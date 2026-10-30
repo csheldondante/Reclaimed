@@ -12,6 +12,19 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 115 (2026-10-30, session 5, `places`) — caching by section, travel on the atlas, the camera's view (DECISIONS round 115)
+
+Streaming is good enough for now (places 3c850b9); these are for when gameplay and the finished generator are built.
+
+| id | item | size | status |
+|---|---|---|---|
+| RC1 | Load a section ahead and keep it: gameplay keeps the player inside a section of the map; its tiles (and regions) are made before they arrive there and stay resident on the GPU while they are in it — the tile atlas gets a pinned set per section beside its least-recently-drawn pool, sized from the section | M | deferred |
+| RC2 | Travel on the atlas map: the player goes from place to place on the atlas map; the destination is precached while the travel is animated on the map, and the place opens when it is resident | M | deferred |
+| RC3 | En route: events on the way, new POI generated along the path, or a fade between pretty views along the road and the map — the travel covers the loading and is fun in itself | M | deferred |
+| RC4 | Generation partitions the map into regions with natural barriers on their borders (cliffs, water, ridges), so play is coherent within a region and the cache loads by region (RC1); the region graph is shared by map design (rooms, key and door) and streaming | L | deferred |
+| RC5 | What the tile atlas keeps today, to revisit with RC1: a fixed GPU budget of slots (desktop 384 / 144 MB, phone 104 / 39 MB), least recently drawn out (never a tile the last frame drew); the planner asks for the footprint plus look-ahead along the motion; nothing is kept for what is likely to come back besides recency; tiles are keyed by the view's turn (a turn bakes all of them again) and live on the GPU only (a reload makes them again; WV6) | S | open |
+| OC1 | The camera's view kept clear: the camera slides over the heightmap toward the ground at the centre of the screen, which is always visible (Camera.focus, round 114); what blocks the view of it is dithered by a rule for how much of the nearby surface a thing may hide, by its height and maybe its layers — small things like rocks may, a cliff or spire hiding the ground may not. Replaces the tiles' eye-side cut (FOCUS_HOLE) and the rings' pressing; one rule for the window, the tiles and the rings; uses the Dither contract (api/cutaway.ts) | M | open |
+
 ## Round 114 (2026-10-30, `framepace`) — the phone's parked frame drops (56-57 fps, p99 33 ms with ~1-2 ms of CPU)
 
 The user: the hero run "framerate feels bad"; the goal a steady 60 on the Pixel 9a. "Keep the per cell look for now I

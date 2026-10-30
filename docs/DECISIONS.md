@@ -3,6 +3,17 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-30 — round 115 (session 5, `places`) — streaming is good enough; caching by section, travel on the atlas, the camera's view kept clear
+
+- The user, verbatim: "This build is ok but still lags on phone and the desktop version on my wide monitor does not load all the tiles (and I assume it is considerably more powerful than the phone) which seems like it is an issue with the implementation because I don't think the PC streaming should be that slow if it is just a heightmap.  That said I'm decently happy with it and I don't want to waste any more time on this as our main project." → places 3c850b9 is the streaming build for now; perf stops being the main project.
+  One agent (`tilecal`) checks whether the wide-monitor gap is settings and, if so, calibrates the tiles to the hardware.
+- The user, verbatim: "Ok so let's just document a few things to help with performance before we move on. I think in the actual gameplay and with the finished generator we can coral the player into sections of the map and load the tiles for those sections ahead of time so that they remain on the GPU." → BACKLOG RC1.
+- The user, verbatim: "I also think we want to generally have the player use the atlas map to travel from location to location. We can precache the locations they go to and animate travel on that map while we load in the background. One fun thing we might do is have events enroute and generate new poi along their path or fade between pretty views along the road and the map." → BACKLOG RC2, RC3.
+- The user, verbatim: "In terms of level generation and map design (a subject I want to spend lots of time on) one goal of generation is to partition the map into regions with natural barriers along borders that also mean our caching strategy can exploit this coherence to load certain tiles." → BACKLOG RC4 (map design: a subject the user wants to spend lots of time on).
+- The user, verbatim: "Does the current system cache only what's on screen or likely to come back on screen? What is the eviction policy? At least part of the problem visually is that the effect to hide things in front of the camera is not good and generally I want the camera to slide across the heightmap towards the projection at the center of the screen which should always be visible and then dither things that block that view with some tbd formula for how much of the nearby surface they can occlude as a function of height and maybe layers. Small. Rocks are fine. A cliff or spire blocking the ground is not." → answered (the tile atlas is a fixed GPU budget, least recently drawn out; nothing
+  predicts what comes back beyond the planner's look-ahead; tiles are keyed by the view's turn and never saved) and
+  BACKLOG OC1, RC5.
+
 ## 2026-10-30 — round 114 (session 5, `worldstore`) — a saved world from another generator; a run's places made fresh
 
 - The user, verbatim: "Without the flag my world seems to me glitched (which is fine for now). I think the intention
