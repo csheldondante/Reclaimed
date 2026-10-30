@@ -37,7 +37,7 @@ and if so make the runtime calibrate to the hardware.
 | CAL7 | Unit tests without a browser for the calibration: the rate's estimator and the floor's rate and room tests on synthetic inputs (vitest, `npm test`; src/render/tilecalib.test.ts, 11 tests) | S | done (`tilecal`) |
 | CAL4 | The phone at the calibrated floor: a phone that fills faster than the prior gets a wider floor (the proxy at 90 fps 2.78 → 1.67) and an atlas up to 128 MB — the phone bench should check its frames there | S | open |
 | CAL5 | The user's PC: `reclaimed.renderer.tiles.cal.stats` and `.stats` on the wide monitor (the rate the 3080 measures, the floor, its bound, the atlas) — and a screenshot if tiles still don't load parked inside the floor | S | asked |
-| CAL6 | A dark rectangle over the land at the right of the 5120 x 1440 view (before and after: shots88/tilecal/before/uw5120-z1.3.png) | S | open |
+| CAL6 | A dark rectangle over the land at the right of the 5120 x 1440 view (before and after: shots88/tilecal/before/uw5120-z1.3.png). The user: "The rectangle looks to me like a blocky storm cloud shadow". The storm shade (common.wgsl cloudShade/stormDist) is a lobed blob with a ragged edge, so its straight, screen-aligned edges mean something rectangular clips it — which of the window, the tiles, the rings, the far land or the shadow map's fit draws the shade, and where it stops | S | open |
 
 ## Round 114 (2026-10-30, `framepace`) — the phone's parked frame drops (56-57 fps, p99 33 ms with ~1-2 ms of CPU)
 
