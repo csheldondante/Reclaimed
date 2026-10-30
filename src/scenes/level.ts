@@ -64,6 +64,11 @@ import { loadRunStory, runWorld, startAtlasRun } from '../story/atlas-run';
 
 /** round 83, V21: ?cutaway=1 — the camera on a puck (api/puck.ts), sliced under a roof and orbiting round a cliff */
 const CUTAWAY = new URLSearchParams(location.search).get('cutaway') === '1';
+/** (round 113) ?planner=0: no planner — each layer's own fixed look-ahead, the sim's ticks never cut */
+const PLANNER_OFF = new URLSearchParams(location.search).get('planner') === '0';
+const PLAN_OFF = new Set((new URLSearchParams(location.search).get('planoff') ?? '').split(',').filter(Boolean));
+/** (round 113, tilesfirst, SF7) ?arriveprep=0: land written into the window waits READY_TICKS sim ticks for the grid, as before */
+const ARRIVE_PREP = new URLSearchParams(location.search).get('arriveprep') !== '0';
 /** (round 98) ?flyspeed=: the free camera's speed (cells a second; Shift 120) — on a phone, the speed ✈'s ⇧ flies at */
 const FLY_SPEED = Number(new URLSearchParams(location.search).get('flyspeed') ?? 35);
 import { cpuLine, cpuStats, frameSteps, record, timed } from '../gpu/cpustat';
@@ -85,6 +90,7 @@ import { beginPipelineBatch, endPipelineBatch } from '../gpu/pipeline';
 import { captureWorld, loadSnapshot, saveSnapshot } from '../sim/snapshot';
 import { loadWarm, saveWarm, warmKey } from '../sim/warm-cache';
 import { buildWiki } from '../gm/wiki';
+import { StreamPlanner } from './planner';
 
 export interface LevelOptions {
   /** play this map instead of generating the level's (a loaded sandbox map) */
@@ -203,6 +209,50 @@ export class LevelScene implements Scene {
    *  chunks where the land isn't a heightfield, near the focus, or edited; the LOD rings (a 1-cell ring first)
    *  draw the rest of the window's land (scenes/hybrid.ts). ?vradius= the focus's radius (world units; round 100: 0, none — 40 before). */
   private hybridOn = new URLSearchParams(location.search).get('hybrid') === '1';
+  /** (round 113, tilesfirst) the streaming planner (scenes/planner.ts): made once the streamed window and its tiles are */
+  planner?: StreamPlanner;
+
+  /** (round 113) the planner's frame: its inputs read, its plan given to the streamer, the tiles, the mesh, the pacer, the sim */
+  private planFrame(): void {
+    const S = this.stream;
+    const core = this.core;
+    const TL = core.renderer.tiles;
+    if (!S || !TL || PLANNER_OFF) return;
+    if (!this.planner) {
+      const fm = core.renderer.fieldMesh;
+      const keyOf = (rx: number, ry: number) => `${rx},${ry}`;
+      this.planner = new StreamPlanner({
+        vel: () => [S.vel[0], S.vel[1]],
+        cover: () => TL.coverCheck(core.camera),
+        arriving: () => S.unwritten.map(([lx, ly]) => keyOf(Math.floor((S.origin[0] + lx) / S.R), Math.floor((S.origin[1] + ly) / S.R))),
+        windowDraws: (k) => {
+          const [rx, ry] = k.split(',').map(Number);
+          const lx = rx * S.R - S.origin[0];
+          const ly = ry * S.R - S.origin[1];
+          if (lx < 0 || ly < 0 || lx >= S.W || ly >= S.H) return false;
+          const [nx, ny, side] = fm.chunkGrid;
+          const wd = core.renderer.windowDrawn();
+          for (let j = ly / side; j < (ly + S.R) / side; j++)
+            for (let i = lx / side; i < (lx + S.R) / side; i++) {
+              if (i >= nx || j >= ny) continue;
+              const v = wd[j * nx + i];
+              if (v !== 1 && v !== 2) return false;
+            }
+          return true;
+        },
+        landLatency: () => S.landLatency(),
+        tileLatency: () => TL.tileLatency(),
+      });
+      const a = this.opts.atlas?.atlas;
+      if (a && !PLAN_OFF.has('pacer')) a.pacer.holes = () => this.planner!.plan.holes;
+    }
+    const P = this.planner.update();
+    // (?planoff=slide,tile,mesh,sim: a consumer left as before — the A/B of each)
+    S.reach = { land: P.reach.land, slide: PLAN_OFF.has('slide') ? 0 : P.reach.window, dir: P.dir };
+    TL.reach = PLAN_OFF.has('tile') ? null : P.reach.tile;
+    core.renderer.fieldMesh.lead = PLAN_OFF.has('mesh') ? [0, 0] : [P.dir[0] * P.reach.window, P.dir[1] * P.reach.window * ROW_H];
+    core.simCap = PLAN_OFF.has('sim') ? null : P.simCap;
+  }
   hybrid?: HybridChunks;
   private ticksAvg = 1;
   /** the last frames' times (ms) and every hitch (a frame over 50 ms) since the level began: the phone's profile (round 79) */
@@ -1516,7 +1566,13 @@ export class LevelScene implements Scene {
           // in waits sim ticks, not a time, for the grid)
           const h = new HybridChunks(nx, ny, side, dims.w, dims.h, S, Number(host.params.get('vradius') ?? 0), () => ({ oz: S.oz, zMax: dims.zMax }), Number(host.params.get('stormreach') ?? 110), () => core.sim.tick);
           this.hybrid = h;
-          S.onRelief.push((x0, y0, x1, y1) => h.landBox(x0, y0, x1, y1));
+          // (round 113, tilesfirst — SF7: the land written is prepared for drawing at once (WorldCore.prepareArrived)
+          // and the grid draws it this frame: no READY_TICKS wait on the sim's ticks, which a slide holds — the step-1
+          // chain's slowest link, 100-230 ms of a written region drawn by nothing. ?arriveprep=0 as before)
+          S.onRelief.push((x0, y0, x1, y1) => {
+            if (ARRIVE_PREP) core.prepareArrived();
+            h.landBox(x0, y0, x1, y1, ARRIVE_PREP ? -Infinity : undefined);
+          });
           S.onSlide.push((dx, dy, dz) => {
             if (!dz) h.shift(dx / side, dy / side);
             else h.zMoved();
@@ -1960,6 +2016,9 @@ export class LevelScene implements Scene {
     const lc = this.hoverWorld ?? [camera.target[0], camera.target[1]];
     globals.lens = [lc[0], lc[1], 24, this.lensK < 0.01 ? 0 : this.lensK];
 
+    // (round 113, tilesfirst — the planner: one footprint, each layer's reach from its measured latency at the camera's
+    // speed, holes first and rendering before simulation; scenes/planner.ts)
+    this.planFrame();
     // (a slide in progress: the sim waits for the regions coming in)
     void this.stream?.update();
     // (hybrid) what's voxels this frame: the events edit what they touch; the focus is the camera's target

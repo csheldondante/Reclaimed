@@ -56,6 +56,10 @@ export interface Coverage {
   undrawn: string[];
 }
 
+/** (window z) the lowest land the footprint looks for, and how far over the window's top */
+const Z_LO = -64;
+const Z_HI = 128;
+
 /** the clip-space quad of a box's footprint at height z, and whether the box (z0..z1) meets the screen */
 function project(m: Float32Array, x0: number, y0: number, x1: number, y1: number, z0: number, z1: number): { seen: boolean; quad: [number, number][] } {
   let lx = Infinity;
@@ -138,8 +142,30 @@ export function coverage(v: CoverView): Coverage {
   const reach = v.reach ?? 6;
   const rw = Math.ceil(v.W / R);
   const rh = Math.ceil(v.H / R);
-  for (let j = -reach; j < rh + reach; j++)
-    for (let i = -reach; i < rw + reach; i++) {
+  // (only the regions under the screen's corners' footprint at the land's lowest and highest — the view's ground
+  // between Z_LO and the window's top past Z_HI: a few dozen boxes, not the reach's few hundred)
+  let fx0 = Infinity;
+  let fy0 = Infinity;
+  let fx1 = -Infinity;
+  let fy1 = -Infinity;
+  const det = m[0] * m[5] - m[4] * m[1];
+  for (const z of [Z_LO, v.zMax + Z_HI])
+    for (const [cx, cy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      const rx = cx - m[8] * z - m[12];
+      const ry = cy - m[9] * z - m[13];
+      const x = (m[5] * rx - m[4] * ry) / det;
+      const y = (m[0] * ry - m[1] * rx) / det;
+      fx0 = Math.min(fx0, x);
+      fx1 = Math.max(fx1, x);
+      fy0 = Math.min(fy0, y);
+      fy1 = Math.max(fy1, y);
+    }
+  const i0 = Math.max(-reach, Math.floor(fx0 / R));
+  const i1 = Math.min(rw + reach - 1, Math.floor(fx1 / R));
+  const j0 = Math.max(-reach, Math.floor(fy0 / (R * ROW_H)));
+  const j1 = Math.min(rh + reach - 1, Math.floor(fy1 / (R * ROW_H)));
+  for (let j = j0; j <= j1; j++)
+    for (let i = i0; i <= i1; i++) {
       if (i >= 0 && j >= 0 && i < rw && j < rh) continue;
       const rx = w0 + i;
       const ry = h0 + j;

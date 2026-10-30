@@ -156,18 +156,21 @@ export class SurfaceSystem implements SimSystem {
   readonly name = 'surface';
   readonly period = 1;
   private s;
-  constructor(device: GPUDevice, private world: PrepWorld, private prof: Profiler) {
+  /** `all` (round 113, tilesfirst): every column, asleep or not — the render preparation of land just written
+   *  (WorldCore.prepareArrived), whatever the sleep mask says yet */
+  constructor(device: GPUDevice, private world: PrepWorld, private prof: Profiler, all = false) {
+    const skip = SLEEP_MORE && !all;
     this.s = kernel(
       device,
       world,
-      'surface',
-      `const SLEEP_MORE: bool = ${SLEEP_MORE};
+      all ? 'surface-all' : 'surface',
+      `const SLEEP_MORE: bool = ${skip};
 ` + surfaceWgsl,
       { 3: 'read', 4: 'rw', 16: 'stex', 19: 'tex', 20: 'stex', 28: 'tex', 30: 'stex' },
       { 3: world.layers, 4: world.surface, 16: world.driftView, 19: world.airView, 20: world.strataView, 28: world.projView, 30: world.levelsView },
       true,
       // (it skips sleeping chunks only with ?sleepmore=1)
-      SLEEP_MORE ? LIVE : undefined,
+      skip ? LIVE : undefined,
     );
   }
   encode(enc: GPUCommandEncoder): void {
@@ -445,19 +448,21 @@ export class RenderFieldsSystem implements SimSystem {
   readonly name = 'renderfields';
   readonly period = 2;
   private s;
-  constructor(device: GPUDevice, private world: PrepWorld, private prof: Profiler) {
+  /** `all` (round 113): every column (SurfaceSystem's) */
+  constructor(device: GPUDevice, private world: PrepWorld, private prof: Profiler, all = false) {
+    const skip = SLEEP_MORE && !all;
     this.s = kernel(
       device,
       world,
-      'renderfields',
-      terrainShapeWgsl + meshStateWgsl + meshRegionWgsl + `const SLEEP_MORE: bool = ${SLEEP_MORE};
+      all ? 'renderfields-all' : 'renderfields',
+      terrainShapeWgsl + meshStateWgsl + meshRegionWgsl + `const SLEEP_MORE: bool = ${skip};
 ` + renderFieldsWgsl + flowWgsl + riverHeld(),
       { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw', 8: 'read', 9: 'read', 10: 'read', 16: 'stex', 17: 'tex', 22: 'tex', 62: 'tex', 30: 'uniform' },
       { 3: world.surface, 4: world.moisture, 5: world.fire, 6: world.flux, 7: world.renderFields, 8: world.water, 9: world.veg, 10: world.lava, 16: world.cornerView, 17: world.driftView, 22: world.riverFlowView, 62: world.riverWetView, 30: world.meshRegion },
       false,
       // (round 104, simscale: with ?sleepmore=1 it skips a sleeping chunk but a drowsy one — the live list exactly —
       // so it's dispatched over the live chunks only; the field mesh's region is always set, MR.n.w 1)
-      SLEEP_MORE ? LIVE : undefined,
+      skip ? LIVE : undefined,
     );
   }
   encode(enc: GPUCommandEncoder): void {

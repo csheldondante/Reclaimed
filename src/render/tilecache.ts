@@ -809,7 +809,7 @@ export class TileCache {
     const shifts = sp > MOVING ? [0, 1, 2] : [0, 2];
     // (round 113, tilesfirst — grow with speed: as far ahead as the camera goes in the tiles' measured latency, wanted
     // to drawn, and a region and a half more; ?tileahead= fixes the seconds as before)
-    const ahead = sp > MOVING ? (PREFETCH_FIXED ? Math.max(PREFETCH_S, AHEAD_CELLS / sp) : this.tileLatency() + AHEAD_CELLS / sp) : 0;
+    const ahead = sp > MOVING ? (PREFETCH_FIXED ? Math.max(PREFETCH_S, AHEAD_CELLS / sp) : this.reach !== null ? this.reach / sp : this.tileLatency() + AHEAD_CELLS / sp) : 0;
     // (round 113, tilesfirst — tiles first: inside the window too, where its own drawing isn't there for sure)
     const wd = this.host.windowDrawn();
     const [mnx, mny, mside] = this.host.win.mesh.chunkGrid;
@@ -869,6 +869,10 @@ export class TileCache {
     d.sort((a, b) => a - b);
     return Math.min(3, d[Math.floor(d.length * 0.9)]);
   }
+
+  /** (round 113, the planner's — scenes/planner.ts) how far ahead along the camera's motion the tiles are asked for
+   *  (world units), or null: their own latency at the speed */
+  reach: number | null = null;
 
   /** a tile of region (rx, ry) at this turn? */
   hasTile(rx: number, ry: number, az: number): boolean {

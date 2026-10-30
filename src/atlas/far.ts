@@ -49,6 +49,8 @@ export class FarLand {
   private pipe: GPURenderPipeline;
   /** (round 113) the stand-in's (far.wgsl vsStandIn / fsStandIn) */
   private standPipe?: GPURenderPipeline;
+  private standIndex: GPUBuffer;
+  private standCount: number;
   private group: GPUBindGroup;
   private uni: GPUBuffer;
   private index: GPUBuffer;
@@ -141,6 +143,19 @@ export class FarLand {
     this.count = idx.length;
     this.index = device.createBuffer({ label: 'far index', size: idx.byteLength, usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST });
     device.queue.writeBuffer(this.index, 0, idx);
+    // (round 113: the stand-in's grid — half as many vertices a side, twice as far apart: far.wgsl vsStandIn)
+    const GS = (G - 1) / 2 + 1;
+    const sidx = new Uint32Array((GS - 1) * (GS - 1) * 6);
+    o = 0;
+    for (let j = 0; j < GS - 1; j++)
+      for (let i = 0; i < GS - 1; i++) {
+        const a = j * GS + i;
+        sidx.set([a, a + 1, a + GS, a + 1, a + GS + 1, a + GS], o);
+        o += 6;
+      }
+    this.standCount = sidx.length;
+    this.standIndex = device.createBuffer({ label: 'far stand-in index', size: sidx.byteLength, usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(this.standIndex, 0, sidx);
     this.uni = device.createBuffer({ label: 'far params', size: UNI_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     const VF = GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT;
     const layout = device.createBindGroupLayout({
@@ -322,14 +337,15 @@ export class FarLand {
     }    if (this.standPipe) {
       pass.setPipeline(this.standPipe);
       pass.setBindGroup(0, this.group);
-      pass.setIndexBuffer(this.index, 'uint32');
-      pass.drawIndexed(this.count);
+      pass.setIndexBuffer(this.standIndex, 'uint32');
+      pass.drawIndexed(this.standCount);
     }
   }
 
   dispose(): void {
     for (const t of this.textures) t.destroy();
     this.index.destroy();
+    this.standIndex.destroy();
     this.uni.destroy();
     this.lod?.dispose();
     this.bake?.dispose();

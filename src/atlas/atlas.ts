@@ -263,6 +263,8 @@ export class TilePacer {
   device?: GPUDevice;
   profiler?: import('../gpu/profiler').Profiler;
   urgency: () => number = () => 0;
+  /** (round 113, the planner's — scenes/planner.ts) the view has undrawn land: the tiles get the frame's whole room */
+  holes: () => boolean = () => false;
   /** (round 102) GPU ms a tile (measured), the frame's GPU ms without tiles, the budget now (ms), how it's measured */
   tileMs = 0.3;
   gpuMs = 8;
@@ -357,7 +359,8 @@ export class TilePacer {
         if (this.doneIdle) this.gpuMs = this.doneIdle;
       }
       const room = this.base - this.gpuMs - Math.max(1.5, this.base * 0.1);
-      this.budgetMs = Math.max(0, room) * (0.33 + 0.47 * fast);
+      // (round 113: holes first — while the view has undrawn land, all of the room)
+      this.budgetMs = Math.max(0, room) * (this.holes() ? 1 : 0.33 + 0.47 * fast);
       n = Math.max(1, Math.min(most, Math.floor(this.guard), Math.floor(this.budgetMs / Math.max(this.tileMs, 0.05))));
     }
     this.perFrame = n;
@@ -367,7 +370,8 @@ export class TilePacer {
     // (round 112, tilefast: the tiles' lane's share — half the turns while the streamer has some waiting, else all — is
     // kept whole for it: what its queue doesn't take now, its chain does as it asks again in this task, the urgent
     // region's next tiles in this frame; the streamer's the rest, and what neither takes is the chain's too)
-    const share = !CHAIN || this.fixed || TILES_FIXED || !this.first.length ? 0 : this.waiting.length ? Math.ceil(n / 2) : n;
+    // (round 113: holes first — while the view has undrawn land the tiles' lane takes every turn it has asks for)
+    const share = !CHAIN || this.fixed || TILES_FIXED || !this.first.length ? 0 : this.waiting.length && !this.holes() ? Math.ceil(n / 2) : n;
     const go: (() => void)[] = [];
     let tileGo = 0;
     if (share) {

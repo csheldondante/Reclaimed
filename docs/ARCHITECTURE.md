@@ -2345,3 +2345,10 @@ clears them).
   mesh's whose fieldmesh record is built and not empty — after prepare, before the world pass). So the swap from tile to
   window is the frame the window's drawing is ready, chunk by chunk. TileCache.wanted asks for tiles of window regions
   where the window doesn't draw for sure; its look-ahead is TileCache.tileLatency (wanted to drawn, p90) at the speed.
+- **The planner** (step 4): scenes/planner.ts `StreamPlanner` (level.ts `planFrame`, each frame before the streamer's
+  update). Reads (`PlanSource`): the camera's motion, the coverage check, the arriving regions and whether the window
+  draws them, the land's and tiles' latencies. Writes (`Plan`): reach per layer (cells along the motion: speed x
+  latency + 96), `holes`, `simCap`. Consumers take one field each: Streamer.reach, FieldMesh.lead, TileCache.reach,
+  TilePacer.holes, WorldCore.simCap. `?planner=0`, `?planoff=slide,tile,mesh,sim,pacer`.
+- **Land written is drawable at once** (SF7): the streamer's onRelief → level → WorldCore.prepareArrived (SurfaceSystem
+  and RenderFieldsSystem with `all`: every column, no sleep skip) and HybridChunks.landBox(…, −Infinity): ready now.
