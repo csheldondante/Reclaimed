@@ -12770,3 +12770,10 @@ worst frame (73 of 129 frames), z2.78 4.15% (80 of 146) where the CPU "out of de
 320-480), though its "no pop-in" read clean to 320. So places now **fails the gate** on its phone pans (BACKLOG BG4);
 shots C:/Projects/shots88/bgcheck/where-z5-pan.png (the grey-blue region = the clear colour, samples marked red),
 bench-clean.json, gate-clean/.
+
+## 2026-10-29 — the pan bench can run without the background check (round 112)
+
+- The user, after the stable build's phone bench (data/bench/pixel9a-pan-stable.json, frames worse than earlier runs
+  with the check on): "Let's turn those off for the next one." The pan pages always set bgcheck=1; `?bgcheck=0` on the
+  bench's start page now runs them without it (bench.ts), for a frame-time run free of the check's depth and pick
+  stores. Behaviour of the check itself is unchanged.

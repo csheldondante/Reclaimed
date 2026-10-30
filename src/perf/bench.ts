@@ -1101,7 +1101,10 @@ async function start(host: Host, panel: Panel): Promise<void> {
     s.suite = 'pan';
     const plan = panPlan(innerWidth, innerHeight, host.params.get('benchsmoke') === '1', Number(host.params.get('panwin') ?? 0));
     s.results.panPlan = plan;
-    s.pages = [s.pages[0], ...plan.pages.map((pg) => ({ name: `pan${pg.window}`, params: { ...common, at: RIDE_AT, win: String(pg.window), panzooms: pg.zooms.join('_'), bgcheck: '1' } }))];
+    // (round 112) ?bgcheck=0 on the start page runs the pan pages without the background check (its depth and pick
+    // stores may cost frames on the phone's GPU), for a clean frame-time run
+    const bg = host.params.get('bgcheck') === '0' ? '0' : '1';
+    s.pages = [s.pages[0], ...plan.pages.map((pg) => ({ name: `pan${pg.window}`, params: { ...common, at: RIDE_AT, win: String(pg.window), panzooms: pg.zooms.join('_'), bgcheck: bg } }))];
   }
   // (v3, ?benchsmoke=1: the start, the hero and one window page, the end — a check that the chain works, ~3 min)
   if (host.params.get('benchsmoke') === '1' && s.suite !== 'pan') s.pages = [s.pages[0], s.pages.find((x) => x.name === 'hero')!, { name: 'win256', params: { ...common, at: RIDE_AT, drive: '18', win: '256' } }];
