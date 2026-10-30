@@ -18,6 +18,7 @@ each was implemented.
   answers verbatim: the stand-in "this is fine but hopefully we rarely hit it"; the window "I think we want simulation
   only where what is visible and a small buffer"; the speed to keep clean "I would say 2x bike speed so we have room for
   faster note the camera will pull back some when the bike goes faster"; 4 MB more for height grids "yes that's fine".
+- And: "Prioritize rendering over simulation too": the planner's budget covers what is visible first; simulation gets what is left.
 - Order: migration steps 1-5 on branch `tilesfirst`, each gated and merged one at a time; step 6 (the window as
   simulation only) planned, scheduled after.
 
