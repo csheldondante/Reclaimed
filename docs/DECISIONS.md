@@ -14,6 +14,10 @@ each was implemented.
   don't see the device or the screen (a fill rate of 2 tiles a frame, an atlas capped at 128 MB); now the land's fill
   rate is measured, the floor is what that rate fills in 5 s, and the atlas grows to what the floor needs within a
   memory budget (512 MB off a phone, 128 MB on one — asked: BACKLOG CAL3). DEVLOG round 115.
+- On the budget, verbatim: "Why limit to 512 and 128MB both should use as much as we need that the hardware
+  supports." → no policy caps: the atlas grows to what the floor needs, bounded by the device's limits (its widest
+  texture, the adapter's maximum asked for) and by allocations that succeed — an out-of-memory growth keeps the atlas
+  and is the ceiling, not retried. The phone the same rule. Also: unit tests rather than browser runs where possible.
 
 ## 2026-10-30 — round 114 (session 5, `worldstore`) — a saved world from another generator; a run's places made fresh
 

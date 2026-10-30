@@ -18,6 +18,7 @@
 // look to read a region's own columns, not the window's: BACKLOG TC2).
 
 import type { Profiler } from '../gpu/profiler';
+import { ignoreTeardown } from '../gpu/pipeline';
 import type { WorldGpu } from '../sim/world-gpu';
 import type { Camera } from './camera';
 import { CAMERA_CUT_BYTES, CAMERA_CUT_OFFSET, CAMERA_POS_OFFSET } from './camera';
@@ -26,7 +27,7 @@ import { ROW_H } from '../world/lattice';
 import type { LandTimes } from './tileland';
 import { coverage, type Coverage } from './coverage';
 import meshStateWgsl from '../shaders/meshstate.wgsl?raw';
-import { TileCalibration } from './tilecalib';
+import { TileCalibration, floorSearch } from './tilecalib';
 
 /** (round 105) what makes the render-only land: tileland.ts (the playable path, ?tilegpu=0) or tilelandgpu.ts */
 export interface LandMaker {
@@ -221,6 +222,15 @@ interface Tile {
 }
 
 /** a bake slot: its camera and groups (made again when the mesh's buffers change) */
+/** (round 115) an atlas growth: its rows, the planes, params and instances made for it, its allocations held */
+interface Growth {
+  rows: number;
+  planes: [GPUTexture, GPUTexture, GPUTexture];
+  tp: GPUBuffer;
+  inst: GPUBuffer;
+  ok: boolean;
+}
+
 interface Baker {
   cam: GPUBuffer;
   gWin?: GPUBindGroup;
@@ -267,13 +277,12 @@ export class TileCache {
     const dev = host.device;
     const slotBytes = SW * SH * TEXEL_BYTES;
     const lim = dev.limits.maxTextureDimension2D;
-    // (round 115, `tilecal`: the atlas is as wide as the most it may grow to — the calibration's memory budget — so a
-    // growth adds rows and every slot keeps its place: TileCache.grow)
-    const most = Math.max(4, Math.floor((TileCalibration.atlasMostMB(BUDGET_MB) * 2 ** 20) / slotBytes));
-    this.cols = Math.max(1, Math.min(Math.floor(lim / SW), Math.ceil(Math.sqrt(most * (SH / SW)))));
-    this.rowsMost = Math.max(1, Math.min(Math.floor(lim / SH), Math.ceil(most / this.cols)));
     const want = Math.max(4, Math.floor((BUDGET_MB * 2 ** 20) / slotBytes));
-    const rows = Math.min(this.rowsMost, Math.ceil(want / this.cols));
+    // (round 115, `tilecal`: the atlas is as wide as the device's widest texture, so a growth adds rows and every slot
+    // keeps its place — TileCache.grow — up to the texture's height: the hardware's bound, no budget's. ?tilemb=: as made)
+    this.cols = Math.max(1, Math.floor(lim / SW));
+    const rows = Math.min(Math.floor(lim / SH), Math.ceil(want / this.cols));
+    this.rowsMost = TileCalibration.atlasFixed ? rows : Math.max(rows, Math.floor(lim / SH));
     const slots = this.cols * rows;
     this.cells = new Array(slots * 4).fill(null);
     this.stats.slots = slots;
@@ -393,12 +402,13 @@ export class TileCache {
     this.track(cam);
     // (round 112, tilefix3: the device's zoom floor, now and then — the camera holds to it)
     for (const r of this.retired.splice(0)) r.destroy();
+    if (this.growing?.ok) this.finishGrow(this.growing);
     if (ZOOM_FLOOR && this.frame % 30 === 1) {
       const f = this.zoomFloor(cam, renderW);
       if (f > 0) cam.zoomFloor = f;
       this.stats.zoomFloor = +f.toFixed(2);
       // (round 115, `tilecal`: the atlas the floor's bound, and the measured rate's floor would take a tenth more slots
-      // than it has or more — a growth is a copy of the atlas, not done for a few — it grows to them, within its budget)
+      // than it has or more — a growth is a copy of the atlas, not done for a few — it grows to them, as the hardware allows)
       const slots = this.cells.length >> 2;
       if (this.stats.floorBound === 'room' && this.cal.stats.source !== 'prior' && this.slotsAtRate > slots * GROW_AT) this.grow(this.slotsAtRate);
     }
@@ -477,83 +487,85 @@ export class TileCache {
     const perim0 = 2 * (Math.hypot(ax, ay) + Math.hypot(bx, by));
     const side = Math.sqrt(R * R * ROW_H);
     const slots = this.cells.length >> 2;
-    const most = this.cal.fillTiles;
-    // (from close out, the first zoom that doesn't fit; the floor the one before it)
-    let floor = 24;
-    let bound: 'room' | 'rate' | 'none' = 'none';
-    let tiles = 0;
-    // (the regions a ground of scale k touches; the screen's own must fill in the budget — the look-ahead asks for them
-    // first (wanted: on the screen before its margin) — and the screen with the margin must fit the atlas)
-    const regions = (k: number) => (area0 * k * k) / (side * side) + (perim0 * k) / side + 4;
-    // (round 115: on past the atlas's room to the rate's own floor — the slots that one would take are what the atlas
-    // grows to: TileCache.encode, grow)
-    let roomFull = false;
-    let slotsAtRate = 0;
-    for (let z = 24; z >= 0.5; z /= 1.04) {
-      const k = z0 / z;
-      const n = regions(k);
-      const sz = this.partFor(B, rp0 / k, 48);
-      const frac = sz === 0 ? 1 : sz === 1 ? 0.5 : 0.25;
-      const need = regions(k * MARGIN) * frac;
-      if (n > most) {
-        if (!roomFull) bound = 'rate';
-        break;
-      }
-      slotsAtRate = Math.ceil(need / FLOOR_ROOM);
-      if (roomFull) continue;
-      if (need > slots * FLOOR_ROOM) {
-        roomFull = true;
-        bound = 'room';
-        continue;
-      }
-      floor = z;
-      tiles = n;
-    }
+    // (the search itself: tilecalib.ts floorSearch — the rate's test and the room's, unit-tested)
+    const { floor, bound, tiles, slotsAtRate } = floorSearch({
+      z0, area0, perim0, side, margin: MARGIN, slots, room: FLOOR_ROOM, fillTiles: this.cal.fillTiles,
+      frac: (k) => {
+        const sz = this.partFor(B, rp0 / k, 48);
+        return sz === 0 ? 1 : sz === 1 ? 0.5 : 0.25;
+      },
+    });
     this.stats.floorBound = bound;
     this.stats.floorTiles = Math.round(tiles);
     this.slotsAtRate = slotsAtRate;
     return floor;
   }
 
-  /** (round 115) the slots the rate's own floor would take (zoomFloor): what the atlas grows to, within its budget */
+  /** (round 115) the slots the rate's own floor would take (zoomFloor): what the atlas grows to, as the hardware allows */
   private slotsAtRate = 0;
 
   /**
-   * (round 115, `tilecal`) The atlas grown to hold `slots` (whole rows of it, at most rowsMost): its three planes made
-   * again taller with the old copied in, every slot where it was; the slots' params copied; the instances' buffer and the
-   * groups that bind them made again. The tiles stay. Only ever up. What it replaced is destroyed a frame on.
+   * (round 115, `tilecal`) The atlas grown to hold `slots` (whole rows of it: at most the device's texture height, and
+   * under the ceiling a growth that ran out of memory found): its planes, the slots' params and the instances' buffer
+   * asked for inside an 'out-of-memory' error scope. Out of memory: what was made is destroyed, the atlas stays as it
+   * was, and those bytes are the calibration's ceiling (`cal.oom`) — nothing at or over it is asked for again; that's the
+   * hardware's answer, not a fallback (validation errors stay outside the scope: fatal as ever). Made: the next frame's
+   * encode copies the old in (`finishGrow`).
    */
   private grow(slots: number): void {
-    const rows = Math.min(this.rowsMost, Math.ceil(slots / this.cols));
+    if (this.growing || !this.atlasA) return;
+    const perRow = this.cols * SW * SH * (TEXEL_BYTES + LIVE_BYTES);
+    let rows = Math.min(this.rowsMost, Math.ceil(slots / this.cols));
+    while (rows > this.rows && !this.cal.mayAsk(rows * perRow)) rows--;
     if (rows <= this.rows) return;
     const dev = this.host.device;
-    const n0 = this.cells.length >> 2;
     const n = this.cols * rows;
-    const enc = dev.createCommandEncoder({ label: 'tiles atlas grow' });
-    if (this.atlasA) {
-      const next = this.atlasTextures(rows);
-      const old = [this.atlasA, this.atlasB, this.atlasLive];
-      for (let i = 0; i < 3; i++) enc.copyTextureToTexture({ texture: old[i] }, { texture: next[i] }, [this.cols * SW, this.rows * SH, 1]);
-      this.retired.push(...old);
-      [this.atlasA, this.atlasB, this.atlasLive] = next;
-    }
+    dev.pushErrorScope('out-of-memory');
+    const planes = this.atlasTextures(rows);
     const tp = dev.createBuffer({ label: 'tiles params', size: n * 4 * 32, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
-    enc.copyBufferToBuffer(this.tparams, 0, tp, 0, this.tparams.size);
+    const inst = dev.createBuffer({ label: 'tiles instances', size: n * 4 * 16 * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    const job: Growth = { rows, planes, tp, inst, ok: false };
+    this.growing = job;
+    void dev.popErrorScope().then((err) => {
+      if (!err) {
+        job.ok = true;
+        return;
+      }
+      for (const r of [...planes, tp, inst]) r.destroy();
+      this.cal.oom(rows * perRow);
+      this.growing = null;
+    }, ignoreTeardown);
+  }
+
+  /** (round 115) a growth whose allocations held: the old atlas copied in, every slot where it was; the old retired */
+  private finishGrow(job: Growth): void {
+    const dev = this.host.device;
+    const n0 = this.cells.length >> 2;
+    const n = this.cols * job.rows;
+    const enc = dev.createCommandEncoder({ label: 'tiles atlas grow' });
+    const old = [this.atlasA, this.atlasB, this.atlasLive];
+    for (let i = 0; i < 3; i++) enc.copyTextureToTexture({ texture: old[i] }, { texture: job.planes[i] }, [this.cols * SW, this.rows * SH, 1]);
+    enc.copyBufferToBuffer(this.tparams, 0, job.tp, 0, this.tparams.size);
     dev.queue.submit([enc.finish()]);
-    this.retired.push(this.tparams, this.inst);
-    this.tparams = tp;
+    this.retired.push(...old, this.tparams, this.inst);
+    [this.atlasA, this.atlasB, this.atlasLive] = job.planes;
+    this.tparams = job.tp;
+    this.inst = job.inst;
     const inst = new Float32Array(n * 4 * 16);
     inst.set(this.instData);
     this.instData = inst;
-    this.inst = dev.createBuffer({ label: 'tiles instances', size: inst.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     for (let i = n0 * 4; i < n * 4; i++) this.cells.push(null);
-    this.rows = rows;
+    this.rows = job.rows;
     this.stats.slots = n;
     this.stats.mb = +((n * SW * SH * (TEXEL_BYTES + LIVE_BYTES)) / 2 ** 20).toFixed(1);
     this.stats.grown++;
-    if (this.atlasA) this.host.profiler.trackMemory('tiles', this.cols * this.rows * SW * SH * (TEXEL_BYTES + LIVE_BYTES) + SW * SH * (16 + 8 + 4));
+    this.host.profiler.trackMemory('tiles', this.cols * this.rows * SW * SH * (TEXEL_BYTES + LIVE_BYTES) + SW * SH * (16 + 8 + 4));
+    this.growing = null;
     this.invalidate();
   }
+
+  /** (round 115) a growth asked for and not yet in */
+  private growing: Growth | null = null;
 
   /** (round 115, `tilecal`) the tiles' calibration to this device and screen: the land's rate, the floor's budget */
   readonly cal = new TileCalibration();

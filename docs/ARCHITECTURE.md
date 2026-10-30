@@ -2331,15 +2331,19 @@ clears them).
     slot free, or the bakes at their cap; not the atlas full; the camera at rest), and `holes` (level.ts: the planner's
     — only frames the pacer gives the tiles its turns for holes measure).
   - *Out:* `rate` (tiles a second, a running estimate from the tier's prior, a second of bottlenecked frames at a
-    time), `fillTiles` (what the rate makes in the fill budget, 5 s), `atlasMB(cssW, cssH)` (the atlas as made: 24 MB
-    by the css area, at most 128) and `atlasMostMB(made)` (what it may grow to: 512 MB off a phone, 128 on one);
-    `stats` for the gate and the bench. Overrides: `?tilerate=` (tiles a frame at 60 Hz), `?floorframes=` (the budget,
+    time), `fillTiles` (what the rate makes in the fill budget, 5 s), `atlasMB(cssW, cssH)` (the atlas's starting size:
+    24 MB by the css area, at most 128 — a start, not a limit), `oom(bytes)` / `mayAsk(bytes)` (the hardware's ceiling a
+    growth found) and `floorSearch` (pure: the floor's rate and room tests, unit-tested in tilecalib.test.ts); `stats`
+    for the gate and the bench. Overrides: `?tilerate=` (tiles a frame at 60 Hz), `?floorframes=` (the budget,
     frames at 60 Hz), `?tilemb=` (the atlas, no growth).
   - *Used by TileCache:* `zoomFloor` — the widest zoom whose screen's own regions (area and perimeter) are at most
     `fillTiles` and whose screen with the margin fits 80% of the atlas; `stats.floorBound` which held it. When the
     atlas held it and the rate's own floor would take 10% more slots, `grow` adds atlas rows (the atlas is made as wide
     as its budget allows, so every slot keeps its place): the three planes and the slots' params copied into taller
-    ones, the instances' buffer and every group binding them remade, the old destroyed a frame on. Only up.
+    ones, the instances' buffer and every group binding them remade, the old destroyed a frame on. Only up. No budget:
+    the atlas is as wide as the device's widest texture (device.ts asks for the adapter's maxTextureDimension2D), grows
+    to its height at most, and its allocations are made in an 'out-of-memory' error scope — out of memory, the new ones
+    are destroyed, the atlas stays, and those bytes are the ceiling (`cal.stats.ceilingBytes`) never asked for again.
 
 - A window region's tile is never the least recently used while the region is in the window (prepare marks it used):
   it's the tile the screen needs the frame the region leaves.

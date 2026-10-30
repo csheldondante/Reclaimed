@@ -13520,3 +13520,24 @@ follows the frame rate: the same build holds 1.95 at 1600 x 900 under the gate's
   rate or the atlas: unchanged by this.
 - A dark rectangle over the land at the right of the 5120 x 1440 view (before and after: uw5120-z1.3.png) —
   not looked into.
+
+### Round 115 (`tilecal`, 2): no memory caps — the atlas bounded by the hardware; unit tests
+
+The user on the budget (BACKLOG CAL3), verbatim: "Why limit to 512 and 128MB both should use as much as we need that
+the hardware supports."
+- No policy caps, the phone the same rule. The atlas starts where it did (24 MB by the css area, at most 128 — a
+  start) and grows to the slots the measured rate's floor needs. Its bounds are the hardware's: it's as wide as the
+  device's widest texture and grows to that texture's height (device.ts now asks for the adapter's
+  maxTextureDimension2D, as it already did its buffer limits; the slots' params and instances are KB, far under
+  maxBufferSize / maxStorageBufferBindingSize), and its allocations succeed: a growth's planes and buffers are made in
+  an 'out-of-memory' error scope; out of memory, they're destroyed, the atlas stays, and the bytes are the ceiling
+  (`cal.stats.ceilingBytes`) — no growth at or over it is asked for again. Validation errors stay outside the scope,
+  fatal as ever. The copy into the new atlas runs the frame after the scope resolves (TileCache.finishGrow).
+- The floor's search is a pure function (tilecalib.ts `floorSearch`), and the estimator takes its clock
+  (`landFrame(baked, bottleneck, now)`): **unit tests without a browser** — vitest (added: `npm test`,
+  vitest.config.ts, node only), src/render/tilecalib.test.ts, 11 tests: the prior, a block's 30% step, convergence,
+  frames left out (not the bottleneck, stalls, no holes), the ceiling; the square's (side + 2)² count, the rate's test,
+  the room's test and the slots the atlas grows to, a wide screen's closer floor, a faster device's wider floor. 0.4 s.
+- One browser smoke (fillprobe, shared GPU — growth's correctness only, no timings): 1600 x 900 grew to 512 slots /
+  192 MB (floor 1.32), 5120 x 1440 to 1024 / 384 MB, the phone proxy to 256 / 96 MB; no out-of-memory, no errors.
+  The atlas now starts as whole rows of the widest texture (64 slots a row at 8192), so its first size rounds up a row.

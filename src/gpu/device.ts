@@ -39,7 +39,9 @@ export async function initGpu(canvas: HTMLCanvasElement): Promise<Gpu> {
 
   // (the adapter's own buffer limits, not the defaults: a wider streamed window's mesh — ?win=, round 79 —
   // binds more than the default 128 MB where the GPU allows it; FieldMesh says so where it doesn't)
-  const requiredLimits = { maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize, maxBufferSize: adapter.limits.maxBufferSize };
+  // (round 115, tilecal: and its widest texture — the tile atlas grows to what the hardware holds, one texture's side its
+  // bound: TileCache.grow)
+  const requiredLimits = { maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize, maxBufferSize: adapter.limits.maxBufferSize, maxTextureDimension2D: adapter.limits.maxTextureDimension2D };
   const device = await adapter.requestDevice({ requiredFeatures, requiredLimits });
 
   device.lost.then((info) => {
