@@ -11,6 +11,8 @@ each was implemented.
 >
 > Most of this looks great. I think sea caves still need a lot of work and I had some bad performance with the birches on mobile. The creature editor and plant editor are fun but I have ideas on how to improve both. I need to actually play a generated run and try it out. Was there a link? Really awesome work overall.
 
+- The user, verbatim, on drawing creatures larger at wide zoom (inhabitants IN13): "Keep the creature small for now I want to add larger creatures but I want to improve the generator even more and talk through increasing the quality and adding composable creatures via items and mounts." → creatures at true size; a
+  design session on the creature generator's quality and composable creatures (items, mounts) before that work starts.
 - → structures: settle/ moves onto the structures contract (STR15) and towns use the new buildings; farms and small huts
   where population is thin, density from a field. flora: the birches' cost on the phone. A playable generated run: play,
   terrain and runplan merged and a run's stages played with the heroes. Sea caves need more work (the user to say what).
