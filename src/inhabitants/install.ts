@@ -23,12 +23,19 @@ export function installInhabitants(core: WorldCore, opts: InhabitantsOpts = {}):
   return life;
 }
 
+const READABLE_ZOOM = 16;
+const MAX_DRAW_SCALE = 3;
+const SCALE_PARAM = typeof location !== 'undefined' && new URLSearchParams(location.search).get('lifescale') ? Number(new URLSearchParams(location.search).get('lifescale')) : null;
+
 /** each frame: the mesh built round what the camera sees */
 export function lifeFocus(life: InhabitantsGpu, core: WorldCore): void {
   const cam = core.camera;
   life.focus = [cam.target[0], cam.target[1]];
   // (the view's half-diagonal in world units, and a margin: the iso view's ground reaches further up the screen)
   life.focusR = cam.fly ? 400 : (Math.hypot(cam.viewportW, cam.viewportH) / Math.max(cam.zoom, 0.01)) * 0.75 + 12;
+  // (readability: life size from READABLE_ZOOM in, up to MAX_DRAW_SCALE bigger as the view widens — a creature keeps
+  // ~READABLE_ZOOM px a cell of body; ?lifescale= overrides, 1 life size always)
+  life.drawScale = SCALE_PARAM ?? (cam.fly ? 1 : Math.min(MAX_DRAW_SCALE, Math.max(1, READABLE_ZOOM / Math.max(cam.zoom, 0.01))));
 }
 
 /** A wilderness scene round `at` (world units): what ?life=1 shows. Returns the groups by name. */

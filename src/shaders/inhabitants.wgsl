@@ -52,7 +52,9 @@ struct LifeParams {
   n: u32, nGroups: u32, binsX: u32, binsY: u32,
   binSize: f32, focusX: f32, focusY: f32, focusR: f32,
   lod: u32, nNodes: u32, nEdges: u32, maxVerts: u32,
-  time: f32, worldW: f32, worldH: f32, pad1: f32,
+  time: f32, worldW: f32, worldH: f32,
+  /** how much bigger than life a creature is drawn (readability zoomed out: system.ts drawScale) */
+  drawScale: f32,
   /** the window's slide (shiftIt) */
   shift: vec4<f32>,
 }
@@ -807,14 +809,16 @@ fn meshIt(@builtin(global_invocation_id) gid: vec3<u32>) {
   let base = i * MAXP * 2u;
   let k = 0.88 + 0.24 * rnd(u32(agents[i * AS + 4u].y), 77u);
   var o = o0;
+  let foot0 = a0.xyz;
   for (var s = 0u; s < ns; s++) {
     let A = sgA(sp, s);
     let B = sgB(sp, s);
-    let pa = pose[base + u32(A.x) * 2u].xyz;
-    let pb = pose[base + u32(A.y) * 2u].xyz;
+    // (drawn bigger than life about its feet when the view is wide: a deer is still a deer at a phone's zoom)
+    let pa = foot0 + (pose[base + u32(A.x) * 2u].xyz - foot0) * P.drawScale;
+    let pb = foot0 + (pose[base + u32(A.y) * 2u].xyz - foot0) * P.drawScale;
     let col = tint(u32(B.z), k);
     if (A.w > 0.5) {
-      let pc = pose[base + u32(A.z) * 2u].xyz;
+      let pc = foot0 + (pose[base + u32(A.z) * 2u].xyz - foot0) * P.drawScale;
       var n = cross(pb - pa, pc - pa);
       let ln = length(n);
       n = select(vec3<f32>(0.0, 0.0, 1.0), n / ln, ln > 1e-9);
@@ -834,8 +838,8 @@ fn meshIt(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (length(u) < 0.1) { u = cross(ax, vec3<f32>(1.0, 0.0, 0.0)); }
     u = normalize(u);
     let v = cross(ax, u);
-    let ra = B.x;
-    let rb = B.y;
+    let ra = B.x * P.drawScale;
+    let rb = B.y * P.drawScale;
     let ta = pa - ax * ra * 0.7;
     let tb = pb + ax * rb * 0.7;
     let centre = (pa + pb) * 0.5;

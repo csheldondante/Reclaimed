@@ -34,6 +34,7 @@ await run({ name: 'lifeshot', kind: 'behaviour' }, async (R) => {
         const r = window.reclaimed;
         const life = r.inhabitants;
         r.camera.zoom = zoom;
+        r.editor?.()?.setVisible?.(false);
         const g = life.groups().find((g) => g.species === follow) ?? life.groups()[0];
         if (g && g.count > 0) {
           r.camera.target[0] = g.centre[0];

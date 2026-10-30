@@ -73,6 +73,12 @@ export class InhabitantsGpu implements SimSystem, Inhabitants {
   /** where the mesh is built: creatures farther than `focusR` from it are skipped (the camera's view; the level sets it) */
   focus: V2 = [0, 0];
   focusR = 1e9;
+  /**
+   * How much bigger than life creatures are drawn, about their feet (1: life size). Readability on a phone: at the
+   * atlas's wide zooms a deer is 3 px — the level sets this from the camera's zoom (install.ts lifeFocus). Only the
+   * mesh; behaviour, presence and hits keep the true size.
+   */
+  drawScale = 1;
   /** (the GPU work toggles: the perf test turns them off one at a time) */
   meshOn = true;
 
@@ -461,7 +467,7 @@ export class InhabitantsGpu implements SimSystem, Inhabitants {
     f[12] = this.time;
     f[13] = this.world.w + 0.5;
     f[14] = this.world.h * ROW_H;
-    f[15] = 0;
+    f[15] = this.drawScale;
     const sh = this.pendingShift ?? [0, 0, 0];
     f[16] = sh[0];
     f[17] = sh[1];
