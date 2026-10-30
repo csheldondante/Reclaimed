@@ -14095,3 +14095,74 @@ what each had stood in for the others (main's notes, consolidate.md):
   ?runplan=view; the level makes one TerrainSystem (its edits stamp the land once).
 
 npm test: 28 files, 207 tests pass (unit 196 in ~2.4 s; the gpu tier with the new atlas-graph fixture ~52 s).
+
+## 2026-10-30 — A generated run played end to end: each stage played by play's hero, not picked (round 119, `runplay`)
+
+The user (round 119): "I need to actually play a generated run and try it out. Was there a link?" Link:
+https://csheldondante.github.io/Reclaimed/runplay/?skipmenu=1&level=atlas&runplan=hoverbike (or `=lich`).
+
+**What a run is now.** The run is planned from the spawn (runplan, on terrain's graph). A card says where you are, the
+stage and its goal; ▶ Play hands the stage to play's hero; winning or losing picks the stage's planned outcome; the
+card says what happened and offers the legs out; the leg is travelled on the atlas map (the destination's land asked
+of terrain, then precached, the warp on arrival); at the end the card says how it ended, what changed in the world
+(each event and where) and the hero's record, and offers another run from the world as left.
+
+**Each encounter as play, for the hero** (src/runplay/rules.ts `stageKind`, by the hero's profile — why: the plan
+fits encounters to what the profile likes, the stage must fit what the profile can do):
+- race (the bike): a loop of 6 gates (8 at the finale), each moved onto the nearest crest (course.ts; the bike launches
+  off crests), sand poured into kickers on flat stretches (the world API's `deposit`), 2-3 rival riders on play's own
+  bike drive (riders.ts: the same crests, slides and speeds; no boost, 0.88 of the hero's cruise) to beat over the line,
+  a 3-2-1, a clock. The hero's place shown live.
+- chase (the bike): a raider on a bike with a 40-cell head start at 0.85 of the hero's cruise, swerving, turned back in
+  from the window's edges; caught within 4 cells (the hook pulls up alongside a vehicle: tap him), lost past 150.
+- fight: a pack of raiders (play's `fun` pack size for the hero, 4-10: the bike 7, the lich 10) to cut down.
+- smash (the lich): a fort of 4 brick towers (5 at the finale, 6 cells tall, `build`) and a garrison coming out from
+  beyond it; a tower is down when what's left of it is under half its height (its middle and four cells round,
+  read back four times a second); the lich's slam craters them.
+- trial (explore and talk as stand-ins, and the lich's rare race): markers against the clock. delve (the knight's) is a
+  stand-in fight until play ports the knight; the knight itself has no play hero, so `?runplan=knight` keeps the card.
+**Win, lose, outcome** (rules.ts `judge`, `outcomeFor`): death first, then the stage's own win, then its clock. Won: the
+plan's first outcome. Lost alive (clock, beaten, got away): the last outcome that isn't a capture; the run goes on —
+at a finale it ends 'fled', not 'lost', because the plan's 'lost' is the GM's death rule (the hero dies, the dead may
+take the map), and a race lost at the line isn't a death (the first playthrough killed the rider for it). Fell: taken
+where the stage has a capture (raiders with a threat behind them), else the run ends 'lost'. The run's clock
+(runplan/clock.ts): planned minutes a stage (up to half again when slower than par — one slow stage shouldn't spend the
+whole run), travel minutes a leg; past the plan's deadline, 'late'.
+
+**One hero, the sandbox's** (play/session.ts): the hero, its controls, chase camera and health bar came out of the
+play sandbox unchanged into `PlaySession`; the sandbox is its tools round one and a run is its stages round one. Why:
+the user tunes controls in the sandbox ("iterate on player controls which is probably the most important thing for
+fun") and the run plays with the same numbers (the same localStorage).
+
+**What the headless playthroughs found and changed** (scripts/runplay.mjs drives the hero through the real controls —
+Controls.script and inject — at what the stage says is next):
+- The bike circled gates 7 cells wide at 11-13 cells: its turn at speed is wider. Gates are 13 wide, passed within 9;
+  rivals ease off into a gate they aren't lined up with (they had circled too and never finished).
+- The race clock was flat-ground par: 5 of 6 gates in 53 s over real hills and a river ran out of time. Par is now a
+  good ride (2.5 × the course over cruise), the clock 1.6 par + 30 s.
+- The chase was caught in 1.8 s: the quarry now has 40 cells and a running start.
+- The lich never reached a tower: the garrison stood among the towers and a tap there lifted a raider; and with the
+  lich behind a tower the tap landed on the lich (a slam, not a glide). The garrison comes from beyond the fort; the
+  autopilot taps a tower's foot (a player tapping a tower behind which the lich floats meets the same — noted for the
+  user). Towers of 9 took one down in 100 s; four of 6 felled at half height go in ~20 s: a wrecking ball, on a clock.
+- `?runencounter=<kind>` plays every stage as one encounter (a check's switch to look at one kind; every system on).
+- The chase was then lost in a chasm: the quarry ran along its cliffs and the bike crashed into them; he now runs the
+  open way (the direction whose ground rises and falls least over 60 cells) at 0.75 of the hero's cruise. Caught in 27 s.
+- The sandbox's rival-alongside check (scripts/playtest.mjs) failed after the session refactor: the rivals had moved to
+  step before the hero, a frame ahead of where the tap was aimed. `PlaySession.afterHero` steps them where they were
+  (after the hero, before the draw); playtest passes again (alongside 39 frames, as on `play`).
+
+**Measured** (scripts/runplay.mjs, the atlas level as deployed, 1x, every system; the desktop iGPU, shared):
+- hoverbike, phone proxy (412x915 dpr 2.6, q=low): a 4-stage plan (11-14 min, deadline 16); race won 6/6 gates in 62 s,
+  chase lost (before the open-way fix), finale race won 8/8 in 65 s → the run won, 8 events (two race-course marks, the
+  Green Choir's attitude, the Hollow Court's presence and power round the finale). The hero's main-thread cost
+  (PlaySession: input, hero, voxel writes) 0.17 ms a frame mean over 10 720 frames, 21 ms worst (a stage's set-up).
+- lich (412x915): fight 10 of 10 raiders in 8 s, the fort's 4 towers in 28 s and the finale's 5 in 23 s (the slams
+  topple the brick into rigid bodies) → the run won; both smash stages buried their regions under ash (the plan's
+  spectacle outcome). 0.10 ms a frame mean.
+- The plan's asks of terrain at leg start: 39-117 ms (graph + requests); e.g. "exits: 2 from room 7: ok, 2 edits";
+  "obstacle river: terrain builds no such obstacle" (said, not faked). The destination's land was ready before every
+  map animation ended (waited 0.0 s).
+- GIFs: C:/Projects/shots88/runplay/hoverbike-stage1-race.gif, chase/hoverbike-stage1-chase.gif,
+  fight/hoverbike-stage1-fight.gif, lich-stage1-fight.gif, lich-stage2-smash.gif; cards, the map's travel and the end
+  cards hoverbike-*.png / lich-*.png in the same folder.

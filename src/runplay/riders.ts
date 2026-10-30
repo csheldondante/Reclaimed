@@ -12,7 +12,7 @@ import { MAT } from '../world/materials';
 import type { P2 } from './course';
 
 /** a gate's reach (cells): within this of its middle, it's passed */
-export const GATE_R = 6;
+export const GATE_R = 9;
 
 type Height = (x: number, y: number) => number;
 
@@ -106,7 +106,11 @@ export class Racer extends Rider {
       ax /= al;
       ay /= al;
     }
-    stepBike(b, steer(b, [ax * this.t.max, ay * this.t.max]), dt, this.top, this.bounds, this.t, false);
+    // (eases off into a gate it isn't lined up with: a bike's turn at full speed is wider than a gate — it circled them)
+    const v = Math.hypot(b.vx, b.vy);
+    const align = v > 1 ? (b.vx * ax + b.vy * ay) / v : 1;
+    const speed = d < 30 && align < 0.8 ? this.t.max * Math.max(0.35, 0.35 + 0.65 * align) : this.t.max;
+    stepBike(b, steer(b, [ax * speed, ay * speed]), dt, this.top, this.bounds, this.t, false);
   }
 }
 
@@ -116,6 +120,12 @@ export class Quarry extends Rider {
   private time = 0;
   constructor(id: string, at: P2, tuning: BikeTuning, pace: number, top: Height, bounds: [number, number], private margin = 30) {
     super(id, at, tuning, pace, top, bounds, 0);
+  }
+  /** a running start, `heading` radians, at its pace (it doesn't wait for the hero to get going) */
+  launch(heading: number): void {
+    this.b.vx = Math.cos(heading) * this.t.max;
+    this.b.vy = Math.sin(heading) * this.t.max;
+    this.b.heading = heading;
   }
   step(dt: number, hero: P2): void {
     const b = this.b;

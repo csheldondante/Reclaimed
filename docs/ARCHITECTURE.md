@@ -2472,6 +2472,31 @@ clears them).
   `warpReady` (atlas-world.ts; `Streamer.precached(ox, oy)`: every region of that window made or in the window, none
   under way), then `warpWindow` on arrival.
 
+## A run played (round 119, `runplay`; BACKLOG RPL1-RPL8)
+
+The user (round 119): "I need to actually play a generated run and try it out." `?skipmenu=1&level=atlas&runplan=hoverbike`
+(or `=lich`; `&runminutes=6-12` a shorter run).
+
+- **Contract** (`src/api/contracts/run.ts`, end): `StagePlayer` (preview, play, hold, arrived) → `PlayedStage` (the
+  planned outcome it picked, how the run goes on, won, a line, seconds and par). The run manager (runplan/level-run.ts)
+  decides what a stage means for the world; the player decides how it's played and won — neither reaches into the other.
+- **The hero** (`src/play/session.ts` `PlaySession`): the hero, its controls, voxels, chase camera and health bar, taken
+  out of the play sandbox unchanged so the sandbox and a run share one: what the user tunes in the sandbox is what a run
+  plays (the parameters are read from the same localStorage). The sandbox is its tools round a session.
+- **The stages** (`src/runplay/`): `rules.ts` (pure) — what each encounter becomes for the hero by its profile (race,
+  chase, fight, smash, trial; stand-ins named), the stage's numbers, `judge` (death first, then the stage's win, then
+  its clock), `outcomeFor` (won: the first outcome; lost: the last that isn't a capture — a finale lost alive ends the run
+  'fled', not the death rule; fell: taken where there's a capture, else the run 'lost'). `course.ts` (pure) — a loop of
+  gates moved onto crests, kickers where the land has none. `riders.ts` (pure) — rivals and the quarry on play's own bike
+  drive (core/bike.ts) under an autopilot; vehicles in PlayWorld, so the hook pulls up alongside them. `stage.ts` — a
+  stage in the level through contracts only: the world API (heights, water, `build` for the fort's towers, `deposit`
+  for kickers), Units (raiders), the session's voxel draw (gates, flags, riders); the banner, the edge arrow, the 3-2-1.
+  `player.ts` — `RunPlayer implements StagePlayer`.
+- **The run's clock** (`src/runplan/clock.ts`): stages count their planned minutes (more past par), legs their travel;
+  past the plan's deadline the run ends 'late'.
+- **Terrain at leg start** (`src/runplan/requests.ts` `askTerrain`): the destination's land graphed (±256 world units),
+  the plan's asks made of terrain before the precache makes the land.
+
 ## Tests in Node (round 117, `testkit`; docs/TESTING.md)
 
 - `npm test` runs two vitest projects, unit (test/unit/**, src/**/*.test.ts) then gpu (test/gpu/**). Neither uses a

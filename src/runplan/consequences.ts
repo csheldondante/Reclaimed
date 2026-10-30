@@ -20,7 +20,7 @@ import type { MemoryWorldState } from '../api/contracts/world-state';
 type Effects = StageOutcome['effects'];
 
 /** the heroes' names on the roster (one hero a role for now; a roster of several a role is GameplayGM's hero select) */
-export const HERO_NAMES: Record<string, string> = { bike: 'the Rider', lich: 'the Lich', knight: 'the Knight', wanderer: 'the Wanderer', gorilla: 'the Ape', tank: 'the Tank Crew', mech: 'the Pilot' };
+export const HERO_NAMES: Record<string, string> = { hoverbike: 'the Rider', bike: 'the Rider', lich: 'the Lich', knight: 'the Knight', wanderer: 'the Wanderer', gorilla: 'the Ape', tank: 'the Tank Crew', mech: 'the Pilot' };
 type Ev = Omit<AtlasEvent, 'id' | 'run'>;
 
 export interface StageContext {

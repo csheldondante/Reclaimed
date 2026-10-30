@@ -12,7 +12,8 @@ export class RunClock {
   minutes = 0;
   constructor(readonly deadline: number) {}
   stage(planned: number, seconds: number, par: number): void {
-    this.minutes += planned * Math.max(1, seconds / Math.max(par, 1));
+    // (slower than par counts, up to half again: one slow stage shouldn't spend the whole run's time)
+    this.minutes += planned * Math.min(1.5, Math.max(1, seconds / Math.max(par, 1)));
   }
   leg(minutes: number): void {
     this.minutes += minutes;

@@ -88,9 +88,11 @@ export function stageSpec(stage: Pick<RunStage, 'encounter' | 'next'>, p: Contro
       const gates = Math.round(6 * (finale ? 1.34 : 1));
       const spacing = Math.max(40, Math.min(90, cruise * 2.2));
       const rivals = finale ? 3 : 2;
-      // (the rivals can't boost: at 0.92 of the hero's cruise a clean ride beats them, a crash or a wrong turn doesn't)
-      const par = (gates * spacing) / cruise;
-      return { kind, goal: `Beat ${rivals} riders through ${gates} gates to the finish`, limit: Math.round(par * 2.5 + 20), par, gates, spacing, rivals, rivalPace: 0.92 };
+      // (the rivals can't boost: at 0.88 of the hero's cruise a clean ride beats them, a crash or a wrong turn doesn't)
+      // (par: a good ride, not flat ground at cruise — round 119's playthrough rode 5 of 6 gates in 53 s over real hills
+      // and a river; the clock half again and some)
+      const par = ((gates * spacing) / cruise) * 2.5;
+      return { kind, goal: `Beat ${rivals} riders through ${gates} gates to the finish`, limit: Math.round(par * 1.6 + 30), par, gates, spacing, rivals, rivalPace: 0.88 };
     }
     case 'trial': {
       const gates = Math.round(4 * big);
@@ -100,7 +102,7 @@ export function stageSpec(stage: Pick<RunStage, 'encounter' | 'next'>, p: Contro
     }
     case 'chase': {
       const par = 25;
-      return { kind, goal: 'Run the raider down before he gets away', limit: Math.round(50 * big), par, quarry: { pace: 0.85, lead: 28, catch: 4, lose: 150 }, standIn };
+      return { kind, goal: 'Run the raider down before he gets away', limit: Math.round(50 * big), par, quarry: { pace: 0.75, lead: 40, catch: 4, lose: 150 }, standIn };
     }
     case 'fight': {
       const pack = fun(p).find((f) => f.kind === 'pack');
@@ -108,8 +110,10 @@ export function stageSpec(stage: Pick<RunStage, 'encounter' | 'next'>, p: Contro
       return { kind, goal: `Cut down ${foes} raiders`, limit: Math.round(120 * big), par: 15 + foes * 5, foes, foeHealth: 3, standIn };
     }
     case 'smash': {
+      // (round 119's first playthrough: towers of 9 took the lich's slams a chunk at a time — one down in 100 s; four of 6,
+      // felled at half their height, went in ~20 s with the autopilot: a wrecking ball's afternoon, a clock to beat)
       const towers = finale ? 5 : 4;
-      return { kind, goal: `Bring down the fort's ${towers} towers before the bell`, limit: Math.round(100 * big), par: 20 + towers * 12, towers, towerHeight: 9, need: towers, foes: finale ? 6 : 4, foeHealth: 3, standIn };
+      return { kind, goal: `Bring down the fort's ${towers} towers before the bell`, limit: Math.round(100 * big), par: 20 + towers * 12, towers, towerHeight: 6, need: towers, foes: finale ? 6 : 4, foeHealth: 3, standIn };
     }
   }
 }
@@ -164,8 +168,10 @@ export function judge(s: StageSpec, o: Observation): StageStatus {
  * The stage's planned outcome for how it went, and how the run goes on. The plan's convention (contracts/run.ts
  * RunStage.outcomes): the first is the hoped-for one, the last how it goes wrong; one may end the run 'captured'.
  * - won: the first.
- * - lost on the clock, beaten, or the quarry got away: the last that isn't a capture (a finale's ends the run 'lost';
- *   another's the run goes on — the world remembers it).
+ * - lost on the clock, beaten, or the quarry got away: the last that isn't a capture; the run goes on (the world
+ *   remembers it) — or, at a finale, ends 'fled': the hero lived and the stand was lost. Why not the plan's 'lost':
+ *   that is the GM's failure rule for a death (consequences.ts failureRules: the hero dies, the dead may take the map),
+ *   and a race lost at the line isn't a death.
  * - the hero fell: taken, if the stage has a capture (raiders with a threat behind them drag the hero off); else the
  *   worst outcome and the run ends 'lost' — death is the GM's failure rule 'lost' (consequences.ts failureRules).
  */
@@ -181,5 +187,6 @@ export function outcomeFor(stage: Pick<RunStage, 'id' | 'outcomes'>, st: StageSt
     if (taken) return { outcome: taken, runEnd: 'captured' };
     return { outcome: worst, runEnd: 'lost' };
   }
-  return { outcome: worst, runEnd: after(worst) };
+  const end = after(worst);
+  return { outcome: worst, runEnd: end === 'lost' ? 'fled' : end };
 }

@@ -61,6 +61,9 @@ export class PlaySandbox {
   ) {
     this.world.vehicles = () => this.rivals.map((r) => r.vehicle());
     session.extraParts = () => this.rivals.map((r) => r.part());
+    session.afterHero = (dt) => {
+      for (const r of this.rivals) r.step(dt);
+    };
     this.bar = el('div', 'play-bar', d.ui);
     this.bar.style.pointerEvents = 'none';
     const who = el('div', 'play-who', this.bar);
@@ -190,7 +193,6 @@ export class PlaySandbox {
 
   /** Each frame, before the camera's update and the draw. */
   update(dt: number): void {
-    for (const r of this.rivals) r.step(dt);
     this.session.update(dt);
   }
 

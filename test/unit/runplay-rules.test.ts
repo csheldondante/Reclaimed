@@ -83,9 +83,9 @@ describe('the planned outcome it picks', () => {
     expect(outcomeFor(mid, { state: 'won', how: 'cleared' })).toEqual({ outcome: mid.outcomes[0], runEnd: null });
     expect(outcomeFor(fin, { state: 'won', how: 'finished' })).toEqual({ outcome: fin.outcomes[0], runEnd: 'won' });
   });
-  test('lost on the clock: how it goes wrong (not the capture); the run goes on unless it was the finale', () => {
+  test('lost on the clock: how it goes wrong (not the capture); the run goes on, or at the finale ends fled (alive)', () => {
     expect(outcomeFor(mid, { state: 'lost', how: 'clock' })).toEqual({ outcome: mid.outcomes[3], runEnd: null });
-    expect(outcomeFor(fin, { state: 'lost', how: 'beaten' })).toEqual({ outcome: fin.outcomes[2], runEnd: 'lost' });
+    expect(outcomeFor(fin, { state: 'lost', how: 'beaten' })).toEqual({ outcome: fin.outcomes[2], runEnd: 'fled' });
   });
   test('the hero fell: dragged off where there’s a capture, else the run is lost (the GM’s failure rule)', () => {
     expect(outcomeFor(mid, { state: 'lost', how: 'died' })).toEqual({ outcome: mid.outcomes[2], runEnd: 'captured' });
@@ -117,7 +117,9 @@ describe('the run’s clock', () => {
     c.stage(5, 30, 60);
     expect(c.minutes).toBe(5);
     c.stage(5, 120, 60);
-    expect(c.minutes).toBe(15);
+    // (twice par counts half again, at most)
+    expect(c.minutes).toBe(12.5);
+    c.leg(2.5);
     c.leg(3);
     expect(c.late).toBe(false);
     c.leg(3);

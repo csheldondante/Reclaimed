@@ -43,14 +43,16 @@ export interface StageDeps {
 /** seconds of 3-2-1 before a race or a chase */
 const COUNTDOWN = 3;
 /** a tower is down when what's left of it is under this share of its height */
-const TOWER_DOWN = 0.35;
+const TOWER_DOWN = 0.5;
 
 /** a gate: two posts and a bar, in half-cell voxels (bottom centre at its foot) */
 function gateVoxels(mat: number, finish: boolean): Voxels {
   const v: Voxels = [];
   const s = 0.5;
-  for (let u = 0; u < 8; u++) for (const r of [-4.5, 4.5]) v.push({ at: [0, r, u * s + s / 2], mat: MAT.Steel });
-  for (let r = -4.5; r <= 4.5; r += s) v.push({ at: [0, r, 4 + s / 2], mat: finish ? ((Math.round(r / s) & 1) ? MAT.Snow : MAT.Obsidian) : mat });
+  // (posts 13 cells apart, the passing reach GATE_R round the middle: a bike's turn at speed is wide — round 119's
+  // autopilot circled gates 7 wide at 11-13 cells)
+  for (let u = 0; u < 8; u++) for (const r of [-6.5, 6.5]) v.push({ at: [0, r, u * s + s / 2], mat: MAT.Steel });
+  for (let r = -6.5; r <= 6.5; r += s) v.push({ at: [0, r, 4 + s / 2], mat: finish ? ((Math.round(r / s) & 1) ? MAT.Snow : MAT.Obsidian) : mat });
   return v;
 }
 /** a flag over a tower still standing, and the quarry's marker */
@@ -78,6 +80,7 @@ export class StagePlay {
   private from: P2 = [0, 0];
   // chase
   private quarry: Quarry | null = null;
+  private quarryHeading: number | null = null;
   // fight / smash
   private foes: UnitId[] = [];
   private towers: { at: P2; base: number; down: boolean }[] = [];
@@ -143,10 +146,14 @@ export class StagePlay {
         break;
       }
       case 'chase': {
-        const a = this.inward(at);
+        // (he runs the open way: the direction whose ground rises and falls least over 60 cells, leaning inward — round
+        // 119's first chase sent him off along a chasm's cliffs, and the bike crashed into them)
+        const a = this.openWay(at, top);
         const q = s.quarry!;
         const p: P2 = [at[0] + Math.cos(a) * q.lead, at[1] + Math.sin(a) * q.lead];
         this.quarry = new Quarry('quarry', p, this.tuning(), q.pace, top, this.d.bounds);
+        // (it sees the hero coming: off at its pace when the clock starts)
+        this.quarryHeading = a;
         this.world.vehicles = () => (this.quarry ? [this.quarry.vehicle()] : []);
         break;
       }
@@ -167,10 +174,32 @@ export class StagePlay {
           this.d.api.terrain!.build(p[0], p[1], 'brick', { radius: 2, layers: s.towerHeight! });
           this.towers.push({ at: p, base, down: false });
         }
-        this.spawnFoes(c, s.foes ?? 0, 3, 8);
+        // (the garrison comes out from beyond the fort: raiders stood among the towers were what a tap on a tower picked
+        // — the lich lifted them instead of gliding there, round 119's first look)
+        this.spawnFoes([c[0] + Math.cos(a0) * 20, c[1] + Math.sin(a0) * 20], s.foes ?? 0, 0, 4);
         break;
       }
     }
+  }
+
+  /** the way from `at` with the least rise and fall over the next 60 cells (and inward, other things equal) */
+  private openWay(at: P2, top: (x: number, y: number) => number): number {
+    const inward = this.inward(at);
+    let best = inward;
+    let bs = Infinity;
+    for (let k = 0; k < 12; k++) {
+      const a = inward + ((k - 6) * Math.PI) / 6;
+      let rough = 0;
+      let prev = top(at[0], at[1]);
+      for (let r = 6; r <= 60; r += 6) {
+        const z = top(at[0] + Math.cos(a) * r, at[1] + Math.sin(a) * r);
+        rough += Math.abs(z - prev);
+        prev = z;
+      }
+      const s = rough + Math.abs(k - 6) * 0.5;
+      if (s < bs) (bs = s), (best = a);
+    }
+    return best;
   }
 
   private spawnFoes(c: P2, n: number, r0: number, r1: number): void {
@@ -274,6 +303,10 @@ export class StagePlay {
       o.rivalGate = Math.max(0, ...this.racers.map((r) => progress(this.gates, r.passed, r.at, this.from)));
       o.rivalDone = this.racers.some((r) => r.done);
     } else if (s.kind === 'chase' && this.quarry) {
+      if (go && this.quarryHeading !== null) {
+        this.quarry.launch(this.quarryHeading);
+        this.quarryHeading = null;
+      }
       if (go) this.quarry.step(dt, me);
       o.quarry = Math.hypot(this.quarry.at[0] - me[0], this.quarry.at[1] - me[1]);
     } else {
@@ -286,9 +319,14 @@ export class StagePlay {
           const H = s.towerHeight ?? 9;
           for (const tw of this.towers) {
             if (tw.down) continue;
-            let hi = -Infinity;
-            for (const [dx, dy] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) hi = Math.max(hi, this.d.api.terrain!.heightAt(tw.at[0] + dx, tw.at[1] + dy) ?? -Infinity);
-            if (hi > -Infinity && hi < tw.base + H * TOWER_DOWN) {
+            // (what's left of it: the mean over its middle and four cells round — a stump at its edge doesn't hold it up)
+            let sum = 0;
+            let n = 0;
+            for (const [dx, dy] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) {
+              const z = this.d.api.terrain!.heightAt(tw.at[0] + dx, tw.at[1] + dy);
+              if (z !== null) (sum += z), n++;
+            }
+            if (n && sum / n < tw.base + H * TOWER_DOWN) {
               tw.down = true;
               this.world.burst('dust', tw.at[0], tw.at[1], tw.base + 2);
             }

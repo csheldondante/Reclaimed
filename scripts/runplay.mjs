@@ -27,7 +27,10 @@ await run({ name: `runplay-${arg('hero', 'hoverbike')}`, kind: 'behaviour', size
   const dir = R.opt('out', 'C:/Projects/shots88/runplay');
   fs.mkdirSync(dir, { recursive: true });
   const settle = Number(R.opt('settle', 30000));
-  const p = await R.level({ level: 'atlas', runplan: hero, runminutes: R.opt('minutes', '6-12') });
+  // (--encounter spectacle: every stage played as that encounter, to look at one kind; --stages N: stop after N)
+  const enc = R.opt('encounter', '');
+  const maxStages = Number(R.opt('stages', '99'));
+  const p = await R.level({ level: 'atlas', runplan: hero, runminutes: R.opt('minutes', '6-12'), ...(enc ? { runencounter: enc } : {}) });
   await p.waitForFunction(() => window.reclaimed?.runplan && (window.reclaimed.runhero?.hero || !window.reclaimed.runplay), { timeout: 180000, polling: 250 });
   R.log(`run up; settling ${settle / 1000} s (a first load's terrain)`);
   await sleep(settle);
@@ -49,7 +52,7 @@ await run({ name: `runplay-${arg('hero', 'hoverbike')}`, kind: 'behaviour', size
         phase: L.jstate?.phase ?? null,
         record: L.record ? { end: L.record.end, events: L.record.events.length, deeds: L.record.deeds } : null,
         done: L.path.at(-1)?.stage === L.at,
-        stage: st ? { kind: st.spec.kind, t: +st.t.toFixed(1), status: st.status } : null,
+        stage: st ? { kind: st.spec.kind, t: +st.t.toFixed(1), status: st.status, rivals: (st.racers ?? []).map((r) => r.passed) } : null,
         legs: L.plan.stages.find((s) => s.id === L.at)?.next ?? [],
       };
     });
@@ -83,17 +86,48 @@ await run({ name: `runplay-${arg('hero', 'hoverbike')}`, kind: 'behaviour', size
       window.__pilotN = (window.__pilotN ?? 0) + 1;
       const n = window.__pilotN;
       if (H.role === 'lich') {
-        // glide by taps toward it (every other step); over a tower or by raiders, slam (a press: down, then up)
-        if (n % 3 === 0) C.inject({ kind: 'tap', at: [a[0] + (dx / l) * Math.min(l, 140), a[1] + (dy / l) * Math.min(l, 140)] });
+        // glide by taps toward it (a tap on a raider lifts it instead: a smash taps a clear spot by the tower, as a
+        // player would); over a tower or by raiders, slam (a press: down, then up)
+        let goal = tgt;
+        if (kind === 'smash') {
+          const near = S.world.units.near(tgt[0], tgt[1], 3);
+          if (near.length) {
+            const ux = (at[0] - tgt[0]) / (dist || 1);
+            const uy = (at[1] - tgt[1]) / (dist || 1);
+            goal = [tgt[0] + ux * 1.5 - uy * 1.5, tgt[1] + uy * 1.5 + ux * 1.5];
+          }
+        }
+        // (a tower's foot, not its top: in the fixed view a lich behind a tower is drawn over its top, and a tap there is a
+        // tap on the lich — a slam, not a glide)
+        const foot = kind === 'smash' ? (st.towers ?? []).find((t) => t.at[0] === tgt[0] && t.at[1] === tgt[1])?.base : undefined;
+        let g = cam.project(goal[0], goal[1], foot ?? S.world.top(goal[0], goal[1]));
+        if (Math.hypot(g[0] - a[0], g[1] - a[1]) < 45 && dist > 3) {
+          // (still over the lich on the screen: the ground 4 cells past it, the way it has to go)
+          const ux = (tgt[0] - at[0]) / dist;
+          const uy = (tgt[1] - at[1]) / dist;
+          const q = [tgt[0] + ux * 4, tgt[1] + uy * 4];
+          g = cam.project(q[0], q[1], S.world.floor(q[0], q[1]));
+        }
+        const gx = g[0] - a[0];
+        const gy = g[1] - a[1];
+        const gl = Math.hypot(gx, gy) || 1;
+        if (n % 3 === 0) C.inject({ kind: 'tap', at: dist < 12 ? g : [a[0] + (gx / gl) * Math.min(gl, 140), a[1] + (gy / gl) * Math.min(gl, 140)] });
         const slam = (kind === 'smash' && dist < 2.5) || (kind === 'fight' && dist < 4);
         C.script = { stick: [0, 0], buttons: [slam && n % 2 === 0] };
-        return `${kind} ${dist.toFixed(0)}${slam ? ' slam' : ''}`;
+        const tw = (st.towers ?? []).map((t) => `${t.down ? 'x' : 'o'}${((S.world.top(t.at[0], t.at[1]) - t.base)).toFixed(1)}`).join(' ');
+        return `${kind} ${dist.toFixed(1)}${slam ? ' slam' : ''} lich z ${(at[2] - S.world.top(at[0], at[1])).toFixed(1)} over ground; towers ${tw}`;
       }
       // the bike: the stick at it, boost when far; hook the quarry when in reach; swipe at a raider beside
-      C.script = { stick: [dx / l, dy / l], buttons: [dist > 20 && kind !== 'fight'] };
+      // (into a gate: off the boost and easier on the stick — a bike's turn at full speed is wider than a gate)
+      const v = H.b ?? { vx: 0, vy: 0 };
+      const sp = Math.hypot(v.vx, v.vy);
+      const align = sp > 1 ? (v.vx * (tgt[0] - at[0]) + v.vy * (tgt[1] - at[1])) / (sp * (dist || 1)) : 1;
+      // (into a gate it isn't lined up with: off the stick to tighten the turn, as a rider would)
+      const m = dist < 35 && (kind === 'race' || kind === 'trial') ? (align < 0.6 ? 0.25 : 0.7) : 1;
+      C.script = { stick: [(dx / l) * m, (dy / l) * m], buttons: [dist > 30 && kind !== 'fight'] };
       if (kind === 'chase' && dist < 22 && n % 4 === 0) C.inject({ kind: 'tap', at: b });
       if (kind === 'fight' && dist < 6 && n % 2 === 0) C.inject({ kind: 'flick', from: [b[0] - 30, b[1]], to: [b[0] + 30, b[1]], dir: [1, 0], speed: 2200 });
-      return `${kind} ${dist.toFixed(0)}`;
+      return `${kind} ${dist.toFixed(0)} hero ${at[0].toFixed(0)},${at[1].toFixed(0)} → ${tgt[0].toFixed(0)},${tgt[1].toFixed(0)} in ${S.world.bounds.map((v) => v.toFixed(0))}`;
     });
   const gif = async (name, frames, every, during) => {
     const enc = GIFEncoder();
@@ -122,21 +156,37 @@ await run({ name: `runplay-${arg('hero', 'hoverbike')}`, kind: 'behaviour', size
       await sleep(500);
       s = await state();
       R.log(`stage ${k}: ${JSON.stringify(s.stage)}`);
-      // a GIF of the first stage's start (the 3-2-1 and the ride off)
-      if (k === 1 && R.opt('gif', '1') === '1') await gif('stage1', 24, 250, () => pilot());
+      // a GIF of each stage (from its 3-2-1, 8 s of play)
+      if (R.opt('gif', '1') === '1') await gif(`stage${k}-${s.stage?.kind}`, 32, 250, () => pilot());
       let lastLog = 0;
+      let shotPlay = false;
+      let shotM = 0;
       while ((await state()).playing) {
         const r = await pilot();
+        if (!shotPlay) {
+          const st = await state();
+          if (st.stage && st.stage.t > 12) {
+            shotPlay = true;
+            await shot(`${k}b-play`);
+          }
+        } else if (argv.includes('--shots')) {
+          const st = await state();
+          const m = Math.floor((st.stage?.t ?? 0) / 20);
+          if (m > shotM) {
+            shotM = m;
+            await shot(`${k}b-play-${m}`);
+          }
+        }
         if (Date.now() - lastLog > 5000) {
           lastLog = Date.now();
           const st = await state();
           R.log(`  ${r} · ${JSON.stringify(st.stage)}`);
-          if (st.stage && st.stage.t > 6 && st.stage.t < 8) await shot(`${k}b-play`);
         }
         await sleep(160);
       }
       s = await state();
       await shot(`${k}c-result`);
+      if (k >= maxStages) break;
       continue;
     }
     if (s.done && !s.journey && !s.record) {
@@ -162,10 +212,11 @@ await run({ name: `runplay-${arg('hero', 'hoverbike')}`, kind: 'behaviour', size
   }
   s = await state();
   await shot('9-end');
-  const logs = await p.evaluate(() => ({ run: window.reclaimed.runplan.log, play: window.reclaimed.runplay?.log ?? [], fps: window.reclaimed.perf?.fps ?? null }));
+  const logs = await p.evaluate(() => ({ run: window.reclaimed.runplan.log, play: window.reclaimed.runplay?.log ?? [], fps: window.reclaimed.perf?.fps ?? null, cpu: (() => { const s = window.reclaimed.runhero?.stats; return s ? { frames: s.frames, msMean: +(s.ms / Math.max(1, s.frames)).toFixed(3), msMax: +s.max.toFixed(2) } : null; })() }));
+  R.log(`the hero's main-thread cost per frame (the session: input, hero, voxel writes): ${JSON.stringify(logs.cpu)}`);
   for (const l of logs.run) R.log(`run: ${l}`);
   for (const l of logs.play) R.log(`play: ${l}`);
-  R.check('the run ended with an end card', !!s.record, s.record);
+  if (maxStages >= 99) R.check('the run ended with an end card', !!s.record, s.record);
   R.check('every stage was played (not picked)', logs.play.length >= 1 && logs.play.length === k, { stages: k, played: logs.play.length });
   await R.fatal(p);
 });

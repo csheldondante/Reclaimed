@@ -17,6 +17,8 @@ export interface PlayerDeps {
   units: Units;
   session: PlaySession;
   bounds: [number, number];
+  /** (a check's switch, ?runencounter=spectacle: every stage played as this encounter — to look at one kind of play) */
+  encounter?: RunStage['encounter'];
 }
 
 export class RunPlayer implements StagePlayer {
@@ -34,7 +36,7 @@ export class RunPlayer implements StagePlayer {
   }
 
   preview(stage: RunStage): { goal: string; note?: string } {
-    const s = stageSpec(stage, this.profile);
+    const s = stageSpec(this.as(stage), this.profile);
     return { goal: s.goal, note: s.standIn };
   }
 
@@ -43,7 +45,7 @@ export class RunPlayer implements StagePlayer {
     // (whole again for each stage: a run's wounds are its statuses, not the health bar)
     S.respawn();
     S.paused = false;
-    const st = new StagePlay({ ui: this.d.ui, api: this.d.api, units: this.d.units, session: S, bounds: this.d.bounds, profile: () => this.profile }, stage);
+    const st = new StagePlay({ ui: this.d.ui, api: this.d.api, units: this.d.units, session: S, bounds: this.d.bounds, profile: () => this.profile }, this.as(stage));
     this.current = st;
     S.statusLine = null;
     const r = await st.result;
@@ -54,6 +56,10 @@ export class RunPlayer implements StagePlayer {
     const { outcome, runEnd } = outcomeFor(stage, r.status);
     this.log.push(`${stage.id} ${r.spec.kind}: ${r.status.state}${r.status.state !== 'playing' ? ` (${r.status.how})` : ''} in ${r.seconds.toFixed(1)} s, ${r.summary} → ${outcome.id}${runEnd ? `, run ${runEnd}` : ''}`);
     return { outcome: outcome.id, runEnd, won: r.status.state === 'won', line: r.summary, seconds: r.seconds, par: r.spec.par };
+  }
+
+  private as(stage: RunStage): RunStage {
+    return this.d.encounter ? { ...stage, encounter: this.d.encounter } : stage;
   }
 
   hold(on: boolean): void {

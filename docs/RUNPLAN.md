@@ -88,3 +88,13 @@ capture → rescue/escape, faction power and relations, the Journey's precache a
 - The stand-in GM rules are tables; a GM-written story's outcomes can replace a stage's outcomes as-is.
 - RC1 pinning (sections kept resident on the GPU) needs the tile atlas's pinned set; the plan already says which
   sections (`RunStage.section`).
+
+## Played, not picked (round 119, `runplay`)
+
+The user (round 119): "I need to actually play a generated run and try it out." On `runplay` (play, terrain and runplan
+merged) a stage is played by play's hero: `LevelRun` hands it to a `StagePlayer` (contracts/run.ts; src/runplay/
+player.ts) and gets back the planned outcome its play picked (src/runplay/rules.ts `outcomeFor`: won, the first; lost,
+the last that isn't a capture; fell, taken where there's a capture, else the run lost — the GM's death rule; a finale
+lost alive ends the run 'fled'). The run's clock is runplan/clock.ts. The region graph is terrain's (graph.ts
+`runGraph`), the capabilities play's profiles (heroes.ts `ROLES`, play-adapter.ts), and the plan's asks are made of
+terrain when a leg sets out (requests.ts `askTerrain`). docs/ARCHITECTURE.md "A run played".

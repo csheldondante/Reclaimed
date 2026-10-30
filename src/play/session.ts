@@ -55,6 +55,8 @@ export class PlaySession {
   extraParts: () => Part[] = () => [];
   /** a line for the status under the health bar instead of the hero's own (a stage's), null: the hero's */
   statusLine: (() => string | null) | null = null;
+  /** each frame after the hero's step and before the draw (the sandbox's rivals ride here, as they did in the sandbox) */
+  afterHero: ((dt: number) => void) | null = null;
   /** paused: the hero isn't stepped or drawn and the camera is left alone (a run's travel on the map) */
   paused = false;
   /** the main thread's cost of the play layer each frame (ms: its input, hero, draw writes; scripts/perf/play.mjs) */
@@ -167,6 +169,7 @@ export class PlaySession {
       zoom: () => cam.zoom,
     });
     h.update(dt, { move: input.dir, input });
+    this.afterHero?.(dt);
     this.controls.show(h.looks());
     this.draw.draw([...h.parts(), ...this.extraParts()]);
     // the camera: after the hero, a little ahead of it, pulled back with speed

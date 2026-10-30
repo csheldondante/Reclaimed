@@ -20,6 +20,13 @@ runplan merged; a run's stages played with play's heroes, not picked. DEVLOG rou
 | id | item | size | status |
 |---|---|---|---|
 | RPL1 | Consolidate the tracks: one controller description (play's ControllerProfile + crossCost: terrain's PassCaps/CAPS_PRESETS and runplan's HEROES gone; `climb.drop`, `Crossing.drop/lava`, `WALKER_PROFILE`, `profileKey` added to play's contract), terrain's atlas graph as the run's region graph (`runGraph`; seed-1 fixture from Dawn), terrain's barrier kinds, the plan's asks as terrain's requests at leg start (`askTerrain`), terrain's FloodRequest in RegionRealisation | M | done (runplay) |
+| RPL2 | A run's stages played, not picked: `?skipmenu=1&level=atlas&runplan=hoverbike` (or `=lich`) — play's hero (PlaySession, shared with the sandbox), each encounter as play for the hero (race: gates over crests, kickers, rival riders to beat to the finish; chase: a rider to run down, the hook pulls alongside; fight: a pack of raiders; smash: the lich brings down a fort's towers on the clock; trial: markers on the clock — explore and talk stand in as it), win/lose → the planned outcome (StagePlayer contract), death/capture/the run's clock, travel on the atlas map, the end card (what changed in the world, the hero's record), another run from the world as left | L | done (runplay) — for the user to play on the phone |
+| RPL3 | Stage rules unit-tested in Node (what each encounter becomes, judge, outcomeFor, the run's clock, the course, rivals and the quarry on the bike drive); scripts/runplay.mjs drives a whole short run headless through the real controls | M | done (runplay) |
+| RPL4 | The knight: its delves are a stand-in fight on foot rules until play ports it (PL5); `?runplan=knight` plays with the card's picks (no play hero) | M | open (needs PL5) |
+| RPL5 | Real dialog for talk stages, real exploring (cairns found, not markers ridden to): today trial stand-ins | M | open |
+| RPL6 | Rivals that fight back (mounted fights: the user's "swinging weapons at nearby enemies in front of the bike"), tricks scored in races (PL7) | M | open |
+| RPL7 | The stage's land shaped for it by terrain requests at leg start (ramps for a race, a wall round a fight): today the plan's generic asks (exits, obstacles) are made, the race's kickers are poured live; a race course routed through terrain's ramps | M | open |
+| RPL8 | A run's world saved between page loads (the world state lives in memory: a reload is a fresh world; GameplayGM owns saving, D-r97) | S | open |
 
 ## Round 117 (2026-10-30, branch `runplan`) — run planning, GM consequences, travel (docs/RUNPLAN.md)
 

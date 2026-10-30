@@ -1889,7 +1889,8 @@ export class LevelScene implements Scene {
       const session = await PlaySession.start({ ui: this.host.ui, api, units, camera: this.core.camera, renderer: this.core.renderer, device: this.host.gpu.device, bounds, respawnAfter: null });
       const c = this.core.camera.target;
       session.choose(playId, session.dryNear([c[0], c[1]]));
-      const p = new RunPlayer({ ui: this.host.ui, api, units, session, bounds });
+      const enc = this.host.params.get('runencounter') as import('../api/contracts/run').EncounterKind | null;
+      const p = new RunPlayer({ ui: this.host.ui, api, units, session, bounds, encounter: enc ?? undefined });
       player = p;
       this.runSession = session;
       this.runPlayer = p;
