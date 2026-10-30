@@ -330,3 +330,52 @@ describe('growth (stored progress)', () => {
     expect(grown(p, 1)).toBe(p);
   });
 });
+
+describe('density drives what is built (round 119)', () => {
+  const dist = (p: ReturnType<typeof planCity>, b: { quads: number[] }) => {
+    const [x, y] = quadCentreOf(p, b.quads[0]);
+    return Math.hypot(x - 500, y - 500);
+  };
+  const quadCentreOf = (p: ReturnType<typeof planCity>, q: number): [number, number] => {
+    const c = quadCorners(p.tiles, q);
+    return [(c[0][0] + c[1][0] + c[2][0] + c[3][0]) / 4, (c[0][1] + c[1][1] + c[2][1] + c[3][1]) / 4];
+  };
+  it('dense: town houses of several storeys; thin: huts of one or two', () => {
+    const dense = planCity(spec('irregular'), flat, undefined, () => 1);
+    expect(dense.buildings.every((b) => b.kind === 'house')).toBe(true);
+    expect(dense.buildings.filter((b) => !b.mega).reduce((s, b) => s + b.storeys, 0) / dense.buildings.length).toBeGreaterThan(2.5);
+    const thin = planCity(spec('irregular'), flat, undefined, () => 0.3);
+    expect(thin.buildings.length).toBeGreaterThan(5);
+    expect(thin.buildings.every((b) => b.kind === 'hut' && b.storeys <= 2)).toBe(true);
+    // (fewer built where fewer live)
+    expect(thin.buildings.length).toBeLessThan(dense.buildings.length);
+  });
+  it('a falling density: houses in the middle, huts further out, the two mixed where they meet (no hard ring)', () => {
+    const p = planCity(spec('irregular', { radius: 60 }), flat);
+    const houses = p.buildings.filter((b) => b.kind === 'house' && !b.mega);
+    const huts = p.buildings.filter((b) => b.kind === 'hut');
+    expect(houses.length).toBeGreaterThan(5);
+    expect(huts.length).toBeGreaterThan(5);
+    const mean = (bs: typeof houses) => bs.reduce((s, b) => s + dist(p, b), 0) / bs.length;
+    expect(mean(huts)).toBeGreaterThan(mean(houses));
+    // where they meet, the bands overlap: the farthest house is further out than the nearest hut
+    expect(Math.max(...houses.map((b) => dist(p, b)))).toBeGreaterThan(Math.min(...huts.map((b) => dist(p, b))));
+  });
+  it('farmland: strips of crops, orchards or pastures fenced by plot, farmsteads of a farmhouse and a barn', () => {
+    const p = planCity(spec('irregular', { radius: 40, farmland: 110 }), hill);
+    expect(p.tiles.use.filter((u) => u === 'field').length).toBeGreaterThan(30);
+    const farm = p.buildings.filter((b) => b.kind === 'farmhouse' || b.kind === 'barn');
+    expect(farm.some((b) => b.kind === 'farmhouse')).toBe(true);
+    expect(farm.some((b) => b.kind === 'barn')).toBe(true);
+    const perBlock = new Map<number, number>();
+    for (const b of farm) perBlock.set(p.tiles.block[b.quads[0]], (perBlock.get(p.tiles.block[b.quads[0]]) ?? 0) + 1);
+    for (const n of perBlock.values()) expect(n).toBeLessThanOrEqual(2);
+    const lib = library();
+    const pc = piecesOf(p);
+    const names = new Set(Array.from(pc.module, (m) => lib.modules[m].name));
+    expect(names.has('crop')).toBe(true);
+    expect(names.has('fence') || names.has('hedge')).toBe(true);
+    expect([...names].some((n) => n.startsWith('barn:'))).toBe(true);
+    expect([...names].some((n) => n.includes(':thatch'))).toBe(true);
+  });
+});

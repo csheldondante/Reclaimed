@@ -28,6 +28,7 @@ const state = {
   ground: (q.get('ground') ?? 'hill') as 'flat' | 'hill' | 'slope' | 'gorge' | 'cliff',
   roads: num('roads', 3),
   grow: num('grow', 1),
+  farms: num('farms', 2.2),
   walls: q.get('walls') === '1',
   tod: num('tod', 0.35),
   tiles: q.get('tiles') === '1',
@@ -78,14 +79,14 @@ async function boot(): Promise<void> {
   const rebuild = () => {
     const t0 = performance.now();
     const ground = GROUNDS[state.ground];
-    const spec: CitySpec = { seed: state.seed, system: state.system, style: state.style, at: [0, 0], radius: state.r, density: state.density, roads: state.roads, walls: state.walls || undefined, sunk: state.ground === 'cliff' ? 0 : undefined };
+    const spec: CitySpec = { seed: state.seed, system: state.system, style: state.style, at: [0, 0], radius: state.r, density: state.density, roads: state.roads, walls: state.walls || undefined, sunk: state.ground === 'cliff' ? 0 : undefined, farmland: state.farms > 1 ? state.r * state.farms : undefined };
     if (state.storeys > 0) spec.storeys = [state.storeys, Math.max(1, state.storeys * 0.4)];
     plan = planCity(spec, ground);
     all = piecesOf(grown(plan, state.grow));
     const ms = performance.now() - t0;
     showView();
     // the ground under it all
-    const G = state.r * (state.roads ? 2.5 : 1) + 50;
+    const G = state.r * Math.max(state.roads ? 2.5 : 1, state.farms > 1 ? state.farms + 0.1 : 1) + 50;
     const step = G > 120 ? 2 : 1;
     const n = Math.floor((2 * G) / step) + 1;
     const verts = new Float32Array(n * n * 4);
@@ -155,8 +156,9 @@ async function boot(): Promise<void> {
     } else {
       r.sg.set(all);
       focusAt = [0, 0, ground(0, 0) + 4];
-      reach = state.r * (state.roads ? 2.4 : 1) + 30;
-      dist = state.r * (state.roads ? 3.4 : 2.7);
+      const far = Math.max(state.roads ? 2.4 : 1, state.farms > 1 ? state.farms : 1);
+      reach = state.r * far + 30;
+      dist = state.r * (far > 1 ? far * 1.4 : 2.7);
     }
   };
 
@@ -368,7 +370,7 @@ function panel() {
     };
     return s;
   };
-  const slider = (k: 'r' | 'storeys' | 'density' | 'tod' | 'roads' | 'grow', lo: number, hi: number, step: number, live = false) => {
+  const slider = (k: 'r' | 'storeys' | 'density' | 'tod' | 'roads' | 'grow' | 'farms', lo: number, hi: number, step: number, live = false) => {
     const s = document.createElement('input');
     s.type = 'range';
     s.min = String(lo);
@@ -416,6 +418,7 @@ function panel() {
   row('density', slider('density', 0.2, 1, 0.05));
   row('ground', select('ground', ['flat', 'hill', 'slope', 'gorge', 'cliff']));
   row('roads', slider('roads', 0, 6, 1));
+  row('farms', slider('farms', 1, 4, 0.1));
   row('time', slider('tod', 0, 1, 0.01, true));
   row('grown', slider('grow', 0, 1, 0.01, true));
   const views = document.createElement('div');

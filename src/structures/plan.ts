@@ -6,8 +6,9 @@
 // tiles, ~100 KB), made once when its land arrives, and its hard parts are sequential (WFC's propagation, growing
 // buildings tile by tile). What is large or per-frame — drawing its pieces, stamping its columns — is on the GPU.
 // Measured: data/perf/structures-*.json (plan ms per city size).
-import type { BuildingRec, CityPlan, CitySpec, Facade, FacadeKind, GroundFn, MegaFeature, Span, TileMesh, TileUse, V2 } from '../api/contracts/structures';
+import type { BuildingKind, BuildingRec, CityPlan, CitySpec, DensityFn, Facade, FacadeKind, GroundFn, MegaFeature, Span, TileMesh, TileUse, V2 } from '../api/contracts/structures';
 import { tileSystem } from './tiles/systems';
+import { farmland, mergeTiles } from './tiles/farmland';
 import { adjacency, quadArea, quadCentre, quadCorners } from './tiles/builder';
 import { fbm, hashf, rng } from './rng';
 import { solve, type WfcProblem } from './wfc';
@@ -19,9 +20,46 @@ export const STOREY_H = 3;
 /** a rampart's height over the ground (m) */
 export const WALL_H = 7;
 
-export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn): CityPlan {
+/** the house / hut line (people per area): denser is a town house, thinner a hut */
+export const HOUSE_D = 0.42;
+
+/**
+ * A density field from the spec alone (the viewer's, a town without a field of its own): full at the middle, falling off
+ * smoothly past the rim (no hard ring), lumpy with noise — the middle's houses, huts toward the edge, farmsteads out in
+ * the farmland where a little is left.
+ */
+export function defaultDensity(spec: CitySpec): DensityFn {
+  const [cx, cy] = spec.at;
+  const R = spec.radius;
+  const k = spec.density ?? 0.8;
+  const F = spec.farmland ?? 0;
+  return (x, y) => {
+    const r = Math.hypot(x - cx, y - cy);
+    const t = r / (R * 1.15);
+    const town = k * 1.25 * Math.exp(-2.4 * t * t) * (0.7 + 0.6 * fbm(x * 0.03, y * 0.03, spec.seed + 3));
+    // (the country round it: a few people out to the farmland's edge, thinning — farmsteads, not nobody)
+    const country = F > R ? 0.16 * Math.max(0, Math.min(1, (F - r) / (F - R))) * (0.4 + 0.9 * fbm(x * 0.012, y * 0.012, spec.seed + 4)) : 0;
+    return Math.min(1, town + country);
+  };
+}
+
+export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn, densityIn?: DensityFn): CityPlan {
   const t0 = performance.now();
-  const tiles = tileSystem({ spec, ground });
+  const dens = densityIn ?? defaultDensity(spec);
+  const core = tileSystem({ spec, ground });
+  // roads out first: the farmland's farmsteads gather along them
+  const linear = routes(spec, ground, water, spec.walls === true && spec.system !== 'radial');
+  let farmBlock0 = Infinity;
+  let tiles = core;
+  if ((spec.farmland ?? 0) > spec.radius) {
+    let b0 = 0;
+    for (let q = 0; q < core.use.length; q++) b0 = Math.max(b0, core.block[q] + 1);
+    farmBlock0 = b0 + 1;
+    const roadPts: V2[] = [];
+    for (const f of linear) if (f.kind === 'road') for (const s of resample(f, 8)) roadPts.push([s.p[0], s.p[1]]);
+    tiles = mergeTiles(core, farmland({ spec, ground, density: dens, rIn: spec.radius, rOut: spec.farmland!, roads: roadPts, block0: farmBlock0 }));
+  }
+  const isFarm = (q: number) => tiles.block[q] >= farmBlock0;
   const t1 = performance.now();
   const r = rng(spec.seed * 31 + 11);
   const style = styleOf(spec.style);
@@ -32,7 +70,6 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn): Ci
   const adj = adjacency(tiles);
   const [cx, cy] = spec.at;
   const R = spec.radius;
-  const density = spec.density ?? 0.8;
   const [sMid, sRim] = spec.storeys ?? style.storeys;
   /** built into the earth (spec.sunk): buildings on steep ground, their backs in the hill */
   const into = spec.sunk !== undefined && spec.sunk >= 0;
@@ -89,7 +126,6 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn): Ci
   };
 
   // ---- roads out (and their bridges), the town wall if asked (linear.ts): what's under a road inside the town is street
-  const linear = routes(spec, ground, water, spec.walls === true && spec.system !== 'radial');
   for (const f of linear) {
     if (f.kind !== 'road') continue;
     for (const s of resample(f, 2))
@@ -100,15 +136,16 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn): Ci
       }
   }
 
-  // ---- which lots are built (the rest are yards: gardens, courtyards, room to grow)
+  // ---- which lots are built, by the density there (the rest are yards: gardens, courtyards, room to grow); a
+  // farmstead's lots all may be (its farmhouse and its barn are chosen as the buildings grow)
   const built = new Uint8Array(nq);
+  const dq = new Float32Array(nq);
   for (let q = 0; q < nq; q++) {
-    if (tiles.use[q] !== 'lot') continue;
     const [cxq, cyq] = quadCentre(tiles, q);
-    const d = Math.hypot(cxq - cx, cyq - cy) / R;
+    dq[q] = dens(cxq, cyq);
+    if (tiles.use[q] !== 'lot') continue;
     const [lo, hi] = quadG(q);
-    const n = fbm(cxq * 0.05, cyq * 0.05, spec.seed + 3);
-    const p = density * (1.05 - 0.35 * d * d) * (0.7 + 0.6 * n);
+    const p = isFarm(q) ? 1 : Math.min(1, dq[q] * 1.6);
     if (hi - lo > STOREY_H * (into ? 3 : 1.3) || hashf(q, spec.seed, 1) > p || quadArea(tiles, q) < 2.5) tiles.use[q] = 'yard';
     else built[q] = 1;
   }
@@ -125,7 +162,7 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn): Ci
     let best = -1;
     let bestD = Infinity;
     for (const [v, qs] of around) {
-      if (qs.length !== 4 || !qs.every((q) => built[q] && tiles.block[q] === tiles.block[qs[0]])) continue;
+      if (qs.length !== 4 || !qs.every((q) => built[q] && !isFarm(q) && dq[q] >= HOUSE_D && tiles.block[q] === tiles.block[qs[0]])) continue;
       const d = Math.abs(Math.hypot(tiles.verts[v * 2] - cx, tiles.verts[v * 2 + 1] - cy) - R * 0.3);
       let lo = Infinity;
       let hi = -Infinity;
@@ -156,7 +193,7 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn): Ci
       const id = buildings.length;
       // (its drum a storey over the middle's houses: the dome stands clear of their roofs)
       const st = Math.max(3, Math.round(sMid) + 1);
-      const b: BuildingRec = { id, quads: qs, base: hi + 0.15, storeys: st, storeyH: STOREY_H, look: Math.floor(r() * 4096), mega: 'dome', district: 0 };
+      const b: BuildingRec = { id, kind: 'house', quads: qs, base: hi + 0.15, storeys: st, storeyH: STOREY_H, look: Math.floor(r() * 4096), mega: 'dome', district: 0 };
       buildings.push(b);
       for (const q of qs) quadBuilding[q] = id;
       megas.push({ kind: 'dome', quads: qs, frame: [outer[0], outer[1], outer[2], outer[3]], z0: b.base, z1: b.base + st * STOREY_H });
@@ -167,10 +204,23 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn): Ci
     const m = Math.floor(r() * (k + 1));
     [order[k], order[m]] = [order[m], order[k]];
   }
+  // (a farmstead: its first building a farmhouse, its second a barn, the rest of its lots its farmyard)
+  const farmCount = new Map<number, number>();
   for (const q0 of order) {
     if (quadBuilding[q0] >= 0) continue;
     const id = buildings.length;
-    const want = 1 + Math.floor(r() * r() * style.maxTiles);
+    let kind: BuildingKind;
+    if (isFarm(q0)) {
+      const n = farmCount.get(tiles.block[q0]) ?? 0;
+      if (n >= 2) {
+        tiles.use[q0] = 'yard';
+        built[q0] = 0;
+        continue;
+      }
+      farmCount.set(tiles.block[q0], n + 1);
+      kind = n === 0 ? 'farmhouse' : 'barn';
+    } else kind = dq[q0] >= HOUSE_D ? 'house' : 'hut';
+    const want = kind === 'house' ? 1 + Math.floor(r() * r() * style.maxTiles) : kind === 'hut' ? 1 + (r() < 0.3 ? 1 : 0) : kind === 'barn' ? 2 + (r() < 0.4 ? 1 : 0) : 1 + (r() < 0.5 ? 1 : 0);
     const quads = [q0];
     quadBuilding[q0] = id;
     let [lo, hi] = quadG(q0);
@@ -178,6 +228,8 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn): Ci
       for (let s = 0; s < 4 && quads.length < want; s++) {
         const n = adj[quads[i] * 4 + s];
         if (n < 0 || !built[n] || quadBuilding[n] >= 0 || tiles.block[n] !== tiles.block[q0]) continue;
+        // (a house doesn't run on into the huts' density, nor a hut into the town's)
+        if (kind === 'house' ? dq[n] < HOUSE_D * 0.85 : kind === 'hut' ? dq[n] >= HOUSE_D * 1.15 : false) continue;
         const [l2, h2] = quadG(n);
         if (Math.max(hi, h2) - Math.min(lo, l2) > STOREY_H * (into ? 2.5 : 0.9)) continue;
         lo = Math.min(lo, l2);
@@ -188,14 +240,23 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn): Ci
     const [bx, by] = quadCentre(tiles, q0);
     const d = Math.min(1, Math.hypot(bx - cx, by - cy) / R);
     const dk = districtOf(bx, by);
-    const storeys = Math.max(1, Math.round(sMid + (sRim - sMid) * Math.pow(d, 0.8) + dBias[dk] + (fbm(bx * 0.04, by * 0.04, spec.seed + 9) - 0.5) * 2.2 + (r() - 0.5) * 0.8));
-    // (look: 12 random bits; bit 15 + bits 12-14 the district's roof colour, most of the time — a few odd ones out)
-    const look = Math.floor(r() * 4096) | (r() < 0.82 ? 0x8000 | (dRoof[dk] << 12) : 0);
+    void d;
+    // storeys by the density: a house from the rim's to the middle's as it rises past the hut line; a hut one (two now
+    // and then where it's nearly a town); a farmhouse one or two; a barn one tall one
+    const dd = Math.min(1, Math.max(0, (dq[q0] - HOUSE_D) / 0.5));
+    const storeys =
+      kind === 'house' ? Math.max(1, Math.round(sRim + (sMid - sRim) * dd + dBias[dk] + (fbm(bx * 0.04, by * 0.04, spec.seed + 9) - 0.5) * 2.2 + (r() - 0.5) * 0.8))
+      : kind === 'hut' ? (dq[q0] > HOUSE_D * 0.75 && r() < 0.35 ? 2 : 1)
+      : kind === 'farmhouse' ? (r() < 0.5 ? 2 : 1)
+      : 1;
+    // (look: 12 random bits; bit 15 + bits 12-14 the district's roof colour, most of the time — a few odd ones out; the
+    // huts' and the farms' thatch their own)
+    const look = Math.floor(r() * 4096) | (kind === 'house' && r() < 0.82 ? 0x8000 | (dRoof[dk] << 12) : 0);
     // (built into the earth — spec.sunk: its floor on the ground's low side, its back in the hill, storeys enough that its
     // roof stands clear of the hill; else on the high side, a plinth under the low)
     const base = into ? lo + 0.15 - (spec.sunk ?? 0) : hi + 0.15;
     const st = into ? Math.max(storeys, Math.ceil((hi - base) / STOREY_H) + 1) : storeys;
-    buildings.push({ id, quads, base, storeys: st, storeyH: STOREY_H, look, district: dk });
+    buildings.push({ id, kind, quads, base, storeys: st, storeyH: kind === 'barn' ? 4.4 : kind === 'hut' ? 2.7 : STOREY_H, look, district: dk });
   }
 
   // ---- landmarks (mega tiles): the tallest building near the middle becomes a tower; a fountain in the plaza
@@ -216,7 +277,7 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn): Ci
       const n = adj[q * 4 + s];
       return n >= 0 && (tiles.use[n] === 'street' || tiles.use[n] === 'plaza' || tiles.use[n] === 'yard');
     });
-    const lone = buildings.filter((b) => b.quads.length === 1 && open(b.quads[0]));
+    const lone = buildings.filter((b) => b.kind === 'house' && b.quads.length === 1 && open(b.quads[0]));
     const near = (c: V2) => (a: BuildingRec, b: BuildingRec) => {
       const da = Math.hypot(quadCentre(tiles, a.quads[0])[0] - c[0], quadCentre(tiles, a.quads[0])[1] - c[1]);
       const db = Math.hypot(quadCentre(tiles, b.quads[0])[0] - c[0], quadCentre(tiles, b.quads[0])[1] - c[1]);
@@ -289,7 +350,8 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn): Ci
         ne++;
       }
     }
-    roofRise.push((edge / ne) * style.pitch);
+    // (thatch steep, a barn's broad roof a little less)
+    roofRise.push((edge / ne) * (b.kind === 'house' ? style.pitch : b.kind === 'hut' ? 1.35 : b.kind === 'barn' ? 1.0 : 1.1));
     for (const q of b.quads) {
       const [lo] = quadG(q);
       if (b.base > lo) spans.push({ quad: q, z0: lo - 0.5, z1: b.base, kind: 'foundation', building: b.id });
@@ -410,6 +472,8 @@ function facadesOf(tiles: TileMesh, adj: Int32Array, buildings: BuildingRec[], q
     nodes.forEach((f, i) => {
       const L = len[i];
       let d = f.level === 0 ? bits(BLANK, WINDOW, WINDOW2, DOOR, SHOP) : bits(BLANK, WINDOW, WINDOW2, BALCONY);
+      // (a hut's, a farmhouse's, a barn's: no shops, no balconies, one window a wall)
+      if (b.kind !== 'house') d &= ~bits(SHOP, BALCONY, WINDOW2);
       if (L < 1.8 || buried[i]) d = bits(BLANK);
       else if (L < 3.2) d &= ~bits(WINDOW2, SHOP);
       if (i === front) d = bits(DOOR);

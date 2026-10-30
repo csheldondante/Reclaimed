@@ -26,8 +26,16 @@ export const enum Part {
   Lamp = 13,
   /** a dome's sheathing (copper gone green, lead) */
   Dome = 14,
+  /** thatch: a hut's, a barn's roof */
+  Thatch = 15,
+  /** weathered planks: a barn's walls, fences */
+  Plank = 16,
+  /** tilled soil */
+  Soil = 17,
+  /** a crop standing in its rows (green, ripening, ripe) */
+  Crop = 18,
 }
-export const PARTS = 15;
+export const PARTS = 19;
 
 export interface Module {
   name: string;
@@ -310,13 +318,13 @@ function roof(sides: number, corners: number, verge: number, eaves: number, clip
     const top = (p: number[]) => [p[0], p[1], p[2]];
     const bot = (p: number[]) => [p[0], p[1], p[2] - T];
     if (viaAC) {
-      k.tri(top(a), top(b), top(c), Part.Roof);
-      k.tri(top(a), top(c), top(d), Part.Roof);
+      k.tri(top(a), top(b), top(c), look.part ?? Part.Roof);
+      k.tri(top(a), top(c), top(d), look.part ?? Part.Roof);
       if (!lod) k.tri(bot(a), bot(c), bot(b), Part.RoofUnder);
       if (!lod) k.tri(bot(a), bot(d), bot(c), Part.RoofUnder);
     } else {
-      k.tri(top(a), top(b), top(d), Part.Roof);
-      k.tri(top(b), top(c), top(d), Part.Roof);
+      k.tri(top(a), top(b), top(d), look.part ?? Part.Roof);
+      k.tri(top(b), top(c), top(d), look.part ?? Part.Roof);
       if (!lod) k.tri(bot(a), bot(d), bot(b), Part.RoofUnder);
       if (!lod) k.tri(bot(b), bot(d), bot(c), Part.RoofUnder);
     }
@@ -351,6 +359,8 @@ export interface RoofLook {
   eave: number;
   /** thickness (w) */
   thick: number;
+  /** what it's covered in (default: Part.Roof) */
+  part?: Part;
 }
 
 /** The gable end: the wall's triangle under a ridge that ends on this side (apex at u ½, w ½ of the roof's rise). */
@@ -529,6 +539,89 @@ function drum(): Module {
   return k.done('drum');
 }
 
+// ------------------------------------------------------------------ huts, barns, the farmland
+
+const HUT: WallLook = { body: Part.Wall, timber: true };
+const BARN: WallLook = { body: Part.Plank, timber: false };
+
+/** a hut's walls: daub between heavy timbers, small windows, a low door (the far looks too) */
+function hutSet(lod: boolean): Module[] {
+  const sfx = lod ? ':lod' : '';
+  const win: Opening = { u0: 0.42, u1: 0.58, w0: 0.38, w1: 0.66, fill: Part.Glass, shutters: true };
+  return [
+    wall(`hut:blank${sfx}`, HUT, [], undefined, lod),
+    wall(`hut:window${sfx}`, HUT, [win], undefined, lod),
+    wall(`hut:door${sfx}`, HUT, [{ u0: 0.38, u1: 0.62, w0: 0, w1: 0.72, fill: Part.Door }], (k) => k.box(0.34, 0.66, -0.3, 0.2, -0.05, 0.02, Part.Stone), lod),
+  ];
+}
+
+/** a barn's walls: upright planks, a slit, wide double doors */
+function barnSet(lod: boolean): Module[] {
+  const sfx = lod ? ':lod' : '';
+  return [
+    wall(`barn:blank${sfx}`, BARN, [], (k) => {
+      if (lod) return;
+      for (let i = 1; i < 8; i++) k.box(i / 8 - 0.006, i / 8 + 0.006, -0.06, 0.05, 0, 1, Part.Trim, 16 | 32);
+    }, lod),
+    wall(`barn:window${sfx}`, BARN, [{ u0: 0.46, u1: 0.54, w0: 0.5, w1: 0.8, fill: Part.Glass }], undefined, lod),
+    wall(`barn:door${sfx}`, BARN, [{ u0: 0.28, u1: 0.72, w0: 0, w1: 0.78, fill: Part.Door }], (k) => {
+      if (lod) return;
+      // the doors' braces: a Z on each leaf
+      k.box(0.28, 0.72, 0.48, 0.52, 0.36, 0.4, Part.Trim);
+      k.box(0.495, 0.505, 0.48, 0.52, 0, 0.78, Part.Trim);
+    }, lod),
+  ];
+}
+
+/** a field's strip: tilled soil, the crop in rows along it (frame: the strip; its top a height over the ground) */
+function crop(): Module {
+  const k = new Kit();
+  k.box(0, 1, 0, 1, 0, 0.3, Part.Soil, 16);
+  const rows = 5;
+  for (let i = 0; i < rows; i++) {
+    const v0 = (i + 0.15) / rows;
+    const v1 = (i + 0.85) / rows;
+    const vm = (v0 + v1) / 2;
+    // a ridge of the crop: a low prism along the strip
+    k.quad([0, v0, 0.3], [1, v0, 0.3], [1, vm, 1], [0, vm, 1], Part.Crop);
+    k.quad([0, vm, 1], [1, vm, 1], [1, v1, 0.3], [0, v1, 0.3], Part.Crop);
+  }
+  return k.done('crop');
+}
+
+/** a fruit tree: a short trunk, a round crown (frame: a small square round it) */
+function fruitTree(): Module {
+  const k = new Kit();
+  k.cyl(0.5, 0.5, 0.06, 0.06, 0, 0.4, 6, Part.Trim, false);
+  const prof: [number, number][] = [[0.2, 0.32], [0.46, 0.5], [0.5, 0.68], [0.4, 0.88], [0.0, 1]];
+  for (let i = 0; i + 1 < prof.length; i++)
+    for (let s = 0; s < 8; s++) {
+      const a0 = (s / 8) * Math.PI * 2;
+      const a1 = ((s + 1) / 8) * Math.PI * 2;
+      const P = (r: number, w: number, a: number) => [0.5 + Math.cos(a) * r, 0.5 + Math.sin(a) * r, w];
+      k.quad(P(prof[i][0], prof[i][1], a0), P(prof[i][0], prof[i][1], a1), P(prof[i + 1][0], prof[i + 1][1], a1), P(prof[i + 1][0], prof[i + 1][1], a0), Part.Plant);
+    }
+  return k.done('fruittree');
+}
+
+/** a post-and-rail fence along a side (frame: thin along it; its top a height over the ground) */
+function fence(): Module {
+  const k = new Kit();
+  for (let i = 0; i <= 3; i++) {
+    const u = i / 3;
+    k.box(Math.max(0, u - 0.02), Math.min(1, u + 0.02), 0.2, 0.8, 0, 1, Part.Plank);
+  }
+  for (const w of [0.45, 0.82]) k.box(0, 1, 0.3, 0.7, w, w + 0.1, Part.Plank, 1 | 2);
+  return k.done('fence');
+}
+
+/** a hedge along a side */
+function hedge(): Module {
+  const k = new Kit();
+  k.box(0, 1, 0, 1, 0, 1, Part.Plant, 1 | 2 | 16);
+  return k.done('hedge');
+}
+
 // ------------------------------------------------------------------ linear features (extruded along splines)
 // Frame: u along the spline, v across it (0 the right edge, 1 the left), w up.
 
@@ -676,7 +769,12 @@ function wallSet(prefix: string, look: WallLook, lod = false): Module[] {
 
 let LIB: (Library & { byName: Map<string, number> }) | null = null;
 
-const ROOF_LOOKS: Record<string, RoofLook> = { tile: { name: 'tile', eave: 0.09, thick: 0.05 }, slate: { name: 'slate', eave: 0.05, thick: 0.04 } };
+const ROOF_LOOKS: Record<string, RoofLook> = {
+  tile: { name: 'tile', eave: 0.09, thick: 0.05 },
+  slate: { name: 'slate', eave: 0.05, thick: 0.04 },
+  // (thatch: deep eaves, a thick soft edge)
+  thatch: { name: 'thatch', eave: 0.15, thick: 0.1, part: Part.Thatch },
+};
 
 /**
  * The one library: the fixed modules made at once, roofs made the first time a mask is asked for (there are hundreds
@@ -692,6 +790,8 @@ export function library(): Library {
   modules.push(chimney(), merlons(), tower(), spire(), fountain(), lamp(), arch());
   modules.push(road(), rail(), wallSeg(), wallWalk(), deck(), archSpan());
   modules.push(dome(), lantern(), drum());
+  modules.push(...hutSet(false), ...hutSet(true), ...barnSet(false), ...barnSet(true));
+  modules.push(crop(), fruitTree(), fence(), hedge());
   const byName = new Map<string, number>();
   modules.forEach((m, i) => {
     if (byName.has(m.name)) throw new Error(`structures: two modules named "${m.name}"`);

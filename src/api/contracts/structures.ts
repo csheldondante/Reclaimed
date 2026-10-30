@@ -56,10 +56,24 @@ export interface CitySpec {
   sunk?: number;
   /** how far it has grown (0..1, default 1: all of it) — stored progress along the plan's build order */
   progress?: number;
+  /** farmland round it out to this far from its centre (m; default 0: none): crop strips, orchards, pastures, farmsteads */
+  farmland?: number;
 }
 
 /** A tile's use. */
-export type TileUse = 'lot' | 'street' | 'plaza' | 'yard' | 'wall' | 'gate' | 'outside';
+/** A tile's use. The farmland's (round 119: "farms and smaller huts for lower population density"): crop strips, an
+ *  orchard's rows, a fenced pasture. */
+export type TileUse = 'lot' | 'street' | 'plaza' | 'yard' | 'wall' | 'gate' | 'outside' | 'field' | 'orchard' | 'pasture';
+
+/**
+ * People per area, 0..1, at a world point (round 119: "Is it density driven+grid based now?"): what decides what's built
+ * on each tile — dense: town houses, storeys by it; thinner: huts; thinnest: farmland with farmsteads. A settlement's
+ * comes from its growth field (settle/field.ts); the viewer makes one from noise.
+ */
+export type DensityFn = (x: number, y: number) => number;
+
+/** What a building is (its module set, roof and size follow): a town house, a hut, a farmhouse, a barn. */
+export type BuildingKind = 'house' | 'hut' | 'farmhouse' | 'barn';
 
 /** The tiles: a planar quad mesh (shared vertices, counter-clockwise quads), every tile system's common output. */
 export interface TileMesh {
@@ -88,6 +102,7 @@ export interface Span {
 
 export interface BuildingRec {
   id: number;
+  kind: BuildingKind;
   quads: number[];
   /** its floor (world z) and storeys */
   base: number;
@@ -246,7 +261,7 @@ export interface PlacedAsset {
 /** The system's API (src/structures/index.ts implements it). Pure functions of their inputs: no GPU, no world state. */
 export interface Structures {
   /** `water`: the depth of standing water at a point (none built or paved where it's over 0.3 m) */
-  plan(spec: CitySpec, ground: GroundFn, water?: GroundFn): CityPlan;
+  plan(spec: CitySpec, ground: GroundFn, water?: GroundFn, density?: DensityFn): CityPlan;
   pieces(plan: CityPlan): StructurePieces;
   /** the columns its buildings fill, on the hex lattice (world cells) */
   columns(plan: CityPlan): ColumnSpan[];

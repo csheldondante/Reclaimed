@@ -29,7 +29,7 @@ export function bakeNav(plan: CityPlan, adj: Int32Array): NavGraph {
 
   // ---- the ground: every open tile (streets, the plaza, yards, the gates' passages)
   const outdoor = new Int32Array(nq).fill(-1);
-  const surfaceOf: Partial<Record<string, NavSurface>> = { street: 'street', plaza: 'plaza', yard: 'ground', gate: 'street' };
+  const surfaceOf: Partial<Record<string, NavSurface>> = { street: 'street', plaza: 'plaza', yard: 'ground', gate: 'street', field: 'ground', orchard: 'ground', pasture: 'ground' };
   for (let q = 0; q < nq; q++) {
     const s = surfaceOf[t.use[q]];
     if (!s) continue;
@@ -50,7 +50,9 @@ export function bakeNav(plan: CityPlan, adj: Int32Array): NavGraph {
         linked.add(a * nq + b);
         link(outdoor[a], outdoor[b], t.use[a] === 'gate' || t.use[b] === 'gate' ? 'gate' : 'walk');
       }
-  // (T-junctions: a tile's corner lying on another's side links them too)
+  // (T-junctions: a tile's corner lying on another's side links them too — found by position, centimetres)
+  const byPos = new Map<string, number>();
+  for (const v of atVert.keys()) byPos.set(`${Math.round(t.verts[v * 2] * 100)},${Math.round(t.verts[v * 2 + 1] * 100)}`, v);
   for (let q = 0; q < nq; q++) {
     if (outdoor[q] < 0) continue;
     for (let s = 0; s < 4; s++) {
@@ -60,8 +62,10 @@ export function bakeNav(plan: CityPlan, adj: Int32Array): NavGraph {
       const b = t.quads[q * 4 + ((s + 1) % 4)];
       const mx = (t.verts[a * 2] + t.verts[b * 2]) / 2;
       const my = (t.verts[a * 2 + 1] + t.verts[b * 2 + 1]) / 2;
-      for (const [v, qs] of atVert) {
-        if (Math.hypot(t.verts[v * 2] - mx, t.verts[v * 2 + 1] - my) > 1e-3) continue;
+      const v = byPos.get(`${Math.round(mx * 100)},${Math.round(my * 100)}`);
+      if (v === undefined) continue;
+      {
+        const qs = atVert.get(v)!;
         for (const o of qs) {
           const lo = Math.min(o, q);
           const hi = Math.max(o, q);

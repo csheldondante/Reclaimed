@@ -133,6 +133,24 @@ fn spAlbedo(sv: SpVert, n: vec3<f32>) -> vec3<f32> {
     case 12u: {
       c *= 0.75 + 0.4 * spN2(p.xy * 1.7);
     }
+    case 15u: {
+      // thatch: combed straw, streaks down the slope, darker where it's old and wet
+      c *= 0.78 + 0.22 * spN2(vec2<f32>(spAlong(p, vec3<f32>(n.x, n.y, 0.0)) * 9.0, p.z * 1.2)) + 0.06 * spN2(p.xy * 3.0);
+      c = mix(c, vec3<f32>(0.12, 0.12, 0.07), smoothstep(0.7, 0.92, spN2(p.xy * 0.5 + vec2<f32>(sv.seed * 13.0, 0.0))) * 0.35);
+    }
+    case 16u: {
+      // planks: upright boards, each its own shade, dark gaps
+      let b = spAlong(p, n) * 3.2;
+      let gap = 1.0 - smoothstep(0.02, 0.07, min(fract(b), 1.0 - fract(b)));
+      c *= (0.84 + 0.22 * spH2(vec2<f32>(floor(b), 3.0))) * (1.0 - 0.4 * gap);
+    }
+    case 17u: {
+      c *= 0.8 + 0.3 * spN2(p.xy * 2.5);
+    }
+    case 18u: {
+      // a crop: stalks' noise, the rows' tops lighter
+      c *= 0.8 + 0.25 * spN2(p.xy * 6.0) + 0.1 * n.z;
+    }
     default: {}
   }
   return c;

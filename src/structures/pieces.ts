@@ -3,10 +3,10 @@
 // neighbour covering it (its kind from the plan's façades), a post where two walls meet outside, a roof on every top
 // from the roof's own height rule (modules.ts roofHeight: ridges, hips and valleys meet across tiles by themselves),
 // gables where a ridge ends, a plinth down to the ground on a slope, paving on the streets.
-import type { CityPlan, StructurePieces, V2 } from '../api/contracts/structures';
+import type { BuildingKind, CityPlan, FacadeKind, StructurePieces, V2 } from '../api/contracts/structures';
 import { adjacency, quadCorners } from './tiles/builder';
 import { library, roofName } from './modules';
-import { styleOf, STYLE_IDS } from './styles';
+import { styleOf, STYLE_IDS, type Style } from './styles';
 import { hashf } from './rng';
 import { WALL_H } from './plan';
 import { resample, segFrame, WALL_WALK } from './linear';
@@ -18,7 +18,7 @@ export const REL = 1;
 /** a wall's thickness (m) */
 export const WALL_T = 0.35;
 /** the roof's lift over the walls' tops (m) */
-export const ROOF_LIFT = 0.14;
+export const ROOF_LIFT = 0.2;
 
 class Out {
   module: number[] = [];
@@ -45,6 +45,14 @@ function wallFrame(a: V2, b: V2, t: number): [V2, V2, V2, V2] {
   const nx = (-dy / L) * t;
   const ny = (dx / L) * t;
   return [a, b, [b[0] + nx, b[1] + ny], [a[0] + nx, a[1] + ny]];
+}
+
+/** the wall module a façade shows on a building of this kind (a hut's and a barn's sets are smaller: no shops, no balconies) */
+export function wallModule(kind: BuildingKind, level: number, f: FacadeKind, style: Style): string {
+  if (kind === 'house') return `${level === 0 ? style.walls0 : style.walls}:${f}`;
+  const set = kind === 'barn' ? 'barn' : 'hut';
+  const k = f === 'door' || f === 'shop' ? 'door' : f === 'blank' ? 'blank' : 'window';
+  return `${set}:${k}`;
 }
 
 /**
@@ -107,14 +115,13 @@ export function piecesOf(plan: CityPlan): StructurePieces {
     const p = quadCorners(t, f.quad);
     const a = p[f.side];
     const c = p[(f.side + 1) % 4];
-    const prefix = f.level === 0 ? style.walls0 : style.walls;
-    out.add(lib.id(`${prefix}:${f.kind}`), sideFrame(p, f.side, WALL_T), f.z0, f.z1, look(b.id), hashf(f.quad, f.side, f.level));
+    out.add(lib.id(wallModule(b.kind, f.level, f.kind, style)), sideFrame(p, f.side, WALL_T), f.z0, f.z1, look(b.id), hashf(f.quad, f.side, f.level));
     // a post at the wall's start where the side before also has a wall here (a convex corner)
     const prev = (f.side + 3) % 4;
     if (wallsAt.has(`${f.quad},${prev},${f.level}`)) {
       const e1 = unit(a, c);
       const e2 = unit(a, p[prev]);
-      if (style.corners === 'post') out.add(lib.id('post:1'), cornerFrame(a, e1, e2, 0.3), f.z0, f.z1, look(b.id), 0);
+      if (style.corners === 'post' || b.kind !== 'house') out.add(lib.id('post:1'), cornerFrame(a, e1, e2, 0.3), f.z0, f.z1, look(b.id), 0);
       else out.add(lib.id('quoins'), cornerFrame(a, e1, e2, 0.42), f.z0, f.z1, look(b.id), 0);
     }
   }
@@ -155,7 +162,8 @@ export function piecesOf(plan: CityPlan): StructurePieces {
         if (around[v].some((o) => o !== q && !joined(o))) corners |= 1 << c;
       }
       let verge = 0;
-      if (style.gables) {
+      // (gables: the style's for a house; a hut's thatch is hipped all round; a farmhouse and a barn gabled)
+      if (b.kind === 'house' ? style.gables : b.kind !== 'hut') {
         // a ridge's end: a free side whose opposite is joined and whose neighbours are free; a lone tile gables its
         // short sides (the ridge along the long way)
         if (sides === 15) {
@@ -187,9 +195,12 @@ export function piecesOf(plan: CityPlan): StructurePieces {
       // (the roof sits a hair above the walls' tops: a warped tile's roof is flat between its warped corners, not exactly
       // the bilinear surface, so on a skewed tile a wall's top could peek through by a few centimetres; the eave's
       // thickness hides the lift)
-      out.add(lib.id(roofName(sides, corners, verge & eaves, eaves, clip, style.roof)), p, top + ROOF_LIFT, top + ROOF_LIFT + rise, look(b.id), hashf(q, 8));
+      // (thatch on huts and farmhouses; a barn's thatch or the style's tiles, building by building)
+      const roofLook = b.kind === 'house' ? style.roof : b.kind === 'barn' && hashf(b.id, seed, 41) < 0.5 ? style.roof : 'thatch';
+      out.add(lib.id(roofName(sides, corners, verge & eaves, eaves, clip, roofLook)), p, top + ROOF_LIFT, top + ROOF_LIFT + rise, look(b.id), hashf(q, 8));
       // a chimney on a ridge (tiles whose roof rises to a ridge, not flat tops)
-      if (sides && hashf(q, seed, 9) < style.chimneys) {
+      const chimneys = b.kind === 'house' ? style.chimneys : b.kind === 'barn' ? 0 : 0.4;
+      if (sides && hashf(q, seed, 9) < chimneys) {
         const f = shrink(p, 0.16);
         const o = hashf(q, 10) < 0.5 ? 0.18 : -0.18;
         const g: [V2, V2, V2, V2] = f.map(([x, y]) => [x + (p[1][0] - p[0][0]) * o, y + (p[1][1] - p[0][1]) * o]) as [V2, V2, V2, V2];
@@ -205,6 +216,30 @@ export function piecesOf(plan: CityPlan): StructurePieces {
     const p = quadCorners(t, q);
     // (owners: −1 the ramparts — one External instance —, −1000 what claims no columns: paving, lamps, the fountain)
     out.owner = u === 'wall' || u === 'gate' ? -1 : -1000;
+    if (u === 'field' || u === 'orchard' || u === 'pasture') {
+      // the farmland: a strip's crop (its plot's colour: green, ripening, ripe), an orchard's trees, a pasture's grass
+      // (the ground's own); fences or hedges round each plot, on the sides with another plot or none beside
+      out.owner = -1000;
+      const plotLook = styleIx * 65536 + (hashf(t.block[q], seed, 43) * 4096) | 0;
+      if (u === 'field') out.add(lib.id('crop'), p, footOf(q, 0.12), 0.42, plotLook, hashf(q, 44), REL);
+      else if (u === 'orchard') {
+        const c: V2 = [(p[0][0] + p[1][0] + p[2][0] + p[3][0]) / 4, (p[0][1] + p[1][1] + p[2][1] + p[3][1]) / 4];
+        const s = 2.2;
+        const z = gz[t.quads[q * 4]] - 0.1;
+        out.add(lib.id('fruittree'), [[c[0] - s, c[1] - s], [c[0] + s, c[1] - s], [c[0] + s, c[1] + s], [c[0] - s, c[1] + s]], z, z + 4.2, plotLook, hashf(q, 45));
+      }
+      const hedged = hashf(t.block[q], seed, 46) < 0.35;
+      for (let s = 0; s < 4; s++) {
+        const n = adj[q * 4 + s];
+        if (n >= 0 && t.block[n] === t.block[q]) continue;
+        const a = p[s];
+        const b2 = p[(s + 1) % 4];
+        const za = gz[t.quads[q * 4 + s]];
+        const zb = gz[t.quads[q * 4 + ((s + 1) % 4)]];
+        out.add(lib.id(hedged ? 'hedge' : 'fence'), wallFrame(a, b2, hedged ? 0.7 : 0.18), [za - 0.1, zb - 0.1, zb - 0.1, za - 0.1], hedged ? 1.3 : 1.15, plotLook, 0, REL);
+      }
+      continue;
+    }
     if (u === 'street' || u === 'plaza') {
       out.add(lib.id('pave'), p, footOf(q, 0.25), 0.37, look(-1), hashf(q, 11), REL);
       if (u === 'street' && hashf(q, seed, 12) < 0.05) {
