@@ -9,7 +9,7 @@
 // The travel here waits on a stand-in loader (a few seconds a leg): the viewer has no streamer. In the level, the same
 // Journey takes the streamer's precache (api/atlas-world.ts precacheWarp).
 
-import type { EncounterKind, EnRouteEvent, RunPlan, RunRecord, RunStage, StageOutcome, TravelLeg } from '../api/contracts/run';
+import type { EncounterKind, EnRouteEvent, RunPlan, RunRecord, RunStage, TravelLeg } from '../api/contracts/run';
 import type { AtlasEvent } from '../api/contracts/world';
 import { MemoryWorldState } from '../api/contracts/world-state';
 import { paintAtlasImage } from '../api/atlas-map';
@@ -22,6 +22,7 @@ import { factsGraph } from './graph';
 import { HEROES, heroCaps } from './heroes';
 import { planRun } from './plan';
 import { Journey, type JourneyState, type Precacher } from './travel';
+import { describe } from './viewer-text';
 
 const ENC_COLOUR: Record<EncounterKind, string> = {
   race: '#f2c14e', chase: '#f08a4b', fight: '#e0483a', horde: '#9a6bd8', spectacle: '#4fd1c5', destruction: '#ff6f91',
@@ -547,7 +548,7 @@ export class RunPlanView implements Scene {
       const col = kinds.has('sink') || kinds.has('flood') ? '60,140,230' : kinds.has('raise-dead') ? '150,80,220' : kinds.has('shadow') ? '20,10,40' : kinds.has('bury') ? '230,200,120' : kinds.has('ruin') ? '220,70,50' : kinds.has('mark') ? '250,230,120' : '240,240,240';
       const [x, y] = this.px(node.centre[0], node.centre[1], W, H);
       const r = (Math.sqrt(node.area / Math.PI) * texel) / (this.atlas.worldW / n) / this.scale;
-      ctx.fillStyle = `rgba(${col},0.38)`;
+      ctx.fillStyle = `rgba(${col},${col === '240,240,240' ? 0.15 : 0.42})`;
       ctx.beginPath();
       ctx.arc(x, y, Math.max(3, r), 0, Math.PI * 2);
       ctx.fill();
@@ -644,20 +645,4 @@ export class RunPlanView implements Scene {
   dispose(): void {
     for (const e of this.els) e.remove();
   }
-}
-
-/** an outcome's effects in a line (what the viewer shows under each choice) */
-export function describe(o: StageOutcome): string {
-  const parts: string[] = [];
-  for (const a of o.effects.atlas ?? []) {
-    const f = a.detail?.faction ? ` ${String(a.detail.faction).replace(/^f-/, '')}` : '';
-    parts.push(`${a.kind}${f} ${a.kind === 'bury' ? `${a.magnitude} cells` : a.magnitude > 0 ? `+${a.magnitude}` : a.magnitude}${a.regions.length > 1 ? ` ×${a.regions.length} regions` : ''}`);
-  }
-  for (const c of o.effects.characters ?? []) {
-    if (c.kind === 'gear' && c.add) parts.push(`gear: ${c.add.join(', ')}`);
-    if (c.kind === 'status' && c.add) parts.push(`status: ${c.add.join(', ')}`);
-    if (c.kind === 'meet') parts.push(`meet ${c.character.name}`);
-    if (c.kind === 'die') parts.push(`${c.id} dies`);
-  }
-  return parts.join(' · ') || 'nothing lasting';
 }

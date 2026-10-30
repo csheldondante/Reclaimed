@@ -25,7 +25,8 @@ fantasy."
 | RP2 | Consequences between runs: per-encounter outcomes (AtlasEvents + CharacterChanges), the GM's failure rules (death: the lich takes the map where the dead hold sway; capture: held at the captor's seat, rescue / escape next run; late: the threat wins), `finishRun`; characters (history, relationships, motivation, gear, statuses) and faction power/relations in the world state | M | done (runplan) |
 | RP3 | RegionState realised per generator at the boundary (`realise` → RegionRealisation: sunk/buried/flooded as height flood-fill requests, ruin/overgrowth/drowned/marks, undead/presence/welcome, flora, sky) — for terrain, structures, inhabitants, flora to read when their contracts land | M | done (contract + conversion; generators don't read it yet) |
 | RP4 | Travel on the atlas map: Journey (precache at once, events held until answered, arrive when animated and resident), en-route events (vista, poi, ambush, weather, traveller) | M | done in the viewer (stand-in loader); the level: RP5 |
-| RP5 | The same travel in the level: AtlasMap draws the run's legs, Journey with the streamer's precache, warp on arrival | M | open |
+| RP5 | The same travel in the level: AtlasMap draws the run's legs, Journey with the streamer's precache, warp on arrival (`?level=atlas&runplan=bike`; a stage's play picked from its outcomes until the play track's heroes run stages) | M | done (runplan) |
+| RP8 | "fade between pretty views along the road": at a vista, the 3D view of the spot (precached with the leg) faded in over the map for a few seconds — the map-side zoom-in is in the viewer only | M | open |
 | RP6 | Swap the stand-ins: terrain's region graph for `factsGraph`, play's controller contract for `HEROES` | S | open (when those tracks land) |
 | RP7 | Pinned sections (RC1): `RunStage.section` says what to keep resident; the tile atlas needs a pinned set | M | open |
 

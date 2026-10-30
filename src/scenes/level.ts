@@ -54,7 +54,7 @@ import type { Station, StationKit } from '../levels/playground';
 import { RB, rockbodyFor } from '../game/rockbodies';
 import { TUNE, TUNING } from '../tune/params';
 import { AtlasMap } from '../api/atlas-map';
-import { precacheWarp, warpWindow } from '../api/atlas-world';
+import { precacheWarp, warpReady, warpWindow } from '../api/atlas-world';
 import { Dither, Orbit, Slice } from '../api/cutaway';
 import { Puck } from '../api/puck';
 import { StoryPlay } from '../story/play';
@@ -484,6 +484,8 @@ export class LevelScene implements Scene {
   private atlasCtl?: HTMLDivElement;
   /** (round 91: scripts/mapnames.mjs reads its labelStats) */
   atlasMap?: AtlasMap;
+  /** (round 117, runplan) ?runplan=<hero>: a planned run travelled on the atlas map */
+  private plannedRun?: import('../runplan/level-run').LevelRun;
   private far?: FarLand;
 
   /**
@@ -1799,6 +1801,31 @@ export class LevelScene implements Scene {
     // round 88 (runstory): ?run=bell — a run story as a hero on the atlas level
     const runId = host.params.get('run');
     if (runId) void this.startRun(runId);
+    // round 117 (runplan): ?runplan=<hero> — a planned run travelled on the atlas map (src/runplan/level-run.ts)
+    const planHero = host.params.get('runplan');
+    if (planHero) void this.startPlannedRun(planHero);
+  }
+
+  /** ?runplan=<hero>: a run planned from the spawn on this atlas; its legs travelled on the atlas map while the land loads */
+  private async startPlannedRun(hero: string): Promise<void> {
+    const a = this.opts.atlas;
+    if (!a || !this.stream || !this.atlasMap) throw new Error('?runplan= plays on the atlas level (?level=atlas)');
+    const S = this.stream;
+    const dims = this.core.dims;
+    const { LevelRun } = await import('../runplan/level-run');
+    // (as ?run=: the sandbox tools are hidden during a run)
+    this.editor?.setVisible(false);
+    this.plannedRun = new LevelRun({
+      atlas: a.atlas,
+      map: this.atlasMap,
+      ui: this.host.ui,
+      hero,
+      precache: (x, y) => precacheWarp(a.atlas, S, dims, x, y),
+      ready: (x, y) => warpReady(a.atlas, S, dims, x, y),
+      warp: (x, y) => warpWindow(a.atlas, S, dims, x, y),
+      say: (s, sec) => this.hud.say(s, sec ?? 4),
+    });
+    (window as unknown as { reclaimed: Record<string, unknown> }).reclaimed.runplan = this.plannedRun;
   }
 
   /** ?run=<id>: the GM's story staged near the spawn, played as a hero (story/hero-run.ts; round 97: through story/atlas-run.ts, as any game starts one) */
@@ -2131,6 +2158,7 @@ export class LevelScene implements Scene {
     }
     // (round 88: the hero run — hero, units, its story, the chase camera)
     if (this.heroRun && !camera.fly) this.heroRun.update(dt);
+    this.plannedRun?.update(dt);
     if (this.storyPlay || this.heroRun) record('story', performance.now() - tStory); // (round 100, hitchrec: timing)
     // (round 90: the player's turn of the view — not flying, not while a story shot or the cutaway has the camera)
     if (this.turn && !camera.fly && !CUTAWAY && !this.storyPlay?.cam.busy && !this.heroRun) this.turn.update(dt);
@@ -3294,6 +3322,7 @@ export class LevelScene implements Scene {
     this.far?.dispose();
     this.storyPlay?.dispose();
     this.heroRun?.dispose();
+    this.plannedRun?.dispose();
     this.worldApi?.dispose();
     this.controls.dispose();
     this.editor?.dispose();

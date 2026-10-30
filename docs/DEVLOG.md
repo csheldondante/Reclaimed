@@ -13458,3 +13458,20 @@ controllers and the user's words) sit behind `RegionGraph` and `HeroCapabilities
 **Tests.** `npx vitest run src/runplan`: 21 tests, ~2 s (vitest added minimally; testkit's setup replaces it).
 **Looked at.** C:/Projects/shots88/runplan/ (bike-1-plan.png, bike-3-event.png, bike-travel.gif, bike-5-end.png,
 bike-phone.png).
+
+## 2026-10-30 — A planned run travelled in the level (round 117, `runplan`; RP5, RC2, RC3)
+
+**What.** `?level=atlas&runplan=bike`: the run planned from the spawn on the live atlas; a card for the stage (its
+outcomes picked for now — the stage's play is the play track's); a leg chosen opens the atlas map with the plan drawn
+on it, the map zoomed to the leg and following the marker, en-route events held on the card until answered; the
+destination's land asked for the moment the leg starts (`precacheWarp`: 49 regions, ~1 ms to ask), and the arrival
+waits until `Streamer.precached` says every region of the destination's window is made — then the warp.
+**Why a readiness check on the streamer.** The user's "animate travel on that map while we load in the background"
+needs to know when the background is done; `precache` only asked. `precached(ox, oy)` reads the streamer's own job and
+pool maps (no new state). **Measured** (scripts/runplanlevel.mjs, desktop iGPU, every system in play, 1x): an 8-12 s
+leg animation, the land ready before it ended every time (waited 0.0 s); the warp after it lands on made land
+(level-bike-4-arrived.png).
+**Looked at.** C:/Projects/shots88/runplan/level-bike-1-start.png, -2-legs.png, -3-event.png (the map on the leg, the
+ambush card), -travel.gif, -4-arrived.png. The first try left the map at the whole continent's zoom and the card over
+the map's buttons: now zoomed to the leg, the card at the bottom while travelling. A lava field was drowned into a sea
+by the lich's first pick: lava and sand country now bury first.

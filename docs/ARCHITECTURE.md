@@ -2410,3 +2410,8 @@ clears them).
   (`precacheWarp`); the viewer a stand-in loader.
 - **Shared change**: `api/atlas-map.ts` exports `paintAtlasImage(atlas)` (AtlasMap's painter, unchanged) so the viewer
   draws the game's own map.
+- **In the level** (`src/runplan/level-run.ts`, `?level=atlas&runplan=<hero>`): `LevelRun` plans from the spawn on the
+  live atlas (atlasFacts + buildWiki), shows a stage card, travels legs on the AtlasMap through `AtlasMap.overlay`
+  (draws the plan), `redraw()` and `centreOn(cx, cy, scale)` (round 117 additions), with `precacheWarp` and
+  `warpReady` (atlas-world.ts; `Streamer.precached(ox, oy)`: every region of that window made or in the window, none
+  under way), then `warpWindow` on arrival.

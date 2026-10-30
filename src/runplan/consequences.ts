@@ -88,7 +88,8 @@ export function stageOutcomes(c: StageContext): StageOutcome[] {
         ['night', `Called down an endless night on ${at}`, night],
       ];
       if (!low) picks.push(picks.shift()!);
-      if (c.node.kind === 'dunes' || c.node.kind === 'badlands') picks.unshift(picks.splice(picks.findIndex((p) => p[0] === 'buried'), 1)[0]);
+      // (sand country and lava country bury first: a ruin under sand, a town under ash — the first look drowned a lava field)
+      if (c.node.kind === 'dunes' || c.node.kind === 'badlands' || c.node.lava > 0 || c.node.kind === 'lavafield') picks.unshift(picks.splice(picks.findIndex((p) => p[0] === 'buried'), 1)[0]);
       won(picks[0][0], picks[0][1], picks[0][2]);
       won(picks[1][0], picks[1][1], picks[1][2]);
       lost('unleashed', `The storm at ${at} got away from you`, { atlas: [ev('storm', [r, ...c.around], 0.5, { detail: { storm: 'arcane' } }), ev('ruin', [r], 0.2)], characters: [hist(h, `lost control at ${at}`), { kind: 'status', id: h, add: ['cursed'] }] });

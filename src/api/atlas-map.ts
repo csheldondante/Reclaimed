@@ -75,6 +75,9 @@ export class AtlasMap {
   facing?: () => number | null;
   /** (round 94) pins on the map: where to go (a story's objective), each with its name */
   marks?: () => MapMark[];
+  /** (round 117, runplan) drawn over the map, under the player's dot: a planned run's legs and stages. `px` a world
+   *  cell → css px (the nearest copy on the torus), `scale` texels a css px */
+  overlay?: (ctx: CanvasRenderingContext2D, px: (cx: number, cy: number) => [number, number], scale: number) => void;
 
   constructor(
     private aw: MapWorld,
@@ -158,6 +161,19 @@ export class AtlasMap {
     return this.aw.toWorld(t[0], t[1]);
   }
 
+  /** (round 117, runplan) draw now (the run's travel animates every frame, not on the map's half-second timer) */
+  redraw(): void {
+    this.draw();
+  }
+
+  /** (round 117, runplan) the view's middle on world cell (cx, cy); its zoom (texels a css px) when given */
+  centreOn(cx: number, cy: number, scale?: number): void {
+    const a = this.aw.atlas;
+    if (scale !== undefined) this.scale = Math.min(8, Math.max(0.05, scale));
+    this.vx = (cx / a.p.cols) * a.p.n;
+    this.vy = (cy / a.p.rows) * a.p.n;
+  }
+
   private centre(): void {
     const a = this.aw.atlas;
     const [cx, cy] = this.player();
@@ -224,6 +240,7 @@ export class AtlasMap {
     ctx.lineWidth = 1.2;
     ctx.strokeRect(wx - ww, wy, ww, (dims.h / a.p.rows) * n * k);
     this.drawLabels(ctx, W, H);
+    this.overlay?.(ctx, cellPx, this.scale);
     // the player: the view's footprint on the ground (the screen's corners at the target's height), a wedge
     // the way the camera faces, the dot
     const cam = this.aw.core.camera;
