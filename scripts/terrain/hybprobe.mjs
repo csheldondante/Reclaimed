@@ -14,7 +14,7 @@ await run({ name: 'terrain-hybprobe', kind: 'behaviour', size: '412x915', dpr: 2
     const wx = x - S.origin[0];
     const row = Math.floor((y - S.origin[1] * 0.8660254) / 0.8660254);
     const col = Math.floor(wx - 0.5 * (row & 1));
-    const C = 16;
+    const C = Rc.core.renderer.fieldMesh.chunkGrid[2];
     const nx = Rc.core.renderer.fieldMesh.chunkGrid[0];
     const res = { origin: S.origin, col, row, chunks: [] };
     for (let dy = -1; dy <= 1; dy++)
@@ -25,6 +25,7 @@ await run({ name: 'terrain-hybprobe', kind: 'behaviour', size: '412x915', dpr: 2
         res.chunks.push({ cx, cy, want: h?.wanted[c], grid: h?.grid[c] });
       }
     res.stats = h?.stats;
+    res.grid = Rc.core.renderer.fieldMesh.chunkGrid;
     return res;
   }, x, y);
   console.log(JSON.stringify(out));

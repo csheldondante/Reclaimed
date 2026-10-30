@@ -57,6 +57,21 @@
 const NONE: u32 = 0xffffffffu;
 /** (round 86) a near word's bit: the CPU marked the chunk urgent (fieldmesh.ts urgent) */
 const URGENT_BIT: u32 = 0x10000u;
+/** (round 117, terrain — TR24) the hybrid's: a chunk the field mesh doesn't draw (the grid's or the rings') — set by the
+ *  CPU in its near word (fieldmesh.ts encode); never looked at for itself, but a drawn chunk's field treats its columns as
+ *  solid, gaps closed (colDist) */
+const UNMESHED_BIT: u32 = 0x20000u;
+
+/** Is column q in a chunk the field mesh doesn't draw (the hybrid's heightfield chunks)? */
+fn colUnmeshed(q: vec2<i32>) -> bool {
+  let wx = f32(q.x) + 0.5 + 0.5 * f32(q.y & 1);
+  let wy = (f32(q.y) + 0.5) * ROW_H;
+  if (wx < 0.0 || wy < 0.0) { return false; }
+  let cx = u32(wx / MR.o.x);
+  let cy = u32(wy / MR.o.z);
+  if (cx >= MR.n.x || cy >= MR.n.y) { return false; }
+  return (atomicLoad(&state[CHUNK0 + MR.n.x * MR.n.y * CSTRIDE + cy * MR.n.x + cx]) & UNMESHED_BIT) != 0u;
+}
 /** (round 93, the page pool) a record's word 13: its range's pages to be given back (unwanted, slid out fresh) */
 const RELEASE: u32 = 1u;
 /** (and) its rebuild found no pages: not marked built, so it's owed and made again (the CPU grows the pool) */
@@ -71,9 +86,21 @@ fn colDist(q0: vec2<i32>, z: f32) -> f32 {
   // (off the map is air: the map's edge closes in a wall; round 83, a streamed window's edge is open — MR.ze.w
   // 1: the edge column goes on past it, no wall)
   var q = q0;
+  // (round 117, terrain — TR24: past a streamed window's edge the edge column goes on, but solid: its gaps closed. With
+  // its gaps carried out too, a cave crossing the edge was a tube open at the mesh's end — a see-through hole into the
+  // land past the window, which the tiles and rings draw as tops only. Closed, the cave ends in a wall at the edge like
+  // any other cut face. A shared-renderer tweak)
+  var solid = false;
   if (!inMap(q)) {
     if (MR.ze.w < 0.5) { return FAR; }
     q = clampCell(q);
+    solid = true;
+  } else if (colUnmeshed(q) || colUnmeshed(q - vec2<i32>(1, 0)) || colUnmeshed(q - vec2<i32>(0, 1))) {
+    // (a column whose low-side neighbour is undrawn closes too: a chunk owns the edges whose base sample is its own, so the
+    // closing face toward a neighbour at −x or −y must fall a sample inside the drawn chunk to be drawn at all)
+    // (the same at the edge of a drawn chunk beside one the mesh doesn't draw — the hybrid's grid or rings, tops only:
+    // a cave running on into it was a tube open at the drawn chunk's side, a see-through hole into the land behind)
+    solid = true;
   }
   // (round 79: the bedrock's top is MR.zb.y — 0 in the window, the world's floor in the band under it)
   let bz = MR.zb.y;
@@ -91,7 +118,7 @@ fn colDist(q0: vec2<i32>, z: f32) -> f32 {
     if (!fieldMat(ivMat(v))) { continue; }
     let z0 = ivZ0(v);
     let z1 = ivZ1(v);
-    if (z0 - hi > 1e-3) {
+    if (z0 - hi > 1e-3 && !solid) {
       // a gap: the run so far is done
       if (z >= lo && z <= hi) { return max(-min(select(z - lo, FAR, lo <= bz), hi - z), -FAR); }
       d = min(d, min(abs(z - lo), abs(z - hi)));
@@ -227,11 +254,12 @@ fn hashChunk(c: u32, li: u32, freshOnly: bool) {
   let nearW = atomicLoad(&state[CHUNK0 + MR.n.x * MR.n.y * CSTRIDE + c]);
   // (round 86: marked urgent by the CPU — URGENT_BIT in its near word: always looked at, any slot)
   let urgent = (nearW & URGENT_BIT) != 0u;
+  let nearV = nearW & ~UNMESHED_BIT;
   var still = false;
   // (round 82: nor one owed a rebuild — found changed when every slot was taken: word 6 its new hash, not yet
   // built. Before, it fell asleep owed, past its drowsy quarter second, and stayed stale until it left the view.)
   let owed = atomicLoad(&state[b0 + 6u]) != built;
-  if (MR.zb.w > 0.5 && nearW == 1u && built != FRESH && built != 0u && !owed) {
+  if (MR.zb.w > 0.5 && nearV == 1u && built != FRESH && built != 0u && !owed) {
     still = true;
     // (round 82: every sim chunk under the columns it hashes — its margin too: 9 points in its rect missed the
     // neighbours left and above, and a change there left it stale)
@@ -243,7 +271,7 @@ fn hashChunk(c: u32, li: u32, freshOnly: bool) {
       }
     }
   }
-  let vis = atomicLoad(&state[CHUNK0 + MR.n.x * MR.n.y * CSTRIDE + c]) != 0u && !taken && !still && (!freshOnly || built == FRESH || built == 0u);
+  let vis = nearV != 0u && !taken && !still && (!freshOnly || built == FRESH || built == 0u);
   let n = select(0u, w * u32(max(j1 - j0 + 1, 0)), vis);
   var sum = 0u;
   var top = 0.0;
@@ -275,6 +303,15 @@ fn hashChunk(c: u32, li: u32, freshOnly: bool) {
   workgroupBarrier();
   if (li != 0u || !vis) { return; }
   var h = atomicLoad(&wgHash);
+  // (round 117: and which chunks round it the mesh doesn't draw — its faces toward them close the caves: a neighbour
+  // turning grid or voxels rebuilds it)
+  for (var k = 0; k < 9; k++) {
+    let ncx = i32(c % MR.n.x) + (k % 3) - 1;
+    let ncy = i32(c / MR.n.x) + (k / 3) - 1;
+    if (ncx < 0 || ncy < 0 || ncx >= i32(MR.n.x) || ncy >= i32(MR.n.y)) { continue; }
+    let nw = atomicLoad(&state[CHUNK0 + MR.n.x * MR.n.y * CSTRIDE + u32(ncy) * MR.n.x + u32(ncx)]);
+    if ((nw & UNMESHED_BIT) != 0u) { h = mixHash(h, u32(k) + 101u); }
+  }
   // and the structures over it (placed, moved) — and none skipped under them (a buried one's faces are the field's)
   var bot = atomicLoad(&wgBot);
   for (var s = 0u; s < MAX_STRUCTS; s++) {

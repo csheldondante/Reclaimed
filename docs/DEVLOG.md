@@ -13814,3 +13814,16 @@ draw only tops, so the mouth is a see-through hole (pale with the tiles, the lan
 mouth3notiles-m.png). Inside the window the mouths read dark (q=high: mouth3hq-m.png; ?hybrid=0: mouth3nohyb-m.png).
 TR24: cap the window's mesh at its edge where a gap crosses it, or let the tiles bake a gap as a dark recess.
 scripts/terrain/hybprobe.mjs (the hybrid's chunk state round a point; window.reclaimed.hybrid() added for it) found it.
+
+**TR24: the see-through mouths (fieldmesh.wgsl, fieldmesh.ts — a shared-renderer tweak for consolidation).** Found with
+scripts/terrain/hybprobe.mjs: the mouth's chunk was voxels (the field mesh) and the chunks behind it the hybrid's grid
+(the window's tops as a heightfield). The cave ran on from the meshed chunk into the grid's, where only tops are drawn,
+so the mesh's tube was open at its side: a hole to the land behind (and, at the window's edge, the same with the edge
+column carried out with its gaps). Now colDist closes a column's gaps — solid from the bedrock to its top — when it lies
+past the window, in a chunk the mesh doesn't draw, or beside one at −x or −y (a chunk owns the edges whose base sample is
+its own, so the closing face toward a low-side neighbour must fall a sample inside the drawn chunk). The CPU marks the
+undrawn chunks in their near words (UNMESHED_BIT; the hash pass ignores it for the chunk itself, and mixes the
+neighbours' bits into a chunk's hash so a neighbour turning grid or voxels rebuilds it). Phone proxy, the same mouths:
+mouth2-m.png (pale holes) → mouth5-m.png (one side closed) → mouth6-m.png (closed: dark recesses along the cliff's foot).
+Cost: a near-word read for each sample's column (three with the low-side check) in colDist — the build's, not the
+frame's. Mouths past the window (tiles, rings) still don't show (TR24b).
