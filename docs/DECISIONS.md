@@ -36,6 +36,11 @@ user's first input, verbatim:
 >
 > Let me know what I haven't weighed in on as much and I'll try to pad it out.
 
+Part 2, the user answering run planning (1) and movement and controls (2), verbatim:
+
+> 1. TBD but I was thinking 15-50 minutes with branching. Decisions should impact the world for the next run.  They should impact characters and their history, relationships and motivations. Potentially impact their gear or persistent statuses. They should impact factions and their relationships and power. They should impact the terrain and the cities and as mentioned change statuses at the regional or global level. Make it eternal night or flood a region and make a new shallow sea or bury a ruin under sand etc. the GM can determine some of what happens in different failure conditions like death or capture or just failure to meet a timeline. Maybe the lich takes over the map and the world is filled with undead. That's the fun of this game.
+> 2. We want the controls to vary per character and we want them to play differently. This was already in the existing GM work. The lich is a floating wrecking ball power fantasy, the hoverbike we want races and tricks and mounted fights, the knight delving and quests etc.
+
 ## 2026-10-30 — round 116 (session 5, `places`) — high-value work in parallel: generators, editors, sound, runs
 
 - The user, verbatim: "I would like to target high value work. What is awesome, what will be most impactful to players and what will show the most rapid progress. In my opinion we should target improvements to the terrain generation, run planning, and character movement and controls and we should add sound effects and work on procedural generators and editors for flora,  agents, gear, buildings and vehicles. I want beautiful structures, sprawling fantastic cities and lively animated agents inhabiting our world. "
