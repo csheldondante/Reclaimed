@@ -13413,3 +13413,15 @@ minute row -1 was undefined, and the callback threw. Without v9's guard the thro
 freeze. It needs a reset inside a frame's lag window, so it struck some runs and not others. A frame timed before
 t0 now belongs to the old recording. Normal play doesn't run the recorder; the game's own frame loop was never the
 cause. The settled parked phases of the same run: untimed 2/247 and 0/249 slow, all apart (min gap 2.2 s).
+
+## 2026-10-30 — round 114 (main): framepace merged; the gate A/B on the fast pans
+
+Pixel 9a bench v9 (data: scratchpad pixel9a-pan-v9.json), complete, no errors: in the shipping settings no two slow
+frames were ever back to back (longest run 1 everywhere); parked 0-4 slow of ~249 per phase; pans mostly 0-5 slow per
+3 s step, some steps with one or more pairs 50-67 ms apart. The user's bar: "If they are not next together then as
+soon as I can ride the bike and test I think we can call the work complete".
+
+The merged tilegate: background 0 everywhere; parked and 20 c/s views as before the merge (the same stale z2.2/z1.3/run
+baselines). The 160 c/s fast views varied, so desktop z8/z5 were A/B'd, pre-merge (covercheck build) against merged,
+twice each, alternating: far land worst pre 0.04%-4.7%, merged 0.1%-4.7%; geometric worst the same 11.8% in all four
+(SF14). Run-to-run noise, not a regression. The z8 20 c/s 0.16% from the full gate didn't recur (0 in all four).
