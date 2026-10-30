@@ -29,6 +29,14 @@ export interface Blow {
   readonly alive: boolean;
 }
 
+/** (round 118) Another rider or vehicle in play, as a hook sees it (the sandbox's rivals): its body and its way. */
+export interface Vehicle {
+  id: string;
+  at: V3;
+  vel: V3;
+  heading: number;
+}
+
 export interface PlayWorld {
   /** the top a hover rides: the ground, loose ground on it, or the water's surface (cells) */
   top(x: number, y: number): number;
@@ -51,6 +59,8 @@ export interface PlayWorld {
   /** a world point on the screen (CSS px), and the ground point seen under a screen point */
   project(x: number, y: number, z: number): Pt;
   groundAt(screen: Pt): Pt;
+  /** (round 118) the other riders and vehicles in play (a hook reels up alongside them); absent: none */
+  vehicles?(): Vehicle[];
 }
 
 /** The units' blows, required: the play layer's heroes shove and hold (AgentUnits implements them). */

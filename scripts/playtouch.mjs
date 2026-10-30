@@ -85,6 +85,40 @@ await run({ name: 'playtouch', kind: 'behaviour', size: '412x915', dpr: 1 }, asy
   R.check('a tap on the gear opens the tune panel', panel);
   await p.screenshot({ path: path.join(out, 'touch-tune.png') });
   await tap('⚙️');
+  // (round 118) ⛰ jumps to another hilly spot
+  const h0 = await pos();
+  await tap('⛰️');
+  await sleep(800);
+  const h1 = await pos();
+  R.check('a tap on the mountain takes the bike to other hills', Math.hypot(h1[0] - h0[0], h1[1] - h0[1]) > 20, { moved: +Math.hypot(h1[0] - h0[0], h1[1] - h0[1]).toFixed(1) });
+  // (round 118) riding, a tap on the ground beside swings the bike; a swipe cuts the rope mid-swing
+  await down(0, 90, 780);
+  for (let i = 1; i <= 6; i++) await move(0, 90, 780 - i * 12);
+  for (let k = 0; k < 20; k++) {
+    await sleep(100);
+    await move(0, 90 + (k % 2), 708);
+  }
+  const g = await p.evaluate(() => {
+    const h = window.reclaimed.play.hero;
+    const [x, y, z] = h.position();
+    const a = h.heading();
+    return window.reclaimed.core.camera.project(x + Math.cos(a) * 3 - Math.sin(a) * 6, y + Math.sin(a) * 3 + Math.cos(a) * 6, z);
+  });
+  await down(3, g[0], g[1]);
+  await sleep(40);
+  await up(3);
+  await sleep(250);
+  const mid = await p.evaluate(() => window.reclaimed.play.hero.status());
+  await down(4, 300, 400);
+  for (let i = 1; i <= 4; i++) {
+    await sleep(16);
+    await move(4, 300 + i * 20, 400);
+  }
+  await up(4);
+  await sleep(150);
+  const after = await p.evaluate(() => window.reclaimed.play.hero.status());
+  await up(0);
+  R.check('a touch tap beside swings; a touch swipe cuts the rope mid-swing', mid === 'SWING' && after !== 'SWING', { mid, after });
   // the lich, by a tap on its chip; then a tap on the ground sends it there
   await tap('lich');
   await sleep(1500);

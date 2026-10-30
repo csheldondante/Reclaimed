@@ -45,10 +45,26 @@ await run({ name: 'playtest', kind: 'behaviour', size: '412x915', dpr: 1 }, asyn
   await p.screenshot({ path: path.join(dir, 'bike-start.png') });
   const s0 = await state();
   R.log(`start ${JSON.stringify(s0)}`);
+  // (round 118) the bike starts on hills: the ground round it rises and falls
+  const relief = await p.evaluate(() => {
+    const t = window.reclaimed.play.d.api.terrain;
+    const [x, y] = window.reclaimed.play.hero.position();
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let r = 3; r <= 15; r += 3)
+      for (let k = 0; k < 12; k++) {
+        const z = t.heightAt(x + Math.cos(k * 0.52) * r, y + Math.sin(k * 0.52) * r);
+        if (z === null) continue;
+        lo = Math.min(lo, z);
+        hi = Math.max(hi, z);
+      }
+    return +(hi - lo).toFixed(1);
+  });
+  R.check('the bike starts on hills (more than 3 cells of rise and fall within 15)', relief > 3, { relief });
   // ride: the stick up the screen, boost held
   await p.evaluate(() => (window.reclaimed.play.controls.script = { stick: [0, -1], buttons: [true] }));
   let top = 0;
-  await gif('bike-ride.gif', 30, 70, async () => {
+  await gif('bike-hills.gif', 30, 70, async () => {
     const s = await state();
     top = Math.max(top, s.speed);
   });
@@ -138,6 +154,72 @@ await run({ name: 'playtest', kind: 'behaviour', size: '412x915', dpr: 1 }, asyn
   });
   R.check('a tap on the ground swings the bike round it (its way turns > 90 deg)', swung > 0 && maxTurn > 1.57, { swungFrames: swung, maxTurn: +maxTurn.toFixed(2) });
   await p.evaluate(() => (window.reclaimed.play.controls.script = { stick: [0, 0], buttons: [false] }));
+  // (round 118) the hook: a foe on the line, dragged, then reeled in by a swipe back toward the bike (the bike brought
+  // to a stop first, the foe put down beside it, so it's within the hook's reach when tapped)
+  await p.evaluate(() => (window.reclaimed.play.controls.script = { stick: [0, 0], buttons: [false] }));
+  await sleep(2500);
+  const onLine = await p.evaluate(() => {
+    const s = window.reclaimed.play;
+    const h = s.hero;
+    const [x, y, z] = h.position();
+    const a = h.heading();
+    const at = [x + Math.cos(a) * 6 - Math.sin(a) * 4, y + Math.sin(a) * 6 + Math.cos(a) * 4];
+    window.__hooked = window.reclaimed.units.spawn('raider', at, 'f-raiders', { hostile: true, health: 12, sight: 4, speed: 1, role: 'raider' });
+    return window.__hooked;
+  });
+  await sleep(700);
+  const tapUnit = (id) =>
+    p.evaluate((id) => {
+      const s = window.reclaimed.play;
+      const u = window.reclaimed.units.get(id);
+      if (!u) return false;
+      s.controls.inject({ kind: 'tap', at: window.reclaimed.core.camera.project(u.at[0], u.at[1], u.at[2] + 0.8) });
+      return true;
+    }, id);
+  await tapUnit(onLine);
+  await p.evaluate(() => (window.reclaimed.play.controls.script = { stick: [0, -1], buttons: [false] }));
+  let lineFrames = 0;
+  await gif('bike-drag.gif', 30, 50, async (i) => {
+    if ((await state()).status === 'ON THE LINE') lineFrames++;
+    if (i === 24)
+      await p.evaluate((id) => {
+        // (a swipe from the foe back toward the bike: reel it in)
+        const s = window.reclaimed.play;
+        const cam = window.reclaimed.core.camera;
+        const u = window.reclaimed.units.get(id);
+        const [x, y, z] = s.hero.position();
+        if (!u) return;
+        const from = cam.project(u.at[0], u.at[1], u.at[2]);
+        const to = cam.project(x, y, z);
+        const d = Math.hypot(to[0] - from[0], to[1] - from[1]) || 1;
+        s.controls.inject({ kind: 'flick', from, to, dir: [(to[0] - from[0]) / d, (to[1] - from[1]) / d], speed: 1500 });
+      }, onLine);
+  });
+  R.check('a tapped foe is dragged on the line', lineFrames > 5, { lineFrames });
+  // (round 118) a rival rider: tapped, the bike is reeled up alongside it
+  await p.evaluate(() => (window.reclaimed.play.controls.script = { stick: [0, 0], buttons: [false] }));
+  await p.evaluate(() => window.reclaimed.play.rival());
+  await sleep(2500);
+  await p.evaluate(() => {
+    const s = window.reclaimed.play;
+    const r = s.rivals[s.rivals.length - 1].vehicle();
+    s.controls.inject({ kind: 'tap', at: window.reclaimed.core.camera.project(r.at[0], r.at[1], r.at[2] + 0.6) });
+  });
+  let alongside = 0;
+  let nearest = Infinity;
+  await gif('bike-alongside.gif', 40, 50, async () => {
+    const st = await state();
+    if (st.status === 'ALONGSIDE') alongside++;
+    const d = await p.evaluate(() => {
+      const s = window.reclaimed.play;
+      const r = s.rivals[s.rivals.length - 1].vehicle();
+      const [x, y] = s.hero.position();
+      return Math.hypot(r.at[0] - x, r.at[1] - y);
+    });
+    nearest = Math.min(nearest, d);
+  });
+  R.check('a tapped rival reels the bike up alongside it (within 4 cells)', alongside > 5 && nearest < 4, { alongside, nearest: +nearest.toFixed(1) });
+  await p.evaluate(() => (window.reclaimed.play.controls.script = { stick: [0, 0], buttons: [false] }));
   // the lich
   await p.evaluate(() => window.reclaimed.play.choose('lich'));
   await sleep(1500);
@@ -168,5 +250,26 @@ await run({ name: 'playtest', kind: 'behaviour', size: '412x915', dpr: 1 }, asyn
   R.log(`floated ${floated}; held now ${JSON.stringify(held)}; slams ${slammed}`);
   R.check('a tap on a raider floated it', floated !== null, { floated });
   await p.screenshot({ path: path.join(dir, 'lich.png') });
+  // (round 118) the life drain: a double tap floats the foe up before the lich's face
+  const victim = await p.evaluate(() => {
+    const s = window.reclaimed.play;
+    s.hero.dropAll();
+    const [x, y] = s.hero.position();
+    return window.reclaimed.units.spawn('raider', [x + 4, y + 2], 'f-raiders', { hostile: true, health: 30, sight: 2, speed: 1, role: 'raider' });
+  });
+  await sleep(1500);
+  let faced = 0;
+  let rose = -Infinity;
+  await gif('lich-drain.gif', 30, 60, async (i) => {
+    if (i === 1 || i === 2) await tapUnit(victim);
+    const r = await p.evaluate((id) => {
+      const s = window.reclaimed.play;
+      const u = window.reclaimed.units.get(id);
+      return { st: s.hero.status(), dz: u ? u.at[2] - s.hero.position()[2] : null };
+    }, victim);
+    if (/FACE TO FACE/.test(r.st)) faced++;
+    if (r.dz !== null) rose = Math.max(rose, r.dz);
+  });
+  R.check('a double tap floats the foe up before the lich and drains it', faced > 5 && rose > -0.5, { faced, rose: +rose.toFixed(2) });
   await p.evaluate(() => (window.reclaimed.play.controls.script = null));
 });

@@ -13711,3 +13711,36 @@ hairpins and posts to swing round. In the browser (scripts/playtest.mjs): the wa
 swing at 79 km/h; C:/Projects/shots88/play/bike-hook.gif. A bug the browser found that Node didn't: the window's slides
 mid-swing left the anchor behind (the bike was shifted, the anchor wasn't) — BikeHero.shift moves the anchor and the
 blade's trail; a test for it (heroes.test.ts, 65 tests now).
+
+## 2026-10-30 — round 118 (`play`): the user's first ride — a faster bike on hills, the hook cut and pulled, riding alongside, the drain lifts (PL11-PL14)
+
+The user, after playing the sandbox on the phone (DECISIONS round 118): "I want to bike to be faster and to try on hills
+... can you swipe to cut it and release early? It would be cool to pull enemies in or drag them that way too or to pull
+up along other vehicles ... I do want the life drain to float them up in front of the lich".
+
+- **Faster** (controllers/hoverbike.ts BIKE_FASTER; the core's tested BIKE untouched): cruise 22 → 32 cells/s, thrust
+  30 → 46 cells/s², boost top 32 → 46 (thrust 45 → 70), downhill top 34 → 50. In the browser: top 45.9 cells/s boosted
+  (was 31.9). The sliders' ranges widened (cruise to 90, thrust to 160, boost top to 120). The camera pulls back 0.5 (0.4)
+  at full speed and leads 0.5 s (0.35) so what's coming is on screen in time.
+- **A ramp fix the faster bike found**: `carry` measured the slope by a central difference a cell either side, which at
+  a kicker's lip looked past it, saw the drop and threw nothing at the very step it should; it reads the cell just
+  climbed now (the test that caught it: the steep kicker at 32 cells/s).
+- **Hills** (play/sandbox/hills.ts findHills, pure, tested): the hilliest rideable spot within reach — candidates every
+  8 cells, each judged by the slopes round it steep enough to launch off but under the bike's climb, and its relief up to
+  12 cells, walls counted against. From heights alone, since the terrain track's contract isn't on places yet. The bike
+  starts there; ⛰ goes to another (30+ cells away). In the browser: 8 cells of rise and fall round the start.
+- **The hook rebuilt as its own piece** (heroes/hook.ts, so other riders can carry it): a swipe while hooked cuts the
+  rope — a swing ends with its momentum, a dragged foe flies off as it was going; a tapped foe is held on the line and
+  dragged behind at the rope's length, scraped when fast and swung into others (the blow just ahead of it, sparing
+  itself), and a swipe back toward the bike reels it in (the old yank); a tapped vehicle reels the bike up alongside
+  it, its speed matched, till cut. After a swing the thumb's stick is read turned by what the swing turned, till it's
+  let go — holding the stick the old way had hauled the bike straight back into an Akira slide.
+- **A rival rider** (play/sandbox/rival.ts, 🏁): the same drive under an autopilot lapping a 40-cell circle that passes
+  the hero, at 0.6 of the cruise — steering by the velocity it wants (along the circle, back toward it when off), because
+  steering at a point ahead drifted it out of its lap with the drive's momentum. It's a vehicle in play
+  (`PlayWorld.vehicles`, new and optional), not a unit: hooks see it, enemies don't. The seed of race rivals (PL7).
+- **The drain** (lich.ts SOUL): the victim eases up from where it was (0.8 s, smoothstep) to 1.6 cells before the lich,
+  its feet at the lich's face — hung plainly up in the air (its middle at the face, the first try, read as standing beside it) — bobbing; the lich turns to it.
+- Tests: 75 in src/play (hook drag/reel/cut, alongside, swing cut keeps momentum, no slide after a swing, hills, rival,
+  drain). Browser (scripts/playtest.mjs, scripts/playtouch.mjs): GIFs bike-hills, bike-drag, bike-alongside, lich-drain
+  in C:/Projects/shots88/play/.

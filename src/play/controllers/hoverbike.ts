@@ -30,15 +30,22 @@ export const BIKE_WEAPONS = {
   assist: 1,
 };
 
+/**
+ * (round 118) Faster than the slice's bike — the user, after riding it on the phone: "I want to bike to be faster". Cruise
+ * 22 → 32 cells/s, thrust 30 → 46, boost top 32 → 46 (its thrust 45 → 70), downhill top 34 → 50; the drag the same, so it
+ * still coasts and carries momentum. The core's BIKE (core/bike.ts, the slice's tested numbers) stays as it was.
+ */
+export const BIKE_FASTER = { accel: 46, max: 32, limit: 50, boost: 70, boostMax: 46 };
+
 export type BikeParams = BikeTuning & typeof BIKE_WEAPONS;
-export const BIKE_DEFAULTS: BikeParams = { ...BIKE, ...BIKE_WEAPONS };
+export const BIKE_DEFAULTS: BikeParams = { ...BIKE, ...BIKE_FASTER, ...BIKE_WEAPONS };
 
 const P = (id: keyof BikeParams, label: string, min: number, max: number, step: number, group: string, help?: string): ParamSpec => ({ id, label, min, max, step, group, help });
 
 export const BIKE_PARAMS: ParamSpec[] = [
-  P('accel', 'thrust', 5, 80, 1, 'drive', 'cells/s² at full stick'),
-  P('max', 'cruise', 5, 50, 1, 'drive', 'cells/s thrust adds speed to'),
-  P('limit', 'top (downhill)', 10, 70, 1, 'drive'),
+  P('accel', 'thrust', 5, 160, 1, 'drive', 'cells/s² at full stick'),
+  P('max', 'cruise', 5, 90, 1, 'drive', 'cells/s thrust adds speed to'),
+  P('limit', 'top (downhill)', 10, 120, 1, 'drive'),
   P('drag', 'drag', 0, 2, 0.05, 'drive'),
   P('coastDrag', 'coast drag', 0, 4, 0.1, 'drive'),
   P('slope', 'slope pull', 0, 1.5, 0.05, 'drive', 'share of gravity along the slope'),
@@ -49,8 +56,8 @@ export const BIKE_PARAMS: ParamSpec[] = [
   P('launchMax', 'launch max', 0, 40, 1, 'air', 'cells/s up'),
   P('launchHeight', 'launch height', 0.5, 10, 0.5, 'air'),
   P('carry', 'ramp carry', 0, 1.5, 0.05, 'air', 'share of a climb rise speed it keeps over the lip (0: the old slice drive)'),
-  P('boost', 'boost thrust', 0, 120, 1, 'boost'),
-  P('boostMax', 'boost top', 10, 80, 1, 'boost'),
+  P('boost', 'boost thrust', 0, 220, 1, 'boost'),
+  P('boostMax', 'boost top', 10, 120, 1, 'boost'),
   P('boostTime', 'tank (s)', 0.2, 6, 0.1, 'boost'),
   P('refill', 'refill /s', 0, 2, 0.05, 'boost'),
   P('climb', 'climb slope', 0.3, 4, 0.1, 'terrain', 'rise over run it rides up'),

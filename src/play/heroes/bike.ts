@@ -25,6 +25,7 @@ import type { ButtonLook, Pad, PlayInput } from '../input/types';
 import type { PlayWorld } from '../world';
 import { MAT } from '../../world/materials';
 import { PlayHero, type Hit } from './base';
+import { Hook } from './hook';
 
 /** The swing's length (s), the share it cuts in, the hand's height (cells), the blade's width; read-back lead (s). */
 export const SLASH = { time: 0.3, active: [0.3, 0.75], hand: 1.1, width: 0.35, perSpeed: 0.25, lead: 0.08 };
@@ -48,14 +49,14 @@ export class BikeHero extends PlayHero {
   readonly pad: Pad = {
     move: 'stick',
     buttons: [{ icon: '🚀', name: 'boost', held: true }],
-    hint: 'Left thumb: ride · hold BOOST (Space) · swipe beside the bike: slash · tap a foe: hook it in · tap the ground: swing round it · hold a drag: lance · haul back at speed: slide',
+    hint: 'Left thumb: ride · hold BOOST (Space) · swipe beside the bike: slash · tap a foe: on the line (swipe back: reel it in) · tap the ground: swing round it · tap a rider: pull up alongside · swipe: cut the line · hold a drag: lance',
   };
   readonly camera: HeroCamera = { zoom: 34, behind: Math.PI / 6, firm: Math.PI / 4 };
   private swing: { side: 1 | -1; yaw: number; pitch: number; reach: number; t: number; plan: PassPlan | null; cut: Set<number>; rec: IntentRecord } | null = null;
   private swingT = 0;
   private lanceA: number | null = null;
-  /** the hook: swinging round an anchor (where, the rope's length, how long, how far round), or a yanked enemy's rope for a moment */
-  private hook: { kind: 'anchor'; at: [number, number]; len: number; t: number; swept: number; a: number } | { kind: 'yank'; id: number; t: number } | null = null;
+  /** the grappling hook (heroes/hook.ts): a swing, a foe on the line, alongside a vehicle */
+  readonly hook: Hook;
   /** the blade's sweep, sampled each step it's out (base, tip, when) */
   private trail: { base: V3; tip: V3; t: number }[] = [];
   /** the last slash, for the debug line */
@@ -70,6 +71,7 @@ export class BikeHero extends PlayHero {
   constructor(world: PlayWorld, at: V2, params: BikeParams = { ...BIKE_DEFAULTS }) {
     super('hover rider', world, params, 10);
     this.b = makeBike(at[0], at[1], world.top, this.tuning());
+    this.hook = new Hook(this.b, world, () => this.p);
   }
 
   private get p(): BikeParams {
@@ -91,6 +93,9 @@ export class BikeHero extends PlayHero {
   speed(): number {
     return speedOf(this.b);
   }
+  profileClimb(): number {
+    return this.p.climb;
+  }
   fast(): number {
     return Math.min(1, speedOf(this.b) / Math.max(this.p.limit, this.p.boostMax));
   }
@@ -98,6 +103,7 @@ export class BikeHero extends PlayHero {
     Object.assign(this.b, makeBike(at[0], at[1], this.world.top, this.tuning()));
     this.swing = null;
     this.lanceA = null;
+    this.hook.cut();
   }
   shift(dx: number, dy: number, dz: number): void {
     this.b.x += dx;
@@ -105,7 +111,7 @@ export class BikeHero extends PlayHero {
     this.b.z += dz;
     // (what's kept in window coordinates moves with it: the hook's anchor, the blade's trail — a slide mid-swing had
     // left the anchor behind, and the rope snapped the bike back across the window)
-    if (this.hook?.kind === 'anchor') this.hook.at = [this.hook.at[0] + dx, this.hook.at[1] + dy];
+    this.hook.shift(dx, dy, dz);
     for (const r of this.trail) {
       r.base = [r.base[0] + dx, r.base[1] + dy, r.base[2] + dz];
       r.tip = [r.tip[0] + dx, r.tip[1] + dy, r.tip[2] + dz];
@@ -123,98 +129,21 @@ export class BikeHero extends PlayHero {
     const b = this.b;
     const p = this.p;
     this.hitT += dt;
-    for (const act of input.acts) if (act.kind === 'tap' && !act.self) this.throwHook(act.at, act.screen);
-    // (swinging: the stick's push turned along the swing, so the rope, not the thumb, does the turning; no slide)
-    let stick = input.dir;
-    const hk = this.hook;
-    if (hk?.kind === 'anchor') {
-      const m = Math.hypot(stick[0], stick[1]);
-      const t = this.tangent(hk);
-      stick = [t[0] * m, t[1] * m];
-      b.slide = 0;
-    }
+    for (const act of input.acts) if (act.kind === 'tap' && !act.self) this.hook.tap(act.at, act.screen, this.targets(b.x, b.y, p.hookRange + 2));
+    // (a swipe while hooked is the hook's: it cuts the line, or reels a foe in — not a slash)
+    const acts = input.acts.filter((a) => !(a.kind === 'flick' && !a.self && this.hook.flick(a.from, a.dir)));
+    const stick = this.hook.stick(input.dir);
     stepBike(b, stick, dt, this.world.top, this.world.bounds, this.tuning(), !!input.buttons[0]);
-    this.swingRope(dt);
+    this.hook.step(dt, hits);
     if (b.air > this.bestAir) this.bestAir = b.air;
     this.air(dt);
     const sp = speedOf(b);
     if (sp > p.ramMin) hits.push({ at: [b.x, b.y], z: b.z + 0.5, radius: RAM_RADIUS, damage: (sp - p.ramMin) * p.ramDamage * dt * 10, push: sp * p.ramPush, dir: [b.vx / sp, b.vy / sp] });
     if (b.slide > 0) this.skid(dt);
     this.swingT = Math.max(0, this.swingT - dt);
-    for (const act of input.acts) if (act.kind === 'flick' && !act.self && this.swingT <= 0) this.startSwing(act.from);
+    for (const act of acts) if (act.kind === 'flick' && !act.self && this.swingT <= 0) this.startSwing(act.from);
     this.swingBlade(dt, hits);
     this.couch(input, dt, hits);
-  }
-
-  /** A tap: an enemy under it within reach is yanked in; else the ground there, within reach, is an anchor to swing round; a tap while swinging lets go. */
-  private throwHook(at: Pt, screen: Pt): void {
-    const b = this.b;
-    const p = this.p;
-    if (p.hookRange <= 0) return;
-    if (this.hook?.kind === 'anchor') {
-      this.hook = null;
-      return;
-    }
-    // (an enemy as it's seen under the finger: its middle projected, within 48 px)
-    let best: { id: number; at: V3 } | null = null;
-    let bd = 48;
-    for (const e of this.targets(b.x, b.y, p.hookRange)) {
-      const s = this.world.project(e.at[0], e.at[1], e.at[2] + e.height * 0.5);
-      const d = Math.hypot(s[0] - screen[0], s[1] - screen[1]);
-      if (d < bd) [best, bd] = [{ id: e.id, at: e.at }, d];
-    }
-    if (best) {
-      // the yank: thrown at where the bike will be when it lands, a lob over the gap (the agents fall at 20 cells/s²)
-      const T = p.hookYank;
-      const to: V3 = [b.x + b.vx * T, b.y + b.vy * T, b.z + 0.5];
-      this.world.units.release(best.id, [(to[0] - best.at[0]) / T, (to[1] - best.at[1]) / T, (to[2] - best.at[2] + 0.5 * 20 * T * T) / T]);
-      this.hook = { kind: 'yank', id: best.id, t: T };
-      this.shake = Math.max(this.shake, 0.3);
-      return;
-    }
-    const d = Math.hypot(at[0] - b.x, at[1] - b.y);
-    if (d < 1.5 || d > p.hookRange) return;
-    this.hook = { kind: 'anchor', at: [at[0], at[1]], len: d, t: 0, swept: 0, a: Math.atan2(b.y - at[1], b.x - at[0]) };
-  }
-
-  /** The way round the anchor the bike is going (unit, perpendicular to the rope, on its velocity's side). */
-  private tangent(h: { at: [number, number] }): Pt {
-    const b = this.b;
-    const rx = b.x - h.at[0];
-    const ry = b.y - h.at[1];
-    const l = Math.hypot(rx, ry) || 1;
-    const t: Pt = [-ry / l, rx / l];
-    return t[0] * b.vx + t[1] * b.vy >= 0 ? t : [-t[0], -t[1]];
-  }
-
-  /** The rope: a swing keeps the bike within its length of the anchor (what pulls outward is taken off), until its time or its angle is up. */
-  private swingRope(dt: number): void {
-    const h = this.hook;
-    if (!h) return;
-    if (h.kind === 'yank') {
-      h.t -= dt;
-      if (h.t <= 0) this.hook = null;
-      return;
-    }
-    const b = this.b;
-    h.t += dt;
-    const rx = b.x - h.at[0];
-    const ry = b.y - h.at[1];
-    const r = Math.hypot(rx, ry) || 1;
-    const [ux, uy] = [rx / r, ry / r];
-    if (r > h.len) {
-      b.x = h.at[0] + ux * h.len;
-      b.y = h.at[1] + uy * h.len;
-      const out = b.vx * ux + b.vy * uy;
-      if (out > 0) {
-        b.vx -= out * ux;
-        b.vy -= out * uy;
-      }
-    }
-    const a = Math.atan2(b.y - h.at[1], b.x - h.at[0]);
-    h.swept += Math.abs(Math.atan2(Math.sin(a - h.a), Math.cos(a - h.a)));
-    h.a = a;
-    if (h.t > this.p.hookTime || h.swept > this.p.hookTurn) this.hook = null;
   }
 
   /** What it does to the air: its wake, the downwash pulsed under it, dust, a landing's and a crash's slam. */
@@ -405,13 +334,7 @@ export class BikeHero extends PlayHero {
       out.push({ voxels: vox.map((v) => ({ at: [v.at[0], -v.at[1], v.at[2]], mat: v.mat })), at: [b.x, b.y, b.z], q: [0, 0, 0, 1], flash: 1, size: TRAIL.size });
     }
     // the rope, hand to the anchor or to the enemy yanked
-    const hk = this.hook;
-    let end: V3 | null = null;
-    if (hk?.kind === 'anchor') end = [hk.at[0], hk.at[1], this.world.floor(hk.at[0], hk.at[1]) + 0.2];
-    else if (hk?.kind === 'yank') {
-      const u = this.world.units.get(hk.id);
-      if (u) end = [u.at[0], u.at[1], u.at[2] + 0.8];
-    }
+    const end = this.hook.end();
     if (end) {
       const n = Math.min(80, Math.ceil(Math.hypot(end[0] - hand[0], end[1] - hand[1], end[2] - hand[2]) / 0.35));
       const vox: { at: V3; mat: number }[] = [];
@@ -434,8 +357,8 @@ export class BikeHero extends PlayHero {
     if (b.crashed > 0) return 'CRASH!';
     if (b.slide > 0) return 'SLIDE';
     if (this.hitT < 0.6) return 'HIT!';
-    if (this.hook?.kind === 'anchor') return 'SWING';
-    if (this.hook?.kind === 'yank') return 'HOOKED';
+    const hs = this.hook.status();
+    if (hs) return hs;
     return `${Math.round(speedOf(b) * 3.6)} km/h${b.air > 0.25 ? ` · AIR ${b.air.toFixed(1)} s` : ''}${this.lanceA !== null ? ' · LANCE' : ''}`;
   }
 }

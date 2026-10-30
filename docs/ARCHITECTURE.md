@@ -2103,10 +2103,10 @@ Inside (each its own concern):
 |---|---|---|
 | core/ | the drives (bike.ts glide, levitate.ts), planners (intercept.ts pass, fling.ts), aim.ts, gestures.ts (Stroke), intent.ts (Layer B's types and log) | pure functions of state + input + a height function: Node-testable, GPU-portable (flat Params) |
 | controllers/ | each controller's data: ParamSpec list, defaults, `profile(params)` | the generators' terms derived from the numbers the controller runs on |
-| heroes/ | base.ts (the engine's Hero contract, health, blows as AreaHits, targets with velocity), bike.ts, lich.ts, make.ts | a controller's behaviour: its drive + abilities, Layer A input → Layer B intent → Layer C action |
+| heroes/ | base.ts (the engine's Hero contract, health, blows as AreaHits, targets with velocity), bike.ts, hook.ts (the grappling hook, round 118), lich.ts, make.ts | a controller's behaviour: its drive + abilities, Layer A input → Layer B intent → Layer C action |
 | input/ | types.ts (PlayInput: stick, buttons, drag, acts in the world), controls.ts (DOM: floating stick, gestures, buttons), read.ts (screen → ground) | the thumbs separated from what they mean |
 | draw/ | shapes.ts (voxel models, quaternions; pure), voxels.ts (Renderer.addVoxels instance buffer) | a hero is a Part list: a mesh can replace voxels later without the heroes changing |
-| sandbox/ | the viewer: hero switch, live tune panel, spawn, respawn, the chase camera, the HUD | where the user tunes fun |
+| sandbox/ | the viewer: hero switch, live tune panel, spawn, respawn, the chase camera, the HUD; hills.ts (where to ride, from heights), rival.ts (a rival rider: a vehicle in play, `PlayWorld.vehicles`) | where the user tunes fun |
 
 Shared-system tweak: the Units contract's optional `strike` / `hold` / `release` / `maxHeld` (AgentUnits implements
 them over Agents.hit/hold/launch); the play world requires them.

@@ -7,7 +7,7 @@
 import type { AreaHit, UnitId, UnitView, V3 } from '../api/contracts/units';
 import type { Pt } from './core/gestures';
 import type { Act, Drag, PlayInput } from './input/types';
-import type { Blow, PlayWorld } from './world';
+import type { Blow, PlayWorld, Vehicle } from './world';
 
 export const PX = 20;
 
@@ -29,7 +29,7 @@ export interface TestWorld extends PlayWorld {
   tick(dt: number): void;
 }
 
-export function testWorld(height: (x: number, y: number) => number, opts: { water?: (x: number, y: number) => number; maxHeld?: number } = {}): TestWorld {
+export function testWorld(height: (x: number, y: number) => number, opts: { water?: (x: number, y: number) => number; maxHeld?: number; vehicles?: () => Vehicle[] } = {}): TestWorld {
   const list: FakeUnit[] = [];
   const strikes: AreaHit[] = [];
   const craters: { x: number; y: number; r: number }[] = [];
@@ -79,6 +79,7 @@ export function testWorld(height: (x: number, y: number) => number, opts: { wate
     crater: (x, y, r) => void craters.push({ x, y, r }),
     project: (x, y, z) => [x * PX, (y - z) * PX],
     groundAt: (s) => [s[0] / PX, s[1] / PX],
+    vehicles: opts.vehicles,
     add(at, health = 3) {
       const id = next++;
       list.push({ id, at: [at[0], at[1], height(at[0], at[1])], vel: [0, 0, 0], health, held: false });

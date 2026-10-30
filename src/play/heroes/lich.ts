@@ -48,7 +48,14 @@ export const PULL = { reach: 10, cone: 0.6 };
 /** Telekinesis: hung `height` over the ground `lift` px above the thumb, its spring damped `damp` of critical; let go, `thumb` of the thumb's speed and `up` more; faster than `smack` it hits. */
 export const CARRY = { height: 1.5, lift: 90, damp: 0.6, thumb: 0.4, up: 3, smack: 7, reach: 1.5, push: 0.6, every: 0.4, wall: 0.35 };
 /** Face to face: held `ahead` before the lich at its face's height; a beat every `every` s. */
-export const SOUL = { ahead: 1.4, face: 1.4, every: 0.25 };
+/**
+ * Face to face (round 118, the user: "I do want the life drain to float them up in front of the lich"): the victim
+ * rises from where it stood to `ahead` cells before the lich, its feet at the lich's face (`face` over the lich's
+ * feet: hung up in the air, plainly off the ground — its middle at the face read as standing beside it in the first
+ * browser run), over `rise` s, eased, and hangs there bobbing while its soul's drawn out, a beat every `every` s; the lich
+ * turns to it.
+ */
+export const SOUL = { ahead: 1.8, face: 1.4, every: 0.25, rise: 0.8, bob: 0.12 };
 /** The faint downdraft under it (a visual in place of a shadow): wind (cells/s) well under what moves enemies. */
 export const DOWNDRAFT = { radius: 1.8, strength: 2.5, motes: 6 };
 
@@ -79,7 +86,7 @@ export class LichHero extends PlayHero {
   private draft: Blow | null = null;
   private swirl: Blow | null = null;
   private carried: { id: UnitId; at: V3; vel: V3; want: V3 | null; wantVel: V3; struck: Map<number, number> } | null = null;
-  private soul: { id: UnitId; t: number } | null = null;
+  private soul: { id: UnitId; t: number; from: V3; k: number } | null = null;
   private lastTap: { id: UnitId; t: number; screen: Pt } | null = null;
   private slamT = 0;
   private down: boolean[] = [];
@@ -345,7 +352,11 @@ export class LichHero extends PlayHero {
   private faceToFace(id: UnitId): void {
     if (this.soul && this.soul.id !== id) this.drop(this.soul.id);
     this.forget(id);
-    this.soul = { id, t: SOUL.every };
+    const u = this.world.units.get(id);
+    if (!u) return;
+    // (the lich turns to it; it rises from where it stands)
+    this.b.heading = Math.atan2(u.at[1] - this.b.y, u.at[0] - this.b.x);
+    this.soul = { id, t: SOUL.every, from: [...u.at], k: 0 };
   }
 
   /** Face to face: held before the lich, its soul drawn out into the lich, till it's ash. */
@@ -360,7 +371,12 @@ export class LichHero extends PlayHero {
     }
     const [c, n] = [Math.cos(b.heading), Math.sin(b.heading)];
     const face = b.z + SOUL.face;
-    if (!this.world.units.hold(s.id, [b.x + c * SOUL.ahead, b.y + n * SOUL.ahead, face - UNIT_HEIGHT * 0.75])) {
+    // (eased up from where it stood to before the lich's face, its middle there; then a slow bob)
+    s.k = Math.min(1, s.k + dt / SOUL.rise);
+    const k = s.k * s.k * (3 - 2 * s.k);
+    const want: V3 = [b.x + c * SOUL.ahead, b.y + n * SOUL.ahead, face + Math.sin(this.t * 2.2) * SOUL.bob];
+    const at: V3 = [s.from[0] + (want[0] - s.from[0]) * k, s.from[1] + (want[1] - s.from[1]) * k, s.from[2] + (want[2] - s.from[2]) * k];
+    if (!this.world.units.hold(s.id, at)) {
       this.soul = null;
       return;
     }

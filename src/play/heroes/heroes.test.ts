@@ -14,6 +14,19 @@ const run = (n: number, f: (i: number) => void) => {
 const flat = () => 2;
 
 describe('hoverbike hero', () => {
+  it('is the faster bike of round 118: cruises past 28 cells/s, boosts past 40', () => {
+    const w = testWorld(flat);
+    const bike = new BikeHero(w, [50, 50]);
+    run(300, () => bike.update(DT, { move: [1, 0], input: input({ dir: [1, 0] }) }));
+    expect(bike.speed()).toBeGreaterThan(28);
+    let top = 0;
+    run(90, () => {
+      bike.update(DT, { move: [1, 0], input: input({ dir: [1, 0], buttons: [true] }) });
+      top = Math.max(top, bike.speed());
+    });
+    expect(top).toBeGreaterThan(40);
+  });
+
   it('rides to its cruise speed on the stick, faster with boost held', () => {
     const w = testWorld(flat);
     const bike = new BikeHero(w, [50, 50]);
@@ -100,17 +113,68 @@ describe('hoverbike hero', () => {
     expect(bike.parts().find((p) => p.size !== undefined)).toBeUndefined();
   });
 
-  it('the hook: a tap on an enemy yanks it in toward the bike', () => {
+  it('the hook: a tap on a foe puts it on the line; riding on drags it behind at the rope length', () => {
     const w = testWorld(flat);
     const bike = new BikeHero(w, [20, 50]);
-    const id = w.add([28, 56]);
-    bike.update(DT, { move: [0, 0], input: input({ acts: [tap([28, 56], 2)] }) });
-    run(3, () => bike.update(DT, { move: [0, 0], input: input() }));
+    const id = w.add([26, 54]);
+    bike.update(DT, { move: [0, 0], input: input({ acts: [tap([26, 54], 2)] }) });
+    expect(bike.status()).toBe('ON THE LINE');
+    run(120, () => bike.update(DT, { move: [1, 0], input: input({ dir: [1, 0] }) }));
     const u = w.list.find((v) => v.id === id)!;
-    // (thrown at the bike: its velocity points back at it, and up)
+    const [x, y] = bike.position();
+    expect(u.held).toBe(true);
+    expect(u.at[0]).toBeGreaterThan(40);
+    expect(Math.hypot(u.at[0] - x, u.at[1] - y)).toBeLessThan(Math.hypot(6, 4) + 0.5);
+    // (dragged fast, it's scraped)
+    expect(u.health).toBeLessThan(3);
+  });
+
+  it('the hook: a swipe back toward the bike reels the foe in; a swipe away cuts it loose, flung as it went', () => {
+    const reel = () => {
+      const w = testWorld(flat);
+      const bike = new BikeHero(w, [20, 50]);
+      const id = w.add([28, 56]);
+      bike.update(DT, { move: [0, 0], input: input({ acts: [tap([28, 56], 2)] }) });
+      run(3, () => bike.update(DT, { move: [0, 0], input: input() }));
+      // (from the foe, toward the bike)
+      bike.update(DT, { move: [0, 0], input: input({ acts: [flick([28, 56], [-0.8, -0.6])] }) });
+      return w.list.find((v) => v.id === id)!;
+    };
+    const u = reel();
+    expect(u.held).toBe(false);
     expect(u.vel[0]).toBeLessThan(0);
     expect(u.vel[1]).toBeLessThan(0);
     expect(u.vel[2]).toBeGreaterThan(0);
+    const w = testWorld(flat);
+    const bike = new BikeHero(w, [20, 50]);
+    const id = w.add([26, 54]);
+    bike.update(DT, { move: [0, 0], input: input({ acts: [tap([26, 54], 2)] }) });
+    run(90, () => bike.update(DT, { move: [1, 0], input: input({ dir: [1, 0] }) }));
+    bike.update(DT, { move: [1, 0], input: input({ dir: [1, 0], acts: [flick([bike.position()[0], 60], [1, 0])] }) });
+    const f = w.list.find((v) => v.id === id)!;
+    expect(f.held).toBe(false);
+    expect(f.vel[0]).toBeGreaterThan(5);
+    expect(bike.status()).not.toBe('ON THE LINE');
+  });
+
+  it('the hook: a tap on another rider reels the bike up alongside it', () => {
+    let rx = 40;
+    const rival = () => [{ id: 'r1', at: [rx, 62, 2] as [number, number, number], vel: [20, 0, 0] as [number, number, number], heading: 0 }];
+    const w = testWorld(flat, { vehicles: rival });
+    const bike = new BikeHero(w, [30, 50]);
+    run(30, () => {
+      bike.update(DT, { move: [1, 0], input: input({ dir: [1, 0] }) });
+      rx += 20 * DT;
+    });
+    bike.update(DT, { move: [1, 0], input: input({ dir: [1, 0], acts: [tap([rx, 62], 2.6)] }) });
+    expect(bike.status()).toBe('ALONGSIDE');
+    run(120, () => {
+      bike.update(DT, { move: [1, 0], input: input({ dir: [1, 0] }) });
+      rx += 20 * DT;
+    });
+    const [x, y] = bike.position();
+    expect(Math.hypot(x - rx, y - 62)).toBeLessThan(3.5);
+    expect(Math.abs(bike.b.vx - 20)).toBeLessThan(4);
   });
 
   it('the hook: a tap on the ground ahead and to one side swings the bike round it, a turn far tighter than it carves', () => {
@@ -128,6 +192,42 @@ describe('hoverbike hero', () => {
     };
     expect(turned(false)).toBeLessThan(0.2);
     expect(turned(true)).toBeGreaterThan(1.2);
+  });
+
+  it('a swipe mid-swing cuts the rope: it flies on with the momentum it had', () => {
+    const w = testWorld(flat);
+    const bike = new BikeHero(w, [20, 50]);
+    run(90, () => bike.update(DT, { move: [1, 0], input: input({ dir: [1, 0] }) }));
+    const [x, y] = bike.position();
+    bike.update(DT, { move: [1, 0], input: input({ dir: [1, 0], acts: [tap([x + 4, y + 6], 2)] }) });
+    run(15, () => bike.update(DT, { move: [1, 0], input: input({ dir: [1, 0] }) }));
+    const sp = bike.speed();
+    const way = Math.atan2(bike.b.vy, bike.b.vx);
+    bike.update(DT, { move: [1, 0], input: input({ dir: [1, 0], acts: [flick([x, y - 3], [0, -1])] }) });
+    expect(bike.status()).not.toBe('SWING');
+    expect(bike.speed()).toBeGreaterThan(sp * 0.9);
+    const d = Math.atan2(bike.b.vy, bike.b.vx) - way;
+    expect(Math.abs(Math.atan2(Math.sin(d), Math.cos(d)))).toBeLessThan(0.15);
+  });
+
+  it('after a swing, the stick still held the old way steers on the new way: no slide back', () => {
+    const w = testWorld(flat);
+    const bike = new BikeHero(w, [20, 50]);
+    run(90, () => bike.update(DT, { move: [1, 0], input: input({ dir: [1, 0] }) }));
+    const [x, y] = bike.position();
+    bike.update(DT, { move: [1, 0], input: input({ dir: [1, 0], acts: [tap([x + 4, y + 6], 2)] }) });
+    let slid = false;
+    run(150, () => {
+      bike.update(DT, { move: [1, 0], input: input({ dir: [1, 0] }) });
+      if (bike.b.slide > 0) slid = true;
+    });
+    expect(slid).toBe(false);
+    // (going on the swing's new way, well turned from +x)
+    expect(Math.abs(Math.atan2(bike.b.vy, bike.b.vx))).toBeGreaterThan(1.2);
+    // let go of the stick and push it again: plain again
+    bike.update(DT, { move: [0, 0], input: input() });
+    run(120, () => bike.update(DT, { move: [1, 0], input: input({ dir: [1, 0] }) }));
+    expect(Math.abs(Math.atan2(bike.b.vy, bike.b.vx))).toBeLessThan(0.5);
   });
 
   it('a window slide mid-swing moves the anchor with the bike: the swing carries on the same', () => {
@@ -217,6 +317,28 @@ describe('lich hero', () => {
     lich.update(DT, { move: [0, 0], input: input() });
     expect(w.list[0].held).toBe(false);
     expect(lich.held()).not.toContain(id);
+  });
+
+  it('a double tap on a foe floats it up before the lich, hung at the height of the lich face, rising, not snapping', () => {
+    const w = testWorld(flat);
+    const lich = new LichHero(w, [20, 20]);
+    const id = w.add([24, 22], 20);
+    lich.update(DT, { move: [0, 0], input: input({ acts: [tap([24, 22], 2)] }) });
+    lich.update(DT, { move: [0, 0], input: input({ acts: [tap([24, 22], 2)] }) });
+    const u = () => w.list.find((v) => v.id === id)!;
+    lich.update(DT, { move: [0, 0], input: input() });
+    // (a frame in: still near where it was floated by the first tap, not snapped before the lich)
+    expect(Math.hypot(u().at[0] - 24, u().at[1] - 22)).toBeLessThan(0.5);
+    run(60, () => lich.update(DT, { move: [0, 0], input: input() }));
+    const [x, y, z] = lich.position();
+    const f = u();
+    expect(lich.status()).toMatch(/FACE TO FACE/);
+    // (before it: 1-2.4 cells off, the way the lich now faces; its feet at the lich face height)
+    const d = Math.hypot(f.at[0] - x, f.at[1] - y);
+    expect(d).toBeGreaterThan(1);
+    expect(d).toBeLessThan(2.4);
+    expect(Math.abs(f.at[2] - (z + 1.4))).toBeLessThan(0.3);
+    expect(f.health).toBeLessThan(20);
   });
 
   it('a flick away with nothing held is a force push: a cone of shove that way', () => {

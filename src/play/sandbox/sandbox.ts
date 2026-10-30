@@ -23,6 +23,9 @@ import { Controls } from '../input/controls';
 import { readInput } from '../input/read';
 import { library } from '../library';
 import { makePlayWorld, type PlayWorld } from '../world';
+import { findHills } from './hills';
+import { LAP, Rival } from './rival';
+import { BIKE_DEFAULTS } from '../controllers/hoverbike';
 import './sandbox.css';
 
 export interface SandboxDeps {
@@ -41,7 +44,8 @@ export interface SandboxDeps {
 }
 
 /** how far the camera pulls back at full speed (a share of the hero's zoom), how far it leads (s of travel), how quickly it follows (1/s) */
-const CAM = { back: 0.4, lead: 0.35, follow: 6, zoomEase: 2, shake: 0.35 };
+// (round 118: the faster bike — pulled back further and leading further ahead, so what's coming is on screen in time)
+const CAM = { back: 0.5, lead: 0.5, leadMax: 12, follow: 6, zoomEase: 2, shake: 0.35 };
 /** raiders spawned at a time, how far ahead (cells) */
 const SPAWN = { count: 4, ahead: 18, spread: 4 };
 const STORE = 'reclaimed.play.params.';
@@ -59,6 +63,8 @@ export class PlaySandbox {
   private deadT = 0;
   private zoom = 0;
   private spawned: number[] = [];
+  /** (round 118) rival riders lapping near where they were called: something to hook onto and ride alongside */
+  readonly rivals: Rival[] = [];
   private keepFresh: (() => void) | null = null;
   /** the main thread's cost of the play layer each frame (ms: its input, hero, draw writes; scripts/perf/play.mjs) */
   readonly stats = { frames: 0, ms: 0, max: 0 };
@@ -75,6 +81,7 @@ export class PlaySandbox {
     };
     d.units.watch(actor);
     this.draw = new VoxelDraw(d.device, d.renderer);
+    this.world.vehicles = () => this.rivals.map((r) => r.vehicle());
     this.bar = el('div', 'play-bar', d.ui);
     this.bar.style.pointerEvents = 'none';
     const who = el('div', 'play-who', this.bar);
@@ -96,7 +103,9 @@ export class PlaySandbox {
       b.addEventListener('click', f);
     };
     tool('⚙️', 'tune the controller', () => this.togglePanel());
+    tool('⛰️', 'go to hills', () => this.toHills());
     tool('👹', 'spawn raiders ahead', () => this.spawn());
+    tool('🏁', 'a rival rider (tap it to hook on and pull up alongside)', () => this.rival());
     tool('⟲', 'back on its feet', () => this.respawn());
     const info = el('div', 'play-info', d.ui);
     info.style.pointerEvents = 'none';
@@ -117,7 +126,9 @@ export class PlaySandbox {
     }
     const s = new PlaySandbox(d);
     s.keepFresh = t.keepFresh(() => s.hero?.position() ?? null);
-    s.choose(d.hero, s.dryNear([d.camera.target[0], d.camera.target[1]]));
+    const c: Pt = [d.camera.target[0], d.camera.target[1]];
+    // (round 118: the bike starts where there are hills to ride, if any are near)
+    s.choose(d.hero, (d.hero === 'hoverbike' ? s.hills(c, null)?.at : null) ?? s.dryNear(c));
     if (d.tune) s.togglePanel();
     return s;
   }
@@ -153,6 +164,42 @@ export class PlaySandbox {
     }
   }
 
+  /** The hilliest rideable spot near `at` (play/sandbox/hills.ts), at least 30 cells from `away`. */
+  hills(at: Pt, away: Pt | null) {
+    const t = this.d.api.terrain!;
+    const b = this.d.bounds;
+    return findHills((x, y) => t.heightAt(x, y), at, {
+      radius: Math.min(b[0], b[1]) * 0.45,
+      step: 8,
+      climb: this.hero ? this.hero.profileClimb() : 1.5,
+      least: 0.25,
+      bounds: b,
+      margin: 24,
+      dry: (x, y) => this.world.depth(x, y) < 0.05 && (!away || Math.hypot(x - away[0], y - away[1]) > 30),
+    });
+  }
+
+  /** ⛰: off to the hilliest spot in reach (another one each press) */
+  toHills(): void {
+    const [x, y] = this.hero.position();
+    const s = this.hills([x, y], [x, y]);
+    if (!s) return this.toast('No hills in reach here — ride somewhere else and try again');
+    this.hero.place(s.at);
+    this.d.camera.target[0] = s.at[0];
+    this.d.camera.target[1] = s.at[1];
+    this.toast(`Hills: ${s.slopes} slopes, ${s.relief.toFixed(0)} cells of rise and fall`);
+  }
+
+  /** a rival rider lapping round the hero's spot (at most 3: the oldest goes) */
+  rival(): void {
+    const [x, y] = this.hero.position();
+    if (this.rivals.length >= 3) this.rivals.shift();
+    // (its lap passes by the hero: the circle's centre a radius off, the rival starting ~10 cells along it from the hero)
+    const a = Math.random() * Math.PI * 2;
+    const centre: Pt = [x - Math.cos(a) * LAP.radius, y - Math.sin(a) * LAP.radius];
+    this.rivals.push(new Rival(`rival${Date.now() % 100000}`, centre, { ...BIKE_DEFAULTS }, this.world.top, this.d.bounds, a - 0.25));
+  }
+
   /** raiders, hostile, ahead of the hero (or round it, still) */
   spawn(): void {
     const h = this.hero;
@@ -176,6 +223,7 @@ export class PlaySandbox {
   /** the window slid (WorldCore.onShift's step, negated: what's kept in window coordinates moves by it) */
   shift(dx: number, dy: number, dz: number): void {
     this.hero.shift(dx, dy, dz);
+    for (const r of this.rivals) r.shift(dx, dy, dz);
   }
 
   /** the atlas map's warp: dropped where the camera is */
@@ -208,11 +256,15 @@ export class PlaySandbox {
     });
     h.update(dt, { move: input.dir, input });
     this.controls.show(h.looks());
-    this.draw.draw(h.parts());
+    for (const r of this.rivals) r.step(dt);
+    this.draw.draw([...h.parts(), ...this.rivals.map((r) => r.part())]);
     // the camera: after the hero, a little ahead of it, pulled back with speed
     const p = h.position();
     const v = (h as unknown as { b?: { vx: number; vy: number } }).b;
-    const lead: Pt = v ? [v.vx * CAM.lead, v.vy * CAM.lead] : [0, 0];
+    let lead: Pt = v ? [v.vx * CAM.lead, v.vy * CAM.lead] : [0, 0];
+    // (at most `leadMax` cells ahead: a hook's reel had thrown the view off the bike)
+    const ll = Math.hypot(lead[0], lead[1]);
+    if (ll > CAM.leadMax) lead = [(lead[0] / ll) * CAM.leadMax, (lead[1] / ll) * CAM.leadMax];
     const k = 1 - Math.exp(-CAM.follow * dt);
     const want: [number, number, number] = [p[0] + lead[0], p[1] + lead[1], p[2]];
     for (let i = 0; i < 3; i++) cam.target[i] += (want[i] - cam.target[i]) * k;

@@ -28,6 +28,10 @@ The user: "I think just make a new layer you own so I can work from one session"
 | PL8 | Vegetation in the controllers: slowed in a thicket, cut through, once flora's contract has a density query; the profile already says what each is meant to do | M | open |
 | PL9 | Many riders on the GPU (race rivals, AI bikes): the drives are pure (state, stick, dt, height) over flat Params — a kernel when there are many (D-r101) | M | deferred |
 | PL10 | Merge with herosandbox-r (registry, contract 1.1, traversal fields, autopilot): play heroes as registry entries; the Pilot steering along a traversal field by the play profile | M | open |
+| PL11 | A faster bike (cruise 22 → 32 cells/s, thrust 30 → 46, boost top 32 → 46, downhill 34 → 50; the camera pulls back 0.5 and leads 0.5 s) and spawned on hills (play/sandbox/hills.ts: the hilliest rideable spot near, from heights); ⛰ in the sandbox to go to other hills | M | done (play) |
+| PL12 | The hook cut early by a swipe (the momentum kept; the stick read turned by the swing after it, so no slide back); a foe on the line dragged behind or reeled in by a swipe back toward the bike | M | done (play) |
+| PL13 | The hook reels the bike up alongside another vehicle (PlayWorld.vehicles; the sandbox's 🏁 rival rider lapping a circle by the hero) | M | done (play) |
+| PL14 | The lich's life drain floats its victim up before its face (eased from where it was, its middle at the lich's face, bobbing; the lich turns to it) | S | done (play) |
 
 ## Round 117 (2026-10-30, session 5, `testkit`) — the test pyramid: unit and GPU tests in Node, a smoke test (DECISIONS round 117)
 

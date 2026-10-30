@@ -66,7 +66,7 @@ export type BikeTuning = {
   slideStop: number;
   /**
    * (round 117, play) held down to the ground on a climb faster than the cushion can lift it, it keeps this share of
-   * the ground's rise speed under it (the slope along its way over a cell either side, times its speed; at most
+   * the ground's rise speed under it (the rise of the cell behind it along its way, times its speed; at most
    * `launchMax`), so it carries that up over the crest and a ramp throws it. 0: the slice's old behaviour — the clamp
    * zeroed it, and the bike went over a ramp's lip with no upward speed (a kicker to a landing at the same height
    * dropped it into the gap).
@@ -343,7 +343,9 @@ export function stepBike(b: Bike, stick: [number, number], dt: number, heightAt:
       let up = 0;
       if (sp > 0.5 && t.carry > 0) {
         const [ux, uy] = [b.vx / sp, b.vy / sp];
-        const along = (heightAt(b.x + ux, b.y + uy) - heightAt(b.x - ux, b.y - uy)) / 2;
+        // (behind it only: the rise of the cell it has just climbed — a central difference looked past a kicker's lip,
+        // saw the drop, and threw nothing at the very step it should)
+        const along = heightAt(b.x, b.y) - heightAt(b.x - ux, b.y - uy);
         up = Math.min(t.launchMax, Math.max(0, along * sp * t.carry));
       }
       b.vz = up;

@@ -90,6 +90,10 @@ export abstract class PlayHero implements Hero {
   abstract status(): string;
   /** 0..1: how fast, as a share of its top speed (the camera pulls back with it) */
   abstract fast(): number;
+  /** the steepest slope it rides up (its profile's climb.slope; the sandbox's hill finder) */
+  profileClimb(): number {
+    return 1.5;
+  }
   /** its buttons' gauges and lights */
   looks(): ButtonLook[] {
     return [];
