@@ -13402,3 +13402,14 @@ Changes:
   while it waited (0: the loop, not a tile).
 - `?ticktol=` (TickClock.tol, default 0.12): a test's display that isn't 60 Hz locks; benchrun.mjs `--hz`.
 - BENCH_VERSION 9.
+
+## 2026-10-30 — round 114 (`framepace`): the phone's frozen frame loop was the hitch recorder (FP9)
+
+Bench v9's frame guard caught it on the Pixel 9a at zoom 14's pool step at 20 c/s: "a frame failed: TypeError: Cannot
+read properties of undefined (reading 'frames') at account at frameStart". The bench resets the hitch recorder
+(`?hitch=1`, bench pages only) between steps, setting t0 from performance.now(). A frame's rAF time runs behind that
+by its callback's lag (p50 ~8 ms, max ~20 ms on the phone), so a frame that began before the reset had t < 0, its
+minute row -1 was undefined, and the callback threw. Without v9's guard the throw ended the rAF chain: v8's silent
+freeze. It needs a reset inside a frame's lag window, so it struck some runs and not others. A frame timed before
+t0 now belongs to the old recording. Normal play doesn't run the recorder; the game's own frame loop was never the
+cause. The settled parked phases of the same run: untimed 2/247 and 0/249 slow, all apart (min gap 2.2 s).
