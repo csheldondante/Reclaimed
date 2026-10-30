@@ -11,6 +11,7 @@ import { solve, WfcContradiction } from './wfc';
 import { adjacency, quadArea, quadCorners } from './tiles/builder';
 import { tileSystem } from './tiles/systems';
 import { fbm } from './rng';
+import { profile, GRADE } from './linear';
 
 const hill: GroundFn = (x, y) => 20 + 12 * fbm(x * 0.012, y * 0.012, 4) + 0.04 * x;
 const flat: GroundFn = () => 10;
@@ -236,4 +237,44 @@ describe('roofs meet walls', () => {
   }
   expect(worst, report).toBeLessThan(0.02);
 });
+});
+
+describe('linear features', () => {
+  const gorge: GroundFn = (x, y) => {
+    const g = Math.abs(Math.hypot(x - 500, y - 500) - 110);
+    return 26 - 24 * Math.max(0, 1 - (g / 20) ** 2);
+  };
+  it('a road over a valley: never steeper than its grade, a bridge where it stands high over the ground', () => {
+    const g = Array.from({ length: 60 }, (_, i) => 20 - 15 * Math.max(0, 1 - ((i - 30) / 12) ** 2));
+    const { z, bridge } = profile(g, 2, g.map(() => false));
+    for (let i = 1; i < z.length; i++) expect(Math.abs(z[i] - z[i - 1])).toBeLessThanOrEqual(GRADE * 2 + 1e-9);
+    expect(bridge[30]).toBe(true);
+    expect(bridge[2]).toBe(false);
+    for (let i = 0; i < z.length; i++) expect(z[i]).toBeGreaterThanOrEqual(g[i]);
+  });
+  it('roads out of a town in a gorge cross it on arched bridges; their far ends reach the plaza', () => {
+    const p = planCity(spec('irregular', { roads: 3 }), gorge);
+    const bridges = p.linear.filter((f) => f.kind === 'bridge');
+    expect(bridges.length).toBeGreaterThanOrEqual(2);
+    const lib = library();
+    const pc = piecesOf(p);
+    const names = new Set(Array.from(pc.module, (m) => lib.modules[m].name));
+    expect(names.has('deck') && names.has('archspan') && names.has('road')).toBe(true);
+    const g = p.nav;
+    const plaza = g.nodes.find((n) => n.surface === 'plaza')!;
+    const far = g.nodes.filter((n) => n.surface === 'street' && n.building < 0).sort((a, b) => Math.hypot(b.at[0] - 500, b.at[1] - 500) - Math.hypot(a.at[0] - 500, a.at[1] - 500))[0];
+    expect(navPath(g, far.id, plaza.id).length).toBeGreaterThan(5);
+  });
+  it('a walled town: wall runs with towers, the rampart walk reached by stairs', () => {
+    const p = planCity(spec('contour-voronoi', { roads: 2, walls: true }), hill);
+    expect(p.linear.some((f) => f.kind === 'wall')).toBe(true);
+    const lib = library();
+    const pc = piecesOf(p);
+    expect(Array.from(pc.module).some((m) => lib.modules[m].name === 'wallwalk')).toBe(true);
+    const g = p.nav;
+    const plaza = g.nodes.find((n) => n.surface === 'plaza' || n.surface === 'street')!;
+    const walk = g.nodes.find((n) => n.surface === 'rampart')!;
+    const path = navPath(g, plaza.id, walk.id);
+    expect(path.length).toBeGreaterThan(1);
+  });
 });

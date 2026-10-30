@@ -439,6 +439,97 @@ function arch(): Module {
   return wall('gatearch', { body: Part.Stone, timber: false }, [{ u0: 0.22, u1: 0.78, w0: 0, w1: 0.5, fill: Part.Door, arch: 0.22 }]);
 }
 
+// ------------------------------------------------------------------ linear features (extruded along splines)
+// Frame: u along the spline, v across it (0 the right edge, 1 the left), w up.
+
+/** a road: cobbles between kerbs; the frame's top a height over its foot (paving 0.3 m into the ground, kerbs 0.15 up) */
+function road(): Module {
+  const k = new Kit();
+  k.box(0, 1, 0.07, 0.93, 0, 0.667, Part.Pave, 1 | 2 | 16);
+  k.box(0, 1, 0, 0.07, 0, 1, Part.Stone, 1 | 2 | 16);
+  k.box(0, 1, 0.93, 1, 0, 1, Part.Stone, 1 | 2 | 16);
+  return k.done('road');
+}
+
+/** a railway: a ballast bank, sleepers, two rails (frame top 0.6 m over its foot) */
+function rail(): Module {
+  const k = new Kit();
+  // the ballast: a trapezoid across
+  k.quad([0, 0.1, 0], [1, 0.1, 0], [1, 0.22, 0.5], [0, 0.22, 0.5], Part.Stone);
+  k.quad([0, 0.22, 0.5], [1, 0.22, 0.5], [1, 0.78, 0.5], [0, 0.78, 0.5], Part.Stone);
+  k.quad([0, 0.78, 0.5], [1, 0.78, 0.5], [1, 0.9, 0], [0, 0.9, 0], Part.Stone);
+  for (let i = 0; i < 5; i++) k.box(i / 5 + 0.04, i / 5 + 0.14, 0.24, 0.76, 0.5, 0.6, Part.Trim, 16);
+  for (const v of [0.36, 0.64]) {
+    k.box(0, 1, v - 0.012, v + 0.012, 0.6, 0.72, Part.Metal, 1 | 2 | 16);
+    k.box(0, 1, v - 0.025, v + 0.025, 0.72, 0.76, Part.Metal, 1 | 2 | 16);
+  }
+  return k.done('rail');
+}
+
+/** a town wall's body: stone from the ground to the walk (the frame's foot the ground, its top the walk) */
+function wallSeg(): Module {
+  const k = new Kit();
+  k.box(0, 1, 0, 1, 0, 1, Part.Stone, 1 | 2 | 16);
+  // a batter at the foot, a string course under the walk
+  k.box(0, 1, -0.06, 1.06, 0, 0.12, Part.Stone, 1 | 2 | 16);
+  k.box(0, 1, -0.04, 1.04, 0.9, 0.93, Part.Stone, 1 | 2);
+  return k.done('wallseg');
+}
+
+/** the wall walk's parapets either side, crenellated (frame top 1.3 m over its foot) */
+function wallWalk(): Module {
+  const k = new Kit();
+  for (const [v0, v1] of [
+    [0, 0.13],
+    [0.87, 1],
+  ]) {
+    k.box(0, 1, v0, v1, 0, 0.55, Part.Stone, 1 | 2 | 16);
+    for (let i = 0; i < 3; i++) k.box((i + 0.15) / 3, (i + 0.75) / 3, v0, v1, 0.55, 1, Part.Stone, 16);
+  }
+  k.box(0, 1, 0.13, 0.87, -0.05, 0.02, Part.Pave, 1 | 2 | 16);
+  return k.done('wallwalk');
+}
+
+/** a bridge's deck: a stone slab, paved, with parapets (frame top 1.2 m over its foot: the deck's underside) */
+function deck(): Module {
+  const k = new Kit();
+  k.box(0, 1, 0, 1, 0, 0.25, Part.Stone, 1 | 2);
+  k.box(0, 1, 0.1, 0.9, 0.25, 0.27, Part.Pave, 1 | 2 | 16);
+  k.box(0, 1, 0, 0.1, 0.25, 0.95, Part.Stone, 1 | 2 | 16);
+  k.box(0, 1, 0.9, 1, 0.25, 0.95, Part.Stone, 1 | 2 | 16);
+  k.box(0, 1, -0.02, 0.12, 0.95, 1, Part.Stone, 1 | 2);
+  k.box(0, 1, 0.88, 1.02, 0.95, 1, Part.Stone, 1 | 2);
+  return k.done('deck');
+}
+
+/**
+ * One arch of a viaduct between two half piers (the frame's foot the ground at each corner, its top the deck's
+ * underside): Roman proportions on tall spans, a low segment over a shallow one — the height decides.
+ */
+function archSpan(): Module {
+  const k = new Kit();
+  const p = 0.14;
+  k.box(0, p, 0, 1, 0, 1, Part.Stone, 1 | 16);
+  k.box(1 - p, 1, 0, 1, 0, 1, Part.Stone, 2 | 16);
+  const n = 10;
+  const spring = 0.5;
+  const soffit = (u: number) => spring + (1 - spring - 0.06) * Math.sqrt(Math.max(0, 1 - ((u - 0.5) / (0.5 - p)) ** 2));
+  for (let i = 0; i < n; i++) {
+    const u0 = p + ((1 - 2 * p) * i) / n;
+    const u1 = p + ((1 - 2 * p) * (i + 1)) / n;
+    const a = soffit(u0);
+    const b = soffit(u1);
+    // the spandrels' faces, then the soffit
+    k.quad([u0, 0, a], [u1, 0, b], [u1, 0, 1], [u0, 0, 1], Part.Stone);
+    k.quad([u1, 1, b], [u0, 1, a], [u0, 1, 1], [u1, 1, 1], Part.Stone);
+    k.quad([u0, 0, a], [u0, 1, a], [u1, 1, b], [u1, 0, b], Part.Stone);
+  }
+  // the piers' cutwaters' caps where the arch springs
+  k.box(0, p + 0.02, -0.05, 1.05, spring - 0.03, spring, Part.Stone);
+  k.box(1 - p - 0.02, 1, -0.05, 1.05, spring - 0.03, spring, Part.Stone);
+  return k.done('archspan');
+}
+
 // ------------------------------------------------------------------ the library
 
 export interface Library {
@@ -504,6 +595,7 @@ export function library(): Library {
   modules.push(gable(PLASTER, true), gable(PLASTER, false), gable(STONE, true), gable(STONE, false));
   modules.push(post(Part.Trim), post(Part.Stone), quoins(), slab(Part.Stone, 'plinth'), slab(Part.Pave, 'pave'), slab(Part.Stone, 'rampart'), slab(Part.Plant, 'garden'));
   modules.push(chimney(), merlons(), tower(), spire(), fountain(), lamp(), arch());
+  modules.push(road(), rail(), wallSeg(), wallWalk(), deck(), archSpan());
   const byName = new Map<string, number>();
   modules.forEach((m, i) => {
     if (byName.has(m.name)) throw new Error(`structures: two modules named "${m.name}"`);

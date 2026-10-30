@@ -13711,3 +13711,45 @@ stood in the sea in a straight line.
   it; the straight brown line across the sea is the atlas's road to the old town (atlas/ways.ts), stamped before the city.
 
 Shots: C:\Projects\shots88\structures\city-irregular-0.png (the atlas, start zoom), dist-0.png (the viewer, r 90).
+
+## 2026-10-30 — round 117 (`structures`): linear features — roads, viaducts, town walls (STR11)
+
+The user: "linear tile features we can use for bridges, roads, railroads and extrude along splines". src/structures/linear.ts.
+
+**Why the same warped modules.** A segment of a road between two spline samples is a frame like a tile's (its right and
+left edges at either end, each end's across-direction its own tangent's normal, so consecutive segments share edges
+with no gap), so roads, rails, walls and viaducts are more modules (road, rail, wallseg, wallwalk, deck, archspan) in
+the same library, drawn by the same pieces path — no renderer of their own, the look shared with the buildings.
+
+**Roads and bridges.** A road out of the town samples the ground every 2 m and makes its profile: forward and backward
+passes that only raise, so it's never steeper than a 14% grade — valleys and water are filled by the deck. Where the
+deck stands more than 2.6 m over the ground (or over water, 3 m up) it's a bridge: deck pieces (slab, paving, parapets;
+their foot the deck's underside at each end, so the deck follows its grade) and arch pieces under them (their foot the
+ground at each corner, their top the deck): spans about as long as the bridge is high (5-12 m), so a tall viaduct gets
+Roman proportions and a shallow crossing a low segment — the module scales, the height decides. Roads inside the town
+turn the tiles under them into street before the massing. `CitySpec.roads` (viewer slider; the game `&croads=`, 2).
+
+**Town walls.** `CitySpec.walls` on a non-radial town: a loop at 1.06 R following the ground, the walk 8 m over it (the
+body's top a height over its foot, so the walk follows the ground), crenellated parapets both sides, round towers with
+spires every 28 m and at each run's open end — gaps where the roads go out (the gates' flanks), none over water.
+
+**Nav and columns.** A node every 4 m along roads (street), bridges (bridge) and wall walks (rampart); a road's first
+node joins the town's nearest open ground, runs join where they meet, a wall run's ends come down by stairs. Walls
+(foot to walk) and bridge decks (their arches open underneath) are each their own External instance.
+
+**Found in the game: the ground stretched up over the buildings.** The hybrid renderer draws most chunks as a lattice
+through the columns' tops; a building's External top is a column top, so the lattice rose to it — dark mottled
+pillars under the houses. The host now tells the hybrid each claim's box (`touched` → `HybridChunks.edit`, as the
+resting rock's do): those chunks are the field mesh's, which leaves External out.
+
+**Measured** (scripts/perf/structcity.mjs, phone proxy, q=low, every system on): the world pass 2.69 → 4.57 ms at the
+start's zoom, 2.84 → 5.10 ms at ×3 with two roads and the voxel chunks (the frame's total moved by other agents' load).
+About 2 ms on the desktop iGPU at the phone's resolution: STR10 (a LOD for distant pieces, fewer roof masks) before
+bigger cities.
+
+Unit tests (30): the profile never steeper than its grade, a bridge in a valley's middle; roads out of a town in a gorge
+cross it on arched bridges and their far ends reach the plaza; a walled town has wall runs, parapets, and its rampart is
+reached by stairs.
+
+Shots: C:\Projects\shots88\structures\lin-0/1/2.png (viewer: viaducts over a gorge, walled towns), bridge-0/1.png
+(close), cityw-0/1.png (the atlas: a walled contour-voronoi town, a viaduct across the bay).

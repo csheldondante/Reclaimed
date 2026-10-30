@@ -23,19 +23,29 @@ const state = {
   storeys: num('storeys', 0),
   density: num('density', 0.8),
   view: (q.get('view') ?? 'city') as 'building' | 'district' | 'city',
-  ground: (q.get('ground') ?? 'hill') as 'flat' | 'hill' | 'slope',
+  ground: (q.get('ground') ?? 'hill') as 'flat' | 'hill' | 'slope' | 'gorge',
+  roads: num('roads', 3),
+  walls: q.get('walls') === '1',
   tod: num('tod', 0.35),
   tiles: q.get('tiles') === '1',
   nav: q.get('nav') === '1',
   yaw: num('yaw', 0.75),
   pitch: num('pitch', 0.62),
   zoom: num('zoom', 1),
+  px: num('px', 0),
+  py: num('py', 0),
 };
 
 const GROUNDS: Record<string, GroundFn> = {
   flat: () => 10,
   hill: (x, y) => 10 + 30 * fbm(x * 0.006 + 3.1, y * 0.006 + 1.7, 11, 4) + 0.06 * x,
   slope: (x, y) => 10 + 0.22 * x + 3 * fbm(x * 0.02, y * 0.02, 5, 3),
+  // (a gorge round the town: the roads out cross it on viaducts)
+  gorge: (x, y) => {
+    const d = Math.hypot(x, y) + 12 * (fbm(x * 0.01, y * 0.01, 3, 2) - 0.5);
+    const g = Math.abs(d - 120);
+    return 26 + 6 * fbm(x * 0.008, y * 0.008, 9, 3) - 24 * Math.max(0, 1 - (g / 22) ** 2);
+  },
 };
 
 class UnsupportedError extends Error {}
@@ -63,14 +73,14 @@ async function boot(): Promise<void> {
   const rebuild = () => {
     const t0 = performance.now();
     const ground = GROUNDS[state.ground];
-    const spec: CitySpec = { seed: state.seed, system: state.system, style: state.style, at: [0, 0], radius: state.r, density: state.density };
+    const spec: CitySpec = { seed: state.seed, system: state.system, style: state.style, at: [0, 0], radius: state.r, density: state.density, roads: state.roads, walls: state.walls || undefined };
     if (state.storeys > 0) spec.storeys = [state.storeys, Math.max(1, state.storeys * 0.4)];
     plan = planCity(spec, ground);
     all = piecesOf(plan);
     const ms = performance.now() - t0;
     showView();
     // the ground under it all
-    const G = state.r + 50;
+    const G = state.r * (state.roads ? 2.5 : 1) + 50;
     const step = G > 120 ? 2 : 1;
     const n = Math.floor((2 * G) / step) + 1;
     const verts = new Float32Array(n * n * 4);
@@ -124,13 +134,13 @@ async function boot(): Promise<void> {
     } else {
       r.sg.set(all);
       focusAt = [0, 0, ground(0, 0) + 4];
-      reach = state.r + 30;
-      dist = state.r * 2.7;
+      reach = state.r * (state.roads ? 2.4 : 1) + 30;
+      dist = state.r * (state.roads ? 3.4 : 2.7);
     }
   };
 
   // ---- the camera: turn (drag), zoom (wheel, pinch), pan (right-drag, two fingers)
-  let pan: [number, number] = [0, 0];
+  let pan: [number, number] = [state.px, state.py];
   const pointers = new Map<number, { x: number; y: number }>();
   let pinch0 = 0;
   canvas.addEventListener('pointerdown', (e) => {
@@ -156,6 +166,8 @@ async function boot(): Promise<void> {
       const s = Math.sin(state.yaw);
       pan[0] += (-dx * c + dy * s) * k * 0.9;
       pan[1] += (-dx * s - dy * c) * k * 0.9;
+      state.px = pan[0];
+      state.py = pan[1];
     }
     p.x = e.clientX;
     p.y = e.clientY;
@@ -182,6 +194,7 @@ async function boot(): Promise<void> {
   ui.onChange = (k) => {
     if (k === 'view') {
       pan = [0, 0];
+      state.px = state.py = 0;
       state.zoom = 1;
       showView();
     } else if (k === 'tod') {
@@ -314,7 +327,7 @@ function panel() {
     };
     return s;
   };
-  const slider = (k: 'r' | 'storeys' | 'density' | 'tod', lo: number, hi: number, step: number, live = false) => {
+  const slider = (k: 'r' | 'storeys' | 'density' | 'tod' | 'roads', lo: number, hi: number, step: number, live = false) => {
     const s = document.createElement('input');
     s.type = 'range';
     s.min = String(lo);
@@ -360,7 +373,8 @@ function panel() {
   row('size', slider('r', 16, 160, 4));
   row('storeys', slider('storeys', 0, 9, 1));
   row('density', slider('density', 0.2, 1, 0.05));
-  row('ground', select('ground', ['flat', 'hill', 'slope']));
+  row('ground', select('ground', ['flat', 'hill', 'slope', 'gorge']));
+  row('roads', slider('roads', 0, 6, 1));
   row('time', slider('tod', 0, 1, 0.01, true));
   const views = document.createElement('div');
   views.className = 'views';
@@ -378,14 +392,14 @@ function panel() {
   el.append(views);
   const ov = document.createElement('div');
   ov.className = 'views';
-  for (const k of ['tiles', 'nav'] as const) {
+  for (const k of ['walls', 'tiles', 'nav'] as const) {
     const b = document.createElement('button');
     b.textContent = k;
     b.className = state[k] ? 'on' : '';
     b.onclick = () => {
       state[k] = !state[k];
       b.className = state[k] ? 'on' : '';
-      api.onChange('overlay');
+      api.onChange(k === 'walls' ? 'walls' : 'overlay');
     };
     ov.append(b);
   }

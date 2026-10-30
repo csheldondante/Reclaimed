@@ -1599,6 +1599,7 @@ export class LevelScene implements Scene {
             ground: a.ground,
             water: a.map.water,
             sea: core.globals.seaZ,
+            touched: (x0, y0, x1, y1) => this.hybrid?.edit((x0 + x1) / 2, (y0 + y1) / 2, Math.max(x1 - x0, y1 - y0) / 2),
             dust: (x, y, z, n) => {
               const [wx, wy] = cellPos(x, y);
               core.sim.particles.burst({ kind: PK.Dust, x: wx, y: wy, z, count: n, speed: 2, spread: 1.2 });

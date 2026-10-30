@@ -46,6 +46,8 @@ export interface CitySpec {
   density?: number;
   /** a wall round it (default: radial cities yes, others no) */
   walls?: boolean;
+  /** roads out of the town (bridges where they cross a valley or water; default 0) */
+  roads?: number;
   /** contour-voronoi: the height step between contour rows of plots (m, default 3) */
   contour?: number;
   /** radial: spokes (default 6) */
@@ -141,10 +143,14 @@ export type LinearKind = 'road' | 'rail' | 'wall' | 'bridge';
 
 export interface LinearFeature {
   kind: LinearKind;
-  /** the spline's control points (world x, y, z: the deck or the road's top); Catmull-Rom through them */
+  /** the spline's control points (world x, y, z: the deck, the road's or the wall walk's top); Catmull-Rom through them */
   points: V3[];
+  /** the ground under each point (world z): what piers, arches and walls stand on */
+  ground: number[];
   /** width (m) */
   width: number;
+  /** a loop (a town wall) */
+  closed?: boolean;
 }
 
 /** What a building shows on one storey of one side (chosen by WFC so bays line up and doors face the street). */

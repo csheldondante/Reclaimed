@@ -5,6 +5,7 @@
 // it for where a hero can climb. Its own representation: it never reads the pieces or the columns.
 import type { CityPlan, NavGraph, NavLink, NavLinkKind, NavNode, NavSurface, V3 } from '../api/contracts/structures';
 import { quadCentre, quadCorners } from './tiles/builder';
+import { resample } from './linear';
 
 export function bakeNav(plan: CityPlan, adj: Int32Array): NavGraph {
   const t = plan.tiles;
@@ -170,6 +171,50 @@ export function bakeNav(plan: CityPlan, adj: Int32Array): NavGraph {
           link(wallTop[q], outdoor[n], 'stairs', (plan.quadTop[q] - nodes[outdoor[n]].at[2]) * 2);
         }
       }
+  }
+  // ---- linear features: a node every 4 m along roads, bridges and wall walks; a road's first node joins the town's
+  // nearest open ground, a wall's ends come down by stairs
+  const nearestOutdoor = (x: number, y: number, within: number) => {
+    let best = -1;
+    let bd = within;
+    for (let q = 0; q < nq; q++) {
+      if (outdoor[q] < 0) continue;
+      const o = nodes[outdoor[q]].at;
+      const d = Math.hypot(o[0] - x, o[1] - y);
+      if (d < bd) {
+        bd = d;
+        best = outdoor[q];
+      }
+    }
+    return best;
+  };
+  const ends: { at: V3; id: number }[] = [];
+  for (const f of plan.linear) {
+    const S = resample(f, 4);
+    if (S.length < 2) continue;
+    const surface: NavSurface = f.kind === 'wall' ? 'rampart' : f.kind === 'bridge' ? 'bridge' : 'street';
+    const ids = S.map((q) => node([q.p[0], q.p[1], q.p[2] + 0.1], surface, -1));
+    for (let i = 0; i + 1 < ids.length; i++) link(ids[i], ids[i + 1], 'walk');
+    if (f.closed) link(ids[ids.length - 1], ids[0], 'walk');
+    if (f.kind === 'wall') {
+      for (const e of f.closed ? [] : [0, ids.length - 1]) {
+        const q = S[e];
+        const foot = node([q.p[0], q.p[1], q.g], 'ground', -1);
+        link(ids[e], foot, 'stairs', (q.p[2] - q.g) * 2);
+        const o = nearestOutdoor(q.p[0], q.p[1], 14);
+        if (o >= 0) link(foot, o, 'walk');
+      }
+    } else {
+      // (the run's ends: joined to the town, or to the next run's end — a road meets its bridge)
+      for (const e of [0, ids.length - 1]) {
+        const at = nodes[ids[e]].at;
+        const other = ends.find((x) => Math.hypot(x.at[0] - at[0], x.at[1] - at[1]) < 1);
+        if (other) link(ids[e], other.id, 'walk');
+        else ends.push({ at, id: ids[e] });
+      }
+      const o = nearestOutdoor(S[0].p[0], S[0].p[1], 10);
+      if (o >= 0) link(ids[0], o, 'walk');
+    }
   }
   return { nodes, links };
 }

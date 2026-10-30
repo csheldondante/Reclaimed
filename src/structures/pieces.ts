@@ -9,6 +9,7 @@ import { library, roofName } from './modules';
 import { styleOf, STYLE_IDS } from './styles';
 import { hashf } from './rng';
 import { WALL_H } from './plan';
+import { resample, segFrame, WALL_WALK } from './linear';
 
 /** floats a piece */
 export const PIECE_FLOATS = 16;
@@ -199,6 +200,8 @@ export function piecesOf(plan: CityPlan): StructurePieces {
   for (let q = 0; q < nq; q++) {
     const u = t.use[q];
     const p = quadCorners(t, q);
+    // (owners: −1 the ramparts — one External instance —, −1000 what claims no columns: paving, lamps, the fountain)
+    out.owner = u === 'wall' || u === 'gate' ? -1 : -1000;
     if (u === 'street' || u === 'plaza') {
       out.add(lib.id('pave'), p, footOf(q, 0.25), 0.37, look(-1), hashf(q, 11), REL);
       if (u === 'street' && hashf(q, seed, 12) < 0.05) {
@@ -228,7 +231,61 @@ export function piecesOf(plan: CityPlan): StructurePieces {
       }
     }
   }
+  out.owner = -1000;
   for (const m of plan.megas)
     if (m.kind === 'fountain') out.add(lib.id('fountain'), m.frame, m.z0, m.z1, look(-1), 0);
+
+  // ---- linear features: a module a segment along the spline (contracts LinearFeature; linear.ts)
+  plan.linear.forEach((f, fk) => {
+    const L = look(-1);
+    // (a wall run or a bridge is its own External instance, −2 − its index: cut, only it goes)
+    out.owner = f.kind === 'wall' || f.kind === 'bridge' ? -2 - fk : -1000;
+    if (f.kind === 'road' || f.kind === 'rail') {
+      const S = resample(f, 3);
+      for (let i = 0; i + 1 < S.length; i++) {
+        const a = S[i];
+        const b = S[i + 1];
+        const fr = segFrame(a, b, f.width);
+        // (its foot 0.3 m under the surface at each end: the paving follows the road's own grade)
+        out.add(lib.id(f.kind), fr, [a.p[2] - 0.3, b.p[2] - 0.3, b.p[2] - 0.3, a.p[2] - 0.3], f.kind === 'road' ? 0.45 : 0.6, L, hashf(i, 21), REL);
+      }
+    } else if (f.kind === 'bridge') {
+      // spans about as long as the bridge is high (Roman proportions), at least 5 m
+      const S0 = resample(f, 2);
+      let hMean = 0;
+      for (const s of S0) hMean += s.p[2] - s.g;
+      hMean /= Math.max(1, S0.length);
+      const S = resample(f, Math.max(5, Math.min(12, hMean * 1.1)));
+      for (let i = 0; i + 1 < S.length; i++) {
+        const a = S[i];
+        const b = S[i + 1];
+        const fr = segFrame(a, b, f.width);
+        const da = a.p[2] - 0.3;
+        const db = b.p[2] - 0.3;
+        out.add(lib.id('deck'), fr, [da, db, db, da], 1.2, L, hashf(i, 22), REL);
+        const top = Math.min(da, db);
+        if (top - Math.max(a.g, b.g) > 1.2) out.add(lib.id('archspan'), fr, [a.g - 0.5, b.g - 0.5, b.g - 0.5, a.g - 0.5], top, L, hashf(i, 23));
+      }
+    } else if (f.kind === 'wall') {
+      const S = resample(f, 4);
+      for (let i = 0; i + 1 < S.length; i++) {
+        const a = S[i];
+        const b = S[i + 1];
+        const fr = segFrame(a, b, f.width);
+        // (the walk follows the ground WALL_WALK over it: the body's top a height over its foot, the parapets on it)
+        out.add(lib.id('wallseg'), fr, [a.g - 0.6, b.g - 0.6, b.g - 0.6, a.g - 0.6], WALL_WALK + 0.6, L, hashf(i, 24), REL);
+        out.add(lib.id('wallwalk'), fr, [a.p[2], b.p[2], b.p[2], a.p[2]], 1.3, L, hashf(i, 25), REL);
+      }
+      // towers along it every ~28 m and at its open ends (the gates' flanks)
+      const T = resample(f, 28);
+      const ends = f.closed ? T : [...T, S[S.length - 1]];
+      for (const s of ends) {
+        const h = f.width * 0.95;
+        const fr: [V2, V2, V2, V2] = [[s.p[0] - h, s.p[1] - h], [s.p[0] + h, s.p[1] - h], [s.p[0] + h, s.p[1] + h], [s.p[0] - h, s.p[1] + h]];
+        out.add(lib.id('tower'), fr, s.g - 0.6, s.p[2] + 3.5, L, hashf(Math.round(s.p[0]), 26));
+        out.add(lib.id('spire'), shrink(fr, 0.95), s.p[2] + 3.5, s.p[2] + 3.5 + h * 2.4, L, hashf(Math.round(s.p[1]), 27));
+      }
+    }
+  });
   return out.done();
 }

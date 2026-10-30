@@ -13,6 +13,7 @@ import { fbm, hashf, rng } from './rng';
 import { solve, type WfcProblem } from './wfc';
 import { bakeNav } from './nav';
 import { styleOf } from './styles';
+import { routes, resample } from './linear';
 
 export const STOREY_H = 3;
 /** a rampart's height over the ground (m) */
@@ -84,6 +85,18 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn): Ci
     });
     return best;
   };
+
+  // ---- roads out (and their bridges), the town wall if asked (linear.ts): what's under a road inside the town is street
+  const linear = routes(spec, ground, water, spec.walls === true && spec.system !== 'radial');
+  for (const f of linear) {
+    if (f.kind !== 'road') continue;
+    for (const s of resample(f, 2))
+      for (let q = 0; q < nq; q++) {
+        if (tiles.use[q] !== 'lot' && tiles.use[q] !== 'yard') continue;
+        const [x, y] = quadCentre(tiles, q);
+        if (Math.hypot(x - s.p[0], y - s.p[1]) < f.width * 0.5 + 1.2) tiles.use[q] = 'street';
+      }
+  }
 
   // ---- which lots are built (the rest are yards: gardens, courtyards, room to grow)
   const built = new Uint8Array(nq);
@@ -239,7 +252,7 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn): Ci
     quadTop,
     roofRise,
     megas,
-    linear: [],
+    linear,
     nav: { nodes: [], links: [] },
     stats: {},
   };

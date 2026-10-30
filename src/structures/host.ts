@@ -36,6 +36,12 @@ export interface CityHostIO {
   water?: Float32Array;
   /** the sea's level (window z): ground under it is under water too */
   sea?: number;
+  /**
+   * (the renderer's hybrid: a chunk drawn as a heightfield lattice through the columns' tops would stretch the ground
+   * up over a building's External top — the field mesh's voxels leave room for it) the window box a claim touched
+   * (window units), to be drawn as voxels
+   */
+  touched?: (x0: number, y0: number, x1: number, y1: number) => void;
   /** where to say something fell (dust) */
   dust?: (x: number, y: number, z: number, count: number) => void;
 }
@@ -47,13 +53,13 @@ export interface CitySite {
   id?: string;
 }
 
-/** the URL's city: ?city=<system>&cstyle=&cseed=&cr= */
+/** the URL's city: ?city=<system>&cstyle=&cseed=&cr=&croads=&cwalls=1 */
 export function citySpecFrom(q: URLSearchParams, site: CitySite): CitySpec {
   const system = q.get('city') as GridStyle;
   if (!['irregular', 'contour-voronoi', 'radial', 'orthogonal'].includes(system)) throw new Error(`?city= must be irregular, contour-voronoi, radial or orthogonal (got "${system}")`);
   const style = (q.get('cstyle') ?? (system === 'radial' ? 'bastion' : 'hearth')) as CitySpec['style'];
   if (!STYLE_IDS.includes(style)) throw new Error(`?cstyle= must be one of ${STYLE_IDS.join(', ')}`);
-  return { seed: Number(q.get('cseed') ?? 7), system, style, at: site.at, radius: Number(q.get('cr') ?? site.radius) };
+  return { seed: Number(q.get('cseed') ?? 7), system, style, at: site.at, radius: Number(q.get('cr') ?? site.radius), roads: Number(q.get('croads') ?? 2), walls: q.get('cwalls') === '1' || undefined };
 }
 
 export class CityHost {
@@ -76,15 +82,12 @@ export class CityHost {
     this.plan = planCity(spec, (x, y) => this.groundAt(x, y), this.io.water || this.io.sea !== undefined ? (x, y) => Math.max(this.io.water ? this.at(this.io.water, x, y) : 0, (this.io.sea ?? -Infinity) - this.groundAt(x, y)) : undefined);
     this.all = piecesOf(this.plan);
     this.stats.planMs = +(performance.now() - t0).toFixed(1);
+    // (one instance a building; the ramparts (−1) one, each wall run or bridge (−2 …) one)
     for (const c of columnsOf(this.plan)) {
-      if (c.building < 0) continue;
       const l = this.cols.get(c.building);
       if (l) l.push(c);
       else this.cols.set(c.building, [c]);
     }
-    // (ramparts: their own instance, building −1 in the columns — kept under key −1)
-    const walls = columnsOf(this.plan).filter((c) => c.building < 0);
-    if (walls.length) this.cols.set(-1, walls);
     this.stats.buildings = this.plan.buildings.length;
     this.show();
     const ext = io.external();
@@ -125,6 +128,19 @@ export class CityHost {
     this.away.delete(b);
     if (!inst) return;
     this.claims.set(b, inst);
+    if (this.io.touched) {
+      let x0 = Infinity;
+      let y0 = Infinity;
+      let x1 = -Infinity;
+      let y1 = -Infinity;
+      for (const c of inst.cols) {
+        x0 = Math.min(x0, c.x);
+        x1 = Math.max(x1, c.x + 1);
+        y0 = Math.min(y0, c.y * ROW_H);
+        y1 = Math.max(y1, (c.y + 1) * ROW_H);
+      }
+      this.io.touched(x0, y0, x1, y1);
+    }
     this.stats.claimed = this.claims.size;
     this.stats.columns += inst.cols.length;
   }

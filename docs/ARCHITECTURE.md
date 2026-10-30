@@ -2234,6 +2234,13 @@ Hosts declare `spData` and `hostNight()` and their own entry points: the viewer 
 a 2048² shadow map, fog, filmic curve) and the game's (shaders/structgame.wgsl: render.wgsl's `lighting`, `haze`,
 `cutAway`, the pick; `Renderer.enableStructures`, the pieces at the draw group's binding 3, back faces culled).
 
+**Linear features** (`linear.ts`): a profile module warped segment by segment along a Catmull-Rom spline (each
+segment's frame its right and left edges at either end). Roads: the ground sampled every 2 m, a profile never steeper
+than 14% (passes that only raise: valleys and water filled by the deck); over 2.6 m above the ground, or over water, a
+bridge — deck pieces on the profile and arch pieces from the ground (spans ≈ the height, 5-12 m). Walls: a loop at
+1.06 R, the walk 8 m over the ground, towers every 28 m and at the gates. Each wall run and bridge is its own External
+instance; nav nodes every 4 m (street, bridge, rampart), stairs at a wall run's ends.
+
 **Viewer:** structures.html (src/structures/viewer/): tile system, style, seed, size, storeys, density, ground (flat,
 hill, slope), time of day; building (one building isolated: `isolate` re-works its façades and roofs alone), district,
 city; drag to turn, wheel or pinch to zoom, right-drag or two fingers to pan; tile and nav overlays; every setting in the

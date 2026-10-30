@@ -32,7 +32,8 @@ viewer structures.html.
 | STR8 | The viewer (structures.html): system, style, seed, size, storeys, density, ground, time of day (lit windows at dusk); building / district / city; turn, zoom, pan; tile and nav overlays; every setting in the URL | M | done (structures) |
 | STR9 | The city on real terrain: the game's renderer draws the pieces (shared structmesh.wgsl), the columns claimed as External intervals, at an atlas site (`?city=<system>`: the town nearest the start handed off) | L | done (structures) |
 | STR10 | LOD for the game: far walls as plain slabs (windows painted), roofs only beyond a distance; measure the phone first (a 56 m town is ~555k triangles at full detail) | M | open |
-| STR11 | Linear features: roads, rails, walls and bridges extruded along splines (LinearFeature in the contract; atlas/ways.ts's graded roads and bridges the input) | L | open |
+| STR11 | Linear features: roads, rails, walls and bridges extruded along splines (linear.ts): roads out of a town graded to 14%, viaducts where they stand high over valleys or water, town walls with towers and gates; nav and External columns | L | done (structures) |
+| STR20 | Linear features from the atlas's own ways (atlas/ways.ts: its graded roads, bridges, switchbacks, lift towers) drawn as these modules instead of column stamps; rails in a town (none generated yet — the module is there) | M | open |
 | STR12 | Mega tiles beyond one tile: domes and halls over a 2 × 2 patch, the keep at a radial city's heart, gatehouse towers on the wall | M | open |
 | STR13 | Cities built into the earth (spec.sunk): terraces cut into a slope, quarry towns with the terrain track's contract | M | open |
 | STR14 | Buriable assets (statue, column, fallen tower, arch, bell: mesh + solid → cells under any skew) placed by the terrain track as External owners, drawn by meshinst | M | wip |
