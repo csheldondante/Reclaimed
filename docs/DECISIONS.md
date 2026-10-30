@@ -3,6 +3,18 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-30 — round 114 (session 5, `worldstore`) — a saved world from another generator; a run's places made fresh
+
+- The user, verbatim: "Without the flag my world seems to me glitched (which is fine for now). I think the intention
+  was to have places regenerated from the atlas data the first time you visit each run (as long as it can be
+  deterministic from seed) and to speed up serialization by prefetching tiles into memory or the GPU aggressively
+  ahead of when they are needed." (The flag: `?world=new`.)
+- → Branch `worldstore`: the land generator's version is a hash of its sources made at build time (no hand bump: the
+  old GEN_VERSION stayed 1 and old builds' regions loaded beside new land); a record of another generator is dropped
+  as the store opens and its region made again from the seed; the world id carries the atlas options; a run is its
+  own world, made fresh each run. The prefetch part is left to the streaming work (covercheck's files): a measured
+  note and a design in the DEVLOG (BACKLOG WV5).
+
 ## 2026-10-30 — round 113 (session 5, `places`) — streaming: stand-ins first, detail as fast as it comes
 
 - The user, verbatim: "This will take a while I would prefer you fix the design. As mentioned we should be able to get

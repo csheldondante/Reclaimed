@@ -34,12 +34,12 @@ import { Hud } from '../ui/hud';
 import type { PerfOverlay } from '../ui/perf-overlay';
 import { WorldCore, type Host, type Scene } from './world-core';
 import { Streamer, REGION, TIER, boxOf, type WorldSave } from './streamer';
-import { Atlas, atlasParamsFrom } from '../atlas/atlas';
+import { Atlas, atlasParamsFrom, type AtlasParams } from '../atlas/atlas';
 import { EV, eventAt } from '../atlas/coarse';
 import { FarLand } from '../atlas/far';
 import { GPUGEN } from '../atlas/finish';
 import type { MapData } from '../world/mapgen';
-import { settleTol, Sleep } from '../sim/sleep';
+import { settleLand, settleTol, Sleep } from '../sim/sleep';
 import { RiverWet } from '../weather/riverwet';
 import { CatchmentWet } from '../weather/catchwet';
 import { RiverWetField } from '../weather/wetfield';
@@ -116,14 +116,31 @@ const ATLAS_COL_K = SANDBOX_K - K_HEADROOM;
 const WARMUP_TICKS = 1800; // ~30 s of sim: rivers reach equilibrium before the player looks
 
 /**
- * (round 100) The world the store keeps: the atlas's seed (and the run's, `?run=`); `?world=new` clears it first,
- * `?world=<name>` another of the same seed; `?worldsave=0` keeps this session's changes in memory only.
+ * (round 100) The world the store keeps: the atlas's seed; `?world=new` clears it first, `?world=<name>` another of
+ * the same seed; `?worldsave=0` keeps this session's changes in memory only.
+ * (Round 114, `worldstore`.) And what else decides the land besides the generator's code (GEN_VERSION, in each
+ * record): the atlas's other parameters (`?a.*`), the river mode and whether land comes in settled — `~<hash>`, so a
+ * world made with other options is another world, not loaded into this one. A run (`?run=<story>`) is its own world,
+ * one per run: `@<instance>` (`?runinst=` names one, else each page load starts a new run — a run can't be resumed
+ * after a reload, its story starts again, so its places are made again from the seed the first time they're visited
+ * and keep their changes for the rest of the run). Earlier runs' records on this seed are dropped when a run opens.
  */
-export function worldSaveOf(params: URLSearchParams, seed: number): WorldSave {
+export function worldSaveOf(params: URLSearchParams, p: AtlasParams, gen: { rivers: string; settle: boolean }): WorldSave {
   const w = params.get('world');
   const run = params.get('run');
   const name = w && w !== 'new' ? `:${w}` : '';
-  return { world: `atlas:${seed}${run ? `:run=${run}` : ''}${name}`, disk: params.get('worldsave') !== '0', fresh: w === 'new' };
+  const { seed, ...rest } = p;
+  const opts = JSON.stringify([Object.keys(rest).sort().map((k) => [k, rest[k as keyof typeof rest]]), gen.rivers, gen.settle]);
+  let h = 0x811c9dc5;
+  for (let i = 0; i < opts.length; i++) h = Math.imul(h ^ opts.charCodeAt(i), 0x01000193) >>> 0;
+  const base = `atlas:${seed}~${h.toString(16).padStart(8, '0')}`;
+  const inst = params.get('runinst') ?? `${Date.now().toString(36)}${Math.floor(Math.random() * 1296).toString(36)}`;
+  return {
+    world: `${base}${run ? `:run=${run}@${inst}` : ''}${name}`,
+    disk: params.get('worldsave') !== '0',
+    fresh: w === 'new',
+    endedRuns: run ? `${base}:run=` : undefined,
+  };
 }
 
 export class LevelScene implements Scene {
@@ -1411,7 +1428,7 @@ export class LevelScene implements Scene {
             },
             a.origin,
             { oz: a.oz, outside: a.outside, ground: a.ground },
-            worldSaveOf(host.params, a.atlas.p.seed),
+            worldSaveOf(host.params, a.atlas.p, { rivers: riverMode(), settle: settleLand() }),
           )
         : new Streamer(core);
       // (round 102) the tile pacer gives more of the frame's room as the camera moves fast

@@ -15,6 +15,8 @@ export interface StoreMeta {
   raw: number;
   packed: number;
   hash: number;
+  /** (round 114) the land generator that made it (GEN_VERSION); round 100–113's records have none */
+  gen?: string;
 }
 
 /** `mem`: the session's own tier (?worldsave=0): kept in the worker's memory, compressed the same, never on disk */
@@ -24,9 +26,25 @@ export type StoreAsk = { mem?: boolean } & (
   | { op: 'get'; id: number; world: string; key: string }
   | { op: 'delete'; id: number; world: string; key: string }
   | { op: 'clear'; id: number; world: string }
+  | { op: 'prune'; id: number; world: string; gen: string; endedRuns?: string }
 );
 
-export type StoreReply = { id: number; ok: true; metas?: StoreMeta[]; raw?: ArrayBuffer; packed?: number; ms?: number } | { id: number; ok: false; error: string };
+/** (prune) per world: records dropped for being another generator's, for being an ended run's */
+export type Dropped = Record<string, { gen: number; run: number }>;
+
+export type StoreReply = { id: number; ok: true; metas?: StoreMeta[]; raw?: ArrayBuffer; packed?: number; ms?: number; dropped?: Dropped } | { id: number; ok: false; error: string };
+
+/**
+ * (round 114) Whether a record goes as a store opens: this world's made by another land generator (unusable here:
+ * its region is made again from the seed; and any world's from before generators were named), or any of an ended run's (`endedRuns`: the prefix of this seed's runs'
+ * worlds; this world excepted). Other worlds' records stay — another seed, another branch's build may still use them.
+ */
+function pruned(m: StoreMeta, a: { world: string; gen: string; endedRuns?: string }): 'gen' | 'run' | null {
+  // (round 100–113's records, of any world, say no generator: none is this build's or any later one's)
+  if (m.gen === undefined) return 'gen';
+  if (m.world === a.world) return m.gen === a.gen ? null : 'gen';
+  return a.endedRuns && m.world.startsWith(a.endedRuns) ? 'run' : null;
+}
 
 let dbP: Promise<IDBDatabase> | null = null;
 function db(): Promise<IDBDatabase> {
@@ -94,6 +112,17 @@ const memMeta = new Map<string, StoreMeta>();
 
 async function handleMem(m: StoreAsk): Promise<StoreReply> {
   const t0 = performance.now();
+  if (m.op === 'prune') {
+    const dropped: Dropped = {};
+    for (const [k, x] of [...memMeta]) {
+      const why = pruned(x, m);
+      if (!why) continue;
+      (dropped[x.world] ??= { gen: 0, run: 0 })[why]++;
+      memMeta.delete(k);
+      memRegions.delete(k);
+    }
+    return { id: m.id, ok: true, dropped };
+  }
   if (m.op === 'index') return { id: m.id, ok: true, metas: [...memMeta.values()].filter((x) => x.world === m.world) };
   if (m.op === 'put') {
     const packed = await pipe(shuffle(new Uint8Array(m.raw)), new CompressionStream('deflate'));
@@ -127,6 +156,22 @@ async function handle(m: StoreAsk): Promise<StoreReply> {
     const t = d.transaction('meta', 'readonly');
     const metas = (await req(t.objectStore('meta').getAll(range(m.world)))) as StoreMeta[];
     return { id: m.id, ok: true, metas };
+  }
+  if (m.op === 'prune') {
+    // (the meta rows only — small — every world's, one transaction)
+    const t = d.transaction(['regions', 'meta'], 'readwrite');
+    const meta = t.objectStore('meta');
+    const [keys, metas] = await Promise.all([req(meta.getAllKeys()), req(meta.getAll())]);
+    const dropped: Dropped = {};
+    (metas as StoreMeta[]).forEach((x, i) => {
+      const why = pruned(x, m);
+      if (!why) return;
+      (dropped[x.world] ??= { gen: 0, run: 0 })[why]++;
+      meta.delete(keys[i]);
+      t.objectStore('regions').delete(keys[i]);
+    });
+    await done(t);
+    return { id: m.id, ok: true, dropped };
   }
   if (m.op === 'put') {
     const t0 = performance.now();
