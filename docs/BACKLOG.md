@@ -12,6 +12,23 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 117 (2026-10-30, branch `runplan`) — run planning, GM consequences, travel (docs/RUNPLAN.md)
+
+The user (round 117): runs of "15-50 minutes with branching. Decisions should impact the world for the next run"; "the
+run manager should be able to get. The graph and request obstacles or otherwise request a certain number of exits";
+"A fast bike need races and chases. A combat soldier needs fun fights. A force of nature needs spectacle and power
+fantasy."
+
+| id | item | size | status |
+|---|---|---|---|
+| RP1 | The run manager: a branching run (start, 1-4 layers of two, a finale) planned on the region graph for the hero's capabilities, 15-50 min, every path to the finale; terrain requests (obstacles fun for the hero, exits per stage); `?runplan=view` viewer | L | done (runplan) |
+| RP2 | Consequences between runs: per-encounter outcomes (AtlasEvents + CharacterChanges), the GM's failure rules (death: the lich takes the map where the dead hold sway; capture: held at the captor's seat, rescue / escape next run; late: the threat wins), `finishRun`; characters (history, relationships, motivation, gear, statuses) and faction power/relations in the world state | M | done (runplan) |
+| RP3 | RegionState realised per generator at the boundary (`realise` → RegionRealisation: sunk/buried/flooded as height flood-fill requests, ruin/overgrowth/drowned/marks, undead/presence/welcome, flora, sky) — for terrain, structures, inhabitants, flora to read when their contracts land | M | done (contract + conversion; generators don't read it yet) |
+| RP4 | Travel on the atlas map: Journey (precache at once, events held until answered, arrive when animated and resident), en-route events (vista, poi, ambush, weather, traveller) | M | done in the viewer (stand-in loader); the level: RP5 |
+| RP5 | The same travel in the level: AtlasMap draws the run's legs, Journey with the streamer's precache, warp on arrival | M | open |
+| RP6 | Swap the stand-ins: terrain's region graph for `factsGraph`, play's controller contract for `HEROES` | S | open (when those tracks land) |
+| RP7 | Pinned sections (RC1): `RunStage.section` says what to keep resident; the tile atlas needs a pinned set | M | open |
+
 ## Round 115 (2026-10-30, session 5, `places`) — caching by section, travel on the atlas, the camera's view (DECISIONS round 115)
 
 Streaming is good enough for now (places 3c850b9); these are for when gameplay and the finished generator are built.

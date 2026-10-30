@@ -20,7 +20,7 @@ import type { Condition, Outcome, SessionStory } from '../api/contracts/story';
 
 export const ATLAS_EVENT_KINDS = [
   'sink', 'raise', 'bury', 'overgrow', 'freeze', 'thaw', 'storm', 'clear-storm', 'shadow', 'light',
-  'raise-dead', 'lay-dead', 'flood', 'drain', 'burn', 'ruin', 'rebuild', 'faction-presence', 'faction-attitude', 'mark',
+  'raise-dead', 'lay-dead', 'flood', 'drain', 'burn', 'ruin', 'rebuild', 'faction-presence', 'faction-attitude', 'faction-relation', 'faction-power', 'mark',
 ] as const satisfies readonly AtlasEventKind[];
 /** (a compile error here: world.ts has a kind the list above lacks) */
 export const ATLAS_EVENT_KINDS_COMPLETE: [Exclude<AtlasEventKind, (typeof ATLAS_EVENT_KINDS)[number]>] extends [never] ? true : false = true;
@@ -292,7 +292,7 @@ export function checkStory(input: unknown, world: CheckWorld): string[] {
       if (!regs.length) bad(`${ea}.regions`, 'is empty');
       for (const r of regs) if (!regionIds.has(r as number)) bad(`${ea}.regions`, `region ${JSON.stringify(r)} isn't in the snapshot`);
       if (k === 'bury') num(`${ea}.magnitude`, e.magnitude, 0.5, 40);
-      else if (k === 'faction-presence' || k === 'faction-attitude') num(`${ea}.magnitude`, e.magnitude, -1, 1);
+      else if (k === 'faction-presence' || k === 'faction-attitude' || k === 'faction-relation' || k === 'faction-power') num(`${ea}.magnitude`, e.magnitude, -1, 1);
       else num(`${ea}.magnitude`, e.magnitude, 0, 1);
       if (k === 'flood') {
         if (e.level === undefined) bad(`${ea}.level`, 'a flood needs its level (world z); its magnitude is a 0..1 strength');
@@ -316,7 +316,7 @@ export function checkStory(input: unknown, world: CheckWorld): string[] {
       if (e.detail !== undefined && !isObj(e.detail)) bad(`${ea}.detail`, 'expected an object');
       if (k === 'storm' && !STORMS.includes(d.storm as string)) bad(`${ea}.detail.storm`, `a storm needs detail.storm: ${STORMS.join(', ')}`);
       if (k === 'bury' && !BURY.includes(d.material as string)) bad(`${ea}.detail.material`, `a bury needs detail.material: ${BURY.join(', ')}`);
-      if ((k === 'faction-presence' || k === 'faction-attitude') && !factionIds.has(d.faction as string)) bad(`${ea}.detail.faction`, `${k} needs a snapshot faction, got ${JSON.stringify(d.faction)}`);
+      if ((k === 'faction-presence' || k === 'faction-attitude' || k === 'faction-relation' || k === 'faction-power') && !factionIds.has(d.faction as string)) bad(`${ea}.detail.faction`, `${k} needs a snapshot faction, got ${JSON.stringify(d.faction)}`);
       if ('location' in d) bad(`${ea}.detail.location`, 'a story location goes on the event itself (AtlasEvent.location)');
       if (k === 'mark') {
         str(`${ea}.detail.name`, d.name);

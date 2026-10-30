@@ -13425,3 +13425,36 @@ The merged tilegate: background 0 everywhere; parked and 20 c/s views as before 
 baselines). The 160 c/s fast views varied, so desktop z8/z5 were A/B'd, pre-merge (covercheck build) against merged,
 twice each, alternating: far land worst pre 0.04%-4.7%, merged 0.1%-4.7%; geometric worst the same 11.8% in all four
 (SF14). Run-to-run noise, not a regression. The z8 20 c/s 0.16% from the full gate didn't recur (0 in all four).
+
+## 2026-10-30 — Run planning, consequences and travel (round 117, branch `runplan`; docs/RUNPLAN.md)
+
+**What.** A run manager that plans a branching run on the region graph fitted to the hero, the stand-in GM's
+consequences for the next run (characters, factions, terrain and cities, regional statuses, failure by death, capture
+or the clock), RegionState converted for each generator, travel on the atlas map with en-route events and precache, and
+a viewer (`?runplan=view&seed=1&hero=bike`). The user (round 117): "15-50 minutes with branching. Decisions should
+impact the world for the next run"; "the run manager should be able to get. The graph and request obstacles or
+otherwise request a certain number of exits"; "A fast bike need races and chases. A combat soldier needs fun fights. A
+force of nature needs spectacle and power fantasy."
+
+**Why CPU.** The planner is a few Dijkstras over 7772 regions once a run, deterministic from the seed, unit-tested in
+Node; the GPU only sees its outputs. Measured (scripts/perf/runplan.mjs, the viewer on the desktop iGPU at the phone
+proxy's size): a plan ~45-100 ms in the page (much of it `world.snapshot()` cloning every region's state; 15-45 ms in
+Node), the travel animation at the display's rate (median 10 ms, p95 10.3 ms). The viewer's panel first called
+`world.snapshot()` on every redraw (~30 ms each, a played run ~0.65 s); it now reads what it shows.
+
+**Why layers of two, a finale.** Every choice is a real fork (two places, two kinds of play when the hero likes more
+than one), every path reaches the finale so the run can't strand the player, and the length is bounded (stage minutes
+are budgets, scaled when a path would leave 15-50). Two stages of a layer at least 1100 world units apart: the first
+look at seed 1 had both choices in neighbouring chasms with their labels on top of each other (500).
+
+**Why one flood-fill request for sea, sand and flood.** The user: "a GPU flood fill based on height … We can flood with
+water, sand, magma etc." — `realise` turns sunk (a new shallow sea), buried (a ruin under sand or ash) and flooded into
+the same `FloodRequest` (seed, level, material) for terrain's tool.
+
+**Why stand-ins.** Terrain's graph and play's controller contract weren't published when this started; `factsGraph`
+(barriers guessed from region kinds and ground, the atlas's roads as crossings) and `HEROES` (read off GameplayGM's
+controllers and the user's words) sit behind `RegionGraph` and `HeroCapabilities`, so swapping them changes no test.
+
+**Tests.** `npx vitest run src/runplan`: 21 tests, ~2 s (vitest added minimally; testkit's setup replaces it).
+**Looked at.** C:/Projects/shots88/runplan/ (bike-1-plan.png, bike-3-event.png, bike-travel.gif, bike-5-end.png,
+bike-phone.png).

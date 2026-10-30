@@ -173,6 +173,8 @@ async function main() {
 
   // ?atlas=view: the atlas viewer (round 67); ?skipmenu=1 goes straight to the level (debugging, scripted tests)
   if (params.get('atlas') === 'view') show(await AtlasView.create(host));
+  // (round 117, runplan) ?runplan=view: the run-plan viewer (src/runplan/viewer.ts)
+  else if (params.get('runplan') === 'view') show(await (await import('./runplan/viewer')).RunPlanView.create(host));
   else if (params.get('skipmenu') === '1') await startLevel(params.get('level') ?? 'valley');
   else await startMenu();
   bootMark('level-ready');

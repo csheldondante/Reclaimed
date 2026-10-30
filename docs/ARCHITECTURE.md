@@ -2393,3 +2393,20 @@ clears them).
   TilePacer.holes, WorldCore.simCap. `?planner=0`, `?planoff=slide,tile,mesh,sim,pacer`.
 - **Land written is drawable at once** (SF7): the streamer's onRelief → level → WorldCore.prepareArrived (SurfaceSystem
   and RenderFieldsSystem with `all`: every column, no sleep skip) and HybridChunks.landBox(…, −Infinity): ready now.
+
+## Planned runs (round 117, branch `runplan`; docs/RUNPLAN.md)
+
+- **Contract** (`src/api/contracts/run.ts`, second half): `RunPlanner.plan({ graph, world, hero, seed, from, minutes })
+  → RunPlan` — stages (region, encounter, brief, minutes, the section to keep resident, outcomes, legs out), legs
+  (route of regions, path in world units, crossings, en-route events, minutes, animation seconds), failure rules, terrain
+  requests, the deadline. Inputs are stand-ins until their tracks land: `RegionGraph` (terrain's), `HeroCapabilities`
+  (play's). Outputs other systems read: `TerrainRequest` (terrain), `RegionRealisation` (terrain's `FloodRequest`
+  fills, structures, inhabitants, flora, sky), `RunStage.section` (the streamer's pinned set, RC1).
+- **World state** (`world.ts`, `world-state.ts`): characters (`CharacterRecord`, `applyCharacter`, in the snapshot),
+  `Faction.power`, events `faction-power` / `faction-relation`. Outcomes are `Outcome` + `CharacterChange[]`, applied
+  by `finishRun` (src/runplan/consequences.ts) through `WorldState.apply` and `applyCharacter` only.
+- **Travel** (`src/runplan/travel.ts`): `Journey(leg, dest, Precacher)` — pure; asks for the destination's land when it
+  starts, arrives when the animation is done and the land is ready. The level gives it the streamer's precache
+  (`precacheWarp`); the viewer a stand-in loader.
+- **Shared change**: `api/atlas-map.ts` exports `paintAtlasImage(atlas)` (AtlasMap's painter, unchanged) so the viewer
+  draws the game's own map.
