@@ -1741,6 +1741,8 @@ export class LevelScene implements Scene {
       atlas: this.opts.atlas?.atlas,
       // (round 117, terrain track) the region graph, its requests and the flood tool (api/contracts/terrain.ts)
       terrain: this.opts.atlas?.atlas ? new TerrainSystem(this.opts.atlas.atlas) : undefined,
+      // (round 117, terrain: the hybrid's chunks, for probes — which are voxels, which the grid's)
+      hybrid: () => this.hybrid,
       // (round 93) the land past the window: far.lod.bytes, far.windowLook, far.grownVeg
       far: this.far,
       toggleFly: () => this.toggleFly(),

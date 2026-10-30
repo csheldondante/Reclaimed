@@ -13799,3 +13799,18 @@ coastal slope is a sea cave too); most cliff stretches have them (the mask's thr
 CAVE_MID 9. From the fixed view on the phone proxy the mouths now show along the sea cliff
 (C:/Projects/shots88/terrain/mouth2-m.png), but as pale patches: the inside is lit like open ground — the draw doesn't
 darken under a roof (TR21 stays open for the renderer: shade inside a run's gap).
+
+**Under cover (render.wgsl underCover — a shared-renderer tweak for consolidation).** Main asked the terrain track to
+shade what's under a roof (no track owns the renderer). lighting() now fades the sky's light and the bounce (to 0.1) and
+the sun (to 0.2) by how far under cover a point is: 0 when its column (the one its face looks out to) has no top above
+it; else the share of nine columns — its own and eight round it, 3 and 7 cells out — whose tops stand over it: deeper in a
+cave, darker. One surface read for open ground, nine under a roof; nothing past the window (the tiles are tops). Every
+draw that calls lighting() gets it (the mesh, the prisms, the grid, rock and instance meshes). The gpu tier compiles it
+(a WorldCore makes the renderer); its numbers aren't unit-tested yet (the term reads the window's surface words through
+common.wgsl's chunked layout: a probe needs a tiny world's buffers — next). Pictures (phone proxy, the sea cliff at
+16232,4253): before mouth2-m.png, after mouth3-m.png — the same pale patches, because those mouths are past the window's
+edge: the window's mesh cuts each mouth into the face and what lies behind is past the window, where the tiles and rings
+draw only tops, so the mouth is a see-through hole (pale with the tiles, the land behind with ?tiles=0:
+mouth3notiles-m.png). Inside the window the mouths read dark (q=high: mouth3hq-m.png; ?hybrid=0: mouth3nohyb-m.png).
+TR24: cap the window's mesh at its edge where a gap crosses it, or let the tiles bake a gap as a dark recess.
+scripts/terrain/hybprobe.mjs (the hybrid's chunk state round a point; window.reclaimed.hybrid() added for it) found it.
