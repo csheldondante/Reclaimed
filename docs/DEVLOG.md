@@ -13601,3 +13601,11 @@ device (TK7), so it now opens a page per level.
   always making a Renderer (TK6).
 
 vite.config.ts: `__dirname` → `import.meta.dirname`, which vitest's config loader asks for. Same value.
+
+## 2026-10-30 — round 117 (main): testkit merged; the runner copies a build where it may not rename one
+
+testkit's pyramid on places: `npm test` 78 passed + 1 expected fail (TK4) in 19.8 s, no browser (unit, then the GPU tier on
+Dawn in Node). The smoke needs the runner's own build server (warm snapshots), and in main's sandboxed shells every directory
+rename in .testcache fails EPERM, so caa0827's guard made every runner script fail there. Now the build is copied into the
+cache instead, index.html last (a build counts as present once its index.html is). `npm run smoke` then passed: the atlas
+ready in 65 s with three other agents' checks on the GPU, sim ticking, no fatal.
