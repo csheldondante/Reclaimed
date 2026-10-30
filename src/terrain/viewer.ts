@@ -76,7 +76,7 @@ export class TerrainView implements Scene {
     const tog = (k: keyof TerrainView['show'], label: string) => `<label style="margin-right:6px;white-space:nowrap"><input type="checkbox" data-show="${k}" ${this.show[k] ? 'checked' : ''}> ${label}</label>`;
     const legend = (Object.keys(KIND_COLOUR) as BarrierKind[]).map((k) => `<span style="display:inline-block;margin:1px 4px 1px 0"><i style="display:inline-block;width:9px;height:9px;background:${KIND_COLOUR[k]};margin-right:3px"></i>${k}</span>`).join('');
     d.innerHTML =
-      `<div style="font-size:14px;margin-bottom:4px">Terrain</div>` +
+      `<div style="font-size:14px;margin-bottom:4px"><button data-fold style="padding:2px 8px">▾</button> Terrain <button data-atlas style="padding:2px 6px;font-size:11px">atlas panel</button></div><div data-body>` +
       `<div>${btn('data-graph', 'Graph here')}</div>` +
       `<div style="margin-top:4px">controller: ${(['walker', 'bike', 'lich'] as const).map((k) => btn(`data-caps="${k}"`, k)).join('')}</div>` +
       `<div style="margin-top:4px">picked room: ${btn('data-exits="1"', '1 exit')}${btn('data-exits="2"', '2 exits')}${btn('data-exits="3"', '3 exits')}</div>` +
@@ -85,7 +85,27 @@ export class TerrainView implements Scene {
       `<div style="margin-top:6px">${tog('rooms', 'rooms')}${tog('borders', 'borders')}${tog('passes', 'passes')}${tog('edits', 'edits')}${tog('mask', "can't stand")}${tog('veg', 'vegetation')}${tog('props', 'buried')}</div>` +
       `<div class="tv-info" style="margin-top:8px;white-space:pre-wrap"></div>` +
       `<div style="margin-top:6px">${legend}</div>` +
-      `<div style="margin-top:6px;color:#aaa">Zoom in (a graph covers ≤ 2048 world units), Graph here, tap a room. Double-click walks in.</div>`;
+      `<div style="margin-top:6px;color:#aaa">Zoom in (a graph covers ≤ 2048 world units), Graph here, tap a room. Double-click walks in.</div></div>`;
+    // (a phone: the panel folds — ▾ — and the atlas's own panel hides, so the map shows; both start folded on a narrow screen)
+    const body = d.querySelector<HTMLDivElement>('[data-body]')!;
+    const fold = d.querySelector<HTMLButtonElement>('[data-fold]')!;
+    const setFold = (f: boolean) => {
+      body.style.display = f ? 'none' : '';
+      fold.textContent = f ? '▸' : '▾';
+    };
+    fold.onclick = () => setFold(body.style.display !== 'none');
+    const atlasPanel = () => this.host.ui.querySelector<HTMLDivElement>('.atlas-info')?.parentElement ?? null;
+    d.querySelector<HTMLButtonElement>('[data-atlas]')!.onclick = () => {
+      const p = atlasPanel();
+      if (p) p.style.display = p.style.display === 'none' ? '' : 'none';
+    };
+    if (typeof innerWidth !== 'undefined' && innerWidth < 640) {
+      setFold(true);
+      queueMicrotask(() => {
+        const p = atlasPanel();
+        if (p) p.style.display = 'none';
+      });
+    }
     d.querySelector<HTMLButtonElement>('[data-graph]')!.onclick = () => void this.makeGraph();
     d.querySelectorAll<HTMLButtonElement>('[data-caps]').forEach((b) => (b.onclick = () => this.setCaps(CAPS_PRESETS[b.dataset.caps as 'walker'])));
     d.querySelectorAll<HTMLButtonElement>('[data-exits]').forEach((b) => (b.onclick = () => this.exits(Number(b.dataset.exits))));

@@ -50,6 +50,9 @@ await run({ name: 'terrain-viewer', kind: 'behaviour', size: '1200x800', strictC
   R.check('GPU flood = CPU flood', fc.differ === 0 && Math.abs(fc.gpuLevel - fc.cpuLevel) < 1e-3, fc);
   const fl = await p.evaluate(async (at) => {
     const v = window.reclaimed.viewer;
+    // (a depth over the tapped ground: the spot needn't be a basin — 6 cells of water over it, the land round it that's lower)
+    const d = document.querySelector('[data-depth]');
+    if (d) d.value = '6';
     const r = await v.flood(at[0], at[1], 'water');
     return r;
   }, [x, y]);

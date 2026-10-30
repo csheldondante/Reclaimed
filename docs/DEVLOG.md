@@ -13839,3 +13839,8 @@ border texels — so the plan and the land agree. CPU, once (the per-texel array
 on Dawn: 2468 regions, 7361 borders (cliff, sea, ridge, lava, steep, river, ravine, open). The node and edge shapes follow
 runplan's stand-in (centre, area, tier, ground, rivers, lava; a, b, barrier, length) so its adapter is a rename. Floods
 take 'silt' too (runplan's materials: water, sand, ash, silt, magma).
+
+**The viewer on a phone.** The atlas's panel (270 wide) and the terrain's (250) covered a 412-wide screen. The terrain
+panel now folds (▾/▸) and hides the atlas's panel (a button); on a narrow screen both start out of the way. The viewer's
+smoke on the phone proxy (scripts/terrain/viewer.mjs --size 412x915 --dpr 2.6): graph, an exit opened (a ford), the GPU
+flood equal to the CPU's, a flood 6 over the tapped ground (C:/Projects/shots88/terrain/viewer-phone-*.png).
