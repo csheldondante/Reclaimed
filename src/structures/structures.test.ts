@@ -1,0 +1,239 @@
+// The structures system at its contract, on tiny cities (vitest, Node; no GPU). `npx vitest run src/structures`.
+import { describe, expect, it } from 'vitest';
+import type { CitySpec, GroundFn } from '../api/contracts/structures';
+import { planCity, isolate } from './plan';
+import { piecesOf, PIECE_FLOATS, ROOF_LIFT } from './pieces';
+import { columnsOf } from './columns';
+import { buriable } from './assets';
+import { navPath } from './nav';
+import { library, roofHeight } from './modules';
+import { solve, WfcContradiction } from './wfc';
+import { adjacency, quadArea, quadCorners } from './tiles/builder';
+import { tileSystem } from './tiles/systems';
+import { fbm } from './rng';
+
+const hill: GroundFn = (x, y) => 20 + 12 * fbm(x * 0.012, y * 0.012, 4) + 0.04 * x;
+const flat: GroundFn = () => 10;
+const SYSTEMS = ['irregular', 'contour-voronoi', 'radial', 'orthogonal'] as const;
+const spec = (system: CitySpec['system'], o: Partial<CitySpec> = {}): CitySpec => ({ seed: 7, system, style: 'hearth', at: [500, 500], radius: 48, ...o });
+
+describe('tile systems', () => {
+  for (const system of SYSTEMS)
+    it(`${system}: a counter-clockwise quad mesh, deterministic, conforming enough to have neighbours`, () => {
+      const t = tileSystem({ spec: spec(system), ground: hill });
+      const n = t.use.length;
+      expect(n).toBeGreaterThan(60);
+      for (let q = 0; q < n; q++) expect(quadArea(t, q)).toBeGreaterThan(0.01);
+      const again = tileSystem({ spec: spec(system), ground: hill });
+      expect(Array.from(again.quads)).toEqual(Array.from(t.quads));
+      const adj = adjacency(t);
+      let inner = 0;
+      for (let i = 0; i < adj.length; i++) if (adj[i] >= 0) inner++;
+      // most sides are shared (T-junctions where radial rings double, Voronoi bands meet plots)
+      expect(inner / adj.length).toBeGreaterThan(0.6);
+      expect(t.use.filter((u) => u === 'lot').length).toBeGreaterThan(n * 0.2);
+      expect(t.use.some((u) => u === 'street')).toBe(true);
+    });
+
+  it('irregular: relaxed toward squares (no sliver tiles)', () => {
+    const t = tileSystem({ spec: spec('irregular'), ground: flat });
+    let worst = 180;
+    for (let q = 0; q < t.use.length; q++) {
+      const p = quadCorners(t, q);
+      for (let k = 0; k < 4; k++) {
+        const a = p[(k + 3) % 4];
+        const b = p[k];
+        const c = p[(k + 1) % 4];
+        const ang = Math.abs(Math.atan2((a[0] - b[0]) * (c[1] - b[1]) - (a[1] - b[1]) * (c[0] - b[0]), (a[0] - b[0]) * (c[0] - b[0]) + (a[1] - b[1]) * (c[1] - b[1])));
+        worst = Math.min(worst, (ang * 180) / Math.PI);
+      }
+    }
+    expect(worst).toBeGreaterThan(30);
+  });
+
+  it('radial has a wall and gates on its rim', () => {
+    const t = tileSystem({ spec: spec('radial'), ground: flat });
+    expect(t.use.filter((u) => u === 'wall').length).toBeGreaterThan(10);
+    expect(t.use.filter((u) => u === 'gate').length).toBeGreaterThan(0);
+  });
+});
+
+describe('roofs', () => {
+  it('a ridge carries on across a joined side: two tiles in a row meet at the same heights', () => {
+    // tile A free on sides 0, 2, 3 (its side 1 joined to B); B free on 0, 1, 2 (its side 3 joined to A)
+    for (const v of [0, 0.2, 0.5, 0.8, 1]) expect(roofHeight(1, v, 1 | 4 | 8, 0)).toBeCloseTo(roofHeight(0, v, 1 | 2 | 4, 0));
+  });
+  it('the inside of an L slopes down to its corner on both arms', () => {
+    // corner tile: free sides 0 and 3, joined 1 and 2, corner 2 (1,1) free; the arm across side 1 is free on 0 and 2
+    for (const v of [0, 0.25, 0.5, 0.75, 1]) expect(roofHeight(1, v, 1 | 8, 4)).toBeCloseTo(roofHeight(0, v, 1 | 4, 0));
+  });
+  it('every roof module is made of finite vertices in a sane frame', () => {
+    const lib = library();
+    const id = lib.id('roof:5:0:10:5:0:tile');
+    const m = lib.modules[id];
+    expect(m.index.length % 3).toBe(0);
+    for (const x of m.verts) expect(Number.isFinite(x)).toBe(true);
+  });
+});
+
+describe('wfc', () => {
+  it('meets the constraints of a chain', () => {
+    // 3 tiles, a chain of 20 nodes: tile t may be followed only by t or t+1 (mod 3)
+    const n = 20;
+    const allow = new Uint32Array([0b011, 0b110, 0b101]);
+    const sol = solve({ tiles: 3, domain: new Uint32Array(n).fill(7), weight: new Float64Array(n * 3).fill(1), edges: Array.from({ length: n - 1 }, (_, i) => [i, i + 1, 0] as [number, number, number]), allow: [allow] }, 3);
+    for (let i = 0; i + 1 < n; i++) expect(allow[sol[i]] & (1 << sol[i + 1])).toBeTruthy();
+  });
+  it('throws when the rules cannot be met', () => {
+    // two nodes that must differ, both forced to tile 0
+    expect(() => solve({ tiles: 2, domain: new Uint32Array([1, 1]), weight: new Float64Array(4).fill(1), edges: [[0, 1, 0]], allow: [new Uint32Array([0b10, 0b01])] }, 1)).toThrow(WfcContradiction);
+  });
+});
+
+describe('plans', () => {
+  for (const system of SYSTEMS)
+    it(`${system}: buildings in one block each, a front door each, façades only where open`, () => {
+      const p = planCity(spec(system), hill);
+      expect(p.buildings.length).toBeGreaterThan(5);
+      for (const b of p.buildings) {
+        const blocks = new Set(b.quads.map((q) => p.tiles.block[q]));
+        expect(blocks.size).toBe(1);
+        if (!b.mega && p.facades.some((f) => f.building === b.id && f.level === 0)) expect(p.facades.some((f) => f.building === b.id && f.kind === 'door' && f.level === 0)).toBe(true);
+      }
+      // a door is only ever on the ground floor; a balcony never is
+      for (const f of p.facades) {
+        if (f.kind === 'door' || f.kind === 'shop') expect(f.level).toBe(0);
+        if (f.kind === 'balcony') expect(f.level).toBeGreaterThan(0);
+      }
+    });
+
+  it('the same spec and ground make the same plan', () => {
+    const a = planCity(spec('irregular'), hill);
+    const b = planCity(spec('irregular'), hill);
+    expect(JSON.stringify(b.facades)).toBe(JSON.stringify(a.facades));
+    expect(b.buildings.map((x) => x.storeys)).toEqual(a.buildings.map((x) => x.storeys));
+  });
+
+  it('nav: from every building’s top storey to the street, and onto the rampart at a gate', () => {
+    const p = planCity(spec('radial'), flat);
+    const g = p.nav;
+    const street = g.nodes.find((n) => n.surface === 'plaza')!;
+    expect(street).toBeTruthy();
+    let reached = 0;
+    let tried = 0;
+    for (const b of p.buildings.slice(0, 12)) {
+      const top = g.nodes.filter((n) => n.building === b.id).sort((x, y) => y.at[2] - x.at[2])[0];
+      if (!top) continue;
+      tried++;
+      if (navPath(g, top.id, street.id).length) reached++;
+    }
+    expect(reached).toBe(tried);
+    const rampart = g.nodes.find((n) => n.surface === 'rampart')!;
+    const path = navPath(g, street.id, rampart.id);
+    expect(path.length).toBeGreaterThan(1);
+    const kinds = new Set<string>();
+    for (let i = 0; i + 1 < path.length; i++) {
+      const l = g.links.find((l) => (l.a === path[i] && l.b === path[i + 1]) || (l.b === path[i] && l.a === path[i + 1]))!;
+      kinds.add(l.kind);
+    }
+    expect(kinds.has('stairs')).toBe(true);
+  });
+});
+
+describe('pieces and columns', () => {
+  for (const style of ['hearth', 'bastion', 'terrace'] as const)
+    it(`${style}: every piece a module that exists, every frame finite`, () => {
+      const p = planCity(spec('irregular', { style }), hill);
+      const pc = piecesOf(p);
+      const lib = library();
+      expect(pc.count).toBeGreaterThan(100);
+      for (let i = 0; i < pc.count; i++) expect(pc.module[i]).toBeLessThan(lib.modules.length);
+      for (let i = 0; i < pc.count * PIECE_FLOATS; i++) expect(Number.isFinite(pc.data[i])).toBe(true);
+    });
+
+  it('columns: one span a column, solid upward, under the buildings', () => {
+    const p = planCity(spec('orthogonal'), flat);
+    const cols = columnsOf(p);
+    expect(cols.length).toBeGreaterThan(50);
+    const seen = new Set<string>();
+    for (const c of cols) {
+      expect(c.z1).toBeGreaterThan(c.z0);
+      const k = `${c.x},${c.y}`;
+      expect(seen.has(k)).toBe(false);
+      seen.add(k);
+    }
+  });
+});
+
+describe('buriable assets', () => {
+  for (const kind of ['statue', 'column', 'fallen-tower', 'arch', 'bell'] as const)
+    it(`${kind}: a mesh and the cells it fills, skewed`, () => {
+      const a = buriable(kind, 3);
+      expect(a.index.length).toBeGreaterThan(30);
+      const id = new Float32Array([1, 0, 0, 100, 0, 1, 0, 100, 0, 0, 1, 5]);
+      const up = a.cells(id);
+      expect(up.length).toBeGreaterThan(0);
+      // lying on its side (turned 90° about x): wider, lower
+      const c = Math.cos(Math.PI / 2);
+      const s = Math.sin(Math.PI / 2);
+      const side = a.cells(new Float32Array([1, 0, 0, 100, 0, c, -s, 100, 0, s, c, 5]));
+      const top = (cs: typeof up) => Math.max(...cs.map((x) => x.z1));
+      if (a.bounds[1][2] > (a.bounds[1][1] - a.bounds[0][1]) * 1.2) expect(top(side)).toBeLessThan(top(up));
+    });
+});
+
+/** a piece's vertex in the world (structmesh.wgsl spVertex, on the CPU) */
+function warp(d: Float32Array, o: number, u: number, v: number, w: number) {
+  const P = (k: number) => [d[o + k * 2], d[o + k * 2 + 1]];
+  const [c0, c1, c2, c3] = [P(0), P(1), P(2), P(3)];
+  const x = (1 - u) * (1 - v) * c0[0] + u * (1 - v) * c1[0] + u * v * c2[0] + (1 - u) * v * c3[0];
+  const y = (1 - u) * (1 - v) * c0[1] + u * (1 - v) * c1[1] + u * v * c2[1] + (1 - u) * v * c3[1];
+  const zf = (1 - u) * (1 - v) * d[o + 8] + u * (1 - v) * d[o + 9] + u * v * d[o + 10] + (1 - u) * v * d[o + 11];
+  return [x, y, zf + (d[o + 12] - zf) * w];
+}
+describe('roofs meet walls', () => {
+  it('no wall pokes up through a roof at its height (mitred walls, eaves held back, the roof lifted)', () => {
+  const plan = planCity({ seed: 7, system: 'irregular', style: 'hearth', at: [0, 0], radius: 40, density: 0.8 }, hill);
+  let worst = 0;
+  let report = '';
+  for (const b of plan.buildings) {
+    const pc = piecesOf(isolate(plan, b.id));
+    const lib = library();
+    // roof triangles (world)
+    const tris: number[][][] = [];
+    for (let i = 0; i < pc.count; i++) {
+      const m = lib.modules[pc.module[i]];
+      if (!m.name.startsWith('roof:')) continue;
+      for (let t = 0; t < m.index.length; t += 3) {
+        const vs = [0, 1, 2].map((k) => m.index[t + k]);
+        if (m.verts[vs[0] * 4 + 3] !== 2) continue;
+        tris.push([...vs.map((vi) => warp(pc.data, i * PIECE_FLOATS, m.verts[vi * 4], m.verts[vi * 4 + 1], m.verts[vi * 4 + 2])), [pc.data[i * PIECE_FLOATS + 8], i, 0]]);
+      }
+    }
+    for (let i = 0; i < pc.count; i++) {
+      const m = lib.modules[pc.module[i]];
+      if (!m.name.startsWith('plaster')) continue;
+      for (const [u, v] of [[0.02, 0], [0.5, 0], [0.98, 0], [0.02, 1], [0.98, 1]]) {
+        const p = warp(pc.data, i * PIECE_FLOATS, u, v, 1);
+        for (const t of tris) {
+          const [a, bb, c, meta] = t;
+          if (Math.abs(meta[0] - ROOF_LIFT - p[2]) > 0.01) continue;
+          const den = (bb[1] - c[1]) * (a[0] - c[0]) + (c[0] - bb[0]) * (a[1] - c[1]);
+          if (Math.abs(den) < 1e-9) continue;
+          const l1 = ((bb[1] - c[1]) * (p[0] - c[0]) + (c[0] - bb[0]) * (p[1] - c[1])) / den;
+          const l2 = ((c[1] - a[1]) * (p[0] - c[0]) + (a[0] - c[0]) * (p[1] - c[1])) / den;
+          const l3 = 1 - l1 - l2;
+          if (l1 < -1e-6 || l2 < -1e-6 || l3 < -1e-6) continue;
+          const z = l1 * a[2] + l2 * bb[2] + l3 * c[2];
+          const poke = p[2] - z;
+          if (poke > worst && Math.abs(z - p[2]) < 4) {
+            worst = poke;
+            report = `b${b.id} piece ${i} ${m.name} uv ${u},${v} wall top ${p[2].toFixed(2)} roof ${z.toFixed(2)} roofTri ${JSON.stringify(t.map((q) => q.map((x) => +x.toFixed(2))))} roofmod ${lib.modules[pc.module[t[3][1]]].name}`;
+          }
+        }
+      }
+    }
+  }
+  expect(worst, report).toBeLessThan(0.02);
+});
+});
