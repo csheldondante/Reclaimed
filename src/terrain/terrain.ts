@@ -11,12 +11,13 @@
 import type { Atlas } from '../atlas/atlas';
 import type { StampOps } from '../atlas/stamps';
 import { ROW_H } from '../world/lattice';
-import type { BuriedProp, ExcavationSite, FloodRequest, FloodResult, PassCaps, Terrain, TerrainEdit, TerrainGraph, TerrainNeed, TerrainRequest, TerrainResult, V2 } from '../api/contracts';
+import type { AtlasRegionGraph, BuriedProp, ExcavationSite, FloodRequest, FloodResult, PassCaps, Terrain, TerrainEdit, TerrainGraph, TerrainNeed, TerrainRequest, TerrainResult, V2 } from '../api/contracts';
 import { CAPS_PRESETS } from '../api/contracts/terrain';
 import { depthAt, partition, RegionGraph, SCREEN_AREA } from './partition';
 import { LandSampler } from './sample';
 import { FloodField } from './flood';
 import { placeBuried, PROP_TILE } from './props';
+import { atlasGraph } from './atlasgraph';
 
 /** a rock fill's material and a ford's (world/materials.ts MAT: Stone, Rubble) */
 const MAT_STONE = 1;
@@ -61,6 +62,12 @@ export class TerrainSystem implements Terrain {
   /** the samples themselves (the viewer draws them) */
   sample(x0: number, y0: number, w: number, h: number, step: number) {
     return this.sampler.sample(x0, y0, w, h, step);
+  }
+
+  private atlasG?: AtlasRegionGraph;
+  /** the atlas's regions as a graph (atlasgraph.ts; made once) */
+  atlasGraph(): AtlasRegionGraph {
+    return (this.atlasG ??= atlasGraph(this.atlas));
   }
 
   /** what lies buried in a rectangle (props.ts: decided per world tile, so any rectangle agrees) */

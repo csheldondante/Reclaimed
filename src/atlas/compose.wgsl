@@ -286,7 +286,7 @@ fn nearTo(q: vec2<f32>, p: vec2<f32>) -> vec2<f32> {
 struct LakeHere {
   level: f32,
   m: f32,
-  /** (round 117, terrain/flood.ts) what fills it: 0 water, 1 sand, 2 magma, 3 ash (a lake's second word) */
+  /** (round 117, terrain/flood.ts) what fills it: 0 water, 1 sand, 2 magma, 3 ash, 4 silt (a lake's second word) */
   fluid: u32,
 }
 
@@ -849,7 +849,8 @@ fn ground(p: vec2<f32>) -> Ground {
         g.clava = max(g.clava, lh.level - g.h);
       } else {
         g.loose = max(g.loose, lh.level - g.h);
-        g.lmat = select(3u, 17u, lh.fluid == 3u);
+        // (sand 3, ash 17, silt 22: world/materials.ts MAT)
+        g.lmat = select(select(3u, 17u, lh.fluid == 3u), 22u, lh.fluid == 4u);
       }
     }
     lh.level = 0.0;

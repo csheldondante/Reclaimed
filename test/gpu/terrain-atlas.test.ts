@@ -50,6 +50,18 @@ describe('terrain on a small atlas', () => {
     expect(cols.w).toBe(64);
     expect(g.takeErrors()).toEqual([]);
     expect(a.riverStats.shaped.falls).toBeGreaterThan(0);
+    // the partition's top level: the atlas's regions, their borders' barriers
+    const ag = T.atlasGraph();
+    const ns = [...ag.nodes()];
+    expect(ns.length).toBe(a.defs.length);
+    const all = ns.flatMap((n) => ag.edges(n.id));
+    expect(all.length).toBeGreaterThan(ns.length);
+    const bk = new Set<string | null>(all.map((e) => e.barrier));
+    if (process.env.TERRAIN_LOG) console.log(`atlas graph: ${ns.length} regions, ${all.length / 2} borders: ${[...bk].join(', ')}`);
+    expect(bk.has('sea') || bk.has('cliff')).toBe(true);
+    expect(bk.has(null)).toBe(true);
+    for (const e of all) expect(ag.edges(e.a).includes(e) && ag.edges(e.b).includes(e)).toBe(true);
+    expect(ag.regionAt(ns[0].centre)).toBeGreaterThanOrEqual(0);
   }, 180_000);
   it('caves: open runs at cliffs (terrain/cave.wgsl), ground() over the whole small world', async () => {
     const g = await testGpu();

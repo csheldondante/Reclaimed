@@ -230,7 +230,7 @@ export interface TerrainResult {
 }
 
 /** what a basin is flooded with (a fluid's column material; sand and ash bury what's under) */
-export type FloodFluid = 'water' | 'sand' | 'magma' | 'ash';
+export type FloodFluid = 'water' | 'sand' | 'magma' | 'ash' | 'silt';
 
 export interface FloodRequest {
   /** a world point in the basin */
@@ -285,8 +285,54 @@ export interface ExcavationSite {
   props: number[];
 }
 
+/**
+ * The partition's top level, world-wide: the atlas's regions (provinces ~25 macro texels across — the "larger terrain
+ * features") and what stands between neighbours, read off the rules the border is drawn by (a plateau's cliff, a
+ * massif's flank, a ravine, a wall, the coast, a river along or across it). For planning a run on the overmap (runplan's
+ * RegionGraph stand-in has this shape); the rooms where a stage is played come from Terrain.graph(rect).
+ */
+export interface AtlasRegionNode {
+  id: number;
+  /** the atlas region's kind (plains, mesa, dunes …) */
+  kind: string;
+  land: boolean;
+  /** world units */
+  centre: V2;
+  /** macro texels */
+  area: number;
+  /** its landform's tier (lowland, upland, plateau, massif; null water) */
+  tier: string | null;
+  ground: { min: number; mean: number; max: number };
+  /** river and lava node texels in it */
+  rivers: number;
+  lava: number;
+}
+
+export interface AtlasRegionEdge {
+  a: number;
+  b: number;
+  /** the first of `causes` (null: open ground) */
+  barrier: BarrierKind | null;
+  causes: BarrierKind[];
+  /** world units of shared border, and between the centres (on the torus) */
+  length: number;
+  span: number;
+}
+
+export interface AtlasRegionGraph {
+  readonly seed: number;
+  readonly world: { w: number; h: number };
+  node(id: number): AtlasRegionNode | undefined;
+  edges(id: number): AtlasRegionEdge[];
+  nodes(): Iterable<AtlasRegionNode>;
+  /** the region at a world point */
+  regionAt(at: V2): number;
+}
+
 /** The terrain system's API (src/terrain/terrain.ts `TerrainSystem` implements it over the atlas). */
 export interface Terrain {
+  /** the atlas's regions as a graph (the partition's top level, world-wide; made once) */
+  atlasGraph(): AtlasRegionGraph;
   /** what lies buried in a rectangle (deterministic from the seed): props and the excavation sites they cluster in */
   buried(rect: { x0: number; y0: number; x1: number; y1: number }): Promise<{ props: BuriedProp[]; sites: ExcavationSite[] }>;
   /** the region graph over a rectangle (world units); caps: the controller rooms are made for (default the walker) */

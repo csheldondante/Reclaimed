@@ -17,7 +17,7 @@ import { makeBindGroup, makeComputeAsync, makeModule, type ComputeKernel } from 
 import type { FloodFluid, FloodRequest, FloodResult, V2 } from '../api/contracts';
 import floodW from './flood.wgsl?raw';
 
-export const FLUID_CODE: Record<FloodFluid, number> = { water: 0, sand: 1, magma: 2, ash: 3 };
+export const FLUID_CODE: Record<FloodFluid, number> = { water: 0, sand: 1, magma: 2, ash: 3, silt: 4 };
 
 export interface FloodGrid {
   /** m × m heights (row-major) */

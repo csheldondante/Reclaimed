@@ -2451,3 +2451,6 @@ want to be able to flood a basin and bury things".
 - **Rivers:** rivers.ts builds the nodes; terrain/rivershape.ts shapes their course (relaxed) and levels (incised,
   staircased, still falling downstream) before the table; terrain/river.wgsl (in Atlas.parts()) holds River, riverAt
   (the warped lookup, two segments a node) and riverCut (the cross-section) that compose.wgsl ground() calls.
+- **Top level (round 117):** Terrain.atlasGraph() — the atlas's regions world-wide with each border's barrier (terrain/
+  atlasgraph.ts, from the atlas's CPU arrays and the border rules compose.wgsl draws by); the rooms under a region come
+  from Terrain.graph(rect).

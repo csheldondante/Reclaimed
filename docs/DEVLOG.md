@@ -13827,3 +13827,15 @@ neighbours' bits into a chunk's hash so a neighbour turning grid or voxels rebui
 mouth2-m.png (pale holes) → mouth5-m.png (one side closed) → mouth6-m.png (closed: dark recesses along the cliff's foot).
 Cost: a near-word read for each sample's column (three with the low-side check) in colDist — the build's, not the
 frame's. Mouths past the window (tiles, rings) still don't show (TR24b).
+
+**The partition's top level: the atlas's regions as a graph (terrain/atlasgraph.ts, Terrain.atlasGraph()).** runplan
+plans a run across the overmap on a stand-in RegionGraph of the atlas's regions (contracts/run.ts); the terrain graph so
+far was local (features and rooms over ≤ 2048 world units). The user's "recursive" regions: the atlas's provinces (~25
+macro texels across) are the larger features, the rooms under them come from Terrain.graph(rect) where a stage is
+played. Each border's barrier is read off the rules compose.wgsl ground() draws it by — a land/sea border the coast
+(a sea cliff where the land's coast edge is one), two landforms the higher one's edge (a plateau's cliff, a massif's
+steep flank), one landform the winning region's own edge (a ravine, a wall: 'ridge'), and a river or lava node on the
+border texels — so the plan and the land agree. CPU, once (the per-texel arrays are on the CPU already); a small atlas
+on Dawn: 2468 regions, 7361 borders (cliff, sea, ridge, lava, steep, river, ravine, open). The node and edge shapes follow
+runplan's stand-in (centre, area, tier, ground, rivers, lava; a, b, barrier, length) so its adapter is a rename. Floods
+take 'silt' too (runplan's materials: water, sand, ash, silt, magma).
