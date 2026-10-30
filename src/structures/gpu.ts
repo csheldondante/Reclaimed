@@ -13,6 +13,8 @@ export const SP_PAL = STYLE_IDS.length * PARTS * VARIANTS;
 
 export interface DrawRange {
   module: number;
+  /** its far look (modules.ts lodOf) */
+  lod: number;
   first: number;
   count: number;
 }
@@ -27,7 +29,7 @@ export class StructureGpu {
   private mods: { first: number; count: number; base: number }[] = [];
   private libSize = 0;
   private dataCap = 0;
-  readonly stats = { pieces: 0, draws: 0, tris: 0, modules: 0, bytes: 0 };
+  readonly stats = { pieces: 0, draws: 0, tris: 0, lodTris: 0, modules: 0, bytes: 0 };
 
   constructor(private device: GPUDevice) {
     this.uploadLibrary();
@@ -94,6 +96,10 @@ export class StructureGpu {
 
   /** Show these pieces (replacing what was shown). */
   set(p: StructurePieces): void {
+    // (the far looks first: asking for one may make a module — then the library is uploaded with it)
+    const lib = library();
+    const lodOf = new Map<number, number>();
+    for (let i = 0; i < p.count; i++) if (!lodOf.has(p.module[i])) lodOf.set(p.module[i], lib.lodOf(p.module[i]));
     this.uploadLibrary();
     this.ensureData(p.count);
     const order = Array.from({ length: p.count }, (_, i) => i).sort((a, b) => p.module[a] - p.module[b]);
@@ -104,23 +110,28 @@ export class StructureGpu {
       const m = p.module[src];
       const last = this.ranges[this.ranges.length - 1];
       if (last && last.module === m) last.count++;
-      else this.ranges.push({ module: m, first: dst, count: 1 });
+      else this.ranges.push({ module: m, lod: lodOf.get(m)!, first: dst, count: 1 });
     });
     if (buf.byteLength) this.device.queue.writeBuffer(this.data, SP_PAL * 16, buf);
     let tris = 0;
-    for (const r of this.ranges) tris += (this.mods[r.module].count / 3) * r.count;
+    let lodTris = 0;
+    for (const r of this.ranges) {
+      tris += (this.mods[r.module].count / 3) * r.count;
+      lodTris += (this.mods[r.lod].count / 3) * r.count;
+    }
+    this.stats.lodTris = lodTris;
     this.stats.pieces = p.count;
     this.stats.draws = this.ranges.length;
     this.stats.tris = tris;
     this.stats.bytes = this.dataCap + this.verts.size + this.index.size;
   }
 
-  /** the draws (pipeline and bind group set by the host) */
-  draw(pass: GPURenderPassEncoder): number {
+  /** the draws (pipeline and bind group set by the host); `lod`: every piece in its far look */
+  draw(pass: GPURenderPassEncoder, lod = false): number {
     pass.setVertexBuffer(0, this.verts);
     pass.setIndexBuffer(this.index, 'uint32');
     for (const r of this.ranges) {
-      const m = this.mods[r.module];
+      const m = this.mods[lod ? r.lod : r.module];
       pass.drawIndexed(m.count, r.count, m.first, m.base, r.first);
     }
     return this.ranges.length;

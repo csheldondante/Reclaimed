@@ -226,7 +226,12 @@ export class Renderer {
   private miShadowPipe?: GPURenderPipeline;
   private miShadowGroup?: GPUBindGroup;
   /** (round 117, structures) the city's pieces (enableStructures): drawn as the trees are, in the world and shadow passes */
-  private structs?: { sg: StructureGpu; pipe?: GPURenderPipeline; shadow?: GPURenderPipeline; group?: GPUBindGroup; shadowGroup?: GPUBindGroup; version: number };
+  private structs?: { sg: StructureGpu; pipe?: GPURenderPipeline; shadow?: GPURenderPipeline; group?: GPUBindGroup; shadowGroup?: GPUBindGroup; version: number; lod: boolean };
+  /**
+   * (round 117, STR10) the zoom (screen pixels a cell) under which the city's pieces draw their far look: the camera is
+   * orthographic, so one zoom says how small every piece is; `?structlod=` to tune (0: always full, 99: always far)
+   */
+  structLodZoom = Number(new URLSearchParams(location.search).get('structlod') ?? 7);
   /** the draw pipelines' layout (render.wgsl's), for draws enabled after construction */
   private drawPl!: GPUPipelineLayout;
   /** (round 95, ?rockbody=1) the rigid rock's own mesh (enableRockMesh), its pipeline and group */
@@ -1132,6 +1137,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
   }
 
   encode(enc: GPUCommandEncoder, target: GPUTextureView, cam: Camera, opts: RenderOptions): void {
+    if (this.structs) this.structs.lod = cam.zoom < this.structLodZoom;
     this.syncMeshPool();
     this.syncInst();
     cam.write(this.camData);
@@ -1278,7 +1284,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       this.structGroups();
       pass.setPipeline(this.structs.pipe);
       pass.setBindGroup(0, this.structs.group!);
-      this.profiler.draws += this.structs.sg.draw(pass);
+      this.profiler.draws += this.structs.sg.draw(pass, this.structs.lod);
       pass.setPipeline(this.opaquePipe);
     }
     for (const s of SKIP.has('prisms') ? [] : this.prismSources) {
@@ -1743,7 +1749,8 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       this.structGroups();
       pass.setPipeline(this.structs.shadow);
       pass.setBindGroup(0, this.structs.shadowGroup!);
-      this.structs.sg.draw(pass);
+      // (the sun's map: always the far look — its texels are bigger than a window frame)
+      this.structs.sg.draw(pass, true);
     }
     pass.setPipeline(this.shadowBodyPipe!);
     if (this.world.strVoxels > 0) {
@@ -1944,7 +1951,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
     const device = this.device;
     const riverFoam = `const RIVER_FOAM_SPEED: bool = ${riverMode() === 'table'};\n`;
     const module = makeModule(device, 'structures', [commonWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, sg.wgsl(), structMeshWgsl, structGameWgsl]);
-    const st: NonNullable<Renderer['structs']> = { sg, version: -1 };
+    const st: NonNullable<Renderer['structs']> = { sg, version: -1, lod: false };
     this.structs = st;
     const vertex: GPUVertexState = { module, entryPoint: 'vsStruct', buffers: [StructureGpu.vertexLayout()] };
     renderPipe(device, {

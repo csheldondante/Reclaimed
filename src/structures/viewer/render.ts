@@ -42,6 +42,8 @@ export class ViewerRenderer {
   private ground?: { buf: GPUBuffer; index: GPUBuffer; count: number };
   private lines?: { buf: GPUBuffer; count: number };
   showLines = false;
+  /** draw the pieces' far look (STR10) */
+  lod = false;
   /** (?gputime=1, the perf test) the GPU's time for the last frames' passes (ms), when timestamps are there */
   gpuMs: number[] = [];
   private ts?: { set: GPUQuerySet; resolve: GPUBuffer; read: GPUBuffer[]; busy: boolean[]; frame: number };
@@ -203,7 +205,7 @@ export class ViewerRenderer {
         pass.drawIndexed(this.ground.count);
       }
       pass.setPipeline(this.pieceShadow);
-      this.sg.draw(pass);
+      this.sg.draw(pass, true);
       pass.end();
     }
     {
@@ -230,7 +232,7 @@ export class ViewerRenderer {
         pass.drawIndexed(this.ground.count);
       }
       pass.setPipeline(this.piecePipe);
-      this.sg.draw(pass);
+      this.sg.draw(pass, this.lod);
       if (this.showLines && this.lines) {
         pass.setPipeline(this.linePipe);
         pass.setVertexBuffer(0, this.lines.buf);

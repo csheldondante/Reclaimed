@@ -105,7 +105,7 @@ async function boot(): Promise<void> {
     r.setGround(verts, index);
     r.setLines(lines(plan));
     r.showLines = state.tiles || state.nav;
-    ui.stats.textContent = `${plan.stats.tiles} tiles · ${plan.stats.buildings} buildings · ${r.sg.stats.pieces} pieces · ${(r.sg.stats.tris / 1000).toFixed(0)}k tris · ${r.sg.stats.draws} draws · planned in ${ms.toFixed(0)} ms`;
+    ui.stats.textContent = `${plan.stats.tiles} tiles · ${plan.stats.buildings} buildings · ${r.sg.stats.pieces} pieces · ${(r.sg.stats.tris / 1000).toFixed(0)}k tris (far ${(r.sg.stats.lodTris / 1000).toFixed(0)}k) · ${r.sg.stats.draws} draws · planned in ${ms.toFixed(0)} ms`;
     writeUrl();
   };
 
@@ -216,6 +216,8 @@ async function boot(): Promise<void> {
       canvas.height = h;
     }
     const D = dist * state.zoom;
+    // (the far look past 160 m — or ?lod=0 / 1 to compare)
+    r.lod = q.has('lod') ? q.get('lod') === '1' : D > 160;
     const at = [focusAt[0] + pan[0], focusAt[1] + pan[1], focusAt[2]];
     const eye: [number, number, number] = [at[0] + Math.cos(state.yaw) * Math.cos(state.pitch) * D, at[1] + Math.sin(state.yaw) * Math.cos(state.pitch) * D, at[2] + Math.sin(state.pitch) * D];
     const vp = mul(perspective((32 * Math.PI) / 180, w / h, Math.max(0.5, D * 0.02), D * 8 + 500), lookAt(eye, at, [0, 0, 1]));

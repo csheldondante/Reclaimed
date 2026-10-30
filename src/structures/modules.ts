@@ -112,7 +112,8 @@ export interface WallLook {
 }
 
 /** A wall slab with openings cut (rectangles; the slab is boxes round them), frames, sills, shutters, framing. */
-function wall(name: string, look: WallLook, openings: Opening[], extra?: (k: Kit) => void): Module {
+function wall(name: string, look: WallLook, openings: Opening[], extra?: (k: Kit) => void, lod = false): Module {
+  if (lod) return wallLod(name, look, openings);
   const k = new Kit();
   const D = 1; // wall depth in v
   // the slab: split u at the openings' edges, then each column split in w round the opening in it
@@ -186,6 +187,31 @@ function wall(name: string, look: WallLook, openings: Opening[], extra?: (k: Kit
   return k.done(name);
 }
 
+/**
+ * The far look of a wall (STR10: the camera is orthographic, so every piece is as small on screen as the zoom makes it;
+ * zoomed out, a window's frame, sill, bars and reveal are under a pixel): the slab's faces, each opening a flat quad of
+ * its fill, shutters and the timber beams flat on the face — ~20 triangles for ~200.
+ */
+function wallLod(name: string, look: WallLook, openings: Opening[]): Module {
+  const k = new Kit();
+  k.box(0, 1, 0, 1, 0, 1, look.body, 8 | 16 | 32);
+  const flat = (u0: number, u1: number, w0: number, w1: number, v: number, part: Part) => k.quad([u0, v, w0], [u1, v, w0], [u1, v, w1], [u0, v, w1], part);
+  for (const o of openings) {
+    flat(o.u0, o.u1, o.w0, o.w1 + (o.arch ?? 0) * 0.8, -0.03, o.fill);
+    if (o.shutters) {
+      const sw = (o.u1 - o.u0) * 0.5;
+      flat(o.u0 - 0.03 - sw, o.u0 - 0.03, o.w0, o.w1, -0.03, Part.Shutter);
+      flat(o.u1 + 0.03, o.u1 + 0.03 + sw, o.w0, o.w1, -0.03, Part.Shutter);
+    }
+  }
+  if (look.timber) {
+    flat(0, 1, 0, 0.055, -0.05, Part.Trim);
+    flat(0, 1, 0.95, 1, -0.05, Part.Trim);
+  }
+  if (look.base) flat(0, 1, 0, 0.16, -0.05, Part.Stone);
+  return k.done(name);
+}
+
 /** a diagonal timber from (ua, wa) to (ub, wb), proud of the wall */
 function brace(k: Kit, ua: number, ub: number, wa: number, wb: number): void {
   const t = 0.028;
@@ -230,7 +256,7 @@ export function roofHeight(u: number, v: number, sides: number, corners: number)
   return h;
 }
 
-function roof(sides: number, corners: number, verge: number, eaves: number, clip: number, look: RoofLook): Module {
+function roof(sides: number, corners: number, verge: number, eaves: number, clip: number, look: RoofLook, lod = false): Module {
   const k = new Kit();
   const e = look.eave;
   // the 3 × 3 points, pushed out under the free sides' eaves
@@ -284,15 +310,17 @@ function roof(sides: number, corners: number, verge: number, eaves: number, clip
     if (viaAC) {
       k.tri(top(a), top(b), top(c), Part.Roof);
       k.tri(top(a), top(c), top(d), Part.Roof);
-      k.tri(bot(a), bot(c), bot(b), Part.RoofUnder);
-      k.tri(bot(a), bot(d), bot(c), Part.RoofUnder);
+      if (!lod) k.tri(bot(a), bot(c), bot(b), Part.RoofUnder);
+      if (!lod) k.tri(bot(a), bot(d), bot(c), Part.RoofUnder);
     } else {
       k.tri(top(a), top(b), top(d), Part.Roof);
       k.tri(top(b), top(c), top(d), Part.Roof);
-      k.tri(bot(a), bot(d), bot(b), Part.RoofUnder);
-      k.tri(bot(b), bot(d), bot(c), Part.RoofUnder);
+      if (!lod) k.tri(bot(a), bot(d), bot(b), Part.RoofUnder);
+      if (!lod) k.tri(bot(b), bot(d), bot(c), Part.RoofUnder);
     }
   }
+  // (far: the top only — under the eaves and the fascia are under a pixel)
+  if (lod) return k.done(`roof:${sides}:${corners}:${verge}:${eaves}:${clip}:${look.name}:lod`);
   // fascia boards on the free sides' and the verges' edges (the roof's thickness, seen from below the eaves)
   const edge = (p: number[], q: number[]) => k.quad([p[0], p[1], p[2] - T], [q[0], q[1], q[2] - T], [q[0], q[1], q[2]], [p[0], p[1], p[2]], Part.Trim);
   if ((sides | verge) & 1) {
@@ -536,6 +564,8 @@ export interface Library {
   modules: Module[];
   id(name: string): number;
   has(name: string): boolean;
+  /** its far look (STR10: walls and roofs have one, made on first ask for roofs), or itself */
+  lodOf(id: number): number;
 }
 
 /** wall modules a style offers, by role */
@@ -546,24 +576,24 @@ const PLASTER: WallLook = { body: Part.Wall, timber: true };
 const PLASTER0: WallLook = { body: Part.Wall, timber: true, base: true };
 const STONE: WallLook = { body: Part.Stone, timber: false };
 
-function wallSet(prefix: string, look: WallLook): Module[] {
+function wallSet(prefix: string, look: WallLook, lod = false): Module[] {
   const win = (u0: number, u1: number): Opening => ({ u0, u1, w0: 0.3, w1: 0.74, fill: Part.Glass, sill: true, shutters: look.timber });
   return [
-    wall(`${prefix}:blank`, look, []),
-    wall(`${prefix}:window`, look, [win(0.38, 0.62)]),
-    wall(`${prefix}:window2`, look, [win(0.2, 0.38), win(0.62, 0.8)]),
-    wall(`${prefix}:door`, look, [{ u0: 0.39, u1: 0.61, w0: 0, w1: 0.7, fill: Part.Door, arch: look.timber ? 0 : 0.08 }], (k) => {
+    wall(`${prefix}:blank${lod ? ':lod' : ''}`, look, [], undefined, lod),
+    wall(`${prefix}:window${lod ? ':lod' : ''}`, look, [win(0.38, 0.62)], undefined, lod),
+    wall(`${prefix}:window2${lod ? ':lod' : ''}`, look, [win(0.2, 0.38), win(0.62, 0.8)], undefined, lod),
+    wall(`${prefix}:door${lod ? ':lod' : ''}`, look, [{ u0: 0.39, u1: 0.61, w0: 0, w1: 0.7, fill: Part.Door, arch: look.timber ? 0 : 0.08 }], (k) => {
       // a step and a small hood over the door
       k.box(0.34, 0.66, -0.35, 0.2, -0.06, 0.03, Part.Stone);
       if (look.timber) k.box(0.33, 0.67, -0.5, 0.1, 0.76, 0.8, Part.Roof);
-    }),
-    wall(`${prefix}:shop`, look, [{ u0: 0.14, u1: 0.86, w0: 0.08, w1: 0.66, fill: Part.Glass }], (k) => {
+    }, lod),
+    wall(`${prefix}:shop${lod ? ':lod' : ''}`, look, [{ u0: 0.14, u1: 0.86, w0: 0.08, w1: 0.66, fill: Part.Glass }], (k) => {
       // an awning: a slope out from over the window
       k.quad([0.12, 0, 0.74], [0.88, 0, 0.74], [0.88, -2.6, 0.6], [0.12, -2.6, 0.6], Part.Awning);
       k.quad([0.12, 0, 0.74], [0.12, -2.6, 0.6], [0.88, -2.6, 0.6], [0.88, 0, 0.74], Part.Awning);
       k.box(0.12, 0.88, -2.65, -2.55, 0.56, 0.6, Part.Awning);
-    }),
-    wall(`${prefix}:balcony`, look, [{ u0: 0.36, u1: 0.64, w0: 0.04, w1: 0.74, fill: Part.Glass }], (k) => {
+    }, lod),
+    wall(`${prefix}:balcony${lod ? ':lod' : ''}`, look, [{ u0: 0.36, u1: 0.64, w0: 0.04, w1: 0.74, fill: Part.Glass }], (k) => {
       // a timber balcony: its floor out of the wall, a rail, posts
       k.box(0.26, 0.74, -2.4, 0, 0.0, 0.04, Part.Trim);
       k.box(0.26, 0.74, -2.4, -2.28, 0.04, 0.33, Part.Trim, 0);
@@ -575,8 +605,8 @@ function wallSet(prefix: string, look: WallLook): Module[] {
       }
       k.box(0.3, 0.32, -0.9, -0.3, -0.12, 0.0, Part.Trim);
       k.box(0.68, 0.7, -0.9, -0.3, -0.12, 0.0, Part.Trim);
-    }),
-    wall(`${prefix}:slit`, look, [{ u0: 0.47, u1: 0.53, w0: 0.3, w1: 0.72, fill: Part.Glass }]),
+    }, lod),
+    wall(`${prefix}:slit${lod ? ':lod' : ''}`, look, [{ u0: 0.47, u1: 0.53, w0: 0.3, w1: 0.72, fill: Part.Glass }], undefined, lod),
   ];
 }
 
@@ -592,6 +622,7 @@ export function library(): Library {
   if (LIB) return LIB;
   const modules: Module[] = [];
   modules.push(...wallSet('plaster', PLASTER), ...wallSet('plaster0', PLASTER0), ...wallSet('stone', STONE));
+  modules.push(...wallSet('plaster', PLASTER, true), ...wallSet('plaster0', PLASTER0, true), ...wallSet('stone', STONE, true));
   modules.push(gable(PLASTER, true), gable(PLASTER, false), gable(STONE, true), gable(STONE, false));
   modules.push(post(Part.Trim), post(Part.Stone), quoins(), slab(Part.Stone, 'plinth'), slab(Part.Pave, 'pave'), slab(Part.Stone, 'rampart'), slab(Part.Plant, 'garden'));
   modules.push(chimney(), merlons(), tower(), spire(), fountain(), lamp(), arch());
@@ -607,15 +638,21 @@ export function library(): Library {
     id(name: string) {
       let i = byName.get(name);
       if (i === undefined) {
-        const m = /^roof:(\d+):(\d+):(\d+):(\d+):(\d+):(\w+)$/.exec(name);
+        const m = /^roof:(\d+):(\d+):(\d+):(\d+):(\d+):(\w+)(:lod)?$/.exec(name);
         if (!m || !ROOF_LOOKS[m[6]]) throw new Error(`structures: no module "${name}"`);
         i = modules.length;
-        modules.push(roof(+m[1], +m[2], +m[3], +m[4], +m[5], ROOF_LOOKS[m[6]]));
+        modules.push(roof(+m[1], +m[2], +m[3], +m[4], +m[5], ROOF_LOOKS[m[6]], !!m[7]));
         byName.set(name, i);
       }
       return i;
     },
     has: (name: string) => byName.has(name),
+    lodOf(id: number): number {
+      const n = modules[id].name;
+      if (n.endsWith(':lod')) return id;
+      if (byName.has(`${n}:lod`)) return byName.get(`${n}:lod`)!;
+      return n.startsWith('roof:') ? lib.id(`${n}:lod`) : id;
+    },
   };
   LIB = lib;
   return lib;

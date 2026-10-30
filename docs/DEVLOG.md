@@ -13753,3 +13753,21 @@ reached by stairs.
 
 Shots: C:\Projects\shots88\structures\lin-0/1/2.png (viewer: viaducts over a gorge, walled towns), bridge-0/1.png
 (close), cityw-0/1.png (the atlas: a walled contour-voronoi town, a viaduct across the bay).
+
+## 2026-10-30 — round 117 (`structures`): the far look (STR10)
+
+**Why by zoom, not by distance.** The game's camera is orthographic: every piece is as small on screen as the zoom makes
+it, wherever it is. So one number decides: under `Renderer.structLodZoom` (7 screen pixels a cell, `?structlod=` to tune)
+every piece draws its far look. Walls: the slab's faces, each opening a flat quad of its fill, shutters and the timber
+beams flat on the face (~20 triangles for ~200: a window's frame, sill, bars and reveal are under a pixel there). Roofs:
+the top only (no underside, no fascia). The far look is the same instances drawn with another module's index range
+(`DrawRange.lod`; no re-sorting, no second buffer); roofs' far looks are made on first ask like their full ones. The
+sun's shadow map always draws the far look (its texels are bigger than a window frame). The viewer uses it past 160 m
+(`?lod=0|1` to compare): at city scale the two are hard to tell apart (shots lod-0/1.png).
+
+**Measured** (scripts/perf/structcity.mjs, phone proxy q=low, all systems, the same 281-building town with two roads):
+at the start's zoom (4 px a cell: the far look) the world pass 2.70 → 2.86 ms (+0.16; it was +1.9 ms at full detail),
+the shadow pass 0.70 → 0.69 (was +0.12). At ×3 zoom (12 px a cell: full detail) +2.6 ms — the city then fills the
+screen with forward-shaded pieces (render.wgsl `lighting` per fragment, no depth pre-pass) where the terrain is deferred;
+next steps there: the pieces into the G-buffer path on the phone, or a depth pre-pass. Triangles: a 90 m town 1.78M full,
+0.27M far (6.6×).

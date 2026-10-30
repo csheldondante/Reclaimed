@@ -2234,6 +2234,10 @@ Hosts declare `spData` and `hostNight()` and their own entry points: the viewer 
 a 2048² shadow map, fog, filmic curve) and the game's (shaders/structgame.wgsl: render.wgsl's `lighting`, `haze`,
 `cutAway`, the pick; `Renderer.enableStructures`, the pieces at the draw group's binding 3, back faces culled).
 
+**The far look** (STR10): walls and roofs have a far module (`Library.lodOf`: flat openings and beams on the slab; roofs'
+tops only); `StructureGpu.draw(pass, lod)` draws the same instances with it. The game picks it by zoom
+(`Renderer.structLodZoom`, 7 px a cell: the camera is orthographic), the shadow map always.
+
 **Linear features** (`linear.ts`): a profile module warped segment by segment along a Catmull-Rom spline (each
 segment's frame its right and left edges at either end). Roads: the ground sampled every 2 m, a profile never steeper
 than 14% (passes that only raise: valleys and water filled by the deck); over 2.6 m above the ground, or over water, a

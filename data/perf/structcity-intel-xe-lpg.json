@@ -1,22 +1,22 @@
 {
- "when": "2026-10-30T17:22:06.075Z",
+ "when": "2026-10-30T17:33:09.042Z",
  "city": "irregular",
  "size": "412x915@2.6",
  "runs": [
   {
    "skip": "none",
    "zoom": 1,
-   "gpu": 12.29,
-   "frames": 579,
+   "gpu": 9.3,
+   "frames": 636,
    "top": {
-    "draw": 4.57,
-    "shadow": 1.49,
-    "renderprep": 0.7,
+    "draw": 2.86,
+    "shadow": 0.69,
+    "renderprep": 0.67,
     "renderfields": 0.46,
-    "gbuffer": 0.44,
-    "coarse-depth": 0.36,
+    "gbuffer": 0.39,
     "surface": 0.31,
-    "fieldmesh-hash": 0.28
+    "coarse-depth": 0.29,
+    "fieldmesh-hash": 0.23
    },
    "adapter": "intel / xe-lpg",
    "city": {
@@ -28,17 +28,17 @@
   {
    "skip": "none",
    "zoom": 3,
-   "gpu": 12.45,
-   "frames": 573,
+   "gpu": 12.76,
+   "frames": 556,
    "top": {
-    "draw": 5.1,
-    "shadow": 1.42,
-    "renderprep": 0.52,
-    "renderfields": 0.45,
-    "coarse-depth": 0.36,
-    "gbuffer": 0.32,
-    "surface": 0.31,
-    "fieldmesh-hash": 0.28
+    "draw": 5.54,
+    "shadow": 0.76,
+    "renderprep": 0.56,
+    "renderfields": 0.5,
+    "coarse-depth": 0.37,
+    "gbuffer": 0.35,
+    "surface": 0.34,
+    "fieldmesh-hash": 0.29
    },
    "adapter": "intel / xe-lpg",
    "city": {
@@ -50,17 +50,17 @@
   {
    "skip": "structures",
    "zoom": 1,
-   "gpu": 13.16,
-   "frames": 495,
+   "gpu": 12.33,
+   "frames": 514,
    "top": {
-    "draw": 2.69,
-    "shadow": 1.37,
-    "renderprep": 0.68,
-    "renderfields": 0.62,
-    "fieldmesh-hash": 0.44,
+    "draw": 2.7,
+    "shadow": 0.7,
+    "renderprep": 0.7,
+    "renderfields": 0.63,
+    "fieldmesh-hash": 0.45,
     "coarse-depth": 0.44,
-    "surface": 0.43,
-    "gbuffer": 0.41
+    "gbuffer": 0.42,
+    "surface": 0.42
    },
    "adapter": "intel / xe-lpg",
    "city": {
@@ -72,17 +72,17 @@
   {
    "skip": "structures",
    "zoom": 3,
-   "gpu": 12.01,
-   "frames": 548,
+   "gpu": 11.82,
+   "frames": 555,
    "top": {
-    "draw": 2.84,
-    "shadow": 1.32,
-    "renderprep": 0.5,
-    "renderfields": 0.5,
-    "fieldmesh-hash": 0.44,
-    "coarse-depth": 0.41,
-    "surface": 0.35,
-    "gbuffer": 0.31
+    "draw": 2.98,
+    "shadow": 0.7,
+    "renderfields": 0.54,
+    "renderprep": 0.52,
+    "fieldmesh-hash": 0.46,
+    "coarse-depth": 0.4,
+    "surface": 0.38,
+    "gbuffer": 0.32
    },
    "adapter": "intel / xe-lpg",
    "city": {
