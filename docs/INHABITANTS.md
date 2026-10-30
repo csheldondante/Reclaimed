@@ -55,11 +55,12 @@ species' palette, varied ±12% a creature. Why: the user allowed "voxel, low pol
 2-3 blocks and lose the gait; spindles keep legs, necks and wings readable and cost 48 vertices a bone (24 at the far
 LOD). `addMesh` gets them lit and shadowed like physics skins with no renderer of their own (one 2-line tweak, below).
 
-**Readable at the phone's zooms: drawn bigger than life when the view is wide.** `drawScale` = 24 / zoom, 1 to 4
-(install.ts): a creature keeps ~24 px a cell of body however far out. Only the mesh scales, about the feet; behaviour,
-presence and hits keep the true size. A dark footprint under each creature (two triangles) gives contrast on grass and
-puts a flying bird on the map. Wolves are charcoal with pale bellies and gold eyes for the same reason.
-`?lifescale=` / `?lifelod=` override.
+**True size.** For a while creatures were drawn up to 4x bigger as the view widened (24 px a cell of body). The user
+(IN13): "Keep the creature small for now I want to add larger creatures but I want to improve the generator even more
+and talk through increasing the quality and adding composable creatures via items and mounts." So they draw at true size;
+`drawScale` stays a knob (`?lifescale=`) for that conversation. What stays for readability at true size: a dark
+footprint under each creature (two triangles) for contrast on grass (and a flying bird's place on the map), charcoal
+wolves with pale bellies and gold eyes. `?lifelod=` forces the mesh's detail.
 
 **GPU, one thread a creature.** Behaviour, animation and the mesh are per frame and scale with the count (5 000 × ~25
 points × 60 Hz): the "GPU first where data is large or per-frame" rule. The CPU keeps species, groups and orders, and

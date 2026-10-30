@@ -13643,3 +13643,10 @@ docs/INHABITANTS.md. What changed and the reasons the measurements gave:
 - Tests: 23 unit (rigs, presence, paths, the species table), 10 on Dawn (feet, IK lengths, slopes, the herd's bolt, the
   gale, paths, the mesh's counts at both LODs, the slide, presence, the hunt, the dragon). Shots:
   C:/Projects/shots88/inhabitants (atlas-herd, atlas-hunt.gif + strip, atlas-dragon, viewer-phone).
+
+- **(later, IN13) True size again.** The user: "Keep the creature small for now I want to add larger creatures but I
+  want to improve the generator even more and talk through increasing the quality and adding composable creatures via
+  items and mounts." drawScale defaults to 1 (?lifescale= kept as a knob for that talk); the footprint and the wolves'
+  contrast stay. Shots on the phone proxy (412x915 dpr 2.6): truesize-startzoom.png (the atlas's opening zoom: the herd
+  is specks) and truesize-playzoom.png/.gif (zoom 16: legs, necks, heads read). The new files' line endings made LF
+  (some had been written CRLF by a script; whole-file diffs on files that are all new on this branch).

@@ -32,7 +32,7 @@ animals. Herds, predators that stalk." docs/INHABITANTS.md.
 | IN10 | Caves and overhangs: creatures stand on the column's top only; read the agents' nav surfaces (or a shared "surfaces" contract) to walk under roofs | M | open |
 | IN11 | One `groundAt` (solid top + loose layer, or a sleeping body's top) in common.wgsl for every kernel that copies it (flagged) | S | open |
 | IN12 | Abilities as the effects library's calls when it lands (now: fire ignite + the lava beam + a wind blast through AbilityHost), and a breath's visible flame | M | deferred |
-| IN13 | The user's look: proportions, the scale with zoom (24 px a cell, up to 4x), colours — judge on the phone | S | asked |
+| IN13 | The user's look: the scale with zoom (24 px a cell, up to 4x). The user: "Keep the creature small for now I want to add larger creatures but I want to improve the generator even more and talk through increasing the quality and adding composable creatures via items and mounts." → true size again (?lifescale= kept as a knob); footprint and contrast kept. Generator quality, items and mounts wait for a design session | S | done (inhabitants) |
 
 ## Round 117 (2026-10-30, session 5, `testkit`) — the test pyramid: unit and GPU tests in Node, a smoke test (DECISIONS round 117)
 

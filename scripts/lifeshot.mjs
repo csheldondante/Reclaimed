@@ -1,6 +1,6 @@
 // Round 117 (inhabitants): a look at the creatures — a level with ?life=, the camera close on them, a still and a GIF.
 //   node scripts/lifeshot.mjs [--level bestiary|atlas] [--life 1|dragon|town|viewer] [--at x,y] [--zoom 22]
-//     [--follow deer|wolves|crows|...] [--frames 40] [--every 80] [--out dir] [--wait 600 (ticks)] [--q low]
+//     [--follow deer|wolves|crows|...] (--zoom 0 keeps the level's) [--frames 40] [--every 80] [--out dir] [--wait 600 (ticks)] [--q low]
 // Behaviour kind: shares the GPU. Writes <out>/<name>.png and .gif (default C:/Projects/shots88/inhabitants).
 import fs from 'node:fs';
 import path from 'node:path';
@@ -50,7 +50,8 @@ await run({ name: 'lifeshot', kind: 'behaviour' }, async (R) => {
       (zoom, follow) => {
         const r = window.reclaimed;
         const life = r.inhabitants;
-        r.camera.zoom = zoom;
+        // (--zoom 0: the level's own zoom)
+        if (zoom > 0) r.camera.zoom = zoom;
         r.editor?.()?.setVisible?.(false);
         const g = life.groups().find((g) => g.species === follow) ?? life.groups()[0];
         if (g && g.count > 0) {

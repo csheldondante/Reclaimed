@@ -23,8 +23,6 @@ export function installInhabitants(core: WorldCore, opts: InhabitantsOpts = {}):
   return life;
 }
 
-const READABLE_ZOOM = 24;
-const MAX_DRAW_SCALE = 4;
 const FAR_ZOOM = 14;
 const LOD_PARAM = typeof location !== 'undefined' && new URLSearchParams(location.search).get('lifelod') ? Number(new URLSearchParams(location.search).get('lifelod')) : null;
 const SCALE_PARAM = typeof location !== 'undefined' && new URLSearchParams(location.search).get('lifescale') ? Number(new URLSearchParams(location.search).get('lifescale')) : null;
@@ -35,9 +33,10 @@ export function lifeFocus(life: InhabitantsGpu, core: WorldCore): void {
   life.focus = [cam.target[0], cam.target[1]];
   // (the view's half-diagonal in world units, and a margin: the iso view's ground reaches further up the screen)
   life.focusR = cam.fly ? 400 : (Math.hypot(cam.viewportW, cam.viewportH) / Math.max(cam.zoom, 0.01)) * 0.75 + 12;
-  // (readability: life size from READABLE_ZOOM in, up to MAX_DRAW_SCALE bigger as the view widens — a creature keeps
-  // ~READABLE_ZOOM px a cell of body; ?lifescale= overrides, 1 life size always)
-  life.drawScale = SCALE_PARAM ?? (cam.fly ? 1 : Math.min(MAX_DRAW_SCALE, Math.max(1, READABLE_ZOOM / Math.max(cam.zoom, 0.01))));
+  // (true size: the user on IN13, round 117 — "Keep the creature small for now I want to add larger creatures but I want
+  // to improve the generator even more and talk through increasing the quality and adding composable creatures via
+  // items and mounts." The scale stays a knob, ?lifescale=, for that conversation; the default is 1)
+  life.drawScale = SCALE_PARAM ?? 1;
   // (far LOD under FAR_ZOOM px a cell: a limb's taper still reads, its joints' facets don't; ?lifelod=0|1 forces it)
   life.lod = LOD_PARAM ?? (!cam.fly && cam.zoom < FAR_ZOOM ? 1 : 0);
 }
