@@ -13079,3 +13079,43 @@ The per-cell look is untouched.
 Not changed, for the phone's numbers to decide (BACKLOG FP4, FP5): the draw's geometry (the far stand-in drawn inside
 the window too), 2-tick sim frames ("Prioritize rendering over simulation too": a frame-locked tick when the rate
 is the display's), the pacing limit.
+
+## 2026-10-30 — round 114 (`framepace`, FP4): the frame-locked tick
+
+Why: the Pixel 9a's bench v6 run on `framepace` (scratchpad pixel9a-pan-framepace.json; the user: "Subjectively this
+one looked really good with very little pop in and pretty smooth"). Parked, GPU span p50 6.2-6.6 ms, p95 10-11 (of
+16.7); slow frames 2-8 of ~245, and they ran 1.5-2 sim ticks on average against 0.8 for the rest. With the sim off,
+or three frames in flight, none of 249 was slow; with one in flight 20. 20% of frames ran no tick at all (zoom 14
+timed: 45 frames 0 ticks, 200 one, 2 two). So the drops left are the sim's 2-tick frames: the fixed-step accumulator
+against a 60 Hz display at the 60 Hz tick rate drifts in phase, and the rAF's jitter puts it either side of a tick
+boundary — 0, 1 or 2 ticks a frame. (The slow frames also began late: rAF lag 5-7 ms, the last submit 10 ms in.)
+
+The change: sim/tickclock.ts, behind `WorldCore.clock.take(simDt, speed, maxTicks, keep)`:
+- 'locked' (the default): when the display's median rAF interval over the last 31 frames is within 12% of the tick
+  (and speed 1), a frame runs exactly one tick — rendering first.
+- Drift: what's owed (or run ahead) stays in `acc` as the accumulator's did. Past two ticks owed it runs one extra tick,
+  past one ahead it skips one, never two corrections within 20 frames (4 once it's past 100 ms owed — a planner's cut,
+  a stall). Past 0.5 s owed it's dropped, as the accumulator dropped time rather than spiral. Sim time stays true over
+  the long run (below: within 30 ms over 2 minutes).
+- Any other display rate (90/120 Hz: 0/1 a frame; 30 Hz: 2), speed, or `?tick=accum`: the accumulator as before.
+- Counters `clock.stats` (frames, locked frames, ticks, extra, skipped, dropped); the bench's parked pace records them
+  each phase (`tickClock`), and bench v7 adds a `tickAccum` phase (the accumulator) at the first zoom beside untimed
+  (locked), inFlight1/3 and simOff — the phone's next run compares directly.
+
+scripts/tickclock-sim.ts (made-up displays, 120 s each; ticks a frame 0 / 1 / 2, sim time less real):
+| display | accumulator | locked |
+|---|---|---|
+| 60 Hz, 1 ms jitter | 117 / 6974 / 113, -9 ms | 4 / 7199 / 1, +7 ms |
+| 60 Hz, 3 ms jitter | 336 / 6550 / 325, -9 ms | 19 / 7184 / 8, -9 ms |
+| 59.94 Hz | 118 / 6958 / 121, -12 ms | 1 / 7192 / 4, -12 ms |
+| 60.5 Hz | 135 / 7060 / 70, -16 ms | 65 / 7199 / 1, +1 ms |
+| 60 Hz, a vsync missed every 40 frames | 114 / 6630 / 285 (each miss followed by a 2-tick frame) | 1 / 6857 / 171 (paid back 20+ frames later), -29 ms |
+| 60 Hz, the planner cuts 30 frames | -476 ms (dropped once the cut lifted) | +7 ms (paid back) |
+| 120 / 90 / 30 Hz | 0/1, 0/1, 2 | the same (not locked) |
+
+Desktop: the headless (and headful) Chrome here presents at ~100 Hz, and its rAF can't be held to 60 Hz on a whole
+vsync grid (scripts/paceprobe.mjs --hz with --uncapped gives ~19 ms frames), so the clock never locks there — rightly:
+it measured a 10 ms (and 19 ms) display and ran the accumulator, the ticks a frame identical to `tickAccum` (0: 340,
+1: 490 of 830 at 100 Hz; 1: 358, 2: 66 at 52 Hz). The locked path is checked by scripts/tickclock-sim.ts above; the
+phone's v7 run (`untimed` locked against `tickAccum`, `tickClock` per phase: lockedFrames, extra, skipped) is the
+measure. Bench v7 ran end to end headless (pan page, zoom 14, no errors).

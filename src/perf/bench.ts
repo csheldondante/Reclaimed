@@ -32,7 +32,7 @@ import { BGCHECK, bgShares, type BgShares } from '../render/bgcheck';
 /** (v3) vite.config.ts `define`: the build's time */
 declare const __BENCH_BUILD__: string;
 
-export const BENCH_VERSION = 6;
+export const BENCH_VERSION = 7;
 const STATE = 'reclaimed.bench.state';
 /** (v3) the build, on the start page: vite.config.ts defines it at build time */
 const BUILD: string = typeof __BENCH_BUILD__ !== 'undefined' ? __BENCH_BUILD__ : 'dev';
@@ -307,9 +307,10 @@ function paceHeadline(out: Record<string, any>): string {
     if (!r || !r.frames) return null;
     const slow = r.slow?.n ?? 0;
     const inf = Object.entries(r.inFlightAtStart ?? {}).map(([a, n]) => `${a}:${n}`).join(' ');
-    return `${k} ${r.fps} fps, slow ${slow}/${r.frames}, interval p99 ${r.interval?.p99}, done p50/p95 ${r.done?.p50}/${r.done?.p95}, gpu p50/p95 ${r.gpu?.p50 ?? '-'}/${r.gpu?.p95 ?? '-'}, gap p50 ${r.gap?.p50 ?? '-'}, inFlight ${inf}, held ${r.heldRafs}, slow frames' done ${r.slow?.done ?? '-'} gpu ${r.slow?.gpu ?? '-'} ticks ${r.slow?.ticks ?? '-'} vs ok ${r.ok?.done ?? '-'} / ${r.ok?.gpu ?? '-'} / ${r.ok?.ticks ?? '-'}`;
+    const tc = r.tickClock ? ` [${r.tickClock.mode}: locked ${r.tickClock.lockedFrames}/${r.tickClock.frames}, extra ${r.tickClock.extra}, skipped ${r.tickClock.skipped}, display ${r.tickClock.displayMs} ms]` : '';
+    return `${k}${tc} ${r.fps} fps, slow ${slow}/${r.frames}, interval p99 ${r.interval?.p99}, done p50/p95 ${r.done?.p50}/${r.done?.p95}, gpu p50/p95 ${r.gpu?.p50 ?? '-'}/${r.gpu?.p95 ?? '-'}, gap p50 ${r.gap?.p50 ?? '-'}, inFlight ${inf}, held ${r.heldRafs}, slow frames' done ${r.slow?.done ?? '-'} gpu ${r.slow?.gpu ?? '-'} ticks ${r.slow?.ticks ?? '-'} vs ok ${r.ok?.done ?? '-'} / ${r.ok?.gpu ?? '-'} / ${r.ok?.ticks ?? '-'}`;
   };
-  return ['timed', 'untimed', 'inFlight1', 'inFlight3', 'simOff'].map(one).filter(Boolean).join(' | ');
+  return ['timed', 'untimed', 'tickAccum', 'inFlight1', 'inFlight3', 'simOff'].map(one).filter(Boolean).join(' | ');
 }
 
 function makePanReport(s: BenchState): Record<string, unknown> {
@@ -1368,11 +1369,17 @@ class Bench {
       const undo = setup();
       try {
         await sleep(400);
+        const clock = this.R.core.clock as { mode: string; stats: Record<string, number>; displayDt(): number } | undefined;
+        const c0 = clock ? { ...clock.stats } : null;
         const m = pacer.mark();
         await sleep(seconds * 1000);
         await this.dev.queue.onSubmittedWorkDone();
         await sleep(150);
-        out[key] = pacer.report(m, key);
+        const r = pacer.report(m, key);
+        // (v7, round 114: the sim's tick clock over the phase — sim/tickclock.ts: frames locked to one tick, the
+        // extra / skipped ticks that paid its drift back, time dropped)
+        if (clock && c0) r.tickClock = { mode: clock.mode, displayMs: r3(clock.displayDt() * 1000), ...Object.fromEntries(Object.entries(clock.stats).map(([k, v]) => [k, r3(v - c0[k])])) };
+        out[key] = r;
       } finally {
         undo();
       }
@@ -1392,6 +1399,18 @@ class Bench {
           pacer.maxInFlight = n;
           return () => {
             pacer.maxInFlight = 2;
+            prof.active = wasActive;
+          };
+        });
+      // (v7, round 114: the accumulator as before the tick clock, against the default 'locked')
+      const clock = this.R.core.clock as { mode: string } | undefined;
+      if (clock)
+        await phase('tickAccum', () => {
+          prof.active = false;
+          const was = clock.mode;
+          clock.mode = 'accum';
+          return () => {
+            clock.mode = was;
             prof.active = wasActive;
           };
         });
