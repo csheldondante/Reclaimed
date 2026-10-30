@@ -12874,3 +12874,32 @@ baselines predate the zoom floor (tilefix3) — the camera at 2.57 not 1.3 — t
 alike (46-50 fps under the 60 Hz cap on this iGPU, p99 24-32 ms as step 1). Cost: one more draw of the far land's grid
 (26k vertices, five texture reads each), fragments only where nothing else drew (early depth).
 
+
+## 2026-10-30 — round 113 (`tilesfirst`, step 3): tiles as cover — a window region's tile draws wherever the window doesn't
+
+The user's "load the fast tiles first and then something is always there and swap only when the slow one is ready".
+Step 1 found the made tile held back in 77-100% of the holes: TC9 drew a window region's tile only while **none** of its
+four chunks was drawn, and only with the CPU's mesh mirror in step with the slides.
+- **Chunk by chunk, the same frame.** TileCache.prepare draws a window region's tile while any of its chunks isn't drawn
+  for sure by the window (Renderer.windowDrawn 1 or 2); tiles.wgsl fsTile discards, inside the window, wherever the
+  window draws its land this frame (`windowDrawsAt`: TileU.drawn, a bit a chunk). TileU.drawn is made on the GPU each
+  frame (TileCache.encodeMask, a 64-invocation pass): the grid's chunks in its view (the CPU's candidates — the grid is
+  drawn by the CPU's list) or the voxel mesh's in view whose own record is built and not empty (meshstate.wgsl
+  MS_BUILT, MS_INDICES) — so the tile gives way the frame the mesh is built, not when the stats readback (frames
+  behind, 60 in play) says so. The fragment stage has no storage buffer to spare (the mesh's eight): the set is a
+  uniform written by a compute pass (the buffer UNIFORM | STORAGE). TC9's `arriving` is gone.
+- **Tiles asked for inside the window.** TileCache.wanted no longer skips the window: a point whose chunk the window
+  doesn't draw for sure asks for its region's tile (the render-only land, made from the atlas as past the window).
+- **Grow with speed (the tiles' part).** The look-ahead's seconds are TileCache.tileLatency (the 90th percentile of the
+  last regions' wanted to drawn) plus a region and a half at the speed; `?tileahead=` fixes them as before.
+
+**Gate** (as steps 1-2; shots88/tilesfirst/gate-step3.json), geometric undrawn worst frame, step 2 → step 3:
+phone z14 20/40/80/160: 0/0/0/47.9% → **0/0/0/0**; phone z8: 17.1/17.1/19.7/19.1 → **0/0/0.60/0**; phone z5:
+10.7/10.7/11.3/16.1 → **0/0/0.61/0**; desktop z14: 1.4/0.2/7.8/30.2 → **0/0/0/0.92**; desktop z8: 13.9/13.3/13.3/14.4 →
+**0/0.06/0/12.1**; desktop z5: 7.6/7.4/7.6/21.9 → **0/0/0.11/5.9**. Background 0 throughout (the stand-in); the far
+share where it shows 0-1.2% bar desktop z8/z5 160 (16%, 13%). What's left is land **past** the window at the fastest
+speeds on the big screen (regions `r…`: tiles not made in time) — step 4's reach. Parked views pass; golden changes as
+on places' tree (z2.2/z1.3 baselines older than the zoom floor) plus phone z3.5 1.31% (scattered pixels: plants).
+Frames alike (45-51 fps under the 60 Hz cap on this iGPU as before). The gate's old "out of detail" still flags phone
+z5 pans 2-3.6% ("off": its points at the focus's height, a tile's CPU box off the screen) where the geometric check and
+the pixels read 0.

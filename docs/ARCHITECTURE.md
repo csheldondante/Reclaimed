@@ -2337,3 +2337,11 @@ clears them).
   the land's own height under the whole view, inside the window too, drawn at clip depth STAND_Z (just short of the
   clear; tested and written) after the far land: it shows only where nothing nearer drew. bgcheck.ts counts depth
   >= STAND_Z (or the far land's pick) as the far land. `?standin=0` off.
+- **The cover and the swap** (layer 1 over layer 3; step 3). A window region's tile is drawn while any of its chunks
+  isn't drawn for sure by the window (windowDrawn 1/2); its fragments inside the window are discarded where the window
+  draws this frame (tiles.wgsl `windowDrawsAt`, TileU.drawn). TileU (binding 45, uniform; TileCache `uni`, UNIFORM |
+  STORAGE): r, u, f, win, focus, mesh (chunk width, depth, chunks across, down), cand (32 vec4: the grid's chunks in its
+  view, the voxel mesh's in view — CPU), drawn (16 vec4: TileCache.encodeMask's compute — the grid's candidates, and the
+  mesh's whose fieldmesh record is built and not empty — after prepare, before the world pass). So the swap from tile to
+  window is the frame the window's drawing is ready, chunk by chunk. TileCache.wanted asks for tiles of window regions
+  where the window doesn't draw for sure; its look-ahead is TileCache.tileLatency (wanted to drawn, p90) at the speed.

@@ -215,7 +215,11 @@ struct TileI { clip: vec4<f32>, slot: vec4<f32>, anchor: vec4<f32>, pad: vec4<f3
 /** the view's right, up and along (toward the far side) — unit vectors; w: the clip depth a unit along; the
  *  window's size (window units), the region's size (x, y window units), how far past its edge a tile draws */
 /** (round 112, TF5) focus: the camera's target (window units), w 1 — the eye side's cut (fsTile) — 0 none */
-struct TileU { r: vec4<f32>, u: vec4<f32>, f: vec4<f32>, win: vec4<f32>, focus: vec4<f32> };
+// (round 113, tilesfirst: `mesh` the window's mesh chunks — a chunk's width and depth (window units), chunks across
+// and down; then two candidate sets the CPU writes (tilecache.ts prepare: the grid's chunks in its view, the voxel
+// mesh's in view) and `drawn`, a bit a chunk, set: the window draws it this frame — written on the GPU from the
+// candidates and the mesh's own state (tilecache.ts encodeMask: built and not empty), so the swap is the same frame's)
+struct TileU { r: vec4<f32>, u: vec4<f32>, f: vec4<f32>, win: vec4<f32>, focus: vec4<f32>, mesh: vec4<f32>, cand: array<vec4<u32>, 32>, drawn: array<vec4<u32>, 16> };
 @group(0) @binding(45) var<uniform> TU: TileU;
 /** (round 108, TC20) the weather's cover (weather/cover.ts): snow (cells), wet, ice (its share of the texel), which lap
  *  round the ring it is (-1: nothing known) */
@@ -277,6 +281,16 @@ fn vsTile(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> T
 
 struct TFrag { @location(0) color: vec4<f32>, @location(1) pick: vec2<u32>, @builtin(frag_depth) depth: f32 };
 
+/** (round 113) does the window draw its land at p (window units) this frame? (TU.drawn: tilecache.ts encodeMask's) */
+fn windowDrawsAt(p: vec2<f32>) -> bool {
+  let c = vec2<i32>(floor(p / TU.mesh.xy));
+  if (TU.mesh.z < 0.5 || any(c < vec2<i32>(0)) || c.x >= i32(TU.mesh.z) || c.y >= i32(TU.mesh.w)) { return false; }
+  let k = u32(c.y * i32(TU.mesh.z) + c.x);
+  if (k >= 2048u) { return false; }
+  let w = k >> 5u;
+  return (TU.drawn[w >> 2u][w & 3u] & (1u << (k & 31u))) != 0u;
+}
+
 @fragment
 fn fsTile(in: TOut) -> TFrag {
   let t = in;
@@ -291,8 +305,10 @@ fn fsTile(in: TOut) -> TFrag {
   // window, past a cell — the window draws its own land live)
   let rl = p.xy - t.anchor.xy;
   if (any(rl < vec2<f32>(-TU.win.w)) || any(rl > TU.win.zz * vec2<f32>(1.0, 0.8660254) + TU.win.w)) { discard; }
-  // (an arriving region's tile — plane.w 1 — draws inside the window till the window draws its land)
-  if (t.plane.w < 0.5 && all(p.xy > vec2<f32>(TU.win.w)) && all(p.xy < TU.win.xy - TU.win.w)) { discard; }
+  // (round 113, tilesfirst — tiles first, always: inside the window a tile draws wherever the window doesn't draw its
+  // land this frame — its chunk neither the grid's in view nor the voxel mesh's built — and nowhere it does: the swap to
+  // the window is the frame its drawing is ready, chunk by chunk, no frame between with neither)
+  if (all(p.xy > vec2<f32>(TU.win.w)) && all(p.xy < TU.win.xy - TU.win.w) && windowDrawsAt(p.xy)) { discard; }
   // (round 112, `tilefix2`, TF5 — the user's option (a): on the eye's side of the focus, what rises into the line from
   // the eye to it is cut, as the rings press theirs down (far.wgsl underFocus: over 24 world units on, 0.85 of the
   // line's height); what's behind shows through, the focus with it)
