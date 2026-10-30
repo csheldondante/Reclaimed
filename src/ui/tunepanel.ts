@@ -154,6 +154,19 @@ export class TunePanel {
 
   private letGo = () => (this.dragging = false);
 
+  /** (round 112) re-ask the visibility rule (its answer changed with something outside the registry: a lab's selection) */
+  refresh(): void {
+    this.applyFilter();
+  }
+
+  /** (round 112) open a group (and scroll it into view, if `scroll`) */
+  openGroup(group: string, scroll = false): void {
+    const g = this.groups.get(group);
+    if (!g) return;
+    g.el.open = true;
+    if (scroll) g.el.scrollIntoView({ block: 'nearest' });
+  }
+
   /** (round 111) show a built-in preset as the one loaded (a lab that loaded it itself) */
   showBuiltin(name: string): void {
     if (this.builtins[name]) this.presetSel.value = BUILTIN + name;

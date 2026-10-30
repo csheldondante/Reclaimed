@@ -4,6 +4,8 @@
 // regenerate's cost (GPU run, the columns' packing, the world's write, the frames after it).
 //   node scripts/noiselab.mjs [--url http://localhost:5207] [--out C:/Projects/shots88/noiselab] [--size 1280x800]
 //     [--dpr 1] [--q medium] [--only "TG2: mesas, ramps, ravines"]
+// Round 112 (TG9, TG10, TG11): the layer stack's list driven as a user would (select, add, move down, solo, up to here,
+// remove: the recipe back as it was), and the carves' recipes seen from low down off the coast (a flying camera).
 import puppeteer from 'puppeteer-core';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -91,7 +93,7 @@ try {
     const mean = fr.slice(1).reduce((a, b) => a + b, 0) / Math.max(1, fr.length - 1);
     rows.push({ name, ...s, worstFrame: worst, meanFrame: mean });
     console.log(
-      `${name}: heights ${s.min.toFixed(0)}–${s.max.toFixed(0)}, caves ${s.caves}, runs ≤ ${s.maxRuns}; gpu ${s.gpuMs.toFixed(1)} ms (${s.passes} passes), columns ${s.packMs.toFixed(1)} ms, world write ${s.writeMs.toFixed(1)} ms; frames after: mean ${mean.toFixed(1)} ms, worst ${worst.toFixed(1)} ms`,
+      `${name}: heights ${s.min.toFixed(0)}–${s.max.toFixed(0)}, gaps ${s.caves} (written ${s.gapCols}, opened ${s.cutCols}, joined ${s.joinedCols}), runs ≤ ${s.maxRuns}; gpu ${s.gpuMs.toFixed(1)} ms (${s.passes} passes), columns ${s.packMs.toFixed(1)} ms, world write ${s.writeMs.toFixed(1)} ms; frames after: mean ${mean.toFixed(1)} ms, worst ${worst.toFixed(1)} ms`,
     );
     // the world with the panel shut, then the panel (its preview) open
     await p.evaluate(() => window.noiselab.panel.toggle(false));
@@ -100,6 +102,25 @@ try {
     await p.evaluate(() => window.noiselab.panel.toggle(true));
     await sleep(300);
     await p.screenshot({ path: path.join(out, `${tag}${slug(name)}-panel.png`) });
+    // (round 112: the carves from low down, a flying camera off the cliff: TG3 from the sea to the east, TG11 its wall)
+    const flyShots = name.startsWith('TG3')
+      ? [[220, 70, 24, Math.PI, -0.12], [220, 111, 24, Math.PI, -0.12], [220, 150, 24, Math.PI, -0.12], [205, 40, 30, Math.PI * 0.85, -0.2]]
+      : name.startsWith('TG11')
+        ? [[230, 150, 22, Math.PI * 1.1, -0.1], [128, 20, 20, Math.PI * 0.5, -0.05], [30, 170, 24, -Math.PI * 0.2, -0.1]]
+        : [];
+    for (let k = 0; k < flyShots.length; k++) {
+      const [x, y, z, yaw, pitch] = flyShots[k];
+      await p.evaluate(
+        (x, y, z, yaw, pitch) => {
+          window.noiselab.panel.toggle(false);
+          window.reclaimed.camera.fly = { pos: [x, y, z], yaw, pitch, fov: (60 * Math.PI) / 180 };
+        },
+        x, y, z, yaw, pitch,
+      );
+      await sleep(2500);
+      await p.screenshot({ path: path.join(out, `${tag}${slug(name)}-fly${k + 1}.png`) });
+    }
+    if (flyShots.length) await p.evaluate(() => (window.reclaimed.camera.fly = null));
     // (the sea caves close: the coast's cliff from the sea)
     if (name.startsWith('TG3')) {
       const keep = await p.evaluate(() => {
@@ -120,6 +141,75 @@ try {
         c.zoom = k.z;
       }, keep);
     }
+  }
+  // (round 112) the layer stack, driven through its rows and buttons
+  if (!only || only.includes('TG3')) {
+    await p.evaluate(() => window.noiselab.load('TG3: coastal mesas, sea caves'));
+    await sleep(1500);
+    await p.evaluate(() => window.noiselab.settled);
+    const ui = await p.evaluate(async () => {
+      const lab = window.noiselab;
+      const st = lab.stack;
+      lab.panel.toggle(true);
+      const settle = async () => {
+        await new Promise((r) => setTimeout(r, 60));
+        await lab.settled;
+        await new Promise((r) => setTimeout(r, 60));
+        await lab.settled;
+      };
+      const rows = () => [...document.querySelectorAll('.lab-row')].filter((r) => !r.hidden);
+      const names = () => rows().map((r) => r.querySelector('.lab-name').textContent.replace(/^\d+\. /, ''));
+      const btn = (label) => [...document.querySelectorAll('.lab-bar button')].find((b) => b.textContent === label);
+      const shownGroups = () => [...document.querySelectorAll('.tune-group')].filter((g) => !g.hidden).map((g) => g.querySelector('summary').textContent);
+      const recipe0 = JSON.stringify(lab.registry.changed());
+      const log = { start: names(), gaps0: lab.stats.caves };
+      // select the third row: its parameters alone
+      rows()[2].click();
+      log.selected = st.selected;
+      log.groupsShown = shownGroups();
+      // add under it, then move the new layer down one
+      btn('+ layer').click();
+      await settle();
+      log.afterAdd = names();
+      btn('↓').click();
+      await settle();
+      log.afterDown = names();
+      log.selAfterDown = st.selected;
+      // solo the carve (the last row): it and what it reads
+      const carveRow = rows().findIndex((r) => r.querySelector('.lab-name').textContent.includes('carve'));
+      rows()[carveRow].querySelectorAll('.lab-view')[0].click();
+      await settle();
+      log.soloKeeps = st.stacked(st.effective(window.noiselab.registry.values)).map((i) => i + 1);
+      log.soloGaps = lab.stats.caves;
+      log.soloLinks = rows()[carveRow].querySelector('.lab-links').textContent;
+      log.carveStat = rows()[carveRow].querySelector('.lab-stat').textContent;
+      // the result up to the first row
+      rows()[0].querySelectorAll('.lab-view')[1].click();
+      await settle();
+      log.upToKeeps = st.stacked(st.effective(window.noiselab.registry.values)).map((i) => i + 1);
+      log.upToGaps = lab.stats.caves;
+      // views off; the added layer removed: the recipe as it was
+      rows()[0].querySelectorAll('.lab-view')[1].click();
+      await settle();
+      log.removing = st.selected;
+      btn('remove').click();
+      await settle();
+      log.afterRemove = names();
+      log.recipeBack = JSON.stringify(lab.registry.changed()) === recipe0;
+      log.gapsEnd = lab.stats.caves;
+      return log;
+    });
+    console.log('stack:', JSON.stringify(ui, null, 1));
+    if (ui.afterAdd.length !== ui.start.length + 1) fail('add did not add a row');
+    if (ui.afterDown[4] !== ui.afterAdd[3] || ui.afterDown[3] !== ui.afterAdd[4] || ui.selAfterDown !== 4) fail('move down did not move the new layer');
+    if (ui.groupsShown.filter((g) => g.startsWith('Layer')).length !== 1) fail(`selecting a row showed ${ui.groupsShown.join(', ')}`);
+    if (!(ui.soloKeeps.length < ui.afterDown.length)) fail('solo kept every layer');
+    if (ui.soloGaps < 1) fail('the soloed carve cut nothing');
+    if (ui.upToKeeps.length !== 1 || ui.upToGaps !== 0) fail('up to here did not stop at the first layer');
+    if (!ui.recipeBack) fail('add, move, remove did not give the recipe back');
+    if (ui.gapsEnd !== ui.gaps0) fail(`the gaps changed after the round trip (${ui.gaps0} → ${ui.gapsEnd})`);
+    await sleep(1500);
+    await p.screenshot({ path: path.join(out, `${tag}stack-ui.png`) });
   }
   // a slider: the preview follows while it moves, the world when it's let go
   const live = await p.evaluate(async () => {

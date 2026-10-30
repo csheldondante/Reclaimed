@@ -7,8 +7,9 @@ import { TunePanel } from '../ui/tunepanel';
 import type { ChunkLayout, LabColumns } from './columns';
 import { drawPreview, labColumns, recordStats } from './columns';
 import { NoiseLabGpu, type LabResult } from './lab';
-import { LAB_TUNING, labValues, labVisible } from './params';
+import { LAB_TUNING, TARGET, labValues, labVisible } from './params';
 import { PRESETS } from './presets';
+import { LayerStack } from './stack';
 
 /** what the lab needs of the level */
 export interface LabWorld {
@@ -32,6 +33,10 @@ export interface LabStats {
   max: number;
   caves: number;
   maxRuns: number;
+  /** (round 112) the last write: columns with gaps, opened by a carve, whose extra gaps joined */
+  gapCols: number;
+  cutCols: number;
+  joinedCols: number;
 }
 
 const STORE = 'reclaimed.noiselab.presets';
@@ -48,7 +53,9 @@ export class NoiseLabControl {
   private worldDue = false;
   private idleTimer = 0;
   private dead = false;
-  readonly stats: LabStats = { runs: 0, writes: 0, passes: 0, gpuMs: 0, packMs: 0, writeMs: 0, min: 0, max: 0, caves: 0, maxRuns: 0 };
+  readonly stats: LabStats = { runs: 0, writes: 0, passes: 0, gpuMs: 0, packMs: 0, writeMs: 0, min: 0, max: 0, caves: 0, maxRuns: 0, gapCols: 0, cutCols: 0, joinedCols: 0 };
+  /** (round 112) the layer stack's list (rows, selection, solo, up to here) */
+  readonly stack = new LayerStack();
   /** resolves when the run in flight (and the world's write it owes) is done */
   settled: Promise<void> = Promise.resolve();
 
@@ -66,7 +73,22 @@ export class NoiseLabControl {
     this.canvas.className = 'lab-preview';
     this.canvas.title = 'the recipe from above (x right, rows down; the camera looks from the bottom right)';
     this.line.className = 'tune-note';
-    top.append(this.canvas, this.line);
+    // (round 112) the preview folds away (a phone's panel keeps room for the stack); the stack under it
+    const fold = document.createElement('button');
+    fold.className = 'lab-fold';
+    const phone = matchMedia('(pointer: coarse)').matches;
+    const showPreview = (on: boolean) => {
+      this.canvas.hidden = !on;
+      fold.textContent = on ? 'map ▾' : 'map ▸';
+    };
+    showPreview(!phone);
+    fold.addEventListener('click', () => showPreview(this.canvas.hidden === true));
+    const head = document.createElement('div');
+    head.className = 'lab-head';
+    const title = document.createElement('span');
+    title.textContent = 'layers (top runs first) — tap a row for its parameters';
+    head.append(fold, title);
+    top.append(head, this.canvas, this.line, this.stack.el);
     // the recipe: a copied one, a built-in by name, or the one the lab opens with
     const s = params.get('lab');
     const named = params.get('labpreset');
@@ -86,13 +108,23 @@ export class NoiseLabControl {
       cls: 'lab',
       builtins: PRESETS,
       top,
-      open: ['lab', 'L1', 'L2'],
-      shown: !matchMedia('(pointer: coarse)').matches,
-      visible: (d) => labVisible(d.group, d.key),
+      open: ['L1'],
+      shown: !phone,
+      // (round 112) the selected layer's parameters alone
+      visible: (d) => (d.group === 'lab' || d.group === `L${this.stack.selected + 1}`) && labVisible(d.group, d.key),
     });
+    this.stack.onView = () => {
+      this.panel.refresh();
+      this.panel.openGroup(`L${this.stack.selected + 1}`);
+      this.request(true);
+    };
     this.panel.onRelease = () => this.worldNow();
     if (!s) this.panel.showBuiltin(named ?? START_PRESET);
+    this.stack.render();
+    this.panel.refresh();
+    this.panel.openGroup(`L${this.stack.selected + 1}`);
     this.off = LAB_TUNING.onChange((id) => {
+      this.stack.render();
       // (a slider moving: the preview now, the world when it's let go or settles; anything else: both)
       const slider = !!id && this.panel.dragging;
       this.request(!slider || labValues().lab.live === 1);
@@ -108,8 +140,12 @@ export class NoiseLabControl {
   load(name: string): void {
     const p = PRESETS[name];
     if (!p) throw new Error(`noise lab: no recipe "${name}" (${this.presets.join(' | ')})`);
+    this.stack.solo = this.stack.upTo = -1;
+    this.stack.selected = 0;
     LAB_TUNING.apply(p);
     this.panel.showBuiltin(name);
+    this.panel.refresh();
+    this.panel.openGroup('L1');
   }
 
   /** run the recipe; `world`: rewrite the world from it too */
@@ -119,7 +155,7 @@ export class NoiseLabControl {
     clearTimeout(this.idleTimer);
     // (a drag that stops without a release — a phone's — still reaches the world)
     if (!this.worldDue) this.idleTimer = window.setTimeout(() => this.worldNow(), 600);
-    this.settled = this.gpu.run().then(
+    this.settled = this.gpu.run(this.stack.effective(labValues())).then(
       (r) => this.got(r),
       (e) => {
         if (!this.dead) throw e;
@@ -140,7 +176,16 @@ export class NoiseLabControl {
     s.passes = r.passes;
     s.gpuMs = r.ms;
     const ctx = this.canvas.getContext('2d');
-    if (ctx) drawPreview(r, ctx);
+    this.stack.drawThumbs(r);
+    if (ctx) {
+      drawPreview(r, ctx);
+      // (a soloed mask or carve: the preview is its output, the world its effect)
+      const so = this.stack.solo;
+      if (so >= 0 && labValues()[`L${so + 1}`].target !== TARGET.h) {
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(this.stack.thumbOf(so), 0, 0, this.canvas.width, this.canvas.height);
+      }
+    }
     Object.assign(s, recordStats(r));
     if (this.worldDue) {
       this.worldDue = false;
@@ -148,10 +193,13 @@ export class NoiseLabControl {
       const cols = labColumns(r, this.world.layout);
       s.packMs = performance.now() - t0;
       s.maxRuns = cols.maxRuns;
+      s.gapCols = cols.gapCols;
+      s.cutCols = cols.cutCols;
+      s.joinedCols = cols.joinedCols;
       s.writeMs = this.world.write(cols, labValues().lab.sea);
       s.writes++;
     }
-    this.line.textContent = `heights ${s.min.toFixed(0)}–${s.max.toFixed(0)} · caves ${s.caves} cols · run ${s.gpuMs.toFixed(1)} ms (${s.passes} passes) · columns ${s.packMs.toFixed(1)} ms · world ${s.writeMs.toFixed(1)} ms`;
+    this.line.textContent = `heights ${s.min.toFixed(0)}–${s.max.toFixed(0)} · gaps ${s.caves} cols${s.joinedCols ? ` (${s.joinedCols} joined)` : ''} · run ${s.gpuMs.toFixed(1)} ms (${s.passes} passes) · columns ${s.packMs.toFixed(1)} ms · world ${s.writeMs.toFixed(1)} ms`;
   }
 
   dispose(): void {

@@ -12,17 +12,26 @@ import { makeLayout, makeModule } from '../gpu/pipeline';
 import { FIELD_GENS, GEN, LAYERS, LAYER_FLOATS, labValues, layerWgsl, matOf, packLayers, type LabValues } from './params';
 import { MAT } from '../world/materials';
 
-/** a column's record: height, cave floor, cave roof (0, 0: none), materials (top + rock·64 + cliff·4096) */
+/** a column's record: height, its gaps (floor, roof; 0, 0: none), materials (top + rock·64 + cliff·4096, joined·8192
+ *  when a column had more gaps than it keeps and some joined, cut·16384 when a carve opened it down to a floor) */
 export interface LabResult {
   w: number;
   h: number;
-  /** four floats a column, row-major (y · w + x) */
+  /** COL_FLOATS a column, row-major (y · w + x): height, gap 0 floor, roof, materials, gap 1 floor, roof, gap 2 floor, roof */
   cols: Float32Array;
+  /** (round 112) each layer's output at every THUMB-th column: LAYERS × tw × th × (value, mask weight) */
+  thumbs: Float32Array;
+  tw: number;
+  th: number;
   /** the run's time from submit to the record read (ms) */
   ms: number;
   passes: number;
 }
 
+/** floats a column's record */
+export const COL_FLOATS = 8;
+/** the stack's thumbnails sample every THUMB-th column */
+export const THUMB = 4;
 const SLOT = 256;
 const MAX_PASSES = 160;
 const KERNELS = ['labEval', 'labSlope', 'labSeed', 'labJfa', 'labJfaDone', 'labFinish'] as const;
@@ -47,6 +56,10 @@ export class NoiseLabGpu {
   private bufs: GPUBuffer[];
   private out: GPUBuffer;
   private read: GPUBuffer;
+  private thumbs: GPUBuffer;
+  private thumbRead: GPUBuffer;
+  readonly tw: number;
+  readonly th: number;
   private busy = false;
   private want?: { v: LabValues; res: ((r: LabResult) => void)[]; rej: ((e: unknown) => void)[] };
   private dead = false;
@@ -66,10 +79,16 @@ export class NoiseLabGpu {
     const fields = device.createBuffer({ label: 'lab fields', size: N * 16 * LAYERS, usage: S });
     const jA = device.createBuffer({ label: 'lab jfa a', size: N * 16, usage: S });
     const jB = device.createBuffer({ label: 'lab jfa b', size: N * 16, usage: S });
-    this.out = device.createBuffer({ label: 'lab columns', size: N * 16, usage: S });
-    this.read = device.createBuffer({ label: 'lab columns read', size: N * 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
-    this.bufs = [st, fields, jA, jB, this.out];
-    const layout = makeLayout(device, 'lab', { 0: 'uniform', 1: 'read', 2: 'rw', 3: 'rw', 4: 'rw', 5: 'rw', 6: 'rw' }, GPUShaderStage.COMPUTE);
+    this.out = device.createBuffer({ label: 'lab columns', size: N * COL_FLOATS * 4, usage: S });
+    this.read = device.createBuffer({ label: 'lab columns read', size: N * COL_FLOATS * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const gaps = device.createBuffer({ label: 'lab gaps', size: N * 32, usage: S });
+    this.tw = Math.ceil(w / THUMB);
+    this.th = Math.ceil(h / THUMB);
+    const tb = LAYERS * this.tw * this.th * 8;
+    this.thumbs = device.createBuffer({ label: 'lab thumbs', size: tb, usage: S });
+    this.thumbRead = device.createBuffer({ label: 'lab thumbs read', size: tb, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    this.bufs = [st, fields, jA, jB, this.out, gaps, this.thumbs];
+    const layout = makeLayout(device, 'lab', { 0: 'uniform', 1: 'read', 2: 'rw', 3: 'rw', 4: 'rw', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw' }, GPUShaderStage.COMPUTE);
     for (let i = 0; i < MAX_PASSES; i++) {
       this.groups.push(
         device.createBindGroup({
@@ -105,7 +124,7 @@ export class NoiseLabGpu {
 
   dispose(): void {
     this.dead = true;
-    for (const b of [this.uni, this.lp, this.read, ...this.bufs]) b.destroy();
+    for (const b of [this.uni, this.lp, this.read, this.thumbRead, ...this.bufs]) b.destroy();
   }
 
   private async pump(): Promise<void> {
@@ -134,7 +153,7 @@ export class NoiseLabGpu {
     jfaSteps.push(1);
     for (let l = 0; l < LAYERS; l++) {
       const L = v[`L${l + 1}`];
-      if (!L.on || !FIELD_GENS.includes(L.gen)) continue;
+      if (!L.on || L.mute || !FIELD_GENS.includes(L.gen)) continue;
       // (the layers before it, then its field)
       passes.push({ k: 'labEval', l0: from, l1: l });
       from = l;
@@ -187,10 +206,14 @@ export class NoiseLabGpu {
       U[23] = matOf(lab.beachMat);
       U[24] = matOf(lab.paintMat);
       U[25] = MAT.Snow;
+      U[26] = THUMB;
+      U[27] = this.tw;
     });
     device.queue.writeBuffer(this.uni, 0, u);
     device.queue.writeBuffer(this.lp, 0, packLayers(v));
     const enc = device.createCommandEncoder({ label: 'noise lab' });
+    // (a layer that doesn't run leaves no thumbnail)
+    enc.clearBuffer(this.thumbs);
     const gx = Math.ceil(w / 8);
     const gy = Math.ceil(h / 8);
     passes.forEach((p, i) => {
@@ -200,12 +223,15 @@ export class NoiseLabGpu {
       cp.dispatchWorkgroups(gx, gy);
       cp.end();
     });
-    enc.copyBufferToBuffer(this.out, 0, this.read, 0, w * h * 16);
+    enc.copyBufferToBuffer(this.out, 0, this.read, 0, w * h * COL_FLOATS * 4);
+    enc.copyBufferToBuffer(this.thumbs, 0, this.thumbRead, 0, this.thumbs.size);
     const t0 = performance.now();
     device.queue.submit([enc.finish()]);
-    await this.read.mapAsync(GPUMapMode.READ);
+    await Promise.all([this.read.mapAsync(GPUMapMode.READ), this.thumbRead.mapAsync(GPUMapMode.READ)]);
     const cols = new Float32Array(this.read.getMappedRange().slice(0));
     this.read.unmap();
-    return { w, h, cols, ms: performance.now() - t0, passes: passes.length };
+    const thumbs = new Float32Array(this.thumbRead.getMappedRange().slice(0));
+    this.thumbRead.unmap();
+    return { w, h, cols, thumbs, tw: this.tw, th: this.th, ms: performance.now() - t0, passes: passes.length };
   }
 }

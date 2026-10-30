@@ -359,3 +359,30 @@ canvas#world {
 .tune-panel.lab { width: min(380px, calc(100vw - 16px)); }
 .lab-top { margin: 2px 0 6px; }
 .lab-preview { display: block; width: 100%; aspect-ratio: 256 / 222; image-rendering: pixelated; border-radius: 6px; background: #111; }
+/* (round 112, TG9) the noise lab's layer stack (noiselab/stack.ts): a row a layer, the selected one's parameters below */
+.lab-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; font-size: 11px; color: var(--ink-dim); }
+.tune-panel .lab-fold { min-height: 26px; padding: 2px 8px; flex: none; }
+.lab-preview[hidden] { display: none; }
+@media (pointer: coarse) { .lab-preview { max-height: 34dvh; object-fit: contain; } }
+.lab-stack { margin-top: 4px; }
+.lab-rows { display: flex; flex-direction: column; gap: 3px; }
+.lab-row { display: flex; align-items: center; gap: 6px; padding: 3px 4px; border-radius: 6px; border: 1px solid rgba(236, 230, 216, 0.1); background: rgba(255, 255, 255, 0.03); cursor: pointer; }
+.lab-row[hidden] { display: none; }
+.lab-row.sel { border-color: var(--leaf); background: rgba(143, 179, 90, 0.14); }
+.lab-row.muted { opacity: 0.5; }
+.lab-row.after { opacity: 0.4; }
+.lab-row.gated { border-left: 3px solid #7fa7d9; }
+.lab-row.drop { box-shadow: 0 -3px 0 0 var(--leaf); }
+.lab-row.dragging { opacity: 0.6; }
+.lab-handle { touch-action: none; cursor: grab; padding: 6px 2px; color: var(--ink-dim); font-size: 14px; user-select: none; }
+.lab-thumb { width: 36px; height: 36px; flex: none; image-rendering: pixelated; border-radius: 4px; background: #111; }
+.lab-text { flex: 1; min-width: 0; }
+.lab-name { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lab-links { font-size: 10px; color: #9fbde3; line-height: 1.25; }
+.lab-links.warn { color: #e0a060; }
+.lab-stat { color: #e7b27a; }
+.lab-row input[type=checkbox] { width: 18px; height: 18px; flex: none; accent-color: var(--leaf); }
+.tune-panel .lab-view { min-height: 28px; min-width: 28px; padding: 2px 4px; flex: none; }
+.tune-panel .lab-view.on { border-color: var(--leaf); background: rgba(143, 179, 90, 0.35); }
+.lab-bar { display: flex; gap: 4px; flex-wrap: wrap; margin: 6px 0 2px; }
+.tune-panel .lab-bar button { min-height: 28px; padding: 2px 8px; }
