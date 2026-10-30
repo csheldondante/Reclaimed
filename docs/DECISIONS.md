@@ -3,6 +3,17 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-30 — round 116 (session 5, `places`) — high-value work in parallel: generators, editors, sound, runs
+
+- The user, verbatim: "I would like to target high value work. What is awesome, what will be most impactful to players and what will show the most rapid progress. In my opinion we should target improvements to the terrain generation, run planning, and character movement and controls and we should add sound effects and work on procedural generators and editors for flora,  agents, gear, buildings and vehicles. I want beautiful structures, sprawling fantastic cities and lively animated agents inhabiting our world. "
+- The user, verbatim: "I would like to work effectively so let's have multiple agents on multiple worktrees building the different components and exposing an API. I think we should be able to work on most of these in parallel and have small non interfering performance tests and I'll wake up the desktop system that you were using before."
+- Asked: where movement, controls, gear and vehicles happen → "Reclaimed, via the hero API" (GameplayGM uses it). How many
+  agents at once → 6 now: `terrain`, `flora`, `structures` (buildings and cities), `inhabitants` (creatures and animation),
+  `sound`, `runplan`; movement/controls + gear + vehicles join as the first finish.
+- Each track: its own worktree and directory, one typed contract in src/api/contracts/<track>.ts, an editor page the user
+  can open on the phone and the PC, and a small perf test of its own (scripts/perf/<track>.mjs, JSON to data/perf/) that
+  also runs on the desktop (RTX 3080).
+
 ## 2026-10-30 — round 115 (session 5, `places`) — streaming is good enough; caching by section, travel on the atlas, the camera's view kept clear
 
 - The user, verbatim: "This build is ok but still lags on phone and the desktop version on my wide monitor does not load all the tiles (and I assume it is considerably more powerful than the phone) which seems like it is an issue with the implementation because I don't think the PC streaming should be that slow if it is just a heightmap.  That said I'm decently happy with it and I don't want to waste any more time on this as our main project." → places 3c850b9 is the streaming build for now; perf stops being the main project.
