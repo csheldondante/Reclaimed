@@ -24,6 +24,7 @@ import { CAMERA_CUT_BYTES, CAMERA_CUT_OFFSET, CAMERA_POS_OFFSET } from './camera
 import type { FieldMesh } from './fieldmesh';
 import { ROW_H } from '../world/lattice';
 import type { LandTimes } from './tileland';
+import { coverage, type Coverage } from './coverage';
 
 /** (round 105) what makes the render-only land: tileland.ts (the playable path, ?tilegpu=0) or tilelandgpu.ts */
 export interface LandMaker {
@@ -35,6 +36,8 @@ export interface LandMaker {
   /** (round 112, tilefast: the bench's why) region "rx,ry"'s land: being made, made and waiting for its bake, wanted
    *  and not started, or none of these */
   stateOf?(key: string): 'making' | 'made' | 'queued' | null;
+  /** (round 113, the coverage check) region (rx, ry)'s heights as the CPU knows them (window z), or null */
+  zRange?(rx: number, ry: number): [number, number] | null;
 }
 
 /** the streamer's region (cells; rows the same count) */
@@ -158,6 +161,9 @@ export interface TileHost {
   /** (hybrid) every mesh chunk's lowest and highest column top (window z; scenes/hybrid.ts), or null */
   chunkBox: () => { lo: Float32Array; hi: Float32Array } | null;
   drawGrid: (pass: GPURenderPassEncoder, which: Uint8Array) => void;
+  /** (round 113, tilesfirst) per mesh chunk (chunkGrid order) how the window draws it this frame, as the CPU knows it
+   *  (Renderer.windowDrawn: 1 the grid's, 2 the voxel mesh's built, 3 the voxel mesh's in view not known built, 0 none) */
+  windowDrawn: () => Uint8Array;
   meshGroup: (cam: GPUBuffer, src: TileSrc) => GPUBindGroup;
   meshEntries: (src: TileSrc, cam: GPUBuffer) => GPUBindGroupEntry[];
 }
@@ -1074,6 +1080,34 @@ export class TileCache {
     pass.setBindGroup(0, this.drawGroup);
     pass.draw(6, this.drawCount);
     h.profiler.draws++;
+  }
+
+  /**
+   * (round 113, tilesfirst) The geometric coverage check (render/coverage.ts) this frame: the window's chunks and the
+   * regions past it the camera sees, each drawn (the window's own drawing of it, or a tile) or not. Null before the
+   * window's placed, or flying.
+   */
+  coverCheck(cam: Camera): Coverage | null {
+    if (!this.origin || cam.fly) return null;
+    const h = this.host;
+    const [nx, ny, side] = h.win.mesh.chunkGrid;
+    const box = h.chunkBox();
+    return coverage({
+      viewProj: cam.viewProj,
+      W: h.world.w,
+      H: h.world.h,
+      nx,
+      ny,
+      side,
+      lo: box?.lo ?? null,
+      hi: box?.hi ?? null,
+      zMax: h.world.zMax,
+      drawn: h.windowDrawn(),
+      origin: [this.origin[0], this.origin[1]],
+      R,
+      tile: (rx, ry) => this.drawnSet.has(`${rx},${ry}`),
+      zRange: (rx, ry) => this.land?.zRange?.(rx, ry) ?? null,
+    });
   }
 
   /**

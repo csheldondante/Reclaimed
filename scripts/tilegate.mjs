@@ -53,12 +53,15 @@ const loadFrames = Number(opt('loadframes', 180));
 const hz = Number(opt('hz', 60));
 const chromeArgs = (opt('chromeargs', '--disable-gpu-vsync --disable-frame-rate-limit') || '').split(' ').filter(Boolean);
 const parkedS = Number(opt('parked', 2));
-const panV = Number(opt('pan', 20));
+// (round 113, tilesfirst: --pan a list of speeds, each a run at each of --panzooms (default the zooms))
+const panVs = String(opt('pan', 20)).split(',').map(Number);
+const panZooms = opt('panzooms', null)?.split(',').map(Number) ?? null;
 const panS = Number(opt('panning', 3));
 const panMiss = Number(opt('panmiss', 0.02));
 const tol = Number(opt('tol', 40));
 const areaMax = Number(opt('area', 0.01));
 const bgMax = Number(opt('bgmax', 0.001));
+const geoMax = Number(opt('geomax', 0.001));
 const outDir = opt('out', 'C:/Projects/shots88/tilegate');
 // (round 112, tilefix2: baselines by GPU — vendors render 1.5-12% of a frame differently: a dir an adapter,
 // <baselines>/<vendor>-<architecture>, written the first time an adapter runs)
@@ -110,6 +113,7 @@ async function measure(p, secs, parked = true) {
     const frames = [];
     let worst = 0;
     let worstWhy = {};
+    const geo = { frames: 0, framesAny: 0, sum: 0, max: 0, worst: [] };
     let last = performance.now();
     const t0 = last;
     while (performance.now() - t0 < secs * 1000) {
@@ -151,6 +155,18 @@ async function measure(p, secs, parked = true) {
             why[k] = (why[k] ?? 0) + 1;
           }
         }
+      // (round 113, tilesfirst: the geometric coverage check — render/coverage.ts: what the camera sees drawn by neither
+      // the window nor a tile, this frame; the build's own when it has it)
+      const gc = TL?.coverCheck?.(cam);
+      if (gc) {
+        geo.frames++;
+        geo.sum += gc.share;
+        if (gc.share > geo.max) {
+          geo.max = gc.share;
+          geo.worst = gc.undrawn.slice(0, 6);
+        }
+        if (gc.chunksUndrawn + gc.regionsUndrawn) geo.framesAny++;
+      }
       // (each chunk's run of frames read undrawn: on, or over)
       for (const wk of [...runs.keys()]) if (!seen.has(wk)) runs.delete(wk);
       for (const wk of seen) runs.set(wk, (runs.get(wk) ?? 0) + 1);
@@ -178,7 +194,7 @@ async function measure(p, secs, parked = true) {
     const rep = window.reclaimedHitch?.report?.();
     const hitches = rep?.worst ? rep.worst.slice(0, 2).map((h) => `${h.ms} ${h.cause} ${[...(h.steps ?? []), ...(h.async ?? [])].slice(0, 2).map((x) => `${x.label} ${x.ms}`).join(', ')}`) : [];
     // (round 112, tilefix3: the zoom as it stands — under the device's floor it's held at it — and the floor)
-    return { zoom: +cam.zoom.toFixed(2), zoomFloor: +(cam.zoomFloor ?? 0).toFixed(2), hitches, fps: +(frames.length / secs).toFixed(1), p99: +q(0.99).toFixed(1), max: +q(1).toFixed(1), miss: +worst.toFixed(3), why: worstWhy, bg, tiles: { slots: st.slots, used: st.used, drawn: st.drawn, mb: st.mb }, pipe };
+    return { zoom: +cam.zoom.toFixed(2), zoomFloor: +(cam.zoomFloor ?? 0).toFixed(2), hitches, fps: +(frames.length / secs).toFixed(1), p99: +q(0.99).toFixed(1), max: +q(1).toFixed(1), miss: +worst.toFixed(3), why: worstWhy, bg, geo: geo.frames ? { max: +geo.max.toFixed(4), mean: +(geo.sum / geo.frames).toFixed(5), framesAny: geo.framesAny, frames: geo.frames, worst: geo.worst } : null, tiles: { slots: st.slots, used: st.used, drawn: st.drawn, mb: st.mb }, pipe };
   }, secs, parked);
 }
 
@@ -196,12 +212,16 @@ function judge(tag, m, missMax) {
     if (m.miss > missMax) f.push(`out of detail ${(m.miss * 100).toFixed(1)}% (${Object.entries(m.why).map(([k, v]) => `${k} ${v}`).join(', ')})`);
   // (round 112, bgcheck: the background colour on more than --bgmax of a frame's samples; frame rate or not)
   if (m.bg && m.bg.max > bgMax) f.push(`background ${(m.bg.max * 100).toFixed(2)}% of the screen (worst frame; ${m.bg.framesAny} of ${m.bg.frames} frames with any)`);
+  // (round 113, tilesfirst: the geometric check — undrawn land in sight — over --geomax of the screen in a frame)
+  if (m.geo && m.geo.max > geoMax) f.push(`undrawn ${(m.geo.max * 100).toFixed(2)}% of the screen (geometric; ${m.geo.framesAny} of ${m.geo.frames} frames; ${m.geo.worst.join(' ')})`);
     if (f.length) fails.push(`${tag}: ${f.join('; ')}`);
     return f;
   }
   if (m.miss > missMax) f.push(`out of detail ${(m.miss * 100).toFixed(1)}% (${Object.entries(m.why).map(([k, v]) => `${k} ${v}`).join(', ')})`);
   // (round 112, bgcheck: the background colour on more than --bgmax of a frame's samples; frame rate or not)
   if (m.bg && m.bg.max > bgMax) f.push(`background ${(m.bg.max * 100).toFixed(2)}% of the screen (worst frame; ${m.bg.framesAny} of ${m.bg.frames} frames with any)`);
+  // (round 113, tilesfirst: the geometric check — undrawn land in sight — over --geomax of the screen in a frame)
+  if (m.geo && m.geo.max > geoMax) f.push(`undrawn ${(m.geo.max * 100).toFixed(2)}% of the screen (geometric; ${m.geo.framesAny} of ${m.geo.frames} frames; ${m.geo.worst.join(' ')})`);
   if (m.fps < CRIT.fps) f.push(`fps ${m.fps}`);
   if (m.max > CRIT.max) f.push(`frame ${m.max} ms${m.hitches?.length ? ` (${m.hitches.join('; ')})` : ''}`);
   if (m.p99 > CRIT.p99) f.push(`p99 ${m.p99} ms`);
@@ -380,7 +400,8 @@ for (const sk0 of screens) {
     }
     // 3: panning, each zoom
     if (doPan && mode === 'atlas')
-      for (const z of zooms) {
+      for (const z of panZooms ?? zooms)
+      for (const panV of panVs) {
         const tag = `${sk}-z${z}`;
         await p.evaluate((z) => (window.reclaimed.camera.zoom = z), z);
         await frames(p, loadFrames);

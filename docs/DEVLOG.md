@@ -12777,3 +12777,78 @@ bench-clean.json, gate-clean/.
   with the check on): "Let's turn those off for the next one." The pan pages always set bgcheck=1; `?bgcheck=0` on the
   bench's start page now runs them without it (bench.ts), for a frame-time run free of the check's depth and pick
   stores. Behaviour of the check itself is unchanged.
+
+
+## 2026-10-30 — round 113 (`tilesfirst`, step 1): where the close-zoom holes come from, timed; the geometric coverage check
+
+The user, after the stable build's phone bench (data/bench/pixel9a-pan-stable.json: background on 14-58% of the screen
+panning at zoom 14 at 40-80 c/s, 16% at zoom 8 at 80, not at wide zooms): "Why don't we load the fast tiles first and
+then something is always there and swap only when the slow one is ready? It's really dumb not to grow with speed. The
+fix is both." and "Why can't we just compute the orthographic visible area and see if any tiles that are not loaded
+cover it? It seems cheap though and I don't buy your theory." Main's theory (untested): the screen is inside the live
+window at close zoom, fast panning outruns the window's slide and mesh rebuild, the look-ahead doesn't scale with
+speed, and since the pool (in-memory) runs were worst it isn't generation. The streaming design the user approved
+(https://claude.ai/artifact/UnqDENhSKGH1abe7pxWiNh: layers 0 stand-in, 1 tile, 2 height grid, 3 full window) makes
+this its migration step 1: measure the chain, add the geometric check, show it agrees with the pixel check.
+
+**The tools.** scripts/holediag.mjs: pans on the phone proxy (412x915, dpr 2.6, q=low, a Pixel's UA, window 256, the
+pan bench's flags; `--throttle 4` slows the CPU four times, the phone's main thread) and for each frame the pixel check
+(render/bgcheck.ts snapshot) samples, classifies every background sample by what the CPU knew that frame, the sample's
+view ray marched down to the first chunk whose highest column top it passes under (a first version put the point on the
+ground at the camera's height — 25-50 cells off on this land, and misattributed half the holes). scripts/chaintime.mjs:
+per region that comes into the window during the pan, the time of each link from wanted to drawn.
+
+**The chain, timed** (z14, window 256, phone proxy with the CPU at 1/4, ms from the slide; data: shots88/tilesfirst/
+chain-before.json):
+
+| link | 40 c/s line | 80 c/s line | 80 c/s pool |
+|---|---|---|---|
+| land asked (prefetch) | −634 | −697 | −670 |
+| land made (in the pool) | −241 | −993 (one −17) | −907 |
+| slid → written into the window | 27 (max 81) | 18-27 (max 72) | 17 (max 32) |
+| written → the grid draws it (READY_TICKS, 3-6 sim ticks) | **199** (max 232) | **99-101** (max 152) | **98** (max 132) |
+| a tile of it drawn inside the window | only while none of its 4 chunks is drawn | same | same |
+
+The land is made 0.2-1 s before the slide needs it, the slide writes it in 1-2 frames: **neither generation nor the
+slide is the slow link**. The slowest is the hand-off to drawing: the hybrid grid waits READY_TICKS (3) sim ticks after
+the write, and the sim doesn't tick while the slide is busy writing the rest of its strip — 100-230 ms in which the
+region is in the window, written, and drawn by nothing: with the tiles on (the default) there are no LOD rings
+(level.ts `lod = tilesOn ? null`), and the window region's tile (TC9) draws only while **none** of the region's four
+chunks is drawn (and only when the CPU's mirror of the mesh is in step with the slides). A region whose chunks come in
+one by one, or that has a chunk neither the grid's nor voxels (outZ: its land under the window's floor), has no cover.
+
+**Where the holes were** (holediag, same proxy, `standin=0`; shares of the background samples): the region's tile was
+**in the atlas and not drawn** (`+held`) in 77-100% of them; by chunk state: the grid not ready yet 35-85% (the
+READY_TICKS wait), the window's mirror saying drawn — the voxel mesh built and in view, or the grid's first frames —
+15-61%, voxel mesh not built 4-23%, slid in but not written 0-29% (pool 80, one frame), chunk culled on the CPU with
+stale tops ~26% of one run. Never: a region that was never asked for. So main's theory was half right: the holes are in
+the window, at close zoom, worse from the pool — but not because the slide or the mesh can't keep up with the camera
+(the land was made a second early); because nothing covers a region between its land being written and its drawing
+being ready, and a made tile was held back. The look-ahead not growing with speed didn't cause these (2 strips ahead
+were enough at 80 c/s); it would at the bike's speeds with the pull-back.
+
+**The old "out of detail" metric** (bench.ts writtenShare / missingWhere, the gate's measure) counted a point inside the
+window as detailed once its region was **written**, not drawn — exactly the 100-230 ms these holes live in — and put the
+point on the ground at the focus's height. **The geometric check** (render/coverage.ts, TileCache.coverCheck,
+Renderer.windowDrawn): the camera's orthographic view against each window chunk's box (its lowest to highest column top:
+the hybrid's) and each region past the window (its heights as the CPU knows them, Atlas.zRange); each seen piece is
+drawn if the window draws it this frame (the grid's and in the grid's view, or the voxel mesh's built and in view) or a
+tile of its region is drawn; the undrawn pieces' footprint quads at their middle height, clipped to the screen, are the
+share. CPU only, a few hundred boxes, run every frame by the bench and the gate. **It agrees with the pixel check**: in
+holediag's frame pairs the correlation is 0.99-1.0 at pool 80/160 and line 80 (0.48 at line 160, where it's the larger:
+a box's quad is a little wider than its land), none of 270 frames had pixels' holes over 0.5% with the geometric under
+0.1% bar one; in the gate's 24 pan runs (step-1 gate below) the two worst-frame shares sit side by side: z8 phone 16.7 /
+19.8%, 15.0 / 19.6, 17.5 / 18.8, 19.6 / 18.6; z5 10.6 / 11.7, 8.8 / 11.0, 11.9 / 10.6; desktop z14 80 13.2 / 13.8.
+
+**The bench and the gate.** The pan bench's step has `geo` (max, mean, frames with any, chunks and regions undrawn) and
+its pop-in is the geometric check's (over 0.1%); `lowDetailMax` (the old one) stays in the row to compare; with the
+pixel check on the mesh's mirror is read every frame during a step. scripts/tilegate.mjs: `geo` in every row, a view
+fails over `--geomax` (0.001); `--pan` takes a list of speeds and `--panzooms` the zooms to pan at.
+bgcheck.ts reads the far land's pick before the depth: the stand-in (step 2) draws without writing the depth.
+
+**Step-1 gate** (tilegate, both screens, `--pan 20,40,80,160 --panzooms 14,8,5`, the build of this step's tree;
+shots88/tilesfirst/gate-step1.json): parked views all pass (bg 0-0.02%, geo 0); every pan at z8 and z5 fails at every
+speed (phone bg 8.8-19.6%, geo 10-19.8%), phone z14 passes to 80 c/s and fails at 160 (bg 11.8%, geo 28.5%), desktop
+z14 fails from 40 (2.6%). Frames not judged: this laptop's iGPU runs the gate's pages at 47-52 fps under the 60 Hz cap.
+That is places' behaviour (BG4 (b)): this step changes nothing drawn.
+

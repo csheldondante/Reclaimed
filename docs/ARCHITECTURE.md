@@ -2315,3 +2315,21 @@ clears them).
   tiles.wgsl fsTile discards what rises into the line from the eye to the focus (TileU.focus: the camera's target, w 1;
   the rings' underFocus rule) — no tile is left out for it. The gate: scripts/tilegate.mjs (frames held to 60 Hz, load in
   frames, baselines by adapter).
+
+## The coverage check, and drawn versus written (round 113, `tilesfirst`; the streaming design's step 1)
+
+- **Drawn, not loaded.** `Renderer.windowDrawn()` (TileHost.windowDrawn) is the one answer to "does the window draw
+  chunk c this frame", after the frame's culls: 1 the hybrid grid's (`gridOn.on`) and in the grid's view (`gridView`);
+  2 the voxel mesh's in view (`FieldMesh.inViewMask`) and built by the CPU's mirror (FieldMesh.built: the stats
+  readback, frames behind; not trusted while it predates a slide); 3 in the mesh's view, not known built; 0 nothing.
+  Drawn for sure: 1 or 2. A region written into the window (Streamer.unwritten) is not drawn until this says so.
+- **render/coverage.ts** `coverage(view)`: the camera's orthographic view against each window chunk's box (its column
+  tops' span: HybridChunks.lo/hi via TileHost.chunkBox) and each world region past the window within `reach` regions
+  (its heights: LandMaker.zRange — TileLandGpu, Atlas.zRange through the streamer's TileLandSource, window z); a seen
+  piece is drawn when the window draws it for sure or a tile of its region is drawn (TileCache's drawn set); the result:
+  pieces seen and undrawn, and the undrawn share of the screen (each piece's footprint quad at its middle height,
+  clipped). `TileCache.coverCheck(cam)` assembles it. CPU only; no GPU work, no readback. Callers: the pan bench (each
+  step's `geo`, its pop-in), scripts/tilegate.mjs (`geo`, `--geomax`), scripts/holediag.mjs (validated against the
+  pixel check, render/bgcheck.ts).
+- **The pixel check** (bgcheck.ts) classifies the far land's pick (FAR_PICK_TAG) before the clear depth: a stand-in
+  drawn without writing the depth is the far land, not the background.
