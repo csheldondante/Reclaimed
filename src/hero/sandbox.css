@@ -1,7 +1,8 @@
 /* (round 112, herosandbox) the hero sandbox's bar, tools and inspector (hero/sandbox.ts): top left, clear of the
    editor (top right), the TouchPad's buttons (bottom right) and the turn buttons (bottom left). Folded on a phone. */
 .hero-sb {
-  position: fixed; z-index: 30; left: max(8px, env(safe-area-inset-left)); top: max(8px, env(safe-area-inset-top));
+  /* (round 117, revive: over the hero's health bar, 31 — open, it hid the tools' row on a phone; folded, the bar sits under it) */
+  position: fixed; z-index: 32; left: max(8px, env(safe-area-inset-left)); top: max(8px, env(safe-area-inset-top));
   width: min(360px, calc(100vw - 16px)); max-height: calc(100vh - 220px); overflow: auto;
   font: 12px var(--font, system-ui, sans-serif); color: var(--ink, #ece6d8);
   background: rgba(28, 26, 22, 0.78); border: 1px solid rgba(236, 230, 216, 0.2); border-radius: 10px; padding: 6px;

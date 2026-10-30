@@ -178,7 +178,9 @@ export class TouchPad implements HeroController {
       },
       { signal, capture: true },
     );
-    window.addEventListener('keyup', (e) => this.keys.delete(e.key.toLowerCase()), { signal });
+    // (round 117, revive: in the capture phase, as keydown — a panel that stops its keys' propagation, the hero
+    // sandbox's, swallowed the keyup with a button of it focused, and W walked the hero on for ever)
+    window.addEventListener('keyup', (e) => this.keys.delete(e.key.toLowerCase()), { signal, capture: true });
     window.addEventListener('blur', () => this.keys.clear(), { signal });
   }
 

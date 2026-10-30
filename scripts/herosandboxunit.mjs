@@ -147,6 +147,23 @@ try {
     for (let a = 0; a < 24; a++) if (set.has(cellAt(c[0] + Math.cos((a * Math.PI) / 12) * 5.8, c[1] + Math.sin((a * Math.PI) / 12) * 5.8).join())) hit++;
     ok(hit === 24 && cols.length === set.size && cols.every((q) => q.layers === 6), `a ring as ${cols.length} columns, one build each, covering its circle (${hit}/24)`);
   }
+  {
+    // (round 117, revive) a raider the spawn tool puts down a screen's half away (past its sight) idles; ordered to
+    // attack the hero (the tool does now) it comes for it
+    const { SimpleUnits } = await v.ssrLoadModule('/src/units/simple.ts');
+    const { UNIT_KINDS } = await v.ssrLoadModule('/src/hero/sandbox.ts');
+    const run = (order) => {
+      const u = new SimpleUnits({ heightAt: () => 10 });
+      const hero = { id: 'hero', faction: 'player', position: () => [10, 10, 10], alive: () => true, hurt: () => {} };
+      u.watch(hero);
+      const id = u.spawn('raider', [40, 10], 'raiders', UNIT_KINDS.raider.opts);
+      if (order) u.order(id, { kind: 'attack', target: 'hero' });
+      for (let k = 0; k < 120; k++) u.update(1 / 20);
+      return u.get(id).at[0];
+    };
+    const idle = run(false), sent = run(true);
+    ok(Math.abs(idle - 40) < 0.5 && sent < 30, `a raider 30 cells off (sight ${UNIT_KINDS.raider.opts.sight}) idles at x ${idle.toFixed(1)}; ordered to attack it comes: x ${sent.toFixed(1)}`);
+  }
 } finally {
   await v.close();
 }

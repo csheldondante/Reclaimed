@@ -1823,7 +1823,13 @@ export class LevelScene implements Scene {
       level: this.level.id,
       heightAt: this.heightAt,
       say: (t, sec) => this.hud.say(t, sec ?? 3),
-      editor: (on) => this.editor?.setVisible(on),
+      // (round 117, revive: the playground's stations bar too — on a phone it lay under the hero's ⚔ and 🏃 —
+      editor: (on) => {
+        this.editor?.setVisible(on);
+        if (this.stationsBar) this.stationsBar.el.style.display = on ? '' : 'none';
+        // (and the atlas's touch buttons — 🗺 ✦ ✈ ☄ 🌋 lay under ⚔ and 🏃 at the bottom right)
+        if (this.atlasCtl) this.atlasCtl.style.display = on ? 'flex' : 'none';
+      },
       land: () => {
         if (core.camera.fly) this.toggleFly();
       },
@@ -1834,6 +1840,9 @@ export class LevelScene implements Scene {
     core.onShift.push((dx, dy, dz) => hs.slid(dx, dy, dz));
     this.stream?.onWarp.push(() => hs.warped());
     (window as unknown as { reclaimed: Record<string, unknown> }).reclaimed.heroSandbox = hs;
+    // (round 117, revive: the test bed's tuning panel opened over the hero sandbox's tools at the top left on a desktop —
+    // clicks meant for 👹 and 🏁 landed in it; it starts shut here, its "tune" button opens it)
+    this.tunePanel?.toggle(false);
     // ?hero=<role>: in as it from the start (a script, a link to a hero's test)
     const role = host.params.get('hero');
     if (role)

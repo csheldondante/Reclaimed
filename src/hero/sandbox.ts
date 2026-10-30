@@ -694,7 +694,15 @@ export class HeroSandbox {
     if (tool.kind === 'spawn') {
       // (a tap off the loaded world: said, not thrown out of the event handler)
       try {
-        this.spawn(tool.unit, at);
+        const id = this.spawn(tool.unit, at);
+        // (round 117, revive: a foe the spawn tool puts down comes for the hero — at sight 10-18 cells, the ones a
+        // phone's tap put a screen's half away stood idle, and the user asked for enemies to fight. The course's
+        // foes keep their posts.)
+        const units = this.heroUnits ?? this.units;
+        if (this.hero && !UNIT_KINDS[tool.unit].friendly && UNIT_KINDS[tool.unit].opts.hostile) {
+          units.order(id, { kind: 'attack', target: this.hero.id });
+          this.log.add('host→hero', 'units.order', id, 'attack', this.hero.id);
+        }
       } catch (e) {
         this.d.say((e as Error).message, 3);
       }

@@ -13553,3 +13553,34 @@ interfaces and tweak them" / "Or at least provide feedback" (BACKLOG HS1; DECISI
 HS6 (lava has no world API to fill with), HS7 (a big fill takes seconds), HS8 (the sandbox's SimpleUnits beside the
 atlas's AgentUnits), HS10 (the GPU traversal field), HS11 (a pilot for GameplayGM's heroes), HS12 (one mirror accessor
 per kind).
+
+## 2026-10-30 — round 117 (`herosandbox-r`, revive): the hero sandbox played as a player would
+
+The user: "Likewise with the hero sandbox it was not useable. Maybe with the improvements merged in?" / "Test them
+before merging or have me test on my phone". herosandbox (787df5b) merged onto places adff3ee (level.ts, vite.config.ts
+and the docs conflicted whole-file: the merge base was LF, both sides CRLF — merged with every side normalised; the
+hero-shared import map's entries now go in through rolldownOptions beside places' main + contract inputs; the build
+emits them). Node: scripts/herosandboxunit.mjs all ok. Then played on the phone proxy (412x915 dpr 2.6 q=low, touch;
+scripts/play.mjs) in the playground and the atlas sandbox, and on the desktop (1600x900). What worked as built: 🧍 in
+and out, the stick (held 5 s: 39-40 cells at speed 8; the round 112 stop is gone), 🧭 autopilot (55 cells on the
+atlas), 🏁 a course (31 pieces, 4 foes, walls and a pit seen), 🪣 water into the course's pit (35-40 columns), ⚔ kills
+raiders. What a player hit, fixed:
+
+- **Spawned enemies stood still.** A raider sees 14 cells, a brute 10; a phone's tap half a screen away put them
+  further, so they idled and the user's "a way to spawn enemies" gave nothing to fight. The spawn tool now orders a
+  hostile it puts down to attack the hero (Units.order, the contract's own); the course's foes keep their posts.
+  After: three raiders chase, the hero takes 9 hits' worth and kills all three (phone), the same on the desktop.
+- **W walked the hero on for ever on a desktop** after any sandbox button was clicked: the sandbox panel stops its
+  keys' propagation, the TouchPad's keydown listens in the capture phase but its keyup didn't, so with a panel button
+  focused the keyup never arrived. Keyup in the capture phase too. After: W held 2 s walks 16 cells and stops.
+- **Overlapping controls on a phone**: the playground's stations bar lay under ⚔ and 🏃, and on the atlas the 🗺 ✦ ✈ ☄
+  🌋 buttons did — a thumb on ⚔ could hit either. Both hide while the hero is in (the sandbox's `editor(false)`), and
+  come back on the way out.
+- **On a desktop the test bed's tuning panel opened over the sandbox's tools** (both top left): clicks meant for 👹 and
+  🏁 landed in it. It starts shut where the hero sandbox is (its "tune" button opens it).
+- The sandbox panel, unfolded, sat under the hero's health bar (z 30 < 31) on a phone, hiding the tools' row; it's over
+  it now (folded, the bar sits under it as before).
+
+Still not there (BACKLOG): one hero only — "drop in as different heroes" needs GameplayGM's modules (HS2) or more
+built-in roles (HS14); the course is the obstacle-course stub, not GE3 (HS5). Shots and GIFs:
+C:/Projects/shots88/revive/p-hs-*.png|gif, d-hs-*.png.
