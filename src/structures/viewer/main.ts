@@ -446,8 +446,26 @@ function panel() {
     ov.append(b);
   }
   el.append(ov);
+  // the city on real terrain: the game's atlas, the town nearest the start handed to this generator (src/structures/host.ts)
+  const terrain = document.createElement('a');
+  terrain.className = 'terrain';
+  terrain.textContent = 'on real terrain ↗';
+  terrain.target = '_blank';
+  const href = () => {
+    const p = new URLSearchParams({ skipmenu: '1', level: 'atlas', city: state.system, cstyle: state.style, cseed: String(state.seed), croads: String(Math.min(state.roads, 3)), ...(state.walls ? { cwalls: '1' } : {}), ...(state.grow < 1 ? { cgrow: String(state.grow) } : {}) });
+    terrain.href = `./?${p}`;
+  };
+  terrain.onpointerdown = href;
+  terrain.onfocus = href;
+  href();
+  el.append(terrain);
   api.stats.className = 'stats';
   el.append(api.stats);
+  // (a phone: the panel starts folded — the city first; + opens it)
+  if (Math.min(innerWidth, innerHeight) < 520 && !q.has('panel')) {
+    el.classList.add('folded');
+    fold.textContent = '+';
+  }
   return api;
 }
 

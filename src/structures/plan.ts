@@ -526,3 +526,19 @@ function subset(plan: CityPlan, keep: Map<number, number>): CityPlan {
   const megas = plan.megas.filter((m) => m.kind === 'fountain' || m.kind === 'keep' || m.quads.some((q) => quadBuilding[q] >= 0));
   return { ...plan, tiles, quadBuilding, quadTop, facades, megas, sites, spans: plan.spans.filter((s) => s.building < 0 || keep.has(s.building)) };
 }
+
+/** Move a plan's frame by (dx, dy) world units, in place (a host whose world slides under it: the window's). */
+export function shiftPlan(plan: CityPlan, dx: number, dy: number): void {
+  const v = plan.tiles.verts;
+  for (let i = 0; i < v.length; i += 2) {
+    v[i] -= dx;
+    v[i + 1] -= dy;
+  }
+  plan.spec = { ...plan.spec, at: [plan.spec.at[0] - dx, plan.spec.at[1] - dy] };
+  for (const n of plan.nav.nodes) {
+    n.at[0] -= dx;
+    n.at[1] -= dy;
+  }
+  for (const m of plan.megas) for (const p of m.frame) (p[0] -= dx), (p[1] -= dy);
+  for (const f of plan.linear) for (const p of f.points) (p[0] -= dx), (p[1] -= dy);
+}

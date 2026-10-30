@@ -16,7 +16,7 @@ import type { ExternalInstance, ExternalRegistry } from '../sim/external';
 import { OWNER_STRUCT } from '../sim/external';
 import { MAT } from '../world/materials';
 import { cellAt, ROW_H } from '../world/lattice';
-import { planCity, grown } from './plan';
+import { planCity, grown, shiftPlan } from './plan';
 import { piecesOf, PIECE_FLOATS } from './pieces';
 import { columnsOf } from './columns';
 import { StructureGpu } from './gpu';
@@ -201,6 +201,8 @@ export class CityHost {
         d[i * PIECE_FLOATS + k * 2] -= ox;
         d[i * PIECE_FLOATS + k * 2 + 1] -= oy;
       }
+    // (the plan — its nav, its tiles — in the window's frame too: agents and heroes read it as the land is)
+    shiftPlan(this.plan, ox, oy);
     for (const cs of this.cols.values())
       for (const c of cs) {
         c.x -= dx;

@@ -2234,6 +2234,14 @@ Hosts declare `spData` and `hostNight()` and their own entry points: the viewer 
 a 2048² shadow map, fog, filmic curve) and the game's (shaders/structgame.wgsl: render.wgsl's `lighting`, `haze`,
 `cutAway`, the pick; `Renderer.enableStructures`, the pieces at the draw group's binding 3, back faces culled).
 
+**Mega tiles** (STR12): a domed temple over four tiles meeting at a vertex (its frame the patch's outer corners: a
+module warps over a patch as over a tile), a radial city's keep on its plaza (its own frame, no tiles). **Into the earth**
+(STR13, `spec.sunk`): floors on the ground's low side, backs in the hill, buried walls blank. **Growth** (STR16):
+`plan.order` (the old core first) and `grown(plan, p)` — stored progress is one number. **Placed assets** (STR14): affine
+pieces (flags bit 2: a 3 × 4 transform, the module in metres) via `assetPieces`, for the terrain track's buried things.
+**Frames:** a plan's coordinates are its spec's frame; the game's host plans in the window's and moves the plan (tiles,
+nav, megas, linear) with the land on a slide (`shiftPlan`), so agents read `reclaimed.city().plan.nav` as the window is.
+
 **The far look** (STR10): walls and roofs have a far module (`Library.lodOf`: flat openings and beams on the slab; roofs'
 tops only); `StructureGpu.draw(pass, lod)` draws the same instances with it. The game picks it by zoom
 (`Renderer.structLodZoom`, 7 px a cell: the camera is orthographic), the shadow map always.
