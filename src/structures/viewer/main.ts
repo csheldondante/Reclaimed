@@ -45,7 +45,8 @@ async function boot(): Promise<void> {
   if (!navigator.gpu) throw new UnsupportedError('This page needs WebGPU (Chrome or Edge 113+, Safari 18+).');
   const adapter = await navigator.gpu.requestAdapter();
   if (!adapter) throw new UnsupportedError('No WebGPU adapter.');
-  const device = await adapter.requestDevice();
+  // (timestamps for the perf test's GPU time, when the adapter has them: instrumentation, not needed to draw)
+  const device = await adapter.requestDevice({ requiredFeatures: adapter.features.has('timestamp-query') ? ['timestamp-query'] : [] });
   device.addEventListener('uncapturederror', (e) => fatal(`GPU error: ${(e as GPUUncapturedErrorEvent).error.message}`));
   const ctx = canvas.getContext('webgpu')!;
   const format = navigator.gpu.getPreferredCanvasFormat();
@@ -210,7 +211,7 @@ async function boot(): Promise<void> {
     if (!document.querySelector('.fatal')) requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);
-  (window as unknown as { structures: unknown }).structures = { state, plan: () => plan, stats: () => ({ ...r.sg.stats, ...plan?.stats }), rebuild };
+  (window as unknown as { structures: unknown }).structures = { state, plan: () => plan, stats: () => ({ ...r.sg.stats, ...plan?.stats }), rebuild, gpuMs: () => r.gpuMs.slice(), adapter: `${adapter.info?.vendor ?? ''} ${adapter.info?.architecture ?? ''} ${adapter.info?.description ?? ''}`.trim() };
   document.body.dataset.ready = '1';
 
   function writeUrl() {

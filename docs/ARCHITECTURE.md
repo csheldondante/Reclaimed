@@ -2159,6 +2159,85 @@ Claude subagent run with docs/GM.md as its context. Later it will be a model cal
 - Debug: `?towndebug=1` (src/settle/debug.ts). Tests: scripts/settletest.mjs (the planner, no browser),
   scripts/settlementtest.mjs (in play).
 
+## Structures: buildings, districts, cities (round 117, branch `structures`; BACKLOG STR1-STR17)
+
+The user (DECISIONS round 117): "beautiful structures, sprawling fantastic cities"; megastructures as "various procedural
+building assets for various tile systems plus some WFC and mega tile features (features multiple tiles big)"; "Irregular
+tiles like towscraper, voronoi tilings of isolines to make city streets and plot lots, radial tiles like bulwark. Let's
+bake paths into the tiles we generate so agents can interact with them. Taking elevators, stairs, walking on ramparts. I
+would also have linear tile features we can use for bridges, roads, railroads and extrude along splines."
+
+**Contract:** `src/api/contracts/structures.ts` (`Structures`: `plan`, `pieces`, `columns`, `asset`); implementation
+`src/structures/` (index.ts). Pure functions of their inputs: no GPU, no world state, deterministic from the spec and the
+ground. Other tracks use only the contract.
+
+**One representation per use, converted at the boundaries** (the user: "Please don't make assumptions … just because we
+have voxel assets currently doesn't mean we don't want to switch to meshes"):
+
+| stage | representation | who reads it | why this one |
+|---|---|---|---|
+| `CitySpec` | seed, tile system, style, centre, radius, storeys, density, walls, sunk | stored (a city is its spec; progress beside it) | tiny; the plan is re-made from it (towns grow as stored progress, round 110) |
+| `CityPlan` | a planar quad mesh (`TileMesh`) + occupancy `Span`s per tile + buildings + `Facade`s + megas + `NavGraph` | the pieces, the columns, the nav, the city game later | the truth (the spans design, round 102: "each grid be store intervals like the terrain but for building types"); ~100 KB for a town |
+| `StructurePieces` | warped module instances: a module id + 16 floats (4 corners, 4 foot heights, top, look, seed, flags) | the renderer (any host) | the look wants detail finer than a column (windows, eaves, sharp edges — "structures stay sharp", round 39); a module is stored once on the GPU however many thousand walls use it |
+| `ColumnSpan[]` | one solid span per hex column (foot to mid-roof) | the External registry (sim/external.ts) | the sims only need "solid here"; one span a column is what an External instance holds |
+| `NavGraph` | nodes (street, plaza, ground, floor, roof, rampart) and links (walk, stairs, door, gate, lift) | agents (inhabitants), the play track | paths, not fields (round 104) |
+
+**Tile systems → one quad mesh** (`tiles/systems.ts`, `tiles/builder.ts`). Every system ends as counter-clockwise quads
+with shared vertices, each tagged lot / street / plaza / yard / wall / gate and a block (buildings never cross blocks), so
+one massing, one module set and one nav baker serve them all. Polygons become quads Townscaper's way (centre to edge
+midpoints); slivers under 0.05 m² are dropped.
+- *irregular*: a triangle lattice in the disc, pairs merged at random (82%), every face cut into quads, 30 rounds of
+  Townscaper's squaring relax (the rim pinned); lanes: 3-5 noisy rays and a ring through the quads, a plaza at the centre.
+- *contour-voronoi*: seeds on a jittered lattice pulled onto the ground's contours (Newton along the gradient to the
+  nearest multiple of `contour` m), thinned; Voronoi cells (clipped to the disc) are plots; each plot's inset (street
+  half-width, none along the rim) is its lots, the band between is street; all subdivided once.
+- *radial*: rings a tile apart, sectors doubling outward to stay a tile across; a ring road near half way, the spokes,
+  the outermost ring the wall with gates on the spokes, a plaza at the heart.
+- *orthogonal*: a lattice turned at random, a street every 4-5 tiles.
+
+**Massing** (`plan.ts`): lots are built by density × fall-off × noise (too steep, too small → yard); buildings grow tile by
+tile inside a block up to the style's size, on ground spanning less than 0.9 of a storey; storeys fall from the centre
+to the rim with noise; a tile now and then a storey up or down (stepped skylines). Foundations to the ground under the
+floor; ramparts 7 m over the ground. Landmarks: the tallest lone tiles near the centre become towers; a fountain where
+the plaza's tiles meet. The planner is on the CPU on purpose: a plan is small, made once when its land arrives, and its
+hard parts (WFC, growing buildings) are sequential; what is large or per-frame (drawing pieces, stamping columns) is on
+the GPU.
+
+**Façades by WFC** (`wfc.ts`, a general solver: ≤ 32 tiles, any graph, weighted, arc-consistent, restarts on a
+contradiction and throws after 12). Per building: a node per exposed storey of each side (hidden where a neighbour's
+storeys cover it); relation 0 *above* (bays line up: a window2 only under a window2, a door or shop under windows or a
+balcony), relation 1 *beside* (round a corner or along a wall: no two doors, no two balconies). Doors and shops on the
+ground floor only, balconies above it; the front door is the longest street-facing ground wall. Blank is always allowed,
+so the rules can always be met.
+
+**Modules** (`modules.ts`): made in code in a unit frame (u, v, w), a vertex (u, v, w, part), part a palette slot.
+Walls run along a side (v 0 the outer face, 1 the inner, 0.35 m; v < 0 sticks out): openings cut as boxes round them,
+frames, sills, shutters, glazing bars, timber framing and braces for the timber looks. Roofs are a height field — h(u, v)
+= the least distance to the roof's free sides and free corners — so ridges, hips and valleys meet across tiles without a
+table; all creases lie on u, v ∈ {0, ½, 1} and the diagonals through the centre, so 8 triangles are exact. Roof masks
+(sides, corners, verge, eaves, clip) are made on first use. Gables close a ridge's end; verges run past them.
+
+**Pieces** (`pieces.ts`): walls from the façades on mitred frames (inner corners slide along the neighbouring sides, so
+walls meet on the corner's line); posts or quoins at convex corners; a roof on every top — a side is joined if the
+neighbour is the same building as tall or taller, or another building taller (the roof leans on its wall); eaves only over
+what is lower (never into a neighbour's wall as tall), corners clipped where a tile as tall touches diagonally, the roof
+lifted 0.14 m over the walls (a warped tile's roof is flat between its warped corners, not the bilinear surface).
+Unit-tested: no wall top pokes through a roof at its height (structures.test.ts).
+
+**Drawing** (`gpu.ts` + `shaders/structmesh.wgsl`, shared by every host): the library in one vertex and one index buffer;
+the palette (styles × 14 parts × 8 variants, linear) then 4 vec4s a piece in one storage buffer (read in the vertex
+stage only); pieces sorted by module, one `drawIndexed` a module in use with `firstInstance` (core WebGPU). The vertex
+stage warps (x, y bilinear over the corners, z from the foot's bilinear height to the top; flag 1: top relative to the
+foot) and picks the palette variant per building; the fragment makes the patterns in world space (coursed stone, roof
+tile courses and moss, cobbles, limewash, timber grain) and the glow (a share of windows and the lamps at night).
+Hosts declare `spData` and `hostNight()` and their own entry points: the viewer (viewer/viewer.wgsl: sun, sky, bounce,
+a 2048² shadow map, fog, filmic curve); the game's renderer next (STR9).
+
+**Viewer:** structures.html (src/structures/viewer/): tile system, style, seed, size, storeys, density, ground (flat,
+hill, slope), time of day; building (one building isolated: `isolate` re-works its façades and roofs alone), district,
+city; drag to turn, wheel or pinch to zoom, right-drag or two fingers to pan; tile and nav overlays; every setting in the
+URL. scripts/structshot.mjs shoots it; scripts/perf/structures.mjs measures it.
+
 ## Instrumentation (round 100, branch `hitchrec`)
 
 - **CPU steps**: gpu/cpustat.ts `record(label, ms)` / `timed(label, f)` — the perf overlay's worst steps, and while

@@ -12,6 +12,34 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 117 (2026-10-30, session 5, `structures`) — buildings, districts, cities (DECISIONS round 117)
+
+The user: "beautiful structures, sprawling fantastic cities"; megastructures as "various procedural building assets for
+various tile systems plus some WFC and mega tile features (features multiple tiles big)"; "bake paths into the tiles we
+generate so agents can interact with them. Taking elevators, stairs, walking on ramparts"; "linear tile features we can
+use for bridges, roads, railroads and extrude along splines". Code: src/structures/, contract src/api/contracts/structures.ts,
+viewer structures.html.
+
+| id | item | size | status |
+|---|---|---|---|
+| STR1 | The contract (contracts/structures.ts): CitySpec → CityPlan (tiles, spans, buildings, façades, megas, nav) → pieces (warped module instances) / columns (External spans) / buriable assets | M | done (structures) |
+| STR2 | Tile systems to one quad mesh: irregular (Townscaper: triangles paired, cut, relaxed), contour-voronoi (plots on the ground's contours, streets between), radial (rings, spokes, a wall, gates), orthogonal | M | done (structures) |
+| STR3 | Massing and buildings (lots built by density, grown tile by tile inside a block on ground no steeper than a storey, stepped skylines), occupancy spans (the spans design, round 102) | M | done (structures) |
+| STR4 | WFC (a general solver, src/structures/wfc.ts) for the façades: bays line up, a front door on the street, no two doors or balconies side by side | S | done (structures) |
+| STR5 | The module library in a unit frame, warped into irregular tiles (Townscaper's look): walls (blank, window, window2, door, shop, balcony, slit), gables, posts, quoins, plinths, paving, ramparts, merlons, gate arch, tower, spire, chimney, fountain, lamp; roofs from one height rule (ridges, hips, valleys meet across tiles) | L | done (structures) |
+| STR6 | Styles as data: hearth (timber and limewash under tile), bastion (stone and slate, two towers), terrace (flat-fronted, low-pitched) | S | done (structures) |
+| STR7 | Baked nav: streets, plazas, yards, storeys (stairs), doors, balconies, a lift up each tower, the rampart walk with stairs at the gates; navPath | M | done (structures) |
+| STR8 | The viewer (structures.html): system, style, seed, size, storeys, density, ground, time of day (lit windows at dusk); building / district / city; turn, zoom, pan; tile and nav overlays; every setting in the URL | M | done (structures) |
+| STR9 | The city on real terrain: the game's renderer draws the pieces (shared structmesh.wgsl), the columns claimed as External intervals, at an atlas site | L | wip |
+| STR10 | LOD for the game: far walls as plain slabs (windows painted), roofs only beyond a distance; measure the phone first (a 56 m town is ~555k triangles at full detail) | M | open |
+| STR11 | Linear features: roads, rails, walls and bridges extruded along splines (LinearFeature in the contract; atlas/ways.ts's graded roads and bridges the input) | L | open |
+| STR12 | Mega tiles beyond one tile: domes and halls over a 2 × 2 patch, the keep at a radial city's heart, gatehouse towers on the wall | M | open |
+| STR13 | Cities built into the earth (spec.sunk): terraces cut into a slope, quarry towns with the terrain track's contract | M | open |
+| STR14 | Buriable assets (statue, column, fallen tower, arch, bell: mesh + solid → cells under any skew) placed by the terrain track as External owners, drawn by meshinst | M | wip |
+| STR15 | Migrate settle/ (the settlements' plans, stamps and life) onto this contract: the plan from CityPlan, buildings as pieces + External, agents on the baked nav | L | open |
+| STR16 | Growth as stored progress (round 110): a plan's tiles in build order, progress per tile, pieces shown up to it | M | open |
+| STR17 | The perf test: scripts/perf/structures.mjs (plan ms and draw cost per city size) | S | wip |
+
 ## Round 117 (2026-10-30, session 5, `testkit`) — the test pyramid: unit and GPU tests in Node, a smoke test (DECISIONS round 117)
 
 The user: "TDD make some unit tests so you can stop hogging my browser so much. Do complete integration tests after unit

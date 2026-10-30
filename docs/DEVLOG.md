@@ -13609,3 +13609,48 @@ Dawn in Node). The smoke needs the runner's own build server (warm snapshots), a
 rename in .testcache fails EPERM, so caa0827's guard made every runner script fail there. Now the build is copied into the
 cache instead, index.html last (a build counts as present once its index.html is). `npm run smoke` then passed: the atlas
 ready in 65 s with three other agents' checks on the GPU, sim ticking, no fatal.
+
+## 2026-10-30 — round 117 (`structures`): buildings, districts and cities — tile systems, WFC façades, warped modules, a viewer
+
+The user: "I want beautiful structures, sprawling fantastic cities"; megastructures as "various procedural building
+assets for various tile systems plus some WFC and mega tile features (features multiple tiles big)"; "bake paths into
+the tiles we generate so agents can interact with them". ARCHITECTURE "Structures" has the contract and the pipeline.
+
+**Why meshes for the look and columns for the sims (both, by use).** The settlements' buildings were column intervals
+(build/town.ts, settle/raster.ts): a 1 m column can't hold a window frame, an eave or a sharp corner, and the user found
+bevelled structures ugly (round 39). Warped module instances give Townscaper's look on irregular tiles at 64 bytes a
+piece, a module stored once. The sims never needed rooms, only "solid here": one External span a column (columns.ts),
+converted at that boundary only. Agents need paths (round 104): the nav graph is baked from the plan, not from either.
+
+**Why the roof is a height rule.** h = the least distance to the roof's free sides and free corners. Two tiles in a row
+continue a ridge, an L gets a valley, a 2 × 2 block a pyramid — none of it tabled. Its creases fall on a 3 × 3 grid with
+centre diagonals, so 8 triangles are exact (unit-tested: ridges and the inside of an L meet across tiles).
+
+**Finding (fixed): walls through roofs.** White slivers on the slopes near the eaves. A numeric check (now a unit test)
+found three causes, each fixed at its root: square wall ends stuck out past the next wall at obtuse corners (walls are
+mitred now); eaves overhung into a neighbour's wall as tall (eaves only over what is lower, corners clipped where a tile
+as tall touches diagonally); a warped tile's roof is flat between its warped corners, not the bilinear surface, up to
+0.13 m off on skewed tiles (the roof lifted 0.14 m, hidden in the eave's thickness). Worst poke 3.08 m → 0.
+
+**Measured** (scripts/perf/structures.mjs, data/perf/structures-intel-xe-lpg.json; the viewer at the phone proxy
+412×915 dpr 2.6, 4× MSAA, shadow + main pass; build = plan + pieces + upload in the page):
+
+| system | r 32 m | r 64 m | r 112 m |
+|---|---|---|---|
+| irregular | 11.6 ms build · 193k tris · GPU 3.1 ms | 35 ms · 787k · 5.0 ms | 173 ms · 2.57M · 7.9 ms |
+| contour-voronoi | 17 ms · 131k · 2.3 ms | 40 ms · 698k · 4.7 ms | 206 ms · 2.29M · 7.4 ms |
+| radial (bastion) | 9 ms · 72k · 1.9 ms | 24 ms · 464k · 3.9 ms | 76 ms · 1.48M · 5.7 ms |
+| orthogonal | 9 ms · 146k · 2.3 ms | 22 ms · 573k · 5.0 ms | 93 ms · 1.76M · 6.3 ms |
+
+The desktop iGPU draws a 64 m town in ~5 ms at the phone's resolution; the phone is slower, and the game's frame has the
+terrain in it, so the game needs a LOD (STR10: plain slabs with painted windows past a distance) before big cities go in.
+Draws: 50-400 a city (one a module mask in use; roof masks dominate) — fine on the desktop, to watch on the phone.
+
+**Unit tests** (src/structures/structures.test.ts, 27, ~1 s): every tile system a CCW quad mesh, deterministic, mostly
+conforming, with lots and streets; irregular relaxed (no angle under 30°); radial walls and gates; roof continuity; WFC
+meets its constraints and throws when it can't; per system a front door per building with ground walls, doors and shops
+only on the ground floor; same spec → same plan; nav from every building's top storey to the plaza, and onto the rampart
+by stairs at a gate; every piece a real module with finite frames, per style; one column span per column; buriable
+assets' cells under a skew; no wall through its roof.
+
+Shared-system tweaks (for main to consolidate): vite.config.ts builds and hashes structures.html.

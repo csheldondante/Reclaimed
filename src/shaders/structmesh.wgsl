@@ -137,7 +137,7 @@ fn spEmit(sv: SpVert) -> vec3<f32> {
   if (sv.part == 3u) {
     let h = spHash(u32(sv.seed * 1048576.0));
     if ((h & 255u) < 150u) {
-      let warm = vec3<f32>(1.0, 0.62, 0.28) * (0.8 + 0.5 * f32((h >> 8u) & 255u) / 255.0);
+      let warm = vec3<f32>(1.0, 0.5, 0.17) * (0.8 + 0.5 * f32((h >> 8u) & 255u) / 255.0);
       return warm * night * 1.4;
     }
   }

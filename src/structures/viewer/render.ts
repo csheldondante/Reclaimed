@@ -42,6 +42,9 @@ export class ViewerRenderer {
   private ground?: { buf: GPUBuffer; index: GPUBuffer; count: number };
   private lines?: { buf: GPUBuffer; count: number };
   showLines = false;
+  /** (?gputime=1, the perf test) the GPU's time for the last frames' passes (ms), when timestamps are there */
+  gpuMs: number[] = [];
+  private ts?: { set: GPUQuerySet; resolve: GPUBuffer; read: GPUBuffer[]; busy: boolean[]; frame: number };
 
   constructor(
     private device: GPUDevice,
@@ -50,6 +53,10 @@ export class ViewerRenderer {
     readonly samples: number,
   ) {
     this.sg = new StructureGpu(device);
+    if (device.features.has('timestamp-query')) {
+      const read = [0, 1, 2].map(() => device.createBuffer({ size: 32, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }));
+      this.ts = { set: device.createQuerySet({ type: 'timestamp', count: 4 }), resolve: device.createBuffer({ size: 32, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC }), read, busy: [false, false, false], frame: 0 };
+    }
     this.uni = device.createBuffer({ label: 'viewer view', size: 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.shadowTex = device.createTexture({ label: 'viewer shadow', size: [SHADOW, SHADOW], format: 'depth32float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
     this.sampler = device.createSampler({ compare: 'less', magFilter: 'linear', minFilter: 'linear' });
@@ -181,7 +188,11 @@ export class ViewerRenderer {
     const group = this.bind();
     const enc = dev.createCommandEncoder();
     {
-      const pass = enc.beginRenderPass({ colorAttachments: [], depthStencilAttachment: { view: this.shadowTex.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' } });
+      const pass = enc.beginRenderPass({
+        colorAttachments: [],
+        depthStencilAttachment: { view: this.shadowTex.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' },
+        timestampWrites: this.ts ? { querySet: this.ts.set, beginningOfPassWriteIndex: 0, endOfPassWriteIndex: 1 } : undefined,
+      });
       pass.setBindGroup(0, this.shadowGroup);
       if (this.ground) {
         pass.setPipeline(this.groundShadow);
@@ -207,6 +218,7 @@ export class ViewerRenderer {
           },
         ],
         depthStencilAttachment: { view: this.depth.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'discard' },
+        timestampWrites: this.ts ? { querySet: this.ts.set, beginningOfPassWriteIndex: 2, endOfPassWriteIndex: 3 } : undefined,
       });
       pass.setBindGroup(0, group);
       if (this.ground) {
@@ -224,6 +236,27 @@ export class ViewerRenderer {
       }
       pass.end();
     }
+    const ts = this.ts;
+    const slot = ts ? ts.frame++ % 3 : -1;
+    const take = ts && !ts.busy[slot];
+    if (ts && take) {
+      enc.resolveQuerySet(ts.set, 0, 4, ts.resolve, 0);
+      enc.copyBufferToBuffer(ts.resolve, 0, ts.read[slot], 0, 32);
+    }
     dev.queue.submit([enc.finish()]);
+    if (ts && take) {
+      ts.busy[slot] = true;
+      const buf = ts.read[slot];
+      buf.mapAsync(GPUMapMode.READ).then(() => {
+        const t = new BigInt64Array(buf.getMappedRange().slice(0));
+        buf.unmap();
+        ts.busy[slot] = false;
+        const ms = (Number(t[1] - t[0]) + Number(t[3] - t[2])) / 1e6;
+        if (ms > 0 && ms < 1000) {
+          this.gpuMs.push(ms);
+          if (this.gpuMs.length > 240) this.gpuMs.shift();
+        }
+      }, () => {});
+    }
   }
 }
