@@ -26,7 +26,7 @@ import { RANGES } from '../scenes/range';
 import { RegionStore } from '../world/region-store';
 import type { HitchBoot } from './start';
 import { copyText, deviceTag, downloadJson, postDev, shareJson, stamp } from './report-io';
-import { bgShares, type BgShares } from '../render/bgcheck';
+import { BGCHECK, bgShares, type BgShares } from '../render/bgcheck';
 
 /** (v3) vite.config.ts `define`: the build's time */
 declare const __BENCH_BUILD__: string;
@@ -2642,6 +2642,13 @@ class Bench {
         let perFrameSum = 0;
         let usedMax = 0;
         let drawnMax = 0;
+        // (round 113, tilesfirst: the geometric coverage check every frame — render/coverage.ts: the land the camera
+        // sees not drawn this frame, neither the window's nor a tile's — its worst frame, mean, frames with any; with the
+        // pixel check on, the mesh's built mirror read back every frame so the two judge the same frame)
+        const geo = { max: 0, sum: 0, frames: 0, framesAny: 0, chunksMax: 0, regionsMax: 0 };
+        const fmesh = TL?.host?.win?.mesh as { statPeriod: number } | undefined;
+        const statWas = fmesh?.statPeriod;
+        if (fmesh && BGCHECK) fmesh.statPeriod = 1;
         BG?.take();
         while (performance.now() - t0 < PAN_STEP_S * 1000) {
           const t = await frame();
@@ -2656,6 +2663,15 @@ class Bench {
           frames.push(t - last);
           last = t;
           low = Math.max(low, this.parkedCover - this.writtenShare());
+          const gc = TL?.coverCheck(cam);
+          if (gc) {
+            geo.frames++;
+            geo.sum += gc.share;
+            geo.max = Math.max(geo.max, gc.share);
+            if (gc.chunksUndrawn + gc.regionsUndrawn > 0) geo.framesAny++;
+            geo.chunksMax = Math.max(geo.chunksMax, gc.chunksUndrawn);
+            geo.regionsMax = Math.max(geo.regionsMax, gc.regionsUndrawn);
+          }
           if (TL) lead.push(1 - TL.coverageSplit(cam).lead);
           // (round 106: where what's not in detail is, the worst frame's of each kind)
           const fw: Record<string, number> = {};
@@ -2668,6 +2684,7 @@ class Bench {
             drawnMax = Math.max(drawnMax, TL.stats.drawn);
           }
         }
+        if (fmesh && statWas !== undefined) fmesh.statPeriod = statWas;
         const secs = (performance.now() - t0) / 1000;
         const fps = (this.prof.frameNo - fno0) / secs;
         // (round 112, bgcheck: the step's frames read back — a readback started after the step — then its shares)
@@ -2685,8 +2702,11 @@ class Bench {
         if (fps < PAN_FPS) fails.push(`fps ${fps.toFixed(0)}`);
         if (max > PAN_MAX_FRAME) fails.push(`frame ${max.toFixed(0)} ms`);
         if (p99 > PAN_P99) fails.push(`p99 ${p99.toFixed(0)} ms`);
-        const popIn = low > 0.001;
-        if (popIn) fails.push(`pop-in ${(low * 100).toFixed(0)}% of the screen`);
+        // (round 113: pop-in is the geometric check's — what the camera sees that's drawn by neither the window nor a
+        // tile. The old "out of detail" (writtenShare) counted the window's land as detailed once written, not drawn,
+        // and missed the close-zoom holes; it's kept in the row as lowDetailMax to compare)
+        const popIn = geo.max > 0.001;
+        if (popIn) fails.push(`pop-in ${(geo.max * 100).toFixed(1)}% of the screen (geometric)`);
         if (bgShown && PAN_BG_FAILS) fails.push(`background ${(bg!.bgMax * 100).toFixed(2)}% of the screen`);
         const slides = this.R.stream.stats.slides - sl0;
         const over = frames.filter((f) => f > PAN_BUDGET).length;
@@ -2699,7 +2719,8 @@ class Bench {
         const slots = TL && ts0 ? { slots: TL.stats.slots, mb: TL.stats.mb, usedMax, drawnMax, evicted: TL.stats.evicted - ts0.evicted, noSlot: ((TL.land?.stats.noSlot as number | undefined) ?? 0) - ts0.noSlot } : null;
         const pacer = pz && pc0 ? { perFrameMean: frames.length ? r3(perFrameSum / frames.length) : null, turnsPerFrame: r3((pz.tiles - pc0.tiles) / Math.max(1, frames.length)), chained: pz.chained - pc0.chained } : null;
         const tiles = TL?.land ? { ...tileStepOf(TL, baked0, t0, secs, lead), missMax: { win: r3(miss.win), ahead: r3(miss.ahead), side: r3(miss.side), behind: r3(miss.behind) }, missWhy: whyR, slots, pacer } : null;
-        steps.push({ speed: v, fps: +fps.toFixed(1), p99: r3(p99), max: r3(max), lowDetailMax: r3(low), tiles, slides, framesOverBudget: over, overBudgetPerSlide: slides ? r3(over / slides) : null, slideDoneMs: slideDone, baseDoneP50: bd.length ? bd[Math.floor(bd.length / 2)] : null, slideCpuMs: slideCpu, bg, ok: !fails.length });
+        const geoR = { max: r3(geo.max), mean: geo.frames ? +(geo.sum / geo.frames).toFixed(5) : null, frames: geo.frames, framesAny: geo.framesAny, chunksMax: geo.chunksMax, regionsMax: geo.regionsMax };
+        steps.push({ speed: v, fps: +fps.toFixed(1), p99: r3(p99), max: r3(max), lowDetailMax: r3(low), geo: geoR, tiles, slides, framesOverBudget: over, overBudgetPerSlide: slides ? r3(over / slides) : null, slideDoneMs: slideDone, baseDoneP50: bd.length ? bd[Math.floor(bd.length / 2)] : null, slideCpuMs: slideCpu, bg, ok: !fails.length });
         if (fails.length && strict) {
           strict = false;
           failedFirst = fails.join(', ');

@@ -80,12 +80,14 @@ fn sampleGrid(@builtin(global_invocation_id) g: vec3<u32>, @builtin(local_invoca
     let d = textureLoad(depthT, px, 0);
     let k = textureLoad(pickT, px, 0).xy;
     var c = 0u;
-    if (d >= 1.0) {
-      atomicAdd(&wBg, 1u);
-      c = 1u;
-    } else if (k.x == 0u && k.y == P.z) {
+    // (round 113, tilesfirst: the far land's pick first — the stand-in (far.wgsl vsStandIn) is drawn at the far plane
+    // without writing the depth, so its pixels keep the clear depth; they're the far land's, not the background)
+    if (k.x == 0u && k.y == P.z) {
       atomicAdd(&wFar, 1u);
       c = 2u;
+    } else if (d >= 1.0) {
+      atomicAdd(&wBg, 1u);
+      c = 1u;
     }
     cls[g.y * P.x + g.x] = c;
   }

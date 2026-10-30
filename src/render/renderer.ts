@@ -873,6 +873,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
           gridOn: () => (this.gridLive ? this.gridOn!.on : null),
           chunkBox: () => this.gridOn,
           drawGrid: (pass, which) => void this.drawGrid(pass, which),
+          windowDrawn: () => this.windowDrawn(),
           meshGroup: (cam, src) => this.meshGroupOf!(cam, this.shadowView, src),
           meshEntries: (src, cam) => this.meshEntries(src, cam),
         });
@@ -1762,6 +1763,32 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
     this.tiles?.moved(dcx, t);
     this.band?.mesh.shift(dcx, dcy, t);
     this.shore.dirty();
+  }
+
+  private drawnNow = new Uint8Array(0);
+  /**
+   * (round 113, tilesfirst) Per mesh chunk (chunkGrid order) how the window draws its land this frame, as the CPU knows
+   * it after the frame's culls: 1 the hybrid grid's and in its view; 2 the voxel mesh's in view and built (FieldMesh.built
+   * — the stats readback's mirror, a frame or more behind; not trusted while it's from before a slide); 3 the voxel mesh's
+   * in view, not known built (the GPU's state decides: tilecache.ts encodeMask); 0 not drawn. Drawn for sure: 1 or 2.
+   * The coverage check's and the tiles' cover's.
+   */
+  windowDrawn(): Uint8Array {
+    const fm = this.fieldMesh;
+    const [nx, ny] = fm.chunkGrid;
+    const n = nx * ny;
+    if (this.drawnNow.length !== n) this.drawnNow = new Uint8Array(n);
+    const d = this.drawnNow;
+    d.fill(0);
+    const mirror = fm.built.length === n && fm.builtSlides === fm.slides;
+    const iv = fm.inViewMask;
+    const g = this.gridLive ? this.gridOn!.on : null;
+    const gv = this.gridView;
+    for (let c = 0; c < n; c++) {
+      if (g && g[c] && gv[c]) d[c] = 1;
+      else if (iv && iv[c]) d[c] = mirror && fm.built[c] ? 2 : 3;
+    }
+    return d;
   }
 
   /** (hybrid) the mesh chunks wanted (FieldMesh.setWanted): the window's and the band's, the same grid */

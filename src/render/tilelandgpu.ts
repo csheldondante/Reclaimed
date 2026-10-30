@@ -405,4 +405,12 @@ export class TileLandGpu {
     if (j) return j.made ? 'made' : 'making';
     return this.firstWanted.has(key) ? 'queued' : null;
   }
+
+  /** (round 113, the coverage check) region (rx, ry)'s heights as the CPU knows them, window z, or null */
+  zRange(rx: number, ry: number): [number, number] | null {
+    const z = this.src.zRange(rx * R, ry * R);
+    if (!z) return null;
+    const oz = this.src.oz();
+    return [z[0] - oz, z[1] - oz];
+  }
 }

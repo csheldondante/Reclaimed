@@ -3,6 +3,23 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-30 — round 113 (`tilesfirst`) — tiles first, grow with speed, the geometric coverage check; the streaming design
+
+- The user, verbatim, after the stable build's phone bench showed the background while panning fast at close zoom:
+  "Why don't we load the fast tiles first and then something is always there and swap only when the slow one is ready?
+  It's really dumb not to grow with speed. The fix is both."
+- "Why can't we just compute the orthographic visible area and see if any tiles that are not loaded cover it? It seems
+  cheap though and I don't buy your theory." → render/coverage.ts (SF1); main's theory measured: half right (DEVLOG
+  round 113).
+- The streaming design (https://claude.ai/artifact/UnqDENhSKGH1abe7pxWiNh: layers 0 stand-in, 1 tile, 2 height grid,
+  3 full window; one planner; swap only when ready) approved, carried out in steps (BACKLOG SF1-SF6). The user's answers:
+  - the stand-in: "this is fine but hopefully we rarely hit it";
+  - the window: "I think we want simulation only where what is visible and a small buffer";
+  - the speed: "I would say 2x bike speed so we have room for faster note the camera will pull back some when the bike
+    goes faster" → the gate at 2 x 34 c/s (the hoverbike's top speed), at zoom 14 (its camera's pull-back): 80 c/s z14;
+  - memory: "yes that's fine" (about 4 MB more for height grids).
+- "Prioritize rendering over simulation too" → the planner's budget (SF4): coverage and drawing first, simulation the rest.
+
 ## 2026-10-29 — round 112 (session 5, `bgcheck`) — background colour in the pan test
 
 - The user, verbatim: "Can we do a pan test for the phone that fails if any bg color shows?" then "Or flags it anyway" → render/bgcheck.ts behind ?bgcheck=1; the pan bench flags a step (fails

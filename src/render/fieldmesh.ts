@@ -129,6 +129,10 @@ export class FieldMesh {
   /** per chunk: near the view (rebuilt when changed; written to the state), in it (drawn) */
   private near = new Uint32Array(0);
   private inView = new Uint8Array(0);
+  /** (round 113) per chunk 1: drawn this frame if built (the last cull's; hybrid: only the wanted) */
+  get inViewMask(): Uint8Array {
+    return this.inView;
+  }
   /** per chunk: the top of what's in it (the hash pass's, read back; zMax until known), what its box reaches up to */
   private tops = new Float32Array(0);
   /** per chunk: inside the sun's box (castCull), so it casts into the shadow map */
