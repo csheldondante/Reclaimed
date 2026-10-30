@@ -13803,3 +13803,14 @@ so any turn, tilt or skew. `assetPieces(placed)` makes each kind + seed's mesh a
 each placement a piece; any host draws them with the city's light and palette (stone, bronze). The terrain track lays
 them: `structures.asset(kind, seed).cells(transform)` for its External claim, `structures.assetPieces([...])` to draw.
 The viewer's `assets` view: each kind upright and skewed half-sunk beside it. Shot: assets-0.png.
+
+## 2026-10-30 — round 117 (`structures`): towns grow as stored progress (STR16)
+
+The user (round 110): "towns should visibly grow but slowly … we store progress and so although you could watch the
+agents build you can also leave and come back and more tiles will have been completed". A plan has a build order
+(`CityPlan.order`: by distance from the middle with noise, landmarks early — the old core first); `grown(plan, p)` is
+the town with the first p share of it standing and the next building a site (its storeys so far, no roof yet), its
+façades worked out again for what stands (a wall a missing neighbour would hide shows). Stored progress is that one
+number per town (`CitySpec.progress`; the game `&cgrow=`, the viewer's `grown` slider); the plan is re-made from the spec.
+Agents building a site, and progress advancing by rate × elapsed time while away, are the inhabitants' and the run's.
+Shots: grow-0.png (0.15: the core round the plaza, the temple and the towers), grow-1.png (0.55).

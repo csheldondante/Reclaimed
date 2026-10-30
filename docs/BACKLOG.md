@@ -39,7 +39,7 @@ viewer structures.html.
 | STR13 | Cities built into the earth: spec.sunk done (backs in the hill, buried walls blank); quarry towns need the terrain track's carving contract (open) | M | wip |
 | STR14 | Buriable assets (statue, column, fallen tower, arch, bell: mesh + solid → cells under any skew) as affine pieces (`assetPieces`) any host draws; the terrain track places them and claims their cells | M | done (structures) |
 | STR15 | Migrate settle/ (the settlements' plans, stamps and life) onto this contract: the plan from CityPlan, buildings as pieces + External, agents on the baked nav | L | open |
-| STR16 | Growth as stored progress (round 110): a plan's tiles in build order, progress per tile, pieces shown up to it | M | open |
+| STR16 | Growth as stored progress (round 110): the plan's build order, `grown(plan, p)` (the next building a site); agents building it and progress while away are the inhabitants' and the run's | M | done (structures) |
 | STR17 | The perf tests: scripts/perf/structures.mjs (the viewer: build ms, pieces, triangles, GPU per system and size), scripts/perf/structcity.mjs (the game's frame with the city drawn and skipped) | S | done (structures) |
 | STR18 | Pieces in the render-only tiles past the window (a city half out of the window shows only its window half's columns in the tiles) | M | open |
 | STR19 | Destruction as bodies: a cut building breaks into pieces that fall (the physics track's solver), not rubble in place | L | open |

@@ -54,6 +54,8 @@ export interface CitySpec {
   spokes?: number;
   /** built into the earth: buildings cut into the ground below this many metres under it (quarry towns; default 0) */
   sunk?: number;
+  /** how far it has grown (0..1, default 1: all of it) — stored progress along the plan's build order */
+  progress?: number;
 }
 
 /** A tile's use. */
@@ -180,6 +182,10 @@ export interface CityPlan {
   /** per quad: its building (-1 none), its top (world z of the roof's foot; NaN unbuilt) */
   quadBuilding: Int32Array;
   quadTop: Float64Array;
+  /** the build order (building ids, the old core first): a town grows along it (stored progress: a share of it) */
+  order: number[];
+  /** buildings going up (a grown plan's: storeys so far, no roof yet) */
+  sites?: Set<number>;
   /** the roof's rise a unit of the tile (m), per building */
   roofRise: number[];
   megas: MegaFeature[];

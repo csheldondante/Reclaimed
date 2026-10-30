@@ -1,7 +1,7 @@
 // The structures system at its contract, on tiny cities (vitest, Node; no GPU). `npx vitest run src/structures`.
 import { describe, expect, it } from 'vitest';
 import type { CitySpec, GroundFn } from '../api/contracts/structures';
-import { planCity, isolate } from './plan';
+import { planCity, isolate, grown } from './plan';
 import { piecesOf, PIECE_FLOATS, ROOF_LIFT } from './pieces';
 import { columnsOf } from './columns';
 import { buriable, assetPieces, AFFINE } from './assets';
@@ -311,5 +311,22 @@ describe('placed assets', () => {
     expect(pc.module[2]).not.toBe(pc.module[0]);
     expect(pc.data[15]).toBe(AFFINE);
     expect(Array.from(pc.data.subarray(0, 12))).toEqual(Array.from(t));
+  });
+});
+
+describe('growth (stored progress)', () => {
+  it('a share of the build order stands, the old core first; the next building a site without a roof', () => {
+    const p = planCity(spec('irregular'), flat);
+    expect(new Set(p.order).size).toBe(p.buildings.length);
+    const g = grown(p, 0.4);
+    const standing = new Set<number>();
+    for (let q = 0; q < g.quadBuilding.length; q++) if (g.quadBuilding[q] >= 0) standing.add(g.quadBuilding[q]);
+    expect(standing.size).toBeGreaterThan(p.buildings.length * 0.35);
+    expect(standing.size).toBeLessThan(p.buildings.length * 0.45);
+    for (const f of g.facades) expect(standing.has(f.building)).toBe(true);
+    const pc = piecesOf(g);
+    const lib = library();
+    for (const s of g.sites ?? []) for (let i = 0; i < pc.count; i++) if (pc.building[i] === s) expect(lib.modules[pc.module[i]].name.startsWith('roof:')).toBe(false);
+    expect(grown(p, 1)).toBe(p);
   });
 });

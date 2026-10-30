@@ -16,7 +16,7 @@ import type { ExternalInstance, ExternalRegistry } from '../sim/external';
 import { OWNER_STRUCT } from '../sim/external';
 import { MAT } from '../world/materials';
 import { cellAt, ROW_H } from '../world/lattice';
-import { planCity } from './plan';
+import { planCity, grown } from './plan';
 import { piecesOf, PIECE_FLOATS } from './pieces';
 import { columnsOf } from './columns';
 import { StructureGpu } from './gpu';
@@ -59,7 +59,7 @@ export function citySpecFrom(q: URLSearchParams, site: CitySite): CitySpec {
   if (!['irregular', 'contour-voronoi', 'radial', 'orthogonal'].includes(system)) throw new Error(`?city= must be irregular, contour-voronoi, radial or orthogonal (got "${system}")`);
   const style = (q.get('cstyle') ?? (system === 'radial' ? 'bastion' : 'hearth')) as CitySpec['style'];
   if (!STYLE_IDS.includes(style)) throw new Error(`?cstyle= must be one of ${STYLE_IDS.join(', ')}`);
-  return { seed: Number(q.get('cseed') ?? 7), system, style, at: site.at, radius: Number(q.get('cr') ?? site.radius), roads: Number(q.get('croads') ?? 2), walls: q.get('cwalls') === '1' || undefined };
+  return { seed: Number(q.get('cseed') ?? 7), system, style, at: site.at, radius: Number(q.get('cr') ?? site.radius), roads: Number(q.get('croads') ?? 2), walls: q.get('cwalls') === '1' || undefined, progress: q.has('cgrow') ? Number(q.get('cgrow')) : undefined };
 }
 
 export class CityHost {
@@ -80,10 +80,12 @@ export class CityHost {
     io.renderer.enableStructures(this.sg);
     const t0 = performance.now();
     this.plan = planCity(spec, (x, y) => this.groundAt(x, y), this.io.water || this.io.sea !== undefined ? (x, y) => Math.max(this.io.water ? this.at(this.io.water, x, y) : 0, (this.io.sea ?? -Infinity) - this.groundAt(x, y)) : undefined);
-    this.all = piecesOf(this.plan);
+    // (?cgrow=: the town as built so far — stored progress, a share of its build order)
+    const built = grown(this.plan, spec.progress ?? 1);
+    this.all = piecesOf(built);
     this.stats.planMs = +(performance.now() - t0).toFixed(1);
     // (one instance a building; the ramparts (−1) one, each wall run or bridge (−2 …) one)
-    for (const c of columnsOf(this.plan)) {
+    for (const c of columnsOf(built)) {
       const l = this.cols.get(c.building);
       if (l) l.push(c);
       else this.cols.set(c.building, [c]);

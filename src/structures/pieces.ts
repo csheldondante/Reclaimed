@@ -136,6 +136,8 @@ export function piecesOf(plan: CityPlan): StructurePieces {
         continue;
       }
       if (b.base > lo + 0.05) out.add(lib.id('plinth'), p, footOf(q, 0.6), b.base, look(b.id), 0);
+      // (a site — going up in a grown plan — has no roof yet)
+      if (plan.sites?.has(b.id)) continue;
       // the roof: which sides and corners end it
       const joined = (n: number) => {
         if (n < 0) return false;

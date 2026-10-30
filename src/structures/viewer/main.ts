@@ -4,7 +4,7 @@
 // tiles and the baked nav. Every setting is in the URL (scripts and screenshots open the same view).
 import type { CitySpec, CityPlan, GroundFn, StructurePieces } from '../../api/contracts/structures';
 import type { GridStyle } from '../../api/contracts/settlement';
-import { planCity, isolate } from '../plan';
+import { planCity, isolate, grown } from '../plan';
 import { piecesOf, PIECE_FLOATS } from '../pieces';
 import { fbm } from '../rng';
 import { quadCorners, quadCentre } from '../tiles/builder';
@@ -27,6 +27,7 @@ const state = {
   view: (q.get('view') ?? 'city') as 'building' | 'district' | 'city' | 'assets',
   ground: (q.get('ground') ?? 'hill') as 'flat' | 'hill' | 'slope' | 'gorge' | 'cliff',
   roads: num('roads', 3),
+  grow: num('grow', 1),
   walls: q.get('walls') === '1',
   tod: num('tod', 0.35),
   tiles: q.get('tiles') === '1',
@@ -80,7 +81,7 @@ async function boot(): Promise<void> {
     const spec: CitySpec = { seed: state.seed, system: state.system, style: state.style, at: [0, 0], radius: state.r, density: state.density, roads: state.roads, walls: state.walls || undefined, sunk: state.ground === 'cliff' ? 0 : undefined };
     if (state.storeys > 0) spec.storeys = [state.storeys, Math.max(1, state.storeys * 0.4)];
     plan = planCity(spec, ground);
-    all = piecesOf(plan);
+    all = piecesOf(grown(plan, state.grow));
     const ms = performance.now() - t0;
     showView();
     // the ground under it all
@@ -219,6 +220,12 @@ async function boot(): Promise<void> {
       showView();
     } else if (k === 'tod') {
       /* per frame */
+    } else if (k === 'grow') {
+      // (the town as built so far: the same plan, a share of its build order)
+      if (plan) {
+        all = piecesOf(grown(plan, state.grow));
+        showView();
+      }
     } else if (k === 'overlay') {
       r.showLines = state.tiles || state.nav;
       if (plan) r.setLines(lines(plan));
@@ -361,7 +368,7 @@ function panel() {
     };
     return s;
   };
-  const slider = (k: 'r' | 'storeys' | 'density' | 'tod' | 'roads', lo: number, hi: number, step: number, live = false) => {
+  const slider = (k: 'r' | 'storeys' | 'density' | 'tod' | 'roads' | 'grow', lo: number, hi: number, step: number, live = false) => {
     const s = document.createElement('input');
     s.type = 'range';
     s.min = String(lo);
@@ -410,6 +417,7 @@ function panel() {
   row('ground', select('ground', ['flat', 'hill', 'slope', 'gorge', 'cliff']));
   row('roads', slider('roads', 0, 6, 1));
   row('time', slider('tod', 0, 1, 0.01, true));
+  row('grown', slider('grow', 0, 1, 0.01, true));
   const views = document.createElement('div');
   views.className = 'views';
   for (const v of ['building', 'district', 'city', 'assets'] as const) {

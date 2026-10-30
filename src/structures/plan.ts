@@ -316,6 +316,7 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn): Ci
     quadBuilding,
     quadTop,
     roofRise,
+    order: buildOrder(buildings, tiles, spec),
     megas,
     linear,
     nav: { nodes: [], links: [] },
@@ -455,24 +456,73 @@ export function tileOutline(t: TileMesh, q: number): V2[] {
   return quadCorners(t, q);
 }
 
+/** the old core first: by distance from the middle with noise, the landmarks early */
+function buildOrder(buildings: BuildingRec[], tiles: TileMesh, spec: CitySpec): number[] {
+  const [cx, cy] = spec.at;
+  const score = buildings.map((b) => {
+    const [x, y] = quadCentre(tiles, b.quads[0]);
+    return Math.hypot(x - cx, y - cy) / spec.radius + 0.45 * hashf(b.id, spec.seed, 5) - (b.mega ? 0.6 : 0);
+  });
+  return buildings.map((b) => b.id).sort((a, b) => score[a] - score[b]);
+}
+
 /**
  * One building of a plan on its own (the viewer's building view): the others taken away, its façades and roofs worked
  * out again as if it stood alone — the walls its neighbours hid are shown, its roofs no longer lean on theirs.
  */
 export function isolate(plan: CityPlan, id: number): CityPlan {
   const b = plan.buildings[id];
+  const keep = new Map<number, number>([[id, Math.round((Math.max(...b.quads.map((q) => plan.quadTop[q])) - b.base) / b.storeyH)]]);
+  return { ...subset(plan, keep), megas: [] };
+}
+
+/**
+ * The town as built so far (round 110: "towns should visibly grow but slowly … we store progress"; BACKLOG ST18/STR16):
+ * the plan's buildings in its build order (`plan.order`, the old core first), the first `progress` share of them
+ * standing, the next one a site — its lower storeys up, no roof yet. Stored progress is just this number.
+ */
+export function grown(plan: CityPlan, progress: number): CityPlan {
+  if (progress >= 1) return plan;
+  const n = plan.order.length;
+  const done = Math.floor(Math.max(0, progress) * n);
+  const keep = new Map<number, number>();
+  for (let i = 0; i < done; i++) keep.set(plan.order[i], Infinity);
+  const site = plan.order[done];
+  if (site !== undefined) {
+    const b = plan.buildings[site];
+    const frac = Math.max(0, progress) * n - done;
+    const st = Math.floor(frac * b.storeys);
+    if (st > 0 && !b.mega) keep.set(site, -st);
+  }
+  return subset(plan, keep);
+}
+
+/**
+ * A plan with only these buildings (id → storeys to keep: Infinity all, a negative −k: k storeys and no roof — a site);
+ * the façades worked out again for what stands (walls a missing neighbour hid are shown).
+ */
+function subset(plan: CityPlan, keep: Map<number, number>): CityPlan {
   const nq = plan.tiles.use.length;
   const quadBuilding = new Int32Array(nq).fill(-1);
   const quadTop = new Float64Array(nq).fill(NaN);
   const quadStoreys = new Int32Array(nq);
-  for (const q of b.quads) {
-    quadBuilding[q] = id;
-    quadTop[q] = plan.quadTop[q];
-    quadStoreys[q] = Math.round((plan.quadTop[q] - b.base) / b.storeyH);
+  const sites = new Set<number>();
+  for (const [id, k] of keep) {
+    const b = plan.buildings[id];
+    if (k < 0) sites.add(id);
+    for (const q of b.quads) {
+      const full = Math.round((plan.quadTop[q] - b.base) / b.storeyH);
+      const st = k < 0 ? Math.min(full, -k) : full;
+      quadBuilding[q] = id;
+      quadStoreys[q] = st;
+      quadTop[q] = b.base + st * b.storeyH;
+    }
   }
+  // (ramparts stay: they're the town's from the start)
+  for (let q = 0; q < nq; q++) if (plan.tiles.use[q] === 'wall' || plan.tiles.use[q] === 'gate') quadTop[q] = plan.quadTop[q];
   const adj = adjacency(plan.tiles);
   const facades = facadesOf(plan.tiles, adj, plan.buildings, quadBuilding, quadStoreys, plan.spec.seed, plan.ground);
-  const tiles = { ...plan.tiles, use: plan.tiles.use.map((u): TileUse => (u === 'lot' || u === 'yard' ? 'yard' : u)) };
-  for (const q of b.quads) tiles.use[q] = 'lot';
-  return { ...plan, tiles, quadBuilding, quadTop, facades, megas: [], spans: plan.spans.filter((s) => s.building === id) };
+  const tiles = { ...plan.tiles, use: plan.tiles.use.map((u, q): TileUse => (u === 'lot' && quadBuilding[q] < 0 ? 'yard' : u)) };
+  const megas = plan.megas.filter((m) => m.kind === 'fountain' || m.kind === 'keep' || m.quads.some((q) => quadBuilding[q] >= 0));
+  return { ...plan, tiles, quadBuilding, quadTop, facades, megas, sites, spans: plan.spans.filter((s) => s.building < 0 || keep.has(s.building)) };
 }
