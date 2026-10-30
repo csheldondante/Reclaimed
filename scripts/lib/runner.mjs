@@ -90,9 +90,12 @@ export function build(root = ROOT) {
   if (r.status !== 0) throw new Error(`vite build failed:\n${r.stdout}\n${r.stderr}`);
   try {
     fs.renameSync(tmp, out);
-  } catch {
-    // (another run built the same sources meanwhile: theirs is the same)
+  } catch (e) {
+    // (another run built the same sources meanwhile: theirs is the same — but only if it's there: round 114 found a
+    // sandboxed shell where every rename in .testcache fails EPERM, the build dropped and an empty dir served, the page
+    // never booting)
     fs.rmSync(tmp, { recursive: true, force: true });
+    if (!fs.existsSync(path.join(out, 'index.html'))) throw new Error(`build: couldn't move ${tmp} to ${out} (${e.code ?? e.message}) and no other run's build is there`);
   }
   // (old builds of this worktree: keep the last few)
   const old = fs.readdirSync(CACHE).filter((d) => /^build-[0-9a-f]{12}$/.test(d)).map((d) => ({ d, t: fs.statSync(path.join(CACHE, d)).mtimeMs })).sort((a, b) => b.t - a.t);

@@ -6,7 +6,8 @@
 //   2. ride away 6 regions and back (slides by hand: the region frozen into the pool, evicted or not): identical;
 //   3. warp away 10 regions and back: identical;
 //   4. reload the page: the region restored from the store: identical;
-//   5. (--run) a story run's bone door opened; reload: its plug still gone.
+//   5. (--run) a story run's bone door opened; reload into the same run (?runinst=, round 114): its plug still gone;
+//      load again as a new run (no ?runinst: each page load is a run of its own): the door's land made again, shut.
 // Measured: the region record's size raw and compressed, the pool's memory, freeze / thaw / hash / encode / load times.
 //   node scripts/worldsavetest.mjs [--url http://localhost:5283] [--wait 35000] [--run] [--extra "&meshinst=1"]
 import puppeteer from 'puppeteer-core';
@@ -282,8 +283,8 @@ try {
   if (doRun) {
     const r = await browser.newPage();
     watch(r);
-    const runOpen = async () => {
-      await r.goto(`${url}/?skipmenu=1&level=atlas&tutorial=0&q=low&run=bell${extra}`, { waitUntil: 'load' });
+    const runOpen = async (inst = '&runinst=wst') => {
+      await r.goto(`${url}/?skipmenu=1&level=atlas&tutorial=0&q=low&run=bell${inst}${extra}`, { waitUntil: 'load' });
       for (let t = 0; !(await r.evaluate(() => !!window.reclaimed?.run?.play)); t += 1000) {
         if (t > 240000) throw new Error('the run never started');
         await sleep(1000);
@@ -323,6 +324,12 @@ try {
     const relaid = await plug();
     ok(after.plug !== null && after.plug <= opened.plug && after.plug < shut.plug, 'reloaded the run: the opened door land restored (its plug gone where it was)', { after, relaid });
     console.log(`     the run's stage laid again: its bone door now ${JSON.stringify(relaid.world)} (was ${JSON.stringify(opened.world)}), ${relaid.plug} plug cells`);
+    // (round 114) a new run: the places made again from the seed the first time they're visited — the old run's door
+    // land not loaded (its records dropped as the new run's store opens)
+    await runOpen('');
+    const fresh = await plug();
+    const dropped = await r.evaluate(() => window.reclaimed.stream.store.stats.deleted);
+    ok(fresh.plug !== null && fresh.plug > opened.plug && dropped > 0, "a new run: its door shut, the last run's records dropped as its store opened", { fresh, opened, shut, dropped });
     await r.close();
   }
 } catch (e) {

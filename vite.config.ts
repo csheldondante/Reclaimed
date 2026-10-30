@@ -2,6 +2,7 @@ import { defineConfig, type Plugin } from 'vite';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { genHash } from './scripts/lib/gen-sources.mjs';
 
 /** (round 112, testspeed) the build's content: every file of src/ and data/ and the pages — the player's warm cache
  *  is keyed by it (src/sim/warm-cache.ts): any change to what the game is made of, a new key, nothing stale */
@@ -66,8 +67,10 @@ function hitchSink(): Plugin {
 export default defineConfig({
   // relative asset paths: the build works from any folder (GitHub Pages serves it at /Reclaimed/)
   base: './',
+  // (round 114, worldstore: __GEN_HASH__ the land generator's version — scripts/lib/gen-sources.mjs; a saved region
+  // made by another is dropped and made again. The dev server reads it at start: restart it after editing the generator.)
   // (round 102, bench v3: the build's time on the benchmark's start page — src/perf/bench.ts BUILD)
-  define: { __BENCH_BUILD__: JSON.stringify(new Date().toISOString().slice(0, 16).replace('T', ' ')), __BUILD_HASH__: JSON.stringify(contentHash()) },
+  define: { __BENCH_BUILD__: JSON.stringify(new Date().toISOString().slice(0, 16).replace('T', ' ')), __BUILD_HASH__: JSON.stringify(contentHash()), __GEN_HASH__: JSON.stringify(genHash(__dirname)) },
   server: { port: 5173, strictPort: true },
   // (round 112, testspeed: contract.html — the contract tier's page, src/test/contract.ts: a system on a tiny world)
   build: { rolldownOptions: { input: { main: path.resolve(__dirname, 'index.html'), contract: path.resolve(__dirname, 'contract.html') } } },

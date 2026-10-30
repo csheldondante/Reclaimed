@@ -38,9 +38,43 @@ const FAR = 3000;
 
 const ELEVATION = (30 * Math.PI) / 180; // classic 2:1 pixel-art dimetric
 
+/** how far over and under the target's height the focus's ray looks for the ground (world z), and its step */
+const FOCUS_REACH = 256;
+const FOCUS_STEP = 0.5;
+
+/**
+ * (round 114, `covercheck`) The ground the screen's centre shows: down the view's ray through the target (the points that
+ * project to the centre) from the eye's side, the first point at or under `ground`'s top there; null when the ray meets
+ * no ground `ground` knows.
+ */
+export function groundFocus(t: readonly number[], eye: readonly number[], ground: (x: number, y: number) => number | null): [number, number, number] | null {
+  for (let z = t[2] + FOCUS_REACH; z >= t[2] - FOCUS_REACH; z -= FOCUS_STEP) {
+    const s = (z - t[2]) / eye[2];
+    const x = t[0] + eye[0] * s;
+    const y = t[1] + eye[1] * s;
+    const g = ground(x, y);
+    if (g !== null && z <= g) return [x, y, g];
+  }
+  return null;
+}
+
 export class Camera {
   /** World-space point at the centre of the screen. */
   target: [number, number, number] = [128, 128, 10];
+  /**
+   * (round 114, `covercheck`) The land's top at a window point (x cells, y world units), where the level knows it, or
+   * null — set by a streamed level (api/atlas-world.ts: the window's own ground). With it, `focus` is the ground the
+   * screen's centre shows; without it, the target.
+   */
+  ground: ((x: number, y: number) => number | null) | null = null;
+  /**
+   * (round 114, `covercheck`) The eye side's cut's focus (tiles.wgsl fsTile, far.wgsl underFocus: what rises into the line
+   * from the eye to it is cut or pressed down): the ground the screen's centre shows, as `ground` knows it — null where it
+   * knows none (the cut off). Made by update(). The target's z isn't the ground's: it stays as the window placed it while
+   * the camera pans (only a slide's tier shift moves it), so over land higher than that the cut took a band of the tiles
+   * round the screen's middle — the stand-in showing through, "a screenspace band of low detail that never loads".
+   */
+  focus: [number, number, number] | null = null;
   /** Screen pixels per world unit (cell). (Round 112, `tilefix3`: never under `zoomFloor` — whoever sets it.) */
   get zoom(): number {
     return this.zoomV;
@@ -117,6 +151,7 @@ export class Camera {
     this.eye[0] = ex;
     this.eye[1] = ey;
     this.eye[2] = ez;
+    this.focus = this.ground ? groundFocus(this.target, this.eye, this.ground) : [this.target[0], this.target[1], this.target[2]];
     // camera basis: forward = -eye, right = normalize(forward × up), up' = right × forward
     const fx = -ex;
     const fy = -ey;

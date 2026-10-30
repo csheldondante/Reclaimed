@@ -1255,12 +1255,17 @@ further out ahead of the camera so we never wait for them". Three tiers under th
   never changed is not saved: evicted, it's made again by the source when it's wanted. Nothing waits for a readback
   but a load of the same region (`checks`).
 - **The store** (`world/region-store.ts`, worker `region-store.worker.ts`): IndexedDB `reclaimed-world`, stores
-  `regions` (key `world|rx,ry` → the compressed record) and `meta` (→ session, time, raw and packed sizes, hash; read
-  whole at open: `has` answers at once). Records are byte-shuffled (each word's four bytes in four planes) and
+  `regions` (key `world|rx,ry` → the compressed record) and `meta` (→ session, time, raw and packed sizes, hash, and
+  (round 114) `gen`, the generator that made it; read whole at open: `has` answers at once). (Round 114, `worldstore`:)
+  as a store opens it first drops what it can't use (`prune`, one transaction over the meta rows): this world's
+  records of another `gen`, every record with no `gen` (rounds 100–113, any world), and, when a run opens, this
+  seed's earlier runs' worlds (`WorldSave.endedRuns`) — said once in the console (`[worldsave] dropped …`). Other
+  worlds' records stay (another seed; another branch's Pages build, which shares the origin and so the database). Records are byte-shuffled (each word's four bytes in four planes) and
   deflated (CompressionStream) in the worker; reads are inflated there. `?worldsave=0`: the same tier in the
   worker's memory, nothing on disk. A store that can't open is a console error and the memory tier.
 - **The record**: `u32 'RCLR' | u32 n | header JSON (n bytes) | sections` (16-byte aligned, offsets from the data's
-  start). Header: `format` (RECORD_FORMAT 1), `gen` (GEN_VERSION 1: bump when the land generator changes), `world`,
+  start). Header: `format` (RECORD_FORMAT 2), `gen` (GEN_VERSION — round 114: not a hand-bumped number but a hash
+  of the generator's sources made at build time, below), `world`,
   `rx, ry, x0, y0, oz`, `sig`, `session`, `savedAt`, `hash`, `sections`, `things`. Sections: `body` (the layout),
   `outside` (per column n, then z0 z1 mat aux), `surface`, `ground`, `relief`, `gapTop`, `colTop`. A record of
   another format, generator, world or layout is reported (console) and the region made again; one that can't be
@@ -1269,7 +1274,21 @@ further out ahead of the camera so we never wait for them". Three tiers under th
   with `?meshinst=1` the resting rock) is taken with a region frozen — `{owner, kind, m (3×4, region-local), state,
   cols, fallback, id}` — and given back when it's written (ExternalRegistry.adopt: its cells are External in the
   columns already). The window's sweep saves them without taking them.
-- **The world id** (level.ts worldSaveOf): `atlas:<seed>` (`:run=<id>` in a run, `:<name>` for `?world=<name>`);
+- **The generator's version** (round 114, `worldstore`; `scripts/lib/gen-sources.mjs`, vite.config.ts
+  `__GEN_HASH__`): a SHA-1 (16 hex) over the path and text (LF line ends) of every file a region's land is made from —
+  the value-import closure of `GEN_ENTRIES` (atlas/atlas.ts, world/streamgen.ts, settle/settlements.ts,
+  story/stage-land.ts: the generator, the noise land and the two stamp hooks) with their `?raw` WGSL and JSON data,
+  not descending into `GEN_BOUNDARY` (gpu, sim, tune, weather, grids, gm, units, render, ui, scenes: plumbing, the
+  sims and drawing, whose code doesn't decide what land is made). `node scripts/lib/gen-sources.mjs` lists the files
+  (41 at round 114). An edit to any of them — even a comment — is a new generator: saves of the old one are dropped
+  and their regions made again from the seed. The dev server reads it at start (restart after editing the generator).
+  A new stamp hook or generator entry must be added to `GEN_ENTRIES`.
+- **The world id** (level.ts worldSaveOf): `atlas:<seed>~<opts>` — `<opts>` an FNV hash of what else decides the land:
+  the atlas's other parameters (`?a.*`), the river mode, whether land comes in settled (round 114: before, a world
+  made with other options loaded this one's records); `:<name>` for `?world=<name>`. A run (`?run=<story>`) is its
+  own world, one per run: `:run=<story>@<instance>`, the instance new each page load (a run isn't resumed after a
+  reload: its story starts again) unless `?runinst=` names one; the seed's earlier runs' records are dropped as it
+  opens. Without `?run=` the world persists across page loads until `?world=new`.
   `?world=new` (or the ✦ button, two taps) clears it. On load, the window's regions with a record are written in
   (`Streamer.restore`) before the window slides, and the LandSource's `restored` lets the atlas's hooks (the
   settlements' plans, a run's stage) see that land as made. A warp freezes what the window held into the pool (a
@@ -2326,6 +2345,15 @@ clears them).
   tiles.wgsl fsTile discards what rises into the line from the eye to the focus (TileU.focus: the camera's target, w 1;
   the rings' underFocus rule) — no tile is left out for it. The gate: scripts/tilegate.mjs (frames held to 60 Hz, load in
   frames, baselines by adapter).
+- (round 114, `covercheck`) **The focus** is `Camera.focus`: the ground the screen's centre shows — the view's ray through
+  the target down to the first point at or under `Camera.ground`'s top (set by api/atlas-world.ts: the window's own
+  columns' tops, `core.map.surface`, none past the window or in a region not written yet), null when it meets none.
+  The target's z is not the ground's (only a slide's tier shift moves it). TileU.focus and FarLand.focus are it (w 0 /
+  null: no cut, no pressing). **The eye side's cut** in fsTile takes a tile's point only when it's over the line to the
+  focus (the rule above), within FOCUS_HOLE (0.2 of the screen's shorter side) of the focus on the screen (nearFocus)
+  and the view's ray behind it runs into the window's footprint before the window's floor (hidesWindow) — what it opens
+  is the window's land, not the stand-in. The tile gate fails a view whose far land in a frame (the pixel check) is over
+  the geometric check's worst by `--agreemax` (0.01).
 
 ## The coverage check, and drawn versus written (round 113, `tilesfirst`; the streaming design's step 1)
 
