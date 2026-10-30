@@ -144,7 +144,9 @@ export class CityHost {
       this.io.touched(x0, y0, x1, y1);
     }
     this.stats.claimed = this.claims.size;
-    this.stats.columns += inst.cols.length;
+    let n = 0;
+    for (const c of this.claims.values()) n += c.cols.length;
+    this.stats.columns = n;
   }
 
   /** a building's cells were cut or it hangs free: let it go to rubble, take its pieces away behind dust */

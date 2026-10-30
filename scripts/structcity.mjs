@@ -32,4 +32,19 @@ await run({ name: 'structcity', kind: 'behaviour', size: '1280x800' }, async (R)
   await R.sleep(2500);
   await p.screenshot({ path: path.join(OUT, `${out}-2.png`) });
   R.log(`shots: ${OUT}/${out}-0.png, -1.png, -2.png`);
+  if (R.flag('slide')) {
+    // (--slide: the camera away past the window's edge and back — the window slides; buildings leaving let go, come back
+    // and claim again; nothing fatal)
+    const before = await p.evaluate(() => window.reclaimed.city().stats.claimed);
+    for (const dx of [260, -260]) {
+      await p.evaluate((d) => {
+        const c = window.reclaimed.camera;
+        c.target = [c.target[0] + d, c.target[1], c.target[2]];
+      }, dx);
+      await R.simSeconds(p, 25);
+    }
+    const after = await p.evaluate(() => ({ ...window.reclaimed.city().stats, slides: window.reclaimed.stream?.stats?.slides }));
+    R.check('slid away and back: the city still holds its columns', after.claimed >= before * 0.9, { before, after });
+    await p.screenshot({ path: path.join(OUT, `${out}-3.png`) });
+  }
 });
