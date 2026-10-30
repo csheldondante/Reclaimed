@@ -7,8 +7,7 @@
 // frame; the piece warps it: x, y bilinear over the four corners (Townscaper's deformed modules), z from the foot's
 // bilinear height up to the top (flags & 1: the top is a height over the foot — paving that follows the ground).
 
-const SP_PARTS: u32 = 14u;
-const SP_VARIANTS: u32 = 8u;
+// (SP_PAL, SP_PARTS, SP_VARIANTS: from src/structures/gpu.ts wgsl(), the TS tables' sizes)
 
 struct SpVert {
   wpos: vec3<f32>,

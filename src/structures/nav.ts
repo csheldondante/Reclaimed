@@ -87,20 +87,22 @@ export function bakeNav(plan: CityPlan, adj: Int32Array): NavGraph {
     }
     x /= b.quads.length;
     y /= b.quads.length;
-    if (b.mega === 'tower') {
-      // a tower: its foot and its top, a lift between (Bulwark's lifts; stairs would wind round inside)
+    if (b.mega) {
+      // a landmark: its foot and its top — a tower's by a lift (Bulwark's lifts; stairs would wind round inside), a
+      // domed temple's gallery by stairs — a door onto the open ground beside it
       const foot = node([x, y, b.base + 0.05], 'floor', b.id);
-      const crown = node([x, y, b.base + top * b.storeyH], 'roof', b.id);
-      link(foot, crown, 'lift', top * b.storeyH);
+      const crown = node([x, y, b.base + top * b.storeyH], b.mega === 'tower' ? 'roof' : 'floor', b.id);
+      link(foot, crown, b.mega === 'tower' ? 'lift' : 'stairs', top * b.storeyH * (b.mega === 'tower' ? 1 : 2));
       levelNode.set(`${b.id},0`, foot);
-      const q = b.quads[0];
-      for (let s = 0; s < 4; s++) {
-        const n = adj[q * 4 + s];
-        if (n >= 0 && outdoor[n] >= 0) {
-          link(foot, outdoor[n], 'door');
-          break;
+      let door = false;
+      for (const q of b.quads)
+        for (let s = 0; s < 4 && !door; s++) {
+          const n = adj[q * 4 + s];
+          if (n >= 0 && outdoor[n] >= 0) {
+            link(foot, outdoor[n], 'door');
+            door = true;
+          }
         }
-      }
       continue;
     }
     let below = -1;
@@ -149,6 +151,28 @@ export function bakeNav(plan: CityPlan, adj: Int32Array): NavGraph {
       const bal = node([mx + ox * 0.6, my + oy * 0.6, f.z0 + 0.05], 'floor', f.building);
       link(inside, bal, 'door');
     }
+  }
+
+  // ---- a keep (a mega feature on the plaza, no tiles of its own): a door to the plaza, a lift to its top
+  for (const m of plan.megas) {
+    if (m.kind !== 'keep') continue;
+    const x = (m.frame[0][0] + m.frame[2][0]) / 2;
+    const y = (m.frame[0][1] + m.frame[2][1]) / 2;
+    const foot = node([x, y, m.z0], 'floor', -1);
+    const crown = node([x, y, m.z1], 'roof', -1);
+    link(foot, crown, 'lift', m.z1 - m.z0);
+    let best = -1;
+    let bd = Infinity;
+    for (let q = 0; q < nq; q++) {
+      if (outdoor[q] < 0) continue;
+      const o = nodes[outdoor[q]].at;
+      const d = Math.hypot(o[0] - x, o[1] - y);
+      if (d < bd) {
+        bd = d;
+        best = outdoor[q];
+      }
+    }
+    if (best >= 0) link(foot, best, 'door');
   }
 
   // ---- ramparts: a walk along the wall's top, stairs down at the gates

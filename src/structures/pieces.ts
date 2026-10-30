@@ -129,6 +129,7 @@ export function piecesOf(plan: CityPlan): StructurePieces {
       const top = plan.quadTop[q];
       let lo = Infinity;
       for (let k = 0; k < 4; k++) lo = Math.min(lo, gz[t.quads[q * 4 + k]]);
+      if (b.mega === 'dome') continue;
       if (b.mega === 'tower') {
         out.add(lib.id('tower'), p, lo - 0.6, top, look(b.id), hashf(q, 5));
         out.add(lib.id('spire'), p, top, top + rise * 2.6, look(b.id), hashf(q, 6));
@@ -232,8 +233,27 @@ export function piecesOf(plan: CityPlan): StructurePieces {
     }
   }
   out.owner = -1000;
-  for (const m of plan.megas)
+  for (const m of plan.megas) {
     if (m.kind === 'fountain') out.add(lib.id('fountain'), m.frame, m.z0, m.z1, look(-1), 0);
+    const half = Math.hypot(m.frame[2][0] - m.frame[0][0], m.frame[2][1] - m.frame[0][1]) / (2 * Math.SQRT2);
+    let lo = m.z0;
+    for (const q of m.quads) for (let k = 0; k < 4; k++) lo = Math.min(lo, gz[t.quads[q * 4 + k]]);
+    if (m.kind === 'dome') {
+      // a domed temple: a drum of tall windows, the dome on it, a lantern on its crown
+      out.owner = plan.quadBuilding[m.quads[0]];
+      const L = look(out.owner);
+      const f = shrink(m.frame, 0.9);
+      const r = half * 0.9;
+      out.add(lib.id('drum'), f, lo - 0.6, m.z1, L, 0);
+      out.add(lib.id('dome'), shrink(m.frame, 0.86), m.z1, m.z1 + r * 0.95, L, 0);
+      out.add(lib.id('lantern'), shrink(m.frame, 0.2), m.z1 + r * 0.9, m.z1 + r * 0.9 + half * 0.55, L, 0);
+    } else if (m.kind === 'keep') {
+      out.owner = -1;
+      out.add(lib.id('drum'), m.frame, lo - 0.6, m.z1, look(-1), 0);
+      out.add(lib.id('spire'), shrink(m.frame, 0.92), m.z1, m.z1 + half * 2.2, look(-1), 0);
+    }
+  }
+  out.owner = -1000;
 
   // ---- linear features: a module a segment along the spline (contracts LinearFeature; linear.ts)
   plan.linear.forEach((f, fk) => {

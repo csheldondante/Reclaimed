@@ -13771,3 +13771,19 @@ the shadow pass 0.70 → 0.69 (was +0.12). At ×3 zoom (12 px a cell: full detai
 screen with forward-shaded pieces (render.wgsl `lighting` per fragment, no depth pre-pass) where the terrain is deferred;
 next steps there: the pieces into the G-buffer path on the phone, or a depth pre-pass. Triangles: a 90 m town 1.78M full,
 0.27M far (6.6×).
+
+## 2026-10-30 — round 117 (`structures`): mega tiles — a domed temple, the keep (STR12)
+
+The user: "some WFC and mega tile features (features multiple tiles big)".
+- **A domed temple over four tiles.** In a town of R ≥ 30 m: an interior vertex of valence 4 whose four tiles are built
+  lots of one block on ground within a storey, nearest 0.3 R from the middle. It is the first building (the rest grow
+  round it); its frame is the four tiles' corners opposite the shared vertex, counter-clockwise round it — so a module
+  in its unit frame warps over a patch of irregular tiles like a tile's module over one tile. Pieces: a drum of two rows
+  of tall windows (a storey over the middle's houses), a ribbed dome sheathed in green copper (a new palette part, Dome:
+  styles × 15 parts now; SP_PARTS and SP_VARIANTS come from TS into the WGSL, not written twice), a lantern.
+- **Bulwark's heart.** A radial city's plaza gets a great round keep (2.7 tiles across, 4 storeys over the middle's
+  houses, a spire), a ring of plaza left round it; no tiles of its own — its columns rastered from its frame, a door to
+  the plaza and a lift to its top in the nav.
+- Landmarks' nav: every mega building has a foot, a crown (a tower's by a lift, a temple's gallery by stairs) and a door
+  onto the open ground beside it.
+Shots: C:\Projects\shots88\structures\mega-0.png (the dome among the hearth roofs), mega-1.png (the radial keep).

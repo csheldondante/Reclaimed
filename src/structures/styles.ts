@@ -68,6 +68,7 @@ export const STYLES: Record<StructureStyleId, Style> = {
       [Part.Water]: ['#4f8fa0'],
       [Part.Plant]: ['#5b7a3a', '#4f6e34'],
       [Part.Lamp]: ['#ffd48a'],
+      [Part.Dome]: ['#5f9a86', '#6aa58f'],
     }),
   },
   bastion: {
@@ -97,6 +98,7 @@ export const STYLES: Record<StructureStyleId, Style> = {
       [Part.Water]: ['#4c7d8c'],
       [Part.Plant]: ['#566f38'],
       [Part.Lamp]: ['#ffcf80'],
+      [Part.Dome]: ['#4f5860', '#5a8a7a'],
     }),
   },
   terrace: {
@@ -126,6 +128,7 @@ export const STYLES: Record<StructureStyleId, Style> = {
       [Part.Water]: ['#4f8fa0'],
       [Part.Plant]: ['#5b7a3a'],
       [Part.Lamp]: ['#ffd48a'],
+      [Part.Dome]: ['#6f9f8e'],
     }),
   },
 };

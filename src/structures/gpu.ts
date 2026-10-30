@@ -37,7 +37,7 @@ export class StructureGpu {
   }
 
   wgsl(): string {
-    return `const SP_PAL: u32 = ${SP_PAL}u;\n`;
+    return `const SP_PAL: u32 = ${SP_PAL}u;\nconst SP_PARTS: u32 = ${PARTS}u;\nconst SP_VARIANTS: u32 = ${VARIANTS}u;\n`;
   }
 
   private uploadLibrary(): void {

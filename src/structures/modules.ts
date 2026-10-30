@@ -24,8 +24,10 @@ export const enum Part {
   Water = 11,
   Plant = 12,
   Lamp = 13,
+  /** a dome's sheathing (copper gone green, lead) */
+  Dome = 14,
 }
-export const PARTS = 14;
+export const PARTS = 15;
 
 export interface Module {
   name: string;
@@ -467,6 +469,66 @@ function arch(): Module {
   return wall('gatearch', { body: Part.Stone, timber: false }, [{ u0: 0.22, u1: 0.78, w0: 0, w1: 0.5, fill: Part.Door, arch: 0.22 }]);
 }
 
+/** a dome over its frame: a hemisphere (radius 0.5 fills the frame; w 0 its spring, 1 its crown), ribbed */
+function dome(): Module {
+  const k = new Kit();
+  const prof: [number, number][] = [];
+  const n = 7;
+  for (let i = 0; i <= n; i++) {
+    const t = (i / n) * (Math.PI / 2);
+    prof.push([0.5 * Math.cos(t), Math.sin(t)]);
+  }
+  const P = (r: number, w: number, a: number) => [0.5 + Math.cos(a) * r, 0.5 + Math.sin(a) * r, w];
+  for (let i = 0; i + 1 < prof.length; i++)
+    for (let s = 0; s < 20; s++) {
+      const a0 = (s / 20) * Math.PI * 2;
+      const a1 = ((s + 1) / 20) * Math.PI * 2;
+      const [r0, w0] = prof[i];
+      const [r1, w1] = prof[i + 1];
+      k.quad(P(r0, w0, a0), P(r0, w0, a1), P(r1, w1, a1), P(r1, w1, a0), Part.Dome);
+    }
+  for (let s = 0; s < 8; s++) {
+    const a = (s / 8) * Math.PI * 2;
+    for (let i = 0; i + 1 < prof.length; i++) {
+      const [r0, w0] = prof[i];
+      const [r1, w1] = prof[i + 1];
+      k.quad(P(r0 + 0.006, w0, a - 0.012), P(r0 + 0.006, w0, a + 0.012), P(r1 + 0.006, w1, a + 0.012), P(r1 + 0.006, w1, a - 0.012), Part.Trim);
+    }
+  }
+  k.cyl(0.5, 0.5, 0.52, 0.52, -0.04, 0.02, 20, Part.Stone, false);
+  return k.done('dome');
+}
+
+/** a lantern on a dome's crown: a little drum of windows and a cap */
+function lantern(): Module {
+  const k = new Kit();
+  k.cyl(0.5, 0.5, 0.35, 0.35, 0, 0.55, 8, Part.Stone, false);
+  for (let i = 0; i < 8; i++) {
+    const a = ((i + 0.5) / 8) * Math.PI * 2;
+    const cu = 0.5 + Math.cos(a) * 0.34;
+    const cv = 0.5 + Math.sin(a) * 0.34;
+    k.box(cu - 0.05, cu + 0.05, cv - 0.05, cv + 0.05, 0.15, 0.45, Part.Glass);
+  }
+  k.cone(0.5, 0.5, 0.42, 0.42, 0.55, 0.85, 8, Part.Dome);
+  k.box(0.48, 0.52, 0.48, 0.52, 0.85, 1, Part.Metal);
+  return k.done('lantern');
+}
+
+/** a great round drum (a keep, a domed temple): coursed stone, two rows of tall windows round it, a parapet */
+function drum(): Module {
+  const k = new Kit();
+  k.cyl(0.5, 0.5, 0.5, 0.5, 0, 1, 24, Part.Stone, false);
+  k.cyl(0.5, 0.5, 0.53, 0.53, 0.94, 1, 24, Part.Stone, true);
+  k.cyl(0.5, 0.5, 0.52, 0.52, 0, 0.06, 24, Part.Stone, false);
+  for (let i = 0; i < 12; i++) {
+    const a = ((i + 0.5) / 12) * Math.PI * 2;
+    const cu = 0.5 + Math.cos(a) * 0.495;
+    const cv = 0.5 + Math.sin(a) * 0.495;
+    for (const w of [0.18, 0.58]) k.box(cu - 0.022, cu + 0.022, cv - 0.022, cv + 0.022, w, w + 0.22, Part.Glass);
+  }
+  return k.done('drum');
+}
+
 // ------------------------------------------------------------------ linear features (extruded along splines)
 // Frame: u along the spline, v across it (0 the right edge, 1 the left), w up.
 
@@ -627,6 +689,7 @@ export function library(): Library {
   modules.push(post(Part.Trim), post(Part.Stone), quoins(), slab(Part.Stone, 'plinth'), slab(Part.Pave, 'pave'), slab(Part.Stone, 'rampart'), slab(Part.Plant, 'garden'));
   modules.push(chimney(), merlons(), tower(), spire(), fountain(), lamp(), arch());
   modules.push(road(), rail(), wallSeg(), wallWalk(), deck(), archSpan());
+  modules.push(dome(), lantern(), drum());
   const byName = new Map<string, number>();
   modules.forEach((m, i) => {
     if (byName.has(m.name)) throw new Error(`structures: two modules named "${m.name}"`);

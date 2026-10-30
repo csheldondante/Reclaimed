@@ -37,6 +37,8 @@ export function columnsOf(plan: CityPlan): ColumnSpan[] {
   for (let q = 0; q < t.use.length; q++) if (isFinite(lo[q])) raster(quadCorners(t, q), lo[q], hi[q], bld[q], seen, out);
   // (linear features: a wall from its foot to its walk, a bridge's deck — its arches stay open underneath — ids −2 and
   // below, one a feature; roads lie on the ground: nothing to claim)
+  // (the keep: its own frame on the plaza, no tiles of its own — one instance with the ramparts)
+  for (const m of plan.megas) if (m.kind === 'keep') raster(m.frame, m.z0 - 0.6, m.z1 - 1, -1, seen, out);
   plan.linear.forEach((f, k) => {
     if (f.kind !== 'wall' && f.kind !== 'bridge') return;
     const S = resample(f, 2);

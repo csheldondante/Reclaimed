@@ -278,3 +278,22 @@ describe('linear features', () => {
     expect(path.length).toBeGreaterThan(1);
   });
 });
+
+describe('mega tiles', () => {
+  it('a domed temple over four tiles meeting at a vertex; a keep at a radial city\u2019s heart, its top reached by a lift', () => {
+    const p = planCity(spec('irregular'), flat);
+    const dome = p.megas.find((m) => m.kind === 'dome')!;
+    expect(dome.quads.length).toBe(4);
+    const b = p.buildings[p.quadBuilding[dome.quads[0]]];
+    expect(b.mega).toBe('dome');
+    expect(dome.quads.every((q) => p.quadBuilding[q] === b.id)).toBe(true);
+    const r = planCity(spec('radial'), flat);
+    expect(r.megas.some((m) => m.kind === 'keep')).toBe(true);
+    const g = r.nav;
+    const plaza = g.nodes.find((n) => n.surface === 'plaza')!;
+    const top = g.nodes.filter((n) => n.surface === 'roof').sort((a, c) => c.at[2] - a.at[2])[0];
+    const path = navPath(g, plaza.id, top.id);
+    expect(path.length).toBeGreaterThan(1);
+    expect(g.links.some((l) => l.kind === 'lift')).toBe(true);
+  });
+});

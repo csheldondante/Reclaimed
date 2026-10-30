@@ -114,6 +114,52 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn): Ci
   // ---- buildings: grown tile by tile inside a block, a few tiles each, on ground no steeper than a storey
   const quadBuilding = new Int32Array(nq).fill(-1);
   const buildings: BuildingRec[] = [];
+  const megas: MegaFeature[] = [];
+  // a domed temple over four tiles that meet at a vertex (a mega tile: one feature over several tiles), in the middle
+  // quarter, on ground flat enough: the first building, so the rest grow round it
+  if (R >= 30) {
+    const around = new Map<number, number[]>();
+    for (let q = 0; q < nq; q++) for (let k = 0; k < 4; k++) (around.get(tiles.quads[q * 4 + k]) ?? around.set(tiles.quads[q * 4 + k], []).get(tiles.quads[q * 4 + k])!).push(q);
+    let best = -1;
+    let bestD = Infinity;
+    for (const [v, qs] of around) {
+      if (qs.length !== 4 || !qs.every((q) => built[q] && tiles.block[q] === tiles.block[qs[0]])) continue;
+      const d = Math.abs(Math.hypot(tiles.verts[v * 2] - cx, tiles.verts[v * 2 + 1] - cy) - R * 0.3);
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (const q of qs) {
+        const [l, h] = quadG(q);
+        lo = Math.min(lo, l);
+        hi = Math.max(hi, h);
+      }
+      if (hi - lo < STOREY_H && d < bestD) {
+        bestD = d;
+        best = v;
+      }
+    }
+    if (best >= 0) {
+      const qs = around.get(best)!;
+      const vx = tiles.verts[best * 2];
+      const vy = tiles.verts[best * 2 + 1];
+      // the patch's corners: each tile's corner opposite the shared vertex, counter-clockwise round it
+      const outer = qs
+        .map((q) => {
+          const k = [0, 1, 2, 3].find((i) => tiles.quads[q * 4 + i] === best)!;
+          const o = tiles.quads[q * 4 + ((k + 2) % 4)];
+          return [tiles.verts[o * 2], tiles.verts[o * 2 + 1]] as V2;
+        })
+        .sort((a, b) => Math.atan2(a[1] - vy, a[0] - vx) - Math.atan2(b[1] - vy, b[0] - vx));
+      let hi = -Infinity;
+      for (const q of qs) hi = Math.max(hi, quadG(q)[1]);
+      const id = buildings.length;
+      // (its drum a storey over the middle's houses: the dome stands clear of their roofs)
+      const st = Math.max(3, Math.round(sMid) + 1);
+      const b: BuildingRec = { id, quads: qs, base: hi + 0.15, storeys: st, storeyH: STOREY_H, look: Math.floor(r() * 4096), mega: 'dome', district: 0 };
+      buildings.push(b);
+      for (const q of qs) quadBuilding[q] = id;
+      megas.push({ kind: 'dome', quads: qs, frame: [outer[0], outer[1], outer[2], outer[3]], z0: b.base, z1: b.base + st * STOREY_H });
+    }
+  }
   const order = Array.from({ length: nq }, (_, q) => q).filter((q) => built[q]);
   for (let k = order.length - 1; k > 0; k--) {
     const m = Math.floor(r() * (k + 1));
@@ -147,14 +193,13 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn): Ci
   }
 
   // ---- landmarks (mega tiles): the tallest building near the middle becomes a tower; a fountain in the plaza
-  const megas: MegaFeature[] = [];
   const quadTop = new Float64Array(nq).fill(NaN);
   const quadStoreys = new Int32Array(nq);
   for (const b of buildings)
     for (const q of b.quads) {
       // (a tile now and then a storey up or down from its building: Townscaper's stepped skylines)
       const h = hashf(q, spec.seed, 2);
-      const s = Math.max(1, b.storeys + (h < 0.14 ? 1 : h > 0.88 && b.quads.length > 1 ? -1 : 0));
+      const s = b.mega ? b.storeys : Math.max(1, b.storeys + (h < 0.14 ? 1 : h > 0.88 && b.quads.length > 1 ? -1 : 0));
       quadStoreys[q] = s;
       quadTop[q] = b.base + s * b.storeyH;
     }
@@ -186,7 +231,21 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn): Ci
     }
   }
   const plaza = Array.from({ length: nq }, (_, q) => q).filter((q) => tiles.use[q] === 'plaza');
-  if (plaza.length) {
+  if (spec.system === 'radial' && plaza.length) {
+    // Bulwark's heart: a great round keep in the middle of the plaza (a ring of the plaza left round it)
+    let gx = 0;
+    let gy = 0;
+    let hi = -Infinity;
+    for (const q of plaza) {
+      const [x, y] = quadCentre(tiles, q);
+      gx += x / plaza.length;
+      gy += y / plaza.length;
+      hi = Math.max(hi, quadG(q)[1]);
+    }
+    const s = (spec.tile ?? 4) * 1.35;
+    const z1 = hi + Math.max(5, Math.round(sMid) + 4) * STOREY_H;
+    megas.push({ kind: 'keep', quads: [], frame: [[gx - s, gy - s], [gx + s, gy - s], [gx + s, gy + s], [gx - s, gy + s]], z0: hi + 0.1, z1 });
+  } else if (plaza.length) {
     let pz = Infinity;
     for (const q of plaza) pz = Math.min(pz, quadG(q)[0]);
     // the fountain stands where the plaza's tiles meet (their shared vertex nearest the middle)
