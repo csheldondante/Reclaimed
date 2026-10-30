@@ -91,9 +91,14 @@ export function build(root = ROOT) {
   try {
     fs.renameSync(tmp, out);
   } catch (e) {
-    // (another run built the same sources meanwhile: theirs is the same — but only if it's there: round 114 found a
-    // sandboxed shell where every rename in .testcache fails EPERM, the build dropped and an empty dir served, the page
-    // never booting)
+    // (another run built the same sources meanwhile: theirs is the same — but only if it's there. Round 114: in a
+    // sandboxed shell every directory rename in .testcache fails EPERM; there the build is copied instead, index.html
+    // last, since a build counts as there once its index.html is — a run reading it meanwhile sees none yet)
+    if (!fs.existsSync(path.join(out, 'index.html')) && e.code === 'EPERM') {
+      fs.mkdirSync(out, { recursive: true });
+      for (const n of fs.readdirSync(tmp)) if (n !== 'index.html') fs.cpSync(path.join(tmp, n), path.join(out, n), { recursive: true });
+      fs.copyFileSync(path.join(tmp, 'index.html'), path.join(out, 'index.html'));
+    }
     fs.rmSync(tmp, { recursive: true, force: true });
     if (!fs.existsSync(path.join(out, 'index.html'))) throw new Error(`build: couldn't move ${tmp} to ${out} (${e.code ?? e.message}) and no other run's build is there`);
   }
