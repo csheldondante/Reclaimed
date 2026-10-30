@@ -34,6 +34,8 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn): Ci
   const R = spec.radius;
   const density = spec.density ?? 0.8;
   const [sMid, sRim] = spec.storeys ?? style.storeys;
+  /** built into the earth (spec.sunk): buildings on steep ground, their backs in the hill */
+  const into = spec.sunk !== undefined && spec.sunk >= 0;
   const quadG = (q: number) => {
     let lo = Infinity;
     let hi = -Infinity;
@@ -107,7 +109,7 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn): Ci
     const [lo, hi] = quadG(q);
     const n = fbm(cxq * 0.05, cyq * 0.05, spec.seed + 3);
     const p = density * (1.05 - 0.35 * d * d) * (0.7 + 0.6 * n);
-    if (hi - lo > STOREY_H * 1.3 || hashf(q, spec.seed, 1) > p || quadArea(tiles, q) < 2.5) tiles.use[q] = 'yard';
+    if (hi - lo > STOREY_H * (into ? 3 : 1.3) || hashf(q, spec.seed, 1) > p || quadArea(tiles, q) < 2.5) tiles.use[q] = 'yard';
     else built[q] = 1;
   }
 
@@ -177,7 +179,7 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn): Ci
         const n = adj[quads[i] * 4 + s];
         if (n < 0 || !built[n] || quadBuilding[n] >= 0 || tiles.block[n] !== tiles.block[q0]) continue;
         const [l2, h2] = quadG(n);
-        if (Math.max(hi, h2) - Math.min(lo, l2) > STOREY_H * 0.9) continue;
+        if (Math.max(hi, h2) - Math.min(lo, l2) > STOREY_H * (into ? 2.5 : 0.9)) continue;
         lo = Math.min(lo, l2);
         hi = Math.max(hi, h2);
         quadBuilding[n] = id;
@@ -189,7 +191,11 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn): Ci
     const storeys = Math.max(1, Math.round(sMid + (sRim - sMid) * Math.pow(d, 0.8) + dBias[dk] + (fbm(bx * 0.04, by * 0.04, spec.seed + 9) - 0.5) * 2.2 + (r() - 0.5) * 0.8));
     // (look: 12 random bits; bit 15 + bits 12-14 the district's roof colour, most of the time — a few odd ones out)
     const look = Math.floor(r() * 4096) | (r() < 0.82 ? 0x8000 | (dRoof[dk] << 12) : 0);
-    buildings.push({ id, quads, base: hi + 0.15 - (spec.sunk ?? 0), storeys, storeyH: STOREY_H, look, district: dk });
+    // (built into the earth — spec.sunk: its floor on the ground's low side, its back in the hill, storeys enough that its
+    // roof stands clear of the hill; else on the high side, a plinth under the low)
+    const base = into ? lo + 0.15 - (spec.sunk ?? 0) : hi + 0.15;
+    const st = into ? Math.max(storeys, Math.ceil((hi - base) / STOREY_H) + 1) : storeys;
+    buildings.push({ id, quads, base, storeys: st, storeyH: STOREY_H, look, district: dk });
   }
 
   // ---- landmarks (mega tiles): the tallest building near the middle becomes a tower; a fountain in the plaza
@@ -298,7 +304,7 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn): Ci
     }
 
   // ---- façades: which wall each storey of each side shows (WFC per building)
-  const facades = facadesOf(tiles, adj, buildings, quadBuilding, quadStoreys, spec.seed);
+  const facades = facadesOf(tiles, adj, buildings, quadBuilding, quadStoreys, spec.seed, gz);
   const t2 = performance.now();
   const plan: CityPlan = {
     spec,
@@ -353,7 +359,7 @@ const ABOVE = new Uint32Array([
 /** side by side round a corner or along a wall: no two doors, no two balconies */
 const BESIDE = new Uint32Array(KINDS.map((_, a) => bits(...KINDS.map((__, b) => b).filter((b) => !((a === DOOR && b === DOOR) || (a === BALCONY && b === BALCONY))))));
 
-function facadesOf(tiles: TileMesh, adj: Int32Array, buildings: BuildingRec[], quadBuilding: Int32Array, quadStoreys: Int32Array, seed: number): Facade[] {
+function facadesOf(tiles: TileMesh, adj: Int32Array, buildings: BuildingRec[], quadBuilding: Int32Array, quadStoreys: Int32Array, seed: number, gz: Float64Array): Facade[] {
   const out: Facade[] = [];
   for (const b of buildings) {
     if (b.mega || quadBuilding[b.quads[0]] !== b.id) continue;
@@ -361,6 +367,8 @@ function facadesOf(tiles: TileMesh, adj: Int32Array, buildings: BuildingRec[], q
     const len: number[] = [];
     const street: boolean[] = [];
     const yard: boolean[] = [];
+    /** in the earth: the ground at the wall stands over most of the storey (blank, no door: a house dug into a hill) */
+    const buried: boolean[] = [];
     for (const q of b.quads) {
       const p = quadCorners(tiles, q);
       for (let s = 0; s < 4; s++) {
@@ -379,6 +387,8 @@ function facadesOf(tiles: TileMesh, adj: Int32Array, buildings: BuildingRec[], q
           len.push(L);
           street.push(n >= 0 && (tiles.use[n] === 'street' || tiles.use[n] === 'plaza'));
           yard.push(n >= 0 && tiles.use[n] === 'yard');
+          const g = (gz[tiles.quads[q * 4 + s]] + gz[tiles.quads[q * 4 + ((s + 1) % 4)]]) / 2;
+          buried.push(g > z0 + b.storeyH * 0.6);
         }
       }
     }
@@ -389,7 +399,7 @@ function facadesOf(tiles: TileMesh, adj: Int32Array, buildings: BuildingRec[], q
     // the front door: the longest street-facing ground wall (else the longest ground wall)
     let front = -1;
     nodes.forEach((f, i) => {
-      if (f.level !== 0) return;
+      if (f.level !== 0 || buried[i]) return;
       // (long enough for a door first, then facing the street, then the longest)
       const sc = (k: number) => (len[k] >= 1.8 ? 1000 : 0) + (street[k] ? 100 : yard[k] ? 50 : 0) + len[k];
       const score = sc(i);
@@ -399,7 +409,7 @@ function facadesOf(tiles: TileMesh, adj: Int32Array, buildings: BuildingRec[], q
     nodes.forEach((f, i) => {
       const L = len[i];
       let d = f.level === 0 ? bits(BLANK, WINDOW, WINDOW2, DOOR, SHOP) : bits(BLANK, WINDOW, WINDOW2, BALCONY);
-      if (L < 1.8) d = bits(BLANK);
+      if (L < 1.8 || buried[i]) d = bits(BLANK);
       else if (L < 3.2) d &= ~bits(WINDOW2, SHOP);
       if (i === front) d = bits(DOOR);
       domain[i] = d;
@@ -461,7 +471,7 @@ export function isolate(plan: CityPlan, id: number): CityPlan {
     quadStoreys[q] = Math.round((plan.quadTop[q] - b.base) / b.storeyH);
   }
   const adj = adjacency(plan.tiles);
-  const facades = facadesOf(plan.tiles, adj, plan.buildings, quadBuilding, quadStoreys, plan.spec.seed);
+  const facades = facadesOf(plan.tiles, adj, plan.buildings, quadBuilding, quadStoreys, plan.spec.seed, plan.ground);
   const tiles = { ...plan.tiles, use: plan.tiles.use.map((u): TileUse => (u === 'lot' || u === 'yard' ? 'yard' : u)) };
   for (const q of b.quads) tiles.use[q] = 'lot';
   return { ...plan, tiles, quadBuilding, quadTop, facades, megas: [], spans: plan.spans.filter((s) => s.building === id) };

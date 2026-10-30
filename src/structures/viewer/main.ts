@@ -23,7 +23,7 @@ const state = {
   storeys: num('storeys', 0),
   density: num('density', 0.8),
   view: (q.get('view') ?? 'city') as 'building' | 'district' | 'city',
-  ground: (q.get('ground') ?? 'hill') as 'flat' | 'hill' | 'slope' | 'gorge',
+  ground: (q.get('ground') ?? 'hill') as 'flat' | 'hill' | 'slope' | 'gorge' | 'cliff',
   roads: num('roads', 3),
   walls: q.get('walls') === '1',
   tod: num('tod', 0.35),
@@ -40,6 +40,8 @@ const GROUNDS: Record<string, GroundFn> = {
   flat: () => 10,
   hill: (x, y) => 10 + 30 * fbm(x * 0.006 + 3.1, y * 0.006 + 1.7, 11, 4) + 0.06 * x,
   slope: (x, y) => 10 + 0.22 * x + 3 * fbm(x * 0.02, y * 0.02, 5, 3),
+  // (a steep hillside: the town built into it — spec.sunk)
+  cliff: (x, y) => 10 + 0.55 * x + 0.12 * y + 4 * fbm(x * 0.02, y * 0.02, 7, 3),
   // (a gorge round the town: the roads out cross it on viaducts)
   gorge: (x, y) => {
     const d = Math.hypot(x, y) + 12 * (fbm(x * 0.01, y * 0.01, 3, 2) - 0.5);
@@ -73,7 +75,7 @@ async function boot(): Promise<void> {
   const rebuild = () => {
     const t0 = performance.now();
     const ground = GROUNDS[state.ground];
-    const spec: CitySpec = { seed: state.seed, system: state.system, style: state.style, at: [0, 0], radius: state.r, density: state.density, roads: state.roads, walls: state.walls || undefined };
+    const spec: CitySpec = { seed: state.seed, system: state.system, style: state.style, at: [0, 0], radius: state.r, density: state.density, roads: state.roads, walls: state.walls || undefined, sunk: state.ground === 'cliff' ? 0 : undefined };
     if (state.storeys > 0) spec.storeys = [state.storeys, Math.max(1, state.storeys * 0.4)];
     plan = planCity(spec, ground);
     all = piecesOf(plan);
@@ -375,7 +377,7 @@ function panel() {
   row('size', slider('r', 16, 160, 4));
   row('storeys', slider('storeys', 0, 9, 1));
   row('density', slider('density', 0.2, 1, 0.05));
-  row('ground', select('ground', ['flat', 'hill', 'slope', 'gorge']));
+  row('ground', select('ground', ['flat', 'hill', 'slope', 'gorge', 'cliff']));
   row('roads', slider('roads', 0, 6, 1));
   row('time', slider('tod', 0, 1, 0.01, true));
   const views = document.createElement('div');
