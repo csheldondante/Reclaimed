@@ -17,6 +17,8 @@ const UNI_BYTES = 96 + 10 * 16;
 /** vertices a side, and world units between them */
 const G = 161;
 const SPACING = 32;
+/** (round 113, tilesfirst) ?standin=0: no stand-in under the view (far.wgsl vsStandIn) — the background shows where nothing drew */
+const STAND_IN = typeof location === 'undefined' || new URLSearchParams(location.search).get('standin') !== '0';
 
 /** (round 93) the window's light and look (the Globals' — render.wgsl lighting), for the rings to be lit as it is */
 export interface FarLight {
@@ -45,6 +47,8 @@ export interface FarTargets {
 
 export class FarLand {
   private pipe: GPURenderPipeline;
+  /** (round 113) the stand-in's (far.wgsl vsStandIn / fsStandIn) */
+  private standPipe?: GPURenderPipeline;
   private group: GPUBindGroup;
   private uni: GPUBuffer;
   private index: GPUBuffer;
@@ -199,6 +203,17 @@ export class FarLand {
       primitive: { topology: 'triangle-list', cullMode: 'none' },
       depthStencil: { format: t.depthFormat, depthWriteEnabled: true, depthCompare: 'less' },
     });
+    // (round 113, tilesfirst: the stand-in — far.wgsl vsStandIn — the far land at its own height under the whole view,
+    // at the far plane's depth: it shows only where nothing else drew. ?standin=0 off, to compare)
+    if (!ceiling && STAND_IN)
+      this.standPipe = device.createRenderPipeline({
+        label: 'far stand-in',
+        layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
+        vertex: { module, entryPoint: 'vsStandIn' },
+        fragment: { module, entryPoint: 'fsStandIn', targets: [{ format: t.format }, { format: t.pickFormat }] },
+        primitive: { topology: 'triangle-list', cullMode: 'none' },
+        depthStencil: { format: t.depthFormat, depthWriteEnabled: true, depthCompare: 'less' },
+      });
     if (lod) {
       const m = lod.n;
       const li = new Uint32Array((m - 1) * (m - 1) * 6);
@@ -304,6 +319,11 @@ export class FarLand {
       pass.setPipeline(this.gPipe);
       pass.setBindGroup(0, this.gGroup!);
       pass.draw(54, this.gCount);
+    }    if (this.standPipe) {
+      pass.setPipeline(this.standPipe);
+      pass.setBindGroup(0, this.group);
+      pass.setIndexBuffer(this.index, 'uint32');
+      pass.drawIndexed(this.count);
     }
   }
 

@@ -2333,3 +2333,7 @@ clears them).
   pixel check, render/bgcheck.ts).
 - **The pixel check** (bgcheck.ts) classifies the far land's pick (FAR_PICK_TAG) before the clear depth: a stand-in
   drawn without writing the depth is the far land, not the background.
+- **The stand-in** (layer 0; step 2): atlas/far.ts `standPipe`, far.wgsl `vsStandIn` / `fsStandIn` — the far land's grid at
+  the land's own height under the whole view, inside the window too, drawn at clip depth STAND_Z (just short of the
+  clear; tested and written) after the far land: it shows only where nothing nearer drew. bgcheck.ts counts depth
+  >= STAND_Z (or the far land's pick) as the far land. `?standin=0` off.

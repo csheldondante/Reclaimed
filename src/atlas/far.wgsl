@@ -311,6 +311,12 @@ fn fsFar(v: FOutV) -> FOutF {
   if (FC.pos.w < 0.5 && l.x > 2.0 && l.y > 2.0 && LD.info.x < 0.5) { discard; }
   if (inLod(l) || tiled(l)) { discard; }
   if (farCut(v.local, v.pos.xy)) { discard; }
+  return farShade(v);
+}
+
+/** the far land's look at a vertex's interpolants: lit, the bake's far level where it's baked, fogged; its pick */
+fn farShade(v: FOutV) -> FOutF {
+  let l = v.local.xy;
   let sun = normalize(vec3<f32>(0.45, 0.35, 0.82));
   let lit = 0.45 + 0.7 * max(dot(v.nrm, sun), 0.0);
   var c = v.col * lit;
@@ -336,6 +342,40 @@ fn fsFar(v: FOutV) -> FOutF {
   o.pick = vec2<u32>(0u, 0xfa000000u);
   return o;
 }
+
+// ---- (round 113, `tilesfirst`) the stand-in: the far land under the whole view -----------------------------------
+// The streaming design's layer 0 (docs/ARCHITECTURE.md "The stand-in and the cover"): the same grid as the far land,
+// at the land's own height everywhere — inside the window too, never sunk or pressed down — drawn after everything
+// else of the world pass at the far plane's depth (its clip z set to just short of the clear depth; tested and
+// written, so what's blended over it — the water's surface — is drawn over land, not over the clear colour). It shows
+// only where nothing else drew: the background the bgcheck counted, now the far land's look (bgcheck.ts counts its
+// depth as the far land's — STAND_Z there too, keep the two the same). Nothing else changes: anything drawn is nearer.
+const STAND_Z: f32 = 0.99999976;
+
+@vertex
+fn vsStandIn(@builtin(vertex_index) vi: u32) -> FOutV {
+  let G = u32(FP.mid.z);
+  let s = FP.win.z;
+  let gi = vec2<f32>(f32(vi % G), f32(vi / G)) - f32(G - 1u) * 0.5;
+  let local = (floor((FP.mid.xy + FP.org.xy) / s) + gi) * s - FP.org.xy;
+  let p = local + FP.org.xy;
+  let a = farAt(p);
+  let e = s;
+  let hx = farAt(p + vec2<f32>(e, 0.0)).x - farAt(p - vec2<f32>(e, 0.0)).x;
+  let hy = farAt(p + vec2<f32>(0.0, e)).x - farAt(p - vec2<f32>(0.0, e)).x;
+  let z = max(a.x, FP.mid.w) - FP.org.z;
+  var o: FOutV;
+  o.local = vec3<f32>(local, z);
+  let c = FC.viewProj * vec4<f32>(local, z, 1.0);
+  o.pos = vec4<f32>(c.xy, STAND_Z * c.w, c.w);
+  o.nrm = normalize(vec3<f32>(-hx / (2.0 * e), -hy / (2.0 * e), 1.0));
+  o.col = farColour(p, a.x, a.y, a.z);
+  o.dist = length(local - FP.mid.xy) / (f32(G - 1u) * 0.5 * s);
+  return o;
+}
+
+@fragment
+fn fsStandIn(v: FOutV) -> FOutF { return farShade(v); }
 
 // ---- the rings (round 83, lod.ts) ---------------------------------------------------
 // A ring an instance: its grid of n × n texels (lod.wgsl: the ground's top and colour). Toward its edge
