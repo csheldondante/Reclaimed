@@ -75,5 +75,6 @@ describe('terrain diagnostics', () => {
       console.log(`ground there: h ${v[j * 4].toFixed(1)}, open ${v[j * 4 + 1].toFixed(1)}..${v[j * 4 + 2].toFixed(1)}`);
     }
     expect(g.takeErrors()).toEqual([]);
+    a.dispose();
   }, 300_000);
 });

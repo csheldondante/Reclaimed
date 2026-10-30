@@ -888,7 +888,9 @@ fn ground(p: vec2<f32>) -> Ground {
   }
   // (round 117, terrain/gorge.wgsl) gorges wound across a plateau's top, walkable at the bottom and along the rims —
   // none under a river or a lake (their water's level is the plateau's: cut under it, it would hang in the air)
-  if (isLand(A) && A.tier == TIER_PLATEAU && g.w > 0.98 && g.rx > 5.0 && g.lk == 0.0) {
+  // (not in the macro ground's pass: the rivers and lakes are found on the land without them — a gorge cutting a lake's
+  // rim drained it, round 117; at a cell a gorge stops at a lake's rim, g.lk)
+  if (AP.macroPass == 0u && isLand(A) && A.tier == TIER_PLATEAU && g.w > 0.98 && g.rx > 5.0 && g.lk == 0.0) {
     let gz = gorgeAt(u, g.h, AP.sea + 10.0, g.dl);
     if (gz.cut < g.h) {
       g.h = gz.cut;

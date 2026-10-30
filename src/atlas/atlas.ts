@@ -159,9 +159,12 @@ interface Extra {
   vscale?: number;
   mode?: number;
   vsize?: [number, number];
+  /** (round 117) the macro ground's pass (AtlasP.macroPass): the hydrology's ground, without the terrain's small cuts */
+  macro?: boolean;
 }
 
-const PARAM_BYTES = 144;
+// (round 117, terrain: 160 — AtlasP.macroPass and its padding)
+const PARAM_BYTES = 160;
 /** forms.wgsl ColOut, and the runs a column holds (MR) */
 const COL_WORDS = 16;
 const COLG_BYTES = 96;
@@ -605,6 +608,7 @@ const RIVER_LEVEE: f32 = ${RIVER_LEVEE.toFixed(2)};
     f[33] = p.detail;
     f[34] = e.tile?.[0] ?? 0;
     f[35] = e.tile?.[1] ?? 0;
+    u[36] = e.macro ? 1 : 0;
     this.device.queue.writeBuffer(into, 0, ab);
   }
 
@@ -791,7 +795,13 @@ const RIVER_LEVEE: f32 = ${RIVER_LEVEE.toFixed(2)};
     await this.time('jfa borders', () => jfa(kSeedR, { 6: this.region }, kOutR, { 6: this.region, 9: this.dist }));
     await this.time('jfa coast', () => jfa(kSeedC, { 6: this.region, 22: this.regs }, kOutC, { 6: this.region, 9: this.dist, 22: this.regs }));
     await this.time('jfa landforms', () => jfa(kSeedL, { 6: this.region, 22: this.regs }, kOutL, { 6: this.region, 9: this.dist, 22: this.regs }));
-    const macro = () => one(kMacro, bg(kMacro, { 11: hmacB, 20: this.region, 21: this.dist, 22: this.regs, 23: this.pat, 25: this.riverBuf, 26: this.coarse.cells }));
+    // (round 117: the macro ground — what the rivers and lakes are found on, the roads planned on — without the gorges:
+    // a gorge cutting a lake's rim drained it and moved the rivers; compose.wgsl ground() asks AtlasP.macroPass)
+    const macro = async () => {
+      this.writeParams({ macro: true });
+      await one(kMacro, bg(kMacro, { 11: hmacB, 20: this.region, 21: this.dist, 22: this.regs, 23: this.pat, 25: this.riverBuf, 26: this.coarse.cells }));
+      this.writeParams();
+    };
     await this.time('ground', macro);
     this.hmac = new Float32Array(await this.time('readback ground', () => this.read(hmacB)));
 
