@@ -3,6 +3,39 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-30 — round 117 (session 5) — design session, part 1: intent for the generator tracks
+
+The six tracks of round 116 were stopped before building ("How are they running if we have not had a design session for
+each?" / "Please let's do an interactive design. I'll feed you my thoughts and then they can work and not before"). The
+user's first input, verbatim:
+
+> I don't want to squash your creativity or impose dogmatic constraints on implementation but I do want to express my intent, convey useful insights and suggest methodology and things to keep in mind during work. In the past you have run ahead and missed useful things. For example, you had several places in code that converting the column space terrain material representations into voxel space when it was not needed for rendering or simulation and caused performance to crater.
+> Please don't make assumptions. For example, just because we have voxel assets currently doesn't mean we don't want to switch to meshes. The terrain looks better now as a mesh than it did before.  In general I want you to document why so that how doesn't become dogmatic.
+>
+> Why do we like modular code with clean abstractions? It minimizes test surface area and the volume of potential bugs. It means improvements are automatically inherited. It means that we can have the same coverage with fewer faster unit tests. Why is what matters because it also informs when it is ok to break a rule. If many agents are working in parallel they may all need slightly different tweaks to other systems or APIs. We want to work fast and we can address that and consolidate when we merge them back together.
+>
+> I want more meshes buried in the terrain. The whole point of having an other type and interval is we can actually have buried statues and fallen structures and stones. These being skew add visual interest and they make great props for telekenisis or excavation sites. Column aligned terrain is just one useful data representation but I think we are going to want instances meshes as well. This system I believe was started but we need unit tests to see how well it works and how it interacts with physics. Unburying something should not make it suddenly launch into the air. It should maybe topple or slide and tumble and maybe stay up depending on support.
+>
+> Ok so now terrain. Generally speaking we want our terrain to be striking to look at and interesting to explore. The current terrain is generally quite good visually but it is particularly good at the cliffs where I gave a lot of input to how as well as why. Cliffs would be even better with rocks around the base and caves that open (often at their base). For ocean caves we want waves that crash agains the rocks. For those on land we want sand or dirt piled up and rocks along their base. Those are all specific examples but let's talk more generally.
+>
+> We want to partition our map. We want high frequency and low frequency regions of our partion and we may subpartition those. We want natural barriers like rivers, magma flows, ravines, dense vegetation, tar pits, steep mountains and cliffs that let us steer player traversal during runs. We also want transient soft barriers like hostile agents, severe storms or weather or occasionally just long distances that are not fun to traverse without a vehicle. We should use noise and baked tiling heightmaps to make this happen and have thresholds along which we can use SDF to blend heightmaps and create natural barriers and ramps. Barriers let us control play. An impassible mountain can have a cave through it. A ravine can require the player to build a bridge. A desert with dust storms may require a vehicle. The generation of the map doesn't need to do this all in one shot or according to a plan but the more it can do quickly the better. I like using voroi and noise and masks and SDF to blend. Impassible areas I often have high frequency noise and then paths and walkable areas are less busy. I want both terrain and instanced features like structures or potentially plants. Waking through lead covered forest floor with silver birches towering above and leaves falling and blowing in the wind would be breathtaking. We want to use our systems to impress players. Make tall grass that blows in the wind. Make leaves or dust. Have a thick fog or heavy storm with flooding. Fill the wilderness with boids of various animals. Herds, predators that stalk. This is a playground for us both.
+>
+> A few other concrete exam ok was for terrain. Rivers look bad right now. They have serious isotropy issues and they have no banks. Use SDF. Have them carve into the ground. Make their banks look eroded. Add reeds. Have rocks and rapids. Have waterfalls. So many waterfalls. Have them disappear into holes and pop out of caves. Play with flow of water and magma and make the maps fascinating to explore.
+>
+> Caves should have ground level openings and be wide enough to traverse. We want underground rivers and lakes. We want vast chambers. We want crumbling ceilings with beams of light coming down and shade plants growing in the borrowed light. Let's make this world hauntingly beautiful.
+>
+> I think instead of a global sea level a GPU flood fill based on height would let us easily flood areas and would be a nice tool. We can flood with water, sand, magma etc.
+>
+> I do want more 3d meshes interacting with the terrain. Large trees, megastructures (although these I want to be various procedural building assets for various tile systems plus some WFC and mega tile features (features multiple tiles big)).
+>
+> For units I want rain world style procedural animation with secondary features like capes or fur. I want hunanoid an non. It doesn't have to be high fidelity it does have to be readable and look cool.
+>
+> For buildings we have different types of tile system. Irregular tiles like towscraper, voronoi tilings of isolines to make city streets and plot lots, radial tiles like bulwark. Let's bake paths into the tiles we generate so agents can interact with them. Taking elevators, stairs, walking on ramparts. I would also have linear tile features we can use for bridges, roads, railroads and extrude along splines.
+>
+> For plants, L systems are great for branches and then cellular autonoma for roots. I am ok with stylized or low fidelity but I just want it to be readable and pretty and look integrated with the world. Plants growing on fields and being instances that way into other geometry is key.
+>
+> Let me know what I haven't weighed in on as much and I'll try to pad it out.
+
 ## 2026-10-30 — round 116 (session 5, `places`) — high-value work in parallel: generators, editors, sound, runs
 
 - The user, verbatim: "I would like to target high value work. What is awesome, what will be most impactful to players and what will show the most rapid progress. In my opinion we should target improvements to the terrain generation, run planning, and character movement and controls and we should add sound effects and work on procedural generators and editors for flora,  agents, gear, buildings and vehicles. I want beautiful structures, sprawling fantastic cities and lively animated agents inhabiting our world. "
