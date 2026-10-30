@@ -67,6 +67,14 @@ Part 3, the user answering what the read-through of earlier decisions found (unm
 > 6. A GPU algorithm we use for generative tools. I want to be able to flood a basin and bury things and flood fill based on heightmap makes that easy.
 > 7. As fast as we can make it and we will iterate on design as we go.
 
+Part 4, the user approving the six tracks (terrain, structures, inhabitants, flora, run planning, the game layer for heroes and controls), verbatim:
+
+> Yes that sounds good. Sound and editors are ok to defer. Likely we want a model to generate sound effects and maybe 2d images. What do you mean the editor though? If we are making generators for units and cities and plants just having a way to view that sounds great. It might be cool to also pipe those assets into a database and then generate images and index the asset with an encoder so we can do text searches by keyword or description
+
+→ "Editor" means a viewer: each generator gets a page to view what it makes (seed, a few parameters, turn and zoom). Sound
+and full editors are deferred; sound effects and 2D images may come from a model. Later: an asset database the generators
+feed, with rendered images and an encoder index for text search by keyword or description (with the desktop DB service).
+
 ## 2026-10-30 — round 116 (session 5, `places`) — high-value work in parallel: generators, editors, sound, runs
 
 - The user, verbatim: "I would like to target high value work. What is awesome, what will be most impactful to players and what will show the most rapid progress. In my opinion we should target improvements to the terrain generation, run planning, and character movement and controls and we should add sound effects and work on procedural generators and editors for flora,  agents, gear, buildings and vehicles. I want beautiful structures, sprawling fantastic cities and lively animated agents inhabiting our world. "
