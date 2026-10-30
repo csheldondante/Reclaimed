@@ -19,6 +19,7 @@ each was implemented.
   only where what is visible and a small buffer"; the speed to keep clean "I would say 2x bike speed so we have room for
   faster note the camera will pull back some when the bike goes faster"; 4 MB more for height grids "yes that's fine".
 - And: "Prioritize rendering over simulation too": the planner's budget covers what is visible first; simulation gets what is left.
+- The look: "Keep the per cell look for now I enjoy it": the height grid draws the same per-cell look as the hybrid grid (material-ID texture), no triplanar or detail textures.
 - Order: migration steps 1-5 on branch `tilesfirst`, each gated and merged one at a time; step 6 (the window as
   simulation only) planned, scheduled after.
 ## 2026-10-30 — round 113 (`tilesfirst`) — tiles first, grow with speed, the geometric coverage check; the streaming design
