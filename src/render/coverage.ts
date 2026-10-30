@@ -37,6 +37,9 @@ export interface CoverView {
   R: number;
   /** a tile drawn of world region (rx, ry) this frame */
   tile: (rx: number, ry: number) => boolean;
+  /** (optional) world region (rx, ry)'s land is known to lie off the screen: its tile's own extent, as baked, is (the
+   *  CPU's box from the macro heights can be taller than the land) */
+  offScreen?: (rx: number, ry: number) => boolean;
   /** world region (rx, ry)'s heights (window z), or null (unknown) */
   zRange: (rx: number, ry: number) => [number, number] | null;
   /** regions past the window this far round the window looked at (regions) */
@@ -173,7 +176,7 @@ export function coverage(v: CoverView): Coverage {
       const x0 = i * R;
       const y0 = j * R * ROW_H;
       const pr = project(m, x0, y0, x0 + R, y0 + R * ROW_H, zr[0], zr[1]);
-      if (!pr.seen) continue;
+      if (!pr.seen || v.offScreen?.(rx, ry)) continue;
       out.regions++;
       if (v.tile(rx, ry)) continue;
       out.regionsUndrawn++;
