@@ -60,6 +60,7 @@ tests work and do quick smoke tests to find failures early." docs/TESTING.md.
 | TK9 | MemoryWorldState.snapshot() handed out the live factions and settlements: a save between runs changed when a faction's attitude moved after it (world-state.test.ts); copies now | S | done (testkit) |
 | TK10 | More unit tests for what the brief listed and this round didn't reach: the planners (scenes/planner.ts), calibration math (perf/), run and story logic (run/, story/), layout and packing (world/layout.ts, sim/pages.ts) | M | open |
 | TK11 | The runner's teardown once took ~200 s after a passing check (smoke, rocklab alone, on a busy GPU): page / browser / server close; time each | S | open |
+| TK12 | (terrain, round 117) The gpu tier's shared worker died ("Worker exited unexpectedly") as soon as a second file made a WorldCore — reproducible in the terrain worktree with only places' own gpu files, never in a fresh worktree at the same commit, and after a file built a whole atlas; each gpu file now runs in a fresh worker (isolate: true; tier ~16 s). Why Dawn dies in one directory and not another is unknown (a stale Dawn/D3D cache keyed by path?) | S | done (terrain), cause open |
 
 ## Round 118 (2026-10-30, session 5, `places`) — found while reviewing the tracks
 
