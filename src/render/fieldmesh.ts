@@ -50,6 +50,8 @@ const FRESH_HASH = 0x9e3779b9;
 const URGENT_SLOTS = 4;
 /** fieldmesh.wgsl URGENT_BIT: in a chunk's near word, marked urgent */
 const URGENT_BIT = 0x10000;
+/** (round 117, terrain) fieldmesh.wgsl UNMESHED_BIT: in a chunk's near word, the hybrid doesn't mesh it */
+const UNMESHED_BIT = 0x20000;
 /** cells over a chunk's known top its box reaches (growth since the readback, the bevels) */
 const TOP_PAD = 4;
 
@@ -606,15 +608,18 @@ export class FieldMesh {
     // (state word 15: the frame, so the second hash pass knows what the first took)
     this.device.queue.writeBuffer(this.state, 15 * 4, new Uint32Array([++this.frameNo]));
     let nearW = this.near;
-    if (this.urgentN > 0) {
+    if (this.urgentN > 0 || this.wanted) {
       if (this.nearOut.length !== chunks) this.nearOut = new Uint32Array(chunks);
       nearW = this.nearOut;
       nearW.set(this.near);
-      for (let c = 0; c < chunks; c++) {
+      for (let c = 0; c < chunks && this.urgentN > 0; c++) {
         if (!this.urgentLeft[c]) continue;
         if (nearW[c]) nearW[c] |= URGENT_BIT;
         if (--this.urgentLeft[c] === 0) this.urgentN--;
       }
+      // (round 117, terrain — TR24: the hybrid's chunks the mesh doesn't draw, marked: a drawn chunk's field closes the
+      // caves at its side toward them — fieldmesh.wgsl UNMESHED_BIT, colDist)
+      if (this.wanted) for (let c = 0; c < chunks; c++) if (!this.wanted[c]) nearW[c] |= UNMESHED_BIT;
     }
     this.device.queue.writeBuffer(this.state, (CHUNK0 + chunks * CSTRIDE) * 4, nearW);
     // (round 80: a band only changes when it's packed — every chunk looked at for a few seconds after; else
