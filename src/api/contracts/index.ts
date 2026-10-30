@@ -12,3 +12,4 @@ export * from './diplomacy-memory';
 export * from './units';
 export * from './hero';
 export * from './simtiers';
+export * from './terrain';

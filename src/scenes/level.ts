@@ -1,5 +1,6 @@
 // The playable valley: world + diegetic powers + HUD + level goal.
 
+import { TerrainSystem } from '../terrain/terrain';
 import type { Ambience } from '../audio/ambience';
 import { Nature, reclamation, worldHealth } from '../game/nature';
 import { Powers } from '../game/powers';
@@ -1735,6 +1736,8 @@ export class LevelScene implements Scene {
       },
       stream: this.stream,
       atlas: this.opts.atlas?.atlas,
+      // (round 117, terrain track) the region graph, its requests and the flood tool (api/contracts/terrain.ts)
+      terrain: this.opts.atlas?.atlas ? new TerrainSystem(this.opts.atlas.atlas) : undefined,
       // (round 93) the land past the window: far.lod.bytes, far.windowLook, far.grownVeg
       far: this.far,
       toggleFly: () => this.toggleFly(),

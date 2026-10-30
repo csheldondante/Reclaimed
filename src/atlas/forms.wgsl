@@ -393,7 +393,8 @@ fn colFinish(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
   }
   // set lava, a cone: the rock added is basalt at the top
-  if (g.cap != 0u && !river) {
+  // (round 117: a boulder in a river's channel stands out of its water, bare rock — terrain/river.wgsl riverCut)
+  if (g.cap != 0u && (!river || top > g.rl)) {
     topMat = g.cap;
     cover = 0.0;
   }

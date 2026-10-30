@@ -268,57 +268,14 @@ fn stampSum(p: vec2<f32>, unit: bool) -> Stamped {
   return Stamped(dh + odd, select(0u, mat, odd > 1.5));
 }
 
-struct River {
-  on: bool,
-  /** distance from the river's line, in its half-widths */
-  x: f32,
-  level: f32,
-  w: f32,
-  depth: f32,
-  flags: u32,
-  /** (round 84) its flow at the reference wetness: downstream along the segment, its node's speed (cells a tick) */
-  vel: vec2<f32>,
-}
+// (round 117, terrain track: River and riverAt moved to terrain/river.wgsl — the course warped off the texel grid, two
+// segments a node, the step of a cascade; riverCut there is the cross-section)
 
 /** q moved by whole turns of the torus to be nearest p */
 fn nearTo(q: vec2<f32>, p: vec2<f32>) -> vec2<f32> {
   let W = vec2<f32>(AP.worldW, AP.worldH);
   let d = q - p;
   return p + d - round(d / W) * W;
-}
-
-/** the nearest river at p: of the segments from the nodes nearest the four texels round it to their next */
-fn riverAt(p: vec2<f32>) -> River {
-  var r: River;
-  r.on = false;
-  r.x = 1e9;
-  let t = torusU(p) * f32(AP.n) - 0.5;
-  let i0 = vec2<i32>(floor(t));
-  for (var k = 0; k < 4; k++) {
-    let id = riverBuf[texIdxW(i0 + vec2<i32>(k & 1, k >> 1))];
-    if (id == 0u) { continue; }
-    let a = riverNode(id - 1u);
-    let b = riverNode(a.next);
-    let pa = nearTo(vec2<f32>(a.x, a.y), p);
-    let pb = nearTo(vec2<f32>(b.x, b.y), pa);
-    let ab = pb - pa;
-    let l2 = dot(ab, ab);
-    var s = 0.0;
-    if (l2 > 1e-6) { s = clamp(dot(p - pa, ab) / l2, 0.0, 1.0); }
-    let w = mix(a.width, b.width, s);
-    let x = length(p - (pa + ab * s)) / w;
-    if (x < r.x) {
-      r.on = true;
-      r.x = x;
-      r.level = mix(a.level, b.level, s);
-      r.w = w;
-      r.depth = mix(a.depth, b.depth, s);
-      r.vel = select(vec2<f32>(0.0), ab / sqrt(max(l2, 1e-12)), l2 > 1e-6) * mix(a.speed, b.speed, s);
-      r.flags = a.flags & b.flags;
-      if (a.flags == 1u && s < 0.5) { r.flags = 1u; }
-    }
-  }
-  return r;
 }
 
 /**
@@ -329,12 +286,15 @@ fn riverAt(p: vec2<f32>) -> River {
 struct LakeHere {
   level: f32,
   m: f32,
+  /** (round 117, terrain/flood.ts) what fills it: 0 water, 1 sand, 2 magma, 3 ash (a lake's second word) */
+  fluid: u32,
 }
 
 fn lakeAt(p: vec2<f32>) -> LakeHere {
   var o: LakeHere;
   o.level = 0.0;
   o.m = 0.0;
+  o.fluid = 0u;
   let tab = riverBuf[AP.n * AP.n + 1u];
   if (tab == 0u) { return o; }
   let ids0 = riverBuf[AP.n * AP.n + 2u];
@@ -362,6 +322,7 @@ fn lakeAt(p: vec2<f32>) -> LakeHere {
     if (m > bm || (m == bm && L > o.level)) {
       bm = m;
       o.level = L;
+      o.fluid = u32(bitcast<f32>(riverBuf[tab + (id - 1u) * 2u + 1u]));
     }
   }
   o.m = bm;
@@ -833,7 +794,20 @@ fn ground(p: vec2<f32>) -> Ground {
   // the ground is a bank over the level (a beach rising from the water), so no water stands over lower ground
   // past it (where the macro rim is lower between its texels). Before the river's channel: the river out cuts
   // through the bank at the outlet.
-  let lh = lakeAt(p);
+  var lh = lakeAt(p);
+  // (round 117, terrain/flood.ts) a basin flooded with sand or ash buries what's in it (loose ground to its level); with
+  // magma, lava stands to it — not water
+  if (lh.fluid != 0u && lh.level > 0.0) {
+    if (lh.m >= 0.5 && g.h < lh.level) {
+      if (lh.fluid == 2u) {
+        g.clava = max(g.clava, lh.level - g.h);
+      } else {
+        g.loose = max(g.loose, lh.level - g.h);
+        g.lmat = select(3u, 17u, lh.fluid == 3u);
+      }
+    }
+    lh.level = 0.0;
+  }
   g.lk = lh.level;
   g.lkw = false;
   if (lh.level > 0.0) {
@@ -858,9 +832,13 @@ fn ground(p: vec2<f32>) -> Ground {
   // between — a trench in its bed only filled with what slid down its sides, the held water standing over it)
   let inLake = g.lkw && g.h < lh.level;
   if (rv.on && rv.x < 4.0 && !lowR && !inLake) {
-    var cut = rv.level + (rv.x - 1.0) * rv.w * 2.5;
-    if (rv.x < 1.0) { cut = rv.level - rv.depth * (1.0 - rv.x * rv.x); }
-    g.h = min(g.h, cut);
+    // (round 117, terrain/river.wgsl riverCut: the channel, its eroded bank, bars, boulders and plunge pools)
+    let rc = riverCut(p, rv);
+    g.h = min(g.h, rc.cut);
+    if (rc.raise > g.h) {
+      g.h = rc.raise;
+      if (rc.rock > 0.5) { g.cap = max(regs[g.a].rockMat, 1u); }
+    }
     g.rl = rv.level;
     g.rx = rv.x;
     g.rflags = rv.flags;

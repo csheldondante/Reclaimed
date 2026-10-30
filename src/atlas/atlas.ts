@@ -24,6 +24,7 @@ import buildW from './build.wgsl?raw';
 import columnsW from './columns.wgsl?raw';
 import commonW from './common.wgsl?raw';
 import composeW from './compose.wgsl?raw';
+import terrainRiverW from '../terrain/river.wgsl?raw';
 import formsW from './forms.wgsl?raw';
 import noiseW from './noise.wgsl?raw';
 import patsimW from './patsim.wgsl?raw';
@@ -446,6 +447,8 @@ const CRATER_BLOCK = 4 + MAX_CRATERS * CRATER_WORDS;
 export const GIANT_FLOATS = 8;
 const MAT_QUARTZ = 36;
 /** forms.wgsl MARGIN and its lattices' finest spacing */
+/** (round 117, terrain track) basins the flood tool may add to the lakes' table (Atlas.addBasin) */
+export const FLOOD_SPARE = 64;
 const FORM_MARGIN = 48;
 const FINEST = 4;
 
@@ -507,6 +510,8 @@ export class Atlas {
   riverStats = { nodes: 0, lava: 0, waterfalls: 0, lakes: 0, ms: 0, speed: [0, 0, 0] as [number, number, number], discharge: 0, pipeSlope: 0 };
   /** the nodes (rivers.ts NODE_WORDS each), for tools */
   riverNodes: Uint32Array = new Uint32Array(0);
+  /** (round 117, terrain track) where the lakes' table and ids sit in riverBuf (words), rows used and room for more */
+  private basinTab = { tabOff: 0, idsOff: 0, used: 0, cap: 0, on: false };
   /** (round 109, rivers.ts) what drains into each node: weather/catchwet.ts's per-watershed wetness */
   riverCatchments?: Catchments;
   /** (round 90, rivers.ts) the lakes: each filled hollow kept as one, and per texel which (rivers.ts LAKE_IN: its
@@ -552,7 +557,8 @@ const RIVER_FALL: f32 = ${RIVER_FALL.toFixed(2)};
 const RIVER_SHEET: f32 = ${RIVER_SHEET.toFixed(2)};
 const RIVER_LEVEE: f32 = ${RIVER_LEVEE.toFixed(2)};
 `;
-    return [noiseW, commonW, patternsW, composeW, rivers, ...own];
+    // (round 117: terrain/river.wgsl — the rivers' course and cross-section, the terrain track's)
+    return [noiseW, commonW, patternsW, composeW, terrainRiverW, rivers, ...own];
   }
 
   writeParams(e: Extra = {}, into = this.paramBuf): void {
@@ -817,12 +823,15 @@ const RIVER_LEVEE: f32 = ${RIVER_LEVEE.toFixed(2)};
     this.lakeAt = rv.lakeAt;
     // (round 90) after the nodes: the lakes' table (LAKE_WORDS each: the level), then the per-texel ids, two to a word
     const nodeBytes = Math.max(rv.nodes.byteLength, NODE_WORDS * 4);
-    const lakeTab = new Float32Array(Math.max(rv.lakes.length, 1) * LAKE_WORDS);
+    // (round 117, terrain track: FLOOD_SPARE more rows for the basins the terrain's flood tool fills — terrain/flood.ts,
+    // Atlas.addBasin; a lake's second word is its fluid: 0 water, 1 sand, 2 magma, 3 ash)
+    const lakeTab = new Float32Array((rv.lakes.length + FLOOD_SPARE) * LAKE_WORDS);
     for (const lk of rv.lakes) lakeTab[lk.id * LAKE_WORDS] = lk.level;
     const tabOff = N + CRATER_BLOCK + nodeBytes / 4;
     // (?lakes=0: the lakes found but not realised — the before of an A/B; the rivers' levels are the lakes' still)
     const realise = new URLSearchParams(location.search).get('lakes') !== '0';
-    lakeOff = rv.lakes.length && realise ? [tabOff, tabOff + lakeTab.length] : [0, 0];
+    lakeOff = realise ? [tabOff, tabOff + lakeTab.length] : [0, 0];
+    this.basinTab = { tabOff, idsOff: tabOff + lakeTab.length, used: rv.lakes.length, cap: rv.lakes.length + FLOOD_SPARE, on: realise };
     this.riverBuf.destroy();
     this.riverBuf = dev.createBuffer({ label: 'atlas rivers', size: (N + CRATER_BLOCK) * 4 + nodeBytes + lakeTab.byteLength + rv.lakeAt.byteLength, usage: S });
     writeCraters();
@@ -1756,6 +1765,25 @@ const RIVER_LEVEE: f32 = ${RIVER_LEVEE.toFixed(2)};
       return [Math.floor(((tx + 0.5) / n) * this.p.cols), Math.floor(((ty + 0.5) / n) * this.p.rows)];
     }
     throw new Error('atlas: nowhere to start (no temperate land)');
+  }
+
+  /**
+   * (round 117, terrain track — terrain/flood.ts) A basin filled to `level` with `fluid` (0 water, 1 sand, 2 magma,
+   * 3 ash): a row of the lakes' table, its texels (`inside`, macro texel indices) marked as in it and `rim` as its
+   * shore (compose.wgsl lakeAt: the bank raised over its level where the ground dips under it). Land made from now on
+   * has it; the window's and the tiles' land made before don't (remade as they stream again). Returns its id.
+   */
+  addBasin(inside: ArrayLike<number>, rim: ArrayLike<number>, level: number, fluid: number): number {
+    const T = this.basinTab;
+    if (!T.on) throw new Error('atlas: the lakes are off (?lakes=0): no basin can be flooded');
+    if (T.used >= T.cap) throw new Error(`atlas: no room for another basin (${T.cap - T.used} of FLOOD_SPARE ${FLOOD_SPARE} left)`);
+    const id = T.used++;
+    for (let k = 0; k < rim.length; k++) if (!(this.lakeAt[rim[k]] & 0x8000)) this.lakeAt[rim[k]] = id + 1;
+    for (let k = 0; k < inside.length; k++) this.lakeAt[inside[k]] = (id + 1) | 0x8000;
+    const row = new Float32Array([level, fluid]);
+    this.device.queue.writeBuffer(this.riverBuf, (T.tabOff + id * LAKE_WORDS) * 4, row);
+    this.device.queue.writeBuffer(this.riverBuf, T.idsOff * 4, this.lakeAt);
+    return id;
   }
 
   dispose(): void {
