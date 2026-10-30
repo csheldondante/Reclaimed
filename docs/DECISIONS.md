@@ -3,6 +3,17 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-30 — round 118 (session 5, `play`) — the user played the sandbox
+
+- The user, verbatim, after playing branch `play` on the phone:
+
+> I tried it and it's decent! I want to bike to be faster and to try on hills. I didn't try the grappling hook yet but can you swipe to cut it and release early? It would be cool to pull enemies in or drag them that way too or to pull up along other vehicles. Either way this is cool!
+>
+> For the lich the telekinesis controls much better. I do want the life drain to float them up in front of the lich but this is fine for now.
+
+- → BACKLOG PL11-PL14 (`play`): a faster bike, spawned on hills; the hook cut early by a swipe, enemies pulled in or dragged on
+  the line, the bike reeled up alongside other vehicles; the lich's life drain floats its victim up in front of the lich.
+
 ## 2026-10-30 — round 117 (session 5) — design session, part 1: intent for the generator tracks
 
 The six tracks of round 116 were stopped before building ("How are they running if we have not had a design session for
