@@ -117,6 +117,13 @@ each was implemented.
   overhanging cliffs asked of the solver agent (Node tests of analyseRock, then lab stations). The lattice-vs-nodes and
   the judge's torque model answered in chat; the user to decide.
 
+- The user, verbatim: "Can we treat this as an experiment and test each approach side by side? Performance batteries and feel tests so I can see what is improved vs the cost?" and "I would like the for both the deformation and the terrain collapse"
+  → Two halves of one experiment. Deformation (branch solver): old / nodes / lattice / hybrid, picked live in the lab
+  (?solver=), with a compare mode from one snapshot. Terrain collapse (branch judge): today's judge (runs) against the
+  user's method of sections on the GPU with a thrust check for arches (?judge=sections). Each gets a perf battery (GPU and
+  CPU ms, bodies, scaling 10/50/200, the phone proxy) and a correctness battery (arch, dome, overhangs, spire, pylon,
+  wood tower, mesa, burial).
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
