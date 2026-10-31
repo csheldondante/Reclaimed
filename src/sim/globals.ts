@@ -40,6 +40,9 @@ export const enum EventKind {
   Ripple = 6,
   /** set alight: fuel within the radius catches at intensity `strength` (fire.wgsl; world API fire.ignite) */
   Ignite = 7,
+  /** (LW1) mend: cracked structure within the radius knits back, a damage level with chance `strength` (structure.wgsl;
+   *  the trait system's restoration fields) */
+  Mend = 8,
 }
 
 /** A dust storm: a roaming patch of strong, gusty wind (no rain, no cloud). */

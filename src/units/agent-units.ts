@@ -14,6 +14,9 @@
 //    unit's agents.hit). A unit that isn't hostile but is ordered to attack, or a guard with a hostile in
 //    sight, closes in on the foes' field and strikes (CPU: in reach, every STRIKE s, a hit with a knock).
 //  - Health is the contract's (default 3); the GPU's hp is HPK times it. Deaths come back as death events.
+//  - (LW1) Raised: with the trait system on the agents a fallen unit lies as a corpse, and a raise effect can stand it up
+//    again (a 'raised' event: the same GPU id) in the raiser's group. It's alive again here, keeps its role, and is
+//    `bound`: the raiser's, not this layer's to order — it neither takes jobs nor hunts until the game orders it.
 // Window coordinates (x cells, y world units, z the ground) as the world API's.
 import type { Actor, SpawnOpts, UnitId, UnitJob, UnitView, Units, V2, V3 } from '../api/contracts/units';
 import type { FactionId } from '../api/contracts/world';
@@ -63,6 +66,8 @@ export interface UnitRec {
   work?: any; // eslint-disable-line @typescript-eslint/no-explicit-any
   patrolAt?: V2;
   seenState?: AgentState['state'];
+  /** (LW1) raised into this group: the raiser's (no jobs, no hunt here until it's ordered) */
+  bound?: number;
 }
 
 const COLOURS = ['#7c8a96', '#b0583a', '#5d8a4a', '#b89a4a', '#6a5a9a', '#4a8a8a'];
@@ -71,7 +76,11 @@ export class AgentUnits implements Units {
   readonly died: ((u: UnitView, by: UnitId | string | null) => void)[] = [];
   readonly hurt: ((u: UnitView, damage: number, by: UnitId | string | null) => void)[] = [];
   readonly noticed: ((u: UnitView, target: UnitId | string) => void)[] = [];
+  /** (LW1) a fallen unit raised (the trait system's raise): alive again, bound to `group` */
+  readonly raised: ((u: UnitView, group: number) => void)[] = [];
   readonly recs = new Map<UnitId, UnitRec>();
+  /** (LW1) the fallen by their GPU id: a corpse may rise */
+  private fallen = new Map<number, UnitId>();
   private byGpu = new Map<number, UnitId>();
   private actors: Actor[] = [];
   private next = 1;
@@ -163,6 +172,8 @@ export class AgentUnits implements Units {
       const u = this.recs.get(id);
       if (!u || !u.v.alive) continue;
       if (u.v.job.kind === 'work' && job.kind !== 'work') this.routine?.drop(u);
+      // (an order takes a raised unit back from its raiser)
+      u.bound = undefined;
       u.v.job = job;
       u.target = job.kind === 'attack' ? job.target : null;
       this.release(u);
@@ -432,19 +443,35 @@ export class AgentUnits implements Units {
         u.v.state = 'dead';
         u.v.health = 0;
         this.byGpu.delete(e.id);
+        this.fallen.set(e.id, u.v.id);
         if (u.v.job.kind === 'work') this.routine?.drop(u);
         this.release(u);
         const by = typeof e.by === 'number' ? (this.hitBy.get(e.by) ?? null) : null;
         for (const f of this.died) f(this.view(u), by);
-      }
+      } else if (e.type === 'raised') {
+        const id = this.fallen.get(e.id);
+        const u = id !== undefined ? this.recs.get(id) : undefined;
+        this.fallen.delete(e.id);
+        if (!u) continue;
+        u.v.alive = true;
+        u.v.state = 'idle';
+        u.v.job = { kind: 'idle' };
+        u.target = null;
+        u.group = e.group;
+        u.bound = e.group;
+        this.byGpu.set(e.id, u.v.id);
+        for (const f of this.raised) f(this.view(u), e.group);
+      } else if (e.type === 'decayed') this.fallen.delete(e.id);
     }
     // (the dead are kept for `query({ dead: true })` a while, then forgotten)
     if (this.recs.size > 600) for (const [id, u] of this.recs) if (!u.v.alive) this.recs.delete(id);
+    if (this.fallen.size > 600) for (const [g, id] of this.fallen) if (!this.recs.has(id)) this.fallen.delete(g);
   }
 
   /** who's hunting whom; who's striking; the jobs' groups */
   private think(dt: number): void {
-    const live = [...this.recs.values()].filter((u) => u.v.alive);
+    // (LW1: the raised are their raiser's — not hunted for here, nor given jobs)
+    const live = [...this.recs.values()].filter((u) => u.v.alive && u.bound === undefined);
     const hostiles = live.filter((u) => u.v.hostile);
     const enemiesOf = (u: UnitRec) => (x: UnitRec) => x.v.alive && x.v.hostile !== u.v.hostile && (x.v.faction !== u.v.faction || x.v.hostile);
     const d2 = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1]);

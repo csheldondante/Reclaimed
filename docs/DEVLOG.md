@@ -14408,3 +14408,48 @@ animals, animals-close; tilegate/). Seen while looking, already on places: a dar
 spawn's wide zoom (cmp-wide-5291.png, places' build) — M120-2; tall dark spires near the tilegate spot are in the
 old baselines too; the stretched triangles in the free camera at terrain's fall spot are on places' build as well (M120-4). The animals only come with `?life=1` (not in the default world) — M120-3, the user's call.
 
+## 2026-10-31 — round 120 (`traits`): Living World slice 1 — traits, effects and modular rules on the GPU agents (LW1)
+
+The user (DECISIONS round 120): "the systems that process traits for things like combat and other interactions are
+essentially game specific logic but we want it GPU bound and cheap so we can use it on our agents. Modular architecture
+here is key." And the design document's §4: "combinatorial depth from shared status/effect semantics", "statuses are verbs
+on the simulation". What was there: the GPU agents (units.wgsl's step does damage, fire, drowning, throws by kind), the
+Units contract on them (AgentUnits), recipe tags (round 85), world events for growth (Grow). No trait data, no effect
+notion, no way for a game to add a rule without editing units.wgsl. Play's lich is on `play`/`runsit`, not places — main's
+call: build on places, a thin caster in the playground, the lich's hook documented (LW1-1).
+
+**Why three structures.** Traits are data (what a thing is, what's happening to it), effects are operations put into the
+world, rules are the game's code. Folding any two together is the conflation the user's principles warn about: a rule
+that also stores state can't be swapped; an effect that knows who it hurts is a bespoke spell. So: a trait word a slot
+(intrinsic bits + statuses with expiry ticks — expiry ticks, not timers counted down: an f16 or u8 timer either loses
+precision or needs a per-tick decrement; a u32 tick compares exactly), an effect list a tick (a uniform: 32), and modules —
+each its own kernel with a 256-byte table, seeing only the prelude. The registry is the only thing that knows the set.
+
+**Why CAPS and LOOK.** The step already has 8 storage buffers (nav, dist, units, occ, events, fire, shove, lava): it can't
+bind the trait buffer, and it shouldn't — it's the engine. So the unit record grew a fifth vec4 the step and the draw
+read: CAPS (no burn, no drown, rooted, flee) and LOOK (tint, halo, sparks, a body lying), derived each tick from the
+traits by the game's `caps` and `look` modules (round 85: "derived capabilities as separate rules"). The engine only knows
+four verbs; which traits give them is a table. Fire immunity is then "fire_immune → NO_BURN" plus a resist row
+(fire × 0), petrification "petrified → ROOTED | NO_BURN" plus a stone tint; nothing in units.wgsl names a trait.
+
+**Corpses.** Raising needs the body: a death used to free the slot at once. With the trait system on, the slot lies as a
+`corpse` (drawn on its back, ash-tinted) for `corpseSeconds` (40), then decays (the core zeroes it; a `decayed` event
+frees the slot) unless a raise stands it up — the same id, same kind (role and gear), alive, undead, in the raiser's
+group. AgentUnits revives its record and marks it `bound` (the raiser's; no jobs or hunts here until ordered). The sync
+also frees a corpse it sees zeroed or alive, so a dropped event doesn't leak a slot. `?traits=0` turns the system and
+corpse mode off together.
+
+**The world.** A heal's reach into fields and geometry goes through the systems' own channel, not a bespoke write:
+EventKind.Grow (existing: wilt, particles) and a new EventKind.Mend (8) that structure.wgsl reads — a cracked interval
+within the radius knits back a damage level with chance `strength`. The pulses come from the trait system's SimSystem
+half (ticked before the agents), so a sanctuary mends an empty town too.
+
+**Tests (TDD).** Unit 13 (test/unit/traits.test.ts): ids and masks, tags → traits, materials, the registry (order,
+rejects, add/remove leaves the others), the slice's tables. GPU 8 on Dawn (test/gpu/traits.test.ts): a sanctuary over
+150 living + 150 undead (living 4 → ~8 hp in 2 s at 2 hp/s, undead 10 → ~4); raise (100 dead: 60 workers and 30 raiders
+rise in group 9 with their kinds and ids, the 10 walking dead stay down); corpses decay and their slots are reused;
+fire_immune (a fire burst: 7 vs 10 hp; a burning blow: 40 of 40 plain alight, 0 immune); petrified rooted (a throwing blow
+moves the free > 2 cells, the stone < 0.3); modularity (a `regen` module registered later raises hp only on
+`regenerating`, the other modules' list untouched, heal unchanged, unregistered it stops); Mend (a lightning-cracked
+concrete block: damage 124 → 0 under a 6 s sanctuary, no agent about); AgentUnits (a smith raised keeps its role, a
+walking dead stays down). Full suite: 245 passed (1 expected fail, 2 skipped).

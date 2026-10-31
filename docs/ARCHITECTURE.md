@@ -1752,7 +1752,7 @@ headroom | wet | six 3-bit links, room, region — the peel reads `places` and
 `placeTable` in its own bind group), `agentNavCost` (round 107: per surface, the
 height and wet the links and the relax reckon its cost by, following nav's floor with hysteresis — the
 units ride nav, the fields read this), `agentDist` (NFIELDS = 4 fields × surfaces,
-f32), `agentUnits` (four vec4 a unit: units.wgsl), `agentOcc` (units per
+f32), `agentUnits` (five vec4 a unit: units.wgsl — the fifth, LW1, the trait system's CAPS and LOOK and the max hp), `agentOcc` (units per
 column, two halves by tick parity), `agentEvents` (a count and 8-u32
 records: swing, hurt, death, alight; the CPU copies and clears it in
 `sync`), `agentModels` (the kinds' voxels) with `agentKindModels`, and
@@ -1768,6 +1768,70 @@ occupancy half cleared; every unit stepped; every unit's voxels written.
 The params uniform (binding 10) carries counts, 32 seeds, each group's field
 and colour, each field's place, 8 kinds, 32 hits, 8 targets, 8 holds, 32
 launches.
+
+## Traits and effects (Living World slice 1, branch `traits`; BACKLOG LW1; contract src/api/contracts/traits.ts)
+
+The user (DECISIONS round 120): "the systems that process traits for things like combat and other interactions are
+essentially game specific logic but we want it GPU bound and cheap so we can use it on our agents. Modular architecture
+here is key." Three concerns, three structures:
+
+- **Traits** (what a thing is, what is happening to it): one id space — intrinsic bits 0-15 (`living`, `undead`,
+  `flying`, `construct`, `fire_immune`, `regenerating`, `invisible`, `incorporeal`), statuses bits 16-23 with an expiry
+  each (`burning`, `frightened`, `healing`, `raised`, `petrified`, `corpse`, `harmed`, `blessed`). A recipe Kind's tags
+  seed them (`traitsOfTags`: a tag named as a trait is that trait); materials carry the same ids (`MATERIAL_TRAITS`).
+  On the agents: `traits` buffer (src/traits/system.ts), three vec4<u32> a unit slot — the trait word, the source group,
+  the occupant (generation + 1), and an expiry tick a status (PERM: for ever). Bodies and structures use the ids
+  through their materials for now (the sanctuary's grow and mend reach `living` and `construct` ground).
+- **Effects** (operations put into the world): `apply({ op: 'heal' | 'raise' | 'damage' | 'status', at, radius, … })`.
+  A field lasts (`seconds`; a heal lasts till `end`), a burst is one tick. Up to 32 at once (an error past that). They
+  reach agents through the rules below, and fields and geometry only through the systems' own channel: the world
+  events Grow (wilt.wgsl, particles) and Mend (new, EventKind 8: structure.wgsl knits a cracked interval back a damage
+  level with chance `strength`), pulsed every `world.every` s. A heal's world effects don't need an agent about.
+- **Rules** (modules; the game's): `TraitModule { name, wgsl: 'fn module_main(u: u32) {…}', table ≤ 64 words, order }`,
+  registered on the `TraitsApi` (src/traits/registry.ts keeps the set). Each is its own compute kernel, one thread an
+  agent slot, writing only its own slot; it sees the prelude (src/traits/prelude.wgsl: units, events, traits, the tick's
+  effects, its table as `MT`, helpers `tWord`, `hasAll`, `statusOn`, `effCovers`, `effAmount`, `setHp`, `emit`…) and no
+  other module. Storage buffers per kernel: units, events, traits (3 of 8). Adding a module compiles one kernel and
+  touches nothing else (test/gpu/traits.test.ts "modularity").
+
+**The engine boundary (CAPS and LOOK).** A rule never edits the agents' step. The unit record grew a fifth vec4 (units.wgsl
+`UNIT_V` = 5, agents.ts `UNIT_V`): `e.x` CAPS — the verbs the step honours (`CAP_NO_BURN`: never alight, no lava harm;
+`CAP_NO_DROWN`; `CAP_ROOTED`: no walking, pushes, wind, shoves, throws; `CAP_FLEE`: walks up its field) — `e.y` LOOK —
+what the draw shows (bits 0-7 torso material, 8-15 head, 16-23 a halo's material; `LOOK_HALO`, `LOOK_SPARKS`,
+`LOOK_CORPSE`: a fallen unit drawn lying) — and `e.z` the max hp it was spawned with. The game's `caps` and `look` modules
+derive them from the traits each tick by tables (round 85's derived capabilities). Without the trait system both are 0
+and the agents behave and look as before.
+
+**A tick.** `TraitSystem` is a SimSystem ('traits', every tick, inserted before 'agents': the effects' lives, the world
+pulses, the params uniform) and an agents stage (`agents.addStage`): inside the agents' pass, after `unitStep` and before
+`unitDraw` — `traitPre` (core.wgsl: a new occupant seeded from its kind's traits, `assign`ed traits, statuses past their
+expiry dropped, `burning` mirrored from the unit's fire, a fallen unit laid out as a `corpse` for `corpseSeconds`, a
+decayed corpse zeroed with a `decayed` event), the modules in order, `traitPost` (a live unit at ≤ 0 hp dies: a death
+event, `by: 'effect'`).
+
+**Corpse mode** (`agents.setKeepCorpses`, the trait system turns it on): a death no longer frees the slot; the body lies
+(drawn by LOOK_CORPSE) until a `raised` event (the same id, alive again: Agents and AgentUnits revive it) or a `decayed`
+one (the slot freed). The sync also frees a corpse it sees zeroed or alive, so a lost event doesn't leak a slot.
+
+**The slice's rules** (src/game/traits/modules.ts `registerSlice`): `status` (immunities per status: the undead and
+constructs know no fear), `raise` (a `living` corpse in a raise effect stands up `undead` + `raised` in the effect's group,
+its kind — role and gear — kept, with a share of its hp, hopping up as a thrown unit gets up), `heal` (the living, not
+undead or constructs, gain the field's rate, up to their max; glow), `holy_harm` ("healing on undead harms": 1.5× the
+rate; sparks), `typed_damage` (a resist table, rows of trait masks × multipliers for fire, life, necrotic, physical:
+fire_immune × fire 0, undead × life 2 and × necrotic −0.5 — it mends them), `caps`, `look`. AgentUnits' `shambler`
+kind is `undead` (scenes/level.ts).
+
+**Play's lich (the one-line hook, when play/runsit merge into places — BACKLOG LW1-2).** Its raise dead calls the effect
+path, nothing else:
+`world.traits.apply({ op: 'raise', group: lichFollowers, at: [x, y], radius: 8 })` — the corpses there rise undead,
+keeping role and gear, in its followers' group; AgentUnits fires `raised(u, group)` for each. A sanctuary is
+`traits.apply({ op: 'heal', rate, at, radius, world: { grow: true, mend: true } })`.
+
+**The playground's station 7 `traits`** (levels/traitstation.ts): a village (180 workers round a well), 90 walking dead,
+a lich (an ogre, undead and fire_immune) — a thin driver of the API, no controls — and buttons: crowd, smite (a necrotic
+burst: bodies), raise, sanctuary, fear, petrify, clear. `reclaimed.traitStation()` drives it from a script
+(scripts/traitshot.mjs); `reclaimed.traits` is the TraitsApi. `?traits=0` turns the system off (the perf toggle,
+scripts/perf/traits.mjs).
 
 ## The sims' tiers (round 108, branch `simtiers`; BACKLOG SM1-SM4)
 

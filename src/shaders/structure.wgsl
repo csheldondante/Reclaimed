@@ -194,6 +194,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       dmg = min(15u, dmg + u32(hit * exp(-depth / 8.0)));
     }
     dmg = hydraulicDamage(p, z0, z1, dmg, m, i);
+    // (LW1) a mending field (the sanctuary's restoration, src/traits): within its radius a cracked interval knits back,
+    // a level at a time with chance ∝ the event's strength — "repairs structures a little"
+    for (var e = 0u; e < numEvents(); e++) {
+      if (evKind(e) != EV_MEND || dmg == 0u) { continue; }
+      let ev = G.events[e];
+      if (length(cellPos(p) - ev.xy) > ev.z) { continue; }
+      if (rand3(id.x * 7u + i, id.y, G.tick ^ 0x3e7du) < ev.w) { dmg -= 1u; }
+    }
     // taps chip the interval they touched (cosmetic decay that adds up)
     for (var e = 0u; e < numEvents(); e++) {
       if (evKind(e) != EV_CHIP) { continue; }

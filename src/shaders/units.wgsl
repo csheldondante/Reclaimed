@@ -28,7 +28,7 @@
 // tumbling; alight it flickers and a hit flashes it (the physics voxel's
 // heat glow, render.wgsl fsBody).
 //
-// A unit, four vec4<f32>:
+// A unit, five vec4<f32> (UNIT_V; agents.ts UNIT_V, src/traits/prelude.wgsl mirror it):
 //   a: x, y, z (its feet), info (u32 bits): group 0-7 | alive 8 | kind 9-11 |
 //      state 12-14 | alight 15 | generation 16-31 (its id: gen * 8192 + slot)
 //   b: vx, vy, vz, stride phase (tumbling: its stun, s: how much longer
@@ -36,7 +36,25 @@
 //   c: hp, swing cooldown (s), fire left (s), heading (rad)
 //   d: hurt flash (s), state time (s), time under water (s), wander heading
 //      (rad; tumbling: how far it has rolled)
+//   e: (LW1, the trait system's words — 0 without it) CAPS, the verbs the step
+//      honours (u32 bits: CAP_*); LOOK, what the draw shows (u32: LOOK_*); the
+//      max hp it was spawned with; 0. The step only reads them: the trait
+//      modules derive them from the traits each tick (src/traits).
 @group(0) @binding(7) var<storage, read_write> units: array<vec4<f32>>;
+const UNIT_V: u32 = 5u;
+// CAPS (src/traits/prelude.wgsl, contracts/traits.ts): never set alight (nor
+// hurt by lava); never drowns; rooted (no walking, pushes, throws: a statue);
+// flees its field (walks up it, not down)
+const CAP_NO_BURN: u32 = 1u;
+const CAP_NO_DROWN: u32 = 2u;
+const CAP_ROOTED: u32 = 4u;
+const CAP_FLEE: u32 = 8u;
+// LOOK: bits 0-7 the torso's material (0: as its kind), 8-15 the head's, 16-23
+// a halo's material, then a halo over its head (glowing), sparks about it, and
+// (not alive) its body lying where it fell
+const LOOK_HALO: u32 = 0x1000000u;
+const LOOK_SPARKS: u32 = 0x2000000u;
+const LOOK_CORPSE: u32 = 0x4000000u;
 // units per column, two halves: the tick writes one (tick % 2) and reads the
 // other, the last tick's count
 @group(0) @binding(8) var<storage, read_write> occ: array<atomic<u32>>;
@@ -180,7 +198,7 @@ fn occClearCols(@builtin(global_invocation_id) id: vec3<u32>) {
 fn unitBox(@builtin(global_invocation_id) id: vec3<u32>) {
   let u = id.x;
   if (u >= AP.n.x) { return; }
-  let a = units[u * 4u];
+  let a = units[u * UNIT_V];
   if (((unitInfo(a) >> 8u) & 1u) == 0u) { return; }
   let c = cellAt(a.xy);
   let x = u32(clamp(c.x, 0, i32(G.mapW) - 1));
@@ -286,10 +304,13 @@ fn floorUnder(i: u32, z: f32) -> f32 {
 fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
   let u = id.x;
   if (u >= AP.n.x) { return; }
-  var a = units[u * 4u];
-  var b = units[u * 4u + 1u];
-  var cc = units[u * 4u + 2u];
-  var dd = units[u * 4u + 3u];
+  var a = units[u * UNIT_V];
+  var b = units[u * UNIT_V + 1u];
+  var cc = units[u * UNIT_V + 2u];
+  var dd = units[u * UNIT_V + 3u];
+  let caps = bitcast<u32>(units[u * UNIT_V + 4u].x);
+  let noBurn = (caps & CAP_NO_BURN) != 0u;
+  let rooted = (caps & CAP_ROOTED) != 0u;
   var info = unitInfo(a);
   if (((info >> 8u) & 1u) == 0u) { return; }
   let uid = unitId(u, info);
@@ -328,6 +349,7 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
   var stunHit = 0.0;
   var killedBy = 0u;
   var dead = false;
+  if (noBurn) { alight = false; burn = 0.0; }
 
   // the game's hits
   for (var h = 0u; h < AP.n2.x; h++) {
@@ -351,7 +373,7 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
     push += away * hit.c.x / mass;
     if (hit.d.z != 0.0) { lift += hit.d.z / mass; lifted = true; }
     stunHit = max(stunHit, hit.d.w);
-    if ((hz & 1u) != 0u && !alight) { alight = true; burn = BURN_TIME; emit(EV_ALIGHT, uid, hid, 0.0, pos); }
+    if ((hz & 1u) != 0u && !alight && !noBurn) { alight = true; burn = BURN_TIME; emit(EV_ALIGHT, uid, hid, 0.0, pos); }
   }
 
   // held by the game, or launched: holds and launches name its slot
@@ -375,6 +397,8 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
     state = ST_TUMBLE;
     stT = 0.0;
   }
+  // (rooted — petrified: a statue — nothing moves it but the game's hand)
+  if (rooted) { push = vec2<f32>(0.0); lift = 0.0; lifted = false; stunHit = 0.0; }
   // thrown by a hit: pushed past TUMBLE_PUSH, or lifted (then the lift is
   // its upward speed; else it hops by a share of the push)
   if ((length(push) > TUMBLE_PUSH || lift > 0.0) && state != ST_HELD) {
@@ -396,7 +420,7 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
   let k = surfaceAt(i, pos.z + 0.5);
   var floorZ = select(pos.z, navZ(i * NAV_K + min(k, NAV_K - 1u)), k < NAV_K);
   // the wind (not under a roof: the top surface, or in the open air above it)
-  if (state != ST_HELD && (k == 0u || k >= NAV_K)) {
+  if (state != ST_HELD && !rooted && (k == 0u || k >= NAV_K)) {
     let wv = windAt(pos + vec3<f32>(0.0, 0.0, height * 0.5));
     let ws = length(wv);
     let ex = ws - WIND_CALM;
@@ -423,7 +447,7 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   // knocked over by what tumbled through here last tick (not itself: it
   // was tumbling then, and a tumbling unit doesn't take shoves)
-  if (state != ST_TUMBLE && state != ST_HELD) {
+  if (state != ST_TUMBLE && state != ST_HELD && !rooted) {
     let sm = f32(atomicLoad(&shove[(rd + i) * 4u + 2u])) / SHOVE_FIX;
     if (sm > 0.0) {
       let p = vec2<f32>(f32(atomicLoad(&shove[(rd + i) * 4u])), f32(atomicLoad(&shove[(rd + i) * 4u + 1u]))) / SHOVE_FIX;
@@ -434,17 +458,17 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
   let onGround = k < NAV_K && state != ST_HELD && pos.z - floorZ < 0.5;
   // water: wading slows, over its head it drowns (and it puts out fire)
   let depth = select(0.0, navWater(i * NAV_K), k == 0u && onGround);
-  if (depth > height) { under += dt; } else { under = 0.0; }
+  if (depth > height && (caps & CAP_NO_DROWN) == 0u) { under += dt; } else { under = 0.0; }
   if (depth > height * 0.5) { alight = false; burn = 0.0; }
   if (under > DROWN_TIME && !dead) { dead = true; killedBy = BY_WATER; }
   // fire: where the ground burns, lava, hot ground, an ember just landed, a burning unit by it
   let lv = lava[i];
   let onTop = onGround && k == 0u;
-  if (onTop && lv.x > 0.05 && lv.y > LAVA_LIGHT) {
+  if (onTop && lv.x > 0.05 && lv.y > LAVA_LIGHT && !noBurn) {
     hp -= LAVA_DPS * dt;
     if (hp <= 0.0 && !dead) { dead = true; killedBy = BY_LAVA; }
   }
-  if (!alight && depth < height * 0.5) {
+  if (!alight && !noBurn && depth < height * 0.5) {
     var lit = onTop && (fire[i] > 0.3 || (lv.x > 0.05 && lv.y > LAVA_LIGHT) || lv.z > HOT_GROUND);
     let sk = textureLoad(sparkTex, texCol(vec2<i32>(c)), 0).x;
     if (sk > 0.0 && f32(G.tick) - sk < 2.5) { lit = true; }
@@ -574,6 +598,8 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
         want = vec2<f32>(cos(wanderH), sin(wanderH)) * 0.4;
       } else if (here < FAR && here > 0.6) {
         want = downField(fld, s, c, pos.xy, here);
+        // (frightened: away up its field, from what it would have gone to)
+        if ((caps & CAP_FLEE) != 0u) { want = -want; }
       }
       if (alight) {
         // burning: running about, faster
@@ -593,6 +619,7 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     // wading: slower the deeper
     speed *= 1.0 - 0.6 * clamp(depth / max(height, 0.1), 0.0, 1.0);
+    if (rooted) { speed = 0.0; want = vec2<f32>(0.0); push = vec2<f32>(0.0); }
     let goalV = select(want, normalize(want), length(want) > 1.0) * speed;
     var v2 = vel.xy + (goalV - vel.xy) * min(dt * 6.0, 1.0) + push;
     var p2 = pos.xy + v2 * dt;
@@ -629,17 +656,17 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   if (dead) {
     emit(EV_DEATH, uid, killedBy, 0.0, pos);
-    units[u * 4u] = vec4<f32>(pos, bitcast<f32>(info & ~(1u << 8u)));
+    units[u * UNIT_V] = vec4<f32>(pos, bitcast<f32>(info & ~(1u << 8u)));
     return;
   }
   let fi = colIdxI(clampCell(cellAt(np.xy)));
   if (alight) { atomicAdd(&shove[(wr + fi) * 4u + 3u], 1); }
   let phase = fract(b.w + dt * length(vel.xy) * 0.9);
   info = (info & ~((7u << 12u) | (1u << 15u) | 0xffu)) | (state << 12u) | (select(0u, 1u, alight) << 15u) | grp;
-  units[u * 4u] = vec4<f32>(np, bitcast<f32>(info));
-  units[u * 4u + 1u] = vec4<f32>(vel, select(phase, stun, state == ST_TUMBLE));
-  units[u * 4u + 2u] = vec4<f32>(hp, cool, burn, heading);
-  units[u * 4u + 3u] = vec4<f32>(flash, stT, under, wanderH);
+  units[u * UNIT_V] = vec4<f32>(np, bitcast<f32>(info));
+  units[u * UNIT_V + 1u] = vec4<f32>(vel, select(phase, stun, state == ST_TUMBLE));
+  units[u * UNIT_V + 2u] = vec4<f32>(hp, cool, burn, heading);
+  units[u * UNIT_V + 3u] = vec4<f32>(flash, stT, under, wanderH);
   atomicAdd(&occ[wr + fi], 1u);
 }
 
@@ -666,30 +693,37 @@ const PHYS_BIT: u32 = 0x40000000u;
 fn unitDraw(@builtin(global_invocation_id) id: vec3<u32>) {
   let u = id.x;
   if (u >= AP.n.x) { return; }
-  let a = units[u * 4u];
+  let a = units[u * UNIT_V];
   let info = unitInfo(a);
-  if (((info >> 8u) & 1u) == 0u) { return; }
-  let b = units[u * 4u + 1u];
-  let cc = units[u * 4u + 2u];
-  let dd = units[u * 4u + 3u];
+  // (LW1) the trait modules' look; a fallen unit is drawn only while it lies as a corpse (the trait system's)
+  let look = bitcast<u32>(units[u * UNIT_V + 4u].y);
+  let corpse = ((info >> 8u) & 1u) == 0u;
+  if (corpse && (look & LOOK_CORPSE) == 0u) { return; }
+  let b = units[u * UNIT_V + 1u];
+  let cc = units[u * UNIT_V + 2u];
+  let dd = units[u * UNIT_V + 3u];
   let kn = (info >> 9u) & 7u;
   let kind = AP.kinds[kn];
   let km = kindModels[kn];
   let grp = info & 0xffu;
-  let state = (info >> 12u) & 7u;
+  let state = select((info >> 12u) & 7u, ST_TUMBLE, corpse);
   let h = kind.a.x;
   let yaw = cc.w;
   var q = vec4<f32>(0.0, 0.0, sin(yaw * 0.5), cos(yaw * 0.5));
   // tumbling: rolled along its throw, about the axis across it, round its middle
   let mid = vec3<f32>(0.0, 0.0, h * 0.5);
-  if (state == ST_TUMBLE) {
+  if (corpse) {
+    // a body: flat on its back where it fell
+    let ax = vec3<f32>(-sin(yaw), cos(yaw), 0.0);
+    q = qmul(vec4<f32>(ax * sin(-0.785398), cos(-0.785398)), q);
+  } else if (state == ST_TUMBLE) {
     let ax = vec3<f32>(-sin(yaw), cos(yaw), 0.0);
     q = qmul(vec4<f32>(ax * sin(dd.w * 0.5), cos(dd.w * 0.5)), q);
   }
   // (round 88) at work (its group's pose bit) or swinging: bent forward to a tool in its hands, rocking
   let gm = AP.groupMat[grp / 4u][grp % 4u];
   let swinging = state == ST_SWING;
-  let working = (((gm >> 8u) & 1u) != 0u && state < ST_TUMBLE) || swinging;
+  let working = ((((gm >> 8u) & 1u) != 0u && state < ST_TUMBLE) || swinging) && !corpse;
   if (working) {
     let ph = f32(G.tick) * 0.13 + f32(u) * 1.7;
     let bend = select(0.2 + 0.3 * max(sin(ph), -0.3), 0.55 * sin(min(dd.y / 0.6, 1.0) * 3.1416), swinging);
@@ -701,14 +735,33 @@ fn unitDraw(@builtin(global_invocation_id) id: vec3<u32>) {
   // alight: a flicker of heat; hurt: a white flash (fsBody's physics-voxel glow, bits 16-23)
   let alight = ((info >> 15u) & 1u) != 0u;
   var heat = 0.0;
-  if (alight) { heat = 0.45 + 0.25 * rand3(u, G.tick / 3u, 11u); }
-  if (dd.x > 0.0) { heat = 1.0; }
+  if (alight && !corpse) { heat = 0.45 + 0.25 * rand3(u, G.tick / 3u, 11u); }
+  if (dd.x > 0.0 && !corpse) { heat = 1.0; }
   let glow = select(0u, PHYS_BIT | (u32(heat * 255.0) << 16u), heat > 0.0);
   let n = select(3u, km.y, km.y > 0u);
   let cv = carried[u];
   let holds = cv.x > 0.5 && state < ST_TUMBLE;
-  let base = atomicAdd(&drawArgs[1], n + select(0u, 1u, holds) + select(0u, 1u, working));
-  let centre = a.xyz + mid + vec3<f32>(0.0, 0.0, bob);
+  // (LW1) a halo (healing), two sparks (harmed)
+  let halo = (look & LOOK_HALO) != 0u && !corpse;
+  let sparks = (look & LOOK_SPARKS) != 0u && !corpse;
+  let extra = select(0u, 1u, holds) + select(0u, 1u, working);
+  let base = atomicAdd(&drawArgs[1], n + extra + select(0u, 1u, halo) + select(0u, 2u, sparks));
+  let centre = select(a.xyz + mid + vec3<f32>(0.0, 0.0, bob), a.xyz + vec3<f32>(0.0, 0.0, h * 0.14), corpse);
+  if (halo) {
+    // a small glowing light over its head (a share of its melting point: the heat glow's white end)
+    let hm = (look >> 16u) & 0xffu;
+    let bobH = 0.06 * sin(f32(G.tick) * 0.12 + f32(u));
+    putVoxel(base + n + extra, a.xyz + vec3<f32>(0.0, 0.0, h + 0.28 + bobH), select(15u, hm, hm != 0u) | (3u << 24u) | PHYS_BIT | (230u << 16u), vec4<f32>(0.0, 0.0, 0.0, 1.0));
+  }
+  if (sparks) {
+    // bright motes jumping about its body, new places every few ticks
+    let o = base + n + extra + select(0u, 1u, halo);
+    for (var j = 0u; j < 2u; j++) {
+      let t = G.tick / 3u;
+      let r = vec3<f32>(rand3(u, t, 30u + j) - 0.5, rand3(u, t, 40u + j) - 0.5, rand3(u, t, 50u + j));
+      putVoxel(o + j, a.xyz + vec3<f32>(r.xy * 0.9, 0.2 + r.z * h), 15u | (2u << 24u) | PHYS_BIT | (250u << 16u), vec4<f32>(0.0, 0.0, 0.0, 1.0));
+    }
+  }
   if (holds) {
     // its load, held up over its head
     let e = cv.y;
@@ -722,9 +775,12 @@ fn unitDraw(@builtin(global_invocation_id) id: vec3<u32>) {
   if (km.y > 0u) {
     // the kind's model: voxels round its feet, turned its way
     let code = km.z;
+    let tint = look & 0xffu;
     for (var v = 0u; v < km.y; v++) {
       let m = models[km.x + v];
-      let w = bitcast<u32>(m.w) | (code << 24u) | glow;
+      // (a tint mottles a model: a voxel in three of its colour)
+      let mat = select(bitcast<u32>(m.w), tint, tint != 0u && (v * 7u + u) % 3u == 0u);
+      let w = mat | (code << 24u) | glow;
       putVoxel(base + v, centre + qrotv(q, m.xyz - mid), w, q);
     }
     return;
@@ -732,12 +788,14 @@ fn unitDraw(@builtin(global_invocation_id) id: vec3<u32>) {
   // the default figure: legs, torso (its kind's colour, else its group's), head
   var torso = kind.c.z;
   if (torso == 0u) { torso = gm & 0xffu; }
+  if ((look & 0xffu) != 0u) { torso = look & 0xffu; }
+  let headMat = select(select(MAT_HEAD, kind.c.y, kind.c.y != 0u), (look >> 8u) & 0xffu, ((look >> 8u) & 0xffu) != 0u);
   let lg = h * 0.27;
   let ts = h * 0.4;
   let code = vec3<u32>(vec3<f32>(lg, ts, lg) * 16.0 + 0.5);
   putVoxel(base, centre + qrotv(q, vec3<f32>(0.0, 0.0, lg * 0.5) - mid), select(MAT_LEGS, kind.c.x, kind.c.x != 0u) | (min(code.x, 63u) << 24u) | glow, q);
   putVoxel(base + 1u, centre + qrotv(q, vec3<f32>(0.0, 0.0, lg + ts * 0.5) - mid), torso | (min(code.y, 63u) << 24u) | glow, q);
-  putVoxel(base + 2u, centre + qrotv(q, vec3<f32>(0.03 * h, 0.0, lg + ts + lg * 0.5) - mid), select(MAT_HEAD, kind.c.y, kind.c.y != 0u) | (min(code.z, 63u) << 24u) | glow, q);
+  putVoxel(base + 2u, centre + qrotv(q, vec3<f32>(0.03 * h, 0.0, lg + ts + lg * 0.5) - mid), headMat | (min(code.z, 63u) << 24u) | glow, q);
 }
 
 /** Items in flight (round 63): a voxel of the material each, tumbling about its axis. */

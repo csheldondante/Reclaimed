@@ -15,6 +15,8 @@
 //              its steady state as the atlas's rivers are (riverFlow, riverheld.wgsl), asleep until something wakes it
 //   6 dust     (x 16..112, y 192..240): a field of drift and ash with a sandstone top on a thin leg in it: dust storms
 //              and a collapse's dust
+//   7 traits   (x 128..256, y 192..256): (LW1) a plain for the trait system's slice — a village and the walking dead, a
+//              lich raising the fallen, a sanctuary healing the living and burning the undead (levels/traitstation.ts)
 // Storage coordinates (x column, y row); the camera looks from +x+y, so each station's open side faces it.
 
 import { CHUNK, ColumnGrid, type Interval, type WorldDims } from '../world/layout';
@@ -22,6 +24,7 @@ import { MAT } from '../world/materials';
 import type { MapData } from '../world/mapgen';
 import { cellAt, cellPos, ROW_H } from '../world/lattice';
 import { holdRivers, type AuthoredRiver } from '../world/rivertable';
+import type { TraitStationDriver } from './traitstation';
 
 const G = 10;
 
@@ -39,7 +42,15 @@ export interface StationKit {
   rain(x: number, y: number): void;
   /** after `secs` (sim time is not waited for: wall time) */
   later(secs: number, f: () => void): void;
+  /** (LW1) the traits station's driver, where the level has the trait system on its agents */
+  traits?: TraitStationDriver;
 }
+
+/** (LW1) the traits station's driver, or a clear error */
+const tk = (k: StationKit): TraitStationDriver => {
+  if (!k.traits) throw new Error('the traits station needs the trait system on the agents (scenes/level.ts installTraits)');
+  return k.traits;
+};
 
 export interface Station {
   id: string;
@@ -218,6 +229,22 @@ export const STATIONS: Station[] = [
     actions: [
       { label: 'dust storm', run: (k) => k.dust(...wp(48, 216)) },
       { label: 'topple', run: (k) => k.smash(...wp(82, 214), G + 2.5, 2.4) },
+    ],
+  },
+  {
+    id: 'traits',
+    name: 'traits',
+    rect: [128, 192, 256, 256],
+    look: [192, 192, 12, 2.8],
+    hint: 'traits: the living and the walking dead; a lich raises the fallen; a sanctuary heals the living and burns the undead',
+    actions: [
+      { label: 'crowd', run: (k) => tk(k).crowd() },
+      { label: 'smite', run: (k) => tk(k).smite() },
+      { label: 'raise', run: (k) => tk(k).raise() },
+      { label: 'sanctuary', run: (k) => tk(k).sanctuary() },
+      { label: 'fear', run: (k) => tk(k).fear() },
+      { label: 'petrify', run: (k) => tk(k).petrify() },
+      { label: 'clear', run: (k) => tk(k).clear() },
     ],
   },
 ];

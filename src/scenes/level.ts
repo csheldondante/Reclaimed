@@ -25,6 +25,10 @@ import { mountViewer } from '../inhabitants/viewer';
 import { Settlements } from '../settle/settlements';
 import { TownDebug } from '../settle/debug';
 import { AgentUnits } from '../units/agent-units';
+import { installTraits } from '../traits/install';
+import type { TraitSystem } from '../traits/system';
+import { registerSlice } from '../game/traits/modules';
+import { TraitStation } from '../levels/traitstation';
 import type { Agents } from '../agents/agents';
 import { attachSim, type Sim } from '../api/world';
 import { LEVEL_H, type Block, type Town } from '../build/town';
@@ -54,7 +58,7 @@ import { TunePanel } from '../ui/tunepanel';
 import { BugReport } from '../ui/bugreport';
 import { StationsBar } from '../ui/stations';
 import { NoiseLabControl } from '../noiselab/control';
-import type { Station, StationKit } from '../levels/playground';
+import { stationMiddle, type Station, type StationKit } from '../levels/playground';
 import { RB, rockbodyFor } from '../game/rockbodies';
 import { TUNE, TUNING } from '../tune/params';
 import { AtlasMap } from '../api/atlas-map';
@@ -335,6 +339,9 @@ export class LevelScene implements Scene {
   agents!: Agents;
   /** (round 117, ?life=: src/inhabitants) creatures with bodies — the Inhabitants contract */
   inhabitants?: InhabitantsGpu;
+  /** (LW1) the trait system on the agents, with the game's rules (src/game/traits) */
+  traits!: TraitSystem;
+  private traitStation?: TraitStation;
   private lifeSpawned = false;
   /** (round 88, the atlas level) the settlements, and the units (the Units contract on the agents) */
   settlements?: Settlements;
@@ -1045,6 +1052,10 @@ export class LevelScene implements Scene {
     const p = host.params;
     this.intro = !this.story && !!this.level.intro && (p.get('tutorial') === '1' || (p.get('tutorial') !== '0' && p.get('skipmenu') !== '1' && loadLevelProgress(this.level.id) === 0));
     this.agents = installAgents(core);
+    // (LW1) traits and effects on the agents: the engine's stage, the game's rules (the slice: healing vs necromancy).
+    // Its world effects (a sanctuary's growth and mending) wake the land they land on: sleeping chunks don't tick
+    this.traits = installTraits(core, this.agents, { onWorld: (x, y, r) => this.sleep?.wake(x, y, r + 8, Sleep.EVENT_S, performance.now() / 1000) });
+    registerSlice(this.traits);
     // (round 117, inhabitants: ?life=1|dragon|town|viewer — creatures with bodies round the camera; src/inhabitants/install.ts)
     if (host.params.get('life')) this.inhabitants = installInhabitants(core);
     if (this.level.sandbox) {
@@ -1341,6 +1352,10 @@ export class LevelScene implements Scene {
       editor: () => this.editor,
       // agents: agents.spawn(200, x, y, { group: 0 }); agents.goTo(0, x, y)
       agents: this.agents,
+      // (LW1) traits: traits.apply({ op: 'heal', rate: 2, at: [x, y], radius: 10 }), traits.read(), traits.census()
+      traits: this.traits,
+      // (LW1, the playground) the traits station's driver: station.crowd(), .smite(), .raise(), .sanctuary(), .census()
+      traitStation: () => this.traitStationDriver(),
       // (round 117, ?life=) the inhabitants: life.define(spec), life.spawnGroup(sp, [x, y], n), life.drive(g, order), life.presence(rect, cell)
       get inhabitants() {
         return self.inhabitants;
@@ -1702,6 +1717,8 @@ export class LevelScene implements Scene {
       const st = a?.settlements;
       if (st) {
         const units = new AgentUnits(this.agents);
+        // (LW1) the walking dead are undead (AgentUnits' 'shambler' kind): the sanctuary burns them, raise passes them by
+        this.traits.kindTraits('shambler', ['undead']);
         this.units = units;
         this.settlements = st;
         // (round 94) the settlements past the window planned on the atlas's rough ground and baked into the land there
@@ -3297,7 +3314,15 @@ export class LevelScene implements Scene {
       dust: (x, y) => void core.weather.placeDust(x, y),
       rain: (x, y) => void core.weather.spawn(x, y),
       later: (secs, f) => void setTimeout(f, secs * 1000),
+      traits: this.level.stations?.some((x) => x.id === 'traits') ? this.traitStationDriver() : undefined,
     };
+  }
+
+  /** (LW1) the playground's traits station: its driver over this level's agents and trait system (made once) */
+  private traitStationDriver(): TraitStation {
+    const s = this.level.stations?.find((x) => x.id === 'traits');
+    if (!s) throw new Error('this level has no traits station');
+    return (this.traitStation ??= new TraitStation(this.agents, this.traits, stationMiddle(s)));
   }
 
   /** (round 108, AR8) a station put back as the level opened: what moves there let go, its chunks restored */

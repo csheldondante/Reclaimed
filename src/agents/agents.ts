@@ -119,9 +119,13 @@ const P_REGROUPS = P_TARGET_H + MAX_TARGETS;
 const PARAMS_BYTES = (P_REGROUPS + MAX_REGROUPS) * 4;
 /** what the tumbling units fall by (units.wgsl GRAVITY, cells/s²) */
 export const AGENT_GRAVITY = 20;
-/** bytes of a surface (agents.wgsl nav: vec4<u32>), and of a unit (four vec4) */
+/** bytes of a surface (agents.wgsl nav: vec4<u32>), and of a unit (UNIT_V vec4: units.wgsl; the fifth, LW1, the trait
+ *  system's caps and look and the max hp) */
 const NAV_BYTES = 16;
-const UNIT_BYTES = 64;
+export const UNIT_V = 5;
+const UNIT_BYTES = UNIT_V * 16;
+/** floats a unit */
+const UF = UNIT_V * 4;
 /** each group's torso colour (the default figure), by material */
 const GROUP_MATS = [MAT.Rust, MAT.Brick, MAT.Steel, MAT.Wood, MAT.Concrete, MAT.Grass, MAT.Basalt, MAT.Sand];
 const STATES = ['wander', 'chase', 'swing', 'tumble', 'held'] as const;
@@ -202,7 +206,11 @@ export type AgentEvent =
   | { type: 'windup'; id: number; target: number; lands: number; x: number; y: number; z: number }
   | { type: 'swing'; id: number; target: number; damage: number; x: number; y: number; z: number }
   | { type: 'hurt'; id: number; hit: number | 'impact'; damage: number; x: number; y: number; z: number }
-  | { type: 'death'; id: number; by: number | 'fire' | 'water' | 'impact' | 'lava'; x: number; y: number; z: number }
+  | { type: 'death'; id: number; by: number | 'fire' | 'water' | 'impact' | 'lava' | 'effect'; x: number; y: number; z: number }
+  /** (LW1, corpse mode) a corpse raised by an effect (`by`, its id) into `group`: the same id, alive again */
+  | { type: 'raised'; id: number; by: number; group: number; x: number; y: number; z: number }
+  /** (LW1, corpse mode) a corpse gone to dust: its slot is free */
+  | { type: 'decayed'; id: number; x: number; y: number; z: number }
   | { type: 'alight'; id: number; by: number | 'fire'; x: number; y: number; z: number }
   /** a thrown (or dropped) item came down: `amount` of it is ground there now (0: the column had no room) */
   | { type: 'landed'; item: number; material: MaterialName; amount: number; x: number; y: number; z: number };
@@ -263,6 +271,14 @@ const DEFAULT_KINDS: KindSpec[] = [
   { name: 'raider', height: 1.2, mass: 1, hp: 10, speed: 3.2, reach: 1.2, damage: 2, swingPeriod: 1.0, notice: 30 },
   { name: 'ogre', height: 2, mass: 3, hp: 22, speed: 1.8, reach: 1.8, damage: 5, swingPeriod: 1.6, notice: 25 },
 ];
+
+/**
+ * (LW1) A stage run with the units each tick, after their step and before their draw (the trait system: its core and
+ * the game's modules). It encodes into the agents' own compute pass.
+ */
+export interface AgentStage {
+  encode(pass: GPUComputePassEncoder): void;
+}
 
 export class Agents implements SimSystem {
   readonly name = 'agents';
@@ -373,6 +389,26 @@ export class Agents implements SimSystem {
   private navStale = true;
   /** events that didn't fit the buffer, all told (0 normally) */
   dropped = 0;
+  /** (LW1) stages between the units' step and their draw (agents.addStage) */
+  private stages: AgentStage[] = [];
+  /**
+   * (LW1) Corpse mode (the trait system turns it on): a fallen unit's slot isn't freed at its death — its body lies
+   * there, a corpse to raise, until it decays (a 'decayed' event, or its record seen zeroed). Off: freed at death.
+   */
+  private keepCorpses = false;
+  private corpses = new Set<number>();
+
+  /** (LW1) corpse mode on or off (the trait system's); off clears the bodies lying now (their slots freed) */
+  setKeepCorpses(on: boolean): void {
+    this.keepCorpses = on;
+    if (on) return;
+    const z = new Float32Array(UF);
+    for (const slot of this.corpses) {
+      this.device.queue.writeBuffer(this.units, slot * UNIT_BYTES, z);
+      this.free.push(slot);
+    }
+    this.corpses.clear();
+  }
 
   /**
    * Relax sweeps a tick (quality's `agentSweeps`; default 8). The fields'
@@ -539,6 +575,27 @@ export class Agents implements SimSystem {
     device.queue.submit([enc.finish()]);
   }
 
+  /** (LW1) Add a stage between the units' step and their draw (the trait system). */
+  addStage(s: AgentStage): void {
+    this.stages.push(s);
+  }
+
+  /** (LW1) The events buffer (units.wgsl's layout: [0] the count, then 8 u32 each) and its capacity: stages append to it. */
+  get eventsBuffer(): GPUBuffer {
+    return this.events;
+  }
+  static readonly EVENT_CAP = EVENT_CAP;
+
+  /** (LW1) Kind `i`'s spec (undefined: not defined). */
+  kindSpec(i: number): KindSpec | undefined {
+    return this.kinds[i];
+  }
+
+  /** (LW1) Bodies lying as corpses now (corpse mode). */
+  get corpseCount(): number {
+    return this.corpses.size;
+  }
+
   /** Slots in use (the live and the freed below the high-water mark). */
   get size(): number {
     return this.count;
@@ -592,7 +649,7 @@ export class Agents implements SimSystem {
     if (this.free.length + (MAX_UNITS - this.count) < n) throw new Error(`agents: no room for ${n} more units (${MAX_UNITS} slots)`);
     const spread = opts.spread ?? Math.sqrt(n) * 0.6;
     const ids: number[] = [];
-    const d = new Float32Array(16);
+    const d = new Float32Array(UF);
     const u = new Uint32Array(d.buffer);
     for (let i = 0; i < n; i++) {
       const slot = this.free.length ? this.free.pop()! : this.count++;
@@ -610,6 +667,8 @@ export class Agents implements SimSystem {
       d[8] = opts.hp ?? spec.hp;
       d[11] = a;
       d[15] = Math.random() * Math.PI * 2;
+      // (e: caps and look 0 — the trait modules derive them; its max hp, what healing tops it up to)
+      d[18] = d[8];
       this.device.queue.writeBuffer(this.units, slot * UNIT_BYTES, d);
       ids.push(gen * MAX_UNITS + slot);
     }
@@ -625,7 +684,7 @@ export class Agents implements SimSystem {
    */
   shift(dx: number, dy: number, dz: number): void {
     this.translator ??= new Translator(this.device);
-    this.translator.run(this.units, MAX_UNITS, 4, 0b1, [dx, dy, dz]);
+    this.translator.run(this.units, MAX_UNITS, UNIT_V, 0b1, [dx, dy, dz]);
     this.translator.run(this.flyBuf, MAX_FLY, 2, 0b1, [dx, dy, dz]);
     for (const f of this.flights) f.pos = [f.pos[0] - dx, f.pos[1] - dy, f.pos[2] - dz];
     // (round 104, simscale: the scope's box with the land; the strips come in start over)
@@ -648,10 +707,12 @@ export class Agents implements SimSystem {
 
   /** Take units out at once (no death event). */
   remove(ids: readonly number[]): void {
-    const z = new Float32Array(16);
+    const z = new Float32Array(UF);
     for (const id of ids) {
       const slot = id % MAX_UNITS;
       if (Math.floor(id / MAX_UNITS) !== this.gen[slot]) continue;
+      // (a corpse that decayed is free already: not twice)
+      if (!this.corpses.delete(slot) && this.free.includes(slot)) continue;
       this.device.queue.writeBuffer(this.units, slot * UNIT_BYTES, z);
       this.free.push(slot);
       this.holds.delete(slot);
@@ -1071,7 +1132,7 @@ export class Agents implements SimSystem {
       const ef = new Float32Array(b, 0, evBytes / 4);
       const m = Math.min(eu[0], EVENT_CAP);
       dropped = eu[0] - m;
-      const BY: Record<number, 'fire' | 'water' | 'impact' | 'lava'> = { 0xffffffff: 'fire', 0xfffffffe: 'water', 0xfffffffd: 'impact', 0xfffffffc: 'lava' };
+      const BY: Record<number, 'fire' | 'water' | 'impact' | 'lava' | 'effect'> = { 0xffffffff: 'fire', 0xfffffffe: 'water', 0xfffffffd: 'impact', 0xfffffffc: 'lava', 0xfffffffb: 'effect' };
       const by = (v: number) => BY[v] ?? v;
       for (let e = 0; e < m; e++) {
         const o = 4 + e * 8;
@@ -1082,29 +1143,43 @@ export class Agents implements SimSystem {
         else if (kind === 2) events.push({ type: 'hurt', id, hit: by(eu[o + 2]) as number | 'impact', damage: ef[o + 3], ...p });
         else if (kind === 3) {
           events.push({ type: 'death', id, by: by(eu[o + 2]), ...p });
-          this.free.push(id % MAX_UNITS);
+          // (corpse mode: the body lies there until it decays or rises)
+          if (this.keepCorpses) this.corpses.add(id % MAX_UNITS);
+          else this.free.push(id % MAX_UNITS);
           this.holds.delete(id % MAX_UNITS);
         } else if (kind === 4) events.push({ type: 'alight', id, by: by(eu[o + 2]) as number | 'fire', ...p });
         else if (kind === 5) events.push({ type: 'windup', id, target: eu[o + 2], lands: ef[o + 3], ...p });
+        else if (kind === 6) {
+          events.push({ type: 'decayed', id, ...p });
+          if (this.corpses.delete(id % MAX_UNITS)) this.free.push(id % MAX_UNITS);
+        } else if (kind === 7) {
+          events.push({ type: 'raised', id, by: eu[o + 2], group: Math.round(ef[o + 3]), ...p });
+          this.corpses.delete(id % MAX_UNITS);
+        }
       }
       if (n) {
-        const uf = new Float32Array(b, evBytes, n * 16);
-        const uu = new Uint32Array(b, evBytes, n * 16);
+        const uf = new Float32Array(b, evBytes, n * UF);
+        const uu = new Uint32Array(b, evBytes, n * UF);
         for (let s = 0; s < n; s++) {
-          const info = uu[s * 16 + 3];
+          const info = uu[s * UF + 3];
+          // (corpse mode: a body that rose — its event lost to a full buffer — or went to dust, seen here)
+          if (this.corpses.has(s) && (info === 0 || (info >>> 8) & 1)) {
+            this.corpses.delete(s);
+            if (info === 0) this.free.push(s);
+          }
           if (!((info >>> 8) & 1)) continue;
           units.push({
             id: (info >>> 16) * MAX_UNITS + s,
-            x: uf[s * 16],
-            y: uf[s * 16 + 1],
-            z: uf[s * 16 + 2],
-            heading: uf[s * 16 + 11],
-            vx: uf[s * 16 + 4],
-            vy: uf[s * 16 + 5],
-            vz: uf[s * 16 + 6],
+            x: uf[s * UF],
+            y: uf[s * UF + 1],
+            z: uf[s * UF + 2],
+            heading: uf[s * UF + 11],
+            vx: uf[s * UF + 4],
+            vy: uf[s * UF + 5],
+            vz: uf[s * UF + 6],
             state: STATES[(info >>> 12) & 7] ?? 'wander',
             alight: ((info >>> 15) & 1) === 1,
-            hp: uf[s * 16 + 8],
+            hp: uf[s * UF + 8],
             kind: this.kinds[(info >>> 9) & 7]?.name ?? '?',
             group: info & 0xff,
           });
@@ -1264,6 +1339,8 @@ export class Agents implements SimSystem {
     pass.setBindGroup(0, this.unitGroup);
     pass.setPipeline(this.k.unitStep.pipeline);
     pass.dispatchWorkgroups(Math.ceil(this.count / 64));
+    // (LW1: the trait system — its core and the game's rules — between the step and the draw)
+    for (const s of this.stages) s.encode(pass);
     // the draw's instance count restarts each tick (written before this tick's submit)
     this.device.queue.writeBuffer(this.indirect, 0, new Uint32Array([36, 0, 0, 0]));
     pass.setBindGroup(0, this.drawGroup);

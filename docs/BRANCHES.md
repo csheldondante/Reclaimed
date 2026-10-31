@@ -33,6 +33,7 @@ worked on in parallel:
 | `stream` | `C:/Projects/Reclaimed-stream` | `npm run dev -- --port 5199` |
 | `atlas` | `C:/Projects/Reclaimed-atlas` | `npm run dev -- --port 5203` |
 | `places` | `C:/Projects/Reclaimed-places` | `npm run dev -- --port 5207` |
+| `traits` | `C:/Projects/Reclaimed-traits` | `npm run dev -- --port 5241` |
 | `physfix` | `C:/Projects/Reclaimed-physfix` | `npm run dev -- --port 5291` |
 | `physfix2` | `C:/Projects/Reclaimed-physfix2` | `npm run dev -- --port 5311` |
 | `testspeed` | `C:/Projects/Reclaimed-testspeed` | `node scripts/run.mjs serve` (port 6280) |
@@ -65,6 +66,7 @@ worked on in parallel:
 | `heroapi` | The hoverbike game's heroes in a run story (round 97): additive contracts and HeroRun options for a game's own hero, controller, units and camera (story/atlas-run.ts `startAtlasRun`), dialog as an event (barks, talks and sightings fired by happenings), the phone's missing dialog answers fixed, the Bell story showing more; GameplayGM's experiment/slice plays it. /Reclaimed/heroapi/?skipmenu=1&level=atlas&run=bell | `places` (28a0945) | HA1–HA10 |
 | `runstream` | A run over the streamed world (round 99): the window streams during a story run; the stage in world units (StageFrame), its places in world cells stamped into the land as it arrives (story/stage-land.ts, Atlas.landHooks), what play changes that lasts (opened locks, graves, broken walls) kept as a diff, so warps and long rides keep them (RS9, RS16). /Reclaimed/runstream/?skipmenu=1&level=atlas&run=bell | `heroapi` (4e02676) + `places` (b936f81) | RS9, RS16, RS17 |
 | `settlements` | Settlements with agents working round them (round 88, docs/SYSTEMS.md systems 6, 7, 12): every atlas site a Settlement record (the city game's contract) with a people's profile (data/recipes/), districts on overlay grids (radial, contour-Voronoi, irregular, orthogonal), buildings as Instances realised in the columns as land arrives (walls, plaza, fields, ruins adapted, raiders' camps); its people as units (the Units contract on the GPU agents) on their rounds, a raid met by guards. /Reclaimed/settlements/?skipmenu=1&level=atlas&town=1 (`&towndebug=1` the grid and jobs) | `places` | R4, R6, ST1–ST8 |
+| `traits` | Living World slice 1 (round 120, LW1): one trait system on the GPU agents (traits as data, effects as operations, the game's interaction rules as modular kernels over CAPS/LOOK), healing vs necromancy; the playground's traits station. /Reclaimed/traits/?skipmenu=1&level=playground (station 7) | `places` (a91730a) | LW1 |
 | `perf` | Profiling and experiments for phones (round 61): what's a clear win merges into `grids`; the user validates the feel on a phone | `grids` (with `agents`) | G16, Q20 |
 | `physics` | The sandbox as a destruction playground and terrain for other games: physics voxels (one GPU solver: metal bends, stone cracks), heat beam, then meteors and volcanoes (docs/PHYSICS.md) | grids' engine and look | F13 |
 
