@@ -1043,6 +1043,14 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
    * normal; drawIndirect args, vertex count first), lit and shadowed like a
    * body's voxels. Physics.skinOut / skinArgs: meshes bent by their bodies.
    */
+  /** (round 120) a mesh source let go (its buffers made again: render/bodymesh.ts grew) */
+  removeMesh(indirect: GPUBuffer): void {
+    this.meshSources = this.meshSources.filter((s) => s.indirect !== indirect);
+  }
+
+  /** (round 120) compute run at the start of each frame's encode, before anything's drawn (bodies' meshes skinned) */
+  readonly frameCompute: ((enc: GPUCommandEncoder) => void)[] = [];
+
   addMesh(verts: GPUBuffer, indirect: GPUBuffer): void {
     this.meshSources.push({
       indirect,
@@ -1194,6 +1202,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
     // look flags (render.wgsl Camera.eye.w)
     new Float32Array(this.camData)[19] = (this.flatTops ? 1 : 0) | (this.fieldMesh.on ? 2 : 0) | (Renderer.opts.noDetail << 2);
     this.fieldMesh.cull(cam);
+    for (const f of this.frameCompute) f(enc);
     // (round 86: the grid's chunks in view, and near it for the terrain cache)
     if (this.gridLive) {
       const n = this.gridOn!.on.length;

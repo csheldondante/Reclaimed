@@ -303,8 +303,17 @@ fn contactMass(o: u32, invM: f32, mat: u32) -> f32 {
   }
   return 1.0 / invM;
 }
+/**
+ * What dents where a node of this material is hit: its own material if it's stiff (metal, wood), else (round 120: a
+ * tanker landing on its tyres, asphalt, didn't dent at all — the user: "dropping the tanker … does not trigger
+ * breaking") the body's main material, bodies[8].w
+ */
+fn dentMat(o: u32, mat: u32) -> u32 { return select(u32(bodies[o * BODY_V + 8u].w), mat, SM[mat * 4u + 3u].x >= 0.999); }
 /** a stiff deformable (metal, wood: frame 1) dents where it's hit hard */
-fn dentable(o: u32, mat: u32) -> bool { return bodies[o * BODY_V + 8u].x < 0.5 && SM[mat * 4u + 3u].x >= 0.999 && SM[mat * 4u + 3u].y > 0.0; }
+fn dentable(o: u32, mat: u32) -> bool {
+  let m = dentMat(o, mat);
+  return bodies[o * BODY_V + 8u].x < 0.5 && SM[m * 4u + 3u].x >= 0.999 && SM[m * 4u + 3u].y > 0.0;
+}
 /** how deep a hit of this kinetic energy dents a block of this size (cells; at most half the block) */
 fn dentDepth(energy: f32, mat: u32, size: f32) -> f32 {
   let a = size * size;
@@ -666,7 +675,7 @@ fn solve(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
               // (metal and wood dent where they hit: the body's energy into the ground, shared over what touches)
               if (dentable(b, mat)) {
                 let e = 0.5 * bodies[B0 + 7u].z / max(4.0, bodies[B0 + 6u].x) * ap * ap;
-                pdent[l] += gh.n * dentDepth(e, mat, lane[(b * NN + n) * LANE_V + 2u].w);
+                pdent[l] += gh.n * dentDepth(e, dentMat(b, mat), lane[(b * NN + n) * LANE_V + 2u].w);
               }
             }
             atomicMax(&wDeep, bitcast<u32>(gh.d));
@@ -760,7 +769,7 @@ fn solve(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
             if (dentable(b, mat)) {
               let mo = min(bodies[o * BODY_V + 7u].z, 1e5) / max(4.0, bodies[o * BODY_V + 6u].x);
               let e = 0.5 * min(mo, bodies[B0 + 7u].z) * ap * ap;
-              pdent[l] += bestN * dentDepth(e, mat, lane[(b * NN + n) * LANE_V + 2u].w);
+              pdent[l] += bestN * dentDepth(e, dentMat(b, mat), lane[(b * NN + n) * LANE_V + 2u].w);
             }
           }
           let relMove = mv - select(ovel * h, vec3<f32>(0.0), bodies[o * BODY_V].z == B_ASLEEP);
@@ -870,7 +879,7 @@ fn solve(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
                 if (dentable(b, mat)) {
                   let mo2 = min(bodies[o * BODY_V + 7u].z, 1e5) / max(4.0, bodies[o * BODY_V + 6u].x);
                   let e = 0.5 * min(mo2, bodies[B0 + 7u].z) * ap * ap;
-                  let dd2 = dentDepth(e, mat, lane[gi * LANE_V + 2u].w);
+                  let dd2 = dentDepth(e, dentMat(b, mat), lane[gi * LANE_V + 2u].w);
                   sr[l] = sr[l] - qrotS(qinvS(sq[l]), N) * dd2;
                   dentW -= N * dd2;
                 }
@@ -1230,16 +1239,13 @@ fn shift(@builtin(global_invocation_id) id: vec3<u32>) {
   }
 }
 
-// ---- skin: the cells of bodies, where they are (the column projection) and drawn as voxels -------------------------
+// ---- skin: the cells of bodies, where they are (the column projection) --------------------------------------------
 // Each cell rides the node it was bound to (skinCells: xyz its rest about its body's rest centre of mass, f32 bits; w
-// its node's lane | drawn << 23 | material << 24), placed by that node's transform as the tick ends. Every cell is
-// marked in the columns it's in (physCols, as the physics voxels' prep: the projection pass makes them runs the nature
-// grid sees — sand poured on a body lies on it, water goes round it: a body at rest is buried, then dug out); a drawn
-// one (metal: the field mesh can't hold its thin members) is also a render.wgsl vsBody instance (two vec4<u32>:
-// position bits and the material word, then the rotation), counted into drawIndirect args.
+// its node's lane | material << 24), placed by that node's transform as the tick ends. Every cell is marked in the
+// columns it's in (physCols, as the physics voxels' prep: the projection pass makes them runs the nature grid sees —
+// sand poured on a body lies on it, water goes round it: a body at rest is buried, then dug out). (Round 120: none is
+// drawn as a voxel — a body is drawn by its own mesh, render/bodymesh.ts.)
 @group(0) @binding(17) var<storage, read> skinCells: array<vec4<u32>>;
-@group(0) @binding(18) var<storage, read_write> skinInst: array<vec4<u32>>;
-@group(0) @binding(19) var<storage, read_write> skinArgs: array<atomic<u32>>;
 @group(0) @binding(20) var<storage, read_write> projCols: array<atomic<u32>>;
 
 @compute @workgroup_size(64)
@@ -1248,8 +1254,6 @@ fn skin(@builtin(global_invocation_id) id: vec3<u32>) {
   if (i >= u32(SU.e.z)) { return; }
   let c = skinCells[i];
   let li = c.w & 0x7fffffu;
-  let drawn = ((c.w >> 23u) & 1u) != 0u;
-  let m = c.w >> 24u;
   let b = li / NN;
   let st = bodies[b * BODY_V].z;
   if (st != B_AWAKE && st != B_ASLEEP) { return; }
@@ -1266,9 +1270,4 @@ fn skin(@builtin(global_invocation_id) id: vec3<u32>) {
       atomicOr(&projCols[colIdxI(cc) * PHYS_COL_WORDS + zc / 32u], 1u << (zc % 32u));
     }
   }
-  if (!drawn) { return; }
-  let k = atomicAdd(&skinArgs[1], 1u);
-  let word = m | ((pcg(i) & 255u) << 8u) | 0x40000000u;
-  skinInst[k * 2u] = vec4<u32>(bitcast<vec3<u32>>(x), word);
-  skinInst[k * 2u + 1u] = bitcast<vec4<u32>>(q);
 }

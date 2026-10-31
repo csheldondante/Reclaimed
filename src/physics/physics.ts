@@ -480,6 +480,26 @@ export class Physics implements SimSystem {
     return body;
   }
 
+  /**
+   * (round 120: one mesh a body — the user: "a lot of things turn into lattices during falling") A mesh drawn over a
+   * body spawnLattice made hidden: bindSkinTo's records (vertex → its particles, indices within the body). False: no
+   * room for its triangles.
+   */
+  attachSkin(body: PhysBody, mesh: { data: Float32Array; tris: number }): boolean {
+    if (this.skinTris + mesh.tris > SKIN_TRIS) return false;
+    const U = new Uint32Array(mesh.data.buffer);
+    for (let v = 0; v < mesh.tris * 3; v++) for (let k = 0; k < 4; k++) if (U[v * 28 + k] !== 0xffffffff) U[v * 28 + k] += body.offset;
+    this.device.queue.writeBuffer(this.skinSrc, this.skinTris * 3 * SKIN_V_BYTES, mesh.data);
+    body.skin = { mesh: { id: `lattice-${body.id}`, pos: new Float32Array(0), tris: new Uint32Array(0), mat: new Uint8Array(0) }, first: this.skinTris, tris: mesh.tris };
+    this.skinTris += mesh.tris;
+    return true;
+  }
+
+  /** room for this many more skin triangles */
+  hasSkinRoom(tris: number): boolean {
+    return this.skinTris + tris <= SKIN_TRIS;
+  }
+
   /** Is there room for `bodies` more bodies of `voxels` lattice cells in all? */
   private translator?: Translator;
 

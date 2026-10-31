@@ -34,12 +34,18 @@ export interface BodySpec {
   /** rigid (rock: never deforms, the host breaks it) or deformable (metal, wood: bends, dents, snaps); default by its
    *  main material */
   kind?: 'rigid' | 'deformable';
-  /**
-   * its surface cells drawn as voxels, each riding its node (a body without a mesh of its own: metal's thin members);
-   * or which of them (round 120: a rock's concrete and brick, which its mesh doesn't hold — drawn from the same pose as
-   * the mesh, not from a readback a tick or two late)
-   */
-  drawCells?: boolean | ((c: SolverCell) => boolean);
+}
+
+/**
+ * (round 120: one mesh a body, never its cells drawn — the user: "Rendering and simulation should not be coupled that
+ * way") What a body's mesh is bound to: its nodes' rest places (the spawn frame, world cells), the node each of its
+ * cells is in (BodySpec.cells' order), the block size (cells a node's side). The mesh is drawn by the renderer,
+ * skinned to the nodes (render/bodymesh.ts).
+ */
+export interface SolverBind {
+  nodeRest: readonly V3[];
+  cellNode: ArrayLike<number>;
+  g: number;
 }
 
 /** A body as the solver last reported it (a tick or two late: `tick`). */
@@ -84,6 +90,8 @@ export interface NodeSolver {
   wake(b: SolverBody): void;
   /** what the last readback said (undefined: not read back yet) */
   read(b: SolverBody): BodyRead | undefined;
+  /** what its mesh is bound to (round 120) */
+  bindOf(b: SolverBody): SolverBind;
   /** called after each readback, with the tick it was of */
   onRead?: (tick: number) => void;
   readonly bodies: ReadonlySet<SolverBody>;

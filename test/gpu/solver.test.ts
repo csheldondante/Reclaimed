@@ -7,6 +7,7 @@ import { Solver } from '../../src/solver/solver';
 import { TUNE, TUNING, worldG } from '../../src/tune/params';
 import type { BodyRead, SolverBody, SolverCell } from '../../src/api/contracts/solver';
 import { tinyMap } from '../support/tinymap';
+import { MODELS } from '../../src/world/models';
 import { testGpu, type TestGpu } from './dawn';
 import { tinyWorld, type TinyWorld } from './world';
 
@@ -419,4 +420,32 @@ test('a tower toppled onto flat stone rests within about its own height of its f
   expect(angle(r.q)).toBeGreaterThan(45);
   expect(most).toBeLessThan(H * 1.1);
   expect(Math.hypot(r.vel[0], r.vel[1])).toBeLessThan(0.3);
+});
+
+// (round 120, the user: "dropping the tanker in a stone does not trigger breaking and it probably should") a tanker
+// truck landing on its tyres (asphalt: not metal) dents — its body's steel takes the blow — more from higher up
+test('a tanker truck dropped on stone dents, more from higher (its tyres are asphalt)', async () => {
+  const truck = MODELS.find((m) => m.id === 'tankertruck')!;
+  const dentFrom = async (h: number) => {
+    clear();
+    const cells: SolverCell[] = [];
+    const [w, d, hh] = truck.size;
+    for (let z = 0; z < hh; z++) for (let y = 0; y < d; y++) for (let x = 0; x < w; x++) {
+      const m = truck.vox[x + w * (y + d * z)];
+      if (m) cells.push({ x: 20 + x, y: 20 + y, z: FLOOR + h + z, mat: m });
+    }
+    const b = solver.add({ cells, kind: 'deformable' })!;
+    await step(2);
+    const r0 = await solver.rests(b);
+    await step(Math.round(60 * (Math.sqrt((2 * h) / worldG()) + 1.5)));
+    const r1 = await solver.rests(b);
+    let most = 0;
+    for (let i = 0; i < r0.length; i++) most = Math.max(most, Math.hypot(r1[i][0] - r0[i][0], r1[i][1] - r0[i][1], r1[i][2] - r0[i][2]));
+    return most;
+  };
+  const low = await dentFrom(2);
+  const high = await dentFrom(20);
+  if (process.env.SOLVER_LOG) console.log('tanker dent from 2:', low.toFixed(3), 'from 20:', high.toFixed(3));
+  expect(high).toBeGreaterThan(0.05);
+  expect(high).toBeGreaterThan(low);
 });

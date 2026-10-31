@@ -17,7 +17,7 @@ import { dispatch, type SimSystem } from '../sim/system';
 import type { WorldGpu } from '../sim/world-gpu';
 import { TICK_DT } from '../sim/simulation';
 import { TUNE, TUNING, worldG } from '../tune/params';
-import type { BodyRead, BodySpec, NodeSolver, Q, SolverBody, V3 } from '../api/contracts/solver';
+import type { BodyRead, BodySpec, NodeSolver, Q, SolverBind, SolverBody, V3 } from '../api/contracts/solver';
 import { buildBody, cellCentre, NN } from './build';
 import { kindOf, packSolverMats, solverMat } from './materials';
 
@@ -32,6 +32,8 @@ const START_SLOTS = 32;
 interface Slot extends SolverBody {
   /** impulse queued (cells/s) */
   dv: V3 | null;
+  /** what its mesh is bound to (bindOf) */
+  bind: SolverBind;
 }
 
 const qrot = (q: Q, v: V3): V3 => {
@@ -59,15 +61,12 @@ export class Solver implements SimSystem, NodeSolver {
   private nextId = 1;
   private reads = new Map<number, BodyRead>();
   private buf!: Record<'lane' | 'bodies' | 'wake' | 'snap' | 'pose', GPUBuffer>;
-  /** (drawCells) the cells drawn as voxels: their buffer, its room, each body's cells (packed as skinCells), the instances */
+  /** every body's cells, each riding its node (packed as skinCells): marked in the columns (the projection) */
   private skinCells!: GPUBuffer;
   private skinRoom = 0;
   private skinCount = 0;
   private skinOf = new Map<SolverBody, Uint32Array>();
   private skinDirty = false;
-  /** render.wgsl vsBody instances of the drawn cells, and their drawIndirect args (Renderer.addVoxels) */
-  skinInst!: GPUBuffer;
-  readonly skinArgs: GPUBuffer;
   private uni: GPUBuffer;
   private mats: GPUBuffer;
   private k: Record<string, { k: ComputeKernel; g: GPUBindGroup }> = {};
@@ -87,8 +86,6 @@ export class Solver implements SimSystem, NodeSolver {
   ) {
     this.uni = world.buf('solverU', this.uniData.byteLength, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     this.mats = world.buf('solverMats', packSolverMats().byteLength, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
-    this.skinArgs = world.buf('solver skin args', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
-    device.queue.writeBuffer(this.skinArgs, 0, new Uint32Array([36, 0, 0, 0]));
     // (the deformables' numbers are tuning parameters: re-packed when one moves)
     TUNING.onChange((id) => {
       if (id === null || id.startsWith('solver.')) this.matsDirty = true;
@@ -101,7 +98,7 @@ export class Solver implements SimSystem, NodeSolver {
       solve: { 1: 'read', 2: 'uniform', 3: 'rw', 9: 'rw', 11: 'read', 13: 'rw', 14: 'read', 15: 'rw', 23: 'uniform' },
       pairs: { 9: 'rw', 13: 'rw' },
       shift: { 3: 'rw', 9: 'rw', 15: 'rw' },
-      skin: { 3: 'rw', 9: 'rw', 15: 'rw', 17: 'read', 18: 'rw', 19: 'rw', 20: 'rw' },
+      skin: { 3: 'rw', 9: 'rw', 15: 'rw', 17: 'read', 20: 'rw' },
     };
     for (const [entry, s] of Object.entries(spec)) {
       const all = { ...base, ...s };
@@ -111,19 +108,16 @@ export class Solver implements SimSystem, NodeSolver {
     this.alloc(START_SLOTS);
   }
 
-  /** room for this many drawn cells (doubling): the cells' and the instances' buffers made again */
+  /** room for this many cells (doubling): their buffer made again */
   private growSkin(n: number): void {
     if (n <= this.skinRoom) return;
     let room = Math.max(4096, this.skinRoom);
     while (room < n) room *= 2;
     this.skinCells?.destroy();
-    this.skinInst?.destroy();
     this.skinCells = this.world.buf('solver skin cells', room * 16, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);
-    this.skinInst = this.world.buf('solver skin instances', room * 32, GPUBufferUsage.STORAGE);
     this.skinRoom = room;
     this.skinDirty = true;
     if (this.k.skin) this.bindAll();
-    this.onBuffers?.();
   }
 
   /** the node transforms for the last two ticks (4 vec4 a node: prev pos, prev rot, pos, rot; slot b's nodes at b·64) */
@@ -180,7 +174,7 @@ export class Solver implements SimSystem, NodeSolver {
 
   private res: Record<number, GPUBuffer> = {};
   private bindAll(): void {
-    const res: Record<number, GPUBuffer> = { ...this.res, 17: this.skinCells, 18: this.skinInst, 19: this.skinArgs, 20: this.world.physCols };
+    const res: Record<number, GPUBuffer> = { ...this.res, 17: this.skinCells, 20: this.world.physCols };
     for (const [entry, { k, spec }] of Object.entries(this.kernels)) {
       const g = makeBindGroup(this.device, `solver-${entry}`, k.layout, Object.fromEntries(Object.keys(spec).map((b) => [b, res[Number(b)]])));
       this.k[entry] = { k, g };
@@ -197,7 +191,7 @@ export class Solver implements SimSystem, NodeSolver {
       s = this.slots.findIndex((x) => x === null);
     }
     const kind = spec.kind ?? kindOf(built.mat);
-    const body: Slot = { slot: s, id: this.nextId++, restCom: built.com, cells: built.cells, nodes: built.nodes.length, kind, dv: null };
+    const body: Slot = { slot: s, id: this.nextId++, restCom: built.com, cells: built.cells, nodes: built.nodes.length, kind, dv: null, bind: { nodeRest: built.nodes.map((nd) => nd.rest), cellNode: built.cellNode, g: built.g } };
     this.slots[s] = body;
     this.bodies.add(body);
     this.used = Math.max(this.used, s + 1);
@@ -243,7 +237,7 @@ export class Solver implements SimSystem, NodeSolver {
     B.set(q, 16);
     B.set([0, 0, spec.allow ?? 0, 0], 24);
     B.set([0, 1, built.mass, 0], 28);
-    B.set([kind === 'rigid' ? 1 : 0, built.nodes.some((nd) => nd.pinned) ? 1 : 0, 1, 0], 32);
+    B.set([kind === 'rigid' ? 1 : 0, built.nodes.some((nd) => nd.pinned) ? 1 : 0, 1, built.mat], 32);
     const q0 = this.device.queue;
     const o = s * NN;
     q0.writeBuffer(this.buf.lane, o * LANE_V * 16, L);
@@ -251,19 +245,18 @@ export class Solver implements SimSystem, NodeSolver {
     q0.writeBuffer(this.buf.bodies, s * BODY_V * 16, B);
     q0.writeBuffer(this.buf.wake, s * 4, new Uint32Array([0]));
     {
-      // (every cell, for the column projection — the drawn ones (drawCells: its surface) flagged: their rest about its
-      // rest centre of mass, f32 bits; their node's lane | drawn << 23 | material << 24)
+      // (every cell, for the column projection: their rest about its rest centre of mass, f32 bits; their node's lane |
+      // material << 24. Round 120: none drawn as voxels — a body is drawn by its own mesh, render/bodymesh.ts)
       const list: number[] = [];
       const f = new Float32Array(1);
       const u = new Uint32Array(f.buffer);
       spec.cells.forEach((c, i) => {
-        const drawn = (typeof spec.drawCells === 'function' ? spec.drawCells(c) : !!spec.drawCells) && built.surface[i];
         const [cx, cy, cz] = cellCentre(c);
         for (const v of [cx - built.com[0], cy - built.com[1], cz - built.com[2]]) {
           f[0] = v;
           list.push(u[0]);
         }
-        list.push(((s * NN + built.cellNode[i]) | (drawn ? 1 << 23 : 0) | ((c.mat & 0xff) << 24)) >>> 0);
+        list.push(((s * NN + built.cellNode[i]) | ((c.mat & 0xff) << 24)) >>> 0);
       });
       this.skinOf.set(body, new Uint32Array(list));
       this.skinDirty = true;
@@ -291,6 +284,13 @@ export class Solver implements SimSystem, NodeSolver {
   wake(b: SolverBody): void {
     if (this.slots[b.slot] !== b) return;
     this.device.queue.writeBuffer(this.buf.wake, b.slot * 4, new Uint32Array([1]));
+  }
+
+  /** (round 120) what a body's mesh is bound to: its nodes' rest places, each of its cells' node (spec.cells order) */
+  bindOf(b: SolverBody): SolverBind {
+    const s = this.slots[b.slot];
+    if (!s || s.id !== b.id) throw new Error(`solver: body ${b.id} isn't in slot ${b.slot}`);
+    return s.bind;
   }
 
   read(b: SolverBody): BodyRead | undefined {
@@ -363,7 +363,7 @@ export class Solver implements SimSystem, NodeSolver {
     }
     dispatch(enc, this.prof, 'solver-pairs', this.k.pairs.k, this.k.pairs.g, [Math.ceil(this.used / 64), 1]);
     dispatch(enc, this.prof, 'solver', this.k.solve.k, this.k.solve.g, [this.used, 1]);
-    // the drawn cells where their nodes are now
+    // the cells where their nodes are now (the projection's marks)
     if (this.skinDirty) {
       this.skinDirty = false;
       let n = 0;
@@ -378,7 +378,6 @@ export class Solver implements SimSystem, NodeSolver {
       this.device.queue.writeBuffer(this.skinCells, 0, all);
       this.skinCount = n;
     }
-    this.device.queue.writeBuffer(this.skinArgs, 0, new Uint32Array([36, 0, 0, 0]));
     if (this.skinCount) dispatch(enc, this.prof, 'solver-skin', this.k.skin.k, this.k.skin.g, [Math.ceil(this.skinCount / 64), 1]);
     this.readBack(enc);
   }

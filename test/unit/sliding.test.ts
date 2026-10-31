@@ -72,3 +72,31 @@ test('the friction is the tuning (μ 0: the same push slides on)', () => {
   settle(rb, 1);
   expect(b.v[0]).toBeGreaterThan(3);
 });
+
+// (a steeper slope's slide is held back by the ground damping, RB.contactDamp: it creeps — recorded, BACKLOG SL13)
+test('a block on a slope gentler than its friction stays put (tan θ < μ); steeper than it, it moves', () => {
+  const run = (deg: number) => {
+    const k = Math.tan((deg * Math.PI) / 180);
+    const n: [number, number, number] = [-k / Math.hypot(k, 1), 0, 1 / Math.hypot(k, 1)];
+    const SLOPE: RockGround = {
+      probe: (x, _y, z) => {
+        const top = FLOOR + k * (x - 20);
+        return z < top ? { d: (top - z) * n[2], n } : null;
+      },
+      topIn: (_x0, _y0, x1) => FLOOR + k * (x1 - 20),
+    };
+    const rb = new RockBodies(SLOPE);
+    const cells = [];
+    for (let x = 0; x < 4; x++) for (let y = 0; y < 4; y++) for (let z = 0; z < 2; z++) cells.push({ x: 20 + x, y: 20 + y, z: FLOOR + 6 + z, mat: 1 });
+    const b = rb.spawn(cells)!;
+    settle(rb, 1.5);
+    const x0 = b.pos[0];
+    settle(rb, 3);
+    return Math.abs(b.pos[0] - x0);
+  };
+  const gentle = run(15);
+  const steep = run(45);
+  if (process.env.SOLVER_LOG) console.log('slope 15°', gentle.toFixed(2), '45°', steep.toFixed(2));
+  expect(gentle).toBeLessThan(0.3);
+  expect(steep).toBeGreaterThan(gentle * 5);
+});

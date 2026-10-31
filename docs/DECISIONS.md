@@ -154,6 +154,18 @@ each was implemented.
   variant: found at its root, with Node tests (a toppled tower rests within about its height; a block sliding at v on
   stone stops within v²/(2μg)). The user looked only at the defaults (nodes × runs) and liked the rock collapse: the
   solver and judge pickers go on an always-visible chip.
+- The user, verbatim, on 6aef66e: "I think you hybrid approach looks fine actually but I notice a lot of things turn into lattices during falling. Is the tanker physics applied to just the regular tanker or do I have to do something? Consider making a physics benchmark for the phone that can drop things and topple towers. One other thing but dropping the tanker in a stone does not trigger breaking and it probably should. Also, the tower toppling does not wake up the tanker in top of it so the tanker floats until touched. Consider a telikinetic drag tool to test swinging tankers and rocks into things."
+  → In order: a sleeper whose support goes wakes on its own (the lattice's sleepers woke only for their own kind
+  moving); a hard blow breaks whichever is weaker by energy (hard ground gives where struck; metal dents); the one-mesh
+  decoupling in every variant, the voxel lattice included (its bodies drawn as their own meshes over their particles);
+  a telekinetic drag tool (grab and swing, phone first, a thumb's reach); a phone physics bench (?physbench=1: the
+  line-up, towers, the mesa, a swung tanker, every solver × judge; a card and a JSON). The map's tankers and cars wake
+  into the picked variant when struck — nothing to do.
+- The user, verbatim, on soft ground: "Also, when bodies hit the ground with heavy impacts in soft material like sand or dirt they should displace material and dampen energy that way. I would just cheat and have the intersection with softer materials turn them into particles but I really want it to push into the ground a bit to look like it is in soft material."
+  → "Erode, don't push" with the ground as the softer body: each loose material a softness; a body sinks into soft
+  ground by its softness and the blow's energy and ends visibly embedded; the cells it sinks into leave the columns,
+  part as a spray of particles, the rest a rim round it (mass kept); the energy spent by the displaced mass (drag, no
+  bounce); stone as today. Next after the above.
 
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 

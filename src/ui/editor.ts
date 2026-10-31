@@ -43,6 +43,7 @@ export type EditTool =
   | 'place'
   | 'smash'
   | 'drop'
+  | 'drag'
   | 'beam'
   | 'volcano'
   | 'meteor'
@@ -110,6 +111,7 @@ const TOOLS: [EditTool, string, string][] = [
   ['place', '🚗', 'Place a model: cars, ruins, a tanker… (E rotates)'],
   ['smash', '💥', 'Break: punch a hole where you click — what loses its support falls'],
   ['drop', '🧱', 'Drop a physics body: steel bends, stone cracks into pieces, a hard hit crumbles it'],
+  ['drag', '🫳', 'Telekinesis: grab a body (a tanker, a rock, a piece) and drag it — let go to throw it; swing it into things'],
   ['beam', '🔥', 'Heat beam: hold on something — steel glows, softens and melts, so you can cut it; the ground melts into lava'],
   ['volcano', '🌋', 'Volcano: tap — a cone rises out of the ground, then lava pours down its sides and sets into basalt'],
   ['meteor', '☄️', 'Meteor: tap — it falls smoking from the sky and blows out a crater: what it hits turns to dust, the blast of air throws it out'],

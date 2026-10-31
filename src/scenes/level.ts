@@ -88,7 +88,7 @@ const FLY_SPEED = Number(new URLSearchParams(location.search).get('flyspeed') ??
 import { cpuLine, cpuStats, frameSteps, record, timed } from '../gpu/cpustat';
 import { type Interval, CHUNK, columnSlots, K_HEADROOM, packColumn, readColumn, SLOT_WORDS, sfMat, sfZ, sfPack, windowZMax } from '../world/layout';
 import { modelById, modelColumns, restingBase, seatColumn, type VoxelModel } from '../world/models';
-import { Integrity } from '../game/integrity';
+import { Integrity, type Grab } from '../game/integrity';
 import { WorldVox } from '../game/fracture';
 import { MAT } from '../world/materials';
 import { cellAt, cellPos, poiWorld, ROW_H } from '../world/lattice';
@@ -364,6 +364,8 @@ export class LevelScene implements Scene {
   lava?: LavaSystem;
   /** sandbox: the heat beam's pointer while held */
   private beamAt?: [number, number];
+  /** (round 120) the drag tool's hold: the body, the height it's held at, where the pointer is (CSS px) */
+  private dragHold?: { g: Grab; h: number; at: [number, number] };
   private beamWoke = -Infinity;
   private beamLine?: SVGLineElement;
   private beamDot?: SVGCircleElement;
@@ -1203,6 +1205,19 @@ export class LevelScene implements Scene {
           this.dropAtPick(sx, sy);
           return true;
         }
+        // (round 120) telekinesis: the body nearest the press, within a thumb's reach, held while dragging
+        if (this.editor?.tool === 'drag') {
+          const ig = this.integrity;
+          if (!ig) return false;
+          const [gx, gy, gz] = camera.groundAt(sx, sy, this.heightAt);
+          const reach = 48 / camera.zoom + 2;
+          // (on the ground under the finger or anything stood on it up to a body's height above)
+          const g = ig.grabAt(gx, gy, gz + 2, reach + 2);
+          if (!g) return false;
+          const st = ig.grabState(g)!;
+          this.dragHold = { g, h: st.pos[2] + 2, at: [sx, sy] };
+          return true;
+        }
         // the heat beam: on while held, aimed at what's under the pointer (frame())
         if (this.editor?.tool === 'beam') {
           this.beamAt = this.beamAim(sx, sy);
@@ -1233,6 +1248,7 @@ export class LevelScene implements Scene {
           return;
         }
         if (this.beamAt) return void (this.beamAt = this.beamAim(sx, sy));
+        if (this.dragHold) return void (this.dragHold.at = [sx, sy]);
         if (this.smashing) {
           this.pickSmash(sx, sy);
           return void this.smashAt(sx, sy, false);
@@ -1243,6 +1259,8 @@ export class LevelScene implements Scene {
       },
       dragEnd: () => {
         if (this.flyDrag) return void (this.flyDrag = undefined);
+        // (let go: it flies on with the speed it had)
+        if (this.dragHold) return void (this.dragHold = undefined);
         if (this.beamAt) {
           this.beamAt = undefined;
           if (this.physics) this.physics.beam = null;
@@ -2261,6 +2279,11 @@ export class LevelScene implements Scene {
     this.stepMeteors(dt);
     this.drawRing();
     if (this.beamAt && this.physics && !this.beamPicking) this.aimBeam(this.beamAt);
+    // (round 120) the held body pulled to where the finger is, at the height it was lifted to
+    if (this.dragHold && this.integrity) {
+      const [tx, ty] = camera.groundAt(this.dragHold.at[0], this.dragHold.at[1], () => this.dragHold!.h);
+      if (!this.integrity.pull(this.dragHold.g, [tx, ty, this.dragHold.h], Math.min(dt, 1 / 20))) this.dragHold = undefined;
+    }
     // (round 87: the beam bores through rock with no edit event — what it undercuts is judged while it's held)
     const lb = this.lava?.beam;
     if (lb && this.integrity && performance.now() - this.beamCutAt > 250) {

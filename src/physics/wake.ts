@@ -12,6 +12,8 @@ import { cellAt, cellPos } from '../world/lattice';
 import { MAT } from '../world/materials';
 import type { WorldCore } from '../scenes/world-core';
 import type { Physics, PhysBody } from './physics';
+import { bindSkinTo } from './mesh';
+import { BM_VERT, buildBodyMesh } from '../render/bodymeshbuild';
 
 /** What the structure system holds up: not stone (the bedrock), not asphalt (the roads). */
 export const STRUCTURAL: ReadonlySet<number> = new Set<number>([MAT.Concrete, MAT.Brick, MAT.Rust, MAT.Steel, MAT.Canvas]);
@@ -190,6 +192,20 @@ export class Waker {
     for (const { part, lo, hi } of parts) {
       const at = (x: number, y: number, z: number) => piece.get(key(lo[0] + x, lo[1] + y, lo[2] + z));
       const mine = new Set(part);
+      // (round 120: drawn as its own mesh over its particles, its voxels hidden — never as a lattice of cubes)
+      const dims: [number, number, number] = [hi[0] - lo[0] + 1, hi[1] - lo[1] + 1, hi[2] - lo[2] + 1];
+      const skin = bindSkinTo(
+        buildBodyMesh(part),
+        BM_VERT,
+        part.map((c) => {
+          const [px, py] = cellPos(c.x, c.y);
+          return { i: c.x - lo[0] + dims[0] * (c.y - lo[1] + dims[1] * (c.z - lo[2])), c: [px, py, c.z + 0.5] as [number, number, number] };
+        }),
+      );
+      if (!phys.hasSkinRoom(skin.tris)) {
+        full++;
+        continue;
+      }
       const body = phys.spawnLattice(
         [hi[0] - lo[0] + 1, hi[1] - lo[1] + 1, hi[2] - lo[2] + 1],
         (x, y, z) => {
@@ -200,8 +216,9 @@ export class Waker {
           const [px, py] = cellPos(lo[0] + x, lo[1] + y);
           return [px, py, lo[2] + z + 0.5];
         },
-        { pinned: (x, y, z) => !!at(x, y, z)?.pin },
+        { pinned: (x, y, z) => !!at(x, y, z)?.pin, hidden: true },
       );
+      if (body && !phys.attachSkin(body, skin)) throw new Error('wake: its mesh had room a moment ago');
       if (body) bodies.push(body);
       else full++;
     }

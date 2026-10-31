@@ -24,32 +24,31 @@ import { ColumnBodies, subtract, type ColPiece, type FallingBody, type Landing }
 import { RockBodies, RB, columnsGround, type RockBody, type RockGround, type V3 } from './rockbodies';
 import { BUILD_FRAMES, RK_N, type RockDraw, type RockMesh } from '../render/rockmesh';
 import type { Physics } from '../physics/physics';
-import { TUNE } from '../tune/params';
+import { TUNE, worldG } from '../tune/params';
 import { record } from '../gpu/cpustat'; // (round 100, hitchrec: timing)
 import { ExternalRegistry, OWNER_ROCK, type ExternalCol, type ExternalInstance } from '../sim/external';
 import { fieldMeshed } from '../world/materials';
-import { restingVoxels } from './rockbodies';
 import { Solver } from '../solver/solver';
 import { ROUTING, solverVariant, type Routing, type SolverVariant } from '../solver/variant';
 import type { PhysBody } from '../physics/physics';
 import type { SolverBody } from '../api/contracts/solver';
 import { modelColumns, type VoxelModel } from '../world/models';
 import { rockDrawFor } from './rockdraw';
+import { groundBlowRadius } from './blows';
+import { BodyMeshes } from '../render/bodymesh';
+import { BM_VERT, buildBodyMesh, type MeshCell } from '../render/bodymeshbuild';
+import { bindSkinTo } from '../physics/mesh';
 
 /** (round 96) what bends: metal — and (solver step 2, but for the baseline variant) wood — goes to a deformable body (the node solver's or the voxel lattice's, by the variant), the rest of what falls stays rigid */
 const METAL: ReadonlySet<number> = new Set<number>([MAT.Steel, MAT.Rust]);
 const WOOD: ReadonlySet<number> = new Set<number>([MAT.Wood, MAT.Log]);
 /** (round 96) cells of metal woken at once at most (wake.ts WAKE_MAX) */
 const METAL_MAX = 6000;
+/** (round 120) a body held by the drag tool (Integrity.grabAt) */
+export type Grab = { kind: 'rigid'; b: RockBody } | { kind: 'solver'; body: SolverBody } | { kind: 'phys'; body: PhysBody };
+
 /** (round 120) a hit harder than this (cells/s) wakes the map's metal it struck (wakeMetalNear) */
 const WAKE_HIT = 3;
-/**
- * (round 96, ?rbskin=1, an experiment) the metal drawn as a field mesh skinned to its particles (meshed as stone: the
- * field leaves metal to the prisms). Off by default: the field mesh can't hold metal's thin members — a girder two
- * cells deep, a tower's one-column legs mesh to nothing — so the metal is drawn as its particles' own voxels, each
- * turned with its particle, as the woken buildings and the drop tool's bodies are.
- */
-const SKIN_METAL = typeof location !== 'undefined' && new URLSearchParams(location.search).get('rbskin') === '1';
 
 const PASS = 0.35; // s between analyses while anything is dirty or moving
 /** (round 100, hitchrec) the structures' boxes a pass judges until it has taken this long (ms); the rest wait for the next */
@@ -128,7 +127,7 @@ export class Integrity {
    */
   readonly external: ExternalRegistry | null = null;
   /** (round 99) the resting rock: instance → its mesh's slot and transform (oldest first) */
-  private resting = new Map<number, { slot?: number; m: number[]; mat: number; cells?: { x: number; y: number; z: number; mat: number }[]; history?: number; vox?: Float32Array }>();
+  private resting = new Map<number, { slot?: number; m: number[]; mat: number; cells?: { x: number; y: number; z: number; mat: number }[]; history?: number; mesh?: number }>();
   /**
    * (round 96, the user: "a different material like metal (does it use the deformation physics the buildings
    * do?)") With rockbody on, metal that the judges free or cut is woken into the physics voxels (the GPU solver the
@@ -136,8 +135,16 @@ export class Integrity {
    * cells resting on other ground pinned — and drawn with its own mesh skinned to the particles.
    */
   physics?: Physics;
-  /** (solver step 2) the metal woken into the node solver: its body, its mesh's slot (SKIN_METAL) */
-  private metal: { body: SolverBody; slot?: number; mat: number }[] = [];
+  /** (solver step 2) the metal woken into the node solver: its body, its own mesh (bodyMeshes), its main material */
+  private metal: { body: SolverBody; mesh: number; mat: number }[] = [];
+  /**
+   * (round 120, the user: "Rendering and simulation should not be coupled that way") every body's own mesh, skinned to
+   * what moves it (render/bodymesh.ts): the metal's whole, a rock's what the rock mesh doesn't hold (what's built, or
+   * all of one the rock mesh had no room for) — never its cells drawn as voxels
+   */
+  readonly bodyMeshes: BodyMeshes | null = null;
+  /** each moving rock's own mesh (0: none, the rock mesh holds all of it) */
+  private rockMeshOf = new Map<RockBody, number>();
   /**
    * (round 86) a cut was sent this tick or since: the next pass starts at once (not on the 0.35 s timer), its
    * readback submitted after the tick that made the cut — so one look is enough
@@ -187,7 +194,7 @@ export class Integrity {
   /** dust where something breaks or a body hits (grains, spread in cells, the material it's made of) */
   onDust?: (x: number, y: number, z: number, count: number, spread: number, mat: number) => void;
   /** stats for the perf overlay / tests */
-  stats = { passes: 0, bodies: 0, crumbled: 0, settled: 0, crumbledBodies: 0, impacts: 0, shatters: 0, shattered: 0, lastMs: 0, rockSeeds: 0, rereads: 0, settledFalls: 0, settleMs: 0, metal: 0, deferred: 0, judgeMs: 0, judgeGpuMs: 0 };
+  stats = { passes: 0, bodies: 0, crumbled: 0, settled: 0, crumbledBodies: 0, impacts: 0, shatters: 0, shattered: 0, lastMs: 0, rockSeeds: 0, rereads: 0, settledFalls: 0, settleMs: 0, metal: 0, deferred: 0, judgeMs: 0, judgeGpuMs: 0, groundBlows: 0 };
   /** sleeping bodies projected per column: top, bottom (top < 0: none) — the
    *  GPU's bodyProj texture and the bodies' own collision share it */
   readonly proj: Float32Array;
@@ -226,23 +233,28 @@ export class Integrity {
       if (route.rock === 'nodes' || route.metal === 'nodes') {
       const solver = new Solver(core.host.gpu.device, core.world, core.host.profiler);
       core.sim.systems.push(solver);
-      if (route.rock === 'nodes') {
-        this.rigid!.engine = solver;
-        // (round 120: the cells its mesh doesn't hold — what's built, or all of a body without a mesh — the solver's
-        // skin draws, from the pose its mesh is drawn from)
-        this.rigid!.drawnCell = (b, mat) => !!RB.cubes || b.slot === undefined || !fieldMeshed(mat);
-      }
+      if (route.rock === 'nodes') this.rigid!.engine = solver;
       (this as { solver: Solver | null }).solver = solver;
-      // (what it draws: the metal's cells as voxels, each riding its node; the rock mesh skinned to its nodes)
-      core.renderer.addVoxels(solver.skinInst, solver.skinArgs);
       // (its bodies' cells in the columns every column while it holds any: the projection's whole pass)
       core.sim.project.wholeWhile.push(() => solver.used > 0);
-      core.renderer.setRockNodes({ pose: solver.pose, lanes: solver.lanes });
-      solver.onBuffers = () => {
-        core.renderer.removeVoxels(solver.skinArgs);
-        core.renderer.addVoxels(solver.skinInst, solver.skinArgs);
-        core.renderer.setRockNodes({ pose: solver.pose, lanes: solver.lanes });
+      }
+      // (round 120) the bodies' own meshes, skinned each frame to the solver's nodes (or a matrix), drawn lit and shadowed
+      const bm = new BodyMeshes(core.host.gpu.device, core.world, core.host.profiler);
+      (this as { bodyMeshes: BodyMeshes | null }).bodyMeshes = bm;
+      core.renderer.addMesh(bm.out, bm.args);
+      bm.onBuffers = () => {
+        core.renderer.removeMesh(bm.args);
+        core.renderer.addMesh(bm.out, bm.args);
       };
+      core.renderer.frameCompute.push((enc) => bm.encode(enc, core.renderAlpha()));
+      const solver = this.solver;
+      if (solver) {
+        const nodes = () => {
+          core.renderer.setRockNodes({ pose: solver.pose, lanes: solver.lanes });
+          bm.setNodes({ pose: solver.pose, lanes: solver.lanes });
+        };
+        nodes();
+        solver.onBuffers = nodes;
       }
       this.rockMesh = core.renderer.enableRockMesh();
       // (round 110: with the rigid rock always, not only `?meshinst=1` — the user: "When things come to rest they turn
@@ -543,7 +555,7 @@ export class Integrity {
         const at = r?.pos ?? mb.body.restCom;
         if (!over(at[0], at[1])) continue;
         this.solver.remove(mb.body);
-        if (mb.slot !== undefined) this.rockMesh?.release(mb.slot);
+        this.bodyMeshes?.remove(mb.mesh);
         this.metal = this.metal.filter((m) => m !== mb);
       }
   }
@@ -563,14 +575,10 @@ export class Integrity {
     const bent = cells.filter((c) => this.bends(c.mat)).length * 2 > cells.length;
     if (this.route.rock === 'lattice' || (bent && this.route.metal === 'lattice')) return this.spawnLattice(cells, () => false);
     if (bent) {
-      const slot = SKIN_METAL ? this.rockMesh?.alloc(cells.map((c) => ({ ...c, mat: MAT.Stone })))?.id : undefined;
       if (!this.solver) return false;
-      const body = this.solver.add({ cells, vel, kind: 'deformable', drawCells: slot === undefined });
-      if (!body) {
-        if (slot !== undefined) this.rockMesh?.release(slot);
-        return false;
-      }
-      this.metal.push({ body, slot, mat: this.bends(most) ? most : cells.find((c) => this.bends(c.mat))!.mat });
+      const body = this.solver.add({ cells, vel, kind: 'deformable' });
+      if (!body) return false;
+      this.metal.push({ body, mesh: this.meshFor(body, cells), mat: this.bends(most) ? most : cells.find((c) => this.bends(c.mat))!.mat });
       this.stats.bodies++;
       return true;
     }
@@ -687,6 +695,18 @@ export class Integrity {
     }
     const dims: [number, number, number] = [hi[0] - lo[0] + 1, hi[1] - lo[1] + 1, hi[2] - lo[2] + 1];
     if (!phys.hasRoom(dims[0] * dims[1] * dims[2])) return false;
+    // (round 120, the user: "a lot of things turn into lattices during falling": drawn as its own mesh over its
+    // particles — bound to them, torn where they part — its voxels hidden, as the node solver's bodies are drawn)
+    const verts = buildBodyMesh(cells);
+    const skin = bindSkinTo(
+      verts,
+      BM_VERT,
+      cells.map((c) => {
+        const [px, py] = cellPos(c.x, c.y);
+        return { i: c.x - lo[0] + dims[0] * (c.y - lo[1] + dims[1] * (c.z - lo[2])), c: [px, py, c.z + 0.5] as [number, number, number] };
+      }),
+    );
+    if (!phys.hasSkinRoom(skin.tris)) return false;
     const at = new Map(cells.map((c) => [`${c.x - lo[0]},${c.y - lo[1]},${c.z - lo[2]}`, c]));
     const body: PhysBody | null = phys.spawnLattice(
       dims,
@@ -698,8 +718,9 @@ export class Integrity {
       { pinned: (x, y, z) => {
         const c = at.get(`${x},${y},${z}`);
         return !!c && pinned(c);
-      } },
+      }, hidden: true },
     );
+    if (body && !phys.attachSkin(body, skin)) throw new Error('spawnLattice: its mesh had room a moment ago');
     if (body) this.stats.bodies++;
     return !!body;
   }
@@ -937,7 +958,7 @@ export class Integrity {
     }
     this.flushLoose();
     const { data, count } = this.bodies.pack();
-    if (this.rigid?.list.length || this.restingVox) {
+    if (this.rigid) {
       // (round 95) the rigid rock: a step, its hits (dust, sparks, a break), what came to rest written back
       const tRigid = performance.now(); // (round 100, hitchrec: timing)
       if (this.rigid?.list.length && this.world.slots.length && dt > 0) this.stepRigid(dt);
@@ -947,29 +968,18 @@ export class Integrity {
       const f = this.packF;
       const u = new Uint32Array(f.buffer);
       f.set(new Float32Array(data.buffer, data.byteOffset, Math.min(count, max) * 8));
-      // (the cells drawn as voxels: of those without a mesh, all; (round 112) of the rest, what's built — the rock's mesh
-      // is the field mesh's, which draws no concrete, brick or metal: a concrete piece was a body with an empty mesh,
-      // the user's "The concrete just immediately vanished". The rest of the cells only cast the shadow)
-      const drawn = (b: RockBody, k: { mat: number }) => !!RB.cubes || b.slot === undefined || !fieldMeshed(k.mat);
-      // (round 120, the user: "the mesh changes appearance and sometimes turns into blocks during falling": a body on
-      // the node solver had its mesh skinned to the solver's pose, this frame's, and its cells — drawn or casting its
-      // shadow — at its CPU pose, the readback a tick or two behind: falling, those cells were a cell above the mesh,
-      // their shadow darkening it in blocks. Its cells are the solver's to draw now, from the same pose (drawnCell);
-      // its mesh casts its own shadow (renderer.ts: the rock mesh in the shadow pass))
-      const cpu = (b: RockBody) => !this.rigid!.engineBody(b);
-      let shown = this.rigid!.packInto(f, u, Math.min(count, max), max, (b, k) => cpu(b) && drawn(b, k));
-      // (round 112) and the resting ones' (their cells drawn so where they lie)
-      for (const r of this.resting.values())
-        if (r.vox?.length) {
-          const k = Math.min(r.vox.length / 8, max - shown);
-          f.set(r.vox.subarray(0, k * 8), shown * 8);
-          shown += k;
-        }
-      const n = this.rigid!.packInto(f, u, shown, max, (b, k) => cpu(b) && !drawn(b, k));
-      this.core.renderer.setBodies(u, n, shown);
+      // (round 120, the user: "it switches for rendering as voxels. Rendering and simulation should not be coupled that
+      // way": no rock's cells drawn as voxels, moving or resting — what the rock mesh doesn't hold is the body's own
+      // mesh, bodyMeshes (it was its cells, from the CPU pose: the round-120 blocks while falling); and no cells only
+      // casting the shadow — the meshes cast their own)
+      const n = Math.min(count, max);
+      this.core.renderer.setBodies(u, n, n);
+      this.syncRockMeshes();
     } else this.core.renderer.setBodies(data, count);
     this.rockDraws();
     this.metalBlows();
+    this.latticeBlows();
+    this.wakeLattice();
     // (round 86) the pieces falling in the columns: a step, their chunks meshed at once, what came down
     if (this.world.slots.length && dt > 0 && this.falling.list.length) {
       for (const l of this.falling.update(dt, ++this.fallFrame % FALL_EVERY === 0)) this.land(l);
@@ -1450,6 +1460,7 @@ export class Integrity {
       this.stats.impacts++;
       // (round 120) the map's metal it struck (a tanker, a car) wakes into the picked variant's body
       if (h.speed > WAKE_HIT) this.wakeMetalNear(x, y, z, 1.5);
+      this.groundBlow(x, y, z, 0.5 * b.mass * h.speed * h.speed);
       const br = rigid.breakAt(b, h.speed, h.at);
       if (!br) continue;
       // (its mesh drawn split between the pieces till theirs are built)
@@ -1475,7 +1486,7 @@ export class Integrity {
     // (the solver's bodies cleared — undo, a warp — take the metal's with them)
     if (this.solver && this.metal.length) {
       const live = this.solver.bodies;
-      for (const mb of this.metal) if (!live.has(mb.body) && mb.slot !== undefined) rm.release(mb.slot);
+      for (const mb of this.metal) if (!live.has(mb.body)) this.bodyMeshes?.remove(mb.mesh);
       this.metal = this.metal.filter((mb) => live.has(mb.body));
     }
     const draws: RockDraw[] = [];
@@ -1494,8 +1505,7 @@ export class Integrity {
     for (const a of this.afterglow) draws.push({ slot: a.slot, m: a.m });
     // (round 99) the resting rock, where it lies
     for (const r of this.resting.values()) if (r.slot !== undefined) draws.push({ slot: r.slot, m: r.m });
-    // (round 96) the metal: its mesh skinned to its particles
-    for (const mb of this.metal) if (mb.slot !== undefined) draws.push({ slot: mb.slot, m: [], skin: { slot: mb.body.slot, com: mb.body.restCom, nodes: mb.body.nodes, mat: mb.mat } });
+    // (round 120: the metal is drawn by its own mesh — bodyMeshes — not the rock mesh)
     for (const g of this.ghosts) {
       const seeds = g.seeds.map((s): [number, number, number, number] => [s.s[0], s.s[1], s.s[2], s.piece && index.has(s.piece) ? index.get(s.piece)! : -1]);
       draws.push({ slot: g.slot, m: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0], ghost: { seeds, hit: g.hit, rad: g.rad } });
@@ -1604,26 +1614,19 @@ export class Integrity {
       lo = [Math.min(lo[0], c.x), Math.min(lo[1], c.y), Math.min(lo[2], c.z)];
       hi = [Math.max(hi[0], c.x), Math.max(hi[1], c.y), Math.max(hi[2], c.z)];
     }
-    // (its mesh's slot first: without one its cells are drawn)
     const list = [...cells.values()];
-    // (meshed as stone: the field leaves metal to the prisms — its own material drawn: RockDraw.skin.mat)
     const mats = new Map<number, number>();
     for (const c of list) mats.set(c.mat, (mats.get(c.mat) ?? 0) + 1);
     const mat = [...mats].sort((a, b) => b[1] - a[1])[0][0];
-    const slot = SKIN_METAL ? this.rockMesh?.alloc(list.map((c) => ({ ...c, mat: MAT.Stone })))?.id : undefined;
     const pins = new Set(list.filter((c) => c.pin).map((c) => key(c.x, c.y, c.z)));
     const plain = list.map((c) => ({ x: c.x, y: c.y, z: c.z, mat: c.mat }));
     // (the variant's: the voxel lattice — the physics voxels, drawn as their own voxels — or the node solver)
     let body: SolverBody | null = null;
     if (this.route.metal === 'lattice') {
-      if (slot !== undefined) this.rockMesh?.release(slot);
       if (!this.spawnLattice(plain, (c) => pins.has(key(c.x, c.y, c.z)))) return;
     } else {
-      body = solver!.add({ cells: plain, pinned: (c) => pins.has(key(c.x, c.y, c.z)), kind: 'deformable', drawCells: slot === undefined });
-      if (!body) {
-        if (slot !== undefined) this.rockMesh?.release(slot);
-        return;
-      }
+      body = solver!.add({ cells: plain, pinned: (c) => pins.has(key(c.x, c.y, c.z)), kind: 'deformable' });
+      if (!body) return;
     }
     // out of the columns (both copies)
     const byCol = new Map<number, { z0: number; z1: number }[]>();
@@ -1650,7 +1653,7 @@ export class Integrity {
     }
     this.touchCols(touched, true);
     this.urgent = true;
-    if (body) this.metal.push({ body, slot, mat });
+    if (body) this.metal.push({ body, mesh: this.meshFor(body, plain), mat });
     this.stats.bodies++;
     this.stats.metal = (this.stats.metal ?? 0) + list.length;
     const [fx, fy] = cellPos(Math.round((lo[0] + hi[0]) / 2), Math.round((lo[1] + hi[1]) / 2));
@@ -1672,6 +1675,8 @@ export class Integrity {
       const [x, y, z] = r.impact.at;
       // (round 120) the map's metal it struck wakes too (a girder dropped on a parked car: both bend)
       if (r.impact.speed > WAKE_HIT) this.wakeMetalNear(x, y, z, 1.5);
+      // (round 120) and hard ground struck hard gives
+      this.groundBlow(x, y, z, e);
       const n = Math.min(40, Math.round(Math.sqrt(e) / 12));
       if (n < 1) continue;
       // (metal sparks; wood splinters and dusts)
@@ -1872,7 +1877,7 @@ export class Integrity {
           const m = [...t.m];
           m[3] += x0;
           m[7] += y0 * ROW_H;
-          this.resting.set(inst.id, { slot, m, mat: st.mat, cells: st.cells, history: t.id, vox: this.voxOf(st.cells, m, slot) });
+          this.resting.set(inst.id, { slot, m, mat: st.mat, cells: st.cells, history: t.id, mesh: this.restingMesh(st.cells, m, slot) });
         }
       },
     };
@@ -1883,17 +1888,189 @@ export class Integrity {
     return this.resting.size;
   }
 
-  /** (round 112) voxels the resting bodies have drawn as voxels (what's built in them; all of one with no mesh) */
-  private get restingVox(): number {
-    let n = 0;
-    for (const r of this.resting.values()) n += (r.vox?.length ?? 0) / 8;
-    return n;
+  /**
+   * (round 120, the user: "the tower toppling does not wake up the tanker on top of it so the tanker floats until
+   * touched") The voxel lattice's sleepers (physics.ts: they wake for what moves among its own bodies, and cuts) woken
+   * by what moves on the other solvers too — a rigid rock or a node-solver body going by or out from under one.
+   */
+  /**
+   * (round 120, the user: "dropping the tanker in a stone does not trigger breaking and it probably should") A body
+   * that strikes hard ground (rock, concrete: what's solid) with more than impact.groundEnergy crumbles it where it
+   * struck — the break tool's smash, a ball of radius 0.8·∛(E / groundEnergy) at most 3 — and the collapse judge looks
+   * at what that leaves. (The body's own share: rock breaks on its hits, metal and wood dent: solver.wgsl.)
+   */
+  groundBlow(x: number, y: number, z: number, energy: number): number {
+    const r = groundBlowRadius(energy);
+    if (!r || !this.world.slots.length) return 0;
+    const [cx, cy] = cellAt(x, y);
+    const m = this.world.matAt(cx, cy, Math.max(0, Math.floor(z - 0.5)));
+    if (MATERIALS[m]?.state !== MatState.Solid) return 0;
+    this.core.sim.edit.always = true;
+    this.core.globals.events.push({ kind: EventKind.Edit, x, y, z: OP.SMASH * 32, radius: r, strength: z - 0.3 });
+    this.watch(x, y, r + 2, 3);
+    this.onDust?.(x, y, z, Math.min(60, Math.round(10 + r * 12)), r + 0.5, m);
+    this.stats.groundBlows++;
+    return r;
   }
 
-  /** (round 112) a resting body's voxels: what its mesh doesn't draw (all of it without one) */
-  private voxOf(cells: { x: number; y: number; z: number; mat: number }[], m: number[], slot: number | undefined): Float32Array | undefined {
-    const v = restingVoxels(cells, m, (mat) => slot === undefined || !fieldMeshed(mat));
-    return v.length ? v : undefined;
+  /**
+   * (round 120, the user: "Consider a telekinetic drag tool to test swinging tankers and rocks into things") The body
+   * nearest world (x, y, z) within `r` of it (and its own size) — a rigid rock, a node-solver body (metal, wood), a
+   * voxel-lattice body — to be pulled (pull). Null: none near.
+   */
+  grabAt(x: number, y: number, z: number, r: number): Grab | null {
+    let best: Grab | null = null;
+    let bd = Infinity;
+    const consider = (g: Grab, p: V3, size: number) => {
+      const d = Math.hypot(p[0] - x, p[1] - y, p[2] - z) - size;
+      if (d < r && d < bd) [best, bd] = [g, d];
+    };
+    for (const b of this.rigid?.list ?? []) consider({ kind: 'rigid', b }, b.pos, b.radius);
+    if (this.solver)
+      for (const mb of this.metal) {
+        const rd = this.solver.read(mb.body);
+        if (rd) consider({ kind: 'solver', body: mb.body }, rd.pos, Math.cbrt(mb.body.cells));
+      }
+    if (this.physics)
+      for (const body of this.physics.bodies) {
+        const st = this.physics.state(body);
+        if (st && st.alive > 0) consider({ kind: 'phys', body }, st.pos, 0.5 * Math.hypot(...body.dims) * body.size);
+      }
+    return best;
+  }
+
+  /** where a grabbed body is and how it moves (null: it's gone) */
+  grabState(g: Grab): { pos: V3; vel: V3 } | null {
+    if (g.kind === 'rigid') return this.rigid?.list.includes(g.b) ? { pos: g.b.pos, vel: g.b.v } : null;
+    if (g.kind === 'solver') {
+      const r = this.solver?.bodies.has(g.body) ? this.solver.read(g.body) : undefined;
+      return r ? { pos: r.pos, vel: r.vel } : null;
+    }
+    const st = this.physics?.state(g.body);
+    return st && st.alive > 0 ? { pos: st.pos, vel: st.vel } : null;
+  }
+
+  /**
+   * Pull a grabbed body toward `target` (world) for dt s: a damped spring on its centre (it swings, overshoots a little,
+   * and carries its speed into what it hits — the hit goes through the same rules: breaks, dents, the ground giving),
+   * its weight held up. False: it's gone.
+   */
+  pull(g: Grab, target: V3, dt: number, k = 40): boolean {
+    const s = this.grabState(g);
+    if (!s) return false;
+    const c = 2 * Math.sqrt(k) * 0.6;
+    const dv: V3 = [0, 1, 2].map((a) => (k * (target[a] - s.pos[a]) - c * s.vel[a]) * dt) as V3;
+    dv[2] += worldG() * dt;
+    if (g.kind === 'rigid') {
+      const sb = this.rigid!.engineBody(g.b);
+      if (sb && this.solver) {
+        this.solver.wake(sb);
+        this.solver.impulse(sb, dv);
+      } else g.b.v = [g.b.v[0] + dv[0], g.b.v[1] + dv[1], g.b.v[2] + dv[2]];
+      // (held, it isn't at rest however still it hangs)
+      g.b.still = 0;
+    } else if (g.kind === 'solver') {
+      this.solver!.wake(g.body);
+      this.solver!.impulse(g.body, dv);
+    } else this.physics!.impulse(g.body, dv);
+    return true;
+  }
+
+  /**
+   * (round 120: the hybrid's tanker, on the voxel lattice, dropped on stone broke nothing) The lattice's bodies' hits:
+   * a body falling that stopped short this tick (its speed down by more than 2.5 cells/s, from going down) struck what's
+   * under it — its blow's energy (½ m Δv², m its voxels × 4) to the ground there (groundBlow).
+   */
+  private latticeLast = new Map<number, { v: V3; tick: number }>();
+  private latticeBlows(): void {
+    const phys = this.physics;
+    if (!phys || !this.world.slots.length) return;
+    for (const body of phys.bodies) {
+      const st = phys.state(body);
+      if (!st || st.alive <= 0) continue;
+      const was = this.latticeLast.get(body.id);
+      if (was && was.tick === st.tick) continue;
+      this.latticeLast.set(body.id, { v: [...st.vel] as V3, tick: st.tick });
+      if (!was || was.v[2] > -2) continue;
+      const dv = Math.hypot(st.vel[0] - was.v[0], st.vel[1] - was.v[1], st.vel[2] - was.v[2]);
+      if (dv < 2.5) continue;
+      const [cx, cy] = cellAt(st.pos[0], st.pos[1]);
+      const top = this.world.colTop(cx, cy);
+      this.groundBlow(st.pos[0], st.pos[1], top, 0.5 * st.alive * 4 * dv * dv);
+    }
+  }
+
+  private wakeLattice(): void {
+    const phys = this.physics;
+    if (!phys) return;
+    for (const b of this.rigid?.list ?? []) if (Math.hypot(b.v[0], b.v[1], b.v[2]) > 1) phys.wakeNear(b.pos[0], b.pos[1], b.radius + 1);
+    if (this.solver)
+      for (const mb of this.metal) {
+        const r = this.solver.read(mb.body);
+        if (r && !r.asleep && Math.hypot(r.vel[0], r.vel[1], r.vel[2]) > 1) phys.wakeNear(r.pos[0], r.pos[1], Math.cbrt(mb.body.cells) * 1.2 + 1);
+      }
+  }
+
+  /** (round 120) a resting body's own mesh where it lies: what the rock mesh doesn't hold of it (all, without a slot) */
+  private restingMesh(cells: MeshCell[], m: number[], slot: number | undefined): number | undefined {
+    const bm = this.bodyMeshes;
+    const keep = cells.filter((c) => !!RB.cubes || slot === undefined || !fieldMeshed(c.mat));
+    if (!bm || !keep.length) return undefined;
+    const id = bm.add(buildBodyMesh(keep), { kind: 'matrix', m });
+    this.rockMeshIds.add(id);
+    return id;
+  }
+
+  /** (round 120) a solver body's own mesh, bound to its nodes (its cells in the order it was made from) */
+  private meshFor(body: SolverBody, cells: MeshCell[]): number {
+    const bm = this.bodyMeshes;
+    if (!bm || !this.solver) return 0;
+    return bm.add(buildBodyMesh(cells, this.solver.bindOf(body)), { kind: 'nodes', slot: body.slot, com: body.restCom });
+  }
+
+  /** (round 120) the rock meshes made (moving and resting): those no body holds any more let go (syncRockMeshes) */
+  private rockMeshIds = new Set<number>();
+
+  /**
+   * (round 120) Each moving rock's own mesh, made the first frame it moves (what the rock mesh doesn't hold of it:
+   * what's built, or all of it without a slot) and kept to its rest: on the node solver bound to its nodes, else moved
+   * by its CPU matrix each frame. Meshes no body or resting rock holds let go.
+   */
+  private syncRockMeshes(): void {
+    const bm = this.bodyMeshes;
+    const rigid = this.rigid;
+    if (!bm || !rigid) return;
+    const live = new Set<number>();
+    for (const b of rigid.list) {
+      let id = this.rockMeshOf.get(b);
+      if (id === undefined) {
+        const sb = rigid.engage(b)?.sb ?? null;
+        const all = rigid.latCells(b);
+        const idx: number[] = [];
+        all.forEach((c, i) => {
+          if (!!RB.cubes || b.slot === undefined || !fieldMeshed(c.mat)) idx.push(i);
+        });
+        id = 0;
+        if (idx.length) {
+          const cells = idx.map((i) => all[i]);
+          if (sb && this.solver) {
+            const bind = this.solver.bindOf(sb);
+            id = bm.add(buildBodyMesh(cells, { nodeRest: bind.nodeRest, cellNode: idx.map((i) => bind.cellNode[i]), g: bind.g }), { kind: 'nodes', slot: sb.slot, com: sb.restCom });
+          } else id = bm.add(buildBodyMesh(cells), { kind: 'matrix', m: rigid.drawMatrix(b) });
+          this.rockMeshIds.add(id);
+        }
+        this.rockMeshOf.set(b, id);
+      } else if (id && !rigid.engineBody(b)) bm.setPose(id, { kind: 'matrix', m: rigid.drawMatrix(b) });
+      if (id) live.add(id);
+    }
+    const inList = new Set(rigid.list);
+    for (const b of [...this.rockMeshOf.keys()]) if (!inList.has(b)) this.rockMeshOf.delete(b);
+    for (const r of this.resting.values()) if (r.mesh) live.add(r.mesh);
+    for (const id of [...this.rockMeshIds])
+      if (!live.has(id)) {
+        bm.remove(id);
+        this.rockMeshIds.delete(id);
+      }
   }
 
   /**
@@ -1946,7 +2123,11 @@ export class Integrity {
     rigid.stats.settled++;
     const m = rigid.matrix(b);
     const cells = rigid.latCells(b);
-    this.resting.set(inst.id, { slot: b.slot, m, mat: b.mat, cells, vox: this.voxOf(cells, m, b.slot) });
+    // (round 120: its own mesh, the same, where it came to rest)
+    const mesh = this.rockMeshOf.get(b) || undefined;
+    this.rockMeshOf.delete(b);
+    if (mesh) this.bodyMeshes?.setPose(mesh, { kind: 'matrix', m });
+    this.resting.set(inst.id, { slot: b.slot, m, mat: b.mat, cells, mesh });
     const cols = inst.cols.map((c) => ({ x: c.x, y: c.y, ivs: [] }));
     this.touchCols(cols, true);
     // (judged for what floats, not weighed — as a heap written back is)
@@ -2212,6 +2393,12 @@ export class Integrity {
       y1 = Math.max(y1, c.y);
     }
     this.touch({ box: [x0, y0, x1, y1] } as FallingBody, first);
+    // (round 120: the ground there changed — what of the voxel lattice slept on it looks again)
+    if (this.physics) {
+      const [ax, ay] = cellPos(x0, y0);
+      const [bx, by] = cellPos(x1, y1);
+      this.physics.wakeNear((ax + bx) / 2, (ay + by) / 2, Math.hypot(bx - ax, by - ay) / 2 + 1);
+    }
   }
 
   /**
