@@ -44,6 +44,13 @@ each was implemented.
   through ordinary soil so it has things to throw. Items in slots: held item(s), helmet, cape, shirt, pants, mount,
   some asymmetric. Main's Pages workflow is now places' (0d4732e). BACKLOG RS20-22 next, FO1, LI1, IT1, PL20, PL21.
 
+- The user, verbatim, after trying the bike camera fix (runplay 28c46d8) on the phone:
+
+> Much better view and it seemed fine to play on my phone. The race was good. The chase was still hard because you don't start off close or already in pursuit. I think fleeing is better than chasing because it's hard to steer
+
+- → PL20 accepted on the phone. A chase starts close and already in pursuit (PL23); fleeing is the better verb for the bike than
+  chasing, since steering onto a moving target is hard (situation runs lean on fleeing: RS20).
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
