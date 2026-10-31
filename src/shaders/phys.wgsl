@@ -47,8 +47,8 @@ const FRAG_CAP: u32 = 8192u;
 const FRAG_MIN_CODE: u32 = 4u;
 const HASH_N: u32 = 262144u;
 const HASH_NONE: u32 = 0xffffffffu;
-// G_ACC (was 20.0): G.tune.voxelsGravity (round 108, src/tune/params.ts) // cells/s²
-// VMAX (was 60.0): G.tune.voxelsVmax (round 108, src/tune/params.ts)
+// G_ACC (was 20.0): worldG() × G.tune.voxelsGravity (solver step 1, AR9: one world gravity, a scale of its own)
+// VMAX (was 60.0): none (solver step 1, AR10: no speed caps)
 // AIR_DRAG (was 0.05): G.tune.voxelsAirDrag (round 108, src/tune/params.ts) // 1/s
 // STEP_UP (was 0.45): G.tune.voxelsStepUp (round 108, src/tune/params.ts) // a ledge this high is climbed, not a wall
 // CRUMBLE_DEPTH (was 0.6): G.tune.voxelsCrumbleDepth (round 108, src/tune/params.ts) // into solid ground this far, a voxel crumbles
@@ -244,7 +244,7 @@ fn predict(@builtin(global_invocation_id) id: vec3<u32>) {
   let vt = pv[i];
   var v = vt.xyz;
   if (x.w > 0.0) {
-    v.z -= G.tune.voxelsGravity * PU.a.x;
+    v.z -= worldG() * G.tune.voxelsGravity * PU.a.x;
     v += gameAccel(i, x.xyz, v) * PU.a.x;
   }
   pv[i] = vec4<f32>(v, vt.w);
@@ -603,8 +603,6 @@ fn finalize(@builtin(global_invocation_id) id: vec3<u32>) {
     if (nb > 0.0) { v += dv / nb * damp; }
   }
   v *= 1.0 - G.tune.voxelsAirDrag * h;
-  let sp = length(v);
-  if (sp > G.tune.voxelsVmax) { v *= G.tune.voxelsVmax / sp; }
   pv[i] = vec4<f32>(v, prev.w);
   if (x.z < -20.0) {
     px[2u * i] = vec4<f32>(x.xyz, PV_DEAD);

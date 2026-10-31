@@ -13609,3 +13609,32 @@ Dawn in Node). The smoke needs the runner's own build server (warm snapshots), a
 rename in .testcache fails EPERM, so caa0827's guard made every runner script fail there. Now the build is copied into the
 cache instead, index.html last (a build counts as present once its index.html is). `npm run smoke` then passed: the atlas
 ready in 65 s with three other agents' checks on the GPU, sim ticking, no fatal.
+
+## 2026-10-31 — round 120 (`solver`, step 1): one world gravity, no speed caps, the rigid rock on a fixed step
+
+The physics design (DECISIONS round 106, AR4) names three causes of "floaty" and "choppy": four gravities, speed caps
+instead of scale, and bodies stepped on the frame's dt or drawn as they stand each tick. Round 120 the user asked why
+rocks read slow while the old tankers read well: the tankers ran at 20 cells/s² (about 2× the world's 9.8) with a cap
+of 60, the rigid rock at 9.8 capped at 14 cells/s, the columns' falling pieces capped at 4. Step 1 is the cheap part of
+the fix, which the user can feel at once, before the solver itself.
+
+- **One gravity (AR9).** `world.gravityX` ("world gravity ×", ?gx=) multiplies `world.gravity`; `worldG()` (tune/params.ts
+  on the CPU, common.wgsl on the GPU) is what every mover reads, times its own group's `gravity` scale only where one is
+  wanted. The physics voxels' gravity is now a scale (default 1: they fall at 9.8 like everything else; world × 2 is
+  the tankers' old feel, for the user to compare). Chips and splash keep their look at × 1.45 (was 14), agents theirs
+  at × 2.05 (was 20, units.wgsl and agents.ts both read it: the lob arcs stay right). The flow model's streams, sheets
+  and spray read worldG() too, so world × 2 doubles everything at once.
+- **No caps (AR10).** `pieces.maxV` (4), `rigid.maxV` (14) and `voxels.vmax` (60) are gone. A 20-cell fall now lands at
+  about 20 cells/s (air drag still a slider: the pieces' 0.35/s gives a terminal speed of 28). The columns' falling
+  pieces are swept (a step never passes what is under it), the rigid rock's probe reaches 2 cells, the voxels move at
+  most 0.25 cells a substep at 60 cells/s: no tunnelling at these speeds.
+- **Fixed step, drawn between the last two (the choppiness fix).** The rigid rock stepped by the frame's dt split into
+  up to six substeps; now whole steps of 1/120 s, the remainder carried, and it is drawn (its cells and its mesh) at
+  `alpha` between its last two poses (`RockBodies.drawPose`, nlerp). Its resting pose is the true one (`matrix`), the
+  drawn one is `drawMatrix`. The GPU physics voxels are left as they are: on a 60 Hz display the tick clock runs one
+  tick a frame (no steps to hide), and step 2's solver replaces them with node transforms for the last two steps,
+  interpolated in the vertex shader by design.
+
+Tests first (test/unit/gravity.test.ts, 5): worldG scales; the caps are gone; the rigid rock falls at 9.8 uncapped
+(29.4 cells/s after 3 s, it stopped at 14); world × 2 doubles it; 144 Hz frames give the same state as whole steps and
+draw between the last two. `npm test`: 83 passed + 1 expected fail.

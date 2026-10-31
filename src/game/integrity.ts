@@ -1209,7 +1209,7 @@ export class Integrity {
     for (const b of this.rigid.list) {
       if (b.slot === undefined && !waiting.has(b)) continue;
       index.set(b, draws.length);
-      draws.push({ slot: waiting.has(b) || b.slot === undefined ? -1 : b.slot, m: this.rigid.matrix(b) });
+      draws.push({ slot: waiting.has(b) || b.slot === undefined ? -1 : b.slot, m: this.rigid.drawMatrix(b) });
     }
     for (const a of this.afterglow) draws.push({ slot: a.slot, m: a.m });
     // (round 99) the resting rock, where it lies

@@ -1405,6 +1405,10 @@ riverfalls' sheets were reverted (the user: they didn't match the rest of the vi
 Held rivers' falls draw as their columns' water. The world's gravity stays one value: (round 108) the tuning's
 `world.gravity` (9.8 cells/s², its default world/scale.ts `WORLD_G`), read as `G.tune.worldGravity` by the flow model's
 streams, sheets and spray, and by the CPU's rigid rock and falling pieces (× their own `gravity`).
+(Solver step 1, AR9) That value times `world.gravityX` (the panel's "world gravity ×") is `worldG()` — tune/params.ts on
+the CPU, common.wgsl on the GPU — and it is the only gravity: every mover (the rigid rock, the falling pieces, the
+physics voxels, chips and splash, the agents, the flow model) reads worldG() × its own group's `gravity` scale. No
+mover has a speed cap (AR10).
 
 ## The tuning registry (round 108, branch `playground`; BACKLOG AR5)
 

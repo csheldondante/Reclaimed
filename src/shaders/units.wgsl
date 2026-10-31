@@ -101,7 +101,8 @@ const HOT_GROUND: f32 = 300.0;
 const DROWN_TIME: f32 = 3.0;
 // a push past this (cells/s, after the mass) throws it
 const TUMBLE_PUSH: f32 = 5.0;
-const GRAVITY: f32 = 20.0;
+// (solver step 1, AR9) GRAVITY (was 20.0): the world's × the tuning's units.gravity (agents/agents.ts unitsG())
+fn unitsG() -> f32 { return worldG() * G.tune.unitsGravity; }
 // tumbling: what's left of a landing's speed, a slam's; the ground's grip
 const BOUNCE: f32 = 0.35;
 const SLAM_BOUNCE: f32 = 0.35;
@@ -469,7 +470,7 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
     // (where the game holds it: nothing else moves it)
   } else if (state == ST_TUMBLE) {
     // flying, falling, bouncing: free of the links
-    vel.z -= GRAVITY * dt;
+    vel.z -= unitsG() * dt;
     np = pos + vel * dt;
     var ni = colIdxI(clampCell(cellAt(np.xy)));
     var fz = floorUnder(ni, np.z);

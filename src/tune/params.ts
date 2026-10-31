@@ -13,6 +13,7 @@ const SPEC = {
     owner: 'everything falling through the air by the world\'s gravity (common.wgsl; liquid.wgsl, particles.wgsl, render.wgsl, the CPU bodies)',
     params: {
       gravity: { label: 'gravity', units: 'cells/s²', min: 1, max: 30, step: 0.1, def: WORLD_G, gpu: true, help: 'a cell a metre (DECISIONS rounds 106, 108): the falls, their spray and sheets, the rigid rock and the falling pieces' },
+      gravityX: { label: 'world gravity ×', units: '× gravity', min: 0.25, max: 4, step: 0.05, def: 1, gpu: true, url: 'gx', help: '(solver step 1, AR9) every mover\'s gravity times this: bodies, pieces, metal, water\'s falls, spray, chips, agents. 1: true gravity at a metre a cell; about 2: the old tankers\' feel (they ran at 20 cells/s²)' },
     },
   },
   rigid: {
@@ -30,7 +31,6 @@ const SPEC = {
       crumble: { label: 'crumble ×', units: '×', min: 0.5, max: 3, step: 0.1, def: 1.4, url: 'rbcrumble', help: 'the radius that crumbles round a hard hit, and the pieces it breaks into' },
       scatter: { label: 'scatter', units: 'share', min: 0, max: 1, step: 0.05, def: 0.2, url: 'rbscatter', help: 'pieces of a break thrown apart at this share of the impact speed' },
       tipSpin: { label: 'tip spin', units: 'rad/s', min: 0, max: 3, step: 0.05, def: 0.5, url: 'rbspin', help: 'a tipping piece\'s start about the edge it tips over' },
-      maxV: { label: 'top speed', units: 'cells/s', min: 2, max: 60, step: 1, def: 14, url: 'rbmaxv' },
       slop: { label: 'contact slop', units: 'cells', min: 0, max: 0.3, step: 0.01, def: 0.03, help: 'overlap allowed before a contact pushes back (soft contacts)' },
       slopK: { label: 'overlap k', units: 'cells', min: 0, max: 0.3, step: 0.005, def: 0.065, url: 'rbslopk', help: '(round 110) more overlap allowed with mass: k · mass^p (cells; mass in cells of rock) — a big rock meets the ground only once it visibly cuts into it. A pair: the lighter one\'s (the ground is the heaviest)' },
       slopP: { label: 'overlap p', units: 'exp', min: 0, max: 1, step: 0.05, def: 0.35, url: 'rbslopp', help: '(round 110) mass^p: 1/3 grows with its size, 0 the same for all' },
@@ -55,7 +55,6 @@ const SPEC = {
     owner: 'game/colbodies.ts and game/bodies.ts (CPU, the pieces the structure check frees without rigid rock)',
     params: {
       gravity: { label: 'gravity ×', units: '× world', min: 0.2, max: 4, step: 0.05, def: 1, help: 'times the world\'s gravity (was a 10 cells/s² of its own)' },
-      maxV: { label: 'top speed', units: 'cells/s', min: 1, max: 40, step: 0.5, def: 4, help: 'the cap a falling piece reaches (4: why they look floaty)' },
       airDrag: { label: 'air drag', units: '1/s', min: 0, max: 2, step: 0.05, def: 0.35 },
       landing: { label: 'landing', units: 'share', min: 0, max: 1, step: 0.05, def: 0.6, help: 'share of the falling speed a contact takes away a substep (bodies.ts)' },
       slop: { label: 'sink', units: 'cells', min: 0, max: 0.5, step: 0.01, def: 0.15, help: 'overlap a landing piece sinks before it stops (bodies.ts)' },
@@ -91,8 +90,7 @@ const SPEC = {
     title: 'Physics voxels (metal)',
     owner: 'physics/physics.ts + phys.wgsl (GPU: what bends — metal woken into bonded voxels)',
     params: {
-      gravity: { label: 'gravity', units: 'cells/s²', min: 1, max: 40, step: 0.5, def: 20, gpu: true, help: 'its own (2× the world\'s: a conflation to settle)' },
-      vmax: { label: 'top speed', units: 'cells/s', min: 5, max: 120, step: 1, def: 60, gpu: true },
+      gravity: { label: 'gravity ×', units: '× world', min: 0.2, max: 4, step: 0.05, def: 1, gpu: true, help: '(solver step 1, AR9) times the world\'s gravity: it had its own 20 cells/s², about 2× (try world gravity × 2 for that feel). No top speed any more (AR10: it was capped at 60)' },
       airDrag: { label: 'air drag', units: '1/s', min: 0, max: 2, step: 0.01, def: 0.05, gpu: true },
       stepUp: { label: 'step up', units: 'cells', min: 0, max: 1.5, step: 0.05, def: 0.45, gpu: true, help: 'a ledge this high is climbed, not a wall' },
       crumbleDepth: { label: 'crumble depth', units: 'cells', min: 0.1, max: 1.5, step: 0.05, def: 0.6, gpu: true, help: 'into solid ground this far, a voxel crumbles (erode, not push)' },
@@ -184,7 +182,14 @@ const SPEC = {
     owner: 'particles.wgsl (GPU)',
     params: {
       drag: { label: 'drag', units: '1/s', min: 0, max: 3, step: 0.05, def: 0.3, gpu: true },
-      gravity: { label: 'gravity', units: 'cells/s²', min: 1, max: 40, step: 0.5, def: 14, gpu: true, help: 'its own (not the world\'s: a conflation to settle)' },
+      gravity: { label: 'gravity ×', units: '× world', min: 0.2, max: 4, step: 0.05, def: 1.45, gpu: true, help: '(solver step 1, AR9) times the world\'s gravity: it had its own 14 cells/s² (1.45 keeps that look at world × 1)' },
+    },
+  },
+  units: {
+    title: 'Agents falling',
+    owner: 'units.wgsl and agents/agents.ts (GPU agents tumbling, thrown, knocked back)',
+    params: {
+      gravity: { label: 'gravity ×', units: '× world', min: 0.2, max: 4, step: 0.05, def: 2.05, gpu: true, help: '(solver step 1, AR9) times the world\'s gravity: they had their own 20 cells/s² (2.05 keeps that at world × 1; agents\' feel is their own track)' },
     },
   },
   spray: {
@@ -211,6 +216,13 @@ const SPEC = {
 export const TUNING = new Registry(SPEC);
 /** the live values: `TUNE.rigid.friction` (a system reads its own group only) */
 export const TUNE = TUNING.values;
+/**
+ * (solver step 1, BACKLOG AR9) The world's gravity, cells/s²: world.gravity × world.gravityX. Every mover reads this,
+ * times its own group's `gravity` scale only where one is wanted. common.wgsl `worldG()` is the same on the GPU.
+ */
+export function worldG(): number {
+  return TUNE.world.gravity * TUNE.world.gravityX;
+}
 TUNING.checkWgsl(commonWgsl);
 
 // The page's address: ?tune=<string> (a preset's copyable string), and the older names (?rbgrav=, ?crush=, ?bear=sand:0.1)

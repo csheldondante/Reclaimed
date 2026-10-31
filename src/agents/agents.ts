@@ -23,6 +23,7 @@ import { FieldReader } from './fieldreader';
 import { AgentScope } from './scope';
 import { CUSTOM, TILES_BINDING, cullKernel } from '../sim/cull';
 import { ROW_H } from '../world/lattice';
+import { TUNE, worldG } from '../tune/params';
 
 /** (round 104, simscale) the fields kept only round what the agents do and relaxed only where something changed
  *  (agents/scope.ts); ?agentscope=0: the whole window every tick, as before */
@@ -117,8 +118,11 @@ const P_TARGET_H = P_LAUNCHES + MAX_LAUNCHES * 4;
 const MAX_REGROUPS = 64;
 const P_REGROUPS = P_TARGET_H + MAX_TARGETS;
 const PARAMS_BYTES = (P_REGROUPS + MAX_REGROUPS) * 4;
-/** what the tumbling units fall by (units.wgsl GRAVITY, cells/s²) */
-export const AGENT_GRAVITY = 20;
+/** what the tumbling units fall by (units.wgsl unitsG(), cells/s²): the world's gravity × the tuning's units.gravity
+ *  (solver step 1, AR9: it was a 20 of its own; the default scale keeps that at world gravity × 1) */
+export function unitsG(): number {
+  return worldG() * TUNE.units.gravity;
+}
 /** bytes of a surface (agents.wgsl nav: vec4<u32>), and of a unit (four vec4) */
 const NAV_BYTES = 16;
 const UNIT_BYTES = 64;
@@ -215,8 +219,6 @@ export interface Item {
 
 /** units.wgsl MAX_FLY: items in flight at once */
 const MAX_FLY = 128;
-/** units.wgsl GRAVITY */
-const GRAVITY = 20;
 
 interface Flight {
   id: number;
@@ -784,7 +786,7 @@ export class Agents implements SimSystem {
   lob(id: number, from: readonly [number, number, number], to: readonly [number, number, number], time?: number, opts: LaunchOpts = {}): [number, number, number] {
     const d = Math.hypot(to[0] - from[0], to[1] - from[1]);
     const t = time ?? Math.min(1.5, Math.max(0.5, d / 14));
-    const v: [number, number, number] = [(to[0] - from[0]) / t, (to[1] - from[1]) / t, (to[2] - from[2] + 0.5 * AGENT_GRAVITY * t * t) / t];
+    const v: [number, number, number] = [(to[0] - from[0]) / t, (to[1] - from[1]) / t, (to[2] - from[2] + 0.5 * unitsG() * t * t) / t];
     this.launch(id, v, opts);
     return v;
   }
@@ -958,7 +960,7 @@ export class Agents implements SimSystem {
     const from: [number, number, number] = [u.x, u.y, u.z + h + Agents.edge(it.amount) * 0.5];
     const d = Math.hypot(to[0] - from[0], to[1] - from[1]);
     const time = opts.time ?? Math.max(0.35, d / 12);
-    const vel: [number, number, number] = [(to[0] - from[0]) / time, (to[1] - from[1]) / time, (to[2] - from[2]) / time + 0.5 * GRAVITY * time];
+    const vel: [number, number, number] = [(to[0] - from[0]) / time, (to[1] - from[1]) / time, (to[2] - from[2]) / time + 0.5 * unitsG() * time];
     return this.toss(it.material, it.amount, from, vel, opts.hit);
   }
 
@@ -988,7 +990,7 @@ export class Agents implements SimSystem {
     this.flyAt = now;
     const keep: Flight[] = [];
     for (const f of this.flights) {
-      f.vel[2] -= GRAVITY * dt;
+      f.vel[2] -= unitsG() * dt;
       for (let a = 0; a < 3; a++) f.pos[a] += f.vel[a] * dt;
       f.spin += 7 * dt;
       const [x, y, z] = f.pos;

@@ -12,7 +12,7 @@
 // piece falls through is the pieces' while they fall: what the sim does there meanwhile is written over.
 
 import { MATERIALS, MatState } from '../world/materials';
-import { TUNE } from '../tune/params';
+import { TUNE, worldG } from '../tune/params';
 import type { Interval } from '../world/layout';
 
 /** one column of a piece: its runs (world z, where it broke free) */
@@ -174,7 +174,9 @@ export class ColumnBodies {
     const touched = new Set<number>();
     for (const b of only ?? this.list) {
       b.age += dt;
-      const v = Math.max(-P.maxV, (b.vz - TUNE.world.gravity * P.gravity * dt) * Math.exp(-P.airDrag * dt));
+      // (solver step 1: the world's gravity, AR9; no top speed, AR10 — it was capped at 4 cells/s; the fall is swept, so
+      // a fast piece still stops on what is under it)
+      const v = (b.vz - worldG() * P.gravity * dt) * Math.exp(-P.airDrag * dt);
       // the gap under it: the least over its runs
       let gap = Infinity;
       let at: [number, number, number] = [0, 0, 0];
