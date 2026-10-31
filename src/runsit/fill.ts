@@ -25,6 +25,7 @@ import { heroCaps } from '../runplan/heroes';
 import { reach, routeTo } from '../runplan/route';
 import { ITEMS } from './items';
 import { delta, pathEstimates, type SituationMap, type V2 } from './state';
+import { worldPrint } from '../gm/situationcheck';
 
 /** the town the dead come for: this far from the start (world units) */
 const TARGET_RANGE: [number, number] = [380, 1500];
@@ -214,7 +215,7 @@ export function fillSituation(o: FillOptions): Situation {
     id: `horde-${o.seed}-${snap.run}`,
     title: `${dead ? 'The Dead Come' : 'Raiders Ride'} for ${T}`,
     premise: `${dead ? 'A host of the walking dead' : 'A raiding host'} has risen in ${origin.name} and marches on ${T}. Ride to ${H} for its levy and come late but in force, or warn ${T} yourself and hold it — or lead its people into ${hills.name} and let the town go.`,
-    from: { worldVersion: snap.version, run: snap.run, seed: o.seed },
+    from: { worldVersion: snap.version, run: snap.run, seed: o.seed, print: worldPrint(snap) },
     hero: o.hero ?? 'any',
     threat: { kind: 'horde', name: dead ? 'the Hollow Host' : 'the Raiding Host', faction: threatFaction, role, count: 16, route, arrives: 0, outriders: { count: 3, role, behind: 0.6 } },
     target: { settlement: town.id, region: town.region, name: T },

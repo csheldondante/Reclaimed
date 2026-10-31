@@ -25,8 +25,12 @@ export interface Situation {
   title: string;
   /** a paragraph: what's happening and what the hero can do about it */
   premise: string;
-  /** the world it was written for */
-  from: { worldVersion: number; run: number; seed: number };
+  /**
+   * the world it was written for. `print` (round 120, the phone bug): the world's fingerprint (src/gm/situationcheck.ts
+   * worldPrint: its settlements and factions) — the same seed made on another GPU can come out with other towns, and a
+   * situation names towns
+   */
+  from: { worldVersion: number; run: number; seed: number; print?: string };
   /** the hero it was written for, or 'any' */
   hero: string;
   threat: SituationThreat;

@@ -14,7 +14,9 @@ import { FinaleRules, fireSite, FIRE_EVERY, FALL_AT, HOLD_S, BREACH_MAX } from '
 import { UnitFollowers } from '../../src/runsit/followers';
 import { ITEMS, emptyLoadout, equip, use, totals, displaced, carried } from '../../src/runsit/items';
 import { finishSituation } from '../../src/runsit/finish';
-import { checkSituation, situationWorldFrom } from '../../src/gm/situationcheck';
+import { checkSituation, situationWorldFrom, worldPrint } from '../../src/gm/situationcheck';
+import { situationFor } from '../../src/runsit/gm';
+import { Journey } from '../../src/runplan/travel';
 import { seed1, seed1Graph, seed1World } from '../support/seed1';
 
 const fill = (world = seed1().wiki.snapshot) => fillSituation({ graph: seed1Graph(), world, seed: 1, from: seed1().wiki.spawn.region, at: seed1().wiki.spawn.at as [number, number] });
@@ -294,5 +296,54 @@ describe('what lasts (finish.ts)', () => {
     expect(rec.end).toBe('won');
     expect(w.settlements.find((s) => s.id === sit.target.settlement)!.condition).toBe('abandoned');
     expect(w.region(sit.refuge.region).marks.some((m) => /refuge/.test(m.name))).toBe(true);
+  });
+});
+
+describe("the run's situation (gm.ts) — round 120's phone bug", () => {
+  // The user on a Pixel 9a: "The bike link just teleports me around the map but never loads anything else". The run
+  // couldn't be made there and the failure was swallowed (fixed in level.ts: the fatal overlay); one way it fails is the
+  // GM's situation naming towns the phone's world hasn't — the same seed made on another GPU — which these pin.
+  const gm = (): Situation => JSON.parse(readFileSync(new URL('../../data/situations/grey-muster-bumku.json', import.meta.url), 'utf8'));
+  const opts = (world = seed1().wiki.snapshot) => ({ graph: seed1Graph(), world, wiki: seed1().wiki, seed: 1, from: seed1().wiki.spawn.region, at: seed1().wiki.spawn.at as [number, number], hero: 'hoverbike' });
+  it("plays the GM's situation in the world it was written for", () => {
+    const r = situationFor({ ...opts(), written: [gm()] });
+    expect(r.by).toBe('gm');
+    expect(gm().from.print).toBe(worldPrint(seed1().wiki.snapshot));
+  });
+  it("in another make of the seed (other towns) it is not that world's: the template, and the card says why", () => {
+    const other = structuredClone(seed1().wiki.snapshot);
+    const s = other.settlements.find((x) => x.id === gm().target.settlement)!;
+    s.region = other.regions.find((r) => r.id !== s.region && r.settlements.length === 0)!.id;
+    expect(worldPrint(other)).not.toBe(worldPrint(seed1().wiki.snapshot));
+    const r = situationFor({ ...opts(other), written: [gm()] });
+    expect(r.by).toBe('template');
+    expect(r.note).toMatch(/another make of seed 1/);
+    expect(r.sit.from.print).toBe(worldPrint(other));
+  });
+  it("a GM's file for this world with problems is an error, never patched", () => {
+    const bad = gm();
+    bad.threat.route = [bad.threat.route[0], bad.target.region];
+    expect(() => situationFor({ ...opts(), written: [bad] })).toThrow(/problems/);
+  });
+});
+
+describe('a leg under a slow loader (a phone)', () => {
+  it('waits for the land as long as it takes, then arrives once', () => {
+    const r = runOf(fill());
+    r.areaDone({ seconds: 60, won: true });
+    const leg = r.choose('c-road');
+    let asked = 0;
+    let ready = false;
+    const J = new Journey({ id: leg.choice.id, from: leg.from.id, to: leg.to.id, route: [], path: leg.path, minutes: leg.minutes, animSeconds: 6, crossings: [], events: [] }, leg.path[1], { precache: () => (asked++, 49), ready: () => ready });
+    const phases: string[] = [];
+    for (let i = 0; i < 60 * 40; i++) phases.push(J.update(1 / 60).phase);
+    expect(asked).toBe(1);
+    expect(phases.includes('arrived')).toBe(false);
+    expect(phases.at(-1)).toBe('waiting');
+    ready = true;
+    expect(J.update(1 / 60).phase).toBe('arrived');
+    r.arrive();
+    expect(r.at).toBe('a-road');
+    expect(() => r.arrive()).toThrow(/phase area/);
   });
 });

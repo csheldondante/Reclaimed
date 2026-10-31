@@ -29,7 +29,12 @@ await run({ name: `runsit-${hero}-${want}`, kind: 'behaviour', size: arg('size',
   const tag = `${hero}-${want}`;
   const settle = Number(R.opt('settle', 30000));
   const p = await R.level({ level: 'atlas', runplan: hero, perf: 1, ...(R.opt('gm', '1') === '0' ? { runsitgm: 0 } : {}) });
-  await p.waitForFunction(() => window.reclaimed?.runsit && window.reclaimed.runhero?.hero, { timeout: 180000, polling: 250 });
+  await p.waitForFunction(() => (window.reclaimed?.runsit && window.reclaimed.runhero?.hero) || document.querySelector('.fatal'), { timeout: 180000, polling: 250 });
+  await R.fatal(p);
+  // (round 120's phone bug: the run never made — a swallowed error — left a free hero with no card. The run is up: its
+  // card shown and the hero held until Go)
+  const up = await p.evaluate(() => ({ card: window.reclaimed.runsit.card.isConnected && window.reclaimed.runsit.card.style.display !== 'none' && window.reclaimed.runsit.card.textContent.length > 0, held: window.reclaimed.runhero.paused, by: window.reclaimed.runsit.by, note: window.reclaimed.runsit.byNote ?? null }));
+  R.check('the run is up: its card shown, the hero held until Go', up.card && up.held, up);
   R.log(`run up; settling ${settle / 1000} s (a first load's terrain)`);
   await sleep(settle);
   await R.fatal(p);

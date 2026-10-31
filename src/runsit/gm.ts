@@ -8,7 +8,7 @@
 import type { Situation } from '../api/contracts/situation';
 import type { RegionGraph } from '../api/contracts/run';
 import type { WorldSnapshot } from '../api/contracts/world';
-import { checkSituation, situationWorldFrom } from '../gm/situationcheck';
+import { checkSituation, situationWorldFrom, worldPrint } from '../gm/situationcheck';
 import { fillSituation } from './fill';
 import type { V2 } from './state';
 
@@ -26,12 +26,21 @@ export function writtenSituations(): Situation[] {
  * them), else the template's. `wiki` is the world wiki built from the live atlas (its regions' neighbours and centres:
  * what the validator checks a route and the clock against).
  */
-export function situationFor(o: { graph: RegionGraph; world: WorldSnapshot; wiki: unknown; seed: number; from: number; at?: V2; hero: string; gm?: boolean }): { sit: Situation; by: 'gm' | 'template' } {
+export function situationFor(o: { graph: RegionGraph; world: WorldSnapshot; wiki: unknown; seed: number; from: number; at?: V2; hero: string; gm?: boolean; written?: Situation[] }): { sit: Situation; by: 'gm' | 'template'; note?: string } {
   const sw = situationWorldFrom({ ...(o.wiki as object), snapshot: o.world });
+  const print = worldPrint(o.world);
+  let note: string | undefined;
   if (o.gm !== false)
-    for (const s of writtenSituations()) {
+    for (const s of o.written ?? writtenSituations()) {
       if (s.from.seed !== o.seed || s.from.worldVersion !== o.world.version || s.from.run !== o.world.run) continue;
       if (s.hero !== 'any' && s.hero !== o.hero) continue;
+      // (written for another make of this seed — other towns: round 120's phone bug. Not this world's situation; said on
+      // the card and the console, and the template fills one for the world as it came out here)
+      if (s.from.print !== print) {
+        note = `the GM's "${s.title}" was written for another make of seed ${o.seed} (world ${s.from.print ?? 'unprinted'}, here ${print}: this GPU made other towns)`;
+        console.warn(`runsit: ${note}`);
+        continue;
+      }
       const p = checkSituation(s, sw);
       if (p.length) throw new Error(`runsit: the GM's situation ${s.id} has ${p.length} problems:\n${p.join('\n')}`);
       return { sit: structuredClone(s), by: 'gm' };
@@ -39,5 +48,5 @@ export function situationFor(o: { graph: RegionGraph; world: WorldSnapshot; wiki
   const sit = fillSituation({ graph: o.graph, world: o.world, seed: o.seed, from: o.from, at: o.at, hero: o.hero });
   const p = checkSituation(sit, sw);
   if (p.length) throw new Error(`runsit: the template's situation ${sit.id} has ${p.length} problems:\n${p.join('\n')}`);
-  return { sit, by: 'template' };
+  return { sit, by: 'template', note };
 }

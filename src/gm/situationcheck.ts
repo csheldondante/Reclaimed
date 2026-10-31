@@ -52,6 +52,23 @@ export function situationWorldFrom(json: unknown): SituationWorld {
   };
 }
 
+/**
+ * (round 120, the phone bug) A world's fingerprint: its seed, its settlements (id, name, region, faction, size) and its
+ * factions, hashed. The atlas is made on the GPU and its macro ground read back; the rivers, the sites and so the towns
+ * and realms are planned on it — a phone's GPU can make the same seed with other towns than the desktop's that the wiki
+ * cache was pulled from. A situation names towns, so it is for one print.
+ */
+export function worldPrint(snap: WorldSnapshot): string {
+  let h = 2166136261;
+  const add = (t: string) => {
+    for (let i = 0; i < t.length; i++) h = Math.imul(h ^ t.charCodeAt(i), 16777619);
+  };
+  add(`seed ${snap.seed};`);
+  for (const s of snap.settlements) add(`${s.id} ${s.name} ${s.region} ${s.faction} ${s.size};`);
+  for (const f of snap.factions) add(`${f.id};`);
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+
 export function checkSituation(input: unknown, world: SituationWorld): string[] {
   const P: string[] = [];
   const bad = (at: string, msg: string) => P.push(`${at}: ${msg}`);
@@ -104,7 +121,8 @@ export function checkSituation(input: unknown, world: SituationWorld): string[] 
   str('situation.premise', s.premise);
   str('situation.hero', s.hero);
   if (isObj(s.from)) {
-    keys('situation.from', s.from, ['worldVersion', 'run', 'seed']);
+    keys('situation.from', s.from, ['worldVersion', 'run', 'seed'], ['print']);
+    if (s.from.print !== undefined && s.from.print !== worldPrint(snap)) bad('situation.from.print', `${JSON.stringify(s.from.print)}, but this world's is ${worldPrint(snap)}: written for another make of seed ${snap.seed} (other towns)`);
     if (s.from.worldVersion !== snap.version) bad('situation.from.worldVersion', `${s.from.worldVersion}, but the snapshot is version ${snap.version}`);
     if (s.from.run !== snap.run) bad('situation.from.run', `${s.from.run}, but the snapshot's run to come is ${snap.run}`);
     if (s.from.seed !== snap.seed) bad('situation.from.seed', `${s.from.seed}, but the world's seed is ${snap.seed}`);

@@ -76,6 +76,8 @@ export class LevelSit {
   private wiki: ReturnType<typeof buildWiki>;
   run!: SituationRun;
   by: 'gm' | 'template' = 'template';
+  /** why the GM's situation wasn't played (another make of this world), if so */
+  byNote: string | undefined;
   area: AreaPlay | null = null;
   /** the last area's report (the edge card) */
   last: AreaEnd | null = null;
@@ -113,8 +115,9 @@ export class LevelSit {
   private newRun(from: number, at: V2): void {
     const t0 = performance.now();
     const snap = this.world.snapshot();
-    const { sit, by } = situationFor({ graph: this.graph, world: snap, wiki: this.wiki, seed: this.d.atlas.p.seed, from, at, hero: this.d.hero, gm: this.d.gm });
+    const { sit, by, note } = situationFor({ graph: this.graph, world: snap, wiki: this.wiki, seed: this.d.atlas.p.seed, from, at, hero: this.d.hero, gm: this.d.gm });
     this.by = by;
+    this.byNote = note;
     this.run = new SituationRun(sit, situationMap(this.graph, snap));
     this.log.push(`situation ${sit.id} (${by}) in ${(performance.now() - t0).toFixed(1)} ms: ${sit.title}; the threat at ${sit.target.name} in ${sit.threat.arrives} min`);
     this.record = null;
@@ -337,6 +340,7 @@ export class LevelSit {
         h('div', sit.title, 'font:600 16px Georgia,serif;color:#ffd9a0');
         h('div', sit.premise, 'margin:2px 0 6px');
         h('div', this.by === 'gm' ? 'written by the GM for this world' : 'the template, filled from this world', muted);
+        if (this.byNote) h('div', `(${this.byNote})`, muted);
       }
       h('div', `${PLAY_GLYPH[a.play.kind]} ${a.name} — ${PLAY_TITLE[a.play.kind]}`, `margin-top:6px;font:600 14px Georgia,serif;color:${PLAY_COLOUR[a.play.kind]}`);
       h('div', a.brief, 'margin:2px 0');

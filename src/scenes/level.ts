@@ -36,6 +36,7 @@ import type { PerfOverlay } from '../ui/perf-overlay';
 import { WorldCore, type Host, type Scene } from './world-core';
 import { Streamer, REGION, TIER, boxOf, type WorldSave } from './streamer';
 import { Atlas, atlasParamsFrom, type AtlasParams } from '../atlas/atlas';
+import { showFatal } from '../gpu/device';
 import { EV, eventAt } from '../atlas/coarse';
 import { FarLand } from '../atlas/far';
 import { GPUGEN } from '../atlas/finish';
@@ -1827,7 +1828,10 @@ export class LevelScene implements Scene {
     const planHero = host.params.get('runplan');
     // (round 120, runsit: a run is a situation on the live map — the old arcade stages only with &runstages=1, kept for
     // comparison until the user says to delete them: BACKLOG RS23)
-    if (planHero && planHero !== 'view') void (host.params.get('runstages') === '1' ? this.startPlannedRun(planHero) : this.startSituationRun(planHero));
+    // (round 120, the phone bug: a run that can't start is the fatal overlay with its reason — it was a swallowed rejection,
+    // the hero left free with nothing in step with the window)
+    if (planHero && planHero !== 'view')
+      (host.params.get('runstages') === '1' ? this.startPlannedRun(planHero) : this.startSituationRun(planHero)).catch((e: unknown) => showFatal(`the run couldn't start: ${e instanceof Error ? e.message : String(e)}`));
     // round 117 (play): ?play=<hero> — the play sandbox (the game layer, loaded only when asked for: the engine doesn't import it)
     const playId = host.params.get('play');
     if (playId) void this.startPlay(playId);
@@ -1892,6 +1896,13 @@ export class LevelScene implements Scene {
     const c = this.core.camera.target;
     session.choose(id, session.dryNear([c[0], c[1]]));
     this.runSession = session;
+    // (in step with the window from the moment the hero exists — round 120's phone bug: this was registered after the
+    // run was made, so when making it failed every slide left the hero a region off: "teleports me around the map")
+    let sitNow: import('../runsit/level-sit').LevelSit | null = null;
+    this.core.onShift.push((dx, dy, dz) => {
+      session.shift(-dx, -dy, -dz);
+      sitNow?.shift(-dx, -dy);
+    });
     const W = a.atlas.worldW;
     const H = a.atlas.p.rows * ROW_H;
     const wrap = (d: number, n: number) => d - Math.round(d / n) * n;
@@ -1916,10 +1927,7 @@ export class LevelScene implements Scene {
       gm: this.host.params.get('runsitgm') !== '0',
     });
     this.situationRun = sit;
-    this.core.onShift.push((dx, dy, dz) => {
-      session.shift(-dx, -dy, -dz);
-      sit.shift(-dx, -dy);
-    });
+    sitNow = sit;
     const R = (window as unknown as { reclaimed: Record<string, unknown> }).reclaimed;
     R.runsit = sit;
     R.runhero = session;
