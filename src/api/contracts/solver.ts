@@ -34,6 +34,8 @@ export interface BodySpec {
   /** rigid (rock: never deforms, the host breaks it) or deformable (metal, wood: bends, dents, snaps); default by its
    *  main material */
   kind?: 'rigid' | 'deformable';
+  /** its surface cells drawn as voxels, each riding its node (a body without a mesh of its own: metal's thin members) */
+  drawCells?: boolean;
 }
 
 /** A body as the solver last reported it (a tick or two late: `tick`). */

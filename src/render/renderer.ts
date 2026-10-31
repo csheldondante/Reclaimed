@@ -231,8 +231,8 @@ export class Renderer {
   private rockShadowPipe?: GPURenderPipeline;
   private rockShadowGroup?: GPUBindGroup;
   private rockGroupOf?: (cam?: GPUBuffer, shadow?: GPUTextureView) => GPUBindGroup;
-  /** (round 96) the physics voxels' particle buffers the rock mesh is skinned to (setRockParticles) */
-  private rockParticles?: { px: GPUBuffer; pr: GPUBuffer; pq: GPUBuffer };
+  /** (solver step 2) the node solver's buffers the rock mesh is skinned to (setRockNodes) */
+  private rockNodes?: { pose: GPUBuffer; lanes: GPUBuffer };
   /** (round 95) of the body voxels, the first this many are drawn (the rest only cast shadows: the rigid rock's, its mesh drawn) */
   private bodyShown = 0;
   private meshResources!: (cam: GPUBuffer, shadow: GPUTextureView, src: { mesh: FieldMesh; chunks: GPUBuffer; layers: GPUBuffer }) => Record<number, GPUBuffer | GPUTextureView | GPUSampler>;
@@ -820,9 +820,9 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
         const layout = makeLayout(
           device,
           'rock-mesh',
-          { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex', 25: 'depth', 26: 'csampler', 30: 'uniform', 31: 'uniform', 32: 'read', 33: 'read', 34: 'read' },
+          { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex', 25: 'depth', 26: 'csampler', 30: 'uniform', 31: 'uniform', 32: 'read', 33: 'read' },
           VF,
-          { 3: GPUShaderStage.VERTEX, 5: GPUShaderStage.VERTEX, 11: VF, 32: GPUShaderStage.VERTEX, 33: GPUShaderStage.VERTEX, 34: GPUShaderStage.VERTEX, ...Object.fromEntries([1, 4, 6, 7, 8, 9, 13].map((b) => [b, GPUShaderStage.FRAGMENT])) },
+          { 3: GPUShaderStage.VERTEX, 5: GPUShaderStage.VERTEX, 11: VF, 32: GPUShaderStage.VERTEX, 33: GPUShaderStage.VERTEX, ...Object.fromEntries([1, 4, 6, 7, 8, 9, 13].map((b) => [b, GPUShaderStage.FRAGMENT])) },
         );
         const module = makeModule(device, 'rock-mesh', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, meshStateWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`, meshSourceWgsl, meshDrawWgsl, rockMeshWgsl]);
         const pipe = device.createRenderPipeline({
@@ -833,11 +833,11 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
           primitive: { topology: 'triangle-list', cullMode: 'none' },
           depthStencil: depthStencil(true),
         });
-        // (round 96: the physics voxels' particles, the metal's mesh skinned to them; a stand-in without them)
-        const none = device.createBuffer({ label: 'rock no particles', size: 64, usage: GPUBufferUsage.STORAGE });
+        // (solver step 2: the node solver's nodes, the metal's mesh skinned to them; a stand-in without them)
+        const none = device.createBuffer({ label: 'rock no nodes', size: 64, usage: GPUBufferUsage.STORAGE });
         const group = (cam: GPUBuffer = this.camBuf, shadow: GPUTextureView = this.shadowView) => {
-          const p = this.rockParticles;
-          return makeBindGroup(device, 'rock-mesh', layout, { ...this.meshResources(cam, shadow, { mesh: rm.mesh, chunks: rm.chunks, layers: rm.layers }), 31: rm.uni, 32: p?.px ?? none, 33: p?.pr ?? none, 34: p?.pq ?? none });
+          const p = this.rockNodes;
+          return makeBindGroup(device, 'rock-mesh', layout, { ...this.meshResources(cam, shadow, { mesh: rm.mesh, chunks: rm.chunks, layers: rm.layers }), 31: rm.uni, 32: p?.pose ?? none, 33: p?.lanes ?? none });
         };
         // (round 99: depth only, through the sun's camera)
         // (made when a rock mesh is: synchronously, as its own pipe above)
@@ -965,6 +965,11 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
    * cell), 30 a physics voxel (8-15 speckle, 16-23 heat), 31 a structure
    * grid's; leave 30 and 31 clear for a game model. See ARCHITECTURE.md.
    */
+  /** (solver step 2) a voxel source let go (its instances are made again: the node solver's grew) */
+  removeVoxels(indirect: GPUBuffer): void {
+    this.voxelSources = this.voxelSources.filter((s) => s.indirect !== indirect);
+  }
+
   addVoxels(inst: GPUBuffer, indirect: GPUBuffer): void {
     this.voxelSources.push({
       indirect,
@@ -1911,9 +1916,9 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
     return rm;
   }
 
-  /** (round 96) The physics voxels' particles, for the rock mesh's skinned draws (the metal's). */
-  setRockParticles(p: { px: GPUBuffer; pr: GPUBuffer; pq: GPUBuffer }): void {
-    this.rockParticles = p;
+  /** (solver step 2) The node solver's buffers, for the rock mesh's skinned draws (the metal's); again when they grow. */
+  setRockNodes(p: { pose: GPUBuffer; lanes: GPUBuffer }): void {
+    this.rockNodes = p;
     if (this.rockGroupOf) {
       this.rockGroup = this.rockGroupOf();
       this.rockShadowGroup = this.noShadowView ? this.rockGroupOf(this.lightCamBuf, this.noShadowView) : undefined;

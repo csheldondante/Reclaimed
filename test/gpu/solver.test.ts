@@ -206,35 +206,49 @@ test('a sleeping body is woken by a hard hit, not by being touched', async () =>
   expect(woke).toBe(true);
 });
 
-test('steel holds its shape: a girder cantilevered off the ledge barely sags under its own weight', async () => {
+test('steel holds its shape: a girder cantilevered off the ledge carries its own weight', async () => {
   clear();
+  // 24 × 1 × 2, 20 of it over the edge: the moment at the root, 153 a cell × 20² / 2 = 30 600, over its section (a node
+  // of 2 × 1 × 2 cells: Z ≈ 0.47) is 65 000 — under steel's yield (2e5)
   const cells = box(24, 1, 2, LEDGE_X - 20, 30, LEDGE, MAT.Steel);
   const b = solver.add({ cells, pinned: (c) => c.x >= LEDGE_X })!;
   await step(180);
   const nodes = await solver.nodes(b);
   const low = Math.min(...nodes.map((n) => n.x[2]));
   if (process.env.SOLVER_LOG) console.log('cantilever low', low);
-  expect(low).toBeGreaterThan(LEDGE + 0.5 - 0.3);
+  expect(low).toBeGreaterThan(LEDGE + 1 - 0.2);
   expect(rd(b).parts).toBe(1);
   expect(g.takeErrors()).toEqual([]);
 });
 
-test('soft metal droops and stays drooped (plastic): no frame, a low yield', async () => {
+test('past its yield a bar bends at its root and stays bent (a plastic hinge on the load)', async () => {
   clear();
-  TUNE.solver.steelFrame = 0;
-  TUNE.solver.steelYield = 2;
-  TUNE.solver.steelTensile = 2000;
-  TUNE.solver.steelShear = 2000;
-  const cells = box(24, 1, 2, LEDGE_X - 20, 34, LEDGE, MAT.Steel);
+  // a 1 × 1 steel bar, 32 cells over the edge: 76 a cell × 32² / 2 = 38 900 over Z = 1/6 is 2.3e5 — past the yield
+  // (2e5), under the strength (4e5)
+  const cells = box(36, 1, 1, LEDGE_X - 32, 34, LEDGE, MAT.Steel);
+  const b = solver.add({ cells, pinned: (c) => c.x >= LEDGE_X })!;
+  await step(240);
+  const nodes = await solver.nodes(b);
+  const tipZ = nodes.reduce((m, n) => (n.x[0] < m.x[0] ? n : m), nodes[0]).x[2];
+  if (process.env.SOLVER_LOG) console.log('bar tip', tipZ, 'parts', rd(b).parts);
+  expect(tipZ).toBeLessThan(LEDGE + 0.5 - 1);
+  expect(rd(b).parts).toBe(1);
+  // its rest shape has followed: bent for good
+  const rest = await solver.rests(b);
+  expect(Math.min(...rest.map((r) => r[2]))).toBeLessThan(LEDGE + 0.5 - 1);
+});
+
+test('a soft body (canvas, scrap) sags under its own weight where steel holds (regions, no frame)', async () => {
+  clear();
+  const cells = box(24, 1, 2, LEDGE_X - 20, 38, LEDGE, MAT.Canvas);
   const b = solver.add({ cells, pinned: (c) => c.x >= LEDGE_X })!;
   await step(120);
-  const mid = await solver.nodes(b);
-  const tip0 = Math.min(...mid.map((n) => n.x[2]));
-  expect(tip0).toBeLessThan(LEDGE + 0.5 - 1);
-  // its rest shape has followed: the girder's own idea of straight is now bent (plastic)
-  const rest = await solver.rests(b);
-  const r0 = Math.min(...rest.map((r) => r[2]));
-  expect(r0).toBeLessThan(Math.max(...rest.map((r) => r[2])) - 1.5 - 0.5);
+  const nodes = await solver.nodes(b);
+  const low = Math.min(...nodes.map((n) => n.x[2]));
+  if (process.env.SOLVER_LOG) console.log('canvas low', low, 'parts', rd(b).parts);
+  // (soft: it gives under its own weight, where steel holds)
+  expect(low).toBeLessThan(LEDGE + 1 - 0.25);
+  expect(rd(b).parts).toBe(1);
 });
 
 test('a girder bridge dents where a rock lands on it, and stays dented', async () => {
@@ -263,12 +277,10 @@ test('a girder bridge dents where a rock lands on it, and stays dented', async (
   expect(rd(b).parts).toBe(1);
 });
 
-test('a bond stressed past its strength snaps: the graph splits into parts', async () => {
+test('a bar loaded past its strength snaps at its root: the graph splits into parts', async () => {
   clear();
-  TUNE.solver.steelFrame = 0;
-  TUNE.solver.steelTensile = 8;
-  TUNE.solver.steelShear = 8;
-  const cells = box(24, 1, 2, LEDGE_X - 20, 40, LEDGE, MAT.Steel);
+  // 1 × 1, 44 over the edge: 76 × 44² / 2 = 73 600 over Z = 1/6 is 4.4e5 — past steel's strength (4e5)
+  const cells = box(48, 1, 1, LEDGE_X - 44, 42, LEDGE, MAT.Steel);
   const b = solver.add({ cells, pinned: (c) => c.x >= LEDGE_X })!;
   let broke = 0;
   await step(180, () => {

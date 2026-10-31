@@ -46,6 +46,9 @@ export interface Built {
   radius: number;
   /** the body's main material (by mass) */
   mat: number;
+  /** each cell's node, and whether it's on the surface (something beside it is empty): what's drawn of it */
+  cellNode: Int32Array;
+  surface: boolean[];
 }
 
 /** a cell's centre (world) */
@@ -56,12 +59,27 @@ export function cellCentre(c: { x: number; y: number; z: number }): V3 {
 
 const key = (x: number, y: number, z: number) => `${x},${y},${z}`;
 
-export function buildBody(cells: readonly SolverCell[], pinned?: (c: SolverCell) => boolean): Built | null {
+/** the cells' centre of mass where they stand, by the solver's densities (what buildBody's `com` comes to) */
+export function restComOf(cells: readonly SolverCell[]): V3 {
+  let m = 0;
+  const c: V3 = [0, 0, 0];
+  for (const k of cells) {
+    const d = solverMat(k.mat).density;
+    const p = cellCentre(k);
+    for (let a = 0; a < 3; a++) c[a] += p[a] * d;
+    m += d;
+  }
+  return [c[0] / m, c[1] / m, c[2] / m];
+}
+
+/** `minBlock`: the least block size (a deformable's nodes span its members' sections: the loads through a bond are over
+ *  the section a node stands for, and a node a cell wide would take a girder's whole bend through one cell) */
+export function buildBody(cells: readonly SolverCell[], pinned?: (c: SolverCell) => boolean, minBlock = 1): Built | null {
   if (!cells.length) return null;
   const at = new Map<string, number>();
   cells.forEach((c, i) => at.set(key(c.x, c.y, c.z), i));
   // the block size: the least giving <= NN blocks
-  let g = 1;
+  let g = Math.max(1, minBlock);
   let blockOf: (c: SolverCell) => string = () => '';
   for (; ; g++) {
     const gg = g;
@@ -186,5 +204,13 @@ export function buildBody(cells: readonly SolverCell[], pinned?: (c: SolverCell)
       next = far;
     }
   }
-  return { nodes, bonds, points, g, com, mass, cells: cells.length, radius, mat: main(mats) };
+  const surface = cells.map((c) => {
+    if (!at.has(key(c.x, c.y, c.z + 1)) || !at.has(key(c.x, c.y, c.z - 1))) return true;
+    for (let k = 0; k < 6; k++) {
+      const [x, y] = nbr(c.x, c.y, k);
+      if (!at.has(key(x, y, c.z))) return true;
+    }
+    return false;
+  });
+  return { nodes, bonds, points, g, com, mass, cells: cells.length, radius, mat: main(mats), cellNode: nodeOfCell, surface };
 }

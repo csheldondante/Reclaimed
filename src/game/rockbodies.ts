@@ -17,6 +17,8 @@
 import { MAT, MATERIALS, MatState } from '../world/materials';
 import { cellAt, cellPos, nbr, DIRV, ROW_H } from '../world/lattice';
 import { TUNE, worldG } from '../tune/params';
+import type { BodySpec, BodyRead, SolverBody } from '../api/contracts/solver';
+import { restComOf } from '../solver/build';
 
 export type V3 = [number, number, number];
 type Q = [number, number, number, number];
@@ -400,8 +402,32 @@ function rng(seed: number): () => number {
   };
 }
 
+/**
+ * (solver step 2, BACKLOG AR4) What moves the bodies when the GPU node solver does (src/solver: the contract's add,
+ * remove and read): RockBodies keeps what the judge needs of each body — its cells, mass, necks, its breaks, the hand-
+ * over at rest — and the solver moves it. Without one (the Node tests, the CPU harness, a body fast-forwarded to rest)
+ * the CPU step below moves it.
+ */
+export interface RockEngine {
+  add(spec: BodySpec): SolverBody | null;
+  remove(b: SolverBody): void;
+  read(b: SolverBody): BodyRead | undefined;
+}
+
+interface Engined {
+  sb: SolverBody;
+  /** the solver's centre of mass less the body's (spawn frame): the two weigh materials their own way */
+  d: V3;
+  /** the last readback taken, and when (ms) */
+  tick: number;
+  at: number;
+}
+
 export class RockBodies {
   list: RockBody[] = [];
+  /** (solver step 2) the GPU solver moves the bodies (null: the CPU step) */
+  engine: RockEngine | null = null;
+  private engined = new Map<RockBody, Engined>();
   private nextId = 1;
   /** while the ground's copy isn't of the window as it is (a slide, until it's read again): nothing moves */
   frozen = false;
@@ -849,6 +875,7 @@ export class RockBodies {
     const erode: { body: RockBody; at: V3 }[] = [];
     if (this.frozen || !this.list.length || dt <= 0) return { hits, rest, erode };
     const t0 = performance.now();
+    if (this.engine && !only) return this.fromEngine(dt, hits, rest, erode, t0);
     let n: number;
     if (only) n = Math.max(1, Math.round(dt / SUB_DT));
     else {
@@ -888,6 +915,73 @@ export class RockBodies {
       if (b.still > RB.restT || b.age > MAX_AGE) rest.push(b);
       for (const at of b.erode) erode.push({ body: b, at });
     }
+    this.stats.stepMs = performance.now() - t0;
+    return { hits, rest, erode };
+  }
+
+  /**
+   * (solver step 2) The frame with the GPU solver moving the bodies: new ones handed to it, gone ones taken out, and
+   * each one's latest readback taken (a tick or two late) — its pose (drawn between the last two read), velocity, what
+   * it hit and how hard, the ground it cut too deep into, whether it's at rest — the same summary the CPU step makes,
+   * for the judge (breaks, dust, the hand-over at rest).
+   */
+  private fromEngine(dt: number, hits: RockHit[], rest: RockBody[], erode: { body: RockBody; at: V3 }[], t0: number): { hits: RockHit[]; rest: RockBody[]; erode: { body: RockBody; at: V3 }[] } {
+    const eng = this.engine!;
+    const live = new Set(this.list);
+    for (const [b, e] of this.engined) {
+      if (live.has(b)) continue;
+      eng.remove(e.sb);
+      this.engined.delete(b);
+    }
+    const now = performance.now();
+    for (const b of this.list) {
+      let e = this.engined.get(b);
+      if (!e) {
+        const cells = b.cells.map((k) => ({ x: k.lat[0], y: k.lat[1], z: k.lat[2], mat: k.mat }));
+        // (the solver's centre of mass, its materials weighed its own way, sits d from the body's: placed by it)
+        const d = sub(restComOf(cells), b.origin);
+        const sb = eng.add({ cells, pose: { pos: add(b.pos, mv(rotM(b.q), d)), q: b.q }, vel: b.v, spin: b.w, allow: b.allow, kind: 'rigid' });
+        if (!sb) continue;
+        e = { sb, d, tick: -1, at: now };
+        this.engined.set(b, e);
+      }
+      b.hit = 0;
+      b.erode = [];
+      const r = eng.read(e.sb);
+      if (r && r.tick !== e.tick) {
+        e.tick = r.tick;
+        e.at = now;
+        b.prevPos = b.pos;
+        b.prevQ = b.q;
+        const R = rotM(r.q);
+        b.pos = sub(r.pos, mv(R, e.d));
+        b.q = r.q;
+        b.v = r.vel;
+        b.w = r.spin;
+        b.contact = r.touching > 0;
+        if (r.impact) {
+          b.hit = r.impact.speed;
+          b.hitAt = r.impact.at;
+        }
+        b.erode = r.erode;
+        b.still = r.asleep ? RB.restT + 1 : 0;
+        b.allow = Math.min(b.allow, ALLOW_MAX);
+      }
+      b.age += dt;
+      b.grace -= dt;
+      if (!b.contact) b.airborne += dt;
+      if (b.airborne > 0.15) b.grace = Math.min(b.grace, 0);
+      b.dustT += dt;
+      if (b.hit > 1.5 && (b.dustT > 0.25 || b.hit > this.breakSpeedOf(b) || b.hit > b.neckV)) {
+        b.dustT = 0;
+        hits.push({ body: b, speed: b.hit, at: b.hitAt });
+      }
+      if (b.still > RB.restT || b.age > MAX_AGE) rest.push(b);
+      for (const at of b.erode) erode.push({ body: b, at });
+    }
+    // (drawn between its last two readbacks: they come a tick apart)
+    const lastAt = Math.max(0, ...[...this.engined.values()].map((e) => e.at));
+    this.alpha = Math.min(1, Math.max(0, (now - lastAt) / (SUB_DT * 2000)));
     this.stats.stepMs = performance.now() - t0;
     return { hits, rest, erode };
   }

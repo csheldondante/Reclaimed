@@ -9,22 +9,12 @@ const RK_N: u32 = 40u;
 const RK_STRIDE: u32 = 12u;
 struct RockDraws { d: array<vec4<f32>, 481> };
 @group(0) @binding(31) var<uniform> RK: RockDraws;
-// (round 96) the physics voxels' particles (physics.ts): positions (two vec4 each: now xyz, inverse mass (< 0 gone);
-// before), rest positions (the spawn frame's), rotations (their regions'): a metal piece's mesh is skinned to them
-@group(0) @binding(32) var<storage, read> rkPx: array<vec4<f32>>;
-@group(0) @binding(33) var<storage, read> rkPr: array<vec4<f32>>;
-@group(0) @binding(34) var<storage, read> rkPq: array<vec4<f32>>;
-
-/** (round 96) the particle of lattice cell c (column x, y, cell z of the spawn frame) of draw e's body, or -1 */
-fn rkParticle(e: u32, c: vec3<i32>) -> i32 {
-  let a = rkAt(e, 1u);
-  let dm = vec3<i32>(rkAt(e, 2u).xyz);
-  let l = c - vec3<i32>(a.yzw);
-  if (any(l < vec3<i32>(0)) || any(l >= dm)) { return -1; }
-  let j = i32(a.x) + (l.z * dm.y + l.y) * dm.x + l.x;
-  if (rkPx[2 * j].w < 0.0) { return -1; }
-  return j;
-}
+// (solver step 2) the node solver's nodes (solver.ts): their transforms for the last two ticks (pose: prev pos, prev
+// rot, pos, rot) and their lanes ([0] w < 0 gone; [6] the rest a mesh is bound to, about the body's rest centre of
+// mass) — a metal piece's mesh is skinned to them, drawn between the two ticks at RK.d[0].y
+@group(0) @binding(32) var<storage, read> rkPose: array<vec4<f32>>;
+@group(0) @binding(33) var<storage, read> rkLane: array<vec4<f32>>;
+const RK_LANE: u32 = 8u;
 
 struct ROut {
   @builtin(position) pos: vec4<f32>,
@@ -97,27 +87,47 @@ fn vsRock(@builtin(vertex_index) vi: u32) -> ROut {
   var wp = vec3<f32>(0.0);
   var wn = n;
   if (sh.w > 1.5) {
-    // (round 96, skinned: the particle of the cell a little inside the surface, or of one beside it)
-    let si = s - normalize(n) * 0.35;
-    let c0 = cellAt(si.xy);
-    let cz = i32(floor(si.z));
-    var j = rkParticle(e, vec3<i32>(c0, cz));
-    if (j < 0) {
-      let odd = (c0.y & 1) != 0;
-      let off = array<vec2<i32>, 8>(vec2<i32>(1, 0), vec2<i32>(-1, 0), select(vec2<i32>(0, 1), vec2<i32>(1, 1), odd), select(vec2<i32>(-1, -1), vec2<i32>(0, -1), odd), select(vec2<i32>(-1, 1), vec2<i32>(0, 1), odd), select(vec2<i32>(0, -1), vec2<i32>(1, -1), odd), vec2<i32>(0, 0), vec2<i32>(0, 0));
-      for (var k = 0u; k < 8u && j < 0; k++) {
-        let dz = select(0, select(1, -1, k == 7u), k >= 6u);
-        j = rkParticle(e, vec3<i32>(c0 + off[k], cz + dz));
+    // (solver step 2, skinned: the vertex goes with the nodes nearest where it was bound — up to four, weighted by
+    // nearness — each carrying it at its offset turned with it, between the last two ticks)
+    let a = rkAt(e, 1u);
+    let nn = u32(rkAt(e, 2u).x);
+    let base = u32(a.x) * 64u;
+    let al = clamp(RK.d[0].y, 0.0, 1.0);
+    let sr = s - a.yzw;
+    var bi = vec4<u32>(0u);
+    var bd = vec4<f32>(1e9);
+    for (var k = 0u; k < nn; k++) {
+      let ln = rkLane[(base + k) * RK_LANE];
+      if (ln.w < 0.0) { continue; }
+      let d = length(sr - rkLane[(base + k) * RK_LANE + 6u].xyz);
+      if (d < bd.w) {
+        if (d < bd.z) {
+          if (d < bd.y) {
+            if (d < bd.x) { bd = vec4<f32>(d, bd.xyz); bi = vec4<u32>(k, bi.xyz); }
+            else { bd = vec4<f32>(bd.x, d, bd.yz); bi = vec4<u32>(bi.x, k, bi.yz); }
+          } else { bd = vec4<f32>(bd.xy, d, bd.z); bi = vec4<u32>(bi.xy, k, bi.z); }
+        } else { bd.w = d; bi.w = k; }
       }
     }
-    if (j < 0) {
-      o.gone = 1.0;
-      j = 0;
+    if (bd.x > 1e8) { return o; }
+    var wsum = 0.0;
+    var nsum = vec3<f32>(0.0);
+    for (var i = 0u; i < 4u; i++) {
+      if (bd[i] > 1e8 || bd[i] > bd.x + 1.5 * rkLane[(base + bi.x) * RK_LANE + 2u].w) { continue; }
+      let j = base + bi[i];
+      let w = 1.0 / ((bd[i] + 0.25) * (bd[i] + 0.25));
+      let q0 = rkPose[j * 4u + 1u];
+      var q1 = rkPose[j * 4u + 3u];
+      if (dot(q0, q1) < 0.0) { q1 = -q1; }
+      let q = normalize(mix(q0, q1, al));
+      let x = mix(rkPose[j * 4u].xyz, rkPose[j * 4u + 2u].xyz, al);
+      wp += w * (x + quatRotate(q, sr - rkLane[j * RK_LANE + 6u].xyz));
+      nsum += w * quatRotate(q, n);
+      wsum += w;
+      if (i == 0u) { o.rq = q; }
     }
-    let q = rkPq[j];
-    wp = rkPx[2 * j].xyz + quatRotate(q, s - rkPr[j].xyz);
-    wn = quatRotate(q, n);
-    o.rq = q;
+    wp /= wsum;
+    wn = normalize(nsum);
   } else {
     wp = rkMove(t, s);
     wn = rkTurn(t, n);

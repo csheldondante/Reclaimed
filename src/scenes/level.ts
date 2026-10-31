@@ -1100,11 +1100,9 @@ export class LevelScene implements Scene {
       };
       // (round 95, ?rockbody=1) rock hitting the ground hard throws sparks, up and out
       this.integrity.onSparks = (x, y, z, count, speed) => core.sim.particles.burst({ kind: PK.Spark, x, y, z, count, speed, spread: 0.4, vel: [0, 0, speed * 0.4] });
-      // (round 96) metal goes to the physics voxels, its mesh skinned to them
-      if (this.integrity.rigid && this.physics) {
-        this.integrity.physics = this.physics;
-        core.renderer.setRockParticles(this.physics.buffers);
-      }
+      // (round 96; solver step 2) metal goes to the node solver (Integrity.wakeMetal); the physics voxels stay the
+      // sandbox's tools' (the drop tool, the beam)
+      if (this.integrity.rigid && this.physics) this.integrity.physics = this.physics;
       core.globals.spanCollapse = false;
       weather.holdNatural(1e9);
     }

@@ -66,6 +66,10 @@ struct SolverU { a: vec4<f32>, b: vec4<f32>, c: vec4<f32>, d: vec4<f32>, e: vec4
 //  [4] xy (u32 bits) bonds: the nodes of its own body it's held to (bits 0..63); z its block's faces on the body's
 //      surface (a number: bits 0 +x, 1 -x, 2 +y, 3 -y, 4 +z, 5 -z — build.ts exposed), w 0
 //  [5] contact point: rest position (spawn frame), w the node it rides (f32); < 0 no point
+//  [6] the node's rest position as it was made (about the rest centre of mass): what meshes are skinned to (bound
+//      there: [2] moves on as it bends, and the drawn vertices with it); w the cells it stands for
+//  [7] how its rest has turned from that (a quaternion: a stiff deformable's plastic hinges) — its rotation [3] is
+//      its part's turn times this, from the bind frame
 @group(0) @binding(3) var<storage, read_write> lane: array<vec4<f32>>;
 // per body, BODY_V vec4 (solver.ts BodyRead):
 //  [0] x nodes, y points, z state, w cells (its size: the slop's mass)
@@ -90,7 +94,7 @@ struct SolverU { a: vec4<f32>, b: vec4<f32>, c: vec4<f32>, d: vec4<f32>, e: vec4
 @group(0) @binding(15) var<storage, read_write> pose: array<vec4<f32>>;
 @group(0) @binding(11) var<storage, read> layersIn: array<vec4<u32>>;
 
-const LANE_V: u32 = 6u;
+const LANE_V: u32 = 8u;
 // (stored as f32 numbers, not bits: small integers' bits are denormal floats, which the GPU may flush to 0)
 // (read whole and picked in registers: a storage vec4 indexed by a variable came out a component off on D3D12)
 fn nbrAt(b: u32, k: u32) -> u32 {
@@ -208,11 +212,18 @@ var<workgroup> sc0: array<vec3<f32>, 64>;
 var<workgroup> pd: array<vec3<f32>, 64>;
 var<workgroup> po: array<vec3<f32>, 64>;
 var<workgroup> pn: array<u32, 64>;
-var<workgroup> ptR: array<vec3<f32>, 64>;
 var<workgroup> wState: u32;
 var<workgroup> wN: u32;
 var<workgroup> wP: u32;
 var<workgroup> wRigid: u32;
+// (a stiff deformable: metal, wood — frame 1; the load flow)
+var<workgroup> wStiff: u32;
+var<workgroup> spar: array<u32, 64>;
+var<workgroup> sord: array<u32, 64>;
+var<workgroup> wRp: vec4<f32>;
+// (the workgroup's memory is 16 KB on a phone: the load flow's sums reuse arrays free by then — its corrections sc (the
+// soft regions' centres), its subtree forces pd (the points' asks, gathered already) and moments pdent (their dents,
+// taken at the first pass) — and the bind rests, hinge turns and point rests are read from the lanes)
 var<workgroup> wChanged: atomic<u32>;
 var<workgroup> wFlag: u32;
 var<workgroup> ptN: array<u32, 64>;
@@ -295,6 +306,120 @@ fn massOf(l: u32) -> f32 { return select(1e6, 1.0 / sw[l], sw[l] > 0.0); }
 /** the overlap allowed against something of `cells` cells (PX3's rule: rigid.slop + min(slopCap, slopK · cells^slopP)) */
 fn slopFor(cells: f32) -> f32 { return SU.b.z + min(SU.c.y, SU.b.w * pow(max(cells, 1.0), SU.c.x)); }
 
+/**
+ * (thread 0, a stiff deformable's last pass of a substep) The loads through its bonds — the user (round 120): "Does it
+ * also propagate forces to compute torque and shear forces?", "you propagate support in then weight back out". What
+ * holds it (pinned nodes, nodes touching something) are the roots; a breadth-first walk over its bonds from them gives
+ * each node the bond it hangs from. Back from the far ends, each node's subtree sums its forces (m Δ / h²: what the
+ * fit had to do to hold it there) and their moments; at the bond to its parent that is a moment (bend), a shear and a
+ * pull, over the section of what the node stands for (its cells along it: A = s², Z = s³ / 6). Past the material's
+ * strength the bond snaps; past its yield the most overloaded bond is a plastic hinge: what hangs from it turns about
+ * it a little (its rest shape: it stays bent), by how far past.
+ */
+fn loadFlow(b: u32, nN: u32, nP: u32, h: f32, mat: u32) {
+  // roots: held (pinned) or touching
+  var nq = 0u;
+  for (var k = 0u; k < nN; k++) {
+    spar[k] = 0xffffffffu;
+    pd[k] = vec3<f32>(0.0);
+    pdent[k] = vec3<f32>(0.0);
+    if (sw[k] < 0.0) { continue; }
+    var held = sw[k] == 0.0 || rt[k] != 0u;
+    for (var j = 0u; j < nP && !held; j++) { if (ptN[j] == k && pn[j] != 0u) { held = true; } }
+    if (held) {
+      spar[k] = k;
+      sord[nq] = k;
+      nq++;
+    }
+  }
+  if (nq == 0u) { return; }
+  var head = 0u;
+  while (head < nq) {
+    let k = sord[head];
+    head++;
+    for (var j = 0u; j < nN; j++) {
+      if (spar[j] != 0xffffffffu || sw[j] < 0.0 || !bondedTo(k, j)) { continue; }
+      spar[j] = k;
+      sord[nq] = j;
+      nq++;
+    }
+  }
+  // back from the far ends: each subtree's force and moment (about the origin), handed to its parent
+  let mB = smB(mat);
+  var worst = 1.0;
+  var wk = 0xffffffffu;
+  var waxis = vec3<f32>(0.0);
+  for (var i = nq; i > 0u; i--) {
+    let k = sord[i - 1u];
+    let p = spar[k];
+    // (a blow is stopped within a substep here — PBD's contacts are perfectly stiff — so its force would be without
+    // bound; a real one is spread over the give at the contact: a node's load is held to SU.e.w g)
+    var f = massOf(k) * sc[k] / (h * h);
+    let fmax = massOf(k) * SU.b.x * SU.e.w;
+    if (length(f) > fmax) { f = f * (fmax / length(f)); }
+    pd[k] += f;
+    pdent[k] += cross(sx[k], f);
+    if (p == k) { continue; }
+    pd[p] += pd[k];
+    pdent[p] += pdent[k];
+    // at the bond k–p
+    let bp = 0.5 * (sx[k] + sx[p]);
+    let M = pdent[k] - cross(bp, pd[k]);
+    let e = normalize(sx[k] - sx[p]);
+    let Mp = M - e * dot(M, e);
+    let cellsK = max(1.0, lane[(b * NN + k) * LANE_V + 6u].w);
+    let s = sqrt(max(1.0, cellsK / max(lane[(b * NN + k) * LANE_V + 2u].w, 1.0)));
+    let A = s * s;
+    let Z = s * s * s / 6.0;
+    let sB = length(Mp) / Z;
+    let sT = max(0.0, dot(pd[k], e)) / A;
+    let sS2 = length(pd[k] - e * dot(pd[k], e)) / A;
+    if (sB > mB.z || sT > mB.z || sS2 > mB.w) {
+      atomicAnd(&sbond[k * 2u + (p >> 5u)], ~(1u << (p & 31u)));
+      atomicAnd(&sbond[p * 2u + (k >> 5u)], ~(1u << (k & 31u)));
+      atomicAdd(&wBroke, 1u);
+      atomicStore(&wChanged, 1u);
+      continue;
+    }
+    let ratio = sB / max(mB.y, 1e-6);
+    if (ratio > worst) {
+      worst = ratio;
+      wk = k;
+      waxis = Mp;
+    }
+  }
+  // the plastic hinge: what hangs from bond wk–parent turns about it (its rest shape), by how far past the yield
+  if (wk == 0xffffffffu || length(waxis) < 1e-9) { return; }
+  let p = spar[wk];
+  let ang = min(0.03, (worst - 1.0) * 0.01) * smC(mat).w;
+  // (the forces summed are what holds it — the loads are their opposite: it turns the way they push)
+  let axr = qrotS(qinvS(wRp), -normalize(waxis));
+  let dq = vec4<f32>(axr * sin(0.5 * ang), cos(0.5 * ang));
+  let pivot = 0.5 * (sr[wk] + sr[p]);
+  // (and where it is, turned the same about the hinge where it is now — its position before the substep too: plastic
+  // flow is a creep, not a fling; the turn makes no speed)
+  let dqW = qmulS(qmulS(wRp, dq), qinvS(wRp));
+  let pivotW = 0.5 * (sx[wk] + sx[p]);
+  for (var j = 0u; j < nN; j++) {
+    if (sw[j] < 0.0) { continue; }
+    // (in wk's subtree: wk on its way to a root)
+    var a = j;
+    var inSub = false;
+    for (var d = 0u; d < 64u; d++) {
+      if (a == wk) { inSub = true; break; }
+      let up = spar[a];
+      if (up == a || up == 0xffffffffu) { break; }
+      a = up;
+    }
+    if (!inSub) { continue; }
+    sr[j] = pivot + qrotS(dq, sr[j] - pivot);
+    sx[j] = pivotW + qrotS(dqW, sx[j] - pivotW);
+    sp[j] = pivotW + qrotS(dqW, sp[j] - pivotW);
+    let qi = (b * NN + j) * LANE_V + 7u;
+    lane[qi] = normalize(qmulS(dq, lane[qi]));
+  }
+}
+
 @compute @workgroup_size(64)
 fn solve(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l: u32) {
   let b = wg.x;
@@ -329,7 +454,10 @@ fn solve(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
   let nP = wP;
   let live = l < nN && lane[gi * LANE_V].w >= 0.0;
   let mat = min(u32(lane[gi * LANE_V + 1u].w), 39u);
-  if (l == 0u) { wRigid = u32(bodies[B0 + 8u].x > 0.5); }
+  if (l == 0u) {
+    wRigid = u32(bodies[B0 + 8u].x > 0.5);
+    wStiff = u32(bodies[B0 + 8u].x < 0.5 && SM[mat * 4u + 3u].x >= 0.999);
+  }
   // the body into workgroup memory
   sx[l] = lane[gi * LANE_V].xyz - wO;
   sv[l] = lane[gi * LANE_V + 1u].xyz + select(vec3<f32>(0.0), wCtl.xyz, wCtl.w > 0.0 && live);
@@ -342,7 +470,6 @@ fn solve(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
   let pt = lane[gi * LANE_V + 5u];
   let pLive = l < nP && pt.w >= 0.0;
   let pNode = min(u32(max(pt.w, 0.0)), NN - 1u);
-  ptR[l] = pt.xyz;
   ptN[l] = select(0xffffffffu, pNode, pLive);
   let cells = bodies[B0].w;
   let ownSlop = max(slopFor(cells), bodies[B0 + 6u].z);
@@ -356,7 +483,7 @@ fn solve(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
   // fell asleep still touch — or another body hit it hard, above)
   if (state == 2u) {
     if (pLive) {
-      let w = sx[pNode] + qrotS(sq[pNode], ptR[l] - sr[pNode]) + wO;
+      let w = sx[pNode] + qrotS(sq[pNode], lane[gi * LANE_V + 5u].xyz - lane[(b * NN + pNode) * LANE_V + 6u].xyz) + wO;
       let g = probe(w);
       if (g.d > -0.15) { atomicAdd(&wTouch, 1u); }
     }
@@ -433,7 +560,7 @@ fn solve(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
       var osum = vec3<f32>(0.0);
       if (pLive && sw[pNode] > 0.0) {
         let n = pNode;
-        let off = qrotS(sq[n], ptR[l] - sr[n]);
+        let off = qrotS(sq[n], lane[gi * LANE_V + 5u].xyz - lane[(b * NN + n) * LANE_V + 6u].xyz);
         let w = sx[n] + off + wO;
         let mv = sx[n] - sp[n];
         let gh = probe(w);
@@ -592,8 +719,8 @@ fn solve(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
             let me = contactMass(b, sw[l], mat);
             let share = select(mo / (mo + me), 1.0, asleep);
             let nq2 = snap[(o * NN + on) * LANE_V + 3u];
-            let nr2 = snap[(o * NN + on) * LANE_V + 2u];
-            let wpt = nl.xyz + qrotS(nq2, pt.xyz - nr2.xyz) + ov * tSub;
+            let nb2 = snap[(o * NN + on) * LANE_V + 6u];
+            let wpt = nl.xyz + qrotS(nq2, pt.xyz - nb2.xyz) + ov * tSub;
             let lp = qrotS(qi, wpt - xl);
             let inside = hs - abs(lp);
             if (any(inside <= vec3<f32>(0.0))) { continue; }
@@ -653,6 +780,27 @@ fn solve(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
           if (sw[l] > 0.0) { sx[l] = goal; }
           sq[l] = rot;
         }
+        workgroupBarrier();
+      } else if (workgroupUniformLoad(&wStiff) == 1u) {
+        // a stiff deformable (metal, wood: frame 1): rigid between yields — its part fitted rigidly to its rest shape,
+        // pinned nodes holding it — and the corrections that fit makes are the loads it carries (m Δ / h²: the weight
+        // it holds up, the blow it stops). On the last pass they flow from its far ends to what holds it (loadFlow):
+        // the moment and shear at each bond — past the yield a plastic hinge turns what's beyond it, past the strength
+        // the bond snaps
+        var pf: Fit;
+        if (live) { pf = partFit(l, nN, true); }
+        workgroupBarrier();
+        // (summed over the substep's passes: the first does most of it)
+        if (it == 0u) { sc[l] = vec3<f32>(0.0); }
+        if (live && sw[l] > 0.0) {
+          sc[l] = sc[l] + pf.goal - sx[l];
+          sx[l] = pf.goal;
+        }
+        if (live) { sq[l] = qmulS(pf.rot, lane[gi * LANE_V + 7u]); }
+        if (l == 0u) { wRp = pf.rot; }
+        workgroupBarrier();
+        if (it == iters - 1u && l == 0u) { loadFlow(b, nN, nP, h, mat); }
+        storageBarrier();
         workgroupBarrier();
       } else {
         // a deformable (metal, wood): first how the loads on it now (the contacts' pushes, what holds it) would bend
@@ -920,4 +1068,32 @@ fn shift(@builtin(global_invocation_id) id: vec3<u32>) {
     let b = i / NN;
     bodies[b * BODY_V + 1u] = vec4<f32>(bodies[b * BODY_V + 1u].xyz - d, bodies[b * BODY_V + 1u].w);
   }
+}
+
+// ---- skin: the cells of bodies drawn as voxels (metal: the field mesh can't hold its thin members) -----------------
+// Each cell rides the node it was bound to (skinCells: xyz its rest about its body's rest centre of mass, f32 bits; w
+// its node's lane | material << 24), placed by that node's transform as the tick ends and drawn as render.wgsl vsBody's
+// instances (two vec4<u32>: position bits and the material word, then the rotation), counted into drawIndirect args.
+@group(0) @binding(17) var<storage, read> skinCells: array<vec4<u32>>;
+@group(0) @binding(18) var<storage, read_write> skinInst: array<vec4<u32>>;
+@group(0) @binding(19) var<storage, read_write> skinArgs: array<atomic<u32>>;
+
+@compute @workgroup_size(64)
+fn skin(@builtin(global_invocation_id) id: vec3<u32>) {
+  let i = id.x;
+  if (i >= u32(SU.e.z)) { return; }
+  let c = skinCells[i];
+  let li = c.w & 0xffffffu;
+  let m = c.w >> 24u;
+  let b = li / NN;
+  let st = bodies[b * BODY_V].z;
+  if (st != B_AWAKE && st != B_ASLEEP) { return; }
+  if (lane[li * LANE_V].w < 0.0) { return; }
+  let r = bitcast<vec3<f32>>(c.xyz);
+  let q = pose[li * 4u + 3u];
+  let x = pose[li * 4u + 2u].xyz + qrotS(q, r - lane[li * LANE_V + 6u].xyz);
+  let k = atomicAdd(&skinArgs[1], 1u);
+  let word = m | ((pcg(i) & 255u) << 8u) | 0x40000000u;
+  skinInst[k * 2u] = vec4<u32>(bitcast<vec3<u32>>(x), word);
+  skinInst[k * 2u + 1u] = bitcast<vec4<u32>>(q);
 }

@@ -40,10 +40,10 @@ export interface RockDraw {
   /** a ghost: its vertices go with the fragment whose seed (spawn frame) is nearest; none within `rad` of `hit` */
   ghost?: { seeds: [number, number, number, number][]; hit: [number, number, number]; rad: number };
   /**
-   * (round 96) skinned to a physics body's particles instead (`m` unused): its first particle, its lattice's low
-   * corner (column x, y, cell z of the spawn frame) and size — each vertex goes with the particle of its cell
+   * (solver step 2) skinned to a node-solver body's nodes instead (`m` unused): its slot, its rest centre of mass (the
+   * spawn frame), its nodes, the material it's drawn as — each vertex goes with the nodes nearest where it was bound
    */
-  skin?: { offset: number; lo: [number, number, number]; dims: [number, number, number]; mat?: number };
+  skin?: { slot: number; com: [number, number, number]; nodes: number; mat?: number };
 }
 
 interface Slot {
@@ -225,11 +225,13 @@ export class RockMesh {
   }
 
   /** This frame's draws (at most RK_N; the rest aren't drawn). */
-  setDraws(draws: RockDraw[]): void {
+  setDraws(draws: RockDraw[], alpha = 1): void {
     const d = this.data;
     d.fill(0);
     const n = Math.min(RK_N, draws.length);
     d[0] = n;
+    // (solver step 2: where the frame lies between the solver's last two ticks — its skinned draws are drawn there)
+    d[1] = alpha;
     for (let e = 0; e < n; e++) {
       const r = draws[e];
       const o = 4 + e * STRIDE * 4;
@@ -240,8 +242,8 @@ export class RockMesh {
         d.set([s.shift[0], s.shift[1], s.shift[2], r.skin ? 2 : r.ghost ? 1 : 0], o + 16);
       } else d.set([1, 1, 0, 0], o);
       if (r.skin) {
-        d.set([r.skin.offset, ...r.skin.lo], o + 4);
-        d.set([...r.skin.dims, r.skin.mat ?? 0], o + 8);
+        d.set([r.skin.slot, ...r.skin.com], o + 4);
+        d.set([r.skin.nodes, 0, 0, r.skin.mat ?? 0], o + 8);
       } else d.set(r.m, o + 4);
       if (r.ghost) {
         d.set([...r.ghost.hit, r.ghost.rad], o + 20);
