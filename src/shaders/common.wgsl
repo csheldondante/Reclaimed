@@ -706,6 +706,14 @@ fn bodyTopAt(q: vec2<i32>) -> f32 {
   return textureLoad(bodyProjTex, texCol(vec2<i32>(q)), 0).x;
 }
 
+/**
+ * The ground in column q over its solid top `solid` (the surface z, or a kernel's own base): the loose layer
+ * (a dust skin, a drift) lies on it, and a sleeping body's top is ground too. The one definition every kernel
+ * that stands, flows or settles on the ground uses (round 120, IN11: water, lava, sediment, particles,
+ * render-prep and the inhabitants each had their own copy). Each kernel reads its own surface binding.
+ */
+fn groundZ(q: vec2<i32>, solid: f32) -> f32 { return max(solid + driftAt(q), bodyTopAt(q)); }
+
 // The structure grids (and sleeping bodies) as each nature column sees them
 // (project.wgsl): up to PROJ_K solid intervals, top first, in the layers' own
 // interval form — so a structure's floors and the air between them read like

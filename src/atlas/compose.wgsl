@@ -268,57 +268,14 @@ fn stampSum(p: vec2<f32>, unit: bool) -> Stamped {
   return Stamped(dh + odd, select(0u, mat, odd > 1.5));
 }
 
-struct River {
-  on: bool,
-  /** distance from the river's line, in its half-widths */
-  x: f32,
-  level: f32,
-  w: f32,
-  depth: f32,
-  flags: u32,
-  /** (round 84) its flow at the reference wetness: downstream along the segment, its node's speed (cells a tick) */
-  vel: vec2<f32>,
-}
+// (round 117, terrain track: River and riverAt moved to terrain/river.wgsl — the course warped off the texel grid, two
+// segments a node, the step of a cascade; riverCut there is the cross-section)
 
 /** q moved by whole turns of the torus to be nearest p */
 fn nearTo(q: vec2<f32>, p: vec2<f32>) -> vec2<f32> {
   let W = vec2<f32>(AP.worldW, AP.worldH);
   let d = q - p;
   return p + d - round(d / W) * W;
-}
-
-/** the nearest river at p: of the segments from the nodes nearest the four texels round it to their next */
-fn riverAt(p: vec2<f32>) -> River {
-  var r: River;
-  r.on = false;
-  r.x = 1e9;
-  let t = torusU(p) * f32(AP.n) - 0.5;
-  let i0 = vec2<i32>(floor(t));
-  for (var k = 0; k < 4; k++) {
-    let id = riverBuf[texIdxW(i0 + vec2<i32>(k & 1, k >> 1))];
-    if (id == 0u) { continue; }
-    let a = riverNode(id - 1u);
-    let b = riverNode(a.next);
-    let pa = nearTo(vec2<f32>(a.x, a.y), p);
-    let pb = nearTo(vec2<f32>(b.x, b.y), pa);
-    let ab = pb - pa;
-    let l2 = dot(ab, ab);
-    var s = 0.0;
-    if (l2 > 1e-6) { s = clamp(dot(p - pa, ab) / l2, 0.0, 1.0); }
-    let w = mix(a.width, b.width, s);
-    let x = length(p - (pa + ab * s)) / w;
-    if (x < r.x) {
-      r.on = true;
-      r.x = x;
-      r.level = mix(a.level, b.level, s);
-      r.w = w;
-      r.depth = mix(a.depth, b.depth, s);
-      r.vel = select(vec2<f32>(0.0), ab / sqrt(max(l2, 1e-12)), l2 > 1e-6) * mix(a.speed, b.speed, s);
-      r.flags = a.flags & b.flags;
-      if (a.flags == 1u && s < 0.5) { r.flags = 1u; }
-    }
-  }
-  return r;
 }
 
 /**
@@ -329,12 +286,15 @@ fn riverAt(p: vec2<f32>) -> River {
 struct LakeHere {
   level: f32,
   m: f32,
+  /** (round 117, terrain/flood.ts) what fills it: 0 water, 1 sand, 2 magma, 3 ash, 4 silt (a lake's second word) */
+  fluid: u32,
 }
 
 fn lakeAt(p: vec2<f32>) -> LakeHere {
   var o: LakeHere;
   o.level = 0.0;
   o.m = 0.0;
+  o.fluid = 0u;
   let tab = riverBuf[AP.n * AP.n + 1u];
   if (tab == 0u) { return o; }
   let ids0 = riverBuf[AP.n * AP.n + 2u];
@@ -362,6 +322,7 @@ fn lakeAt(p: vec2<f32>) -> LakeHere {
     if (m > bm || (m == bm && L > o.level)) {
       bm = m;
       o.level = L;
+      o.fluid = u32(bitcast<f32>(riverBuf[tab + (id - 1u) * 2u + 1u]));
     }
   }
   o.m = bm;
@@ -518,6 +479,8 @@ struct Mesa {
   /** the top's height just inside its wall (a fraction of the drop: the rim lowered, the joint cell's
    *  fall): a lip is as high as what it juts from */
   lipW: f32,
+  /** (round 117) the talus's height against the bottom wall's foot (cells): a cave's mouth opens over it */
+  talFoot: f32,
 }
 
 /**
@@ -635,7 +598,8 @@ fn mesaEdge(u: vec2<f32>, sh: f32, drop: f32, g: vec2<f32>) -> Mesa {
   // collects and slopes at the base"): an apron sloping off each wall's foot (an SDF of the wall, its height
   // a fifth of the wall's, varying along it), lumpy; thinner in the ravines
   let tn = 0.55 + 0.45 * (0.5 + 0.5 * pfbm(u, perOf(40.0), 2u, AP.seed + 621u));
-  if (o.x < 0.0) { o.tal = max(o.tal, min(sh4[0] * drop * 0.2, 26.0) * tn - 0.8 * (-o.x)); }
+  o.talFoot = min(sh4[0] * drop * 0.2, 26.0) * tn;
+  if (o.x < 0.0) { o.tal = max(o.tal, o.talFoot - 0.8 * (-o.x)); }
   for (var k = 1u; k < MESA_TIERS; k++) {
     if (o.x > xw[k - 1u] + 1.2 && o.x < xw[k] - 1.2) { o.tal = max(o.tal, min(sh4[k] * drop * 0.2, 20.0) * tn - 0.8 * (xw[k] - o.x)); }
   }
@@ -752,6 +716,8 @@ fn ground(p: vec2<f32>) -> Ground {
     let hB = hs[1];
     var w = 0.0;
     var extra = 0.0;
+    var caveF = 0.0;
+    var caveR = 0.0;
     // (jitter along a border, odd under swapping the pair)
     let sgn = select(-1.0, 1.0, m.a < m.b);
     let jit = sgn * 2.5 * pfbm(u, perOf(14.0), 2u, AP.seed + 31u);
@@ -786,6 +752,18 @@ fn ground(p: vec2<f32>) -> Ground {
         w = select(1.0 - me.w, me.w, hiA);
         extra = (1.0 - me.w) * me.rise;
         talus = me.tal;
+        // (round 117, terrain/cave.wgsl) a cave opening at the cliff's foot, its mouth's pile of talus
+        if (me.rav < 0.05 && me.ramp < 0.05) {
+          // (a cliff into water: the foot a cell over the sea, TG3 — a cave's gap under the water would stand dry, TG16)
+          // (and over the talus heaped against the wall: a mouth behind the heap would be buried)
+          let cfoot = max(hLo + 0.3 + me.talFoot * 0.85, AP.sea + 1.0);
+          let cc = cliffCave(u, me.x, cfoot, hHi - cfoot, hHi);
+          if (cc.roof > cc.floor) {
+            caveF = cc.floor;
+            caveR = cc.roof;
+          }
+          talus = max(talus, cc.pile);
+        }
         // overhangs: the top wall's lip out over the ledge or the ground, the foot's wall undercut
         // (where it's tall, not in a ravine; each comes and goes along it)
         if (drop > 30.0 && me.rav < 0.05 && me.ramp < 0.05) {
@@ -807,8 +785,37 @@ fn ground(p: vec2<f32>) -> Ground {
         w = smoothstep(-ew, ew, s);
       }
     }
+    // (round 117, terrain/cave.wgsl) caves at a cliff's foot and along every coast where the land stands over the sea
+    // (the coasts' kinds are mostly beaches and smooth slopes, not sea cliffs: a cave into a steep coastal slope is a
+    // sea cave too): the foot a cell over the sea on a coast (TG3), the low ground's inland; the high side the land's
+    let coastB = isLand(A) != isLand(B);
+    if (kind != EDGE_MESA && (coastB || kind == EDGE_CLIFF)) {
+      let xs = s + jit;
+      let hiA2 = select(hA >= hB, isLand(A), coastB);
+      let hHi = select(hB, hA, hiA2);
+      let hLo2 = select(hA, hB, hiA2);
+      let x = select(-xs, xs, hiA2);
+      let foot = select(max(hLo2 + 0.3, AP.sea + 1.0), AP.sea + 1.0, coastB);
+      let cc = cliffCave(u, x, foot, hHi - foot, hHi);
+      if (cc.roof > cc.floor) {
+        caveF = cc.floor;
+        caveR = cc.roof;
+      }
+      talus = max(talus, cc.pile);
+    }
     g.h = mix(hB, hA, w) + extra;
     g.w = w;
+    // (a cliff's cave: open from its floor to its roof, rock kept over it)
+    // (a cliff's cave: open from its floor to its roof; where the roof comes within 2 of the ground, open to the sky —
+    // a collapse letting the light down; only into the high side: never raises the ground)
+    if (caveR > caveF && caveF < g.h - 1.0) {
+      if (caveR > g.h - 2.0) {
+        g.h = caveF;
+        g.hlo = min(g.hlo, g.h);
+      } else {
+        g.ov = vec3<f32>(0.0, caveF, caveR);
+      }
+    }
     // (a lip's open runs from the ground under it)
     if (g.ov.y < 0.0) { g.ov.y = g.h; }
     if (g.ov.z - g.ov.y < 3.0) { g.ov = vec3<f32>(0.0); }
@@ -833,7 +840,21 @@ fn ground(p: vec2<f32>) -> Ground {
   // the ground is a bank over the level (a beach rising from the water), so no water stands over lower ground
   // past it (where the macro rim is lower between its texels). Before the river's channel: the river out cuts
   // through the bank at the outlet.
-  let lh = lakeAt(p);
+  var lh = lakeAt(p);
+  // (round 117, terrain/flood.ts) a basin flooded with sand or ash buries what's in it (loose ground to its level); with
+  // magma, lava stands to it — not water
+  if (lh.fluid != 0u && lh.level > 0.0) {
+    if (lh.m >= 0.5 && g.h < lh.level) {
+      if (lh.fluid == 2u) {
+        g.clava = max(g.clava, lh.level - g.h);
+      } else {
+        g.loose = max(g.loose, lh.level - g.h);
+        // (sand 3, ash 17, silt 22: world/materials.ts MAT)
+        g.lmat = select(select(3u, 17u, lh.fluid == 3u), 22u, lh.fluid == 4u);
+      }
+    }
+    lh.level = 0.0;
+  }
   g.lk = lh.level;
   g.lkw = false;
   if (lh.level > 0.0) {
@@ -858,14 +879,31 @@ fn ground(p: vec2<f32>) -> Ground {
   // between — a trench in its bed only filled with what slid down its sides, the held water standing over it)
   let inLake = g.lkw && g.h < lh.level;
   if (rv.on && rv.x < 4.0 && !lowR && !inLake) {
-    var cut = rv.level + (rv.x - 1.0) * rv.w * 2.5;
-    if (rv.x < 1.0) { cut = rv.level - rv.depth * (1.0 - rv.x * rv.x); }
-    g.h = min(g.h, cut);
+    // (round 117, terrain/river.wgsl riverCut: the channel, its eroded bank, bars, boulders and plunge pools)
+    let rc = riverCut(p, rv);
+    g.h = min(g.h, rc.cut);
+    if (rc.raise > g.h) {
+      g.h = rc.raise;
+      if (rc.rock > 0.5) { g.cap = max(regs[g.a].rockMat, 1u); }
+    }
     g.rl = rv.level;
     g.rx = rv.x;
     g.rflags = rv.flags;
     g.rvel = rv.vel;
     g.rd = rv.depth;
+  }
+  // (round 117, terrain/gorge.wgsl) gorges wound across a plateau's top, walkable at the bottom and along the rims —
+  // none under a river or a lake (their water's level is the plateau's: cut under it, it would hang in the air)
+  // (not in the macro ground's pass: the rivers and lakes are found on the land without them — a gorge cutting a lake's
+  // rim drained it, round 117; at a cell a gorge stops at a lake's rim, g.lk)
+  if (AP.macroPass == 0u && isLand(A) && A.tier == TIER_PLATEAU && g.w > 0.98 && g.rx > 5.0 && g.lk == 0.0) {
+    let gz = gorgeAt(u, g.h, AP.sea + 10.0, g.dl);
+    if (gz.cut < g.h) {
+      g.h = gz.cut;
+      g.hlo = min(g.hlo, g.h);
+      g.ov = vec3<f32>(0.0);
+      talus = max(talus, gz.talus);
+    }
   }
   // (no overhang where a river runs or the coarse world has changed the ground)
   if (g.rx < 3.0 || abs(co.dr) > 0.3) { g.ov = vec3<f32>(0.0); }

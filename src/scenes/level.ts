@@ -1,5 +1,6 @@
 // The playable valley: world + diegetic powers + HUD + level goal.
 
+import { TerrainSystem } from '../terrain/terrain';
 import type { Ambience } from '../audio/ambience';
 import { Nature, reclamation, worldHealth } from '../game/nature';
 import { Powers } from '../game/powers';
@@ -18,6 +19,9 @@ import { Physics } from '../physics/physics';
 import type { LavaSystem } from '../sim/lava';
 import { installPhysics } from '../physics/install';
 import { installAgents } from '../agents/install';
+import { abilityHost, installInhabitants, lifeFocus, wilderness } from '../inhabitants/install';
+import type { InhabitantsGpu } from '../inhabitants/system';
+import { mountViewer } from '../inhabitants/viewer';
 import { Settlements } from '../settle/settlements';
 import { TownDebug } from '../settle/debug';
 import { AgentUnits } from '../units/agent-units';
@@ -95,6 +99,9 @@ import { captureWorld, loadSnapshot, saveSnapshot } from '../sim/snapshot';
 import { loadWarm, saveWarm, warmKey } from '../sim/warm-cache';
 import { buildWiki } from '../gm/wiki';
 import { StreamPlanner } from './planner';
+import { SettlementsView } from '../settle/view';
+import type { GridStyle } from '../api/contracts/settlement';
+import type { CitySpec } from '../api/contracts/structures';
 
 export interface LevelOptions {
   /** play this map instead of generating the level's (a loaded sandbox map) */
@@ -326,6 +333,9 @@ export class LevelScene implements Scene {
   physics?: Physics;
   /** the agents layer (docs/AGENTS.md): units walking the surfaces by shared fields */
   agents!: Agents;
+  /** (round 117, ?life=: src/inhabitants) creatures with bodies — the Inhabitants contract */
+  inhabitants?: InhabitantsGpu;
+  private lifeSpawned = false;
   /** (round 88, the atlas level) the settlements, and the units (the Units contract on the agents) */
   settlements?: Settlements;
   units?: AgentUnits;
@@ -354,6 +364,8 @@ export class LevelScene implements Scene {
   private beamPicking = false;
   /** sandbox: structural integrity and falling pieces (F7) */
   private integrity?: Integrity;
+  /** (round 117, structures: ?city=) the structures track's city on the window's ground */
+  private settlementsView?: SettlementsView;
   /** (round 108, AR5/AR8) the tuning panel, the bug report, the playground's stations */
   private tunePanel?: TunePanel;
   bugReport?: BugReport;
@@ -892,6 +904,23 @@ export class LevelScene implements Scene {
         cx = Math.round(s.at[0]);
         cy = Math.round(s.at[1] / ROW_H);
       }
+      // (round 117/119, structures: ?city=<tile system>&cstyle=&cseed= — every settlement is planned by the structures
+      // system now; this starts at the town or city nearest the start and plans its town with that tile system / style)
+      if (host.params.get('city') && settlements && !at) {
+        const near = settlements.near([cx, cy * ROW_H], 1e9).find((x) => x.size === 'town' || x.size === 'city');
+        if (near) {
+          cx = Math.round(near.at[0]);
+          cy = Math.round(near.at[1] / ROW_H);
+          const q = host.params;
+          const ov: Partial<CitySpec> = { system: q.get('city') as GridStyle };
+          if (!['irregular', 'contour-voronoi', 'radial', 'orthogonal'].includes(ov.system!)) throw new Error(`?city= must be irregular, contour-voronoi, radial or orthogonal`);
+          if (q.has('cstyle')) ov.style = q.get('cstyle') as CitySpec['style'];
+          if (q.has('cseed')) ov.seed = Number(q.get('cseed'));
+          if (q.has('croads')) ov.roads = Number(q.get('croads'));
+          if (q.get('cwalls') === '1') ov.walls = true;
+          settlements.override(near.id, ov);
+        }
+      }
       // (?win=: a wider window, whole regions — round 79, the user: "stream in a few more blocks out to see
       // more of the terrain at a time … nice for debugging even if too slow for mobile")
       // (round 90: or the viewer's range setting, the phone tier's default wider — scenes/range.ts)
@@ -1016,6 +1045,8 @@ export class LevelScene implements Scene {
     const p = host.params;
     this.intro = !this.story && !!this.level.intro && (p.get('tutorial') === '1' || (p.get('tutorial') !== '0' && p.get('skipmenu') !== '1' && loadLevelProgress(this.level.id) === 0));
     this.agents = installAgents(core);
+    // (round 117, inhabitants: ?life=1|dragon|town|viewer — creatures with bodies round the camera; src/inhabitants/install.ts)
+    if (host.params.get('life')) this.inhabitants = installInhabitants(core);
     if (this.level.sandbox) {
       // the physics voxels (one GPU solver for every material, docs/PHYSICS.md)
       // and lava; the map's own ruins stay terrain until something touches
@@ -1297,6 +1328,9 @@ export class LevelScene implements Scene {
       readBuffer: (n: Parameters<WorldCore['readBuffer']>[0]) => core.readBuffer(n),
       probe: (...a: Parameters<WorldCore['probe']>) => core.probe(...a),
       integrity: () => this.integrity,
+      // (round 117, structures) the city (?city=): its plan, stats
+      // (round 119) the settlements' structures: what's drawn and claimed (settle/view.ts)
+      settlementsView: () => this.settlementsView,
       // (round 95) the rigid rock's knobs (?rockbody=1): rb.breakSpeed = 12
       rb: RB,
       // (round 108, AR5) the tuning registry: tune.set('rigid.friction', 0.3), tune.changed(), tune.encode()
@@ -1305,6 +1339,10 @@ export class LevelScene implements Scene {
       editor: () => this.editor,
       // agents: agents.spawn(200, x, y, { group: 0 }); agents.goTo(0, x, y)
       agents: this.agents,
+      // (round 117, ?life=) the inhabitants: life.define(spec), life.spawnGroup(sp, [x, y], n), life.drive(g, order), life.presence(rect, cell)
+      get inhabitants() {
+        return self.inhabitants;
+      },
       // physics voxels (sandbox): phys.drop('steel', 5, 1, 10, x, y, 6) — a w × d × h box
       // of a material, its centre at world (x, y), `above` cells over the ground
       phys: {
@@ -1700,19 +1738,37 @@ export class LevelScene implements Scene {
           fell: (at) => plants().fell(at[0], at[1]).then((t) => t?.logs ?? 0),
           take: (at, n) => terrainApi().take(at[0], at[1], n),
           put: (at, m, n) => terrainApi().put(at[0], at[1], m, n),
-          townIO: {
-            ground: (col) => terrainApi().heightAt(...cellPos(col % dims.w, Math.floor(col / dims.w))) ?? 0,
-            stamp: (stamps) => core.sim.town.stamp(stamps),
-            zMax: dims.zMax,
-          },
           epoch: () => epoch,
           ready: (at) => (this.worldApi ??= attachSim(core)).fresh && terrainApi().heightAt(at[0], at[1]) !== null,
           budget: Number(host.params.get('townfolk') ?? ((host.quality.agentSweeps ?? 8) <= 2 ? 28 : 48)),
         });
+        // (round 119) the settlements drawn as structures and their buildings' columns claimed (settle/view.ts); its
+        // slide hooks after Integrity's (the registry has moved when it claims again)
+        const view = new SettlementsView(
+          {
+            device: host.gpu.device,
+            renderer: core.renderer,
+            external: () => this.integrity?.external ?? null,
+            ready: () => this.integrity?.ensureCopy() ?? Promise.resolve(),
+            dims: { w: dims.w, h: dims.h },
+            origin: () => [S.origin[0], S.origin[1]],
+            oz: () => S.oz,
+            focus: () => [core.camera.target[0], core.camera.target[1]],
+            touched: (x0, y0, x1, y1) => this.hybrid?.edit((x0 + x1) / 2, (y0 + y1) / 2, Math.max(x1 - x0, y1 - y0) / 2),
+            dust: (x, y, z, n) => core.sim.particles.burst({ kind: PK.Dust, x, y, z, count: n, speed: 2, spread: 1.2 }),
+          },
+          st,
+        );
+        this.settlementsView = view;
+        S.onBeforeSlide.push((dx, dy) => view.beforeSlide(dx, dy));
+        S.onSlide.push(() => view.slid());
+        S.onWarp.push(() => view.slid());
         if (host.params.get('towndebug') === '1') this.townDebug = new TownDebug(host.ui, st, core.camera, (x, y) => this.heightAt(x, y));
       }
     }
     (window as unknown as { reclaimed: unknown }).reclaimed = Object.assign(api, {
+      // (round 117, flora) the flora contract (api/contracts/flora.ts), for scripted checks: reclaimed.flora().passability…
+      flora: () => (this.worldApi ??= attachSim(this.core)).flora,
       // (round 88, the atlas level) settlements.near([x, y]) / settlement('s12') / live() / raid() / plan(id), its
       // events (built, died, raided); units: the Units contract (api/contracts/units.ts) on the agents
       settlements: this.settlements,
@@ -1736,6 +1792,10 @@ export class LevelScene implements Scene {
       },
       stream: this.stream,
       atlas: this.opts.atlas?.atlas,
+      // (round 117, terrain track) the region graph, its requests and the flood tool (api/contracts/terrain.ts)
+      terrain: this.opts.atlas?.atlas ? new TerrainSystem(this.opts.atlas.atlas) : undefined,
+      // (round 117, terrain: the hybrid's chunks, for probes — which are voxels, which the grid's)
+      hybrid: () => this.hybrid,
       // (round 93) the land past the window: far.lod.bytes, far.windowLook, far.grownVeg
       far: this.far,
       toggleFly: () => this.toggleFly(),
@@ -1800,6 +1860,30 @@ export class LevelScene implements Scene {
     // round 88 (runstory): ?run=bell — a run story as a hero on the atlas level
     const runId = host.params.get('run');
     if (runId) void this.startRun(runId);
+  }
+
+  /** (round 117, ?life=) the inhabitants each frame: spawned once the ground's first read is in, the mesh built round the view */
+  private lifeFrame(dt: number): void {
+    const life = this.inhabitants!;
+    const { core, host } = this;
+    if (!this.lifeSpawned && this.surfaceCache?.length) {
+      this.lifeSpawned = true;
+      const mode = host.params.get('life');
+      const t = core.camera.target;
+      life.setAbilityHost(
+        abilityHost(core, {
+          lavaBeam: (b) => this.lava && (this.lava.beam = b),
+          blast: (x, y, r, st, tm) => (this.worldApi ??= attachSim(core)).wind?.blast(x, y, r, st, tm),
+        }),
+      );
+      if (mode === 'viewer') {
+        this.editor?.setVisible(false);
+        mountViewer(host.ui, life, core, this.heightAt);
+      }
+      else if (mode !== 'empty') wilderness(life, [t[0], t[1]], { herd: Number(host.params.get('lifeherd') ?? 12), dragon: mode === 'dragon', town: mode === 'town', ground: this.heightAt });
+    }
+    lifeFocus(life, core);
+    life.update(dt);
   }
 
   /** ?run=<id>: the GM's story staged near the spawn, played as a hero (story/hero-run.ts; round 97: through story/atlas-run.ts, as any game starts one) */
@@ -1997,6 +2081,9 @@ export class LevelScene implements Scene {
     // (round 88) the units' sync and thinking, the settlements' rounds and rates, the debug view
     // (round 94: the settlements past the window planned for the bake, whatever the streamer's doing)
     this.settlements?.farUpdate(dt);
+    // (round 119) the settlements' pieces: made again when a plan, a storey or the window changed
+    this.settlementsView?.update();
+    if (this.inhabitants) this.lifeFrame(dt * this.speed);
     if (this.units && !this.stream?.busy) {
       this.units.update(dt * this.speed);
       timed('settle', () => this.settlements!.update(dt * this.speed));

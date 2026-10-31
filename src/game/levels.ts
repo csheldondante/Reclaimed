@@ -13,6 +13,7 @@ import { generateFlowlab, setupFlowlab } from '../levels/flowlab';
 import { generateRocklab } from '../levels/rocklab';
 import { generatePlayground, STATIONS, type Station } from '../levels/playground';
 import { generateNoiselab } from '../levels/noiselab';
+import { generateBestiary } from '../levels/bestiary';
 import type { FlowKit } from '../flow/install';
 import type { RiverMode } from '../sim/world-gpu';
 import type { GateSpec } from '../world/kit';
@@ -169,6 +170,15 @@ export const LEVELS: LevelDef[] = [
     hidden: true,
     zMax: 128,
     noiseLab: true,
+  },
+  {
+    id: 'bestiary',
+    name: 'The Bestiary',
+    blurb: 'Creatures with bodies: pick a body plan, tweak it, watch it walk, run and fly (round 117, ?life=viewer).',
+    model: 'sign',
+    generate: (dims) => generateBestiary(dims),
+    sandbox: true,
+    hidden: true,
   },
   {
     id: 'sandbox',

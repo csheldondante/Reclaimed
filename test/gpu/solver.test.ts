@@ -13,7 +13,7 @@ import { tinyWorld, type TinyWorld } from './world';
 const W = 64;
 const H = 64;
 const FLOOR = 10;
-// a ledge: x >= 40 stands 6 higher
+// a ledge: x >= 40 stands 6 higher; a pillar as high at x 14..17, rows 50..55 (the bridge's other end)
 const LEDGE_X = 40;
 const LEDGE = 16;
 
@@ -22,7 +22,7 @@ let w: TinyWorld;
 let solver: Solver;
 beforeAll(async () => {
   g = await testGpu();
-  w = await tinyWorld(g, tinyMap(W, H, 32, (x) => [{ z0: 0, z1: x >= LEDGE_X ? LEDGE : FLOOR, mat: MAT.Stone }]), []);
+  w = await tinyWorld(g, tinyMap(W, H, 32, (x, y) => [{ z0: 0, z1: x >= LEDGE_X || (x >= 14 && x < 18 && y >= 50 && y < 56) ? LEDGE : FLOOR, mat: MAT.Stone }]), []);
   solver = new Solver(g.device, w.core.world, w.core.host.profiler);
   w.core.sim.systems.push(solver);
 });
@@ -254,11 +254,12 @@ test('a soft body (canvas, scrap) sags under its own weight where steel holds (r
 test('a girder bridge dents where a rock lands on it, and stays dented', async () => {
   clear();
   // a 24-long, 2 × 2 steel girder pinned at both ends, a 4-cell stone block dropped on its middle
-  const cells = box(24, 2, 2, 16, 44, LEDGE, MAT.Steel);
-  const b = solver.add({ cells, pinned: (c) => c.x < 18 || c.x >= 38 })!;
+  const cells = box(26, 2, 2, 15, 52, LEDGE, MAT.Steel);
+  // (its ends on the pillar and the ledge: foundations)
+  const b = solver.add({ cells, pinned: (c) => c.x < 18 || c.x >= LEDGE_X })!;
   await step(10);
   const rest0 = await solver.rests(b);
-  const rock = solver.add({ cells: box(6, 2, 6, 25, 44, LEDGE + 16) })!;
+  const rock = solver.add({ cells: box(6, 2, 6, 25, 52, LEDGE + 16) })!;
   let hit = 0;
   for (let t = 0; t < 12; t++) {
     await step(20, () => {

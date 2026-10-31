@@ -26,6 +26,8 @@ export interface SettlementSeed {
   setting: string;
   ruin: boolean;
   box: { x0: number; y0: number; w: number; h: number };
+  /** (the level's ?city=) its town planned with another tile system or style */
+  override?: Partial<import('../api/contracts/structures').CitySpec>;
 }
 
 export function recordsFrom(wiki: WorldWiki, seed: number): SettlementSeed[] {

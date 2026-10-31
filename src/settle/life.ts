@@ -6,7 +6,8 @@
 //    the heap grows;
 //  - woodcutters to the trees in reach: they fell one (plants.fell), carry its logs to the log heap;
 //  - builders from the heaps to the house being built: what they bring goes into it, and every COST of it a
-//    block of the house stands (build/town.ts: walls, floors, a roof, stamped into the columns as they go up);
+//    storey of the house stands (round 119: the town's plan's building — structures pieces, its columns claimed —
+//    shown storey by storey by the settlement's view, `raise`; its roof when the last is up);
 //    a house finished is a Building with its Instance, and four more people move in (more units, within the
 //    budget);
 //  - farmers to the fields and back to the granary with a sheaf (grain into the stores);
@@ -17,9 +18,6 @@ import type { Settlement } from '../api/contracts/settlement';
 import type { UnitId, V2 } from '../api/contracts/units';
 import type { FactionId } from '../api/contracts/world';
 import { AgentUnits, F, G, type Routine, type UnitRec } from '../units/agent-units';
-import { Town, type TownIO } from '../build/town';
-import { LotGrid } from './grids';
-import { cellAt } from '../world/lattice';
 import type { SiteSpec, Spot } from './plan';
 
 /** the routine's groups (agents groups 8..15; resting at home is the units' standing group) */
@@ -28,6 +26,8 @@ const THERE = 1.9;
 /** cells³ a load; what a block of a house takes */
 const LOAD = 0.45;
 const COST = 1.2;
+/** what a storey takes (a lot was ~5 blocks a level) */
+const STOREY_COST = COST * 5;
 /** seconds between the field's steps in play */
 const GROW_S = 8;
 
@@ -40,7 +40,6 @@ export interface LiveSpot extends Spot {
 export interface LiveSite {
   spec: SiteSpec;
   door: V2;
-  poly: V2[];
 }
 
 export interface LifeIO {
@@ -55,8 +54,8 @@ export interface LifeIO {
   /** the ground, exactly (world API terrain.take / put) */
   take(at: V2, amount: number): Promise<{ material: string; amount: number }>;
   put(at: V2, material: string, amount: number): Promise<number>;
-  /** what a town stamps the window's columns through, and the window's moves (a site's grid is made again) */
-  townIO: TownIO;
+  /** a site's storeys up so far (the settlement's view shows them, claims their columns; its roof when all are up) */
+  raise(site: SiteSpec, storeys: number): void;
   dims: { w: number; h: number };
   epoch(): number;
   /** the ground's heights are in (a house is set on them) */
@@ -101,7 +100,7 @@ export class SettlementLife implements Routine {
   private treeAt = -1e9;
   private grewAt = 0;
   private seeded = '';
-  private site: { town: Town; epoch: number; live: LiveSite; order: { cell: number; level: number }[] } | null = null;
+  private site: { live: LiveSite } | null = null;
   jobs: { farm: V2[]; fell: V2[]; quarry: V2[] } = { farm: [], fell: [], quarry: [] };
   private homes: V2[] = [];
   private stores: V2[] = [];
@@ -234,59 +233,27 @@ export class SettlementLife implements Routine {
     this.onRaid(outcome, losses);
   }
 
-  /** the house being built: a town over its lot in the window (made again when the window moves) */
+  /** the house being built: the first unfinished site (its door in the window's frame now) */
   private siteTown(): void {
     const live = this.io.sites().find((s) => !s.spec.finished);
-    if (!live) {
-      this.site = null;
-      return;
-    }
-    if (this.site && this.site.live.spec === live.spec && this.site.epoch === this.io.epoch()) {
-      this.site.live = live;
-      return;
-    }
-    if (!this.io.ready(live.door)) return;
-    const { w, h } = this.io.dims;
-    const grid = new LotGrid(w, h, { polys: [live.poly], street: [false] }, 0.6);
-    const town = new Town(w, h, this.io.townIO, { grid });
-    town.wallMat = live.spec.wall;
-    town.roofMat = live.spec.roof;
-    const lot = grid.lots[0];
-    const order: { cell: number; level: number }[] = [];
-    if (lot) for (let L = 0; L < live.spec.storeys; L++) for (const c of lot.inner) order.push({ cell: c, level: L });
-    // each cell's floor: set once on the ground as it was before anything stood (kept relative to the ground at
-    // the door, which stays open), so a grid made again after the window moves puts the house where it was
-    const [dx, dy] = cellAt(live.door[0], live.door[1]);
-    const doorZ = this.io.townIO.ground(dy * w + dx);
-    const spec = live.spec;
-    if (!spec.floors && lot) {
-      for (const c of lot.inner) town.plan(c, 0, true);
-      spec.floors = lot.inner.map((c) => town.base[c] - doorZ);
-      for (const c of lot.inner) town.plan(c, 0, false);
-    }
-    if (lot && spec.floors) lot.inner.forEach((c, k) => (town.base[c] = doorZ + spec.floors![k]));
-    // (what's already up, put back: the same matter stamped again)
-    const done = spec.done ?? 0;
-    if (done) town.set(order.slice(0, done), true);
-    this.site = { town, epoch: this.io.epoch(), live, order };
+    this.site = live ? { live } : null;
   }
 
-  /** a builder's load into the house: a block every COST */
+  /** a builder's load into the house: a storey every STOREY_COST (the settlement's view raises it) */
   private build(amount: number): void {
     const s = this.site;
     if (!s) return;
     const spec = s.live.spec;
     spec.progress = (spec.progress ?? 0) + amount;
     this.moved.built += amount;
-    // (a block's floor is set on the ground's heights: none while they're being read again)
-    while (spec.progress >= COST && (spec.done ?? 0) < s.order.length && this.io.ready(s.live.door)) {
-      spec.progress -= COST;
-      const b = s.order[spec.done ?? 0];
-      s.town.add(b.cell, b.level);
+    // (a storey goes up where the ground's heights are in: none while they're being read again)
+    while (spec.progress >= STOREY_COST && (spec.done ?? 0) < spec.storeys && this.io.ready(s.live.door)) {
+      spec.progress -= STOREY_COST;
       spec.done = (spec.done ?? 0) + 1;
+      this.io.raise(spec, spec.done);
       this.blocks++;
     }
-    if ((spec.done ?? 0) >= s.order.length && s.order.length) {
+    if ((spec.done ?? 0) >= spec.storeys && spec.storeys) {
       this.houses++;
       this.io.finished(spec);
       // four more people move in (as many as the budget lets out; the rest are counted)

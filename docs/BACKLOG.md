@@ -12,6 +12,136 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 120 (2026-10-31, session 5, `merge120`) — rivers, cities, animals and trees merged (DECISIONS round 120)
+
+| id | item | size | status |
+|---|---|---|---|
+| M120-1 | The phone's fast pan (tilegate 160 c/s, z8/z5) shows 0.14-0.5 % of the screen undrawn: tiles past the window still queued or making as they come into view (r225,215 and neighbours). Places passes; bisected to the terrain merge (its heavier compose: caves, gorges, the sea rule). Main accepted it for now (round 120); measured: z8 0.16 % (13 of 151 frames), z5 0.24 % (46 of 152; rerun 0.14-0.52 %), desktop's fast pans fail on places too (places 43.9/19.0/4.6 %, merged 52.2/21.6/9.2 % at z14/z8/z5). Next: measure a tile's bake before/after terrain, then the bake's cost or the look-ahead | M | open (accepted) |
+| M120-2 | A dark flat quad over the sand at the spawn's wide zoom (zoom 1.6, bottom right; shots88/merge120/cmp-wide-5291.png) — already on places, not from the merge (= CAL6) | S | open |
+| M120-4 | The free camera at terrain's fall spot (scripts/terrain/shots.mjs, fall 6108,14009): huge stretched blue and beige triangles over the top-left third — far geometry or a skirt with a vertex at a wrong height. On places' build too (shots88/merge120/river-places-fall.png) and on the terrain merge alone (river-terrain-fall.png); not from the merge | S | open |
+| M120-3 | The animals come only with `?life=1`; the user asked for them merged — whether the wilderness is on in the default world is the user's call | S | open |
+
+## Round 117 (2026-10-30, session 5, `flora`) — plants: L-system trees, CA roots, species by fields, soft barriers (DECISIONS round 117)
+
+The user: "For plants, L systems are great for branches and then cellular autonoma for roots. I am ok with stylized or low
+fidelity but I just want it to be readable and pretty and look integrated with the world. Plants growing on fields and
+being instances that way into other geometry is key." ARCHITECTURE "Flora".
+
+| id | item | size | status |
+|---|---|---|---|
+| FL1 | The flora contract (src/api/contracts/flora.ts): species, library, placement (fit, plantsIn), passability (density, passage by controller caps), refresh; on the world API as `sim.flora`, `reclaimed.flora()` in the level | M | done (flora) |
+| FL2 | Species from parameters (src/flora/species.ts): L-systems + a 3D turtle with tropism for trunks and branches (silver birch weeping, broadleaf, conifer whorls, old giant, thicket shrub, fern, ivy), a root CA (pipe-model surface roots), tall grass, reeds, wildflowers, moss; seasonal colours, stiffness, niche, barrier; deterministic from a seed (unit tests: src/flora/*.test.ts) | L | done (flora) |
+| FL3 | The game draws the library: every tree a species variant (5 birch, 4 broadleaf, 4 conifer, 3 giant) through meshinst (one indirect draw a kind), floralook.wgsl shared with the viewer; `?flora=0` the old boxes | M | done (flora) |
+| FL4 | The small plants as meshes: tall grass rippling in a downwind wave across the meadows, wildflowers, ferns on the woodland floor, thicket shrubs in shrubland (few under the canopy) | M | done (flora) |
+| FL5 | Birch woods: a stand-in biome field (vegplan.wgsl birchWood, world-cell value noise) — swap for a real biome field when terrain/climate gives one; birches towering (11-17 cells) | S | done (flora); real biome field open |
+| FL6 | Birches let leaves go all year (more in a wind, many in the fall): particles.wgsl K_LEAF | S | done (flora) |
+| FL7 | The viewer page (flora.html): biome scenes (birch wood with leaves falling, meadow, riverbank reeds, ruin with ivy and moss, cave ferns) or one plant growing; seed, wind, season, growth, density; turn and zoom | M | done (flora) |
+| FL8 | The perf test (scripts/perf/flora.mjs → data/perf/flora-<adapter>.json): a dense wood in the atlas at zoom 14 and 5, phone tier, flora on/off | S | done (flora) |
+| FL9 | api/plants.ts's CPU port of vegPlan ignored the window's origin (G.org): in a streamed window its trees (fell, treeAt, logs) were another window's. Fixed with the port made a pure, tested function (planTree) | S | done (flora) |
+| FL10 | Reeds on riverbanks and plants by moisture/light in the game: vegprep has all 8 storage buffers; a flora kernel of its own (surface, veg, moisture, water, instances, indirect) would place by every field and free vegprep of the trees | M | open |
+| FL11 | Plants instanced onto other geometry in the game: ivy on structures and ruins, moss on rock (needs the structures track's surfaces / External hosts; the viewer's ruin shows the mapping) | M | open |
+| FL12 | Shade plants in caves under light beams (needs the terrain track's cave light) | S | open |
+| FL13 | Far tiles' trees by species (tiles.wgsl tileTrees, atlas bake treesAt: round crowns, no species) — birch woods pale from afar | S | open |
+| FL14 | Large trees as bodies: trunks External (MI6), a felled tree falls as a body, burns as fuel (fire reads veg today) | L | open |
+| FL15 | Leaf litter under woods in play (MAT_LEAFLIT is laid only by the baked climate): "lead covered forest floor" | S | open |
+| FL16 | Roots into the world: the CA's cells as the ground's grip (banks' angle of repose) and visible in cuts and cave ceilings | M | open |
+| FL17 | Passability on the GPU: a per-column plant-fill field for agents and paths (the CPU model is per region today) | M | open |
+| FL18 | Grass and twigs by zoom: at zoom 5 a blade is under a pixel — a level of detail if the perf test shows the cost | S | open |
+| FL19 | The phone's low tier (render scale 0.5) broke twigs into dashes and grass into static: plants made for the tier's render pixels (min wood and leaf widths, fewer wider blades), grass thinned by render px, litter in flakes | S | done (flora) |
+| FL20 | The birches’ cost on the phone (round 119): levels of detail by on-screen size (full, coarse, far; thickets full and far), the kind in the vertex, three variants a tree species, 4096 a kind, half the year-round leaf fall — within noise of the boxes on the phone proxy | M | done (flora) |
+| FL21 | The phone bench for the birch wood: ?florabench=1 (flora then boxes, parked, frame times, tap to copy) — the user to run it on the Pixel | S | asked |
+
+## Round 117 (2026-10-30, session 5, `inhabitants`) — creatures with bodies, herds, predators that stalk (DECISIONS round 117)
+
+The user: "rain world style procedural animation with secondary features like capes or fur. I want hunanoid an non. It
+doesn't have to be high fidelity it does have to be readable and look cool."; "Fill the wilderness with boids of various
+animals. Herds, predators that stalk." docs/INHABITANTS.md.
+
+| id | item | size | status |
+|---|---|---|---|
+| IN1 | The Inhabitants contract (src/api/contracts/inhabitants.ts): species as data, spawn and drive, WalkPaths, AbilityHost, presence (density/threat a region) | M | done (inhabitants) |
+| IN2 | The body generator: biped, quadruped, bird, serpent, insect, beast, winged from parameters; gear slots (cape, hood, pack, weapon, shield); fur; deterministic from the seed | M | done (inhabitants) |
+| IN3 | Procedural animation on the GPU: spine follow, planted feet stepping by gait group, two-bone IK, verlet tails/capes/fur in the world's wind, wings, swinging arms, head dips; low-poly spindles through Renderer.addMesh | L | done (inhabitants) |
+| IN4 | Behaviour: herds (boids), stalkers (rest, stalk, burst, catch), flocks, townsfolk on paths, wanderers; cliffs, water, fire, wind knock-down; directors' pace | L | done (inhabitants) |
+| IN5 | The viewer (?level=bestiary&life=viewer) and the perf test (scripts/perf/inhabitants.mjs) | M | done (inhabitants) |
+| IN6 | The mesh a thread a segment (one thread writes a creature's ~950 vertices now: 2.6 ms for 5 000 at full LOD on the iGPU); measure on the Pixel 9a first | M | open |
+| IN7 | Townsfolk on the structures track's baked paths (WalkPaths is the contract; standInPaths floats in the air without a building) | M | open (needs structures) |
+| IN8 | Bodies for the GPU agents' units (settlers, raiders, GameplayGM's foes) from the same rig and mesh, reading the units buffer as a source; then retire units.wgsl's three-cube figure | M | open |
+| IN9 | Creatures that leave the window: kept as group records and put back when it returns (now they walk back in from the edge) | M | open |
+| IN10 | Caves and overhangs: creatures stand on the column's top only; read the agents' nav surfaces (or a shared "surfaces" contract) to walk under roofs | M | open |
+| IN11 | One `groundAt` (solid top + loose layer, or a sleeping body's top) in common.wgsl for every kernel that copies it (flagged) — `groundZ(q, solid)` in common.wgsl, used by water_flux, lava_flux, sediment, particles, renderprep and inhabitants (merge120) | S | done (merge120) |
+| IN12 | Abilities as the effects library's calls when it lands (now: fire ignite + the lava beam + a wind blast through AbilityHost), and a breath's visible flame | M | deferred |
+| IN13 | The user's look: the scale with zoom (24 px a cell, up to 4x). The user: "Keep the creature small for now I want to add larger creatures but I want to improve the generator even more and talk through increasing the quality and adding composable creatures via items and mounts." → true size again (?lifescale= kept as a knob); footprint and contrast kept. Generator quality, items and mounts wait for a design session | S | done (inhabitants) |
+
+## Round 117 (2026-10-30, session 5, `structures`) — buildings, districts, cities (DECISIONS round 117)
+
+The user: "beautiful structures, sprawling fantastic cities"; megastructures as "various procedural building assets for
+various tile systems plus some WFC and mega tile features (features multiple tiles big)"; "bake paths into the tiles we
+generate so agents can interact with them. Taking elevators, stairs, walking on ramparts"; "linear tile features we can
+use for bridges, roads, railroads and extrude along splines". Code: src/structures/, contract src/api/contracts/structures.ts,
+viewer structures.html.
+
+| id | item | size | status |
+|---|---|---|---|
+| STR1 | The contract (contracts/structures.ts): CitySpec → CityPlan (tiles, spans, buildings, façades, megas, nav) → pieces (warped module instances) / columns (External spans) / buriable assets | M | done (structures) |
+| STR2 | Tile systems to one quad mesh: irregular (Townscaper: triangles paired, cut, relaxed), contour-voronoi (plots on the ground's contours, streets between), radial (rings, spokes, a wall, gates), orthogonal | M | done (structures) |
+| STR3 | Massing and buildings (lots built by density, grown tile by tile inside a block on ground no steeper than a storey, stepped skylines), occupancy spans (the spans design, round 102) | M | done (structures) |
+| STR4 | WFC (a general solver, src/structures/wfc.ts) for the façades: bays line up, a front door on the street, no two doors or balconies side by side | S | done (structures) |
+| STR5 | The module library in a unit frame, warped into irregular tiles (Townscaper's look): walls (blank, window, window2, door, shop, balcony, slit), gables, posts, quoins, plinths, paving, ramparts, merlons, gate arch, tower, spire, chimney, fountain, lamp; roofs from one height rule (ridges, hips, valleys meet across tiles) | L | done (structures) |
+| STR6 | Styles as data: hearth (timber and limewash under tile), bastion (stone and slate, two towers), terrace (flat-fronted, low-pitched) | S | done (structures) |
+| STR7 | Baked nav: streets, plazas, yards, storeys (stairs), doors, balconies, a lift up each tower, the rampart walk with stairs at the gates; navPath | M | done (structures) |
+| STR8 | The viewer (structures.html): system, style, seed, size, storeys, density, ground, time of day (lit windows at dusk); building / district / city; turn, zoom, pan; tile and nav overlays; every setting in the URL | M | done (structures) |
+| STR9 | The city on real terrain: the game's renderer draws the pieces (shared structmesh.wgsl), the columns claimed as External intervals, at an atlas site (`?city=<system>`: the town nearest the start handed off) | L | done (structures) |
+| STR10 | LOD for the game: the far look by zoom (walls as slabs with flat openings, roofs' tops only; 6.6× fewer triangles; +0.16 ms at the start's zoom) | M | done (structures) |
+| STR21 | Close zoom costs +2.6 ms (iGPU, phone proxy): the pieces forward-shaded over the screen; draw them into the G-buffer on the phone, or a depth pre-pass; cull pieces off screen by chunk | M | open |
+| STR11 | Linear features: roads, rails, walls and bridges extruded along splines (linear.ts): roads out of a town graded to 14%, viaducts where they stand high over valleys or water, town walls with towers and gates; nav and External columns | L | done (structures) |
+| STR20 | Linear features from the atlas's own ways (atlas/ways.ts: its graded roads, bridges, switchbacks, lift towers) drawn as these modules instead of column stamps; rails in a town (none generated yet — the module is there) | M | open |
+| STR12 | Mega tiles beyond one tile: a domed temple over a 4-tile patch (its frame the patch's outer corners), the keep at a radial city's heart; halls, gatehouse towers on a radial wall still to do | M | done (structures) |
+| STR13 | Cities built into the earth: spec.sunk done (backs in the hill, buried walls blank); quarry towns need the terrain track's carving contract (open) | M | wip |
+| STR14 | Buriable assets (statue, column, fallen tower, arch, bell: mesh + solid → cells under any skew) as affine pieces (`assetPieces`) any host draws; the terrain track places them and claims their cells | M | done (structures) |
+| STR15 | Migrate settle/ onto this contract (round 119): plan.ts plans via planCity with the growth field as density, view.ts draws pieces and claims External, life.ts raises sites storey by storey; no voxel stamping | L | done (structures) |
+| STR22 | Density drives what's built (round 119, the user: "farms and smaller huts for lower population density"): town houses, thatched huts, farmland (crop strips, orchards, pastures, fences, hedges), farmsteads (farmhouse + barn) | M | done (structures) |
+| STR23 | Agents on the baked nav (settlements' people path on plan.nav, not fields) — the inhabitants track's | M | open |
+| STR24 | A crop strip on a steep or cut slope shows as a plateau with an edge: drape every vertex finer, or leave such strips to pasture | S | open |
+| STR16 | Growth as stored progress (round 110): the plan's build order, `grown(plan, p)` (the next building a site); agents building it and progress while away are the inhabitants' and the run's | M | done (structures) |
+| STR17 | The perf tests: scripts/perf/structures.mjs (the viewer: build ms, pieces, triangles, GPU per system and size), scripts/perf/structcity.mjs (the game's frame with the city drawn and skipped) | S | done (structures) |
+| STR18 | Pieces in the render-only tiles past the window (a city half out of the window shows only its window half's columns in the tiles) | M | open |
+| STR19 | Destruction as bodies: a cut building breaks into pieces that fall (the physics track's solver), not rubble in place | L | open |
+
+## Round 117 (2026-10-30, session 5, `terrain`) — the terrain track: rivers, the region graph, the basin flood (DECISIONS round 117)
+
+The user: "striking to look at and interesting to explore" … "Let's make this world hauntingly beautiful." DEVLOG round
+117 (`terrain`); docs/ARCHITECTURE.md "Terrain: the region graph, the rivers' shape, the basin flood".
+
+| id | item | size | status |
+|---|---|---|---|
+| TR1 | Rivers off the texel grid: nodes relaxed along their stems, the lookup warped, two segments a node (terrain/rivershape.ts, terrain/river.wgsl) | M | done (terrain) |
+| TR2 | Rivers with banks: the level incised under the plain, eroded banks (Voronoi slumps, benches), gravel bars, boulders in rapids and round pools, cascades of falls, plunge pools | M | done (terrain) |
+| TR3 | The widest rivers (half-width 10-12) showed the grid's 45-degree kinks | S | done (terrain): the courses relaxed 10 passes, nodes up to 11 cells off their texel (the lookup's two segments a node still find them) — C:/Projects/shots88/terrain/r3-wide.png; a ragged bank edge here and there remains |
+| TR4 | Rivers that sink into holes and come out of caves (an underground reach: a node flag, the cave's floor as its bed) | M | open |
+| TR5 | The region graph (api/contracts/terrain.ts): features and rooms 1-3 screens, borders with barrier kinds and measures, costs per controller (PassCaps), soft barriers; the GPU sample, the CPU partition (terrain/partition.ts) | L | done (terrain) |
+| TR6 | Reeds along the banks and the benches from flora's contract; the samples' vegetation density from flora (the stand-in is forms.wgsl's woods) | S | open (needs flora) |
+| TR7 | The global sea replaced where it's read (forms' sea water, Globals.seaZ, the shore, the tiles' water plane, the caves' floors relative to AP.sea): the oceans as basins in the lakes' table (DZ1's design, MF8) | L | open |
+| TR8 | A sand or ash flood buries what's stamped later (settlements, ruins): the finish pass's fill after the stamps | M | open |
+| TR9 | Phone proxy: driveprofile on the river-heavy atlas at q=low 412x915 before/after TR1-TR2 (the columns' GPU passes) | S | open |
+| TR10 | Requests: exits, obstacles and openings (ramps, fords, walls as stamps; bridges and vegetation as needs for structures and flora) (terrain/terrain.ts) | M | done (terrain) |
+| TR11 | The basin flood: Planchon-Darboux fill and the basin's mark on the GPU, into the lakes' table with a fluid (water, sand, magma, ash) (terrain/flood.ts) | M | done (terrain) |
+| TR12 | The terrain viewer (?terrain=view): the region graph, controllers, exits, the flood over the atlas view | M | done (terrain) |
+| TR13 | Cliffs with caves opening at their base (ground-level openings wide enough to walk), sand and rocks piled at the mouths; sea caves with crashing waves (the user's 2.5D recipe, on noiselab2-r) | L | wip (terrain): terrain/cave.wgsl — the recipe at plateau edges and cliffs, grottos at the foot, passages climbing through, collapses; waves crashing at the cliffs (the shore swell) not done |
+| TR14 | Gorges walkable at the bottom and along the top; deep quarries; room for cities in the earth (with structures) | L | wip (terrain): gorges in the plateaus (terrain/gorge.wgsl); quarries and cities in the earth open |
+| TR15 | Caves: underground rivers and lakes, vast chambers, crumbling ceilings with light beams (shade plants via flora) | L | open |
+| TR16 | Buried props: skew stones, statues, fallen structures as External intervals and instanced meshes; a placement pass for excavation sites (structures' assets; testkit's un-burying tests) | L | wip (terrain): the placement (terrain/props.ts, Terrain.buried) done; the owner that draws them and holds their cells open (needs structures' assets) |
+| TR17 | A request's edits remake land already in the window (today only land made after it has them) | S | open |
+| TR18 | Roads and rivers: the sites and roads are planned on the macro ground with the rivers' channels in it (atlas.ts 'ground with rivers'), so TR1-TR2 moved some roads (171 roads before, 168 after; at 6108,14009 the nearest road went from 32 to 278 world units away, back to 61 after the trench fix). A road should cross a river by a ford or a bridge request (TerrainRequest), not be rerouted or dropped; plan roads on the ground before the incision or let the A* take a crossing at a cost | M | open |
+| TR19 | (structures, round 117) A road into the sea: ways.ts's road to the old town site runs straight out over the water as a brown line (shots88/structures/city-irregular-0.png, west of the city): the A* lets a road through cells under the sea's level (sites.ts: a river's mouth, a lake) — a road should end at the coast or ask for a bridge or ford | S | open |
+| TR20 | (structures, round 117) The window's water and the tiles' water beyond it differ in brightness: the window shows as a lighter diamond over the sea at wide zoom (part of the one-sea-plane work, TR7) | S | open |
+| TR21 | The cliffs' cave mouths in the fixed view: found (they were there, low) and made bigger and more frequent (every coast over the sea, grottos, a taller vault at the mouth); they now show on the phone proxy but pale — the inside of a gap is lit like open ground. Shade inside a run's gap (the renderer), then waves into a sea cave (TG16) | M | wip (terrain part done; the renderer's shading open) |
+| TR22 | Gorges drained plateau lakes (two at 6040,4860) and moved rivers and roads: they changed the macro ground the hydrology is found on | S | done (terrain): the macro pass has no gorges (AtlasP.macroPass); a gorge stops at a lake's rim and under a river |
+| TR23 | (main's review, round 117) A flat plane (green, or the ground's colour) walled by black slabs fills the view when the camera's focus is deep (a gorge's floor, a basin under a plateau): at 11028,6868 (cells) and in a gorge at 5224,12886; in places' build too (gorge-base-gorge1.png). Probed on Dawn: the ground there is ordinary (a plateau, a coast); the circle in the view's middle and the cut faces are the camera's cutaway (OC1/RC5's 'view kept clear' at a deep focus), not the land — renderer's | M | open (renderer) |
+| TR24 | (renderer) A cave's mouth showed as a see-through hole on the phone tier: the hybrid meshes only the chunks that need voxels, and a cave running on from a meshed chunk into a grid (heightfield) chunk — or past the window's edge — was a tube open at the mesh's side | M | done (terrain): the field mesh's field closes a column's gaps where its chunk (or its low-side neighbour's) isn't meshed or is past the window (fieldmesh.wgsl colDist, UNMESHED_BIT in the near word; a neighbour's change rebuilds); mouth2-m.png → mouth6-m.png |
+| TR24b | (renderer) A cave's mouth on land past the window (the tiles, the rings: tops only) doesn't show at all: bake a gap as a dark recess (the tile's summary has the highest gap's roof a column; the draw shaders have no layers) | S | open |
+| TR25 | The partition's top level world-wide: the atlas's regions as a graph with each border's barrier (Terrain.atlasGraph; runplan's RegionGraph stand-in's shape) | M | done (terrain) |
+
 ## Round 117 (2026-10-30, session 5, `testkit`) — the test pyramid: unit and GPU tests in Node, a smoke test (DECISIONS round 117)
 
 The user: "TDD make some unit tests so you can stop hogging my browser so much. Do complete integration tests after unit
@@ -30,6 +160,7 @@ tests work and do quick smoke tests to find failures early." docs/TESTING.md.
 | TK9 | MemoryWorldState.snapshot() handed out the live factions and settlements: a save between runs changed when a faction's attitude moved after it (world-state.test.ts); copies now | S | done (testkit) |
 | TK10 | More unit tests for what the brief listed and this round didn't reach: the planners (scenes/planner.ts), calibration math (perf/), run and story logic (run/, story/), layout and packing (world/layout.ts, sim/pages.ts) | M | open |
 | TK11 | The runner's teardown once took ~200 s after a passing check (smoke, rocklab alone, on a busy GPU): page / browser / server close; time each | S | open |
+| TK12 | (terrain, round 117) The gpu tier's shared worker died ("Worker exited unexpectedly") as soon as a second file made a WorldCore — reproducible in the terrain worktree with only places' own gpu files, never in a fresh worktree at the same commit, and after a file built a whole atlas; each gpu file now runs in a fresh worker (isolate: true; tier ~16 s). Why Dawn dies in one directory and not another is unknown (a stale Dawn/D3D cache keyed by path?) | S | done (terrain), cause open |
 
 ## Round 120 (2026-10-31, session 5, `places`) — the user played the run, the towns and the birches (DECISIONS round 120)
 
@@ -48,6 +179,13 @@ tests work and do quick smoke tests to find failures early." docs/TESTING.md.
 | LI1 | Rocks mixed through ordinary soil (not only cliffs and bases), so the lich has things to throw besides people | M | open |
 | IT1 | Items in slots: held item(s), helmet, cape, shirt, pants, mount, some asymmetric options; mechanical effects that force choices (pairs with IN20 segments) | L | open |
 | PL23 | A chase starts close to the quarry and already in pursuit; the user: fleeing suits the bike better than chasing ("it's hard to steer") — situation runs (RS20) favour fleeing | S | open |
+| STR31 | Cliffside cities: tiles on vertical surfaces, towns built into canyon walls with walkways (Bulwark as inspiration, not copied); builds on STR13 | L | next (after purposes, ports, lights) |
+| STR32 | Ports: docks, piers, moored ships, warehouses; ships | M | next (designed round 120) |
+| STR33 | Dressing: banners (in the wind), torches, streets with kerbs and lamps; lights at night across the town, not only the viewer's lit windows | M | next (designed round 120) |
+| STR34 | More architectural styles (today hearth, bastion, terrace) and more regular grids | M | next (designed round 120) |
+| STR35 | Architecture from tech progression (round 85 recipes and civilisation profiles): skyscrapers from higher tech, ruins from fallen ones, varied architecture; a hive bug city as a non-human civilisation | L | next |
+| STR36 | Specialised settlements: mining, farming, ports, lumber, trading (with STR30's purposes and stories) | L | next (designed round 120) |
+| WD1 | The same seed must make the same world on every GPU (found by runsit, round 120): the atlas's macro ground is read back from the GPU and rivers and settlements are planned on it, so another GPU can make other towns from one seed - a GM story, a save or a shared run then names places that aren't there. Make the planning inputs bit-exact across GPUs (integer or fixed-point where it decides, or plan on the CPU from the seed), with a cross-adapter test (Dawn D3D12 vs SwiftShader) | M | open |
 | FLO21 | Birch cost on the phone: the user's result good — done (flora 18c3bdb, unmerged) | S | done |
 
 ## Round 118 (2026-10-30, session 5, `places`) — found while reviewing the tracks

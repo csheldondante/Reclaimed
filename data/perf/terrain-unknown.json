@@ -1,0 +1,200 @@
+{
+ "terrain": {
+  "at": "2026-10-30T16:29:35.535Z",
+  "adapter": "",
+  "atlas": {
+   "compile": 6390.2,
+   "base": 25.7,
+   "cc land": 195.7,
+   "clean": 12.3,
+   "cc continents": 171.7,
+   "keys": 23.1,
+   "cc regions": 88.9,
+   "readback": 103.3,
+   "regions (cpu)": 331.6,
+   "patterns": 603.1,
+   "jfa borders": 72.4,
+   "jfa coast": 50.9,
+   "jfa landforms": 49.7,
+   "ground": 43.4,
+   "readback ground": 12.9,
+   "rivers (cpu)": 626.9,
+   "jfa rivers": 540.1,
+   "ground with rivers": 149.4,
+   "sites and roads (cpu)": 304.6,
+   "ways (cpu)": 31.3,
+   "coarse world": 78.9,
+   "giants (cpu)": 22.1,
+   "compile view": 5440.6
+  },
+  "rivers": {
+   "nodes": 54142,
+   "lava": 9952,
+   "waterfalls": 431,
+   "lakes": 813,
+   "ms": 586,
+   "speed": [
+    0.09,
+    0.104,
+    0.8
+   ],
+   "discharge": 1.047,
+   "pipeSlope": 0.88
+  },
+  "columns": {
+   "regions": 24,
+   "median": 28.3,
+   "min": 3.3,
+   "max": 75
+  },
+  "graph": {
+   "samples": 262144,
+   "sampleMs": 31.9,
+   "graphMs": 405.9,
+   "partitionMs": 374,
+   "rooms": 61,
+   "features": 3,
+   "borders": 156
+  },
+  "flood": {
+   "gpuLevel": 90.9033203125,
+   "cpuLevel": 90.9033203125,
+   "gpuCount": 4,
+   "cpuCount": 4,
+   "differ": 0,
+   "passes": [
+    128,
+    64
+   ],
+   "gpuMs": 469.1,
+   "cpuMs": 12.4
+  }
+ },
+ "places-base": {
+  "at": "2026-10-30T16:34:34.243Z",
+  "adapter": "",
+  "atlas": {
+   "compile": 5665.6,
+   "base": 26.7,
+   "cc land": 193.2,
+   "clean": 11.3,
+   "cc continents": 172,
+   "keys": 24.5,
+   "cc regions": 94.1,
+   "readback": 81.6,
+   "regions (cpu)": 408.1,
+   "patterns": 782.9,
+   "jfa borders": 75.1,
+   "jfa coast": 52.3,
+   "jfa landforms": 51.3,
+   "ground": 37.2,
+   "readback ground": 9.3,
+   "rivers (cpu)": 598.9,
+   "jfa rivers": 96,
+   "ground with rivers": 64.1,
+   "sites and roads (cpu)": 310.1,
+   "ways (cpu)": 40,
+   "coarse world": 100.8,
+   "giants (cpu)": 18.8,
+   "compile view": 4856.4
+  },
+  "rivers": {
+   "nodes": 54142,
+   "lava": 9952,
+   "waterfalls": 494,
+   "lakes": 813,
+   "ms": 551,
+   "speed": [
+    0.09,
+    0.11,
+    0.8
+   ],
+   "discharge": 1.047,
+   "pipeSlope": 1.681
+  },
+  "columns": {
+   "regions": 24,
+   "median": 28.5,
+   "min": 15.7,
+   "max": 52.9
+  },
+  "graph": null,
+  "flood": null
+ },
+ "terrain-final": {
+  "at": "2026-10-30T19:35:13.844Z",
+  "adapter": "",
+  "atlas": {
+   "compile": 7633.3,
+   "base": 25.4,
+   "cc land": 247.3,
+   "clean": 12.9,
+   "cc continents": 193.2,
+   "keys": 24.3,
+   "cc regions": 105.8,
+   "readback": 57.5,
+   "regions (cpu)": 165.9,
+   "patterns": 21.7,
+   "jfa borders": 74.2,
+   "jfa coast": 66.6,
+   "jfa landforms": 55.4,
+   "ground": 55.6,
+   "readback ground": 10.2,
+   "rivers (cpu)": 582.4,
+   "jfa rivers": 59.9,
+   "ground with rivers": 58.3,
+   "sites and roads (cpu)": 277.7,
+   "ways (cpu)": 30.1,
+   "coarse world": 15.4,
+   "giants (cpu)": 17.2,
+   "compile view": 7000.2
+  },
+  "rivers": {
+   "nodes": 53975,
+   "lava": 9724,
+   "waterfalls": 441,
+   "lakes": 817,
+   "ms": 549,
+   "speed": [
+    0.09,
+    0.105,
+    0.8
+   ],
+   "discharge": 1.041,
+   "pipeSlope": 1.13,
+   "shaped": {
+    "cascaded": 6242,
+    "falls": 2840,
+    "incision": 2.4
+   }
+  },
+  "columns": {
+   "regions": 24,
+   "median": 31.3,
+   "min": 16.9,
+   "max": 40.1
+  },
+  "graph": {
+   "samples": 262144,
+   "sampleMs": 24.8,
+   "graphMs": 276.8,
+   "partitionMs": 252,
+   "rooms": 61,
+   "features": 3,
+   "borders": 156
+  },
+  "flood": {
+   "gpuLevel": 90.64337921142578,
+   "cpuLevel": 90.64337921142578,
+   "gpuCount": 0,
+   "cpuCount": 0,
+   "differ": 0,
+   "passes": [
+    128,
+    32
+   ],
+   "gpuMs": 254.4,
+   "cpuMs": 11
+  }
+ }
+}

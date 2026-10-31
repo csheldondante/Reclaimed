@@ -125,13 +125,15 @@ fn surfaceAt(p: vec2<f32>) -> Surf {
     mat = 3u;
     c = lodAlbedo[mat].rgb;
   }
-  var veg = select(startVeg(p, ra, g, h, snowy, wet), 0.0, h < AP.sea || (g.lkw && g.lk > h) || (river && g.rl > h));
+  // (round 117, terrain/sea.wgsl: the sea only where it reaches)
+  let sea = h < AP.sea && seaOpen(g.a, g.coast);
+  var veg = select(startVeg(p, ra, g, h, snowy, wet), 0.0, sea || (g.lkw && g.lk > h) || (river && g.rl > h));
   let wd = wayDist(p);
   if (wd < WAY_HALF + 0.5) { veg = 0.0; }
   var top = h;
   var glow = 0.0;
   // water over it: the sea, a river (lava glowing)
-  if (h < AP.sea) {
+  if (sea) {
     top = AP.sea;
     c = mix(vec3<f32>(0.2, 0.36, 0.42), vec3<f32>(0.08, 0.18, 0.3), clamp((AP.sea - h) / 20.0, 0.0, 1.0));
   } else if (g.lkw && g.lk > h) {

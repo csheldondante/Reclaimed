@@ -151,7 +151,7 @@ fn dropDust(pos: vec3<f32>, amount: f32) {
 /** The ground a running grain meets on q (a body lying there too). */
 fn runGround(q: vec2<i32>) -> f32 {
   let j = colIdxI(q);
-  return max(f32(sfZ(surface[j])) + driftAt(q), bodyTopAt(q));
+  return groundZ(q, f32(sfZ(surface[j])));
 }
 // (perfopt, simhz: every use is a spawn's chance a 60 Hz tick, `rare(..) < p` — divided by simStep() it's S times
 // as likely, S ticks' worth of spawning a tick)
@@ -342,7 +342,9 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
       // autumn (round 51): the broadleaves let their turned leaves go,
       // fluttering down out of the crown — more in a wind (state 1 + species:
       // drawn in its autumn colours)
-      let shed = seasonShed();
+      // (round 117, flora: the birches let a few go all year — "leaves falling and blowing in the wind" — more in a
+      // wind, many more in the fall)
+      let shed = select(seasonShed(), max(seasonShed(), 0.06), pl.species == 2u);
       if (pl.species != 1u && shed > 0.0 && rare(id.x, id.y, 0x1ea5u) < shed * (0.08 + max(ws - 2.0, 0.0) * 0.03)) {
         let top = g + pl.trunk + pl.crown;
         let at = vec3<f32>(base.xy + vec2<f32>(r1 - 0.5, fract(r2 * 3.1) - 0.5) * (1.2 + pl.crown * 0.6), top - r2 * pl.crown);
@@ -586,7 +588,7 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   let ci = colIdxI(cell);
   // (grains land on a body lying here too)
-  let ground = max(f32(sfZ(surface[ci])) + driftAt(cell), bodyTopAt(cell)) + water[ci];
+  let ground = groundZ(cell, f32(sfZ(surface[ci]))) + water[ci];
   if (kind == K_RUN) {
     vel.z -= RUN_G * DT;
     pos += vel * DT;
@@ -620,7 +622,7 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
     let c2 = cellAt(pos.xy);
     if (!inMap(c2) || life <= 0.0) { parts[id.x].p.w = 0.0; return; }
     let j2 = colIdxI(c2);
-    if (pos.z <= max(f32(sfZ(surface[j2])) + driftAt(c2), bodyTopAt(c2)) + water[j2]) { parts[id.x].p.w = 0.0; return; }
+    if (pos.z <= groundZ(c2, f32(sfZ(surface[j2]))) + water[j2]) { parts[id.x].p.w = 0.0; return; }
     parts[id.x] = Particle(vec4<f32>(pos, life), vec4<f32>(vel, P.v.w), P.m);
     return;
   }

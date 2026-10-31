@@ -76,6 +76,36 @@ each was implemented.
   → The solver keeps PX3's mass-scaled overlap (slop + min(slopCap, slopK · mass^slopP)) as the contact rule's slop:
   never corrected, never wakes a sleeper, no push-back; drawn as surface deformation at the contact.
 
+- The user, verbatim: "Rivers trees, cities and animals should all be merged by the way" → terrain, flora, structures and
+  inhabitants merged on branch merge120 through the merge gate (tiles, coverage, frame time, shots looked at), then places.
+- The user, verbatim: "Definitely show me the results in the physics lab before you push. I want to see rocks and buildings and have metal too so I can see deformation, breaking and getting buried in a variety of materials and geometry. We made those playgrounds for a reason"
+  → the solver's steps are shown in the playground and the rock lab (stations for rock, buildings and metal: bending,
+  breaking, burial) before each push.
+
+- The user, verbatim, on cities:
+
+> I do want to update city generation to see bulwark examples and add features like ships, docs, banners, torches, streets, different architectural styles, lights at night, more regular grids and skyscrapers and ruins, and of course the specialized settlements for mining, farming, ports, etc
+
+- → A cities design session (BACKLOG STR30-STR36) before the structures agent starts; after merge120 lands.
+
+- Asked back (what exists: four tile systems incl. radial and orthogonal, three styles, lit windows in the viewer only;
+  questions: 1 what Bulwark examples mean, 2 skyscrapers as old-world ruins or living, 3 ships moored or sailing, 4 night
+  lights as emissive + a cheap light pool, 5 order purposes+ports → dressing+lights → styles/ruins). The user, verbatim:
+
+> 1. I think that cliffside cities would also be cool so we can have cities built into the walls of canyons. We don't need to copy but I would love if our tiles could work on vertical surfaces too and they did a good job of that
+> 2. Honestly the vision is to add tech progression and recipe driven building and units. There should be memories about this.
+> 3. I think both anchored at harbor and sailing. It will make the world feel very alive. I'm not sure about sinking them or wind but both would be very cool.
+> 4. Yes absolutely enough
+> 5. Yes that makes sense to me. I think the skyscraper idea is really about tech progression and in general generating more varied city architecture. A weird example but I wonder if we could make a large hive bug city
+
+- → Cliffside cities: tile systems on vertical surfaces (canyon walls), buildings stacked into the face with walkways
+  (Bulwark as inspiration, not copied; STR13's sunk towns are the start). Architecture follows tech progression through
+  round 85's recipe-driven civilizations (recipe.ts/compose.ts: a civilisation profile's technology, culture, materials
+  and history choose its buildings; skyscrapers are what a higher tech builds, ruins what a fallen one leaves); a hive
+  bug city as a non-human civilisation's architecture. Ships both moored in harbours and sailing (sinking and wind
+  later, maybe). Night lights: emissive + a cheap light pool, no torch shadows. Order: purposes + ports → dressing +
+  night lights → styles, cliffside, tech-driven architecture, ruins, the hive.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:

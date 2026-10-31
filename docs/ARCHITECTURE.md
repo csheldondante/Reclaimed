@@ -2106,6 +2106,10 @@ Claude subagent run with docs/GM.md as its context. Later it will be a model cal
 
 ## Settlements and units in play (round 88, branch `settlements`; docs/SYSTEMS.md 6, 7, 12)
 
+(Round 119, branch `structures`: the planning, the buildings and their stamping moved onto the structures contract —
+ARCHITECTURE "Structures", *Settlements on it*. Below, what each building is and what's stamped is as of round 88;
+the records, rights, life and rates still hold.)
+
 - **Records (atlas scale).** `Settlements` (src/settle/settlements.ts) makes one `Settlement` (settlement.ts) per
   atlas site from the world wiki built live (`buildWiki(atlasFacts(atlas))`: the ids `s<n>`, names, regions and
   realms the GM's stories use). records.ts picks each one's `CivProfile` (data/recipes/civs.json, by the realm's
@@ -2162,6 +2166,144 @@ Claude subagent run with docs/GM.md as its context. Later it will be a model cal
   through a column: an adit under the rock that stays over it).
 - Debug: `?towndebug=1` (src/settle/debug.ts). Tests: scripts/settletest.mjs (the planner, no browser),
   scripts/settlementtest.mjs (in play).
+
+## Structures: buildings, districts, cities (round 117, branch `structures`; BACKLOG STR1-STR17)
+
+The user (DECISIONS round 117): "beautiful structures, sprawling fantastic cities"; megastructures as "various procedural
+building assets for various tile systems plus some WFC and mega tile features (features multiple tiles big)"; "Irregular
+tiles like towscraper, voronoi tilings of isolines to make city streets and plot lots, radial tiles like bulwark. Let's
+bake paths into the tiles we generate so agents can interact with them. Taking elevators, stairs, walking on ramparts. I
+would also have linear tile features we can use for bridges, roads, railroads and extrude along splines."
+
+**Contract:** `src/api/contracts/structures.ts` (`Structures`: `plan`, `pieces`, `columns`, `asset`); implementation
+`src/structures/` (index.ts). Pure functions of their inputs: no GPU, no world state, deterministic from the spec and the
+ground. Other tracks use only the contract.
+
+**One representation per use, converted at the boundaries** (the user: "Please don't make assumptions … just because we
+have voxel assets currently doesn't mean we don't want to switch to meshes"):
+
+| stage | representation | who reads it | why this one |
+|---|---|---|---|
+| `CitySpec` | seed, tile system, style, centre, radius, storeys, density, walls, sunk | stored (a city is its spec; progress beside it) | tiny; the plan is re-made from it (towns grow as stored progress, round 110) |
+| `CityPlan` | a planar quad mesh (`TileMesh`) + occupancy `Span`s per tile + buildings + `Facade`s + megas + `NavGraph` | the pieces, the columns, the nav, the city game later | the truth (the spans design, round 102: "each grid be store intervals like the terrain but for building types"); ~100 KB for a town |
+| `StructurePieces` | warped module instances: a module id + 16 floats (4 corners, 4 foot heights, top, look, seed, flags) | the renderer (any host) | the look wants detail finer than a column (windows, eaves, sharp edges — "structures stay sharp", round 39); a module is stored once on the GPU however many thousand walls use it |
+| `ColumnSpan[]` | one solid span per hex column (foot to mid-roof) | the External registry (sim/external.ts) | the sims only need "solid here"; one span a column is what an External instance holds |
+| `NavGraph` | nodes (street, plaza, ground, floor, roof, rampart) and links (walk, stairs, door, gate, lift) | agents (inhabitants), the play track | paths, not fields (round 104) |
+
+**Tile systems → one quad mesh** (`tiles/systems.ts`, `tiles/builder.ts`). Every system ends as counter-clockwise quads
+with shared vertices, each tagged lot / street / plaza / yard / wall / gate and a block (buildings never cross blocks), so
+one massing, one module set and one nav baker serve them all. Polygons become quads Townscaper's way (centre to edge
+midpoints); slivers under 0.05 m² are dropped.
+- *irregular*: a triangle lattice in the disc, pairs merged at random (82%), every face cut into quads, 30 rounds of
+  Townscaper's squaring relax (the rim pinned); lanes: 3-5 noisy rays and a ring through the quads, a plaza at the centre.
+- *contour-voronoi*: seeds on a jittered lattice pulled onto the ground's contours (Newton along the gradient to the
+  nearest multiple of `contour` m), thinned; Voronoi cells (clipped to the disc) are plots; each plot's inset (street
+  half-width, none along the rim) is its lots, the band between is street; all subdivided once.
+- *radial*: rings a tile apart, sectors doubling outward to stay a tile across; a ring road near half way, the spokes,
+  the outermost ring the wall with gates on the spokes, a plaza at the heart.
+- *orthogonal*: a lattice turned at random, a street every 4-5 tiles.
+
+**Massing** (`plan.ts`): lots are built by density × fall-off × noise (too steep, too small → yard); buildings grow tile by
+tile inside a block up to the style's size, on ground spanning less than 0.9 of a storey; storeys fall from the centre
+to the rim with noise; a tile now and then a storey up or down (stepped skylines). Foundations to the ground under the
+floor; ramparts 7 m over the ground. Landmarks: the tallest lone tiles near the centre become towers; a fountain where
+the plaza's tiles meet. The planner is on the CPU on purpose: a plan is small, made once when its land arrives, and its
+hard parts (WFC, growing buildings) are sequential; what is large or per-frame (drawing pieces, stamping columns) is on
+the GPU.
+
+**Façades by WFC** (`wfc.ts`, a general solver: ≤ 32 tiles, any graph, weighted, arc-consistent, restarts on a
+contradiction and throws after 12). Per building: a node per exposed storey of each side (hidden where a neighbour's
+storeys cover it); relation 0 *above* (bays line up: a window2 only under a window2, a door or shop under windows or a
+balcony), relation 1 *beside* (round a corner or along a wall: no two doors, no two balconies). Doors and shops on the
+ground floor only, balconies above it; the front door is the longest street-facing ground wall. Blank is always allowed,
+so the rules can always be met.
+
+**Modules** (`modules.ts`): made in code in a unit frame (u, v, w), a vertex (u, v, w, part), part a palette slot.
+Walls run along a side (v 0 the outer face, 1 the inner, 0.35 m; v < 0 sticks out): openings cut as boxes round them,
+frames, sills, shutters, glazing bars, timber framing and braces for the timber looks. Roofs are a height field — h(u, v)
+= the least distance to the roof's free sides and free corners — so ridges, hips and valleys meet across tiles without a
+table; all creases lie on u, v ∈ {0, ½, 1} and the diagonals through the centre, so 8 triangles are exact. Roof masks
+(sides, corners, verge, eaves, clip) are made on first use. Gables close a ridge's end; verges run past them.
+
+**Pieces** (`pieces.ts`): walls from the façades on mitred frames (inner corners slide along the neighbouring sides, so
+walls meet on the corner's line); posts or quoins at convex corners; a roof on every top — a side is joined if the
+neighbour is the same building as tall or taller, or another building taller (the roof leans on its wall); eaves only over
+what is lower (never into a neighbour's wall as tall), corners clipped where a tile as tall touches diagonally, the roof
+lifted 0.14 m over the walls (a warped tile's roof is flat between its warped corners, not the bilinear surface).
+Unit-tested: no wall top pokes through a roof at its height (structures.test.ts).
+
+**Drawing** (`gpu.ts` + `shaders/structmesh.wgsl`, shared by every host): the library in one vertex and one index buffer;
+the palette (styles × 14 parts × 8 variants, linear) then 4 vec4s a piece in one storage buffer (read in the vertex
+stage only); pieces sorted by module, one `drawIndexed` a module in use with `firstInstance` (core WebGPU). The vertex
+stage warps (x, y bilinear over the corners, z from the foot's bilinear height to the top; flag 1: top relative to the
+foot) and picks the palette variant per building; the fragment makes the patterns in world space (coursed stone, roof
+tile courses and moss, cobbles, limewash, timber grain) and the glow (a share of windows and the lamps at night).
+Hosts declare `spData` and `hostNight()` and their own entry points: the viewer (viewer/viewer.wgsl: sun, sky, bounce,
+a 2048² shadow map, fog, filmic curve) and the game's (shaders/structgame.wgsl: render.wgsl's `lighting`, `haze`,
+`cutAway`, the pick; `Renderer.enableStructures`, the pieces at the draw group's binding 3, back faces culled).
+
+**Mega tiles** (STR12): a domed temple over four tiles meeting at a vertex (its frame the patch's outer corners: a
+module warps over a patch as over a tile), a radial city's keep on its plaza (its own frame, no tiles). **Into the earth**
+(STR13, `spec.sunk`): floors on the ground's low side, backs in the hill, buried walls blank. **Growth** (STR16):
+`plan.order` (the old core first) and `grown(plan, p)` — stored progress is one number. **Placed assets** (STR14): affine
+pieces (flags bit 2: a 3 × 4 transform, the module in metres) via `assetPieces`, for the terrain track's buried things.
+**Frames:** a plan's coordinates are its spec's frame (a settlement's: its box's — settle/view.ts moves its pieces and
+claims into the window's); `shiftPlan` moves a plan's own frame where a host needs it.
+
+**The far look** (STR10): walls and roofs have a far module (`Library.lodOf`: flat openings and beams on the slab; roofs'
+tops only); `StructureGpu.draw(pass, lod)` draws the same instances with it. The game picks it by zoom
+(`Renderer.structLodZoom`, 7 px a cell: the camera is orthographic), the shadow map always.
+
+**Linear features** (`linear.ts`): a profile module warped segment by segment along a Catmull-Rom spline (each
+segment's frame its right and left edges at either end). Roads: the ground sampled every 2 m, a profile never steeper
+than 14% (passes that only raise: valleys and water filled by the deck); over 2.6 m above the ground, or over water, a
+bridge — deck pieces on the profile and arch pieces from the ground (spans ≈ the height, 5-12 m). Walls: a loop at
+1.06 R, the walk 8 m over the ground, towers every 28 m and at the gates. Each wall run and bridge is its own External
+instance; nav nodes every 4 m (street, bridge, rampart), stairs at a wall run's ends.
+
+**Viewer:** structures.html (src/structures/viewer/): tile system, style, seed, size, storeys, density, ground (flat,
+hill, slope), time of day; building (one building isolated: `isolate` re-works its façades and roofs alone), district,
+city; drag to turn, wheel or pinch to zoom, right-drag or two fingers to pan; tile and nav overlays; every setting in the
+URL. scripts/structshot.mjs shoots it; scripts/perf/structures.mjs measures it.
+
+**Density** (round 119; the user: "Can we get farms and smaller huts for lower population density? Is it density
+driven+grid based now?"): `planCity(spec, ground, water?, density?)` takes a `DensityFn` (people per area, 0..1). The
+tile systems (and the farmland's) are the grid; the density decides what is built on each tile: whether a lot is built
+(p = 1.6 × density), its kind — a town `house` at or over `HOUSE_D` (0.42), a thatched `hut` under it (one storey, two
+now and then near the line), a house's storeys rising from the rim's to the middle's with the density — and the
+farmland's plots: `farmstead` (a farmhouse and a barn on the plot's lots; likelier where there are more people and by the
+roads), else crop strips, orchards, pastures (fewest people: pastures and fields). No hard rings: the kinds follow the
+field, and where houses and huts meet they mix. Without a field (the viewer) `defaultDensity(spec)`: a smooth fall-off
+with noise plus a thin country out to the farmland's edge.
+
+**The farmland** (`tiles/farmland.ts`, `spec.farmland` the outer radius): Voronoi plots over the ring past the town, each
+inset by a lane; a field cut into strips 5-7 m wide along its long way, each strip a quad (its straightest corners
+dropped; a wedge left as pasture) cut every ~6 m along; a farmstead's plot cut into lots; its outline a fence or hedge
+(a linear feature, straight between its posts). Modules: `crop` (tilled soil, five ridges, in four along its length),
+`fruittree`, `fence`, `hedge`; huts (`hut:*`: daub between timbers, small shuttered windows), barns (`barn:*`: planks, a
+wide door), thatch roofs (`roof:…:thatch`, deep eaves). Parts 15-18 (Thatch, Plank, Soil, Crop).
+
+**Draped pieces** (flags bit 4): what lies on the ground — paving, crops, fences, hedges — is laid by the host on the
+ground as it is now (`hostGround`: the game's column top plus its loose ground; the viewer's the plan's), not as the plan
+saw it (a road graded, a bank eroded since).
+
+**Settlements on it** (round 119, STR15; src/settle/): one concern each —
+- `plan.ts` *plans*: a settlement's record, civ profile and box ground → `planCity` (its tile system the profile's first
+  grid style, its style from its architecture — fortified/squat: bastion; terraces, flat roofs, tall: terrace; else
+  hearth —, storeys from the profile, walls if fortified, farmland out to R + 36 m, the quarry kept out) with the density
+  from the settlement's growth field (`field.ts`, by size: a hamlet's middle reaches huts, a city's town houses, plus a
+  thin country). Then the record: each standing building a `Building` + `Instance` (the hall, the granary, the workshop,
+  the temple (the dome), an adapted ruin (a tower), houses and huts; barns are granaries), doors as spots; the frontier
+  (the last 10% of the town's build order) not up yet: two sites, the rest room to grow; fields from the farmland's crop
+  plots. `SettlementPlan.city` is the structures plan, `standing` its storeys up per building. The land gets only the
+  ground works (stalls, piles, the quarry, the camp, bare ground under fields, streets and buildings).
+- `view.ts` *shows and claims*: every planned settlement within 1400 m drawn as pieces (`Renderer.enableStructures`), each
+  standing building's columns an External instance (`OWNER_STRUCT`); cut or loose → rubble + dust, the building no longer
+  standing; slides let go and claim again. `reclaimed.settlementsView()`.
+- `life.ts` *lives*: builders raise a site storey by storey (`LifeIO.raise` → the plan's `standing` → the view), its roof
+  when the last is up; the rest as before.
+- `raster.ts` (the far land's stamps) is told where the roofs are (`rasterColumns`): buildings aren't in the columns.
+- `?city=<system>&cstyle=&cseed=&croads=&cwalls=1` plans the town nearest the start with those (`Settlements.override`).
 
 ## Instrumentation (round 100, branch `hitchrec`)
 
@@ -2429,3 +2571,117 @@ clears them).
 - A module that reads `location`, `innerWidth` and the like at load works in the unit tier only if it guards them
   (`typeof location === 'undefined'`). The gpu tier's setup defines them, a page with no query at 412 x 915, for the
   modules a WorldCore pulls in.
+
+## Terrain: the region graph, the rivers' shape, the basin flood (round 117, `terrain`; BACKLOG TR1-TR17)
+
+The user: "We want to partition our map … natural barriers … we should know by character controller what they can and
+can't pass easily. I would make regions recursive with open fully connected spaces 1-3 screens big and that are part of
+larger terrain features." / "Terrain makes the barriers initially but the run manager should be able to get. The graph
+and request obstacles or otherwise request a certain number of exits." / "A GPU algorithm we use for generative tools. I
+want to be able to flood a basin and bury things".
+
+- **Contract:** src/api/contracts/terrain.ts — `Terrain` (graph, request, edits, flood), `TerrainGraph` (regions at two
+  levels: features 0, rooms 1; borders with a BarrierKind, causes, BorderMeasure and passes; cost/exits/reach per
+  `PassCaps`; soften), `TerrainRequest` (exits, obstacle, open) → `TerrainResult` (edits, needs), `FloodRequest` →
+  `FloodResult`. World units of the atlas. `PassCaps` stands in for the play track's controller contract; `CAPS_PRESETS`.
+- **Implementation:** src/terrain/terrain.ts `TerrainSystem` (window.reclaimed.terrain in the atlas level and the viewer).
+  sample.ts + sample.wgsl: the land on a grid from the atlas's ground() (its own uniform buffers; bindings 20-26 read,
+  40-41). partition.ts: the CPU graph (pure; unit-tested). flood.ts + flood.wgsl: the GPU fill and mark, and the CPU
+  reference they must equal.
+- **Edits** are atlas stampHooks (atlas/stamps.ts PLAN ops): land made after a request has them. **Needs** (bridges,
+  vegetation, rubble) are for other tracks; the run manager passes them on through their contracts.
+- **Basins:** a flood is a row of the lakes' table in riverBuf (Atlas.addBasin; FLOOD_SPARE rows; word 1 the fluid: 0
+  water, 1 sand, 2 magma, 3 ash) and its texels in the per-texel lake ids. compose.wgsl lakeAt returns the fluid; ground()
+  buries (loose ground to the level) or melts (lava to it). The viewer shows it at once (it reads riverBuf per pixel);
+  land already made isn't remade.
+- **Rivers:** rivers.ts builds the nodes; terrain/rivershape.ts shapes their course (relaxed) and levels (incised,
+  staircased, still falling downstream) before the table; terrain/river.wgsl (in Atlas.parts()) holds River, riverAt
+  (the warped lookup, two segments a node) and riverCut (the cross-section) that compose.wgsl ground() calls.
+- **Top level (round 117):** Terrain.atlasGraph() — the atlas's regions world-wide with each border's barrier (terrain/
+  atlasgraph.ts, from the atlas's CPU arrays and the border rules compose.wgsl draws by); the rooms under a region come
+  from Terrain.graph(rect).
+
+## Inhabitants (round 117, `inhabitants`; docs/INHABITANTS.md)
+
+- Contract: `src/api/contracts/inhabitants.ts` (`Inhabitants`): species as data (`SpeciesSpec`: body plan, proportions,
+  palette, secondary, gear, abilities, behaviour), `spawnGroup` / `drive` / `remove`, `setPaths(WalkPaths)` (the
+  structures track's baked paths), `setAbilityHost(AbilityHost)` (the level's fire/heat/wind hooks), `presence(rect,
+  cell)` (density and threat a region, for runplan and terrain), `shift` in WorldCore.onShift's sense.
+- Implementation: `InhabitantsGpu` (src/inhabitants/system.ts), a SimSystem after the particles. Reads only WorldGpu's
+  contract buffers: `surface` + the drift texture + the body projection (the ground), `fire`, `water`, the wind texture.
+  Owns its buffers (agents 5 vec4, pose 32 points x 2 vec4, bins, orders, group sums, the species table, the mesh).
+- Its mesh goes to `Renderer.addMesh` in vsSkin's form; nb.w = 1 marks a vertex whose word is a 0xrrggbb colour
+  (render.wgsl fsBody).
+- Bindings in inhabitants.wgsl: 40 params, 41 species table, 42 agents, 43 pose, 44 bins, 45 orders (+ paths), 46 group
+  sums, 47 verts, 48 draw args, 49 surface, 50 fire, 51 water; 15, 17, 21 common.wgsl's wind, drift and body textures.
+  Layouts mirrored in src/inhabitants/pack.ts (species), paths.ts (paths) and system.ts (agents, params).
+
+## Flora (round 117, branch `flora`; src/flora, contract src/api/contracts/flora.ts)
+
+The user (DECISIONS round 117): "For plants, L systems are great for branches and then cellular autonoma for roots. I am
+ok with stylized or low fidelity but I just want it to be readable and pretty and look integrated with the world. Plants
+growing on fields and being instances that way into other geometry is key." The showcase: "Waking through lead covered
+forest floor with silver birches towering above and leaves falling and blowing in the wind would be breathtaking ...
+Make tall grass that blows in the wind. Make leaves or dust." And (part 3): "plants making a barrier (even a soft barrier
+like slowing you down or requiring you to cut through) is a good thing".
+
+**Representations, one per use (and why).**
+- A species is parameters (src/flora/species.ts): an L-system and a turtle (trunk and branches), a leaf look, a root
+  automaton, colours, a niche over the world's fields, a barrier. Why: one generator gives many plants. Variants are
+  seeds and a new species is one entry. The viewer's sliders are those parameters.
+- A plant's look is a low-poly, faceted mesh (src/flora/mesh.ts, generate.ts): 4 floats a vertex, `w = part + sway`
+  (part 3 wood, 4 leaf, 5 blade, 6 petal, 7 root, 8 accent; sway 0..0.99 what the wind moves). Why packed: the
+  instanced renderer's vertex format and buffers stay as they were (render/meshinst.ts, MI3).
+- Roots are cells (roots.ts, a CA on a small grid: grow where exactly one neighbour is root, by soil, down-bias). Why
+  cells: terrain, erosion and excavation speak cells. Only the main surface roots become wood, chosen and thickened by
+  the pipe model (a root as thick as what it feeds).
+- The game's library (library.ts GAME_LIBRARY): each drawn species × a few variants, made once at start (~70 ms). These
+  are the meshinst kinds, one indexed indirect draw a kind. Why a fixed library and not a mesh per plant: one draw for
+  thousands of plants is what the phone affords.
+- Where plants stand is not stored. It is the succession field (`veg`) plus hashes: vegplan.wgsl vegPlan (trees, their
+  species and heights) and vegprep.wgsl floraSmall (thickets, tall grass, flowers, ferns). The CPU ports are
+  api/plants.ts planTree and flora/placement.ts standsAt, identical (test/gpu/flora-plan.test.ts runs vegPlan on Dawn
+  against planTree).
+- Birch woods: vegplan.wgsl birchWood, low-frequency value noise of the world cell (the window's origin added). This
+  stands in for a biome field until one exists; it is the one place to swap.
+- Passability is a number per region computed from the same plan (flora/passability.ts), never a second copy of the
+  plants.
+
+**The draw.**
+- vegprep.wgsl writes the instances: a tree as its species' variant by its column's hash (FL_* ranges from
+  library.wgsl()), scaled by the wood's age; floraSmall's plants jittered in the cell. Plants drawn as meshes take no
+  room in the box lists.
+- meshinst.wgsl draws every kind. Parts ≥ 3 go through floralook.wgsl: `floraSway` (the column's lean from sway.wgsl ×
+  the species' stiffness, a faster flutter on leaves and blades, a downwind wave across the meadow) and `floraLook`
+  (colours from FLORA_COL, birch lenticels, the season's turn and bare winter crowns, grass through seasonGrass). The
+  viewer page draws with the same two functions.
+- `?flora=0` is the old draw (boxes, or `?meshinst=1`'s four hand-made trees). Flora is on by default on this branch.
+- Falling leaves are particles.wgsl's K_LEAF, carried by the wind. Birches now let a few go all year (more in a wind,
+  many in the fall).
+
+**The contract** (`Flora`, on the world API: `sim.flora`; in the level `reclaimed.flora()`):
+- `library`: species(), mesh(id, seed), variants(id).
+- `placement`: fit(site) gives the species for a site's fields; plantsIn(rect) gives the trees and thickets standing
+  there, as the GPU draws them.
+- `passability`: density(rect, height) and passage(rect, caps) → {density, speed, mustCut, blocked, cost}. `FloraCaps`
+  {mass, speed, cuts, flies, height} stands in for the play track's controller capabilities.
+- The model: coverage = 1 − exp(−Σ fill·footprint·reach / area). A tree counts only its trunk (you walk under the
+  canopy); grass below the waist barely slows a tall walker. Past 0.55 coverage a controller cuts (a blade, cuttable
+  plants), breaks through (mass ≥ the stand's breakMass) or is blocked. A flyer ignores it.
+- Shrubland (succession 2.6–3.6) is the thicket. Under the woods only a fifth of the shrubs are drawn, so the forest
+  floor stays open.
+- `refresh()` re-reads the succession field (the CPU mirror).
+
+**The viewer** (flora.html, src/flora/viewer.ts + viewer.wgsl; its own small renderer).
+- Biome scenes (scene.ts) or one plant growing (the L-system re-made at fewer iterations as it grows).
+- Wind, season, growth and density sliders; drag to turn, wheel or pinch to zoom.
+- The ruin scene shows plants instanced onto other geometry: ivy on walls (the vine's plane mapped onto the face), moss
+  on stones.
+
+**Levels of detail** (round 119, the phone).
+- A tree kind exists at three levels (full, coarse, far) and a thicket at two, for the same variants: FL_<ID>, _L1,
+  _L2. vegprep picks one by the plant’s height on screen in render pixels: full from 150, coarse from 55; a thicket’s
+  far lump under 25.
+- The library is made for the tier’s render pixels a CSS pixel (FLORA_RPX; the renderer’s floraRpx).
+- A vertex’s w carries its kind (+16 × kind, baked by render/meshinst.ts), so the draw finds the kind in one step.
+- Phone bench: ?florabench=1 (src/flora/bench.ts).

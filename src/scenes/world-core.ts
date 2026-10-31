@@ -141,7 +141,7 @@ export class WorldCore {
     this.onShift.push((dx, dy) => this.sim.wind.shift(dx, Math.round(dy / ROW_H)));
     // (simscale: what comes in is projected at the next tick — grids/systems.ts ProjectSystem)
     this.onShift.push(() => (this.world.projectAll = true));
-    this.renderer = new Renderer(device, host.gpu.format, this.world, host.profiler, fieldMesh, host.quality.shadowSize, meshRoom, host.quality.meshSlots);
+    this.renderer = new Renderer(device, host.gpu.format, this.world, host.profiler, fieldMesh, host.quality.shadowSize, meshRoom, host.quality.meshSlots, Math.min(typeof devicePixelRatio === 'number' ? devicePixelRatio : 1, host.quality.maxDpr) * host.quality.renderScale);
     this.structures = new Structures(device, this.world);
     this.weather = new Weather(map.surface, this.dims.w, this.dims.h, (x, y) => this.world.ring.i(x, y));
     // (round 108, TC20: a render-only tile's land seeds the weather's cover)

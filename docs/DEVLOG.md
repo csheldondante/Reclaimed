@@ -13610,6 +13610,804 @@ rename in .testcache fails EPERM, so caa0827's guard made every runner script fa
 cache instead, index.html last (a build counts as present once its index.html is). `npm run smoke` then passed: the atlas
 ready in 65 s with three other agents' checks on the GPU, sim ticking, no fatal.
 
+## 2026-10-30 — round 117 (`terrain`): rivers off the texel grid with banks; the region graph; the basin flood; the terrain viewer
+
+The user, verbatim (DECISIONS round 117): "Generally speaking we want our terrain to be striking to look at and
+interesting to explore." "Rivers look bad right now. They have serious isotropy issues and they have no banks. Use SDF.
+Have them carve into the ground. Make their banks look eroded. Add reeds. Have rocks and rapids. Have waterfalls. So many
+waterfalls." "Waterfalls and flow are what look pretty good." "We want to partition our map … we should know by
+character controller what they can and can't pass easily. I would make regions recursive with open fully connected
+spaces 1-3 screens big and that are part of larger terrain features." "Terrain makes the barriers initially but the run
+manager should be able to get. The graph and request obstacles or otherwise request a certain number of exits." "A GPU
+algorithm we use for generative tools. I want to be able to flood a basin and bury things".
+
+**Rivers (terrain/rivershape.ts on the CPU, terrain/river.wgsl on the GPU).** Why they looked bad: the river graph is a
+drainage tree over the macro texels (8 cells, 8 neighbours), so every reach ran at 0, 45 or 90 degrees, and the water
+stood at the filled ground's level, flush with the plain it crossed — no bank could show. The fixes, each for one of
+those causes:
+- The course: the nodes relaxed along their main stems (6 Laplacian passes, at most 7 cells each so a node stays near its
+  texel — the GPU finds a river by the nodes nearest a point's texels), and the GPU's lookup warped by a slow noise (7
+  world units, period 150: its gradient well under 1, so the line never folds) — bends at every angle. riverAt now tests
+  the two segments from each nearby node, so the joints are continuous once nodes leave their texels.
+- The level: incised under the filled ground by 0.8 + 0.35 × the half-width (1.2-4.5 cells), ramped in over 4 nodes from
+  the river's end and never under the still water it runs into (a channel below the lake beside it would drain it
+  backwards); steep reaches (0.6 cells a node or more) made a staircase of 3.5-cell steps — still pools and falls. The
+  level still only falls downstream (unit-tested: every consumer, the held rivers and the pipes, relies on it). A step
+  of 2.9-8.5 cells drops at its segment's middle within about a cell, so the bed steps and forms.wgsl pours a sheet over
+  it (a step over RIVER_FALL): a waterfall, not a chute. The cliffs' big falls keep their interpolation (the ones that
+  looked good).
+- The cross-section (riverCut): the channel's parabola; a bank whose steepness varies along the river (cut banks steep,
+  slumps gentle), broken into slumped blocks by Voronoi cells ~6 across — the cliffs' treatment the user praised
+  ("voronoi plus noise plus sdf to make steps") — benches (a floodplain the river left, a little over the water) on some
+  stretches; gravel bars just over the water on one side; boulders in rapids, round plunge pools and a few on every
+  bank (bare rock: forms.wgsl now lets a cap stand in a channel where it is over the water); a deeper pool under each
+  fall.
+Pictures (the same spots before/after, the atlas level at 1x, q=high): C:/Projects/shots88/terrain/base-*.png and
+r1-*.png. The fall spot (a plateau's river, 6108,14009): before a 45-degree zigzag flush with the sand; after a
+winding channel between brown banks with bars and rocks. The wide lowland river (12916,4435): banks now line it; its
+45-degree kinks are softer but still there (TR3).
+Cost (scripts/perf/terrain.mjs, the desktop iGPU, the least of 3 for each of 24 64² regions on river nodes, wall
+including the readback): Atlas.columns median 28.3 ms vs places 28.5 ms — a wash. The rivers' CPU pass 627 vs 599 ms
+(+28 ms shaping), "ground with rivers" (the macro pass) 149 vs 64 ms, once per atlas. The phone's frame isn't touched
+by this (the columns are made as land streams; their GPU passes on the phone are TR9's driveprofile).
+Not done: reeds (flora's contract, TR6), rivers into holes and out of caves (TR4), the wide rivers' kinks (TR3). The
+authored rivers' CPU mirror (world/rivertable.ts, the playground's) keeps the plain profile (B-TS13: the rule is
+duplicated already; the new cross-section uses the atlas's noise).
+
+**The region graph (api/contracts/terrain.ts; terrain/sample.ts → terrain/partition.ts).** Why this shape:
+- Features are what the walker reaches without crossing anything it can't (union-find over passable sample edges), so by
+  construction every barrier lies between features. Rooms split a feature: seeds deepest first a room apart, grown
+  together by a weighted geodesic distance whose step costs more near the feature's edge (1 + 6 / (1 + distance)) — on
+  open land a Voronoi of the seeds (bounded rooms), where it narrows the crossing is dear so two rooms meet in the
+  narrows (the door). (A plain watershed on the distance gave one 16-screen room on a plain: it has one maximum.) Then
+  rooms under a screen merge into their best neighbour, and neighbours across a long shared edge (no narrows) merge
+  while they stay within 3 screens. A slot (no clear disc 2 samples across: a ravine's floor, a ledge) is no room.
+- Borders keep measures, not verdicts: the least climb, drop, depth, vegetation, the narrowest water and gap, each by a
+  bottleneck (or least-count) search across a band round the border. What a controller crosses is reckoned when asked:
+  a Dijkstra over the two rooms' band by its PassCaps (step, slope, drop, deep, lava, veg, gap, fly), cached per caps.id
+  — the user's "parameterize it so we can reason about it during generation". A body over water it can't touch bottom
+  in rides the surface (a hovering bike). Soft barriers (hostiles, storms, distance) are laid on a border and add to its
+  cost.
+- Controllers: PassCaps is a stand-in until the `play` track's controller contract (herosandbox's Mobility is a subset);
+  CAPS_PRESETS walker, bike, lich.
+- The samples are taken on the GPU from the atlas's own ground() (the heights, rivers, lakes and coarse world the
+  columns are made of: the graph and what's drawn agree), read back once; the graph's search work is on the CPU (graph
+  search, a few hundred thousand samples, at planning time). 512² samples (2048 world units at 4): sample 32 ms,
+  partition 374 ms in the page (Node: 350-500 ms; the borders' searches were 275 ms of it before they were banded, 21
+  after).
+- Vegetation density in the samples is forms.wgsl's woods formula, a stand-in until flora supplies the plants' density.
+Tests: src/terrain/partition.test.ts (plain, dumbbell narrows, cliff, one-way drop, river, ford, vegetation, ravine and
+the bike's jump, soft barriers, a 512² noisy valley), src/terrain/terrain.test.ts.
+
+**Requests (terrain/terrain.ts).** `exits` opens the cheapest barriers out of a room for a controller — a ramp up a cliff
+long enough for its slope (stamped: the column made exactly that high, solid 40 cells under it), a ford (the bed raised
+to 0.4 under the water, rubble), a bridge, vegetation cleared (needs: structures, flora) — or closes the easiest doors
+with a wall 9 high (the walker and bike stop, the lich floats over). `obstacle` and `open` act on one border. Edits are
+stamp hooks (atlas stampHooks: the same operations the GPU and CPU paths make), so land made after a request has it;
+land already in the window isn't remade (a run plans first; TR17).
+
+**The flood (terrain/flood.wgsl, flood.ts).** The depression-filled surface by Planchon-Darboux passes on the GPU (W =
+max(h, min(W, neighbours' W)); the window's edge and the standing sea are the outlets), the seed's W its basin's spill
+height; then the basin marked by a dilation from the seed under that level (or a level given). The standing sea walls
+the mark (a flood stops at its shore). Applied as a row of the lakes' table (Atlas.addBasin; FLOOD_SPARE 64 rows
+reserved, the row's second word the fluid): the river graph's lakes are already basins filled with water at their spill
+height, so a flood is the same thing with any level and fluid, and the land is made from it as from a lake
+(compose.wgsl lakeAt) — no new binding in kernels at the 8-storage-buffer limit (formSeed uses all 8). Sand and ash
+bury: loose ground to the level; magma: lava to it. The GPU result equals the CPU reference texel for texel
+(test/gpu/terrain-flood.test.ts on Dawn, and in the page). Not yet: the global sea replaced everywhere it's read (forms'
+sea water, the renderer's sea plane, the shore, the tiles: DZ1's design, TR7); a sand flood buries the ground, not what
+settlements stamp on it later (TR8).
+
+**The viewer: `?terrain=view`.** The atlas viewer (seed and sliders, layers 1-9, pan and zoom, double-click walks in)
+with the region graph over it (rooms, borders by kind, doors and passes, edits, masks), a controller picker, a room's
+exits and reach, the exit requests, and the flood (water, sand, magma; a depth over the tap, 0 the spill height).
+Smoke: scripts/terrain/viewer.mjs (graph, a ford made, GPU flood = CPU). Pictures: C:/Projects/shots88/terrain/viewer-*.png.
+
+Shared-system tweaks for consolidation: atlas.ts (river.wgsl in parts(); FLOOD_SPARE rows and addBasin;
+riverStats.shaped), compose.wgsl (River/riverAt moved to terrain/river.wgsl; the carve calls riverCut; LakeHere.fluid and
+the buried/molten basins), forms.wgsl (a cap may stand in a channel over the water), rivers.ts (the course and levels
+shaped before the table), atlas-view.ts (viewport(), worldAt public, onPick), main.ts (?terrain=view), level.ts
+(reclaimed.terrain).
+
+**Follow-up (main's review of the first pictures).** (1) The road at the fall spot wasn't carved away: the sites and roads
+are planned on the macro ground with the rivers in it, so the channels moved them (TR18). (2) The "trench along the cliff
+top" was a real fault: the graph's levels aren't monotone (a river through a hollow too small for a lake follows its
+floor and rises out of it), and the "only falling" pass pushed every node past such a hollow under its floor: at
+6108,14009 the whole reach to the cliff's edge stood at 263, 7-9 under the ground (base 270-272). Now a node is held
+under the one above it only where the filled ground itself fell between them (unit test: a river rising out of a hollow
+isn't cut into a trench). The river there pours off the plateau's edge into the sea (a 173-cell fall on its last segment,
+as before), facing away from the view. (3) The white columns are geysers (the user); the triangles top-left are the far
+land (in both pictures; not this track's). The first graph's 12 s was the sampler's pipeline compiling (the atlas's
+ground() shader), not the sampling: it's one dispatch and one readback, 32 ms for 512² warm; it now compiles in the
+background when the TerrainSystem is made. Phone proxy (412x915 dpr 2.6, q=low): C:/Projects/shots88/terrain/
+phone-base-fall.png, phone-r1-fall.png, phone-r2-fall.png. driveprofile (q=low, phone proxy, 30 s, desktop iGPU):
+places p50 9.8 ms, p95 16.9, GPU 11.55 ms/frame; terrain p50 9.8, p95 19.2, GPU 10.61 — within the run-to-run spread
+(the base from Pages, this from a local preview).
+
+## 2026-10-30 — round 117 (`terrain`): caves at cliffs' feet (the user's recipe), gorges in the plateaus, buried props placed
+
+**Caves at the foot of cliffs (terrain/cave.wgsl).** The user: "Cliffs would be even better with rocks around the base
+and caves that open (often at their base)" / "Caves should have ground level openings and be wide enough to traverse".
+The method is the user's own recipe, verbatim in the file's head ("Take a simplex fractal noise in 2d and set a
+threshold so that they are windy … make noise lower on the floor so it is walkable"), with TG3's numbers from
+noiselab2-r (revive made it work at a visible scale: passages ~12 wide, roof = base + min(0.35 d², 12) + noise, floor =
+base − 0.5 + a quarter of the noise, the base a cell over the sea at a sea cliff). noiselab2-r isn't merged: the lab is
+its own scene; the recipe is folded into the atlas's cliffs. Per cell, no JFA: the passages are a band of a 2D fbm, the
+distance in from a passage's edge its margin × CAVE_MID (the fbm's gradient made d from the margin over the period give
+4-cell vaults, measured on Dawn: test/gpu/terrain-diag.test.ts prints the open runs and the made columns round a point).
+The base runs from the foot (over the talus heaped against a mesa's wall: a mouth behind the heap was buried; a cell
+over the sea where the foot is under it — the sea doesn't enter a gap yet, TG16) up to a share of the cliff's height
+inside it, over 70 cells: a passage climbs through the cliff, a way up an impassable wall ("An impassible mountain can
+have a cave through it"). Grottos (round chambers ~45 cells apart, 6-10 across) near the foot are cut by the face, so the
+base has mouths often, not only where a passage happens to reach it. Where a roof comes within 2 cells of the ground
+the ground opens to the floor (a collapse letting light down). Applied in ground(): plateau edges (EDGE_MESA, beside the
+lips and undercuts) and EDGE_CLIFF/EDGE_SEACLIFF, as the overhang's open run (columns.wgsl takes it as a cavern).
+Pictures: C:/Projects/shots88/terrain/cave*-cliff1.png (a mouth at a plateau's foot), cave*-sea0.png. Honest state:
+the open runs are in the made columns (the Dawn probe: 92-99 under a 145 top, round 16234,4213), but the mouths seen in the
+fixed view are few; whether the sea-cliff mouths face away from the camera or the draw hides thin gaps at a face is
+TR21.
+
+**Gorges (terrain/gorge.wgsl).** The user: "Traversvlable gorges (both at the bottom and above)". The zero lines of a slow
+noise wind across a plateau's top; across one, its distance (|n| / threshold) is an SDF: a flat floor over its middle
+half (the corridor at the bottom), walls in three tiers whose edges each Voronoi cell moves (the cliffs' blocks), rims at
+the plateau's height (walkable above); 14-44 deep, shallowing to nothing at its heads, never deeper than the low ground
+beyond the plateau. None under a river or a lake: the first pictures had a river's held water hanging in curtains
+where a gorge cut under its level (C:/Projects/shots88/terrain/gorge1-gorge1.png; fixed, gorge2-gorge1.png). The green plane
+and black walls in those pictures are in places' build at the same spot (gorge-base-gorge1.png): not this track's. The
+gorges change the macro ground the rivers and lakes are found on: two lakes on a plateau at 6040,4860 drained through a
+gorge (TR22).
+
+**Buried props (terrain/props.ts; contract BuriedProp, ExcavationSite; Terrain.buried(rect)).** The user: "buried statues
+and fallen structures and stones. These being skew add visual interest and they make great props for telekenisis or
+excavation sites." Decided per world tile (128 units, a hash of the seed and the tile): the same things whatever
+rectangle asks. Excavation sites (5% of tiles on dry ground not too steep: 3-7 statues, fallen columns, slabs, ruins
+round a middle, skew, 30-80 % sunk) and lone stones (more where the ground is steep: a cliff's foot, a bank). Terrain says
+where, how deep and how tilted; structures supplies what a statue looks like (its asset by kind); an External owner
+draws them and holds their cells (TR16: not built — no owner yet; testkit's tests cover the un-burying). The viewer
+draws them (stones grey, statues gold, sites ringed). Tests: src/terrain/props.test.ts.
+
+Tests on Dawn (no browser): test/gpu/terrain-atlas.test.ts (a 512² atlas built with the terrain's WGSL: the graph from
+the GPU's samples, the flood = CPU, columns over a river), terrain-caves.test.ts (open runs at cliffs over a whole small
+world), terrain-diag.test.ts (TERRAIN_DIAG="x,y": the default atlas probed round a point). npm test: all pass.
+
+**Follow-up: lakes kept, gorges readable, the sea only where it reaches, the gpu tier isolated.**
+- TR22: the gorges drained two plateau lakes and moved rivers and roads, because the rivers and lakes are found on the
+  macro ground and the gorges were in it. Avoid, not refill: the hydrology is the atlas's steady state, and a gorge (10-30
+  cells, under the 8-cell texel's intent) shouldn't move it world-wide; refilling with the flood would make every gorge a
+  lake touches a reservoir and still shift the rivers. The macro pass now has no gorges (AtlasP.macroPass, PARAM_BYTES
+  144 → 160); per cell a gorge stops at a lake's rim (g.lk) and under rivers (g.rx).
+- The gorges were too deep and narrow for the fixed view: the camera's focus on a gorge's floor set off the cutaway (a
+  flat plane walled by black slabs — TR23, in places' build too: the renderer's). Now 10-28 deep and half again as wide
+  (GORGE_W 0.085 → 0.13): a broad floor between tiered walls that reads from above. A Dawn probe over the whole world
+  (test/gpu/terrain-find.test.ts, TERRAIN_FIND=gorge) lists gorges to frame: 0.9 % of the world's samples. Pictures at the
+  play zoom: C:/Projects/shots88/terrain/gorge4-a.png (the floor and the tiered walls, the plateau's lakes kept),
+  gorge4-b.png (a desert gorge, hoodoos on the rim), gorge4-phone-a.png (the phone proxy).
+- terrain/sea.wgsl: the sea's water stands only where the sea reaches (its own regions and land within 24 of the coast),
+  in the window (forms.wgsl) and in the rings (lod.wgsl) alike — a basin dipping under the sea's level inland is dry until
+  flooded (the flood tool). A first step of TR7; the sea's level is still AP.sea.
+- The gpu tier: each file in a fresh worker (TK12, docs/TESTING.md). In this worktree one shared worker died as soon as a
+  second file made a WorldCore — with only places' own gpu files — and never in a fresh worktree at the same commit.
+
+**TR21: the caves' mouths, found and made to read.** A Dawn probe (test/gpu/terrain-diag.test.ts: TERRAIN_DIAG="x,y" now
+also lists the mouths — an open run with a neighbour's ground under its roof — and which way they face; the fixed view
+sees faces toward +x+y) showed the coast's caves were there all along, at sea level, 6-13 high in cliffs 40-60 high:
+too low to read from above. Seen from the sea with the free camera (scripts/terrain/shots.mjs --fly) one is a proper sea
+cave, the waves at its foot (C:/Projects/shots88/terrain/mouth1-m-fly.png). Changes: caves along every coast where the
+land stands over the sea, not only the "sea cliff" kind (most coasts are beaches and steep slopes — a cave into a steep
+coastal slope is a sea cave too); most cliff stretches have them (the mask's threshold lowered); grottos twice as dense
+(sites ~28 cells apart, 7-12 in radius); the vault taller at the mouth (up to 22, under 0.6 of the cliff; TG3's 12 inside),
+CAVE_MID 9. From the fixed view on the phone proxy the mouths now show along the sea cliff
+(C:/Projects/shots88/terrain/mouth2-m.png), but as pale patches: the inside is lit like open ground — the draw doesn't
+darken under a roof (TR21 stays open for the renderer: shade inside a run's gap).
+
+**Under cover (render.wgsl underCover — a shared-renderer tweak for consolidation).** Main asked the terrain track to
+shade what's under a roof (no track owns the renderer). lighting() now fades the sky's light and the bounce (to 0.1) and
+the sun (to 0.2) by how far under cover a point is: 0 when its column (the one its face looks out to) has no top above
+it; else the share of nine columns — its own and eight round it, 3 and 7 cells out — whose tops stand over it: deeper in a
+cave, darker. One surface read for open ground, nine under a roof; nothing past the window (the tiles are tops). Every
+draw that calls lighting() gets it (the mesh, the prisms, the grid, rock and instance meshes). The gpu tier compiles it
+(a WorldCore makes the renderer); its numbers aren't unit-tested yet (the term reads the window's surface words through
+common.wgsl's chunked layout: a probe needs a tiny world's buffers — next). Pictures (phone proxy, the sea cliff at
+16232,4253): before mouth2-m.png, after mouth3-m.png — the same pale patches, because those mouths are past the window's
+edge: the window's mesh cuts each mouth into the face and what lies behind is past the window, where the tiles and rings
+draw only tops, so the mouth is a see-through hole (pale with the tiles, the land behind with ?tiles=0:
+mouth3notiles-m.png). Inside the window the mouths read dark (q=high: mouth3hq-m.png; ?hybrid=0: mouth3nohyb-m.png).
+TR24: cap the window's mesh at its edge where a gap crosses it, or let the tiles bake a gap as a dark recess.
+scripts/terrain/hybprobe.mjs (the hybrid's chunk state round a point; window.reclaimed.hybrid() added for it) found it.
+
+**TR24: the see-through mouths (fieldmesh.wgsl, fieldmesh.ts — a shared-renderer tweak for consolidation).** Found with
+scripts/terrain/hybprobe.mjs: the mouth's chunk was voxels (the field mesh) and the chunks behind it the hybrid's grid
+(the window's tops as a heightfield). The cave ran on from the meshed chunk into the grid's, where only tops are drawn,
+so the mesh's tube was open at its side: a hole to the land behind (and, at the window's edge, the same with the edge
+column carried out with its gaps). Now colDist closes a column's gaps — solid from the bedrock to its top — when it lies
+past the window, in a chunk the mesh doesn't draw, or beside one at −x or −y (a chunk owns the edges whose base sample is
+its own, so the closing face toward a low-side neighbour must fall a sample inside the drawn chunk). The CPU marks the
+undrawn chunks in their near words (UNMESHED_BIT; the hash pass ignores it for the chunk itself, and mixes the
+neighbours' bits into a chunk's hash so a neighbour turning grid or voxels rebuilds it). Phone proxy, the same mouths:
+mouth2-m.png (pale holes) → mouth5-m.png (one side closed) → mouth6-m.png (closed: dark recesses along the cliff's foot).
+Cost: a near-word read for each sample's column (three with the low-side check) in colDist — the build's, not the
+frame's. Mouths past the window (tiles, rings) still don't show (TR24b).
+
+**The partition's top level: the atlas's regions as a graph (terrain/atlasgraph.ts, Terrain.atlasGraph()).** runplan
+plans a run across the overmap on a stand-in RegionGraph of the atlas's regions (contracts/run.ts); the terrain graph so
+far was local (features and rooms over ≤ 2048 world units). The user's "recursive" regions: the atlas's provinces (~25
+macro texels across) are the larger features, the rooms under them come from Terrain.graph(rect) where a stage is
+played. Each border's barrier is read off the rules compose.wgsl ground() draws it by — a land/sea border the coast
+(a sea cliff where the land's coast edge is one), two landforms the higher one's edge (a plateau's cliff, a massif's
+steep flank), one landform the winning region's own edge (a ravine, a wall: 'ridge'), and a river or lava node on the
+border texels — so the plan and the land agree. CPU, once (the per-texel arrays are on the CPU already); a small atlas
+on Dawn: 2468 regions, 7361 borders (cliff, sea, ridge, lava, steep, river, ravine, open). The node and edge shapes follow
+runplan's stand-in (centre, area, tier, ground, rivers, lava; a, b, barrier, length) so its adapter is a rename. Floods
+take 'silt' too (runplan's materials: water, sand, ash, silt, magma).
+
+**The viewer on a phone.** The atlas's panel (270 wide) and the terrain's (250) covered a 412-wide screen. The terrain
+panel now folds (▾/▸) and hides the atlas's panel (a button); on a narrow screen both start out of the way. The viewer's
+smoke on the phone proxy (scripts/terrain/viewer.mjs --size 412x915 --dpr 2.6): graph, an exit opened (a ford), the GPU
+flood equal to the CPU's, a flood 6 over the tapped ground (C:/Projects/shots88/terrain/viewer-phone-*.png).
+
+**Cost at the end of the round (scripts/perf/terrain.mjs, desktop iGPU, data/perf/terrain-unknown.json "terrain-final").**
+A 64² region's columns over rivers (the least of 3, median of 24): 31.3 ms with the rivers' cross-section, the caves, the
+gorges and the sea rule, against places' 28.5 (≈ +10 %, wall time including the readback, within the runs' spread so far).
+The region graph over 2048² world units at 4: the GPU sample 24.8 ms, the partition 252 ms. A 1024-reach flood on the GPU
+254 ms (fill and mark passes in batches of 32 with a readback each), equal to the CPU's texel for texel. The rivers' CPU
+pass 582 ms, the macro ground with rivers 58 ms. The phone proxy's driveprofile after TR24: p50 9.8 ms, p95 11.6.
+
+## 2026-10-30 — round 117 (`structures`): buildings, districts and cities — tile systems, WFC façades, warped modules, a viewer
+
+The user: "I want beautiful structures, sprawling fantastic cities"; megastructures as "various procedural building
+assets for various tile systems plus some WFC and mega tile features (features multiple tiles big)"; "bake paths into
+the tiles we generate so agents can interact with them". ARCHITECTURE "Structures" has the contract and the pipeline.
+
+**Why meshes for the look and columns for the sims (both, by use).** The settlements' buildings were column intervals
+(build/town.ts, settle/raster.ts): a 1 m column can't hold a window frame, an eave or a sharp corner, and the user found
+bevelled structures ugly (round 39). Warped module instances give Townscaper's look on irregular tiles at 64 bytes a
+piece, a module stored once. The sims never needed rooms, only "solid here": one External span a column (columns.ts),
+converted at that boundary only. Agents need paths (round 104): the nav graph is baked from the plan, not from either.
+
+**Why the roof is a height rule.** h = the least distance to the roof's free sides and free corners. Two tiles in a row
+continue a ridge, an L gets a valley, a 2 × 2 block a pyramid — none of it tabled. Its creases fall on a 3 × 3 grid with
+centre diagonals, so 8 triangles are exact (unit-tested: ridges and the inside of an L meet across tiles).
+
+**Finding (fixed): walls through roofs.** White slivers on the slopes near the eaves. A numeric check (now a unit test)
+found three causes, each fixed at its root: square wall ends stuck out past the next wall at obtuse corners (walls are
+mitred now); eaves overhung into a neighbour's wall as tall (eaves only over what is lower, corners clipped where a tile
+as tall touches diagonally); a warped tile's roof is flat between its warped corners, not the bilinear surface, up to
+0.13 m off on skewed tiles (the roof lifted 0.14 m, hidden in the eave's thickness). Worst poke 3.08 m → 0.
+
+**Measured** (scripts/perf/structures.mjs, data/perf/structures-intel-xe-lpg.json; the viewer at the phone proxy
+412×915 dpr 2.6, 4× MSAA, shadow + main pass; build = plan + pieces + upload in the page):
+
+| system | r 32 m | r 64 m | r 112 m |
+|---|---|---|---|
+| irregular | 11.6 ms build · 193k tris · GPU 3.1 ms | 35 ms · 787k · 5.0 ms | 173 ms · 2.57M · 7.9 ms |
+| contour-voronoi | 17 ms · 131k · 2.3 ms | 40 ms · 698k · 4.7 ms | 206 ms · 2.29M · 7.4 ms |
+| radial (bastion) | 9 ms · 72k · 1.9 ms | 24 ms · 464k · 3.9 ms | 76 ms · 1.48M · 5.7 ms |
+| orthogonal | 9 ms · 146k · 2.3 ms | 22 ms · 573k · 5.0 ms | 93 ms · 1.76M · 6.3 ms |
+
+The desktop iGPU draws a 64 m town in ~5 ms at the phone's resolution; the phone is slower, and the game's frame has the
+terrain in it, so the game needs a LOD (STR10: plain slabs with painted windows past a distance) before big cities go in.
+Draws: 50-400 a city (one a module mask in use; roof masks dominate) — fine on the desktop, to watch on the phone.
+
+**Unit tests** (src/structures/structures.test.ts, 27, ~1 s): every tile system a CCW quad mesh, deterministic, mostly
+conforming, with lots and streets; irregular relaxed (no angle under 30°); radial walls and gates; roof continuity; WFC
+meets its constraints and throws when it can't; per system a front door per building with ground walls, doors and shops
+only on the ground floor; same spec → same plan; nav from every building's top storey to the plaza, and onto the rampart
+by stairs at a gate; every piece a real module with finite frames, per style; one column span per column; buriable
+assets' cells under a skew; no wall through its roof.
+
+Shared-system tweaks (for main to consolidate): vite.config.ts builds and hashes structures.html.
+
+## 2026-10-30 — round 117 (`structures`): the city on real terrain (STR9)
+
+`?skipmenu=1&level=atlas&city=irregular` (or contour-voronoi, radial, orthogonal; `&cstyle=`, `&cseed=`, `&cr=`): the
+town or city nearest the start is handed to the structures track — its own buildings aren't stamped
+(`Settlements.handedOff`) — and src/structures/host.ts `CityHost` plans a city there on the window's ground (the
+atlas's window ground and water as made: nothing built or paved under more than 0.3 m of water), draws its pieces with
+the game's renderer and claims each building's columns as one External instance (`OWNER_STRUCT`).
+
+**Why the game's renderer draws them (not an overlay).** The pieces must be lit, shadowed, hazed and cut away exactly as
+the land round them, and picked like it: `Renderer.enableStructures` makes a pipeline from render.wgsl + structmesh.wgsl
++ structgame.wgsl (the trees' way, meshinst.wgsl), the pieces' buffer at the draw group's binding 3, drawn in the world
+pass and the sun's shadow pass. One shared module file (structmesh.wgsl) for the viewer and the game: the look is the
+same in both.
+
+**Why External columns, and why they stop a metre under the roof.** The sims treat External as rock that never gives:
+rain runs off, sand piles, fire and water go round, the terrain's draws leave room. The first run showed grass tufts
+and moss poking through the roofs: what grows on an External top grew on the solid's top, which reached mid-roof. The
+solid now stops a metre under the walls' tops, inside the top storey.
+
+**What the sims do to it.** A building whose cells are cut (dug, smashed, melted) or found hanging free is let go to
+rubble where it stood, its pieces taken away behind dust (round 106: hide every swap behind a burst of dust). Before a
+slide, buildings whose columns would leave the window let go of them (to air); after it, the plan moves with the land
+and they claim again once all back. Collapse into bodies is later (with the physics track).
+
+**Shared tweaks (for main to consolidate):** renderer.ts `enableStructures` + two draws (world, shadow) and `drawPl`;
+integrity.ts `ensureCopy()` (the CPU copy of the layers read once if none yet: claims at the level's start needed it —
+"Invalid typed array length" before); external.ts `OWNER_STRUCT = 2`; settlements.ts `handedOff`; level.ts the
+`?city=` site, the host, its slide hooks, `reclaimed.city()`.
+
+**Measured** (scripts/perf/structcity.mjs, data/perf/structcity-intel-xe-lpg.json; phone proxy 412×915 dpr 2.6 q=low,
+every system on, parked over a 281-building irregular city, 5191 pieces, ~500k triangles): the world pass ("draw")
+2.66 → 3.53 ms at the start's zoom, 2.77 → 3.81 ms at ×3 zoom — about 1 ms of GPU. Back faces culled (the modules are
+wound outward, every frame counter-clockwise; checked in the viewer with `?cull=0` to compare): before culling the ×3
+zoom cost 2.3 ms. The frame's total GPU time moved ±1 ms between runs on the shared desktop (other agents), so the pass
+times are the measure.
+
+Shots: C:\Projects\shots88\structures\city-irregular-0/1/2.png.
+
+## 2026-10-30 — round 117 (`structures`): the city reads from afar; it keeps off the water
+
+Main's review of the first city on the atlas: at the start's zoom it read as "one dense blob of roofs", and its west edge
+stood in the sea in a straight line.
+- **The sea.** The planner was told only the window's water layer; the sea isn't in it (the sea is a level, `seaZ`).
+  The host now gives the planner max(water layer, sea − ground), and no house stands within 1.2 tiles of water: the
+  shore is yards and lanes and follows the coast.
+- **Quarters.** A city of radius R gets round(R / 26) quarters (≤ 7): the middle and a ring at 0.62 R, a quarter's edge
+  noisy. Each has its roofs' colour (82% of its houses; look bit 15 + bits 12-14, structmesh.wgsl picks the roof's
+  variant from it), a height bias and a landmark tower (the middle's 6 storeys over its neighbours, the others' 3); towers
+  stand only on a tile with open ground beside it (a door, a lift: nav).
+- **Streets.** Irregular towns' main lanes are two tiles wide within 0.6 R; the plaza 2.8 tiles across in a big town.
+- Doors: the front door prefers a street, then a yard; a door step with no open tile across its side (a T-junction where
+  radial rings double) links to the nearest open ground within 6 m.
+- Not ours (listed for main): the lighter diamond of water is the streamed window's water against the tiles' water past
+  it; the straight brown line across the sea is the atlas's road to the old town (atlas/ways.ts), stamped before the city.
+
+Shots: C:\Projects\shots88\structures\city-irregular-0.png (the atlas, start zoom), dist-0.png (the viewer, r 90).
+
+## 2026-10-30 — round 117 (`structures`): linear features — roads, viaducts, town walls (STR11)
+
+The user: "linear tile features we can use for bridges, roads, railroads and extrude along splines". src/structures/linear.ts.
+
+**Why the same warped modules.** A segment of a road between two spline samples is a frame like a tile's (its right and
+left edges at either end, each end's across-direction its own tangent's normal, so consecutive segments share edges
+with no gap), so roads, rails, walls and viaducts are more modules (road, rail, wallseg, wallwalk, deck, archspan) in
+the same library, drawn by the same pieces path — no renderer of their own, the look shared with the buildings.
+
+**Roads and bridges.** A road out of the town samples the ground every 2 m and makes its profile: forward and backward
+passes that only raise, so it's never steeper than a 14% grade — valleys and water are filled by the deck. Where the
+deck stands more than 2.6 m over the ground (or over water, 3 m up) it's a bridge: deck pieces (slab, paving, parapets;
+their foot the deck's underside at each end, so the deck follows its grade) and arch pieces under them (their foot the
+ground at each corner, their top the deck): spans about as long as the bridge is high (5-12 m), so a tall viaduct gets
+Roman proportions and a shallow crossing a low segment — the module scales, the height decides. Roads inside the town
+turn the tiles under them into street before the massing. `CitySpec.roads` (viewer slider; the game `&croads=`, 2).
+
+**Town walls.** `CitySpec.walls` on a non-radial town: a loop at 1.06 R following the ground, the walk 8 m over it (the
+body's top a height over its foot, so the walk follows the ground), crenellated parapets both sides, round towers with
+spires every 28 m and at each run's open end — gaps where the roads go out (the gates' flanks), none over water.
+
+**Nav and columns.** A node every 4 m along roads (street), bridges (bridge) and wall walks (rampart); a road's first
+node joins the town's nearest open ground, runs join where they meet, a wall run's ends come down by stairs. Walls
+(foot to walk) and bridge decks (their arches open underneath) are each their own External instance.
+
+**Found in the game: the ground stretched up over the buildings.** The hybrid renderer draws most chunks as a lattice
+through the columns' tops; a building's External top is a column top, so the lattice rose to it — dark mottled
+pillars under the houses. The host now tells the hybrid each claim's box (`touched` → `HybridChunks.edit`, as the
+resting rock's do): those chunks are the field mesh's, which leaves External out.
+
+**Measured** (scripts/perf/structcity.mjs, phone proxy, q=low, every system on): the world pass 2.69 → 4.57 ms at the
+start's zoom, 2.84 → 5.10 ms at ×3 with two roads and the voxel chunks (the frame's total moved by other agents' load).
+About 2 ms on the desktop iGPU at the phone's resolution: STR10 (a LOD for distant pieces, fewer roof masks) before
+bigger cities.
+
+Unit tests (30): the profile never steeper than its grade, a bridge in a valley's middle; roads out of a town in a gorge
+cross it on arched bridges and their far ends reach the plaza; a walled town has wall runs, parapets, and its rampart is
+reached by stairs.
+
+Shots: C:\Projects\shots88\structures\lin-0/1/2.png (viewer: viaducts over a gorge, walled towns), bridge-0/1.png
+(close), cityw-0/1.png (the atlas: a walled contour-voronoi town, a viaduct across the bay).
+
+## 2026-10-30 — round 117 (`structures`): the far look (STR10)
+
+**Why by zoom, not by distance.** The game's camera is orthographic: every piece is as small on screen as the zoom makes
+it, wherever it is. So one number decides: under `Renderer.structLodZoom` (7 screen pixels a cell, `?structlod=` to tune)
+every piece draws its far look. Walls: the slab's faces, each opening a flat quad of its fill, shutters and the timber
+beams flat on the face (~20 triangles for ~200: a window's frame, sill, bars and reveal are under a pixel there). Roofs:
+the top only (no underside, no fascia). The far look is the same instances drawn with another module's index range
+(`DrawRange.lod`; no re-sorting, no second buffer); roofs' far looks are made on first ask like their full ones. The
+sun's shadow map always draws the far look (its texels are bigger than a window frame). The viewer uses it past 160 m
+(`?lod=0|1` to compare): at city scale the two are hard to tell apart (shots lod-0/1.png).
+
+**Measured** (scripts/perf/structcity.mjs, phone proxy q=low, all systems, the same 281-building town with two roads):
+at the start's zoom (4 px a cell: the far look) the world pass 2.70 → 2.86 ms (+0.16; it was +1.9 ms at full detail),
+the shadow pass 0.70 → 0.69 (was +0.12). At ×3 zoom (12 px a cell: full detail) +2.6 ms — the city then fills the
+screen with forward-shaded pieces (render.wgsl `lighting` per fragment, no depth pre-pass) where the terrain is deferred;
+next steps there: the pieces into the G-buffer path on the phone, or a depth pre-pass. Triangles: a 90 m town 1.78M full,
+0.27M far (6.6×).
+
+## 2026-10-30 — round 117 (`structures`): mega tiles — a domed temple, the keep (STR12)
+
+The user: "some WFC and mega tile features (features multiple tiles big)".
+- **A domed temple over four tiles.** In a town of R ≥ 30 m: an interior vertex of valence 4 whose four tiles are built
+  lots of one block on ground within a storey, nearest 0.3 R from the middle. It is the first building (the rest grow
+  round it); its frame is the four tiles' corners opposite the shared vertex, counter-clockwise round it — so a module
+  in its unit frame warps over a patch of irregular tiles like a tile's module over one tile. Pieces: a drum of two rows
+  of tall windows (a storey over the middle's houses), a ribbed dome sheathed in green copper (a new palette part, Dome:
+  styles × 15 parts now; SP_PARTS and SP_VARIANTS come from TS into the WGSL, not written twice), a lantern.
+- **Bulwark's heart.** A radial city's plaza gets a great round keep (2.7 tiles across, 4 storeys over the middle's
+  houses, a spire), a ring of plaza left round it; no tiles of its own — its columns rastered from its frame, a door to
+  the plaza and a lift to its top in the nav.
+- Landmarks' nav: every mega building has a foot, a crown (a tower's by a lift, a temple's gallery by stairs) and a door
+  onto the open ground beside it.
+Shots: C:\Projects\shots88\structures\mega-0.png (the dome among the hearth roofs), mega-1.png (the radial keep).
+
+## 2026-10-30 — round 117 (`structures`): towns in the earth; buriable assets drawn (STR13, STR14)
+
+**Built into the earth** (the user: "Deep cut quarries and cities built into the earth"). `CitySpec.sunk` (≥ 0): lots up
+to three storeys of fall are built, a building may span 2.5 storeys of it, its floor on the ground's low side (less
+`sunk`) and its back in the hill, with storeys enough that its roof stands a storey clear. A wall whose ground stands over
+60% of its storey is buried: blank, never the front door. Its External claim takes only the free cells, so the buried part
+stays the hill's. The viewer's `cliff` ground shows it. Quarries (a pit cut by the terrain track, the town in its walls)
+need the terrain track's carving contract: open (STR13 stays open for that half).
+
+**Buriable assets drawn** (the user: "buried statues and fallen structures and stones … skew add visual interest"). An
+affine piece (flags bit 2): the piece's first three rows are a 3 × 4 local → world transform, the module in metres —
+so any turn, tilt or skew. `assetPieces(placed)` makes each kind + seed's mesh a library module once (`Library.add`) and
+each placement a piece; any host draws them with the city's light and palette (stone, bronze). The terrain track lays
+them: `structures.asset(kind, seed).cells(transform)` for its External claim, `structures.assetPieces([...])` to draw.
+The viewer's `assets` view: each kind upright and skewed half-sunk beside it. Shot: assets-0.png.
+
+## 2026-10-30 — round 117 (`structures`): towns grow as stored progress (STR16)
+
+The user (round 110): "towns should visibly grow but slowly … we store progress and so although you could watch the
+agents build you can also leave and come back and more tiles will have been completed". A plan has a build order
+(`CityPlan.order`: by distance from the middle with noise, landmarks early — the old core first); `grown(plan, p)` is
+the town with the first p share of it standing and the next building a site (its storeys so far, no roof yet), its
+façades worked out again for what stands (a wall a missing neighbour would hide shows). Stored progress is that one
+number per town (`CitySpec.progress`; the game `&cgrow=`, the viewer's `grown` slider); the plan is re-made from the spec.
+Agents building a site, and progress advancing by rate × elapsed time while away, are the inhabitants' and the run's.
+Shots: grow-0.png (0.15: the core round the plaza, the temple and the towers), grow-1.png (0.55).
+
+## 2026-10-30 — round 119 (`structures`): the settlements on the structures contract; density drives what's built (STR15)
+
+The user (DECISIONS round 119): "Let's move the old settlement code over and have them actually use the new structures.
+Can we get farms and smaller huts for lower population density? Is it density driven+grid based now?"
+
+**The question, answered.**
+- *Before*: grid based, barely density driven. A settlement's districts were overlay grids (settle/grids.ts: the four
+  styles → lots → quads), a fields lattice round it. The growth field (field.ts) picked *which* lots got houses (built
+  where its intensity passed `BUILT_V` 0.35) and nudged storeys up where it was strong; every building was the same kind
+  of house in the civ's materials, stamped into the columns as voxels (build/town.ts), and the fields a ring of furrowed
+  lots. The structures track's cities (round 117) were grid based with radial fall-offs, no density input at all.
+- *Now*: grid based **and** density driven, as two separate concerns. The grid (the tile system: irregular,
+  contour-voronoi, radial or orthogonal for the town; Voronoi plots for the farmland) says *where tiles are*. The density
+  (`DensityFn`, a settlement's from its growth field) says *what's built on each*: built or a yard; a town house (dense:
+  storeys rising with the density) or a thatched hut (thin); out in the farmland a farmstead (a farmhouse and a barn) or
+  crop strips, an orchard or a pasture (thinnest). Size scales the density (a hamlet's middle reaches huts, a city's town
+  houses), the field is smooth, so the kinds blend: houses and huts mix where they meet, farmsteads string along roads.
+
+**Why one concern each.** settle/plan.ts plans (its town via `planCity` + the record's buildings, spots, jobs, sites);
+settle/view.ts shows and claims (pieces drawn, External columns); life.ts lives (builders raise a site storey by storey:
+`LifeIO.raise`, no voxels stamped). The buildings aren't stamped into the land any more (they were build/town.ts voxel
+columns: the round-117 representation argument — pieces for the look, External spans for the sims). The far land's
+raster is told where the roofs are (`rasterColumns`) since the columns no longer hold them.
+
+**What changes for other systems (contracts unchanged, data changed):**
+- `Settlement` records: the same fields; `buildings[].cells` are the plan's tile ids (were LotGrid cells); `grids` are two
+  (the town's tile system, the farmland); a building's `use` now includes huts' and barns' (barn = granary: `store`).
+- `SettlementPlan`: `city` (the structures plan) and `standing` replace `grids`; `SiteSpec` is a plan building
+  (`building`, `storeys`, `door`) — no polygon, no materials; `free` lists buildings in build order.
+- `LifeIO`: `raise(site, storeys)` replaces `townIO` (no stamping); `LiveSite` has no polygon.
+- Spots (homes, stores, posts, farm, mine, site, pile, trade) and stores' rates as before — the agents' jobs and homes,
+  the GM's facts (wiki: records only) and runplan's region fields don't read the plan. `Settlements.handedOff` and
+  src/structures/host.ts (round 117's one city) are gone: every settlement is a structures town now;
+  `?city=<system>&cstyle=…` plans the nearest town with those (`Settlements.override`).
+- build/town.ts, build/towngrid.ts and settle/grids.ts stay for the sandbox's town tool and the world API (`api/world.ts`)
+  — not the settlements'.
+
+**New in structures:** `DensityFn` and `defaultDensity`; building kinds (house, hut, farmhouse, barn) with their wall
+sets, thatch roofs, steeper hut roofs, a barn's tall storey; the farmland tile system (tiles/farmland.ts) with crop strips,
+orchards, pastures, farmsteads, fences and hedges as linear features; `keepOut` discs (a quarry); draped pieces (flags 4:
+paving, crops, fences laid on the ground as the game has it now — the plan's raw ground was up to ~3 m off where roads
+were graded and banks cut, which showed as crop rows standing in the air); bare columns under fields, streets and
+buildings (no meadow tufts through a crop).
+
+**Measured** (scripts/perf/structcity.mjs, phone proxy 412×915 dpr 2.6, q=low, every system on, parked at the city s55 —
+2356 pieces, 209k triangles full / 59k far): the world pass 2.17 → 2.34 ms with the settlements drawn at the start's
+zoom (the far look), 2.29 → 2.90 ms at ×3. Plans in the game: a city's pieces made in 12 ms when its plan arrives (main
+thread, once), a village's 4-5 ms.
+
+**Tests:** src/settle/plan.test.ts (5: a town's buildings are the plan's with records and doors, two sites and room to grow,
+fields worked; the land gets only ground works and the raster the roofs; a hamlet mostly huts, a city mostly houses,
+farmsteads; a site's roof only when its last storey is up; deterministic); structures.test.ts +3 (dense → houses, thin →
+huts, a falling density mixes them with no ring; farmland strips, fences, farmhouse + barn per farmstead, thatch).
+`npm test` 119 + 1 expected fail; `npm run smoke` passed. In the game (scripts/structtowns.mjs): city s55 (70 houses, 40
+huts, 2 farmsteads, 106 buildings claimed), town s82, village s52 (15 huts, 3 houses, a farmstead, 24 field strips).
+
+**Open:** a field on a steep or cut slope still shows its strip as a plateau with an edge (draped per vertex, 4 along a
+strip); hamlets weren't in this world's atlas to look at; quarry towns (the terrain track's carving) still open.
+
+Shots: C:\Projects\shots88\structures\towns-city-0/1.png, towns-town-0/1.png, towns-village-0/1.png,
+phone-towns-city-0/1.png (phone proxy), dens-0/1.png (viewer: houses → huts → farmland).
+
+## 2026-10-30 — round 119 (`structures`): main's review of the towns — spikes, fins, a wall in the river
+
+- **Grey spikes through the city** were draped paving: each vertex took the live ground under it, and next to a
+  building that's an External column whose top is the roof — a paving vertex there jumped up to the roof. Draping is now
+  per piece: the live ground at the piece's four corners (blended over the three nearest columns, External ones left
+  out), bilinear between them, so a piece stays one plane; where a corner's ground has moved more than 1.5 m from the
+  plan's (a cut, a terrace, sand slid since) the whole piece goes under the ground instead of hanging as a curtain.
+- **Crop fins**: from the game's steep camera the crop's 0.3 m-tall rows read as boards standing up (rows running up the
+  screen, their sides lit apart from their tops). The crop is now soil with rows only a few centimetres proud, bevelled,
+  a 0.25 m piece; strips on ground falling more than 1.5 m across a piece are pasture.
+- **The wall in the river**: a wall-ring point is left out when it or the wall either side of it has any water under it
+  (sampled every metre, even shallow), so the runs end in towers either side of a river — a water gate.
+Shots: towns-city-1.png, towns-village-1.png, phone-towns-city-1.png, phone-towns-village-1.png.
+
+---
+
+## 2026-10-30 — round 117, `inhabitants`: creatures with bodies, herds and predators that stalk
+
+The user (round 117): "rain world style procedural animation with secondary features like capes or fur. I want
+hunanoid an non. It doesn't have to be high fidelity it does have to be readable and look cool." and "Fill the
+wilderness with boids of various animals. Herds, predators that stalk." The design and every choice's why:
+docs/INHABITANTS.md. What changed and the reasons the measurements gave:
+
+- **A contract first** (src/api/contracts/inhabitants.ts): other tracks give species, paths and ability hooks as data
+  and read presence (density, threat) — hostile creatures as the "transient soft barriers" of r117 for the run planner.
+- **Bodies as points with roles; low-poly spindles on the GPU through Renderer.addMesh.** Voxels at a deer's size are
+  2-3 blocks and lose the gait; spindles keep limbs readable at 48 vertices a bone. addMesh gives lighting and shadows
+  for a 2-line render.wgsl tweak (a vertex's word as a colour).
+- **GPU, one thread a creature** (bins, behave, animate, mesh): per frame and growing with the count. Measured on the
+  Intel Xe-LPG, the atlas with every system, phone proxy: 0.57 / 1.07 / 2.73 ms for 100 / 1 000 / 5 000 creatures at
+  the far LOD; the mesh is most of it (one thread writes a creature's vertices; IN6).
+- **First frames drew nothing on the bestiary and the atlas**: the creatures stood on `sfZ(surface)`, the solid top,
+  and the warmup's dust skin (the loose layer, ~1 cell) covered them. The ground is `max(sfZ + driftAt, bodyTopAt)`,
+  as the particles' (flagged: every kernel copies it; IN11).
+- **The atlas's slide** moved them the wrong way: WorldCore.onShift's (dx, dy, dz) is how far the window moved, so
+  what's in it moves by minus that (the agents' Translator). A Dawn test pins it.
+- **Readability on the phone** (main's review of the first shots: "the stalk itself isn't readable"): drawn bigger than
+  life when the view is wide (24 px a cell of body, up to 4x, about the feet; behaviour keeps true sizes), a dark
+  footprint under each for contrast, charcoal wolves; the stalk crouches (the body sinks 28%, the knees fold), the
+  wolves burst when the herd bolts, the one they reach is knocked down, a bolted herd settles where it ran.
+- **The herd ran at the wolf** at first: the threat vector summed the direction *to* the predator. A Dawn test of a whole
+  hunt (stalk, burst, one caught, the rest > 10 cells off) caught it and holds it.
+- **Abilities only on the hunt**: a dragon at rest beat its wings every 1.2 s (dust and knocked agents for nothing); now
+  wing beats when prey is within twice the breath's range, breath within its range.
+- Tests: 23 unit (rigs, presence, paths, the species table), 10 on Dawn (feet, IK lengths, slopes, the herd's bolt, the
+  gale, paths, the mesh's counts at both LODs, the slide, presence, the hunt, the dragon). Shots:
+  C:/Projects/shots88/inhabitants (atlas-herd, atlas-hunt.gif + strip, atlas-dragon, viewer-phone).
+
+- **(later, IN13) True size again.** The user: "Keep the creature small for now I want to add larger creatures but I
+  want to improve the generator even more and talk through increasing the quality and adding composable creatures via
+  items and mounts." drawScale defaults to 1 (?lifescale= kept as a knob for that talk); the footprint and the wolves'
+  contrast stay. Shots on the phone proxy (412x915 dpr 2.6): truesize-startzoom.png (the atlas's opening zoom: the herd
+  is specks) and truesize-playzoom.png/.gif (zoom 16: legs, necks, heads read). The new files' line endings made LF
+  (some had been written CRLF by a script; whole-file diffs on files that are all new on this branch).
+
+## 2026-10-30 — round 117 (`flora`): plants from parameters — L-system trees, CA roots, species by fields, soft barriers
+
+The user (DECISIONS round 117): "For plants, L systems are great for branches and then cellular autonoma for roots. I am
+ok with stylized or low fidelity but I just want it to be readable and pretty and look integrated with the world. Plants
+growing on fields and being instances that way into other geometry is key." And: "Waking through lead covered forest
+floor with silver birches towering above and leaves falling and blowing in the wind would be breathtaking ... Make tall
+grass that blows in the wind. Make leaves or dust." And (part 3): "plants making a barrier (even a soft barrier like
+slowing you down or requiring you to cut through) is a good thing". ARCHITECTURE "Flora"; BACKLOG FL1-FL19.
+
+**What was there.** vegplan.wgsl decides where trees stand (four species by a hash) and vegprep.wgsl draws them as
+boxes, or with `?meshinst=1` as four hand-made low-poly meshes (MI3, "keep?" unanswered). Grass tufts and flowers were
+quarter-cell boxes. Falling leaves were particles in the fall only. No L-systems, roots, tall grass, reeds or biome.
+
+**Built.**
+- src/flora, pure TS, unit-tested:
+  - a stochastic L-system and a 3D turtle with tropism (rng, lsystem.ts);
+  - a root cellular automaton (roots.ts: grow where exactly one neighbour is root, by soil, with a down-bias; the pipe
+    model picks and thickens the visible surface roots);
+  - a mesh builder (mesh.ts: faceted tubes, leaf clusters, birch's hanging leaf diamonds, conifer needle tufts,
+    two-sided blades);
+  - eleven species as parameters (species.ts);
+  - generate(id, seed, {growth});
+  - the game library (library.ts);
+  - placement (fit by niche, the CPU ports of what the GPU stands);
+  - passability (passability.ts);
+  - viewer scenes (scene.ts).
+- The game draws it, on by default on this branch (`?flora=0` for the old way):
+  - vegprep writes every tree as one of its species' library variants;
+  - meadows carry tall-grass clumps and wildflowers, the woodland floor ferns, shrubland its thickets;
+  - florafield.wgsl (new) puts reeds on banks by water depth and moisture;
+  - meshinst draws them all, through floralook.wgsl (sway and colour), which the viewer shares.
+- Birch woods: vegplan.wgsl birchWood is world-scale value noise standing in for a biome field. Birches tower at 11-17
+  cells and let a few leaves go all year (particles.wgsl).
+- The woodland floor reads as leaf litter in drifts: meshdraw.wgsl, a look only, so the tiles inherit it.
+- The contract src/api/contracts/flora.ts (FL1), on the world API. The viewer page flora.html (FL7). The perf test
+  scripts/perf/flora.mjs (FL8).
+
+**Why these choices.**
+- *Parameters, not meshes.* One generator, many plants. Variants are seeds, and a species is one entry.
+- *A fixed library of variants drawn by instancing,* not a mesh per plant. One indexed indirect draw a variant is what
+  the phone affords for thousands of plants. The library takes ~70 ms to make at start.
+- *Roots as cells.* That is what terrain, erosion and excavation speak (FL16 takes them into the world). Only the
+  pipe-model main roots become wood; the first cut drew every root cell and roots were 60 % of a birch's triangles.
+- *The packed vertex `w = part + sway`.* The instanced renderer's format and buffers stayed as they were.
+- *No stored plants.* Where plants stand is still the succession field plus hashes. The CPU's ports are now pure
+  functions tested against the GPU (test/gpu/flora-plan.test.ts runs vegPlan on Dawn against planTree for a 64² window
+  with an origin).
+- *A stand-in biome as noise.* No biome field exists yet (climate has temperature and moisture only). birchWood is the
+  one place to swap one in.
+- *Passability from the same plan.* What you can't walk through is what you see:
+  - coverage = 1 − exp(−Σ fill·footprint·reach / area);
+  - a tree blocks only its trunk (you walk under the canopy);
+  - shrubland (succession 2.6-3.6) is the thicket. Under the woods only a fifth of its shrubs are drawn, so the forest
+    floor is open: the first cut drew all of them and a wood was an impassable dark-green carpet.
+
+**Found and fixed on the way.**
+- api/plants.ts's CPU port of vegPlan hashed window columns without the window's origin, so in a streamed window its
+  trees (treeAt, fell, logs) were another window's (FL9).
+- In the atlas, the plants of a whole 1024² window were emitted every prep with no view cull: 33,780 flora instances and
+  3.3 M triangles at zoom 14, the shadow pass drawing them all again. Now:
+  - vegprep and florafield leave out plants whose box and shadow are off screen (floraput.wgsl floraSeen, the camera
+    bound at 31 as renderprep's PrepCam);
+  - grass, flowers and ferns thin out under 8 px a cell and are gone under 4.5 px (the ground's plant cover paints the
+    meadow there);
+  - only trees and thickets cast shadows.
+
+**Measured** (scripts/perf/flora.mjs, Intel Xe-LPG iGPU, the phone tier q=low 412x915 dpr 2.6, the densest wood near
+?at=13728,4768, every system in play; GPU ms a frame from the profiler; the GPU shared with other agents' checks, so
+±1 ms):
+
+| | zoom 14: flora instances / triangles | draw | shadow | GPU a frame | zoom 5: draw | GPU a frame |
+|---|---|---|---|---|---|---|
+| boxes (`?flora=0`) | — | 3.94 | 0.68 | 12.52 | 4.97 | 12.75 |
+| flora, no cull (first cut) | 33,780 / 3.3 M | 4.95 | 2.65 | 12.03 | 4.77 | 10.57 |
+| flora, culled + grass LOD + shadow kinds | 3,772 / 515 k | 5.58 | 0.61 | 13.34 | 5.26 | 12.21 |
+
+So the flora costs ~+0.5-1.6 ms of draw at the close zoom over the boxes, and about even at zoom 5. The shadow pass is
+back to the boxes' cost.
+
+**Viewer** (flora.html): biome scenes, or one plant growing (the L-system re-made at fewer iterations as it grows). The
+plants are generated in 7-100 ms a scene, 0.3-12 ms a plant. Triangles a plant:
+
+| birch | conifer | broadleaf | giant | tall-grass clump | fern | ivy | reeds |
+|---|---|---|---|---|---|---|---|
+| ~1.9-2.5 k | ~1.6 k | ~0.6 k | ~1.4 k | 72 | 260 | ~390 | ~140 |
+
+**Shared-system tweaks (for main to consolidate):**
+- vegplan.wgsl: birch heights and birch woods.
+- api/plants.ts: the origin, planTree, birchWood and vegCol.
+- vegprep.wgsl: the flora instances, floraSmall, the view cull, binding 31.
+- meshinst.wgsl: parts ≥ 3 go through floralook.
+- render/meshinst.ts: draw(…, only) for the shadow kinds.
+- renderer.ts:
+  - the library;
+  - the indirect buffer sized by kinds;
+  - florafield;
+  - the camera bound to vegprep.
+- particles.wgsl: birch leaves all year.
+- meshdraw.wgsl: the litter look.
+- api/world.ts: `flora`.
+- level.ts: `reclaimed.flora()`.
+- vite.config.ts: flora.html.
+- contracts/index.ts.
+
+**Conflations flagged** (the user's principles):
+- vegprep.wgsl both lays out box plants and writes flora instances, and is at the 8-storage-buffer limit. A flora kernel
+  of its own for all the library's plants (florafield's shape) would free it (FL10).
+- vegPlan's CPU port still exists twice (api/plants.ts planTree and flora/placement.ts standsAt for the small plants).
+  They are tested against the GPU for trees only.
+- MI3's question (meshes as the default for trees) is answered on this branch by doing it. Needs the user's yes.
+
+### Round 117 (`flora`), follow-up: readable on the phone tier
+
+Main, looking at the shots: the desktop birch wood (q=high) "is lovely". On the phone tier, though, the trunks and
+branches "break into dotted white dashes and the canopy is speckle; it reads as noise, not a forest". The cause is that
+the low tier renders at half scale (maxDpr 1 × renderScale 0.5): at zoom 14 a cell is 7 render pixels. A birch twig
+0.05 cells across is then a third of a pixel, and a grass blade 1.4 px.
+
+**Fixes.** The plants are now made for the pixels they'll get.
+- The renderer passes render px a CSS px (the tier's dpr cap × render scale) to the library, which builds its plants for
+  zoom 12 at that density (`generate(id, seed, {px})`):
+  - wood is at least ~1.7 px wide, and twigs under half of that are left out;
+  - leaf clusters are at least ~3 px and merged (fewer, bigger), so the crown's volume is about kept;
+  - grass gets fewer, wider blades (≥ 1.7 px).
+  - At desktop densities (px ≥ ~30) nothing changes (unit test).
+- Grass, flowers and ferns thin by render px a cell, not CSS px: sparse under 11, gone under 5. At the phone's zoom 14 a
+  full meadow of clumps read as static; the ground's plant cover paints it instead.
+- The leaf litter is drawn in half-cell flakes, not per-pixel speckle.
+- The thicket shrubs are lighter and 0.8 the size; the birch crowns are fuller (three leaf diamonds a site).
+- Reeds stand only on a bank: open water and dry land both within two cells, in water at most 0.3 deep, never under
+  the sea's level. The first cut stood them all over a shallow lake.
+
+Shots of the same spot (?at=13728,4768):
+- phone before and after: C:\Projects\shots88\flora\m7p-compare.png, m9-compare.png;
+- desktop: m8d-flora1-z14.png.
+
+The remaining speckle on the phone is the ground's own per-cell look at half scale, not the plants'.
+
+## 2026-10-30 — round 119 (`flora`): the birches' cost on the phone
+
+The user, verbatim (DECISIONS round 119): "I had some bad performance with the birches on mobile." Main: fix that
+first; target the birch wood within ~1 ms of the old boxes on the phone proxy, measured with the GPU otherwise idle, and
+a bench link the real phone can run.
+
+**What cost.** These are counts at the showcase (?at=13728,4768), zoom 14, on the phone tier, after round 117's cull and
+before this work:
+- birches were their full ~1.6-2.5 k-triangle meshes at 90 render pixels tall;
+- the thicket shrubs had no LOD: 600 of them were 128 k triangles at zoom 5;
+- every vertex of every plant looped over all ~45 kinds to find its kind (meshinst.wgsl miKind), on the phone's
+  vertex stage;
+- the birches let leaves go all year at 0.12.
+
+**Changed.**
+- Levels of detail by height on screen in render pixels:
+  - a tree is full from 150 px;
+  - coarse from 55 px: made for 2.2 px a cell, so the trunk and main limbs stay (a birch's white trunk is what makes it
+    read; the first coarse level, made for 1.5 px, lost it and the birches read as green blobs on the phone), twigs and
+    roots gone, leaves merged, ~120-550 triangles;
+  - far below that: ~20-30 triangles, a trunk and the crown's masses, from the same skeleton;
+  - a thicket under 25 px is its far lump.
+  - The library lays out the levels per variant (FL_<ID>_L1/L2), so a tree keeps its variant across levels.
+- The kind rides in the vertex's w (+16 × kind, baked by render/meshinst.ts), so finding it is one step, not a search.
+- Three variants a tree species (two for the giant): with three levels that is still ~40 kinds, a draw each. A flora
+  kind holds at most 4096 instances, not 8192: 11 MB, not 23. The view cull keeps on-screen counts far under that.
+- The birches' all-year leaf fall is halved (0.06).
+- florafield skips off-screen columns before its 5 × 5 bank search. A bank also needs six dry columns of the 25: a lone
+  dry line through held river water isn't one.
+
+**Measured.** scripts/perf/flora.mjs, Intel Xe-LPG iGPU, phone tier, the GPU held alone by the runner's timing lease.
+Flora and boxes were alternated twice (`--variants 1,0,1,0`), because single runs swung ±1-3 ms. GPU ms a frame:
+
+| | zoom 14 GPU | draw | shadow | renderprep | plant triangles | zoom 5 GPU | draw |
+|---|---|---|---|---|---|---|---|
+| boxes (`?flora=0`) | 12.45, 12.04 | 4.01, 3.90 | 0.69, 0.67 | 0.72, 0.70 | — | 11.50, 11.48 | 4.57, 4.57 |
+| flora (this) | 12.16, 11.18 | 4.14, 3.87 | 0.46, 0.43 | 0.82, 0.76 | 135 k | 11.12, 11.65 | 4.26, 4.44 |
+| flora (round 117, culled) | 13.34 | 5.58 | 0.61 | 0.78 | 515 k | 12.21 | 5.26 |
+
+The flora is now within noise of the boxes: draw ±0.2, the shadow 0.2 cheaper, renderprep ~0.1 dearer.
+
+**The phone's own check.** `?florabench=1` (src/flora/bench.ts), one link, about two minutes, works headless:
+- it parks at the woodiest block near the start;
+- it measures frame times (and the GPU's where the adapter times it) at zoom 14 and 8 with the flora;
+- it reloads with `?flora=0` and measures the same;
+- it shows both, tap to copy.
+
+/?skipmenu=1&level=atlas&tutorial=0&at=13728,4768&florabench=1
+
+Shots: C:\Projects\shots88\flora\m11-compare.png (phone before, after, and the lake at zoom 8).
+
+## 2026-10-31 — round 120 (`merge120`): rivers, cities, animals and trees merged; one ground function
+
+The user (round 120, verbatim): "Rivers trees, cities and animals should all be merged by the way". `places` b7bd8f9
+took `terrain` d2c1384, `structures` 461b966, `inhabitants` f5fcada and `flora` 18c3bdb in that order (each branch's
+origin tip). Code conflicts were small: `api/contracts/index.ts` exports terrain, inhabitants and flora; `level.ts`'s
+frame updates the settlements' pieces, then the creatures; `vite.config.ts` builds every viewer page (main, contract,
+structures, flora) and hashes both new pages. The rest auto-merged: the renderer's structures (`enableStructures`, its
+own pipelines) and flora (the library through meshInst, `florafield`) don't share state; `render.wgsl` has terrain's
+`underCover` and the inhabitants' skin colour side by side. Docs kept both sides; BACKLOG is places' with each track's
+own section re-added (one `# Backlog`).
+
+Stand-ins kept (play isn't merged): terrain's `PassCaps` and flora's passage caps stay until play's ControllerProfile
+lands, when both read it.
+
+One ground function (IN11). Seven kernels spelled the ground a thing stands on as
+`max(solid + driftAt(q), bodyTopAt(q))` (water_flux twice, lava_flux, sediment, particles three times, renderprep
+twice, and the inhabitants' new copy). It is `groundZ(q, solid)` in common.wgsl now, each kernel passing its own solid
+top (its surface binding, or sediment's base) — common.wgsl can't read `surface` itself, since not every kernel binds
+it. phys.wgsl's `groundAt(c, z)` (the layers under a body's z) and renderprep's `groundTop` (the contiguous stack for
+hidden faces) are different questions and stay. Same expression, same results: npm test passes unchanged.
+
+Tests after each merge: terrain 111, + structures 152, + inhabitants 185, + flora 224 passed (1 expected fail, 2
+skipped).
+
+The gate (desktop iGPU, intel-xe-lpg):
+- `npm run smoke`: atlas ready in 43 s, no fatal, sim ticking.
+- tilegate (desktop 1600x900, phone 412x915 q=low, atlas/run/w384): every parked view 0 out of detail and 0 background
+  (21 of 21); slow pans (20 c/s) all ok. The goldens changed 5-54% — rivers off the texel grid with banks, the towns
+  on the structures contract and the flora library's trees: each diff looked at, no void, flat fill or band; baselines
+  rewritten (--update). The fast pans (160 c/s): desktop z14/z8/z5 fail on places too (places 43.9/19.0/4.6 % undrawn,
+  merged 52.2/21.6/9.2 %); phone z8/z5 newly fail by 0.14-0.5 % of the screen (r225,215 and neighbours: tiles past the
+  window still `queued`/`making` when they come into view) — bisected to the terrain merge alone (e508caa), places
+  passes. The terrain's heavier compose makes the tiles arrive later on a fast pan; main accepted it for now (BACKLOG
+  M120-1).
+- driveprofile (q=low 412x915, alternated A/B, two runs each): places p50 9.8/9.9, p95 12.7/13.3, GPU 8.1/11.1 ms;
+  merged p50 9.9/9.8, p95 11.4/12.1, GPU 7.1/9.7 ms — within the iGPU's clock noise, no cost visible.
+- perf/flora (the birch wood, 13728,4768): flora z14 GPU 6.6 ms, z5 15.2; boxes (?flora=0) z14 12.4, z5 12.3 (the
+  clocks drift between the variants; FL20's alternated A/B is the better judge).
+- perf/structcity (s55): GPU 12.6 ms drawn vs 12.3 skipped at the start's zoom (world pass 3.0 vs 2.95); zoom x3
+  11.2 vs 12.9 — noise-level.
+Shots: C:/Projects/shots88/merge120/ (spawn, spawn-wide, river-fall, river-wide, city-s55, village-s52, birches,
+animals, animals-close; tilegate/). Seen while looking, already on places: a dark flat quad over the sand at the
+spawn's wide zoom (cmp-wide-5291.png, places' build) — M120-2; tall dark spires near the tilegate spot are in the
+old baselines too; the stretched triangles in the free camera at terrain's fall spot are on places' build as well (M120-4). The animals only come with `?life=1` (not in the default world) — M120-3, the user's call.
+
 ## 2026-10-31 — round 120 (`solver`, step 1): one world gravity, no speed caps, the rigid rock on a fixed step
 
 The physics design (DECISIONS round 106, AR4) names three causes of "floaty" and "choppy": four gravities, speed caps

@@ -173,9 +173,13 @@ async function main() {
 
   // ?atlas=view: the atlas viewer (round 67); ?skipmenu=1 goes straight to the level (debugging, scripted tests)
   if (params.get('atlas') === 'view') show(await AtlasView.create(host));
+  // (round 117, terrain track) ?terrain=view: the terrain viewer — the atlas view with the region graph, its requests and the flood tool
+  else if (params.get('terrain') === 'view') show(await (await import('./terrain/viewer')).TerrainView.create(host));
   else if (params.get('skipmenu') === '1') await startLevel(params.get('level') ?? 'valley');
   else await startMenu();
   bootMark('level-ready');
+  // (round 119, flora: ?florabench=1 — the birch wood's phone bench, flora on then off: src/flora/bench.ts)
+  if (params.get('florabench') === '1') void import('./flora/bench').then((m) => m.floraBench(params));
   if (pageBench === 'run') void pageBenchRun();
   if (bench === 'level')
     void benchLevel({

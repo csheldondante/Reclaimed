@@ -393,7 +393,8 @@ fn colFinish(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
   }
   // set lava, a cone: the rock added is basalt at the top
-  if (g.cap != 0u && !river) {
+  // (round 117: a boulder in a river's channel stands out of its water, bare rock — terrain/river.wgsl riverCut)
+  if (g.cap != 0u && (!river || top > g.rl)) {
     topMat = g.cap;
     cover = 0.0;
   }
@@ -703,7 +704,8 @@ fn colFinish(@builtin(global_invocation_id) gid: vec3<u32>) {
   o.lava = 0.0;
   // the open ground (not a form's top, not a hole in it): below the sea, water
   let open = !surfForm && abs(surf - topL) < 0.01;
-  if (open) { o.water = max(max(AP.sea - topL, 0.0), g.cw); }
+  // (round 117, terrain/sea.wgsl: only where the sea reaches — a basin under its level inland stays dry)
+  if (open) { o.water = max(select(0.0, max(AP.sea - topL, 0.0), seaOpen(g.a, g.coast)), g.cw); }
   // (round 90) a lake: its water to its level (the atlas's steady state: held still, riverFlow with no flow)
   // (on whatever's on top under its level too — a boulder, a form's top, a skylight down into a cave: flooded, no
   // dry island or hole under the water)
