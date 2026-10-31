@@ -146,6 +146,11 @@ each was implemented.
 
 - The user, verbatim: "I think that the tiled rendering on phones makes per system unreliable. We already found this. You need to toggle systems to measure the diff for an accurate number" → the physics bench measures each system's cost by toggling it (on/off windows alternated) and takes the frame difference; per-pass timestamps kept only as unreliable on tilers.
 
+- The user, verbatim, on the physics decision: "I suspect it will win after JB6 since my understanding is the teadbacks are very slow and it isn't clear what we need that for. I don't want to spend too much more time on physics. The new telekinesis, the dirt deforming and the objects and terrain interacting on impact makes this genuinely awesome to see in action and worth the lower FPS during intense scenes." and "Yeah that sounds good. Maybe merge and when do that work in a background worker thread. I have a document I want you to read and to discuss in the meantime."
+  → solver and judge merged into places on branch merge121 with lattice x runs as the default, then JB6 (no CPU readback
+  on the hot path; judge A's CPU work maybe in a Web Worker) on branch jb6. The user's design document "Living World —
+  Effects, Rituals, and Run Structures" (v3) is kept verbatim at docs/design/LIVING_WORLD_v3.md, for discussion.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
