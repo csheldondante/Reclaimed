@@ -42,7 +42,7 @@ each was implemented.
   Three to five areas to start, tuned by play. Followers take orders, and ordering them leads into a building mode
   (the hero's own settlements). The lich keeps raising the dead and rune casting (tornados, lightning); rocks mixed
   through ordinary soil so it has things to throw. Items in slots: held item(s), helmet, cape, shirt, pants, mount,
-  some asymmetric. Main's Pages workflow is now places' (0d4732e). BACKLOG RS20-22 next, FO1, LI1-LI2, IT1, PL20.
+  some asymmetric. Main's Pages workflow is now places' (0d4732e). BACKLOG RS20-22 next, FO1, LI1, IT1, PL20, PL21.
 
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
