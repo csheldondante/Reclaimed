@@ -14892,3 +14892,19 @@ p50 ~9.9 ms and p95 ~11 ms everywhere (the frame's cap here); GPU 8–12.7 ms a 
 (the line-up and the swung tanker the most); judge A 0.25–1.3 ms a pass, judge B (7e029fc merged) 24–36 ms submit-to-verdict
 — its GPU 1.7–5.2 ms, 32 KB read; the rest is waiting on the frame's readback; the column readback 20–41 ms latency,
 1.3–3 MB a read. data/perf/solver/physbench-headless.json.
+
+## 2026-10-31 — round 120 (`solver`): the physics bench reports like the others; the lattice's mesh room grows (SL21, SL22)
+
+The user: "This looks fantastic and seems fast but the bench does not generate an automated report or keep my phone
+awake the way the other benches do." ?physbench=1 now runs on the benchmark's own pieces (src/perf/bench.ts exports
+them; nothing copied): its panel; keepAwake on every page (re-asked on visibilitychange, each page's lock and every loss
+in the report: wakeLock, wakeLog); the device's facts (deviceFacts) on the first page; at the end the report is saved
+at once and the buttons are bench.ts's (Download report, Copy, Share…; reportButtons now takes the file's kind:
+reclaimed-physbench-<stamp>-<device>.json), the dev server keeps it (postDev, perf-reports/physbench-*.json), the last
+run stays in localStorage with a "Download previous run" while the next goes, and the card has one line a solver ×
+judge (src/perf/physsummary.ts, test/unit/physsummary.test.ts): the worst stage's p95/p99, physics ms (GPU passes +
+main thread), the judge's mean and worst ms, slow frames and their runs.
+
+The voxel lattice's mesh room was a fixed 16384 triangles a session; the user's rule is no GPU memory caps. It starts
+there and doubles on demand (Physics.growSkin: the records copied over, the kernels bound again, the renderer's draw
+made again) up to what one binding of the device holds — past that a body is refused as with no room.

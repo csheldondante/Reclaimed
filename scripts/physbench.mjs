@@ -39,6 +39,10 @@ try {
   }
   if (!report) throw new Error('no report in 40 min');
   const r = JSON.parse(report);
+  const card = await p.$eval('#bench-panel', (e) => e.innerText).catch(() => '(no card)');
+  console.log(`card:
+${card}`);
+  console.log(`kind ${r.kind} v${r.version}, wakeLock ${JSON.stringify(r.wakeLock)}, device ${r.device?.adapter?.vendor ?? '?'}, summary ${r.summary?.length}`);
   for (const row of r.rows) console.log(`${row.pair.padEnd(16)} ${row.stage.padEnd(34)} p50 ${row.p50} p95 ${row.p95} p99 ${row.p99} GPU ${row.gpu} phys GPU ${row.gpuPhysics} CPU ${row.cpuPhysics} judge ${row.judge.passes}× ${row.judge.ms} ms (worst ${row.judge.worst}, GPU ${row.judge.gpuMs}, ${row.judge.readKB} KB) read ${row.read.reads}× ${row.read.ms} ms ${row.read.kb} KB awake ${row.awake} slow ${row.slow}/${row.clusters} runs`);
   if (out) fs.writeFileSync(out, JSON.stringify(r, null, 1));
 } catch (e) {

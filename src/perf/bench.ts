@@ -702,7 +702,8 @@ type WakeSentinel = { release(): Promise<void>; addEventListener(t: 'release', f
 let wakeLock: WakeSentinel | null = null;
 let wakeWanted = false;
 let wakeHooked = false;
-const wakeLog: string[] = [];
+/** (round 120: the physics bench's too — src/perf/physbench.ts) the wake lock's losses, ms since the page began */
+export const wakeLog: string[] = [];
 async function requestWake(): Promise<boolean> {
   const wl = (navigator as Navigator & { wakeLock?: { request(t: 'screen'): Promise<WakeSentinel> } }).wakeLock;
   if (!wl) {
@@ -724,7 +725,7 @@ async function requestWake(): Promise<boolean> {
     return false;
   }
 }
-async function keepAwake(): Promise<boolean> {
+export async function keepAwake(): Promise<boolean> {
   wakeWanted = true;
   if (!wakeHooked) {
     wakeHooked = true;
@@ -736,7 +737,7 @@ async function keepAwake(): Promise<boolean> {
   }
   return wakeLock ? true : requestWake();
 }
-async function letSleep(): Promise<void> {
+export async function letSleep(): Promise<void> {
   wakeWanted = false;
   try {
     await wakeLock?.release();
@@ -746,7 +747,7 @@ async function letSleep(): Promise<void> {
   wakeLock = null;
 }
 
-class Panel {
+export class Panel {
   readonly el: HTMLDivElement;
   private line: HTMLDivElement;
   constructor(ui: HTMLElement) {
@@ -968,7 +969,7 @@ async function ioRates(device: GPUDevice, quick = false): Promise<Record<string,
 
 // ---------- device facts ----------
 
-async function deviceFacts(host: Host): Promise<Record<string, unknown>> {
+export async function deviceFacts(host: Host): Promise<Record<string, unknown>> {
   const { adapter, device } = host.gpu;
   const lim = (l: GPUSupportedLimits) => {
     const o: Record<string, number> = {};
@@ -1182,7 +1183,11 @@ async function clearWorlds(s: BenchState): Promise<void> {
   s.worlds = [];
 }
 
-function reportButtons(panel: Panel, body: string, previous = false): void {
+/**
+ * Download (the primary path), Copy and Share… for a report; `kind` names its file (reclaimed-<kind>-<stamp>-<device>
+ * .json) and the share sheet (round 120: the physics bench's too)
+ */
+export function reportButtons(panel: Panel, body: string, previous = false, kind = 'bench', title = 'Reclaimed benchmark', auto = false): void {
   const status = panel.text('');
   const say = (m: string) => (status.textContent = m);
   let name = '';
@@ -1194,12 +1199,14 @@ function reportButtons(panel: Panel, body: string, previous = false): void {
     } catch {
       gpu = '';
     }
-    return (name = `reclaimed-bench-${stamp()}-${await deviceTag(gpu)}.json`);
+    return (name = `reclaimed-${kind}-${stamp()}-${await deviceTag(gpu)}.json`);
   };
   panel.button(previous ? 'Download previous run' : 'Download report', !previous, () => void nameOf().then((n) => say(downloadJson(body, n))));
   panel.button('Copy', false, () => void copyText(body).then(say, (e: Error) => say(`copy failed: ${e.message}`)));
-  panel.button('Share…', false, () => void nameOf().then(async (n) => say((await shareJson(body, n, 'Reclaimed benchmark')) || 'this browser can’t share files: use Download')));
+  panel.button('Share…', false, () => void nameOf().then(async (n) => say((await shareJson(body, n, title)) || 'this browser can’t share files: use Download')));
   panel.el.appendChild(status);
+  // (saved at once, no tap needed — the button is there to save it again)
+  if (auto) void nameOf().then((n) => say(downloadJson(body, n)));
 }
 
 async function finish(host: Host | null, panel: Panel): Promise<void> {

@@ -80,7 +80,7 @@ export async function shareJson(body: string, name: string, title: string): Prom
 }
 
 /** On the dev server: the report kept in perf-reports/ (null when not served by it). */
-export async function postDev(body: string, kind: 'hitch' | 'bench'): Promise<string | null> {
+export async function postDev(body: string, kind: 'hitch' | 'bench' | 'physbench'): Promise<string | null> {
   if (!import.meta.env.DEV) return null;
   try {
     const res = await fetch(`/__hitch?kind=${kind}`, { method: 'POST', body, headers: { 'content-type': 'application/json' } });

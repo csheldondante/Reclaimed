@@ -35,6 +35,7 @@ export const MAX_BODIES = FRAG_BODY;
 const G_FRAG_MS = 7000;
 const HASH_N = 262144;
 /** triangles of meshes drawn over bodies (phys.wgsl skin), all together */
+/** (round 120: the start — the room grows on demand to what the device's bindings hold: Physics.growSkin) */
 export const SKIN_TRIS = 16384;
 const SKIN_V_BYTES = 7 * 16;
 
@@ -221,7 +222,13 @@ export class Physics implements SimSystem {
   readonly inst: GPUBuffer;
   readonly indirect: GPUBuffer;
   /** meshes over bodies, bent by them (render.wgsl vsSkin; Renderer.addMesh) and their draw args */
-  readonly skinOut: GPUBuffer;
+  skinOut: GPUBuffer;
+  /** (round 120) the skin buffers made again (grown): the renderer's draw of skinOut is to be made again */
+  onSkinBuffers?: () => void;
+  /** skin triangles there's room for now (grows: growSkin) */
+  private skinRoom = SKIN_TRIS;
+  private res: Record<number, GPUBuffer> = {};
+  private specs: Record<string, BindSpec> = {};
   readonly skinArgs: GPUBuffer;
   private skinSrc: GPUBuffer;
   private skinTris = 0;
@@ -267,7 +274,7 @@ export class Physics implements SimSystem {
     device.queue.writeBuffer(this.bodyTable, FRAG_BODY * 16, new Uint32Array([0, FRAG_CAP, 1, 1]));
     this.inst = world.buf('physInst', PV_CAP * 32, GPUBufferUsage.STORAGE);
     this.indirect = world.buf('physIndirect', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
-    this.skinSrc = world.buf('physSkinSrc', SKIN_TRIS * 3 * SKIN_V_BYTES, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);
+    this.skinSrc = world.buf('physSkinSrc', SKIN_TRIS * 3 * SKIN_V_BYTES, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
     this.skinOut = world.buf('physSkinOut', SKIN_TRIS * 3 * 32, GPUBufferUsage.STORAGE);
     this.skinArgs = world.buf('physSkinArgs', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
     device.queue.writeBuffer(this.skinArgs, 0, new Uint32Array([0, 1, 0, 0]));
@@ -319,11 +326,13 @@ export class Physics implements SimSystem {
       34: this.pushBuf,
       35: this.bstat,
     };
+    this.res = res;
     const kernel = (entry: string, spec: BindSpec) => {
       const all = { ...base, ...spec };
       const k = makeCompute(device, `phys-${entry}`, parts, all, entry);
       const g = makeBindGroup(device, `phys-${entry}`, k.layout, Object.fromEntries(Object.keys(all).map((b) => [b, res[Number(b)]])));
       this.k[entry] = { k, g };
+      this.specs[entry] = all;
     };
     kernel('predict', { 3: 'rw', 4: 'rw', 5: 'rw', 33: 'uniform', 34: 'uniform' });
     kernel('stats', { 3: 'rw', 4: 'rw', 5: 'rw', 6: 'rw', 35: 'rw' });
@@ -457,7 +466,7 @@ export class Physics implements SimSystem {
   spawnMesh(mesh: SkinMesh, voxel: number, pos: V3, q: Q, vel: V3 = [0, 0, 0]): PhysBody | null {
     const lat = latticeFor(mesh, voxel);
     const { data, tris } = bindSkin(mesh, lat);
-    if (this.skinTris + tris > SKIN_TRIS) return null;
+    if (!this.growSkin(this.skinTris + tris)) return null;
     const m = lat.model;
     const [w, d] = m.size;
     const body = this.spawnLattice(
@@ -486,7 +495,7 @@ export class Physics implements SimSystem {
    * room for its triangles.
    */
   attachSkin(body: PhysBody, mesh: { data: Float32Array; tris: number }): boolean {
-    if (this.skinTris + mesh.tris > SKIN_TRIS) return false;
+    if (!this.growSkin(this.skinTris + mesh.tris)) return false;
     const U = new Uint32Array(mesh.data.buffer);
     for (let v = 0; v < mesh.tris * 3; v++) for (let k = 0; k < 4; k++) if (U[v * 28 + k] !== 0xffffffff) U[v * 28 + k] += body.offset;
     this.device.queue.writeBuffer(this.skinSrc, this.skinTris * 3 * SKIN_V_BYTES, mesh.data);
@@ -497,7 +506,44 @@ export class Physics implements SimSystem {
 
   /** room for this many more skin triangles */
   hasSkinRoom(tris: number): boolean {
-    return this.skinTris + tris <= SKIN_TRIS;
+    return this.skinTris + tris <= this.skinMost();
+  }
+
+  /** the most skin triangles one binding of the device holds (its source records are the bigger) */
+  private skinMost(): number {
+    const lim = this.device.limits;
+    return Math.floor(Math.min(lim.maxStorageBufferBindingSize, lim.maxBufferSize) / (3 * SKIN_V_BYTES));
+  }
+
+  /**
+   * (round 120, the user's rule: no GPU memory caps — use what the hardware holds, grown on demand) Room for `tris`
+   * skin triangles: the buffers doubled (the records so far copied over, the kernels bound again, the renderer told)
+   * up to what the device's bindings hold. False past that: the device can't hold it.
+   */
+  private growSkin(tris: number): boolean {
+    if (tris <= this.skinRoom) return true;
+    const most = this.skinMost();
+    if (tris > most) return false;
+    let room = this.skinRoom;
+    while (room < tris) room = Math.min(most, room * 2);
+    const src = this.world.buf('physSkinSrc', room * 3 * SKIN_V_BYTES, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
+    const out = this.world.buf('physSkinOut', room * 3 * 32, GPUBufferUsage.STORAGE);
+    if (this.skinTris) {
+      const enc = this.device.createCommandEncoder({ label: 'phys skin grow' });
+      enc.copyBufferToBuffer(this.skinSrc, 0, src, 0, this.skinTris * 3 * SKIN_V_BYTES);
+      this.device.queue.submit([enc.finish()]);
+    }
+    this.skinSrc.destroy();
+    this.skinOut.destroy();
+    this.skinSrc = src;
+    this.skinOut = out;
+    this.skinRoom = room;
+    this.res[30] = src;
+    this.res[31] = out;
+    for (const [entry, all] of Object.entries(this.specs))
+      if (30 in all || 31 in all) this.k[entry].g = makeBindGroup(this.device, `phys-${entry}`, this.k[entry].k.layout, Object.fromEntries(Object.keys(all).map((b) => [b, this.res[Number(b)]])));
+    this.onSkinBuffers?.();
+    return true;
   }
 
   /** Is there room for `bodies` more bodies of `voxels` lattice cells in all? */

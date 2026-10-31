@@ -143,3 +143,16 @@ test('a block dropped on stone does not sink', async () => {
   await frames(150);
   expect(ig.stats.softBlows).toBe(b0);
 });
+
+// (round 120, the user's rule: no GPU memory caps) the lattice's mesh room grows on demand to what the device holds
+test("the voxel lattice's mesh room grows past its start, within the device's bindings", async () => {
+  const p = phys as unknown as { growSkin(t: number): boolean; skinRoom: number; skinMost(): number };
+  const start = p.skinRoom;
+  expect(p.growSkin(start * 3)).toBe(true);
+  expect(p.skinRoom).toBeGreaterThanOrEqual(start * 3);
+  expect(p.growSkin(p.skinMost() + 1)).toBe(false);
+  // (the bodies made before and after draw on: the kernels bound to the new buffers)
+  expect(ig.dropBody(box(30, 40, FLOOR + 6, 4, 2, 2, MAT.Steel))).toBe(true);
+  await frames(30);
+  expect(g.takeErrors()).toEqual([]);
+});

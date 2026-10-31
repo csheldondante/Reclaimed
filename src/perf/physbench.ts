@@ -10,10 +10,13 @@
 
 import { VARIANTS } from '../solver/variant';
 import { JUDGES } from '../game/judge';
-import { copyText, downloadJson } from './report-io';
+import { postDev } from './report-io';
+import { deviceFacts, keepAwake, letSleep, Panel, reportButtons, wakeLog } from './bench';
+import { summarize, summaryLines, type PhysRow } from './physsummary';
 import { stepTaps } from '../gpu/cpustat';
 
 const KEY = 'reclaimed.physbench';
+const NL = String.fromCharCode(10);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 interface Stage {
@@ -77,50 +80,40 @@ const STAGES: Stage[] = [
   },
 ];
 
-interface Row {
-  pair: string;
-  stage: string;
-  frames: number;
-  fps: number;
-  p50: number;
-  p95: number;
-  p99: number;
-  worst: number;
-  gpu: number | null;
-  gpuPhysics: number | null;
-  cpuPhysics: number;
-  /** the main thread's steps over the stage, ms a frame, the five biggest (cpustat labels) */
-  cpuTop: Record<string, number>;
-  /** the collapse judge (game/judge.ts: A its CPU, B submit to verdict): passes, mean and worst ms, B's GPU ms and bytes read */
-  judge: { passes: number; ms: number; worst: number; gpuMs: number | null; readKB: number | null };
-  /** the columns' readback for the judge (Integrity.stats readMs, readKB): reads, mean and worst latency, KB a read */
-  read: { reads: number; ms: number; worst: number; kb: number };
-  awake: number;
-  slow: number;
-  clusters: number;
-  longestRun: number;
-}
+type Row = PhysRow;
 
-function say(el: HTMLElement, t: string): void {
-  el.textContent = t;
+/** this run's state between its pages, and the last finished run's report (a "previous run" download) */
+const LAST = 'reclaimed.physbench.last';
+interface State {
+  pairs: string[];
+  rows: Row[];
+  startedAt: string;
+  device?: Record<string, unknown>;
+  /** each page's wake lock: held or not */
+  wake: { pair: string; held: boolean }[];
+  wakeLog: string[];
 }
 
 export async function physBench(params: URLSearchParams): Promise<void> {
-  const box = document.createElement('div');
-  box.style.cssText = 'position:fixed;left:8px;right:8px;bottom:8px;z-index:60;background:rgba(20,24,30,.9);color:#eef;font:12px system-ui;padding:8px;border-radius:8px;white-space:pre-wrap;pointer-events:auto;max-height:60vh;overflow:auto';
-  document.body.appendChild(box);
-  let st: { pairs: string[]; rows: Row[] };
+  const R: Rec = (window as unknown as { reclaimed: Rec }).reclaimed;
+  // (round 120, the user: "the bench does not generate an automated report or keep my phone awake the way the other
+  // benches do" — the bench's own panel, wake lock, report and its buttons: src/perf/bench.ts, report-io.ts)
+  const panel = new Panel(document.body);
+  const held = await keepAwake();
+  let st: State;
   try {
-    st = JSON.parse(localStorage.getItem(KEY) ?? 'null') ?? { pairs: [], rows: [] };
+    st = JSON.parse(localStorage.getItem(KEY) ?? 'null') ?? null;
   } catch {
-    st = { pairs: [], rows: [] };
+    st = null as unknown as State;
   }
   const all = (params.get('pairs') ?? '').split(',').filter(Boolean);
   const pairs = all.length ? all : VARIANTS.flatMap((v) => Object.keys(JUDGES).map((j) => `${v}:${j}`));
   const here = `${params.get('solver') ?? 'nodes'}:${params.get('judge') ?? 'runs'}`;
-  // (a fresh start: the first pair's page, with nothing stored for this run)
-  if (!params.get('physbenchstep')) {
-    st = { pairs, rows: [] };
+  // (a fresh start: the device's facts, then the first pair's page)
+  if (!params.get('physbenchstep') || !st) {
+    st = { pairs, rows: [], startedAt: new Date().toISOString(), wake: [], wakeLog: [] };
+    panel.say('physics bench: the device…');
+    st.device = await deviceFacts(R.core.host);
     localStorage.setItem(KEY, JSON.stringify(st));
     const [solver, judge] = pairs[0].split(':');
     const u = new URL(location.href);
@@ -130,14 +123,17 @@ export async function physBench(params: URLSearchParams): Promise<void> {
     location.href = u.toString();
     return;
   }
+  st.wake.push({ pair: here, held });
+  // (the last finished run, while this one goes)
+  const prev = localStorage.getItem(LAST);
+  if (prev) reportButtons(panel, prev, true, 'physbench', 'Reclaimed physics bench');
   const step = Number(params.get('physbenchstep'));
-  const R: Rec = (window as unknown as { reclaimed: Rec }).reclaimed;
-  say(box, `physics bench ${step + 1}/${st.pairs.length} (${here}) — letting the level settle (12 s)…`);
+  panel.say(`physics bench ${step + 1}/${st.pairs.length} (${here}) — letting the level settle (12 s)…`);
   await sleep(12000);
   const P = R.core.host.profiler;
   P.active = true;
   for (const s of STAGES) {
-    say(box, `physics bench ${step + 1}/${st.pairs.length} (${here}) — ${s.name}…`);
+    panel.say(`physics bench ${step + 1}/${st.pairs.length} (${here}) — ${s.name}…`);
     let cpu = 0;
     const steps = new Map<string, number>();
     const tap = (label: string, ms: number) => {
@@ -225,6 +221,7 @@ export async function physBench(params: URLSearchParams): Promise<void> {
       longestRun: longest,
     });
   }
+  st.wakeLog.push(...wakeLog.map((l) => `${here} ${l}`));
   localStorage.setItem(KEY, JSON.stringify(st));
   if (step + 1 < st.pairs.length) {
     const [solver, judge] = st.pairs[step + 1].split(':');
@@ -232,28 +229,40 @@ export async function physBench(params: URLSearchParams): Promise<void> {
     u.searchParams.set('solver', solver);
     u.searchParams.set('judge', judge);
     u.searchParams.set('physbenchstep', String(step + 1));
-    say(box, `physics bench: next, ${st.pairs[step + 1]} (reloading)…`);
+    panel.say(`physics bench: next, ${st.pairs[step + 1]} (reloading)…`);
     location.href = u.toString();
     return;
   }
   localStorage.removeItem(KEY);
-  const report = JSON.stringify({ bench: 'physics', v: 1, ua: navigator.userAgent, when: new Date().toISOString(), stages: STAGES.map((s) => s.name), rows: st.rows }, null, 1);
-  (window as unknown as { physBenchReport: string }).physBenchReport = report;
-  const lines: string[] = [];
-  for (const pair of st.pairs) {
-    const rs = st.rows.filter((r) => r.pair === pair);
-    const p95 = Math.max(...rs.map((r) => r.p95));
-    const gpu = rs.map((r) => r.gpu ?? 0).reduce((a, b) => a + b, 0) / Math.max(1, rs.length);
-    lines.push(`${pair}: worst p95 ${p95} ms, p50 ${Math.max(...rs.map((r) => r.p50))} ms, GPU ${gpu.toFixed(1)} ms, slow ${rs.reduce((a, r) => a + r.slow, 0)} in ${rs.reduce((a, r) => a + r.clusters, 0)} runs`);
+  await letSleep();
+  const report = {
+    kind: 'reclaimed-physbench',
+    version: 2,
+    startedAt: st.startedAt,
+    finishedAt: new Date().toISOString(),
+    url: location.href,
+    device: st.device ?? null,
+    wakeLock: st.wake,
+    wakeLog: st.wakeLog,
+    stages: STAGES.map((s) => s.name),
+    summary: summarize(st.rows),
+    rows: st.rows,
+  };
+  const body = JSON.stringify(report, null, 1);
+  (window as unknown as { physBenchReport: string }).physBenchReport = body;
+  try {
+    localStorage.setItem(LAST, body);
+  } catch {
+    // (the browser's storage full: the download is the copy)
   }
-  box.innerHTML = '';
-  const pre = document.createElement('div');
-  pre.textContent = `physics bench done:\n${lines.join('\n')}`;
-  const copy = document.createElement('button');
-  copy.textContent = 'copy JSON';
-  copy.onclick = async () => (copy.textContent = await copyText(report));
-  const down = document.createElement('button');
-  down.textContent = 'download JSON';
-  down.onclick = () => (down.textContent = downloadJson(report, `physbench-${Date.now()}.json`));
-  box.append(pre, copy, document.createTextNode(' '), down);
+  panel.say(`Physics bench done — ${st.pairs.length} solver × judge pairs, ${STAGES.length} stages each.`);
+  panel.text(summaryLines(st.rows).join(NL), true);
+  reportButtons(panel, body, false, 'physbench', 'Reclaimed physics bench', true);
+  const dev = await postDev(body, 'physbench');
+  if (dev) panel.text(`dev server: ${dev}`, true);
+  panel.button('Run again', false, () => {
+    const u = new URL(location.href);
+    u.searchParams.delete('physbenchstep');
+    location.href = u.toString();
+  });
 }
