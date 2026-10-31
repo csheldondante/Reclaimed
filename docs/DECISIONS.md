@@ -76,6 +76,12 @@ each was implemented.
   → The solver keeps PX3's mass-scaled overlap (slop + min(slopCap, slopK · mass^slopP)) as the contact rule's slop:
   never corrected, never wakes a sleeper, no push-back; drawn as surface deformation at the contact.
 
+- The user, verbatim: "Rivers trees, cities and animals should all be merged by the way" → terrain, flora, structures and
+  inhabitants merged on branch merge120 through the merge gate (tiles, coverage, frame time, shots looked at), then places.
+- The user, verbatim: "Definitely show me the results in the physics lab before you push. I want to see rocks and buildings and have metal too so I can see deformation, breaking and getting buried in a variety of materials and geometry. We made those playgrounds for a reason"
+  → the solver's steps are shown in the playground and the rock lab (stations for rock, buildings and metal: bending,
+  breaking, burial) before each push.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
