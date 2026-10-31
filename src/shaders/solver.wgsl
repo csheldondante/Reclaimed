@@ -398,6 +398,11 @@ fn loadFlow(b: u32, nN: u32, nP: u32, h: f32, mat: u32) {
   // the plastic hinge: what hangs from bond wk–parent turns about it (its rest shape), by how far past the yield
   if (wk == 0xffffffffu || length(waxis) < 1e-9) { return; }
   let p = spar[wk];
+  // (only a part a foundation holds creeps: a free one's supports are what it touches — roots of the walk, never in
+  // what hangs from a bond — so its hinge couldn't see the ground it would turn into)
+  var held = false;
+  for (var j = 0u; j < nN; j++) { if (sw[j] == 0.0 && scomp[j] == scomp[wk]) { held = true; break; } }
+  if (!held) { return; }
   let ang = min(0.012, (worst - 1.0) * 0.01) * smC(mat).w;
   // (the forces summed are what holds it — the loads are their opposite: it turns the way they push)
   let axr = qrotS(qinvS(wRp), -normalize(waxis));

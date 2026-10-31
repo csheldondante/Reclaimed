@@ -328,12 +328,12 @@ test('a steel pylon left on one leg bends over at its foot and comes down mostly
     });
     if (process.env.SOLVER_LOG) {
       const ns = await solver.nodes(b);
-      console.log('t', t * 20, 'top', Math.max(...ns.map((n) => n.x[2])).toFixed(2), 'low', Math.min(...ns.map((n) => n.x[2])).toFixed(2), 'parts', rd(b).parts, 'broke', broke, 'v', rd(b).vel.map((v) => v.toFixed(1)).join(','));
+      { const lo = ns.reduce((m, n, i) => (n.x[2] < ns[m].x[2] ? i : m), 0); console.log('t', t * 20, 'top', Math.max(...ns.map((n) => n.x[2])).toFixed(2), 'low', lo, ns[lo].x.map((v) => v.toFixed(1)).join(','), 'w', ns[lo].w.toFixed(3), 'parts', rd(b).parts, 'broke', broke); }
     }
   }
   const nodes = await solver.nodes(b);
   const top = Math.max(...nodes.map((n) => n.x[2]));
-  if (process.env.SOLVER_LOG) console.log('pylon top', top, 'parts', rd(b).parts, 'broke', broke);
+  if (process.env.SOLVER_LOG) console.log('pylon top', top, 'parts', rd(b).parts, 'broke', broke, Array.from(new Float32Array(await g.read((solver as any).buf.bodies, 16, (b.slot * 16 + 8) * 16))));
   // it came down (bent over at its foot, or fell)
   expect(top).toBeLessThan(FLOOR + 12);
   // in a few pieces at most, not a shower of fragments
@@ -359,4 +359,24 @@ test('a steel post toppling onto the floor stays on it', async () => {
   const low = Math.min(...ns.map((n) => n.x[2]));
   if (process.env.SOLVER_LOG) console.log('post low', low, 'top', Math.max(...ns.map((n) => n.x[2])), 'parts', rd(b).parts);
   expect(low).toBeGreaterThan(FLOOR + 0.3);
+});
+
+test('a steel frame dropped on its side lands on the floor and stays on it', async () => {
+  clear();
+  // the pylon's lattice lying on its side (x along its height), 6 cells over the floor
+  const cells: SolverCell[] = [];
+  const legs: [number, number][] = [[0, 0], [5, 0], [0, 5], [5, 5]];
+  const at = (h: number, a: number, b: number) => ({ x: 8 + h, y: 20 + a, z: FLOOR + 6 + b, mat: MAT.Steel });
+  for (const [a, b] of legs) for (let h = 0; h < 16; h++) cells.push(at(h, a, b));
+  for (let h = 4; h < 16; h += 5) for (let a = 0; a <= 5; a++) for (let b = 0; b <= 5; b++) if ((a === 0 || a === 5 || b === 0 || b === 5) && !legs.some(([p, q]) => p === a && q === b)) cells.push(at(h, a, b));
+  const b = solver.add({ cells })!;
+  for (let t = 0; t < 8; t++) {
+    await step(20);
+    if (process.env.SOLVER_LOG) {
+      const ns = await solver.nodes(b);
+      console.log('frame t', t * 20, 'low', Math.min(...ns.map((n) => n.x[2])).toFixed(2), 'parts', rd(b).parts, 'broke', rd(b).broke, 'asleep', rd(b).asleep, 'touch', rd(b).touching, 'w', ns.slice(0, 4).map((n) => n.w.toFixed(3)).join(','), 'nodes', b.nodes);
+    }
+  }
+  const ns = await solver.nodes(b);
+  expect(Math.min(...ns.map((n) => n.x[2]))).toBeGreaterThan(FLOOR - 0.5);
 });
