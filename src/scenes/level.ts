@@ -3226,6 +3226,11 @@ export class LevelScene implements Scene {
         const ig = this.integrity;
         return {
           station: this.stationsBar?.current.id ?? null,
+          // (solver step 4: which solver and judge, and what the node solver holds — the bug report's physics)
+          experiment: { solver: solverVariant(host.params), judge: JUDGE_ID, lastRun: this.lastRun },
+          solver: ig?.solver
+            ? [...ig.solver.bodies].slice(0, 30).map((b) => ({ slot: b.slot, kind: b.kind, nodes: b.nodes, cells: b.cells, read: ig.solver!.read(b) ?? null }))
+            : null,
           integrity: ig ? { stats: { ...ig.stats }, falling: ig.falling.list.length, resting: ig.restingCount, rigid: rigid ? { bodies: rigid.list.length, stats: { ...rigid.stats }, list: rigid.list.slice(0, 20).map((b) => ({ pos: b.pos, v: b.v, w: b.w, cells: b.cells.length })) } : null } : null,
           sleep: this.sleep ? { awake: this.sleep.awake } : null,
           flow: this.flow ? { springs: this.flow.water.springs.length + this.flow.lava.springs.length } : null,
