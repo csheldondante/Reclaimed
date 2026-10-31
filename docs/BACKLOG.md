@@ -12,6 +12,22 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 120 (2026-10-31, session 5, `judge`) — the collapse judges side by side: judge B, the method of sections on the GPU (DECISIONS round 120)
+
+| id | item | size | status |
+|---|---|---|---|
+| JB1 | Judge B (`?judge=sections`): the user's method of sections on the GPU behind one interface with judge A (game/judge.ts `RockJudge`, `JUDGES` { runs, sections } for a lab panel); every section's shear and moment, a thrust line for what's held from opposite sides, the neck under a piece that held; Integrity awaits whichever is picked (ARCHITECTURE "The collapse judges") | L | done (`judge`) |
+| SV1 | (the solver agent's shape tests) The keystone cut out of an arch: the brief says the halves must fall. B judges the stone as one bonded piece: each half is a corbel 3 thick reaching 3 (its root moment 17× under its strength) and stands, as a natural arch's stubs do (Wall Arch, 2008). Only masonry (voussoirs, no tension: Heyman's own assumption) drops them. A also holds them. Recorded in the test as B's expectation — the user's call: bonded rock (now) or masonry spans (B would need to know a span was an arch before it was cut: a mark kept from an earlier judging, or tension off in pieces that meet) | S | asked |
+| SV2 | (the solver agent's shape tests) A holds a 3-thick stone shelf at reach 16 (too strong; a rough stone estimate fails it at 12-14). B: L ≤ √(σ't/3) from 4 MPa — 7.2 m at 1 m thick, 10.2 at 2, 12.5 at 3, 14.5 at 4 — holds 12, drops 16, every thickness within its limit ±10 % | S | done in B (`judge`); A unchanged |
+| JB2 | B's GPU time is latency-bound: ~0.1 ms a distance level on the desktop iGPU (one workgroup, a pass a level; a few dependent memory reads per run a phase) — a 16-reach shelf ~1.6 ms, a 120-long cliff lip ~5 ms. Ideas: spread the levels over frames (the verdict is async anyway), a log-depth subtree sum (pointer jumping on a spanning forest: Σ over a level's runs of their subtrees is the component's sum; the components still need the merge tree), several workgroups per level for big fronts | M | open |
+| JB3 | B's window: a piece reaching its side (the seeds' box + 32 columns) is held there, as A's neck keys into the land past 16 columns — a hanging piece longer than the margin isn't judged whole | S | open |
+| JB4 | B's neck checks one horizontal section (at the piece's lowest point), not every height of a leg (a leg narrowest lower down isn't checked there); buckling isn't modelled (A's buckle) | S | open |
+| JB5 | B's thrust check: the abutments' side of the thrust (H on the legs: an arch's legs pushed apart) isn't checked; a meeting component deeper than level 1 skips bending without its own thrust check | S | open |
+| JB6 | AR6 remainder: B reads no columns back, but Integrity still keeps its CPU copy (apply's writes, External, the structures' analyse) and reads it before each pass whichever judge is picked | M | open |
+| JB7 | The solver lab's variant switch: list `JUDGES` in its panel (the solver agent's side, branch `solver`; not edited here) | S | open |
+| JB8 | Feel tests in the browser: A vs B on the atlas (a mesa undercut, a cliff collapse) on the phone proxy | S | see DEVLOG round 120 (`judge`) |
+| JB9 | Material strengths: every solid's tensile is TUNE.judgeB.tensile × its materials.ts strength (concrete 0.8, brick 0.6, wood 0.4…) — one number per material, not per kind of load; masonry vs bonded rock (SV1) is the open question | S | open |
+
 ## Round 120 (2026-10-31, session 5, `merge120`) — rivers, cities, animals and trees merged (DECISIONS round 120)
 
 | id | item | size | status |

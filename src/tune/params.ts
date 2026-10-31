@@ -238,6 +238,21 @@ const SPEC = {
       chipSpeed: { label: 'chip speed', units: 'cells/s', min: 0, max: 12, step: 0.25, def: 3, help: 'chips of a soft landing (a hard one throws them at its own speed)' },
     },
   },
+  judgeB: {
+    title: 'Judge B (method of sections, ?judge=sections)',
+    owner: 'game/judge.ts + shaders/judge.wgsl (GPU: what lets go, section by section; a cell a metre)',
+    params: {
+      tensile: { label: 'tensile', units: 'MPa', min: 0.1, max: 30, step: 0.1, def: 4, url: 'jbtensile', help: 'what a section takes in bending, × the material\'s strength (intact limestone or sandstone ~4)' },
+      shear: { label: 'shear', units: 'MPa', min: 0.1, max: 60, step: 0.1, def: 8, url: 'jbshear', help: 'what a section takes in shear (rock\'s cohesion, ~2 × its tensile)' },
+      crush: { label: 'crush', units: 'MPa', min: 1, max: 300, step: 1, def: 60, url: 'jbcrush', help: 'what a leg or an arch\'s crown takes in compression' },
+      density: { label: 'rock density', units: 'kg/m³', min: 1000, max: 4000, step: 50, def: 2600, help: 'a material of density 1 (materials.ts) weighs this' },
+      meet: { label: 'meet', units: 'share', min: 0.05, max: 0.9, step: 0.05, def: 0.35, help: 'a section whose faces\' normals sum to under this share of its area is held from opposite sides: an arch' },
+      archTol: { label: 'arch give', units: 'cells', min: 0, max: 2, step: 0.05, def: 0.5, help: 'how far past a run the thrust line may pass (the columns\' cells are whole)' },
+      tipGive: { label: 'tip give', units: 'cells', min: 0, max: 2, step: 0.05, def: 0, help: 'how far a centre of mass may lie past the hull of the leg under it' },
+      neck: { label: 'neck reach', units: 'columns', min: 2, max: 64, step: 1, def: 16, help: 'past this through standing columns from a piece, it is keyed into the land' },
+      margin: { label: 'window margin', units: 'columns', min: 8, max: 96, step: 1, def: 32, help: 'the judged window: the seeds\' box and this much round it (a piece reaching its side is held there)' },
+    },
+  },
 } satisfies Record<string, GroupSpec>;
 
 export const TUNING = new Registry(SPEC);

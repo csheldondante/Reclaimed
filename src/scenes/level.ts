@@ -54,7 +54,7 @@ import { TunePanel } from '../ui/tunepanel';
 import { BugReport } from '../ui/bugreport';
 import { StationsBar } from '../ui/stations';
 import { experimentControls, startRun } from '../ui/experiment';
-import { judgeName } from '../game/judges';
+import { JUDGE_ID } from '../game/judge';
 import { solverVariant } from '../solver/variant';
 import { NoiseLabControl } from '../noiselab/control';
 import type { Station, StationKit } from '../levels/playground';
@@ -3245,7 +3245,7 @@ export class LevelScene implements Scene {
         },
       });
       // (solver step 2, the experiment: which solver and judge — a pick reloads — and compare; ?run= presses a button)
-      this.tunePanel.prepend(experimentControls({ variant: solverVariant(host.params), judge: judgeName(host.params), lastRun: () => this.lastRun }));
+      this.tunePanel.prepend(experimentControls({ variant: solverVariant(host.params), judge: JUDGE_ID, lastRun: () => this.lastRun }));
       startRun(host.params, (id, label) => {
         const i = stations.findIndex((s) => s.id === id);
         const k = i < 0 ? -1 : stations[i].actions.findIndex((a) => a.label === label);

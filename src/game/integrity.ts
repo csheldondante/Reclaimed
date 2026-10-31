@@ -12,7 +12,8 @@
 
 import { packColumn, readColumn, columnSlots, SLOT_WORDS, type Interval } from '../world/layout';
 import { MAT, MATERIALS, MatState } from '../world/materials';
-import { analyse, analyseRock, floatingRuns, WorldVox, type Fracture, type Voxel } from './fracture';
+import { analyse, floatingRuns, WorldVox, type Fracture, type Voxel } from './fracture';
+import { JUDGE_ID, JUDGES, type JudgeColumns, type RockJudge } from './judge';
 import { Bodies, type Body } from './bodies';
 import type { WorldCore } from '../scenes/world-core';
 import { ignoreTeardown } from '../gpu/pipeline';
@@ -168,6 +169,11 @@ export class Integrity {
   private cutSeeds = new Map<number, number>();
   /** (round 96) why what gave gave, summed over every rock pass (Fracture.why) — for the tests */
   why: Record<string, number> = {};
+  /**
+   * (round 120) the rock's judge (game/judge.ts): A, runs (fracture.ts analyseRock on the CPU's copy), by default; B,
+   * sections (the method of sections on the GPU, judge.wgsl), with ?judge=sections. Settable (a lab's panel: JUDGES)
+   */
+  judge: RockJudge = JUDGES[JUDGE_ID].make();
   private t = 0;
   private busy = false;
   /** chips where something crumbles or a body hits hard */
@@ -177,7 +183,7 @@ export class Integrity {
   /** dust where something breaks or a body hits (grains, spread in cells, the material it's made of) */
   onDust?: (x: number, y: number, z: number, count: number, spread: number, mat: number) => void;
   /** stats for the perf overlay / tests */
-  stats = { passes: 0, bodies: 0, crumbled: 0, settled: 0, crumbledBodies: 0, impacts: 0, shatters: 0, shattered: 0, lastMs: 0, rockSeeds: 0, rereads: 0, settledFalls: 0, settleMs: 0, metal: 0, deferred: 0 };
+  stats = { passes: 0, bodies: 0, crumbled: 0, settled: 0, crumbledBodies: 0, impacts: 0, shatters: 0, shattered: 0, lastMs: 0, rockSeeds: 0, rereads: 0, settledFalls: 0, settleMs: 0, metal: 0, deferred: 0, judgeMs: 0, judgeGpuMs: 0 };
   /** sleeping bodies projected per column: top, bottom (top < 0: none) — the
    *  GPU's bodyProj texture and the bodies' own collision share it */
   readonly proj: Float32Array;
@@ -320,7 +326,7 @@ export class Integrity {
     const seeds: [number, number][] = [];
     for (let y = 0; y < this.core.dims.h; y++) for (let x = 0; x < this.core.dims.w; x++) seeds.push([x, y]);
     const t0 = performance.now();
-    const r = analyseRock(w, seeds, undefined, { weigh });
+    const r = await this.judge.judge({ cols: this.judgeCols(w), seeds, weigh });
     const ms = performance.now() - t0;
     let fell = 0;
     const at: [number, number, number][] = [];
@@ -895,8 +901,12 @@ export class Integrity {
       this.falling.restoreCpu();
       // (round 95) the copy is of the window as it is: the rigid rock moves again
       if (this.rigid && (!READ_NEAR || this.readEpoch === this.core.windowEpoch)) this.rigid.frozen = false;
-      this.pass();
-      this.timing.doneAt = performance.now();
+      // (round 120: judge B answers from the GPU — the pass waits for its verdict, and no other pass starts meanwhile)
+      this.busy = true;
+      return this.pass().then(() => {
+        this.busy = false;
+        this.timing.doneAt = performance.now();
+      });
     }, ignoreTeardown);
   }
 
@@ -1095,8 +1105,13 @@ export class Integrity {
     return null;
   }
 
-  private pass(): void {
-    const t0 = performance.now();
+  /** (round 120) the columns as the judges read them: the CPU's copy (A), the GPU's own (B) */
+  private judgeCols(vox: WorldVox = this.world): JudgeColumns {
+    return { packed: this.core.packed, vox, gpu: { device: this.core.host.gpu.device, slots: this.core.world.layers, chunks: this.core.world.chunks } };
+  }
+
+  private async pass(): Promise<void> {
+    let t0 = performance.now();
     // (round 99) what other systems own, as the copy now has it: an instance that lost cells is cut (its owner told);
     // after a whole read, External intervals no one owns are orphans (an undo, a thaw) and go back to ground
     if (this.external) {
@@ -1125,7 +1140,13 @@ export class Integrity {
       }
       const fresh = this.fresh;
       const known = fresh ? (x: number, y: number) => fresh.has(this.chunkOf(x, y)) : undefined;
-      const r = analyseRock(this.world, seeds, known, { weigh: (x, y) => cut.has(y * 65536 + x), rotate: !!this.rigid });
+      const tj = performance.now();
+      const r = await this.judge.judge({ cols: this.judgeCols(), seeds, known, weigh: (x, y) => cut.has(y * 65536 + x), rotate: !!this.rigid });
+      // (judge B's wait for its verdict isn't the pass's CPU time: the judge's own stats keep it, and its GPU ms)
+      if (this.judge.id === 'sections') t0 += performance.now() - tj;
+      this.stats.judgeMs = this.judge.stats.ms;
+      this.stats.judgeGpuMs = this.judge.stats.gpuMs ?? 0;
+      record(`judge.${this.judge.id}`, this.judge.stats.ms);
       this.stats.rockSeeds += seeds.length;
       // (round 96: what the last weighing found, for the tests)
       for (const [k, v] of Object.entries(r.why ?? {})) this.why[k] = (this.why[k] ?? 0) + v;

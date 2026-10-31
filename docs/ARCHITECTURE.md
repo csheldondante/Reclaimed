@@ -2723,5 +2723,67 @@ the solver only moves what they hand over. Rendering reads its node transforms w
 
 **The experiment** (solver/variant.ts, `?solver=`): `old` (the CPU rigid rock, the columns' falling pieces, metal on
 the voxel lattice), `nodes`, `lattice` (everything on phys.wgsl's voxel lattice, which sleeps too now), `hybrid`
-(rock on the nodes, metal and wood on the lattice). `?judge=` (game/judges.ts) names the judge; `columns` is the one
-here (`sections` on branch `judge`). The lab's panel picks both (a reload) and compares (ui/experiment.ts, `?run=`).
+(rock on the nodes, metal and wood on the lattice). `?judge=runs|sections` (game/judge.ts JUDGES, from branch `judge`)
+picks the judge. The lab's panel picks both (a reload) and compares every solver × judge (ui/experiment.ts, `?run=`).
+## The collapse judges (round 120, branch `judge`; BACKLOG JB1-JB9, SV1, SV2)
+
+What lets go when the ground is cut is decided by a **judge** behind one interface (src/game/judge.ts); what it frees
+is moved by the solver (branch `solver`: rigid rock, nodes, lattice). Two judges, side by side (the user, round 120:
+"Can we treat this as an experiment and test each approach side by side?"):
+
+- **A, `runs`** (the default): fracture.ts `analyseRock` on the CPU over Integrity's read-back copy of the columns —
+  joints between runs (round 92: load handed in from the far end, a joint holds strength × min(BEND h², SHEAR h)),
+  legs that buckle, bend and tip (round 96).
+- **B, `sections`** (`?judge=sections`): the user's method of sections on the GPU (src/shaders/judge.wgsl). The
+  columns are read in place (WorldGpu.layers and .chunks); only the verdict comes back.
+
+**The interface.** `RockJudge.judge(input): Promise<Fracture>` — input: `cols` (`packed`, plus the CPU copy `vox` for A
+and the GPU's `{device, slots, chunks}` for B), `seeds` (the columns an edit cut), `weigh` (what an edit weakened:
+fracture.ts RockOpts.weigh), `rotate` (report hinges), `known` (A's stale-copy test). Output: fracture.ts `Fracture`
+(pieces as runs, crumbleRuns, tips with pivot and axis, why). `stats`: ms (wall), gpuMs (B, timestamp queries),
+readBytes, sections, arch. `JUDGES = { runs, sections }` — `{label, make()}` for a lab panel to list; `JUDGE_ID` the
+page's choice. Integrity holds `judge` (settable) and awaits it in its pass; `judgeAll` (the tests' whole-window
+judging) goes through it too.
+
+**Judge B, kernel by kernel** (one compute pass, five dispatches; the window: the seeds' box and
+TUNE.judgeB.margin columns round it — a piece reaching the window's side is held there, as A's neck keys into the land):
+1. `build` (a thread a column): the column's runs (columnRuns' rule: touching intervals of matter, films 0.02 apart
+   touch) → nodes: z0, z1, mass (cells × density × √3/2 m², a hex prism), first moment in z, side-holding extent,
+   weakest side-holding strength, flags (stands, solid, never-gives, seeded, weighed).
+2. `adjacency` (a thread a node): per direction a 16-bit mask of the neighbour column's runs it is joined to (A's
+   `touch` on the side-holding extents); map and window edges.
+3. `judge1` (one workgroup): the flood from what holds (standing runs, edges), frontier by frontier — each run visited
+   once, the levels laid out in order; the hanging runs' pieces (union-find, least-id roots).
+4. `faces` (a thread a run): its faces to the runs a step nearer, summed once: area, centroid, normals' sum and
+   tensor, foot height; per direction Σh, Σh·z, Σ(h³/12 + h z²), the extent.
+5. `judge2` (one workgroup): **the sections, one pass a distance level from the far end in** — the component of
+   everything ≥ k out grows a level at a time (union-find; its mass and first moments carried from the level before,
+   each run added once; sums in workgroup slots, a slot a root) and its section (the faces to the runs k − 1 out) is
+   checked: shear (weight on the section's area) and moment (weight × the lever from the section's centroid to the
+   centre of mass beyond) against tensile × strength × its section modulus (the faces projected across the lever: I
+   about the neutral axis over the extreme fibre). A section whose faces' normals cancel (|Σ a n| < meet × Σ a) is
+   held from opposite sides — an arch or a dome: not bent; its level-1 piece gets **the thrust check** (Heyman's
+   safe theorem, discretely: a uniform-load funicular, a parabola along the span's axis — radial for a dome — from
+   the springings' mean foot must fit inside every run of the piece, give archTol; the least thrust, M·L / 8f, within
+   the crushing strength on half the springings' area). Then **release**: a reachability flood from what holds that
+   doesn't cross a failed section's faces; what it can't reach is freed, its pieces by union-find. **The neck**: a
+   weighed piece that held is weighed on the standing runs joined above its lowest point (followed TUNE.judgeB.neck
+   columns, past that keyed): the horizontal section there — tipping (its centre of mass past the hull of the leg's
+   cells, 24 directions), the far side's pull (M·L/S − M/A > tensile × strength), crushing (M/A > crush × strength).
+   **The verdict**: records of the runs that go (their slots copied: the CPU needs no copy of the columns), each
+   piece's kind and hinge, why.
+
+Units: a cell a metre; stresses in the weight of a metre of rock a square metre (σ' = MPa × 10⁶ / (density × g)):
+TUNE.judgeB tensile 4 MPa (σ' ≈ 157), shear 8, crush 60, density 2600 kg/m³, meet 0.35, archTol 0.5, tipGive 0,
+neck 16, margin 32 — the tuning panel's "Judge B" group (CPU-side; the kernel gets them in its own uniform). Material
+strengths, densities and never-gives (span Infinity) from materials.ts (a 256-entry table the kernel reads).
+
+Buffers (sized to the window, grown and judged again on overflow — never cut short): params (uniform), the world's
+chunk table and slots (read), materials (read), the columns' marks (seeded, weighed), N (the nodes' own numbers,
+plain words, written by build/adjacency/faces: 64 fields a node), W (the judge's atomics: 95 fields a node, counters,
+levels), O (the verdict: header, why, 1024 pieces, records). judge.wgsl is self-contained (no common.wgsl): binding 0
+is its own params, not the Globals.
+
+Tests: test/gpu/judge-shapes.test.ts (A and B on every shape, B asserted from the stone estimate; JUDGE_LOG=1 writes
+data/perf/judge/shapes.md), test/gpu/judge-perf.test.ts (JUDGE_PERF=1: data/perf/judge/node-*.json and the phase
+breakdown node-phases.json), test/support/judgeworld.ts (RockWorld's passes through a judge).

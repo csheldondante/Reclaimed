@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 
 const j = JSON.parse(fs.readFileSync(process.argv[2] ?? 'data/perf/solver/battery.json', 'utf8'));
+for (const r of j.results) r.variant = r.judge ? `${r.variant} × ${r.judge}` : r.variant;
 const variants = [...new Set(j.results.map((r) => r.variant))];
 const stations = [...new Set(j.results.map((r) => r.station))];
 const cell = (r) => {

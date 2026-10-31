@@ -18,6 +18,8 @@ const opt = (k, d) => {
 };
 const url = opt('url', 'http://localhost:5211');
 const variants = opt('variants', 'old,nodes,lattice,hybrid').split(',');
+// (and the judges: every solver × judge)
+const judges = opt('judges', 'runs,sections').split(',');
 const stationsWanted = opt('stations', 'rock,build,slide,house,metal,collapse').split(',');
 const measureS = Number(opt('measure', '8'));
 const out = opt('out', `data/perf/solver/battery-${new Date().toISOString().slice(0, 10)}.json`);
@@ -34,7 +36,7 @@ const browser = await puppeteer.launch({
 const results = [];
 let failed = false;
 try {
-  for (const variant of variants) {
+  for (const variant of variants) for (const judge of judges) {
     for (const level of ['playground', 'rocklab']) {
       const mine = stationsWanted.filter((s) => (LEVEL_OF[s] ?? 'playground') === level);
       if (!mine.length) continue;
@@ -43,7 +45,7 @@ try {
         failed = true;
         console.log(`FAIL [${variant}] pageerror ${e.message}`);
       });
-      await p.goto(`${url}/?skipmenu=1&level=${level}&tutorial=0&q=low&solver=${variant}`, { waitUntil: 'load' });
+      await p.goto(`${url}/?skipmenu=1&level=${level}&tutorial=0&q=low&solver=${variant}&judge=${judge}`, { waitUntil: 'load' });
       await p.waitForFunction(() => window.reclaimed?.scene?.bugReport, { timeout: 300000 });
       await sleep(30000);
       const fatal = await p.$eval('.fatal', (e) => e.textContent).catch(() => null);
@@ -117,9 +119,9 @@ try {
             bodiesMade: ig?.stats.bodies ?? 0,
           };
         });
-        const row = { variant, level, station: id, ...r };
+        const row = { variant, judge, level, station: id, ...r, judgeMs: await p.evaluate(() => window.reclaimed.scene.integrity?.judge?.stats?.ms ?? null) };
         results.push(row);
-        console.log(`[${variant}] ${id}: GPU ${r.gpuMs} ms (physics ${r.physGpuMs}), CPU solver ${r.cpuMs.solver} physics ${r.cpuMs.physics} rigid ${r.cpuMs.rigid}; rigid ${r.rigidBodies}, solver ${r.solverBodies} (${r.solverAwake} awake, ${r.solverNodes} nodes, ${r.solverParts} parts), voxels ${r.physVoxels}; mem ${(r.memBytes / 1048576).toFixed(1)} MB; vUp ${r.feel.vUpMax}`);
+        console.log(`[${variant} × ${judge}] ${id}: GPU ${r.gpuMs} ms (physics ${r.physGpuMs}), CPU solver ${r.cpuMs.solver} physics ${r.cpuMs.physics} rigid ${r.cpuMs.rigid}; rigid ${r.rigidBodies}, solver ${r.solverBodies} (${r.solverAwake} awake, ${r.solverNodes} nodes, ${r.solverParts} parts), voxels ${r.physVoxels}; mem ${(r.memBytes / 1048576).toFixed(1)} MB; vUp ${r.feel.vUpMax}`);
       }
       await p.close();
     }

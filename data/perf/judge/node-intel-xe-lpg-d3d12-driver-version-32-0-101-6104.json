@@ -1,0 +1,177 @@
+{
+ "when": "2026-10-31T07:49:32.839Z",
+ "adapter": "intel / xe-lpg / D3D12 driver version 32.0.101.6104",
+ "note": "median of 5 (the GPU is shared with other agents: gpuMinMs, the least, is the uncontended estimate); A ms = readback + CPU; B ms = wall (submit → verdict), gpuMs = timestamps",
+ "rows": [
+  {
+   "scene": "arch, one foot cut",
+   "A": {
+    "ms": 2.092,
+    "readbackMs": 1.663,
+    "freed": 189,
+    "passes": 2
+   },
+   "slotWords": 131072,
+   "B": {
+    "ms": 6.896,
+    "gpuMs": 0.918,
+    "gpuMinMs": 0.918,
+    "freed": 189,
+    "passes": 2
+   }
+  },
+  {
+   "scene": "dome",
+   "A": {
+    "ms": 7.071,
+    "readbackMs": 1.337,
+    "freed": 0,
+    "passes": 1
+   },
+   "slotWords": 131072,
+   "B": {
+    "ms": 6.64,
+    "gpuMs": 1.311,
+    "gpuMinMs": 1.311,
+    "freed": 0,
+    "passes": 1
+   }
+  },
+  {
+   "scene": "shelf 3 thick, reach 16",
+   "A": {
+    "ms": 3.908,
+    "readbackMs": 1.119,
+    "freed": 0,
+    "passes": 1
+   },
+   "slotWords": 131072,
+   "B": {
+    "ms": 8.394,
+    "gpuMs": 3.211,
+    "gpuMinMs": 3.146,
+    "freed": 480,
+    "passes": 2
+   }
+  },
+  {
+   "scene": "mid-span neck",
+   "A": {
+    "ms": 3.263,
+    "readbackMs": 1.597,
+    "freed": 160,
+    "passes": 2
+   },
+   "slotWords": 131072,
+   "B": {
+    "ms": 5.982,
+    "gpuMs": 2.228,
+    "gpuMinMs": 1.573,
+    "freed": 160,
+    "passes": 2
+   }
+  },
+  {
+   "scene": "spire undercut",
+   "A": {
+    "ms": 1.394,
+    "readbackMs": 1.212,
+    "freed": 126,
+    "passes": 2
+   },
+   "slotWords": 131072,
+   "B": {
+    "ms": 5.762,
+    "gpuMs": 1.835,
+    "gpuMinMs": 0.721,
+    "freed": 126,
+    "passes": 2
+   }
+  },
+  {
+   "scene": "mesa undercut (40 × 40 × 30, notch 14 deep)",
+   "A": {
+    "ms": 6.503,
+    "readbackMs": 2.329,
+    "freed": 0,
+    "passes": 1
+   },
+   "slotWords": 524288,
+   "B": {
+    "ms": 11.12,
+    "gpuMs": 4.26,
+    "gpuMinMs": 3.998,
+    "freed": 0,
+    "passes": 1
+   }
+  },
+  {
+   "scene": "cliff collapse (120 long, lip 4 × 20)",
+   "A": {
+    "ms": 19.426,
+    "readbackMs": 2.474,
+    "freed": 9600,
+    "passes": 2
+   },
+   "slotWords": 524288,
+   "B": {
+    "ms": 33.736,
+    "gpuMs": 26.083,
+    "gpuMinMs": 23.134,
+    "freed": 9600,
+    "passes": 2
+   }
+  },
+  {
+   "scene": "10 arms at once",
+   "A": {
+    "ms": 2.761,
+    "readbackMs": 1.777,
+    "freed": 180,
+    "passes": 2
+   },
+   "slotWords": 131072,
+   "B": {
+    "ms": 6.907,
+    "gpuMs": 2.753,
+    "gpuMinMs": 2.359,
+    "freed": 180,
+    "passes": 2
+   }
+  },
+  {
+   "scene": "50 arms at once",
+   "A": {
+    "ms": 6.162,
+    "readbackMs": 2.48,
+    "freed": 900,
+    "passes": 2
+   },
+   "slotWords": 524288,
+   "B": {
+    "ms": 10.727,
+    "gpuMs": 4.653,
+    "gpuMinMs": 3.539,
+    "freed": 900,
+    "passes": 2
+   }
+  },
+  {
+   "scene": "200 arms at once",
+   "A": {
+    "ms": 24.198,
+    "readbackMs": 5.824,
+    "freed": 3600,
+    "passes": 2
+   },
+   "slotWords": 1605632,
+   "B": {
+    "ms": 34.58,
+    "gpuMs": 17.236,
+    "gpuMinMs": 15.466,
+    "freed": 3600,
+    "passes": 2
+   }
+  }
+ ]
+}

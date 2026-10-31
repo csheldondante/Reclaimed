@@ -12,8 +12,8 @@
 //   hybrid   rock and what's built on the node solver (rigid clusters that the judge's breaks split along cell
 //            boundaries), metal and wood on the voxel lattice
 //
-// The judge (what lets go) is the same for all: `?judge=` picks it (game/judges.ts; the column judge today, room for
-// the method of sections on branch `judge`).
+// The judge (what lets go) is picked apart: `?judge=runs|sections` (game/judge.ts JUDGES — the column judge and
+// the method of sections on the GPU, from branch `judge`).
 
 export type SolverVariant = 'old' | 'nodes' | 'lattice' | 'hybrid';
 export const VARIANTS: readonly SolverVariant[] = ['old', 'nodes', 'lattice', 'hybrid'];
