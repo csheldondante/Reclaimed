@@ -64,7 +64,8 @@ struct SolverU { a: vec4<f32>, b: vec4<f32>, c: vec4<f32>, d: vec4<f32>, e: vec4
 //  [2] rest position (the spawn frame: world cells where it stood), w the node's size (cells across its block)
 //  [3] rotation (rest → world): its region's (deformable) or its part's (rigid)
 //  [4] xy (u32 bits) bonds: the nodes of its own body it's held to (bits 0..63); z its block's faces on the body's
-//      surface (a number: bits 0 +x, 1 -x, 2 +y, 3 -y, 4 +z, 5 -z — build.ts exposed), w 0
+//      surface (a number: bits 0 +x, 1 -x, 2 +y, 3 -y, 4 +z, 5 -z — build.ts exposed), w how far its cells reach below
+//      it (its foot)
 //  [5] contact point: rest position (spawn frame), w the node it rides (f32); < 0 no point
 //  [6] the node's rest position as it was made (about the rest centre of mass): what meshes are skinned to (bound
 //      there: [2] moves on as it bends, and the drawn vertices with it); w the cells it stands for
@@ -248,6 +249,8 @@ var<workgroup> pdent: array<vec3<f32>, 64>;
 // the body's centre as the tick began: positions are kept relative to it (f32 at world coordinates of a few hundred
 // has ~1e-5 steps — a slow body's move a substep is ~1e-4: its velocity from the move came out 6% off)
 var<workgroup> wO: vec3<f32>;
+// (a substep with a dent in it)
+var<workgroup> wDent: u32;
 
 struct Fit { goal: vec3<f32>, rot: vec4<f32> };
 /** Node l's part (its connected piece), fitted rigidly: the rotation and centre that best match where its nodes are,
@@ -296,7 +299,8 @@ fn dentable(o: u32, mat: u32) -> bool { return bodies[o * BODY_V + 8u].x < 0.5 &
 /** how deep a hit of this kinetic energy dents a block of this size (cells; at most half the block) */
 fn dentDepth(energy: f32, mat: u32, size: f32) -> f32 {
   let a = size * size;
-  return clamp(energy / (SM[mat * 4u + 3u].y * a) - 0.02, 0.0, 0.5 * size);
+  // (at most a quarter of the block at a blow: what moves the rest of its part onto the dent comes as a jolt)
+  return clamp(energy / (SM[mat * 4u + 3u].y * a) - 0.02, 0.0, 0.25 * size);
 }
 
 fn bondedTo(l: u32, j: u32) -> bool {
@@ -317,15 +321,18 @@ fn slopFor(cells: f32) -> f32 { return SU.b.z + min(SU.c.y, SU.b.w * pow(max(cel
  * it a little (its rest shape: it stays bent), by how far past.
  */
 fn loadFlow(b: u32, nN: u32, nP: u32, h: f32, mat: u32) {
-  // roots: held (pinned) or touching
+  // roots: what holds each part — its pinned nodes if it has any (a part held by a foundation is fixed by it: what
+  // it touches can't hold it up any further, and a hinge mustn't turn it into what it touches), else what it touches
   var nq = 0u;
   for (var k = 0u; k < nN; k++) {
     spar[k] = 0xffffffffu;
     pd[k] = vec3<f32>(0.0);
     pdent[k] = vec3<f32>(0.0);
     if (sw[k] < 0.0) { continue; }
-    var held = sw[k] == 0.0 || rt[k] != 0u;
-    for (var j = 0u; j < nP && !held; j++) { if (ptN[j] == k && pn[j] != 0u) { held = true; } }
+    var pinnedPart = false;
+    for (var j = 0u; j < nN; j++) { if (sw[j] == 0.0 && scomp[j] == scomp[k]) { pinnedPart = true; break; } }
+    var held = sw[k] == 0.0 || (!pinnedPart && rt[k] != 0u);
+    for (var j = 0u; j < nP && !held && !pinnedPart; j++) { if (ptN[j] == k && pn[j] != 0u) { held = true; } }
     if (held) {
       spar[k] = k;
       sord[nq] = k;
@@ -391,7 +398,7 @@ fn loadFlow(b: u32, nN: u32, nP: u32, h: f32, mat: u32) {
   // the plastic hinge: what hangs from bond wk–parent turns about it (its rest shape), by how far past the yield
   if (wk == 0xffffffffu || length(waxis) < 1e-9) { return; }
   let p = spar[wk];
-  let ang = min(0.03, (worst - 1.0) * 0.01) * smC(mat).w;
+  let ang = min(0.012, (worst - 1.0) * 0.01) * smC(mat).w;
   // (the forces summed are what holds it — the loads are their opposite: it turns the way they push)
   let axr = qrotS(qinvS(wRp), -normalize(waxis));
   let dq = vec4<f32>(axr * sin(0.5 * ang), cos(0.5 * ang));
@@ -400,18 +407,32 @@ fn loadFlow(b: u32, nN: u32, nP: u32, h: f32, mat: u32) {
   // flow is a creep, not a fling; the turn makes no speed)
   let dqW = qmulS(qmulS(wRp, dq), qinvS(wRp));
   let pivotW = 0.5 * (sx[wk] + sx[p]);
+  // (what hangs from it: wk's subtree, marked in spar's high bit) — and only a bond it hangs by alone turns: one in a
+  // loop (a braced frame) is held by the others, which share its load (the walk gave the load to one path)
   for (var j = 0u; j < nN; j++) {
     if (sw[j] < 0.0) { continue; }
-    // (in wk's subtree: wk on its way to a root)
     var a = j;
-    var inSub = false;
     for (var d = 0u; d < 64u; d++) {
-      if (a == wk) { inSub = true; break; }
+      if (a == wk) { sord[j] = 1u; break; }
       let up = spar[a];
-      if (up == a || up == 0xffffffffu) { break; }
+      if (up == a || up == 0xffffffffu) { sord[j] = 0u; break; }
       a = up;
+      sord[j] = 0u;
     }
-    if (!inSub) { continue; }
+  }
+  for (var j = 0u; j < nN; j++) {
+    if (sw[j] < 0.0 || sord[j] == 0u) { continue; }
+    // (what hangs from it already rests on something: the ground carries it, it turns no further into it)
+    if (rt[j] != 0u) { return; }
+    for (var k = 0u; k < nP; k++) { if (ptN[k] == j && pn[k] != 0u) { return; } }
+    for (var k = 0u; k < nN; k++) {
+      if (sw[k] < 0.0 || sord[k] == 1u || !bondedTo(j, k)) { continue; }
+      if (j == wk && k == p) { continue; }
+      return;
+    }
+  }
+  for (var j = 0u; j < nN; j++) {
+    if (sw[j] < 0.0 || sord[j] == 0u) { continue; }
     sr[j] = pivot + qrotS(dq, sr[j] - pivot);
     sx[j] = pivotW + qrotS(dqW, sx[j] - pivotW);
     sp[j] = pivotW + qrotS(dqW, sp[j] - pivotW);
@@ -591,15 +612,17 @@ fn solve(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
           }
           let ex = gh.d - ownSlop;
           if (ex > 0.0) {
-            if (!gh.ext && ex > erodeD) {
-              // (erode, don't push: the ground there crumbles)
-              if (it == 0u && s == 0u) {
-                let k = atomicAdd(&wErode, 1u);
-                if (k < ERODE_N) { bodies[b * BODY_V + 9u + k] = vec4<f32>(w, ex); }
-              }
-            } else {
+            // (deeper than the slop and erodeDepth into ground: erode, don't push — the ground there crumbles; it's
+            // still stopped from going further in, never pushed out)
+            // (rock erodes the ground it's cut into; metal and wood don't — they're pushed out, at the push-out speed)
+            let deep = !gh.ext && ex > erodeD && rigid;
+            if (deep && it == 0u && s == 0u) {
+              let k = atomicAdd(&wErode, 1u);
+              if (k < ERODE_N) { bodies[b * BODY_V + 9u + k] = vec4<f32>(w, ex); }
+            }
+            {
               let inward = max(0.0, -dot(mv, gh.n));
-              let corr = min(ex, inward + pushMax);
+              let corr = min(ex, inward + select(pushMax, 0.0, deep));
               let tang = mv - gh.n * dot(mv, gh.n);
               let tl = length(tang);
               var d = gh.n * corr;
@@ -697,13 +720,34 @@ fn solve(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
       // same test those bodies make (their point in this node's block, out through its faces on the surface), from
       // this side — so a contact pushes both ways, each by its share of the mass (a body's points alone would leave
       // the one it lands on unmoved, untouched)
+      var dentW = vec3<f32>(0.0);
       if (live && sw[l] > 0.0) {
         var acc = vec3<f32>(0.0);
         var cnt = 0.0;
+        // (the node's own foot too — the bottom of the block it stands for, however it's turned: a piece broken down to
+        // a node or two keeps the ground under it, whatever its few points face)
+        var footN = vec3<f32>(0.0);
+        {
+          let foot = sx[l] + wO - vec3<f32>(0.0, 0.0, 0.9 * lane[gi * LANE_V + 4u].w);
+          let gh = probe(foot);
+          let ex = gh.d - ownSlop;
+          if (ex > 0.0) {
+            let mvn = sx[l] - sp[l];
+            let inward = max(0.0, -dot(mvn, gh.n));
+            acc += gh.n * min(ex, inward + select(pushMax, 0.0, !gh.ext && ex > erodeD && rigid));
+            cnt += 1.0;
+            footN = gh.n;
+            if (it == iters - 1u) { rt[l] = 1u; }
+          }
+        }
         for (var k = 0u; k < nP; k++) {
           if (ptN[k] == l && length(pd[k]) > 0.0) { acc += pd[k]; cnt += 1.0; }
           // (its points' dents: its rest shape pushed in, once a substep)
-          if (it == 0u && ptN[k] == l) { sr[l] = sr[l] + qrotS(qinvS(sq[l]), pdent[k]); }
+          // (the node stays where the contact holds it; the rest of its part comes down onto the dent)
+          if (it == 0u && ptN[k] == l && length(pdent[k]) > 0.0) {
+            sr[l] = sr[l] + qrotS(qinvS(sq[l]), pdent[k]);
+            dentW += pdent[k];
+          }
         }
         let myScale = bodies[B0 + 3u].w;
         let gl = lane[gi * LANE_V + 2u].w * myScale;
@@ -712,7 +756,7 @@ fn solve(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
         let qi = qinvS(sq[l]);
         let exM = u32(lane[gi * LANE_V + 4u].z);
         let mvl = sx[l] - sp[l];
-        var nsum = vec3<f32>(0.0);
+        var nsum = footN;
         for (var k = 0u; k < NBR_N; k++) {
           let o1 = nbrAt(b, k);
           if (o1 == 0u) { break; }
@@ -767,6 +811,7 @@ fn solve(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
                   let e = 0.5 * min(mo2, bodies[B0 + 7u].z) * ap * ap;
                   let dd2 = dentDepth(e, mat, lane[gi * LANE_V + 2u].w);
                   sr[l] = sr[l] - qrotS(qinvS(sq[l]), N) * dd2;
+                  dentW -= N * dd2;
                 }
               }
             }
@@ -777,6 +822,31 @@ fn solve(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
           rt[l] = select(0u, 1u, length(nsum) > 0.0);
         }
         if (cnt > 0.0) { sx[l] = sx[l] + acc / cnt; }
+      }
+      // (a dent changed the rest shape: its part put in that shape now, its centre of mass kept, where it was before
+      // the substep too — the fit then has nothing to correct, and the crush makes no speed: a small piece's dent had
+      // flung it)
+      if (it == 0u) {
+        if (l == 0u) { wDent = 0u; }
+        workgroupBarrier();
+        sc0[l] = dentW;
+        if (length(dentW) > 0.0) { wDent = 1u; }
+        if (workgroupUniformLoad(&wDent) == 1u) {
+          if (live && sw[l] > 0.0) {
+            var m = 0.0;
+            var md = vec3<f32>(0.0);
+            for (var k = 0u; k < nN; k++) {
+              if (sw[k] <= 0.0 || scomp[k] != scomp[l]) { continue; }
+              let mk = massOf(k);
+              m += mk;
+              md += mk * sc0[k];
+            }
+            let shift = sc0[l] - md / max(m, 1e-6);
+            sx[l] = sx[l] + shift;
+            sp[l] = sp[l] + shift;
+          }
+          workgroupBarrier();
+        }
       }
       workgroupBarrier();
 
@@ -983,7 +1053,7 @@ fn solve(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
     lane[gi * LANE_V + 1u] = vec4<f32>(sv[l], f32(mat));
     lane[gi * LANE_V + 2u] = vec4<f32>(sr[l], lane[gi * LANE_V + 2u].w);
     lane[gi * LANE_V + 3u] = sq[l];
-    lane[gi * LANE_V + 4u] = vec4<f32>(bitcast<vec2<f32>>(vec2<u32>(atomicLoad(&sbond[l * 2u]), atomicLoad(&sbond[l * 2u + 1u]))), lane[gi * LANE_V + 4u].z, 0.0);
+    lane[gi * LANE_V + 4u] = vec4<f32>(bitcast<vec2<f32>>(vec2<u32>(atomicLoad(&sbond[l * 2u]), atomicLoad(&sbond[l * 2u + 1u]))), lane[gi * LANE_V + 4u].zw);
     pose[gi * 4u + 2u] = vec4<f32>(sx[l] + wO, 0.0);
     pose[gi * 4u + 3u] = sq[l];
     sp2 = length(sv[l]);
@@ -1063,6 +1133,14 @@ fn pairs(@builtin(global_invocation_id) id: vec3<u32>) {
       if (length(ci.xyz - cj.xyz) < ci.w + cj.w + vi + vj + 0.5) {
         near[n] = f32(j + 1u);
         n++;
+        // (a sleeper about to be hit hard — this one closing on it fast enough that its blow will wake it — is woken
+        // now, so both are awake when they meet: the blow then reaches it, dents it, moves it. Touching alone never
+        // wakes one)
+        if (bj.z == B_ASLEEP) {
+          let d = cj.xyz - ci.xyz;
+          let close = dot(bodies[i * BODY_V + 2u].xyz, normalize(d));
+          if (close * bi.w > SU.d.w && length(d) < ci.w + cj.w + close * 0.15) { atomicStore(&wakeFlag[j], 1u); }
+        }
       }
     }
   }

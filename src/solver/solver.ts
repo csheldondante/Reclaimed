@@ -99,7 +99,7 @@ export class Solver implements SimSystem, NodeSolver {
     const base: BindSpec = { 0: 'uniform', 22: 'uniform' };
     const spec: Record<string, BindSpec> = {
       solve: { 1: 'read', 2: 'uniform', 3: 'rw', 9: 'rw', 11: 'read', 13: 'rw', 14: 'read', 15: 'rw', 23: 'uniform' },
-      pairs: { 9: 'rw' },
+      pairs: { 9: 'rw', 13: 'rw' },
       shift: { 3: 'rw', 9: 'rw', 15: 'rw' },
       skin: { 3: 'rw', 9: 'rw', 15: 'rw', 17: 'read', 18: 'rw', 19: 'rw' },
     };
@@ -231,6 +231,7 @@ export class Solver implements SimSystem, NodeSolver {
       L.set(q, o4 + 12);
       LU.set(built.bonds[i], o4 + 16);
       L[o4 + 18] = nd.exposed;
+      L[o4 + 19] = nd.foot;
       pose.set([...x, 0, ...q, ...x, 0, ...q], i * 16);
     }
     built.points.forEach((p, k) => L.set([p.rest[0] - built.com[0], p.rest[1] - built.com[1], p.rest[2] - built.com[2], p.node], (k * LANE_V + 5) * 4));

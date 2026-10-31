@@ -125,6 +125,7 @@ test('an overlap within the slop is never corrected (PX3: surface deformation, n
     if (r) {
       maxUp = Math.max(maxUp, r.vel[2]);
       minZ = Math.min(minZ, r.pos[2]);
+      if (process.env.SOLVER_LOG && r.tick % 10 === 0) console.log('slab', r.tick, r.pos[2].toFixed(3), r.vel[2].toFixed(3), r.touching);
     }
   });
   const r = rd(b);
@@ -280,13 +281,82 @@ test('a girder bridge dents where a rock lands on it, and stays dented', async (
 
 test('a bar loaded past its strength snaps at its root: the graph splits into parts', async () => {
   clear();
-  // 1 × 1, 44 over the edge: 76 × 44² / 2 = 73 600 over Z = 1/6 is 4.4e5 — past steel's strength (4e5)
-  const cells = box(48, 1, 1, LEDGE_X - 44, 42, LEDGE, MAT.Steel);
+  // 1 × 1, 36 over the edge: 76 × 36² / 2 = 49 200 over Z = 1/6 is 2.95e5 — past a weaker steel's strength (2.5e5)
+  TUNE.solver.steelTensile = 2.5e5;
+  const cells = box(40, 1, 1, LEDGE_X - 36, 42, LEDGE, MAT.Steel);
   const b = solver.add({ cells, pinned: (c) => c.x >= LEDGE_X })!;
   let broke = 0;
-  await step(180, () => {
-    broke += solver.read(b)?.broke ?? 0;
-  });
+  for (let t = 0; t < 9; t++) {
+    await step(20, () => {
+      broke += solver.read(b)?.broke ?? 0;
+    });
+    if (process.env.SOLVER_LOG) {
+      const ns = await solver.nodes(b);
+      const lo = ns.reduce((m, n, i) => (n.x[2] < ns[m].x[2] ? i : m), 0);
+      console.log('snap t', t * 20, 'low node', lo, ns[lo].x.map((v) => v.toFixed(2)).join(','), 'w', ns[lo].w.toFixed(3), 'parts', solver.read(b)?.parts, 'broke', broke, 'all', ns.map((n) => n.x[0].toFixed(0) + ':' + n.x[2].toFixed(1)).join(' '));
+    }
+  }
   expect(broke).toBeGreaterThan(0);
   expect(rd(b).parts).toBeGreaterThan(1);
+  // what broke off fell to the floor and lies on it: not through it, not flung
+  const ns = await solver.nodes(b);
+  if (process.env.SOLVER_LOG) console.log('snapped z', Math.min(...ns.map((n) => n.x[2])).toFixed(2), Math.max(...ns.map((n) => n.x[2])).toFixed(2));
+  expect(Math.min(...ns.map((n) => n.x[2]))).toBeGreaterThan(FLOOR - 1);
+  expect(Math.max(...ns.map((n) => n.x[2]))).toBeLessThan(LEDGE + 2);
+});
+
+test('a steel pylon left on one leg bends over at its foot and comes down mostly whole (it crumples, not shatters)', async () => {
+  clear();
+  // four 1 × 1 legs 16 high at a 6-cell square's corners, braced every 5, a platform on top; only one leg's foot is
+  // still on the ground (pinned), the other three cut away under it
+  const cells: SolverCell[] = [];
+  const x0 = 6;
+  const y0 = 56;
+  const legs: [number, number][] = [[x0, y0], [x0 + 5, y0], [x0, y0 + 5], [x0 + 5, y0 + 5]];
+  for (const [x, y] of legs) for (let z = FLOOR + 1; z < FLOOR + 17; z++) cells.push({ x, y, z, mat: MAT.Steel });
+  for (let z = FLOOR + 5; z < FLOOR + 17; z += 5)
+    for (let x = x0; x <= x0 + 5; x++)
+      for (let y = y0; y <= y0 + 5; y++) if ((x === x0 || x === x0 + 5 || y === y0 || y === y0 + 5) && !legs.some(([a, b]) => a === x && b === y)) cells.push({ x, y, z, mat: MAT.Steel });
+  for (let x = x0; x <= x0 + 5; x++) for (let y = y0; y <= y0 + 5; y++) cells.push({ x, y, z: FLOOR + 17, mat: MAT.Steel });
+  // the standing leg's foot on the floor
+  cells.push({ x: x0, y: y0, z: FLOOR, mat: MAT.Steel });
+  const b = solver.add({ cells, pinned: (c) => c.z === FLOOR })!;
+  let broke = 0;
+  for (let t = 0; t < 15; t++) {
+    await step(20, () => {
+      broke += solver.read(b)?.broke ?? 0;
+    });
+    if (process.env.SOLVER_LOG) {
+      const ns = await solver.nodes(b);
+      console.log('t', t * 20, 'top', Math.max(...ns.map((n) => n.x[2])).toFixed(2), 'low', Math.min(...ns.map((n) => n.x[2])).toFixed(2), 'parts', rd(b).parts, 'broke', broke, 'v', rd(b).vel.map((v) => v.toFixed(1)).join(','));
+    }
+  }
+  const nodes = await solver.nodes(b);
+  const top = Math.max(...nodes.map((n) => n.x[2]));
+  if (process.env.SOLVER_LOG) console.log('pylon top', top, 'parts', rd(b).parts, 'broke', broke);
+  // it came down (bent over at its foot, or fell)
+  expect(top).toBeLessThan(FLOOR + 12);
+  // in a few pieces at most, not a shower of fragments
+  expect(rd(b).parts).toBeLessThanOrEqual(3);
+});
+
+test('a steel girder dropped flat lands on the floor and stays on it (not through it)', async () => {
+  clear();
+  const b = solver.add({ cells: box(16, 2, 2, 8, 60, FLOOR + 10, MAT.Steel) })!;
+  await step(200);
+  const ns = await solver.nodes(b);
+  const low = Math.min(...ns.map((n) => n.x[2]));
+  if (process.env.SOLVER_LOG) console.log('girder low', low, 'parts', rd(b).parts);
+  expect(low).toBeGreaterThan(FLOOR + 0.5);
+  expect(low).toBeLessThan(FLOOR + 1.5);
+});
+
+test('a steel post toppling onto the floor stays on it', async () => {
+  clear();
+  const b = solver.add({ cells: box(2, 2, 14, 30, 60, FLOOR, MAT.Steel), vel: [2, 0, 0] })!;
+  await step(240);
+  const ns = await solver.nodes(b);
+  const low = Math.min(...ns.map((n) => n.x[2]));
+  if (process.env.SOLVER_LOG) console.log('post low', low, 'top', Math.max(...ns.map((n) => n.x[2])), 'parts', rd(b).parts);
+  expect(low).toBeGreaterThan(FLOOR + 0.3);
 });

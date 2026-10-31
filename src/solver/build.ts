@@ -30,6 +30,8 @@ export interface BuiltNode {
    * inner face it would be pushed sideways into the next block)
    */
   exposed: number;
+  /** how far its cells reach below it (cells: its rest to their lowest bottom) */
+  foot: number;
 }
 
 export interface Built {
@@ -89,14 +91,14 @@ export function buildBody(cells: readonly SolverCell[], pinned?: (c: SolverCell)
   }
   const blockIdx = new Map<string, number>();
   const nodeOfCell = new Int32Array(cells.length);
-  const acc: { p: V3; m: number; cells: number; mats: Map<number, number>; pinned: boolean; exposed: number }[] = [];
+  const acc: { p: V3; m: number; cells: number; mats: Map<number, number>; pinned: boolean; exposed: number; low: number }[] = [];
   cells.forEach((c, i) => {
     const k = blockOf(c);
     let n = blockIdx.get(k);
     if (n === undefined) {
       n = acc.length;
       blockIdx.set(k, n);
-      acc.push({ p: [0, 0, 0], m: 0, cells: 0, mats: new Map(), pinned: false, exposed: 0 });
+      acc.push({ p: [0, 0, 0], m: 0, cells: 0, mats: new Map(), pinned: false, exposed: 0, low: Infinity });
     }
     nodeOfCell[i] = n;
     const a = acc[n];
@@ -107,6 +109,7 @@ export function buildBody(cells: readonly SolverCell[], pinned?: (c: SolverCell)
     a.cells++;
     a.mats.set(c.mat, (a.mats.get(c.mat) ?? 0) + m);
     if (pinned?.(c)) a.pinned = true;
+    a.low = Math.min(a.low, c.z);
     const empty = (x: number, y: number, z: number) => !at.has(key(x, y, z));
     const nb = (k: number) => nbr(c.x, c.y, k);
     if (empty(...nb(0), c.z)) a.exposed |= 1;
@@ -117,7 +120,7 @@ export function buildBody(cells: readonly SolverCell[], pinned?: (c: SolverCell)
     if (empty(c.x, c.y, c.z - 1)) a.exposed |= 32;
   });
   const main = (mats: Map<number, number>) => [...mats].sort((x, y) => y[1] - x[1])[0][0];
-  const nodes: BuiltNode[] = acc.map((a) => ({ rest: [a.p[0] / a.m, a.p[1] / a.m, a.p[2] / a.m], mass: a.m, mat: main(a.mats), cells: a.cells, pinned: a.pinned, exposed: a.exposed }));
+  const nodes: BuiltNode[] = acc.map((a) => ({ rest: [a.p[0] / a.m, a.p[1] / a.m, a.p[2] / a.m], mass: a.m, mat: main(a.mats), cells: a.cells, pinned: a.pinned, exposed: a.exposed, foot: a.p[2] / a.m - a.low }));
   // bonds: cells touching across blocks
   const bonds: [number, number][] = nodes.map(() => [0, 0]);
   const bond = (i: number, j: number) => {
@@ -148,11 +151,11 @@ export function buildBody(cells: readonly SolverCell[], pinned?: (c: SolverCell)
   const mats = new Map<number, number>();
   for (const n of nodes) mats.set(n.mat, (mats.get(n.mat) ?? 0) + n.mass);
   // contact points: the exposed faces' corners
-  const cand = new Map<string, V3>();
+  const cand = new Map<string, { p: V3; node: number }>();
   // (a little inside the hexagon: a corner exactly where three cells meet lies on the edge of every block round it)
   const R = 0.85 / Math.sqrt(3);
   let radius = 0;
-  cells.forEach((c) => {
+  cells.forEach((c, ci) => {
     const [px, py] = cellPos(c.x, c.y);
     const open = (x: number, y: number, z: number) => !at.has(key(x, y, z));
     const sides: boolean[] = [];
@@ -169,7 +172,7 @@ export function buildBody(cells: readonly SolverCell[], pinned?: (c: SolverCell)
         if (!faceOpen && !sides.some(Boolean)) continue;
         const a = Math.PI / 6 + (k * Math.PI) / 3;
         const p: V3 = [px + Math.cos(a) * R, py + Math.sin(a) * R, zz];
-        cand.set(`${p[0].toFixed(3)},${p[1].toFixed(3)},${zz}`, p);
+        cand.set(`${p[0].toFixed(3)},${p[1].toFixed(3)},${zz}`, { p, node: nodeOfCell[ci] });
       }
     }
     const d = Math.hypot(px - com[0], py - com[1], c.z + 0.5 - com[2]) + 0.8;
@@ -178,30 +181,30 @@ export function buildBody(cells: readonly SolverCell[], pinned?: (c: SolverCell)
   const list = [...cand.values()];
   const points: { rest: V3; node: number }[] = [];
   if (list.length) {
-    // farthest-point sampling from the lowest corner
-    let first = 0;
-    for (let i = 1; i < list.length; i++) if (list[i][2] < list[first][2]) first = i;
+    // every node with a corner on the surface gets one — its lowest (a node without a point would fall through the
+    // ground once it broke off alone) — then farthest-point sampling over the rest, from those
     const dist = new Float64Array(list.length).fill(Infinity);
-    let next = first;
-    for (let s = 0; s < Math.min(NN, list.length); s++) {
-      const p = list[next];
-      let best = 0;
-      let bd = Infinity;
-      nodes.forEach((n, i) => {
-        const d = Math.hypot(n.rest[0] - p[0], n.rest[1] - p[1], n.rest[2] - p[2]);
-        if (d < bd) [bd, best] = [d, i];
-      });
-      points.push({ rest: p, node: best });
-      dist[next] = -1;
-      let far = -1;
-      for (let i = 0; i < list.length; i++) {
-        if (dist[i] < 0) continue;
-        const q = list[i];
-        dist[i] = Math.min(dist[i], Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]));
-        if (far < 0 || dist[i] > dist[far]) far = i;
+    const take = (i: number) => {
+      const c = list[i];
+      points.push({ rest: c.p, node: c.node });
+      dist[i] = -1;
+      for (let j = 0; j < list.length; j++) {
+        if (dist[j] < 0) continue;
+        const q = list[j].p;
+        dist[j] = Math.min(dist[j], Math.hypot(q[0] - c.p[0], q[1] - c.p[1], q[2] - c.p[2]));
       }
+    };
+    const lowest = new Map<number, number>();
+    list.forEach((c, i) => {
+      const k = lowest.get(c.node);
+      if (k === undefined || c.p[2] < list[k].p[2]) lowest.set(c.node, i);
+    });
+    for (const i of lowest.values()) if (points.length < NN) take(i);
+    while (points.length < Math.min(NN, list.length)) {
+      let far = -1;
+      for (let j = 0; j < list.length; j++) if (dist[j] >= 0 && (far < 0 || dist[j] > dist[far])) far = j;
       if (far < 0) break;
-      next = far;
+      take(far);
     }
   }
   const surface = cells.map((c) => {
