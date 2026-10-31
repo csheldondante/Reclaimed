@@ -34,7 +34,7 @@ import type { PhysBody } from '../physics/physics';
 import type { SolverBody } from '../api/contracts/solver';
 import { modelColumns, type VoxelModel } from '../world/models';
 import { rockDrawFor } from './rockdraw';
-import { groundBlowRadius } from './blows';
+import { groundBlowRadius, sinkDepth, softnessOf, splitDisplaced } from './blows';
 import { BodyMeshes } from '../render/bodymesh';
 import { BM_VERT, buildBodyMesh, type MeshCell } from '../render/bodymeshbuild';
 import { bindSkinTo } from '../physics/mesh';
@@ -194,7 +194,7 @@ export class Integrity {
   /** dust where something breaks or a body hits (grains, spread in cells, the material it's made of) */
   onDust?: (x: number, y: number, z: number, count: number, spread: number, mat: number) => void;
   /** stats for the perf overlay / tests */
-  stats = { passes: 0, bodies: 0, crumbled: 0, settled: 0, crumbledBodies: 0, impacts: 0, shatters: 0, shattered: 0, lastMs: 0, rockSeeds: 0, rereads: 0, settledFalls: 0, settleMs: 0, metal: 0, deferred: 0, judgeMs: 0, judgeGpuMs: 0, groundBlows: 0 };
+  stats = { passes: 0, bodies: 0, crumbled: 0, settled: 0, crumbledBodies: 0, impacts: 0, shatters: 0, shattered: 0, lastMs: 0, rockSeeds: 0, rereads: 0, settledFalls: 0, settleMs: 0, metal: 0, deferred: 0, judgeMs: 0, judgeGpuMs: 0, groundBlows: 0, softBlows: 0, softRemoved: 0, softSpray: 0, softRim: 0, softDeepest: 0 };
   /** sleeping bodies projected per column: top, bottom (top < 0: none) — the
    *  GPU's bodyProj texture and the bodies' own collision share it */
   readonly proj: Float32Array;
@@ -1460,7 +1460,7 @@ export class Integrity {
       this.stats.impacts++;
       // (round 120) the map's metal it struck (a tanker, a car) wakes into the picked variant's body
       if (h.speed > WAKE_HIT) this.wakeMetalNear(x, y, z, 1.5);
-      this.groundBlow(x, y, z, 0.5 * b.mass * h.speed * h.speed);
+      this.groundBlow(x, y, z, 0.5 * b.mass * h.speed * h.speed, b.radius * 0.8);
       const br = rigid.breakAt(b, h.speed, h.at);
       if (!br) continue;
       // (its mesh drawn split between the pieces till theirs are built)
@@ -1676,7 +1676,7 @@ export class Integrity {
       // (round 120) the map's metal it struck wakes too (a girder dropped on a parked car: both bend)
       if (r.impact.speed > WAKE_HIT) this.wakeMetalNear(x, y, z, 1.5);
       // (round 120) and hard ground struck hard gives
-      this.groundBlow(x, y, z, e);
+      this.groundBlow(x, y, z, e, 0.6 * Math.cbrt(mb.body.cells));
       const n = Math.min(40, Math.round(Math.sqrt(e) / 12));
       if (n < 1) continue;
       // (metal sparks; wood splinters and dusts)
@@ -1899,18 +1899,85 @@ export class Integrity {
    * struck — the break tool's smash, a ball of radius 0.8·∛(E / groundEnergy) at most 3 — and the collapse judge looks
    * at what that leaves. (The body's own share: rock breaks on its hits, metal and wood dent: solver.wgsl.)
    */
-  groundBlow(x: number, y: number, z: number, energy: number): number {
-    const r = groundBlowRadius(energy);
-    if (!r || !this.world.slots.length) return 0;
+  groundBlow(x: number, y: number, z: number, energy: number, reach = 1.5): number {
+    if (!this.world.slots.length) return 0;
     const [cx, cy] = cellAt(x, y);
     const m = this.world.matAt(cx, cy, Math.max(0, Math.floor(z - 0.5)));
-    if (MATERIALS[m]?.state !== MatState.Solid) return 0;
+    // (loose ground: it sinks in — softBlow)
+    if (softnessOf(m) > 0) return this.softBlow(x, y, energy, reach, m);
+    const r = groundBlowRadius(energy);
+    if (!r || MATERIALS[m]?.state !== MatState.Solid) return 0;
     this.core.sim.edit.always = true;
     this.core.globals.events.push({ kind: EventKind.Edit, x, y, z: OP.SMASH * 32, radius: r, strength: z - 0.3 });
     this.watch(x, y, r + 2, 3);
     this.onDust?.(x, y, z, Math.min(60, Math.round(10 + r * 12)), r + 0.5, m);
     this.stats.groundBlows++;
     return r;
+  }
+
+  /**
+   * (round 120, the user: "when bodies hit the ground with heavy impacts in soft material like sand or dirt they should
+   * displace material and dampen energy that way … I really want it to push into the ground a bit to look like it is in
+   * soft material") "Erode, don't push", the ground the softer body: under a blow on loose ground the footprint (`reach`
+   * cells round the impact) is dug out to sinkDepth — deepest in the middle — so the body settles into it and ends
+   * embedded; what's dug out (only loose ground: what's under it stays) is spray (particles, impact.spray of it) and a rim
+   * laid round the dent (the rest) — the cells removed are all of it. The energy is the dig's: no bounce. Depth (cells).
+   */
+  softBlow(x: number, y: number, energy: number, reach: number, mat: number): number {
+    const depth = sinkDepth(energy, softnessOf(mat), reach);
+    if (!depth) return 0;
+    const { w: W, h: H } = this.core.dims;
+    const [cx, cy] = cellAt(x, y);
+    const R = Math.ceil(reach) + 1;
+    let removed = 0;
+    const touched: { x: number; y: number }[] = [];
+    for (let j = cy - 2 * R; j <= cy + 2 * R; j++)
+      for (let i = cx - R; i <= cx + R; i++) {
+        if (i < 0 || j < 0 || i >= W || j >= H) continue;
+        const [px, py] = cellPos(i, j);
+        const d = Math.hypot(px - x, py - y);
+        if (d > reach) continue;
+        const col = readColumn(this.core.packed, this.world.slots, i, j);
+        if (!col.length) continue;
+        const top = col[col.length - 1];
+        if (!(softnessOf(top.mat) > 0)) continue;
+        // (deepest under the middle, half as deep at the rim; never below the loose run's own bottom)
+        const want = depth * (1 - 0.5 * (d / reach) ** 2);
+        const cut = Math.min(want, top.z1 - top.z0);
+        if (cut < 0.02) continue;
+        removed += cut;
+        this.writeColumn(i, j, [...col.slice(0, -1), ...(top.z1 - cut > top.z0 + 1e-3 ? [{ ...top, z1: top.z1 - cut }] : [])]);
+        touched.push({ x: i, y: j });
+      }
+    if (!touched.length) return 0;
+    this.touchCols(touched, true);
+    const { spray, rim } = splitDisplaced(removed);
+    // the rim: laid on the ring just outside the dent (the loose deposit — the sim lays it as its own ground)
+    const ring: number[] = [];
+    for (let j = cy - 2 * (R + 3); j <= cy + 2 * (R + 3); j++)
+      for (let i = cx - R - 3; i <= cx + R + 3; i++) {
+        if (i < 0 || j < 0 || i >= W || j >= H) continue;
+        const [px, py] = cellPos(i, j);
+        const d = Math.hypot(px - x, py - y);
+        if (d > reach && d <= reach + 2.5) ring.push(j * W + i);
+      }
+    const each = ring.length ? rim / ring.length : 0;
+    for (const i of ring) {
+      const e = this.pendingLoose.get(i) ?? { amount: 0, mats: new Map() };
+      e.amount += each;
+      e.mats.set(mat, (e.mats.get(mat) ?? 0) + each);
+      this.pendingLoose.set(i, e);
+    }
+    this.flushLoose();
+    // the spray: a cloud of the ground's own stuff, by how much
+    this.onDust?.(x, y, this.world.colTop(cx, cy) + 0.3, Math.min(80, Math.round(8 + spray * 6)), reach + 0.5, mat);
+    this.chips(touched.map((c) => [c.x + 0.5, c.y + 0.5, this.world.colTop(c.x, c.y) + 0.2] as [number, number, number]), 1, 3 + Math.cbrt(energy) * 0.05);
+    this.stats.softBlows++;
+    this.stats.softDeepest = Math.max(this.stats.softDeepest, depth);
+    this.stats.softRemoved += removed;
+    this.stats.softSpray += spray;
+    this.stats.softRim += ring.length ? rim : 0;
+    return depth;
   }
 
   /**
@@ -1996,7 +2063,7 @@ export class Integrity {
       if (dv < 2.5) continue;
       const [cx, cy] = cellAt(st.pos[0], st.pos[1]);
       const top = this.world.colTop(cx, cy);
-      this.groundBlow(st.pos[0], st.pos[1], top, 0.5 * st.alive * 4 * dv * dv);
+      this.groundBlow(st.pos[0], st.pos[1], top, 0.5 * st.alive * 4 * dv * dv, 0.3 * Math.hypot(body.dims[0], body.dims[1]) * body.size);
     }
   }
 

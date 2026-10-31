@@ -20,3 +20,19 @@ test('the threshold is the tuning', () => {
   TUNE.impact.groundEnergy = 1e9;
   expect(groundBlowRadius(1e6)).toBe(0);
 });
+
+test('soft ground: sand softer than soil, stone not soft at all; a blow sinks deeper the harder it is', async () => {
+  const { softnessOf, sinkDepth, splitDisplaced } = await import('../../src/game/blows');
+  const { MAT } = await import('../../src/world/materials');
+  expect(softnessOf(MAT.Sand)).toBeGreaterThan(softnessOf(MAT.Soil));
+  expect(softnessOf(MAT.Soil)).toBeGreaterThan(0);
+  expect(softnessOf(MAT.Stone)).toBe(0);
+  expect(sinkDepth(1e5, 0, 2)).toBe(0);
+  const s = softnessOf(MAT.Sand);
+  expect(sinkDepth(2e5, s, 2)).toBeGreaterThan(sinkDepth(2e4, s, 2));
+  expect(sinkDepth(1e12, s, 2)).toBeLessThanOrEqual(3);
+  const { spray, rim } = splitDisplaced(7.5);
+  expect(spray + rim).toBeCloseTo(7.5, 9);
+  expect(spray).toBeGreaterThan(0);
+  expect(rim).toBeGreaterThan(spray);
+});
