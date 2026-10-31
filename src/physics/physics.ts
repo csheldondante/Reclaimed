@@ -768,6 +768,7 @@ export class Physics implements SimSystem {
     // the columns the voxels cover, refilled by prep (once more after the last body goes)
     if (this.used || this.colsLive) {
       enc.clearBuffer(this.world.physCols);
+      this.world.physColsTick = tick;
       enc.clearBuffer(this.world.physPuff);
     }
     this.colsLive = this.used > 0;

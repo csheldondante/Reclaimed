@@ -1230,20 +1230,25 @@ fn shift(@builtin(global_invocation_id) id: vec3<u32>) {
   }
 }
 
-// ---- skin: the cells of bodies drawn as voxels (metal: the field mesh can't hold its thin members) -----------------
+// ---- skin: the cells of bodies, where they are (the column projection) and drawn as voxels -------------------------
 // Each cell rides the node it was bound to (skinCells: xyz its rest about its body's rest centre of mass, f32 bits; w
-// its node's lane | material << 24), placed by that node's transform as the tick ends and drawn as render.wgsl vsBody's
-// instances (two vec4<u32>: position bits and the material word, then the rotation), counted into drawIndirect args.
+// its node's lane | drawn << 23 | material << 24), placed by that node's transform as the tick ends. Every cell is
+// marked in the columns it's in (physCols, as the physics voxels' prep: the projection pass makes them runs the nature
+// grid sees — sand poured on a body lies on it, water goes round it: a body at rest is buried, then dug out); a drawn
+// one (metal: the field mesh can't hold its thin members) is also a render.wgsl vsBody instance (two vec4<u32>:
+// position bits and the material word, then the rotation), counted into drawIndirect args.
 @group(0) @binding(17) var<storage, read> skinCells: array<vec4<u32>>;
 @group(0) @binding(18) var<storage, read_write> skinInst: array<vec4<u32>>;
 @group(0) @binding(19) var<storage, read_write> skinArgs: array<atomic<u32>>;
+@group(0) @binding(20) var<storage, read_write> projCols: array<atomic<u32>>;
 
 @compute @workgroup_size(64)
 fn skin(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = id.x;
   if (i >= u32(SU.e.z)) { return; }
   let c = skinCells[i];
-  let li = c.w & 0xffffffu;
+  let li = c.w & 0x7fffffu;
+  let drawn = ((c.w >> 23u) & 1u) != 0u;
   let m = c.w >> 24u;
   let b = li / NN;
   let st = bodies[b * BODY_V].z;
@@ -1252,6 +1257,16 @@ fn skin(@builtin(global_invocation_id) id: vec3<u32>) {
   let r = bitcast<vec3<f32>>(c.xyz);
   let q = pose[li * 4u + 3u];
   let x = pose[li * 4u + 2u].xyz + qrotS(q, r - lane[li * LANE_V + 6u].xyz);
+  // (the column under it, and a little round it: a turned body leaves no holes — the physics voxels' splat)
+  for (var k = 0u; k <= NDIR; k++) {
+    let o = select(DIRV[min(k, NDIR - 1u)] * 0.3, vec2<f32>(0.0), k == NDIR);
+    let cc = cellAt(x.xy + o);
+    if (inMap(cc) && x.z >= 0.0 && x.z < f32(PHYS_COL_WORDS * 32u)) {
+      let zc = u32(x.z);
+      atomicOr(&projCols[colIdxI(cc) * PHYS_COL_WORDS + zc / 32u], 1u << (zc % 32u));
+    }
+  }
+  if (!drawn) { return; }
   let k = atomicAdd(&skinArgs[1], 1u);
   let word = m | ((pcg(i) & 255u) << 8u) | 0x40000000u;
   skinInst[k * 2u] = vec4<u32>(bitcast<vec3<u32>>(x), word);

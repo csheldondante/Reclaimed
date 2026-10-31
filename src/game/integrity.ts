@@ -224,6 +224,8 @@ export class Integrity {
       (this as { solver: Solver | null }).solver = solver;
       // (what it draws: the metal's cells as voxels, each riding its node; the rock mesh skinned to its nodes)
       core.renderer.addVoxels(solver.skinInst, solver.skinArgs);
+      // (its bodies' cells in the columns every column while it holds any: the projection's whole pass)
+      core.sim.project.wholeWhile.push(() => solver.used > 0);
       core.renderer.setRockNodes({ pose: solver.pose, lanes: solver.lanes });
       solver.onBuffers = () => {
         core.renderer.removeVoxels(solver.skinArgs);

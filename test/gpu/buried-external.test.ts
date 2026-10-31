@@ -60,3 +60,4 @@ test('plants on its top live on (it stays overgrowable)', async () => {
   expect(vegBefore).toBeGreaterThan(0.3);
   expect(after).toBeGreaterThan(0.05);
 });
+
