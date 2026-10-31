@@ -18,6 +18,8 @@ const url = opt('url', 'http://localhost:5211');
 const out = opt('out', 'C:/Projects/shots88/solver/lab');
 const only = opt('only', '');
 const variant = opt('solver', 'nodes');
+const judge = opt('judge', 'runs');
+const level = opt('level', 'playground');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 fs.mkdirSync(out, { recursive: true });
 
@@ -28,6 +30,7 @@ const PLAN = {
   slide: [[2, 'release the slab'], [8, 'nick the spire'], [14, 'undercut the mesa'], [30, 'bury'], [42, 'dig out']],
   house: [[2, 'break a corner'], [12, 'topple the towers']],
   metal: [[2, 'boulder on the bridge'], [12, 'cut the pylon'], [22, 'drop the tanker'], [38, 'bury the tanker']],
+  collapse: [[2, 'cut a foot'], [8, "cut the dome's ring"], [16, 'undercut the cliff'], [24, 'undercut the spire'], [34, 'cut the keystone']],
 };
 const FRAMES = 54;
 
@@ -48,7 +51,7 @@ try {
   p.on('console', (m) => {
     if (m.type() === 'error') console.log(`[console.error] ${m.text().slice(0, 300)}`);
   });
-  await p.goto(`${url}/?skipmenu=1&level=playground&tutorial=0&q=low&solver=${variant}`, { waitUntil: 'load' });
+  await p.goto(`${url}/?skipmenu=1&level=${level}&tutorial=0&q=low&solver=${variant}&judge=${judge}`, { waitUntil: 'load' });
   await p.waitForFunction(() => window.reclaimed?.scene?.bugReport, { timeout: 240000 });
   await sleep(35000);
   const fatal = await p.$eval('.fatal', (e) => e.textContent).catch(() => null);

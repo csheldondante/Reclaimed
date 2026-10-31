@@ -75,6 +75,12 @@ try {
               const r = ig.solver.read(b);
               if (r) window.__feel.vUp = Math.max(window.__feel.vUp, r.vel[2]);
             }
+            // (the voxel lattice's bodies: their state's mean velocity)
+            const ph = R.scene.physics;
+            for (const b of ph?.bodies ?? []) {
+              const st = ph.state(b);
+              if (st) window.__feel.vUp = Math.max(window.__feel.vUp, st.vel[2]);
+            }
             requestAnimationFrame(watch);
           };
           requestAnimationFrame(watch);
