@@ -27,6 +27,8 @@ the active map with real consequences". First slice: the horde comes for the tow
 | RS28 | An evacuation's town is charred at the end whether or not the horde reached it (the ending says it was left to the dead); the people led out don't yet live in the refuge as a camp (a settlement record) | M | open |
 | RS29 | data/wiki/seed1 was stale against the live atlas (re-pulled this round); the Bell story (data/stories/the-bell-under-kaudru.json) fails storycheck against it (11 problems, before and after this branch: f-kuharm, s139) — the GM to rewrite it | S | open |
 | RS30 | A run's world saved between page loads (RPL8); the next run starts from the town region in the world as left (same page only) | S | open |
+| RS31 | (the user, Pixel 9a) "The bike link just teleports me around the map but never loads anything else": a run that couldn't start was swallowed (no card, a free hero) and the hero wasn't shifted with the window (the shift registered after the run was made) — now the fatal overlay with the reason and the hero in step from the start; a situation carries its world's print (`from.print`) and a GM file for another make of the seed gives way to the template, said on the card | S | done (runsit) — the phone's own cause to confirm on the phone |
+| RS32 | The same seed may make other towns on another GPU (the atlas's macro ground is made on the GPU and read back; rivers, sites and realms are planned on it): the GM's wiki cache, a saved world and a GM file assume one world. An atlas made the same everywhere (integer or fixed-point where it decides), or the cache pulled per device class | M | open |
 
 ## Round 119 (2026-10-30, branch `runplay`) — a generated run played end to end (DECISIONS round 119)
 

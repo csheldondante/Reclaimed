@@ -14303,3 +14303,20 @@ controls; `--ff` takes ways on without playing the areas between, to look at the
 fires live — p50 9.8 ms, p95 11.6-16.6 ms, GPU ~14 ms (EMA); the hero's main-thread cost 0.05-0.1 ms a frame. The phone
 proxy drive (`driveprofile.mjs`, q=low, dpr 1, 30 s) on this branch: p50 9.9, p95 12.1 ms, GPU 11.4 ms a frame; the fire
 and structure passes 0.04 ms each (the wood change costs nothing measurable).
+
+### Round 120 (`runsit`), the phone bug
+
+The user (Pixel 9a, the Pages build): "The bike link just teleports me around the map but never loads anything else. I
+can drive around though which is fun still but it's very broken". From the code: a free hero means the run was never
+made — LevelSit's constructor threw — and `startSituationRun` was called as `void …` with no handler for its rejection
+(main has no unhandledrejection hook), so nothing showed. And the window's shift (`core.onShift`: hero and run moved with
+a slide) was registered only after the run was made: with the run missing, every slide left the hero a region off, and
+the camera chased it off the made land — the teleports and the land that never loads. Fixed: a run that can't start is
+the fatal overlay with its reason; the shift is registered as soon as the hero exists. What threw on the phone, most
+likely: the GM's situation, validated against the wiki the phone builds live from its own atlas — and the atlas's macro
+ground is made on the GPU and read back, with the rivers, sites and realms planned on it, so another GPU can make the same
+seed with other towns (RS32). A situation now carries its world's print (`from.print`, `worldPrint`: its towns and
+factions hashed); a GM file for another make of the seed gives way to the template, and the card says so. Tests: the
+selection (the GM's file in its own world; skipped with a note in another; a broken one for this world throws), a leg
+under a loader that isn't ready for 40 s (waits, asks once, arrives once). scripts/runsit.mjs now checks the run is up
+(its card, the hero held) before playing. To confirm on the phone (or a headless page on another GPU path).
