@@ -347,7 +347,13 @@ export class TraitSystem implements TraitsApi, SimSystem {
     if (l.pulse > 0) return;
     l.pulse = e.world.every ?? 1;
     const [x, y] = e.at;
-    if (e.world.grow) this.globals.events.push({ kind: EventKind.Grow, x, y, radius: e.radius, strength: 1 });
+    // (growth: a tap's worth somewhere in the field each pulse — the Grow event plants a tree at its very middle, so one
+    // spot pulsed again and again becomes one thicket)
+    if (e.world.grow) {
+      const a = Math.random() * Math.PI * 2;
+      const r = Math.sqrt(Math.random()) * e.radius * 0.85;
+      this.globals.events.push({ kind: EventKind.Grow, x: x + Math.cos(a) * r, y: y + Math.sin(a) * r, radius: Math.min(3, e.radius), strength: 1 });
+    }
     if (e.world.mend) this.globals.events.push({ kind: EventKind.Mend, x, y, radius: e.radius, strength: Math.min(1, 0.5 * e.rate) });
     this.opts.onWorld?.(x, y, e.radius);
   }

@@ -235,7 +235,7 @@ export const STATIONS: Station[] = [
     id: 'traits',
     name: 'traits',
     rect: [128, 192, 256, 256],
-    look: [192, 192, 12, 2.8],
+    look: [190, 194, 11, 9],
     hint: 'traits: the living and the walking dead; a lich raises the fallen; a sanctuary heals the living and burns the undead',
     actions: [
       { label: 'crowd', run: (k) => tk(k).crowd() },

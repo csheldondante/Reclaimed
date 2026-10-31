@@ -14453,3 +14453,22 @@ moves the free > 2 cells, the stone < 0.3); modularity (a `regen` module registe
 `regenerating`, the other modules' list untouched, heal unchanged, unregistered it stops); Mend (a lightning-cracked
 concrete block: damage 124 → 0 under a 6 s sanctuary, no agent about); AgentUnits (a smith raised keeps its role, a
 walking dead stays down). Full suite: 245 passed (1 expected fail, 2 skipped).
+
+**Measured (desktop iGPU, intel xe-lpg; the phone proxy q=low 412x915 dpr 2.6).** scripts/perf/traits.mjs: the atlas
+with every system in play, 1000 agents round the camera (500 living, 500 undead) under a lasting sanctuary and a fear
+field, the trait system toggled on and off in 3 s windows, four rounds each (round 120: toggle, don't trust per-pass
+timestamps on tilers): the agents' pass 0.530 ms on vs 0.445 off (+0.085 ms for 7 modules + core, 9 dispatches of 16
+workgroups); the whole frame's GPU 11.20 vs 11.41 ms (−0.21: inside the iGPU's clock noise); the traits system's CPU
+0.01 ms a tick. Well under the 1 ms target. driveprofile (q=low, the ride): p50 9.9, p95 11.8, GPU 9.83 ms a frame —
+places' last gate read p50 9.8-9.9, p95 11.4-13.3: no cost visible with no agents about. `npm run smoke` passes (atlas
+ready 40.7 s, no fatal).
+
+**Seen** (scripts/traitshot.mjs, C:/Projects/shots88/traits/): the crowd (180 villagers round the well, 90 walking dead
+in green and bone, the lich); the smite leaves ~105 bodies lying ash-grey; the raise stands them all up green and bone,
+hopping up, and they gather on the lich; the sanctuary greens the ground (Grow pulses, spread over the field: one spot
+pulsed every 0.5 s grew a single thicket in the first run, so a random point a pulse and the station's every 3 s), the
+living glow (a white halo over the head), the undead spark and fall (the raised round the lich too — the rule doesn't
+care whose they are); fear sends the village up its field; petrify turns the walking dead grey and still. Readable close
+(04-sanctuary-close.png, zoom 26); at the station's default zoom the halos and sparks are a few pixels (LW1-4).
+The first run found the playground had no one draining the agents' events (no Units layer): corpse mode's books live in
+the sync, so the station syncs every 250 ms while it has agents.

@@ -50,22 +50,30 @@ export class TraitStation implements TraitStationDriver {
     agents.follow(G.lich, -1);
   }
 
+  // (close together, so one view holds them all and the sanctuary between reaches both)
   private get village(): [number, number] {
-    return [this.at[0] - 16, this.at[1] - 4];
+    return [this.at[0] - 9, this.at[1]];
   }
   private get graveyard(): [number, number] {
-    return [this.at[0] + 18, this.at[1] - 2];
+    return [this.at[0] + 9, this.at[1]];
   }
   private get lichAt(): [number, number] {
-    return [this.at[0] + 2, this.at[1] + 10];
+    return [this.at[0] - 5, this.at[1] + 8];
+  }
+  /** the agents' events drained (deaths, rises, decays: corpse mode keeps its books in the sync) while the station has
+   *  agents — the playground has no Units layer doing it */
+  private syncing: ReturnType<typeof setInterval> | null = null;
+  private keepSynced(): void {
+    this.syncing ??= setInterval(() => void this.agents.sync(), 250);
   }
 
   crowd(): void {
     const [vx, vy] = this.village;
     const [dx, dy] = this.graveyard;
     const [lx, ly] = this.lichAt;
-    this.ids.push(...this.agents.spawn(180, vx, vy, { group: G.village, kind: 'worker', spread: 9 }));
-    const dead = this.agents.spawn(90, dx, dy, { group: G.dead, kind: 'raider', spread: 8 });
+    this.keepSynced();
+    this.ids.push(...this.agents.spawn(180, vx, vy, { group: G.village, kind: 'worker', spread: 7 }));
+    const dead = this.agents.spawn(90, dx, dy, { group: G.dead, kind: 'raider', spread: 6 });
     this.traits.assign(dead, ['undead']);
     this.ids.push(...dead);
     if (this.lich === null) {
@@ -78,20 +86,17 @@ export class TraitStation implements TraitStationDriver {
   }
 
   smite(): void {
+    // (the village's side toward the lich)
     const [vx, vy] = this.village;
-    const [lx, ly] = this.lichAt;
-    // (toward the lich, on the village's edge)
-    const at: [number, number] = [vx + (lx - vx) * 0.45, vy + (ly - vy) * 0.45];
-    this.effects.push(this.traits.apply({ op: 'damage', type: 'necrotic', amount: 100, at, radius: 6 }));
+    this.effects.push(this.traits.apply({ op: 'damage', type: 'necrotic', amount: 100, at: [vx + 1, vy + 3], radius: 4.5 }));
   }
 
   raise(): void {
-    this.effects.push(this.traits.apply({ op: 'raise', group: G.raised, at: this.lichAt, radius: 18 }));
+    this.effects.push(this.traits.apply({ op: 'raise', group: G.raised, at: this.lichAt, radius: 12 }));
   }
 
   sanctuary(): void {
-    const at: [number, number] = [this.at[0], this.at[1] - 3];
-    this.effects.push(this.traits.apply({ op: 'heal', rate: 1.5, at, radius: 12, seconds: 25, world: { grow: true, mend: true, every: 1 } }));
+    this.effects.push(this.traits.apply({ op: 'heal', rate: 1.5, at: [this.at[0], this.at[1]], radius: 11, seconds: 25, world: { grow: true, mend: true, every: 3 } }));
   }
 
   fear(): void {
@@ -99,10 +104,12 @@ export class TraitStation implements TraitStationDriver {
   }
 
   petrify(): void {
-    this.effects.push(this.traits.apply({ op: 'status', status: 'petrified', lasts: 15, at: this.graveyard, radius: 7 }));
+    this.effects.push(this.traits.apply({ op: 'status', status: 'petrified', lasts: 15, at: this.graveyard, radius: 10 }));
   }
 
   clear(): void {
+    if (this.syncing) clearInterval(this.syncing);
+    this.syncing = null;
     this.agents.remove(this.ids);
     this.ids = [];
     this.lich = null;

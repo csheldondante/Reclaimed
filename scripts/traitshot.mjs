@@ -53,6 +53,8 @@ await run({ name: 'traitshot', kind: 'behaviour', size: '412x915', dpr: 2 }, asy
   await p.evaluate((zoom) => {
     const r = window.reclaimed;
     r.scene.tunePanel?.toggle(false);
+    // (the sandbox's tool panel covers half a phone's screen: out of the pictures)
+    for (const el of document.querySelectorAll('.editor')) el.style.display = 'none';
     const i = r.scene.level.stations.findIndex((s) => s.id === 'traits');
     r.scene.stationsBar.pick(i);
     if (zoom) r.camera.zoom = zoom;
@@ -79,6 +81,23 @@ await run({ name: 'traitshot', kind: 'behaviour', size: '412x915', dpr: 2 }, asy
   await gif('04-sanctuary.gif', 32, 250);
   await shot('04-sanctuary.png');
   const c3 = await census('sanctuary');
+  // close: the halos on the living, the sparks on the undead, the raised (green and bone) round the lich
+  const far = await p.evaluate(() => {
+    const c = window.reclaimed.camera;
+    const was = { target: [...c.target], zoom: c.zoom };
+    const [x, y, z] = c.target;
+    c.target = [x - 3, y + 2, z];
+    c.zoom = 26;
+    return was;
+  });
+  await sleep(1200);
+  await gif('04-sanctuary-close.gif', 20, 200);
+  await shot('04-sanctuary-close.png');
+  await p.evaluate((was) => {
+    const c = window.reclaimed.camera;
+    c.target = was.target;
+    c.zoom = was.zoom;
+  }, far);
 
   await click('fear');
   await gif('05-fear.gif', 20, 250);
