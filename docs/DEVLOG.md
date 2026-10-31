@@ -14488,3 +14488,26 @@ on Dawn here, 4³ stone blocks and 16 × 2 × 2 steel girders alternating; noisy
 The lattice sleeps now (fair to it, the coordinator: "a lattice that never sleeps isn't a fair comparison"): the same
 rest rule, woken by the game acting, a moving neighbour or a cut; its solve skipped whole when every body sleeps. Its
 steel rings above the rest speed and half its bodies stay awake.
+
+**The battery** (scripts/physbattery.mjs → data/perf/solver/battery.json; the phone proxy in headless Chrome on this
+machine's Xe-LPG, every system in play; each station's buttons pressed in turn, then measured 8 s — so it's the cost
+while things move and settle. The node solver's row after its parts were kept between ticks, which halved it):
+
+| station | old | lattice | hybrid | nodes |
+|---|---|---|---|---|
+| rock | 7.277 (0) / 0.10 · none · rise 1.29 | 9.127 (1.649) / 0.03 · 8989 voxels · rise 0 | 4.337 (0.793) / 0.01 · 0/1 nodes-bodies (58 nodes) · rise 0.9 | 7.841 (1.619) / 0.02 · 0/1 nodes-bodies (58 nodes) · rise 0.9 |
+| build | 6.792 (0) / 0.10 · 1 rigid · rise 7.19 | 11.46 (3.982) / 0.03 · 10080 voxels · rise 0 | 11.806 (5.609) / 0.11 · 4 rigid, 4/4 nodes-bodies (144 nodes) · rise 0.48 | 6.413 (2.62) / 0.01 · 4 rigid, 4/4 nodes-bodies (144 nodes) · rise 0.49 |
+| slide | 6.204 (0) / 0.10 · none · rise 3.49 | 6.793 (2.165) / 0.04 · 11312 voxels · rise 0 | 8.393 (1.741) / 0.01 · 0/1 nodes-bodies (24 nodes) · rise 0.7 | 7.942 (0.742) / 0.12 · 0/1 nodes-bodies (53 nodes) · rise 0.1 |
+| house | 9.824 (0.983) / 0.24 · 8304 voxels · rise 2.82 | 11.606 (3.808) / 0.02 · 12296 voxels · rise 0 | 11.817 (4.253) / 0.04 · 1 rigid, 1/1 nodes-bodies (20 nodes), 8880 voxels · rise 0.42 | 7.012 (2.081) / 0.01 · 1 rigid, 2/3 nodes-bodies (92 nodes) · rise 0.42 |
+| metal | 11.595 (2.244) / 0.14 · 9757 voxels · rise 1.3 | 11.806 (3.764) / 0.04 · 13919 voxels · rise 0 | 6.617 (1.69) / 0.02 · 0/1 nodes-bodies (12 nodes), 10333 voxels · rise 0.01 | 11.804 (5.16) / 0.01 · 2 rigid, 4/6 nodes-bodies (212 nodes) · rise 0.2 |
+| collapse | 9.555 (0) / 0.41 · 3 rigid · rise 8.77 | 8.137 (1.621) / 0.03 · 11780 voxels · rise 0 | 7.379 (1.217) / 0.01 · 0/1 nodes-bodies (20 nodes) · rise 1.4 | 8.456 (1.523) / 0.01 · 0/1 nodes-bodies (24 nodes) · rise 1.4 |
+
+(412x915 dpr 2.6 q=low; 8 s after the station's buttons; GPU ms a frame (the physics passes') / CPU ms of the physics systems · what's moving · the fastest upward speed seen, cells/s)
+
+Reading it: the node solver costs 0.7–5 ms of GPU while a station's pieces move (the metal station's six bodies, 212
+nodes, the most: its stiff bodies' load walk runs on one thread), against the lattice's 1.6–4 ms holding 9–14k voxels
+(it keeps every body for good) and the baseline's ~0 for rock (the CPU rigid rock: 0.1–0.4 ms of CPU) and 1–2.2 ms
+for its metal on the lattice. Feel: the baseline's rigid rock rises up to 8.8 cells/s on the collapse station (the
+push-outs the design was against); the node solver's never past 1.4 (the push-out speed and the slow erode). The
+lattice's voxels aren't watched by the rise check. Asleep, the node solver costs next to nothing; the lab's steel on the
+lattice rings and half of it stays awake.

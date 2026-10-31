@@ -243,7 +243,7 @@ export class Solver implements SimSystem, NodeSolver {
     B.set(q, 16);
     B.set([0, 0, spec.allow ?? 0, 0], 24);
     B.set([0, 1, built.mass, 0], 28);
-    B.set([kind === 'rigid' ? 1 : 0, built.nodes.some((nd) => nd.pinned) ? 1 : 0, 0, 0], 32);
+    B.set([kind === 'rigid' ? 1 : 0, built.nodes.some((nd) => nd.pinned) ? 1 : 0, 1, 0], 32);
     const q0 = this.device.queue;
     const o = s * NN;
     q0.writeBuffer(this.buf.lane, o * LANE_V * 16, L);

@@ -81,7 +81,8 @@ struct SolverU { a: vec4<f32>, b: vec4<f32>, c: vec4<f32>, d: vec4<f32>, e: vec4
 //  [5] x hardest approach this tick (cells/s), yzw where (world)
 //  [6] x points touching, y deepest overlap, z the overlap it may keep (allow), w points touching when it fell asleep
 //  [7] x erode points this tick, y parts (connected), z mass, w bonds broken this tick
-//  [8] x rigid (1) or deformable (0), y 1 when a node is pinned (a foundation holds it), zw 0
+//  [8] x rigid (1) or deformable (0), y 1 when a node is pinned (a foundation holds it), z 1: its parts to work out
+//      (made, or bonds changed), w 0
 //  [9..12] where it erodes the ground this tick (world points, w how deep past its slop)
 //  [13..14] the other bodies near it (slot + 1 as f32, 0 none; pairs)
 //  [15] what the game asks of it this tick: xyz a velocity change (an impulse), w 1 when set (the solve clears it)
@@ -551,11 +552,16 @@ fn solve(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
   }
   workgroupBarrier();
 
-  // parts: the connected pieces of the bond graph (a rigid body's clusters), by the least index reached
-  scomp[l] = l;
+  // parts: the connected pieces of the bond graph (a rigid body's clusters), by the least index reached — kept in the
+  // lanes from tick to tick ([4].z / 64), worked out again only when the host made the body (bodies[8].z set) or a
+  // bond broke (below): the rounds and their barriers had been a body's biggest fixed cost
+  scomp[l] = u32(lane[gi * LANE_V + 4u].z) >> 6u;
+  if (l == 0u) { wFlag = u32(bodies[B0 + 8u].z); }
+  let stale = workgroupUniformLoad(&wFlag) != 0u;
+  if (stale) { scomp[l] = l; }
   workgroupBarrier();
-  if (l == 0u) { atomicStore(&wChanged, 0u); }
-  for (var round = 0u; round < 64u; round++) {
+  if (l == 0u) { atomicStore(&wChanged, 0u); bodies[B0 + 8u].z = 0.0; }
+  for (var round = 0u; round < select(0u, 64u, stale); round++) {
     var c = scomp[l];
     if (live) {
       for (var j = 0u; j < nN; j++) { if (bondedTo(l, j) && scomp[j] < c) { c = scomp[j]; } }
@@ -670,7 +676,7 @@ fn solve(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
             let inside = hs - abs(lp);
             if (any(inside <= vec3<f32>(0.0))) { continue; }
             // out through the nearest of its faces on the body's surface (the side the point is on)
-            let ex = u32(snap[(o * NN + j) * LANE_V + 4u].z);
+            let ex = u32(snap[(o * NN + j) * LANE_V + 4u].z) & 63u;
             var dd = 1e9;
             var ax = vec3<f32>(0.0);
             let fx = select(1u, 2u, lp.x < 0.0);
@@ -761,7 +767,7 @@ fn solve(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
         let hs = vec3<f32>(0.5, 0.5 * ROW_H, 0.5) * gl;
         let xl = sx[l] + wO;
         let qi = qinvS(sq[l]);
-        let exM = u32(lane[gi * LANE_V + 4u].z);
+        let exM = u32(lane[gi * LANE_V + 4u].z) & 63u;
         let mvl = sx[l] - sp[l];
         var nsum = footN;
         for (var k = 0u; k < NBR_N; k++) {
@@ -1060,7 +1066,7 @@ fn solve(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
     lane[gi * LANE_V + 1u] = vec4<f32>(sv[l], f32(mat));
     lane[gi * LANE_V + 2u] = vec4<f32>(sr[l], lane[gi * LANE_V + 2u].w);
     lane[gi * LANE_V + 3u] = sq[l];
-    lane[gi * LANE_V + 4u] = vec4<f32>(bitcast<vec2<f32>>(vec2<u32>(atomicLoad(&sbond[l * 2u]), atomicLoad(&sbond[l * 2u + 1u]))), lane[gi * LANE_V + 4u].zw);
+    lane[gi * LANE_V + 4u] = vec4<f32>(bitcast<vec2<f32>>(vec2<u32>(atomicLoad(&sbond[l * 2u]), atomicLoad(&sbond[l * 2u + 1u]))), f32((u32(lane[gi * LANE_V + 4u].z) & 63u) | (scomp[l] << 6u)), lane[gi * LANE_V + 4u].w);
     pose[gi * 4u + 2u] = vec4<f32>(sx[l] + wO, 0.0);
     pose[gi * 4u + 3u] = sq[l];
     sp2 = length(sv[l]);
