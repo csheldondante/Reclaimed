@@ -103,7 +103,7 @@ fn fsPool(in: SPoolOut) -> FOut {
   if (cutAway(in.wpos, in.pos.xy)) { discard; }
   var o: FOut;
   // (added to the lit, hazed colour already there: a little goes a long way in the encoded target)
-  o.color = vec4<f32>(spPoolLight(in.wpos, in.info) * 0.42, 0.0);
+  o.color = vec4<f32>(spPoolLight(in.wpos, in.info) * 0.8, 0.0);
   o.pick = vec2<u32>(0u, 0u);
   return o;
 }

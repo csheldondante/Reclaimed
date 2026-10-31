@@ -125,7 +125,7 @@ fn vsPool(@location(0) a: vec4<f32>, @builtin(instance_index) ii: u32) -> PoolOu
 
 @fragment
 fn fsPool(in: PoolOut) -> @location(0) vec4<f32> {
-  return vec4<f32>(spPoolLight(in.wpos, in.info) * 0.42, 0.0);
+  return vec4<f32>(spPoolLight(in.wpos, in.info) * 0.8, 0.0);
 }
 
 // ---- the ground: a height grid (x, y, z, wetness/slope tint)

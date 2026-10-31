@@ -14436,3 +14436,21 @@ dressing and night lights (STR30, STR32, STR36, STR33). ARCHITECTURE "Cities".
 Tests: unit 235 passed (+39: src/structures/purpose.test.ts 20, src/settle/purpose.test.ts 11, src/settle/ships.test.ts 6,
 test/unit/cities-world.test.ts 2), gpu 30 (+2: test/gpu/cities.test.ts — the game's and the viewer's structures shaders
 compile on Dawn; a small atlas's settlements have purposes and stories and its routes lie on its sea).
+
+Measured (desktop iGPU, intel-xe-lpg; every system in play as deployed, 1x):
+- `npm run smoke`: atlas ready in 44 s, no fatal, sim ticking.
+- Pieces the dressing adds to a town (Node count, hearth, hilly): R 30 2315 pieces (+68 kerbs, 29 pools, 27 props, 7
+  lamps), R 42 4176 (+142, 61, 54, 13) — about 5%.
+- driveprofile (q=low 412x915 dpr 2.6, A/B alternated twice, places = origin/places 213e5b7 built alongside): cities day
+  p50 9.9/9.9 p95 12.5/12.1, night (tod 0.97) 9.9/9.9 p95 12.5/12.8; places day 9.9/9.8 p95 12.8/12.1, night 9.9/9.9 p95
+  12.7/11.5 — no cost visible.
+- perf/structcity at the port s84 (--tod new): the world pass 2.26 ms drawn vs 1.92 skipped by day; at night 1.44 vs
+  2.03 (the GPU totals swing 7.5-13.9 ms between runs on this iGPU: the pools' cost is under its noise).
+- tilegate: every parked view 0 out of detail and 0 background (21 of 21). The goldens: no town is in the gate's views;
+  the wide zooms (z2.2, z1.3) differ 20-30% because the zoom floor differs run to run (places' own build fails the same
+  views by 33-39% against the same baselines), and z5/z3.5's 1-3% are scattered spire and plant pixels — baselines left
+  as they are. The fast pans fail as on places (M120-1).
+- Shots: C:/Projects/shots88/cities/ — cv-0..8 (the viewer: port day and night, mining, lumber, farming, trading, hold
+  with its history, trading at night), c-<purpose>-{day,day-near,night-near,night}.png (in game: port s84, mining s96,
+  lumber s7, trading s104, farming s53, hold s124 — this GPU's world; WD1 says another GPU may make other towns),
+  farming-dusk-wind.gif. The light pools were faint at first in the game: their strength doubled (0.42 → 0.8).
