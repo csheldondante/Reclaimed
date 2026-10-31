@@ -41,6 +41,14 @@ user) · `deferred` (agreed for later).
 | M120-4 | The free camera at terrain's fall spot (scripts/terrain/shots.mjs, fall 6108,14009): huge stretched blue and beige triangles over the top-left third — far geometry or a skirt with a vertex at a wrong height. On places' build too (shots88/merge120/river-places-fall.png) and on the terrain merge alone (river-terrain-fall.png); not from the merge | S | open |
 | M120-3 | The animals come only with `?life=1`; the user asked for them merged — whether the wilderness is on in the default world is the user's call | S | open |
 
+## Round 120 (2026-10-31, session 5, `merge121`) — the physics merged: lattice x runs by default (DECISIONS round 120)
+
+| id | item | size | status |
+|---|---|---|---|
+| M121-1 | The defaults `?solver=lattice` (solver/variant.ts DEFAULT_SOLVER) and `?judge=runs`, from the phone bench (Pixel 9a: lattice x runs p95 20 / p99 35 ms, the smoothest); every variant still picked by `?solver=` / `?judge=` and the lab chip; the physics bench names the page's pair from the same functions | S | done (merge121) |
+| M121-2 | The tilegate goldens had drifted on places itself (places against its baselines: desktop-z1.3 31.5 %, phone-z2.2/z1.3 31.3 %; merged 20.7/22.4/22.5 %) plus phone-z14 1.9 % from the merge (the drag tool's button in the tool palette, a passing particle): those four rewritten, the rest kept | S | done (merge121) |
+| M121-3 | A small white dash floating beside the toppled pillar in the atlas shots (shots88/merge121/deepcut/3-cliff-cut-3s.png, 7-tanker-6s.png) — a spark or chip particle, or a stray quad; look on the phone | S | open |
+
 ## Round 117 (2026-10-30, session 5, `flora`) — plants: L-system trees, CA roots, species by fields, soft barriers (DECISIONS round 117)
 
 The user: "For plants, L systems are great for branches and then cellular autonoma for roots. I am ok with stylized or low

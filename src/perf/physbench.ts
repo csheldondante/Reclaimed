@@ -8,8 +8,8 @@
 //   …&physbench=1&pairs=nodes:runs,hybrid:sections             (some)
 // State between the loads in localStorage (cleared at the end). Every system in play as the deployed page runs it.
 
-import { VARIANTS } from '../solver/variant';
-import { JUDGES } from '../game/judge';
+import { solverVariant, VARIANTS } from '../solver/variant';
+import { JUDGE_ID, JUDGES } from '../game/judge';
 import { postDev } from './report-io';
 import { deviceFacts, keepAwake, letSleep, Panel, reportButtons, wakeLog } from './bench';
 import { summarize, summaryLines, TIMESTAMP_NOTE, type PhysRow, type Toggle } from './physsummary';
@@ -151,7 +151,7 @@ export async function physBench(params: URLSearchParams): Promise<void> {
   }
   const all = (params.get('pairs') ?? '').split(',').filter(Boolean);
   const pairs = all.length ? all : VARIANTS.flatMap((v) => Object.keys(JUDGES).map((j) => `${v}:${j}`));
-  const here = `${params.get('solver') ?? 'nodes'}:${params.get('judge') ?? 'runs'}`;
+  const here = `${solverVariant(params)}:${JUDGE_ID}`;
   // (a fresh start: the device's facts, then the first pair's page)
   if (!params.get('physbenchstep') || !st) {
     st = { pairs, rows: [], startedAt: new Date().toISOString(), wake: [], wakeLog: [] };

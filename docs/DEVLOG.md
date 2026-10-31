@@ -14956,3 +14956,38 @@ mesh"): that's a fallback, and the slots a cap. The rock mesh's copy (render/roc
   throws — there's no other look for a rock.
 test/gpu/rockmesh-room.test.ts (a tiny world with the field mesh on): 120 small pieces each with its own slot, 40 big
 ones growing the storage past its start, a full copy refused.
+
+## 2026-10-31 — round 120 (merge121): the physics merged, lattice x runs the default
+
+**Why.** The user (round 120): "I suspect it will win after JB6 since my understanding is the readbacks are very slow
+and it isn't clear what we need that for. I don't want to spend too much more time on physics. [...]" and "Maybe
+merge". `solver` (0a3861e) already held `judge` (bf59514, 7e029fc); `origin/judge` has nothing later, so one merge.
+
+**Conflicts.** pages.yml (places' list kept: it already lists merge121 and jb6); DECISIONS round 120 (both sides kept,
+the branch's entries first, then main's). BACKLOG merged without a conflict (one `# Backlog`). The branch had turned
+src/scenes/level.ts, src/render/rockmesh.ts and src/shaders/rockmesh.wgsl to LF; put back to CRLF so the merge's diff
+is the change only (level.ts +114/-9, not a 3500-line rewrite).
+
+**Defaults.** `?solver=` defaults to `lattice` (DEFAULT_SOLVER in solver/variant.ts; it was `nodes`), `?judge=` stays
+`runs`: the phone bench (Pixel 9a) had lattice x runs p95 20 / p99 35 ms, the smoothest pair. The physics bench names
+the page's pair from solverVariant() and JUDGE_ID instead of its own copy of the defaults. Every variant stays
+selectable (URL and the lab chip). Rock is drawn with the rock mesh in every variant (solver 776fd6e/0a3861e: by
+material, no voxel path on the lattice) — seen in the atlas shots: the toppled pillar is one rock mesh.
+
+**Gate** (desktop iGPU intel-xe-lpg, every system on, 1x):
+- typecheck; `npm test` 43 files, 328 passed (2 expected fail, 5 skipped), unit and GPU on Dawn.
+- `npm run smoke --levels atlas,playground,rocklab`: all three load, no fatal, sim ticking (atlas ready 36.6 s).
+- tilegate: every parked view 0 out of detail, 0 background (all screens, all zooms); slow pans ok. Goldens: four over
+  1 % — desktop-z1.3 20.7 %, phone-z2.2 22.4 %, phone-z1.3 22.5 %, phone-z14 1.9 %. places' own build against the
+  same baselines: 31.5 / 31.3 / 31.3 / 0.2 %, so the first three are drift already on places; phone-z14's is the tool
+  palette's new button (the drag tool) and a passing particle. Each diff looked at (no void, flat fill or band); those
+  four rewritten with --update, the rest kept. Fast pans (160 c/s): desktop z14/z8/z5 fail on places too (places
+  53.5/8.9/9.8 %, merged 52.3/18.9/0.4 % — noisy run to run); phone z8 failed once (39 % in 11 frames) and passed on a
+  rerun, as did every phone/w384 fast pan; places passes them too (M120-1's 0.14-0.5 % didn't show on either).
+- driveprofile (q=low 412x915, alternated places/merged, two runs each): places p50 9.8/9.9, p95 14.1/13.9, p99
+  34.3/34.4, GPU 14.5/15.0 ms; merged p50 9.8/9.9, p95 13.4/13.4, p99 34.3/34.0, GPU 14.3/14.5 ms — no cost visible.
+- The atlas (q=low 412x915, tod 0.45): a 26-layer stone pillar built, its foot cut (crater r 6.5) — the judge (runs)
+  lets it go as one rock body that topples onto its side (rock mesh), dust; a tanker dropped from 16 cells lands as its
+  body mesh with dust beside it (softBlows 1: it sank into the soft ground, a spray and a rim). A smaller cut (r 4.5)
+  leaves a cave in the pillar's foot that the judge holds. Shots: C:/Projects/shots88/merge121/ (1-7, small cut) and
+  deepcut/ (the collapse); tilegate/, tilegate-places/ (places' goldens), tilegate-pan2/ (the phone pan rerun).

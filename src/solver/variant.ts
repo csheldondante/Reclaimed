@@ -37,9 +37,12 @@ export const ROUTING: Record<SolverVariant, Routing> = {
   hybrid: { rock: 'nodes', structures: 'rock', metal: 'lattice', woodBends: true },
 };
 
-/** the page's variant: `?solver=` (default nodes) */
+/** the default variant: the phone bench's smoothest (Pixel 9a, lattice x runs p95 20 / p99 35 ms; round 120) */
+export const DEFAULT_SOLVER: SolverVariant = 'lattice';
+
+/** the page's variant: `?solver=` (default lattice) */
 export function solverVariant(params: URLSearchParams = typeof location === 'undefined' ? new URLSearchParams() : new URLSearchParams(location.search)): SolverVariant {
-  const v = params.get('solver') ?? 'nodes';
+  const v = params.get('solver') ?? DEFAULT_SOLVER;
   if (!(VARIANTS as readonly string[]).includes(v)) throw new Error(`?solver=${v}: one of ${VARIANTS.join(', ')}`);
   return v as SolverVariant;
 }
