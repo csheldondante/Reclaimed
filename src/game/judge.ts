@@ -55,11 +55,22 @@ export interface JudgeStats {
   /** (B) pieces that fell because a thrust line didn't fit (or crushed its crown) */
   arch?: number;
   window?: [number, number, number, number];
+  /** (B) its GPU ms kernel by kernel */
+  kernels?: Record<string, number>;
+  /** (B) the runs it judged (of the seeded, weighed pieces), the deepest level, the pairs (a judged run at each of
+   *  its levels), and the judged runs' box (x0, y0, x1, y1): what the cut really needed of the window */
+  judged?: number;
+  deepest?: number;
+  pairs?: number;
+  judgedBox?: [number, number, number, number];
 }
 
 export interface RockJudge {
   readonly id: JudgeId;
   judge(input: JudgeInput): Promise<Fracture>;
+  /** (B) make its pipelines ahead of the first cut (async: the first judging otherwise compiled them on the frame — a
+   *  1.4 s frame on the phone proxy's first cut, round 120's browser battery) */
+  warm?(device: GPUDevice): Promise<void>;
   readonly stats: JudgeStats;
   destroy(): void;
 }
@@ -79,6 +90,9 @@ export const JUDGE_ID: JudgeId = (() => {
   return v as JudgeId;
 })();
 
+/** the page's address (judge B's ?jbmode= ?jbcull= for the browser battery) */
+const PAGE_Q = typeof location === 'undefined' ? null : new URLSearchParams(location.search);
+
 /** Judge A: fracture.ts analyseRock over the CPU's copy. */
 export class RunsJudge implements RockJudge {
   readonly id = 'runs' as const;
@@ -96,21 +110,30 @@ export class RunsJudge implements RockJudge {
 // ---- judge B ----
 
 /** judge.wgsl's layout: its work buffer's fields, its output's header (keep in step with the shader) */
-const NFIELDS = 95;
+const NFIELDS = 98;
 /** the nodes' own numbers (judge.wgsl N_*) */
-const NN = 64;
+const NN = 69;
+/** the pairs' fields (judge.wgsl P_*) */
+const NPF = 56;
 const NCOUNT = 16;
 const O_REC0 = 32 + 1024 * 8;
 const O_PIECE0 = 32;
+const O_STATS = 16;
 const PIECE_W = 8;
 const MAX_LEVELS = 1024;
-const PARAM_BYTES = 96;
+const PARAM_BYTES = 112;
 const NONE = 0xffffffff;
 /** the kinds judge.wgsl reports (K_*) */
 const KIND = ['free', 'shear', 'bend', 'arch', 'arch crush', 'tip', 'lean', 'crush'] as const;
+/** the kernels, in their order (the pairs' only in mode `pairs`) */
+const KERNELS = ['build', 'adjacency', 'pieces', 'pieceFlags', 'judge1', 'faces', 'pairsInit', 'pairsUnite', 'pairsFind', 'pairsSum', 'checks', 'marks', 'judge2', 'judge3', 'freedUnite', 'judge4'] as const;
+type Kernel = (typeof KERNELS)[number];
+const PAIR_KERNELS = new Set<Kernel>(['pairsInit', 'pairsUnite', 'pairsFind', 'pairsSum', 'checks', 'marks']);
+const BINDS = { 0: 'uniform', 1: 'read', 2: 'read', 3: 'read', 4: 'read', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw' } as const;
 
 interface Sized {
   ncap: number;
+  pcap: number;
   outCap: number;
   cols: number;
   work: GPUBuffer;
@@ -123,41 +146,49 @@ interface Sized {
 interface DeviceKit {
   device: GPUDevice;
   layout: GPUBindGroupLayout;
-  build: GPUComputePipeline;
-  adjacency: GPUComputePipeline;
-  judge1: GPUComputePipeline;
-  faces: GPUComputePipeline;
-  judge2: GPUComputePipeline;
+  pipes: Record<Kernel, GPUComputePipeline>;
   params: GPUBuffer;
   mats: GPUBuffer;
+  ind: GPUBuffer;
+  /** (binding 8 of every kernel but judge1: the indirect buffer can't be writable in the pass that dispatches from it) */
+  dummy: GPUBuffer;
   query: GPUQuerySet | null;
   qres: GPUBuffer | null;
   sized: Sized | null;
 }
 
-/** the material table judge.wgsl reads: state, strength, density (fracture.ts densityOf), never-gives */
+/** the material table judge.wgsl reads: state, strength, density (fracture.ts densityOf), tensile share or −1 never-gives */
 function materialTable(): Float32Array {
   const t = new Float32Array(256 * 4);
   MATERIALS.forEach((m, i) => {
     t[i * 4] = m.state;
     t[i * 4 + 1] = m.strength;
     t[i * 4 + 2] = m.density ?? (m.state === MatState.Vegetation ? 0.4 : 1);
-    t[i * 4 + 3] = m.span === Infinity ? 1 : 0;
+    // (w: its tensile share by its bond — "Follow the material" — or −1, never gives)
+    const T = TUNE.judgeB;
+    const share = { rock: T.tRock, masonry: T.tMasonry, cast: T.tCast, metal: T.tMetal, other: T.tOther }[m.bond ?? 'other'];
+    t[i * 4 + 3] = m.span === Infinity ? -1 : share;
   });
   return t;
 }
 
 /**
  * Judge B: the method of sections on the GPU (judge.wgsl's header says how). A window round the seeds (the seeds' box
- * and TUNE.judgeB.margin columns round it) is judged in one compute pass — build, adjacency, judge1 (one workgroup),
- * faces, judge2 (one workgroup) — and only the verdict comes back: the runs that go, their slots copied, and each piece's kind and hinge.
- * Its work buffers grow to the window (never a silent cap: past them it's judged again in bigger ones).
+ * and TUNE.judgeB.margin columns round it) is judged in one submit and only the verdict comes back: the runs that
+ * go, their slots copied, and each piece's kind and hinge. Only the pieces a cut could have weakened are flooded and
+ * judged (round 120's culling: exact). Its sections are judged all levels at once on the whole GPU (`mode` 'pairs',
+ * the default) or a pass a level in one workgroup ('levels': the oracle the tests hold 'pairs' to). Its work buffers
+ * grow to the window (never a silent cap: past them it's judged again in bigger ones).
  */
 export class SectionsJudge implements RockJudge {
   readonly id = 'sections' as const;
   readonly stats: JudgeStats = { ms: 0 };
   private kit: DeviceKit | null = null;
-  /** (perf battery only) stop the judge kernel before this phase (judge.wgsl's 2–9); 0: every phase */
+  /** 'pairs': every level at once (union-find on (run, level) pairs); 'levels': a pass a level (the oracle) */
+  mode: 'pairs' | 'levels' = PAGE_Q?.get('jbmode') === 'levels' ? 'levels' : 'pairs';
+  /** (the perf battery, the equality tests; ?jbcull=0) false judges every piece in the window, not only the seeded ones */
+  cull = PAGE_Q?.get('jbcull') !== '0';
+  /** (perf battery only) stop judge.wgsl's single-workgroup kernels before this phase; 0: every phase */
   stopAt = 0;
 
   async judge(inp: JudgeInput): Promise<Fracture> {
@@ -201,15 +232,17 @@ export class SectionsJudge implements RockJudge {
     if (weighAll || weighFn) for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (weighAll || weighFn!(x, y)) mask[(y - y0) * ww + (x - x0)] |= 2;
     const kit = this.kitFor(g.device);
     let ncap = ww * wh * Math.min(p.maxK, 3) + 1024;
+    let pcap = ncap * 4;
     let outCap = O_REC0 + 65536;
     for (let attempt = 0; ; attempt++) {
-      const s = this.size(kit, ncap, outCap, ww * wh);
+      const s = this.size(kit, ncap, pcap, outCap, ww * wh);
       const r = await this.run(kit, s, g, inp, [x0, y0, ww, wh], mask);
       // (past its buffers: judged again in bigger ones — the verdict is never cut short)
       if (r.over) {
-        if (attempt > 3) throw new Error(`judge B: the window ${ww}×${wh} still overflows (${r.over})`);
+        if (attempt > 5) throw new Error(`judge B: the window ${ww}×${wh} still overflows (${r.over})`);
         if (r.over & 4) ncap = ww * wh * p.maxK + 1024;
         if (r.over & 2) outCap = O_REC0 + (outCap - O_REC0) * 4;
+        if (r.over & 16) pcap = Math.max(pcap * 4, r.pairs + 1024);
         if (r.over & 8) throw new Error(`judge B: a piece more than ${MAX_LEVELS} runs from what holds it`);
         if (r.over & 1) throw new Error('judge B: more than 1024 pieces in one judging');
         continue;
@@ -219,59 +252,75 @@ export class SectionsJudge implements RockJudge {
     }
   }
 
-  private kitFor(device: GPUDevice): DeviceKit {
+  private warming: Promise<void> | null = null;
+  warm(device: GPUDevice): Promise<void> {
+    if (this.kit?.device === device) return Promise.resolve();
+    return (this.warming ??= (async () => {
+      const layout = makeLayout(device, 'judge B', BINDS, GPUShaderStage.COMPUTE);
+      const module = device.createShaderModule({ label: 'judge.wgsl', code: judgeWgsl });
+      const pl = device.createPipelineLayout({ label: 'judge B', bindGroupLayouts: [layout] });
+      const made = await Promise.all(KERNELS.map((k) => device.createComputePipelineAsync({ label: `judge B ${k}`, layout: pl, compute: { module, entryPoint: k } })));
+      this.kitFor(device, layout, Object.fromEntries(KERNELS.map((k, i) => [k, made[i]])) as Record<Kernel, GPUComputePipeline>);
+    })());
+  }
+
+  private kitFor(device: GPUDevice, madeLayout?: GPUBindGroupLayout, made?: Record<Kernel, GPUComputePipeline>): DeviceKit {
     if (this.kit?.device === device) return this.kit;
-    const layout = makeLayout(device, 'judge B', { 0: 'uniform', 1: 'read', 2: 'read', 3: 'read', 4: 'read', 5: 'rw', 6: 'rw', 7: 'rw' }, GPUShaderStage.COMPUTE);
-    const module = device.createShaderModule({ label: 'judge.wgsl', code: judgeWgsl });
-    const pl = device.createPipelineLayout({ label: 'judge B', bindGroupLayouts: [layout] });
-    const mk = (entryPoint: string) => device.createComputePipeline({ label: `judge B ${entryPoint}`, layout: pl, compute: { module, entryPoint } });
+    const layout = madeLayout ?? makeLayout(device, 'judge B', BINDS, GPUShaderStage.COMPUTE);
+    let pipes = made;
+    if (!pipes) {
+      const module = device.createShaderModule({ label: 'judge.wgsl', code: judgeWgsl });
+      const pl = device.createPipelineLayout({ label: 'judge B', bindGroupLayouts: [layout] });
+      pipes = Object.fromEntries(KERNELS.map((k) => [k, device.createComputePipeline({ label: `judge B ${k}`, layout: pl, compute: { module, entryPoint: k } })])) as Record<Kernel, GPUComputePipeline>;
+    }
     const mats = device.createBuffer({ label: 'judge B materials', size: 256 * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     device.queue.writeBuffer(mats, 0, materialTable());
     const ts = device.features.has('timestamp-query');
     this.kit = {
       device,
       layout,
-      build: mk('build'),
-      adjacency: mk('adjacency'),
-      judge1: mk('judge1'),
-      faces: mk('faces'),
-      judge2: mk('judge2'),
+      pipes,
       params: device.createBuffer({ label: 'judge B params', size: PARAM_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }),
       mats,
-      query: ts ? device.createQuerySet({ type: 'timestamp', count: 2 }) : null,
-      qres: ts ? device.createBuffer({ label: 'judge B times', size: 16, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC }) : null,
+      ind: device.createBuffer({ label: 'judge B pairs dispatch', size: 32, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT }),
+      dummy: device.createBuffer({ label: 'judge B no dispatch', size: 16, usage: GPUBufferUsage.STORAGE }),
+      query: ts ? device.createQuerySet({ type: 'timestamp', count: 2 * KERNELS.length }) : null,
+      qres: ts ? device.createBuffer({ label: 'judge B times', size: 16 * KERNELS.length, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC }) : null,
       sized: null,
     };
     return this.kit;
   }
 
-  private size(kit: DeviceKit, ncap: number, outCap: number, cols: number): Sized {
+  private size(kit: DeviceKit, ncap: number, pcap: number, outCap: number, cols: number): Sized {
     const s = kit.sized;
-    if (s && s.ncap >= ncap && s.outCap >= outCap && s.cols >= cols) return s;
+    if (s && s.ncap >= ncap && s.pcap >= pcap && s.outCap >= outCap && s.cols >= cols) return s;
     if (s) for (const b of [s.work, s.nodes, s.out, s.read, s.mask]) b.destroy();
     const n = Math.max(ncap, s?.ncap ?? 0);
+    const pc = Math.max(pcap, s?.pcap ?? 0);
     const o = Math.max(outCap, s?.outCap ?? 0);
     const c = Math.max(cols, s?.cols ?? 0);
     const dev = kit.device;
-    const words = NFIELDS * n + NCOUNT + 2 * (MAX_LEVELS + 2);
+    const words = NFIELDS * n + NCOUNT + 3 * (MAX_LEVELS + 2) + NPF * pc;
     kit.sized = {
       ncap: n,
+      pcap: pc,
       outCap: o,
       cols: c,
       work: dev.createBuffer({ label: 'judge B work', size: words * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST }),
       nodes: dev.createBuffer({ label: 'judge B nodes', size: (NN * n + 2 * c) * 4, usage: GPUBufferUsage.STORAGE }),
       out: dev.createBuffer({ label: 'judge B out', size: o * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST }),
-      read: dev.createBuffer({ label: 'judge B verdict', size: o * 4 + 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }),
+      read: dev.createBuffer({ label: 'judge B verdict', size: o * 4 + 16 * KERNELS.length, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }),
       mask: dev.createBuffer({ label: 'judge B marks', size: c * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST }),
     };
     return kit.sized;
   }
 
-  private async run(kit: DeviceKit, s: Sized, g: NonNullable<JudgeColumns['gpu']>, inp: JudgeInput, win: [number, number, number, number], mask: Uint32Array): Promise<{ over: number; fracture: Fracture }> {
+  private async run(kit: DeviceKit, s: Sized, g: NonNullable<JudgeColumns['gpu']>, inp: JudgeInput, win: [number, number, number, number], mask: Uint32Array): Promise<{ over: number; pairs: number; fracture: Fracture }> {
     const dev = kit.device;
     const p = inp.cols.packed;
     const T = TUNE.judgeB;
     const [ox, oy, ww, wh] = win;
+    const pairs = this.mode === 'pairs';
     // stresses in the weight of a metre of rock a square metre (a cell a metre, rock of density 1 weighing T.density)
     const unit = 1e6 / (T.density * WORLD_G);
     const pb = new ArrayBuffer(PARAM_BYTES);
@@ -289,44 +338,59 @@ export class SectionsJudge implements RockJudge {
     f[20] = 0.5; // fracture.ts OVERLAP
     f[21] = 0.02; // fracture.ts FILM_GAP
     u[22] = MAX_LEVELS;
-    u[23] = this.stopAt; // (the perf battery's phase breakdown: stop before phase n; 0 runs them all)
+    u[23] = this.stopAt;
+    u[24] = s.pcap;
+    u[25] = pairs ? 1 : 0;
+    u[26] = this.cull ? 0 : 1;
     dev.queue.writeBuffer(kit.params, 0, pb);
+    // (the sliders are live: the table each judging)
+    dev.queue.writeBuffer(kit.mats, 0, materialTable());
     dev.queue.writeBuffer(s.mask, 0, mask);
-    const bg = makeBindGroup(dev, 'judge B', kit.layout, { 0: kit.params, 1: g.chunks, 2: g.slots, 3: kit.mats, 4: s.mask, 5: s.work, 6: s.out, 7: s.nodes });
+    const res = { 0: kit.params, 1: g.chunks, 2: g.slots, 3: kit.mats, 4: s.mask, 5: s.work, 6: s.out, 7: s.nodes };
+    const bg1 = makeBindGroup(dev, 'judge B (judge1)', kit.layout, { ...res, 8: kit.ind });
+    const bg = makeBindGroup(dev, 'judge B', kit.layout, { ...res, 8: kit.dummy });
     const enc = dev.createCommandEncoder({ label: 'judge B' });
     enc.clearBuffer(s.work);
     enc.clearBuffer(s.out, 0, O_REC0 * 4);
-    const pass = enc.beginComputePass({ label: 'judge B', timestampWrites: kit.query ? { querySet: kit.query, beginningOfPassWriteIndex: 0, endOfPassWriteIndex: 1 } : undefined });
-    pass.setBindGroup(0, bg);
-    pass.setPipeline(kit.build);
-    pass.dispatchWorkgroups(Math.ceil((ww * wh) / 64));
-    pass.setPipeline(kit.adjacency);
-    pass.dispatchWorkgroups(Math.ceil(s.ncap / 64));
-    pass.setPipeline(kit.judge1);
-    pass.dispatchWorkgroups(1);
-    pass.setPipeline(kit.faces);
-    pass.dispatchWorkgroups(Math.ceil(s.ncap / 64));
-    pass.setPipeline(kit.judge2);
-    pass.dispatchWorkgroups(1);
-    pass.end();
-    if (kit.query && kit.qres) enc.resolveQuerySet(kit.query, 0, 2, kit.qres, 0);
+    // a pass a kernel, each timed (the frame's GPU budget is what matters on the phone: every kernel's share shown)
+    const ran: Kernel[] = KERNELS.filter((k) => pairs || !PAIR_KERNELS.has(k));
+    ran.forEach((k, i) => {
+      const pass = enc.beginComputePass({ label: `judge B ${k}`, timestampWrites: kit.query ? { querySet: kit.query, beginningOfPassWriteIndex: 2 * i, endOfPassWriteIndex: 2 * i + 1 } : undefined });
+      pass.setBindGroup(0, k === 'judge1' ? bg1 : bg);
+      pass.setPipeline(kit.pipes[k]);
+      if (k === 'build') pass.dispatchWorkgroups(Math.ceil((ww * wh) / 64));
+      else if (k === 'adjacency' || k === 'faces' || k === 'pieces' || k === 'pieceFlags' || k === 'freedUnite') pass.dispatchWorkgroups(Math.ceil(s.ncap / 64));
+      else if (k === 'judge1' || k === 'judge2' || k === 'judge3' || k === 'judge4') pass.dispatchWorkgroups(1);
+      else if (k === 'checks') pass.dispatchWorkgroupsIndirect(kit.ind, 16);
+      else pass.dispatchWorkgroupsIndirect(kit.ind, 0);
+      pass.end();
+    });
+    if (kit.query && kit.qres) enc.resolveQuerySet(kit.query, 0, 2 * ran.length, kit.qres, 0);
     enc.copyBufferToBuffer(s.out, 0, s.read, 0, s.outCap * 4);
-    if (kit.qres) enc.copyBufferToBuffer(kit.qres, 0, s.read, s.outCap * 4, 16);
+    if (kit.qres) enc.copyBufferToBuffer(kit.qres, 0, s.read, s.outCap * 4, 16 * ran.length);
     dev.queue.submit([enc.finish()]);
     await s.read.mapAsync(GPUMapMode.READ);
     const all = s.read.getMappedRange();
     const O = new Uint32Array(all.slice(0, s.outCap * 4));
     if (kit.qres) {
-      const t = new BigUint64Array(all.slice(s.outCap * 4, s.outCap * 4 + 16));
-      this.stats.gpuMs = Number(t[1] - t[0]) / 1e6;
+      const t = new BigUint64Array(all.slice(s.outCap * 4, s.outCap * 4 + 16 * ran.length));
+      const kernels: Record<string, number> = {};
+      ran.forEach((k, i) => (kernels[k] = Number(t[2 * i + 1] - t[2 * i]) / 1e6));
+      this.stats.kernels = kernels;
+      this.stats.gpuMs = Number(t[2 * ran.length - 1] - t[0]) / 1e6;
     }
     s.read.unmap();
-    const over = (O[2] & 3) | (O[3] === 1 ? 4 : 0) | (O[3] === 2 ? 8 : 0);
-    if (over) return { over, fracture: null as unknown as Fracture };
+    const over = (O[2] & 3) | (O[3] === 1 ? 4 : 0) | (O[3] === 2 ? 8 : 0) | (O[3] === 3 ? 16 : 0);
+    if (over) return { over, pairs: O[O_STATS + 3], fracture: null as unknown as Fracture };
     const recW = O[0];
     this.stats.readBytes = (O_REC0 + recW) * 4;
     this.stats.sections = O[14];
-    return { over: 0, fracture: this.verdict(O, recW) };
+    this.stats.hanging = O[O_STATS];
+    this.stats.judged = O[O_STATS + 1];
+    this.stats.deepest = O[O_STATS + 2];
+    this.stats.pairs = O[O_STATS + 3];
+    this.stats.judgedBox = O[O_STATS + 1] ? [O[O_STATS + 4], O[O_STATS + 5], O[O_STATS + 6], O[O_STATS + 7]] : undefined;
+    return { over: 0, pairs: 0, fracture: this.verdict(O, recW) };
   }
 
   /** the GPU's verdict as a Fracture: its pieces (runs, clipped), what crumbles, the hinges, why */
@@ -381,7 +445,7 @@ export class SectionsJudge implements RockJudge {
   destroy(): void {
     const k = this.kit;
     if (!k) return;
-    for (const b of [k.params, k.mats, k.qres, k.sized?.work, k.sized?.nodes, k.sized?.out, k.sized?.read, k.sized?.mask]) b?.destroy();
+    for (const b of [k.params, k.mats, k.ind, k.dummy, k.qres, k.sized?.work, k.sized?.nodes, k.sized?.out, k.sized?.read, k.sized?.mask]) b?.destroy();
     k.query?.destroy();
     this.kit = null;
   }

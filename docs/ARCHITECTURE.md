@@ -2745,45 +2745,47 @@ readBytes, sections, arch. `JUDGES = { runs, sections }` — `{label, make()}` f
 page's choice. Integrity holds `judge` (settable) and awaits it in its pass; `judgeAll` (the tests' whole-window
 judging) goes through it too.
 
-**Judge B, kernel by kernel** (one compute pass, five dispatches; the window: the seeds' box and
-TUNE.judgeB.margin columns round it — a piece reaching the window's side is held there, as A's neck keys into the land):
-1. `build` (a thread a column): the column's runs (columnRuns' rule: touching intervals of matter, films 0.02 apart
-   touch) → nodes: z0, z1, mass (cells × density × √3/2 m², a hex prism), first moment in z, side-holding extent,
-   weakest side-holding strength, flags (stands, solid, never-gives, seeded, weighed).
-2. `adjacency` (a thread a node): per direction a 16-bit mask of the neighbour column's runs it is joined to (A's
-   `touch` on the side-holding extents); map and window edges.
-3. `judge1` (one workgroup): the flood from what holds (standing runs, edges), frontier by frontier — each run visited
-   once, the levels laid out in order; the hanging runs' pieces (union-find, least-id roots).
-4. `faces` (a thread a run): its faces to the runs a step nearer, summed once: area, centroid, normals' sum and
-   tensor, foot height; per direction Σh, Σh·z, Σ(h³/12 + h z²), the extent.
-5. `judge2` (one workgroup): **the sections, one pass a distance level from the far end in** — the component of
-   everything ≥ k out grows a level at a time (union-find; its mass and first moments carried from the level before,
-   each run added once; sums in workgroup slots, a slot a root) and its section (the faces to the runs k − 1 out) is
-   checked: shear (weight on the section's area) and moment (weight × the lever from the section's centroid to the
-   centre of mass beyond) against tensile × strength × its section modulus (the faces projected across the lever: I
-   about the neutral axis over the extreme fibre). A section whose faces' normals cancel (|Σ a n| < meet × Σ a) is
-   held from opposite sides — an arch or a dome: not bent; its level-1 piece gets **the thrust check** (Heyman's
-   safe theorem, discretely: a uniform-load funicular, a parabola along the span's axis — radial for a dome — from
-   the springings' mean foot must fit inside every run of the piece, give archTol; the least thrust, M·L / 8f, within
-   the crushing strength on half the springings' area). Then **release**: a reachability flood from what holds that
-   doesn't cross a failed section's faces; what it can't reach is freed, its pieces by union-find. **The neck**: a
-   weighed piece that held is weighed on the standing runs joined above its lowest point (followed TUNE.judgeB.neck
-   columns, past that keyed): the horizontal section there — tipping (its centre of mass past the hull of the leg's
-   cells, 24 directions), the far side's pull (M·L/S − M/A > tensile × strength), crushing (M/A > crush × strength).
-   **The verdict**: records of the runs that go (their slots copied: the CPU needs no copy of the columns), each
-   piece's kind and hinge, why.
+**Judge B, kernel by kernel** (one submit, a compute pass a kernel, each timed: `stats.kernels`; the window: the seeds'
+box and TUNE.judgeB.margin columns round it — a piece reaching the window's side is held there):
+1. `build` (a thread a column): the column's runs (columnRuns' rule) → nodes: z0, z1, mass (cells × density × √3/2 m²),
+   first moment in z, side-holding extent, weakest strength, flags. `adjacency` (a thread a node): a 16-bit mask a
+   direction of the neighbour column's runs it's joined to; map and window edges.
+2. `pieces`, `pieceFlags` (whole GPU, lock-free union-find): the hanging runs' pieces; seeded (a solid run in or
+   beside a seed column) and weighed. **Culling** (round 120b, exact): only seeded pieces go on — a piece's verdict
+   depends on its own runs, what holds them and the neck's standing runs, never another piece.
+3. `judge1` (one workgroup): the flood from what holds, frontier by frontier (depth-serial), over the seeded pieces;
+   the judged runs (seeded and weighed pieces) by level, each given its pairs; the indirect dispatch for the pairs.
+4. `faces` (a thread a run): its faces to the runs a step nearer, summed once, by direction.
+5. **The pairs** (mode `pairs`, the default; round 120b): a pair (v, k) a judged run v at each level k ≤ dist v.
+   `pairsInit`, `pairsUnite` (lock-free union-find: (v, k) with (u, k) for joined u with dist u ≥ k), `pairsFind`
+   (roots: one per component per level), `pairsSum` (mass and first moments of everything ≥ k out, the level-k runs'
+   faces; gathered by root in workgroup memory first), `checks` (a thread a root: shear, moment against the section
+   modulus projected across the lever; meeting sections skipped for the thrust check), `marks` (a run in a failed
+   component goes; the failed section's own runs are its cut). Dispatched indirectly from judge1's counts. Exactly the
+   level pass's verdicts (test/gpu/judge-equal.test.ts); mode `levels` (?jbmode=levels) is that pass, the oracle: one
+   pass a distance level in one workgroup (judge2's phase 4).
+6. `judge2` (one workgroup): the level pass in mode `levels`; the thrust check for level-1 components that meet
+   (Heyman: a parabola from the springings inside every run; least thrust within crushing).
+7. `judge3` (one workgroup): what still holds — mode `levels` a release flood that doesn't cross a failed section,
+   mode `pairs` the marks. `freedUnite` (whole GPU): the freed runs' pieces.
+8. `judge4` (one workgroup, over the seeded pieces' runs only): the pieces out (kind, hinge), the neck (a held piece on
+   the standing runs joined above its lowest point, 16 columns at most: tipping past its hull, the far side's pull,
+   crushing; a standing run two pieces reach goes with the lesser), the records (the runs that go, their slots copied).
 
 Units: a cell a metre; stresses in the weight of a metre of rock a square metre (σ' = MPa × 10⁶ / (density × g)):
 TUNE.judgeB tensile 4 MPa (σ' ≈ 157), shear 8, crush 60, density 2600 kg/m³, meet 0.35, archTol 0.5, tipGive 0,
-neck 16, margin 32 — the tuning panel's "Judge B" group (CPU-side; the kernel gets them in its own uniform). Material
+neck 16, margin 32, and the tension share by bond (tRock 1, tMasonry 0, tCast 1, tMetal 1, tOther 1: materials.ts
+`bond`, round 120b "Follow the material") — the tuning panel's "Judge B" group (CPU-side; the kernel gets them in its own uniform
+and the material table). Material
 strengths, densities and never-gives (span Infinity) from materials.ts (a 256-entry table the kernel reads).
 
 Buffers (sized to the window, grown and judged again on overflow — never cut short): params (uniform), the world's
 chunk table and slots (read), materials (read), the columns' marks (seeded, weighed), N (the nodes' own numbers,
-plain words, written by build/adjacency/faces: 64 fields a node), W (the judge's atomics: 95 fields a node, counters,
-levels), O (the verdict: header, why, 1024 pieces, records). judge.wgsl is self-contained (no common.wgsl): binding 0
+plain words: 67 fields a node), W (the judge's atomics: 96 fields a node, counters, levels, the pairs' 55 fields a
+pair), O (the verdict: header, why, stats, 1024 pieces, records), IND (the pairs' indirect dispatch, written by judge1;
+bound only to judge1 — a buffer can't be writable in the pass that dispatches from it). judge.wgsl is self-contained (no common.wgsl): binding 0
 is its own params, not the Globals.
 
 Tests: test/gpu/judge-shapes.test.ts (A and B on every shape, B asserted from the stone estimate; JUDGE_LOG=1 writes
-data/perf/judge/shapes.md), test/gpu/judge-perf.test.ts (JUDGE_PERF=1: data/perf/judge/node-*.json and the phase
+data/perf/judge/shapes.md), test/gpu/judge-equal.test.ts (B's fast paths against its oracle: shapes, 40 random caves), test/gpu/judge-perf.test.ts (JUDGE_PERF=1: data/perf/judge/node-*.json and the phase
 breakdown node-phases.json), test/support/judgeworld.ts (RockWorld's passes through a judge).

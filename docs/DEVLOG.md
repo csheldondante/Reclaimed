@@ -14683,3 +14683,101 @@ near no fragment's seed) was `return o` with its position at clip (2, 2, 2, 1); 
 drawn ones is clipped to a sliver stretched toward the corner. The node solver's pieces break more often (longer
 ghosts), hence there. Now such a vertex is placed with the ghost and marked gone, and the triangle is discarded whole (the
 sun's pass discards it too: fsRockZ). 0 streaks in 4 runs of the three cuts (were 3–6 a run).
+
+**Not done here**: the solver lab's panel listing JUDGES (the solver agent's side, JB7); B's open edges JB3–JB6, JB9.
+
+**The browser battery** (scripts/judgebattery.mjs; the atlas level with every system in play, 1x, 412 x 915, q=low,
+headless Chrome on the desktop's iGPU; data/perf/judge/browser-low.json; shots in C:/Projects/shots88/judge). Stone
+built with the world API near the spawn and cut at its foot, 8 s watched after each cut:
+
+| scene | A: judge ms a pass (CPU) / read back | B: wall ms a pass / GPU ms | frames p99 / max (A; B) |
+|---|---|---|---|
+| mesa (built, undercut) | 3.7, 2.2, 0.2 / 5.4 MB | 42, 42 / 20.5, 19.3 | 12.2 / 22; 12.0 / 19.6 |
+| tower (built, foot cut) | 0.5, 0.6 / 3.1 MB | 18, 73 / 7.6, 18.7 | 12.0 / 21.9; 12.1 / 22.0 |
+
+Nothing fell in either judge (the built rock is smaller than asked — the build brush's footprint — and the bowl at its
+foot doesn't undercut it past holding: shots88/judge/*.png show it standing notched); both crumbled the same sliver.
+Two findings: **B's first judging compiled its five pipelines on the frame** — a 1435 ms frame at the first cut on the
+first run; fixed here (`RockJudge.warm`: Integrity makes B's pipelines asynchronously when it's made; the second run's
+worst frame 19.6 ms). And **B's GPU time on the atlas is 8–20 ms a pass** (its 70 × 70+ window holds the atlas's caves
+and overhangs: many hanging runs, many levels — the per-level latency, JB2), against A's 0.2–3.7 ms of CPU plus its
+3–5 MB of readback a cut (which B doesn't make; Integrity still does, JB6). On the desktop the frames don't show either
+(p99 12 ms both); on a phone 20 ms of GPU in one submit would. The verdict's wait (B's wall ms) is async: no frame
+waits for it.
+
+## 2026-10-31 — round 120b (`judge`): judge B on the whole GPU — every level at once, culled to what a cut touched
+
+**Why.** The user, on B's 8–20 ms a pass on the atlas: "Yes please implement options 1 and 2" (each level on the whole
+GPU; few sequential passes), then "culling to only a local neighborhood is also good … take the deepest point in the
+suspended group … and cut off anything further than 1.5x that distance", and "If pointer jumping works but is less
+accurate it could still make sense for large caverns as a fallback".
+
+**Options 1 + 2 as one: the pairs (mode `pairs`, the default).** The level pass's components — everything ≥ k out,
+joined within that — are the connected components of a graph of pairs (v, k), a run at each level it reaches
+(1 ≤ k ≤ dist v), (v, k) joined to (u, k) when v and u are joined and dist u ≥ k. Union-find on that graph is
+lock-free (compare-and-swap hooking, least id the root), so every level's components come out of one dispatch over
+all the pairs, on the whole GPU: no pass a level and no log-depth rounds at all — a constant 6 dispatches (init,
+unite, find, sum, checks, marks) whatever the depth. Sums: a pair adds its run's mass to its component's root (a
+workgroup gathers its pairs by root first: a level's pairs lie together), a run adds its faces at its own level only.
+Every root is checked in parallel with the level pass's own arithmetic. What goes: a run is cut off from what holds
+it exactly when a component it's in at some level failed (that component's only ties to what holds it are its
+section's faces) — so the marks (a pair in a failed component marks its run) give the release flood's answer with no
+flood. **It is exact**: the same verdicts as the level pass, not an approximation — no fallback needed (the user's
+"less accurate" case doesn't arise); the level pass stays as the oracle (`mode: 'levels'`, ?jbmode=levels).
+
+**Option 3, culling — graph-local, not a radius.** Pieces (the hanging runs' connected components) are found first,
+on the whole GPU; only a piece with a run a cut could have weakened (in or beside a seed column) is flooded, given
+pairs, judged. That is exact where the user's 1.5 · D radius is an approximation: a piece's verdict depends on its
+own runs, the standing runs holding it, and (the neck) standing runs within 16 columns — never on another piece. So
+judging only the touched pieces is the whole-window verdict, with no boundary rule (JB3's window edge still holds a
+piece longer than the window, as before). What the radius would have bought (a small window to build) is reported
+instead: the judged runs' box. On the atlas the cut groups are tiny: 9–40 runs, deepest D 3–5, a box 3–6 columns
+across, in a window of ~2500 hanging runs (86 × 88 columns) — the culling is what pays (below); with groups this shallow no size
+threshold between the paths is needed (pairs is the faster at every size measured, and exact).
+
+**The equality tests found two races in B as first built** (test/gpu/judge-equal.test.ts: the oracle — levels, every
+piece — against levels culled, pairs culled, pairs whole, on the shapes and 40 random caves; 3 runs clean):
+- a frontier's count (the flood's, the release's, the level pass's roots) read by one thread before every append of
+  the phase was in: distances could come out wrong (a cave's pairs 73/75/78 run to run) — a barrier before each read;
+- the neck's standing runs went to whichever piece claimed them first — two pieces reaching the same leg were judged
+  differently run to run — now the lesser piece (atomicMin, then listed once).
+
+**Measured** (data/perf/judge/browser-low*.json; the atlas on the phone proxy, 412 × 915, q=low, headless Chrome on
+the desktop's iGPU, every system in play; B's GPU ms by timestamps a kernel; the GPU shared with other agents):
+
+| atlas, a cut | B as first built (levels, every piece) | levels culled | pairs culled (default) |
+|---|---|---|---|
+| mesa (40 runs, D 5) | 12.7–20.2 ms a pass | 4.1–7.7 | 2.5–5.9 (2nd pass 2.5–3.6) |
+| tower (9 runs, D 3) | 4.4–18.4 | 2.1–4.4 | 1.8–3.8 |
+
+Where pairs-culled's ~2.5 ms goes (mesa, 2nd pass): the neck 1.3 (judge4: the mesa's standing body walked up to 16
+columns, hop by hop), the flood 0.45 (judge1: depth-serial), pieces 0.3, build + adjacency + faces 0.4, the six pair
+kernels 0.5, the rest < 0.2. The frames: p99 12–13 ms, the same as with A (B's submit runs async; on the desktop it
+fits). Not yet the ~1 ms asked for: the neck walk (JB11) and the window's own build are next. Whole-window judging
+(Integrity.judgeAll, every column a seed — a test hook, not the game's path): 52 268 hanging runs, D 40, 265–387 ms.
+
+Node (data/perf/judge/node-*.json, least of 7; noisy): the shapes 0.5–1.2 ms pairs vs 0.9–2.0 levels; the 120-long
+lip ~9 ms both (its flood and freeing 9600 cells dominate); A 1.5–23 ms. Node's phase profile (node-phases.json) is
+now per kernel: SectionsJudge.stats.kernels.
+
+Also: pieces, the freed runs' union-find and the release (mode 1) moved off the single workgroup to whole-GPU kernels;
+the single-workgroup phases after the sections walk only the seeded pieces' runs (F_SEEDL), not the window's.
+
+
+## 2026-10-31 — round 120b (`judge`): "Follow the material" — tension by the material's bond
+
+**Why.** SV1 (an arch's keystone cut out) put to the user; the user: "Follow the material". Natural rock is one
+bonded piece — a natural arch's halves stand as corbels when it falls (Wall Arch, 2008); built masonry is blocks with
+mortar — no tension (Heyman's own assumption) — and its halves fall.
+
+**What.** materials.ts `bond` ('rock' stone, basalt, sandstone, bedrock, obsidian, quartz, sinter, crystal, coral;
+'masonry' brick, tile, plaster; 'cast' concrete, asphalt; 'metal' steel, rust; 'other' the rest), a share of
+TUNE.judgeB.tensile per group (sliders tRock 1, tMasonry 0, tCast 1, tMetal 1, tOther 1; the material table rewritten
+each judging, so they're live). In judge.wgsl a run's tensile strength is the least of strength × share over its
+side-holding intervals (a brick wall on stone ground is as weak in tension as its brick); the bending check (each
+section, both modes) and the neck's pull use it; shear and crushing keep the plain strength. The oracle (mode levels)
+and the pairs follow the same rule — the equality tests now include brick arches and every third random cave of brick.
+
+**Tests** (B; A unchanged): natural rock arch — stands; keystone cut: stands (corbels); foot cut: 189 fall. Masonry
+(brick) arch — stands (in compression: a thrust line, no tension needed); keystone cut: both halves fall (2 × 27
+cells); foot cut: 189 fall.

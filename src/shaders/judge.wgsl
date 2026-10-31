@@ -38,18 +38,24 @@ struct Params {
   tensile: f32, shear: f32, crush: f32, tipGive: f32,
   meet: f32, archTol: f32, neckR: u32, minBody: f32,
   overlap: f32, filmGap: f32, maxLevels: u32, stopAt: u32,
+  /** the pairs' capacity (a run at each of its levels); mode 1: the sections all levels at once (pairs), 0: a pass a
+   *  level (the oracle) */
+  pcap: u32, mode: u32, pad1: u32, pad2: u32,
 }
 
 @group(0) @binding(0) var<uniform> P: Params;
 @group(0) @binding(1) var<storage, read> chunks: array<vec2<u32>>;
 @group(0) @binding(2) var<storage, read> slots: array<vec4<u32>>;
-/** per material: state, strength, density, 1 = never gives (span Infinity) */
+/** per material: state, strength, density, w its tensile share (round 120b, "Follow the material": natural rock 1,
+ *  built masonry 0 — TUNE.judgeB by group) or −1: never gives (span Infinity) */
 @group(0) @binding(3) var<storage, read> MT: array<vec4<f32>>;
 /** per window column: bit 0 seeded (a seed column or beside one), bit 1 weighed (an edit cut it) */
 @group(0) @binding(4) var<storage, read> colMask: array<u32>;
 @group(0) @binding(5) var<storage, read_write> W: array<atomic<u32>>;
 @group(0) @binding(6) var<storage, read_write> O: array<atomic<u32>>;
 @group(0) @binding(7) var<storage, read_write> N: array<u32>;
+/** (judge1 writes) the pair kernels' indirect dispatch: x the judged runs / 64, y the deepest level */
+@group(0) @binding(8) var<storage, read_write> IND: array<u32>;
 
 const NONE: u32 = 0xffffffffu;
 const INF_D: u32 = 0x7fffffffu;
@@ -77,6 +83,7 @@ const PF_REACHED: u32 = 4u;
 const PF_FAILED: u32 = 8u;
 const PF_KEYED: u32 = 16u;
 const PF_NECKFAIL: u32 = 32u;
+const PF_ARCHFAIL: u32 = 64u;
 // failure kinds (F_KIND at the failed root)
 const K_SHEAR: u32 = 1u;
 const K_BEND: u32 = 2u;
@@ -109,7 +116,12 @@ const N_FU: u32 = 23u; // 9
 const N_FSTR: u32 = 32u;
 const N_FINF: u32 = 33u;
 const N_FD: u32 = 34u; // 30
-const NN: u32 = 64u;
+const N_PBASE: u32 = 64u;
+const N_ORDER2: u32 = 65u;
+const F_SEEDL: u32 = 66u; // (in N) the runs of the seeded pieces (all of them with P.pad1 = 1)
+const N_TS: u32 = 67u; // a run's weakest tensile strength (strength × its material's tensile share)
+const N_FTS: u32 = 68u; // its faces' weakest
+const NN: u32 = 69u;
 // the judge's work (W: atomics), each an array of P.ncap words (fi)
 const F_DYN: u32 = 0u;
 const F_DIST: u32 = 12u;
@@ -173,7 +185,10 @@ const F_KI: u32 = 68u;
 const F_KC: u32 = 69u;
 const F_SUPU: u32 = 70u;
 const F_SUP: u32 = 71u; // 24
-const NFIELDS: u32 = 95u;
+const F_DEAD: u32 = 95u;
+const F_STS: u32 = 96u; // a section's weakest tensile strength (the level pass)
+const F_KT: u32 = 97u; // a leg's weakest tensile strength (the neck)
+const NFIELDS: u32 = 98u;
 // counters (after the fields and the two per-column arrays)
 const C_NODES: u32 = 0u;
 const C_HANG: u32 = 1u;
@@ -185,6 +200,10 @@ const C_NECK: u32 = 6u;
 const C_OVER: u32 = 7u;
 const C_LIST: u32 = 8u;
 const C_MAXD2: u32 = 9u;
+const C_PAIRS: u32 = 10u;
+const C_H2: u32 = 11u;
+const C_PROOTS: u32 = 12u;
+const C_SEEDN: u32 = 13u;
 const NCOUNT: u32 = 16u;
 // the output's header: counts, then why (fracture.ts Fracture.why), then pieces (8 words each), then records
 const O_RECW: u32 = 0u;
@@ -206,6 +225,30 @@ fn colArr(a: u32, c: u32) -> u32 { return NN * P.ncap + a * P.ww * P.wh + c; }
 fn cnt(c: u32) -> u32 { return NFIELDS * P.ncap + c; }
 fn lvl(k: u32) -> u32 { return cnt(NCOUNT) + k; }
 fn lvlCur(k: u32) -> u32 { return cnt(NCOUNT) + P.maxLevels + 2u + k; }
+/** the judged runs' levels (ORDER2: level k's at [lvl2(k), lvl2(k + 1))) */
+fn lvl2(k: u32) -> u32 { return cnt(NCOUNT) + 2u * (P.maxLevels + 2u) + k; }
+// ---- the pairs: a run at each of its levels, (v, k) for 1 ≤ k ≤ dist(v) — the component of everything ≥ k out that
+// v is in is the pairs' connected component at level k. Their fields in W after the levels (pf) ----
+const P_PAR: u32 = 0u;
+const P_NODE: u32 = 1u;
+const P_RT: u32 = 2u;
+const P_M: u32 = 3u; // 4: mass, its first moments
+const P_U: u32 = 7u; // 9: the faces' unprojected sums (faces' N_FU)
+const P_D: u32 = 16u; // 30: per direction Σh, Σh·zc, Σ(h³/12 + h·zc²), zmin, zmax
+const P_STR: u32 = 46u;
+const P_INF: u32 = 47u;
+const P_KIND: u32 = 48u;
+const P_PIVX: u32 = 49u;
+const P_PIVY: u32 = 50u;
+const P_PIVZ: u32 = 51u;
+const P_AXX: u32 = 52u;
+const P_AXY: u32 = 53u;
+const P_LIST: u32 = 54u;
+const P_TS: u32 = 55u;
+const NPF: u32 = 56u;
+fn pw(f: u32, q: u32) -> u32 { return cnt(NCOUNT) + 3u * (P.maxLevels + 2u) + f * P.pcap + q; }
+/** run v's pair at level k */
+fn pairOf(v: u32, k: u32) -> u32 { return nu(N_PBASE, v) + k - 1u; }
 
 fn nu(f: u32, n: u32) -> u32 { return N[f * P.ncap + n]; }
 fn nf(f: u32, n: u32) -> f32 { return bitcast<f32>(N[f * P.ncap + n]); }
@@ -293,6 +336,7 @@ fn build(@builtin(global_invocation_id) gid: vec3<u32>) {
   var mass = 0.0;
   var mz = 0.0;
   var str = 1e9;
+  var tsh = 1e9;
   var fl = 0u;
   var sl0 = 0u;
   var sln = 0u;
@@ -316,6 +360,7 @@ fn build(@builtin(global_invocation_id) gid: vec3<u32>) {
       N[N_MASS * P.ncap + id] = bitcast<u32>(mass);
       N[N_MZ * P.ncap + id] = bitcast<u32>(mz);
       N[N_STR * P.ncap + id] = bitcast<u32>(str);
+      N[N_TS * P.ncap + id] = bitcast<u32>(tsh);
       N[N_FLAGS * P.ncap + id] = fl;
       N[N_SL0 * P.ncap + id] = sl0;
       N[N_SLN * P.ncap + id] = sln;
@@ -331,6 +376,7 @@ fn build(@builtin(global_invocation_id) gid: vec3<u32>) {
       mass = 0.0;
       mz = 0.0;
       str = 1e9;
+      tsh = 1e9;
       fl = 0u;
       if (z0 < 1e-3) { fl |= NF_STANDS; }
       if ((cm & 1u) != 0u) { fl |= NF_SEEDED; }
@@ -353,7 +399,8 @@ fn build(@builtin(global_invocation_id) gid: vec3<u32>) {
       sh0 = min(sh0, z0);
       sh1 = max(sh1, z1);
       str = min(str, mt.y);
-      if (mt.w > 0.5) { fl |= NF_BED; }
+      tsh = min(tsh, mt.y * select(mt.w, 1.0, mt.w < -0.5));
+      if (mt.w < -0.5) { fl |= NF_BED; }
     }
   }
 }
@@ -434,28 +481,30 @@ fn cas(i: u32, expect: u32, v: u32) -> bool {
   }
 }
 
-fn find(f: u32, x: u32) -> u32 {
+fn find(f: u32, x: u32) -> u32 { return findAt(f * P.ncap, x); }
+fn unite(f: u32, a: u32, b: u32) { uniteAt(f * P.ncap, a, b); }
+fn findAt(base: u32, x: u32) -> u32 {
   var r = x;
   loop {
-    let p = ld(fi(f, r));
+    let p = ld(base + r);
     if (p == r) { break; }
     // (path halving)
-    let gp = ld(fi(f, p));
-    _ = atomicCompareExchangeWeak(&W[fi(f, r)], p, gp);
+    let gp = ld(base + p);
+    _ = atomicCompareExchangeWeak(&W[base + r], p, gp);
     r = p;
   }
   return r;
 }
 /** union by hooking the larger root under the smaller: a component's root is its least id */
-fn unite(f: u32, a: u32, b: u32) {
+fn uniteAt(base: u32, a: u32, b: u32) {
   var x = a;
   var y = b;
   loop {
-    x = find(f, x);
-    y = find(f, y);
+    x = findAt(base, x);
+    y = findAt(base, y);
     if (x == y) { return; }
     if (x < y) { let t = x; x = y; y = t; }
-    let r = atomicCompareExchangeWeak(&W[fi(f, x)], x, y);
+    let r = atomicCompareExchangeWeak(&W[base + x], x, y);
     if (r.exchanged) { return; }
   }
 }
@@ -472,6 +521,7 @@ fn uniformCount(i: u32) -> u32 {
 }
 
 fn hangN() -> u32 { return min(ld(cnt(C_HANG)), P.ncap); }
+fn seedN() -> u32 { return min(ld(cnt(C_SEEDN)), P.ncap); }
 
 /** the projected section's numbers for root r at its level (centroid, lever direction, CoM) */
 struct Lever { u: vec2<f32>, L: f32, com: vec2<f32>, cen: vec2<f32>, meet: bool }
@@ -536,6 +586,57 @@ fn wflush(list: u32, nNew: u32, n: u32, f0: u32, g0: u32) {
 var<private> wgLid: u32;
 
 // ---- judge: one workgroup ------------------------------------------------------------------------------------------
+// ---- pieces, pieceFlags: a thread a hanging run (the whole GPU; union-find is lock-free) ----
+// 1 — pieces first: the hanging runs' connected components, and which a cut could have weakened (seeded: a solid
+// run in a seed column or beside one). Round 120, the user's local culling: only those are flooded and judged —
+// exact, not a radius: a piece's verdict depends on its own runs, what holds them and (the neck) the standing runs
+// within TUNE.judgeB.neck columns, nothing farther (P.pad1 = 1 judges every piece: the whole-window reference)
+@compute @workgroup_size(64)
+fn pieces(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let t = gid.x;
+  if (t >= hangN()) { return; }
+  {
+    let i = nu(F_HANG, t);
+    for (var d = 0u; d < 6u; d++) {
+      let nb = nbrBase(i, d);
+      for (var r = 0u; r < 16u; r++) {
+        if ((nb.y & (1u << r)) == 0u) { continue; }
+        let j = nb.x + r;
+        if (!standsN(j) && j < i) { unite(F_PC, i, j); }
+      }
+    }
+  }
+}
+
+@compute @workgroup_size(64)
+fn pieceFlags(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let t = gid.x;
+  if (t >= hangN()) { return; }
+  {
+    let i = nu(F_HANG, t);
+    let p = find(F_PC, i);
+    N[N_PIECE * P.ncap + i] = p;
+    // (weighed: an edit cut its column, or the column of a standing run holding it)
+    var wByHolder = false;
+    for (var d = 0u; d < 6u; d++) {
+      let nb = nbrBase(i, d);
+      for (var r = 0u; r < 16u; r++) {
+        if ((nb.y & (1u << r)) == 0u) { continue; }
+        let j = nb.x + r;
+        if (standsN(j) && (nu(N_FLAGS, j) & NF_WEIGHED) != 0u) { wByHolder = true; }
+      }
+    }
+    if (wByHolder) { st(fi(F_DYN, i), NF_WEIGHED); }
+    let fl = nu(N_FLAGS, i) | select(0u, NF_WEIGHED, wByHolder);
+    var pf = 0u;
+    if ((fl & NF_SEEDED) != 0u && (fl & NF_SOLID) != 0u) { pf |= PF_SEEDED; }
+    if ((fl & NF_WEIGHED) != 0u) { pf |= PF_WEIGHED; }
+    atomicOr(&W[fi(F_PF, p)], pf);
+    minf(fi(F_ZC, p), nf(N_Z0, i));
+  }
+}
+
+
 @compute @workgroup_size(256)
 fn judge1(@builtin(local_invocation_index) lid: u32) {
   wgLid = lid;
@@ -544,32 +645,37 @@ fn judge1(@builtin(local_invocation_index) lid: u32) {
   let H = uniformCount(0u);
   let gW = 256u;
 
-  // 1 — flood: frontier by frontier from what holds (level 1: joined to a standing run, or at an edge) — each run
-  // visited once, the levels laid out in order as they're found (F_ORDER: level k at [lvl(k), lvl(k + 1)))
+  // (the seeded pieces' runs: every later single-workgroup phase walks these, not the whole window)
+  for (var t = lid; t < H; t += gW) {
+    let i = nu(F_HANG, t);
+    if (P.pad1 != 0u || (ld(fi(F_PF, nu(N_PIECE, i))) & PF_SEEDED) != 0u) { nst(F_SEEDL, atomicAdd(&W[cnt(C_SEEDN)], 1u), i); }
+  }
   if (lid == 0u) { st(cnt(C_LIST), 0u); st(lvl(1u), 0u); }
   workgroupBarrier();
   storageBarrier();
+
+  if (P.stopAt == 2u) { return; }
+  // 2 — flood: frontier by frontier from what holds (level 1: joined to a standing run, or at an edge) — each run
+  // visited once, the levels laid out in order as they're found (F_ORDER: level k at [lvl(k), lvl(k + 1))); only
+  // the seeded pieces (a frontier never leaves its piece)
   for (var t = lid; t < H; t += gW) {
     let i = nu(F_HANG, t);
+    if (P.pad1 == 0u && (ld(fi(F_PF, nu(N_PIECE, i))) & PF_SEEDED) == 0u) { continue; }
     var held = edgeHeld(i);
-    var wByHolder = false;
     for (var d = 0u; d < 6u; d++) {
       let nb = nbrBase(i, d);
       for (var r = 0u; r < 16u; r++) {
         if ((nb.y & (1u << r)) == 0u) { continue; }
-        let j = nb.x + r;
-        if (standsN(j)) {
-          held = true;
-          if ((nu(N_FLAGS, j) & NF_WEIGHED) != 0u) { wByHolder = true; }
-        }
+        if (standsN(nb.x + r)) { held = true; }
       }
     }
     if (held) {
       st(fi(F_DIST, i), 1u);
       nst(F_ORDER, atomicAdd(&W[cnt(C_LIST)], 1u), i);
     }
-    if (wByHolder) { st(fi(F_DYN, i), NF_WEIGHED); }
   }
+  workgroupBarrier();
+  storageBarrier();
   var loK = 0u;
   var k = 1u;
   loop {
@@ -595,44 +701,280 @@ fn judge1(@builtin(local_invocation_index) lid: u32) {
     }
     loK = hiK;
     k++;
+    // (every append of this frontier in before the next is counted)
+    workgroupBarrier();
+    storageBarrier();
   }
   let maxD = k - 1u;
   workgroupBarrier();
   storageBarrier();
-
-  if (P.stopAt == 2u) { return; }
-  // 2 — pieces: the hanging runs' connected components
   for (var t = lid; t < H; t += gW) {
     let i = nu(F_HANG, t);
     // (the distances as plain words from here on)
-    N[N_DIST * P.ncap + i] = ld(fi(F_DIST, i));
-    for (var d = 0u; d < 6u; d++) {
-      let nb = nbrBase(i, d);
-      for (var r = 0u; r < 16u; r++) {
-        if ((nb.y & (1u << r)) == 0u) { continue; }
-        let j = nb.x + r;
-        if (!standsN(j) && j < i) { unite(F_PC, i, j); }
-      }
+    let d = ld(fi(F_DIST, i));
+    N[N_DIST * P.ncap + i] = d;
+    if (d < INF_D) { atomicOr(&W[fi(F_PF, nu(N_PIECE, i))], PF_REACHED); }
+  }
+  workgroupBarrier();
+  storageBarrier();
+  // the judged runs (a seeded, weighed piece the flood reached: the only ones a verdict can come from), by level
+  // again, each given its pairs (a slot a level it reaches)
+  for (var t = lid; t < H; t += gW) {
+    let i = nu(F_HANG, t);
+    let d = nu(N_DIST, i);
+    let p = nu(N_PIECE, i);
+    if (d == 1u) { nst(N_ROOT, i, p); }
+    let pfl = ld(fi(F_PF, p));
+    if (d != INF_D && (pfl & (PF_SEEDED | PF_WEIGHED)) == (PF_SEEDED | PF_WEIGHED)) {
+      atomicAdd(&W[lvl2(d)], 1u);
+      nst(N_PBASE, i, atomicAdd(&W[cnt(C_PAIRS)], d));
+    } else {
+      nst(N_PBASE, i, NONE);
     }
   }
   workgroupBarrier();
   storageBarrier();
-  for (var t = lid; t < H; t += gW) {
-    let i = nu(F_HANG, t);
-    let p = find(F_PC, i);
-    N[N_PIECE * P.ncap + i] = p;
-    let fl = nu(N_FLAGS, i) | ld(fi(F_DYN, i));
-    var pf = 0u;
-    if ((fl & NF_SEEDED) != 0u && (fl & NF_SOLID) != 0u) { pf |= PF_SEEDED; }
-    if ((fl & NF_WEIGHED) != 0u) { pf |= PF_WEIGHED; }
-    if (nu(N_DIST, i) < INF_D) { pf |= PF_REACHED; }
-    atomicOr(&W[fi(F_PF, p)], pf);
-    minf(fi(F_ZC, p), nf(N_Z0, i));
+  if (lid == 0u) {
+    var sum = 0u;
+    for (var k = 0u; k <= maxD + 1u; k++) {
+      let c = ld(lvl2(k));
+      st(lvl2(k), sum);
+      st(lvlCur(k), sum);
+      sum += c;
+    }
+    st(cnt(C_H2), sum);
+    // (stats: the window's hanging runs, the judged ones, the deepest level)
+    atomicStore(&O[O_TIME], H);
+    atomicStore(&O[O_TIME + 1u], sum);
+    atomicStore(&O[O_TIME + 2u], maxD);
+    atomicStore(&O[O_TIME + 3u], ld(cnt(C_PAIRS)));
+    atomicStore(&O[O_TIME + 4u], NONE);
+    atomicStore(&O[O_TIME + 5u], NONE);
+    if (ld(cnt(C_PAIRS)) > P.pcap && ld(cnt(C_OVER)) == 0u) { st(cnt(C_OVER), 3u); }
+    let go = P.mode == 1u && ld(cnt(C_OVER)) == 0u;
+    IND[0] = select(0u, (sum + 63u) / 64u, go);
+    IND[1] = select(0u, maxD, go);
+    IND[2] = 1u;
+    // (the checks: a thread a root pair, at most a pair each)
+    IND[4] = select(0u, (ld(cnt(C_PAIRS)) + 63u) / 64u, go);
+    IND[5] = 1u;
+    IND[6] = 1u;
   }
   workgroupBarrier();
   storageBarrier();
+  for (var t = lid; t < H; t += gW) {
+    let i = nu(F_HANG, t);
+    if (nu(N_PBASE, i) == NONE) { continue; }
+    let q = colXY(nu(N_COL, i));
+    atomicMin(&O[O_TIME + 4u], u32(q.x));
+    atomicMin(&O[O_TIME + 5u], u32(q.y));
+    atomicMax(&O[O_TIME + 6u], u32(q.x));
+    atomicMax(&O[O_TIME + 7u], u32(q.y));
+    nst(N_ORDER2, atomicAdd(&W[lvlCur(nu(N_DIST, i))], 1u), i);
+  }
 
   if (lid == 0u) { st(cnt(C_MAXD2), maxD); }
+}
+
+// ---- the pairs (mode 1): every level's sections at once, on the whole GPU — a thread a pair, (x: a run of the
+// judged ones ≥ that level, y: the level − 1), dispatched indirectly (IND). Union-find on the pairs (a pair joined to
+// the pairs of its joined runs at the same level) is concurrent and lock-free, so a constant number of dispatches
+// gives every level's components: no pass a level ----
+/** the pair at this invocation: (run, level, pair), or the run NONE */
+fn pairAt(gid: vec3<u32>) -> vec3<u32> {
+  let k = gid.y + 1u;
+  let t = ld(lvl2(k)) + gid.x;
+  if (ld(cnt(C_OVER)) != 0u || t >= ld(cnt(C_H2))) { return vec3<u32>(NONE, 0u, 0u); }
+  let v = nu(N_ORDER2, t);
+  return vec3<u32>(v, k, pairOf(v, k));
+}
+
+@compute @workgroup_size(64)
+fn pairsInit(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let a = pairAt(gid);
+  if (a.x == NONE) { return; }
+  st(pw(P_PAR, a.z), a.z);
+  st(pw(P_NODE, a.z), a.x);
+  stf(pw(P_STR, a.z), 1e9);
+  stf(pw(P_TS, a.z), 1e9);
+  for (var d = 0u; d < 6u; d++) { stf(pw(P_D + d * 5u + 3u, a.z), 1e9); }
+}
+
+@compute @workgroup_size(64)
+fn pairsUnite(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let a = pairAt(gid);
+  if (a.x == NONE) { return; }
+  let v = a.x;
+  let k = a.y;
+  for (var d = 0u; d < 6u; d++) {
+    let nb = nbrBase(v, d);
+    for (var r = 0u; r < 16u; r++) {
+      if ((nb.y & (1u << r)) == 0u) { continue; }
+      let j = nb.x + r;
+      let dj = nu(N_DIST, j);
+      if (j < v && dj >= k && dj != INF_D) { uniteAt(pw(P_PAR, 0u), a.z, pairOf(j, k)); }
+    }
+  }
+}
+
+@compute @workgroup_size(64)
+fn pairsFind(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let a = pairAt(gid);
+  if (a.x == NONE) { return; }
+  let r = findAt(pw(P_PAR, 0u), a.z);
+  st(pw(P_RT, a.z), r);
+  if (r == a.z) { st(pw(P_LIST, atomicAdd(&W[cnt(C_PROOTS)], 1u)), r); }
+}
+
+// (a workgroup's masses gathered by root first: a level's pairs lie together, nearly all in one component)
+var<workgroup> hk: array<atomic<u32>, 64>;
+// (a slot's 32 words: mass and its moments (4), the faces' sums (9), per direction Σh, Σh·zc, ΣI (18))
+var<workgroup> hv: array<atomic<u32>, 2048>;
+fn haddf(i: u32, v: f32) {
+  var old = atomicLoad(&hv[i]);
+  loop {
+    let r = atomicCompareExchangeWeak(&hv[i], old, bitcast<u32>(bitcast<f32>(old) + v));
+    if (r.exchanged) { break; }
+    old = r.old_value;
+  }
+}
+
+@compute @workgroup_size(64)
+fn pairsSum(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_index) lid: u32) {
+  atomicStore(&hk[lid], NONE);
+  for (var q = 0u; q < 32u; q++) { atomicStore(&hv[lid * 32u + q], 0u); }
+  workgroupBarrier();
+  let a = pairAt(gid);
+  if (a.x != NONE) {
+    let v = a.x;
+    let k = a.y;
+    let r = ld(pw(P_RT, a.z));
+    let m = nf(N_MASS, v);
+    let pos = cellPos(colXY(nu(N_COL, v)));
+    let vals = array<f32, 4>(m, m * pos.x, m * pos.y, nf(N_MZ, v));
+    var slot = NONE;
+    let h = (r * 2654435761u) >> 26u;
+    for (var probe = 0u; probe < 8u && slot == NONE; probe++) {
+      let sl = (h + probe) & 63u;
+      loop {
+        let o = atomicCompareExchangeWeak(&hk[sl], NONE, r);
+        if (o.exchanged || o.old_value == r) { slot = sl; break; }
+        if (o.old_value != NONE) { break; }
+      }
+    }
+    for (var q = 0u; q < 4u; q++) {
+      if (slot != NONE) { haddf(slot * 32u + q, vals[q]); } else { addf(pw(P_M + q, r), vals[q]); }
+    }
+    // the faces: a run's own level only (its faces to the runs a step nearer)
+    if (k == nu(N_DIST, v)) {
+      for (var q = 0u; q < 9u; q++) {
+        let x = nf(N_FU + q, v);
+        if (slot != NONE) { haddf(slot * 32u + 4u + q, x); } else { addf(pw(P_U + q, r), x); }
+      }
+      minf(pw(P_STR, r), nf(N_FSTR, v));
+      minf(pw(P_TS, r), nf(N_FTS, v));
+      if (nu(N_FINF, v) != 0u) { st(pw(P_INF, r), 1u); }
+      for (var d = 0u; d < 6u; d++) {
+        let sh = nf(N_FD + d * 5u, v);
+        if (sh <= 0.0) { continue; }
+        for (var q = 0u; q < 3u; q++) {
+          let x = nf(N_FD + d * 5u + q, v);
+          if (slot != NONE) { haddf(slot * 32u + 13u + d * 3u + q, x); } else { addf(pw(P_D + d * 5u + q, r), x); }
+        }
+        minf(pw(P_D + d * 5u + 3u, r), nf(N_FD + d * 5u + 3u, v));
+        maxf(pw(P_D + d * 5u + 4u, r), nf(N_FD + d * 5u + 4u, v));
+      }
+    }
+  }
+  workgroupBarrier();
+  let key = atomicLoad(&hk[lid]);
+  if (key != NONE) {
+    for (var q = 0u; q < 13u; q++) {
+      let x = bitcast<f32>(atomicLoad(&hv[lid * 32u + q]));
+      if (x != 0.0) { addf(pw(select(P_U + q - 4u, P_M + q, q < 4u), key), x); }
+    }
+    for (var d = 0u; d < 6u; d++) {
+      for (var q = 0u; q < 3u; q++) {
+        let x = bitcast<f32>(atomicLoad(&hv[lid * 32u + 13u + d * 3u + q]));
+        if (x != 0.0) { addf(pw(P_D + d * 5u + q, key), x); }
+      }
+    }
+  }
+}
+
+/** a thread a component at a level (a root pair): its section checked, as judge2's level pass does (phase 4 g) */
+@compute @workgroup_size(64)
+fn checks(@builtin(global_invocation_id) gid: vec3<u32>) {
+  if (P.mode != 1u || ld(cnt(C_OVER)) != 0u || gid.x >= ld(cnt(C_PROOTS))) { return; }
+  let r = ld(pw(P_LIST, gid.x));
+  let v = ld(pw(P_NODE, r));
+  let k = r - nu(N_PBASE, v) + 1u;
+  let piece = nu(N_PIECE, v);
+  let M = ldf(pw(P_M, r));
+  let com = vec2<f32>(ldf(pw(P_M + 1u, r)), ldf(pw(P_M + 2u, r))) / max(M, 1e-6);
+  let A0 = ldf(pw(P_U, r));
+  let cen = vec2<f32>(ldf(pw(P_U + 1u, r)), ldf(pw(P_U + 2u, r))) / max(A0, 1e-6);
+  let lvv = com - cen;
+  let L = length(lvv);
+  let u = select(vec2<f32>(1.0, 0.0), lvv / max(L, 1e-6), L > 1e-4);
+  let meet = length(vec2<f32>(ldf(pw(P_U + 3u, r)), ldf(pw(P_U + 4u, r)))) < P.meet * max(A0, 1e-6);
+  let inf = ld(pw(P_INF, r)) != 0u;
+  // (level 1: the piece's own sums, where the thrust check and the neck read them)
+  if (k == 1u) {
+    for (var q = 0u; q < 4u; q++) { st(fi(F_AM + q, piece), ld(pw(P_M + q, r))); }
+    for (var q = 0u; q < 9u; q++) { st(fi(F_A0 + q, piece), ld(pw(P_U + q, r))); }
+    st(fi(F_INF, piece), select(0u, 1u, inf));
+    st(fi(F_SSTR, piece), ld(pw(P_STR, r)));
+    nst(F_ROOTS, atomicAdd(&W[cnt(C_ROOTS)], 1u), piece);
+  }
+  if (inf || meet) { return; }
+  oadd(O_WHY + 10u, 1u);
+  let s = min(ldf(pw(P_STR, r)), 1e3);
+  let ts = min(ldf(pw(P_TS, r)), 1e3);
+  var Ap = 0.0;
+  var Apz = 0.0;
+  var Ip = 0.0;
+  var zlo = 1e9;
+  var zhi = 0.0;
+  for (var d = 0u; d < 6u; d++) {
+    let sh = ldf(pw(P_D + d * 5u, r));
+    let w = EDGE * abs(dot(DIRV[d], u));
+    if (sh <= 0.0 || w <= 1e-4) { continue; }
+    Ap += w * sh;
+    Apz += w * ldf(pw(P_D + d * 5u + 1u, r));
+    Ip += w * ldf(pw(P_D + d * 5u + 2u, r));
+    zlo = min(zlo, ldf(pw(P_D + d * 5u + 3u, r)));
+    zhi = max(zhi, ldf(pw(P_D + d * 5u + 4u, r)));
+  }
+  let As = select(0.6366 * A0, Ap, L > 1e-3);
+  var kind = 0u;
+  if (M > P.shear * s * As) { kind = K_SHEAR; }
+  if (kind == 0u && Ap > 1e-6) {
+    let zb = Apz / Ap;
+    let I = max(Ip - Ap * zb * zb, 0.0);
+    let c = max(zhi - zb, zb - zlo);
+    let S = I / max(c, 1e-3);
+    if (M * L > P.tensile * ts * S) { kind = K_BEND; }
+  } else if (kind == 0u && L > 1e-3) { kind = K_BEND; }
+  if (kind == 0u) { return; }
+  st(pw(P_KIND, r), kind);
+  stf(pw(P_PIVX, r), cen.x);
+  stf(pw(P_PIVY, r), cen.y);
+  stf(pw(P_PIVZ, r), select(zlo, 0.0, zlo >= 1e9));
+  stf(pw(P_AXX, r), -u.y);
+  stf(pw(P_AXY, r), u.x);
+  atomicOr(&W[fi(F_PF, piece)], PF_FAILED);
+}
+
+/** a thread a pair: a run in a failed component goes; the runs of a failed section's own level are its cut */
+@compute @workgroup_size(64)
+fn marks(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let a = pairAt(gid);
+  if (a.x == NONE) { return; }
+  let r = ld(pw(P_RT, a.z));
+  if (ld(pw(P_KIND, r)) == 0u) { return; }
+  st(fi(F_DEAD, a.x), 1u);
+  if (a.y == nu(N_DIST, a.x)) { st(fi(F_CUT, a.x), r + 1u); }
 }
 
 // ---- faces: a thread a hanging run — its faces to the runs a step nearer, summed once (the sections read them) -----
@@ -654,6 +996,7 @@ fn faces(@builtin(global_invocation_id) gid: vec3<u32>) {
     dd[q * 5u + 4u] = 0.0;
   }
   var smin = 1e9;
+  var tmin = 1e9;
   var inf = select(0u, 1u, k == 1u && edgeHeld(i));
   let pi = cellPos(colXY(nu(N_COL, i)));
   let a0 = nf(N_SH0, i);
@@ -682,6 +1025,7 @@ fn faces(@builtin(global_invocation_id) gid: vec3<u32>) {
       u[7] += a * n.y * n.y;
       u[8] += a * z0;
       smin = min(smin, min(si, nf(N_STR, j)));
+      tmin = min(tmin, min(nf(N_TS, i), nf(N_TS, j)));
       if (bi || (nu(N_FLAGS, j) & NF_BED) != 0u) { inf = 1u; }
       if (h > 0.0) {
         let zc = 0.5 * (z0 + z1);
@@ -695,6 +1039,7 @@ fn faces(@builtin(global_invocation_id) gid: vec3<u32>) {
   }
   for (var q = 0u; q < 9u; q++) { N[(N_FU + q) * P.ncap + i] = bitcast<u32>(u[q]); }
   N[N_FSTR * P.ncap + i] = bitcast<u32>(smin);
+  N[N_FTS * P.ncap + i] = bitcast<u32>(tmin);
   N[N_FINF * P.ncap + i] = inf;
   for (var q = 0u; q < 30u; q++) { N[(N_FD + q) * P.ncap + i] = bitcast<u32>(dd[q]); }
 }
@@ -704,32 +1049,35 @@ fn faces(@builtin(global_invocation_id) gid: vec3<u32>) {
 fn judge2(@builtin(local_invocation_index) lid: u32) {
   wgLid = lid;
   if (P.stopAt >= 1u && P.stopAt <= 4u) { return; }
-  if (lid == 0u) { wgL[0] = hangN(); wgL[2] = ld(cnt(C_MAXD2)); }
+  if (lid == 0u) { wgL[0] = seedN(); wgL[2] = ld(cnt(C_MAXD2)); }
   let H = uniformCount(0u);
   let maxD = workgroupUniformLoad(&wgL[2]);
   let gW = 256u;
-  // 4 — the sections, from the far end in: a pass a level
+  // 4 — the sections, from the far end in: a pass a level (mode 0, the oracle; mode 1 has done them all at once)
   var nPrev = 0u;
-  for (var k = maxD; k >= 1u; k--) {
+  let levels = select(maxD, 0u, P.mode == 1u);
+  for (var k = levels; k >= 1u; k--) {
     let lo = ld(lvl(k));
     let hi = ld(lvl(k + 1u));
     let oldList = select(F_ROOTS2, F_ROOTS, (k & 1u) == 0u);
     let newList = select(F_ROOTS, F_ROOTS2, (k & 1u) == 0u);
     let oldC = select(C_ROOTS2, C_ROOTS, (k & 1u) == 0u);
     let newC = select(C_ROOTS, C_ROOTS2, (k & 1u) == 0u);
-    let nOld = select(0u, nPrev, k < maxD);
+    let nOld = select(0u, nPrev, k < levels);
     // a: the level's runs start as their own components, their sums cleared
     for (var t = lo + lid; t < hi; t += gW) {
       let i = nu(F_ORDER, t);
       for (var f = F_AM; f <= F_ZMAX; f++) { st(fi(f, i), 0u); }
       st(fi(F_ZMIN, i), FINF);
       stf(fi(F_SSTR, i), 1e9);
+      stf(fi(F_STS, i), 1e9);
     }
     for (var t = lid; t < nOld; t += gW) {
       let r = nu(oldList, t);
       for (var f = F_A0; f <= F_ZMAX; f++) { st(fi(f, r), 0u); }
       st(fi(F_ZMIN, r), FINF);
       stf(fi(F_SSTR, r), 1e9);
+      stf(fi(F_STS, r), 1e9);
     }
     // b: joined to everything ≥ k out
     for (var t = lo + lid; t < hi; t += gW) {
@@ -767,6 +1115,9 @@ fn judge2(@builtin(local_invocation_index) lid: u32) {
         nst(F_SLOT, i, q);
       }
     }
+    // (every root listed before the count is read)
+    workgroupBarrier();
+    storageBarrier();
     if (lid == 0u) { wgL[0] = ld(cnt(newC)); }
     let nNew = uniformCount(0u);
     nPrev = nNew;
@@ -802,21 +1153,26 @@ fn judge2(@builtin(local_invocation_index) lid: u32) {
       var acc = array<f32, 9>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
       var cur = NONE;
       var smin = 1e9;
+      var tmin = 1e9;
       for (var t = lo + lid; t < hi; t += gW) {
         let i = nu(F_ORDER, t);
         let r = nu(N_ROOT, i);
         if (r != cur) {
           put(cur, &acc, 9u, F_A0, 4u);
           if (cur != NONE && smin < 1e9) { minf(fi(F_SSTR, cur), smin); }
+          if (cur != NONE && tmin < 1e9) { minf(fi(F_STS, cur), tmin); }
           smin = 1e9;
+          tmin = 1e9;
           cur = r;
         }
         for (var q = 0u; q < 9u; q++) { acc[q] += nf(N_FU + q, i); }
         smin = min(smin, nf(N_FSTR, i));
+        tmin = min(tmin, nf(N_FTS, i));
         if (nu(N_FINF, i) != 0u) { st(fi(F_INF, r), 1u); }
       }
       put(cur, &acc, 9u, F_A0, 4u);
       if (cur != NONE && smin < 1e9) { minf(fi(F_SSTR, cur), smin); }
+      if (cur != NONE && tmin < 1e9) { minf(fi(F_STS, cur), tmin); }
     }
     workgroupBarrier();
     wflush(newList, nNew, 13u, F_AM, 0u);
@@ -866,6 +1222,7 @@ fn judge2(@builtin(local_invocation_index) lid: u32) {
       oadd(O_WHY + 10u, 1u);
       let M = ldf(fi(F_AM, r));
       let s = min(ldf(fi(F_SSTR, r)), 1e3);
+      let ts = min(ldf(fi(F_STS, r)), 1e3);
       let Ap = ldf(fi(F_AP, r));
       let A0 = ldf(fi(F_A0, r));
       // (shear on the faces' area across the lever; with no lever, a face's mean share)
@@ -877,17 +1234,19 @@ fn judge2(@builtin(local_invocation_index) lid: u32) {
         let I = max(ldf(fi(F_IP, r)) - Ap * zb * zb, 0.0);
         let c = max(ldf(fi(F_ZMAX, r)) - zb, zb - ldf(fi(F_ZMIN, r)));
         let S = I / max(c, 1e-3);
-        if (M * lv.L > P.tensile * s * S) { kind = K_BEND; }
+        if (M * lv.L > P.tensile * ts * S) { kind = K_BEND; }
       } else if (kind == 0u && lv.L > 1e-3) { kind = K_BEND; }
       if (kind != 0u) {
         st(fi(F_FAIL, r), k);
-        st(fi(F_KIND, r), kind);
-        // it hinges where it broke (fracture.ts hingeOf): about the section's foot, the axis across the lever
-        stf(fi(F_PIVX, r), lv.cen.x);
-        stf(fi(F_PIVY, r), lv.cen.y);
-        stf(fi(F_PIVZ, r), ldf(fi(F_ZMIN, r)));
-        stf(fi(F_AXX, r), -lv.u.y);
-        stf(fi(F_AXY, r), lv.u.x);
+        // it hinges where it broke (fracture.ts hingeOf): about the section's foot, the axis across the lever — kept
+        // in the pair of the root at this level (as mode 1 keeps it in its root pair)
+        let q = pairOf(r, k);
+        st(pw(P_KIND, q), kind);
+        stf(pw(P_PIVX, q), lv.cen.x);
+        stf(pw(P_PIVY, q), lv.cen.y);
+        stf(pw(P_PIVZ, q), select(ldf(fi(F_ZMIN, r)), 0.0, ld(fi(F_ZMIN, r)) == FINF));
+        stf(pw(P_AXX, q), -lv.u.y);
+        stf(pw(P_AXY, q), lv.u.x);
         atomicOr(&W[fi(F_PF, nu(N_PIECE, r))], PF_FAILED);
       }
     }
@@ -897,7 +1256,7 @@ fn judge2(@builtin(local_invocation_index) lid: u32) {
     for (var t = lo + lid; t < hi; t += gW) {
       let i = nu(F_ORDER, t);
       let r = nu(N_ROOT, i);
-      if (ld(fi(F_FAIL, r)) == k) { st(fi(F_CUT, i), r + 1u); }
+      if (ld(fi(F_FAIL, r)) == k) { st(fi(F_CUT, i), pairOf(r, k) + 1u); }
     }
     for (var t = lid; t < WSLOTS * 16u; t += gW) { atomicStore(&wacc[t], 0u); }
     workgroupBarrier();
@@ -950,11 +1309,10 @@ fn judge2(@builtin(local_invocation_index) lid: u32) {
   storageBarrier();
   // every run of a meeting piece bounds the parabola's rise: z_s + f q inside [z0, z1] (give archTol)
   for (var t = lid; t < H; t += gW) {
-    let i = nu(F_HANG, t);
+    let i = nu(F_SEEDL, t);
     let d = nu(N_DIST, i);
     if (d == 0u || d > maxD) { continue; }
-    let r = find(F_LV, i);
-    if (nu(N_DIST, r) != 1u) { continue; }
+    let r = nu(N_PIECE, i);
     let lv = leverOf(r);
     if (!lv.meet) { continue; }
     let sp = span(r);
@@ -985,39 +1343,60 @@ fn judge2(@builtin(local_invocation_index) lid: u32) {
       if (thrust > P.crush * min(ldf(fi(F_SSTR, r)), 1e3) * A) { kind = K_ARCHCRUSH; }
     }
     if (kind != 0u) {
-      st(fi(F_FAIL, r), 1u);
-      st(fi(F_KIND, r), kind);
-      stf(fi(F_PIVX, r), lv.cen.x);
-      stf(fi(F_PIVY, r), lv.cen.y);
-      stf(fi(F_PIVZ, r), sp.zs);
-      stf(fi(F_AXX, r), 0.0);
-      stf(fi(F_AXY, r), 0.0);
-      atomicOr(&W[fi(F_PF, nu(N_PIECE, r))], PF_FAILED);
+      let q = pairOf(r, 1u);
+      st(pw(P_KIND, q), kind);
+      stf(pw(P_PIVX, q), lv.cen.x);
+      stf(pw(P_PIVY, q), lv.cen.y);
+      stf(pw(P_PIVZ, q), sp.zs);
+      stf(pw(P_AXX, q), 0.0);
+      stf(pw(P_AXY, q), 0.0);
+      atomicOr(&W[fi(F_PF, r)], PF_FAILED | PF_ARCHFAIL);
     }
   }
   workgroupBarrier();
   storageBarrier();
   for (var t = lo1 + lid; t < hi1; t += gW) {
     let i = nu(F_ORDER, t);
-    let r = nu(N_ROOT, i);
-    if (ld(fi(F_FAIL, r)) == 1u) { st(fi(F_CUT, i), r + 1u); }
+    let r = nu(N_PIECE, i);
+    if ((ld(fi(F_PF, r)) & PF_ARCHFAIL) != 0u) { st(fi(F_CUT, i), pairOf(r, 1u) + 1u); }
   }
   workgroupBarrier();
   storageBarrier();
 
+}
+
+// ---- judge3: one workgroup — the release (mode 0: a flood that doesn't cross a failed section; mode 1: the marks) ----
+@compute @workgroup_size(256)
+fn judge3(@builtin(local_invocation_index) lid: u32) {
+  wgLid = lid;
+  if (P.stopAt >= 1u && P.stopAt <= 4u) { return; }
+  if (lid == 0u) { wgL[0] = seedN(); }
+  let H = uniformCount(0u);
+  let gW = 256u;
   if (P.stopAt == 6u) { return; }
   // 6 — release: what still reaches what holds without crossing a failed section (frontier by frontier, F_ORDER
-  // reused for the frontiers)
+  // reused for the frontiers). Mode 1: the same runs, from the marks — a run is cut off from what holds it exactly
+  // when a component it's in at some level failed (that component's only ties to what holds it are its section's
+  // faces), or its piece's thrust line didn't fit
+  if (P.mode == 1u) {
+    for (var t = lid; t < H; t += gW) {
+      let i = nu(F_SEEDL, t);
+      let gone = ld(fi(F_DEAD, i)) != 0u || (ld(fi(F_PF, nu(N_PIECE, i))) & PF_ARCHFAIL) != 0u;
+      st(fi(F_REACH, i), select(0u, 1u, nu(N_DIST, i) != INF_D && !gone));
+    }
+  }
   if (lid == 0u) { st(cnt(C_LIST), 0u); }
   workgroupBarrier();
   storageBarrier();
   for (var t = lid; t < H; t += gW) {
-    let i = nu(F_HANG, t);
-    if (nu(N_DIST, i) == 1u && ld(fi(F_CUT, i)) == 0u) {
+    let i = nu(F_SEEDL, t);
+    if (P.mode == 0u && nu(N_DIST, i) == 1u && ld(fi(F_CUT, i)) == 0u) {
       st(fi(F_REACH, i), 1u);
       nst(F_ORDER, atomicAdd(&W[cnt(C_LIST)], 1u), i);
     }
   }
+  workgroupBarrier();
+  storageBarrier();
   var lo6 = 0u;
   loop {
     if (lid == 0u) { wgL[1] = ld(cnt(C_LIST)); }
@@ -1042,13 +1421,23 @@ fn judge2(@builtin(local_invocation_index) lid: u32) {
       }
     }
     lo6 = hi6;
+    workgroupBarrier();
+    storageBarrier();
   }
 
   if (P.stopAt == 7u) { return; }
+}
+
+// ---- freedUnite: a thread a hanging run — the freed runs' pieces (lock-free union-find, the whole GPU) ----
+@compute @workgroup_size(64)
+fn freedUnite(@builtin(global_invocation_id) gid: vec3<u32>) {
+  if (P.stopAt >= 1u && P.stopAt <= 7u) { return; }
   // 7 — the freed runs (of a seeded piece, held nowhere now) and their pieces
-  for (var t = lid; t < H; t += gW) {
-    let i = nu(F_HANG, t);
-    if (!freed(i)) { continue; }
+  let t = gid.x;
+  if (t >= seedN()) { return; }
+  {
+    let i = nu(F_SEEDL, t);
+    if (!freed(i)) { return; }
     for (var d = 0u; d < 6u; d++) {
       let nb = nbrBase(i, d);
       for (var rr = 0u; rr < 16u; rr++) {
@@ -1058,10 +1447,21 @@ fn judge2(@builtin(local_invocation_index) lid: u32) {
       }
     }
   }
+}
+
+// ---- judge4: one workgroup — the freed pieces out, the necks, the records ----
+@compute @workgroup_size(256)
+fn judge4(@builtin(local_invocation_index) lid: u32) {
+  wgLid = lid;
+  if (P.stopAt >= 1u && P.stopAt <= 4u) { return; }
+  if (lid == 0u) { wgL[0] = seedN(); }
+  let H = uniformCount(0u);
+  let gW = 256u;
+  if (P.stopAt == 7u) { return; }
   workgroupBarrier();
   storageBarrier();
   for (var t = lid; t < H; t += gW) {
-    let i = nu(F_HANG, t);
+    let i = nu(F_SEEDL, t);
     if (!freed(i)) { continue; }
     let r = find(F_FR, i);
     addf(fi(F_VOL, r), nf(N_Z1, i) - nf(N_Z0, i));
@@ -1070,7 +1470,7 @@ fn judge2(@builtin(local_invocation_index) lid: u32) {
   workgroupBarrier();
   storageBarrier();
   for (var t = lid; t < H; t += gW) {
-    let i = nu(F_HANG, t);
+    let i = nu(F_SEEDL, t);
     if (!freed(i)) { continue; }
     let r = find(F_FR, i);
     if (ld(fi(F_CUT, i)) != 0u && nu(N_DIST, i) == ld(fi(F_MINK, r))) { st(fi(F_TIPSRC, r), ld(fi(F_CUT, i)) - 1u); }
@@ -1085,12 +1485,12 @@ fn judge2(@builtin(local_invocation_index) lid: u32) {
   workgroupBarrier();
   storageBarrier();
   for (var t = lid; t < H; t += gW) {
-    let r = nu(F_HANG, t);
+    let r = nu(F_SEEDL, t);
     if (!freed(r) || find(F_FR, r) != r) { continue; }
     let o = ld(fi(F_OUT, r));
     let src = ld(fi(F_TIPSRC, r));
     var kind = 0u;
-    if (src != NONE) { kind = ld(fi(F_KIND, src)); }
+    if (src != NONE) { kind = ld(pw(P_KIND, src)); }
     let vol = ldf(fi(F_VOL, r));
     if (o == NONE) {
       oadd(O_WHY + 9u, u32(vol * 1000.0));
@@ -1104,11 +1504,11 @@ fn judge2(@builtin(local_invocation_index) lid: u32) {
     let tip = (P.flags & 1u) != 0u && (kind == K_BEND || kind == K_SHEAR);
     atomicStore(&O[pb + 1u], select(0u, 1u, tip));
     if (tip) {
-      atomicStore(&O[pb + 2u], ld(fi(F_PIVX, src)));
-      atomicStore(&O[pb + 3u], ld(fi(F_PIVY, src)));
-      atomicStore(&O[pb + 4u], ld(fi(F_PIVZ, src)));
-      atomicStore(&O[pb + 5u], ld(fi(F_AXX, src)));
-      atomicStore(&O[pb + 6u], ld(fi(F_AXY, src)));
+      atomicStore(&O[pb + 2u], ld(pw(P_PIVX, src)));
+      atomicStore(&O[pb + 3u], ld(pw(P_PIVY, src)));
+      atomicStore(&O[pb + 4u], ld(pw(P_PIVZ, src)));
+      atomicStore(&O[pb + 5u], ld(pw(P_AXX, src)));
+      atomicStore(&O[pb + 6u], ld(pw(P_AXY, src)));
     }
     atomicStore(&O[pb + 7u], bitcast<u32>(vol));
   }
@@ -1116,86 +1516,128 @@ fn judge2(@builtin(local_invocation_index) lid: u32) {
   storageBarrier();
 
   if (P.stopAt == 8u) { return; }
-  // 8 — the neck: a seeded, weighed piece that held, on the standing columns under it (fracture.ts neck)
+  // 8 — the neck: a seeded, weighed piece that held, on the standing columns under it (fracture.ts neck). A standing
+  // run two pieces reach goes with the lesser piece (atomicMin, then listed once): the same verdict every time —
+  // the first claim winning was a race (round 120's equality tests caught a cave judged two ways)
   if (lid == 0u) { st(cnt(C_LIST), 0u); st(cnt(C_NECK), 0u); }
   workgroupBarrier();
   storageBarrier();
-  for (var t = lid; t < H; t += gW) {
-    let i = nu(F_HANG, t);
-    let p = nu(N_PIECE, i);
-    let pf = ld(fi(F_PF, p));
-    if ((pf & (PF_SEEDED | PF_WEIGHED | PF_REACHED)) != (PF_SEEDED | PF_WEIGHED | PF_REACHED) || (pf & PF_FAILED) != 0u) { continue; }
-    if (p == i) { nst(F_ROOTS, atomicAdd(&W[cnt(C_LIST)], 1u), p); }
-    // the standing runs it's joined to (hop 1)
-    for (var d = 0u; d < 6u; d++) {
-      let nb = nbrBase(i, d);
-      for (var rr = 0u; rr < 16u; rr++) {
-        if ((nb.y & (1u << rr)) == 0u) { continue; }
-        let j = nb.x + rr;
-        if (!standsN(j)) { continue; }
-        if (cas(fi(F_NECK, j), NONE, p)) {
-          st(fi(F_HOP, j), 1u);
-          st(fi(F_NECKL, atomicAdd(&W[cnt(C_NECK)], 1u)), j);
-        }
-      }
-    }
-  }
-  workgroupBarrier();
-  storageBarrier();
-  // on through the standing runs joined above the piece's lowest point, NECK_R columns (past it: keyed into the land)
-  for (var hop = 1u; hop <= P.neckR; hop++) {
-    if (lid == 0u) { wgL[0] = ld(cnt(C_NECK)); }
-    let nN = uniformCount(0u);
-    for (var t = lid; t < nN; t += gW) {
-      let j = ld(fi(F_NECKL, t));
-      if (ld(fi(F_HOP, j)) != hop) { continue; }
-      let p = ld(fi(F_NECK, j));
-      if (edgeHeld(j)) { atomicOr(&W[fi(F_PF, p)], PF_KEYED); continue; }
-      let zc = ldf(fi(F_ZC, p));
+  for (var ph = 0u; ph < 2u; ph++) {
+    for (var t = lid; t < H; t += gW) {
+      let i = nu(F_SEEDL, t);
+      let p = nu(N_PIECE, i);
+      let pf = ld(fi(F_PF, p));
+      if ((pf & (PF_SEEDED | PF_WEIGHED | PF_REACHED)) != (PF_SEEDED | PF_WEIGHED | PF_REACHED) || (pf & PF_FAILED) != 0u) { continue; }
+      if (ph == 0u && p == i) { nst(F_ROOTS, atomicAdd(&W[cnt(C_LIST)], 1u), p); }
+      // the standing runs it's joined to (hop 1)
       for (var d = 0u; d < 6u; d++) {
-        let nb = nbrBase(j, d);
+        let nb = nbrBase(i, d);
         for (var rr = 0u; rr < 16u; rr++) {
           if ((nb.y & (1u << rr)) == 0u) { continue; }
-          let m = nb.x + rr;
-          if (!standsN(m)) { continue; }
-          // joined above zc
-          let o = min(nf(N_SH1, j), nf(N_SH1, m)) - max(zc, max(nf(N_SH0, j), nf(N_SH0, m)));
-          if (o < P.overlap) { continue; }
-          if (hop == P.neckR) { atomicOr(&W[fi(F_PF, p)], PF_KEYED); continue; }
-          if (cas(fi(F_NECK, m), NONE, p)) {
-            st(fi(F_HOP, m), hop + 1u);
-            st(fi(F_NECKL, atomicAdd(&W[cnt(C_NECK)], 1u)), m);
-          }
+          let j = nb.x + rr;
+          if (!standsN(j)) { continue; }
+          if (ph == 0u) { atomicMin(&W[fi(F_NECK, j)], p); } else if (cas(fi(F_HOP, j), 0u, 1u)) { st(fi(F_NECKL, atomicAdd(&W[cnt(C_NECK)], 1u)), j); }
         }
       }
     }
     workgroupBarrier();
     storageBarrier();
   }
+  // on through the standing runs joined above the piece's lowest point, NECK_R columns (past it: keyed into the land)
+  // (the runs are listed hop by hop: this hop's are the ones listed since the last)
+  var loH = 0u;
+  for (var hop = 1u; hop <= P.neckR; hop++) {
+    if (lid == 0u) { wgL[0] = ld(cnt(C_NECK)); }
+    let nN = uniformCount(0u);
+    for (var ph = 0u; ph < 2u; ph++) {
+      for (var t = loH + lid; t < nN; t += gW) {
+        let j = ld(fi(F_NECKL, t));
+        if (ld(fi(F_HOP, j)) != hop) { continue; }
+        let p = ld(fi(F_NECK, j));
+        if (edgeHeld(j)) {
+          if (ph == 0u) { atomicOr(&W[fi(F_PF, p)], PF_KEYED); }
+          continue;
+        }
+        let zc = ldf(fi(F_ZC, p));
+        for (var d = 0u; d < 6u; d++) {
+          let nb = nbrBase(j, d);
+          for (var rr = 0u; rr < 16u; rr++) {
+            if ((nb.y & (1u << rr)) == 0u) { continue; }
+            let m = nb.x + rr;
+            if (!standsN(m)) { continue; }
+            // joined above zc
+            let o = min(nf(N_SH1, j), nf(N_SH1, m)) - max(zc, max(nf(N_SH0, j), nf(N_SH0, m)));
+            if (o < P.overlap) { continue; }
+            if (hop == P.neckR) {
+              if (ph == 0u) { atomicOr(&W[fi(F_PF, p)], PF_KEYED); }
+              continue;
+            }
+            // (a run listed at an earlier hop keeps its piece)
+            if (ph == 0u) {
+              if (ld(fi(F_HOP, m)) == 0u) { atomicMin(&W[fi(F_NECK, m)], p); }
+            } else if (cas(fi(F_HOP, m), 0u, hop + 1u)) {
+              st(fi(F_NECKL, atomicAdd(&W[cnt(C_NECK)], 1u)), m);
+            }
+          }
+        }
+      }
+      workgroupBarrier();
+      storageBarrier();
+    }
+    // (nothing new this hop: the leg is whole — the hops past it would find nothing)
+    loH = nN;
+    if (lid == 0u) { wgL[1] = ld(cnt(C_NECK)); }
+    if (uniformCount(1u) == nN) { break; }
+  }
   if (lid == 0u) { wgL[0] = ld(cnt(C_LIST)); wgL[1] = ld(cnt(C_NECK)); }
   let nP = uniformCount(0u);
   let nN = workgroupUniformLoad(&wgL[1]);
   // the checks in parallel: the leg's sums (a thread a standing run), then each piece's middle and lever, then its
   // section's second moment and its hull's reach in 24 directions (a thread a standing run), then the verdict
-  for (var t = lid; t < nP; t += gW) { st(fi(F_KS, nu(F_ROOTS, t)), FINF); }
+  for (var t = lid; t < nP; t += gW) {
+    st(fi(F_KS, nu(F_ROOTS, t)), FINF);
+    st(fi(F_KT, nu(F_ROOTS, t)), FINF);
+  }
   workgroupBarrier();
   storageBarrier();
-  for (var t = lid; t < nN; t += gW) {
-    let j = ld(fi(F_NECKL, t));
-    let p = ld(fi(F_NECK, j));
-    if ((ld(fi(F_PF, p)) & PF_KEYED) != 0u) { continue; }
-    let zc = ldf(fi(F_ZC, p));
-    let z0 = nf(N_Z0, j);
-    let z1 = nf(N_Z1, j);
-    let m = nf(N_MASS, j) * max(z1 - zc, 0.0) / max(z1 - z0, 1e-6);
-    let q = cellPos(colXY(nu(N_COL, j)));
-    addf(fi(F_KM, p), m);
-    addf(fi(F_KMX, p), m * q.x);
-    addf(fi(F_KMY, p), m * q.y);
-    addf(fi(F_KA, p), ROW_H);
-    addf(fi(F_KCX, p), ROW_H * q.x);
-    addf(fi(F_KCY, p), ROW_H * q.y);
-    minf(fi(F_KS, p), select(nf(N_STR, j), 1e9, (nu(N_FLAGS, j) & NF_BED) != 0u));
+  // (a thread's sums kept while its runs are one piece's — nearly always — and put once: not every leg run's six
+  // adds on the same words)
+  {
+    var cur = NONE;
+    var acc = array<f32, 8>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1e9, 1e9);
+    for (var t = lid; t <= nN + gW; t += gW) {
+      var p = NONE;
+      var j = 0u;
+      if (t < nN) {
+        j = ld(fi(F_NECKL, t));
+        p = ld(fi(F_NECK, j));
+        if ((ld(fi(F_PF, p)) & PF_KEYED) != 0u) { p = NONE; }
+      }
+      if (p != cur || t >= nN) {
+        if (cur != NONE) {
+          for (var q = 0u; q < 6u; q++) { addf(fi(F_KM + q, cur), acc[q]); }
+          minf(fi(F_KS, cur), acc[6]);
+          minf(fi(F_KT, cur), acc[7]);
+        }
+        acc = array<f32, 8>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1e9, 1e9);
+        cur = p;
+      }
+      if (t >= nN) { break; }
+      if (p == NONE) { continue; }
+      let zc = ldf(fi(F_ZC, p));
+      let z0 = nf(N_Z0, j);
+      let z1 = nf(N_Z1, j);
+      let m = nf(N_MASS, j) * max(z1 - zc, 0.0) / max(z1 - z0, 1e-6);
+      let q = cellPos(colXY(nu(N_COL, j)));
+      acc[0] += m;
+      acc[1] += m * q.x;
+      acc[2] += m * q.y;
+      acc[3] += ROW_H;
+      acc[4] += ROW_H * q.x;
+      acc[5] += ROW_H * q.y;
+      acc[6] = min(acc[6], select(nf(N_STR, j), 1e9, (nu(N_FLAGS, j) & NF_BED) != 0u));
+      acc[7] = min(acc[7], select(nf(N_TS, j), 1e9, (nu(N_FLAGS, j) & NF_BED) != 0u));
+    }
   }
   workgroupBarrier();
   storageBarrier();
@@ -1217,21 +1659,46 @@ fn judge2(@builtin(local_invocation_index) lid: u32) {
   }
   workgroupBarrier();
   storageBarrier();
-  for (var t = lid; t < nN; t += gW) {
-    let j = ld(fi(F_NECKL, t));
-    let p = ld(fi(F_NECK, j));
-    if ((ld(fi(F_PF, p)) & PF_KEYED) != 0u) { continue; }
-    let q = cellPos(colXY(nu(N_COL, j)));
-    let cen = vec2<f32>(ldf(fi(F_PIVX, p)), ldf(fi(F_PIVY, p)));
-    let uu = vec2<f32>(ldf(fi(F_AXX, p)), ldf(fi(F_AXY, p)));
-    let dd = dot(q - cen, uu);
-    addf(fi(F_KI, p), ROW_H * dd * dd + 0.0601);
-    maxf(fi(F_KC, p), abs(dd) + 0.5);
-    // (reaches offset by 1e4: positive, so they order as their bits)
-    maxf(fi(F_SUPU, p), dot(q, uu) + 1e4);
-    for (var a = 0u; a < 24u; a++) {
-      let ang = f32(a) * 0.2617994;
-      maxf(fi(F_SUP + a, p), dot(q, vec2<f32>(cos(ang), sin(ang))) + 1e4);
+  {
+    var cur = NONE;
+    var ki = 0.0;
+    var kc = 0.0;
+    var sup = array<f32, 25>();
+    for (var a = 0u; a < 25u; a++) { sup[a] = 0.0; }
+    for (var t = lid; t <= nN + gW; t += gW) {
+      var p = NONE;
+      var j = 0u;
+      if (t < nN) {
+        j = ld(fi(F_NECKL, t));
+        p = ld(fi(F_NECK, j));
+        if ((ld(fi(F_PF, p)) & PF_KEYED) != 0u) { p = NONE; }
+      }
+      if (p != cur || t >= nN) {
+        if (cur != NONE) {
+          addf(fi(F_KI, cur), ki);
+          maxf(fi(F_KC, cur), kc);
+          // (reaches offset by 1e4: positive, so they order as their bits)
+          maxf(fi(F_SUPU, cur), sup[24]);
+          for (var a = 0u; a < 24u; a++) { maxf(fi(F_SUP + a, cur), sup[a]); }
+        }
+        ki = 0.0;
+        kc = 0.0;
+        for (var a = 0u; a < 25u; a++) { sup[a] = 0.0; }
+        cur = p;
+      }
+      if (t >= nN) { break; }
+      if (p == NONE) { continue; }
+      let q = cellPos(colXY(nu(N_COL, j)));
+      let cen = vec2<f32>(ldf(fi(F_PIVX, p)), ldf(fi(F_PIVY, p)));
+      let uu = vec2<f32>(ldf(fi(F_AXX, p)), ldf(fi(F_AXY, p)));
+      let dd = dot(q - cen, uu);
+      ki += ROW_H * dd * dd + 0.0601;
+      kc = max(kc, abs(dd) + 0.5);
+      sup[24] = max(sup[24], dot(q, uu) + 1e4);
+      for (var a = 0u; a < 24u; a++) {
+        let ang = f32(a) * 0.2617994;
+        sup[a] = max(sup[a], dot(q, vec2<f32>(cos(ang), sin(ang))) + 1e4);
+      }
     }
   }
   workgroupBarrier();
@@ -1245,6 +1712,7 @@ fn judge2(@builtin(local_invocation_index) lid: u32) {
     if (A <= 0.0 || M <= 0.0) { continue; }
     oadd(O_WHY + 7u, 1u);
     let s = min(ldf(fi(F_KS, p)), 1e3);
+    let ts = min(ldf(fi(F_KT, p)), 1e3);
     let com = vec2<f32>(ldf(fi(F_AX, p)) + ldf(fi(F_KMX, p)), ldf(fi(F_AY, p)) + ldf(fi(F_KMY, p))) / M;
     let cen = vec2<f32>(ldf(fi(F_PIVX, p)), ldf(fi(F_PIVY, p)));
     let uu = vec2<f32>(ldf(fi(F_AXX, p)), ldf(fi(F_AXY, p)));
@@ -1263,7 +1731,7 @@ fn judge2(@builtin(local_invocation_index) lid: u32) {
     // the far side's pull: the moment about the section's middle over its modulus, less the weight on its area
     let S = ldf(fi(F_KI, p)) / max(ldf(fi(F_KC, p)), 0.5);
     var kind = 0u;
-    if (worst > P.tipGive) { kind = K_TIP; } else if (M * L / S - M / A > P.tensile * s) { kind = K_LEAN; } else if (M / A > P.crush * s) { kind = K_CRUSH; }
+    if (worst > P.tipGive) { kind = K_TIP; } else if (M * L / S - M / A > P.tensile * ts) { kind = K_LEAN; } else if (M / A > P.crush * s) { kind = K_CRUSH; }
     if (kind == 0u) { continue; }
     atomicOr(&W[fi(F_PF, p)], PF_NECKFAIL);
     st(fi(F_KIND, p), kind);
@@ -1300,7 +1768,7 @@ fn judge2(@builtin(local_invocation_index) lid: u32) {
 
   // 9 — the records: every run that goes (its slots copied), and the leg a crushed piece leaves as rubble
   for (var t = lid; t < H; t += gW) {
-    let i = nu(F_HANG, t);
+    let i = nu(F_SEEDL, t);
     if (freed(i)) {
       let o = ld(fi(F_OUT, find(F_FR, i)));
       record(i, o, 0.0, 1e9);

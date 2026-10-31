@@ -1,0 +1,890 @@
+{
+ "when": "2026-10-31T09:15:51.198Z",
+ "q": "low",
+ "viewport": "412x915",
+ "runs": {
+  "A": {
+   "mesa": {
+    "judge": "runs",
+    "passes": 3,
+    "judgeMs": [
+     3.9,
+     1.8,
+     0.3
+    ],
+    "passLog": [
+     {
+      "at": 51,
+      "judgeMs": 3.9,
+      "judgeGpuMs": 0,
+      "passMs": 5.7,
+      "bodies": 0
+     },
+     {
+      "at": 395,
+      "judgeMs": 1.8,
+      "judgeGpuMs": 0,
+      "passMs": 2.2,
+      "bodies": 0
+     },
+     {
+      "at": 768,
+      "judgeMs": 0.3,
+      "judgeGpuMs": 0,
+      "passMs": 0.3,
+      "bodies": 0
+     }
+    ],
+    "frameGpu": {
+     "n": 0,
+     "p50": 0,
+     "max": 0
+    },
+    "judgeGpuMs": [
+     0,
+     0,
+     0
+    ],
+    "passMsMax": 5.7,
+    "bodies": 0,
+    "crumbled": 1,
+    "readKB": 5376,
+    "frames": {
+     "n": 816,
+     "p50": 9.8,
+     "p95": 11.4,
+     "p99": 12.4,
+     "max": 19.9
+    },
+    "why": {
+     "free": 1,
+     "load": 0,
+     "crush": 0,
+     "tip": 0,
+     "buckle": 0,
+     "bend": 0,
+     "crushed": 0,
+     "crumbs": 0.508636474609375,
+     "keyed": 0,
+     "weighed": 2
+    }
+   },
+   "tower": {
+    "judge": "runs",
+    "passes": 2,
+    "judgeMs": [
+     0.5,
+     0.5
+    ],
+    "passLog": [
+     {
+      "at": 63,
+      "judgeMs": 0.5,
+      "judgeGpuMs": 0,
+      "passMs": 0.9,
+      "bodies": 0
+     },
+     {
+      "at": 390,
+      "judgeMs": 0.5,
+      "judgeGpuMs": 0,
+      "passMs": 0.6,
+      "bodies": 0
+     }
+    ],
+    "frameGpu": {
+     "n": 0,
+     "p50": 0,
+     "max": 0
+    },
+    "judgeGpuMs": [
+     0,
+     0
+    ],
+    "passMsMax": 0.9,
+    "bodies": 0,
+    "crumbled": 0,
+    "readKB": 3072,
+    "frames": {
+     "n": 816,
+     "p50": 9.8,
+     "p95": 11.2,
+     "p99": 11.9,
+     "max": 18.9
+    },
+    "why": {
+     "free": 1,
+     "load": 0,
+     "crush": 0,
+     "tip": 0,
+     "buckle": 0,
+     "bend": 0,
+     "crushed": 0,
+     "crumbs": 0.508636474609375,
+     "keyed": 0,
+     "weighed": 4
+    }
+   },
+   "whole": {
+    "pieces": 0,
+    "ms": 209.3
+   }
+  },
+  "B levels (as first built)": {
+   "mesa": {
+    "judge": "sections",
+    "passes": 3,
+    "judgeMs": [
+     45.8,
+     42
+    ],
+    "passLog": [
+     {
+      "at": 409,
+      "judgeMs": 45.8,
+      "judgeGpuMs": 17.557,
+      "passMs": 2,
+      "bodies": 0,
+      "window": [
+       103,
+       84,
+       86,
+       88
+      ],
+      "hanging": 2473,
+      "judged": 40,
+      "deepest": 13,
+      "judgedBox": [
+       142,
+       123,
+       147,
+       132
+      ],
+      "kernels": {
+       "build": 0.749,
+       "adjacency": 0.237,
+       "pieces": 0.478,
+       "pieceFlags": 0.203,
+       "judge1": 1.695,
+       "faces": 0.361,
+       "judge2": 10.276,
+       "judge3": 1.14,
+       "freedUnite": 0.149,
+       "judge4": 2.25
+      }
+     },
+     {
+      "at": 756,
+      "judgeMs": 42,
+      "judgeGpuMs": 17.588,
+      "passMs": 0.5,
+      "bodies": 0,
+      "window": [
+       114,
+       99,
+       65,
+       65
+      ],
+      "hanging": 2472,
+      "judged": 40,
+      "deepest": 13,
+      "judgedBox": [
+       142,
+       123,
+       147,
+       132
+      ],
+      "kernels": {
+       "build": 0.104,
+       "adjacency": 0.183,
+       "pieces": 0.362,
+       "pieceFlags": 0.225,
+       "judge1": 1.819,
+       "faces": 0.335,
+       "judge2": 10.729,
+       "judge3": 1.273,
+       "freedUnite": 0.129,
+       "judge4": 2.407
+      }
+     }
+    ],
+    "frameGpu": {
+     "n": 0,
+     "p50": 0,
+     "max": 0
+    },
+    "judgeGpuMs": [
+     17.557,
+     17.588
+    ],
+    "passMsMax": 2,
+    "bodies": 0,
+    "crumbled": 1,
+    "readKB": 5376,
+    "frames": {
+     "n": 814,
+     "p50": 9.9,
+     "p95": 11.3,
+     "p99": 12,
+     "max": 18.7
+    },
+    "why": {
+     "free": 0,
+     "load": 0,
+     "crush": 0,
+     "tip": 0,
+     "buckle": 0,
+     "bend": 0,
+     "crushed": 0.508636474609375,
+     "crumbs": 0.508,
+     "keyed": 0,
+     "weighed": 2
+    }
+   },
+   "tower": {
+    "judge": "sections",
+    "passes": 2,
+    "judgeMs": [
+     19.8,
+     34.4
+    ],
+    "passLog": [
+     {
+      "at": 67,
+      "judgeMs": 19.8,
+      "judgeGpuMs": 5.916,
+      "passMs": 0.1,
+      "bodies": 0,
+      "window": [
+       91,
+       89,
+       76,
+       78
+      ],
+      "hanging": 654,
+      "judged": 0,
+      "deepest": 7,
+      "kernels": {
+       "build": 0.088,
+       "adjacency": 0.162,
+       "pieces": 0.294,
+       "pieceFlags": 0.201,
+       "judge1": 0.683,
+       "faces": 0.191,
+       "judge2": 3.439,
+       "judge3": 0.504,
+       "freedUnite": 0.129,
+       "judge4": 0.206
+      }
+     },
+     {
+      "at": 379,
+      "judgeMs": 34.4,
+      "judgeGpuMs": 18.405,
+      "passMs": 0.3,
+      "bodies": 0,
+      "window": [
+       91,
+       89,
+       76,
+       78
+      ],
+      "hanging": 2604,
+      "judged": 9,
+      "deepest": 16,
+      "judgedBox": [
+       127,
+       126,
+       129,
+       129
+      ],
+      "kernels": {
+       "build": 0.09,
+       "adjacency": 0.162,
+       "pieces": 0.368,
+       "pieceFlags": 0.218,
+       "judge1": 1.934,
+       "faces": 0.198,
+       "judge2": 12.74,
+       "judge3": 1.333,
+       "freedUnite": 0.128,
+       "judge4": 1.215
+      }
+     }
+    ],
+    "frameGpu": {
+     "n": 0,
+     "p50": 0,
+     "max": 0
+    },
+    "judgeGpuMs": [
+     5.916,
+     18.405
+    ],
+    "passMsMax": 0.3,
+    "bodies": 0,
+    "crumbled": 0,
+    "readKB": 3072,
+    "frames": {
+     "n": 814,
+     "p50": 9.9,
+     "p95": 11.2,
+     "p99": 11.7,
+     "max": 22.7
+    },
+    "why": {
+     "free": 0,
+     "load": 0,
+     "crush": 0,
+     "tip": 0,
+     "buckle": 0,
+     "bend": 0,
+     "crushed": 0.508636474609375,
+     "crumbs": 0.508,
+     "keyed": 0,
+     "weighed": 4
+    }
+   },
+   "whole": {
+    "pieces": 0,
+    "ms": 377.3,
+    "gpuMs": 265.38881,
+    "window": [
+     0,
+     0,
+     320,
+     320
+    ],
+    "hanging": 52268,
+    "judged": 52268,
+    "deepest": 40,
+    "kernels": {
+     "build": 8.309792,
+     "adjacency": 1.892124,
+     "pieces": 3.661279,
+     "pieceFlags": 1.982748,
+     "judge1": 25.634059,
+     "faces": 2.013008,
+     "judge2": 88.757726,
+     "judge3": 17.985253,
+     "freedUnite": 1.682594,
+     "judge4": 113.450176
+    }
+   }
+  },
+  "B levels culled": {
+   "mesa": {
+    "judge": "sections",
+    "passes": 3,
+    "judgeMs": [
+     36.1,
+     25.3
+    ],
+    "passLog": [
+     {
+      "at": 449,
+      "judgeMs": 36.1,
+      "judgeGpuMs": 7.061,
+      "passMs": 1.8,
+      "bodies": 0,
+      "window": [
+       103,
+       84,
+       86,
+       88
+      ],
+      "hanging": 2473,
+      "judged": 40,
+      "deepest": 5,
+      "judgedBox": [
+       142,
+       123,
+       147,
+       132
+      ],
+      "kernels": {
+       "build": 0.612,
+       "adjacency": 0.189,
+       "pieces": 0.51,
+       "pieceFlags": 0.187,
+       "judge1": 0.586,
+       "faces": 0.277,
+       "judge2": 1.766,
+       "judge3": 0.35,
+       "freedUnite": 0.168,
+       "judge4": 2.398
+      }
+     },
+     {
+      "at": 754,
+      "judgeMs": 25.3,
+      "judgeGpuMs": 4.65,
+      "passMs": 0.7,
+      "bodies": 0,
+      "window": [
+       114,
+       99,
+       65,
+       65
+      ],
+      "hanging": 2472,
+      "judged": 40,
+      "deepest": 5,
+      "judgedBox": [
+       142,
+       123,
+       147,
+       132
+      ],
+      "kernels": {
+       "build": 0.074,
+       "adjacency": 0.122,
+       "pieces": 0.271,
+       "pieceFlags": 0.15,
+       "judge1": 0.495,
+       "faces": 0.181,
+       "judge2": 1.203,
+       "judge3": 0.24,
+       "freedUnite": 0.088,
+       "judge4": 1.813
+      }
+     }
+    ],
+    "frameGpu": {
+     "n": 0,
+     "p50": 0,
+     "max": 0
+    },
+    "judgeGpuMs": [
+     7.061,
+     4.65
+    ],
+    "passMsMax": 1.8,
+    "bodies": 0,
+    "crumbled": 1,
+    "readKB": 5376,
+    "frames": {
+     "n": 816,
+     "p50": 9.9,
+     "p95": 11.3,
+     "p99": 12,
+     "max": 20.6
+    },
+    "why": {
+     "free": 0,
+     "load": 0,
+     "crush": 0,
+     "tip": 0,
+     "buckle": 0,
+     "bend": 0,
+     "crushed": 0.508636474609375,
+     "crumbs": 0.508,
+     "keyed": 0,
+     "weighed": 2
+    }
+   },
+   "tower": {
+    "judge": "sections",
+    "passes": 2,
+    "judgeMs": [
+     11.3,
+     16.5
+    ],
+    "passLog": [
+     {
+      "at": 76,
+      "judgeMs": 11.3,
+      "judgeGpuMs": 2.121,
+      "passMs": 0,
+      "bodies": 0,
+      "window": [
+       91,
+       89,
+       76,
+       78
+      ],
+      "hanging": 654,
+      "judged": 0,
+      "deepest": 5,
+      "kernels": {
+       "build": 0.053,
+       "adjacency": 0.089,
+       "pieces": 0.171,
+       "pieceFlags": 0.112,
+       "judge1": 0.269,
+       "faces": 0.099,
+       "judge2": 0.92,
+       "judge3": 0.186,
+       "freedUnite": 0.076,
+       "judge4": 0.134
+      }
+     },
+     {
+      "at": 386,
+      "judgeMs": 16.5,
+      "judgeGpuMs": 3.425,
+      "passMs": 0.4,
+      "bodies": 0,
+      "window": [
+       91,
+       89,
+       76,
+       78
+      ],
+      "hanging": 2604,
+      "judged": 9,
+      "deepest": 3,
+      "judgedBox": [
+       127,
+       126,
+       129,
+       129
+      ],
+      "kernels": {
+       "build": 0.085,
+       "adjacency": 0.165,
+       "pieces": 0.413,
+       "pieceFlags": 0.196,
+       "judge1": 0.462,
+       "faces": 0.155,
+       "judge2": 0.56,
+       "judge3": 0.174,
+       "freedUnite": 0.126,
+       "judge4": 1.073
+      }
+     }
+    ],
+    "frameGpu": {
+     "n": 0,
+     "p50": 0,
+     "max": 0
+    },
+    "judgeGpuMs": [
+     2.121,
+     3.425
+    ],
+    "passMsMax": 0.4,
+    "bodies": 0,
+    "crumbled": 0,
+    "readKB": 3072,
+    "frames": {
+     "n": 815,
+     "p50": 9.9,
+     "p95": 11.2,
+     "p99": 12.3,
+     "max": 13.8
+    },
+    "why": {
+     "free": 0,
+     "load": 0,
+     "crush": 0,
+     "tip": 0,
+     "buckle": 0,
+     "bend": 0,
+     "crushed": 0.508636474609375,
+     "crumbs": 0.508,
+     "keyed": 0,
+     "weighed": 4
+    }
+   },
+   "whole": {
+    "pieces": 0,
+    "ms": 414.3,
+    "gpuMs": 279.390129,
+    "window": [
+     0,
+     0,
+     320,
+     320
+    ],
+    "hanging": 52268,
+    "judged": 52268,
+    "deepest": 40,
+    "kernels": {
+     "build": 12.415235,
+     "adjacency": 3.272063,
+     "pieces": 5.922567,
+     "pieceFlags": 2.857431,
+     "judge1": 31.424595,
+     "faces": 3.763101,
+     "judge2": 91.191878,
+     "judge3": 17.26984,
+     "freedUnite": 1.423585,
+     "judge4": 109.829991
+    }
+   }
+  },
+  "B pairs culled (default)": {
+   "mesa": {
+    "judge": "sections",
+    "passes": 3,
+    "judgeMs": [
+     34.1,
+     29.2
+    ],
+    "passLog": [
+     {
+      "at": 423,
+      "judgeMs": 34.1,
+      "judgeGpuMs": 5.862,
+      "passMs": 1.9,
+      "bodies": 0,
+      "window": [
+       103,
+       84,
+       86,
+       88
+      ],
+      "hanging": 2473,
+      "judged": 40,
+      "deepest": 5,
+      "judgedBox": [
+       142,
+       123,
+       147,
+       132
+      ],
+      "kernels": {
+       "build": 0.6,
+       "adjacency": 0.188,
+       "pieces": 0.346,
+       "pieceFlags": 0.191,
+       "judge1": 0.659,
+       "faces": 0.284,
+       "pairsInit": 0.035,
+       "pairsUnite": 0.147,
+       "pairsFind": 0.031,
+       "pairsSum": 0.362,
+       "checks": 0.099,
+       "marks": 0.027,
+       "judge2": 0.085,
+       "judge3": 0.087,
+       "freedUnite": 0.168,
+       "judge4": 2.522
+      }
+     },
+     {
+      "at": 737,
+      "judgeMs": 29.2,
+      "judgeGpuMs": 3.614,
+      "passMs": 0.5,
+      "bodies": 0,
+      "window": [
+       114,
+       99,
+       65,
+       65
+      ],
+      "hanging": 2472,
+      "judged": 40,
+      "deepest": 5,
+      "judgedBox": [
+       142,
+       123,
+       147,
+       132
+      ],
+      "kernels": {
+       "build": 0.077,
+       "adjacency": 0.12,
+       "pieces": 0.255,
+       "pieceFlags": 0.153,
+       "judge1": 0.431,
+       "faces": 0.188,
+       "pairsInit": 0.022,
+       "pairsUnite": 0.107,
+       "pairsFind": 0.023,
+       "pairsSum": 0.252,
+       "checks": 0.069,
+       "marks": 0.018,
+       "judge2": 0.059,
+       "judge3": 0.059,
+       "freedUnite": 0.087,
+       "judge4": 1.672
+      }
+     }
+    ],
+    "frameGpu": {
+     "n": 0,
+     "p50": 0,
+     "max": 0
+    },
+    "judgeGpuMs": [
+     5.862,
+     3.614
+    ],
+    "passMsMax": 1.9,
+    "bodies": 0,
+    "crumbled": 1,
+    "readKB": 5376,
+    "frames": {
+     "n": 816,
+     "p50": 9.9,
+     "p95": 11.3,
+     "p99": 12.6,
+     "max": 18.9
+    },
+    "why": {
+     "free": 0,
+     "load": 0,
+     "crush": 0,
+     "tip": 0,
+     "buckle": 0,
+     "bend": 0,
+     "crushed": 0.508636474609375,
+     "crumbs": 0.508,
+     "keyed": 0,
+     "weighed": 2
+    }
+   },
+   "tower": {
+    "judge": "sections",
+    "passes": 2,
+    "judgeMs": [
+     27,
+     49.6
+    ],
+    "passLog": [
+     {
+      "at": 74,
+      "judgeMs": 27,
+      "judgeGpuMs": 2.531,
+      "passMs": 0.1,
+      "bodies": 0,
+      "window": [
+       91,
+       89,
+       76,
+       78
+      ],
+      "hanging": 654,
+      "judged": 0,
+      "deepest": 5,
+      "kernels": {
+       "build": 0.111,
+       "adjacency": 0.21,
+       "pieces": 0.352,
+       "pieceFlags": 0.245,
+       "judge1": 0.544,
+       "faces": 0.22,
+       "pairsInit": 0.017,
+       "pairsUnite": 0.015,
+       "pairsFind": 0.013,
+       "pairsSum": 0.014,
+       "checks": 0.014,
+       "marks": 0.014,
+       "judge2": 0.258,
+       "judge3": 0.047,
+       "freedUnite": 0.156,
+       "judge4": 0.269
+      }
+     },
+     {
+      "at": 404,
+      "judgeMs": 49.6,
+      "judgeGpuMs": 3.13,
+      "passMs": 0.6,
+      "bodies": 0,
+      "window": [
+       91,
+       89,
+       76,
+       78
+      ],
+      "hanging": 2604,
+      "judged": 9,
+      "deepest": 3,
+      "judgedBox": [
+       127,
+       126,
+       129,
+       129
+      ],
+      "kernels": {
+       "build": 0.089,
+       "adjacency": 0.163,
+       "pieces": 0.604,
+       "pieceFlags": 0.212,
+       "judge1": 0.371,
+       "faces": 0.163,
+       "pairsInit": 0.026,
+       "pairsUnite": 0.106,
+       "pairsFind": 0.023,
+       "pairsSum": 0.134,
+       "checks": 0.054,
+       "marks": 0.02,
+       "judge2": 0.049,
+       "judge3": 0.076,
+       "freedUnite": 0.126,
+       "judge4": 0.888
+      }
+     }
+    ],
+    "frameGpu": {
+     "n": 0,
+     "p50": 0,
+     "max": 0
+    },
+    "judgeGpuMs": [
+     2.531,
+     3.13
+    ],
+    "passMsMax": 0.6,
+    "bodies": 0,
+    "crumbled": 0,
+    "readKB": 3072,
+    "frames": {
+     "n": 815,
+     "p50": 9.9,
+     "p95": 11.2,
+     "p99": 11.8,
+     "max": 22.2
+    },
+    "why": {
+     "free": 0,
+     "load": 0,
+     "crush": 0,
+     "tip": 0,
+     "buckle": 0,
+     "bend": 0,
+     "crushed": 0.508636474609375,
+     "crumbs": 0.508,
+     "keyed": 0,
+     "weighed": 4
+    }
+   },
+   "whole": {
+    "pieces": 0,
+    "ms": 497.6,
+    "gpuMs": 385.188009,
+    "window": [
+     0,
+     0,
+     320,
+     320
+    ],
+    "hanging": 52268,
+    "judged": 52268,
+    "deepest": 40,
+    "kernels": {
+     "build": 8.787289,
+     "adjacency": 2.262538,
+     "pieces": 4.855855,
+     "pieceFlags": 2.221705,
+     "judge1": 29.979083,
+     "faces": 2.196809,
+     "pairsInit": 42.797076,
+     "pairsUnite": 43.925767,
+     "pairsFind": 39.946313,
+     "pairsSum": 44.689409,
+     "checks": 4.225286,
+     "marks": 39.285692,
+     "judge2": 15.395477,
+     "judge3": 1.20666,
+     "freedUnite": 1.395356,
+     "judge4": 101.982852
+    }
+   }
+  }
+ }
+}

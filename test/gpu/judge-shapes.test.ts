@@ -28,13 +28,14 @@ const SIGMA = (TUNE.judgeB.tensile * 1e6) / (TUNE.judgeB.density * WORLD_G);
 const reachLimit = (t: number) => Math.sqrt((SIGMA * t) / 3);
 
 /** a world of stone ground to G with `extra` stone intervals in some columns */
-function world(extra: (x: number, y: number) => [number, number][]): RockWorld {
+function world(extra: (x: number, y: number) => [number, number][], mat: number = MAT.Stone): RockWorld {
   return new RockWorld(W, W, 64, (x, y) => {
+    // (stone ground; what's built on it of `mat` — touching intervals of one material merged)
     const col: Interval[] = [{ z0: 0, z1: G, mat: MAT.Stone }];
     for (const [z0, z1] of extra(x, y).sort((a, b) => a[0] - b[0])) {
       const last = col[col.length - 1];
-      if (z0 <= last.z1 + 1e-6) last.z1 = Math.max(last.z1, z1);
-      else col.push({ z0, z1, mat: MAT.Stone });
+      if (last.mat === mat && z0 <= last.z1 + 1e-6) last.z1 = Math.max(last.z1, z1);
+      else col.push({ z0: Math.max(z0, last.z1), z1, mat });
     }
     return col;
   });
@@ -93,42 +94,56 @@ async function both(name: string, make: () => RockWorld, cols: [number, number][
   return b;
 }
 
-describe('an arch (two legs 3 × 3, 12 high, 9 apart, a span 3 deep over them)', () => {
-  const legA = (x: number) => x >= 10 && x < 13;
-  const legB = (x: number) => x >= 22 && x < 25;
-  const rows = (y: number) => y >= 15 && y < 18;
-  const arch = () =>
-    world((x, y) => {
-      if (!rows(y) || x < 10 || x >= 25) return [];
-      const out: [number, number][] = [[G + 12, G + 15]];
-      if (legA(x) || legB(x)) out.push([G, G + 12]);
-      return out;
-    });
-  const all: [number, number][] = [];
-  for (let y = 15; y < 18; y++) for (let x = 10; x < 25; x++) all.push([x, y]);
+// (the user on the keystone, round 120b: "Follow the material" — natural stone keeps its tensile strength, built
+// masonry has none: materials.ts bond, TUNE.judgeB.tRock / tMasonry)
+for (const [kind, mat] of [
+  ['natural rock', MAT.Stone],
+  ['masonry (brick)', MAT.Brick],
+] as const)
+  describe(`a ${kind} arch (two legs 3 × 3, 12 high, 9 apart, a span 3 deep over them)`, () => {
+    const legA = (x: number) => x >= 10 && x < 13;
+    const legB = (x: number) => x >= 22 && x < 25;
+    const rows = (y: number) => y >= 15 && y < 18;
+    const arch = () =>
+      world((x, y) => {
+        if (!rows(y) || x < 10 || x >= 25) return [];
+        const out: [number, number][] = [[G + 12, G + 15]];
+        if (legA(x) || legB(x)) out.push([G, G + 12]);
+        return out;
+      }, mat);
+    const all: [number, number][] = [];
+    for (let y = 15; y < 18; y++) for (let x = 10; x < 25; x++) all.push([x, y]);
+    const tag = mat === MAT.Stone ? 'arch' : 'brick arch';
 
-  test('stands (held from both legs: in compression, a parabola 3 deep fits its span of 9)', async () => {
-    expect((await both('arch', arch, all)).freed).toBe(0);
-  });
-
-  test('a foot cut out from under one leg: the leg and the span let go (a 12-reach arm with a 108-cell leg on its end)', async () => {
-    const r = await both('arch, one foot cut', arch, all, (w) => {
-      for (let y = 15; y < 18; y++) for (let x = 22; x < 25; x++) w.dig(x, y, G, G + 3);
+    test('stands (held from both legs: in compression, a parabola 3 deep fits its span of 9)', async () => {
+      expect((await both(tag, arch, all)).freed).toBe(0);
     });
-    expect(r.freed).toBeGreaterThan(9 * 6);
-  });
 
-  // (SV1) the brief: "a keystone removed, so the halves no longer meet, must fall". B judges the stone as one piece
-  // (bonded, as a natural arch is): each half is then a corbel 3 thick reaching 3 from its leg — its root moment
-  // 3·3²/2 = 13.5 a metre of width against σ'·3²/6 ≈ 235: it holds 17×, as Wall Arch's stubs stood after it fell (2008).
-  // Only masonry (voussoirs, no tension: Heyman's own assumption) drops its halves. Recorded, not forced: the user's call.
-  test('the keystone cut out: the halves stand as corbels (bonded stone; masonry would fall: SV1, the user\'s call)', async () => {
-    const r = await both('arch, keystone cut', arch, all, (w) => {
-      for (let y = 15; y < 18; y++) for (let x = 16; x < 19; x++) w.dig(x, y, G + 12, G + 15);
+    test('a foot cut out from under one leg: the leg and the span let go (a 12-reach arm with a 108-cell leg on its end)', async () => {
+      const r = await both(`${tag}, one foot cut`, arch, all, (w) => {
+        for (let y = 15; y < 18; y++) for (let x = 22; x < 25; x++) w.dig(x, y, G, G + 3);
+      });
+      expect(r.freed).toBeGreaterThan(9 * 6);
     });
-    expect(r.freed).toBe(0);
+
+    // natural stone: each half is a corbel 3 thick reaching 3 from its leg — its root moment 3·3²/2 = 13.5 a metre of
+    // width against σ'·3²/6 ≈ 235: it holds 17×, as Wall Arch's stubs stood after it fell (2008). Masonry: no tension
+    // (Heyman) — a half held from one side can't hang, it falls
+    if (mat === MAT.Stone)
+      test('the keystone cut out: the halves stand as corbels (natural stone keeps its tension; SV1)', async () => {
+        const r = await both(`${tag}, keystone cut`, arch, all, (w) => {
+          for (let y = 15; y < 18; y++) for (let x = 16; x < 19; x++) w.dig(x, y, G + 12, G + 15);
+        });
+        expect(r.freed).toBe(0);
+      });
+    else
+      test('the keystone cut out: both halves fall (masonry has no tension; SV1)', async () => {
+        const r = await both(`${tag}, keystone cut`, arch, all, (w) => {
+          for (let y = 15; y < 18; y++) for (let x = 16; x < 19; x++) w.dig(x, y, G + 12, G + 15);
+        });
+        expect(r.freed).toBeGreaterThanOrEqual(2 * 9 * 2);
+      });
   });
-});
 
 describe('a dome (a stone shell 1.5 thick, radius 9, on the ground)', () => {
   const C: [number, number] = [32, 32];

@@ -201,6 +201,8 @@ export class Integrity {
     rockbody = false,
   ) {
     this.world = new WorldVox(core.packed, new Uint32Array(0));
+    // (round 120: judge B's pipelines made ahead of the first cut)
+    void this.judge.warm?.(core.host.gpu.device);
     this.bodies = new Bodies(this.world);
     const N = core.dims.w * core.dims.h;
     this.proj = new Float32Array(N * 4);
