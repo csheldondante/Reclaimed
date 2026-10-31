@@ -29,10 +29,11 @@ import type { Agents } from '../agents/agents';
 import { attachSim, type Sim } from '../api/world';
 import { LEVEL_H, type Block, type Town } from '../build/town';
 import type { BuildCrew } from '../agents/buildcrew';
-import type { Waker, WakeOptions } from '../physics/wake';
+import { STRUCTURAL, type Waker, type WakeOptions } from '../physics/wake';
 import { box, table } from '../physics/shapes';
 import { boxMesh, rockMesh, type SkinMesh } from '../physics/mesh';
 import { BODIES } from '../ui/editor';
+import { LINEUP } from '../physics/shapes';
 import type { WorldStats } from '../sim/systems';
 import { Hud } from '../ui/hud';
 import type { PerfOverlay } from '../ui/perf-overlay';
@@ -69,6 +70,8 @@ import { demoStory } from '../story/demo';
 import type { HeroRun } from '../story/hero-run';
 import { loadRunStory, runWorld, startAtlasRun } from '../story/atlas-run';
 
+/** (round 120) what a ruin wakes as besides its metal, where the metal wakes into the picked solver variant */
+const NON_METAL: ReadonlySet<number> = new Set([...STRUCTURAL].filter((m) => m !== MAT.Steel && m !== MAT.Rust));
 /** round 83, V21: ?cutaway=1 — the camera on a puck (api/puck.ts), sliced under a roof and orbiting round a cliff */
 const CUTAWAY = new URLSearchParams(location.search).get('cutaway') === '1';
 /** (round 113) ?planner=0: no planner — each layer's own fixed look-ahead, the sim's ticks never cut */
@@ -2876,6 +2879,14 @@ export class LevelScene implements Scene {
    */
   wake(x: number, y: number, z: number, r: number): Promise<void> {
     if (!this.waker) return Promise.resolve();
+    // (round 120: the map's tankers and cars wake into the picked solver variant — ?solver= — like the metal the judge
+    // frees; the rest of the ruin, concrete and brick, as before)
+    const ig = this.integrity;
+    if (ig?.rigid && ig.wakeMetalNear(x, y, z, r)) {
+      return this.waker.wake(x, y, z, r, { materials: NON_METAL }).then(({ full }) => {
+        if (full) this.hud.say('No room for more bodies.', 2);
+      }, ignoreTeardown);
+    }
     return this.waker.wake(x, y, z, r).then(({ full }) => {
       if (full) this.hud.say('No room for more bodies.', 2);
     }, ignoreTeardown);
@@ -3008,7 +3019,11 @@ export class LevelScene implements Scene {
     }, ignoreTeardown);
   }
 
-  /** Drop the chosen physics body over what's under the cursor (docs/PHYSICS.md). */
+  /**
+   * Drop the chosen body (or, drop all, the line-up) over what's under the cursor (docs/PHYSICS.md). (round 120) Where
+   * the level has the rigid rock (the playground, the rock lab, the atlas) it falls by the picked solver variant —
+   * ?solver=old|nodes|lattice|hybrid (Integrity.dropModels → dropBody); elsewhere on the physics voxels, as before.
+   */
   private dropAtPick(sx: number, sy: number): void {
     const { core } = this;
     const ed = this.editor!;
@@ -3017,6 +3032,17 @@ export class LevelScene implements Scene {
     const [rx, ry] = [(sx / core.camera.viewportW) * this.renderW, (sy / core.camera.viewportH) * this.renderH];
     core.renderer.pick(rx, ry).then(async (hit) => {
       if (!hit) return;
+      const ig = this.integrity;
+      if (ig?.rigid) {
+        const kinds = ed.dropAll ? LINEUP.map((id) => BODIES.find((b) => b.id === id)!) : [kind];
+        const n = ig.dropModels(kinds.map((k) => k.make()), hit.cell % core.dims.w, Math.floor(hit.cell / core.dims.w), ed.dropHeight);
+        if (n < kinds.length) this.hud.say('No room for more bodies.', 2);
+        return;
+      }
+      if (ed.dropAll) {
+        this.hud.say('Drop all needs a level with the solvers (the playground, the rock lab).', 3);
+        return;
+      }
       const [x, y] = cellPos(hit.cell % core.dims.w, Math.floor(hit.cell / core.dims.w));
       // (over a body already there: above it)
       const api = (window as unknown as { reclaimed: { phys: { spawn: (m: VoxelModel, x: number, y: number, above: number, yaw: number, pitch: number, roll: number, vel: [number, number, number], floor: number) => Promise<unknown> } } }).reclaimed;
@@ -3339,6 +3365,17 @@ export class LevelScene implements Scene {
         this.sleep?.wake(wx, wy, 24, Sleep.EVENT_S, now());
       },
       wakeMetal: (x, y, z) => this.integrity?.wakeMetalAt(x, y, z),
+      dropModels: (ids, x, y, above, wrap) => {
+        const kinds = ids.map((id) => {
+          const k = BODIES.find((b) => b.id === id);
+          if (!k) throw new Error(`station dropModels: no body ${id} (physics/shapes.ts bodyCatalogue)`);
+          return k;
+        });
+        if (!this.integrity?.rigid) throw new Error('station dropModels: no solvers here (the level needs the rigid rock)');
+        this.integrity.dropModels(kinds.map((k) => k.make()), x, y, above, wrap);
+        const [wx, wy] = cellPos(x, y);
+        this.sleep?.wake(wx, wy, 40, Sleep.EVENT_S, now());
+      },
     };
   }
 

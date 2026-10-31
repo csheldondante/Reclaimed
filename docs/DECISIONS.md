@@ -124,6 +124,21 @@ each was implemented.
   CPU ms, bodies, scaling 10/50/200, the phone proxy) and a correctness battery (arch, dome, overhangs, spire, pylon,
   wood tower, mesa, burial).
 
+- The user, verbatim, after trying the solver variants in the lab: "I think the rock collapse looks better. I can't tell with deformation. Can you modify the tanker physics to use it or make a drop things tool that does? One bug I do notice is the mesh changes appearance and sometimes turns into blocks during falling."
+  → The node solver's rock collapse is the better one. Deformation is judged on things the user knows: the sandbox's drop
+  tool drops through the picked variant (?solver=old|nodes|lattice|hybrid) — the tanker, a car, a bus, a girder, the
+  pylon, a house — with a height control and "drop all" (the line-up side by side); the map's tankers and ruined cars
+  wake into the picked variant when struck (a body's hit, the beam, the break tool), and the metal station has the
+  line-up too. The falling mesh's change of look and pop to blocks is a bug: found at its root and fixed, with a test
+  that a falling body is drawn the same way from its break to its rest.
+- The user, verbatim, on the deployed lab (422a4b6/2f97d70): "The nodes looks way better for metal but it switches for rendering as voxels. Rendering and simulation should not be coupled that way. I noticed weird sliding in this build under all settings. rock towers fell then slid along flat ground quite far."
+  → One mesh a body, skinned to its nodes by vertex weights in every state (awake, falling, broken, asleep, buried) and
+  every variant; never its cells as voxels. Built once when it wakes, with a mesher that keeps metal's thin members;
+  a break splits its triangles by their node weights, the cuts capped behind dust. The sliding is a bug shared by every
+  variant: found at its root, with Node tests (a toppled tower rests within about its height; a block sliding at v on
+  stone stops within v²/(2μg)). The user looked only at the defaults (nodes × runs) and liked the rock collapse: the
+  solver and judge pickers go on an always-visible chip.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:

@@ -95,6 +95,9 @@ function station(id: string): { map: MapData; rect: [number, number, number, num
     wakeMetal: () => {
       throw new Error('contract tier: waking metal needs the level (the node solver comes with its rigid rock)');
     },
+    dropModels: () => {
+      throw new Error('contract tier: dropping models needs the level (the solvers come with its rigid rock)');
+    },
   });
   return { map, rect: [0, 0, x1 - x0, y1 - y0], kit };
 }

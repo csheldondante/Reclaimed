@@ -14649,3 +14649,37 @@ the lab's panel, solver × judge, "compare" replays the last cut under each):
 - *Judges.* **runs** (A) decides in under a millisecond, so a cut lets go at once. **sections** (B) takes 10–30 ms wall
   a judging here (a beat after the cut) and frees what A misses where a long thick shelf's moment is too much (3 and 4
   thick at reach 16: data/perf/judge/shapes.md); the arch with its keystone out still stands under both (SV1).
+
+## 2026-10-31 — round 120 (`solver`): the drop tool through the variants; the falling mesh's look (SL9–SL11)
+
+**The drop tool.** The user: "I can't tell with deformation. Can you modify the tanker physics to use it or make a drop
+things tool that does?" Where the level has the rigid rock (playground, rock lab, atlas) the sandbox's drop tool now drops
+through the picked variant (Integrity.dropModels → dropBody, which routes by ROUTING): the tanker truck, the cars, the
+bus, a steel I-girder (new, physics/shapes.ts), the pylon, the ruined house, from 0–60 cells up; "drop all" lines them
+up side by side (LINEUP) so each one's bending and denting is seen against the others. A model is one body, classed by
+what most of it is made of (a car is steel with asphalt tyres). The metal station has "drop the line-up". The map's
+tankers and cars (stamped into the columns) wake into the picked variant when struck: a rigid rock's or a solver body's
+hit over 3 cells/s (wakeMetalNear round the impact), the beam and the break tool (LevelScene.wake: metal first, the rest
+of the ruin as before).
+
+**"The mesh changes appearance and sometimes turns into blocks during falling."** Reproduced headlessly on the rock lab's
+collapse station, `?solver=nodes&judge=runs`, zoomed on the cliff's shelves (scripts/drawpath.mjs: each moving rock's
+draw path a frame — skin, matrix, split, cubes, none — with bursts of shots after each cut): the shelves, light cobbled
+stone in the ground, went dark and blotched in hex-sized blocks as they fell, and back to light as they came to rest. No
+body changed path and no slot was refused (RockMesh.stats now counts refusals by reason): the cause was two poses. Its
+mesh was skinned to the solver's nodes (this tick's pose) while its cells — drawn for what the mesh doesn't hold, and
+all of them as shadow casters — came from the CPU pose, the readback a tick or two behind: falling at 15 cells/s the
+cubes sat half a cell above the mesh and shadowed it in blocks; at rest the two agreed. Now a body on the node solver has
+its cells drawn by the solver's own skin from the same pose (BodySpec.drawCells takes a predicate: what the mesh
+doesn't hold), none from the CPU, and the rock mesh casts its own shadow (it already drew into the sun's pass). A piece
+broken off is handed to the solver the frame it breaks (RockBodies.engage) and drawn skinned from then on — its part of
+the parent's mesh too, the ghost's vertices following the piece's nodes — so it no longer jumps from the CPU's matrix to
+the solver's pose eight frames later. Test: test/unit/rockdraw.test.ts; the probe passes 0 of 24 changed on the
+collapse station.
+
+**Streaks into the sky.** The same captures showed a long dark stick from a breaking piece to the screen's top right
+for a frame or two at every cut — on nodes, never on old. Bisected in the shader: a ghost vertex left out (crumbled, or
+near no fragment's seed) was `return o` with its position at clip (2, 2, 2, 1); a triangle with that vertex and two
+drawn ones is clipped to a sliver stretched toward the corner. The node solver's pieces break more often (longer
+ghosts), hence there. Now such a vertex is placed with the ghost and marked gone, and the triangle is discarded whole (the
+sun's pass discards it too: fsRockZ). 0 streaks in 4 runs of the three cuts (were 3–6 a run).

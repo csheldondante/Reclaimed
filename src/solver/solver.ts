@@ -257,7 +257,7 @@ export class Solver implements SimSystem, NodeSolver {
       const f = new Float32Array(1);
       const u = new Uint32Array(f.buffer);
       spec.cells.forEach((c, i) => {
-        const drawn = !!spec.drawCells && built.surface[i];
+        const drawn = (typeof spec.drawCells === 'function' ? spec.drawCells(c) : !!spec.drawCells) && built.surface[i];
         const [cx, cy, cz] = cellCentre(c);
         for (const v of [cx - built.com[0], cy - built.com[1], cz - built.com[2]]) {
           f[0] = v;

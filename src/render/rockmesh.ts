@@ -76,7 +76,7 @@ export class RockMesh {
   private data = new Float32Array(4 + RK_N * STRIDE * 4);
   /** entries this frame */
   count = 0;
-  stats = { slots: 0, refused: 0, written: 0 };
+  stats = { slots: 0, refused: 0, written: 0, tall: 0, wide: 0, blocks: 0, place: 0, over: 0 };
 
   constructor(
     private device: GPUDevice,
@@ -126,13 +126,13 @@ export class RockMesh {
       z1 = Math.max(z1, c.z);
     }
     const zs = Math.max(0, MARGIN - z0);
-    if (z1 + 1 + zs > this.world.zMax - MARGIN) return this.refuse();
+    if (z1 + 1 + zs > this.world.zMax - MARGIN) return this.refuse('tall');
     // (its size in mesh chunks, with the margins and a row to keep the rows' parity)
     const a = Math.ceil((x1 - x0 + 2 + 2 * MARGIN) / MCHUNK);
     const b = Math.ceil((y1 - y0 + 2 + 2 * MARGIN) / MCHUNK);
-    if (a > 3 || b > 3) return this.refuse();
+    if (a > 3 || b > 3) return this.refuse('wide');
     const need = a * b * 4;
-    if (this.free.length < need) return this.refuse();
+    if (this.free.length < need) return this.refuse('blocks');
     let at: [number, number] | null = null;
     for (let j = 0; j + b <= this.my && !at; j++)
       for (let i = 0; i + a <= this.mx && !at; i++) {
@@ -140,7 +140,7 @@ export class RockMesh {
         for (let q = 0; q < b && ok; q++) for (let p = 0; p < a && ok; p++) if (this.occ[(j + q) * this.nxMesh + i + p]) ok = false;
         if (ok) at = [i, j];
       }
-    if (!at) return this.refuse();
+    if (!at) return this.refuse('place');
     const [i, j] = at;
     for (let q = 0; q < b; q++) for (let p = 0; p < a; p++) this.occ[(j + q) * this.nxMesh + i + p] = 1;
     // (columns along, rows down: an even number of rows, so the odd rows' half-cell shift is kept)
@@ -193,8 +193,9 @@ export class RockMesh {
     return { id, shift };
   }
 
-  private refuse(): null {
+  private refuse(why: 'tall' | 'wide' | 'blocks' | 'place'): null {
     this.stats.refused++;
+    this.stats[why]++;
     return null;
   }
 
@@ -229,6 +230,7 @@ export class RockMesh {
     const d = this.data;
     d.fill(0);
     const n = Math.min(RK_N, draws.length);
+    if (draws.length > RK_N) this.stats.over++;
     d[0] = n;
     // (solver step 2: where the frame lies between the solver's last two ticks — its skinned draws are drawn there)
     d[1] = alpha;
@@ -240,7 +242,11 @@ export class RockMesh {
         const [i, j, a, b] = s.rect;
         d.set([i * MCHUNK, j * MCHUNK * ROW_H, (i + a) * MCHUNK, (j + b) * MCHUNK * ROW_H], o);
         d.set([s.shift[0], s.shift[1], s.shift[2], r.skin ? 2 : r.ghost ? 1 : 0], o + 16);
-      } else d.set([1, 1, 0, 0], o);
+      } else {
+        // (no mesh of its own: only a ghost's vertices go with it — skinned, round 120, or by its matrix)
+        d.set([1, 1, 0, 0], o);
+        d.set([0, 0, 0, r.skin ? 2 : 0], o + 16);
+      }
       if (r.skin) {
         d.set([r.skin.slot, ...r.skin.com], o + 4);
         d.set([r.skin.nodes, 0, 0, r.skin.mat ?? 0], o + 8);

@@ -900,7 +900,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
         };
         // (round 99: depth only, through the sun's camera)
         // (made when a rock mesh is: synchronously, as its own pipe above)
-        const shadow = device.createRenderPipeline({ label: 'shadow-rock', layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }), vertex: { module, entryPoint: 'vsRock' }, primitive: { topology: 'triangle-list', cullMode: 'none' }, depthStencil: shadowDepth });
+        const shadow = device.createRenderPipeline({ label: 'shadow-rock', layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }), vertex: { module, entryPoint: 'vsRock' }, fragment: { module, entryPoint: 'fsRockZ', targets: [] }, primitive: { topology: 'triangle-list', cullMode: 'none' }, depthStencil: shadowDepth });
         return { pipe, group, shadow };
       };
       // (round 103, ?tiles=1: the tile cache — the mesh's module with tiles.wgsl, the resolve's layout and its own)

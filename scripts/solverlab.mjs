@@ -32,7 +32,9 @@ const PLAN = {
   metal: [[2, 'boulder on the bridge'], [12, 'cut the pylon'], [22, 'drop the tanker'], [38, 'bury the tanker']],
   collapse: [[2, 'cut a foot'], [8, "cut the dome's ring"], [16, 'undercut the cliff'], [24, 'undercut the spire'], [34, 'cut the keystone']],
 };
-const FRAMES = 54;
+// (round 120) --plan '{"metal":[[2,"drop the line-up"]]}': a station's buttons replaced
+Object.assign(PLAN, JSON.parse(opt('plan', '{}')));
+const FRAMES = Number(opt('frames', 54));
 
 const browser = await puppeteer.launch({
   executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',

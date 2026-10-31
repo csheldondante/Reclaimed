@@ -935,16 +935,8 @@ export class RockBodies {
     }
     const now = performance.now();
     for (const b of this.list) {
-      let e = this.engined.get(b);
-      if (!e) {
-        const cells = b.cells.map((k) => ({ x: k.lat[0], y: k.lat[1], z: k.lat[2], mat: k.mat }));
-        // (the solver's centre of mass, its materials weighed its own way, sits d from the body's: placed by it)
-        const d = sub(restComOf(cells), b.origin);
-        const sb = eng.add({ cells, pose: { pos: add(b.pos, mv(rotM(b.q), d)), q: b.q }, vel: b.v, spin: b.w, allow: b.allow, kind: 'rigid' });
-        if (!sb) continue;
-        e = { sb, d, tick: -1, at: now };
-        this.engined.set(b, e);
-      }
+      const e = this.engage(b, now);
+      if (!e) continue;
       b.hit = 0;
       b.erode = [];
       const r = eng.read(e.sb);
@@ -989,6 +981,32 @@ export class RockBodies {
   /** (solver step 2) the node solver's body carrying this one (null: not handed over yet, or the CPU step moves it) */
   engineBody(b: RockBody): SolverBody | null {
     return this.engined.get(b)?.sb ?? null;
+  }
+
+  /**
+   * (round 120) which of a body's cells the solver draws as voxels, riding its nodes (the host's say: those its mesh
+   * doesn't hold) — with its mesh skinned to the same nodes, both drawn from one pose
+   */
+  drawnCell: (b: RockBody, mat: number) => boolean = () => false;
+
+  /**
+   * (solver step 2) Handed to the GPU solver now if it isn't yet (its pose written where it is): the frame a body is
+   * made or broken off is drawn from the solver's pose like every frame after (round 120: a piece drawn first by its
+   * own CPU pose, a readback behind, then by the solver's, jumped and changed its look). Null: no solver, or no room.
+   */
+  engage(b: RockBody, now = performance.now()): Engined | null {
+    const eng = this.engine;
+    if (!eng || !this.list.includes(b)) return null;
+    let e = this.engined.get(b);
+    if (e) return e;
+    const cells = b.cells.map((k) => ({ x: k.lat[0], y: k.lat[1], z: k.lat[2], mat: k.mat }));
+    // (the solver's centre of mass, its materials weighed its own way, sits d from the body's: placed by it)
+    const d = sub(restComOf(cells), b.origin);
+    const sb = eng.add({ cells, pose: { pos: add(b.pos, mv(rotM(b.q), d)), q: b.q }, vel: b.v, spin: b.w, allow: b.allow, kind: 'rigid', drawCells: (c) => this.drawnCell(b, c.mat) });
+    if (!sb) return null;
+    e = { sb, d, tick: -1, at: now };
+    this.engined.set(b, e);
+    return e;
   }
 
   private substep(b: RockBody, h: number, top: number): void {

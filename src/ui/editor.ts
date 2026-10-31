@@ -142,8 +142,10 @@ export class Editor {
   /** place tool: degrees of tilt; above 0 the model goes in as a structure grid of its own (docs/GRIDS.md) */
   tilt = 0;
   /** drop tool: which body (physics/shapes.ts bodyCatalogue) and how high above the ground */
-  body = 'steel-beam';
+  body = 'model:tankertruck';
   dropHeight = 8;
+  /** (round 120) drop all: the line-up (physics/shapes.ts LINEUP) side by side, not the one body */
+  dropAll = false;
   /** town tool: presses change the plan (workers build it), not what stands */
   plan = false;
   private el: HTMLElement;
@@ -165,8 +167,9 @@ export class Editor {
       <div class="models" data-models>${MODELS.map((m) => `<button data-mod="${m.id}" title="${m.name}"><img alt="${m.name}" src="${thumbnail(m)}"></button>`).join('')}</div>
       <label data-bl>bury <input data-b type="range" min="0" max="4" value="${this.bury}"></label>
       <label data-tl title="Above 0: placed as its own tilted grid (sand buries it, moss grows on it)">tilt <input data-ti type="range" min="0" max="90" step="5" value="0"></label>
-      <label data-pbl>body <select data-pb>${BODIES.map((b) => `<option value="${b.id}">${b.name}</option>`).join('')}</select></label>
-      <label data-dhl>height <input data-dh type="range" min="0" max="30" value="${this.dropHeight}"></label>
+      <label data-pbl>body <select data-pb>${BODIES.map((b) => `<option value="${b.id}"${b.id === this.body ? ' selected' : ''}>${b.name}</option>`).join('')}</select></label>
+      <label data-dhl>height <input data-dh type="range" min="0" max="60" value="${this.dropHeight}"> <span data-dhv>${this.dropHeight}</span></label>
+      <label data-dal title="Drop the tanker, the cars, the bus, a girder, the pylon and a house side by side (by the solver variant picked in the tuning panel)">drop all <input data-da type="checkbox"></label>
       <div class="maps" data-tw>
         <label title="Plan: presses mark blocks to build (green) or take down (red); workers build the difference from a pile of bricks or logs">plan <input data-tp type="checkbox"></label>
         <button data-a="crew" title="Send six workers to build the plan from the nearest pile of bricks or logs">👷 workers</button>
@@ -200,6 +203,7 @@ export class Editor {
       show('[data-tl]', t === 'place');
       show('[data-pbl]', t === 'drop');
       show('[data-dhl]', t === 'drop');
+      show('[data-dal]', t === 'drop');
       show('[data-tw]', t === 'town');
       if (list) {
         const cur = this.picked[t as 'pour' | 'build'];
@@ -215,7 +219,11 @@ export class Editor {
     el.querySelector<HTMLInputElement>('[data-tp]')!.addEventListener('change', (e) => (this.plan = (e.target as HTMLInputElement).checked));
     el.querySelector<HTMLButtonElement>('[data-a="crew"]')!.addEventListener('click', () => this.maps.crew?.());
     el.querySelector<HTMLSelectElement>('[data-pb]')!.addEventListener('change', (e) => (this.body = (e.target as HTMLSelectElement).value));
-    el.querySelector<HTMLInputElement>('[data-dh]')!.addEventListener('input', (e) => (this.dropHeight = Number((e.target as HTMLInputElement).value)));
+    el.querySelector<HTMLInputElement>('[data-dh]')!.addEventListener('input', (e) => {
+      this.dropHeight = Number((e.target as HTMLInputElement).value);
+      el.querySelector<HTMLElement>('[data-dhv]')!.textContent = String(this.dropHeight);
+    });
+    el.querySelector<HTMLInputElement>('[data-da]')!.addEventListener('change', (e) => (this.dropAll = (e.target as HTMLInputElement).checked));
     const bury = el.querySelector<HTMLInputElement>('[data-b]')!;
     bury.addEventListener('input', () => (this.bury = Number(bury.value)));
     const tilt = el.querySelector<HTMLInputElement>('[data-ti]')!;

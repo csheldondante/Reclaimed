@@ -71,7 +71,7 @@ fn vsRock(@builtin(vertex_index) vi: u32) -> ROut {
   if (sh.w > 0.5 && sh.w < 1.5) {
     // (a ghost: crumbled here — not drawn; else the nearest fragment's)
     let hit = rkAt(e, 5u);
-    if (length(s - hit.xyz) < hit.w) { return o; }
+    let cut = length(s - hit.xyz) < hit.w;
     var best = 1e9;
     for (var k = 0u; k < 6u; k++) {
       let q = rkAt(e, 6u + k);
@@ -82,15 +82,21 @@ fn vsRock(@builtin(vertex_index) vi: u32) -> ROut {
         t = u32(q.w);
       }
     }
-    if (t == e) { return o; }
+    // (round 120: a vertex left out is placed — where it was, the ghost's own transform — and marked gone, so the
+    // triangles it's in are discarded whole. Sent off the clip volume instead, a triangle with one vertex there and two
+    // drawn was clipped to a sliver stretched off toward the screen's corner: the long dark streaks into the sky the
+    // node solver's breaks showed, its pieces breaking more often)
+    if (t == e || cut) { o.gone = 1.0; }
   }
   var wp = vec3<f32>(0.0);
   var wn = n;
-  if (sh.w > 1.5) {
+  if (rkAt(t, 4u).w > 1.5) {
     // (solver step 2, skinned: the vertex goes with the nodes nearest where it was bound — up to four, weighted by
-    // nearness — each carrying it at its offset turned with it, between the last two ticks)
-    let a = rkAt(e, 1u);
-    let nn = u32(rkAt(e, 2u).x);
+    // nearness — each carrying it at its offset turned with it, between the last two ticks. Round 120: a ghost's
+    // vertex with its fragment's nodes, when that fragment is skinned — the spawn frame is the same lattice's, so its
+    // place about the fragment's rest centre is where it was bound)
+    let a = rkAt(t, 1u);
+    let nn = u32(rkAt(t, 2u).x);
     let base = u32(a.x) * 64u;
     let al = clamp(RK.d[0].y, 0.0, 1.0);
     let sr = s - a.yzw;
@@ -140,6 +146,13 @@ fn vsRock(@builtin(vertex_index) vi: u32) -> ROut {
   o.ent = t;
   o.shift = sh.xyz;
   return o;
+}
+
+/** (round 120) the sun's depth: what the look leaves out (gone, torn) casts no shadow either */
+@fragment
+fn fsRockZ(in: ROut) {
+  let st = max(length(dpdx(in.wpos)) / max(length(dpdx(in.lpos)), 1e-4), length(dpdy(in.wpos)) / max(length(dpdy(in.lpos)), 1e-4));
+  if (in.gone > 0.02 || st > 1.6) { discard; }
 }
 
 @fragment
@@ -212,6 +225,7 @@ fn fsRock(in: ROut) -> FOut {
   col = haze(col, in.wpos);
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), 1.0);
+
   let wc = clampCell(cellAt(in.wpos.xy));
   o.pick = vec2<u32>(winIdx(wc) + 1u, pickInfo(mat, in.wpos.z, 0u));
   return o;

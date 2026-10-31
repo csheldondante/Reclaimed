@@ -52,6 +52,11 @@ export interface StationKit {
   drop(cells: { x: number; y: number; z: number; mat: number }[], vel?: [number, number, number]): void;
   /** (solver step 2) the metal at this cell (storage x, y, cell z) and all it connects to woken into the node solver */
   wakeMetal(x: number, y: number, z: number): void;
+  /**
+   * (round 120) the drop tool's bodies (physics/shapes.ts bodyCatalogue ids) side by side round storage (x, y), in rows
+   * at most `wrap` columns wide, `above` cells over the ground, each by the picked solver variant
+   */
+  dropModels(ids: string[], x: number, y: number, above: number, wrap?: number): void;
 }
 
 export interface Station {
@@ -339,6 +344,12 @@ export const STATIONS: Station[] = [
           for (const x of [t.x0 + 1, t.x1 - 2]) for (const y of [t.y0 + 1, t.y1 - 2]) k.smash(...wp(x + 0.5, y + 0.5), G + 4, 1.4);
           k.later(0.4, () => k.wakeMetal(t.x0, t.y0, t.z0));
         },
+      },
+      {
+        // (round 120, the user: "make a drop things tool" — the tanker, the cars, the bus and a girder from 16 up, on
+        // the open ground before the pylon, by the variant picked)
+        label: 'drop the line-up',
+        run: (k) => k.dropModels(['model:tankertruck', 'model:car', 'model:carburnt', 'model:bus', 'girder'], 225, 230, 16, 26),
       },
       {
         label: 'bury the tanker',
