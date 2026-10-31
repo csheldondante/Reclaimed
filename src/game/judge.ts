@@ -60,6 +60,9 @@ export interface JudgeStats {
 export interface RockJudge {
   readonly id: JudgeId;
   judge(input: JudgeInput): Promise<Fracture>;
+  /** (B) make its pipelines ahead of the first cut (async: the first judging otherwise compiled them on the frame — a
+   *  1.4 s frame on the phone proxy's first cut, round 120's browser battery) */
+  warm?(device: GPUDevice): Promise<void>;
   readonly stats: JudgeStats;
   destroy(): void;
 }
@@ -219,12 +222,25 @@ export class SectionsJudge implements RockJudge {
     }
   }
 
-  private kitFor(device: GPUDevice): DeviceKit {
+  private warming: Promise<void> | null = null;
+  warm(device: GPUDevice): Promise<void> {
+    if (this.kit?.device === device) return Promise.resolve();
+    return (this.warming ??= (async () => {
+      const layout = makeLayout(device, 'judge B', { 0: 'uniform', 1: 'read', 2: 'read', 3: 'read', 4: 'read', 5: 'rw', 6: 'rw', 7: 'rw' }, GPUShaderStage.COMPUTE);
+      const module = device.createShaderModule({ label: 'judge.wgsl', code: judgeWgsl });
+      const pl = device.createPipelineLayout({ label: 'judge B', bindGroupLayouts: [layout] });
+      const mk = (entryPoint: string) => device.createComputePipelineAsync({ label: `judge B ${entryPoint}`, layout: pl, compute: { module, entryPoint } });
+      const [build, adjacency, judge1, faces, judge2] = await Promise.all(['build', 'adjacency', 'judge1', 'faces', 'judge2'].map(mk));
+      this.kitFor(device, { layout, build, adjacency, judge1, faces, judge2 });
+    })());
+  }
+
+  private kitFor(device: GPUDevice, made?: Pick<DeviceKit, 'layout' | 'build' | 'adjacency' | 'judge1' | 'faces' | 'judge2'>): DeviceKit {
     if (this.kit?.device === device) return this.kit;
-    const layout = makeLayout(device, 'judge B', { 0: 'uniform', 1: 'read', 2: 'read', 3: 'read', 4: 'read', 5: 'rw', 6: 'rw', 7: 'rw' }, GPUShaderStage.COMPUTE);
-    const module = device.createShaderModule({ label: 'judge.wgsl', code: judgeWgsl });
-    const pl = device.createPipelineLayout({ label: 'judge B', bindGroupLayouts: [layout] });
-    const mk = (entryPoint: string) => device.createComputePipeline({ label: `judge B ${entryPoint}`, layout: pl, compute: { module, entryPoint } });
+    const layout = made?.layout ?? makeLayout(device, 'judge B', { 0: 'uniform', 1: 'read', 2: 'read', 3: 'read', 4: 'read', 5: 'rw', 6: 'rw', 7: 'rw' }, GPUShaderStage.COMPUTE);
+    const module = made ? null : device.createShaderModule({ label: 'judge.wgsl', code: judgeWgsl });
+    const pl = made ? null : device.createPipelineLayout({ label: 'judge B', bindGroupLayouts: [layout] });
+    const mk = (entryPoint: 'build' | 'adjacency' | 'judge1' | 'faces' | 'judge2') => made?.[entryPoint] ?? device.createComputePipeline({ label: `judge B ${entryPoint}`, layout: pl!, compute: { module: module!, entryPoint } });
     const mats = device.createBuffer({ label: 'judge B materials', size: 256 * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     device.queue.writeBuffer(mats, 0, materialTable());
     const ts = device.features.has('timestamp-query');

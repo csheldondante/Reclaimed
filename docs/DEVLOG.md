@@ -14492,5 +14492,23 @@ in one workgroup (a few dependent memory reads a run a phase; barriers measured 
 BACKLOG JB2. B costs no CPU (its verdict is parsed in ~0.1 ms) and reads back only the verdict (32 KB with the records
 of what falls) where A reads the window's chunks (130–520 K words here) every pass.
 
-**Not done here**: the browser battery on the atlas and the phone proxy (below, once main hands over the browser); the
-solver lab's panel listing JUDGES (the solver agent's side, JB7); B's open edges JB3–JB6, JB9.
+**Not done here**: the solver lab's panel listing JUDGES (the solver agent's side, JB7); B's open edges JB3–JB6, JB9.
+
+**The browser battery** (scripts/judgebattery.mjs; the atlas level with every system in play, 1x, 412 x 915, q=low,
+headless Chrome on the desktop's iGPU; data/perf/judge/browser-low.json; shots in C:/Projects/shots88/judge). Stone
+built with the world API near the spawn and cut at its foot, 8 s watched after each cut:
+
+| scene | A: judge ms a pass (CPU) / read back | B: wall ms a pass / GPU ms | frames p99 / max (A; B) |
+|---|---|---|---|
+| mesa (built, undercut) | 3.7, 2.2, 0.2 / 5.4 MB | 42, 42 / 20.5, 19.3 | 12.2 / 22; 12.0 / 19.6 |
+| tower (built, foot cut) | 0.5, 0.6 / 3.1 MB | 18, 73 / 7.6, 18.7 | 12.0 / 21.9; 12.1 / 22.0 |
+
+Nothing fell in either judge (the built rock is smaller than asked — the build brush's footprint — and the bowl at its
+foot doesn't undercut it past holding: shots88/judge/*.png show it standing notched); both crumbled the same sliver.
+Two findings: **B's first judging compiled its five pipelines on the frame** — a 1435 ms frame at the first cut on the
+first run; fixed here (`RockJudge.warm`: Integrity makes B's pipelines asynchronously when it's made; the second run's
+worst frame 19.6 ms). And **B's GPU time on the atlas is 8–20 ms a pass** (its 70 × 70+ window holds the atlas's caves
+and overhangs: many hanging runs, many levels — the per-level latency, JB2), against A's 0.2–3.7 ms of CPU plus its
+3–5 MB of readback a cut (which B doesn't make; Integrity still does, JB6). On the desktop the frames don't show either
+(p99 12 ms both); on a phone 20 ms of GPU in one submit would. The verdict's wait (B's wall ms) is async: no frame
+waits for it.

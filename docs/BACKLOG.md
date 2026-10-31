@@ -25,7 +25,8 @@ user) · `deferred` (agreed for later).
 | JB5 | B's thrust check: the abutments' side of the thrust (H on the legs: an arch's legs pushed apart) isn't checked; a meeting component deeper than level 1 skips bending without its own thrust check | S | open |
 | JB6 | AR6 remainder: B reads no columns back, but Integrity still keeps its CPU copy (apply's writes, External, the structures' analyse) and reads it before each pass whichever judge is picked | M | open |
 | JB7 | The solver lab's variant switch: list `JUDGES` in its panel (the solver agent's side, branch `solver`; not edited here) | S | open |
-| JB8 | Feel tests in the browser: A vs B on the atlas (a mesa undercut, a cliff collapse) on the phone proxy | S | see DEVLOG round 120 (`judge`) |
+| JB8 | Feel tests in the browser: A vs B on the atlas on the phone proxy — scripts/judgebattery.mjs runs (DEVLOG round 120, `judge`), but its built rock didn't collapse under either judge: a cut that really brings down a mesa or a cliff in the atlas (find one in the land, or build bigger) is still to do, and the phone itself | S | open |
+| JB10 | B on the atlas: 8–20 ms of GPU a pass (the window's caves and overhangs: many levels). Before B can be the default on the phone: JB2, or a smaller window (margin 32 → the piece's own extent), or the levels spread over frames | M | open |
 | JB9 | Material strengths: every solid's tensile is TUNE.judgeB.tensile × its materials.ts strength (concrete 0.8, brick 0.6, wood 0.4…) — one number per material, not per kind of load; masonry vs bonded rock (SV1) is the open question | S | open |
 
 ## Round 120 (2026-10-31, session 5, `merge120`) — rivers, cities, animals and trees merged (DECISIONS round 120)

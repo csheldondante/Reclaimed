@@ -1,0 +1,153 @@
+{
+ "when": "2026-10-31T08:13:58.754Z",
+ "q": "low",
+ "viewport": "412x915",
+ "runs": {
+  "runs": {
+   "mesa": {
+    "judge": "runs",
+    "passes": 3,
+    "judgeMs": [
+     3.7,
+     2.2,
+     0.2
+    ],
+    "judgeGpuMs": [
+     0,
+     0,
+     0
+    ],
+    "passMsMax": 5.6,
+    "bodies": 0,
+    "crumbled": 1,
+    "readKB": 5376,
+    "frames": {
+     "n": 812,
+     "p50": 9.9,
+     "p95": 11.2,
+     "p99": 12.2,
+     "max": 22.2
+    },
+    "why": {
+     "free": 1,
+     "load": 0,
+     "crush": 0,
+     "tip": 0,
+     "buckle": 0,
+     "bend": 0,
+     "crushed": 0,
+     "crumbs": 0.508636474609375,
+     "keyed": 0,
+     "weighed": 2
+    }
+   },
+   "tower": {
+    "judge": "runs",
+    "passes": 2,
+    "judgeMs": [
+     0.5,
+     0.6
+    ],
+    "judgeGpuMs": [
+     0,
+     0
+    ],
+    "passMsMax": 0.8,
+    "bodies": 0,
+    "crumbled": 0,
+    "readKB": 3072,
+    "frames": {
+     "n": 814,
+     "p50": 9.9,
+     "p95": 11.2,
+     "p99": 12,
+     "max": 21.9
+    },
+    "why": {
+     "free": 1,
+     "load": 0,
+     "crush": 0,
+     "tip": 0,
+     "buckle": 0,
+     "bend": 0,
+     "crushed": 0,
+     "crumbs": 0.508636474609375,
+     "keyed": 0,
+     "weighed": 4
+    }
+   }
+  },
+  "sections": {
+   "mesa": {
+    "judge": "sections",
+    "passes": 3,
+    "judgeMs": [
+     42.4,
+     41.6
+    ],
+    "judgeGpuMs": [
+     20.492,
+     19.266
+    ],
+    "passMsMax": 2.3,
+    "bodies": 0,
+    "crumbled": 1,
+    "readKB": 5376,
+    "frames": {
+     "n": 813,
+     "p50": 9.9,
+     "p95": 11.2,
+     "p99": 12,
+     "max": 19.6
+    },
+    "why": {
+     "free": 0,
+     "load": 0,
+     "crush": 0,
+     "tip": 0,
+     "buckle": 0,
+     "bend": 0,
+     "crushed": 0.508636474609375,
+     "crumbs": 0.508,
+     "keyed": 0,
+     "weighed": 2
+    }
+   },
+   "tower": {
+    "judge": "sections",
+    "passes": 2,
+    "judgeMs": [
+     18.3,
+     73.3
+    ],
+    "judgeGpuMs": [
+     7.612,
+     18.699
+    ],
+    "passMsMax": 0.5,
+    "bodies": 0,
+    "crumbled": 0,
+    "readKB": 3072,
+    "frames": {
+     "n": 811,
+     "p50": 9.9,
+     "p95": 11.2,
+     "p99": 12.1,
+     "max": 22
+    },
+    "why": {
+     "free": 0,
+     "load": 0,
+     "crush": 0,
+     "tip": 0,
+     "buckle": 0,
+     "bend": 0,
+     "crushed": 0.508636474609375,
+     "crumbs": 0.508,
+     "keyed": 0,
+     "weighed": 4
+    }
+   }
+  }
+ }
+}
