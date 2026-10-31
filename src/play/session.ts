@@ -12,6 +12,7 @@ import type { Sim } from '../api/world';
 import type { Camera } from '../render/camera';
 import type { Renderer } from '../render/renderer';
 import type { Pt } from './core/gestures';
+import { Chase, DEFAULT_CHASE, type ChaseView } from './core/chase';
 import { VoxelDraw } from './draw/voxels';
 import type { Part } from './draw/shapes';
 import { makeHero, type PlayHeroId } from './heroes/make';
@@ -35,9 +36,10 @@ export interface SessionDeps {
   respawnAfter: number | null;
 }
 
-/** how far the camera pulls back at full speed (a share of the hero's zoom), how far it leads (s of travel), how quickly it follows (1/s) */
-// (round 118: the faster bike — pulled back further and leading further ahead, so what's coming is on screen in time)
-const CAM = { back: 0.5, lead: 0.5, leadMax: 12, follow: 6, zoomEase: 2, shake: 0.35 };
+/** how hard the hero's jolts knock the view about (cells at shake 1); the rest of the framing is the hero's (HeroCamera.chase) */
+const SHAKE = 0.35;
+/** (round 120, PL20) px of the screen's edges the framing keeps clear (the banner at the top, the stick at the bottom) */
+const HUD_MARGIN = 56;
 const STORE = 'reclaimed.play.params.';
 
 export class PlaySession {
@@ -49,7 +51,10 @@ export class PlaySession {
   private status: HTMLElement;
   private hp: HTMLElement;
   private deadT = 0;
-  private zoom = 0;
+  /** (round 120, PL20) the chase camera's framing: the lead ahead of the hero and the zoom (play/core/chase.ts) */
+  readonly chase = new Chase(DEFAULT_CHASE, 30);
+  /** where the hero was last frame (its velocity for the framing: any hero, whatever moves it) */
+  private last: [number, number] | null = null;
   private keepFresh: (() => void) | null = null;
   /** what else to draw with the hero each frame (the sandbox's rivals, a run's gates and riders) */
   extraParts: () => Part[] = () => [];
@@ -118,7 +123,8 @@ export class PlaySession {
     this.controls?.dispose();
     this.hero = makeHero(id, this.world, where, tunedParams(id));
     this.controls = new Controls(this.d.ui, this.hero.pad);
-    this.zoom = this.hero.camera.zoom;
+    this.chase.reset(this.hero.camera.chase ?? DEFAULT_CHASE, this.hero.camera.zoom);
+    this.last = null;
     this.deadT = 0;
     return this.hero;
   }
@@ -134,11 +140,13 @@ export class PlaySession {
   /** the window slid (WorldCore.onShift's step, negated: what's kept in window coordinates moves by it) */
   shift(dx: number, dy: number, dz: number): void {
     this.hero.shift(dx, dy, dz);
+    if (this.last) this.last = [this.last[0] + dx, this.last[1] + dy];
   }
 
   /** the atlas map's warp: dropped where the camera is */
   warped(at: Pt): void {
     this.hero.place(at);
+    this.last = null;
   }
 
   /** Each frame, before the camera's update and the draw. */
@@ -174,25 +182,29 @@ export class PlaySession {
     this.afterHero?.(dt);
     this.controls.show(h.looks());
     this.draw.draw([...h.parts(), ...this.extraParts()]);
-    // the camera: after the hero, a little ahead of it, pulled back with speed
+    // the camera: on the hero plus a lead along its velocity, zoomed out to keep what's ahead on screen (chase.ts)
     const p = h.position();
-    const v = (h as unknown as { b?: { vx: number; vy: number } }).b;
-    let lead: Pt = v ? [v.vx * CAM.lead, v.vy * CAM.lead] : [0, 0];
-    // (at most `leadMax` cells ahead: a hook's reel had thrown the view off the bike)
-    const ll = Math.hypot(lead[0], lead[1]);
-    if (ll > CAM.leadMax) lead = [(lead[0] / ll) * CAM.leadMax, (lead[1] / ll) * CAM.leadMax];
-    const k = 1 - Math.exp(-CAM.follow * dt);
-    const want: [number, number, number] = [p[0] + lead[0], p[1] + lead[1], p[2]];
-    for (let i = 0; i < 3; i++) cam.target[i] += (want[i] - cam.target[i]) * k;
+    let vx = 0;
+    let vy = 0;
+    if (this.last && dt > 0) {
+      vx = (p[0] - this.last[0]) / dt;
+      vy = (p[1] - this.last[1]) / dt;
+      // (a jump of the hero's own — a respawn, a warp — isn't a velocity)
+      if (Math.hypot(vx, vy) > 400) vx = vy = 0;
+    }
+    this.last = [p[0], p[1]];
+    this.chase.step(dt, vx, vy, h.fast(), this.view());
+    const k = 1 - Math.exp(-this.chase.f.follow * dt);
+    cam.target[0] = p[0] + this.chase.lead[0];
+    cam.target[1] = p[1] + this.chase.lead[1];
+    cam.target[2] += (p[2] - cam.target[2]) * k;
     // (a jolt: the view knocked about by the hero's shake, a few cells at most, gone in a quarter second)
     if (h.shake > 0) {
-      const j = h.shake * h.shake * CAM.shake;
+      const j = h.shake * h.shake * SHAKE;
       cam.target[0] += (Math.random() - 0.5) * 2 * j;
       cam.target[1] += (Math.random() - 0.5) * 2 * j;
     }
-    const z = h.camera.zoom * (1 - CAM.back * h.fast());
-    this.zoom += (z - this.zoom) * (1 - Math.exp(-CAM.zoomEase * dt));
-    cam.zoom = this.zoom;
+    cam.zoom = this.chase.zoom;
     // the HUD
     this.hp.style.setProperty('--hp', String(h.health / h.maxHealth));
     const s = h.alive ? (this.statusLine?.() ?? h.status()) : this.d.respawnAfter !== null ? 'DOWN — back up in a moment' : 'DOWN';
@@ -201,6 +213,22 @@ export class PlaySession {
       this.deadT += dt;
       if (this.deadT > this.d.respawnAfter) this.respawn();
     }
+  }
+
+  /** the screen as the chase framing sees it: its size, the view's squash, a ground step's move on it at zoom 1 */
+  private view(): ChaseView {
+    const cam = this.d.camera;
+    const z = cam.zoom;
+    const t = cam.target;
+    const o = cam.project(t[0], t[1], t[2]);
+    const screenOf = (dx: number, dy: number): [number, number] => {
+      const q = cam.project(t[0] + dx, t[1] + dy, t[2]);
+      return [(q[0] - o[0]) / z, (q[1] - o[1]) / z];
+    };
+    // (a ground step straight up the screen: its length there is the squash)
+    const up = cam.screenDeltaToWorld(0, -1);
+    const squash = 1 / (z * Math.hypot(up[0], up[1]));
+    return { w: cam.viewportW, h: cam.viewportH, squash, margin: HUD_MARGIN, screenOf };
   }
 
   /** the hero as the run contract sees it */

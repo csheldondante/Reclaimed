@@ -14166,3 +14166,49 @@ Controls.script and inject — at what the stage says is next):
 - GIFs: C:/Projects/shots88/runplay/hoverbike-stage1-race.gif, chase/hoverbike-stage1-chase.gif,
   fight/hoverbike-stage1-fight.gif, lich-stage1-fight.gif, lich-stage2-smash.gif; cards, the map's travel and the end
   cards hoverbike-*.png / lich-*.png in the same folder.
+
+## 2026-10-31 — round 120 (`runplay`, PL20): the bike's chase camera and earlier notice of the gates
+
+The user (DECISIONS round 120): "The bike was not really playable because of how zoomed in we are and how little notice
+for the gates." At 34 px a cell a 412 px phone showed ~12 cells across: the bike at 46 cells/s crossed the screen's
+half width in about 0.13 s, and the arrow pointed at the next gate only, so a gate was announced ~1.3 s ahead (the gates
+are 70 cells apart) and seen on screen 0.1-0.6 s ahead.
+
+**What changed.**
+- The framing is per hero, as data: `HeroCamera.chase` (contracts/hero.ts `ChaseFraming`). The bike's numbers live
+  with its controller (controllers/hoverbike.ts `BIKE_CAMERA`); a hero without one (the lich) gets play's default,
+  which is the round 118 framing (0.5 s lead, at most 12 cells; pulled back by half at full `fast()`). Not on
+  `ControllerProfile`: that is the generators' terms (what a body can cross, what it's fun at) — camera framing is a
+  different concern, and the hero contract already carried the camera's ask (zoom, behind).
+- play/core/chase.ts `Chase` (pure, Node-tested): the view fitted in TIME — `ahead` seconds of travel kept on screen in
+  front of the hero — against the screen's SHORTEST reach (min(W/2, H/2 ÷ sin 30°) less a 56 px HUD margin), so only
+  speed moves the zoom, not the heading (a loop course turns all the time; a zoom that followed the heading would
+  pump). The speed it fits is smoothed (1.5/s); the zoom eases out at 1.5/s and back in at 0.6/s. A big landscape
+  screen has the reach and doesn't zoom out at all.
+- The lead is an offset from the hero eased toward speed × lead (capped by a share of the reach that way, so the hero
+  stays on screen and a portrait phone leads further up the screen than across), not a target the camera chases: a
+  chased target lags v/follow (7-8 cells at 46 cells/s), which ate most of the old 0.5 s look-ahead.
+- The bike: 22 px a cell at rest (34 before: ~19 cells across a phone, was 12), 0.8 s ahead at speed, a 0.45 s lead
+  (≤ 0.6 of the reach), out to 12 px a cell (10 tried first: the bike was hard to pick out at the phone's size).
+- The gates (runplay/notice.ts, stage.ts): arrows to the next gate AND the one after (`SIGNPOSTED` = 2), each labelled
+  with its number and distance (cells), the next big and gold, the one after smaller and paler; the next one's arrow
+  swells for 0.6 s as a gate is passed. With gates 70 cells apart the second arrow doubles the notice.
+
+**Measured** (warning = from a gate first being on screen or signposted to passing it):
+- Node (test/unit/runplay-notice.test.ts: the race course as laid, ridden flat out at 46 cells/s through the real camera
+  maths on 412x915; before = the round 118 framing with its lag and one arrow): gates 1-4 noticed 1.33-1.35 s → 2.68-5.62 s
+  ahead; seen on screen 0.08-0.42 s → 0.25-1.02 s ahead. The first gate is announced through the 3-2-1 either way (4.25 s).
+- Headless (scripts/runplay.mjs --encounter race --stages 2, the atlas level as deployed, every system, 1x, 412x915 dpr
+  2.6, q=low; the script now logs each gate's notice per frame — works on a build without the change, which was run from a
+  worktree at the merge for the before). Distance at first notice over the top speed (46), gates 1-4, i.e. seconds of
+  warning at top speed: before 1.43, 1.04, 1.18, 1.63 → after 2.43, 2.49, 2.74, 2.45 (stage 1) and 2.54, 2.45, 2.94, 2.16
+  (stage 2). On screen at first sight (same measure): before 0.67-1.18 s → after 0.42-1.72 s — no clear gain (the gate is often across the
+  phone's narrow width; the arrows carry the notice there). Zoom while racing: before p10/p50/p90 18.5/23.3/29.1 px a cell
+  → after 12.0/12.2-12.5/17.4-18.0. Stage 1 won both times; stage 2 before passed 1 gate (the autopilot lost on cliffs),
+  after all 6.
+- Frame interval in the race (rAF, headless vsync): p50 9.9 / p95 10.3 ms before → 10.0 / 10.5 ms after; the session's
+  main-thread cost 0.098 → 0.093 ms a frame. driveprofile.mjs doesn't drive the play camera (its own camera), so the phone
+  proxy there is untouched by this change; the wider view draws ~3.5× the ground area, which the tile cache's zoom floor
+  bounds (BACKLOG PL22: check the GPU time on the phone at 12 px a cell).
+- GIFs: C:/Projects/shots88/camera/after/hoverbike-stage1-race.gif, hoverbike-stage2-race.gif; shots *-1b-play.png;
+  before: C:/Projects/shots88/camera/before/. Per-gate numbers: hoverbike-notice.json in each.

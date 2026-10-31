@@ -144,6 +144,70 @@ await run({ name: `runplay-${arg('hero', 'hoverbike')}`, kind: 'behaviour', size
     R.log(`saved ${f}`);
   };
 
+  // (round 120, PL20) each gate's warning, every frame in the page: when it first came on screen, when it was first
+  // signposted (StagePlay.signpostedGates; a build without it signposted the next gate only), when it was passed, and the
+  // distance it was first noticed at (over the bike's top speed: seconds of warning at top speed). Works on a build from
+  // before the round 120 camera too, for the before/after.
+  const watchGates = () =>
+    p.evaluate(() => {
+      const R = window.reclaimed;
+      const st = R.runplay?.current;
+      if (!st || !st.gates?.length) return false;
+      const n = st.gates.length;
+      const log = { gates: Array.from({ length: n }, () => ({ seen: null, sign: null, passed: null, seenD: 0, signD: 0 })), zoom: [], speed: [], frames: [] };
+      window.__notice = log;
+      let lastPassed = st.passed;
+      let lastNow = performance.now();
+      const tick = (now) => {
+        // (st outlives being current: the last gate's pass is read after the stage ends)
+        const t = st.t;
+        while (lastPassed < st.passed) log.gates[lastPassed++].passed = t;
+        if (st.status.state !== 'playing') return;
+        log.frames.push(now - lastNow);
+        lastNow = now;
+        const H = R.runhero.hero;
+        const at = H.position();
+        const cam = R.camera;
+        const sign = st.signpostedGates ? st.signpostedGates() : [st.passed];
+        for (let i = st.passed; i < n; i++) {
+          const g = st.gates[i];
+          const [sx, sy] = cam.project(g[0], g[1], st.gateZ[i]);
+          const on = sx > 40 && sy > 40 && sx < innerWidth - 40 && sy < innerHeight - 40;
+          const d = Math.hypot(g[0] - at[0], g[1] - at[1]);
+          const e = log.gates[i];
+          if (on && e.seen === null) (e.seen = t), (e.seenD = d);
+          if (sign.includes(i) && e.sign === null) (e.sign = t), (e.signD = d);
+        }
+        if (t >= 0) {
+          log.zoom.push(cam.zoom);
+          log.speed.push(H.speed());
+        }
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+      return true;
+    });
+  const notices = [];
+  const readGates = async (k) => {
+    const r = await p.evaluate(() => {
+      const L = window.__notice;
+      if (!L) return null;
+      const top = window.reclaimed.runhero.hero.params?.boostMax ?? 46;
+      const q = (a, f) => (a.length ? +a.slice().sort((x, y) => x - y)[Math.floor(a.length * f)].toFixed(2) : null);
+      const gates = L.gates.map((g, i) => {
+        if (g.passed === null) return { gate: i, passed: false };
+        const first = Math.min(g.seen ?? Infinity, g.sign ?? Infinity);
+        const firstD = g.seen !== null && g.seen === first ? g.seenD : g.signD;
+        return { gate: i, seenS: g.seen === null ? 0 : +(g.passed - g.seen).toFixed(2), noticeS: first === Infinity ? 0 : +(g.passed - first).toFixed(2), seenTopS: g.seen === null ? 0 : +(g.seenD / top).toFixed(2), noticeTopS: first === Infinity ? 0 : +(firstD / top).toFixed(2) };
+      });
+      return { top, gates, zoom: { p10: q(L.zoom, 0.1), p50: q(L.zoom, 0.5), p90: q(L.zoom, 0.9) }, speed: { p50: q(L.speed, 0.5), p90: q(L.speed, 0.9) }, frameMs: { p50: q(L.frames, 0.5), p95: q(L.frames, 0.95) } };
+    });
+    if (r) {
+      notices.push({ stage: k, ...r });
+      R.log(`gate notice, stage ${k}: ${JSON.stringify(r)}`);
+    }
+  };
+
   const tStart = Date.now();
   let k = 0;
   let s = await state();
@@ -156,6 +220,7 @@ await run({ name: `runplay-${arg('hero', 'hoverbike')}`, kind: 'behaviour', size
       await sleep(500);
       s = await state();
       R.log(`stage ${k}: ${JSON.stringify(s.stage)}`);
+      await watchGates();
       // a GIF of each stage (from its 3-2-1, 8 s of play)
       if (R.opt('gif', '1') === '1') await gif(`stage${k}-${s.stage?.kind}`, 32, 250, () => pilot());
       let lastLog = 0;
@@ -184,6 +249,7 @@ await run({ name: `runplay-${arg('hero', 'hoverbike')}`, kind: 'behaviour', size
         }
         await sleep(160);
       }
+      await readGates(k);
       s = await state();
       await shot(`${k}c-result`);
       if (k >= maxStages) break;
@@ -216,6 +282,7 @@ await run({ name: `runplay-${arg('hero', 'hoverbike')}`, kind: 'behaviour', size
   R.log(`the hero's main-thread cost per frame (the session: input, hero, voxel writes): ${JSON.stringify(logs.cpu)}`);
   for (const l of logs.run) R.log(`run: ${l}`);
   for (const l of logs.play) R.log(`play: ${l}`);
+  if (notices.length) fs.writeFileSync(path.join(dir, `${hero}-notice.json`), JSON.stringify(notices, null, 1));
   if (maxStages >= 99) R.check('the run ended with an end card', !!s.record, s.record);
   R.check('every stage was played (not picked)', logs.play.length >= 1 && logs.play.length === k, { stages: k, played: logs.play.length });
   await R.fatal(p);
