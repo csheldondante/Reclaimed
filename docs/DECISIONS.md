@@ -82,6 +82,12 @@ each was implemented.
   → the solver's steps are shown in the playground and the rock lab (stations for rock, buildings and metal: bending,
   breaking, burial) before each push.
 
+- The user, verbatim, on cities:
+
+> I do want to update city generation to see bulwark examples and add features like ships, docs, banners, torches, streets, different architectural styles, lights at night, more regular grids and skyscrapers and ruins, and of course the specialized settlements for mining, farming, ports, etc
+
+- → A cities design session (BACKLOG STR30-STR36) before the structures agent starts; after merge120 lands.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
