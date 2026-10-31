@@ -2381,3 +2381,20 @@ level: one editor, one HUD after), Firefox 157 with `dom.webgpu.enabled`
 (menu), and Firefox without WebGPU (the "can't run here" overlay sits above
 the loading screen: `.fatal` z-index 100, `#loading` 40, above the editor
 panel's 20).
+
+## 2026-10-30 — the sandbox panel names what's picked (TL1)
+
+Some of the panel's icons are hard to read (⛆ pour, ◌ drain, ❦ plant),
+and on a phone there's no hover to show their tips. A line at the top of the
+panel now names the tool, with the material for pour and build ("Pour sand",
+"Build brick") and the model for place ("Drop tanker truck"). Each tool's
+name is the third field of `TOOLS`; `Editor.showPicked()` runs whenever the
+tool, material or model changes.
+
+It stays one line (`nowrap`, with an ellipsis as a backstop) because it sits
+above the tool buttons: a second line would push them down under the
+player's finger. Widths in headless Chrome (13 px text, 152 px of room): the
+longest names, "Drop apartment block" and the hands' "Tap: grow · drag:
+wind", are 134 px. "Tap to grow, drag for wind" was 165 px, so it was cut.
+Checked by clicking every tool, material and model at 1200×750 and
+390×844: none overflow, and the tool buttons stay put.

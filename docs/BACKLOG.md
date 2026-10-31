@@ -56,6 +56,7 @@ user) · `deferred` (agreed for later).
 | Q18 | Frame rate is low on the phone | M | open: phones get the `high` tier like desktop; compare `?q=low` on the device and the perf overlay, then pick a default tier for phones |
 | FF1 | Firefox (2026-10-30): the Pages build shows a blank page and `ReferenceError: GPUBufferUsage is not defined` | S | done (this commit): `world-gpu.ts` read `GPUBufferUsage` at module scope, which throws before `initGpu` can say WebGPU is missing; it's read in the constructor now. The message tells Firefox-on-Linux players to set `dom.webgpu.enabled` (verified: the menu runs in Firefox 157 on Linux with it). Every branch has the same line |
 | LD1 | Loading (2026-10-30): the game shows a grey screen while it loads; show a progress bar and a caption that switches between fun little jobs ("growing trees", "architecting buildings") like games have | S | done (this commit): `#loading` in index.html, driven by `ui/loader.ts`. The bar follows the real stages (script, GPU, scene built, warmup slices), and 22 jobs cycle every 1.6 s. It also covers level loads from the menu and the sandbox's new/load |
+| TL1 | Sandbox panel (2026-10-30): put text at the top saying what's selected (car icon, then the tanker truck: "drop tanker truck"), because some icons aren't clear, especially on mobile where you can't hover | S | done (this commit): a one-line heading names the tool, with the material for pour and build and the model for place ("Drop tanker truck"); the widest name is 134 of 152 px |
 
 ## Round 22 (2026-10-11, session 4)
 
