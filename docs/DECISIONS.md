@@ -158,6 +158,21 @@ each was implemented.
   kinematic bodies (heroes, agents, vehicles) in the same broadphase; a GPU collision-event buffer drained by gameplay
   (damage, sound, particles, triggers). Not started: the user wants less time on physics for now.
 
+- Discussing docs/design/LIVING_WORLD_v3.md (asked: 1 the slice order: traits/effects with healing vs necromancy, an attractor, day-build/night-defend, the branching journey, later rituals and the castle court; 2 one trait system across agents, bodies, structures and materials; 3 which heroes play day/defend; 4 does the GM pick the loop). The user, verbatim:
+
+> 1. That order works!
+> 2. Yes! I think that the systems that process traits for things like combat and other interactions are essentially game specific logic but we want it GPU bound and cheap so we can use it on our agents. Modular architecture here is key.
+> 3. I think we want building to be a new view that essentially lets you paint into the building grid. I was actually thinking we can differentiate more then just structure vs not. We can have housing, agriculture, ports, civic etc.  different materials for different functions the structures serve to keep it legible. You get the readability of fixed structures for an rts style game but the creative fun of townscraper. And instead of building a bunch of new baracks you can expand your training camp or hospital or housing and the material style determines if it renders as a single structure like a castle or a dense block of homes. Plus it lets you build vertically.  I think this is more like an interface than a specific hero but only some heroes will get this mode.
+> 4. I think a mix. The character and run objective should inform what the GM sets up for that run but the GM can theoretically update the interactions mid run based on player choices. If a character excepts the mantle of leadership as a reward for great service then the next run may well be city management for that leader (for example)
+
+- → Slices in that order. One trait system across agents, bodies, structures and materials. The interaction systems
+  (combat and the like) are game-specific modules, but on the GPU and cheap enough for every agent: modular kernels
+  over shared trait data. Building is a view (an interface some heroes get): paint functions into the building grid
+  (housing, agriculture, port, civic, training, hospital...), each function a "material" whose style decides whether it
+  renders as one structure (a castle) or a dense block; you grow a function rather than placing more buildings;
+  vertical too; Townscaper's fun with an RTS's readability. The GM sets up a run from the character and objective and
+  may change it mid-run on the player's choices; accepting leadership can make the next run city management.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
