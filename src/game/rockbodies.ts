@@ -16,7 +16,9 @@
 
 import { MAT, MATERIALS, MatState } from '../world/materials';
 import { cellAt, cellPos, nbr, DIRV, ROW_H } from '../world/lattice';
-import { TUNE } from '../tune/params';
+import { TUNE, worldG } from '../tune/params';
+import type { BodySpec, BodyRead, SolverBody } from '../api/contracts/solver';
+import { restComOf } from '../solver/build';
 
 export type V3 = [number, number, number];
 type Q = [number, number, number, number];
@@ -38,7 +40,10 @@ export function rockbodyFor(levelId?: string): boolean {
   return levelId === 'atlas' || levelId === 'rocklab' || levelId === 'playground';
 }
 
-const SUB_DT = 1 / 120;
+/** (solver step 1) the fixed step: every body moves in whole steps of this, drawn between its last two (drawPose) */
+export const SUB_DT = 1 / 120;
+/** steps a frame at most (a long frame's rest is dropped, not caught up) */
+const MAX_SUBS = 6;
 /** (round 108) gravity (the world's × RB.gravity), air drag, rest (restV, restW for restT) and the contacts' slop: RB */
 /** settled regardless after this long (s) */
 export const MAX_AGE = 20;
@@ -73,6 +78,9 @@ export interface RockBody {
   invI: M3;
   pos: V3;
   q: Q;
+  /** (solver step 1) its pose a step before (drawn between that and this: RockBodies.drawPose); unset: as it is */
+  prevPos?: V3;
+  prevQ?: Q;
   v: V3;
   w: V3;
   age: number;
@@ -260,6 +268,19 @@ function inv3(m: M3): M3 {
   const s = 1 / det;
   return [A * s, -(b * i - c * h) * s, (b * f - c * e) * s, B * s, (a * i - c * g) * s, -(a * f - c * d) * s, C * s, -(a * h - b * g) * s, (a * e - b * d) * s];
 }
+/** (solver step 1) a blend of two rotations (the shorter way), normalised */
+function nlerp(a: Q, b: Q, t: number): Q {
+  const s = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3] < 0 ? -1 : 1;
+  const q: Q = [a[0] * (1 - t) + s * b[0] * t, a[1] * (1 - t) + s * b[1] * t, a[2] * (1 - t) + s * b[2] * t, a[3] * (1 - t) + s * b[3] * t];
+  const l = Math.hypot(q[0], q[1], q[2], q[3]);
+  return [q[0] / l, q[1] / l, q[2] / l, q[3] / l];
+}
+/** a body's 3 × 4 matrix (its spawn frame → world) at a pose */
+function poseMatrix(b: RockBody, pos: V3, q: Q): number[] {
+  const R = rotM(q);
+  const t = sub(pos, mv(R, b.origin));
+  return [R[0], R[1], R[2], t[0], R[3], R[4], R[5], t[1], R[6], R[7], R[8], t[2]];
+}
 /** world inverse inertia × v: R · I⁻¹ · Rᵀ v */
 const iw = (b: RockBody, R: M3, v: V3): V3 => mv(R, mv(b.invI, mtv(R, v)));
 
@@ -381,8 +402,32 @@ function rng(seed: number): () => number {
   };
 }
 
+/**
+ * (solver step 2, BACKLOG AR4) What moves the bodies when the GPU node solver does (src/solver: the contract's add,
+ * remove and read): RockBodies keeps what the judge needs of each body — its cells, mass, necks, its breaks, the hand-
+ * over at rest — and the solver moves it. Without one (the Node tests, the CPU harness, a body fast-forwarded to rest)
+ * the CPU step below moves it.
+ */
+export interface RockEngine {
+  add(spec: BodySpec): SolverBody | null;
+  remove(b: SolverBody): void;
+  read(b: SolverBody): BodyRead | undefined;
+}
+
+interface Engined {
+  sb: SolverBody;
+  /** the solver's centre of mass less the body's (spawn frame): the two weigh materials their own way */
+  d: V3;
+  /** the last readback taken, and when (ms) */
+  tick: number;
+  at: number;
+}
+
 export class RockBodies {
   list: RockBody[] = [];
+  /** (solver step 2) the GPU solver moves the bodies (null: the CPU step) */
+  engine: RockEngine | null = null;
+  private engined = new Map<RockBody, Engined>();
   private nextId = 1;
   /** while the ground's copy isn't of the window as it is (a slide, until it's read again): nothing moves */
   frozen = false;
@@ -811,22 +856,48 @@ export class RockBodies {
     return { pieces, seeds, hit: add(hit, b.origin) };
   }
 
-  /** A step of every body (dt s): the hits hard enough to break or to raise dust, and the bodies come to rest. */
+  /**
+   * (solver step 1) The sim time owed to the fixed step (s, under SUB_DT after an update) and where the frame lies between
+   * a body's last two steps (0..1): drawPose's blend.
+   */
+  private acc = 0;
+  alpha = 1;
+
+  /**
+   * A step of every body (dt s of frame time): the hits hard enough to break or to raise dust, and the bodies come to
+   * rest. (Solver step 1, the design's choppiness fix: whole steps of SUB_DT, the frame's remainder carried to the next
+   * frame and drawn as a blend of the last two steps — it stepped by the frame's own dt before.) With `only`, those
+   * bodies take `dt` in whole steps at once (a settle loop), the shared clock untouched.
+   */
   update(dt: number, only?: RockBody[]): { hits: RockHit[]; rest: RockBody[]; erode: { body: RockBody; at: V3 }[] } {
     const hits: RockHit[] = [];
     const rest: RockBody[] = [];
     const erode: { body: RockBody; at: V3 }[] = [];
     if (this.frozen || !this.list.length || dt <= 0) return { hits, rest, erode };
     const t0 = performance.now();
-    const n = Math.min(6, Math.max(1, Math.ceil(dt / SUB_DT)));
-    const h = dt / n;
+    if (this.engine && !only) return this.fromEngine(dt, hits, rest, erode, t0);
+    let n: number;
+    if (only) n = Math.max(1, Math.round(dt / SUB_DT));
+    else {
+      this.acc += dt;
+      n = Math.min(MAX_SUBS, Math.floor(this.acc / SUB_DT));
+      this.acc = Math.min(this.acc - n * SUB_DT, SUB_DT);
+      this.alpha = this.acc / SUB_DT;
+    }
+    const h = SUB_DT;
+    dt = n * h;
+    if (n === 0) return { hits, rest, erode };
     for (const b of only ?? this.list) {
       b.hit = 0;
       b.erode = [];
       // (the broad phase once a frame: the highest ground it could reach this frame)
       const r0 = b.radius + len(b.v) * dt + 0.5;
       const top = this.ground.topIn(b.pos[0] - r0, b.pos[1] - r0, b.pos[0] + r0, b.pos[1] + r0);
-      for (let s = 0; s < n; s++) this.substep(b, h, top);
+      for (let s = 0; s < n; s++) {
+        b.prevPos = b.pos;
+        b.prevQ = b.q;
+        this.substep(b, h, top);
+      }
       b.age += dt;
       b.grace -= dt;
       // (round 112) the grace is for the contact it was freed in (its stub, the ground it was cut from): once it has left
@@ -848,13 +919,95 @@ export class RockBodies {
     return { hits, rest, erode };
   }
 
+  /**
+   * (solver step 2) The frame with the GPU solver moving the bodies: new ones handed to it, gone ones taken out, and
+   * each one's latest readback taken (a tick or two late) — its pose (drawn between the last two read), velocity, what
+   * it hit and how hard, the ground it cut too deep into, whether it's at rest — the same summary the CPU step makes,
+   * for the judge (breaks, dust, the hand-over at rest).
+   */
+  private fromEngine(dt: number, hits: RockHit[], rest: RockBody[], erode: { body: RockBody; at: V3 }[], t0: number): { hits: RockHit[]; rest: RockBody[]; erode: { body: RockBody; at: V3 }[] } {
+    const eng = this.engine!;
+    const live = new Set(this.list);
+    for (const [b, e] of this.engined) {
+      if (live.has(b)) continue;
+      eng.remove(e.sb);
+      this.engined.delete(b);
+    }
+    const now = performance.now();
+    for (const b of this.list) {
+      const e = this.engage(b, now);
+      if (!e) continue;
+      b.hit = 0;
+      b.erode = [];
+      const r = eng.read(e.sb);
+      if (r && r.tick !== e.tick) {
+        e.tick = r.tick;
+        e.at = now;
+        b.prevPos = b.pos;
+        b.prevQ = b.q;
+        const R = rotM(r.q);
+        b.pos = sub(r.pos, mv(R, e.d));
+        b.q = r.q;
+        b.v = r.vel;
+        b.w = r.spin;
+        b.contact = r.touching > 0;
+        if (r.impact) {
+          b.hit = r.impact.speed;
+          b.hitAt = r.impact.at;
+        }
+        b.erode = r.erode;
+        b.still = r.asleep ? RB.restT + 1 : 0;
+        b.allow = Math.min(b.allow, ALLOW_MAX);
+      }
+      b.age += dt;
+      b.grace -= dt;
+      if (!b.contact) b.airborne += dt;
+      if (b.airborne > 0.15) b.grace = Math.min(b.grace, 0);
+      b.dustT += dt;
+      if (b.hit > 1.5 && (b.dustT > 0.25 || b.hit > this.breakSpeedOf(b) || b.hit > b.neckV)) {
+        b.dustT = 0;
+        hits.push({ body: b, speed: b.hit, at: b.hitAt });
+      }
+      if (b.still > RB.restT || b.age > MAX_AGE) rest.push(b);
+      for (const at of b.erode) erode.push({ body: b, at });
+    }
+    // (drawn between its last two readbacks: they come a tick apart)
+    const lastAt = Math.max(0, ...[...this.engined.values()].map((e) => e.at));
+    this.alpha = Math.min(1, Math.max(0, (now - lastAt) / (SUB_DT * 2000)));
+    this.stats.stepMs = performance.now() - t0;
+    return { hits, rest, erode };
+  }
+
+  /** (solver step 2) the node solver's body carrying this one (null: not handed over yet, or the CPU step moves it) */
+  engineBody(b: RockBody): SolverBody | null {
+    return this.engined.get(b)?.sb ?? null;
+  }
+
+  /**
+   * (solver step 2) Handed to the GPU solver now if it isn't yet (its pose written where it is): the frame a body is
+   * made or broken off is drawn from the solver's pose like every frame after (round 120: a piece drawn first by its
+   * own CPU pose, a readback behind, then by the solver's, jumped and changed its look). Null: no solver, or no room.
+   */
+  engage(b: RockBody, now = performance.now()): Engined | null {
+    const eng = this.engine;
+    if (!eng || !this.list.includes(b)) return null;
+    let e = this.engined.get(b);
+    if (e) return e;
+    const cells = b.cells.map((k) => ({ x: k.lat[0], y: k.lat[1], z: k.lat[2], mat: k.mat }));
+    // (the solver's centre of mass, its materials weighed its own way, sits d from the body's: placed by it)
+    const d = sub(restComOf(cells), b.origin);
+    const sb = eng.add({ cells, pose: { pos: add(b.pos, mv(rotM(b.q), d)), q: b.q }, vel: b.v, spin: b.w, allow: b.allow, kind: 'rigid' });
+    if (!sb) return null;
+    e = { sb, d, tick: -1, at: now };
+    this.engined.set(b, e);
+    return e;
+  }
+
   private substep(b: RockBody, h: number, top: number): void {
-    // gravity, air, top speed; the spin damped
-    b.v[2] -= TUNE.world.gravity * RB.gravity * h;
+    // gravity (the world's: solver step 1, AR9), air; no top speed (AR10: it was capped at 14); the spin damped
+    b.v[2] -= worldG() * RB.gravity * h;
     const drag = Math.exp(-RB.airDrag * h);
     b.v = mul(b.v, drag);
-    const sp = len(b.v);
-    if (sp > RB.maxV) b.v = mul(b.v, RB.maxV / sp);
     b.w = mul(b.w, Math.exp(-RB.angDamp * h));
     const R = rotM(b.q);
     // the contacts: its corners in the ground (only those low enough to reach it)
@@ -1057,9 +1210,20 @@ export class RockBodies {
 
   /** spawn frame → world, rows of a 3×4 (rotation | translation): what its mesh is drawn with */
   matrix(b: RockBody): number[] {
-    const R = rotM(b.q);
-    const t = sub(b.pos, mv(R, b.origin));
-    return [R[0], R[1], R[2], t[0], R[3], R[4], R[5], t[1], R[6], R[7], R[8], t[2]];
+    return poseMatrix(b, b.pos, b.q);
+  }
+
+  /** (solver step 1) where it is drawn this frame: between its last two steps by `alpha` (its pose as is: matrix) */
+  drawPose(b: RockBody): { pos: V3; q: Q } {
+    const a = this.alpha;
+    if (!b.prevPos || !b.prevQ || a >= 1) return { pos: b.pos, q: b.q };
+    return { pos: add(mul(b.prevPos, 1 - a), mul(b.pos, a)), q: nlerp(b.prevQ, b.q, a) };
+  }
+
+  /** (solver step 1) the matrix it is drawn with this frame (drawPose's) */
+  drawMatrix(b: RockBody): number[] {
+    const { pos, q } = this.drawPose(b);
+    return poseMatrix(b, pos, q);
   }
 
   /** its cells as lattice cells of the spawn frame (column x, y, cell z): what its mesh is made from */
@@ -1090,7 +1254,10 @@ export class RockBodies {
 
   /** the window moved by (dx, dy, dz) world cells: every body with the land */
   shift(dx: number, dy: number, dz: number): void {
-    for (const b of this.list) b.pos = [b.pos[0] - dx, b.pos[1] - dy, b.pos[2] - dz];
+    for (const b of this.list) {
+      b.pos = [b.pos[0] - dx, b.pos[1] - dy, b.pos[2] - dz];
+      if (b.prevPos) b.prevPos = [b.prevPos[0] - dx, b.prevPos[1] - dy, b.prevPos[2] - dz];
+    }
   }
 
   /** the world box a body may cover (x0, y0, x1, y1) */
@@ -1113,20 +1280,21 @@ export class RockBodies {
   packInto(f: Float32Array, u: Uint32Array, o: number, max: number, which: (b: RockBody, k: RockCell) => boolean = () => true): number {
     let n = o;
     for (const b of this.list) {
-      const R = rotM(b.q);
+      const { pos, q } = this.drawPose(b);
+      const R = rotM(q);
       for (const k of b.surf) {
         if (!which(b, k)) continue;
         if (n >= max) return n;
         const p = mv(R, k.p);
         const i = n * 8;
-        f[i] = b.pos[0] + p[0];
-        f[i + 1] = b.pos[1] + p[1];
-        f[i + 2] = b.pos[2] + p[2];
+        f[i] = pos[0] + p[0];
+        f[i + 1] = pos[1] + p[1];
+        f[i + 2] = pos[2] + p[2];
         u[i + 3] = k.mat;
-        f[i + 4] = b.q[0];
-        f[i + 5] = b.q[1];
-        f[i + 6] = b.q[2];
-        f[i + 7] = b.q[3];
+        f[i + 4] = q[0];
+        f[i + 5] = q[1];
+        f[i + 6] = q[2];
+        f[i + 7] = q[3];
         n++;
       }
     }

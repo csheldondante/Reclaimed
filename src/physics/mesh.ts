@@ -250,3 +250,53 @@ export function rockMesh(mat: number, r: number, sub = 1, seed = 1): SkinMesh {
   });
   return { id: `rock-${mat}-${r}`, pos: new Float32Array(verts.flat()), tris: new Uint32Array(faces.flat()), mat: new Uint8Array(faces.length).fill(mat) };
 }
+
+/**
+ * (round 120, the user: "a lot of things turn into lattices during falling" — one mesh a body, every variant) A body's
+ * own mesh (render/bodymeshbuild.ts: `verts`, BM_VERT floats a vertex, positions in its spawn frame — world cells) bound
+ * to the voxel lattice's particles under it: `centres` the solid particles' places then (`i` its index in the body),
+ * each vertex to the nearest four within reach of the nearest, as bindSkin. Out: bindSkin's records (indices within
+ * the body: Physics.attachSkin offsets them).
+ */
+export function bindSkinTo(verts: Float32Array, stride: number, centres: { i: number; c: V }[]): { data: Float32Array; tris: number } {
+  const n = verts.length / stride;
+  const T = n / 3;
+  const grid = new Map<string, { i: number; c: V }[]>();
+  const cellKey = (x: number, y: number, z: number) => `${x},${y},${z}`;
+  for (const q of centres) {
+    const k = cellKey(Math.floor(q.c[0]), Math.floor(q.c[1]), Math.floor(q.c[2]));
+    const l = grid.get(k);
+    if (l) l.push(q);
+    else grid.set(k, [q]);
+  }
+  const u = new Uint32Array(verts.buffer, verts.byteOffset, verts.length);
+  const data = new Float32Array(T * 3 * 28);
+  const U = new Uint32Array(data.buffer);
+  for (let v = 0; v < n; v++) {
+    const p: V = [verts[v * stride], verts[v * stride + 1], verts[v * stride + 2]];
+    const near: { i: number; c: V; d: number }[] = [];
+    for (let r = 1; near.length < 1 && r <= 64; r *= 2) {
+      near.length = 0;
+      const g = p.map((q) => Math.floor(q)) as V;
+      for (let z = g[2] - r; z <= g[2] + r; z++)
+        for (let y = g[1] - r; y <= g[1] + r; y++)
+          for (let x = g[0] - r; x <= g[0] + r; x++) for (const q of grid.get(cellKey(x, y, z)) ?? []) near.push({ ...q, d: Math.hypot(...sub(p, q.c)) });
+    }
+    if (!near.length) throw new Error(`bindSkinTo: no particle near vertex ${v}`);
+    near.sort((a, b) => a.d - b.d);
+    const reach = near[0].d + 1.25;
+    const use = near.filter((q) => q.d <= reach).slice(0, 4);
+    const wts = use.map((q) => (1 - q.d / (reach + 1e-6)) ** 2 + 1e-4);
+    const sum = wts.reduce((a, b) => a + b, 0);
+    const o = v * 28;
+    for (let k = 0; k < 4; k++) {
+      U[o + k] = k < use.length ? use[k].i : 0xffffffff;
+      data[o + 4 + k] = k < use.length ? wts[k] / sum : 0;
+      if (k < use.length) data.set(sub(p, use[k].c), o + 12 + k * 4);
+    }
+    data.set(p, o + 8);
+    // (the material: the vertex word's low byte)
+    U[o + 11] = u[v * stride + 3] & 0xff;
+  }
+  return { data, tris: T };
+}

@@ -47,8 +47,8 @@ const FRAG_CAP: u32 = 8192u;
 const FRAG_MIN_CODE: u32 = 4u;
 const HASH_N: u32 = 262144u;
 const HASH_NONE: u32 = 0xffffffffu;
-// G_ACC (was 20.0): G.tune.voxelsGravity (round 108, src/tune/params.ts) // cells/s²
-// VMAX (was 60.0): G.tune.voxelsVmax (round 108, src/tune/params.ts)
+// G_ACC (was 20.0): worldG() × G.tune.voxelsGravity (solver step 1, AR9: one world gravity, a scale of its own)
+// VMAX (was 60.0): none (solver step 1, AR10: no speed caps)
 // AIR_DRAG (was 0.05): G.tune.voxelsAirDrag (round 108, src/tune/params.ts) // 1/s
 // STEP_UP (was 0.45): G.tune.voxelsStepUp (round 108, src/tune/params.ts) // a ledge this high is climbed, not a wall
 // CRUMBLE_DEPTH (was 0.6): G.tune.voxelsCrumbleDepth (round 108, src/tune/params.ts) // into solid ground this far, a voxel crumbles
@@ -95,6 +95,17 @@ struct PhysU {
 // holds settles instead of swinging through)
 struct Push { a: vec4<f32>, b: vec4<f32>, c: vec4<u32> };
 @group(0) @binding(34) var<uniform> PP: array<Push, 8>;
+// (solver step 2, the experiment: the lattice sleeps too) the bodies asleep, a bit a body (physics.ts: settled for a
+// moment — slower than the rigid rock's rest speed while it touches something — till something wakes it): their voxels
+// are left out of the solve (they stay in the hash: what's awake still meets them), drawn and read as they lie
+@group(0) @binding(36) var<uniform> PS: array<vec4<u32>, 2>;
+fn sleeping(i: u32) -> bool {
+  let bi = bodyOf(infoOf(i));
+  let w = PS[bi >> 7u];
+  let c = (bi >> 5u) & 3u;
+  let word = select(select(select(w.x, w.y, c == 1u), w.z, c == 2u), w.w, c == 3u);
+  return ((word >> (bi & 31u)) & 1u) != 0u;
+}
 
 @group(0) @binding(3) var<storage, read_write> px: array<vec4<f32>>;
 @group(0) @binding(4) var<storage, read_write> pv: array<vec4<f32>>;
@@ -239,12 +250,12 @@ fn gameAccel(i: u32, x: vec3<f32>, v: vec3<f32>) -> vec3<f32> {
 @compute @workgroup_size(64)
 fn predict(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = id.x;
-  if (i >= PU.c.x || !alive(i)) { return; }
+  if (i >= PU.c.x || !alive(i) || sleeping(i)) { return; }
   let x = px[2u * i];
   let vt = pv[i];
   var v = vt.xyz;
   if (x.w > 0.0) {
-    v.z -= G.tune.voxelsGravity * PU.a.x;
+    v.z -= worldG() * G.tune.voxelsGravity * PU.a.x;
     v += gameAccel(i, x.xyz, v) * PU.a.x;
   }
   pv[i] = vec4<f32>(v, vt.w);
@@ -256,7 +267,7 @@ fn predict(@builtin(global_invocation_id) id: vec3<u32>) {
 @compute @workgroup_size(64)
 fn region(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = id.x;
-  if (i >= PU.c.x || !alive(i)) { return; }
+  if (i >= PU.c.x || !alive(i) || sleeping(i)) { return; }
   let info = infoOf(i);
   let b = PB[(info >> 8u) & 0xffu];
   let l = latOf(i, b);
@@ -315,7 +326,7 @@ fn region(@builtin(global_invocation_id) id: vec3<u32>) {
 @compute @workgroup_size(64)
 fn gather(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = id.x;
-  if (i >= PU.c.x || !alive(i)) { return; }
+  if (i >= PU.c.x || !alive(i) || sleeping(i)) { return; }
   let x = px[2u * i];
   if (x.w <= 0.0) { return; }
   let info = infoOf(i);
@@ -386,7 +397,7 @@ fn wakeable(m: u32) -> bool { return m == 5u || m == 11u || m == 7u || m == 20u 
 @compute @workgroup_size(64)
 fn collide(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = id.x;
-  if (i >= PU.c.x || !alive(i)) { return; }
+  if (i >= PU.c.x || !alive(i) || sleeping(i)) { return; }
   let x0 = px[2u * i];
   let info = infoOf(i);
   let m = info & 0xffu;
@@ -534,7 +545,7 @@ fn collide(@builtin(global_invocation_id) id: vec3<u32>) {
 @compute @workgroup_size(64)
 fn finalize(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = id.x;
-  if (i >= PU.c.x || !alive(i)) { return; }
+  if (i >= PU.c.x || !alive(i) || sleeping(i)) { return; }
   let x = px[2u * i];
   let prev = px[2u * i + 1u];
   let info = infoOf(i);
@@ -604,7 +615,6 @@ fn finalize(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   v *= 1.0 - G.tune.voxelsAirDrag * h;
   let sp = length(v);
-  if (sp > G.tune.voxelsVmax) { v *= G.tune.voxelsVmax / sp; }
   pv[i] = vec4<f32>(v, prev.w);
   if (x.z < -20.0) {
     px[2u * i] = vec4<f32>(x.xyz, PV_DEAD);
@@ -654,7 +664,7 @@ fn finalize(@builtin(global_invocation_id) id: vec3<u32>) {
 @compute @workgroup_size(64)
 fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = id.x;
-  if (i >= PU.c.x || !alive(i)) { return; }
+  if (i >= PU.c.x || !alive(i) || sleeping(i)) { return; }
   let x = px[2u * i];
   let t = px[2u * i + 1u].w;
   let info = infoOf(i);
@@ -766,8 +776,9 @@ fn split(@builtin(global_invocation_id) id: vec3<u32>) {
   let info = infoOf(i);
   let code = select(sizeCodeOf(info), 16u, sizeCodeOf(info) == 0u);
   let cc = code / 2u;
-  // a fragment, or too small to halve: it goes to dust (deaths)
-  if (bodyOf(info) == FRAG_BODY || cc < FRAG_MIN_CODE) { return; }
+  // a fragment, or too small to halve: it goes to dust (deaths). (Round 120, the user: "The lattice still switches to
+  // voxels" — a voxel of a body its mesh draws goes to dust too: its pieces would be drawn as cubes)
+  if (bodyOf(info) == FRAG_BODY || cc < FRAG_MIN_CODE || ((info >> 22u) & 1u) != 0u) { return; }
   let m = info & 0xffu;
   let cs = f32(cc) / 16.0;
   let q = pq[i];
@@ -903,25 +914,10 @@ fn prep(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
         if (j < 0 || !alive(u32(j))) { show = true; }
       }
     }
-    // (a body a mesh draws: its voxels are only what the world feels, round 49
-    // — but one that has lost a face neighbour it had shows where the mesh
-    // tore, so a break shows what's inside)
+    // (a body a mesh draws: its voxels are only what the world feels, round 49 — never drawn, round 120 (the user:
+    // "The lattice still switches to voxels"): a break shows as the mesh tearing, its cut behind the dust)
     let info = infoOf(i);
-    if (((info >> 22u) & 1u) != 0u) {
-      let b = PB[bodyOf(info)];
-      let l = latOf(i, b);
-      // (gone, or the crack has opened: a snapped bond whose two sides still
-      // touch is hidden under the mesh, which bends across it)
-      var lost = false;
-      let gap = 1.25 * sizeOf(info);
-      for (var f = 0u; f < 6u; f++) {
-        if (((info >> (23u + f)) & 1u) == 0u) { continue; }
-        let j = latIdx(l + n26(FACES[f]), b);
-        if (j < 0 || !alive(u32(j))) { lost = true; continue; }
-        if ((bonds & (1u << FACES[f])) == 0u && length(px[2u * u32(j)].xyz - xc) > gap) { lost = true; }
-      }
-      show = lost;
-    }
+    if (((info >> 22u) & 1u) != 0u) { show = false; }
   }
   let off = atomicAdd(&wgN, select(0u, 1u, show));
   workgroupBarrier();

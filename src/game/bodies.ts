@@ -11,7 +11,7 @@
 
 import type { Voxel, WorldVox } from './fracture';
 import { MATERIALS, MatState } from '../world/materials';
-import { TUNE } from '../tune/params';
+import { TUNE, worldG } from '../tune/params';
 
 type V3 = [number, number, number];
 type Q = [number, number, number, number]; // x, y, z, w
@@ -366,7 +366,8 @@ export class Bodies {
   }
 
   private step(b: Body, h: number): void {
-    b.vz = Math.max(-P.maxV, (b.vz - TUNE.world.gravity * P.gravity * h) * Math.exp(-P.airDrag * h));
+    // (solver step 1: the world's gravity, AR9; no top speed, AR10 — it was capped at 4 cells/s)
+    b.vz = (b.vz - worldG() * P.gravity * h) * Math.exp(-P.airDrag * h);
     // what it rests on: the deepest overlap among its points
     let deep = -1;
     for (const pl of b.points) {

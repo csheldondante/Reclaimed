@@ -21,8 +21,8 @@ const MAX_CYCLONES: u32 = 4u;
 // kernels, live from the tuning panel. A kernel reads G.tune.<group><Key>; each default is the old constant.
 struct Tune {
   worldGravity: f32,
+  worldGravityX: f32,
   voxelsGravity: f32,
-  voxelsVmax: f32,
   voxelsAirDrag: f32,
   voxelsStepUp: f32,
   voxelsCrumbleDepth: f32,
@@ -67,10 +67,10 @@ struct Tune {
   dustShown: f32,
   debrisDrag: f32,
   debrisGravity: f32,
+  unitsGravity: f32,
   sprayDrops: f32,
   spraySplash: f32,
   sprayMist: f32,
-  pad50: f32,
   pad51: f32,
 };
 
@@ -258,7 +258,10 @@ const ROW_H: f32 = 0.8660254;
  *  the air by the world's own gravity reads it here: the flow model's streams (liquid.wgsl GF), their sheets
  *  (render.wgsl STREAM_G), the spray off them (particles.wgsl DROP_G).
  *  (Round 108, AR5: no longer a constant — G.tune.worldGravity, the tuning registry's world.gravity, its default
- *  world/scale.ts WORLD_G; the CPU's bodies read the same value, TUNE.world.gravity.) */
+ *  world/scale.ts WORLD_G; the CPU's bodies read the same value, TUNE.world.gravity.)
+ *  (Solver step 1, AR9: one world gravity — world.gravity × world.gravityX, the panel's "world gravity ×"; every mover
+ *  reads worldG(), times its own group's scale only where one is wanted. The CPU's is tune/params.ts worldG().) */
+fn worldG() -> f32 { return G.tune.worldGravity * G.tune.worldGravityX; }
 /** unit vector of each direction in the world plane */
 const DIRV = array<vec2<f32>, 6>(
   vec2<f32>(1.0, 0.0), vec2<f32>(-1.0, 0.0),

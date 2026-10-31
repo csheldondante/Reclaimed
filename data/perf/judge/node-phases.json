@@ -1,0 +1,55 @@
+{
+ "when": "2026-10-31T09:24:32.771Z",
+ "adapter": "intel / xe-lpg / D3D12 driver version 32.0.101.6104",
+ "note": "B gpu ms, min of 7, its kernel stopped before phase n (judge.wgsl): before 1 = build + adjacency only",
+ "out": {
+  "dome": {
+   "before 1": 0.983,
+   "before 2": 0.918,
+   "before 3": 2.097,
+   "before 4": 2.359,
+   "before 5": 3.801,
+   "before 6": 3.998,
+   "before 7": 2.687,
+   "before 8": 2.818,
+   "before 9": 4.063,
+   "all": 4.063
+  },
+  "shelf 3 thick, reach 16": {
+   "before 1": 1.049,
+   "before 2": 1.049,
+   "before 3": 2.621,
+   "before 4": 2.884,
+   "before 5": 2.949,
+   "before 6": 3.015,
+   "before 7": 2.753,
+   "before 8": 3.211,
+   "before 9": 3.277,
+   "all": 3.277
+  },
+  "cliff collapse (120 long, lip 4 × 20)": {
+   "before 1": 2.032,
+   "before 2": 2.032,
+   "before 3": 10.158,
+   "before 4": 10.289,
+   "before 5": 11.534,
+   "before 6": 11.665,
+   "before 7": 10.289,
+   "before 8": 15.073,
+   "before 9": 15.598,
+   "all": 14.746
+  },
+  "200 arms at once": {
+   "before 1": 5.898,
+   "before 2": 6.095,
+   "before 3": 10.355,
+   "before 4": 10.42,
+   "before 5": 13.042,
+   "before 6": 13.304,
+   "before 7": 11.665,
+   "before 8": 12.059,
+   "before 9": 15.139,
+   "all": 13.566
+  }
+ }
+}

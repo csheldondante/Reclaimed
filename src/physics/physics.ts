@@ -19,6 +19,7 @@ import type { VoxelModel } from '../world/models';
 import { qRotate, type Q, type V3 } from '../grids/structures';
 import { TICK_DT } from '../sim/simulation';
 import { bindSkin, latticeFor, type SkinMesh } from './mesh';
+import { TUNE } from '../tune/params';
 
 /** particles, all bodies together */
 export const PV_CAP = 1 << 17;
@@ -30,8 +31,11 @@ export const PV_CAP = 1 << 17;
 export const FRAG_CAP = 8192;
 const FRAG_BODY = 255;
 export const MAX_BODIES = FRAG_BODY;
+/** (the experiment's sleep) how long after a body woke fragments may still be about (ms: phys.wgsl fragLife's 6 s) */
+const G_FRAG_MS = 7000;
 const HASH_N = 262144;
 /** triangles of meshes drawn over bodies (phys.wgsl skin), all together */
+/** (round 120: the start — the room grows on demand to what the device's bindings hold: Physics.growSkin) */
 export const SKIN_TRIS = 16384;
 const SKIN_V_BYTES = 7 * 16;
 
@@ -190,6 +194,13 @@ export class Physics implements SimSystem {
   beam: Beam | null = null;
 
   private px: GPUBuffer;
+  /** (round 120) the particles' positions (2 vec4 each: xyz, w < 0 gone) and rotations — the rock mesh skins to them */
+  get positions(): GPUBuffer {
+    return this.px;
+  }
+  get rotations(): GPUBuffer {
+    return this.pq;
+  }
   private pv: GPUBuffer;
   private pr: GPUBuffer;
   private pq: GPUBuffer;
@@ -208,11 +219,23 @@ export class Physics implements SimSystem {
   private uni: GPUBuffer;
   private mats: GPUBuffer;
   private bodyTable: GPUBuffer;
+  /** (solver step 2, the experiment) the bodies asleep (phys.wgsl PS), and how long each has been settled (s) */
+  private sleepBuf: GPUBuffer;
+  private sleepBits = new Uint32Array(8);
+  private sleepDirty = false;
+  private stillFor = new Map<number, number>();
+  readonly asleep = new Set<number>();
   /** draw instances (render.wgsl vsBody) and their indirect args */
   readonly inst: GPUBuffer;
   readonly indirect: GPUBuffer;
   /** meshes over bodies, bent by them (render.wgsl vsSkin; Renderer.addMesh) and their draw args */
-  readonly skinOut: GPUBuffer;
+  skinOut: GPUBuffer;
+  /** (round 120) the skin buffers made again (grown): the renderer's draw of skinOut is to be made again */
+  onSkinBuffers?: () => void;
+  /** skin triangles there's room for now (grows: growSkin) */
+  private skinRoom = SKIN_TRIS;
+  private res: Record<number, GPUBuffer> = {};
+  private specs: Record<string, BindSpec> = {};
   readonly skinArgs: GPUBuffer;
   private skinSrc: GPUBuffer;
   private skinTris = 0;
@@ -253,11 +276,12 @@ export class Physics implements SimSystem {
     this.mats = world.buf('physMats', MAX_MATERIALS * 64, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     device.queue.writeBuffer(this.mats, 0, packPhysMats());
     this.bodyTable = world.buf('physBodies', 256 * 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    this.sleepBuf = world.buf('physSleep', 32, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     // the fragments' ring: a lattice of FRAG_CAP × 1 × 1 (they have no bonds)
     device.queue.writeBuffer(this.bodyTable, FRAG_BODY * 16, new Uint32Array([0, FRAG_CAP, 1, 1]));
     this.inst = world.buf('physInst', PV_CAP * 32, GPUBufferUsage.STORAGE);
-    this.indirect = world.buf('physIndirect', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
-    this.skinSrc = world.buf('physSkinSrc', SKIN_TRIS * 3 * SKIN_V_BYTES, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);
+    this.indirect = world.buf('physIndirect', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
+    this.skinSrc = world.buf('physSkinSrc', SKIN_TRIS * 3 * SKIN_V_BYTES, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
     this.skinOut = world.buf('physSkinOut', SKIN_TRIS * 3 * 32, GPUBufferUsage.STORAGE);
     this.skinArgs = world.buf('physSkinArgs', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
     device.queue.writeBuffer(this.skinArgs, 0, new Uint32Array([0, 1, 0, 0]));
@@ -273,7 +297,7 @@ export class Physics implements SimSystem {
     device.queue.writeBuffer(this.px, 0, empty);
 
     const parts = [commonWgsl, layersWgsl, materialsWgsl, physWgsl];
-    const base: BindSpec = { 0: 'uniform', 22: 'uniform', 23: 'uniform', 24: 'uniform' };
+    const base: BindSpec = { 0: 'uniform', 22: 'uniform', 23: 'uniform', 24: 'uniform', 36: 'uniform' };
     const res: Record<number, GPUBuffer> = {
       0: world.globals,
       1: world.chunks,
@@ -296,6 +320,7 @@ export class Physics implements SimSystem {
       22: this.uni,
       23: this.mats,
       24: this.bodyTable,
+      36: this.sleepBuf,
       25: this.touches,
       26: world.physCols,
       27: world.physPuff,
@@ -308,11 +333,13 @@ export class Physics implements SimSystem {
       34: this.pushBuf,
       35: this.bstat,
     };
+    this.res = res;
     const kernel = (entry: string, spec: BindSpec) => {
       const all = { ...base, ...spec };
       const k = makeCompute(device, `phys-${entry}`, parts, all, entry);
       const g = makeBindGroup(device, `phys-${entry}`, k.layout, Object.fromEntries(Object.keys(all).map((b) => [b, res[Number(b)]])));
       this.k[entry] = { k, g };
+      this.specs[entry] = all;
     };
     kernel('predict', { 3: 'rw', 4: 'rw', 5: 'rw', 33: 'uniform', 34: 'uniform' });
     kernel('stats', { 3: 'rw', 4: 'rw', 5: 'rw', 6: 'rw', 35: 'rw' });
@@ -446,7 +473,7 @@ export class Physics implements SimSystem {
   spawnMesh(mesh: SkinMesh, voxel: number, pos: V3, q: Q, vel: V3 = [0, 0, 0]): PhysBody | null {
     const lat = latticeFor(mesh, voxel);
     const { data, tris } = bindSkin(mesh, lat);
-    if (this.skinTris + tris > SKIN_TRIS) return null;
+    if (!this.growSkin(this.skinTris + tris)) return null;
     const m = lat.model;
     const [w, d] = m.size;
     const body = this.spawnLattice(
@@ -467,6 +494,63 @@ export class Physics implements SimSystem {
     body.skin = { mesh, first: this.skinTris, tris };
     this.skinTris += tris;
     return body;
+  }
+
+  /**
+   * (round 120: one mesh a body — the user: "a lot of things turn into lattices during falling") A mesh drawn over a
+   * body spawnLattice made hidden: bindSkinTo's records (vertex → its particles, indices within the body). False: no
+   * room for its triangles.
+   */
+  attachSkin(body: PhysBody, mesh: { data: Float32Array; tris: number }): boolean {
+    if (!this.growSkin(this.skinTris + mesh.tris)) return false;
+    const U = new Uint32Array(mesh.data.buffer);
+    for (let v = 0; v < mesh.tris * 3; v++) for (let k = 0; k < 4; k++) if (U[v * 28 + k] !== 0xffffffff) U[v * 28 + k] += body.offset;
+    this.device.queue.writeBuffer(this.skinSrc, this.skinTris * 3 * SKIN_V_BYTES, mesh.data);
+    body.skin = { mesh: { id: `lattice-${body.id}`, pos: new Float32Array(0), tris: new Uint32Array(0), mat: new Uint8Array(0) }, first: this.skinTris, tris: mesh.tris };
+    this.skinTris += mesh.tris;
+    return true;
+  }
+
+  /** room for this many more skin triangles */
+  hasSkinRoom(tris: number): boolean {
+    return this.skinTris + tris <= this.skinMost();
+  }
+
+  /** the most skin triangles one binding of the device holds (its source records are the bigger) */
+  private skinMost(): number {
+    const lim = this.device.limits;
+    return Math.floor(Math.min(lim.maxStorageBufferBindingSize, lim.maxBufferSize) / (3 * SKIN_V_BYTES));
+  }
+
+  /**
+   * (round 120, the user's rule: no GPU memory caps — use what the hardware holds, grown on demand) Room for `tris`
+   * skin triangles: the buffers doubled (the records so far copied over, the kernels bound again, the renderer told)
+   * up to what the device's bindings hold. False past that: the device can't hold it.
+   */
+  private growSkin(tris: number): boolean {
+    if (tris <= this.skinRoom) return true;
+    const most = this.skinMost();
+    if (tris > most) return false;
+    let room = this.skinRoom;
+    while (room < tris) room = Math.min(most, room * 2);
+    const src = this.world.buf('physSkinSrc', room * 3 * SKIN_V_BYTES, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
+    const out = this.world.buf('physSkinOut', room * 3 * 32, GPUBufferUsage.STORAGE);
+    if (this.skinTris) {
+      const enc = this.device.createCommandEncoder({ label: 'phys skin grow' });
+      enc.copyBufferToBuffer(this.skinSrc, 0, src, 0, this.skinTris * 3 * SKIN_V_BYTES);
+      this.device.queue.submit([enc.finish()]);
+    }
+    this.skinSrc.destroy();
+    this.skinOut.destroy();
+    this.skinSrc = src;
+    this.skinOut = out;
+    this.skinRoom = room;
+    this.res[30] = src;
+    this.res[31] = out;
+    for (const [entry, all] of Object.entries(this.specs))
+      if (30 in all || 31 in all) this.k[entry].g = makeBindGroup(this.device, `phys-${entry}`, this.k[entry].k.layout, Object.fromEntries(Object.keys(all).map((b) => [b, this.res[Number(b)]])));
+    this.onSkinBuffers?.();
+    return true;
   }
 
   /** Is there room for `bodies` more bodies of `voxels` lattice cells in all? */
@@ -597,6 +681,10 @@ export class Physics implements SimSystem {
     this.used = 0;
     this.skinTris = 0;
     this.states.clear();
+    this.asleep.clear();
+    this.stillFor.clear();
+    this.sleepBits.fill(0);
+    this.sleepDirty = true;
     this.ctl.fill(0, 0, FRAG_BODY * 20);
     this.ctlDirty = true;
     // (nothing left to draw: encode stops writing the draw args)
@@ -606,6 +694,12 @@ export class Physics implements SimSystem {
 
   /** The game's drives, impulses (this tick only) and pushes (this tick only) to the GPU. */
   private writeGame(): void {
+    // (the game acting on anything wakes everything: cheap, and rare)
+    if ((this.ctlDirty || this.pushes.length || this.blasts.length || this.beam) && this.asleep.size) this.wakeAll();
+    if (this.sleepDirty) {
+      this.device.queue.writeBuffer(this.sleepBuf, 0, this.sleepBits);
+      this.sleepDirty = false;
+    }
     if (this.ctlDirty) {
       this.device.queue.writeBuffer(this.ctlBuf, 0, this.ctl);
       this.ctlDirty = false;
@@ -655,6 +749,71 @@ export class Physics implements SimSystem {
         tick,
       });
     }
+    this.updateSleep(tick);
+  }
+
+  /**
+   * (solver step 2, the experiment: a lattice that never sleeps isn't a fair comparison, and the design says settled
+   * bodies sleep) A body slower than the rigid rock's rest speed for its rest time sleeps; it wakes when the game acts
+   * on anything (a drive, an impulse, a push, a blast, the beam), when an awake body comes near it, or when the ground
+   * near it is cut (wakeNear).
+   */
+  private lastSleepTick = -1;
+  private updateSleep(tick: number): void {
+    const dt = this.lastSleepTick < 0 ? 0 : (tick - this.lastSleepTick) * TICK_DT;
+    this.lastSleepTick = tick;
+    const R = TUNE.rigid;
+    const moving: { pos: V3; r: number }[] = [];
+    for (const b of this.bodies) {
+      const st = this.states.get(b.id);
+      if (!st || this.asleep.has(b.id)) continue;
+      const sp = Math.hypot(...st.vel);
+      if (sp < R.restV) this.stillFor.set(b.id, (this.stillFor.get(b.id) ?? 0) + dt);
+      else this.stillFor.set(b.id, 0);
+      // (what wakes a neighbour: really moving, a cell a second — a settling jiggle doesn't)
+      if (sp > 1) moving.push({ pos: st.pos, r: this.radiusOf(b) });
+      if ((this.stillFor.get(b.id) ?? 0) > R.restT) this.setAsleep(b.id, true);
+    }
+    // (an awake body near a sleeper wakes it)
+    for (const m of moving)
+      for (const b of this.bodies) {
+        if (!this.asleep.has(b.id)) continue;
+        const st = this.states.get(b.id);
+        if (st && Math.hypot(st.pos[0] - m.pos[0], st.pos[1] - m.pos[1], st.pos[2] - m.pos[2]) < m.r + this.radiusOf(b) + 0.5) this.setAsleep(b.id, false);
+      }
+  }
+
+  private radiusOf(b: PhysBody): number {
+    return 0.5 * Math.hypot(b.dims[0], b.dims[1], b.dims[2]) * b.size;
+  }
+
+  /** when a body last woke (ms): fragments may fly a while after */
+  private wokeAt = 0;
+  private setAsleep(id: number, on: boolean): void {
+    if (on === this.asleep.has(id)) return;
+    if (on) this.asleep.add(id);
+    else {
+      this.asleep.delete(id);
+      this.stillFor.set(id, 0);
+      this.wokeAt = performance.now();
+    }
+    const w = id >> 5;
+    this.sleepBits[w] = on ? (this.sleepBits[w] | (1 << (id & 31))) >>> 0 : (this.sleepBits[w] & ~(1 << (id & 31))) >>> 0;
+    this.sleepDirty = true;
+  }
+
+  /** every body awake (the game acted) */
+  wakeAll(): void {
+    for (const id of [...this.asleep]) this.setAsleep(id, false);
+  }
+
+  /** the bodies within r of world (x, y) (any height) woken: the ground there was cut */
+  wakeNear(x: number, y: number, r: number): void {
+    for (const b of this.bodies) {
+      if (!this.asleep.has(b.id)) continue;
+      const st = this.states.get(b.id);
+      if (st && Math.hypot(st.pos[0] - x, st.pos[1] - y) < r + this.radiusOf(b)) this.setAsleep(b.id, false);
+    }
   }
 
   private writeUniforms(tick: number): void {
@@ -682,6 +841,7 @@ export class Physics implements SimSystem {
     // the columns the voxels cover, refilled by prep (once more after the last body goes)
     if (this.used || this.colsLive) {
       enc.clearBuffer(this.world.physCols);
+      this.world.physColsTick = tick;
       enc.clearBuffer(this.world.physPuff);
     }
     this.colsLive = this.used > 0;
@@ -700,7 +860,10 @@ export class Physics implements SimSystem {
       else pass.dispatchWorkgroups(groups[0], groups[1]);
       this.prof.dispatches++;
     };
-    for (let s = 0; s < this.substeps; s++) {
+    // (every body asleep, no fragment flying since the last one woke: the solve is skipped whole — its dispatches and the
+    // hash's clears are most of the lattice's fixed cost)
+    const allAsleep = this.bodies.length > 0 && this.asleep.size === this.bodies.length && performance.now() - this.wokeAt > G_FRAG_MS;
+    for (let s = 0; s < (allAsleep ? 0 : this.substeps); s++) {
       run('predict');
       for (let it = 0; it < this.iterations; it++) {
         run('region');

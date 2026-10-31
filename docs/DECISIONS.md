@@ -124,7 +124,48 @@ each was implemented.
   CPU ms, bodies, scaling 10/50/200, the phone proxy) and a correctness battery (arch, dome, overhangs, spire, pylon,
   wood tower, mesa, burial).
 
-- The user, verbatim, on judge B's 8-20 ms GPU per pass on the atlas: "Wait what is the cost there? I'm trying to understand that 8-20ms GPU time", "What is that step?" (a ring of hanging runs at one flood distance from what holds them; one pass each, ~0.1 ms mostly overhead; caves make 80-200 rings) and "Yes please implement options 1  and 2"
+  (2) pointer jumping, few sequential passes): "Yes please implement options 1 and 2", then "I'm also ok with the
+  other options but I think we should prioritize the the pointer jumping and parallelization and culling to only a
+  local neighborhood is also good. Since the support from more distant points drops off with distance a reasonable
+  cutoff is to take the deepest point in the suspended group (via JFA to supports) and cut off anything further than
+  1.5x that distance. A cave might be only 20 cells across right? So that would mean checking anything within a 30x30
+  window which should be trivially fast and maybe not even need the pointer jumping", and "If pointer jumping works
+  but is less accurate it could still make sense for large caverns as a fallback for culling alone"
+  → (branch judge, round 120b) every level's sections at once on the whole GPU (union-find on (run, level) pairs):
+  exact, so no less-accurate fallback is needed; culling to the pieces a cut touched (exact: a piece's verdict never
+  depends on another piece), reported with the box the judged runs span. DEVLOG round 120b has the numbers.
+- The user, verbatim, on SV1 (an arch's keystone cut out: do the halves fall?): "Follow the material"
+  → Judge B's tensile strength comes from the material (materials.ts `bond`, a slider a group in the "Judge B"
+  panel): natural stone (bedrock, stone, sandstone, basalt, the other rocks) keeps it — the halves stand as corbels,
+  as a natural arch's stubs do; built masonry (brick, tile, plaster) has none (Heyman's no-tension assumption) — the
+  halves fall. Both fall with a foot cut.
+- The user, verbatim, after trying the solver variants in the lab: "I think the rock collapse looks better. I can't tell with deformation. Can you modify the tanker physics to use it or make a drop things tool that does? One bug I do notice is the mesh changes appearance and sometimes turns into blocks during falling."
+  → The node solver's rock collapse is the better one. Deformation is judged on things the user knows: the sandbox's drop
+  tool drops through the picked variant (?solver=old|nodes|lattice|hybrid) — the tanker, a car, a bus, a girder, the
+  pylon, a house — with a height control and "drop all" (the line-up side by side); the map's tankers and ruined cars
+  wake into the picked variant when struck (a body's hit, the beam, the break tool), and the metal station has the
+  line-up too. The falling mesh's change of look and pop to blocks is a bug: found at its root and fixed, with a test
+  that a falling body is drawn the same way from its break to its rest.
+- The user, verbatim, on the deployed lab (422a4b6/2f97d70): "The nodes looks way better for metal but it switches for rendering as voxels. Rendering and simulation should not be coupled that way. I noticed weird sliding in this build under all settings. rock towers fell then slid along flat ground quite far."
+  → One mesh a body, skinned to its nodes by vertex weights in every state (awake, falling, broken, asleep, buried) and
+  every variant; never its cells as voxels. Built once when it wakes, with a mesher that keeps metal's thin members;
+  a break splits its triangles by their node weights, the cuts capped behind dust. The sliding is a bug shared by every
+  variant: found at its root, with Node tests (a toppled tower rests within about its height; a block sliding at v on
+  stone stops within v²/(2μg)). The user looked only at the defaults (nodes × runs) and liked the rock collapse: the
+  solver and judge pickers go on an always-visible chip.
+- The user, verbatim, on 6aef66e: "I think you hybrid approach looks fine actually but I notice a lot of things turn into lattices during falling. Is the tanker physics applied to just the regular tanker or do I have to do something? Consider making a physics benchmark for the phone that can drop things and topple towers. One other thing but dropping the tanker in a stone does not trigger breaking and it probably should. Also, the tower toppling does not wake up the tanker in top of it so the tanker floats until touched. Consider a telikinetic drag tool to test swinging tankers and rocks into things."
+  → In order: a sleeper whose support goes wakes on its own (the lattice's sleepers woke only for their own kind
+  moving); a hard blow breaks whichever is weaker by energy (hard ground gives where struck; metal dents); the one-mesh
+  decoupling in every variant, the voxel lattice included (its bodies drawn as their own meshes over their particles);
+  a telekinetic drag tool (grab and swing, phone first, a thumb's reach); a phone physics bench (?physbench=1: the
+  line-up, towers, the mesa, a swung tanker, every solver × judge; a card and a JSON). The map's tankers and cars wake
+  into the picked variant when struck — nothing to do.
+- The user, verbatim, on soft ground: "Also, when bodies hit the ground with heavy impacts in soft material like sand or dirt they should displace material and dampen energy that way. I would just cheat and have the intersection with softer materials turn them into particles but I really want it to push into the ground a bit to look like it is in soft material."
+  → "Erode, don't push" with the ground as the softer body: each loose material a softness; a body sinks into soft
+  ground by its softness and the blow's energy and ends visibly embedded; the cells it sinks into leave the columns,
+  part as a spray of particles, the rest a rim round it (mass kept); the energy spent by the displaced mass (drag, no
+  bounce); stone as today. Next after the above.
+
   → judge B: (1) each level spread over many workgroups; (2) log-depth passes (pointer jumping) instead of one a level,
   verdicts kept equal to the level-by-level oracle. Target about 1 ms on the atlas.
 
@@ -150,7 +191,6 @@ each was implemented.
   → solver and judge merged into places on branch merge121 with lattice x runs as the default, then JB6 (no CPU readback
   on the hot path; judge A's CPU work maybe in a Web Worker) on branch jb6. The user's design document "Living World —
   Effects, Rituals, and Run Structures" (v3) is kept verbatim at docs/design/LIVING_WORLD_v3.md, for discussion.
-
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:

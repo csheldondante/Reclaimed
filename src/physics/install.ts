@@ -31,6 +31,11 @@ export function installPhysics(core: WorldCore, opts: { wakeOnTouch?: boolean } 
   // (and the projection every column: its voxels over them change every tick)
   sim.project.wholeWhile.push(() => physics.used > 0);
   renderer.addMesh(physics.skinOut, physics.skinArgs);
+  // (round 120: its skin's room grows on demand — the draw made again on the new buffer)
+  physics.onSkinBuffers = () => {
+    renderer.removeMesh(physics.skinArgs);
+    renderer.addMesh(physics.skinOut, physics.skinArgs);
+  };
   const lava = new LavaSystem(host.gpu.device, core.world, host.profiler);
   sim.systems.splice(sim.systems.indexOf(physics), 0, lava);
   renderer.addPrisms(lava.inst, lava.indirect);

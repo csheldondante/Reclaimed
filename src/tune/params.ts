@@ -13,6 +13,7 @@ const SPEC = {
     owner: 'everything falling through the air by the world\'s gravity (common.wgsl; liquid.wgsl, particles.wgsl, render.wgsl, the CPU bodies)',
     params: {
       gravity: { label: 'gravity', units: 'cells/s²', min: 1, max: 30, step: 0.1, def: WORLD_G, gpu: true, help: 'a cell a metre (DECISIONS rounds 106, 108): the falls, their spray and sheets, the rigid rock and the falling pieces' },
+      gravityX: { label: 'world gravity ×', units: '× gravity', min: 0.25, max: 4, step: 0.05, def: 1, gpu: true, url: 'gx', help: '(solver step 1, AR9) every mover\'s gravity times this: bodies, pieces, metal, water\'s falls, spray, chips, agents. 1: true gravity at a metre a cell; about 2: the old tankers\' feel (they ran at 20 cells/s²)' },
     },
   },
   rigid: {
@@ -30,7 +31,6 @@ const SPEC = {
       crumble: { label: 'crumble ×', units: '×', min: 0.5, max: 3, step: 0.1, def: 1.4, url: 'rbcrumble', help: 'the radius that crumbles round a hard hit, and the pieces it breaks into' },
       scatter: { label: 'scatter', units: 'share', min: 0, max: 1, step: 0.05, def: 0.2, url: 'rbscatter', help: 'pieces of a break thrown apart at this share of the impact speed' },
       tipSpin: { label: 'tip spin', units: 'rad/s', min: 0, max: 3, step: 0.05, def: 0.5, url: 'rbspin', help: 'a tipping piece\'s start about the edge it tips over' },
-      maxV: { label: 'top speed', units: 'cells/s', min: 2, max: 60, step: 1, def: 14, url: 'rbmaxv' },
       slop: { label: 'contact slop', units: 'cells', min: 0, max: 0.3, step: 0.01, def: 0.03, help: 'overlap allowed before a contact pushes back (soft contacts)' },
       slopK: { label: 'overlap k', units: 'cells', min: 0, max: 0.3, step: 0.005, def: 0.065, url: 'rbslopk', help: '(round 110) more overlap allowed with mass: k · mass^p (cells; mass in cells of rock) — a big rock meets the ground only once it visibly cuts into it. A pair: the lighter one\'s (the ground is the heaviest)' },
       slopP: { label: 'overlap p', units: 'exp', min: 0, max: 1, step: 0.05, def: 0.35, url: 'rbslopp', help: '(round 110) mass^p: 1/3 grows with its size, 0 the same for all' },
@@ -46,7 +46,7 @@ const SPEC = {
       neckStrength: { label: 'neck strength', units: 'cells/s', min: 1, max: 300, step: 1, def: 70, help: '(round 112) a thin section snaps when (the mass beyond it) x (the impact speed) / (its cross-section) passes this x strength' },
       neckDepth: { label: 'neck depth', units: 'cells', min: 1, max: 8, step: 1, def: 3, help: '(round 112) the thickest a neck is looked for: its half-thickness in lattice steps from the surface' },
       neckMin: { label: 'neck side', units: 'cells', min: 4, max: 200, step: 1, def: 12, help: '(round 112) the least a side of a neck must weigh to snap off on its own' },
-      maxBodies: { label: 'max bodies', units: 'bodies', min: 1, max: 60, step: 1, def: 10, url: 'rbmax', help: 'at once (the phone); past it the oldest settles into the columns' },
+      maxBodies: { label: 'max bodies', units: 'bodies', min: 1, max: 200, step: 1, def: 50, url: 'rbmax', help: 'at once (the phone); past it the oldest settles into the columns' },
       cubes: { label: 'show cubes', units: '0/1', min: 0, max: 1, step: 1, def: 0, url: 'rbcubes', help: 'debug: the cubes the bodies are simulated with drawn too' },
     },
   },
@@ -55,7 +55,6 @@ const SPEC = {
     owner: 'game/colbodies.ts and game/bodies.ts (CPU, the pieces the structure check frees without rigid rock)',
     params: {
       gravity: { label: 'gravity ×', units: '× world', min: 0.2, max: 4, step: 0.05, def: 1, help: 'times the world\'s gravity (was a 10 cells/s² of its own)' },
-      maxV: { label: 'top speed', units: 'cells/s', min: 1, max: 40, step: 0.5, def: 4, help: 'the cap a falling piece reaches (4: why they look floaty)' },
       airDrag: { label: 'air drag', units: '1/s', min: 0, max: 2, step: 0.05, def: 0.35 },
       landing: { label: 'landing', units: 'share', min: 0, max: 1, step: 0.05, def: 0.6, help: 'share of the falling speed a contact takes away a substep (bodies.ts)' },
       slop: { label: 'sink', units: 'cells', min: 0, max: 0.5, step: 0.01, def: 0.15, help: 'overlap a landing piece sinks before it stops (bodies.ts)' },
@@ -68,6 +67,9 @@ const SPEC = {
       breakSpeed: { label: 'break speed', units: 'cells/s', min: 0.2, max: 10, step: 0.1, def: 1.2, help: 'a piece hitting this fast or more shatters' },
       shatter: { label: 'shatter', units: 'voxels·cells²/s²', min: 50, max: 5000, step: 50, def: 700, help: 'pieces ≈ weakness · speed² · voxels / this' },
       crumb: { label: 'crumbs', units: 'voxels', min: 1, max: 100, step: 1, def: 16, help: 'pieces this small crumble to loose ground' },
+      softSink: { label: 'soft ground sink', units: 'k', min: 0, max: 0.5, step: 0.01, def: 0.08, help: '(round 120) how far a blow sinks a body into loose ground: k · softness · ∛(½mv²) over the side of its footprint (cells, at most 3)' },
+      spray: { label: 'soft ground spray', units: 'share', min: 0, max: 1, step: 0.05, def: 0.3, help: '(round 120) of the ground a body sinks into, the share thrown up as a spray; the rest is a rim round it' },
+      groundEnergy: { label: 'ground gives at', units: '½mv²', min: 1000, max: 400000, step: 1000, def: 15000, help: '(round 120) a body striking hard ground with more energy than this crumbles it where it struck: a ball of radius 0.8·∛(E / this), at most 3' },
     },
   },
   fracture: {
@@ -91,8 +93,7 @@ const SPEC = {
     title: 'Physics voxels (metal)',
     owner: 'physics/physics.ts + phys.wgsl (GPU: what bends — metal woken into bonded voxels)',
     params: {
-      gravity: { label: 'gravity', units: 'cells/s²', min: 1, max: 40, step: 0.5, def: 20, gpu: true, help: 'its own (2× the world\'s: a conflation to settle)' },
-      vmax: { label: 'top speed', units: 'cells/s', min: 5, max: 120, step: 1, def: 60, gpu: true },
+      gravity: { label: 'gravity ×', units: '× world', min: 0.2, max: 4, step: 0.05, def: 1, gpu: true, help: '(solver step 1, AR9) times the world\'s gravity: it had its own 20 cells/s², about 2× (try world gravity × 2 for that feel). No top speed any more (AR10: it was capped at 60)' },
       airDrag: { label: 'air drag', units: '1/s', min: 0, max: 2, step: 0.01, def: 0.05, gpu: true },
       stepUp: { label: 'step up', units: 'cells', min: 0, max: 1.5, step: 0.05, def: 0.45, gpu: true, help: 'a ledge this high is climbed, not a wall' },
       crumbleDepth: { label: 'crumble depth', units: 'cells', min: 0.1, max: 1.5, step: 0.05, def: 0.6, gpu: true, help: 'into solid ground this far, a voxel crumbles (erode, not push)' },
@@ -184,7 +185,41 @@ const SPEC = {
     owner: 'particles.wgsl (GPU)',
     params: {
       drag: { label: 'drag', units: '1/s', min: 0, max: 3, step: 0.05, def: 0.3, gpu: true },
-      gravity: { label: 'gravity', units: 'cells/s²', min: 1, max: 40, step: 0.5, def: 14, gpu: true, help: 'its own (not the world\'s: a conflation to settle)' },
+      gravity: { label: 'gravity ×', units: '× world', min: 0.2, max: 4, step: 0.05, def: 1.45, gpu: true, help: '(solver step 1, AR9) times the world\'s gravity: it had its own 14 cells/s² (1.45 keeps that look at world × 1)' },
+    },
+  },
+  solver: {
+    title: 'Node solver',
+    owner: 'solver/solver.ts + solver.wgsl (GPU: the one solver for what breaks free — rock, buildings, metal, wood; its contact rules are the rigid group\'s: slop, overlap k/p/cap, push-out speed, erode depth, rest)',
+    params: {
+      substeps: { label: 'substeps', units: 'a tick', min: 1, max: 12, step: 1, def: 4, help: 'steps a tick (60 Hz): more is stiffer and steadier, and costs' },
+      iterations: { label: 'iterations', units: 'a substep', min: 1, max: 12, step: 1, def: 2, help: 'contact and shape passes a substep' },
+      wakeImpulse: { label: 'wake impulse', units: 'cells·cells/s', min: 0, max: 500, step: 5, def: 30, help: 'a sleeping body is woken by a hit of (approach speed × the hitter\'s cells) past this — never by contact alone' },
+      nodeRadius: { label: 'node block ×', units: '× block', min: 0.5, max: 1.5, step: 0.05, def: 1, help: 'another body feels a body as the blocks of cells its nodes stand for, this much larger (1: the cells it was made of)' },
+      friction: { label: 'friction ×', units: '×', min: 0, max: 3, step: 0.05, def: 1, help: 'times each material\'s friction' },
+      blowG: { label: 'blow load', units: 'g', min: 1, max: 100, step: 0.5, def: 8, help: 'the most a blow loads a node, in its weights (a contact stops it within a substep — perfectly stiff — so its force would be without bound; a real blow is spread over the give where it lands). Higher: impacts bend and snap metal more' },
+      steelE: { label: 'steel E', units: 'stress/strain', min: 1e5, max: 1e9, step: 1e5, def: 1.6e8, help: 'only with a frame under 1 (soft): stress = E × the bonds\' strain' },
+      steelYield: { label: 'steel yield', units: 'mass/(cell·s²)', min: 1e3, max: 2e6, step: 1e3, def: 2e5, help: 'the bend a bond carries (moment / section, s³/6) past which it turns as a hinge and stays bent. 2e5: a 1-cell steel bar 30 cells long cantilevered just holds; a 2 × 2 one holds 60' },
+      steelTensile: { label: 'steel strength', units: 'mass/(cell·s²)', min: 1e3, max: 4e6, step: 1e3, def: 4e5, help: 'a bond pulled or bent past this snaps (the load through it from what it holds and what hits it)' },
+      steelShear: { label: 'steel shear', units: 'mass/(cell·s²)', min: 1e3, max: 4e6, step: 1e3, def: 2.5e5, help: 'a bond sheared past this (force across it over its section) snaps' },
+      steelStiffness: { label: 'steel stiffness', units: 'share/substep', min: 0.05, max: 1, step: 0.05, def: 0.6, help: 'how far toward its rest shape a substep (1 rigid)' },
+      steelFrame: { label: 'steel frame', units: 'share', min: 0, max: 1, step: 0.05, def: 1, help: 'how much it holds its whole shape (the rest bends locally): high, a girder stays straight and dents where it\'s hit' },
+      steelDent: { label: 'steel dent', units: 'energy/cell³', min: 100, max: 100000, step: 100, def: 7000, help: 'a hit\'s kinetic energy over this × the contact\'s area is how deep it dents (at most half a node)' },
+      rustTensile: { label: 'rust strength', units: 'mass/(cell·s²)', min: 1e3, max: 4e6, step: 1e3, def: 1.5e5 },
+      woodE: { label: 'wood E', units: 'stress/strain', min: 1e5, max: 1e9, step: 1e5, def: 1e7 },
+      woodYield: { label: 'wood yield', units: 'mass/(cell·s²)', min: 1e2, max: 1e6, step: 1e2, def: 3e4 },
+      woodTensile: { label: 'wood strength', units: 'mass/(cell·s²)', min: 1e2, max: 1e6, step: 1e2, def: 6e4 },
+      woodShear: { label: 'wood shear', units: 'mass/(cell·s²)', min: 1e2, max: 1e6, step: 1e2, def: 1.5e4 },
+      woodFrame: { label: 'wood frame', units: 'share', min: 0, max: 1, step: 0.05, def: 1 },
+      woodDent: { label: 'wood dent', units: 'energy/cell³', min: 100, max: 100000, step: 100, def: 2500 },
+      woodStiffness: { label: 'wood stiffness', units: 'share/substep', min: 0.05, max: 1, step: 0.05, def: 0.7 },
+    },
+  },
+  units: {
+    title: 'Agents falling',
+    owner: 'units.wgsl and agents/agents.ts (GPU agents tumbling, thrown, knocked back)',
+    params: {
+      gravity: { label: 'gravity ×', units: '× world', min: 0.2, max: 4, step: 0.05, def: 2.05, gpu: true, help: '(solver step 1, AR9) times the world\'s gravity: they had their own 20 cells/s² (2.05 keeps that at world × 1; agents\' feel is their own track)' },
     },
   },
   spray: {
@@ -206,11 +241,39 @@ const SPEC = {
       chipSpeed: { label: 'chip speed', units: 'cells/s', min: 0, max: 12, step: 0.25, def: 3, help: 'chips of a soft landing (a hard one throws them at its own speed)' },
     },
   },
+  judgeB: {
+    title: 'Judge B (method of sections, ?judge=sections)',
+    owner: 'game/judge.ts + shaders/judge.wgsl (GPU: what lets go, section by section; a cell a metre)',
+    params: {
+      tensile: { label: 'tensile', units: 'MPa', min: 0.1, max: 30, step: 0.1, def: 4, url: 'jbtensile', help: 'what a section takes in bending, × the material\'s strength (intact limestone or sandstone ~4)' },
+      shear: { label: 'shear', units: 'MPa', min: 0.1, max: 60, step: 0.1, def: 8, url: 'jbshear', help: 'what a section takes in shear (rock\'s cohesion, ~2 × its tensile)' },
+      crush: { label: 'crush', units: 'MPa', min: 1, max: 300, step: 1, def: 60, url: 'jbcrush', help: 'what a leg or an arch\'s crown takes in compression' },
+      density: { label: 'rock density', units: 'kg/m³', min: 1000, max: 4000, step: 50, def: 2600, help: 'a material of density 1 (materials.ts) weighs this' },
+      meet: { label: 'meet', units: 'share', min: 0.05, max: 0.9, step: 0.05, def: 0.35, help: 'a section whose faces\' normals sum to under this share of its area is held from opposite sides: an arch' },
+      archTol: { label: 'arch give', units: 'cells', min: 0, max: 2, step: 0.05, def: 0.5, help: 'how far past a run the thrust line may pass (the columns\' cells are whole)' },
+      tipGive: { label: 'tip give', units: 'cells', min: 0, max: 2, step: 0.05, def: 0, help: 'how far a centre of mass may lie past the hull of the leg under it' },
+      neck: { label: 'neck reach', units: 'columns', min: 2, max: 64, step: 1, def: 16, help: 'past this through standing columns from a piece, it is keyed into the land' },
+      pairsDepth: { label: 'pairs from depth', units: 'levels', min: 1, max: 64, step: 1, def: 10, help: 'a judged piece this many levels deep or more: every level at once on the whole GPU (the pairs); shallower, a pass a level in one workgroup (cheaper for few levels; both exact)' },
+      tRock: { label: 'tension: rock', units: '× tensile', min: 0, max: 2, step: 0.05, def: 1, help: 'natural stone (materials.ts bond rock): keeps its tensile strength — a natural arch\'s halves stand' },
+      tMasonry: { label: 'tension: masonry', units: '× tensile', min: 0, max: 2, step: 0.05, def: 0, help: 'brick, tile, plaster (bond masonry): blocks, no tension (Heyman) — an arch without its keystone falls' },
+      tCast: { label: 'tension: cast', units: '× tensile', min: 0, max: 2, step: 0.05, def: 1, help: 'concrete, asphalt (bond cast)' },
+      tMetal: { label: 'tension: metal', units: '× tensile', min: 0, max: 5, step: 0.05, def: 1, help: 'steel, rust (bond metal)' },
+      tOther: { label: 'tension: other', units: '× tensile', min: 0, max: 2, step: 0.05, def: 1, help: 'every other solid (bond other)' },
+      margin: { label: 'window margin', units: 'columns', min: 8, max: 96, step: 1, def: 32, help: 'the judged window: the seeds\' box and this much round it (a piece reaching its side is held there)' },
+    },
+  },
 } satisfies Record<string, GroupSpec>;
 
 export const TUNING = new Registry(SPEC);
 /** the live values: `TUNE.rigid.friction` (a system reads its own group only) */
 export const TUNE = TUNING.values;
+/**
+ * (solver step 1, BACKLOG AR9) The world's gravity, cells/s²: world.gravity × world.gravityX. Every mover reads this,
+ * times its own group's `gravity` scale only where one is wanted. common.wgsl `worldG()` is the same on the GPU.
+ */
+export function worldG(): number {
+  return TUNE.world.gravity * TUNE.world.gravityX;
+}
 TUNING.checkWgsl(commonWgsl);
 
 // The page's address: ?tune=<string> (a preset's copyable string), and the older names (?rbgrav=, ?crush=, ?bear=sand:0.1)
