@@ -210,8 +210,9 @@ export class MenuScene implements Scene {
   }
   private hoverAt?: [number, number];
 
-  async init(): Promise<void> {
-    await this.core.warmup(30, (s) => MENU_SYSTEMS.has(s.name));
+  /** Settles the diorama; `progress` is told how far (0..1) for the loading screen. */
+  async init(progress?: (f: number) => void): Promise<void> {
+    await this.core.warmup(30, (s) => MENU_SYSTEMS.has(s.name), progress);
   }
 
   resize(renderW: number, renderH: number, cssW: number, cssH: number): void {
