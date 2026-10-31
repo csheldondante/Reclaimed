@@ -85,7 +85,7 @@ fn groundAt(p: vec2<f32>) -> f32 {
   if (!inMap(c)) { return 0.0; }
   // (the loose ground lies on the solid top — a dust skin, a drift — and a sleeping body's top is ground too:
   // as the particles' ground, particles.wgsl)
-  return max(sfZ(surface[colIdxI(c)]) + driftAt(c), bodyTopAt(c));
+  return groundZ(c, f32(sfZ(surface[colIdxI(c)])));
 }
 fn waterAt(p: vec2<f32>) -> f32 {
   let c = cellAt(p);

@@ -60,7 +60,7 @@ animals. Herds, predators that stalk." docs/INHABITANTS.md.
 | IN8 | Bodies for the GPU agents' units (settlers, raiders, GameplayGM's foes) from the same rig and mesh, reading the units buffer as a source; then retire units.wgsl's three-cube figure | M | open |
 | IN9 | Creatures that leave the window: kept as group records and put back when it returns (now they walk back in from the edge) | M | open |
 | IN10 | Caves and overhangs: creatures stand on the column's top only; read the agents' nav surfaces (or a shared "surfaces" contract) to walk under roofs | M | open |
-| IN11 | One `groundAt` (solid top + loose layer, or a sleeping body's top) in common.wgsl for every kernel that copies it (flagged) | S | open |
+| IN11 | One `groundAt` (solid top + loose layer, or a sleeping body's top) in common.wgsl for every kernel that copies it (flagged) — `groundZ(q, solid)` in common.wgsl, used by water_flux, lava_flux, sediment, particles, renderprep and inhabitants (merge120) | S | done (merge120) |
 | IN12 | Abilities as the effects library's calls when it lands (now: fire ignite + the lava beam + a wind blast through AbilityHost), and a breath's visible flame | M | deferred |
 | IN13 | The user's look: the scale with zoom (24 px a cell, up to 4x). The user: "Keep the creature small for now I want to add larger creatures but I want to improve the generator even more and talk through increasing the quality and adding composable creatures via items and mounts." → true size again (?lifescale= kept as a knob); footprint and contrast kept. Generator quality, items and mounts wait for a design session | S | done (inhabitants) |
 

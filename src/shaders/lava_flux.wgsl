@@ -23,7 +23,7 @@ const LAVA_RUNNY: f32 = 1150.0;
 const LAVA_THICK: f32 = 0.8;
 
 fn bedAt(q: vec2<i32>) -> f32 {
-  return max(f32(sfZ(surface[colIdxI(q)])) + driftAt(q), bodyTopAt(q));
+  return groundZ(q, f32(sfZ(surface[colIdxI(q)])));
 }
 
 @compute @workgroup_size(8, 8)

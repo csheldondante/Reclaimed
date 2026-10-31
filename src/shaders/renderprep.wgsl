@@ -287,7 +287,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     o += 1u;
   }
   // liquids lie on top of drifted dust (it sinks; round 13)
-  let bed = max(top + driftAt(vec2<i32>(id.xy)), bodyTopAt(vec2<i32>(id.xy)));
+  let bed = groundZ(vec2<i32>(id.xy), top);
   if (WATER_BOXES && d > WATER_MIN) {
     // no side wall where the coverSides sheet runs on into a wet neighbour, or
     // where the ground beside rises over the water: drawn, those walls stood
@@ -300,7 +300,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
       if (!inMap(q)) { continue; }
       let j = colIdxI(q);
       let nd = water[j];
-      let nb = max(sfZ(surface[j]) + driftAt(q), bodyTopAt(q));
+      let nb = groundZ(q, f32(sfZ(surface[j])));
       if ((nd > WATER_MIN && max(bed, nb) - min(lv, nb + nd) <= SHEET_STEP) || gt[k] >= lv) { hide |= 1u << k; }
     }
     var wi = mkInst(id.x, id.y, 1u, 1u, bed, lv, MAT_WATER, 0u);

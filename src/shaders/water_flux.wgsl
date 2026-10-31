@@ -40,7 +40,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let d = water[i];
   if (d <= 1e-5) { flux[i] = dZero(); return; }
   // (a body lying here is ground to the water: round 17)
-  let g = max(f32(sfZ(surface[i])) + driftAt(p), bodyTopAt(p));
+  let g = groundZ(p, f32(sfZ(surface[i])));
   let H = g + d + oil[i] * OIL_DENSITY;
   var f = flux[i];
   for (var k = 0u; k < NDIR; k++) {
@@ -48,7 +48,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     var Hn = max(g, G.ocean.x);
     if (inMap(q)) {
       let j = colIdxI(q);
-      Hn = max(f32(sfZ(surface[j])) + driftAt(q), bodyTopAt(q)) + water[j] + oil[j] * OIL_DENSITY;
+      Hn = groundZ(q, f32(sfZ(surface[j]))) + water[j] + oil[j] * OIL_DENSITY;
     }
     f[k] = select(max(0.0, f[k] * G.tune.pipesFriction + G.tune.pipesGain * (H - Hn)), max(0.0, G.tune.pipesGain / (1.0 - G.tune.pipesFriction) * (H - Hn)), seed);
   }

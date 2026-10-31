@@ -14362,3 +14362,27 @@ The flora is now within noise of the boxes: draw ±0.2, the shadow 0.2 cheaper, 
 /?skipmenu=1&level=atlas&tutorial=0&at=13728,4768&florabench=1
 
 Shots: C:\Projects\shots88\flora\m11-compare.png (phone before, after, and the lake at zoom 8).
+
+## 2026-10-31 — round 120 (`merge120`): rivers, cities, animals and trees merged; one ground function
+
+The user (round 120, verbatim): "Rivers trees, cities and animals should all be merged by the way". `places` b7bd8f9
+took `terrain` d2c1384, `structures` 461b966, `inhabitants` f5fcada and `flora` 18c3bdb in that order (each branch's
+origin tip). Code conflicts were small: `api/contracts/index.ts` exports terrain, inhabitants and flora; `level.ts`'s
+frame updates the settlements' pieces, then the creatures; `vite.config.ts` builds every viewer page (main, contract,
+structures, flora) and hashes both new pages. The rest auto-merged: the renderer's structures (`enableStructures`, its
+own pipelines) and flora (the library through meshInst, `florafield`) don't share state; `render.wgsl` has terrain's
+`underCover` and the inhabitants' skin colour side by side. Docs kept both sides; BACKLOG is places' with each track's
+own section re-added (one `# Backlog`).
+
+Stand-ins kept (play isn't merged): terrain's `PassCaps` and flora's passage caps stay until play's ControllerProfile
+lands, when both read it.
+
+One ground function (IN11). Seven kernels spelled the ground a thing stands on as
+`max(solid + driftAt(q), bodyTopAt(q))` (water_flux twice, lava_flux, sediment, particles three times, renderprep
+twice, and the inhabitants' new copy). It is `groundZ(q, solid)` in common.wgsl now, each kernel passing its own solid
+top (its surface binding, or sediment's base) — common.wgsl can't read `surface` itself, since not every kernel binds
+it. phys.wgsl's `groundAt(c, z)` (the layers under a body's z) and renderprep's `groundTop` (the contiguous stack for
+hidden faces) are different questions and stay. Same expression, same results: npm test passes unchanged.
+
+Tests after each merge: terrain 111, + structures 152, + inhabitants 185, + flora 224 passed (1 expected fail, 2
+skipped). The gate's numbers follow below.
