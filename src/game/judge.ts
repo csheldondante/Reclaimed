@@ -63,6 +63,8 @@ export interface JudgeStats {
   deepest?: number;
   pairs?: number;
   judgedBox?: [number, number, number, number];
+  /** (B) the windows tried (JB13: grown when a seeded piece or its leg reached the side) */
+  windows?: number;
 }
 
 export interface RockJudge {
@@ -126,7 +128,7 @@ const NONE = 0xffffffff;
 /** the kinds judge.wgsl reports (K_*) */
 const KIND = ['free', 'shear', 'bend', 'arch', 'arch crush', 'tip', 'lean', 'crush'] as const;
 /** the kernels, in their order (the pairs' only in mode `pairs`) */
-const KERNELS = ['build', 'adjacency', 'pieces', 'pieceFlags', 'judge1', 'faces', 'pairsInit', 'pairsUnite', 'pairsFind', 'pairsSum', 'checks', 'marks', 'judge2', 'judge3', 'freedUnite', 'judge4'] as const;
+const KERNELS = ['build', 'adjacency', 'pieces', 'pieceFlags', 'seedList', 'judge1', 'faces', 'pairsInit', 'pairsUnite', 'pairsFind', 'pairsSum', 'checks', 'marks', 'judge2', 'judge3', 'freedUnite', 'judge4'] as const;
 type Kernel = (typeof KERNELS)[number];
 const PAIR_KERNELS = new Set<Kernel>(['pairsInit', 'pairsUnite', 'pairsFind', 'pairsSum', 'checks', 'marks']);
 const BINDS = { 0: 'uniform', 1: 'read', 2: 'read', 3: 'read', 4: 'read', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw' } as const;
@@ -184,10 +186,13 @@ export class SectionsJudge implements RockJudge {
   readonly id = 'sections' as const;
   readonly stats: JudgeStats = { ms: 0 };
   private kit: DeviceKit | null = null;
-  /** 'pairs': every level at once (union-find on (run, level) pairs); 'levels': a pass a level (the oracle) */
-  mode: 'pairs' | 'levels' = PAGE_Q?.get('jbmode') === 'levels' ? 'levels' : 'pairs';
+  /** 'pairs': every level at once (union-find on (run, level) pairs); 'levels': a pass a level (the oracle); 'auto' (the
+   *  default): the pairs when the deepest judged piece is TUNE.judgeB.pairsDepth levels or more, else the level pass */
+  mode: 'pairs' | 'levels' | 'auto' = ((m) => (m === 'levels' || m === 'pairs' ? m : 'auto'))(PAGE_Q?.get('jbmode'));
   /** (the perf battery, the equality tests; ?jbcull=0) false judges every piece in the window, not only the seeded ones */
   cull = PAGE_Q?.get('jbcull') !== '0';
+  /** (JB13; ?jbgrow=0) start from a window the leg walk fits in and grow it as asked; false: the margin's window */
+  grow = PAGE_Q?.get('jbgrow') !== '0';
   /** (perf battery only) stop judge.wgsl's single-workgroup kernels before this phase; 0: every phase */
   stopAt = 0;
 
@@ -212,39 +217,52 @@ export class SectionsJudge implements RockJudge {
       x1 = Math.max(x1, x);
       y1 = Math.max(y1, y);
     }
-    const m = Math.round(T.margin);
-    x0 = Math.max(0, x0 - m);
-    y0 = Math.max(0, y0 - m);
-    x1 = Math.min(mapW - 1, x1 + m);
-    y1 = Math.min(mapH - 1, y1 + m);
-    const ww = x1 - x0 + 1;
-    const wh = y1 - y0 + 1;
-    this.stats.window = [x0, y0, ww, wh];
-    // the columns' marks: seeded (a seed or beside one), weighed (an edit cut it)
-    const mask = new Uint32Array(ww * wh);
-    const weighFn = typeof inp.weigh === 'function' ? inp.weigh : null;
-    const weighAll = inp.weigh === undefined || inp.weigh === true;
-    for (const [sx, sy] of seeds) {
-      const cs: [number, number][] = [[sx, sy]];
-      for (let k = 0; k < NDIR; k++) cs.push(nbr(sx, sy, k));
-      for (const [x, y] of cs) if (x >= x0 && y >= y0 && x <= x1 && y <= y1) mask[(y - y0) * ww + (x - x0)] |= 1;
-    }
-    if (weighAll || weighFn) for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (weighAll || weighFn!(x, y)) mask[(y - y0) * ww + (x - x0)] |= 2;
+    // the window (JB13, the user: "a 30x30 window which should be trivially fast"): the seeds' box and, first, a margin
+    // the leg walk fits in (TUNE.judgeB.neck + 2) — grown (×2, to TUNE.judgeB.margin) when a seeded piece or its leg
+    // reaches its side; at the margin the side holds, as it always did. The same verdict as the margin's window:
+    // a piece's verdict needs only its runs, what holds them and its leg's walk
+    const full = Math.round(T.margin);
+    let m = this.grow ? Math.min(full, Math.round(T.neck) + 2) : full;
     const kit = this.kitFor(g.device);
-    let ncap = ww * wh * Math.min(p.maxK, 3) + 1024;
-    let pcap = ncap * 4;
+    let ncap = 0;
+    let pcap = 0;
     let outCap = O_REC0 + 65536;
+    this.stats.windows = 0;
     for (let attempt = 0; ; attempt++) {
+      const wx0 = Math.max(0, x0 - m);
+      const wy0 = Math.max(0, y0 - m);
+      const wx1 = Math.min(mapW - 1, x1 + m);
+      const wy1 = Math.min(mapH - 1, y1 + m);
+      const ww = wx1 - wx0 + 1;
+      const wh = wy1 - wy0 + 1;
+      this.stats.window = [wx0, wy0, ww, wh];
+      this.stats.windows!++;
+      // the columns' marks: seeded (a seed or beside one), weighed (an edit cut it)
+      const mask = new Uint32Array(ww * wh);
+      const weighFn = typeof inp.weigh === 'function' ? inp.weigh : null;
+      const weighAll = inp.weigh === undefined || inp.weigh === true;
+      for (const [sx, sy] of seeds) {
+        const cs: [number, number][] = [[sx, sy]];
+        for (let k = 0; k < NDIR; k++) cs.push(nbr(sx, sy, k));
+        for (const [x, y] of cs) if (x >= wx0 && y >= wy0 && x <= wx1 && y <= wy1) mask[(y - wy0) * ww + (x - wx0)] |= 1;
+      }
+      if (weighAll || weighFn) for (let y = wy0; y <= wy1; y++) for (let x = wx0; x <= wx1; x++) if (weighAll || weighFn!(x, y)) mask[(y - wy0) * ww + (x - wx0)] |= 2;
+      ncap = Math.max(ncap, ww * wh * Math.min(p.maxK, 3) + 1024);
+      pcap = Math.max(pcap, ncap * 4);
       const s = this.size(kit, ncap, pcap, outCap, ww * wh);
-      const r = await this.run(kit, s, g, inp, [x0, y0, ww, wh], mask);
+      const r = await this.run(kit, s, g, inp, [wx0, wy0, ww, wh], mask);
       // (past its buffers: judged again in bigger ones — the verdict is never cut short)
       if (r.over) {
-        if (attempt > 5) throw new Error(`judge B: the window ${ww}×${wh} still overflows (${r.over})`);
+        if (attempt > 8) throw new Error(`judge B: the window ${ww}×${wh} still overflows (${r.over})`);
         if (r.over & 4) ncap = ww * wh * p.maxK + 1024;
         if (r.over & 2) outCap = O_REC0 + (outCap - O_REC0) * 4;
         if (r.over & 16) pcap = Math.max(pcap * 4, r.pairs + 1024);
         if (r.over & 8) throw new Error(`judge B: a piece more than ${MAX_LEVELS} runs from what holds it`);
         if (r.over & 1) throw new Error('judge B: more than 1024 pieces in one judging');
+        continue;
+      }
+      if (r.grow && m < full) {
+        m = Math.min(full, m * 2);
         continue;
       }
       this.stats.ms = performance.now() - t0;
@@ -315,12 +333,12 @@ export class SectionsJudge implements RockJudge {
     return kit.sized;
   }
 
-  private async run(kit: DeviceKit, s: Sized, g: NonNullable<JudgeColumns['gpu']>, inp: JudgeInput, win: [number, number, number, number], mask: Uint32Array): Promise<{ over: number; pairs: number; fracture: Fracture }> {
+  private async run(kit: DeviceKit, s: Sized, g: NonNullable<JudgeColumns['gpu']>, inp: JudgeInput, win: [number, number, number, number], mask: Uint32Array): Promise<{ over: number; pairs: number; grow: boolean; fracture: Fracture }> {
     const dev = kit.device;
     const p = inp.cols.packed;
     const T = TUNE.judgeB;
     const [ox, oy, ww, wh] = win;
-    const pairs = this.mode === 'pairs';
+    const pairs = this.mode !== 'levels';
     // stresses in the weight of a metre of rock a square metre (a cell a metre, rock of density 1 weighing T.density)
     const unit = 1e6 / (T.density * WORLD_G);
     const pb = new ArrayBuffer(PARAM_BYTES);
@@ -340,8 +358,9 @@ export class SectionsJudge implements RockJudge {
     u[22] = MAX_LEVELS;
     u[23] = this.stopAt;
     u[24] = s.pcap;
-    u[25] = pairs ? 1 : 0;
+    u[25] = this.mode === 'pairs' ? 1 : this.mode === 'auto' ? 2 : 0;
     u[26] = this.cull ? 0 : 1;
+    u[27] = Math.round(TUNE.judgeB.pairsDepth);
     dev.queue.writeBuffer(kit.params, 0, pb);
     // (the sliders are live: the table each judging)
     dev.queue.writeBuffer(kit.mats, 0, materialTable());
@@ -359,7 +378,7 @@ export class SectionsJudge implements RockJudge {
       pass.setBindGroup(0, k === 'judge1' ? bg1 : bg);
       pass.setPipeline(kit.pipes[k]);
       if (k === 'build') pass.dispatchWorkgroups(Math.ceil((ww * wh) / 64));
-      else if (k === 'adjacency' || k === 'faces' || k === 'pieces' || k === 'pieceFlags' || k === 'freedUnite') pass.dispatchWorkgroups(Math.ceil(s.ncap / 64));
+      else if (k === 'adjacency' || k === 'faces' || k === 'pieces' || k === 'pieceFlags' || k === 'seedList' || k === 'freedUnite') pass.dispatchWorkgroups(Math.ceil(s.ncap / 64));
       else if (k === 'judge1' || k === 'judge2' || k === 'judge3' || k === 'judge4') pass.dispatchWorkgroups(1);
       else if (k === 'checks') pass.dispatchWorkgroupsIndirect(kit.ind, 16);
       else pass.dispatchWorkgroupsIndirect(kit.ind, 0);
@@ -381,7 +400,7 @@ export class SectionsJudge implements RockJudge {
     }
     s.read.unmap();
     const over = (O[2] & 3) | (O[3] === 1 ? 4 : 0) | (O[3] === 2 ? 8 : 0) | (O[3] === 3 ? 16 : 0);
-    if (over) return { over, pairs: O[O_STATS + 3], fracture: null as unknown as Fracture };
+    if (over) return { over, pairs: O[O_STATS + 3], grow: false, fracture: null as unknown as Fracture };
     const recW = O[0];
     this.stats.readBytes = (O_REC0 + recW) * 4;
     this.stats.sections = O[14];
@@ -390,7 +409,7 @@ export class SectionsJudge implements RockJudge {
     this.stats.deepest = O[O_STATS + 2];
     this.stats.pairs = O[O_STATS + 3];
     this.stats.judgedBox = O[O_STATS + 1] ? [O[O_STATS + 4], O[O_STATS + 5], O[O_STATS + 6], O[O_STATS + 7]] : undefined;
-    return { over: 0, pairs: 0, fracture: this.verdict(O, recW) };
+    return { over: 0, pairs: 0, grow: O[O_STATS + 8] !== 0, fracture: this.verdict(O, recW) };
   }
 
   /** the GPU's verdict as a Fracture: its pieces (runs, clipped), what crumbles, the hinges, why */

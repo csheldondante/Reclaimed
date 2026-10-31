@@ -14814,3 +14814,61 @@ landing — SL20.)
 spring to the finger at the height it was lifted to (its weight held), and lets go with its speed: swung into things,
 its hits go through the same rules. ?physbench=1 runs the playground's scripted scene under every solver × judge (a
 reload each) and shows a card with a JSON to copy or download.
+
+
+## 2026-10-31 — round 120c (`judge`): JB11–JB13 — judge B toward ~1 ms; judge A's whole cost
+
+**Why.** The user: "I do think my new method looks a little better but they are close enough that I think it should
+come down to performance (unless that is also close)". So: B's cost on the atlas, and A's whole cost, measured the same
+way.
+
+**What.**
+- JB13, the window from the pieces (the user's 1.5·D idea, made exact): B starts from the seeds' box plus the leg walk's
+  reach (TUNE.judgeB.neck + 2 = 18 columns, not 32) and grows the window (×2, up to TUNE.judgeB.margin) only when a
+  seeded piece, or its leg walk, reaches the side — a piece's verdict needs only its own runs, what holds them and its
+  leg walk, so a window that holds all three gives the margin window's verdict. On the atlas no cut needed to grow:
+  37 × 37 to 58 × 60 columns instead of 86 × 88, with 465 hanging runs instead of 2473. A `seedList` kernel lists the
+  seeded pieces' runs once; every single-workgroup phase and the faces walk only those.
+- JB11, the leg walk: one phase a hop instead of two (each claimant takes the lesser piece with atomicMin and the
+  first one lists the run, so the order doesn't matter), and it stops as soon as a hop finds nothing new. Its sums
+  were already gathered a thread at a time.
+- JB12, the flood: it now visits only the seeded pieces' runs. I didn't spread it across workgroups: on the atlas D
+  is 3–5, so a dispatch per level would cost more than the 0.1–0.4 ms it takes in one workgroup.
+- Which path, by depth (`mode` 'auto', the default): with this little to do, the level pass in one workgroup is
+  cheaper than the pairs' six dispatches. Judge1 chooses on the GPU: the pairs when the deepest judged piece is
+  TUNE.judgeB.pairsDepth (10) levels or more, the level pass below that. Both paths are exact.
+- The equality tests now include the growing window and the auto mode, plus 40 caves with a 4-column leg walk, so that
+  the window starts at 6 columns and has to grow. All pass, equal to the oracle (the level pass, every piece, the
+  margin's window).
+- Integrity records each pass's readback: `stats.readMs` (from the read starting to the copy arriving) and
+  `stats.readKB`. `SectionsJudge.stats.kernels` has B's GPU ms a kernel, plus window, windows, hanging, judged,
+  deepest and judgedBox, for the solver's phone bench.
+
+**Measured on the atlas** (412 × 915, q=low, every system in play; headless Chrome on the desktop's iGPU, which other
+agents shared; data/perf/judge/browser-low*.json; each load cuts a mesa and a tower; two passes each):
+
+| | B GPU ms a pass, least … most over 3 rounds |
+|---|---|
+| B as first built (levels, every piece, margin 32) | 3.6 … 21.4 |
+| B levels, culled, window from the pieces | 0.8 … 6.4 (the quietest round: 0.8–2.3) |
+| B pairs, culled, window from the pieces | 1.45 … 4.0 |
+| B auto (the default; at D 3–5 the level pass) | 1.6 … 6.5 |
+
+The spread inside one variant (×3–4) is other agents' load on the shared GPU; the least is the honest estimate. The
+level pass and auto run the same kernels at these depths, so the 0.8 ms and 1.6 ms are noise between them. On a quiet
+GPU, B's cut costs about 1 ms. On the deep synthetic scenes (Node: the 120-long lip, D 20) the pairs are about 2× the
+level pass.
+
+**Judge A's whole cost** (the same loads):
+
+| | per pass |
+|---|---|
+| CPU (analyseRock) | 0.3–3.9 ms (mesa 3.6, 2.1, 0.3; tower 0.4, 0.5) |
+| readback | 1–2.2 MB, 7–61 ms from asking to arriving (async: no frame waits for it) |
+| frames over 20 ms in the 8 s after a cut | 0–2 (B: 0–3 — the same noise) |
+| worst frame | 17.5–22 ms (B: 15.7–24) |
+
+Neither judge caused a hitch on the desktop. The CPU ms is A's frame-thread cost: it runs on the main thread in the
+readback's continuation. On the phone that is the number to watch, about 3 to 5 times these. **The readback is paid
+today whichever judge runs**, because Integrity keeps its CPU copy for applying a verdict, for External and for the
+structures' check (JB6). Until JB6 is done, B's 1 ms of GPU adds to the same readback rather than replacing it.

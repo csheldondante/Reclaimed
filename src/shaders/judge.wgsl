@@ -40,7 +40,7 @@ struct Params {
   overlap: f32, filmGap: f32, maxLevels: u32, stopAt: u32,
   /** the pairs' capacity (a run at each of its levels); mode 1: the sections all levels at once (pairs), 0: a pass a
    *  level (the oracle) */
-  pcap: u32, mode: u32, pad1: u32, pad2: u32,
+  pcap: u32, mode: u32, pad1: u32, autoD: u32,
 }
 
 @group(0) @binding(0) var<uniform> P: Params;
@@ -204,6 +204,9 @@ const C_PAIRS: u32 = 10u;
 const C_H2: u32 = 11u;
 const C_PROOTS: u32 = 12u;
 const C_SEEDN: u32 = 13u;
+/** (judge1) the path taken: 1 the pairs, 0 the level pass — mode 2 picks by depth (P.autoD) */
+const C_MODE: u32 = 14u;
+fn pairsMode() -> bool { return ld(cnt(C_MODE)) == 1u; }
 const NCOUNT: u32 = 16u;
 // the output's header: counts, then why (fracture.ts Fracture.why), then pieces (8 words each), then records
 const O_RECW: u32 = 0u;
@@ -211,6 +214,8 @@ const O_PIECES: u32 = 1u;
 const O_OVER: u32 = 2u;
 const O_WHY: u32 = 4u; // free, load(shear), bend, arch, crush, tip, lean, weighed, keyed, crumbs (×1000), sections
 const O_TIME: u32 = 16u;
+/** (judge.ts) the window was too small: a seeded piece or its leg reached its side */
+const O_GROW: u32 = 24u;
 const O_PIECE0: u32 = 32u;
 const MAX_PIECES: u32 = 1024u;
 const PIECE_W: u32 = 8u;
@@ -637,19 +642,27 @@ fn pieceFlags(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 
 
+// ---- seedList: a thread a hanging run — the seeded pieces' runs listed (every single-workgroup phase walks these, not
+// the window); a seeded piece reaching the window's side asks for a bigger window (JB13: judge.ts grows it to the
+// margin — at the margin the side holds, as before) ----
+@compute @workgroup_size(64)
+fn seedList(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let t = gid.x;
+  if (t >= hangN()) { return; }
+  let i = nu(F_HANG, t);
+  if (P.pad1 == 0u && (ld(fi(F_PF, nu(N_PIECE, i))) & PF_SEEDED) == 0u) { return; }
+  nst(F_SEEDL, atomicAdd(&W[cnt(C_SEEDN)], 1u), i);
+  if ((nu(N_EFL, i) & NF_WINEDGE) != 0u) { atomicOr(&O[O_GROW], 1u); }
+}
+
 @compute @workgroup_size(256)
 fn judge1(@builtin(local_invocation_index) lid: u32) {
   wgLid = lid;
   if (P.stopAt == 1u) { return; }
-  if (lid == 0u) { wgL[0] = hangN(); }
+  // (only the seeded pieces' runs from here on: seedList's — the whole window's with P.pad1)
+  if (lid == 0u) { wgL[0] = seedN(); }
   let H = uniformCount(0u);
   let gW = 256u;
-
-  // (the seeded pieces' runs: every later single-workgroup phase walks these, not the whole window)
-  for (var t = lid; t < H; t += gW) {
-    let i = nu(F_HANG, t);
-    if (P.pad1 != 0u || (ld(fi(F_PF, nu(N_PIECE, i))) & PF_SEEDED) != 0u) { nst(F_SEEDL, atomicAdd(&W[cnt(C_SEEDN)], 1u), i); }
-  }
   if (lid == 0u) { st(cnt(C_LIST), 0u); st(lvl(1u), 0u); }
   workgroupBarrier();
   storageBarrier();
@@ -659,7 +672,7 @@ fn judge1(@builtin(local_invocation_index) lid: u32) {
   // visited once, the levels laid out in order as they're found (F_ORDER: level k at [lvl(k), lvl(k + 1))); only
   // the seeded pieces (a frontier never leaves its piece)
   for (var t = lid; t < H; t += gW) {
-    let i = nu(F_HANG, t);
+    let i = nu(F_SEEDL, t);
     if (P.pad1 == 0u && (ld(fi(F_PF, nu(N_PIECE, i))) & PF_SEEDED) == 0u) { continue; }
     var held = edgeHeld(i);
     for (var d = 0u; d < 6u; d++) {
@@ -709,7 +722,7 @@ fn judge1(@builtin(local_invocation_index) lid: u32) {
   workgroupBarrier();
   storageBarrier();
   for (var t = lid; t < H; t += gW) {
-    let i = nu(F_HANG, t);
+    let i = nu(F_SEEDL, t);
     // (the distances as plain words from here on)
     let d = ld(fi(F_DIST, i));
     N[N_DIST * P.ncap + i] = d;
@@ -720,7 +733,7 @@ fn judge1(@builtin(local_invocation_index) lid: u32) {
   // the judged runs (a seeded, weighed piece the flood reached: the only ones a verdict can come from), by level
   // again, each given its pairs (a slot a level it reaches)
   for (var t = lid; t < H; t += gW) {
-    let i = nu(F_HANG, t);
+    let i = nu(F_SEEDL, t);
     let d = nu(N_DIST, i);
     let p = nu(N_PIECE, i);
     if (d == 1u) { nst(N_ROOT, i, p); }
@@ -744,14 +757,18 @@ fn judge1(@builtin(local_invocation_index) lid: u32) {
     }
     st(cnt(C_H2), sum);
     // (stats: the window's hanging runs, the judged ones, the deepest level)
-    atomicStore(&O[O_TIME], H);
+    atomicStore(&O[O_TIME], hangN());
     atomicStore(&O[O_TIME + 1u], sum);
     atomicStore(&O[O_TIME + 2u], maxD);
     atomicStore(&O[O_TIME + 3u], ld(cnt(C_PAIRS)));
     atomicStore(&O[O_TIME + 4u], NONE);
     atomicStore(&O[O_TIME + 5u], NONE);
     if (ld(cnt(C_PAIRS)) > P.pcap && ld(cnt(C_OVER)) == 0u) { st(cnt(C_OVER), 3u); }
-    let go = P.mode == 1u && ld(cnt(C_OVER)) == 0u;
+    // (mode 2: the pairs for a deep piece, the level pass in one workgroup for shallow ones — both exact; the level
+    // pass's fixed cost is lower when there are few levels: the atlas's cuts, D 3–5, measured round 120b)
+    let usePairs = P.mode == 1u || (P.mode == 2u && maxD >= P.autoD);
+    st(cnt(C_MODE), select(0u, 1u, usePairs));
+    let go = usePairs && ld(cnt(C_OVER)) == 0u;
     IND[0] = select(0u, (sum + 63u) / 64u, go);
     IND[1] = select(0u, maxD, go);
     IND[2] = 1u;
@@ -763,7 +780,7 @@ fn judge1(@builtin(local_invocation_index) lid: u32) {
   workgroupBarrier();
   storageBarrier();
   for (var t = lid; t < H; t += gW) {
-    let i = nu(F_HANG, t);
+    let i = nu(F_SEEDL, t);
     if (nu(N_PBASE, i) == NONE) { continue; }
     let q = colXY(nu(N_COL, i));
     atomicMin(&O[O_TIME + 4u], u32(q.x));
@@ -905,7 +922,7 @@ fn pairsSum(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invoca
 /** a thread a component at a level (a root pair): its section checked, as judge2's level pass does (phase 4 g) */
 @compute @workgroup_size(64)
 fn checks(@builtin(global_invocation_id) gid: vec3<u32>) {
-  if (P.mode != 1u || ld(cnt(C_OVER)) != 0u || gid.x >= ld(cnt(C_PROOTS))) { return; }
+  if (!pairsMode() || ld(cnt(C_OVER)) != 0u || gid.x >= ld(cnt(C_PROOTS))) { return; }
   let r = ld(pw(P_LIST, gid.x));
   let v = ld(pw(P_NODE, r));
   let k = r - nu(N_PBASE, v) + 1u;
@@ -982,8 +999,8 @@ fn marks(@builtin(global_invocation_id) gid: vec3<u32>) {
 fn faces(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (P.stopAt == 1u || P.stopAt == 2u || P.stopAt == 3u) { return; }
   let t = gid.x;
-  if (t >= hangN()) { return; }
-  let i = nu(F_HANG, t);
+  if (t >= seedN()) { return; }
+  let i = nu(F_SEEDL, t);
   let k = nu(N_DIST, i);
   if (k == 0u || k == INF_D) { return; }
   var u = array<f32, 9>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
@@ -1049,13 +1066,14 @@ fn faces(@builtin(global_invocation_id) gid: vec3<u32>) {
 fn judge2(@builtin(local_invocation_index) lid: u32) {
   wgLid = lid;
   if (P.stopAt >= 1u && P.stopAt <= 4u) { return; }
-  if (lid == 0u) { wgL[0] = seedN(); wgL[2] = ld(cnt(C_MAXD2)); }
+  if (lid == 0u) { wgL[0] = seedN(); wgL[2] = ld(cnt(C_MAXD2)); wgL[3] = ld(cnt(C_MODE)); }
   let H = uniformCount(0u);
   let maxD = workgroupUniformLoad(&wgL[2]);
+  let viaPairs = workgroupUniformLoad(&wgL[3]) == 1u;
   let gW = 256u;
   // 4 — the sections, from the far end in: a pass a level (mode 0, the oracle; mode 1 has done them all at once)
   var nPrev = 0u;
-  let levels = select(maxD, 0u, P.mode == 1u);
+  let levels = select(maxD, 0u, viaPairs);
   for (var k = levels; k >= 1u; k--) {
     let lo = ld(lvl(k));
     let hi = ld(lvl(k + 1u));
@@ -1378,7 +1396,7 @@ fn judge3(@builtin(local_invocation_index) lid: u32) {
   // reused for the frontiers). Mode 1: the same runs, from the marks — a run is cut off from what holds it exactly
   // when a component it's in at some level failed (that component's only ties to what holds it are its section's
   // faces), or its piece's thrust line didn't fit
-  if (P.mode == 1u) {
+  if (pairsMode()) {
     for (var t = lid; t < H; t += gW) {
       let i = nu(F_SEEDL, t);
       let gone = ld(fi(F_DEAD, i)) != 0u || (ld(fi(F_PF, nu(N_PIECE, i))) & PF_ARCHFAIL) != 0u;
@@ -1390,7 +1408,7 @@ fn judge3(@builtin(local_invocation_index) lid: u32) {
   storageBarrier();
   for (var t = lid; t < H; t += gW) {
     let i = nu(F_SEEDL, t);
-    if (P.mode == 0u && nu(N_DIST, i) == 1u && ld(fi(F_CUT, i)) == 0u) {
+    if (!pairsMode() && nu(N_DIST, i) == 1u && ld(fi(F_CUT, i)) == 0u) {
       st(fi(F_REACH, i), 1u);
       nst(F_ORDER, atomicAdd(&W[cnt(C_LIST)], 1u), i);
     }
@@ -1522,13 +1540,13 @@ fn judge4(@builtin(local_invocation_index) lid: u32) {
   if (lid == 0u) { st(cnt(C_LIST), 0u); st(cnt(C_NECK), 0u); }
   workgroupBarrier();
   storageBarrier();
-  for (var ph = 0u; ph < 2u; ph++) {
+  {
     for (var t = lid; t < H; t += gW) {
       let i = nu(F_SEEDL, t);
       let p = nu(N_PIECE, i);
       let pf = ld(fi(F_PF, p));
       if ((pf & (PF_SEEDED | PF_WEIGHED | PF_REACHED)) != (PF_SEEDED | PF_WEIGHED | PF_REACHED) || (pf & PF_FAILED) != 0u) { continue; }
-      if (ph == 0u && p == i) { nst(F_ROOTS, atomicAdd(&W[cnt(C_LIST)], 1u), p); }
+      if (p == i) { nst(F_ROOTS, atomicAdd(&W[cnt(C_LIST)], 1u), p); }
       // the standing runs it's joined to (hop 1)
       for (var d = 0u; d < 6u; d++) {
         let nb = nbrBase(i, d);
@@ -1536,7 +1554,10 @@ fn judge4(@builtin(local_invocation_index) lid: u32) {
           if ((nb.y & (1u << rr)) == 0u) { continue; }
           let j = nb.x + rr;
           if (!standsN(j)) { continue; }
-          if (ph == 0u) { atomicMin(&W[fi(F_NECK, j)], p); } else if (cas(fi(F_HOP, j), 0u, 1u)) { st(fi(F_NECKL, atomicAdd(&W[cnt(C_NECK)], 1u)), j); }
+          // (one phase: every claimant this hop takes the min — order-free — and the first lists it)
+          let hj = ld(fi(F_HOP, j));
+          if (hj == 0u || hj == 1u) { atomicMin(&W[fi(F_NECK, j)], p); }
+          if (cas(fi(F_HOP, j), 0u, 1u)) { st(fi(F_NECKL, atomicAdd(&W[cnt(C_NECK)], 1u)), j); }
         }
       }
     }
@@ -1549,13 +1570,14 @@ fn judge4(@builtin(local_invocation_index) lid: u32) {
   for (var hop = 1u; hop <= P.neckR; hop++) {
     if (lid == 0u) { wgL[0] = ld(cnt(C_NECK)); }
     let nN = uniformCount(0u);
-    for (var ph = 0u; ph < 2u; ph++) {
+    {
       for (var t = loH + lid; t < nN; t += gW) {
         let j = ld(fi(F_NECKL, t));
         if (ld(fi(F_HOP, j)) != hop) { continue; }
         let p = ld(fi(F_NECK, j));
         if (edgeHeld(j)) {
-          if (ph == 0u) { atomicOr(&W[fi(F_PF, p)], PF_KEYED); }
+          atomicOr(&W[fi(F_PF, p)], PF_KEYED);
+          if ((nu(N_EFL, j) & NF_WINEDGE) != 0u) { atomicOr(&O[O_GROW], 1u); }
           continue;
         }
         let zc = ldf(fi(F_ZC, p));
@@ -1569,15 +1591,13 @@ fn judge4(@builtin(local_invocation_index) lid: u32) {
             let o = min(nf(N_SH1, j), nf(N_SH1, m)) - max(zc, max(nf(N_SH0, j), nf(N_SH0, m)));
             if (o < P.overlap) { continue; }
             if (hop == P.neckR) {
-              if (ph == 0u) { atomicOr(&W[fi(F_PF, p)], PF_KEYED); }
+              atomicOr(&W[fi(F_PF, p)], PF_KEYED);
               continue;
             }
-            // (a run listed at an earlier hop keeps its piece)
-            if (ph == 0u) {
-              if (ld(fi(F_HOP, m)) == 0u) { atomicMin(&W[fi(F_NECK, m)], p); }
-            } else if (cas(fi(F_HOP, m), 0u, hop + 1u)) {
-              st(fi(F_NECKL, atomicAdd(&W[cnt(C_NECK)], 1u)), m);
-            }
+            // (a run listed at an earlier hop keeps its piece; every claimant this hop takes the min, the first lists it)
+            let hm = ld(fi(F_HOP, m));
+            if (hm == 0u || hm == hop + 1u) { atomicMin(&W[fi(F_NECK, m)], p); }
+            if (cas(fi(F_HOP, m), 0u, hop + 1u)) { st(fi(F_NECKL, atomicAdd(&W[cnt(C_NECK)], 1u)), m); }
           }
         }
       }

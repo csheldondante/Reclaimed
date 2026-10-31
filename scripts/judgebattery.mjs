@@ -26,7 +26,8 @@ const RUNS = [
   ['A', 'judge=runs'],
   ['B levels (as first built)', 'judge=sections&jbmode=levels&jbcull=0'],
   ['B levels culled', 'judge=sections&jbmode=levels'],
-  ['B pairs culled (default)', 'judge=sections'],
+  ['B pairs culled', 'judge=sections&jbmode=pairs'],
+  ['B auto (default)', 'judge=sections'],
 ];
 const only = opt('only', '');
 for (const [judge, query] of RUNS.filter(([j]) => !only || j.includes(only))) {
@@ -99,7 +100,7 @@ for (const [judge, query] of RUNS.filter(([j]) => !only || j.includes(only))) {
               if (s.passes !== seen) {
                 seen = s.passes;
                 const js = ig.judge.stats;
-                passes.push({ at: +(now - t0).toFixed(0), judgeMs: +s.judgeMs.toFixed(3), judgeGpuMs: +s.judgeGpuMs.toFixed(3), passMs: +s.lastMs.toFixed(3), bodies: s.bodies - s0.bodies, window: js.window, hanging: js.hanging, judged: js.judged, deepest: js.deepest, judgedBox: js.judgedBox, kernels: js.kernels ? Object.fromEntries(Object.entries(js.kernels).map(([k, v]) => [k, +v.toFixed(3)])) : undefined });
+                passes.push({ at: +(now - t0).toFixed(0), judgeMs: +s.judgeMs.toFixed(3), judgeGpuMs: +s.judgeGpuMs.toFixed(3), passMs: +s.lastMs.toFixed(3), readMs: +s.readMs.toFixed(2), readKB: +s.readKB.toFixed(0), bodies: s.bodies - s0.bodies, window: js.window, windows: js.windows, hanging: js.hanging, judged: js.judged, deepest: js.deepest, judgedBox: js.judgedBox, kernels: js.kernels ? Object.fromEntries(Object.entries(js.kernels).map(([k, v]) => [k, +v.toFixed(3)])) : undefined });
               }
               if (now - t0 < 8000) requestAnimationFrame(tick);
               else done();
@@ -122,7 +123,7 @@ for (const [judge, query] of RUNS.filter(([j]) => !only || j.includes(only))) {
             bodies: ig.stats.bodies - s0.bodies,
             crumbled: ig.stats.crumbled - s0.crumbled,
             readKB: +((ig.readBytes - rb0) / 1024).toFixed(0),
-            frames: { n: frames.length, p50: pct(0.5), p95: pct(0.95), p99: pct(0.99), max: sorted[sorted.length - 1] },
+            frames: { n: frames.length, p50: pct(0.5), p95: pct(0.95), p99: pct(0.99), max: sorted[sorted.length - 1], over20: frames.filter((f) => f > 20).length },
             why: ig.why,
           };
         },

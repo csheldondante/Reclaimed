@@ -129,13 +129,14 @@ describe.skipIf(!process.env.JUDGE_PERF)('the judges\' perf battery (JUDGE_PERF=
       const row: Record<string, unknown> = { scene: sc.name };
       // A; B as first built (a pass a level, every piece); B culled (only the seeded pieces); B culled, every level at
       // once (pairs: the default); B pairs, not culled
-      const sections = (mode: 'levels' | 'pairs', cull: boolean) => () => Object.assign(new SectionsJudge(), { mode, cull });
+      const sections = (mode: 'levels' | 'pairs' | 'auto', cull: boolean) => () => Object.assign(new SectionsJudge(), { mode, cull });
       const variants: [string, () => RockJudge][] = [
         ['A', () => new RunsJudge()],
         ['B levels', sections('levels', false)],
         ['B levels culled', sections('levels', true)],
         ['B pairs', sections('pairs', false)],
         ['B pairs culled', sections('pairs', true)],
+        ['B auto (default)', sections('auto', true)],
       ];
       for (const [k, make] of variants) {
         const ms: number[] = [];

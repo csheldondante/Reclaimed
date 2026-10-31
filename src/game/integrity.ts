@@ -166,7 +166,7 @@ export class Integrity {
   /** chunks round what was touched: hybrid voxels from now on (the level: HybridChunks.edit); x0, y0, x1, y1 world */
   onTouched?: (x0: number, y0: number, x1: number, y1: number) => void;
   /** (round 86) when the last pass was asked for and done (performance.now, ms): the latency probe reads them */
-  timing = { askedAt: 0, readAt: 0, doneAt: 0, spawnedAt: 0 };
+  timing = { askedAt: 0, readStartAt: 0, readAt: 0, doneAt: 0, spawnedAt: 0 };
   private world: WorldVox;
   /** boxes to analyse: x0, y0, x1, y1, passes left (edits reach the GPU a
    *  tick after they are queued, so each box is looked at twice) */
@@ -194,7 +194,7 @@ export class Integrity {
   /** dust where something breaks or a body hits (grains, spread in cells, the material it's made of) */
   onDust?: (x: number, y: number, z: number, count: number, spread: number, mat: number) => void;
   /** stats for the perf overlay / tests */
-  stats = { passes: 0, bodies: 0, crumbled: 0, settled: 0, crumbledBodies: 0, impacts: 0, shatters: 0, shattered: 0, lastMs: 0, rockSeeds: 0, rereads: 0, settledFalls: 0, settleMs: 0, metal: 0, deferred: 0, judgeMs: 0, judgeGpuMs: 0, groundBlows: 0, softBlows: 0, softRemoved: 0, softSpray: 0, softRim: 0, softDeepest: 0 };
+  stats = { passes: 0, bodies: 0, crumbled: 0, settled: 0, crumbledBodies: 0, impacts: 0, shatters: 0, shattered: 0, lastMs: 0, rockSeeds: 0, rereads: 0, settledFalls: 0, settleMs: 0, metal: 0, deferred: 0, judgeMs: 0, judgeGpuMs: 0, readMs: 0, readKB: 0, groundBlows: 0, softBlows: 0, softRemoved: 0, softSpray: 0, softRim: 0, softDeepest: 0 };
   /** sleeping bodies projected per column: top, bottom (top < 0: none) — the
    *  GPU's bodyProj texture and the bodies' own collision share it */
   readonly proj: Float32Array;
@@ -1007,11 +1007,16 @@ export class Integrity {
     this.urgent = false;
     this.busy = true;
     this.inflight = new Map();
+    // (round 120b: judge A's whole cost — the readback's latency and bytes, for the judges' battery)
+    this.timing.readStartAt = performance.now();
+    const bytes0 = this.readBytes;
     // the layers (structures, solid ground; the loose ground on them too)
     const read = READ_NEAR ? this.readNear() : this.core.readBuffer('layers').then((f) => ((this.readBytes += f.byteLength), (this.fresh = null), f));
     void read.then((f) => {
       this.busy = false;
       this.timing.readAt = performance.now();
+      this.stats.readMs = this.timing.readAt - this.timing.readStartAt;
+      this.stats.readKB = (this.readBytes - bytes0) / 1024;
       // (round 92: a slide began meanwhile — what was read is of the window before it; judged again after)
       if (this.held?.()) f = 'slid';
       // (round 88: the window slid while it was read — nothing judged on that, the seeds kept for the next look)
