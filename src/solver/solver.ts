@@ -402,6 +402,16 @@ export class Solver implements SimSystem, NodeSolver {
     return out;
   }
 
+  /** what it holds outside the world's buffers (its readback buffers) let go: once the readbacks in flight are in */
+  async destroy(): Promise<void> {
+    this.slots.fill(null);
+    this.bodies.clear();
+    this.used = 0;
+    while (this.busy > 0) await new Promise((r) => setTimeout(r, 1));
+    for (const b of this.readPool) b.destroy();
+    this.readPool = [];
+  }
+
   /** a material's numbers (re-exported for tools) */
   static mat = solverMat;
 }

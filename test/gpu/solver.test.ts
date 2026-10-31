@@ -22,11 +22,16 @@ let w: TinyWorld;
 let solver: Solver;
 beforeAll(async () => {
   g = await testGpu();
-  w = await tinyWorld(g, tinyMap(W, H, 64, (x) => [{ z0: 0, z1: x >= LEDGE_X ? LEDGE : FLOOR, mat: MAT.Stone }]), []);
+  w = await tinyWorld(g, tinyMap(W, H, 32, (x) => [{ z0: 0, z1: x >= LEDGE_X ? LEDGE : FLOOR, mat: MAT.Stone }]), []);
   solver = new Solver(g.device, w.core.world, w.core.host.profiler);
   w.core.sim.systems.push(solver);
 });
-afterAll(() => w?.destroy());
+afterAll(async () => {
+  // (the readbacks in flight finished before the world goes)
+  await g.device.queue.onSubmittedWorkDone();
+  await solver?.destroy();
+  w?.destroy();
+});
 
 const box = (w0: number, d: number, h: number, x0: number, y0: number, z0: number, mat: number = MAT.Stone): SolverCell[] => {
   const out: SolverCell[] = [];
