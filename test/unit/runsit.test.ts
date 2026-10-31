@@ -10,7 +10,7 @@ import type { UnitId, UnitJob, Units, UnitView } from '../../src/api/contracts/u
 import { MemoryWorldState } from '../../src/api/contracts/world-state';
 import { fillSituation, situationMap } from '../../src/runsit/fill';
 import { SituationRun, HORDE_CAP_S, PURSUIT_CLOSE, pathEstimates } from '../../src/runsit/state';
-import { FinaleRules, fireSite, FIRE_EVERY, FALL_AT, HOLD_S } from '../../src/runsit/finale';
+import { FinaleRules, fireSite, FIRE_EVERY, FALL_AT, HOLD_S, BREACH_MAX } from '../../src/runsit/finale';
 import { UnitFollowers } from '../../src/runsit/followers';
 import { ITEMS, emptyLoadout, equip, use, totals, displaced, carried } from '../../src/runsit/items';
 import { finishSituation } from '../../src/runsit/finish';
@@ -123,11 +123,13 @@ describe('the finale (finale.ts)', () => {
   it('the dead inside set fires; enough fires and the town has burned', () => {
     const f = new FinaleRules(setup());
     let fires = 0;
-    for (let t = 0; t < 200 && f.status.state === 'playing'; t++) fires += f.step(1, { t, heroAlive: true, hordeCame: true, hordeLeft: 10, hordeInside: 3 });
+    let t = 0;
+    for (; t < 400 && f.status.state === 'playing'; t++) fires += f.step(1, { t, heroAlive: true, hordeCame: true, hordeLeft: 18, hordeInside: 18 });
     expect(fires).toBe(FALL_AT);
     expect(f.status).toMatchObject({ state: 'ended', end: 'burned' });
-    // (three inside: a fire every FIRE_EVERY / 3 s)
-    expect(FIRE_EVERY / 3).toBeLessThan(5);
+    // (eighteen inside count as BREACH_MAX: the town takes FALL_AT fires × FIRE_EVERY / BREACH_MAX seconds to fall)
+    expect(t).toBe(Math.ceil((FALL_AT * FIRE_EVERY) / BREACH_MAX));
+    expect(t).toBeGreaterThan(30);
   });
   it('broken before it falls: saved; the hero down: fell; held long enough: saved', () => {
     const a = new FinaleRules(setup());

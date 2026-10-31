@@ -33,6 +33,13 @@ await run({ name: `runsit-${hero}-${want}`, kind: 'behaviour', size: arg('size',
   R.log(`run up; settling ${settle / 1000} s (a first load's terrain)`);
   await sleep(settle);
   await R.fatal(p);
+  // (--ff "c-a,c-b": those ways on taken without playing the areas between — to look at the finale quickly)
+  const ff = R.opt('ff', '');
+  if (ff) {
+    await p.evaluate((l) => window.reclaimed.runsit.fastForward(l), ff.split(','));
+    R.log(`fast-forwarded: ${ff}`);
+    await sleep(8000);
+  }
   const shot = async (name) => {
     const f = path.join(dir, `${tag}-${name}.png`);
     await p.screenshot({ path: f });
@@ -247,6 +254,33 @@ await run({ name: `runsit-${hero}-${want}`, kind: 'behaviour', size: arg('size',
   s = await state();
   await sleep(8000);
   await shot('9-end');
+  // the town as the run left it: the camera over its middle (the card hidden), a still and a GIF of what's burning
+  const town = await p.evaluate(() => {
+    const A = window.reclaimed.runsit.area;
+    const T = A?.town;
+    if (!T) return null;
+    window.reclaimed.runsit.card.style.display = 'none';
+    const cam = window.reclaimed.camera;
+    cam.target[0] = T.centre[0];
+    cam.target[1] = T.centre[1];
+    cam.target[2] = window.reclaimed.runhero.world.top(T.centre[0], T.centre[1]);
+    return { centre: T.centre, houses: T.doors.length };
+  });
+  if (town) {
+    R.log(`the town after: ${JSON.stringify(town)}`);
+    await sleep(3000);
+    await shot('9-town');
+    // (a fallen town: the window is made again with it charred, CHAR_AFTER_S after the end)
+    await sleep(30000);
+    await p.evaluate(() => {
+      const T = window.reclaimed.runsit.area?.town;
+      const cam = window.reclaimed.camera;
+      if (T) (cam.target[0] = T.centre[0]), (cam.target[1] = T.centre[1]);
+    });
+    await sleep(4000);
+    await shot('9-town-later');
+    if (R.opt('gif', '1') === '1') await gif('after', 20, 1000);
+  }
   const logs = await p.evaluate(() => ({ run: window.reclaimed.runsit.log, cpu: (() => { const s = window.reclaimed.runhero?.stats; return s ? { frames: s.frames, msMean: +(s.ms / Math.max(1, s.frames)).toFixed(3), msMax: +s.max.toFixed(2) } : null; })() }));
   for (const l of logs.run) R.log(`run: ${l}`);
   const ft = await p.evaluate(() => {

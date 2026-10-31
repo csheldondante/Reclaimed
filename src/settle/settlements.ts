@@ -374,7 +374,8 @@ export class Settlements {
   /** (round 120, runsit) a column of a burned settlement: what stood is down to its first cell or two, wood and render ash */
   private charColumn(lo: number, ivs: Iv[], k: number): Iv[] {
     const h = (((k * 2654435761) >>> 0) % 1000) / 1000;
-    const top = lo + 0.6 + h * 1.4;
+    // (walls down to stumps of 1-3.5 cells, the rest of them rubble and ash: a town seen burned, not erased)
+    const top = lo + 1 + h * 2.5;
     const out: Iv[] = [];
     for (const v of ivs) {
       if (v.z0 >= top) continue;

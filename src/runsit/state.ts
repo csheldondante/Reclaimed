@@ -28,7 +28,7 @@ export const LEG_MIN = 0.25;
 /** of each minute on the road, the share the pursuers close (a mount's pace closes less: pace × this) */
 export const PURSUIT_CLOSE = 0.5;
 /** the horde comes into the finale at most this many seconds in (an early hero doesn't wait minutes) */
-export const HORDE_CAP_S = 120;
+export const HORDE_CAP_S = 60;
 /** a late hero finds a fire set for each this many seconds the horde has been in the town, up to BURNING_MAX */
 export const BURNING_EVERY_S = 40;
 export const BURNING_MAX = 4;
@@ -160,7 +160,7 @@ export class SituationRun {
   areaDone(r: AreaResult): void {
     if (this.phase !== 'area') throw new Error(`situation: areaDone in phase ${this.phase}`);
     const a = this.area();
-    this.clock += r.seconds / 60;
+    this.clock += areaMinutes(a.minutes, r.seconds);
     this.path.push({ area: a.id, won: r.won, seconds: r.seconds });
     this.log.push(`${a.id} (${a.play.kind}) ${r.won ? 'won' : 'lost'} in ${r.seconds.toFixed(0)} s; clock ${this.clock.toFixed(1)}`);
     if (r.heroDied) return this.finish('fell');
@@ -300,6 +300,17 @@ export class SituationRun {
     this.phase = 'ended';
     this.log.push(`ended ${end} at minute ${this.clock.toFixed(1)}`);
   }
+}
+
+/**
+ * An area's minutes on the run's clock: its planned minutes (the GM's budget — what the fork's timing was written
+ * against), more when it was played slower, up to half again (runplan/clock.ts's rule for a stage). Why not the played
+ * seconds alone: round 120's first playthrough had the bike through a planned 2.5-minute area in 16 s, so the hold's
+ * way — written late — arrived early and the fork meant nothing; the GM's clock is the situation's, the play is how
+ * well it's met.
+ */
+export function areaMinutes(planned: number, seconds: number): number {
+  return planned * Math.min(1.5, Math.max(1, seconds / 60 / Math.max(planned, 0.01)));
 }
 
 /** minutes from area `a` to the target along the quickest way on (its planned minutes and legs) */

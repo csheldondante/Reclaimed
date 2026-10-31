@@ -1912,6 +1912,7 @@ export class LevelScene implements Scene {
       ready: (x, y) => warpReady(a.atlas, S, dims, x, y),
       warp: (x, y) => warpWindow(a.atlas, S, dims, x, y),
       say: (s, sec) => this.hud.say(s, sec ?? 4),
+      remake: () => S.warp(S.origin[0], S.origin[1], S.oz, true),
       gm: this.host.params.get('runsitgm') !== '0',
     });
     this.situationRun = sit;

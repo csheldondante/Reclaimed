@@ -9,8 +9,11 @@
 import type { SituationEnd } from '../api/contracts/situation';
 import type { FinaleSetup, V2 } from './state';
 
-/** horde-seconds inside the town for each fire it sets (three of the dead inside for 4 s set one) */
-export const FIRE_EVERY = 12;
+/** horde-seconds inside the town for each fire it sets, counting at most BREACH_MAX of the dead at once: a breach of
+ *  four or more sets a fire every 7.5 s, so a town falls in ~45 s of it — time to ride back and break it (round 120's
+ *  first finale had eighteen inside setting one a second: fallen in 3 s) */
+export const FIRE_EVERY = 30;
+export const BREACH_MAX = 4;
 /** fires set when the town has fallen (and the rest of it is fired) */
 export const FALL_AT = 6;
 /** seconds after the horde comes that the town is judged to have held (the dead broken off, the night over) */
@@ -48,7 +51,7 @@ export class FinaleRules {
   /** a step: how many new fires the horde sets now (keeps going after the end: a town left to the dead still burns) */
   step(dt: number, o: FinaleObs): number {
     let ignite = 0;
-    this.breach += dt * o.hordeInside;
+    this.breach += dt * Math.min(BREACH_MAX, o.hordeInside);
     while (this.breach >= FIRE_EVERY) {
       this.breach -= FIRE_EVERY;
       ignite++;

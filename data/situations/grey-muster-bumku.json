@@ -1,0 +1,268 @@
+{
+  "id": "grey-muster-bumku",
+  "title": "The Grey Muster Comes for Bumku",
+  "premise": "The Hollow Court has woken the Peaks of Thuhold, and what came out of them has gathered on the Teeth of Kaudru: the Grey Muster, the dead of every barrow in those hills, marching down through Bethorn Downs on Bumku, the Baummask Moot's port on the Fields of Karkmo. Bumku has fences, not walls, and no idea what is coming. Ride round the Teeth to Muru, the Red Hold on Bra Flats, and its levy will march back by the north road — late, but in force. Or take the road to Bumku yourself: warn it and man its fences, or lead its people up onto the rises of Varrn Plain and let the town go. And there is the crossing on the Bethorn water, where the Muster must come over: burn it under them and buy the town time, if you can get through their vanguard.",
+  "from": { "worldVersion": 0, "run": 0, "seed": 1 },
+  "hero": "any",
+  "threat": {
+    "kind": "horde",
+    "name": "the Grey Muster of Kaudru",
+    "faction": "f-hollow-court",
+    "role": "walking dead",
+    "count": 18,
+    "route": [2129, 2141, 2159, 2171],
+    "arrives": 8.8,
+    "outriders": { "count": 3, "role": "walking dead", "behind": 0.5 }
+  },
+  "target": { "settlement": "s53", "region": 2171, "name": "Bumku" },
+  "refuge": { "region": 2233, "name": "the Varrn rises" },
+  "areas": [
+    {
+      "id": "a-flats",
+      "name": "Thaurd Flats",
+      "region": 2341,
+      "at": [13716, 4794],
+      "brief": "Dry river flats. A Choir singer runs past you shouting that the dead are down off Kaudru, bound for Bumku — and three of them are already on your trail.",
+      "minutes": 2.5,
+      "play": { "kind": "flee" },
+      "say": [
+        { "line": "The barrows on Kaudru are empty! They're walking on Bumku!" },
+        { "line": "Grey shapes on the river path behind you. They've seen you." }
+      ]
+    },
+    {
+      "id": "a-muru",
+      "name": "Muru, the Red Hold",
+      "region": 2023,
+      "settlement": "s84",
+      "brief": "The Moot's hold on Bra Flats, beyond the Peaks of Thuhold. Its hall keeps the levy of the north road; carry the word up to it before the reeve shuts the doors.",
+      "minutes": 3.5,
+      "play": {
+        "kind": "deliver",
+        "settlement": "s84",
+        "sends": { "faction": "f-baummask", "role": "guard", "count": 12 },
+        "gives": ["red-horn", "muru-courser"],
+        "limit": 150
+      },
+      "say": [
+        { "line": "Muru's red gate. The hall is at the top of the street — and the reeve doesn't wait for strangers." },
+        { "line": "Twelve spears for Bumku, by the north road round the Teeth. They'll march, but they won't run." }
+      ]
+    },
+    {
+      "id": "a-ferry",
+      "name": "The Herd Flats landing",
+      "region": 2227,
+      "brief": "A Salt Fleet barge tied up on the Herd Flats river, its crew salvaging what the herders left when they ran. They'll trade — briefly, and for whatever you have.",
+      "minutes": 1.5,
+      "play": { "kind": "trader", "offers": ["dead-bell", "sail-cloak", "boarding-shield"] },
+      "say": [
+        { "line": "\"You're running toward it? Mad. Here — take something, and be quick, we're casting off.\"" }
+      ]
+    },
+    {
+      "id": "a-varrn",
+      "name": "The Varrn road",
+      "region": 2233,
+      "brief": "The straight road to Bumku over Varrn Plain. The Muster's outriders have gone ahead of it and lie in the ditches.",
+      "minutes": 2.5,
+      "play": { "kind": "ambush", "foes": 5, "role": "walking dead", "faction": "f-hollow-court" },
+      "say": [
+        { "line": "The ditches by the Varrn road stir. They were waiting for whoever ran to warn the town." }
+      ]
+    },
+    {
+      "id": "a-crossing",
+      "name": "The Bethorn crossing",
+      "region": 2159,
+      "brief": "The herders' timber crossing over the Bethorn water, the one way the Muster can bring its whole body over. Its vanguard is already on the near bank; the rest is coming down off Kaudru.",
+      "minutes": 2.5,
+      "play": { "kind": "ambush", "foes": 7, "role": "walking dead", "faction": "f-hollow-court" },
+      "say": [
+        { "line": "The crossing. Pitch on the beams, a torch in your hand — and the vanguard between you and it." }
+      ]
+    },
+    {
+      "id": "a-bumku",
+      "name": "Bumku",
+      "region": 2171,
+      "settlement": "s53",
+      "brief": "A timber port on the Fields of Karkmo, its granaries full from the harvest; fences, not walls. The Muster comes over the Bethorn side.",
+      "minutes": 5,
+      "play": { "kind": "town" },
+      "say": [
+        { "line": "Bumku. Ring the harbour bell!" },
+        { "line": "Grey on the Bethorn road. Here they come." }
+      ]
+    }
+  ],
+  "choices": [
+    {
+      "id": "c-red-hold",
+      "from": "a-flats",
+      "to": "a-muru",
+      "text": "Ride round the Teeth to Muru, the Red Hold, for its levy (late, but in force)",
+      "effects": []
+    },
+    {
+      "id": "c-river-road",
+      "from": "a-flats",
+      "to": "a-ferry",
+      "text": "Take the river road by Herd Flats, where a Salt Fleet barge trades (a little slower)",
+      "effects": []
+    },
+    {
+      "id": "c-straight",
+      "from": "a-flats",
+      "to": "a-varrn",
+      "text": "Run the straight road over Varrn Plain to Bumku",
+      "effects": []
+    },
+    {
+      "id": "c-ahead-of-levy",
+      "from": "a-muru",
+      "to": "a-bumku",
+      "text": "Ride ahead of the levy and tell Bumku help is coming",
+      "effects": [{ "kind": "warn" }]
+    },
+    {
+      "id": "c-ferry-on",
+      "from": "a-ferry",
+      "to": "a-varrn",
+      "text": "On to Bumku by the Varrn road",
+      "effects": []
+    },
+    {
+      "id": "c-to-crossing",
+      "from": "a-ferry",
+      "to": "a-crossing",
+      "text": "Cut east to the Bethorn crossing and burn it under the Muster",
+      "effects": []
+    },
+    {
+      "id": "c-hold-fences",
+      "from": "a-varrn",
+      "to": "a-bumku",
+      "text": "Warn Bumku and man its fences",
+      "effects": [{ "kind": "warn" }]
+    },
+    {
+      "id": "c-to-the-rises",
+      "from": "a-varrn",
+      "to": "a-bumku",
+      "text": "Warn Bumku and lead its people up onto the Varrn rises; let the town go",
+      "effects": [{ "kind": "warn" }, { "kind": "evacuate" }]
+    },
+    {
+      "id": "c-fire-crossing",
+      "from": "a-crossing",
+      "to": "a-bumku",
+      "text": "Fire the crossing and race the smoke back to Bumku",
+      "effects": [{ "kind": "delay", "minutes": 2.5 }, { "kind": "warn" }]
+    }
+  ],
+  "items": [
+    {
+      "id": "red-horn",
+      "name": "The Red Horn of Muru",
+      "slot": "held",
+      "text": "Blow it and four of the Muru levy run ahead to you (twice) — but it fills your hand",
+      "effects": [{ "kind": "call-allies", "count": 4, "uses": 2 }]
+    },
+    {
+      "id": "muru-courser",
+      "name": "A Muru courser",
+      "slot": "mount",
+      "text": "A post-horse from the hold's stable: the roads take 40% less time and the dead close slower — you reach Bumku sooner, alone",
+      "effects": [{ "kind": "pace", "mult": 0.6 }]
+    },
+    {
+      "id": "dead-bell",
+      "name": "A drowned ship's bell",
+      "slot": "held",
+      "text": "Ring it: the dead within 45 cells turn to it for 30 s (twice). Ring it away from the houses",
+      "effects": [{ "kind": "lure", "radius": 45, "seconds": 30, "uses": 2 }]
+    },
+    {
+      "id": "sail-cloak",
+      "name": "Salt-soaked sailcloth cloak",
+      "slot": "cape",
+      "text": "No fire takes within 25 cells of you: stand by the granaries and they won't burn",
+      "effects": [{ "kind": "fire-ward", "radius": 25 }]
+    },
+    {
+      "id": "boarding-shield",
+      "name": "A Fleet boarding shield",
+      "slot": "held",
+      "also": ["cape"],
+      "text": "Half the harm comes through — but it's huge: it fills your hand and your back",
+      "effects": [{ "kind": "guard", "mult": 0.5 }]
+    }
+  ],
+  "endings": {
+    "saved": {
+      "text": "Bumku stands. The Grey Muster broke on its fences, and the Karkmo fields are full of the dead lying down again.",
+      "outcome": {
+        "atlas": [
+          { "kind": "lay-dead", "regions": [2141, 2159, 2171], "magnitude": 0.35, "cause": { "by": "story", "ref": "grey-muster-bumku/saved" } },
+          { "kind": "mark", "regions": [2171], "magnitude": 1, "detail": { "name": "the Karkmo Stand", "kind": "battlefield" }, "cause": { "by": "story", "ref": "grey-muster-bumku/saved" } },
+          { "kind": "faction-presence", "regions": [2141], "magnitude": -0.2, "detail": { "faction": "f-hollow-court" }, "cause": { "by": "story", "ref": "grey-muster-bumku/saved" } },
+          { "kind": "faction-presence", "regions": [2159], "magnitude": 0.15, "detail": { "faction": "f-baummask" }, "cause": { "by": "story", "ref": "grey-muster-bumku/saved" } }
+        ],
+        "attitude": [
+          { "faction": "f-baummask", "delta": 0.35 },
+          { "faction": "f-hollow-court", "delta": -0.2 }
+        ]
+      },
+      "settlement": "struggling"
+    },
+    "burned": {
+      "text": "Bumku burned with its harvest in it. The Muster walks the ashes, and Kaudru's barrows have new tenants.",
+      "outcome": {
+        "atlas": [
+          { "kind": "burn", "regions": [2171], "magnitude": 0.9, "cause": { "by": "story", "ref": "grey-muster-bumku/burned" } },
+          { "kind": "ruin", "regions": [2171], "magnitude": 0.7, "cause": { "by": "story", "ref": "grey-muster-bumku/burned" } },
+          { "kind": "mark", "regions": [2171], "magnitude": 1, "detail": { "name": "the Ashes of Bumku", "kind": "ruin" }, "cause": { "by": "story", "ref": "grey-muster-bumku/burned" } },
+          { "kind": "raise-dead", "regions": [2171, 2159], "magnitude": 0.4, "cause": { "by": "story", "ref": "grey-muster-bumku/burned" } },
+          { "kind": "faction-presence", "regions": [2171], "magnitude": 0.3, "detail": { "faction": "f-hollow-court" }, "cause": { "by": "story", "ref": "grey-muster-bumku/burned" } },
+          { "kind": "faction-presence", "regions": [2171], "magnitude": -0.4, "detail": { "faction": "f-baummask" }, "cause": { "by": "story", "ref": "grey-muster-bumku/burned" } }
+        ],
+        "attitude": [{ "faction": "f-baummask", "delta": -0.3 }]
+      },
+      "settlement": "ruined"
+    },
+    "evacuated": {
+      "text": "Bumku's people live, camped on the Varrn rises under the Choir's eyes; the town is ash behind them.",
+      "outcome": {
+        "atlas": [
+          { "kind": "burn", "regions": [2171], "magnitude": 0.7, "cause": { "by": "story", "ref": "grey-muster-bumku/evacuated" } },
+          { "kind": "ruin", "regions": [2171], "magnitude": 0.5, "cause": { "by": "story", "ref": "grey-muster-bumku/evacuated" } },
+          { "kind": "mark", "regions": [2171], "magnitude": 1, "detail": { "name": "Bumku, left to the dead", "kind": "ruin" }, "cause": { "by": "story", "ref": "grey-muster-bumku/evacuated" } },
+          { "kind": "mark", "regions": [2233], "magnitude": 1, "detail": { "name": "Varrn Hearth, the Bumku refuge", "kind": "camp" }, "cause": { "by": "story", "ref": "grey-muster-bumku/evacuated" } },
+          { "kind": "faction-presence", "regions": [2233], "magnitude": 0.25, "detail": { "faction": "f-baummask" }, "cause": { "by": "story", "ref": "grey-muster-bumku/evacuated" } },
+          { "kind": "raise-dead", "regions": [2171], "magnitude": 0.25, "cause": { "by": "story", "ref": "grey-muster-bumku/evacuated" } }
+        ],
+        "attitude": [
+          { "faction": "f-baummask", "delta": 0.2 },
+          { "faction": "f-green-choir", "delta": 0.1 }
+        ]
+      },
+      "settlement": "abandoned"
+    },
+    "fell": {
+      "text": "The hero fell on the road. No one warned Bumku; the Muster found it asleep, and spread on over Varrn Plain.",
+      "outcome": {
+        "atlas": [
+          { "kind": "burn", "regions": [2171], "magnitude": 0.9, "cause": { "by": "story", "ref": "grey-muster-bumku/fell" } },
+          { "kind": "ruin", "regions": [2171], "magnitude": 0.8, "cause": { "by": "story", "ref": "grey-muster-bumku/fell" } },
+          { "kind": "mark", "regions": [2171], "magnitude": 1, "detail": { "name": "the Ashes of Bumku", "kind": "ruin" }, "cause": { "by": "story", "ref": "grey-muster-bumku/fell" } },
+          { "kind": "raise-dead", "regions": [2171, 2159, 2233], "magnitude": 0.4, "cause": { "by": "story", "ref": "grey-muster-bumku/fell" } },
+          { "kind": "faction-presence", "regions": [2171, 2233], "magnitude": 0.3, "detail": { "faction": "f-hollow-court" }, "cause": { "by": "story", "ref": "grey-muster-bumku/fell" } },
+          { "kind": "faction-presence", "regions": [2171], "magnitude": -0.5, "detail": { "faction": "f-baummask" }, "cause": { "by": "story", "ref": "grey-muster-bumku/fell" } }
+        ],
+        "attitude": [{ "faction": "f-baummask", "delta": -0.1 }]
+      },
+      "settlement": "ruined"
+    }
+  }
+}

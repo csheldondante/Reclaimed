@@ -16,17 +16,30 @@ import type { SituationArea, SituationEnd } from '../api/contracts/situation';
 import type { PlaySession } from '../play/session';
 import type { Part, Voxels } from '../play/draw/shapes';
 import { MAT } from '../world/materials';
+import { library } from '../play/library';
 import { FinaleRules, INSIDE, fireSite, FALL_AT, type FinaleStatus } from './finale';
 import { totals, use } from './items';
 import type { UnitFollowers } from './followers';
 import type { AreaResult, FinaleSetup, SituationRun, V2 } from './state';
 
-/** cells from where the hero comes in to the area's edge (the way on) */
-export const EDGE_R = 110;
+/** seconds of the hero's cruise from where it comes in to the area's edge (the way on), and the cells that's kept
+ *  within: 1-3 screens (the user: "areas of 1-3 screens"; round 120's first playthrough had the bike across 110 cells
+ *  in 3 s — a ride, not an area) */
+export const EDGE_S = 16;
+export const EDGE_CELLS: [number, number] = [110, 520];
 /** cells off the hall or the town where the hero comes in (it rides in, it isn't dropped at the door) */
 export const ENTRY_R = 80;
 /** cells to a goal that count as there */
 export const THERE = 8;
+/**
+ * The march: units walk their goal fields only near the goal (round 120's probe: a go 40 cells off arrived, 80 and 120
+ * stood — the agents' fields are a few chunks round what they do), so a horde 150 cells out is walked in by a front a
+ * stride ahead of it, moved on as it gets near: every MARCH_S, MARCH_STRIDE cells on toward the town.
+ */
+const MARCH_S = 3;
+const MARCH_STRIDE = 22;
+/** outriders farther than this from the hero are off the screen: they gain on a slow hero there, or lose a fast one */
+const PURSUIT_FAR = 70;
 /** outriders: cells a minute behind, at least, at most */
 const BEHIND_CELLS: [number, number, number] = [60, 22, 110];
 
@@ -66,6 +79,12 @@ export class AreaPlay {
   private resolve!: (e: AreaEnd) => void;
   readonly log: string[] = [];
   private pursuers: UnitId[] = [];
+  /** the outriders' pace and the hero's over the last few seconds (who's gaining) */
+  private pursuitPace = 4.2;
+  private pursuitAt: { t: number; at: V2 } | null = null;
+  /** the horde's front: the one point it walks to, moved on toward the town as it gets there (MARCH) */
+  private front: V2 | null = null;
+  private frontT = 0;
   private foes: UnitId[] = [];
   private allies: UnitId[] = [];
   private trader: UnitId | null = null;
@@ -75,6 +94,7 @@ export class AreaPlay {
   rules: FinaleRules | null = null;
   town: TownPlaces | null = null;
   private waitedTown = 0;
+  private loggedAt = -1e9;
   private horde: UnitId[] = [];
   private hordeCame = false;
   private reinforced = false;
@@ -108,7 +128,8 @@ export class AreaPlay {
     if ((p.kind === 'deliver' || p.kind === 'town' || p.kind === 'trader') && from) {
       const f = d.toWin(from);
       const [ux, uy] = unit([f[0] - here[0], f[1] - here[1]]);
-      this.entry = this.inside([here[0] + ux * ENTRY_R, here[1] + uy * ENTRY_R]);
+      const r = p.kind === 'town' ? ENTRY_R : Math.max(ENTRY_R, this.reach() * 0.8);
+      this.entry = this.inside([here[0] + ux * r, here[1] + uy * r], 16);
     } else this.entry = this.inside(here);
     this.entry = d.session.dryNear(this.entry);
     d.session.warped(this.entry);
@@ -118,6 +139,20 @@ export class AreaPlay {
 
   private get hero() {
     return this.d.session.hero;
+  }
+  /** the hero's cruise (cells/s: play's profile, as the sandbox tunes it) */
+  private cruise(): number {
+    const h = this.hero;
+    const c = library.get(h.role === 'lich' ? 'lich' : 'hoverbike');
+    return c ? c.profile(h.params).speed.cruise : 6;
+  }
+  /** the area's reach for this hero: its cruise for EDGE_S seconds, in EDGE_CELLS */
+  private reach(): number {
+    return Math.max(EDGE_CELLS[0], Math.min(EDGE_CELLS[1], this.cruise() * EDGE_S));
+  }
+  /** a point `r` cells from the entry along `dir` — past the window's edge if it must be: the window slides with the hero */
+  private out(dir: V2, r: number): V2 {
+    return [this.entry[0] + dir[0] * r, this.entry[1] + dir[1] * r];
   }
   private heroAt(): V2 {
     const p = this.hero.position();
@@ -163,14 +198,16 @@ export class AreaPlay {
     const cells = Math.max(BEHIND_CELLS[1], Math.min(BEHIND_CELLS[2], BEHIND_CELLS[0] * Math.max(0, P.behind)));
     const c = this.inside([this.entry[0] - away[0] * cells, this.entry[1] - away[1] * cells], 10);
     const th = this.d.run.sit.threat;
-    this.pursuers = this.spawnAround(c, P.count, 2, 6, th.role, th.faction, { hostile: true, sight: 70, speed: 4.2, health: 3, job: { kind: 'attack', target: 'hero' } });
+    // (they ride as fast as most of the hero's cruise: a chase, not a stroll — at least a running corpse's pace)
+    this.pursuitPace = Math.max(4.2, this.cruise() * 0.75);
+    this.pursuers = this.spawnAround(c, P.count, 2, 6, th.role, th.faction, { hostile: true, sight: 70, speed: Math.max(4.2, this.cruise() * 0.75), health: 3, job: { kind: 'attack', target: 'hero' } });
     this.log.push(`${P.count} outriders ${cells.toFixed(0)} cells behind`);
   }
 
   private setUp(here: V2): void {
     const p = this.area.play;
     const way = this.wayOn();
-    const edge = (): V2 => this.inside([this.entry[0] + way[0] * EDGE_R, this.entry[1] + way[1] * EDGE_R]);
+    const edge = (): V2 => this.out(way, this.reach());
     switch (p.kind) {
       case 'flee':
         this.goal = edge();
@@ -211,6 +248,66 @@ export class AreaPlay {
     this.log.push(`${this.area.id} ${p.kind}: in at ${this.entry.map((v) => v.toFixed(0))}, goal ${this.goal?.map((v) => v.toFixed(0))}`);
   }
 
+  /** `d` cells from a toward b (b itself when nearer) */
+  private toward(a: V2, b: V2, d: number): V2 {
+    const l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (l <= d) return [b[0], b[1]];
+    return [a[0] + ((b[0] - a[0]) / l) * d, a[1] + ((b[1] - a[1]) / l) * d];
+  }
+
+  /** the horde walked on: its front moved toward the town as the dead reach it (those hunting are left to it) */
+  private march(dt: number): void {
+    if (!this.front || !this.town) return;
+    this.frontT += dt;
+    if (this.frontT < MARCH_S) return;
+    this.frontT = 0;
+    const c = this.town.centre;
+    const dead = this.alive(this.horde).map((id) => this.d.units.get(id)!);
+    if (!dead.length) return;
+    const lure = this.lure?.at;
+    const goal = lure ?? c;
+    let x = 0;
+    let y = 0;
+    for (const u of dead) (x += u.at[0]), (y += u.at[1]);
+    const mid: V2 = [x / dead.length, y / dead.length];
+    // (the front a stride on from where the horde is now, toward the town — or the bell)
+    const next = this.toward(mid, goal, MARCH_STRIDE);
+    // (ordered every step, moved or not: a unit that went off hunting comes back to the front, not to an old one)
+    this.front = next;
+    this.d.units.order(dead.filter((u) => u.state !== 'chase' && u.state !== 'swing').map((u) => u.id), { kind: 'go', to: next });
+  }
+
+  /**
+   * The outriders off the screen: a hero slower than them over the last seconds is caught up with (they come in again
+   * PURSUIT_FAR / 2 behind it), a faster one leaves them (they're lost past twice PURSUIT_FAR). The user (round 120):
+   * "time pressure like pursuers"; (PL23) "I think fleeing is better than chasing".
+   */
+  private pursue(me: V2): void {
+    if (!this.pursuitAt) this.pursuitAt = { t: this.t, at: me };
+    const dt = this.t - this.pursuitAt.t;
+    if (dt < 3) return;
+    const pace = Math.hypot(me[0] - this.pursuitAt.at[0], me[1] - this.pursuitAt.at[1]) / dt;
+    const back: V2 = pace > 0.5 ? [(this.pursuitAt.at[0] - me[0]) / (pace * dt), (this.pursuitAt.at[1] - me[1]) / (pace * dt)] : [0, 0];
+    this.pursuitAt = { t: this.t, at: me };
+    const th = this.d.run.sit.threat;
+    this.pursuers = this.pursuers.flatMap((id) => {
+      const u = this.d.units.get(id);
+      if (!u?.alive) return [id];
+      const d = Math.hypot(u.at[0] - me[0], u.at[1] - me[1]);
+      if (d < PURSUIT_FAR) return [id];
+      if (pace >= this.pursuitPace) {
+        if (d < PURSUIT_FAR * 2) return [id];
+        this.d.units.remove(id);
+        this.log.push(`an outrider lost at t ${this.t.toFixed(0)}`);
+        return [];
+      }
+      this.d.units.remove(id);
+      const r = PURSUIT_FAR / 2;
+      const at = this.d.session.dryNear([me[0] + back[0] * r + (Math.random() - 0.5) * 8, me[1] + back[1] * r + (Math.random() - 0.5) * 8]);
+      return [this.d.units.spawn(th.role, at, th.faction, { hostile: true, sight: 70, speed: this.pursuitPace, health: u.health, job: { kind: 'attack', target: 'hero' } })];
+    });
+  }
+
   /** the finale's town in place (its plan made: the places known) */
   private townReady(): boolean {
     if (this.town) return true;
@@ -239,15 +336,18 @@ export class AreaPlay {
     return true;
   }
 
-  /** the horde arrives: at the town's edge from its road, or (late) already in its streets */
-  private hordeComes(inside: boolean): void {
+  /** the horde arrives: from its road, out past the town's edge — or (late) at its edge, the first houses burning */
+  private hordeComes(late: boolean): void {
     if (this.hordeCame || !this.town) return;
     const s = this.setup!;
     const c = this.town.centre;
-    const at: V2 = inside ? c : this.inside([c[0] + s.from[0] * (this.town.radius + 60), c[1] + s.from[1] * (this.town.radius + 60)], 12);
-    this.horde = this.spawnAround(at, s.horde, inside ? this.town.radius * 0.2 : 2, inside ? this.town.radius * 0.7 : 14, s.role, s.faction, { hostile: true, sight: 14, speed: 3.0, health: 3, job: { kind: 'go', to: c } });
+    const r = late ? this.town.radius * 0.95 : this.town.radius + 60;
+    const at: V2 = this.inside([c[0] + s.from[0] * r, c[1] + s.from[1] * r], 12);
+    this.front = this.toward(at, c, MARCH_STRIDE);
+    this.frontT = 0;
+    this.horde = this.spawnAround(at, s.horde, 2, 14, s.role, s.faction, { hostile: true, sight: 14, speed: 3.0, health: 3, job: { kind: 'go', to: this.front } });
     this.hordeCame = true;
-    this.say(inside ? 'The dead are in the streets!' : 'The dead are at the gates!');
+    this.say(late ? 'The dead are in the streets!' : 'The dead are at the gates!');
     this.log.push(`horde of ${s.horde} at ${at.map((v) => v.toFixed(0))} (t ${this.t.toFixed(0)} s)`);
   }
 
@@ -335,6 +435,8 @@ export class AreaPlay {
     this.entry = mv(this.entry)!;
     if (this.town) this.town = { ...this.town, centre: mv(this.town.centre)!, doors: this.town.doors.map((p) => mv(p)!) };
     if (this.lure) this.lure.at = mv(this.lure.at)!;
+    this.front = mv(this.front);
+    if (this.pursuitAt) this.pursuitAt.at = mv(this.pursuitAt.at)!;
     this.d.followers.shift(dx, dy);
   }
 
@@ -350,6 +452,7 @@ export class AreaPlay {
     if (p.kind === 'town') return this.updateTown(dt, me);
     if (this.done) return;
     // the outriders keep after the hero
+    if (this.pursuers.length) this.pursue(me);
     if (!this.hero.alive) return this.finish({ seconds: this.t, won: false, heroDied: true, pursuers: this.alive(this.pursuers).length });
     const at = this.goal!;
     const dist = Math.hypot(at[0] - me[0], at[1] - me[1]);
@@ -401,13 +504,16 @@ export class AreaPlay {
     }
     const T = this.town!;
     if (!this.hordeCame && this.t >= s.hordeIn) this.hordeComes(false);
+    this.march(dt);
+    if (this.pursuers.length && this.hero.alive) this.pursue(me);
     if (s.reinforce && !this.reinforced && this.t >= s.reinforce.in) {
       this.reinforced = true;
       const run = this.d.run;
       const hold = run.sit.areas.find((a) => a.play.kind === 'deliver');
       const dir = hold ? unit(delta(run.map.areaAt(this.area), run.map.areaAt(hold), run.map.world)) : ([-s.from[0], -s.from[1]] as V2);
-      const at = this.inside([T.centre[0] + dir[0] * (T.radius + 50), T.centre[1] + dir[1] * (T.radius + 50)], 12);
-      this.allies.push(...this.spawnAround(at, s.reinforce.count, 2, 10, s.reinforce.role, s.reinforce.faction, { hostile: false, sight: 22, speed: 3.8, health: 6, role: 'guard', job: { kind: 'guard', at: T.centre, radius: 14 } }));
+      // (in at the town's edge on their side, and to its middle: the march's reach is the agents' — see MARCH)
+      const at = this.inside([T.centre[0] + dir[0] * T.radius * 0.6, T.centre[1] + dir[1] * T.radius * 0.6], 12);
+      this.allies.push(...this.spawnAround(at, s.reinforce.count, 2, 10, s.reinforce.role, s.reinforce.faction, { hostile: false, sight: 22, speed: 3.8, health: 6, role: 'guard', job: { kind: 'guard', at: this.toward(at, T.centre, 30), radius: 12 } }));
       this.say(`The levy of ${hold?.name ?? 'the hold'} is here!`);
       this.log.push(`levy of ${s.reinforce.count} at t ${this.t.toFixed(0)}`);
     }
@@ -416,7 +522,7 @@ export class AreaPlay {
       this.lure.t -= dt;
       if (this.lure.t <= 0) {
         this.lure = null;
-        this.d.units.order(this.alive(this.horde), { kind: 'go', to: T.centre });
+        this.frontT = MARCH_S;
       }
     }
     const horde = this.alive(this.horde);
@@ -438,8 +544,20 @@ export class AreaPlay {
       this.say(`${this.area.name} is burning!`);
       this.log.push(`fallen at t ${this.t.toFixed(0)}: ${this.burning.size} houses alight`);
     }
+    if (this.t - this.loggedAt > 15) {
+      this.loggedAt = this.t;
+      let far = 0;
+      const states: Record<string, number> = {};
+      for (const id of horde) {
+        const u = this.d.units.get(id)!;
+        far += Math.hypot(u.at[0] - T.centre[0], u.at[1] - T.centre[1]);
+        const k = `${u.state}/${u.job.kind}`;
+        states[k] = (states[k] ?? 0) + 1;
+      }
+      this.log.push(`t ${this.t.toFixed(0)}: hero ${me.map((v) => v.toFixed(0))}; ${horde.length} dead (mean ${(far / Math.max(1, horde.length)).toFixed(0)} cells off the middle, ${inside.length} inside; ${JSON.stringify(states)}); ${this.alive(this.allies).length} allies; ${this.d.followers.members().length} following, ${safe} safe; fires ${R.fires}`);
+    }
     if (this.done) {
-      this.text(`${this.area.name}: ${R.status.state === 'ended' ? R.status.why : ''} · ${this.burning.size} houses burned`);
+      this.text(`${this.area.name}: ${R.status.state === 'ended' ? R.status.why : ''} · ${this.burning.size} houses alight`);
       return;
     }
     // the HUD
@@ -454,6 +572,8 @@ export class AreaPlay {
     const st = R.status as FinaleStatus;
     if (was === 'playing' && st.state === 'ended') {
       this.done = true;
+      this.bar.style.display = 'none';
+      setTimeout(() => (this.big.textContent = ''), 4000);
       this.big.textContent = st.end === 'saved' ? 'SAVED' : st.end === 'evacuated' ? 'THEY LIVE' : st.end === 'burned' ? 'IT BURNS' : 'FALLEN';
       this.arrow.style.display = 'none';
       this.log.push(`finale ${st.end}: ${st.why} at t ${this.t.toFixed(0)}`);

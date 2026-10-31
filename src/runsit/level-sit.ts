@@ -58,11 +58,15 @@ export interface LevelSitDeps {
   ready: (cx: number, cy: number) => boolean;
   warp: (cx: number, cy: number) => Promise<void>;
   say: (s: string, seconds?: number) => void;
+  /** the window made again where it is (the streamer's warp to its own place): land a system changed comes in as it is now */
+  remake: () => Promise<void>;
   /** false: the template even where the GM wrote one (?runsitgm=0) */
   gm?: boolean;
 }
 
 const toCell = (x: number, y: number): [number, number] => [x, y / ROW_H];
+/** seconds a fallen town burns live before the window is made again with it charred */
+const CHAR_AFTER_S = 25;
 const PLAY_COLOUR: Record<string, string> = { flee: '#f08a4b', ambush: '#e0483a', deliver: '#f2c14e', trader: '#8fd16a', town: '#ffffff' };
 const PLAY_GLYPH: Record<string, string> = { flee: '⇢', ambush: '⚔', deliver: '✉', trader: '⚖', town: '♜' };
 
@@ -82,7 +86,8 @@ export class LevelSit {
   runs = 0;
   readonly log: string[] = [];
   private followers: UnitFollowers;
-  private card: HTMLDivElement;
+  /** (the scripts hide it for a look at the town) */
+  readonly card: HTMLDivElement;
   private warping = false;
   private travelScale = 1;
   private cameFrom: V2 | null = null;
@@ -200,8 +205,38 @@ export class LevelSit {
     const run = this.run;
     this.record = finishSituation(this.world, run, this.d.hero);
     const ending = run.sit.endings[run.end!];
-    if (ending.settlement === 'ruined' || ending.settlement === 'abandoned') this.d.settlements.setCondition(run.sit.target.settlement, ending.settlement);
+    if (ending.settlement === 'ruined' || ending.settlement === 'abandoned') {
+      // (the settlements system realises it charred from now on; the window is made again once the fires have had their
+      // time, so what stands of a town of plaster and tile — which the fire's heat only cracks — comes down to its stumps:
+      // DEVLOG round 120)
+      this.d.settlements.setCondition(run.sit.target.settlement, ending.settlement);
+      const n = this.runs;
+      setTimeout(() => {
+        if (this.runs === n && !this.journey) void this.d.remake().then(() => this.log.push(`${run.sit.target.name}: the window made again, the town charred`));
+      }, CHAR_AFTER_S * 1000);
+    }
     this.log.push(`end ${run.end}: ${this.record.events.length} events; ${run.sit.target.name} ${ending.settlement ?? 'as it was'}`);
+    this.render();
+  }
+
+  /**
+   * (a check's switch: scripts/runsit.mjs --ff) Take these ways on without playing the areas between (each counted at
+   * its planned minutes, won, the first offer taken), then warp to where they lead — to look at a later area, the
+   * finale above all, without riding the whole run each time.
+   */
+  async fastForward(choices: string[]): Promise<void> {
+    for (const id of choices) {
+      const a = this.run.area();
+      this.run.areaDone({ seconds: a.minutes * 60, won: true, pursuers: this.run.pursuers?.count ?? 0 });
+      if (this.run.offers.length) this.run.take(this.run.offers[0]);
+      this.cameFrom = this.run.map.areaAt(a);
+      this.run.choose(id);
+      this.run.arrive();
+    }
+    this.log.push(...this.run.log.splice(0));
+    this.warping = true;
+    await this.d.warp(...toCell(...this.run.map.areaAt(this.run.area())));
+    this.warping = false;
     this.render();
   }
 
@@ -342,7 +377,8 @@ export class LevelSit {
     const seen = new Set<string>();
     for (const e of R.events) {
       const f = e.detail?.faction ? ` (${this.world.faction(String(e.detail.faction))?.name ?? e.detail.faction})` : '';
-      const line = `${e.kind}${f}: ${e.regions.map(name).join(', ')}${e.kind === 'mark' && e.detail?.name ? ` — ${e.detail.name}` : ''}`;
+      const where = e.kind === 'faction-attitude' ? 'toward you' : e.regions.length > 4 ? `${name(e.regions[0])} and ${e.regions.length - 1} regions round it` : e.regions.map(name).join(', ');
+      const line = `${e.kind}${f}: ${where}${e.kind === 'mark' && e.detail?.name ? ` — ${e.detail.name}` : ''}`;
       if (seen.has(line)) continue;
       seen.add(line);
       h('div', `· ${line}`, muted);
