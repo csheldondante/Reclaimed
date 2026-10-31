@@ -14781,3 +14781,36 @@ and the pairs follow the same rule — the equality tests now include brick arch
 **Tests** (B; A unchanged): natural rock arch — stands; keystone cut: stands (corbels); foot cut: 189 fall. Masonry
 (brick) arch — stands (in compression: a thrust line, no tension needed); keystone cut: both halves fall (2 × 27
 cells); foot cut: 189 fall.
+
+## 2026-10-31 — round 120 (`solver`): one mesh a body; sleepers wake; blows break; drag tool; the physics bench (SL12, SL15–SL18)
+
+**One mesh a body (SL12).** The user: "it switches for rendering as voxels. Rendering and simulation should not be coupled
+that way", then on the hybrid: "a lot of things turn into lattices during falling". Every body freed or dropped is drawn
+by its own mesh, made once when it wakes and kept to its rest: render/bodymeshbuild.ts makes the surface of its cells as
+the world draws what's built (hex prisms, a face where the next cell isn't the body's — a girder's web, a pylon's legs
+stay), each vertex bound to its cell's node and up to three near it. render/bodymesh.ts skins all of them in one compute
+pass a frame (bodymesh.wgsl: the node solver's poses between its last two ticks, or a CPU matrix) into one triangle list
+the renderer draws lit and shadowed (vsSkin). A vertex keeps only the nodes in its own node's part, so a broken body's
+mesh splits along its cells' faces. The node solver no longer draws any cell as a voxel (its skin kernel only marks the
+columns); the CPU rock's built cells and resting rocks' are meshes; the voxel lattice's bodies (the hybrid's and the
+lattice's metal, Waker's ruins) get the same mesh bound to their particles (Physics.attachSkin over the existing skin
+kernel), their voxels hidden. Tests: test/unit/bodymesh.test.ts.
+
+**Sleepers wake when their support goes (SL15).** The tanker on the toppled tower was the hybrid's, on the voxel lattice;
+the lattice's sleep (this branch's, for a fair comparison) woke a body only for one of its own kind moving near it, a
+cut, or the game acting. Now rigid rock and node-solver bodies moving faster than a cell a second wake the lattice's
+sleepers near them, and ground written under them wakes them. test/gpu/integrity.test.ts: a lattice slab asleep wakes
+when a stone block falls past it (fails without the fix).
+
+**Hard blows break (SL16).** A body striking solid ground with more than impact.groundEnergy (15000, ½mv² in each
+solver's mass) crumbles it where it struck — the break tool's smash, radius 0.8·∛(E/T) up to 3 — and the judge looks
+at what's left: the CPU rock's hits, the node solver's impacts, and the lattice's (a falling body whose speed drops by
+more than 2.5 cells/s in a tick). A 96-cell stone block from 28 cells: E 22500, crumbles; from a cell: 80, holds. The
+node solver's dents took a node's own material: a tanker truck lands on its asphalt tyres; now the body's main material
+dents where the node's isn't metal. (Measured on the way: a tanker truck dropped 2 cells already bends ~2 cells at
+landing — SL20.)
+
+**Drag tool, physics bench (SL17, SL18).** 🫳 grabs the body nearest the finger within ~48 px, pulls its centre on a damped
+spring to the finger at the height it was lifted to (its weight held), and lets go with its speed: swung into things,
+its hits go through the same rules. ?physbench=1 runs the playground's scripted scene under every solver × judge (a
+reload each) and shows a card with a JSON to copy or download.

@@ -2692,14 +2692,15 @@ One GPU constraint solver for what breaks free — src/solver (host), src/shader
 src/api/contracts/solver.ts (`NodeSolver`). The judges (game/integrity.ts, fracture.ts) still decide what lets go;
 the solver only moves what they hand over. Rendering reads its node transforms without touching its state.
 
-- **In:** `add({ cells, pose?, vel?, spin?, pinned?, allow?, kind?, drawCells? })` — lattice cells where they stood
+- **In:** `add({ cells, pose?, vel?, spin?, pinned?, allow?, kind? })` — lattice cells where they stood
   (the spawn frame), a pose if it's elsewhere now (a resting rock woken). `impulse(body, dv)`, `wake(body)`,
   `remove(body)`. `shift(dx, dy, dz)` when the window slides.
 - **Out:** `read(body)` a tick or two late — centre of mass, rotation (spawn frame → world), velocity, spin, asleep,
   touching, the hardest impact (speed, where), ground cut too deep (erode points), parts, bonds broken, mass.
   `pose`: per node its position and rotation for the last two ticks (4 vec4: prev pos, prev rot, pos, rot; slot b's
   nodes at b · 64) — drawn between them at `WorldCore.renderAlpha()`. `lanes`: per node its bind rest ([6]), what a
-  mesh is skinned to. `skinInst`/`skinArgs`: a body's surface cells as vsBody instances riding their nodes.
+  mesh is skinned to. `bindOf(body)`: its nodes' rest places and each cell's node — what its own mesh is bound to.
+  It draws nothing itself (round 120: no cell is ever drawn as a voxel; its skin kernel only marks the columns).
 - **A body** is up to 64 nodes (blocks of g³ cells, g the least giving ≤ 64; 2 at least for a deformable over 16
   cells — a node spans its member's section) and up to 64 contact points (every node's lowest exposed corner, then
   farthest-point sampling). Bonds are a 64-bit mask a node: cells touching across blocks. Rest positions are kept
@@ -2725,6 +2726,14 @@ the solver only moves what they hand over. Rendering reads its node transforms w
 the voxel lattice), `nodes`, `lattice` (everything on phys.wgsl's voxel lattice, which sleeps too now), `hybrid`
 (rock on the nodes, metal and wood on the lattice). `?judge=runs|sections` (game/judge.ts JUDGES, from branch `judge`)
 picks the judge. The lab's panel picks both (a reload) and compares every solver × judge (ui/experiment.ts, `?run=`).
+
+**Bodies' own meshes** (round 120; render/bodymesh.ts, render/bodymeshbuild.ts, shaders/bodymesh.wgsl): one mesh a
+body, made from its cells when it wakes (hex prism faces where the next cell isn't the body's), each vertex bound to its
+cell's node and up to three near it; `BodyMeshes.add(verts, pose)` with pose `{nodes: slot, com}` (skinned each frame
+to the solver's nodes between its last two ticks, a vertex keeping only its own part's nodes) or `{matrix}` (the CPU
+rock, a resting rock); one triangle list drawn by Renderer.addMesh. On the voxel lattice the same mesh is bound to the
+body's particles (`Physics.attachSkin`, its voxels hidden). Integrity owns the meshes of what it frees and drops;
+the rock mesh (the field mesh's copy) still draws a rock's stone, the body mesh what's built of it.
 ## The collapse judges (round 120, branch `judge`; BACKLOG JB1-JB9, SV1, SV2)
 
 What lets go when the ground is cut is decided by a **judge** behind one interface (src/game/judge.ts); what it frees
