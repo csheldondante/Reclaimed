@@ -62,6 +62,20 @@ each was implemented.
   consolidation, designed and not built. Realistic: 9.8 cells/s² at a metre a cell (a 20-cell fall in 2 s, landing at
   20 cells/s); the caps and the tankers' doubled gravity are why rocks read slow and the tankers read well (AR9, AR10).
 
+- The user, verbatim, on the solver (branch solver, started this round):
+
+> That system should let things come to rest and get a column projection so that they can be buried right? Can they also be overgrown? If I recall it splits the mesh into nodes and uses the connections for elastic and plastic deformation of vertices correct? Does it also propogate forces to compute torque and sheer forces? I would be curious if we can also improve the terrain fracture on thin columns so that we get slightly more plausible rock slides. Did the system there implement the flood fill from edges approach? I think you propogate support in then weight back out and see where support is exceed but I'm not sure.
+
+- → Rest keeps the column projection (External intervals: buried by sediment, grown over at the External material's
+  growth cap). Breaking and yield on the XPBD constraint forces (tension, shear, bending moment), not only strain. The
+  rock judge (round 92's load handed in from the far end, joints at strength × min(BEND h², SHEAR h); round 96's legs)
+  stays the trigger; what it frees falls as a rock slide: slides along its failure plane, topples from the base,
+  breaks into blocks, loads its neighbours (progressive), sheds rubble and dust. Sent to the solver agent.
+
+- The user, verbatim: "I think the penetration tolerance was also really important from what I recall. Big things can push into each other and not push back and this just represents surface deformation at contact."
+  → The solver keeps PX3's mass-scaled overlap (slop + min(slopCap, slopK · mass^slopP)) as the contact rule's slop:
+  never corrected, never wakes a sleeper, no push-back; drawn as surface deformation at the contact.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
