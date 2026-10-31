@@ -57,6 +57,8 @@ export class PlaySession {
   statusLine: (() => string | null) | null = null;
   /** each frame after the hero's step and before the draw (the sandbox's rivals ride here, as they did in the sandbox) */
   afterHero: ((dt: number) => void) | null = null;
+  /** (round 120, runsit) the share of a unit's blow the hero takes (a run's helmet or mail: items.ts 'guard'; 1 none) */
+  damageTaken = 1;
   /** paused: the hero isn't stepped or drawn and the camera is left alone (a run's travel on the map) */
   paused = false;
   /** the main thread's cost of the play layer each frame (ms: its input, hero, draw writes; scripts/perf/play.mjs) */
@@ -70,7 +72,7 @@ export class PlaySession {
       faction: null,
       position: () => (this.hero?.alive && !this.paused ? this.hero.position() : null),
       alive: () => !!this.hero?.alive,
-      hurt: (damage, by) => this.hero?.actor.hurt(damage, by),
+      hurt: (damage, by) => this.hero?.actor.hurt(damage * this.damageTaken, by),
     };
     d.units.watch(actor);
     this.draw = new VoxelDraw(d.device, d.renderer);

@@ -26,7 +26,8 @@ import { ROW_H } from '../world/lattice';
 import { atlasFacts } from '../gm/atlas-facts';
 import { buildWiki, type WorldWiki } from '../gm/wiki';
 import { recordsFrom, type SettlementSeed } from './records';
-import { planSettlement, type SettlementPlan } from './plan';
+import { planSettlement, type Iv, type SettlementPlan } from './plan';
+import { MAT } from '../world/materials';
 import { SettlementLife, type LiveSite, type LiveSpot, type RaidOutcome } from './life';
 import { BUILT_V, FIELD_CELL, type SiteSpec } from './plan';
 import type { TownIO } from '../build/town';
@@ -121,6 +122,8 @@ export class Settlements {
     return this.io?.units ?? null;
   }
   private clock = 0;
+  /** (round 120, runsit) settlements a run left ruined or abandoned: realised charred (setCondition) */
+  private charred = new Set<string>();
   private lastAdvance = 0;
 
   constructor(private atlas: Atlas) {
@@ -175,6 +178,46 @@ export class Settlements {
   /** the live settlement, if any */
   live(): Settlement | null {
     return this.life?.rec ?? null;
+  }
+
+  /**
+   * (round 120, runsit) A planned settlement's places in world units: its middle (the plaza), how far it's built, and
+   * its buildings' doors (one a building) — what a run's finale needs (where the dead go, which houses they fire).
+   * null: not planned yet (its land hasn't come in).
+   */
+  places(id: string): { centre: V2; radius: number; doors: { at: V2; ref: string }[] } | null {
+    const p = this.done.get(id);
+    const s = this.byId.get(id);
+    if (!p || !s) return null;
+    const ox = s.box.x0;
+    const oy = s.box.y0 * ROW_H;
+    const seen = new Set<string>();
+    const doors: { at: V2; ref: string }[] = [];
+    for (const sp of p.spots) {
+      if (!sp.ref || seen.has(sp.ref) || !['home', 'store', 'post', 'make'].includes(sp.kind)) continue;
+      seen.add(sp.ref);
+      doors.push({ at: [sp.at[0] + ox, sp.at[1] + oy], ref: sp.ref });
+    }
+    return { centre: [p.centre[0] + ox, p.centre[1] + oy], radius: s.rec.radius, doors };
+  }
+
+  /**
+   * (round 120, runsit) What a run left of a settlement (the world state's word for it, settlement.ts condition). A
+   * ruined or abandoned one is charred from now on: its land, made again, has its buildings burned down to stumps and
+   * ash (stamp), and no one lives in it. Why here: the settlements system owns how a settlement becomes land; the run
+   * only says what happened to it. The user (round 120): "Let it burn down if the player fails".
+   */
+  setCondition(id: string, c: Settlement['condition']): void {
+    const s = this.byId.get(id);
+    if (!s) throw new Error(`settlements: no settlement ${id}`);
+    s.rec.condition = c;
+    const gone = c === 'ruined' || c === 'abandoned';
+    if (gone === this.charred.has(id)) return;
+    if (gone) {
+      this.charred.add(id);
+      for (const p of s.rec.people) if (!p.hostile) p.count = 0;
+    } else this.charred.delete(id);
+    for (const f of this.atlas.stampsChanged) f(s.box.x0, s.box.y0, s.box.w, s.box.h);
   }
 
   /** send the live settlement's camp on it (false: no camp, or a raid's on) */
@@ -328,9 +371,23 @@ export class Settlements {
     return plan;
   }
 
+  /** (round 120, runsit) a column of a burned settlement: what stood is down to its first cell or two, wood and render ash */
+  private charColumn(lo: number, ivs: Iv[], k: number): Iv[] {
+    const h = (((k * 2654435761) >>> 0) % 1000) / 1000;
+    const top = lo + 0.6 + h * 1.4;
+    const out: Iv[] = [];
+    for (const v of ivs) {
+      if (v.z0 >= top) continue;
+      const burnt = v.mat === MAT.Wood || v.mat === MAT.Canvas || v.mat === MAT.Log || v.mat === MAT.Plaster || v.mat === MAT.Tile;
+      out.push({ z0: v.z0, z1: Math.min(v.z1, top), mat: burnt ? (h < 0.5 ? MAT.Ash : MAT.Rubble) : v.mat });
+    }
+    return out;
+  }
+
   /** the plan's columns that fall in this region, as stamps (world z: atlas/stamps.ts PLAN) */
   private stamp(p: SettlementPlan, s: SettlementSeed, ops: StampOps, x0: number, y0: number, w: number, h: number): void {
     const b = s.box;
+    const charred = this.charred.has(s.rec.id);
     for (let y = 0; y < h; y++) {
       const ly = this.mod(y0 + y - b.y0, this.rows);
       if (ly >= b.h) continue;
@@ -341,7 +398,7 @@ export class Settlements {
         if (!cp) continue;
         // (what stands above the ground there goes; the plan's goes on it — a well's shaft, a quarry's benches: the
         // ground let down; an adit: a gap through it, rock over it)
-        ops.plan(y * w + x, cp.lo, cp.ivs, cp.bare, cp.cut ?? 0, cp.hole);
+        ops.plan(y * w + x, cp.lo, charred ? this.charColumn(cp.lo, cp.ivs, ly * b.w + lx) : cp.ivs, cp.bare, cp.cut ?? 0, cp.hole);
         this.stats.stamped++;
       }
     }

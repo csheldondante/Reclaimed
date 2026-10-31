@@ -496,6 +496,8 @@ export class LevelScene implements Scene {
   /** (round 119, runplay) a planned run's hero and its stage player */
   private runSession?: import('../play/session').PlaySession;
   private runPlayer?: import('../runplay/player').RunPlayer;
+  /** (round 120, runsit) ?runplan=<hero>: the situation run */
+  private situationRun?: import('../runsit/level-sit').LevelSit;
   /** (runplay, round 119) the one terrain system over this level's atlas (its edits are stamped into the land as it's made: one list, one hook) */
   private terrainSystem(): TerrainSystem {
     const a = this.opts.atlas?.atlas;
@@ -1823,7 +1825,9 @@ export class LevelScene implements Scene {
     if (runId) void this.startRun(runId);
     // round 117 (runplan): ?runplan=<hero> — a planned run travelled on the atlas map (src/runplan/level-run.ts)
     const planHero = host.params.get('runplan');
-    if (planHero) void this.startPlannedRun(planHero);
+    // (round 120, runsit: a run is a situation on the live map — the old arcade stages only with &runstages=1, kept for
+    // comparison until the user says to delete them: BACKLOG RS23)
+    if (planHero && planHero !== 'view') void (host.params.get('runstages') === '1' ? this.startPlannedRun(planHero) : this.startSituationRun(planHero));
     // round 117 (play): ?play=<hero> — the play sandbox (the game layer, loaded only when asked for: the engine doesn't import it)
     const playId = host.params.get('play');
     if (playId) void this.startPlay(playId);
@@ -1863,7 +1867,64 @@ export class LevelScene implements Scene {
     (window as unknown as { reclaimed: Record<string, unknown> }).reclaimed.play = this.play;
   }
 
-  /** ?runplan=<hero>: a run planned from the spawn on this atlas; its legs travelled on the atlas map while the land loads */
+  /**
+   * (round 120, runsit) ?runplan=<hero>: the run as a situation on the live map (src/runsit/level-sit.ts) — the GM's for
+   * this world or the template's; its areas played by play's hero (the same PlaySession as the sandbox), the atlas map
+   * and the ways on at each area's edge, the finale at the town, what's left of it remembered.
+   */
+  private async startSituationRun(hero: string): Promise<void> {
+    const a = this.opts.atlas;
+    if (!a || !this.stream || !this.atlasMap) throw new Error('?runplan= plays on the atlas level (?level=atlas)');
+    const id = hero === 'bike' ? 'hoverbike' : hero;
+    if (id !== 'hoverbike' && id !== 'lich') throw new Error(`?runplan=${hero}: a situation run is played by a play hero (hoverbike, lich)`);
+    const units = this.units;
+    const st = this.settlements;
+    if (!units || !st) throw new Error('?runplan=: the situation plays with the atlas level units and settlements (the settlements are off: ?towns=0)');
+    const S = this.stream;
+    const dims = this.core.dims;
+    const { LevelSit } = await import('../runsit/level-sit');
+    const { PlaySession } = await import('../play/session');
+    this.editor?.setVisible(false);
+    this.host.ui.classList.add('play-on');
+    const api = (this.worldApi ??= attachSim(this.core));
+    const bounds: [number, number] = [dims.w, dims.h * ROW_H];
+    const session = await PlaySession.start({ ui: this.host.ui, api, units, camera: this.core.camera, renderer: this.core.renderer, device: this.host.gpu.device, bounds, respawnAfter: null });
+    const c = this.core.camera.target;
+    session.choose(id, session.dryNear([c[0], c[1]]));
+    this.runSession = session;
+    const W = a.atlas.worldW;
+    const H = a.atlas.p.rows * ROW_H;
+    const wrap = (d: number, n: number) => d - Math.round(d / n) * n;
+    const sit = new LevelSit({
+      atlas: a.atlas,
+      terrain: this.terrainSystem(),
+      map: this.atlasMap,
+      ui: this.host.ui,
+      hero: id,
+      session,
+      api,
+      units,
+      settlements: st,
+      bounds,
+      // (world units → the window as it is now: the nearest way round the torus from the window's middle)
+      toWin: (p) => [wrap(p[0] - S.origin[0] - dims.w / 2, W) + dims.w / 2, wrap(p[1] - S.origin[1] * ROW_H - (dims.h * ROW_H) / 2, H) + (dims.h * ROW_H) / 2],
+      precache: (x, y) => precacheWarp(a.atlas, S, dims, x, y),
+      ready: (x, y) => warpReady(a.atlas, S, dims, x, y),
+      warp: (x, y) => warpWindow(a.atlas, S, dims, x, y),
+      say: (s, sec) => this.hud.say(s, sec ?? 4),
+      gm: this.host.params.get('runsitgm') !== '0',
+    });
+    this.situationRun = sit;
+    this.core.onShift.push((dx, dy, dz) => {
+      session.shift(-dx, -dy, -dz);
+      sit.shift(-dx, -dy);
+    });
+    const R = (window as unknown as { reclaimed: Record<string, unknown> }).reclaimed;
+    R.runsit = sit;
+    R.runhero = session;
+  }
+
+  /** ?runplan=<hero>&runstages=1: a run planned from the spawn on this atlas; its legs travelled on the atlas map while the land loads */
   private async startPlannedRun(hero: string): Promise<void> {
     const a = this.opts.atlas;
     if (!a || !this.stream || !this.atlasMap) throw new Error('?runplan= plays on the atlas level (?level=atlas)');
@@ -2260,6 +2321,7 @@ export class LevelScene implements Scene {
       this.runPlayer?.update(dt);
     }
     this.plannedRun?.update(dt);
+    this.situationRun?.update(dt);
     if (this.storyPlay || this.heroRun) record('story', performance.now() - tStory); // (round 100, hitchrec: timing)
     // (round 90: the player's turn of the view — not flying, not while a story shot or the cutaway has the camera)
     if (this.turn && !camera.fly && !CUTAWAY && !this.storyPlay?.cam.busy && !this.heroRun && !this.play && !this.runSession) this.turn.update(dt);
@@ -3425,6 +3487,7 @@ export class LevelScene implements Scene {
     this.heroRun?.dispose();
     this.play?.dispose();
     this.plannedRun?.dispose();
+    this.situationRun?.dispose();
     this.runPlayer?.dispose();
     this.runSession?.dispose();
     this.worldApi?.dispose();

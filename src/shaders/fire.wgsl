@@ -25,6 +25,12 @@
 const EMBER_CATCH: f32 = 0.35;
 
 const MAT_TRASH_F: u32 = 12u;
+// (round 120, runsit) timber, logs and canvas: a building's wooden roof, a woodpile, a tent burn where they're the top
+// (the recipes already called them flammable — data/recipes/core.json timber 0.8, canvas 1 — the fire didn't read it).
+// The user (round 120): "have zombies assail the city. Let it burn down if the player fails." structure.wgsl chars them.
+const MAT_WOOD_F: u32 = 10u;
+const MAT_CANVAS_F: u32 = 21u;
+const MAT_LOG_F: u32 = 29u;
 
 fn fuelAt(i: u32) -> f32 {
   // any oil film is fuel: spills spread thin within a second, and a film
@@ -33,7 +39,10 @@ fn fuelAt(i: u32) -> f32 {
   var f = select(0.0, 1.2 + min(o, 1.0) * 2.0, o > 0.004);
   let v = veg[i];
   f += smoothstep(0.5, 2.0, v) * 0.6 + smoothstep(3.0, 5.0, v) * 0.6;
-  if (sfMat(surface[i]) == MAT_TRASH_F) { f += 0.8; }
+  let sm = sfMat(surface[i]);
+  if (sm == MAT_TRASH_F) { f += 0.8; }
+  if (sm == MAT_WOOD_F || sm == MAT_LOG_F) { f += 0.9; }
+  if (sm == MAT_CANVAS_F) { f += 1.1; }
   return f;
 }
 

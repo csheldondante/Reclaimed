@@ -249,3 +249,50 @@ A session runs the GM as a Claude subagent. Make a story for a world version and
 Later, a model-calling GM implements the same `GameMaster.brief(snapshot, player)`. It sends this document,
 the wiki and the player record as the prompt, runs `checkStory` on the reply, and asks again with the
 problems until the story is clean.
+
+## Situations (round 120, `runsit`)
+
+The user (round 120): "the missions should not be disjoint levels they should be objectives and situations spawned into
+the active map with real consequences" and, on who writes them: "This is what we want the gm to do possibly with
+templates. Look at world state and tell a story with meaningful decisions for the player run."
+
+A **Situation** (`src/api/contracts/situation.ts`, with items.ts) is the run itself: a threat with a clock and a route on
+the real region graph, the place it comes for, three to five areas the hero plays live (1-3 screens each), the choices
+at each area's edge (the player sees them on the atlas map, each with what the actual clock says: "you'd reach Bromusk
+2.3 min before the dead"), the items on the way, and what each ending does to the world. It's played by `?runplan=<hero>`
+(src/runsit/). The first slice: **the horde comes for the town**.
+
+What the game does with each part:
+- `threat` — a horde of `count` units of `role` (the dead: "walking dead") marching over `route` (neighbouring regions,
+  the target's last) to reach the target at `arrives` run minutes. `outriders` hunt the hero from the start (pursuers:
+  they close on every road, `behind` minutes back at the start).
+- `areas[0]` is where the run starts; exactly one area plays `town` (the finale, at the target settlement). The other
+  plays: `flee` (the outriders on the hero: reach the area's edge), `ambush` (foes on the road: break through), `deliver`
+  (carry the word to a settlement's hall within `limit` seconds: its levy `sends` marches for the target, slower than the
+  hero; it may `gives` a choice of items), `trader` (reach the trader: take one of the `offers`).
+- `choices` — `from` an area's edge `to` the next area. Effects: `warn` (the town arms and gathers when the hero gets
+  there first), `evacuate` (with `warn`: the finale is a flight — the people are led into the `refuge`, the town left
+  to the dead), `delay` (the threat slowed: a bridge burned behind).
+- The clock: an area counts the time it's played; a road between areas takes its distance at 500 world units a minute
+  (`TRAVEL_PACE`: the same for every hero, so a clock is fair to each; a mount shortens it). Make the fork real: one way
+  in time with less, one late with more — "ride to the Red Hold for reinforcements (late but in force)" against "warn
+  the town and lead the people into the hills". The validator prints every path's planned minutes against `arrives`.
+- The finale (src/runsit/finale.ts): the dead that get inside the town set fires (the real fire system: it spreads on
+  the timber and the fields, its heat brings the houses down); six fires and the town has fallen. The horde broken
+  first: `saved`. Half the people led out reaching the refuge: `evacuated` (the town still burns behind them). The town
+  fallen: `burned`. The hero dead: `fell`. A hero who comes after the dead finds the town already burning.
+- `endings` — all four, each an Outcome (`atlas` events and `attitude` only) and the settlement's condition after.
+  `burned` must burn the target's region. The next run reads the world as it was left (a ruined town is never a target
+  again; the dead walk where the outcome raised them).
+
+Rules the validator (`node scripts/storycheck.mjs data/situations/<id>.json`) checks: everything names what the wiki
+has (regions, settlements in their regions, factions); the route goes border to border; the refuge is the target's
+region or next to it; 3-7 areas, every one reached, every path 3-5 areas, a fork somewhere, no way back round; items
+defined and offered; some path in time; the endings change the world.
+
+The template (src/runsit/fill.ts, `node scripts/situation.mjs --seed 1`) fills the same contract deterministically from
+the seed and the world: tests and a run with no GM file use it. A GM-written situation is the template's peer: the GM
+reads the wiki (the Hollow Court's ground, the realms' towns and cities, the land) and writes the run the world suggests
+— who's threatened, who could help, what the hills are called, what the dead leave behind — as
+`data/situations/<id>.json`, run until the validator prints ok. The game plays the first file written for the world's
+version and run, else the template (src/runsit/gm.ts).
