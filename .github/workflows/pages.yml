@@ -1,10 +1,16 @@
-# Build the game and publish it to GitHub Pages on every push to main.
+# Build the game and publish it to GitHub Pages. One site holds every branch:
+# main at the root, each other branch that is on origin under /<branch>/
+# (docs/BRANCHES.md), so any branch can be tried on a phone. A push to any of
+# them rebuilds them all from origin, so the workflow must be the same on each.
 # One-time setup: Settings → Pages → Source: "GitHub Actions".
 name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [main]
+    # (round 112) only places and main deploy: the github-pages environment allows only them, and a feature
+    # branch's run used to cancel places' (cancel-in-progress) and then be rejected. Every run builds all the
+    # branches listed below from origin, so a feature branch is published by the next push to places.
+    branches: [main, places]
   workflow_dispatch:
 
 permissions:
@@ -14,22 +20,31 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run build
+      - name: Build every branch
+        run: |
+          set -e
+          mkdir -p site
+          for b in main ambient puzzle mayhem sandbox grids physics agents perf builder stream atlas places perfopt ceiling rivers flow dialog hybrid simcull collapse seawall runstory settlements lakes phonecam winmem fardetail farbake rockbody heroapi streamspeed runstream meshinst regionstore zmesh hitchrec bench gpugen bench2 tilecache simscale slidehitch ringwin tileahead frameprobe tilelatency pages watersurf agentspike tilephone riverfalls playground watershed simtiers tileparity physfix playwater noiselab physfix2 tilefast waterscale noiselab2 tilefix meteorfix testspeed tilefix2 herosandbox tilefix3 panfinger tilesfirst framepace covercheck worldstore tilecal terrain flora structures inhabitants sound runplan play testkit noiselab2-r herosandbox-r runplay; do
+            git rev-parse -q --verify "origin/$b" >/dev/null || continue
+            git worktree add -f "../wt-$b" "origin/$b"
+            (cd "../wt-$b" && npm ci && npm run build)
+            if [ "$b" = main ]; then cp -r "../wt-$b/dist/." site/; else mkdir -p "site/$b" && cp -r "../wt-$b/dist/." "site/$b/"; fi
+          done
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: dist
+          path: site
   deploy:
     needs: build
     runs-on: ubuntu-latest
