@@ -190,6 +190,14 @@ each was implemented.
   Runs: focus on 2+3 as one loop (an encounter map where building is one kind of encounter), folk hero (1) later; a
   design talk on the choices and encounters it exposes.
 
+- Proposed back: a run as a campaign on the real atlas, a threat track that changes the world, turns of map -> engage or delegate -> build -> threat moves, an encounter catalogue (defend, battle, expedition, mission, petition, diplomacy, outpost, merchant, world event, ritual) with rewards that change later options. The user, verbatim:
+
+> Yes I think that structure is more or less right. It's essentially a set of opportunities the player is presented with that resolve via encounters that can help or hinder you and that always progress you towards some climactic ending. Notice it doesn't really matter if your at a fixed stronghold or leading a party of refugees to find a new home. They interface can be similar. The encounters are the games of skill to determine outcomes or just choices of resource allocation to gain benefits or hinderances.
+
+- → One opportunity loop for every run style: opportunities offered -> resolved by encounters (games of skill played live,
+  or resource-allocation choices) -> help or hinder -> always toward a climax. The base is either fixed (a stronghold) or
+  moving (a refugee party); the interface is the same. runsit's horde run is its first moving-base instance.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
