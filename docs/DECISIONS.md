@@ -106,6 +106,17 @@ each was implemented.
   later, maybe). Night lights: emissive + a cheap light pool, no torch shadows. Order: purposes + ports → dressing +
   night lights → styles, cliffside, tech-driven architecture, ruins, the hive.
 
+- The user, verbatim, on solver step 2's lab shots (the pylon snapping into small pieces where the old voxels crumpled):
+
+> Dumb question but how does that compare to just using voxels internally to represent the material and connections instead of nodes?  I know it's fewer elements but a 3d lattice seems well suited to the gpu for parallelization.
+>
+> Did it replace my column space collapse solver? Can we get a collapse test for domes and arches and cliffs with overhang in there?
+> How does the current algorithm account for the torque at each point? I'm thinking what if you average unsupported column mass to get a center of mass first. Then you flood fill in from the supports and for each step compute total support each point can provide to that center of mass and if it's less than the amount needed the whole piece comes down. Otherwise you adjust by center of mass of the front and continue until you have no more deep points. Does that sound accurate? Is it parallelizable?
+
+- → The column judge stays (it decides what lets go; the solver moves it). Collapse tests for arches, domes and
+  overhanging cliffs asked of the solver agent (Node tests of analyseRock, then lab stations). The lattice-vs-nodes and
+  the judge's torque model answered in chat; the user to decide.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
