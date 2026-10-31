@@ -1,0 +1,385 @@
+{
+ "bench": "physics",
+ "v": 1,
+ "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36",
+ "when": "2026-10-31T11:48:46.258Z",
+ "stages": [
+  "drop the line-up",
+  "topple the rock towers",
+  "undercut the mesa",
+  "topple the house towers",
+  "swing the tanker into the bridge"
+ ],
+ "rows": [
+  {
+   "pair": "nodes:runs",
+   "stage": "drop the line-up",
+   "frames": 806,
+   "fps": 100.8,
+   "p50": 9.9,
+   "p95": 11,
+   "p99": 15.5,
+   "worst": 47.9,
+   "gpu": 12.15,
+   "gpuPhysics": 5.34,
+   "cpuPhysics": 0,
+   "cpuTop": {
+    "sim": 0.17,
+    "render": 0.14,
+    "judge": 0.02,
+    "mesh": 0.02,
+    "rockbodies": 0
+   },
+   "judge": {
+    "passes": 1,
+    "ms": 0,
+    "worst": 0,
+    "gpuMs": null,
+    "readKB": null
+   },
+   "read": {
+    "reads": 1,
+    "ms": 49.9,
+    "worst": 49.9,
+    "kb": 16384
+   },
+   "awake": 5,
+   "slow": 1,
+   "clusters": 1,
+   "longestRun": 1
+  },
+  {
+   "pair": "nodes:runs",
+   "stage": "topple the rock towers",
+   "frames": 958,
+   "fps": 100.9,
+   "p50": 9.8,
+   "p95": 11,
+   "p99": 11.6,
+   "worst": 76.9,
+   "gpu": 10.76,
+   "gpuPhysics": 1.65,
+   "cpuPhysics": 0.03,
+   "cpuTop": {
+    "render": 0.21,
+    "sim": 0.2,
+    "judge": 0.07,
+    "judge.pass": 0.04,
+    "rockbodies": 0.03
+   },
+   "judge": {
+    "passes": 29,
+    "ms": 0.79,
+    "worst": 5.2,
+    "gpuMs": null,
+    "readKB": null
+   },
+   "read": {
+    "reads": 31,
+    "ms": 26.25,
+    "worst": 54.1,
+    "kb": 2240
+   },
+   "awake": 9,
+   "slow": 1,
+   "clusters": 1,
+   "longestRun": 1
+  },
+  {
+   "pair": "nodes:runs",
+   "stage": "undercut the mesa",
+   "frames": 608,
+   "fps": 101.4,
+   "p50": 9.9,
+   "p95": 10.9,
+   "p99": 11.2,
+   "worst": 22.6,
+   "gpu": 9.93,
+   "gpuPhysics": 0.87,
+   "cpuPhysics": 0.02,
+   "cpuTop": {
+    "render": 0.21,
+    "sim": 0.2,
+    "judge.pass": 0.06,
+    "judge": 0.05,
+    "judge.runs": 0.03
+   },
+   "judge": {
+    "passes": 14,
+    "ms": 1.26,
+    "worst": 4.9,
+    "gpuMs": null,
+    "readKB": null
+   },
+   "read": {
+    "reads": 16,
+    "ms": 20.61,
+    "worst": 47.5,
+    "kb": 1700
+   },
+   "awake": 2,
+   "slow": 0,
+   "clusters": 0,
+   "longestRun": 0
+  },
+  {
+   "pair": "nodes:runs",
+   "stage": "topple the house towers",
+   "frames": 600,
+   "fps": 100.1,
+   "p50": 9.8,
+   "p95": 11,
+   "p99": 23.3,
+   "worst": 41,
+   "gpu": 11.68,
+   "gpuPhysics": 2.61,
+   "cpuPhysics": 0.04,
+   "cpuTop": {
+    "sim": 0.19,
+    "render": 0.17,
+    "judge": 0.12,
+    "judge.pass": 0.07,
+    "rockbodies": 0.04
+   },
+   "judge": {
+    "passes": 16,
+    "ms": 0.41,
+    "worst": 1.6,
+    "gpuMs": null,
+    "readKB": null
+   },
+   "read": {
+    "reads": 21,
+    "ms": 25.04,
+    "worst": 43.8,
+    "kb": 2846.5
+   },
+   "awake": 7,
+   "slow": 3,
+   "clusters": 2,
+   "longestRun": 2
+  },
+  {
+   "pair": "nodes:runs",
+   "stage": "swing the tanker into the bridge",
+   "frames": 981,
+   "fps": 101.2,
+   "p50": 9.9,
+   "p95": 10.9,
+   "p99": 11.5,
+   "worst": 39.9,
+   "gpu": 11.77,
+   "gpuPhysics": 4.29,
+   "cpuPhysics": 0,
+   "cpuTop": {
+    "sim": 0.18,
+    "render": 0.15,
+    "judge.pass": 0.04,
+    "judge": 0.02,
+    "mesh": 0.01
+   },
+   "judge": {
+    "passes": 17,
+    "ms": 0.25,
+    "worst": 0.6,
+    "gpuMs": null,
+    "readKB": null
+   },
+   "read": {
+    "reads": 19,
+    "ms": 33.84,
+    "worst": 92.3,
+    "kb": 1330.5
+   },
+   "awake": 5,
+   "slow": 1,
+   "clusters": 1,
+   "longestRun": 1
+  },
+  {
+   "pair": "nodes:sections",
+   "stage": "drop the line-up",
+   "frames": 811,
+   "fps": 101.3,
+   "p50": 9.9,
+   "p95": 11,
+   "p99": 11.7,
+   "worst": 54,
+   "gpu": 10.05,
+   "gpuPhysics": 2.46,
+   "cpuPhysics": 0,
+   "cpuTop": {
+    "sim": 0.2,
+    "render": 0.19,
+    "judge.sections": 0.09,
+    "judge": 0.08,
+    "mesh": 0.02
+   },
+   "judge": {
+    "passes": 3,
+    "ms": 24.33,
+    "worst": 38.1,
+    "gpuMs": 1.68,
+    "readKB": 32.1
+   },
+   "read": {
+    "reads": 3,
+    "ms": 35.1,
+    "worst": 75.1,
+    "kb": 6314.7
+   },
+   "awake": 6,
+   "slow": 1,
+   "clusters": 1,
+   "longestRun": 1
+  },
+  {
+   "pair": "nodes:sections",
+   "stage": "topple the rock towers",
+   "frames": 954,
+   "fps": 100.5,
+   "p50": 9.9,
+   "p95": 11.2,
+   "p99": 18.2,
+   "worst": 56.5,
+   "gpu": 12,
+   "gpuPhysics": 4.01,
+   "cpuPhysics": 0.07,
+   "cpuTop": {
+    "judge.sections": 0.92,
+    "sim": 0.19,
+    "render": 0.17,
+    "judge": 0.12,
+    "rockbodies": 0.07
+   },
+   "judge": {
+    "passes": 33,
+    "ms": 27.7,
+    "worst": 59.8,
+    "gpuMs": 2.15,
+    "readKB": 32.4
+   },
+   "read": {
+    "reads": 35,
+    "ms": 36.76,
+    "worst": 89.4,
+    "kb": 2015.1
+   },
+   "awake": 15,
+   "slow": 3,
+   "clusters": 3,
+   "longestRun": 1
+  },
+  {
+   "pair": "nodes:sections",
+   "stage": "undercut the mesa",
+   "frames": 611,
+   "fps": 101.9,
+   "p50": 9.9,
+   "p95": 10.9,
+   "p99": 11.3,
+   "worst": 21.9,
+   "gpu": 10.5,
+   "gpuPhysics": 3.38,
+   "cpuPhysics": 0.02,
+   "cpuTop": {
+    "judge.sections": 1.13,
+    "sim": 0.18,
+    "render": 0.18,
+    "judge": 0.05,
+    "judge.pass": 0.03
+   },
+   "judge": {
+    "passes": 21,
+    "ms": 35.42,
+    "worst": 56.5,
+    "gpuMs": 5.1,
+    "readKB": 32.2
+   },
+   "read": {
+    "reads": 21,
+    "ms": 27.02,
+    "worst": 51,
+    "kb": 3047.6
+   },
+   "awake": 14,
+   "slow": 0,
+   "clusters": 0,
+   "longestRun": 0
+  },
+  {
+   "pair": "nodes:sections",
+   "stage": "topple the house towers",
+   "frames": 607,
+   "fps": 101.4,
+   "p50": 9.8,
+   "p95": 11,
+   "p99": 12.8,
+   "worst": 37.1,
+   "gpu": 10.4,
+   "gpuPhysics": 2.92,
+   "cpuPhysics": 0.02,
+   "cpuTop": {
+    "judge.sections": 1.04,
+    "sim": 0.19,
+    "render": 0.18,
+    "judge": 0.08,
+    "judge.pass": 0.05
+   },
+   "judge": {
+    "passes": 21,
+    "ms": 30.95,
+    "worst": 49.2,
+    "gpuMs": 5.24,
+    "readKB": 32.1
+   },
+   "read": {
+    "reads": 23,
+    "ms": 25.27,
+    "worst": 62.2,
+    "kb": 3124.9
+   },
+   "awake": 12,
+   "slow": 1,
+   "clusters": 1,
+   "longestRun": 1
+  },
+  {
+   "pair": "nodes:sections",
+   "stage": "swing the tanker into the bridge",
+   "frames": 976,
+   "fps": 100.9,
+   "p50": 9.9,
+   "p95": 11,
+   "p99": 11.7,
+   "worst": 40.4,
+   "gpu": 12.54,
+   "gpuPhysics": 6.85,
+   "cpuPhysics": 0,
+   "cpuTop": {
+    "judge.sections": 1.48,
+    "sim": 0.16,
+    "render": 0.13,
+    "judge": 0.05,
+    "judge.pass": 0.04
+   },
+   "judge": {
+    "passes": 41,
+    "ms": 35.94,
+    "worst": 87.6,
+    "gpuMs": 3.79,
+    "readKB": 32.2
+   },
+   "read": {
+    "reads": 42,
+    "ms": 41.31,
+    "worst": 97.6,
+    "kb": 1558.9
+   },
+   "awake": 9,
+   "slow": 3,
+   "clusters": 3,
+   "longestRun": 1
+  }
+ ]
+}

@@ -1484,7 +1484,7 @@ export class Integrity {
    * the ghosts of those just broken (their pieces' own meshes not drawn till the ghost goes).
    */
   /** (round 120) this frame's draw path of each moving rock by its id (rockDraws) */
-  readonly drawPaths = new Map<number, 'skin' | 'matrix' | 'split-skin' | 'split-matrix' | 'cubes' | 'none'>();
+  readonly drawPaths = new Map<number, 'skin' | 'matrix' | 'split-skin' | 'split-matrix' | 'mesh' | 'cubes' | 'none'>();
   private rockDraws(): void {
     const rm = this.rockMesh;
     if (!rm || !this.rigid) return;
@@ -1523,7 +1523,8 @@ export class Integrity {
     for (const b of this.rigid.list) {
       const at = index.get(b);
       const skin = at !== undefined && !!draws[at].skin;
-      const path = at === undefined ? 'cubes' : at >= RK_N ? 'none' : waiting.has(b) ? (skin ? 'split-skin' : 'split-matrix') : skin ? 'skin' : 'matrix';
+      // (no rock mesh: all of it its own body mesh — what's built, a brick house — or, were neither there, its cells)
+      const path = at === undefined ? (this.rockMeshOf.get(b) ? 'mesh' : 'cubes') : at >= RK_N ? 'none' : waiting.has(b) ? (skin ? 'split-skin' : 'split-matrix') : skin ? 'skin' : 'matrix';
       this.drawPaths.set(b.id, path);
     }
     for (const a of this.afterglow) if (--a.frames <= 0) rm.release(a.slot);

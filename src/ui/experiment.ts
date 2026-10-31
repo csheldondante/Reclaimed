@@ -100,7 +100,9 @@ export function startRun(params: URLSearchParams, press: (station: string, butto
 export function experimentChip(h: ExperimentHooks): HTMLElement {
   const wrap = document.createElement('div');
   wrap.className = 'experiment-chip';
-  wrap.style.cssText = 'position:absolute;top:56px;left:10px;z-index:30;font:12px system-ui,sans-serif;color:#eee';
+  // (above the report and tune buttons, bottom left: the tuning panel opens over the top of the screen; the panel
+  // opens above the chip)
+  wrap.style.cssText = 'position:absolute;bottom:250px;left:10px;z-index:70;font:12px system-ui,sans-serif;color:#eee;display:flex;flex-direction:column-reverse;align-items:flex-start';
   const chip = document.createElement('button');
   chip.textContent = `${h.variant} · ${h.judge}`;
   chip.title = 'the solver and the collapse judge: pick another (the page reloads with it)';

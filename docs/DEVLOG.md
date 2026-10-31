@@ -14872,3 +14872,23 @@ Neither judge caused a hitch on the desktop. The CPU ms is A's frame-thread cost
 readback's continuation. On the phone that is the number to watch, about 3 to 5 times these. **The readback is paid
 today whichever judge runs**, because Integrity keeps its CPU copy for applying a verdict, for External and for the
 structures' check (JB6). Until JB6 is done, B's 1 ms of GPU adds to the same readback rather than replacing it.
+
+## 2026-10-31 — round 120 (`solver`): soft ground; the physics bench headless (SL18, SL19)
+
+**Soft ground.** The user: "when bodies hit the ground with heavy impacts in soft material like sand or dirt they should
+displace material and dampen energy that way … I really want it to push into the ground a bit to look like it is in
+soft material." The contact rule "erode, don't push" with the ground the softer body: a blow on loose ground digs out
+the body's footprint (Integrity.softBlow: depth impact.softSink · softness · ∛E over the footprint's side, at most 3,
+half as deep at its edge; softness from materials.ts `bear`, sand 2, soil 1, anything not granular 0) and the body
+settles into the dent; what's dug out is impact.spray (0.3) thrown up as dust and chips and the rest laid as a rim on
+the ring round it (the loose deposit) — test/gpu/integrity.test.ts checks removed = spray + rim, deeper from higher
+(a 27-cell stone block on sand: 0.4 cells from 3 up, more from 24), no rebound, and stone not sinking. Every solver
+reaches it through groundBlow (the CPU rock's hits, the node solver's impacts, the lattice's). The slide and metal
+stations have sand, dirt and stone side by side and "drop on sand, dirt, stone".
+
+**The physics bench, headless** (scripts/physbench.mjs, the desktop's Chrome on D3D11 at the phone proxy's 412 × 915,
+q=low; the phone's own numbers are the user's run). Per stage, nodes × runs / nodes × sections / hybrid × runs:
+p50 ~9.9 ms and p95 ~11 ms everywhere (the frame's cap here); GPU 8–12.7 ms a frame, the physics passes 0.8–6.9 ms
+(the line-up and the swung tanker the most); judge A 0.25–1.3 ms a pass, judge B (7e029fc merged) 24–36 ms submit-to-verdict
+— its GPU 1.7–5.2 ms, 32 KB read; the rest is waiting on the frame's readback; the column readback 20–41 ms latency,
+1.3–3 MB a read. data/perf/solver/physbench-headless.json.

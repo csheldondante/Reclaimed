@@ -82,13 +82,28 @@ const DUST = { x0: 16, x1: 112, y0: 192, y1: 240 };
 // (solver step 2) the node solver's stations
 /** the slope's top at column x (storage): up toward −x, a cell a column and a quarter, whole cells */
 const slopeTop = (x: number) => G + Math.max(0, Math.round((132 - x) * 0.8));
-const SLIDE = { slab: { x0: 116, x1: 124, y0: 204, y1: 212 }, pegs: [[118, 206], [122, 210]] as [number, number][], spire: { x: 150, y: 200, r: 1.3, h: 22 }, mesa: { x0: 136, x1: 148, y0: 220, y1: 232, h: 12 } };
+/** (round 120, soft ground) a sand pit 4 deep, the soil as it is (dirt), a stone pad: storage x0, x1 of each, rows y0, y1 */
+interface Grounds {
+  y0: number;
+  y1: number;
+  sand: [number, number];
+  dirt: [number, number];
+  stone: [number, number];
+}
+const SLIDE = {
+  slab: { x0: 116, x1: 124, y0: 204, y1: 212 },
+  pegs: [[118, 206], [122, 210]] as [number, number][],
+  spire: { x: 150, y: 200, r: 1.3, h: 22 },
+  mesa: { x0: 136, x1: 148, y0: 220, y1: 232, h: 12 },
+  grounds: { y0: 206, y1: 218, sand: [150, 154], dirt: [154, 157], stone: [157, 160] } as Grounds,
+};
 const HOUSE = { house: { x0: 164, x1: 174, y0: 196, y1: 204, h: 7 }, tower: { x0: 194, x1: 198, y0: 198, y1: 202, h: 20 }, wood: { x0: 180, x1: 186, y0: 218, y1: 224, h: 16 } };
 const METAL = {
   pillars: [[212, 196], [236, 196]] as [number, number][],
   girder: { x0: 212, x1: 240, y0: 197, y1: 199, z0: G + 10 },
   pylon: { x0: 222, x1: 228, y0: 214, y1: 220, h: 20 },
   tanker: { x0: 238, x1: 250, y0: 226, y1: 231, z0: G + 8, h: 5 },
+  grounds: { y0: 221, y1: 240, sand: [206, 219], dirt: [219, 228], stone: [228, 237] } as Grounds,
 };
 const cellsBox = (x0: number, y0: number, z0: number, w: number, d: number, h: number, mat: number) => {
   const out: { x: number; y: number; z: number; mat: number }[] = [];
@@ -262,6 +277,14 @@ export const STATIONS: Station[] = [
     hint: 'node solver, rock: a slab on a slope held by pegs, a thin spire, a mesa — slides, topples, shatters; buried, dug out',
     actions: [
       { label: 'release the slab', run: (k) => SLIDE.pegs.forEach(([x, y]) => k.smash(...wp(x + 0.5, y + 0.5), slopeTop(x) + 0.5, 1.1)) },
+      {
+        // (round 120) a stone block from 14 up on each of the sand pit, the dirt and the stone pad
+        label: 'drop on sand, dirt, stone',
+        run: (k) => {
+          const g = SLIDE.grounds;
+          for (const [a] of [g.sand, g.dirt, g.stone]) k.drop(cellsBox(a, 210, G + 14, 3, 3, 3, MAT.Stone));
+        },
+      },
       { label: 'nick the spire', run: (k) => k.smash(...wp(SLIDE.spire.x - 1, SLIDE.spire.y + 0.5), G + 1.5, 1.6) },
       {
         label: 'undercut the mesa',
@@ -352,6 +375,16 @@ export const STATIONS: Station[] = [
         run: (k) => k.dropModels(['model:tankertruck', 'model:car', 'model:carburnt', 'model:bus', 'girder'], 225, 230, 16, 26),
       },
       {
+        // (round 120, the user: "when bodies hit the ground with heavy impacts in soft material like sand or dirt they
+        // should displace material") a tanker truck from 16 up on each: it sinks into the sand, less into the dirt,
+        // not into the stone
+        label: 'drop on sand, dirt, stone',
+        run: (k) => {
+          const g = METAL.grounds;
+          for (const [a, b] of [g.sand, g.dirt, g.stone]) k.dropModels(['model:tankertruck'], Math.round((a + b) / 2), 230, 16);
+        },
+      },
+      {
         label: 'bury the tanker',
         run: (k) => {
           const t = METAL.tanker;
@@ -403,6 +436,13 @@ export function generatePlayground(dims: WorldDims): MapData {
         if (Math.hypot(px - wx, py - wy) <= r) out.push([x, y]);
       }
     return out;
+  };
+  /** (round 120) sand, dirt (the soil as it lies) and stone side by side, the top at G */
+  const soft = (g: Grounds) => {
+    for (let y = g.y0; y < g.y1; y++) {
+      for (let x = g.sand[0]; x < g.sand[1]; x++) put(x, y, G - 4, G, MAT.Sand);
+      for (let x = g.stone[0]; x < g.stone[1]; x++) put(x, y, G - 2, G, MAT.Stone);
+    }
   };
   /** a box of storage cells */
   const block = (x0: number, y0: number, z0: number, bw: number, bd: number, bh: number, mat: number) => {
@@ -523,6 +563,8 @@ export function generatePlayground(dims: WorldDims): MapData {
     for (const [a, b] of disc(sx, sy, sp.r)) put(a, b, G - 2, G + sp.h, MAT.Stone);
     const m = SLIDE.mesa;
     block(m.x0, m.y0, G, m.x1 - m.x0, m.y1 - m.y0, m.h, MAT.Stone);
+    // (round 120: a sand pit, the soil (dirt) and a stone pad side by side, for drops to show the difference)
+    soft(SLIDE.grounds);
   }
   // 8. house: a stone house (walls a cell thick, a concrete roof), a brick tower, a wooden tower (posts and floors)
   {
@@ -542,6 +584,8 @@ export function generatePlayground(dims: WorldDims): MapData {
   // 9. metal: a steel girder on two stone pillars; a steel pylon (legs, braces, a platform); a steel tanker on posts
   {
     const M = METAL;
+    // (round 120: sand, dirt and stone side by side under where the line-up lands)
+    soft(M.grounds);
     for (const [x, y] of M.pillars) block(x, y, G, 3, 3, 10, MAT.Stone);
     const g = M.girder;
     block(g.x0, g.y0, g.z0, g.x1 - g.x0, g.y1 - g.y0, 2, MAT.Steel);
