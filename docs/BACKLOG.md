@@ -31,6 +31,21 @@ tests work and do quick smoke tests to find failures early." docs/TESTING.md.
 | TK10 | More unit tests for what the brief listed and this round didn't reach: the planners (scenes/planner.ts), calibration math (perf/), run and story logic (run/, story/), layout and packing (world/layout.ts, sim/pages.ts) | M | open |
 | TK11 | The runner's teardown once took ~200 s after a passing check (smoke, rocklab alone, on a busy GPU): page / browser / server close; time each | S | open |
 
+## Round 120 (2026-10-31, session 5, `places`) — the user played the run, the towns and the birches (DECISIONS round 120)
+
+| id | item | size | status |
+|---|---|---|---|
+| RS20 | Runs as situations in the live map, not disjoint stages: a threat set moving toward a place (zombies assail a city; it burns if the player fails), changes made in the session (a dam broken floods the valley), chases, fleeing, a message delivered before the enemy; races only with arenas (jumps, crowds). Runplay's stages are the stand-in it replaces | L | asked (design session) |
+| RS21 | At an area's boundary: the atlas map with choices from the actual situation (ride to the Red Hold for reinforcements, or warn the town and lead the people into the hills) | M | asked (design session) |
+| RS22 | Roguelike structure: items along the run with mechanical choices; time pressure (pursuers, a date to arrive by); encounters on the way that prepare for the final challenge | L | asked (design session) |
+| PL20 | The bike unplayable in a run: the camera too close and the gates seen too late (look-ahead, zoom with speed, early notice) | S | open |
+| PL21 | The lich "decent but not quite what I had in mind" — design talk | M | asked |
+| TR30 | Cave networks: mouths in cliffs much bigger, obviously entrances, leading into deep tunnels under the land (a noise band intersected with the land, SDF-blended), not overhangs; replaces the sea-cave work (TR21, TR24b) | L | asked (design session) |
+| IN20 | Creatures from swappable body segments, the same mechanism for equipment, fur, spikes and skins; vertex blending at joints; limbs and tails as secondary motion from root motion (Rain World); mounts and items (round 119) | L | asked (design session) |
+| FLO20 | Trees much bigger relative to the hero; forests where the camera is under the canopy | M | asked (design session) |
+| STR30 | Settlements with purposes (trading post, mine, lumber camp, ...) and stories | M | asked (design session) |
+| FLO21 | Birch cost on the phone: the user's result good — done (flora 18c3bdb, unmerged) | S | done |
+
 ## Round 118 (2026-10-30, session 5, `places`) — found while reviewing the tracks
 
 | id | item | size | status |

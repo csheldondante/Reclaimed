@@ -3,6 +3,29 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-31 — round 120 (session 5) — after playing the run, the towns and the birches; runs redesigned
+
+- The user, verbatim:
+
+> 1. Birches were good 2. The lich was decent but not quite what I had in mind. Let's talk more. The bike was not really playable because of how zoomed in we are and how little notice for the gates. 3. I think the opening should be even bigger and should protrude into deep underground tunnels. I don't just want overhangs I want entranced to cave networks. That's why I said to intersect a nose band and use SDF to blend (I want tunnels under the land that you enter from the cliffs and are obviously entrances. 4. I just think the creatures would be better with swappable body segments that would also be what we use for equipment and then we can add equipment or fur or spikes or different skin with the same technique. I might also make them have vertex blending at joints and animate limbs and tails as secondary animations driven by root motion similar to rain world or other top down procedural animators. For plants I want trees that are much bigger relative to the player potentially and to make forests where we are zoomed in and the camera is under the trees. 5. Cities is a huge improvement but I do want to make it so different settlements have different purposes like trading posts, mines, lumber camps, etc. towns should have stories.
+>
+> Going back to run structure this is a good start but I would not just have races or spawned things to destroy. Have an objective to protect a city form zombies and have zombies assail the city. Let it burn down if the player fails. Don't have races unless you have arenas with jumps and crowds. Have chases. Flee. Deliver a message before enemies arrive etc.  the missions should not be disjoint levels they should be objectives and situations spawned into the active map with real consequences. Benefits may still be simulated between runs but when possible make the gameplay actually modify the map during the session not with text between sessions. Like actually break a dam and flood a valley don't just say it happened. In terms of the overworld I would make it so when the player reaches the boundary of an area they get the map and choices of where to go based on the actual situation. Deliver a message to the Red Hold to get them to send reinforcements or warn the town and lead the peoplen into the hills. The actual gameplay should reflect interesting world changing choices.
+>
+> I would consider looking to other roguelikes for inspiration though. Having items along the run with interesting mechanical choices, having time pressure like pursuers or needing to reach your destination by some date are good. Having encounters along the way and basically prepping for the final challenge by facing challenges along the way is the sort of play the run is meant to orchestrate.
+
+- Earlier the same day, on the town fixes: the 404s were main's own Pages deploy (PRs #1 and #2) replacing the site; places
+  redeployed everything (2e2bbf5).
+- → Birches done (flora's phone result good). The lich: a design talk first. The bike: the camera too close and the gates
+  seen too late. Sea caves → cave networks: big mouths in cliffs that lead into deep tunnels under the land (a noise band
+  intersected and SDF-blended), obviously entrances. Creatures: swappable body segments that are also how equipment, fur,
+  spikes and skins attach; vertex blending at joints; limbs and tails as secondary motion from root motion (Rain World).
+  Plants: much bigger trees; forests where the camera is under the canopy. Settlements: purposes (trading post, mine,
+  lumber camp...) and stories. Runs: situations spawned into the live map with real consequences made in the session
+  (the city burns, the dam breaks and floods the valley), not disjoint stages; at an area's boundary the map with choices
+  from the actual situation; roguelike items with mechanical choices, time pressure (pursuers, a date), encounters that
+  prepare for the final challenge. No races without arenas (jumps, crowds); chases, fleeing, a message before the enemy.
+  Runplay's arcade stages are a stand-in to be replaced. BACKLOG round 120.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
