@@ -20,7 +20,8 @@ export const REQUIRED_STORAGE_BUFFERS_PER_STAGE = 8;
 export async function initGpu(canvas: HTMLCanvasElement): Promise<Gpu> {
   if (!('gpu' in navigator) || !navigator.gpu) {
     throw new UnsupportedError(
-      'This browser does not expose WebGPU. Try a recent Chrome, Edge, or Safari 26+, or Firefox 141+ on Windows.',
+      'This browser does not expose WebGPU. Try a recent Chrome, Edge, or Safari 26+, or Firefox 141+ on Windows. ' +
+        'Firefox on Linux: set dom.webgpu.enabled to true in about:config, then reload.',
     );
   }
   const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });

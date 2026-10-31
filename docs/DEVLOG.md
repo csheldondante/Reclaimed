@@ -2326,3 +2326,21 @@ After: 210 / 58 / 461 / 235 (carving off: 197 / 43 / 452 / 235; the rest is
 mostly sky past the map edge and a few seams between soft tops). Draw
 (1600×900): default view 5.6 → 6.8 ms, zoomed gorge 6.8 → 8.1 ms.
 
+
+## 2026-10-30 — Firefox without WebGPU: a blank page instead of the message (FF1)
+
+Reported on the Pages build in Firefox: a blank page and
+`ReferenceError: GPUBufferUsage is not defined`. Reproduced in headless
+Firefox 157 on Linux, which has no WebGPU by default (`navigator.gpu` is
+missing, and so are the `GPUBufferUsage` / `GPUTextureUsage` constants).
+`sim/world-gpu.ts` set `const S = GPUBufferUsage.STORAGE | ...` at module
+scope. ES modules evaluate before `main()` runs, so the throw came before
+`initGpu` could raise its UnsupportedError, and nothing was shown. `S` is set
+in the WorldGpu constructor now (its only user). It was the only module-scope
+WebGPU read on any branch, and every branch has it (in `world-gpu.ts`).
+
+Firefox 157 on Linux runs the game with `dom.webgpu.enabled = true` in
+about:config (the menu diorama draws, headless, no other prefs needed), so
+the unsupported message now says so. Checked after the change, headless
+Firefox: without the pref, the "can't run here" overlay with that text; with
+it, the menu.

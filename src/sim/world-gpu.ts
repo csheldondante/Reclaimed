@@ -11,8 +11,6 @@ import { GLOBALS_BYTES } from './globals';
 
 export const STATS_COUNT = 16;
 
-const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
-
 export class WorldGpu {
   readonly w: number;
   readonly h: number;
@@ -146,8 +144,11 @@ export class WorldGpu {
     this.zMax = zMax;
     this.maxK = packed.maxK;
     const N = this.cells;
+    // Not at module scope: GPUBufferUsage exists only where WebGPU does, and this
+    // module loads before initGpu can report that it's missing.
+    const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
 
-    this.globals = this.buf('globals', GLOBALS_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    this.globals =this.buf('globals', GLOBALS_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     const mats = packMaterialTable();
     this.materials = this.buf('materials', mats.byteLength, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     device.queue.writeBuffer(this.materials, 0, mats);
