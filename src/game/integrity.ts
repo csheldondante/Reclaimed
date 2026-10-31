@@ -1365,7 +1365,11 @@ export class Integrity {
     for (const b of this.rigid.list) {
       if (b.slot === undefined && !waiting.has(b)) continue;
       index.set(b, draws.length);
-      draws.push({ slot: waiting.has(b) || b.slot === undefined ? -1 : b.slot, m: this.rigid.drawMatrix(b) });
+      // (on the node solver its mesh is skinned to its nodes on the GPU — where it is this frame, no readback's lag —
+      // but for a ghost's pieces, drawn by their matrices till their own meshes are built)
+      const sb = this.rigid.engineBody(b);
+      if (sb && b.slot !== undefined && !waiting.has(b)) draws.push({ slot: b.slot, m: [], skin: { slot: sb.slot, com: sb.restCom, nodes: sb.nodes } });
+      else draws.push({ slot: waiting.has(b) || b.slot === undefined ? -1 : b.slot, m: this.rigid.drawMatrix(b) });
     }
     for (const a of this.afterglow) draws.push({ slot: a.slot, m: a.m });
     // (round 99) the resting rock, where it lies

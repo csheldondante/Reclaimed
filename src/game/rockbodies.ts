@@ -986,6 +986,11 @@ export class RockBodies {
     return { hits, rest, erode };
   }
 
+  /** (solver step 2) the node solver's body carrying this one (null: not handed over yet, or the CPU step moves it) */
+  engineBody(b: RockBody): SolverBody | null {
+    return this.engined.get(b)?.sb ?? null;
+  }
+
   private substep(b: RockBody, h: number, top: number): void {
     // gravity (the world's: solver step 1, AR9), air; no top speed (AR10: it was capped at 14); the spin damped
     b.v[2] -= worldG() * RB.gravity * h;
