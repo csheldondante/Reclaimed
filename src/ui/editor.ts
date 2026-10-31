@@ -80,23 +80,25 @@ const HARD: [string, number][] = [
   ['trash', MAT.Trash],
 ];
 
-const TOOLS: [EditTool, string, string][] = [
-  ['wind', '✋', 'Hands: tap to grow, drag to make wind'],
-  ['pour', '⛆', 'Pour: drop loose material from above (a layer per press)'],
-  ['build', '▲', 'Build: lay hard material (a layer per press)'],
-  ['bedrock', '⛰', 'Bedrock: raise stone from below, lifting everything on it'],
-  ['dig', '▼', 'Dig: take a layer off the top'],
-  ['place', '🚗', 'Place a model: cars, ruins, a tanker… (E rotates)'],
-  ['smash', '💥', 'Break: punch a hole where you click — what loses its support falls'],
-  ['water', '💧', 'Pour water'],
-  ['drain', '◌', 'Drain water and oil'],
-  ['oil', '⬤', 'Spill oil'],
-  ['pollute', '☣', 'Poison the ground'],
-  ['clean', '✧', 'Clean: poison, oil, dust'],
-  ['plant', '❦', 'Plant'],
-  ['storm', '☁', 'Place a storm'],
-  ['duststorm', '🌫', 'Place a dust storm'],
-  ['cyclone', '🌀', 'Place a cyclone'],
+/** Each tool: its icon, its name at the top of the panel (pour, build and
+ *  place add the material or model), and its hover tip. */
+const TOOLS: [EditTool, string, string, string][] = [
+  ['wind', '✋', 'Tap: grow · drag: wind','Hands: tap to grow, drag to make wind'],
+  ['pour', '⛆', 'Pour', 'Pour: drop loose material from above (a layer per press)'],
+  ['build', '▲', 'Build', 'Build: lay hard material (a layer per press)'],
+  ['bedrock', '⛰', 'Raise bedrock', 'Bedrock: raise stone from below, lifting everything on it'],
+  ['dig', '▼', 'Dig', 'Dig: take a layer off the top'],
+  ['place', '🚗', 'Drop', 'Place a model: cars, ruins, a tanker… (E rotates)'],
+  ['smash', '💥', 'Punch a hole', 'Break: punch a hole where you click — what loses its support falls'],
+  ['water', '💧', 'Pour water', 'Pour water'],
+  ['drain', '◌', 'Drain water and oil', 'Drain water and oil'],
+  ['oil', '⬤', 'Spill oil', 'Spill oil'],
+  ['pollute', '☣', 'Poison the ground', 'Poison the ground'],
+  ['clean', '✧', 'Clean the ground', 'Clean: poison, oil, dust'],
+  ['plant', '❦', 'Plant', 'Plant'],
+  ['storm', '☁', 'Place a storm', 'Place a storm'],
+  ['duststorm', '🌫', 'Place a dust storm', 'Place a dust storm'],
+  ['cyclone', '🌀', 'Place a cyclone', 'Place a cyclone'],
 ];
 
 export class Editor {
@@ -121,7 +123,8 @@ export class Editor {
     const el = document.createElement('div');
     el.className = 'editor';
     el.innerHTML = `
-      <div class="tools">${TOOLS.map(([t, icon, tip]) => `<button data-t="${t}" title="${tip}">${icon}</button>`).join('')}</div>
+      <div class="picked" data-picked></div>
+      <div class="tools">${TOOLS.map(([t, icon, , tip]) => `<button data-t="${t}" title="${tip}">${icon}</button>`).join('')}</div>
       <label data-ml>material <select data-m></select></label>
       <label>size <input data-r type="range" min="1" max="16" value="${this.radius}"></label>
       <label data-ll>layers <input data-l type="range" min="1" max="4" value="${this.layers}"></label>
@@ -158,11 +161,13 @@ export class Editor {
         matSel.innerHTML = list.map(([n, m]) => `<option value="${m}"${m === cur ? ' selected' : ''}>${n}</option>`).join('');
         this.material = cur;
       } else if (t === 'bedrock') this.material = MAT.Stone;
+      this.showPicked();
     };
     for (const b of el.querySelectorAll<HTMLButtonElement>('[data-t]')) b.addEventListener('click', () => sel(b.dataset.t as EditTool));
     matSel.addEventListener('change', () => {
       this.material = Number(matSel.value);
       if (this.tool === 'pour' || this.tool === 'build') this.picked[this.tool] = this.material;
+      this.showPicked();
     });
     const bury = el.querySelector<HTMLInputElement>('[data-b]')!;
     bury.addEventListener('input', () => (this.bury = Number(bury.value)));
@@ -171,6 +176,7 @@ export class Editor {
       this.bury = MODELS.find((m) => m.id === id)!.sink;
       bury.value = String(this.bury);
       for (const b of el.querySelectorAll<HTMLButtonElement>('[data-mod]')) b.classList.toggle('on', b.dataset.mod === id);
+      this.showPicked();
     };
     for (const b of el.querySelectorAll<HTMLButtonElement>('[data-mod]')) b.addEventListener('click', () => pickModel(b.dataset.mod!));
     pickModel(this.model);
@@ -244,7 +250,20 @@ export class Editor {
       this.material = material;
       if (tool === 'pour' || tool === 'build') this.picked[tool] = material;
       this.el.querySelector<HTMLSelectElement>('[data-m]')!.value = String(material);
+      this.showPicked();
     }
+  }
+
+  /** The line at the top of the panel: the tool, and the material or model it puts down. */
+  private showPicked(): void {
+    const [, , name] = TOOLS.find(([t]) => t === this.tool)!;
+    const what =
+      this.tool === 'pour' || this.tool === 'build'
+        ? [...LOOSE, ...HARD].find(([, m]) => m === this.material)![0]
+        : this.tool === 'place'
+          ? MODELS.find((m) => m.id === this.model)!.name.toLowerCase()
+          : '';
+    this.el.querySelector('[data-picked]')!.textContent = what ? `${name} ${what}` : name;
   }
 
   dispose(): void {

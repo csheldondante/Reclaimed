@@ -298,6 +298,11 @@ canvas#world {
   background: var(--panel); border-radius: 12px; padding: 8px; width: 168px;
   display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--ink-dim);
 }
+/* one line, always: it sits above the tool buttons, which mustn't move when it changes */
+.editor .picked {
+  color: var(--ink); font-size: 13px; padding: 0 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .editor .tools, .editor .speed, .editor .maps { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .editor button {
   appearance: none; border: 1px solid transparent; border-radius: 8px; background: rgba(255, 255, 255, 0.06);
