@@ -17,6 +17,7 @@ import type { BikeTuning } from '../play/core/bike';
 import type { Part, Voxels } from '../play/draw/shapes';
 import { MAT } from '../world/materials';
 import { layCourse, progress, type P2 } from './course';
+import { onScreen, SIGNPOSTED, signposted } from './notice';
 import { GATE_R, Quarry, Racer } from './riders';
 import { judge, stageSpec, type Observation, type StageSpec, type StageStatus } from './rules';
 
@@ -70,7 +71,10 @@ export class StagePlay {
   t = -COUNTDOWN;
   status: StageStatus = { state: 'playing' };
   private banner: HTMLDivElement;
-  private arrow: HTMLDivElement;
+  /** (round 120, PL20) the arrows at the screen's edge: what's next, and (a race's) the gate after it — each with its distance */
+  private arrows: { el: HTMLDivElement; tip: HTMLDivElement; label: HTMLDivElement }[] = [];
+  /** seconds since the last gate was passed (the arrows pulse to the next) */
+  private passedT = 99;
   private big: HTMLDivElement;
   // race / trial
   private gates: P2[] = [];
@@ -95,7 +99,13 @@ export class StagePlay {
     this.spec = stageSpec(stage, d.profile());
     this.result = new Promise((res) => (this.done = res));
     this.banner = div(d.ui, 'position:absolute;left:50%;transform:translateX(-50%);top:calc(max(8px, env(safe-area-inset-top)) + 4px);max-width:min(70vw,420px);padding:6px 12px;border-radius:9px;background:rgba(18,16,12,0.78);color:#f3e8cf;font:600 13px/1.3 system-ui,sans-serif;text-align:center;pointer-events:none;z-index:7;');
-    this.arrow = div(d.ui, 'position:absolute;width:0;height:0;border-left:13px solid transparent;border-right:13px solid transparent;border-bottom:26px solid #ffd35a;filter:drop-shadow(0 1px 3px rgba(0,0,0,.7));pointer-events:none;z-index:7;display:none;');
+    // (the next: big and gold; the one after: smaller and paler, so the line through the next can be planned)
+    for (const [size, color, alpha] of [[17, '#ffd35a', 1], [11, '#fff0c0', 0.75]] as const) {
+      const el = div(d.ui, `position:absolute;left:0;top:0;width:0;height:0;pointer-events:none;z-index:7;display:none;opacity:${alpha};`);
+      const tip = div(el, `position:absolute;left:${-size}px;top:${-size}px;width:0;height:0;border-left:${size}px solid transparent;border-right:${size}px solid transparent;border-bottom:${size * 2}px solid ${color};filter:drop-shadow(0 1px 3px rgba(0,0,0,.7));`);
+      const label = div(el, `position:absolute;left:0;top:${size + 4}px;transform:translateX(-50%);white-space:nowrap;padding:1px 6px;border-radius:7px;background:rgba(18,16,12,0.72);color:${color};font:700 ${size >= 15 ? 13 : 11}px/1.3 system-ui,sans-serif;`);
+      this.arrows.push({ el, tip, label });
+    }
     this.big = div(d.ui, 'position:absolute;left:50%;top:34%;transform:translate(-50%,-50%);color:#fff3c4;font:800 64px system-ui,sans-serif;text-shadow:0 3px 12px rgba(0,0,0,.8);pointer-events:none;z-index:7;');
     this.setUp();
   }
@@ -287,6 +297,7 @@ export class StagePlay {
     const s = this.spec;
     const wasCounting = this.t < 0;
     this.t += dt;
+    this.passedT += dt;
     const go = this.t >= 0;
     if (wasCounting) this.big.textContent = go ? 'GO!' : String(Math.ceil(-this.t));
     if (go && this.t > 0.8 && this.big.textContent) this.big.textContent = '';
@@ -296,6 +307,7 @@ export class StagePlay {
       const g = this.gates[this.passed];
       if (g && Math.hypot(g[0] - me[0], g[1] - me[1]) < GATE_R + 1) {
         this.passed++;
+        this.passedT = 0;
         this.world.burst('dust', g[0], g[1], this.gateZ[this.passed - 1] + 1);
       }
       if (go) for (const r of this.racers) r.step(dt);
@@ -370,20 +382,33 @@ export class StagePlay {
     }
     const text = `${line} · ⏱ ${clock}`;
     if (this.banner.textContent !== text) this.banner.textContent = text;
-    // the arrow at the screen's edge toward what's next, when it's off screen (or far)
-    const tgt = this.objective();
-    if (!tgt) {
-      this.arrow.style.display = 'none';
+    // the arrows at the screen's edge toward what's next (a race: the next gate and the one after), off screen or far
+    const marks: { at: P2; label: string }[] = [];
+    if (s.kind === 'race' || s.kind === 'trial') {
+      for (let i = this.passed; i < this.gates.length && signposted(i, this.passed); i++)
+        marks.push({ at: this.gates[i], label: `${i === this.gates.length - 1 ? '🏁' : i + 1} · ${Math.round(Math.hypot(this.gates[i][0] - me[0], this.gates[i][1] - me[1]))}` });
+    } else {
+      const tgt = this.objective();
+      if (tgt) marks.push({ at: tgt, label: String(Math.round(Math.hypot(tgt[0] - me[0], tgt[1] - me[1]))) });
+    }
+    this.arrows.forEach((a, k) => this.pointAt(a, marks[k] ?? null, me, k === 0 ? Math.max(0, 1 - this.passedT / 0.6) : 0));
+  }
+
+  /** one arrow toward `m` at the screen's edge (or over it when it's on screen and far); `pulse` 0..1 swells it */
+  private pointAt(a: { el: HTMLDivElement; tip: HTMLDivElement; label: HTMLDivElement }, m: { at: P2; label: string } | null, me: P2, pulse: number): void {
+    if (!m) {
+      a.el.style.display = 'none';
       return;
     }
+    const tgt = m.at;
     const z = this.world.top(tgt[0], tgt[1]);
     const [sx, sy] = this.world.project(tgt[0], tgt[1], z);
     const W = innerWidth;
     const H = innerHeight;
     const pad = 40;
-    const on = sx > pad && sy > pad + 40 && sx < W - pad && sy < H - pad;
+    const on = onScreen(sx, sy, W, H, pad) && sy > pad + 40;
     if (on && Math.hypot(tgt[0] - me[0], tgt[1] - me[1]) < 60) {
-      this.arrow.style.display = 'none';
+      a.el.style.display = 'none';
       return;
     }
     const cx = W / 2;
@@ -393,14 +418,21 @@ export class StagePlay {
     const l = Math.hypot(dx, dy) || 1;
     dx /= l;
     dy /= l;
-    // (clamped to the screen's edge, inset)
-    const k = Math.min(Math.abs((W / 2 - pad) / (dx || 1e-6)), Math.abs((H / 2 - pad) / (dy || 1e-6)));
+    // (clamped to the screen's edge, inset; room under it for the label)
+    const k = Math.min(Math.abs((W / 2 - pad) / (dx || 1e-6)), Math.abs((H / 2 - pad - 18) / (dy || 1e-6)));
     const ax = on ? sx : cx + dx * k;
     const ay = on ? sy - 30 : cy + dy * k;
-    this.arrow.style.display = '';
-    this.arrow.style.left = `${ax - 13}px`;
-    this.arrow.style.top = `${ay - 13}px`;
-    this.arrow.style.transform = `rotate(${Math.atan2(dy, dx) + Math.PI / 2}rad)`;
+    a.el.style.display = '';
+    a.el.style.transform = `translate(${ax}px, ${ay}px)`;
+    a.tip.style.transform = `rotate(${Math.atan2(dy, dx) + Math.PI / 2}rad) scale(${1 + pulse * 0.6})`;
+    if (a.label.textContent !== m.label) a.label.textContent = m.label;
+  }
+
+  /** (round 120) the gates signposted now (scripts/runplay.mjs measures each gate's warning by it) */
+  signpostedGates(): number[] {
+    const out: number[] = [];
+    for (let i = this.passed; i < this.gates.length && i < this.passed + SIGNPOSTED; i++) out.push(i);
+    return out;
   }
 
   private finish(o: Observation): void {
@@ -412,13 +444,13 @@ export class StagePlay {
     else if (s.kind === 'fight') summary = `${s.foes! - (o.foesLeft ?? 0)} of ${s.foes} raiders down`;
     else summary = `${o.down ?? 0} of ${s.towers} towers down`;
     this.big.textContent = st.state === 'won' ? 'WON' : st.state === 'playing' ? '' : st.how === 'died' ? 'DOWN' : st.how === 'clock' ? 'TIME' : st.how === 'beaten' ? 'BEATEN' : 'GONE';
-    this.arrow.style.display = 'none';
+    for (const a of this.arrows) a.el.style.display = 'none';
     this.done?.({ status: st, seconds: Math.max(0, this.t), spec: s, summary });
   }
 
   dispose(): void {
     this.banner.remove();
-    this.arrow.remove();
+    for (const a of this.arrows) a.el.remove();
     this.big.remove();
     for (const id of this.foes) this.d.units.remove(id);
     this.foes = [];

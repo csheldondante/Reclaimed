@@ -19,7 +19,7 @@ import { makeBike, speedOf, stepBike, type Bike, type BikeTuning } from '../core
 import type { Pt } from '../core/gestures';
 import { ASSIST, passPlanner, segmentDistance, type PassBudget, type PassPlan } from '../core/intercept';
 import { IntentLog, type IntentRecord } from '../core/intent';
-import { BIKE_DEFAULTS, type BikeParams } from '../controllers/hoverbike';
+import { BIKE_CAMERA, BIKE_DEFAULTS, type BikeParams } from '../controllers/hoverbike';
 import { attitude, BLADE_LENGTH, buildBike, buildBlade, buildLance, LANCE_LENGTH, qAxis, qMul, type Part } from '../draw/shapes';
 import type { ButtonLook, Pad, PlayInput } from '../input/types';
 import type { PlayWorld } from '../world';
@@ -51,7 +51,7 @@ export class BikeHero extends PlayHero {
     buttons: [{ icon: '🚀', name: 'boost', held: true }],
     hint: 'Left thumb: ride · hold BOOST (Space) · swipe beside the bike: slash · tap a foe: on the line (swipe back: reel it in) · tap the ground: swing round it · tap a rider: pull up alongside · swipe: cut the line · hold a drag: lance',
   };
-  readonly camera: HeroCamera = { zoom: 34, behind: Math.PI / 6, firm: Math.PI / 4 };
+  readonly camera: HeroCamera = BIKE_CAMERA;
   private swing: { side: 1 | -1; yaw: number; pitch: number; reach: number; t: number; plan: PassPlan | null; cut: Set<number>; rec: IntentRecord } | null = null;
   private swingT = 0;
   private lanceA: number | null = null;

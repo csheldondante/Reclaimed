@@ -1925,6 +1925,9 @@ against a contract and knows only its inputs:
   `Walker` on foot; `src/hero/touchpad.ts` `TouchPad` the phone-first controller (a floating stick, ⚔, a
   context button; WASD / Space / E). It sits under the rest of #ui, over the canvas: the level's Controls see
   none of its pointers.
+  (round 120, PL20) `HeroCamera.chase?: ChaseFraming` — the chase camera's framing at speed per hero (lead in seconds,
+  seconds of travel kept on screen ahead, the widest zoom, eases); `src/play/core/chase.ts` `Chase` turns it into the
+  view's lead and zoom (PlaySession, the sandbox and a run). Absent: play's default (the lich's round 118 framing).
 - `src/units/figures.ts` — `Figures`: the hero and units as a few voxels each, written from the CPU every frame
   into an instance buffer drawn by `Renderer.addVoxels` (units.wgsl's instance form: centre f32 × 3 + the
   material word with the size in bits 24–29 and the body glow for the hurt flash; a quaternion).

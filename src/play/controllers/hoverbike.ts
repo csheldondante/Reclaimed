@@ -5,6 +5,7 @@
 // from the numbers, not written beside them, so a tuned bike tells the generators the truth: launch it harder and its
 // ramps' gaps grow; give it more thrust and its slaloms tighten.
 
+import type { HeroCamera } from '../../api/contracts/hero';
 import type { ControllerInfo, ControllerProfile, ParamSpec, Params } from '../../api/contracts/play';
 import { BIKE, type BikeTuning } from '../core/bike';
 
@@ -36,6 +37,20 @@ export const BIKE_WEAPONS = {
  * still coasts and carries momentum. The core's BIKE (core/bike.ts, the slice's tested numbers) stays as it was.
  */
 export const BIKE_FASTER = { accel: 46, max: 32, limit: 50, boost: 70, boostMax: 46 };
+
+/**
+ * (round 120, PL20) The bike's chase camera — the user: "The bike was not really playable because of how zoomed in we
+ * are and how little notice for the gates." Wider at rest (34 → 22 px a cell: ~19 cells across a 412 px phone, was 12),
+ * and at speed fitted in time (play/core/chase.ts): 0.8 s of travel kept on screen ahead, the centre leading by 0.45 s
+ * (at most 0.6 of the way to the edge), out to 12 px a cell. Out at 1.5/s, back in at 0.6/s, the speed it fits smoothed
+ * over ~0.7 s: no pumping over bumps and boosts. Numbers and why: DEVLOG round 120.
+ */
+export const BIKE_CAMERA: HeroCamera = {
+  zoom: 22,
+  behind: Math.PI / 6,
+  firm: Math.PI / 4,
+  chase: { lead: 0.45, leadMax: 40, leadShare: 0.6, ahead: 0.8, minZoom: 12, back: 0, follow: 3, zoomOut: 1.5, zoomIn: 0.6, speedEase: 1.5 },
+};
 
 export type BikeParams = BikeTuning & typeof BIKE_WEAPONS;
 export const BIKE_DEFAULTS: BikeParams = { ...BIKE, ...BIKE_FASTER, ...BIKE_WEAPONS };

@@ -48,6 +48,32 @@ export interface HeroCamera {
   behind: number;
   /** past this the pull is twice as firm (Orbit.prefer.firm) */
   firm?: number;
+  /** (round 120, PL20) how the chase camera frames it at speed (play/core/chase.ts); absent: play's default framing */
+  chase?: ChaseFraming;
+}
+
+/**
+ * (round 120, PL20) The chase camera's framing at speed, per hero — the user: "The bike was not really playable because
+ * of how zoomed in we are and how little notice for the gates." Seconds, not cells, so a faster hero sees as far in time.
+ * play/core/chase.ts turns it into the view's lead and zoom each frame.
+ */
+export interface ChaseFraming {
+  /** look-ahead: the screen's centre leads the hero by this many seconds of its velocity... */
+  lead: number;
+  /** ...but at most this many cells, and this share of the way from the centre to the screen's nearest edge */
+  leadMax: number;
+  leadShare: number;
+  /** seconds of travel kept on screen ahead of the hero (0: none — the zoom only follows `back`): it zooms out to fit them */
+  ahead: number;
+  /** the widest it zooms out to (screen px a cell; the tiles' own floor still applies) */
+  minZoom: number;
+  /** pulled back with the hero's `fast()` (a share of its zoom at 1) — the older framing, kept for the lich */
+  back: number;
+  /** how quickly (1/s) the lead follows the velocity, the zoom eases out and back in (in slower: no pumping), and the speed it fits is smoothed */
+  follow: number;
+  zoomOut: number;
+  zoomIn: number;
+  speedEase: number;
 }
 
 /** What a hero needs from the world: its ground, the units it fights and talks to. */
