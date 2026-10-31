@@ -179,7 +179,7 @@ try {
       await click('↺ reset');
       await sleep(3000);
       // (its top speed out of the way: 14 cells/s caps a fall of 10 cells at either gravity)
-      await p.evaluate((g) => (window.reclaimed.tune.set('rigid.gravity', g), window.reclaimed.tune.set('rigid.maxV', 60)), g);
+      await p.evaluate((g) => (window.reclaimed.tune.set('rigid.gravity', g)), g);
       await click('nick the legs');
       let vmax = 0;
       let n = 0;

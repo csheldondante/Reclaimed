@@ -1,0 +1,195 @@
+{
+ "at": "2026-10-31T07:47:06.405Z",
+ "viewport": "412x915 dpr 2.6 q=low",
+ "measureS": 8,
+ "results": [
+  {
+   "variant": "nodes",
+   "level": "playground",
+   "station": "rock",
+   "gpuMs": 7.841,
+   "physGpuMs": 1.619,
+   "passes": {
+    "solver-pairs": 0.013,
+    "solver": 1.606
+   },
+   "cpuMs": {
+    "solver": 0.021,
+    "physics": 0.001,
+    "rigid": 0
+   },
+   "frameP50": 9.8,
+   "frameP95": 11.2,
+   "rigidBodies": 0,
+   "solverBodies": 1,
+   "solverAwake": 0,
+   "solverNodes": 58,
+   "solverParts": 1,
+   "physVoxels": 0,
+   "physBodies": 0,
+   "memBytes": 35856160,
+   "feel": {
+    "vUpMax": 0.9,
+    "belowGround": 0
+   },
+   "bodiesMade": 2
+  },
+  {
+   "variant": "nodes",
+   "level": "playground",
+   "station": "build",
+   "gpuMs": 6.413,
+   "physGpuMs": 2.62,
+   "passes": {
+    "solver-pairs": 0.011,
+    "solver": 2.609
+   },
+   "cpuMs": {
+    "solver": 0.015,
+    "physics": 0,
+    "rigid": 0
+   },
+   "frameP50": 0.2,
+   "frameP95": 10.6,
+   "rigidBodies": 4,
+   "solverBodies": 4,
+   "solverAwake": 4,
+   "solverNodes": 144,
+   "solverParts": 4,
+   "physVoxels": 0,
+   "physBodies": 0,
+   "memBytes": 35856160,
+   "feel": {
+    "vUpMax": 0.49,
+    "belowGround": 0
+   },
+   "bodiesMade": 7
+  },
+  {
+   "variant": "nodes",
+   "level": "playground",
+   "station": "slide",
+   "gpuMs": 7.942,
+   "physGpuMs": 0.742,
+   "passes": {
+    "solver-pairs": 0.013,
+    "solver": 0.729
+   },
+   "cpuMs": {
+    "solver": 0.016,
+    "physics": 0,
+    "rigid": 0.1
+   },
+   "frameP50": 0,
+   "frameP95": 10.3,
+   "rigidBodies": 0,
+   "solverBodies": 1,
+   "solverAwake": 0,
+   "solverNodes": 53,
+   "solverParts": 1,
+   "physVoxels": 0,
+   "physBodies": 0,
+   "memBytes": 35856160,
+   "feel": {
+    "vUpMax": 0.1,
+    "belowGround": 0
+   },
+   "bodiesMade": 11
+  },
+  {
+   "variant": "nodes",
+   "level": "playground",
+   "station": "house",
+   "gpuMs": 7.012,
+   "physGpuMs": 2.081,
+   "passes": {
+    "solver-pairs": 0.011,
+    "solver": 2.062,
+    "solver-skin": 0.008
+   },
+   "cpuMs": {
+    "solver": 0.013,
+    "physics": 0,
+    "rigid": 0
+   },
+   "frameP50": 0,
+   "frameP95": 10.3,
+   "rigidBodies": 1,
+   "solverBodies": 3,
+   "solverAwake": 2,
+   "solverNodes": 92,
+   "solverParts": 4,
+   "physVoxels": 0,
+   "physBodies": 0,
+   "memBytes": 35856160,
+   "feel": {
+    "vUpMax": 0.42,
+    "belowGround": 0
+   },
+   "bodiesMade": 14
+  },
+  {
+   "variant": "nodes",
+   "level": "playground",
+   "station": "metal",
+   "gpuMs": 11.804,
+   "physGpuMs": 5.16,
+   "passes": {
+    "solver-pairs": 0.018,
+    "solver": 5.127,
+    "solver-skin": 0.016
+   },
+   "cpuMs": {
+    "solver": 0.01,
+    "physics": 0.001,
+    "rigid": 0
+   },
+   "frameP50": 0,
+   "frameP95": 10.3,
+   "rigidBodies": 2,
+   "solverBodies": 6,
+   "solverAwake": 4,
+   "solverNodes": 212,
+   "solverParts": 14,
+   "physVoxels": 0,
+   "physBodies": 0,
+   "memBytes": 35856160,
+   "feel": {
+    "vUpMax": 0.2,
+    "belowGround": 0
+   },
+   "bodiesMade": 33
+  },
+  {
+   "variant": "nodes",
+   "level": "rocklab",
+   "station": "collapse",
+   "gpuMs": 8.456,
+   "physGpuMs": 1.523,
+   "passes": {
+    "solver-pairs": 0.011,
+    "solver": 1.512
+   },
+   "cpuMs": {
+    "solver": 0.006,
+    "physics": 0,
+    "rigid": 0
+   },
+   "frameP50": 9.9,
+   "frameP95": 11.3,
+   "rigidBodies": 0,
+   "solverBodies": 1,
+   "solverAwake": 0,
+   "solverNodes": 24,
+   "solverParts": 1,
+   "physVoxels": 0,
+   "physBodies": 0,
+   "memBytes": 35856160,
+   "feel": {
+    "vUpMax": 1.4,
+    "belowGround": 0
+   },
+   "bodiesMade": 6
+  }
+ ]
+}

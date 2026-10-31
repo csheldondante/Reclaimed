@@ -132,6 +132,12 @@ export class Simulation {
    * Encode and submit one tick. Globals are uploaded per tick so each tick sees
    * its own tick number/time (queue.writeBuffer is ordered with submits).
    */
+  /**
+   * (round 120, the physics bench: on a tiler GPU per-pass timestamps don't add up — a system's cost is measured by
+   * the frame with it and without it) systems by name not stepped while named here
+   */
+  readonly paused = new Set<string>();
+
   step(globals: GlobalsState, filter?: (s: SimSystem) => boolean): void {
     globals.tick = this.tick;
     this.uploadGlobals(globals);
@@ -157,6 +163,7 @@ export class Simulation {
     for (const sys of this.systems) {
       if (this.tick % sys.period !== 0) continue;
       if (filter && !filter(sys)) continue;
+      if (this.paused.has(sys.name)) continue;
       const t0 = performance.now();
       sys.encode(enc, this.tick);
       const dt = performance.now() - t0;

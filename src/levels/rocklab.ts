@@ -11,13 +11,66 @@
 //   (round 96) in front of those, metal (with rockbody on it's woken into the physics voxels and bends): a steel girder
 //           bridge on two stone piers (break a pier) · a steel frame tower (a meteor at its feet)
 // The sandbox's tools (Break, Meteor, Heat beam, Dig) are on the panel.
+// (solver step 2; the user, round 120: "Can we get a collapse test for domes and arches and cliffs with overhang in
+// there?") A station off to the back left, 'collapse' (storage x 16..112, rows 16..96), with a button a cut: an arch
+// (the keystone; a foot), a dome (a hole in its crown; its base ring), a cliff with three shelves off its top (reach
+// 6 / 10 / 14, 1 / 2 / 3 thick: the judge's numbers in test/unit/judge-shapes.test.ts), a thin spire (its foot cut
+// past its middle on one side). The same shapes the judge's Node tests cut.
 
 import { ColumnGrid, type Interval, type WorldDims } from '../world/layout';
 import { MAT } from '../world/materials';
 import type { MapData } from '../world/mapgen';
 import { cellAt, cellPos } from '../world/lattice';
+import type { Station } from './playground';
 
 const PLAIN = 12;
+/** (solver step 2) the collapse station's shapes (storage cells) */
+const SHAPES = {
+  arch: { legs: [22, 34], y0: 24, y1: 27, h: 12, span: 3 },
+  dome: { x: 60, y: 40, r: 9, t: 1.5 },
+  cliff: { x0: 80, x1: 88, y0: 20, y1: 50, h: 20, shelves: [[22, 28, 6, 1], [32, 38, 10, 2], [42, 48, 14, 3]] as [number, number, number, number][] },
+  spire: { x: 40, y: 70, r: 1.6, h: 20 },
+};
+const wp = (x: number, y: number): [number, number] => cellPos(x, y);
+
+/** (solver step 2) the rock lab's stations: the collapse shapes, a button a cut */
+export const ROCKLAB_STATIONS: Station[] = [
+  {
+    id: 'collapse',
+    name: 'collapse',
+    rect: [16, 16, 112, 96],
+    look: [60, 40, 14, 4],
+    hint: 'the collapse judge: an arch, a dome, a cliff with three overhangs, a thin spire — cut them, watch what lets go',
+    actions: [
+      { label: 'cut the keystone', run: (k) => k.dig(...wp(29.5, 25.5), 2.2, 4) },
+      { label: 'cut a foot', run: (k) => k.smash(...wp(SHAPES.arch.legs[1] + 1.5, 25.5), PLAIN + 1.5, 2.4) },
+      { label: 'hole in the dome', run: (k) => k.dig(...wp(SHAPES.dome.x, SHAPES.dome.y), 2.5, 3) },
+      {
+        label: 'cut the dome\'s ring',
+        run: (k) => {
+          const d = SHAPES.dome;
+          const [cx, cy] = wp(d.x, d.y);
+          for (let a = 0; a < 2 * Math.PI; a += Math.PI / 8) k.smash(cx + Math.cos(a) * (d.r - 0.8), cy + Math.sin(a) * (d.r - 0.8), PLAIN + 1, 1.6);
+        },
+      },
+      {
+        label: 'nick the shelves',
+        run: (k) => {
+          const c = SHAPES.cliff;
+          for (const [y0, y1, reach] of c.shelves) k.dig(...wp(c.x1 + reach - 0.5, (y0 + y1) / 2), 1.2, 1);
+        },
+      },
+      {
+        label: 'undercut the cliff',
+        run: (k) => {
+          const c = SHAPES.cliff;
+          for (const [y0, y1, , thick] of c.shelves) k.smash(...wp(c.x1 - 1, (y0 + y1) / 2), PLAIN + c.h - thick - 1, 2.2);
+        },
+      },
+      { label: 'undercut the spire', run: (k) => k.smash(...wp(SHAPES.spire.x + 1, SHAPES.spire.y + 0.5), PLAIN + 1, 1.6) },
+    ],
+  },
+];
 /** the middle of the pieces (world): where the camera opens (the level's default target, w × 0.55, h × ROW_H × 0.5) */
 export const ROCKLAB = { spacing: 22 };
 
@@ -128,6 +181,29 @@ export function generateRocklab(dims: WorldDims): MapData {
         for (let t = 0; t <= 1; t += 0.05) for (const [a, b] of disc(x + ax + (bx - ax) * t, y + ay + (by - ay) * t, 0.6)) put(a, b, z, z + 1, MAT.Steel);
       }
     for (const [a, b] of disc(x, y, 4.5)) put(a, b, G + 32, G + 33, MAT.Steel);
+  }
+  // (solver step 2) the collapse station's shapes
+  {
+    const A = SHAPES.arch;
+    for (let y = A.y0; y < A.y1 + 1; y++) {
+      for (let x = A.legs[0]; x < A.legs[1] + 3; x++) put(x, y, G + A.h, G + A.h + A.span, MAT.Stone);
+      for (const lx of A.legs) for (let x = lx; x < lx + 3; x++) put(x, y, G, G + A.h, MAT.Stone);
+    }
+    const D = SHAPES.dome;
+    const [dx, dy] = cellPos(D.x, D.y);
+    for (const [a, b] of disc(dx, dy, D.r)) {
+      const [px, py] = cellPos(a, b);
+      const d = Math.hypot(px - dx, py - dy);
+      const ri = D.r - D.t;
+      const inner = d < ri ? G + Math.sqrt(ri * ri - d * d) : G;
+      put(a, b, Math.floor(inner), Math.ceil(G + Math.sqrt(D.r * D.r - d * d)), MAT.Stone);
+    }
+    const C = SHAPES.cliff;
+    for (let y = C.y0; y < C.y1; y++) for (let x = C.x0; x < C.x1; x++) put(x, y, G, G + C.h, MAT.Stone);
+    for (const [y0, y1, reach, thick] of C.shelves) for (let y = y0; y < y1; y++) for (let x = C.x1; x < C.x1 + reach; x++) put(x, y, G + C.h - thick, G + C.h, MAT.Stone);
+    const S = SHAPES.spire;
+    const [sx, sy] = cellPos(S.x, S.y);
+    for (const [a, b] of disc(sx, sy, S.r)) put(a, b, G, G + S.h, MAT.Stone);
   }
   const grid = new ColumnGrid(dims);
   for (let y = 0; y < h; y++)

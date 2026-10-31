@@ -14408,3 +14408,586 @@ animals, animals-close; tilegate/). Seen while looking, already on places: a dar
 spawn's wide zoom (cmp-wide-5291.png, places' build) — M120-2; tall dark spires near the tilegate spot are in the
 old baselines too; the stretched triangles in the free camera at terrain's fall spot are on places' build as well (M120-4). The animals only come with `?life=1` (not in the default world) — M120-3, the user's call.
 
+## 2026-10-31 — round 120 (`solver`, step 1): one world gravity, no speed caps, the rigid rock on a fixed step
+
+The physics design (DECISIONS round 106, AR4) names three causes of "floaty" and "choppy": four gravities, speed caps
+instead of scale, and bodies stepped on the frame's dt or drawn as they stand each tick. Round 120 the user asked why
+rocks read slow while the old tankers read well: the tankers ran at 20 cells/s² (about 2× the world's 9.8) with a cap
+of 60, the rigid rock at 9.8 capped at 14 cells/s, the columns' falling pieces capped at 4. Step 1 is the cheap part of
+the fix, which the user can feel at once, before the solver itself.
+
+- **One gravity (AR9).** `world.gravityX` ("world gravity ×", ?gx=) multiplies `world.gravity`; `worldG()` (tune/params.ts
+  on the CPU, common.wgsl on the GPU) is what every mover reads, times its own group's `gravity` scale only where one is
+  wanted. The physics voxels' gravity is now a scale (default 1: they fall at 9.8 like everything else; world × 2 is
+  the tankers' old feel, for the user to compare). Chips and splash keep their look at × 1.45 (was 14), agents theirs
+  at × 2.05 (was 20, units.wgsl and agents.ts both read it: the lob arcs stay right). The flow model's streams, sheets
+  and spray read worldG() too, so world × 2 doubles everything at once.
+- **No caps (AR10).** `pieces.maxV` (4), `rigid.maxV` (14) and `voxels.vmax` (60) are gone. A 20-cell fall now lands at
+  about 20 cells/s (air drag still a slider: the pieces' 0.35/s gives a terminal speed of 28). The columns' falling
+  pieces are swept (a step never passes what is under it), the rigid rock's probe reaches 2 cells, the voxels move at
+  most 0.25 cells a substep at 60 cells/s: no tunnelling at these speeds.
+- **Fixed step, drawn between the last two (the choppiness fix).** The rigid rock stepped by the frame's dt split into
+  up to six substeps; now whole steps of 1/120 s, the remainder carried, and it is drawn (its cells and its mesh) at
+  `alpha` between its last two poses (`RockBodies.drawPose`, nlerp). Its resting pose is the true one (`matrix`), the
+  drawn one is `drawMatrix`. The GPU physics voxels are left as they are: on a 60 Hz display the tick clock runs one
+  tick a frame (no steps to hide), and step 2's solver replaces them with node transforms for the last two steps,
+  interpolated in the vertex shader by design.
+
+Tests first (test/unit/gravity.test.ts, 5): worldG scales; the caps are gone; the rigid rock falls at 9.8 uncapped
+(29.4 cells/s after 3 s, it stopped at 14); world × 2 doubles it; 144 Hz frames give the same state as whole steps and
+draw between the last two. `npm test`: 83 passed + 1 expected fail.
+
+## 2026-10-31 — round 120 (`solver`, step 2): the one node solver, and the experiment beside the lattice
+
+The physics design (DECISIONS round 106; round 120: "I really want both the burying, toppling and deformation/
+fracture. Is that all consolidated into one system yet?"): one GPU constraint solver for what breaks free, the
+judges deciding what lets go. Built (ARCHITECTURE "The node solver"), then — the user, round 120: "Can we treat this
+as an experiment and test each approach side by side?" — run beside the voxel lattice (the tankers' phys.wgsl) and
+the step-1 baseline, picked per page (`?solver=old|nodes|lattice|hybrid`, the lab panel's picker).
+
+**Why it's built the way it is.**
+- *One workgroup a body, everything inside one dispatch.* A body is at most 64 nodes and 64 contact points, so the
+  whole solve — substeps, passes, the part labels, the load walk — runs in workgroup memory with barriers: one
+  dispatch a tick for all bodies (the lattice: ~60 dispatches a tick and four 2¹⁸-entry hash clears). Other bodies are
+  read from a snapshot moved on by their velocity: deterministic, no races.
+- *Positions about the body's centre, rests about its rest centre.* In world coordinates f32 sums of ~3700 had steps
+  of 2.4e-4: a falling block drifted 0.01 cells/s a tick sideways and fell 6 % faster than gravity.
+- *Node blocks tile the body.* Another body's points are tested against a node's block (turned with it), out through
+  its faces on the surface only: node spheres let hex corners slip between them (a block fell through a block).
+- *Contacts push both ways.* Each body's points against the others' blocks, and each body's blocks against the
+  others' points (the same test from the other side) — a boulder landing on a girder otherwise left the girder
+  unmoved and unhit.
+- *Separation never adds speed* at the body: its velocity away from what it touches held to what it had before the
+  contacts, off every node alike, so a topple's turn is kept (per-node clamps killed toppling; none launched a
+  block at 1 cell/s).
+- *Stiff metal is rigid between yields.* Shape matching with a few passes left a girder like rubber (a 20-cell
+  cantilever sagged to the floor); a whole-part fit blended in stopped dents. So metal and wood fit their part
+  rigidly, and the fit's corrections ARE the loads (m Δ / h²: weight held, blows stopped — capped at `blowG` g, a
+  contact stops a body within a substep and its force would be without bound), walked from what holds it to the far
+  ends: moment, shear and pull at each bond over its section (the user: "Does it also propagate forces to compute
+  torque and shear forces?"). Stresses are physical (steel yield 2e5 mass/(cell·s²) ≈ 250 MPa at a metre a cell): a
+  1 × 1 bar 30 cells out holds, 32 yields at its root and bends down, 36 (weaker steel) snaps.
+- *Plastic flow and dents make no speed.* A hinge turns what hangs from it in its rest shape and where it is; a dent
+  moves its part into the new shape keeping its centre of mass: a small broken piece's dent had flung it 700 cells up.
+
+**Tests** (Node, before the kernel ran): test/gpu/solver.test.ts 18 (all pass: SL1 and SL2 — the node solver's
+metal folding into the floor as it landed, the pylon shattering — were a pinned node's 1e6 counted in the body's mass,
+making every blow's dent the deepest), test/unit/solver-build.test.ts 5,
+test/unit/judge-shapes.test.ts 11 (SV1 test.fails). `npm test` is green (the gpu tier's worker crashes now and then
+on this shared GPU after several worlds — it did on places too, 1 in 3).
+
+**The scaling run** (test/gpu/solver-bench.test.ts, SOLVER_BENCH=1 → data/perf/solver/scaling.json; wall ms a tick
+on Dawn here, 4³ stone blocks and 16 × 2 × 2 steel girders alternating; noisy — the GPU is shared):
+
+| bodies | nodes falling | nodes landed (asleep) | lattice falling | lattice landed |
+|---|---|---|---|---|
+| 10 | 2.2–7.7 | 0.14–0.79 (all asleep) | 2.1–6.5 | 4.7–5.3 (5 of 10 asleep) |
+| 50 | 3.5–7.8 | 0.22–0.61 (all asleep) | 4.6–5.2 | 3.0–5.4 (10–26 of 50) |
+| 200 | 3.8–16.5 | 0.19–0.90 (all asleep) | 8.0–10.5 | 3.7–12 (30–61 of 200) |
+
+The lattice sleeps now (fair to it, the coordinator: "a lattice that never sleeps isn't a fair comparison"): the same
+rest rule, woken by the game acting, a moving neighbour or a cut; its solve skipped whole when every body sleeps. Its
+steel rings above the rest speed and half its bodies stay awake.
+
+**The battery** (scripts/physbattery.mjs → data/perf/solver/battery.json; the phone proxy in headless Chrome on this
+machine's Xe-LPG, every system in play; each station's buttons pressed in turn, then measured 8 s — so it's the cost
+while things move and settle. The node solver's row after its parts were kept between ticks, which halved it):
+
+| station | old | lattice | hybrid | nodes |
+|---|---|---|---|---|
+| rock | 7.277 (0) / 0.10 · none · rise 1.29 | 9.127 (1.649) / 0.03 · 8989 voxels · rise 0 | 4.337 (0.793) / 0.01 · 0/1 nodes-bodies (58 nodes) · rise 0.9 | 7.841 (1.619) / 0.02 · 0/1 nodes-bodies (58 nodes) · rise 0.9 |
+| build | 6.792 (0) / 0.10 · 1 rigid · rise 7.19 | 11.46 (3.982) / 0.03 · 10080 voxels · rise 0 | 11.806 (5.609) / 0.11 · 4 rigid, 4/4 nodes-bodies (144 nodes) · rise 0.48 | 6.413 (2.62) / 0.01 · 4 rigid, 4/4 nodes-bodies (144 nodes) · rise 0.49 |
+| slide | 6.204 (0) / 0.10 · none · rise 3.49 | 6.793 (2.165) / 0.04 · 11312 voxels · rise 0 | 8.393 (1.741) / 0.01 · 0/1 nodes-bodies (24 nodes) · rise 0.7 | 7.942 (0.742) / 0.12 · 0/1 nodes-bodies (53 nodes) · rise 0.1 |
+| house | 9.824 (0.983) / 0.24 · 8304 voxels · rise 2.82 | 11.606 (3.808) / 0.02 · 12296 voxels · rise 0 | 11.817 (4.253) / 0.04 · 1 rigid, 1/1 nodes-bodies (20 nodes), 8880 voxels · rise 0.42 | 7.012 (2.081) / 0.01 · 1 rigid, 2/3 nodes-bodies (92 nodes) · rise 0.42 |
+| metal | 11.595 (2.244) / 0.14 · 9757 voxels · rise 1.3 | 11.806 (3.764) / 0.04 · 13919 voxels · rise 0 | 6.617 (1.69) / 0.02 · 0/1 nodes-bodies (12 nodes), 10333 voxels · rise 0.01 | 11.804 (5.16) / 0.01 · 2 rigid, 4/6 nodes-bodies (212 nodes) · rise 0.2 |
+| collapse | 9.555 (0) / 0.41 · 3 rigid · rise 8.77 | 8.137 (1.621) / 0.03 · 11780 voxels · rise 0 | 7.379 (1.217) / 0.01 · 0/1 nodes-bodies (20 nodes) · rise 1.4 | 8.456 (1.523) / 0.01 · 0/1 nodes-bodies (24 nodes) · rise 1.4 |
+
+(412x915 dpr 2.6 q=low; 8 s after the station's buttons; GPU ms a frame (the physics passes') / CPU ms of the physics systems · what's moving · the fastest upward speed seen, cells/s)
+
+Reading it: the node solver costs 0.7–5 ms of GPU while a station's pieces move (the metal station's six bodies, 212
+nodes, the most: its stiff bodies' load walk runs on one thread), against the lattice's 1.6–4 ms holding 9–14k voxels
+(it keeps every body for good) and the baseline's ~0 for rock (the CPU rigid rock: 0.1–0.4 ms of CPU) and 1–2.2 ms
+for its metal on the lattice. Feel: the baseline's rigid rock rises up to 8.8 cells/s on the collapse station (the
+push-outs the design was against); the node solver's never past 1.4 (the push-out speed and the slow erode). The
+lattice's voxels aren't watched by the rise check. Asleep, the node solver costs next to nothing; the lab's steel on the
+lattice rings and half of it stays awake.
+
+## 2026-10-31 — round 120 (`judge`): judge B, the method of sections on the GPU, side by side with judge A
+
+**Why.** The user (round 120): "How does the current algorithm account for the torque at each point? I'm thinking what
+if you average unsupported column mass to get a center of mass first. Then you flood fill in from the supports and for
+each step compute total support each point can provide to that center of mass … Is it parallelizable?" and "Can we
+treat this as an experiment and test each approach side by side? Performance batteries and feel tests so I can see what
+is improved vs the cost?" Judge A (fracture.ts analyseRock) hands load in from the far end with no lever arm: a
+joint holds strength × min(BEND h², SHEAR h), so a cantilever's moment isn't modelled (the solver agent's shape tests:
+a 3-thick stone shelf holds at reach 16, SV2; an arch's halves without their keystone hold, SV1).
+
+**What.** One interface (game/judge.ts `RockJudge`: the columns and the seeds in, a `Fracture` out; `JUDGES` { runs,
+sections } for a lab panel; `?judge=`), Integrity awaiting whichever is picked. Judge B in src/shaders/judge.wgsl
+(ARCHITECTURE "The collapse judges" has the kernels): the runs as nodes, a flood from what holds, then for every
+distance level from the far end in the component of everything beyond and its section — shear, and moment (weight ×
+lever to the centre of mass beyond) against tensile × the section modulus of its faces projected across the lever.
+Every section is checked, not only the root; a failed one frees what's beyond it (a reachability flood that doesn't
+cross it, then union-find for the pieces). Arches and domes: a section whose faces' normals cancel is held from
+opposite sides — not bent; its piece is judged by a thrust line (Heyman's safe theorem as a discrete test: a parabola
+from the springings fitting inside every run, the least thrust on the crown within crushing). A piece that held is
+then weighed on the standing columns under it (the neck: tipping past the hull, the far side's pull, crushing).
+
+**Sums: one pass a level, not a log-depth tree.** The sections nest (everything ≥ k out is a union of what's ≥ k + 1
+out and the level's runs), so a union-find grown a level at a time carries each component's mass and first moments
+from the level before — each run added once, O(runs) work in all, depth = the piece's reach. A log-depth tree sum
+needs a tree: a spanning forest makes subtree sums cheap by pointer jumping, but a level's components still need the
+merge tree, and a run's load split over one parent (not its whole cross-section) is what broke a slab's edge row in
+round 92's first try. Sections are summed across the whole component (a slab's width), as A's round-92 fix.
+
+**The stone estimate (a cell a metre).** Intact limestone or sandstone takes ~4 MPa in tension; rock weighs 2600 kg/m³
+× 9.8 = 25.5 kN/m³, so σ' = 4e6 / 25 480 ≈ 157 metres of rock. A shelf t thick holds a reach L while t·L²/2 ≤ σ'·t²/6:
+L ≤ √(σ't/3) — 7.2 m at 1 thick, 10.2 at 2, 12.5 at 3, 14.5 at 4 (the solver agent's rough "12–14" for 3). Masses
+count a column as the hex prism it is (√3/2 m² across): without it the 3-thick shelf fell at 12 (moment 15 % high).
+
+**Tests** (test/gpu/judge-shapes.test.ts, Node on Dawn; both judges on every shape, B asserted):
+
+| shape | A (runs) freed | B (sections) freed | B expected |
+|---|---|---|---|
+| arch | 0 | 0 | stands (held from both legs; a parabola 3 deep fits its 9 span) |
+| arch, one foot cut | 189 (tips) | 189 (tips) | the leg and span fall |
+| arch, keystone cut | 0 | 0 | stands as two corbels (SV1: see below) |
+| dome; crown hole | 0; 0 | 0; 0 | stands (thrust line fits; a compression ring) |
+| dome, base ring cut | 782 | 782 | falls (held by nothing) |
+| shelf 1 thick: reach 6 / 8 | 60 / 80 | 0 / 80 | limit 7.2 |
+| shelf 2 thick: reach 8 / 12 | 0 / 240 | 0 / 240 | limit 10.2 |
+| shelf 3 thick: reach 12 / 16 | 0 / 0 | 0 / 480 | limit 12.5 (SV2) |
+| shelf 4 thick: reach 12 / 16 | 0 / 0 | 0 / 640 | limit 14.5 |
+| mid-span neck (6 thick ×6, 1 thick, 3 thick ×5) | 160 | 160 | breaks at the neck: what's beyond falls, the root stays |
+| spire; undercut | 0; 126 (tips) | 0; 126 (tips) | tips over the cut side |
+
+(the full table, ms included: data/perf/judge/shapes.md.) **SV1 is left to the user**: the brief asks the halves to
+fall once the keystone goes. B judges the stone as one bonded piece, and each half is then a corbel 3 thick reaching 3
+— its root moment 3·3²/2 = 13.5 a metre of width against σ'·3²/6 ≈ 235: it holds 17×, as natural arches leave their
+stubs standing (Wall Arch, 2008). Only masonry — voussoirs with no tension, Heyman's own assumption — drops them; to do
+that B would need to know a span was an arch before it was cut (a mark kept from an earlier judging), or to take
+tension away from every piece that meets. The test records "stands" with the reason (BACKLOG SV1, asked).
+
+**Perf** (test/gpu/judge-perf.test.ts, JUDGE_PERF=1; the desktop's Intel Xe-LPG iGPU, D3D12, Dawn in Node; the GPU
+shared with other agents' browsers — their load moved B's numbers 2–5× between runs, so the least of 7 is the
+uncontended estimate). A = the window's readback + analyseRock's CPU ms; B = its GPU ms by timestamp queries (its wall
+ms adds the verdict's mapAsync, ~4–6 ms in Node).
+
+| scene | A ms (readback + CPU) | B GPU ms, first build | B GPU ms, now (least of 7: node-phases.json for the dome, shelf, cliff and 200 arms; the battery's gpuMinMs for the rest) |
+|---|---|---|---|
+| arch, one foot cut | 4.8 (3.2 + 1.6) | 1.4 | 0.9 |
+| dome | 6.5 (2.4 + 4.1) | 3.3 | 2.2 |
+| shelf 3 × 16 | 6.2 (3.7 + 2.5) | 2.4 | 1.6 |
+| mid-span neck | 6.7 (5.4 + 1.3) | 2.6 | 1.6 |
+| spire undercut | 1.5 (1.4 + 0.1) | 0.5 | 0.7 |
+| mesa 40 × 40 × 30, notch 14 deep (holds in both) | 7.7 (2.7 + 5.0) | 8.2 | 4.0 |
+| cliff 120 long, lip 4 × 20 (9600 cells fall) | 44.0 (3.6 + 40.4) | 26.9 | 5.2 |
+| 10 / 50 / 200 arms at once | 2.7 / 6.3 / 23.0 | 1.8 / 4.6 / 26.7 | 2.4 / 3.5 / 5.0 |
+
+What took B's first build to 27 ms, and what each fix bought (the kernel stopped before each phase,
+data/perf/judge/node-phases.json): float sums by compare-and-swap on one root's words, every run of a front contending
+(→ a thread's sums in registers, then a workgroup slot a root, one add a root to storage); every node read through
+atomics (→ the nodes' own numbers in a plain buffer, N); the flood and the release as Bellman-Ford sweeps over every
+run (→ frontier by frontier, each run once: the cliff's flood 2.8 → 0.6 ms); each run's faces re-read from its
+neighbours in two phases a level (→ a parallel `faces` kernel sums them once); the neck one thread a piece looping its
+legs 26 times (→ four parallel passes: the dome's neck 2.0 → 0.3 ms). What's left is latency: ~0.1 ms a distance level
+in one workgroup (a few dependent memory reads a run a phase; barriers measured at ~0.6 µs each, not the cost) —
+BACKLOG JB2. B costs no CPU (its verdict is parsed in ~0.1 ms) and reads back only the verdict (32 KB with the records
+of what falls) where A reads the window's chunks (130–520 K words here) every pass.
+
+**Not done here**: the browser battery on the atlas and the phone proxy (below, once main hands over the browser); the
+solver lab's panel listing JUDGES (the solver agent's side, JB7); B's open edges JB3–JB6, JB9.
+
+**The load walk on every thread; judge B merged** (round 120, later). The stiff bodies' walk (roots, the breadth-
+first walk, the sums back from the far ends, the hinge) ran on thread 0 — O(n²) on one thread, the metal station's
+5.2 ms. Now the walk goes a depth a round (a node joins at the depth of the first bonded neighbour already in), the
+sums a level at a time (each node gathers its children's), the bond checks and the hinge's subtree on every thread.
+The branch `judge` (the method of sections on the GPU, game/judge.ts JUDGES = runs | sections) is merged: the lab's
+judge picker lists them, compare walks every solver × judge, the battery takes --judges.
+
+**The battery, every solver × judge** (data/perf/solver/battery-4x2.json; the phone proxy; each station's buttons then 8 s):
+
+| station | old × runs | old × sections | nodes × runs | nodes × sections | lattice × runs | lattice × sections | hybrid × runs | hybrid × sections |
+|---|---|---|---|---|---|---|---|---|
+| rock | 7.366 (0) / 0.20 · none · rise 2.59 | 8.004 (0) / 0.20 · 2 rigid · rise 1.12 | 9.781 (1.728) / 0.02 · 0/1 nodes-bodies (58 nodes) · rise 0.15 | 11.142 (2.426) / 0.01 · 2 rigid, 2/2 nodes-bodies (51 nodes) · rise 1.14 | 11.316 (3.742) / 0.03 · 8989 voxels · rise 0 | 8.609 (1.383) / 0.02 · 9725 voxels · rise 0 | 9.818 (1.728) / 0.02 · 0/1 nodes-bodies (58 nodes) · rise 0.26 | 11.393 (2.721) / 0.01 · 2 rigid, 2/2 nodes-bodies (55 nodes) · rise 1.09 |
+| build | 6.82 (0) / 0.20 · none · rise 7.19 | 7.352 (0) / 0.10 · none · rise 1.96 | 12.179 (5.538) / 0.01 · 3 rigid, 3/3 nodes-bodies (90 nodes) · rise 0.74 | 11.995 (4.731) / 0.03 · 2 rigid, 2/2 nodes-bodies (66 nodes) · rise 0.45 | 11.409 (3.933) / 0.02 · 10080 voxels · rise 0 | 11.477 (3.882) / 0.03 · 11639 voxels · rise 0 | 12.307 (5.639) / 0.12 · 3 rigid, 3/3 nodes-bodies (90 nodes) · rise 0.38 | 11.519 (4.658) / 0.01 · 5 rigid, 5/5 nodes-bodies (181 nodes) · rise 0.74 |
+| slide | 7.064 (0) / 0.20 · none · rise 3.77 | 7.093 (0) / 0.20 · 1 rigid · rise 3.17 | 8.172 (0.766) / 0.01 · 0/1 nodes-bodies (60 nodes) · rise 0.07 | 9.318 (1.351) / 0.01 · 0/1 nodes-bodies (40 nodes) · rise 0.42 | 11.025 (3.75) / 0.02 · 11312 voxels · rise 0 | 10.933 (3.735) / 0.03 · 12871 voxels · rise 0 | 8.919 (1.459) / 0.03 · 1 rigid, 1/1 nodes-bodies (28 nodes) · rise 1.34 | 9.269 (1.616) / 0.03 · 0/1 nodes-bodies (26 nodes) · rise 0.31 |
+| house | 8.463 (0.857) / 0.13 · 8304 voxels · rise 2.29 | 8.142 (0.84) / 0.14 · 8304 voxels · rise 0 | 9.612 (1.739) / 0.02 · 1/3 nodes-bodies (87 nodes) · rise 0.06 | 8.644 (1.3) / 0.02 · 1/3 nodes-bodies (112 nodes) · rise 0 | 11.671 (3.795) / 0.02 · 12296 voxels · rise 0 | 10.808 (3.349) / 0.03 · 13559 voxels · rise 0 | 10.903 (3.212) / 0.06 · 0/1 nodes-bodies (55 nodes), 8880 voxels · rise 0.24 | 10.149 (2.629) / 0.02 · 0/1 nodes-bodies (26 nodes), 8880 voxels · rise 0 |
+| metal | 11.141 (1.859) / 0.22 · 9757 voxels · rise 1.63 | 11.054 (2.173) / 0.03 · 1 rigid, 9757 voxels · rise 2.56 | 12.297 (4.891) / 0.02 · 2 rigid, 4/6 nodes-bodies (212 nodes) · rise 0.2 | 11.318 (3.583) / 0.02 · 2 rigid, 4/6 nodes-bodies (212 nodes) · rise 0.66 | 11.471 (3.691) / 0.02 · 13919 voxels · rise 0 | 11.337 (3.593) / 0.03 · 15182 voxels · rise 0 | 11.978 (3.569) / 0.03 · 0/1 nodes-bodies (12 nodes), 10333 voxels · rise 0.04 | 12.315 (4.032) / 0.03 · 0/1 nodes-bodies (12 nodes), 10333 voxels · rise 0.12 |
+| collapse | 9.361 (0) / 0.60 · 3 rigid · rise 8.94 | 11.573 (0) / 0.30 · 1 rigid · rise 3.64 | 14.296 (3.113) / 0.01 · 0/1 nodes-bodies (14 nodes) · rise 1.69 | 13.618 (2.695) / 0.02 · 1 rigid, 1/1 nodes-bodies (12 nodes) · rise 3.39 | 14.686 (3.486) / 0.04 · 11780 voxels · rise 0 | 14.037 (2.76) / 0.01 · 9032 voxels · rise 0 | 13.684 (2.514) / 0.02 · 0/1 nodes-bodies (20 nodes) · rise 1.52 | 14.009 (3.051) / 0.02 · 1 rigid, 1/1 nodes-bodies (23 nodes) · rise 0.19 |
+
+(412x915 dpr 2.6 q=low; 8 s after the station's buttons; GPU ms a frame (the physics passes') / CPU ms of the physics systems · what's moving · the fastest upward speed seen, cells/s)
+
+Per pair over the six stations (physics GPU ms a frame avg / max; the judge's last judging, ms):
+old × runs 0.45 / 1.86, judge 0.1–0.4 · old × sections 0.50 / 2.17, judge 11–26 · nodes × runs 2.96 / 5.54, judge 0.1–1.8 ·
+nodes × sections 2.68 / 4.73, judge 9–21 · lattice × runs 3.73 / 3.93 · lattice × sections 3.12 / 3.88 · hybrid × runs
+3.02 / 5.64 · hybrid × sections 3.12 / 4.66. The fastest rise: old's CPU rigid rock up to 8.9 cells/s; the node solver
+1.1–3.4. The node solver's load walk on every thread didn't move its GPU numbers here (the GPU is shared with other
+agents' browsers; its cost is the per-body solve while things move, ~1 ms a moving stiff body).
+
+**The lattice's rise** (data/perf/solver/battery-lattice-rise.json; the battery now watches the voxel bodies' mean upward
+velocity): rock 1.9, build 1.4, slide 1.2, house 3.5, metal 1.8, collapse 3.2 cells/s.
+
+**Feel notes, a pair at a time** (from the battery, the Node tests and the stations' GIFs; the user tries them himself —
+the lab's panel, solver × judge, "compare" replays the last cut under each):
+
+- *Solvers.*
+  - **old** (CPU rigid rock, the columns' pieces, metal on the lattice): rock is cheapest on the GPU (~0, 0.1–0.6 ms of
+    CPU) but its push-outs fling — pieces rise at up to 8.9 cells/s on the collapse station, the bounce the design was
+    against; pieces pass through one another (no body against body); what's built drops in columns. Metal crumples
+    on the lattice (the pylon folds into a heap: the tankers' look).
+  - **nodes**: rock and what's built fall at full gravity with no bounce (rise ≤ 1.7), stack and lean on one another,
+    rest overlapped within their slop and sleep (asleep ≈ free); breaks are the judge's. Metal and wood are stiff:
+    they hold their shape until a load or a blow passes their yield (a hinge: they bend where the moment is, and stay
+    bent) or their strength (they snap: the pylon on one leg snaps at its foot and comes down in two). Dents are
+    modest. Cost: about 1 ms of GPU a moving stiff body on this iGPU (the metal station's 5.5 ms peak).
+  - **lattice** (phys.wgsl for everything): everything bends a little — stone flexes before it cracks, metal crumples
+    and dents richly (the tankers), what breaks crumbles into fragments then dust. Costs 3–4 ms steady while it holds
+    9–14k voxels (it keeps every body); half its steel rings above the rest speed and won't sleep. Rise 1.2–3.5.
+  - **hybrid** (rock on the nodes, metal and wood on the lattice): the node solver's heavy, quiet rock with the
+    lattice's crumpling metal — 3.0 ms on average, rise ≤ 1.5.
+- *Judges.* **runs** (A) decides in under a millisecond, so a cut lets go at once. **sections** (B) takes 10–30 ms wall
+  a judging here (a beat after the cut) and frees what A misses where a long thick shelf's moment is too much (3 and 4
+  thick at reach 16: data/perf/judge/shapes.md); the arch with its keystone out still stands under both (SV1).
+
+## 2026-10-31 — round 120 (`solver`): the drop tool through the variants; the falling mesh's look (SL9–SL11)
+
+**The drop tool.** The user: "I can't tell with deformation. Can you modify the tanker physics to use it or make a drop
+things tool that does?" Where the level has the rigid rock (playground, rock lab, atlas) the sandbox's drop tool now drops
+through the picked variant (Integrity.dropModels → dropBody, which routes by ROUTING): the tanker truck, the cars, the
+bus, a steel I-girder (new, physics/shapes.ts), the pylon, the ruined house, from 0–60 cells up; "drop all" lines them
+up side by side (LINEUP) so each one's bending and denting is seen against the others. A model is one body, classed by
+what most of it is made of (a car is steel with asphalt tyres). The metal station has "drop the line-up". The map's
+tankers and cars (stamped into the columns) wake into the picked variant when struck: a rigid rock's or a solver body's
+hit over 3 cells/s (wakeMetalNear round the impact), the beam and the break tool (LevelScene.wake: metal first, the rest
+of the ruin as before).
+
+**"The mesh changes appearance and sometimes turns into blocks during falling."** Reproduced headlessly on the rock lab's
+collapse station, `?solver=nodes&judge=runs`, zoomed on the cliff's shelves (scripts/drawpath.mjs: each moving rock's
+draw path a frame — skin, matrix, split, cubes, none — with bursts of shots after each cut): the shelves, light cobbled
+stone in the ground, went dark and blotched in hex-sized blocks as they fell, and back to light as they came to rest. No
+body changed path and no slot was refused (RockMesh.stats now counts refusals by reason): the cause was two poses. Its
+mesh was skinned to the solver's nodes (this tick's pose) while its cells — drawn for what the mesh doesn't hold, and
+all of them as shadow casters — came from the CPU pose, the readback a tick or two behind: falling at 15 cells/s the
+cubes sat half a cell above the mesh and shadowed it in blocks; at rest the two agreed. Now a body on the node solver has
+its cells drawn by the solver's own skin from the same pose (BodySpec.drawCells takes a predicate: what the mesh
+doesn't hold), none from the CPU, and the rock mesh casts its own shadow (it already drew into the sun's pass). A piece
+broken off is handed to the solver the frame it breaks (RockBodies.engage) and drawn skinned from then on — its part of
+the parent's mesh too, the ghost's vertices following the piece's nodes — so it no longer jumps from the CPU's matrix to
+the solver's pose eight frames later. Test: test/unit/rockdraw.test.ts; the probe passes 0 of 24 changed on the
+collapse station.
+
+**Streaks into the sky.** The same captures showed a long dark stick from a breaking piece to the screen's top right
+for a frame or two at every cut — on nodes, never on old. Bisected in the shader: a ghost vertex left out (crumbled, or
+near no fragment's seed) was `return o` with its position at clip (2, 2, 2, 1); a triangle with that vertex and two
+drawn ones is clipped to a sliver stretched toward the corner. The node solver's pieces break more often (longer
+ghosts), hence there. Now such a vertex is placed with the ghost and marked gone, and the triangle is discarded whole (the
+sun's pass discards it too: fsRockZ). 0 streaks in 4 runs of the three cuts (were 3–6 a run).
+
+**Not done here**: the solver lab's panel listing JUDGES (the solver agent's side, JB7); B's open edges JB3–JB6, JB9.
+
+**The browser battery** (scripts/judgebattery.mjs; the atlas level with every system in play, 1x, 412 x 915, q=low,
+headless Chrome on the desktop's iGPU; data/perf/judge/browser-low.json; shots in C:/Projects/shots88/judge). Stone
+built with the world API near the spawn and cut at its foot, 8 s watched after each cut:
+
+| scene | A: judge ms a pass (CPU) / read back | B: wall ms a pass / GPU ms | frames p99 / max (A; B) |
+|---|---|---|---|
+| mesa (built, undercut) | 3.7, 2.2, 0.2 / 5.4 MB | 42, 42 / 20.5, 19.3 | 12.2 / 22; 12.0 / 19.6 |
+| tower (built, foot cut) | 0.5, 0.6 / 3.1 MB | 18, 73 / 7.6, 18.7 | 12.0 / 21.9; 12.1 / 22.0 |
+
+Nothing fell in either judge (the built rock is smaller than asked — the build brush's footprint — and the bowl at its
+foot doesn't undercut it past holding: shots88/judge/*.png show it standing notched); both crumbled the same sliver.
+Two findings: **B's first judging compiled its five pipelines on the frame** — a 1435 ms frame at the first cut on the
+first run; fixed here (`RockJudge.warm`: Integrity makes B's pipelines asynchronously when it's made; the second run's
+worst frame 19.6 ms). And **B's GPU time on the atlas is 8–20 ms a pass** (its 70 × 70+ window holds the atlas's caves
+and overhangs: many hanging runs, many levels — the per-level latency, JB2), against A's 0.2–3.7 ms of CPU plus its
+3–5 MB of readback a cut (which B doesn't make; Integrity still does, JB6). On the desktop the frames don't show either
+(p99 12 ms both); on a phone 20 ms of GPU in one submit would. The verdict's wait (B's wall ms) is async: no frame
+waits for it.
+
+## 2026-10-31 — round 120b (`judge`): judge B on the whole GPU — every level at once, culled to what a cut touched
+
+**Why.** The user, on B's 8–20 ms a pass on the atlas: "Yes please implement options 1 and 2" (each level on the whole
+GPU; few sequential passes), then "culling to only a local neighborhood is also good … take the deepest point in the
+suspended group … and cut off anything further than 1.5x that distance", and "If pointer jumping works but is less
+accurate it could still make sense for large caverns as a fallback".
+
+**Options 1 + 2 as one: the pairs (mode `pairs`, the default).** The level pass's components — everything ≥ k out,
+joined within that — are the connected components of a graph of pairs (v, k), a run at each level it reaches
+(1 ≤ k ≤ dist v), (v, k) joined to (u, k) when v and u are joined and dist u ≥ k. Union-find on that graph is
+lock-free (compare-and-swap hooking, least id the root), so every level's components come out of one dispatch over
+all the pairs, on the whole GPU: no pass a level and no log-depth rounds at all — a constant 6 dispatches (init,
+unite, find, sum, checks, marks) whatever the depth. Sums: a pair adds its run's mass to its component's root (a
+workgroup gathers its pairs by root first: a level's pairs lie together), a run adds its faces at its own level only.
+Every root is checked in parallel with the level pass's own arithmetic. What goes: a run is cut off from what holds
+it exactly when a component it's in at some level failed (that component's only ties to what holds it are its
+section's faces) — so the marks (a pair in a failed component marks its run) give the release flood's answer with no
+flood. **It is exact**: the same verdicts as the level pass, not an approximation — no fallback needed (the user's
+"less accurate" case doesn't arise); the level pass stays as the oracle (`mode: 'levels'`, ?jbmode=levels).
+
+**Option 3, culling — graph-local, not a radius.** Pieces (the hanging runs' connected components) are found first,
+on the whole GPU; only a piece with a run a cut could have weakened (in or beside a seed column) is flooded, given
+pairs, judged. That is exact where the user's 1.5 · D radius is an approximation: a piece's verdict depends on its
+own runs, the standing runs holding it, and (the neck) standing runs within 16 columns — never on another piece. So
+judging only the touched pieces is the whole-window verdict, with no boundary rule (JB3's window edge still holds a
+piece longer than the window, as before). What the radius would have bought (a small window to build) is reported
+instead: the judged runs' box. On the atlas the cut groups are tiny: 9–40 runs, deepest D 3–5, a box 3–6 columns
+across, in a window of ~2500 hanging runs (86 × 88 columns) — the culling is what pays (below); with groups this shallow no size
+threshold between the paths is needed (pairs is the faster at every size measured, and exact).
+
+**The equality tests found two races in B as first built** (test/gpu/judge-equal.test.ts: the oracle — levels, every
+piece — against levels culled, pairs culled, pairs whole, on the shapes and 40 random caves; 3 runs clean):
+- a frontier's count (the flood's, the release's, the level pass's roots) read by one thread before every append of
+  the phase was in: distances could come out wrong (a cave's pairs 73/75/78 run to run) — a barrier before each read;
+- the neck's standing runs went to whichever piece claimed them first — two pieces reaching the same leg were judged
+  differently run to run — now the lesser piece (atomicMin, then listed once).
+
+**Measured** (data/perf/judge/browser-low*.json; the atlas on the phone proxy, 412 × 915, q=low, headless Chrome on
+the desktop's iGPU, every system in play; B's GPU ms by timestamps a kernel; the GPU shared with other agents):
+
+| atlas, a cut | B as first built (levels, every piece) | levels culled | pairs culled (default) |
+|---|---|---|---|
+| mesa (40 runs, D 5) | 12.7–20.2 ms a pass | 4.1–7.7 | 2.5–5.9 (2nd pass 2.5–3.6) |
+| tower (9 runs, D 3) | 4.4–18.4 | 2.1–4.4 | 1.8–3.8 |
+
+Where pairs-culled's ~2.5 ms goes (mesa, 2nd pass): the neck 1.3 (judge4: the mesa's standing body walked up to 16
+columns, hop by hop), the flood 0.45 (judge1: depth-serial), pieces 0.3, build + adjacency + faces 0.4, the six pair
+kernels 0.5, the rest < 0.2. The frames: p99 12–13 ms, the same as with A (B's submit runs async; on the desktop it
+fits). Not yet the ~1 ms asked for: the neck walk (JB11) and the window's own build are next. Whole-window judging
+(Integrity.judgeAll, every column a seed — a test hook, not the game's path): 52 268 hanging runs, D 40, 265–387 ms.
+
+Node (data/perf/judge/node-*.json, least of 7; noisy): the shapes 0.5–1.2 ms pairs vs 0.9–2.0 levels; the 120-long
+lip ~9 ms both (its flood and freeing 9600 cells dominate); A 1.5–23 ms. Node's phase profile (node-phases.json) is
+now per kernel: SectionsJudge.stats.kernels.
+
+Also: pieces, the freed runs' union-find and the release (mode 1) moved off the single workgroup to whole-GPU kernels;
+the single-workgroup phases after the sections walk only the seeded pieces' runs (F_SEEDL), not the window's.
+
+
+## 2026-10-31 — round 120b (`judge`): "Follow the material" — tension by the material's bond
+
+**Why.** SV1 (an arch's keystone cut out) put to the user; the user: "Follow the material". Natural rock is one
+bonded piece — a natural arch's halves stand as corbels when it falls (Wall Arch, 2008); built masonry is blocks with
+mortar — no tension (Heyman's own assumption) — and its halves fall.
+
+**What.** materials.ts `bond` ('rock' stone, basalt, sandstone, bedrock, obsidian, quartz, sinter, crystal, coral;
+'masonry' brick, tile, plaster; 'cast' concrete, asphalt; 'metal' steel, rust; 'other' the rest), a share of
+TUNE.judgeB.tensile per group (sliders tRock 1, tMasonry 0, tCast 1, tMetal 1, tOther 1; the material table rewritten
+each judging, so they're live). In judge.wgsl a run's tensile strength is the least of strength × share over its
+side-holding intervals (a brick wall on stone ground is as weak in tension as its brick); the bending check (each
+section, both modes) and the neck's pull use it; shear and crushing keep the plain strength. The oracle (mode levels)
+and the pairs follow the same rule — the equality tests now include brick arches and every third random cave of brick.
+
+**Tests** (B; A unchanged): natural rock arch — stands; keystone cut: stands (corbels); foot cut: 189 fall. Masonry
+(brick) arch — stands (in compression: a thrust line, no tension needed); keystone cut: both halves fall (2 × 27
+cells); foot cut: 189 fall.
+
+## 2026-10-31 — round 120 (`solver`): one mesh a body; sleepers wake; blows break; drag tool; the physics bench (SL12, SL15–SL18)
+
+**One mesh a body (SL12).** The user: "it switches for rendering as voxels. Rendering and simulation should not be coupled
+that way", then on the hybrid: "a lot of things turn into lattices during falling". Every body freed or dropped is drawn
+by its own mesh, made once when it wakes and kept to its rest: render/bodymeshbuild.ts makes the surface of its cells as
+the world draws what's built (hex prisms, a face where the next cell isn't the body's — a girder's web, a pylon's legs
+stay), each vertex bound to its cell's node and up to three near it. render/bodymesh.ts skins all of them in one compute
+pass a frame (bodymesh.wgsl: the node solver's poses between its last two ticks, or a CPU matrix) into one triangle list
+the renderer draws lit and shadowed (vsSkin). A vertex keeps only the nodes in its own node's part, so a broken body's
+mesh splits along its cells' faces. The node solver no longer draws any cell as a voxel (its skin kernel only marks the
+columns); the CPU rock's built cells and resting rocks' are meshes; the voxel lattice's bodies (the hybrid's and the
+lattice's metal, Waker's ruins) get the same mesh bound to their particles (Physics.attachSkin over the existing skin
+kernel), their voxels hidden. Tests: test/unit/bodymesh.test.ts.
+
+**Sleepers wake when their support goes (SL15).** The tanker on the toppled tower was the hybrid's, on the voxel lattice;
+the lattice's sleep (this branch's, for a fair comparison) woke a body only for one of its own kind moving near it, a
+cut, or the game acting. Now rigid rock and node-solver bodies moving faster than a cell a second wake the lattice's
+sleepers near them, and ground written under them wakes them. test/gpu/integrity.test.ts: a lattice slab asleep wakes
+when a stone block falls past it (fails without the fix).
+
+**Hard blows break (SL16).** A body striking solid ground with more than impact.groundEnergy (15000, ½mv² in each
+solver's mass) crumbles it where it struck — the break tool's smash, radius 0.8·∛(E/T) up to 3 — and the judge looks
+at what's left: the CPU rock's hits, the node solver's impacts, and the lattice's (a falling body whose speed drops by
+more than 2.5 cells/s in a tick). A 96-cell stone block from 28 cells: E 22500, crumbles; from a cell: 80, holds. The
+node solver's dents took a node's own material: a tanker truck lands on its asphalt tyres; now the body's main material
+dents where the node's isn't metal. (Measured on the way: a tanker truck dropped 2 cells already bends ~2 cells at
+landing — SL20.)
+
+**Drag tool, physics bench (SL17, SL18).** 🫳 grabs the body nearest the finger within ~48 px, pulls its centre on a damped
+spring to the finger at the height it was lifted to (its weight held), and lets go with its speed: swung into things,
+its hits go through the same rules. ?physbench=1 runs the playground's scripted scene under every solver × judge (a
+reload each) and shows a card with a JSON to copy or download.
+
+
+## 2026-10-31 — round 120c (`judge`): JB11–JB13 — judge B toward ~1 ms; judge A's whole cost
+
+**Why.** The user: "I do think my new method looks a little better but they are close enough that I think it should
+come down to performance (unless that is also close)". So: B's cost on the atlas, and A's whole cost, measured the same
+way.
+
+**What.**
+- JB13, the window from the pieces (the user's 1.5·D idea, made exact): B starts from the seeds' box plus the leg walk's
+  reach (TUNE.judgeB.neck + 2 = 18 columns, not 32) and grows the window (×2, up to TUNE.judgeB.margin) only when a
+  seeded piece, or its leg walk, reaches the side — a piece's verdict needs only its own runs, what holds them and its
+  leg walk, so a window that holds all three gives the margin window's verdict. On the atlas no cut needed to grow:
+  37 × 37 to 58 × 60 columns instead of 86 × 88, with 465 hanging runs instead of 2473. A `seedList` kernel lists the
+  seeded pieces' runs once; every single-workgroup phase and the faces walk only those.
+- JB11, the leg walk: one phase a hop instead of two (each claimant takes the lesser piece with atomicMin and the
+  first one lists the run, so the order doesn't matter), and it stops as soon as a hop finds nothing new. Its sums
+  were already gathered a thread at a time.
+- JB12, the flood: it now visits only the seeded pieces' runs. I didn't spread it across workgroups: on the atlas D
+  is 3–5, so a dispatch per level would cost more than the 0.1–0.4 ms it takes in one workgroup.
+- Which path, by depth (`mode` 'auto', the default): with this little to do, the level pass in one workgroup is
+  cheaper than the pairs' six dispatches. Judge1 chooses on the GPU: the pairs when the deepest judged piece is
+  TUNE.judgeB.pairsDepth (10) levels or more, the level pass below that. Both paths are exact.
+- The equality tests now include the growing window and the auto mode, plus 40 caves with a 4-column leg walk, so that
+  the window starts at 6 columns and has to grow. All pass, equal to the oracle (the level pass, every piece, the
+  margin's window).
+- Integrity records each pass's readback: `stats.readMs` (from the read starting to the copy arriving) and
+  `stats.readKB`. `SectionsJudge.stats.kernels` has B's GPU ms a kernel, plus window, windows, hanging, judged,
+  deepest and judgedBox, for the solver's phone bench.
+
+**Measured on the atlas** (412 × 915, q=low, every system in play; headless Chrome on the desktop's iGPU, which other
+agents shared; data/perf/judge/browser-low*.json; each load cuts a mesa and a tower; two passes each):
+
+| | B GPU ms a pass, least … most over 3 rounds |
+|---|---|
+| B as first built (levels, every piece, margin 32) | 3.6 … 21.4 |
+| B levels, culled, window from the pieces | 0.8 … 6.4 (the quietest round: 0.8–2.3) |
+| B pairs, culled, window from the pieces | 1.45 … 4.0 |
+| B auto (the default; at D 3–5 the level pass) | 1.6 … 6.5 |
+
+The spread inside one variant (×3–4) is other agents' load on the shared GPU; the least is the honest estimate. The
+level pass and auto run the same kernels at these depths, so the 0.8 ms and 1.6 ms are noise between them. On a quiet
+GPU, B's cut costs about 1 ms. On the deep synthetic scenes (Node: the 120-long lip, D 20) the pairs are about 2× the
+level pass.
+
+**Judge A's whole cost** (the same loads):
+
+| | per pass |
+|---|---|
+| CPU (analyseRock) | 0.3–3.9 ms (mesa 3.6, 2.1, 0.3; tower 0.4, 0.5) |
+| readback | 1–2.2 MB, 7–61 ms from asking to arriving (async: no frame waits for it) |
+| frames over 20 ms in the 8 s after a cut | 0–2 (B: 0–3 — the same noise) |
+| worst frame | 17.5–22 ms (B: 15.7–24) |
+
+Neither judge caused a hitch on the desktop. The CPU ms is A's frame-thread cost: it runs on the main thread in the
+readback's continuation. On the phone that is the number to watch, about 3 to 5 times these. **The readback is paid
+today whichever judge runs**, because Integrity keeps its CPU copy for applying a verdict, for External and for the
+structures' check (JB6). Until JB6 is done, B's 1 ms of GPU adds to the same readback rather than replacing it.
+
+## 2026-10-31 — round 120 (`solver`): soft ground; the physics bench headless (SL18, SL19)
+
+**Soft ground.** The user: "when bodies hit the ground with heavy impacts in soft material like sand or dirt they should
+displace material and dampen energy that way … I really want it to push into the ground a bit to look like it is in
+soft material." The contact rule "erode, don't push" with the ground the softer body: a blow on loose ground digs out
+the body's footprint (Integrity.softBlow: depth impact.softSink · softness · ∛E over the footprint's side, at most 3,
+half as deep at its edge; softness from materials.ts `bear`, sand 2, soil 1, anything not granular 0) and the body
+settles into the dent; what's dug out is impact.spray (0.3) thrown up as dust and chips and the rest laid as a rim on
+the ring round it (the loose deposit) — test/gpu/integrity.test.ts checks removed = spray + rim, deeper from higher
+(a 27-cell stone block on sand: 0.4 cells from 3 up, more from 24), no rebound, and stone not sinking. Every solver
+reaches it through groundBlow (the CPU rock's hits, the node solver's impacts, the lattice's). The slide and metal
+stations have sand, dirt and stone side by side and "drop on sand, dirt, stone".
+
+**The physics bench, headless** (scripts/physbench.mjs, the desktop's Chrome on D3D11 at the phone proxy's 412 × 915,
+q=low; the phone's own numbers are the user's run). Per stage, nodes × runs / nodes × sections / hybrid × runs:
+p50 ~9.9 ms and p95 ~11 ms everywhere (the frame's cap here); GPU 8–12.7 ms a frame, the physics passes 0.8–6.9 ms
+(the line-up and the swung tanker the most); judge A 0.25–1.3 ms a pass, judge B (7e029fc merged) 24–36 ms submit-to-verdict
+— its GPU 1.7–5.2 ms, 32 KB read; the rest is waiting on the frame's readback; the column readback 20–41 ms latency,
+1.3–3 MB a read. data/perf/solver/physbench-headless.json.
+
+## 2026-10-31 — round 120 (`solver`): the physics bench reports like the others; the lattice's mesh room grows (SL21, SL22)
+
+The user: "This looks fantastic and seems fast but the bench does not generate an automated report or keep my phone
+awake the way the other benches do." ?physbench=1 now runs on the benchmark's own pieces (src/perf/bench.ts exports
+them; nothing copied): its panel; keepAwake on every page (re-asked on visibilitychange, each page's lock and every loss
+in the report: wakeLock, wakeLog); the device's facts (deviceFacts) on the first page; at the end the report is saved
+at once and the buttons are bench.ts's (Download report, Copy, Share…; reportButtons now takes the file's kind:
+reclaimed-physbench-<stamp>-<device>.json), the dev server keeps it (postDev, perf-reports/physbench-*.json), the last
+run stays in localStorage with a "Download previous run" while the next goes, and the card has one line a solver ×
+judge (src/perf/physsummary.ts, test/unit/physsummary.test.ts): the worst stage's p95/p99, physics ms (GPU passes +
+main thread), the judge's mean and worst ms, slow frames and their runs.
+
+The voxel lattice's mesh room was a fixed 16384 triangles a session; the user's rule is no GPU memory caps. It starts
+there and doubles on demand (Physics.growSkin: the records copied over, the kernels bound again, the renderer's draw
+made again) up to what one binding of the device holds — past that a body is refused as with no room.
+
+## 2026-10-31 — round 120 (`solver`): no voxels on the lattice; meshing by material; the bench toggles (SL23–SL25)
+
+The user on 42335d9: "Both look great and I think are fast enough on this machine. The rocks do look better with the
+nodes but largely because of the meshing. The lattice still switches to voxels." The phone (Pixel 9a, all 8 pairs):
+p95/p99 old×runs 20/29, lattice×runs 22/37, lattice×sections 21/38, hybrid×runs 24/36, nodes×runs 49/52,
+nodes×sections 77/443 — the nodes 25–45 ms of the Mali GPU while bodies move (SL26, the user to decide).
+
+**Voxels on the lattice (SL23).** Two paths drew cells for a meshed lattice body: its hidden voxels were shown where it
+lost a face neighbour or a crack opened (round 49's "a break shows what's inside"), and a crumbling voxel split into
+eight half-size fragments in the fragment ring, drawn as cubes. Now a meshed body's voxels are never drawn (its mesh
+tears; dust covers the cut) and its crumbling voxels go straight to dust (the deaths pass: loose ground and a puff).
+test/gpu/lattice-draw.test.ts reads the lattice's own instance count: 0 over a stone block and a steel bar dropped hard
+(177 before the fix).
+
+**Meshing by material (SL24).** The rock looked better on the nodes because of the rock mesh. Every rock body is now the
+rock mesh whatever moves it: on the node solver skinned to its nodes, the CPU rock by its matrix, and on the voxel
+lattice skinned to its particles (rockmesh.wgsl's mode 3: a vertex goes with the particles of its own cell and the six
+beside it, a layer above and below, at its offset from where each cell stood, turned with it; none left, torn). What's
+built and metal are the body mesh in every variant. The rock lab's collapse on ?solver=lattice: the arch and the
+shelves fall as the rock mesh, bending as the lattice bends.
+
+**The bench's costs by toggling (SL25).** The user: "I think that the tiled rendering on phones makes per system
+unreliable. We already found this. You need to toggle systems to measure the diff" (round 80: the Pixel's per-pass
+times overlapped, each 8–27 ms over a 29 ms span; bench v2's judgeTimestamps flags it). Each stage now ends with the
+physics (the solver, the lattice, the CPU rock's step — the bodies frozen where they are, still drawn) and then the
+judge switched off and on in three alternating 1.5 s windows each way; the report gives what each adds to the frame's
+interval and to its GPU span (Simulation.paused, Integrity.paused). Per-pass timestamps stay in the JSON as
+gpuPhysicsPasses with a note on the card that they're unreliable on tilers. Headless on the desktop (nodes × sections):
+the interval doesn't move (vsync-bound), the GPU span +1.4–1.9 ms with physics, +1.3–2.2 with the judge.
+
+## 2026-10-31 — round 120 (`solver`): the rock mesh's room grows; no other look for a rock (SL27)
+
+The coordinator, on 776fd6e's report ("if the rock mesh has no slot free, that body is drawn entirely with the body
+mesh"): that's a fallback, and the slots a cap. The rock mesh's copy (render/rockmesh.ts) had 72 blocks of storage —
+18 slots of one mesh chunk, a piece wider than 3 chunks refused — and 40 draws a frame in a uniform. Now:
+- the copy is packed in squares of 4 columns and rows (a piece's region its size plus the margins, regions sharing
+  column chunks and mesh chunks — refcounted, a chunk's block given back when nothing's in it, a shared chunk
+  re-meshed when a piece leaves it), so its room is the window's area, not a count of chunks;
+- its storage doubles on demand (the contents copied over, FieldMesh.sourceChanged makes its groups again, the renderer
+  its draw groups) up to one binding of the device, and throws past that;
+- the draws are a storage buffer that grows with them (the vertex stage reads it; the fragment gets its draw's
+  rotation and material as varyings — the fragment stage's storage bindings were at the limit of 8);
+- resting rock made into ground for room gives its slot back at once (it was held for six frames of afterglow, so the
+  loop let every resting rock go and still found no room), then the afterglows and ghosts; a copy full of moving rock
+  throws — there's no other look for a rock.
+test/gpu/rockmesh-room.test.ts (a tiny world with the field mesh on): 120 small pieces each with its own slot, 40 big
+ones growing the storage past its start, a full copy refused.
+
+## 2026-10-31 — round 120 (merge121): the physics merged, lattice x runs the default
+
+**Why.** The user (round 120): "I suspect it will win after JB6 since my understanding is the readbacks are very slow
+and it isn't clear what we need that for. I don't want to spend too much more time on physics. [...]" and "Maybe
+merge". `solver` (0a3861e) already held `judge` (bf59514, 7e029fc); `origin/judge` has nothing later, so one merge.
+
+**Conflicts.** pages.yml (places' list kept: it already lists merge121 and jb6); DECISIONS round 120 (both sides kept,
+the branch's entries first, then main's). BACKLOG merged without a conflict (one `# Backlog`). The branch had turned
+src/scenes/level.ts, src/render/rockmesh.ts and src/shaders/rockmesh.wgsl to LF; put back to CRLF so the merge's diff
+is the change only (level.ts +114/-9, not a 3500-line rewrite).
+
+**Defaults.** `?solver=` defaults to `lattice` (DEFAULT_SOLVER in solver/variant.ts; it was `nodes`), `?judge=` stays
+`runs`: the phone bench (Pixel 9a) had lattice x runs p95 20 / p99 35 ms, the smoothest pair. The physics bench names
+the page's pair from solverVariant() and JUDGE_ID instead of its own copy of the defaults. Every variant stays
+selectable (URL and the lab chip). Rock is drawn with the rock mesh in every variant (solver 776fd6e/0a3861e: by
+material, no voxel path on the lattice) — seen in the atlas shots: the toppled pillar is one rock mesh.
+
+**Gate** (desktop iGPU intel-xe-lpg, every system on, 1x):
+- typecheck; `npm test` 43 files, 328 passed (2 expected fail, 5 skipped), unit and GPU on Dawn.
+- `npm run smoke --levels atlas,playground,rocklab`: all three load, no fatal, sim ticking (atlas ready 36.6 s).
+- tilegate: every parked view 0 out of detail, 0 background (all screens, all zooms); slow pans ok. Goldens: four over
+  1 % — desktop-z1.3 20.7 %, phone-z2.2 22.4 %, phone-z1.3 22.5 %, phone-z14 1.9 %. places' own build against the
+  same baselines: 31.5 / 31.3 / 31.3 / 0.2 %, so the first three are drift already on places; phone-z14's is the tool
+  palette's new button (the drag tool) and a passing particle. Each diff looked at (no void, flat fill or band); those
+  four rewritten with --update, the rest kept. Fast pans (160 c/s): desktop z14/z8/z5 fail on places too (places
+  53.5/8.9/9.8 %, merged 52.3/18.9/0.4 % — noisy run to run); phone z8 failed once (39 % in 11 frames) and passed on a
+  rerun, as did every phone/w384 fast pan; places passes them too (M120-1's 0.14-0.5 % didn't show on either).
+- driveprofile (q=low 412x915, alternated places/merged, two runs each): places p50 9.8/9.9, p95 14.1/13.9, p99
+  34.3/34.4, GPU 14.5/15.0 ms; merged p50 9.8/9.9, p95 13.4/13.4, p99 34.3/34.0, GPU 14.3/14.5 ms — no cost visible.
+- The atlas (q=low 412x915, tod 0.45): a 26-layer stone pillar built, its foot cut (crater r 6.5) — the judge (runs)
+  lets it go as one rock body that topples onto its side (rock mesh), dust; a tanker dropped from 16 cells lands as its
+  body mesh with dust beside it (softBlows 1: it sank into the soft ground, a spray and a rim). A smaller cut (r 4.5)
+  leaves a cave in the pillar's foot that the judge holds. Shots: C:/Projects/shots88/merge121/ (1-7, small cut) and
+  deepcut/ (the collapse); tilegate/, tilegate-places/ (places' goldens), tilegate-pan2/ (the phone pan rerun).

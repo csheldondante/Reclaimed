@@ -1,0 +1,60 @@
+{
+ "at": "2026-10-31T07:56:54.743Z",
+ "what": "wall ms a tick on Dawn (D3D12), this machine; 4³ stone blocks and 16 × 2 × 2 steel girders alternating",
+ "rows": [
+  {
+   "kind": "nodes",
+   "bodies": 10,
+   "asleep": 10,
+   "voxels": 640,
+   "nodes": 365,
+   "fallingMs": 2.133,
+   "landedMs": 0.397
+  },
+  {
+   "kind": "lattice",
+   "bodies": 10,
+   "asleep": 7,
+   "voxels": 640,
+   "nodes": 640,
+   "fallingMs": 11.509,
+   "landedMs": 3.438
+  },
+  {
+   "kind": "nodes",
+   "bodies": 50,
+   "asleep": 50,
+   "voxels": 3200,
+   "nodes": 1924,
+   "fallingMs": 2.801,
+   "landedMs": 0.345
+  },
+  {
+   "kind": "lattice",
+   "bodies": 50,
+   "asleep": 25,
+   "voxels": 3200,
+   "nodes": 3200,
+   "fallingMs": 4.752,
+   "landedMs": 3.166
+  },
+  {
+   "kind": "nodes",
+   "bodies": 200,
+   "asleep": 200,
+   "voxels": 12800,
+   "nodes": 7741,
+   "fallingMs": 5.4,
+   "landedMs": 0.297
+  },
+  {
+   "kind": "lattice",
+   "bodies": 200,
+   "asleep": 63,
+   "voxels": 12800,
+   "nodes": 12800,
+   "fallingMs": 9.36,
+   "landedMs": 6.364
+  }
+ ]
+}

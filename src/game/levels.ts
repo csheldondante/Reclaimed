@@ -10,7 +10,7 @@ import { generateLandforms } from '../world/landforms';
 import { generateStreamWindow } from '../world/streamgen';
 import { generateTrials } from '../levels/trials';
 import { generateFlowlab, setupFlowlab } from '../levels/flowlab';
-import { generateRocklab } from '../levels/rocklab';
+import { generateRocklab, ROCKLAB_STATIONS } from '../levels/rocklab';
 import { generatePlayground, STATIONS, type Station } from '../levels/playground';
 import { generateNoiselab } from '../levels/noiselab';
 import { generateBestiary } from '../levels/bestiary';
@@ -140,6 +140,8 @@ export const LEVELS: LevelDef[] = [
     blurb: 'Rock to break: a top on a thin leg, an arm, an arch, a pillar, banded towers (round 92).',
     model: 'sign',
     generate: (dims) => generateRocklab(dims),
+    // (solver step 2) the collapse judge's shapes, a button a cut
+    stations: ROCKLAB_STATIONS,
     sandbox: true,
     hidden: true,
     zMax: 96,

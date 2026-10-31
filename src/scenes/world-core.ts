@@ -294,6 +294,16 @@ export class WorldCore {
     device.queue.submit([enc.finish()]);
   }
 
+  /**
+   * (solver step 1, the design's choppiness fix) Where this frame lies between the sim's last two ticks (0..1): what's
+   * drawn from a fixed-step system's last two states is blended by it. Locked to the display (one tick a frame) it's 1:
+   * the latest state, no lag; at other rates the accumulator's time owed toward the next tick.
+   */
+  renderAlpha(): number {
+    if (this.clock.locked) return 1;
+    return Math.min(1, Math.max(0, this.clock.acc / TICK_DT));
+  }
+
   render(): void {
     const { device, context } = this.host.gpu;
     const prof = this.host.profiler;

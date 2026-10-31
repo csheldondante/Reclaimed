@@ -206,6 +206,8 @@ export class WorldGpu {
    *  merges it into bodyProj / proj): PHYS_COL_WORDS u32 per column, bit z set where a voxel's
    *  centre lies in cell z (0..PHYS_COL_WORDS · 32 − 1: 511; round 100 — 8 words, 255, before the window held the atlas's height) */
   readonly physCols: GPUBuffer;
+  /** (solver step 2) the tick physCols was last cleared on: the physics voxels and the node solver both mark it, the first to run a tick clears it */
+  physColsTick = -1;
   /** air the physics voxels shove as they land (physics.ts writes it each tick;
    *  windfield.wgsl pushes the wind out from it): u32 per wind texel, ×1000 */
   readonly physPuff: GPUBuffer;

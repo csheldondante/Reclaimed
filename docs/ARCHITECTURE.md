@@ -1405,6 +1405,10 @@ riverfalls' sheets were reverted (the user: they didn't match the rest of the vi
 Held rivers' falls draw as their columns' water. The world's gravity stays one value: (round 108) the tuning's
 `world.gravity` (9.8 cells/s², its default world/scale.ts `WORLD_G`), read as `G.tune.worldGravity` by the flow model's
 streams, sheets and spray, and by the CPU's rigid rock and falling pieces (× their own `gravity`).
+(Solver step 1, AR9) That value times `world.gravityX` (the panel's "world gravity ×") is `worldG()` — tune/params.ts on
+the CPU, common.wgsl on the GPU — and it is the only gravity: every mover (the rigid rock, the falling pieces, the
+physics voxels, chips and splash, the agents, the flow model) reads worldG() × its own group's `gravity` scale. No
+mover has a speed cap (AR10).
 
 ## The tuning registry (round 108, branch `playground`; BACKLOG AR5)
 
@@ -2681,3 +2685,119 @@ like slowing you down or requiring you to cut through) is a good thing".
 - The library is made for the tier’s render pixels a CSS pixel (FLORA_RPX; the renderer’s floraRpx).
 - A vertex’s w carries its kind (+16 × kind, baked by render/meshinst.ts), so the draw finds the kind in one step.
 - Phone bench: ?florabench=1 (src/flora/bench.ts).
+
+## The node solver (round 120, branch `solver`; BACKLOG AR4, the physics design of round 106)
+
+One GPU constraint solver for what breaks free — src/solver (host), src/shaders/solver.wgsl (kernel), its contract
+src/api/contracts/solver.ts (`NodeSolver`). The judges (game/integrity.ts, fracture.ts) still decide what lets go;
+the solver only moves what they hand over. Rendering reads its node transforms without touching its state.
+
+- **In:** `add({ cells, pose?, vel?, spin?, pinned?, allow?, kind? })` — lattice cells where they stood
+  (the spawn frame), a pose if it's elsewhere now (a resting rock woken). `impulse(body, dv)`, `wake(body)`,
+  `remove(body)`. `shift(dx, dy, dz)` when the window slides.
+- **Out:** `read(body)` a tick or two late — centre of mass, rotation (spawn frame → world), velocity, spin, asleep,
+  touching, the hardest impact (speed, where), ground cut too deep (erode points), parts, bonds broken, mass.
+  `pose`: per node its position and rotation for the last two ticks (4 vec4: prev pos, prev rot, pos, rot; slot b's
+  nodes at b · 64) — drawn between them at `WorldCore.renderAlpha()`. `lanes`: per node its bind rest ([6]), what a
+  mesh is skinned to. `bindOf(body)`: its nodes' rest places and each cell's node — what its own mesh is bound to.
+  It draws nothing itself (round 120: no cell is ever drawn as a voxel; its skin kernel only marks the columns).
+- **A body** is up to 64 nodes (blocks of g³ cells, g the least giving ≤ 64; 2 at least for a deformable over 16
+  cells — a node spans its member's section) and up to 64 contact points (every node's lowest exposed corner, then
+  farthest-point sampling). Bonds are a 64-bit mask a node: cells touching across blocks. Rest positions are kept
+  about the rest centre of mass, positions about the body's centre as the tick began (f32: world-sized sums drifted
+  0.01 cells/s a tick).
+- **One workgroup a body**, every substep (4) and pass (2) inside one dispatch; other bodies read from a snapshot
+  copied before it (the lanes of those awake). Rigid (rock, what's built): each connected part shape-matched exactly.
+  Stiff deformable (metal, wood; `frame` 1): rigid between yields; the fit's corrections are the loads it carries,
+  walked from what holds it (pinned nodes; else what it touches) to the far ends once a tick — moment, shear and
+  pull at each bond over the section its node stands for: past the strength the bond snaps, past the yield the most
+  loaded bond is a plastic hinge (only in a part a foundation holds; only a bond its subtree hangs by alone). Blows
+  dent (a hit's energy over the dent strength × area), put in so they make no speed. Soft deformable (canvas,
+  scrap): region shape matching, plastic flow.
+- **Contacts:** points against the ground (layers.wgsl; a node's own foot too) and against other bodies' node
+  blocks (out through their faces on the surface), both ways by contact mass (a rigid body's whole, a stiff
+  deformable's whole or the world's if a foundation holds it, a soft one's node). The rules are the rigid group's
+  sliders: an overlap within the slop never corrected; past it stopped and pushed out at `pushV`, the push-out part
+  taken off the velocity (separation never adds speed); rock past slop + erodeDepth erodes the ground instead.
+  Sleep: slower than `restV` while held for `restT`; woken by a hard hit (or one about to land), an impulse, its
+  support going.
+
+**The experiment** (solver/variant.ts, `?solver=`): `old` (the CPU rigid rock, the columns' falling pieces, metal on
+the voxel lattice), `nodes`, `lattice` (everything on phys.wgsl's voxel lattice, which sleeps too now), `hybrid`
+(rock on the nodes, metal and wood on the lattice). `?judge=runs|sections` (game/judge.ts JUDGES, from branch `judge`)
+picks the judge. The lab's panel picks both (a reload) and compares every solver × judge (ui/experiment.ts, `?run=`).
+
+**Bodies' own meshes** (round 120; render/bodymesh.ts, render/bodymeshbuild.ts, shaders/bodymesh.wgsl): one mesh a
+body, made from its cells when it wakes (hex prism faces where the next cell isn't the body's), each vertex bound to its
+cell's node and up to three near it; `BodyMeshes.add(verts, pose)` with pose `{nodes: slot, com}` (skinned each frame
+to the solver's nodes between its last two ticks, a vertex keeping only its own part's nodes) or `{matrix}` (the CPU
+rock, a resting rock); one triangle list drawn by Renderer.addMesh. On the voxel lattice the same mesh is bound to the
+body's particles (`Physics.attachSkin`, its voxels hidden). Integrity owns the meshes of what it frees and drops;
+the rock mesh (the field mesh's copy) still draws a rock's stone, the body mesh what's built of it.
+## The collapse judges (round 120, branch `judge`; BACKLOG JB1-JB9, SV1, SV2)
+
+What lets go when the ground is cut is decided by a **judge** behind one interface (src/game/judge.ts); what it frees
+is moved by the solver (branch `solver`: rigid rock, nodes, lattice). Two judges, side by side (the user, round 120:
+"Can we treat this as an experiment and test each approach side by side?"):
+
+- **A, `runs`** (the default): fracture.ts `analyseRock` on the CPU over Integrity's read-back copy of the columns —
+  joints between runs (round 92: load handed in from the far end, a joint holds strength × min(BEND h², SHEAR h)),
+  legs that buckle, bend and tip (round 96).
+- **B, `sections`** (`?judge=sections`): the user's method of sections on the GPU (src/shaders/judge.wgsl). The
+  columns are read in place (WorldGpu.layers and .chunks); only the verdict comes back.
+
+**The interface.** `RockJudge.judge(input): Promise<Fracture>` — input: `cols` (`packed`, plus the CPU copy `vox` for A
+and the GPU's `{device, slots, chunks}` for B), `seeds` (the columns an edit cut), `weigh` (what an edit weakened:
+fracture.ts RockOpts.weigh), `rotate` (report hinges), `known` (A's stale-copy test). Output: fracture.ts `Fracture`
+(pieces as runs, crumbleRuns, tips with pivot and axis, why). `stats`: ms (wall), gpuMs (B, timestamp queries),
+readBytes, sections, arch. `JUDGES = { runs, sections }` — `{label, make()}` for a lab panel to list; `JUDGE_ID` the
+page's choice. Integrity holds `judge` (settable) and awaits it in its pass; `judgeAll` (the tests' whole-window
+judging) goes through it too.
+
+**Judge B, kernel by kernel** (one submit, a compute pass a kernel, each timed: `stats.kernels`; the window: the seeds'
+box plus the leg walk's reach, TUNE.judgeB.neck + 2 columns, grown ×2 to TUNE.judgeB.margin when a seeded piece or
+its leg walk reaches the side (round 120c, JB13: exact); at the margin the side holds, as before):
+1. `build` (a thread a column): the column's runs (columnRuns' rule) → nodes: z0, z1, mass (cells × density × √3/2 m²),
+   first moment in z, side-holding extent, weakest strength, flags. `adjacency` (a thread a node): a 16-bit mask a
+   direction of the neighbour column's runs it's joined to; map and window edges.
+2. `pieces`, `pieceFlags` (whole GPU, lock-free union-find): the hanging runs' pieces; seeded (a solid run in or
+   beside a seed column) and weighed; `seedList` lists the seeded pieces' runs (what every later single-workgroup
+   phase walks). **Culling** (round 120b, exact): only seeded pieces go on — a piece's verdict
+   depends on its own runs, what holds them and the neck's standing runs, never another piece.
+3. `judge1` (one workgroup): the flood from what holds, frontier by frontier (depth-serial), over the seeded pieces;
+   the judged runs (seeded and weighed pieces) by level, each given its pairs; the indirect dispatch for the pairs.
+4. `faces` (a thread a run): its faces to the runs a step nearer, summed once, by direction.
+5. **The pairs** (mode `pairs`; the default `auto` takes them when the deepest judged piece is TUNE.judgeB.pairsDepth (10)
+   levels or more, else the level pass — judge1 chooses on the GPU, both exact; round 120c): a pair (v, k) a judged run v at each level k ≤ dist v.
+   `pairsInit`, `pairsUnite` (lock-free union-find: (v, k) with (u, k) for joined u with dist u ≥ k), `pairsFind`
+   (roots: one per component per level), `pairsSum` (mass and first moments of everything ≥ k out, the level-k runs'
+   faces; gathered by root in workgroup memory first), `checks` (a thread a root: shear, moment against the section
+   modulus projected across the lever; meeting sections skipped for the thrust check), `marks` (a run in a failed
+   component goes; the failed section's own runs are its cut). Dispatched indirectly from judge1's counts. Exactly the
+   level pass's verdicts (test/gpu/judge-equal.test.ts); mode `levels` (?jbmode=levels) is that pass, the oracle: one
+   pass a distance level in one workgroup (judge2's phase 4).
+6. `judge2` (one workgroup): the level pass in mode `levels`; the thrust check for level-1 components that meet
+   (Heyman: a parabola from the springings inside every run; least thrust within crushing).
+7. `judge3` (one workgroup): what still holds — mode `levels` a release flood that doesn't cross a failed section,
+   mode `pairs` the marks. `freedUnite` (whole GPU): the freed runs' pieces.
+8. `judge4` (one workgroup, over the seeded pieces' runs only): the pieces out (kind, hinge), the neck (a held piece on
+   the standing runs joined above its lowest point, 16 columns at most: tipping past its hull, the far side's pull,
+   crushing; a standing run two pieces reach goes with the lesser), the records (the runs that go, their slots copied).
+
+Units: a cell a metre; stresses in the weight of a metre of rock a square metre (σ' = MPa × 10⁶ / (density × g)):
+TUNE.judgeB tensile 4 MPa (σ' ≈ 157), shear 8, crush 60, density 2600 kg/m³, meet 0.35, archTol 0.5, tipGive 0,
+neck 16, margin 32, and the tension share by bond (tRock 1, tMasonry 0, tCast 1, tMetal 1, tOther 1: materials.ts
+`bond`, round 120b "Follow the material") — the tuning panel's "Judge B" group (CPU-side; the kernel gets them in its own uniform
+and the material table). Material
+strengths, densities and never-gives (span Infinity) from materials.ts (a 256-entry table the kernel reads).
+
+Buffers (sized to the window, grown and judged again on overflow — never cut short): params (uniform), the world's
+chunk table and slots (read), materials (read), the columns' marks (seeded, weighed), N (the nodes' own numbers,
+plain words: 67 fields a node), W (the judge's atomics: 96 fields a node, counters, levels, the pairs' 55 fields a
+pair), O (the verdict: header, why, stats, 1024 pieces, records), IND (the pairs' indirect dispatch, written by judge1;
+bound only to judge1 — a buffer can't be writable in the pass that dispatches from it). judge.wgsl is self-contained (no common.wgsl): binding 0
+is its own params, not the Globals.
+
+Tests: test/gpu/judge-shapes.test.ts (A and B on every shape, B asserted from the stone estimate; JUDGE_LOG=1 writes
+data/perf/judge/shapes.md), test/gpu/judge-equal.test.ts (B's fast paths against its oracle: shapes, 40 random caves), test/gpu/judge-perf.test.ts (JUDGE_PERF=1: data/perf/judge/node-*.json and the phase
+breakdown node-phases.json), test/support/judgeworld.ts (RockWorld's passes through a judge).

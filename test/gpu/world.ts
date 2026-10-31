@@ -26,7 +26,7 @@ export interface TinyWorld {
   destroy(): void;
 }
 
-export async function tinyWorld(g: TestGpu, map: MapData, systems: string[] | 'all', rivers: 'sim' | 'table' = 'sim'): Promise<TinyWorld> {
+export async function tinyWorld(g: TestGpu, map: MapData, systems: string[] | 'all', rivers: 'sim' | 'table' = 'sim', opts: { fieldMesh?: boolean } = {}): Promise<TinyWorld> {
   // (no canvas and no page: the world's constructor doesn't draw — a Host as far as WorldCore reads it)
   const host: Host = {
     gpu: { adapter: undefined as unknown as GPUAdapter, device: g.device, context: undefined as unknown as GPUCanvasContext, format: 'bgra8unorm', hasTimestamps: false, adapterInfo: g.adapterInfo },
@@ -39,7 +39,7 @@ export async function tinyWorld(g: TestGpu, map: MapData, systems: string[] | 'a
   };
   useRivers(rivers);
   beginPipelineBatch();
-  const core = new WorldCore(host, map, host.quality.particles, CHUNK, false);
+  const core = new WorldCore(host, map, host.quality.particles, CHUNK, opts.fieldMesh ?? false);
   await endPipelineBatch();
   const all = core.sim.systems.map((s) => s.name);
   const names = new Set(systems === 'all' ? all : systems);

@@ -29,10 +29,11 @@ import type { Agents } from '../agents/agents';
 import { attachSim, type Sim } from '../api/world';
 import { LEVEL_H, type Block, type Town } from '../build/town';
 import type { BuildCrew } from '../agents/buildcrew';
-import type { Waker, WakeOptions } from '../physics/wake';
+import { STRUCTURAL, type Waker, type WakeOptions } from '../physics/wake';
 import { box, table } from '../physics/shapes';
 import { boxMesh, rockMesh, type SkinMesh } from '../physics/mesh';
 import { BODIES } from '../ui/editor';
+import { LINEUP } from '../physics/shapes';
 import type { WorldStats } from '../sim/systems';
 import { Hud } from '../ui/hud';
 import type { PerfOverlay } from '../ui/perf-overlay';
@@ -53,6 +54,9 @@ import { FLOWLAB } from '../levels/flowlab';
 import { TunePanel } from '../ui/tunepanel';
 import { BugReport } from '../ui/bugreport';
 import { StationsBar } from '../ui/stations';
+import { experimentChip, experimentControls, startRun } from '../ui/experiment';
+import { JUDGE_ID } from '../game/judge';
+import { solverVariant } from '../solver/variant';
 import { NoiseLabControl } from '../noiselab/control';
 import type { Station, StationKit } from '../levels/playground';
 import { RB, rockbodyFor } from '../game/rockbodies';
@@ -66,6 +70,8 @@ import { demoStory } from '../story/demo';
 import type { HeroRun } from '../story/hero-run';
 import { loadRunStory, runWorld, startAtlasRun } from '../story/atlas-run';
 
+/** (round 120) what a ruin wakes as besides its metal, where the metal wakes into the picked solver variant */
+const NON_METAL: ReadonlySet<number> = new Set([...STRUCTURAL].filter((m) => m !== MAT.Steel && m !== MAT.Rust));
 /** round 83, V21: ?cutaway=1 — the camera on a puck (api/puck.ts), sliced under a roof and orbiting round a cliff */
 const CUTAWAY = new URLSearchParams(location.search).get('cutaway') === '1';
 /** (round 113) ?planner=0: no planner — each layer's own fixed look-ahead, the sim's ticks never cut */
@@ -82,7 +88,7 @@ const FLY_SPEED = Number(new URLSearchParams(location.search).get('flyspeed') ??
 import { cpuLine, cpuStats, frameSteps, record, timed } from '../gpu/cpustat';
 import { type Interval, CHUNK, columnSlots, K_HEADROOM, packColumn, readColumn, SLOT_WORDS, sfMat, sfZ, sfPack, windowZMax } from '../world/layout';
 import { modelById, modelColumns, restingBase, seatColumn, type VoxelModel } from '../world/models';
-import { Integrity } from '../game/integrity';
+import { Integrity, type Grab } from '../game/integrity';
 import { WorldVox } from '../game/fracture';
 import { MAT } from '../world/materials';
 import { cellAt, cellPos, poiWorld, ROW_H } from '../world/lattice';
@@ -358,6 +364,8 @@ export class LevelScene implements Scene {
   lava?: LavaSystem;
   /** sandbox: the heat beam's pointer while held */
   private beamAt?: [number, number];
+  /** (round 120) the drag tool's hold: the body, the height it's held at, where the pointer is (CSS px) */
+  private dragHold?: { g: Grab; h: number; at: [number, number] };
   private beamWoke = -Infinity;
   private beamLine?: SVGLineElement;
   private beamDot?: SVGCircleElement;
@@ -370,6 +378,8 @@ export class LevelScene implements Scene {
   private tunePanel?: TunePanel;
   bugReport?: BugReport;
   private stationsBar?: StationsBar;
+  /** (solver step 2, the experiment) the station and button last pressed: what "compare" plays again */
+  private lastRun: string | null = null;
   /** (round 111, TG1) the noise lab's recipe, its panel and its runs (level.noiseLab) */
   noiseLab?: NoiseLabControl;
   /** sandbox: a smash drag in progress */
@@ -1131,11 +1141,9 @@ export class LevelScene implements Scene {
       };
       // (round 95, ?rockbody=1) rock hitting the ground hard throws sparks, up and out
       this.integrity.onSparks = (x, y, z, count, speed) => core.sim.particles.burst({ kind: PK.Spark, x, y, z, count, speed, spread: 0.4, vel: [0, 0, speed * 0.4] });
-      // (round 96) metal goes to the physics voxels, its mesh skinned to them
-      if (this.integrity.rigid && this.physics) {
-        this.integrity.physics = this.physics;
-        core.renderer.setRockParticles(this.physics.buffers);
-      }
+      // (round 96; solver step 2) metal goes to the node solver (Integrity.wakeMetal); the physics voxels stay the
+      // sandbox's tools' (the drop tool, the beam)
+      if (this.integrity.rigid && this.physics) this.integrity.physics = this.physics;
       core.globals.spanCollapse = false;
       weather.holdNatural(1e9);
     }
@@ -1197,6 +1205,19 @@ export class LevelScene implements Scene {
           this.dropAtPick(sx, sy);
           return true;
         }
+        // (round 120) telekinesis: the body nearest the press, within a thumb's reach, held while dragging
+        if (this.editor?.tool === 'drag') {
+          const ig = this.integrity;
+          if (!ig) return false;
+          const [gx, gy, gz] = camera.groundAt(sx, sy, this.heightAt);
+          const reach = 48 / camera.zoom + 2;
+          // (on the ground under the finger or anything stood on it up to a body's height above)
+          const g = ig.grabAt(gx, gy, gz + 2, reach + 2);
+          if (!g) return false;
+          const st = ig.grabState(g)!;
+          this.dragHold = { g, h: st.pos[2] + 2, at: [sx, sy] };
+          return true;
+        }
         // the heat beam: on while held, aimed at what's under the pointer (frame())
         if (this.editor?.tool === 'beam') {
           this.beamAt = this.beamAim(sx, sy);
@@ -1227,6 +1248,7 @@ export class LevelScene implements Scene {
           return;
         }
         if (this.beamAt) return void (this.beamAt = this.beamAim(sx, sy));
+        if (this.dragHold) return void (this.dragHold.at = [sx, sy]);
         if (this.smashing) {
           this.pickSmash(sx, sy);
           return void this.smashAt(sx, sy, false);
@@ -1237,6 +1259,8 @@ export class LevelScene implements Scene {
       },
       dragEnd: () => {
         if (this.flyDrag) return void (this.flyDrag = undefined);
+        // (let go: it flies on with the speed it had)
+        if (this.dragHold) return void (this.dragHold = undefined);
         if (this.beamAt) {
           this.beamAt = undefined;
           if (this.physics) this.physics.beam = null;
@@ -2255,6 +2279,11 @@ export class LevelScene implements Scene {
     this.stepMeteors(dt);
     this.drawRing();
     if (this.beamAt && this.physics && !this.beamPicking) this.aimBeam(this.beamAt);
+    // (round 120) the held body pulled to where the finger is, at the height it was lifted to
+    if (this.dragHold && this.integrity) {
+      const [tx, ty] = camera.groundAt(this.dragHold.at[0], this.dragHold.at[1], () => this.dragHold!.h);
+      if (!this.integrity.pull(this.dragHold.g, [tx, ty, this.dragHold.h], Math.min(dt, 1 / 20))) this.dragHold = undefined;
+    }
     // (round 87: the beam bores through rock with no edit event — what it undercuts is judged while it's held)
     const lb = this.lava?.beam;
     if (lb && this.integrity && performance.now() - this.beamCutAt > 250) {
@@ -2873,6 +2902,14 @@ export class LevelScene implements Scene {
    */
   wake(x: number, y: number, z: number, r: number): Promise<void> {
     if (!this.waker) return Promise.resolve();
+    // (round 120: the map's tankers and cars wake into the picked solver variant — ?solver= — like the metal the judge
+    // frees; the rest of the ruin, concrete and brick, as before)
+    const ig = this.integrity;
+    if (ig?.rigid && ig.wakeMetalNear(x, y, z, r)) {
+      return this.waker.wake(x, y, z, r, { materials: NON_METAL }).then(({ full }) => {
+        if (full) this.hud.say('No room for more bodies.', 2);
+      }, ignoreTeardown);
+    }
     return this.waker.wake(x, y, z, r).then(({ full }) => {
       if (full) this.hud.say('No room for more bodies.', 2);
     }, ignoreTeardown);
@@ -3005,7 +3042,11 @@ export class LevelScene implements Scene {
     }, ignoreTeardown);
   }
 
-  /** Drop the chosen physics body over what's under the cursor (docs/PHYSICS.md). */
+  /**
+   * Drop the chosen body (or, drop all, the line-up) over what's under the cursor (docs/PHYSICS.md). (round 120) Where
+   * the level has the rigid rock (the playground, the rock lab, the atlas) it falls by the picked solver variant —
+   * ?solver=old|nodes|lattice|hybrid (Integrity.dropModels → dropBody); elsewhere on the physics voxels, as before.
+   */
   private dropAtPick(sx: number, sy: number): void {
     const { core } = this;
     const ed = this.editor!;
@@ -3014,6 +3055,17 @@ export class LevelScene implements Scene {
     const [rx, ry] = [(sx / core.camera.viewportW) * this.renderW, (sy / core.camera.viewportH) * this.renderH];
     core.renderer.pick(rx, ry).then(async (hit) => {
       if (!hit) return;
+      const ig = this.integrity;
+      if (ig?.rigid) {
+        const kinds = ed.dropAll ? LINEUP.map((id) => BODIES.find((b) => b.id === id)!) : [kind];
+        const n = ig.dropModels(kinds.map((k) => k.make()), hit.cell % core.dims.w, Math.floor(hit.cell / core.dims.w), ed.dropHeight);
+        if (n < kinds.length) this.hud.say('No room for more bodies.', 2);
+        return;
+      }
+      if (ed.dropAll) {
+        this.hud.say('Drop all needs a level with the solvers (the playground, the rock lab).', 3);
+        return;
+      }
       const [x, y] = cellPos(hit.cell % core.dims.w, Math.floor(hit.cell / core.dims.w));
       // (over a body already there: above it)
       const api = (window as unknown as { reclaimed: { phys: { spawn: (m: VoxelModel, x: number, y: number, above: number, yaw: number, pitch: number, roll: number, vel: [number, number, number], floor: number) => Promise<unknown> } } }).reclaimed;
@@ -3197,6 +3249,15 @@ export class LevelScene implements Scene {
     const rigidLine = () => (rigid ? `rigid ${rigid.list.length} · step ${rigid.stats.stepMs.toFixed(2)} ms · breaks ${rigid.stats.breaks} · settled ${rigid.stats.settled}` : '');
     this.tunePanel = new TunePanel(host.ui, {
       open: this.level.lab?.open,
+      // (solver step 4: presets to start from — the user's "tankers' feel" is world gravity × 2)
+      builtins: {
+        "tankers' feel (gravity × 2)": { 'world.gravityX': 2 },
+        'heavy and slow (gravity × 0.5)': { 'world.gravityX': 0.5 },
+        'soft metal (bends a lot)': { 'solver.steelYield': 6e4, 'solver.steelTensile': 4e5, 'solver.blowG': 12 },
+        'brittle metal (snaps)': { 'solver.steelYield': 2e5, 'solver.steelTensile': 2.2e5, 'solver.steelShear': 1.5e5 },
+        'deep overlap (big slop)': { 'rigid.slopK': 0.12, 'rigid.slopCap': 1.2 },
+        'stiff contacts (small slop)': { 'rigid.slopK': 0.02, 'rigid.slopCap': 0.3, 'rigid.pushV': 1.5 },
+      },
       // (open at the start in a test bed on a desktop; on a phone its button, the world first)
       shown: !!this.level.lab && !matchMedia('(pointer: coarse)').matches,
       stats: () => {
@@ -3214,6 +3275,11 @@ export class LevelScene implements Scene {
         const ig = this.integrity;
         return {
           station: this.stationsBar?.current.id ?? null,
+          // (solver step 4: which solver and judge, and what the node solver holds — the bug report's physics)
+          experiment: { solver: solverVariant(host.params), judge: JUDGE_ID, lastRun: this.lastRun },
+          solver: ig?.solver
+            ? [...ig.solver.bodies].slice(0, 30).map((b) => ({ slot: b.slot, kind: b.kind, nodes: b.nodes, cells: b.cells, read: ig.solver!.read(b) ?? null }))
+            : null,
           integrity: ig ? { stats: { ...ig.stats }, falling: ig.falling.list.length, resting: ig.restingCount, rigid: rigid ? { bodies: rigid.list.length, stats: { ...rigid.stats }, list: rigid.list.slice(0, 20).map((b) => ({ pos: b.pos, v: b.v, w: b.w, cells: b.cells.length })) } : null } : null,
           sleep: this.sleep ? { awake: this.sleep.awake } : null,
           flow: this.flow ? { springs: this.flow.water.springs.length + this.flow.lava.springs.length } : null,
@@ -3231,12 +3297,29 @@ export class LevelScene implements Scene {
           core.camera.target = [x, y, z];
           core.camera.zoom = zoom;
         },
-        run: (s, k) => s.actions[k].run(this.stationKit()),
+        run: (s, k) => {
+          this.lastRun = `${s.id}/${encodeURIComponent(s.actions[k].label)}`;
+          s.actions[k].run(this.stationKit());
+        },
         reset: (s) => this.resetStation(s),
         resetAll: () => {
           for (const s of stations) this.resetStation(s);
           core.weather.dusts = [];
         },
+      });
+      // (solver step 2, the experiment: which solver and judge — a pick reloads — and compare; ?run= presses a button)
+      const hooks = { variant: solverVariant(host.params), judge: JUDGE_ID, lastRun: () => this.lastRun };
+      this.tunePanel.prepend(experimentControls(hooks));
+      // (round 120: and always in sight, a chip that opens them)
+      host.ui.appendChild(experimentChip(hooks));
+      startRun(host.params, (id, label) => {
+        const i = stations.findIndex((s) => s.id === id);
+        const k = i < 0 ? -1 : stations[i].actions.findIndex((a) => a.label === label);
+        if (k < 0) return false;
+        this.stationsBar!.pick(i);
+        this.lastRun = `${id}/${encodeURIComponent(label)}`;
+        stations[i].actions[k].run(this.stationKit());
+        return true;
       });
     }
   }
@@ -3297,6 +3380,28 @@ export class LevelScene implements Scene {
       dust: (x, y) => void core.weather.placeDust(x, y),
       rain: (x, y) => void core.weather.spawn(x, y),
       later: (secs, f) => void setTimeout(f, secs * 1000),
+      pour: (x, y, r, layers, mat) => {
+        core.sim.edit.always = true;
+        core.globals.events.push({ kind: EventKind.Edit, x, y, z: OP.POUR * 32 + mat + 512, radius: r, strength: layers });
+        this.sleep?.wake(x, y, r + 8, Sleep.EVENT_S, now());
+      },
+      drop: (cells, vel) => {
+        if (!this.integrity?.dropBody(cells, vel)) throw new Error('station drop: no node solver here (the level needs the rigid rock)');
+        const [wx, wy] = cellPos(cells[0].x, cells[0].y);
+        this.sleep?.wake(wx, wy, 24, Sleep.EVENT_S, now());
+      },
+      wakeMetal: (x, y, z) => this.integrity?.wakeMetalAt(x, y, z),
+      dropModels: (ids, x, y, above, wrap) => {
+        const kinds = ids.map((id) => {
+          const k = BODIES.find((b) => b.id === id);
+          if (!k) throw new Error(`station dropModels: no body ${id} (physics/shapes.ts bodyCatalogue)`);
+          return k;
+        });
+        if (!this.integrity?.rigid) throw new Error('station dropModels: no solvers here (the level needs the rigid rock)');
+        this.integrity.dropModels(kinds.map((k) => k.make()), x, y, above, wrap);
+        const [wx, wy] = cellPos(x, y);
+        this.sleep?.wake(wx, wy, 40, Sleep.EVENT_S, now());
+      },
     };
   }
 
