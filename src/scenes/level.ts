@@ -3208,6 +3208,17 @@ export class LevelScene implements Scene {
       dust: (x, y) => void core.weather.placeDust(x, y),
       rain: (x, y) => void core.weather.spawn(x, y),
       later: (secs, f) => void setTimeout(f, secs * 1000),
+      pour: (x, y, r, layers, mat) => {
+        core.sim.edit.always = true;
+        core.globals.events.push({ kind: EventKind.Edit, x, y, z: OP.POUR * 32 + mat + 512, radius: r, strength: layers });
+        this.sleep?.wake(x, y, r + 8, Sleep.EVENT_S, now());
+      },
+      drop: (cells, vel) => {
+        if (!this.integrity?.dropBody(cells, vel)) throw new Error('station drop: no node solver here (the level needs the rigid rock)');
+        const [wx, wy] = cellPos(cells[0].x, cells[0].y);
+        this.sleep?.wake(wx, wy, 24, Sleep.EVENT_S, now());
+      },
+      wakeMetal: (x, y, z) => this.integrity?.wakeMetalAt(x, y, z),
     };
   }
 

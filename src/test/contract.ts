@@ -88,6 +88,13 @@ function station(id: string): { map: MapData; rect: [number, number, number, num
     dust: () => undefined,
     rain: () => undefined,
     later,
+    pour: (x, y, r, layers, mat) => core.globals.events.push({ kind: EventKind.Edit, x: x - ox, y: y - oy, z: OP.POUR * 32 + mat + 512, radius: r, strength: layers }),
+    drop: () => {
+      throw new Error('contract tier: a station drop needs the level (the node solver comes with its rigid rock)');
+    },
+    wakeMetal: () => {
+      throw new Error('contract tier: waking metal needs the level (the node solver comes with its rigid rock)');
+    },
   });
   return { map, rect: [0, 0, x1 - x0, y1 - y0], kit };
 }

@@ -472,6 +472,16 @@ fn solve(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
   let pNode = min(u32(max(pt.w, 0.0)), NN - 1u);
   ptN[l] = select(0xffffffffu, pNode, pLive);
   let cells = bodies[B0].w;
+  // (a foundation lets go once there's nothing under it: its support smashed or dug — the physics voxels' rule)
+  if (live && sw[l] == 0.0 && (state == 1u || state == 2u)) {
+    let size = lane[gi * LANE_V + 2u].w;
+    let g0 = probe(sx[l] + wO - vec3<f32>(0.0, 0.0, 0.5 * size + 0.3));
+    if (g0.d <= 0.0) {
+      let cellsN = max(1.0, lane[gi * LANE_V + 6u].w);
+      sw[l] = 1.0 / (cellsN * smA(mat).x);
+      lane[gi * LANE_V] = vec4<f32>(lane[gi * LANE_V].xyz, sw[l]);
+    }
+  }
   let ownSlop = max(slopFor(cells), bodies[B0 + 6u].z);
   let h = SU.a.x;
   let subs = u32(SU.a.y);

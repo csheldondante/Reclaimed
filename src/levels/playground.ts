@@ -15,6 +15,13 @@
 //              its steady state as the atlas's rivers are (riverFlow, riverheld.wgsl), asleep until something wakes it
 //   6 dust     (x 16..112, y 192..240): a field of drift and ash with a sandstone top on a thin leg in it: dust storms
 //              and a collapse's dust
+//   (solver step 2, the user round 120: "I want to see rocks and buildings and have metal too so I can see deformation,
+//   breaking and getting buried in a variety of materials and geometry") — the node solver's stations:
+//   7 slide    (x 112..160, y 192..240): a stone slab on a slope held by two pegs, a thin spire, a mesa to undercut;
+//              sand poured over what came down, and dug out
+//   8 house    (x 160..208, y 192..240): a stone house, a brick tower, a wooden tower (posts and floors)
+//   9 metal    (x 208..256, y 192..240): a steel girder bridge on stone pillars (a boulder dropped on it), a steel
+//              pylon (two legs cut), a steel tanker on concrete posts (dropped), sand over it
 // Storage coordinates (x column, y row); the camera looks from +x+y, so each station's open side faces it.
 
 import { CHUNK, ColumnGrid, type Interval, type WorldDims } from '../world/layout';
@@ -39,6 +46,12 @@ export interface StationKit {
   rain(x: number, y: number): void;
   /** after `secs` (sim time is not waited for: wall time) */
   later(secs: number, f: () => void): void;
+  /** (solver step 2) loose ground poured over world (x, y): `layers` cells of it within r (burying what's there) */
+  pour(x: number, y: number, r: number, layers: number, mat: number): void;
+  /** (solver step 2) a body of these cells (storage x, y, cell z; air there) dropped into the node solver */
+  drop(cells: { x: number; y: number; z: number; mat: number }[], vel?: [number, number, number]): void;
+  /** (solver step 2) the metal at this cell (storage x, y, cell z) and all it connects to woken into the node solver */
+  wakeMetal(x: number, y: number, z: number): void;
 }
 
 export interface Station {
@@ -61,6 +74,22 @@ const SOIL = { shelf: { x0: 196, x1: 234, y0: 20, y1: 48, top: G + 12 }, bank: {
 const BREACH = { plateau: { x0: 16, x1: 56, y0: 116, y1: 172, top: G + 24 }, pool: { c: [32, 144] as [number, number], r: 9, floor: G + 21, level: G + 23.6 }, notch: { y0: 141, y1: 147, floor: G + 22 }, plug: [52, 54] as [number, number], basin: { x0: 56, x1: 92, y0: 116, y1: 172, floor: G - 4 } };
 const RIVER = { x0: 112, x1: 256, y0: 100, y1: 172, ledge: 196, top: G + 20, lip: G + 12, low: G + 3, foot: G, mid: 136, amp: 7, wave: 13, width: 4, discharge: 0.3 };
 const DUST = { x0: 16, x1: 112, y0: 192, y1: 240 };
+// (solver step 2) the node solver's stations
+/** the slope's top at column x (storage): up toward −x, a cell a column and a quarter, whole cells */
+const slopeTop = (x: number) => G + Math.max(0, Math.round((132 - x) * 0.8));
+const SLIDE = { slab: { x0: 116, x1: 124, y0: 204, y1: 212 }, pegs: [[118, 206], [122, 210]] as [number, number][], spire: { x: 150, y: 200, r: 1.3, h: 22 }, mesa: { x0: 136, x1: 148, y0: 220, y1: 232, h: 12 } };
+const HOUSE = { house: { x0: 164, x1: 174, y0: 196, y1: 204, h: 7 }, tower: { x0: 194, x1: 198, y0: 198, y1: 202, h: 20 }, wood: { x0: 180, x1: 186, y0: 218, y1: 224, h: 16 } };
+const METAL = {
+  pillars: [[212, 196], [236, 196]] as [number, number][],
+  girder: { x0: 212, x1: 240, y0: 197, y1: 199, z0: G + 10 },
+  pylon: { x0: 222, x1: 228, y0: 214, y1: 220, h: 20 },
+  tanker: { x0: 238, x1: 250, y0: 226, y1: 231, z0: G + 8, h: 5 },
+};
+const cellsBox = (x0: number, y0: number, z0: number, w: number, d: number, h: number, mat: number) => {
+  const out: { x: number; y: number; z: number; mat: number }[] = [];
+  for (let z = z0; z < z0 + h; z++) for (let y = y0; y < y0 + d; y++) for (let x = x0; x < x0 + w; x++) out.push({ x, y, z, mat });
+  return out;
+};
 
 /** the river's channel's middle row at column x */
 const riverMid = (x: number) => RIVER.mid + RIVER.amp * Math.sin((x - RIVER.x0) / RIVER.wave);
@@ -220,6 +249,98 @@ export const STATIONS: Station[] = [
       { label: 'topple', run: (k) => k.smash(...wp(82, 214), G + 2.5, 2.4) },
     ],
   },
+  {
+    id: 'slide',
+    name: 'slide',
+    rect: [112, 192, 160, 240],
+    look: [136, 186, 14, 3.2],
+    hint: 'node solver, rock: a slab on a slope held by pegs, a thin spire, a mesa — slides, topples, shatters; buried, dug out',
+    actions: [
+      { label: 'release the slab', run: (k) => SLIDE.pegs.forEach(([x, y]) => k.smash(...wp(x + 0.5, y + 0.5), slopeTop(x) + 0.5, 1.1)) },
+      { label: 'nick the spire', run: (k) => k.smash(...wp(SLIDE.spire.x - 1, SLIDE.spire.y + 0.5), G + 1.5, 1.6) },
+      {
+        label: 'undercut the mesa',
+        run: (k) => {
+          const m = SLIDE.mesa;
+          for (let y = m.y0; y < m.y1; y += 3) k.smash(...wp(m.x1 - 0.5, y + 1), G + 1.5, 2.2);
+        },
+      },
+      {
+        label: 'bury',
+        run: (k) => {
+          for (const [x, y] of [[150, 206], [144, 200], [128, 208], [150, 226]] as [number, number][]) k.pour(...wp(x, y), 5, 3, MAT.Sand);
+        },
+      },
+      {
+        label: 'dig out',
+        run: (k) => {
+          for (const [x, y] of [[150, 206], [144, 200], [128, 208], [150, 226]] as [number, number][]) k.dig(...wp(x, y), 5, 4);
+        },
+      },
+    ],
+  },
+  {
+    id: 'house',
+    name: 'house',
+    rect: [160, 192, 208, 240],
+    look: [184, 186, 12, 3.2],
+    hint: 'node solver, buildings: a stone house, a brick tower, a wooden tower — break, topple, the wood bends',
+    actions: [
+      { label: 'break a corner', run: (k) => k.smash(...wp(HOUSE.house.x0 + 0.5, HOUSE.house.y0 + 0.5), G + 2, 2.4) },
+      {
+        label: 'topple the towers',
+        run: (k) => {
+          const t = HOUSE.tower;
+          k.smash(...wp(t.x1 - 0.5, (t.y0 + t.y1) / 2), G + 1.5, 2);
+          const w = HOUSE.wood;
+          k.smash(...wp(w.x1 - 0.5, w.y0 + 0.5), G + 1, 1.2);
+          k.smash(...wp(w.x1 - 0.5, w.y1 - 0.5), G + 1, 1.2);
+          k.later(0.4, () => k.wakeMetal(w.x0, w.y0, G + 4));
+        },
+      },
+    ],
+  },
+  {
+    id: 'metal',
+    name: 'metal',
+    rect: [208, 192, 256, 240],
+    look: [232, 186, 14, 3.2],
+    hint: 'node solver, metal: a girder bridge (a boulder dropped on it), a pylon (two legs cut), a tanker (dropped) — dents, bends, snaps; buried',
+    actions: [
+      {
+        label: 'boulder on the bridge',
+        run: (k) => {
+          const g = METAL.girder;
+          k.wakeMetal(g.x0 + 12, g.y0, g.z0);
+          k.later(0.3, () => k.drop(cellsBox(222, 196, G + 24, 5, 4, 4, MAT.Stone)));
+        },
+      },
+      {
+        label: 'cut the pylon',
+        run: (k) => {
+          const p = METAL.pylon;
+          k.smash(...wp(p.x1 + 0.5, p.y0 + 0.5), G + 1, 1.3);
+          k.smash(...wp(p.x1 + 0.5, p.y1 + 0.5), G + 1, 1.3);
+          k.later(0.4, () => k.wakeMetal(p.x0, p.y0, G + 6));
+        },
+      },
+      {
+        label: 'drop the tanker',
+        run: (k) => {
+          const t = METAL.tanker;
+          for (const x of [t.x0 + 1, t.x1 - 2]) for (const y of [t.y0 + 1, t.y1 - 2]) k.smash(...wp(x + 0.5, y + 0.5), G + 4, 1.4);
+          k.later(0.4, () => k.wakeMetal(t.x0, t.y0, t.z0));
+        },
+      },
+      {
+        label: 'bury the tanker',
+        run: (k) => {
+          const t = METAL.tanker;
+          for (let x = t.x0; x <= t.x1; x += 5) k.pour(...wp(x, (t.y0 + t.y1) / 2), 6, 4, MAT.Sand);
+        },
+      },
+    ],
+  },
 ];
 
 export function generatePlayground(dims: WorldDims): MapData {
@@ -366,6 +487,62 @@ export function generatePlayground(dims: WorldDims): MapData {
     const [lx, ly] = cellPos(82, 214);
     for (const [a, b] of disc(lx, ly, 1.8)) put(a, b, G - 2, G + 18, MAT.Sandstone);
     for (const [a, b] of disc(lx + 1, ly, 5)) put(a, b, G + 14, G + 18, MAT.Sandstone);
+  }
+
+  // 7. slide: a slope up toward −x with a stone slab on two concrete pegs a cell over it; a thin spire; a mesa
+  {
+    for (let y = 192; y < 240; y++) for (let x = 112; x < 136; x++) ground(x, y, slopeTop(x), MAT.Stone);
+    const s = SLIDE.slab;
+    for (let y = s.y0; y < s.y1; y++)
+      for (let x = s.x0; x < s.x1; x++) {
+        const z0 = slopeTop(x) + 1;
+        put(x, y, z0, z0 + 2, MAT.Stone);
+      }
+    for (const [x, y] of SLIDE.pegs) put(x, y, slopeTop(x), slopeTop(x) + 1, MAT.Concrete);
+    const sp = SLIDE.spire;
+    const [sx, sy] = cellPos(sp.x, sp.y);
+    for (const [a, b] of disc(sx, sy, sp.r)) put(a, b, G - 2, G + sp.h, MAT.Stone);
+    const m = SLIDE.mesa;
+    block(m.x0, m.y0, G, m.x1 - m.x0, m.y1 - m.y0, m.h, MAT.Stone);
+  }
+  // 8. house: a stone house (walls a cell thick, a concrete roof), a brick tower, a wooden tower (posts and floors)
+  {
+    const hs = HOUSE.house;
+    for (let y = hs.y0; y < hs.y1; y++)
+      for (let x = hs.x0; x < hs.x1; x++) {
+        const wall = x === hs.x0 || y === hs.y0 || x === hs.x1 - 1 || y === hs.y1 - 1;
+        if (wall) put(x, y, G, G + hs.h, MAT.Stone);
+        put(x, y, G + hs.h, G + hs.h + 1, MAT.Concrete);
+      }
+    const t = HOUSE.tower;
+    block(t.x0, t.y0, G, t.x1 - t.x0, t.y1 - t.y0, t.h, MAT.Brick);
+    const w = HOUSE.wood;
+    for (const x of [w.x0, w.x1 - 1]) for (const y of [w.y0, w.y1 - 1]) put(x, y, G, G + w.h, MAT.Wood);
+    for (let z = G + 5; z < G + w.h; z += 5) block(w.x0, w.y0, z, w.x1 - w.x0, w.y1 - w.y0, 1, MAT.Wood);
+  }
+  // 9. metal: a steel girder on two stone pillars; a steel pylon (legs, braces, a platform); a steel tanker on posts
+  {
+    const M = METAL;
+    for (const [x, y] of M.pillars) block(x, y, G, 3, 3, 10, MAT.Stone);
+    const g = M.girder;
+    block(g.x0, g.y0, g.z0, g.x1 - g.x0, g.y1 - g.y0, 2, MAT.Steel);
+    const p = M.pylon;
+    for (const x of [p.x0, p.x1]) for (const y of [p.y0, p.y1]) put(x, y, G, G + p.h, MAT.Steel);
+    for (let z = G + 6; z < G + p.h; z += 6)
+      for (let x = p.x0; x <= p.x1; x++)
+        for (let y = p.y0; y <= p.y1; y++) if (x === p.x0 || x === p.x1 || y === p.y0 || y === p.y1) put(x, y, z, z + 1, MAT.Steel);
+    block(p.x0, p.y0, G + p.h, p.x1 - p.x0 + 1, p.y1 - p.y0 + 1, 1, MAT.Steel);
+    const t = M.tanker;
+    for (let y = t.y0; y < t.y1; y++)
+      for (let x = t.x0; x < t.x1; x++) {
+        const shell = x === t.x0 || y === t.y0 || x === t.x1 - 1 || y === t.y1 - 1;
+        if (shell) put(x, y, t.z0, t.z0 + t.h, MAT.Steel);
+        else {
+          put(x, y, t.z0, t.z0 + 1, MAT.Steel);
+          put(x, y, t.z0 + t.h - 1, t.z0 + t.h, MAT.Steel);
+        }
+      }
+    for (const x of [t.x0 + 1, t.x1 - 2]) for (const y of [t.y0 + 1, t.y1 - 2]) put(x, y, G, t.z0, MAT.Concrete);
   }
 
   // (round 110) the rivers: carved, filled and held as the atlas's (world/rivertable.ts → WorldGpu riverFlow)

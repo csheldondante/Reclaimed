@@ -31,8 +31,8 @@ import { restingVoxels } from './rockbodies';
 import { Solver } from '../solver/solver';
 import type { SolverBody } from '../api/contracts/solver';
 
-/** (round 96) what bends: metal goes to the node solver as a deformable body (solver step 2; it was the physics voxels), the rest of what falls stays rigid */
-const METAL: ReadonlySet<number> = new Set<number>([MAT.Steel, MAT.Rust]);
+/** (round 96) what bends: metal — and (solver step 2) wood — goes to the node solver as a deformable body (it was the physics voxels), the rest of what falls stays rigid */
+const METAL: ReadonlySet<number> = new Set<number>([MAT.Steel, MAT.Rust, MAT.Wood, MAT.Log]);
 /** (round 96) cells of metal woken at once at most (wake.ts WAKE_MAX) */
 const METAL_MAX = 6000;
 /**
@@ -501,6 +501,42 @@ export class Integrity {
     }
     this.bodies.list = this.bodies.list.filter((b) => !over(b.pos[0], b.pos[1]));
     this.dirty = this.dirty.filter(([a, b, c, d]) => !(a >= wx0 && c <= wx1 && b >= wy0 && d <= wy1));
+    // (solver step 2) the metal there let go too
+    if (this.solver)
+      for (const mb of [...this.metal]) {
+        const r = this.solver.read(mb.body);
+        const at = r?.pos ?? mb.body.restCom;
+        if (!over(at[0], at[1])) continue;
+        this.solver.remove(mb.body);
+        if (mb.slot !== undefined) this.rockMesh?.release(mb.slot);
+        this.metal = this.metal.filter((m) => m !== mb);
+      }
+  }
+
+  /**
+   * (solver step 2, the lab) A body made of these cells (column x, y, cell z — where it starts, out of the ground),
+   * dropped: metal into the node solver as a deformable, the rest as the rigid rock. Its cells must be air.
+   */
+  dropBody(cells: { x: number; y: number; z: number; mat: number }[], vel: [number, number, number] = [0, 0, 0]): boolean {
+    if (!this.rigid || !this.solver || !cells.length) return false;
+    if (METAL.has(cells[0].mat)) {
+      const slot = SKIN_METAL ? this.rockMesh?.alloc(cells.map((c) => ({ ...c, mat: MAT.Stone })))?.id : undefined;
+      const body = this.solver.add({ cells, vel, kind: 'deformable', drawCells: slot === undefined });
+      if (!body) return false;
+      this.metal.push({ body, slot, mat: cells[0].mat });
+      return true;
+    }
+    const b = this.rigid.spawn(cells);
+    if (!b) return false;
+    b.v = vel;
+    b.slot = this.allocRock(cells);
+    this.stats.bodies++;
+    return true;
+  }
+
+  /** (solver step 2, the lab) the metal at this cell (column x, y, cell z) and all it connects to woken into the solver */
+  wakeMetalAt(x: number, y: number, z: number): void {
+    if (this.rigid && this.solver && this.world.slots.length) this.wakeMetal([[x, y, z]]);
   }
 
   /**
