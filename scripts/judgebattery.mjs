@@ -22,7 +22,14 @@ fs.mkdirSync(shots, { recursive: true });
 const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 const out = { when: new Date().toISOString(), q, viewport: '412x915', runs: {} };
 let failed = false;
-for (const judge of ['runs', 'sections']) {
+const RUNS = [
+  ['A', 'judge=runs'],
+  ['B levels (as first built)', 'judge=sections&jbmode=levels&jbcull=0'],
+  ['B levels culled', 'judge=sections&jbmode=levels'],
+  ['B pairs culled (default)', 'judge=sections'],
+];
+const only = opt('only', '');
+for (const [judge, query] of RUNS.filter(([j]) => !only || j.includes(only))) {
   const browser = await puppeteer.launch({
     executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
     headless: 'new',
@@ -37,7 +44,7 @@ for (const judge of ['runs', 'sections']) {
       console.log(judge, 'pageerror', e.message);
     });
     p.on('console', (m) => m.type() === 'error' && !m.text().includes('404') && console.log(judge, 'console', m.text()));
-    await p.goto(`${url}/?skipmenu=1&tutorial=0&q=${q}&level=atlas&judge=${judge}`, { waitUntil: 'load' });
+    await p.goto(`${url}/?skipmenu=1&tutorial=0&perf=1&q=${q}&level=atlas&${query}`, { waitUntil: 'load' });
     await p.waitForFunction(() => window.reclaimed?.stream && window.reclaimed?.integrity?.(), { timeout: 240000 });
     // (the first load after a server start is slow: the land settles first)
     await sleep(wait);
@@ -75,6 +82,10 @@ for (const judge of ['runs', 'sections']) {
           const rb0 = ig.readBytes;
           const passes = [];
           const frames = [];
+          // (the frames' own GPU ms, from the game's profiler: the frame B's submit lands in shares the GPU with it)
+          const frameGpu = [];
+          let listening = true;
+          R.core.host.profiler.listen((_f, ms) => listening && frameGpu.push(ms));
           let last = performance.now();
           let seen = s0.passes;
           t.crater(at.x + cut.side, at.y, { radius: cut.radius, z: at.z + 2 });
@@ -87,13 +98,16 @@ for (const judge of ['runs', 'sections']) {
               const s = ig.stats;
               if (s.passes !== seen) {
                 seen = s.passes;
-                passes.push({ at: +(now - t0).toFixed(0), judgeMs: +s.judgeMs.toFixed(3), judgeGpuMs: +s.judgeGpuMs.toFixed(3), passMs: +s.lastMs.toFixed(3), bodies: s.bodies - s0.bodies });
+                const js = ig.judge.stats;
+                passes.push({ at: +(now - t0).toFixed(0), judgeMs: +s.judgeMs.toFixed(3), judgeGpuMs: +s.judgeGpuMs.toFixed(3), passMs: +s.lastMs.toFixed(3), bodies: s.bodies - s0.bodies, window: js.window, hanging: js.hanging, judged: js.judged, deepest: js.deepest, judgedBox: js.judgedBox, kernels: js.kernels ? Object.fromEntries(Object.entries(js.kernels).map(([k, v]) => [k, +v.toFixed(3)])) : undefined });
               }
               if (now - t0 < 8000) requestAnimationFrame(tick);
               else done();
             };
             requestAnimationFrame(tick);
           });
+          listening = false;
+          const gs = [...frameGpu].sort((a, b) => a - b);
           const sorted = [...frames].sort((a, b) => a - b);
           const pct = (f) => sorted[Math.min(sorted.length - 1, Math.floor(f * sorted.length))];
           const judged = passes.filter((x) => x.judgeMs > 0);
@@ -101,6 +115,8 @@ for (const judge of ['runs', 'sections']) {
             judge: ig.judge.id,
             passes: passes.length,
             judgeMs: judged.map((x) => x.judgeMs),
+            passLog: judged,
+            frameGpu: { n: gs.length, p50: +(gs[Math.floor(gs.length / 2)] ?? 0).toFixed(3), max: +(gs[gs.length - 1] ?? 0).toFixed(3) },
             judgeGpuMs: judged.map((x) => x.judgeGpuMs),
             passMsMax: Math.max(0, ...passes.map((x) => x.passMs)),
             bodies: ig.stats.bodies - s0.bodies,
@@ -113,8 +129,18 @@ for (const judge of ['runs', 'sections']) {
         at,
         cut,
       );
-      await p.screenshot({ path: `${shots}/${judge}-${name}.png` });
+      await p.screenshot({ path: `${shots}/${judge.replace(/[^a-zA-Z0-9]+/g, "_")}-${name}.png` });
       runs[name] = r;
+      // (the whole window judged, every column a seed: the atlas's hanging groups as they are — how many, how deep)
+      if (name === 'tower') {
+        runs.whole = await p.evaluate(async () => {
+          const ig = window.reclaimed.integrity();
+          const r = await ig.judgeAll(true);
+          const js = ig.judge.stats;
+          return { pieces: r.pieces, ms: +r.ms.toFixed(2), gpuMs: js.gpuMs, window: js.window, hanging: js.hanging, judged: js.judged, deepest: js.deepest, kernels: js.kernels };
+        });
+        console.log(judge, 'whole', JSON.stringify(runs.whole));
+      }
       console.log(judge, name, JSON.stringify(r));
     }
     out.runs[judge] = runs;
@@ -126,5 +152,5 @@ for (const judge of ['runs', 'sections']) {
   }
 }
 fs.mkdirSync('data/perf/judge', { recursive: true });
-fs.writeFileSync(`data/perf/judge/browser-${q}.json`, JSON.stringify(out, null, 1) + '\n');
+fs.writeFileSync(`data/perf/judge/browser-${q}${only ? '-' + only.replace(/[^a-z0-9]+/gi, '_') : ''}.json`, JSON.stringify(out, null, 1) + '\n');
 process.exit(failed ? 1 : 0);

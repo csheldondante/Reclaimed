@@ -122,19 +122,30 @@ const scenes: Scene[] = [
 const median = (a: number[]) => [...a].sort((p, q) => p - q)[Math.floor(a.length / 2)];
 
 describe.skipIf(!process.env.JUDGE_PERF)('the judges\' perf battery (JUDGE_PERF=1)', () => {
-  test('every scene, A and B, five times', { timeout: 600_000 }, async () => {
+  test('every scene, A and B, seven times', { timeout: 600_000 }, async () => {
     const gpu = await testGpu();
     const rows: Record<string, unknown>[] = [];
     for (const sc of scenes) {
       const row: Record<string, unknown> = { scene: sc.name };
-      for (const make of [() => new RunsJudge(), () => new SectionsJudge()]) {
+      // A; B as first built (a pass a level, every piece); B culled (only the seeded pieces); B culled, every level at
+      // once (pairs: the default); B pairs, not culled
+      const sections = (mode: 'levels' | 'pairs', cull: boolean) => () => Object.assign(new SectionsJudge(), { mode, cull });
+      const variants: [string, () => RockJudge][] = [
+        ['A', () => new RunsJudge()],
+        ['B levels', sections('levels', false)],
+        ['B levels culled', sections('levels', true)],
+        ['B pairs', sections('pairs', false)],
+        ['B pairs culled', sections('pairs', true)],
+      ];
+      for (const [k, make] of variants) {
         const ms: number[] = [];
         const gms: number[] = [];
         const read: number[] = [];
         let freed = 0;
         let passes = 0;
         let runs = 0;
-        for (let rep = 0; rep < 5; rep++) {
+        let stats: RockJudge['stats'] | null = null;
+        for (let rep = 0; rep < 7; rep++) {
           const j: RockJudge = make();
           const w = sc.make();
           sc.cut?.(w);
@@ -153,6 +164,7 @@ describe.skipIf(!process.env.JUDGE_PERF)('the judges\' perf battery (JUDGE_PERF=
           ms.push(r.stats[0].ms + rb);
           read.push(rb);
           gms.push(r.stats[0].gpuMs ?? 0);
+          if (!stats || (r.stats[0].gpuMs ?? 0) <= Math.min(...gms)) stats = r.stats[0];
           freed = r.freed;
           passes = r.passes.length;
           runs = w.packed.slots.length;
@@ -160,15 +172,15 @@ describe.skipIf(!process.env.JUDGE_PERF)('the judges\' perf battery (JUDGE_PERF=
           cols.chunks.destroy();
           j.destroy();
         }
-        const k = make().id === 'runs' ? 'A' : 'B';
-        row[k] = { ms: +median(ms).toFixed(3), ...(k === 'A' ? { readbackMs: +median(read).toFixed(3) } : { gpuMs: +median(gms).toFixed(3), gpuMinMs: +Math.min(...gms).toFixed(3) }), freed, passes };
+        const kern = stats?.kernels ? Object.fromEntries(Object.entries(stats.kernels).map(([n, v]) => [n, +v.toFixed(3)])) : undefined;
+        row[k] = { ms: +median(ms).toFixed(3), ...(k === 'A' ? { readbackMs: +median(read).toFixed(3) } : { gpuMs: +median(gms).toFixed(3), gpuMinMs: +Math.min(...gms).toFixed(3), kernels: kern, hanging: stats?.hanging, judged: stats?.judged, deepest: stats?.deepest, pairs: stats?.pairs }), freed, passes };
         row.slotWords = runs;
       }
       rows.push(row);
     }
     mkdirSync('data/perf/judge', { recursive: true });
     const tag = gpu.adapterInfo.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'unknown';
-    writeFileSync(`data/perf/judge/node-${tag}.json`, JSON.stringify({ when: new Date().toISOString(), adapter: gpu.adapterInfo, note: 'median of 5 (the GPU is shared with other agents: gpuMinMs, the least, is the uncontended estimate); A ms = readback + CPU; B ms = wall (submit → verdict), gpuMs = timestamps', rows }, null, 1) + '\n');
+    writeFileSync(`data/perf/judge/node-${tag}.json`, JSON.stringify({ when: new Date().toISOString(), adapter: gpu.adapterInfo, note: 'median of 7 (the GPU is shared with other agents: gpuMinMs, the least, is the uncontended estimate); A ms = readback + CPU; B ms = wall (submit → verdict), gpuMs = timestamps', rows }, null, 1) + '\n');
     console.log(JSON.stringify(rows, null, 1));
     expect(gpu.takeErrors()).toEqual([]);
   });
