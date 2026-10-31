@@ -253,7 +253,7 @@ export const STATIONS: Station[] = [
     id: 'slide',
     name: 'slide',
     rect: [112, 192, 160, 240],
-    look: [136, 186, 14, 3.2],
+    look: [134, 190, 14, 6],
     hint: 'node solver, rock: a slab on a slope held by pegs, a thin spire, a mesa — slides, topples, shatters; buried, dug out',
     actions: [
       { label: 'release the slab', run: (k) => SLIDE.pegs.forEach(([x, y]) => k.smash(...wp(x + 0.5, y + 0.5), slopeTop(x) + 0.5, 1.1)) },
@@ -283,7 +283,7 @@ export const STATIONS: Station[] = [
     id: 'house',
     name: 'house',
     rect: [160, 192, 208, 240],
-    look: [184, 186, 12, 3.2],
+    look: [184, 190, 12, 6],
     hint: 'node solver, buildings: a stone house, a brick tower, a wooden tower — break, topple, the wood bends',
     actions: [
       { label: 'break a corner', run: (k) => k.smash(...wp(HOUSE.house.x0 + 0.5, HOUSE.house.y0 + 0.5), G + 2, 2.4) },
@@ -304,8 +304,8 @@ export const STATIONS: Station[] = [
     id: 'metal',
     name: 'metal',
     rect: [208, 192, 256, 240],
-    look: [232, 186, 14, 3.2],
-    hint: 'node solver, metal: a girder bridge (a boulder dropped on it), a pylon (two legs cut), a tanker (dropped) — dents, bends, snaps; buried',
+    look: [232, 190, 14, 6],
+    hint: 'node solver, metal: a girder bridge (a boulder dropped on it), a pylon (three legs cut), a tanker (dropped) — dents, bends, snaps; buried',
     actions: [
       {
         label: 'boulder on the bridge',
@@ -319,8 +319,10 @@ export const STATIONS: Station[] = [
         label: 'cut the pylon',
         run: (k) => {
           const p = METAL.pylon;
+          // (three of its four legs: it hangs on the last, which bends at its foot)
           k.smash(...wp(p.x1 + 0.5, p.y0 + 0.5), G + 1, 1.3);
           k.smash(...wp(p.x1 + 0.5, p.y1 + 0.5), G + 1, 1.3);
+          k.smash(...wp(p.x0 + 0.5, p.y1 + 0.5), G + 1, 1.3);
           k.later(0.4, () => k.wakeMetal(p.x0, p.y0, G + 6));
         },
       },

@@ -619,6 +619,9 @@ fn solve(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
           if (o1 == 0u) { break; }
           let o = o1 - 1u;
           let ob = bodies[o * BODY_V];
+          // (not near it at all: skipped — its bounding sphere, a margin for this tick's moves)
+          let oc = bodies[o * BODY_V + 1u];
+          if (length(w - oc.xyz) > oc.w + 2.0) { continue; }
           let oN = u32(ob.x);
           let ov = bodies[o * BODY_V + 2u].xyz;
           let oRad = bodies[o * BODY_V + 3u].w;
@@ -715,6 +718,8 @@ fn solve(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
           if (o1 == 0u) { break; }
           let o = o1 - 1u;
           let ob = bodies[o * BODY_V];
+          let oc = bodies[o * BODY_V + 1u];
+          if (length(xl - oc.xyz) > oc.w + gl + 2.0) { continue; }
           let oP = u32(ob.y);
           let asleep = ob.z == B_ASLEEP;
           let ov = select(bodies[o * BODY_V + 2u].xyz, vec3<f32>(0.0), asleep);
@@ -809,7 +814,8 @@ fn solve(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
         if (live) { sq[l] = qmulS(pf.rot, lane[gi * LANE_V + 7u]); }
         if (l == 0u) { wRp = pf.rot; }
         workgroupBarrier();
-        if (it == iters - 1u && l == 0u) { loadFlow(b, nN, nP, h, mat); }
+        // (once a tick, on its last pass: the loads change over ticks, not substeps)
+        if (s == subs - 1u && it == iters - 1u && l == 0u) { loadFlow(b, nN, nP, h, mat); }
         storageBarrier();
         workgroupBarrier();
       } else {
@@ -985,6 +991,8 @@ fn solve(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
   }
   if (pLive && pn[l] != 0u) { atomicAdd(&wTouch, 1u); }
   if (live && rt[l] != 0u) { atomicAdd(&wTouch, 1u); }
+  // (a pinned node holds it as the ground does: a standing frame at rest sleeps)
+  if (live && sw[l] == 0.0) { atomicAdd(&wTouch, 1u); }
   workgroupBarrier();
   if (l == 0u) {
     var m = 0.0;

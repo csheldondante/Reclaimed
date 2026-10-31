@@ -190,7 +190,7 @@ const SPEC = {
     owner: 'solver/solver.ts + solver.wgsl (GPU: the one solver for what breaks free — rock, buildings, metal, wood; its contact rules are the rigid group\'s: slop, overlap k/p/cap, push-out speed, erode depth, rest)',
     params: {
       substeps: { label: 'substeps', units: 'a tick', min: 1, max: 12, step: 1, def: 4, help: 'steps a tick (60 Hz): more is stiffer and steadier, and costs' },
-      iterations: { label: 'iterations', units: 'a substep', min: 1, max: 12, step: 1, def: 3, help: 'contact and shape passes a substep' },
+      iterations: { label: 'iterations', units: 'a substep', min: 1, max: 12, step: 1, def: 2, help: 'contact and shape passes a substep' },
       wakeImpulse: { label: 'wake impulse', units: 'cells·cells/s', min: 0, max: 500, step: 5, def: 30, help: 'a sleeping body is woken by a hit of (approach speed × the hitter\'s cells) past this — never by contact alone' },
       nodeRadius: { label: 'node block ×', units: '× block', min: 0.5, max: 1.5, step: 0.05, def: 1, help: 'another body feels a body as the blocks of cells its nodes stand for, this much larger (1: the cells it was made of)' },
       friction: { label: 'friction ×', units: '×', min: 0, max: 3, step: 0.05, def: 1, help: 'times each material\'s friction' },
