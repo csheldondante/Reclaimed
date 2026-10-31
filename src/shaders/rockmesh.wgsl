@@ -5,13 +5,14 @@
 // meshed) take the transform of the fragment whose seed is nearest, those where it crumbled none.
 // The look: the copy's intervals for the material, the spawn frame's position for what was there (strata, specks,
 // facets, plants: the land it came from), lit and shadowed where it is now.
-const RK_N: u32 = 40u;
 const RK_STRIDE: u32 = 12u;
-struct RockDraws { d: array<vec4<f32>, 481> };
-@group(0) @binding(31) var<uniform> RK: RockDraws;
+// (round 120: as many draws as there are — a storage buffer that grows with them, read by the vertex stage only: the
+// fragment stage gets what it needs of its draw as flat varyings, ROut.ek and rq)
+@group(0) @binding(31) var<storage, read> RKD: array<vec4<f32>>;
+const RK_NONE: u32 = 0xffffffffu;
 // (solver step 2) the node solver's nodes (solver.ts): their transforms for the last two ticks (pose: prev pos, prev
 // rot, pos, rot) and their lanes ([0] w < 0 gone; [6] the rest a mesh is bound to, about the body's rest centre of
-// mass) — a metal piece's mesh is skinned to them, drawn between the two ticks at RK.d[0].y
+// mass) — a metal piece's mesh is skinned to them, drawn between the two ticks at RKD[0].y
 @group(0) @binding(32) var<storage, read> rkPose: array<vec4<f32>>;
 @group(0) @binding(33) var<storage, read> rkLane: array<vec4<f32>>;
 const RK_LANE: u32 = 8u;
@@ -31,17 +32,38 @@ struct ROut {
   @location(5) @interpolate(flat) shift: vec3<f32>,
   // (round 96) 1 where its particle is gone (a skinned vertex): the triangles there aren't drawn
   @location(6) gone: f32,
-  // (round 96) a skinned vertex's particle's rotation (the detail's normals turn with it)
+  // (round 96) a skinned vertex's particle's rotation (the detail's normals turn with it); round 120: every draw's — a
+  // matrix's rotation as a quaternion too
   @location(7) rq: vec4<f32>,
+  // (round 120) its draw's material to be drawn as (0: the copy's own)
+  @location(8) @interpolate(flat) ek: vec2<f32>,
 };
+
+/** a rotation matrix's rows as a quaternion */
+fn quatOfRows(r0: vec3<f32>, r1: vec3<f32>, r2: vec3<f32>) -> vec4<f32> {
+  let tr = r0.x + r1.y + r2.z;
+  if (tr > 0.0) {
+    let s = sqrt(tr + 1.0) * 2.0;
+    return vec4<f32>((r2.y - r1.z) / s, (r0.z - r2.x) / s, (r1.x - r0.y) / s, 0.25 * s);
+  }
+  if (r0.x > r1.y && r0.x > r2.z) {
+    let s = sqrt(1.0 + r0.x - r1.y - r2.z) * 2.0;
+    return vec4<f32>(0.25 * s, (r0.y + r1.x) / s, (r0.z + r2.x) / s, (r2.y - r1.z) / s);
+  }
+  if (r1.y > r2.z) {
+    let s = sqrt(1.0 + r1.y - r0.x - r2.z) * 2.0;
+    return vec4<f32>((r0.y + r1.x) / s, 0.25 * s, (r1.z + r2.y) / s, (r0.z - r2.x) / s);
+  }
+  let s = sqrt(1.0 + r2.z - r0.x - r1.y) * 2.0;
+  return vec4<f32>((r0.z + r2.x) / s, (r1.z + r2.y) / s, 0.25 * s, (r1.x - r0.y) / s);
+}
 
 /** v (the spawn frame's) turned as the fragment's piece is */
 fn rkTurnF(in: ROut, v: vec3<f32>) -> vec3<f32> {
-  if (rkAt(in.ent, 4u).w > 1.5) { return quatRotate(normalize(in.rq), v); }
-  return rkTurn(in.ent, v);
+  return quatRotate(normalize(in.rq), v);
 }
 
-fn rkAt(e: u32, k: u32) -> vec4<f32> { return RK.d[1u + e * RK_STRIDE + k]; }
+fn rkAt(e: u32, k: u32) -> vec4<f32> { return RKD[1u + e * RK_STRIDE + k]; }
 fn rkMove(e: u32, s: vec3<f32>) -> vec3<f32> {
   let a = rkAt(e, 1u);
   let b = rkAt(e, 2u);
@@ -59,8 +81,8 @@ fn vsRock(@builtin(vertex_index) vi: u32) -> ROut {
   var o: ROut;
   o.rq = vec4<f32>(0.0, 0.0, 0.0, 1.0);
   o.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0);
-  let cnt = min(u32(RK.d[0].x), RK_N);
-  var e = RK_N;
+  let cnt = u32(RKD[0].x);
+  var e = RK_NONE;
   for (var i = 0u; i < cnt; i++) {
     let r = rkAt(i, 0u);
     if (p.x >= r.x && p.y >= r.y && p.x < r.z && p.y < r.w) {
@@ -68,7 +90,7 @@ fn vsRock(@builtin(vertex_index) vi: u32) -> ROut {
       break;
     }
   }
-  if (e == RK_N) { return o; }
+  if (e == RK_NONE) { return o; }
   let sh = rkAt(e, 4u);
   let s = p - sh.xyz;
   var t = e;
@@ -143,7 +165,7 @@ fn vsRock(@builtin(vertex_index) vi: u32) -> ROut {
     let a = rkAt(t, 1u);
     let nn = u32(rkAt(t, 2u).x);
     let base = u32(a.x) * 64u;
-    let al = clamp(RK.d[0].y, 0.0, 1.0);
+    let al = clamp(RKD[0].y, 0.0, 1.0);
     let sr = s - a.yzw;
     var bi = vec4<u32>(0u);
     var bd = vec4<f32>(1e9);
@@ -182,6 +204,7 @@ fn vsRock(@builtin(vertex_index) vi: u32) -> ROut {
   } else {
     wp = rkMove(t, s);
     wn = rkTurn(t, n);
+    o.rq = quatOfRows(rkAt(t, 1u).xyz, rkAt(t, 2u).xyz, rkAt(t, 3u).xyz);
   }
   o.pos = CAM.viewProj * vec4<f32>(wp, 1.0);
   o.wpos = wp;
@@ -189,6 +212,7 @@ fn vsRock(@builtin(vertex_index) vi: u32) -> ROut {
   o.lpos = p;
   o.lnrm = n;
   o.ent = t;
+  o.ek = vec2<f32>(select(0.0, rkAt(t, 2u).w, rkAt(t, 4u).w > 1.5 && rkAt(t, 4u).w < 2.5), 0.0);
   o.shift = sh.xyz;
   return o;
 }
@@ -220,7 +244,7 @@ fn fsRock(in: ROut) -> FOut {
   let lk = meshLook(cell, ip.z, up);
   var mat = lk.mat;
   // (round 96) a metal piece is meshed as stone (the field leaves metal to the prisms): its own material for the look
-  if (rkAt(in.ent, 4u).w > 1.5 && rkAt(in.ent, 2u).w > 0.5) { mat = u32(rkAt(in.ent, 2u).w); }
+  if (in.ek.x > 0.5) { mat = u32(in.ek.x); }
   let isTop = up && in.lpos.z > lk.top - 0.8;
   var alb = groundAlbedo(mat);
   if (isTop && lk.below != 0u && mat == lk.mat) { alb = mix(groundAlbedo(lk.below), alb, smoothstep(0.02, 0.2, lk.thick)); }

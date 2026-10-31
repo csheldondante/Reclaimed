@@ -14938,3 +14938,21 @@ judge switched off and on in three alternating 1.5 s windows each way; the repor
 interval and to its GPU span (Simulation.paused, Integrity.paused). Per-pass timestamps stay in the JSON as
 gpuPhysicsPasses with a note on the card that they're unreliable on tilers. Headless on the desktop (nodes × sections):
 the interval doesn't move (vsync-bound), the GPU span +1.4–1.9 ms with physics, +1.3–2.2 with the judge.
+
+## 2026-10-31 — round 120 (`solver`): the rock mesh's room grows; no other look for a rock (SL27)
+
+The coordinator, on 776fd6e's report ("if the rock mesh has no slot free, that body is drawn entirely with the body
+mesh"): that's a fallback, and the slots a cap. The rock mesh's copy (render/rockmesh.ts) had 72 blocks of storage —
+18 slots of one mesh chunk, a piece wider than 3 chunks refused — and 40 draws a frame in a uniform. Now:
+- the copy is packed in squares of 4 columns and rows (a piece's region its size plus the margins, regions sharing
+  column chunks and mesh chunks — refcounted, a chunk's block given back when nothing's in it, a shared chunk
+  re-meshed when a piece leaves it), so its room is the window's area, not a count of chunks;
+- its storage doubles on demand (the contents copied over, FieldMesh.sourceChanged makes its groups again, the renderer
+  its draw groups) up to one binding of the device, and throws past that;
+- the draws are a storage buffer that grows with them (the vertex stage reads it; the fragment gets its draw's
+  rotation and material as varyings — the fragment stage's storage bindings were at the limit of 8);
+- resting rock made into ground for room gives its slot back at once (it was held for six frames of afterglow, so the
+  loop let every resting rock go and still found no room), then the afterglows and ghosts; a copy full of moving rock
+  throws — there's no other look for a rock.
+test/gpu/rockmesh-room.test.ts (a tiny world with the field mesh on): 120 small pieces each with its own slot, 40 big
+ones growing the storage past its start, a full copy refused.

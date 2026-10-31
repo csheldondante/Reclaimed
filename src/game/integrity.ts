@@ -22,7 +22,7 @@ import { EventKind } from '../sim/globals';
 import { CUTS, OP, editOpOf } from '../sim/edit-ops';
 import { ColumnBodies, subtract, type ColPiece, type FallingBody, type Landing } from './colbodies';
 import { RockBodies, RB, columnsGround, type RockBody, type RockGround, type V3 } from './rockbodies';
-import { BUILD_FRAMES, RK_N, type RockDraw, type RockMesh } from '../render/rockmesh';
+import { BUILD_FRAMES, type RockDraw, type RockMesh } from '../render/rockmesh';
 import type { Physics } from '../physics/physics';
 import { TUNE, worldG } from '../tune/params';
 import { record } from '../gpu/cpustat'; // (round 100, hitchrec: timing)
@@ -1557,7 +1557,7 @@ export class Integrity {
       const at = index.get(b);
       const skin = at !== undefined && !!draws[at].skin;
       // (no rock mesh: all of it its own body mesh — what's built, a brick house — or, were neither there, its cells)
-      const path = at === undefined ? (this.rockMeshOf.get(b) ? 'mesh' : 'cubes') : at >= RK_N ? 'none' : waiting.has(b) ? (skin ? 'split-skin' : 'split-matrix') : skin ? 'skin' : 'matrix';
+      const path = at === undefined ? (this.rockMeshOf.get(b) ? 'mesh' : 'cubes') : waiting.has(b) ? (skin ? 'split-skin' : 'split-matrix') : skin ? 'skin' : 'matrix';
       this.drawPaths.set(b.id, path);
     }
     for (const a of this.afterglow) if (--a.frames <= 0) rm.release(a.slot);
@@ -1829,24 +1829,36 @@ export class Integrity {
     this.urgent = true;
   }
 
-  /** (round 99) A mesh slot for a piece; with no room, the oldest resting rock becomes ground to make some. */
+  /**
+   * (round 99) A mesh slot for a piece; with no room, the oldest resting rock becomes ground to make some (round 120:
+   * its slot given back at once — kept a few frames for its afterglow, the room it made wasn't there yet, and every
+   * resting rock went). Past that the window's copy holds nothing but moving pieces: it throws (no other look for it).
+   * Undefined: no rock in it (what's built: the body mesh), or no rock mesh at all (no field mesh: nothing is meshed).
+   */
   private allocRock(all: { x: number; y: number; z: number; mat: number }[]): number | undefined {
     const rm = this.rockMesh;
     if (!rm) return undefined;
-    // (round 112) its mesh is the field mesh's: only what that draws (what's built is drawn as voxels)
+    // (round 112) its mesh is the field mesh's: only what that draws (what's built is the body mesh)
     const cells = all.filter((c) => fieldMeshed(c.mat));
     if (!cells.length) return undefined;
     for (;;) {
       const got = rm.alloc(cells);
       if (got) return got.id;
       const oldest = this.resting.keys().next();
-      if (oldest.done || !this.external) return undefined;
-      const inst = this.external.get(oldest.value);
-      if (!inst) {
-        this.resting.delete(oldest.value);
+      if (!oldest.done && this.external) {
+        const inst = this.external.get(oldest.value);
+        if (!inst) this.resting.delete(oldest.value);
+        else this.unrest(inst, 'room');
         continue;
       }
-      this.unrest(inst, 'room');
+      // (the afterglows and ghosts: the frames they'd have stayed, given up for it)
+      if (this.afterglow.length || this.ghosts.length) {
+        for (const g of [...this.afterglow, ...this.ghosts]) rm.release(g.slot);
+        this.afterglow = [];
+        this.ghosts = [];
+        continue;
+      }
+      throw new Error(`rock mesh: the window's copy is full of moving rock (${rm.held} pieces) — no room for a piece of ${cells.length} cells`);
     }
   }
 
@@ -2394,7 +2406,11 @@ export class Integrity {
     const r = this.resting.get(inst.id);
     this.resting.delete(inst.id);
     if (r) {
-      if (r.slot !== undefined) this.afterglow.push({ slot: r.slot, m: r.m, frames: 6 });
+      // (round 120: made room for, its slot given back at once; else its mesh stays a few frames while the ground's is made)
+      if (r.slot !== undefined) {
+        if (why === 'room') this.rockMesh?.release(r.slot);
+        else this.afterglow.push({ slot: r.slot, m: r.m, frames: 6 });
+      }
       if (this.rigid) {
         this.rigid.stats.baked++;
         this.rigid.bakedWhy[why] = (this.rigid.bakedWhy[why] ?? 0) + 1;

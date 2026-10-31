@@ -328,6 +328,11 @@ export class FieldMesh {
   poolStats = { pages: 0, free: 0, starved: 0, grown: 0, mb: 0, low: 0, most: 0 };
   /** bumped when the pool's buffer is replaced: the draw groups that bind it are made again (renderer.ts) */
   poolVersion = 0;
+  /** (round 120) its source's buffers made again (the rock mesh's copy grew): its groups again, and the draws' (poolVersion) */
+  sourceChanged(): void {
+    this.makeGroups();
+    this.poolVersion++;
+  }
   private poolError: Error | null = null;
 
   /** Grow the pool to `pages` pages: a new buffer, the old one's pages copied in, the new pages for the GPU to push. */
