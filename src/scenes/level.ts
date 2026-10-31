@@ -96,6 +96,9 @@ import { captureWorld, loadSnapshot, saveSnapshot } from '../sim/snapshot';
 import { loadWarm, saveWarm, warmKey } from '../sim/warm-cache';
 import { buildWiki } from '../gm/wiki';
 import { StreamPlanner } from './planner';
+import { SettlementsView } from '../settle/view';
+import type { GridStyle } from '../api/contracts/settlement';
+import type { CitySpec } from '../api/contracts/structures';
 
 export interface LevelOptions {
   /** play this map instead of generating the level's (a loaded sandbox map) */
@@ -355,6 +358,8 @@ export class LevelScene implements Scene {
   private beamPicking = false;
   /** sandbox: structural integrity and falling pieces (F7) */
   private integrity?: Integrity;
+  /** (round 117, structures: ?city=) the structures track's city on the window's ground */
+  private settlementsView?: SettlementsView;
   /** (round 108, AR5/AR8) the tuning panel, the bug report, the playground's stations */
   private tunePanel?: TunePanel;
   bugReport?: BugReport;
@@ -893,6 +898,23 @@ export class LevelScene implements Scene {
         cx = Math.round(s.at[0]);
         cy = Math.round(s.at[1] / ROW_H);
       }
+      // (round 117/119, structures: ?city=<tile system>&cstyle=&cseed= — every settlement is planned by the structures
+      // system now; this starts at the town or city nearest the start and plans its town with that tile system / style)
+      if (host.params.get('city') && settlements && !at) {
+        const near = settlements.near([cx, cy * ROW_H], 1e9).find((x) => x.size === 'town' || x.size === 'city');
+        if (near) {
+          cx = Math.round(near.at[0]);
+          cy = Math.round(near.at[1] / ROW_H);
+          const q = host.params;
+          const ov: Partial<CitySpec> = { system: q.get('city') as GridStyle };
+          if (!['irregular', 'contour-voronoi', 'radial', 'orthogonal'].includes(ov.system!)) throw new Error(`?city= must be irregular, contour-voronoi, radial or orthogonal`);
+          if (q.has('cstyle')) ov.style = q.get('cstyle') as CitySpec['style'];
+          if (q.has('cseed')) ov.seed = Number(q.get('cseed'));
+          if (q.has('croads')) ov.roads = Number(q.get('croads'));
+          if (q.get('cwalls') === '1') ov.walls = true;
+          settlements.override(near.id, ov);
+        }
+      }
       // (?win=: a wider window, whole regions — round 79, the user: "stream in a few more blocks out to see
       // more of the terrain at a time … nice for debugging even if too slow for mobile")
       // (round 90: or the viewer's range setting, the phone tier's default wider — scenes/range.ts)
@@ -1300,6 +1322,9 @@ export class LevelScene implements Scene {
       readBuffer: (n: Parameters<WorldCore['readBuffer']>[0]) => core.readBuffer(n),
       probe: (...a: Parameters<WorldCore['probe']>) => core.probe(...a),
       integrity: () => this.integrity,
+      // (round 117, structures) the city (?city=): its plan, stats
+      // (round 119) the settlements' structures: what's drawn and claimed (settle/view.ts)
+      settlementsView: () => this.settlementsView,
       // (round 95) the rigid rock's knobs (?rockbody=1): rb.breakSpeed = 12
       rb: RB,
       // (round 108, AR5) the tuning registry: tune.set('rigid.friction', 0.3), tune.changed(), tune.encode()
@@ -1703,15 +1728,31 @@ export class LevelScene implements Scene {
           fell: (at) => plants().fell(at[0], at[1]).then((t) => t?.logs ?? 0),
           take: (at, n) => terrainApi().take(at[0], at[1], n),
           put: (at, m, n) => terrainApi().put(at[0], at[1], m, n),
-          townIO: {
-            ground: (col) => terrainApi().heightAt(...cellPos(col % dims.w, Math.floor(col / dims.w))) ?? 0,
-            stamp: (stamps) => core.sim.town.stamp(stamps),
-            zMax: dims.zMax,
-          },
           epoch: () => epoch,
           ready: (at) => (this.worldApi ??= attachSim(core)).fresh && terrainApi().heightAt(at[0], at[1]) !== null,
           budget: Number(host.params.get('townfolk') ?? ((host.quality.agentSweeps ?? 8) <= 2 ? 28 : 48)),
         });
+        // (round 119) the settlements drawn as structures and their buildings' columns claimed (settle/view.ts); its
+        // slide hooks after Integrity's (the registry has moved when it claims again)
+        const view = new SettlementsView(
+          {
+            device: host.gpu.device,
+            renderer: core.renderer,
+            external: () => this.integrity?.external ?? null,
+            ready: () => this.integrity?.ensureCopy() ?? Promise.resolve(),
+            dims: { w: dims.w, h: dims.h },
+            origin: () => [S.origin[0], S.origin[1]],
+            oz: () => S.oz,
+            focus: () => [core.camera.target[0], core.camera.target[1]],
+            touched: (x0, y0, x1, y1) => this.hybrid?.edit((x0 + x1) / 2, (y0 + y1) / 2, Math.max(x1 - x0, y1 - y0) / 2),
+            dust: (x, y, z, n) => core.sim.particles.burst({ kind: PK.Dust, x, y, z, count: n, speed: 2, spread: 1.2 }),
+          },
+          st,
+        );
+        this.settlementsView = view;
+        S.onBeforeSlide.push((dx, dy) => view.beforeSlide(dx, dy));
+        S.onSlide.push(() => view.slid());
+        S.onWarp.push(() => view.slid());
         if (host.params.get('towndebug') === '1') this.townDebug = new TownDebug(host.ui, st, core.camera, (x, y) => this.heightAt(x, y));
       }
     }
@@ -2004,6 +2045,8 @@ export class LevelScene implements Scene {
     // (round 88) the units' sync and thinking, the settlements' rounds and rates, the debug view
     // (round 94: the settlements past the window planned for the bake, whatever the streamer's doing)
     this.settlements?.farUpdate(dt);
+    // (round 119) the settlements' pieces: made again when a plan, a storey or the window changed
+    this.settlementsView?.update();
     if (this.units && !this.stream?.busy) {
       this.units.update(dt * this.speed);
       timed('settle', () => this.settlements!.update(dt * this.speed));

@@ -13851,3 +13851,284 @@ gorges and the sea rule, against places' 28.5 (≈ +10 %, wall time including th
 The region graph over 2048² world units at 4: the GPU sample 24.8 ms, the partition 252 ms. A 1024-reach flood on the GPU
 254 ms (fill and mark passes in batches of 32 with a readback each), equal to the CPU's texel for texel. The rivers' CPU
 pass 582 ms, the macro ground with rivers 58 ms. The phone proxy's driveprofile after TR24: p50 9.8 ms, p95 11.6.
+
+## 2026-10-30 — round 117 (`structures`): buildings, districts and cities — tile systems, WFC façades, warped modules, a viewer
+
+The user: "I want beautiful structures, sprawling fantastic cities"; megastructures as "various procedural building
+assets for various tile systems plus some WFC and mega tile features (features multiple tiles big)"; "bake paths into
+the tiles we generate so agents can interact with them". ARCHITECTURE "Structures" has the contract and the pipeline.
+
+**Why meshes for the look and columns for the sims (both, by use).** The settlements' buildings were column intervals
+(build/town.ts, settle/raster.ts): a 1 m column can't hold a window frame, an eave or a sharp corner, and the user found
+bevelled structures ugly (round 39). Warped module instances give Townscaper's look on irregular tiles at 64 bytes a
+piece, a module stored once. The sims never needed rooms, only "solid here": one External span a column (columns.ts),
+converted at that boundary only. Agents need paths (round 104): the nav graph is baked from the plan, not from either.
+
+**Why the roof is a height rule.** h = the least distance to the roof's free sides and free corners. Two tiles in a row
+continue a ridge, an L gets a valley, a 2 × 2 block a pyramid — none of it tabled. Its creases fall on a 3 × 3 grid with
+centre diagonals, so 8 triangles are exact (unit-tested: ridges and the inside of an L meet across tiles).
+
+**Finding (fixed): walls through roofs.** White slivers on the slopes near the eaves. A numeric check (now a unit test)
+found three causes, each fixed at its root: square wall ends stuck out past the next wall at obtuse corners (walls are
+mitred now); eaves overhung into a neighbour's wall as tall (eaves only over what is lower, corners clipped where a tile
+as tall touches diagonally); a warped tile's roof is flat between its warped corners, not the bilinear surface, up to
+0.13 m off on skewed tiles (the roof lifted 0.14 m, hidden in the eave's thickness). Worst poke 3.08 m → 0.
+
+**Measured** (scripts/perf/structures.mjs, data/perf/structures-intel-xe-lpg.json; the viewer at the phone proxy
+412×915 dpr 2.6, 4× MSAA, shadow + main pass; build = plan + pieces + upload in the page):
+
+| system | r 32 m | r 64 m | r 112 m |
+|---|---|---|---|
+| irregular | 11.6 ms build · 193k tris · GPU 3.1 ms | 35 ms · 787k · 5.0 ms | 173 ms · 2.57M · 7.9 ms |
+| contour-voronoi | 17 ms · 131k · 2.3 ms | 40 ms · 698k · 4.7 ms | 206 ms · 2.29M · 7.4 ms |
+| radial (bastion) | 9 ms · 72k · 1.9 ms | 24 ms · 464k · 3.9 ms | 76 ms · 1.48M · 5.7 ms |
+| orthogonal | 9 ms · 146k · 2.3 ms | 22 ms · 573k · 5.0 ms | 93 ms · 1.76M · 6.3 ms |
+
+The desktop iGPU draws a 64 m town in ~5 ms at the phone's resolution; the phone is slower, and the game's frame has the
+terrain in it, so the game needs a LOD (STR10: plain slabs with painted windows past a distance) before big cities go in.
+Draws: 50-400 a city (one a module mask in use; roof masks dominate) — fine on the desktop, to watch on the phone.
+
+**Unit tests** (src/structures/structures.test.ts, 27, ~1 s): every tile system a CCW quad mesh, deterministic, mostly
+conforming, with lots and streets; irregular relaxed (no angle under 30°); radial walls and gates; roof continuity; WFC
+meets its constraints and throws when it can't; per system a front door per building with ground walls, doors and shops
+only on the ground floor; same spec → same plan; nav from every building's top storey to the plaza, and onto the rampart
+by stairs at a gate; every piece a real module with finite frames, per style; one column span per column; buriable
+assets' cells under a skew; no wall through its roof.
+
+Shared-system tweaks (for main to consolidate): vite.config.ts builds and hashes structures.html.
+
+## 2026-10-30 — round 117 (`structures`): the city on real terrain (STR9)
+
+`?skipmenu=1&level=atlas&city=irregular` (or contour-voronoi, radial, orthogonal; `&cstyle=`, `&cseed=`, `&cr=`): the
+town or city nearest the start is handed to the structures track — its own buildings aren't stamped
+(`Settlements.handedOff`) — and src/structures/host.ts `CityHost` plans a city there on the window's ground (the
+atlas's window ground and water as made: nothing built or paved under more than 0.3 m of water), draws its pieces with
+the game's renderer and claims each building's columns as one External instance (`OWNER_STRUCT`).
+
+**Why the game's renderer draws them (not an overlay).** The pieces must be lit, shadowed, hazed and cut away exactly as
+the land round them, and picked like it: `Renderer.enableStructures` makes a pipeline from render.wgsl + structmesh.wgsl
++ structgame.wgsl (the trees' way, meshinst.wgsl), the pieces' buffer at the draw group's binding 3, drawn in the world
+pass and the sun's shadow pass. One shared module file (structmesh.wgsl) for the viewer and the game: the look is the
+same in both.
+
+**Why External columns, and why they stop a metre under the roof.** The sims treat External as rock that never gives:
+rain runs off, sand piles, fire and water go round, the terrain's draws leave room. The first run showed grass tufts
+and moss poking through the roofs: what grows on an External top grew on the solid's top, which reached mid-roof. The
+solid now stops a metre under the walls' tops, inside the top storey.
+
+**What the sims do to it.** A building whose cells are cut (dug, smashed, melted) or found hanging free is let go to
+rubble where it stood, its pieces taken away behind dust (round 106: hide every swap behind a burst of dust). Before a
+slide, buildings whose columns would leave the window let go of them (to air); after it, the plan moves with the land
+and they claim again once all back. Collapse into bodies is later (with the physics track).
+
+**Shared tweaks (for main to consolidate):** renderer.ts `enableStructures` + two draws (world, shadow) and `drawPl`;
+integrity.ts `ensureCopy()` (the CPU copy of the layers read once if none yet: claims at the level's start needed it —
+"Invalid typed array length" before); external.ts `OWNER_STRUCT = 2`; settlements.ts `handedOff`; level.ts the
+`?city=` site, the host, its slide hooks, `reclaimed.city()`.
+
+**Measured** (scripts/perf/structcity.mjs, data/perf/structcity-intel-xe-lpg.json; phone proxy 412×915 dpr 2.6 q=low,
+every system on, parked over a 281-building irregular city, 5191 pieces, ~500k triangles): the world pass ("draw")
+2.66 → 3.53 ms at the start's zoom, 2.77 → 3.81 ms at ×3 zoom — about 1 ms of GPU. Back faces culled (the modules are
+wound outward, every frame counter-clockwise; checked in the viewer with `?cull=0` to compare): before culling the ×3
+zoom cost 2.3 ms. The frame's total GPU time moved ±1 ms between runs on the shared desktop (other agents), so the pass
+times are the measure.
+
+Shots: C:\Projects\shots88\structures\city-irregular-0/1/2.png.
+
+## 2026-10-30 — round 117 (`structures`): the city reads from afar; it keeps off the water
+
+Main's review of the first city on the atlas: at the start's zoom it read as "one dense blob of roofs", and its west edge
+stood in the sea in a straight line.
+- **The sea.** The planner was told only the window's water layer; the sea isn't in it (the sea is a level, `seaZ`).
+  The host now gives the planner max(water layer, sea − ground), and no house stands within 1.2 tiles of water: the
+  shore is yards and lanes and follows the coast.
+- **Quarters.** A city of radius R gets round(R / 26) quarters (≤ 7): the middle and a ring at 0.62 R, a quarter's edge
+  noisy. Each has its roofs' colour (82% of its houses; look bit 15 + bits 12-14, structmesh.wgsl picks the roof's
+  variant from it), a height bias and a landmark tower (the middle's 6 storeys over its neighbours, the others' 3); towers
+  stand only on a tile with open ground beside it (a door, a lift: nav).
+- **Streets.** Irregular towns' main lanes are two tiles wide within 0.6 R; the plaza 2.8 tiles across in a big town.
+- Doors: the front door prefers a street, then a yard; a door step with no open tile across its side (a T-junction where
+  radial rings double) links to the nearest open ground within 6 m.
+- Not ours (listed for main): the lighter diamond of water is the streamed window's water against the tiles' water past
+  it; the straight brown line across the sea is the atlas's road to the old town (atlas/ways.ts), stamped before the city.
+
+Shots: C:\Projects\shots88\structures\city-irregular-0.png (the atlas, start zoom), dist-0.png (the viewer, r 90).
+
+## 2026-10-30 — round 117 (`structures`): linear features — roads, viaducts, town walls (STR11)
+
+The user: "linear tile features we can use for bridges, roads, railroads and extrude along splines". src/structures/linear.ts.
+
+**Why the same warped modules.** A segment of a road between two spline samples is a frame like a tile's (its right and
+left edges at either end, each end's across-direction its own tangent's normal, so consecutive segments share edges
+with no gap), so roads, rails, walls and viaducts are more modules (road, rail, wallseg, wallwalk, deck, archspan) in
+the same library, drawn by the same pieces path — no renderer of their own, the look shared with the buildings.
+
+**Roads and bridges.** A road out of the town samples the ground every 2 m and makes its profile: forward and backward
+passes that only raise, so it's never steeper than a 14% grade — valleys and water are filled by the deck. Where the
+deck stands more than 2.6 m over the ground (or over water, 3 m up) it's a bridge: deck pieces (slab, paving, parapets;
+their foot the deck's underside at each end, so the deck follows its grade) and arch pieces under them (their foot the
+ground at each corner, their top the deck): spans about as long as the bridge is high (5-12 m), so a tall viaduct gets
+Roman proportions and a shallow crossing a low segment — the module scales, the height decides. Roads inside the town
+turn the tiles under them into street before the massing. `CitySpec.roads` (viewer slider; the game `&croads=`, 2).
+
+**Town walls.** `CitySpec.walls` on a non-radial town: a loop at 1.06 R following the ground, the walk 8 m over it (the
+body's top a height over its foot, so the walk follows the ground), crenellated parapets both sides, round towers with
+spires every 28 m and at each run's open end — gaps where the roads go out (the gates' flanks), none over water.
+
+**Nav and columns.** A node every 4 m along roads (street), bridges (bridge) and wall walks (rampart); a road's first
+node joins the town's nearest open ground, runs join where they meet, a wall run's ends come down by stairs. Walls
+(foot to walk) and bridge decks (their arches open underneath) are each their own External instance.
+
+**Found in the game: the ground stretched up over the buildings.** The hybrid renderer draws most chunks as a lattice
+through the columns' tops; a building's External top is a column top, so the lattice rose to it — dark mottled
+pillars under the houses. The host now tells the hybrid each claim's box (`touched` → `HybridChunks.edit`, as the
+resting rock's do): those chunks are the field mesh's, which leaves External out.
+
+**Measured** (scripts/perf/structcity.mjs, phone proxy, q=low, every system on): the world pass 2.69 → 4.57 ms at the
+start's zoom, 2.84 → 5.10 ms at ×3 with two roads and the voxel chunks (the frame's total moved by other agents' load).
+About 2 ms on the desktop iGPU at the phone's resolution: STR10 (a LOD for distant pieces, fewer roof masks) before
+bigger cities.
+
+Unit tests (30): the profile never steeper than its grade, a bridge in a valley's middle; roads out of a town in a gorge
+cross it on arched bridges and their far ends reach the plaza; a walled town has wall runs, parapets, and its rampart is
+reached by stairs.
+
+Shots: C:\Projects\shots88\structures\lin-0/1/2.png (viewer: viaducts over a gorge, walled towns), bridge-0/1.png
+(close), cityw-0/1.png (the atlas: a walled contour-voronoi town, a viaduct across the bay).
+
+## 2026-10-30 — round 117 (`structures`): the far look (STR10)
+
+**Why by zoom, not by distance.** The game's camera is orthographic: every piece is as small on screen as the zoom makes
+it, wherever it is. So one number decides: under `Renderer.structLodZoom` (7 screen pixels a cell, `?structlod=` to tune)
+every piece draws its far look. Walls: the slab's faces, each opening a flat quad of its fill, shutters and the timber
+beams flat on the face (~20 triangles for ~200: a window's frame, sill, bars and reveal are under a pixel there). Roofs:
+the top only (no underside, no fascia). The far look is the same instances drawn with another module's index range
+(`DrawRange.lod`; no re-sorting, no second buffer); roofs' far looks are made on first ask like their full ones. The
+sun's shadow map always draws the far look (its texels are bigger than a window frame). The viewer uses it past 160 m
+(`?lod=0|1` to compare): at city scale the two are hard to tell apart (shots lod-0/1.png).
+
+**Measured** (scripts/perf/structcity.mjs, phone proxy q=low, all systems, the same 281-building town with two roads):
+at the start's zoom (4 px a cell: the far look) the world pass 2.70 → 2.86 ms (+0.16; it was +1.9 ms at full detail),
+the shadow pass 0.70 → 0.69 (was +0.12). At ×3 zoom (12 px a cell: full detail) +2.6 ms — the city then fills the
+screen with forward-shaded pieces (render.wgsl `lighting` per fragment, no depth pre-pass) where the terrain is deferred;
+next steps there: the pieces into the G-buffer path on the phone, or a depth pre-pass. Triangles: a 90 m town 1.78M full,
+0.27M far (6.6×).
+
+## 2026-10-30 — round 117 (`structures`): mega tiles — a domed temple, the keep (STR12)
+
+The user: "some WFC and mega tile features (features multiple tiles big)".
+- **A domed temple over four tiles.** In a town of R ≥ 30 m: an interior vertex of valence 4 whose four tiles are built
+  lots of one block on ground within a storey, nearest 0.3 R from the middle. It is the first building (the rest grow
+  round it); its frame is the four tiles' corners opposite the shared vertex, counter-clockwise round it — so a module
+  in its unit frame warps over a patch of irregular tiles like a tile's module over one tile. Pieces: a drum of two rows
+  of tall windows (a storey over the middle's houses), a ribbed dome sheathed in green copper (a new palette part, Dome:
+  styles × 15 parts now; SP_PARTS and SP_VARIANTS come from TS into the WGSL, not written twice), a lantern.
+- **Bulwark's heart.** A radial city's plaza gets a great round keep (2.7 tiles across, 4 storeys over the middle's
+  houses, a spire), a ring of plaza left round it; no tiles of its own — its columns rastered from its frame, a door to
+  the plaza and a lift to its top in the nav.
+- Landmarks' nav: every mega building has a foot, a crown (a tower's by a lift, a temple's gallery by stairs) and a door
+  onto the open ground beside it.
+Shots: C:\Projects\shots88\structures\mega-0.png (the dome among the hearth roofs), mega-1.png (the radial keep).
+
+## 2026-10-30 — round 117 (`structures`): towns in the earth; buriable assets drawn (STR13, STR14)
+
+**Built into the earth** (the user: "Deep cut quarries and cities built into the earth"). `CitySpec.sunk` (≥ 0): lots up
+to three storeys of fall are built, a building may span 2.5 storeys of it, its floor on the ground's low side (less
+`sunk`) and its back in the hill, with storeys enough that its roof stands a storey clear. A wall whose ground stands over
+60% of its storey is buried: blank, never the front door. Its External claim takes only the free cells, so the buried part
+stays the hill's. The viewer's `cliff` ground shows it. Quarries (a pit cut by the terrain track, the town in its walls)
+need the terrain track's carving contract: open (STR13 stays open for that half).
+
+**Buriable assets drawn** (the user: "buried statues and fallen structures and stones … skew add visual interest"). An
+affine piece (flags bit 2): the piece's first three rows are a 3 × 4 local → world transform, the module in metres —
+so any turn, tilt or skew. `assetPieces(placed)` makes each kind + seed's mesh a library module once (`Library.add`) and
+each placement a piece; any host draws them with the city's light and palette (stone, bronze). The terrain track lays
+them: `structures.asset(kind, seed).cells(transform)` for its External claim, `structures.assetPieces([...])` to draw.
+The viewer's `assets` view: each kind upright and skewed half-sunk beside it. Shot: assets-0.png.
+
+## 2026-10-30 — round 117 (`structures`): towns grow as stored progress (STR16)
+
+The user (round 110): "towns should visibly grow but slowly … we store progress and so although you could watch the
+agents build you can also leave and come back and more tiles will have been completed". A plan has a build order
+(`CityPlan.order`: by distance from the middle with noise, landmarks early — the old core first); `grown(plan, p)` is
+the town with the first p share of it standing and the next building a site (its storeys so far, no roof yet), its
+façades worked out again for what stands (a wall a missing neighbour would hide shows). Stored progress is that one
+number per town (`CitySpec.progress`; the game `&cgrow=`, the viewer's `grown` slider); the plan is re-made from the spec.
+Agents building a site, and progress advancing by rate × elapsed time while away, are the inhabitants' and the run's.
+Shots: grow-0.png (0.15: the core round the plaza, the temple and the towers), grow-1.png (0.55).
+
+## 2026-10-30 — round 119 (`structures`): the settlements on the structures contract; density drives what's built (STR15)
+
+The user (DECISIONS round 119): "Let's move the old settlement code over and have them actually use the new structures.
+Can we get farms and smaller huts for lower population density? Is it density driven+grid based now?"
+
+**The question, answered.**
+- *Before*: grid based, barely density driven. A settlement's districts were overlay grids (settle/grids.ts: the four
+  styles → lots → quads), a fields lattice round it. The growth field (field.ts) picked *which* lots got houses (built
+  where its intensity passed `BUILT_V` 0.35) and nudged storeys up where it was strong; every building was the same kind
+  of house in the civ's materials, stamped into the columns as voxels (build/town.ts), and the fields a ring of furrowed
+  lots. The structures track's cities (round 117) were grid based with radial fall-offs, no density input at all.
+- *Now*: grid based **and** density driven, as two separate concerns. The grid (the tile system: irregular,
+  contour-voronoi, radial or orthogonal for the town; Voronoi plots for the farmland) says *where tiles are*. The density
+  (`DensityFn`, a settlement's from its growth field) says *what's built on each*: built or a yard; a town house (dense:
+  storeys rising with the density) or a thatched hut (thin); out in the farmland a farmstead (a farmhouse and a barn) or
+  crop strips, an orchard or a pasture (thinnest). Size scales the density (a hamlet's middle reaches huts, a city's town
+  houses), the field is smooth, so the kinds blend: houses and huts mix where they meet, farmsteads string along roads.
+
+**Why one concern each.** settle/plan.ts plans (its town via `planCity` + the record's buildings, spots, jobs, sites);
+settle/view.ts shows and claims (pieces drawn, External columns); life.ts lives (builders raise a site storey by storey:
+`LifeIO.raise`, no voxels stamped). The buildings aren't stamped into the land any more (they were build/town.ts voxel
+columns: the round-117 representation argument — pieces for the look, External spans for the sims). The far land's
+raster is told where the roofs are (`rasterColumns`) since the columns no longer hold them.
+
+**What changes for other systems (contracts unchanged, data changed):**
+- `Settlement` records: the same fields; `buildings[].cells` are the plan's tile ids (were LotGrid cells); `grids` are two
+  (the town's tile system, the farmland); a building's `use` now includes huts' and barns' (barn = granary: `store`).
+- `SettlementPlan`: `city` (the structures plan) and `standing` replace `grids`; `SiteSpec` is a plan building
+  (`building`, `storeys`, `door`) — no polygon, no materials; `free` lists buildings in build order.
+- `LifeIO`: `raise(site, storeys)` replaces `townIO` (no stamping); `LiveSite` has no polygon.
+- Spots (homes, stores, posts, farm, mine, site, pile, trade) and stores' rates as before — the agents' jobs and homes,
+  the GM's facts (wiki: records only) and runplan's region fields don't read the plan. `Settlements.handedOff` and
+  src/structures/host.ts (round 117's one city) are gone: every settlement is a structures town now;
+  `?city=<system>&cstyle=…` plans the nearest town with those (`Settlements.override`).
+- build/town.ts, build/towngrid.ts and settle/grids.ts stay for the sandbox's town tool and the world API (`api/world.ts`)
+  — not the settlements'.
+
+**New in structures:** `DensityFn` and `defaultDensity`; building kinds (house, hut, farmhouse, barn) with their wall
+sets, thatch roofs, steeper hut roofs, a barn's tall storey; the farmland tile system (tiles/farmland.ts) with crop strips,
+orchards, pastures, farmsteads, fences and hedges as linear features; `keepOut` discs (a quarry); draped pieces (flags 4:
+paving, crops, fences laid on the ground as the game has it now — the plan's raw ground was up to ~3 m off where roads
+were graded and banks cut, which showed as crop rows standing in the air); bare columns under fields, streets and
+buildings (no meadow tufts through a crop).
+
+**Measured** (scripts/perf/structcity.mjs, phone proxy 412×915 dpr 2.6, q=low, every system on, parked at the city s55 —
+2356 pieces, 209k triangles full / 59k far): the world pass 2.17 → 2.34 ms with the settlements drawn at the start's
+zoom (the far look), 2.29 → 2.90 ms at ×3. Plans in the game: a city's pieces made in 12 ms when its plan arrives (main
+thread, once), a village's 4-5 ms.
+
+**Tests:** src/settle/plan.test.ts (5: a town's buildings are the plan's with records and doors, two sites and room to grow,
+fields worked; the land gets only ground works and the raster the roofs; a hamlet mostly huts, a city mostly houses,
+farmsteads; a site's roof only when its last storey is up; deterministic); structures.test.ts +3 (dense → houses, thin →
+huts, a falling density mixes them with no ring; farmland strips, fences, farmhouse + barn per farmstead, thatch).
+`npm test` 119 + 1 expected fail; `npm run smoke` passed. In the game (scripts/structtowns.mjs): city s55 (70 houses, 40
+huts, 2 farmsteads, 106 buildings claimed), town s82, village s52 (15 huts, 3 houses, a farmstead, 24 field strips).
+
+**Open:** a field on a steep or cut slope still shows its strip as a plateau with an edge (draped per vertex, 4 along a
+strip); hamlets weren't in this world's atlas to look at; quarry towns (the terrain track's carving) still open.
+
+Shots: C:\Projects\shots88\structures\towns-city-0/1.png, towns-town-0/1.png, towns-village-0/1.png,
+phone-towns-city-0/1.png (phone proxy), dens-0/1.png (viewer: houses → huts → farmland).
+
+## 2026-10-30 — round 119 (`structures`): main's review of the towns — spikes, fins, a wall in the river
+
+- **Grey spikes through the city** were draped paving: each vertex took the live ground under it, and next to a
+  building that's an External column whose top is the roof — a paving vertex there jumped up to the roof. Draping is now
+  per piece: the live ground at the piece's four corners (blended over the three nearest columns, External ones left
+  out), bilinear between them, so a piece stays one plane; where a corner's ground has moved more than 1.5 m from the
+  plan's (a cut, a terrace, sand slid since) the whole piece goes under the ground instead of hanging as a curtain.
+- **Crop fins**: from the game's steep camera the crop's 0.3 m-tall rows read as boards standing up (rows running up the
+  screen, their sides lit apart from their tops). The crop is now soil with rows only a few centimetres proud, bevelled,
+  a 0.25 m piece; strips on ground falling more than 1.5 m across a piece are pasture.
+- **The wall in the river**: a wall-ring point is left out when it or the wall either side of it has any water under it
+  (sampled every metre, even shallow), so the runs end in towers either side of a river — a water gate.
+Shots: towns-city-1.png, towns-village-1.png, phone-towns-city-1.png, phone-towns-village-1.png.

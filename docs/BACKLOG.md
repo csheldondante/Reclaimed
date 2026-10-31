@@ -12,6 +12,41 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 117 (2026-10-30, session 5, `structures`) — buildings, districts, cities (DECISIONS round 117)
+
+The user: "beautiful structures, sprawling fantastic cities"; megastructures as "various procedural building assets for
+various tile systems plus some WFC and mega tile features (features multiple tiles big)"; "bake paths into the tiles we
+generate so agents can interact with them. Taking elevators, stairs, walking on ramparts"; "linear tile features we can
+use for bridges, roads, railroads and extrude along splines". Code: src/structures/, contract src/api/contracts/structures.ts,
+viewer structures.html.
+
+| id | item | size | status |
+|---|---|---|---|
+| STR1 | The contract (contracts/structures.ts): CitySpec → CityPlan (tiles, spans, buildings, façades, megas, nav) → pieces (warped module instances) / columns (External spans) / buriable assets | M | done (structures) |
+| STR2 | Tile systems to one quad mesh: irregular (Townscaper: triangles paired, cut, relaxed), contour-voronoi (plots on the ground's contours, streets between), radial (rings, spokes, a wall, gates), orthogonal | M | done (structures) |
+| STR3 | Massing and buildings (lots built by density, grown tile by tile inside a block on ground no steeper than a storey, stepped skylines), occupancy spans (the spans design, round 102) | M | done (structures) |
+| STR4 | WFC (a general solver, src/structures/wfc.ts) for the façades: bays line up, a front door on the street, no two doors or balconies side by side | S | done (structures) |
+| STR5 | The module library in a unit frame, warped into irregular tiles (Townscaper's look): walls (blank, window, window2, door, shop, balcony, slit), gables, posts, quoins, plinths, paving, ramparts, merlons, gate arch, tower, spire, chimney, fountain, lamp; roofs from one height rule (ridges, hips, valleys meet across tiles) | L | done (structures) |
+| STR6 | Styles as data: hearth (timber and limewash under tile), bastion (stone and slate, two towers), terrace (flat-fronted, low-pitched) | S | done (structures) |
+| STR7 | Baked nav: streets, plazas, yards, storeys (stairs), doors, balconies, a lift up each tower, the rampart walk with stairs at the gates; navPath | M | done (structures) |
+| STR8 | The viewer (structures.html): system, style, seed, size, storeys, density, ground, time of day (lit windows at dusk); building / district / city; turn, zoom, pan; tile and nav overlays; every setting in the URL | M | done (structures) |
+| STR9 | The city on real terrain: the game's renderer draws the pieces (shared structmesh.wgsl), the columns claimed as External intervals, at an atlas site (`?city=<system>`: the town nearest the start handed off) | L | done (structures) |
+| STR10 | LOD for the game: the far look by zoom (walls as slabs with flat openings, roofs' tops only; 6.6× fewer triangles; +0.16 ms at the start's zoom) | M | done (structures) |
+| STR21 | Close zoom costs +2.6 ms (iGPU, phone proxy): the pieces forward-shaded over the screen; draw them into the G-buffer on the phone, or a depth pre-pass; cull pieces off screen by chunk | M | open |
+| STR11 | Linear features: roads, rails, walls and bridges extruded along splines (linear.ts): roads out of a town graded to 14%, viaducts where they stand high over valleys or water, town walls with towers and gates; nav and External columns | L | done (structures) |
+| STR20 | Linear features from the atlas's own ways (atlas/ways.ts: its graded roads, bridges, switchbacks, lift towers) drawn as these modules instead of column stamps; rails in a town (none generated yet — the module is there) | M | open |
+| STR12 | Mega tiles beyond one tile: a domed temple over a 4-tile patch (its frame the patch's outer corners), the keep at a radial city's heart; halls, gatehouse towers on a radial wall still to do | M | done (structures) |
+| STR13 | Cities built into the earth: spec.sunk done (backs in the hill, buried walls blank); quarry towns need the terrain track's carving contract (open) | M | wip |
+| STR14 | Buriable assets (statue, column, fallen tower, arch, bell: mesh + solid → cells under any skew) as affine pieces (`assetPieces`) any host draws; the terrain track places them and claims their cells | M | done (structures) |
+| STR15 | Migrate settle/ onto this contract (round 119): plan.ts plans via planCity with the growth field as density, view.ts draws pieces and claims External, life.ts raises sites storey by storey; no voxel stamping | L | done (structures) |
+| STR22 | Density drives what's built (round 119, the user: "farms and smaller huts for lower population density"): town houses, thatched huts, farmland (crop strips, orchards, pastures, fences, hedges), farmsteads (farmhouse + barn) | M | done (structures) |
+| STR23 | Agents on the baked nav (settlements' people path on plan.nav, not fields) — the inhabitants track's | M | open |
+| STR24 | A crop strip on a steep or cut slope shows as a plateau with an edge: drape every vertex finer, or leave such strips to pasture | S | open |
+| STR16 | Growth as stored progress (round 110): the plan's build order, `grown(plan, p)` (the next building a site); agents building it and progress while away are the inhabitants' and the run's | M | done (structures) |
+| STR17 | The perf tests: scripts/perf/structures.mjs (the viewer: build ms, pieces, triangles, GPU per system and size), scripts/perf/structcity.mjs (the game's frame with the city drawn and skipped) | S | done (structures) |
+| STR18 | Pieces in the render-only tiles past the window (a city half out of the window shows only its window half's columns in the tiles) | M | open |
+| STR19 | Destruction as bodies: a cut building breaks into pieces that fall (the physics track's solver), not rubble in place | L | open |
+
 ## Round 117 (2026-10-30, session 5, `terrain`) — the terrain track: rivers, the region graph, the basin flood (DECISIONS round 117)
 
 The user: "striking to look at and interesting to explore" … "Let's make this world hauntingly beautiful." DEVLOG round
