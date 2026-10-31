@@ -603,6 +603,7 @@ fn finalize(@builtin(global_invocation_id) id: vec3<u32>) {
     if (nb > 0.0) { v += dv / nb * damp; }
   }
   v *= 1.0 - G.tune.voxelsAirDrag * h;
+  let sp = length(v);
   pv[i] = vec4<f32>(v, prev.w);
   if (x.z < -20.0) {
     px[2u * i] = vec4<f32>(x.xyz, PV_DEAD);
