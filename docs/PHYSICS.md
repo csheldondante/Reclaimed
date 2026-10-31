@@ -338,3 +338,43 @@ one 30 × 30 × 12 block (10.8k voxels) 1.5 ms. Most of it is the fixed part
   eruptions that build and fade; the meteor as a physics body that
   tumbles in (it is particles on a straight path).
 - Sleeping: every live voxel is solved every substep.
+
+## The node solver (round 120, branch `solver`; BACKLOG AR4, the physics design of round 106)
+
+One GPU constraint solver for what breaks free — src/solver (host), src/shaders/solver.wgsl (kernel), its contract
+src/api/contracts/solver.ts (`NodeSolver`). The judges (game/integrity.ts, fracture.ts) still decide what lets go;
+the solver only moves what they hand over. Rendering reads its node transforms without touching its state.
+
+- **In:** `add({ cells, pose?, vel?, spin?, pinned?, allow?, kind?, drawCells? })` — lattice cells where they stood
+  (the spawn frame), a pose if it's elsewhere now (a resting rock woken). `impulse(body, dv)`, `wake(body)`,
+  `remove(body)`. `shift(dx, dy, dz)` when the window slides.
+- **Out:** `read(body)` a tick or two late — centre of mass, rotation (spawn frame → world), velocity, spin, asleep,
+  touching, the hardest impact (speed, where), ground cut too deep (erode points), parts, bonds broken, mass.
+  `pose`: per node its position and rotation for the last two ticks (4 vec4: prev pos, prev rot, pos, rot; slot b's
+  nodes at b · 64) — drawn between them at `WorldCore.renderAlpha()`. `lanes`: per node its bind rest ([6]), what a
+  mesh is skinned to. `skinInst`/`skinArgs`: a body's surface cells as vsBody instances riding their nodes.
+- **A body** is up to 64 nodes (blocks of g³ cells, g the least giving ≤ 64; 2 at least for a deformable over 16
+  cells — a node spans its member's section) and up to 64 contact points (every node's lowest exposed corner, then
+  farthest-point sampling). Bonds are a 64-bit mask a node: cells touching across blocks. Rest positions are kept
+  about the rest centre of mass, positions about the body's centre as the tick began (f32: world-sized sums drifted
+  0.01 cells/s a tick).
+- **One workgroup a body**, every substep (4) and pass (2) inside one dispatch; other bodies read from a snapshot
+  copied before it (the lanes of those awake). Rigid (rock, what's built): each connected part shape-matched exactly.
+  Stiff deformable (metal, wood; `frame` 1): rigid between yields; the fit's corrections are the loads it carries,
+  walked from what holds it (pinned nodes; else what it touches) to the far ends once a tick — moment, shear and
+  pull at each bond over the section its node stands for: past the strength the bond snaps, past the yield the most
+  loaded bond is a plastic hinge (only in a part a foundation holds; only a bond its subtree hangs by alone). Blows
+  dent (a hit's energy over the dent strength × area), put in so they make no speed. Soft deformable (canvas,
+  scrap): region shape matching, plastic flow.
+- **Contacts:** points against the ground (layers.wgsl; a node's own foot too) and against other bodies' node
+  blocks (out through their faces on the surface), both ways by contact mass (a rigid body's whole, a stiff
+  deformable's whole or the world's if a foundation holds it, a soft one's node). The rules are the rigid group's
+  sliders: an overlap within the slop never corrected; past it stopped and pushed out at `pushV`, the push-out part
+  taken off the velocity (separation never adds speed); rock past slop + erodeDepth erodes the ground instead.
+  Sleep: slower than `restV` while held for `restT`; woken by a hard hit (or one about to land), an impulse, its
+  support going.
+
+**The experiment** (solver/variant.ts, `?solver=`): `old` (the CPU rigid rock, the columns' falling pieces, metal on
+the voxel lattice), `nodes`, `lattice` (everything on phys.wgsl's voxel lattice, which sleeps too now), `hybrid`
+(rock on the nodes, metal and wood on the lattice). `?judge=` (game/judges.ts) names the judge; `columns` is the one
+here (`sections` on branch `judge`). The lab's panel picks both (a reload) and compares (ui/experiment.ts, `?run=`).

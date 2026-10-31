@@ -14436,3 +14436,54 @@ the fix, which the user can feel at once, before the solver itself.
 Tests first (test/unit/gravity.test.ts, 5): worldG scales; the caps are gone; the rigid rock falls at 9.8 uncapped
 (29.4 cells/s after 3 s, it stopped at 14); world × 2 doubles it; 144 Hz frames give the same state as whole steps and
 draw between the last two. `npm test`: 83 passed + 1 expected fail.
+
+## 2026-10-31 — round 120 (`solver`, step 2): the one node solver, and the experiment beside the lattice
+
+The physics design (DECISIONS round 106; round 120: "I really want both the burying, toppling and deformation/
+fracture. Is that all consolidated into one system yet?"): one GPU constraint solver for what breaks free, the
+judges deciding what lets go. Built (ARCHITECTURE "The node solver"), then — the user, round 120: "Can we treat this
+as an experiment and test each approach side by side?" — run beside the voxel lattice (the tankers' phys.wgsl) and
+the step-1 baseline, picked per page (`?solver=old|nodes|lattice|hybrid`, the lab panel's picker).
+
+**Why it's built the way it is.**
+- *One workgroup a body, everything inside one dispatch.* A body is at most 64 nodes and 64 contact points, so the
+  whole solve — substeps, passes, the part labels, the load walk — runs in workgroup memory with barriers: one
+  dispatch a tick for all bodies (the lattice: ~60 dispatches a tick and four 2¹⁸-entry hash clears). Other bodies are
+  read from a snapshot moved on by their velocity: deterministic, no races.
+- *Positions about the body's centre, rests about its rest centre.* In world coordinates f32 sums of ~3700 had steps
+  of 2.4e-4: a falling block drifted 0.01 cells/s a tick sideways and fell 6 % faster than gravity.
+- *Node blocks tile the body.* Another body's points are tested against a node's block (turned with it), out through
+  its faces on the surface only: node spheres let hex corners slip between them (a block fell through a block).
+- *Contacts push both ways.* Each body's points against the others' blocks, and each body's blocks against the
+  others' points (the same test from the other side) — a boulder landing on a girder otherwise left the girder
+  unmoved and unhit.
+- *Separation never adds speed* at the body: its velocity away from what it touches held to what it had before the
+  contacts, off every node alike, so a topple's turn is kept (per-node clamps killed toppling; none launched a
+  block at 1 cell/s).
+- *Stiff metal is rigid between yields.* Shape matching with a few passes left a girder like rubber (a 20-cell
+  cantilever sagged to the floor); a whole-part fit blended in stopped dents. So metal and wood fit their part
+  rigidly, and the fit's corrections ARE the loads (m Δ / h²: weight held, blows stopped — capped at `blowG` g, a
+  contact stops a body within a substep and its force would be without bound), walked from what holds it to the far
+  ends: moment, shear and pull at each bond over its section (the user: "Does it also propagate forces to compute
+  torque and shear forces?"). Stresses are physical (steel yield 2e5 mass/(cell·s²) ≈ 250 MPa at a metre a cell): a
+  1 × 1 bar 30 cells out holds, 32 yields at its root and bends down, 36 (weaker steel) snaps.
+- *Plastic flow and dents make no speed.* A hinge turns what hangs from it in its rest shape and where it is; a dent
+  moves its part into the new shape keeping its centre of mass: a small broken piece's dent had flung it 700 cells up.
+
+**Tests** (Node, before the kernel ran): test/gpu/solver.test.ts 18 (16 pass, SL1 and SL2 test.fails: the node
+solver's metal folding into the floor as it lands, the pylon shattering), test/unit/solver-build.test.ts 5,
+test/unit/judge-shapes.test.ts 11 (SV1 test.fails). `npm test` is green (the gpu tier's worker crashes now and then
+on this shared GPU after several worlds — it did on places too, 1 in 3).
+
+**The scaling run** (test/gpu/solver-bench.test.ts, SOLVER_BENCH=1 → data/perf/solver/scaling.json; wall ms a tick
+on Dawn here, 4³ stone blocks and 16 × 2 × 2 steel girders alternating; noisy — the GPU is shared):
+
+| bodies | nodes falling | nodes landed (asleep) | lattice falling | lattice landed |
+|---|---|---|---|---|
+| 10 | 2.2–7.7 | 0.14–0.79 (all asleep) | 2.1–6.5 | 4.7–5.3 (5 of 10 asleep) |
+| 50 | 3.5–7.8 | 0.22–0.61 (all asleep) | 4.6–5.2 | 3.0–5.4 (10–26 of 50) |
+| 200 | 3.8–16.5 | 0.19–0.90 (all asleep) | 8.0–10.5 | 3.7–12 (30–61 of 200) |
+
+The lattice sleeps now (fair to it, the coordinator: "a lattice that never sleeps isn't a fair comparison"): the same
+rest rule, woken by the game acting, a moving neighbour or a cut; its solve skipped whole when every body sleeps. Its
+steel rings above the rest speed and half its bodies stay awake.
