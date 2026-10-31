@@ -1912,7 +1912,8 @@ fn vsSkin(@builtin(vertex_index) vi: u32) -> VOut {
   o.pos = CAM.viewProj * vec4<f32>(wp, 1.0);
   o.wpos = wp;
   o.nrm = bitcast<vec3<f32>>(nb.xyz);
-  o.info = vec2<u32>(a.w, 0u);
+  // (round 117, inhabitants: nb.w 1 — the word is a colour 0xrrggbb, not a material; fsBody reads info.y)
+  o.info = vec2<u32>(a.w, nb.w);
   o.tint = 0.0;
   o.zr = vec2<f32>(wp.z - 0.5, wp.z + 0.5);
   o.bmin = wp;
@@ -1951,6 +1952,8 @@ fn fsBody(in: VOut) -> FOut {
   let physV = ((word >> 30u) & 1u) != 0u;
   let r = select(randv(vec3<i32>(floor(in.bmin * 3.0))), f32((word >> 8u) & 0xffu) / 255.0, physV);
   var alb = toLinear(MATS[mat].albedo.rgb) * (0.88 + 0.24 * r);
+  // (round 117, inhabitants.wgsl meshIt: a creature's vertex carries its own colour — vsSkin's info.y 1)
+  if (in.info.y == 1u) { alb = toLinear(vec3<f32>(f32((word >> 16u) & 255u), f32((word >> 8u) & 255u), f32(word & 255u)) / 255.0) * (0.94 + 0.12 * r); }
   let nrm = normalize(in.nrm);
   // a structure grid's voxel (structprep.wgsl): the growth it owns on its
   // faces, and the nature grid's sand drawn over it where it's buried

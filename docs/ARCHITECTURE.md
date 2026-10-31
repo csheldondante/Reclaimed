@@ -2596,3 +2596,18 @@ want to be able to flood a basin and bury things".
 - **Top level (round 117):** Terrain.atlasGraph() — the atlas's regions world-wide with each border's barrier (terrain/
   atlasgraph.ts, from the atlas's CPU arrays and the border rules compose.wgsl draws by); the rooms under a region come
   from Terrain.graph(rect).
+
+## Inhabitants (round 117, `inhabitants`; docs/INHABITANTS.md)
+
+- Contract: `src/api/contracts/inhabitants.ts` (`Inhabitants`): species as data (`SpeciesSpec`: body plan, proportions,
+  palette, secondary, gear, abilities, behaviour), `spawnGroup` / `drive` / `remove`, `setPaths(WalkPaths)` (the
+  structures track's baked paths), `setAbilityHost(AbilityHost)` (the level's fire/heat/wind hooks), `presence(rect,
+  cell)` (density and threat a region, for runplan and terrain), `shift` in WorldCore.onShift's sense.
+- Implementation: `InhabitantsGpu` (src/inhabitants/system.ts), a SimSystem after the particles. Reads only WorldGpu's
+  contract buffers: `surface` + the drift texture + the body projection (the ground), `fire`, `water`, the wind texture.
+  Owns its buffers (agents 5 vec4, pose 32 points x 2 vec4, bins, orders, group sums, the species table, the mesh).
+- Its mesh goes to `Renderer.addMesh` in vsSkin's form; nb.w = 1 marks a vertex whose word is a 0xrrggbb colour
+  (render.wgsl fsBody).
+- Bindings in inhabitants.wgsl: 40 params, 41 species table, 42 agents, 43 pose, 44 bins, 45 orders (+ paths), 46 group
+  sums, 47 verts, 48 draw args, 49 surface, 50 fire, 51 water; 15, 17, 21 common.wgsl's wind, drift and body textures.
+  Layouts mirrored in src/inhabitants/pack.ts (species), paths.ts (paths) and system.ts (agents, params).

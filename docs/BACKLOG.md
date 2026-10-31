@@ -12,6 +12,28 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 117 (2026-10-30, session 5, `inhabitants`) — creatures with bodies, herds, predators that stalk (DECISIONS round 117)
+
+The user: "rain world style procedural animation with secondary features like capes or fur. I want hunanoid an non. It
+doesn't have to be high fidelity it does have to be readable and look cool."; "Fill the wilderness with boids of various
+animals. Herds, predators that stalk." docs/INHABITANTS.md.
+
+| id | item | size | status |
+|---|---|---|---|
+| IN1 | The Inhabitants contract (src/api/contracts/inhabitants.ts): species as data, spawn and drive, WalkPaths, AbilityHost, presence (density/threat a region) | M | done (inhabitants) |
+| IN2 | The body generator: biped, quadruped, bird, serpent, insect, beast, winged from parameters; gear slots (cape, hood, pack, weapon, shield); fur; deterministic from the seed | M | done (inhabitants) |
+| IN3 | Procedural animation on the GPU: spine follow, planted feet stepping by gait group, two-bone IK, verlet tails/capes/fur in the world's wind, wings, swinging arms, head dips; low-poly spindles through Renderer.addMesh | L | done (inhabitants) |
+| IN4 | Behaviour: herds (boids), stalkers (rest, stalk, burst, catch), flocks, townsfolk on paths, wanderers; cliffs, water, fire, wind knock-down; directors' pace | L | done (inhabitants) |
+| IN5 | The viewer (?level=bestiary&life=viewer) and the perf test (scripts/perf/inhabitants.mjs) | M | done (inhabitants) |
+| IN6 | The mesh a thread a segment (one thread writes a creature's ~950 vertices now: 2.6 ms for 5 000 at full LOD on the iGPU); measure on the Pixel 9a first | M | open |
+| IN7 | Townsfolk on the structures track's baked paths (WalkPaths is the contract; standInPaths floats in the air without a building) | M | open (needs structures) |
+| IN8 | Bodies for the GPU agents' units (settlers, raiders, GameplayGM's foes) from the same rig and mesh, reading the units buffer as a source; then retire units.wgsl's three-cube figure | M | open |
+| IN9 | Creatures that leave the window: kept as group records and put back when it returns (now they walk back in from the edge) | M | open |
+| IN10 | Caves and overhangs: creatures stand on the column's top only; read the agents' nav surfaces (or a shared "surfaces" contract) to walk under roofs | M | open |
+| IN11 | One `groundAt` (solid top + loose layer, or a sleeping body's top) in common.wgsl for every kernel that copies it (flagged) | S | open |
+| IN12 | Abilities as the effects library's calls when it lands (now: fire ignite + the lava beam + a wind blast through AbilityHost), and a breath's visible flame | M | deferred |
+| IN13 | The user's look: the scale with zoom (24 px a cell, up to 4x). The user: "Keep the creature small for now I want to add larger creatures but I want to improve the generator even more and talk through increasing the quality and adding composable creatures via items and mounts." → true size again (?lifescale= kept as a knob); footprint and contrast kept. Generator quality, items and mounts wait for a design session | S | done (inhabitants) |
+
 ## Round 117 (2026-10-30, session 5, `structures`) — buildings, districts, cities (DECISIONS round 117)
 
 The user: "beautiful structures, sprawling fantastic cities"; megastructures as "various procedural building assets for
