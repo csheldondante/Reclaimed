@@ -10,7 +10,7 @@ on:
     # (round 112) only places and main deploy: the github-pages environment allows only them, and a feature
     # branch's run used to cancel places' (cancel-in-progress) and then be rejected. Every run builds all the
     # branches listed below from origin, so a feature branch is published by the next push to places.
-    branches: [main, places, merge120]
+    branches: [main, places, merge120, judge]
   workflow_dispatch:
 
 permissions:
@@ -36,7 +36,7 @@ jobs:
         run: |
           set -e
           mkdir -p site
-          for b in main ambient puzzle mayhem sandbox grids physics agents perf builder stream atlas places perfopt ceiling rivers flow dialog hybrid simcull collapse seawall runstory settlements lakes phonecam winmem fardetail farbake rockbody heroapi streamspeed runstream meshinst regionstore zmesh hitchrec bench gpugen bench2 tilecache simscale slidehitch ringwin tileahead frameprobe tilelatency pages watersurf agentspike tilephone riverfalls playground watershed simtiers tileparity physfix playwater noiselab physfix2 tilefast waterscale noiselab2 tilefix meteorfix testspeed tilefix2 herosandbox tilefix3 panfinger tilesfirst framepace covercheck worldstore tilecal terrain flora structures inhabitants sound runplan play testkit noiselab2-r herosandbox-r runplay runsit solver merge120; do
+          for b in main ambient puzzle mayhem sandbox grids physics agents perf builder stream atlas places perfopt ceiling rivers flow dialog hybrid simcull collapse seawall runstory settlements lakes phonecam winmem fardetail farbake rockbody heroapi streamspeed runstream meshinst regionstore zmesh hitchrec bench gpugen bench2 tilecache simscale slidehitch ringwin tileahead frameprobe tilelatency pages watersurf agentspike tilephone riverfalls playground watershed simtiers tileparity physfix playwater noiselab physfix2 tilefast waterscale noiselab2 tilefix meteorfix testspeed tilefix2 herosandbox tilefix3 panfinger tilesfirst framepace covercheck worldstore tilecal terrain flora structures inhabitants sound runplan play testkit noiselab2-r herosandbox-r runplay runsit solver merge120 judge; do
             git rev-parse -q --verify "origin/$b" >/dev/null || continue
             git worktree add -f "../wt-$b" "origin/$b"
             (cd "../wt-$b" && npm ci && npm run build)

@@ -14408,3 +14408,89 @@ animals, animals-close; tilegate/). Seen while looking, already on places: a dar
 spawn's wide zoom (cmp-wide-5291.png, places' build) — M120-2; tall dark spires near the tilegate spot are in the
 old baselines too; the stretched triangles in the free camera at terrain's fall spot are on places' build as well (M120-4). The animals only come with `?life=1` (not in the default world) — M120-3, the user's call.
 
+
+## 2026-10-31 — round 120 (`judge`): judge B, the method of sections on the GPU, side by side with judge A
+
+**Why.** The user (round 120): "How does the current algorithm account for the torque at each point? I'm thinking what
+if you average unsupported column mass to get a center of mass first. Then you flood fill in from the supports and for
+each step compute total support each point can provide to that center of mass … Is it parallelizable?" and "Can we
+treat this as an experiment and test each approach side by side? Performance batteries and feel tests so I can see what
+is improved vs the cost?" Judge A (fracture.ts analyseRock) hands load in from the far end with no lever arm: a
+joint holds strength × min(BEND h², SHEAR h), so a cantilever's moment isn't modelled (the solver agent's shape tests:
+a 3-thick stone shelf holds at reach 16, SV2; an arch's halves without their keystone hold, SV1).
+
+**What.** One interface (game/judge.ts `RockJudge`: the columns and the seeds in, a `Fracture` out; `JUDGES` { runs,
+sections } for a lab panel; `?judge=`), Integrity awaiting whichever is picked. Judge B in src/shaders/judge.wgsl
+(ARCHITECTURE "The collapse judges" has the kernels): the runs as nodes, a flood from what holds, then for every
+distance level from the far end in the component of everything beyond and its section — shear, and moment (weight ×
+lever to the centre of mass beyond) against tensile × the section modulus of its faces projected across the lever.
+Every section is checked, not only the root; a failed one frees what's beyond it (a reachability flood that doesn't
+cross it, then union-find for the pieces). Arches and domes: a section whose faces' normals cancel is held from
+opposite sides — not bent; its piece is judged by a thrust line (Heyman's safe theorem as a discrete test: a parabola
+from the springings fitting inside every run, the least thrust on the crown within crushing). A piece that held is
+then weighed on the standing columns under it (the neck: tipping past the hull, the far side's pull, crushing).
+
+**Sums: one pass a level, not a log-depth tree.** The sections nest (everything ≥ k out is a union of what's ≥ k + 1
+out and the level's runs), so a union-find grown a level at a time carries each component's mass and first moments
+from the level before — each run added once, O(runs) work in all, depth = the piece's reach. A log-depth tree sum
+needs a tree: a spanning forest makes subtree sums cheap by pointer jumping, but a level's components still need the
+merge tree, and a run's load split over one parent (not its whole cross-section) is what broke a slab's edge row in
+round 92's first try. Sections are summed across the whole component (a slab's width), as A's round-92 fix.
+
+**The stone estimate (a cell a metre).** Intact limestone or sandstone takes ~4 MPa in tension; rock weighs 2600 kg/m³
+× 9.8 = 25.5 kN/m³, so σ' = 4e6 / 25 480 ≈ 157 metres of rock. A shelf t thick holds a reach L while t·L²/2 ≤ σ'·t²/6:
+L ≤ √(σ't/3) — 7.2 m at 1 thick, 10.2 at 2, 12.5 at 3, 14.5 at 4 (the solver agent's rough "12–14" for 3). Masses
+count a column as the hex prism it is (√3/2 m² across): without it the 3-thick shelf fell at 12 (moment 15 % high).
+
+**Tests** (test/gpu/judge-shapes.test.ts, Node on Dawn; both judges on every shape, B asserted):
+
+| shape | A (runs) freed | B (sections) freed | B expected |
+|---|---|---|---|
+| arch | 0 | 0 | stands (held from both legs; a parabola 3 deep fits its 9 span) |
+| arch, one foot cut | 189 (tips) | 189 (tips) | the leg and span fall |
+| arch, keystone cut | 0 | 0 | stands as two corbels (SV1: see below) |
+| dome; crown hole | 0; 0 | 0; 0 | stands (thrust line fits; a compression ring) |
+| dome, base ring cut | 782 | 782 | falls (held by nothing) |
+| shelf 1 thick: reach 6 / 8 | 60 / 80 | 0 / 80 | limit 7.2 |
+| shelf 2 thick: reach 8 / 12 | 0 / 240 | 0 / 240 | limit 10.2 |
+| shelf 3 thick: reach 12 / 16 | 0 / 0 | 0 / 480 | limit 12.5 (SV2) |
+| shelf 4 thick: reach 12 / 16 | 0 / 0 | 0 / 640 | limit 14.5 |
+| mid-span neck (6 thick ×6, 1 thick, 3 thick ×5) | 160 | 160 | breaks at the neck: what's beyond falls, the root stays |
+| spire; undercut | 0; 126 (tips) | 0; 126 (tips) | tips over the cut side |
+
+(the full table, ms included: data/perf/judge/shapes.md.) **SV1 is left to the user**: the brief asks the halves to
+fall once the keystone goes. B judges the stone as one bonded piece, and each half is then a corbel 3 thick reaching 3
+— its root moment 3·3²/2 = 13.5 a metre of width against σ'·3²/6 ≈ 235: it holds 17×, as natural arches leave their
+stubs standing (Wall Arch, 2008). Only masonry — voussoirs with no tension, Heyman's own assumption — drops them; to do
+that B would need to know a span was an arch before it was cut (a mark kept from an earlier judging), or to take
+tension away from every piece that meets. The test records "stands" with the reason (BACKLOG SV1, asked).
+
+**Perf** (test/gpu/judge-perf.test.ts, JUDGE_PERF=1; the desktop's Intel Xe-LPG iGPU, D3D12, Dawn in Node; the GPU
+shared with other agents' browsers — their load moved B's numbers 2–5× between runs, so the least of 7 is the
+uncontended estimate). A = the window's readback + analyseRock's CPU ms; B = its GPU ms by timestamp queries (its wall
+ms adds the verdict's mapAsync, ~4–6 ms in Node).
+
+| scene | A ms (readback + CPU) | B GPU ms, first build | B GPU ms, now (least of 7: node-phases.json for the dome, shelf, cliff and 200 arms; the battery's gpuMinMs for the rest) |
+|---|---|---|---|
+| arch, one foot cut | 4.8 (3.2 + 1.6) | 1.4 | 0.9 |
+| dome | 6.5 (2.4 + 4.1) | 3.3 | 2.2 |
+| shelf 3 × 16 | 6.2 (3.7 + 2.5) | 2.4 | 1.6 |
+| mid-span neck | 6.7 (5.4 + 1.3) | 2.6 | 1.6 |
+| spire undercut | 1.5 (1.4 + 0.1) | 0.5 | 0.7 |
+| mesa 40 × 40 × 30, notch 14 deep (holds in both) | 7.7 (2.7 + 5.0) | 8.2 | 4.0 |
+| cliff 120 long, lip 4 × 20 (9600 cells fall) | 44.0 (3.6 + 40.4) | 26.9 | 5.2 |
+| 10 / 50 / 200 arms at once | 2.7 / 6.3 / 23.0 | 1.8 / 4.6 / 26.7 | 2.4 / 3.5 / 5.0 |
+
+What took B's first build to 27 ms, and what each fix bought (the kernel stopped before each phase,
+data/perf/judge/node-phases.json): float sums by compare-and-swap on one root's words, every run of a front contending
+(→ a thread's sums in registers, then a workgroup slot a root, one add a root to storage); every node read through
+atomics (→ the nodes' own numbers in a plain buffer, N); the flood and the release as Bellman-Ford sweeps over every
+run (→ frontier by frontier, each run once: the cliff's flood 2.8 → 0.6 ms); each run's faces re-read from its
+neighbours in two phases a level (→ a parallel `faces` kernel sums them once); the neck one thread a piece looping its
+legs 26 times (→ four parallel passes: the dome's neck 2.0 → 0.3 ms). What's left is latency: ~0.1 ms a distance level
+in one workgroup (a few dependent memory reads a run a phase; barriers measured at ~0.6 µs each, not the cost) —
+BACKLOG JB2. B costs no CPU (its verdict is parsed in ~0.1 ms) and reads back only the verdict (32 KB with the records
+of what falls) where A reads the window's chunks (130–520 K words here) every pass.
+
+**Not done here**: the browser battery on the atlas and the phone proxy (below, once main hands over the browser); the
+solver lab's panel listing JUDGES (the solver agent's side, JB7); B's open edges JB3–JB6, JB9.
