@@ -54,6 +54,7 @@ tests work and do quick smoke tests to find failures early." docs/TESTING.md.
 | STR34 | More architectural styles (today hearth, bastion, terrace) and more regular grids | M | next (designed round 120) |
 | STR35 | Architecture from tech progression (round 85 recipes and civilisation profiles): skyscrapers from higher tech, ruins from fallen ones, varied architecture; a hive bug city as a non-human civilisation | L | next |
 | STR36 | Specialised settlements: mining, farming, ports, lumber, trading (with STR30's purposes and stories) | L | next (designed round 120) |
+| WD1 | The same seed must make the same world on every GPU (found by runsit, round 120): the atlas's macro ground is read back from the GPU and rivers and settlements are planned on it, so another GPU can make other towns from one seed - a GM story, a save or a shared run then names places that aren't there. Make the planning inputs bit-exact across GPUs (integer or fixed-point where it decides, or plan on the CPU from the seed), with a cross-adapter test (Dawn D3D12 vs SwiftShader) | M | open |
 | FLO21 | Birch cost on the phone: the user's result good — done (flora 18c3bdb, unmerged) | S | done |
 
 ## Round 118 (2026-10-30, session 5, `places`) — found while reviewing the tracks
