@@ -1,35 +1,35 @@
 {
   "at": "13728,4768",
-  "when": "2026-10-30T20:31:58.114Z",
+  "when": "2026-10-31T05:11:26.532Z",
   "adapter": "intel / xe-lpg",
   "rows": [
     {
       "flora": "1",
       "zoom": 14,
       "wood": 256,
-      "fps": 101.8,
+      "fps": 101.6,
       "p50": 9.9,
-      "p95": 10.9,
-      "gpu": 12.16,
-      "draw": 4.14,
-      "gbuffer": 0.18,
-      "shadow": 0.46,
-      "renderprep": 0.82,
+      "p95": 11,
+      "gpu": 6.63,
+      "draw": 2.03,
+      "gbuffer": 0.09,
+      "shadow": 0.23,
+      "renderprep": 0.47,
       "passes": {
-        "draw": 4.14,
-        "renderprep": 0.82,
-        "renderfields": 0.7,
-        "coarse-depth": 0.47,
-        "shadow": 0.46,
-        "surface": 0.41,
-        "fieldmesh-hash": 0.33,
-        "coarse-flux": 0.26,
-        "gbuffer": 0.18,
-        "watersurf": 0.16,
-        "particles-emit": 0.09,
-        "sway": 0.09,
-        "particles-update": 0.08,
-        "water-flux": 0.05
+        "draw": 2.03,
+        "renderprep": 0.47,
+        "renderfields": 0.32,
+        "surface": 0.26,
+        "coarse-depth": 0.24,
+        "shadow": 0.23,
+        "coarse-flux": 0.13,
+        "fieldmesh-hash": 0.1,
+        "gbuffer": 0.09,
+        "watersurf": 0.08,
+        "sway": 0.05,
+        "particles-emit": 0.05,
+        "particles-update": 0.05,
+        "water-flux": 0.03
       },
       "plants": {
         "instances": 1329,
@@ -134,37 +134,37 @@
       "flora": "1",
       "zoom": 5,
       "wood": 256,
-      "fps": 203.7,
-      "p50": 0.1,
-      "p95": 10.7,
-      "gpu": 11.12,
-      "draw": 4.26,
-      "gbuffer": 0.29,
-      "shadow": 0.35,
-      "renderprep": 0.82,
+      "fps": 202.8,
+      "p50": 0.2,
+      "p95": 11,
+      "gpu": 15.17,
+      "draw": 5.53,
+      "gbuffer": 0.38,
+      "shadow": 0.4,
+      "renderprep": 1.02,
       "passes": {
-        "draw": 4.26,
-        "renderprep": 0.82,
-        "renderfields": 0.53,
-        "coarse-depth": 0.39,
-        "shadow": 0.35,
-        "surface": 0.32,
-        "gbuffer": 0.29,
-        "fieldmesh-hash": 0.28,
-        "coarse-flux": 0.2,
-        "watersurf": 0.15,
-        "particles-update": 0.07,
-        "particles-emit": 0.07,
-        "sway": 0.07,
-        "water-flux": 0.04
+        "draw": 5.53,
+        "renderprep": 1.02,
+        "renderfields": 0.89,
+        "surface": 0.54,
+        "coarse-depth": 0.48,
+        "shadow": 0.4,
+        "gbuffer": 0.38,
+        "coarse-flux": 0.24,
+        "fieldmesh-hash": 0.21,
+        "watersurf": 0.2,
+        "sway": 0.11,
+        "particles-emit": 0.11,
+        "particles-update": 0.1,
+        "water-flux": 0.06
       },
       "plants": {
-        "instances": 709,
-        "tris": 16856,
+        "instances": 719,
+        "tris": 17096,
         "by": {
           "oak-0-l2": [
-            8,
-            192
+            9,
+            216
           ],
           "oak-1-l2": [
             10,
@@ -191,286 +191,20 @@
             408
           ],
           "birch-1-l2": [
-            12,
-            288
+            13,
+            312
           ],
           "birch-2-l2": [
             19,
             456
           ],
           "shrub-0-l2": [
-            319,
-            7656
+            322,
+            7728
           ],
           "shrub-1-l2": [
-            273,
-            6552
-          ]
-        }
-      }
-    },
-    {
-      "flora": "0",
-      "zoom": 14,
-      "wood": 256,
-      "fps": 101.7,
-      "p50": 9.9,
-      "p95": 10.9,
-      "gpu": 12.45,
-      "draw": 4.01,
-      "gbuffer": 0.2,
-      "shadow": 0.69,
-      "renderprep": 0.72,
-      "passes": {
-        "draw": 4.01,
-        "renderfields": 0.74,
-        "renderprep": 0.72,
-        "shadow": 0.69,
-        "coarse-depth": 0.52,
-        "surface": 0.43,
-        "fieldmesh-hash": 0.34,
-        "coarse-flux": 0.29,
-        "gbuffer": 0.2,
-        "watersurf": 0.17,
-        "particles-emit": 0.1,
-        "sway": 0.09,
-        "particles-update": 0.09,
-        "water-flux": 0.05
-      },
-      "plants": null
-    },
-    {
-      "flora": "0",
-      "zoom": 5,
-      "wood": 256,
-      "fps": 203.9,
-      "p50": 0.1,
-      "p95": 10.7,
-      "gpu": 11.5,
-      "draw": 4.57,
-      "gbuffer": 0.29,
-      "shadow": 0.47,
-      "renderprep": 0.7,
-      "passes": {
-        "draw": 4.57,
-        "renderprep": 0.7,
-        "renderfields": 0.53,
-        "shadow": 0.47,
-        "coarse-depth": 0.39,
-        "surface": 0.33,
-        "gbuffer": 0.29,
-        "fieldmesh-hash": 0.28,
-        "coarse-flux": 0.19,
-        "watersurf": 0.15,
-        "particles-emit": 0.07,
-        "particles-update": 0.07,
-        "sway": 0.07,
-        "water-flux": 0.04
-      },
-      "plants": null
-    },
-    {
-      "flora": "1",
-      "zoom": 14,
-      "wood": 256,
-      "fps": 101.1,
-      "p50": 9.9,
-      "p95": 10.9,
-      "gpu": 11.18,
-      "draw": 3.87,
-      "gbuffer": 0.17,
-      "shadow": 0.43,
-      "renderprep": 0.76,
-      "passes": {
-        "draw": 3.87,
-        "renderprep": 0.76,
-        "renderfields": 0.61,
-        "coarse-depth": 0.44,
-        "shadow": 0.43,
-        "surface": 0.36,
-        "fieldmesh-hash": 0.31,
-        "coarse-flux": 0.23,
-        "gbuffer": 0.17,
-        "watersurf": 0.15,
-        "particles-emit": 0.09,
-        "sway": 0.08,
-        "particles-update": 0.08,
-        "water-flux": 0.05
-      },
-      "plants": {
-        "instances": 1327,
-        "tris": 135104,
-        "by": {
-          "oak-1-l1": [
-            1,
-            272
-          ],
-          "oak-2-l1": [
-            1,
-            292
-          ],
-          "oak-0-l2": [
-            5,
-            120
-          ],
-          "oak-1-l2": [
-            4,
-            96
-          ],
-          "oak-2-l2": [
-            5,
-            120
-          ],
-          "pine-0-l1": [
-            2,
-            2040
-          ],
-          "pine-1-l1": [
-            8,
-            8928
-          ],
-          "pine-2-l1": [
-            2,
-            2152
-          ],
-          "pine-0-l2": [
-            6,
-            120
-          ],
-          "pine-1-l2": [
-            6,
-            120
-          ],
-          "pine-2-l2": [
-            7,
-            140
-          ],
-          "birch-0-l1": [
-            25,
-            28200
-          ],
-          "birch-1-l1": [
-            19,
-            19228
-          ],
-          "birch-2-l1": [
-            24,
-            8928
-          ],
-          "shrub-0-l2": [
-            185,
-            4440
-          ],
-          "shrub-1-l2": [
-            154,
-            3696
-          ],
-          "tallgrass-0": [
-            212,
-            10176
-          ],
-          "tallgrass-1": [
-            217,
-            10416
-          ],
-          "tallgrass-2": [
-            215,
-            10320
-          ],
-          "flower-0": [
-            74,
-            3404
-          ],
-          "flower-1": [
-            86,
-            3956
-          ],
-          "fern-0": [
-            35,
-            9100
-          ],
-          "fern-1": [
-            34,
-            8840
-          ]
-        }
-      }
-    },
-    {
-      "flora": "1",
-      "zoom": 5,
-      "wood": 256,
-      "fps": 202,
-      "p50": 0.1,
-      "p95": 10.8,
-      "gpu": 11.65,
-      "draw": 4.44,
-      "gbuffer": 0.3,
-      "shadow": 0.37,
-      "renderprep": 0.85,
-      "passes": {
-        "draw": 4.44,
-        "renderprep": 0.85,
-        "renderfields": 0.58,
-        "coarse-depth": 0.39,
-        "shadow": 0.37,
-        "surface": 0.34,
-        "gbuffer": 0.3,
-        "fieldmesh-hash": 0.28,
-        "coarse-flux": 0.2,
-        "watersurf": 0.16,
-        "particles-emit": 0.08,
-        "sway": 0.07,
-        "particles-update": 0.07,
-        "water-flux": 0.05
-      },
-      "plants": {
-        "instances": 709,
-        "tris": 16856,
-        "by": {
-          "oak-0-l2": [
-            8,
-            192
-          ],
-          "oak-1-l2": [
-            10,
-            240
-          ],
-          "oak-2-l2": [
-            11,
-            264
-          ],
-          "pine-0-l2": [
-            8,
-            160
-          ],
-          "pine-1-l2": [
-            15,
-            300
-          ],
-          "pine-2-l2": [
-            17,
-            340
-          ],
-          "birch-0-l2": [
-            17,
-            408
-          ],
-          "birch-1-l2": [
-            12,
-            288
-          ],
-          "birch-2-l2": [
-            19,
-            456
-          ],
-          "shrub-0-l2": [
-            319,
-            7656
-          ],
-          "shrub-1-l2": [
-            273,
-            6552
+            278,
+            6672
           ]
         }
       }
@@ -482,25 +216,25 @@
       "fps": 101.3,
       "p50": 9.9,
       "p95": 10.9,
-      "gpu": 12.04,
-      "draw": 3.9,
+      "gpu": 12.39,
+      "draw": 3.98,
       "gbuffer": 0.19,
       "shadow": 0.67,
-      "renderprep": 0.7,
+      "renderprep": 0.71,
       "passes": {
-        "draw": 3.9,
-        "renderprep": 0.7,
-        "renderfields": 0.69,
+        "draw": 3.98,
+        "renderfields": 0.71,
+        "renderprep": 0.71,
         "shadow": 0.67,
-        "coarse-depth": 0.49,
-        "surface": 0.4,
-        "fieldmesh-hash": 0.33,
-        "coarse-flux": 0.26,
+        "coarse-depth": 0.51,
+        "surface": 0.43,
+        "coarse-flux": 0.24,
+        "fieldmesh-hash": 0.22,
         "gbuffer": 0.19,
         "watersurf": 0.17,
         "particles-emit": 0.1,
+        "particles-update": 0.1,
         "sway": 0.09,
-        "particles-update": 0.08,
         "water-flux": 0.05
       },
       "plants": null
@@ -509,28 +243,28 @@
       "flora": "0",
       "zoom": 5,
       "wood": 256,
-      "fps": 202.9,
-      "p50": 0.1,
+      "fps": 203.6,
+      "p50": 0.2,
       "p95": 10.8,
-      "gpu": 11.48,
-      "draw": 4.57,
-      "gbuffer": 0.29,
-      "shadow": 0.48,
-      "renderprep": 0.7,
+      "gpu": 12.3,
+      "draw": 4.9,
+      "gbuffer": 0.3,
+      "shadow": 0.45,
+      "renderprep": 0.71,
       "passes": {
-        "draw": 4.57,
-        "renderprep": 0.7,
-        "renderfields": 0.55,
-        "shadow": 0.48,
-        "coarse-depth": 0.4,
-        "surface": 0.33,
-        "gbuffer": 0.29,
-        "fieldmesh-hash": 0.28,
+        "draw": 4.9,
+        "renderprep": 0.71,
+        "renderfields": 0.61,
+        "shadow": 0.45,
+        "coarse-depth": 0.39,
+        "surface": 0.37,
+        "gbuffer": 0.3,
         "coarse-flux": 0.19,
-        "watersurf": 0.16,
-        "particles-emit": 0.07,
-        "particles-update": 0.07,
-        "sway": 0.07,
+        "fieldmesh-hash": 0.19,
+        "watersurf": 0.17,
+        "particles-update": 0.09,
+        "particles-emit": 0.08,
+        "sway": 0.08,
         "water-flux": 0.05
       },
       "plants": null

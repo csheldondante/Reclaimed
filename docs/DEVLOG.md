@@ -14385,4 +14385,26 @@ it. phys.wgsl's `groundAt(c, z)` (the layers under a body's z) and renderprep's 
 hidden faces) are different questions and stay. Same expression, same results: npm test passes unchanged.
 
 Tests after each merge: terrain 111, + structures 152, + inhabitants 185, + flora 224 passed (1 expected fail, 2
-skipped). The gate's numbers follow below.
+skipped).
+
+The gate (desktop iGPU, intel-xe-lpg):
+- `npm run smoke`: atlas ready in 43 s, no fatal, sim ticking.
+- tilegate (desktop 1600x900, phone 412x915 q=low, atlas/run/w384): every parked view 0 out of detail and 0 background
+  (21 of 21); slow pans (20 c/s) all ok. The goldens changed 5-54% — rivers off the texel grid with banks, the towns
+  on the structures contract and the flora library's trees: each diff looked at, no void, flat fill or band; baselines
+  rewritten (--update). The fast pans (160 c/s): desktop z14/z8/z5 fail on places too (places 43.9/19.0/4.6 % undrawn,
+  merged 52.2/21.6/9.2 %); phone z8/z5 newly fail by 0.14-0.5 % of the screen (r225,215 and neighbours: tiles past the
+  window still `queued`/`making` when they come into view) — bisected to the terrain merge alone (e508caa), places
+  passes. The terrain's heavier compose makes the tiles arrive later on a fast pan; main accepted it for now (BACKLOG
+  M120-1).
+- driveprofile (q=low 412x915, alternated A/B, two runs each): places p50 9.8/9.9, p95 12.7/13.3, GPU 8.1/11.1 ms;
+  merged p50 9.9/9.8, p95 11.4/12.1, GPU 7.1/9.7 ms — within the iGPU's clock noise, no cost visible.
+- perf/flora (the birch wood, 13728,4768): flora z14 GPU 6.6 ms, z5 15.2; boxes (?flora=0) z14 12.4, z5 12.3 (the
+  clocks drift between the variants; FL20's alternated A/B is the better judge).
+- perf/structcity (s55): GPU 12.6 ms drawn vs 12.3 skipped at the start's zoom (world pass 3.0 vs 2.95); zoom x3
+  11.2 vs 12.9 — noise-level.
+Shots: C:/Projects/shots88/merge120/ (spawn, spawn-wide, river-fall, river-wide, city-s55, village-s52, birches,
+animals, animals-close; tilegate/). Seen while looking, already on places: a dark flat quad over the sand at the
+spawn's wide zoom (cmp-wide-5291.png, places' build) — M120-2; tall dark spires near the tilegate spot are in the
+old baselines too; the stretched triangles in the free camera at terrain's fall spot are on places' build as well (M120-4). The animals only come with `?life=1` (not in the default world) — M120-3, the user's call.
+

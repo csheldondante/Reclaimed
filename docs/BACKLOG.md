@@ -12,6 +12,15 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 120 (2026-10-31, session 5, `merge120`) — rivers, cities, animals and trees merged (DECISIONS round 120)
+
+| id | item | size | status |
+|---|---|---|---|
+| M120-1 | The phone's fast pan (tilegate 160 c/s, z8/z5) shows 0.14-0.5 % of the screen undrawn: tiles past the window still queued or making as they come into view (r225,215 and neighbours). Places passes; bisected to the terrain merge (its heavier compose: caves, gorges, the sea rule). Main accepted it for now (round 120); measured: z8 0.16 % (13 of 151 frames), z5 0.24 % (46 of 152; rerun 0.14-0.52 %), desktop's fast pans fail on places too (places 43.9/19.0/4.6 %, merged 52.2/21.6/9.2 % at z14/z8/z5). Next: measure a tile's bake before/after terrain, then the bake's cost or the look-ahead | M | open (accepted) |
+| M120-2 | A dark flat quad over the sand at the spawn's wide zoom (zoom 1.6, bottom right; shots88/merge120/cmp-wide-5291.png) — already on places, not from the merge (= CAL6) | S | open |
+| M120-4 | The free camera at terrain's fall spot (scripts/terrain/shots.mjs, fall 6108,14009): huge stretched blue and beige triangles over the top-left third — far geometry or a skirt with a vertex at a wrong height. On places' build too (shots88/merge120/river-places-fall.png) and on the terrain merge alone (river-terrain-fall.png); not from the merge | S | open |
+| M120-3 | The animals come only with `?life=1`; the user asked for them merged — whether the wilderness is on in the default world is the user's call | S | open |
+
 ## Round 117 (2026-10-30, session 5, `flora`) — plants: L-system trees, CA roots, species by fields, soft barriers (DECISIONS round 117)
 
 The user: "For plants, L systems are great for branches and then cellular autonoma for roots. I am ok with stylized or low
