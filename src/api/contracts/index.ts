@@ -14,3 +14,4 @@ export * from './hero';
 export * from './simtiers';
 export * from './terrain';
 export * from './inhabitants';
+export * from './flora';

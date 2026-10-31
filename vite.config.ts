@@ -16,7 +16,7 @@ function contentHash(): string {
     }
   };
   for (const d of ['src', 'data']) if (fs.existsSync(path.resolve(import.meta.dirname, d))) walk(path.resolve(import.meta.dirname, d));
-  for (const f of ['index.html', 'contract.html', 'structures.html', 'package.json', 'vite.config.ts']) if (fs.existsSync(path.resolve(import.meta.dirname, f))) h.update(fs.readFileSync(path.resolve(import.meta.dirname, f)));
+  for (const f of ['index.html', 'contract.html', 'structures.html', 'flora.html', 'package.json', 'vite.config.ts']) if (fs.existsSync(path.resolve(import.meta.dirname, f))) h.update(fs.readFileSync(path.resolve(import.meta.dirname, f)));
   return h.digest('hex').slice(0, 16);
 }
 
@@ -72,8 +72,9 @@ export default defineConfig({
   // (round 102, bench v3: the build's time on the benchmark's start page — src/perf/bench.ts BUILD)
   define: { __BENCH_BUILD__: JSON.stringify(new Date().toISOString().slice(0, 16).replace('T', ' ')), __BUILD_HASH__: JSON.stringify(contentHash()), __GEN_HASH__: JSON.stringify(genHash(import.meta.dirname)) },
   server: { port: 5173, strictPort: true },
+  // (round 117, flora: flora.html — the flora viewer page, src/flora/viewer.ts)
   // (round 112, testspeed: contract.html — the contract tier's page, src/test/contract.ts: a system on a tiny world)
   // (round 117, structures: structures.html — the structures track's viewer, src/structures/viewer/)
-  build: { rolldownOptions: { input: { main: path.resolve(import.meta.dirname, 'index.html'), contract: path.resolve(import.meta.dirname, 'contract.html'), structures: path.resolve(import.meta.dirname, 'structures.html') } } },
+  build: { rolldownOptions: { input: { main: path.resolve(import.meta.dirname, 'index.html'), contract: path.resolve(import.meta.dirname, 'contract.html'), structures: path.resolve(import.meta.dirname, 'structures.html'), flora: path.resolve(import.meta.dirname, 'flora.html') } } },
   plugins: [hitchSink()],
 });

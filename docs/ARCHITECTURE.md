@@ -2611,3 +2611,73 @@ want to be able to flood a basin and bury things".
 - Bindings in inhabitants.wgsl: 40 params, 41 species table, 42 agents, 43 pose, 44 bins, 45 orders (+ paths), 46 group
   sums, 47 verts, 48 draw args, 49 surface, 50 fire, 51 water; 15, 17, 21 common.wgsl's wind, drift and body textures.
   Layouts mirrored in src/inhabitants/pack.ts (species), paths.ts (paths) and system.ts (agents, params).
+
+## Flora (round 117, branch `flora`; src/flora, contract src/api/contracts/flora.ts)
+
+The user (DECISIONS round 117): "For plants, L systems are great for branches and then cellular autonoma for roots. I am
+ok with stylized or low fidelity but I just want it to be readable and pretty and look integrated with the world. Plants
+growing on fields and being instances that way into other geometry is key." The showcase: "Waking through lead covered
+forest floor with silver birches towering above and leaves falling and blowing in the wind would be breathtaking ...
+Make tall grass that blows in the wind. Make leaves or dust." And (part 3): "plants making a barrier (even a soft barrier
+like slowing you down or requiring you to cut through) is a good thing".
+
+**Representations, one per use (and why).**
+- A species is parameters (src/flora/species.ts): an L-system and a turtle (trunk and branches), a leaf look, a root
+  automaton, colours, a niche over the world's fields, a barrier. Why: one generator gives many plants. Variants are
+  seeds and a new species is one entry. The viewer's sliders are those parameters.
+- A plant's look is a low-poly, faceted mesh (src/flora/mesh.ts, generate.ts): 4 floats a vertex, `w = part + sway`
+  (part 3 wood, 4 leaf, 5 blade, 6 petal, 7 root, 8 accent; sway 0..0.99 what the wind moves). Why packed: the
+  instanced renderer's vertex format and buffers stay as they were (render/meshinst.ts, MI3).
+- Roots are cells (roots.ts, a CA on a small grid: grow where exactly one neighbour is root, by soil, down-bias). Why
+  cells: terrain, erosion and excavation speak cells. Only the main surface roots become wood, chosen and thickened by
+  the pipe model (a root as thick as what it feeds).
+- The game's library (library.ts GAME_LIBRARY): each drawn species × a few variants, made once at start (~70 ms). These
+  are the meshinst kinds, one indexed indirect draw a kind. Why a fixed library and not a mesh per plant: one draw for
+  thousands of plants is what the phone affords.
+- Where plants stand is not stored. It is the succession field (`veg`) plus hashes: vegplan.wgsl vegPlan (trees, their
+  species and heights) and vegprep.wgsl floraSmall (thickets, tall grass, flowers, ferns). The CPU ports are
+  api/plants.ts planTree and flora/placement.ts standsAt, identical (test/gpu/flora-plan.test.ts runs vegPlan on Dawn
+  against planTree).
+- Birch woods: vegplan.wgsl birchWood, low-frequency value noise of the world cell (the window's origin added). This
+  stands in for a biome field until one exists; it is the one place to swap.
+- Passability is a number per region computed from the same plan (flora/passability.ts), never a second copy of the
+  plants.
+
+**The draw.**
+- vegprep.wgsl writes the instances: a tree as its species' variant by its column's hash (FL_* ranges from
+  library.wgsl()), scaled by the wood's age; floraSmall's plants jittered in the cell. Plants drawn as meshes take no
+  room in the box lists.
+- meshinst.wgsl draws every kind. Parts ≥ 3 go through floralook.wgsl: `floraSway` (the column's lean from sway.wgsl ×
+  the species' stiffness, a faster flutter on leaves and blades, a downwind wave across the meadow) and `floraLook`
+  (colours from FLORA_COL, birch lenticels, the season's turn and bare winter crowns, grass through seasonGrass). The
+  viewer page draws with the same two functions.
+- `?flora=0` is the old draw (boxes, or `?meshinst=1`'s four hand-made trees). Flora is on by default on this branch.
+- Falling leaves are particles.wgsl's K_LEAF, carried by the wind. Birches now let a few go all year (more in a wind,
+  many in the fall).
+
+**The contract** (`Flora`, on the world API: `sim.flora`; in the level `reclaimed.flora()`):
+- `library`: species(), mesh(id, seed), variants(id).
+- `placement`: fit(site) gives the species for a site's fields; plantsIn(rect) gives the trees and thickets standing
+  there, as the GPU draws them.
+- `passability`: density(rect, height) and passage(rect, caps) → {density, speed, mustCut, blocked, cost}. `FloraCaps`
+  {mass, speed, cuts, flies, height} stands in for the play track's controller capabilities.
+- The model: coverage = 1 − exp(−Σ fill·footprint·reach / area). A tree counts only its trunk (you walk under the
+  canopy); grass below the waist barely slows a tall walker. Past 0.55 coverage a controller cuts (a blade, cuttable
+  plants), breaks through (mass ≥ the stand's breakMass) or is blocked. A flyer ignores it.
+- Shrubland (succession 2.6–3.6) is the thicket. Under the woods only a fifth of the shrubs are drawn, so the forest
+  floor stays open.
+- `refresh()` re-reads the succession field (the CPU mirror).
+
+**The viewer** (flora.html, src/flora/viewer.ts + viewer.wgsl; its own small renderer).
+- Biome scenes (scene.ts) or one plant growing (the L-system re-made at fewer iterations as it grows).
+- Wind, season, growth and density sliders; drag to turn, wheel or pinch to zoom.
+- The ruin scene shows plants instanced onto other geometry: ivy on walls (the vine's plane mapped onto the face), moss
+  on stones.
+
+**Levels of detail** (round 119, the phone).
+- A tree kind exists at three levels (full, coarse, far) and a thicket at two, for the same variants: FL_<ID>, _L1,
+  _L2. vegprep picks one by the plant’s height on screen in render pixels: full from 150, coarse from 55; a thicket’s
+  far lump under 25.
+- The library is made for the tier’s render pixels a CSS pixel (FLORA_RPX; the renderer’s floraRpx).
+- A vertex’s w carries its kind (+16 × kind, baked by render/meshinst.ts), so the draw finds the kind in one step.
+- Phone bench: ?florabench=1 (src/flora/bench.ts).

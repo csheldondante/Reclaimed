@@ -178,6 +178,8 @@ async function main() {
   else if (params.get('skipmenu') === '1') await startLevel(params.get('level') ?? 'valley');
   else await startMenu();
   bootMark('level-ready');
+  // (round 119, flora: ?florabench=1 — the birch wood's phone bench, flora on then off: src/flora/bench.ts)
+  if (params.get('florabench') === '1') void import('./flora/bench').then((m) => m.floraBench(params));
   if (pageBench === 'run') void pageBenchRun();
   if (bench === 'level')
     void benchLevel({

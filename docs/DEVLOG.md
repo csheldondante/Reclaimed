@@ -14173,3 +14173,192 @@ docs/INHABITANTS.md. What changed and the reasons the measurements gave:
   contrast stay. Shots on the phone proxy (412x915 dpr 2.6): truesize-startzoom.png (the atlas's opening zoom: the herd
   is specks) and truesize-playzoom.png/.gif (zoom 16: legs, necks, heads read). The new files' line endings made LF
   (some had been written CRLF by a script; whole-file diffs on files that are all new on this branch).
+
+## 2026-10-30 — round 117 (`flora`): plants from parameters — L-system trees, CA roots, species by fields, soft barriers
+
+The user (DECISIONS round 117): "For plants, L systems are great for branches and then cellular autonoma for roots. I am
+ok with stylized or low fidelity but I just want it to be readable and pretty and look integrated with the world. Plants
+growing on fields and being instances that way into other geometry is key." And: "Waking through lead covered forest
+floor with silver birches towering above and leaves falling and blowing in the wind would be breathtaking ... Make tall
+grass that blows in the wind. Make leaves or dust." And (part 3): "plants making a barrier (even a soft barrier like
+slowing you down or requiring you to cut through) is a good thing". ARCHITECTURE "Flora"; BACKLOG FL1-FL19.
+
+**What was there.** vegplan.wgsl decides where trees stand (four species by a hash) and vegprep.wgsl draws them as
+boxes, or with `?meshinst=1` as four hand-made low-poly meshes (MI3, "keep?" unanswered). Grass tufts and flowers were
+quarter-cell boxes. Falling leaves were particles in the fall only. No L-systems, roots, tall grass, reeds or biome.
+
+**Built.**
+- src/flora, pure TS, unit-tested:
+  - a stochastic L-system and a 3D turtle with tropism (rng, lsystem.ts);
+  - a root cellular automaton (roots.ts: grow where exactly one neighbour is root, by soil, with a down-bias; the pipe
+    model picks and thickens the visible surface roots);
+  - a mesh builder (mesh.ts: faceted tubes, leaf clusters, birch's hanging leaf diamonds, conifer needle tufts,
+    two-sided blades);
+  - eleven species as parameters (species.ts);
+  - generate(id, seed, {growth});
+  - the game library (library.ts);
+  - placement (fit by niche, the CPU ports of what the GPU stands);
+  - passability (passability.ts);
+  - viewer scenes (scene.ts).
+- The game draws it, on by default on this branch (`?flora=0` for the old way):
+  - vegprep writes every tree as one of its species' library variants;
+  - meadows carry tall-grass clumps and wildflowers, the woodland floor ferns, shrubland its thickets;
+  - florafield.wgsl (new) puts reeds on banks by water depth and moisture;
+  - meshinst draws them all, through floralook.wgsl (sway and colour), which the viewer shares.
+- Birch woods: vegplan.wgsl birchWood is world-scale value noise standing in for a biome field. Birches tower at 11-17
+  cells and let a few leaves go all year (particles.wgsl).
+- The woodland floor reads as leaf litter in drifts: meshdraw.wgsl, a look only, so the tiles inherit it.
+- The contract src/api/contracts/flora.ts (FL1), on the world API. The viewer page flora.html (FL7). The perf test
+  scripts/perf/flora.mjs (FL8).
+
+**Why these choices.**
+- *Parameters, not meshes.* One generator, many plants. Variants are seeds, and a species is one entry.
+- *A fixed library of variants drawn by instancing,* not a mesh per plant. One indexed indirect draw a variant is what
+  the phone affords for thousands of plants. The library takes ~70 ms to make at start.
+- *Roots as cells.* That is what terrain, erosion and excavation speak (FL16 takes them into the world). Only the
+  pipe-model main roots become wood; the first cut drew every root cell and roots were 60 % of a birch's triangles.
+- *The packed vertex `w = part + sway`.* The instanced renderer's format and buffers stayed as they were.
+- *No stored plants.* Where plants stand is still the succession field plus hashes. The CPU's ports are now pure
+  functions tested against the GPU (test/gpu/flora-plan.test.ts runs vegPlan on Dawn against planTree for a 64² window
+  with an origin).
+- *A stand-in biome as noise.* No biome field exists yet (climate has temperature and moisture only). birchWood is the
+  one place to swap one in.
+- *Passability from the same plan.* What you can't walk through is what you see:
+  - coverage = 1 − exp(−Σ fill·footprint·reach / area);
+  - a tree blocks only its trunk (you walk under the canopy);
+  - shrubland (succession 2.6-3.6) is the thicket. Under the woods only a fifth of its shrubs are drawn, so the forest
+    floor is open: the first cut drew all of them and a wood was an impassable dark-green carpet.
+
+**Found and fixed on the way.**
+- api/plants.ts's CPU port of vegPlan hashed window columns without the window's origin, so in a streamed window its
+  trees (treeAt, fell, logs) were another window's (FL9).
+- In the atlas, the plants of a whole 1024² window were emitted every prep with no view cull: 33,780 flora instances and
+  3.3 M triangles at zoom 14, the shadow pass drawing them all again. Now:
+  - vegprep and florafield leave out plants whose box and shadow are off screen (floraput.wgsl floraSeen, the camera
+    bound at 31 as renderprep's PrepCam);
+  - grass, flowers and ferns thin out under 8 px a cell and are gone under 4.5 px (the ground's plant cover paints the
+    meadow there);
+  - only trees and thickets cast shadows.
+
+**Measured** (scripts/perf/flora.mjs, Intel Xe-LPG iGPU, the phone tier q=low 412x915 dpr 2.6, the densest wood near
+?at=13728,4768, every system in play; GPU ms a frame from the profiler; the GPU shared with other agents' checks, so
+±1 ms):
+
+| | zoom 14: flora instances / triangles | draw | shadow | GPU a frame | zoom 5: draw | GPU a frame |
+|---|---|---|---|---|---|---|
+| boxes (`?flora=0`) | — | 3.94 | 0.68 | 12.52 | 4.97 | 12.75 |
+| flora, no cull (first cut) | 33,780 / 3.3 M | 4.95 | 2.65 | 12.03 | 4.77 | 10.57 |
+| flora, culled + grass LOD + shadow kinds | 3,772 / 515 k | 5.58 | 0.61 | 13.34 | 5.26 | 12.21 |
+
+So the flora costs ~+0.5-1.6 ms of draw at the close zoom over the boxes, and about even at zoom 5. The shadow pass is
+back to the boxes' cost.
+
+**Viewer** (flora.html): biome scenes, or one plant growing (the L-system re-made at fewer iterations as it grows). The
+plants are generated in 7-100 ms a scene, 0.3-12 ms a plant. Triangles a plant:
+
+| birch | conifer | broadleaf | giant | tall-grass clump | fern | ivy | reeds |
+|---|---|---|---|---|---|---|---|
+| ~1.9-2.5 k | ~1.6 k | ~0.6 k | ~1.4 k | 72 | 260 | ~390 | ~140 |
+
+**Shared-system tweaks (for main to consolidate):**
+- vegplan.wgsl: birch heights and birch woods.
+- api/plants.ts: the origin, planTree, birchWood and vegCol.
+- vegprep.wgsl: the flora instances, floraSmall, the view cull, binding 31.
+- meshinst.wgsl: parts ≥ 3 go through floralook.
+- render/meshinst.ts: draw(…, only) for the shadow kinds.
+- renderer.ts:
+  - the library;
+  - the indirect buffer sized by kinds;
+  - florafield;
+  - the camera bound to vegprep.
+- particles.wgsl: birch leaves all year.
+- meshdraw.wgsl: the litter look.
+- api/world.ts: `flora`.
+- level.ts: `reclaimed.flora()`.
+- vite.config.ts: flora.html.
+- contracts/index.ts.
+
+**Conflations flagged** (the user's principles):
+- vegprep.wgsl both lays out box plants and writes flora instances, and is at the 8-storage-buffer limit. A flora kernel
+  of its own for all the library's plants (florafield's shape) would free it (FL10).
+- vegPlan's CPU port still exists twice (api/plants.ts planTree and flora/placement.ts standsAt for the small plants).
+  They are tested against the GPU for trees only.
+- MI3's question (meshes as the default for trees) is answered on this branch by doing it. Needs the user's yes.
+
+### Round 117 (`flora`), follow-up: readable on the phone tier
+
+Main, looking at the shots: the desktop birch wood (q=high) "is lovely". On the phone tier, though, the trunks and
+branches "break into dotted white dashes and the canopy is speckle; it reads as noise, not a forest". The cause is that
+the low tier renders at half scale (maxDpr 1 × renderScale 0.5): at zoom 14 a cell is 7 render pixels. A birch twig
+0.05 cells across is then a third of a pixel, and a grass blade 1.4 px.
+
+**Fixes.** The plants are now made for the pixels they'll get.
+- The renderer passes render px a CSS px (the tier's dpr cap × render scale) to the library, which builds its plants for
+  zoom 12 at that density (`generate(id, seed, {px})`):
+  - wood is at least ~1.7 px wide, and twigs under half of that are left out;
+  - leaf clusters are at least ~3 px and merged (fewer, bigger), so the crown's volume is about kept;
+  - grass gets fewer, wider blades (≥ 1.7 px).
+  - At desktop densities (px ≥ ~30) nothing changes (unit test).
+- Grass, flowers and ferns thin by render px a cell, not CSS px: sparse under 11, gone under 5. At the phone's zoom 14 a
+  full meadow of clumps read as static; the ground's plant cover paints it instead.
+- The leaf litter is drawn in half-cell flakes, not per-pixel speckle.
+- The thicket shrubs are lighter and 0.8 the size; the birch crowns are fuller (three leaf diamonds a site).
+- Reeds stand only on a bank: open water and dry land both within two cells, in water at most 0.3 deep, never under
+  the sea's level. The first cut stood them all over a shallow lake.
+
+Shots of the same spot (?at=13728,4768):
+- phone before and after: C:\Projects\shots88\flora\m7p-compare.png, m9-compare.png;
+- desktop: m8d-flora1-z14.png.
+
+The remaining speckle on the phone is the ground's own per-cell look at half scale, not the plants'.
+
+## 2026-10-30 — round 119 (`flora`): the birches' cost on the phone
+
+The user, verbatim (DECISIONS round 119): "I had some bad performance with the birches on mobile." Main: fix that
+first; target the birch wood within ~1 ms of the old boxes on the phone proxy, measured with the GPU otherwise idle, and
+a bench link the real phone can run.
+
+**What cost.** These are counts at the showcase (?at=13728,4768), zoom 14, on the phone tier, after round 117's cull and
+before this work:
+- birches were their full ~1.6-2.5 k-triangle meshes at 90 render pixels tall;
+- the thicket shrubs had no LOD: 600 of them were 128 k triangles at zoom 5;
+- every vertex of every plant looped over all ~45 kinds to find its kind (meshinst.wgsl miKind), on the phone's
+  vertex stage;
+- the birches let leaves go all year at 0.12.
+
+**Changed.**
+- Levels of detail by height on screen in render pixels:
+  - a tree is full from 150 px;
+  - coarse from 55 px: made for 2.2 px a cell, so the trunk and main limbs stay (a birch's white trunk is what makes it
+    read; the first coarse level, made for 1.5 px, lost it and the birches read as green blobs on the phone), twigs and
+    roots gone, leaves merged, ~120-550 triangles;
+  - far below that: ~20-30 triangles, a trunk and the crown's masses, from the same skeleton;
+  - a thicket under 25 px is its far lump.
+  - The library lays out the levels per variant (FL_<ID>_L1/L2), so a tree keeps its variant across levels.
+- The kind rides in the vertex's w (+16 × kind, baked by render/meshinst.ts), so finding it is one step, not a search.
+- Three variants a tree species (two for the giant): with three levels that is still ~40 kinds, a draw each. A flora
+  kind holds at most 4096 instances, not 8192: 11 MB, not 23. The view cull keeps on-screen counts far under that.
+- The birches' all-year leaf fall is halved (0.06).
+- florafield skips off-screen columns before its 5 × 5 bank search. A bank also needs six dry columns of the 25: a lone
+  dry line through held river water isn't one.
+
+**Measured.** scripts/perf/flora.mjs, Intel Xe-LPG iGPU, phone tier, the GPU held alone by the runner's timing lease.
+Flora and boxes were alternated twice (`--variants 1,0,1,0`), because single runs swung ±1-3 ms. GPU ms a frame:
+
+| | zoom 14 GPU | draw | shadow | renderprep | plant triangles | zoom 5 GPU | draw |
+|---|---|---|---|---|---|---|---|
+| boxes (`?flora=0`) | 12.45, 12.04 | 4.01, 3.90 | 0.69, 0.67 | 0.72, 0.70 | — | 11.50, 11.48 | 4.57, 4.57 |
+| flora (this) | 12.16, 11.18 | 4.14, 3.87 | 0.46, 0.43 | 0.82, 0.76 | 135 k | 11.12, 11.65 | 4.26, 4.44 |
+| flora (round 117, culled) | 13.34 | 5.58 | 0.61 | 0.78 | 515 k | 12.21 | 5.26 |
+
+The flora is now within noise of the boxes: draw ±0.2, the shadow 0.2 cheaper, renderprep ~0.1 dearer.
+
+**The phone's own check.** `?florabench=1` (src/flora/bench.ts), one link, about two minutes, works headless:
+- it parks at the woodiest block near the start;
+- it measures frame times (and the GPU's where the adapter times it) at zoom 14 and 8 with the flora;
+- it reloads with `?flora=0` and measures the same;
+- it shows both, tap to copy.
+
+/?skipmenu=1&level=atlas&tutorial=0&at=13728,4768&florabench=1
+
+Shots: C:\Projects\shots88\flora\m11-compare.png (phone before, after, and the lake at zoom 8).

@@ -21,6 +21,8 @@ import { Agents, type KindSpec } from '../agents/agents';
 import { installAgents } from '../agents/install';
 import { Fx } from './fx';
 import { Plants } from './plants';
+import { FloraWorld } from '../flora';
+import type { Flora } from './contracts/flora';
 import { Crew, type CrewDef } from '../agents/crew';
 import { Mirror } from './mirror';
 import { Terrain } from './terrain';
@@ -98,6 +100,8 @@ export interface Sim {
   readonly terrain?: Terrain;
   /** the plants and the trees on them (round 63; attachSim made it, the type didn't say so: round 83, dialog) */
   readonly plants?: Plants;
+  /** (round 117, flora) the flora contract (api/contracts/flora.ts): species, meshes, placement, passability */
+  readonly flora?: Flora;
   readonly water?: Water;
   readonly fire?: Fire;
   readonly wind?: Wind;
@@ -169,6 +173,7 @@ export function attachSim(core: WorldCore, mods: SimModules = ALL, warm?: Warmup
     core,
     terrain,
     plants,
+    flora: plants ? new FloraWorld({ dims: () => core.dims, origin: () => core.globals.origin ?? [0, 0], veg: (cx, cy) => plants.vegCol(cx, cy), refresh: () => mirror.refresh() }) : undefined,
     water: mods.water ? new Water(core, mirror) : undefined,
     fire: mods.fire ? new Fire(core, mirror) : undefined,
     wind: mods.wind ? new Wind(core, mirror) : undefined,
