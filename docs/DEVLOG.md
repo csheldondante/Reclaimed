@@ -14597,3 +14597,10 @@ of what falls) where A reads the window's chunks (130–520 K words here) every 
 
 **Not done here**: the browser battery on the atlas and the phone proxy (below, once main hands over the browser); the
 solver lab's panel listing JUDGES (the solver agent's side, JB7); B's open edges JB3–JB6, JB9.
+
+**The load walk on every thread; judge B merged** (round 120, later). The stiff bodies' walk (roots, the breadth-
+first walk, the sums back from the far ends, the hinge) ran on thread 0 — O(n²) on one thread, the metal station's
+5.2 ms. Now the walk goes a depth a round (a node joins at the depth of the first bonded neighbour already in), the
+sums a level at a time (each node gathers its children's), the bond checks and the hinge's subtree on every thread.
+The branch `judge` (the method of sections on the GPU, game/judge.ts JUDGES = runs | sections) is merged: the lab's
+judge picker lists them, compare walks every solver × judge, the battery takes --judges.
