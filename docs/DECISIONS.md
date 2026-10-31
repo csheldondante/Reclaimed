@@ -124,6 +124,10 @@ each was implemented.
   CPU ms, bodies, scaling 10/50/200, the phone proxy) and a correctness battery (arch, dome, overhangs, spire, pylon,
   wood tower, mesa, burial).
 
+- The user, verbatim, on judge B's 8-20 ms GPU per pass on the atlas: "Wait what is the cost there? I'm trying to understand that 8-20ms GPU time", "What is that step?" (a ring of hanging runs at one flood distance from what holds them; one pass each, ~0.1 ms mostly overhead; caves make 80-200 rings) and "Yes please implement options 1  and 2"
+  → judge B: (1) each level spread over many workgroups; (2) log-depth passes (pointer jumping) instead of one a level,
+  verdicts kept equal to the level-by-level oracle. Target about 1 ms on the atlas.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
