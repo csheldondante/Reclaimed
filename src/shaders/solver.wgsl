@@ -223,6 +223,14 @@ var<workgroup> wStiff: u32;
 var<workgroup> spar: array<u32, 64>;
 var<workgroup> sord: array<u32, 64>;
 var<workgroup> wRp: vec4<f32>;
+// (the load walk's: each node's depth from what holds it, roots found, a round's change, the worst yield and its bond)
+var<workgroup> sdep: array<u32, 64>;
+var<workgroup> wRoots: atomic<u32>;
+var<workgroup> wChanged2: atomic<u32>;
+var<workgroup> wWorst: atomic<u32>;
+var<workgroup> wWk: u32;
+var<workgroup> wAxis: vec3<f32>;
+var<workgroup> wHinge: u32;
 // (the workgroup's memory is 16 KB on a phone: the load flow's sums reuse arrays free by then — its corrections sc (the
 // soft regions' centres), its subtree forces pd (the points' asks, gathered already) and moments pdent (their dents,
 // taken at the first pass) — and the bind rests, hinge turns and point rests are read from the lanes)
@@ -312,69 +320,103 @@ fn massOf(l: u32) -> f32 { return select(1e6, 1.0 / sw[l], sw[l] > 0.0); }
 fn slopFor(cells: f32) -> f32 { return SU.b.z + min(SU.c.y, SU.b.w * pow(max(cells, 1.0), SU.c.x)); }
 
 /**
- * (thread 0, a stiff deformable's last pass of a substep) The loads through its bonds — the user (round 120): "Does it
- * also propagate forces to compute torque and shear forces?", "you propagate support in then weight back out". What
- * holds it (pinned nodes, nodes touching something) are the roots; a breadth-first walk over its bonds from them gives
- * each node the bond it hangs from. Back from the far ends, each node's subtree sums its forces (m Δ / h²: what the
- * fit had to do to hold it there) and their moments; at the bond to its parent that is a moment (bend), a shear and a
- * pull, over the section of what the node stands for (its cells along it: A = s², Z = s³ / 6). Past the material's
- * strength the bond snaps; past its yield the most overloaded bond is a plastic hinge: what hangs from it turns about
- * it a little (its rest shape: it stays bent), by how far past.
+ * (a stiff deformable's last pass of a tick; every thread, node l) The loads through its bonds — the user (round 120):
+ * "Does it also propagate forces to compute torque and shear forces?", "you propagate support in then weight back
+ * out". What holds it (pinned nodes, nodes touching something) are the roots; a breadth-first walk over its bonds from
+ * them (in rounds: a node joins at the depth of the first neighbour it finds already in) gives each node the bond it
+ * hangs from. Back from the far ends, level by level, each node's subtree sums its forces (m Δ / h²: what the fit had
+ * to do to hold it there) and their moments; at the bond to its parent that is a moment (bend), a shear and a pull,
+ * over the section of what the node stands for (its cells along it: A = s², Z = s³ / 6). Past the material's strength
+ * the bond snaps; past its yield the most overloaded bond is a plastic hinge: what hangs from it turns about it a
+ * little (its rest shape: it stays bent), by how far past. (It ran on one thread: the metal station's 5 ms.)
  */
-fn loadFlow(b: u32, nN: u32, nP: u32, h: f32, mat: u32) {
-  // roots: what holds each part — its pinned nodes if it has any (a part held by a foundation is fixed by it: what
-  // it touches can't hold it up any further, and a hinge mustn't turn it into what it touches), else what it touches
-  var nq = 0u;
-  for (var k = 0u; k < nN; k++) {
-    spar[k] = 0xffffffffu;
-    pd[k] = vec3<f32>(0.0);
-    pdent[k] = vec3<f32>(0.0);
-    if (sw[k] < 0.0) { continue; }
+fn loadFlow(b: u32, l: u32, nN: u32, nP: u32, h: f32, mat: u32) {
+  let NONE = 0xffffffffu;
+  let live = l < nN && sw[l] >= 0.0;
+  // roots: what holds each part — its pinned nodes if it has any (a part held by a foundation is fixed by it: what it
+  // touches can't hold it up any further, and a hinge mustn't turn it into what it touches), else what it touches
+  spar[l] = NONE;
+  sdep[l] = NONE;
+  pd[l] = vec3<f32>(0.0);
+  pdent[l] = vec3<f32>(0.0);
+  if (l == 0u) {
+    atomicStore(&wRoots, 0u);
+    atomicStore(&wWorst, 0u);
+    wWk = NONE;
+    wHinge = 1u;
+  }
+  workgroupBarrier();
+  if (live) {
     var pinnedPart = false;
-    for (var j = 0u; j < nN; j++) { if (sw[j] == 0.0 && scomp[j] == scomp[k]) { pinnedPart = true; break; } }
-    var held = sw[k] == 0.0 || (!pinnedPart && rt[k] != 0u);
-    for (var j = 0u; j < nP && !held && !pinnedPart; j++) { if (ptN[j] == k && pn[j] != 0u) { held = true; } }
+    for (var j = 0u; j < nN; j++) { if (sw[j] == 0.0 && scomp[j] == scomp[l]) { pinnedPart = true; break; } }
+    var held = sw[l] == 0.0 || (!pinnedPart && rt[l] != 0u);
+    for (var j = 0u; j < nP && !held && !pinnedPart; j++) { if (ptN[j] == l && pn[j] != 0u) { held = true; } }
     if (held) {
-      spar[k] = k;
-      sord[nq] = k;
-      nq++;
+      spar[l] = l;
+      sdep[l] = 0u;
+      atomicAdd(&wRoots, 1u);
     }
   }
-  if (nq == 0u) { return; }
-  var head = 0u;
-  while (head < nq) {
-    let k = sord[head];
-    head++;
-    for (var j = 0u; j < nN; j++) {
-      if (spar[j] != 0xffffffffu || sw[j] < 0.0 || !bondedTo(k, j)) { continue; }
-      spar[j] = k;
-      sord[nq] = j;
-      nq++;
+  workgroupBarrier();
+  if (l == 0u) { wFlag = atomicLoad(&wRoots); }
+  if (workgroupUniformLoad(&wFlag) == 0u) { return; }
+  // the walk, a depth a round
+  var depth = 0u;
+  for (var r = 0u; r < 64u; r++) {
+    var pick = NONE;
+    if (live && sdep[l] == NONE) {
+      for (var j = 0u; j < nN; j++) { if (sdep[j] == r && bondedTo(l, j)) { pick = j; break; } }
     }
+    workgroupBarrier();
+    if (l == 0u) { atomicStore(&wChanged2, 0u); }
+    workgroupBarrier();
+    if (pick != NONE) {
+      spar[l] = pick;
+      sdep[l] = r + 1u;
+      atomicStore(&wChanged2, 1u);
+    }
+    workgroupBarrier();
+    if (l == 0u) { wFlag = atomicLoad(&wChanged2); }
+    if (workgroupUniformLoad(&wFlag) == 0u) { break; }
+    depth = r + 1u;
   }
-  // back from the far ends: each subtree's force and moment (about the origin), handed to its parent
-  let mB = smB(mat);
-  var worst = 1.0;
-  var wk = 0xffffffffu;
-  var waxis = vec3<f32>(0.0);
-  for (var i = nq; i > 0u; i--) {
-    let k = sord[i - 1u];
-    let p = spar[k];
-    // (a blow is stopped within a substep here — PBD's contacts are perfectly stiff — so its force would be without
-    // bound; a real one is spread over the give at the contact: a node's load is held to SU.e.w g)
-    var f = massOf(k) * sc[k] / (h * h);
-    let fmax = massOf(k) * SU.b.x * SU.e.w;
+  // each node's own force (held to SU.e.w g: a blow is stopped within a substep here — PBD's contacts are perfectly
+  // stiff — so its force would be without bound; a real one is spread over the give at the contact) and its moment
+  if (live && sdep[l] != NONE) {
+    var f = massOf(l) * sc[l] / (h * h);
+    let fmax = massOf(l) * SU.b.x * SU.e.w;
     if (length(f) > fmax) { f = f * (fmax / length(f)); }
-    pd[k] += f;
-    pdent[k] += cross(sx[k], f);
-    if (p == k) { continue; }
-    pd[p] += pd[k];
-    pdent[p] += pdent[k];
-    // at the bond k–p
+    pd[l] = f;
+    pdent[l] = cross(sx[l], f);
+  }
+  workgroupBarrier();
+  // back from the far ends: at depth d − 1 each node takes its children's sums
+  for (var d = depth; d > 0u; d--) {
+    if (live && sdep[l] == d - 1u) {
+      var F = pd[l];
+      var S = pdent[l];
+      for (var c = 0u; c < nN; c++) {
+        if (c != l && sdep[c] == d && spar[c] == l) {
+          F += pd[c];
+          S += pdent[c];
+        }
+      }
+      pd[l] = F;
+      pdent[l] = S;
+    }
+    workgroupBarrier();
+  }
+  // at each bond (a node and the one it hangs from): snap, or the yield's worst
+  let mB = smB(mat);
+  var ratio = 0.0;
+  var Mp = vec3<f32>(0.0);
+  if (live && sdep[l] != NONE && sdep[l] > 0u) {
+    let k = l;
+    let p = spar[k];
     let bp = 0.5 * (sx[k] + sx[p]);
     let M = pdent[k] - cross(bp, pd[k]);
     let e = normalize(sx[k] - sx[p]);
-    let Mp = M - e * dot(M, e);
+    Mp = M - e * dot(M, e);
     let cellsK = max(1.0, lane[(b * NN + k) * LANE_V + 6u].w);
     let s = sqrt(max(1.0, cellsK / max(lane[(b * NN + k) * LANE_V + 2u].w, 1.0)));
     let A = s * s;
@@ -387,64 +429,70 @@ fn loadFlow(b: u32, nN: u32, nP: u32, h: f32, mat: u32) {
       atomicAnd(&sbond[p * 2u + (k >> 5u)], ~(1u << (k & 31u)));
       atomicAdd(&wBroke, 1u);
       atomicStore(&wChanged, 1u);
-      continue;
-    }
-    let ratio = sB / max(mB.y, 1e-6);
-    if (ratio > worst) {
-      worst = ratio;
-      wk = k;
-      waxis = Mp;
+    } else {
+      ratio = sB / max(mB.y, 1e-6);
+      if (ratio > 1.0) { atomicMax(&wWorst, bitcast<u32>(ratio)); }
     }
   }
-  // the plastic hinge: what hangs from bond wk–parent turns about it (its rest shape), by how far past the yield
-  if (wk == 0xffffffffu || length(waxis) < 1e-9) { return; }
-  let p = spar[wk];
+  workgroupBarrier();
+  let worst = bitcast<f32>(atomicLoad(&wWorst));
+  if (ratio > 1.0 && ratio == worst) {
+    wWk = l;
+    wAxis = Mp;
+  }
   // (only a part a foundation holds creeps: a free one's supports are what it touches — roots of the walk, never in
   // what hangs from a bond — so its hinge couldn't see the ground it would turn into)
-  var held = false;
-  for (var j = 0u; j < nN; j++) { if (sw[j] == 0.0 && scomp[j] == scomp[wk]) { held = true; break; } }
-  if (!held) { return; }
+  workgroupBarrier();
+  let wk = workgroupUniformLoad(&wWk);
+  if (wk == NONE) { return; }
+  let p = spar[wk];
+  // what hangs from it: wk on its way to a root
+  var inSub = false;
+  if (live) {
+    var a = l;
+    for (var d = 0u; d < 64u; d++) {
+      if (a == wk) { inSub = true; break; }
+      let up = spar[a];
+      if (up == a || up == NONE) { break; }
+      a = up;
+    }
+  }
+  sord[l] = select(0u, 1u, inSub);
+  workgroupBarrier();
+  // only a bond it hangs by alone turns (one in a loop — a braced frame — is held by the others, which share its load:
+  // the walk gave it to one path); not when what hangs already rests on something (the ground carries it); not in a
+  // free part
+  if (inSub) {
+    var bad = rt[l] != 0u;
+    for (var k = 0u; k < nP && !bad; k++) { if (ptN[k] == l && pn[k] != 0u) { bad = true; } }
+    for (var k = 0u; k < nN && !bad; k++) {
+      if (sw[k] < 0.0 || sord[k] == 1u || !bondedTo(l, k)) { continue; }
+      if (l == wk && k == p) { continue; }
+      bad = true;
+    }
+    if (bad) { wHinge = 0u; }
+  }
+  if (l == 0u) {
+    var held = false;
+    for (var j = 0u; j < nN; j++) { if (sw[j] == 0.0 && scomp[j] == scomp[wk]) { held = true; break; } }
+    if (!held) { wHinge = 0u; }
+  }
+  if (workgroupUniformLoad(&wHinge) == 0u) { return; }
+  if (!inSub) { return; }
   let ang = min(0.012, (worst - 1.0) * 0.01) * smC(mat).w;
   // (the forces summed are what holds it — the loads are their opposite: it turns the way they push)
-  let axr = qrotS(qinvS(wRp), -normalize(waxis));
+  let axr = qrotS(qinvS(wRp), -normalize(wAxis));
   let dq = vec4<f32>(axr * sin(0.5 * ang), cos(0.5 * ang));
   let pivot = 0.5 * (sr[wk] + sr[p]);
   // (and where it is, turned the same about the hinge where it is now — its position before the substep too: plastic
   // flow is a creep, not a fling; the turn makes no speed)
   let dqW = qmulS(qmulS(wRp, dq), qinvS(wRp));
   let pivotW = 0.5 * (sx[wk] + sx[p]);
-  // (what hangs from it: wk's subtree, marked in spar's high bit) — and only a bond it hangs by alone turns: one in a
-  // loop (a braced frame) is held by the others, which share its load (the walk gave the load to one path)
-  for (var j = 0u; j < nN; j++) {
-    if (sw[j] < 0.0) { continue; }
-    var a = j;
-    for (var d = 0u; d < 64u; d++) {
-      if (a == wk) { sord[j] = 1u; break; }
-      let up = spar[a];
-      if (up == a || up == 0xffffffffu) { sord[j] = 0u; break; }
-      a = up;
-      sord[j] = 0u;
-    }
-  }
-  for (var j = 0u; j < nN; j++) {
-    if (sw[j] < 0.0 || sord[j] == 0u) { continue; }
-    // (what hangs from it already rests on something: the ground carries it, it turns no further into it)
-    if (rt[j] != 0u) { return; }
-    for (var k = 0u; k < nP; k++) { if (ptN[k] == j && pn[k] != 0u) { return; } }
-    for (var k = 0u; k < nN; k++) {
-      if (sw[k] < 0.0 || sord[k] == 1u || !bondedTo(j, k)) { continue; }
-      if (j == wk && k == p) { continue; }
-      return;
-    }
-  }
-  for (var j = 0u; j < nN; j++) {
-    if (sw[j] < 0.0 || sord[j] == 0u) { continue; }
-    sr[j] = pivot + qrotS(dq, sr[j] - pivot);
-    sx[j] = pivotW + qrotS(dqW, sx[j] - pivotW);
-    sp[j] = pivotW + qrotS(dqW, sp[j] - pivotW);
-    let qi = (b * NN + j) * LANE_V + 7u;
-    lane[qi] = normalize(qmulS(dq, lane[qi]));
-  }
+  sr[l] = pivot + qrotS(dq, sr[l] - pivot);
+  sx[l] = pivotW + qrotS(dqW, sx[l] - pivotW);
+  sp[l] = pivotW + qrotS(dqW, sp[l] - pivotW);
+  let qi = (b * NN + l) * LANE_V + 7u;
+  lane[qi] = normalize(qmulS(dq, lane[qi]));
 }
 
 @compute @workgroup_size(64)
@@ -898,7 +946,7 @@ fn solve(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
         if (l == 0u) { wRp = pf.rot; }
         workgroupBarrier();
         // (once a tick, on its last pass: the loads change over ticks, not substeps)
-        if (s == subs - 1u && it == iters - 1u && l == 0u) { loadFlow(b, nN, nP, h, mat); }
+        if (s == subs - 1u && it == iters - 1u) { loadFlow(b, l, nN, nP, h, mat); }
         storageBarrier();
         workgroupBarrier();
       } else {
