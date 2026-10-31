@@ -261,8 +261,11 @@ export const STATIONS: Station[] = [
       {
         label: 'undercut the mesa',
         run: (k) => {
+          // (its foot cut three deep along its front, and a crack down from its top four cells back: its front slab,
+          // held by the crack's uncut part only, lets go — a 12-thick mesa only undercut stands, as it would)
           const m = SLIDE.mesa;
-          for (let y = m.y0; y < m.y1; y += 3) k.smash(...wp(m.x1 - 0.5, y + 1), G + 1.5, 2.2);
+          for (let y = m.y0; y < m.y1; y += 2) k.smash(...wp(m.x1 - 1.5, y + 1), G + 1.5, 2.4);
+          for (let y = m.y0; y < m.y1; y += 2) for (let z = G + 4; z < G + m.h; z += 2) k.smash(...wp(m.x1 - 4.5, y + 1), z, 1.1);
         },
       },
       {
@@ -290,11 +293,14 @@ export const STATIONS: Station[] = [
       {
         label: 'topple the towers',
         run: (k) => {
+          // (the brick tower's foot cut past its middle on one side: it tips that way — the judge's lean, RB15)
           const t = HOUSE.tower;
-          k.smash(...wp(t.x1 - 0.5, (t.y0 + t.y1) / 2), G + 1.5, 2);
+          for (let y = t.y0; y < t.y1; y++) k.smash(...wp(t.x1 - 1, y + 0.5), G + 1, 1.6);
+          // (three of the wooden tower's four posts cut at the foot: it leans on the last and goes over)
           const w = HOUSE.wood;
           k.smash(...wp(w.x1 - 0.5, w.y0 + 0.5), G + 1, 1.2);
           k.smash(...wp(w.x1 - 0.5, w.y1 - 0.5), G + 1, 1.2);
+          k.smash(...wp(w.x0 + 0.5, w.y1 - 0.5), G + 1, 1.2);
           k.later(0.4, () => k.wakeMetal(w.x0, w.y0, G + 4));
         },
       },
