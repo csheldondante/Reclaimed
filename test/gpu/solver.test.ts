@@ -382,3 +382,41 @@ test('a steel frame dropped on its side lands on the floor and stays on it', asy
   const ns = await solver.nodes(b);
   expect(Math.min(...ns.map((n) => n.x[2]))).toBeGreaterThan(FLOOR - 0.5);
 });
+
+// (round 120, the user: "rock towers fell then slid along flat ground quite far") friction holds what lands
+test('a block slid at v on flat stone stops within v²/(2μg) (SL13)', async () => {
+  clear();
+  const b = solver.add({ cells: box(4, 4, 2, 20, 20, FLOOR) })!;
+  await step(60);
+  const x0 = rd(b).pos[0];
+  const v = 8;
+  solver.impulse(b, [v, 0, 0]);
+  let most = 0;
+  await step(240, () => {
+    const r = solver.read(b);
+    if (r) most = Math.max(most, r.pos[0] - x0);
+  });
+  const mu = TUNE.rigid.friction * TUNE.solver.friction;
+  const bound = (v * v) / (2 * mu * worldG());
+  if (process.env.SOLVER_LOG) console.log('slid', most.toFixed(2), 'bound', bound.toFixed(2), 'v', rd(b).vel.map((q) => q.toFixed(2)));
+  expect(most).toBeLessThan(bound * 1.15);
+  expect(Math.abs(rd(b).vel[0])).toBeLessThan(0.2);
+});
+
+test('a tower toppled onto flat stone rests within about its own height of its foot (SL13)', async () => {
+  clear();
+  const H = 16;
+  const b = solver.add({ cells: box(3, 3, H, 20, 20, FLOOR), spin: [0, 1.2, 0], vel: [1, 0, 0] })!;
+  await step(1);
+  const x0 = rd(b).pos[0];
+  let most = 0;
+  await step(480, () => {
+    const r = solver.read(b);
+    if (r) most = Math.max(most, Math.abs(r.pos[0] - x0));
+  });
+  const r = rd(b);
+  if (process.env.SOLVER_LOG) console.log('tower', most.toFixed(2), 'now', (r.pos[0] - x0).toFixed(2), 'v', r.vel.map((q) => q.toFixed(2)), 'angle', angle(r.q).toFixed(0));
+  expect(angle(r.q)).toBeGreaterThan(45);
+  expect(most).toBeLessThan(H * 1.1);
+  expect(Math.hypot(r.vel[0], r.vel[1])).toBeLessThan(0.3);
+});

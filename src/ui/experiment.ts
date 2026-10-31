@@ -92,3 +92,24 @@ export function startRun(params: URLSearchParams, press: (station: string, butto
     if (left.length) setTimeout(() => openPair(left[0], run, left.slice(1)), secs * 1000);
   }, 6000);
 }
+
+/**
+ * (round 120, the user looked only at the defaults: the pickers were inside the tuning panel) An always-visible chip in
+ * the lab — "nodes · runs" — that opens the solver and judge pickers (and compare) under it.
+ */
+export function experimentChip(h: ExperimentHooks): HTMLElement {
+  const wrap = document.createElement('div');
+  wrap.className = 'experiment-chip';
+  wrap.style.cssText = 'position:absolute;top:56px;left:10px;z-index:30;font:12px system-ui,sans-serif;color:#eee';
+  const chip = document.createElement('button');
+  chip.textContent = `${h.variant} · ${h.judge}`;
+  chip.title = 'the solver and the collapse judge: pick another (the page reloads with it)';
+  chip.style.cssText = 'background:rgba(20,22,26,.78);color:#eee;border:1px solid rgba(255,255,255,.25);border-radius:12px;padding:3px 10px;cursor:pointer;font:inherit';
+  const panel = experimentControls(h);
+  panel.style.cssText += ';display:none;background:rgba(20,22,26,.9);border-radius:8px;padding:6px 8px;margin-top:4px';
+  chip.addEventListener('click', () => (panel.style.display = panel.style.display === 'none' ? 'flex' : 'none'));
+  wrap.append(chip, panel);
+  // (the chip is UI: its presses don't reach the world)
+  for (const ev of ['pointerdown', 'pointerup', 'wheel']) wrap.addEventListener(ev, (e) => e.stopPropagation());
+  return wrap;
+}
