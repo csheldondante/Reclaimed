@@ -339,7 +339,19 @@ export class Solver implements SimSystem, NodeSolver {
       dispatch(enc, this.prof, 'solver-shift', this.k.shift.k, this.k.shift.g, [Math.ceil((this.used * NN) / 64), 1]);
       this.shiftBy = null;
     }
-    enc.copyBufferToBuffer(this.buf.lane, 0, this.buf.snap, 0, this.used * NN * LANE_V * 16);
+    // (what other bodies feel: the lanes of those awake — a sleeper's don't change, its last copy stands; runs of
+    // neighbouring slots in one copy)
+    const lane = NN * LANE_V * 16;
+    let run0 = -1;
+    for (let s = 0; s <= this.used; s++) {
+      const b = s < this.used ? this.slots[s] : null;
+      const moving = !!b && !this.reads.get(b.id)?.asleep;
+      if (moving && run0 < 0) run0 = s;
+      if (!moving && run0 >= 0) {
+        enc.copyBufferToBuffer(this.buf.lane, run0 * lane, this.buf.snap, run0 * lane, (s - run0) * lane);
+        run0 = -1;
+      }
+    }
     dispatch(enc, this.prof, 'solver-pairs', this.k.pairs.k, this.k.pairs.g, [Math.ceil(this.used / 64), 1]);
     dispatch(enc, this.prof, 'solver', this.k.solve.k, this.k.solve.g, [this.used, 1]);
     // the drawn cells where their nodes are now

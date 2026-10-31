@@ -1,54 +1,60 @@
 {
- "at": "2026-10-31T07:08:51.564Z",
+ "at": "2026-10-31T07:18:25.864Z",
  "what": "wall ms a tick on Dawn (D3D12), this machine; 4³ stone blocks and 16 × 2 × 2 steel girders alternating",
  "rows": [
   {
    "kind": "nodes",
    "bodies": 10,
+   "asleep": 10,
    "voxels": 640,
    "nodes": 365,
-   "fallingMs": 2.181,
-   "landedMs": 0.322
+   "fallingMs": 12.973,
+   "landedMs": 0.791
   },
   {
    "kind": "lattice",
    "bodies": 10,
+   "asleep": 5,
    "voxels": 640,
    "nodes": 640,
-   "fallingMs": 6.472,
-   "landedMs": 3.676
+   "fallingMs": 5.433,
+   "landedMs": 4.716
   },
   {
    "kind": "nodes",
    "bodies": 50,
+   "asleep": 50,
    "voxels": 3200,
    "nodes": 1924,
-   "fallingMs": 4.182,
-   "landedMs": 0.388
+   "fallingMs": 3.713,
+   "landedMs": 0.608
   },
   {
    "kind": "lattice",
    "bodies": 50,
+   "asleep": 26,
    "voxels": 3200,
    "nodes": 3200,
-   "fallingMs": 7.422,
-   "landedMs": 6.37
+   "fallingMs": 4.658,
+   "landedMs": 3.006
   },
   {
    "kind": "nodes",
    "bodies": 200,
+   "asleep": 200,
    "voxels": 12800,
    "nodes": 7741,
-   "fallingMs": 16.507,
-   "landedMs": 0.471
+   "fallingMs": 3.81,
+   "landedMs": 0.189
   },
   {
    "kind": "lattice",
    "bodies": 200,
+   "asleep": 61,
    "voxels": 12800,
    "nodes": 12800,
-   "fallingMs": 9.144,
-   "landedMs": 4.98
+   "fallingMs": 8.026,
+   "landedMs": 11.962
   }
  ]
 }

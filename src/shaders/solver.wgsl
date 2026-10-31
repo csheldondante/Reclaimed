@@ -518,6 +518,8 @@ fn solve(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
   // (asleep: nothing moves. It wakes when what holds it has gone — fewer than half the points that touched when it
   // fell asleep still touch — or another body hit it hard, above)
   if (state == 2u) {
+    // (its support looked at every sixth tick, staggered: a sleeper costs next to nothing)
+    if ((G.tick + b) % 6u != 0u) { return; }
     if (pLive) {
       let w = sx[pNode] + qrotS(sq[pNode], lane[gi * LANE_V + 5u].xyz - lane[(b * NN + pNode) * LANE_V + 6u].xyz) + wO;
       let g = probe(w);

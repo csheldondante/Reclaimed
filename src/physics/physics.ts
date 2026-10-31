@@ -19,6 +19,7 @@ import type { VoxelModel } from '../world/models';
 import { qRotate, type Q, type V3 } from '../grids/structures';
 import { TICK_DT } from '../sim/simulation';
 import { bindSkin, latticeFor, type SkinMesh } from './mesh';
+import { TUNE } from '../tune/params';
 
 /** particles, all bodies together */
 export const PV_CAP = 1 << 17;
@@ -30,6 +31,8 @@ export const PV_CAP = 1 << 17;
 export const FRAG_CAP = 8192;
 const FRAG_BODY = 255;
 export const MAX_BODIES = FRAG_BODY;
+/** (the experiment's sleep) how long after a body woke fragments may still be about (ms: phys.wgsl fragLife's 6 s) */
+const G_FRAG_MS = 7000;
 const HASH_N = 262144;
 /** triangles of meshes drawn over bodies (phys.wgsl skin), all together */
 export const SKIN_TRIS = 16384;
@@ -208,6 +211,12 @@ export class Physics implements SimSystem {
   private uni: GPUBuffer;
   private mats: GPUBuffer;
   private bodyTable: GPUBuffer;
+  /** (solver step 2, the experiment) the bodies asleep (phys.wgsl PS), and how long each has been settled (s) */
+  private sleepBuf: GPUBuffer;
+  private sleepBits = new Uint32Array(8);
+  private sleepDirty = false;
+  private stillFor = new Map<number, number>();
+  readonly asleep = new Set<number>();
   /** draw instances (render.wgsl vsBody) and their indirect args */
   readonly inst: GPUBuffer;
   readonly indirect: GPUBuffer;
@@ -253,6 +262,7 @@ export class Physics implements SimSystem {
     this.mats = world.buf('physMats', MAX_MATERIALS * 64, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     device.queue.writeBuffer(this.mats, 0, packPhysMats());
     this.bodyTable = world.buf('physBodies', 256 * 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    this.sleepBuf = world.buf('physSleep', 32, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     // the fragments' ring: a lattice of FRAG_CAP × 1 × 1 (they have no bonds)
     device.queue.writeBuffer(this.bodyTable, FRAG_BODY * 16, new Uint32Array([0, FRAG_CAP, 1, 1]));
     this.inst = world.buf('physInst', PV_CAP * 32, GPUBufferUsage.STORAGE);
@@ -273,7 +283,7 @@ export class Physics implements SimSystem {
     device.queue.writeBuffer(this.px, 0, empty);
 
     const parts = [commonWgsl, layersWgsl, materialsWgsl, physWgsl];
-    const base: BindSpec = { 0: 'uniform', 22: 'uniform', 23: 'uniform', 24: 'uniform' };
+    const base: BindSpec = { 0: 'uniform', 22: 'uniform', 23: 'uniform', 24: 'uniform', 36: 'uniform' };
     const res: Record<number, GPUBuffer> = {
       0: world.globals,
       1: world.chunks,
@@ -296,6 +306,7 @@ export class Physics implements SimSystem {
       22: this.uni,
       23: this.mats,
       24: this.bodyTable,
+      36: this.sleepBuf,
       25: this.touches,
       26: world.physCols,
       27: world.physPuff,
@@ -597,6 +608,10 @@ export class Physics implements SimSystem {
     this.used = 0;
     this.skinTris = 0;
     this.states.clear();
+    this.asleep.clear();
+    this.stillFor.clear();
+    this.sleepBits.fill(0);
+    this.sleepDirty = true;
     this.ctl.fill(0, 0, FRAG_BODY * 20);
     this.ctlDirty = true;
     // (nothing left to draw: encode stops writing the draw args)
@@ -606,6 +621,12 @@ export class Physics implements SimSystem {
 
   /** The game's drives, impulses (this tick only) and pushes (this tick only) to the GPU. */
   private writeGame(): void {
+    // (the game acting on anything wakes everything: cheap, and rare)
+    if ((this.ctlDirty || this.pushes.length || this.blasts.length || this.beam) && this.asleep.size) this.wakeAll();
+    if (this.sleepDirty) {
+      this.device.queue.writeBuffer(this.sleepBuf, 0, this.sleepBits);
+      this.sleepDirty = false;
+    }
     if (this.ctlDirty) {
       this.device.queue.writeBuffer(this.ctlBuf, 0, this.ctl);
       this.ctlDirty = false;
@@ -655,6 +676,71 @@ export class Physics implements SimSystem {
         tick,
       });
     }
+    this.updateSleep(tick);
+  }
+
+  /**
+   * (solver step 2, the experiment: a lattice that never sleeps isn't a fair comparison, and the design says settled
+   * bodies sleep) A body slower than the rigid rock's rest speed for its rest time sleeps; it wakes when the game acts
+   * on anything (a drive, an impulse, a push, a blast, the beam), when an awake body comes near it, or when the ground
+   * near it is cut (wakeNear).
+   */
+  private lastSleepTick = -1;
+  private updateSleep(tick: number): void {
+    const dt = this.lastSleepTick < 0 ? 0 : (tick - this.lastSleepTick) * TICK_DT;
+    this.lastSleepTick = tick;
+    const R = TUNE.rigid;
+    const moving: { pos: V3; r: number }[] = [];
+    for (const b of this.bodies) {
+      const st = this.states.get(b.id);
+      if (!st || this.asleep.has(b.id)) continue;
+      const sp = Math.hypot(...st.vel);
+      if (sp < R.restV) this.stillFor.set(b.id, (this.stillFor.get(b.id) ?? 0) + dt);
+      else this.stillFor.set(b.id, 0);
+      // (what wakes a neighbour: really moving, a cell a second — a settling jiggle doesn't)
+      if (sp > 1) moving.push({ pos: st.pos, r: this.radiusOf(b) });
+      if ((this.stillFor.get(b.id) ?? 0) > R.restT) this.setAsleep(b.id, true);
+    }
+    // (an awake body near a sleeper wakes it)
+    for (const m of moving)
+      for (const b of this.bodies) {
+        if (!this.asleep.has(b.id)) continue;
+        const st = this.states.get(b.id);
+        if (st && Math.hypot(st.pos[0] - m.pos[0], st.pos[1] - m.pos[1], st.pos[2] - m.pos[2]) < m.r + this.radiusOf(b) + 0.5) this.setAsleep(b.id, false);
+      }
+  }
+
+  private radiusOf(b: PhysBody): number {
+    return 0.5 * Math.hypot(b.dims[0], b.dims[1], b.dims[2]) * b.size;
+  }
+
+  /** when a body last woke (ms): fragments may fly a while after */
+  private wokeAt = 0;
+  private setAsleep(id: number, on: boolean): void {
+    if (on === this.asleep.has(id)) return;
+    if (on) this.asleep.add(id);
+    else {
+      this.asleep.delete(id);
+      this.stillFor.set(id, 0);
+      this.wokeAt = performance.now();
+    }
+    const w = id >> 5;
+    this.sleepBits[w] = on ? (this.sleepBits[w] | (1 << (id & 31))) >>> 0 : (this.sleepBits[w] & ~(1 << (id & 31))) >>> 0;
+    this.sleepDirty = true;
+  }
+
+  /** every body awake (the game acted) */
+  wakeAll(): void {
+    for (const id of [...this.asleep]) this.setAsleep(id, false);
+  }
+
+  /** the bodies within r of world (x, y) (any height) woken: the ground there was cut */
+  wakeNear(x: number, y: number, r: number): void {
+    for (const b of this.bodies) {
+      if (!this.asleep.has(b.id)) continue;
+      const st = this.states.get(b.id);
+      if (st && Math.hypot(st.pos[0] - x, st.pos[1] - y) < r + this.radiusOf(b)) this.setAsleep(b.id, false);
+    }
   }
 
   private writeUniforms(tick: number): void {
@@ -700,7 +786,10 @@ export class Physics implements SimSystem {
       else pass.dispatchWorkgroups(groups[0], groups[1]);
       this.prof.dispatches++;
     };
-    for (let s = 0; s < this.substeps; s++) {
+    // (every body asleep, no fragment flying since the last one woke: the solve is skipped whole — its dispatches and the
+    // hash's clears are most of the lattice's fixed cost)
+    const allAsleep = this.bodies.length > 0 && this.asleep.size === this.bodies.length && performance.now() - this.wokeAt > G_FRAG_MS;
+    for (let s = 0; s < (allAsleep ? 0 : this.substeps); s++) {
       run('predict');
       for (let it = 0; it < this.iterations; it++) {
         run('region');

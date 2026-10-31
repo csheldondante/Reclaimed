@@ -256,6 +256,8 @@ export class Integrity {
           // (round 92: a crater's event radius is its ejecta's, CRATER_RING × its bowl's: the bowl and its rim are what it cut)
           const op = editOpOf(e.z ?? 0);
           this.markDirty(e.x, e.y, e.radius + 14, Math.max(0.5, e.radius), op === OP.CRATER ? e.radius / 2.5 + 1.5 : undefined);
+          // (solver step 2: the lattice's sleepers by a cut wake — the node solver's find out for themselves)
+          this.physics?.wakeNear(e.x, e.y, e.radius + 4);
           // (round 86: judged now — this tick's submit carries the cut, and the pass's readback goes after it)
           this.urgent = true;
           if (!this.timing.askedAt || this.timing.doneAt >= this.timing.askedAt) this.timing.askedAt = performance.now();

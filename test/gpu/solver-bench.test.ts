@@ -60,10 +60,15 @@ test.skipIf(!process.env.SOLVER_BENCH)('scaling: node solver vs voxel lattice', 
       };
       await time(10);
       const falling = await time(60);
-      // (landed: two seconds on)
-      await time(120);
+      // (landed: two seconds on, a tick a frame as the game runs them — readbacks in, so the sleepers fall asleep)
+      for (let k = 0; k < 120; k++) {
+        w.core.sim.step(w.core.globals, (s) => s.name === name);
+        await g.device.queue.onSubmittedWorkDone();
+        await new Promise((r) => setTimeout(r, 0));
+      }
       const landed = await time(60);
-      const row = { kind, bodies: n, voxels, nodes: solver ? [...solver.bodies].reduce((s, b) => s + b.nodes, 0) : voxels, fallingMs: +falling.toFixed(3), landedMs: +landed.toFixed(3) };
+      await new Promise((r) => setTimeout(r, 30));
+      const row = { kind, bodies: n, asleep: phys ? phys.asleep.size : [...solver!.bodies].filter((b) => solver!.read(b)?.asleep).length, voxels, nodes: solver ? [...solver.bodies].reduce((s, b) => s + b.nodes, 0) : voxels, fallingMs: +falling.toFixed(3), landedMs: +landed.toFixed(3) };
       rows.push(row);
       console.log(JSON.stringify(row));
       expect(g.takeErrors()).toEqual([]);
