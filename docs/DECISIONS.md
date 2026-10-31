@@ -200,6 +200,12 @@ each was implemented.
 
 - The user, verbatim: "Note this also works for adventuring parties since we can scale the opportunities and encounters to your resources." → the base can also be an adventuring party; the opportunities and encounters offered scale to the base's resources (a party, a refugee column, a stronghold, an army). Defaults stated and not objected to yet: discrete map turns with real-time encounters, one region a run growing with vassals or travel, carry-over = world state + heroes' traits and artifacts.
 
+- The user, verbatim: "Yeah that sounds perfect. Feel free to merge whatever will be the base for that. I think it actually works even for a lone heroes journey too so I think I'm happy with this as a structure for each run. Then the fun is building out the sets of encounters and choices and stories that motivate the decisions and the story of the big conflict which we need to know going into the run so we can foreshadow or establish motivations."
+  → The opportunity loop is every run's structure, a lone hero included (the base's scale is a parameter). runsit (with
+  runplay, play, terrain and runplan in it) merges into places as the loop's base, after the physics merge. The GM writes
+  the big conflict's story before the run starts, so encounters can foreshadow it and motivations can be established;
+  the content work is then sets of encounters, choices and stories.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
