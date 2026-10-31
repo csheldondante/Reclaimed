@@ -133,6 +133,10 @@ each was implemented.
 
 - The user, verbatim: "It's worth testing probably" and "If pointer jumping works but is less accurate it could still make sense for large caverns as a fallback for culling alone" → judge B: culled levels for small groups, pointer jumping for large ones if it can't match exactly; how far its verdicts differ reported.
 
+- The user, verbatim, after trying the lab (solver 6aef66e): "I do think my new method looks a little better but they are close enough that I think it should come down to performance (unless that is also close)" — and on deformation, waking, breaking, a drag tool and a phone bench (quoted in the solver branch's DECISIONS).
+  → The sections judge vs the runs judge is decided by performance: judge B goes on to JB11-JB13, and a phone physics
+  bench (?physbench=1) measures both judges and every solver variant on the device.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
