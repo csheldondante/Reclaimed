@@ -17,6 +17,7 @@ const opt = (k, d) => {
 const url = opt('url', 'http://localhost:5211');
 const out = opt('out', 'C:/Projects/shots88/solver/lab');
 const only = opt('only', '');
+const variant = opt('solver', 'nodes');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 fs.mkdirSync(out, { recursive: true });
 
@@ -47,7 +48,7 @@ try {
   p.on('console', (m) => {
     if (m.type() === 'error') console.log(`[console.error] ${m.text().slice(0, 300)}`);
   });
-  await p.goto(`${url}/?skipmenu=1&level=playground&tutorial=0&q=low`, { waitUntil: 'load' });
+  await p.goto(`${url}/?skipmenu=1&level=playground&tutorial=0&q=low&solver=${variant}`, { waitUntil: 'load' });
   await p.waitForFunction(() => window.reclaimed?.scene?.bugReport, { timeout: 240000 });
   await sleep(35000);
   const fatal = await p.$eval('.fatal', (e) => e.textContent).catch(() => null);
