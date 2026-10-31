@@ -1113,7 +1113,7 @@ export class LevelScene implements Scene {
       core.integrity = integ;
       // lightning seeks what you see (loose ground, fallen bodies) and breaks
       // the bodies it strikes (round 19)
-      this.powers.topAt = (x, y) => integ.topAt(x, y);
+      this.powers.topAt = (x, y) => integ.bodyTopAt(x, y);
       this.powers.onStrike = (x, y, z) => {
         integ.breakBodies([x, y, z], 2.6);
         integ.markDirty(x, y, 16);
@@ -1775,7 +1775,7 @@ export class LevelScene implements Scene {
             device: host.gpu.device,
             renderer: core.renderer,
             external: () => this.integrity?.external ?? null,
-            ready: () => this.integrity?.ensureCopy() ?? Promise.resolve(),
+            columns: (cols, then) => this.integrity?.columnsReady(cols, then) ?? Promise.resolve(),
             dims: { w: dims.w, h: dims.h },
             origin: () => [S.origin[0], S.origin[1]],
             oz: () => S.oz,
@@ -2905,14 +2905,13 @@ export class LevelScene implements Scene {
     // (round 120: the map's tankers and cars wake into the picked solver variant — ?solver= — like the metal the judge
     // frees; the rest of the ruin, concrete and brick, as before)
     const ig = this.integrity;
-    if (ig?.rigid && ig.wakeMetalNear(x, y, z, r)) {
-      return this.waker.wake(x, y, z, r, { materials: NON_METAL }).then(({ full }) => {
+    const waker = this.waker;
+    // (round 120, JB6: the metal found where the columns are read — the copy, or fetched — so it answers later)
+    return (ig?.rigid ? ig.wakeMetalNear(x, y, z, r) : Promise.resolve(false))
+      .then((metal) => waker.wake(x, y, z, r, metal ? { materials: NON_METAL } : undefined))
+      .then(({ full }) => {
         if (full) this.hud.say('No room for more bodies.', 2);
       }, ignoreTeardown);
-    }
-    return this.waker.wake(x, y, z, r).then(({ full }) => {
-      if (full) this.hud.say('No room for more bodies.', 2);
-    }, ignoreTeardown);
   }
 
   /** A meteor at what's under the pointer: it comes in from the sky, smoking (stepMeteors). */
@@ -3058,7 +3057,7 @@ export class LevelScene implements Scene {
       const ig = this.integrity;
       if (ig?.rigid) {
         const kinds = ed.dropAll ? LINEUP.map((id) => BODIES.find((b) => b.id === id)!) : [kind];
-        const n = ig.dropModels(kinds.map((k) => k.make()), hit.cell % core.dims.w, Math.floor(hit.cell / core.dims.w), ed.dropHeight);
+        const n = await ig.dropModels(kinds.map((k) => k.make()), hit.cell % core.dims.w, Math.floor(hit.cell / core.dims.w), ed.dropHeight);
         if (n < kinds.length) this.hud.say('No room for more bodies.', 2);
         return;
       }
@@ -3398,7 +3397,7 @@ export class LevelScene implements Scene {
           return k;
         });
         if (!this.integrity?.rigid) throw new Error('station dropModels: no solvers here (the level needs the rigid rock)');
-        this.integrity.dropModels(kinds.map((k) => k.make()), x, y, above, wrap);
+        void this.integrity.dropModels(kinds.map((k) => k.make()), x, y, above, wrap);
         const [wx, wy] = cellPos(x, y);
         this.sleep?.wake(wx, wy, 40, Sleep.EVENT_S, now());
       },

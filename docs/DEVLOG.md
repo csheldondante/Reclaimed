@@ -14991,3 +14991,49 @@ material, no voxel path on the lattice) — seen in the atlas shots: the toppled
   body mesh with dust beside it (softBlows 1: it sank into the soft ground, a spray and a rim). A smaller cut (r 4.5)
   leaves a cave in the pillar's foot that the judge holds. Shots: C:/Projects/shots88/merge121/ (1-7, small cut) and
   deepcut/ (the collapse); tilegate/, tilegate-places/ (places' goldens), tilegate-pan2/ (the phone pan rerun).
+
+## 2026-10-31 — round 120 (jb6): JB6, no CPU readback on the hot path
+
+**Why.** The user (round 120): "I suspect it will win after JB6 since my understanding is the readbacks are very slow
+and it isn't clear what we need that for." Judge B (sections) reads the GPU's columns in place, but Integrity still read
+the layers back before every pass whatever the judge (the chunks round what it looks at; all of the window, 1-16 MB,
+after any slide), to keep a CPU copy that its other readers walked.
+
+**The readers of the CPU copy, and what each needed** (game/integrity.ts before this):
+- every pass: judge A (fracture.ts analyseRock: the copy, around the seeds); applying a verdict (crumbleRuns cut out,
+  spillRubble's neighbours' tops, spawnRigid's subtract, the structures' crushed cells); External's verify (the claimed
+  cells as they are) and orphans (after a whole read); the structures' analyse on every dirty box (each cut marks one);
+- every frame: the impacts (latticeBlows/groundBlow/softBlow: the material and top where struck, a dig written back);
+  the CPU rigid rock's ground (rockbodies.ts columnsGround: the old variant's step, any variant's spawn and fast-forward);
+  the pieces falling in the columns (colbodies.ts); the cube bodies (bodies.ts, never spawned now); topAt (lightning);
+- on events: the metal flood (wakeMetal: a tanker struck, metal in a verdict), the drop tool's ground, the settlements'
+  and the resting rock's claims (External), the tests' scan/judgeAll.
+
+**What moved where.**
+- Changes to the columns are the GPU's (game/colapply.ts, shaders/colapply.wgsl): a verdict's cuts (subtract, then the
+  rubble rule past K), the crumbs spilled to the lowest open neighbour (added into the deposit), loose ground laid
+  (added, never overwritten: the CPU's 2-tick overwrite rule is gone), External spans let go (sim/external.ts
+  releaseSpan), orphans made ground (orphanColumn). Each rule has one CPU statement; the copy, where kept, is changed by
+  it so it stays the GPU's. Node tests (test/gpu/colapply.test.ts) hold the GPU to the CPU on the judges' shapes, 40
+  random caves (judge B's verdicts), random cuts past K, random External release and orphans.
+- Blows are the edit pass's (edit.wgsl, OP.SMASH with BLOW_TAG): it reads the struck column's top on the GPU and sinks
+  loose ground (depth from impact.softSink, the rim from impact.spray — now GPU tune parameters — and the material's
+  softness, look.z of the material table) or smashes hard ground past impact.groundEnergy. The dust's colour is the
+  ground's own, looked up by the particles (payload GROUND_DUST).
+- A small GPU question (game/colquery.ts) says whether a dirty box holds anything built before its chunks are read for
+  the structures' analyse; External's verify fetches only the chunks with claimed cells near the cut; the metal flood,
+  the drop tool and the settlements' claims fetch the chunks they need (game/colcopy.ts `fetch`, readable in the same
+  task: a column not fetched throws, never a stale read).
+- The copy (game/colcopy.ts, out of Integrity) is kept whole, and read before each pass as before, only where a CPU
+  consumer walks it: judge A, the CPU rigid rock (old, nodes, hybrid: RockBodies' ground at spawn and fast-forward), the
+  pieces falling in the columns (no rigid rock, or the old variant's structures). The default, lattice x runs, keeps it
+  (judge A); lattice x sections keeps none. `?jb6=0` keeps it everywhere, for measuring only.
+
+**Judge A**: kept with the copy, not moved to a Web Worker. Its cost is the readback (its latency on the phone, 15-650
+ms), not its CPU time (judge A's whole cost in the round-120c battery is mostly the read); a worker fed by a narrow
+readback would still wait for that readback, and the copy's other readers (the CPU rigid rock) would still need it.
+
+Tests: test/gpu/jb6.test.ts (the lattice with the sections judge: a cut freeing an overhang judged, cut out on the GPU and
+falling as a lattice body; a block sinking into sand; a block smashing stone — `readBytes` 0 throughout; a claimed thing
+dug into: only its chunks fetched, its owner told, let go on the GPU; with judge A the copy is read again).
+test/gpu/integrity.test.ts's blows now look at the GPU's columns (the CPU no longer knows which blow sank or smashed).

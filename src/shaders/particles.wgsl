@@ -547,8 +547,14 @@ fn bursts(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     if (kind == K_HAZE) {
       // a dust cloud where something broke (round 21): the payload slot names
-      // the material, which tints it; it swells, drifts and thins over ~5 s
-      spawnFull(a.xyz + r * b.w, carry + dir * b.y * (0.4 + 0.6 * fract(r.y * 9.1)), 4.0 + (r.x + 0.5) * 3.0, kind, 0.0, h, 0u, dustTag(u32(b.z)));
+      // the material, which tints it; it swells, drifts and thins over ~5 s. (Round 120, JB6: a payload under 0 is the
+      // ground's own where it rises — a blow's spray, decided on the GPU: the CPU doesn't know what was struck)
+      var hm = u32(max(b.z, 0.0));
+      if (b.z < 0.0) {
+        let gc = cellAt(a.xy);
+        if (inMap(gc)) { hm = groundMatAt(gc, sfMat(surface[colIdxI(gc)])); }
+      }
+      spawnFull(a.xyz + r * b.w, carry + dir * b.y * (0.4 + 0.6 * fract(r.y * 9.1)), 4.0 + (r.x + 0.5) * 3.0, kind, 0.0, h, 0u, dustTag(hm));
       continue;
     }
     if (kind == K_BIRD) {

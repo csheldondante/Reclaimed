@@ -25,7 +25,7 @@ beforeAll(async () => {
   phys = installPhysics(w.core, { wakeOnTouch: false }).physics;
   ig = new Integrity(w.core, true);
   ig.physics = phys;
-  await ig.ensureCopy();
+  await ig.columnsReady([], () => {});
 });
 afterAll(async () => {
   await g.device.queue.onSubmittedWorkDone();

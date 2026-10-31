@@ -20,6 +20,13 @@ export const OP = {
   PUT: 15,
 } as const;
 
+/**
+ * (round 120, JB6) a blow: OP.SMASH with this tag (code bits 10-15) — a body struck the ground there (radius: its
+ * footprint's reach + 3, strength: the blow's energy ½mv²); edit.wgsl decides on the columns whether it sinks into loose
+ * ground or smashes hard ground (Integrity.groundBlow)
+ */
+export const BLOW_TAG = 1024;
+
 /** a new press (layer tools: a fresh layer) */
 export const STROKE_START = 512;
 

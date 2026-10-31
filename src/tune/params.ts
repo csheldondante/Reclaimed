@@ -67,9 +67,9 @@ const SPEC = {
       breakSpeed: { label: 'break speed', units: 'cells/s', min: 0.2, max: 10, step: 0.1, def: 1.2, help: 'a piece hitting this fast or more shatters' },
       shatter: { label: 'shatter', units: 'voxels·cells²/s²', min: 50, max: 5000, step: 50, def: 700, help: 'pieces ≈ weakness · speed² · voxels / this' },
       crumb: { label: 'crumbs', units: 'voxels', min: 1, max: 100, step: 1, def: 16, help: 'pieces this small crumble to loose ground' },
-      softSink: { label: 'soft ground sink', units: 'k', min: 0, max: 0.5, step: 0.01, def: 0.08, help: '(round 120) how far a blow sinks a body into loose ground: k · softness · ∛(½mv²) over the side of its footprint (cells, at most 3)' },
-      spray: { label: 'soft ground spray', units: 'share', min: 0, max: 1, step: 0.05, def: 0.3, help: '(round 120) of the ground a body sinks into, the share thrown up as a spray; the rest is a rim round it' },
-      groundEnergy: { label: 'ground gives at', units: '½mv²', min: 1000, max: 400000, step: 1000, def: 15000, help: '(round 120) a body striking hard ground with more energy than this crumbles it where it struck: a ball of radius 0.8·∛(E / this), at most 3' },
+      softSink: { label: 'soft ground sink', units: 'k', min: 0, max: 0.5, step: 0.01, def: 0.08, gpu: true, help: '(round 120) how far a blow sinks a body into loose ground: k · softness · ∛(½mv²) over the side of its footprint (cells, at most 3)' },
+      spray: { label: 'soft ground spray', units: 'share', min: 0, max: 1, step: 0.05, def: 0.3, gpu: true, help: '(round 120) of the ground a body sinks into, the share thrown up as a spray; the rest is a rim round it' },
+      groundEnergy: { label: 'ground gives at', units: '½mv²', min: 1000, max: 400000, step: 1000, def: 15000, gpu: true, help: '(round 120) a body striking hard ground with more energy than this crumbles it where it struck: a ball of radius 0.8·∛(E / this), at most 3' },
     },
   },
   fracture: {
