@@ -1545,7 +1545,9 @@ export class Integrity {
       const [x, y, z] = r.impact.at;
       const n = Math.min(40, Math.round(Math.sqrt(e) / 12));
       if (n < 1) continue;
-      this.onSparks?.(x, y, z + 0.2, Math.min(24, n), 1.5 + r.impact.speed * 0.4);
+      // (metal sparks; wood splinters and dusts)
+      if (WOOD.has(mb.mat)) this.onDust?.(x, y, z + 0.2, n, 0.8 + r.impact.speed * 0.1, mb.mat);
+      else this.onSparks?.(x, y, z + 0.2, Math.min(24, n), 1.5 + r.impact.speed * 0.4);
       this.onChips?.(x, y, z + 0.2, Math.ceil(n / 2), 2 + r.impact.speed * 0.3);
       this.onCollapse?.(x, y, z, Math.min(400, e / 400));
     }
