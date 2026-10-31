@@ -14624,3 +14624,28 @@ nodes × sections 2.68 / 4.73, judge 9–21 · lattice × runs 3.73 / 3.93 · la
 3.02 / 5.64 · hybrid × sections 3.12 / 4.66. The fastest rise: old's CPU rigid rock up to 8.9 cells/s; the node solver
 1.1–3.4. The node solver's load walk on every thread didn't move its GPU numbers here (the GPU is shared with other
 agents' browsers; its cost is the per-body solve while things move, ~1 ms a moving stiff body).
+
+**The lattice's rise** (data/perf/solver/battery-lattice-rise.json; the battery now watches the voxel bodies' mean upward
+velocity): rock 1.9, build 1.4, slide 1.2, house 3.5, metal 1.8, collapse 3.2 cells/s.
+
+**Feel notes, a pair at a time** (from the battery, the Node tests and the stations' GIFs; the user tries them himself —
+the lab's panel, solver × judge, "compare" replays the last cut under each):
+
+- *Solvers.*
+  - **old** (CPU rigid rock, the columns' pieces, metal on the lattice): rock is cheapest on the GPU (~0, 0.1–0.6 ms of
+    CPU) but its push-outs fling — pieces rise at up to 8.9 cells/s on the collapse station, the bounce the design was
+    against; pieces pass through one another (no body against body); what's built drops in columns. Metal crumples
+    on the lattice (the pylon folds into a heap: the tankers' look).
+  - **nodes**: rock and what's built fall at full gravity with no bounce (rise ≤ 1.7), stack and lean on one another,
+    rest overlapped within their slop and sleep (asleep ≈ free); breaks are the judge's. Metal and wood are stiff:
+    they hold their shape until a load or a blow passes their yield (a hinge: they bend where the moment is, and stay
+    bent) or their strength (they snap: the pylon on one leg snaps at its foot and comes down in two). Dents are
+    modest. Cost: about 1 ms of GPU a moving stiff body on this iGPU (the metal station's 5.5 ms peak).
+  - **lattice** (phys.wgsl for everything): everything bends a little — stone flexes before it cracks, metal crumples
+    and dents richly (the tankers), what breaks crumbles into fragments then dust. Costs 3–4 ms steady while it holds
+    9–14k voxels (it keeps every body); half its steel rings above the rest speed and won't sleep. Rise 1.2–3.5.
+  - **hybrid** (rock on the nodes, metal and wood on the lattice): the node solver's heavy, quiet rock with the
+    lattice's crumpling metal — 3.0 ms on average, rise ≤ 1.5.
+- *Judges.* **runs** (A) decides in under a millisecond, so a cut lets go at once. **sections** (B) takes 10–30 ms wall
+  a judging here (a beat after the cut) and frees what A misses where a long thick shelf's moment is too much (3 and 4
+  thick at reach 16: data/perf/judge/shapes.md); the arch with its keystone out still stands under both (SV1).
