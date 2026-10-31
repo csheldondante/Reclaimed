@@ -2500,6 +2500,37 @@ The user (round 119): "I need to actually play a generated run and try it out." 
 - **Terrain at leg start** (`src/runplan/requests.ts` `askTerrain`): the destination's land graphed (±256 world units),
   the plan's asks made of terrain before the precache makes the land.
 
+## A run as a situation (round 120, `runsit`; BACKLOG RS20-RS30, FO1, IT1; docs/GM.md "Situations")
+
+`?skipmenu=1&level=atlas&runplan=hoverbike` (or `=lich`): the run is one situation on the live map. The old arcade stages
+(`A run played`, above) only with `&runstages=1`.
+
+- **Contracts** (all additive): `contracts/situation.ts` (Situation, SituationThreat, SituationArea, AreaPlay,
+  SituationChoice, ChoiceEffect, SituationEnding/End), `contracts/items.ts` (ItemSlot, ItemDef with `also`, ItemEffect,
+  Loadout), `contracts/orders.ts` (Order, Followers). The SessionStory is untouched: a situation is its sibling and shares
+  Outcome for what an ending does.
+- **Who writes it**: the GM (data/situations/*.json, validated by `src/gm/situationcheck.ts`; storycheck's AtlasEvent
+  check is the shared `atlasEventProblems`), else the template (`src/runsit/fill.ts`, deterministic from the seed and the
+  world). `src/runsit/gm.ts` `situationFor` picks and validates.
+- **Pure** (Node-tested): `runsit/state.ts` SituationRun (phases area → edge → travel → … → ended; the clock at the
+  areas' planned minutes and the road pace; the threat's progress; pursuers; warn/evacuate/delay; the levy; the loadout;
+  `finaleSetup`), `runsit/finale.ts` FinaleRules (fires, the fall, the end) and `fireSite`, `runsit/items.ts`,
+  `runsit/followers.ts` UnitFollowers (Order → UnitJob over the Units contract), `runsit/finish.ts` (the world state:
+  `applyEffects`, the settlement's condition, the hero, the RunRecord).
+- **Live**: `runsit/area.ts` AreaPlay — through Units, the world API's fire, the followers and the settlements' places
+  only; the horde walked by a front (the agents' fields reach a few chunks: MARCH), outriders gaining on a slow hero off
+  the screen. `runsit/level-sit.ts` LevelSit — the card, the atlas map's overlay (the dead's march and where they are, the
+  ways on, the levy, the refuge), the leg by runplan's Journey with the streamer's precache, the warp, the end card, the
+  next run from where the hero is; after a fall it tells the settlements system (`setCondition`) and has the window made
+  again (`remake`: a fresh warp to itself).
+- **Engine changes**: fire.wgsl (timber, logs, canvas on top are fuel), structure.wgsl (wood takes 8x the heat damage and
+  fails to ash), Settlements `places(id)` / `setCondition(id, c)` (a ruined or abandoned settlement's columns stamped as
+  stumps, rubble and ash; its people none), PlaySession `damageTaken`.
+- **Window coordinates**: the situation is in world units; the level hands AreaPlay `toWin` (the nearest way round the
+  torus from the window's middle); slides reach AreaPlay through LevelSit.shift.
+- Scripts: `scripts/situation.mjs` (fill and check in Node via Vite's SSR loader), `scripts/runsit.mjs` (the headless
+  playthrough: `--want saved|burned|evacuated`, `--ff`), `scripts/storycheck.mjs` (stories and situations).
+
 ## Tests in Node (round 117, `testkit`; docs/TESTING.md)
 
 - `npm test` runs two vitest projects, unit (test/unit/**, src/**/*.test.ts) then gpu (test/gpu/**). Neither uses a

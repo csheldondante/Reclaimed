@@ -14212,3 +14212,94 @@ are 70 cells apart) and seen on screen 0.1-0.6 s ahead.
   bounds (BACKLOG PL22: check the GPU time on the phone at 12 px a cell).
 - GIFs: C:/Projects/shots88/camera/after/hoverbike-stage1-race.gif, hoverbike-stage2-race.gif; shots *-1b-play.png;
   before: C:/Projects/shots88/camera/before/. Per-gate numbers: hoverbike-notice.json in each.
+
+## 2026-10-31 — round 120 (`runsit`): the run as a situation on the live map — "the horde comes for the town"
+
+The user (round 120): "the missions should not be disjoint levels they should be objectives and situations spawned into
+the active map with real consequences ... Like actually break a dam and flood a valley don't just say it happened ... when
+the player reaches the boundary of an area they get the map and choices of where to go based on the actual situation.
+Deliver a message to the Red Hold to get them to send reinforcements or warn the town and lead the peoplen into the
+hills." And who writes it: "This is what we want the gm to do possibly with templates. Look at world state and tell a
+story with meaningful decisions for the player run." Branch `runsit` (from runplay, places merged, runplay's bike camera
+fix merged). `?skipmenu=1&level=atlas&runplan=hoverbike` (or `=lich`) now plays a situation; the old stages with
+`&runstages=1` (BACKLOG RS23).
+
+**Contracts (additive).** `contracts/situation.ts` — a Situation: the threat (a horde: faction, role, count, its route
+on the real region graph, the minute it reaches the target, outriders), the target settlement, the refuge, 3-7 areas
+(play: flee, ambush, deliver, trader, town), the choices at each area's edge (effects warn, evacuate, delay), the
+items, four endings (saved, burned, evacuated, fell: an Outcome and the settlement's condition). A sibling of the
+SessionStory, not more fields on it: a story is people and talks over places, a situation a clock, a route and forks
+over the map; they share Outcome. `contracts/items.ts` — slots (held, helmet, cape, shirt, pants, mount; `also` for an
+asymmetric item), effects (call-allies, lure, fire-ward, pace, guard), Loadout. `contracts/orders.ts` — Order (follow,
+hold, go, release) and Followers: general on purpose, the way into a building mode later (FO1). Settlements' public
+API: `places(id)` (its middle and doors) and `setCondition(id, c)` (a ruined or abandoned settlement realised charred).
+PlaySession `damageTaken` (a guard item).
+
+**Why the pieces are where they are.**
+- `runsit/state.ts` (pure): the run's state machine — areas, the edge, legs, the end; the clock; the threat's progress;
+  the pursuers; what the choices set going; the finale's setup (horde size and when it comes, fires already set when the
+  hero's late, the town's levy when warned, the hold's levy and when it comes). Node tests drive it; the level drives
+  the same code.
+- The clock: an area counts its **planned** minutes (more if played slower, up to half again — runplan/clock.ts's rule).
+  The first playthrough counted played seconds: the bike was through a 2.5-minute area in 16 s, so the hold's way (written
+  late) arrived early and the fork meant nothing. A leg counts its distance at 500 world units a minute for every hero
+  (`TRAVEL_PACE`), so a GM's clock is fair to each; a mount shortens it.
+- `runsit/finale.ts` (pure): fires, the fall, saved/evacuated/fell. A breach counts at most four of the dead; one fire per
+  30 horde-seconds → a fire every 7.5 s, fallen at six (~45 s of a breach). The first finale had eighteen inside setting a
+  fire a second: fallen in 3 s.
+- `runsit/area.ts`: the live half. Everything through contracts — Units (spawn, order, query), the world API's fire
+  (`fire.ignite` at a house's door), the followers, the settlements' places.
+- **The march.** A probe (round 120): units ordered to `go` 20 and 40 cells off arrived; 80 and 120 stood still (the agents'
+  goal fields reach a few chunks round what they do). So the horde walks to a front a stride (22 cells) ahead of its middle,
+  moved on every 3 s toward the town (or the bell). With it the dead reach the town (68 → 32 cells mean in 45 s) and fire it.
+  RS26 for the agents' reach.
+- **Pursuers off the screen.** Outriders more than 70 cells off gain on a hero slower than them (they come in again 35
+  behind it) and lose one faster (gone past 140): the user's pursuers that catch up if you're slow, without walking units
+  across the map. The bike outran all three in 6 s. The user's PL23 (round 120, after the camera fix: "I think fleeing is
+  better than chasing because it's hard to steer"): the slice has no chase — fleeing, outrunning, the word carried ahead.
+- **Areas sized to the hero.** The edge is the hero's cruise for 16 s (110-520 cells): 110 cells for the lich, ~500 for the
+  bike — the window slides with the hero.
+- **The town burns in the map.** Wood now burns: fire.wgsl counts timber, logs and canvas as fuel where they're the top
+  (the recipes already called them flammable: timber 0.8, canvas 1), and structure.wgsl gives wooden intervals 8x the heat
+  damage and turns what fails of them to ash. A plaster-and-tile town (Bumku's) doesn't burn so: the fires take round its
+  houses (the fields, the yards), and 25 s after the fall the window is made again (a fresh warp to itself) with the
+  settlements system realising the town charred: stumps of 1-3.5 cells, rubble and ash (RS25). A warp away and back keeps
+  the land as it was (the streamer freezes it to its pool), so the burned town stays for the rest of the session.
+- **The world remembers** (`runsit/finish.ts`): the ending's Outcome through runplan's `applyEffects`, the settlement's
+  condition, the hero's history, the RunRecord. The next run's template doesn't send the dead for a ruined town.
+- **The GM** wrote `data/situations/grey-muster-bumku.json` (a Claude subagent with docs/GM.md's new "Situations"
+  section, looped on the validator): the Grey Muster of Kaudru (18 walking dead) over 2129 → 2141 → 2159 → 2171 to Bumku;
+  Muru the Red Hold (its only road to Bumku runs round the north: late by 1.2 min, 12 guards); a Salt Fleet barge trader;
+  the Varrn road ambush; the Bethorn crossing to burn (a 2.5-minute delay). Its first draft was written against
+  data/wiki/seed1.json, which turned out stale against the live atlas (the live run's validator refused it: settlements and
+  realms had changed); the wiki was re-pulled (`worldwiki.mjs --pull`) and the GM rewrote it. The game plays the first GM
+  file for the world's seed, version and run, else the template (`runsit/gm.ts`), both validated.
+- **The validator** (`src/gm/situationcheck.ts`, `node scripts/storycheck.mjs data/situations/<id>.json`): shapes,
+  references, the route border to border, the refuge next to the town, the run's shape (reached, a fork, 3-5 areas a path,
+  no cycles), items defined and offered, some path in time (delays counted), the endings change the world and 'burned'
+  burns the town. storycheck's AtlasEvent check is now one function both use (`atlasEventProblems`; the Bell story's output
+  identical before and after). state.ts has no constructor parameter properties so Node's type stripping runs it for the
+  validator.
+
+**Tests.** test/unit/runsit.test.ts (18): the template filled from seed 1 and validated, deterministic; the fork real (the
+straight road in time, the hold later); the state machine (warn + evacuate into the finale; the hold's levy later than the
+hero with the dead already in; a delay; a death ends it fell); pursuers close on the road, less with a mount; the finale's
+fires and the fall, saved, fell, held, evacuated with the town still burning after; fire sites and the ward; items (a slot
+holds one, the asymmetric banner, uses, totals); followers' orders as jobs; the validator's refusals; the GM's file
+passes; a burned town ruined in the world, through a save, not the next target; an evacuation abandoned with a refuge
+marked. `npm run test:unit`: 26 files, 245 passed. `npm run smoke`: passed.
+
+**Playthroughs** (scripts/runsit.mjs, the deployed build, 412x915, every system, 1x; autopilot through the real
+controls; `--ff` takes ways on without playing the areas between, to look at the finale):
+- hoverbike, whole run, burned: flee (outriders lost in 6 s) → the Red Hold (word delivered, the Red Horn taken) → Bumku
+  at minute 10.0, 1.2 min after the dead: two houses burning, the horde at the edge; the bike stood aside; fallen at 39 s;
+  ended burned; charred 25 s later.
+- lich, whole run, saved: flee 18 s → the Varrn ambush 18 s → Bumku 2.2 min ahead; the horde broken at 133 s.
+- hoverbike, saved (straight road): held to 360 s with the horde broken outside.
+- hoverbike, evacuated (`--ff` to the rises): "Follow me" took 18 of 25; 13 reached the refuge at 142 s.
+- hoverbike, burned with the fences manned and the bike idle: the march brought the dead in; fallen at 106 s.
+
+**Frame time** (desktop iGPU, 412x915 dpr 1, perf overlay on): the finale with the horde, the levy, the townsfolk and the
+fires live — p50 9.8 ms, p95 11.6-16.6 ms, GPU ~14 ms (EMA); the hero's main-thread cost 0.05-0.1 ms a frame. The phone
+proxy drive (`driveprofile.mjs`, q=low, dpr 1, 30 s) on this branch: p50 9.9, p95 12.1 ms, GPU 11.4 ms a frame; the fire
+and structure passes 0.04 ms each (the wood change costs nothing measurable).

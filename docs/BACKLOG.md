@@ -12,6 +12,22 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 120 (2026-10-31, branch `runsit`) — the run as a situation on the live map (DECISIONS round 120)
+
+The user (round 120): "the missions should not be disjoint levels they should be objectives and situations spawned into
+the active map with real consequences". First slice: the horde comes for the town. DEVLOG round 120 (`runsit`).
+
+| id | item | size | status |
+|---|---|---|---|
+| RS23 | Runplay's arcade stages (races, the chase, the fort) are reachable only with `&runstages=1`, for comparison: for the user to say delete them | S | asked |
+| RS24 | The areas' size for the bike: a hall 165 cells off is 5 s on the bike; areas are sized to the hero's cruise (16 s, 110-520 cells) but a 5-10 minute area needs more in it (more than one thing to do, a second wave, people to pick up on the way) | M | open |
+| RS25 | Plaster-and-tile towns don't burn in the fire (only timber, logs and canvas do — fire.wgsl/structure.wgsl): such a town is fired live round its houses and charred by the settlements system when the window is made again (25 s after the fall). Burning masonry interiors (floors, roofs' timbers inside) would make it burn in front of the player | M | open |
+| RS26 | Units walk their goal fields only near the goal (a go 80 cells off stood still): the horde is walked in by a front a stride ahead of it (area.ts MARCH). The agents' reach (scope, field front) or CPU paths between far points (ST15) would let a march be one order | M | open |
+| RS27 | The GM's format gaps (its report): endings can't depend on the path (the levy came, a crossing burned), no mark for a burned crossing, `fell` can't name where the hero died, the clock doesn't count a mount's pace | M | open |
+| RS28 | An evacuation's town is charred at the end whether or not the horde reached it (the ending says it was left to the dead); the people led out don't yet live in the refuge as a camp (a settlement record) | M | open |
+| RS29 | data/wiki/seed1 was stale against the live atlas (re-pulled this round); the Bell story (data/stories/the-bell-under-kaudru.json) fails storycheck against it (11 problems, before and after this branch: f-kuharm, s139) — the GM to rewrite it | S | open |
+| RS30 | A run's world saved between page loads (RPL8); the next run starts from the town region in the world as left (same page only) | S | open |
+
 ## Round 119 (2026-10-30, branch `runplay`) — a generated run played end to end (DECISIONS round 119)
 
 The user (round 119): "I need to actually play a generated run and try it out. Was there a link?" play, terrain and
@@ -123,9 +139,9 @@ tests work and do quick smoke tests to find failures early." docs/TESTING.md.
 
 | id | item | size | status |
 |---|---|---|---|
-| RS20 | Runs as situations in the live map, not disjoint stages: a threat set moving toward a place (zombies assail a city; it burns if the player fails), changes made in the session (a dam broken floods the valley), chases, fleeing, a message delivered before the enemy; races only with arenas (jumps, crowds). Runplay's stages are the stand-in it replaces | L | next (the GM writes it from world state, templates allowed; 3-5 areas to start) |
-| RS21 | At an area's boundary: the atlas map with choices from the actual situation (ride to the Red Hold for reinforcements, or warn the town and lead the people into the hills) | M | next |
-| RS22 | Roguelike structure: items along the run with mechanical choices; time pressure (pursuers, a date to arrive by); encounters on the way that prepare for the final challenge | L | next |
+| RS20 | Runs as situations in the live map, not disjoint stages: a threat set moving toward a place (zombies assail a city; it burns if the player fails), changes made in the session (a dam broken floods the valley), chases, fleeing, a message delivered before the enemy; races only with arenas (jumps, crowds). Runplay's stages are the stand-in it replaces | L | first slice done (runsit): "the horde comes for the town" — a situation on the live map, the GM writes it (data/situations), the template fills one from the world; the town really burns (RS23-RS30 follow) |
+| RS21 | At an area's boundary: the atlas map with choices from the actual situation (ride to the Red Hold for reinforcements, or warn the town and lead the people into the hills) | M | done (runsit): the edge card and the atlas map with the dead on the march, the levy, the refuge; each way on with what the clock says of it |
+| RS22 | Roguelike structure: items along the run with mechanical choices; time pressure (pursuers, a date to arrive by); encounters on the way that prepare for the final challenge | L | first slice done (runsit): items in slots offered at the hold and the trader; outriders that gain on a slow hero; the dead's clock; an ambush on the road |
 | PL20 | The bike unplayable in a run: the camera too close and the gates seen too late (look-ahead, zoom with speed, early notice) — HeroCamera.chase framing fitted in time (play/core/chase.ts), the bike 22 px a cell at rest out to 12 at speed, arrows to the next two gates with distances; warning at top speed ~1.0-1.6 s → 2.2-2.9 s (DEVLOG round 120) | S | done (runplay, this commit) |
 | PL22 | The bike's wider view on the phone: GPU time at 12 px a cell in a race (the headless check is vsync-bound); the gates often sit across the portrait phone's narrow width — a framing that leans toward the next gate if the arrows aren't enough | S | open |
 | PL21 | The lich: keep raising the dead and the rune casting (tornados, lightning) the user liked | M | open |
@@ -133,9 +149,9 @@ tests work and do quick smoke tests to find failures early." docs/TESTING.md.
 | IN20 | Creatures from swappable body segments, the same mechanism for equipment, fur, spikes and skins; vertex blending at joints; limbs and tails as secondary motion from root motion (Rain World); mounts and items (round 119) | L | asked (design session) |
 | FLO20 | Trees much bigger relative to the hero; forests where the camera is under the canopy | M | asked (design session) |
 | STR30 | Settlements with purposes (trading post, mine, lumber camp, ...) and stories | M | asked (design session) |
-| FO1 | Followers take orders from the hero; ordering them is the way into a building mode where the hero makes their own settlements | L | open |
+| FO1 | Followers take orders from the hero; ordering them is the way into a building mode where the hero makes their own settlements | L | first slice done (runsit): contracts/orders.ts (follow, hold, go, release) over Units; "Follow me" / "Hold here" in the town; building mode open |
 | LI1 | Rocks mixed through ordinary soil (not only cliffs and bases), so the lich has things to throw besides people | M | open |
-| IT1 | Items in slots: held item(s), helmet, cape, shirt, pants, mount, some asymmetric options; mechanical effects that force choices (pairs with IN20 segments) | L | open |
+| IT1 | Items in slots: held item(s), helmet, cape, shirt, pants, mount, some asymmetric options; mechanical effects that force choices (pairs with IN20 segments) | L | first slice done (runsit): contracts/items.ts (slots, asymmetric `also`, effects call-allies, lure, fire-ward, pace, guard), runsit/items.ts; drawing them open |
 | FLO21 | Birch cost on the phone: the user's result good — done (flora 18c3bdb, unmerged) | S | done |
 
 ## Round 118 (2026-10-30, session 5, `places`) — found while reviewing the tracks
