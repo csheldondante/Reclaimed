@@ -13609,3 +13609,245 @@ Dawn in Node). The smoke needs the runner's own build server (warm snapshots), a
 rename in .testcache fails EPERM, so caa0827's guard made every runner script fail there. Now the build is copied into the
 cache instead, index.html last (a build counts as present once its index.html is). `npm run smoke` then passed: the atlas
 ready in 65 s with three other agents' checks on the GPU, sim ticking, no fatal.
+
+## 2026-10-30 — round 117 (`terrain`): rivers off the texel grid with banks; the region graph; the basin flood; the terrain viewer
+
+The user, verbatim (DECISIONS round 117): "Generally speaking we want our terrain to be striking to look at and
+interesting to explore." "Rivers look bad right now. They have serious isotropy issues and they have no banks. Use SDF.
+Have them carve into the ground. Make their banks look eroded. Add reeds. Have rocks and rapids. Have waterfalls. So many
+waterfalls." "Waterfalls and flow are what look pretty good." "We want to partition our map … we should know by
+character controller what they can and can't pass easily. I would make regions recursive with open fully connected
+spaces 1-3 screens big and that are part of larger terrain features." "Terrain makes the barriers initially but the run
+manager should be able to get. The graph and request obstacles or otherwise request a certain number of exits." "A GPU
+algorithm we use for generative tools. I want to be able to flood a basin and bury things".
+
+**Rivers (terrain/rivershape.ts on the CPU, terrain/river.wgsl on the GPU).** Why they looked bad: the river graph is a
+drainage tree over the macro texels (8 cells, 8 neighbours), so every reach ran at 0, 45 or 90 degrees, and the water
+stood at the filled ground's level, flush with the plain it crossed — no bank could show. The fixes, each for one of
+those causes:
+- The course: the nodes relaxed along their main stems (6 Laplacian passes, at most 7 cells each so a node stays near its
+  texel — the GPU finds a river by the nodes nearest a point's texels), and the GPU's lookup warped by a slow noise (7
+  world units, period 150: its gradient well under 1, so the line never folds) — bends at every angle. riverAt now tests
+  the two segments from each nearby node, so the joints are continuous once nodes leave their texels.
+- The level: incised under the filled ground by 0.8 + 0.35 × the half-width (1.2-4.5 cells), ramped in over 4 nodes from
+  the river's end and never under the still water it runs into (a channel below the lake beside it would drain it
+  backwards); steep reaches (0.6 cells a node or more) made a staircase of 3.5-cell steps — still pools and falls. The
+  level still only falls downstream (unit-tested: every consumer, the held rivers and the pipes, relies on it). A step
+  of 2.9-8.5 cells drops at its segment's middle within about a cell, so the bed steps and forms.wgsl pours a sheet over
+  it (a step over RIVER_FALL): a waterfall, not a chute. The cliffs' big falls keep their interpolation (the ones that
+  looked good).
+- The cross-section (riverCut): the channel's parabola; a bank whose steepness varies along the river (cut banks steep,
+  slumps gentle), broken into slumped blocks by Voronoi cells ~6 across — the cliffs' treatment the user praised
+  ("voronoi plus noise plus sdf to make steps") — benches (a floodplain the river left, a little over the water) on some
+  stretches; gravel bars just over the water on one side; boulders in rapids, round plunge pools and a few on every
+  bank (bare rock: forms.wgsl now lets a cap stand in a channel where it is over the water); a deeper pool under each
+  fall.
+Pictures (the same spots before/after, the atlas level at 1x, q=high): C:/Projects/shots88/terrain/base-*.png and
+r1-*.png. The fall spot (a plateau's river, 6108,14009): before a 45-degree zigzag flush with the sand; after a
+winding channel between brown banks with bars and rocks. The wide lowland river (12916,4435): banks now line it; its
+45-degree kinks are softer but still there (TR3).
+Cost (scripts/perf/terrain.mjs, the desktop iGPU, the least of 3 for each of 24 64² regions on river nodes, wall
+including the readback): Atlas.columns median 28.3 ms vs places 28.5 ms — a wash. The rivers' CPU pass 627 vs 599 ms
+(+28 ms shaping), "ground with rivers" (the macro pass) 149 vs 64 ms, once per atlas. The phone's frame isn't touched
+by this (the columns are made as land streams; their GPU passes on the phone are TR9's driveprofile).
+Not done: reeds (flora's contract, TR6), rivers into holes and out of caves (TR4), the wide rivers' kinks (TR3). The
+authored rivers' CPU mirror (world/rivertable.ts, the playground's) keeps the plain profile (B-TS13: the rule is
+duplicated already; the new cross-section uses the atlas's noise).
+
+**The region graph (api/contracts/terrain.ts; terrain/sample.ts → terrain/partition.ts).** Why this shape:
+- Features are what the walker reaches without crossing anything it can't (union-find over passable sample edges), so by
+  construction every barrier lies between features. Rooms split a feature: seeds deepest first a room apart, grown
+  together by a weighted geodesic distance whose step costs more near the feature's edge (1 + 6 / (1 + distance)) — on
+  open land a Voronoi of the seeds (bounded rooms), where it narrows the crossing is dear so two rooms meet in the
+  narrows (the door). (A plain watershed on the distance gave one 16-screen room on a plain: it has one maximum.) Then
+  rooms under a screen merge into their best neighbour, and neighbours across a long shared edge (no narrows) merge
+  while they stay within 3 screens. A slot (no clear disc 2 samples across: a ravine's floor, a ledge) is no room.
+- Borders keep measures, not verdicts: the least climb, drop, depth, vegetation, the narrowest water and gap, each by a
+  bottleneck (or least-count) search across a band round the border. What a controller crosses is reckoned when asked:
+  a Dijkstra over the two rooms' band by its PassCaps (step, slope, drop, deep, lava, veg, gap, fly), cached per caps.id
+  — the user's "parameterize it so we can reason about it during generation". A body over water it can't touch bottom
+  in rides the surface (a hovering bike). Soft barriers (hostiles, storms, distance) are laid on a border and add to its
+  cost.
+- Controllers: PassCaps is a stand-in until the `play` track's controller contract (herosandbox's Mobility is a subset);
+  CAPS_PRESETS walker, bike, lich.
+- The samples are taken on the GPU from the atlas's own ground() (the heights, rivers, lakes and coarse world the
+  columns are made of: the graph and what's drawn agree), read back once; the graph's search work is on the CPU (graph
+  search, a few hundred thousand samples, at planning time). 512² samples (2048 world units at 4): sample 32 ms,
+  partition 374 ms in the page (Node: 350-500 ms; the borders' searches were 275 ms of it before they were banded, 21
+  after).
+- Vegetation density in the samples is forms.wgsl's woods formula, a stand-in until flora supplies the plants' density.
+Tests: src/terrain/partition.test.ts (plain, dumbbell narrows, cliff, one-way drop, river, ford, vegetation, ravine and
+the bike's jump, soft barriers, a 512² noisy valley), src/terrain/terrain.test.ts.
+
+**Requests (terrain/terrain.ts).** `exits` opens the cheapest barriers out of a room for a controller — a ramp up a cliff
+long enough for its slope (stamped: the column made exactly that high, solid 40 cells under it), a ford (the bed raised
+to 0.4 under the water, rubble), a bridge, vegetation cleared (needs: structures, flora) — or closes the easiest doors
+with a wall 9 high (the walker and bike stop, the lich floats over). `obstacle` and `open` act on one border. Edits are
+stamp hooks (atlas stampHooks: the same operations the GPU and CPU paths make), so land made after a request has it;
+land already in the window isn't remade (a run plans first; TR17).
+
+**The flood (terrain/flood.wgsl, flood.ts).** The depression-filled surface by Planchon-Darboux passes on the GPU (W =
+max(h, min(W, neighbours' W)); the window's edge and the standing sea are the outlets), the seed's W its basin's spill
+height; then the basin marked by a dilation from the seed under that level (or a level given). The standing sea walls
+the mark (a flood stops at its shore). Applied as a row of the lakes' table (Atlas.addBasin; FLOOD_SPARE 64 rows
+reserved, the row's second word the fluid): the river graph's lakes are already basins filled with water at their spill
+height, so a flood is the same thing with any level and fluid, and the land is made from it as from a lake
+(compose.wgsl lakeAt) — no new binding in kernels at the 8-storage-buffer limit (formSeed uses all 8). Sand and ash
+bury: loose ground to the level; magma: lava to it. The GPU result equals the CPU reference texel for texel
+(test/gpu/terrain-flood.test.ts on Dawn, and in the page). Not yet: the global sea replaced everywhere it's read (forms'
+sea water, the renderer's sea plane, the shore, the tiles: DZ1's design, TR7); a sand flood buries the ground, not what
+settlements stamp on it later (TR8).
+
+**The viewer: `?terrain=view`.** The atlas viewer (seed and sliders, layers 1-9, pan and zoom, double-click walks in)
+with the region graph over it (rooms, borders by kind, doors and passes, edits, masks), a controller picker, a room's
+exits and reach, the exit requests, and the flood (water, sand, magma; a depth over the tap, 0 the spill height).
+Smoke: scripts/terrain/viewer.mjs (graph, a ford made, GPU flood = CPU). Pictures: C:/Projects/shots88/terrain/viewer-*.png.
+
+Shared-system tweaks for consolidation: atlas.ts (river.wgsl in parts(); FLOOD_SPARE rows and addBasin;
+riverStats.shaped), compose.wgsl (River/riverAt moved to terrain/river.wgsl; the carve calls riverCut; LakeHere.fluid and
+the buried/molten basins), forms.wgsl (a cap may stand in a channel over the water), rivers.ts (the course and levels
+shaped before the table), atlas-view.ts (viewport(), worldAt public, onPick), main.ts (?terrain=view), level.ts
+(reclaimed.terrain).
+
+**Follow-up (main's review of the first pictures).** (1) The road at the fall spot wasn't carved away: the sites and roads
+are planned on the macro ground with the rivers in it, so the channels moved them (TR18). (2) The "trench along the cliff
+top" was a real fault: the graph's levels aren't monotone (a river through a hollow too small for a lake follows its
+floor and rises out of it), and the "only falling" pass pushed every node past such a hollow under its floor: at
+6108,14009 the whole reach to the cliff's edge stood at 263, 7-9 under the ground (base 270-272). Now a node is held
+under the one above it only where the filled ground itself fell between them (unit test: a river rising out of a hollow
+isn't cut into a trench). The river there pours off the plateau's edge into the sea (a 173-cell fall on its last segment,
+as before), facing away from the view. (3) The white columns are geysers (the user); the triangles top-left are the far
+land (in both pictures; not this track's). The first graph's 12 s was the sampler's pipeline compiling (the atlas's
+ground() shader), not the sampling: it's one dispatch and one readback, 32 ms for 512² warm; it now compiles in the
+background when the TerrainSystem is made. Phone proxy (412x915 dpr 2.6, q=low): C:/Projects/shots88/terrain/
+phone-base-fall.png, phone-r1-fall.png, phone-r2-fall.png. driveprofile (q=low, phone proxy, 30 s, desktop iGPU):
+places p50 9.8 ms, p95 16.9, GPU 11.55 ms/frame; terrain p50 9.8, p95 19.2, GPU 10.61 — within the run-to-run spread
+(the base from Pages, this from a local preview).
+
+## 2026-10-30 — round 117 (`terrain`): caves at cliffs' feet (the user's recipe), gorges in the plateaus, buried props placed
+
+**Caves at the foot of cliffs (terrain/cave.wgsl).** The user: "Cliffs would be even better with rocks around the base
+and caves that open (often at their base)" / "Caves should have ground level openings and be wide enough to traverse".
+The method is the user's own recipe, verbatim in the file's head ("Take a simplex fractal noise in 2d and set a
+threshold so that they are windy … make noise lower on the floor so it is walkable"), with TG3's numbers from
+noiselab2-r (revive made it work at a visible scale: passages ~12 wide, roof = base + min(0.35 d², 12) + noise, floor =
+base − 0.5 + a quarter of the noise, the base a cell over the sea at a sea cliff). noiselab2-r isn't merged: the lab is
+its own scene; the recipe is folded into the atlas's cliffs. Per cell, no JFA: the passages are a band of a 2D fbm, the
+distance in from a passage's edge its margin × CAVE_MID (the fbm's gradient made d from the margin over the period give
+4-cell vaults, measured on Dawn: test/gpu/terrain-diag.test.ts prints the open runs and the made columns round a point).
+The base runs from the foot (over the talus heaped against a mesa's wall: a mouth behind the heap was buried; a cell
+over the sea where the foot is under it — the sea doesn't enter a gap yet, TG16) up to a share of the cliff's height
+inside it, over 70 cells: a passage climbs through the cliff, a way up an impassable wall ("An impassible mountain can
+have a cave through it"). Grottos (round chambers ~45 cells apart, 6-10 across) near the foot are cut by the face, so the
+base has mouths often, not only where a passage happens to reach it. Where a roof comes within 2 cells of the ground
+the ground opens to the floor (a collapse letting light down). Applied in ground(): plateau edges (EDGE_MESA, beside the
+lips and undercuts) and EDGE_CLIFF/EDGE_SEACLIFF, as the overhang's open run (columns.wgsl takes it as a cavern).
+Pictures: C:/Projects/shots88/terrain/cave*-cliff1.png (a mouth at a plateau's foot), cave*-sea0.png. Honest state:
+the open runs are in the made columns (the Dawn probe: 92-99 under a 145 top, round 16234,4213), but the mouths seen in the
+fixed view are few; whether the sea-cliff mouths face away from the camera or the draw hides thin gaps at a face is
+TR21.
+
+**Gorges (terrain/gorge.wgsl).** The user: "Traversvlable gorges (both at the bottom and above)". The zero lines of a slow
+noise wind across a plateau's top; across one, its distance (|n| / threshold) is an SDF: a flat floor over its middle
+half (the corridor at the bottom), walls in three tiers whose edges each Voronoi cell moves (the cliffs' blocks), rims at
+the plateau's height (walkable above); 14-44 deep, shallowing to nothing at its heads, never deeper than the low ground
+beyond the plateau. None under a river or a lake: the first pictures had a river's held water hanging in curtains
+where a gorge cut under its level (C:/Projects/shots88/terrain/gorge1-gorge1.png; fixed, gorge2-gorge1.png). The green plane
+and black walls in those pictures are in places' build at the same spot (gorge-base-gorge1.png): not this track's. The
+gorges change the macro ground the rivers and lakes are found on: two lakes on a plateau at 6040,4860 drained through a
+gorge (TR22).
+
+**Buried props (terrain/props.ts; contract BuriedProp, ExcavationSite; Terrain.buried(rect)).** The user: "buried statues
+and fallen structures and stones. These being skew add visual interest and they make great props for telekenisis or
+excavation sites." Decided per world tile (128 units, a hash of the seed and the tile): the same things whatever
+rectangle asks. Excavation sites (5% of tiles on dry ground not too steep: 3-7 statues, fallen columns, slabs, ruins
+round a middle, skew, 30-80 % sunk) and lone stones (more where the ground is steep: a cliff's foot, a bank). Terrain says
+where, how deep and how tilted; structures supplies what a statue looks like (its asset by kind); an External owner
+draws them and holds their cells (TR16: not built — no owner yet; testkit's tests cover the un-burying). The viewer
+draws them (stones grey, statues gold, sites ringed). Tests: src/terrain/props.test.ts.
+
+Tests on Dawn (no browser): test/gpu/terrain-atlas.test.ts (a 512² atlas built with the terrain's WGSL: the graph from
+the GPU's samples, the flood = CPU, columns over a river), terrain-caves.test.ts (open runs at cliffs over a whole small
+world), terrain-diag.test.ts (TERRAIN_DIAG="x,y": the default atlas probed round a point). npm test: all pass.
+
+**Follow-up: lakes kept, gorges readable, the sea only where it reaches, the gpu tier isolated.**
+- TR22: the gorges drained two plateau lakes and moved rivers and roads, because the rivers and lakes are found on the
+  macro ground and the gorges were in it. Avoid, not refill: the hydrology is the atlas's steady state, and a gorge (10-30
+  cells, under the 8-cell texel's intent) shouldn't move it world-wide; refilling with the flood would make every gorge a
+  lake touches a reservoir and still shift the rivers. The macro pass now has no gorges (AtlasP.macroPass, PARAM_BYTES
+  144 → 160); per cell a gorge stops at a lake's rim (g.lk) and under rivers (g.rx).
+- The gorges were too deep and narrow for the fixed view: the camera's focus on a gorge's floor set off the cutaway (a
+  flat plane walled by black slabs — TR23, in places' build too: the renderer's). Now 10-28 deep and half again as wide
+  (GORGE_W 0.085 → 0.13): a broad floor between tiered walls that reads from above. A Dawn probe over the whole world
+  (test/gpu/terrain-find.test.ts, TERRAIN_FIND=gorge) lists gorges to frame: 0.9 % of the world's samples. Pictures at the
+  play zoom: C:/Projects/shots88/terrain/gorge4-a.png (the floor and the tiered walls, the plateau's lakes kept),
+  gorge4-b.png (a desert gorge, hoodoos on the rim), gorge4-phone-a.png (the phone proxy).
+- terrain/sea.wgsl: the sea's water stands only where the sea reaches (its own regions and land within 24 of the coast),
+  in the window (forms.wgsl) and in the rings (lod.wgsl) alike — a basin dipping under the sea's level inland is dry until
+  flooded (the flood tool). A first step of TR7; the sea's level is still AP.sea.
+- The gpu tier: each file in a fresh worker (TK12, docs/TESTING.md). In this worktree one shared worker died as soon as a
+  second file made a WorldCore — with only places' own gpu files — and never in a fresh worktree at the same commit.
+
+**TR21: the caves' mouths, found and made to read.** A Dawn probe (test/gpu/terrain-diag.test.ts: TERRAIN_DIAG="x,y" now
+also lists the mouths — an open run with a neighbour's ground under its roof — and which way they face; the fixed view
+sees faces toward +x+y) showed the coast's caves were there all along, at sea level, 6-13 high in cliffs 40-60 high:
+too low to read from above. Seen from the sea with the free camera (scripts/terrain/shots.mjs --fly) one is a proper sea
+cave, the waves at its foot (C:/Projects/shots88/terrain/mouth1-m-fly.png). Changes: caves along every coast where the
+land stands over the sea, not only the "sea cliff" kind (most coasts are beaches and steep slopes — a cave into a steep
+coastal slope is a sea cave too); most cliff stretches have them (the mask's threshold lowered); grottos twice as dense
+(sites ~28 cells apart, 7-12 in radius); the vault taller at the mouth (up to 22, under 0.6 of the cliff; TG3's 12 inside),
+CAVE_MID 9. From the fixed view on the phone proxy the mouths now show along the sea cliff
+(C:/Projects/shots88/terrain/mouth2-m.png), but as pale patches: the inside is lit like open ground — the draw doesn't
+darken under a roof (TR21 stays open for the renderer: shade inside a run's gap).
+
+**Under cover (render.wgsl underCover — a shared-renderer tweak for consolidation).** Main asked the terrain track to
+shade what's under a roof (no track owns the renderer). lighting() now fades the sky's light and the bounce (to 0.1) and
+the sun (to 0.2) by how far under cover a point is: 0 when its column (the one its face looks out to) has no top above
+it; else the share of nine columns — its own and eight round it, 3 and 7 cells out — whose tops stand over it: deeper in a
+cave, darker. One surface read for open ground, nine under a roof; nothing past the window (the tiles are tops). Every
+draw that calls lighting() gets it (the mesh, the prisms, the grid, rock and instance meshes). The gpu tier compiles it
+(a WorldCore makes the renderer); its numbers aren't unit-tested yet (the term reads the window's surface words through
+common.wgsl's chunked layout: a probe needs a tiny world's buffers — next). Pictures (phone proxy, the sea cliff at
+16232,4253): before mouth2-m.png, after mouth3-m.png — the same pale patches, because those mouths are past the window's
+edge: the window's mesh cuts each mouth into the face and what lies behind is past the window, where the tiles and rings
+draw only tops, so the mouth is a see-through hole (pale with the tiles, the land behind with ?tiles=0:
+mouth3notiles-m.png). Inside the window the mouths read dark (q=high: mouth3hq-m.png; ?hybrid=0: mouth3nohyb-m.png).
+TR24: cap the window's mesh at its edge where a gap crosses it, or let the tiles bake a gap as a dark recess.
+scripts/terrain/hybprobe.mjs (the hybrid's chunk state round a point; window.reclaimed.hybrid() added for it) found it.
+
+**TR24: the see-through mouths (fieldmesh.wgsl, fieldmesh.ts — a shared-renderer tweak for consolidation).** Found with
+scripts/terrain/hybprobe.mjs: the mouth's chunk was voxels (the field mesh) and the chunks behind it the hybrid's grid
+(the window's tops as a heightfield). The cave ran on from the meshed chunk into the grid's, where only tops are drawn,
+so the mesh's tube was open at its side: a hole to the land behind (and, at the window's edge, the same with the edge
+column carried out with its gaps). Now colDist closes a column's gaps — solid from the bedrock to its top — when it lies
+past the window, in a chunk the mesh doesn't draw, or beside one at −x or −y (a chunk owns the edges whose base sample is
+its own, so the closing face toward a low-side neighbour must fall a sample inside the drawn chunk). The CPU marks the
+undrawn chunks in their near words (UNMESHED_BIT; the hash pass ignores it for the chunk itself, and mixes the
+neighbours' bits into a chunk's hash so a neighbour turning grid or voxels rebuilds it). Phone proxy, the same mouths:
+mouth2-m.png (pale holes) → mouth5-m.png (one side closed) → mouth6-m.png (closed: dark recesses along the cliff's foot).
+Cost: a near-word read for each sample's column (three with the low-side check) in colDist — the build's, not the
+frame's. Mouths past the window (tiles, rings) still don't show (TR24b).
+
+**The partition's top level: the atlas's regions as a graph (terrain/atlasgraph.ts, Terrain.atlasGraph()).** runplan
+plans a run across the overmap on a stand-in RegionGraph of the atlas's regions (contracts/run.ts); the terrain graph so
+far was local (features and rooms over ≤ 2048 world units). The user's "recursive" regions: the atlas's provinces (~25
+macro texels across) are the larger features, the rooms under them come from Terrain.graph(rect) where a stage is
+played. Each border's barrier is read off the rules compose.wgsl ground() draws it by — a land/sea border the coast
+(a sea cliff where the land's coast edge is one), two landforms the higher one's edge (a plateau's cliff, a massif's
+steep flank), one landform the winning region's own edge (a ravine, a wall: 'ridge'), and a river or lava node on the
+border texels — so the plan and the land agree. CPU, once (the per-texel arrays are on the CPU already); a small atlas
+on Dawn: 2468 regions, 7361 borders (cliff, sea, ridge, lava, steep, river, ravine, open). The node and edge shapes follow
+runplan's stand-in (centre, area, tier, ground, rivers, lava; a, b, barrier, length) so its adapter is a rename. Floods
+take 'silt' too (runplan's materials: water, sand, ash, silt, magma).
+
+**The viewer on a phone.** The atlas's panel (270 wide) and the terrain's (250) covered a 412-wide screen. The terrain
+panel now folds (▾/▸) and hides the atlas's panel (a button); on a narrow screen both start out of the way. The viewer's
+smoke on the phone proxy (scripts/terrain/viewer.mjs --size 412x915 --dpr 2.6): graph, an exit opened (a ford), the GPU
+flood equal to the CPU's, a flood 6 over the tapped ground (C:/Projects/shots88/terrain/viewer-phone-*.png).
+
+**Cost at the end of the round (scripts/perf/terrain.mjs, desktop iGPU, data/perf/terrain-unknown.json "terrain-final").**
+A 64² region's columns over rivers (the least of 3, median of 24): 31.3 ms with the rivers' cross-section, the caves, the
+gorges and the sea rule, against places' 28.5 (≈ +10 %, wall time including the readback, within the runs' spread so far).
+The region graph over 2048² world units at 4: the GPU sample 24.8 ms, the partition 252 ms. A 1024-reach flood on the GPU
+254 ms (fill and mark passes in batches of 32 with a readback each), equal to the CPU's texel for texel. The rivers' CPU
+pass 582 ms, the macro ground with rivers 58 ms. The phone proxy's driveprofile after TR24: p50 9.8 ms, p95 11.6.

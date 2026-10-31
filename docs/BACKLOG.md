@@ -12,6 +12,40 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 117 (2026-10-30, session 5, `terrain`) — the terrain track: rivers, the region graph, the basin flood (DECISIONS round 117)
+
+The user: "striking to look at and interesting to explore" … "Let's make this world hauntingly beautiful." DEVLOG round
+117 (`terrain`); docs/ARCHITECTURE.md "Terrain: the region graph, the rivers' shape, the basin flood".
+
+| id | item | size | status |
+|---|---|---|---|
+| TR1 | Rivers off the texel grid: nodes relaxed along their stems, the lookup warped, two segments a node (terrain/rivershape.ts, terrain/river.wgsl) | M | done (terrain) |
+| TR2 | Rivers with banks: the level incised under the plain, eroded banks (Voronoi slumps, benches), gravel bars, boulders in rapids and round pools, cascades of falls, plunge pools | M | done (terrain) |
+| TR3 | The widest rivers (half-width 10-12) showed the grid's 45-degree kinks | S | done (terrain): the courses relaxed 10 passes, nodes up to 11 cells off their texel (the lookup's two segments a node still find them) — C:/Projects/shots88/terrain/r3-wide.png; a ragged bank edge here and there remains |
+| TR4 | Rivers that sink into holes and come out of caves (an underground reach: a node flag, the cave's floor as its bed) | M | open |
+| TR5 | The region graph (api/contracts/terrain.ts): features and rooms 1-3 screens, borders with barrier kinds and measures, costs per controller (PassCaps), soft barriers; the GPU sample, the CPU partition (terrain/partition.ts) | L | done (terrain) |
+| TR6 | Reeds along the banks and the benches from flora's contract; the samples' vegetation density from flora (the stand-in is forms.wgsl's woods) | S | open (needs flora) |
+| TR7 | The global sea replaced where it's read (forms' sea water, Globals.seaZ, the shore, the tiles' water plane, the caves' floors relative to AP.sea): the oceans as basins in the lakes' table (DZ1's design, MF8) | L | open |
+| TR8 | A sand or ash flood buries what's stamped later (settlements, ruins): the finish pass's fill after the stamps | M | open |
+| TR9 | Phone proxy: driveprofile on the river-heavy atlas at q=low 412x915 before/after TR1-TR2 (the columns' GPU passes) | S | open |
+| TR10 | Requests: exits, obstacles and openings (ramps, fords, walls as stamps; bridges and vegetation as needs for structures and flora) (terrain/terrain.ts) | M | done (terrain) |
+| TR11 | The basin flood: Planchon-Darboux fill and the basin's mark on the GPU, into the lakes' table with a fluid (water, sand, magma, ash) (terrain/flood.ts) | M | done (terrain) |
+| TR12 | The terrain viewer (?terrain=view): the region graph, controllers, exits, the flood over the atlas view | M | done (terrain) |
+| TR13 | Cliffs with caves opening at their base (ground-level openings wide enough to walk), sand and rocks piled at the mouths; sea caves with crashing waves (the user's 2.5D recipe, on noiselab2-r) | L | wip (terrain): terrain/cave.wgsl — the recipe at plateau edges and cliffs, grottos at the foot, passages climbing through, collapses; waves crashing at the cliffs (the shore swell) not done |
+| TR14 | Gorges walkable at the bottom and along the top; deep quarries; room for cities in the earth (with structures) | L | wip (terrain): gorges in the plateaus (terrain/gorge.wgsl); quarries and cities in the earth open |
+| TR15 | Caves: underground rivers and lakes, vast chambers, crumbling ceilings with light beams (shade plants via flora) | L | open |
+| TR16 | Buried props: skew stones, statues, fallen structures as External intervals and instanced meshes; a placement pass for excavation sites (structures' assets; testkit's un-burying tests) | L | wip (terrain): the placement (terrain/props.ts, Terrain.buried) done; the owner that draws them and holds their cells open (needs structures' assets) |
+| TR17 | A request's edits remake land already in the window (today only land made after it has them) | S | open |
+| TR18 | Roads and rivers: the sites and roads are planned on the macro ground with the rivers' channels in it (atlas.ts 'ground with rivers'), so TR1-TR2 moved some roads (171 roads before, 168 after; at 6108,14009 the nearest road went from 32 to 278 world units away, back to 61 after the trench fix). A road should cross a river by a ford or a bridge request (TerrainRequest), not be rerouted or dropped; plan roads on the ground before the incision or let the A* take a crossing at a cost | M | open |
+| TR19 | (structures, round 117) A road into the sea: ways.ts's road to the old town site runs straight out over the water as a brown line (shots88/structures/city-irregular-0.png, west of the city): the A* lets a road through cells under the sea's level (sites.ts: a river's mouth, a lake) — a road should end at the coast or ask for a bridge or ford | S | open |
+| TR20 | (structures, round 117) The window's water and the tiles' water beyond it differ in brightness: the window shows as a lighter diamond over the sea at wide zoom (part of the one-sea-plane work, TR7) | S | open |
+| TR21 | The cliffs' cave mouths in the fixed view: found (they were there, low) and made bigger and more frequent (every coast over the sea, grottos, a taller vault at the mouth); they now show on the phone proxy but pale — the inside of a gap is lit like open ground. Shade inside a run's gap (the renderer), then waves into a sea cave (TG16) | M | wip (terrain part done; the renderer's shading open) |
+| TR22 | Gorges drained plateau lakes (two at 6040,4860) and moved rivers and roads: they changed the macro ground the hydrology is found on | S | done (terrain): the macro pass has no gorges (AtlasP.macroPass); a gorge stops at a lake's rim and under a river |
+| TR23 | (main's review, round 117) A flat plane (green, or the ground's colour) walled by black slabs fills the view when the camera's focus is deep (a gorge's floor, a basin under a plateau): at 11028,6868 (cells) and in a gorge at 5224,12886; in places' build too (gorge-base-gorge1.png). Probed on Dawn: the ground there is ordinary (a plateau, a coast); the circle in the view's middle and the cut faces are the camera's cutaway (OC1/RC5's 'view kept clear' at a deep focus), not the land — renderer's | M | open (renderer) |
+| TR24 | (renderer) A cave's mouth showed as a see-through hole on the phone tier: the hybrid meshes only the chunks that need voxels, and a cave running on from a meshed chunk into a grid (heightfield) chunk — or past the window's edge — was a tube open at the mesh's side | M | done (terrain): the field mesh's field closes a column's gaps where its chunk (or its low-side neighbour's) isn't meshed or is past the window (fieldmesh.wgsl colDist, UNMESHED_BIT in the near word; a neighbour's change rebuilds); mouth2-m.png → mouth6-m.png |
+| TR24b | (renderer) A cave's mouth on land past the window (the tiles, the rings: tops only) doesn't show at all: bake a gap as a dark recess (the tile's summary has the highest gap's roof a column; the draw shaders have no layers) | S | open |
+| TR25 | The partition's top level world-wide: the atlas's regions as a graph with each border's barrier (Terrain.atlasGraph; runplan's RegionGraph stand-in's shape) | M | done (terrain) |
+
 ## Round 117 (2026-10-30, session 5, `testkit`) — the test pyramid: unit and GPU tests in Node, a smoke test (DECISIONS round 117)
 
 The user: "TDD make some unit tests so you can stop hogging my browser so much. Do complete integration tests after unit
@@ -30,6 +64,7 @@ tests work and do quick smoke tests to find failures early." docs/TESTING.md.
 | TK9 | MemoryWorldState.snapshot() handed out the live factions and settlements: a save between runs changed when a faction's attitude moved after it (world-state.test.ts); copies now | S | done (testkit) |
 | TK10 | More unit tests for what the brief listed and this round didn't reach: the planners (scenes/planner.ts), calibration math (perf/), run and story logic (run/, story/), layout and packing (world/layout.ts, sim/pages.ts) | M | open |
 | TK11 | The runner's teardown once took ~200 s after a passing check (smoke, rocklab alone, on a busy GPU): page / browser / server close; time each | S | open |
+| TK12 | (terrain, round 117) The gpu tier's shared worker died ("Worker exited unexpectedly") as soon as a second file made a WorldCore — reproducible in the terrain worktree with only places' own gpu files, never in a fresh worktree at the same commit, and after a file built a whole atlas; each gpu file now runs in a fresh worker (isolate: true; tier ~16 s). Why Dawn dies in one directory and not another is unknown (a stale Dawn/D3D cache keyed by path?) | S | done (terrain), cause open |
 
 ## Round 120 (2026-10-31, session 5, `places`) — the user played the run, the towns and the birches (DECISIONS round 120)
 

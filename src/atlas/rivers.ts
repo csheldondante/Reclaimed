@@ -14,6 +14,7 @@
 
 import { warmth } from './regions';
 import { riverChannelDepth, riverSpeed } from '../world/rivertable';
+import { shapeLevels, smooth, type LevelStats, type RiverCourse } from '../terrain/rivershape';
 
 /** texels drained through for a river, and the most a lava river runs */
 const RIVER_MIN = 160;
@@ -116,6 +117,8 @@ export interface Rivers {
   speed: [number, number, number];
   discharge: number;
   pipeSlope: number;
+  /** (round 117) the courses' shaping (terrain/rivershape.ts): staircased nodes, the falls they made, the mean incision */
+  shaped: LevelStats;
 }
 
 /** how dry a latitude is (regions.ts dryness: compose.wgsl moistureAt's latitude term) */
@@ -343,6 +346,34 @@ export function findRivers(opt: {
   }
   // the table
   const count = xs.length;
+  // (round 117, terrain track — terrain/rivershape.ts: the course relaxed off the texel grid's corners, the water
+  // incised under the filled ground between banks, steep reaches stepped into falls; still falling downstream)
+  const course: RiverCourse = {
+    x: new Float32Array(count),
+    y: new Float32Array(count),
+    level: new Float32Array(count),
+    width: new Float32Array(count),
+    next: new Int32Array(count),
+    still: new Uint8Array(count),
+    acc: new Float32Array(count),
+    worldW: opt.worldW,
+    worldH: opt.worldH,
+  };
+  for (let k = 0; k < count; k++) {
+    const i = xs[k];
+    const x = i % n;
+    const y = (i - x) / n;
+    const d = down[i];
+    course.x[k] = ((x + 0.5) / n) * opt.worldW;
+    course.y[k] = ((y + 0.5) / n) * opt.worldH;
+    course.level[k] = water[i] ? sea - 0.4 : lev[i];
+    course.width[k] = flags[k] & RIVER_LAVA ? 3 : Math.min(12, 2 + Math.sqrt(acc[i]) * 0.3);
+    course.next[k] = d >= 0 && nodeAt[d] ? nodeAt[d] - 1 : k;
+    course.still[k] = water[i] || lakeAt[i] & LAKE_IN ? 1 : 0;
+    course.acc[k] = acc[i];
+  }
+  smooth(course);
+  const shaped = shapeLevels(course);
   const nodes = new Uint32Array(Math.max(count, 1) * NODE_WORDS);
   const f = new Float32Array(nodes.buffer);
   let waterfalls = 0;
@@ -352,23 +383,21 @@ export function findRivers(opt: {
   const cell = opt.worldW / n;
   for (let k = 0; k < count; k++) {
     const i = xs[k];
-    const x = i % n;
-    const y = (i - x) / n;
     const lv = flags[k] & RIVER_LAVA;
     // (lava: narrower; a river wider downstream)
-    const w = lv ? 3 : Math.min(12, 2 + Math.sqrt(acc[i]) * 0.3);
+    const w = course.width[k];
     const d = down[i];
-    const next = d >= 0 && nodeAt[d] ? nodeAt[d] - 1 : k;
+    const next = course.next[k];
     const o = k * NODE_WORDS;
-    f[o] = ((x + 0.5) / n) * opt.worldW;
-    f[o + 1] = ((y + 0.5) / n) * opt.worldH;
-    f[o + 2] = water[i] ? sea - 0.4 : lev[i];
+    f[o] = course.x[k];
+    f[o + 1] = course.y[k];
+    f[o + 2] = course.level[k];
     f[o + 3] = w;
     nodes[o + 4] = next;
     nodes[o + 5] = flags[k];
     // (round 110: the rating shared with an authored river table — world/rivertable.ts)
     f[o + 6] = lv ? 1.4 : riverChannelDepth(w);
-    const fall = next !== k ? Math.max(0, lev[i] - (water[d] ? sea : lev[d])) : 0;
+    const fall = next !== k ? Math.max(0, course.level[k] - (water[d] ? sea : course.level[next])) : 0;
     // (round 90) a river into a lake, and the one out of it
     if (!lv && d >= 0) {
       const li = lakeAt[i] & LAKE_IN ? (lakeAt[i] & 0x7fff) - 1 : -1;
@@ -448,5 +477,6 @@ export function findRivers(opt: {
     speed: [r3(sp[0] ?? 0), r3(med(sp)), r3(sp[sp.length - 1] ?? 0)],
     discharge: r3(med(qs)),
     pipeSlope: r3(med(ratio)),
+    shaped,
   };
 }
