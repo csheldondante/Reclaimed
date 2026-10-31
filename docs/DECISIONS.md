@@ -72,6 +72,10 @@ each was implemented.
   stays the trigger; what it frees falls as a rock slide: slides along its failure plane, topples from the base,
   breaks into blocks, loads its neighbours (progressive), sheds rubble and dust. Sent to the solver agent.
 
+- The user, verbatim: "I think the penetration tolerance was also really important from what I recall. Big things can push into each other and not push back and this just represents surface deformation at contact."
+  → The solver keeps PX3's mass-scaled overlap (slop + min(slopCap, slopK · mass^slopP)) as the contact rule's slop:
+  never corrected, never wakes a sleeper, no push-back; drawn as surface deformation at the contact.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
