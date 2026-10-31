@@ -192,6 +192,8 @@ tests work and do quick smoke tests to find failures early." docs/TESTING.md.
 | LW3 | Day build → night defend (Thronefall loop) with the building view: paint functions into the building grid (housing, agriculture, port, civic, training camp, hospital...), each function a material whose style renders one structure or a dense block, grown not multiplied, vertical; an interface some heroes get; followers (FO1) | L | next |
 | LW4 | Branching journey → climax: runsit refined toward FTL/Oregon legibility | M | next |
 | LW5 | Later: node-powered rituals (structures + an effect graph + a power source + upkeep; magic nodes as atlas features); castle court → knights on missions → reports; the GM choosing and switching loops mid-run (accepting leadership → a city-management run) | L | open |
+| LI2 | The lich pulls up pieces of terrain or structure with telekinesis and hurls them (the judge frees the piece, the solver carries it; impacts through the break rules) | M | open |
+| RN1 | Run styles: (2+3) stronghold + encounter map as one loop, building as one kind of encounter (design talk round 120); (1) folk hero free adventure with an enemy progress track tied to real world changes, later | L | asked (design session) |
 | FLO21 | Birch cost on the phone: the user's result good — done (flora 18c3bdb, unmerged) | S | done |
 
 ## Round 118 (2026-10-30, session 5, `places`) — found while reviewing the tracks

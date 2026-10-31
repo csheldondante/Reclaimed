@@ -173,6 +173,23 @@ each was implemented.
   vertical too; Townscaper's fun with an RTS's readability. The GM sets up a run from the character and objective and
   may change it mid-run on the player's choices; accepting leadership can make the next run city management.
 
+- The user, verbatim, on reviewing branches and on run styles:
+
+> Yeah I feel like I'm less clear about what to review for those. Should I just see that they are fun? Do you want to go through structure or functionality with me for the to sign off on it? My hope is that eventually we can get to a really full world with a huge breath of cool content that interacts with simulations and fun interfaces with the data of which our character controllers, and various gameplay systems like city building and ordering units are top.
+
+> I liked the bike camera and the lich is pretty fun and will be even better with the improved telekinesis physics and hopefully a way to pull up pieces of terrain or structure to hurl them. I would like to try the horde run. I imagine three initial run styles to start:
+> 1. A folk hero style action adventure where you have a quest and travel freely to try to complete it. Talking to people, doing dude quests, gaining skills and abilities and either succeeding or failing in your primary quest. I like an enemy progress track tied to real world changes so players have pressure to engage and we can tune how much. This is the most open and it needs fun combat, places to explore, people to talk to, skills to aquire.
+> 2. A city/stronghold management game that is basically a city builder/worker management sim with a schedule so that you switch between building, fending off threats, dispatching workers and armies you build on the atlas map and answering petitions. I imagine you get interesting choices like vassalizing other settlements, sending limited troops or spies on missions with different rewards and then facing threats with the resources and abilities you aquire from your decisions and city building. You can marshall large armies or recover powerful artifacts or spells, set up trade deals, establish resource outposts and then face armies and threats with what you've built.
+> 3. As I write this I realize this is just an extension of 2. But games like FTL or slay the spire have you move across a map and make choices from provided options about what encounters to engage with and then those encounters give rewards that change what is available for the next encounter. I think that same structure is shared by this and option 2 but option 2 has a building phase (which could just be viewed as another encounter)
+>
+> So I think I might place 2,3 as my preference to focus on and to discuss the types of choice and encounter we want to expose through that.
+
+- → Branch review split: the user judges fun and feel on the phone; main reviews structure (contracts, one concern,
+  no fallbacks or caps, rendering apart from simulation, tests) and sends a one-page note with only the user's
+  decisions. play's bike camera and lich kept; the lich to pull up terrain or structure pieces and hurl them (LI2).
+  Runs: focus on 2+3 as one loop (an encounter map where building is one kind of encounter), folk hero (1) later; a
+  design talk on the choices and encounters it exposes.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
