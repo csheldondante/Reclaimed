@@ -856,6 +856,7 @@ export class Integrity {
       this.core.renderer.setBodies(u, n, shown);
     } else this.core.renderer.setBodies(data, count);
     this.rockDraws();
+    this.metalBlows();
     // (round 86) the pieces falling in the columns: a step, their chunks meshed at once, what came down
     if (this.world.slots.length && dt > 0 && this.falling.list.length) {
       for (const l of this.falling.update(dt, ++this.fallFrame % FALL_EVERY === 0)) this.land(l);
@@ -1527,6 +1528,27 @@ export class Integrity {
     this.stats.metal = (this.stats.metal ?? 0) + list.length;
     const [fx, fy] = cellPos(Math.round((lo[0] + hi[0]) / 2), Math.round((lo[1] + hi[1]) / 2));
     this.onCollapse?.(fx, fy, lo[2] + 0.5, list.length * 0.1);
+  }
+
+  /**
+   * (solver step 2: the design's "energy goes to particles") A metal or wood body on the node solver that hit something
+   * this tick: its blow's energy (½ m v²) as sparks and chips where it struck, and the sound; a small knock nothing.
+   */
+  private metalTick = new Map<SolverBody, number>();
+  private metalBlows(): void {
+    if (!this.solver) return;
+    for (const mb of this.metal) {
+      const r = this.solver.read(mb.body);
+      if (!r?.impact || r.impact.speed < 2.5 || this.metalTick.get(mb.body) === r.tick) continue;
+      this.metalTick.set(mb.body, r.tick);
+      const e = 0.5 * r.mass * r.impact.speed * r.impact.speed;
+      const [x, y, z] = r.impact.at;
+      const n = Math.min(40, Math.round(Math.sqrt(e) / 12));
+      if (n < 1) continue;
+      this.onSparks?.(x, y, z + 0.2, Math.min(24, n), 1.5 + r.impact.speed * 0.4);
+      this.onChips?.(x, y, z + 0.2, Math.ceil(n / 2), 2 + r.impact.speed * 0.3);
+      this.onCollapse?.(x, y, z, Math.min(400, e / 400));
+    }
   }
 
   /** (round 95) world points → the column indices + 0.5 toLoose and chips take */
