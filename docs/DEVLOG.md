@@ -14454,3 +14454,10 @@ Measured (desktop iGPU, intel-xe-lpg; every system in play as deployed, 1x):
   with its history, trading at night), c-<purpose>-{day,day-near,night-near,night}.png (in game: port s84, mining s96,
   lumber s7, trading s104, farming s53, hold s124 — this GPU's world; WD1 says another GPU may make other towns),
   farming-dusk-wind.gif. The light pools were faint at first in the game: their strength doubled (0.42 → 0.8).
+
+Checked after main's review of the shots (scripts/citiesprobe.mjs: one town's view on any build, `--works` puts the camera
+on the purpose's work site): the lavender slabs round s104 at night and the dark plume by s84's lighthouse are on places'
+build at the same view and time (the plume also with the structures skipped) — pre-existing, BACKLOG CIT1, CIT2; a
+farmstead's barn in shallow water across the river is on places too (CIT3). The mine s96's works are there in play
+(probe/mine-works-cities.png: the headframe, a spoil heap, the rail): the earlier shot was framed on the town, the works
+past its rim. (A pit-floor-over-the-sea rule tried for the barn was reverted: the barn wasn't in a pit.)
