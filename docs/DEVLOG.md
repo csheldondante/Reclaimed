@@ -14320,3 +14320,8 @@ factions hashed); a GM file for another make of the seed gives way to the templa
 selection (the GM's file in its own world; skipped with a note in another; a broken one for this world throws), a leg
 under a loader that isn't ready for 40 s (waits, asks once, arrives once). scripts/runsit.mjs now checks the run is up
 (its card, the hero held) before playing. To confirm on the phone (or a headless page on another GPU path).
+Checked after the fix (scripts/phoneprobe.mjs, the deployed Pages build of 7c0ae3a, 412x915, CPU throttled 4x, D3D11 on the
+desktop iGPU): the run up in 56 s, the GM's situation (its print 2653900f matched), the card shown, the hero held; no
+errors but the site's favicon 404. SwiftShader as a second GPU path isn't available to Chrome here (no adapter), so the
+phone's own cause (RS32) is to be seen on the phone: the card now says when the GM's file was for another make of the
+seed, and any other failure is the fatal overlay with its reason.
