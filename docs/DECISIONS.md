@@ -131,6 +131,8 @@ each was implemented.
 - The user, verbatim: "I'm also ok with the other options but I think we should prioritize the the pointer jumping and parallelization and culling to only a local neighborhood is also good. Since the support from more distant points drops off with distance a reasonable cutoff is to take the deepest point in the suspended group (via JFA to supports) and cut off anything further than 1.5x that distance. A cave might be only 20 cells across right? So that would mean checking anything within a 30x30 window which should be trivially fast and maybe not even need the pointer jumping"
   → judge B: (3) culled to 1.5 × the suspended group's deepest distance from its supports; each fix measured alone.
 
+- The user, verbatim: "It's worth testing probably" and "If pointer jumping works but is less accurate it could still make sense for large caverns as a fallback for culling alone" → judge B: culled levels for small groups, pointer jumping for large ones if it can't match exactly; how far its verdicts differ reported.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
