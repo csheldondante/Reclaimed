@@ -34,6 +34,14 @@ export interface MaterialDef {
   bear?: number;
   /** (round 92) mass per cell against rock's 1 (default 1; plants 0.4): what a piece weighs (fracture.ts analyseRock) */
   density?: number;
+  /**
+   * (round 120b, the user on the keystone: "Follow the material") how a solid holds in tension, for judge B
+   * (game/judge.ts): 'rock' natural stone keeps its tensile strength (a natural arch's halves stand as corbels);
+   * 'masonry' built of blocks — brick, tile, plaster — has none (Heyman's no-tension assumption: an arch without its
+   * keystone falls); 'cast' concrete, asphalt; 'metal'; anything else 'other'. Each group's share of TUNE.judgeB.tensile
+   * is a slider (judgeB.tRock, tMasonry, tCast, tMetal, tOther).
+   */
+  bond?: Bond;
   /** Max vegetation stage this substrate can carry (0 = nothing grows). */
   growthCap: number;
   /** Growth-rate multiplier for vegetation on this substrate. */
@@ -65,6 +73,9 @@ export interface MaterialDef {
 }
 
 const NEVER = 1e9;
+
+/** (round 120b) how a solid holds in tension (MaterialDef.bond) */
+export type Bond = 'rock' | 'masonry' | 'cast' | 'metal' | 'other';
 
 export const MAT = {
   Air: 0,
@@ -145,17 +156,17 @@ const NONE: Omit<MaterialDef, 'name' | 'albedo' | 'state'> = {
 
 export const MATERIALS: MaterialDef[] = [
   { ...NONE, name: 'air', albedo: [0, 0, 0], state: MatState.Empty },
-  { ...NONE, name: 'stone', albedo: [0.4, 0.39, 0.37], state: MatState.Solid, growthCap: 1.2, suitability: 0.3, porosity: 0.25, smooth: 2 },
+  { ...NONE, name: 'stone', albedo: [0.4, 0.39, 0.37], state: MatState.Solid, bond: 'rock', growthCap: 1.2, suitability: 0.3, porosity: 0.25, smooth: 2 },
   { ...NONE, name: 'soil', albedo: [0.45, 0.36, 0.27], state: MatState.Granular, bear: 0.3, reposeDry: 1.4, reposeWet: 1, strength: 0.2, growthCap: 5, suitability: 1, porosity: 0.6, smooth: 2, washMobility: 0.6, washFlow: 0.12 },
   { ...NONE, name: 'sand', albedo: [0.72, 0.65, 0.5], state: MatState.Granular, bear: 0.15, reposeDry: 1, reposeWet: 1, strength: 0.1, growthCap: 2.5, suitability: 0.4, porosity: 0.5, smooth: 2, windLift: 14, airborne: 0.15, washMobility: 1, washFlow: 0.08 },
   { ...NONE, name: 'rubble', albedo: [0.44, 0.41, 0.38], state: MatState.Granular, bear: 0.4, reposeDry: 1.7, reposeWet: 1.5, strength: 0.3, growthCap: 3, suitability: 0.5, porosity: 0.3, smooth: 1, washMobility: 0.25, washFlow: 0.3 },
-  { ...NONE, name: 'concrete', albedo: [0.66, 0.65, 0.62], state: MatState.Solid, strength: 0.8, growthCap: 1.5, suitability: 0.25, porosity: 0.35 },
-  { ...NONE, name: 'asphalt', albedo: [0.24, 0.24, 0.25], state: MatState.Solid, strength: 0.6, growthCap: 2, suitability: 0.3, specular: 0.1, porosity: 0.3 },
-  { ...NONE, name: 'rust', albedo: [0.5, 0.29, 0.17], state: MatState.Solid, strength: 0.85, growthCap: 1, suitability: 0.2, specular: 0.2, porosity: 0.2 },
+  { ...NONE, name: 'concrete', albedo: [0.66, 0.65, 0.62], state: MatState.Solid, bond: 'cast', strength: 0.8, growthCap: 1.5, suitability: 0.25, porosity: 0.35 },
+  { ...NONE, name: 'asphalt', albedo: [0.24, 0.24, 0.25], state: MatState.Solid, bond: 'cast', strength: 0.6, growthCap: 2, suitability: 0.3, specular: 0.1, porosity: 0.3 },
+  { ...NONE, name: 'rust', albedo: [0.5, 0.29, 0.17], state: MatState.Solid, bond: 'metal', strength: 0.85, growthCap: 1, suitability: 0.2, specular: 0.2, porosity: 0.2 },
   { ...NONE, name: 'water', albedo: [0.2, 0.33, 0.38], state: MatState.Liquid, specular: 0.8 },
   { ...NONE, name: 'leaves', albedo: [0.25, 0.45, 0.18], state: MatState.Vegetation, strength: 0.1 },
   { ...NONE, name: 'wood', albedo: [0.36, 0.25, 0.15], state: MatState.Vegetation, strength: 0.4 },
-  { ...NONE, name: 'brick', albedo: [0.58, 0.34, 0.27], state: MatState.Solid, strength: 0.6, growthCap: 1.5, suitability: 0.3, porosity: 0.4 },
+  { ...NONE, name: 'brick', albedo: [0.58, 0.34, 0.27], state: MatState.Solid, bond: 'masonry', strength: 0.6, growthCap: 1.5, suitability: 0.3, porosity: 0.4 },
   // compacted waste: holds together against water until it is burned (it
   // then leaves ash — DECISIONS round 5); rendered as multicoloured specks
   { ...NONE, name: 'trash', albedo: [0.52, 0.5, 0.47], state: MatState.Solid, strength: 1, growthCap: 1, suitability: 0.15, porosity: 0.2 },
@@ -175,13 +186,13 @@ export const MATERIALS: MaterialDef[] = [
   // drifted dust: fine, blown about by a gust (it lies in the layers like any loose ground)
   { ...NONE, name: 'drift', albedo: [0.6, 0.5, 0.39], state: MatState.Granular, bear: 0.1, reposeDry: 0.8, reposeWet: 0.6, porosity: 0.4, windLift: 9, airborne: 0.4, washMobility: 1, washFlow: 0.03 },
   // faded painted metal: car bodies, ship hulls, pylons (models.ts; round 13 F5)
-  { ...NONE, name: 'steel', albedo: [0.44, 0.48, 0.5], state: MatState.Solid, strength: 0.85, growthCap: 1, suitability: 0.2, specular: 0.25, porosity: 0.15 },
+  { ...NONE, name: 'steel', albedo: [0.44, 0.48, 0.5], state: MatState.Solid, bond: 'metal', strength: 0.85, growthCap: 1, suitability: 0.2, specular: 0.25, porosity: 0.15 },
   // tent fabric: weathered off-white canvas, weak
   { ...NONE, name: 'canvas', albedo: [0.78, 0.75, 0.66], state: MatState.Solid, strength: 0.3, growthCap: 1, suitability: 0.2, porosity: 0.5 },
   // packed dust: a deep dust layer compacted into ground (round 15, H3)
   { ...NONE, name: 'silt', albedo: [0.56, 0.47, 0.37], state: MatState.Granular, bear: 0.2, reposeDry: 1.4, reposeWet: 1, strength: 0.15, growthCap: 3.5, suitability: 0.7, porosity: 0.5, smooth: 2, washMobility: 0.6, washFlow: 0.12 },
   // set lava: dark, glassy-rough stone (round 47)
-  { ...NONE, name: 'basalt', albedo: [0.2, 0.19, 0.19], state: MatState.Solid, growthCap: 1.2, suitability: 0.35, specular: 0.12, porosity: 0.2 },
+  { ...NONE, name: 'basalt', albedo: [0.2, 0.19, 0.19], state: MatState.Solid, bond: 'rock', growthCap: 1.2, suitability: 0.35, specular: 0.12, porosity: 0.2 },
   // molten rock (a field, like oil; its glow is drawn by temperature)
   { ...NONE, name: 'lava', albedo: [0.9, 0.35, 0.08], state: MatState.Liquid, emissive: 1 },
   // snow (round 50): bright, holds a fair slope dry, slumps wet; a breeze
@@ -192,30 +203,30 @@ export const MATERIALS: MaterialDef[] = [
   // ice (round 50): see-through pale blue, glossy; melts back to water
   { ...NONE, name: 'ice', albedo: [0.72, 0.86, 0.95], state: MatState.Solid, strength: 0.4, specular: 0.9, glass: 1 },
   // crystal (round 50): faceted, see-through, a faint glow of its own
-  { ...NONE, name: 'crystal', albedo: [0.62, 0.5, 0.9], state: MatState.Solid, emissive: 0.25, strength: 0.7, specular: 1, glass: 1 },
+  { ...NONE, name: 'crystal', albedo: [0.62, 0.5, 0.9], state: MatState.Solid, bond: 'rock', emissive: 0.25, strength: 0.7, specular: 1, glass: 1 },
   // logs (round 63): felled trunks, cut and stacked (wood is the living trunk, plant matter)
   { ...NONE, name: 'log', albedo: [0.45, 0.31, 0.18], state: MatState.Solid, strength: 0.45, growthCap: 1, suitability: 0.2 },
   // sandstone (round 64): warm banded rock, the mesas' strata; terrain (round 69: strength 1 — the
   // atlas's mesas, badlands and dunes stand on it; api/terrain.ts already counted it as ground)
-  { ...NONE, name: 'sandstone', albedo: [0.74, 0.47, 0.32], state: MatState.Solid, growthCap: 1.2, suitability: 0.3, porosity: 0.3 },
+  { ...NONE, name: 'sandstone', albedo: [0.74, 0.47, 0.32], state: MatState.Solid, bond: 'rock', growthCap: 1.2, suitability: 0.3, porosity: 0.3 },
   // plaster and roof tiles (round 65): what the town is built of (build/town.ts): pale walls, terracotta roofs
-  { ...NONE, name: 'plaster', albedo: [0.86, 0.8, 0.68], state: MatState.Solid, strength: 0.6, growthCap: 1.2, suitability: 0.25, porosity: 0.3 },
-  { ...NONE, name: 'tile', albedo: [0.68, 0.3, 0.2], state: MatState.Solid, strength: 0.6, growthCap: 1.3, suitability: 0.3, specular: 0.15, porosity: 0.2 },
+  { ...NONE, name: 'plaster', albedo: [0.86, 0.8, 0.68], state: MatState.Solid, bond: 'masonry', strength: 0.6, growthCap: 1.2, suitability: 0.25, porosity: 0.3 },
+  { ...NONE, name: 'tile', albedo: [0.68, 0.3, 0.2], state: MatState.Solid, bond: 'masonry', strength: 0.6, growthCap: 1.3, suitability: 0.3, specular: 0.15, porosity: 0.2 },
   // the atlas's forms (round 69; what's meant to stand is strong — "if you want it to stand make a stronger material"):
   // flesh: soft-looking, wet, red; the flesh style's ground, so terrain (strength 1): its vessels stand
   { ...NONE, name: 'flesh', albedo: [0.7, 0.34, 0.34], state: MatState.Solid, growthCap: 1.5, suitability: 0.45, specular: 0.35, porosity: 0.6, smooth: 2 },
   // coral: pale, porous, light and fairly strong (shells, branches, vessels)
-  { ...NONE, name: 'coral', albedo: [0.9, 0.74, 0.68], state: MatState.Solid, strength: 0.85, growthCap: 1.6, suitability: 0.4, porosity: 0.55, smooth: 1 },
+  { ...NONE, name: 'coral', albedo: [0.9, 0.74, 0.68], state: MatState.Solid, bond: 'rock', strength: 0.85, growthCap: 1.6, suitability: 0.4, porosity: 0.55, smooth: 1 },
   // obsidian: black volcanic glass by the lava; terrain (never falls)
-  { ...NONE, name: 'obsidian', albedo: [0.07, 0.06, 0.09], state: MatState.Solid, specular: 0.95, porosity: 0.05 },
+  { ...NONE, name: 'obsidian', albedo: [0.07, 0.06, 0.09], state: MatState.Solid, bond: 'rock', specular: 0.95, porosity: 0.05 },
   // quartz (round 75): the giant crystals, mountains of it — faceted, glowing a little; terrain. Round 83: in
   // the field mesh, cut as a gem (meshdraw.wgsl gemLook), not see-through prisms column by column
-  { ...NONE, name: 'quartz', albedo: [0.74, 0.66, 0.96], state: MatState.Solid, emissive: 0.2, specular: 1 },
+  { ...NONE, name: 'quartz', albedo: [0.74, 0.66, 0.96], state: MatState.Solid, bond: 'rock', emissive: 0.2, specular: 1 },
   // sinter: the pale crust a geyser's water leaves round its vent; terrain
-  { ...NONE, name: 'sinter', albedo: [0.86, 0.82, 0.72], state: MatState.Solid, growthCap: 0.5, suitability: 0.1, porosity: 0.4, smooth: 2 },
+  { ...NONE, name: 'sinter', albedo: [0.86, 0.82, 0.72], state: MatState.Solid, bond: 'rock', growthCap: 0.5, suitability: 0.1, porosity: 0.4, smooth: 2 },
   // bedrock (round 83, the user: "If things are breaking just make a material that is stronger so they don't
   // break"): dark, dense rock whose overhangs never give — for what must stand (a cave's roof, an arch)
-  { ...NONE, name: 'bedrock', albedo: [0.26, 0.25, 0.25], state: MatState.Solid, porosity: 0.05, smooth: 2, span: Infinity },
+  { ...NONE, name: 'bedrock', albedo: [0.26, 0.25, 0.25], state: MatState.Solid, bond: 'rock', porosity: 0.05, smooth: 2, span: Infinity },
   // external (round 99, sim/external.ts): owned by another system, which draws it; to the sims, rock that never gives
   // by itself (its owner decides when it breaks); moss takes on it as on stone
   { ...NONE, name: 'external', albedo: [0.4, 0.39, 0.37], state: MatState.Solid, bear: 1, growthCap: 1.2, suitability: 0.3, porosity: 0.2, span: Infinity },

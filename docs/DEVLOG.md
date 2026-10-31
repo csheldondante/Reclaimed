@@ -14570,3 +14570,22 @@ now per kernel: SectionsJudge.stats.kernels.
 
 Also: pieces, the freed runs' union-find and the release (mode 1) moved off the single workgroup to whole-GPU kernels;
 the single-workgroup phases after the sections walk only the seeded pieces' runs (F_SEEDL), not the window's.
+
+
+## 2026-10-31 — round 120b (`judge`): "Follow the material" — tension by the material's bond
+
+**Why.** SV1 (an arch's keystone cut out) put to the user; the user: "Follow the material". Natural rock is one
+bonded piece — a natural arch's halves stand as corbels when it falls (Wall Arch, 2008); built masonry is blocks with
+mortar — no tension (Heyman's own assumption) — and its halves fall.
+
+**What.** materials.ts `bond` ('rock' stone, basalt, sandstone, bedrock, obsidian, quartz, sinter, crystal, coral;
+'masonry' brick, tile, plaster; 'cast' concrete, asphalt; 'metal' steel, rust; 'other' the rest), a share of
+TUNE.judgeB.tensile per group (sliders tRock 1, tMasonry 0, tCast 1, tMetal 1, tOther 1; the material table rewritten
+each judging, so they're live). In judge.wgsl a run's tensile strength is the least of strength × share over its
+side-holding intervals (a brick wall on stone ground is as weak in tension as its brick); the bending check (each
+section, both modes) and the neck's pull use it; shear and crushing keep the plain strength. The oracle (mode levels)
+and the pairs follow the same rule — the equality tests now include brick arches and every third random cave of brick.
+
+**Tests** (B; A unchanged): natural rock arch — stands; keystone cut: stands (corbels); foot cut: 189 fall. Masonry
+(brick) arch — stands (in compression: a thrust line, no tension needed); keystone cut: both halves fall (2 × 27
+cells); foot cut: 189 fall.

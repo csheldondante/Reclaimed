@@ -110,11 +110,11 @@ export class RunsJudge implements RockJudge {
 // ---- judge B ----
 
 /** judge.wgsl's layout: its work buffer's fields, its output's header (keep in step with the shader) */
-const NFIELDS = 96;
+const NFIELDS = 98;
 /** the nodes' own numbers (judge.wgsl N_*) */
-const NN = 67;
+const NN = 69;
 /** the pairs' fields (judge.wgsl P_*) */
-const NPF = 55;
+const NPF = 56;
 const NCOUNT = 16;
 const O_REC0 = 32 + 1024 * 8;
 const O_PIECE0 = 32;
@@ -157,14 +157,17 @@ interface DeviceKit {
   sized: Sized | null;
 }
 
-/** the material table judge.wgsl reads: state, strength, density (fracture.ts densityOf), never-gives */
+/** the material table judge.wgsl reads: state, strength, density (fracture.ts densityOf), tensile share or −1 never-gives */
 function materialTable(): Float32Array {
   const t = new Float32Array(256 * 4);
   MATERIALS.forEach((m, i) => {
     t[i * 4] = m.state;
     t[i * 4 + 1] = m.strength;
     t[i * 4 + 2] = m.density ?? (m.state === MatState.Vegetation ? 0.4 : 1);
-    t[i * 4 + 3] = m.span === Infinity ? 1 : 0;
+    // (w: its tensile share by its bond — "Follow the material" — or −1, never gives)
+    const T = TUNE.judgeB;
+    const share = { rock: T.tRock, masonry: T.tMasonry, cast: T.tCast, metal: T.tMetal, other: T.tOther }[m.bond ?? 'other'];
+    t[i * 4 + 3] = m.span === Infinity ? -1 : share;
   });
   return t;
 }
@@ -340,6 +343,8 @@ export class SectionsJudge implements RockJudge {
     u[25] = pairs ? 1 : 0;
     u[26] = this.cull ? 0 : 1;
     dev.queue.writeBuffer(kit.params, 0, pb);
+    // (the sliders are live: the table each judging)
+    dev.queue.writeBuffer(kit.mats, 0, materialTable());
     dev.queue.writeBuffer(s.mask, 0, mask);
     const res = { 0: kit.params, 1: g.chunks, 2: g.slots, 3: kit.mats, 4: s.mask, 5: s.work, 6: s.out, 7: s.nodes };
     const bg1 = makeBindGroup(dev, 'judge B (judge1)', kit.layout, { ...res, 8: kit.ind });

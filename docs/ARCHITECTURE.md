@@ -2731,7 +2731,9 @@ box and TUNE.judgeB.margin columns round it — a piece reaching the window's si
 
 Units: a cell a metre; stresses in the weight of a metre of rock a square metre (σ' = MPa × 10⁶ / (density × g)):
 TUNE.judgeB tensile 4 MPa (σ' ≈ 157), shear 8, crush 60, density 2600 kg/m³, meet 0.35, archTol 0.5, tipGive 0,
-neck 16, margin 32 — the tuning panel's "Judge B" group (CPU-side; the kernel gets them in its own uniform). Material
+neck 16, margin 32, and the tension share by bond (tRock 1, tMasonry 0, tCast 1, tMetal 1, tOther 1: materials.ts
+`bond`, round 120b "Follow the material") — the tuning panel's "Judge B" group (CPU-side; the kernel gets them in its own uniform
+and the material table). Material
 strengths, densities and never-gives (span Infinity) from materials.ts (a 256-entry table the kernel reads).
 
 Buffers (sized to the window, grown and judged again on overflow — never cut short): params (uniform), the world's

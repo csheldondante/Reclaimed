@@ -124,6 +124,23 @@ each was implemented.
   CPU ms, bodies, scaling 10/50/200, the phone proxy) and a correctness battery (arch, dome, overhangs, spire, pylon,
   wood tower, mesa, burial).
 
+- The user, verbatim, on judge B's 8-20 ms a pass on the atlas (options put by main: (1) each level on the whole GPU,
+  (2) pointer jumping, few sequential passes): "Yes please implement options 1 and 2", then "I'm also ok with the
+  other options but I think we should prioritize the the pointer jumping and parallelization and culling to only a
+  local neighborhood is also good. Since the support from more distant points drops off with distance a reasonable
+  cutoff is to take the deepest point in the suspended group (via JFA to supports) and cut off anything further than
+  1.5x that distance. A cave might be only 20 cells across right? So that would mean checking anything within a 30x30
+  window which should be trivially fast and maybe not even need the pointer jumping", and "If pointer jumping works
+  but is less accurate it could still make sense for large caverns as a fallback for culling alone"
+  → (branch judge, round 120b) every level's sections at once on the whole GPU (union-find on (run, level) pairs):
+  exact, so no less-accurate fallback is needed; culling to the pieces a cut touched (exact: a piece's verdict never
+  depends on another piece), reported with the box the judged runs span. DEVLOG round 120b has the numbers.
+- The user, verbatim, on SV1 (an arch's keystone cut out: do the halves fall?): "Follow the material"
+  → Judge B's tensile strength comes from the material (materials.ts `bond`, a slider a group in the "Judge B"
+  panel): natural stone (bedrock, stone, sandstone, basalt, the other rocks) keeps it — the halves stand as corbels,
+  as a natural arch's stubs do; built masonry (brick, tile, plaster) has none (Heyman's no-tension assumption) — the
+  halves fall. Both fall with a foot cut.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:

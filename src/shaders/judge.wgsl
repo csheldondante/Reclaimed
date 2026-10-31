@@ -46,7 +46,8 @@ struct Params {
 @group(0) @binding(0) var<uniform> P: Params;
 @group(0) @binding(1) var<storage, read> chunks: array<vec2<u32>>;
 @group(0) @binding(2) var<storage, read> slots: array<vec4<u32>>;
-/** per material: state, strength, density, 1 = never gives (span Infinity) */
+/** per material: state, strength, density, w its tensile share (round 120b, "Follow the material": natural rock 1,
+ *  built masonry 0 — TUNE.judgeB by group) or −1: never gives (span Infinity) */
 @group(0) @binding(3) var<storage, read> MT: array<vec4<f32>>;
 /** per window column: bit 0 seeded (a seed column or beside one), bit 1 weighed (an edit cut it) */
 @group(0) @binding(4) var<storage, read> colMask: array<u32>;
@@ -118,7 +119,9 @@ const N_FD: u32 = 34u; // 30
 const N_PBASE: u32 = 64u;
 const N_ORDER2: u32 = 65u;
 const F_SEEDL: u32 = 66u; // (in N) the runs of the seeded pieces (all of them with P.pad1 = 1)
-const NN: u32 = 67u;
+const N_TS: u32 = 67u; // a run's weakest tensile strength (strength × its material's tensile share)
+const N_FTS: u32 = 68u; // its faces' weakest
+const NN: u32 = 69u;
 // the judge's work (W: atomics), each an array of P.ncap words (fi)
 const F_DYN: u32 = 0u;
 const F_DIST: u32 = 12u;
@@ -183,7 +186,9 @@ const F_KC: u32 = 69u;
 const F_SUPU: u32 = 70u;
 const F_SUP: u32 = 71u; // 24
 const F_DEAD: u32 = 95u;
-const NFIELDS: u32 = 96u;
+const F_STS: u32 = 96u; // a section's weakest tensile strength (the level pass)
+const F_KT: u32 = 97u; // a leg's weakest tensile strength (the neck)
+const NFIELDS: u32 = 98u;
 // counters (after the fields and the two per-column arrays)
 const C_NODES: u32 = 0u;
 const C_HANG: u32 = 1u;
@@ -239,7 +244,8 @@ const P_PIVZ: u32 = 51u;
 const P_AXX: u32 = 52u;
 const P_AXY: u32 = 53u;
 const P_LIST: u32 = 54u;
-const NPF: u32 = 55u;
+const P_TS: u32 = 55u;
+const NPF: u32 = 56u;
 fn pw(f: u32, q: u32) -> u32 { return cnt(NCOUNT) + 3u * (P.maxLevels + 2u) + f * P.pcap + q; }
 /** run v's pair at level k */
 fn pairOf(v: u32, k: u32) -> u32 { return nu(N_PBASE, v) + k - 1u; }
@@ -330,6 +336,7 @@ fn build(@builtin(global_invocation_id) gid: vec3<u32>) {
   var mass = 0.0;
   var mz = 0.0;
   var str = 1e9;
+  var tsh = 1e9;
   var fl = 0u;
   var sl0 = 0u;
   var sln = 0u;
@@ -353,6 +360,7 @@ fn build(@builtin(global_invocation_id) gid: vec3<u32>) {
       N[N_MASS * P.ncap + id] = bitcast<u32>(mass);
       N[N_MZ * P.ncap + id] = bitcast<u32>(mz);
       N[N_STR * P.ncap + id] = bitcast<u32>(str);
+      N[N_TS * P.ncap + id] = bitcast<u32>(tsh);
       N[N_FLAGS * P.ncap + id] = fl;
       N[N_SL0 * P.ncap + id] = sl0;
       N[N_SLN * P.ncap + id] = sln;
@@ -368,6 +376,7 @@ fn build(@builtin(global_invocation_id) gid: vec3<u32>) {
       mass = 0.0;
       mz = 0.0;
       str = 1e9;
+      tsh = 1e9;
       fl = 0u;
       if (z0 < 1e-3) { fl |= NF_STANDS; }
       if ((cm & 1u) != 0u) { fl |= NF_SEEDED; }
@@ -390,7 +399,8 @@ fn build(@builtin(global_invocation_id) gid: vec3<u32>) {
       sh0 = min(sh0, z0);
       sh1 = max(sh1, z1);
       str = min(str, mt.y);
-      if (mt.w > 0.5) { fl |= NF_BED; }
+      tsh = min(tsh, mt.y * select(mt.w, 1.0, mt.w < -0.5));
+      if (mt.w < -0.5) { fl |= NF_BED; }
     }
   }
 }
@@ -786,6 +796,7 @@ fn pairsInit(@builtin(global_invocation_id) gid: vec3<u32>) {
   st(pw(P_PAR, a.z), a.z);
   st(pw(P_NODE, a.z), a.x);
   stf(pw(P_STR, a.z), 1e9);
+  stf(pw(P_TS, a.z), 1e9);
   for (var d = 0u; d < 6u; d++) { stf(pw(P_D + d * 5u + 3u, a.z), 1e9); }
 }
 
@@ -861,6 +872,7 @@ fn pairsSum(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invoca
         if (slot != NONE) { haddf(slot * 32u + 4u + q, x); } else { addf(pw(P_U + q, r), x); }
       }
       minf(pw(P_STR, r), nf(N_FSTR, v));
+      minf(pw(P_TS, r), nf(N_FTS, v));
       if (nu(N_FINF, v) != 0u) { st(pw(P_INF, r), 1u); }
       for (var d = 0u; d < 6u; d++) {
         let sh = nf(N_FD + d * 5u, v);
@@ -918,6 +930,7 @@ fn checks(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (inf || meet) { return; }
   oadd(O_WHY + 10u, 1u);
   let s = min(ldf(pw(P_STR, r)), 1e3);
+  let ts = min(ldf(pw(P_TS, r)), 1e3);
   var Ap = 0.0;
   var Apz = 0.0;
   var Ip = 0.0;
@@ -941,7 +954,7 @@ fn checks(@builtin(global_invocation_id) gid: vec3<u32>) {
     let I = max(Ip - Ap * zb * zb, 0.0);
     let c = max(zhi - zb, zb - zlo);
     let S = I / max(c, 1e-3);
-    if (M * L > P.tensile * s * S) { kind = K_BEND; }
+    if (M * L > P.tensile * ts * S) { kind = K_BEND; }
   } else if (kind == 0u && L > 1e-3) { kind = K_BEND; }
   if (kind == 0u) { return; }
   st(pw(P_KIND, r), kind);
@@ -983,6 +996,7 @@ fn faces(@builtin(global_invocation_id) gid: vec3<u32>) {
     dd[q * 5u + 4u] = 0.0;
   }
   var smin = 1e9;
+  var tmin = 1e9;
   var inf = select(0u, 1u, k == 1u && edgeHeld(i));
   let pi = cellPos(colXY(nu(N_COL, i)));
   let a0 = nf(N_SH0, i);
@@ -1011,6 +1025,7 @@ fn faces(@builtin(global_invocation_id) gid: vec3<u32>) {
       u[7] += a * n.y * n.y;
       u[8] += a * z0;
       smin = min(smin, min(si, nf(N_STR, j)));
+      tmin = min(tmin, min(nf(N_TS, i), nf(N_TS, j)));
       if (bi || (nu(N_FLAGS, j) & NF_BED) != 0u) { inf = 1u; }
       if (h > 0.0) {
         let zc = 0.5 * (z0 + z1);
@@ -1024,6 +1039,7 @@ fn faces(@builtin(global_invocation_id) gid: vec3<u32>) {
   }
   for (var q = 0u; q < 9u; q++) { N[(N_FU + q) * P.ncap + i] = bitcast<u32>(u[q]); }
   N[N_FSTR * P.ncap + i] = bitcast<u32>(smin);
+  N[N_FTS * P.ncap + i] = bitcast<u32>(tmin);
   N[N_FINF * P.ncap + i] = inf;
   for (var q = 0u; q < 30u; q++) { N[(N_FD + q) * P.ncap + i] = bitcast<u32>(dd[q]); }
 }
@@ -1054,12 +1070,14 @@ fn judge2(@builtin(local_invocation_index) lid: u32) {
       for (var f = F_AM; f <= F_ZMAX; f++) { st(fi(f, i), 0u); }
       st(fi(F_ZMIN, i), FINF);
       stf(fi(F_SSTR, i), 1e9);
+      stf(fi(F_STS, i), 1e9);
     }
     for (var t = lid; t < nOld; t += gW) {
       let r = nu(oldList, t);
       for (var f = F_A0; f <= F_ZMAX; f++) { st(fi(f, r), 0u); }
       st(fi(F_ZMIN, r), FINF);
       stf(fi(F_SSTR, r), 1e9);
+      stf(fi(F_STS, r), 1e9);
     }
     // b: joined to everything ≥ k out
     for (var t = lo + lid; t < hi; t += gW) {
@@ -1135,21 +1153,26 @@ fn judge2(@builtin(local_invocation_index) lid: u32) {
       var acc = array<f32, 9>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
       var cur = NONE;
       var smin = 1e9;
+      var tmin = 1e9;
       for (var t = lo + lid; t < hi; t += gW) {
         let i = nu(F_ORDER, t);
         let r = nu(N_ROOT, i);
         if (r != cur) {
           put(cur, &acc, 9u, F_A0, 4u);
           if (cur != NONE && smin < 1e9) { minf(fi(F_SSTR, cur), smin); }
+          if (cur != NONE && tmin < 1e9) { minf(fi(F_STS, cur), tmin); }
           smin = 1e9;
+          tmin = 1e9;
           cur = r;
         }
         for (var q = 0u; q < 9u; q++) { acc[q] += nf(N_FU + q, i); }
         smin = min(smin, nf(N_FSTR, i));
+        tmin = min(tmin, nf(N_FTS, i));
         if (nu(N_FINF, i) != 0u) { st(fi(F_INF, r), 1u); }
       }
       put(cur, &acc, 9u, F_A0, 4u);
       if (cur != NONE && smin < 1e9) { minf(fi(F_SSTR, cur), smin); }
+      if (cur != NONE && tmin < 1e9) { minf(fi(F_STS, cur), tmin); }
     }
     workgroupBarrier();
     wflush(newList, nNew, 13u, F_AM, 0u);
@@ -1199,6 +1222,7 @@ fn judge2(@builtin(local_invocation_index) lid: u32) {
       oadd(O_WHY + 10u, 1u);
       let M = ldf(fi(F_AM, r));
       let s = min(ldf(fi(F_SSTR, r)), 1e3);
+      let ts = min(ldf(fi(F_STS, r)), 1e3);
       let Ap = ldf(fi(F_AP, r));
       let A0 = ldf(fi(F_A0, r));
       // (shear on the faces' area across the lever; with no lever, a face's mean share)
@@ -1210,7 +1234,7 @@ fn judge2(@builtin(local_invocation_index) lid: u32) {
         let I = max(ldf(fi(F_IP, r)) - Ap * zb * zb, 0.0);
         let c = max(ldf(fi(F_ZMAX, r)) - zb, zb - ldf(fi(F_ZMIN, r)));
         let S = I / max(c, 1e-3);
-        if (M * lv.L > P.tensile * s * S) { kind = K_BEND; }
+        if (M * lv.L > P.tensile * ts * S) { kind = K_BEND; }
       } else if (kind == 0u && lv.L > 1e-3) { kind = K_BEND; }
       if (kind != 0u) {
         st(fi(F_FAIL, r), k);
@@ -1570,14 +1594,17 @@ fn judge4(@builtin(local_invocation_index) lid: u32) {
   let nN = workgroupUniformLoad(&wgL[1]);
   // the checks in parallel: the leg's sums (a thread a standing run), then each piece's middle and lever, then its
   // section's second moment and its hull's reach in 24 directions (a thread a standing run), then the verdict
-  for (var t = lid; t < nP; t += gW) { st(fi(F_KS, nu(F_ROOTS, t)), FINF); }
+  for (var t = lid; t < nP; t += gW) {
+    st(fi(F_KS, nu(F_ROOTS, t)), FINF);
+    st(fi(F_KT, nu(F_ROOTS, t)), FINF);
+  }
   workgroupBarrier();
   storageBarrier();
   // (a thread's sums kept while its runs are one piece's — nearly always — and put once: not every leg run's six
   // adds on the same words)
   {
     var cur = NONE;
-    var acc = array<f32, 7>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1e9);
+    var acc = array<f32, 8>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1e9, 1e9);
     for (var t = lid; t <= nN + gW; t += gW) {
       var p = NONE;
       var j = 0u;
@@ -1590,8 +1617,9 @@ fn judge4(@builtin(local_invocation_index) lid: u32) {
         if (cur != NONE) {
           for (var q = 0u; q < 6u; q++) { addf(fi(F_KM + q, cur), acc[q]); }
           minf(fi(F_KS, cur), acc[6]);
+          minf(fi(F_KT, cur), acc[7]);
         }
-        acc = array<f32, 7>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1e9);
+        acc = array<f32, 8>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1e9, 1e9);
         cur = p;
       }
       if (t >= nN) { break; }
@@ -1608,6 +1636,7 @@ fn judge4(@builtin(local_invocation_index) lid: u32) {
       acc[4] += ROW_H * q.x;
       acc[5] += ROW_H * q.y;
       acc[6] = min(acc[6], select(nf(N_STR, j), 1e9, (nu(N_FLAGS, j) & NF_BED) != 0u));
+      acc[7] = min(acc[7], select(nf(N_TS, j), 1e9, (nu(N_FLAGS, j) & NF_BED) != 0u));
     }
   }
   workgroupBarrier();
@@ -1683,6 +1712,7 @@ fn judge4(@builtin(local_invocation_index) lid: u32) {
     if (A <= 0.0 || M <= 0.0) { continue; }
     oadd(O_WHY + 7u, 1u);
     let s = min(ldf(fi(F_KS, p)), 1e3);
+    let ts = min(ldf(fi(F_KT, p)), 1e3);
     let com = vec2<f32>(ldf(fi(F_AX, p)) + ldf(fi(F_KMX, p)), ldf(fi(F_AY, p)) + ldf(fi(F_KMY, p))) / M;
     let cen = vec2<f32>(ldf(fi(F_PIVX, p)), ldf(fi(F_PIVY, p)));
     let uu = vec2<f32>(ldf(fi(F_AXX, p)), ldf(fi(F_AXY, p)));
@@ -1701,7 +1731,7 @@ fn judge4(@builtin(local_invocation_index) lid: u32) {
     // the far side's pull: the moment about the section's middle over its modulus, less the weight on its area
     let S = ldf(fi(F_KI, p)) / max(ldf(fi(F_KC, p)), 0.5);
     var kind = 0u;
-    if (worst > P.tipGive) { kind = K_TIP; } else if (M * L / S - M / A > P.tensile * s) { kind = K_LEAN; } else if (M / A > P.crush * s) { kind = K_CRUSH; }
+    if (worst > P.tipGive) { kind = K_TIP; } else if (M * L / S - M / A > P.tensile * ts) { kind = K_LEAN; } else if (M / A > P.crush * s) { kind = K_CRUSH; }
     if (kind == 0u) { continue; }
     atomicOr(&W[fi(F_PF, p)], PF_NECKFAIL);
     st(fi(F_KIND, p), kind);
