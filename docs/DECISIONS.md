@@ -151,6 +151,13 @@ each was implemented.
   on the hot path; judge A's CPU work maybe in a Web Worker) on branch jb6. The user's design document "Living World —
   Effects, Rituals, and Run Structures" (v3) is kept verbatim at docs/design/LIVING_WORLD_v3.md, for discussion.
 
+- The user, verbatim: "I mean a background agent. It's also worth considering making the physics consist of a more traditional parallel rigidbody system and then doing the node based simulation only on true collisions. Doing it that way also makes it easy to make kinematic objects interact and drain an event buffer for collision events."
+  → Filed as the design for the node solver's rework (BACKLOG PH1, superseding SL26): a parallel rigid-body pipeline
+  (one thread a body or contact: broadphase grid, narrowphase, a parallel contact solve), bodies switched to the node
+  solver only for true collisions past an energy threshold (deform, dent, break) and back to rigid when they settle;
+  kinematic bodies (heroes, agents, vehicles) in the same broadphase; a GPU collision-event buffer drained by gameplay
+  (damage, sound, particles, triggers). Not started: the user wants less time on physics for now.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
