@@ -238,7 +238,10 @@ export class Renderer {
   private miShadowPipe?: GPURenderPipeline;
   private miShadowGroup?: GPUBindGroup;
   /** (round 117, structures) the city's pieces (enableStructures): drawn as the trees are, in the world and shadow passes */
-  private structs?: { sg: StructureGpu; pipe?: GPURenderPipeline; shadow?: GPURenderPipeline; group?: GPUBindGroup; shadowGroup?: GPUBindGroup; version: number; lod: boolean };
+  private structs?: { sg: StructureGpu; pipe?: GPURenderPipeline; shadow?: GPURenderPipeline; glow?: GPURenderPipeline; group?: GPUBindGroup; shadowGroup?: GPUBindGroup; version: number; lod: boolean };
+  /** (round 120, cities) how dark it is (the day/night's night, 0..1: Globals sky.w), set by the scene each frame — the
+   *  towns' light pools are drawn only when it's past dusk */
+  structNight = 0;
   /**
    * (round 117, STR10) the zoom (screen pixels a cell) under which the city's pieces draw their far look: the camera is
    * orthographic, so one zoom says how small every piece is; `?structlod=` to tune (0: always full, 99: always far)
@@ -1391,6 +1394,13 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       pass.drawIndirect(v.indirect, 0);
       this.profiler.draws++;
     }
+    // (round 120, cities) the towns' light pools at night, over everything opaque, under the water
+    if (this.structs?.glow && this.structNight > 0.3 && this.structs.sg.glow.length && !SKIP.has('structures') && !SKIP.has('pools')) {
+      this.structGroups();
+      pass.setPipeline(this.structs.glow);
+      pass.setBindGroup(0, this.structs.group!);
+      this.profiler.draws += this.structs.sg.drawGlow(pass);
+    }
     // (watersurf) the water's surface, then the blended prisms (oil, ice and crystal; without the field mesh the water)
     const flat = SKIP.has('waterflat');
     if (this.waterSurf && this.waterSurfPipe && !SKIP.has('water')) {
@@ -2014,6 +2024,15 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       primitive: { topology: 'triangle-list', cullMode: STRUCT_CULL },
       depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: true, depthCompare: 'less' },
     }, (p) => (st.pipe = p));
+    // (round 120) the lights' pools: added over the lit world (one + one), no depth written, the pick untouched
+    renderPipe(device, {
+      label: 'structures-glow',
+      layout: this.drawPl,
+      vertex: { module, entryPoint: 'vsPool', buffers: [StructureGpu.vertexLayout()] },
+      fragment: { module, entryPoint: 'fsPool', targets: [{ format: this.colorFormat, blend: { color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' }, alpha: { srcFactor: 'zero', dstFactor: 'one', operation: 'add' } } }, { format: PICK_FORMAT, writeMask: 0 }] },
+      primitive: { topology: 'triangle-list', cullMode: 'none' },
+      depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: false, depthCompare: 'less-equal' },
+    }, (p) => (st.glow = p));
     if (this.noShadowView)
       renderPipe(device, {
         label: 'shadow-structures',

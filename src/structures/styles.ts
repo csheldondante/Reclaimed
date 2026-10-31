@@ -73,6 +73,8 @@ export const STYLES: Record<StructureStyleId, Style> = {
       [Part.Plank]: ['#6e5a44', '#7a6046', '#5f5246', '#82684c'],
       [Part.Soil]: ['#5a4632', '#6b5038', '#4f3d2c'],
       [Part.Crop]: ['#7e9a3c', '#b8a554', '#a9a04a', '#c4ae62', '#6f8e36'],
+      [Part.Cloth]: ['#a8322c', '#2f5a8a', '#d9b25a', '#e8e0cc', '#3f6e4a'],
+      [Part.Flame]: ['#ffb24a'],
     }),
   },
   bastion: {
@@ -107,6 +109,8 @@ export const STYLES: Record<StructureStyleId, Style> = {
       [Part.Plank]: ['#6e5a44', '#7a6046', '#5f5246', '#82684c'],
       [Part.Soil]: ['#5a4632', '#6b5038', '#4f3d2c'],
       [Part.Crop]: ['#7e9a3c', '#b8a554', '#a9a04a', '#c4ae62', '#6f8e36'],
+      [Part.Cloth]: ['#7a1f1c', '#2a3f5f', '#c9a04a'],
+      [Part.Flame]: ['#ffb24a'],
     }),
   },
   terrace: {
@@ -141,6 +145,8 @@ export const STYLES: Record<StructureStyleId, Style> = {
       [Part.Plank]: ['#6e5a44', '#7a6046', '#5f5246', '#82684c'],
       [Part.Soil]: ['#5a4632', '#6b5038', '#4f3d2c'],
       [Part.Crop]: ['#7e9a3c', '#b8a554', '#a9a04a', '#c4ae62', '#6f8e36'],
+      [Part.Cloth]: ['#2f5a4f', '#a8483a', '#d8c690', '#3a4f7a'],
+      [Part.Flame]: ['#ffb24a'],
     }),
   },
 };

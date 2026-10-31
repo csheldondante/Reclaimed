@@ -26,12 +26,18 @@ export interface SettlementSeed {
   setting: string;
   ruin: boolean;
   box: { x0: number; y0: number; w: number; h: number };
+  /** (round 120) the ways its roads leave by (unit vectors toward the settlements they join): a trading post's caravan
+   *  yards stand by them */
+  approaches: [number, number][];
   /** (the level's ?city=) its town planned with another tile system or style */
   override?: Partial<import('../api/contracts/structures').CitySpec>;
 }
 
 export function recordsFrom(wiki: WorldWiki, seed: number): SettlementSeed[] {
   const facs = new Map(wiki.factions.map((f) => [f.id, f]));
+  const byId = new Map(wiki.snapshot.settlements.map((x) => [x.id, x]));
+  const W = wiki.world.w;
+  const H = wiki.world.h;
   return wiki.snapshot.settlements.map((s, i) => {
     const site = wiki.sites[i];
     if (site.id !== s.id) throw new Error(`wiki: site ${i} is ${site.id}, its settlement ${s.id}`);
@@ -62,8 +68,19 @@ export function recordsFrom(wiki: WorldWiki, seed: number): SettlementSeed[] {
     const x1 = Math.ceil((cx + reach) / REGION) * REGION;
     const y0 = Math.floor((cy - rows) / REGION) * REGION;
     const y1 = Math.ceil((cy + rows) / REGION) * REGION;
+    // (the roads' ways out: toward each neighbour, the world wrapping)
+    const approaches = site.roads.map((id): [number, number] => {
+      const o = byId.get(id)!;
+      let dx = o.at[0] - s.at[0];
+      let dy = o.at[1] - s.at[1];
+      dx -= Math.round(dx / W) * W;
+      dy -= Math.round(dy / H) * H;
+      const L = Math.hypot(dx, dy) || 1;
+      return [+(dx / L).toFixed(4), +(dy / L).toFixed(4)];
+    });
     return {
       rec,
+      approaches,
       civ,
       camp: campFaction ? campCiv() : null,
       campId: campFaction ? `${s.id}-camp` : undefined,

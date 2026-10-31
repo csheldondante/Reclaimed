@@ -6,6 +6,8 @@
 import type { Atlas } from '../atlas/atlas';
 import { STAMP } from '../atlas/atlas';
 import { dryness, warmth } from '../atlas/regions';
+import { kindTraits, type KindTraits } from '../atlas/kind-traits';
+export type { KindTraits } from '../atlas/kind-traits';
 import { TIER_NAMES } from '../atlas/landforms';
 import { CROSS_NAMES, SETTING_NAMES, SITE_NAMES } from '../atlas/sites';
 import { RIVER_LAVA } from '../atlas/rivers';
@@ -41,7 +43,10 @@ export interface RegionFacts {
   ground: { min: number; mean: number; max: number };
   /** atlas stamps whose centre is in it: impact craters, crystal facets, domes, facet fields */
   stamps: string[];
+  /** (round 120, `cities`) what its kind of land is (atlas/regions.ts KINDS): what a settlement's purpose reads */
+  traits: KindTraits;
 }
+
 
 export interface SiteFacts {
   id: number;
@@ -152,6 +157,7 @@ export function atlasFacts(a: Atlas): AtlasFacts {
       lava: lava[id],
       ground: { min: Math.round(gMin[id]), mean: Math.round(gSum[id] / Math.max(1, gN[id])), max: Math.round(gMax[id]) },
       stamps: stamps[id],
+      traits: kindTraits(d.kind),
     };
   });
   const sites: SiteFacts[] = a.settlement.sites.map((s, id) => ({

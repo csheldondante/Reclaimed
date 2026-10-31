@@ -255,6 +255,8 @@ export class WorldCore {
     g.sun = this.light.dir;
     g.sunCol = [this.light.col[0], this.light.col[1], this.light.col[2], this.light.timeOfDay];
     g.sky = [this.light.sky[0], this.light.sky[1], this.light.sky[2], this.light.night];
+    // (round 120) the towns' light pools are drawn past dusk (structgame.wgsl hostNight: from 0.3)
+    this.renderer.structNight = this.light.night;
 
     // (round 113, the planner's — scenes/planner.ts: rendering before simulation — while the view has undrawn land the
     // sim's ticks a frame are cut; its time catches up later, capped as ever)

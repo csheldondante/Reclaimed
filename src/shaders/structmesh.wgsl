@@ -4,10 +4,14 @@
 //      (x0 y0 x1 y1) (x2 y2 x3 y3) (foot z0 z1 z2 z3) (top, look, seed, flags)
 //   `fn hostNight() -> f32` — 0 by day, 1 at night (the windows and lamps glow)
 //   `fn hostGround(xy: vec2<f32>, planned: f32) -> f32` — the ground now under a draped piece (or `planned`)
+//   (round 120) `fn hostWind(xy: vec2<f32>) -> vec2<f32>` — the wind there (its strength 0 calm .. ~2.6 a gale: the
+//      plants' lean over 0.3, sway.wgsl) and `fn hostTime() -> f32` — seconds, for flutter, flicker and turning wheels
 // and its own entry points, which call spVertex / spAlbedo / spEmit. A module vertex is (u, v, w, part) in the unit
 // frame; the piece warps it: x, y bilinear over the four corners (Townscaper's deformed modules), z from the foot's
 // bilinear height up to the top (flags & 1: the top is a height over the foot — paving that follows the ground; flags & 2:
-// an affine piece, rows 0-2 a 3 × 4 transform).
+// an affine piece, rows 0-2 a 3 × 4 transform; flags & 8: WIND — its cloth streams downwind from where it hangs (a banner);
+// flags & 16: SPIN — an affine piece turns about its local y axis (a waterwheel, a windmill's sails)).
+// (round 120) look bits 20-22: what history left — soot (a burned quarter), damp (a flooded one), fresh stone (new walls).
 
 // (SP_PAL, SP_PARTS, SP_VARIANTS: from src/structures/gpu.ts wgsl(), the TS tables' sizes)
 // (a draped piece's corners may move this far from the plan's ground; past it, it's hidden)
@@ -68,15 +72,41 @@ fn spVertex(a: vec4<f32>, piece: u32) -> SpVert {
   // (flags & 2: an affine piece — a buriable asset at any skew; rows 0-2 its local → world transform, the module in
   // metres: assets.ts)
   if ((u32(tp.w) & 2u) != 0u) {
-    let l = vec4<f32>(a.xyz, 1.0);
+    var lp = a.xyz;
+    let flags = u32(tp.w);
+    let at = vec2<f32>(c01.w, c23.w);
+    if ((flags & 16u) != 0u) {
+      // (SPIN: turning with the wind about the local y axis — a millwheel turns with its river all the same)
+      let ang = hostTime() * (0.5 + 0.6 * min(length(hostWind(at)), 2.0)) + tp.z * 6.283;
+      let cs = cos(ang);
+      let sn = sin(ang);
+      lp = vec3<f32>(lp.x * cs - lp.z * sn, lp.y, lp.x * sn + lp.z * cs);
+    }
+    let l = vec4<f32>(lp, 1.0);
     o.wpos = vec3<f32>(dot(c01, l), dot(c23, l), dot(foot, l));
+    if ((flags & 8u) != 0u && u32(a.w + 0.5) == 19u) {
+      // (WIND: the cloth streams downwind from where it hangs — the pole at local x 0 —, droops in calm air, flutters)
+      let l0 = vec4<f32>(0.0, lp.y, lp.z, 1.0);
+      let base = vec3<f32>(dot(c01, l0), dot(c23, l0), dot(foot, l0));
+      let d = length(o.wpos - base);
+      let w = hostWind(base.xy);
+      let ws = length(w);
+      let k = clamp(ws / 1.4, 0.0, 1.0);
+      var hz = (o.wpos - base).xy;
+      if (ws > 0.04) { hz = w; }
+      hz = hz / max(length(hz), 1e-4);
+      let droop = mix(1.25, 0.12, k);
+      let wave = sin(hostTime() * (3.0 + 5.0 * k) - d * 2.4 + tp.z * 40.0) * d * (0.06 + 0.12 * k);
+      o.wpos = base + vec3<f32>(hz * d * cos(droop) + vec2<f32>(-hz.y, hz.x) * wave, -d * sin(droop) + wave * 0.4);
+    }
   }
   o.w = a.z;
   o.part = u32(a.w + 0.5);
   o.look = u32(tp.y);
   o.seed = tp.z;
   // the palette: the style's slot, its variant picked per building (look's low bits, hashed per part)
-  let style = o.look >> 16u;
+  // (round 120: bits 20-22 are history's marks, not the style's)
+  let style = (o.look >> 16u) & 15u;
   let pick = spHash((o.look & 0xffffu) * 31u + o.part * 7919u);
   let nVar = u32(spFetch((style * SP_PARTS + o.part) * SP_VARIANTS).w);
   var vi = pick % max(nVar, 1u);
@@ -172,6 +202,11 @@ fn spAlbedo(sv: SpVert, n: vec3<f32>) -> vec3<f32> {
     }
     default: {}
   }
+  // (round 120) what history left on it: soot over a burned quarter, damp and silt on a flooded one, fresh stone
+  let wear = sv.look >> 20u;
+  if ((wear & 1u) != 0u) { c *= 0.16 + 0.3 * spN2(p.xy * 1.3 + vec2<f32>(p.z * 0.8, 0.0)); }
+  if ((wear & 2u) != 0u) { c = mix(c * 0.62, vec3<f32>(0.16, 0.17, 0.11), 0.28 * smoothstep(0.6, 0.0, sv.w)); }
+  if ((wear & 4u) != 0u && sv.part == 4u) { c = min(c * 1.28 + vec3<f32>(0.02), vec3<f32>(1.0)); }
   return c;
 }
 
@@ -179,7 +214,8 @@ fn spAlbedo(sv: SpVert, n: vec3<f32>) -> vec3<f32> {
 fn spEmit(sv: SpVert) -> vec3<f32> {
   let night = hostNight();
   if (night <= 0.0) { return vec3<f32>(0.0); }
-  if (sv.part == 3u) {
+  // (a burned or flooded house is empty: its windows stay dark)
+  if (sv.part == 3u && ((sv.look >> 20u) & 3u) == 0u) {
     let h = spHash(u32(sv.seed * 1048576.0));
     if ((h & 255u) < 150u) {
       let warm = vec3<f32>(1.0, 0.5, 0.17) * (0.8 + 0.5 * f32((h >> 8u) & 255u) / 255.0);
@@ -188,4 +224,28 @@ fn spEmit(sv: SpVert) -> vec3<f32> {
   }
   if (sv.part == 13u) { return vec3<f32>(1.0, 0.78, 0.45) * night * 3.0; }
   return vec3<f32>(0.0);
+}
+
+/** (round 120) A flame's own light (it burns by day too, brighter at night), flickering. */
+fn spFlame(sv: SpVert) -> vec3<f32> {
+  let f = 0.7 + 0.18 * sin(hostTime() * 13.0 + sv.seed * 61.0) + 0.12 * sin(hostTime() * 23.0 + sv.wpos.z * 9.0);
+  return vec3<f32>(1.0, 0.5, 0.15) * (0.8 + 2.4 * hostNight()) * f;
+}
+
+/** (round 120) A light pool's piece: its middle and reach (its frame's corners 0 and 2 are opposite) and its strength (the
+ *  piece's seed). */
+fn spPoolInfo(piece: u32) -> vec4<f32> {
+  let c01 = spRow(piece, 0u);
+  let c23 = spRow(piece, 1u);
+  let tp = spRow(piece, 3u);
+  return vec4<f32>((c01.xy + c23.xy) * 0.5, (c23.x - c01.x) * 0.5, tp.z);
+}
+
+/** (round 120) The light a pool adds at a point (linear): warm, falling off to its rim, a slight flicker; only at night
+ *  (no shadows: the user, round 120 — a pool of light is "absolutely enough"). */
+fn spPoolLight(wpos: vec3<f32>, info: vec4<f32>) -> vec3<f32> {
+  let d = length(wpos.xy - info.xy) / max(info.z, 0.1);
+  let f = max(0.0, 1.0 - d);
+  let flick = 0.9 + 0.1 * sin(hostTime() * 9.0 + info.x * 1.7 + info.y);
+  return vec3<f32>(1.0, 0.6, 0.28) * info.w * f * f * hostNight() * flick;
 }

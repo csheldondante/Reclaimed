@@ -9,6 +9,8 @@
 // in the corner of two walls — u along the one side, v along the other. A vertex is (u, v, w, part): the part is the
 // palette slot (Part below) the shader colours it by.
 
+import { dressModules } from './dressmodules';
+
 export const enum Part {
   Wall = 0,
   Trim = 1,
@@ -34,8 +36,12 @@ export const enum Part {
   Soil = 17,
   /** a crop standing in its rows (green, ripening, ripe) */
   Crop = 18,
+  /** (round 120) cloth: banners, sails, a wagon's hood (the host moves a WIND piece's cloth with the wind) */
+  Cloth = 19,
+  /** (round 120) a flame: a torch's (glows and flickers at night) */
+  Flame = 20,
 }
-export const PARTS = 19;
+export const PARTS = 21;
 
 export interface Module {
   name: string;
@@ -800,6 +806,8 @@ export function library(): Library {
   modules.push(dome(), lantern(), drum());
   modules.push(...hutSet(false), ...hutSet(true), ...barnSet(false), ...barnSet(true));
   modules.push(crop(), fruitTree(), fence(), hedge());
+  // (round 120, cities: the purposes' and the dressing's — dressmodules.ts)
+  modules.push(...dressModules());
   const byName = new Map<string, number>();
   modules.forEach((m, i) => {
     if (byName.has(m.name)) throw new Error(`structures: two modules named "${m.name}"`);

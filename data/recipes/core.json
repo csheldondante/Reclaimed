@@ -35,7 +35,17 @@
     { "id": "wall", "name": "town wall", "tags": ["structure", "fortification"] },
     { "id": "field", "name": "field", "tags": ["land", "farmland"], "base": { "yield": 1 } },
     { "id": "megastructure", "name": "ruined tower", "tags": ["structure", "ancient", "tall"], "material": "concrete" },
-    { "id": "camp", "name": "raiders' camp", "tags": ["structure", "camp", "hostile"], "material": "canvas" }
+    { "id": "camp", "name": "raiders' camp", "tags": ["structure", "camp", "hostile"], "material": "canvas" },
+    { "id": "saw", "name": "saw bench", "tags": ["facility", "sawing"] },
+    { "id": "millstone", "name": "millstone", "tags": ["facility", "milling"] },
+    { "id": "stalls", "name": "horse stalls", "tags": ["facility", "stalls"] },
+    { "id": "warehouse", "name": "warehouse", "tags": ["structure", "building", "large", "trade"], "slots": [{ "id": "fitting", "accepts": { "all": ["storage"] }, "count": 2 }] },
+    { "id": "sawmill", "name": "sawmill", "tags": ["structure", "building"], "slots": [{ "id": "fitting", "accepts": { "all": ["facility"] }, "count": 1 }] },
+    { "id": "mill", "name": "windmill", "tags": ["structure", "building", "tall"], "slots": [{ "id": "fitting", "accepts": { "all": ["facility"] }, "count": 1 }] },
+    { "id": "stable", "name": "stables", "tags": ["structure", "building"], "slots": [{ "id": "fitting", "accepts": { "all": ["facility"] }, "count": 1 }] },
+    { "id": "headframe", "name": "mine headframe", "tags": ["structure", "mine", "civic"] },
+    { "id": "lighthouse", "name": "lighthouse", "tags": ["structure", "beacon", "tall", "civic"] },
+    { "id": "pier", "name": "pier", "tags": ["structure", "dock", "civic"] }
   ],
   "recipes": [
     { "id": "house", "name": "build a house", "how": "assemble", "makes": "house", "slots": [{ "id": "room", "accepts": { "all": ["room"] } }], "needs": { "work": 40 } },
@@ -56,6 +66,13 @@
     { "id": "defence", "when": { "any": ["fortification"] }, "tags": ["defence"], "add": { "defence": 5 } },
     { "id": "farmland", "when": { "all": ["farmland"] }, "tags": ["farm"], "add": { "grain": 2 } },
     { "id": "ruin-unmet", "when": { "all": ["ancient", "structure"], "none": ["has:room"] }, "unmet": "a ruin: nobody lives in it until it's adapted" },
-    { "id": "worker", "when": { "all": ["person"] }, "abilities": ["work"] }
+    { "id": "worker", "when": { "all": ["person"] }, "abilities": ["work"] },
+    { "id": "sawmill", "when": { "all": ["fitting:sawing"] }, "tags": ["sawmill"], "abilities": ["saw-logs"] },
+    { "id": "mill", "when": { "all": ["fitting:milling"] }, "tags": ["mill"], "abilities": ["grind-grain"] },
+    { "id": "stable", "when": { "all": ["fitting:stalls"] }, "tags": ["stable"], "abilities": ["keep-horses"] },
+    { "id": "trade", "when": { "all": ["trade", "structure"], "none": ["civic"] }, "tags": ["trade"] },
+    { "id": "mine", "when": { "all": ["mine"] }, "tags": ["mine"], "abilities": ["raise-ore"] },
+    { "id": "beacon", "when": { "all": ["beacon"] }, "tags": ["lighthouse"], "abilities": ["guide-ships"] },
+    { "id": "dock", "when": { "all": ["dock"] }, "tags": ["dock"], "abilities": ["moor-ships"] }
   ]
 }

@@ -100,6 +100,7 @@ import { loadWarm, saveWarm, warmKey } from '../sim/warm-cache';
 import { buildWiki } from '../gm/wiki';
 import { StreamPlanner } from './planner';
 import { SettlementsView } from '../settle/view';
+import { ShipsView } from '../settle/shipsview';
 import type { GridStyle } from '../api/contracts/settlement';
 import type { CitySpec } from '../api/contracts/structures';
 
@@ -366,6 +367,7 @@ export class LevelScene implements Scene {
   private integrity?: Integrity;
   /** (round 117, structures: ?city=) the structures track's city on the window's ground */
   private settlementsView?: SettlementsView;
+  private shipsView?: ShipsView;
   /** (round 108, AR5/AR8) the tuning panel, the bug report, the playground's stations */
   private tunePanel?: TunePanel;
   bugReport?: BugReport;
@@ -918,6 +920,8 @@ export class LevelScene implements Scene {
           if (q.has('cseed')) ov.seed = Number(q.get('cseed'));
           if (q.has('croads')) ov.roads = Number(q.get('croads'));
           if (q.get('cwalls') === '1') ov.walls = true;
+          // (round 120: ?cpurpose= — its town planned for that purpose, whatever the land made it)
+          if (q.has('cpurpose')) ov.purpose = q.get('cpurpose') as CitySpec['purpose'];
           settlements.override(near.id, ov);
         }
       }
@@ -1333,6 +1337,7 @@ export class LevelScene implements Scene {
       // (round 117, structures) the city (?city=): its plan, stats
       // (round 119) the settlements' structures: what's drawn and claimed (settle/view.ts)
       settlementsView: () => this.settlementsView,
+      shipsView: () => this.shipsView,
       // (round 95) the rigid rock's knobs (?rockbody=1): rb.breakSpeed = 12
       rb: RB,
       // (round 108, AR5) the tuning registry: tune.set('rigid.friction', 0.3), tune.changed(), tune.encode()
@@ -1762,6 +1767,9 @@ export class LevelScene implements Scene {
           st,
         );
         this.settlementsView = view;
+        // (round 120) the sailing ships between the ports (settle/ships.ts, shipsview.ts), drawn with the towns' pieces
+        if (host.params.get('ships') !== '0')
+          this.shipsView = new ShipsView({ sg: view.sg, toWindow: (p) => st.toWindow(p), oz: () => S.oz, focus: () => [core.camera.target[0], core.camera.target[1]], time: () => core.globals.time, sea: a!.atlas.p.sea, style: 'hearth' }, st.fleet);
         S.onBeforeSlide.push((dx, dy) => view.beforeSlide(dx, dy));
         S.onSlide.push(() => view.slid());
         S.onWarp.push(() => view.slid());
@@ -2085,6 +2093,7 @@ export class LevelScene implements Scene {
     this.settlements?.farUpdate(dt);
     // (round 119) the settlements' pieces: made again when a plan, a storey or the window changed
     this.settlementsView?.update();
+    this.shipsView?.update();
     if (this.inhabitants) this.lifeFrame(dt * this.speed);
     if (this.units && !this.stream?.busy) {
       this.units.update(dt * this.speed);

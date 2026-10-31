@@ -14408,3 +14408,31 @@ animals, animals-close; tilegate/). Seen while looking, already on places: a dar
 spawn's wide zoom (cmp-wide-5291.png, places' build) — M120-2; tall dark spires near the tilegate spot are in the
 old baselines too; the stretched triangles in the free camera at terrain's fall spot are on places' build as well (M120-4). The animals only come with `?life=1` (not in the default world) — M120-3, the user's call.
 
+
+## 2026-10-31 — round 120, `cities`: settlements with purposes and stories; ports and ships; dressing and night lights
+
+Why: the user, round 120 — "different settlements have different purposes like trading posts, mines, lumber camps, etc.
+towns should have stories"; ships "both anchored at harbor and sailing. It will make the world feel very alive"; lights
+at night as emissive surfaces plus a cheap pool ("Yes absolutely enough"). Agreed order: purposes and ports first, then
+dressing and night lights (STR30, STR32, STR36, STR33). ARCHITECTURE "Cities".
+
+- Purpose from the land, not rolled (settle/purpose.ts): scored from the atlas facts the wiki has. A first pass made 121
+  of seed 1's 140 settlements ports: the atlas calls any site within two coarse cells of the sea a port — even ones on
+  plateaus 200 over it (its settings on seed 1 are only port 121 and cliffside 19). A harbour now needs the town down by
+  the water (full under 6 over the sea, none past 18): port 43, trading 35, hold 30, lumber 15, mining 11, farming 6.
+  Farming is rare because seed 1's settled land is tundra and dunes (STR41/STR42: the atlas's settings).
+- Stories: enemies are powers at odds with the town's owner (its realm's relations), never its own realm — the first pass
+  counted a realm with a slightly negative attitude to the player as raiding its own towns, and every town was raided.
+- The wiki runs in Node from cached facts, and the region kinds (atlas/regions.ts) can't be imported there (materials.ts'
+  enums): the kind's traits go into the atlas facts (atlas/kind-traits.ts); seed 1's cache gained them by
+  scripts/factstraits.mjs (no browser).
+- Ports: a port or lumber town moves to front its water (the atlas's site can be 60 from the sea, past a town's
+  radius). Piers cross the shallows and stop where a ship can lie (1.2 m + 0.3); berths are checked bow to stern.
+- Ship routes: Dijkstra's costs in a Float32Array rounded below the popped double, so every popped cell looked stale and
+  no route was ever found — Float64Array. A coarse cell is water only when all its texels are; on a small real atlas
+  (seed 3, n 512) 5 routes, 7 ships, charted in 56-67 ms, every point checked on the sea.
+- The new trades walk the existing rounds in play (life.ts ROUTINE) — their own paths wait for STR23 (STR38).
+
+Tests: unit 235 passed (+39: src/structures/purpose.test.ts 20, src/settle/purpose.test.ts 11, src/settle/ships.test.ts 6,
+test/unit/cities-world.test.ts 2), gpu 30 (+2: test/gpu/cities.test.ts — the game's and the viewer's structures shaders
+compile on Dawn; a small atlas's settlements have purposes and stories and its routes lie on its sea).

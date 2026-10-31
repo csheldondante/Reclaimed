@@ -36,6 +36,7 @@ import { waysNear } from '../atlas/ways';
 import type { SurfaceStamp } from '../atlas/bake';
 import { rasterPlan, stampMatch } from './raster';
 import type { ExactPlanDone, ExactPlanJob, FarPlanDone, FarPlanInit, FarPlanJob } from './plan-worker';
+import { Fleet, shipRoutes } from './ships';
 
 const T = 64;
 /** a game day (s): the stores' rates are a day's */
@@ -97,7 +98,7 @@ export class Settlements {
   private cols: number;
   private rows: number;
   /** the ms the records took, and each plan's */
-  stats = { recordsMs: 0, planned: 0, planMs: 0, stamped: 0, rawTiles: 0, rawMs: 0, workerPlans: 0, workerMs: 0, reviveMs: 0 };
+  stats = { recordsMs: 0, planned: 0, planMs: 0, stamped: 0, rawTiles: 0, rawMs: 0, workerPlans: 0, workerMs: 0, reviveMs: 0, fleetMs: 0, routes: 0 };
   /** (round 94) the far plans: how many, the ms (the rough ground's GPU and readback, wall; in the worker the ways, the
    *  plan, the raster), the worker's first message (ms on the main thread), and each exact plan's match with its far
    *  one (IoU of their tops' cover) */
@@ -122,6 +123,23 @@ export class Settlements {
   }
   private clock = 0;
   private lastAdvance = 0;
+  private fleetOf: Fleet | null = null;
+
+  /**
+   * (round 120) The sailing ships: routes over the atlas's sea between the ports (ships.ts), charted the first time
+   * they're asked for (stats.fleetMs). The GM reads where they are at a time: fleet.at(t, sea).
+   */
+  get fleet(): Fleet {
+    if (this.fleetOf) return this.fleetOf;
+    const t0 = performance.now();
+    const ports = this.seeds.filter((s) => s.rec.purpose?.kind === 'port').map((s) => ({ id: s.rec.id, at: s.rec.at }));
+    const a = this.atlas;
+    const routes = shipRoutes(ports, { n: a.p.n, worldW: a.worldW, worldH: a.worldH, ground: a.hmac, sea: a.p.sea });
+    this.fleetOf = new Fleet(routes, a.p.seed);
+    this.stats.fleetMs = +(performance.now() - t0).toFixed(1);
+    this.stats.routes = routes.length;
+    return this.fleetOf;
+  }
 
   constructor(private atlas: Atlas) {
     const t0 = performance.now();

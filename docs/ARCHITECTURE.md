@@ -2301,6 +2301,47 @@ saw it (a road graded, a bank eroded since).
 - `raster.ts` (the far land's stamps) is told where the roofs are (`rasterColumns`): buildings aren't in the columns.
 - `?city=<system>&cstyle=&cseed=&croads=&cwalls=1` plans the town nearest the start with those (`Settlements.override`).
 
+## Cities: purposes, stories, ports, dressing, night lights (round 120, branch `cities`; BACKLOG STR30-STR36)
+
+The user (DECISIONS round 120): "different settlements have different purposes like trading posts, mines, lumber camps,
+etc. towns should have stories"; ships "both anchored at harbor and sailing"; night lights as emissive surfaces and a
+cheap pool of light ("Yes absolutely enough"). One concern a file:
+
+- **Purpose** (`settle/purpose.ts`, pure): a site's `PurposeFacts` (the atlas's setting, its region's kind, tier, rivers,
+  climate, stamps and kind traits — `atlas/kind-traits.ts`, carried in the atlas facts so the wiki needs no atlas —, its
+  roads and fords, its height in its region, the enemies present, a realm's seat) → a score per purpose, the highest
+  wins; `why`, `scores` and `trades` kept. The wiki calls it while it's built (`gm/wiki.ts`), so `Settlement.purpose` is
+  on the record the GM reads before any land arrives; the wiki's page says it.
+- **Story** (`settle/story.ts`, pure): founding (by its owner, for its purpose's reason), then the world state: enemies
+  in its region at odds with its owner raided it (walled after; a strong one burned a quarter), a port or river town
+  low by the water flooded, and WorldState.history's burn / flood / ruin / rebuild events in its region.
+  `Settlement.story` (contracts/settlement.ts).
+- **The plan** (`settle/plan.ts`) turns them into the structures spec: `CitySpec.purpose`, `works` (a mine's quarry
+  mouth), `approaches` (records.ts: the roads' ways out), `marks` (the story's burned quarter, flood level, new walls); a
+  hold is radial, bastion, walled; a port or a lumber camp moves to front its water. The record gets the purpose's
+  buildings (warehouse, sawmill, stables, granary; the headframe, lighthouse, windmill and piers as things — core.json
+  kinds and rules: dock, mine, mill, stable, sawmill, lighthouse), people by the purpose's mix, stores (ore, fish, goods,
+  planks, flour, arms), jobs (load, saw, tend, mill). In play the new trades walk the existing rounds (life.ts ROUTINE).
+- **Structures** (`structures/purpose.ts`, called by `planCity`): `purposeBuildings` (after the buildings grow: the work
+  site, a port's quay tiles, re-kinded buildings, a market widened, history's wear), `purposeWorks` (after the landmarks:
+  piers to water a ship can lie in, berths, a lighthouse, a headframe and rails, a windmill, props), `dressing` (after
+  the façades: street lamps ~12 m apart, torches at doors and gates, banners; `plan.lights`). CityPlan adds `works`,
+  `berths`, `props`, `lights`; TileUse `quay`; BuildingKind warehouse / sawmill / granary / stable; MegaKind lighthouse /
+  headframe / windmill; LinearKind pier; BuildingRec.wear. Modules: `structures/dressmodules.ts` (props, ships and the
+  sails in metres as affine pieces; the quay edge, kerb, pier, lighthouse, headframe, windmill, pool in tile frames).
+  Parts Cloth (19) and Flame (20).
+- **Drawing** (structmesh.wgsl): flags WIND (8: a banner's cloth streams downwind from its pole, droops in calm) and SPIN
+  (16: waterwheels and sails turn); look bits 20-22 soot / damp / fresh stone; flames flicker; `spPoolLight` a pool's
+  warm fall-off at night. Hosts add `hostWind(xy)` (the game: the plants' lean, sway.wgsl's `bend` / 0.3; past the window
+  the prevailing wind) and `hostTime()`. `StructureGpu` keeps the pools' ranges apart (`drawGlow`: the game's
+  `structures-glow` pipeline, one + one, no depth written, only when `Renderer.structNight` > 0.3; the viewer's likewise)
+  and MOVING_CAP (64) slots after the palette for what moves (`setMoving`).
+- **Ships** (`settle/ships.ts`, pure): `shipRoutes` charts routes once over the atlas's sea (a coarse cell is water when
+  all its texels are 1.5 under the sea; Dijkstra kept off coasts; string-pulled), each port to its two nearest reachable;
+  `Fleet.at(t, sea)` places every ship by the time alone (out, rest 40 s, back). `Settlements.fleet` charts on first ask;
+  `settle/shipsview.ts` draws the ships within 900 of the camera each frame (`?ships=0` off).
+- **Viewer**: purpose, coast / river / mountain grounds with water, day / dusk / night, wind, the history toggle.
+
 ## Instrumentation (round 100, branch `hitchrec`)
 
 - **CPU steps**: gpu/cpustat.ts `record(label, ms)` / `timed(label, f)` — the perf overlay's worst steps, and while

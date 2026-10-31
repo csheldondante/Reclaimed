@@ -5,6 +5,7 @@ import { planCity } from './plan';
 import { piecesOf } from './pieces';
 import { columnsOf } from './columns';
 import { buriable, assetPieces } from './assets';
+import { shipPieces } from './pieces';
 
 export const structures: Structures = {
   plan: planCity,
@@ -12,9 +13,10 @@ export const structures: Structures = {
   columns: columnsOf,
   asset: buriable,
   assetPieces,
+  shipPieces,
 };
 
-export { planCity, piecesOf, columnsOf, buriable, assetPieces };
+export { planCity, piecesOf, columnsOf, buriable, assetPieces, shipPieces };
 export { navPath } from './nav';
 export { library } from './modules';
 export { STYLES, STYLE_IDS } from './styles';

@@ -29,7 +29,7 @@ export function bakeNav(plan: CityPlan, adj: Int32Array): NavGraph {
 
   // ---- the ground: every open tile (streets, the plaza, yards, the gates' passages)
   const outdoor = new Int32Array(nq).fill(-1);
-  const surfaceOf: Partial<Record<string, NavSurface>> = { street: 'street', plaza: 'plaza', yard: 'ground', gate: 'street', field: 'ground', orchard: 'ground', pasture: 'ground' };
+  const surfaceOf: Partial<Record<string, NavSurface>> = { street: 'street', plaza: 'plaza', quay: 'street', yard: 'ground', gate: 'street', field: 'ground', orchard: 'ground', pasture: 'ground' };
   for (let q = 0; q < nq; q++) {
     const s = surfaceOf[t.use[q]];
     if (!s) continue;

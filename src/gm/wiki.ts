@@ -13,6 +13,8 @@ import type { Faction, FactionId, Lake, RegionState, WorldSnapshot } from '../ap
 import type { Settlement } from '../api/contracts/settlement';
 import type { AtlasFacts, RegionFacts } from './atlas-facts';
 import { freshRegion } from '../api/contracts/world.ts';
+import { purposeOf } from '../settle/purpose.ts';
+import { storyOf } from '../settle/story.ts';
 
 export const WIKI_VERSION = 1;
 
@@ -312,6 +314,42 @@ export function buildWiki(f: AtlasFacts): WorldWiki {
       a.relations[b.id] = v;
     }
 
+  /** (atlas facts cached before round 120 have no traits: pull them again — scripts/worldwiki.mjs --pull, or the
+   *  traits script, scripts/factstraits.mjs) */
+  const traitsOf = (r: RegionFacts) => {
+    if (!r.traits) throw new Error(`wiki: region ${r.id}'s atlas facts have no traits (cached before round 120): pull the atlas facts again`);
+    return r.traits;
+  };
+  // (round 120, `cities`) each settlement's purpose, read from the land (settle/purpose.ts), and its story (settle/story.ts):
+  // the GM reads both here, before any of its land comes in
+  const facName = new Map(factions.map((x) => [x.id, x.name]));
+  const facAtt = new Map(factions.map((x) => [x.id, x.attitude]));
+  for (const s of f.sites) {
+    const st = settlements[s.id];
+    const reg = f.regions[s.region];
+    // (its enemies: a power in its region at odds with its owner — the Court with every living one, the Fleet with the
+    // coasts' —, or, a free town's, any power hostile to all comers; never its own realm)
+    const own = st.faction ? factions.find((x) => x.id === st.faction) : undefined;
+    const foe = (fid: FactionId) => fid !== st.faction && (own ? (own.relations[fid] ?? 0) < -0.25 : (facAtt.get(fid) ?? 0) < -0.25);
+    const hostiles = Object.entries(presence[s.region])
+      .filter(([fid, v]) => foe(fid as FactionId) && (v ?? 0) > 0)
+      .sort((x, y) => (y[1] ?? 0) - (x[1] ?? 0))
+      .map(([fid, v]) => ({ id: fid as FactionId, name: facName.get(fid as FactionId) ?? fid, v: v ?? 0 }));
+    const crossings = f.roads.filter((r) => r.a === s.id || r.b === s.id).reduce((n, r) => n + r.crossings.filter((c) => c.kind === 'bridge' && c.region === s.region).length, 0);
+    st.purpose = purposeOf({
+      setting: s.setting,
+      size: s.size,
+      roads: st.roads.length,
+      crossings,
+      region: { kind: reg.kind, tier: reg.tier, rivers: reg.rivers, dryness: reg.dryness, temp: reg.temp, ground: reg.ground, stamps: reg.stamps, traits: traitsOf(reg) },
+      ground: s.ground,
+      sea: f.params.sea,
+      hostile: hostiles[0]?.v ?? 0,
+      seat: factions.some((x) => x.seat === st.id),
+    });
+    st.story = storyOf({ id: st.id, name: st.name, at: st.at, size: s.size, setting: s.setting, purpose: st.purpose, owner: st.faction, ownerName: st.faction ? (facName.get(st.faction) ?? null) : null, ground: s.ground, sea: f.params.sea, hostiles, ruin: 0, flooded: null, history: [] });
+  }
+
   const bySite = new Map<number, string[]>();
   for (const s of settlements) bySite.set(s.region, [...(bySite.get(s.region) ?? []), s.id]);
   const snapshot: WorldSnapshot = {
@@ -442,6 +480,8 @@ export function wikiMarkdown(w: WorldWiki, opt: { around?: [number, number]; rad
     L.push(`### ${s.name} \`${s.id}\``);
     L.push(`- A ${s.atlasSize} (${s.setting}) in ${r.name} (region ${r.id}: ${r.kind}, ${r.tier}, ${r.climate}); ${Math.round(near(s.at))} from the start; cell ${s.cell.join(',')}.`);
     L.push(`- Faction: ${s.faction ? `${fac.get(s.faction)!.name} \`${s.faction}\`` : 'none (a free town)'}. Condition: ${s.condition}.`);
+    if (s.purpose) L.push(`- Purpose: **${s.purpose.kind}** — ${s.purpose.why}; its people: ${s.purpose.trades.join(', ')}.`);
+    if (s.story) L.push(`- Story: ${s.story.founding}${s.story.events.length > 1 ? ` Since: ${s.story.events.slice(1).map((e) => e.note).join('; ')}.` : ''}`);
     const rs = w.roads.filter((x) => x.a === s.id || x.b === s.id);
     for (const x of rs) {
       const o = set.get(x.a === s.id ? x.b : x.a)!;

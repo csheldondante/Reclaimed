@@ -12,6 +12,17 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 120 (2026-10-31, session 5, `cities`) — purposes, ports, dressing and night lights (DECISIONS round 120)
+
+| id | item | size | status |
+|---|---|---|---|
+| STR37 | Ships: sinking, and sailing by the wind (the user: "I'm not sure about sinking them or wind but both would be very cool") — maybes for later; today a ship plies its route out and back on a schedule (settle/ships.ts) | M | later (maybe) |
+| STR38 | The purposes' trades walk the farmers', woodcutters' and miners' rounds in play (life.ts ROUTINE: dockers carry from the piers like farmers from the fields); each trade its own round on the baked nav (with STR23) | M | open |
+| STR39 | The light pools are drawn in the window only: the far land's tiles (baked) show the lit windows' pieces but no pools on their ground | S | open |
+| STR40 | Rivers' ports: a river town's piers need water 1.2 m deep within 24 m; shallow rivers make a quay without piers (`plan.stats.piers` 0) — barges at a landing instead | S | open |
+| STR41 | Purposes from the land are scored at atlas scale (setting, region kind, roads, height, enemies): on seed 1 the atlas places sites only by the sea or on cliffs (port 121, cliffside 19), so farming is rare there (6 of 140); the atlas's site settings (STR42) would widen it | S | open |
+| STR42 | The atlas's sites: more settings (forest, river inland, crossroads, a mine's mountain) so the land offers every purpose (atlas/sites.ts scores coast cells first) | M | open |
+
 ## Round 120 (2026-10-31, session 5, `merge120`) — rivers, cities, animals and trees merged (DECISIONS round 120)
 
 | id | item | size | status |
@@ -174,17 +185,17 @@ tests work and do quick smoke tests to find failures early." docs/TESTING.md.
 | TR30 | Cave networks: mouths in cliffs much bigger, obviously entrances, leading into deep tunnels under the land (a noise band intersected with the land, SDF-blended), not overhangs; replaces the sea-cave work (TR21, TR24b) | L | asked (design session) |
 | IN20 | Creatures from swappable body segments, the same mechanism for equipment, fur, spikes and skins; vertex blending at joints; limbs and tails as secondary motion from root motion (Rain World); mounts and items (round 119) | L | asked (design session) |
 | FLO20 | Trees much bigger relative to the hero; forests where the camera is under the canopy | M | asked (design session) |
-| STR30 | Settlements with purposes (trading post, mine, lumber camp, ...) and stories | M | asked (design session) |
+| STR30 | Settlements with purposes (trading post, mine, lumber camp, ...) and stories | M | done (cities: settle/purpose.ts, story.ts; on the record and the wiki) |
 | FO1 | Followers take orders from the hero; ordering them is the way into a building mode where the hero makes their own settlements | L | open |
 | LI1 | Rocks mixed through ordinary soil (not only cliffs and bases), so the lich has things to throw besides people | M | open |
 | IT1 | Items in slots: held item(s), helmet, cape, shirt, pants, mount, some asymmetric options; mechanical effects that force choices (pairs with IN20 segments) | L | open |
 | PL23 | A chase starts close to the quarry and already in pursuit; the user: fleeing suits the bike better than chasing ("it's hard to steer") — situation runs (RS20) favour fleeing | S | open |
 | STR31 | Cliffside cities: tiles on vertical surfaces, towns built into canyon walls with walkways (Bulwark as inspiration, not copied); builds on STR13 | L | next (after purposes, ports, lights) |
-| STR32 | Ports: docks, piers, moored ships, warehouses; ships | M | next (designed round 120) |
-| STR33 | Dressing: banners (in the wind), torches, streets with kerbs and lamps; lights at night across the town, not only the viewer's lit windows | M | next (designed round 120) |
+| STR32 | Ports: docks, piers, moored ships, warehouses; ships | M | done (cities: quay, piers, berths, warehouses, lighthouse; ships sailing between ports, settle/ships.ts) |
+| STR33 | Dressing: banners (in the wind), torches, streets with kerbs and lamps; lights at night across the town, not only the viewer's lit windows | M | done (cities: kerbs, lamps every 12 m, torches, banners on the wind field; flames and light pools at night in the game) |
 | STR34 | More architectural styles (today hearth, bastion, terrace) and more regular grids | M | next (designed round 120) |
 | STR35 | Architecture from tech progression (round 85 recipes and civilisation profiles): skyscrapers from higher tech, ruins from fallen ones, varied architecture; a hive bug city as a non-human civilisation | L | next |
-| STR36 | Specialised settlements: mining, farming, ports, lumber, trading (with STR30's purposes and stories) | L | next (designed round 120) |
+| STR36 | Specialised settlements: mining, farming, ports, lumber, trading (with STR30's purposes and stories) | L | done (cities: structures/purpose.ts — each purpose's works, buildings, props, people and jobs) |
 | WD1 | The same seed must make the same world on every GPU (found by runsit, round 120): the atlas's macro ground is read back from the GPU and rivers and settlements are planned on it, so another GPU can make other towns from one seed - a GM story, a save or a shared run then names places that aren't there. Make the planning inputs bit-exact across GPUs (integer or fixed-point where it decides, or plan on the CPU from the seed), with a cross-adapter test (Dawn D3D12 vs SwiftShader) | M | open |
 | FLO21 | Birch cost on the phone: the user's result good — done (flora 18c3bdb, unmerged) | S | done |
 

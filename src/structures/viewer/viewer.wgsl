@@ -11,7 +11,7 @@ struct View {
   eye: vec4<f32>,
   sunCol: vec4<f32>,
   skyCol: vec4<f32>,
-  // x: shadow map texel, y: show tile lines
+  // x: shadow map texel, y: show tile lines, z: seconds (round 120), w: the wind's strength
   misc: vec4<f32>,
 };
 
@@ -24,6 +24,9 @@ fn hostNight() -> f32 { return V.sun.w; }
 // (the viewer's ground is the plan's)
 fn hostGround(xy: vec2<f32>, planned: f32) -> f32 { return planned; }
 fn spFetch(i: u32) -> vec4<f32> { return spData[i]; }
+// (round 120: a steady breeze from the west-south-west, its strength the viewer's wind slider)
+fn hostWind(xy: vec2<f32>) -> vec2<f32> { return vec2<f32>(0.94, 0.34) * V.misc.w; }
+fn hostTime() -> f32 { return V.misc.z; }
 
 fn shadowAt(wpos: vec3<f32>, n: vec3<f32>) -> f32 {
   let p = V.lightProj * vec4<f32>(wpos + n * 0.06, 1.0);
@@ -97,7 +100,32 @@ fn fsPiece(in: PieceOut) -> @location(0) vec4<f32> {
   sv.seed = bitcast<f32>(in.info.z);
   sv.base = in.base;
   let alb = spAlbedo(sv, n);
+  if (sv.part == 20u) { return finish(spFlame(sv), in.wpos); }
   return finish(alb * light(in.wpos, n) + spEmit(sv), in.wpos);
+}
+
+// (round 120) the lights' pools: added over what's drawn (blend one + one), at night
+struct PoolOut {
+  @builtin(position) pos: vec4<f32>,
+  @location(0) wpos: vec3<f32>,
+  @location(1) @interpolate(flat) info: vec4<f32>,
+};
+
+@vertex
+fn vsPool(@location(0) a: vec4<f32>, @builtin(instance_index) ii: u32) -> PoolOut {
+  let sv = spVertex(a, ii);
+  var o: PoolOut;
+  o.pos = V.viewProj * vec4<f32>(sv.wpos, 1.0);
+  // (a hair toward the eye: over the ground it lies on)
+  o.pos.z -= 0.0003 * o.pos.w;
+  o.wpos = sv.wpos;
+  o.info = spPoolInfo(ii);
+  return o;
+}
+
+@fragment
+fn fsPool(in: PoolOut) -> @location(0) vec4<f32> {
+  return vec4<f32>(spPoolLight(in.wpos, in.info) * 0.42, 0.0);
 }
 
 // ---- the ground: a height grid (x, y, z, wetness/slope tint)
@@ -133,8 +161,13 @@ fn fsGround(in: GroundOut) -> @location(0) vec4<f32> {
   let rock = vec3<f32>(0.33, 0.31, 0.28) * (0.85 + 0.3 * spN2(p * 1.3 + in.wpos.z));
   let steep = smoothstep(0.82, 0.62, n.z);
   var c = mix(grass, rock, steep);
-  // trodden earth near the town (tint)
-  c = mix(c, vec3<f32>(0.3, 0.25, 0.17), in.tint * 0.6);
+  // trodden earth near the town (tint); (round 120) water where the tint is 2 (the sea or a river at its level)
+  c = mix(c, vec3<f32>(0.3, 0.25, 0.17), min(in.tint, 1.0) * 0.6);
+  if (in.tint > 1.5) {
+    let rip = spN2(p * 0.7 + vec2<f32>(V.misc.z * 0.3, 0.0)) * 0.5 + spN2(p * 2.3 - vec2<f32>(0.0, V.misc.z * 0.5)) * 0.5;
+    c = mix(vec3<f32>(0.04, 0.12, 0.16), vec3<f32>(0.1, 0.24, 0.28), rip);
+    n = normalize(vec3<f32>((rip - 0.5) * 0.15, 0.0, 1.0));
+  }
   // tile lines (the viewer's overlay): drawn by the line pass
   return finish(c * light(in.wpos, n), in.wpos);
 }

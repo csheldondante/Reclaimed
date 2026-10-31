@@ -15,6 +15,7 @@ import { solve, type WfcProblem } from './wfc';
 import { bakeNav } from './nav';
 import { styleOf } from './styles';
 import { routes, resample } from './linear';
+import { dressing, purposeBuildings, purposeWorks, type PurposeCtx } from './purpose';
 
 export const STOREY_H = 3;
 /** a rampart's height over the ground (m) */
@@ -283,6 +284,11 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn, den
     buildings.push({ id, kind, quads, base, storeys: st, storeyH: kind === 'barn' ? 4.4 : kind === 'hut' ? 2.7 : STOREY_H, look, district: dk });
   }
 
+  // ---- (round 120) the purpose: its work site, a port's quay, the purpose's buildings (warehouses, a sawmill, granaries,
+  // stables), a market widened; history's marks worn in (purpose.ts)
+  const pctx: PurposeCtx = { spec, tiles, adj, gz, ground, water, buildings, quadBuilding, isFarm, r };
+  const works = purposeBuildings(pctx);
+
   // ---- landmarks (mega tiles): the tallest building near the middle becomes a tower; a fountain in the plaza
   const quadTop = new Float64Array(nq).fill(NaN);
   const quadStoreys = new Int32Array(nq);
@@ -361,6 +367,9 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn, den
     }
   }
 
+  // ---- (round 120) the purpose's works: piers, ships, a lighthouse, a headframe and rails, a windmill, the props
+  const { berths, props } = purposeWorks(pctx, works, megas, linear);
+
   // ---- spans (the occupancy truth): foundations, storeys, ramparts
   const spans: Span[] = [];
   const roofRise: number[] = [];
@@ -391,6 +400,8 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn, den
 
   // ---- façades: which wall each storey of each side shows (WFC per building)
   const facades = facadesOf(tiles, adj, buildings, quadBuilding, quadStoreys, spec.seed, gz);
+  // ---- (round 120) the dressing: street lamps, torches, banners; every light's pool
+  const lights = dressing(pctx, facades, megas, props, berths);
   const t2 = performance.now();
   const plan: CityPlan = {
     spec,
@@ -405,6 +416,10 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn, den
     order: buildOrder(buildings, tiles, spec),
     megas,
     linear,
+    works,
+    berths,
+    props,
+    lights,
     nav: { nodes: [], links: [] },
     stats: {},
   };
@@ -416,6 +431,10 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn, den
     facades: facades.length,
     navNodes: plan.nav.nodes.length,
     navLinks: plan.nav.links.length,
+    props: props.length,
+    lights: lights.length,
+    berths: berths.length,
+    piers: linear.filter((f) => f.kind === 'pier').length,
     tilesMs: +(t1 - t0).toFixed(2),
     planMs: +(t2 - t1).toFixed(2),
     navMs: +(t3 - t2).toFixed(2),
@@ -625,7 +644,8 @@ function subset(plan: CityPlan, keep: Map<number, number>): CityPlan {
   const adj = adjacency(plan.tiles);
   const facades = facadesOf(plan.tiles, adj, plan.buildings, quadBuilding, quadStoreys, plan.spec.seed, plan.ground);
   const tiles = { ...plan.tiles, use: plan.tiles.use.map((u, q): TileUse => (u === 'lot' && quadBuilding[q] < 0 ? 'yard' : u)) };
-  const megas = plan.megas.filter((m) => m.kind === 'fountain' || m.kind === 'keep' || m.quads.some((q) => quadBuilding[q] >= 0));
+  // (the free-standing ones — a keep, a lighthouse, a headframe, a windmill — stand from the start, as the ramparts do)
+  const megas = plan.megas.filter((m) => m.kind === 'fountain' || m.quads.length === 0 || m.quads.some((q) => quadBuilding[q] >= 0));
   return { ...plan, tiles, quadBuilding, quadTop, facades, megas, sites, spans: plan.spans.filter((s) => s.building < 0 || keep.has(s.building)) };
 }
 
