@@ -279,8 +279,8 @@ test('a girder bridge dents where a rock lands on it, and stays dented', async (
   expect(rd(b).parts).toBe(1);
 });
 
-// (SL1: the snapped part folds as it lands — a part of it ends up under the floor; the node solver's metal, open)
-test.fails('a bar loaded past its strength snaps at its root: the graph splits into parts, and what broke off lies on the floor (SL1)', async () => {
+// (SL1, fixed: a pinned node's weight had counted in the body's mass, making every blow's dent the deepest)
+test('a bar loaded past its strength snaps at its root: the graph splits into parts, and what broke off lies on the floor (SL1)', async () => {
   clear();
   // 1 × 1, 36 over the edge: 76 × 36² / 2 = 49 200 over Z = 1/6 is 2.95e5 — past a weaker steel's strength (2.5e5)
   TUNE.solver.steelTensile = 2.5e5;
@@ -306,9 +306,8 @@ test.fails('a bar loaded past its strength snaps at its root: the graph splits i
   expect(Math.max(...ns.map((n) => n.x[2]))).toBeLessThan(LEDGE + 2);
 });
 
-// (SL2: it snaps at its foot as it leans — right — then breaks into 6-9 pieces as it lands, some into the floor; the
-// voxel lattice crumples it whole: the node solver's metal, open)
-test.fails('a steel pylon left on one leg bends over at its foot and comes down mostly whole (it crumples, not shatters) (SL2)', async () => {
+// (SL2, fixed with SL1: it snaps at its foot as it leans and comes down in two)
+test('a steel pylon left on one leg bends over at its foot and comes down mostly whole (it crumples, not shatters) (SL2)', async () => {
   clear();
   // four 1 × 1 legs 16 high at a 6-cell square's corners, braced every 5, a platform on top; only one leg's foot is
   // still on the ground (pinned), the other three cut away under it

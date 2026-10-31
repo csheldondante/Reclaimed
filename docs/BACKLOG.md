@@ -1366,8 +1366,8 @@ Order decided: C4, C3, C5 → C2 → C1 (with A6/A15 sediment) → C6 → C7 →
 
 | id | item | size | status |
 |---|---|---|---|
-| SL1 | Node solver, metal: a bar snapped at its root folds as the broken part lands and part of it ends under the floor (test/gpu/solver.test.ts, test.fails) | M | open |
-| SL2 | Node solver, metal: a pylon left on one leg snaps at its foot as it leans (right) and then breaks into 6–9 pieces landing, some into the floor; the voxel lattice crumples it whole (test.fails) | M | open |
+| SL1 | Node solver, metal: a bar snapped at its root folds as the broken part lands and part of it ends under the floor (test/gpu/solver.test.ts) | M | done (this branch: a pinned node's 1e6 had counted in the body's mass, so every blow dented as deep as a dent goes) |
+| SL2 | Node solver, metal: a pylon left on one leg snaps at its foot as it leans (right) and then broke into 6–9 pieces landing, some into the floor; the voxel lattice crumples it whole | M | done (with SL1: it comes down in two) |
 | SL3 | The lab's wooden tower doesn't topple when two posts are cut (the judge keeps it on the other two; with them pinned the node solver holds it rigid) | S | open |
 | SL4 | The slide station's mesa undercut doesn't let go (the smashes don't take enough of its foot for the judge) | S | open |
 | SL5 | The node solver's cost: about 0.1 ms a falling body on this machine's Dawn (16 ms for 200 falling at once); asleep ~free. The phone's numbers wait for the battery on the device | M | open |

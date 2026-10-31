@@ -1076,6 +1076,7 @@ fn solve(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
     var c = vec3<f32>(0.0);
     var v = vec3<f32>(0.0);
     var parts = 0.0;
+    var mFree = 0.0;
     for (var k = 0u; k < nN; k++) {
       if (sw[k] < 0.0) { continue; }
       let mk = massOf(k);
@@ -1083,6 +1084,8 @@ fn solve(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
       c += mk * sx[k];
       v += mk * sv[k];
       if (scomp[k] == k) { parts += 1.0; }
+      // (its mass as it is: a pinned node's weight is the world's, not counted — it had made every blow's energy huge)
+      if (sw[k] > 0.0) { mFree += 1.0 / sw[k]; }
     }
     c /= max(m, 1e-6);
     v /= max(m, 1e-6);
@@ -1115,7 +1118,7 @@ fn solve(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
     let b6 = bodies[B0 + 6u];
     // (the overlap it was freed with only shrinks: to its deepest now)
     bodies[B0 + 6u] = vec4<f32>(touch, deep, min(b6.z, deep), b6.w);
-    bodies[B0 + 7u] = vec4<f32>(f32(min(atomicLoad(&wErode), ERODE_N)), parts, m, f32(atomicLoad(&wBroke)));
+    bodies[B0 + 7u] = vec4<f32>(f32(min(atomicLoad(&wErode), ERODE_N)), parts, mFree, f32(atomicLoad(&wBroke)));
   }
 }
 
