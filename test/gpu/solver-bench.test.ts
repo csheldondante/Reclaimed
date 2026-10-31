@@ -1,10 +1,15 @@
-// The node solver's cost (BACKLOG AR4's budget: about 50 awake bodies at 60 fps on the phone). Run with SOLVER_BENCH=1:
-// wall time of the GPU's work a tick (Dawn on this machine's GPU; a relative number, the browser's profiler gives
-// the absolute), for rigid blocks and stiff metal bodies, falling and resting. Skipped otherwise (the suite stays fast).
+// The physics experiment's scaling run (round 120: "Performance batteries … what is improved vs the cost"):
+// SOLVER_BENCH=1 — 10, 50 and 200 awake bodies on the node solver and on the voxel lattice (physics/physics.ts,
+// phys.wgsl), the same shapes (rock blocks 4³, steel girders 16 × 2 × 2), falling then landed: the GPU's work a tick,
+// timed as wall time of a batch of ticks on Dawn (this machine's GPU; relative — the browser battery has the
+// profiler's numbers). Written to data/perf/solver/scaling.json. Skipped otherwise (the suite stays fast).
+import fs from 'node:fs';
 import { expect, test } from 'vitest';
 import { MAT } from '../../src/world/materials';
 import { Solver } from '../../src/solver/solver';
+import { Physics } from '../../src/physics/physics';
 import type { SolverCell } from '../../src/api/contracts/solver';
+import { cellPos } from '../../src/world/lattice';
 import { tinyMap } from '../support/tinymap';
 import { testGpu } from './dawn';
 import { tinyWorld } from './world';
@@ -15,32 +20,57 @@ const box = (w0: number, d: number, h: number, x0: number, y0: number, z0: numbe
   return out;
 };
 
-test.skipIf(!process.env.SOLVER_BENCH)('cost a tick', async () => {
+test.skipIf(!process.env.SOLVER_BENCH)('scaling: node solver vs voxel lattice', async () => {
   const g = await testGpu();
-  const w = await tinyWorld(g, tinyMap(128, 128, 64, () => [{ z0: 0, z1: 10, mat: MAT.Stone }]), []);
-  const s = new Solver(g.device, w.core.world, w.core.host.profiler);
-  w.core.sim.systems.push(s);
-  const run = async (label: string, n: number) => {
-    for (let i = 0; i < 10; i++) w.core.sim.step(w.core.globals, (x) => x.name === 'solver');
-    await g.device.queue.onSubmittedWorkDone();
-    const t0 = performance.now();
-    for (let i = 0; i < n; i++) w.core.sim.step(w.core.globals, (x) => x.name === 'solver');
-    await g.device.queue.onSubmittedWorkDone();
-    await new Promise((r) => setTimeout(r, 20));
-    const asleep = [...s.bodies].filter((b) => s.read(b)?.asleep).length;
-    console.log(`${label}: ${((performance.now() - t0) / n).toFixed(3)} ms a tick (${s.used} slots, ${asleep} asleep)`);
-  };
-  await run('empty', 60);
-  for (let i = 0; i < 25; i++) s.add({ cells: box(4, 4, 4, 8 + (i % 5) * 20, 8 + Math.floor(i / 5) * 20, 30, MAT.Stone) });
-  await run('25 rigid 4³ falling', 60);
-  for (let i = 0; i < 25; i++) s.add({ cells: box(16, 2, 2, 4 + (i % 5) * 22, 14 + Math.floor(i / 5) * 20, 40, MAT.Steel) });
-  await run('+25 steel girders falling', 60);
-  await run('the 50, later', 120);
-  await run('the 50, later still', 240);
-  // (a pinned steel frame standing: woken whole, resting)
-  for (let i = 0; i < 10; i++) s.add({ cells: box(2, 2, 20, 10 + i * 10, 110, 10, MAT.Steel), pinned: (c) => c.z === 10 });
-  await run('+10 standing pinned steel posts', 240);
-  expect(g.takeErrors()).toEqual([]);
-  await s.destroy();
-  w.destroy();
-}, 120_000);
+  const rows: Record<string, unknown>[] = [];
+  for (const n of [10, 50, 200]) {
+    for (const kind of ['nodes', 'lattice'] as const) {
+      const w = await tinyWorld(g, tinyMap(256, 256, 64, () => [{ z0: 0, z1: 10, mat: MAT.Stone }]), []);
+      const solver = kind === 'nodes' ? new Solver(g.device, w.core.world, w.core.host.profiler) : null;
+      const phys = kind === 'lattice' ? new Physics(g.device, w.core.world, w.core.host.profiler) : null;
+      w.core.sim.systems.push((solver ?? phys)!);
+      let voxels = 0;
+      for (let i = 0; i < n; i++) {
+        const x0 = 8 + (i % 14) * 17;
+        const y0 = 8 + Math.floor(i / 14) * 17;
+        const cells = i % 2 ? box(16, 2, 2, x0, y0, 30, MAT.Steel) : box(4, 4, 4, x0, y0, 30, MAT.Stone);
+        voxels += cells.length;
+        if (solver) solver.add({ cells });
+        else {
+          const lo = [x0, y0, 30];
+          const set = new Set(cells.map((c) => `${c.x - lo[0]},${c.y - lo[1]},${c.z - lo[2]}`));
+          const mat = cells[0].mat;
+          phys!.spawnLattice(
+            i % 2 ? [16, 2, 2] : [4, 4, 4],
+            (x, y, z) => (set.has(`${x},${y},${z}`) ? mat : 0),
+            (x, y, z) => {
+              const [px, py] = cellPos(lo[0] + x, lo[1] + y);
+              return [px, py, lo[2] + z + 0.5];
+            },
+          );
+        }
+      }
+      const name = kind === 'nodes' ? 'solver' : 'physics';
+      const time = async (ticks: number) => {
+        await g.device.queue.onSubmittedWorkDone();
+        const t0 = performance.now();
+        for (let k = 0; k < ticks; k++) w.core.sim.step(w.core.globals, (s) => s.name === name);
+        await g.device.queue.onSubmittedWorkDone();
+        return (performance.now() - t0) / ticks;
+      };
+      await time(10);
+      const falling = await time(60);
+      // (landed: two seconds on)
+      await time(120);
+      const landed = await time(60);
+      const row = { kind, bodies: n, voxels, nodes: solver ? [...solver.bodies].reduce((s, b) => s + b.nodes, 0) : voxels, fallingMs: +falling.toFixed(3), landedMs: +landed.toFixed(3) };
+      rows.push(row);
+      console.log(JSON.stringify(row));
+      expect(g.takeErrors()).toEqual([]);
+      await solver?.destroy();
+      w.destroy();
+    }
+  }
+  fs.mkdirSync('data/perf/solver', { recursive: true });
+  fs.writeFileSync('data/perf/solver/scaling.json', JSON.stringify({ at: new Date().toISOString(), what: 'wall ms a tick on Dawn (D3D12), this machine; 4³ stone blocks and 16 × 2 × 2 steel girders alternating', rows }, null, 1));
+}, 600_000);

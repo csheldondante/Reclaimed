@@ -53,6 +53,9 @@ import { FLOWLAB } from '../levels/flowlab';
 import { TunePanel } from '../ui/tunepanel';
 import { BugReport } from '../ui/bugreport';
 import { StationsBar } from '../ui/stations';
+import { experimentControls, startRun } from '../ui/experiment';
+import { judgeName } from '../game/judges';
+import { solverVariant } from '../solver/variant';
 import { NoiseLabControl } from '../noiselab/control';
 import type { Station, StationKit } from '../levels/playground';
 import { RB, rockbodyFor } from '../game/rockbodies';
@@ -370,6 +373,8 @@ export class LevelScene implements Scene {
   private tunePanel?: TunePanel;
   bugReport?: BugReport;
   private stationsBar?: StationsBar;
+  /** (solver step 2, the experiment) the station and button last pressed: what "compare" plays again */
+  private lastRun: string | null = null;
   /** (round 111, TG1) the noise lab's recipe, its panel and its runs (level.noiseLab) */
   noiseLab?: NoiseLabControl;
   /** sandbox: a smash drag in progress */
@@ -3229,12 +3234,26 @@ export class LevelScene implements Scene {
           core.camera.target = [x, y, z];
           core.camera.zoom = zoom;
         },
-        run: (s, k) => s.actions[k].run(this.stationKit()),
+        run: (s, k) => {
+          this.lastRun = `${s.id}/${encodeURIComponent(s.actions[k].label)}`;
+          s.actions[k].run(this.stationKit());
+        },
         reset: (s) => this.resetStation(s),
         resetAll: () => {
           for (const s of stations) this.resetStation(s);
           core.weather.dusts = [];
         },
+      });
+      // (solver step 2, the experiment: which solver and judge — a pick reloads — and compare; ?run= presses a button)
+      this.tunePanel.prepend(experimentControls({ variant: solverVariant(host.params), judge: judgeName(host.params), lastRun: () => this.lastRun }));
+      startRun(host.params, (id, label) => {
+        const i = stations.findIndex((s) => s.id === id);
+        const k = i < 0 ? -1 : stations[i].actions.findIndex((a) => a.label === label);
+        if (k < 0) return false;
+        this.stationsBar!.pick(i);
+        this.lastRun = `${id}/${encodeURIComponent(label)}`;
+        stations[i].actions[k].run(this.stationKit());
+        return true;
       });
     }
   }

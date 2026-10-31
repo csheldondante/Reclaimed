@@ -146,6 +146,11 @@ export class TunePanel {
   /** (round 111) a slider held (pressed, not yet let go) */
   dragging = false;
 
+  /** (solver step 2, the experiment) a control of the page's own at the panel's top (ui/experiment.ts) */
+  prepend(node: HTMLElement): void {
+    this.el.prepend(node);
+  }
+
   toggle(want?: boolean): void {
     const on = want ?? this.el.hidden === true;
     this.el.hidden = !on;

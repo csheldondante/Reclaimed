@@ -29,10 +29,13 @@ import { ExternalRegistry, OWNER_ROCK, type ExternalCol, type ExternalInstance }
 import { fieldMeshed } from '../world/materials';
 import { restingVoxels } from './rockbodies';
 import { Solver } from '../solver/solver';
+import { ROUTING, solverVariant, type Routing, type SolverVariant } from '../solver/variant';
+import type { PhysBody } from '../physics/physics';
 import type { SolverBody } from '../api/contracts/solver';
 
-/** (round 96) what bends: metal — and (solver step 2) wood — goes to the node solver as a deformable body (it was the physics voxels), the rest of what falls stays rigid */
-const METAL: ReadonlySet<number> = new Set<number>([MAT.Steel, MAT.Rust, MAT.Wood, MAT.Log]);
+/** (round 96) what bends: metal — and (solver step 2, but for the baseline variant) wood — goes to a deformable body (the node solver's or the voxel lattice's, by the variant), the rest of what falls stays rigid */
+const METAL: ReadonlySet<number> = new Set<number>([MAT.Steel, MAT.Rust]);
+const WOOD: ReadonlySet<number> = new Set<number>([MAT.Wood, MAT.Log]);
 /** (round 96) cells of metal woken at once at most (wake.ts WAKE_MAX) */
 const METAL_MAX = 6000;
 /**
@@ -97,6 +100,13 @@ export class Integrity {
   readonly rigid: RockBodies | null = null;
   /** (solver step 2, AR4) the GPU node solver that moves the rigid rock (src/solver; its contract api/contracts/solver.ts) */
   readonly solver: Solver | null = null;
+  /** (solver step 2, the experiment) which representation moves what's freed (solver/variant.ts: ?solver=) */
+  readonly variant: SolverVariant = solverVariant();
+  private readonly route: Routing = ROUTING[this.variant];
+  /** what bends (goes to a deformable body): metal, and wood but for the baseline */
+  private bends(m: number): boolean {
+    return METAL.has(m) || (this.route.woodBends && WOOD.has(m));
+  }
   /** sparks where rock hits rock hard (round 86: "a big cloud of dust … and maybe sparks") */
   onSparks?: (x: number, y: number, z: number, count: number, speed: number) => void;
   /** (round 95) the body voxels drawn this frame (the cube bodies' and the rigid rock's) */
@@ -198,10 +208,13 @@ export class Integrity {
     if (rockbody) {
       (this as { rigid: RockBodies | null }).rigid = new RockBodies(this.rockGround());
       // (solver step 2, AR4) the GPU node solver moves them: body against body, the contact rules, a fixed step drawn
-      // between its last two; the judge here still decides what lets go, breaks it, and takes it back at rest
+      // between its last two; the judge here still decides what lets go, breaks it, and takes it back at rest — with
+      // the variant's say (?solver=: the baseline keeps the CPU rigid rock, the lattice the voxels)
+      const route = ROUTING[this.variant];
+      if (route.rock === 'nodes' || route.metal === 'nodes') {
       const solver = new Solver(core.host.gpu.device, core.world, core.host.profiler);
       core.sim.systems.push(solver);
-      this.rigid!.engine = solver;
+      if (route.rock === 'nodes') this.rigid!.engine = solver;
       (this as { solver: Solver | null }).solver = solver;
       // (what it draws: the metal's cells as voxels, each riding its node; the rock mesh skinned to its nodes)
       core.renderer.addVoxels(solver.skinInst, solver.skinArgs);
@@ -211,6 +224,7 @@ export class Integrity {
         core.renderer.addVoxels(solver.skinInst, solver.skinArgs);
         core.renderer.setRockNodes({ pose: solver.pose, lanes: solver.lanes });
       };
+      }
       this.rockMesh = core.renderer.enableRockMesh();
       // (round 110: with the rigid rock always, not only `?meshinst=1` — the user: "When things come to rest they turn
       // to dust instead of staying as meshes as we discussed"; DECISIONS round 106: "A settled body stays an object
@@ -518,9 +532,11 @@ export class Integrity {
    * dropped: metal into the node solver as a deformable, the rest as the rigid rock. Its cells must be air.
    */
   dropBody(cells: { x: number; y: number; z: number; mat: number }[], vel: [number, number, number] = [0, 0, 0]): boolean {
-    if (!this.rigid || !this.solver || !cells.length) return false;
-    if (METAL.has(cells[0].mat)) {
+    if (!this.rigid || !cells.length) return false;
+    if (this.route.rock === 'lattice' || (this.bends(cells[0].mat) && this.route.metal === 'lattice')) return this.spawnLattice(cells, () => false);
+    if (this.bends(cells[0].mat)) {
       const slot = SKIN_METAL ? this.rockMesh?.alloc(cells.map((c) => ({ ...c, mat: MAT.Stone })))?.id : undefined;
+      if (!this.solver) return false;
       const body = this.solver.add({ cells, vel, kind: 'deformable', drawCells: slot === undefined });
       if (!body) return false;
       this.metal.push({ body, slot, mat: cells[0].mat });
@@ -534,9 +550,41 @@ export class Integrity {
     return true;
   }
 
-  /** (solver step 2, the lab) the metal at this cell (column x, y, cell z) and all it connects to woken into the solver */
+  /** (solver step 2, the lab) the metal at this cell (column x, y, cell z) and all it connects to woken (by the variant) */
   wakeMetalAt(x: number, y: number, z: number): void {
-    if (this.rigid && this.solver && this.world.slots.length) this.wakeMetal([[x, y, z]]);
+    if (this.rigid && (this.route.metal === 'nodes' ? this.solver : this.physics) && this.world.slots.length) this.wakeMetal([[x, y, z]]);
+  }
+
+  /**
+   * (solver step 2, the lattice variants) Cells (out of the columns already) as a body of the physics voxels — a
+   * particle a cell on its lattice, 26 bonds, shape matched (phys.wgsl) — `pinned` ones held. False with no room.
+   */
+  private spawnLattice(cells: { x: number; y: number; z: number; mat: number }[], pinned: (c: { x: number; y: number; z: number; mat: number }) => boolean): boolean {
+    const phys = this.physics;
+    if (!phys || !cells.length) return false;
+    let lo: [number, number, number] = [Infinity, Infinity, Infinity];
+    let hi: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+    for (const c of cells) {
+      lo = [Math.min(lo[0], c.x), Math.min(lo[1], c.y), Math.min(lo[2], c.z)];
+      hi = [Math.max(hi[0], c.x), Math.max(hi[1], c.y), Math.max(hi[2], c.z)];
+    }
+    const dims: [number, number, number] = [hi[0] - lo[0] + 1, hi[1] - lo[1] + 1, hi[2] - lo[2] + 1];
+    if (!phys.hasRoom(dims[0] * dims[1] * dims[2])) return false;
+    const at = new Map(cells.map((c) => [`${c.x - lo[0]},${c.y - lo[1]},${c.z - lo[2]}`, c]));
+    const body: PhysBody | null = phys.spawnLattice(
+      dims,
+      (x, y, z) => at.get(`${x},${y},${z}`)?.mat ?? 0,
+      (x, y, z) => {
+        const [px, py] = cellPos(lo[0] + x, lo[1] + y);
+        return [px, py, lo[2] + z + 0.5];
+      },
+      { pinned: (x, y, z) => {
+        const c = at.get(`${x},${y},${z}`);
+        return !!c && pinned(c);
+      } },
+    );
+    if (body) this.stats.bodies++;
+    return !!body;
   }
 
   /**
@@ -1131,7 +1179,7 @@ export class Integrity {
   /** What an analysis found, done: what crumbles crumbles, what breaks free falls. Did anything crumble? */
   private apply(r: Fracture): boolean {
     // (round 96) metal isn't the judges': it's woken into the physics voxels, whole, where they found it
-    if (this.rigid && this.solver) this.takeMetal(r);
+    if (this.rigid && (this.route.metal === 'nodes' ? this.solver : this.physics)) this.takeMetal(r);
     // (round 99) what other systems own found hanging free or giving: their owners told (the rock lets go: its cells
     // are ground again, and fall here with the rest as they do)
     if (this.external) this.takeExternal(r);
@@ -1168,7 +1216,7 @@ export class Integrity {
     }
     // (solver step 2, AR11: the falling pieces folded into the one solver) what the structure judge frees — concrete,
     // brick — falls as rigid bodies too, body against body, toppling, at rest a mesh or its cells
-    if (this.rigid && this.solver && r.bodies.length) {
+    if (this.rigid && this.route.structures === 'rock' && r.bodies.length) {
       for (const body of r.bodies) {
         const piece = cellsToRuns(body);
         if (this.above) for (const c of piece) if (c.ivs.some((iv) => iv.z1 >= zTop)) c.ivs.push(...this.above.take(c.x, c.y));
@@ -1176,7 +1224,7 @@ export class Integrity {
       }
       this.timing.spawnedAt = performance.now();
     }
-    const pieces: ColPiece[][] = this.rigid && this.solver ? [] : [...(this.rigid ? [] : (r.pieces ?? [])), ...r.bodies.map(cellsToRuns)];
+    const pieces: ColPiece[][] = this.rigid && this.route.structures === 'rock' ? [] : [...(this.rigid ? [] : (r.pieces ?? [])), ...r.bodies.map(cellsToRuns)];
     for (const piece of pieces) {
       // (round 87: a run reaching the window's top goes on above it — Streamer.outside, the band draws it: that
       // comes down with it)
@@ -1224,6 +1272,12 @@ export class Integrity {
         z0 = Math.min(z0, iv.z0);
         for (let z = Math.round(iv.z0); z < Math.round(iv.z1); z++) cells.push({ x: c.x, y: c.y, z, mat: iv.mat });
       }
+    }
+    // (the lattice variant: rock and what's built on the voxel lattice too — the tankers' solver for everything)
+    if (this.route.rock === 'lattice' && this.physics) {
+      this.touchCols(piece, true);
+      this.spawnLattice(cells, () => false);
+      return;
     }
     const b = rigid.spawn(cells, tip);
     this.touchCols(piece, true);
@@ -1311,8 +1365,8 @@ export class Integrity {
     const at: [number, number, number][] = [];
     const strip = (rp: { x: number; y: number; ivs: { z0: number; z1: number; mat: number }[] }[] | undefined) => {
       for (const c of rp ?? []) {
-        const keep = c.ivs.filter((iv) => !METAL.has(iv.mat));
-        if (keep.length !== c.ivs.length) for (const iv of c.ivs) if (METAL.has(iv.mat)) at.push([c.x, c.y, Math.floor((iv.z0 + iv.z1) / 2)]);
+        const keep = c.ivs.filter((iv) => !this.bends(iv.mat));
+        if (keep.length !== c.ivs.length) for (const iv of c.ivs) if (this.bends(iv.mat)) at.push([c.x, c.y, Math.floor((iv.z0 + iv.z1) / 2)]);
         c.ivs = keep;
       }
     };
@@ -1321,8 +1375,8 @@ export class Integrity {
     strip(r.crumbleRuns);
     if (r.crumbleRuns) r.crumbleRuns = r.crumbleRuns.filter((c) => c.ivs.length);
     const cellsOut = (vs: Voxel[]) => {
-      for (const v of vs) if (METAL.has(v.mat)) at.push([v.x, v.y, v.z]);
-      return vs.filter((v) => !METAL.has(v.mat));
+      for (const v of vs) if (this.bends(v.mat)) at.push([v.x, v.y, v.z]);
+      return vs.filter((v) => !this.bends(v.mat));
     };
     r.crumble = cellsOut(r.crumble);
     r.bodies = r.bodies.map(cellsOut).filter((b) => b.length);
@@ -1336,7 +1390,7 @@ export class Integrity {
    * ?rbskin=1).
    */
   private wakeMetal(seeds: [number, number, number][]): void {
-    const solver = this.solver!;
+    const solver = this.solver;
     const { w: W, h: H } = this.core.dims;
     const cols = new Map<number, Interval[]>();
     const colAt = (x: number, y: number) => {
@@ -1353,9 +1407,9 @@ export class Integrity {
       for (let k = 0; k < col.length; k++) {
         const iv = col[k];
         // (any metal in the cell, a sliver too: what a meteor's melt left of a member is taken with it, not left floating)
-        if (!METAL.has(iv.mat) || iv.z1 <= z + 0.01 || iv.z0 >= z + 0.99) continue;
+        if (!this.bends(iv.mat) || iv.z1 <= z + 0.01 || iv.z0 >= z + 0.99) continue;
         const below = k > 0 ? col[k - 1] : null;
-        const pin = z === Math.floor(iv.z0 + 0.01) && (iv.z0 < 1e-3 || (!!below && Math.abs(below.z1 - iv.z0) < 1e-3 && !METAL.has(below.mat)));
+        const pin = z === Math.floor(iv.z0 + 0.01) && (iv.z0 < 1e-3 || (!!below && Math.abs(below.z1 - iv.z0) < 1e-3 && !this.bends(below.mat)));
         return { mat: iv.mat, pin };
       }
       return null;
@@ -1401,15 +1455,18 @@ export class Integrity {
     const mat = [...mats].sort((a, b) => b[1] - a[1])[0][0];
     const slot = SKIN_METAL ? this.rockMesh?.alloc(list.map((c) => ({ ...c, mat: MAT.Stone })))?.id : undefined;
     const pins = new Set(list.filter((c) => c.pin).map((c) => key(c.x, c.y, c.z)));
-    const body = solver.add({
-      cells: list.map((c) => ({ x: c.x, y: c.y, z: c.z, mat: c.mat })),
-      pinned: (c) => pins.has(key(c.x, c.y, c.z)),
-      kind: 'deformable',
-      drawCells: slot === undefined,
-    });
-    if (!body) {
+    const plain = list.map((c) => ({ x: c.x, y: c.y, z: c.z, mat: c.mat }));
+    // (the variant's: the voxel lattice — the physics voxels, drawn as their own voxels — or the node solver)
+    let body: SolverBody | null = null;
+    if (this.route.metal === 'lattice') {
       if (slot !== undefined) this.rockMesh?.release(slot);
-      return;
+      if (!this.spawnLattice(plain, (c) => pins.has(key(c.x, c.y, c.z)))) return;
+    } else {
+      body = solver!.add({ cells: plain, pinned: (c) => pins.has(key(c.x, c.y, c.z)), kind: 'deformable', drawCells: slot === undefined });
+      if (!body) {
+        if (slot !== undefined) this.rockMesh?.release(slot);
+        return;
+      }
     }
     // out of the columns (both copies)
     const byCol = new Map<number, { z0: number; z1: number }[]>();
@@ -1427,7 +1484,7 @@ export class Integrity {
       const col = colAt(x, y);
       const out: Interval[] = [];
       for (const iv of col) {
-        if (!METAL.has(iv.mat)) out.push(iv);
+        if (!this.bends(iv.mat)) out.push(iv);
         else out.push(...subtract([iv], cut));
       }
       this.writeColumn(x, y, out);
@@ -1436,7 +1493,7 @@ export class Integrity {
     }
     this.touchCols(touched, true);
     this.urgent = true;
-    this.metal.push({ body, slot, mat });
+    if (body) this.metal.push({ body, slot, mat });
     this.stats.bodies++;
     this.stats.metal = (this.stats.metal ?? 0) + list.length;
     const [fx, fy] = cellPos(Math.round((lo[0] + hi[0]) / 2), Math.round((lo[1] + hi[1]) / 2));
