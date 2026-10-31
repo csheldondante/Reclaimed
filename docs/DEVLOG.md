@@ -15037,3 +15037,29 @@ Tests: test/gpu/jb6.test.ts (the lattice with the sections judge: a cut freeing 
 falling as a lattice body; a block sinking into sand; a block smashing stone — `readBytes` 0 throughout; a claimed thing
 dug into: only its chunks fetched, its owner told, let go on the GPU; with judge A the copy is read again).
 test/gpu/integrity.test.ts's blows now look at the GPU's columns (the CPU no longer knows which blow sank or smashed).
+
+**Measured (jb6, desktop iGPU intel-xe-lpg, the phone proxy: atlas, 412 x 915, dpr 2.6, q=low, every system, 1x).**
+- The toggle (scripts/jb6toggle.mjs; lattice x sections, `?jb6=0` against JB6, alternated; 30 s of a bowl dug round the
+  camera every 1.2 s and a stone block dropped every 3 s; data/perf/jb6/toggle-lattice-sections*.json):
+
+  | run | frames p50 / p95 / p99 / max (ms) | > 33 ms | GPU mean / p95 (ms) | read back | passes |
+  |---|---|---|---|---|---|
+  | jb6=0, 1 | 9.8 / 11.7 / 12.8 / 92.6 | 1 of 3045 | — | 120.9 MB | 67 |
+  | jb6, 1 | 9.9 / 11.4 / 12.5 / 98.4 | 3 of 3030 | — | 0 | 65 |
+  | jb6=0, 2 | 9.9 / 11.4 / 12.4 / 73.1 | 2 of 3046 | — | 119.3 MB | 66 |
+  | jb6, 2 | 9.9 / 11.4 / 12.9 / 69.7 | 3 of 3032 | — | 0 | 65 |
+  | jb6=0 (perf=1) | 9.9 / 10.6 / 11.5 / 68.8 | 1 of 3040 | 6.45 / 9.81 | 125.2 MB | 70 |
+  | jb6 (perf=1) | 9.9 / 10.7 / 11.8 / 67.6 | 1 of 3036 | 6.34 / 9.67 | 0 | 68 |
+
+  The copy cost about 1.8 MB a pass (the chunks ±24 round each cut, read again each look) — 4 MB/s of readback while
+  cutting; with JB6, none. On this desktop the frames don't show it (its readback is fast and off the frame); the phone
+  is where it was slow (the round-120 judges' battery: 15-650 ms a read) — the phone bench is the judge of that.
+- The physics bench headless (playground, lattice:runs vs lattice:sections; data/perf/jb6/physbench-headless.json): the
+  frames alike (p95 10.5 / 10.6, p99 11.2 / 11.5 ms); toggled costs within noise for both. Runs read back 1.1-3.7 MB a
+  stage (9-16 reads of 10-14 ms each) and judged on the main thread 0.2-1.35 ms a pass (worst 4.5); sections read none
+  but its verdict — 32 KB used (97 KB mapped) — its judging 0.4-2.6 ms of GPU and 12-16 ms from submit to verdict
+  (the readback's wait, off the main thread). So on the desktop it's a tie on frames; sections now does what runs did
+  with no copy read back and no CPU judging on the main thread — whether it beats runs on the phone is the phone bench's
+  call (Pages build of `jb6`, `?physbench=1&pairs=lattice:runs,lattice:sections`).
+- Gate: typecheck; `npm test` 351 passed (2 expected fail, 5 skipped) (unit and GPU on Dawn); `npm run smoke` atlas, playground, rocklab; the atlas
+  with judge B, a pillar's foot cut (it toppled as one rock-mesh body) and a tanker dropped (C:/Projects/shots88/jb6/).

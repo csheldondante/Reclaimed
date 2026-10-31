@@ -41,7 +41,7 @@ async function one(jb6) {
       console.log('pageerror', e.message);
     });
     p.on('console', (m) => m.type() === 'error' && !m.text().includes('404') && console.log('console', m.text().slice(0, 300)));
-    await p.goto(`${url}/?skipmenu=1&tutorial=0&q=low&level=atlas&solver=${solver}&judge=${judge}${jb6 ? '' : '&jb6=0'}`, { waitUntil: 'load' });
+    await p.goto(`${url}/?skipmenu=1&tutorial=0&q=low&perf=1&level=atlas&solver=${solver}&judge=${judge}${jb6 ? '' : '&jb6=0'}`, { waitUntil: 'load' });
     await p.waitForFunction(() => window.reclaimed?.stream && window.reclaimed?.integrity?.(), { timeout: 240000 });
     // (the first load after a server start is slow: the land settles first)
     await sleep(wait);
