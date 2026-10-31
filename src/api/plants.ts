@@ -36,16 +36,76 @@ function pcg(v: number): number {
   const w = Math.imul(((s >>> ((s >>> 28) + 4)) ^ s) >>> 0, 277803737) >>> 0;
   return ((w >>> 22) ^ w) >>> 0;
 }
+// (round 117, flora: the window's origin goes in, as common.wgsl hash3 adds G.org.zw — before, a streamed window's
+// trees here were another window's)
+let ORG: [number, number] = [0, 0];
 function hash3(x: number, y: number, z: number): number {
-  return pcg((x ^ pcg((y ^ pcg(z)) >>> 0)) >>> 0);
+  return pcg(((x + ORG[0]) ^ pcg(((y + ORG[1]) ^ pcg(z)) >>> 0)) >>> 0);
 }
 function rand3(x: number, y: number, z: number): number {
   return (hash3(x, y, z) >>> 8) / 16777216;
+}
+/** vegplan.wgsl floraCorner / birchWood (round 117): the birch woods, a stand-in biome field */
+function floraCorner(x: number, y: number): number {
+  return (pcg(((x >>> 0) ^ pcg(((y >>> 0) ^ 0x51a7b1) >>> 0)) >>> 0) >>> 8) / 16777216;
+}
+export function birchWood(cx: number, cy: number, org: [number, number] = ORG): number {
+  const px = (cx + org[0]) / 72;
+  const py = (cy + org[1]) / 72;
+  const ix = Math.floor(px);
+  const iy = Math.floor(py);
+  const fx = px - ix;
+  const fy = py - iy;
+  const ux = fx * fx * (3 - 2 * fx);
+  const uy = fy * fy * (3 - 2 * fy);
+  const a = floraCorner(ix, iy) + (floraCorner(ix + 1, iy) - floraCorner(ix, iy)) * ux;
+  const b = floraCorner(ix, iy + 1) + (floraCorner(ix + 1, iy + 1) - floraCorner(ix, iy + 1)) * ux;
+  const n = a + (b - a) * uy;
+  const t = Math.min(1, Math.max(0, (n - 0.52) / (0.7 - 0.52)));
+  return t * t * (3 - 2 * t);
 }
 
 /** Logs a tree makes: its trunk's wood and some of its crown's limbs (cells³). */
 function logsOf(trunk: number, crown: number): number {
   return Math.round((0.3 * trunk + 0.15 * crown) * 100) / 100;
+}
+
+/**
+ * vegplan.wgsl vegPlan's tree at window column (cx, cy) with succession v, or null — the same hashes and thresholds
+ * (round 117: a pure function, so a Dawn test checks it against the kernel: test/gpu/flora-plan.test.ts). `org`: the
+ * window's world origin (Globals.origin), w × h its size.
+ */
+export function planTree(cx: number, cy: number, v: number, w: number, h: number, org: [number, number]): Tree | null {
+  ORG = org;
+  const edge = cx < 2 || cy < 2 || cx + 3 >= w || cy + 3 >= h;
+  if (!(v >= 3.6) || edge || rand3(cx, cy, 4242) >= 0.045) return null;
+  const hs = rand3(cx, cy, 321);
+  const hv = rand3(cx, cy, 7);
+  const age = Math.min(Math.max(v - 3.6, 0), 1.4);
+  let species: TreeSpecies;
+  let trunk: number;
+  let crown: number;
+  const inBirch = rand3(cx, cy, 333) < birchWood(cx, cy) * 0.85;
+  if (v > 4.7 && hs < 0.12 && !inBirch) {
+    species = 'giant';
+    trunk = 5 + Math.floor(hv * 4);
+    crown = 3 + Math.floor(hv * 2);
+  } else if (hs < 0.42 && !inBirch) {
+    species = 'conifer';
+    trunk = 1 + Math.floor(hv * 2);
+    crown = 4 + Math.floor(age * 2) + Math.floor(hv * 3);
+  } else if (hs < 0.58 || inBirch) {
+    species = 'birch';
+    // (round 117, flora: towering birches — vegplan.wgsl's heights, kept identical)
+    trunk = 8 + Math.floor(age * 2) + Math.floor(hv * 2);
+    crown = 5;
+  } else {
+    species = 'broadleaf';
+    trunk = 2 + Math.floor(age * 2.5) + Math.floor(hv * 3);
+    crown = 2 + Math.floor(hv * 1.99) + (v > 4.5 ? 1 : 0);
+  }
+  const [x, y] = cellPos(cx, cy);
+  return { cx, cy, x, y, species, trunk, crown, logs: logsOf(trunk, crown) };
 }
 
 export class Plants {
@@ -66,36 +126,17 @@ export class Plants {
     return v[this.core.ring.idx(cx, cy)];
   }
 
+  /** (round 117, flora) the succession field at window column (cx, cy), null before the first read or off the window */
+  vegCol(cx: number, cy: number): number | null {
+    const v = this.mirror.f32('veg');
+    const { w, h } = this.core.dims;
+    if (!v || cx < 0 || cy < 0 || cx >= w || cy >= h) return null;
+    return v[this.core.ring.idx(cx, cy)];
+  }
+
   /** vegplan.wgsl's tree at column (cx, cy) with veg v, or null. */
   private planAt(cx: number, cy: number, v: number): Tree | null {
-    const { w, h } = this.core.dims;
-    const edge = cx < 2 || cy < 2 || cx + 3 >= w || cy + 3 >= h;
-    if (!(v >= 3.6) || edge || rand3(cx, cy, 4242) >= 0.045) return null;
-    const hs = rand3(cx, cy, 321);
-    const hv = rand3(cx, cy, 7);
-    const age = Math.min(Math.max(v - 3.6, 0), 1.4);
-    let species: TreeSpecies;
-    let trunk: number;
-    let crown: number;
-    if (v > 4.7 && hs < 0.12) {
-      species = 'giant';
-      trunk = 5 + Math.floor(hv * 4);
-      crown = 3 + Math.floor(hv * 2);
-    } else if (hs < 0.42) {
-      species = 'conifer';
-      trunk = 1 + Math.floor(hv * 2);
-      crown = 4 + Math.floor(age * 2) + Math.floor(hv * 3);
-    } else if (hs < 0.58) {
-      species = 'birch';
-      trunk = 3 + Math.floor(age * 2) + Math.floor(hv * 2);
-      crown = 2;
-    } else {
-      species = 'broadleaf';
-      trunk = 2 + Math.floor(age * 2.5) + Math.floor(hv * 3);
-      crown = 2 + Math.floor(hv * 1.99) + (v > 4.5 ? 1 : 0);
-    }
-    const [x, y] = cellPos(cx, cy);
-    return { cx, cy, x, y, species, trunk, crown, logs: logsOf(trunk, crown) };
+    return planTree(cx, cy, v, this.core.dims.w, this.core.dims.h, this.core.globals.origin ?? [0, 0]);
   }
 
   /** The tree standing at (x, y)'s column, or null. */

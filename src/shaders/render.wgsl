@@ -696,6 +696,29 @@ fn sunLit(wpos: vec3<f32>, nrm: vec3<f32>, sc: vec2<i32>) -> f32 {
   return smoothstep(0.1, 0.9, acc / wsum);
 }
 
+/**
+ * (round 117, terrain track — a shared-renderer tweak for consolidation) How far under cover a point is: 0 under the
+ * open sky; toward 1 deep in a cave. A point is under cover when its column (the one its face looks out to) has its top
+ * above it — a cave's floor or wall, the ground under an overhang or a deck; how deep, by how many of eight columns
+ * round it, 3 and 7 cells out, are roofed over it too. The sky's light and the bounce fade with it, so a cave's mouth
+ * reads dark from above instead of lit like open ground (the user: "Caves should have ground level openings", "vast
+ * chambers … crumbling ceilings with beams of light" — the shafts later). One surface read for open ground; nine under a
+ * roof. Past the window (the tiles): none (they're tops).
+ */
+fn underCover(wpos: vec3<f32>, nrm: vec3<f32>) -> f32 {
+  let c = cellAt(wpos.xy + nrm.xy * 0.6);
+  if (!inMap(c)) { return 0.0; }
+  if (wpos.z > sfZ(surface[colIdxI(c)]) - 1.0) { return 0.0; }
+  var n = 1.0;
+  for (var k = 0; k < 8; k++) {
+    let a = f32(k) * 0.7853982;
+    let r = select(3.0, 7.0, (k & 1) == 1);
+    let q = cellAt(wpos.xy + vec2<f32>(cos(a), sin(a)) * r);
+    if (inMap(q) && sfZ(surface[colIdxI(q)]) > wpos.z + 1.0) { n += 1.0; }
+  }
+  return n / 9.0;
+}
+
 /** Direct + ambient light with heightfield shadow and storm cloud shade. */
 fn lighting(wpos: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
   let sun = sunDir();
@@ -727,7 +750,11 @@ fn lighting(wpos: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
   var flick = 0.0;
   if (glow > 0.0) { flick = 0.75 + 0.25 * vnoise(vec2<f32>(G.time * 9.0, wpos.x + wpos.y)); }
   let firelight = vec3<f32>(1.8, 0.75, 0.25) * glow * flick;
-  return ambient + fill + flash + firelight + sunCol * ndl * lit * (1.0 - cloud * 0.9);
+  // (round 117: under a roof the sky's light and the bounce fade, deeper darker; the sun too — the shadow map sees most
+  // roofs, the heightfield march not all)
+  let cov = underCover(wpos, nrm);
+  let shade = mix(1.0, 0.1, cov);
+  return (ambient + fill) * shade + flash + firelight + sunCol * ndl * lit * (1.0 - cloud * 0.9) * mix(1.0, 0.2, cov);
 }
 
 // the player's reach on a story level (game/reach.ts): 1 inside, 0.5 at
@@ -1885,7 +1912,8 @@ fn vsSkin(@builtin(vertex_index) vi: u32) -> VOut {
   o.pos = CAM.viewProj * vec4<f32>(wp, 1.0);
   o.wpos = wp;
   o.nrm = bitcast<vec3<f32>>(nb.xyz);
-  o.info = vec2<u32>(a.w, 0u);
+  // (round 117, inhabitants: nb.w 1 — the word is a colour 0xrrggbb, not a material; fsBody reads info.y)
+  o.info = vec2<u32>(a.w, nb.w);
   o.tint = 0.0;
   o.zr = vec2<f32>(wp.z - 0.5, wp.z + 0.5);
   o.bmin = wp;
@@ -1924,6 +1952,8 @@ fn fsBody(in: VOut) -> FOut {
   let physV = ((word >> 30u) & 1u) != 0u;
   let r = select(randv(vec3<i32>(floor(in.bmin * 3.0))), f32((word >> 8u) & 0xffu) / 255.0, physV);
   var alb = toLinear(MATS[mat].albedo.rgb) * (0.88 + 0.24 * r);
+  // (round 117, inhabitants.wgsl meshIt: a creature's vertex carries its own colour — vsSkin's info.y 1)
+  if (in.info.y == 1u) { alb = toLinear(vec3<f32>(f32((word >> 16u) & 255u), f32((word >> 8u) & 255u), f32(word & 255u)) / 255.0) * (0.94 + 0.12 * r); }
   let nrm = normalize(in.nrm);
   // a structure grid's voxel (structprep.wgsl): the growth it owns on its
   // faces, and the nature grid's sand drawn over it where it's buried

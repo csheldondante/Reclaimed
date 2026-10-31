@@ -49,10 +49,16 @@ test('a 120 Hz display runs a tick every other frame', () => {
 
 ## A GPU kernel test on a tiny world
 
-Put it in `test/gpu/<area>.test.ts`. All the gpu files share one Dawn device (`testGpu()`), and Dawn keeps what it
-compiled for that device. The first `WorldCore` pays for its ~100 pipelines (~10 s with DXC here). Every later one,
-in any file, takes ~0.1 s. So make a world per scenario freely. A GPU validation error fails the test: check
+Put it in `test/gpu/<area>.test.ts`. The tests of a file share one Dawn device (`testGpu()`), and Dawn keeps what it
+compiled for that device. A file's first `WorldCore` pays for its ~100 pipelines (~10 s with DXC here). Every later one
+in that file takes ~0.1 s. So make a world per scenario freely. A GPU validation error fails the test: check
 `g.takeErrors()`.
+
+Each gpu file runs in a fresh worker (vitest.config.ts `isolate: true`, round 117, terrain; BACKLOG TK12). With one
+worker shared by every file, Dawn's process died ("Worker exited unexpectedly") when a second file made a WorldCore,
+reproducibly in one worktree and never in a fresh one at the same commit, and after a file had built a whole atlas.
+Isolated, a file pays its own compile (the tier ~16 s instead of ~13) and can't take another down. Build an atlas once
+per file (test/gpu/terrain-atlas.test.ts shares one small atlas between its tests).
 
 One kernel, made the engine's way (common.wgsl prepended, explicit layouts):
 

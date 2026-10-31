@@ -66,6 +66,8 @@ export class AtlasView implements Scene {
   /** the sites, roads and crossings drawn over the map (round 78; O toggles) */
   private overlay: HTMLCanvasElement;
   private showOverlay = true;
+  /** (round 117) a click on the map a tool over this view takes (true: taken — no drag, no meteor) */
+  onPick?: (e: PointerEvent) => boolean;
 
   private constructor(
     private host: Host,
@@ -156,8 +158,14 @@ export class AtlasView implements Scene {
     this.listeners.push([t, ev, f]);
   }
 
+  /** (round 117, terrain track: the terrain viewer draws over this view — terrain/viewer.ts) the view's middle, world
+   *  units a render pixel, and the canvas's sizes */
+  viewport(): { vc: [number, number]; scale: number; size: { rw: number; rh: number; cw: number; ch: number } } {
+    return { vc: this.vc, scale: this.scale, size: this.size };
+  }
+
   /** a CSS pixel on the canvas → the world point there */
-  private worldAt(cx: number, cy: number): [number, number] {
+  worldAt(cx: number, cy: number): [number, number] {
     const { rw, rh, cw, ch } = this.size;
     const sx = (cx / cw) * rw;
     const sy = (cy / ch) * rh;
@@ -169,6 +177,8 @@ export class AtlasView implements Scene {
     this.on(c, 'pointerdown', (e) => {
       const p = e as PointerEvent;
       // (round 71) shift-click: a great meteor there; alt-click: an eruption
+      // (round 117: a tool armed over the view — the terrain viewer's flood — takes the click instead)
+      if (this.onPick?.(p)) return;
       if (p.shiftKey || p.altKey) {
         const [x, y] = this.wrap(this.worldAt(p.clientX, p.clientY));
         if (p.shiftKey) this.atlas.coarse.meteor(x, y);

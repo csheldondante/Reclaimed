@@ -1,19 +1,24 @@
-// A settlement realised (round 88, arrival scale): from its record, its people's profile and the ground in
-// its box, the districts' grids, the buildings on their lots (Building + Instance records), the town wall,
-// the plaza's well and stalls, the fields, an adapted ruin where it was founded over one, and a raiders'
-// camp near some — and what each of those puts in the columns. Deterministic from the seed and the ground:
+// A settlement realised (round 88, arrival scale; round 119: on the structures contract): from its record, its people's
+// profile and the ground in its box — its town and farmland planned by the structures system (contracts/structures.ts:
+// tiles, buildings by the density of its growth field, façades, walls, landmarks), each building's record (Building +
+// Instance), the plaza's well and stalls, the fields' jobs, an adapted ruin where it was founded over one, the quarry, a
+// raiders' camp near some — and what the ground works put in the columns (the buildings are pieces: drawn, and claimed
+// as External columns in play by view.ts, not stamped into the land). Deterministic from the seed and the ground:
 // the same settlement comes out the same whichever of its regions streams in first.
 //
 // Everything here is in the box's local coordinates (x cells, y world units; the box's first row even, so
 // local rows have the world's parity). settlements.ts turns them into world and window coordinates.
-import type { Building, Job, Settlement, SettlementGrid } from '../api/contracts/settlement';
+import type { Building, Job, Settlement } from '../api/contracts/settlement';
 import type { Instance, ThingEvent } from '../api/contracts/recipe';
 import type { FactionId } from '../api/contracts/world';
 import { derive } from '../api/contracts/compose';
-import { Town, LEVEL_H, type Block } from '../build/town';
 import { MAT } from '../world/materials';
 import { ROW_H, cellAt, cellPos } from '../world/lattice';
-import { LotGrid, rand, stylePolys, type Lot, type Pt } from './grids';
+import { rand, type Pt } from './grids';
+import type { BuildingRec, CityPlan, CitySpec, DensityFn, StructureStyleId, V2 } from '../api/contracts/structures';
+import { planCity } from '../structures/plan';
+import { columnsOf } from '../structures/columns';
+import { fbm } from '../structures/rng';
 import { catalogue, type CivEntry } from './catalogue';
 import { GrowthField } from './field';
 
@@ -40,23 +45,18 @@ export interface Spot {
 }
 
 /** A house still to build (life.ts builds it block by block from the piles): its lot, its storeys. */
+/** A house still to build (life.ts has it built storey by storey from the piles): a building of the town's plan. */
 export interface SiteSpec {
   id: string;
-  /** the lot's polygon (local) */
-  poly: Pt[];
+  /** its building in the plan (contracts/structures.ts BuildingRec id) */
+  building: number;
   storeys: number;
   door: Pt;
-  /** the materials it's built in */
-  wall: number;
-  roof: number;
-  /** (in play) blocks up, what's been brought toward the next, finished */
+  /** (in play) storeys up, what's been brought toward the next, finished */
   done?: number;
   progress?: number;
   finished?: boolean;
-  /** each cell's floor over the ground at the door, fixed when building began */
-  floors?: number[];
 }
-
 /** The quarry: a terraced pit, or an adit into a hillside. */
 export interface QuarrySpec {
   kind: 'pit' | 'adit';
@@ -89,6 +89,8 @@ export interface PlanInput {
   /** the atlas region at a local point (a quarry in its own region needs no rights) */
   regionAt?: (x: number, y: number) => number;
   sea: number;
+  /** (the level's ?city= override: this settlement's town planned with another tile system or style) */
+  override?: Partial<CitySpec>;
 }
 
 export interface SettlementPlan {
@@ -96,12 +98,16 @@ export interface SettlementPlan {
   /** its camp's record, if it has one */
   camp: Settlement | null;
   things: Map<string, Instance>;
-  /** box column → what it gets */
+  /** box column → what the ground works put there (stalls, piles, the quarry, the camp; not the buildings) */
   columns: Map<number, ColumnPlan>;
   spots: Spot[];
-  /** the districts' grids (for the debug view and the city game): by SettlementGrid id */
-  grids: Map<string, LotGrid>;
-  /** per lot what it was given (debug) */
+  /** the town and its farmland: the structures plan in the box's frame (local x, y) */
+  city: CityPlan;
+  /** per building of the plan: storeys standing (0: not built yet — a site or room to grow) */
+  standing: Int32Array;
+  /** the box's width in columns (its frame's) */
+  boxW: number;
+  /** per building (`b<id>`) or field (`f<n>`) what it was given (debug) */
   lotUse: Map<string, string>;
   /** the plaza's middle (local) */
   centre: Pt;
@@ -110,11 +116,11 @@ export interface SettlementPlan {
   quarry: QuarrySpec | null;
   /** the settlement as a growth field over its box (field.ts): FIELD_CELL world units a cell, local */
   field: GrowthField;
-  /** lots it may grow onto: their polygons, the field there when planned (life.ts makes them sites) */
-  free: { poly: Pt[]; centre: Pt; door: Pt; v: number }[];
+  /** buildings it may grow onto, in its build order: their middles, doors, the field there when planned (grow() makes
+   *  them sites) */
+  free: { building: number; centre: Pt; door: Pt; v: number }[];
   ms: number;
 }
-
 /** world units a growth-field cell */
 export const FIELD_CELL = 3;
 /** the field's intensity at which a lot is built */
@@ -191,11 +197,18 @@ const BUILT: Record<Settlement['size'], { R: number; people: number }> = {
   town: { R: 30, people: 36 },
   city: { R: 42, people: 70 },
 };
-/** the fields' band past the built radius */
-export const FIELDS_BAND = 18;
-/** how far a camp sits from the built edge */
-export const CAMP_OFF = 24;
-export const BOX_PAD = FIELDS_BAND + CAMP_OFF + 9;
+/** the farmland's band past the built radius (round 119: crop strips, orchards, pastures, farmsteads) */
+export const FARM_BAND = 36;
+/** (the old name: the fields' band) */
+export const FIELDS_BAND = FARM_BAND;
+/** how far a camp sits from the built edge: past the farmland */
+export const CAMP_OFF = FARM_BAND + 8;
+export const BOX_PAD = CAMP_OFF + 13;
+/** how much of a town its size lets be dense (a hamlet's middle is huts, a city's town houses) */
+const SIZE_K: Record<Settlement['size'], number> = { camp: 0.3, hamlet: 0.36, village: 0.46, town: 0.8, city: 1 };
+/** the share of a town's own buildings (its build order) standing when it's first planned: the rest its frontier */
+const FRONTIER_UP = 0.9;
+type Use = 'hall' | 'granary' | 'workshop' | 'house' | 'ruin' | 'temple';
 
 export function builtRadius(size: Settlement['size']): number {
   return BUILT[size].R;
@@ -213,7 +226,6 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
   const columns = new Map<number, ColumnPlan>();
   const spots: Spot[] = [];
   const lotUse = new Map<string, string>();
-  const grids = new Map<string, LotGrid>();
   // the centre, local
   // (world = local + (x0, y0 × ROW_H): the box's first row is even)
   const ox = box.x0;
@@ -227,7 +239,11 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
   };
   const groundAt = (x: number, y: number) => {
     const c = colAt(x, y);
-    return c < 0 ? inp.sea : inp.ground[c];
+    if (c >= 0) return inp.ground[c];
+    // (past the box — a farm's far corner, a centre moved to dry ground — the box's nearest column: never the sea's
+    // floor, which warped a field's strip from the ground down to it)
+    const [rx, ry] = cellAt(x, y);
+    return inp.ground[Math.min(H - 1, Math.max(0, ry)) * W + Math.min(W - 1, Math.max(0, rx))];
   };
   const built = BUILT[rec.size];
   const R = built.R;
@@ -273,139 +289,114 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
     thing({ id, kind, owner: { settlement: rec.id, faction: rec.faction ?? undefined }, place: { in: 'thing', thing: owner, slot } });
     things.get(owner)!.parts.push({ slot, thing: id });
   };
-
-  // ---- the districts: the profile's grids, the first at the core, a second round it in a town or bigger ----
-  const styles = civ.profile.builds.grids;
-  const two = styles.length > 1 && (rec.size === 'town' || rec.size === 'city');
-  const coreR = two ? R * 0.58 : R;
-  const sgrids: SettlementGrid[] = [];
-  const spacingOf = (s: string) => (s === 'radial' ? 10.5 : s === 'orthogonal' ? 10 : s === 'irregular' ? 9.5 : 12);
-  sgrids.push({ id: `${rec.id}:g0`, style: styles[0], seed: (inp.seed * 31 + 1) >>> 0, at: [rec.at[0], rec.at[1]], radius: coreR, spacing: spacingOf(styles[0]), spokes: 4 + Math.floor(r() * 3), contour: 3, angle: r() * Math.PI, purpose: 'core', civ: civ.profile.id });
-  if (two) sgrids.push({ id: `${rec.id}:g1`, style: styles[1], seed: (inp.seed * 31 + 2) >>> 0, at: [rec.at[0], rec.at[1]], radius: R, spacing: spacingOf(styles[1]), spokes: 8, contour: 3, angle: r() * Math.PI, purpose: 'homes', civ: civ.profile.id });
-  // the fields: a square lattice round the built edge
-  sgrids.push({ id: `${rec.id}:fields`, style: 'orthogonal', seed: (inp.seed * 31 + 3) >>> 0, at: [rec.at[0], rec.at[1]], radius: R + FIELDS_BAND, spacing: 9, angle: r() * Math.PI, purpose: 'fields', civ: civ.profile.id });
-  const lots: (Lot & { grid: string; gi: number })[] = [];
-  const lotGrids: LotGrid[] = [];
-  sgrids.forEach((g, gi) => {
-    const prevR = gi === 0 ? 0 : sgrids[gi - 1].radius + (g.purpose === 'fields' ? 2.5 : 0);
-    const P = stylePolys(g.style, centre, g.radius, g.spacing, { seed: g.seed, spokes: g.spokes, contour: g.contour, angle: g.angle, ground: groundAt });
-    const lg = new LotGrid(W, H, P, g.purpose === 'fields' ? 0.92 : 0.6, gi === 0 ? undefined : (x, y) => Math.hypot(x - cx, y - cy) < prevR);
-    for (const l of lg.lots) {
-      l.r = Math.hypot(l.centre[0] - cx, l.centre[1] - cy);
-      lots.push({ ...l, grid: g.id, gi });
-    }
-    grids.set(g.id, lg);
-    lotGrids.push(lg);
-  });
-  rec.grids = sgrids;
-
-  // ---- what each lot's ground is like ----------------------------------------------------------------------
-  const lotGround = (lg: LotGrid, l: Lot) => {
-    let lo = Infinity;
-    let hi = -Infinity;
-    let wet = 0;
-    let n = 0;
-    for (const c of l.inner)
-      for (const col of lg.columns[c]) {
-        const g = inp.ground[col];
-        lo = Math.min(lo, g);
-        hi = Math.max(hi, g);
-        if (inp.water[col] > 0.2 || g < inp.sea + 0.6) wet++;
-        n++;
+  const disc = (at: Pt, rad: number, f: (col: number, d: number, x: number, y: number) => void) => {
+    for (let y = at[1] - rad - 1; y <= at[1] + rad + 1; y += 0.4)
+      for (let x = at[0] - rad - 1; x <= at[0] + rad + 1; x += 0.4) {
+        const col = colAt(x, y);
+        if (col < 0) continue;
+        const [qx, qy] = cellPos(col % W, Math.floor(col / W));
+        const d = Math.hypot(qx - at[0], qy - at[1]);
+        if (d <= rad) f(col, d, qx, qy);
       }
-    return { lo, hi, wet: n ? wet / n : 1, n };
   };
 
-  // ---- uses: the plaza, the hall, stores and works, houses; a ruin adapted; streets left open ---------------
-  const coreLots = lots.filter((l) => l.gi < sgrids.length - 1);
-  const fieldLots = lots.filter((l) => l.gi === sgrids.length - 1);
-  const ok = coreLots.filter((l) => {
-    if (l.street) return false;
-    const g = lotGround(lotGrids[l.gi], l);
-    return g.n > 4 && g.wet < 0.15 && g.hi - g.lo < 4.5;
-  });
-  ok.sort((a, b) => a.r - b.r);
-  const people = built.people;
-  // the settlement as a growth field: civic buildings at its middle, houses where it has grown strong
+  // ---- the settlement as a growth field (field.ts): where its people are, and so what's built where -----------------
   const field = growField(inp, centre, R);
   const vAt = (p: Pt) => field.at(p[0] / FIELD_CELL, p[1] / FIELD_CELL).v;
-  const houses = ok.length;
-  type Use = 'hall' | 'granary' | 'workshop' | 'house' | 'ruin' | 'temple';
-  const uses: { lot: (typeof ok)[number]; use: Use }[] = [];
-  let k = 0;
-  // (the nearest lot to the middle is the plaza in every style but the radial, whose middle is open already)
-  const plazaLot = styles[0] === 'radial' ? null : ok.shift() ?? null;
-  if (plazaLot) lotUse.set(`${plazaLot.grid}:${plazaLot.id}`, 'plaza');
-  const order: Use[] = ['hall', 'granary'];
-  if (inp.ruin) order.push('ruin');
-  if ((civ.profile.knowledge.smithing ?? 'uses') !== 'uses') order.push('workshop');
-  if (civ.profile.builds.architecture.includes('temple')) order.push('temple');
-  for (const u of order) if (k < ok.length) uses.push({ lot: ok[k++], use: u });
-  // the rest by the field, strongest first: built past BUILT_V; the next two are houses still to build (the
-  // builders' work in play); the rest wait for the field to reach them
-  const rest = ok.slice(k).map((l) => ({ l, v: vAt(l.centre) })).sort((a, b) => b.v - a.v);
-  let h = 0;
-  for (; h < rest.length && h < houses && rest[h].v >= BUILT_V; h++) uses.push({ lot: rest[h].l, use: 'house' });
-  const siteLots = rest.slice(h, h + 2).filter((x) => x.v > 0.04).map((x) => x.l);
-  const freeLots = rest.slice(h + siteLots.length).filter((x) => x.v > 0.001 || x.l.r < R);
+  const people = built.people;
 
-  // its door: the middle of the yard quad nearest the plaza
-  const doorOf = (lg: LotGrid, lot: Lot): Pt => {
-    let best = lot.yard[0];
-    let bd = Infinity;
-    for (const c of lot.yard) {
-      const [qx, qy] = lg.centre(c);
-      const d = Math.hypot(qx - cx, qy - cy);
-      if (d < bd) {
-        bd = d;
-        best = c;
-      }
-    }
-    return lg.centre(best);
-  };
+  // ---- the quarry's place first: its pit (or adit's apron) and its spoil kept out of the farmland -----------------
+  const quarrySpot = chooseQuarry(inp, centre, R, colAt, groundAt, disc, r);
 
-  // ---- the towns (one a district) and their blocks ---------------------------------------------------------
-  const io = { ground: (col: number) => inp.ground[col], stamp: () => {}, zMax: 1e5 };
-  const towns = lotGrids.slice(0, -1).map((lg) => new Town(W, H, io, { grid: lg }));
-  /** per district cell: the building it belongs to, and its materials */
-  const cellLook = lotGrids.map(() => new Map<number, { wall: number; roof: number; broken?: number; patched?: number }>());
+  // ---- the town and its farmland: the structures planner (contracts/structures.ts, round 119: "have them actually use
+  // the new structures") on the box's ground, the density from the growth field — dense: town houses; thinner: huts;
+  // thinnest: farmland with its farmsteads
+  const styles = civ.profile.builds.grids;
   const [s0, s1] = civ.profile.builds.storeys;
+  const fortified = civ.profile.builds.architecture.includes('fortified') || (civ.profile.prefers.tags.fortified ?? 0) > 0.5 || rec.size === 'city';
+  const sizeK = SIZE_K[rec.size];
+  const farmR = R + FARM_BAND;
+  const density: DensityFn = (x, y) => {
+    const town = Math.min(1, Math.max(0, (vAt([x, y]) - 0.08) / 0.72)) * sizeK;
+    const d = Math.hypot(x - cx, y - cy);
+    // (the country round it: a few people out to the farmland's edge, thinning — farmsteads, not nobody)
+    const country = 0.17 * Math.max(0, Math.min(1, (farmR - d) / (farmR - R))) * (0.4 + 0.9 * fbm(x * 0.012, y * 0.012, inp.seed + 4));
+    return Math.min(1, town + country);
+  };
+  const water = (x: number, y: number) => {
+    const c = colAt(x, y);
+    return c < 0 ? 0 : Math.max(inp.water[c], inp.sea - inp.ground[c]);
+  };
+  const keepOut: { at: V2; r: number }[] = [];
+  if (quarrySpot) keepOut.push({ at: quarrySpot.at, r: 10 }, { at: quarrySpot.spoil, r: 6 });
+  const spec: CitySpec = {
+    seed: inp.seed,
+    system: styles[0],
+    style: styleFor(civ),
+    at: [cx, cy],
+    radius: R,
+    tile: rec.size === 'hamlet' || rec.size === 'village' ? 3.6 : 4,
+    storeys: [s1 + 0.6, s0],
+    walls: fortified && rec.size !== 'hamlet',
+    roads: 0,
+    farmland: farmR,
+    keepOut,
+    ...inp.override,
+  };
+  const city = planCity(spec, groundAt, water, density);
+  rec.grids = [
+    { id: `${rec.id}:g0`, style: spec.system, seed: spec.seed, at: [rec.at[0], rec.at[1]], radius: R, spacing: spec.tile ?? 4, purpose: 'core', civ: civ.profile.id },
+    { id: `${rec.id}:fields`, style: 'contour-voronoi', seed: spec.seed + 1, at: [rec.at[0], rec.at[1]], radius: farmR, spacing: 26, purpose: 'fields', civ: civ.profile.id },
+  ];
+
+  // ---- what each building is: the hall, the granary, the workshop, the temple, an adapted ruin; houses and huts; the
+  // farmsteads' farmhouses and barns (barns are granaries) — the record's Buildings and Instances, their doors as spots
+  const townB = city.buildings.filter((b) => b.kind === 'house' || b.kind === 'hut');
+  const dist = (b: BuildingRec) => {
+    const [x, y] = buildingCentre(city, b);
+    return Math.hypot(x - cx, y - cy);
+  };
+  const byMiddle = townB.filter((b) => !b.mega).sort((a, b) => dist(a) - dist(b));
+  const useOf = new Map<number, Use>();
+  const take = (u: Use, pick?: BuildingRec) => {
+    const b = pick ?? byMiddle.find((x) => !useOf.has(x.id));
+    if (b) useOf.set(b.id, u);
+  };
+  take('hall', byMiddle.find((b) => b.quads.length >= 2));
+  take('granary');
+  if ((civ.profile.knowledge.smithing ?? 'uses') !== 'uses') take('workshop');
+  const dome = city.buildings.find((b) => b.mega === 'dome');
+  if (civ.profile.builds.architecture.includes('temple') || dome) take('temple', dome);
+  const tower = city.buildings.find((b) => b.mega === 'tower');
+  if (inp.ruin && tower) take('ruin', tower);
+  for (const b of city.buildings) if (!useOf.has(b.id)) useOf.set(b.id, b.kind === 'barn' ? 'granary' : 'house');
+
+  // the frontier: the town's last buildings in its build order aren't up yet — the next two are sites (the builders'
+  // work in play), the rest wait for it to grow (the farmsteads stand: the country is older than the town's edge)
+  const standing = new Int32Array(city.buildings.length);
+  for (const b of city.buildings) standing[b.id] = b.storeys;
+  const frontier = city.order.filter((id) => {
+    const b = city.buildings[id];
+    return (b.kind === 'house' || b.kind === 'hut') && !b.mega && useOf.get(id) === 'house';
+  });
+  const nUp = Math.round(frontier.length * FRONTIER_UP);
+  const siteIds = frontier.slice(nUp, nUp + 2);
+  const freeIds = frontier.slice(nUp + 2);
+  for (const id of [...siteIds, ...freeIds]) standing[id] = 0;
+  const doorAt = (b: BuildingRec): Pt => doorOf(city, b) ?? buildingCentre(city, b);
+
   const buildings: Building[] = [];
   const homeOf: string[] = [];
-  let bn = 0;
-  for (const { lot, use } of uses) {
-    const gi = lot.gi;
-    const town = towns[gi];
-    const t = Math.min(1, lot.r / R);
-    // (taller where the field is strong)
-    let storeys = Math.round(s0 + (s1 - s0) * Math.min(1, Math.max(0, (vAt(lot.centre) - BUILT_V) / 0.45)) * (1 - 0.4 * t) + (r() - 0.5));
-    storeys = Math.max(s0, Math.min(s1, storeys));
-    if (use === 'hall') storeys = Math.min(s1 + 1, 4);
-    if (use === 'granary') storeys = Math.max(1, s0);
-    if (use === 'ruin') storeys = 5 + Math.floor(r() * 3);
-    const blocks: Block[] = [];
-    lot.inner.forEach((c, j) => {
-      // (a corner a storey lower now and then: the roofline steps)
-      const n = use === 'ruin' ? storeys - (j % 3 === 0 ? 1 + Math.floor(r() * 2) : 0) : storeys - (storeys > 1 && r() < 0.3 ? 1 : 0);
-      for (let L = 0; L < n; L++) blocks.push({ cell: c, level: L });
-    });
-    town.set(blocks, true);
-    const id = `${rec.id}:b${bn++}`;
+  for (const b of city.buildings) {
+    if (!standing[b.id]) continue;
+    const use = useOf.get(b.id)!;
+    const id = `${rec.id}:b${b.id}`;
     const kind = use === 'ruin' ? 'megastructure' : use === 'temple' ? 'hall' : use;
-    const lk = civ.look;
-    const look =
-      use === 'hall' ? { wall: lk.foundation, roof: lk.roof }
-      : use === 'granary' ? { wall: lk.trim, roof: lk.roof }
-      : use === 'workshop' ? { wall: lk.wall, roof: lk.trim }
-      : use === 'ruin' ? { wall: MAT.Concrete, roof: MAT.Concrete, broken: storeys, patched: Math.min(2, storeys) }
-      : { wall: lk.wall, roof: lk.roof };
-    for (const c of lot.inner) cellLook[gi].set(c, look);
-    const [lx, ly] = lot.centre;
-    const z = inp.ground[Math.max(0, colAt(lx, ly))];
-    const place = { in: 'world' as const, region: rec.region, at: [lx + ox, ly + oy, z] as [number, number, number] };
+    const [lx, ly] = buildingCentre(city, b);
+    const place = { in: 'world' as const, region: rec.region, at: [lx + ox, ly + oy, b.base] as [number, number, number] };
     const owner = { settlement: rec.id, faction: rec.faction ?? undefined };
     if (use === 'ruin') {
-      // an older people's tower: concrete, broken; its lower floors patched and lived in (adapted, not rebuilt)
+      // an older people's tower, its lower floors lived in (adapted, not rebuilt)
       thing({ id, kind, name: `the old tower at ${rec.name}`, material: 'concrete', condition: 0.35, aged: 0.8, owner, place, history: [
         { what: 'made', run: -40, note: 'raised by a people long gone' },
         { what: 'broken', run: -12, note: 'its top fell in' },
@@ -425,31 +416,40 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
       if (use === 'workshop') part(id, 'fitting', 'forge', 0);
     }
     const caps = derive(catalogue(things), id);
-    const b: Building = { id, thing: id, grid: lot.grid, cells: lot.inner.slice(), storeys, use: caps.tags.filter((x) => USE_TAGS.has(x)), workers: use === 'workshop' ? ['smith'] : use === 'granary' ? ['hauler'] : undefined };
-    if (use === 'temple') b.use.push('temple');
-    buildings.push(b);
-    lotUse.set(`${lot.grid}:${lot.id}`, use);
-    const door = doorOf(lotGrids[gi], lot);
-    if (b.use.includes('housing')) {
+    const rb: Building = { id, thing: id, grid: rec.grids[b.kind === 'farmhouse' || b.kind === 'barn' ? 1 : 0].id, cells: b.quads.slice(), storeys: b.storeys, use: caps.tags.filter((x) => USE_TAGS.has(x)), workers: use === 'workshop' ? ['smith'] : use === 'granary' ? ['hauler'] : undefined };
+    if (use === 'temple') rb.use.push('temple');
+    buildings.push(rb);
+    lotUse.set(`b${b.id}`, use);
+    const door = doorAt(b);
+    if (rb.use.includes('housing')) {
       spots.push({ at: door, kind: 'home', ref: id });
       homeOf.push(id);
     }
-    if (b.use.includes('store')) spots.push({ at: door, kind: 'store', ref: id });
+    if (rb.use.includes('store')) spots.push({ at: door, kind: 'store', ref: id });
     if (use === 'hall') spots.push({ at: door, kind: 'post', ref: id }, { at: door, kind: 'store', ref: id });
     if (use === 'workshop') spots.push({ at: door, kind: 'make', ref: id });
     if (things.get(id)!.condition < 0.85) spots.push({ at: door, kind: 'repair', ref: id });
   }
 
   // the sites: their doors are where the builders bring what they carry
-  const sites: SiteSpec[] = siteLots.map((lot, n) => {
-    const door = doorOf(lotGrids[lot.gi], lot);
+  const sites: SiteSpec[] = siteIds.map((bid, n) => {
+    const b = city.buildings[bid];
+    const door = doorAt(b);
     const id = `${rec.id}:site${n}`;
-    lotUse.set(`${lot.grid}:${lot.id}`, 'site');
+    lotUse.set(`b${bid}`, 'site');
     spots.push({ at: door, kind: 'site', ref: id });
-    return { id, poly: lot.poly, storeys: Math.max(1, Math.min(2, s1)), door, wall: civ.look.wall, roof: civ.look.roof };
+    return { id, building: bid, storeys: b.storeys, door };
   });
 
-  // ---- the columns: what the towns stand, in each building's materials ------------------------------------
+  // ---- the plaza: the fountain (the town's well) and stalls --------------------------------------------------------
+  const fountain = city.megas.find((m) => m.kind === 'fountain');
+  const plaza: Pt = fountain ? [(fountain.frame[0][0] + fountain.frame[2][0]) / 2, (fountain.frame[0][1] + fountain.frame[2][1]) / 2] : centre;
+  const seen = new Set<number>();
+  const once = (f: (col: number, d: number, x: number, y: number) => void) => (col: number, d: number, x: number, y: number) => {
+    if (seen.has(col)) return;
+    seen.add(col);
+    f(col, d, x, y);
+  };
   const setCol = (col: number, p: ColumnPlan) => {
     if (col < 0) return;
     const was = columns.get(col);
@@ -459,68 +459,14 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
     for (const iv of p.ivs) if (iv.z0 >= top - 1e-3) was.ivs.push(iv);
     was.bare ||= p.bare;
   };
-  towns.forEach((town, gi) => {
-    const lg = lotGrids[gi];
-    for (let c = 0; c < lg.count; c++) {
-      const lk = cellLook[gi].get(c);
-      if (!lk || !town.mask[c]) continue;
-      const base = town.base[c];
-      for (const col of lg.columns[c]) {
-        const g = inp.ground[col];
-        const ivs: Iv[] = [];
-        if (base > g + 0.01) ivs.push({ z0: g, z1: base, mat: civ.look.foundation });
-        const lx = col % W;
-        const ly = Math.floor(col / W);
-        const h = (((lx * 73856093) ^ (ly * 19349663)) >>> 0) / 4294967296;
-        for (const iv of town.design(c, col)) {
-          let mat = iv.mat === MAT.Tile ? lk.roof : lk.wall;
-          if (lk.broken !== undefined) {
-            // the ruin: no roof, its top floors gnawed; its patched floors in the people's own wall
-            if (iv.mat === MAT.Tile) continue;
-            const level = Math.floor((iv.z0 - base) / LEVEL_H);
-            if (level >= lk.broken - 2 && h < 0.45) continue;
-            if (level < (lk.patched ?? 0)) mat = civ.look.wall;
-            else if (h > 0.8) mat = MAT.Rust;
-          }
-          ivs.push({ z0: iv.z0, z1: iv.z1, mat });
-        }
-        setCol(col, { lo: g, ivs, bare: true });
-      }
-    }
-  });
-
-  // ---- the plaza: a well and stalls -------------------------------------------------------------------------
-  const plaza: Pt = plazaLot ? plazaLot.centre : centre;
-  const disc = (at: Pt, rad: number, f: (col: number, d: number, x: number, y: number) => void) => {
-    for (let y = at[1] - rad - 1; y <= at[1] + rad + 1; y += 0.4)
-      for (let x = at[0] - rad - 1; x <= at[0] + rad + 1; x += 0.4) {
-        const col = colAt(x, y);
-        if (col < 0) continue;
-        const [qx, qy] = cellPos(col % W, Math.floor(col / W));
-        const d = Math.hypot(qx - at[0], qy - at[1]);
-        if (d <= rad) f(col, d, qx, qy);
-      }
-  };
-  const seen = new Set<number>();
-  const once = (f: (col: number, d: number, x: number, y: number) => void) => (col: number, d: number, x: number, y: number) => {
-    if (seen.has(col)) return;
-    seen.add(col);
-    f(col, d, x, y);
-  };
   const well = thing({ id: `${rec.id}:well`, kind: 'well', material: civ.lookMat.foundation, owner: { settlement: rec.id }, place: { in: 'world', region: rec.region, at: [plaza[0] + ox, plaza[1] + oy, groundAt(...plaza)] } });
-  disc(plaza, 1.9, once((col, d) => {
-    const g = inp.ground[col];
-    if (d < 0.7) setCol(col, { lo: g, ivs: [], bare: true, cut: 0.8 });
-    else setCol(col, { lo: g, ivs: [{ z0: g, z1: g + 1.1, mat: civ.look.foundation }], bare: true });
-  }));
-  buildings.push({ id: well, thing: well, grid: sgrids[0].id, cells: [], storeys: 0, use: ['water'] });
-  seen.clear();
+  buildings.push({ id: well, thing: well, grid: rec.grids[0].id, cells: [], storeys: 0, use: ['water'] });
   const stalls = rec.size === 'village' || rec.size === 'hamlet' ? 2 : 4;
   for (let s = 0; s < stalls; s++) {
     const a = (s / stalls) * Math.PI * 2 + r();
     const at: Pt = [plaza[0] + Math.cos(a) * 5, plaza[1] + Math.sin(a) * 5];
     const id = thing({ id: `${rec.id}:stall${s}`, kind: 'stall', material: 'canvas', owner: { settlement: rec.id }, place: { in: 'world', region: rec.region, at: [at[0] + ox, at[1] + oy, groundAt(...at)] } });
-    buildings.push({ id, thing: id, grid: sgrids[0].id, cells: [], storeys: 1, use: ['trade'] });
+    buildings.push({ id, thing: id, grid: rec.grids[0].id, cells: [], storeys: 1, use: ['trade'] });
     disc(at, 1.6, once((col, d) => {
       const g = inp.ground[col];
       const post = d > 1.1;
@@ -530,74 +476,62 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
   }
   spots.push({ at: plaza, kind: 'post', ref: well });
 
-  // ---- the wall: a ring past the built edge, gates where the main ways go out --------------------------------
-  const fortified = civ.profile.builds.architecture.includes('fortified') || (civ.profile.prefers.tags.fortified ?? 0) > 0.5 || rec.size === 'city';
-  const gates: number[] = [];
-  if (fortified && rec.size !== 'hamlet') {
-    const Rw = R + 1.5;
-    const ng = rec.size === 'village' ? 2 : 4;
-    const a0 = r() * Math.PI * 2;
-    for (let g = 0; g < ng; g++) gates.push(a0 + (g / ng) * Math.PI * 2);
+  // ---- the wall's gates: posts where the wall runs end (structures' walls: linear.ts / the radial rampart) ---------
+  const wallRuns = city.linear.filter((f) => f.kind === 'wall');
+  if (wallRuns.length || city.tiles.use.includes('gate')) {
     const wid = thing({ id: `${rec.id}:wall`, kind: 'wall', material: civ.lookMat.foundation, owner: { settlement: rec.id, faction: rec.faction ?? undefined }, place: { in: 'world', region: rec.region, at: [cx + ox, cy + oy, groundAt(cx, cy)] } });
-    buildings.push({ id: wid, thing: wid, grid: sgrids[sgrids.length - 2].id, cells: [], storeys: 1, use: ['defence'] });
-    seen.clear();
-    disc(centre, Rw + 1, once((col, d, x, y) => {
-      if (Math.abs(d - Rw) > 0.75) return;
-      const a = Math.atan2(y - cy, x - cx);
-      const gap = gates.some((ga) => Math.abs(Math.atan2(Math.sin(a - ga), Math.cos(a - ga))) * Rw < 2.2);
-      const g = inp.ground[col];
-      if (g < inp.sea + 0.5 || inp.water[col] > 0.3) return;
-      const tower = gates.some((ga) => {
-        const dd = Math.abs(Math.atan2(Math.sin(a - ga), Math.cos(a - ga))) * Rw;
-        return dd >= 2.2 && dd < 4;
-      });
-      if (gap) return void setCol(col, { lo: g, ivs: [], bare: true });
-      const top = g + (tower ? 6 : 3.4) + ((Math.floor(a * Rw) & 1) === 0 ? 0.8 : 0);
-      setCol(col, { lo: g, ivs: [{ z0: g, z1: top, mat: civ.look.foundation }], bare: true });
-    }));
-    for (const ga of gates) spots.push({ at: [cx + Math.cos(ga) * (Rw - 2.5), cy + Math.sin(ga) * (Rw - 2.5)], kind: 'post', ref: wid });
+    buildings.push({ id: wid, thing: wid, grid: rec.grids[0].id, cells: [], storeys: 1, use: ['defence'] });
+    for (const f of wallRuns) if (!f.closed) for (const p of [f.points[0], f.points[f.points.length - 1]]) spots.push({ at: [p[0] + (cx - p[0]) * 0.08, p[1] + (cy - p[1]) * 0.08], kind: 'post', ref: wid });
+    for (let q = 0; q < city.tiles.use.length; q++) if (city.tiles.use[q] === 'gate') spots.push({ at: quadCentreOf(city, q), kind: 'post', ref: wid });
   }
 
-  // ---- fields: the outer lattice's flat dry lots, furrowed ---------------------------------------------------
-  const flg = lotGrids[lotGrids.length - 1];
-  const furrow = r() * Math.PI;
-  const fc = Math.cos(furrow);
-  const fs = Math.sin(furrow);
-  let nf = 0;
-  const farmers = Math.max(2, Math.round(people * 0.35));
-  for (const l of fieldLots) {
-    if (nf >= Math.max(3, farmers)) break;
-    const cells = [...l.inner, ...l.yard];
-    let lo = Infinity;
-    let hi = -Infinity;
-    let wet = 0;
-    let n = 0;
-    for (const c of cells)
-      for (const col of flg.columns[c]) {
-        const g = inp.ground[col];
-        lo = Math.min(lo, g);
-        hi = Math.max(hi, g);
-        if (inp.water[col] > 0.1 || g < inp.sea + 0.8 || columns.has(col)) wet++;
-        n++;
-      }
-    if (n < 10 || wet > 0 || hi - lo > 3.5) continue;
-    const id = thing({ id: `${rec.id}:field${nf}`, kind: 'field', owner: { settlement: rec.id }, place: { in: 'world', region: rec.region, at: [l.centre[0] + ox, l.centre[1] + oy, lo] } });
-    nf++;
-    buildings.push({ id, thing: id, grid: l.grid, cells: cells.slice(), storeys: 0, use: ['farm'], workers: ['farmer'] });
-    lotUse.set(`${l.grid}:${l.id}`, 'field');
-    for (const c of l.inner)
-      for (const col of flg.columns[c]) {
-        const [x, y] = cellPos(col % W, Math.floor(col / W));
-        const stripe = Math.floor((x * fc + y * fs) / 1.3) & 1;
-        const g = inp.ground[col];
-        // (furrows of soil; the rows between keep their green)
-        if (stripe) setCol(col, { lo: g, ivs: [{ z0: g, z1: g + 0.3, mat: MAT.Soil }], bare: true });
-      }
-    spots.push({ at: l.centre, kind: 'farm', ref: id });
+  // ---- fields: the farmland's crop plots (a field thing each, a farm job at its middle), nearest the town first -------
+  const plots = new Map<number, { x: number; y: number; n: number; cells: number[] }>();
+  city.tiles.use.forEach((u, q) => {
+    if (u !== 'field' && u !== 'orchard') return;
+    const [x, y] = quadCentreOf(city, q);
+    const b = city.tiles.block[q];
+    const p = plots.get(b) ?? plots.set(b, { x: 0, y: 0, n: 0, cells: [] }).get(b)!;
+    p.x += x;
+    p.y += y;
+    p.n++;
+    p.cells.push(q);
+  });
+  const farmers = Math.max(3, Math.round(people * 0.35));
+  const plotList = [...plots.values()].map((p) => ({ ...p, at: [p.x / p.n, p.y / p.n] as Pt })).sort((a, b) => Math.hypot(a.at[0] - cx, a.at[1] - cy) - Math.hypot(b.at[0] - cx, b.at[1] - cy));
+  plotList.slice(0, farmers).forEach((p, nf) => {
+    const id = thing({ id: `${rec.id}:field${nf}`, kind: 'field', owner: { settlement: rec.id }, place: { in: 'world', region: rec.region, at: [p.at[0] + ox, p.at[1] + oy, groundAt(...p.at)] } });
+    buildings.push({ id, thing: id, grid: rec.grids[1].id, cells: p.cells, storeys: 0, use: ['farm'], workers: ['farmer'] });
+    lotUse.set(`f${nf}`, 'field');
+    spots.push({ at: p.at, kind: 'farm', ref: id });
+  });
+
+  // ---- bare ground: no plants on the crop strips, the streets, the plaza and under the buildings (the old stamps had
+  // them bare too: a field's crop is its own, not the meadow's tufts through it)
+  {
+    const t = city.tiles;
+    const bareUse = new Set(['field', 'street', 'plaza', 'gate']);
+    for (let q = 0; q < t.use.length; q++) {
+      if (!bareUse.has(t.use[q]) && city.quadBuilding[q] < 0) continue;
+      const ps: Pt[] = [0, 1, 2, 3].map((k) => [t.verts[t.quads[q * 4 + k] * 2], t.verts[t.quads[q * 4 + k] * 2 + 1]]);
+      const [r0] = [cellAt(Math.min(...ps.map((p) => p[0])), Math.min(...ps.map((p) => p[1])))[1]];
+      const r1 = cellAt(Math.max(...ps.map((p) => p[0])), Math.max(...ps.map((p) => p[1])))[1];
+      const x0 = Math.min(...ps.map((p) => p[0]));
+      const x1 = Math.max(...ps.map((p) => p[0]));
+      for (let ry = r0 - 1; ry <= r1 + 1; ry++)
+        for (let rx = Math.floor(x0) - 1; rx <= Math.ceil(x1) + 1; rx++) {
+          if (rx < 0 || ry < 0 || rx >= W || ry >= H) continue;
+          const [px, py] = cellPos(rx, ry);
+          if (!inQuad(ps, px, py)) continue;
+          const col = ry * W + rx;
+          if (columns.has(col)) continue;
+          columns.set(col, { lo: inp.ground[col], ivs: [], bare: true });
+        }
+    }
   }
 
   // ---- the piles: stone and logs heaped beside the hall, where the quarry's and the woods' loads go ----------
-  const hallDoor = spots.find((x) => x.kind === 'post' && x.ref?.endsWith(':b0'))?.at ?? plaza;
+  const hallDoor = spots.find((x) => x.kind === 'post' && x.ref !== undefined && lotUse.get(`b${x.ref.split(':b').pop()}`) === 'hall')?.at ?? plaza;
   const away = Math.atan2(hallDoor[1] - cy, hallDoor[0] - cx);
   const piles: { at: Pt; what: string; mat: number }[] = [
     { at: [hallDoor[0] + Math.cos(away + 1.2) * 4.5, hallDoor[1] + Math.sin(away + 1.2) * 4.5], what: 'stone', mat: MAT.Rubble },
@@ -618,40 +552,11 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
   // (mining outside the settlement's own region needs rights there: settlements.ts)
   let quarry: QuarrySpec | null = null;
   {
-    let best: { at: Pt; s: number; dir: Pt; rise: number } | null = null;
-    for (let ring = 0; ring < 3; ring++)
-      for (let t = 0; t < 24; t++) {
-        const a = (t / 24) * Math.PI * 2 + ring * 0.13;
-        const d = R + 9 + ring * 7;
-        const at: Pt = [cx + Math.cos(a) * d, cy + Math.sin(a) * d];
-        const c0 = colAt(...at);
-        if (c0 < 0 || columns.has(c0) || inp.water[c0] > 0.05 || inp.ground[c0] < inp.sea + 1) continue;
-        let clash = false;
-        disc(at, 8, (col) => {
-          if (columns.has(col) || inp.water[col] > 0.1) clash = true;
-        });
-        if (clash) continue;
-        // (the steepest rise within 10 cells: a hill to tunnel into)
-        let rise = 0;
-        let dir: Pt = [1, 0];
-        for (let k = 0; k < 12; k++) {
-          const b = (k / 12) * Math.PI * 2;
-          const g = groundAt(at[0] + Math.cos(b) * 9, at[1] + Math.sin(b) * 9) - inp.ground[c0];
-          if (g > rise) {
-            rise = g;
-            dir = [Math.cos(b), Math.sin(b)];
-          }
-        }
-        const rock = inp.top[c0] === MAT.Stone || inp.top[c0] === MAT.Basalt || inp.top[c0] === MAT.Sandstone ? 2 : 0;
-        // (its own region's ground first: elsewhere it needs mineral rights there)
-        const own = !inp.regionAt || inp.regionAt(...at) === rec.region ? 3 : 0;
-        const sc = own + rock + Math.min(rise, 10) * 0.4 + r() * 0.5 - ring * 0.3;
-        if (!best || sc > best.s) best = { at, s: sc, dir, rise };
-      }
+    const best = quarrySpot;
     if (best) {
       const { at, dir } = best;
       const g0 = groundAt(...at);
-      const spoil: Pt = [at[0] - dir[0] * 9 + dir[1] * 4, at[1] - dir[1] * 9 - dir[0] * 4];
+      const spoil: Pt = best.spoil;
       if (best.rise > 6) {
         // an adit: an apron cut level at the hill's foot, a tunnel 3 wide and 3 high into it, timbered at its mouth
         quarry = { kind: 'adit', at, dir, floor: g0 };
@@ -806,6 +711,139 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
   }));
   void homeOf;
   for (const st of sites) rec.needs.push({ kind: 'build', at: [st.door[0] + ox, st.door[1] + oy], ref: st.id, priority: 2 });
-  const free = freeLots.map(({ l, v }) => ({ poly: l.poly, centre: l.centre, door: doorOf(lotGrids[l.gi], l), v }));
-  return { rec, camp: campRec, things, columns, spots, grids, lotUse, centre, campAt, sites, quarry, field, free, ms: +(performance.now() - t0).toFixed(1) };
+  const free = freeIds.map((bid) => {
+    const b = city.buildings[bid];
+    const c = buildingCentre(city, b);
+    return { building: bid, centre: c, door: doorAt(b), v: vAt(c) };
+  });
+  return { rec, camp: campRec, things, columns, spots, city, standing, boxW: W, lotUse, centre, campAt, sites, quarry, field, free, ms: +(performance.now() - t0).toFixed(1) };
+}
+
+// ---- helpers: the town's buildings and tiles in the box's frame ------------------------------------------------------
+
+/** a tile's middle */
+export function quadCentreOf(city: CityPlan, q: number): Pt {
+  const t = city.tiles;
+  let x = 0;
+  let y = 0;
+  for (let k = 0; k < 4; k++) {
+    const v = t.quads[q * 4 + k];
+    x += t.verts[v * 2] / 4;
+    y += t.verts[v * 2 + 1] / 4;
+  }
+  return [x, y];
+}
+
+/** a building's middle (its tiles' middles averaged) */
+export function buildingCentre(city: CityPlan, b: BuildingRec): Pt {
+  let x = 0;
+  let y = 0;
+  for (const q of b.quads) {
+    const c = quadCentreOf(city, q);
+    x += c[0] / b.quads.length;
+    y += c[1] / b.quads.length;
+  }
+  return [x, y];
+}
+
+/** a building's front door, a step outside it (its ground-floor door façade; null: none) */
+export function doorOf(city: CityPlan, b: BuildingRec): Pt | null {
+  const f = city.facades.find((x) => x.building === b.id && x.level === 0 && x.kind === 'door');
+  if (!f) return null;
+  const t = city.tiles;
+  const a = t.quads[f.quad * 4 + f.side];
+  const c = t.quads[f.quad * 4 + ((f.side + 1) % 4)];
+  const ax = t.verts[a * 2];
+  const ay = t.verts[a * 2 + 1];
+  const cx = t.verts[c * 2];
+  const cy = t.verts[c * 2 + 1];
+  const L = Math.hypot(cx - ax, cy - ay) || 1;
+  // (outside: the right of the side — the tiles run counter-clockwise)
+  return [(ax + cx) / 2 + ((cy - ay) / L) * 0.9, (ay + cy) / 2 - ((cx - ax) / L) * 0.9];
+}
+
+/** a civ's look among the structures styles: the hill holds' stone, the guilds' and the free folk's timber and tile, the
+ *  foundry towns' and the old law's flat-fronted terraces */
+export function styleFor(civ: CivEntry): StructureStyleId {
+  const a = civ.profile.builds.architecture;
+  if (a.includes('fortified') || a.includes('squat')) return 'bastion';
+  if (a.includes('terraces') || a.includes('flat-roofs') || a.includes('tall')) return 'terrace';
+  return 'hearth';
+}
+
+/**
+ * The columns a far view's raster reads (raster.ts, the land past the window): the plan's ground works and, for the
+ * buildings standing, their tops (roof-coloured) — the buildings are pieces in play (drawn, not stamped into the land),
+ * so the raster alone is told where they stand.
+ */
+export function rasterColumns(plan: SettlementPlan, roof: number, wall: number): Map<number, ColumnPlan> {
+  const out = new Map(plan.columns);
+  const W = plan.boxW;
+  for (const c of columnsOf(plan.city)) {
+    if (c.building >= 0 && !plan.standing[c.building]) continue;
+    const k = c.y * W + c.x;
+    if (c.x < 0 || c.y < 0 || c.x >= W) continue;
+    // (a column the plan only bared — no plants — takes the building's top; a ground work's stays)
+    if (out.get(k)?.ivs.length) continue;
+    out.set(k, { lo: c.z0, ivs: [{ z0: c.z0, z1: c.z1 + 1.5, mat: c.building >= 0 ? roof : wall }], bare: true });
+  }
+  return out;
+}
+
+/** The quarry's place: in a ring past the built edge, into a hill if one rises near, its own region's ground first. */
+function chooseQuarry(
+  inp: PlanInput,
+  centre: Pt,
+  R: number,
+  colAt: (x: number, y: number) => number,
+  groundAt: (x: number, y: number) => number,
+  disc: (at: Pt, rad: number, f: (col: number, d: number, x: number, y: number) => void) => void,
+  r: () => number,
+): { at: Pt; s: number; dir: Pt; rise: number; spoil: Pt } | null {
+  const [cx, cy] = centre;
+  const rec = inp.rec;
+  let best: { at: Pt; s: number; dir: Pt; rise: number } | null = null;
+  for (let ring = 0; ring < 3; ring++)
+    for (let t = 0; t < 24; t++) {
+      const a = (t / 24) * Math.PI * 2 + ring * 0.13;
+      const d = R + 9 + ring * 7;
+      const at: Pt = [cx + Math.cos(a) * d, cy + Math.sin(a) * d];
+      const c0 = colAt(...at);
+      if (c0 < 0 || inp.water[c0] > 0.05 || inp.ground[c0] < inp.sea + 1) continue;
+      let clash = false;
+      disc(at, 8, (col) => {
+        if (inp.water[col] > 0.1) clash = true;
+      });
+      if (clash) continue;
+      // (the steepest rise within 10 cells: a hill to tunnel into)
+      let rise = 0;
+      let dir: Pt = [1, 0];
+      for (let k = 0; k < 12; k++) {
+        const b = (k / 12) * Math.PI * 2;
+        const g = groundAt(at[0] + Math.cos(b) * 9, at[1] + Math.sin(b) * 9) - inp.ground[c0];
+        if (g > rise) {
+          rise = g;
+          dir = [Math.cos(b), Math.sin(b)];
+        }
+      }
+      const rock = inp.top[c0] === MAT.Stone || inp.top[c0] === MAT.Basalt || inp.top[c0] === MAT.Sandstone ? 2 : 0;
+      // (its own region's ground first: elsewhere it needs mineral rights there)
+      const own = !inp.regionAt || inp.regionAt(...at) === rec.region ? 3 : 0;
+      const sc = own + rock + Math.min(rise, 10) * 0.4 + r() * 0.5 - ring * 0.3;
+      if (!best || sc > best.s) best = { at, s: sc, dir, rise };
+    }
+  if (!best) return null;
+  const { at, dir } = best;
+  return { ...best, spoil: [at[0] - dir[0] * 9 + dir[1] * 4, at[1] - dir[1] * 9 - dir[0] * 4] };
+}
+
+/** is (x, y) inside a quad (any winding) */
+function inQuad(p: Pt[], x: number, y: number): boolean {
+  let c = false;
+  for (let i = 0, j = p.length - 1; i < p.length; j = i++) {
+    const [xi, yi] = p[i];
+    const [xj, yj] = p[j];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) c = !c;
+  }
+  return c;
 }

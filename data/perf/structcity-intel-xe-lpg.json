@@ -1,0 +1,103 @@
+{
+ "when": "2026-10-31T05:11:30.973Z",
+ "town": "s55",
+ "size": "412x915@2.6",
+ "runs": [
+  {
+   "skip": "none",
+   "zoom": 1,
+   "gpu": 12.6,
+   "frames": 491,
+   "top": {
+    "draw": 3,
+    "agents": 1.03,
+    "shadow": 0.71,
+    "renderprep": 0.66,
+    "gbuffer": 0.38,
+    "fieldmesh-hash": 0.34,
+    "surface": 0.33,
+    "fieldmesh-sample": 0.32
+   },
+   "adapter": "intel / xe-lpg",
+   "view": {
+    "settlements": 1,
+    "pieces": 794,
+    "tris": 81574,
+    "lodTris": 34686,
+    "draws": 73
+   }
+  },
+  {
+   "skip": "none",
+   "zoom": 3,
+   "gpu": 11.19,
+   "frames": 606,
+   "top": {
+    "draw": 3.57,
+    "agents": 0.74,
+    "shadow": 0.69,
+    "renderprep": 0.55,
+    "fieldmesh-hash": 0.34,
+    "fieldmesh-sample": 0.3,
+    "surface": 0.25,
+    "renderfields": 0.24
+   },
+   "adapter": "intel / xe-lpg",
+   "view": {
+    "settlements": 1,
+    "pieces": 794,
+    "tris": 81574,
+    "lodTris": 34686,
+    "draws": 73
+   }
+  },
+  {
+   "skip": "structures",
+   "zoom": 1,
+   "gpu": 12.29,
+   "frames": 526,
+   "top": {
+    "draw": 2.95,
+    "agents": 0.97,
+    "shadow": 0.75,
+    "renderprep": 0.71,
+    "gbuffer": 0.4,
+    "fieldmesh-hash": 0.37,
+    "fieldmesh-sample": 0.33,
+    "surface": 0.31
+   },
+   "adapter": "intel / xe-lpg",
+   "view": {
+    "settlements": 1,
+    "pieces": 794,
+    "tris": 81574,
+    "lodTris": 34686,
+    "draws": 73
+   }
+  },
+  {
+   "skip": "structures",
+   "zoom": 3,
+   "gpu": 12.88,
+   "frames": 500,
+   "top": {
+    "draw": 3.43,
+    "agents": 1.02,
+    "shadow": 0.73,
+    "renderprep": 0.59,
+    "fieldmesh-sample": 0.39,
+    "fieldmesh-hash": 0.37,
+    "renderfields": 0.33,
+    "surface": 0.31
+   },
+   "adapter": "intel / xe-lpg",
+   "view": {
+    "settlements": 1,
+    "pieces": 794,
+    "tris": 81574,
+    "lodTris": 34686,
+    "draws": 73
+   }
+  }
+ ]
+}

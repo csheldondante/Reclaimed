@@ -51,6 +51,11 @@ struct AtlasP {
   /** round 80: the tile of the batch colFinish does (columns along x, y from the batch's corner) */
   tileX: f32,
   tileY: f32,
+  /** (round 117, terrain) 1 in the macro ground's pass (the hydrology's ground: no gorges — compose.wgsl ground()) */
+  macroPass: u32,
+  _p0: u32,
+  _p1: u32,
+  _p2: u32,
 }
 
 @group(0) @binding(0) var<uniform> AP: AtlasP;

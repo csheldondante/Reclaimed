@@ -30,6 +30,8 @@ export class MeshInstances {
     device: GPUDevice,
     readonly kinds: MeshKind[],
     buf: (label: string, size: number, usage: number) => GPUBuffer,
+    /** (round 119, flora) instances a kind may have (MI_CAP by default; the flora library's many kinds take fewer) */
+    readonly cap = MI_CAP,
   ) {
     let nv = 0;
     let ni = 0;
@@ -42,14 +44,17 @@ export class MeshInstances {
     const ix = new Uint32Array(ni);
     kinds.forEach((k, i) => {
       v.set(k.verts, this.ranges[i].base * 4);
+      // (round 119, the phone: the kind rides in each vertex's w, + 16 × kind — meshinst.wgsl reads it in one step where
+      // it searched every kind's vertex range per vertex, a loop of ~40 on the phone's vertex stage)
+      for (let j = this.ranges[i].base * 4 + 3; j < (this.ranges[i].base + this.ranges[i].nv) * 4; j += 4) v[j] += 16 * i;
       ix.set(k.index, this.ranges[i].first);
     });
     this.verts = buf('meshinst verts', v.byteLength, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST);
     device.queue.writeBuffer(this.verts, 0, v);
     this.index = buf('meshinst index', Math.ceil(ix.byteLength / 4) * 4, GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST);
     device.queue.writeBuffer(this.index, 0, ix);
-    this.instances = buf('meshinst instances', kinds.length * MI_CAP * MI_STRIDE * 16, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);
-    this.stats = { kinds: kinds.length, verts: nv, tris: ni / 3, bytes: v.byteLength + ix.byteLength + kinds.length * MI_CAP * MI_STRIDE * 16 };
+    this.instances = buf('meshinst instances', kinds.length * cap * MI_STRIDE * 16, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);
+    this.stats = { kinds: kinds.length, verts: nv, tris: ni / 3, bytes: v.byteLength + ix.byteLength + kinds.length * cap * MI_STRIDE * 16 };
   }
 
   /** The draw args a frame starts from (each kind: its indices, no instances yet), at MI_ARGS_WORD. */
@@ -62,7 +67,7 @@ export class MeshInstances {
   /** The WGSL constants meshinst.wgsl (and the kernels that write instances) read. */
   wgsl(): string {
     const rows = this.ranges.map((r) => `vec2<u32>(${r.base}u, ${r.base + r.nv}u)`).join(', ');
-    return `const MI_CAP: u32 = ${MI_CAP}u;\nconst MI_N: u32 = ${this.kinds.length}u;\nconst MI_ARGS: u32 = ${MI_ARGS_WORD}u;\nconst MI_KINDS = array<vec2<u32>, ${this.kinds.length}>(${rows});\n`;
+    return `const MI_CAP: u32 = ${this.cap}u;\nconst MI_N: u32 = ${this.kinds.length}u;\nconst MI_ARGS: u32 = ${MI_ARGS_WORD}u;\nconst MI_KINDS = array<vec2<u32>, ${this.kinds.length}>(${rows});\n`;
   }
 
   /** (tests, the perf overlay) the instances each kind drew last (read back from the draw args) */
@@ -78,11 +83,17 @@ export class MeshInstances {
     return this.kinds.map((_, k) => u[k * 5 + 1]);
   }
 
-  /** Draw every kind (the pipeline, the group and the vertex/index buffers set by the caller). */
-  draw(pass: GPURenderPassEncoder, indirect: GPUBuffer): number {
+  /** Draw every kind (the pipeline, the group and the vertex/index buffers set by the caller); `only` (round 117,
+   *  flora: the shadow pass) a flag a kind, those left out not drawn. */
+  draw(pass: GPURenderPassEncoder, indirect: GPUBuffer, only?: boolean[]): number {
     pass.setVertexBuffer(0, this.verts);
     pass.setIndexBuffer(this.index, 'uint32');
-    for (let k = 0; k < this.kinds.length; k++) pass.drawIndexedIndirect(indirect, (MI_ARGS_WORD + k * 5) * 4);
-    return this.kinds.length;
+    let n = 0;
+    for (let k = 0; k < this.kinds.length; k++) {
+      if (only && !only[k]) continue;
+      pass.drawIndexedIndirect(indirect, (MI_ARGS_WORD + k * 5) * 4);
+      n++;
+    }
+    return n;
   }
 }

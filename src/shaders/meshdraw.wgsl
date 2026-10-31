@@ -422,6 +422,20 @@ fn meshSurf(in: MOut) -> Surf {
       // (it turns with the season, as fsBox)
       g = mix(g, seasonGrass(g, fbm2(wo(in.wpos.xy) * 0.08)), 1.0 - 0.5 * smoothstep(3.0, 4.5, v));
       alb = wither(toLinear(g * (0.82 + 0.3 * n2)), cf.w, n2);
+      // (round 117, flora) the woodland floor in fallen leaves — "lead covered forest floor": under the woods
+      // (succession past 3.7) the cover is leaf litter in drifts, green between them; last year's leaves brown, this
+      // fall's bright. A look only (the material stays): the baked climate's MAT_LEAFLIT is the real thing, rarely laid
+      if (isTop) {
+        let litter = smoothstep(3.7, 4.5, v) * smoothstep(0.3, 0.62, fbm2(wo(in.wpos.xy) * 0.3));
+        // (in half-cell flakes, not per pixel: at the phone's half render scale a finer speckle reads as noise)
+        let fl = randv(vec3<i32>(vec2<i32>(floor(wo(in.wpos.xy) * 2.0)), 4417));
+        let fc = randv(vec3<i32>(vec2<i32>(floor(wo(in.wpos.xy) * 2.0)), 4418));
+        if (fl < litter) {
+          var lc = autumnLeaf(select(0u, 2u, fc > 0.5), fract(fc * 3.7));
+          lc = mix(lc, vec3<f32>(0.42, 0.31, 0.18), 0.5 - 0.35 * seasonShed());
+          alb = toLinear(lc) * (0.8 + 0.25 * n1);
+        }
+      }
       // (perfopt, ?tufts=0: no tuft boxes — their look painted here instead: on soil-like ground, a quarter cell
       // in shade here and there, as many as vegplan.wgsl would stand there)
       if ((!TUFTS_DRAWN || TILE_BAKE) && isTop && MATS[lk.mat].eco.x >= 2.0) {

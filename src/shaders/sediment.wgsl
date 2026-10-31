@@ -91,7 +91,7 @@ fn baseAt(q: vec2<i32>) -> f32 {
 fn levelAt(q: vec2<i32>) -> f32 {
   if (!inMap(q)) { return 0.0; }
   // a body lying here is ground too: things bank against it and slide off it
-  return max(baseAt(q) + driftAt(q), bodyTopAt(q));
+  return groundZ(q, baseAt(q));
 }
 
 // ---- the open air a structure leaves (docs/GRIDS.md) ----------------------------
