@@ -137,6 +137,11 @@ each was implemented.
   → The sections judge vs the runs judge is decided by performance: judge B goes on to JB11-JB13, and a phone physics
   bench (?physbench=1) measures both judges and every solver variant on the device.
 
+- The phone physics bench (Pixel 9a, solver 42335d9; p95/p99 ms): old x runs 20/29, lattice x runs 22/37, lattice x sections 21/38, hybrid x runs 24/36, nodes x runs 49/52, nodes x sections 77/443 (stalls of 400-840 ms). The user, verbatim: "I thought lattice was best for metal?" and "Both look great and I think are fast enough on this machine. The rocks do look better with the nodes but largely because of the meshing. The lattice still switches to voxels."
+  → Meshing chosen by material, never by the solver: every rock body drawn with the rock mesh, every metal or wood body
+  with its body mesh, in every variant; the lattice's remaining voxel draw path removed. The phone favours lattice and
+  the runs judge; the node solver's rework for phone GPUs waits on the user.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
