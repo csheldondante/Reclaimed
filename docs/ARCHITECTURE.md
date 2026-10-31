@@ -2703,17 +2703,20 @@ page's choice. Integrity holds `judge` (settable) and awaits it in its pass; `ju
 judging) goes through it too.
 
 **Judge B, kernel by kernel** (one submit, a compute pass a kernel, each timed: `stats.kernels`; the window: the seeds'
-box and TUNE.judgeB.margin columns round it — a piece reaching the window's side is held there):
+box plus the leg walk's reach, TUNE.judgeB.neck + 2 columns, grown ×2 to TUNE.judgeB.margin when a seeded piece or
+its leg walk reaches the side (round 120c, JB13: exact); at the margin the side holds, as before):
 1. `build` (a thread a column): the column's runs (columnRuns' rule) → nodes: z0, z1, mass (cells × density × √3/2 m²),
    first moment in z, side-holding extent, weakest strength, flags. `adjacency` (a thread a node): a 16-bit mask a
    direction of the neighbour column's runs it's joined to; map and window edges.
 2. `pieces`, `pieceFlags` (whole GPU, lock-free union-find): the hanging runs' pieces; seeded (a solid run in or
-   beside a seed column) and weighed. **Culling** (round 120b, exact): only seeded pieces go on — a piece's verdict
+   beside a seed column) and weighed; `seedList` lists the seeded pieces' runs (what every later single-workgroup
+   phase walks). **Culling** (round 120b, exact): only seeded pieces go on — a piece's verdict
    depends on its own runs, what holds them and the neck's standing runs, never another piece.
 3. `judge1` (one workgroup): the flood from what holds, frontier by frontier (depth-serial), over the seeded pieces;
    the judged runs (seeded and weighed pieces) by level, each given its pairs; the indirect dispatch for the pairs.
 4. `faces` (a thread a run): its faces to the runs a step nearer, summed once, by direction.
-5. **The pairs** (mode `pairs`, the default; round 120b): a pair (v, k) a judged run v at each level k ≤ dist v.
+5. **The pairs** (mode `pairs`; the default `auto` takes them when the deepest judged piece is TUNE.judgeB.pairsDepth (10)
+   levels or more, else the level pass — judge1 chooses on the GPU, both exact; round 120c): a pair (v, k) a judged run v at each level k ≤ dist v.
    `pairsInit`, `pairsUnite` (lock-free union-find: (v, k) with (u, k) for joined u with dist u ≥ k), `pairsFind`
    (roots: one per component per level), `pairsSum` (mass and first moments of everything ≥ k out, the level-k runs'
    faces; gathered by root in workgroup memory first), `checks` (a thread a root: shear, moment against the section

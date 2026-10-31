@@ -218,6 +218,7 @@ const SPEC = {
       archTol: { label: 'arch give', units: 'cells', min: 0, max: 2, step: 0.05, def: 0.5, help: 'how far past a run the thrust line may pass (the columns\' cells are whole)' },
       tipGive: { label: 'tip give', units: 'cells', min: 0, max: 2, step: 0.05, def: 0, help: 'how far a centre of mass may lie past the hull of the leg under it' },
       neck: { label: 'neck reach', units: 'columns', min: 2, max: 64, step: 1, def: 16, help: 'past this through standing columns from a piece, it is keyed into the land' },
+      pairsDepth: { label: 'pairs from depth', units: 'levels', min: 1, max: 64, step: 1, def: 10, help: 'a judged piece this many levels deep or more: every level at once on the whole GPU (the pairs); shallower, a pass a level in one workgroup (cheaper for few levels; both exact)' },
       tRock: { label: 'tension: rock', units: '× tensile', min: 0, max: 2, step: 0.05, def: 1, help: 'natural stone (materials.ts bond rock): keeps its tensile strength — a natural arch\'s halves stand' },
       tMasonry: { label: 'tension: masonry', units: '× tensile', min: 0, max: 2, step: 0.05, def: 0, help: 'brick, tile, plaster (bond masonry): blocks, no tension (Heyman) — an arch without its keystone falls' },
       tCast: { label: 'tension: cast', units: '× tensile', min: 0, max: 2, step: 0.05, def: 1, help: 'concrete, asphalt (bond cast)' },

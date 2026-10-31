@@ -6,6 +6,7 @@
 //   levels + cull   only the pieces a cut could have weakened are flooded and judged
 //   pairs + cull    every level's sections at once (union-find on (run, level) pairs), culled — the default
 //   pairs, no cull
+//   pairs + cull + grow  (JB13) a window from the leg walk's reach, grown when a piece reaches its side
 import { describe, expect, test } from 'vitest';
 import { SectionsJudge } from '../../src/game/judge';
 import type { Fracture } from '../../src/game/fracture';
@@ -32,9 +33,13 @@ function canon(fr: Fracture): string {
 }
 
 const VARIANTS = [
-  { mode: 'levels', cull: true },
-  { mode: 'pairs', cull: true },
-  { mode: 'pairs', cull: false },
+  { mode: 'levels', cull: true, grow: false },
+  { mode: 'pairs', cull: true, grow: false },
+  { mode: 'pairs', cull: false, grow: false },
+  // (JB13: a window from the leg walk's reach, grown when a seeded piece or its leg reaches its side)
+  { mode: 'pairs', cull: true, grow: true },
+  // (the default: the pairs from TUNE.judgeB.pairsDepth levels, else the level pass)
+  { mode: 'auto', cull: true, grow: true },
 ] as const;
 
 /** the oracle's verdict and each variant's, on one world cut at `seeds` (weighed: those columns) */
@@ -43,17 +48,18 @@ async function compare(w: RockWorld, seeds: [number, number][]): Promise<{ oracl
   const cols = gpuCols(gpu.device, w);
   gpu.device.queue.writeBuffer(cols.slots, 0, w.packed.slots);
   const weighed = new Set(seeds.map(([x, y]) => y * 65536 + x));
-  const judge = async (mode: 'levels' | 'pairs', cull: boolean) => {
+  const judge = async (mode: 'levels' | 'pairs' | 'auto', cull: boolean, grow: boolean) => {
     const j = new SectionsJudge();
     j.mode = mode;
     j.cull = cull;
+    j.grow = grow;
     const fr = await j.judge({ cols: { packed: w.packed, gpu: cols }, seeds, weigh: (x, y) => weighed.has(y * 65536 + x), rotate: true });
     j.destroy();
     return fr;
   };
-  const ref = await judge('levels', false);
+  const ref = await judge('levels', false, false);
   const got: string[] = [];
-  for (const v of VARIANTS) got.push(canon(await judge(v.mode, v.cull)));
+  for (const v of VARIANTS) got.push(canon(await judge(v.mode, v.cull, v.grow)));
   cols.slots.destroy();
   cols.chunks.destroy();
   expect(gpu.takeErrors()).toEqual([]);
@@ -168,5 +174,21 @@ describe('random caves: every fast path gives the oracle\'s verdict', () => {
     }
     // (the caves are worth testing: some of them let something go)
     expect(falling).toBeGreaterThan(3);
+  }, 300_000);
+
+  test('40 caves with a short leg walk (neck 4: the growing window starts at 6 columns and has to grow)', async () => {
+    const { TUNE } = await import('../../src/tune/params');
+    const was = TUNE.judgeB.neck;
+    TUNE.judgeB.neck = 4;
+    try {
+      for (let s = 1; s <= 40; s++) {
+        const { w, seeds } = cave(s * 104729, s % 3 === 0 ? MAT.Brick : MAT.Stone);
+        if (!seeds.length) continue;
+        const r = await compare(w, seeds);
+        for (const g of r.got) expect(g, `cave ${s}`).toBe(r.oracle);
+      }
+    } finally {
+      TUNE.judgeB.neck = was;
+    }
   }, 300_000);
 });
