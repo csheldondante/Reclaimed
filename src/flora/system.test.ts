@@ -4,7 +4,7 @@ import { FloraWorld, type FloraSource } from './index';
 import { fit } from './placement';
 import { coverage, passage, MUST_CUT } from './passability';
 import { SPECIES } from './species';
-import type { FloraCaps } from '../api/contracts/flora';
+import { WALKER_PROFILE, type ControllerProfile } from '../api/contracts/play';
 
 const ROW_H = Math.sqrt(3) / 2;
 const field = (v: (cx: number, cy: number) => number, w = 96, h = 96): FloraSource => ({
@@ -13,10 +13,17 @@ const field = (v: (cx: number, cy: number) => number, w = 96, h = 96): FloraSour
   veg: (cx, cy) => v(cx, cy),
 });
 const rect = (x0: number, y0: number, x1: number, y1: number) => ({ x0, y0: y0 * ROW_H, x1, y1: y1 * ROW_H });
-const walker: FloraCaps = { mass: 1, speed: 4, cuts: false, flies: false, height: 2 };
-const knight: FloraCaps = { mass: 3, speed: 8, cuts: true, flies: false, height: 2.5 };
-const swordsman: FloraCaps = { mass: 1, speed: 4, cuts: true, flies: false, height: 2 };
-const bird: FloraCaps = { mass: 0, speed: 10, cuts: false, flies: true, height: 0.5 };
+// (merge122) bodies as play's profiles: the walker without its sword, a charging knight, a swordsman, a bird
+const as = (mass: number, height: number, cuts: boolean, fly = 0): ControllerProfile => ({
+  ...WALKER_PROFILE,
+  body: { mass, height },
+  vegetation: { ...WALKER_PROFILE.vegetation, cuts },
+  fly: { ceiling: fly },
+});
+const walker = as(1, 2, false);
+const knight = as(3, 2.5, true);
+const swordsman = as(1, 2, true);
+const bird = as(0, 0.5, false, 6);
 
 describe('fit (niches)', () => {
   it('reeds on a wet bank, ferns in the shade, birch in an open wood, moss on wet rock, nothing on bare dry rock', () => {

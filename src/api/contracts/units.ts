@@ -94,6 +94,29 @@ export interface Actor {
   hurt(damage: number, by: UnitView): void;
 }
 
+/**
+ * (round 117, play) A blow over an area, as the play layer's heroes deal them: a bike's ram and slash, a lich's
+ * force push and slam. Beyond `hit`'s damage it shoves (cells/s, the implementation divides by a unit's mass) and
+ * throws (lift). Coordinates as the rest (window x, y; z the height of its centre, absent: any height).
+ */
+export interface AreaHit {
+  at: V2;
+  z?: number;
+  radius: number;
+  damage: number;
+  /** a shove: along `dir`, or out from `at` without one */
+  push?: number;
+  dir?: V2;
+  /** an upward throw on top of the shove (cells/s) */
+  lift?: number;
+  /** only within this angle (radians either side) of `axis` (default `dir`) */
+  cone?: number;
+  axis?: V2;
+  /** seconds a unit it throws stays down */
+  stun?: number;
+  fire?: boolean;
+}
+
 /** The units system as a game uses it. */
 export interface Units {
   spawn(kind: string, at: V2, faction: FactionId | null, opts?: SpawnOpts): UnitId;
@@ -111,6 +134,20 @@ export interface Units {
   /** a blow: `by` a unit, an actor's id, or null (the world: a fall, fire) */
   hit(id: UnitId, damage: number, by: UnitId | string | null): void;
   remove(id: UnitId): void;
+  /**
+   * (round 117, play — optional; main to consolidate) a blow over an area with a shove and a throw (AreaHit); `died`
+   * and `hurt` name `by` as `hit` does. The play layer's heroes need it (src/play); AgentUnits implements it.
+   */
+  strike?(h: AreaHit, by: UnitId | string | null): void;
+  /**
+   * (round 117, play — optional) hold a unit with its feet at `at` (telekinesis: a lich floating it), each frame
+   * while held; false: it's gone or can't be held. At most `maxHeld` at once.
+   */
+  hold?(id: UnitId, at: V3): boolean;
+  /** (round 117, play — optional) let a held unit go (or throw any unit) at `vel` (cells/s); it tumbles and gets up */
+  release?(id: UnitId, vel?: V3): void;
+  /** (round 117, play) how many units `hold` keeps at once */
+  readonly maxHeld?: number;
   /** actors hostile units may attack */
   watch(actor: Actor): void;
   /** the window slid (streamed worlds): positions shift with it */

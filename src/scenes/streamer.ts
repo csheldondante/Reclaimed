@@ -33,6 +33,7 @@
 // AHEAD strips along the camera's motion and uploaded into the pool when ready, so a slide only copies. On load,
 // the window's regions with a record are restored (Streamer.restore).
 
+import { poolVictim } from './pool-victim';
 import { record, timed } from '../gpu/cpustat';
 import { RegionPool, type PoolSlot } from './region-pool';
 import { RegionCopier } from './region-copy';
@@ -894,27 +895,13 @@ export class Streamer {
       const cx = (this.origin[0] + this.W / 2 + lead(this.vel[0])) / R - 0.5;
       const cy = (this.origin[1] + this.H / 2 + lead(this.vel[1])) / R - 0.5;
       const wrap = this.source.wrap;
-      const d1 = (d: number, n?: number) => (n ? Math.min(Math.abs(d) % n, n - (Math.abs(d) % n)) : Math.abs(d));
-      const nearX = this.W / R / 2 + 1.5;
-      const nearY = this.H / R / 2 + 1.5;
-      let victim: string | null = null;
-      let far = -1;
-      for (const k of this.frozen.keys()) {
-        if (this.jobs.has(k)) continue;
-        const [rx, ry] = k.split(',').map(Number);
-        const ax = d1(rx - cx, wrap && wrap[0] / R);
-        const ay = d1(ry - cy, wrap && wrap[1] / R);
-        // (frozen is in LRU order: the first one outside is the oldest)
-        if (ax > nearX || ay > nearY) {
-          victim = k;
-          break;
-        }
-        const d = Math.hypot(ax, ay);
-        if (d > far) {
-          far = d;
-          victim = k;
-        }
-      }
+      // (merge122: the choice is pool-victim.ts's, tested on its own; a travel's pinned window is kept like a job's)
+      const victim = poolVictim(this.frozen.keys(), {
+        keep: (k) => this.jobs.has(k) || this.pinned.has(k),
+        centre: [cx, cy],
+        near: [this.W / R / 2 + 1.5, this.H / R / 2 + 1.5],
+        wrap: wrap ? [wrap[0] / R, wrap[1] / R] : undefined,
+      });
       if (victim === null) return null;
       this.evict(victim);
     }
@@ -1287,6 +1274,14 @@ export class Streamer {
   private taken = new WeakSet<Promise<Frozen>>();
   /** (round 98) land ready to write (made ahead, or thawed and checked), by region key — round 100: in the pool */
   private made = new Map<string, Frozen>();
+  /**
+   * (merge122) The window a travel precached (precache's window, not its ring), kept in the pool until the warp there:
+   * never a victim of slotFor. Without it a full pool (POOL_CAP) evicted the far destination's regions as "outside
+   * where the window is heading" while the hero waited, and `precached` never came true — runsit's journey hung on
+   * "waiting" (merge122's gate, the atlas with every system on). One travel's window at a time (RP7's pinned sections
+   * would generalise it).
+   */
+  private pinned = new Set<string>();
   /** (round 98) frames a slide was due but its land wasn't ready (the camera went on, up to the edge's clamp) */
   waited = 0;
 
@@ -1600,6 +1595,11 @@ export class Streamer {
   precache(ox: number, oy: number, ring = WARP_RING, skipWindow = false): number {
     if (!this.store) return 0;
     const { R, W, H } = this;
+    // (merge122) a travel's destination window held in the pool until the warp (a ring after a warp pins nothing)
+    if (!skipWindow) {
+      this.pinned.clear();
+      for (let ly = 0; ly < H; ly += R) for (let lx = 0; lx < W; lx += R) this.pinned.add(this.key((ox + lx) / R, (oy + ly) / R));
+    }
     const spots: [number, number, number][] = [];
     for (let ly = -ring * R; ly < H + ring * R; ly += R)
       for (let lx = -ring * R; lx < W + ring * R; lx += R) spots.push([ox + lx, oy + ly, Math.hypot(lx + R / 2 - W / 2, ly + R / 2 - H / 2)]);
@@ -1615,6 +1615,26 @@ export class Streamer {
     }
     this.stats.precached += n;
     return n;
+  }
+
+  /**
+   * (round 117, runplan) Is the land of a window at origin (ox, oy) ready for a warp — every region of it made (in the
+   * pool) or in the window now, none still under way? The run's travel on the atlas map waits on this before it
+   * arrives (src/runplan/travel.ts Journey), so the travel covers the loading. Without a store nothing is precached:
+   * the warp makes the land itself, so it's "ready" (the warp's own wait is the only one).
+   */
+  precached(ox: number, oy: number): boolean {
+    if (!this.store) return true;
+    const { R, W, H } = this;
+    for (let ly = 0; ly < H; ly += R)
+      for (let lx = 0; lx < W; lx += R) {
+        const wx = ox + lx;
+        const wy = oy + ly;
+        const key = this.key(wx / R, wy / R);
+        if (this.jobs.has(key)) return false;
+        if (!this.made.has(key) && !(this.winInfo.has(key) && this.inWindow(wx, wy))) return false;
+      }
+    return true;
   }
 
   /** (round 100) whether world cell (wx, wy) — a region's corner — is in the window now */
@@ -2483,6 +2503,8 @@ export class Streamer {
     } finally {
       this.busy = false;
       this.heldNow = false;
+      // (merge122) the travel's pinned window is written (or no longer wanted): released once the warp is done
+      this.pinned.clear();
     }
     this.stats.lastMs = +(performance.now() - t0).toFixed(1);
   }

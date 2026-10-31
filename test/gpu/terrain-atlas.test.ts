@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { testGpu } from './dawn';
 import { Atlas, DEFAULT_ATLAS } from '../../src/atlas/atlas';
 import { TerrainSystem } from '../../src/terrain/terrain';
-import { CAPS_PRESETS } from '../../src/api/contracts/terrain';
+import { WALKER_PROFILE } from '../../src/api/contracts/play';
 import { makeBindGroup, makeComputeAsync, makeModule } from '../../src/gpu/pipeline';
 
 // (one small atlas for every test here: two in one worker crashed Dawn's process — the gpu tier shares one device)
@@ -43,7 +43,7 @@ describe('terrain on a small atlas', () => {
     const graph = await T.graph({ x0: x - 512, y0: y - 512, x1: x + 512, y1: y + 512 });
     expect(graph.rooms().length).toBeGreaterThan(0);
     const kinds = new Set(graph.borders().map((b) => b.kind));
-    if (process.env.TERRAIN_LOG) console.log(`graph: ${graph.features().length} features, ${graph.rooms().length} rooms, ${graph.borders().length} borders (${[...kinds].join(', ')}); walker reaches ${graph.reach(graph.rooms()[0].id, CAPS_PRESETS.walker).length}`);
+    if (process.env.TERRAIN_LOG) console.log(`graph: ${graph.features().length} features, ${graph.rooms().length} rooms, ${graph.borders().length} borders (${[...kinds].join(', ')}); walker reaches ${graph.reach(graph.rooms()[0].id, WALKER_PROFILE).length}`);
     const fc = await T.floodTool.check([x, y], 512);
     expect(fc.differ).toBe(0);
     const cols = await a.columns(Math.floor(x) - 32, Math.floor(y / 0.8660254) - 32, 64, 64);

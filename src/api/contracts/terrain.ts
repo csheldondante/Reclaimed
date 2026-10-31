@@ -19,7 +19,7 @@
 // one body can reach without crossing a barrier: a plateau's top, a valley floor between cliffs, an island) and ROOMS
 // (level 1: open, fully connected spaces 1-3 screens big, a feature split at its narrow points). Its edges are BORDERS
 // between rooms: 'open' between rooms of one feature (a door: the narrows they meet at), or a barrier of some kind.
-// What a body can cross is asked per controller (PassCaps): the graph holds the physical measures (heights, water,
+// What a body can cross is asked per controller (play's ControllerProfile): the graph holds the physical measures (heights, water,
 // lava, vegetation along every crossing), not a verdict, so a new controller needs no new generation.
 //
 // Coordinates: world units of the atlas (x along a row, y = row × 0.866 — atlas/compose.wgsl's p), z the world's z.
@@ -30,43 +30,13 @@
 //   terrain.flood({ at, level?, fluid: 'water' })                // a basin flooded to its spill height (or a level)
 
 import type { V2 } from './units';
+import type { ControllerProfile } from './play';
 
-/**
- * What a body can get over — the controller's capabilities as the terrain sees them. A stand-in until the `play`
- * track's controller contract lands (its controllers say this about themselves; herosandbox's Mobility is a subset:
- * step, drop, deep). Cells and cells a second.
- */
-export interface PassCaps {
-  /** an id (the cache key of costs: one per distinct capability set) */
-  id: string;
-  /** the highest sheer step it gets up in one go (a ledge it climbs) */
-  step: number;
-  /** the steepest ground it walks up (rise per cell of run) */
-  slope: number;
-  /** the deepest drop it takes safely (down a cliff) */
-  drop: number;
-  /** water it wades or rides through up to this deep (Infinity: hovers or swims) */
-  deep: number;
-  /** goes over lava (a lich floating, a heat-shielded vehicle) */
-  lava?: boolean;
-  /** vegetation it pushes through up to this density (0..1; 1: anything) — denser costs `vegCost` a cell or stops it */
-  veg: number;
-  /** cells of walking a cell of vegetation it cuts through costs (it can cut: `veg` is what it passes uncut) */
-  vegCost?: number;
-  /** a gap it jumps (cells across, level or down: a bike off a ramp at speed) */
-  gap?: number;
-  /** flies: crosses anything lower than this over the ground it left (cells) */
-  fly?: number;
-  /** its speed on open ground (cells a second): distance is a soft barrier by time, not cells */
-  speed: number;
-}
-
-/** The stand-ins for today's heroes (src/hero: the Walker; the hoverbike game's bike and lich), until `play` says. */
-export const CAPS_PRESETS: Record<'walker' | 'bike' | 'lich', PassCaps> = {
-  walker: { id: 'walker', step: 1.5, slope: 1.0, drop: 6, deep: 1.2, veg: 0.75, vegCost: 4, speed: 8 },
-  bike: { id: 'bike', step: 0.8, slope: 0.6, drop: 10, deep: Infinity, veg: 0.35, gap: 12, speed: 30 },
-  lich: { id: 'lich', step: 3, slope: 2.5, drop: Infinity, deep: Infinity, lava: true, veg: 1, fly: 40, speed: 10 },
-};
+// (runplay, round 119 — the consolidation) What a body can get over is play's ControllerProfile (contracts/play.ts),
+// the one controller description every generator reads; terrain's own stand-in (PassCaps, CAPS_PRESETS) is gone.
+// Every `caps` below is a profile: library.get(id).profile(params), or WALKER_PROFILE (the default body rooms are
+// made for). Inside, terrain asks play's crossCost of each step between samples (src/terrain/partition.ts stepCost),
+// so the graph's costs and play's agree.
 
 /** What stands in the way along a border (the dominant cause; a border may have several — `causes`). */
 export type BarrierKind =
@@ -171,11 +141,11 @@ export interface TerrainGraph {
    * What crossing a border costs a body (cells of walking-equivalent from room `from`'s floor to the other's), Infinity
    * when it can't; soft barriers add to it by their strength. Cached per caps.id.
    */
-  cost(border: number, caps: PassCaps, from?: number): number;
+  cost(border: number, caps: ControllerProfile, from?: number): number;
   /** the borders out of a room a body can cross (finite cost from it), each with its cost */
-  exits(room: number, caps: PassCaps): { border: number; to: number; cost: number }[];
+  exits(room: number, caps: ControllerProfile): { border: number; to: number; cost: number }[];
   /** the rooms a body reaches from a room (crossing whatever it can) */
-  reach(room: number, caps: PassCaps): number[];
+  reach(room: number, caps: ControllerProfile): number[];
   /** lay a soft barrier on a border (hostiles, a storm, distance): it adds strength × SOFT_COST to its cost */
   soften(border: number, kind: BarrierKind, strength: number): void;
 }
@@ -213,11 +183,11 @@ export interface TerrainNeed {
 export type TerrainRequest =
   /** have `count` exits from a room a body with `caps` can cross: opens the cheapest barriers (ramps, fords, a
    *  tunnel; a bridge as a need) or closes doors (a wall of rubble, dense vegetation as a need) to make it so */
-  | { kind: 'exits'; room: number; count: number; caps: PassCaps }
-  /** put an obstacle on a border (closing its doors to `caps`; default: every preset) */
-  | { kind: 'obstacle'; border: number; barrier: 'wall' | 'vegetation' | 'rubble' | 'ravine'; caps?: PassCaps }
+  | { kind: 'exits'; room: number; count: number; caps: ControllerProfile }
+  /** put an obstacle on a border (closing its doors to `caps`; default: every body) */
+  | { kind: 'obstacle'; border: number; barrier: 'wall' | 'vegetation' | 'rubble' | 'ravine'; caps?: ControllerProfile }
   /** open a border to `caps` (its cheapest crossing made passable) */
-  | { kind: 'open'; border: number; caps: PassCaps };
+  | { kind: 'open'; border: number; caps: ControllerProfile };
 
 export interface TerrainResult {
   ok: boolean;
@@ -336,7 +306,7 @@ export interface Terrain {
   /** what lies buried in a rectangle (deterministic from the seed): props and the excavation sites they cluster in */
   buried(rect: { x0: number; y0: number; x1: number; y1: number }): Promise<{ props: BuriedProp[]; sites: ExcavationSite[] }>;
   /** the region graph over a rectangle (world units); caps: the controller rooms are made for (default the walker) */
-  graph(rect: { x0: number; y0: number; x1: number; y1: number }, opts?: { caps?: PassCaps; step?: number; screen?: number }): Promise<TerrainGraph>;
+  graph(rect: { x0: number; y0: number; x1: number; y1: number }, opts?: { caps?: ControllerProfile; step?: number; screen?: number }): Promise<TerrainGraph>;
   request(graph: TerrainGraph, req: TerrainRequest): TerrainResult;
   /** the edits in force (stamped into land made from now on) */
   edits(): TerrainEdit[];

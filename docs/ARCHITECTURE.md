@@ -1310,6 +1310,8 @@ further out ahead of the camera so we never wait for them". Three tiers under th
   (`Atlas.rawGround`: finish.wgsl's raw mode, 16 bytes a column back), never on the main thread.
 - **Precache**: `Streamer.precache(ox, oy, ring)` asks for a window's regions and a ring round it into the pool; a
   warp uses what's made or under way for its window and asks for its ring (`?warpring=` 1) right after its own.
+  (merge122) A travel's precache pins its destination window in the pool (`Streamer.pinned`, never a victim of
+  the pool's eviction) until the next warp is done: a full pool had evicted it while the journey waited for it.
   Ahead of fast motion: `?aheads=` seconds of it, 2–4 strips.
 
 ## The town (round 65, branch `builder`)
@@ -1929,6 +1931,9 @@ against a contract and knows only its inputs:
   `Walker` on foot; `src/hero/touchpad.ts` `TouchPad` the phone-first controller (a floating stick, ⚔, a
   context button; WASD / Space / E). It sits under the rest of #ui, over the canvas: the level's Controls see
   none of its pointers.
+  (round 120, PL20) `HeroCamera.chase?: ChaseFraming` — the chase camera's framing at speed per hero (lead in seconds,
+  seconds of travel kept on screen ahead, the widest zoom, eases); `src/play/core/chase.ts` `Chase` turns it into the
+  view's lead and zoom (PlaySession, the sandbox and a run). Absent: play's default (the lich's round 118 framing).
 - `src/units/figures.ts` — `Figures`: the hero and units as a few voxels each, written from the CPU every frame
   into an instance buffer drawn by `Renderer.addVoxels` (units.wgsl's instance form: centre f32 × 3 + the
   material word with the size in bits 24–29 and the body glow for the hurt flash; a quaternion).
@@ -2082,6 +2087,38 @@ Claude subagent run with docs/GM.md as its context. Later it will be a model cal
   properties, no enums).
 - Test: `scripts/gmtest.mjs`. The first story and docs/GM.md's example come out clean, 18 kinds of mistake
   are caught, and FileGM serves and refuses as it should.
+
+## The play layer (round 117, branch `play`; src/play, contract src/api/contracts/play.ts)
+
+The game layer: heroes, their controllers, controls, gear and vehicles. Its own system, moved in from GameplayGM so
+the user can iterate on controls in one session ("I want the separation of concerns but I also want to be able to
+iterate on player controls"). Boundaries:
+
+- **The engine never imports it.** The level loads `src/play/sandbox/sandbox.ts` with a dynamic `import()` for
+  `?play=` only (scenes/level.ts `startPlay`), and drives it each frame like a hero run (`update(dt)` before the
+  camera; the window's slides through `shift`; the map's warp through `warped`).
+- **It reaches the world only through contracts**: play/world.ts `makePlayWorld` builds a narrow `PlayWorld` (the
+  top a hover rides, the floor, water depth, blows on units, wind wake/gust/blow/blast, fx bursts, craters, the
+  camera's projection) from the world API (terrain, water, wind, fx), the Units contract and the camera. The heroes see
+  nothing else, so they run in Node tests on play/testing.ts's synthetic world.
+- **Other tracks read it only through `contracts/play.ts`**: `ControllerProfile` (speed, turn radius, climb, jump,
+  fly, water, vegetation, bridge, destruction, encounter weights), `ControllerInfo` (params, defaults,
+  `profile(params)`), `Playbook` (the library: `src/play/library.ts` `library`), and the pure `crossCost(profile,
+  crossing)` and `fun(profile)`.
+
+Inside (each its own concern):
+
+| part | what | why this shape |
+|---|---|---|
+| core/ | the drives (bike.ts glide, levitate.ts), planners (intercept.ts pass, fling.ts), aim.ts, gestures.ts (Stroke), intent.ts (Layer B's types and log) | pure functions of state + input + a height function: Node-testable, GPU-portable (flat Params) |
+| controllers/ | each controller's data: ParamSpec list, defaults, `profile(params)` | the generators' terms derived from the numbers the controller runs on |
+| heroes/ | base.ts (the engine's Hero contract, health, blows as AreaHits, targets with velocity), bike.ts, hook.ts (the grappling hook, round 118), lich.ts, make.ts | a controller's behaviour: its drive + abilities, Layer A input → Layer B intent → Layer C action |
+| input/ | types.ts (PlayInput: stick, buttons, drag, acts in the world), controls.ts (DOM: floating stick, gestures, buttons), read.ts (screen → ground) | the thumbs separated from what they mean |
+| draw/ | shapes.ts (voxel models, quaternions; pure), voxels.ts (Renderer.addVoxels instance buffer) | a hero is a Part list: a mesh can replace voxels later without the heroes changing |
+| sandbox/ | the viewer: hero switch, live tune panel, spawn, respawn, the chase camera, the HUD; hills.ts (where to ride, from heights), rival.ts (a rival rider: a vehicle in play, `PlayWorld.vehicles`) | where the user tunes fun |
+
+Shared-system tweak: the Units contract's optional `strike` / `hold` / `release` / `maxHeld` (AgentUnits implements
+them over Agents.hit/hold/launch); the play world requires them.
 
 ## Things and diplomacy (round 85, src/api/contracts)
 
@@ -2560,6 +2597,88 @@ clears them).
 - **Land written is drawable at once** (SF7): the streamer's onRelief → level → WorldCore.prepareArrived (SurfaceSystem
   and RenderFieldsSystem with `all`: every column, no sleep skip) and HybridChunks.landBox(…, −Infinity): ready now.
 
+## Planned runs (round 117, branch `runplan`; docs/RUNPLAN.md)
+
+- **Contract** (`src/api/contracts/run.ts`, second half): `RunPlanner.plan({ graph, world, hero, seed, from, minutes })
+  → RunPlan` — stages (region, encounter, brief, minutes, the section to keep resident, outcomes, legs out), legs
+  (route of regions, path in world units, crossings, en-route events, minutes, animation seconds), failure rules, terrain
+  requests, the deadline. Inputs (runplay, round 119): `RegionGraph` is terrain's `AtlasRegionGraph` joined with the
+  wiki's names, the atlas facts' stamps and road crossings (src/runplan/graph.ts `runGraph`); `HeroCapabilities` is
+  derived only, from play's `ControllerProfile` through play's `crossCost` (play-adapter.ts `capsFromProfile`; the role →
+  controller table is heroes.ts `ROLES`). Barrier kinds are terrain's `BarrierKind`. Outputs other systems read:
+  `RunTerrainAsk` (turned into terrain's `TerrainRequest` on the stage's land when a leg sets out: runplan/requests.ts
+  `askTerrain`), `RegionRealisation` (`RegionFill`: terrain's `FloodRequest` + region and why; structures, inhabitants,
+  flora, sky), `RunStage.section` (the streamer's pinned set, RC1).
+- **World state** (`world.ts`, `world-state.ts`): characters (`CharacterRecord`, `applyCharacter`, in the snapshot),
+  `Faction.power`, events `faction-power` / `faction-relation`. Outcomes are `Outcome` + `CharacterChange[]`, applied
+  by `finishRun` (src/runplan/consequences.ts) through `WorldState.apply` and `applyCharacter` only.
+- **Travel** (`src/runplan/travel.ts`): `Journey(leg, dest, Precacher)` — pure; asks for the destination's land when it
+  starts, arrives when the animation is done and the land is ready. The level gives it the streamer's precache
+  (`precacheWarp`); the viewer a stand-in loader.
+- **Shared change**: `api/atlas-map.ts` exports `paintAtlasImage(atlas)` (AtlasMap's painter, unchanged) so the viewer
+  draws the game's own map.
+- **In the level** (`src/runplan/level-run.ts`, `?level=atlas&runplan=<hero>`): `LevelRun` plans from the spawn on the
+  live atlas (atlasFacts + buildWiki), shows a stage card, travels legs on the AtlasMap through `AtlasMap.overlay`
+  (draws the plan), `redraw()` and `centreOn(cx, cy, scale)` (round 117 additions), with `precacheWarp` and
+  `warpReady` (atlas-world.ts; `Streamer.precached(ox, oy)`: every region of that window made or in the window, none
+  under way), then `warpWindow` on arrival.
+
+## A run played (round 119, `runplay`; BACKLOG RPL1-RPL8)
+
+The user (round 119): "I need to actually play a generated run and try it out." `?skipmenu=1&level=atlas&runplan=hoverbike`
+(or `=lich`; `&runminutes=6-12` a shorter run).
+
+- **Contract** (`src/api/contracts/run.ts`, end): `StagePlayer` (preview, play, hold, arrived) → `PlayedStage` (the
+  planned outcome it picked, how the run goes on, won, a line, seconds and par). The run manager (runplan/level-run.ts)
+  decides what a stage means for the world; the player decides how it's played and won — neither reaches into the other.
+- **The hero** (`src/play/session.ts` `PlaySession`): the hero, its controls, voxels, chase camera and health bar, taken
+  out of the play sandbox unchanged so the sandbox and a run share one: what the user tunes in the sandbox is what a run
+  plays (the parameters are read from the same localStorage). The sandbox is its tools round a session.
+- **The stages** (`src/runplay/`): `rules.ts` (pure) — what each encounter becomes for the hero by its profile (race,
+  chase, fight, smash, trial; stand-ins named), the stage's numbers, `judge` (death first, then the stage's win, then
+  its clock), `outcomeFor` (won: the first outcome; lost: the last that isn't a capture — a finale lost alive ends the run
+  'fled', not the death rule; fell: taken where there's a capture, else the run 'lost'). `course.ts` (pure) — a loop of
+  gates moved onto crests, kickers where the land has none. `riders.ts` (pure) — rivals and the quarry on play's own bike
+  drive (core/bike.ts) under an autopilot; vehicles in PlayWorld, so the hook pulls up alongside them. `stage.ts` — a
+  stage in the level through contracts only: the world API (heights, water, `build` for the fort's towers, `deposit`
+  for kickers), Units (raiders), the session's voxel draw (gates, flags, riders); the banner, the edge arrow, the 3-2-1.
+  `player.ts` — `RunPlayer implements StagePlayer`.
+- **The run's clock** (`src/runplan/clock.ts`): stages count their planned minutes (more past par), legs their travel;
+  past the plan's deadline the run ends 'late'.
+- **Terrain at leg start** (`src/runplan/requests.ts` `askTerrain`): the destination's land graphed (±256 world units),
+  the plan's asks made of terrain before the precache makes the land.
+
+## A run as a situation (round 120, `runsit`; BACKLOG RS20-RS30, FO1, IT1; docs/GM.md "Situations")
+
+`?skipmenu=1&level=atlas&runplan=hoverbike` (or `=lich`): the run is one situation on the live map. The old arcade stages
+(`A run played`, above) only with `&runstages=1`.
+
+- **Contracts** (all additive): `contracts/situation.ts` (Situation, SituationThreat, SituationArea, AreaPlay,
+  SituationChoice, ChoiceEffect, SituationEnding/End), `contracts/items.ts` (ItemSlot, ItemDef with `also`, ItemEffect,
+  Loadout), `contracts/orders.ts` (Order, Followers). The SessionStory is untouched: a situation is its sibling and shares
+  Outcome for what an ending does.
+- **Who writes it**: the GM (data/situations/*.json, validated by `src/gm/situationcheck.ts`; storycheck's AtlasEvent
+  check is the shared `atlasEventProblems`), else the template (`src/runsit/fill.ts`, deterministic from the seed and the
+  world). `src/runsit/gm.ts` `situationFor` picks and validates.
+- **Pure** (Node-tested): `runsit/state.ts` SituationRun (phases area → edge → travel → … → ended; the clock at the
+  areas' planned minutes and the road pace; the threat's progress; pursuers; warn/evacuate/delay; the levy; the loadout;
+  `finaleSetup`), `runsit/finale.ts` FinaleRules (fires, the fall, the end) and `fireSite`, `runsit/items.ts`,
+  `runsit/followers.ts` UnitFollowers (Order → UnitJob over the Units contract), `runsit/finish.ts` (the world state:
+  `applyEffects`, the settlement's condition, the hero, the RunRecord).
+- **Live**: `runsit/area.ts` AreaPlay — through Units, the world API's fire, the followers and the settlements' places
+  only; the horde walked by a front (the agents' fields reach a few chunks: MARCH), outriders gaining on a slow hero off
+  the screen. `runsit/level-sit.ts` LevelSit — the card, the atlas map's overlay (the dead's march and where they are, the
+  ways on, the levy, the refuge), the leg by runplan's Journey with the streamer's precache, the warp, the end card, the
+  next run from where the hero is; after a fall it tells the settlements system (`setCondition`) and has the window made
+  again (`remake`: a fresh warp to itself).
+- **Engine changes**: fire.wgsl (timber, logs, canvas on top are fuel), structure.wgsl (wood takes 8x the heat damage and
+  fails to ash), Settlements `places(id)` / `setCondition(id, c)` (a ruined or abandoned settlement's columns stamped as
+  stumps, rubble and ash; its people none), PlaySession `damageTaken`.
+- **Window coordinates**: the situation is in world units; the level hands AreaPlay `toWin` (the nearest way round the
+  torus from the window's middle); slides reach AreaPlay through LevelSit.shift.
+- Scripts: `scripts/situation.mjs` (fill and check in Node via Vite's SSR loader), `scripts/runsit.mjs` (the headless
+  playthrough: `--want saved|burned|evacuated`, `--ff`), `scripts/storycheck.mjs` (stories and situations).
+
 ## Tests in Node (round 117, `testkit`; docs/TESTING.md)
 
 - `npm test` runs two vitest projects, unit (test/unit/**, src/**/*.test.ts) then gpu (test/gpu/**). Neither uses a
@@ -2582,8 +2701,11 @@ want to be able to flood a basin and bury things".
 
 - **Contract:** src/api/contracts/terrain.ts — `Terrain` (graph, request, edits, flood), `TerrainGraph` (regions at two
   levels: features 0, rooms 1; borders with a BarrierKind, causes, BorderMeasure and passes; cost/exits/reach per
-  `PassCaps`; soften), `TerrainRequest` (exits, obstacle, open) → `TerrainResult` (edits, needs), `FloodRequest` →
-  `FloodResult`. World units of the atlas. `PassCaps` stands in for the play track's controller contract; `CAPS_PRESETS`.
+  body; soften), `TerrainRequest` (exits, obstacle, open) → `TerrainResult` (edits, needs), `FloodRequest` →
+  `FloodResult`. World units of the atlas. A body is play's `ControllerProfile` (runplay, round 119: `PassCaps` and
+  `CAPS_PRESETS` are gone; `WALKER_PROFILE` is the default body rooms are made for): each step between samples costs
+  the run × play's `crossCost` (partition.ts stepCost), a room's ground is what costs ≤ `CLEAR_COST` (1.75); border
+  costs are cached per `profileKey`.
 - **Implementation:** src/terrain/terrain.ts `TerrainSystem` (window.reclaimed.terrain in the atlas level and the viewer).
   sample.ts + sample.wgsl: the land on a grid from the atlas's ground() (its own uniform buffers; bindings 20-26 read,
   40-41). partition.ts: the CPU graph (pure; unit-tested). flood.ts + flood.wgsl: the GPU fill and mark, and the CPU
@@ -2663,8 +2785,10 @@ like slowing you down or requiring you to cut through) is a good thing".
 - `library`: species(), mesh(id, seed), variants(id).
 - `placement`: fit(site) gives the species for a site's fields; plantsIn(rect) gives the trees and thickets standing
   there, as the GPU draws them.
-- `passability`: density(rect, height) and passage(rect, caps) → {density, speed, mustCut, blocked, cost}. `FloraCaps`
-  {mass, speed, cuts, flies, height} stands in for the play track's controller capabilities.
+- `passability`: density(rect, height) and passage(rect, body) → {density, speed, mustCut, blocked, cost}. `body` is
+  play's ControllerProfile (contracts/play.ts): `body.mass` (class 0..4), `body.height`, `vegetation.cuts`, and
+  `fly.ceiling` > 0 for a flyer. (merge122: the `FloraCaps` stand-in is gone, as terrain's PassCaps went in runplay —
+  one controller description every generator reads.)
 - The model: coverage = 1 − exp(−Σ fill·footprint·reach / area). A tree counts only its trunk (you walk under the
   canopy); grass below the waist barely slows a tall walker. Past 0.55 coverage a controller cuts (a blade, cuttable
   plants), breaks through (mass ≥ the stand's breakMass) or is blocked. A flyer ignores it.

@@ -12,6 +12,94 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 122 (2026-10-31, session 5, `merge122`) — runsit merged into places: the base for the opportunity loop (DECISIONS round 120)
+
+The user (round 120): "Feel free to merge whatever will be the base for that." `runsit` (a84b8c4, holding `runplay`,
+`play`, `terrain`, `runplan`) onto `places`. DEVLOG round 122 (`merge122`); the structure review in
+C:/Projects/shots88/merge122/STRUCTURE.md.
+
+| id | item | size | status |
+|---|---|---|---|
+| M122-1 | runsit merged onto places: heroes and controls, the bike camera (PL20), the situation runs; the old arcade stages behind `&runstages=1` (RS23) | M | done (merge122) |
+| M122-2 | One controller description: flora's `FloraCaps` stand-in gone — `flora.passability.passage(rect, body)` takes play's ControllerProfile, which gains `body: { mass, height }` (walker 1 / 2, bike 2 / 1.5, lich 1 / 2.5). Terrain's PassCaps and runplan's HEROES/BarrierKind/TerrainRequest/FloodRequest were already terrain's and play's (RPL1) | S | done (merge122) |
+| M122-3 | A run's journey hung on "waiting" for ever on the merged build: the pool (POOL_CAP 32) full, the destination's precached regions evicted as "outside where the window is heading" while the travel waited. The streamer pins a travel's destination window in the pool until the warp (Streamer.pinned); the eviction choice is scenes/pool-victim.ts, unit-tested | S | done (merge122) |
+| M122-8 | The region pool sized to the device (POOL_CAP is a fixed 32, `?pool=`): from the memory budget the tiles already calibrate (tilecal), at least the window + a pinned travel window + the ring's jobs, else a clear unsupported message | S | open |
+| M122-4 | runsit.mjs's autopilot sometimes circles the flee area's way on 15-25 cells off for minutes (THERE 8 cells; full stick at the bike's speed) — the playthrough is flaky; slow near the goal, or the area's goal a band the bike rides through | S | open |
+| M122-5 | Structure follow-ups (STRUCTURE.md): runsit reaches into runplan's insides (route, rng, graph, travel, consequences, heroes); runplay into play's (core/bike, core/chase, draw/shapes, session, world); play and runplay into render/camera and render/renderer types; LevelScene wires both run modes and the sandbox (three PlaySession.start sites) — each behind its owner's API | M | open |
+| M122-6 | Two answers to "how fast through brush": play's `vegetation.through` (crossCost) and flora's `passage().speed` — one should go (flora's is measured from the stand) | S | open |
+| M122-7 | The lich's raise dead through traits' `raise` effect (the hook in traits' ARCHITECTURE) once `traits` is on places (not yet at this merge) | S | open (needs traits) |
+
+## Round 120 (2026-10-31, branch `runsit`) — the run as a situation on the live map (DECISIONS round 120)
+
+The user (round 120): "the missions should not be disjoint levels they should be objectives and situations spawned into
+the active map with real consequences". First slice: the horde comes for the town. DEVLOG round 120 (`runsit`).
+
+| id | item | size | status |
+|---|---|---|---|
+| RS23 | Runplay's arcade stages (races, the chase, the fort) are reachable only with `&runstages=1`, for comparison: for the user to say delete them | S | asked |
+| RS24 | The areas' size for the bike: a hall 165 cells off is 5 s on the bike; areas are sized to the hero's cruise (16 s, 110-520 cells) but a 5-10 minute area needs more in it (more than one thing to do, a second wave, people to pick up on the way) | M | open |
+| RS25 | Plaster-and-tile towns don't burn in the fire (only timber, logs and canvas do — fire.wgsl/structure.wgsl): such a town is fired live round its houses and charred by the settlements system when the window is made again (25 s after the fall). Burning masonry interiors (floors, roofs' timbers inside) would make it burn in front of the player | M | open |
+| RS26 | Units walk their goal fields only near the goal (a go 80 cells off stood still): the horde is walked in by a front a stride ahead of it (area.ts MARCH). The agents' reach (scope, field front) or CPU paths between far points (ST15) would let a march be one order | M | open |
+| RS27 | The GM's format gaps (its report): endings can't depend on the path (the levy came, a crossing burned), no mark for a burned crossing, `fell` can't name where the hero died, the clock doesn't count a mount's pace | M | open |
+| RS28 | An evacuation's town is charred at the end whether or not the horde reached it (the ending says it was left to the dead); the people led out don't yet live in the refuge as a camp (a settlement record) | M | open |
+| RS29 | data/wiki/seed1 was stale against the live atlas (re-pulled this round); the Bell story (data/stories/the-bell-under-kaudru.json) fails storycheck against it (11 problems, before and after this branch: f-kuharm, s139) — the GM to rewrite it | S | open |
+| RS30 | A run's world saved between page loads (RPL8); the next run starts from the town region in the world as left (same page only) | S | open |
+| RS31 | (the user, Pixel 9a) "The bike link just teleports me around the map but never loads anything else": a run that couldn't start was swallowed (no card, a free hero) and the hero wasn't shifted with the window (the shift registered after the run was made) — now the fatal overlay with the reason and the hero in step from the start; a situation carries its world's print (`from.print`) and a GM file for another make of the seed gives way to the template, said on the card | S | done (runsit) — the phone's own cause to confirm on the phone |
+| RS32 | The same seed may make other towns on another GPU (the atlas's macro ground is made on the GPU and read back; rivers, sites and realms are planned on it): the GM's wiki cache, a saved world and a GM file assume one world. An atlas made the same everywhere (integer or fixed-point where it decides), or the cache pulled per device class | M | open |
+
+## Round 119 (2026-10-30, branch `runplay`) — a generated run played end to end (DECISIONS round 119)
+
+The user (round 119): "I need to actually play a generated run and try it out. Was there a link?" play, terrain and
+runplan merged; a run's stages played with play's heroes, not picked. DEVLOG round 119 (`runplay`).
+
+| id | item | size | status |
+|---|---|---|---|
+| RPL1 | Consolidate the tracks: one controller description (play's ControllerProfile + crossCost: terrain's PassCaps/CAPS_PRESETS and runplan's HEROES gone; `climb.drop`, `Crossing.drop/lava`, `WALKER_PROFILE`, `profileKey` added to play's contract), terrain's atlas graph as the run's region graph (`runGraph`; seed-1 fixture from Dawn), terrain's barrier kinds, the plan's asks as terrain's requests at leg start (`askTerrain`), terrain's FloodRequest in RegionRealisation | M | done (runplay) |
+| RPL2 | A run's stages played, not picked: `?skipmenu=1&level=atlas&runplan=hoverbike` (or `=lich`) — play's hero (PlaySession, shared with the sandbox), each encounter as play for the hero (race: gates over crests, kickers, rival riders to beat to the finish; chase: a rider to run down, the hook pulls alongside; fight: a pack of raiders; smash: the lich brings down a fort's towers on the clock; trial: markers on the clock — explore and talk stand in as it), win/lose → the planned outcome (StagePlayer contract), death/capture/the run's clock, travel on the atlas map, the end card (what changed in the world, the hero's record), another run from the world as left | L | done (runplay) — for the user to play on the phone |
+| RPL3 | Stage rules unit-tested in Node (what each encounter becomes, judge, outcomeFor, the run's clock, the course, rivals and the quarry on the bike drive); scripts/runplay.mjs drives a whole short run headless through the real controls | M | done (runplay) |
+| RPL4 | The knight: its delves are a stand-in fight on foot rules until play ports it (PL5); `?runplan=knight` plays with the card's picks (no play hero) | M | open (needs PL5) |
+| RPL5 | Real dialog for talk stages, real exploring (cairns found, not markers ridden to): today trial stand-ins | M | open |
+| RPL6 | Rivals that fight back (mounted fights: the user's "swinging weapons at nearby enemies in front of the bike"), tricks scored in races (PL7) | M | open |
+| RPL7 | The stage's land shaped for it by terrain requests at leg start (ramps for a race, a wall round a fight): today the plan's generic asks (exits, obstacles) are made, the race's kickers are poured live; a race course routed through terrain's ramps | M | open |
+| RPL8 | A run's world saved between page loads (the world state lives in memory: a reload is a fresh world; GameplayGM owns saving, D-r97) | S | open |
+
+## Round 117 (2026-10-30, branch `runplan`) — run planning, GM consequences, travel (docs/RUNPLAN.md)
+
+The user (round 117): runs of "15-50 minutes with branching. Decisions should impact the world for the next run"; "the
+run manager should be able to get. The graph and request obstacles or otherwise request a certain number of exits";
+"A fast bike need races and chases. A combat soldier needs fun fights. A force of nature needs spectacle and power
+fantasy."
+
+| id | item | size | status |
+|---|---|---|---|
+| RP1 | The run manager: a branching run (start, 1-4 layers of two, a finale) planned on the region graph for the hero's capabilities, 15-50 min, every path to the finale; terrain requests (obstacles fun for the hero, exits per stage); `?runplan=view` viewer | L | done (runplan) |
+| RP2 | Consequences between runs: per-encounter outcomes (AtlasEvents + CharacterChanges), the GM's failure rules (death: the lich takes the map where the dead hold sway; capture: held at the captor's seat, rescue / escape next run; late: the threat wins), `finishRun`; characters (history, relationships, motivation, gear, statuses) and faction power/relations in the world state | M | done (runplan) |
+| RP3 | RegionState realised per generator at the boundary (`realise` → RegionRealisation: sunk/buried/flooded as height flood-fill requests, ruin/overgrowth/drowned/marks, undead/presence/welcome, flora, sky) — for terrain, structures, inhabitants, flora to read when their contracts land | M | done (contract + conversion; generators don't read it yet) |
+| RP4 | Travel on the atlas map: Journey (precache at once, events held until answered, arrive when animated and resident), en-route events (vista, poi, ambush, weather, traveller) | M | done in the viewer (stand-in loader); the level: RP5 |
+| RP5 | The same travel in the level: AtlasMap draws the run's legs, Journey with the streamer's precache, warp on arrival (`?level=atlas&runplan=bike`; a stage's play picked from its outcomes until the play track's heroes run stages) | M | done (runplan) |
+| RP8 | "fade between pretty views along the road": at a vista, the 3D view of the spot (precached with the leg) faded in over the map for a few seconds — the map-side zoom-in is in the viewer only | M | open |
+| RP6 | Swap the stand-ins: terrain's region graph for `factsGraph`, play's controller contract for `HEROES` | S | done (runplay, round 119): `runGraph(Terrain.atlasGraph())`, `heroCaps` from play's `library` profiles (RPL1) |
+| RP7 | Pinned sections (RC1): `RunStage.section` says what to keep resident; the tile atlas needs a pinned set | M | open |
+## Round 117 (2026-10-30, `play`) — the game layer: heroes, controllers, controls, gear, vehicles (DECISIONS round 117)
+
+The user: "I think just make a new layer you own so I can work from one session" / "We want the controls to vary per character and we want them to play differently" / "parameterize it so we can reason about it during generation". src/play/, contract src/api/contracts/play.ts.
+
+| id | item | size | status |
+|---|---|---|---|
+| PL1 | The play layer and its contract: controllers as data + module, a capability profile derived from the parameters, crossCost and fun for terrain, flora and runplan | M | done (play) |
+| PL2 | The hoverbike and the lich ported from GameplayGM onto Reclaimed's contracts, with the slice's pure modules and tests; the lich's slam (wrecking ball); the bike's ramp `carry` fix | M | done (play) |
+| PL3 | The play sandbox: ?skipmenu=1&level=atlas&play=hoverbike (or lich) — hero switch, live tune panel with the profile, spawn raiders, respawn; phone controls | M | done (play) — for the user to try on the phone |
+| PL4 | scripts/perf/play.mjs (timing, phone proxy) and scripts/playtest.mjs (behaviour, GIFs) | S | done (play) |
+| PL5 | Port the knight (delving: sword flicks, lunge, spin, bow, hook vault), then the gorilla, tank, mech, as play heroes with profiles | L | open |
+| PL6 | The lich's spellbook (zap, fireball, raise dead) and throws of physics bodies and torn-out rocks — needs a world API for bodies (GameplayGM's bodies.ts/rocks.ts reach into the engine) | M | open |
+| PL7 | Bike: the grappling hook (a tap: a foe yanked in, or the ground swung round — done, play); tricks scored (airtime, spins, slides), a race (checkpoints, a rival) still open — the user's "I would like to add more later" | L | wip (hook done) |
+| PL8 | Vegetation in the controllers: slowed in a thicket, cut through, once flora's contract has a density query; the profile already says what each is meant to do | M | open — flora's query is there and reads play's profile (merge122, M122-2); the drives don't call it yet |
+| PL9 | Many riders on the GPU (race rivals, AI bikes): the drives are pure (state, stick, dt, height) over flat Params — a kernel when there are many (D-r101) | M | deferred |
+| PL10 | Merge with herosandbox-r (registry, contract 1.1, traversal fields, autopilot): play heroes as registry entries; the Pilot steering along a traversal field by the play profile | M | open |
+| PL11 | A faster bike (cruise 22 → 32 cells/s, thrust 30 → 46, boost top 32 → 46, downhill 34 → 50; the camera pulls back 0.5 and leads 0.5 s) and spawned on hills (play/sandbox/hills.ts: the hilliest rideable spot near, from heights); ⛰ in the sandbox to go to other hills | M | done (play) |
+| PL12 | The hook cut early by a swipe (the momentum kept; the stick read turned by the swing after it, so no slide back); a foe on the line dragged behind or reeled in by a swipe back toward the bike | M | done (play) |
+| PL13 | The hook reels the bike up alongside another vehicle (PlayWorld.vehicles; the sandbox's 🏁 rival rider lapping a circle by the hero) | M | done (play) |
+| PL14 | The lich's life drain floats its victim up before its face (eased from where it was, its middle at the lich's face, bobbing; the lich turns to it) | S | done (play) |
 ## Round 120 (2026-10-31, session 5, `judge`) — the collapse judges side by side: judge B, the method of sections on the GPU (DECISIONS round 120)
 
 | id | item | size | status |
@@ -194,18 +282,19 @@ tests work and do quick smoke tests to find failures early." docs/TESTING.md.
 
 | id | item | size | status |
 |---|---|---|---|
-| RS20 | Runs as situations in the live map, not disjoint stages: a threat set moving toward a place (zombies assail a city; it burns if the player fails), changes made in the session (a dam broken floods the valley), chases, fleeing, a message delivered before the enemy; races only with arenas (jumps, crowds). Runplay's stages are the stand-in it replaces | L | next (the GM writes it from world state, templates allowed; 3-5 areas to start) |
-| RS21 | At an area's boundary: the atlas map with choices from the actual situation (ride to the Red Hold for reinforcements, or warn the town and lead the people into the hills) | M | next |
-| RS22 | Roguelike structure: items along the run with mechanical choices; time pressure (pursuers, a date to arrive by); encounters on the way that prepare for the final challenge | L | next |
-| PL20 | The bike unplayable in a run: the camera too close and the gates seen too late (look-ahead, zoom with speed, early notice) | S | open |
+| RS20 | Runs as situations in the live map, not disjoint stages: a threat set moving toward a place (zombies assail a city; it burns if the player fails), changes made in the session (a dam broken floods the valley), chases, fleeing, a message delivered before the enemy; races only with arenas (jumps, crowds). Runplay's stages are the stand-in it replaces | L | first slice done (runsit): "the horde comes for the town" — a situation on the live map, the GM writes it (data/situations), the template fills one from the world; the town really burns (RS23-RS30 follow) |
+| RS21 | At an area's boundary: the atlas map with choices from the actual situation (ride to the Red Hold for reinforcements, or warn the town and lead the people into the hills) | M | done (runsit): the edge card and the atlas map with the dead on the march, the levy, the refuge; each way on with what the clock says of it |
+| RS22 | Roguelike structure: items along the run with mechanical choices; time pressure (pursuers, a date to arrive by); encounters on the way that prepare for the final challenge | L | first slice done (runsit): items in slots offered at the hold and the trader; outriders that gain on a slow hero; the dead's clock; an ambush on the road |
+| PL20 | The bike unplayable in a run: the camera too close and the gates seen too late (look-ahead, zoom with speed, early notice) — HeroCamera.chase framing fitted in time (play/core/chase.ts), the bike 22 px a cell at rest out to 12 at speed, arrows to the next two gates with distances; warning at top speed ~1.0-1.6 s → 2.2-2.9 s (DEVLOG round 120) | S | done (runplay, this commit) |
+| PL22 | The bike's wider view on the phone: GPU time at 12 px a cell in a race (the headless check is vsync-bound); the gates often sit across the portrait phone's narrow width — a framing that leans toward the next gate if the arrows aren't enough | S | open |
 | PL21 | The lich: keep raising the dead and the rune casting (tornados, lightning) the user liked | M | open |
 | TR30 | Cave networks: mouths in cliffs much bigger, obviously entrances, leading into deep tunnels under the land (a noise band intersected with the land, SDF-blended), not overhangs; replaces the sea-cave work (TR21, TR24b) | L | asked (design session) |
 | IN20 | Creatures from swappable body segments, the same mechanism for equipment, fur, spikes and skins; vertex blending at joints; limbs and tails as secondary motion from root motion (Rain World); mounts and items (round 119) | L | asked (design session) |
 | FLO20 | Trees much bigger relative to the hero; forests where the camera is under the canopy | M | asked (design session) |
 | STR30 | Settlements with purposes (trading post, mine, lumber camp, ...) and stories | M | asked (design session) |
-| FO1 | Followers take orders from the hero; ordering them is the way into a building mode where the hero makes their own settlements | L | open |
+| FO1 | Followers take orders from the hero; ordering them is the way into a building mode where the hero makes their own settlements | L | first slice done (runsit): contracts/orders.ts (follow, hold, go, release) over Units; "Follow me" / "Hold here" in the town; building mode open |
 | LI1 | Rocks mixed through ordinary soil (not only cliffs and bases), so the lich has things to throw besides people | M | open |
-| IT1 | Items in slots: held item(s), helmet, cape, shirt, pants, mount, some asymmetric options; mechanical effects that force choices (pairs with IN20 segments) | L | open |
+| IT1 | Items in slots: held item(s), helmet, cape, shirt, pants, mount, some asymmetric options; mechanical effects that force choices (pairs with IN20 segments) | L | first slice done (runsit): contracts/items.ts (slots, asymmetric `also`, effects call-allies, lure, fire-ward, pace, guard), runsit/items.ts; drawing them open |
 | PL23 | A chase starts close to the quarry and already in pursuit; the user: fleeing suits the bike better than chasing ("it's hard to steer") — situation runs (RS20) favour fleeing | S | open |
 | STR31 | Cliffside cities: tiles on vertical surfaces, towns built into canyon walls with walkways (Bulwark as inspiration, not copied); builds on STR13 | L | next (after purposes, ports, lights) |
 | STR32 | Ports: docks, piers, moored ships, warehouses; ships | M | next (designed round 120) |

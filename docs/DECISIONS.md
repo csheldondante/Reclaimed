@@ -247,6 +247,14 @@ each was implemented.
   the big conflict's story before the run starts, so encounters can foreshadow it and motivations can be established;
   the content work is then sets of encounters, choices and stories.
 
+- The user, verbatim, on runsit's phone link (Pixel 9a, the Pages build of `runsit`): "The bike link just teleports me
+  around the map but never loads anything else. I can drive around though which is fun still but it's very broken" →
+  the run couldn't be made on the phone and the failure was swallowed (no card, a free hero), and the window's shift was
+  registered only after the run was made, so every slide moved the hero a region. Fixed on `runsit` (BACKLOG RS31): the
+  fatal overlay with the reason, the hero in step from the start, and a situation names the world it was written for
+  (another GPU can make the same seed with other towns: the GM's file is then not that world's, the template plays and
+  the card says so).
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:

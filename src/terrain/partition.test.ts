@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { partition, RegionGraph, type TerrainSamples } from './partition';
-import { CAPS_PRESETS } from '../api/contracts/terrain';
+import { WALKER_PROFILE } from '../api/contracts/play';
+import { library } from '../play/library';
 
 /** a w×h sample grid, step 4, ground from f(x, y) (sample coords) */
 function land(w: number, h: number, f: (x: number, y: number) => number, extra?: (S: TerrainSamples, i: number, x: number, y: number) => void): TerrainSamples {
@@ -14,7 +15,10 @@ function land(w: number, h: number, f: (x: number, y: number) => number, extra?:
   return S;
 }
 const graph = (S: TerrainSamples) => new RegionGraph(partition(S));
-const { walker, bike, lich } = CAPS_PRESETS;
+// (runplay: play's profiles — the walker, the hoverbike and the lich at their defaults)
+const walker = WALKER_PROFILE;
+const bike = library.get('hoverbike')!.profile();
+const lich = library.get('lich')!.profile();
 
 describe('partition', () => {
   it('a small open plain is one feature, one room', () => {
@@ -83,14 +87,18 @@ describe('partition', () => {
     }));
     expect(g.features().length).toBe(1);
   });
-  it('dense vegetation: a walker cuts through at a cost, a bike cannot', () => {
+  // (runplay: play's profiles — the bike is slowed in a thicket, not stopped: the user's "a soft barrier like slowing you down")
+  it('dense vegetation: a walker cuts through and a bike pushes through, both slower than the lich floats over', () => {
     const g = graph(land(100, 60, () => 100, (S, i, x) => { if (x >= 46 && x < 54) S.veg[i] = 0.95; }));
     const B = g.borders().find((b) => b.kind !== 'open')!;
     expect(B.kind).toBe('vegetation');
     const cw = g.cost(B.id, walker);
     expect(cw).toBeLessThan(Infinity);
-    expect(cw).toBeGreaterThan(8 * 4 * 4);
-    expect(g.cost(B.id, bike)).toBe(Infinity);
+    const cl = g.cost(B.id, lich);
+    expect(cw).toBeGreaterThan(cl * 1.2);
+    const cb = g.cost(B.id, bike);
+    expect(cb).toBeLessThan(Infinity);
+    expect(cb).toBeGreaterThan(cl * 1.2);
   });
   it('a ravine: lower than both sides; the bike jumps a narrow one', () => {
     const g = graph(land(100, 60, (x) => (x >= 49 && x < 51 ? 60 : 100)));

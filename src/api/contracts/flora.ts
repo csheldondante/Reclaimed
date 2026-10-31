@@ -20,8 +20,10 @@
 //   const m = lib.mesh('birch', 7)                 // the 7th seed's silver birch: vertices, indices, height
 //   flora.placement.fit({ veg: 4, moisture: 0.5, light: 0.8, altitude: 20, slope: 0.1, host: 'ground' })
 //   flora.placement.plantsIn({ x0, y0, x1, y1 })   // the trees (and thickets) standing there, as the GPU draws them
-//   flora.passability.passage(rect, { mass: 1, speed: 6, cuts: true, flies: false, height: 2 })
+//   flora.passability.passage(rect, library.get('hoverbike')!.profile())   // play's profile (contracts/play.ts)
 //     // → { density: 0.6, speed: 0.55, mustCut: true, blocked: false, cost: 1.8 }
+
+import type { ControllerProfile } from './play';
 
 /** A species' id (src/flora/species.ts SpeciesId; open-ended so new species need no contract change). */
 export type FloraSpeciesId = string;
@@ -113,23 +115,9 @@ export interface FloraPlacementApi {
   plantsIn(r: FloraRect): FloraPlant[];
 }
 
-/**
- * What a controller can do about plants (a stand-in until the play track's controller contract carries it). The play
- * track: "we plan to make an expanding library of controllers ... parameterize it so we can reason about it during
- * generation".
- */
-export interface FloraCaps {
-  /** mass class 0 (a cat) … 1 (a person) … 2 (a horse, a bike) … 3 (a charging knight, a car) … 4 (a wrecking ball) */
-  mass: number;
-  /** top speed (cells/s): speed through brush is what it loses */
-  speed: number;
-  /** carries a blade (or fire) to cut through */
-  cuts: boolean;
-  /** flies over it */
-  flies: boolean;
-  /** its height (cells): grass below the waist barely slows a tall walker */
-  height: number;
-}
+// What a controller can do about plants is play's ControllerProfile (contracts/play.ts): `body.mass` and `body.height`,
+// `vegetation.cuts`, and `fly.ceiling` > 0 flies over it. (merge122: flora's own FloraCaps stand-in is gone — one
+// controller description, as terrain's PassCaps went in runplay.)
 
 export interface FloraPassage {
   /** plant fill over the rectangle, at the controller's height (0 open … 1 solid) */
@@ -147,7 +135,7 @@ export interface FloraPassage {
 export interface FloraPassabilityApi {
   /** plant fill over the rectangle for a walker of this height (default 2 cells) */
   density(r: FloraRect, height?: number): number;
-  passage(r: FloraRect, caps: FloraCaps): FloraPassage;
+  passage(r: FloraRect, body: ControllerProfile): FloraPassage;
 }
 
 export interface Flora {

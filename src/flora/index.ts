@@ -1,7 +1,8 @@
 // The flora system (round 117): the contract (api/contracts/flora.ts) over the generators (library, species), the
 // placement rules and the passability model. It reads the world only through a FloraSource (the succession field as
 // the CPU mirror last read it, the window's size and origin), so it is tested on a made-up field.
-import type { Flora, FloraCaps, FloraLibraryApi, FloraPlant, FloraRect, FloraSpeciesInfo } from '../api/contracts/flora';
+import type { ControllerProfile } from '../api/contracts/play';
+import type { Flora, FloraLibraryApi, FloraPlant, FloraRect, FloraSpeciesInfo } from '../api/contracts/flora';
 import { cellAt, cellPos } from '../world/lattice';
 import { generate } from './generate';
 import { FloraLibrary, GAME_LIBRARY } from './library';
@@ -62,7 +63,7 @@ export class FloraWorld implements Flora {
     };
     this.passability = {
       density: (r, height = 2) => coverage(this.standPlants(r), this.area(r), height),
-      passage: (r, caps: FloraCaps) => passage(this.standPlants(r), this.area(r), caps),
+      passage: (r, body: ControllerProfile) => passage(this.standPlants(r), this.area(r), body),
     };
   }
 

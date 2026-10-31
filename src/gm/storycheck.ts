@@ -20,7 +20,7 @@ import type { Condition, Outcome, SessionStory } from '../api/contracts/story';
 
 export const ATLAS_EVENT_KINDS = [
   'sink', 'raise', 'bury', 'overgrow', 'freeze', 'thaw', 'storm', 'clear-storm', 'shadow', 'light',
-  'raise-dead', 'lay-dead', 'flood', 'drain', 'burn', 'ruin', 'rebuild', 'faction-presence', 'faction-attitude', 'mark',
+  'raise-dead', 'lay-dead', 'flood', 'drain', 'burn', 'ruin', 'rebuild', 'faction-presence', 'faction-attitude', 'faction-relation', 'faction-power', 'mark',
 ] as const satisfies readonly AtlasEventKind[];
 /** (a compile error here: world.ts has a kind the list above lacks) */
 export const ATLAS_EVENT_KINDS_COMPLETE: [Exclude<AtlasEventKind, (typeof ATLAS_EVENT_KINDS)[number]>] extends [never] ? true : false = true;
@@ -281,54 +281,7 @@ export function checkStory(input: unknown, world: CheckWorld): string[] {
     arr(`${at}.hostile`, o.hostile ?? []).forEach((c, i) => {
       if (!castById.has(c as string)) bad(`${at}.hostile[${i}]`, `${JSON.stringify(c)} isn't in the cast`);
     });
-    arr(`${at}.atlas`, o.atlas ?? []).forEach((e, i) => {
-      const ea = `${at}.atlas[${i}]`;
-      if (!isObj(e)) return bad(ea, 'expected an AtlasEvent (without id and run)');
-      keys(ea, e, ['kind', 'regions', 'magnitude', 'cause'], ['area', 'detail', 'level', 'location']);
-      if ('id' in e || 'run' in e) bad(ea, 'a story leaves "id" and "run" to the run');
-      const k = e.kind as string;
-      if (!ATLAS_EVENT_KINDS.includes(k as AtlasEventKind)) bad(`${ea}.kind`, `${JSON.stringify(k)} isn't an AtlasEvent kind (${ATLAS_EVENT_KINDS.join(', ')})`);
-      const regs = arr(`${ea}.regions`, e.regions);
-      if (!regs.length) bad(`${ea}.regions`, 'is empty');
-      for (const r of regs) if (!regionIds.has(r as number)) bad(`${ea}.regions`, `region ${JSON.stringify(r)} isn't in the snapshot`);
-      if (k === 'bury') num(`${ea}.magnitude`, e.magnitude, 0.5, 40);
-      else if (k === 'faction-presence' || k === 'faction-attitude') num(`${ea}.magnitude`, e.magnitude, -1, 1);
-      else num(`${ea}.magnitude`, e.magnitude, 0, 1);
-      if (k === 'flood') {
-        if (e.level === undefined) bad(`${ea}.level`, 'a flood needs its level (world z); its magnitude is a 0..1 strength');
-        else if (num(`${ea}.level`, e.level, 0, 1000) && world.ground)
-          for (const r of regs) {
-            const g = world.ground(r as number);
-            if (g && (e.level as number) <= g.min) bad(`${ea}.level`, `a flood at z ${e.level} stands under all of region ${r}'s ground (${g.min}..${g.max}): it floods nothing`);
-            if (g && (e.level as number) > g.max + 30) bad(`${ea}.level`, `a flood at z ${e.level} is far over region ${r}'s ground (${g.min}..${g.max})`);
-          }
-      } else if (e.level !== undefined) bad(`${ea}.level`, `only a flood has a level (this is a ${k})`);
-      if (e.location !== undefined) {
-        const l = locById.get(e.location as string);
-        if (!l) bad(`${ea}.location`, `${JSON.stringify(e.location)} isn't one of the story's locations`);
-        else if (!regs.includes(l.region)) bad(`${ea}.location`, `${e.location} is in region ${l.region}, which the event doesn't touch (${regs.join(', ')})`);
-      }
-      if (e.area !== undefined) {
-        if (!isObj(e.area) || !Array.isArray(e.area.at) || e.area.at.length !== 2) bad(`${ea}.area`, 'expected { at: [x, y], radius }');
-        else num(`${ea}.area.radius`, e.area.radius, 1);
-      }
-      const d = (e.detail ?? {}) as J;
-      if (e.detail !== undefined && !isObj(e.detail)) bad(`${ea}.detail`, 'expected an object');
-      if (k === 'storm' && !STORMS.includes(d.storm as string)) bad(`${ea}.detail.storm`, `a storm needs detail.storm: ${STORMS.join(', ')}`);
-      if (k === 'bury' && !BURY.includes(d.material as string)) bad(`${ea}.detail.material`, `a bury needs detail.material: ${BURY.join(', ')}`);
-      if ((k === 'faction-presence' || k === 'faction-attitude') && !factionIds.has(d.faction as string)) bad(`${ea}.detail.faction`, `${k} needs a snapshot faction, got ${JSON.stringify(d.faction)}`);
-      if ('location' in d) bad(`${ea}.detail.location`, 'a story location goes on the event itself (AtlasEvent.location)');
-      if (k === 'mark') {
-        str(`${ea}.detail.name`, d.name);
-        str(`${ea}.detail.kind`, d.kind);
-      }
-      if (!isObj(e.cause)) bad(`${ea}.cause`, 'expected { by: "story", ref? }');
-      else {
-        keys(`${ea}.cause`, e.cause, ['by'], ['ref']);
-        if (e.cause.by !== 'story') bad(`${ea}.cause.by`, `a story's events are by "story", got ${JSON.stringify(e.cause.by)}`);
-        if (e.cause.ref !== undefined) str(`${ea}.cause.ref`, e.cause.ref);
-      }
-    });
+    arr(`${at}.atlas`, o.atlas ?? []).forEach((e, i) => P.push(...atlasEventProblems(`${at}.atlas[${i}]`, e, { regionIds, factionIds, ground: world.ground, regionOf: (l) => locById.get(l)?.region as number | undefined })));
     arr(`${at}.attitude`, o.attitude ?? []).forEach((a, i) => {
       const aa = `${at}.attitude[${i}]`;
       if (!isObj(a)) return bad(aa, 'expected an object');
@@ -594,4 +547,85 @@ function forEachOutcome(s: J, f: (o: unknown) => void): void {
     if (isObj(o.failed)) f(o.failed.outcome);
   }
   for (const h of (Array.isArray(s.happenings) ? s.happenings : []) as J[]) if (isObj(h)) f(h.effects);
+}
+
+/**
+ * (round 120, runsit: shared with the situation checker, src/gm/situationcheck.ts) An AtlasEvent as a story or a
+ * situation writes it (no id, no run): its kind, regions, magnitude for the kind, a flood's level against the ground,
+ * a story location (when `regionOf` knows story locations; none: a location is refused), the detail each kind needs,
+ * the cause. Returns every problem, each prefixed with `ea`.
+ */
+export function atlasEventProblems(
+  ea: string,
+  e: unknown,
+  ctx: { regionIds: Set<number>; factionIds: Set<string>; ground?: CheckWorld['ground']; regionOf?: (location: string) => number | undefined },
+): string[] {
+  const P: string[] = [];
+  const bad = (at: string, msg: string) => P.push(`${at}: ${msg}`);
+  const { regionIds, factionIds } = ctx;
+  const world = { ground: ctx.ground };
+  const keys = (at: string, o: J, req: string[], opt: string[] = []) => {
+    for (const k of req) if (!(k in o)) bad(at, `missing "${k}"`);
+    for (const k of Object.keys(o)) if (!req.includes(k) && !opt.includes(k)) bad(at, `"${k}" isn't a field of this type (no prose outside the fields)`);
+  };
+  const str = (at: string, v: unknown) => {
+    if (typeof v !== 'string') return bad(at, `expected a string, got ${JSON.stringify(v)}`), false;
+    if (!v.trim()) return bad(at, 'is empty'), false;
+    return true;
+  };
+  const num = (at: string, v: unknown, lo = -Infinity, hi = Infinity) => {
+    if (typeof v !== 'number' || !Number.isFinite(v)) return bad(at, `expected a number, got ${JSON.stringify(v)}`), false;
+    if (v < lo || v > hi) return bad(at, `${v} is outside ${lo}..${hi}`), false;
+    return true;
+  };
+  const arr = (at: string, v: unknown): unknown[] => {
+    if (!Array.isArray(v)) return bad(at, `expected an array, got ${JSON.stringify(v)}`), [];
+    return v;
+  };
+  if (!isObj(e)) return bad(ea, 'expected an AtlasEvent (without id and run)'), P;
+  keys(ea, e, ['kind', 'regions', 'magnitude', 'cause'], ['area', 'detail', 'level', 'location']);
+  if ('id' in e || 'run' in e) bad(ea, 'a story leaves "id" and "run" to the run');
+  const k = e.kind as string;
+  if (!ATLAS_EVENT_KINDS.includes(k as AtlasEventKind)) bad(`${ea}.kind`, `${JSON.stringify(k)} isn't an AtlasEvent kind (${ATLAS_EVENT_KINDS.join(', ')})`);
+  const regs = arr(`${ea}.regions`, e.regions);
+  if (!regs.length) bad(`${ea}.regions`, 'is empty');
+  for (const r of regs) if (!regionIds.has(r as number)) bad(`${ea}.regions`, `region ${JSON.stringify(r)} isn't in the snapshot`);
+  if (k === 'bury') num(`${ea}.magnitude`, e.magnitude, 0.5, 40);
+  else if (k === 'faction-presence' || k === 'faction-attitude' || k === 'faction-relation' || k === 'faction-power') num(`${ea}.magnitude`, e.magnitude, -1, 1);
+  else num(`${ea}.magnitude`, e.magnitude, 0, 1);
+  if (k === 'flood') {
+    if (e.level === undefined) bad(`${ea}.level`, 'a flood needs its level (world z); its magnitude is a 0..1 strength');
+    else if (num(`${ea}.level`, e.level, 0, 1000) && world.ground)
+      for (const r of regs) {
+        const g = world.ground(r as number);
+        if (g && (e.level as number) <= g.min) bad(`${ea}.level`, `a flood at z ${e.level} stands under all of region ${r}'s ground (${g.min}..${g.max}): it floods nothing`);
+        if (g && (e.level as number) > g.max + 30) bad(`${ea}.level`, `a flood at z ${e.level} is far over region ${r}'s ground (${g.min}..${g.max})`);
+      }
+  } else if (e.level !== undefined) bad(`${ea}.level`, `only a flood has a level (this is a ${k})`);
+  if (e.location !== undefined) {
+    const lr = ctx.regionOf?.(e.location as string);
+    if (lr === undefined) bad(`${ea}.location`, `${JSON.stringify(e.location)} isn't one of the story's locations`);
+    else if (!regs.includes(lr)) bad(`${ea}.location`, `${e.location} is in region ${lr}, which the event doesn't touch (${regs.join(', ')})`);
+  }
+  if (e.area !== undefined) {
+    if (!isObj(e.area) || !Array.isArray(e.area.at) || e.area.at.length !== 2) bad(`${ea}.area`, 'expected { at: [x, y], radius }');
+    else num(`${ea}.area.radius`, e.area.radius, 1);
+  }
+  const d = (e.detail ?? {}) as J;
+  if (e.detail !== undefined && !isObj(e.detail)) bad(`${ea}.detail`, 'expected an object');
+  if (k === 'storm' && !STORMS.includes(d.storm as string)) bad(`${ea}.detail.storm`, `a storm needs detail.storm: ${STORMS.join(', ')}`);
+  if (k === 'bury' && !BURY.includes(d.material as string)) bad(`${ea}.detail.material`, `a bury needs detail.material: ${BURY.join(', ')}`);
+  if ((k === 'faction-presence' || k === 'faction-attitude' || k === 'faction-relation' || k === 'faction-power') && !factionIds.has(d.faction as string)) bad(`${ea}.detail.faction`, `${k} needs a snapshot faction, got ${JSON.stringify(d.faction)}`);
+  if ('location' in d) bad(`${ea}.detail.location`, 'a story location goes on the event itself (AtlasEvent.location)');
+  if (k === 'mark') {
+    str(`${ea}.detail.name`, d.name);
+    str(`${ea}.detail.kind`, d.kind);
+  }
+  if (!isObj(e.cause)) bad(`${ea}.cause`, 'expected { by: "story", ref? }');
+  else {
+    keys(`${ea}.cause`, e.cause, ['by'], ['ref']);
+    if (e.cause.by !== 'story') bad(`${ea}.cause.by`, `a story's events are by "story", got ${JSON.stringify(e.cause.by)}`);
+    if (e.cause.ref !== undefined) str(`${ea}.cause.ref`, e.cause.ref);
+  }
+  return P;
 }

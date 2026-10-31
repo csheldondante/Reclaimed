@@ -13609,6 +13609,141 @@ Dawn in Node). The smoke needs the runner's own build server (warm snapshots), a
 rename in .testcache fails EPERM, so caa0827's guard made every runner script fail there. Now the build is copied into the
 cache instead, index.html last (a build counts as present once its index.html is). `npm run smoke` then passed: the atlas
 ready in 65 s with three other agents' checks on the GPU, sim ticking, no fatal.
+## 2026-10-30 — round 117 (`play`): the game layer moved in — heroes, controllers, controls, a sandbox (PL1-PL4)
+
+**Why a layer of its own.** The user (round 117 part 3): "I think just make a new layer you own so I can work from
+one session. I want the separation of concerns but I also want to be able to iterate on player controls which is
+probably the most important thing for fun." / "Let's make it another system so it is encapsulated but move it in so
+we can work on it and iterate here." So `src/play/` is the game layer: the engine never imports it (the level loads
+it with a dynamic `import()` only for `?play=`), it reaches the world only through contracts (the world API, the
+Units contract, the camera), and other tracks read it only through `src/api/contracts/play.ts`.
+
+**What moved from GameplayGM** (runtimes/hoverbike @ experiment/slice 515fcd9, read only): the pure pieces verbatim
+with their tests — core/bike.ts (the glide drive: cushion, crest launch, boost, crash, Akira slide), core/levitate.ts,
+core/intercept.ts (the pass planner), core/fling.ts, core/aim.ts, core/gestures.ts (Stroke: tap, flick, circle, drag),
+core/intent.ts (gesture → intent → planned, assisted action; "a miss the player earned stays a miss") — 39 of their
+tests pass unchanged in Node (vitest). Then the two heroes re-homed on Reclaimed's contracts: heroes/bike.ts (the
+hover rider: ram, side slash through the pass planner, couched lance, its wake/downwash/dust through the wind and fx
+APIs) and heroes/lich.ts (levitation, tap to glide, float, face-to-face soul drain, telekinetic carry and smack, the
+planned fling, pull, force push, the storm). Left in GameplayGM for now: the knight, gorilla, tank and mech; the
+lich's spellbook and its physics-body/rock throws (no world API for bodies yet); hero select and saving.
+
+**The capability profile (why derived, not written).** The user: "parameterize it so we can reason about it during
+generation and make not only obstacles but fun ones." Each controller is data (ParamSpec list + defaults,
+controllers/*.ts) plus a small module (heroes/*.ts), and `profile(params)` derives what generators need — speed,
+turn radius, climb, jump height/gap (and whether it needs a ramp), fly ceiling, water, vegetation, bridge,
+destruction, encounter weights — from the same numbers the controller runs on. Tune the bike's launch cap and its
+ramps' clearable gap grows; the generators can't drift from the controller. `crossCost(profile, crossing)` (1 open
+ground, Infinity can't) and `fun(profile)` (ramps, straights, slaloms, packs, breakables, climbs, delves, with sizes)
+are pure functions in the contract so terrain, flora and runplan agree on one answer.
+
+**A new ability: the slam** (the lich's wrecking ball). A tap on the lich (or 💥): the world API's crater under it, a
+ring that shoves and throws (Units.strike with lift and stun), the air slammed out. The GameplayGM lich broke nothing
+of the ground itself; "a floating wrecking ball power fantasy" asked for it. Its health is 30 (12 for the slice's):
+the raiders wore it down in seconds in the first browser run, not a power fantasy.
+
+**A drive fix: `carry`.** Ported as-is, the bike rode a kicker with vz pinned at 0 (the ground clamp zeroed it every
+step on a climb faster than the cushion lifts), so it went over a ramp's lip with no upward speed — "launching off
+ramps" only happened where the ground fell away. Now, held down on a climb, it keeps `carry` of the ground's rise
+speed (the slope over a cell either side, times its speed, at most launchMax): a 0.6 kicker throws it ~13 cells/s up
+and it clears a 10-cell gap to a landing at the same height (heroes.test.ts). `carry: 0` is the slice's drive again —
+a slider in the tune panel, so the user can compare.
+
+**Why the controllers run on the CPU (the D-r101 ruling said the GPU).** One hero, a few hundred flops a frame, and it
+must answer the thumb in the same frame; a GPU kernel adds a readback (1-2 frames) for no throughput win. Measured:
+the whole play layer (input, hero, its voxels written) costs 0.12 ms of main thread a frame on the phone proxy
+(scripts/perf/play.mjs). Kept GPU-ready: Params are flat number records and the drives are pure functions of (state,
+stick, dt, height), so many riders (race rivals, AI bikes) can move to a kernel when there are many (PL9).
+
+**Units contract tweak (for main to consolidate).** Optional `strike(AreaHit, by)`, `hold(id, at)`, `release(id, vel)`,
+`maxHeld` on Units — a hero's blows shove and throw, telekinesis holds — implemented in AgentUnits by forwarding to
+Agents.hit/hold/launch (its private goal `release` renamed `releaseGoal`). The play world requires them (a clear error
+otherwise, no silent fallback).
+
+**The sandbox** (`?skipmenu=1&level=atlas&play=hoverbike|lich`, `&tune=1` opens the panel): the atlas level as
+deployed, every system on. Hero chips top left (switch in place), ⚙ tune (a slider per parameter, grouped, live; the
+profile it gives shown above; reset; copy as JSON; kept per hero in localStorage), 👹 raiders spawned ahead, ⟲ back up.
+Controls phone first: a floating stick where the left thumb lands (the bottom-left zone), everything else the hero's
+gestures, thumb-sized buttons bottom right with gauges (the boost tank, the slam's cooldown). The camera follows at a
+fixed angle, leads along the way and pulls back with speed (D-r80). The level's own camera buttons, turn and score bar
+are hidden while it runs (they sat under the thumbs: the first browser run's screenshot).
+
+**Measured** (Intel Xe-LPG iGPU, phone proxy 412x915 dpr 2.6 q=low, data/perf/play-intel-xe-lpg.json): riding flat
+out 20 s with raiders spawned every 5 s — 94 fps, p50 9.8 ms, p95 15 ms, 6 frames over 50 ms (the window's slides);
+the lich in a storm with slams every 2 s — 99 fps, p50 9.9, p95 11.9, 2 over 50 ms. The play layer 0.12 ms a frame of
+CPU, worst 1.3 ms. The behaviour check (scripts/playtest.mjs): the bike rode 86 cells in ~4 s, top 32 cells/s
+(boost), the raiders ahead died to the ram; the lich floated a tapped raider and slammed two craters. GIFs in
+C:/Projects/shots88/play/. Unit tests: 60 in src/play (vitest), the heroes at their contract on synthetic terrain.
+
+## 2026-10-30 — round 117 (`play`): the fight readable at play zoom; real touches; testkit
+
+**Why.** Main looked at the first GIFs: the fight didn't read (raiders in one frame, no swing seen), and the level's
+own buttons still sat under BOOST and SLAM (those shots predated the `.play-on` hiding; the new ones show it works).
+- The blade leaves a trail: glowing voxels (the body glow bits) along each of its last sweeps, 0.22 s, thinning as
+  they age — the arc of the cut is seen at the zoom the bike is played at. A cut throws the one struck (`slashLift`
+  5 cells/s, a slider) and stuns it a moment, sprays sparks along the cut and dust off it, and the HUD says HIT!.
+- A camera jolt (`PlayHero.shake`, decaying in a quarter second): a cut, a hard landing, a crash, the lich's slam.
+- The bike's base zoom 34 (26), pulling back 0.4 at full speed (0.45): the bike was ~30 px at 79 km/h on the phone.
+- scripts/playtest.mjs's fight is staged so it shows one: a file of raiders 2.5 cells left of the bike's way, a swipe
+  whenever one is coming up on that side (11 swipes, 13 frames of HIT!, the file of 6 cut down, the slash planned with
+  4% help). C:/Projects/shots88/play/bike-fight.gif.
+
+**Real touches (scripts/playtouch.mjs).** CDP multi-finger touches on a phone-shaped page: the left thumb's stick held
+while the right thumb swipes beside the bike (read as a slash), a tap on ⚙ opens the tune panel, a tap on 💀 switches,
+a tap on the ground glides the lich 19 cells. It found a real phone bug: the UI layer's `#ui > * { pointer-events:
+auto }` gave the hint toast pointer events, and over the middle of the screen it ate the lich's taps for 6 s after a
+switch — the toast, bar and info now take none (inline). (Harness note: Chrome reads a touchEnd's points as the ones
+lifted; an empty list lifts every finger.)
+
+**testkit merged** (places 8bd557b): the play tests run in places' vitest 4 unit project beside their code (61 tests,
+src/play); `npm test` 138 + 1 expected fail.
+
+## 2026-10-30 — round 117 (`play`): the bike's grappling hook (PL7)
+
+The user: "Maybe a grappling hook to reel in enemies or do sharp turns." A tap (the bike's right thumb had no tap) —
+on a foe within `hookRange` (16 cells; as it's seen, within 48 px of the finger): it's yanked in, thrown on a lob that
+lands where the bike will be in `hookYank` s, so the ram or the next slash meets it; on the ground within reach: an
+anchor, and the bike swings round it on a rope its length — whatever pulls outward taken off, the stick's push turned
+along the swing (the rope, not the thumb, turns it; no slide while it swings) — until `hookTime` s or `hookTurn`
+radians round; a tap while swinging lets go. The rope is drawn hand to anchor (or to the foe). Profile: a hook makes
+the bike's turn radius ~0.4 of its reach (6.4 cells, from 16 carved), chase 1, fight 0.7 — so runplan can ask for
+hairpins and posts to swing round. In the browser (scripts/playtest.mjs): the way turned 2.35 rad (135 deg) in one
+swing at 79 km/h; C:/Projects/shots88/play/bike-hook.gif. A bug the browser found that Node didn't: the window's slides
+mid-swing left the anchor behind (the bike was shifted, the anchor wasn't) — BikeHero.shift moves the anchor and the
+blade's trail; a test for it (heroes.test.ts, 65 tests now).
+
+## 2026-10-30 — round 118 (`play`): the user's first ride — a faster bike on hills, the hook cut and pulled, riding alongside, the drain lifts (PL11-PL14)
+
+The user, after playing the sandbox on the phone (DECISIONS round 118): "I want to bike to be faster and to try on hills
+... can you swipe to cut it and release early? It would be cool to pull enemies in or drag them that way too or to pull
+up along other vehicles ... I do want the life drain to float them up in front of the lich".
+
+- **Faster** (controllers/hoverbike.ts BIKE_FASTER; the core's tested BIKE untouched): cruise 22 → 32 cells/s, thrust
+  30 → 46 cells/s², boost top 32 → 46 (thrust 45 → 70), downhill top 34 → 50. In the browser: top 45.9 cells/s boosted
+  (was 31.9). The sliders' ranges widened (cruise to 90, thrust to 160, boost top to 120). The camera pulls back 0.5 (0.4)
+  at full speed and leads 0.5 s (0.35) so what's coming is on screen in time.
+- **A ramp fix the faster bike found**: `carry` measured the slope by a central difference a cell either side, which at
+  a kicker's lip looked past it, saw the drop and threw nothing at the very step it should; it reads the cell just
+  climbed now (the test that caught it: the steep kicker at 32 cells/s).
+- **Hills** (play/sandbox/hills.ts findHills, pure, tested): the hilliest rideable spot within reach — candidates every
+  8 cells, each judged by the slopes round it steep enough to launch off but under the bike's climb, and its relief up to
+  12 cells, walls counted against. From heights alone, since the terrain track's contract isn't on places yet. The bike
+  starts there; ⛰ goes to another (30+ cells away). In the browser: 8 cells of rise and fall round the start.
+- **The hook rebuilt as its own piece** (heroes/hook.ts, so other riders can carry it): a swipe while hooked cuts the
+  rope — a swing ends with its momentum, a dragged foe flies off as it was going; a tapped foe is held on the line and
+  dragged behind at the rope's length, scraped when fast and swung into others (the blow just ahead of it, sparing
+  itself), and a swipe back toward the bike reels it in (the old yank); a tapped vehicle reels the bike up alongside
+  it, its speed matched, till cut. After a swing the thumb's stick is read turned by what the swing turned, till it's
+  let go — holding the stick the old way had hauled the bike straight back into an Akira slide.
+- **A rival rider** (play/sandbox/rival.ts, 🏁): the same drive under an autopilot lapping a 40-cell circle that passes
+  the hero, at 0.6 of the cruise — steering by the velocity it wants (along the circle, back toward it when off), because
+  steering at a point ahead drifted it out of its lap with the drive's momentum. It's a vehicle in play
+  (`PlayWorld.vehicles`, new and optional), not a unit: hooks see it, enemies don't. The seed of race rivals (PL7).
+- **The drain** (lich.ts SOUL): the victim eases up from where it was (0.8 s, smoothstep) to 1.6 cells before the lich,
+  its feet at the lich's face — hung plainly up in the air (its middle at the face, the first try, read as standing beside it) — bobbing; the lich turns to it.
+- Tests: 75 in src/play (hook drag/reel/cut, alongside, swing cut keeps momentum, no slide after a swing, hills, rival,
+  drain). Browser (scripts/playtest.mjs, scripts/playtouch.mjs): GIFs bike-hills, bike-drag, bike-alongside, lich-drain
+  in C:/Projects/shots88/play/.
 
 ## 2026-10-30 — round 117 (`terrain`): rivers off the texel grid with banks; the region graph; the basin flood; the terrain viewer
 
@@ -14991,3 +15126,405 @@ material, no voxel path on the lattice) — seen in the atlas shots: the toppled
   body mesh with dust beside it (softBlows 1: it sank into the soft ground, a spray and a rim). A smaller cut (r 4.5)
   leaves a cave in the pillar's foot that the judge holds. Shots: C:/Projects/shots88/merge121/ (1-7, small cut) and
   deepcut/ (the collapse); tilegate/, tilegate-places/ (places' goldens), tilegate-pan2/ (the phone pan rerun).
+
+## 2026-10-30 — Run planning, consequences and travel (round 117, branch `runplan`; docs/RUNPLAN.md)
+
+**What.** A run manager that plans a branching run on the region graph fitted to the hero, the stand-in GM's
+consequences for the next run (characters, factions, terrain and cities, regional statuses, failure by death, capture
+or the clock), RegionState converted for each generator, travel on the atlas map with en-route events and precache, and
+a viewer (`?runplan=view&seed=1&hero=bike`). The user (round 117): "15-50 minutes with branching. Decisions should
+impact the world for the next run"; "the run manager should be able to get. The graph and request obstacles or
+otherwise request a certain number of exits"; "A fast bike need races and chases. A combat soldier needs fun fights. A
+force of nature needs spectacle and power fantasy."
+
+**Why CPU.** The planner is a few Dijkstras over 7772 regions once a run, deterministic from the seed, unit-tested in
+Node; the GPU only sees its outputs. Measured (scripts/perf/runplan.mjs, the viewer on the desktop iGPU at the phone
+proxy's size): a plan ~45-100 ms in the page (much of it `world.snapshot()` cloning every region's state; 15-45 ms in
+Node), the travel animation at the display's rate (median 10 ms, p95 10.3 ms). The viewer's panel first called
+`world.snapshot()` on every redraw (~30 ms each, a played run ~0.65 s); it now reads what it shows.
+
+**Why layers of two, a finale.** Every choice is a real fork (two places, two kinds of play when the hero likes more
+than one), every path reaches the finale so the run can't strand the player, and the length is bounded (stage minutes
+are budgets, scaled when a path would leave 15-50). Two stages of a layer at least 1100 world units apart: the first
+look at seed 1 had both choices in neighbouring chasms with their labels on top of each other (500).
+
+**Why one flood-fill request for sea, sand and flood.** The user: "a GPU flood fill based on height … We can flood with
+water, sand, magma etc." — `realise` turns sunk (a new shallow sea), buried (a ruin under sand or ash) and flooded into
+the same `FloodRequest` (seed, level, material) for terrain's tool.
+
+**Why stand-ins.** Terrain's graph and play's controller contract weren't published when this started; `factsGraph`
+(barriers guessed from region kinds and ground, the atlas's roads as crossings) and `HEROES` (read off GameplayGM's
+controllers and the user's words) sit behind `RegionGraph` and `HeroCapabilities`, so swapping them changes no test.
+
+**Tests.** test/unit/runplan.test.ts (21), runplan-play.test.ts (3), ~2 s in the unit tier (testkit's vitest 4 setup).
+**Looked at.** C:/Projects/shots88/runplan/ (bike-1-plan.png, bike-3-event.png, bike-travel.gif, bike-5-end.png,
+bike-phone.png).
+
+## 2026-10-30 — A planned run travelled in the level (round 117, `runplan`; RP5, RC2, RC3)
+
+**What.** `?level=atlas&runplan=bike`: the run planned from the spawn on the live atlas; a card for the stage (its
+outcomes picked for now — the stage's play is the play track's); a leg chosen opens the atlas map with the plan drawn
+on it, the map zoomed to the leg and following the marker, en-route events held on the card until answered; the
+destination's land asked for the moment the leg starts (`precacheWarp`: 49 regions, ~1 ms to ask), and the arrival
+waits until `Streamer.precached` says every region of the destination's window is made — then the warp.
+**Why a readiness check on the streamer.** The user's "animate travel on that map while we load in the background"
+needs to know when the background is done; `precache` only asked. `precached(ox, oy)` reads the streamer's own job and
+pool maps (no new state). **Measured** (scripts/runplanlevel.mjs, desktop iGPU, every system in play, 1x): an 8-12 s
+leg animation, the land ready before it ended every time (waited 0.0 s); the warp after it lands on made land
+(level-bike-4-arrived.png).
+**Looked at.** C:/Projects/shots88/runplan/level-bike-1-start.png, -2-legs.png, -3-event.png (the map on the leg, the
+ambush card), -travel.gif, -4-arrived.png. The first try left the map at the whole continent's zoom and the card over
+the map's buttons: now zoomed to the leg, the card at the bottom while travelling. A lava field was drowned into a sea
+by the lich's first pick: lava and sand country now bury first.
+
+
+## 2026-10-30 — Play's controller profiles as the run manager's capabilities (round 117, `runplan`; RP6)
+
+play (6c3947f) published `ControllerProfile` with `crossCost(profile, crossing)` and `fun(profile)`. The adapter
+(src/runplan/play-adapter.ts `capsFromProfile`) turns each barrier into the ground it is in play's terms (a cliff a
+12-cell step, a ravine a 10-cell gap — with a ramp when it's the hero's planned fun crossing — a river 3 deep, the sea
+30) and asks play's own crossCost, so terrain, flora and runplan agree on what a hero can pass. Why an adapter: the
+planner thinks in borders between regions, play in crossings of ground; this is where they meet. It reads the profile
+structurally (play isn't on places yet); at the merge `ProfileLike` becomes `ControllerProfile`. The planner now asks
+for a fun obstacle the bare barrier would stop (a bike's ravine) because the request carries its passage (the ramp).
+Merged places (testkit): the tests moved to test/unit/runplan*.test.ts, the seed-1 fixture to test/support/seed1.ts.
+
+
+## 2026-10-30 — The tracks consolidated: play, terrain and runplan on one branch with one controller description (round 119, `runplay`)
+
+The user (round 119): "I need to actually play a generated run and try it out. Was there a link?" A run was planned
+and travelled (runplan) but its stages were picked from a card: the heroes (play) and the region graph (terrain) lived
+on other branches. `runplay` merges origin/play, origin/terrain and origin/runplan (in that order) and reconciles
+what each had stood in for the others (main's notes, consolidate.md):
+
+- **One controller description: play's.** `ControllerProfile` + `crossCost` + `fun` (contracts/play.ts) is the only
+  account of what a hero can cross. Terrain's `PassCaps`/`CAPS_PRESETS` and runplan's `HEROES` table are gone.
+  - Two fields play didn't have and terrain needed move into play's contract: `climb.drop` (the deepest drop taken
+    safely: the walker 6, the bike and the lich any — core/bike.ts has no fall damage) and `Crossing.drop` / `Crossing.lava`
+    (only what flies goes over lava). `WALKER_PROFILE` is Reclaimed's on-foot walker (hero/walker.ts numbers): the body
+    terrain makes rooms for by default and the knight's stand-in until play ports it (PL5). `profileKey` is a profile's
+    cache key (terrain caches border costs per body).
+  - Terrain's graph asks play's `crossCost` of every step between samples (partition.ts stepCost: the rise its slope
+    takes, the rest a sheer step, a drop past its slope, the water, lava and vegetation at the next sample) × the run.
+    Why: the terrain's costs, runplan's and play's can't disagree when they're one function. A sample is a room's ground
+    when crossing it costs at most `CLEAR_COST` (1.75) × open ground. Barrier naming (cliff/steep, ravine depth) is
+    physical now (3 × the walker's step; the walker's drop), not the build body's. Edits' predicates (a ford, a ramp, a
+    wall, a cut, a thicket) are crossCost calls too.
+  - What changed in behaviour, from play's numbers: a bike is slowed by a thicket, not stopped (play's profile says
+    `vegetation.through 0.5`: the user's "a soft barrier like slowing you down"); play's bike climbs steeper than a
+    walker's ramp, so it rides one. The terrain tests say so now.
+  - Runplan's `HeroCapabilities` stays as the planner's per-barrier view, derived only (play-adapter.ts
+    `capsFromProfile`, crossCost on each barrier's typical ground) — an adapter because the atlas graph names a border's
+    barrier without measuring it, while play reasons in cells of gap, step and water.
+- **The region graph is terrain's.** Runplan's guessed `factsGraph` → `runGraph(Terrain.atlasGraph(), …)`: terrain's
+  nodes and barriers, joined with the wiki's names and settlements and the atlas facts' stamps and road crossings
+  (src/runplan/graph.ts). Terrain's edges are unordered; the join turns each to face out of the region asked. Edge
+  `length` is terrain's (shared border); the planner's travel uses `span` (centre to centre), as its old length was.
+  Seed 1's atlas graph is a fixture (data/atlas/seed1-graph.json) written by test/gpu/atlasgraph.test.ts on Dawn from
+  the level's own atlas and checked against the atlas facts (same regions, kinds, centres): the planner's Node tests
+  plan on terrain's real graph without a GPU.
+- **Barrier kinds are terrain's** (cliff, steep, ridge, ravine, river, lake, sea, lava, vegetation, tar; hostile, storm,
+  distance). Runplan's mountain/water/thicket/ice/dunes/hostiles are gone with the guesses that made them.
+- **Requests.** Runplan's `TerrainRequest` is renamed `RunTerrainAsk` (the planner's terms: atlas regions); terrain's
+  `TerrainRequest` acts on a stage's rooms and borders, which exist only once the stage's rectangle is sampled, so the
+  asks are turned into terrain's requests when a leg sets out (src/runplan/requests.ts, before the destination's land is
+  made: the edits are stamped into it).
+- **Floods are terrain's.** `RegionRealisation.terrain.fills` are terrain's `FloodRequest` (at, level, fluid) plus the
+  region and why (`RegionFill`).
+- Shared tweaks reconciled from the merge: level.ts keeps both ?play= and ?runplan=; main.ts both ?terrain=view and
+  ?runplan=view; the level makes one TerrainSystem (its edits stamp the land once).
+
+npm test: 28 files, 207 tests pass (unit 196 in ~2.4 s; the gpu tier with the new atlas-graph fixture ~52 s).
+
+## 2026-10-30 — A generated run played end to end: each stage played by play's hero, not picked (round 119, `runplay`)
+
+The user (round 119): "I need to actually play a generated run and try it out. Was there a link?" Link:
+https://csheldondante.github.io/Reclaimed/runplay/?skipmenu=1&level=atlas&runplan=hoverbike (or `=lich`).
+
+**What a run is now.** The run is planned from the spawn (runplan, on terrain's graph). A card says where you are, the
+stage and its goal; ▶ Play hands the stage to play's hero; winning or losing picks the stage's planned outcome; the
+card says what happened and offers the legs out; the leg is travelled on the atlas map (the destination's land asked
+of terrain, then precached, the warp on arrival); at the end the card says how it ended, what changed in the world
+(each event and where) and the hero's record, and offers another run from the world as left.
+
+**Each encounter as play, for the hero** (src/runplay/rules.ts `stageKind`, by the hero's profile — why: the plan
+fits encounters to what the profile likes, the stage must fit what the profile can do):
+- race (the bike): a loop of 6 gates (8 at the finale), each moved onto the nearest crest (course.ts; the bike launches
+  off crests), sand poured into kickers on flat stretches (the world API's `deposit`), 2-3 rival riders on play's own
+  bike drive (riders.ts: the same crests, slides and speeds; no boost, 0.88 of the hero's cruise) to beat over the line,
+  a 3-2-1, a clock. The hero's place shown live.
+- chase (the bike): a raider on a bike with a 40-cell head start at 0.85 of the hero's cruise, swerving, turned back in
+  from the window's edges; caught within 4 cells (the hook pulls up alongside a vehicle: tap him), lost past 150.
+- fight: a pack of raiders (play's `fun` pack size for the hero, 4-10: the bike 7, the lich 10) to cut down.
+- smash (the lich): a fort of 4 brick towers (5 at the finale, 6 cells tall, `build`) and a garrison coming out from
+  beyond it; a tower is down when what's left of it is under half its height (its middle and four cells round,
+  read back four times a second); the lich's slam craters them.
+- trial (explore and talk as stand-ins, and the lich's rare race): markers against the clock. delve (the knight's) is a
+  stand-in fight until play ports the knight; the knight itself has no play hero, so `?runplan=knight` keeps the card.
+**Win, lose, outcome** (rules.ts `judge`, `outcomeFor`): death first, then the stage's own win, then its clock. Won: the
+plan's first outcome. Lost alive (clock, beaten, got away): the last outcome that isn't a capture; the run goes on —
+at a finale it ends 'fled', not 'lost', because the plan's 'lost' is the GM's death rule (the hero dies, the dead may
+take the map), and a race lost at the line isn't a death (the first playthrough killed the rider for it). Fell: taken
+where the stage has a capture (raiders with a threat behind them), else the run ends 'lost'. The run's clock
+(runplan/clock.ts): planned minutes a stage (up to half again when slower than par — one slow stage shouldn't spend the
+whole run), travel minutes a leg; past the plan's deadline, 'late'.
+
+**One hero, the sandbox's** (play/session.ts): the hero, its controls, chase camera and health bar came out of the
+play sandbox unchanged into `PlaySession`; the sandbox is its tools round one and a run is its stages round one. Why:
+the user tunes controls in the sandbox ("iterate on player controls which is probably the most important thing for
+fun") and the run plays with the same numbers (the same localStorage).
+
+**What the headless playthroughs found and changed** (scripts/runplay.mjs drives the hero through the real controls —
+Controls.script and inject — at what the stage says is next):
+- The bike circled gates 7 cells wide at 11-13 cells: its turn at speed is wider. Gates are 13 wide, passed within 9;
+  rivals ease off into a gate they aren't lined up with (they had circled too and never finished).
+- The race clock was flat-ground par: 5 of 6 gates in 53 s over real hills and a river ran out of time. Par is now a
+  good ride (2.5 × the course over cruise), the clock 1.6 par + 30 s.
+- The chase was caught in 1.8 s: the quarry now has 40 cells and a running start.
+- The lich never reached a tower: the garrison stood among the towers and a tap there lifted a raider; and with the
+  lich behind a tower the tap landed on the lich (a slam, not a glide). The garrison comes from beyond the fort; the
+  autopilot taps a tower's foot (a player tapping a tower behind which the lich floats meets the same — noted for the
+  user). Towers of 9 took one down in 100 s; four of 6 felled at half height go in ~20 s: a wrecking ball, on a clock.
+- `?runencounter=<kind>` plays every stage as one encounter (a check's switch to look at one kind; every system on).
+- The chase was then lost in a chasm: the quarry ran along its cliffs and the bike crashed into them; he now runs the
+  open way (the direction whose ground rises and falls least over 60 cells) at 0.75 of the hero's cruise. Caught in 27 s.
+- The sandbox's rival-alongside check (scripts/playtest.mjs) failed after the session refactor: the rivals had moved to
+  step before the hero, a frame ahead of where the tap was aimed. `PlaySession.afterHero` steps them where they were
+  (after the hero, before the draw); playtest passes again (alongside 39 frames, as on `play`).
+
+**Measured** (scripts/runplay.mjs, the atlas level as deployed, 1x, every system; the desktop iGPU, shared):
+- hoverbike, phone proxy (412x915 dpr 2.6, q=low): a 4-stage plan (11-14 min, deadline 16); race won 6/6 gates in 62 s,
+  chase lost (before the open-way fix), finale race won 8/8 in 65 s → the run won, 8 events (two race-course marks, the
+  Green Choir's attitude, the Hollow Court's presence and power round the finale). The hero's main-thread cost
+  (PlaySession: input, hero, voxel writes) 0.17 ms a frame mean over 10 720 frames, 21 ms worst (a stage's set-up).
+- lich (412x915): fight 10 of 10 raiders in 8 s, the fort's 4 towers in 28 s and the finale's 5 in 23 s (the slams
+  topple the brick into rigid bodies) → the run won; both smash stages buried their regions under ash (the plan's
+  spectacle outcome). 0.10 ms a frame mean.
+- The plan's asks of terrain at leg start: 39-117 ms (graph + requests); e.g. "exits: 2 from room 7: ok, 2 edits";
+  "obstacle river: terrain builds no such obstacle" (said, not faked). The destination's land was ready before every
+  map animation ended (waited 0.0 s).
+- GIFs: C:/Projects/shots88/runplay/hoverbike-stage1-race.gif, chase/hoverbike-stage1-chase.gif,
+  fight/hoverbike-stage1-fight.gif, lich-stage1-fight.gif, lich-stage2-smash.gif; cards, the map's travel and the end
+  cards hoverbike-*.png / lich-*.png in the same folder.
+
+## 2026-10-31 — round 120 (`runplay`, PL20): the bike's chase camera and earlier notice of the gates
+
+The user (DECISIONS round 120): "The bike was not really playable because of how zoomed in we are and how little notice
+for the gates." At 34 px a cell a 412 px phone showed ~12 cells across: the bike at 46 cells/s crossed the screen's
+half width in about 0.13 s, and the arrow pointed at the next gate only, so a gate was announced ~1.3 s ahead (the gates
+are 70 cells apart) and seen on screen 0.1-0.6 s ahead.
+
+**What changed.**
+- The framing is per hero, as data: `HeroCamera.chase` (contracts/hero.ts `ChaseFraming`). The bike's numbers live
+  with its controller (controllers/hoverbike.ts `BIKE_CAMERA`); a hero without one (the lich) gets play's default,
+  which is the round 118 framing (0.5 s lead, at most 12 cells; pulled back by half at full `fast()`). Not on
+  `ControllerProfile`: that is the generators' terms (what a body can cross, what it's fun at) — camera framing is a
+  different concern, and the hero contract already carried the camera's ask (zoom, behind).
+- play/core/chase.ts `Chase` (pure, Node-tested): the view fitted in TIME — `ahead` seconds of travel kept on screen in
+  front of the hero — against the screen's SHORTEST reach (min(W/2, H/2 ÷ sin 30°) less a 56 px HUD margin), so only
+  speed moves the zoom, not the heading (a loop course turns all the time; a zoom that followed the heading would
+  pump). The speed it fits is smoothed (1.5/s); the zoom eases out at 1.5/s and back in at 0.6/s. A big landscape
+  screen has the reach and doesn't zoom out at all.
+- The lead is an offset from the hero eased toward speed × lead (capped by a share of the reach that way, so the hero
+  stays on screen and a portrait phone leads further up the screen than across), not a target the camera chases: a
+  chased target lags v/follow (7-8 cells at 46 cells/s), which ate most of the old 0.5 s look-ahead.
+- The bike: 22 px a cell at rest (34 before: ~19 cells across a phone, was 12), 0.8 s ahead at speed, a 0.45 s lead
+  (≤ 0.6 of the reach), out to 12 px a cell (10 tried first: the bike was hard to pick out at the phone's size).
+- The gates (runplay/notice.ts, stage.ts): arrows to the next gate AND the one after (`SIGNPOSTED` = 2), each labelled
+  with its number and distance (cells), the next big and gold, the one after smaller and paler; the next one's arrow
+  swells for 0.6 s as a gate is passed. With gates 70 cells apart the second arrow doubles the notice.
+
+**Measured** (warning = from a gate first being on screen or signposted to passing it):
+- Node (test/unit/runplay-notice.test.ts: the race course as laid, ridden flat out at 46 cells/s through the real camera
+  maths on 412x915; before = the round 118 framing with its lag and one arrow): gates 1-4 noticed 1.33-1.35 s → 2.68-5.62 s
+  ahead; seen on screen 0.08-0.42 s → 0.25-1.02 s ahead. The first gate is announced through the 3-2-1 either way (4.25 s).
+- Headless (scripts/runplay.mjs --encounter race --stages 2, the atlas level as deployed, every system, 1x, 412x915 dpr
+  2.6, q=low; the script now logs each gate's notice per frame — works on a build without the change, which was run from a
+  worktree at the merge for the before). Distance at first notice over the top speed (46), gates 1-4, i.e. seconds of
+  warning at top speed: before 1.43, 1.04, 1.18, 1.63 → after 2.43, 2.49, 2.74, 2.45 (stage 1) and 2.54, 2.45, 2.94, 2.16
+  (stage 2). On screen at first sight (same measure): before 0.67-1.18 s → after 0.42-1.72 s — no clear gain (the gate is often across the
+  phone's narrow width; the arrows carry the notice there). Zoom while racing: before p10/p50/p90 18.5/23.3/29.1 px a cell
+  → after 12.0/12.2-12.5/17.4-18.0. Stage 1 won both times; stage 2 before passed 1 gate (the autopilot lost on cliffs),
+  after all 6.
+- Frame interval in the race (rAF, headless vsync): p50 9.9 / p95 10.3 ms before → 10.0 / 10.5 ms after; the session's
+  main-thread cost 0.098 → 0.093 ms a frame. driveprofile.mjs doesn't drive the play camera (its own camera), so the phone
+  proxy there is untouched by this change; the wider view draws ~3.5× the ground area, which the tile cache's zoom floor
+  bounds (BACKLOG PL22: check the GPU time on the phone at 12 px a cell).
+- GIFs: C:/Projects/shots88/camera/after/hoverbike-stage1-race.gif, hoverbike-stage2-race.gif; shots *-1b-play.png;
+  before: C:/Projects/shots88/camera/before/. Per-gate numbers: hoverbike-notice.json in each.
+
+## 2026-10-31 — round 120 (`runsit`): the run as a situation on the live map — "the horde comes for the town"
+
+The user (round 120): "the missions should not be disjoint levels they should be objectives and situations spawned into
+the active map with real consequences ... Like actually break a dam and flood a valley don't just say it happened ... when
+the player reaches the boundary of an area they get the map and choices of where to go based on the actual situation.
+Deliver a message to the Red Hold to get them to send reinforcements or warn the town and lead the peoplen into the
+hills." And who writes it: "This is what we want the gm to do possibly with templates. Look at world state and tell a
+story with meaningful decisions for the player run." Branch `runsit` (from runplay, places merged, runplay's bike camera
+fix merged). `?skipmenu=1&level=atlas&runplan=hoverbike` (or `=lich`) now plays a situation; the old stages with
+`&runstages=1` (BACKLOG RS23).
+
+**Contracts (additive).** `contracts/situation.ts` — a Situation: the threat (a horde: faction, role, count, its route
+on the real region graph, the minute it reaches the target, outriders), the target settlement, the refuge, 3-7 areas
+(play: flee, ambush, deliver, trader, town), the choices at each area's edge (effects warn, evacuate, delay), the
+items, four endings (saved, burned, evacuated, fell: an Outcome and the settlement's condition). A sibling of the
+SessionStory, not more fields on it: a story is people and talks over places, a situation a clock, a route and forks
+over the map; they share Outcome. `contracts/items.ts` — slots (held, helmet, cape, shirt, pants, mount; `also` for an
+asymmetric item), effects (call-allies, lure, fire-ward, pace, guard), Loadout. `contracts/orders.ts` — Order (follow,
+hold, go, release) and Followers: general on purpose, the way into a building mode later (FO1). Settlements' public
+API: `places(id)` (its middle and doors) and `setCondition(id, c)` (a ruined or abandoned settlement realised charred).
+PlaySession `damageTaken` (a guard item).
+
+**Why the pieces are where they are.**
+- `runsit/state.ts` (pure): the run's state machine — areas, the edge, legs, the end; the clock; the threat's progress;
+  the pursuers; what the choices set going; the finale's setup (horde size and when it comes, fires already set when the
+  hero's late, the town's levy when warned, the hold's levy and when it comes). Node tests drive it; the level drives
+  the same code.
+- The clock: an area counts its **planned** minutes (more if played slower, up to half again — runplan/clock.ts's rule).
+  The first playthrough counted played seconds: the bike was through a 2.5-minute area in 16 s, so the hold's way (written
+  late) arrived early and the fork meant nothing. A leg counts its distance at 500 world units a minute for every hero
+  (`TRAVEL_PACE`), so a GM's clock is fair to each; a mount shortens it.
+- `runsit/finale.ts` (pure): fires, the fall, saved/evacuated/fell. A breach counts at most four of the dead; one fire per
+  30 horde-seconds → a fire every 7.5 s, fallen at six (~45 s of a breach). The first finale had eighteen inside setting a
+  fire a second: fallen in 3 s.
+- `runsit/area.ts`: the live half. Everything through contracts — Units (spawn, order, query), the world API's fire
+  (`fire.ignite` at a house's door), the followers, the settlements' places.
+- **The march.** A probe (round 120): units ordered to `go` 20 and 40 cells off arrived; 80 and 120 stood still (the agents'
+  goal fields reach a few chunks round what they do). So the horde walks to a front a stride (22 cells) ahead of its middle,
+  moved on every 3 s toward the town (or the bell). With it the dead reach the town (68 → 32 cells mean in 45 s) and fire it.
+  RS26 for the agents' reach.
+- **Pursuers off the screen.** Outriders more than 70 cells off gain on a hero slower than them (they come in again 35
+  behind it) and lose one faster (gone past 140): the user's pursuers that catch up if you're slow, without walking units
+  across the map. The bike outran all three in 6 s. The user's PL23 (round 120, after the camera fix: "I think fleeing is
+  better than chasing because it's hard to steer"): the slice has no chase — fleeing, outrunning, the word carried ahead.
+- **Areas sized to the hero.** The edge is the hero's cruise for 16 s (110-520 cells): 110 cells for the lich, ~500 for the
+  bike — the window slides with the hero.
+- **The town burns in the map.** Wood now burns: fire.wgsl counts timber, logs and canvas as fuel where they're the top
+  (the recipes already called them flammable: timber 0.8, canvas 1), and structure.wgsl gives wooden intervals 8x the heat
+  damage and turns what fails of them to ash. A plaster-and-tile town (Bumku's) doesn't burn so: the fires take round its
+  houses (the fields, the yards), and 25 s after the fall the window is made again (a fresh warp to itself) with the
+  settlements system realising the town charred: stumps of 1-3.5 cells, rubble and ash (RS25). A warp away and back keeps
+  the land as it was (the streamer freezes it to its pool), so the burned town stays for the rest of the session.
+- **The world remembers** (`runsit/finish.ts`): the ending's Outcome through runplan's `applyEffects`, the settlement's
+  condition, the hero's history, the RunRecord. The next run's template doesn't send the dead for a ruined town.
+- **The GM** wrote `data/situations/grey-muster-bumku.json` (a Claude subagent with docs/GM.md's new "Situations"
+  section, looped on the validator): the Grey Muster of Kaudru (18 walking dead) over 2129 → 2141 → 2159 → 2171 to Bumku;
+  Muru the Red Hold (its only road to Bumku runs round the north: late by 1.2 min, 12 guards); a Salt Fleet barge trader;
+  the Varrn road ambush; the Bethorn crossing to burn (a 2.5-minute delay). Its first draft was written against
+  data/wiki/seed1.json, which turned out stale against the live atlas (the live run's validator refused it: settlements and
+  realms had changed); the wiki was re-pulled (`worldwiki.mjs --pull`) and the GM rewrote it. The game plays the first GM
+  file for the world's seed, version and run, else the template (`runsit/gm.ts`), both validated.
+- **The validator** (`src/gm/situationcheck.ts`, `node scripts/storycheck.mjs data/situations/<id>.json`): shapes,
+  references, the route border to border, the refuge next to the town, the run's shape (reached, a fork, 3-5 areas a path,
+  no cycles), items defined and offered, some path in time (delays counted), the endings change the world and 'burned'
+  burns the town. storycheck's AtlasEvent check is now one function both use (`atlasEventProblems`; the Bell story's output
+  identical before and after). state.ts has no constructor parameter properties so Node's type stripping runs it for the
+  validator.
+
+**Tests.** test/unit/runsit.test.ts (18): the template filled from seed 1 and validated, deterministic; the fork real (the
+straight road in time, the hold later); the state machine (warn + evacuate into the finale; the hold's levy later than the
+hero with the dead already in; a delay; a death ends it fell); pursuers close on the road, less with a mount; the finale's
+fires and the fall, saved, fell, held, evacuated with the town still burning after; fire sites and the ward; items (a slot
+holds one, the asymmetric banner, uses, totals); followers' orders as jobs; the validator's refusals; the GM's file
+passes; a burned town ruined in the world, through a save, not the next target; an evacuation abandoned with a refuge
+marked. `npm run test:unit`: 26 files, 245 passed. `npm run smoke`: passed.
+
+**Playthroughs** (scripts/runsit.mjs, the deployed build, 412x915, every system, 1x; autopilot through the real
+controls; `--ff` takes ways on without playing the areas between, to look at the finale):
+- hoverbike, whole run, burned: flee (outriders lost in 6 s) → the Red Hold (word delivered, the Red Horn taken) → Bumku
+  at minute 10.0, 1.2 min after the dead: two houses burning, the horde at the edge; the bike stood aside; fallen at 39 s;
+  ended burned; charred 25 s later.
+- lich, whole run, saved: flee 18 s → the Varrn ambush 18 s → Bumku 2.2 min ahead; the horde broken at 133 s.
+- hoverbike, saved (straight road): held to 360 s with the horde broken outside.
+- hoverbike, evacuated (`--ff` to the rises): "Follow me" took 18 of 25; 13 reached the refuge at 142 s.
+- hoverbike, burned with the fences manned and the bike idle: the march brought the dead in; fallen at 106 s.
+
+**Frame time** (desktop iGPU, 412x915 dpr 1, perf overlay on): the finale with the horde, the levy, the townsfolk and the
+fires live — p50 9.8 ms, p95 11.6-16.6 ms, GPU ~14 ms (EMA); the hero's main-thread cost 0.05-0.1 ms a frame. The phone
+proxy drive (`driveprofile.mjs`, q=low, dpr 1, 30 s) on this branch: p50 9.9, p95 12.1 ms, GPU 11.4 ms a frame; the fire
+and structure passes 0.04 ms each (the wood change costs nothing measurable).
+
+### Round 120 (`runsit`), the phone bug
+
+The user (Pixel 9a, the Pages build): "The bike link just teleports me around the map but never loads anything else. I
+can drive around though which is fun still but it's very broken". From the code: a free hero means the run was never
+made — LevelSit's constructor threw — and `startSituationRun` was called as `void …` with no handler for its rejection
+(main has no unhandledrejection hook), so nothing showed. And the window's shift (`core.onShift`: hero and run moved with
+a slide) was registered only after the run was made: with the run missing, every slide left the hero a region off, and
+the camera chased it off the made land — the teleports and the land that never loads. Fixed: a run that can't start is
+the fatal overlay with its reason; the shift is registered as soon as the hero exists. What threw on the phone, most
+likely: the GM's situation, validated against the wiki the phone builds live from its own atlas — and the atlas's macro
+ground is made on the GPU and read back, with the rivers, sites and realms planned on it, so another GPU can make the same
+seed with other towns (RS32). A situation now carries its world's print (`from.print`, `worldPrint`: its towns and
+factions hashed); a GM file for another make of the seed gives way to the template, and the card says so. Tests: the
+selection (the GM's file in its own world; skipped with a note in another; a broken one for this world throws), a leg
+under a loader that isn't ready for 40 s (waits, asks once, arrives once). scripts/runsit.mjs now checks the run is up
+(its card, the hero held) before playing. To confirm on the phone (or a headless page on another GPU path).
+Checked after the fix (scripts/phoneprobe.mjs, the deployed Pages build of 7c0ae3a, 412x915, CPU throttled 4x, D3D11 on the
+desktop iGPU): the run up in 56 s, the GM's situation (its print 2653900f matched), the card shown, the hero held; no
+errors but the site's favicon 404. SwiftShader as a second GPU path isn't available to Chrome here (no adapter), so the
+phone's own cause (RS32) is to be seen on the phone: the card now says when the GM's file was for another make of the
+seed, and any other failure is the fatal overlay with its reason.
+
+## 2026-10-31 — round 122 (merge122): runsit merged into places, the base for the opportunity loop
+
+**Why.** The user (round 120): "Yeah that sounds perfect. Feel free to merge whatever will be the base for that." The
+opportunity loop is every run's structure; `runsit` (a84b8c4) holds `runplay`, `play`, `terrain` and `runplan`, so it
+brings play's heroes and controls, the bike camera (PL20) and the situation runs. Onto `places` 9c4cebc (terrain,
+structures, inhabitants and flora from merge120; the physics from merge121).
+
+**Conflicts.** pages.yml (places' list: it already lists merge122); contracts/index.ts (both sides' exports);
+level.ts — runsit had turned some lines LF, so git saw a 7000-line conflict: merged three-way on normalised line ends
+(one real conflict, the terrain system: runsit's one shared `terrainSystem()` kept) and written back CRLF (+201/-4 on
+places'). streamer.ts, ARCHITECTURE and BRANCHES were mixed after the merge: put back to CRLF. DEVLOG and DECISIONS
+both sides kept; BACKLOG places' version with runsit's four sections re-added and its status updates to RS20-RS22,
+PL20, FO1, IT1 (+PL22); one `# Backlog`.
+
+**One controller description (the consolidation notes).** Terrain's PassCaps/CAPS_PRESETS and runplan's HEROES,
+BarrierKind, TerrainRequest and FloodRequest were already gone on `runplay` (RPL1): one profile, play's; terrain's
+barrier kinds and requests (runplan keeps `RunTerrainAsk`, its region-level ask, converted at the boundary by
+requests.ts). What was left was flora's `FloraCaps` {mass, speed, cuts, flies, height}: deleted. play's
+ControllerProfile gains `body: { mass, height }` (the only two things flora needed that the profile lacked; `speed`
+was never read); `flora.passability.passage(rect, body)` reads `body.mass`, `body.height`, `vegetation.cuts` and
+`fly.ceiling > 0`. Values: walker 1 / 2 cells, bike 2 / 1.5 (its rider sits low), lich 1 / 2.5. Flora's tests build
+their walker, knight, swordsman and bird from WALKER_PROFILE. Left as a flag (M122-6): play's `vegetation.through` and
+flora's computed speed answer the same question.
+
+**Traits.** Not on places at this merge (908e95f): the lich's raise dead through its `raise` effect stays a row (M122-7).
+
+**The journey that never arrived (M122-3).** runsit.mjs on the merged build hung after the first area's map, silently:
+the journey sat in `waiting` for ever (logged now). The pool was full (32 of POOL_CAP 32, no jobs) and the
+destination window the travel had precached had been evicted again — the pool evicts the oldest region "outside where
+the window is heading", and the far destination is exactly that while the hero waits at the edge. Nothing asked for it
+again, so `Streamer.precached` never came true. The fix is the eviction rule's, not a retry: a travel's precache pins
+its destination window (`Streamer.pinned`, not its ring) and the pool never evicts a pinned region; the pins are
+released when the next warp is done. The choice moved out of the Streamer into scenes/pool-victim.ts (pure) with
+test/unit/pool-victim.test.ts (the pinned destination outlives the old window; never pinned or a job's; the short way
+round a wrapping world). With it the same run reaches area 2 in 10 s of travel and finishes. Not done here: POOL_CAP is
+still a fixed 32 (`?pool=`), not sized to the device's memory — a pool smaller than the window, a pinned window and the
+jobs would leave slotFor nothing to evict (it returns null, as before).
+
+**runsit.mjs.** The bike's speed, last barricade hit and crash in the autopilot's log line; a shot when a road area
+still plays after 45 s; the journey's phase and the streamer's pool every 10 s. One playthrough circled the flee area's
+way on 15-25 cells off for minutes (THERE is 8 cells; full stick at the bike's speed, no hits, no crash): the
+autopilot's orbit, M122-4.
+
+**Gate** (desktop iGPU intel-xe-lpg, every system on, 1x, q=low 412x915 for the run scripts):
+- typecheck; `npm test`: 64 files, 481 passed (2 expected fail, 5 skipped), unit and GPU on Dawn.
+- `npm run smoke --levels atlas,playground,rocklab`: all three load, no fatal, sims ticking (atlas ready 36.7 s).
+- runsit.mjs `--want saved`: GM situation grey-muster-bumku (print 2653900f matched), flee won 16 s, ambush 8 s, the
+  town held till the dead broke off at t 360, ended saved, end card; finale frames p50 9.9 / p95 14.1 ms, GPU 13.3 ms;
+  the hero's main-thread cost 0.086 ms mean. `--want burned`: the levy fetched (late), the town fell at t 41 with 63
+  houses alight, ended burned; finale p50 9.9 / p95 11.6 ms, GPU 13.4 ms.
+- phoneprobe (local build, CPU x4, d3d11): run up in 47 s, the GM's situation, card shown, hero held; no fatal (a 404,
+  the favicon).
+- tilegate: every parked view 0 out of detail, 0 background (21 views). Goldens: desktop-z1.3 39.9 %, phone-z2.2
+  21.0 %, phone-z1.3 21.1 % — places' own build on the same baselines 36.1 / 21.7 / 21.6 % (drift already on places);
+  phone-z3.5 3.5 % and phone-z8 1.0 %: diffs looked at, scattered foliage and the perf panel's numbers, no void, flat
+  fill or band (places had w384-phone-z14 1.1 % instead). Baselines not rewritten. Fast pans 160 c/s desktop z14/z8/z5
+  fail (1.7 / 18.4 / 9.2 %), as on places at merge121.
+- driveprofile (alternated places/merged, two runs each): places p50 9.9/9.9, p95 11.5/11.3, p99 20.2/14.4, GPU frame
+  9.5/8.6 ms; merged p50 9.8/9.9, p95 11.5/11.5, p99 19.6/19.9, GPU 8.1/12.7 ms — within the runs' spread.
+- Shots: C:/Projects/shots88/merge122/ — runsit-saved/ (the bike run's area cards 1-done, 1-edge, the map 1-map,
+  2-map, the town, the end card), runsit-burned/ (9-town: the town burning; finale.gif, after.gif), lich-sandbox.png
+  (`?play=lich` among places' flora), tilegate/, tilegate-places/, drive-*.log; STRUCTURE.md (the structure review).

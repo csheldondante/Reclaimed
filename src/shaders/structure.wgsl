@@ -24,6 +24,13 @@
 @group(0) @binding(9) var<storage, read> fire: array<f32>;
 const HEAT_RATE: f32 = 0.016;
 const MAT_TRASH_S: u32 = 12u;
+// (round 120, runsit) wood burns: timber, logs and canvas take heat damage many times faster than stone, and what
+// fails of them goes to ash, not rubble — a house fired by the dead comes down in a few minutes (fire.wgsl lights them)
+const MAT_WOOD_S: u32 = 10u;
+const MAT_CANVAS_S: u32 = 21u;
+const MAT_LOG_S: u32 = 29u;
+const WOOD_HEAT: f32 = 8.0;
+fn wooden(m: u32) -> bool { return m == MAT_WOOD_S || m == MAT_CANVAS_S || m == MAT_LOG_S; }
 const MAT_ASH_S: u32 = 17u;
 
 // Hydraulic loading (the dam-breach mechanic, but generic):
@@ -201,7 +208,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       let ez = evZ(e);
       if (length(cellPos(p) - ev.xy) < ev.z && f32(ez) + 1.0 >= z0 && f32(ez) <= z1) { dmg = min(15u, dmg + u32(ev.w)); }
     }
-    if (heat > 0.3 && rand3(id.x * 16u + i, id.y, G.tick ^ 0x4ea7u) < perTick(HEAT_RATE * heat * (1.2 - MATS[m].sim.w))) {
+    let burns = select(1.0, WOOD_HEAT, wooden(m));
+    if (heat > 0.3 && rand3(id.x * 16u + i, id.y, G.tick ^ 0x4ea7u) < perTick(HEAT_RATE * heat * burns * (1.2 - MATS[m].sim.w))) {
       dmg = min(15u, dmg + 1u);
     }
     // the cyclone batters what stands in it (round 12: ruins and wrecks — not plants)
@@ -218,7 +226,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let spanRule = G.misc.y < 1.5;
     let fails = collapseOn && ((spanRule && !touching && s == 0u) || dmg >= dmgLimit(m));
     if (fails) {
-      layersOut[cs.x + i] = ivPack(z0, z1, MAT_RUBBLE, 0u);
+      layersOut[cs.x + i] = ivPack(z0, z1, select(MAT_RUBBLE, MAT_ASH_S, wooden(m) && heat > 0.3), 0u);
       atomicAdd(&stats[STAT_COLLAPSED], 1u);
       s = 0u;
     } else {

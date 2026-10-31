@@ -13,7 +13,8 @@
 //     breakMass) or it is blocked; a flyer ignores all of it.
 // Pure: the plants come in as a list (what placement says stands there), so it is tested on its own.
 
-import type { FloraCaps, FloraPassage } from '../api/contracts/flora';
+import type { FloraPassage } from '../api/contracts/flora';
+import type { ControllerProfile } from '../api/contracts/play';
 import type { Barrier } from './species';
 
 export interface StandPlant {
@@ -41,9 +42,11 @@ export function coverage(plants: StandPlant[], area: number, h = 2): number {
   return 1 - Math.exp(-sum / area);
 }
 
-export function passage(plants: StandPlant[], area: number, caps: FloraCaps): FloraPassage {
-  if (caps.flies) return { density: 0, speed: 1, mustCut: false, blocked: false, cost: 1 };
-  const c = coverage(plants, area, caps.height);
+/** A stand's passage for a body (play's profile: its mass class and height, whether it cuts, whether it flies). */
+export function passage(plants: StandPlant[], area: number, body: ControllerProfile): FloraPassage {
+  if (body.fly.ceiling > 0) return { density: 0, speed: 1, mustCut: false, blocked: false, cost: 1 };
+  const mass = body.body.mass;
+  const c = coverage(plants, area, body.body.height);
   // the stand's slowness and toughness, weighted by what each plant adds
   let w = 0;
   let slow = 0;
@@ -59,12 +62,12 @@ export function passage(plants: StandPlant[], area: number, caps: FloraCaps): Fl
   const slowAvg = w > 0 ? slow / w : 1;
   const cutShare = w > 0 ? cuttable / w : 1;
   // a heavy controller loses less in brush (it shoves through) — half the loss per mass class over the stand's
-  const shove = caps.mass >= breakMass && w > 0 ? 0.5 : 1;
+  const shove = mass >= breakMass && w > 0 ? 0.5 : 1;
   let speed = Math.max(0.15, 1 - c * (1 - slowAvg) * shove * 1.6);
   const dense = c >= MUST_CUT;
-  const breaks = caps.mass >= breakMass;
+  const breaks = mass >= breakMass;
   const mustCut = dense && !breaks;
-  const canCut = caps.cuts && cutShare > 0.75;
+  const canCut = body.vegetation.cuts && cutShare > 0.75;
   const blocked = mustCut && !canCut;
   if (mustCut && canCut) speed = Math.min(speed, 0.35);
   const cost = blocked ? Infinity : 1 / speed + (mustCut ? 1.5 * c : 0);
