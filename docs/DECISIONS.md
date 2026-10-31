@@ -26,6 +26,24 @@ each was implemented.
   prepare for the final challenge. No races without arenas (jumps, crowds); chases, fleeing, a message before the enemy.
   Runplay's arcade stages are a stand-in to be replaced. BACKLOG round 120.
 
+- Proposed back (a run as one unfolding situation on the live map: a threat with a clock and a route placed on the real
+  region graph; areas of 1-3 screens played live; at an area's edge the atlas map with choices from the actual state;
+  legs with pursuers, ambushes, traders, refugees; items with mechanical effects; the finale where the choices led; the
+  first slice "the horde comes for the town"). The user's answers, verbatim:
+
+> Yeah push pages workflow to main and make the camera fix. 1. This is what we want the gm to do possibly with templates. Look at world state and tell a story with meaningful decisions for the player run. 2. Let's try it and tune from there.
+> 3. Yes I think ordering followers would be rad and is a natural way to enter a building mode and make your own settlements
+> 4. I liked both raising the dead and the rune based casting of the lich. Summoning tornados, lightning, etc. I do wish we had more rocks just mixed in with the normal soil so that a lich has things to throw aside from just people
+> 5. Exactly. Maybe the held item(s) a helmet, cape, shirt, pants, mount and maybe some assymetric options
+
+  (the questions: 1 who writes the situation, procedural templates first or the GM; 2 three to five areas of 5-10
+  minutes; 3 heroes ordering followers; 4 what the lich misses; 5 a few slots that force trade-offs, or a growing pile)
+- → The GM writes the run: it reads the world state and tells a story with meaningful decisions, templates allowed.
+  Three to five areas to start, tuned by play. Followers take orders, and ordering them leads into a building mode
+  (the hero's own settlements). The lich keeps raising the dead and rune casting (tornados, lightning); rocks mixed
+  through ordinary soil so it has things to throw. Items in slots: held item(s), helmet, cape, shirt, pants, mount,
+  some asymmetric. Main's Pages workflow is now places' (0d4732e). BACKLOG RS20-22 next, FO1, LI1-LI2, IT1, PL20.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
