@@ -48,12 +48,12 @@ tests work and do quick smoke tests to find failures early." docs/TESTING.md.
 | LI1 | Rocks mixed through ordinary soil (not only cliffs and bases), so the lich has things to throw besides people | M | open |
 | IT1 | Items in slots: held item(s), helmet, cape, shirt, pants, mount, some asymmetric options; mechanical effects that force choices (pairs with IN20 segments) | L | open |
 | PL23 | A chase starts close to the quarry and already in pursuit; the user: fleeing suits the bike better than chasing ("it's hard to steer") — situation runs (RS20) favour fleeing | S | open |
-| STR31 | Bulwark-style examples (the user: "see bulwark examples"): what they mean to be asked | M | asked (design session) |
-| STR32 | Ports: docks, piers, moored ships, warehouses; ships | M | asked (design session) |
-| STR33 | Dressing: banners (in the wind), torches, streets with kerbs and lamps; lights at night across the town, not only the viewer's lit windows | M | asked (design session) |
-| STR34 | More architectural styles (today hearth, bastion, terrace) and more regular grids | M | asked (design session) |
-| STR35 | Skyscrapers and ruins | L | asked (design session) |
-| STR36 | Specialised settlements: mining, farming, ports, lumber, trading (with STR30's purposes and stories) | L | asked (design session) |
+| STR31 | Cliffside cities: tiles on vertical surfaces, towns built into canyon walls with walkways (Bulwark as inspiration, not copied); builds on STR13 | L | next (after purposes, ports, lights) |
+| STR32 | Ports: docks, piers, moored ships, warehouses; ships | M | next (designed round 120) |
+| STR33 | Dressing: banners (in the wind), torches, streets with kerbs and lamps; lights at night across the town, not only the viewer's lit windows | M | next (designed round 120) |
+| STR34 | More architectural styles (today hearth, bastion, terrace) and more regular grids | M | next (designed round 120) |
+| STR35 | Architecture from tech progression (round 85 recipes and civilisation profiles): skyscrapers from higher tech, ruins from fallen ones, varied architecture; a hive bug city as a non-human civilisation | L | next |
+| STR36 | Specialised settlements: mining, farming, ports, lumber, trading (with STR30's purposes and stories) | L | next (designed round 120) |
 | FLO21 | Birch cost on the phone: the user's result good — done (flora 18c3bdb, unmerged) | S | done |
 
 ## Round 118 (2026-10-30, session 5, `places`) — found while reviewing the tracks
