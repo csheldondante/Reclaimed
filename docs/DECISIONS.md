@@ -144,6 +144,8 @@ each was implemented.
 
 - The user, verbatim: "I think the ground interaction and the impacts made it much much better." (soft ground sinking with spray and rim, hard blows crumbling ground, dents; solver 19f5de0/42335d9) → kept; keep tuning from there.
 
+- The user, verbatim: "I think that the tiled rendering on phones makes per system unreliable. We already found this. You need to toggle systems to measure the diff for an accurate number" → the physics bench measures each system's cost by toggling it (on/off windows alternated) and takes the frame difference; per-pass timestamps kept only as unreliable on tilers.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
