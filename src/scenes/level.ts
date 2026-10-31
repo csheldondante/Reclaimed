@@ -3200,6 +3200,15 @@ export class LevelScene implements Scene {
     const rigidLine = () => (rigid ? `rigid ${rigid.list.length} · step ${rigid.stats.stepMs.toFixed(2)} ms · breaks ${rigid.stats.breaks} · settled ${rigid.stats.settled}` : '');
     this.tunePanel = new TunePanel(host.ui, {
       open: this.level.lab?.open,
+      // (solver step 4: presets to start from — the user's "tankers' feel" is world gravity × 2)
+      builtins: {
+        "tankers' feel (gravity × 2)": { 'world.gravityX': 2 },
+        'heavy and slow (gravity × 0.5)': { 'world.gravityX': 0.5 },
+        'soft metal (bends a lot)': { 'solver.steelYield': 6e4, 'solver.steelTensile': 4e5, 'solver.blowG': 12 },
+        'brittle metal (snaps)': { 'solver.steelYield': 2e5, 'solver.steelTensile': 2.2e5, 'solver.steelShear': 1.5e5 },
+        'deep overlap (big slop)': { 'rigid.slopK': 0.12, 'rigid.slopCap': 1.2 },
+        'stiff contacts (small slop)': { 'rigid.slopK': 0.02, 'rigid.slopCap': 0.3, 'rigid.pushV': 1.5 },
+      },
       // (open at the start in a test bed on a desktop; on a phone its button, the world first)
       shown: !!this.level.lab && !matchMedia('(pointer: coarse)').matches,
       stats: () => {
