@@ -14604,3 +14604,23 @@ first walk, the sums back from the far ends, the hinge) ran on thread 0 — O(n�
 sums a level at a time (each node gathers its children's), the bond checks and the hinge's subtree on every thread.
 The branch `judge` (the method of sections on the GPU, game/judge.ts JUDGES = runs | sections) is merged: the lab's
 judge picker lists them, compare walks every solver × judge, the battery takes --judges.
+
+**The battery, every solver × judge** (data/perf/solver/battery-4x2.json; the phone proxy; each station's buttons then 8 s):
+
+| station | old × runs | old × sections | nodes × runs | nodes × sections | lattice × runs | lattice × sections | hybrid × runs | hybrid × sections |
+|---|---|---|---|---|---|---|---|---|
+| rock | 7.366 (0) / 0.20 · none · rise 2.59 | 8.004 (0) / 0.20 · 2 rigid · rise 1.12 | 9.781 (1.728) / 0.02 · 0/1 nodes-bodies (58 nodes) · rise 0.15 | 11.142 (2.426) / 0.01 · 2 rigid, 2/2 nodes-bodies (51 nodes) · rise 1.14 | 11.316 (3.742) / 0.03 · 8989 voxels · rise 0 | 8.609 (1.383) / 0.02 · 9725 voxels · rise 0 | 9.818 (1.728) / 0.02 · 0/1 nodes-bodies (58 nodes) · rise 0.26 | 11.393 (2.721) / 0.01 · 2 rigid, 2/2 nodes-bodies (55 nodes) · rise 1.09 |
+| build | 6.82 (0) / 0.20 · none · rise 7.19 | 7.352 (0) / 0.10 · none · rise 1.96 | 12.179 (5.538) / 0.01 · 3 rigid, 3/3 nodes-bodies (90 nodes) · rise 0.74 | 11.995 (4.731) / 0.03 · 2 rigid, 2/2 nodes-bodies (66 nodes) · rise 0.45 | 11.409 (3.933) / 0.02 · 10080 voxels · rise 0 | 11.477 (3.882) / 0.03 · 11639 voxels · rise 0 | 12.307 (5.639) / 0.12 · 3 rigid, 3/3 nodes-bodies (90 nodes) · rise 0.38 | 11.519 (4.658) / 0.01 · 5 rigid, 5/5 nodes-bodies (181 nodes) · rise 0.74 |
+| slide | 7.064 (0) / 0.20 · none · rise 3.77 | 7.093 (0) / 0.20 · 1 rigid · rise 3.17 | 8.172 (0.766) / 0.01 · 0/1 nodes-bodies (60 nodes) · rise 0.07 | 9.318 (1.351) / 0.01 · 0/1 nodes-bodies (40 nodes) · rise 0.42 | 11.025 (3.75) / 0.02 · 11312 voxels · rise 0 | 10.933 (3.735) / 0.03 · 12871 voxels · rise 0 | 8.919 (1.459) / 0.03 · 1 rigid, 1/1 nodes-bodies (28 nodes) · rise 1.34 | 9.269 (1.616) / 0.03 · 0/1 nodes-bodies (26 nodes) · rise 0.31 |
+| house | 8.463 (0.857) / 0.13 · 8304 voxels · rise 2.29 | 8.142 (0.84) / 0.14 · 8304 voxels · rise 0 | 9.612 (1.739) / 0.02 · 1/3 nodes-bodies (87 nodes) · rise 0.06 | 8.644 (1.3) / 0.02 · 1/3 nodes-bodies (112 nodes) · rise 0 | 11.671 (3.795) / 0.02 · 12296 voxels · rise 0 | 10.808 (3.349) / 0.03 · 13559 voxels · rise 0 | 10.903 (3.212) / 0.06 · 0/1 nodes-bodies (55 nodes), 8880 voxels · rise 0.24 | 10.149 (2.629) / 0.02 · 0/1 nodes-bodies (26 nodes), 8880 voxels · rise 0 |
+| metal | 11.141 (1.859) / 0.22 · 9757 voxels · rise 1.63 | 11.054 (2.173) / 0.03 · 1 rigid, 9757 voxels · rise 2.56 | 12.297 (4.891) / 0.02 · 2 rigid, 4/6 nodes-bodies (212 nodes) · rise 0.2 | 11.318 (3.583) / 0.02 · 2 rigid, 4/6 nodes-bodies (212 nodes) · rise 0.66 | 11.471 (3.691) / 0.02 · 13919 voxels · rise 0 | 11.337 (3.593) / 0.03 · 15182 voxels · rise 0 | 11.978 (3.569) / 0.03 · 0/1 nodes-bodies (12 nodes), 10333 voxels · rise 0.04 | 12.315 (4.032) / 0.03 · 0/1 nodes-bodies (12 nodes), 10333 voxels · rise 0.12 |
+| collapse | 9.361 (0) / 0.60 · 3 rigid · rise 8.94 | 11.573 (0) / 0.30 · 1 rigid · rise 3.64 | 14.296 (3.113) / 0.01 · 0/1 nodes-bodies (14 nodes) · rise 1.69 | 13.618 (2.695) / 0.02 · 1 rigid, 1/1 nodes-bodies (12 nodes) · rise 3.39 | 14.686 (3.486) / 0.04 · 11780 voxels · rise 0 | 14.037 (2.76) / 0.01 · 9032 voxels · rise 0 | 13.684 (2.514) / 0.02 · 0/1 nodes-bodies (20 nodes) · rise 1.52 | 14.009 (3.051) / 0.02 · 1 rigid, 1/1 nodes-bodies (23 nodes) · rise 0.19 |
+
+(412x915 dpr 2.6 q=low; 8 s after the station's buttons; GPU ms a frame (the physics passes') / CPU ms of the physics systems · what's moving · the fastest upward speed seen, cells/s)
+
+Per pair over the six stations (physics GPU ms a frame avg / max; the judge's last judging, ms):
+old × runs 0.45 / 1.86, judge 0.1–0.4 · old × sections 0.50 / 2.17, judge 11–26 · nodes × runs 2.96 / 5.54, judge 0.1–1.8 ·
+nodes × sections 2.68 / 4.73, judge 9–21 · lattice × runs 3.73 / 3.93 · lattice × sections 3.12 / 3.88 · hybrid × runs
+3.02 / 5.64 · hybrid × sections 3.12 / 4.66. The fastest rise: old's CPU rigid rock up to 8.9 cells/s; the node solver
+1.1–3.4. The node solver's load walk on every thread didn't move its GPU numbers here (the GPU is shared with other
+agents' browsers; its cost is the per-body solve while things move, ~1 ms a moving stiff body).
