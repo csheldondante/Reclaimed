@@ -51,6 +51,17 @@ each was implemented.
 - → PL20 accepted on the phone. A chase starts close and already in pursuit (PL23); fleeing is the better verb for the bike than
   chasing, since steering onto a moving target is hard (situation runs lean on fleeing: RS20).
 
+- The user, verbatim, on the building physics:
+
+> Also, for the building physics I really want both the burying, toppling and deformation/fracture. Is that all consolidated into one system yet? Rocks breaking looks decent if a bit slow (what would realistic acceleration look like here?) I think we can to better in terms of breaking and deformation. The old tankers the physics looked great.
+
+- → Not consolidated: the integrity judges (what gives), the columns' falling pieces (bodies.ts/colbodies.ts, capped at
+  4 cells/s, AR10), the CPU rigid rock (rockbodies.ts, world gravity, capped at 14 cells/s, no body against body), the GPU
+  physics voxels (physics/physics.ts + phys.wgsl, the tankers' solver: bonded voxels that bend and snap, its own gravity 20)
+  and the resting meshes' External intervals (burying, MI4/PX4). Round 106's one GPU constraint solver (AR4) is the
+  consolidation, designed and not built. Realistic: 9.8 cells/s² at a metre a cell (a 20-cell fall in 2 s, landing at
+  20 cells/s); the caps and the tankers' doubled gravity are why rocks read slow and the tankers read well (AR9, AR10).
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
