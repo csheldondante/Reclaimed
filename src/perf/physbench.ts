@@ -12,7 +12,7 @@ import { VARIANTS } from '../solver/variant';
 import { JUDGES } from '../game/judge';
 import { postDev } from './report-io';
 import { deviceFacts, keepAwake, letSleep, Panel, reportButtons, wakeLog } from './bench';
-import { summarize, summaryLines, type PhysRow } from './physsummary';
+import { summarize, summaryLines, TIMESTAMP_NOTE, type PhysRow, type Toggle } from './physsummary';
 import { stepTaps } from '../gpu/cpustat';
 
 const KEY = 'reclaimed.physbench';
@@ -92,6 +92,49 @@ interface State {
   /** each page's wake lock: held or not */
   wake: { pair: string; held: boolean }[];
   wakeLog: string[];
+}
+
+/**
+ * A system's cost by the frame with it and without it (round 120: per-pass timestamps don't add up on a tiler): `set`
+ * turns it off (true) or on, in WINDOWS alternating windows each way, each WINDOW_S long — so heat and clocks even
+ * out as the main bench's toggles do; the frames' mean interval and GPU span with it on, less with it off.
+ */
+const WINDOWS = 3;
+const WINDOW_S = 1.5;
+async function toggled(R: Rec, set: (off: boolean) => void): Promise<Toggle> {
+  const P = R.core.host.profiler;
+  const sums = { on: { dt: [] as number[], gpu: [] as number[] }, off: { dt: [] as number[], gpu: [] as number[] } };
+  let side: 'on' | 'off' = 'on';
+  let last = 0;
+  let live = true;
+  const tick = (t: number) => {
+    if (last) sums[side].dt.push(t - last);
+    last = t;
+    if (live) requestAnimationFrame(tick);
+  };
+  P.listen((_f: number, ms: number) => {
+    if (live) sums[side].gpu.push(ms);
+  });
+  requestAnimationFrame(tick);
+  for (let k = 0; k < WINDOWS; k++)
+    for (const s of ['on', 'off'] as const) {
+      set(s === 'off');
+      await sleep(250);
+      side = s;
+      last = 0;
+      await sleep(WINDOW_S * 1000);
+    }
+  set(false);
+  live = false;
+  const mean = (x: number[]) => (x.length ? x.reduce((a, b) => a + b, 0) / x.length : NaN);
+  const d = (a: number, b: number) => (Number.isFinite(a) && Number.isFinite(b) ? +(a - b).toFixed(2) : null);
+  return {
+    frameMs: d(mean(sums.on.dt), mean(sums.off.dt)),
+    gpuMs: d(mean(sums.on.gpu), mean(sums.off.gpu)),
+    on: { frameMs: +mean(sums.on.dt).toFixed(2), gpuMs: sums.on.gpu.length ? +mean(sums.on.gpu).toFixed(2) : null },
+    off: { frameMs: +mean(sums.off.dt).toFixed(2), gpuMs: sums.off.gpu.length ? +mean(sums.off.gpu).toFixed(2) : null },
+    windows: WINDOWS,
+  };
 }
 
 export async function physBench(params: URLSearchParams): Promise<void> {
@@ -179,6 +222,18 @@ export async function physBench(params: URLSearchParams): Promise<void> {
     await sleep(s.secs * 1000);
     on = false;
     stepTaps.splice(stepTaps.indexOf(tap), 1);
+    // (round 120, the user: "the tiled rendering on phones makes per system unreliable … You need to toggle systems to
+    // measure the diff" — the scene goes on, the system off and on in turn, the frame's interval and GPU time compared)
+    panel.say(`physics bench ${step + 1}/${st.pairs.length} (${here}) — ${s.name}: physics off and on…`);
+    const physicsToggle = await toggled(R, (off) => {
+      const sim = R.core.sim;
+      for (const n of ['solver', 'physics']) off ? sim.paused.add(n) : sim.paused.delete(n);
+      if (R.scene.integrity) R.scene.integrity.paused.physics = off;
+    });
+    panel.say(`physics bench ${step + 1}/${st.pairs.length} (${here}) — ${s.name}: the judge off and on…`);
+    const judgeToggle = await toggled(R, (off) => {
+      if (R.scene.integrity) R.scene.integrity.paused.judge = off;
+    });
     const d: number[] = [];
     for (let i = 1; i < t.length; i++) d.push(t[i] - t[i - 1]);
     const f = [...d].sort((a, b) => a - b);
@@ -210,7 +265,9 @@ export async function physBench(params: URLSearchParams): Promise<void> {
       p99: q(0.99),
       worst: +f[f.length - 1].toFixed(1),
       gpu: fr ? +(P.gpuTotalMs / fr).toFixed(2) : null,
-      gpuPhysics: fr ? +(gp / fr).toFixed(2) : null,
+      gpuPhysicsPasses: fr ? +(gp / fr).toFixed(2) : null,
+      physicsToggle,
+      judgeToggle,
       cpuPhysics: +(cpu / Math.max(1, d.length)).toFixed(2),
       cpuTop: Object.fromEntries([...steps].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([k, v]) => [k, +(v / Math.max(1, d.length)).toFixed(2)])),
       judge: { passes: J.passes, ms: +(J.sum / Math.max(1, J.passes)).toFixed(2), worst: +J.worst.toFixed(2), gpuMs: J.gpuN ? +(J.gpu / J.gpuN).toFixed(2) : null, readKB: J.bytesN ? +(J.bytes / J.bytesN / 1024).toFixed(1) : null },
@@ -246,6 +303,7 @@ export async function physBench(params: URLSearchParams): Promise<void> {
     wakeLog: st.wakeLog,
     stages: STAGES.map((s) => s.name),
     summary: summarize(st.rows),
+    note: TIMESTAMP_NOTE,
     rows: st.rows,
   };
   const body = JSON.stringify(report, null, 1);
@@ -257,6 +315,7 @@ export async function physBench(params: URLSearchParams): Promise<void> {
   }
   panel.say(`Physics bench done — ${st.pairs.length} solver × judge pairs, ${STAGES.length} stages each.`);
   panel.text(summaryLines(st.rows).join(NL), true);
+  panel.text(TIMESTAMP_NOTE, true);
   reportButtons(panel, body, false, 'physbench', 'Reclaimed physics bench', true);
   const dev = await postDev(body, 'physbench');
   if (dev) panel.text(`dev server: ${dev}`, true);

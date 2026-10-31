@@ -194,6 +194,13 @@ export class Physics implements SimSystem {
   beam: Beam | null = null;
 
   private px: GPUBuffer;
+  /** (round 120) the particles' positions (2 vec4 each: xyz, w < 0 gone) and rotations — the rock mesh skins to them */
+  get positions(): GPUBuffer {
+    return this.px;
+  }
+  get rotations(): GPUBuffer {
+    return this.pq;
+  }
   private pv: GPUBuffer;
   private pr: GPUBuffer;
   private pq: GPUBuffer;
@@ -273,7 +280,7 @@ export class Physics implements SimSystem {
     // the fragments' ring: a lattice of FRAG_CAP × 1 × 1 (they have no bonds)
     device.queue.writeBuffer(this.bodyTable, FRAG_BODY * 16, new Uint32Array([0, FRAG_CAP, 1, 1]));
     this.inst = world.buf('physInst', PV_CAP * 32, GPUBufferUsage.STORAGE);
-    this.indirect = world.buf('physIndirect', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
+    this.indirect = world.buf('physIndirect', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
     this.skinSrc = world.buf('physSkinSrc', SKIN_TRIS * 3 * SKIN_V_BYTES, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
     this.skinOut = world.buf('physSkinOut', SKIN_TRIS * 3 * 32, GPUBufferUsage.STORAGE);
     this.skinArgs = world.buf('physSkinArgs', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);

@@ -14908,3 +14908,33 @@ main thread), the judge's mean and worst ms, slow frames and their runs.
 The voxel lattice's mesh room was a fixed 16384 triangles a session; the user's rule is no GPU memory caps. It starts
 there and doubles on demand (Physics.growSkin: the records copied over, the kernels bound again, the renderer's draw
 made again) up to what one binding of the device holds — past that a body is refused as with no room.
+
+## 2026-10-31 — round 120 (`solver`): no voxels on the lattice; meshing by material; the bench toggles (SL23–SL25)
+
+The user on 42335d9: "Both look great and I think are fast enough on this machine. The rocks do look better with the
+nodes but largely because of the meshing. The lattice still switches to voxels." The phone (Pixel 9a, all 8 pairs):
+p95/p99 old×runs 20/29, lattice×runs 22/37, lattice×sections 21/38, hybrid×runs 24/36, nodes×runs 49/52,
+nodes×sections 77/443 — the nodes 25–45 ms of the Mali GPU while bodies move (SL26, the user to decide).
+
+**Voxels on the lattice (SL23).** Two paths drew cells for a meshed lattice body: its hidden voxels were shown where it
+lost a face neighbour or a crack opened (round 49's "a break shows what's inside"), and a crumbling voxel split into
+eight half-size fragments in the fragment ring, drawn as cubes. Now a meshed body's voxels are never drawn (its mesh
+tears; dust covers the cut) and its crumbling voxels go straight to dust (the deaths pass: loose ground and a puff).
+test/gpu/lattice-draw.test.ts reads the lattice's own instance count: 0 over a stone block and a steel bar dropped hard
+(177 before the fix).
+
+**Meshing by material (SL24).** The rock looked better on the nodes because of the rock mesh. Every rock body is now the
+rock mesh whatever moves it: on the node solver skinned to its nodes, the CPU rock by its matrix, and on the voxel
+lattice skinned to its particles (rockmesh.wgsl's mode 3: a vertex goes with the particles of its own cell and the six
+beside it, a layer above and below, at its offset from where each cell stood, turned with it; none left, torn). What's
+built and metal are the body mesh in every variant. The rock lab's collapse on ?solver=lattice: the arch and the
+shelves fall as the rock mesh, bending as the lattice bends.
+
+**The bench's costs by toggling (SL25).** The user: "I think that the tiled rendering on phones makes per system
+unreliable. We already found this. You need to toggle systems to measure the diff" (round 80: the Pixel's per-pass
+times overlapped, each 8–27 ms over a 29 ms span; bench v2's judgeTimestamps flags it). Each stage now ends with the
+physics (the solver, the lattice, the CPU rock's step — the bodies frozen where they are, still drawn) and then the
+judge switched off and on in three alternating 1.5 s windows each way; the report gives what each adds to the frame's
+interval and to its GPU span (Simulation.paused, Integrity.paused). Per-pass timestamps stay in the JSON as
+gpuPhysicsPasses with a note on the card that they're unreliable on tilers. Headless on the desktop (nodes × sections):
+the interval doesn't move (vsync-bound), the GPU span +1.4–1.9 ms with physics, +1.3–2.2 with the judge.

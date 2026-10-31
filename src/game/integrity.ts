@@ -194,6 +194,11 @@ export class Integrity {
   /** dust where something breaks or a body hits (grains, spread in cells, the material it's made of) */
   onDust?: (x: number, y: number, z: number, count: number, spread: number, mat: number) => void;
   /** stats for the perf overlay / tests */
+  /**
+   * (round 120, the physics bench's toggles — the user: "You need to toggle systems to measure the diff for an
+   * accurate number") the CPU rigid rock not stepped (the bodies frozen where they are, still drawn), the judge not run
+   */
+  readonly paused = { physics: false, judge: false };
   stats = { passes: 0, bodies: 0, crumbled: 0, settled: 0, crumbledBodies: 0, impacts: 0, shatters: 0, shattered: 0, lastMs: 0, rockSeeds: 0, rereads: 0, settledFalls: 0, settleMs: 0, metal: 0, deferred: 0, judgeMs: 0, judgeGpuMs: 0, readMs: 0, readKB: 0, groundBlows: 0, softBlows: 0, softRemoved: 0, softSpray: 0, softRim: 0, softDeepest: 0 };
   /** sleeping bodies projected per column: top, bottom (top < 0: none) — the
    *  GPU's bodyProj texture and the bodies' own collision share it */
@@ -684,6 +689,10 @@ export class Integrity {
    * (solver step 2, the lattice variants) Cells (out of the columns already) as a body of the physics voxels — a
    * particle a cell on its lattice, 26 bonds, shape matched (phys.wgsl) — `pinned` ones held. False with no room.
    */
+  /** (round 120) the voxel lattice's bodies with rock in them: the rock mesh's slot, skinned to their particles */
+  private latticeRock: { body: PhysBody; slot: number; lo: [number, number, number]; dims: [number, number, number] }[] = [];
+  private particlesBound = false;
+
   private spawnLattice(cells: { x: number; y: number; z: number; mat: number }[], pinned: (c: { x: number; y: number; z: number; mat: number }) => boolean): boolean {
     const phys = this.physics;
     if (!phys || !cells.length) return false;
@@ -696,8 +705,11 @@ export class Integrity {
     const dims: [number, number, number] = [hi[0] - lo[0] + 1, hi[1] - lo[1] + 1, hi[2] - lo[2] + 1];
     if (!phys.hasRoom(dims[0] * dims[1] * dims[2])) return false;
     // (round 120, the user: "a lot of things turn into lattices during falling": drawn as its own mesh over its
-    // particles — bound to them, torn where they part — its voxels hidden, as the node solver's bodies are drawn)
-    const verts = buildBodyMesh(cells);
+    // particles — bound to them, torn where they part — its voxels hidden, as the node solver's bodies are drawn. And
+    // "The rocks do look better with the nodes but largely because of the meshing": meshing by material, not by solver
+    // — its rock is the rock mesh (the field mesh's copy) skinned to its particles, the rest the body mesh)
+    const slot = this.allocRock(cells);
+    const verts = buildBodyMesh(slot === undefined ? cells : cells.filter((c) => !fieldMeshed(c.mat)));
     const skin = bindSkinTo(
       verts,
       BM_VERT,
@@ -706,7 +718,10 @@ export class Integrity {
         return { i: c.x - lo[0] + dims[0] * (c.y - lo[1] + dims[1] * (c.z - lo[2])), c: [px, py, c.z + 0.5] as [number, number, number] };
       }),
     );
-    if (!phys.hasSkinRoom(skin.tris)) return false;
+    if (!phys.hasSkinRoom(skin.tris)) {
+      if (slot !== undefined) this.rockMesh?.release(slot);
+      return false;
+    }
     const at = new Map(cells.map((c) => [`${c.x - lo[0]},${c.y - lo[1]},${c.z - lo[2]}`, c]));
     const body: PhysBody | null = phys.spawnLattice(
       dims,
@@ -720,7 +735,9 @@ export class Integrity {
         return !!c && pinned(c);
       }, hidden: true },
     );
-    if (body && !phys.attachSkin(body, skin)) throw new Error('spawnLattice: its mesh had room a moment ago');
+    if (body && skin.tris && !phys.attachSkin(body, skin)) throw new Error('spawnLattice: its mesh had room a moment ago');
+    if (body && slot !== undefined) this.latticeRock.push({ body, slot, lo, dims });
+    else if (slot !== undefined) this.rockMesh?.release(slot);
     if (body) this.stats.bodies++;
     return !!body;
   }
@@ -961,7 +978,7 @@ export class Integrity {
     if (this.rigid) {
       // (round 95) the rigid rock: a step, its hits (dust, sparks, a break), what came to rest written back
       const tRigid = performance.now(); // (round 100, hitchrec: timing)
-      if (this.rigid?.list.length && this.world.slots.length && dt > 0) this.stepRigid(dt);
+      if (this.rigid?.list.length && this.world.slots.length && dt > 0 && !this.paused.physics) this.stepRigid(dt);
       record('rockbodies', performance.now() - tRigid); // (round 100, hitchrec: timing)
       const max = 16384;
       if (this.packF.length < max * 8) this.packF = new Float32Array(max * 8);
@@ -999,7 +1016,7 @@ export class Integrity {
     if (this.watches.length) this.watches = this.watches.filter((w) => w.left > 0);
     // (round 86: a cut waits for its event to be sent — the world API marks it as it's queued — then goes at once)
     const cutQueued = this.urgent && this.core.globals.events.some((e) => e.kind === EventKind.Edit && CUTS.has(editOpOf(e.z ?? 0)));
-    const due = (this.urgent && !cutQueued) || this.t <= 0;
+    const due = ((this.urgent && !cutQueued) || this.t <= 0) && !this.paused.judge;
     const rigidN = this.rigid?.list.length ?? 0;
     if (this.busy || !due || (!this.dirty.length && !this.rockSeeds.size && !this.bodies.list.length && !rigidN && this.world.slots.length)) return;
     // (with only sleeping bodies about, a slower pass still checks they're held up; the rigid rock's ground is read round it)
@@ -1508,6 +1525,22 @@ export class Integrity {
       draws.push(rockDrawFor(waiting.has(b) || b.slot === undefined ? -1 : b.slot, rigid.engage(b)?.sb ?? null, () => rigid.drawMatrix(b)));
     }
     for (const a of this.afterglow) draws.push({ slot: a.slot, m: a.m });
+    // (round 120) the rock on the voxel lattice: its mesh skinned to its particles (those gone: let go)
+    const phys = this.physics;
+    if (phys && this.latticeRock.length) {
+      if (!this.particlesBound) {
+        this.core.renderer.setRockParticles({ px: phys.positions, pq: phys.rotations });
+        this.particlesBound = true;
+      }
+      const live = new Set(phys.bodies);
+      this.latticeRock = this.latticeRock.filter((r) => {
+        const st = phys.state(r.body);
+        if (live.has(r.body) && (!st || st.alive > 0)) return true;
+        rm.release(r.slot);
+        return false;
+      });
+      for (const r of this.latticeRock) draws.push({ slot: r.slot, m: [], lattice: { offset: r.body.offset, lo: r.lo, dims: r.dims } });
+    }
     // (round 99) the resting rock, where it lies
     for (const r of this.resting.values()) if (r.slot !== undefined) draws.push({ slot: r.slot, m: r.m });
     // (round 120: the metal is drawn by its own mesh — bodyMeshes — not the rock mesh)

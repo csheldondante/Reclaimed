@@ -44,6 +44,11 @@ export interface RockDraw {
    * spawn frame), its nodes, the material it's drawn as — each vertex goes with the nodes nearest where it was bound
    */
   skin?: { slot: number; com: [number, number, number]; nodes: number; mat?: number };
+  /**
+   * (round 120) skinned to a voxel-lattice body's particles instead (`m` unused): its first particle, its lattice's
+   * low corner (storage column, row, cell z) and size — each vertex goes with the particles of the cells round it
+   */
+  lattice?: { offset: number; lo: [number, number, number]; dims: [number, number, number] };
 }
 
 interface Slot {
@@ -241,13 +246,16 @@ export class RockMesh {
       if (s) {
         const [i, j, a, b] = s.rect;
         d.set([i * MCHUNK, j * MCHUNK * ROW_H, (i + a) * MCHUNK, (j + b) * MCHUNK * ROW_H], o);
-        d.set([s.shift[0], s.shift[1], s.shift[2], r.skin ? 2 : r.ghost ? 1 : 0], o + 16);
+        d.set([s.shift[0], s.shift[1], s.shift[2], r.lattice ? 3 : r.skin ? 2 : r.ghost ? 1 : 0], o + 16);
       } else {
         // (no mesh of its own: only a ghost's vertices go with it — skinned, round 120, or by its matrix)
         d.set([1, 1, 0, 0], o);
         d.set([0, 0, 0, r.skin ? 2 : 0], o + 16);
       }
-      if (r.skin) {
+      if (r.lattice) {
+        d.set([r.lattice.offset, ...r.lattice.lo], o + 4);
+        d.set([...r.lattice.dims, 0], o + 8);
+      } else if (r.skin) {
         d.set([r.skin.slot, ...r.skin.com], o + 4);
         d.set([r.skin.nodes, 0, 0, r.skin.mat ?? 0], o + 8);
       } else d.set(r.m, o + 4);

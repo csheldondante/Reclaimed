@@ -43,7 +43,7 @@ try {
   console.log(`card:
 ${card}`);
   console.log(`kind ${r.kind} v${r.version}, wakeLock ${JSON.stringify(r.wakeLock)}, device ${r.device?.adapter?.vendor ?? '?'}, summary ${r.summary?.length}`);
-  for (const row of r.rows) console.log(`${row.pair.padEnd(16)} ${row.stage.padEnd(34)} p50 ${row.p50} p95 ${row.p95} p99 ${row.p99} GPU ${row.gpu} phys GPU ${row.gpuPhysics} CPU ${row.cpuPhysics} judge ${row.judge.passes}× ${row.judge.ms} ms (worst ${row.judge.worst}, GPU ${row.judge.gpuMs}, ${row.judge.readKB} KB) read ${row.read.reads}× ${row.read.ms} ms ${row.read.kb} KB awake ${row.awake} slow ${row.slow}/${row.clusters} runs`);
+  for (const row of r.rows) console.log(`${row.pair.padEnd(16)} ${row.stage.padEnd(34)} p50 ${row.p50} p95 ${row.p95} p99 ${row.p99} GPU ${row.gpu} physics +${row.physicsToggle.frameMs} ms (GPU +${row.physicsToggle.gpuMs}; passes ${row.gpuPhysicsPasses}, unreliable on tilers) judge +${row.judgeToggle.frameMs} ms (GPU +${row.judgeToggle.gpuMs}) CPU ${row.cpuPhysics} judge ${row.judge.passes}× ${row.judge.ms} ms (worst ${row.judge.worst}, GPU ${row.judge.gpuMs}, ${row.judge.readKB} KB) read ${row.read.reads}× ${row.read.ms} ms ${row.read.kb} KB awake ${row.awake} slow ${row.slow}/${row.clusters} runs`);
   if (out) fs.writeFileSync(out, JSON.stringify(r, null, 1));
 } catch (e) {
   failed = true;

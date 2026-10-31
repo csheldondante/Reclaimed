@@ -15,6 +15,10 @@ struct RockDraws { d: array<vec4<f32>, 481> };
 @group(0) @binding(32) var<storage, read> rkPose: array<vec4<f32>>;
 @group(0) @binding(33) var<storage, read> rkLane: array<vec4<f32>>;
 const RK_LANE: u32 = 8u;
+// (round 120: rendering by material, not by solver — the rock on the voxel lattice drawn with the same mesh, skinned
+// to the lattice's particles: 2 vec4 a particle, xyz where it is, w < 0 gone; its rotation)
+@group(0) @binding(34) var<storage, read> rkPx: array<vec4<f32>>;
+@group(0) @binding(35) var<storage, read> rkPq: array<vec4<f32>>;
 
 struct ROut {
   @builtin(position) pos: vec4<f32>,
@@ -90,7 +94,48 @@ fn vsRock(@builtin(vertex_index) vi: u32) -> ROut {
   }
   var wp = vec3<f32>(0.0);
   var wn = n;
-  if (rkAt(t, 4u).w > 1.5) {
+  if (rkAt(t, 4u).w > 2.5) {
+    // (round 120, on the voxel lattice: the particles of the cells round where the vertex was — its own cell's and the
+    // six beside it, a layer above and below — each carrying it at its offset from where that cell stood, turned with
+    // the particle; by nearness. None left: it's gone, its triangles torn)
+    let a = rkAt(t, 1u);
+    let dm = rkAt(t, 2u);
+    let off = u32(a.x);
+    let lo = vec3<i32>(i32(a.y), i32(a.z), i32(a.w));
+    let dims = vec3<i32>(i32(dm.x), i32(dm.y), i32(dm.z));
+    let c0 = cellAt(s.xy);
+    let z0 = i32(floor(s.z));
+    var sp = vec3<f32>(0.0);
+    var sn = vec3<f32>(0.0);
+    var ws = 0.0;
+    for (var k = 0u; k <= NDIR; k++) {
+      var c = c0;
+      if (k < NDIR) { c = cellAt(cellPos(c0) + DIRV[k]); }
+      for (var dz = -1; dz <= 1; dz++) {
+        let l = vec3<i32>(c.x, c.y, z0 + dz) - lo;
+        if (any(l < vec3<i32>(0)) || any(l >= dims)) { continue; }
+        let j = off + u32(l.x + dims.x * (l.y + dims.y * l.z));
+        let x = rkPx[2u * j];
+        if (x.w < 0.0) { continue; }
+        let rc = vec3<f32>(cellPos(c), f32(z0 + dz) + 0.5);
+        let d = length(s - rc);
+        if (d > 1.6) { continue; }
+        let w = 1.0 / ((d + 0.25) * (d + 0.25));
+        let q = normalize(rkPq[j]);
+        sp += w * (x.xyz + quatRotate(q, s - rc));
+        sn += w * quatRotate(q, n);
+        ws += w;
+        if (ws == w) { o.rq = q; }
+      }
+    }
+    if (ws <= 0.0) {
+      o.gone = 1.0;
+      wp = s;
+    } else {
+      wp = sp / ws;
+      wn = normalize(sn);
+    }
+  } else if (rkAt(t, 4u).w > 1.5) {
     // (solver step 2, skinned: the vertex goes with the nodes nearest where it was bound — up to four, weighted by
     // nearness — each carrying it at its offset turned with it, between the last two ticks. Round 120: a ghost's
     // vertex with its fragment's nodes, when that fragment is skinned — the spawn frame is the same lattice's, so its

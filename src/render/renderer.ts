@@ -879,9 +879,9 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
         const layout = makeLayout(
           device,
           'rock-mesh',
-          { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex', 25: 'depth', 26: 'csampler', 30: 'uniform', 31: 'uniform', 32: 'read', 33: 'read' },
+          { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex', 25: 'depth', 26: 'csampler', 30: 'uniform', 31: 'uniform', 32: 'read', 33: 'read', 34: 'read', 35: 'read' },
           VF,
-          { 3: GPUShaderStage.VERTEX, 5: GPUShaderStage.VERTEX, 11: VF, 32: GPUShaderStage.VERTEX, 33: GPUShaderStage.VERTEX, ...Object.fromEntries([1, 4, 6, 7, 8, 9, 13].map((b) => [b, GPUShaderStage.FRAGMENT])) },
+          { 3: GPUShaderStage.VERTEX, 5: GPUShaderStage.VERTEX, 11: VF, 32: GPUShaderStage.VERTEX, 33: GPUShaderStage.VERTEX, 34: GPUShaderStage.VERTEX, 35: GPUShaderStage.VERTEX, ...Object.fromEntries([1, 4, 6, 7, 8, 9, 13].map((b) => [b, GPUShaderStage.FRAGMENT])) },
         );
         const module = makeModule(device, 'rock-mesh', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, meshStateWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`, meshSourceWgsl, meshDrawWgsl, rockMeshWgsl]);
         const pipe = device.createRenderPipeline({
@@ -896,7 +896,8 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
         const none = device.createBuffer({ label: 'rock no nodes', size: 64, usage: GPUBufferUsage.STORAGE });
         const group = (cam: GPUBuffer = this.camBuf, shadow: GPUTextureView = this.shadowView) => {
           const p = this.rockNodes;
-          return makeBindGroup(device, 'rock-mesh', layout, { ...this.meshResources(cam, shadow, { mesh: rm.mesh, chunks: rm.chunks, layers: rm.layers }), 31: rm.uni, 32: p?.pose ?? none, 33: p?.lanes ?? none });
+          const q = this.rockParticles;
+          return makeBindGroup(device, 'rock-mesh', layout, { ...this.meshResources(cam, shadow, { mesh: rm.mesh, chunks: rm.chunks, layers: rm.layers }), 31: rm.uni, 32: p?.pose ?? none, 33: p?.lanes ?? none, 34: q?.px ?? none, 35: q?.pq ?? none });
         };
         // (round 99: depth only, through the sun's camera)
         // (made when a rock mesh is: synchronously, as its own pipe above)
@@ -2048,6 +2049,16 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
   }
 
   /** (solver step 2) The node solver's buffers, for the rock mesh's skinned draws (the metal's); again when they grow. */
+  /** (round 120) the voxel lattice's particles (positions, rotations) the rock mesh is skinned to on the lattice */
+  private rockParticles?: { px: GPUBuffer; pq: GPUBuffer };
+  setRockParticles(p: { px: GPUBuffer; pq: GPUBuffer }): void {
+    this.rockParticles = p;
+    if (this.rockGroupOf) {
+      this.rockGroup = this.rockGroupOf();
+      this.rockShadowGroup = this.noShadowView ? this.rockGroupOf(this.lightCamBuf, this.noShadowView) : undefined;
+    }
+  }
+
   setRockNodes(p: { pose: GPUBuffer; lanes: GPUBuffer }): void {
     this.rockNodes = p;
     if (this.rockGroupOf) {

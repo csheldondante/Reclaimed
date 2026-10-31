@@ -776,8 +776,9 @@ fn split(@builtin(global_invocation_id) id: vec3<u32>) {
   let info = infoOf(i);
   let code = select(sizeCodeOf(info), 16u, sizeCodeOf(info) == 0u);
   let cc = code / 2u;
-  // a fragment, or too small to halve: it goes to dust (deaths)
-  if (bodyOf(info) == FRAG_BODY || cc < FRAG_MIN_CODE) { return; }
+  // a fragment, or too small to halve: it goes to dust (deaths). (Round 120, the user: "The lattice still switches to
+  // voxels" — a voxel of a body its mesh draws goes to dust too: its pieces would be drawn as cubes)
+  if (bodyOf(info) == FRAG_BODY || cc < FRAG_MIN_CODE || ((info >> 22u) & 1u) != 0u) { return; }
   let m = info & 0xffu;
   let cs = f32(cc) / 16.0;
   let q = pq[i];
@@ -913,25 +914,10 @@ fn prep(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
         if (j < 0 || !alive(u32(j))) { show = true; }
       }
     }
-    // (a body a mesh draws: its voxels are only what the world feels, round 49
-    // — but one that has lost a face neighbour it had shows where the mesh
-    // tore, so a break shows what's inside)
+    // (a body a mesh draws: its voxels are only what the world feels, round 49 — never drawn, round 120 (the user:
+    // "The lattice still switches to voxels"): a break shows as the mesh tearing, its cut behind the dust)
     let info = infoOf(i);
-    if (((info >> 22u) & 1u) != 0u) {
-      let b = PB[bodyOf(info)];
-      let l = latOf(i, b);
-      // (gone, or the crack has opened: a snapped bond whose two sides still
-      // touch is hidden under the mesh, which bends across it)
-      var lost = false;
-      let gap = 1.25 * sizeOf(info);
-      for (var f = 0u; f < 6u; f++) {
-        if (((info >> (23u + f)) & 1u) == 0u) { continue; }
-        let j = latIdx(l + n26(FACES[f]), b);
-        if (j < 0 || !alive(u32(j))) { lost = true; continue; }
-        if ((bonds & (1u << FACES[f])) == 0u && length(px[2u * u32(j)].xyz - xc) > gap) { lost = true; }
-      }
-      show = lost;
-    }
+    if (((info >> 22u) & 1u) != 0u) { show = false; }
   }
   let off = atomicAdd(&wgN, select(0u, 1u, show));
   workgroupBarrier();
