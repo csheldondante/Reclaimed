@@ -2801,3 +2801,44 @@ is its own params, not the Globals.
 Tests: test/gpu/judge-shapes.test.ts (A and B on every shape, B asserted from the stone estimate; JUDGE_LOG=1 writes
 data/perf/judge/shapes.md), test/gpu/judge-equal.test.ts (B's fast paths against its oracle: shapes, 40 random caves), test/gpu/judge-perf.test.ts (JUDGE_PERF=1: data/perf/judge/node-*.json and the phase
 breakdown node-phases.json), test/support/judgeworld.ts (RockWorld's passes through a judge).
+
+## The columns on the CPU, and changes made on the GPU (round 120, branch `jb6`; BACKLOG JB6, AR6)
+
+The integrity system (game/integrity.ts) judges and changes the GPU's columns (WorldGpu.layers). Since JB6 the CPU holds
+no copy of them unless a CPU consumer walks one, and every change it makes to them is the GPU's:
+
+- **game/colcopy.ts `ColumnCopy`** — the CPU's copy, one concern out of Integrity. `kept`: the window's whole copy, read
+  before each judge's pass (the chunks round what it looks at; whole after a slide, `drop()`), for judge A
+  (fracture.ts analyseRock), the CPU rigid rock's ground (rockbodies.ts columnsGround: the old, nodes and hybrid
+  variants — RockBodies' step, spawn and fast-forward) and the pieces falling in the columns (colbodies.ts: a level
+  without the rigid rock, the old variant's structures). `sparse`: nothing held; a reader `fetch`es the chunks it needs
+  and reads them in the same task (`read` of a column not fetched this frame throws: never a stale read). Writes go to
+  the GPU by `queue.writeBuffer` and into the copy where it holds the column; reads in flight replay what was written
+  meanwhile. `Integrity.keepsCopy` is the policy (`?jb6=0` keeps it everywhere — measuring only).
+- **game/colapply.ts `ColumnApply`** (shaders/colapply.wgsl, standalone like judge.wgsl: its own params, the chunk table,
+  the slots, the deposit, a page table for the deposit's ring index) — the changes, in stages: `applyCuts` (colbodies.ts
+  subtract, then the rubble rule past K: `cutColumn`), `spillTarget`/`spillDeposit` (crumbled cells' rubble to the
+  lowest-topped column of the 3 x 3 round each that isn't a crumbled column, the loose material most given, added to
+  deposit.y/z: `spillPlan`), `depositAdd` (loose ground added — the CPU's toLoose; never overwritten now), `release`
+  (External spans let go: sim/external.ts `releaseSpan`), `orphans` (the whole window: `orphanColumn` against every
+  claimed span). Each rule has one CPU statement, used to change the kept copy alike (`Integrity.edit`); the Node tests
+  (test/gpu/colapply.test.ts) hold the GPU to it. Nothing comes back.
+- **game/colquery.ts `ColumnQuery`** (shaders/colquery.wgsl) — `count(boxes, mask)`: how many columns of each box hold a
+  material the mask says yes to, a few bytes back. The structures' analyse asks it (`isStructural`) before it fetches a
+  dirty box's chunks.
+- **Blows** — `Integrity.groundBlow` sends an Edit event, OP.SMASH with `BLOW_TAG` (sim/edit-ops.ts; radius the
+  footprint's reach + 3, strength the energy ½mv²); edit.wgsl decides on the struck column's top: loose ground (the
+  material table's `look.z`, materials.ts `softnessOf`) sinks — the footprint's top run cut by depth · (1 − ½(d/reach)²),
+  the rim (impact.spray's rest) added to the deposit round it; solid ground past impact.groundEnergy smashes (OP.SMASH's
+  rule, `smashCol`). impact.softSink, .spray and .groundEnergy are GPU tune parameters (Globals.tune). A dust burst's
+  payload `GROUND_DUST` (−1) tints it with the ground's own material where it rises (particles.wgsl bursts).
+- **External** (sim/external.ts) — `ColumnAccess.release` (optional): the registry lets go through it with no column read
+  (the integrity system's: the GPU's `release` stage). `claim` and `verify` read columns: kept, the copy; sparse, a
+  pass fetches the chunks with claimed cells among those it looks at, and an owner claiming (the settlements view:
+  `ViewIO.columns(cols, then)` → `Integrity.columnsReady`) gets its columns fetched first. `claimedSpans()` gives the
+  GPU's orphans pass every claimed span.
+- **What still reads the columns back on the sections path (lattice)**: a pass's fetch of the chunks with claimed cells
+  near a cut, a dirty box's chunks when something's built in it, the metal flood round a struck tanker (`wakeMetal`,
+  grown when the metal reaches past what it fetched), the drop tool's ground, the settlements' claims — each a few chunks,
+  on purpose, never the window before every pass. Judge B's own verdict (its header and the records' room, 97 KB to
+  start, grown when a judging overflows it).

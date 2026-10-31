@@ -301,3 +301,39 @@ describe('the GPU asked of its columns (game/colquery.ts)', () => {
     expect(gpu.takeErrors()).toEqual([]);
   });
 });
+
+describe('the CPU copy (game/colcopy.ts)', () => {
+  test('sparse: a column is readable once fetched, this window and this frame only; writes during a fetch go back over it', async () => {
+    const { ColumnCopy } = await import('../../src/game/colcopy');
+    const gpu = await testGpu();
+    const w = new RockWorld(48, 48, 64, (x) => [{ z0: 0, z1: 10 + (x % 5), mat: MAT.Stone }]);
+    const cols = gpuCols(gpu.device, w);
+    gpu.device.queue.writeBuffer(cols.slots, 0, w.packed.slots);
+    let epoch = 0;
+    const copy = new ColumnCopy({ device: gpu.device, packed: w.packed, layers: () => cols.slots, epoch: () => epoch, readWhole: async () => new Float32Array(await gpu.read(cols.slots, w.packed.slots.byteLength)) }, 'sparse');
+    expect(() => copy.read(3, 3)).toThrow(/isn't held/);
+    const fetching = copy.fetch([copy.chunkOf(3, 3)]);
+    // (written while the fetch is in flight: the copy keeps this, not what the read brought)
+    copy.write(4, 3, [{ z0: 0, z1: 2, mat: MAT.Sand }]);
+    expect(await fetching).toBe(true);
+    expect(copy.read(3, 3)).toEqual(w.read(3, 3));
+    expect(copy.read(4, 3)).toEqual([{ z0: 0, z1: 2, mat: MAT.Sand, aux: 0 }]);
+    // (another chunk: not fetched)
+    expect(() => copy.read(20, 3)).toThrow(/isn't held/);
+    // (a new frame: nothing held)
+    copy.frame();
+    expect(() => copy.read(3, 3)).toThrow(/isn't held/);
+    // (fetched, then the window slid: not readable)
+    expect(await copy.fetch([copy.chunkOf(3, 3)])).toBe(true);
+    epoch++;
+    expect(copy.has(3, 3)).toBe(false);
+    // (kept: the whole window read, every column readable)
+    copy.mode = 'kept';
+    copy.drop();
+    expect(await copy.readFor(new Set())).toBe('whole');
+    expect(copy.read(40, 40)).toEqual(w.read(40, 40));
+    cols.slots.destroy();
+    cols.chunks.destroy();
+    expect(gpu.takeErrors()).toEqual([]);
+  });
+});

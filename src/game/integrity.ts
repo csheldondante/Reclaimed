@@ -1132,7 +1132,6 @@ export class Integrity {
    * runs if the window slid meanwhile.
    */
   async columnsReady(cols: Iterable<[number, number]>, then: () => void): Promise<void> {
-    this.syncCopy();
     const chunks = new Set<number>();
     for (const [x, y] of cols) if (x >= 0 && y >= 0 && x < this.core.dims.w && y < this.core.dims.h) chunks.add(this.cols.chunkOf(x, y));
     await this.withColumns(chunks, then);
@@ -2052,8 +2051,8 @@ export class Integrity {
     this.core.sim.edit.always = true;
     // (what it lands on asleep: woken, so the edit pass sees it)
     this.core.sleep?.wake(x, y, reach + 6, 4, performance.now() / 1000);
+    // (a smash is a cut: the event tap marks it for the judge — two looks — as any smash; a sink judges nothing much)
     this.core.globals.events.push({ kind: EventKind.Edit, x, y, z: OP.SMASH * 32 + BLOW_TAG, radius: reach + 3, strength: energy });
-    this.watch(x, y, reach + 3, 3);
     // (the spray, the ground's own stuff — what was struck the particles look up)
     this.onDust?.(x, y, z + 0.3, Math.min(80, Math.round(8 + Math.cbrt(energy) * 0.4)), reach + 0.5, GROUND_DUST);
     this.stats.blows++;
@@ -2623,7 +2622,7 @@ export class Integrity {
    * chunks fetched. `then` runs in the same task, the columns readable; false: the window slid meanwhile (not run).
    */
   private async withColumns<T>(chunks: Iterable<number>, then: () => T): Promise<T | undefined> {
-    if (this.cols.mode === 'kept') {
+    if (this.syncCopy() === 'kept') {
       if (!this.cols.any) await this.cols.readFor('all');
       return this.cols.any ? then() : undefined;
     }
