@@ -142,6 +142,8 @@ each was implemented.
   with its body mesh, in every variant; the lattice's remaining voxel draw path removed. The phone favours lattice and
   the runs judge; the node solver's rework for phone GPUs waits on the user.
 
+- The user, verbatim: "I think the ground interaction and the impacts made it much much better." (soft ground sinking with spray and rim, hard blows crumbling ground, dents; solver 19f5de0/42335d9) → kept; keep tuning from there.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
