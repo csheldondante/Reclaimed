@@ -14470,8 +14470,9 @@ the step-1 baseline, picked per page (`?solver=old|nodes|lattice|hybrid`, the la
 - *Plastic flow and dents make no speed.* A hinge turns what hangs from it in its rest shape and where it is; a dent
   moves its part into the new shape keeping its centre of mass: a small broken piece's dent had flung it 700 cells up.
 
-**Tests** (Node, before the kernel ran): test/gpu/solver.test.ts 18 (16 pass, SL1 and SL2 test.fails: the node
-solver's metal folding into the floor as it lands, the pylon shattering), test/unit/solver-build.test.ts 5,
+**Tests** (Node, before the kernel ran): test/gpu/solver.test.ts 18 (all pass: SL1 and SL2 — the node solver's
+metal folding into the floor as it landed, the pylon shattering — were a pinned node's 1e6 counted in the body's mass,
+making every blow's dent the deepest), test/unit/solver-build.test.ts 5,
 test/unit/judge-shapes.test.ts 11 (SV1 test.fails). `npm test` is green (the gpu tier's worker crashes now and then
 on this shared GPU after several worlds — it did on places too, 1 in 3).
 
