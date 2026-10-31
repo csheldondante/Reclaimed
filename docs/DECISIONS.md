@@ -198,6 +198,8 @@ each was implemented.
   or resource-allocation choices) -> help or hinder -> always toward a climax. The base is either fixed (a stronghold) or
   moving (a refugee party); the interface is the same. runsit's horde run is its first moving-base instance.
 
+- The user, verbatim: "Note this also works for adventuring parties since we can scale the opportunities and encounters to your resources." → the base can also be an adventuring party; the opportunities and encounters offered scale to the base's resources (a party, a refugee column, a stronghold, an army). Defaults stated and not objected to yet: discrete map turns with real-time encounters, one region a run growing with vassals or travel, carry-over = world state + heroes' traits and artifacts.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
