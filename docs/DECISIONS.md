@@ -324,6 +324,8 @@ each was implemented.
 
 - The user, verbatim: "Let's not even have rolls for now. Let's assume you assign resources it resolves one way and if not it may trigger an on expires effect" → the card lab is deterministic: a committed card resolves to its one outcome after its duration; an uncommitted one may fire its onExpire when it expires. Odds stay possible in the contract for later.
 
+- The user, verbatim: "We can have abilities and deck building that negates these or decreases time to address etc.  you could have things like sacrificing units to delay an approaching army for example" → abilities as part of the deck-building (negate an expiry, cut the time to address, extend an expiry, resolve instantly), plus sacrifices (spend an agent or goods for good to delay a threat, negate an expiry, or force a card); one system with the bonus kinds plus delay and sacrifice.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
