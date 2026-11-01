@@ -57,6 +57,10 @@ export class BikeHero extends PlayHero {
   private lanceA: number | null = null;
   /** the grappling hook (heroes/hook.ts): a swing, a foe on the line, alongside a vehicle */
   readonly hook: Hook;
+  /** (round 120, the lab's handling metrics) the drive's state, read only: a barricade hit this step (`hit`), a crash */
+  get drive(): Readonly<import('../core/bike').Bike> {
+    return this.b;
+  }
   /** the blade's sweep, sampled each step it's out (base, tip, when) */
   private trail: { base: V3; tip: V3; t: number }[] = [];
   /** the last slash, for the debug line */

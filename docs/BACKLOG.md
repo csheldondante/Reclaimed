@@ -27,6 +27,11 @@ user) · `deferred` (agreed for later).
 | CAM6 | The signal flickers between ✓ and ✕ as the beam's end crosses a wall: hysteresis on its kind | S | open |
 | CAM7 | The cutaway's radius and rim in the tiles and the far land (tiles.wgsl, far.wgsl read only the slice's height): on the atlas level the rim and radius show only on the window's own draw | S | open |
 | CAM8 | The modes on the atlas: `?cam=` reaches the play sandbox and the situation runs through PlaySession (the cost measured on the lab, not yet on the atlas phone proxy) | S | open |
+| HL6 | The traits station in the hero lab (the Traits Lab's scenes with a hero: the lich raises, the bike rides the sanctuary); the scenes one list (levels/traitstation.ts TRAIT_SCENES) both labs press | M | done (herolab) |
+| HL7 | One station framework: the playground's Station/StationsBar (levels/playground.ts, ui/stations.ts: the playground, the rock lab, the Traits Lab) and the hero lab's LabStation/VariantPicker (play/lab/lab.ts) are still two; fold the playground's into the lab's (a station kind with resets and a camera look) | M | open |
+| PL31 | The handling metrics' rider is a model (re-aims every 0.25 s, 16 directions): crashes stay 10-20 a minute for every variant; the user's thumb on the phone decides. Assist fights 10-24 % of frames with that rider: tune `strong`/`maxBend` once played | S | open |
+| CAM10 | The cut in a canyon shows big dark sections (the cut walls' insides): a lighter section colour, or the dithered cut there | S | open |
+| UI10 | The title screen's places don't all fit a phone (412 x 785): a wrapping list of every place, the hero lab button; scripts/titlefit.mjs checks every entry reachable | S | done (herolab) |
 
 ## Round 123 (2026-10-31, session 5, `merge123`) — cities and traits merged into places (DECISIONS round 120)
 
@@ -371,8 +376,8 @@ tests work and do quick smoke tests to find failures early." docs/TESTING.md.
 | STR50 | Townscaper verticality: build up as well as out (stacked tiles, storeys over streets, bridges between towers, terraces); not evident in today's towns (round 120) | L | todo (iterate) |
 | STR51 | Towns on varied terrain: showcase hills, cliffs, terraces, rivers and coves in the viewer and the atlas (today the viewer is mostly flat ground) | M | todo (iterate) |
 | STR52 | Purpose that reads at a glance: a mining town, a port and a lumber camp should look clearly different (silhouette, layout, materials, works dominating), not the same town with extras | M | todo (iterate) |
-| CAM9 | cut + tilt the default camera (the user: cut easiest to use, tilt best looking, cut + tilt best for readability); a cut + dither variant | S | next (herolab) |
-| PL30 | Bike handling where precision matters (canyon, city): turn acceleration and rate, steering assist from a corridor flow field, small-obstacle avoidance, target magnetism toward enemies (reusing play's aim assist); player intent always wins | M | next (herolab) |
+| CAM9 | cut + tilt the default camera (the user: cut easiest to use, tilt best looking, cut + tilt best for readability); a cut + dither variant | S | done (herolab: DEFAULT_CAM chase + cutaway + tilt; `cut~` the dithered cut) |
+| PL30 | Bike handling where precision matters (canyon, city): turn acceleration and rate, steering assist from a corridor flow field, small-obstacle avoidance, target magnetism toward enemies (reusing play's aim assist); player intent always wins | M | first pass done (herolab: grip/turn rate, corridor, avoid, magnet chips on the moves stations; Node metrics) — the user to try |
 | FLO21 | Birch cost on the phone: the user's result good — done (flora 18c3bdb, unmerged) | S | done |
 
 ## Round 118 (2026-10-30, session 5, `places`) — found while reviewing the tracks

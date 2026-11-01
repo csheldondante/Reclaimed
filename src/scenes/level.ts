@@ -1953,7 +1953,19 @@ export class LevelScene implements Scene {
     this.editor?.setVisible(false);
     this.host.ui.classList.add('play-on');
     const dims = this.core.dims;
-    this.heroLab = await HeroLab.start({ ui: this.host.ui, api, units, camera: this.core.camera, renderer: this.core.renderer, device: this.host.gpu.device, bounds: [dims.w, dims.h * ROW_H] });
+    // (round 120: the lich's raise through the trait system; the Traits Lab's scenes over this level's agents — the lab
+    // has no settlements, so the agents' fields 4-5 and groups 10-13 the scenes use are free)
+    this.heroLab = await HeroLab.start({
+      ui: this.host.ui,
+      api,
+      units,
+      camera: this.core.camera,
+      renderer: this.core.renderer,
+      device: this.host.gpu.device,
+      bounds: [dims.w, dims.h * ROW_H],
+      raise: this.playRaise(units),
+      traitScene: (at) => new TraitStation(this.agents, this.traits, at),
+    });
     (window as unknown as { reclaimed: Record<string, unknown> }).reclaimed.lab = this.heroLab;
   }
 

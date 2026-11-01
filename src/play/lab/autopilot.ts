@@ -39,11 +39,12 @@ export class Autopilot {
     return this.total;
   }
 
-  /** where the path starts, and the way it heads there */
-  start(): { at: V2; heading: number } {
-    const a = this.path[0].at;
-    const b = this.path[1].at;
-    this.i = 0;
+  /** where the path starts (or the point `k` along it), and the way it heads there */
+  start(k = 0): { at: V2; heading: number } {
+    const n = this.path.length;
+    const a = this.path[k % n].at;
+    const b = this.path[(k + 1) % n].at;
+    this.i = k % n;
     return { at: [a[0], a[1]], heading: Math.atan2(b[1] - a[1], b[0] - a[0]) };
   }
 

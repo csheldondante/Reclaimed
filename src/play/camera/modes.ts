@@ -291,13 +291,18 @@ export class EdgeMode implements CameraMode {
 
 /** Cutaway: anything taller than a short height over the surface the hero is on is cut down, round the hero, a rim lit. */
 export class CutawayMode implements CameraMode {
-  readonly id = 'cutaway' as const;
-  readonly stage = 3;
+  readonly stage: number;
   /** the slice's height now (world z); null: none */
   z: number | null = null;
   private floor: number | null = null;
   private linger = 0;
-  constructor(private p: CamParams) {}
+  /** `cutaway` (a hard slice) or `cutfade` (its top and edge thinned by the dither): the same mode, its own numbers */
+  constructor(
+    private p: CamParams,
+    readonly id: 'cutaway' | 'cutfade' = 'cutaway',
+  ) {
+    this.stage = id === 'cutaway' ? 3 : 3.5;
+  }
 
   reset(): void {
     this.z = null;
@@ -311,7 +316,7 @@ export class CutawayMode implements CameraMode {
   }
 
   step(ctx: CamContext, frame: CamFrame): void {
-    const P = this.p.cutaway;
+    const P = this.p[this.id];
     const v = frame.view;
     const dt = ctx.dt;
     // (the floor eased: a bump under the bike doesn't bob the whole cut)
@@ -331,6 +336,8 @@ export class CutawayMode implements CameraMode {
       this.z += (high + 5 - this.z) * k;
       if (this.z >= high) this.z = null;
     }
-    frame.cut.slice = this.z === null ? null : { z: this.z, at: [ctx.pose.at[0], ctx.pose.at[1]], radius: P.radius * halfScreen(v), rim: P.rim };
+    // (both cuts on: the second leaves the first's slice when it has none of its own)
+    if (this.z === null) return;
+    frame.cut.slice = { z: this.z, at: [ctx.pose.at[0], ctx.pose.at[1]], radius: P.radius * halfScreen(v), rim: P.rim, fade: P.fade, fadeR: P.fadeR };
   }
 }

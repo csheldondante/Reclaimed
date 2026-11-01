@@ -100,6 +100,10 @@ export interface CamSlice {
   at: V2;
   radius: number;
   rim: number;
+  /** (round 120: the dithered cut) cells above `z` over which the cut thins out by the dither (0: hard) */
+  fade?: number;
+  /** ...and the outer share of the radius it thins over (0: a hard edge) */
+  fadeR?: number;
 }
 
 /** A hole kept open round a point: what's in front of it and over its base, within r on screen, dithered out. */
@@ -135,7 +139,7 @@ export interface CamContext {
   world: SightWorld;
 }
 
-export type CamModeId = 'chase' | 'rotate' | 'tilt' | 'cutaway' | 'edge' | 'dither';
+export type CamModeId = 'chase' | 'rotate' | 'tilt' | 'cutaway' | 'cutfade' | 'edge' | 'dither';
 
 /** One camera variant: it reads the frame so far and writes its own part. */
 export interface CameraMode {

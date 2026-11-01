@@ -17,6 +17,7 @@ import type { CamModeId, V2 } from '../api/contracts/camera';
 import { applyFrame, liveSight } from './camera/apply';
 import { SignalHud } from './camera/hud';
 import { CameraRig, parseCam } from './camera/rig';
+import { steerAssist, type SteerParams } from './core/steer';
 import { VoxelDraw } from './draw/voxels';
 import type { Part } from './draw/shapes';
 import { makeHero, type PlayHeroId } from './heroes/make';
@@ -78,6 +79,15 @@ export class PlaySession {
   private camWas: CamModeId[] = [];
   /** (round 121, herolab) the stick taken over (the lab's autopilot): the direction over the ground for the hero at p, given the player's stick */
   steer: ((p: V2, stick: V2) => V2) | null = null;
+  /**
+   * (round 120, PL30) the vehicle's steering assist (core/steer.ts: corridor, avoidance, magnetism; the player's strong
+   * steer overrides it at once); null: none. Not the lich's (it doesn't steer a vehicle).
+   */
+  assist: SteerParams | null = null;
+  /** frames the assist ran, bent the stick, and was held off by a strong steer it disagreed with */
+  readonly assistStats = { frames: 0, bent: 0, fought: 0 };
+  /** the hero's velocity last frame (cells/s, differenced) */
+  private vel: V2 = [0, 0];
   /** where the hero was last frame (its velocity for the framing: any hero, whatever moves it) */
   private last: [number, number] | null = null;
   private keepFresh: (() => void) | null = null;
@@ -230,6 +240,17 @@ export class PlaySession {
       const q = h.position();
       input.dir = this.steer([q[0], q[1]], [input.dir[0], input.dir[1]]);
     }
+    if (this.assist && h.role !== 'lich') {
+      const q = h.position();
+      // (last frame's velocity: this frame's isn't made yet)
+      const vel = this.vel;
+      const foes = this.assist.magnet > 0 ? this.world.units.near(q[0], q[1], this.assist.magnetRange).filter((u) => u.hostile).map((u): V2 => [u.at[0], u.at[1]]) : [];
+      const o = steerAssist([input.dir[0], input.dir[1]], [q[0], q[1]], vel, this.world.top, foes, h.profileClimb(), this.assist);
+      input.dir = o.dir;
+      this.assistStats.frames++;
+      if (o.by && o.bend !== 0) this.assistStats.bent++;
+      if (o.fought) this.assistStats.fought++;
+    }
     h.update(dt, { move: input.dir, input });
     this.afterHero?.(dt);
     this.controls.show(h.looks());
@@ -245,12 +266,13 @@ export class PlaySession {
       if (Math.hypot(vx, vy) > 400) vx = vy = 0;
     }
     this.last = [p[0], p[1]];
+    this.vel = [vx, vy];
     // (round 121: the camera rig — the chase as before, and the modes picked over it: play/camera)
     this.sight.frame();
     const frame = this.rig.step(dt, { at: [p[0], p[1], p[2]], floor: this.world.top(p[0], p[1]), heading: h.heading(), vel: [vx, vy], fast: h.fast() }, { move: input.dir }, this.sight, { w: cam.viewportW, h: cam.viewportH, margin: HUD_MARGIN });
     const ids = this.rig.ids;
     const had = (m: CamModeId) => ids.includes(m) || this.camWas.includes(m);
-    applyFrame(cam, frame, { turn: had('rotate'), tilt: had('tilt'), cut: had('cutaway') || had('edge') || had('dither') });
+    applyFrame(cam, frame, { turn: had('rotate'), tilt: had('tilt'), cut: had('cutaway') || had('cutfade') || had('edge') || had('dither') });
     this.camWas = ids;
     this.signals?.update(frame.signals, cam, HUD_MARGIN);
     // (a jolt: the view knocked about by the hero's shake, a few cells at most, gone in a quarter second)

@@ -16,13 +16,20 @@ export const CAM_MODES: readonly { id: CamModeId; label: string; icon: string; h
   { id: 'tilt', label: 'tilt', icon: '⤒', hint: 'the view tilts toward top-down as what hides the hero rises' },
   { id: 'dither', label: 'dither', icon: '░', hint: 'what hides the hero and the way ahead is dithered out round them' },
   { id: 'cutaway', label: 'cut', icon: '✂', hint: 'anything taller than a short height over the hero\'s ground is cut down round it, a rim lit' },
+  { id: 'cutfade', label: 'cut~', icon: '✄', hint: 'the cut with its top and its edge thinned out by a dither instead of a hard slice' },
   { id: 'edge', label: 'edge', icon: '▣', hint: 'the centre and the way ahead kept clear; occluders only at the screen\'s edges' },
 ];
 
-/** `?cam=` → the modes (the chase always first); an unknown name throws (no silent default) */
+/**
+ * (round 120, the user: "cut plus tilt is best for readability") the camera with no `?cam=`: the chase, the cut and
+ * the tilt. `?cam=chase` is the chase alone (the camera before the lab).
+ */
+export const DEFAULT_CAM: readonly CamModeId[] = ['chase', 'cutaway', 'tilt'];
+
+/** `?cam=` → the modes (the chase always first); absent: DEFAULT_CAM; an unknown name throws (no silent default) */
 export function parseCam(s: string | null | undefined): CamModeId[] {
+  if (!s) return [...DEFAULT_CAM];
   const out: CamModeId[] = ['chase'];
-  if (!s) return out;
   for (const raw of s.split(/[+, ]+/)) {
     const id = raw.trim().toLowerCase();
     if (!id) continue;
@@ -66,7 +73,7 @@ export class CameraRig {
   ) {
     this.chase = new ChaseMode(p);
     this.ahead = new WayAheadSource(p);
-    this.all = { chase: this.chase, rotate: new RotateMode(p), tilt: new TiltMode(p), cutaway: new CutawayMode(p), edge: new EdgeMode(p), dither: new DitherMode(p) };
+    this.all = { chase: this.chase, rotate: new RotateMode(p), tilt: new TiltMode(p), cutaway: new CutawayMode(p), cutfade: new CutawayMode(p, 'cutfade'), edge: new EdgeMode(p), dither: new DitherMode(p) };
     this.use(ids);
   }
 

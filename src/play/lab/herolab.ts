@@ -1,18 +1,23 @@
 // ---- play/lab/herolab.ts ----------------------------------------------------------------------------------------
 // (round 121, herolab; BACKLOG HL1, CAM1) The hero lab: `?skipmenu=1&level=herolab` — play's hero (PlaySession, the
-// same as the sandbox and a run) on the lab's test terrains, with every camera mode a chip. The user (round 120): "we
-// need a variety of settings to try in different terrains to see what works."
-//   top        the stations (one tap: the hero dropped at its ride's start), the kinds of station (camera now;
-//              abilities, puzzles, enemies, the combat gym slot in), the hero
-//   under it   the camera modes (multi: they combine; `?cam=`), the autopilot (▶: rides the station's path; touch the
-//              stick to take over for a moment), the camera's tuning (every mode's numbers, sliders)
-//   on screen  the way ahead: a green ✓ where it goes on round a turn, a red ✕ where it ends (an arrow at the edge
-//              when it's off the screen)
-// Address: ?station=cliff|canyon|forest|city|cave|hills  ?cam=rotate+dither  ?hero=hoverbike|lich  ?auto=0  ?camtune=
+// same as the sandbox and a run) on the lab's test terrains. The user (round 120): "we need a variety of settings to
+// try in different terrains to see what works."
+//   lab        the kinds of station: camera (the six terrains), moves (the bike's handling on the canyon and the city:
+//              PL30), traits (the Traits Lab's scenes with a hero: LW1); puzzles, enemies and the combat gym slot in
+//   station    the stations of that kind (one tap: the hero dropped at its ride's start)
+//   hero       the bike or the lich
+//   camera     the camera modes (multi: they combine; `?cam=`; the default cut + tilt, round 120)
+//   handling   (moves) the bike's turning and steering-assist variants (multi; `?handling=`)
+//   scenes     (traits) a crowd, smite, raise, sanctuary, fear, petrify, clear (levels/traitstation.ts TRAIT_SCENES)
+//   tools      the autopilot (▶: rides the station's path; touch the stick to take over for a moment), back to the start
+//   on screen  the way ahead: ✓ where it goes on round a turn, ✕ where it ends (an arrow at the edge off the screen);
+//              the camera's and the handling's numbers behind their buttons on the right
+// Address: ?station=<id> ?cam=cutaway+tilt ?hero=hoverbike|lich ?handling=grip+corridor ?auto=0 ?camtune= ?handtune=
 
 import type { CamModeId, V2 } from '../../api/contracts/camera';
 import type { Units } from '../../api/contracts/units';
 import type { Sim } from '../../api/world';
+import { runTraitScene, TRAIT_SCENES, type TraitStationDriver } from '../../levels/traitstation';
 import type { Camera } from '../../render/camera';
 import type { Renderer } from '../../render/renderer';
 import { TunePanel } from '../../ui/tunepanel';
@@ -21,8 +26,9 @@ import { CAM_TUNING } from '../camera/params';
 import { CamMetrics, type MetricsSummary } from '../camera/metrics';
 import { CAM_MODES, camString, parseCam } from '../camera/rig';
 import type { PlayHeroId } from '../heroes/make';
-import { el, PlaySession } from '../session';
-import { Autopilot } from './autopilot';
+import { el, PlaySession, type SessionDeps } from '../session';
+import { Autopilot, type AutoPath } from './autopilot';
+import { applyTurn, HANDLING, HANDLING_VARIANTS, parseHandling, steerParams, useHandling, type HandlingId } from './handling';
 import { STATION_KINDS, Stations, urlParam, VariantPicker, type LabStation, type StationKind } from './lab';
 import { LAB_TERRAINS, type LabTerrain } from './terrains';
 import '../sandbox/sandbox.css';
@@ -36,6 +42,10 @@ export interface HeroLabDeps {
   renderer: Renderer;
   device: GPUDevice;
   bounds: [number, number];
+  /** (merge123) the world's raise dead for play's lich (SessionDeps.raise) */
+  raise?: SessionDeps['raise'];
+  /** (round 120, LW1) the traits' scenes over this level's agents, round a point (levels/traitstation.ts TraitStation); absent: no traits station */
+  traitScene?: (at: V2) => TraitStationDriver;
 }
 
 /** what a station is given */
@@ -54,22 +64,31 @@ export class HeroLab {
   private byName = new Map<string, VariantPicker<string>>();
   private metrics: CamMetrics | null = null;
   private panel: TunePanel;
+  private handPanel: TunePanel;
   private hint: HTMLElement;
+  /** the station row (rebuilt for the kind picked) and the kind's own row (handling chips, a station's actions) */
+  private stationRow: HTMLElement;
+  private kindRow: HTMLElement;
+  private stationPicker: VariantPicker<string> | null = null;
+  private handPicker: VariantPicker<HandlingId>;
+  kind: StationKind;
   /** the autopilot round the station's path; null: the player rides */
   pilot: Autopilot | null = null;
   auto: boolean;
   private yieldT = 0;
   private resize: ResizeObserver;
+  private traits: TraitStationDriver | null = null;
   /** the camera metrics live (the perf overlay's line, and scripts/herolab.mjs) */
   readonly live = { frames: 0, cam: '' };
 
   private constructor(
     readonly d: HeroLabDeps,
     readonly session: PlaySession,
+    first: string,
   ) {
     this.auto = urlParam.get('auto') !== '0';
     const ctx: LabContext = { lab: this, session };
-    this.stations = new Stations(LAB_TERRAINS.map((t) => this.terrainStation(t)), ctx);
+    this.stations = new Stations(this.allStations(), ctx);
     // (the autopilot holds the stick until the player pushes it)
     session.steer = (p: V2, stick: V2) => {
       if (Math.hypot(stick[0], stick[1]) > 0.2) this.yieldT = TAKE_OVER;
@@ -78,25 +97,24 @@ export class HeroLab {
     };
     this.bar = el('div', 'lab-bar', d.ui);
     for (const ev of ['pointerdown', 'touchstart', 'wheel']) this.bar.addEventListener(ev, (e) => e.stopPropagation(), { passive: true });
-    const initialStation = urlParam.get('station') ?? 'cliff';
-    if (!LAB_TERRAINS.some((t) => t.id === initialStation)) throw new Error(`?station=${initialStation}: no such station (${LAB_TERRAINS.map((t) => t.id).join(', ')})`);
+    const firstStation = this.stations.list.find((s) => s.id === first);
+    if (!firstStation) throw new Error(`?station=${first}: no such station (${this.stations.list.map((s) => s.id).join(', ')})`);
+    this.kind = firstStation.kind;
     const kinds = new VariantPicker<StationKind>(this.bar, 'lab', STATION_KINDS.map((k) => ({ id: k.kind, icon: k.icon, label: k.kind, hint: k.name })), {
-      initial: ['camera'],
+      initial: [this.kind],
       onChange: (v) => {
-        if (!this.stations.ofKind(v[0]).length) {
-          this.toast(`${STATION_KINDS.find((k) => k.kind === v[0])!.name}: no stations yet — the framework is ready for them (BACKLOG HL1)`);
-          kinds.set(['camera']);
+        const list = this.stations.ofKind(v[0]);
+        if (!list.length) {
+          this.toast(`${STATION_KINDS.find((k) => k.kind === v[0])!.name}: no stations yet — the framework is ready for them (BACKLOG HL3)`);
+          kinds.set([this.kind]);
+          return;
         }
+        this.kind = v[0];
+        this.showStations(list[0].id);
       },
     });
     this.pickers.push(kinds as unknown as VariantPicker<string>);
-    this.pickers.push(
-      new VariantPicker(this.bar, 'terrain', LAB_TERRAINS.map((t) => ({ id: t.id, icon: ICONS[t.id] ?? '·', label: t.id, hint: `${t.name}: ${t.hint}` })), {
-        param: 'station',
-        initial: [initialStation],
-        onChange: (v) => this.go(v[0]),
-      }),
-    );
+    this.stationRow = el('div', 'lab-slot', this.bar);
     const hero = (urlParam.get('hero') ?? 'hoverbike') as PlayHeroId;
     this.pickers.push(
       new VariantPicker<PlayHeroId>(this.bar, 'hero', [
@@ -107,6 +125,7 @@ export class HeroLab {
         initial: [hero],
         onChange: (v) => {
           session.choose(v[0]);
+          this.applyHandling();
           this.go(this.stations.current?.id ?? 'cliff');
         },
       }) as unknown as VariantPicker<string>,
@@ -126,7 +145,25 @@ export class HeroLab {
       }) as unknown as VariantPicker<string>,
     );
     this.live.cam = camString(cam);
+    this.kindRow = el('div', 'lab-slot', this.bar);
+    // (the bike's handling variants: the moves stations show them)
+    const hs = urlParam.get('handtune');
+    useHandling(HANDLING, parseHandling(urlParam.get('handling')));
+    if (hs) HANDLING.apply(HANDLING.decode(hs));
+    this.handPicker = new VariantPicker<HandlingId>(this.kindRow, 'handling', HANDLING_VARIANTS.map((v) => ({ id: v.id, icon: v.icon, label: v.label, hint: v.hint })), {
+      multi: true,
+      fixed: ['stock'],
+      param: 'handling',
+      initial: parseHandling(urlParam.get('handling')),
+      format: (v) => v.filter((x) => x !== 'stock').join('+') || 'stock',
+      onChange: (v) => {
+        useHandling(HANDLING, v.filter((x) => x !== 'stock'));
+        this.applyHandling();
+      },
+    });
+    HANDLING.onChange(() => this.applyHandling());
     for (const p of this.pickers) this.byName.set(p.title, p);
+    this.byName.set('handling', this.handPicker as unknown as VariantPicker<string>);
     const tools = el('div', 'lab-row', this.bar);
     const autoBtn = el('button', 'play-chip lab-chip', tools) as HTMLButtonElement;
     autoBtn.innerHTML = '<span>▶</span><small>auto</small>';
@@ -161,30 +198,63 @@ export class HeroLab {
       open: ['ahead'],
       visible: (def) => def.group === 'chase' || def.group === 'ahead' || session.rig.ids.includes(def.group as CamModeId),
     });
+    this.handPanel = new TunePanel(d.ui, {
+      registry: HANDLING,
+      store: 'reclaimed.herolab.handling',
+      urlParam: 'handtune',
+      label: '🏍 handling',
+      cls: 'herolab-hand',
+      open: ['turn', 'assist'],
+    });
     session.setCam(cam);
+    this.applyHandling();
+    this.showStations(first);
   }
 
   static async start(d: HeroLabDeps): Promise<HeroLab> {
-    const session = await PlaySession.start({ ...d, respawnAfter: 2, cam: urlParam.get('cam') ?? 'chase' });
+    const session = await PlaySession.start({ ...d, respawnAfter: 2, cam: camString(parseCam(urlParam.get('cam'))) });
     const hero = (urlParam.get('hero') ?? 'hoverbike') as PlayHeroId;
     if (hero !== 'hoverbike' && hero !== 'lich') throw new Error(`?hero=${hero}: the lab has the hoverbike and the lich (the walker isn't a play hero yet)`);
-    const first = LAB_TERRAINS.find((t) => t.id === (urlParam.get('station') ?? 'cliff')) ?? LAB_TERRAINS[0];
-    session.choose(hero, first.path[0].at);
-    const lab = new HeroLab(d, session);
-    lab.go(first.id);
-    return lab;
+    const first = urlParam.get('station') ?? 'cliff';
+    session.choose(hero, LAB_TERRAINS[0].path[0].at);
+    return new HeroLab(d, session, first);
   }
 
-  /** a terrain to ride as a station: the hero at its ride's start, the autopilot on its path, its points of interest */
-  private terrainStation(t: LabTerrain): LabStation<LabContext> {
+  // ---- the stations ---------------------------------------------------------------------------------------------
+
+  private allStations(): LabStation<LabContext>[] {
+    const out = LAB_TERRAINS.map((t) => this.rideStation(t, 'camera', t.id, t.name, t.hint, t.path));
+    // (round 120, PL30) the bike's handling where precision matters: the canyon and the city, with the handling chips
+    for (const id of ['canyon', 'city']) {
+      const t = LAB_TERRAINS.find((x) => x.id === id)!;
+      out.push(this.rideStation(t, 'moves', `moves-${id}`, `Handling: ${t.name}`, 'the bike\'s turning and steering assist (the chips under the camera\'s); the player\'s strong steer always wins', t.path));
+    }
+    // (round 120, LW1) the traits' scenes on the hills, ridden through: a figure of eight through the middle
+    if (this.d.traitScene) {
+      const t = LAB_TERRAINS.find((x) => x.id === 'hills')!;
+      const mid: V2 = [(t.rect[0] + t.rect[2]) / 2, (t.rect[1] + t.rect[3]) / 2];
+      const st = this.rideStation(t, 'traits', 'traits', 'Traits', 'the living and the walking dead: smite them, raise the fallen with the lich (💀 raise), ride the bike through the sanctuary that heals the living and burns the undead', figureEight(mid, 13, 16));
+      st.actions = TRAIT_SCENES.map((sc) => ({ label: sc.label, icon: sc.icon, run: () => runTraitScene(this.traitDriver(mid), sc.id) }));
+      out.push(st);
+    }
+    return out;
+  }
+
+  private traitDriver(at: V2): TraitStationDriver {
+    if (!this.d.traitScene) throw new Error('the hero lab has no trait system here');
+    return (this.traits ??= this.d.traitScene(at));
+  }
+
+  /** a station ridden on a terrain: the hero at its ride's start, the autopilot on its path, its points of interest */
+  private rideStation(t: LabTerrain, kind: StationKind, id: string, name: string, hint: string, path: AutoPath[]): LabStation<LabContext> {
     return {
-      id: t.id,
-      kind: 'camera',
-      name: t.name,
-      icon: ICONS[t.id],
-      hint: t.hint,
+      id,
+      kind,
+      name,
+      icon: kind === 'traits' ? '✨' : ICONS[t.id],
+      hint,
       enter: ({ session }) => {
-        this.pilot = new Autopilot(t.path);
+        this.pilot = new Autopilot(path);
         const st = this.pilot.start();
         session.respawn(st.at);
         const rig = session.rig;
@@ -195,20 +265,85 @@ export class HeroLab {
         rig.sources.length = 0;
         const top = (p: V2) => session.world.top(p[0], p[1]);
         if (t.pois.length) rig.sources.push(new PointsSource('poi', 'objective', () => t.pois.map((p): [number, number, number] => [p[0], p[1], top(p)]), 0.6, 2));
-        this.hint.textContent = `${t.name}: ${t.hint}`;
+        this.hint.textContent = `${name}: ${hint}`;
+        this.showKindRow();
       },
     };
+  }
+
+  /** the station chips for the kind now */
+  private showStations(id: string): void {
+    this.stationPicker?.dispose();
+    const list = this.stations.ofKind(this.kind);
+    this.stationPicker = new VariantPicker<string>(this.stationRow, 'station', list.map((s) => ({ id: s.id, icon: s.icon ?? '·', label: s.id.replace('moves-', ''), hint: `${s.name}: ${s.hint}` })), {
+      param: 'station',
+      initial: [list.some((s) => s.id === id) ? id : list[0].id],
+      onChange: (v) => this.go(v[0]),
+    });
+    this.byName.set('station', this.stationPicker);
+    this.go(this.stationPicker.value[0]);
+  }
+
+  /** the kind's own row: the handling chips (moves), the station's actions (traits) */
+  private showKindRow(): void {
+    const s = this.stations.current;
+    this.handPicker.el.style.display = s?.kind === 'moves' ? '' : 'none';
+    this.kindRow.querySelector('.lab-actions')?.remove();
+    if (s?.actions?.length) {
+      const row = el('div', 'lab-row lab-actions', this.kindRow);
+      const t = el('span', 'lab-row-title', row);
+      t.textContent = 'scenes';
+      for (const a of s.actions) {
+        const b = el('button', 'play-chip lab-chip', row) as HTMLButtonElement;
+        b.innerHTML = `<span>${a.icon ?? '·'}</span><small>${a.label}</small>`;
+        b.addEventListener('pointerdown', (e) => e.stopPropagation());
+        b.addEventListener('click', () => a.run({ lab: this, session: this.session }));
+      }
+    }
+  }
+
+  /** the handling's numbers into the bike: its turning onto its params, the assist onto the session */
+  private applyHandling(): void {
+    const h = this.session.hero;
+    if (h.role === 'lich') {
+      this.session.assist = null;
+      return;
+    }
+    applyTurn(HANDLING.values, h.params);
+    const a = steerParams(HANDLING.values);
+    this.session.assist = a.corridor > 0 || a.avoid > 0 || a.magnet > 0 ? a : null;
   }
 
   go(id: string): void {
     this.stations.go(id);
   }
 
-  /** (scripts/herolab.mjs) a station, the camera modes (`?cam=` form) and a hero, as the chips would pick them */
-  pick(o: { station?: string; cam?: string; hero?: PlayHeroId }): void {
+  /** (scripts/herolab.mjs) a station, the camera modes (`?cam=` form), a hero and handling, as the chips would pick them */
+  pick(o: { station?: string; cam?: string; hero?: PlayHeroId; handling?: string }): void {
     if (o.hero) this.byName.get('hero')!.set([o.hero]);
     if (o.cam) this.byName.get('camera')!.set(parseCam(o.cam));
-    if (o.station) this.byName.get('terrain')!.set([o.station]);
+    if (o.handling) this.handPicker.set(['stock', ...parseHandling(o.handling)]);
+    if (o.station) {
+      const s = this.stations.list.find((x) => x.id === o.station);
+      if (!s) throw new Error(`pick: no station ${o.station}`);
+      if (s.kind !== this.kind) {
+        this.kind = s.kind;
+        this.byName.get('lab')!.set([s.kind]);
+      }
+      this.showStations(o.station);
+    }
+  }
+
+  /** (scripts/herolab.mjs) a station's action by its label (the traits' scenes) */
+  act(label: string): void {
+    const a = this.stations.current?.actions?.find((x) => x.label === label);
+    if (!a) throw new Error(`act: the station has no "${label}"`);
+    a.run({ lab: this, session: this.session });
+  }
+
+  /** (scripts/herolab.mjs) the traits on the scene's agents (null: no scene yet) */
+  async census(): Promise<Record<string, number> | null> {
+    return this.traits ? this.traits.census() : null;
   }
 
   /** (scripts/herolab.mjs) the camera metrics over the next `secs` of play, on the live world (play/camera/metrics.ts) */
@@ -248,10 +383,24 @@ export class HeroLab {
     this.resize.disconnect();
     this.d.ui.classList.remove('lab-on');
     for (const p of this.pickers) p.dispose();
+    this.stationPicker?.dispose();
+    this.handPicker.dispose();
+    this.traits?.clear();
     this.bar.remove();
     this.panel.dispose();
+    this.handPanel.dispose();
     this.session.dispose();
   }
+}
+
+/** a figure of eight round `mid` (half-width w, half-height h), crossing itself at the middle */
+function figureEight(mid: V2, w: number, h: number): AutoPath[] {
+  const out: AutoPath[] = [];
+  for (let k = 0; k < 48; k++) {
+    const a = (k / 48) * Math.PI * 2;
+    out.push({ at: [mid[0] + Math.sin(2 * a) * w, mid[1] + Math.sin(a) * h], speed: 0.55 });
+  }
+  return out;
 }
 
 const ICONS: Record<string, string> = { cliff: '🧗', canyon: '🏜', forest: '🌲', city: '🏙', cave: '🕳', hills: '⛰' };

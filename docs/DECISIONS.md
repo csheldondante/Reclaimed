@@ -3,6 +3,24 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-31 — round 120 (session 5, `herolab`) — the user tried the hero lab
+
+- The user, verbatim:
+
+> Hero lab is great. I think that cut and tilt are the easiest to use and best looking respectively. Cut with a dither effect would be interesting. Fundamentally I think the issue is that the bike is so fast and bad at turning it just doesn't work well with places that require precise turning like the canyon. I wonder if there is some way to use steering assist and flow fields to make the bike better to control in such areas or just bump it's turning acceleration. I believe a variant of it at some point used minor steering assist to hit enemies and avoid small obstacles that will arrest momentum. Regardless I think that cut plus tilt is best for readability.
+
+- → Cut + tilt is the default camera (the lab, the play sandbox, the runs; `?cam=chase` the old one, `?cam=` the others);
+  a cut whose top and edge fade by the dither (`cut~`, combinable with tilt). The bike's handling as lab variants: turn
+  acceleration (grip) and turn rate; steering assist from a corridor field toward the open way in narrow places;
+  small-obstacle avoidance; magnetism toward enemies (core/aim.ts reused) — the player's intent overrides: the assist
+  fills in only a light stick, a strong steer wins at once. BACKLOG CAM9, PL30.
+
+- The user, verbatim: "Can you add traits to the hero lab? I haven't tested it yet but I would like to."
+  → A traits station in the hero lab (the Traits Lab's scenes — crowd, smite, raise, sanctuary, fear, petrify — with a
+  hero: the lich raising the fallen, the bike riding through the sanctuary); the scenes one list both labs press.
+- (the coordinator, from the user's phone) The title screen's level list doesn't fit 412 × 785: every entry reachable,
+  the hero lab on it (BACKLOG UI10).
+
 ## 2026-10-31 — round 120 (session 5) — after playing the run, the towns and the birches; runs redesigned
 
 - The user, verbatim:

@@ -72,6 +72,13 @@ export type BikeTuning = {
    * dropped it into the gap).
    */
   carry: number;
+  /**
+   * (round 120, the user on the hero lab: "or just bump it's turning acceleration") grip: sideways acceleration
+   * (cells/s²) that swings the velocity toward the stick, on top of the thrust (which only pushes along the stick, so a
+   * fast bike turns wide); at most `turnRate` (rad/s) of swing, times the stick's push. 0: the drive as it was.
+   */
+  grip: number;
+  turnRate: number;
 };
 
 export const BIKE: BikeTuning = {
@@ -109,6 +116,8 @@ export const BIKE: BikeTuning = {
   slideBank: 0.9,
   slideStop: 3,
   carry: 1,
+  grip: 0,
+  turnRate: 6,
 };
 
 export interface Bike {
@@ -233,6 +242,20 @@ export function stepBike(b: Bike, stick: [number, number], dt: number, heightAt:
     const room = Math.max(0, Math.min(1, (top - along) / (accel * dt)));
     b.vx += ux * accel * dt * room * power;
     b.vy += uy * accel * dt * room * power;
+  }
+  // (round 120) grip: the velocity swung toward the stick, on the cushion (not flying, not sliding)
+  if ((t.grip ?? 0) > 0 && b.air < 0.1 && b.slide === 0 && sm > 0.1) {
+    const v = speedOf(b);
+    if (v > 1) {
+      const d = angleTo(Math.atan2(b.vy, b.vx), Math.atan2(push[1], push[0]));
+      const most = Math.min(t.turnRate ?? 6, t.grip / v) * dt * Math.min(1, sm);
+      const r = Math.max(-most, Math.min(most, d));
+      const c = Math.cos(r);
+      const s = Math.sin(r);
+      const vx = b.vx * c - b.vy * s;
+      b.vy = b.vx * s + b.vy * c;
+      b.vx = vx;
+    }
   }
   const reach = t.hover * 1.6;
   // on the cushion, gravity pulls it along the slope: it keeps some of what it gains downhill

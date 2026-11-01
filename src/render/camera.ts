@@ -14,7 +14,7 @@ export const CAMERA_POS_OFFSET = CAMERA_BYTES + 64;
 /** what's cut from the view after it (render.wgsl Camera.cut, see, boxes; round 83) */
 export const CAMERA_CUT_OFFSET = CAMERA_POS_OFFSET + 16;
 /** cut (a vec4), see (4 vec4s), boxes (4 boxes, 2 vec4s each), the slice's shape (a vec4: round 121) */
-export const CAMERA_CUT_BYTES = 16 + 4 * 16 + 8 * 16 + 16;
+export const CAMERA_CUT_BYTES = 16 + 4 * 16 + 8 * 16 + 16 + 16;
 
 /** What's cut from the view (api/cutaway.ts: Slice, Dither) — the sun's camera cuts nothing. */
 export interface Cut {
@@ -28,7 +28,7 @@ export interface Cut {
    * (round 121, herolab: the cutaway camera mode) the slice only within `radius` (world units on screen) of (x, y) at the
    * slice's height, and a rim lit `rim` cells under the cut; absent: the whole view, no rim (round 83's slice)
    */
-  sliceShape?: { x: number; y: number; radius: number; rim: number } | null;
+  sliceShape?: { x: number; y: number; radius: number; rim: number; fade?: number; fadeR?: number } | null;
 }
 
 /** the free camera: where it is (world), which way it looks (radians), its vertical field of view */
@@ -299,7 +299,7 @@ export class Camera {
       c.see.forEach((p, i) => f.set(p, o + 4 + i * 4));
       c.boxes.forEach((b, i) => f.set([b[0], b[1], b[2], 0, b[3], b[4], b[5], 0], o + 20 + i * 8));
       const sh = c.slice === null ? null : c.sliceShape;
-      if (sh) f.set([sh.x, sh.y, sh.radius, sh.rim], o + 52);
+      if (sh) f.set([sh.x, sh.y, sh.radius, sh.rim, sh.fade ?? 0, sh.fadeR ?? 0, 0, 0], o + 52);
     }
   }
 }

@@ -33,6 +33,26 @@ export interface TraitStationDriver {
   census(): Promise<Record<string, number>>;
 }
 
+/**
+ * (round 120, herolab) The traits' scenes, once: the Traits Lab's buttons (levels/traitlab.ts) and the hero lab's
+ * traits station (play/lab/herolab.ts) both run these on a driver — one list, two places to press them.
+ */
+export const TRAIT_SCENES: { id: keyof TraitStationDriver & string; label: string; icon: string }[] = [
+  { id: 'crowd', label: 'crowd', icon: '👥' },
+  { id: 'smite', label: 'smite', icon: '☠' },
+  { id: 'raise', label: 'raise', icon: '🧟' },
+  { id: 'sanctuary', label: 'sanctuary', icon: '✨' },
+  { id: 'fear', label: 'fear', icon: '😱' },
+  { id: 'petrify', label: 'petrify', icon: '🗿' },
+  { id: 'clear', label: 'clear', icon: '🧹' },
+];
+
+/** run a scene on a driver */
+export function runTraitScene(d: TraitStationDriver, id: (typeof TRAIT_SCENES)[number]['id']): void {
+  if (id === 'census') throw new Error('census is a readout, not a scene');
+  d[id]();
+}
+
 export class TraitStation implements TraitStationDriver {
   private ids: number[] = [];
   private lich: number | null = null;

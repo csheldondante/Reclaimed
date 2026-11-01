@@ -2229,6 +2229,13 @@ abilities and moves and puzzles and enemies and camera modes so we can iterate m
   puzzle | enemy | combat; enter/update/leave), `VariantPicker` (chips, single or multi, mirrored to the address),
   `Stations`. `play/lab/herolab.ts` puts PlaySession, the stations, the pickers (terrain, hero, camera modes,
   autopilot) and the camera's TunePanel together; `reclaimed.lab.pick({station, cam, hero})`, `.measure(secs)`.
+- **(round 120, after the user's try)** `DEFAULT_CAM` (chase + cutaway + tilt) when `?cam=` is absent. `cutfade`: the
+  cutaway's numbers apart and a fade (`CamSlice.fade`, `fadeR` → `Camera.cut.sliceShape` → render.wgsl `sliceSoft`, read
+  by `sliceReach`; `cutAway` compares it with the 4 × 4 dither). The bike's handling: `BikeTuning.grip`/`turnRate`
+  (core/bike.ts) and `core/steer.ts` `steerAssist` (corridor, avoidance, magnetism over the stick; a strong steer wins at
+  once), applied by `PlaySession.assist` (null: none); the lab's `handling.ts` registry, variants and `?handling=`.
+  Stations have `actions`; kinds include `traits` (the Traits Lab's `TRAIT_SCENES`, one list both labs press, on a
+  `TraitStation` the level makes over its agents and trait system: `HeroLabDeps.traitScene`).
 - **Measured**: `test/unit/herolab-metrics.test.ts` (Node: `ride()` — play's hero by the autopilot on the lab's columns
   and planTree's trees) and `scripts/herolab.mjs` (the live world: shots, GIFs, metrics; `--cost`: frame time by
   toggling each mode against the chase on the phone proxy).

@@ -140,7 +140,30 @@ function distToPath(p: V2, path: V2[], closed: boolean): number {
   }
   return best;
 }
+/**
+ * (round 120, PL30: small obstacles that stop the bike dead) boulders on the canyon's floor, a little off its middle,
+ * every ~22 cells of the ring: 3 cells high (over the bike's 1.2 wall), a cell and a half across
+ */
+const BOULDERS: V2[] = (() => {
+  const out: V2[] = [];
+  let run = 0;
+  for (let k = 0; k < RING.length; k++) {
+    const a = RING[k];
+    const b = RING[(k + 1) % RING.length];
+    const l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    run += l;
+    if (run > 22) {
+      run = 0;
+      const side = out.length % 2 ? 1.6 : -1.6;
+      out.push([a[0] + (-(b[1] - a[1]) / l) * side, a[1] + ((b[0] - a[0]) / l) * side]);
+    }
+  }
+  return out;
+})();
+const onRock = (x: number, y: number, rocks: V2[], r: number) => rocks.some((p) => Math.hypot(x - p[0], y - p[1]) < r);
+
 function canyonColumn(x: number, y: number): LabColumn {
+  if (onRock(x, y, BOULDERS, 1.6)) return { top: G + 3, skin: MAT.Stone };
   const inside = inBox(x, y, CANYON.x0 + 6, 4, CANYON.x0 + W3 - 4, HALF - 4);
   if (!inside) return { top: G + noise(x / 9, y / 9) * 0.8, skin: MAT.Sand };
   const d = Math.min(distToPath([x, y], RING, true), distToPath([x, y], BRANCH, false) + 1);
@@ -193,7 +216,21 @@ function cityPath(): { at: V2; speed: number }[] {
   const i = pts.findIndex((p) => p.at[0] > ax + 9 && Math.abs(p.at[1] - ya) < 1);
   return [...detour, ...pts.slice(i)].filter((p, k, a) => k === 0 || Math.hypot(p.at[0] - a[k - 1].at[0], p.at[1] - a[k - 1].at[1]) > 0.5);
 }
+/** (round 120, PL30) bollards: posts a cell across, 3 high, along the streets the ride laps, a little off their middle */
+const POSTS: V2[] = (() => {
+  const out: V2[] = [];
+  const y0 = CITY.y0;
+  const xa = CITY.streets[1] + 3.5;
+  const xb = CITY.streets[3] + 3.5;
+  const ya = y0 + CITY.cross[1] + 3.5;
+  const yb = y0 + CITY.cross[3] + 3.5;
+  for (let x = xa + 10; x < xb - 8; x += 13) out.push([x, yb + 1.5]);
+  for (let y = ya + 10; y < yb - 8; y += 13) out.push([xa - 1.5, y], [xb + 1.5, y + 6]);
+  return out;
+})();
+
 function cityColumn(x: number, y: number): LabColumn {
+  if (onRock(x, y, POSTS, 0.7)) return { top: G + 3, skin: MAT.Steel };
   const u = x - CITY.x0;
   const v = y - CITY.y0;
   const w = CITY.width;
@@ -254,7 +291,8 @@ function hillsPath(): { at: V2; speed: number }[] {
 }
 function hillsColumn(x: number, y: number): LabColumn {
   const h = 7 * (0.5 + 0.5 * Math.sin(x / 9.5) * Math.cos(y / 11)) + noise(x / 10, y / 10) * 3;
-  return { top: G + h, skin: MAT.Grass, veg: 1.2 };
+  // (a soil skin: grass is a plant layer, not ground — the agents stood on the stone under it, out of sight)
+  return { top: G + h, skin: MAT.Soil, veg: 0 };
 }
 
 export const LAB_TERRAINS: LabTerrain[] = [

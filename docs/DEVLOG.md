@@ -15777,3 +15777,55 @@ plain blow.
 - Shots: C:/Projects/shots88/merge123/ — towns/ (m123-port, -mining, -hold: day, night, near), traits/ (the station:
   crowd, smite, raise.gif, sanctuary, petrify), lich/ (01-raiders, 02-fallen, 03-raise.gif, 03-raised: the raised in
   green and bone round the lich), runsit-saved/, tilegate/, tilegate-places/, drive-*.log; STRUCTURE.md.
+
+## 2026-11-01 — round 120, after the user tried the hero lab (`herolab`): cut + tilt by default, the dithered cut, the bike's handling, traits in the lab, the title fits a phone (CAM9, PL30, HL6, UI10)
+
+**Why.** The user: "cut and tilt are the easiest to use and best looking respectively ... Cut with a dither effect would
+be interesting ... the bike is so fast and bad at turning ... steering assist and flow fields ... or just bump it's
+turning acceleration ... cut plus tilt is best for readability", and "Can you add traits to the hero lab?"
+(DECISIONS round 120, herolab). places merged in first (traits, the Traits Lab, the lich's raise: merge123).
+
+**The default camera** is `DEFAULT_CAM` = chase + cutaway + tilt (rig.ts parseCam with no `?cam=`): the lab, the play
+sandbox and the situation runs (PlaySession). `?cam=chase` is the old camera. **The dithered cut** (`cut~`, mode id
+`cutfade`): the same CutawayMode with its own numbers; its top thins out over `fade` cells and its edge over `fadeR` of
+the radius by the 4 × 4 dither instead of a hard plane (render.wgsl `sliceReach`, Camera.sliceSoft — one vec4 more;
+sight.ts mirrors it, so a metric's "open" is the draw's: at least half the dither's pixels gone).
+
+**The bike's handling** (BACKLOG PL30). Grip and turn rate are the bike's own parameters (core/bike.ts: the velocity
+swung toward the stick by up to min(turnRate, grip / speed); 0 = the bike as it was; sliders in the sandbox's tune
+too). The assist is core/steer.ts, pure, applied by PlaySession to the stick before the hero (the bike only): a
+corridor read off the ground ahead (a fan of rays walked to the walls — the flow field sampled where needed, not
+stored) bends a light stick toward the open way when the walls stand close; small obstacles dead ahead (centre ray
+blocked, rays a little either side clear past it) are gone round; a foe in the cone ahead pulls the stick
+(core/aim.ts `assist`/`lean`, the weapons' own aim). The rule: a stick more than `strong` (35°) off the way it's going
+turns the assist off on that frame, at once; between 0.6 and 1 of that it fades. Rocks (canyon) and bollards (city)
+added to the lab so avoidance has something to avoid. Two bugs on the way: the assist read a zero velocity (this
+frame's position against itself); the hills' Grass skin is a plant layer, so the traits' agents stood on the stone
+under it, hidden (Soil now, and bare: its shrubs hid them too).
+
+**Measured** (Node, test/unit/herolab-handling.test.ts; a sloppy rider — re-aims every 0.25 s, 16 directions, full
+stick — the mean of 4 rides of 60 s from points round the loop; C:/Projects/shots88/herolab/handling-node.txt):
+
+| | canyon hits/min | crashes/min | speed c/s | lap s | fights | city hits/min | crashes/min | speed | lap s | fights |
+|---|---|---|---|---|---|---|---|---|---|---|
+| stock | 114.8 | 16.8 | 11.1 | 24.6 | 0 % | 36.5 | 15.3 | 9.4 | 30.6 | 0 % |
+| grip | 29.5 | 20.5 | 13.6 | 17.1 | 0 % | 18.5 | 16.0 | 9.2 | 24.0 | 0 % |
+| corridor | 25.0 | 18.3 | 14.4 | 16.5 | 22 % | 25.3 | 14.5 | 11.5 | 22.1 | 19 % |
+| avoid | 25.3 | 17.8 | 13.1 | 19.4 | 7 % | 27.5 | 16.3 | 12.7 | 20.9 | 10 % |
+| corridor+avoid | 23.3 | 19.0 | 14.0 | 21.2 | 22 % | 20.0 | 17.3 | 12.6 | 20.2 | 21 % |
+| grip+corridor+avoid | 17.0 | 10.0 | 13.0 | 19.4 | 13 % | 21.0 | 17.5 | 12.7 | 18.2 | 11 % |
+
+Every variant scrapes the walls a quarter as often as stock in the canyon and laps 20-35 % faster in both; grip with
+the assist halves the canyon's crashes. The crashes that stay are the rider model's (it aims at a point round a corner
+through the corner): PL31 — the user's thumb decides. "Fights" is the share of frames a strong steer held off a bend
+the assist wanted: high with this rider, to tune with play.
+
+**Traits in the hero lab** (HL6): a `traits` station kind; the hills' middle, ridden in a figure of eight through it;
+its buttons are the Traits Lab's scenes, now one list (levels/traitstation.ts `TRAIT_SCENES`, `runTraitScene`) that the
+Traits Lab's station also builds its buttons from. Headless (C:/Projects/shots88/herolab/r2): crowd 180 living + 91
+undead; smite → 122-132 corpses; the lich's raise → 122-132 raised following, 213-223 undead. The two station frameworks
+(the playground's and the lab's) are still two: HL7.
+
+**The title screen** (UI10): every place on it also as a small wrapping button (the diorama's models don't all fit a
+phone), the button row wraps, the panel scrolls, a Hero lab button. scripts/titlefit.mjs at 412 × 785: all 16 buttons on
+the screen.

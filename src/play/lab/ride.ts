@@ -14,6 +14,11 @@ import { input, testWorld } from '../testing';
 import { Autopilot } from './autopilot';
 import { labSight } from './labworld';
 import { LAB_TERRAINS } from './terrains';
+import type { Params } from '../../api/contracts/play';
+import { BIKE_DEFAULTS } from '../controllers/hoverbike';
+import { steerAssist } from '../core/steer';
+import type { BikeHero } from '../heroes/bike';
+import { applyTurn, HANDLING_SPEC, steerParams, useHandling, type HandlingId } from './handling';
 
 let SIGHT: ReturnType<typeof labSight> | null = null;
 export const sight = () => (SIGHT ??= labSight());
@@ -78,4 +83,98 @@ export function ride(terrain: string, modes: readonly CamModeId[], opts: { hero?
   }
   const sum = m.summary();
   return { ...sum, terrain, cam: modes.filter((x) => x !== 'chase').join('+') || 'chase', who: heroId, laps: laps + prog, speed: dist / secs };
+}
+
+// ---- (round 120, PL30) the bike's handling variants, measured -------------------------------------------------------
+
+export interface HandlingResult {
+  terrain: string;
+  variant: string;
+  /** barricade hits (glances and crashes) a minute, and crashes a minute */
+  hits: number;
+  crashes: number;
+  /** cells a second, the mean over the ride */
+  speed: number;
+  /** seconds a lap (the path's length over the progress made) */
+  lap: number;
+  /** share of frames the stick fought the assist (a strong steer held off a bend it wanted) */
+  fight: number;
+  /** share of frames the assist bent the stick */
+  bent: number;
+}
+
+/**
+ * The bike ridden round a station by a sloppy rider — a thumb, not the autopilot's precision: it re-aims every
+ * `every` s at a point `look` cells on, in one of 16 directions, full stick — with the handling variants on.
+ */
+export function rideHandling(terrain: string, ids: readonly HandlingId[], opts: { secs?: number; dt?: number; look?: number; every?: number; starts?: number } = {}): HandlingResult {
+  // (a ride is a noisy sample — one wedge against a wall dominates it: the mean of rides from `starts` points round the loop)
+  const n = opts.starts ?? 4;
+  const rows = Array.from({ length: n }, (_, k) => rideOnce(terrain, ids, opts, k / n));
+  const mean = (f: (r: HandlingResult) => number) => rows.reduce((a, r) => a + f(r), 0) / n;
+  return { terrain, variant: ids.join('+'), hits: mean((r) => r.hits), crashes: mean((r) => r.crashes), speed: mean((r) => r.speed), lap: n / rows.reduce((a, r) => a + 1 / r.lap, 0), fight: mean((r) => r.fight), bent: mean((r) => r.bent) };
+}
+
+function rideOnce(terrain: string, ids: readonly HandlingId[], opts: { secs?: number; dt?: number; look?: number; every?: number }, from: number): HandlingResult {
+  const secs = opts.secs ?? 60;
+  const dt = opts.dt ?? 1 / 60;
+  const t = LAB_TERRAINS.find((x) => x.id === terrain)!;
+  const s = sight();
+  const world = testWorld((x, y) => s.top(x, y), { maxHeld: 4 });
+  const pilot = new Autopilot(t.path, opts.look ?? 6);
+  const st = pilot.start(Math.floor(from * t.path.length));
+  const reg = new Registry(HANDLING_SPEC);
+  useHandling(reg, ids);
+  const params = { ...BIKE_DEFAULTS } as unknown as Params;
+  applyTurn(reg.values, params);
+  const hero = makeHero('hoverbike', world, st.at, params) as BikeHero;
+  const assist = steerParams(reg.values);
+  const every = opts.every ?? 0.25;
+  let stick: V2 = [0, 0];
+  let vel: V2 = [0, 0];
+  let aimT = 0;
+  let last: V2 | null = null;
+  let dist = 0;
+  let hits = 0;
+  let crashes = 0;
+  let wasHit = false;
+  let fought = 0;
+  let bent = 0;
+  let frames = 0;
+  let laps = 0;
+  let prog = 0;
+  for (let time = 0; time < secs; time += dt) {
+    const p = hero.position();
+    aimT -= dt;
+    if (aimT <= 0) {
+      aimT = every;
+      const d = pilot.steer([p[0], p[1]]);
+      const m = Math.hypot(d[0], d[1]);
+      const a = Math.round(Math.atan2(d[1], d[0]) / (Math.PI / 8)) * (Math.PI / 8);
+      stick = m > 0.05 ? [Math.cos(a) * Math.min(1, m * 1.4), Math.sin(a) * Math.min(1, m * 1.4)] : [0, 0];
+    } else pilot.steer([p[0], p[1]]);
+    let dir = stick;
+    if (last) {
+      const o = steerAssist(stick, [p[0], p[1]], vel, world.top, [], hero.profileClimb(), assist);
+      dir = o.dir;
+      if (o.by && o.bend !== 0) bent++;
+      if (o.fought) fought++;
+    }
+    hero.update(dt, { move: dir, input: input({ dir }) });
+    frames++;
+    const q = hero.position();
+    dist += Math.hypot(q[0] - p[0], q[1] - p[1]);
+    vel = [(q[0] - p[0]) / dt, (q[1] - p[1]) / dt];
+    last = [q[0], q[1]];
+    const b = hero.drive;
+    if (b.hit > 0 && !wasHit) hits++;
+    wasHit = b.hit > 0;
+    if (b.crash > 0) crashes++;
+    const pr = pilot.progress;
+    if (pr < prog - 0.5) laps++;
+    prog = pr;
+  }
+  const done = laps + ((prog - from + 1) % 1);
+  const min = secs / 60;
+  return { terrain, variant: ids.join('+'), hits: hits / min, crashes: crashes / min, speed: dist / secs, lap: done > 0 ? secs / done : Infinity, fight: fought / frames, bent: bent / frames };
 }

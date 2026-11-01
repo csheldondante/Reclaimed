@@ -6,7 +6,7 @@ import { hiddenShare, lookAt } from './modes';
 import { CAM_SPEC } from './params';
 import { CameraRig, camString, parseCam } from './rig';
 import { Registry } from '../../tune/registry';
-import { eyeDir, hiddenBy } from './sight';
+import { eyeDir, hiddenBy, sliceReach } from './sight';
 import { boxWorld } from './testworld';
 
 const SCREEN = { w: 412, h: 915, margin: 56 };
@@ -23,7 +23,8 @@ function run(rig: CameraRig, w: SightWorld, secs: number, p = pose(), dt = 1 / 6
 
 describe('?cam=', () => {
   it('names the modes, the chase always first', () => {
-    expect(parseCam(null)).toEqual(['chase']);
+    expect(parseCam(null)).toEqual(['chase', 'cutaway', 'tilt']);
+    expect(parseCam('chase')).toEqual(['chase']);
     expect(parseCam('rotate+dither')).toEqual(['chase', 'rotate', 'dither']);
     expect(parseCam('edge,dither cut')).toEqual(['chase', 'edge', 'dither', 'cutaway']);
     expect(() => parseCam('wobble')).toThrow(/no camera mode/);
@@ -144,5 +145,23 @@ describe('camera modes', () => {
     const f = run(rig, w, 0.2, p);
     expect(f.signals).toEqual([{ id: 'ahead', kind: 'dead', at: expect.any(Array) }]);
     expect(lookAt(rig.interests[0])[2]).toBeCloseTo(1.2, 6);
+  });
+});
+
+describe('the dithered cut (round 120)', () => {
+  it('thins out over its fade, and the hero is still seen through it', () => {
+    const e = eyeDir(Math.PI / 4, Math.PI / 6);
+    const s = { z: 3, at: [64, 64] as [number, number], radius: 10, rim: 0, fade: 2, fadeR: 0.4 };
+    expect(sliceReach(s, [64, 64, 2.5], e)).toBe(0);
+    expect(sliceReach(s, [64, 64, 4], e)).toBeCloseTo(0.5, 6);
+    expect(sliceReach(s, [64, 64, 6], e)).toBe(1);
+    // (at the edge of its radius it thins out too)
+    const near = sliceReach(s, [64, 64, 6], e);
+    const edge = sliceReach(s, [64 + 6, 64 - 6, 6], e);
+    expect(edge).toBeLessThan(near);
+    const rig = new CameraRig(parseCam('cutfade+tilt'), fresh());
+    const f = run(rig, walled(), 2);
+    expect(f.cut.slice?.fade).toBeGreaterThan(0);
+    expect(hiddenBy(walled(), [64, 64, 1.2], eyeDir(f.view.azimuth, f.view.elevation), f.cut)).toBeNull();
   });
 });

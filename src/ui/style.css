@@ -293,7 +293,12 @@ canvas#world {
 .editor .models { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px; }
 .editor .models button { padding: 1px; height: auto; min-width: 0; }
 .editor .models img { width: 100%; height: auto; display: block; }
-.menu .play-row { display: flex; gap: 10px; }
+.menu .play-row { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; max-width: 100%; }
+/* (BACKLOG UI10) every place as a small button, wrapping: reachable at a phone's 412 x 785 */
+.menu .level-list { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; max-width: min(560px, 100%); }
+.menu .level-list button { font-size: 11px; padding: 4px 8px; min-height: 0; }
+.menu .level-list button.on { border-color: rgba(236, 230, 216, 0.6); color: var(--ink); }
+#ui > .menu { overflow-y: auto; overscroll-behavior: contain; }
 /* (round 108, AR5) the tuning panel (ui/tunepanel.ts) and the bug report (ui/bugreport.ts): phone first */
 .tune-btn, .bug-btn {
   position: fixed; z-index: 40; left: max(8px, env(safe-area-inset-left)); bottom: calc(max(8px, env(safe-area-inset-bottom)) + 132px);

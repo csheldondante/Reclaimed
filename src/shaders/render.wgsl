@@ -21,6 +21,8 @@ struct Camera {
   // (round 121, herolab: the cutaway camera mode) the slice's shape: xy the point it's round (at the slice's height),
   // z its radius on screen (world units; 0: the whole view), w the rim's depth under the cut (cells; 0: none)
   sliceShape: vec4<f32>,
+  // (round 120: the dithered cut) x cells over the slice it thins out over, y the outer share of the radius (0: hard)
+  sliceSoft: vec4<f32>,
 };
 
 /** 4 × 4 ordered dither, 0..1 (a pixel's threshold) */
@@ -72,6 +74,22 @@ fn inSliceRadius(p: vec3<f32>) -> bool {
 /** over the slice (round 83, V21: api/cutaway.ts Slice; round 121: within its radius) */
 fn sliced(p: vec3<f32>) -> bool { return CAM.cut.w > 0.5 && p.z > CAM.cut.x && inSliceRadius(p); }
 
+/** (round 120, the dithered cut) how far into the slice's cut p is, 0..1: hard (0 or 1) or thinned over `sliceSoft` */
+fn sliceReach(p: vec3<f32>) -> f32 {
+  if (CAM.cut.w < 0.5) { return 0.0; }
+  let sh = CAM.sliceShape;
+  let sf = CAM.sliceSoft;
+  var kz = select(0.0, 1.0, p.z > CAM.cut.x);
+  if (sf.x > 0.0) { kz = smoothstep(CAM.cut.x, CAM.cut.x + sf.x, p.z); }
+  if (kz <= 0.0 || sh.z <= 0.0) { return kz; }
+  let v = p - vec3<f32>(sh.xy, CAM.cut.x);
+  let e = toEye(p);
+  let d = length(v - dot(v, e) * e);
+  var kr = select(0.0, 1.0, d < sh.z);
+  if (sf.y > 0.0) { kr = 1.0 - smoothstep(sh.z * (1.0 - sf.y), sh.z, d); }
+  return kz * kr;
+}
+
 /** (round 121, herolab) the cut's rim: what's left just under the slice, lit so the cut's outline reads, 0..1 */
 fn sliceRim(p: vec3<f32>) -> f32 {
   let w = CAM.sliceShape.w;
@@ -92,7 +110,8 @@ fn inCut(p: vec3<f32>) -> bool { return CAM.cut.w > 0.5 || seeReach(p) > 0.5; }
  * opens and closes as an iris). The shadow pass doesn't cut: the light stays.
  */
 fn cutAway(p: vec3<f32>, px: vec2<f32>) -> bool {
-  return sliced(p) || seeReach(p) > bayer4(px);
+  let b = bayer4(px);
+  return sliceReach(p) > b || seeReach(p) > b;
 }
 
 /** toward the eye from p: one way for the fixed (orthographic) view, from where it is for the free one */

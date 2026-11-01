@@ -84,6 +84,23 @@ export const CAM_SPEC = {
       when: { label: 'when', units: '0 always · 1 hidden', min: 0, max: 1, step: 1, def: 1, choices: ['always', 'while hidden'] },
       rate: { label: 'lowers at', units: '1/s', min: 0.5, max: 20, step: 0.5, def: 6 },
       linger: { label: 'stays', units: 's', min: 0, max: 4, step: 0.1, def: 1, help: 'seconds it stays after the view clears' },
+      fade: { label: 'fade over', units: 'cells', min: 0, max: 8, step: 0.25, def: 0, help: 'the cut thinned out by a dither over this many cells above it (0: a hard slice)' },
+      fadeR: { label: 'fade at the edge', units: 'share of the radius', min: 0, max: 1, step: 0.05, def: 0, help: 'the cut thinned out by a dither over this outer share of its radius (0: a hard edge)' },
+    },
+  },
+  // (round 120, the user: "Cut with a dither effect would be interesting") the cut whose edges fade by a dither
+  cutfade: {
+    title: 'Cutaway, dithered',
+    owner: 'play/camera/modes.ts CutawayMode as cutfade (render.wgsl sliceReach: the slice and its fade by the 4 x 4 dither)',
+    params: {
+      height: { label: 'cut at', units: 'cells over the floor', min: 1, max: 30, step: 0.5, def: 3 },
+      radius: { label: 'radius', units: 'share of the screen', min: 0, max: 2, step: 0.05, def: 0.85 },
+      rim: { label: 'rim', units: 'cells', min: 0, max: 2, step: 0.05, def: 0 },
+      when: { label: 'when', units: '0 always / 1 hidden', min: 0, max: 1, step: 1, def: 1, choices: ['always', 'while hidden'] },
+      rate: { label: 'lowers at', units: '1/s', min: 0.5, max: 20, step: 0.5, def: 6 },
+      linger: { label: 'stays', units: 's', min: 0, max: 4, step: 0.1, def: 1 },
+      fade: { label: 'fade over', units: 'cells', min: 0, max: 8, step: 0.25, def: 3 },
+      fadeR: { label: 'fade at the edge', units: 'share of the radius', min: 0, max: 1, step: 0.05, def: 0.35 },
     },
   },
   edge: {

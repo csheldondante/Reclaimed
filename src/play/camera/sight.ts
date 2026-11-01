@@ -28,6 +28,17 @@ export function acrossEye(q: V3, c: V3, e: V3): number {
   return Math.hypot(v0 - a * e[0], v1 - a * e[1], v2 - a * e[2]);
 }
 
+/** render.wgsl sliceReach: how far into the slice's cut q is, 0..1 (hard: 0 or 1; thinned by the dither over `fade` cells and `fadeR` of the radius) */
+export function sliceReach(s: NonNullable<CamCut['slice']>, q: V3, e: V3): number {
+  const fz = s.fade ?? 0;
+  const kz = fz > 0 ? sstep(s.z, s.z + fz, q[2]) : q[2] > s.z ? 1 : 0;
+  if (kz <= 0 || s.radius <= 0) return kz;
+  const d = acrossEye(q, [s.at[0], s.at[1], s.z], e);
+  const fr = s.fadeR ?? 0;
+  const kr = fr > 0 ? 1 - sstep(s.radius * (1 - fr), s.radius, d) : d < s.radius ? 1 : 0;
+  return kz * kr;
+}
+
 /** render.wgsl seeReach for one point: 0..1 */
 export function seeReach(q: V3, s: V3, r: number, e: V3): number {
   const v0 = q[0] - s[0];
@@ -42,7 +53,7 @@ export function seeReach(q: V3, s: V3, r: number, e: V3): number {
 export function cutOpens(cut: CamCut | null, q: V3, e: V3): boolean {
   if (!cut) return false;
   const s = cut.slice;
-  if (s && q[2] > s.z && (s.radius <= 0 || acrossEye(q, [s.at[0], s.at[1], s.z], e) < s.radius)) return true;
+  if (s && sliceReach(s, q, e) >= 0.5) return true;
   for (const p of cut.see) if (seeReach(q, p.at, p.r, e) > 0.5) return true;
   return false;
 }

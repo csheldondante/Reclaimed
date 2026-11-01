@@ -78,6 +78,8 @@ export const BIKE_PARAMS: ParamSpec[] = [
   P('climb', 'climb slope', 0.3, 4, 0.1, 'terrain', 'rise over run it rides up'),
   P('wall', 'wall height', 0.3, 4, 0.1, 'terrain', 'taller and steeper is a barricade'),
   P('crash', 'crash speed', 3, 40, 1, 'terrain', 'into a barricade faster than this, it crashes'),
+  P('grip', 'grip', 0, 200, 1, 'handling', '(round 120) sideways cells/s² swinging its way toward the stick: a tighter turn at speed (0: as it was)'),
+  P('turnRate', 'turn rate', 0.5, 12, 0.1, 'handling', 'rad/s the grip swings its way at most'),
   P('slideMin', 'slide speed', 3, 30, 1, 'slide', 'faster than this, stick hauled back = Akira slide'),
   P('slideTurn', 'slide turn', 1, 15, 0.5, 'slide', 'rad/s'),
   P('ramMin', 'ram speed', 2, 30, 1, 'weapons'),

@@ -68,3 +68,16 @@
 .tune-panel.herolab {
   top: calc(var(--lab-h, 140px) + 4px);
 }
+.lab-slot {
+  display: contents;
+}
+.play-on .tune-btn.herolab-hand {
+  display: block !important;
+  top: calc(46% + 48px);
+  bottom: auto;
+  left: auto;
+  right: max(8px, env(safe-area-inset-right));
+}
+.tune-panel.herolab-hand {
+  top: calc(var(--lab-h, 140px) + 4px);
+}

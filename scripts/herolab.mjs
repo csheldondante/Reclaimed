@@ -84,10 +84,54 @@ await run({ name: 'herolab', kind: COST ? 'timing' : 'behaviour', size: '412x915
     return;
   }
 
-  const secs = Number(arg('secs', 10));
-  const gifs = R.argv.includes('--gifs');
   const nFrames = Number(arg('frames', 24));
   const every = Number(arg('every', 120));
+  // (round 120) --traits: the traits station with a hero — the crowd, smite, the lich raising, the bike through the sanctuary
+  if (R.argv.includes('--traits')) {
+    const shot = async (name) => p.screenshot({ path: path.join(out, `traits-${name}.png`) });
+    await p.evaluate(() => window.reclaimed.lab.pick({ station: 'traits', hero: 'lich', cam: 'cutaway+tilt' }));
+    await sleep(2000);
+    for (const [act, wait] of [['crowd', 5000], ['smite', 3000], ['raise', 4000]]) {
+      await p.evaluate((a) => window.reclaimed.lab.act(a), act);
+      await sleep(wait);
+      await shot(act);
+      R.log(`traits ${act}: ${JSON.stringify(await p.evaluate(() => window.reclaimed.lab.census?.()))}`);
+    }
+    await p.evaluate(() => window.reclaimed.lab.pick({ hero: 'hoverbike' }));
+    await p.evaluate(() => window.reclaimed.lab.act('sanctuary'));
+    await sleep(3000);
+    await shot('sanctuary-bike');
+    await gif(path.join(out, 'traits-sanctuary-bike.gif'));
+    await R.fatal(p);
+    return;
+  }
+  // (round 120, PL30) --handling "stock|grip+corridor+avoid": GIFs of the bike's handling variants on the canyon and the city
+  const hand = arg('handling', '');
+  if (hand) {
+    for (const t of ['moves-canyon', 'moves-city'])
+      for (const v of hand.split('|')) {
+        await p.evaluate((o) => window.reclaimed.lab.pick(o), { station: t, hero: 'hoverbike', handling: v, cam: 'cutaway+tilt' });
+        await sleep(2500);
+        await p.screenshot({ path: path.join(out, `${t}-${v.replace(/\+/g, '_')}.png`) });
+        await gif(path.join(out, `${t}-${v.replace(/\+/g, '_')}.gif`));
+        await R.fatal(p);
+      }
+    return;
+  }
+  const secs = Number(arg('secs', 10));
+  const gifs = R.argv.includes('--gifs');
+  async function gif(file) {
+    const enc = GIFEncoder();
+    for (let i = 0; i < nFrames; i++) {
+      const png = PNG.sync.read(Buffer.from(await p.screenshot({ type: 'png' })));
+      const half = halve(png);
+      const pal = quantize(half.data, 256);
+      enc.writeFrame(applyPalette(half.data, pal), half.width, half.height, { palette: pal, delay: every });
+      await sleep(every);
+    }
+    enc.finish();
+    fs.writeFileSync(file, enc.bytes());
+  }
   const rows = [];
   for (const t of terrains) {
     for (const c of cams) {

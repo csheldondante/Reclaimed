@@ -7,7 +7,7 @@ import { ColumnGrid, type WorldDims } from '../world/layout';
 import { MAT } from '../world/materials';
 import type { MapData } from '../world/mapgen';
 import { stationMiddle, type Station, type StationKit } from './playground';
-import type { TraitStationDriver } from './traitstation';
+import { runTraitScene, TRAIT_SCENES, type TraitStationDriver } from './traitstation';
 
 const PLAIN = 10;
 
@@ -27,15 +27,8 @@ export const TRAITLAB_STATIONS: Station[] = [
     rect: RECT,
     look: [MID[0] - 2, MID[1], 11, 9],
     hint: 'traits: the living and the walking dead; a lich raises the fallen; a sanctuary heals the living and burns the undead',
-    actions: [
-      { label: 'crowd', run: (k) => tk(k).crowd() },
-      { label: 'smite', run: (k) => tk(k).smite() },
-      { label: 'raise', run: (k) => tk(k).raise() },
-      { label: 'sanctuary', run: (k) => tk(k).sanctuary() },
-      { label: 'fear', run: (k) => tk(k).fear() },
-      { label: 'petrify', run: (k) => tk(k).petrify() },
-      { label: 'clear', run: (k) => tk(k).clear() },
-    ],
+    // (round 120, herolab: the scenes are one list, levels/traitstation.ts TRAIT_SCENES — the hero lab presses the same)
+    actions: TRAIT_SCENES.map((sc) => ({ label: sc.label, run: (k: StationKit) => runTraitScene(tk(k), sc.id) })),
   },
 ];
 

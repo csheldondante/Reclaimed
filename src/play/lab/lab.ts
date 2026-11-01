@@ -10,11 +10,12 @@
 //   page's address (`?<param>=`) so a variant is a link to send.
 // Neither knows the world or the camera: a station is given what the lab gives it (its context), nothing else.
 
-export type StationKind = 'camera' | 'moves' | 'puzzle' | 'enemy' | 'combat';
+export type StationKind = 'camera' | 'moves' | 'traits' | 'puzzle' | 'enemy' | 'combat';
 
 export const STATION_KINDS: { kind: StationKind; icon: string; name: string }[] = [
   { kind: 'camera', icon: '🎥', name: 'camera & terrain' },
   { kind: 'moves', icon: '🤸', name: 'abilities & moves' },
+  { kind: 'traits', icon: '✨', name: 'traits: the living and the dead, sanctuary, fear, stone' },
   { kind: 'puzzle', icon: '🧩', name: 'puzzles' },
   { kind: 'enemy', icon: '👹', name: 'enemies' },
   { kind: 'combat', icon: '⚔', name: 'combat gym (CB1: a design talk first)' },
@@ -27,9 +28,17 @@ export interface LabStation<C> {
   icon?: string;
   /** one line: what to try here */
   hint: string;
+  /** buttons that do something there (the traits' scenes: a crowd, smite, raise...) */
+  actions?: LabAction<C>[];
   enter(ctx: C): void;
   update?(ctx: C, dt: number): void;
   leave?(ctx: C): void;
+}
+
+export interface LabAction<C> {
+  label: string;
+  icon?: string;
+  run(ctx: C): void;
 }
 
 /** a page parameter, read and written without reloading */
