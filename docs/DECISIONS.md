@@ -320,6 +320,8 @@ each was implemented.
 
 - The user, verbatim: "I recommend making a playground for the card mechanics that has no playable encounters. It would just be getting rewards that get new opportunities, decrease time spent to deal with card (distance based maybe) decrease resources etc. Think deck builder in terms of the design then we will work on thematic fits so they feel plausible in the world. That's the semi hard part." → a card lab first (no encounters; every card resolves by its odds; abstract cards; deck-builder rewards: unlocks, shorter durations, lower costs, bonuses, new agents and tags; distance-based duration; an auto-play simulator for win rate and dominant strategies), on the same contract and dealer as the map; theme comes after.
 
+- The user, verbatim: "Each should have world consequences that are visible. A occupied city, refugees fleeing, a toppled empire, a flooded civilization etc" → every card's outcomes and expiry carry real world-state changes (settlement conditions, refugee flows, faction power and owners, region statuses) through WorldState.apply, shown in the card lab's world panel and log, and listed on each card beside its gameplay reward.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
