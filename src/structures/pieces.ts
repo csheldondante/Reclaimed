@@ -3,7 +3,8 @@
 // neighbour covering it (its kind from the plan's façades), a post where two walls meet outside, a roof on every top
 // from the roof's own height rule (modules.ts roofHeight: ridges, hips and valleys meet across tiles by themselves),
 // gables where a ridge ends, a plinth down to the ground on a slope, paving on the streets.
-import type { BuildingKind, CityPlan, FacadeKind, StructurePieces, V2 } from '../api/contracts/structures';
+import type { Berth, BuildingKind, CityPlan, FacadeKind, LightSource, Prop, StructurePieces, StructureStyleId, V2 } from '../api/contracts/structures';
+import { PROP_SIZE } from './dressmodules';
 import { adjacency, quadCorners } from './tiles/builder';
 import { library, roofName } from './modules';
 import { styleOf, STYLE_IDS, type Style } from './styles';
@@ -17,6 +18,15 @@ export const PIECE_FLOATS = 16;
 export const REL = 1;
 /** flags: draped — the host lays it on the ground as it is now (structmesh.wgsl hostGround) */
 export const DRAPE = 4;
+/** (round 120) flags: cloth moves with the wind (structmesh.wgsl: a WIND piece's Cloth vertices turn downwind) */
+export const WIND = 8;
+/** (round 120) flags: an affine piece spins about its local y axis (a waterwheel, a windmill's sails) */
+export const SPIN = 16;
+/** (round 120) look bits (over the style's, under 2^24 so a float keeps them): what history left on a piece — soot, a
+ *  waterline, fresh stone */
+export const LOOK_BURNED = 1 << 20;
+export const LOOK_FLOODED = 1 << 21;
+export const LOOK_FRESH = 1 << 22;
 /** a wall's thickness (m) */
 export const WALL_T = 0.35;
 /** the roof's lift over the walls' tops (m) */
@@ -52,7 +62,9 @@ function wallFrame(a: V2, b: V2, t: number): [V2, V2, V2, V2] {
 /** the wall module a façade shows on a building of this kind (a hut's and a barn's sets are smaller: no shops, no balconies) */
 export function wallModule(kind: BuildingKind, level: number, f: FacadeKind, style: Style): string {
   if (kind === 'house') return `${level === 0 ? style.walls0 : style.walls}:${f}`;
-  const set = kind === 'barn' ? 'barn' : 'hut';
+  // (round 120: a warehouse is dressed stone; a sawmill, stables and a granary are planked like a barn)
+  if (kind === 'warehouse') return `stone:${f === 'shop' || f === 'balcony' ? 'window' : f}`;
+  const set = kind === 'barn' || kind === 'sawmill' || kind === 'stable' || kind === 'granary' ? 'barn' : 'hut';
   const k = f === 'door' || f === 'shop' ? 'door' : f === 'blank' ? 'blank' : 'window';
   return `${set}:${k}`;
 }
@@ -102,7 +114,13 @@ export function piecesOf(plan: CityPlan): StructurePieces {
   const gz = plan.ground;
   const out = new Out();
   const seed = plan.spec.seed;
-  const look = (b: number) => styleIx * 65536 + (b >= 0 ? plan.buildings[b].look : Math.floor(hashf(seed, 77) * 65536));
+  const wearOf = (b: number) => {
+    const w = b >= 0 ? plan.buildings[b].wear : undefined;
+    return w === 'burned' ? LOOK_BURNED : w === 'flooded' ? LOOK_FLOODED : 0;
+  };
+  const look = (b: number) => styleIx * 65536 + (b >= 0 ? plan.buildings[b].look : Math.floor(hashf(seed, 77) * 65536)) + wearOf(b);
+  // (the town's walls newer than the town: fresh stone — a history mark, spec.marks)
+  const wallLook = look(-1) + ((plan.spec.marks ?? []).some((m) => m.kind === 'newwalls') ? LOOK_FRESH : 0);
   const footOf = (q: number, d: number): [number, number, number, number] => [0, 1, 2, 3].map((k) => gz[t.quads[q * 4 + k]] - d) as [number, number, number, number];
   // quads round each vertex (the roofs' corner rule)
   const around: number[][] = Array.from({ length: gz.length }, () => []);
@@ -145,8 +163,8 @@ export function piecesOf(plan: CityPlan): StructurePieces {
         continue;
       }
       if (b.base > lo + 0.05) out.add(lib.id('plinth'), p, footOf(q, 0.6), b.base, look(b.id), 0);
-      // (a site — going up in a grown plan — has no roof yet)
-      if (plan.sites?.has(b.id)) continue;
+      // (a site — going up in a grown plan — has no roof yet; a gutted one — burned — none any more)
+      if (plan.sites?.has(b.id) || b.wear === 'burned') continue;
       // the roof: which sides and corners end it
       const joined = (n: number) => {
         if (n < 0) return false;
@@ -198,10 +216,10 @@ export function piecesOf(plan: CityPlan): StructurePieces {
       // the bilinear surface, so on a skewed tile a wall's top could peek through by a few centimetres; the eave's
       // thickness hides the lift)
       // (thatch on huts and farmhouses; a barn's thatch or the style's tiles, building by building)
-      const roofLook = b.kind === 'house' ? style.roof : b.kind === 'barn' && hashf(b.id, seed, 41) < 0.5 ? style.roof : 'thatch';
+      const roofLook = b.kind === 'house' || b.kind === 'warehouse' ? style.roof : b.kind !== 'hut' && b.kind !== 'farmhouse' && hashf(b.id, seed, 41) < 0.5 ? style.roof : 'thatch';
       out.add(lib.id(roofName(sides, corners, verge & eaves, eaves, clip, roofLook)), p, top + ROOF_LIFT, top + ROOF_LIFT + rise, look(b.id), hashf(q, 8));
       // a chimney on a ridge (tiles whose roof rises to a ridge, not flat tops)
-      const chimneys = b.kind === 'house' ? style.chimneys : b.kind === 'barn' ? 0 : 0.4;
+      const chimneys = b.kind === 'house' ? style.chimneys : b.kind === 'hut' || b.kind === 'farmhouse' ? 0.4 : 0;
       if (sides && hashf(q, seed, 9) < chimneys) {
         const f = shrink(p, 0.16);
         const o = hashf(q, 10) < 0.5 ? 0.18 : -0.18;
@@ -232,17 +250,23 @@ export function piecesOf(plan: CityPlan): StructurePieces {
       }
       continue;
     }
-    if (u === 'street' || u === 'plaza') {
+    if (u === 'street' || u === 'plaza' || u === 'quay') {
       out.add(lib.id('pave'), p, footOf(q, 0.25), 0.37, look(-1), hashf(q, 11), REL | DRAPE);
-      if (u === 'street' && hashf(q, seed, 12) < 0.05) {
-        const c: V2 = [(p[0][0] + p[2][0]) / 2, (p[0][1] + p[2][1]) / 2];
-        const s = 0.22;
-        const z = gz[t.quads[q * 4]] + 0.1;
-        out.add(lib.id('lamp'), [[c[0] - s, c[1] - s], [c[0] + s, c[1] - s], [c[0] + s, c[1] + s], [c[0] - s, c[1] + s]], z, z + 3.2, look(-1), hashf(q, 13));
+      // (round 120) kerbs where a street meets a lot or a yard; a quay's dressed stone edge down to the water
+      for (let s = 0; s < 4; s++) {
+        const n = adj[q * 4 + s];
+        const a = t.quads[q * 4 + s];
+        const b = t.quads[q * 4 + ((s + 1) % 4)];
+        if (u === 'quay' && (n < 0 || t.use[n] === 'outside')) {
+          const top = Math.max(gz[a], gz[b]) + 0.3;
+          out.add(lib.id('quayedge'), wallFrame(p[s], p[(s + 1) % 4], 0.6), [gz[a] - 2.5, gz[b] - 2.5, gz[b] - 2.5, gz[a] - 2.5], top, look(-1), hashf(q, s, 14));
+        } else if (u === 'street' && n >= 0 && (t.use[n] === 'lot' || t.use[n] === 'yard')) {
+          out.add(lib.id('kerb'), wallFrame(p[s], p[(s + 1) % 4], 0.22), [gz[a] - 0.2, gz[b] - 0.2, gz[b] - 0.2, gz[a] - 0.2], 0.36, look(-1), 0, REL | DRAPE);
+        }
       }
     } else if (u === 'wall' || u === 'gate') {
       const top = plan.quadTop[q];
-      if (u === 'wall') out.add(lib.id('rampart'), p, footOf(q, 0.6), top, look(-1), 0);
+      if (u === 'wall') out.add(lib.id('rampart'), p, footOf(q, 0.6), top, wallLook, 0);
       else {
         // the gate: arches on the sides the passage runs through, a lintel over it
         let lo = Infinity;
@@ -250,14 +274,14 @@ export function piecesOf(plan: CityPlan): StructurePieces {
         for (let s = 0; s < 4; s++) {
           const n = adj[q * 4 + s];
           if (n >= 0 && (t.use[n] === 'wall' || t.use[n] === 'gate')) continue;
-          out.add(lib.id('gatearch'), wallFrame(p[s], p[(s + 1) % 4], 0.9), lo - 0.3, top, look(-1), 0);
+          out.add(lib.id('gatearch'), wallFrame(p[s], p[(s + 1) % 4], 0.9), lo - 0.3, top, wallLook, 0);
         }
-        out.add(lib.id('rampart'), p, top - WALL_H * 0.28, top, look(-1), 0);
+        out.add(lib.id('rampart'), p, top - WALL_H * 0.28, top, wallLook, 0);
       }
       for (let s = 0; s < 4; s++) {
         const n = adj[q * 4 + s];
         if (n >= 0 && (t.use[n] === 'wall' || t.use[n] === 'gate')) continue;
-        out.add(lib.id('merlons'), wallFrame(p[s], p[(s + 1) % 4], 0.45), top, top + 1.1, look(-1), 0);
+        out.add(lib.id('merlons'), wallFrame(p[s], p[(s + 1) % 4], 0.45), top, top + 1.1, wallLook, 0);
       }
     }
   }
@@ -280,6 +304,22 @@ export function piecesOf(plan: CityPlan): StructurePieces {
       out.owner = -1;
       out.add(lib.id('drum'), m.frame, lo - 0.6, m.z1, look(-1), 0);
       out.add(lib.id('spire'), shrink(m.frame, 0.92), m.z1, m.z1 + half * 2.2, look(-1), 0);
+    } else if (m.kind === 'lighthouse') {
+      // (round 120) a port's lighthouse: its banded tower, the lantern (it glows) and the cap
+      out.owner = -1;
+      out.add(lib.id('lhtower'), m.frame, m.z0 - 0.6, m.z1, look(-1), 0);
+      out.add(lib.id('lhtop'), m.frame, m.z1, m.z1 + 4.2, look(-1), 0);
+    } else if (m.kind === 'headframe') {
+      out.owner = -1000;
+      out.add(lib.id('headframe'), m.frame, m.z0 - 0.3, m.z1, look(-1), 0);
+    } else if (m.kind === 'windmill') {
+      out.owner = -1;
+      out.add(lib.id('millbody'), m.frame, m.z0 - 0.5, m.z1, look(-1), 0);
+      out.add(lib.id('millcap'), m.frame, m.z1, m.z1 + 2.8, look(-1), 0);
+      // the sails before its cap, turning (SPIN), facing the way the seed turned the cap
+      const a = hashf(seed, 99) * Math.PI * 2;
+      const c: V2 = [(m.frame[0][0] + m.frame[2][0]) / 2, (m.frame[0][1] + m.frame[2][1]) / 2];
+      out.add(lib.id('prop:millsails'), ...affine(c[0] - Math.sin(a) * half * 0.95, c[1] + Math.cos(a) * half * 0.95, m.z1 + 0.9, a, 1), look(-1), 0.37, AFFINE_F | SPIN);
     }
   }
   out.owner = -1000;
@@ -323,6 +363,17 @@ export function piecesOf(plan: CityPlan): StructurePieces {
         const top = Math.min(da, db);
         if (top - Math.max(a.g, b.g) > 1.2) out.add(lib.id('archspan'), fr, [a.g - 0.5, b.g - 0.5, b.g - 0.5, a.g - 0.5], top, L, hashf(i, 23));
       }
+    } else if (f.kind === 'pier') {
+      // (round 120) a pier: its deck on the water at the points' height, piles down to the bed under it
+      const S = resample(f, 3);
+      for (let i = 0; i + 1 < S.length; i++) {
+        const a = S[i];
+        const b = S[i + 1];
+        const fr = segFrame(a, b, f.width);
+        const d = a.p[2] - 0.3;
+        out.add(lib.id('pierdeck'), fr, [d, d, d, d], 1.2, L, hashf(i, 28), REL);
+        out.add(lib.id('pierpiles'), fr, [a.g - 0.6, b.g - 0.6, b.g - 0.6, a.g - 0.6], d, L, hashf(i, 29));
+      }
     } else if (f.kind === 'wall') {
       const S = resample(f, 4);
       for (let i = 0; i + 1 < S.length; i++) {
@@ -330,8 +381,8 @@ export function piecesOf(plan: CityPlan): StructurePieces {
         const b = S[i + 1];
         const fr = segFrame(a, b, f.width);
         // (the walk follows the ground WALL_WALK over it: the body's top a height over its foot, the parapets on it)
-        out.add(lib.id('wallseg'), fr, [a.g - 0.6, b.g - 0.6, b.g - 0.6, a.g - 0.6], WALL_WALK + 0.6, L, hashf(i, 24), REL);
-        out.add(lib.id('wallwalk'), fr, [a.p[2], b.p[2], b.p[2], a.p[2]], 1.3, L, hashf(i, 25), REL);
+        out.add(lib.id('wallseg'), fr, [a.g - 0.6, b.g - 0.6, b.g - 0.6, a.g - 0.6], WALL_WALK + 0.6, wallLook, hashf(i, 24), REL);
+        out.add(lib.id('wallwalk'), fr, [a.p[2], b.p[2], b.p[2], a.p[2]], 1.3, wallLook, hashf(i, 25), REL);
       }
       // towers along it every ~28 m and at its open ends (the gates' flanks)
       const T = resample(f, 28);
@@ -339,10 +390,74 @@ export function piecesOf(plan: CityPlan): StructurePieces {
       for (const s of ends) {
         const h = f.width * 0.95;
         const fr: [V2, V2, V2, V2] = [[s.p[0] - h, s.p[1] - h], [s.p[0] + h, s.p[1] - h], [s.p[0] + h, s.p[1] + h], [s.p[0] - h, s.p[1] + h]];
-        out.add(lib.id('tower'), fr, s.g - 0.6, s.p[2] + 3.5, L, hashf(Math.round(s.p[0]), 26));
-        out.add(lib.id('spire'), shrink(fr, 0.95), s.p[2] + 3.5, s.p[2] + 3.5 + h * 2.4, L, hashf(Math.round(s.p[1]), 27));
+        out.add(lib.id('tower'), fr, s.g - 0.6, s.p[2] + 3.5, wallLook, hashf(Math.round(s.p[0]), 26));
+        out.add(lib.id('spire'), shrink(fr, 0.95), s.p[2] + 3.5, s.p[2] + 3.5 + h * 2.4, wallLook, hashf(Math.round(s.p[1]), 27));
       }
     }
   });
+  // ---- (round 120) the props, the moored ships, the lights' pools
+  out.owner = -1000;
+  propPieces(out, plan.props, look(-1));
+  shipsInto(out, plan.berths, styleIx);
+  poolPieces(out, plan.lights, look(-1));
+  return out.done();
+}
+
+/** affine flags (assets.ts AFFINE) */
+const AFFINE_F = 2;
+
+/**
+ * An affine piece's 16 floats as Out.add's arguments: rows 0-2 of the 3 × 4 transform (a turn about z by `heading`, a
+ * uniform scale, a translation) where a tile's corners (8 floats), its foot (4) and its top go.
+ */
+function affine(x: number, y: number, z: number, heading: number, scale: number): [[V2, V2, V2, V2], [number, number, number, number], number] {
+  const c = Math.cos(heading) * scale;
+  const s = Math.sin(heading) * scale;
+  return [
+    [[c, -s], [0, x], [s, c], [0, y]],
+    [0, 0, scale, z],
+    0,
+  ];
+}
+
+function propPieces(out: Out, props: Prop[], look: number): void {
+  const lib = library();
+  for (const p of props) {
+    if (p.kind === 'lamp') {
+      // (a street lamp: the square-framed module the streets always had)
+      const s = 0.22;
+      out.add(lib.id('lamp'), [[p.at[0] - s, p.at[1] - s], [p.at[0] + s, p.at[1] - s], [p.at[0] + s, p.at[1] + s], [p.at[0] - s, p.at[1] + s]], p.at[2], p.at[2] + p.size, look, p.seed);
+      continue;
+    }
+    const k = PROP_SIZE[p.kind];
+    if (!k) throw new Error(`structures: no prop module for "${p.kind}"`);
+    const flags = AFFINE_F | (p.kind === 'banner' ? WIND : 0) | (p.kind === 'waterwheel' ? SPIN : 0);
+    out.add(lib.id(`prop:${p.kind}`), ...affine(p.at[0], p.at[1], p.at[2], p.heading, p.size / k), look, p.seed, flags);
+  }
+}
+
+function shipsInto(out: Out, ships: Berth[], styleIx: number): void {
+  const lib = library();
+  for (const b of ships) out.add(lib.id(`ship:${b.kind}`), ...affine(b.at[0], b.at[1], b.at[2], b.heading, b.length / 12), styleIx * 65536 + Math.floor(b.seed * 4096), b.seed, AFFINE_F);
+}
+
+function poolPieces(out: Out, lights: LightSource[], look: number): void {
+  const lib = library();
+  for (const l of lights) {
+    // (a ship's lantern lights the water, not a floor: its glow alone)
+    if (l.kind === 'lantern') continue;
+    const r = l.radius;
+    const [x, y] = l.at;
+    // (the light's strength in the seed: a beacon's pool is wide and faint, a torch's small and warm)
+    const strength = l.kind === 'beacon' ? 0.35 : l.kind === 'torch' ? 0.9 : 0.75;
+    out.add(lib.id('pool'), [[x - r, y - r], [x + r, y - r], [x + r, y + r], [x - r, y + r]], l.foot, 0.05, look, strength, REL | DRAPE);
+  }
+}
+
+/** (round 120) Ships as pieces (contracts Structures.shipPieces): affine, moved by making them again. */
+export function shipPieces(ships: Berth[], style: StructureStyleId): StructurePieces {
+  const out = new Out();
+  out.owner = -1000;
+  shipsInto(out, ships, STYLE_IDS.indexOf(style));
   return out.done();
 }

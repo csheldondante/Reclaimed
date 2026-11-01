@@ -15528,3 +15528,199 @@ autopilot's orbit, M122-4.
 - Shots: C:/Projects/shots88/merge122/ — runsit-saved/ (the bike run's area cards 1-done, 1-edge, the map 1-map,
   2-map, the town, the end card), runsit-burned/ (9-town: the town burning; finale.gif, after.gif), lich-sandbox.png
   (`?play=lich` among places' flora), tilegate/, tilegate-places/, drive-*.log; STRUCTURE.md (the structure review).
+
+## 2026-10-31 — round 120, `cities`: settlements with purposes and stories; ports and ships; dressing and night lights
+
+Why: the user, round 120 — "different settlements have different purposes like trading posts, mines, lumber camps, etc.
+towns should have stories"; ships "both anchored at harbor and sailing. It will make the world feel very alive"; lights
+at night as emissive surfaces plus a cheap pool ("Yes absolutely enough"). Agreed order: purposes and ports first, then
+dressing and night lights (STR30, STR32, STR36, STR33). ARCHITECTURE "Cities".
+
+- Purpose from the land, not rolled (settle/purpose.ts): scored from the atlas facts the wiki has. A first pass made 121
+  of seed 1's 140 settlements ports: the atlas calls any site within two coarse cells of the sea a port — even ones on
+  plateaus 200 over it (its settings on seed 1 are only port 121 and cliffside 19). A harbour now needs the town down by
+  the water (full under 6 over the sea, none past 18): port 43, trading 35, hold 30, lumber 15, mining 11, farming 6.
+  Farming is rare because seed 1's settled land is tundra and dunes (STR41/STR42: the atlas's settings).
+- Stories: enemies are powers at odds with the town's owner (its realm's relations), never its own realm — the first pass
+  counted a realm with a slightly negative attitude to the player as raiding its own towns, and every town was raided.
+- The wiki runs in Node from cached facts, and the region kinds (atlas/regions.ts) can't be imported there (materials.ts'
+  enums): the kind's traits go into the atlas facts (atlas/kind-traits.ts); seed 1's cache gained them by
+  scripts/factstraits.mjs (no browser).
+- Ports: a port or lumber town moves to front its water (the atlas's site can be 60 from the sea, past a town's
+  radius). Piers cross the shallows and stop where a ship can lie (1.2 m + 0.3); berths are checked bow to stern.
+- Ship routes: Dijkstra's costs in a Float32Array rounded below the popped double, so every popped cell looked stale and
+  no route was ever found — Float64Array. A coarse cell is water only when all its texels are; on a small real atlas
+  (seed 3, n 512) 5 routes, 7 ships, charted in 56-67 ms, every point checked on the sea.
+- The new trades walk the existing rounds in play (life.ts ROUTINE) — their own paths wait for STR23 (STR38).
+
+Tests: unit 235 passed (+39: src/structures/purpose.test.ts 20, src/settle/purpose.test.ts 11, src/settle/ships.test.ts 6,
+test/unit/cities-world.test.ts 2), gpu 30 (+2: test/gpu/cities.test.ts — the game's and the viewer's structures shaders
+compile on Dawn; a small atlas's settlements have purposes and stories and its routes lie on its sea).
+
+Measured (desktop iGPU, intel-xe-lpg; every system in play as deployed, 1x):
+- `npm run smoke`: atlas ready in 44 s, no fatal, sim ticking.
+- Pieces the dressing adds to a town (Node count, hearth, hilly): R 30 2315 pieces (+68 kerbs, 29 pools, 27 props, 7
+  lamps), R 42 4176 (+142, 61, 54, 13) — about 5%.
+- driveprofile (q=low 412x915 dpr 2.6, A/B alternated twice, places = origin/places 213e5b7 built alongside): cities day
+  p50 9.9/9.9 p95 12.5/12.1, night (tod 0.97) 9.9/9.9 p95 12.5/12.8; places day 9.9/9.8 p95 12.8/12.1, night 9.9/9.9 p95
+  12.7/11.5 — no cost visible.
+- perf/structcity at the port s84 (--tod new): the world pass 2.26 ms drawn vs 1.92 skipped by day; at night 1.44 vs
+  2.03 (the GPU totals swing 7.5-13.9 ms between runs on this iGPU: the pools' cost is under its noise).
+- tilegate: every parked view 0 out of detail and 0 background (21 of 21). The goldens: no town is in the gate's views;
+  the wide zooms (z2.2, z1.3) differ 20-30% because the zoom floor differs run to run (places' own build fails the same
+  views by 33-39% against the same baselines), and z5/z3.5's 1-3% are scattered spire and plant pixels — baselines left
+  as they are. The fast pans fail as on places (M120-1).
+- Shots: C:/Projects/shots88/cities/ — cv-0..8 (the viewer: port day and night, mining, lumber, farming, trading, hold
+  with its history, trading at night), c-<purpose>-{day,day-near,night-near,night}.png (in game: port s84, mining s96,
+  lumber s7, trading s104, farming s53, hold s124 — this GPU's world; WD1 says another GPU may make other towns),
+  farming-dusk-wind.gif. The light pools were faint at first in the game: their strength doubled (0.42 → 0.8).
+
+Checked after main's review of the shots (scripts/citiesprobe.mjs: one town's view on any build, `--works` puts the camera
+on the purpose's work site): the lavender slabs round s104 at night and the dark plume by s84's lighthouse are on places'
+build at the same view and time (the plume also with the structures skipped) — pre-existing, BACKLOG CIT1, CIT2; a
+farmstead's barn in shallow water across the river is on places too (CIT3). The mine s96's works are there in play
+(probe/mine-works-cities.png: the headframe, a spoil heap, the rail): the earlier shot was framed on the town, the works
+past its rim. (A pit-floor-over-the-sea rule tried for the barn was reverted: the barn wasn't in a pit.)
+## 2026-10-31 — round 120 (`traits`): Living World slice 1 — traits, effects and modular rules on the GPU agents (LW1)
+
+The user (DECISIONS round 120): "the systems that process traits for things like combat and other interactions are
+essentially game specific logic but we want it GPU bound and cheap so we can use it on our agents. Modular architecture
+here is key." And the design document's §4: "combinatorial depth from shared status/effect semantics", "statuses are verbs
+on the simulation". What was there: the GPU agents (units.wgsl's step does damage, fire, drowning, throws by kind), the
+Units contract on them (AgentUnits), recipe tags (round 85), world events for growth (Grow). No trait data, no effect
+notion, no way for a game to add a rule without editing units.wgsl. Play's lich is on `play`/`runsit`, not places — main's
+call: build on places, a thin caster in the playground, the lich's hook documented (LW1-1).
+
+**Why three structures.** Traits are data (what a thing is, what's happening to it), effects are operations put into the
+world, rules are the game's code. Folding any two together is the conflation the user's principles warn about: a rule
+that also stores state can't be swapped; an effect that knows who it hurts is a bespoke spell. So: a trait word a slot
+(intrinsic bits + statuses with expiry ticks — expiry ticks, not timers counted down: an f16 or u8 timer either loses
+precision or needs a per-tick decrement; a u32 tick compares exactly), an effect list a tick (a uniform: 32), and modules —
+each its own kernel with a 256-byte table, seeing only the prelude. The registry is the only thing that knows the set.
+
+**Why CAPS and LOOK.** The step already has 8 storage buffers (nav, dist, units, occ, events, fire, shove, lava): it can't
+bind the trait buffer, and it shouldn't — it's the engine. So the unit record grew a fifth vec4 the step and the draw
+read: CAPS (no burn, no drown, rooted, flee) and LOOK (tint, halo, sparks, a body lying), derived each tick from the
+traits by the game's `caps` and `look` modules (round 85: "derived capabilities as separate rules"). The engine only knows
+four verbs; which traits give them is a table. Fire immunity is then "fire_immune → NO_BURN" plus a resist row
+(fire × 0), petrification "petrified → ROOTED | NO_BURN" plus a stone tint; nothing in units.wgsl names a trait.
+
+**Corpses.** Raising needs the body: a death used to free the slot at once. With the trait system on, the slot lies as a
+`corpse` (drawn on its back, ash-tinted) for `corpseSeconds` (40), then decays (the core zeroes it; a `decayed` event
+frees the slot) unless a raise stands it up — the same id, same kind (role and gear), alive, undead, in the raiser's
+group. AgentUnits revives its record and marks it `bound` (the raiser's; no jobs or hunts here until ordered). The sync
+also frees a corpse it sees zeroed or alive, so a dropped event doesn't leak a slot. `?traits=0` turns the system and
+corpse mode off together.
+
+**The world.** A heal's reach into fields and geometry goes through the systems' own channel, not a bespoke write:
+EventKind.Grow (existing: wilt, particles) and a new EventKind.Mend (8) that structure.wgsl reads — a cracked interval
+within the radius knits back a damage level with chance `strength`. The pulses come from the trait system's SimSystem
+half (ticked before the agents), so a sanctuary mends an empty town too.
+
+**Tests (TDD).** Unit 13 (test/unit/traits.test.ts): ids and masks, tags → traits, materials, the registry (order,
+rejects, add/remove leaves the others), the slice's tables. GPU 8 on Dawn (test/gpu/traits.test.ts): a sanctuary over
+150 living + 150 undead (living 4 → ~8 hp in 2 s at 2 hp/s, undead 10 → ~4); raise (100 dead: 60 workers and 30 raiders
+rise in group 9 with their kinds and ids, the 10 walking dead stay down); corpses decay and their slots are reused;
+fire_immune (a fire burst: 7 vs 10 hp; a burning blow: 40 of 40 plain alight, 0 immune); petrified rooted (a throwing blow
+moves the free > 2 cells, the stone < 0.3); modularity (a `regen` module registered later raises hp only on
+`regenerating`, the other modules' list untouched, heal unchanged, unregistered it stops); Mend (a lightning-cracked
+concrete block: damage 124 → 0 under a 6 s sanctuary, no agent about); AgentUnits (a smith raised keeps its role, a
+walking dead stays down). Full suite: 245 passed (1 expected fail, 2 skipped).
+
+**Measured (desktop iGPU, intel xe-lpg; the phone proxy q=low 412x915 dpr 2.6).** scripts/perf/traits.mjs: the atlas
+with every system in play, 1000 agents round the camera (500 living, 500 undead) under a lasting sanctuary and a fear
+field, the trait system toggled on and off in 3 s windows, four rounds each (round 120: toggle, don't trust per-pass
+timestamps on tilers): the agents' pass 0.530 ms on vs 0.445 off (+0.085 ms for 7 modules + core, 9 dispatches of 16
+workgroups); the whole frame's GPU 11.20 vs 11.41 ms (−0.21: inside the iGPU's clock noise); the traits system's CPU
+0.01 ms a tick. Well under the 1 ms target. driveprofile (q=low, the ride): p50 9.9, p95 11.8, GPU 9.83 ms a frame —
+places' last gate read p50 9.8-9.9, p95 11.4-13.3: no cost visible with no agents about. `npm run smoke` passes (atlas
+ready 40.7 s, no fatal).
+
+**Seen** (scripts/traitshot.mjs, C:/Projects/shots88/traits/): the crowd (180 villagers round the well, 90 walking dead
+in green and bone, the lich); the smite leaves ~105 bodies lying ash-grey; the raise stands them all up green and bone,
+hopping up, and they gather on the lich; the sanctuary greens the ground (Grow pulses, spread over the field: one spot
+pulsed every 0.5 s grew a single thicket in the first run, so a random point a pulse and the station's every 3 s), the
+living glow (a white halo over the head), the undead spark and fall (the raised round the lich too — the rule doesn't
+care whose they are); fear sends the village up its field; petrify turns the walking dead grey and still. Readable close
+(04-sanctuary-close.png, zoom 26); at the station's default zoom the halos and sparks are a few pixels (LW1-4).
+The first run found the playground had no one draining the agents' events (no Units layer): corpse mode's books live in
+the sync, so the station syncs every 250 ms while it has agents.
+
+## Round 123 — merge123: cities and traits into places (2026-10-31, session 5)
+
+The user (round 120): "This looks good to merge ... so merge and just take notes of gaps and a Todo to come back and
+iterate on this". `cities` (a659a7c) then `traits` (85e935d) onto `places` 9d453a5 (which now holds the physics,
+merge121, and runsit/play, merge122 — neither branch had seen them). BACKLOG round 123 (M123-1..8).
+
+**Conflicts and how each went.**
+- cities had flipped two files' line endings (level.ts to LF, gm/wiki.ts to CRLF): a whole-file diff each. Merged with
+  `-Xignore-cr-at-eol`, then places' endings put back (level.ts CRLF, wiki.ts LF); cities' new lines in ARCHITECTURE,
+  BRANCHES and DEVLOG were LF in CRLF files and were made CRLF. Real changes: wiki.ts +40, level.ts +9.
+- data/atlas/seed1.json: places' re-pulled facts (runsit's) kept, and cities' scripts/factstraits.mjs run on them for the
+  region kind traits (7772 regions) — the same thing cities did to its older copy.
+- pages.yml: places' list. BACKLOG: places' version, cities' and traits' sections and rows re-added (STR30 done by
+  cities, FO1 keeps runsit's first slice, PH1 places' round-120 design); one `# Backlog`. DEVLOG: both.
+- agents.ts: places' `unitsG()` (the solver's gravity, merge121) with traits' five-vec4 unit (UNIT_V = 5, the trait
+  word). units.wgsl merged clean: every `u * 4u` became `u * UNIT_V`, and nothing else on places reads the unit buffer
+  with a 4-vec4 stride (checked: agents.ts' readback goes through UF).
+- level.ts: both — merge121's station kit (pour, drop, wakeMetal, dropModels) and traits' `traits` driver.
+- playground.ts: merge121's node-solver stations (slide, house, metal: x 112..256, rows 192..240) took the back row the
+  traits station sat on (x 128..256, rows 192..256). Squeezing it into the 16 rows left, or overlapping a solver
+  station (whose reset would restore the other's chunks), were both worse than a level of its own: The Traits Lab
+  (`?level=traitlab`, levels/traitlab.ts — a flat soil plain, the station in the middle; on the title screen, not
+  hidden, at main's word). scenes/level.ts already gives any level with a 'traits' station its driver.
+
+**Consolidations.**
+- *Traits' raise ↔ play's lich (LW1-1, M122-7).* Play's lich had no raise dead of its own (the port left the
+  spellbook in GameplayGM), so nothing was deleted. It gains a 💀 raise button (raiseReach 9 cells, raiseEvery 3 s,
+  on the tune panel) that calls `PlayWorld.raise(x, y, r)` — optional, so play's Node tests and other worlds need none.
+  scenes/level.ts puts it together at the boundary: `traits.apply({ op: 'raise', group: RAISED_GROUP, … })`, and each
+  unit AgentUnits reports `raised` is ordered to follow the 'hero' actor. AgentUnits drops a raised unit's hostility
+  (a raider stood up by the hero's lich would otherwise hunt the hero once ordered). Unit test: the button asks the
+  world once with its reach, then cools down.
+- *cities' purpose and story ↔ runsit.* The wiki keeps both (gm/wiki.ts); data/wiki/seed1.json and .md rebuilt from
+  the cache (`node scripts/worldwiki.mjs`) so the GM reads them (140 settlements, each with purpose and story).
+  runsit's filler on the new wiki: `node scripts/situation.mjs` fills "The Dead Come for Bumku" in 34 ms, its paths
+  checked. scripts/gmtest.mjs and the Bell story's storycheck fail the same way with places' own wiki (pre-existing,
+  M123-8).
+- *Settlement condition: one owner.* The world state's settlement record: runsit's finishSituation writes it, and
+  Settlements.setCondition realises it (charred). cities' story never writes a condition — it reads the world state's
+  events (burn, flood, ruin, rebuild) and region state for its marks. No third path added; the gap (the story doesn't
+  see `condition`) and the run-loop's `settlement-condition` AtlasEvent are M123-4.
+- *The cities stand-in:* dockers share the farmers' fields (STR38) — noted (M123-5), not fixed.
+
+Typecheck clean; unit tests 441 passed (2 expected fail).
+
+**Found by the gate and fixed.** The Traits Lab opened without its stations bar: the bar (and the tuning panel) mount
+only on a level with `lab` (mountLab), which the playground had and the new level didn't — traitshot failed on
+`stationsBar.pick`. The level now has `lab: { open: [] }`.
+
+**scripts/lichraise.mjs** (new): the atlas with `?play=lich`, ten raiders round the lich struck down, then the raise
+button; checks bodies lie and the raised follow. `--kill slam` uses the lich's slam instead — after a slam the lich
+(and what stands in the crater) is not drawn, on places' own build too (pre-existing, M123-9), so the default is a
+plain blow.
+
+**Gate** (desktop iGPU intel-xe-lpg, every system on, 1x, q=low 412x915 for the run scripts):
+- typecheck; `npm test`: 67 files, 544 passed (2 expected fail, 5 skipped), unit and GPU on Dawn.
+- `npm run smoke --levels atlas,playground,rocklab,traitlab`: all four load, no fatal, sims ticking (atlas ready 39.6 s).
+- traitshot.mjs on the Traits Lab: crowd 180 living + 91 undead; smite 105 bodies; raise 105 raised; sanctuary 70
+  healing, 9 harmed; petrify 24 — all checks pass. perf/traits.mjs (the toggle, 1000 agents on the atlas): the agents'
+  pass 0.558 ms on vs 0.454 off (+0.104; the traits branch measured +0.085), the frame's GPU 11.94 vs 11.68 (+0.27,
+  inside the iGPU's noise), CPU 0.0125 ms a tick.
+- lichraise.mjs: 10 raiders struck down, 10 bodies; after the raise 10 alive, 10 following the hero, 0 hostile.
+- citiesshot.mjs (port s84, mining s96, hold s124): each planned for its purpose and drawn, lights 22 / 7 / 18, the
+  port's 3 piers and 2 berths.
+- runsit.mjs `--want saved`: GM situation grey-muster-bumku, the town held till the dead broke off at t 360, ended saved
+  with its end card; finale frames p50 9.9 / p95 15.7 ms, GPU 14.2 ms; the hero's main-thread cost 0.101 ms mean.
+- tilegate (merged and places' own build, the same baselines): every parked view 0 out of detail, 0 background. Goldens
+  over 1 %: merged desktop-z1.3 32.7 % (places 21.3 %), phone-z2.2 21.6 % (places 0.6 %), phone-z1.3 21.5 % (places
+  0.5 %). Looked at: the phone views are the same scene a few pixels over (the spires and the road shifted alike — the
+  view's framing, no void, no flat fill, no band); desktop-z1.3 the far foliage as on places. Fast pans at 160 c/s fail
+  on both (merged desktop z14/z8/z5 3.1/18.3/7.7 %, phone z8 39.5 % in 20 of 151 frames; places 0.5/34.6/12.3 %, phone
+  z8 0.2 %) — the fast pan's known misses, varying run to run. Baselines not rewritten.
+- driveprofile (q=low 412x915 dpr 2.6, served builds, alternated): day places p50 9.9 / p95 12.1 / p99 30.3, GPU 13.35;
+  merged 9.9 / 12.3 / 27.0, GPU 12.37. Night (`tod=0.9`): places 9.9 / 12.2 / 25.2, GPU 12.5; merged 9.9 / 12.4 / 27.6,
+  GPU 12.6. Within the runs' spread.
+- Shots: C:/Projects/shots88/merge123/ — towns/ (m123-port, -mining, -hold: day, night, near), traits/ (the station:
+  crowd, smite, raise.gif, sanctuary, petrify), lich/ (01-raiders, 02-fallen, 03-raise.gif, 03-raised: the raised in
+  green and bone round the lich), runsit-saved/, tilegate/, tilegate-places/, drive-*.log; STRUCTURE.md.

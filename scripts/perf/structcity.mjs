@@ -3,7 +3,7 @@
 // time a frame (the profiler's passes) with the settlements' pieces drawn and skipped (?skip=structures: the same world,
 // their columns still claimed), at the start's zoom and closer. Timing kind (the GPU alone). JSON to
 // data/perf/structcity-<adapter>.json.
-//   node scripts/perf/structcity.mjs [--town s55] [--seconds 8]
+//   node scripts/perf/structcity.mjs [--town s55] [--seconds 8] [--tod 0.97]
 import fs from 'node:fs';
 import path from 'node:path';
 import { run, ROOT } from '../lib/runner.mjs';
@@ -11,9 +11,11 @@ import { run, ROOT } from '../lib/runner.mjs';
 await run({ name: 'perf-structcity', kind: 'timing', size: '412x915', dpr: 2.6 }, async (R) => {
   const town = R.opt('town', 's55');
   const seconds = Number(R.opt('seconds', 8));
+  // (round 120, cities: --tod 0.97 measures the town at night — its light pools drawn)
+  const tod = R.opt('tod', null);
   const out = { when: new Date().toISOString(), town, size: `${R.W}x${R.H}@${R.dpr}`, runs: [] };
   for (const skip of ['', 'structures']) {
-    const p = await R.level({ level: 'atlas', town, perf: '1', ...(skip ? { skip } : {}) });
+    const p = await R.level({ level: 'atlas', town, perf: '1', ...(skip ? { skip } : {}), ...(tod ? { tod, day: '100000' } : {}) });
     await R.simSeconds(p, 15);
     for (const zoom of [1, 3]) {
       await p.evaluate((z) => (window.reclaimed.camera.zoom *= z), zoom);

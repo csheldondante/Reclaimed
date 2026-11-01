@@ -12,6 +12,7 @@ import { generateTrials } from '../levels/trials';
 import { generateFlowlab, setupFlowlab } from '../levels/flowlab';
 import { generateRocklab, ROCKLAB_STATIONS } from '../levels/rocklab';
 import { generatePlayground, STATIONS, type Station } from '../levels/playground';
+import { generateTraitlab, TRAITLAB_STATIONS } from '../levels/traitlab';
 import { generateNoiselab } from '../levels/noiselab';
 import { generateBestiary } from '../levels/bestiary';
 import type { FlowKit } from '../flow/install';
@@ -161,6 +162,20 @@ export const LEVELS: LevelDef[] = [
     rivers: 'table',
     lab: { open: ['world', 'rigid'] },
     stations: STATIONS,
+  },
+  {
+    // (LW1, merge123) the trait system's station on a plain of its own (levels/traitlab.ts)
+    id: 'traitlab',
+    name: 'The Traits Lab',
+    blurb: 'The living and the walking dead: a lich raising the fallen, a sanctuary healing the living and burning the undead.',
+    model: 'sign',
+    generate: (dims) => generateTraitlab(dims),
+    sandbox: true,
+    // (on the title screen, beside the playground: main's word, merge123 — not hidden from the user)
+    zMax: 64,
+    // (the test bed's tuning panel and its stations bar: mountLab)
+    lab: { open: [] },
+    stations: TRAITLAB_STATIONS,
   },
   {
     id: 'noiselab',

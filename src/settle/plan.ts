@@ -15,7 +15,7 @@ import { derive } from '../api/contracts/compose';
 import { MAT } from '../world/materials';
 import { ROW_H, cellAt, cellPos } from '../world/lattice';
 import { rand, type Pt } from './grids';
-import type { BuildingRec, CityPlan, CitySpec, DensityFn, StructureStyleId, V2 } from '../api/contracts/structures';
+import type { BuildingRec, CityMark, CityPlan, CitySpec, DensityFn, StructureStyleId, V2 } from '../api/contracts/structures';
 import { planCity } from '../structures/plan';
 import { columnsOf } from '../structures/columns';
 import { fbm } from '../structures/rng';
@@ -91,6 +91,8 @@ export interface PlanInput {
   sea: number;
   /** (the level's ?city= override: this settlement's town planned with another tile system or style) */
   override?: Partial<CitySpec>;
+  /** (round 120) the ways its roads leave by (records.ts) */
+  approaches?: [number, number][];
 }
 
 export interface SettlementPlan {
@@ -208,13 +210,13 @@ export const BOX_PAD = CAMP_OFF + 13;
 const SIZE_K: Record<Settlement['size'], number> = { camp: 0.3, hamlet: 0.36, village: 0.46, town: 0.8, city: 1 };
 /** the share of a town's own buildings (its build order) standing when it's first planned: the rest its frontier */
 const FRONTIER_UP = 0.9;
-type Use = 'hall' | 'granary' | 'workshop' | 'house' | 'ruin' | 'temple';
+type Use = 'hall' | 'granary' | 'workshop' | 'house' | 'ruin' | 'temple' | 'warehouse' | 'sawmill' | 'stable';
 
 export function builtRadius(size: Settlement['size']): number {
   return BUILT[size].R;
 }
 
-const USE_TAGS = new Set(['housing', 'store', 'smithy', 'meeting-hall', 'temple', 'defence', 'farm', 'trade']);
+const USE_TAGS = new Set(['housing', 'store', 'smithy', 'meeting-hall', 'temple', 'defence', 'farm', 'trade', 'sawmill', 'mill', 'stable', 'mine', 'lighthouse', 'dock']);
 
 export function planSettlement(inp: PlanInput): SettlementPlan {
   const t0 = performance.now();
@@ -278,6 +280,37 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
     centre[1] = cy;
     rec.at = [cx + ox, cy + oy];
   }
+  // (round 120) a port or a lumber camp fronts its water: where the shore lies past the town's middle third, the town
+  // moves toward it (onto dry, level ground) until the shore is inside it — the quay and the sawmill's bank in its tiles
+  if (rec.purpose?.kind === 'port' || rec.purpose?.kind === 'lumber') {
+    const wetAt = (x: number, y: number) => {
+      const c = colAt(x, y);
+      return c >= 0 && (inp.water[c] > 0.3 || inp.ground[c] < inp.sea - 0.3);
+    };
+    let best: [number, number, number] | null = null;
+    for (let k = 0; k < 32; k++) {
+      const a = (k / 32) * Math.PI * 2;
+      for (let d = 2; d <= R * 2.5; d += 2)
+        if (wetAt(cx + Math.cos(a) * d, cy + Math.sin(a) * d)) {
+          if (!best || d < best[0]) best = [d, Math.cos(a), Math.sin(a)];
+          break;
+        }
+    }
+    if (best && best[0] > R * 0.6) {
+      for (let move = best[0] - R * 0.55; move > 2; move -= 3) {
+        const x = cx + best[1] * move;
+        const y = cy + best[2] * move;
+        if (dryAt(x, y) <= 3) {
+          cx = x;
+          cy = y;
+          centre[0] = cx;
+          centre[1] = cy;
+          rec.at = [cx + ox, cy + oy];
+          break;
+        }
+      }
+    }
+  }
   const run = 0;
   const made = (who: FactionId | null, note: string): ThingEvent[] => [{ what: 'made', run, by: who ? { faction: who } : undefined, note }];
   const thing = (t: Omit<Instance, 'history' | 'parts' | 'condition'> & Partial<Pick<Instance, 'history' | 'parts' | 'condition'>>): string => {
@@ -329,18 +362,34 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
   };
   const keepOut: { at: V2; r: number }[] = [];
   if (quarrySpot) keepOut.push({ at: quarrySpot.at, r: 10 }, { at: quarrySpot.spoil, r: 6 });
+  // (round 120) its purpose (read from the land: purpose.ts, on the record by the wiki) and its story's marks in its fabric
+  const purpose = rec.purpose?.kind;
+  const marks: CityMark[] = [];
+  for (const e of rec.story?.events ?? []) {
+    if (e.what === 'burned' && e.at) marks.push({ kind: 'burned', at: [e.at[0] - ox, e.at[1] - oy], r: e.radius ?? 14 });
+    else if (e.what === 'flooded' && e.level !== undefined) marks.push({ kind: 'flooded', level: e.level });
+    else if (e.what === 'walled') marks.push({ kind: 'newwalls' });
+  }
+  const walled = marks.some((m) => m.kind === 'newwalls');
+  const hold = purpose === 'hold';
   const spec: CitySpec = {
     seed: inp.seed,
-    system: styles[0],
-    style: styleFor(civ),
+    // (a hold is Bulwark's: rings and spokes round its keep, walled, in stone)
+    system: hold ? 'radial' : styles[0],
+    style: hold ? 'bastion' : styleFor(civ),
     at: [cx, cy],
     radius: R,
     tile: rec.size === 'hamlet' || rec.size === 'village' ? 3.6 : 4,
     storeys: [s1 + 0.6, s0],
-    walls: fortified && rec.size !== 'hamlet',
+    walls: hold || walled || (fortified && rec.size !== 'hamlet'),
     roads: 0,
     farmland: farmR,
     keepOut,
+    purpose,
+    // (a mine's work site is its quarry's mouth: the headframe and the rails go to it)
+    works: purpose === 'mining' && quarrySpot ? { at: quarrySpot.at, dir: quarrySpot.dir } : undefined,
+    approaches: inp.approaches?.length ? inp.approaches : undefined,
+    marks: marks.length ? marks : undefined,
     ...inp.override,
   };
   const city = planCity(spec, groundAt, water, density);
@@ -369,7 +418,9 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
   if (civ.profile.builds.architecture.includes('temple') || dome) take('temple', dome);
   const tower = city.buildings.find((b) => b.mega === 'tower');
   if (inp.ruin && tower) take('ruin', tower);
-  for (const b of city.buildings) if (!useOf.has(b.id)) useOf.set(b.id, b.kind === 'barn' ? 'granary' : 'house');
+  // (round 120: the purposes' buildings are what the plan made them)
+  const PURPOSE_USE: Partial<Record<BuildingRec['kind'], Use>> = { barn: 'granary', granary: 'granary', warehouse: 'warehouse', sawmill: 'sawmill', stable: 'stable' };
+  for (const b of city.buildings) if (!useOf.has(b.id)) useOf.set(b.id, PURPOSE_USE[b.kind] ?? 'house');
 
   // the frontier: the town's last buildings in its build order aren't up yet — the next two are sites (the builders'
   // work in play), the rest wait for it to grow (the farmsteads stand: the country is older than the town's edge)
@@ -406,17 +457,24 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
       part(id, 'room', 'room', 1);
       part(id, 'fitting', 'hearth', 0);
       rec.founded = { civ: 'the ancients', over: id };
+      rec.story?.events.push({ what: 'adapted', run: -3, note: `the old tower made into homes by ${civ.profile.name}` });
     } else {
-      thing({ id, kind, material: use === 'hall' ? civ.lookMat.foundation : use === 'granary' ? civ.lookMat.trim : civ.lookMat.wall, condition: 0.75 + 0.25 * r(), owner, place });
-      if (use !== 'granary') part(id, 'room', 'room', 0);
+      // (round 120: a quarter its story burned stands gutted; a flood's lower town empty)
+      const worn = b.wear === 'burned' ? 0.12 : b.wear === 'flooded' ? 0.4 : 1;
+      thing({ id, kind, material: use === 'hall' || use === 'warehouse' ? civ.lookMat.foundation : use === 'granary' ? civ.lookMat.trim : civ.lookMat.wall, condition: (0.75 + 0.25 * r()) * worn, owner, place, ...(b.wear ? { history: [...made(rec.faction, `built at ${rec.name}`), { what: b.wear === 'burned' ? ('broken' as const) : ('lost' as const), run: -5, note: b.wear === 'burned' ? 'gutted by fire' : 'abandoned to the flood' }] } : {}) });
+      if (use !== 'granary' && use !== 'warehouse' && use !== 'sawmill' && use !== 'stable') part(id, 'room', 'room', 0);
       if (use === 'house') part(id, 'fitting', 'hearth', 0);
       if (use === 'hall') (part(id, 'fitting', 'hearth', 0), part(id, 'fitting', 'altar', 0));
       if (use === 'temple') part(id, 'fitting', 'altar', 0);
       if (use === 'granary') part(id, 'fitting', 'bin', 0);
       if (use === 'workshop') part(id, 'fitting', 'forge', 0);
+      if (use === 'warehouse') (part(id, 'fitting', 'bin', 0), part(id, 'fitting', 'bin', 1));
+      if (use === 'sawmill') part(id, 'fitting', 'saw', 0);
+      if (use === 'stable') part(id, 'fitting', 'stalls', 0);
     }
     const caps = derive(catalogue(things), id);
-    const rb: Building = { id, thing: id, grid: rec.grids[b.kind === 'farmhouse' || b.kind === 'barn' ? 1 : 0].id, cells: b.quads.slice(), storeys: b.storeys, use: caps.tags.filter((x) => USE_TAGS.has(x)), workers: use === 'workshop' ? ['smith'] : use === 'granary' ? ['hauler'] : undefined };
+    const WORKERS: Partial<Record<Use, string[]>> = { workshop: ['smith'], granary: ['hauler'], warehouse: ['docker'], sawmill: ['sawyer'], stable: ['stablehand'] };
+    const rb: Building = { id, thing: id, grid: rec.grids[b.kind === 'farmhouse' || b.kind === 'barn' ? 1 : 0].id, cells: b.quads.slice(), storeys: b.storeys, use: caps.tags.filter((x) => USE_TAGS.has(x)), workers: WORKERS[use] };
     if (use === 'temple') rb.use.push('temple');
     buildings.push(rb);
     lotUse.set(`b${b.id}`, use);
@@ -428,6 +486,9 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
     if (rb.use.includes('store')) spots.push({ at: door, kind: 'store', ref: id });
     if (use === 'hall') spots.push({ at: door, kind: 'post', ref: id }, { at: door, kind: 'store', ref: id });
     if (use === 'workshop') spots.push({ at: door, kind: 'make', ref: id });
+    if (use === 'warehouse') spots.push({ at: door, kind: 'load', ref: id });
+    if (use === 'sawmill') spots.push({ at: door, kind: 'saw', ref: id });
+    if (use === 'stable') spots.push({ at: door, kind: 'tend', ref: id });
     if (things.get(id)!.condition < 0.85) spots.push({ at: door, kind: 'repair', ref: id });
   }
 
@@ -461,7 +522,30 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
   };
   const well = thing({ id: `${rec.id}:well`, kind: 'well', material: civ.lookMat.foundation, owner: { settlement: rec.id }, place: { in: 'world', region: rec.region, at: [plaza[0] + ox, plaza[1] + oy, groundAt(...plaza)] } });
   buildings.push({ id: well, thing: well, grid: rec.grids[0].id, cells: [], storeys: 0, use: ['water'] });
-  const stalls = rec.size === 'village' || rec.size === 'hamlet' ? 2 : 4;
+  // (a trading post's market has its stalls as the plan's props — the structures' stall pieces —, its spots there)
+  const stalls = purpose === 'trading' ? 0 : rec.size === 'village' || rec.size === 'hamlet' ? 2 : 4;
+  for (const p of city.props) if (p.kind === 'stall') {
+    const id = thing({ id: `${rec.id}:stall${spots.length}`, kind: 'stall', material: 'canvas', owner: { settlement: rec.id }, place: { in: 'world', region: rec.region, at: [p.at[0] + ox, p.at[1] + oy, p.at[2]] } });
+    buildings.push({ id, thing: id, grid: rec.grids[0].id, cells: [], storeys: 1, use: ['trade'] });
+    spots.push({ at: [p.at[0], p.at[1]], kind: 'trade', ref: id });
+  }
+  // (round 120) the purposes' works as things: a mine's headframe, a port's lighthouse and piers, a farming town's mill
+  const work = (kind: string, name: string, at: [number, number, number], spot: Spot['kind'] | null, parts: [string, string][] = []) => {
+    const id = thing({ id: `${rec.id}:${kind}${things.size}`, kind, name: `${name} at ${rec.name}`, material: civ.lookMat.foundation, owner: { settlement: rec.id, faction: rec.faction ?? undefined }, place: { in: 'world', region: rec.region, at: [at[0] + ox, at[1] + oy, at[2]] } });
+    parts.forEach(([slot, k], n) => part(id, slot, k, n));
+    buildings.push({ id, thing: id, grid: rec.grids[0].id, cells: [], storeys: 1, use: derive(catalogue(things), id).tags.filter((x) => USE_TAGS.has(x)) });
+    if (spot) spots.push({ at: [at[0], at[1]], kind: spot, ref: id });
+  };
+  for (const m of city.megas) {
+    const c: [number, number, number] = [(m.frame[0][0] + m.frame[2][0]) / 2, (m.frame[0][1] + m.frame[2][1]) / 2, m.z0];
+    if (m.kind === 'headframe') work('headframe', 'the headframe', c, 'mine');
+    else if (m.kind === 'lighthouse') work('lighthouse', 'the lighthouse', c, null);
+    else if (m.kind === 'windmill') work('mill', 'the windmill', c, 'mill', [['fitting', 'millstone']]);
+  }
+  for (const f of city.linear) if (f.kind === 'pier') {
+    const p = f.points[f.points.length - 1];
+    work('pier', 'a pier', [p[0], p[1], p[2]], 'load');
+  }
   for (let s = 0; s < stalls; s++) {
     const a = (s / stalls) * Math.PI * 2 + r();
     const at: Pt = [plaza[0] + Math.cos(a) * 5, plaza[1] + Math.sin(a) * 5];
@@ -695,19 +779,39 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
   // ---- the record: buildings, people, stores, needs -------------------------------------------------------
   rec.buildings = buildings;
   const role = (name: string, f: number) => ({ role: name, count: Math.max(1, Math.round(people * f)) });
-  rec.people = [role('farmer', 0.25), role('woodcutter', 0.2), role('miner', qBest >= 0 ? 0.2 : 0), role('builder', 0.2), role('guard', 0.15)].filter((p) => p.count > 0 && !(p.role === 'miner' && qBest < 0));
+  // (round 120) the purpose decides who's there: its trades (purpose.ts) take their share from the farmers' and the
+  // woodcutters' — a mining town's miners and carters, a port's dockers, sailors and fishers, a lumber camp's sawyers …
+  const MIX: Record<string, [string, number][]> = {
+    none: [['farmer', 0.25], ['woodcutter', 0.2], ['miner', 0.2], ['builder', 0.2], ['guard', 0.15]],
+    mining: [['miner', 0.35], ['carter', 0.1], ['smith', 0.05], ['farmer', 0.1], ['woodcutter', 0.1], ['builder', 0.15], ['guard', 0.15]],
+    port: [['docker', 0.15], ['sailor', 0.12], ['fisher', 0.1], ['trader', 0.05], ['farmer', 0.12], ['woodcutter', 0.1], ['miner', 0.08], ['builder', 0.13], ['guard', 0.15]],
+    lumber: [['woodcutter', 0.35], ['sawyer', 0.12], ['raftsman', 0.05], ['farmer', 0.12], ['miner', 0.08], ['builder', 0.13], ['guard', 0.15]],
+    farming: [['farmer', 0.4], ['miller', 0.05], ['woodcutter', 0.12], ['miner', 0.1], ['builder', 0.18], ['guard', 0.15]],
+    trading: [['trader', 0.18], ['stablehand', 0.08], ['carter', 0.06], ['farmer', 0.15], ['woodcutter', 0.12], ['miner', 0.08], ['builder', 0.15], ['guard', 0.18]],
+    hold: [['guard', 0.35], ['smith', 0.05], ['farmer', 0.18], ['woodcutter', 0.12], ['miner', 0.12], ['builder', 0.18]],
+  };
+  rec.people = MIX[purpose ?? 'none'].map(([nm, f]) => role(nm, f)).filter((p) => p.count > 0 && !((p.role === 'miner' || p.role === 'carter') && qBest < 0));
   const n = (rl: string) => rec.people.find((p) => p.role === rl)?.count ?? 0;
   rec.stores = {
     grain: { stock: people * 4, rate: n('farmer') * 2.2 - people },
-    log: { stock: 20, rate: n('woodcutter') * 1.5 - n('builder') * 0.6 },
+    log: { stock: 20, rate: n('woodcutter') * 1.5 - n('builder') * 0.6 - n('sawyer') * 1 },
     stone: { stock: 10, rate: n('miner') * 1.2 - n('builder') * 0.4 },
     tools: { stock: 4, rate: (civ.profile.knowledge.smithing ?? 'uses') === 'uses' ? 0 : 0.2 },
   };
+  // (round 120) what its purpose makes
+  if (purpose === 'mining') rec.stores.ore = { stock: 20, rate: n('miner') * 0.8 };
+  if (purpose === 'port') (rec.stores.fish = { stock: 10, rate: n('fisher') * 2 }), (rec.stores.goods = { stock: 30, rate: n('docker') * 0.6 });
+  if (purpose === 'lumber') rec.stores.planks = { stock: 15, rate: n('sawyer') * 1.4 };
+  if (purpose === 'farming') rec.stores.flour = { stock: 10, rate: n('miller') * 3 };
+  if (purpose === 'trading') rec.stores.goods = { stock: 40, rate: n('trader') * 0.8 };
+  if (purpose === 'hold') rec.stores.arms = { stock: 12, rate: n('smith') * 0.4 };
+  /** the purpose's own work first among its jobs */
+  const MAIN_JOB: Record<string, string> = { none: 'farm', mining: 'mine', port: 'load', lumber: 'saw', farming: 'farm', trading: 'trade', hold: 'guard' };
   rec.needs = spots.filter((s) => s.kind !== 'home' && s.kind !== 'store' && s.kind !== 'post' && s.kind !== 'camp' && s.kind !== 'pile' && s.kind !== 'site').map((s) => ({
     kind: s.kind as Job['kind'],
     at: [s.at[0] + ox, s.at[1] + oy],
     ref: s.ref,
-    priority: s.kind === 'farm' ? 2 : s.kind === 'repair' ? 1.5 : 1,
+    priority: s.kind === 'farm' || s.kind === MAIN_JOB[purpose ?? 'none'] ? 2 : s.kind === 'repair' ? 1.5 : 1,
   }));
   void homeOf;
   for (const st of sites) rec.needs.push({ kind: 'build', at: [st.door[0] + ox, st.door[1] + oy], ref: st.id, priority: 2 });

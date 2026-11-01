@@ -10,6 +10,8 @@ import { STYLES, STYLE_IDS, VARIANTS } from './styles';
 
 /** vec4s of palette at the head of the data buffer */
 export const SP_PAL = STYLE_IDS.length * PARTS * VARIANTS;
+/** (round 120) pieces kept after the palette for what moves every frame (sailing ships): written in place, never sorted */
+export const MOVING_CAP = 64;
 
 export interface DrawRange {
   module: number;
@@ -26,6 +28,10 @@ export class StructureGpu {
   /** bumped whenever a buffer is made anew (the host makes its bind group again) */
   version = 0;
   ranges: DrawRange[] = [];
+  /** (round 120) the lights' pools: drawn by their host's glow pass (blended), not with the rest */
+  glow: DrawRange[] = [];
+  /** (round 120) the moving pieces' draws (setMoving) */
+  moving: DrawRange[] = [];
   private mods: { first: number; count: number; base: number }[] = [];
   private libSize = 0;
   private dataCap = 0;
@@ -68,7 +74,7 @@ export class StructureGpu {
   }
 
   private ensureData(pieces: number): void {
-    const need = (SP_PAL + pieces * 4) * 16;
+    const need = (SP_PAL + (MOVING_CAP + pieces) * 4) * 16;
     if (need <= this.dataCap) return;
     const cap = Math.max(need, Math.ceil(this.dataCap * 1.5));
     this.data?.destroy();
@@ -105,14 +111,17 @@ export class StructureGpu {
     const order = Array.from({ length: p.count }, (_, i) => i).sort((a, b) => p.module[a] - p.module[b]);
     const buf = new Float32Array(p.count * PIECE_FLOATS);
     this.ranges = [];
+    this.glow = [];
+    const pool = lib.id('pool');
     order.forEach((src, dst) => {
       buf.set(p.data.subarray(src * PIECE_FLOATS, src * PIECE_FLOATS + PIECE_FLOATS), dst * PIECE_FLOATS);
       const m = p.module[src];
-      const last = this.ranges[this.ranges.length - 1];
+      const list = m === pool ? this.glow : this.ranges;
+      const last = list[list.length - 1];
       if (last && last.module === m) last.count++;
-      else this.ranges.push({ module: m, lod: lodOf.get(m)!, first: dst, count: 1 });
+      else list.push({ module: m, lod: lodOf.get(m)!, first: MOVING_CAP + dst, count: 1 });
     });
-    if (buf.byteLength) this.device.queue.writeBuffer(this.data, SP_PAL * 16, buf);
+    if (buf.byteLength) this.device.queue.writeBuffer(this.data, (SP_PAL + MOVING_CAP * 4) * 16, buf);
     let tris = 0;
     let lodTris = 0;
     for (const r of this.ranges) {
@@ -126,6 +135,28 @@ export class StructureGpu {
     this.stats.bytes = this.dataCap + this.verts.size + this.index.size;
   }
 
+  /**
+   * (round 120) What moves every frame (the sailing ships: contracts Structures.shipPieces), at most MOVING_CAP pieces,
+   * written in place after the palette — the static pieces aren't touched, sorted or re-uploaded.
+   */
+  setMoving(p: StructurePieces): void {
+    if (p.count > MOVING_CAP) throw new Error(`structures: ${p.count} moving pieces, at most ${MOVING_CAP}`);
+    const lib = library();
+    for (let i = 0; i < p.count; i++) lib.lodOf(p.module[i]);
+    this.uploadLibrary();
+    const order = Array.from({ length: p.count }, (_, i) => i).sort((a, b) => p.module[a] - p.module[b]);
+    const buf = new Float32Array(Math.max(1, p.count) * PIECE_FLOATS);
+    this.moving = [];
+    order.forEach((src, dst) => {
+      buf.set(p.data.subarray(src * PIECE_FLOATS, src * PIECE_FLOATS + PIECE_FLOATS), dst * PIECE_FLOATS);
+      const m = p.module[src];
+      const last = this.moving[this.moving.length - 1];
+      if (last && last.module === m) last.count++;
+      else this.moving.push({ module: m, lod: lib.lodOf(m), first: dst, count: 1 });
+    });
+    if (p.count) this.device.queue.writeBuffer(this.data, SP_PAL * 16, buf, 0, p.count * PIECE_FLOATS);
+  }
+
   /** the draws (pipeline and bind group set by the host); `lod`: every piece in its far look */
   draw(pass: GPURenderPassEncoder, lod = false): number {
     pass.setVertexBuffer(0, this.verts);
@@ -134,7 +165,23 @@ export class StructureGpu {
       const m = this.mods[lod ? r.lod : r.module];
       pass.drawIndexed(m.count, r.count, m.first, m.base, r.first);
     }
-    return this.ranges.length;
+    for (const r of this.moving) {
+      const m = this.mods[lod ? r.lod : r.module];
+      pass.drawIndexed(m.count, r.count, m.first, m.base, r.first);
+    }
+    return this.ranges.length + this.moving.length;
+  }
+
+  /** (round 120) the lights' pools (the host's glow pipeline set: blended, no depth written) */
+  drawGlow(pass: GPURenderPassEncoder): number {
+    if (!this.glow.length) return 0;
+    pass.setVertexBuffer(0, this.verts);
+    pass.setIndexBuffer(this.index, 'uint32');
+    for (const r of this.glow) {
+      const m = this.mods[r.module];
+      pass.drawIndexed(m.count, r.count, m.first, m.base, r.first);
+    }
+    return this.glow.length;
   }
 
   /** the vertex layout every host's pipeline uses */
