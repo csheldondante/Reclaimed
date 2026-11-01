@@ -58,7 +58,7 @@ let sim: SimReport | null = null;
 let tour: ReturnType<typeof tournament> | null = null;
 let showEv = false;
 let focus: string | null = null;
-const open = new Set<string>(['board', 'holdings', 'log']);
+const open = new Set<string>(['board', 'holdings', 'running']);
 
 const el = (tag: string, props: Record<string, string> = {}, ...kids: (Node | string)[]) => {
   const e = document.createElement(tag);
@@ -82,18 +82,24 @@ const section = (id: string, title: string, body: HTMLElement) => {
   d.append(el('summary', {}, title), body);
   return d;
 };
-const goods = (g: Record<string, number>) => Object.entries(g).filter(([, n]) => n !== 0).map(([k, n]) => `${n} ${k}`).join(', ');
+/** (round 124) the three resources, with their marks */
+const MARK: Record<string, string> = { labor: '⚒', influence: '✶', power: '⚔' };
+const res = (g: Record<string, number>) => Object.entries(g).filter(([, n]) => n !== 0).map(([k, n]) => `${n} ${MARK[k] ?? ''}${k}`).join(', ');
 
 function cardOf(o: Opportunity): HTMLElement {
   const def = run.card(o.template);
   const player = needsPlayer(o);
-  const event = !!def.onExpire || !!def.climax;
-  const c = el('div', { class: `card ${player ? 'player' : 'agents'}${event ? ' event' : ''}${o.affordable ? '' : ' no'}` });
-  c.append(el('div', { class: 't' }, `${def.climax ? '♛ ' : event ? '⚠ ' : ''}${o.title}`));
+  const threat = !!def.threat;
+  const c = el('div', { class: `card ${threat ? 'threat' : 'opp'}${o.affordable ? '' : ' no'}` });
+  c.append(el('div', { class: 'kind' }, def.climax ? '♛ THE CLIMAX' : threat ? '⚠ THREAT' : '◆ OPPORTUNITY'));
+  c.append(el('div', { class: 't' }, o.title));
   const left = o.expires.turn - run.turn;
   c.append(el('div', { class: 'r k' }, `${run.place(def.place).name}${run.place(def.place).settlement ? ` (${run.place(def.place).settlement!.name})` : ''} · ⏱ ${left <= 0 ? 'goes at the end of this turn' : `${left + 1} turns on the board`}`));
-  const needs = o.requires.map((r) => `${r.count} ${r.kind}${r.tags?.length ? ` (${r.tags.join(', ')})` : ''}`).join(', ') || 'no one';
-  c.append(el('div', { class: 'r' }, `Needs: ${needs}${o.tiers > 1 ? ` · tier ${o.tier} of ${o.tiers}` : ''} · Costs: ${goods(o.costs) || 'nothing'}`));
+  // (pawns' tags are hidden: a card says which of your pawns can go, never what kind it needs)
+  const pawns = o.requires.filter((r) => r.kind !== 'player');
+  const fits = run.holdings.agents.filter((a) => a.kind !== 'player' && pawns.some((r) => r.kind === a.kind && (r.tags ?? []).every((t) => a.tags.includes(t))));
+  const who = [o.requires.some((r) => r.kind === 'player') ? 'you' : '', pawns.length ? (fits.length ? `a pawn (${fits.map((a) => `${a.name}${a.committed ? ' — busy' : ''}`).join(', ')})` : 'a pawn you don\'t have yet') : ''].filter(Boolean).join(' + ') || 'no one';
+  c.append(el('div', { class: 'r' }, `Assign: ${who} · Spend: ${res(o.costs) || 'nothing'}`));
   c.append(el('div', { class: 'r' }, `Takes: ${run.turns(def)} turn${run.turns(def) === 1 ? '' : 's'} (${run.travel(def.place)} travel + ${def.work} work${run.turns(def) < run.travel(def.place) + def.work ? ', less what you hold' : ''})`));
   c.append(el('div', { class: 'r ok' }, `Done: ${rewardLine(def, def.reward, o.tier)}`));
   for (const w of def.reward.world ?? []) c.append(el('div', { class: 'r w' }, `🌍 ${worldLine(w, deck)}`));
@@ -114,9 +120,9 @@ function cardOf(o: Opportunity): HTMLElement {
 
 function rewardLine(def: CardDef, o: CardDef['reward'], tier: number): string {
   const parts = [o.text];
-  if (o.goods) parts.push(goods(Object.fromEntries(Object.entries(o.goods).map(([g, n]) => [g, n > 0 ? n * tier : n]))));
-  for (const a of o.agents ?? []) parts.push(`+${a.name} (${a.kind} ${a.count})`);
-  if (o.tags?.length) parts.push(`those who go: ${o.tags.join(', ')}`);
+  if (o.goods) parts.push(res(Object.fromEntries(Object.entries(o.goods).map(([g, n]) => [g, n > 0 ? n * tier : n]))));
+  for (const a of o.agents ?? []) parts.push(`+ a pawn: ${a.name}`);
+  if (o.tags?.length) parts.push('those who go come back stronger');
   if (o.build) parts.push(`builds ${o.build.name}`);
   if (o.unlock?.length) parts.push(`unlocks ${o.unlock.join(', ')}`);
   if (o.doom) parts.push(`doom ${o.doom > 0 ? '+' : ''}${o.doom}`);
@@ -224,10 +230,17 @@ function drawWorld(cv: HTMLCanvasElement): void {
 
 function render(): void {
   app.innerHTML = '';
-  app.append(el('h1', {}, 'Card lab — the opportunity loop as a deck builder (no encounters, no rolls)'));
+  app.append(el('h1', {}, 'Card lab'));
   const T = OPP_TUNING.values.lab;
   const st = run.end ? (run.end === 'won' ? '✔ WON' : '✘ LOST') : `turn ${run.turn}`;
-  app.append(el('div', { class: 'status' }, `${st} · doom ${run.doom} of ${T.climaxAt} (the climax) · you are at ${run.place(run.at).name} · seed ${seed}`));
+  // (round 124: three counters, nothing else to count)
+  const need = run.need().power ?? 0;
+  app.append(el('div', { class: 'counters' },
+    el('div', {}, el('b', {}, `⚒ ${run.holdings.goods.labor ?? 0}`), el('span', {}, 'labor')),
+    el('div', {}, el('b', {}, `✶ ${run.holdings.goods.influence ?? 0}`), el('span', {}, 'influence')),
+    el('div', {}, el('b', {}, `⚔ ${run.holdings.goods.power ?? 0}`), el('span', {}, `power (${need} to meet the Host)`)),
+  ));
+  app.append(el('div', { class: 'status' }, `${st} · the Host in ${Math.max(0, Math.ceil(run.horizon()))} turns · threats dealt with ${run.handled}, let fire ${run.missed} · score ${run.score()} · you are at ${run.place(run.at).name}`));
   const bar = el('div', { class: 'doom' }, el('div', { style: `width:${Math.min(100, (run.doom / T.climaxAt) * 100)}%` }));
   app.append(bar);
   const seedIn = el('input', { type: 'number', value: String(seed), style: 'width:80px' }) as HTMLInputElement;
@@ -264,28 +277,29 @@ function render(): void {
   // holdings
   const hold = el('div', { class: 'list' });
   for (const a of run.holdings.agents) {
-    const d = el('div', {}, `${a.kind === 'player' ? '★' : '•'} ${a.name} (${a.kind}${a.count > 1 ? ` ${a.count}` : ''})${a.committed ? ' — committed' : ''} `);
-    for (const t of a.tags) d.append(el('span', { class: 'pill' }, t));
-    for (const b of run.owned({ agent: a.id })) d.append(el('span', { class: 'pill relic', title: relicLine(b) }, `✦ ${b.why}`));
+    const d = el('div', { class: 'pawn' }, `${a.kind === 'player' ? '★ you' : `♟ ${a.name}`}${a.committed ? ' — busy' : ''} `);
+    for (const b of run.owned({ agent: a.id })) d.append(el('span', { class: 'pill relic', title: relicLine(b) }, '✦'));
     hold.append(d);
   }
-  hold.append(el('div', {}, `Goods: ${goods(run.holdings.goods) || 'none'}`));
   for (const b of run.holdings.buildings) {
     const d = el('div', {}, `▣ ${b.name} at ${run.place(b.place).settlement?.name ?? run.place(b.place).name} `);
     for (const x of run.owned({ building: b.id })) d.append(el('span', { class: 'pill relic', title: relicLine(x) }, `✦ ${x.why}`));
     hold.append(d);
   }
-  app.append(section('holdings', 'Holdings (✦: effects — tap or hover for what they do)', hold));
+  app.append(section('holdings', 'Pawns and what you built (✦: tap or hover for what it does)', hold));
   const runL = el('div', { class: 'list' });
   for (const { c, turnsLeft } of run.running()) runL.append(el('div', {}, `⏳ ${c.opp.title}: ${turnsLeft ? `${turnsLeft} turn${turnsLeft > 1 ? 's' : ''} left` : 'done this turn'} (${c.agents.map((id) => run.holdings.agents.find((a) => a.id === id)?.name ?? id).join(', ') || 'goods'})`));
   if (!run.running().length) runL.append(el('div', { class: 'k' }, 'nothing committed'));
   app.append(section('running', `Committed: ${run.running().length}`, runL));
-  app.append(section('log', 'Log', el('pre', {}, run.log.slice(-40).reverse().map((l) => `${l.turn}: ${l.text}`).join('\n'))));
-  app.append(section('worldlog', `World log: ${run.world.history().length} changes`, el('pre', {}, run.worldLog.slice().reverse().map((l) => `${l.turn}: ${l.text}\n   ${(l.world ?? []).join('\n   ')}`).join('\n'))));
-  app.append(section('why', "The dealer's why (what was dealt and why, what wasn't and why)", el('pre', {}, run.report ? reportLines(run.report).join('\n') : '')));
-  app.append(section('tune', 'Tuning (every weight, limit and number; kept in this browser)', sliders()));
-  app.append(section('deck', 'The card library: the world and its stacks (JSON: edit, Apply; kept in this browser)', editor()));
-  app.append(section('sim', 'The simulator (auto-play N runs)', simulator()));
+  const tools = el('div');
+  app.append(section('tools', 'Lab tools: the log, the world log, the dealer, tuning, the library, the simulator', tools));
+  const add = (x: HTMLElement) => tools.append(x);
+  add(section('log', 'Log', el('pre', {}, run.log.slice(-40).reverse().map((l) => `${l.turn}: ${l.text}`).join('\n'))));
+  add(section('worldlog', `World log: ${run.world.history().length} changes`, el('pre', {}, run.worldLog.slice().reverse().map((l) => `${l.turn}: ${l.text}\n   ${(l.world ?? []).join('\n   ')}`).join('\n'))));
+  add(section('why', "The dealer's why (what was dealt and why, what wasn't and why)", el('pre', {}, run.report ? reportLines(run.report).join('\n') : '')));
+  add(section('tune', 'Tuning (every weight, limit and number; kept in this browser)', sliders()));
+  add(section('deck', 'The card library: the world and its stacks (JSON: edit, Apply; kept in this browser)', editor()));
+  add(section('sim', 'The simulator (auto-play N runs)', simulator()));
 }
 
 function sliders(): HTMLElement {

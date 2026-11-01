@@ -381,6 +381,7 @@ tests work and do quick smoke tests to find failures early." docs/TESTING.md.
 | PL32 | Bike handling v2: turn radius by speed + brake/drift, a speed governor in narrow corridors, a carve control, more turning acceleration; still poor except forest and hills (round 120, the user) | M | next (herolab) |
 | RN3 | Dominion-style kingdoms: the world state generates each run's opportunity stacks (varied within a stack), permuting viable strategies; EV-per-turn card valuation; simulator bots (EV-per-turn, Big-Money-like baseline, engine builder, random); balance = several strategies viable per kingdom | M | done, first pass (`opportunities`: kingdoms, EV, the bots, the tournament; balance: 2 of 6 kingdoms with two strategies viable — tuning ahead, RN3-1) |
 | RN3-1 | Card lab balance: most kingdoms with two or more viable strategies, none dominating (bigmoney wins everywhere today; the ev bot loses kingdom 2) — through the stacks JSON and the value sliders | M | open |
+| RN3-2 | The card lab simplified (the user): three resources (labor, influence, power), pawns whose tags are hidden and only filter assignment, opportunities and threats; the 24 stacks re-cast; score = climax + threats dealt with − let fire; minimal UI | M | done (`opportunities`; balance in RN3-1) |
 | RN4 | Faeria-style positioning: dispatched agents hold positions on the map that matter (locking down enemies, holding a pass) | L | deferred (simpler version first) |
 | FLO21 | Birch cost on the phone: the user's result good — done (flora 18c3bdb, unmerged) | S | done |
 

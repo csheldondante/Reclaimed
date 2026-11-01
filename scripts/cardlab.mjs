@@ -50,9 +50,9 @@ await run({ name: 'cardlab', kind: 'behaviour', size: '412x785' }, async (R) => 
   const tour = await p.evaluate(() => {
     const L = window.cardlab;
     const t = L.tournament(8);
-    for (const d of document.querySelectorAll('details')) if (d.querySelector('summary').textContent.startsWith('The simulator')) d.open = true;
+    for (const d of document.querySelectorAll('details')) if (/^(The simulator|Lab tools)/.test(d.querySelector('summary').textContent)) d.open = true;
     L.render();
-    for (const d of document.querySelectorAll('details')) if (d.querySelector('summary').textContent.startsWith('The simulator')) (d.open = true), d.scrollIntoView();
+    for (const d of document.querySelectorAll('details')) if (/^(The simulator|Lab tools)/.test(d.querySelector('summary').textContent)) (d.open = true), d.scrollIntoView();
     return t.map((r) => `${r.kingdom}: ${r.results.map((x) => `${x.policy} ${Math.round(x.winRate * 100)}%/${x.meanScore}`).join(' ')} -> ${r.viable.join(',')}`);
   });
   for (const l of tour) R.log(`bots: ${l}`);
@@ -61,9 +61,9 @@ await run({ name: 'cardlab', kind: 'behaviour', size: '412x785' }, async (R) => 
   const s = await p.evaluate(() => {
     const L = window.cardlab;
     const r = L.simulate(200, 'random');
-    for (const d of document.querySelectorAll('details')) d.open = d.querySelector('summary').textContent.startsWith('The simulator') || d.open;
+    for (const d of document.querySelectorAll('details')) d.open = /^(The simulator|Lab tools)/.test(d.querySelector('summary').textContent) || d.open;
     L.render();
-    for (const d of document.querySelectorAll('details')) if (d.querySelector('summary').textContent.startsWith('The simulator')) (d.open = true), d.scrollIntoView();
+    for (const d of document.querySelectorAll('details')) if (/^(The simulator|Lab tools)/.test(d.querySelector('summary').textContent)) (d.open = true), d.scrollIntoView();
     return { win: r.winRate, turns: r.meanTurns, choices: r.meanChoices, never: r.never, always: r.always, relics: r.relics, world: r.world, ms: r.ms };
   });
   R.log(`simulator (random, 200): ${JSON.stringify(s)}`);

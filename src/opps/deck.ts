@@ -84,6 +84,8 @@ export interface CardDef {
   onExpire?: CardOutcome;
   forced?: boolean;
   climax?: boolean;
+  /** (round 124) a threat: dealt with by committing pawns and resources, or it fires its expiry and changes the world */
+  threat?: boolean;
   /** dealt from the start (else only once unlocked) */
   start?: boolean;
   /** taken once a run */
@@ -146,6 +148,13 @@ export function checkDeck(d: LabDeck): string[] {
     }
   }
   if (!d.cards.some((c) => c.climax)) p.push('no climax card');
+  // (three resources only: labor, influence, power)
+  const goodsOf = (o: CardOutcome | undefined) => Object.keys(o?.goods ?? {});
+  for (const c of d.cards) {
+    for (const g of [...c.tiers.flatMap((t) => Object.keys(t.costs)), ...goodsOf(c.reward), ...goodsOf(c.onExpire)]) if (!(RESOURCES as readonly string[]).includes(g)) p.push(`card ${c.id}: ${g} isn't a resource (labor, influence, power)`);
+    if (c.threat && !c.onExpire) p.push(`card ${c.id}: a threat has its expiry`);
+  }
+  for (const g of Object.keys(d.start.goods)) if (!(RESOURCES as readonly string[]).includes(g)) p.push(`start.goods: ${g} isn't a resource`);
   return p;
 }
 
@@ -205,6 +214,9 @@ export function relicLine(b: BonusRecord): string {
 
 // ---- the run ----------------------------------------------------------------------------------------------------------
 
+/** (round 124, the user: "Labor, influence, power") the lab's only resources */
+export const RESOURCES = ['labor', 'influence', 'power'] as const;
+
 export interface DeckEvent {
   turn: number;
   text: string;
@@ -253,8 +265,7 @@ export class DeckRun {
       for (const b of r ?? []) this.holdings.bonuses.push({ ...b, holder: id });
     });
     for (const x of deck.start.build ?? []) this.build(x.name, x.place, x.relics);
-    const T = OPP_TUNE.lab;
-    this.holdings.goods = { supplies: T.startSupplies, coin: T.startCoin, ...structuredClone(deck.start.goods) };
+    this.holdings.goods = { labor: 0, influence: 0, power: 0, ...structuredClone(deck.start.goods) };
     for (const c of deck.cards) if (c.start) this.pool.add(c.id);
     this.deal();
   }
@@ -386,6 +397,11 @@ export class DeckRun {
   deal(): DealReport {
     const r = deal(this.proposals(), { holdings: this.holdings, turn: this.turn, at: this.place(this.at).at, dist: (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]), conflictHooks: ['conflict'], recent: this.recent, tune: { ...OPP_TUNE.dealer, reach: 1e9 } });
     this.report = r;
+    // (a card not dealt this turn has left the board: its stay ends, a later deal starts a new one — a stale stay
+    // showed a timer of −2 over City 5)
+    const now = new Set(r.dealt.map((d) => d.opp.template));
+    for (const k of [...this.seen.keys()]) if (!now.has(k)) (this.seen.delete(k), delete this.extended[k]);
+    if (r.dealt.some((d) => !this.seen.has(d.opp.template))) for (const d of r.dealt) if (!this.seen.has(d.opp.template)) d.opp.expires = { turn: this.turn + (this.card(d.opp.template).expires ?? 1) - 1 };
     this.offered = r.dealt.map((d) => d.opp);
     for (const d of r.dealt) {
       const fresh = !this.seen.has(d.opp.template);
@@ -457,6 +473,7 @@ export class DeckRun {
       }
       this.log.push({ turn: this.turn, text: `let go: ${o.title} — ${o.onExpire.text}` });
       const def = this.card(o.template);
+      if (def.threat && !def.climax) this.missed++;
       this.apply(def, def.onExpire!, o.onExpire);
       if (this.end) return;
     }
@@ -489,6 +506,7 @@ export class DeckRun {
     const def = this.card(c.opp.template);
     if (c.agents.includes('player')) this.at = def.place;
     if (def.once) this.done.add(def.id);
+    if (def.threat && !def.climax) this.handled++;
     for (const n of resolution.bonuses) {
       const w = n.split(':')[0];
       this.firedCount[w] = (this.firedCount[w] ?? 0) + 1;
@@ -555,16 +573,18 @@ export class DeckRun {
 
   // ---- expected value (round 124, RN3-2) -------------------------------------------------------------------------
   // The user: "converting your actions into expected point values and trying to maximize the per turn points over
-  // approximately the game time frame". Points are renown (the climax met is +10 of it). Everything else is priced in
+  // approximately the game time frame". Points are the score (10 the climax met, 2 a threat dealt with). Everything is priced in
   // points: goods by what they buy, strength by how far the climax's need is off, a turn of doom by the points a turn
   // is worth, an agent by what it can do over the turns left, an effect by its expected fires over the turns left, an
   // unlock by its stack's cards. A card's value a turn = (its reward's value − its costs − what it loses + the penalty
   // it avoids) ÷ its turns. Heuristic on purpose: the simulator's bots and the dealer's `ev` term read it, and the
   // sliders tune the prices.
 
-  /** the run's score: renown (the simulator halves a lost run's) */
+  /** (round 124) threats dealt with and let fire; the score: 10 for the climax met, 2 a threat dealt with, −1 a threat let fire */
+  handled = 0;
+  missed = 0;
   score(): number {
-    return this.holdings.goods.renown ?? 0;
+    return (this.end === 'won' ? 10 : 0) + 2 * this.handled - this.missed;
   }
 
   /** turns left until the climax at the current doom rate */
@@ -580,14 +600,13 @@ export class DeckRun {
   /** a good's worth in points now; `spent` for a cost (its own worth, not what it could be turned into) */
   price(g: string, spent = false): number {
     const T = OPP_TUNE.lab;
-    if (g === 'renown') return 1;
     const need = this.need()[g];
     // (the climax's good: dearer the further behind the need is for the turns left)
     if (need) {
       const short = need - (this.holdings.goods[g] ?? 0);
       return short > 0 ? (OPP_TUNE.lab.winPoints / need) * Math.max(0.5, Math.min(4, (2 * short) / this.horizon())) : 0.1;
     }
-    const base = g === 'coin' ? T.coinPoints : g === 'supplies' ? T.supplyPoints : 0.2;
+    const base = g === 'labor' ? T.laborPoints : g === 'influence' ? T.influencePoints : 0.2;
     if (spent) return base;
     // (a good is also worth what it buys of the climax's: a card in the deck that turns it into that good)
     let conv = 0;
@@ -613,8 +632,9 @@ export class DeckRun {
     return (base[kind] ?? 1) * Math.min(1, H / 8);
   }
 
-  private relicValue(b: Omit<Bonus, 'holder' | 'building'>): number {
-    const H = this.horizon();
+  private relicValue(b: Omit<Bonus, 'holder' | 'building'>, after = 0): number {
+    // (it fires only once it's had: the turns left after the card that brings it)
+    const H = Math.max(0, this.horizon() - after);
     const T = OPP_TUNE.lab;
     const uses = b.cooldown ? H / b.cooldown : b.on === 'turn' || b.on === 'threat' ? H : H / 4;
     const e = b.effect;
@@ -631,8 +651,8 @@ export class DeckRun {
     return per * uses * (b.charges !== undefined ? Math.min(1, b.charges / Math.max(1, uses)) : 1);
   }
 
-  /** an outcome's value in points: `direct` its goods and renown now; `engine` what it builds (agents, effects, unlocks) */
-  outcomeValue(o: CardOutcome, tier = 1): { direct: number; engine: number } {
+  /** an outcome's value in points: `direct` its resources now; `engine` what it builds (agents, effects, unlocks) */
+  outcomeValue(o: CardOutcome, tier = 1, after = 0): { direct: number; engine: number } {
     const T = OPP_TUNE.lab;
     let direct = 0;
     for (const [g, n] of Object.entries(o.goods ?? {})) direct += (n > 0 ? n * tier : n) * this.price(g);
@@ -640,8 +660,8 @@ export class DeckRun {
     if (o.end === 'won') direct += 30;
     if (o.end === 'lost') direct -= 30;
     let engine = 0;
-    for (const a of o.agents ?? []) engine += this.agentValue(a.kind) + (a.relics ?? []).reduce((s, b) => s + this.relicValue(b), 0);
-    for (const b of [...(o.relics ?? []), ...(o.build?.relics ?? [])]) engine += this.relicValue(b);
+    for (const a of o.agents ?? []) engine += this.agentValue(a.kind) + (a.relics ?? []).reduce((s, b) => s + this.relicValue(b, after), 0);
+    for (const b of [...(o.relics ?? []), ...(o.build?.relics ?? [])]) engine += this.relicValue(b, after);
     if (o.tags?.length) engine += 0.3 * o.tags.length;
     const H = this.horizon();
     for (const u of o.unlock ?? []) {
@@ -653,14 +673,14 @@ export class DeckRun {
 
   /** a card's expected value: its value, its turns, its points a turn; `direct` and `engine` apart for the bots */
   ev(c: CardDef, tier = 1): { value: number; direct: number; engine: number; turns: number; perTurn: number } {
-    const { direct, engine } = this.outcomeValue(c.reward, tier);
+    const { direct, engine } = this.outcomeValue(c.reward, tier, this.turns(c));
     let cost = 0;
     for (const [g, n] of Object.entries(this.costs(c, tier))) cost += n * this.price(g, g !== Object.keys(this.need())[0]);
     const lose = (c.reward.losses ?? 0) * c.tiers[tier - 1].requires.reduce((s, r) => s + (r.kind === 'player' ? 0 : this.agentValue(r.kind) * r.count), 0);
     // (taking it avoids its penalty for letting it go)
     const avoided = c.onExpire ? -this.outcomeValue(c.onExpire).direct + 0.4 * (c.onExpire.world?.length ?? 0) : 0;
     const turns = Math.max(1, this.turns(c));
-    const value = direct + engine - cost - lose + avoided;
+    const value = direct + engine - cost - lose + avoided + (c.threat && !c.climax ? OPP_TUNE.lab.threatPoints : 0);
     return { value, direct: direct - cost, engine, turns, perTurn: value / turns };
   }
 
@@ -678,7 +698,7 @@ export class DeckRun {
 
 /**
  * The bots (round 124, RN3-3): `ev` maximises expected points a turn over the time left; `bigmoney` (Dominion's baseline)
- * takes the most direct reward a turn — goods and renown now, never an engine; `engine` invests in agents, effects and
+ * takes the most direct reward a turn — resources now, never an engine; `engine` invests in agents, effects and
  * unlocks while more than half the time is left, then cashes in as bigmoney; `random`; `greedy` the dealer's own order.
  */
 export type Policy = 'ev' | 'bigmoney' | 'engine' | 'random' | 'greedy';
@@ -754,7 +774,7 @@ export function simulate(deck: LabDeck, o: { runs: number; seed: number; policy:
     while (!run.end && guard++ < 400) autoTurn(run, o.policy, pick);
     const won = run.end === 'won';
     if (won) wins++;
-    score += run.end === 'won' ? run.score() : run.score() / 2;
+    score += run.score();
     turns += run.turn;
     choices += run.choicesPerTurn.reduce((s, v) => s + v, 0);
     choiceTurns += run.choicesPerTurn.length;
@@ -806,12 +826,11 @@ export function tournament(make: (kingdomSeed: number) => LabDeck, o: { kingdoms
       const s = simulate(deck, { runs: p === 'random' ? (o.runs ?? 20) : 1, seed: k, policy: p });
       return { policy: p, winRate: s.winRate, meanScore: s.meanScore };
     });
-    // (a run lost scores half its renown: the town fell. Viable: winning at least half as often as the best, and
-    // scoring within 80 % of the best of those)
+    // (viable: winning at least half as often as the best, and scoring within 80 % of the best of those)
     const bestWin = Math.max(...results.map((r) => r.winRate));
     const winners = results.filter((r) => r.winRate >= bestWin * 0.5);
     const best = Math.max(...winners.map((r) => r.meanScore));
-    const viable = winners.filter((r) => r.meanScore >= best * 0.8).map((r) => r.policy);
+    const viable = winners.filter((r) => r.meanScore >= best - 0.2 * Math.abs(best)).map((r) => r.policy);
     return { kingdom: k, results, viable };
   });
 }

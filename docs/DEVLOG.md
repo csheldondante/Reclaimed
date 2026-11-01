@@ -15934,3 +15934,46 @@ values and trying to maximize the per turn points over approximately the game ti
 - **Readability.** On the world panel each place with something on offer has a timer over it: the shortest stay,
   ×count, ⏳ for what's running there; orange when one happens anyway if let go. Tapping a place shows its cards under
   the world.
+
+**The card lab, simplified** (the user: "Way too many resources. Labor, influence, power then tags that are hidden to
+the user but filter what pawns the player can assign to things. Then everything is about getting new opportunities to
+increase those things and deal with the threat cards").
+- Three resources: labor, influence, power. checkDeck refuses any other in a cost, a reward or the start. Power is
+  what meets the climax (8). Labor and influence buy power and everything else.
+- Pawns are the agents. Their kinds and tags still filter what they can be assigned to, but the page never shows
+  them. A card says "Assign: you + a pawn (Militia of Town 1, Swords of Port 8 — busy)" or "a pawn you don't have
+  yet". Effects still ride on pawns and on what's built (✦, with a tooltip).
+- Cards are opportunities (raise labor, influence or power, or open new cards) or threats (`threat: true`; dealt
+  with by committing pawns and resources, else they fire their expiry and change the world). New threats:
+  - raiders (core: a power or a militia, or the stores burn and the threat comes a turn sooner);
+  - sickness;
+  - the Empire's envoy.
+
+  The old tribute, fields, refugees and the climax are threats too. The 24 stacks are re-cast into the three
+  resources, with their world consequences kept.
+- Score: 10 for meeting the climax, 2 for each threat dealt with, −1 for each threat let fire. EV is priced in the
+  three resources: power from the climax's need, the others from what they buy, plus `threatPoints` (2) for a threat
+  dealt with. An effect's worth counts only the turns after the card that brings it. Before that, a granary five
+  turns away looked better than mustering.
+- The page: three counters, the pawns, the board (threats in red, labelled THREAT; opportunities labelled), the world
+  with a timer over each place. Everything else (log, world log, the dealer, tuning, the library, the simulator) is
+  folded under "Lab tools".
+- Bots × kingdoms 1-6 (each bot's win rate / score):
+
+  | kingdom | ev | bigmoney | engine | greedy | random | viable |
+  |---|---|---|---|---|---|---|
+  | 1 | 0% / 0 | 100% / 1 | 0% / −9 | 100% / 13 | 0% / −3 | greedy |
+  | 2 | 100% / 12 | 100% / 3 | 100% / 3 | 100% / 15 | 80% / 7.6 | ev, greedy |
+  | 3 | 100% / 13 | 100% / 4 | 100% / 4 | 100% / 16 | 0% / −3 | ev, greedy |
+  | 4 | 100% / 17 | 100% / 2 | 0% / −8 | 100% / 20 | 60% / 2.8 | ev, greedy |
+  | 5 | 100% / 11 | 100% / 2 | 0% / −8 | 100% / 14 | 0% / −1.4 | greedy |
+  | 6 | 100% / 20 | 100% / 2 | 100% / 2 | 100% / 20 | 0% / −0.8 | ev, greedy |
+
+  4 of 6 kingdoms have two viable. But the two (ev, and greedy, the dealer's order, which weighs ev) are close
+  cousins: the real finding is that dealing with threats pays (score 11-20) while bigmoney wins with scores of 1-4 by
+  ignoring them. Engine builds too long and loses. RN3-1 stays open: give the engine a payoff, and make letting
+  threats fire cost the climax (not only the score).
+- In the page (kingdoms 1-8): 6 of 8 have two viable, ev and greedy. Bigmoney wins all 8 with scores of 0-4.
+  Fixed: a card that left the board and came back kept its old stay, so its timer read −2 (City 5's raid); a stay
+  now ends when a card isn't dealt. Shots: C:/Projects/shots88/opportunities/cardlab/ (1-turn6, 2b-place-tapped-ev,
+  4-bots-x-kingdoms).

@@ -36,19 +36,19 @@ describe('kingdoms (kingdom.ts)', () => {
     const raid = LIB.stacks.find((s) => s.id === 'raid')!;
     expect(placesFor(raid, LIB).map((p) => p.id).sort()).toEqual(['P4', 'P5']);
     const cards = stackCards(raid, LIB);
-    expect(cards.map((c) => c.title)).toEqual(expect.arrayContaining(['Raid Fort 4 (+coin +strength by its size)', 'Raid City 5 (+coin +strength by its size)']));
+    expect(cards.map((c) => c.title)).toEqual(expect.arrayContaining(['Raid Fort 4 (+influence +power by its size)', 'Raid City 5 (+influence +power by its size)']));
     // (not uniform: the city's stores are bigger than the fort's)
     const city = cards.find((c) => c.place === 'P5')!;
     const fort = cards.find((c) => c.place === 'P4')!;
-    expect(city.reward.goods!.coin).toBeGreaterThan(fort.reward.goods!.coin);
+    expect(city.reward.goods!.influence).toBeGreaterThan(fort.reward.goods!.influence);
     expect(city.reward.world!.find((w) => w.kind === 'condition')).toMatchObject({ settlement: 'P5' });
   });
   it('a kingdom: the core stacks and ten more, from the seed; another seed, another kingdom; it checks out', () => {
     const a = generateKingdom(LIB, 1).kingdom.stacks.map((s) => s.id);
     const b = generateKingdom(LIB, 2).kingdom.stacks.map((s) => s.id);
     expect(a).toEqual(generateKingdom(LIB, 1).kingdom.stacks.map((s) => s.id));
-    expect(a).toEqual(expect.arrayContaining(['forage', 'climax', 'arm', 'muster']));
-    expect(a.length).toBe(4 + 10);
+    expect(a).toEqual(expect.arrayContaining(['forage', 'climax', 'arm', 'muster', 'raiders']));
+    expect(a.length).toBe(5 + 10);
     expect(a).not.toEqual(b);
     for (const k of [1, 2, 3, 4, 5]) expect(checkDeck(generateKingdom(LIB, k).deck), `kingdom ${k}`).toEqual([]);
   });
@@ -62,9 +62,9 @@ describe('the card lab (deck.ts)', () => {
     const def = r.card(o.template);
     const c = r.commit(o.id);
     expect(c.resolvesTurn).toBe(r.travel(def.place) + def.work);
-    const s = r.holdings.goods.supplies;
+    const s = r.holdings.goods.labor;
     until(r, () => r.resolutions.length > 0);
-    expect(r.holdings.goods.supplies).toBeGreaterThan(s);
+    expect(r.holdings.goods.labor).toBeGreaterThan(s);
     expect(r.at).toBe(def.place);
   });
   it('the deck grows: muster unlocks drill (by stack); drill gives its army a tag and an effect it carries', () => {
@@ -87,7 +87,7 @@ describe('the card lab (deck.ts)', () => {
       until(r, () => r.holdings.buildings.length === 1);
       r.nextTurn();
       expect(r.firedCount['Granary']).toBeGreaterThan(0);
-      expect(r.log.some((l) => /✦ Granary: \+1 supplies/.test(l.text))).toBe(true);
+      expect(r.log.some((l) => /✦ Granary: \+1 labor/.test(l.text))).toBe(true);
       until(r, () => r.world.settlements.find((s) => s.id === 'P2')!.condition === 'ruined', 20);
       expect(r.world.settlements.find((s) => s.id === 'P2')).toMatchObject({ condition: 'ruined' });
       expect(r.holdings.buildings.some((b) => b.place === 'P2')).toBe(false);
@@ -100,15 +100,15 @@ describe('the card lab (deck.ts)', () => {
     const r = new DeckRun(all());
     r.holdings.agents.push({ id: 'army9', kind: 'army', name: 'Militia', count: 6, tags: [], statuses: [], at: { with: 'player' } });
     r.holdings.agents.push({ id: 'k9', kind: 'knight', name: 'Knight', count: 1, tags: ['named'], statuses: [], at: { with: 'player' } });
-    r.holdings.bonuses.push({ why: "Champion's vow", on: 'agent-lost', effect: { kind: 'gain', goods: { strength: 2 } }, holder: 'k9' });
+    r.holdings.bonuses.push({ why: "Champion's vow", on: 'agent-lost', effect: { kind: 'gain', goods: { power: 2 } }, holder: 'k9' });
     r.pool.add('sacrifice');
     r.doom = 5;
     wide(() => r.deal());
-    const str = r.holdings.goods.strength ?? 0;
+    const str = r.holdings.goods.power ?? 0;
     take(r, 'sacrifice');
     until(r, () => r.resolutions.length > 0);
     expect(r.holdings.agents.some((a) => a.id === 'army9')).toBe(false);
-    expect(r.holdings.goods.strength).toBe(str + 2);
+    expect(r.holdings.goods.power).toBe(str + 2);
     expect(r.resolutions[0].out).toContainEqual({ kind: 'conflict', op: 'doom', amount: -3 });
   });
   it('the climax: forced when doom reaches it, always on the board; unmet, the run is lost and Town 1 falls', () => {
@@ -117,7 +117,7 @@ describe('the card lab (deck.ts)', () => {
     expect(r.end).toBe('lost');
     expect(r.world.settlements.find((s) => s.id === 'P1')).toMatchObject({ condition: 'ruined', faction: 'f-host' });
   });
-  it('expected value a turn: the need for strength makes arming worth more as the climax nears; unlocks are engine value', () => {
+  it('expected value a turn: the need for power makes arming worth more as the climax nears; unlocks are engine value; a threat is worth dealing with', () => {
     const r = new DeckRun(all());
     const arm = r.deck.cards.find((c) => c.stack === 'arm')!;
     const early = r.ev(arm).perTurn;
@@ -142,5 +142,33 @@ describe('the bots and the tournament', () => {
     const t = tournament((k) => generateKingdom(LIB, k).deck, { kingdoms: [1, 2, 3, 4, 5, 6], runs: 5 });
     for (const p of ['ev', 'bigmoney', 'engine', 'greedy']) expect(t.every((r) => r.viable.length === 1 && r.viable[0] === p), p).toBe(false);
     console.log(t.map((r) => `${r.kingdom}: ${r.results.map((x) => `${x.policy} ${Math.round(x.winRate * 100)}%/${x.meanScore}`).join(' ')} → ${r.viable.join(',')}`).join('\n'));
+  });
+});
+
+describe('three resources and threats (round 124: "Labor, influence, power")', () => {
+  it('every card costs and gives only labor, influence and power; a deck with another resource is refused', () => {
+    const d = all();
+    expect(checkDeck(d)).toEqual([]);
+    d.cards[0].reward.goods = { coin: 2 };
+    expect(checkDeck(d).some((x) => /coin isn't a resource/.test(x))).toBe(true);
+  });
+  it('a threat dealt with scores, one let fire costs and changes the world', () => {
+    OPP_TUNING.set('dealer.playerMax', 6);
+    try {
+      const r = new DeckRun(all());
+      r.doom = 2;
+      r.holdings.goods.power = 3;
+      r.deal();
+      const t = r.offered.find((o) => o.template.startsWith('raiders@'))!;
+      r.commit(t.id);
+      until(r, () => r.handled > 0);
+      expect(r.handled).toBe(1);
+      expect(r.score()).toBeGreaterThanOrEqual(2);
+      until(r, () => r.missed > 0);
+      expect(r.missed).toBeGreaterThan(0);
+      expect(r.worldLog.length).toBeGreaterThan(0);
+    } finally {
+      OPP_TUNING.reset();
+    }
   });
 });
