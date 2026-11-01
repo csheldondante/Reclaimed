@@ -330,6 +330,19 @@ each was implemented.
 
 - The user, verbatim: "The relics here are unit abilities and tags and things you have built to be clear but yeah they work like relics" → relic effects are owned by their source: an agent's abilities and tags (lost with the agent) or things built (walls, watchtower, granary, road; held by the settlement or region, lost if it burns or is taken). No free-floating relic inventory; rewards grant agents, tags/abilities on agents, or buildings.
 
+- The user, verbatim:
+
+> How are you at boardgames? Do you know the basic trick of converting your actions into  expected point values and trying to maximize the per turn points over approximately the game time frame?
+> I wonder if we can borrow ideas from two of my favorite games Dominion and Faeria. Dominion each round has decks that you can purchase and permuting them changes what strategy is viable each time you play. Here the opportunities are like the cards you can purchase in Dominion but they are not all uniform within a stack and the world state is what generates them and permutes what is available for each run. For readability I would make a timer over each location oportunite and clicking it would show the card for you to read.
+>
+> Faeria also adds positioning to the game and spreading your lands. I think we should ignore that for now but a potentially interesting thing is having the resources you dispatch have board position that impacts things (locking down enemies etc) let's do the simpler version first.
+
+- → Dominion's kingdom: the world state generates each run's set of opportunity stacks (not uniform within a stack),
+  permuting which strategies are viable run to run. Card values in expected points per turn over the remaining horizon;
+  the simulator's bots include an EV-per-turn player and a simple baseline (Dominion's Big Money) so balance means more
+  than one strategy viable per kingdom. A timer over each location; tapping shows the card. Faeria-style positioning of
+  dispatched agents (locking down enemies) deferred: the simpler version first.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
