@@ -28,6 +28,7 @@ iterate on this" (the gaps: STR50-52). `cities` (a659a7c) and `traits` (85e935d)
 | M123-6 | Play's lich predicts throws with UNIT_GRAVITY = 20 ("agents.ts AGENT_GRAVITY"), but the units now fall by unitsG() = world gravity × TUNE.units.gravity (merge121): the comment names a constant that's gone; the prediction drifts if the tuning moves | S | open |
 | M123-7 | The lich's own blows (slam, push, storm) strike its raised followers too: a hit doesn't know sides | S | open |
 | M123-8 | The GM fixtures are stale against the re-pulled seed-1 wiki (pre-existing on places): scripts/gmtest.mjs stops on "f-kuharm isn't in the snapshot"; the Bell Under Kaudru story has 11 problems in storycheck. The wiki was rebuilt here from the cache with cities' purposes and stories (data/wiki/seed1.*) | S | open |
+| M123-9 | After the lich's slam the lich, and units standing in the crater, are not drawn (they're there: positions, follow jobs); on places' own build too (scripts/lichraise.mjs --kill slam) — the crater's land and the voxel draws | S | open |
 
 ## Round 122 (2026-10-31, session 5, `merge122`) — runsit merged into places: the base for the opportunity loop (DECISIONS round 120)
 

@@ -15690,3 +15690,37 @@ merge121, and runsit/play, merge122 — neither branch had seen them). BACKLOG r
 - *The cities stand-in:* dockers share the farmers' fields (STR38) — noted (M123-5), not fixed.
 
 Typecheck clean; unit tests 441 passed (2 expected fail).
+
+**Found by the gate and fixed.** The Traits Lab opened without its stations bar: the bar (and the tuning panel) mount
+only on a level with `lab` (mountLab), which the playground had and the new level didn't — traitshot failed on
+`stationsBar.pick`. The level now has `lab: { open: [] }`.
+
+**scripts/lichraise.mjs** (new): the atlas with `?play=lich`, ten raiders round the lich struck down, then the raise
+button; checks bodies lie and the raised follow. `--kill slam` uses the lich's slam instead — after a slam the lich
+(and what stands in the crater) is not drawn, on places' own build too (pre-existing, M123-9), so the default is a
+plain blow.
+
+**Gate** (desktop iGPU intel-xe-lpg, every system on, 1x, q=low 412x915 for the run scripts):
+- typecheck; `npm test`: 67 files, 544 passed (2 expected fail, 5 skipped), unit and GPU on Dawn.
+- `npm run smoke --levels atlas,playground,rocklab,traitlab`: all four load, no fatal, sims ticking (atlas ready 39.6 s).
+- traitshot.mjs on the Traits Lab: crowd 180 living + 91 undead; smite 105 bodies; raise 105 raised; sanctuary 70
+  healing, 9 harmed; petrify 24 — all checks pass. perf/traits.mjs (the toggle, 1000 agents on the atlas): the agents'
+  pass 0.558 ms on vs 0.454 off (+0.104; the traits branch measured +0.085), the frame's GPU 11.94 vs 11.68 (+0.27,
+  inside the iGPU's noise), CPU 0.0125 ms a tick.
+- lichraise.mjs: 10 raiders struck down, 10 bodies; after the raise 10 alive, 10 following the hero, 0 hostile.
+- citiesshot.mjs (port s84, mining s96, hold s124): each planned for its purpose and drawn, lights 22 / 7 / 18, the
+  port's 3 piers and 2 berths.
+- runsit.mjs `--want saved`: GM situation grey-muster-bumku, the town held till the dead broke off at t 360, ended saved
+  with its end card; finale frames p50 9.9 / p95 15.7 ms, GPU 14.2 ms; the hero's main-thread cost 0.101 ms mean.
+- tilegate (merged and places' own build, the same baselines): every parked view 0 out of detail, 0 background. Goldens
+  over 1 %: merged desktop-z1.3 32.7 % (places 21.3 %), phone-z2.2 21.6 % (places 0.6 %), phone-z1.3 21.5 % (places
+  0.5 %). Looked at: the phone views are the same scene a few pixels over (the spires and the road shifted alike — the
+  view's framing, no void, no flat fill, no band); desktop-z1.3 the far foliage as on places. Fast pans at 160 c/s fail
+  on both (merged desktop z14/z8/z5 3.1/18.3/7.7 %, phone z8 39.5 % in 20 of 151 frames; places 0.5/34.6/12.3 %, phone
+  z8 0.2 %) — the fast pan's known misses, varying run to run. Baselines not rewritten.
+- driveprofile (q=low 412x915 dpr 2.6, served builds, alternated): day places p50 9.9 / p95 12.1 / p99 30.3, GPU 13.35;
+  merged 9.9 / 12.3 / 27.0, GPU 12.37. Night (`tod=0.9`): places 9.9 / 12.2 / 25.2, GPU 12.5; merged 9.9 / 12.4 / 27.6,
+  GPU 12.6. Within the runs' spread.
+- Shots: C:/Projects/shots88/merge123/ — towns/ (m123-port, -mining, -hold: day, night, near), traits/ (the station:
+  crowd, smite, raise.gif, sanctuary, petrify), lich/ (01-raiders, 02-fallen, 03-raise.gif, 03-raised: the raised in
+  green and bone round the lich), runsit-saved/, tilegate/, tilegate-places/, drive-*.log; STRUCTURE.md.

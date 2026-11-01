@@ -1,5 +1,5 @@
 {
-  "when": "2026-10-31T19:38:52.280Z",
+  "when": "2026-11-01T01:45:00.033Z",
   "size": "412x915",
   "dpr": 2.6,
   "agents": 1000,
@@ -18,72 +18,72 @@
   "rows": [
     {
       "on": true,
-      "frames": 209,
-      "gpuFrameMs": 12.054727803827747,
-      "agentsMs": 0.5897184449760767,
-      "traitsCpuMsPerTick": 0.01552605314033728
+      "frames": 235,
+      "gpuFrameMs": 10.677776795744691,
+      "agentsMs": 0.48485577872340435,
+      "traitsCpuMsPerTick": 0.015551405600304468
     },
     {
       "on": false,
-      "frames": 232,
-      "gpuFrameMs": 11.059406241379309,
-      "agentsMs": 0.420425271551724,
-      "traitsCpuMsPerTick": 0.0005554082413844715
-    },
-    {
-      "on": true,
-      "frames": 243,
-      "gpuFrameMs": 10.411893465020574,
-      "agentsMs": 0.4727968888888887,
-      "traitsCpuMsPerTick": 0.010554151513932578
-    },
-    {
-      "on": false,
-      "frames": 222,
-      "gpuFrameMs": 11.546277774774781,
-      "agentsMs": 0.45736856756756733,
-      "traitsCpuMsPerTick": 0.0005552232163631598
-    },
-    {
-      "on": true,
-      "frames": 231,
-      "gpuFrameMs": 11.026785116883115,
-      "agentsMs": 0.5250478658008656,
-      "traitsCpuMsPerTick": 0.006108665790331158
-    },
-    {
-      "on": false,
-      "frames": 224,
-      "gpuFrameMs": 11.427243093750008,
-      "agentsMs": 0.44205199107142895,
+      "frames": 215,
+      "gpuFrameMs": 11.929215860465112,
+      "agentsMs": 0.4682778186046514,
       "traitsCpuMsPerTick": 0
     },
     {
       "on": true,
-      "frames": 225,
-      "gpuFrameMs": 11.301289115555564,
-      "agentsMs": 0.5341882933333335,
-      "traitsCpuMsPerTick": 0.00722029654501545
+      "frames": 211,
+      "gpuFrameMs": 12.16902079620853,
+      "agentsMs": 0.5662692037914692,
+      "traitsCpuMsPerTick": 0.015547786695488924
     },
     {
       "on": false,
-      "frames": 221,
-      "gpuFrameMs": 11.587366533936656,
-      "agentsMs": 0.45956962443438937,
+      "frames": 210,
+      "gpuFrameMs": 12.197243923809518,
+      "agentsMs": 0.48631739047619066,
+      "traitsCpuMsPerTick": 0.0005555378323299181
+    },
+    {
+      "on": true,
+      "frames": 230,
+      "gpuFrameMs": 11.050714904347826,
+      "agentsMs": 0.5062780739130432,
+      "traitsCpuMsPerTick": 0.008881784255930397
+    },
+    {
+      "on": false,
+      "frames": 225,
+      "gpuFrameMs": 11.35585499555556,
+      "agentsMs": 0.4361856755555556,
+      "traitsCpuMsPerTick": 0.0005549089565015674
+    },
+    {
+      "on": true,
+      "frames": 189,
+      "gpuFrameMs": 13.870595608465608,
+      "agentsMs": 0.6751288306878304,
+      "traitsCpuMsPerTick": 0.009997997486815608
+    },
+    {
+      "on": false,
+      "frames": 225,
+      "gpuFrameMs": 11.224643484444446,
+      "agentsMs": 0.4256746399999998,
       "traitsCpuMsPerTick": 0
     }
   ],
   "result": {
     "gpuFrameMs": {
-      "on": 11.199,
-      "off": 11.405,
-      "diff": -0.206
+      "on": 11.942,
+      "off": 11.677,
+      "diff": 0.265
     },
     "agentsPassMs": {
-      "on": 0.53,
-      "off": 0.445,
-      "diff": 0.085
+      "on": 0.558,
+      "off": 0.454,
+      "diff": 0.104
     },
-    "traitsCpuMsPerTick": 0.0099
+    "traitsCpuMsPerTick": 0.0125
   }
 }

@@ -173,6 +173,8 @@ export const LEVELS: LevelDef[] = [
     sandbox: true,
     // (on the title screen, beside the playground: main's word, merge123 — not hidden from the user)
     zMax: 64,
+    // (the test bed's tuning panel and its stations bar: mountLab)
+    lab: { open: [] },
     stations: TRAITLAB_STATIONS,
   },
   {
