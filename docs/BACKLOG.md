@@ -355,6 +355,8 @@ tests work and do quick smoke tests to find failures early." docs/TESTING.md.
 | STR50 | Townscaper verticality: build up as well as out (stacked tiles, storeys over streets, bridges between towers, terraces); not evident in today's towns (round 120) | L | todo (iterate) |
 | STR51 | Towns on varied terrain: showcase hills, cliffs, terraces, rivers and coves in the viewer and the atlas (today the viewer is mostly flat ground) | M | todo (iterate) |
 | STR52 | Purpose that reads at a glance: a mining town, a port and a lumber camp should look clearly different (silhouette, layout, materials, works dominating), not the same town with extras | M | todo (iterate) |
+| CAM9 | cut + tilt the default camera (the user: cut easiest to use, tilt best looking, cut + tilt best for readability); a cut + dither variant | S | next (herolab) |
+| PL30 | Bike handling where precision matters (canyon, city): turn acceleration and rate, steering assist from a corridor flow field, small-obstacle avoidance, target magnetism toward enemies (reusing play's aim assist); player intent always wins | M | next (herolab) |
 | FLO21 | Birch cost on the phone: the user's result good — done (flora 18c3bdb, unmerged) | S | done |
 
 ## Round 118 (2026-10-30, session 5, `places`) — found while reviewing the tracks
