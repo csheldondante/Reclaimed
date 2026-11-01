@@ -15740,3 +15740,18 @@ storycheck and situationcheck. 23 worked templates cover every base scale and al
 should be proved on it before anything moves. Flagged conflations: a settlement's condition written outside
 WorldState.apply; Situation's four concerns; two clocks; two encounter vocabularies; three item representations;
 Faction.attitude beside diplomacy's opinion; HERO_NAMES in consequences.ts; empty Settlement.stores with no owner.
+
+## 2026-11-01 — round 122 (`runloop`): the run loop's design, revision 2 (the user's Strategic Map)
+
+Docs only. The user corrected revision 1 with docs/design/STRATEGIC_MAP.md (verbatim, authoritative). RUN_LOOP.md now
+follows it. There is one kind of opportunity (requirements, costs, duration, outcomes, a location). The player is a
+resource: committing it makes the round's playable challenge, through character control or building. Every other
+resource resolves autonomously and stays locked until resolution. Survivors return with rewards and new opportunities,
+and many commitments run at once. Commits are made only from the player's strategic location, under the GM's travel
+rule (fixed, choice, region, open). Discovery (exploration, scouting, rumours, diplomacy) moves opportunities from
+hidden to rumour to known. New agent kinds unlock new templates. Scale is derived from the holdings. Removed from
+revision 1: the four encounter modes, dispatch as a category, the fixed board of picks, and the Base scale enum.
+Alternatives ("the player or a knight") became sibling opportunities that exclude each other, so each keeps one
+requirement set. The 23 templates are re-cast as about 50 offers with their requirements. The slice shows the scaling
+inside runsit's horde run: the hold's levy becomes an army resource (today it is a special case in finaleSetup) and
+opens autonomous offers while the hero rides on. The conflations list is kept.

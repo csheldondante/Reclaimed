@@ -1,905 +1,779 @@
-# The run loop: opportunities, encounters, the base and the conflict (design draft)
+# The run loop: one kind of opportunity on the strategic map (design draft, revision 2)
 
-Draft for a design session with the user (BACKLOG RN2, with RN1, LW3, LW4, LW5). Nothing here is built. Branch
-`runloop`, from `places` b596b40 (runsit merged, round 122). It is grounded in the code on places and on `cities` and
-`traits`, and lists what is missing.
+A draft for a design session with the user (BACKLOG RN2, with RN1, LW3, LW4, LW5). Nothing here is built. It is on
+branch `runloop`, merged with `places` e9414fc.
+
+**Authority.** The user's correction, docs/design/STRATEGIC_MAP.md (verbatim, round 120, 2026-11-01), overrides this
+document wherever they differ. This revision follows it:
+
+- **one kind of opportunity**: resource requirements, costs, duration, possible outcomes and a location;
+- **the player is a resource**: committing it makes the opportunity the round's playable challenge (character control
+  or building); any other resource resolves it autonomously over time;
+- **no manual allocation and no separate dispatch**: committed resources are locked until the opportunity resolves,
+  then the survivors return with rewards, consequences and new opportunities; opportunities run concurrently while
+  requirements are met;
+- **commits only from the player's current strategic location**, and the GM sets how free travel is;
+- **discovery** reveals opportunities, **new resources unlock new kinds**, and known but unaffordable ones stay visible;
+- **scaling by resources**: a lone hero, a travelling party, a ruler, an empire;
+- **three priority systems**: the atlas / opportunity map, character control, building.
+
+What revision 1 had that is gone: four encounter modes, dispatch as its own category, a fixed board of 3-5 picks per
+turn, and a `Base` with a scale enum.
 
 ## In ten lines
 
-1. A run is one loop: the **conflict** (the GM's arc, written before the run) moves on a **clock**. Each **turn** the
-   **base** (a lone hero, a party, refugees, a stronghold, an army) is offered a board of **opportunities** at real
-   places.
-2. The player takes one or more of them: plays it live (a game of skill), spends on it (a resource choice), **dispatches**
-   members to it (odds, a report) or **builds** for it (the building view). Each is an **encounter**.
-3. Every encounter ends in an **outcome**: world-state changes (AtlasEvents, diplomacy, things), base changes, new
-   opportunities, and conflict progress (helping or hindering). Every path leads to a **climax**.
-4. Opportunities are **spawned by locations**: a template library matched against what is at the place (purpose,
-   story, terrain, region state, factions), the hero (profile, traits, record, gear) and the run (the conflict's phase,
-   the clock, past choices).
-5. Candidates are **scored** on thematic fit, foreshadowing, variety, difficulty for the base's scale, and the hero's
-   likes. A board of 3-5 is picked so it covers more than one kind of play.
-6. The **GM** writes the conflict, picks from and flavours the candidates, and may write new opportunities in the
-   templates' grammar. Everything is checked by **`oppcheck`**, the third validator after storycheck and situationcheck.
-7. runsit's `Situation` is the first instance of the loop: a moving base, a horde conflict, and opportunities at each
-   area's edge. An adapter shows the new contract covers it before anything changes.
-8. There are 23 worked templates across every base scale and all six settlement purposes. Each has a world consequence
-   and a gameplay bonus (§5.4).
-9. The vertical slice: (A) runsit's horde run re-expressed and given generated opportunities, then (B) the same
-   conflict played from a fixed stronghold with days, a building turn and nightly waves.
-10. Eight conflations in today's code are flagged (§8), and there are 12 open questions for the user (§10).
+1. The only unit is the **Opportunity**: where, what it needs locked (`requires`), what it consumes (`costs`), how long
+   it takes (`duration`), and its outcome table (`outcomes`).
+2. **Resources** are of one shape. Agents (the player, companions, knights, diplomats, scouts, prospectors, workers,
+   armies, ships) are locked while committed and may not come back. Goods (coin, supplies, materials, ore …) are spent.
+3. A **Commitment** is made at the player's strategic location. If it includes the player, the opportunity's
+   `challenge` is played now, with character control or the building view. Otherwise it **resolves** autonomously at
+   `start + duration`, with odds from the resources committed.
+4. A **Resolution** returns the survivors, applies the outcome to the world state, gives rewards (new resources too),
+   and spawns or reveals new opportunities. Many commitments run at once.
+5. The **Strategic map** shows the known opportunities. The GM's **TravelRule** (fixed, choice, region, open) says where
+   the player may go. Exploration, scouting, rumours and diplomacy move opportunities from hidden to rumoured to known.
+6. **Scale emerges from holdings**. A lone hero has only the player, so every opportunity it can take is a playable
+   one. A ruler's knights and armies make many run at once. Holding a knight makes the knight templates spawn.
+7. **Generation**: templates state requirements, costs, duration, outcomes and a challenge (if they need the player).
+   They are matched against location, holdings and run facts, then scored and spawned at places. Siblings at one place
+   (delve it yourself, or send workers to pump it) are separate opportunities that exclude each other.
+8. There are 23 worked templates, re-cast as about 50 sibling opportunities with their requirements (§5.4). The GM
+   writes the conflict and flavours or extends the templates; `oppcheck` validates.
+9. Vertical slice: (A) runsit's horde run as a lone hero on a "choice of destinations" map, where the hold's levy
+   becomes an **army resource** and opens autonomous opportunities, the scaling shown in one run; (B) the same
+   conflict as a ruler at a fixed location, with knights, workers and nightly imposed defences.
+10. The eight conflations stand (§8). There are 10 open questions (§10), mostly about how to read the correction.
 
 ---
 
-## 1. What the user asked for (verbatim)
+## 1. What the user asked for
 
-- Round 120: "It's essentially a set of opportunities the player is presented with that resolve via encounters that
-  can help or hinder you and that always progress you towards some climactic ending. Notice it doesn't really matter
-  if your at a fixed stronghold or leading a party of refugees to find a new home. They interface can be similar. The
-  encounters are the games of skill to determine outcomes or just choices of resource allocation to gain benefits or
-  hinderances."
-- "Note this also works for adventuring parties since we can scale the opportunities and encounters to your resources."
+The correction is in docs/design/STRATEGIC_MAP.md. Read it first: its "Core Mechanic" and "Guiding Principle"
+("Opportunities are uniform. Their resource requirements determine who undertakes them; committing the player resource
+makes an opportunity interactive. All opportunities resolve into consequences for the same persistent world.") are the
+rules this document implements.
+
+Earlier, still in force (DECISIONS round 120, verbatim):
+
 - "the story of the big conflict which we need to know going into the run so we can foreshadow or establish
-  motivations."
+  motivations";
 - "The character and run objective should inform what the GM sets up for that run but the GM can theoretically update
-  the interactions mid run based on player choices. If a character excepts the mantle of leadership as a reward for
-  great service then the next run may well be city management for that leader."
-- On building: "a new view that essentially lets you paint into the building grid … housing, agriculture, ports, civic
-  … instead of building a bunch of new baracks you can expand your training camp or hospital or housing … only some
-  heroes will get this mode."
-- On the stronghold: "switch between building, fending off threats, dispatching workers and armies you build on the
-  atlas map and answering petitions … vassalizing other settlements, sending limited troops or spies on missions with
-  different rewards".
-- This round: "I love the idea of thinking of locations as spawning opportunities based on what is at the location and
-  the current hero and run. I would like a process for generating these. We want them thematic and genuinely
-  interesting in terms of world consequences and gameplay bonuses."
-- Standing rule (round 120): "when possible make the gameplay actually modify the map during the session not with text
-  between sessions. Like actually break a dam and flood a valley don't just say it happened."
+  the interactions mid run based on player choices";
+- building as "a new view that essentially lets you paint into the building grid … housing, agriculture, ports, civic
+  … only some heroes will get this mode";
+- the ask behind this document: "I love the idea of thinking of locations as spawning opportunities based on what is at
+  the location and the current hero and run. I would like a process for generating these. We want them thematic and
+  genuinely interesting in terms of world consequences and gameplay bonuses";
+- "when possible make the gameplay actually modify the map during the session not with text between sessions".
 
-## 2. What exists, and what each gives the loop
+## 2. What exists, and what each gives
 
-| piece | where | gives the loop | gap |
+(These are on `places` now. Since revision 1, `cities`' purposes and stories and `traits` have merged.)
+
+| piece | where | gives | gap for this design |
 |---|---|---|---|
-| `Situation` | contracts/situation.ts, runsit/ | a threat with a route and a clock; areas played live (flee, ambush, deliver, trader, town); choices at an area's edge with effects (warn, evacuate, delay); items; four endings as `Outcome` | the threat, the map of areas, the encounter's play and the endings are one structure; only one kind of conflict (horde); choices are fixed when the situation is written; no base beyond the hero and followers |
-| `SituationRun` | runsit/state.ts | the turn machine (area → edge → travel → area), the clock (`areaMinutes`, `TRAVEL_PACE`), pursuers, reinforcements, offers, loadout | the turn is "an area" only; no resources; no dispatch |
-| `fillSituation` | runsit/fill.ts | the first template: reads standing towns, hostile presence, the region graph, a hold, the hills; sets the clock so the fork is real | one template, hard-wired; no scoring; no reading of purpose or story |
-| `situationFor` | runsit/gm.ts | the pattern: a GM file for this world (checked), otherwise the template, and the card says which | carried over as is |
-| `checkSituation` | gm/situationcheck.ts | shape, references, reachability, a fork, the clock (some path in time), endings that change the world | `oppcheck` extends it |
-| `SessionStory` | contracts/story.ts | `Outcome` (atlas, attitude, flags, give, spawn, say, talk, endRun), `Condition`, `happenings` (world effects on a trigger) | the escalation steps of a conflict are happenings in all but name |
-| `RunPlan` | contracts/run.ts, runplan/ | `EncounterKind`, `HeroCapabilities.likes`, `affordances` (what a region affords from its kind and state), `StageOutcome` with `CharacterChange`, `FailureRule`, `RunClock`, `TravelLeg` with `EnRouteEvent`s, `RunTerrainAsk` | a second encounter vocabulary and a second clock (§8) |
-| `applyEffects`, `finishSituation` | runplan/consequences.ts, runsit/finish.ts | outcomes applied one way through `WorldState`; `CharacterRecord` history, statuses and gear | a settlement's condition is set outside `WorldState.apply` (§8) |
-| `WorldState`, `RegionState` | contracts/world.ts, world-state.ts | sunk, buried, overgrowth, frozen, storm, shadow, undead, ruin, flooded, wetness, presence, marks; faction attitude, power, relations; settlements; characters; history; runs | no rumours or open opportunities between runs; no conflict record |
-| `Settlement` | contracts/settlement.ts | size, condition, faction, grids, buildings, people, `stores` (stock and rate), `needs` (Jobs) | on places `stores`, `people` and `needs` are empty (settle/records.ts); no economy ticks them |
-| purpose and story | **`cities` only**: settle/purpose.ts, settle/story.ts | `SettlementPurposeRec` (port, mining, lumber, farming, trading, hold, with the scores and why) and `SettlementStory` (founded, raided, walled, burned, flooded, ruined, grew) read from the land and the history | not on places yet; the generator's richest input |
-| `Diplomacy` | contracts/diplomacy.ts | interactions that fade; agreements: war, truce, peace, alliance, trade, land-rights, mineral-rights, passage, tribute, vassalage; `rights(region)` | not wired into a run; it is the natural home for "vassalise", "trade deal" and "mineral rights" |
-| `Instance`, `CivProfile` | contracts/recipe.ts | things with history (an artifact found, named, stolen); a civilisation's knowledge (uses / repairs / makes / understands) | runs carry items as `ItemDef` ids and characters carry gear as strings (§8) |
-| `ItemDef`, `Loadout` | contracts/items.ts | slots, asymmetric items, mechanical effects (call-allies, lure, fire-ward, pace, guard) | the reward vocabulary for a lone hero |
-| `Followers`, `Order` | contracts/orders.ts | follow, hold, go, release over Units | the moving base's members in play; "work" and "build" orders are open (FO1) |
-| `Units` | contracts/units.ts | spawn, order (guard, go, patrol, attack, follow, flee, work), the hero as an Actor | dispatch needs nothing from it (reports are resolved off-screen) |
-| `Terrain` | contracts/terrain.ts | atlas region graph and barriers; `BuriedProp` and `ExcavationSite`; `FloodRequest` (water, sand, magma, ash, silt); terrain requests (exits, obstacles) | caves (round 120's cave networks) and dams are not features in the contract yet |
-| traits | **`traits` only**: contracts/traits.ts | intrinsic traits (living, undead, flying, construct, fire_immune …), statuses, effects (heal, raise, damage, status) | hero-side preconditions ("an undead hero", "a healer") read these |
-| `ControllerProfile` | contracts/play.ts | speed, climb, jump, fly, water, vegetation, body, bridge, destruction, `encounters` (likes) | no list of a hero's abilities (raise the dead, telekinesis, runes) as data the generator can read |
-| atlas facts, wiki | gm/atlas-facts.ts, gm/wiki.ts | regions (kind, tier, climate, rivers, lava, stamps, ground, neighbours), sites, roads and crossings, lakes, realms and world factions | magic nodes (LW5) don't exist |
+| `Situation`, `SituationRun` | contracts/situation.ts, runsit/state.ts | a threat with a route and a clock; areas played live (flee, ambush, deliver, trader, town); choices at an area's edge; items; four endings | the areas are fixed places for the player to play, and the choices fix where to go next. In this design both become opportunities on a "choice of destinations" map |
+| `fillSituation`, `situationFor`, `checkSituation` | runsit/fill.ts, runsit/gm.ts, gm/situationcheck.ts | the first template (from world state), the GM-file-else-template pattern with the card saying which, and the validator | the pattern carries over as is; `oppcheck` extends the validator |
+| `SessionStory` | contracts/story.ts | `Outcome`, `Condition`, `happenings` | the conflict's escalation steps are happenings |
+| runplan | contracts/run.ts, runplan/ | `HeroCapabilities.likes`, `affordances`, `StageOutcome` with `CharacterChange`, `FailureRule`, `RunClock`, `TravelLeg` with `EnRouteEvent`s, terrain asks | travel and its events; a hero's likes for scoring |
+| `WorldState` | contracts/world.ts, world-state.ts | regions' states, factions (attitude, power, relations), settlements, characters, history, runs | no opportunity record, no rumours, no conflict record |
+| `Settlement` + purpose + story | contracts/settlement.ts, settle/purpose.ts, settle/story.ts | size, condition, faction, grids, buildings, people, stores, needs; `SettlementPurposeRec` (port, mining, lumber, farming, trading, hold with the scores); `SettlementStory` (founded, raided, walled, burned, flooded, ruined, grew) | the generator's richest facts; `stores` and `people` are not ticked by an economy |
+| `Diplomacy` | contracts/diplomacy.ts | interactions; agreements (trade, land and mineral rights, passage, tribute, vassalage …) | how diplomacy reveals opportunities (allies share what they know) and what diplomats resolve |
+| traits | contracts/traits.ts | intrinsic traits and statuses (undead, living, flying …), effects (heal, raise, damage, status) | hero and resource preconditions (an undead lich; a priest's `heal`) |
+| `Instance` | contracts/recipe.ts | things with history | artifacts as rewards |
+| `ItemDef`, `Loadout` | contracts/items.ts | slots and mechanical effects | the player's gear for its challenges |
+| `Followers`, `Units` | contracts/orders.ts, units.ts | units in play that take orders | companions committed with the player are followers in its challenge |
+| `Terrain` | contracts/terrain.ts | the region graph and barriers, `ExcavationSite`, `BuriedProp`, `FloodRequest` | caves and dams aren't features yet |
+| `ControllerProfile` | contracts/play.ts | movement, destruction, `encounters` (likes) | no hero abilities as data |
+| atlas facts, wiki | gm/ | regions, sites, roads and crossings, lakes, realms | no magic nodes (LW5) |
 
-**What's missing, in one list:** a Base; a Conflict record (antagonist, escalation, climaxes, hooks); opportunities as
-generated, expiring offers; a resource ledger for the run; dispatch; the building view and functions; a settlement
-economy (stores ticking); purposes and stories on places; hero abilities as data; caves, dams and magic nodes as
-location features; rumours (what carries over that the next run can find); and one item representation.
+**Missing, in one list:** opportunities as a world record, with visibility and expiry; a resource catalogue and the
+player's holdings; commitment and resolution; the travel rule; a conflict record; rumours; an economy step for
+settlement stores; hero abilities as data; caves, dams and nodes as features; the building view and its functions; one
+item representation.
 
 ## 3. The loop
 
 ```
- before the run                each turn (the clock moves)                                   the end
- ─────────────                 ───────────────────────────                                   ───────
- GM: Conflict  ──┐   ┌─► board: 3-5 Opportunities at real places ──┐
- (arc, hooks,    │   │      (generated: §5; GM-flavoured)             │
-  climaxes)      ├──►│                                                ▼
- Base chosen  ───┘   │   the player takes one (or several, by scale): play live │ spend │ dispatch │ build
- (hero, scale,       │                                                │
-  members, stores)   │                                                ▼
-                     │   Encounter → Outcome: world state, base, unlocks, conflict progress (help / hinder)
-                     │                                                │
-                     │   the conflict's escalation steps that are due fire (the world changes on the map)
-                     └──────────────── until a climax's condition holds ┘ ──► Climax encounter ──► Carry-over
+ before the run: the GM writes the Conflict and the TravelRule; the holdings are set (the player + what the hero has)
+
+ a round:
+   the strategic map shows the known opportunities (and the visible unaffordable ones, greyed with what's missing)
+   the player may move its strategic location (within the TravelRule; travel takes time, and its legs may meet opportunities)
+   from where it is, the player commits resources to any number of affordable opportunities
+       ├─ any commitment that includes the player is this round's playable challenge (character control or building)
+       └─ the rest are locked and resolve on their own at start + duration
+   the clock moves by what the round took (the challenge's play, the travel)
+   every commitment whose time is up resolves: survivors return, outcomes apply, new opportunities spawn or are revealed
+   the conflict's due escalation steps fire (the world changes on the map); imposed opportunities appear
+   until a climax holds → the climax opportunity (it requires the player) → carry-over
 ```
 
-Why one loop for every run: the user asked for it ("doesn't really matter if your at a fixed stronghold or leading a
-party of refugees"). The base's scale is a parameter that filters and sizes the opportunities, so the interface stays
-the same. A lone hero is a base of one.
+Why the player is a resource and nothing else is special: the user's guiding principle. One mechanism (commit, lock,
+resolve) covers the hero's own play, a companion's errand, a knight's quest and an army's campaign. "Dispatch" is
+simply what committing a non-player resource looks like.
 
-Why turns rather than continuous time: runsit already works this way (an area played live, then a decision at its
-edge). The atlas map is where turns are taken, so the stronghold's day and the journey's leg are the same interaction.
-This was the stated default in round 120 and the user didn't object.
+Why a round is defined by the player's challenge: "the playable challenge for that round". The player resource can be
+in only one opportunity at a time, so each round has at most one playable challenge. Autonomous opportunities keep
+running on the clock while it is played.
 
 ## 4. The contract
 
-These are the proposed types, in TypeScript, for a future `src/api/contracts/runloop.ts`. They reuse the existing types
-wherever they can. §4.8 maps each type to what exists today.
+These are proposed types, in TypeScript, for a future `src/api/contracts/opportunity.ts`. They reuse the existing
+types; §4.7 maps them.
 
-### 4.1 Base
+### 4.1 Resources and holdings
 
 ```ts
-import type { FactionId, RegionId, AtlasEvent } from './world';
-import type { Outcome, Condition, Bark } from './story';
-import type { CharacterChange, EncounterKind } from './run';
+import type { FactionId, RegionId } from './world';
+import type { Outcome, Condition } from './story';
+import type { CharacterChange } from './run';
 import type { InstanceId, MaterialId, Tag } from './recipe';
 import type { AreaPlay } from './situation';
 import type { Agreement, Interaction } from './diplomacy';
 
-/** How big the base is. It filters which opportunities are offered and sizes their stakes. */
-export type BaseScale = 'lone' | 'party' | 'refugees' | 'stronghold' | 'army';
+/** Agents: locked while committed, they return (or die) when it resolves. 'player' is the hero the player controls. */
+export type AgentKind = 'player' | 'companion' | 'knight' | 'diplomat' | 'scout' | 'prospector' | 'priest' | 'workers' | 'army' | 'ship';
+/** Goods: spent as costs, earned as rewards. A specific good is a material id or a tag (ore, grain, timber). */
+export type GoodKind = 'coin' | 'supplies' | 'materials' | 'renown' | MaterialId | Tag;
 
-/** What the run spends and earns. Bulk goods use Settlement.stores' keys (a MaterialId or a Tag). */
-export type ResourceId =
-  | 'supplies'   // food, water, fodder: a moving base eats them every turn; a stronghold's people eat them every day
-  | 'coin'       // trade goods and money
-  | 'materials'  // timber, stone, iron: what the building view spends
-  | 'renown'     // standing that opens doors (a hold's levy, a vassal's oath)
-  | MaterialId | Tag;   // ore, grain, cloth … where a template names a specific good
-
-export interface BaseMember {
-  /** a CharacterRecord id (the hero, a named companion) or a group of nameless units */
+/** One agent resource the player holds. A group (workers, an army) is one resource with a count. */
+export interface Agent {
+  id: string;
+  kind: AgentKind;
+  name: string;
+  /** a CharacterRecord id when it's a person the world remembers (the hero, a companion, a named knight) */
   character?: string;
-  group?: { role: string; count: number; faction: FactionId | null };
-  /** what they're good at, 0..1: fight, scout, sneak, talk, build, heal, haul (the dispatch's odds read these) */
-  skills: Partial<Record<'fight' | 'scout' | 'sneak' | 'talk' | 'build' | 'heal' | 'haul', number>>;
-  /** away on a dispatch (its id) until it reports */
-  away?: string;
+  /** a group's size (workers: hands; army: companies); 1 for a person */
+  count: number;
+  /** how good, 0..1 per skill: autonomous odds read these (fight, scout, sneak, talk, build, heal, haul, dig) */
+  skills: Partial<Record<Skill, number>>;
   /** lasting conditions (CharacterRecord.statuses' words: wounded, cursed …) */
   statuses: string[];
-}
-
-export interface Base {
-  id: string;
-  kind: BaseScale;
-  name: string;
-  /** fixed: a settlement (the stronghold IS a Settlement record); moving: where the column is now */
-  position:
-    | { mobility: 'fixed'; settlement: string; region: RegionId }
-    | { mobility: 'moving'; region: RegionId; at: [number, number]; pace: number /* world units a run minute */ };
-  /** the hero who leads it (a CharacterRecord id) */
-  leader: string;
-  members: BaseMember[];
-  /** non-combatants it must keep alive (a refugee column's people; a stronghold's townsfolk are its Settlement.people) */
-  dependants?: { count: number; safeAt?: RegionId };
-  /** stock and the rate each turn (a stronghold's flows from its buildings; a column's upkeep is negative) */
-  stores: Partial<Record<ResourceId, { stock: number; rate: number }>>;
-  /** what it carries that matters (artifacts, a hoverbike in the garage): Instances, not names */
-  things: InstanceId[];
-  /** what it can do now, derived from its members, things and buildings (never stored as truth: §4.8) */
-  capacity: BaseCapacity;
-}
-
-/** Derived each turn from the base's members, things and (fixed) buildings. Opportunities' requirements read it. */
-export interface BaseCapacity {
-  /** combat power, a unit's worth = 1 */
-  strength: number;
-  /** members free to dispatch now */
-  free: number;
-  /** how many dispatches it can run at once (a lone hero: 0; a party: 1; a stronghold: by its training camp …) */
-  dispatchSlots: number;
-  /** may it use the building view (the hero's mode and a place to build: round 120 "only some heroes") */
-  builds: boolean;
-  /** world units a run minute (moving); 0 fixed */
+  /** its traits (traits.ts: undead for a raised company) */
+  traits?: string[];
+  /** world units a run minute: how fast it reaches an opportunity's location and comes back */
   pace: number;
+  /** locked by this commitment, if any */
+  committed?: string;
 }
+export type Skill = 'fight' | 'scout' | 'sneak' | 'talk' | 'build' | 'heal' | 'haul' | 'dig' | 'sail';
+
+/** Everything the player holds: what decides which opportunities it can take, and so its scale. */
+export interface Holdings {
+  agents: Agent[];
+  goods: Partial<Record<GoodKind, { stock: number; rate: number /* a round */ }>>;
+  /** things that matter (an artifact, a hoverbike in the garage) */
+  things: InstanceId[];
+  /** settlements the player rules (a ruler's seat and vassals): their stores flow into `goods`, their people into workers */
+  rules: string[];
+  /** non-combatants the player must keep alive (a refugee column) */
+  dependants?: { count: number };
+}
+
+/** Where the player is on the strategic map: the only place it can commit from. */
+export interface StrategicLocation {
+  region: RegionId;
+  settlement?: string;
+  at: [number, number];
+}
+
+/** How freely the player may move (the GM's choice: "a fixed location, a choice of destinations, a region, or open travel"). */
+export type TravelRule =
+  | { kind: 'fixed' }
+  | { kind: 'choice'; destinations: StrategicLocation[] /* from here: runsit's ways on */ }
+  | { kind: 'region'; regions: RegionId[] }
+  | { kind: 'open' };
 ```
 
-Why the base is separate from the hero: the same hero can lead a party one run and a stronghold the next ("accepting
-the mantle of leadership"). Why a fixed base is a `Settlement`: the user wants the city game to edit the same data the
-world shows (round 83), so a stronghold is a settlement the player owns, not a new record. Why capacity is derived:
-the user's principle of derived capabilities (round 85, `compose.ts derive`). A training camp painted in the building
-view raises `dispatchSlots`, and nothing stores that number by hand.
+The **scale is derived, never stored**: a lone hero holds only the player; a party adds companions; a ruler has
+`rules` and knights, diplomats, workers, armies; an empire has many settlements and armies. A function
+`scaleOf(holdings)` names it for the card and for the templates' difficulty bands.
 
-### 4.2 Conflict
+Why goods and agents are separate kinds: costs are spent and requirements are locked and returned. The user's text has
+both ("resource requirements, costs").
 
-```ts
-/** The run's big conflict: written by the GM before the run (or filled by a template), so encounters can foreshadow it. */
-export interface Conflict {
-  id: string;
-  title: string;
-  /** a paragraph: who wants what, and what happens if no one stops them */
-  premise: string;
-  antagonist: {
-    faction: FactionId;
-    /** a named leader the world remembers (a CharacterRecord id), if there is one */
-    leader?: string;
-    /** where its power sits: a region, a settlement, a mark (a cathedral, a node) */
-    seat: { region: RegionId; settlement?: string; mark?: string };
-    /** what it marches with (a horde's role and count; an army's) */
-    forces: { role: string; count: number }[];
-  };
-  /** what it's after, in world terms the validator can check: the end state if it wins */
-  goal: { text: string; wins: Outcome };
-  /** 0..1: how far along it is. Escalation steps fire as it passes their `at`; the player's outcomes push it back */
-  progress: number;
-  /** how fast progress grows on its own, per run minute (the clock's pressure; 0 when only events move it) */
-  drift: number;
-  /** what happens as it advances: each changes the world on the map, once */
-  steps: EscalationStep[];
-  /** how it can end: the first whose `when` holds is played */
-  climaxes: Climax[];
-  /** words the opportunity templates match on to foreshadow it: 'undead', 'flood', 'bridge:r2159', 'leader:c-grey-reeve' */
-  hooks: string[];
-  /** the template it came from, or 'gm' */
-  by: string;
-}
-
-export interface EscalationStep {
-  id: string;
-  /** progress at which it fires (or a condition) */
-  at: number | Condition[];
-  /** a line for the map and the board ("The Muster crosses the Bethorn") */
-  text: string;
-  /** what it does to the world: AtlasEvents, spawns (the horde on its route), barks */
-  outcome: Outcome;
-  /** hooks it makes true (an opportunity can answer it: "Burn the bridge under them") */
-  raises?: string[];
-  /** fired yet */
-  fired?: boolean;
-}
-
-export interface Climax {
-  id: string;
-  when: Condition[] | { progress: number };
-  /** where it's played, and what (the town's defence, an assault on the seat, a ritual interrupted) */
-  where: { region: RegionId; settlement?: string };
-  encounter: EncounterSpec;
-  /** the endings, keyed like Situation's (saved, burned, evacuated, fell) but open */
-  endings: Record<string, { text: string; outcome: Outcome; ends: 'won' | 'lost' | 'fled' | 'captured' | 'late' }>;
-}
-```
-
-Why progress and steps rather than a single arrival time: runsit's `threat.arrives` is one step (the horde reaches the
-town). A conflict over a run is several (the barrows open, the bridge is crossed, the farms burn, the town is
-besieged). Each of these changes the map in the session, as the user asked. Why hooks are plain strings: templates and
-the GM match on them, and the validator checks every hook a template foreshadows is one the conflict raises.
-
-### 4.3 Opportunity
+### 4.2 Opportunity
 
 ```ts
 export interface Opportunity {
   id: string;
-  /** the template it came from (§5), or 'gm' */
+  /** its template (§5), or 'gm' */
   template: string;
+  /** siblings at one place: taking one retires the others (delve it yourself, or send workers to pump it out) */
+  group?: string;
   title: string;
-  /** a line in the player's words, shown on the board: "Bumku's lower shaft is flooded — and something knocks below" */
   pitch: string;
-  where: { region: RegionId; settlement?: string; at?: [number, number]; site?: number /* ExcavationSite id */ };
-  /** why here: the facts it was matched on, quoted for the card and the GM ("a mining town", "flooded to 41") */
+  /** where it happens; the resources travel there at their pace (counted in the duration) */
+  location: { region: RegionId; settlement?: string; at?: [number, number]; site?: number };
+  /** why here: the facts it was spawned from, quoted for the card and the GM */
   because: string[];
-  /** who offers it: a settlement, a faction, a character, or the land itself (a ruin found) */
   offeredBy: { settlement?: string; faction?: FactionId; character?: string; land?: true };
-  /** what's at stake in a line, and the outcome tiers the card shows (best and worst at least) */
-  stakes: string;
-  /** what the base needs to take it */
-  requires: {
-    scales: BaseScale[];
-    strength?: number;
-    members?: { skill: keyof BaseMember['skills']; min: number; count?: number }[];
-    spend?: Partial<Record<ResourceId, number>>;
-    things?: Tag[];
-  };
-  /** how it's resolved; a template can offer several ways (delve or pump or seal) */
-  ways: OpportunityWay[];
-  /** it's gone at this run minute (or when a condition holds: the town has fallen) */
+
+  /** agents locked while it runs, by kind and count, with what they must be (a skill floor, a trait) */
+  requires: Requirement[];
+  /** goods spent when committed */
+  costs: Partial<Record<GoodKind, number>>;
+  /** run minutes from commitment to resolution, travel there and back included (a player challenge: its planned play) */
+  duration: number;
+
+  /** present exactly when `requires` includes the player: what is played (oppcheck enforces it) */
+  challenge?: Challenge;
+  /** present exactly when it doesn't: how it resolves on its own */
+  autonomous?: { skill: Skill; difficulty: number; danger: number };
+
+  /** what can come of it, by tier (a challenge's result, or the autonomous roll, picks the tier) */
+  outcomes: OutcomeTable;
+
+  /** hidden: not shown; rumour: shown vaguely (a place, a hint) until revealed; known: shown in full */
+  visibility: 'hidden' | 'rumour' | 'known';
+  /** gone at this run minute, or when a condition holds (the town has fallen) */
   expires: number | Condition[];
-  /** known (on the board) or a rumour (shown vaguely until scouted or bought) */
-  known: boolean;
-  /** hooks of the conflict it answers or foreshadows */
+  /** the conflict's hooks it answers or foreshadows */
   hooks: string[];
-  /** the generator's score and its parts, for the GM and the viewer (§5.5) */
+  /** the conflict forces it on the player now (the night's assault, outriders on the road): see §10 q2 */
+  imposed?: boolean;
   score?: Record<string, number>;
 }
 
-export interface OpportunityWay {
-  id: string;
-  /** "Delve for what knocks", "Pump it out", "Seal it" */
-  text: string;
-  encounter: EncounterSpec;
+export interface Requirement {
+  kind: AgentKind;
+  /** a group's size (workers: 10), or how many agents of the kind */
+  count: number;
+  /** each committed agent must have at least this skill (a scout's scouting 0.4) */
+  skill?: { skill: Skill; min: number };
+  traits?: string[];
 }
-```
 
-### 4.4 Encounter
+/** What the player plays: one of the two playable systems. */
+export type Challenge =
+  | { system: 'character'; play: LivePlay; minutes: number }
+  | { system: 'building'; build: BuildChallenge };
 
-```ts
-/** How an opportunity is resolved. Four modes, one outcome table. */
-export type EncounterSpec =
-  /** a game of skill played live on the map: the existing area plays and those to come */
-  | { mode: 'live'; play: LivePlay; minutes: number; outcomes: OutcomeTable }
-  /** a choice of how to spend: resources (and members' time) for odds or a sure thing */
-  | { mode: 'choice'; options: { id: string; text: string; spend: Partial<Record<ResourceId, number>>; turns?: number; odds?: number; outcomes: OutcomeTable }[] }
-  /** members sent without the hero: odds from who goes, a report after `turns` (§6.1) */
-  | { mode: 'dispatch'; difficulty: number; skill: keyof BaseMember['skills']; turns: number; danger: number; outcomes: OutcomeTable }
-  /** the building view: paint functions into a grid with a budget (§6.2) */
-  | { mode: 'build'; settlement: string; grid?: string; budget: Partial<Record<ResourceId, number>>; turns: number; goal?: BuildGoal; outcomes: OutcomeTable };
-
-/** The live plays: runsit's AreaPlay, plus the kinds the templates need (each needs a player in runsit/area.ts). */
+/** runsit's AreaPlay plus the kinds the templates need (each needs a player in runsit/area.ts). */
 export type LivePlay =
-  | AreaPlay                                                            // flee, ambush, deliver, trader, town
-  | { kind: 'delve'; site?: number; depth: number; prize?: string }     // a way down: caves, a shaft, a vault
-  | { kind: 'hold'; at: [number, number]; seconds: number; waves: number } // hold a point (a ford, a gate, a ritual)
-  | { kind: 'escort'; who: string; count: number; to: [number, number] }    // lead people or a cart through
-  | { kind: 'break'; target: string; what: 'dam' | 'bridge' | 'wall' | 'seal' } // destroy a thing in the world
-  | { kind: 'duel'; character: string }                                 // a named champion
-  | { kind: 'hunt'; role: string; count: number };                      // track and kill a beast
+  | AreaPlay                                                               // flee, ambush, deliver, trader, town
+  | { kind: 'delve'; site?: number; depth: number; prize?: string }
+  | { kind: 'hold'; at: [number, number]; seconds: number; waves: number }
+  | { kind: 'escort'; who: string; count: number; to: [number, number] }
+  | { kind: 'break'; target: string; what: 'dam' | 'bridge' | 'wall' | 'seal' }
+  | { kind: 'duel'; character: string }
+  | { kind: 'hunt'; role: string; count: number }
+  | { kind: 'explore'; radius: number };                                   // walk a region: reveals what's in it
 
-/** Results are tiers; a live play's AreaResult maps onto them (won fast, won, won hurt, lost, the hero fell). */
 export type Tier = 'triumph' | 'success' | 'cost' | 'failure' | 'disaster';
-export type OutcomeTable = Partial<Record<Tier, LoopOutcome>> & { success: LoopOutcome; failure: LoopOutcome };
+export type OutcomeTable = Partial<Record<Tier, Resolution['outcome']>> & { success: Resolution['outcome']; failure: Resolution['outcome'] };
 ```
 
-Why only four modes: they are the user's four ("games of skill", "choices of resource allocation", "sending limited
-troops or spies on missions", and "a building phase (which could just be viewed as another encounter)"). Why tiers:
-dispatch reports, choice odds and live results all have to land on the same table, or each mode would need its own
-outcomes.
+Why `challenge` and `autonomous` are mutually exclusive and keyed on `requires`: the user's rule, "their resource
+requirements determine who undertakes them". The kind of opportunity follows from what it needs, not from a separate
+category field.
 
-### 4.5 Outcome
+Why siblings rather than alternative requirements on one opportunity: each opportunity keeps one set of requirements,
+as STRATEGIC_MAP says ("predefined resource requirements"). The choice between doing it yourself and sending workers
+is a choice between two opportunities at one place.
+
+### 4.3 Commitment and resolution
 
 ```ts
-/** What an encounter does. story.ts's Outcome (the world) plus the run's own parts. */
-export interface LoopOutcome extends Outcome {
+/** Resources locked to an opportunity. Made only from the player's strategic location. */
+export interface Commitment {
+  id: string;
+  opportunity: string;
+  /** the agents locked (ids from Holdings.agents), and the goods spent */
+  agents: string[];
+  spent: Partial<Record<GoodKind, number>>;
+  /** where it was made from (must equal the strategic location at commit) */
+  from: StrategicLocation;
+  start: number;
+  /** start + duration */
+  resolves: number;
+  /** the autonomous roll: made at commit from the seed, so a run replays (the odds were shown before committing) */
+  roll?: { seed: number; odds: Record<Tier, number> };
+}
+
+export interface Resolution {
+  commitment: string;
+  tier: Tier;
+  /** the agents that come back, changed (wounded, a group thinned), and those lost */
+  returns: { agent: string; count?: number; statuses?: string[] }[];
+  lost: { agent: string; count?: number; how: string }[];
+  /** a few lines for the report on the map */
+  report: string[];
+  outcome: ResolutionOutcome;
+}
+
+/** What it does: story.ts's Outcome (the world) plus the run's own parts. */
+export interface ResolutionOutcome extends Outcome {
   text: string;
-  /** characters (run.ts CharacterChange: history, status, gear, death) */
   characters?: CharacterChange[];
-  /** the base: resources, members joining or lost, dependants, things gained */
-  base?: {
-    stores?: Partial<Record<ResourceId, number>>;   // + / − now
-    rates?: Partial<Record<ResourceId, number>>;    // + / − a turn from now on (ore income)
-    join?: BaseMember[];
-    lose?: { character?: string; role?: string; count?: number }[];
-    dependants?: number;
-    things?: { kind: string; name?: string }[];      // made as Instances (recipe.ts) when applied
-    move?: { region: RegionId; at?: [number, number] }; // a moving base relocates (passage bought by sea)
-    settle?: { name: string; region: RegionId; at: [number, number] }; // a moving base becomes a fixed one
-  };
-  /** diplomacy: agreements made or broken, interactions remembered (who saw what) */
+  /** the player's holdings: goods (now and per round), new agents (a knight joins, the hold's levy), things */
+  gain?: { goods?: Partial<Record<GoodKind, number>>; rates?: Partial<Record<GoodKind, number>>; agents?: Omit<Agent, 'id' | 'committed'>[]; things?: { kind: string; name?: string }[]; rules?: string[] };
+  /** the strategic location moves (passage bought by sea; the column settles: `settle`) */
+  move?: StrategicLocation;
+  settle?: { name: string; region: RegionId; at: [number, number] };
+  /** diplomacy: agreements and remembered interactions (with witnesses) */
   diplomacy?: { agree?: Omit<Agreement, 'since'>[]; note?: Omit<Interaction, 'run'>[] };
-  /** new opportunities this opens (template ids with where), and hooks it makes true */
-  unlocks?: { template: string; where: Opportunity['where'] }[];
-  raises?: string[];
-  /** the conflict: progress pushed back (−) or forward (+), a step cancelled, a climax changed */
-  conflict?: { progress?: number; cancel?: string[]; climax?: string };
-  /** the run's own state (what runsit's ChoiceEffect does now: warn, evacuate, delay) */
-  run?: ({ kind: 'warn' } | { kind: 'evacuate' } | { kind: 'delay'; minutes: number })[];
-  /** a settlement's condition (an AtlasEvent kind, not a direct write: §8 item 1) */
+  /** opportunities this spawns (template ids at places) and those it reveals (rumour → known, hidden → rumour) */
+  spawns?: { template: string; location: Opportunity['location'] }[];
+  reveals?: { region?: RegionId; opportunities?: string[]; to: 'rumour' | 'known' }[];
+  /** the conflict: progress pushed back (−) or forward (+), steps cancelled, hooks raised */
+  conflict?: { progress?: number; cancel?: string[]; raises?: string[] };
+  /** the GM's travel rule changes (a road opens; the hero is pinned at a siege) */
+  travel?: TravelRule;
+  /** a settlement's condition: an AtlasEvent kind, not a direct write (§8 item 1) */
   settlement?: { id: string; condition: 'thriving' | 'struggling' | 'besieged' | 'abandoned' | 'ruined' };
 }
 ```
 
-### 4.6 Clock and turn
+**Autonomous odds.** `p = σ((Σ committed skill × count weight − difficulty × band) / spread)`, cut into tiers. `danger`
+says how often failure becomes disaster (agents lost). The odds are shown on the card before committing: the user's "no
+manual resource allocation" means the requirements are fixed, so what the player decides is which opportunities to
+take, not how to split forces.
+
+**No agents required** (buying word at a market, a ransom, passage bought): such an opportunity only spends goods. It
+resolves autonomously after its duration, usually at sure odds. It is still committed from the strategic location.
+
+**Player challenges.** The challenge's result maps onto tiers. runsit's `AreaResult` gives won, won hurt, lost and
+fell. A building challenge is met or not against its goal. Agents committed alongside the player (a companion, the
+levy) are in the challenge as followers (`Followers.recruit`).
+
+### 4.4 Conflict
+
+The conflict is kept from revision 1. The GM writes it before the run.
+
+```ts
+export interface Conflict {
+  id: string;
+  title: string;
+  premise: string;
+  antagonist: { faction: FactionId; leader?: string; seat: { region: RegionId; settlement?: string; mark?: string }; forces: { role: string; count: number }[] };
+  goal: { text: string; wins: Outcome };
+  /** 0..1; steps fire as it passes them; resolutions push it back or forward */
+  progress: number;
+  /** growth a run minute on its own (pressure); 0: only events move it */
+  drift: number;
+  steps: { id: string; at: number | Condition[]; text: string; outcome: Outcome; raises?: string[]; imposes?: string[] /* template ids forced on the player */; fired?: boolean }[];
+  /** how it ends: each is an opportunity that requires the player (its challenge the finale) */
+  climaxes: { id: string; when: Condition[] | { progress: number }; opportunity: string }[];
+  /** what templates foreshadow and answer: 'undead', 'bridge:r2159', 'leader:c-grey-reeve' */
+  hooks: string[];
+  by: string;
+}
+```
+
+### 4.5 Clock and round
 
 ```ts
 export interface RunClock {
-  /** run minutes since the start (runsit's unit: an area counts its planned minutes, a road its distance at the pace) */
+  /** run minutes (runsit's unit: a challenge counts its planned minutes, up to 1.5x when played slower; a road its distance at the pace) */
   now: number;
-  turn: number;
-  /** a stronghold's days: minutes a day; day and night from it (Thronefall's rhythm, if the run wants it) */
-  day?: { minutes: number; nightFrom: number /* 0..1 of the day */ };
-  /** a hard date, if the conflict has one (runplan's 'late') */
+  round: number;
+  /** a ruler's days, if the run has them (a day's minutes; the night from this share) */
+  day?: { minutes: number; nightFrom: number };
   deadline?: number;
 }
 
-export interface Turn {
-  n: number;
-  /** what was on offer, what was taken and how it came out */
-  board: string[];
-  taken: { opportunity: string; way: string; tier?: Tier; dispatch?: string }[];
-  /** escalation steps that fired at its end */
-  fired: string[];
-}
-
-/** The run as a loop: the state machine runsit's SituationRun becomes (pure; Node-testable, like it). */
-export interface RunLoop {
+/** The strategic map's state machine (pure; Node-testable, as SituationRun is). */
+export interface StrategicMap {
   readonly conflict: Conflict;
-  readonly base: Base;
+  readonly holdings: Holdings;
   readonly clock: RunClock;
-  /** the opportunities on offer now (generated at the turn's start; §5) */
-  board(): Opportunity[];
-  /** take a way of an opportunity: a live play starts, a choice resolves, a dispatch leaves, a build opens */
-  take(opportunity: string, way: string, opts?: { members?: string[]; option?: string }): EncounterSpec;
-  /** how the encounter came out (live: from the play's AreaResult; build: from the plan) */
-  resolve(opportunity: string, tier: Tier): LoopOutcome;
-  /** the turn ends: travel or a day passes, dispatches report, upkeep is paid, steps fire, the board is made again */
-  endTurn(travel?: { to: RegionId; minutes: number }): { reports: DispatchReport[]; fired: EscalationStep[]; climax: Climax | null };
-  readonly turns: Turn[];
+  location: StrategicLocation;
+  travel: TravelRule;
+  /** visible opportunities (known, rumours), each with whether it's affordable now and what's missing if not */
+  visible(): { opportunity: Opportunity; affordable: boolean; missing: string[] }[];
+  /** move the strategic location (within the TravelRule): the minutes it takes, and any opportunities met on the way */
+  go(to: StrategicLocation): { minutes: number; met: Opportunity[] };
+  /** commit the opportunity's required resources from here (fixed by its `requires`: no allocation) */
+  commit(opportunity: string): Commitment;
+  /** the player's challenge came out this way */
+  played(commitment: string, tier: Tier): Resolution;
+  /** the round ends: the clock moves, due commitments resolve, steps fire, imposed opportunities appear, spawning runs */
+  endRound(): { resolved: Resolution[]; fired: string[]; imposed: Opportunity[]; climax: Opportunity | null };
+  readonly commitments: Commitment[];
 }
 ```
 
-What a turn is, by base: **moving**, a turn is the area's encounter and then a leg to the next place (runsit's edge
-and travel, as today). **Fixed**, a turn is a part of a day: morning (board, dispatch, build), the day's live
-encounter if one is taken, night (the conflict's wave if a step brings one). Upkeep is charged once a turn. Why run
-minutes: they already exist and every checker reasons in them (`pathEstimates`, `areaMinutes`). A day is a number of
-them.
-
-### 4.7 Carry-over
+### 4.6 Carry-over
 
 ```ts
-/** What a run leaves for the next: everything durable goes through WorldState; this is what's added at the end. */
 export interface CarryOver {
   record: import('./run').RunRecord;
-  /** the conflict as the world keeps it: unresolved, it keeps its progress and the antagonist acts between runs */
   conflict: { id: string; progress: number; resolved: boolean; antagonist: FactionId };
-  /** a fixed base stays a Settlement owned by the leader's faction; a column that settled becomes one */
-  base: { settlement?: string; members: string[] /* CharacterRecord ids */ };
-  /** things that leave the run as Instances with history (an artifact found, a banner earned) */
+  /** agents who outlast the run, as CharacterRecords (a knight is a person the world remembers); groups go back to their settlement */
+  agents: string[];
+  /** settlements the player now rules (a ruler's run leaves a realm) */
+  rules: string[];
   things: InstanceId[];
-  /** opportunities not taken, kept as rumours a later run can find (they keep their `because`) */
-  rumours: Pick<Opportunity, 'template' | 'where' | 'because' | 'hooks'>[];
-  /** what the GM should consider next (accepted leadership → a stronghold run; a captive → a rescue) */
-  suggests: { loop: BaseScale; why: string }[];
+  /** opportunities still open: kept in the world as rumours a later run can find, with their `because` */
+  open: Pick<Opportunity, 'template' | 'location' | 'because' | 'hooks'>[];
+  /** what the GM might run next (leadership accepted → a ruler's run) */
+  suggests: { holdings: 'lone' | 'party' | 'ruler' | 'empire'; why: string }[];
 }
 ```
 
-Run-only resources (supplies, coin) don't carry over as numbers. A stronghold's stores do carry over, because they are
-its `Settlement.stores`. Whether a moving base's leftover coin becomes renown is an open question (§10).
+### 4.7 Mapping to the existing contracts
 
-### 4.8 Mapping to the existing contracts
-
-| new | built from | what changes |
+| new | built from | change |
 |---|---|---|
-| `Base` | `Settlement` (fixed); `Followers` + `Loadout` + `SituationRun.pursuers` (moving); `CharacterRecord` (members) | new type; a fixed base is a `Settlement` reference, not a copy; `capacity` derived like `compose.derive` |
-| `Conflict` | `Situation.threat` + `target` + `endings`; `SessionStory.happenings` (steps); `RunPlan.failures` (`FailureRule`) | the threat leaves `Situation`; a horde is one conflict template, `threat.arrives` becomes one step at progress 1 |
-| `EscalationStep` | `SessionStory.happenings[]` (`when` + `effects`) | the same shape with `raises` and progress |
-| `Opportunity` | `SituationChoice` + `SituationArea` (brief, region, settlement); `RunStage`; `EnRouteEvent` (poi) | generated each turn, not fixed when the situation is written; each has an expiry and its `because` |
-| `EncounterSpec` / `LivePlay` | `AreaPlay` (kept, as a member of the union); runplan's `EncounterKind` (only for scoring a hero's likes) | `choice`, `dispatch` and `build` are new modes; the live kinds grow by `delve`, `hold`, `escort`, `break`, `duel`, `hunt` |
-| `Tier` | `AreaResult` (won, heroDied); `PlayedStage` (won, runEnd); `StageOutcome` (first = hoped for) | one result scale for every mode |
-| `LoopOutcome` | `Outcome` (extends it); `StageOutcome.effects.characters`; `ChoiceEffect` (as `run`); `SituationEnding.settlement` | adds `base`, `diplomacy`, `unlocks`, `raises`, `conflict` |
-| `RunClock` | `SituationRun.clock`, `areaMinutes`, `TRAVEL_PACE`, runplan's `RunClock` | one clock (§8 item 3) |
-| `RunLoop` | `SituationRun` (area → edge → travel; finaleSetup) | the state machine generalised: `board`, `take`, `resolve`, `endTurn` |
-| `CarryOver` | `finishSituation`, `RunRecord`, `WorldState.record`, `applyCharacter` | adds conflict state, rumours, things as Instances, suggests |
+| `Agent`, `Holdings` | `CharacterRecord` (people), `Followers` (in play), `Settlement.people` and `stores` (a ruler's), `Loadout` (the player's gear) | new; the player becomes an agent like the others |
+| `StrategicLocation`, `TravelRule` | `SituationRun.at` and its choices (a "choice of destinations"), runplan's legs | the GM's choice, data; runsit's area graph is `choice` |
+| `Opportunity` | `SituationArea` + `AreaPlay` (a player opportunity's challenge), `SituationChoice` (the way there), `RunStage`, `EnRouteEvent` poi | uniform; with requirements, costs, duration, visibility, expiry |
+| `Challenge` / `LivePlay` | `AreaPlay` (kept as a member), runplan's `EncounterKind` (only as the hero's likes) | grows by delve, hold, escort, break, duel, hunt, explore; a building challenge |
+| `Commitment`, `Resolution` | `SituationRun.areaDone`, `PlayedStage`, `StageOutcome` | new: locking, concurrency, autonomous odds |
+| `ResolutionOutcome` | `Outcome` (extends it), `CharacterChange`, `ChoiceEffect` (warn and evacuate become conflict or holdings effects), `SituationEnding.settlement` | adds gain, move, settle, diplomacy, spawns, reveals, conflict, travel |
+| `Conflict` | `Situation.threat` + `target` + `endings`, `SessionStory.happenings`, `FailureRule` | the horde is one conflict; `threat.arrives` is a step; the town finale is a climax opportunity |
+| `RunClock` | `SituationRun.clock`, `areaMinutes`, runplan's `RunClock` | one clock (§8 item 3) |
+| `StrategicMap` | `SituationRun` | generalised: visible, go, commit, played, endRound |
+| `CarryOver` | `finishSituation`, `RunRecord`, `WorldState.record` | adds conflict, agents, rules, open opportunities |
 
-**What `Situation` covers today, and what changes for it.** It covers a moving lone base, a horde conflict with one
-escalation step, five opportunities (as areas with fixed choices), five live plays, three run effects, and four
-climax endings. The first step is an **adapter** (`situationToLoop(sit) → { conflict, opportunities, climax }`) with a
-unit test that plays the same paths and gets the same endings. `Situation` stays the GM's file format until the user
-agrees to a new one. Nothing on places breaks.
+**What runsit's `Situation` already is, in these terms.** A lone hero (holdings: the player). The travel rule is
+`choice` (the ways on at each area's edge). Each area is a player opportunity at a destination, with its `AreaPlay` as
+the challenge and its planned minutes as the duration. The horde is a conflict with one step (`arrives`). The town is
+the climax opportunity. The levy is a resolution that gains an `army` agent, though today it is a special case in
+`finaleSetup`. The first step is an adapter (`situationToMap(sit)`), with a Node test that every path gives the same
+endings and clock as `SituationRun`. The `Situation` file format stays until the user agrees to a new one.
 
 ## 5. Generating opportunities
 
 ### 5.1 The process
 
 ```
- LocationFacts ─┐
- HeroFacts     ─┼─► 1 match: every template × every place in reach whose preconditions hold → candidates
- RunFacts      ─┘   2 instantiate: fill the template's slots from the facts (names, regions, roles, magnitudes)
-                    3 score: theme, foreshadowing, variety, difficulty for the scale, the hero's likes (§5.5)
-                    4 pick the board: 3-5, greedy with a diversity penalty; at least one that answers the conflict
-                    5 GM: may swap, flavour, or add its own in the grammar (§5.6)
-                    6 oppcheck: everything referenced exists; every consequence is realisable (§5.7)
-                    7 offer
+ LocationFacts + Holdings + RunFacts
+   1 match: each template × each place in the world's spawn area whose needs hold, and whose requirements use agent
+     kinds the player holds or can get (a template needing a knight spawns only once a knight is held or offered)
+   2 instantiate: fill the slots (names, regions, magnitudes; requirements and duration scaled to the place and band)
+   3 score: theme, foreshadowing, variety, difficulty for the holdings, the hero's likes (player opportunities)
+   4 spawn: up to a budget per place and per region, best first; siblings spawned together; visibility set by what the
+     player knows of the place (visited, scouted, an ally's, a rumour's)
+   5 GM: may swap, flavour, impose, or add its own in the grammar (§5.6)
+   6 oppcheck (§5.7)
+   7 they are in the world: the strategic map shows the visible ones
 ```
 
-This is pure CPU over a few hundred candidates per turn. It should take milliseconds, and the slice will measure it
-(`scripts/perf/runloop.mjs`, the way runplan's is measured). Runs are deterministic from the seed, the world version
-and the turn, so tests can pin the board.
+When it runs: at the run's start, for the world in reach of the travel rule. Then for a place, when something reveals
+it (exploration, scouting, a rumour, diplomacy). Then for the world, when the holdings gain a new agent kind (a knight
+joins, so knight templates are matched). And when a resolution or an escalation step changes a place's facts (the
+shaft drained, the town besieged). It is pure CPU and deterministic from the seed, the world version and the round,
+and its time will be measured in a perf script, as runplan's is.
 
-"In reach" means the places the base can get to by the next step of the clock. A moving base uses the region graph
-(`reach(g, caps, region)`) out to a leg's effort (runplan's `LEG_EFFORT`). A fixed base uses the regions within N
-borders, which is its sphere, growing with vassals (round 120: "one region a run growing with vassals").
+**The spawn area** follows the travel rule. Fixed means within N borders of the seat, a sphere that grows with vassals
+(`rules`). Choice means the destinations and their surroundings. Region means the named regions. Open means within a
+few legs of the player, refreshed as it moves.
 
-### 5.2 The inputs
+**Two guarantees** (checked, never relaxed silently): at least two affordable player opportunities are reachable this
+round, so the player always has something to play. And at least one visible opportunity answers or foreshadows the
+conflict.
 
-```ts
-/** What is at a place, read from the wiki, the world state and the settlements (all exist except where marked). */
-export interface LocationFacts {
-  region: { id: RegionId; kind: string; tier: string | null; climate: string; rivers: number; lava: number; stamps: string[]; ground: { min: number; mean: number; max: number } };
-  state: import('./world').RegionState;              // undead, ruin, flooded, overgrowth, shadow, storm, presence, marks
-  settlement?: {
-    id: string; size: string; condition: string; faction: FactionId | null;
-    purpose?: import('./settlement').SettlementPurposeRec;   // `cities` (not on places yet)
-    story?: import('./settlement').SettlementStory;          // `cities`
-    stores: Record<string, { stock: number; rate: number }>; // empty on places today
-  };
-  /** terrain features in the region */
-  features: {
-    excavations: { id: number; at: [number, number]; props: string[] }[];  // terrain.ts ExcavationSite + BuriedProp kinds
-    lakes: { id: number; level: number; outflow: boolean }[];              // the wiki's lakes
-    crossings: { kind: string; road: string }[];                           // the wiki's road crossings in it (bridges, fords)
-    caves?: { at: [number, number] }[];                                    // MISSING: round 120's cave mouths
-    dams?: { at: [number, number]; holds: number /* lake id */ }[];        // MISSING
-    nodes?: { at: [number, number]; power: string }[];                     // MISSING: LW5 magic nodes
-  };
-  /** factions here: presence, attitude to the player, power, and the agreements holding here (diplomacy.rights) */
-  factions: { id: FactionId; presence: number; attitude: number; power: number }[];
-  rights: import('./diplomacy').Agreement[];
-  /** people the world remembers who are here (CharacterRecord), alive */
-  people: string[];
-}
+### 5.2 Inputs
 
-export interface HeroFacts {
-  role: string;                                   // runplan heroes.ts ROLES
-  profile: import('./play').ControllerProfile;    // speed, fly, water, destruction, encounters (likes)
-  traits: string[];                               // `traits`: intrinsic (undead for the lich, living …)
-  abilities: string[];                            // MISSING as data: 'raise-dead', 'telekinesis', 'runes', 'lance'
-  record: import('./run').CharacterRecord;        // statuses, motivation, gear, relationships, history
-  loadout: import('./items').Loadout;
-  base: Base;
-}
+`LocationFacts` (unchanged from revision 1; purpose and story are now on places): the region (kind, tier, climate,
+rivers, lava, stamps, ground), its `RegionState`, the settlement (size, condition, faction, purpose, story, stores),
+features (excavation sites and buried props, lakes, road crossings; caves, dams and nodes missing), factions present
+(presence, attitude, power), agreements holding there, remembered people there.
 
-export interface RunFacts {
-  conflict: Conflict;                 // its phase (progress), its hooks, the steps due soon
-  clock: RunClock;
-  taken: Turn[];                      // past choices (variety; what they made true)
-  flags: Record<string, boolean>;     // story flags and raised hooks
-  offered: { template: string; region: RegionId; turn: number }[];  // what was shown recently (variety)
-}
-```
+`HoldingsFacts`: the agent kinds and counts held, their skills and traits; the goods and their rates; the things; the
+settlements ruled; the player's profile (`ControllerProfile`, its `encounters` likes), traits (traits.ts), abilities
+(missing as data), record (statuses, motivation) and loadout.
+
+`RunFacts`: the conflict (progress, hooks, steps due soon), the clock, the travel rule, the commitments running, what
+was offered and taken (variety), flags.
 
 ### 5.3 The template grammar
-
-A template is data, so the GM can read it, write new ones, and the validator can check them. Preconditions are a
-small closed vocabulary (like `Condition`). There is no code in templates.
 
 ```ts
 export interface OpportunityTemplate {
   id: string;
-  title: string;                     // with slots: "The Flooded Shaft of {settlement}"
+  title: string;
   pitch: string;
-  /** what it's about: matched against the conflict's hooks and themes */
-  themes: string[];                  // 'undead', 'water', 'ore', 'faith', 'trade', 'fire' …
-  /** all must hold (hard), and the soft ones add to the theme score by how well they hold */
-  needs: Need[];
-  prefers?: Need[];
-  scales: BaseScale[];
-  /** the ways, each an encounter shape with slots; outcomes per tier as LoopOutcome with slots */
-  ways: { id: string; text: string; encounter: EncounterSpec }[];
-  /** how hard, 0..1 at the scale's baseline; scaled by the base's strength (§5.5) */
-  difficulty: number;
-  /** hooks it can foreshadow or answer when the conflict has them */
+  themes: string[];
+  needs: Need[];                 // must hold at the place (the closed vocabulary of revision 1: purpose, story, size,
+  prefers?: Need[];              //  condition, region, state, flooded, storm, feature, mark, faction, agreement, person,
+                                 //  hero, holdings, conflict, not)
+  /** the opportunities it spawns at the place, siblings in one group (taking one retires the others) */
+  offers: TemplateOffer[];
   answers?: string[];
   foreshadows?: string[];
-  /** run minutes it stays on the board */
+  /** run minutes the offers stay open */
   lasts: number;
-  /** offered at most once a run, or once per region */
-  once?: 'run' | 'region';
+  once?: 'run' | 'place';
 }
 
-export type Need =
-  | { kind: 'purpose'; is: SettlementPurpose[] }                    // cities' purposes
-  | { kind: 'story'; has: SettlementStoryEvent['what'][] }          // cities' stories: raided, flooded, burned …
-  | { kind: 'size'; min: Settlement['size'] }
-  | { kind: 'condition'; is: Settlement['condition'][] }
-  | { kind: 'region'; kinds?: string[]; tier?: string[]; stamps?: string[] }
-  | { kind: 'state'; field: 'undead' | 'ruin' | 'overgrowth' | 'shadow' | 'frozen' | 'sunk' | 'wetness'; min?: number; max?: number }
-  | { kind: 'flooded' } | { kind: 'storm'; min: number; storm?: string[] }
-  | { kind: 'feature'; is: 'excavation' | 'lake' | 'river' | 'crossing' | 'cave' | 'dam' | 'node' | 'lava' }
-  | { kind: 'mark'; kinds: string[] }                               // a battlefield, a grave, the burned town of …
-  | { kind: 'faction'; attitude: 'hostile' | 'wary' | 'friendly'; min: number /* presence */ }
-  | { kind: 'agreement'; is: AgreementKind[]; with?: 'player' | 'owner' }
-  | { kind: 'person'; role?: string; status?: string }              // a remembered character here (a captive)
-  | { kind: 'hero'; traits?: string[]; abilities?: string[]; fly?: boolean; destruction?: number; statuses?: string[] }
-  | { kind: 'base'; dependants?: boolean; mobility?: 'fixed' | 'moving'; has?: ResourceId[] }
-  | { kind: 'conflict'; phase?: [number, number]; hooks?: string[]; route?: true /* the place is on the antagonist's road */ }
-  | { kind: 'not'; need: Need };
+export interface TemplateOffer {
+  id: string;
+  title: string;
+  requires: Requirement[];       // scaled by the band: workers 6 → 10 at a city
+  costs: Partial<Record<GoodKind, number>>;
+  duration: number;              // base minutes; + travel at the slowest committed agent's pace
+  challenge?: Challenge;         // iff requires the player
+  autonomous?: { skill: Skill; difficulty: number; danger: number };
+  outcomes: OutcomeTable;        // with slots
+}
 ```
 
-Why a closed vocabulary: the validator (`oppcheck`) can prove a template's needs refer to things the world can have.
-The GM writes them as JSON. A new `Need` kind is a contract change made on purpose, not prose the game can't read.
+A `Need` of kind `holdings` replaces revision 1's `base`: `{ kind: 'holdings'; agents?: AgentKind[]; rules?: boolean;
+dependants?: boolean }`. A template whose offers require a knight also needs one held, and that is how "having a knight
+creates opportunities requiring a knight". A template with a player offer and a knight offer spawns both when both are
+held, and only the player's when the player has no knight.
 
-### 5.4 The library: 23 worked templates
+### 5.4 The library: 23 templates as uniform opportunities
 
-The table has every base scale and all six purposes (`cities`' port, mining, lumber, farming, trading, hold), plus
-terrain-only and conflict-driven templates. **World** means a consequence through `WorldState` (AtlasEvents,
-diplomacy, settlements), and where possible it is made in the session (a real flood fill, a real fire). **Bonus** means
-the gameplay reward.
+How to read it: **P** means it requires the player and is played (C is character control, B is building). Every other
+row resolves autonomously (A, with the skill it rolls). Durations are in run minutes at a town, before travel. Costs
+are goods. Siblings of a template exclude each other. A ruler's knight or army offers appear only when such agents are
+held.
 
-| # | template | needs (where, hero, run) | scales | ways (encounter) | world consequence | gameplay bonus |
-|---|---|---|---|---|---|---|
-| 1 | **The Flooded Shaft** | purpose mining; story `flooded`, or region `flooded`, or wetness > 1.3; prefers undead > 0.1 nearby | lone, party, stronghold | **delve** (live, `delve` into the flooded workings) · **pump it out** (choice: materials + 2 turns of workers) · **seal it** (live `break` the adit, or choice: materials) | delve: a `mark` (the open shaft), undead + nearby if it fails · pump: `drain` (a real drain of the basin) and the town's ore `rate` + · seal: `lay-dead` −0.2 round it, `mark` "the sealed adit" | delve: an artifact (an `Instance`, its history "dug up at …") · pump: ore income each turn · seal: the dead stop rising there, so the conflict's steps that raise dead there are cancelled |
-| 2 | **The Strike at the Pit** | purpose mining; owner faction power > 0.5; prefers people with a 'miner' role | party, stronghold, army | **side with the miners** (talk, choice: renown) · **break the strike** (live `ambush` reversed: hold the gate) | miners: the town's `faction-presence` shifts to a free company and `mineral-rights` go to them (diplomacy) · broken: owner `attitude` +, the miners' interaction remembered (grudge, halfLife ∞) | miners: a vassal mine (ore flow by agreement) and miners who join as sappers (good at `break`) · broken: coin now, a hostile camp later (unlocks #22 against you) |
-| 3 | **The Last Ship Out** | purpose port; conflict on its way (route within 2 borders); base has dependants | refugees, party | **buy passage** (choice: coin, supplies) · **take the ship** (live `ambush` in the harbour) | buy: the port's `attitude` + · take: port `attitude` −, a `mark` "the stolen cog", the port's ship gone (its trade `rate` −) | the base **moves by sea**: `base.move` over a sea barrier, skipping regions and the pursuers |
-| 4 | **The Wreckers' Light** | purpose port; storm in region ≥ 0.4 | lone, party | **light the lamp** (live `hold` at the lighthouse through the storm, wreckers attack) · **join the wreckers** (choice) | lit: a `mark` (the lighthouse kept), the port's trade `agreement` with the player's faction · joined: port `attitude` −, coin, `faction-presence` of wreckers + | lit: trade income and a pilot who joins (a sea route for later turns) · joined: coin and plunder items |
-| 5 | **Fell the Old Wood** | purpose lumber; neighbouring region overgrowth > 0.5 with a ruin or a mark | party, stronghold | **clear it** (dispatch woodcutters, 2 turns) · **spare it** (talk: the lumber camp's anger) | clear: `overgrow` −0.4 (the forest really thins), the ruin under it surfaces as an excavation (unlocks #13) · spare: lumber camp `attitude` −, the wood stays (and a grove: a healing field, if LW1 is in) | clear: timber (materials) and a dig site · spare: a sanctuary that heals the base's wounded each turn |
-| 6 | **The Firebreak** | purpose lumber or farming; dryness > 0.6; conflict hooks `fire` (or a raider faction near) | lone, party, stronghold | **cut the break** (live `hold`: fell a line before the fire's front, the real fire system) · **let it burn and save the people** (live `escort`) | cut: the fire stops at the line (the region's `burn` is avoided and the camp stands) · let it: `burn` 0.6, the camp `abandoned`, its people move (dependants +) | cut: the camp gives fresh mounts (`pace` item) · let it: more dependants and their gratitude (renown), but supplies − |
-| 7 | **Harvest Before the Host** | purpose farming; conflict route passes within 1 border; phase 0.2-0.7 | party, refugees, stronghold, army | **bring it in** (dispatch haulers, 1 turn) · **burn the fields** (live: set the fires before the host, the real fire) | brought in: the town's grain `stock` + · burned: `burn` the fields' region, farmers' `attitude` −, the conflict's `drift` − (the host forages less) | in: supplies for the base · burned: the conflict is slowed (progress −0.1) at a cost in standing |
-| 8 | **Blight in the Barley** | purpose farming; shadow > 0.2 or undead > 0.1 in a neighbour; conflict hooks `undead` or `shadow` | lone, party | **trace it** (live `delve` or `explore` to the source) · **burn and salt** (choice) | traced: the source is revealed, a conflict step is shown early (foreshadowing), `light` +0.1 · burned: `burn`, the blight stops, farm `rate` − | traced: **intel** (the conflict's next step and its hook on the map) and a cure (a ward item) |
-| 9 | **The Caravan Contract** | purpose trading; roads ≥ 3; a hostile faction presence on a road out | lone, party | **escort it** (live `escort` along a leg; an `ambush` en route) · **rob it** (live `ambush`) | escort: a `trade` agreement (flows of a good to the base's settlement or the town's) · rob: the trading town's `attitude` −, a bounty (unlocks #22 against you) | escort: coin and a steady trade income · rob: coin, goods and items now |
-| 10 | **The Market of Rumours** | purpose trading; any phase | any | **buy word** (choice: coin) · **trade for a map** (choice: a thing) | none directly; it reveals | rumours become **known** opportunities: it turns 1-2 hidden candidates into board entries, or shows the conflict's next step and its time |
-| 11 | **The Levy of the Hold** (runsit's `deliver`) | purpose hold or size city; same realm as the threatened place; not hostile | lone, party | **carry the word** (live `deliver` within a limit) | the hold's levy marches (in the session); `attitude` + | reinforcements at the climax; the hold may give an item (runsit's `gives`) |
-| 12 | **The Oath of a Small Hold** | purpose hold; its faction power < 0.4; conflict near | stronghold, army | **take its oath** (talk, choice: renown) · **demand tribute** (choice: strength shown) | `vassalage` or `tribute` agreement (diplomacy); its presence becomes the player's | oath: its fighters join the climax and its region joins the sphere (more places in reach) · tribute: a flow of coin, and its grudge |
-| 13 | **The Dig** | feature excavation (terrain's `ExcavationSite`, `BuriedProp` statue / column / ruin) | lone, party, stronghold | **dig it out** (dispatch diggers, turns by depth) · **lift it out** (live: telekinesis, if the hero has it) | a `mark` (the excavation), the props raised in the session (the lich lifts the statue) | an artifact `Instance` (a relic with history: "a statue of the drowned king, lifted by …"); a statue can be set in the stronghold (renown each turn) |
-| 14 | **Break the Dam** | feature dam, or a lake with an outflow upstream of the conflict's route | lone, party, army | **break it** (live `break` the dam; the real flood fill downstream) · **hold it** (choice: the dam's keepers paid) | broken: a `flood` downstream (a real `Terrain.flood` water fill, the user's "actually break a dam and flood a valley"), farms `ruin` there · held: the keepers' `attitude` + | broken: the conflict's route is cut (a step cancelled, the host delayed a lot) · held: the downstream town's gratitude |
-| 15 | **Burn the Bridge** | feature crossing on the conflict's route | lone, party | **burn it under them** (live `break` with the vanguard on it) | the crossing is gone (a `mark` "the burned crossing of …" and the road's crossing removed, so later runs' graph has the barrier back) | the conflict's arrival is delayed (runsit's `delay`); the bridge is gone for you too (a longer road back) |
-| 16 | **The Cave Mouth** | feature cave (round 120's cave networks); base moving | refugees, party | **hide the column** (choice: supplies; turns pass) · **clear the lair** (live `delve` or `hunt`) | hidden: none · cleared: a `mark` (a refuge), the region's beasts `presence` − | hidden: pursuers lose the trail (pursuers reset) · cleared: a safe winter camp (#19 becomes possible here) |
-| 17 | **The Field of the Last War** | mark battlefield, or undead ≥ 0.2 | lone, party, army | **lay them to rest** (live: a `hold` while the rite is sung, the living hero) · **raise them** (live: the lich's raise, if the hero has it) | rest: `lay-dead` −0.3, `light` + · raised: `raise-dead` +, the living factions' `attitude` − (witnesses remember) | rest: the conflict loses forces (`forces.count` −) · raised: the base gains an undead company (members, trait `undead`) |
-| 18 | **The Ever-Storm Tower** | storm ≥ 0.5 standing; region stamps spires or crystals preferred | lone, party | **break the storm** (live: climb, a spectacle, the storm system) · **harness it** (choice: materials, a ritual seed) | broken: `clear-storm`, the region's wetness eases · harnessed: a `mark` (a storm gate, LW5's seed), shadow + | broken: the roads there open (border costs fall) · harnessed: a "lightning on call" item, a storm gate the stronghold can later build on |
-| 19 | **A Place to Winter** | base moving with dependants; a region with standing water, flat ground, and no hostile presence; or an `abandoned` settlement | refugees | **settle here** (build: paint the first functions) · **press on** (choice) | settle: a new `Settlement` (camp), `rebuild` if over a ruin, `mark` "where the people of … settled" | the base becomes fixed: the run's climax changes to holding the new home (the next run may be city management) |
-| 20 | **The Siege of {town}** | conflict holds a settlement (presence > 0.6) or the antagonist's seat | army | **starve it** (choice: supplies, turns) · **storm it** (live, the town's walls) · **parley** (talk) | starved: the town `struggling`, its people `attitude` − · stormed: `ruin` +, the town changes hands (`faction-presence`) · parley: a `truce` | the antagonist's power − (`faction-power`), a seat taken, and the climax may move |
-| 21 | **The Well Ran Dry** (a petition) | base fixed; dryness > 0.5 or a `flooded` story reversed | stronghold | **dig a cistern** (build: paint a `water` function) · **send diggers to the spring** (dispatch) | a building (a cistern: `Building.use`) or the spring's `mark`; the town `thriving` | the stronghold's growth (people + per day) and its night defence (fire-fighting) |
-| 22 | **The Champion at the Crossroads** | conflict leader has a named lieutenant (CharacterRecord); a crossing on the route; or a bounty set by #2 / #9 | lone, party | **duel** (live `duel`) · **ambush the champion** (live `ambush`) · **parley** (talk) | killed: the `CharacterRecord` dies, the antagonist's `power` − · spared: the champion's relationship + (a future ally) | killed: the conflict's progress −0.1 and a named weapon (an `Instance`) · spared: a turncoat who tells the seat's weakness (a climax's odds rise) |
-| 23 | **The Captive** | a person with status `captive:<faction>` here (runplan's capture rule) | lone, party | **get them out** (live `escort` out of a hold) · **ransom** (choice: coin) | freed: the captive's `CharacterRecord` statuses cleared, the holder's `attitude` − · ransomed: the holder's coin + | the freed hero joins the base (a member with their own skills and gear) |
+| # | template (needs) | offer | requires | costs | dur. | resolved | world consequence | gameplay reward |
+|---|---|---|---|---|---|---|---|---|
+| 1 | **The Flooded Shaft** (mining; flooded story or wet; undead near preferred) | Delve for what knocks | player | supplies 1 | 6 | P·C delve | `mark` the open shaft; failure: `raise-dead` there | an artifact (`Instance`) |
+| | | Pump it out | workers 8 | materials 6 | 40 | A build | `drain` (the basin really drained); ore `rate` + | ore income each round |
+| | | Seal the adit | player *or a sibling:* workers 4 | materials 3 | 3 / 20 | P·C break / A dig | `lay-dead` −0.2; `mark` the sealed adit | the conflict's raise-dead step there cancelled |
+| 2 | **The Strike at the Pit** (mining; owner power > 0.5) | Speak for the miners | diplomat (talk ≥ 0.4) | renown 2 | 20 | A talk | `mineral-rights` to a free company (diplomacy); presence shift | a vassal mine: ore flow by agreement; sappers join (workers, dig) |
+| | | Hold the gate for the owners | player | none | 5 | P·C hold | owner `attitude` +; the miners' grudge (interaction, halfLife ∞) | coin; a bounty raised (spawns #22 against you) |
+| 3 | **The Last Ship Out** (port; conflict within 2 borders; dependants) | Buy passage | none of the player's agents beyond the column | coin 8, supplies 4 | 10 | A talk | port `attitude` + | the strategic location **moves** by sea (`move`), past the pursuers |
+| | | Take the ship | player | none | 5 | P·C ambush | port `attitude` −; `mark` the stolen cog; the port's trade `rate` − | the same move, and a ship agent |
+| 4 | **The Wreckers' Light** (port; storm ≥ 0.4) | Light the lamp | player | supplies 1 | 5 | P·C hold | `mark` the lighthouse kept; a `trade` agreement | trade income; a pilot (companion, sail) |
+| | | Pay off the wreckers | diplomat | coin 4 | 15 | A talk | wreckers' presence +; port `attitude` − | coin share of wrecks each round |
+| 5 | **Fell the Old Wood** (lumber; an overgrown ruin next door) | Clear it | workers 10 | supplies 3 | 40 | A haul | `overgrow` −0.4 (the forest really thins); the ruin surfaces (spawns #13) | timber (materials) |
+| | | Walk the old wood | player | none | 5 | P·C explore | reveals the region's hidden opportunities; a grove kept | a sanctuary (healing for wounded agents each round, LW1) |
+| 6 | **The Firebreak** (lumber or farming; dry; fire hook) | Cut the break | player | none | 4 | P·C hold (the real fire) | the region's `burn` avoided; the camp stands | fresh mounts (`pace` item) |
+| | | Send axemen ahead | workers 6 | supplies 2 | 15 | A haul (danger 0.3) | as above if success; `burn` 0.6 if failure | the same, and the risk to the workers |
+| 7 | **Harvest Before the Host** (farming; on the conflict's route; progress 0.2-0.7) | Bring it in | workers 8 | none | 20 | A haul | grain `stock` + | supplies |
+| | | Burn the fields | player | none | 4 | P·C hold (set the fires) | `burn` the fields' region; farmers' `attitude` − | the conflict's `drift` − (the host forages less) |
+| 8 | **Blight in the Barley** (farming; shadow or undead near) | Trace it to the source | player | supplies 1 | 6 | P·C delve | `light` +0.1; the source **revealed** | the conflict's next step shown early (foreshadowing); a ward item |
+| | | Send the priest | priest (heal ≥ 0.4) | supplies 1 | 25 | A heal | `light` +0.1 | a ward item |
+| 9 | **The Caravan Contract** (trading; roads ≥ 3; hostiles on a road) | Ride with the caravan | player | none | 6 | P·C escort | a `trade` agreement (flows) | coin, trade income |
+| | | Hire it a guard | knight *or* army 1 | coin 2 | 30 | A fight | the same agreement on success | trade income without the player's round |
+| | | Rob it | player | none | 4 | P·C ambush | the town's `attitude` −; bounty (spawns #22 against you) | coin, goods, items |
+| 10 | **The Market of Rumours** (trading) | Buy word | none | coin 3 | 5 | A talk (sure) | none | **reveals**: rumours in reach → known; the conflict's next step and its time |
+| 11 | **The Levy of the Hold** (hold or city; same realm; not hostile) | Carry the word | player | none | 3 + the ride | P·C deliver | the hold's `attitude` +; the levy marches in the session | **gains an army agent** (the levy), committed to the climax or to #12, #14 |
+| | | Send an envoy | diplomat | renown 1 | 25 | A talk | the same | the same army, later |
+| 12 | **The Oath of a Small Hold** (hold; power < 0.4; conflict near) | Take its oath | diplomat *or* player | renown 2 | 20 / 5 | A talk / P·C deliver | `vassalage` (diplomacy); presence becomes the player's | `rules` + (its stores flow in; the spawn area grows) |
+| | | Demand tribute | army 1 | none | 30 | A fight | `tribute` agreement; its grudge | coin each round |
+| 13 | **The Dig** (excavation site) | Lift it out | player (with telekinesis) | none | 5 | P·C break | the props raised in the session; `mark` the excavation | an artifact (`Instance` with its history) |
+| | | Dig it out | workers 6 (dig) | supplies 2 | 45 | A dig | the same | the same; a statue for the seat (renown each round) |
+| | | Survey it | prospector | supplies 1 | 15 | A dig (sure) | none | **reveals** what lies there (the artifact named); halves the dig's duration |
+| 14 | **Break the Dam** (dam, or a lake upstream of the route) | Break it | player | none | 4 | P·C break | a real `flood` downstream (`Terrain.flood`); farms `ruin` | the conflict's route cut: a step cancelled, a long delay |
+| | | Sap it | workers 6 (dig) *or* army 1 | materials 2 | 25 | A dig (danger 0.4) | the same, and the flood comes when it resolves | the same, without the player's round |
+| | | Pay the keepers to hold it | diplomat | coin 4 | 15 | A talk | keepers' `attitude` + | the downstream town's gratitude (renown) |
+| 15 | **Burn the Bridge** (crossing on the route) | Burn it under them | player | none | 3 | P·C break (the real fire) | the crossing gone (`mark`; the road's crossing removed: later runs' graph) | the arrival delayed (runsit's `delay`) |
+| | | Hold the ford | army 1 *or* knight 2 | supplies 2 | until the host passes | A fight (danger 0.5) | the host's forces − | the delay, and the risk to the army |
+| 16 | **The Cave Mouth** (cave; the player moving) | Hide the column | none beyond the column | supplies 3 | 20 | A sneak (sure) | none | pursuers lose the trail |
+| | | Clear the lair | player | none | 6 | P·C hunt | beasts' presence −; `mark` a refuge | a safe camp (spawns #19 here) |
+| 17 | **The Field of the Last War** (battlefield mark or undead ≥ 0.2) | Lay them to rest | player (living) *or* priest | none / supplies 1 | 5 / 25 | P·C hold / A heal | `lay-dead` −0.3; `light` + | the conflict's forces − |
+| | | Raise them | player (`raise-dead` ability) | none | 4 | P·C (the lich's raise) | `raise-dead` +; the living factions' `attitude` − (witnesses) | **gains an army agent** (undead company, trait undead) |
+| 18 | **The Ever-Storm Tower** (storm ≥ 0.5) | Break the storm | player | none | 6 | P·C explore (the climb) | `clear-storm` | the roads there open (border costs fall) |
+| | | Harness it | priest *or* prospector, workers 6 | materials 8 | 50 | A build | `mark` a storm gate (LW5's seed); shadow + | a "lightning on call" item; the gate as a later building |
+| 19 | **A Place to Winter** (dependants; flat, watered, no hostiles; or an abandoned settlement) | Settle here | player | materials 4, supplies 4 | the building | P·B (paint the first functions) | a new `Settlement` (camp); `rebuild` if over a ruin; `mark` | `rules` + (the column becomes a ruler's seat; the travel rule may become `fixed`) |
+| 20 | **The Siege of {town}** (the antagonist holds it) | Storm the walls | player, army 2 | supplies 4 | 8 | P·C (the assault, the army as followers) | `ruin` +; the town changes hands | the antagonist's `power` −; a seat taken |
+| | | Starve it | army 2 | supplies 6 | 90 | A fight | the town `struggling`; its people's `attitude` − | the same, slowly, at no risk to the player |
+| | | Parley | diplomat | renown 2 | 30 | A talk | a `truce` | time, and the conflict paused |
+| 21 | **The Well Ran Dry** (a seat; dry) | Dig a cistern | player | materials 5 | the building | P·B (paint a `water` function) | a building (`Building.use` water); the town `thriving` | people + per day; fire-fighting at night |
+| | | Send diggers to the spring | workers 6, prospector | supplies 2 | 40 | A dig | the spring's `mark` | the same, without the player's round |
+| 22 | **The Champion at the Crossroads** (a named lieutenant; a crossing on the route; or a bounty) | Duel | player | none | 3 | P·C duel | the lieutenant dies (`CharacterRecord`); antagonist `power` − | a named weapon; the conflict's progress −0.1 |
+| | | Send a knight | knight (fight ≥ 0.6) | none | 20 | A fight (danger 0.5) | the same, or the knight dies | the same |
+| 23 | **The Captive** (a person with `captive:<faction>` here) | Get them out | player | none | 6 | P·C escort | the captive's statuses cleared; the holder's `attitude` − | **gains a companion** (their skills and gear) |
+| | | Ransom | diplomat *or* none | coin 6 | 20 | A talk (sure) | the holder's coin + | the same companion |
 
-Every row has at least two ways with different world consequences. That is the "genuinely interesting" test, and
-`oppcheck` enforces it (§5.7). Coverage: lone (1, 4, 6, 8, 9, 10, 11, 13, 14, 15, 17, 18, 22, 23), party (most), refugees (3, 7, 16,
-19), stronghold (1, 2, 5, 6, 7, 12, 13, 21), army (2, 7, 12, 14, 17, 20). Every purpose has at least two templates:
-mining 1-2, port 3-4, lumber 5-6, farming 7-8, trading 9-10, hold 11-12.
+(Some cells read "player *or* a sibling …". Each such cell is two sibling opportunities with one requirement set each,
+not one opportunity with alternatives.)
 
-**One template in full (#1), as data:**
+**Coverage.** Every template has a player offer, so a lone hero always has something to play. Templates 2, 4, 9, 11,
+12, 13, 14, 15, 18, 20, 21 and 22 have offers that only a party or ruler can take autonomously. Agents that rewards
+create: army (11, 17), companion (4, 23), workers (2), and settlements ruled (12, 19). Those rewards are how a run
+grows in scale within itself. Every purpose has at least two templates. Every template has at least two offers with
+different world consequences, and `oppcheck` enforces that.
+
+**One template as data (#1):**
 
 ```json
 {
-  "id": "flooded-shaft",
-  "title": "The Flooded Shaft of {settlement}",
+  "id": "flooded-shaft", "title": "The Flooded Shaft of {settlement}",
   "pitch": "{settlement}'s lower workings drowned {story.flooded.ago}. The miners say something knocks below the water.",
   "themes": ["water", "ore", "undead", "delve"],
   "needs": [{ "kind": "purpose", "is": ["mining"] }, { "kind": "condition", "is": ["thriving", "struggling", "besieged"] }],
-  "prefers": [{ "kind": "story", "has": ["flooded"] }, { "kind": "state", "field": "undead", "min": 0.1 }, { "kind": "hero", "abilities": ["telekinesis"] }],
-  "scales": ["lone", "party", "stronghold"],
-  "difficulty": 0.45,
-  "answers": ["undead"], "foreshadows": ["undead", "barrows"],
-  "lasts": 30, "once": "region",
-  "ways": [
-    { "id": "delve", "text": "Delve for what knocks", "encounter": { "mode": "live", "play": { "kind": "delve", "depth": 3, "prize": "{artifact}" }, "minutes": 6, "outcomes": {
-      "success": { "text": "You came up with {artifact} and the knocking stopped.", "atlas": [{ "kind": "mark", "regions": ["{region}"], "magnitude": 1, "detail": { "name": "the open shaft of {settlement}", "kind": "mine" } }], "base": { "things": [{ "kind": "{artifact.kind}", "name": "{artifact}" }] }, "raises": ["shaft-open"] },
-      "failure": { "text": "The dead came up behind you.", "atlas": [{ "kind": "raise-dead", "regions": ["{region}"], "magnitude": 0.2 }], "characters": [{ "kind": "status", "id": "{hero}", "add": ["wounded"] }] } } } },
-    { "id": "pump", "text": "Pump it out", "encounter": { "mode": "choice", "options": [{ "id": "pump", "text": "Men and timber for two turns", "spend": { "materials": 6 }, "turns": 2, "outcomes": {
-      "success": { "text": "The shaft is dry; ore comes up again.", "atlas": [{ "kind": "drain", "regions": ["{region}"], "magnitude": 1 }], "base": { "rates": { "ore": 2 } } },
-      "failure": { "text": "The pumps failed; the water won.", "base": { "stores": { "materials": -3 } } } } }] } },
-    { "id": "seal", "text": "Seal it", "encounter": { "mode": "live", "play": { "kind": "break", "target": "adit", "what": "seal" }, "minutes": 3, "outcomes": {
-      "success": { "text": "The adit is rubble. Nothing more comes up.", "atlas": [{ "kind": "lay-dead", "regions": ["{region}"], "magnitude": 0.2 }, { "kind": "mark", "regions": ["{region}"], "magnitude": 1, "detail": { "name": "the sealed adit", "kind": "ruin" } }], "conflict": { "cancel": ["{step.raise-dead-here}"] } },
-      "failure": { "text": "The roof held; the dead didn't.", "atlas": [{ "kind": "raise-dead", "regions": ["{region}"], "magnitude": 0.15 }] } } } }
+  "prefers": [{ "kind": "story", "has": ["flooded"] }, { "kind": "state", "field": "undead", "min": 0.1 }],
+  "answers": ["undead"], "foreshadows": ["undead", "barrows"], "lasts": 60, "once": "place",
+  "offers": [
+    { "id": "delve", "title": "Delve for what knocks", "requires": [{ "kind": "player", "count": 1 }], "costs": { "supplies": 1 }, "duration": 6,
+      "challenge": { "system": "character", "play": { "kind": "delve", "depth": 3, "prize": "{artifact}" }, "minutes": 6 },
+      "outcomes": {
+        "success": { "text": "You came up with {artifact}; the knocking stopped.", "atlas": [{ "kind": "mark", "regions": ["{region}"], "magnitude": 1, "detail": { "name": "the open shaft of {settlement}", "kind": "mine" } }], "gain": { "things": [{ "kind": "{artifact.kind}", "name": "{artifact}" }] } },
+        "failure": { "text": "The dead came up behind you.", "atlas": [{ "kind": "raise-dead", "regions": ["{region}"], "magnitude": 0.2 }], "characters": [{ "kind": "status", "id": "{hero}", "add": ["wounded"] }] } } },
+    { "id": "pump", "title": "Pump it out", "requires": [{ "kind": "workers", "count": 8 }], "costs": { "materials": 6 }, "duration": 40,
+      "autonomous": { "skill": "build", "difficulty": 0.4, "danger": 0.1 },
+      "outcomes": {
+        "success": { "text": "The shaft is dry; ore comes up again.", "atlas": [{ "kind": "drain", "regions": ["{region}"], "magnitude": 1 }], "gain": { "rates": { "ore": 2 } } },
+        "failure": { "text": "The pumps failed; the water won.", "gain": { "goods": { "materials": -3 } } } } },
+    { "id": "seal", "title": "Seal the adit", "requires": [{ "kind": "player", "count": 1 }], "costs": { "materials": 3 }, "duration": 3,
+      "challenge": { "system": "character", "play": { "kind": "break", "target": "adit", "what": "seal" }, "minutes": 3 },
+      "outcomes": {
+        "success": { "text": "The adit is rubble. Nothing more comes up.", "atlas": [{ "kind": "lay-dead", "regions": ["{region}"], "magnitude": 0.2 }], "conflict": { "cancel": ["{step.raise-dead-here}"] } },
+        "failure": { "text": "The roof held; the dead didn't.", "atlas": [{ "kind": "raise-dead", "regions": ["{region}"], "magnitude": 0.15 }] } } }
   ]
 }
 ```
 
-(The slots `{…}` are filled at instantiation from the facts, and `oppcheck` rejects an unfilled one.)
-
 ### 5.5 Scoring
 
-Each candidate (a template, a place, and its filled slots) gets five scores in 0..1. The board is then picked from
-them.
+Scoring now decides **what spawns** (a budget per place and region, best first) and **what the map highlights**. It no
+longer picks a fixed board.
 
-| part | how | why |
-|---|---|---|
-| **theme** `T` | the share of `prefers` that hold, weighted by how far past the threshold (undead 0.4 against a min of 0.1 counts more than 0.11); the purpose's score margin from `SettlementPurposeRec.scores` (a clear mining town over a near-port); overlap of `themes` with the conflict's hooks | thematic: the place makes this opportunity, rather than it being dropped there |
-| **foreshadow** `F` | `foreshadows ∩ conflict.hooks` weighted by how soon the matching step is due (progress distance); `answers ∩` hooks already raised | foreshadowing early and payoff later: the user's "establish motivations" |
-| **variety** `V` | 1 minus penalties: the same template shown in the last 3 turns, the same encounter mode or live kind as most of the board, the same region as the last turn | Slay the Spire's legibility: every board is a real choice between kinds of play |
-| **difficulty** `D` | the template's `difficulty` × the scale's baseline, against the base's `capacity.strength`, compared to a target band that rises with the conflict's progress (easy early, hard near the climax); Gaussian falloff outside the band; any hard requirement unmet removes the candidate | scaled to the base's resources (the user: "we can scale the opportunities and encounters to your resources") |
-| **hero** `H` | `profile.encounters[kind]` for live ways (runplan's likes); 1 for choice, dispatch and build if the base can do them | the bike flees, the lich breaks, the knight delves (round 117) |
-
-`score = 0.30 T + 0.20 F + 0.15 V + 0.20 D + 0.15 H`. These weights are starting points, to be tuned in the viewer.
-
-**Picking the board** (3 for a lone hero, up to 5 for a stronghold). The candidate with the best score goes first.
-Each next pick maximises `score − 0.5 × similarity(to those picked)`, the maximal-marginal-relevance pick. Similarity
-is a shared template, region, encounter mode or theme. Three constraints: at least one pick answers or foreshadows the
-conflict, at least two encounter modes when the base can do more than live play, and one way toward the climax when
-progress > 0.8. If the constraints can't be met, the generator says so on the viewer and the card. It doesn't relax
-them silently.
-
-### 5.6 The GM's role
-
-| when | what the GM does | what it can't do |
-|---|---|---|
-| **before the run** (offline, as today) | writes the **Conflict** (antagonist, goal, steps, climaxes, hooks) from the wiki and the hero's record; may write **authored opportunities** for key places (the GM's set pieces) | name anything the wiki doesn't have; write outcomes outside `LoopOutcome` |
-| **choosing** | per turn, the generator's top 10 candidates with their scores and `because`; the GM may swap the board's picks, but the board's constraints still apply | offer a candidate whose hard needs don't hold |
-| **flavouring** | titles, pitches, speakers (a remembered character as `offeredBy`), barks, the artifact's name and history, slot values within the template's ranges | change a template's ways or outcome kinds |
-| **inventing** | a new template in the grammar (JSON), saved under `data/opportunities/`, checked by `oppcheck` before use | invent `Need` or `LivePlay` kinds (those are contract changes for main and the user) |
-| **mid-run** (the user: "the GM can theoretically update the interactions mid run") | between turns: add an escalation step, move a climax, raise a hook, retire an opportunity, all as data checked again | rewrite what already happened; change a step that already fired |
-
-How it runs, following runsit's pattern: the deterministic generator always makes the board, and a GM file for this
-world and turn replaces or flavours it when present. The card says which ("written by the GM" or "from the template").
-On the phone there is no LLM in the loop. The GM's mid-run edits are files made between sessions, or by an agent on
-the desktop, until a live GM is designed. That's an open question (§10).
-
-### 5.7 Validation: `oppcheck`
-
-It sits beside storycheck and situationcheck (`src/gm/oppcheck.ts`, `node scripts/storycheck.mjs` gains it). It
-returns every problem, and none means the board can be offered. It never patches anything.
-
-| check | how |
+| part | how |
 |---|---|
-| shapes | every field typed; no extra fields; ids unique; no unfilled `{slot}` |
-| references | regions, settlements (in their region), factions, characters (alive), sites, lakes, crossings, items, roles (the unit generator's), things' kinds (the catalogue) exist in the snapshot and wiki |
-| needs hold | every hard `need` holds in the world as it is at the turn (a template offered at a ruined town fails) |
-| realisable consequences | every AtlasEvent passes `atlasEventProblems`; and per kind: a `drain` only where flooded; a `flood` names a level that `Terrain.flood` can fill from that point (a dry run of the basin fill on the CPU height grid); a `burn` only where something burns (plants or timber; RS25's masonry note); `ruin` and `rebuild` only where structures stand; `faction-power` and `relation` on known factions; `settle` on land, not water or another town; a `break` names a thing that exists (a crossing, a dam, an adit) |
-| distinct ways | at least two ways, and their success outcomes differ in at least one world consequence (not just the numbers): the "genuinely interesting" rule |
-| feasible for the base | the place is in reach (a route the hero's caps can cross, `borderCost` > 0); a live kind has a player (a `LivePlay` the area code can play); the scale is allowed; the requirements can be met by the base now or within its expiry |
-| the conflict | every hook it foreshadows is one the conflict raises; a `cancel` names a step that hasn't fired; at least one climax stays reachable after any outcome (no outcome makes the run unwinnable without saying so, as situationcheck's clock rule does) |
-| the board | 3-5 entries, the constraints of §5.5 met |
+| theme `T` | the share of `prefers` that hold, weighted by how far past the threshold; the purpose's score margin; overlap of `themes` with the conflict's hooks |
+| foreshadow `F` | `foreshadows ∩ hooks`, weighted by how soon the matching step is due; `answers ∩` raised hooks |
+| variety `V` | penalties for the same template or region as recent spawns, and for a map dominated by one challenge kind |
+| difficulty `D` | the offers' difficulty against the holdings that can meet them (the player's band by the conflict's progress; an autonomous offer against the best agents of its kind) |
+| hero `H` | for player offers, `ControllerProfile.encounters` for the live kind; 1 for building if the hero has the mode |
 
-## 6. Dispatch and the city builder in the same loop
+The starting weights are `0.30 T + 0.20 F + 0.15 V + 0.20 D + 0.15 H`, tuned in a viewer. Unaffordable known
+opportunities stay visible, as the user said. The map shows what's missing ("needs 8 workers"), which is also how a
+player learns what holding more would open.
 
-### 6.1 Dispatch: delegated encounters
+### 5.6 The GM
 
-The user: "sending limited troops or spies on missions with different rewards", and Darkest Dungeon's dispatch. A
-dispatch is an encounter whose mode is `dispatch`. Any opportunity with a non-live way can be dispatched. A live way can
-be dispatched too, at worse odds than playing it, so the player chooses between playing it themselves and the risk of
-sending others.
+| when | does | can't |
+|---|---|---|
+| before the run | writes the Conflict and the TravelRule; may author set-piece opportunities | name what the wiki lacks |
+| spawning | sees the top candidates per place with scores and `because`; swaps, flavours (titles, pitches, who offers it, the artifact's name), sets visibility (a secret kept hidden) | spawn an offer whose needs fail |
+| imposing | through a step's `imposes`: an opportunity the player must take now (the night assault, the outriders) | impose more than one at a time |
+| inventing | a new template in the grammar, saved under `data/opportunities/`, checked by `oppcheck` | invent `Need`, `AgentKind` or `LivePlay` kinds (contract changes) |
+| mid-run | between rounds: add or move a step, change the travel rule, retire an opportunity, all data checked again | rewrite resolutions already made |
 
-```ts
-export interface Dispatch {
-  id: string;
-  opportunity: string;
-  way: string;
-  members: string[];            // BaseMember ids sent (their `away` set)
-  leaves: number;               // run minute
-  returns: number;              // leaves + travel there and back at their pace + the encounter's turns
-  /** shown before sending: the odds per tier, from who goes */
-  odds: Record<Tier, number>;
-  seed: number;                 // the roll is made when it leaves: deterministic, testable, replayable
-}
+As runsit does today, the deterministic generator always runs, and a GM file for this world and round replaces or
+flavours its output. The card says which one it is.
 
-export interface DispatchReport {
-  dispatch: string;
-  tier: Tier;
-  /** a few lines: what they found, what happened, who was hurt (for the report card and the GM) */
-  lines: string[];
-  outcome: LoopOutcome;         // applied like any other: world, base, characters (injuries, deaths)
-}
-```
+### 5.7 `oppcheck`
 
-**Odds**: `p = σ((Σ members' skill × weight − difficulty × scale) / spread)`, split into tiers by fixed bands.
-`danger` sets how often failure becomes disaster (a death). The hero's absence costs a fixed malus on live ways. All
-of this is shown before sending (Darkest Dungeon's legibility). **Injuries** are `CharacterChange` statuses (`wounded`,
-`maimed`), so they carry over between runs through `CharacterRecord`. A stronghold's hospital (a building function)
-shortens their recovery. **Reports** arrive at `endTurn`, and each is noted in diplomacy as an `Interaction` with
-witnesses (the town saw your men burn its granary), so it comes up in dialog later.
+Everything situationcheck's design checked (shapes, references, needs hold, AtlasEvents realisable per kind, distinct
+outcomes across siblings, a climax reachable), plus these:
 
-Why the roll is made at departure: it keeps everything deterministic, and a test can pin a run. Why reports go
-through the same `LoopOutcome`: a dispatched dig and a played dig change the world the same way, and only the odds
-and the cost differ.
+| check | rule |
+|---|---|
+| uniformity | `challenge` present iff `requires` has the player; `autonomous` present iff not; a challenge's live kind has a player in the area code; a building challenge only for a hero with the mode |
+| requirements | agent kinds known; counts > 0; skill floors in 0..1; a requirement no agent in the world could ever meet is an error (a knight offer in a world with no knights to recruit) |
+| costs and gains | goods known; no outcome loses more agents than were committed; gains of new agent kinds name a template family that uses them (a reward that opens nothing is flagged) |
+| duration | > 0; at least the travel there and back at the slowest required agent's pace; before the expiry |
+| the strategic location | a commit is only from the location; a player offer is reachable under the travel rule this round, or marked unreachable |
+| the guarantees | §5.1's two: player offers reachable, one answering the conflict |
+| imposed | an imposed offer requires the player and expires the same round |
 
-**Taking control.** A dispatched live encounter can be joined by the hero if the base is fixed and the place is within
-a leg (the ruler rides out: the castle-court loop of LIVING_WORLD §3). It is then played live, with the dispatched
-members as followers (`Followers.recruit`).
+## 6. Character control and building as the player's challenges
 
-### 6.2 The building view as an encounter
+There is no dispatch section any more. Committing a knight is dispatch, and §4.3 covers it.
 
-The user: building is "a new view that essentially lets you paint into the building grid", with functions (housing,
-agriculture, port, civic, training camp, hospital …), and "only some heroes will get this mode". So `build` is an
-encounter mode, offered when `capacity.builds` holds (a builder hero and a fixed base, or a refugee column at
-template #19).
+**Character control.** The existing runsit area code plays an `AreaPlay`. The templates add delve, hold, escort, break,
+duel, hunt and explore, each needing a live implementation. Agents committed with the player (a companion, the levy)
+join the challenge as followers.
+
+**Building** (the user: paint into the building grid). A building challenge:
 
 ```ts
-/** What a cell of the settlement's grid is for. Each function is a "material" whose style decides how it renders. */
 export type BuildFunction = 'housing' | 'agriculture' | 'port' | 'civic' | 'training' | 'hospital' | 'storage' | 'workshop' | 'wall' | 'water' | 'shrine';
 
-export interface BuildPlan {
+export interface BuildChallenge {
   settlement: string;
-  grid: string;                                  // a SettlementGrid id (its cells are the painting surface)
-  /** painted cells: cell index → function and storeys (vertical: the user's "build vertically") */
-  cells: Record<number, { fn: BuildFunction; storeys: number }>;
+  grid?: string;                 // a SettlementGrid id: the painting surface
+  budget: Partial<Record<GoodKind, number>>;
+  /** met when the derived totals reach these (a petition's need: walls before the host) */
+  goal?: { text: string; needs: Partial<Record<BuildFunction, number>> };
 }
 
-/** What a plan gives the base, derived by rules (data, like compose.ts CapabilityRule), never stored. */
+/** what painted cells give, as data (derived, never stored: compose.ts's principle) */
 export interface FunctionRule {
   fn: BuildFunction;
-  /** per painted cell (and storey): what it adds */
-  per: { rate?: Partial<Record<ResourceId, number>>; capacity?: Partial<Record<keyof BaseCapacity, number>>; defence?: number; people?: number };
-  /** what it costs to paint a cell */
-  cost: Partial<Record<ResourceId, number>>;
-  /** contiguous cells of one function form one structure (a castle, a hospital) or a dense block (homes): the style's call */
+  per: { rate?: Partial<Record<GoodKind, number>>; agents?: { kind: AgentKind; every: number /* rounds */ }; defence?: number; people?: number };
+  cost: Partial<Record<GoodKind, number>>;
   joins: 'one-structure' | 'block';
-}
-
-export interface BuildGoal {
-  /** a petition's need: "water for the people", "walls before the host" */
-  text: string;
-  /** met when the derived totals reach these */
-  needs: Partial<Record<BuildFunction, number>>;
 }
 ```
 
-How it plays: the turn's build encounter opens the building view on the settlement's grid with a budget. The player
-paints functions, and each painted cell costs its function's `cost`. The turn ends and the plan is applied. The
-structures system grows the buildings over the next turns (`CitySpec.progress`, the stored progress the structures
-track already has), and the derived totals change the base (`rates`, `capacity`, defence for the climax). "Expand your
-training camp rather than build more barracks": painting next to an existing training cell grows that structure,
-because contiguous cells join. Why rules as data: the user's derived-capabilities principle, and the GM and templates
-can name functions (#19 settle, #21 cistern) without knowing the rules' numbers.
+What painting gives the holdings ties building into the same loop. A training camp produces knights or army
+companies over rounds. Housing produces workers. A hospital shortens wounded agents' recovery. Walls add defence to the
+night's imposed defence. So building is how a ruler gets the resources that open more opportunities. The structures
+system grows the buildings over the following rounds (`CitySpec.progress`).
 
-What's missing for it: the painting UI; a `BuildFunction` → structures mapping (structures has `TileUse` and
-`BuildingKind`: house, hut, farmhouse, barn, so functions need styles and modules); `Building.use` filled from the plan;
-the settlement's `stores` ticking (an economy step per turn).
-
-### 6.3 One schedule
-
-For a fixed base the turn is the user's schedule: "switch between building, fending off threats, dispatching workers
-and armies … and answering petitions".
-
-| part of the day | what the player does | the loop's call |
-|---|---|---|
-| morning | read reports; answer a petition (a board entry offered by the town); paint (build); send dispatches | `board()`, `take(…build…)`, `take(…dispatch…)` |
-| day | ride out to one live opportunity in reach, or stay | `take(…live…)`, `resolve` |
-| night | the conflict's wave if a step brings one (the town's defence, runsit's finale played as a recurring `hold`) | `endTurn` → steps fire → a live `town` or `hold` encounter |
-
-A moving base has the same calls without the building part: reports at camp, then the board at the edge, then the leg.
+Still missing for building: the painting UI; function styles and modules in structures (it has house, hut, farmhouse,
+barn); `Building.use` from the plan; settlement stores ticking.
 
 ## 7. What to build first: a vertical slice
 
-### A. The moving base: runsit's horde run as the loop
+### A. A lone hero: runsit's horde run on the strategic map
 
-| step | what | measure / test |
+| step | what | test / measure |
 |---|---|---|
-| A1 | `contracts/runloop.ts` with the types above (only what A needs: Base, Conflict, Opportunity, EncounterSpec with `live` and `choice`, LoopOutcome, RunClock) | typecheck |
-| A2 | `situationToLoop(sit)`: a `Situation` as a Conflict (the horde; `arrives` as one step), a lone Base, its areas and choices as opportunities, its finale as the climax | a Node test: every path of `pathEstimates` played through `RunLoop` gives the same endings and clock as `SituationRun` |
-| A3 | the generator: `LocationFacts` from the wiki and snapshot (purpose and story once `cities` merges; before that the needs that use them are skipped, and the generator says so), six templates (#11 the levy, #9's ambush on the road, #10 the market (the trader), #15 burn the bridge, #7 harvest before the host, #1 the flooded shaft), scoring and the board | Node tests on seed 1's fixture: the board on the Bumku run has the levy, the bridge on the Bethorn crossing (the GM's "Grey Muster" already names it), and one purpose template; deterministic; time per turn measured (expect < 5 ms) |
-| A4 | `oppcheck` (the checks of §5.7 that A3's templates need: references, needs, AtlasEvents, distinct ways, reach, the conflict's climax reachable) | runs in `scripts/storycheck.mjs`; the six templates and seed 1's boards pass |
-| A5 | the edge card shows the board instead of fixed choices: each with its `because`, its stakes, and what the clock says (runsit's notes) | headless shot at the phone proxy; the run plays to an ending; driveprofile unchanged (the board is CPU, off the frame) |
-| A6 | `break` as a live play for the bridge (the real fire on the crossing's timber, or the solver bringing it down) and the dam later | the crossing removed in the world state; the next run's graph has the barrier |
+| A1 | `contracts/opportunity.ts`: Agent, Holdings, StrategicLocation, TravelRule, Opportunity, Requirement, Challenge, Commitment, Resolution, Conflict, RunClock | typecheck |
+| A2 | `situationToMap(sit)`: the player as the only agent; travel `choice` (the ways on); each area a player opportunity (its `AreaPlay` the challenge); the horde a conflict; the town the climax opportunity; the hold's `deliver` resolving with **gain: an army agent** (the levy) in place of `finaleSetup`'s special case | Node test: every path gives the same endings and clock as `SituationRun` |
+| A3 | the levy as a resource: with the army held, #15's "Hold the ford" and #7's "Bring it in" spawn as autonomous offers running while the hero rides on. This is the user's "companions enable additional opportunities that resolve while the hero plays", inside the run they've already played | Node test on seed 1 (the Bumku run): the army commits, resolves at its time, the delay or the stock applied |
+| A4 | the generator and six templates (#11, #15, #10, #7, #1, #22); spawning by place with visibility; scoring; the two guarantees | Node tests: deterministic; the Bethorn crossing gets #15 (the GM's Grey Muster names it); time per round measured (expect < 5 ms) |
+| A5 | `oppcheck` for those six | runs in `scripts/storycheck.mjs` |
+| A6 | the atlas map shows the visible opportunities, the locked agents and their return times, the unaffordable greyed with what's missing; commits from the current destination | headless shot at the phone proxy; the run plays to an ending; driveprofile unchanged |
 
-Why this first: the horde run already works on the phone (merge122). The adapter proves the contract before anything
-moves, and the board is the user's new ask ("locations as spawning opportunities"), shown in the run they have already
-played.
-
-### B. The fixed base: a stronghold against the same conflict
+### B. A ruler at a fixed location
 
 | step | what |
 |---|---|
-| B1 | the base is the threatened town (Bumku) and the hero its warden; days of N run minutes; the conflict's steps fire as days pass (the barrows open, the bridge, the farms) |
-| B2 | the morning board from the generator (the same templates plus #12 the oath, #13 the dig, #21 a petition), dispatch with odds and reports (`choice` and `dispatch` modes; no new live plays) |
-| B3 | the night: runsit's finale (`FinaleRules`, the horde, real fires) as a recurring `hold` with an escalating count; the town's defence from derived capacity (walls painted, militia from housing) |
-| B4 | the building view's first cut: paint 3 functions (housing, training, wall) onto the town's grid with a budget; derived rules only; drawn with the structures system's existing modules (the function picks the style) |
-| B5 | the climax: the host's full assault, or ride out to its seat if progress was pushed below a threshold |
+| B1 | the hero is Bumku's warden; travel `fixed`; holdings: the player, two knights, workers 10, a scout, a diplomat; days of N run minutes |
+| B2 | opportunities in the seat's sphere from the same templates plus #12, #13, #21; many commitments at once; reports on resolution |
+| B3 | the night: the conflict's step imposes a defence (runsit's finale, `FinaleRules`, the real fires) on the player, with escalating counts |
+| B4 | building's first cut: paint housing, training and wall onto the town's grid; the rules produce workers and knights, and walls add defence |
+| B5 | the climax: the host's full assault, or ride to its seat if progress was pushed down (the travel rule opens for it) |
 
-Why the same conflict: the two halves then test one thing. A moving base and a fixed base on one conflict, one
-contract and one generator, which is the user's "the interface can be similar".
+Why these two: they show the user's scaling, a lone hero then a ruler, on one conflict, one contract and one
+generator. A3 shows the scaling inside a single run.
 
-**Not in the slice**: the army scale; rituals and nodes (LW5); a live GM mid-run; diplomacy beyond agreements written
-by outcomes; the economy beyond rates per turn.
+## 8. Conflations in today's code (kept from revision 1)
 
-## 8. Conflations in today's code (flagged per the working rules)
+1. A settlement's condition is written directly (`finishSituation`, `setCondition`), outside `WorldState.apply`. I
+   propose a `settlement-condition` AtlasEvent.
+2. `Situation` holds four concerns: the conflict, the run's map, the challenge's play, and the items.
+3. Two clocks: runplan's `RunClock` and `SituationRun.clock` with `areaMinutes`, the same rule written twice.
+4. Two encounter vocabularies: `EncounterKind` and the `AreaPlay` kinds. `LivePlay` would be what's played, and
+   `EncounterKind` would stay only as the hero's likes.
+5. Three item representations: `ItemDef`/`Loadout`, `CharacterRecord.gear` strings, and `Instance`. A kept item would
+   be an `Instance` and `ItemDef` its run-time view.
+6. A faction's feeling toward the player is in both `Faction.attitude` and `Diplomacy.opinion(player)`.
+7. `HERO_NAMES` lives in runplan/consequences.ts, with the outcome rules.
+8. `Settlement.stores`, `people` and `needs` have no owner that ticks them. A ruler's holdings would read them, so the
+   settlements system should own the economy step.
 
-1. **A settlement's condition is written directly**, outside `WorldState.apply`: `finishSituation` sets
-   `s.condition` and level-sit calls `setCondition`. It is the one world change that isn't an event. Proposal: an
-   AtlasEvent kind `settlement-condition` (detail.settlement, detail.condition), so history, the settlement's story
-   (cities' story.ts reads history) and replays see it.
-2. **`Situation` holds four concerns**: the conflict (threat, target, endings), the run's map (areas, choices), the
-   encounter's play (`AreaPlay`) and the items. The loop separates them. Situation stays as a file format behind the
-   adapter until the user agrees.
-3. **Two clocks**: runplan's `RunClock` (deadline, stage by par) and `SituationRun.clock` with `areaMinutes`. They use
-   the same rule (planned minutes, up to 1.5×), written twice. Proposal: one `RunClock`.
-4. **Two encounter vocabularies**: runplan's `EncounterKind` (race, chase, fight, horde, spectacle …) and runsit's
-   `AreaPlay` kinds. Proposal: `LivePlay` is what's played. `EncounterKind` stays only as the hero's likes (what
-   `ControllerProfile.encounters` scores), with a table from each `LivePlay` kind to the likes it satisfies.
-5. **Three item representations**: `ItemDef` and `Loadout` (runsit), `CharacterRecord.gear: string[]` (runplan), and
-   `Instance` (recipe.ts, the truth for things with history). Proposal: an item a hero keeps after a run is an
-   `Instance`. `ItemDef` is its run-time view (slots and effects), converted at the run's boundary. `gear` holds
-   Instance ids.
-6. **A faction's feeling toward the player is in two places**: `Faction.attitude` and `Diplomacy.opinion(player)`.
-   One should be derived from the other. The loop writes interactions, so the proposal is that attitude is read off
-   diplomacy.
-7. **The hero roster is in consequences.ts** (`HERO_NAMES`), with the outcome rules. It belongs with the heroes
-   (heroes.ts or the CharacterRecords).
-8. **`Settlement.stores`, `people` and `needs` exist but are empty on places** (settle/records.ts). The loop's economy
-   needs them filled and ticked by one owner, the settlements system. Neither the run nor the city builder should own
-   them.
+And one in runsit that this design removes: the hold's levy is a special case in `finaleSetup`, where it should be a
+resource gained.
 
-## 9. What's missing, by owner (for the backlog)
+## 9. Missing, by owner
 
 | item | owner | needed by |
 |---|---|---|
-| purposes and stories on places | `cities` → merge | the generator's best facts (A3) |
-| hero abilities as data (`raise-dead`, `telekinesis`, `runes`, `lance`) | play | `Need` hero abilities; #13, #17 |
-| traits on places | `traits` → merge | `Need` hero traits (undead lich) |
-| caves, dams, magic nodes as features | terrain (caves, dams), atlas (nodes, LW5) | #14, #16, rituals later |
-| `settlement-condition` AtlasEvent; stores ticking | world state, settlements | §8 items 1 and 8 |
-| new live plays: delve, hold, escort, break, duel, hunt | runsit's area code | the templates' live ways |
-| `BuildFunction` styles in structures | structures | §6.2 |
-| rumours in the snapshot | world state | carry-over |
+| hero abilities as data (raise-dead, telekinesis, runes, lance) | play | player offers of #13, #17 |
+| caves, dams, magic nodes as features | terrain; atlas (LW5) | #14, #16 |
+| `settlement-condition` AtlasEvent; stores ticking | world state; settlements | §8 items 1 and 8 |
+| live plays: delve, hold, escort, break, duel, hunt, explore | runsit's area code | the player offers |
+| function styles in structures | structures | building |
+| opportunities and rumours in the snapshot | world state | carry-over, visibility |
+| recruitable agents (where a knight or a scout comes from: a hold's hall, the market, a freed captive) | the templates + settlements | knight and scout offers |
 
-## 10. Open questions for the user
+## 10. Open questions for the user (mostly about reading the correction)
 
-1. **The board's size and pace.** 3 opportunities for a lone hero, up to 5 for a stronghold, a new board every turn?
-   Or a persistent board where offers stay until they expire, as FTL's map does?
-2. **One action per turn, or several by scale?** A lone hero takes one. A stronghold might dispatch two parties and
-   build while the hero rides out. Is that the right asymmetry?
-3. **Dispatch odds shown as numbers** (Darkest Dungeon, XCOM), or as words ("likely", "a gamble")?
-4. **Rumours.** Should some opportunities be hidden until scouted or bought (#10), or is everything on the board
-   known?
-5. **What carries over from the run's resources?** Coin and supplies vanish, become renown, or stay with the hero?
-   A stronghold's stores stay because they're its settlement's.
-6. **Conflict drift.** Does the antagonist advance on its own over time (pressure, as runsit's clock does), or only
-   on steps and the player's failures? Folk-hero runs were meant to have a tunable enemy track (round 120).
-7. **The GM mid-run.** Is a live LLM GM between turns wanted (desktop only?), or are mid-run changes authored ahead
-   as conditional steps the GM writes before the run?
-8. **Template authorship.** Should the GM be allowed to invent templates freely (checked by `oppcheck`), or only
-   flavour the library's, with new templates written by agents and reviewed with you?
-9. **Live versus choice.** How often should an opportunity *require* playing live? Proposal: every board has at least
-   one live way, and a choice way never gives the triumph tier.
-10. **The stronghold's day.** Should a day be a fixed number of minutes with a night wave (Thronefall), or turns
-    with no real time between them (Reigns), with the night only when a step brings one?
-11. **Morally grey ways** (rob the caravan, raise the dead, sack the town). Should every template offer a dark way,
-    with the world remembering it (diplomacy grudges)?
-12. **Scale changes mid-run.** A refugee column settles (#19) and becomes a stronghold within the run. Is that wanted
-    now, or only between runs (the next run as city management)?
+1. **"Committed from the player's current strategic location"**: must the agents be there too (the knights at the
+   seat), or may the player commit any agent it holds, wherever that agent is, as long as the player is at the
+   location? I read it as the first, since it makes where the player stands matter.
+2. **Imposed opportunities**: the night's assault, outriders on the road, the climax. Are these opportunities the
+   conflict forces on the player resource? Or should every opportunity be the player's choice, with the threat as a
+   consequence of ignoring a visible one ("defend the walls tonight")?
+3. **Alternatives as siblings**: "the player or a knight" as two opportunities at one place, as proposed. Or is it
+   one opportunity whose requirement is "one of"?
+4. **Travel**: is moving the strategic location itself an opportunity (it requires the player, has a duration, and
+   its legs can meet challenges), or a separate action on the map?
+5. **Agent quality**: does a veteran knight resolve better than a green one (skills), or are requirements and odds
+   fixed per opportunity, with no quality?
+6. **The round's length**: the player's challenge sets it, and autonomous commitments tick on the clock meanwhile.
+   Should a round with no player commitment (the player waits) advance by a fixed step?
+7. **Visibility of the unaffordable**: show all known ones, or a few, ranked?
+8. **What carries over**: named agents (knights) as CharacterRecords, yes. Groups (workers, armies) go back to their
+   settlement, or stay with the hero?
+9. **The GM mid-run**: a live LLM between rounds (desktop only?), or steps written ahead?
+10. **Scale changes inside a run** (the levy, a vassal, a settled column): wanted now, as A3 proposes, or only
+    between runs?
