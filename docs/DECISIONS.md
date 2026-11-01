@@ -300,6 +300,18 @@ each was implemented.
   knight) unlocking special opportunities; levelling up = better opportunities and resolution bonuses (negate a kind's
   negative effects, resolve some instantly).
 
+- The user, verbatim, on the run-loop revision's questions (hand size, persistence, a ruler riding out):
+
+> 1. Even if we use cards behind the scenes the game should show them as events or opportunities on the map not as a hand. The player may only have one option a turn depending on what makes sense. A ruler may just get city builder or respond to attacks or maybe an opportunity to ride out and back but it costs turns so it is expensive. Part of the challenge here is designing a mechanical way to filter these and deal just the ones that make sense. I like your suggestion of most expensive cards you can afford.
+> 2. Yes I think that we want them to persist.
+> 3. I think we will need to tune the dealer and learn what is fun for play via iteration.
+
+- → Cards are internal only: shown as events and opportunities on the atlas map, never as a hand. A turn may offer one
+  option where that is what makes sense (a ruler: building, answering attacks, or riding out and back at a cost in
+  turns). The dealer filters to what makes sense and deals the most expensive cards you can afford. Tags and bonuses
+  persist with named characters across runs. The dealer is tuned by iteration: it needs its own tuning panel and a way
+  to watch what it deals and why. → Slice A (the horde run as opportunities on the map) starts on branch .
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
