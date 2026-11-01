@@ -286,6 +286,20 @@ each was implemented.
 
 - The user corrected the run-loop draft with "Living World — Strategic Map and Opportunity System", kept verbatim at docs/design/STRATEGIC_MAP.md (authoritative over RUN_LOOP.md where they differ). Its core: every opportunity has resource requirements, costs, duration, outcomes and a location; the player commits resources (no manual allocation, no separate dispatch category); the player resource makes an opportunity the round's playable challenge (character control or building); other resources resolve it autonomously over time; committed resources are locked until it resolves; opportunities run concurrently; commits only from the current strategic location; the GM sets the travel freedom; scouting, rumours and diplomacy reveal opportunities; new resources unlock new kinds; unaffordable ones may stay visible. Three priority systems: the atlas/opportunity map, character control, building. "Opportunities are uniform."
 
+- The user's answers to the run-loop questions (1 agents available where, 2 forced opportunities, 3 sibling offers, 4 travel, 5 agent quality), verbatim:
+
+> 1. I think for simplicity they must be available to your character. Am empire might have access to resources from many constalation settlements but the leader of a city only what is at the city. I would limit the number of opportunities and instead show ones that require more resources. If you have multiple armies you start seeing opportunities that require multiple armies. That way the scale still can grow and be epic but players are never overwhelmed with choices. We want the mechanical and world effects of the choices and potential synergy to be what makes each turn fun. Think of it sort of like a set of cards you can purchase or assign resources to that can resolve or pop up each turn. Some can have negative effects for letting them expire. Which goes right into your second question. Opportunities can trigger player interactions and consequences. 3. I would only show one option to the player and keep player opportunities separate. 4.i would treat it as opportunities that require the player and therefore playing travels you to them. Think of slay the spire or FTL where you have a choice of next destination but you have to keep going. I would have the story progress players to the conclusion with interesting choices along the way. 5. Interchangeable but I would have tags so named characters are also knights or whatever and then have special opportunities that only show up for them. Imagine that one of the ways your party can level up is by gaining better opportunities or resolution bonuses. Negate a negative effect of certain types of opportunity or resolve some instantly etc
+
+- → Resources: only what is available to your character (a city's ruler commits what is at the city; an empire what its
+  settlements hold). Few opportunities at a time, scaling up in what they require (two armies -> two-army opportunities):
+  epic without overwhelming; each turn's fun is the choices' mechanical and world effects and their synergy. Cards you
+  buy or assign resources to, that resolve or appear each turn; some have penalties when they expire; opportunities can
+  trigger player interactions and consequences (the night assault). One option shown; player opportunities kept separate.
+  Travel = player opportunities: playing one travels you there (Slay the Spire / FTL: choose the next destination, keep
+  going); the story drives to the conclusion. Agents interchangeable by kind, with tags (a named character is also a
+  knight) unlocking special opportunities; levelling up = better opportunities and resolution bonuses (negate a kind's
+  negative effects, resolve some instantly).
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
