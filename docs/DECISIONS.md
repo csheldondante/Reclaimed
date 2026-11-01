@@ -280,6 +280,8 @@ each was implemented.
 
 - The user, verbatim: "I meant the current technique. The section judge was slower on phone I thought? My main point is they were all fine for now and I want to defer working on physics and focus on the gameplay so let's do that." → lattice x runs stays the default; jb6 stays unmerged on its branch; physics deferred (PH1).
 
+- The user, verbatim, on the cities shots: "This looks good to merge but it's not clear that it has the townscaper property of being able to build vertically and it really doesn't showcase building on varied terrain and the towns don't look that different based on purpose but they do look cool so merge and just take notes of gaps and a Todo to come back and iterate on this" → cities and traits merged (merge123); gaps filed as STR50-STR52.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:

@@ -316,6 +316,9 @@ tests work and do quick smoke tests to find failures early." docs/TESTING.md.
 | CB1 | Action combat controls improved, and a combat gym | L | next (design talk) |
 | RN2 | Run structure: city builder + overmap + dispatch + choices tied to the world state; a process generating location opportunities from what is at the place, the hero and the run (thematic, real consequences, gameplay bonuses) | L | next (design) |
 | TR40 | Trees baked into isometric sprites for the low LOD (visual continuity with the near trees) | M | deferred |
+| STR50 | Townscaper verticality: build up as well as out (stacked tiles, storeys over streets, bridges between towers, terraces); not evident in today's towns (round 120) | L | todo (iterate) |
+| STR51 | Towns on varied terrain: showcase hills, cliffs, terraces, rivers and coves in the viewer and the atlas (today the viewer is mostly flat ground) | M | todo (iterate) |
+| STR52 | Purpose that reads at a glance: a mining town, a port and a lumber camp should look clearly different (silhouette, layout, materials, works dominating), not the same town with extras | M | todo (iterate) |
 | FLO21 | Birch cost on the phone: the user's result good — done (flora 18c3bdb, unmerged) | S | done |
 
 ## Round 118 (2026-10-30, session 5, `places`) — found while reviewing the tracks
