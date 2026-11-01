@@ -282,6 +282,8 @@ each was implemented.
 
 - The user, verbatim, on the cities shots: "This looks good to merge but it's not clear that it has the townscaper property of being able to build vertically and it really doesn't showcase building on varied terrain and the towns don't look that different based on purpose but they do look cool so merge and just take notes of gaps and a Todo to come back and iterate on this" → cities and traits merged (merge123); gaps filed as STR50-STR52.
 
+- The user, verbatim, after trying the Traits Lab on the phone: "Traits are great. Super cool." → LW1 accepted as the base for effects; the open calls (bodies everywhere, the sanctuary sparing allied undead, the look) stay at their defaults until the user says otherwise.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
