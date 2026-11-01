@@ -171,7 +171,7 @@ export const LEVELS: LevelDef[] = [
     model: 'sign',
     generate: (dims) => generateTraitlab(dims),
     sandbox: true,
-    hidden: true,
+    // (on the title screen, beside the playground: main's word, merge123 — not hidden from the user)
     zMax: 64,
     stations: TRAITLAB_STATIONS,
   },

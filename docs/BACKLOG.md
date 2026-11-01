@@ -12,6 +12,23 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 123 (2026-10-31, session 5, `merge123`) — cities and traits merged into places (DECISIONS round 120)
+
+The user (round 120): "This looks good to merge ... so merge and just take notes of gaps and a Todo to come back and
+iterate on this" (the gaps: STR50-52). `cities` (a659a7c) and `traits` (85e935d) onto `places` 9d453a5. DEVLOG round 123
+(`merge123`); the structure review in C:/Projects/shots88/merge123/STRUCTURE.md.
+
+| id | item | size | status |
+|---|---|---|---|
+| M123-1 | cities and traits merged onto places: settlements with purposes and stories, ports and ships, dressing and night lights; the trait system on the GPU agents (five-vec4 units, UNIT_V, beside the solver's unitsG()) | M | done (`merge123`) |
+| M123-2 | The traits station moved off the playground (merge121's slide/house/metal stations took its back row) to its own level, The Traits Lab (`?level=traitlab`, on the title screen: levels/traitlab.ts); scripts/traitshot.mjs goes there | S | done (`merge123`) |
+| M123-3 | Play's lich raises the dead through the trait system (LW1-1, M122-7): a 💀 raise button (raiseReach 9, raiseEvery 3 s, tunable) calls PlayWorld.raise, put together in scenes/level.ts from `traits.apply({ op: 'raise', group: RAISED_GROUP })`; those raised are ordered to follow the hero and are no longer hostile. Play had no raise logic of its own: nothing deleted | S | done (`merge123`) |
+| M123-4 | Settlement condition has one owner: the world state (runsit's finishSituation writes it; Settlements.setCondition realises it charred). cities' story only reads the world state's events and region state for its marks, never the condition. The story doesn't read `condition` yet: a ruined town shows its burned quarter only if the run's outcome put a `burn` event in the region — the run-loop's `settlement-condition` AtlasEvent through WorldState.apply would let it (not built here) | S | open |
+| M123-5 | The cities stand-in: dockers share the farmers' fields (life.ts ROUTINE; STR38) — noted, not fixed | S | open |
+| M123-6 | Play's lich predicts throws with UNIT_GRAVITY = 20 ("agents.ts AGENT_GRAVITY"), but the units now fall by unitsG() = world gravity × TUNE.units.gravity (merge121): the comment names a constant that's gone; the prediction drifts if the tuning moves | S | open |
+| M123-7 | The lich's own blows (slam, push, storm) strike its raised followers too: a hit doesn't know sides | S | open |
+| M123-8 | The GM fixtures are stale against the re-pulled seed-1 wiki (pre-existing on places): scripts/gmtest.mjs stops on "f-kuharm isn't in the snapshot"; the Bell Under Kaudru story has 11 problems in storycheck. The wiki was rebuilt here from the cache with cities' purposes and stories (data/wiki/seed1.*) | S | open |
+
 ## Round 122 (2026-10-31, session 5, `merge122`) — runsit merged into places: the base for the opportunity loop (DECISIONS round 120)
 
 The user (round 120): "Feel free to merge whatever will be the base for that." `runsit` (a84b8c4, holding `runplay`,
@@ -27,7 +44,7 @@ C:/Projects/shots88/merge122/STRUCTURE.md.
 | M122-4 | runsit.mjs's autopilot sometimes circles the flee area's way on 15-25 cells off for minutes (THERE 8 cells; full stick at the bike's speed) — the playthrough is flaky; slow near the goal, or the area's goal a band the bike rides through | S | open |
 | M122-5 | Structure follow-ups (STRUCTURE.md): runsit reaches into runplan's insides (route, rng, graph, travel, consequences, heroes); runplay into play's (core/bike, core/chase, draw/shapes, session, world); play and runplay into render/camera and render/renderer types; LevelScene wires both run modes and the sandbox (three PlaySession.start sites) — each behind its owner's API | M | open |
 | M122-6 | Two answers to "how fast through brush": play's `vegetation.through` (crossCost) and flora's `passage().speed` — one should go (flora's is measured from the stand) | S | open |
-| M122-7 | The lich's raise dead through traits' `raise` effect (the hook in traits' ARCHITECTURE) once `traits` is on places (not yet at this merge) | S | open (needs traits) |
+| M122-7 | The lich's raise dead through traits' `raise` effect (the hook in traits' ARCHITECTURE) once `traits` is on places (not yet at this merge) | S | done (`merge123`: M123-3) |
 
 ## Round 120 (2026-10-31, branch `runsit`) — the run as a situation on the live map (DECISIONS round 120)
 
@@ -318,8 +335,8 @@ tests work and do quick smoke tests to find failures early." docs/TESTING.md.
 | STR36 | Specialised settlements: mining, farming, ports, lumber, trading (with STR30's purposes and stories) | L | done (cities: structures/purpose.ts — each purpose's works, buildings, props, people and jobs) |
 | WD1 | The same seed must make the same world on every GPU (found by runsit, round 120): the atlas's macro ground is read back from the GPU and rivers and settlements are planned on it, so another GPU can make other towns from one seed - a GM story, a save or a shared run then names places that aren't there. Make the planning inputs bit-exact across GPUs (integer or fixed-point where it decides, or plan on the CPU from the seed), with a cross-adapter test (Dawn D3D12 vs SwiftShader) | M | open |
 | PH1 | Physics done properly (round 120, the user's design): dispatches for integration, coarse collision, fine collision; the lattice only for colliding bodies (priority to bodies the player handles and those past a size); then the solver; a GPU collision-event buffer read back asynchronously by the CPU for other systems (effects, sound, damage); kinematic bodies in the same broadphase. Needs a collaborative design review with an agent before building | L | deferred (design recorded) |
-| LW1 | Traits and effects (Living World slice 1): one trait system across agents, bodies, structures and materials; effects as operations on fields, materials, geometry and agents; interaction systems (combat etc.) as modular GPU kernels over the shared trait data, cheap enough for every agent; first slice healing vs necromancy (the lich's raise dead + a healing field) | L | wip (`traits`: the trait/effect contract, module registry, core, the slice's rules, the playground's traits station; ARCHITECTURE "Traits and effects") |
-| LW1-1 | Wire play's lich (heroes/lich.ts, branch play / runsit) to the effect path when play merges into places: its raise dead is `world.traits.apply({ op: 'raise', group, at, radius })` (ARCHITECTURE "Traits and effects": the one-line hook); a sanctuary for a healer hero | S | next (after play/runsit merge) |
+| LW1 | Traits and effects (Living World slice 1): one trait system across agents, bodies, structures and materials; effects as operations on fields, materials, geometry and agents; interaction systems (combat etc.) as modular GPU kernels over the shared trait data, cheap enough for every agent; first slice healing vs necromancy (the lich's raise dead + a healing field) | L | first slice done (`traits`, merged `merge123`: the trait/effect contract, module registry, core, the slice's rules, the playground's traits station; ARCHITECTURE "Traits and effects") |
+| LW1-1 | Wire play's lich (heroes/lich.ts, branch play / runsit) to the effect path when play merges into places: its raise dead is `world.traits.apply({ op: 'raise', group, at, radius })` (ARCHITECTURE "Traits and effects": the one-line hook); a sanctuary for a healer hero | S | done (`merge123`: M123-3) |
 | LW1-2 | Traits on bodies and structures beyond their materials: a per-body / per-structure trait word (a warded wall, an animated statue) in the same id space; today they reach them only through MATERIAL_TRAITS and the Grow/Mend events | M | open |
 | LW1-3 | More of the vocabulary as modules: invisibility (perception), flying (reach), fire effects that ignite (the fire field), a necrotic blight field on vegetation (wilt), possession/charm (group change) | M | open |
 | LW1-4 | Harm sparks as real particles (particles.wgsl) rather than two glowing motes in the unit's draw; a heal glow pool on the ground | S | open |

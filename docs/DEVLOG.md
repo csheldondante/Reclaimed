@@ -15645,3 +15645,48 @@ care whose they are); fear sends the village up its field; petrify turns the wal
 (04-sanctuary-close.png, zoom 26); at the station's default zoom the halos and sparks are a few pixels (LW1-4).
 The first run found the playground had no one draining the agents' events (no Units layer): corpse mode's books live in
 the sync, so the station syncs every 250 ms while it has agents.
+
+## Round 123 — merge123: cities and traits into places (2026-10-31, session 5)
+
+The user (round 120): "This looks good to merge ... so merge and just take notes of gaps and a Todo to come back and
+iterate on this". `cities` (a659a7c) then `traits` (85e935d) onto `places` 9d453a5 (which now holds the physics,
+merge121, and runsit/play, merge122 — neither branch had seen them). BACKLOG round 123 (M123-1..8).
+
+**Conflicts and how each went.**
+- cities had flipped two files' line endings (level.ts to LF, gm/wiki.ts to CRLF): a whole-file diff each. Merged with
+  `-Xignore-cr-at-eol`, then places' endings put back (level.ts CRLF, wiki.ts LF); cities' new lines in ARCHITECTURE,
+  BRANCHES and DEVLOG were LF in CRLF files and were made CRLF. Real changes: wiki.ts +40, level.ts +9.
+- data/atlas/seed1.json: places' re-pulled facts (runsit's) kept, and cities' scripts/factstraits.mjs run on them for the
+  region kind traits (7772 regions) — the same thing cities did to its older copy.
+- pages.yml: places' list. BACKLOG: places' version, cities' and traits' sections and rows re-added (STR30 done by
+  cities, FO1 keeps runsit's first slice, PH1 places' round-120 design); one `# Backlog`. DEVLOG: both.
+- agents.ts: places' `unitsG()` (the solver's gravity, merge121) with traits' five-vec4 unit (UNIT_V = 5, the trait
+  word). units.wgsl merged clean: every `u * 4u` became `u * UNIT_V`, and nothing else on places reads the unit buffer
+  with a 4-vec4 stride (checked: agents.ts' readback goes through UF).
+- level.ts: both — merge121's station kit (pour, drop, wakeMetal, dropModels) and traits' `traits` driver.
+- playground.ts: merge121's node-solver stations (slide, house, metal: x 112..256, rows 192..240) took the back row the
+  traits station sat on (x 128..256, rows 192..256). Squeezing it into the 16 rows left, or overlapping a solver
+  station (whose reset would restore the other's chunks), were both worse than a level of its own: The Traits Lab
+  (`?level=traitlab`, levels/traitlab.ts — a flat soil plain, the station in the middle; on the title screen, not
+  hidden, at main's word). scenes/level.ts already gives any level with a 'traits' station its driver.
+
+**Consolidations.**
+- *Traits' raise ↔ play's lich (LW1-1, M122-7).* Play's lich had no raise dead of its own (the port left the
+  spellbook in GameplayGM), so nothing was deleted. It gains a 💀 raise button (raiseReach 9 cells, raiseEvery 3 s,
+  on the tune panel) that calls `PlayWorld.raise(x, y, r)` — optional, so play's Node tests and other worlds need none.
+  scenes/level.ts puts it together at the boundary: `traits.apply({ op: 'raise', group: RAISED_GROUP, … })`, and each
+  unit AgentUnits reports `raised` is ordered to follow the 'hero' actor. AgentUnits drops a raised unit's hostility
+  (a raider stood up by the hero's lich would otherwise hunt the hero once ordered). Unit test: the button asks the
+  world once with its reach, then cools down.
+- *cities' purpose and story ↔ runsit.* The wiki keeps both (gm/wiki.ts); data/wiki/seed1.json and .md rebuilt from
+  the cache (`node scripts/worldwiki.mjs`) so the GM reads them (140 settlements, each with purpose and story).
+  runsit's filler on the new wiki: `node scripts/situation.mjs` fills "The Dead Come for Bumku" in 34 ms, its paths
+  checked. scripts/gmtest.mjs and the Bell story's storycheck fail the same way with places' own wiki (pre-existing,
+  M123-8).
+- *Settlement condition: one owner.* The world state's settlement record: runsit's finishSituation writes it, and
+  Settlements.setCondition realises it (charred). cities' story never writes a condition — it reads the world state's
+  events (burn, flood, ruin, rebuild) and region state for its marks. No third path added; the gap (the story doesn't
+  see `condition`) and the run-loop's `settlement-condition` AtlasEvent are M123-4.
+- *The cities stand-in:* dockers share the farmers' fields (STR38) — noted (M123-5), not fixed.
+
+Typecheck clean; unit tests 441 passed (2 expected fail).

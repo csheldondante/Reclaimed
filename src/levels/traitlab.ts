@@ -1,4 +1,4 @@
-// The traits lab (?level=traitlab, merge123): the trait system's station (LW1) on a plain of its own. On the traits
+// The traits lab (?level=traitlab, or "The Traits Lab" on the title screen; merge123): the trait system's station (LW1) on a plain of its own. On the traits
 // branch it sat on the playground's back row (x 128..256, rows 192..256); merge121's node-solver stations (slide, house,
 // metal) took that row, so it moved here rather than squeeze or overlap them. The station's crowd, lich, sanctuary and
 // buttons are levels/traitstation.ts; scenes/level.ts gives a level with a 'traits' station its driver.

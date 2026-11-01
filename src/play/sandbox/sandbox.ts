@@ -21,7 +21,7 @@ import type { PlayHero } from '../heroes/base';
 import type { Controls } from '../input/controls';
 import { library } from '../library';
 import type { PlayWorld } from '../world';
-import { el, PlaySession, saveTuned } from '../session';
+import { el, PlaySession, saveTuned, type SessionDeps } from '../session';
 import { findHills } from './hills';
 import { LAP, Rival } from './rival';
 import { BIKE_DEFAULTS } from '../controllers/hoverbike';
@@ -40,6 +40,8 @@ export interface SandboxDeps {
   hero: PlayHeroId;
   /** open the tune panel at once */
   tune?: boolean;
+  /** (merge123, LW1-1) the world's raise dead (SessionDeps.raise) */
+  raise?: SessionDeps['raise'];
 }
 
 /** raiders spawned at a time, how far ahead (cells) */

@@ -43,6 +43,10 @@ export const LICH_DEFAULTS = {
   /** face to face: soul drawn per beat, and the share that heals the lich */
   soulDamage: 1,
   soulHeal: 0.6,
+  /** (merge123, BACKLOG LW1-1) raise the dead (the button): the fallen within this many cells of it rise undead and
+   *  follow it — the trait system's raise effect; cooldown (s) */
+  raiseReach: 9,
+  raiseEvery: 3,
 };
 
 export type LichParams = typeof LICH_DEFAULTS;
@@ -71,6 +75,8 @@ export const LICH_PARAMS: ParamSpec[] = [
   P('stormTime', 'storm (s)', 1, 20, 0.5, 'storm'),
   P('stormReach', 'storm reach', 2, 15, 0.5, 'storm'),
   P('soulDamage', 'soul drain', 0, 5, 0.1, 'soul'),
+  P('raiseReach', 'raise reach', 2, 20, 0.5, 'raise', 'cells round the lich'),
+  P('raiseEvery', 'raise cooldown', 0.5, 10, 0.5, 'raise'),
 ];
 
 export function lichProfile(params: Params = LICH_DEFAULTS): ControllerProfile {

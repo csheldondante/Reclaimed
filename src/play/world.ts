@@ -61,6 +61,9 @@ export interface PlayWorld {
   groundAt(screen: Pt): Pt;
   /** (round 118) the other riders and vehicles in play (a hook reels up alongside them); absent: none */
   vehicles?(): Vehicle[];
+  /** (merge123, BACKLOG LW1-1) the fallen within `radius` of (x, y) rise undead and follow the hero (the trait
+   *  system's raise effect, put together at the boundary: makePlayWorld's `raise`); absent: no raising here */
+  raise?(x: number, y: number, radius: number): void;
 }
 
 /** The units' blows, required: the play layer's heroes shove and hold (AgentUnits implements them). */
@@ -82,7 +85,7 @@ function playUnits(u: Units): PlayUnits {
  * near there — a hover never drops through unread ground — and the first read is waited for before a hero is put
  * down (PlaySandbox.start).
  */
-export function makePlayWorld(api: Sim, units: Units, camera: Camera, bounds: [number, number]): PlayWorld {
+export function makePlayWorld(api: Sim, units: Units, camera: Camera, bounds: [number, number], raise?: PlayWorld['raise']): PlayWorld {
   const t = api.terrain;
   const water = api.water;
   const wind = api.wind;
@@ -126,5 +129,6 @@ export function makePlayWorld(api: Sim, units: Units, camera: Camera, bounds: [n
     crater: (x, y, radius) => t.crater(x, y, { radius }),
     project: (x, y, z) => camera.project(x, y, z),
     groundAt: (s) => camera.groundAt(s[0], s[1], floor).slice(0, 2) as Pt,
+    raise,
   };
 }

@@ -1827,13 +1827,15 @@ rate; sparks), `typed_damage` (a resist table, rows of trait masks × multiplier
 fire_immune × fire 0, undead × life 2 and × necrotic −0.5 — it mends them), `caps`, `look`. AgentUnits' `shambler`
 kind is `undead` (scenes/level.ts).
 
-**Play's lich (the one-line hook, when play/runsit merge into places — BACKLOG LW1-2).** Its raise dead calls the effect
-path, nothing else:
-`world.traits.apply({ op: 'raise', group: lichFollowers, at: [x, y], radius: 8 })` — the corpses there rise undead,
-keeping role and gear, in its followers' group; AgentUnits fires `raised(u, group)` for each. A sanctuary is
-`traits.apply({ op: 'heal', rate, at, radius, world: { grow: true, mend: true } })`.
+**Play's lich (merge123, BACKLOG LW1-1 / M123-3).** Its 💀 raise button calls `PlayWorld.raise(x, y, raiseReach)`
+(play/world.ts: optional; play knows nothing of traits or GPU groups). scenes/level.ts puts it together at the boundary
+(`playRaise`, passed to PlaySession/PlaySandbox as `raise`): `traits.apply({ op: 'raise', group: RAISED_GROUP, at,
+radius })` — the corpses there rise undead, keeping role and gear, in AgentUnits' RAISED_GROUP (standing, `bound`);
+AgentUnits fires `raised(u, group)` for each and drops its hostility (the raiser's now), and the level's handler orders
+it to follow the 'hero' actor (the Units contract's follow job). A sanctuary for a healer hero would be
+`traits.apply({ op: 'heal', rate, at, radius, world: { grow: true, mend: true } })` the same way.
 
-**The playground's station 7 `traits`** (levels/traitstation.ts): a village (180 workers round a well), 90 walking dead,
+**The Traits Lab's station `traits`** (`?level=traitlab`, on the title screen — levels/traitlab.ts; on the `traits` branch it was the playground's station 7, whose row merge121's solver stations took; levels/traitstation.ts): a village (180 workers round a well), 90 walking dead,
 a lich (an ogre, undead and fire_immune) — a thin driver of the API, no controls — and buttons: crowd, smite (a necrotic
 burst: bodies), raise, sanctuary, fear, petrify, clear. `reclaimed.traitStation()` drives it from a script
 (scripts/traitshot.mjs); `reclaimed.traits` is the TraitsApi. `?traits=0` turns the system off (the perf toggle,

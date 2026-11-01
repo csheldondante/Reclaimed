@@ -362,6 +362,20 @@ describe('lich hero', () => {
     expect(w.craters.length).toBe(1);
   });
 
+  it('(merge123, LW1-1) the raise button asks the world to raise the fallen round it, then cools down', () => {
+    const w = testWorld(flat);
+    const raised: [number, number, number][] = [];
+    w.raise = (x, y, r) => void raised.push([x, y, r]);
+    const lich = new LichHero(w, [20, 20]);
+    lich.update(DT, { move: [0, 0], input: input({ buttons: [false, false, true] }) });
+    expect(raised.length).toBe(1);
+    expect(Math.hypot(raised[0][0] - 20, raised[0][1] - 20)).toBeLessThan(0.5);
+    expect(raised[0][2]).toBe(LICH_DEFAULTS.raiseReach);
+    lich.update(DT, { move: [0, 0], input: input() });
+    lich.update(DT, { move: [0, 0], input: input({ buttons: [false, false, true] }) });
+    expect(raised.length).toBe(1);
+  });
+
   it('never holds more than the units allow (a storm over a crowd)', () => {
     const w = testWorld(flat, { maxHeld: 8 });
     const lich = new LichHero(w, [20, 20]);

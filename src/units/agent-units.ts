@@ -32,6 +32,9 @@ const GOALS = 3;
 export const F = { farm: 0, fell: 1, quarry: 2, home: 3, store: 4, pile: 5, site: 6, targets: 7, foes: 8, goal0: 9 } as const;
 /** groups: striking (standing, at work), standing, goals 2-4, closing on foes, hunting, loafing; 8-15 the rounds */
 export const G = { strike: 0, stand: 1, goal0: 2, foes: 5, hunt: 6, wander: 7 } as const;
+/** (merge123, LW1-1) the group a raise effect stands the fallen up in (contracts/traits.ts raise `group`): standing,
+ *  bound to their raiser until the game orders them (the play hero's: follow it) */
+export const RAISED_GROUP = G.stand;
 /** agents' kinds (0 worker, 1 raider, 2 ogre are the defaults the others use) */
 const K = { worker: 0, guard: 3, character: 4, raider: 5, shambler: 6 } as const;
 const TARGETS = 8;
@@ -497,6 +500,8 @@ export class AgentUnits implements Units {
         u.target = null;
         u.group = e.group;
         u.bound = e.group;
+        // (merge123) the raised are their raiser's: a raider stood up by the hero's lich no longer hunts the hero
+        u.v.hostile = false;
         this.byGpu.set(e.id, u.v.id);
         for (const f of this.raised) f(this.view(u), e.group);
       } else if (e.type === 'decayed') this.fallen.delete(e.id);

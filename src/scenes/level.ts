@@ -24,7 +24,7 @@ import type { InhabitantsGpu } from '../inhabitants/system';
 import { mountViewer } from '../inhabitants/viewer';
 import { Settlements } from '../settle/settlements';
 import { TownDebug } from '../settle/debug';
-import { AgentUnits } from '../units/agent-units';
+import { AgentUnits, RAISED_GROUP } from '../units/agent-units';
 import { installTraits } from '../traits/install';
 import type { TraitSystem } from '../traits/system';
 import { registerSlice } from '../game/traits/modules';
@@ -1965,6 +1965,7 @@ export class LevelScene implements Scene {
       bounds: [dims.w, dims.h * ROW_H],
       hero,
       tune: this.host.params.get('tune') === '1',
+      raise: this.playRaise(this.units),
     });
     // (the window slid: the hero moves with what's kept in window coordinates; the map's warp drops it where the camera is)
     this.core.onShift.push((dx, dy, dz) => this.play?.shift(-dx, -dy, -dz));
@@ -1980,6 +1981,20 @@ export class LevelScene implements Scene {
    * this world or the template's; its areas played by play's hero (the same PlaySession as the sandbox), the atlas map
    * and the ways on at each area's edge, the finale at the town, what's left of it remembered.
    */
+  private playRaising = false;
+  /**
+   * (merge123, BACKLOG LW1-1 / M122-7) play's raise dead, put together here at the boundary: the trait system's raise
+   * effect (traits' one-line hook, ARCHITECTURE "Traits and effects") stands the fallen up in the units' RAISED_GROUP,
+   * and each one raised is ordered to follow the hero (the Units contract's follow job on the 'hero' actor).
+   */
+  private playRaise(units: AgentUnits): (x: number, y: number, radius: number) => void {
+    if (!this.playRaising) {
+      this.playRaising = true;
+      units.raised.push((u) => units.order(u.id, { kind: 'follow', target: 'hero', distance: 3 }));
+    }
+    return (x, y, radius) => void this.traits.apply({ op: 'raise', group: RAISED_GROUP, at: [x, y], radius });
+  }
+
   private async startSituationRun(hero: string): Promise<void> {
     const a = this.opts.atlas;
     if (!a || !this.stream || !this.atlasMap) throw new Error('?runplan= plays on the atlas level (?level=atlas)');
@@ -1996,7 +2011,7 @@ export class LevelScene implements Scene {
     this.host.ui.classList.add('play-on');
     const api = (this.worldApi ??= attachSim(this.core));
     const bounds: [number, number] = [dims.w, dims.h * ROW_H];
-    const session = await PlaySession.start({ ui: this.host.ui, api, units, camera: this.core.camera, renderer: this.core.renderer, device: this.host.gpu.device, bounds, respawnAfter: null });
+    const session = await PlaySession.start({ ui: this.host.ui, api, units, camera: this.core.camera, renderer: this.core.renderer, device: this.host.gpu.device, bounds, respawnAfter: null, raise: this.playRaise(units) });
     const c = this.core.camera.target;
     session.choose(id, session.dryNear([c[0], c[1]]));
     this.runSession = session;
@@ -2060,7 +2075,7 @@ export class LevelScene implements Scene {
       const { RunPlayer } = await import('../runplay/player');
       this.host.ui.classList.add('play-on');
       const bounds: [number, number] = [dims.w, dims.h * ROW_H];
-      const session = await PlaySession.start({ ui: this.host.ui, api, units, camera: this.core.camera, renderer: this.core.renderer, device: this.host.gpu.device, bounds, respawnAfter: null });
+      const session = await PlaySession.start({ ui: this.host.ui, api, units, camera: this.core.camera, renderer: this.core.renderer, device: this.host.gpu.device, bounds, respawnAfter: null, raise: this.playRaise(units) });
       const c = this.core.camera.target;
       session.choose(playId, session.dryNear([c[0], c[1]]));
       const enc = this.host.params.get('runencounter') as import('../api/contracts/run').EncounterKind | null;
