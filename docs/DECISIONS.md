@@ -312,6 +312,12 @@ each was implemented.
   persist with named characters across runs. The dealer is tuned by iteration: it needs its own tuning panel and a way
   to watch what it deals and why. → Slice A (the horde run as opportunities on the map) starts on branch opportunities.
 
+- The user, verbatim, after trying slice A (opportunities dde0f56) on the phone: "This is not really what we discussed. There is not hero card for selecting heros from a roster. No description of the hero or current events and what they are trying to do. No stats/tags and no indicator of what game modes. The opportunities do not appear over the places they are happening or have clear timers or a card to view their effects on expiring or being successfully completed and there are not multiple to select from and the game mode when I select is just drive to a flag no enemies or combat no pursuers no race."
+  → Slice A reworked: a hero roster to choose from (description, stats and tags, which game modes each plays); a run
+  intro with the current events, the conflict and the hero's goal; opportunities anchored over their places with clear
+  timers and a card showing success and expiry effects; several to choose from; every played opportunity a real
+  encounter (enemies and combat, pursuers, chases, defence; races only with an arena), never a drive to a flag.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
