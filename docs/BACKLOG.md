@@ -314,7 +314,7 @@ tests work and do quick smoke tests to find failures early." docs/TESTING.md.
 | CAM1 | The camera, the biggest gameplay fix: occluders hide the hero and what the hero cares about (a cliff's turn: new way or dead end). A hero lab to try camera modes as variants across terrains: rotate, top-down, dither, cut tall things down to a short height above the traversable surface, occlusion allowed only at the screen's edges/top/bottom (atmospheric) | L | next |
 | HL1 | Hero lab: stations for hero abilities and moves, puzzles, enemies and camera modes, every setting a variant to compare | L | next |
 | CB1 | Action combat controls improved, and a combat gym | L | next (design talk) |
-| RN2 | Run structure: city builder + overmap + dispatch + choices tied to the world state; a process generating location opportunities from what is at the place, the hero and the run (thematic, real consequences, gameplay bonuses) | L | next (design) |
+| RN2 | Run structure: city builder + overmap + dispatch + choices tied to the world state; a process generating location opportunities from what is at the place, the hero and the run (thematic, real consequences, gameplay bonuses) | L | design drafted for review (runloop: docs/design/RUN_LOOP.md — the loop's contract, 23 opportunity templates, scoring, the GM's role, oppcheck, dispatch, the building view as an encounter, the slice, 12 questions) |
 | TR40 | Trees baked into isometric sprites for the low LOD (visual continuity with the near trees) | M | deferred |
 | FLO21 | Birch cost on the phone: the user's result good — done (flora 18c3bdb, unmerged) | S | done |
 
