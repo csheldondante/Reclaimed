@@ -55,27 +55,72 @@ export interface Holdings {
   goods: Goods;
   /** settlements the character rules: what is stationed there is available to it (a city's ruler: the city) */
   rules: string[];
-  /** bonuses: the holdings' as a whole, or one agent's (`holder`; they persist on its CharacterRecord) */
+  /** the effects held (relics): each owned by an agent (`holder`; they persist on its CharacterRecord) or a building */
   bonuses: Bonus[];
+  /** (round 124) things built, where they stand */
+  buildings: Building[];
 }
 
 export function emptyHoldings(): Holdings {
-  return { agents: [], goods: {}, rules: [], bonuses: [] };
+  return { agents: [], goods: {}, rules: [], bonuses: [], buildings: [] };
 }
 
 /**
- * Won by levelling up (the user: "gaining better opportunities or resolution bonuses. Negate a negative effect of
- * certain types of opportunity or resolve some instantly"). `holder`: the agent whose bonus it is (it applies only when
- * that agent is committed); absent, the holdings'.
+ * (round 124) An effect held by an owner — an agent's ability or tag (a veteran levy, a sapper, a named knight) or
+ * something built (walls, a watchtower, a granary, a road) — that fires on its trigger. The user: "this is like relics
+ * in slay the spire. They are just active effects tied to triggers"; "The relics here are unit abilities and tags and
+ * things you have built". Lose the owner (the agent lost, the settlement burned or taken) and the effect goes with it.
+ * One mechanism: the contract reads 'commit' (instant, shorten) and 'resolve' (negate a tier, better); the run reads
+ * the rest (dealt: discount, extend, unlock; expiring: negate; turn: gain; threat: delay; agent-lost: gain, delay).
  */
-export type Bonus =
-  /** a resolution of `tier` on an opportunity with one of these themes is lifted to the next better tier */
-  | { kind: 'negate'; themes: string[]; tier: Tier; holder?: string; why: string }
-  /** opportunities with one of these themes resolve at once when committed */
-  | { kind: 'instant'; themes: string[]; holder?: string; why: string };
+export type Trigger = 'dealt' | 'expiring' | 'commit' | 'resolve' | 'turn' | 'threat' | 'agent-lost';
+export const TRIGGERS: readonly Trigger[] = ['dealt', 'expiring', 'commit', 'resolve', 'turn', 'threat', 'agent-lost'];
 
-/** a bonus as a character's record keeps it (no holder: the record is the holder) */
-export type BonusRecord = Bonus extends infer B ? (B extends unknown ? Omit<B, 'holder'> : never) : never;
+export type Effect =
+  /** on expiring: its onExpire doesn't happen; on resolve: a resolution of `tier` is lifted to the next better */
+  | { kind: 'negate'; tier?: Tier }
+  /** the threat this many turns later */
+  | { kind: 'delay'; turns: number }
+  /** on commit: this many fewer turns */
+  | { kind: 'shorten'; turns: number }
+  /** on dealt: it stays offered this many turns longer */
+  | { kind: 'extend'; turns: number }
+  /** on commit: resolves at once */
+  | { kind: 'instant' }
+  /** on resolve: its goods × factor */
+  | { kind: 'better'; factor: number }
+  /** these cards can be dealt while the owner is held */
+  | { kind: 'unlock'; cards: string[] }
+  /** goods gained */
+  | { kind: 'gain'; goods: Goods }
+  /** on dealt: it costs this much less */
+  | { kind: 'discount'; goods: Goods };
+
+export interface Bonus {
+  /** its name (a tooltip, the log) */
+  why: string;
+  on: Trigger;
+  /** the opportunity themes it fires for (absent: any) */
+  themes?: string[];
+  effect: Effect;
+  /** its owner: an agent (an ability or a tag's) or a building; neither: the holdings' own (a ruler's realm) */
+  holder?: string;
+  building?: string;
+  /** fires this many more times (absent: always), at most once every `cooldown` turns, from turn `ready` */
+  charges?: number;
+  cooldown?: number;
+  ready?: number;
+}
+
+/** something built: where it stands (a place or settlement), and the effects it holds (Bonus.building = its id) */
+export interface Building {
+  id: string;
+  name: string;
+  place: string;
+}
+
+/** a bonus as a character's record keeps it (the record is the holder) */
+export type BonusRecord = Omit<Bonus, 'holder' | 'building'>;
 
 /** how a resolution came out, best first */
 export type Tier = 'triumph' | 'success' | 'cost' | 'failure' | 'disaster';
@@ -105,7 +150,7 @@ export type OppEffect =
   | { kind: 'goods'; goods: Goods }
   | { kind: 'agent'; agent: Omit<Agent, 'committed'> }
   /** tags (and bonuses) for the committed agents that come back */
-  | { kind: 'tag'; add: string[]; bonuses?: Bonus[] }
+  | { kind: 'tag'; add: string[]; bonuses?: BonusRecord[] }
   | { kind: 'atlas'; event: Omit<AtlasEvent, 'id' | 'run'> }
   | { kind: 'conflict'; op: string; amount: number };
 
@@ -215,6 +260,8 @@ export interface Commitment {
   turn: number;
   /** a resource opportunity's: the turn it resolves (start turn + duration; the start turn with an 'instant' bonus) */
   resolvesTurn?: number;
+  /** (round 124) the effects that fired on commitment (their names) */
+  fired?: string[];
   /** a resource opportunity's tier, rolled at commitment from its odds (the card showed them) */
   rolled?: Tier;
 }
@@ -288,12 +335,39 @@ export function rollTier(odds: Partial<Record<Tier, number>>, u: number): Tier {
   return [...TIERS].reverse().find((t) => (odds[t] ?? 0) > 0) ?? 'success';
 }
 
-/** the bonuses that apply to a commitment: the holdings' own, and those held by its committed agents */
-export function bonusesFor(h: Holdings, agents: string[]): Bonus[] {
-  return h.bonuses.filter((b) => !b.holder || agents.includes(b.holder));
+/**
+ * The effects that fire on a trigger: owned by a building or the holdings, or by an agent — for 'commit' and 'resolve',
+ * only an agent committed to it (`agents`); for the rest, any agent held. Themed ones only for an opportunity with one
+ * of their themes; one out of charges or cooling down doesn't fire.
+ */
+export function relics(h: Holdings, on: Trigger, o?: Pick<Opportunity, 'themes'>, agents?: string[], turn = 0): Bonus[] {
+  const held = new Set(h.agents.map((a) => a.id));
+  return h.bonuses.filter(
+    (b) =>
+      b.on === on &&
+      (b.charges === undefined || b.charges > 0) &&
+      (b.ready ?? 0) <= turn &&
+      (!b.holder || (agents ? agents.includes(b.holder) : held.has(b.holder))) &&
+      (!b.themes || (o ? themed(b, o) : false)),
+  );
 }
 
-const themed = (b: Bonus, o: Opportunity) => b.themes.some((t) => o.themes.includes(t));
+export const themed = (b: Pick<Bonus, 'themes'>, o: Pick<Opportunity, 'themes'>) => !b.themes || b.themes.includes('*') || b.themes.some((t) => o.themes.includes(t));
+
+/** an effect fired: its charge spent, its cooldown set (on the holdings given: a copy the caller returns) */
+export function fired(h: Holdings, b: Bonus, turn: number): void {
+  const x = h.bonuses.find((y) => y.why === b.why && y.holder === b.holder && y.building === b.building && y.on === b.on);
+  if (!x) return;
+  if (x.charges !== undefined) x.charges--;
+  if (x.cooldown) x.ready = turn + x.cooldown;
+}
+
+/** an agent's effects go with it */
+export function dropOwned(h: Holdings): void {
+  const held = new Set(h.agents.map((a) => a.id));
+  const built = new Set(h.buildings.map((x) => x.id));
+  h.bonuses = h.bonuses.filter((b) => (!b.holder || held.has(b.holder)) && (!b.building || built.has(b.building)) && b.charges !== 0);
+}
 
 /**
  * Commit an opportunity: its agents locked, its costs spent. A resource opportunity's tier is rolled now (`u`: the
@@ -305,17 +379,27 @@ export function commit(h: Holdings, o: Opportunity, at: { id: string; now: numbe
   const s = short(o.costs, h);
   if (s.length) throw new Error(`commit ${o.id}: short of ${s.join('; ')}`);
   const player = needsPlayer(o);
-  if (player !== !!o.challenge) throw new Error(`commit ${o.id}: a challenge iff the player is required`);
-  if (!player && !o.odds) throw new Error(`commit ${o.id}: a resource opportunity needs its odds`);
+  if (o.challenge && !player) throw new Error(`commit ${o.id}: a challenge only when the player is required`);
   const out = structuredClone(h);
   for (const a of out.agents) if (m.agents.includes(a.id)) a.committed = at.id;
   for (const [g, n] of Object.entries(o.costs)) out.goods[g] = (out.goods[g] ?? 0) - n;
   const c: Commitment = { id: at.id, opp: o, agents: m.agents, spent: { ...o.costs }, start: at.now, turn: at.turn };
-  if (!player) {
-    if (at.u === undefined) throw new Error(`commit ${o.id}: a resource opportunity's roll needs its random`);
-    const instant = bonusesFor(h, m.agents).some((b) => b.kind === 'instant' && themed(b, o));
-    c.rolled = rollTier(o.odds!, at.u);
-    c.resolvesTurn = at.turn + (instant ? 0 : 'turns' in o.duration ? o.duration.turns : 0);
+  // (no challenge — an agent's opportunity, or (round 124, the card lab) the player's with none: it resolves by its
+  // odds, or with none to its one outcome ('success'), after its turns)
+  if (!o.challenge) {
+    if (o.odds) {
+      if (at.u === undefined) throw new Error(`commit ${o.id}: a roll needs its random`);
+      c.rolled = rollTier(o.odds, at.u);
+    } else c.rolled = 'success';
+    // (the 'commit' effects of what is committed and what is built: instant, shorten)
+    const fx = relics(h, 'commit', o, m.agents, at.turn);
+    const instant = fx.find((b) => b.effect.kind === 'instant');
+    const shorten = fx.filter((b) => b.effect.kind === 'shorten');
+    const turns = 'turns' in o.duration ? o.duration.turns : 0;
+    const cut = shorten.reduce((s, b) => s + (b.effect.kind === 'shorten' ? b.effect.turns : 0), 0);
+    c.resolvesTurn = at.turn + (instant ? 0 : Math.max(0, turns - cut));
+    c.fired = [...(instant ? [instant] : shorten)].map((b) => b.why);
+    for (const b of instant ? [instant] : shorten) fired(out, b, at.turn);
   }
   return { holdings: out, commitment: c };
 }
@@ -330,8 +414,9 @@ export function resolve(h: Holdings, c: Commitment, at: { now: number; turn: num
   if (!rolled) throw new Error(`resolve ${c.id}: no tier (a player opportunity's comes from its challenge)`);
   let tier = rolled;
   const notes: string[] = [];
-  for (const b of bonusesFor(h, c.agents))
-    if (b.kind === 'negate' && b.tier === tier && themed(b, c.opp)) {
+  const fx = relics(h, 'resolve', c.opp, c.agents, at.turn);
+  for (const b of fx)
+    if (b.effect.kind === 'negate' && b.effect.tier !== undefined && b.effect.tier === tier) {
       const better = TIERS[Math.max(0, TIERS.indexOf(tier) - 1)];
       notes.push(`${b.why}: ${tier} → ${better}`);
       tier = better;
@@ -353,14 +438,20 @@ export function resolve(h: Holdings, c: Commitment, at: { now: number; turn: num
       returns.push({ agent: a.id, count: a.count });
       for (const t of tags) {
         for (const tag of t.add) if (!a.tags.includes(tag)) a.tags.push(tag);
-        for (const b of t.bonuses ?? []) out.bonuses.push({ ...b, holder: a.id });
+        for (const b of t.bonuses ?? []) if (!out.bonuses.some((x) => x.holder === a.id && x.why === b.why)) out.bonuses.push({ ...structuredClone(b), holder: a.id });
       }
     }
   }
   out.agents = out.agents.filter((a) => a.count > 0);
+  // (an agent lost: its effects go with it)
+  dropOwned(out);
   const rest: OppEffect[] = [];
+  const better = fx.filter((b) => b.effect.kind === 'better');
+  for (const b of better) notes.push(`${b.why}: goods ×${b.effect.kind === 'better' ? b.effect.factor : 1}`);
+  const k = better.reduce((m, b) => m * (b.effect.kind === 'better' ? b.effect.factor : 1), 1);
+  for (const b of [...better, ...fx.filter((x) => x.effect.kind === 'negate' && notes.some((n) => n.startsWith(x.why)))]) fired(out, b, at.turn);
   for (const e of outcome.effects) {
-    if (e.kind === 'goods') for (const [g, n] of Object.entries(e.goods)) out.goods[g] = Math.max(0, (out.goods[g] ?? 0) + n);
+    if (e.kind === 'goods') for (const [g, n] of Object.entries(e.goods)) out.goods[g] = Math.max(0, (out.goods[g] ?? 0) + (n > 0 ? Math.round(n * k) : n));
     else if (e.kind === 'agent') out.agents.push(structuredClone(e.agent));
     else if (e.kind !== 'tag') rest.push(e);
   }

@@ -26,6 +26,7 @@ const H = (armies: number, supplies = 5, tags: string[] = []): Holdings => ({
   goods: { supplies },
   rules: [],
   bonuses: [],
+  buildings: [],
 });
 
 function prop(o: Partial<Proposal> & { template: string }): Proposal {
@@ -324,7 +325,7 @@ describe('slice A played through: saved and burned, and what lasts', () => {
     finishOpps(w, r, 'hoverbike');
     const id = r.holdings.agents.find((a) => a.id === 'levy')!.character!;
     const save = MemoryWorldState.restore(JSON.parse(JSON.stringify(w.snapshot())));
-    expect(save.character(id)).toMatchObject({ alive: true, tags: ['veteran'], bonuses: [{ kind: 'negate', tier: 'disaster' }] });
+    expect(save.character(id)).toMatchObject({ alive: true, tags: ['veteran'], bonuses: [{ on: 'resolve', effect: { kind: 'negate', tier: 'disaster' } }] });
     // the next run, the same hold: the levy comes with its record
     const next = make(fordWorld(), save);
     next.play(next.offered[0].id);
@@ -333,7 +334,7 @@ describe('slice A played through: saved and burned, and what lasts', () => {
     next.arrive();
     next.areaDone({ seconds: 170, won: true });
     expect(next.holdings.agents.find((a) => a.id === 'levy')!.tags).toContain('veteran');
-    expect(next.holdings.bonuses.some((b) => b.holder === 'levy' && b.kind === 'negate')).toBe(true);
+    expect(next.holdings.bonuses.some((b) => b.holder === 'levy' && b.effect.kind === 'negate')).toBe(true);
     expect(next.forResources.map((o) => o.template)).toContain('vanguard');
     checked(next);
   });

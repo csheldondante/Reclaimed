@@ -19,7 +19,7 @@ import type { CharacterRecord } from '../api/contracts/run';
 import { hashStr, rng } from '../runplan/rng';
 import { SituationRun, LEVY_PACE, LEG_MIN, TRAVEL_PACE, along, delta, type AreaResult, type SituationMap, type V2 } from '../runsit/state';
 import { deal, type DealReport } from './dealer';
-import { armThreats, detourArea, distOn, DETOURS, holdArea, hordeProposals, type Detour, type HordeView } from './horde';
+import { VETERANS, armThreats, detourArea, distOn, DETOURS, holdArea, hordeProposals, type Detour, type HordeView } from './horde';
 import { OPP_TUNE } from './tune';
 
 export interface OppRunOptions {
@@ -33,7 +33,7 @@ export interface OppRunOptions {
 }
 
 /** what a levy that has stood in a fight comes back with (the ford's tag effect gives the same) */
-export const VETERANS: Bonus = { kind: 'negate', themes: ['fight'], tier: 'disaster', why: 'veterans hold' };
+export { VETERANS };
 
 /** where an army is when it isn't committed: since when, from where (it marches for the town from there) */
 interface March {

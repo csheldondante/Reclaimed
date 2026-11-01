@@ -21,6 +21,7 @@ import type { Condition, Outcome, SessionStory } from '../api/contracts/story';
 export const ATLAS_EVENT_KINDS = [
   'sink', 'raise', 'bury', 'overgrow', 'freeze', 'thaw', 'storm', 'clear-storm', 'shadow', 'light',
   'raise-dead', 'lay-dead', 'flood', 'drain', 'burn', 'ruin', 'rebuild', 'faction-presence', 'faction-attitude', 'faction-relation', 'faction-power', 'mark',
+  'settlement-condition', 'settlement-owner', 'migrate',
 ] as const satisfies readonly AtlasEventKind[];
 /** (a compile error here: world.ts has a kind the list above lacks) */
 export const ATLAS_EVENT_KINDS_COMPLETE: [Exclude<AtlasEventKind, (typeof ATLAS_EVENT_KINDS)[number]>] extends [never] ? true : false = true;

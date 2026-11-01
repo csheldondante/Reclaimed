@@ -82,7 +82,7 @@ describe('commitment and resolution', () => {
   });
   it("bonuses: a veteran's negate lifts a disaster on a fight; an instant resolves on the turn it's committed", () => {
     const o = fordOpp({ odds: { disaster: 1 }, outcomes: { success: { text: 'ok', effects: [] }, failure: { text: 'broke', effects: [], losses: 0.5 }, disaster: { text: 'gone', effects: [], losses: 1 } } });
-    const h: Holdings = { ...hold(agent('levy', 'army', { count: 8, tags: ['veteran'] })), bonuses: [{ kind: 'negate', themes: ['fight'], tier: 'disaster', holder: 'levy', why: 'veterans hold' }] };
+    const h: Holdings = { ...hold(agent('levy', 'army', { count: 8, tags: ['veteran'] })), bonuses: [{ why: 'veterans hold', on: 'resolve', themes: ['fight'], effect: { kind: 'negate', tier: 'disaster' }, holder: 'levy' }] };
     const c = commit(h, o, { id: 'k1', now: 0, turn: 0, u: 0.5 });
     const r = resolve(c.holdings, c.commitment, { now: 1, turn: 1 });
     expect(r.resolution).toMatchObject({ rolled: 'disaster', tier: 'failure', bonuses: ['veterans hold: disaster → failure'] });
@@ -91,7 +91,7 @@ describe('commitment and resolution', () => {
     const other: Holdings = { ...h, bonuses: [{ ...h.bonuses[0], holder: 'someone' }] };
     const c2 = commit(other, o, { id: 'k1', now: 0, turn: 0, u: 0.5 });
     expect(resolve(c2.holdings, c2.commitment, { now: 1, turn: 1 }).resolution.tier).toBe('disaster');
-    const inst: Holdings = { ...h, bonuses: [{ kind: 'instant', themes: ['fight'], why: 'sappers' }] };
+    const inst: Holdings = { ...h, bonuses: [{ why: 'sappers', on: 'commit', themes: ['fight'], effect: { kind: 'instant' } }] };
     expect(commit(inst, fordOpp(), { id: 'k1', now: 0, turn: 4, u: 0.1 }).commitment.resolvesTurn).toBe(4);
   });
   it('a challenge iff the player is required; the player resolves from the challenge, never by a share', () => {
@@ -102,7 +102,9 @@ describe('commitment and resolution', () => {
     expect(() => resolve(c.holdings, c.commitment, { now: 1, turn: 0 })).toThrow(/no tier/);
     const r = resolve(c.holdings, c.commitment, { now: 1, turn: 0, tier: 'success' });
     expect(r.holdings.agents[0]).toMatchObject({ id: 'p', count: 1 });
-    expect(() => commit(h, { ...play, challenge: undefined }, { id: 'k1', now: 0, turn: 0 })).toThrow(/challenge iff/);
+    // (round 124: a challenge only with the player; the card lab's player cards have none and resolve to their outcome)
+    expect(() => commit(hold(agent('a', 'army')), { ...play, requires: [{ kind: 'army', count: 1 }] }, { id: 'k1', now: 0, turn: 0 })).toThrow(/challenge only when/);
+    expect(commit(h, { ...play, challenge: undefined, odds: undefined, duration: { turns: 2 } }, { id: 'k1', now: 0, turn: 3 }).commitment).toMatchObject({ rolled: 'success', resolvesTurn: 5 });
   });
   it('rolls by the odds; an outcome missing for a tier falls to the nearest worse one', () => {
     const odds = { triumph: 0.1, success: 0.5, cost: 0.25, failure: 0.15 };
@@ -116,10 +118,10 @@ describe('persistence (the user: "Yes I think that we want them to persist")', (
   it("a character's tags and bonuses go into the world state and survive a save", () => {
     const w = new MemoryWorldState(1);
     w.applyCharacter({ kind: 'meet', character: { id: 'levy:s1', name: 'the levy', role: 'army', faction: null, hero: false, alive: true, region: 1, motivation: 'serve' } });
-    w.applyCharacter({ kind: 'tags', id: 'levy:s1', add: ['veteran'], bonuses: [{ kind: 'negate', themes: ['fight'], tier: 'disaster', why: 'veterans hold' }] });
-    w.applyCharacter({ kind: 'tags', id: 'levy:s1', add: ['veteran'], bonuses: [{ kind: 'negate', themes: ['fight'], tier: 'disaster', why: 'veterans hold' }] });
+    w.applyCharacter({ kind: 'tags', id: 'levy:s1', add: ['veteran'], bonuses: [{ why: 'veterans hold', on: 'resolve', themes: ['fight'], effect: { kind: 'negate', tier: 'disaster' } }] });
+    w.applyCharacter({ kind: 'tags', id: 'levy:s1', add: ['veteran'], bonuses: [{ why: 'veterans hold', on: 'resolve', themes: ['fight'], effect: { kind: 'negate', tier: 'disaster' } }] });
     const back = MemoryWorldState.restore(JSON.parse(JSON.stringify(w.snapshot())));
-    expect(back.character('levy:s1')).toMatchObject({ tags: ['veteran'], bonuses: [{ kind: 'negate', why: 'veterans hold' }] });
+    expect(back.character('levy:s1')).toMatchObject({ tags: ['veteran'], bonuses: [{ why: 'veterans hold', effect: { kind: 'negate' } }] });
     expect(back.character('levy:s1')!.bonuses).toHaveLength(1);
   });
 });

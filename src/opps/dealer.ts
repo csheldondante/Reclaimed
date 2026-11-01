@@ -55,6 +55,9 @@ export interface Proposal {
   /** a player opportunity that leads toward the climax (the guarantee) */
   towardClimax?: boolean;
   forced?: boolean;
+  /** (round 124) a happening, not an offer: once it makes sense it is on the board whatever is held and outside the
+   *  limits — letting it go has a consequence (the tribute demanded, the climax come), so it can't be hidden */
+  event?: boolean;
   hooks: string[];
 }
 
@@ -173,8 +176,13 @@ export function deal(props: Proposal[], ctx: DealContext): DealReport {
   const dealt: Cand[] = [];
   const out = (c: Cand, why: string) => reject(c.p, 'limits', why, c.score);
 
+  // 5b events: on the board, met or not, outside the limits
+  for (const c of pool.filter((x) => x.p.event)) {
+    dealt.push(c);
+    c.because.push('an event: on the board whatever you hold');
+  }
   // 6 forced: dealt alone among the player's
-  const players = pool.filter((c) => c.kind === 'player');
+  const players = pool.filter((c) => c.kind === 'player' && !c.p.event);
   const forced = players.filter((c) => c.p.forced && c.affordable);
   if (forced.length) {
     dealt.push(forced[0]);
@@ -183,7 +191,7 @@ export function deal(props: Proposal[], ctx: DealContext): DealReport {
     // 7 limits (player)
     const ok = players.filter((c) => c.affordable);
     for (const c of ok) {
-      if (dealt.filter((d) => d.kind === 'player').length >= T.playerMax) out(c, `the player's limit (${T.playerMax}) is full: scored ${c.score.toFixed(2)}`);
+      if (dealt.filter((d) => d.kind === 'player' && !d.p.event).length >= T.playerMax) out(c, `the player's limit (${T.playerMax}) is full: scored ${c.score.toFixed(2)}`);
       else if (c.score < T.minScore && !c.p.towardClimax) out(c, `scored ${c.score.toFixed(2)}, under the least (${T.minScore})`);
       else dealt.push(c);
     }
@@ -206,10 +214,10 @@ export function deal(props: Proposal[], ctx: DealContext): DealReport {
     }
   }
   // 7 limits (resources)
-  const res = pool.filter((c) => c.kind === 'resources');
+  const res = pool.filter((c) => c.kind === 'resources' && !c.p.event);
   let shown = 0;
   for (const c of res) {
-    const n = dealt.filter((d) => d.kind === 'resources').length;
+    const n = dealt.filter((d) => d.kind === 'resources' && !d.p.event).length;
     if (c.affordable) {
       if (n >= T.resourceMax) out(c, `the resource limit (${T.resourceMax}) is full: scored ${c.score.toFixed(2)}`);
       else if (c.score < T.minScore) out(c, `scored ${c.score.toFixed(2)}, under the least (${T.minScore})`);

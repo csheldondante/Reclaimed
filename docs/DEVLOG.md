@@ -15804,3 +15804,47 @@ Headless (scripts/opps.mjs, 412x785, the GM's situation for seed 1, every system
   lazily imported module), so driveprofile was not re-run.
 - Shots: C:/Projects/shots88/opportunities/ (hoverbike-burned-1-start-map, -1-edge-map, -2-harvest-detail,
   -2-harvest-committed, -2-way-detail, -9-end; hoverbike-saved-*; saved-finale.gif; fan2/ the fanned pair), logs beside.
+
+**Slice A rework, part 1** (the user on the phone, round 124, DECISIONS: no roster, no intro, no stats, opportunities
+not over their places nor timed, not several to choose from, "just drive to a flag no enemies or combat no pursuers").
+In Node so far (7e0f2ff): every player opportunity names its encounter (contracts/opportunity.ts `Encounter`: flee,
+ambush, gauntlet, skirmish, chase, rescue, patrol, defend, evacuate, race) with its enemies; oppcheck refuses one with
+none ("a ride to a flag"). Why the old runs had none: the outriders were the run's only pursuers and a won flee left
+none, so the hall and the trader were rides to a flag. Halls and traders now carry a threat of their own
+(`SituationArea.threat`, armThreats from tune: riders between the hero and the hall, raiders round the trader, who must
+be driven off before it trades). Three detours are dealt beside the ways on, each a new area off the road that leads on
+to where it was taken (AreaPlay gained chase — PL23: the quarry already running a few seconds ahead — rescue and
+scout). playerMax 4. Timers by turn or by run minute (`expires.minute`). RN2-7: the slack after the hold (`holdSlack`,
+1.5 min): the host's arrival is moved out until the levy can meet its road; seed 1 now deals the ford and the harvest at
+the hold. RN2-8: the evacuation run ended "saved" because the horde stalled ~130 cells out (walk/go, not advancing:
+the town's water) and the timed hold counted from its spawn; the hold now counts from when the dead first reach the
+town's edge (FinaleRules.reachedAt). The stall itself is still open (RN2-8). Still to do: the roster, the intro, the
+anchored timed markers on the map, the headless encounter check (RN2-10).
+
+**The card lab** (cardlab.html, src/opps/deck.ts, src/cardlab/main.ts, data/cards/lab.json; RN2-9), ahead of the
+rework at the user's word: "making a playground for the card mechanics that has no playable encounters ... Think deck
+builder". Then, in turn: world consequences visible ("A occupied city, refugees fleeing, a toppled empire, a flooded
+civilization"); no rolls ("you assign resources it resolves one way and if not it may trigger an on expires effect");
+abilities as relics ("just active effects tied to triggers") owned by units and buildings ("unit abilities and tags and
+things you have built").
+- The same contract and dealer as the map. The contract's no-odds path: an opportunity with no odds resolves to its one
+  outcome ('success') after its turns; a player opportunity with no challenge resolves the same way (the lab's). Odds
+  stay in the contract, unused here.
+- One effect mechanism (`Bonus`: why, trigger, themes, effect, owner, charges, cooldown). Triggers: dealt, expiring,
+  commit, resolve, turn, threat, agent-lost. Effects: negate, delay, shorten, extend, instant, better, unlock, gain,
+  discount. The contract reads commit (instant, shorten) and resolve (negate a tier, better). The run reads the rest.
+  Every effect has an owner (an agent: lose it and the effect goes; a building, `Holdings.buildings`: lost when its
+  settlement burns or is taken). Slice A's veteran levy is one: `on: resolve, themes: fight, negate disaster`.
+- Three settlement AtlasEvents with one owner, WorldState.apply (RUN_LOOP §8 item 1): `settlement-condition`,
+  `settlement-owner`, `migrate` (refugees from one settlement to another). The lab's cards write world ops that become
+  these (and faction-power, flood, shadow, raise-dead…). The page draws them: owners' colours, condition marks, refugee
+  arrows, floods, the dead, what's built.
+- The dealer gained `event` proposals: a happening with a consequence for letting it go is on the board whatever is held
+  and outside the limits (the tribute demanded, the climax come). Hiding it would make its penalty unfair.
+- Duration is distance: whole turns of travel at `pace` from where the player is, plus work, less the shorten effects.
+- The simulator: win rate, run length, choices a turn, each card dealt/taken/rate/won-when-taken, never and always
+  taken, each effect's fires a run and win rate when it fired vs not, world changes a run. Seed 1, 200 runs, random:
+  6.5 % won, 28.6 turns, 2.5 choices a turn; greedy (the dealer's order) 0 % won — it forages forever, the lab's first
+  finding (it never builds the walls or allies Town 3, the strength never reaches the climax's 8).
+- Tests: test/unit/deck.test.ts (8). Headless: scripts/cardlab.mjs (no GPU), shots in
+  C:/Projects/shots88/opportunities/cardlab/.

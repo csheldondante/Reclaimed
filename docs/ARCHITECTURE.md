@@ -2814,7 +2814,22 @@ situation flow stays behind `?runplan=` until this replaces it.
   `src/opps/level-opps.ts` LevelOpps (extends LevelSit through its protected hooks makeRun/areaDone/arrived/finishRun/
   finishRecord/travel/render/drawOnMap: markers on the AtlasMap — `AtlasMap.onTap` — the detail sheet and Commit, the
   why-list). SituationRun gained `thinned` and `provisioned` (read by finaleSetup).
-- Tests: test/unit/opportunity.test.ts, test/unit/opps.test.ts; headless: scripts/opps.mjs.
+- Tests: test/unit/opportunity.test.ts, test/unit/opps.test.ts, test/unit/deck.test.ts; headless: scripts/opps.mjs, scripts/cardlab.mjs.
+- **Effects (relics), round 124**: `Bonus` = { why, on: Trigger, themes?, effect: Effect, holder? (an agent) | building?
+  (Holdings.buildings), charges?, cooldown?, ready? }. Triggers dealt, expiring, commit, resolve, turn, threat,
+  agent-lost; effects negate, delay, shorten, extend, instant, better, unlock, gain, discount. `relics(h, on, opp?,
+  agents?)` is the one query; the contract fires commit and resolve, the run the rest; `dropOwned` removes an owner's
+  effects with it. CharacterRecord keeps an agent's as `BonusRecord` (no owner).
+- **Encounters, round 124**: `Challenge.encounter` (kind + foes + pursuers + horde); oppcheck refuses an encounter with
+  no enemies. `SituationArea.threat` adds foes and pursuers to an area's play; AreaPlay kinds chase, rescue, scout.
+- **No-odds path, round 124**: an opportunity without odds resolves to 'success' after its turns; a player opportunity
+  without a challenge resolves the same way (the card lab). A challenge only with the player.
+- **Settlement AtlasEvents, round 124**: `settlement-condition`, `settlement-owner`, `migrate`, applied only by
+  WorldState.apply (MemoryWorldState.applySettlement). runsit's finishSituation still writes the condition directly
+  (to move onto the event: open).
+- **The card lab** (cardlab.html → src/cardlab/main.ts; src/opps/deck.ts DeckRun, simulate; data/cards/lab.json): the
+  same contract and dealer as the map, another front end. The dealer's `Proposal.event`: on the board whatever is held,
+  outside the limits.
 
 ## Tests in Node (round 117, `testkit`; docs/TESTING.md)
 

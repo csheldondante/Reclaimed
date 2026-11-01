@@ -57,6 +57,19 @@ const SPEC = {
       detourMinutes: { label: 'a detour’s area', units: 'min', min: 0.5, max: 6, step: 0.25, def: 2.5 },
     },
   },
+  lab: {
+    title: 'Card lab: the loop',
+    owner: 'opps/deck.ts (the card lab: cardlab.html; no encounters, every card rolls)',
+    params: {
+      pace: { label: 'travel a turn', units: 'map units', min: 1, max: 20, step: 0.5, def: 4, help: 'a card’s duration is the travel there at this pace (whole turns) plus its work' },
+      climaxAt: { label: 'the climax at doom', units: 'doom', min: 4, max: 40, step: 1, def: 18, help: 'the climax card is forced when doom reaches this' },
+      doomPerTurn: { label: 'doom a turn', units: 'doom', min: 0, max: 3, step: 0.25, def: 1 },
+      strengthPer: { label: 'odds a strength', units: 'odds', min: 0, max: 0.1, step: 0.005, def: 0.04, help: 'the climax card’s success odds rise by this for each strength held' },
+      startSupplies: { label: 'supplies at the start', units: 'supplies', min: 0, max: 20, step: 1, def: 4 },
+      startCoin: { label: 'coin at the start', units: 'coin', min: 0, max: 20, step: 1, def: 2 },
+      maxTurns: { label: 'turns at most', units: 'turns', min: 10, max: 80, step: 1, def: 40, help: 'a run with no end by then is a loss (the simulator’s guard)' },
+    },
+  },
 } satisfies Record<string, GroupSpec>;
 
 export const OPP_TUNING = new Registry(SPEC);

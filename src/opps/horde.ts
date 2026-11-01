@@ -28,6 +28,10 @@ import type { SituationArea, SituationChoice } from '../api/contracts/situation'
 import type { Made, Proposal, TierOffer } from './dealer';
 import type { HordeTune } from './tune';
 import { along, delta, LEVY_PACE, PLAY_TITLE, type SituationRun, type V2 } from '../runsit/state';
+import type { BonusRecord } from '../api/contracts/opportunity';
+
+/** what a levy that has stood in a fight carries (the ford's tag, a saved town): a disaster on a fight lifted */
+export const VETERANS: BonusRecord = { why: 'veterans hold', on: 'resolve', themes: ['fight'], effect: { kind: 'negate', tier: 'disaster' } };
 
 /** what the conflict is about (the dealer's "tied to the conflict") */
 export const HORDE_HOOKS = ['horde', 'town'];
@@ -293,7 +297,7 @@ export function hordeProposals(v: HordeView): Proposal[] {
       const base = Math.min(0.95, T.fordOdds + 0.1 * (tier - 1) + v.intel);
       const d = T.fordDelay * tier;
       const odds: Partial<Record<Tier, number>> = { triumph: base * 0.2, success: base * 0.8, cost: (1 - base) * 0.6, failure: (1 - base) * 0.4 };
-      const vet = { kind: 'tag' as const, add: ['veteran'], bonuses: [{ kind: 'negate' as const, themes: ['fight'], tier: 'disaster' as Tier, why: 'veterans hold' }] };
+      const vet = { kind: 'tag' as const, add: ['veteran'], bonuses: [VETERANS] };
       return {
         template: 'ford', offer: 'hold', title: `Hold the ford at ${fordName}`,
         pitch: `The host must cross at ${fordName}. Put the levy in the water and hold them there while you ride on.`,
