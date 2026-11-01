@@ -29,14 +29,47 @@ export function acrossEye(q: V3, c: V3, e: V3): number {
 }
 
 /** render.wgsl sliceReach: how far into the slice's cut q is, 0..1 (hard: 0 or 1; thinned by the dither over `fade` cells and `fadeR` of the radius) */
-export function sliceReach(s: NonNullable<CamCut['slice']>, q: V3, e: V3): number {
+export function sliceReach(s: NonNullable<CamCut['slice']>, q: V3, e: V3, w?: SightWorld): number {
+  // (the bowl: h0 at the hero, rising bowl·d² away from it)
+  const dg = Math.hypot(q[0] - s.at[0], q[1] - s.at[1]);
+  const z0 = s.z + (s.bowl ?? 0) * dg * dg;
   const fz = s.fade ?? 0;
-  const kz = fz > 0 ? sstep(s.z, s.z + fz, q[2]) : q[2] > s.z ? 1 : 0;
-  if (kz <= 0 || s.radius <= 0) return kz;
-  const d = acrossEye(q, [s.at[0], s.at[1], s.z], e);
-  const fr = s.fadeR ?? 0;
-  const kr = fr > 0 ? 1 - sstep(s.radius * (1 - fr), s.radius, d) : d < s.radius ? 1 : 0;
-  return kz * kr;
+  // (the fade under the cut's height: whole over it, thinning out over `fade` cells under it)
+  let k = fz > 0 ? sstep(z0 - fz, z0, q[2]) : q[2] > z0 ? 1 : 0;
+  if (k <= 0) return 0;
+  const c: V3 = [s.at[0], s.at[1], s.z];
+  if (s.radius > 0) {
+    const d = acrossEye(q, c, e);
+    const fr = s.fadeR ?? 0;
+    k *= fr > 0 ? 1 - sstep(s.radius * (1 - fr), s.radius, d) : d < s.radius ? 1 : 0;
+    if (k <= 0) return 0;
+  }
+  if (s.nearOnly) {
+    const along = (q[0] - c[0]) * e[0] + (q[1] - c[1]) * e[1] + (q[2] - c[2]) * e[2];
+    k *= sstep(0, 1.5, along);
+    if (k <= 0) return 0;
+  }
+  if (s.occluders) {
+    if (!w) throw new Error('sliceReach: the occluders-only cut needs the world (its land behind the point)');
+    if (!occludes(w, q, e)) return 0;
+  }
+  return k;
+}
+
+/** the steps along the eye's line render.wgsl `occludes` looks behind a point at (cells) */
+export const OCCLUDE_T = [1.5, 3, 5, 8, 12, 17, 24, 32, 44, 60];
+
+/**
+ * render.wgsl occludes: walked on from p away from the eye, the line is out in the open air (0.75 over the land)
+ * somewhere behind it — p hides what's there. A slope gentler than the eye's line never does.
+ */
+export function occludes(w: SightWorld, p: V3, e: V3): boolean {
+  for (const t of OCCLUDE_T) {
+    const x = p[0] - e[0] * t;
+    const y = p[1] - e[1] * t;
+    if (p[2] - e[2] * t > w.top(x, y) + 0.75) return true;
+  }
+  return false;
 }
 
 /** render.wgsl seeReach for one point: 0..1 */
@@ -50,10 +83,10 @@ export function seeReach(q: V3, s: V3, r: number, e: V3): number {
 }
 
 /** Is the solid at q left out of the draw by the cut (render.wgsl cutAway; a hole counts from half its reach)? */
-export function cutOpens(cut: CamCut | null, q: V3, e: V3): boolean {
+export function cutOpens(cut: CamCut | null, q: V3, e: V3, w?: SightWorld): boolean {
   if (!cut) return false;
   const s = cut.slice;
-  if (s && sliceReach(s, q, e) >= 0.5) return true;
+  if (s && sliceReach(s, q, e, w) >= 0.5) return true;
   for (const p of cut.see) if (seeReach(q, p.at, p.r, e) > 0.5) return true;
   return false;
 }
@@ -109,7 +142,7 @@ export function hiddenBy(w: SightWorld, p: V3, e: V3, cut: CamCut | null = null,
           top = pr.z1;
           break;
         }
-    if (!hit || cutOpens(cut, q, e)) continue;
+    if (!hit || cutOpens(cut, q, e, w)) continue;
     const h = top - p[2];
     if (!best) best = { height: h, near: t };
     else best.height = Math.max(best.height, h);

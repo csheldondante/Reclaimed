@@ -17,7 +17,7 @@ import type { CamModeId, V2 } from '../api/contracts/camera';
 import { applyFrame, liveSight } from './camera/apply';
 import { SignalHud } from './camera/hud';
 import { CameraRig, parseCam } from './camera/rig';
-import { steerAssist, type SteerParams } from './core/steer';
+import { steerAssist, type SteerParams, type SteerState } from './core/steer';
 import { VoxelDraw } from './draw/voxels';
 import type { Part } from './draw/shapes';
 import { makeHero, type PlayHeroId } from './heroes/make';
@@ -86,6 +86,8 @@ export class PlaySession {
   assist: SteerParams | null = null;
   /** frames the assist ran, bent the stick, and was held off by a strong steer it disagreed with */
   readonly assistStats = { frames: 0, bent: 0, fought: 0 };
+  /** what the carve remembers (core/steer.ts) */
+  private steerState: SteerState = { carve: null };
   /** the hero's velocity last frame (cells/s, differenced) */
   private vel: V2 = [0, 0];
   /** where the hero was last frame (its velocity for the framing: any hero, whatever moves it) */
@@ -245,7 +247,7 @@ export class PlaySession {
       // (last frame's velocity: this frame's isn't made yet)
       const vel = this.vel;
       const foes = this.assist.magnet > 0 ? this.world.units.near(q[0], q[1], this.assist.magnetRange).filter((u) => u.hostile).map((u): V2 => [u.at[0], u.at[1]]) : [];
-      const o = steerAssist([input.dir[0], input.dir[1]], [q[0], q[1]], vel, this.world.top, foes, h.profileClimb(), this.assist);
+      const o = steerAssist([input.dir[0], input.dir[1]], [q[0], q[1]], vel, this.world.top, foes, h.profileClimb(), this.assist, { dt, boost: !!input.buttons[0], state: this.steerState });
       input.dir = o.dir;
       this.assistStats.frames++;
       if (o.by && o.bend !== 0) this.assistStats.bent++;

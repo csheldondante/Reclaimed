@@ -21,6 +21,16 @@ each was implemented.
 - (the coordinator, from the user's phone) The title screen's level list doesn't fit 412 × 785: every entry reachable,
   the hero lab on it (BACKLOG UI10).
 
+- The user, verbatim, on herolab 0536f2f:
+
+> I think the cut should have a toggle not to cut things behind the player and I think cut getting should raise quadratically as you move away from the bike and it still needs the dither at the edges. Even with the steering the bike goes not handle well except in the forest and the hills. Speaking of which the hills never really get in their own way. I think the cut only needs to happen for things that occlude other triangles on the screen. A hill that is less than the camera steepness can't occlude right?
+
+- → Right: a slope gentler than the eye's line can't hide anything. The cut takes only real occluders (what has open air
+  behind it along the eye's line), only on the near side of the hero (a toggle, on), at a height rising as h0 + k·d²
+  from the hero (a bowl), its edges dithered (the default cut is the dithered one). The bike: more handling variants:
+  tighter when slow with a quicker drift, a governor that slows it into narrow places, a carve, a bigger bump in
+  turning acceleration; measured as before (the rider model is not the user's thumb). BACKLOG CAM11, PL32.
+
 ## 2026-10-31 — round 120 (session 5) — after playing the run, the towns and the birches; runs redesigned
 
 - The user, verbatim:

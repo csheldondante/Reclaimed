@@ -31,6 +31,9 @@ user) · `deferred` (agreed for later).
 | HL7 | One station framework: the playground's Station/StationsBar (levels/playground.ts, ui/stations.ts: the playground, the rock lab, the Traits Lab) and the hero lab's LabStation/VariantPicker (play/lab/lab.ts) are still two; fold the playground's into the lab's (a station kind with resets and a camera look) | M | open |
 | PL31 | The handling metrics' rider is a model (re-aims every 0.25 s, 16 directions): crashes stay 10-20 a minute for every variant; the user's thumb on the phone decides. Assist fights 10-24 % of frames with that rider: tune `strong`/`maxBend` once played | S | open |
 | CAM10 | The cut in a canyon shows big dark sections (the cut walls' insides): a lighter section colour, or the dithered cut there | S | open |
+| CAM11 | The cut, the user's second try: only real occluders (open air behind along the eye's line: render.wgsl `occludes`, sight.ts mirrors it), near side only (toggle, on), a bowl h0 + k·d² from the hero, edges dithered by default | M | done (herolab) |
+| PL32 | More bike handling variants: tight (radius v²/grip, a quicker drift for sharp turns — the Akira slide, no new button), governor (slowed into narrow places by the corridor, boost overrides), carve (the stick a heading the bike curves toward at a speed-limited rate), grip+ (turning acceleration bumped) | M | done (herolab), the user to try |
+| CAM12 | The occluder test reads the nature grid's surface (render.wgsl groundTopW): structures over it and trees (render-only) don't count as land behind a point; and its 10 samples cost a fragment within the cut's radius — measure on the phone | S | open |
 | UI10 | The title screen's places don't all fit a phone (412 x 785): a wrapping list of every place, the hero lab button; scripts/titlefit.mjs checks every entry reachable | S | done (herolab) |
 
 ## Round 123 (2026-10-31, session 5, `merge123`) — cities and traits merged into places (DECISIONS round 120)

@@ -338,6 +338,6 @@ export class CutawayMode implements CameraMode {
     }
     // (both cuts on: the second leaves the first's slice when it has none of its own)
     if (this.z === null) return;
-    frame.cut.slice = { z: this.z, at: [ctx.pose.at[0], ctx.pose.at[1]], radius: P.radius * halfScreen(v), rim: P.rim, fade: P.fade, fadeR: P.fadeR };
+    frame.cut.slice = { z: this.z, at: [ctx.pose.at[0], ctx.pose.at[1]], radius: P.radius * halfScreen(v), rim: P.rim, fade: P.fade, fadeR: P.fadeR, bowl: P.bowl, nearOnly: P.nearOnly >= 0.5, occluders: P.occluders >= 0.5 };
   }
 }

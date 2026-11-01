@@ -21,7 +21,9 @@ struct Camera {
   // (round 121, herolab: the cutaway camera mode) the slice's shape: xy the point it's round (at the slice's height),
   // z its radius on screen (world units; 0: the whole view), w the rim's depth under the cut (cells; 0: none)
   sliceShape: vec4<f32>,
-  // (round 120: the dithered cut) x cells over the slice it thins out over, y the outer share of the radius (0: hard)
+  // (round 120: the dithered cut) x cells over the slice it thins out over, y the outer share of the radius (0: hard);
+  // (round 120, the user's second try) z the bowl: the cut rises k cells a cell² away from the hero (h = h0 + k d²),
+  // w flags: 1 the near side only (nothing beyond the hero from the eye is cut), 2 real occluders only
   sliceSoft: vec4<f32>,
 };
 
@@ -77,24 +79,71 @@ fn sliced(p: vec3<f32>) -> bool { return CAM.cut.w > 0.5 && p.z > CAM.cut.x && i
 /** (round 120, the dithered cut) how far into the slice's cut p is, 0..1: hard (0 or 1) or thinned over `sliceSoft` */
 fn sliceReach(p: vec3<f32>) -> f32 {
   if (CAM.cut.w < 0.5) { return 0.0; }
+  return sliceReachAt(p, sliceBowl(p));
+}
+
+/** (round 120) the cut's height over p: h0 at the hero, rising k d² away from it (a bowl: far land keeps its shape) */
+fn sliceBowl(p: vec3<f32>) -> f32 {
+  let d = length(p.xy - CAM.sliceShape.xy);
+  return CAM.cut.x + CAM.sliceSoft.z * d * d;
+}
+
+/** the land's top at a world point (the nature grid's surface: what a cut's occluder test looks behind) */
+fn groundTopW(w: vec2<f32>) -> f32 { return sfZ(surface[colIdxI(clampCell(cellAt(w)))]); }
+
+/**
+ * (round 120, the user: "the cut only needs to happen for things that occlude other triangles on the screen. A hill
+ * that is less than the camera steepness can't occlude right?") Does p hide anything? Walked on from p away from the
+ * eye, the line is out in the open air somewhere behind it (over the land there): then p stands in front of what's
+ * there. A slope gentler than the eye's line never does — the line runs straight into the ground under it.
+ */
+fn occludes(p: vec3<f32>) -> bool {
+  let e = toEye(p);
+  let ts = array<f32, 10>(1.5, 3.0, 5.0, 8.0, 12.0, 17.0, 24.0, 32.0, 44.0, 60.0);
+  for (var i = 0u; i < 10u; i++) {
+    let q = p - e * ts[i];
+    if (q.z > groundTopW(q.xy) + 0.75) { return true; }
+  }
+  return false;
+}
+
+/** how far into the cut p is (0..1) with the cut's height there `z0`: its fade over the bowl, its radius, its side, its occluders */
+fn sliceReachAt(p: vec3<f32>, z0: f32) -> f32 {
   let sh = CAM.sliceShape;
   let sf = CAM.sliceSoft;
-  var kz = select(0.0, 1.0, p.z > CAM.cut.x);
-  if (sf.x > 0.0) { kz = smoothstep(CAM.cut.x, CAM.cut.x + sf.x, p.z); }
-  if (kz <= 0.0 || sh.z <= 0.0) { return kz; }
-  let v = p - vec3<f32>(sh.xy, CAM.cut.x);
+  var kz = select(0.0, 1.0, p.z > z0);
+  // (the fade under the cut's height: whole over it, thinning out by the dither over `fade` cells under it)
+  if (sf.x > 0.0) { kz = smoothstep(z0 - sf.x, z0, p.z); }
+  if (kz <= 0.0) { return 0.0; }
+  let c = vec3<f32>(sh.xy, CAM.cut.x);
   let e = toEye(p);
-  let d = length(v - dot(v, e) * e);
-  var kr = select(0.0, 1.0, d < sh.z);
-  if (sf.y > 0.0) { kr = 1.0 - smoothstep(sh.z * (1.0 - sf.y), sh.z, d); }
-  return kz * kr;
+  let v = p - c;
+  let along = dot(v, e);
+  if (sh.z > 0.0) {
+    let d = length(v - along * e);
+    var kr = select(0.0, 1.0, d < sh.z);
+    if (sf.y > 0.0) { kr = 1.0 - smoothstep(sh.z * (1.0 - sf.y), sh.z, d); }
+    kz *= kr;
+    if (kz <= 0.0) { return 0.0; }
+  }
+  let flags = u32(sf.w + 0.5);
+  // (the near side only: between the eye and the hero, never beyond it)
+  if ((flags & 1u) != 0u) {
+    kz *= smoothstep(0.0, 1.5, along);
+    if (kz <= 0.0) { return 0.0; }
+  }
+  if ((flags & 2u) != 0u && !occludes(p)) { return 0.0; }
+  return kz;
 }
 
 /** (round 121, herolab) the cut's rim: what's left just under the slice, lit so the cut's outline reads, 0..1 */
 fn sliceRim(p: vec3<f32>) -> f32 {
   let w = CAM.sliceShape.w;
-  if (CAM.cut.w < 0.5 || w <= 0.0 || p.z > CAM.cut.x || p.z < CAM.cut.x - w || !inSliceRadius(p)) { return 0.0; }
-  return 1.0;
+  if (CAM.cut.w < 0.5 || w <= 0.0) { return 0.0; }
+  let z0 = sliceBowl(p) - CAM.sliceSoft.x;
+  if (p.z > z0 || p.z < z0 - w) { return 0.0; }
+  // (only where the cut is: just over this point, something would be cut)
+  return select(0.0, 1.0, sliceReachAt(vec3<f32>(p.xy, z0 + CAM.sliceSoft.x + 0.05), z0 + CAM.sliceSoft.x) > 0.5);
 }
 
 /** the rim's colour mixed into a surface's (linear) */

@@ -16,7 +16,7 @@ import { labSight } from './labworld';
 import { LAB_TERRAINS } from './terrains';
 import type { Params } from '../../api/contracts/play';
 import { BIKE_DEFAULTS } from '../controllers/hoverbike';
-import { steerAssist } from '../core/steer';
+import { steerAssist, type SteerState } from '../core/steer';
 import type { BikeHero } from '../heroes/bike';
 import { applyTurn, HANDLING_SPEC, steerParams, useHandling, type HandlingId } from './handling';
 
@@ -131,6 +131,7 @@ function rideOnce(terrain: string, ids: readonly HandlingId[], opts: { secs?: nu
   const assist = steerParams(reg.values);
   const every = opts.every ?? 0.25;
   let stick: V2 = [0, 0];
+  const state: SteerState = { carve: null };
   let vel: V2 = [0, 0];
   let aimT = 0;
   let last: V2 | null = null;
@@ -155,7 +156,7 @@ function rideOnce(terrain: string, ids: readonly HandlingId[], opts: { secs?: nu
     } else pilot.steer([p[0], p[1]]);
     let dir = stick;
     if (last) {
-      const o = steerAssist(stick, [p[0], p[1]], vel, world.top, [], hero.profileClimb(), assist);
+      const o = steerAssist(stick, [p[0], p[1]], vel, world.top, [], hero.profileClimb(), assist, { dt, state });
       dir = o.dir;
       if (o.by && o.bend !== 0) bent++;
       if (o.fought) fought++;

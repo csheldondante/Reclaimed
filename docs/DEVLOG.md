@@ -15829,3 +15829,60 @@ undead; smite → 122-132 corpses; the lich's raise → 122-132 raised following
 **The title screen** (UI10): every place on it also as a small wrapping button (the diorama's models don't all fit a
 phone), the button row wraps, the panel scrolls, a Hero lab button. scripts/titlefit.mjs at 412 × 785: all 16 buttons on
 the screen.
+
+## 2026-11-01 — round 120, the user's second try (`herolab`): the cut only where it hides something, a bowl, the near side, dithered; more bike handling (CAM11, PL32)
+
+**Why.** The user (DECISIONS round 120, herolab): "the cut only needs to happen for things that occlude other triangles
+on the screen. A hill that is less than the camera steepness can't occlude right?" — right; and a toggle not to cut
+behind the player, the cut rising quadratically away from the bike, the dither at its edges; and the bike still
+handles badly except in the forest and the hills.
+
+**The cut.** Four tests on each fragment, in render.wgsl `sliceReachAt` (and mirrored in sight.ts `sliceReach`, so the
+probes and the metrics see what the draw does):
+- the bowl: the cut's height over p is h0 + k·d² (d the ground distance from the hero; sliders `cut at (h0)` 2.5 and
+  `rises (k)` 0.03 — at 10 cells +3, at 20 +12), so far land keeps its shape;
+- the fade: whole over that height, thinned by the 4 × 4 dither over `fade` (2.5) cells under it, and over the outer
+  `fadeR` (0.35) of the radius — the default cut is the dithered one now (cut~ keeps its own numbers);
+- the near side (`near side only`, on): only what lies between the eye and the hero (dot(p − hero, eye) > 0, eased over
+  1.5 cells);
+- real occluders (`real occluders only`, on; render.wgsl `occludes`): from p on along the eye's line away from the eye,
+  10 samples out to 60 cells, is the line ever in the open air (0.75 over the land's top, the nature grid's surface)?
+  Then p hides what's there. A slope gentler than the eye's line never is (the line runs straight into the ground under
+  it); a cliff's face and top, a building, a canyon's near wall are. Only fragments already inside the bowl, the radius
+  and the near side pay for it.
+Unit tests: the hill under 30° never occludes, a block's top edge does, flat ground doesn't; the bowl and the near side;
+the default cut still opens the wall hiding the hero and leaves the gentle hill. Live (r3, 6 s each): hero hidden 0 %
+on the cliff, the canyon and the hills, 5 % in the city (was 3-18 % with the flat cut).
+
+**The bike** (PL32), four more variants, the player first as before:
+- `tight` — tighter when slow (the grip's radius is v² / grip: grip 45, 9 rad/s) and a quicker drift for a sharp
+  turn: the existing Akira slide (haul the stick back) from 7 cells/s at 9 rad/s, so the brake-and-drift needs no new
+  button;
+- `gov` — the governor (core/steer.ts): in a narrow place (the corridor's reading) faster than govMin / narrowness
+  (13 cells/s at the narrowest), the stick pushes back against the way it goes (never past half a stick, so it never
+  starts the slide); boost held overrides it;
+- `carve` — the stick sets a heading the bike's way curves toward at 4 rad/s at 10 cells/s (slower the faster), with
+  grip 60;
+- `grip+` — the user's "just bump it's turning acceleration": grip 150, 10 rad/s.
+
+Measured with the same rider model (it is not the user's thumb: re-aims every 0.25 s, 16 directions, full stick; 4 × 60
+s; C:/Projects/shots88/herolab/handling2-node.txt):
+
+| variant | canyon hits/min | crashes | lap s | city hits/min | crashes | lap s |
+|---|---|---|---|---|---|---|
+| stock | 114.8 | 16.8 | 24.6 | 36.5 | 15.3 | 30.6 |
+| grip | 29.5 | 20.5 | 17.1 | 18.5 | 16.0 | 24.0 |
+| grip+ | 80.5 | 16.0 | 31.9 | 12.5 | 9.8 | 24.7 |
+| tight | 350.0 | 15.8 | 27.1 | 26.3 | 23.3 | 40.2 |
+| gov | 28.3 | 14.8 | 27.7 | 23.5 | 15.5 | 19.1 |
+| carve | 49.5 | 19.8 | 22.3 | 27.3 | 19.0 | 24.9 |
+| corridor+avoid | 23.3 | 19.0 | 21.2 | 20.0 | 17.3 | 20.2 |
+| grip+ + gov | 21.5 | 11.8 | 22.1 | 13.3 | 10.8 | 18.1 |
+| tight + gov + corridor + avoid | 18.3 | 14.3 | 18.2 | 13.3 | 10.0 | 22.5 |
+| carve + gov | 18.3 | 13.3 | 29.5 | 17.5 | 15.0 | 21.3 |
+
+Read: alone, a bigger turn (grip+, tight) helps in the city and hurts in the canyon with this rider — the canyon's
+tight wiggles make it scrape (tight's 350 hits/min is the drift grinding a wall: the rider hauls the stick at corners);
+the governor is what makes the turning ones work there: grip+ with the governor has the fewest crashes in both (11.8,
+10.8) and the city's best lap; the full assist with tight laps the canyon fastest. The rider model can't say how any
+of it feels: the user's thumb decides (PL31).

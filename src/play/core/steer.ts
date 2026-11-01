@@ -40,9 +40,26 @@ export interface SteerParams {
   strong: number;
   /** degrees the assist bends the stick at most */
   maxBend: number;
+  /**
+   * (round 120, the user's second try: "Even with the steering the bike goes not handle well") the governor, 0..1: in a
+   * narrow place (the corridor's reading) faster than `govMin` (cells/s, at its narrowest) the stick holds the bike back,
+   * let go as the way opens; boost held overrides it
+   */
+  governor: number;
+  govMin: number;
+  /**
+   * carving, rad/s at 10 cells/s (0: off): the stick sets a heading and the bike's way curves toward it at this rate,
+   * slower the faster it goes (the rate × 10 / speed), instead of the stick pushing it sideways at once
+   */
+  carve: number;
 }
 
-export const STEER_OFF: SteerParams = { corridor: 0, look: 0.6, fan: 50, avoid: 0, avoidLook: 0.35, small: 2.5, magnet: 0, magnetCone: 25, magnetRange: 14, strong: 35, maxBend: 40 };
+/** what a carve remembers between frames (the heading it's curving along) */
+export interface SteerState {
+  carve: number | null;
+}
+
+export const STEER_OFF: SteerParams = { corridor: 0, look: 0.6, fan: 50, avoid: 0, avoidLook: 0.35, small: 2.5, magnet: 0, magnetCone: 25, magnetRange: 14, strong: 35, maxBend: 40, governor: 0, govMin: 12, carve: 0 };
 
 const DEG = Math.PI / 180;
 const angleTo = (a: number, b: number) => Math.atan2(Math.sin(b - a), Math.cos(b - a));
@@ -116,13 +133,58 @@ export interface SteerOut {
   by: 'corridor' | 'avoid' | 'magnet' | null;
   /** the assist wanted to bend it (> 10°) but the player's strong steer held it off */
   fought: boolean;
+  /** (the governor) it held the bike back this frame */
+  held?: boolean;
+}
+
+/**
+ * The stick with the helpers filled in: the carve (the stick's heading reached at a rate), then the bend (avoidance,
+ * magnetism, the corridor: a light stick only), then the governor (held back in a narrow place unless boosting).
+ */
+export function steerAssist(stick: Pt, at: Pt, vel: Pt, top: (x: number, y: number) => number, targets: Pt[], climb: number, p: SteerParams, ctx: { dt?: number; boost?: boolean; state?: SteerState } = {}): SteerOut {
+  let s = stick;
+  const sp = Math.hypot(vel[0], vel[1]);
+  const m0 = Math.hypot(stick[0], stick[1]);
+  // the carve: the heading the bike curves along, turned toward the stick at a rate that falls with speed
+  if (p.carve > 0 && ctx.state && ctx.dt) {
+    if (m0 < 0.15) ctx.state.carve = null;
+    else {
+      const want = Math.atan2(stick[1], stick[0]);
+      const from = ctx.state.carve ?? (sp > 2 ? Math.atan2(vel[1], vel[0]) : want);
+      const rate = (p.carve * 10) / Math.max(10, sp);
+      const d = angleTo(from, want);
+      const h = from + Math.max(-rate * ctx.dt, Math.min(rate * ctx.dt, d));
+      ctx.state.carve = h;
+      s = [Math.cos(h) * m0, Math.sin(h) * m0];
+    }
+  }
+  const o = bendAssist(s, at, vel, top, targets, climb, p);
+  // the governor: faster than the corridor allows, the stick pushes back against the way it goes (never so hard it
+  // slides: under half a stick against it)
+  if (p.governor > 0 && !ctx.boost && sp > 2 && m0 >= 0.15) {
+    const heading = Math.atan2(vel[1], vel[0]);
+    const c = corridor(top, at, heading, Math.max(6, sp * p.look), p.fan * DEG, climb);
+    // (govMin at the narrowest, rising fast as the way opens: open land is never held)
+    const allowed = p.govMin / Math.max(0.1, sstep(0.1, 0.55, c.narrow));
+    if (sp > allowed) {
+      const over = Math.min(1, (sp - allowed) / Math.max(4, allowed * 0.5)) * p.governor;
+      const m = Math.hypot(o.dir[0], o.dir[1]) || 1;
+      const ux = o.dir[0] / m;
+      const uy = o.dir[1] / m;
+      const vx = vel[0] / sp;
+      const vy = vel[1] / sp;
+      const k = 0.45 * over;
+      return { ...o, dir: [ux * (1 - over) * m * 0.6 - vx * k, uy * (1 - over) * m * 0.6 - vy * k], held: true };
+    }
+  }
+  return o;
 }
 
 /**
  * The stick with the assist filled in. `vel` the vehicle's velocity (cells/s); `targets` foes' feet (for magnetism);
  * `climb` the rise over run it rides.
  */
-export function steerAssist(stick: Pt, at: Pt, vel: Pt, top: (x: number, y: number) => number, targets: Pt[], climb: number, p: SteerParams): SteerOut {
+function bendAssist(stick: Pt, at: Pt, vel: Pt, top: (x: number, y: number) => number, targets: Pt[], climb: number, p: SteerParams): SteerOut {
   const m = Math.hypot(stick[0], stick[1]);
   const sp = Math.hypot(vel[0], vel[1]);
   const none: SteerOut = { dir: stick, bend: 0, by: null, fought: false };

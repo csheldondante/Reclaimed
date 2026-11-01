@@ -28,7 +28,7 @@ export interface Cut {
    * (round 121, herolab: the cutaway camera mode) the slice only within `radius` (world units on screen) of (x, y) at the
    * slice's height, and a rim lit `rim` cells under the cut; absent: the whole view, no rim (round 83's slice)
    */
-  sliceShape?: { x: number; y: number; radius: number; rim: number; fade?: number; fadeR?: number } | null;
+  sliceShape?: { x: number; y: number; radius: number; rim: number; fade?: number; fadeR?: number; bowl?: number; nearOnly?: boolean; occluders?: boolean } | null;
 }
 
 /** the free camera: where it is (world), which way it looks (radians), its vertical field of view */
@@ -299,7 +299,7 @@ export class Camera {
       c.see.forEach((p, i) => f.set(p, o + 4 + i * 4));
       c.boxes.forEach((b, i) => f.set([b[0], b[1], b[2], 0, b[3], b[4], b[5], 0], o + 20 + i * 8));
       const sh = c.slice === null ? null : c.sliceShape;
-      if (sh) f.set([sh.x, sh.y, sh.radius, sh.rim, sh.fade ?? 0, sh.fadeR ?? 0, 0, 0], o + 52);
+      if (sh) f.set([sh.x, sh.y, sh.radius, sh.rim, sh.fade ?? 0, sh.fadeR ?? 0, sh.bowl ?? 0, (sh.nearOnly ? 1 : 0) + (sh.occluders ? 2 : 0)], o + 52);
     }
   }
 }

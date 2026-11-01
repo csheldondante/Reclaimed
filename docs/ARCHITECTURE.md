@@ -2236,6 +2236,11 @@ abilities and moves and puzzles and enemies and camera modes so we can iterate m
   once), applied by `PlaySession.assist` (null: none); the lab's `handling.ts` registry, variants and `?handling=`.
   Stations have `actions`; kinds include `traits` (the Traits Lab's `TRAIT_SCENES`, one list both labs press, on a
   `TraitStation` the level makes over its agents and trait system: `HeroLabDeps.traitScene`).
+- **(round 120, the user's second try)** The cut is a bowl (`CamSlice.bowl`: h0 + k·d² from the hero), dithered at its
+  edges by default, the near side only (`nearOnly`) and real occluders only (`occluders`): render.wgsl
+  `sliceReachAt`/`occludes` (10 samples of the nature grid's `surface` along the eye's line behind the fragment), the
+  flags in `Camera.sliceSoft.w`; sight.ts `sliceReach`/`occludes` mirror them (they need the SightWorld). core/steer.ts
+  `steerAssist` adds the carve (its heading kept in a `SteerState`) and the governor (boost overrides) round the bend.
 - **Measured**: `test/unit/herolab-metrics.test.ts` (Node: `ride()` — play's hero by the autopilot on the lab's columns
   and planTree's trees) and `scripts/herolab.mjs` (the live world: shots, GIFs, metrics; `--cost`: frame time by
   toggling each mode against the chase on the phone proxy).

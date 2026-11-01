@@ -6,7 +6,7 @@ import { hiddenShare, lookAt } from './modes';
 import { CAM_SPEC } from './params';
 import { CameraRig, camString, parseCam } from './rig';
 import { Registry } from '../../tune/registry';
-import { eyeDir, hiddenBy, sliceReach } from './sight';
+import { eyeDir, hiddenBy, occludes, sliceReach } from './sight';
 import { boxWorld } from './testworld';
 
 const SCREEN = { w: 412, h: 915, margin: 56 };
@@ -152,8 +152,9 @@ describe('the dithered cut (round 120)', () => {
   it('thins out over its fade, and the hero is still seen through it', () => {
     const e = eyeDir(Math.PI / 4, Math.PI / 6);
     const s = { z: 3, at: [64, 64] as [number, number], radius: 10, rim: 0, fade: 2, fadeR: 0.4 };
-    expect(sliceReach(s, [64, 64, 2.5], e)).toBe(0);
-    expect(sliceReach(s, [64, 64, 4], e)).toBeCloseTo(0.5, 6);
+    // (the fade under the cut's height: none 2 under it, half 1 under, whole over it)
+    expect(sliceReach(s, [64, 64, 0.5], e)).toBe(0);
+    expect(sliceReach(s, [64, 64, 2], e)).toBeCloseTo(0.5, 6);
     expect(sliceReach(s, [64, 64, 6], e)).toBe(1);
     // (at the edge of its radius it thins out too)
     const near = sliceReach(s, [64, 64, 6], e);
@@ -163,5 +164,45 @@ describe('the dithered cut (round 120)', () => {
     const f = run(rig, walled(), 2);
     expect(f.cut.slice?.fade).toBeGreaterThan(0);
     expect(hiddenBy(walled(), [64, 64, 1.2], eyeDir(f.view.azimuth, f.view.elevation), f.cut)).toBeNull();
+  });
+});
+
+describe('the cut only where it hides something (round 120, the user, second try)', () => {
+  const e = eyeDir(Math.PI / 4, Math.PI / 6);
+  const at: [number, number] = [64, 64];
+  it('a hill gentler than the eye line never occludes; a cliff top edge does', () => {
+    // (ground rising toward the eye at 0.3 a cell: under 30°)
+    const hill: SightWorld = { solid: () => null, top: (x, y) => Math.max(0, (x + y - 128) * 0.3 / Math.SQRT2), ceiling: 64, bounds: [128, 128] };
+    for (const t of [2, 6, 12]) {
+      const x = 64 + e[0] * t * 1.2;
+      const y = 64 + e[1] * t * 1.2;
+      expect(occludes(hill, [x, y, hill.top(x, y)], e)).toBe(false);
+    }
+    // (a block 20 high on the eye's side: its top's far edge has open air behind it)
+    const block = boxWorld([[68, 60, 74, 100, 20]]);
+    expect(occludes(block, [68.2, 66, 20], e)).toBe(true);
+    // (and flat ground hides nothing)
+    expect(occludes(boxWorld([]), [70, 70, 0], e)).toBe(false);
+  });
+
+  it('the bowl rises with distance; the near side only keeps what is beyond the hero', () => {
+    const s = { z: 2, at, radius: 0, rim: 0, bowl: 0.05, nearOnly: true };
+    // (near the hero, toward the eye, over 2: cut; 10 cells off it'd need over 2 + 5)
+    expect(sliceReach(s, [64 + e[0] * 3, 64 + e[1] * 3, 3.5], e)).toBe(1);
+    expect(sliceReach(s, [64 + 7, 64 + 7, 6], e)).toBe(0);
+    expect(sliceReach(s, [64 + 7, 64 + 7, 9], e)).toBe(1);
+    // (beyond the hero from the eye: never)
+    expect(sliceReach(s, [64 - 3, 64 - 3, 9], e)).toBe(0);
+    expect(sliceReach({ ...s, nearOnly: false }, [64 - 3, 64 - 3, 9], e)).toBe(1);
+  });
+
+  it('the default cut still opens the wall that hides the hero, and leaves the open hills alone', () => {
+    const rig = new CameraRig(parseCam(null), fresh());
+    const f = run(rig, walled(), 2);
+    expect(f.cut.slice?.occluders).toBe(true);
+    expect(hiddenBy(walled(), [64, 64, 1.2], eyeDir(f.view.azimuth, f.view.elevation), f.cut, 80, 0.5)).toBeNull();
+    const hill: SightWorld = { solid: (x, y) => [{ z0: -2, z1: Math.max(0, (x + y - 128) * 0.3 / Math.SQRT2) }], top: (x, y) => Math.max(0, (x + y - 128) * 0.3 / Math.SQRT2), ceiling: 64, bounds: [128, 128] };
+    const s = { z: 2, at, radius: 0, rim: 0, occluders: true };
+    expect(sliceReach(s, [70, 70, hill.top(70, 70)], e, hill)).toBe(0);
   });
 });

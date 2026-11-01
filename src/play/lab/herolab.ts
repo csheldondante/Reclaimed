@@ -28,7 +28,7 @@ import { CAM_MODES, camString, parseCam } from '../camera/rig';
 import type { PlayHeroId } from '../heroes/make';
 import { el, PlaySession, type SessionDeps } from '../session';
 import { Autopilot, type AutoPath } from './autopilot';
-import { applyTurn, HANDLING, HANDLING_VARIANTS, parseHandling, steerParams, useHandling, type HandlingId } from './handling';
+import { applyTurn, assistOn, HANDLING, HANDLING_VARIANTS, parseHandling, steerParams, useHandling, type HandlingId } from './handling';
 import { STATION_KINDS, Stations, urlParam, VariantPicker, type LabStation, type StationKind } from './lab';
 import { LAB_TERRAINS, type LabTerrain } from './terrains';
 import '../sandbox/sandbox.css';
@@ -311,7 +311,7 @@ export class HeroLab {
     }
     applyTurn(HANDLING.values, h.params);
     const a = steerParams(HANDLING.values);
-    this.session.assist = a.corridor > 0 || a.avoid > 0 || a.magnet > 0 ? a : null;
+    this.session.assist = assistOn(a) ? a : null;
   }
 
   go(id: string): void {

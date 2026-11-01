@@ -95,7 +95,7 @@ export function applyFrame(cam: Camera, f: CamFrame, own: Applied): Applied {
   if (own.cut) {
     const s = f.cut.slice;
     cam.cut.slice = s ? s.z : null;
-    cam.cut.sliceShape = s ? { x: s.at[0], y: s.at[1], radius: s.radius, rim: s.rim, fade: s.fade, fadeR: s.fadeR } : null;
+    cam.cut.sliceShape = s ? { x: s.at[0], y: s.at[1], radius: s.radius, rim: s.rim, fade: s.fade, fadeR: s.fadeR, bowl: s.bowl, nearOnly: s.nearOnly, occluders: s.occluders } : null;
     cam.cut.see = f.cut.see.map((p) => [p.at[0], p.at[1], p.at[2], p.r]);
   }
   return own;

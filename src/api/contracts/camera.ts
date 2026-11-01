@@ -104,6 +104,12 @@ export interface CamSlice {
   fade?: number;
   /** ...and the outer share of the radius it thins over (0: a hard edge) */
   fadeR?: number;
+  /** (round 120) the bowl: the cut rises `bowl` cells a cell² away from `at` (h = z + bowl·d²); 0: flat */
+  bowl?: number;
+  /** only what stands between the eye and the hero (never beyond it) */
+  nearOnly?: boolean;
+  /** only real occluders: what has open air behind it along the eye's line (a slope gentler than the eye's never) */
+  occluders?: boolean;
 }
 
 /** A hole kept open round a point: what's in front of it and over its base, within r on screen, dithered out. */

@@ -82,3 +82,35 @@ describe('the assist blend: the player first', () => {
     expect(o.bend).toBe(0);
   });
 });
+
+describe('the governor and the carve (round 120, the second try)', () => {
+  const narrow = boxes([
+    [0, 58, 200, 60, 20],
+    [0, 68, 200, 70, 20],
+  ]);
+  const GOV: SteerParams = { ...STEER_OFF, governor: 1, govMin: 12 };
+  it('holds a fast bike back in a narrow place, not in the open, not when boosting, not when slow', () => {
+    const fast = steerAssist([1, 0], [40, 64], [30, 0], narrow, [], 1, GOV);
+    expect(fast.held).toBe(true);
+    expect(fast.dir[0]).toBeLessThan(0.2);
+    expect(steerAssist([1, 0], [40, 64], [30, 0], boxes([]), [], 1, GOV).held).toBeFalsy();
+    expect(steerAssist([1, 0], [40, 64], [30, 0], narrow, [], 1, GOV, { boost: true }).held).toBeFalsy();
+    expect(steerAssist([1, 0], [40, 64], [8, 0], narrow, [], 1, GOV).held).toBeFalsy();
+    // (never so far against its way that the slide would start: under half a stick)
+    expect(Math.hypot(...fast.dir)).toBeLessThan(0.5);
+  });
+
+  it('the carve turns the stick toward where it points at a rate, slower the faster', () => {
+    const P: SteerParams = { ...STEER_OFF, carve: 4 };
+    const st = { carve: null as number | null };
+    // (going +x at 10 c/s, the stick swung to +y: after 0.1 s the heading has turned 0.4 rad, not 90°)
+    const o = steerAssist([0, 1], [40, 64], [10, 0], boxes([]), [], 1, P, { dt: 0.1, state: st });
+    expect(Math.atan2(o.dir[1], o.dir[0])).toBeCloseTo(0.4, 6);
+    const st2 = { carve: null as number | null };
+    const f = steerAssist([0, 1], [40, 64], [40, 0], boxes([]), [], 1, P, { dt: 0.1, state: st2 });
+    expect(Math.atan2(f.dir[1], f.dir[0])).toBeCloseTo(0.1, 6);
+    // (let go: it forgets)
+    steerAssist([0, 0], [40, 64], [10, 0], boxes([]), [], 1, P, { dt: 0.1, state: st });
+    expect(st.carve).toBeNull();
+  });
+});

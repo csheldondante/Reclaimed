@@ -15,6 +15,8 @@ export const HANDLING_SPEC = {
     params: {
       grip: { label: 'grip', units: 'cells/s²', min: 0, max: 200, step: 1, def: 0, help: 'sideways acceleration swinging its way toward the stick (0: the bike as it was)' },
       turnRate: { label: 'turn rate', units: 'rad/s', min: 0.5, max: 12, step: 0.1, def: 6, help: 'the most the grip swings its way a second' },
+      slideMin: { label: 'drift from', units: 'cells/s', min: 3, max: 30, step: 1, def: 11, help: 'the Akira slide (the stick hauled back) works faster than this: the brake-and-drift for a sharp turn' },
+      slideTurn: { label: 'drift turn', units: 'rad/s', min: 1, max: 15, step: 0.5, def: 5.5 },
     },
   },
   assist: {
@@ -32,18 +34,25 @@ export const HANDLING_SPEC = {
       magnetRange: { label: 'magnet range', units: 'cells', min: 3, max: 40, step: 1, def: 14 },
       strong: { label: 'strong steer', units: '°', min: 5, max: 90, step: 1, def: 35, help: 'a stick this far off the way it goes overrides the assist at once' },
       maxBend: { label: 'bend at most', units: '°', min: 5, max: 90, step: 1, def: 40 },
+      governor: { label: 'governor', units: '0..1', min: 0, max: 1, step: 0.05, def: 0, help: '(round 120) held back in narrow places, let go as the way opens; boost overrides' },
+      govMin: { label: 'governor speed', units: 'cells/s', min: 4, max: 40, step: 1, def: 13, help: 'the speed it allows at the narrowest' },
+      carve: { label: 'carve rate', units: 'rad/s at 10 c/s', min: 0, max: 12, step: 0.25, def: 0, help: '(round 120) the stick sets a heading the bike curves toward at this rate (slower the faster); 0: off' },
     },
   },
 };
 
 export const HANDLING = new Registry(HANDLING_SPEC);
 
-export type HandlingId = 'stock' | 'grip' | 'corridor' | 'avoid' | 'magnet';
+export type HandlingId = 'stock' | 'grip' | 'gripplus' | 'tight' | 'governor' | 'carve' | 'corridor' | 'avoid' | 'magnet';
 
 /** the variants as chips: each turns its helper on at a starting strength (stock: all off) */
 export const HANDLING_VARIANTS: { id: HandlingId; icon: string; label: string; hint: string; set: Record<string, number> }[] = [
   { id: 'stock', icon: '🏍', label: 'stock', hint: 'the bike as it is: no grip, no assist', set: { 'turn.grip': 0, 'assist.corridor': 0, 'assist.avoid': 0, 'assist.magnet': 0 } },
   { id: 'grip', icon: '↪', label: 'grip', hint: 'turn acceleration: the velocity swung toward the stick (grip 70, 6 rad/s)', set: { 'turn.grip': 70 } },
+  { id: 'gripplus', icon: '⤴', label: 'grip+', hint: '(round 120: "just bump it\'s turning acceleration") grip 150, 10 rad/s', set: { 'turn.grip': 150, 'turn.turnRate': 10 } },
+  { id: 'tight', icon: '➰', label: 'tight', hint: 'tighter when slow (grip 45: the turn\'s radius v² / grip) and a quicker drift to brake round a sharp turn (haul the stick back from 7 c/s, 9 rad/s)', set: { 'turn.grip': 45, 'turn.turnRate': 9, 'turn.slideMin': 7, 'turn.slideTurn': 9 } },
+  { id: 'governor', icon: '⏬', label: 'gov', hint: 'held back to ~13 c/s in narrow places, let go as the way opens (boost overrides)', set: { 'assist.governor': 1 } },
+  { id: 'carve', icon: '〽', label: 'carve', hint: 'the stick sets a heading; the bike curves toward it at 4 rad/s (at 10 c/s; slower the faster)', set: { 'assist.carve': 4, 'turn.grip': 60 } },
   { id: 'corridor', icon: '〰', label: 'flow', hint: 'the corridor: a light stick bent toward the open way in narrow places', set: { 'assist.corridor': 0.8 } },
   { id: 'avoid', icon: '🪨', label: 'avoid', hint: 'nudged round small things that would stop it dead', set: { 'assist.avoid': 1 } },
   { id: 'magnet', icon: '🧲', label: 'magnet', hint: 'leaned toward a foe ahead when attacking', set: { 'assist.magnet': 0.7 } },
@@ -72,8 +81,15 @@ export function steerParams(v: typeof HANDLING.values): SteerParams {
   return { ...STEER_OFF, ...v.assist };
 }
 
+/** any helper on (the session runs the assist only then) */
+export function assistOn(a: SteerParams): boolean {
+  return a.corridor > 0 || a.avoid > 0 || a.magnet > 0 || a.governor > 0 || a.carve > 0;
+}
+
 /** the bike's own turning numbers, onto its params */
 export function applyTurn(v: typeof HANDLING.values, params: Params): void {
   params.grip = v.turn.grip;
   params.turnRate = v.turn.turnRate;
+  params.slideMin = v.turn.slideMin;
+  params.slideTurn = v.turn.slideTurn;
 }
