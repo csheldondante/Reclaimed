@@ -326,6 +326,8 @@ each was implemented.
 
 - The user, verbatim: "We can have abilities and deck building that negates these or decreases time to address etc.  you could have things like sacrificing units to delay an approaching army for example" → abilities as part of the deck-building (negate an expiry, cut the time to address, extend an expiry, resolve instantly), plus sacrifices (spend an agent or goods for good to delay a threat, negate an expiry, or force a card); one system with the bonus kinds plus delay and sacrifice.
 
+- The user, verbatim: "I don't think it needs a separate abilities section this is like relics in slay the spire. They are just active effects tied to triggers" → no abilities section: relics, i.e. held effects with a trigger (card dealt/expiring of a kind, commit, resolve, turn start, threat advancing, agent lost) and an effect (negate, delay, shorten, extend, instant, better, unlock, gain), firing automatically; agents' bonuses and tags are relics they carry; sacrifice stays an opportunity whose cost is an agent or goods.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
