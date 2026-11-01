@@ -12,6 +12,22 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 124 (2026-11-01, session 5, `opportunities`) — slice A of the opportunity system: the horde run as opportunities on the map (DECISIONS round 120)
+
+The user's text docs/design/STRATEGIC_MAP.md and the newest DECISIONS round 120 entries ("show them as events or
+opportunities on the map not as a hand", "deal just the ones that make sense ... most expensive cards you can afford",
+tags persist, "tune the dealer ... via iteration"). Design: docs/design/RUN_LOOP.md revision 4. DEVLOG round 124.
+
+| id | item | size | status |
+|---|---|---|---|
+| RN2-1 | The opportunity contract (contracts/opportunity.ts): agents with tags, goods, holdings, `available`, `meet`, `affords`, `commit` (agents locked, costs spent, the roll), `resolve` (losses, tags and bonuses for the survivors, goods and agents gained, conflict and atlas effects passed on), bonuses (negate, instant); pure, unit-tested | M | done (`opportunities`) |
+| RN2-2 | The dealer (opps/dealer.ts): sense filters, reach, the largest affordable tier, scores, one offer a template a place, forced alone, limits, unaffordable and next-tier slots, the guarantees (a way toward the climax; tied to the conflict); every weight and limit a slider (opps/tune.ts, the `dealer` panel); a report of what was dealt and why and what was not and why | M | done (`opportunities`) |
+| RN2-3 | Slice A (opps/horde.ts, opps/run.ts): the outriders forced, the ways on as player opportunities, the Red Hold's levy an army agent, Hold the ford (army 1/2/3, only where the levy can meet the host's road before it), Bring in the harvest (rots if let go: the host sooner), Break the vanguard (veterans only); commitments over turns, the climax settles what's out; the town's fate and the endings as runsit's | L | done in Node (`opportunities`) |
+| RN2-4 | oppcheck (gm/oppcheck.ts): references, consequences realisable, sane deals; run on every deal (a problem throws) | S | done (`opportunities`) |
+| RN2-5 | Persistence: CharacterRecord `tags` and `bonuses` (+ the `tags` CharacterChange); the levy's record (`levy:<hold>`) keeps `veteran` and its bonus into later runs | S | done (`opportunities`) |
+| RN2-6 | The map: opportunities as markers on the AtlasMap (tap: needs, costs, duration, odds, consequences, Commit), ongoing commitments with turns left, no hand UI; the dealer's debug overlay; `?run=opps` beside `?runplan=` | M | wip |
+| RN2-7 | Seed 1's hold path is late by construction (fill.ts: the straight road + 2.5 min; the hold reached at 9.0 min, the host at the town at 9.1): after the levy is won only the harvest makes sense and one way on is left — the ford never does there (it does where the hold is near the host's road: the Node tests). The GM or the template needs a longer way after the hold (a turn or two with the levy) for the levy's opportunities to matter | M | open (the user to judge) |
+
 ## Round 123 (2026-10-31, session 5, `merge123`) — cities and traits merged into places (DECISIONS round 120)
 
 The user (round 120): "This looks good to merge ... so merge and just take notes of gaps and a Todo to come back and

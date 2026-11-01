@@ -156,6 +156,11 @@ export class MemoryWorldState implements WorldState {
       case 'status': r.statuses = [...r.statuses.filter((g) => !c.remove?.includes(g)), ...(c.add ?? []).filter((g) => !r.statuses.includes(g))]; break;
       case 'move': r.region = c.region; break;
       case 'die': r.alive = false; r.history.push({ run, text: c.text }); break;
+      case 'tags': {
+        r.tags = [...(r.tags ?? []).filter((g) => !c.remove?.includes(g)), ...(c.add ?? []).filter((g) => !(r.tags ?? []).includes(g))];
+        if (c.bonuses) r.bonuses = [...(r.bonuses ?? []).filter((b) => !c.bonuses!.some((n) => n.why === b.why)), ...structuredClone(c.bonuses)];
+        break;
+      }
     }
     this.version++;
   }

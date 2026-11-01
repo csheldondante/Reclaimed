@@ -97,6 +97,10 @@ export class SituationRun {
   evacuate = false;
   /** minutes the threat was slowed */
   delay = 0;
+  /** (round 120, opportunities) of the threat's count, how many were cut down before the finale (the levy at the
+   *  vanguard), and how many more of the town's own stand with its guards when it's warned (the harvest brought in) */
+  thinned = 0;
+  provisioned = 0;
   /** the hold's levy on the march: the run minute it reaches the target */
   reinforce: { faction: string; role: string; count: number; arrives: number } | null = null;
   pursuers: { count: number; role: string; behind: number } | null;
@@ -277,12 +281,12 @@ export class SituationRun {
     return {
       mode: this.evacuate ? 'evacuate' : 'defend',
       warned: this.warned,
-      horde: th.count,
+      horde: Math.max(1, th.count - this.thinned),
       role: th.role,
       faction: th.faction,
       hordeIn,
       burning: hordeIn < 0 ? Math.min(BURNING_MAX, Math.ceil(-hordeIn / BURNING_EVERY_S)) : 0,
-      militia: this.warned && hordeIn > 0 ? MILITIA : 0,
+      militia: this.warned && hordeIn > 0 ? MILITIA + this.provisioned : 0,
       reinforce: this.reinforce ? { faction: this.reinforce.faction, role: this.reinforce.role, count: this.reinforce.count, in: Math.max(8, (this.reinforce.arrives - this.clock) * 60) } : null,
       pursuers: this.pursuers && this.pursuers.count > 0 ? { ...this.pursuers } : null,
       from: [dx / l, dy / l],

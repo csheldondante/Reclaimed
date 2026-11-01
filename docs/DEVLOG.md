@@ -15724,3 +15724,59 @@ plain blow.
 - Shots: C:/Projects/shots88/merge123/ — towns/ (m123-port, -mining, -hold: day, night, near), traits/ (the station:
   crowd, smite, raise.gif, sanctuary, petrify), lich/ (01-raiders, 02-fallen, 03-raise.gif, 03-raised: the raised in
   green and bone round the lich), runsit-saved/, tilegate/, tilegate-places/, drive-*.log; STRUCTURE.md.
+
+## Round 124 (2026-11-01, session 5, `opportunities`) — slice A of the opportunity system (DECISIONS round 120)
+
+The user's correction (docs/design/STRATEGIC_MAP.md) and the newest answers (DECISIONS round 120): opportunities are
+uniform; cards only behind the scenes, shown on the map; the dealer deals what makes sense, the most expensive you can
+afford; tags persist; the dealer tuned by iteration. RUN_LOOP.md came over from `runloop` as revision 4 with those
+answers folded in (its "hands" and "at least two player cards" marked stale). BACKLOG RN2-1..RN2-7.
+
+**The contract** (src/api/contracts/opportunity.ts). Resources are the player, agents (kind, count, tags, statuses,
+where they are) and goods. The rules are pure functions that return new holdings: `available` (with the player or at
+a settlement the character rules; not committed, not wounded: the user's "they must be available to your
+character"), `meet` (kinds, counts and tags, fewest-tagged first so a veteran is kept for what needs one), `affords`,
+`commit` (agents locked, costs spent; a resource opportunity's tier rolled at commitment from the odds the card showed),
+`resolve` (bonuses lift the tier, the survivors return with their losses and new tags, goods and agents gained; the
+conflict's and the atlas's effects passed on in `out`, for their owners). Why the conflict's effects are data with an
+`op` and not functions: the contract stays one concern (what a commitment does to the holdings); what "delay the host"
+means is the conflict's, so slice A's run applies `delay`/`hasten`/`thin` to the situation and a ruler's run will
+apply its own. Durations: a player opportunity's in run minutes (its leg and play), a resource one's in turns (the user:
+"resolve or pop up each turn"). Bonuses: `negate` (a tier on a theme lifted to the next better: a veteran levy's
+disaster on a fight becomes a failure) and `instant` (resolves the turn it's committed).
+
+**The dealer** (src/opps/dealer.ts) is generic: templates propose, the dealer decides, in named steps (sense, reach,
+tier, score, one offer a template a place, forced alone, limits, the guarantees), and every proposal it does not deal
+is reported with its step and why. "The most expensive you can afford" is step 3: the largest tier what's available
+meets, and a `tier` part in the score (`wTier`) so a richer deal outranks a poorer one. "One option a turn when that's
+what makes sense": the limits are limits, not targets, and the guarantee is a way toward the climax, not two cards.
+Every weight and limit is a slider (src/opps/tune.ts, a CPU registry the tuning panel edits). 0.1-0.5 ms a deal in Node.
+
+**Slice A** (src/opps/horde.ts, run.ts). runsit's SituationRun keeps its clock, route, pursuers, the town's fate and
+the finale's setup (two fields added: `thinned`, `provisioned`), so the endings work as today; OppRun keeps the
+holdings, the deals, commitments, expiry and the climax. The templates: the outriders (forced, the start), the ways on
+(one per situation choice: ride / warn / lead-out, the GM's travel rule a choice of destinations), Hold the ford (army
+1/2/3 + supplies; delays the host by the tier; survivors veterans), Bring in the harvest (army 1/2; supplies feed the
+warned town's defenders at the climax; let go, it rots and the host comes on sooner), Break the vanguard (only for
+veterans: the tag opportunity). Deliver won is an outcome that gains an army agent (`levy:<hold>`) and supplies —
+runsit's special case in finaleSetup becomes a resource gained; the levy reinforces the finale only if it isn't
+committed, from wherever it was freed. At the climax what is still out resolves (its roll was made at commitment) and
+what is still offered expires.
+
+Why the ford is offered only where the levy can meet the host's road first (`fordAt`: the first point ahead of the
+host the levy reaches 0.25 min before it, at runsit's LEVY_PACE): on seed 1 the hold path is late by construction (the
+hold won at minute 9.0, the host at the town at 9.1 — fill.ts sets the clock at the straight road + 2.5), and a ford
+dealt there would be a lie. The dealer says so ("the levy can't reach the host's road before it passes: 5.3 min to the
+nearest of it; the host at the town in 5 s"), deals the harvest and the one way on. Where the hold is by the host's
+road (the Node tests move it there) the ford is dealt at the tier the levy meets, committed, resolved the next turn.
+That seed 1 never offers it is RN2-7 for the user: the GM's or the template's way after the hold needs a turn or two.
+
+**Persistence.** CharacterRecord gained `tags` and `bonuses` (optional: older saves load), with a `tags`
+CharacterChange; finishOpps writes the named agents the run leaves (a levy that stood in a saved town comes back
+veteran, with the negate bonus; one wiped out dies), and the next run's levy comes with its record — which opens the
+vanguard. oppcheck (src/gm/oppcheck.ts) runs on every deal; a problem throws.
+
+Tests: test/unit/opportunity.test.ts (10), test/unit/opps.test.ts (18: the dealer's tiers, forced, limits, one-offer,
+guarantees, reach, variety, sliders; slice A on seed 1: the outriders forced, the ways on, the levy, the harvest
+committed and let rot, the ford where it makes sense at tier 1 and at tier 2 with two armies, played through to saved
+and to burned, the veteran levy into the next run, oppcheck catching a broken deal, under 5 ms a deal).
