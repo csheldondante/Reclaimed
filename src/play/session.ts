@@ -43,6 +43,9 @@ export interface SessionDeps {
    * the chase); absent: today's chase alone, and no way-ahead signal on screen
    */
   cam?: string | null;
+  /** (merge123, LW1-1) the world's raise dead (PlayWorld.raise; scenes/level.ts puts it together from the trait system
+   *  and the units); absent: none */
+  raise?: PlayWorld['raise'];
 }
 
 /** how hard the hero's jolts knock the view about (cells at shake 1); the rest of the framing is the hero's (HeroCamera.chase) */
@@ -92,7 +95,7 @@ export class PlaySession {
   readonly stats = { frames: 0, ms: 0, max: 0 };
 
   private constructor(readonly d: SessionDeps) {
-    this.world = makePlayWorld(d.api, d.units, d.camera, d.bounds);
+    this.world = makePlayWorld(d.api, d.units, d.camera, d.bounds, d.raise);
     // (one actor for the units to chase, whichever hero it is now)
     const actor: Actor = {
       id: 'hero',

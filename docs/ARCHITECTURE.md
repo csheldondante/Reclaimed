@@ -1758,7 +1758,7 @@ headroom | wet | six 3-bit links, room, region — the peel reads `places` and
 `placeTable` in its own bind group), `agentNavCost` (round 107: per surface, the
 height and wet the links and the relax reckon its cost by, following nav's floor with hysteresis — the
 units ride nav, the fields read this), `agentDist` (NFIELDS = 4 fields × surfaces,
-f32), `agentUnits` (four vec4 a unit: units.wgsl), `agentOcc` (units per
+f32), `agentUnits` (five vec4 a unit: units.wgsl — the fifth, LW1, the trait system's CAPS and LOOK and the max hp), `agentOcc` (units per
 column, two halves by tick parity), `agentEvents` (a count and 8-u32
 records: swing, hurt, death, alight; the CPU copies and clears it in
 `sync`), `agentModels` (the kinds' voxels) with `agentKindModels`, and
@@ -1774,6 +1774,72 @@ occupancy half cleared; every unit stepped; every unit's voxels written.
 The params uniform (binding 10) carries counts, 32 seeds, each group's field
 and colour, each field's place, 8 kinds, 32 hits, 8 targets, 8 holds, 32
 launches.
+
+## Traits and effects (Living World slice 1, branch `traits`; BACKLOG LW1; contract src/api/contracts/traits.ts)
+
+The user (DECISIONS round 120): "the systems that process traits for things like combat and other interactions are
+essentially game specific logic but we want it GPU bound and cheap so we can use it on our agents. Modular architecture
+here is key." Three concerns, three structures:
+
+- **Traits** (what a thing is, what is happening to it): one id space — intrinsic bits 0-15 (`living`, `undead`,
+  `flying`, `construct`, `fire_immune`, `regenerating`, `invisible`, `incorporeal`), statuses bits 16-23 with an expiry
+  each (`burning`, `frightened`, `healing`, `raised`, `petrified`, `corpse`, `harmed`, `blessed`). A recipe Kind's tags
+  seed them (`traitsOfTags`: a tag named as a trait is that trait); materials carry the same ids (`MATERIAL_TRAITS`).
+  On the agents: `traits` buffer (src/traits/system.ts), three vec4<u32> a unit slot — the trait word, the source group,
+  the occupant (generation + 1), and an expiry tick a status (PERM: for ever). Bodies and structures use the ids
+  through their materials for now (the sanctuary's grow and mend reach `living` and `construct` ground).
+- **Effects** (operations put into the world): `apply({ op: 'heal' | 'raise' | 'damage' | 'status', at, radius, … })`.
+  A field lasts (`seconds`; a heal lasts till `end`), a burst is one tick. Up to 32 at once (an error past that). They
+  reach agents through the rules below, and fields and geometry only through the systems' own channel: the world
+  events Grow (wilt.wgsl, particles) and Mend (new, EventKind 8: structure.wgsl knits a cracked interval back a damage
+  level with chance `strength`), pulsed every `world.every` s. A heal's world effects don't need an agent about.
+- **Rules** (modules; the game's): `TraitModule { name, wgsl: 'fn module_main(u: u32) {…}', table ≤ 64 words, order }`,
+  registered on the `TraitsApi` (src/traits/registry.ts keeps the set). Each is its own compute kernel, one thread an
+  agent slot, writing only its own slot; it sees the prelude (src/traits/prelude.wgsl: units, events, traits, the tick's
+  effects, its table as `MT`, helpers `tWord`, `hasAll`, `statusOn`, `effCovers`, `effAmount`, `setHp`, `emit`…) and no
+  other module. Storage buffers per kernel: units, events, traits (3 of 8). Adding a module compiles one kernel and
+  touches nothing else (test/gpu/traits.test.ts "modularity").
+
+**The engine boundary (CAPS and LOOK).** A rule never edits the agents' step. The unit record grew a fifth vec4 (units.wgsl
+`UNIT_V` = 5, agents.ts `UNIT_V`): `e.x` CAPS — the verbs the step honours (`CAP_NO_BURN`: never alight, no lava harm;
+`CAP_NO_DROWN`; `CAP_ROOTED`: no walking, pushes, wind, shoves, throws; `CAP_FLEE`: walks up its field) — `e.y` LOOK —
+what the draw shows (bits 0-7 torso material, 8-15 head, 16-23 a halo's material; `LOOK_HALO`, `LOOK_SPARKS`,
+`LOOK_CORPSE`: a fallen unit drawn lying) — and `e.z` the max hp it was spawned with. The game's `caps` and `look` modules
+derive them from the traits each tick by tables (round 85's derived capabilities). Without the trait system both are 0
+and the agents behave and look as before.
+
+**A tick.** `TraitSystem` is a SimSystem ('traits', every tick, inserted before 'agents': the effects' lives, the world
+pulses, the params uniform) and an agents stage (`agents.addStage`): inside the agents' pass, after `unitStep` and before
+`unitDraw` — `traitPre` (core.wgsl: a new occupant seeded from its kind's traits, `assign`ed traits, statuses past their
+expiry dropped, `burning` mirrored from the unit's fire, a fallen unit laid out as a `corpse` for `corpseSeconds`, a
+decayed corpse zeroed with a `decayed` event), the modules in order, `traitPost` (a live unit at ≤ 0 hp dies: a death
+event, `by: 'effect'`).
+
+**Corpse mode** (`agents.setKeepCorpses`, the trait system turns it on): a death no longer frees the slot; the body lies
+(drawn by LOOK_CORPSE) until a `raised` event (the same id, alive again: Agents and AgentUnits revive it) or a `decayed`
+one (the slot freed). The sync also frees a corpse it sees zeroed or alive, so a lost event doesn't leak a slot.
+
+**The slice's rules** (src/game/traits/modules.ts `registerSlice`): `status` (immunities per status: the undead and
+constructs know no fear), `raise` (a `living` corpse in a raise effect stands up `undead` + `raised` in the effect's group,
+its kind — role and gear — kept, with a share of its hp, hopping up as a thrown unit gets up), `heal` (the living, not
+undead or constructs, gain the field's rate, up to their max; glow), `holy_harm` ("healing on undead harms": 1.5× the
+rate; sparks), `typed_damage` (a resist table, rows of trait masks × multipliers for fire, life, necrotic, physical:
+fire_immune × fire 0, undead × life 2 and × necrotic −0.5 — it mends them), `caps`, `look`. AgentUnits' `shambler`
+kind is `undead` (scenes/level.ts).
+
+**Play's lich (merge123, BACKLOG LW1-1 / M123-3).** Its 💀 raise button calls `PlayWorld.raise(x, y, raiseReach)`
+(play/world.ts: optional; play knows nothing of traits or GPU groups). scenes/level.ts puts it together at the boundary
+(`playRaise`, passed to PlaySession/PlaySandbox as `raise`): `traits.apply({ op: 'raise', group: RAISED_GROUP, at,
+radius })` — the corpses there rise undead, keeping role and gear, in AgentUnits' RAISED_GROUP (standing, `bound`);
+AgentUnits fires `raised(u, group)` for each and drops its hostility (the raiser's now), and the level's handler orders
+it to follow the 'hero' actor (the Units contract's follow job). A sanctuary for a healer hero would be
+`traits.apply({ op: 'heal', rate, at, radius, world: { grow: true, mend: true } })` the same way.
+
+**The Traits Lab's station `traits`** (`?level=traitlab`, on the title screen — levels/traitlab.ts; on the `traits` branch it was the playground's station 7, whose row merge121's solver stations took; levels/traitstation.ts): a village (180 workers round a well), 90 walking dead,
+a lich (an ogre, undead and fire_immune) — a thin driver of the API, no controls — and buttons: crowd, smite (a necrotic
+burst: bodies), raise, sanctuary, fear, petrify, clear. `reclaimed.traitStation()` drives it from a script
+(scripts/traitshot.mjs); `reclaimed.traits` is the TraitsApi. `?traits=0` turns the system off (the perf toggle,
+scripts/perf/traits.mjs).
 
 ## The sims' tiers (round 108, branch `simtiers`; BACKLOG SM1-SM4)
 
@@ -2388,6 +2454,47 @@ saw it (a road graded, a bank eroded since).
   when the last is up; the rest as before.
 - `raster.ts` (the far land's stamps) is told where the roofs are (`rasterColumns`): buildings aren't in the columns.
 - `?city=<system>&cstyle=&cseed=&croads=&cwalls=1` plans the town nearest the start with those (`Settlements.override`).
+
+## Cities: purposes, stories, ports, dressing, night lights (round 120, branch `cities`; BACKLOG STR30-STR36)
+
+The user (DECISIONS round 120): "different settlements have different purposes like trading posts, mines, lumber camps,
+etc. towns should have stories"; ships "both anchored at harbor and sailing"; night lights as emissive surfaces and a
+cheap pool of light ("Yes absolutely enough"). One concern a file:
+
+- **Purpose** (`settle/purpose.ts`, pure): a site's `PurposeFacts` (the atlas's setting, its region's kind, tier, rivers,
+  climate, stamps and kind traits — `atlas/kind-traits.ts`, carried in the atlas facts so the wiki needs no atlas —, its
+  roads and fords, its height in its region, the enemies present, a realm's seat) → a score per purpose, the highest
+  wins; `why`, `scores` and `trades` kept. The wiki calls it while it's built (`gm/wiki.ts`), so `Settlement.purpose` is
+  on the record the GM reads before any land arrives; the wiki's page says it.
+- **Story** (`settle/story.ts`, pure): founding (by its owner, for its purpose's reason), then the world state: enemies
+  in its region at odds with its owner raided it (walled after; a strong one burned a quarter), a port or river town
+  low by the water flooded, and WorldState.history's burn / flood / ruin / rebuild events in its region.
+  `Settlement.story` (contracts/settlement.ts).
+- **The plan** (`settle/plan.ts`) turns them into the structures spec: `CitySpec.purpose`, `works` (a mine's quarry
+  mouth), `approaches` (records.ts: the roads' ways out), `marks` (the story's burned quarter, flood level, new walls); a
+  hold is radial, bastion, walled; a port or a lumber camp moves to front its water. The record gets the purpose's
+  buildings (warehouse, sawmill, stables, granary; the headframe, lighthouse, windmill and piers as things — core.json
+  kinds and rules: dock, mine, mill, stable, sawmill, lighthouse), people by the purpose's mix, stores (ore, fish, goods,
+  planks, flour, arms), jobs (load, saw, tend, mill). In play the new trades walk the existing rounds (life.ts ROUTINE).
+- **Structures** (`structures/purpose.ts`, called by `planCity`): `purposeBuildings` (after the buildings grow: the work
+  site, a port's quay tiles, re-kinded buildings, a market widened, history's wear), `purposeWorks` (after the landmarks:
+  piers to water a ship can lie in, berths, a lighthouse, a headframe and rails, a windmill, props), `dressing` (after
+  the façades: street lamps ~12 m apart, torches at doors and gates, banners; `plan.lights`). CityPlan adds `works`,
+  `berths`, `props`, `lights`; TileUse `quay`; BuildingKind warehouse / sawmill / granary / stable; MegaKind lighthouse /
+  headframe / windmill; LinearKind pier; BuildingRec.wear. Modules: `structures/dressmodules.ts` (props, ships and the
+  sails in metres as affine pieces; the quay edge, kerb, pier, lighthouse, headframe, windmill, pool in tile frames).
+  Parts Cloth (19) and Flame (20).
+- **Drawing** (structmesh.wgsl): flags WIND (8: a banner's cloth streams downwind from its pole, droops in calm) and SPIN
+  (16: waterwheels and sails turn); look bits 20-22 soot / damp / fresh stone; flames flicker; `spPoolLight` a pool's
+  warm fall-off at night. Hosts add `hostWind(xy)` (the game: the plants' lean, sway.wgsl's `bend` / 0.3; past the window
+  the prevailing wind) and `hostTime()`. `StructureGpu` keeps the pools' ranges apart (`drawGlow`: the game's
+  `structures-glow` pipeline, one + one, no depth written, only when `Renderer.structNight` > 0.3; the viewer's likewise)
+  and MOVING_CAP (64) slots after the palette for what moves (`setMoving`).
+- **Ships** (`settle/ships.ts`, pure): `shipRoutes` charts routes once over the atlas's sea (a coarse cell is water when
+  all its texels are 1.5 under the sea; Dijkstra kept off coasts; string-pulled), each port to its two nearest reachable;
+  `Fleet.at(t, sea)` places every ship by the time alone (out, rest 40 s, back). `Settlements.fleet` charts on first ask;
+  `settle/shipsview.ts` draws the ships within 900 of the camera each frame (`?ships=0` off).
+- **Viewer**: purpose, coast / river / mountain grounds with water, day / dusk / night, wind, the history toggle.
 
 ## Instrumentation (round 100, branch `hitchrec`)
 

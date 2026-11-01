@@ -21,7 +21,7 @@ import type { PlayHero } from '../heroes/base';
 import type { Controls } from '../input/controls';
 import { library } from '../library';
 import type { PlayWorld } from '../world';
-import { el, PlaySession, saveTuned } from '../session';
+import { el, PlaySession, saveTuned, type SessionDeps } from '../session';
 import { findHills } from './hills';
 import { LAP, Rival } from './rival';
 import { BIKE_DEFAULTS } from '../controllers/hoverbike';
@@ -42,6 +42,8 @@ export interface SandboxDeps {
   tune?: boolean;
   /** (round 121, herolab) the camera modes (`?cam=`; play/camera/rig.ts); absent: the chase */
   cam?: string | null;
+  /** (merge123, LW1-1) the world's raise dead (SessionDeps.raise) */
+  raise?: SessionDeps['raise'];
 }
 
 /** raiders spawned at a time, how far ahead (cells) */

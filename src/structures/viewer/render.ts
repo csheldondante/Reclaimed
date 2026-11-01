@@ -19,6 +19,9 @@ export interface FrameView {
   sunCol: [number, number, number];
   skyCol: [number, number, number];
   fog: number;
+  /** (round 120) seconds (flutter, flicker, turning wheels) and the wind's strength (0 calm .. 2 a gale) */
+  time: number;
+  wind: number;
 }
 
 export class ViewerRenderer {
@@ -35,6 +38,8 @@ export class ViewerRenderer {
   private groundPipe: GPURenderPipeline;
   private groundShadow: GPURenderPipeline;
   private linePipe: GPURenderPipeline;
+  /** (round 120) the lights' pools: blended over the scene at night */
+  private poolPipe: GPURenderPipeline;
   private shadowTex: GPUTexture;
   private sampler: GPUSampler;
   private depth?: GPUTexture;
@@ -113,6 +118,15 @@ export class ViewerRenderer {
       primitive: { topology: 'triangle-list', cullMode: 'none' },
       depthStencil: shadowState,
     });
+    this.poolPipe = device.createRenderPipeline({
+      label: 'viewer pools',
+      layout: pl,
+      vertex: { module, entryPoint: 'vsPool', buffers: [StructureGpu.vertexLayout()] },
+      fragment: { module, entryPoint: 'fsPool', targets: [{ format, blend: { color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' }, alpha: { srcFactor: 'zero', dstFactor: 'one', operation: 'add' } } }] },
+      primitive: { topology: 'triangle-list', cullMode: 'none' },
+      depthStencil: { format: DEPTH, depthWriteEnabled: false, depthCompare: 'less-equal' },
+      multisample: ms,
+    });
     this.linePipe = device.createRenderPipeline({
       label: 'viewer lines',
       layout: pl,
@@ -187,7 +201,7 @@ export class ViewerRenderer {
     u.set([v.eye[0], v.eye[1], v.eye[2], v.fog], 36);
     u.set([...v.sunCol, 0], 40);
     u.set([...v.skyCol, 0], 44);
-    u.set([1.2 / SHADOW, 0, 0, 0], 48);
+    u.set([1.2 / SHADOW, 0, v.time, v.wind], 48);
     dev.queue.writeBuffer(this.uni, 0, u);
     const group = this.bind();
     const enc = dev.createCommandEncoder();
@@ -233,6 +247,10 @@ export class ViewerRenderer {
       }
       pass.setPipeline(this.piecePipe);
       this.sg.draw(pass, this.lod);
+      if (v.night > 0.01) {
+        pass.setPipeline(this.poolPipe);
+        this.sg.drawGlow(pass);
+      }
       if (this.showLines && this.lines) {
         pass.setPipeline(this.linePipe);
         pass.setVertexBuffer(0, this.lines.buf);

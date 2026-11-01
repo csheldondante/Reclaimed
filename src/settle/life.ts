@@ -83,6 +83,24 @@ interface Work {
 
 const toWorkGroup: Record<string, number> = { farmer: R.toFarm, woodcutter: R.toFell, miner: R.toQuarry, builder: R.toPile };
 
+/**
+ * (round 120, purposes) Which round a trade walks in play: the purposes' people (contracts SettlementPurposeRec.trades)
+ * on the four rounds life has — the sawyers and raftsmen with the woodcutters, the carters with the miners, the dockers,
+ * sailors, fishers, traders, millers and stablehands carrying goods from their work (the purpose's spots: the piers, the
+ * stalls, the mill, the stables) to the store as the farmers do. The record keeps their own trades (the GM's, the city
+ * game's); paths on the baked nav (STR23) will give each its own.
+ */
+export const ROUTINE: Record<string, 'farmer' | 'woodcutter' | 'miner' | 'builder' | 'guard'> = {
+  farmer: 'farmer', woodcutter: 'woodcutter', miner: 'miner', builder: 'builder', guard: 'guard',
+  sawyer: 'woodcutter', raftsman: 'woodcutter', carter: 'miner', smith: 'builder',
+  miller: 'farmer', stablehand: 'farmer', docker: 'farmer', sailor: 'farmer', fisher: 'farmer', trader: 'farmer',
+};
+export function routineOf(role: string): (typeof ROUTINE)[string] {
+  const r = ROUTINE[role];
+  if (!r) throw new Error(`settlements: no round for the trade "${role}" (life.ts ROUTINE)`);
+  return r;
+}
+
 /** One live settlement (and its camp): who's out, the rounds, the house going up, a raid. */
 export class SettlementLife implements Routine {
   readonly ids: UnitId[] = [];
@@ -273,7 +291,9 @@ export class SettlementLife implements Routine {
     // (nobody out: nothing seeded, so the agents' pass stays idle)
     if (!this.ids.length) return;
     const spots = this.io.spots();
-    const farm = spots.filter((s) => s.kind === 'farm').slice(0, 6).map((s) => s.w);
+    // (the farmers' round takes the purposes' work too: the piers, the stalls, the mill, the stables, the sawmill)
+    const trading = this.rec.purpose?.kind === 'trading';
+    const farm = spots.filter((s) => s.kind === 'farm' || s.kind === 'load' || s.kind === 'mill' || s.kind === 'tend' || (trading && s.kind === 'trade')).slice(0, 6).map((s) => s.w);
     const mines = spots.filter((s) => s.kind === 'mine');
     const quarry = mines.filter((m) => this.io.mayMine(m.w)).map((m) => m.w);
     this.denied = mines.length - quarry.length;
@@ -320,7 +340,7 @@ export class SettlementLife implements Routine {
     const w = (u.work ??= { phase: 'home', t: 3 } satisfies Work) as Work;
     const at: V2 = [u.v.at[0], u.v.at[1]];
     const U = this.io.units;
-    const role = u.v.role;
+    const role = routineOf(u.v.role);
     const go = (g: number) => {
       U.regroup(u, g);
       u.v.state = 'walk';
@@ -453,14 +473,15 @@ export class SettlementLife implements Routine {
     w.load = null;
     this.trips++;
     if (!load) return void (w.phase = 'toWork');
-    if (load.real && this.piles.length && (u.v.role === 'miner' || u.v.role === 'woodcutter')) {
+    const role = routineOf(u.v.role);
+    if (load.real && this.piles.length && (role === 'miner' || role === 'woodcutter')) {
       const heap = this.piles.find((p) => (load.material === 'log' ? p.what === 'log' : p.what !== 'log')) ?? this.piles[0];
       // (a little off the heap's middle each time: it grows into a mound, not a post)
       const a = Math.random() * Math.PI * 2;
       const put = await this.io.put([heap.w[0] + Math.cos(a) * 0.6, heap.w[1] + Math.sin(a) * 0.6], load.material, load.amount);
       this.moved.heaped += put;
       this.io.deliver(load.material === 'log' ? 'log' : 'stone', 1);
-    } else if (u.v.role === 'builder') {
+    } else if (role === 'builder') {
       this.build(load.amount);
     } else this.io.deliver('grain', 1);
     w.phase = Math.random() < 0.3 ? 'toHome' : 'toWork';

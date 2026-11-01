@@ -24,7 +24,11 @@ import type { InhabitantsGpu } from '../inhabitants/system';
 import { mountViewer } from '../inhabitants/viewer';
 import { Settlements } from '../settle/settlements';
 import { TownDebug } from '../settle/debug';
-import { AgentUnits } from '../units/agent-units';
+import { AgentUnits, RAISED_GROUP } from '../units/agent-units';
+import { installTraits } from '../traits/install';
+import type { TraitSystem } from '../traits/system';
+import { registerSlice } from '../game/traits/modules';
+import { TraitStation } from '../levels/traitstation';
 import type { Agents } from '../agents/agents';
 import { attachSim, type Sim } from '../api/world';
 import { LEVEL_H, type Block, type Town } from '../build/town';
@@ -59,7 +63,7 @@ import { experimentChip, experimentControls, startRun } from '../ui/experiment';
 import { JUDGE_ID } from '../game/judge';
 import { solverVariant } from '../solver/variant';
 import { NoiseLabControl } from '../noiselab/control';
-import type { Station, StationKit } from '../levels/playground';
+import { stationMiddle, type Station, type StationKit } from '../levels/playground';
 import { RB, rockbodyFor } from '../game/rockbodies';
 import { TUNE, TUNING } from '../tune/params';
 import { AtlasMap } from '../api/atlas-map';
@@ -107,6 +111,7 @@ import { loadWarm, saveWarm, warmKey } from '../sim/warm-cache';
 import { buildWiki } from '../gm/wiki';
 import { StreamPlanner } from './planner';
 import { SettlementsView } from '../settle/view';
+import { ShipsView } from '../settle/shipsview';
 import type { GridStyle } from '../api/contracts/settlement';
 import type { CitySpec } from '../api/contracts/structures';
 
@@ -342,6 +347,9 @@ export class LevelScene implements Scene {
   agents!: Agents;
   /** (round 117, ?life=: src/inhabitants) creatures with bodies — the Inhabitants contract */
   inhabitants?: InhabitantsGpu;
+  /** (LW1) the trait system on the agents, with the game's rules (src/game/traits) */
+  traits!: TraitSystem;
+  private traitStation?: TraitStation;
   private lifeSpawned = false;
   /** (round 88, the atlas level) the settlements, and the units (the Units contract on the agents) */
   settlements?: Settlements;
@@ -379,6 +387,7 @@ export class LevelScene implements Scene {
   private integrity?: Integrity;
   /** (round 117, structures: ?city=) the structures track's city on the window's ground */
   private settlementsView?: SettlementsView;
+  private shipsView?: ShipsView;
   /** (round 108, AR5/AR8) the tuning panel, the bug report, the playground's stations */
   private tunePanel?: TunePanel;
   bugReport?: BugReport;
@@ -947,6 +956,8 @@ export class LevelScene implements Scene {
           if (q.has('cseed')) ov.seed = Number(q.get('cseed'));
           if (q.has('croads')) ov.roads = Number(q.get('croads'));
           if (q.get('cwalls') === '1') ov.walls = true;
+          // (round 120: ?cpurpose= — its town planned for that purpose, whatever the land made it)
+          if (q.has('cpurpose')) ov.purpose = q.get('cpurpose') as CitySpec['purpose'];
           settlements.override(near.id, ov);
         }
       }
@@ -1074,6 +1085,10 @@ export class LevelScene implements Scene {
     const p = host.params;
     this.intro = !this.story && !!this.level.intro && (p.get('tutorial') === '1' || (p.get('tutorial') !== '0' && p.get('skipmenu') !== '1' && loadLevelProgress(this.level.id) === 0));
     this.agents = installAgents(core);
+    // (LW1) traits and effects on the agents: the engine's stage, the game's rules (the slice: healing vs necromancy).
+    // Its world effects (a sanctuary's growth and mending) wake the land they land on: sleeping chunks don't tick
+    this.traits = installTraits(core, this.agents, { onWorld: (x, y, r) => this.sleep?.wake(x, y, r + 8, Sleep.EVENT_S, performance.now() / 1000) });
+    registerSlice(this.traits);
     // (round 117, inhabitants: ?life=1|dragon|town|viewer — creatures with bodies round the camera; src/inhabitants/install.ts)
     if (host.params.get('life')) this.inhabitants = installInhabitants(core);
     if (this.level.sandbox) {
@@ -1376,6 +1391,7 @@ export class LevelScene implements Scene {
       // (round 117, structures) the city (?city=): its plan, stats
       // (round 119) the settlements' structures: what's drawn and claimed (settle/view.ts)
       settlementsView: () => this.settlementsView,
+      shipsView: () => this.shipsView,
       // (round 95) the rigid rock's knobs (?rockbody=1): rb.breakSpeed = 12
       rb: RB,
       // (round 108, AR5) the tuning registry: tune.set('rigid.friction', 0.3), tune.changed(), tune.encode()
@@ -1384,6 +1400,10 @@ export class LevelScene implements Scene {
       editor: () => this.editor,
       // agents: agents.spawn(200, x, y, { group: 0 }); agents.goTo(0, x, y)
       agents: this.agents,
+      // (LW1) traits: traits.apply({ op: 'heal', rate: 2, at: [x, y], radius: 10 }), traits.read(), traits.census()
+      traits: this.traits,
+      // (LW1, the playground) the traits station's driver: station.crowd(), .smite(), .raise(), .sanctuary(), .census()
+      traitStation: () => this.traitStationDriver(),
       // (round 117, ?life=) the inhabitants: life.define(spec), life.spawnGroup(sp, [x, y], n), life.drive(g, order), life.presence(rect, cell)
       get inhabitants() {
         return self.inhabitants;
@@ -1745,6 +1765,8 @@ export class LevelScene implements Scene {
       const st = a?.settlements;
       if (st) {
         const units = new AgentUnits(this.agents);
+        // (LW1) the walking dead are undead (AgentUnits' 'shambler' kind): the sanctuary burns them, raise passes them by
+        this.traits.kindTraits('shambler', ['undead']);
         this.units = units;
         this.settlements = st;
         // (round 94) the settlements past the window planned on the atlas's rough ground and baked into the land there
@@ -1805,6 +1827,9 @@ export class LevelScene implements Scene {
           st,
         );
         this.settlementsView = view;
+        // (round 120) the sailing ships between the ports (settle/ships.ts, shipsview.ts), drawn with the towns' pieces
+        if (host.params.get('ships') !== '0')
+          this.shipsView = new ShipsView({ sg: view.sg, toWindow: (p) => st.toWindow(p), oz: () => S.oz, focus: () => [core.camera.target[0], core.camera.target[1]], time: () => core.globals.time, sea: a!.atlas.p.sea, style: 'hearth' }, st.fleet);
         S.onBeforeSlide.push((dx, dy) => view.beforeSlide(dx, dy));
         S.onSlide.push(() => view.slid());
         S.onWarp.push(() => view.slid());
@@ -1957,6 +1982,7 @@ export class LevelScene implements Scene {
       hero,
       tune: this.host.params.get('tune') === '1',
       cam: this.host.params.get('cam'),
+      raise: this.playRaise(this.units),
     });
     // (the window slid: the hero moves with what's kept in window coordinates; the map's warp drops it where the camera is)
     this.core.onShift.push((dx, dy, dz) => this.play?.shift(-dx, -dy, -dz));
@@ -1972,6 +1998,20 @@ export class LevelScene implements Scene {
    * this world or the template's; its areas played by play's hero (the same PlaySession as the sandbox), the atlas map
    * and the ways on at each area's edge, the finale at the town, what's left of it remembered.
    */
+  private playRaising = false;
+  /**
+   * (merge123, BACKLOG LW1-1 / M122-7) play's raise dead, put together here at the boundary: the trait system's raise
+   * effect (traits' one-line hook, ARCHITECTURE "Traits and effects") stands the fallen up in the units' RAISED_GROUP,
+   * and each one raised is ordered to follow the hero (the Units contract's follow job on the 'hero' actor).
+   */
+  private playRaise(units: AgentUnits): (x: number, y: number, radius: number) => void {
+    if (!this.playRaising) {
+      this.playRaising = true;
+      units.raised.push((u) => units.order(u.id, { kind: 'follow', target: 'hero', distance: 3 }));
+    }
+    return (x, y, radius) => void this.traits.apply({ op: 'raise', group: RAISED_GROUP, at: [x, y], radius });
+  }
+
   private async startSituationRun(hero: string): Promise<void> {
     const a = this.opts.atlas;
     if (!a || !this.stream || !this.atlasMap) throw new Error('?runplan= plays on the atlas level (?level=atlas)');
@@ -1988,7 +2028,7 @@ export class LevelScene implements Scene {
     this.host.ui.classList.add('play-on');
     const api = (this.worldApi ??= attachSim(this.core));
     const bounds: [number, number] = [dims.w, dims.h * ROW_H];
-    const session = await PlaySession.start({ ui: this.host.ui, api, units, camera: this.core.camera, renderer: this.core.renderer, device: this.host.gpu.device, bounds, respawnAfter: null, cam: this.host.params.get('cam') });
+    const session = await PlaySession.start({ ui: this.host.ui, api, units, camera: this.core.camera, renderer: this.core.renderer, device: this.host.gpu.device, bounds, respawnAfter: null, cam: this.host.params.get('cam'), raise: this.playRaise(units) });
     const c = this.core.camera.target;
     session.choose(id, session.dryNear([c[0], c[1]]));
     this.runSession = session;
@@ -2052,7 +2092,7 @@ export class LevelScene implements Scene {
       const { RunPlayer } = await import('../runplay/player');
       this.host.ui.classList.add('play-on');
       const bounds: [number, number] = [dims.w, dims.h * ROW_H];
-      const session = await PlaySession.start({ ui: this.host.ui, api, units, camera: this.core.camera, renderer: this.core.renderer, device: this.host.gpu.device, bounds, respawnAfter: null, cam: this.host.params.get('cam') });
+      const session = await PlaySession.start({ ui: this.host.ui, api, units, camera: this.core.camera, renderer: this.core.renderer, device: this.host.gpu.device, bounds, respawnAfter: null, cam: this.host.params.get('cam'), raise: this.playRaise(units) });
       const c = this.core.camera.target;
       session.choose(playId, session.dryNear([c[0], c[1]]));
       const enc = this.host.params.get('runencounter') as import('../api/contracts/run').EncounterKind | null;
@@ -2309,6 +2349,7 @@ export class LevelScene implements Scene {
     this.settlements?.farUpdate(dt);
     // (round 119) the settlements' pieces: made again when a plan, a storey or the window changed
     this.settlementsView?.update();
+    this.shipsView?.update();
     if (this.inhabitants) this.lifeFrame(dt * this.speed);
     if (this.units && !this.stream?.busy) {
       this.units.update(dt * this.speed);
@@ -3613,7 +3654,15 @@ export class LevelScene implements Scene {
         const [wx, wy] = cellPos(x, y);
         this.sleep?.wake(wx, wy, 40, Sleep.EVENT_S, now());
       },
+      traits: this.level.stations?.some((x) => x.id === 'traits') ? this.traitStationDriver() : undefined,
     };
+  }
+
+  /** (LW1) the playground's traits station: its driver over this level's agents and trait system (made once) */
+  private traitStationDriver(): TraitStation {
+    const s = this.level.stations?.find((x) => x.id === 'traits');
+    if (!s) throw new Error('this level has no traits station');
+    return (this.traitStation ??= new TraitStation(this.agents, this.traits, stationMiddle(s)));
   }
 
   /** (round 108, AR8) a station put back as the level opened: what moves there let go, its chunks restored */
