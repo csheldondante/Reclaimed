@@ -109,18 +109,22 @@ export function detourArea(v: HordeView, d: Detour): SituationArea {
   const sr = v.sr;
   const from = sr.area();
   const a = sr.map.areaAt(from);
-  const [dx, dy] = delta(a, sr.map.areaAt(sr.finaleArea), sr.map.world);
-  const f = DETOUR_AT[d];
-  const at: [number, number] = [a[0] + dx * f, a[1] + dy * f];
   const th = sr.sit.threat;
+  // (on land the situation already knows — the headless run put a straight-line camp in the lake by Bumku: the refuge's
+  // hills for the captives' camp, the host's own road for the herald and the lookout — the route's regions are land)
+  const route = th.route.map((r) => ({ r, at: sr.map.regionCentre(r) }));
+  const nearest = route.reduce((b, x) => (Math.hypot(...delta(a, x.at, sr.map.world)) < Math.hypot(...delta(a, b.at, sr.map.world)) ? x : b), route[0]);
+  const mid = route[Math.min(route.length - 1, Math.floor(route.length * DETOUR_AT[d]))];
+  const pick = d === 'rescue' ? { r: sr.sit.refuge.region, at: sr.map.regionCentre(sr.sit.refuge.region) } : d === 'chase' ? nearest : mid;
+  const at: [number, number] = [pick.at[0], pick.at[1]];
   const T = v.tune;
   const play: SituationArea['play'] =
     d === 'rescue' ? { kind: 'rescue', captives: T.rescueCaptives, guards: T.rescueGuards, role: th.role, faction: th.faction }
     : d === 'chase' ? { kind: 'chase', quarry: T.chaseQuarry, role: th.role, faction: th.faction, escape: 0 }
     : { kind: 'scout', patrols: T.patrols, role: th.role, faction: th.faction };
-  const name = d === 'rescue' ? `the dead's camp by ${from.name}` : d === 'chase' ? `the herald's road from ${from.name}` : `the lookout over ${th.name}`;
+  const name = d === 'rescue' ? `the dead's camp in ${sr.sit.refuge.name}` : d === 'chase' ? `the herald's road` : `the lookout over ${th.name}`;
   const brief = d === 'rescue' ? `Outriders of ${th.name} hold people taken off the roads. Free them and they stand with ${sr.sit.target.name}.` : d === 'chase' ? `${th.name}'s herald rides for the barrows to wake more dead. It is a few seconds ahead of you.` : `A ridge looks over ${th.name}'s road. Patrols watch the way up.`;
-  return { id: `d-${d}-${from.id}`, name, region: from.region, at, brief, minutes: T.detourMinutes, play, threat: { foes: 0, pursuers: d === 'scout' ? 1 : 0 } };
+  return { id: `d-${d}-${from.id}`, name, region: pick.r, at, brief, minutes: T.detourMinutes, play, threat: { foes: 0, pursuers: d === 'scout' ? 1 : 0 } };
 }
 
 const army = (n: number, tags?: string[]): Requirement => ({ kind: 'army', count: n, ...(tags ? { tags } : {}) });

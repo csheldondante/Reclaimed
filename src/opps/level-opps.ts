@@ -13,7 +13,10 @@
 import type { Situation } from '../api/contracts/situation';
 import type { RunRecord } from '../api/contracts/run';
 import type { MemoryWorldState } from '../api/contracts/world-state';
-import { meet, needsPlayer, TIERS, type Opportunity } from '../api/contracts/opportunity';
+import { ENCOUNTER, meet, needsPlayer, TIERS, type Opportunity } from '../api/contracts/opportunity';
+import { library } from '../play/library';
+import { HERO_NAMES } from '../runplan/consequences';
+import type { PlayHeroId } from '../play/heroes/make';
 import { LevelSit, type LevelSitDeps } from '../runsit/level-sit';
 import { situationMap } from '../runsit/fill';
 import { PLAY_TITLE, along, type AreaResult, type SituationRun, type V2 } from '../runsit/state';
@@ -41,6 +44,9 @@ export class LevelOpps extends LevelSit {
   declare selected: string | null;
   declare why: boolean;
   declare hits: { x: number; y: number; r: number; id: string }[];
+  /** (round 124) the run's start: the hero roster, then the intro, then play; the situation panel open */
+  declare stage: 'roster' | 'intro' | 'play';
+  declare sitOpen: boolean;
   readonly panel: TunePanel;
   private offTune: () => void;
 
@@ -69,6 +75,8 @@ export class LevelOpps extends LevelSit {
     });
     this.selected = this.opps.offered.find((o) => o.forced)?.id ?? null;
     this.why = false;
+    this.stage ??= 'roster';
+    this.sitOpen ??= false;
     this.hits = [];
     return this.opps.sr;
   }
@@ -200,8 +208,95 @@ export class LevelOpps extends LevelSit {
     M.redraw();
   }
 
+  /** (round 124) the roster's choice: the hero played, and the run made again for it */
+  pickHero(id: string): void {
+    const S = this.d.session;
+    const p = S.hero?.position();
+    this.d.hero = id;
+    S.choose(id as PlayHeroId, p ? S.dryNear([p[0], p[1]]) : undefined);
+    this.stage = 'intro';
+    this.newRun(this.wiki.spawn.region, this.wiki.spawn.at as V2);
+  }
+
+  /** the modes a hero plays, from its profile (the user: "an indicator of what game modes") */
+  static modes(id: string): { icon: string; name: string; on: boolean }[] {
+    const c = library.get(id);
+    const e = c?.profile().encounters;
+    return [
+      { icon: '🏁', name: 'ride and race', on: (e?.race ?? 0) >= 0.5 },
+      { icon: '⇢', name: 'chase and flee', on: (e?.chase ?? 0) >= 0.5 },
+      { icon: '⚔', name: 'combat', on: (e?.fight ?? 0) >= 0.5 },
+      { icon: '💀', name: 'raise and command', on: !!c?.params.some((x) => x.id === 'raiseReach') },
+      { icon: '🧱', name: 'build', on: false },
+    ];
+  }
+
+  private renderRoster(h: (tag: string, text: string, css?: string) => HTMLElement, btn: (text: string, f: () => void, main?: boolean, css?: string) => HTMLButtonElement, muted: string): void {
+    h('div', 'Choose your hero', 'font:600 16px Georgia,serif;color:#ffd9a0');
+    h('div', 'Each plays the run its own way: the modes it is good at, what it can cross, what it carries from earlier runs.', muted);
+    for (const c of library.controllers()) {
+      const p = c.profile();
+      const rec = this.world.character(c.id);
+      const box = document.createElement('div');
+      box.style.cssText = 'border:1px solid #5a4a30;border-radius:9px;padding:6px 8px;margin:6px 0;background:rgba(40,32,20,0.6)';
+      this.card.appendChild(box);
+      const line = (t: string, css = '') => {
+        const e = document.createElement('div');
+        e.textContent = t;
+        e.style.cssText = css;
+        box.appendChild(e);
+      };
+      line(`${c.icon} ${c.name}${rec ? ` — ${rec.name}${rec.alive ? '' : ' ✝'}` : ` — ${HERO_NAMES[c.id] ?? c.id}`}`, 'font:600 14px Georgia,serif');
+      line(c.line, 'font-size:12px');
+      line(`speed ${p.speed.cruise.toFixed(0)}/${p.speed.top.toFixed(0)} cells/s · jump ${p.jump.height ? `${p.jump.height.toFixed(1)} high, ${p.jump.gap.toFixed(0)} across` : 'none'} · ${p.fly.ceiling ? `flies ${p.fly.ceiling.toFixed(0)} up` : 'on the ground'} · breaks ${Math.round(p.destruction * 100)}%`, muted);
+      const tags = [...(rec?.tags ?? []), ...(rec?.bonuses ?? []).map((b) => `✦ ${b.why}`), ...(rec?.statuses ?? [])];
+      line(`tags: ${tags.length ? tags.join(' · ') : 'none yet'}${rec?.history.length ? ` · ${rec.history.length} deeds` : ''}`, muted);
+      line(`modes: ${LevelOpps.modes(c.id).map((m) => `${m.on ? m.icon : '·'} ${m.on ? m.name : `(${m.name})`}`).join('  ')}`, 'font-size:12px');
+      const b = btn(`Play ${c.name}`, () => this.pickHero(c.id), c.id === this.d.hero);
+      box.appendChild(b);
+    }
+  }
+
+  private renderIntro(h: (tag: string, text: string, css?: string) => HTMLElement, btn: (text: string, f: () => void, main?: boolean, css?: string) => HTMLButtonElement, muted: string): void {
+    const run = this.run;
+    const sit = run.sit;
+    const th = sit.threat;
+    const fac = this.world.faction(th.faction)?.name ?? th.faction;
+    h('div', sit.title, 'font:600 16px Georgia,serif;color:#ffd9a0');
+    h('div', `What is happening: ${th.count} ${th.role} of ${th.name} (${fac}) march over ${th.route.length} regions for ${sit.target.name}.${th.outriders ? ` ${th.outriders.count} outriders ride ahead of them — and they have seen you.` : ''}`, 'margin-top:4px;font-size:13px');
+    h('div', `How bad: if they reach ${sit.target.name} and nothing stops them, it burns (${sit.endings.burned.text})`, 'margin-top:4px;font-size:13px');
+    h('div', `What you are trying to do: ${sit.premise}`, 'margin-top:4px;font-size:13px');
+    h('div', `The clock: they reach ${sit.target.name} at minute ${run.hordeArrives().toFixed(1)}${this.opps.clockWas !== sit.threat.arrives ? ` (the GM's clock was ${this.opps.clockWas})` : ''}. Every ride and every fight spends it.`, 'margin-top:4px;font-size:13px');
+    h('div', `You play ${library.get(this.d.hero)?.icon ?? ''} ${library.get(this.d.hero)?.name ?? this.d.hero}. ${this.by === 'gm' ? 'Written by the GM for this world.' : 'The template, filled from this world.'}`, muted);
+    btn('▶ Begin', () => {
+      this.stage = 'play';
+      this.render();
+    }, true);
+    btn('Another hero', () => {
+      this.stage = 'roster';
+      this.render();
+    });
+  }
+
+  /** the compact situation, reachable all run */
+  private renderSituation(h: (tag: string, text: string, css?: string) => HTMLElement, muted: string): void {
+    const run = this.run;
+    const sit = run.sit;
+    const left = run.hordeArrives() - run.clock;
+    h('div', [
+      `${sit.title}`,
+      `${sit.threat.name}: ${Math.max(1, sit.threat.count - run.thinned)} ${sit.threat.role}, at ${sit.target.name} ${left > 0 ? `in ${left.toFixed(1)} min` : `${(-left).toFixed(1)} min ago`}`,
+      `aim: ${sit.premise}`,
+      `you: ${library.get(this.d.hero)?.name ?? this.d.hero} · modes ${LevelOpps.modes(this.d.hero).filter((m) => m.on).map((m) => m.icon).join(' ')}`,
+      this.opps.intel ? `the lookout's word: the ford's odds +${Math.round(this.opps.intel * 100)}%` : '',
+      this.opps.rallied ? `${this.opps.rallied} freed stand with ${sit.target.name}` : '',
+    ].filter(Boolean).join('\n'), `${muted};white-space:pre-line;margin-top:4px;border-left:3px solid #6b5b3e;padding-left:6px`);
+  }
+
   protected render(): void {
     const run = this.run;
+    if (this.opps && (this.stage === 'roster' || this.stage === 'intro')) return this.renderStart();
+    if (this.panel) this.panel.button.style.visibility = '';
     if (!this.opps || this.record || this.journey || this.playing || (run.phase === 'area' && this.opps.playing) || (run.phase === 'edge' && run.offers.length)) {
       super.render();
       return;
@@ -232,14 +327,9 @@ export class LevelOpps extends LevelSit {
       return b;
     };
     const muted = 'color:#a99c80;font-size:12px';
-    const sit = run.sit;
     const o = this.selected ? this.opps.offered.find((x) => x.id === this.selected) : undefined;
-    if (!run.path.length && run.phase === 'area') {
-      h('div', sit.title, 'font:600 16px Georgia,serif;color:#ffd9a0');
-      h('div', sit.premise, 'margin:2px 0 4px;font-size:12px');
-      h('div', this.by === 'gm' ? 'written by the GM for this world' : 'the template, filled from this world', muted);
-    }
     this.status(h, muted);
+    if (this.sitOpen) this.renderSituation(h, muted);
     if (o) this.detail(o, h, btn, muted);
     else {
       h('div', 'Tap an opportunity on the map: gold you ride to, blue for your agents.', 'margin-top:6px;font-size:13px');
@@ -249,6 +339,10 @@ export class LevelOpps extends LevelSit {
     btn(this.d.map.isOpen ? '🗺 Hide the map' : '🗺 The map', () => {
       if (this.d.map.isOpen) this.d.map.close();
       else this.fitMap();
+      this.render();
+    });
+    btn(this.sitOpen ? '☰ ▲' : '☰ the situation', () => {
+      this.sitOpen = !this.sitOpen;
       this.render();
     });
     btn(this.why ? 'why ▲' : 'why? (the dealer)', () => {
@@ -293,6 +387,9 @@ export class LevelOpps extends LevelSit {
     const need = o.requires.map((r) => `${r.count} ${r.kind}${r.tags?.length ? ` (${r.tags.join(', ')})` : ''}`).join(', ');
     const cost = Object.entries(o.costs).filter(([, n]) => n > 0).map(([g, n]) => `${n} ${g} (${this.opps.holdings.goods[g] ?? 0} held)`).join(', ') || 'nothing';
     const dur = 'minutes' in o.duration ? `about ${fmtMin(o.duration.minutes)}: the ride and ${PLAY_TITLE[o.challenge!.play as keyof typeof PLAY_TITLE]?.toLowerCase() ?? o.challenge!.play}` : `${o.duration.turns} turn${o.duration.turns === 1 ? '' : 's'}`;
+    const e = o.challenge?.encounter;
+    if (e) h('div', `${ENCOUNTER[e.kind].icon} ${ENCOUNTER[e.kind].name}: ${e.text}`, 'margin-top:2px;font:600 12.5px system-ui,sans-serif;color:#ffb38a');
+    h('div', `⏱ ${this.timer(o)}`, 'font-size:12px;color:#ffd35a');
     const rows = [
       `Needs: ${need}${who ? ` — ${who}` : ''}${o.tiers > 1 ? ` · tier ${o.tier} of ${o.tiers}` : ''}`,
       `Costs: ${cost}`,
@@ -312,6 +409,49 @@ export class LevelOpps extends LevelSit {
       this.selected = null;
       this.render();
     });
+  }
+
+  /** how long an opportunity stays: this turn, n turns, m minutes of the run's clock */
+  timer(o: Opportunity): string {
+    const turns = o.expires.turn - this.opps.turn;
+    const mins = o.expires.minute !== undefined ? o.expires.minute - this.run.clock : Infinity;
+    if (Number.isFinite(mins) && mins < 30) return `${fmtMin(Math.max(0, mins))} left${o.onExpire ? ' — then it happens anyway' : ''}`;
+    return turns <= 0 ? `this turn only${o.onExpire ? ' — then it happens anyway' : ''}` : `${turns + 1} turns${o.onExpire ? ' — then it happens anyway' : ''}`;
+  }
+
+  /** the roster and the intro, before the first turn */
+  private renderStart(): void {
+    const C = this.card;
+    C.innerHTML = '';
+    C.style.display = '';
+    C.style.top = '8px';
+    C.style.bottom = 'auto';
+    C.style.maxHeight = '86vh';
+    this.d.map.close();
+    const h = (tag: string, text: string, css = '') => {
+      const e = document.createElement(tag);
+      e.textContent = text;
+      e.style.cssText = css;
+      C.appendChild(e);
+      return e;
+    };
+    const btn = (text: string, f: () => void, main = false) => {
+      const b = document.createElement('button');
+      b.style.cssText = `display:inline-block;min-height:44px;margin:6px 6px 0 0;padding:6px 12px;border-radius:7px;border:1px solid #6b5b3e;background:${main ? '#5a3f12' : '#2a241a'};color:#f3e8cf;font:600 14px system-ui,sans-serif`;
+      b.textContent = text;
+      b.addEventListener('pointerdown', (e) => e.stopPropagation());
+      b.onclick = (e) => {
+        e.stopPropagation();
+        f();
+      };
+      C.appendChild(b);
+      return b;
+    };
+    const muted = 'color:#a99c80;font-size:12px';
+    // (the dealer's panel waits for the run: it sat over the roster's first lines)
+    if (this.panel) this.panel.button.style.visibility = 'hidden';
+    if (this.stage === 'roster') this.renderRoster(h, btn, muted);
+    else this.renderIntro(h, btn, muted);
   }
 
   protected drawOnMap(ctx: CanvasRenderingContext2D, px: (cx: number, cy: number) => [number, number]): void {
@@ -366,15 +506,28 @@ export class LevelOpps extends LevelSit {
       const sel = o.id === this.selected;
       if (player && o.challenge?.area !== run.at) this.line(ctx, here, p, col, sel ? 4 : 2.5, sel ? [] : [7, 5]);
       else if (!player) this.line(ctx, here, p, col, sel ? 3 : 1.5, [3, 5]);
-      const glyph = GLYPH[o.challenge?.play ?? o.template] ?? '◆';
+      const glyph = o.challenge ? ENCOUNTER[o.challenge.encounter.kind].icon : (GLYPH[o.template] ?? '◆');
       if (player) this.dot(ctx, p, sel ? 15 : 13, col, glyph, o.forced ? '#ff5a3a' : o.climax ? '#ffffff' : undefined);
       else this.diamond(ctx, p, sel ? 16 : 14, col, glyph);
-      this.label(ctx, [p[0], p[1] + labelDy[i]], o.title.length > 30 && !sel ? `${o.title.slice(0, 28)}…` : o.title, sel ? '#ffffff' : col);
+      this.label(ctx, [p[0], p[1] + labelDy[i] * 2], o.title.length > 30 && !sel ? `${o.title.slice(0, 28)}…` : o.title, sel ? '#ffffff' : col);
+      // (its timer over it: the user — "clear timers")
+      this.badge(ctx, [p[0], p[1] - 22], `⏱ ${this.timer(o).split(' — ')[0]}`, o.onExpire ? '#ff8a5a' : '#ffd35a');
       hits.push({ x: p[0], y: p[1], r: 26, id: o.id });
     }
     this.hits = hits;
     ctx.textAlign = 'start';
     ctx.textBaseline = 'alphabetic';
+  }
+
+  private badge(ctx: CanvasRenderingContext2D, [x, y]: [number, number], text: string, colour: string): void {
+    ctx.font = '600 11px system-ui,sans-serif';
+    const w = ctx.measureText(text).width + 8;
+    ctx.fillStyle = 'rgba(14,10,6,0.88)';
+    ctx.fillRect(x - w / 2, y - 14, w, 15);
+    ctx.fillStyle = colour;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, x, y - 6);
   }
 
   private line(ctx: CanvasRenderingContext2D, a: [number, number], b: [number, number], colour: string, width: number, dash: number[]): void {

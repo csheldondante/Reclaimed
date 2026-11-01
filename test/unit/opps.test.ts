@@ -362,3 +362,37 @@ describe('oppcheck (gm/oppcheck.ts)', () => {
     expect(ms[Math.floor(ms.length / 2)]).toBeLessThan(5);
   });
 });
+
+describe('every player opportunity is a real encounter (round 124: "no enemies or combat no pursuers")', () => {
+  it('each area of the run, armed, and each detour maps to an encounter with enemies in it', async () => {
+    const { encounterOf, detourArea, DETOURS } = await import('../../src/opps/horde');
+    const r = make();
+    for (const a of r.sit.areas) {
+      const e = encounterOf(r.sr, a);
+      expect(e.foes + e.pursuers + (e.horde ?? 0), `${a.id} (${a.play.kind}: ${e.kind})`).toBeGreaterThan(0);
+    }
+    r.play(r.offered[0].id);
+    r.areaDone({ seconds: 150, won: true, pursuers: 0 });
+    for (const d of DETOURS) {
+      const area = detourArea({ sr: r.sr, turn: r.turn, at: r.at(), tune: OPP_TUNE.horde, harvest: 'open', taken: new Set(), firstSeen: () => ({ turn: 0, minute: 0 }), intel: 0 }, d);
+      const e = encounterOf(r.sr, area);
+      expect(e.foes + e.pursuers, d).toBeGreaterThan(0);
+    }
+    // (and every player opportunity dealt names one — oppcheck runs on every deal and refuses one without)
+    const kinds = new Set(r.reports.flatMap((x) => x.dealt.map((d) => d.opp.challenge?.encounter.kind).filter(Boolean)));
+    expect(kinds.size).toBeGreaterThanOrEqual(3);
+  });
+  it('a detour played: its area made off the road, leading on to where it was taken', () => {
+    const r = make();
+    r.play(r.offered[0].id);
+    r.areaDone({ seconds: 150, won: true, pursuers: 0 });
+    const chase = r.forPlayer.find((o) => o.template === 'chase') ?? r.forPlayer.find((o) => ['rescue', 'scout'].includes(o.template))!;
+    const ons = r.sit.choices.filter((c) => c.from === r.sr.at).map((c) => c.to).sort();
+    r.play(chase.id);
+    r.arrive();
+    expect(r.sr.at).toBe(chase.challenge!.area);
+    r.areaDone({ seconds: 100, won: true });
+    expect(r.sit.choices.filter((c) => c.from === r.sr.at && !c.to.startsWith('d-')).map((c) => c.to).sort()).toEqual(ons.filter((x) => !x.startsWith('d-')));
+    expect(r.resolutions.at(-1)!.out.length + r.resolutions.at(-1)!.outcome.effects.length).toBeGreaterThan(0);
+  });
+});

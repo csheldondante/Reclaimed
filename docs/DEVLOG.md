@@ -15848,3 +15848,37 @@ things you have built").
   finding (it never builds the walls or allies Town 3, the strength never reaches the climax's 8).
 - Tests: test/unit/deck.test.ts (8). Headless: scripts/cardlab.mjs (no GPU), shots in
   C:/Projects/shots88/opportunities/cardlab/.
+
+**Slice A rework, part 2: the map** (RN2-10). `?run=opps` now opens on a hero roster: one card for each play hero.
+Each card shows the hero's line, stats from its ControllerProfile (speed, jump, flight, how much it breaks), the
+tags, effects and deeds on its CharacterRecord, and its game modes as icons. Ride and race, chase and flee, and combat
+come from its encounter likes. Raise and command comes from a raise parameter. Build is not yet any hero's. The choice
+sets the run. An intro follows, before the first turn: what is happening (who, how many, from where), how bad it gets
+(the burned ending), what the hero is trying to do, and the clock (with the GM's clock beside it when the hold's slack
+moved it). A "☰ the situation" panel stays on the card all run. On the map each opportunity is drawn at its place
+with its encounter's icon and a timer over it: this turn, n turns, or m minutes (orange when it happens anyway if let
+go). Tapping one shows the effect card: the encounter and its enemies, the timer, needs, costs, duration, each tier's
+outcome and what letting it go does. Detours are placed on land the situation already knows: the captives' camp in
+the refuge's hills, the herald and the lookout on the host's own road. The first try ran a straight line toward the
+town and put the camp in the lake by Bumku.
+
+Headless (scripts/opps.mjs at 412x785, `tod=0.35`, every system at 1x; it now checks for hostiles round the hero in
+every area):
+- burned, with `--detour chase`: the roster, then the intro, then the forced outriders (3 hostile). Turn 1 dealt four
+  options (the hold, the river road, the straight road, run down the herald). The chase had 3 hostile, the hall 11,
+  and the town 25. The herald got away (+3 dead). The captives and the harvest expired with their penalties. Bumku
+  burned. Finale p95 11.7 ms, GPU 13.7 ms.
+- saved, with `--detour rescue`: flee (3), ambush (5), and at the road's edge four options (warn, lead out, free the
+  captives with 6 min left, scout). Rescue had 3 hostile, the town 16. The horde was broken at t 100: saved. Finale
+  p95 13.5 ms.
+- smoke: passed.
+- Shots: C:/Projects/shots88/opportunities/rework/.
+  - hoverbike-burned-0-roster and -0-intro: the roster and the intro.
+  - hoverbike-saved-2-edge-map and hoverbike-burned-3-edge-map: several anchored, timed opportunities.
+  - hoverbike-burned-1-chase-detail and hoverbike-saved-2-rescue-detail: effect cards.
+  - hoverbike-saved-4-town-enemies: the dead in the shallows at the town.
+  - hoverbike-saved-finale.gif.
+
+Still open: the enemy check counts within 400 cells, so a hero far ahead of its outriders isn't shown with them on
+screen. A close-quarters shot is next. The chase autopilot lost the herald. Whether the chase is catchable on the
+phone is for the user to judge.

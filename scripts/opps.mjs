@@ -28,7 +28,12 @@ await run({ name: `opps-${hero}-${want}`, kind: 'behaviour', size: arg('size', '
   fs.mkdirSync(dir, { recursive: true });
   const tag = `${hero}-${want}`;
   const settle = Number(R.opt('settle', 30000));
-  const p = await R.level({ level: 'atlas', run: 'opps', hero, perf: 1, ...(R.opt('gm', '1') === '0' ? { runsitgm: 0 } : {}) });
+  const shot0 = async (name) => {
+    const f = path.join(R.opt('out', 'C:/Projects/shots88/opportunities'), `${hero}-${want}-${name}.png`);
+    await p.screenshot({ path: f });
+    R.log(`saved ${f}`);
+  };
+  const p = await R.level({ level: 'atlas', run: 'opps', hero, tod: R.opt('tod', '0.35'), perf: R.opt('perf', '0'), ...(R.opt('gm', '1') === '0' ? { runsitgm: 0 } : {}) });
   await p.waitForFunction(() => (window.reclaimed?.opps && window.reclaimed.runhero?.hero) || document.querySelector('.fatal'), { timeout: 180000, polling: 250 });
   await R.fatal(p);
   // (round 120's phone bug: the run never made — a swallowed error — left a free hero with no card. The run is up: its
@@ -36,6 +41,19 @@ await run({ name: `opps-${hero}-${want}`, kind: 'behaviour', size: arg('size', '
   const up = await p.evaluate(() => ({ card: window.reclaimed.runsit.card.isConnected && window.reclaimed.runsit.card.style.display !== 'none' && window.reclaimed.runsit.card.textContent.length > 0, held: window.reclaimed.runhero.paused, by: window.reclaimed.runsit.by, note: window.reclaimed.runsit.byNote ?? null }));
   R.check('the run is up: its card shown, the hero held until Go', up.card && up.held, up);
   R.log(`run up; settling ${settle / 1000} s (a first load's terrain)`);
+  // (round 124) the roster, then the intro, then the run
+  await shot0('0-roster');
+  await p.evaluate((h) => {
+    const L = window.reclaimed.opps;
+    L.pickHero(h);
+  }, hero);
+  await sleep(1500);
+  await shot0('0-intro');
+  await p.evaluate(() => {
+    const L = window.reclaimed.opps;
+    L.stage = 'play';
+    L.render();
+  });
   await sleep(settle);
   await R.fatal(p);
   // (--ff "c-a,c-b": those ways on taken without playing the areas between — to look at the finale quickly)
@@ -189,6 +207,7 @@ await run({ name: `opps-${hero}-${want}`, kind: 'behaviour', size: arg('size', '
     for (const l of lines) R.log(`deal: ${l}`);
   };
   const t0 = Date.now();
+  let detourDone = false;
   let k = 0;
   const frames = [];
   let s = await state();
@@ -211,12 +230,26 @@ await run({ name: `opps-${hero}-${want}`, kind: 'behaviour', size: arg('size', '
       R.log(`area ${k} ${s.at}: ${JSON.stringify(s.area)}`);
       const finale = s.area?.kind === 'town';
       let shotPlay = false;
+      let enemyChecked = false;
       let lastLog = 0;
       let gifDone = false;
       const tA = Date.now();
       while ((await state()).playing && Date.now() - tA < 600000) {
         const r = await pilot(want);
         const st = await state();
+        // (round 124: every encounter has enemies in it — counted round the hero once it has started)
+        // (the town: once the horde has come)
+        const due = st.area ? (st.area.kind === 'town' ? Math.max(4, (await p.evaluate(() => window.reclaimed.runsit.area?.setup?.hordeIn ?? 0)) + 4) : 4) : Infinity;
+        if (!enemyChecked && st.area && st.area.t > due) {
+          enemyChecked = true;
+          const n = await p.evaluate(() => {
+            const A = window.reclaimed.runsit.area;
+            const me = window.reclaimed.runhero.hero.position();
+            return A.d.units.query([me[0], me[1]], 400, { hostile: true }).filter((u) => u.alive !== false).length;
+          });
+          R.check(`${st.area.kind}: enemies in the encounter (${n} hostile within 400 cells)`, n > 0, { kind: st.area.kind, hostile: n });
+          await shot(`${k}-${st.area.kind}-enemies`);
+        }
         if (!shotPlay && st.area && st.area.t > 8) {
           shotPlay = true;
           await shot(`${k}-${st.area.kind}`);
@@ -281,7 +314,24 @@ await run({ name: `opps-${hero}-${want}`, kind: 'behaviour', size: arg('size', '
         R.check(`${res.template} committed: running with its turns left`, s.running.length > 0, s.running);
         await shot(`${k}-${res.template}-committed`);
       }
-      const ways = s.offered.filter((o) => o.player && o.affordable).map((o) => ({ id: o.offer, oid: o.id, toPlay: o.toPlay, kinds: o.kinds }));
+      const ways = s.offered.filter((o) => o.player && o.affordable && !['rescue', 'scout', 'chase'].includes(o.template)).map((o) => ({ id: o.offer, oid: o.id, toPlay: o.toPlay, kinds: o.kinds }));
+      // (--detour chase|rescue|scout: taken at the first edge it's offered at, to play that encounter)
+      const det = R.opt('detour', '');
+      const dOpp = det && !detourDone ? s.offered.find((o) => o.template === det && o.affordable) : null;
+      if (dOpp) {
+        detourDone = true;
+        await p.evaluate((id) => {
+          const L = window.reclaimed.opps;
+          L.selected = id;
+          L.render();
+        }, dOpp.id);
+        await sleep(1000);
+        await shot(`${k}-${det}-detail`);
+        await p.evaluate((id) => window.reclaimed.opps.commit(id), dOpp.id);
+        await sleep(4000);
+        s = await state();
+        continue;
+      }
       const o = pick(ways);
       R.log(`ways on: ${ways.map((x) => x.id).join(' | ')} → ${o.id}`);
       await p.evaluate((id) => {
