@@ -343,6 +343,11 @@ each was implemented.
   than one strategy viable per kingdom. A timer over each location; tapping shows the card. Faeria-style positioning of
   dispatched agents (locking down enemies) deferred: the simpler version first.
 
+- The user, verbatim, on the card lab with kingdoms and bots: "Way too many resources. Labor, influence, power then tags that are hidden to the user but filter what pawns the player can assign to things. Then everything is about getting new opportunities to increase those things and deal with the threat cards"
+  → Three resources only: labor, influence, power. Pawns (the agents) carry tags hidden from the player that filter which
+  pawns can be assigned to which opportunities. The whole loop: opportunities that raise labor, influence and power or
+  open new opportunities, and threat cards to deal with.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
