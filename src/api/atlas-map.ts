@@ -78,6 +78,8 @@ export class AtlasMap {
   /** (round 117, runplan) drawn over the map, under the player's dot: a planned run's legs and stages. `px` a world
    *  cell → css px (the nearest copy on the torus), `scale` texels a css px */
   overlay?: (ctx: CanvasRenderingContext2D, px: (cx: number, cy: number) => [number, number], scale: number) => void;
+  /** (round 124, opportunities) a tap on the map (css px on its canvas): true when it was taken (a marker), before any warp */
+  onTap?: (x: number, y: number) => boolean;
 
   constructor(
     private aw: MapWorld,
@@ -412,7 +414,10 @@ export class AtlasMap {
     c.addEventListener('pointerup', (e) => {
       const d = down;
       down = null;
-      if (!d || d.moved || this.busy || !this.canWarp) return;
+      if (!d || d.moved || this.busy) return;
+      const r = this.canvas.getBoundingClientRect();
+      if (this.onTap?.(e.clientX - r.left, e.clientY - r.top)) return void this.draw();
+      if (!this.canWarp) return;
       // a tap: warp to the world cell under it
       const [cx, cy] = this.cellAt(e);
       void this.warpTo(cx, cy);

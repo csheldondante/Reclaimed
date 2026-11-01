@@ -73,7 +73,7 @@ const PLAY_GLYPH: Record<string, string> = { flee: '⇢', ambush: '⚔', deliver
 export class LevelSit {
   readonly world: MemoryWorldState;
   readonly graph: RegionGraph;
-  private wiki: ReturnType<typeof buildWiki>;
+  protected wiki: ReturnType<typeof buildWiki>;
   run!: SituationRun;
   by: 'gm' | 'template' = 'template';
   /** why the GM's situation wasn't played (another make of this world), if so */
@@ -87,14 +87,14 @@ export class LevelSit {
   playing = false;
   runs = 0;
   readonly log: string[] = [];
-  private followers: UnitFollowers;
+  protected followers: UnitFollowers;
   /** (the scripts hide it for a look at the town) */
   readonly card: HTMLDivElement;
-  private warping = false;
-  private travelScale = 1;
-  private cameFrom: V2 | null = null;
+  protected warping = false;
+  protected travelScale = 1;
+  protected cameFrom: V2 | null = null;
 
-  constructor(private d: LevelSitDeps) {
+  constructor(protected d: LevelSitDeps) {
     const facts = atlasFacts(d.atlas);
     this.wiki = buildWiki(facts);
     this.graph = runGraph(d.terrain.atlasGraph(), { names: { regions: this.wiki.regions, settlements: this.wiki.snapshot.settlements }, facts });
@@ -112,13 +112,13 @@ export class LevelSit {
   }
 
   /** a situation for the world as it is now, starting where the hero is */
-  private newRun(from: number, at: V2): void {
+  protected newRun(from: number, at: V2): void {
     const t0 = performance.now();
     const snap = this.world.snapshot();
     const { sit, by, note } = situationFor({ graph: this.graph, world: snap, wiki: this.wiki, seed: this.d.atlas.p.seed, from, at, hero: this.d.hero, gm: this.d.gm });
     this.by = by;
     this.byNote = note;
-    this.run = new SituationRun(sit, situationMap(this.graph, snap));
+    this.run = this.makeRun(sit, snap);
     this.log.push(`situation ${sit.id} (${by}) in ${(performance.now() - t0).toFixed(1)} ms: ${sit.title}; the threat at ${sit.target.name} in ${sit.threat.arrives} min`);
     this.record = null;
     this.last = null;
@@ -128,6 +128,25 @@ export class LevelSit {
     this.runs++;
     this.d.session.paused = true;
     this.render();
+  }
+
+  /** (round 124: the opportunities run makes its own, around a SituationRun) */
+  protected makeRun(sit: Situation, snap: ReturnType<MemoryWorldState['snapshot']>): SituationRun {
+    return new SituationRun(sit, situationMap(this.graph, snap));
+  }
+
+  /** (round 124) how an area's end and the run's end reach the run (the opportunities run routes them through itself) */
+  protected areaDone(r: import('./state').AreaResult): void {
+    this.run.areaDone(r);
+  }
+  protected finishRun(end: import('../api/contracts/situation').SituationEnd, seconds: number): void {
+    this.run.finish(end, seconds);
+  }
+  protected arrived(): void {
+    this.run.arrive();
+  }
+  protected finishRecord(): RunRecord {
+    return finishSituation(this.world, this.run, this.d.hero);
   }
 
   get sit(): Situation {
@@ -167,12 +186,12 @@ export class LevelSit {
     this.last = r;
     this.log.push(...a.log.splice(0));
     if (r.kind === 'area') {
-      this.run.areaDone(r.result);
+      this.areaDone(r.result);
       // (the area's units go with it: what's still after the hero is the run's pursuers now)
       await new Promise((res) => setTimeout(res, 1200));
       a.dispose();
       if (this.area === a) this.area = null;
-    } else this.run.finish(r.end, r.seconds);
+    } else this.finishRun(r.end, r.seconds);
     this.log.push(...this.run.log.splice(0));
     this.playing = false;
     S.paused = true;
@@ -192,6 +211,11 @@ export class LevelSit {
     const from = this.run.area();
     const leg = this.run.choose(id);
     this.log.push(...this.run.log.splice(0));
+    this.travel(from, leg);
+  }
+
+  /** the leg travelled on the map while the next area's land loads */
+  protected travel(from: import('../api/contracts/situation').SituationArea, leg: NonNullable<SituationRun['leg']>): void {
     this.cameFrom = this.run.map.areaAt(from);
     const len = Math.hypot(leg.path[1][0] - leg.path[0][0], leg.path[1][1] - leg.path[0][1]);
     const tl: TravelLeg = { id: leg.choice.id, from: from.id, to: leg.to.id, route: [], path: leg.path, minutes: leg.minutes, animSeconds: Math.max(4, Math.min(10, 3 + len / 200)), crossings: [], events: [] };
@@ -204,9 +228,9 @@ export class LevelSit {
     this.render();
   }
 
-  private end(): void {
+  protected end(): void {
     const run = this.run;
-    this.record = finishSituation(this.world, run, this.d.hero);
+    this.record = this.finishRecord();
     const ending = run.sit.endings[run.end!];
     if (ending.settlement === 'ruined' || ending.settlement === 'abandoned') {
       // (the settlements system realises it charred from now on; the window is made again once the fires have had their
@@ -268,7 +292,7 @@ export class LevelSit {
         this.journey = null;
         this.jstate = null;
         this.d.map.close();
-        this.run.arrive();
+        this.arrived();
         this.log.push(...this.run.log.splice(0));
         const a = this.run.area();
         this.d.say(`${PLAY_GLYPH[a.play.kind]} ${a.name}`, 4);
@@ -282,7 +306,7 @@ export class LevelSit {
     this.area?.shift(dx, dy);
   }
 
-  private render(): void {
+  protected render(): void {
     const C = this.card;
     C.innerHTML = '';
     C.style.display = this.playing ? 'none' : '';
@@ -392,7 +416,7 @@ export class LevelSit {
     else btn('▶ Another run — the world as you left it', () => this.again(), true);
   }
 
-  private drawOnMap(ctx: CanvasRenderingContext2D, px: (cx: number, cy: number) => [number, number]): void {
+  protected drawOnMap(ctx: CanvasRenderingContext2D, px: (cx: number, cy: number) => [number, number]): void {
     const run = this.run;
     const sit = run.sit;
     const W = run.map.world;
