@@ -15528,3 +15528,56 @@ autopilot's orbit, M122-4.
 - Shots: C:/Projects/shots88/merge122/ — runsit-saved/ (the bike run's area cards 1-done, 1-edge, the map 1-map,
   2-map, the town, the end card), runsit-burned/ (9-town: the town burning; finale.gif, after.gif), lich-sandbox.png
   (`?play=lich` among places' flora), tilegate/, tilegate-places/, drive-*.log; STRUCTURE.md (the structure review).
+
+## 2026-10-31 — round 120, `cities`: settlements with purposes and stories; ports and ships; dressing and night lights
+
+Why: the user, round 120 — "different settlements have different purposes like trading posts, mines, lumber camps, etc.
+towns should have stories"; ships "both anchored at harbor and sailing. It will make the world feel very alive"; lights
+at night as emissive surfaces plus a cheap pool ("Yes absolutely enough"). Agreed order: purposes and ports first, then
+dressing and night lights (STR30, STR32, STR36, STR33). ARCHITECTURE "Cities".
+
+- Purpose from the land, not rolled (settle/purpose.ts): scored from the atlas facts the wiki has. A first pass made 121
+  of seed 1's 140 settlements ports: the atlas calls any site within two coarse cells of the sea a port — even ones on
+  plateaus 200 over it (its settings on seed 1 are only port 121 and cliffside 19). A harbour now needs the town down by
+  the water (full under 6 over the sea, none past 18): port 43, trading 35, hold 30, lumber 15, mining 11, farming 6.
+  Farming is rare because seed 1's settled land is tundra and dunes (STR41/STR42: the atlas's settings).
+- Stories: enemies are powers at odds with the town's owner (its realm's relations), never its own realm — the first pass
+  counted a realm with a slightly negative attitude to the player as raiding its own towns, and every town was raided.
+- The wiki runs in Node from cached facts, and the region kinds (atlas/regions.ts) can't be imported there (materials.ts'
+  enums): the kind's traits go into the atlas facts (atlas/kind-traits.ts); seed 1's cache gained them by
+  scripts/factstraits.mjs (no browser).
+- Ports: a port or lumber town moves to front its water (the atlas's site can be 60 from the sea, past a town's
+  radius). Piers cross the shallows and stop where a ship can lie (1.2 m + 0.3); berths are checked bow to stern.
+- Ship routes: Dijkstra's costs in a Float32Array rounded below the popped double, so every popped cell looked stale and
+  no route was ever found — Float64Array. A coarse cell is water only when all its texels are; on a small real atlas
+  (seed 3, n 512) 5 routes, 7 ships, charted in 56-67 ms, every point checked on the sea.
+- The new trades walk the existing rounds in play (life.ts ROUTINE) — their own paths wait for STR23 (STR38).
+
+Tests: unit 235 passed (+39: src/structures/purpose.test.ts 20, src/settle/purpose.test.ts 11, src/settle/ships.test.ts 6,
+test/unit/cities-world.test.ts 2), gpu 30 (+2: test/gpu/cities.test.ts — the game's and the viewer's structures shaders
+compile on Dawn; a small atlas's settlements have purposes and stories and its routes lie on its sea).
+
+Measured (desktop iGPU, intel-xe-lpg; every system in play as deployed, 1x):
+- `npm run smoke`: atlas ready in 44 s, no fatal, sim ticking.
+- Pieces the dressing adds to a town (Node count, hearth, hilly): R 30 2315 pieces (+68 kerbs, 29 pools, 27 props, 7
+  lamps), R 42 4176 (+142, 61, 54, 13) — about 5%.
+- driveprofile (q=low 412x915 dpr 2.6, A/B alternated twice, places = origin/places 213e5b7 built alongside): cities day
+  p50 9.9/9.9 p95 12.5/12.1, night (tod 0.97) 9.9/9.9 p95 12.5/12.8; places day 9.9/9.8 p95 12.8/12.1, night 9.9/9.9 p95
+  12.7/11.5 — no cost visible.
+- perf/structcity at the port s84 (--tod new): the world pass 2.26 ms drawn vs 1.92 skipped by day; at night 1.44 vs
+  2.03 (the GPU totals swing 7.5-13.9 ms between runs on this iGPU: the pools' cost is under its noise).
+- tilegate: every parked view 0 out of detail and 0 background (21 of 21). The goldens: no town is in the gate's views;
+  the wide zooms (z2.2, z1.3) differ 20-30% because the zoom floor differs run to run (places' own build fails the same
+  views by 33-39% against the same baselines), and z5/z3.5's 1-3% are scattered spire and plant pixels — baselines left
+  as they are. The fast pans fail as on places (M120-1).
+- Shots: C:/Projects/shots88/cities/ — cv-0..8 (the viewer: port day and night, mining, lumber, farming, trading, hold
+  with its history, trading at night), c-<purpose>-{day,day-near,night-near,night}.png (in game: port s84, mining s96,
+  lumber s7, trading s104, farming s53, hold s124 — this GPU's world; WD1 says another GPU may make other towns),
+  farming-dusk-wind.gif. The light pools were faint at first in the game: their strength doubled (0.42 → 0.8).
+
+Checked after main's review of the shots (scripts/citiesprobe.mjs: one town's view on any build, `--works` puts the camera
+on the purpose's work site): the lavender slabs round s104 at night and the dark plume by s84's lighthouse are on places'
+build at the same view and time (the plume also with the structures skipped) — pre-existing, BACKLOG CIT1, CIT2; a
+farmstead's barn in shallow water across the river is on places too (CIT3). The mine s96's works are there in play
+(probe/mine-works-cities.png: the headframe, a spoil heap, the rail): the earlier shot was framed on the town, the works
+past its rim. (A pit-floor-over-the-sea rule tried for the barn was reverted: the barn wasn't in a pit.)

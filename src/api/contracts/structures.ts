@@ -60,12 +60,36 @@ export interface CitySpec {
   farmland?: number;
   /** discs left as they are (a quarry, its spoil): no tile there is built, paved or farmed */
   keepOut?: { at: V2; r: number }[];
+  /** (round 120, `cities`) what it's for: the purpose's buildings, works and props (a port's quay, piers, warehouses,
+   *  lighthouse and moored ships; a mine's headframe, rails and spoil; a lumber camp's sawmill, log piles and logs on the
+   *  river; a farming town's granaries and mill; a trading post's market, caravan yards and stables; a hold's keep) */
+  purpose?: CityPurpose;
+  /** the purpose's work site, when the host chose it (a mine's mouth and the way in; a sawmill's bank): else found */
+  works?: { at: V2; dir: V2 };
+  /** unit directions the roads come in from (a trading post's caravan yards stand by them) */
+  approaches?: V2[];
+  /** its history in its fabric (round 120: "a burned quarter, newer walls, a flooded lower town") */
+  marks?: CityMark[];
+}
+
+/** (round 120) What a city is for (contracts/settlement.ts SettlementPurpose: the same words). */
+export type CityPurpose = 'mining' | 'port' | 'lumber' | 'farming' | 'trading' | 'hold';
+
+/** A mark of a city's history: a quarter burned (its buildings gutted, soot), the lower town flooded (below `level`:
+ *  abandoned, a waterline), walls newer than the town (fresh stone). */
+export interface CityMark {
+  kind: 'burned' | 'flooded' | 'newwalls';
+  at?: V2;
+  r?: number;
+  level?: number;
 }
 
 /** A tile's use. */
 /** A tile's use. The farmland's (round 119: "farms and smaller huts for lower population density"): crop strips, an
  *  orchard's rows, a fenced pasture. */
-export type TileUse = 'lot' | 'street' | 'plaza' | 'yard' | 'wall' | 'gate' | 'outside' | 'field' | 'orchard' | 'pasture';
+export type TileUse = 'lot' | 'street' | 'plaza' | 'yard' | 'wall' | 'gate' | 'outside' | 'field' | 'orchard' | 'pasture'
+  /** (round 120) a port's quay: paved, a stone edge to the water */
+  | 'quay';
 
 /**
  * People per area, 0..1, at a world point (round 119: "Is it density driven+grid based now?"): what decides what's built
@@ -75,7 +99,10 @@ export type TileUse = 'lot' | 'street' | 'plaza' | 'yard' | 'wall' | 'gate' | 'o
 export type DensityFn = (x: number, y: number) => number;
 
 /** What a building is (its module set, roof and size follow): a town house, a hut, a farmhouse, a barn. */
-export type BuildingKind = 'house' | 'hut' | 'farmhouse' | 'barn';
+export type BuildingKind = 'house' | 'hut' | 'farmhouse' | 'barn'
+  /** (round 120, purposes) a port's stone warehouse, a lumber camp's sawmill, a farming town's raised granary, a trading
+   *  post's stables */
+  | 'warehouse' | 'sawmill' | 'granary' | 'stable';
 
 /** The tiles: a planar quad mesh (shared vertices, counter-clockwise quads), every tile system's common output. */
 export interface TileMesh {
@@ -116,10 +143,14 @@ export interface BuildingRec {
   mega?: MegaKind;
   /** its quarter of the city (0 the middle) */
   district?: number;
+  /** (round 120) what its history left on it: gutted by a fire (no roof, soot), abandoned to a flood (a waterline) */
+  wear?: 'burned' | 'flooded';
 }
 
 /** Features several tiles big. */
-export type MegaKind = 'tower' | 'dome' | 'keep' | 'fountain';
+export type MegaKind = 'tower' | 'dome' | 'keep' | 'fountain'
+  /** (round 120, purposes) a port's lighthouse, a mine's headframe, a farming town's windmill */
+  | 'lighthouse' | 'headframe' | 'windmill';
 
 export interface MegaFeature {
   kind: MegaKind;
@@ -158,7 +189,9 @@ export interface NavGraph {
 }
 
 /** A linear feature: a profile extruded along a spline (roads, rails, walls, bridges, aqueducts). */
-export type LinearKind = 'road' | 'rail' | 'wall' | 'bridge' | 'fence' | 'hedge';
+export type LinearKind = 'road' | 'rail' | 'wall' | 'bridge' | 'fence' | 'hedge'
+  /** (round 120) a port's pier: a timber deck on piles out over the water (points: the deck's top) */
+  | 'pier';
 
 export interface LinearFeature {
   kind: LinearKind;
@@ -207,9 +240,54 @@ export interface CityPlan {
   roofRise: number[];
   megas: MegaFeature[];
   linear: LinearFeature[];
+  /** (round 120) the purpose's work site (null: none found — a port with no water near says so here) */
+  works?: { at: V2; dir: V2 } | null;
+  /** (round 120) ships moored in the harbour (a port's) */
+  berths: Berth[];
+  /** (round 120) the dressing and the purpose's things: log piles, stalls, wagons, banners, torches, lamps … */
+  props: Prop[];
+  /** (round 120) what lights at night: lamps, torches, the lighthouse's beacon (each a pool of light on the ground) */
+  lights: LightSource[];
   nav: NavGraph;
   /** counts and ms, for the viewer and the perf test */
   stats: Record<string, number>;
+}
+
+/** (round 120) A ship's place: moored at a pier or anchored in a harbour, or sailing (ships.ts: the same record moved). */
+export interface Berth {
+  /** its middle (x, y) and the water's surface there (z) */
+  at: V3;
+  /** its bow's way (radians, from +x) */
+  heading: number;
+  /** its length (m) */
+  length: number;
+  kind: ShipKind;
+  seed: number;
+}
+export type ShipKind = 'cog' | 'sloop' | 'barge';
+
+/** (round 120) A thing set down: the purposes' (log piles, stalls, wagons, cranes, carts, spoil, logs on the river) and
+ *  the dressing (banners in the wind, torches, street lamps). */
+export type PropKind = 'logpile' | 'log' | 'stall' | 'wagon' | 'crates' | 'crane' | 'spoil' | 'cart' | 'banner' | 'torch' | 'lamp' | 'waterwheel' | 'haystack' | 'trough';
+
+export interface Prop {
+  kind: PropKind;
+  /** its foot (world) */
+  at: V3;
+  /** its facing (radians, from +x) */
+  heading: number;
+  /** its size (m: a pile's length, a pole's height) */
+  size: number;
+  seed: number;
+}
+
+/** (round 120) A light at night: an emissive surface and a pool of light on the ground round it (no shadows). */
+export interface LightSource {
+  at: V3;
+  kind: 'lamp' | 'torch' | 'beacon' | 'lantern';
+  /** the pool's reach (m), and the ground under the light (world z: where the pool lies) */
+  radius: number;
+  foot: number;
 }
 
 /**
@@ -271,4 +349,6 @@ export interface Structures {
   asset(kind: BuriableKind, seed: number): BuriableAsset;
   /** placed assets as pieces (drawn by any StructureGpu host with the city's look) */
   assetPieces(placed: PlacedAsset[]): StructurePieces;
+  /** (round 120) ships as pieces (affine: any heading; a host moves them by making these again) in a style's look */
+  shipPieces(ships: Berth[], style: StructureStyleId): StructurePieces;
 }
