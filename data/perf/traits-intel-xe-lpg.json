@@ -1,0 +1,89 @@
+{
+  "when": "2026-10-31T19:38:52.280Z",
+  "size": "412x915",
+  "dpr": 2.6,
+  "agents": 1000,
+  "adapter": "intel / xe-lpg",
+  "living": 500,
+  "dead": 500,
+  "modules": [
+    "status",
+    "raise",
+    "heal",
+    "holy_harm",
+    "typed_damage",
+    "caps",
+    "look"
+  ],
+  "rows": [
+    {
+      "on": true,
+      "frames": 209,
+      "gpuFrameMs": 12.054727803827747,
+      "agentsMs": 0.5897184449760767,
+      "traitsCpuMsPerTick": 0.01552605314033728
+    },
+    {
+      "on": false,
+      "frames": 232,
+      "gpuFrameMs": 11.059406241379309,
+      "agentsMs": 0.420425271551724,
+      "traitsCpuMsPerTick": 0.0005554082413844715
+    },
+    {
+      "on": true,
+      "frames": 243,
+      "gpuFrameMs": 10.411893465020574,
+      "agentsMs": 0.4727968888888887,
+      "traitsCpuMsPerTick": 0.010554151513932578
+    },
+    {
+      "on": false,
+      "frames": 222,
+      "gpuFrameMs": 11.546277774774781,
+      "agentsMs": 0.45736856756756733,
+      "traitsCpuMsPerTick": 0.0005552232163631598
+    },
+    {
+      "on": true,
+      "frames": 231,
+      "gpuFrameMs": 11.026785116883115,
+      "agentsMs": 0.5250478658008656,
+      "traitsCpuMsPerTick": 0.006108665790331158
+    },
+    {
+      "on": false,
+      "frames": 224,
+      "gpuFrameMs": 11.427243093750008,
+      "agentsMs": 0.44205199107142895,
+      "traitsCpuMsPerTick": 0
+    },
+    {
+      "on": true,
+      "frames": 225,
+      "gpuFrameMs": 11.301289115555564,
+      "agentsMs": 0.5341882933333335,
+      "traitsCpuMsPerTick": 0.00722029654501545
+    },
+    {
+      "on": false,
+      "frames": 221,
+      "gpuFrameMs": 11.587366533936656,
+      "agentsMs": 0.45956962443438937,
+      "traitsCpuMsPerTick": 0
+    }
+  ],
+  "result": {
+    "gpuFrameMs": {
+      "on": 11.199,
+      "off": 11.405,
+      "diff": -0.206
+    },
+    "agentsPassMs": {
+      "on": 0.53,
+      "off": 0.445,
+      "diff": 0.085
+    },
+    "traitsCpuMsPerTick": 0.0099
+  }
+}

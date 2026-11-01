@@ -15581,3 +15581,67 @@ build at the same view and time (the plume also with the structures skipped) —
 farmstead's barn in shallow water across the river is on places too (CIT3). The mine s96's works are there in play
 (probe/mine-works-cities.png: the headframe, a spoil heap, the rail): the earlier shot was framed on the town, the works
 past its rim. (A pit-floor-over-the-sea rule tried for the barn was reverted: the barn wasn't in a pit.)
+## 2026-10-31 — round 120 (`traits`): Living World slice 1 — traits, effects and modular rules on the GPU agents (LW1)
+
+The user (DECISIONS round 120): "the systems that process traits for things like combat and other interactions are
+essentially game specific logic but we want it GPU bound and cheap so we can use it on our agents. Modular architecture
+here is key." And the design document's §4: "combinatorial depth from shared status/effect semantics", "statuses are verbs
+on the simulation". What was there: the GPU agents (units.wgsl's step does damage, fire, drowning, throws by kind), the
+Units contract on them (AgentUnits), recipe tags (round 85), world events for growth (Grow). No trait data, no effect
+notion, no way for a game to add a rule without editing units.wgsl. Play's lich is on `play`/`runsit`, not places — main's
+call: build on places, a thin caster in the playground, the lich's hook documented (LW1-1).
+
+**Why three structures.** Traits are data (what a thing is, what's happening to it), effects are operations put into the
+world, rules are the game's code. Folding any two together is the conflation the user's principles warn about: a rule
+that also stores state can't be swapped; an effect that knows who it hurts is a bespoke spell. So: a trait word a slot
+(intrinsic bits + statuses with expiry ticks — expiry ticks, not timers counted down: an f16 or u8 timer either loses
+precision or needs a per-tick decrement; a u32 tick compares exactly), an effect list a tick (a uniform: 32), and modules —
+each its own kernel with a 256-byte table, seeing only the prelude. The registry is the only thing that knows the set.
+
+**Why CAPS and LOOK.** The step already has 8 storage buffers (nav, dist, units, occ, events, fire, shove, lava): it can't
+bind the trait buffer, and it shouldn't — it's the engine. So the unit record grew a fifth vec4 the step and the draw
+read: CAPS (no burn, no drown, rooted, flee) and LOOK (tint, halo, sparks, a body lying), derived each tick from the
+traits by the game's `caps` and `look` modules (round 85: "derived capabilities as separate rules"). The engine only knows
+four verbs; which traits give them is a table. Fire immunity is then "fire_immune → NO_BURN" plus a resist row
+(fire × 0), petrification "petrified → ROOTED | NO_BURN" plus a stone tint; nothing in units.wgsl names a trait.
+
+**Corpses.** Raising needs the body: a death used to free the slot at once. With the trait system on, the slot lies as a
+`corpse` (drawn on its back, ash-tinted) for `corpseSeconds` (40), then decays (the core zeroes it; a `decayed` event
+frees the slot) unless a raise stands it up — the same id, same kind (role and gear), alive, undead, in the raiser's
+group. AgentUnits revives its record and marks it `bound` (the raiser's; no jobs or hunts here until ordered). The sync
+also frees a corpse it sees zeroed or alive, so a dropped event doesn't leak a slot. `?traits=0` turns the system and
+corpse mode off together.
+
+**The world.** A heal's reach into fields and geometry goes through the systems' own channel, not a bespoke write:
+EventKind.Grow (existing: wilt, particles) and a new EventKind.Mend (8) that structure.wgsl reads — a cracked interval
+within the radius knits back a damage level with chance `strength`. The pulses come from the trait system's SimSystem
+half (ticked before the agents), so a sanctuary mends an empty town too.
+
+**Tests (TDD).** Unit 13 (test/unit/traits.test.ts): ids and masks, tags → traits, materials, the registry (order,
+rejects, add/remove leaves the others), the slice's tables. GPU 8 on Dawn (test/gpu/traits.test.ts): a sanctuary over
+150 living + 150 undead (living 4 → ~8 hp in 2 s at 2 hp/s, undead 10 → ~4); raise (100 dead: 60 workers and 30 raiders
+rise in group 9 with their kinds and ids, the 10 walking dead stay down); corpses decay and their slots are reused;
+fire_immune (a fire burst: 7 vs 10 hp; a burning blow: 40 of 40 plain alight, 0 immune); petrified rooted (a throwing blow
+moves the free > 2 cells, the stone < 0.3); modularity (a `regen` module registered later raises hp only on
+`regenerating`, the other modules' list untouched, heal unchanged, unregistered it stops); Mend (a lightning-cracked
+concrete block: damage 124 → 0 under a 6 s sanctuary, no agent about); AgentUnits (a smith raised keeps its role, a
+walking dead stays down). Full suite: 245 passed (1 expected fail, 2 skipped).
+
+**Measured (desktop iGPU, intel xe-lpg; the phone proxy q=low 412x915 dpr 2.6).** scripts/perf/traits.mjs: the atlas
+with every system in play, 1000 agents round the camera (500 living, 500 undead) under a lasting sanctuary and a fear
+field, the trait system toggled on and off in 3 s windows, four rounds each (round 120: toggle, don't trust per-pass
+timestamps on tilers): the agents' pass 0.530 ms on vs 0.445 off (+0.085 ms for 7 modules + core, 9 dispatches of 16
+workgroups); the whole frame's GPU 11.20 vs 11.41 ms (−0.21: inside the iGPU's clock noise); the traits system's CPU
+0.01 ms a tick. Well under the 1 ms target. driveprofile (q=low, the ride): p50 9.9, p95 11.8, GPU 9.83 ms a frame —
+places' last gate read p50 9.8-9.9, p95 11.4-13.3: no cost visible with no agents about. `npm run smoke` passes (atlas
+ready 40.7 s, no fatal).
+
+**Seen** (scripts/traitshot.mjs, C:/Projects/shots88/traits/): the crowd (180 villagers round the well, 90 walking dead
+in green and bone, the lich); the smite leaves ~105 bodies lying ash-grey; the raise stands them all up green and bone,
+hopping up, and they gather on the lich; the sanctuary greens the ground (Grow pulses, spread over the field: one spot
+pulsed every 0.5 s grew a single thicket in the first run, so a random point a pulse and the station's every 3 s), the
+living glow (a white halo over the head), the undead spark and fall (the raised round the lich too — the rule doesn't
+care whose they are); fear sends the village up its field; petrify turns the walking dead grey and still. Readable close
+(04-sanctuary-close.png, zoom 26); at the station's default zoom the halos and sparks are a few pixels (LW1-4).
+The first run found the playground had no one draining the agents' events (no Units layer): corpse mode's books live in
+the sync, so the station syncs every 250 ms while it has agents.
