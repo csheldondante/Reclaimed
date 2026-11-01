@@ -278,6 +278,8 @@ each was implemented.
   a process for generating location opportunities from what is there, the hero and the run (thematic, real world
   consequences, gameplay bonuses). Deferred: trees baked into isometric sprites for the low LOD.
 
+- The user, verbatim: "I meant the current technique. The section judge was slower on phone I thought? My main point is they were all fine for now and I want to defer working on physics and focus on the gameplay so let's do that." → lattice x runs stays the default; jb6 stays unmerged on its branch; physics deferred (PH1).
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
