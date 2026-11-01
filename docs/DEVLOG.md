@@ -15755,3 +15755,18 @@ Alternatives ("the player or a knight") became sibling opportunities that exclud
 requirement set. The 23 templates are re-cast as about 50 offers with their requirements. The slice shows the scaling
 inside runsit's horde run: the hold's levy becomes an army resource (today it is a special case in finaleSetup) and
 opens autonomous offers while the hero rides on. The conflations list is kept.
+
+## 2026-11-01 — round 122 (`runloop`): the run loop's design, revision 3 (the user's answers)
+
+Docs only. The user answered revision 2's questions (DECISIONS round 120, latest entry), and RUN_LOOP.md now follows
+them. Opportunities are cards in two hands, player cards and resource cards, each card showing one option. The hands
+are small (proposed 3 + 4), and the scale grows by requirement tiers: two armies held deal the two-army cards. Commits
+take only what is available to the character (what travels with the hero, plus what is at the settlements it rules).
+Cards expire, some with a penalty, and cards can force a player interaction (the outriders, the night assault, the
+climax). Travel is a player card: playing one moves the hero there, and there is no waiting (FTL / Slay the Spire).
+Agents are interchangeable by kind, so revision 2's skills and fixed odds are gone. Tags unlock special cards, and
+levelling up wins bonuses (negate a kind of bad effect, resolve instantly, better rewards, unlock a family). The dealer
+selects by what's available, adds a synergy term to the score, and has three guarantees. Templates carry tiers, expiry
+and penalties, and the 23-template table gained a tiers/expiry/tags table. The slice deals the horde run's ways on as
+the player hand, the outriders as a forced card, and the levy as an army that fills the resources hand. Three new
+questions: hand sizes, whether tags and bonuses persist between runs, and whether a ruler may ride out.
