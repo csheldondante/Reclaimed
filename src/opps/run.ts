@@ -17,9 +17,9 @@ import { available, commit, type Bonus, emptyHoldings, needsPlayer, resolve, typ
 import type { Situation, SituationEnd } from '../api/contracts/situation';
 import type { CharacterRecord } from '../api/contracts/run';
 import { hashStr, rng } from '../runplan/rng';
-import { SituationRun, LEVY_PACE, delta, type AreaResult, type SituationMap, type V2 } from '../runsit/state';
+import { SituationRun, LEVY_PACE, LEG_MIN, TRAVEL_PACE, along, delta, type AreaResult, type SituationMap, type V2 } from '../runsit/state';
 import { deal, type DealReport } from './dealer';
-import { distOn, hordeProposals, type HordeView } from './horde';
+import { armThreats, detourArea, distOn, DETOURS, holdArea, hordeProposals, type Detour, type HordeView } from './horde';
 import { OPP_TUNE } from './tune';
 
 export interface OppRunOptions {
@@ -62,9 +62,19 @@ export class OppRun {
   private march = new Map<string, March>();
   private n = 0;
   climaxed = false;
+  /** (round 124) when each template at a place was first offered (its expiry counts from there) */
+  private seen = new Map<string, { turn: number; minute: number }>();
+  /** what the lookout has taught (the ford's odds), and the freed who stand with the town */
+  intel = 0;
+  rallied = 0;
+  /** (RN2-7) the host's arrival as the GM wrote it, and as slice A sets it */
+  readonly clockWas: number;
 
   constructor(sit: Situation, map: SituationMap, readonly o: OppRunOptions) {
     this.sr = new SituationRun(sit, map);
+    armThreats(this.sr, OPP_TUNE.horde);
+    this.clockWas = sit.threat.arrives;
+    this.retime();
     this.holdings = emptyHoldings();
     const me = o.character?.(o.hero);
     this.holdings.agents.push({ id: 'player', kind: 'player', name: me?.name ?? o.hero, character: o.hero, count: 1, tags: [...(me?.tags ?? [])], statuses: [], at: { with: 'player' } });
@@ -76,6 +86,50 @@ export class OppRun {
     return this.sr.sit;
   }
 
+  /**
+   * (round 124, RN2-7) The slack after the hold: the GM's clock was set for runsit's run (the straight road in time, the
+   * hold's way late — on seed 1 the levy is won at minute 9.0 with the host at the town at 9.1, so its opportunities
+   * could never matter). The host's arrival is moved out until the levy, marching from the hold when it is won, can
+   * meet the host's road `holdSlack` minutes before the host gets there. The straight road is then early (the finale
+   * still brings the host in within HORDE_CAP_S); the hold's way has a turn or two to spend. `holdSlack` at its minimum
+   * keeps the GM's clock.
+   */
+  private retime(): void {
+    const T = OPP_TUNE.horde;
+    const sit = this.sr.sit;
+    const hold = holdArea(this.sr);
+    if (!hold || T.holdSlack <= -2) return;
+    const m = this.sr.map;
+    const path = this.sr.sit.choices.find((c) => c.from === sit.areas[0].id && c.to === hold.id);
+    if (!path) return;
+    const start = sit.areas[0];
+    const held = start.minutes + LEG_MIN + Math.hypot(...delta(m.areaAt(start), m.areaAt(hold), m.world)) / TRAVEL_PACE + hold.minutes;
+    const pts = sit.threat.route.map((r) => m.regionCentre(r));
+    let need = 0;
+    let best = Infinity;
+    for (let t = 0.3; t <= 0.981; t += 0.02) {
+      const march = Math.hypot(...delta(m.areaAt(hold), along(pts, t, m.world), m.world)) / LEVY_PACE;
+      best = Math.min(best, (held + march + T.holdSlack) / t);
+    }
+    need = best;
+    if (need > sit.threat.arrives) {
+      this.log.push(`slack after the hold (RN2-7): the host at ${sit.target.name} at minute ${need.toFixed(1)} (the GM's ${sit.threat.arrives}); the hold won by about ${held.toFixed(1)}`);
+      sit.threat.arrives = +need.toFixed(1);
+    }
+  }
+
+  /** (round 124) when a template at a place was first offered; now, if it hasn't been */
+  firstSeen(key: string): { turn: number; minute: number } {
+    return this.seen.get(key) ?? { turn: this.turn, minute: this.sr.clock };
+  }
+
+  /** the key an opportunity's expiry counts from */
+  private seenKey(o: Opportunity): string | null {
+    if (o.template === 'harvest') return `harvest@${holdArea(this.sr)?.id}`;
+    if ((DETOURS as readonly string[]).includes(o.template)) return `${o.template}@${this.sr.at}`;
+    return null;
+  }
+
   /** where the player is (world units): the area, or the leg's start while it's travelled */
   at(): V2 {
     return this.sr.map.areaAt(this.sr.area());
@@ -83,7 +137,7 @@ export class OppRun {
 
   private view(): HordeView {
     const army = available(this.holdings).find((a) => a.kind === 'army');
-    return { sr: this.sr, turn: this.turn, at: this.at(), tune: OPP_TUNE.horde, harvest: this.harvest, taken: this.taken, armyAt: army ? this.armyNow(army.id) : undefined };
+    return { sr: this.sr, turn: this.turn, at: this.at(), tune: OPP_TUNE.horde, harvest: this.harvest, taken: this.taken, armyAt: army ? this.armyNow(army.id) : undefined, firstSeen: (k) => this.firstSeen(k), intel: this.intel };
   }
 
   /** where a free army is now: marching for the town from where it was freed (with the player, if it never was) */
@@ -106,6 +160,10 @@ export class OppRun {
     this.report = r;
     this.reports.push(r);
     this.offered = r.dealt.map((d) => d.opp);
+    for (const d of r.dealt) {
+      const k = this.seenKey(d.opp);
+      if (k && !this.seen.has(k)) this.seen.set(k, { turn: this.turn, minute: this.sr.clock });
+    }
     for (const d of r.dealt) this.recent.push({ template: d.opp.template, place: d.opp.location.name, turn: this.turn });
     this.log.push(`turn ${this.turn}: dealt ${r.dealt.map((d) => d.opp.template).join(', ') || 'nothing'} (${r.ms} ms)`);
     return r;
@@ -170,13 +228,28 @@ export class OppRun {
     }
     if (this.sr.phase !== 'edge') throw new Error(`opportunities: a way on is taken at an area's edge (phase ${this.sr.phase})`);
     if (this.sr.offers.length) this.sr.take(null);
-    this.sr.choose(o.offer);
+    let choice = o.offer;
+    if ((DETOURS as readonly string[]).includes(o.template)) {
+      // (a detour: its area made now, off the road, leading on to where this area leads)
+      const from = this.sr.area();
+      const area = detourArea(this.view(), o.template as Detour);
+      if (area.id !== o.challenge.area) throw new Error(`opportunities: the detour ${o.template} moved (${area.id} is not ${o.challenge.area})`);
+      const on = this.sr.sit.choices.filter((c) => c.from === from.id && !c.to.startsWith('d-'));
+      this.sr.sit.areas.push(area);
+      choice = `c-${area.id}`;
+      this.sr.sit.choices.push({ id: choice, from: from.id, to: area.id, text: o.title, effects: [] });
+      for (const c of on) this.sr.sit.choices.push({ ...structuredClone(c), id: `${c.id}@${area.id}`, from: area.id });
+      this.taken.add(o.template);
+    }
+    this.sr.choose(choice);
     return { travel: true };
   }
 
   /** the leg's travel done: the next area (the town: the climax first) */
   arrive(): void {
     this.sr.arrive();
+    // (the clock moved: what was waiting by the minute and wasn't taken has gone)
+    this.expire((o) => o.expires.minute !== undefined && this.sr.clock >= o.expires.minute);
     if (this.sr.area().play.kind === 'town') this.climax();
   }
 
@@ -220,7 +293,7 @@ export class OppRun {
   private endTurn(): void {
     this.turn++;
     for (const { c } of this.running()) if (c.resolvesTurn! <= this.turn) this.settle(c);
-    this.expire((o) => o.expires.turn < this.turn);
+    this.expire((o) => o.expires.turn < this.turn || (o.expires.minute !== undefined && this.sr.clock >= o.expires.minute));
     this.deal();
   }
 
@@ -232,6 +305,7 @@ export class OppRun {
         this.log.push(`expired ${o.title}: ${o.onExpire.text}`);
       }
       if (o.template === 'harvest' && o.affordable) this.harvest = 'rotted';
+      if (o.onExpire && (DETOURS as readonly string[]).includes(o.template)) this.taken.add(o.template);
     }
     this.offered = this.offered.filter((o) => !due(o));
   }
@@ -256,6 +330,9 @@ export class OppRun {
     if (op === 'delay') this.sr.delay += amount;
     else if (op === 'hasten') this.sr.delay -= amount;
     else if (op === 'thin') this.sr.thinned += amount;
+    else if (op === 'swell') this.sr.thinned -= amount;
+    else if (op === 'rally') this.rallied += amount;
+    else if (op === 'intel') this.intel += amount;
     else throw new Error(`opportunities: no conflict operation ${op}`);
     this.log.push(`the host: ${op} ${amount}`);
   }
@@ -282,7 +359,7 @@ export class OppRun {
     for (const { c } of this.running()) this.settle(c);
     this.expire(() => true);
     const T = OPP_TUNE.horde;
-    this.sr.provisioned = Math.floor((this.holdings.goods.supplies ?? 0) * T.perSupply);
+    this.sr.provisioned = Math.floor((this.holdings.goods.supplies ?? 0) * T.perSupply) + this.rallied;
     const levy = this.holdings.agents.find((x) => x.kind === 'army' && !x.committed && available(this.holdings).includes(x));
     const m = levy ? this.march.get(levy.id) : undefined;
     const hold = this.sit.areas.find((a) => a.play.kind === 'deliver');

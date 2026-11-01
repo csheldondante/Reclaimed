@@ -32,6 +32,9 @@ export interface FinaleObs {
   /** of it, still standing; inside the town */
   hordeLeft: number;
   hordeInside: number;
+  /** (round 124, RN2-8) any of the dead at the town's edge (within 1.5 radii) now; absent: counted as there (the old
+   *  callers) */
+  hordeNear?: boolean;
   /** evacuation: the people led out (their count when the order was given), and how many stand at the refuge */
   refugees?: { led: number; safe: number };
 }
@@ -43,6 +46,9 @@ export class FinaleRules {
   private breach = 0;
   fallen = false;
   status: FinaleStatus = { state: 'playing' };
+  /** (round 124, RN2-8) when the dead first reached the town's edge: the timed hold counts from there, so a horde
+   *  stalled out on the land never reads as a town that held */
+  reachedAt: number | null = null;
 
   constructor(readonly setup: FinaleSetup) {
     this.fires = setup.burning;
@@ -68,12 +74,13 @@ export class FinaleRules {
   }
 
   private judge(o: FinaleObs): FinaleStatus {
+    if (this.reachedAt === null && o.hordeCame && (o.hordeNear ?? true)) this.reachedAt = o.t;
     if (!o.heroAlive) return { state: 'ended', end: 'fell', why: 'the hero fell' };
     const safe = o.refugees && o.refugees.led > 0 && o.refugees.safe >= Math.ceil(o.refugees.led * SAFE_SHARE);
     if (this.setup.mode === 'evacuate' && safe) return { state: 'ended', end: 'evacuated', why: `${o.refugees!.safe} of ${o.refugees!.led} reached the refuge` };
     if (this.fallen) return { state: 'ended', end: 'burned', why: `${this.fires} fires: the town fell` };
     if (o.hordeCame && o.hordeLeft === 0) return { state: 'ended', end: 'saved', why: 'the horde is broken' };
-    const came = Math.max(0, this.setup.hordeIn);
+    const came = Math.max(0, this.setup.hordeIn, this.reachedAt ?? Infinity);
     if (o.hordeCame && o.t > came + HOLD_S) return { state: 'ended', end: 'saved', why: 'the town held till they broke off' };
     return { state: 'playing' };
   }

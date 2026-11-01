@@ -88,6 +88,14 @@ export class AreaPlay {
   private foes: UnitId[] = [];
   private allies: UnitId[] = [];
   private trader: UnitId | null = null;
+  /** (round 124) a chase's quarry and where it runs; a rescue's camp, its guards and captives; a scout's patrols */
+  private quarry: UnitId[] = [];
+  private escape: V2 | null = null;
+  private quarryT = 0;
+  private camp: V2 | null = null;
+  private captives: UnitId[] = [];
+  private freed = false;
+  private edgeAt: V2 | null = null;
   private entry: V2;
   // the finale
   setup: FinaleSetup | null = null;
@@ -192,15 +200,17 @@ export class AreaPlay {
   }
 
   /** the outriders, `behind` minutes back along the way the hero came (or behind it, at the start) */
-  private spawnPursuers(away: V2): void {
-    const P = this.d.run.pursuers;
-    if (!P || P.count <= 0) return;
+  private spawnPursuers(away: V2, extra = 0): void {
+    const run = this.d.run.pursuers;
+    // (round 124: an area's own threat brings outriders of its own, on top of any still hunting the hero)
+    const P = { count: (run?.count ?? 0) + extra, behind: run ? run.behind : 0.4 };
+    if (P.count <= 0) return;
     const cells = Math.max(BEHIND_CELLS[1], Math.min(BEHIND_CELLS[2], BEHIND_CELLS[0] * Math.max(0, P.behind)));
     const c = this.inside([this.entry[0] - away[0] * cells, this.entry[1] - away[1] * cells], 10);
     const th = this.d.run.sit.threat;
     // (they ride as fast as most of the hero's cruise: a chase, not a stroll — at least a running corpse's pace)
     this.pursuitPace = Math.max(4.2, this.cruise() * 0.75);
-    this.pursuers = this.spawnAround(c, P.count, 2, 6, th.role, th.faction, { hostile: true, sight: 70, speed: Math.max(4.2, this.cruise() * 0.75), health: 3, job: { kind: 'attack', target: 'hero' } });
+    this.pursuers.push(...this.spawnAround(c, P.count, 2, 6, th.role, th.faction, { hostile: true, sight: 70, speed: Math.max(4.2, this.cruise() * 0.75), health: 3, job: { kind: 'attack', target: 'hero' } }));
     this.log.push(`${P.count} outriders ${cells.toFixed(0)} cells behind`);
   }
 
@@ -208,18 +218,52 @@ export class AreaPlay {
     const p = this.area.play;
     const way = this.wayOn();
     const edge = (): V2 => this.out(way, this.reach());
+    const th = this.d.run.sit.threat;
+    const extra = this.area.threat ?? { foes: 0, pursuers: 0 };
     switch (p.kind) {
       case 'flee':
         this.goal = edge();
         this.goalName = 'the way on';
-        this.spawnPursuers(way);
+        this.spawnPursuers(way, extra.pursuers);
         break;
+      case 'chase': {
+        // (PL23: it starts close and already in pursuit: the quarry a few seconds ahead, running for its escape)
+        this.escape = this.inside(this.out(way, this.reach()), 10);
+        const start = this.out(way, 16);
+        this.quarry = this.spawnAround(start, p.quarry, 1, 4, p.role, p.faction, { hostile: true, sight: 0, speed: Math.max(3.2, this.cruise() * 0.65), health: 2, job: { kind: 'go', to: this.toward(start, this.escape, 22) } });
+        this.goal = start;
+        this.goalName = 'the quarry';
+        this.spawnPursuers(way, extra.pursuers);
+        break;
+      }
+      case 'rescue': {
+        this.camp = this.d.session.dryNear(this.inside(this.out(way, this.reach() * 0.55), 14));
+        this.edgeAt = edge();
+        this.goal = this.camp;
+        this.goalName = 'the captives';
+        this.foes = this.spawnAround(this.camp, p.guards, 3, 9, p.role, p.faction, { hostile: true, sight: 20, speed: 3.4, health: 3, job: { kind: 'guard', at: this.camp, radius: 10 } });
+        this.captives = this.spawnAround(this.camp, p.captives, 1, 3, 'captive', null, { hostile: false, sight: 0, speed: 3.2, health: 4, role: 'captive', colour: '#e8e0c8', job: { kind: 'guard', at: this.camp, radius: 1 } });
+        this.spawnPursuers(way, extra.pursuers);
+        break;
+      }
+      case 'scout': {
+        this.goal = edge();
+        this.goalName = 'the lookout';
+        const n = Math.max(1, p.patrols);
+        for (let i = 0; i < n; i++) {
+          const k = (i + 1) / (n + 1);
+          const at: V2 = [this.entry[0] + (this.goal[0] - this.entry[0]) * k, this.entry[1] + (this.goal[1] - this.entry[1]) * k];
+          this.foes.push(...this.spawnAround(at, 2, 4, 10, p.role, p.faction, { hostile: true, sight: 26, speed: 3.8, health: 3, job: { kind: 'guard', at, radius: 14 } }));
+        }
+        this.spawnPursuers(way, extra.pursuers);
+        break;
+      }
       case 'ambush': {
         this.goal = edge();
         this.goalName = 'the way on';
         const mid: V2 = [(this.entry[0] + this.goal[0]) / 2, (this.entry[1] + this.goal[1]) / 2];
-        this.foes = this.spawnAround(mid, p.foes, 6, 22, p.role, p.faction, { hostile: true, sight: 24, speed: 3.6, health: 3 });
-        this.spawnPursuers(way);
+        this.foes = this.spawnAround(mid, p.foes + extra.foes, 6, 22, p.role, p.faction, { hostile: true, sight: 24, speed: 3.6, health: 3 });
+        this.spawnPursuers(way, extra.pursuers);
         break;
       }
       case 'deliver': {
@@ -227,7 +271,12 @@ export class AreaPlay {
         this.goal = pl ? this.inside(pl.centre) : this.inside(here);
         this.goalName = `the hall of ${this.area.name}`;
         const [ux, uy] = unit([this.entry[0] - this.goal[0], this.entry[1] - this.goal[1]]);
-        this.spawnPursuers([-ux, -uy]);
+        // (round 124: riders between the hero and the hall)
+        if (extra.foes) {
+          const mid: V2 = [(this.entry[0] + this.goal[0]) / 2, (this.entry[1] + this.goal[1]) / 2];
+          this.foes = this.spawnAround(mid, extra.foes, 6, 18, th.role, th.faction, { hostile: true, sight: 24, speed: 3.6, health: 3 });
+        }
+        this.spawnPursuers([-ux, -uy], extra.pursuers);
         break;
       }
       case 'trader': {
@@ -235,7 +284,9 @@ export class AreaPlay {
         this.goalName = 'the trader';
         this.trader = this.d.units.spawn('trader', this.goal, null, { name: 'the trader', role: 'trader', hostile: false, health: 5, colour: '#e8c66a', job: { kind: 'guard', at: this.goal, radius: 1 } });
         const [ux, uy] = unit([this.entry[0] - this.goal[0], this.entry[1] - this.goal[1]]);
-        this.spawnPursuers([-ux, -uy]);
+        // (round 124: raiders beset the trader: drive them off, and then it trades)
+        if (extra.foes) this.foes = this.spawnAround(this.goal, extra.foes, 5, 12, th.role, th.faction, { hostile: true, sight: 22, speed: 3.6, health: 3, job: { kind: 'guard', at: this.goal, radius: 12 } });
+        this.spawnPursuers([-ux, -uy], extra.pursuers);
         break;
       }
       case 'town':
@@ -431,6 +482,9 @@ export class AreaPlay {
   shift(dx: number, dy: number): void {
     const mv = (p: V2 | null): V2 | null => (p ? [p[0] + dx, p[1] + dy] : null);
     this.goal = mv(this.goal);
+    this.escape = mv(this.escape);
+    this.camp = mv(this.camp);
+    this.edgeAt = mv(this.edgeAt);
     this.refuge = mv(this.refuge);
     this.entry = mv(this.entry)!;
     if (this.town) this.town = { ...this.town, centre: mv(this.town.centre)!, doors: this.town.doors.map((p) => mv(p)!) };
@@ -477,10 +531,62 @@ export class AreaPlay {
         if (!won && left <= 0) return this.finish({ seconds: this.t, won: false, pursuers: chasing });
         break;
       }
-      case 'trader':
-        line = `⚖ Reach the trader · ${dist.toFixed(0)} cells`;
+      case 'trader': {
+        const left = this.alive(this.foes).length;
+        line = left ? `⚖ Drive off the raiders round the trader: ${left} left · ${dist.toFixed(0)} cells` : `⚖ Reach the trader · ${dist.toFixed(0)} cells`;
+        won = dist < THERE && left === 0;
+        break;
+      }
+      case 'chase': {
+        const q = this.alive(this.quarry);
+        this.quarryT += dt;
+        // (units walk their goal only near it: the quarry's goal moved on a stride at a time, toward the escape)
+        if (this.quarryT > 1.5) {
+          this.quarryT = 0;
+          for (const id of q) {
+            const u = this.d.units.get(id)!;
+            this.d.units.order([id], { kind: 'go', to: this.toward([u.at[0], u.at[1]], this.escape!, 22) });
+          }
+        }
+        let near: V2 | null = null;
+        let nd = Infinity;
+        let away = Infinity;
+        for (const id of q) {
+          const u = this.d.units.get(id)!;
+          const dd = Math.hypot(u.at[0] - me[0], u.at[1] - me[1]);
+          if (dd < nd) (nd = dd), (near = [u.at[0], u.at[1]]);
+          away = Math.min(away, Math.hypot(u.at[0] - this.escape![0], u.at[1] - this.escape![1]));
+        }
+        if (near) this.goal = near;
+        line = `⇉ Run them down: ${q.length} of ${p.quarry} running · ${Number.isFinite(nd) ? nd.toFixed(0) : '-'} cells · ${Number.isFinite(away) ? away.toFixed(0) : '-'} cells from getting away`;
+        won = q.length === 0;
+        if (!won && (away < THERE || this.t > 120)) return this.finish({ seconds: this.t, won: false, pursuers: chasing });
+        break;
+      }
+      case 'rescue': {
+        const left = this.alive(this.foes).filter((id) => {
+          const u = this.d.units.get(id)!;
+          return Math.hypot(u.at[0] - this.camp![0], u.at[1] - this.camp![1]) < 30;
+        }).length;
+        if (!this.freed && left === 0 && Math.hypot(this.camp![0] - me[0], this.camp![1] - me[1]) < THERE) {
+          this.freed = true;
+          const ids = this.alive(this.captives);
+          this.d.followers.recruit(ids);
+          this.d.followers.order({ kind: 'follow', distance: 3 });
+          this.goal = this.edgeAt;
+          this.say(`${ids.length} freed: lead them out!`);
+          this.log.push(`rescue: ${ids.length} freed at t ${this.t.toFixed(0)}`);
+        }
+        const withMe = this.d.followers.members().length;
+        line = this.freed ? `⛓ Lead them to the way on: ${withMe} with you · ${dist.toFixed(0)} cells` : left ? `⛓ Cut down the guards: ${left} round the captives · ${dist.toFixed(0)} cells` : `⛓ Reach the captives · ${dist.toFixed(0)} cells`;
+        won = this.freed && dist < THERE;
+        break;
+      }
+      case 'scout': {
+        line = `👁 Reach the lookout past the patrols · ${this.alive(this.foes).length} out · ${dist.toFixed(0)} cells`;
         won = dist < THERE;
         break;
+      }
     }
     this.text(line);
     this.point(at, me);
@@ -535,7 +641,11 @@ export class AreaPlay {
     if (this.refuge) for (const m of this.d.followers.members()) if (Math.hypot(m.unit.at[0] - this.refuge[0], m.unit.at[1] - this.refuge[1]) < 14) safe++;
     const was = R.status.state;
     const fallen = R.fallen;
-    const n = R.step(dt, { t: this.t, heroAlive: this.hero.alive, hordeCame: this.hordeCame, hordeLeft: horde.length, hordeInside: inside.length, refugees: s.mode === 'evacuate' ? { led: this.led, safe } : undefined });
+    const near = horde.some((id) => {
+      const u = this.d.units.get(id)!;
+      return Math.hypot(u.at[0] - T.centre[0], u.at[1] - T.centre[1]) < T.radius * 1.5;
+    });
+    const n = R.step(dt, { t: this.t, heroAlive: this.hero.alive, hordeCame: this.hordeCame, hordeLeft: horde.length, hordeInside: inside.length, hordeNear: near, refugees: s.mode === 'evacuate' ? { led: this.led, safe } : undefined });
     for (let i = 0; i < n; i++) if (!this.setFire(inside[i % Math.max(1, inside.length)] ?? T.centre, inside)) R.unset();
     if (!fallen && R.fallen) {
       // the town has fallen: the rest of it is fired (it burns down in the map)
@@ -677,7 +787,7 @@ export class AreaPlay {
     this.arrow.remove();
     this.big.remove();
     this.bar.remove();
-    for (const id of [...this.pursuers, ...this.foes, ...this.allies, ...this.horde]) this.d.units.remove(id);
+    for (const id of [...this.pursuers, ...this.foes, ...this.allies, ...this.horde, ...this.quarry, ...this.captives]) this.d.units.remove(id);
     if (this.trader !== null) this.d.units.remove(this.trader);
     this.d.followers.dismiss(this.d.followers.members().map((m) => m.unit.id));
   }

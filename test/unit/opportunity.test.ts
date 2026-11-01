@@ -95,7 +95,7 @@ describe('commitment and resolution', () => {
     expect(commit(inst, fordOpp(), { id: 'k1', now: 0, turn: 4, u: 0.1 }).commitment.resolvesTurn).toBe(4);
   });
   it('a challenge iff the player is required; the player resolves from the challenge, never by a share', () => {
-    const play = fordOpp({ requires: [{ kind: 'player', count: 1 }], odds: undefined, duration: { minutes: 3 }, challenge: { system: 'character', play: 'flee', area: 'a-start', minutes: 2.5 }, outcomes: { success: { text: 'away', effects: [], losses: 1 }, failure: { text: 'caught', effects: [] } } });
+    const play = fordOpp({ requires: [{ kind: 'player', count: 1 }], odds: undefined, duration: { minutes: 3 }, challenge: { system: 'character', play: 'flee', area: 'a-start', minutes: 2.5, encounter: { kind: 'flee', foes: 0, pursuers: 3, text: '' } }, outcomes: { success: { text: 'away', effects: [], losses: 1 }, failure: { text: 'caught', effects: [] } } });
     const h = hold(agent('p', 'player'));
     const c = commit(h, play, { id: 'k1', now: 0, turn: 0 });
     expect(c.commitment.rolled).toBeUndefined();

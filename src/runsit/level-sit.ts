@@ -67,8 +67,8 @@ export interface LevelSitDeps {
 const toCell = (x: number, y: number): [number, number] => [x, y / ROW_H];
 /** seconds a fallen town burns live before the window is made again with it charred */
 const CHAR_AFTER_S = 25;
-const PLAY_COLOUR: Record<string, string> = { flee: '#f08a4b', ambush: '#e0483a', deliver: '#f2c14e', trader: '#8fd16a', town: '#ffffff' };
-const PLAY_GLYPH: Record<string, string> = { flee: '⇢', ambush: '⚔', deliver: '✉', trader: '⚖', town: '♜' };
+const PLAY_COLOUR: Record<string, string> = { flee: '#f08a4b', ambush: '#e0483a', deliver: '#f2c14e', trader: '#8fd16a', town: '#ffffff', chase: '#ff9c3a', rescue: '#7fd6c8', scout: '#b8c4ff' };
+const PLAY_GLYPH: Record<string, string> = { flee: '⇢', ambush: '⚔', deliver: '✉', trader: '⚖', town: '♜', chase: '⇉', rescue: '⛓', scout: '👁' };
 
 export class LevelSit {
   readonly world: MemoryWorldState;

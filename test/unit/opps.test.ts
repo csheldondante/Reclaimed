@@ -34,7 +34,7 @@ function prop(o: Partial<Proposal> & { template: string }): Proposal {
     offer: 'x', place: o.template, title: o.template, tiers: [{ requires: [{ kind: 'player', count: 1 }], costs: {} }], sense: [{ ok: true, why: 'it makes sense' }], parts: { theme: 0.5 }, at: [0, 0], hooks: [],
     make: () => ({
       template: o.template, offer: o.offer ?? 'x', title: o.template, pitch: '', location: { region: 1, at: [0, 0], name: o.place ?? o.template },
-      duration: res ? { turns: 1 } : { minutes: 3 }, ...(res ? { odds: { success: 1 } } : { challenge: { system: 'character', play: 'flee', area: 'a', minutes: 3 } }),
+      duration: res ? { turns: 1 } : { minutes: 3 }, ...(res ? { odds: { success: 1 } } : { challenge: { system: 'character' as const, play: 'flee', area: 'a', minutes: 3, encounter: { kind: 'flee' as const, foes: 0, pursuers: 2, text: '' } } }),
       outcomes: { success: { text: 'ok', effects: [] } }, visibility: 'known', expires: { turn: 0 }, themes: [], hooks: o.hooks ?? [],
     }),
     ...o,
@@ -138,14 +138,15 @@ describe('slice A: the horde run as opportunities (run.ts, horde.ts)', () => {
     expect(r.play(r.offered[0].id)).toEqual({ travel: false });
     r.areaDone({ seconds: 120, won: true, pursuers: 0 });
     expect(r.resolutions[0].tier).toBe('triumph');
-    expect(r.forPlayer.map((o) => o.offer).sort()).toEqual(['c-hold', 'c-road']);
+    expect(r.forPlayer.filter((o) => o.offer.startsWith('c-')).map((o) => o.offer).sort()).toEqual(['c-hold', 'c-road']);
+    expect(r.forPlayer.length).toBeGreaterThanOrEqual(3);
     // (a lone hero: no resource opportunity; the dealer says why of each)
     expect(r.forResources).toEqual([]);
     const why = r.report!.rejected.find((x) => x.template === 'harvest')!;
     expect(why.why).toMatch(/army|reach/);
     checked(r);
   });
-  it('the hold: the levy won as an army agent; on seed 1 its only sense is the harvest (the ford out of its reach, with why) and one way on', () => {
+  it('the hold: the levy won as an army agent; with the slack after the hold (RN2-7) the ford and the harvest are both dealt on seed 1', () => {
     const r = make();
     r.play(r.offered[0].id);
     r.areaDone({ seconds: 150, won: true, pursuers: 1 });
@@ -156,9 +157,22 @@ describe('slice A: the horde run as opportunities (run.ts, horde.ts)', () => {
     expect(levy).toMatchObject({ kind: 'army', count: 8, character: expect.stringMatching(/^levy:/) });
     expect(r.holdings.goods.supplies).toBe(OPP_TUNE.horde.holdSupplies);
     expect(r.sr.reinforce).toBeNull();
-    expect(r.forPlayer.map((o) => o.offer)).toEqual(['c-levy']);
-    expect(r.forResources.map((o) => [o.template, o.tier, o.affordable])).toEqual([['harvest', 1, true]]);
-    expect(r.report!.rejected.find((x) => x.template === 'ford')!.why).toMatch(/can't reach the host's road before it passes/);
+    expect(r.forPlayer.map((o) => o.offer)).toContain('c-levy');
+    expect(r.forResources.map((o) => [o.template, o.tier, o.affordable]).sort()).toEqual([['ford', 1, true], ['harvest', 1, true]]);
+    expect(r.sit.threat.arrives).toBeGreaterThan(r.clockWas);
+    // (the GM's clock kept: the ford out of the levy's reach, and the dealer says why)
+    OPP_TUNING.set('horde.holdSlack', -2);
+    try {
+      const g = make();
+      g.play(g.offered[0].id);
+      g.areaDone({ seconds: 150, won: true, pursuers: 1 });
+      g.play(way(g, 'c-hold'));
+      g.arrive();
+      g.areaDone({ seconds: 170, won: true });
+      expect(g.report!.rejected.find((x) => x.template === 'ford')!.why).toMatch(/can't reach the host's road before it passes/);
+    } finally {
+      OPP_TUNING.reset();
+    }
     checked(r);
   });
   it('committing the levy to the harvest locks it, it resolves at the climax, and the supplies feed the town\'s defenders', () => {
@@ -196,7 +210,7 @@ describe('slice A: the horde run as opportunities (run.ts, horde.ts)', () => {
     r.play(way(r, 'c-levy'));
     r.arrive();
     expect(r.harvest).toBe('rotted');
-    expect(r.expired.map((e) => e.opp.template)).toEqual(['harvest']);
+    expect(r.expired.map((e) => e.opp.template)).toContain('harvest');
     expect(r.sr.hordeArrives()).toBeCloseTo(before - OPP_TUNE.horde.rot, 6);
     // (the levy wasn't committed: it marches in from the hold)
     expect(r.sr.reinforce).toMatchObject({ count: 8 });

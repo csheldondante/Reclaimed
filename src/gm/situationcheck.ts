@@ -25,7 +25,7 @@ import { pathEstimates, type SituationMap } from '../runsit/state.ts';
 type J = Record<string, unknown>;
 const isObj = (v: unknown): v is J => typeof v === 'object' && v !== null && !Array.isArray(v);
 const ID = /^[a-z0-9][a-z0-9-]*$/;
-const PLAYS = ['flee', 'ambush', 'deliver', 'trader', 'town'];
+const PLAYS = ['flee', 'ambush', 'deliver', 'trader', 'town', 'chase', 'rescue', 'scout'];
 const EFFECTS = ['warn', 'evacuate', 'delay'];
 const ITEM_EFFECTS = ['call-allies', 'lure', 'fire-ward', 'pace', 'guard'];
 const CONDITIONS = ['thriving', 'struggling', 'besieged', 'abandoned', 'ruined'];
@@ -228,7 +228,7 @@ export function checkSituation(input: unknown, world: SituationWorld): string[] 
   const areaById = new Map<string, J>();
   areas.forEach((a, i) => {
     const at = `areas[${i}](${a.id})`;
-    keys(at, a, ['id', 'name', 'region', 'brief', 'minutes', 'play'], ['settlement', 'at', 'say']);
+    keys(at, a, ['id', 'name', 'region', 'brief', 'minutes', 'play'], ['settlement', 'at', 'say', 'threat']);
     if (id(`${at}.id`, a.id, 'an area')) areaById.set(a.id as string, a);
     str(`${at}.name`, a.name);
     str(`${at}.brief`, a.brief);
@@ -267,6 +267,13 @@ export function checkSituation(input: unknown, world: SituationWorld): string[] 
           int(`${pa}.sends.count`, p.sends.count, 1, 20);
         }
         if (p.gives !== undefined) offer(`${pa}.gives`, p.gives);
+        break;
+      case 'chase':
+      case 'rescue':
+      case 'scout':
+        keys(pa, p, ['kind', 'role', 'faction', p.kind === 'chase' ? 'quarry' : p.kind === 'rescue' ? 'captives' : 'patrols', ...(p.kind === 'chase' ? ['escape'] : p.kind === 'rescue' ? ['guards'] : [])]);
+        str(`${pa}.role`, p.role);
+        if (p.faction !== null) faction(`${pa}.faction`, p.faction);
         break;
       case 'trader':
         keys(pa, p, ['kind', 'offers']);

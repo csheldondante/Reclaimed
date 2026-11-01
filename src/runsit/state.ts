@@ -393,4 +393,7 @@ export const PLAY_TITLE: Record<AreaPlay['kind'], string> = {
   deliver: 'The message',
   trader: 'A trader at the crossroads',
   town: 'The town',
+  chase: 'Run them down',
+  rescue: 'The captives',
+  scout: 'The lookout',
 };

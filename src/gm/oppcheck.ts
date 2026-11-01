@@ -47,7 +47,14 @@ export function checkOpps(r: DealReport, w: OppWorld, h: Holdings, tune: DealerT
     }
     const player = needsPlayer(o);
     if (player !== !!o.challenge) p.push(`${at}: a challenge iff the player is required`);
-    if (o.challenge && !w.situation.areas.some((a) => a.id === o.challenge!.area)) p.push(`${at}: its challenge's area ${o.challenge.area} isn't in the situation`);
+    // (a detour's area, `d-<template>-<from>`, is made when it's played: run.ts)
+    if (o.challenge && !w.situation.areas.some((a) => a.id === o.challenge!.area) && !/^d-(rescue|scout|chase)-/.test(o.challenge.area)) p.push(`${at}: its challenge's area ${o.challenge.area} isn't in the situation`);
+    // (round 124: the user — "no enemies or combat no pursuers": every encounter has enemies in it)
+    if (o.challenge) {
+      const e = o.challenge.encounter;
+      if (!e) p.push(`${at}: a player opportunity names its encounter`);
+      else if (e.foes + e.pursuers + (e.horde ?? 0) <= 0) p.push(`${at}: its encounter (${e.kind}) has no enemies in it: a ride to a flag`);
+    }
     if (player && !('minutes' in o.duration)) p.push(`${at}: a player opportunity's duration is in minutes`);
     if (!player) {
       if (!('turns' in o.duration) || o.duration.turns < 0) p.push(`${at}: a resource opportunity's duration is in turns, not negative`);

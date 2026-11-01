@@ -116,8 +116,38 @@ export interface OppOutcome {
   losses?: number;
 }
 
+/**
+ * (round 124) The kind of encounter a player opportunity is: what's played, with the enemies in it. The user (round
+ * 120, on slice A): "the game mode when I select is just drive to a flag no enemies or combat no pursuers no race" —
+ * every player opportunity names one, and none is a ride to a flag.
+ */
+export type EncounterKind = 'flee' | 'ambush' | 'gauntlet' | 'skirmish' | 'chase' | 'rescue' | 'patrol' | 'defend' | 'evacuate' | 'race';
+export const ENCOUNTER: Record<EncounterKind, { icon: string; name: string }> = {
+  flee: { icon: '⇢', name: 'Flee the pursuers' },
+  ambush: { icon: '⚔', name: 'Break the ambush' },
+  gauntlet: { icon: '✉', name: 'Run the gauntlet' },
+  skirmish: { icon: '⚖', name: 'Drive off the raiders' },
+  chase: { icon: '⇉', name: 'Run them down' },
+  rescue: { icon: '⛓', name: 'Free the captives' },
+  patrol: { icon: '👁', name: 'Slip the patrols' },
+  defend: { icon: '♜', name: 'Defend the town' },
+  evacuate: { icon: '☞', name: 'Lead them out' },
+  race: { icon: '🏁', name: 'Race' },
+};
+
+/** an encounter: its kind, the enemies in it (foes in the way, pursuers behind, a horde), and a line for the card */
+export interface Encounter {
+  kind: EncounterKind;
+  foes: number;
+  pursuers: number;
+  horde?: number;
+  text: string;
+}
+
 /** what is played when the player is committed: a challenge of character control or building */
 export interface Challenge {
+  /** (round 124) what kind of encounter, and its enemies */
+  encounter: Encounter;
   system: 'character' | 'building';
   /** what is played (slice A: an AreaPlay kind — flee, ambush, deliver, trader, town) */
   play: string;
@@ -152,8 +182,8 @@ export interface Opportunity {
   /** what each tier does (a player opportunity's are read from how its challenge came out) */
   outcomes: Partial<Record<Tier, OppOutcome>>;
   visibility: 'rumour' | 'known';
-  /** it leaves the map at the end of this turn if not committed */
-  expires: { turn: number };
+  /** it leaves the map at the end of this turn if not committed, or (round 124) once the run's clock reaches `minute` */
+  expires: { turn: number; minute?: number };
   /** what letting it expire does (the user: "Some can have negative effects for letting them expire") */
   onExpire?: OppOutcome;
   /** it must be played now (the outriders on you; the night assault) */

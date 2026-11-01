@@ -11,10 +11,19 @@
 //   harvest    bring in the harvest at the hold's fields: army 1/2, supplies for the town's defenders; let it go and
 //              the grain rots: the host forages and comes on sooner
 //   vanguard   only for veterans (a tag opportunity): break the host's vanguard, fewer of the dead reach the town
+//   (round 124: the user on slice A — "there are not multiple to select from and the game mode when I select is just
+//   drive to a flag no enemies or combat no pursuers no race". Every player opportunity is an encounter with enemies
+//   (encounterOf; a hall or a trader without its own threat gets one: armThreats), and three detours are dealt beside
+//   the ways on, each a new area off the road that leads on to the same places:)
+//   rescue     free the host's captives (guards, then lead them out): they stand with the town; let them go and they
+//              swell the host
+//   scout      the lookout over the host's road past its patrols: the host's road known (the ford's odds up)
+//   chase      run down the host's herald (it starts close and already running, PL23): fewer of the dead rise; let it
+//              go and more do
 // The DECISIONS round 120 the user: "travel ... as opportunities that require the player and therefore playing travels
 // you to them"; "Having a knight creates opportunities requiring a knight; having an army enables military campaigns".
 
-import type { Goods, OppOutcome, Opportunity, Requirement, Tier } from '../api/contracts/opportunity';
+import type { Encounter, Goods, OppOutcome, Opportunity, Requirement, Tier } from '../api/contracts/opportunity';
 import type { SituationArea, SituationChoice } from '../api/contracts/situation';
 import type { Made, Proposal, TierOffer } from './dealer';
 import type { HordeTune } from './tune';
@@ -23,7 +32,7 @@ import { along, delta, LEVY_PACE, PLAY_TITLE, type SituationRun, type V2 } from 
 /** what the conflict is about (the dealer's "tied to the conflict") */
 export const HORDE_HOOKS = ['horde', 'town'];
 /** the conflict's own operations (an effect `{ kind: 'conflict', op }`; the run applies them: run.ts) */
-export const CONFLICT_OPS = ['delay', 'hasten', 'thin'] as const;
+export const CONFLICT_OPS = ['delay', 'hasten', 'thin', 'swell', 'rally', 'intel'] as const;
 
 /** what the templates read of the run */
 export interface HordeView {
@@ -38,6 +47,76 @@ export interface HordeView {
   taken: Set<string>;
   /** where a free army is (world units), if one is held */
   armyAt?: V2;
+  /** (round 124) the turn a template at a place was first offered (an expiry counts from it, not from each deal) */
+  firstSeen: (key: string) => { turn: number; minute: number };
+  /** what scouting has learned (added to the ford's odds) */
+  intel: number;
+}
+
+/**
+ * (round 124) The encounter an area is: its play, with the threat in it (its own foes and pursuers, the area's
+ * `threat`, the outriders still on the hero). Every player opportunity shows it; a Node test holds that none is empty.
+ */
+export function encounterOf(sr: SituationRun, a: SituationArea, evacuate = false): Encounter {
+  const p = a.play;
+  const x = a.threat ?? { foes: 0, pursuers: 0 };
+  const behind = (sr.pursuers?.count ?? 0) + x.pursuers;
+  const th = sr.sit.threat;
+  const tail = behind ? `, ${behind} ${th.role} behind you` : '';
+  switch (p.kind) {
+    case 'flee':
+      return { kind: 'flee', foes: 0, pursuers: (th.outriders?.count ?? 0) + x.pursuers, text: `${(th.outriders?.count ?? 0) + x.pursuers} outriders on your heels: get away, or cut them down` };
+    case 'ambush':
+      return { kind: 'ambush', foes: p.foes + x.foes, pursuers: behind, text: `${p.foes + x.foes} ${p.role} in the road${tail}` };
+    case 'deliver':
+      return { kind: 'gauntlet', foes: x.foes, pursuers: behind, text: `${x.foes} ${th.role} between you and the hall${tail}; ${Math.round(p.limit)} s to get the word in` };
+    case 'trader':
+      return { kind: 'skirmish', foes: x.foes, pursuers: behind, text: `${x.foes} ${th.role} round the trader: drive them off, then it trades${tail}` };
+    case 'chase':
+      return { kind: 'chase', foes: p.quarry, pursuers: behind, text: `${p.quarry} ${p.role} already running, a few seconds ahead: cut them all down before they get away${tail}` };
+    case 'rescue':
+      return { kind: 'rescue', foes: p.guards, pursuers: behind, text: `${p.guards} ${p.role} guard ${p.captives} captives: cut them down, then lead the captives out${tail}` };
+    case 'scout':
+      return { kind: 'patrol', foes: p.patrols * 2, pursuers: behind, text: `${p.patrols * 2} ${p.role} patrol the way to the lookout${tail}` };
+    case 'town': {
+      const n = Math.max(1, th.count - sr.thinned);
+      return evacuate
+        ? { kind: 'evacuate', foes: 0, pursuers: behind, horde: n, text: `${n} of ${th.name} come for the town: lead its people out to ${sr.sit.refuge.name} before they're caught` }
+        : { kind: 'defend', foes: 0, pursuers: behind, horde: n, text: `${n} of ${th.name} come for the town: hold it, or it burns` };
+    }
+  }
+}
+
+/** (round 124) a hall or a trader with no threat of its own gets one: nothing the player plays is a ride to a flag */
+export function armThreats(sr: SituationRun, t: HordeTune): void {
+  for (const a of sr.sit.areas) {
+    if (a.threat) continue;
+    if (a.play.kind === 'deliver') a.threat = { foes: t.gauntletFoes, pursuers: t.gauntletPursuers };
+    else if (a.play.kind === 'trader') a.threat = { foes: t.skirmishFoes, pursuers: 0 };
+  }
+}
+
+/** the detours: a new area off the road toward the town, leading on to the same places as where it was taken */
+export const DETOURS = ['rescue', 'scout', 'chase'] as const;
+export type Detour = (typeof DETOURS)[number];
+const DETOUR_AT: Record<Detour, number> = { rescue: 0.3, chase: 0.45, scout: 0.6 };
+
+export function detourArea(v: HordeView, d: Detour): SituationArea {
+  const sr = v.sr;
+  const from = sr.area();
+  const a = sr.map.areaAt(from);
+  const [dx, dy] = delta(a, sr.map.areaAt(sr.finaleArea), sr.map.world);
+  const f = DETOUR_AT[d];
+  const at: [number, number] = [a[0] + dx * f, a[1] + dy * f];
+  const th = sr.sit.threat;
+  const T = v.tune;
+  const play: SituationArea['play'] =
+    d === 'rescue' ? { kind: 'rescue', captives: T.rescueCaptives, guards: T.rescueGuards, role: th.role, faction: th.faction }
+    : d === 'chase' ? { kind: 'chase', quarry: T.chaseQuarry, role: th.role, faction: th.faction, escape: 0 }
+    : { kind: 'scout', patrols: T.patrols, role: th.role, faction: th.faction };
+  const name = d === 'rescue' ? `the dead's camp by ${from.name}` : d === 'chase' ? `the herald's road from ${from.name}` : `the lookout over ${th.name}`;
+  const brief = d === 'rescue' ? `Outriders of ${th.name} hold people taken off the roads. Free them and they stand with ${sr.sit.target.name}.` : d === 'chase' ? `${th.name}'s herald rides for the barrows to wake more dead. It is a few seconds ahead of you.` : `A ridge looks over ${th.name}'s road. Patrols watch the way up.`;
+  return { id: `d-${d}-${from.id}`, name, region: from.region, at, brief, minutes: T.detourMinutes, play, threat: { foes: 0, pursuers: d === 'scout' ? 1 : 0 } };
 }
 
 const army = (n: number, tags?: string[]): Requirement => ({ kind: 'army', count: n, ...(tags ? { tags } : {}) });
@@ -118,7 +197,7 @@ export function hordeProposals(v: HordeView): Proposal[] {
         template: 'outriders', offer: 'flee', title: `${PLAY_TITLE.flee}`,
         pitch: start.brief, location: loc(sr, start),
         duration: { minutes: start.minutes },
-        challenge: { system: 'character', play: 'flee', area: start.id, minutes: start.minutes },
+        challenge: { system: 'character', play: 'flee', area: start.id, minutes: start.minutes, encounter: encounterOf(sr, start) },
         outcomes: {
           triumph: { text: 'You lost them on the road.', effects: [] },
           success: { text: 'You got clear, with riders still behind.', effects: [] },
@@ -156,6 +235,46 @@ export function hordeProposals(v: HordeView): Proposal[] {
     });
   }
 
+  // the detours (round 124): off the road toward the town, each once a run, leading on to where it was taken
+  const T0 = v.tune;
+  const here0 = sr.area();
+  const passed0 = sr.at === town.id || sr.phase === 'ended';
+  const fromTown = sr.sit.choices.filter((c) => c.from === sr.at).length;
+  for (const d of DETOURS) {
+    const area = detourArea(v, d);
+    const used = v.taken.has(d) || sr.sit.areas.some((a) => a.id.startsWith(`d-${d}-`));
+    const isDetour = here0.id.startsWith('d-');
+    const ok = !used && !passed0 && !isDetour && fromTown > 0;
+    const key = `${d}@${here0.id}`;
+    const first = v.firstSeen(key);
+    const minuteLeft = Math.max(0, T0.rescueMinutes - (sr.clock - first.minute));
+    const legMin = 0.25 + Math.hypot(...delta(sr.map.areaAt(here0), area.at!, sr.map.world)) / 500;
+    const enc = encounterOf(sr, area);
+    out.push({
+      template: d, offer: d, place: area.id, title: d === 'rescue' ? 'Free the captives' : d === 'chase' ? 'Run down the herald' : 'Scout the host from the ridge',
+      tiers: [{ requires: [PLAYER], costs: {} }],
+      sense: [edge, { ok, why: used ? `${d}: done this run` : isDetour ? 'a detour leads on, not to another' : passed0 ? 'the host is at the town' : `off the road toward ${town.name}` }],
+      parts: { theme: d === 'rescue' ? 0.4 : 0.3, foreshadow: d === 'scout' ? 0.6 : 0.5, synergy: d === 'scout' && v.armyAt ? 0.9 : 0.4, difficulty: 0.6, hero: d === 'chase' ? 0.9 : 0.6 },
+      at: area.at!, towardClimax: true, hooks: ['horde'],
+      make: (): Made => ({
+        template: d, offer: d, title: d === 'rescue' ? 'Free the captives' : d === 'chase' ? 'Run down the herald' : 'Scout the host from the ridge',
+        pitch: area.brief, location: { region: area.region, at: area.at!, name: area.name },
+        duration: { minutes: +(legMin + area.minutes).toFixed(2) },
+        challenge: { system: 'character', play: area.play.kind, area: area.id, minutes: area.minutes, encounter: enc },
+        outcomes:
+          d === 'rescue'
+            ? { success: { text: `${T0.rescueCaptives} freed: they stand with ${town.name}'s defenders (+${T0.rescueCaptives}).`, effects: [{ kind: 'conflict', op: 'rally', amount: T0.rescueCaptives }, { kind: 'goods', goods: { renown: 1 } }] }, failure: { text: `The captives are dragged to the host: ${T0.rescueCaptives} more dead.`, effects: [{ kind: 'conflict', op: 'swell', amount: T0.rescueCaptives }] }, disaster: { text: 'The hero fell.', effects: [] } }
+            : d === 'chase'
+              ? { success: { text: `The herald is down: ${T0.heraldDead} fewer of the dead rise.`, effects: [{ kind: 'conflict', op: 'thin', amount: T0.heraldDead }] }, failure: { text: `The herald got away: ${T0.heraldDead} more dead rise.`, effects: [{ kind: 'conflict', op: 'swell', amount: T0.heraldDead }] }, disaster: { text: 'The hero fell.', effects: [] } }
+              : { success: { text: `The host's road is known: the ford's odds +${Math.round(T0.intel * 100)}%, its time to ${town.name} certain.`, effects: [{ kind: 'conflict', op: 'intel', amount: T0.intel }] }, failure: { text: 'The patrols drove you off the ridge: nothing learned.', effects: [] }, disaster: { text: 'The hero fell.', effects: [] } },
+        visibility: 'known',
+        expires: d === 'rescue' ? { turn: v.turn + 9, minute: +(sr.clock + minuteLeft).toFixed(2) } : { turn: v.turn },
+        ...(d === 'rescue' ? { onExpire: { text: `The captives are taken to the host: ${T0.rescueCaptives} more dead.`, effects: [{ kind: 'conflict' as const, op: 'swell', amount: T0.rescueCaptives }] } } : d === 'chase' ? { onExpire: { text: `The herald reaches the barrows: ${T0.heraldDead} more dead rise.`, effects: [{ kind: 'conflict' as const, op: 'swell', amount: T0.heraldDead }] } } : {}),
+        themes: ['travel', d], hooks: ['horde'],
+      }),
+    });
+  }
+
   // the levy's opportunities (they need an army: the dealer finds none before the hold's levy is won)
   const T = v.tune;
   const passed = sr.phase === 'ended' || sr.at === town.id;
@@ -171,7 +290,7 @@ export function hordeProposals(v: HordeView): Proposal[] {
     parts: { theme: 0.6, foreshadow: 0.9, synergy: sr.taken.length ? 0.6 : 0.3, difficulty: 0.5 },
     at: ford?.at ?? v.at, hooks: ['horde', 'route'],
     make: (tier) => {
-      const base = Math.min(0.95, T.fordOdds + 0.1 * (tier - 1));
+      const base = Math.min(0.95, T.fordOdds + 0.1 * (tier - 1) + v.intel);
       const d = T.fordDelay * tier;
       const odds: Partial<Record<Tier, number>> = { triumph: base * 0.2, success: base * 0.8, cost: (1 - base) * 0.6, failure: (1 - base) * 0.4 };
       const vet = { kind: 'tag' as const, add: ['veteran'], bonuses: [{ kind: 'negate' as const, themes: ['fight'], tier: 'disaster' as Tier, why: 'veterans hold' }] };
@@ -187,7 +306,7 @@ export function hordeProposals(v: HordeView): Proposal[] {
           cost: { text: `The ford held a while, dearly: the host ${fmt(d * 0.75)} late.`, effects: [{ kind: 'conflict', op: 'delay', amount: +(d * 0.75).toFixed(2) }, vet], losses: Math.min(1, T.fordLoss * 2) },
           failure: { text: 'The ford broke at the first rush.', effects: [], losses: Math.min(1, T.fordLoss * 3) },
         },
-        visibility: 'known', expires: { turn: v.turn },
+        visibility: 'known', expires: { turn: v.turn, ...(ford ? { minute: +(sr.clock + ford.hostIn).toFixed(2) } : {}) },
         themes: ['fight', 'delay'], hooks: ['horde', 'route'],
       } satisfies Made;
     },
@@ -215,7 +334,7 @@ export function hordeProposals(v: HordeView): Proposal[] {
           success: { text: `The grain is in: ${T.harvestSupplies * tier} supplies.`, effects: [{ kind: 'goods', goods: { supplies: T.harvestSupplies * tier } }] },
           cost: { text: `Half the grain is in before the rain: ${Math.floor((T.harvestSupplies * tier) / 2)} supplies.`, effects: [{ kind: 'goods', goods: { supplies: Math.floor((T.harvestSupplies * tier) / 2) } }], losses: 0.1 },
         },
-        visibility: 'known', expires: { turn: v.turn },
+        visibility: 'known', expires: { turn: Math.max(v.turn, v.firstSeen(`harvest@${hold.id}`).turn + T.harvestExpiry - 1) },
         onExpire: { text: `The grain rots in ${hold.name}'s fields; the host forages and comes on ${fmt(T.rot)} sooner.`, effects: [{ kind: 'conflict', op: 'hasten', amount: T.rot }] },
         themes: ['harvest', 'labour'], hooks: ['town'],
       }),
@@ -287,7 +406,7 @@ function wayOpp(v: HordeView, c: SituationChoice, to: SituationArea, minutes: nu
     pitch: `${to.brief}${note ? ` (${note})` : ''}`,
     location: loc(sr, to),
     duration: { minutes: +minutes.toFixed(2) },
-    challenge: { system: 'character', play: p.kind, area: to.id, minutes: to.minutes },
+    challenge: { system: 'character', play: p.kind, area: to.id, minutes: to.minutes, encounter: encounterOf(sr, to, c.effects.some((e) => e.kind === 'evacuate')) },
     outcomes,
     visibility: 'known', expires: { turn: v.turn },
     ...(p.kind === 'town' ? { climax: true } : {}),
