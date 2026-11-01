@@ -1,0 +1,70 @@
+/* (round 121, herolab) The hero lab's bar (play/lab/herolab.ts): phone first — rows of small chips across the top,
+   wrapping; the session's health and status under it; the camera tuning's button on the right edge. */
+.lab-bar {
+  position: absolute;
+  top: max(6px, env(safe-area-inset-top));
+  left: 6px;
+  right: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  pointer-events: none;
+  z-index: 6;
+}
+.lab-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 4px;
+  border-radius: 10px;
+  background: rgba(16, 14, 12, 0.35);
+  pointer-events: auto;
+}
+.lab-row-title {
+  font: 600 9px system-ui, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(244, 239, 226, 0.75);
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+}
+.play-chip.lab-chip {
+  width: 38px;
+  height: 38px;
+  border-radius: 9px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  pointer-events: auto;
+}
+.lab-chip span {
+  font-size: 16px;
+  line-height: 1;
+}
+.lab-chip small {
+  font: 600 8px system-ui, sans-serif;
+  opacity: 0.85;
+  margin-top: 1px;
+}
+.lab-hint {
+  flex-basis: 100%;
+  font: 11px system-ui, sans-serif;
+  color: #f4efe2;
+  text-shadow: 0 1px 3px #000;
+  pointer-events: none;
+}
+.lab-on .play-info {
+  top: calc(var(--lab-h, 140px) + 4px);
+}
+.play-on .tune-btn.herolab {
+  display: block !important;
+  top: 46%;
+  bottom: auto;
+  left: auto;
+  right: max(8px, env(safe-area-inset-right));
+}
+.tune-panel.herolab {
+  top: calc(var(--lab-h, 140px) + 4px);
+}

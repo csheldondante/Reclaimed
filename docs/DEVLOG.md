@@ -15528,3 +15528,57 @@ autopilot's orbit, M122-4.
 - Shots: C:/Projects/shots88/merge122/ — runsit-saved/ (the bike run's area cards 1-done, 1-edge, the map 1-map,
   2-map, the town, the end card), runsit-burned/ (9-town: the town burning; finale.gif, after.gif), lich-sandbox.png
   (`?play=lich` among places' flora), tilegate/, tilegate-places/, drive-*.log; STRUCTURE.md (the structure review).
+
+## 2026-10-31 — round 121 (`herolab`): the camera as variants, the hero lab (BACKLOG CAM1, HL1; CAM2-CAM8, HL2-HL5)
+
+**Why.** The user (round 120): "The single biggest gameplay improvement is fixing the camera. I don't know the best
+fix. Thing occlude not only the PC but also things the PC cares about ... we need a variety of settings to try in
+different terrains to see what works." So: no single fix, a lab of variants with numbers to compare them by.
+
+**One contract, modes that compose.** `CameraMode` (api/contracts/camera.ts) reads the hero's pose, intent, interests
+and a narrow SightWorld and writes its part of one CamFrame (framing + cut). Pure, so every mode and every metric runs
+in Node (TDD: sight/ahead/modes/lab tests, 40 new). Reused, not rebuilt: the chase is play/core/chase.ts unchanged
+(wrapped; PlaySession's camera is the rig now, `?cam=` absent = the same chase); rotate is api/cutaway.ts Orbit's spring
+and clear-angle search on more points; dither and edge-only are render.wgsl's existing `see` holes (Dither's
+mechanism); the cutaway is round 83's slice with two additions the brief asked for — a radius on screen round the hero
+(the edges keep their occluders: "atmospheric") and a lit rim under the cut (`Camera.sliceShape`, one vec4). The tilt
+needed `Camera.elevation` (it was a constant; nothing downstream assumed it). The probe mirrors `cutAway` so "seen" in
+a metric is what the draw shows.
+
+**What the hero cares about.** `wayAhead` walks a beam over the sky floor along the heading, swinging round walls; it
+goes on if it gets `dist` from the start as the crow flies (walking a box canyon's back wall isn't a way on — the first
+version counted path length and called a dead end open), a dead end if it turns back past 125°. Interests are sources
+(the way ahead, a station's objectives, PointsSource for enemies). The signal: ✕ red at a dead end, ✓ green round a
+turn, an edge arrow when off screen; a change of kind held 0.3 s (it flickered at walls in the first GIFs).
+
+**The lab.** `?level=herolab`: six stations from pure terrain functions (cliff foot: a massif with a dead-end notch and
+corners that lead on; canyon ring with a blind branch; the densest woods; city blocks with a blind alley; a cave mouth
+in a face turned from the eye; hills), each with a closed ride path for an autopilot (pure pursuit with speed shares).
+The framework is generic (LabStation kinds camera / moves / puzzle / enemy / combat, VariantPicker chips mirrored to the
+address) so the later stations slot in. The cliff loop first ran 15 cells from the map's corner and the bike flew off
+into the void: moved 20 in.
+
+**Measured** (the bike, autopilot; hero = share of frames hidden; ahead = the way's end unseen, off = of which off the
+screen; turn = the eye's mean °/s). Live world, headless, 8 s a cell (C:/Projects/shots88/herolab/metrics-browser.txt;
+Node, 60 s and the lich too: metrics-node.txt):
+
+| terrain | chase | rotate | tilt | dither | cutaway | edge | rotate+dither |
+|---|---|---|---|---|---|---|---|
+| cliff  | 78 % / 97 | 15 / 72, 21°/s | 19 / 75 | 2 / 76 | 4 / 84 | 0 / 76 | 1 / 55, 16°/s |
+| canyon | 94 / 99 | 83 / 100, 45°/s | 10 / 62 | 1 / 41 | 1 / 80 | 0 / 69 | 5 / 51, 23°/s |
+| forest | 51 / 83 | 44 / 78, 25°/s | 27 / 73 | 7 / 62 | 8 / 78 | 0 / 67 | 10 / 65, 17°/s |
+| city   | 100 / 96 | 28 / 61, 21°/s | 42 / 94 | 0 / 80 | 18 / 96 | 0 / 70 | 1 / 38, 16°/s |
+| cave   | 81 / 85 | 5 / 55, 6°/s | 18 / 56 | 0 / 50 | 0 / 79 | 0 / 67 | 1 / 59, 7°/s |
+| hills  | 0 / 92 | 0 / 84, 5°/s | 0 / 94 | 0 / 86 | 0 / 83 | 0 / 89 | 0 / 83, 6°/s |
+
+(hero hidden % / ahead unseen %). Read: the chase hides the bike 50-100 % of the time beside anything tall; every
+treatment fixes the hero (edge 0 %, dither ≤ 7 %, cutaway ≤ 18 % — at 3 cells it can't open a wall the bike hugs);
+rotate alone fails in narrow places (canyon 83 %, 45°/s of turning: it can't find a clear angle and hunts) but with
+dither it's the best at the way ahead (38-59 % unseen) because it turns the view round corners. Most "ahead unseen" is
+off the screen (the probe looks 1.2 s ahead, the chase frames 0.8 s): CAM5. Tilt is comfortable (≤ 10°/s) and helps
+in canyons. Main-thread cost (Node, the forest, the hero, rig and metrics together): chase 0.06 ms a frame, rotate
+0.32, tilt 0.11, dither 0.13, cutaway 0.13, edge 0.08, all five 0.39. GPU cost by toggling on the phone proxy
+(412x915 dpr 2.6, q=low, A/B x 3, 3 s windows; cost.log): inconclusive — the frame pacing flipped between vsync'd
+(16.7 ms) and uncapped regimes independently of the mode, so the per-mode Δ (−4.3 … +6 ms) is the pacing's, not the
+mode's; within one regime the differences are ≤ 0.6 ms (cliff cutaway +0.61, dither +0.35, tilt +0.01). The cut's
+per-fragment work is a few dot products in shaders that already ran `cutAway`.

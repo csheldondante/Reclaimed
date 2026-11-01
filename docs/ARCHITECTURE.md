@@ -2120,6 +2120,53 @@ Inside (each its own concern):
 Shared-system tweak: the Units contract's optional `strike` / `hold` / `release` / `maxHeld` (AgentUnits implements
 them over Agents.hit/hold/launch); the play world requires them.
 
+## The camera as variants and the hero lab (round 121, branch `herolab`; BACKLOG CAM1, HL1)
+
+The user (round 120): "The single biggest gameplay improvement is fixing the camera ... I want a hero lab for both hero
+abilities and moves and puzzles and enemies and camera modes so we can iterate many variants and see what works best."
+
+- **Contract** (`src/api/contracts/camera.ts`): a `CameraMode` takes a `CamContext` — the hero's `CamPose` (feet,
+  floor, heading, velocity, share of top speed), its `CamIntent`, the `Interest`s (points kept readable: the hero, the
+  way ahead, enemies, objectives, pickups) and a `SightWorld` (the columns' solid, the sky floor, props such as trees,
+  the ceiling, the bounds) — and writes its part of one `CamFrame`: the view (`target`, `zoom`, `azimuth`,
+  `elevation`) and the cut (`slice` with its shape: height, centre, radius on screen, rim; `see` holes round points).
+  Modes run in stage order and compose; interests come from `InterestSource`s (pluggable).
+- **Modes** (`src/play/camera/modes.ts`, pure): `chase` (always: play/core/chase.ts, the hero's HeroCamera.chase
+  scaled; `lookAhead` swings the lead toward the way ahead's end), `rotate` (Orbit's spring and clear-angle search on
+  the hero and the way ahead, a cost for turning and optionally for leaving behind the heading), `tilt` (the elevation
+  raised in steps until the points are seen, held, eased back), `cutaway` (the slice at the hero's floor + a short
+  height, within a radius of the screen round the hero, a lit rim), `edge` (the centre and the way ahead kept clear
+  always; occluders only at the screen's edges), `dither` (holes opened round points while they're hidden). Every
+  number is a slider: `CAM_TUNING` (play/camera/params.ts, a tune Registry; the panel's link carries `?camtune=`).
+- **Probes** (pure): `sight.ts` `hiddenBy` marches the eye's ray through the SightWorld and leaves out what the cut
+  opens, mirroring render.wgsl's `cutAway` (so "seen" in a metric is what the draw shows); `ahead.ts` `wayAhead` walks
+  a beam over the sky floor along the heading (swinging round walls) and says whether it gets `dist` away (goes on)
+  or turns back on itself (a dead end).
+- **The rig** (`rig.ts` `CameraRig`, pure): `?cam=` → modes (`parseCam`; unknown names throw), the way-ahead source and
+  more sources, the frame each step, the holes capped at the renderer's 4 (the hero's first), the signals (a dead
+  end; a way on round a turn). `metrics.ts` `CamMetrics`: the hero hidden, the way ahead unseen (off the screen
+  counted apart), the eye's turn in °/s.
+- **Boundary** (`apply.ts`): `liveSight` (Terrain.layersAt cached a frame, Plants.treeAt bucketed and kept a second, as
+  `props.ts` cylinders sized as vegprep.wgsl lays trees out) and `applyFrame` (the view into `Camera`; the turn, tilt and
+  cut only while a mode owns them, so the chase alone leaves other systems' cuts alone). `hud.ts` `SignalHud` (DOM).
+- **Renderer** (shared, small): `Camera.elevation` (was the constant 30°; screenDeltaToWorld and groundAt use it) and
+  `Cut.sliceShape` → render.wgsl `Camera.sliceShape` (one vec4 after `boxes`; CAMERA_CUT_BYTES + 16): `sliced()` only
+  within the radius, `sliceRim()`/`withRim()` light the band just under the cut (fsBox, meshShade). Absent: round 83's
+  whole-view slice, no rim.
+- **PlaySession** (play/session.ts) owns a `CameraRig` instead of the bare Chase (`SessionDeps.cam`; absent: the chase
+  alone, as before, no signal HUD); `session.chase` still reads the chase; `steer` lets the lab's autopilot hold the
+  stick.
+- **The lab** (`?skipmenu=1&level=herolab`): `levels/herolab.ts` builds the map from `play/lab/terrains.ts` (pure: six
+  stations — cliff foot with a dead-end notch, canyon ring with a blind branch, forest at the densest woods, city
+  blocks with a blind alley, a cave mouth in a face turned from the eye, hills — each a closed ride path with speed
+  shares and points of interest). `play/lab/lab.ts` is the generic framework: `LabStation` (kind camera | moves |
+  puzzle | enemy | combat; enter/update/leave), `VariantPicker` (chips, single or multi, mirrored to the address),
+  `Stations`. `play/lab/herolab.ts` puts PlaySession, the stations, the pickers (terrain, hero, camera modes,
+  autopilot) and the camera's TunePanel together; `reclaimed.lab.pick({station, cam, hero})`, `.measure(secs)`.
+- **Measured**: `test/unit/herolab-metrics.test.ts` (Node: `ride()` — play's hero by the autopilot on the lab's columns
+  and planTree's trees) and `scripts/herolab.mjs` (the live world: shots, GIFs, metrics; `--cost`: frame time by
+  toggling each mode against the chase on the phone proxy).
+
 ## Things and diplomacy (round 85, src/api/contracts)
 
 - **recipe.ts.** Everything made is an `Instance` of a `Kind` (tags, base stats, slots). Its `parts` fill slots by

@@ -18,6 +18,9 @@ struct Camera {
   see: array<vec4<f32>, 4>,
   // what may be dithered: lo xyz, hi xyz (two a box)
   boxes: array<vec4<f32>, 8>,
+  // (round 121, herolab: the cutaway camera mode) the slice's shape: xy the point it's round (at the slice's height),
+  // z its radius on screen (world units; 0: the whole view), w the rim's depth under the cut (cells; 0: none)
+  sliceShape: vec4<f32>,
 };
 
 /** 4 × 4 ordered dither, 0..1 (a pixel's threshold) */
@@ -57,8 +60,29 @@ fn seeReach(p: vec3<f32>) -> f32 {
   return k;
 }
 
-/** over the slice (round 83, V21: api/cutaway.ts Slice) */
-fn sliced(p: vec3<f32>) -> bool { return CAM.cut.w > 0.5 && p.z > CAM.cut.x; }
+/** within the slice's radius on screen (round 121: everywhere when it has none) */
+fn inSliceRadius(p: vec3<f32>) -> bool {
+  let sh = CAM.sliceShape;
+  if (sh.z <= 0.0) { return true; }
+  let v = p - vec3<f32>(sh.xy, CAM.cut.x);
+  let e = toEye(p);
+  return length(v - dot(v, e) * e) < sh.z;
+}
+
+/** over the slice (round 83, V21: api/cutaway.ts Slice; round 121: within its radius) */
+fn sliced(p: vec3<f32>) -> bool { return CAM.cut.w > 0.5 && p.z > CAM.cut.x && inSliceRadius(p); }
+
+/** (round 121, herolab) the cut's rim: what's left just under the slice, lit so the cut's outline reads, 0..1 */
+fn sliceRim(p: vec3<f32>) -> f32 {
+  let w = CAM.sliceShape.w;
+  if (CAM.cut.w < 0.5 || w <= 0.0 || p.z > CAM.cut.x || p.z < CAM.cut.x - w || !inSliceRadius(p)) { return 0.0; }
+  return 1.0;
+}
+
+/** the rim's colour mixed into a surface's (linear) */
+fn withRim(col: vec3<f32>, p: vec3<f32>) -> vec3<f32> {
+  return mix(col, vec3<f32>(1.0, 0.78, 0.32), sliceRim(p) * 0.85);
+}
 
 /** Is p where the view was cut open (the slice on, or in a hole)? A surface seen from inside the solid there is drawn dark (a section). */
 fn inCut(p: vec3<f32>) -> bool { return CAM.cut.w > 0.5 || seeReach(p) > 0.5; }
@@ -1439,7 +1463,7 @@ fn fsBox(in: VOut) -> FOut {
   }
   // (no straight grid lines across carved rock or canopies)
   col *= 1.0 - gl * select(1.0, 0.0, canopyN > 0.0 || carved);
-  col = haze(col, lpos);
+  col = haze(withRim(col, lpos), lpos);
 
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), 1.0);

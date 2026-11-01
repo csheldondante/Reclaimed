@@ -12,6 +12,22 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 121 (2026-10-31, session 5, `herolab`) — the camera as variants, the hero lab (DECISIONS round 120; CAM1, HL1)
+
+| id | what | size | status |
+|---|---|---|---|
+| CAM2 | The CameraMode contract (api/contracts/camera.ts) and the rig (play/camera): chase, rotate, tilt, dither, cutaway (radius, rim), edge-only; combined; every number a slider (CAM_TUNING); `?cam=` | M | done (herolab) |
+| CAM3 | What the hero cares about: interests from sources (the way ahead first: a beam over the sky floor that says goes-on or dead end; objectives; enemies via PointsSource); the signal on screen (✓ / ✕, an edge arrow off screen) | M | done (herolab) |
+| CAM4 | Camera metrics per mode × terrain (Node: test/unit/herolab-metrics.test.ts; live: scripts/herolab.mjs) and the frame cost by toggling (`--cost`) | M | done (herolab) |
+| HL2 | The lab framework: LabStation (camera, moves, puzzle, enemy, combat), VariantPicker (chips mirrored to the address), Stations; `?level=herolab` with six terrains, the autopilot, the camera tuning | M | done (herolab) |
+| HL3 | Stations for abilities and moves, puzzles, enemies (the kinds are there, no stations yet) | L | next |
+| HL4 | The walker in the lab (it isn't a play hero: src/hero/walker.ts on the old Hero contract, drawn by Figures) | S | open |
+| HL5 | Play's heroes ride the sky floor (Terrain.heightAt): they can't go into a cave or under a canopy; the lab's cave mouth is ridden past, not into (a layered floor in PlayWorld: floorAt by the hero's height) | M | open |
+| CAM5 | The way-ahead's distance in time overshoots the framing: the end is off the screen 45-80 % of frames at the bike's speed (the chase keeps 0.8 s on screen, the probe looks 1.2 s); the lich's 16-cell minimum is past its close zoom. Tie the probe's reach to what's framed, or frame it (chase.lookAhead) | S | open |
+| CAM6 | The signal flickers between ✓ and ✕ as the beam's end crosses a wall: hysteresis on its kind | S | open |
+| CAM7 | The cutaway's radius and rim in the tiles and the far land (tiles.wgsl, far.wgsl read only the slice's height): on the atlas level the rim and radius show only on the window's own draw | S | open |
+| CAM8 | The modes on the atlas: `?cam=` reaches the play sandbox and the situation runs through PlaySession (the cost measured on the lab, not yet on the atlas phone proxy) | S | open |
+
 ## Round 122 (2026-10-31, session 5, `merge122`) — runsit merged into places: the base for the opportunity loop (DECISIONS round 120)
 
 The user (round 120): "Feel free to merge whatever will be the base for that." `runsit` (a84b8c4, holding `runplay`,
@@ -311,8 +327,8 @@ tests work and do quick smoke tests to find failures early." docs/TESTING.md.
 | LW5 | Later: node-powered rituals (structures + an effect graph + a power source + upkeep; magic nodes as atlas features); castle court → knights on missions → reports; the GM choosing and switching loops mid-run (accepting leadership → a city-management run) | L | open |
 | LI2 | The lich pulls up pieces of terrain or structure with telekinesis and hurls them (the judge frees the piece, the solver carries it; impacts through the break rules) | M | open |
 | RN1 | Run styles: (2+3) stronghold + encounter map as one loop, building as one kind of encounter (design talk round 120); (1) folk hero free adventure with an enemy progress track tied to real world changes, later | L | asked (design session) |
-| CAM1 | The camera, the biggest gameplay fix: occluders hide the hero and what the hero cares about (a cliff's turn: new way or dead end). A hero lab to try camera modes as variants across terrains: rotate, top-down, dither, cut tall things down to a short height above the traversable surface, occlusion allowed only at the screen's edges/top/bottom (atmospheric) | L | next |
-| HL1 | Hero lab: stations for hero abilities and moves, puzzles, enemies and camera modes, every setting a variant to compare | L | next |
+| CAM1 | The camera, the biggest gameplay fix: occluders hide the hero and what the hero cares about (a cliff's turn: new way or dead end). A hero lab to try camera modes as variants across terrains: rotate, top-down, dither, cut tall things down to a short height above the traversable surface, occlusion allowed only at the screen's edges/top/bottom (atmospheric) | L | first pass done (herolab: CAM2-CAM4; the user to try the modes) |
+| HL1 | Hero lab: stations for hero abilities and moves, puzzles, enemies and camera modes, every setting a variant to compare | L | first pass done (herolab: HL2; stations HL3) |
 | CB1 | Action combat controls improved, and a combat gym | L | next (design talk) |
 | RN2 | Run structure: city builder + overmap + dispatch + choices tied to the world state; a process generating location opportunities from what is at the place, the hero and the run (thematic, real consequences, gameplay bonuses) | L | next (design) |
 | TR40 | Trees baked into isometric sprites for the low LOD (visual continuity with the near trees) | M | deferred |

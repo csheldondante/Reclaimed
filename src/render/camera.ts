@@ -13,8 +13,8 @@ export const CAMERA_BYTES = 96;
 export const CAMERA_POS_OFFSET = CAMERA_BYTES + 64;
 /** what's cut from the view after it (render.wgsl Camera.cut, see, boxes; round 83) */
 export const CAMERA_CUT_OFFSET = CAMERA_POS_OFFSET + 16;
-/** cut (a vec4), see (4 vec4s), boxes (4 boxes, 2 vec4s each) */
-export const CAMERA_CUT_BYTES = 16 + 4 * 16 + 8 * 16;
+/** cut (a vec4), see (4 vec4s), boxes (4 boxes, 2 vec4s each), the slice's shape (a vec4: round 121) */
+export const CAMERA_CUT_BYTES = 16 + 4 * 16 + 8 * 16 + 16;
 
 /** What's cut from the view (api/cutaway.ts: Slice, Dither) — the sun's camera cuts nothing. */
 export interface Cut {
@@ -24,6 +24,11 @@ export interface Cut {
   see: [number, number, number, number][];
   /** what may be dithered (lo xyz, hi xyz; world): none marked, anything */
   boxes: [number, number, number, number, number, number][];
+  /**
+   * (round 121, herolab: the cutaway camera mode) the slice only within `radius` (world units on screen) of (x, y) at the
+   * slice's height, and a rim lit `rim` cells under the cut; absent: the whole view, no rim (round 83's slice)
+   */
+  sliceShape?: { x: number; y: number; radius: number; rim: number } | null;
 }
 
 /** the free camera: where it is (world), which way it looks (radians), its vertical field of view */
@@ -138,6 +143,12 @@ export class Camera {
    * it when a large obstacle hides the character (api/cutaway.ts) — the rest of the time it stays put.
    */
   azimuth = Math.PI / 4;
+  /**
+   * (round 121, herolab) How far over the horizon the eye looks down from (radians; 30° the fixed view, the 2:1
+   * dimetric). A camera mode tilts it toward top-down as occlusion rises (play/camera/modes.ts TiltMode); nothing
+   * downstream assumes 30° (the draw, culling and picking read the matrix or `eye`).
+   */
+  elevation = ELEVATION;
 
   update(): void {
     if (this.fly) {
@@ -145,9 +156,10 @@ export class Camera {
       return;
     }
     const az = this.azimuth;
-    const ex = Math.cos(az) * Math.cos(ELEVATION);
-    const ey = Math.sin(az) * Math.cos(ELEVATION);
-    const ez = Math.sin(ELEVATION);
+    const el = this.elevation;
+    const ex = Math.cos(az) * Math.cos(el);
+    const ey = Math.sin(az) * Math.cos(el);
+    const ez = Math.sin(el);
     this.eye[0] = ex;
     this.eye[1] = ey;
     this.eye[2] = ez;
@@ -224,7 +236,7 @@ export class Camera {
     const hx = -Math.cos(az);
     const hy = -Math.sin(az);
     const wx = dx / this.zoom;
-    const wy = dy / this.zoom / Math.sin(ELEVATION);
+    const wy = dy / this.zoom / Math.sin(this.elevation);
     return [rx * wx - hx * wy, ry * wx - hy * wy];
   }
 
@@ -264,7 +276,7 @@ export class Camera {
     let x = tx;
     let y = ty;
     for (let i = 0; i < 6; i++) {
-      const [wx, wy] = this.screenDeltaToWorld(dx, dy + (z - tz) * Math.cos(ELEVATION) * this.zoom);
+      const [wx, wy] = this.screenDeltaToWorld(dx, dy + (z - tz) * Math.cos(this.elevation) * this.zoom);
       x = tx + wx;
       y = ty + wy;
       z = heightAt(x, y);
@@ -286,6 +298,8 @@ export class Camera {
       f.set([c.slice ?? 0, c.see.length, c.boxes.length, c.slice === null ? 0 : 1], o);
       c.see.forEach((p, i) => f.set(p, o + 4 + i * 4));
       c.boxes.forEach((b, i) => f.set([b[0], b[1], b[2], 0, b[3], b[4], b[5], 0], o + 20 + i * 8));
+      const sh = c.slice === null ? null : c.sliceShape;
+      if (sh) f.set([sh.x, sh.y, sh.radius, sh.rim], o + 52);
     }
   }
 }

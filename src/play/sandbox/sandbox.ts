@@ -40,6 +40,8 @@ export interface SandboxDeps {
   hero: PlayHeroId;
   /** open the tune panel at once */
   tune?: boolean;
+  /** (round 121, herolab) the camera modes (`?cam=`; play/camera/rig.ts); absent: the chase */
+  cam?: string | null;
 }
 
 /** raiders spawned at a time, how far ahead (cells) */

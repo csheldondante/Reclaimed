@@ -14,6 +14,7 @@ import { generateRocklab, ROCKLAB_STATIONS } from '../levels/rocklab';
 import { generatePlayground, STATIONS, type Station } from '../levels/playground';
 import { generateNoiselab } from '../levels/noiselab';
 import { generateBestiary } from '../levels/bestiary';
+import { generateHeroLab } from '../levels/herolab';
 import type { FlowKit } from '../flow/install';
 import type { RiverMode } from '../sim/world-gpu';
 import type { GateSpec } from '../world/kit';
@@ -60,6 +61,8 @@ export interface LevelDef {
   stations?: Station[];
   /** (round 111, TG1) the noise lab: its land made and remade by a layer recipe on the GPU (noiselab/control.ts) */
   noiseLab?: boolean;
+  /** (round 121, HL1/CAM1) the hero lab: play's hero on test terrains, the camera modes as chips (play/lab/herolab.ts) */
+  heroLab?: boolean;
 }
 
 export const LEVELS: LevelDef[] = [
@@ -181,6 +184,17 @@ export const LEVELS: LevelDef[] = [
     generate: (dims) => generateBestiary(dims),
     sandbox: true,
     hidden: true,
+  },
+  {
+    id: 'herolab',
+    name: 'The Hero Lab',
+    blurb: 'Test terrains one tap apart — a cliff foot, a canyon, a forest, a street, a cave mouth, hills — and every camera mode to try on them.',
+    model: 'sign',
+    generate: (dims) => generateHeroLab(dims),
+    sandbox: true,
+    hidden: true,
+    zMax: 96,
+    heroLab: true,
   },
   {
     id: 'sandbox',

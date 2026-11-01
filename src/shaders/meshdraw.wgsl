@@ -309,7 +309,7 @@ fn meshShade(in: MOut) -> FOut {
   // (round 83: quartz cut as a gem — the hoverbike's playtest: the giant crystals didn't look faceted)
   if (s.gem) { col = gemLook(in.wpos, s.nrm); }
   col += filmSheen(in.wpos, s.nrm, s.filmN, s.film);
-  col = haze(col, in.wpos);
+  col = haze(withRim(col, in.wpos), in.wpos);
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), 1.0);
   // (the band's z runs past the byte: round 79)
