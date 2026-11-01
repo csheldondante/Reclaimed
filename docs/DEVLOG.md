@@ -15882,3 +15882,55 @@ every area):
 Still open: the enemy check counts within 400 cells, so a hero far ahead of its outriders isn't shown with them on
 screen. A close-quarters shot is next. The chase autopilot lost the herald. Whether the chase is catchable on the
 phone is for the user to judge.
+
+**The card lab, after Dominion** (RN3; the user: "Dominion each round has decks that you can purchase and permuting them
+changes what strategy is viable each time you play. Here the opportunities are like the cards you can purchase ... not
+all uniform within a stack and the world state is what generates them"; "converting your actions into expected point
+values and trying to maximize the per turn points over approximately the game time frame").
+- **Kingdoms** (src/opps/kingdom.ts). data/cards/lab.json is now a library of 24 stacks over a world of 9 places, each
+  place with an owner and a purpose. Each stack says where it can be: an owner (yours, an enemy's, no one's), a
+  purpose (hold, farming, trading, mining, port), or a place with no settlement. Every place that fits makes one card
+  of it, so the cards in a stack differ:
+  - the card is titled with its place;
+  - with `scale`, its goods go up with the settlement's size (City 5's stores are double Fort 4's);
+  - its world consequences aim at '@here', '@home' or '@enemy', the nearest enemy settlement.
+
+  A kingdom is the 4 core stacks (forage, arm, muster, the climax) plus 10 more, drawn from the seed and weighted by
+  how many places fit. An unlock names a stack. A stack whose unlocker isn't in the kingdom starts open. The page has
+  a New kingdom button and lists the kingdom's stacks. Why forage, arm and muster are core: like Dominion's base
+  cards, they make sure every kingdom has a way to the climax's strength. Before them, kingdoms without muster were
+  unwinnable for every bot.
+- **Expected value a turn** (DeckRun.ev). Points are renown; the climax met is +10.
+  - Goods are priced in points. The climax's good (strength) is priced from `winPoints` ÷ the need, dearer the
+    further behind the need is for the turns left. A good is also worth what a card in the deck turns it into
+    strength at, but only as a gain; a cost is priced at its own worth.
+  - A turn of doom is worth `turnPoints`.
+  - Agents are priced by what they can do over the turns left, and effects by their expected fires.
+  - An unlock is priced by its stack's cards, discounted by the time left.
+  - A card's value a turn = (direct + engine − costs − losses + the penalty it avoids) ÷ its turns.
+  - The board shows it under the EV toggle. The dealer reads it as a score part (`wEv`, 0.3).
+- **The bots** (autoTurn): `ev` (most points a turn), `bigmoney` (Dominion's baseline: the most direct reward a turn,
+  never an engine), `engine` (agents, effects and unlocks while more than half the time is left, then bigmoney),
+  `random`, `greedy` (the dealer's own order, which now includes `ev`). `tournament` runs every bot on N kingdoms. A
+  bot is viable in a kingdom when it wins at least half as often as the best and scores within 80 % of the best of
+  those. A lost run scores half its renown.
+- **First results** (kingdoms 1-6; each bot's win rate / score):
+
+  | kingdom | ev | bigmoney | engine | greedy | random | viable |
+  |---|---|---|---|---|---|---|
+  | 1 | 100% / 12 | 100% / 10 | 100% / 14 | 100% / 12 | 40% / 7.7 | ev, engine, greedy |
+  | 2 | 0% / 6.5 | 100% / 10 | 0% / 6 | 100% / 23 | 0% / 5.1 | greedy |
+  | 3 | 100% / 17 | 100% / 26 | 100% / 20 | 100% / 16 | 0% / 0.8 | bigmoney |
+  | 4 | 100% / 10 | 100% / 10 | 100% / 10 | 100% / 12 | 20% / 2 | ev, bigmoney, engine, greedy |
+  | 5 | 100% / 10 | 100% / 24 | 100% / 10 | 100% / 18 | 0% / 0.6 | bigmoney |
+  | 6 | 100% / 10 | 100% / 10 | 100% / 10 | 100% / 17 | 80% / 9.2 | greedy |
+
+  Different kingdoms favour different strategies, and none is the only viable one everywhere. But only 2 of 6
+  kingdoms have two or more viable, against the target of most. Bigmoney wins every kingdom (the festivals and the
+  trade are cheap renown), and the ev bot lost kingdom 2. That's the balance work ahead, with the sliders and the
+  JSON. In the page (kingdoms 1-8): 4 of 8 kingdoms with two or more viable strategies. Viable counts: ev 3,
+  bigmoney 4, engine 3, greedy 5. Shots: C:/Projects/shots88/opportunities/cardlab/ (2b-place-tapped-ev,
+  4-bots-x-kingdoms).
+- **Readability.** On the world panel each place with something on offer has a timer over it: the shortest stay,
+  ×count, ⏳ for what's running there; orange when one happens anyway if let go. Tapping a place shows its cards under
+  the world.

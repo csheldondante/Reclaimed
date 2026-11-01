@@ -2830,6 +2830,11 @@ situation flow stays behind `?runplan=` until this replaces it.
 - **The card lab** (cardlab.html → src/cardlab/main.ts; src/opps/deck.ts DeckRun, simulate; data/cards/lab.json): the
   same contract and dealer as the map, another front end. The dealer's `Proposal.event`: on the board whatever is held,
   outside the limits.
+- **Kingdoms and value, round 124 (RN3)**: src/opps/kingdom.ts `generateKingdom(library, seed, size)` makes a LabDeck from
+  the library's stacks (StackDef: where it can be by owner and purpose; cards made per place, goods scaled by size,
+  world ops aimed at @here/@home/@enemy); CardDef.stack (unlocks name stacks). DeckRun.ev (points a turn: direct +
+  engine − costs − losses + the penalty avoided, over the horizon to the climax); the dealer's `ev` score part; the bots
+  (`autoTurn`: ev, bigmoney, engine, random, greedy) and `tournament` (bots × kingdoms, viability).
 
 ## Tests in Node (round 117, `testkit`; docs/TESTING.md)
 

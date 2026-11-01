@@ -23,9 +23,9 @@
 import { affords, needsPlayer, type Goods, type Holdings, type Opportunity, type Requirement } from '../api/contracts/opportunity';
 import type { DealerTune } from './tune';
 
-export type ScorePart = 'theme' | 'foreshadow' | 'variety' | 'synergy' | 'difficulty' | 'hero' | 'tier';
-export const SCORE_PARTS: readonly ScorePart[] = ['theme', 'foreshadow', 'variety', 'synergy', 'difficulty', 'hero', 'tier'];
-const WEIGHT: Record<ScorePart, keyof DealerTune> = { theme: 'wTheme', foreshadow: 'wForeshadow', variety: 'wVariety', synergy: 'wSynergy', difficulty: 'wDifficulty', hero: 'wHero', tier: 'wTier' };
+export type ScorePart = 'theme' | 'foreshadow' | 'variety' | 'synergy' | 'difficulty' | 'hero' | 'tier' | 'ev';
+export const SCORE_PARTS: readonly ScorePart[] = ['theme', 'foreshadow', 'variety', 'synergy', 'difficulty', 'hero', 'tier', 'ev'];
+const WEIGHT: Record<ScorePart, keyof DealerTune> = { theme: 'wTheme', foreshadow: 'wForeshadow', variety: 'wVariety', synergy: 'wSynergy', difficulty: 'wDifficulty', hero: 'wHero', tier: 'wTier', ev: 'wEv' };
 
 export interface TierOffer {
   requires: Requirement[];
@@ -154,6 +154,8 @@ export function deal(props: Proposal[], ctx: DealContext): DealReport {
       difficulty: p.parts.difficulty ?? 0.5,
       hero: p.parts.hero ?? 0,
       tier: p.tiers.length > 1 ? (t - 1) / (p.tiers.length - 1) : 1,
+      // (round 124: the proposal's expected points a turn, 0..1 — the card lab's ev; the map's templates give none yet)
+      ev: p.parts.ev ?? 0,
     };
     const score = SCORE_PARTS.reduce((s, k) => s + T[WEIGHT[k]] * parts[k], 0);
     const because = [

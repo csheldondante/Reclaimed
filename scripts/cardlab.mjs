@@ -37,6 +37,27 @@ await run({ name: 'cardlab', kind: 'behaviour', size: '412x785' }, async (R) => 
   await shot('1-turn6-full', true);
   for (let i = 0; i < 6; i++) R.log(`turn: ${JSON.stringify(await turn())}`);
   await shot('2-turn12-full', true);
+  // (round 124, RN3) EV on the cards, a place tapped (its cards under the world), the bots on eight kingdoms
+  await p.evaluate(() => {
+    const L = window.cardlab;
+    L.ev(true);
+    const busy = L.run.offered[0];
+    if (busy) L.focus(L.run.card(busy.template).place);
+    L.render();
+  });
+  await sleep(400);
+  await shot('2b-place-tapped-ev');
+  const tour = await p.evaluate(() => {
+    const L = window.cardlab;
+    const t = L.tournament(8);
+    for (const d of document.querySelectorAll('details')) if (d.querySelector('summary').textContent.startsWith('The simulator')) d.open = true;
+    L.render();
+    for (const d of document.querySelectorAll('details')) if (d.querySelector('summary').textContent.startsWith('The simulator')) (d.open = true), d.scrollIntoView();
+    return t.map((r) => `${r.kingdom}: ${r.results.map((x) => `${x.policy} ${Math.round(x.winRate * 100)}%/${x.meanScore}`).join(' ')} -> ${r.viable.join(',')}`);
+  });
+  for (const l of tour) R.log(`bots: ${l}`);
+  await sleep(300);
+  await shot('4-bots-x-kingdoms');
   const s = await p.evaluate(() => {
     const L = window.cardlab;
     const r = L.simulate(200, 'random');
