@@ -255,6 +255,29 @@ each was implemented.
   (another GPU can make the same seed with other towns: the GM's file is then not that world's, the template plays and
   the card says so).
 
+- The jb6 phone bench (Pixel 9a): lattice x runs p95 20.2 / p99 37.1, judge 1.7 ms (worst 17); lattice x sections p95 21.7 / p99 74.7, 0 bytes read back, judge 30 ms (worst 420 ms, frames to 367 ms). The user, verbatim:
+
+> Are they not prewarmed? How reliable are the number without that? I think use the faster technique regardless for now and let's defer further work for the time being. However, I want to come back to physics later and do it properly with dispatches that do integration, course collision, fine collision and then only do the lattice work for colliding bodies (and possibly prioritize those the player is interacting with and those over a certain size). Then we pass to the solver and we populate a buffer of collision events that the CPU can readback asynchronously and other systems can use to trigger effects. Record that design and that it needs collaborative review with an agent. Then let's move on to the run structure and other priorities. I think the biggest priority is making the runs more fun and having the full vertical slice more or less settled.
+>
+> The single biggest gameplay improvement is fixing the camera. I don't know the best fix. Thing occlude not only the PC but also things the PC cares about. Case in point riding the hoverbike near the foot of cliffs is cool and cinematic but when you turn around a cliff sometimes it's a cool new direction to go and sometimes it's a dead end that kills momentum. I want a hero lab for both hero abilities and moves and puzzles and enemies and camera modes so we can iterate many variants and see what works best. We have options like rotating the camera or going top down or using dithering or cutting tall objects down to a short height above the traversable surface the bike is on. Foreground objects occluding can also be atmospheric if it occludes only edges or the bottom or top of the screen. This is all just to point out we need a variety of settings to try in different terrains to see what works.
+>
+> I also want to improve the controls for the action combat and make a gym.
+>
+> The next high priority focus is the larger run structure we discussed. The city builder and the overmap with dispatch and choices and tying it to the world state and data. I love the idea of thinking of locations as spawning opportunities based on what is at the location and the current hero and run. I would like a process for generating these. We want them thematic and genuinely interesting in terms of world consequences and gameplay bonuses.
+>
+>
+> Lastly at some point let's consider baking trees into isometric sprites for the lower LOD so that there is more visual continuity. (Defer it for now but note it as a thing to do)
+
+- → Physics deferred. The design for later (PH1, revised): dispatches for integration, coarse collision, fine collision;
+  the lattice only for colliding bodies (priority to what the player handles and to bodies past a size); then the
+  solver; a GPU collision-event buffer the CPU reads back asynchronously for other systems to trigger effects. It needs
+  a collaborative design review with an agent before building. Priorities now: the runs fun and the full vertical slice;
+  the camera first (a hero lab: abilities, moves, puzzles, enemies, camera modes as variants across terrains: rotate,
+  top-down, dither, cut tall things down above the traversable surface, occlusion only at the screen's edges); action
+  combat controls and a gym; then the run structure (city builder, overmap, dispatch, choices, the world state), with
+  a process for generating location opportunities from what is there, the hero and the run (thematic, real world
+  consequences, gameplay bonuses). Deferred: trees baked into isometric sprites for the low LOD.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
