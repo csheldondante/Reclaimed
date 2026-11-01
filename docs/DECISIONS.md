@@ -318,6 +318,8 @@ each was implemented.
   timers and a card showing success and expiry effects; several to choose from; every played opportunity a real
   encounter (enemies and combat, pursuers, chases, defence; races only with an arena), never a drive to a flag.
 
+- The user, verbatim: "I recommend making a playground for the card mechanics that has no playable encounters. It would just be getting rewards that get new opportunities, decrease time spent to deal with card (distance based maybe) decrease resources etc. Think deck builder in terms of the design then we will work on thematic fits so they feel plausible in the world. That's the semi hard part." → a card lab first (no encounters; every card resolves by its odds; abstract cards; deck-builder rewards: unlocks, shorter durations, lower costs, bonuses, new agents and tags; distance-based duration; an auto-play simulator for win rate and dominant strategies), on the same contract and dealer as the map; theme comes after.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
