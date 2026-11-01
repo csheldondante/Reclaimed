@@ -177,18 +177,26 @@ export class LevelOpps extends LevelSit {
     if (!M.isOpen) M.open();
     const here = this.opps.at();
     const W = this.run.map.world;
-    const pts: V2[] = [here, ...this.opps.offered.map((o) => o.location.at as V2), ...this.opps.running().map(({ c }) => c.opp.location.at as V2)];
-    let span = 400;
+    const run = this.run;
+    const pts: V2[] = [here, ...this.opps.offered.map((o) => o.location.at as V2), ...this.opps.running().map(({ c }) => c.opp.location.at as V2), along(run.sit.threat.route.map((r) => run.map.regionCentre(r)), run.hordeProgress(), W)];
+    // (the box round them, each the short way round the torus from the player)
+    let [x0, y0, x1, y1] = [0, 0, 0, 0];
     for (const p of pts) {
-      let dx = p[0] - here[0];
-      let dy = p[1] - here[1];
-      dx -= Math.round(dx / W.w) * W.w;
-      dy -= Math.round(dy / W.h) * W.h;
-      span = Math.max(span, Math.abs(dx) * 2, Math.abs(dy) * 2);
+      const dx = p[0] - here[0] - Math.round((p[0] - here[0]) / W.w) * W.w;
+      const dy = p[1] - here[1] - Math.round((p[1] - here[1]) / W.h) * W.h;
+      x0 = Math.min(x0, dx);
+      x1 = Math.max(x1, dx);
+      y0 = Math.min(y0, dy);
+      y1 = Math.max(y1, dy);
     }
-    // (the card takes the bottom of the screen: the markers in the top 55 %)
-    const scale = ((span * 1.25) / this.d.atlas.worldW) * this.d.atlas.p.n / (Math.min(innerWidth, innerHeight * 0.55));
-    M.centreOn(...toCell([here[0], here[1] + span * 0.18]), scale);
+    // (the card takes the bottom of the screen: the box fits the top 55 %, with room for the labels)
+    const availW = innerWidth - 60;
+    const availH = innerHeight * 0.55 - 70;
+    const upp = Math.max((x1 - x0 + 200) / availW, (y1 - y0 + 200) / availH, 1.2);
+    const scale = (upp * this.d.atlas.p.n) / this.d.atlas.worldW;
+    const cx = here[0] + (x0 + x1) / 2;
+    const cy = here[1] + (y0 + y1) / 2 + innerHeight * 0.22 * upp;
+    M.centreOn(...toCell([cx, cy]), scale);
     M.redraw();
   }
 
@@ -340,9 +348,19 @@ export class LevelOpps extends LevelSit {
       this.diamond(ctx, p, 12, LOCKED, '⏳');
       this.label(ctx, p, `${c.opp.title} · ${turnsLeft ? `${turnsLeft} turn${turnsLeft > 1 ? 's' : ''}` : 'now'}`, LOCKED);
     }
-    // what's offered
-    for (const o of this.opps.offered) {
-      const p = P(o.location.at as V2);
+    // what's offered (two at one place — warn and lead out, both at the town — fanned round it so each can be tapped)
+    const placed = this.opps.offered.map((o) => P(o.location.at as V2));
+    const labelDy = placed.map(() => 0);
+    const spread = placed.map((p, i) => {
+      const same = placed.map((q, j) => j).filter((j) => Math.hypot(placed[j][0] - p[0], placed[j][1] - p[1]) < 24);
+      if (same.length < 2) return p;
+      labelDy[i] = same.indexOf(i) * 16;
+      const k = same.indexOf(i);
+      const a = -Math.PI / 2 + (k - (same.length - 1) / 2) * 1.3;
+      return [p[0] + Math.cos(a) * 30, p[1] + Math.sin(a) * 30 + 30] as [number, number];
+    });
+    for (const [i, o] of this.opps.offered.entries()) {
+      const p = spread[i];
       const player = needsPlayer(o);
       const col = !o.affordable ? '#8a8a8a' : player ? GOLD : BLUE;
       const sel = o.id === this.selected;
@@ -351,7 +369,7 @@ export class LevelOpps extends LevelSit {
       const glyph = GLYPH[o.challenge?.play ?? o.template] ?? '◆';
       if (player) this.dot(ctx, p, sel ? 15 : 13, col, glyph, o.forced ? '#ff5a3a' : o.climax ? '#ffffff' : undefined);
       else this.diamond(ctx, p, sel ? 16 : 14, col, glyph);
-      this.label(ctx, p, o.title.length > 30 && !sel ? `${o.title.slice(0, 28)}…` : o.title, sel ? '#ffffff' : col);
+      this.label(ctx, [p[0], p[1] + labelDy[i]], o.title.length > 30 && !sel ? `${o.title.slice(0, 28)}…` : o.title, sel ? '#ffffff' : col);
       hits.push({ x: p[0], y: p[1], r: 26, id: o.id });
     }
     this.hits = hits;

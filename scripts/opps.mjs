@@ -22,8 +22,9 @@ const arg = (k, d) => (argv.includes(`--${k}`) ? argv[argv.indexOf(`--${k}`) + 1
 const hero = arg('hero', 'hoverbike');
 const want = arg('want', 'saved');
 
-await run({ name: `runsit-${hero}-${want}`, kind: 'behaviour', size: arg('size', '412x915') }, async (R) => {
-  const dir = R.opt('out', 'C:/Projects/shots88/runsit');
+const commitT = arg('commit', 'harvest');
+await run({ name: `opps-${hero}-${want}`, kind: 'behaviour', size: arg('size', '412x785') }, async (R) => {
+  const dir = R.opt('out', 'C:/Projects/shots88/opportunities');
   fs.mkdirSync(dir, { recursive: true });
   const tag = `${hero}-${want}`;
   const settle = Number(R.opt('settle', 30000));
@@ -180,6 +181,13 @@ await run({ name: `runsit-${hero}-${want}`, kind: 'behaviour', size: arg('size',
     return toTown.find((o) => !o.kinds.includes('evacuate') && o.kinds.includes('warn')) ?? opts.find((o) => o.toPlay === 'ambush') ?? opts.find((o) => o.toPlay !== 'deliver') ?? opts[0];
   };
 
+  const logDeal = async () => {
+    const lines = await p.evaluate(() => {
+      const r = window.reclaimed.opps.opps.report;
+      return r ? [`turn ${r.turn} (${r.ms} ms): dealt ${r.dealt.map((d) => d.opp.title).join(' | ')}`, ...r.rejected.map((x) => `  not: ${x.title} [${x.step}] ${x.why}`), ...r.guarantees.map((g) => `  = ${g}`)] : [];
+    });
+    for (const l of lines) R.log(`deal: ${l}`);
+  };
   const t0 = Date.now();
   let k = 0;
   const frames = [];
@@ -189,7 +197,15 @@ await run({ name: `runsit-${hero}-${want}`, kind: 'behaviour', size: arg('size',
   while (!s.record && Date.now() - t0 < 1500000) {
     if (s.phase === 'area' && !s.playing && !s.journey) {
       k++;
-      await p.evaluate(() => void window.reclaimed.runsit.playArea());
+      if (!s.oplaying) {
+        // (the start: the forced outriders — committed from the map like any opportunity)
+        const f = s.offered.find((o) => o.forced);
+        R.check("the run starts with one forced opportunity dealt alone among the player's", !!f && s.offered.filter((o) => o.player).length === 1, s.offered);
+        await sleep(2500);
+        await shot(`${k}-start-map`);
+        await logDeal();
+        await p.evaluate((id) => window.reclaimed.opps.commit(id), f.id);
+      } else await p.evaluate(() => void window.reclaimed.runsit.playArea());
       await sleep(600);
       s = await state();
       R.log(`area ${k} ${s.at}: ${JSON.stringify(s.area)}`);

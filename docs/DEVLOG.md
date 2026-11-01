@@ -15780,3 +15780,27 @@ Tests: test/unit/opportunity.test.ts (10), test/unit/opps.test.ts (18: the deale
 guarantees, reach, variety, sliders; slice A on seed 1: the outriders forced, the ways on, the levy, the harvest
 committed and let rot, the ford where it makes sense at tier 1 and at tier 2 with two armies, played through to saved
 and to burned, the veteran levy into the next run, oppcheck catching a broken deal, under 5 ms a deal).
+
+**The map** (src/opps/level-opps.ts, `?run=opps`; RN2-6). LevelOpps extends runsit's LevelSit through protected hooks
+(makeRun, areaDone, arrived, finishRun, finishRecord, travel, render, drawOnMap) so the live play, the legs, the finale
+and the end card are runsit's own code, not a copy. At an edge (and at the start, for the forced outriders) the atlas
+map opens fitted to the player, what's offered and the host, with the card at the bottom: gold pins for the player's
+opportunities (a dashed line from where the hero is), blue diamonds for the agents', grey when unaffordable, a red ring
+on a forced one and a white one on the climax, ⏳ diamonds with the turns left for what's committed. Two at one place
+(warn and lead out, both at the town) are fanned apart with their labels stacked. A tap (AtlasMap.onTap, new: it runs
+before the warp rule) shows needs (and which agents would go), costs (and what's held), how long, the odds (or "how you
+play it"), each tier's consequence, what letting it go does, then Commit. No list of opportunities is on the card. The
+`dealer` button (over the map, `.play-on` no longer hides it) opens every weight and limit; moving one deals the turn
+again. "why? (the dealer)" lists what was dealt and why and what wasn't and why.
+
+Headless (scripts/opps.mjs, 412x785, the GM's situation for seed 1, every system at 1x):
+- burned (hold path, the levy committed to the harvest): turn 0 the outriders alone; turn 1 three ways on; turn 2 one
+  way on and the harvest (the ford rejected: the levy can't reach the host's road first); the harvest committed (⏳ 1
+  turn), resolved at the climax at a cost (2 supplies, 1 of 12 lost), the levy came in at minute 12.5 (the dead at 8.8),
+  Bumku burned. Finale frames p50 9.8 / p95 11.6 ms, GPU 13.6 ms; hero main thread 0.053 ms.
+- saved (the straight road, warned): outriders, three ways on, two at the road's edge (fanned), Bumku held. Finale p50
+  9.9 / p95 15.6 ms, GPU 14.3 ms. Deals 0.2-0.6 ms in the page.
+- smoke: atlas loads, no fatal, sim running. `?run=opps` adds nothing to the default page (a branch in level.ts and a
+  lazily imported module), so driveprofile was not re-run.
+- Shots: C:/Projects/shots88/opportunities/ (hoverbike-burned-1-start-map, -1-edge-map, -2-harvest-detail,
+  -2-harvest-committed, -2-way-detail, -9-end; hoverbike-saved-*; saved-finale.gif; fan2/ the fanned pair), logs beside.
