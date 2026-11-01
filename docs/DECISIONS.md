@@ -328,6 +328,8 @@ each was implemented.
 
 - The user, verbatim: "I don't think it needs a separate abilities section this is like relics in slay the spire. They are just active effects tied to triggers" → no abilities section: relics, i.e. held effects with a trigger (card dealt/expiring of a kind, commit, resolve, turn start, threat advancing, agent lost) and an effect (negate, delay, shorten, extend, instant, better, unlock, gain), firing automatically; agents' bonuses and tags are relics they carry; sacrifice stays an opportunity whose cost is an agent or goods.
 
+- The user, verbatim: "The relics here are unit abilities and tags and things you have built to be clear but yeah they work like relics" → relic effects are owned by their source: an agent's abilities and tags (lost with the agent) or things built (walls, watchtower, granary, road; held by the settlement or region, lost if it burns or is taken). No free-floating relic inventory; rewards grant agents, tags/abilities on agents, or buildings.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
