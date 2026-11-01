@@ -379,6 +379,8 @@ tests work and do quick smoke tests to find failures early." docs/TESTING.md.
 | UI10 | The title screen's level list doesn't fit a phone (Pixel 9a): the Traits Lab and later entries are off screen; scroll or wrap the list (round 120, the user) | S | open |
 | CAM11 | Cut only real occluders (a surface rising less steeply than the camera's sight line can't hide anything; gentle hills never cut); toggle (on) to never cut behind the player; cut height rises quadratically with distance from the hero (h0 + k·d²); dithered edges in the default cut (round 120, the user) | M | next (herolab) |
 | PL32 | Bike handling v2: turn radius by speed + brake/drift, a speed governor in narrow corridors, a carve control, more turning acceleration; still poor except forest and hills (round 120, the user) | M | next (herolab) |
+| RN3 | Dominion-style kingdoms: the world state generates each run's opportunity stacks (varied within a stack), permuting viable strategies; EV-per-turn card valuation; simulator bots (EV-per-turn, Big-Money-like baseline, engine builder, random); balance = several strategies viable per kingdom | M | next (card lab) |
+| RN4 | Faeria-style positioning: dispatched agents hold positions on the map that matter (locking down enemies, holding a pass) | L | deferred (simpler version first) |
 | FLO21 | Birch cost on the phone: the user's result good — done (flora 18c3bdb, unmerged) | S | done |
 
 ## Round 118 (2026-10-30, session 5, `places`) — found while reviewing the tracks

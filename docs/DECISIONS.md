@@ -318,6 +318,31 @@ each was implemented.
   timers and a card showing success and expiry effects; several to choose from; every played opportunity a real
   encounter (enemies and combat, pursuers, chases, defence; races only with an arena), never a drive to a flag.
 
+- The user, verbatim: "I recommend making a playground for the card mechanics that has no playable encounters. It would just be getting rewards that get new opportunities, decrease time spent to deal with card (distance based maybe) decrease resources etc. Think deck builder in terms of the design then we will work on thematic fits so they feel plausible in the world. That's the semi hard part." → a card lab first (no encounters; every card resolves by its odds; abstract cards; deck-builder rewards: unlocks, shorter durations, lower costs, bonuses, new agents and tags; distance-based duration; an auto-play simulator for win rate and dominant strategies), on the same contract and dealer as the map; theme comes after.
+
+- The user, verbatim: "Each should have world consequences that are visible. A occupied city, refugees fleeing, a toppled empire, a flooded civilization etc" → every card's outcomes and expiry carry real world-state changes (settlement conditions, refugee flows, faction power and owners, region statuses) through WorldState.apply, shown in the card lab's world panel and log, and listed on each card beside its gameplay reward.
+
+- The user, verbatim: "Let's not even have rolls for now. Let's assume you assign resources it resolves one way and if not it may trigger an on expires effect" → the card lab is deterministic: a committed card resolves to its one outcome after its duration; an uncommitted one may fire its onExpire when it expires. Odds stay possible in the contract for later.
+
+- The user, verbatim: "We can have abilities and deck building that negates these or decreases time to address etc.  you could have things like sacrificing units to delay an approaching army for example" → abilities as part of the deck-building (negate an expiry, cut the time to address, extend an expiry, resolve instantly), plus sacrifices (spend an agent or goods for good to delay a threat, negate an expiry, or force a card); one system with the bonus kinds plus delay and sacrifice.
+
+- The user, verbatim: "I don't think it needs a separate abilities section this is like relics in slay the spire. They are just active effects tied to triggers" → no abilities section: relics, i.e. held effects with a trigger (card dealt/expiring of a kind, commit, resolve, turn start, threat advancing, agent lost) and an effect (negate, delay, shorten, extend, instant, better, unlock, gain), firing automatically; agents' bonuses and tags are relics they carry; sacrifice stays an opportunity whose cost is an agent or goods.
+
+- The user, verbatim: "The relics here are unit abilities and tags and things you have built to be clear but yeah they work like relics" → relic effects are owned by their source: an agent's abilities and tags (lost with the agent) or things built (walls, watchtower, granary, road; held by the settlement or region, lost if it burns or is taken). No free-floating relic inventory; rewards grant agents, tags/abilities on agents, or buildings.
+
+- The user, verbatim:
+
+> How are you at boardgames? Do you know the basic trick of converting your actions into  expected point values and trying to maximize the per turn points over approximately the game time frame?
+> I wonder if we can borrow ideas from two of my favorite games Dominion and Faeria. Dominion each round has decks that you can purchase and permuting them changes what strategy is viable each time you play. Here the opportunities are like the cards you can purchase in Dominion but they are not all uniform within a stack and the world state is what generates them and permutes what is available for each run. For readability I would make a timer over each location oportunite and clicking it would show the card for you to read.
+>
+> Faeria also adds positioning to the game and spreading your lands. I think we should ignore that for now but a potentially interesting thing is having the resources you dispatch have board position that impacts things (locking down enemies etc) let's do the simpler version first.
+
+- → Dominion's kingdom: the world state generates each run's set of opportunity stacks (not uniform within a stack),
+  permuting which strategies are viable run to run. Card values in expected points per turn over the remaining horizon;
+  the simulator's bots include an EV-per-turn player and a simple baseline (Dominion's Big Money) so balance means more
+  than one strategy viable per kingdom. A timer over each location; tapping shows the card. Faeria-style positioning of
+  dispatched agents (locking down enemies) deferred: the simpler version first.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
