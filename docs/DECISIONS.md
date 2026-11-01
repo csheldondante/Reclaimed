@@ -322,6 +322,8 @@ each was implemented.
 
 - The user, verbatim: "Each should have world consequences that are visible. A occupied city, refugees fleeing, a toppled empire, a flooded civilization etc" → every card's outcomes and expiry carry real world-state changes (settlement conditions, refugee flows, faction power and owners, region statuses) through WorldState.apply, shown in the card lab's world panel and log, and listed on each card beside its gameplay reward.
 
+- The user, verbatim: "Let's not even have rolls for now. Let's assume you assign resources it resolves one way and if not it may trigger an on expires effect" → the card lab is deterministic: a committed card resolves to its one outcome after its duration; an uncommitted one may fire its onExpire when it expires. Odds stay possible in the contract for later.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
