@@ -68,6 +68,49 @@ export interface Settlement {
   needs: Job[];
   /** who built it before its people, if they took it over (adaptive reuse: a ruin lived in) */
   founded?: { civ: string; run?: number; over?: string };
+  /** (round 120, `cities`) what it's for, read from the land and the world state (settle/purpose.ts): it shapes the
+   *  layout, the buildings and the jobs. The GM and the wiki read it. */
+  purpose?: SettlementPurposeRec;
+  /** (round 120) its story: why it was founded, who holds it, what happened to it (shown in its fabric: a burned
+   *  quarter, newer walls, a flooded lower town). The GM and the wiki read it. */
+  story?: SettlementStory;
+}
+
+/** What a settlement is for (round 120, the user: "different settlements have different purposes like trading posts,
+ *  mines, lumber camps, etc."). */
+export type SettlementPurpose = 'mining' | 'port' | 'lumber' | 'farming' | 'trading' | 'hold';
+
+export interface SettlementPurposeRec {
+  kind: SettlementPurpose;
+  /** why the land made it this, in a sentence (the GM's and the wiki's) */
+  why: string;
+  /** every purpose's score from the land (the highest won) */
+  scores: Record<SettlementPurpose, number>;
+  /** what its people do (roles), the purpose's first */
+  trades: string[];
+}
+
+/** One thing that happened to a settlement (round 120: "towns should have stories"). */
+export interface SettlementStoryEvent {
+  what: 'founded' | 'raided' | 'walled' | 'burned' | 'flooded' | 'adapted' | 'grew' | 'ruined';
+  /** the run it happened in (negative: before the first run — the deep past) */
+  run: number;
+  note: string;
+  /** where its mark is in the fabric (world units: a burned quarter's middle and reach; a flood's level is `level`) */
+  at?: [number, number];
+  radius?: number;
+  level?: number;
+  /** a world-state event's id, when it came from one (WorldState.history) */
+  cause?: string;
+}
+
+export interface SettlementStory {
+  /** why it was founded, in a sentence */
+  founding: string;
+  /** who holds it (its realm, or a world faction that took it) */
+  owner: FactionId | null;
+  /** what happened, oldest first */
+  events: SettlementStoryEvent[];
 }
 
 /** A building: placed on cells of a grid; what it is and does is its thing's composition (recipe.ts). */
@@ -88,7 +131,9 @@ export interface Building {
 
 /** Work for agents (docs/AGENTS.md: jobs are fields): build, repair, haul, farm, mine, fell, guard, raid. */
 export interface Job {
-  kind: 'build' | 'repair' | 'adapt' | 'haul' | 'farm' | 'mine' | 'dig' | 'salvage' | 'fell' | 'make' | 'trade' | 'guard' | 'raid' | 'flee';
+  kind: 'build' | 'repair' | 'adapt' | 'haul' | 'farm' | 'mine' | 'dig' | 'salvage' | 'fell' | 'make' | 'trade' | 'guard' | 'raid' | 'flee'
+    /** (round 120, purposes) a sawmill's, a mill's, the docks' and the stables' work */
+    | 'saw' | 'mill' | 'load' | 'sail' | 'tend';
   at: [number, number];
   /** a building, a thing, a resource, a recipe, a target */
   ref?: string;

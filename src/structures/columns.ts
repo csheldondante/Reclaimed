@@ -38,9 +38,11 @@ export function columnsOf(plan: CityPlan): ColumnSpan[] {
   // (linear features: a wall from its foot to its walk, a bridge's deck — its arches stay open underneath — ids −2 and
   // below, one a feature; roads lie on the ground: nothing to claim)
   // (the keep: its own frame on the plaza, no tiles of its own — one instance with the ramparts)
-  for (const m of plan.megas) if (m.kind === 'keep') raster(m.frame, m.z0 - 0.6, m.z1 - 1, -1, seen, out);
+  // (round 120: a lighthouse's tower and a windmill's body likewise; a headframe is an open frame — nothing to claim)
+  for (const m of plan.megas) if (m.kind === 'keep' || m.kind === 'lighthouse' || m.kind === 'windmill') raster(m.kind === 'keep' ? m.frame : shrinkFrame(m.frame, 0.7), m.z0 - 0.6, m.z1 - 1, -1, seen, out);
   plan.linear.forEach((f, k) => {
-    if (f.kind !== 'wall' && f.kind !== 'bridge') return;
+    // (round 120: a pier's deck as a bridge's, the water free under it)
+    if (f.kind !== 'wall' && f.kind !== 'bridge' && f.kind !== 'pier') return;
     const S = resample(f, 2);
     for (let i = 0; i + 1 < S.length; i++) {
       const a = S[i];
@@ -51,6 +53,12 @@ export function columnsOf(plan: CityPlan): ColumnSpan[] {
     }
   });
   return out;
+}
+
+function shrinkFrame(f: V2[], k: number): V2[] {
+  const cx = (f[0][0] + f[1][0] + f[2][0] + f[3][0]) / 4;
+  const cy = (f[0][1] + f[1][1] + f[2][1] + f[3][1]) / 4;
+  return f.map((p) => [cx + (p[0] - cx) * k, cy + (p[1] - cy) * k] as V2);
 }
 
 /** the hex columns whose centres lie in a frame: one span each (a column already taken keeps its first) */

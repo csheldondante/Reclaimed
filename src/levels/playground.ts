@@ -29,6 +29,7 @@ import { MAT } from '../world/materials';
 import type { MapData } from '../world/mapgen';
 import { cellAt, cellPos, ROW_H } from '../world/lattice';
 import { holdRivers, type AuthoredRiver } from '../world/rivertable';
+import type { TraitStationDriver } from './traitstation';
 
 const G = 10;
 
@@ -57,6 +58,8 @@ export interface StationKit {
    * at most `wrap` columns wide, `above` cells over the ground, each by the picked solver variant
    */
   dropModels(ids: string[], x: number, y: number, above: number, wrap?: number): void;
+  /** (LW1) the traits station's driver, where the level has the trait system on its agents (levels/traitlab.ts) */
+  traits?: TraitStationDriver;
 }
 
 export interface Station {

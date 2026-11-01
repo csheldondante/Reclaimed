@@ -313,11 +313,15 @@ id | name | kind | tier | climate | ground (min/mean/max z) | water | stamps | s
 ### Bumku `s53`
 - A town (port) in the Fields of Karkmo (region 2171: plains, lowland, temperate); 545 from the start; cell 14064,5050.
 - Faction: The Baummask Moot `f-baummask`. Condition: thriving.
+- Purpose: **farming** — fertile ground in the plains; its people: farmer, miller.
+- Story: Bumku was founded by The Baummask Moot 2 generations ago for fertile ground in the plains. Since: raided by The Salt Fleet; walls raised after the raid, newer stone than the town.
 - Road to Muru `s84`: 1099 long, through plains, range, tundra.
 
 ### Muru `s84`
 - A town (port) in Bra Flats (region 2023: plains, lowland, temperate); 1155 from the start; cell 14544,4606.
 - Faction: The Baummask Moot `f-baummask`. Condition: thriving.
+- Purpose: **port** — a harbour where the land meets the sea; its people: docker, sailor, fisher, trader.
+- Story: Muru was founded by The Baummask Moot 2 generations ago for a harbour where the land meets the sea. Since: raided by The Salt Fleet; walls raised after the raid, newer stone than the town.
 - Road to Vagug `s7`: 736 long, through plains, tundra.
 - Road to Bumku `s53`: 1099 long, through plains, range, tundra.
 - Road to Thokharsk `s73`: 885 long, through tundra, plains; crosses by a bridge in Bethek Tundra (1935).
@@ -325,12 +329,16 @@ id | name | kind | tier | climate | ground (min/mean/max z) | water | stamps | s
 ### Rogau `s60`
 - A village (port) in Rauhan Flats (region 2299: plains, lowland, temperate, dry); 1362 from the start; cell 12367,5309.
 - Faction: The Baummask Moot `f-baummask`. Condition: thriving.
+- Purpose: **port** — a harbour where the land meets the sea; its people: docker, sailor, fisher, trader.
+- Story: Rogau was founded by The Baummask Moot 1 generation ago for a harbour where the land meets the sea.
 - Road to Raukausk `s10`: 1067 long, through lavafield, dunes, plains.
 - Road to Mobra `s20`: 1305 long, through plains; crosses by a bridge in Rauk Downs (1779), a bridge in Thado Downs (1939), a bridge in Hark Plain (2104), a bridge in Rauhan Flats (2299).
 
 ### Vagug `s7`
 - A city (port) in the Fields of Hegaug (region 1793: plains, lowland, cold, wet); 1371 from the start; cell 14096,4014.
 - Faction: The Bagar Concord `f-bagar`. Condition: thriving.
+- Purpose: **lumber** — the plains's forest and a river to float the logs down; its people: woodcutter, sawyer, raftsman.
+- Story: Vagug was founded by The Bagar Concord 4 generations ago for the plains's forest and a river to float the logs down. Since: raided by The Salt Fleet; walls raised after the raid, newer stone than the town.
 - Road to Muru `s84`: 736 long, through plains, tundra.
 - Road to Garka `s102`: 903 long, through plains, tundra; crosses by a bridge in the Barrens of Rald (1487).
 - Road to Movar `s127`: 962 long, through plains, tundra, crystalfield, rift; crosses by a bridge in Marn Chasm (1702).
@@ -338,12 +346,16 @@ id | name | kind | tier | climate | ground (min/mean/max z) | water | stamps | s
 ### Movar `s127`
 - A city (port) in the Gash of Buvar (region 1687: rift, lowland, cold, wet); 1565 from the start; cell 13199,3829.
 - Faction: The Bagar Concord `f-bagar`. Condition: thriving.
+- Purpose: **port** — a harbour where the land meets the sea; its people: docker, sailor, fisher, trader.
+- Story: Movar was founded by The Bagar Concord 4 generations ago for a harbour where the land meets the sea. Since: raided by The Hollow Court; a quarter burned when The Hollow Court raided it; it was never rebuilt; walls raised after the raid, newer stone than the town.
 - Road to Vagug `s7`: 962 long, through plains, tundra, crystalfield, rift; crosses by a bridge in Marn Chasm (1702).
 - Road to Brumbrurd `s49`: 749 long, through plains, rift.
 
 ### Raukausk `s10`
 - A village (port) in Vaskba Embers (region 2639: lavafield, lowland, warm, dry); 1619 from the start; cell 12272,6382.
 - Faction: The Baummask Moot `f-baummask`. Condition: thriving.
+- Purpose: **port** — a harbour where the land meets the sea; its people: docker, sailor, fisher, trader.
+- Story: Raukausk was founded by The Baummask Moot 1 generation ago for a harbour where the land meets the sea. Since: raided by The Salt Fleet; a quarter burned when The Salt Fleet raided it; it was never rebuilt; walls raised after the raid, newer stone than the town.
 - Road to Brebrudru `s35`: 1333 long, through lavafield, dunes, craters, plains, rift; crosses by a bridge in Gethu Waste (2751), a bridge in the Gash of Dubom (3106).
 - Road to Rogau `s60`: 1067 long, through lavafield, dunes, plains.
 - Road to Darkaug `s117`: 1181 long, through lavafield, dunes, highlands; crosses by a bridge in Mothuth Sands (2984), switchbacks in Mothuth Sands (2984).
@@ -351,30 +363,40 @@ id | name | kind | tier | climate | ground (min/mean/max z) | water | stamps | s
 ### Huggek `s120`
 - A city (port) in Brauhag Fields (region 2211: plains, lowland, temperate, dry); 1636 from the start; cell 15344,5346.
 - Faction: The Baummask Moot `f-baummask`. Condition: thriving.
+- Purpose: **port** — a harbour where the land meets the sea; its people: docker, sailor, fisher, trader.
+- Story: Huggek was founded by The Baummask Moot 4 generations ago for a harbour where the land meets the sea. Since: raided by The Salt Fleet; walls raised after the raid, newer stone than the town.
 - Road to Thauhaman `s26`: 747 long, through plains; crosses by a bridge in Draumogan Fields (1988).
 - Road to Drauke `s43`: 1201 long, through plains, dunes, range; crosses by a ramp in Beldrarn Range (2676), a ramp in Thug Downs (2577), a bridge in Thug Downs (2577), a bridge in Brauhag Fields (2211).
 
 ### Drauke `s43`
 - A city (port) in Hoha Dunes (region 2747: dunes, lowland, warm); 1682 from the start; cell 15120,6604.
 - Faction: The Baummask Moot `f-baummask`. Condition: thriving.
+- Purpose: **port** — a harbour where the land meets the sea; its people: docker, sailor, fisher, trader.
+- Story: Drauke was founded by The Baummask Moot 4 generations ago for a harbour where the land meets the sea. Since: raided by The Salt Fleet; a quarter burned when The Salt Fleet raided it; it was never rebuilt; walls raised after the raid, newer stone than the town.
 - Road to Brekbraug `s81`: 888 long, through plains, dunes, crystalfield; crosses by a bridge in Voskmom Waste (3099).
 - Road to Huggek `s120`: 1201 long, through plains, dunes, range; crosses by a ramp in Beldrarn Range (2676), a ramp in Thug Downs (2577), a bridge in Thug Downs (2577), a bridge in Brauhag Fields (2211).
 
 ### Brebrudru `s35`
 - A village (port) in Beldme Rift (region 3114: rift, lowland, hot, wet); 1736 from the start; cell 13039,7381.
 - Faction: The Baummask Moot `f-baummask`. Condition: thriving.
+- Purpose: **port** — a harbour where the land meets the sea; its people: docker, sailor, fisher, trader.
+- Story: Brebrudru was founded by The Baummask Moot 1 generation ago for a harbour where the land meets the sea.
 - Road to Raukausk `s10`: 1333 long, through lavafield, dunes, craters, plains, rift; crosses by a bridge in Gethu Waste (2751), a bridge in the Gash of Dubom (3106).
 - Road to Deharm `s24`: 800 long, through rift; crosses by a bridge in the Chasm of Dauthu (3207).
 
 ### Mobra `s20`
 - A village (port) in Rauk Downs (region 1779: plains, lowland, cold, wet); 1957 from the start; cell 12239,4051.
 - Faction: The Bagar Concord `f-bagar`. Condition: thriving.
+- Purpose: **port** — a harbour where the land meets the sea; its people: docker, sailor, fisher, trader.
+- Story: Mobra was founded by The Bagar Concord 1 generation ago for a harbour where the land meets the sea. Since: raided by The Salt Fleet; a quarter burned when The Salt Fleet raided it; it was never rebuilt; walls raised after the raid, newer stone than the town; the water rose over the lower town; its low houses stand empty.
 - Road to Brumbrurd `s49`: 922 long, through plains, crystalfield, rift; crosses by a bridge in Budro Downs (1654), a bridge in Baurd Flats (1459).
 - Road to Rogau `s60`: 1305 long, through plains; crosses by a bridge in Rauk Downs (1779), a bridge in Thado Downs (1939), a bridge in Hark Plain (2104), a bridge in Rauhan Flats (2299).
 
 ### Thauhaman `s26`
 - A city (port) in Thatho Plain (region 1962: plains, lowland, temperate); 1990 from the start; cell 15536,4606.
 - Faction: The Baummask Moot `f-baummask`. Condition: thriving.
+- Purpose: **port** — a harbour where the land meets the sea; its people: docker, sailor, fisher, trader.
+- Story: Thauhaman was founded by The Baummask Moot 4 generations ago for a harbour where the land meets the sea.
 - Road to Thokharsk `s73`: 645 long, through plains, tundra; crosses by a bridge in Marrosk Barrens (1699).
 - Road to Harndok `s105`: 1586 long, through plains, range; crosses by a tunnel in Brevarg Teeth (2188), a bridge in Draumogan Fields (1988), a bridge in Drarkath Downs (2066), a bridge in Ruth Fields (2176), a bridge in the Fields of Ruvask (2166).
 - Road to Huggek `s120`: 747 long, through plains; crosses by a bridge in Draumogan Fields (1988).
@@ -382,6 +404,8 @@ id | name | kind | tier | climate | ground (min/mean/max z) | water | stamps | s
 ### Thokharsk `s73`
 - A village (port) in Marrosk Barrens (region 1699: tundra, lowland, cold, wet); 1996 from the start; cell 15216,4014.
 - Faction: The Bagar Concord `f-bagar`. Condition: thriving.
+- Purpose: **port** — a harbour where the land meets the sea; its people: docker, sailor, fisher, trader.
+- Story: Thokharsk was founded by The Bagar Concord 1 generation ago for a harbour where the land meets the sea. Since: raided by The Salt Fleet; walls raised after the raid, newer stone than the town; the water rose over the lower town; its low houses stand empty.
 - Road to Thauhaman `s26`: 645 long, through plains, tundra; crosses by a bridge in Marrosk Barrens (1699).
 - Road to Muru `s84`: 885 long, through tundra, plains; crosses by a bridge in Bethek Tundra (1935).
 - Road to Garka `s102`: 1511 long, through tundra; crosses by a bridge in Gargmen Tundra (1754), a bridge in Kobek Steppe (1590), a bridge in the Barrens of Rald (1487).
@@ -389,6 +413,8 @@ id | name | kind | tier | climate | ground (min/mean/max z) | water | stamps | s
 ### Garka `s102`
 - A town (port) in Drukbar Tundra (region 1502: tundra, lowland, cold, wet); 2150 from the start; cell 14671,3311.
 - Faction: The Bagar Concord `f-bagar`. Condition: thriving.
+- Purpose: **port** — a harbour where the land meets the sea; its people: docker, sailor, fisher, trader.
+- Story: Garka was founded by The Bagar Concord 2 generations ago for a harbour where the land meets the sea. Since: raided by The Hollow Court; walls raised after the raid, newer stone than the town; the water rose over the lower town; its low houses stand empty.
 - Road to Vagug `s7`: 903 long, through plains, tundra; crosses by a bridge in the Barrens of Rald (1487).
 - Road to Gard `s72`: 707 long, through tundra.
 - Road to Thokharsk `s73`: 1511 long, through tundra; crosses by a bridge in Gargmen Tundra (1754), a bridge in Kobek Steppe (1590), a bridge in the Barrens of Rald (1487).
@@ -396,12 +422,16 @@ id | name | kind | tier | climate | ground (min/mean/max z) | water | stamps | s
 ### Thevu `s138`
 - A village (port) in the Fens of Hutha (region 3336: marsh, lowland, hot, wet); 2158 from the start; cell 14703,7751.
 - Faction: The Baummask Moot `f-baummask`. Condition: thriving.
+- Purpose: **lumber** — the marsh's forest and a river to float the logs down; its people: woodcutter, sawyer, raftsman.
+- Story: Thevu was founded by The Baummask Moot 1 generation ago for the marsh's forest and a river to float the logs down. Since: raided by The Salt Fleet; a quarter burned when The Salt Fleet raided it; it was never rebuilt; walls raised after the raid, newer stone than the town.
 - Road to Kuharm `s14`: 741 long, through marsh; crosses by a bridge in the Mire of Kug (3395), a bridge in the Fens of Hutha (3336).
 - Road to Brekbraug `s81`: 714 long, through dunes, marsh; crosses by a bridge in Vaskbrosk Sands (3218).
 
 ### Brumbrurd `s49`
 - A town (port) in Baurd Flats (region 1459: plains, lowland, cold, wet); 2182 from the start; cell 12752,3274.
 - Faction: The Bagar Concord `f-bagar`. Condition: thriving.
+- Purpose: **lumber** — the plains's forest and a river to float the logs down; its people: woodcutter, sawyer, raftsman.
+- Story: Brumbrurd was founded by The Bagar Concord 2 generations ago for the plains's forest and a river to float the logs down.
 - Road to Mobra `s20`: 922 long, through plains, crystalfield, rift; crosses by a bridge in Budro Downs (1654), a bridge in Baurd Flats (1459).
 - Road to Movar `s127`: 749 long, through plains, rift.
 - Road to Broga `s132`: 637 long, through plains, crystalfield, rift.
@@ -409,6 +439,8 @@ id | name | kind | tier | climate | ground (min/mean/max z) | water | stamps | s
 ### Deharm `s24`
 - A city (port) in the Gash of Rarro (region 3335: rift, lowland, hot, wet); 2267 from the start; cell 13359,8121.
 - Faction: The Baummask Moot `f-baummask`. Condition: thriving.
+- Purpose: **port** — a harbour where the land meets the sea; its people: docker, sailor, fisher, trader.
+- Story: Deharm was founded by The Baummask Moot 4 generations ago for a harbour where the land meets the sea. Since: raided by The Hollow Court; a quarter burned when The Hollow Court raided it; it was never rebuilt; walls raised after the raid, newer stone than the town; the water rose over the lower town; its low houses stand empty.
 - Road to Vaukask `s17`: 715 long, through marsh, rift; crosses by a bridge in Bauban Rift (3647), a bridge in Thadra Marsh (3436), a bridge in the Gash of Rarro (3335).
 - Road to Brebrudru `s35`: 800 long, through rift; crosses by a bridge in the Chasm of Dauthu (3207).
 - Road to Drebrem `s87`: 1359 long, through rift, plains, hills; crosses by a bridge in Hokeg Plain (3352).
@@ -416,24 +448,32 @@ id | name | kind | tier | climate | ground (min/mean/max z) | water | stamps | s
 ### Brekbraug `s81`
 - A village (port) in Voskmom Waste (region 3099: dunes, lowland, hot, wet); 2305 from the start; cell 15311,7455.
 - Faction: The Baummask Moot `f-baummask`. Condition: thriving.
+- Purpose: **port** — a harbour where the land meets the sea; its people: docker, sailor, fisher, trader.
+- Story: Brekbraug was founded by The Baummask Moot 1 generation ago for a harbour where the land meets the sea. Since: raided by The Salt Fleet; walls raised after the raid, newer stone than the town; the water rose over the lower town; its low houses stand empty.
 - Road to Drauke `s43`: 888 long, through plains, dunes, crystalfield; crosses by a bridge in Voskmom Waste (3099).
 - Road to Thevu `s138`: 714 long, through dunes, marsh; crosses by a bridge in Vaskbrosk Sands (3218).
 
 ### Hanthauth `s124`
 - A village (cliffside) in Daumo Heights (region 3123: highlands, plateau, hot, wet); 2493 from the start; cell 11888,7492.
 - Faction: The Baummask Moot `f-baummask`. Condition: thriving.
+- Purpose: **hold** — a defensible height over its cliff; its people: guard, smith.
+- Story: Hanthauth was founded by The Baummask Moot 1 generation ago for a defensible height over its cliff.
 - Road to Drebrem `s87`: 1063 long, through hills, plains, range, highlands; crosses by a lift in Duld Heights (3168).
 - Road to Darkaug `s117`: 728 long, through highlands, dunes; crosses by switchbacks in Mothuth Sands (2984), a bridge in Mothuth Sands (2984), a lift in Daumo Heights (3123).
 
 ### Drebrem `s87`
 - A village (port) in Muthun Knolls (region 3475: hills, upland, hot, wet); 2563 from the start; cell 12528,8158.
 - Faction: The Baummask Moot `f-baummask`. Condition: thriving.
+- Purpose: **lumber** — the hills's forest and a river to float the logs down; its people: woodcutter, sawyer, raftsman.
+- Story: Drebrem was founded by The Baummask Moot 1 generation ago for the hills's forest and a river to float the logs down. Since: raided by The Salt Fleet; walls raised after the raid, newer stone than the town.
 - Road to Deharm `s24`: 1359 long, through rift, plains, hills; crosses by a bridge in Hokeg Plain (3352).
 - Road to Hanthauth `s124`: 1063 long, through hills, plains, range, highlands; crosses by a lift in Duld Heights (3168).
 
 ### Darkaug `s117`
 - A village (cliffside) in Rag Moor (region 2901: highlands, plateau, warm); 2582 from the start; cell 11471,7011.
 - Faction: The Baummask Moot `f-baummask`. Condition: thriving.
+- Purpose: **hold** — a defensible height over its cliff; its people: guard, smith.
+- Story: Darkaug was founded by The Baummask Moot 1 generation ago for a defensible height over its cliff.
 - Road to Raukausk `s10`: 1181 long, through lavafield, dunes, highlands; crosses by a bridge in Mothuth Sands (2984), switchbacks in Mothuth Sands (2984).
 - Road to Bragu `s116`: 1010 long, through highlands, escarpment; crosses by switchbacks in the Moor of Bukok (3018).
 - Road to Hanthauth `s124`: 728 long, through highlands, dunes; crosses by switchbacks in Mothuth Sands (2984), a bridge in Mothuth Sands (2984), a lift in Daumo Heights (3123).

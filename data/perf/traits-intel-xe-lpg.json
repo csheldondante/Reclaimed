@@ -1,0 +1,89 @@
+{
+  "when": "2026-11-01T01:45:00.033Z",
+  "size": "412x915",
+  "dpr": 2.6,
+  "agents": 1000,
+  "adapter": "intel / xe-lpg",
+  "living": 500,
+  "dead": 500,
+  "modules": [
+    "status",
+    "raise",
+    "heal",
+    "holy_harm",
+    "typed_damage",
+    "caps",
+    "look"
+  ],
+  "rows": [
+    {
+      "on": true,
+      "frames": 235,
+      "gpuFrameMs": 10.677776795744691,
+      "agentsMs": 0.48485577872340435,
+      "traitsCpuMsPerTick": 0.015551405600304468
+    },
+    {
+      "on": false,
+      "frames": 215,
+      "gpuFrameMs": 11.929215860465112,
+      "agentsMs": 0.4682778186046514,
+      "traitsCpuMsPerTick": 0
+    },
+    {
+      "on": true,
+      "frames": 211,
+      "gpuFrameMs": 12.16902079620853,
+      "agentsMs": 0.5662692037914692,
+      "traitsCpuMsPerTick": 0.015547786695488924
+    },
+    {
+      "on": false,
+      "frames": 210,
+      "gpuFrameMs": 12.197243923809518,
+      "agentsMs": 0.48631739047619066,
+      "traitsCpuMsPerTick": 0.0005555378323299181
+    },
+    {
+      "on": true,
+      "frames": 230,
+      "gpuFrameMs": 11.050714904347826,
+      "agentsMs": 0.5062780739130432,
+      "traitsCpuMsPerTick": 0.008881784255930397
+    },
+    {
+      "on": false,
+      "frames": 225,
+      "gpuFrameMs": 11.35585499555556,
+      "agentsMs": 0.4361856755555556,
+      "traitsCpuMsPerTick": 0.0005549089565015674
+    },
+    {
+      "on": true,
+      "frames": 189,
+      "gpuFrameMs": 13.870595608465608,
+      "agentsMs": 0.6751288306878304,
+      "traitsCpuMsPerTick": 0.009997997486815608
+    },
+    {
+      "on": false,
+      "frames": 225,
+      "gpuFrameMs": 11.224643484444446,
+      "agentsMs": 0.4256746399999998,
+      "traitsCpuMsPerTick": 0
+    }
+  ],
+  "result": {
+    "gpuFrameMs": {
+      "on": 11.942,
+      "off": 11.677,
+      "diff": 0.265
+    },
+    "agentsPassMs": {
+      "on": 0.558,
+      "off": 0.454,
+      "diff": 0.104
+    },
+    "traitsCpuMsPerTick": 0.0125
+  }
+}

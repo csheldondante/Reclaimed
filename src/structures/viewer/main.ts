@@ -2,7 +2,9 @@
 // and zoom"). Pick a tile system and a style, a seed and a size; see a building, a district or the city; turn (drag),
 // zoom (wheel, pinch), pan (right-drag, two fingers); the time of day (the windows light at dusk); overlays for the
 // tiles and the baked nav. Every setting is in the URL (scripts and screenshots open the same view).
-import type { CitySpec, CityPlan, GroundFn, StructurePieces } from '../../api/contracts/structures';
+// (round 120, `cities`: a purpose — port, mining, lumber, farming, trading, hold — on ground that has what it needs (a
+// coast, a river, a mountain); day or night (the lights' pools); the wind for the banners; the town's history worn in.)
+import type { CityMark, CityPurpose, CitySpec, CityPlan, GroundFn, StructurePieces } from '../../api/contracts/structures';
 import type { GridStyle } from '../../api/contracts/settlement';
 import { planCity, isolate, grown } from '../plan';
 import { piecesOf, PIECE_FLOATS } from '../pieces';
@@ -26,7 +28,10 @@ const state = {
   storeys: num('storeys', 0),
   density: num('density', 0.8),
   view: (q.get('view') ?? 'city') as 'building' | 'district' | 'city' | 'assets',
-  ground: (q.get('ground') ?? 'hill') as 'flat' | 'hill' | 'slope' | 'gorge' | 'cliff',
+  ground: (q.get('ground') ?? 'hill') as 'flat' | 'hill' | 'slope' | 'gorge' | 'cliff' | 'coast' | 'river' | 'mountain',
+  purpose: (q.get('purpose') ?? 'none') as CityPurpose | 'none',
+  wind: num('wind', 0.8),
+  history: q.get('history') === '1',
   roads: num('roads', 3),
   grow: num('grow', 1),
   farms: num('farms', 2.2),
@@ -41,6 +46,11 @@ const state = {
   py: num('py', 0),
 };
 
+/** (round 120) the sea's level on the grounds with water (coast, river): under it is water */
+const SEA = 11;
+/** the purposes' grounds: what each needs (a port the sea, a lumber camp a river, a mine a mountain) */
+const PURPOSE_GROUND: Record<CityPurpose, string> = { port: 'coast', lumber: 'river', mining: 'mountain', farming: 'flat', trading: 'hill', hold: 'hill' };
+
 const GROUNDS: Record<string, GroundFn> = {
   flat: () => 10,
   hill: (x, y) => 10 + 30 * fbm(x * 0.006 + 3.1, y * 0.006 + 1.7, 11, 4) + 0.06 * x,
@@ -53,7 +63,23 @@ const GROUNDS: Record<string, GroundFn> = {
     const g = Math.abs(d - 120);
     return 26 + 6 * fbm(x * 0.008, y * 0.008, 9, 3) - 24 * Math.max(0, 1 - (g / 22) ** 2);
   },
+  // (round 120) the sea to the east past a wavy shore, deepening out
+  coast: (x, y) => {
+    const shore = state.r * 0.5 + 10 * (fbm(y * 0.012, 3.3, 21, 3) - 0.5);
+    const g = 12.4 + 2 * fbm(x * 0.02, y * 0.02, 5, 3);
+    return x > shore ? g - Math.min(9, (x - shore) * 0.32) : g;
+  },
+  // (round 120) a river past the town's east side, winding north to south
+  river: (x, y) => {
+    const cx = state.r * 0.55 + 7 * Math.sin(y * 0.025);
+    const d = Math.abs(x - cx);
+    return 12.2 + 1.5 * fbm(x * 0.02, y * 0.02, 5, 3) - 4 * Math.max(0, 1 - (d / 8) ** 2);
+  },
+  // (round 120) a mountain rising steeply east of the town
+  mountain: (x, y) => 10 + 1.5 * fbm(x * 0.02, y * 0.02, 5, 3) + Math.max(0, x - state.r * 0.95) * 0.95 + 4 * fbm(x * 0.05, y * 0.05, 8, 2) * Math.min(1, Math.max(0, x - state.r * 0.95) / 10),
 };
+const WATERY = new Set(['coast', 'river']);
+const waterOf = (g: GroundFn): GroundFn => (x, y) => Math.max(0, SEA - g(x, y));
 
 class UnsupportedError extends Error {}
 
@@ -82,7 +108,18 @@ async function boot(): Promise<void> {
     const ground = GROUNDS[state.ground];
     const spec: CitySpec = { seed: state.seed, system: state.system, style: state.style, at: [0, 0], radius: state.r, density: state.density, roads: state.roads, walls: state.walls || undefined, sunk: state.ground === 'cliff' ? 0 : undefined, farmland: state.farms > 1 ? state.r * state.farms : undefined };
     if (state.storeys > 0) spec.storeys = [state.storeys, Math.max(1, state.storeys * 0.4)];
-    plan = planCity(spec, ground);
+    if (state.purpose !== 'none') spec.purpose = state.purpose;
+    if (state.purpose === 'hold') spec.walls = true;
+    // (the history toggle: a quarter burned, walls newer than the town, a flood's lower town — as a settlement's story
+    // marks them, settle/story.ts)
+    if (state.history) {
+      const marks: CityMark[] = [{ kind: 'burned', at: [-state.r * 0.4, state.r * 0.3], r: state.r * 0.3 }, { kind: 'newwalls' }];
+      if (WATERY.has(state.ground)) marks.push({ kind: 'flooded', level: SEA + 1.6 });
+      spec.marks = marks;
+      spec.walls = true;
+    }
+    const water = WATERY.has(state.ground) ? waterOf(ground) : undefined;
+    plan = planCity(spec, ground, water);
     all = piecesOf(grown(plan, state.grow));
     const ms = performance.now() - t0;
     showView();
@@ -98,8 +135,10 @@ async function boot(): Promise<void> {
         const o = (j * n + i) * 4;
         verts[o] = x;
         verts[o + 1] = y;
-        verts[o + 2] = ground(x, y);
-        verts[o + 3] = Math.max(0, 1 - Math.hypot(x, y) / (state.r * 1.05)) * 0.5;
+        const g = ground(x, y);
+        const wet = WATERY.has(state.ground) && g < SEA;
+        verts[o + 2] = wet ? SEA : g;
+        verts[o + 3] = wet ? 2 : Math.max(0, 1 - Math.hypot(x, y) / (state.r * 1.05)) * 0.5;
       }
     const index = new Uint32Array((n - 1) * (n - 1) * 6);
     let k = 0;
@@ -112,7 +151,7 @@ async function boot(): Promise<void> {
     r.setGround(verts, index);
     r.setLines(lines(plan));
     r.showLines = state.tiles || state.nav;
-    ui.stats.textContent = `${plan.stats.tiles} tiles · ${plan.stats.buildings} buildings · ${r.sg.stats.pieces} pieces · ${(r.sg.stats.tris / 1000).toFixed(0)}k tris (far ${(r.sg.stats.lodTris / 1000).toFixed(0)}k) · ${r.sg.stats.draws} draws · planned in ${ms.toFixed(0)} ms`;
+    ui.stats.textContent = `${state.purpose !== 'none' ? `${state.purpose}${plan.works ? '' : ' (no work site on this ground)'} · ` : ''}${plan.stats.tiles} tiles · ${plan.stats.buildings} buildings · ${plan.stats.lights} lights · ${r.sg.stats.pieces} pieces · ${(r.sg.stats.tris / 1000).toFixed(0)}k tris (far ${(r.sg.stats.lodTris / 1000).toFixed(0)}k) · ${r.sg.stats.draws} draws · planned in ${ms.toFixed(0)} ms`;
     writeUrl();
   };
 
@@ -229,8 +268,13 @@ async function boot(): Promise<void> {
       state.px = state.py = 0;
       state.zoom = 1;
       showView();
-    } else if (k === 'tod') {
+    } else if (k === 'tod' || k === 'wind') {
       /* per frame */
+    } else if (k === 'purpose') {
+      // (a purpose brings the ground it needs)
+      if (state.purpose !== 'none') state.ground = PURPOSE_GROUND[state.purpose] as typeof state.ground;
+      ui.sync();
+      rebuild();
     } else if (k === 'grow') {
       // (the town as built so far: the same plan, a share of its build order)
       if (plan) {
@@ -259,7 +303,7 @@ async function boot(): Promise<void> {
     const at = [focusAt[0] + pan[0], focusAt[1] + pan[1], focusAt[2]];
     const eye: [number, number, number] = [at[0] + Math.cos(state.yaw) * Math.cos(state.pitch) * D, at[1] + Math.sin(state.yaw) * Math.cos(state.pitch) * D, at[2] + Math.sin(state.pitch) * D];
     const vp = mul(perspective((32 * Math.PI) / 180, w / h, Math.max(0.5, D * 0.02), D * 8 + 500), lookAt(eye, at, [0, 0, 1]));
-    r.frame({ viewProj: vp, eye, centre: [at[0], at[1], at[2]], reach, fog: 900 + D * 2, ...sky(state.tod) }, w, h);
+    r.frame({ viewProj: vp, eye, centre: [at[0], at[1], at[2]], reach, fog: 900 + D * 2, ...sky(state.tod), time: performance.now() / 1000, wind: state.wind }, w, h);
     // (a GPU error stops the loop: one message, not a flood)
     if (!document.querySelector('.fatal')) requestAnimationFrame(frame);
   };
@@ -361,7 +405,9 @@ function lines(p: CityPlan): Float32Array {
 
 function panel() {
   const el = document.getElementById('panel')!;
-  const api = { stats: document.createElement('div'), onChange: (_k: string) => {} };
+  const api = { stats: document.createElement('div'), onChange: (_k: string) => {}, sync: () => {} };
+  const syncs: (() => void)[] = [];
+  api.sync = () => syncs.forEach((f) => f());
   const row = (label: string, ...kids: HTMLElement[]) => {
     const d = document.createElement('label');
     d.className = 'row';
@@ -370,17 +416,19 @@ function panel() {
     d.append(s, ...kids);
     el.append(d);
   };
-  const select = (k: 'system' | 'style' | 'ground', opts: string[]) => {
+  const select = (k: 'system' | 'style' | 'ground' | 'purpose', opts: string[]) => {
     const s = document.createElement('select');
     for (const o of opts) s.append(new Option(o, o, false, state[k] === o));
+    syncs.push(() => (s.value = state[k]));
     s.onchange = () => {
       (state as Record<string, unknown>)[k] = s.value;
       api.onChange(k);
     };
     return s;
   };
-  const slider = (k: 'r' | 'storeys' | 'density' | 'tod' | 'roads' | 'grow' | 'farms', lo: number, hi: number, step: number, live = false) => {
+  const slider = (k: 'r' | 'storeys' | 'density' | 'tod' | 'roads' | 'grow' | 'farms' | 'wind', lo: number, hi: number, step: number, live = false) => {
     const s = document.createElement('input');
+    syncs.push(() => (s.value = String(state[k])));
     s.type = 'range';
     s.min = String(lo);
     s.max = String(hi);
@@ -405,6 +453,7 @@ function panel() {
   };
   head.append(fold);
   el.append(head);
+  row('purpose', select('purpose', ['none', 'port', 'mining', 'lumber', 'farming', 'trading', 'hold']));
   row('tiles', select('system', ['irregular', 'contour-voronoi', 'radial', 'orthogonal']));
   row('style', select('style', STYLE_IDS));
   const seed = document.createElement('input');
@@ -425,10 +474,25 @@ function panel() {
   row('size', slider('r', 16, 160, 4));
   row('storeys', slider('storeys', 0, 9, 1));
   row('density', slider('density', 0.2, 1, 0.05));
-  row('ground', select('ground', ['flat', 'hill', 'slope', 'gorge', 'cliff']));
+  row('ground', select('ground', ['flat', 'hill', 'slope', 'gorge', 'cliff', 'coast', 'river', 'mountain']));
   row('roads', slider('roads', 0, 6, 1));
   row('farms', slider('farms', 1, 4, 0.1));
   row('time', slider('tod', 0, 1, 0.01, true));
+  // (round 120) day or night at a tap; the wind the banners stream in
+  const dn = document.createElement('div');
+  dn.className = 'views';
+  for (const [label, t] of [['day', 0.35], ['dusk', 0.78], ['night', 0.97]] as const) {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.onclick = () => {
+      state.tod = t;
+      api.sync();
+      api.onChange('tod');
+    };
+    dn.append(b);
+  }
+  el.append(dn);
+  row('wind', slider('wind', 0, 2, 0.05, true));
   row('grown', slider('grow', 0, 1, 0.01, true));
   const views = document.createElement('div');
   views.className = 'views';
@@ -446,14 +510,14 @@ function panel() {
   el.append(views);
   const ov = document.createElement('div');
   ov.className = 'views';
-  for (const k of ['walls', 'tiles', 'nav'] as const) {
+  for (const k of ['walls', 'history', 'tiles', 'nav'] as const) {
     const b = document.createElement('button');
     b.textContent = k;
     b.className = state[k] ? 'on' : '';
     b.onclick = () => {
       state[k] = !state[k];
       b.className = state[k] ? 'on' : '';
-      api.onChange(k === 'walls' ? 'walls' : 'overlay');
+      api.onChange(k === 'walls' || k === 'history' ? k : 'overlay');
     };
     ov.append(b);
   }
@@ -464,7 +528,7 @@ function panel() {
   terrain.textContent = 'on real terrain ↗';
   terrain.target = '_blank';
   const href = () => {
-    const p = new URLSearchParams({ skipmenu: '1', level: 'atlas', city: state.system, cstyle: state.style, cseed: String(state.seed), croads: String(Math.min(state.roads, 3)), ...(state.walls ? { cwalls: '1' } : {}), ...(state.grow < 1 ? { cgrow: String(state.grow) } : {}) });
+    const p = new URLSearchParams({ skipmenu: '1', level: 'atlas', city: state.system, cstyle: state.style, cseed: String(state.seed), croads: String(Math.min(state.roads, 3)), ...(state.walls ? { cwalls: '1' } : {}), ...(state.purpose !== 'none' ? { cpurpose: state.purpose } : {}), ...(state.grow < 1 ? { cgrow: String(state.grow) } : {}) });
     terrain.href = `./?${p}`;
   };
   terrain.onpointerdown = href;

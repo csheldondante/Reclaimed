@@ -278,6 +278,14 @@ each was implemented.
   a process for generating location opportunities from what is there, the hero and the run (thematic, real world
   consequences, gameplay bonuses). Deferred: trees baked into isometric sprites for the low LOD.
 
+- The user, verbatim: "I meant the current technique. The section judge was slower on phone I thought? My main point is they were all fine for now and I want to defer working on physics and focus on the gameplay so let's do that." → lattice x runs stays the default; jb6 stays unmerged on its branch; physics deferred (PH1).
+
+- The user, verbatim, on the cities shots: "This looks good to merge but it's not clear that it has the townscaper property of being able to build vertically and it really doesn't showcase building on varied terrain and the towns don't look that different based on purpose but they do look cool so merge and just take notes of gaps and a Todo to come back and iterate on this" → cities and traits merged (merge123); gaps filed as STR50-STR52.
+
+- The user, verbatim, after trying the Traits Lab on the phone: "Traits are great. Super cool." → LW1 accepted as the base for effects; the open calls (bodies everywhere, the sanctuary sparing allied undead, the look) stay at their defaults until the user says otherwise.
+
+- The user corrected the run-loop draft with "Living World — Strategic Map and Opportunity System", kept verbatim at docs/design/STRATEGIC_MAP.md (authoritative over RUN_LOOP.md where they differ). Its core: every opportunity has resource requirements, costs, duration, outcomes and a location; the player commits resources (no manual allocation, no separate dispatch category); the player resource makes an opportunity the round's playable challenge (character control or building); other resources resolve it autonomously over time; committed resources are locked until it resolves; opportunities run concurrently; commits only from the current strategic location; the GM sets the travel freedom; scouting, rumours and diplomacy reveal opportunities; new resources unlock new kinds; unaffordable ones may stay visible. Three priority systems: the atlas/opportunity map, character control, building. "Opportunities are uniform."
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:

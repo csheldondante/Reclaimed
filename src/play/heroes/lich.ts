@@ -17,6 +17,8 @@
 //   tap the lich, or SLAM           (new in Reclaimed, the wrecking ball) a slam: a crater blown out of the ground
 //                                   under it, a ring of shove and throw, the air slammed out
 //   draw a circle                   a storm: the enemies near rise and circle it, wind and dust swirling up
+//   RAISE (the 💀 button)           (merge123, BACKLOG LW1-1) the fallen round it rise undead and follow it: the world's
+//                                   raise (PlayWorld.raise: the trait system's raise effect); absent there, the button does nothing
 // At most units.maxHeld held at once (the agents hold 8): floating, circling, carried and face to face together.
 
 import type { HeroCamera } from '../../api/contracts/hero';
@@ -68,6 +70,7 @@ export class LichHero extends PlayHero {
     buttons: [
       { icon: '💥', name: 'slam' },
       { icon: '🖐️', name: 'drop all' },
+      { icon: '💀', name: 'raise' },
     ],
     hint: 'Tap the ground: glide · tap a foe: float it, tap again: drain its soul · drag a foe to swing it, let go to fling · flick away: force push · tap the lich (or 💥): slam · drag up from the lich: rise · draw a circle: storm',
   };
@@ -89,6 +92,7 @@ export class LichHero extends PlayHero {
   private soul: { id: UnitId; t: number; from: V3; k: number } | null = null;
   private lastTap: { id: UnitId; t: number; screen: Pt } | null = null;
   private slamT = 0;
+  private raiseT = 0;
   private down: boolean[] = [];
 
   constructor(world: PlayWorld, at: V2, params: LichParams = { ...LICH_DEFAULTS }) {
@@ -153,6 +157,7 @@ export class LichHero extends PlayHero {
   protected step(input: PlayInput, dt: number, hits: Hit[]): void {
     const b = this.b;
     this.slamT = Math.max(0, this.slamT - dt);
+    this.raiseT = Math.max(0, this.raiseT - dt);
     this.heldT = input.drag ? this.heldT + dt : 0;
     this.touch(input.drag, dt);
     const thumb = input.drag?.screenAt ?? null;
@@ -176,9 +181,10 @@ export class LichHero extends PlayHero {
       this.liftFrom ??= this.hover;
       this.hover = Math.max(this.p.floatLow, Math.min(this.p.floatHigh, this.liftFrom + drag.up * FLOAT_PER_PX));
     } else this.liftFrom = null;
-    // buttons: slam, drop all (pressed, not held)
+    // buttons: slam, drop all, raise (pressed, not held)
     if (input.buttons[0] && !this.down[0]) this.slam(hits);
     if (input.buttons[1] && !this.down[1]) this.dropAll();
+    if (input.buttons[2] && !this.down[2]) this.raise();
     this.down = [...input.buttons];
     const carrying = this.carry(input, dt, hits);
     for (const act of input.acts) if (!(carrying && (act.kind === 'flick' || act.kind === 'circle'))) this.power(act, hits);
@@ -418,6 +424,16 @@ export class LichHero extends PlayHero {
     b.heading = Math.atan2(dir[1], dir[0]);
   }
 
+  /** (merge123, LW1-1) Raise the dead: the fallen within raiseReach rise undead and follow it (the world's raise —
+   *  the trait system's effect; the lich only says where). */
+  raise(): void {
+    if (this.raiseT > 0 || !this.world.raise) return;
+    this.raiseT = this.p.raiseEvery;
+    const b = this.b;
+    this.world.raise(b.x, b.y, this.p.raiseReach);
+    this.world.burst('dust', b.x, b.y, this.world.floor(b.x, b.y) + 0.3);
+  }
+
   /** The wrecking ball: a crater under it, a ring of shove and throw, the air slammed out. */
   slam(hits: Hit[]): void {
     if (this.slamT > 0) return;
@@ -557,7 +573,7 @@ export class LichHero extends PlayHero {
   }
 
   looks(): ButtonLook[] {
-    return [{ gauge: 1 - this.slamT / Math.max(this.p.slamEvery, 1e-3) }, { lit: this.held().length > 0 }];
+    return [{ gauge: 1 - this.slamT / Math.max(this.p.slamEvery, 1e-3) }, { lit: this.held().length > 0 }, { gauge: 1 - this.raiseT / Math.max(this.p.raiseEvery, 1e-3) }];
   }
 
   status(): string {
