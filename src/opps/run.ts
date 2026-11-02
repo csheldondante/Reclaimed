@@ -66,6 +66,7 @@ export class OppRun {
     this.clockWas = sit.threat.arrives;
     this.retime();
     this.w = new FactWorld(o.world);
+    HordeStage.clear(this.w);
     this.stage = new HordeStage(this.sr, () => OPP_TUNE.horde);
     // the locus (where the run starts: its settlement, else the nearest standing one) and its cast
     this.locus = this.locusOf();
@@ -366,6 +367,8 @@ export class OppRun {
 
   /** the turn's end: crews due come off, what wasn't taken lapses, the next deal (the detours from the new edge staged) */
   private endTurn(): void {
+    // (a detour is off the road from where it was offered: once the hero has moved on, it isn't there to take)
+    this.engine.withdraw((x) => (DETOURS as readonly string[]).includes(x.template) && !x.opp.challenge?.area.endsWith(`-${this.sr.at}`));
     this.stage.refresh(this.w);
     this.dealt(this.engine.advance());
   }

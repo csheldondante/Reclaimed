@@ -44,8 +44,8 @@ await run({ name: `m124world-${which}`, kind: 'behaviour', size: arg('size', '41
   R.check('a cast of 5-8 named people at the locus', cast.cast.length >= 5 && cast.cast.length <= 8, cast);
 
   /** look at a world point (world units): the window warped there, the card and the map out of the way */
-  const lookAt = async (pt, name, wait = 12000) => {
-    await p.evaluate(async (pt) => {
+  const lookAt = async (pt, name, wait = 12000, zoom = 0) => {
+    await p.evaluate(async (pt, zoom) => {
       const L = window.reclaimed.opps;
       L.card.style.display = 'none';
       L.d.map.close();
@@ -56,7 +56,8 @@ await run({ name: `m124world-${which}`, kind: 'behaviour', size: arg('size', '41
       cam.target[0] = w[0];
       cam.target[1] = w[1];
       cam.target[2] = window.reclaimed.runhero.world.top(w[0], w[1]);
-    }, pt);
+      if (zoom) cam.zoom = zoom;
+    }, pt, zoom);
     await sleep(wait);
     await R.fatal(p);
     await shot(name);
@@ -93,6 +94,7 @@ await run({ name: `m124world-${which}`, kind: 'behaviour', size: arg('size', '41
     await p.evaluate((card) => {
       const L = window.reclaimed.opps;
       L.card.style.display = '';
+      if (L.run.offers.length) L.run.take(null);
       L.selected = L.opps.offered.find((x) => x.template === card).id;
       L.render();
     }, card);
@@ -102,8 +104,14 @@ await run({ name: `m124world-${which}`, kind: 'behaviour', size: arg('size', '41
       const O = window.reclaimed.opps.opps;
       return O.sr.map.areaAt(O.sit.areas.find((a) => a.play.kind === 'deliver'));
     });
+    const townAt0 = await p.evaluate(() => window.reclaimed.opps.opps.sr.map.areaAt(window.reclaimed.opps.opps.sr.finaleArea));
+    if (which === 'tower') {
+      await lookAt(townAt0, 'town-before', 25000, 5);
+      // (back to the hold, where the levy is committed: the town is looked at again when the run gets there)
+      await lookAt(holdAt, 'at-hold', 8000);
+    }
     if (which === 'weir') {
-      await lookAt(holdAt, 'river-before');
+      await lookAt(holdAt, 'river-before', 20000, 4);
       const before = await p.evaluate(() => window.reclaimed.opps.opps.w.ws.region(window.reclaimed.opps.opps.sit.areas.find((a) => a.play.kind === 'deliver').region).wetness);
       R.log(`the hold's region's inflow before: ${before}`);
     }
@@ -125,7 +133,17 @@ await run({ name: `m124world-${which}`, kind: 'behaviour', size: arg('size', '41
     if (which === 'tower') {
       R.check('the world placed it (settlement-building) and the settlements system took it (its plan to make again)', (done.buildings ?? []).includes('watchtower') && (done.placed ?? []).some((x) => x.id === 'watchtower'), done);
       const townAt = await p.evaluate(() => window.reclaimed.opps.opps.sr.map.areaAt(window.reclaimed.opps.opps.sr.finaleArea));
-      await lookAt(townAt, 'town', 20000);
+      await lookAt(townAt, 'town', 25000, 5);
+      const towerAt = await p.evaluate(() => {
+        const O = window.reclaimed.opps.opps;
+        const S = window.reclaimed.opps.d.settlements;
+        const pl = S.plan(O.sit.target.settlement);
+        const b = pl?.city.placed?.[0];
+        const t = b ? S.things.get(`${O.sit.target.settlement}:b${b.building}`) : null;
+        return t ? [t.place.at[0], t.place.at[1]] : null;
+      });
+      R.log(`the watchtower stands at ${JSON.stringify(towerAt)}`);
+      if (towerAt) await lookAt(towerAt, 'tower-close', 8000, 9);
       const plan = await p.evaluate(() => {
         const O = window.reclaimed.opps.opps;
         const pl = window.reclaimed.opps.d.settlements.plan(O.sit.target.settlement);
@@ -147,7 +165,7 @@ await run({ name: `m124world-${which}`, kind: 'behaviour', size: arg('size', '41
       R.check('burned: the settlements system has it ruined (the settlement-condition event, its one owner)', end.condition === 'ruined', end);
       R.check("fallen: the town's holder is the dead's faction, in the world and the settlements system (settlement-owner)", end.now === end.foe && end.world === end.foe, end);
     } else {
-      await lookAt(holdAt, 'river-after', 15000);
+      await lookAt(holdAt, 'river-after', 20000, 4);
       const probe = await p.evaluate(() => {
         const O = window.reclaimed.opps.opps;
         const hold = O.sit.areas.find((a) => a.play.kind === 'deliver');

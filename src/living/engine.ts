@@ -673,7 +673,15 @@ export class LivingEngine {
     return this.deal();
   }
 
-  /** what's on the board now (offered, not committed) */
+  /** (merge124) offers that no longer stand where the player is (a detour from an area left behind) leave the board
+   *  unanswered and without their lapse: they were passed by, not let go */
+  withdraw(due: (o: Offer) => boolean): Offer[] {
+    const gone = this.offers.filter((o) => o.status === 'offered' && due(o));
+    this.offers = this.offers.filter((o) => !gone.includes(o));
+    return gone;
+  }
+
+    /** what's on the board now (offered, not committed) */
   get offered(): Offer[] {
     return this.offers.filter((o) => o.status === 'offered');
   }

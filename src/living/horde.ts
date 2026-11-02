@@ -260,6 +260,14 @@ export class HordeStage implements Stage {
     }
   }
 
+  /** a run's scaffolding left by a run that never ended (a hero chosen again, a run abandoned): cleared before a new
+   *  one stages — a run's entities never outlive it */
+  static clear(w: FactWorld): void {
+    for (const e of w.facts.find({})) if (e.id.startsWith('run:')) w.facts.remove(e.id, 'a new run');
+    for (const key of ['voice_of', 'target_of', 'hold_of'])
+      for (const e of w.facts.find({ tag: { scope: 'condition', key } })) w.facts.dropTag(e.id, 'condition', key);
+  }
+
   /** the run is over: its scaffolding (the host, the areas, the ways, the fields) leaves the fact layer — what it did
    *  stays in the history and the world */
   unstage(w: FactWorld): void {
