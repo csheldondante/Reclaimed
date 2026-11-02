@@ -370,6 +370,8 @@ each was implemented.
   merged). First slice: Briar Hollow in a drought. Plan phases 0 (fact layer), 1 (template engine + world inspector),
   2 (Briar Hollow), 3 (catalog batches), 4 (the army arc).
 
+- The user, verbatim: "Does the river falling or a structure going up need simulation? I think we already have steady flows computed so you can just lower the flow factor coming in and it will dry up. A building going up can just place the structure instead of simulating agents building them. We only need full simulation where the player is looking but our world is robust enough I think that we can do lots of this as near instant cheap mutations." → every opportunity outcome is a near-instant mutation of authoritative state (a river falls by lowering its steady flow's inflow; a structure is placed directly); full simulation only where the player is looking, which reflects the mutated state when it streams in.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
