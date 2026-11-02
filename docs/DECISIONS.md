@@ -389,6 +389,11 @@ each was implemented.
   established cast to the wider world; named characters with charming dialog present cards (a named gnoll petitions for
   the burrows), and each such exchange becomes a relationship fact that can return in later runs.
 
+- The user, verbatim, on the reworked world inspector (facts 5aa6d0f): "This is much better! We will still have to experiment with how we present this to players as the interface is bad but the choices and payoffs and description of the characters presenting them is great. Please proceed with getting it ready to merge into our run structure for now. Next we may add dialogs, interiors, character portraits, and better camera management and zoom handling and foliage. I have a few documents I'll share when you have the bandwidth."
+  → facts (with opportunities) readied and merged into the run structure on merge124: the run's cards come from the fact
+  layer's templates with presenters and rewards. The interface is known-bad and to be experimented with later. Next:
+  dialogs, interiors, character portraits, camera management and zoom, foliage; the user has documents to share.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
