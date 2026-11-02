@@ -139,6 +139,8 @@ fn cutAway(p: vec3<f32>, px: vec2<f32>) -> bool {
 /** (interiors) how far past the focus p is, 0..1 by its amount: past its radius on screen from the focus point */
 fn focusOut(p: vec3<f32>) -> f32 {
   if (CAM.focus.w <= 0.0) { return 0.0; }
+  // (under the shown floor: the building's foundations, the ground — out too)
+  if (p.z < CAM.veil.y - 0.12) { return CAM.focus.w; }
   // (far from its middle: out at once)
   if (length(p.xy - CAM.focus.xy) > CAM.focus.z + 2.0) { return CAM.focus.w; }
   // the footprint's quads: inside one (by the margin), shown; the distance out of the nearest, the fade

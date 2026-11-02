@@ -1450,8 +1450,10 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
         this.gridDrawn = this.drawGrid(pass, this.gridView);
       }
     }
-    if (this.tiles && !SKIP.has('tiles')) this.tiles.draw(pass);
-    for (const f of SKIP.has('far') ? [] : this.extraDraws) f(pass, opts.clear);
+    // (interiors: a focus held whole — a building entered alone in the dark — draws no far land)
+    const focusOnly = (cam.cut.focus?.amount ?? 0) >= 0.999;
+    if (this.tiles && !SKIP.has('tiles') && !focusOnly) this.tiles.draw(pass);
+    for (const f of SKIP.has('far') || focusOnly ? [] : this.extraDraws) f(pass, opts.clear);
     if (this.bodyShown > 0 && !SKIP.has('bodies')) {
       pass.setPipeline(this.bodyPipe);
       pass.setBindGroup(0, this.bodyGroup);

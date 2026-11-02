@@ -160,8 +160,9 @@ fn fsInterior(in: IVOut) -> FOut {
   // (a cut wall's stub: its share of being in front — the silhouette's dark — and the cut's edge, a light rim)
   var front = 0.0;
   var rim = 0.0;
-  // the storey's cut: nothing over its ceiling
+  // the storey's cut: nothing over its ceiling; the storey under it only its flight (seen up through the hole)
   if (in.wpos.z > h0.z) { discard; }
+  if (storey < shown && (kind != 3u || in.wpos.z < floorZ(shown) - 1.1)) { discard; }
   // the storey under: only what's seen down the stair's hole (under the shown floor anyway)
   // walls between the eye and the room: cut down to a stub (a dithered edge), so the room shows
   if ((in.info & 65536u) != 0u && storey == shown) {
@@ -272,7 +273,7 @@ fn fsShaft(in: ShaftOut) -> FOut {
   let h0 = ih(0u);
   var o: FOut;
   o.pick = vec2<u32>(0u);
-  if (in.wpos.z > h0.z) { discard; }
+  if (in.wpos.z > h0.z || focusOut(in.wpos) > 0.5) { discard; }
   // lit: the shadow map at a point between this face and the middle line (the beam's own edge is half in shadow)
   let q = mix(in.wpos, in.core, 0.5);
   let lit = shadowLit(q, vec3<f32>(0.0, 0.0, 1.0));

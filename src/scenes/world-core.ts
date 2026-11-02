@@ -336,7 +336,8 @@ export class WorldCore {
     const screen = context.getCurrentTexture().createView();
     this.renderer.encode(enc, this.post ? this.post.target() : screen, this.camera, {
       // (round 82, V21: under a slice what's cut open of the rock, past every surface, is dark — a section)
-      clear: this.camera.cut.slice !== null ? SECTION_DARK : flashSky(this.light.clear, this.globals.flash),
+      // (interiors: a building entered alone in the dark — the focus whole — on near black)
+      clear: (this.camera.cut.focus?.amount ?? 0) >= 0.999 ? [0.012, 0.012, 0.018] : this.camera.cut.slice !== null ? SECTION_DARK : flashSky(this.light.clear, this.globals.flash),
       sun: this.light.dir,
       rainParticles: Math.round(this.weather.storms.reduce((a, st) => a + q.rain * 0.55 * st.intensity * (st.radius / 26), 0)),
     });
