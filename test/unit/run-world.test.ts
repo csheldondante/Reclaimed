@@ -68,7 +68,9 @@ describe("the run's cards are the living engine's", () => {
     for (const o of offers) {
       const who = r.w.name(o.presenter);
       expect(r.w.facts.entity(o.presenter)?.kind).toBe('person');
-      expect(o.opp.pitch.startsWith(who)).toBe(true);
+      // (dialog2: the presenter's line is said in their petition, not glued onto the pitch)
+      expect(who.length).toBeGreaterThan(0);
+      expect(o.line.length).toBeGreaterThan(0);
       expect(r.engine.template(o.template).reward.text.length).toBeGreaterThan(0);
     }
     // (the run's cards bind the run's real places: the hold is the world's settlement, the host an army in the facts)

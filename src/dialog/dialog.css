@@ -120,3 +120,19 @@
   .dlg-choice { transform: none; }
   .dlg:not(.on) { transform: translate(-50%, 105%); }
 }
+
+/* (dialog2) a petition: narration beside the line, the summary panel, a bigger portrait, answers that can't be chosen */
+.dlg-aside { display: none; font-size: 15px; font-style: italic; color: var(--dlg-dim); margin: 0 0 6px; line-height: 1.4; }
+.dlg-aside.on { display: block; }
+.dlg-facts { display: none; margin-top: 10px; padding: 8px 10px; border-radius: 10px; background: rgba(255, 255, 255, 0.05); border: 1px solid var(--dlg-edge); }
+.dlg-facts.on { display: grid; gap: 4px; }
+.dlg-fact { display: grid; grid-template-columns: 7.2em 1fr; gap: 8px; font-size: 15px; line-height: 1.35; }
+.dlg-fact-k { color: var(--dlg-dim); font-weight: 650; }
+.dlg-fact.good .dlg-fact-v { color: #a8e08a; }
+.dlg-fact.bad .dlg-fact-v { color: #ffad8a; }
+.dlg.petition, .dlg-scrim.petition { position: fixed; }
+.dlg.petition { z-index: 71; max-height: 78vh; max-height: 78dvh; }
+.dlg-scrim.petition { z-index: 70; }
+.dlg.petition .dlg-portrait { width: 72px; height: 72px; border-radius: 14px; background-color: #1a1612; image-rendering: pixelated; }
+.dlg-choice.off { filter: grayscale(1) brightness(0.7); cursor: default; }
+.dlg-why { display: block; font-size: 13px; color: var(--dlg-dim); margin-top: 2px; }

@@ -125,7 +125,7 @@ export const hoverbike: ControllerInfo = {
   id: 'hoverbike',
   name: 'Hover rider',
   icon: '🏍️',
-  line: 'Fast and loose: launch off crests, slash what you pass, slide to a stop.',
+  line: 'Fast and loose. Launch off hills, slash what you pass, and slide to a stop.',
   controls: 'Left thumb: ride · BOOST · swipe on a side of the bike: slash that side · tap a foe: hook it in · tap the ground: swing round it · hold a drag: lance · haul the stick back at speed: slide',
   params: BIKE_PARAMS,
   defaults: BIKE_DEFAULTS,

@@ -25,6 +25,9 @@ stock-take.
   record new user answers in `docs/DECISIONS.md`.
 - Commit at each working milestone and push to `origin`
   (github.com/csheldondante/Reclaimed — the user shares it).
+- **Player-facing text follows docs/WRITING.md** (plain words, one idea a sentence, concrete costs and
+  rewards, no code words, no parentheses). Code comments keep their own style; player text never uses it.
+  `test/unit/writing.test.ts` checks it.
 - **Simplest implementation first, behind a clean interface.** Measure (perf
   overlay, probes) before optimising; record the measurement in the DEVLOG.
 - **One concern per structure.** The user's standing principles: encapsulation,

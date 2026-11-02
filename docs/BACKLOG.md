@@ -12,6 +12,28 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 127 (2026-11-02, session 5, `dialog2`) — petitions as dialogs, a cast with quirks, plain words (DECISIONS, the newest entry: "The writing is incomprehensible")
+
+The user (verbatim): "Use simple plain language like in the worked examples and fix whatever in the prompt produced that
+monstrosity. I want a cast of characters with interesting personality quirks and rolled for traits to make them
+likable. Introduce characters as needed and have them deliver the petition but you can't do that with cards you need
+to do that with dialogs." DEVLOG dialog2.
+
+| id | item | size | status |
+|---|---|---|---|
+| DLG-1 | docs/WRITING.md: the style guide for player-facing text, good and bad examples, the user's catalog as the standard; CLAUDE.md and docs/GM.md point at it | S | done (`dialog2`) |
+| DLG-2 | Every player-facing string rewritten: the run's and Briar Hollow's templates, encounters, the ways' notes, the template situation and the GM's seed 1 situation, roster, intro, status, map hint and timers, hero lines; regions named from the wiki | M | done (`dialog2`) |
+| DLG-3 | The style lint (test/unit/writing.test.ts): code words, parentheses, semicolons, joining dashes, unfilled braces, sentences over 20 words — over templates, seed 1's dealt cards and petitions, Briar Hollow, the cast, the screens, the GM file | S | done (`dialog2`) |
+| DLG-4 | The cast generator (living/cast.ts, contracts/cast.ts): quirks, voice, traits, want, portrait spec; rolled from the seed, kept on the CharacterRecord | M | done (`dialog2`) |
+| DLG-5 | Petitions as dialogs (dialog/petition.ts, living/present.ts): greeting in voice (remembering the player), the ask, "What's in it for me?", "What if I say no?", ask for more; answers → commit, refuse, later, haggle; the summary panel inside the dialog; relationship facts with the presenter and their group; wired on the map (level-opps.ts) | L | done (`dialog2`) |
+| DLG-6 | The Persuasion interface (contracts/dialog.ts): where the user's dialog minigame plugs in; the default reads traits | S | done (`dialog2`; the minigame: the user's ideas to hear) |
+| DLG-7 | Portraits are a 32 px canvas bust from the PortraitSpec; a bust of the real creature rig (inhabitants) and better art later | M | open |
+| DLG-8 | Quirk asides ignore the moment (a hand shaken for a long time while riders are on you): asides tagged calm/urgent, picked by the card's themes | S | open |
+| DLG-9 | Voices are English templates round the content; pronouns are "they" throughout. A character's pronouns, and a few voice tics inside the template's lines (a nervous speaker's "um"), would make them read more alive | S | open |
+| DLG-10 | The inspector (cardlab.html) still shows cards, not petitions: open the same petition there | S | open |
+| DLG-11 | The area play's own card (runsit/level-sit.ts: briefs, the edge card) and barks follow WRITING.md but aren't in the lint yet | S | open |
+| DLG-12 | Negotiation beyond "a little more" (a smaller tier for less, a favour owed instead of goods) where a template allows it | M | open |
+
 ## Round 126 (2026-11-02, session 5, `merge124`) — the living world merged into the run structure (DECISIONS round 125, newest)
 
 The user (verbatim): "Please proceed with getting it ready to merge into our run structure for now." and, on the levy's
@@ -32,7 +54,7 @@ march state: "Oh yeah definitely update the world model so all this data lives i
 | M124-9 | The far land (past the window) shows a placed structure only once the town's exact plan is made again (its far plan is the old one until then) | S | open |
 | M124-11 | Refugees a run moved into a town farm with its farmers (life.ts ROUTINE refugee → farmer): a round of their own (a camp at the town's edge, asking for work) | S | open |
 | M124-12 | A structure placed in a town that stands in the window waits until the window has left it (planned again under the player's feet, its old walls came down as rubble); the structures track could add one building in place instead | S | open |
-| M124-10 | The UI is known-bad (the user): the card shows the presenter's line in the pitch and "You get" — to be experimented with later; dialogs, interiors, portraits, camera/zoom, foliage next | M | open (the user) |
+| M124-10 | The UI is known-bad (the user): the card shows the presenter's line in the pitch and "You get" — to be experimented with later; dialogs, interiors, portraits, camera/zoom, foliage next | M | dialogs done (`dialog2`, DLG-5: a petition is a talk with its presenter, the card a summary panel in it); interiors, camera, foliage are other tracks |
 
 ## Round 125 (2026-11-02, session 5, `facts`) — the living world: the fact layer, the template engine, the world inspector (DECISIONS round 124/125, docs/design/FACTIONS_WORLD_STATE.md)
 
