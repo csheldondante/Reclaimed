@@ -435,6 +435,7 @@ tests work and do quick smoke tests to find failures early." docs/TESTING.md.
 | RN4 | Faeria-style positioning: dispatched agents hold positions on the map that matter (locking down enemies, holding a pass) | L | deferred (simpler version first) |
 | FLO30 | Wind-responsive foliage lab (docs/design/FOLIAGE_WIND.md, the user's): static baselines, then 1A wind-shading ripple + 1B instanced vertex bending (grass) and 1A + 1C coarse lattice deformation (trees), reusing the GPU wind field; phone benchmark by matched static/animated pairs; stop at the first technique that clears the visual bar | M | open (low priority) |
 | PRE1 | Region presentation prototypes (docs/design/REGION_PRESENTATION.md): A birch forest canopy->understory (first), B canyon camera, C cliff climb, D throne-room interior with petitioners; presentation profiles, review overlay, repeatable A/B | L | wip (presentation) |
+| ART1 | Import the user's Unity asset packs (most of Synty's POLYGON range, other low-poly packs): unpack .unitypackage as data, convert FBX meshes, normalise to cell scale, simplify, voxelise or stylise, palette-map (Synty colours come from one atlas texture, easy per face), catalogue by tags. Raw packs stay outside the public repo; only converted game data is committed, after checking each pack's licence. Waiting on the user for the folder path | L | asked (path) |
 | FLO21 | Birch cost on the phone: the user's result good — done (flora 18c3bdb, unmerged) | S | done |
 
 ## Round 118 (2026-10-30, session 5, `places`) — found while reviewing the tracks
