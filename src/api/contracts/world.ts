@@ -79,7 +79,17 @@ export type AtlasEventKind =
   | 'settlement-owner'
   /** (round 124) people moving: refugees fleeing (detail.from, detail.to settlements; magnitude: the share of `from`'s
    *  people who go, 0..1) — they arrive at `to` as 'refugee' */
-  | 'migrate';
+  | 'migrate'
+  /** (round 125, facts) a region's rivers' inflow factor (RegionState.wetness, set to `magnitude`, 0..2): the held steady
+   *  rivers' discharge is Q × it (atlas/rivers.ts), so lowering it dries the river the next time the region is realised —
+   *  a drought is this mutation, not a simulation (the user, round 125) */
+  | 'river-inflow'
+  /** (round 125, facts) a settlement's store of a good (detail.settlement, detail.good; magnitude: stock added, may be
+   *  negative, floored at 0; detail.rate: the rate a day added) */
+  | 'settlement-stores'
+  /** (round 125, facts) a structure placed in a settlement directly, no agents building it (detail.settlement,
+   *  detail.building: its id, detail.use: its uses, detail.name): the region generator lays it out on arrival */
+  | 'settlement-building';
 
 export interface AtlasEvent {
   id: string;
@@ -159,6 +169,9 @@ export interface WorldSnapshot {
   runs: import('./run').RunRecord[];
   /** (round 117, runplan) the characters the world remembers: heroes and the people they met (run.ts CharacterRecord); absent in older saves */
   characters?: import('./run').CharacterRecord[];
+  /** (round 125, facts) the fact layer: entities, scoped tags, relations (diplomacy's agreements among them), claims and
+   *  the event history (diplomacy's interactions among them); absent in older saves (restore migrates them) */
+  facts?: import('./facts').FactSnapshot;
 }
 
 /** The world between runs: the one place AtlasEvents are applied. */

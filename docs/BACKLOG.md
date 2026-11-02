@@ -12,6 +12,17 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 125 (2026-11-02, session 5, `facts`) — the living world: the fact layer, the template engine, the world inspector (DECISIONS round 124/125, docs/design/FACTIONS_WORLD_STATE.md)
+
+The user's design documents (docs/design/FACTIONS_WORLD_STATE.md, OPPORTUNITY_CATALOG.md) and answers: real pawns and
+stores, turns of days, instant plausible mutations, Briar Hollow first. DEVLOG round 125.
+
+| id | what | size | status |
+|---|---|---|---|
+| LW-F1 | The fact layer contract (src/api/contracts/facts.ts, facts-store.ts): entities on existing ids with refs to their owners, scoped tags (8 scopes, kinds per scope, intensities bounded, quantities refused), directed typed relations with history edges, claims apart from control, the append-only history, indexes, changed-entity tracking | L | done (`facts`) |
+| LW-F2 | Centralised invariants (facts-rules.ts): bound labour only where legal or explicitly illegal, exclusive policies, laws on jurisdictions only, court needs nobility or a pretender, war and alliance never both, no claim on what one controls; law resolution with settlement overrides | M | done (`facts`) |
+| LW-F3 | Diplomacy merged into the facts: MemoryDiplomacy is the Diplomacy API over a FactStore (agreements are relations, interactions are events); persistence through WorldSnapshot.facts with migration of older saves | M | done (`facts`) |
+
 ## Round 124 (2026-11-01, session 5, `opportunities`) — slice A of the opportunity system: the horde run as opportunities on the map (DECISIONS round 120)
 
 The user's text docs/design/STRATEGIC_MAP.md and the newest DECISIONS round 120 entries ("show them as events or

@@ -4,6 +4,7 @@
 
 import { freshRegion, type AtlasEvent, type Faction, type FactionId, type RegionId, type RegionState, type WorldSnapshot, type WorldState } from './world';
 import type { CharacterChange, CharacterRecord, RunRecord } from './run';
+import { MemoryFacts, migrateFacts } from './facts-store.ts';
 
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
 
@@ -16,6 +17,8 @@ export class MemoryWorldState implements WorldState {
   readonly settlements: import('./settlement').Settlement[] = [];
   /** (round 117, runplan) the characters the world remembers (heroes and the people they met), by id */
   private chars = new Map<string, CharacterRecord>();
+  /** (round 125, facts) the fact layer kept with the world (facts-store.ts): saved in the snapshot, its own store */
+  facts = new MemoryFacts();
   version = 0;
   run = 0;
   onChange: ((region: RegionId, before: RegionState, after: RegionState) => void)[] = [];
@@ -47,6 +50,8 @@ export class MemoryWorldState implements WorldState {
     for (const c of structuredClone(s.characters ?? [])) w.chars.set(c.id, c);
     w.version = s.version;
     w.run = s.run;
+    // (a save from before the fact layer: its factions, settlements and characters become entities)
+    w.facts = s.facts ? MemoryFacts.restore(s.facts) : migrateFacts(s);
     return w;
   }
 
@@ -98,6 +103,11 @@ export class MemoryWorldState implements WorldState {
         case 'faction-attitude':
           // (a faction's, not a region's: applied once, below)
           break;
+        case 'river-inflow': {
+          if (!(m >= 0 && m <= 2)) throw new Error(`AtlasEvent ${e.id}: a river inflow factor is 0..2 (${m})`);
+          r.wetness = m;
+          break;
+        }
         case 'mark': {
           if (!d.name || !d.kind) throw new Error(`AtlasEvent ${e.id}: a mark needs detail.name and detail.kind`);
           r.marks.push({ id: e.id, name: String(d.name), kind: String(d.kind), at: d.at as [number, number] | undefined, cause: e.id });
@@ -117,7 +127,7 @@ export class MemoryWorldState implements WorldState {
         f.relations[t] = Math.max(-1, Math.min(1, (f.relations[t] ?? 0) + m));
       }
     }
-    if (e.kind === 'settlement-condition' || e.kind === 'settlement-owner' || e.kind === 'migrate') this.applySettlement(e);
+    if (e.kind === 'settlement-condition' || e.kind === 'settlement-owner' || e.kind === 'migrate' || e.kind === 'settlement-stores' || e.kind === 'settlement-building') this.applySettlement(e);
     if (e.kind === 'faction-attitude') {
       const f = this.factions.get(e.detail?.faction as FactionId);
       if (!f) throw new Error(`AtlasEvent ${e.id}: faction-attitude needs detail.faction, a known faction`);
@@ -143,6 +153,20 @@ export class MemoryWorldState implements WorldState {
       const f = d.faction as FactionId | null;
       if (f !== null && !this.factions.has(f)) throw new Error(`AtlasEvent ${e.id}: settlement-owner needs detail.faction, a known faction or null`);
       need('settlement').faction = f;
+    } else if (e.kind === 'settlement-stores') {
+      const g = d.good;
+      if (typeof g !== 'string' || !g) throw new Error(`AtlasEvent ${e.id}: settlement-stores needs detail.good`);
+      const s = need('settlement');
+      const st = (s.stores[g] ??= { stock: 0, rate: 0 });
+      st.stock = Math.max(0, st.stock + e.magnitude);
+      if (typeof d.rate === 'number') st.rate += d.rate;
+    } else if (e.kind === 'settlement-building') {
+      const id = d.building;
+      if (typeof id !== 'string' || !id) throw new Error(`AtlasEvent ${e.id}: settlement-building needs detail.building`);
+      const s = need('settlement');
+      if (s.buildings.some((b) => b.id === id)) throw new Error(`AtlasEvent ${e.id}: ${s.id} already has a building ${id}`);
+      // (placed: its cells and grid are the region generator's to choose when the land is realised)
+      s.buildings.push({ id, thing: id, grid: '', cells: [], storeys: 1, use: Array.isArray(d.use) ? (d.use as string[]) : [] });
     } else {
       const from = need('from');
       const to = need('to');
@@ -223,6 +247,7 @@ export class MemoryWorldState implements WorldState {
       history: this.history(),
       runs: [...this.runs],
       characters: structuredClone(this.characters()),
+      facts: this.facts.snapshot(),
     };
   }
 }

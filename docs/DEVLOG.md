@@ -15977,3 +15977,47 @@ increase those things and deal with the threat cards").
   Fixed: a card that left the board and came back kept its old stay, so its timer read −2 (City 5's raid); a stay
   now ends when a card isn't dealt. Shots: C:/Projects/shots88/opportunities/cardlab/ (1-turn6, 2b-place-tapped-ev,
   4-bots-x-kingdoms).
+
+---
+
+## 2026-11-02 — round 125 (`facts`): the living world's fact layer (phase 0; BACKLOG LW-F1..F3)
+
+The user's docs/design/FACTIONS_WORLD_STATE.md §7 ("a small fact layer over the existing simulation … no graph
+database, general rule engine") and the round-125 answers (real pawns and stores, turns of days, instant plausible
+mutations). One contract, `src/api/contracts/facts.ts`, its store `facts-store.ts` (MemoryFacts) and its rules
+`facts-rules.ts`.
+
+- **Entities** keep the owning system's ids (a faction's, a settlement's, a character's) and carry a `ref` to that
+  record, so nothing another system owns is copied: a settlement's holder, stores and people, a region's water, a
+  faction's power stay in WorldState and change only through WorldState.apply. Thirteen kinds (person … arc).
+- **Scoped tags** name their scope (biology, custom, economy, government, law, culture, capability, condition) and each
+  scope lists the kinds that may carry it: law only on a polity or a settlement (the local override), customs on
+  groups, biology on living things. Rules are booleans/enums, intensities numbers in 0..1 from a short list (support,
+  unrest, enforcement, prosperity, piety, fear), and a quantity's name as a tag is refused ("never copies").
+- **Relations** are directed records of a closed type list in five families (a typo is an error); a symmetric one
+  (war, alliance, peace, trade) is one record holding both ways. Ending an alliance or a war materialises its history
+  edge (former_ally_of, former_enemy_of).
+- **Claims** are their own records (claimant, real target, basis, strength, recognised by, expiry), never control.
+- **Events**: one append-only history by turn with real participants.
+- **Invariants** (facts-rules.ts, centralised): bound labour only where its law allows it or as an explicit
+  illegal_* exception; no exclusive policies in one jurisdiction; laws only on jurisdictions; a hereditary court only
+  under hereditary nobility or as an explicit pretender; never at war and allied at once; no claim on what one
+  controls. Checked on a batch's changed entities by whoever applies the batch (the template engine), since a batch
+  may pass through an inconsistent middle (the law changed before the serfs are freed).
+- **Indexes** by kind, tag, region, settlement and relation type/end; the entities changed since the last drain are
+  tracked so templates evaluate on those. 1000 cohorts: a tag query well under 0.2 ms.
+- **Diplomacy merged (facts holds, diplomacy reads).** MemoryDiplomacy is now the Diplomacy API over a FactStore: an
+  agreement in force is a relation (war → at_war_with, alliance → allied_with, trade → trades_with, land/mineral
+  rights and passage → has_rights, tribute → pays_tribute_to, vassalage → vassal_of) with the Agreement on it; an
+  interaction is a FactEvent with a weight and half-life. Why this way round: the template engine's predicates and the
+  inspector need war, alliance, rights and history as plain relations and events beside every other kind, while
+  dialog, the GM and units already code against the Diplomacy API (opinion, memories, rights), which is unchanged
+  (scripts/recipetest.mjs passes as before). A "never forgotten" interaction has no half-life in the store (Infinity
+  doesn't survive a JSON save) and reads back as Infinity. `importDiplomacy` brings an old record across.
+- **Persistence**: MemoryWorldState keeps a `facts` store and the snapshot carries it (`WorldSnapshot.facts`); a save
+  without one migrates (its factions, settlements and characters become entities referring to their records).
+- WorldState takes three new AtlasEvents for the template engine's outcomes: `river-inflow` (the region's rivers'
+  inflow factor, RegionState.wetness, which the held rivers' discharge scales by: a drought is this one mutation),
+  `settlement-stores` (a good's stock and rate) and `settlement-building` (a structure placed directly, laid out by the
+  region generator on arrival). storycheck knows them.
+- Tests: test/unit/facts.test.ts, 17.

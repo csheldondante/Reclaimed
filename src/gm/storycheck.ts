@@ -21,7 +21,7 @@ import type { Condition, Outcome, SessionStory } from '../api/contracts/story';
 export const ATLAS_EVENT_KINDS = [
   'sink', 'raise', 'bury', 'overgrow', 'freeze', 'thaw', 'storm', 'clear-storm', 'shadow', 'light',
   'raise-dead', 'lay-dead', 'flood', 'drain', 'burn', 'ruin', 'rebuild', 'faction-presence', 'faction-attitude', 'faction-relation', 'faction-power', 'mark',
-  'settlement-condition', 'settlement-owner', 'migrate',
+  'settlement-condition', 'settlement-owner', 'migrate', 'river-inflow', 'settlement-stores', 'settlement-building',
 ] as const satisfies readonly AtlasEventKind[];
 /** (a compile error here: world.ts has a kind the list above lacks) */
 export const ATLAS_EVENT_KINDS_COMPLETE: [Exclude<AtlasEventKind, (typeof ATLAS_EVENT_KINDS)[number]>] extends [never] ? true : false = true;
@@ -593,6 +593,8 @@ export function atlasEventProblems(
   for (const r of regs) if (!regionIds.has(r as number)) bad(`${ea}.regions`, `region ${JSON.stringify(r)} isn't in the snapshot`);
   if (k === 'bury') num(`${ea}.magnitude`, e.magnitude, 0.5, 40);
   else if (k === 'faction-presence' || k === 'faction-attitude' || k === 'faction-relation' || k === 'faction-power') num(`${ea}.magnitude`, e.magnitude, -1, 1);
+  else if (k === 'river-inflow') num(`${ea}.magnitude`, e.magnitude, 0, 2);
+  else if (k === 'settlement-stores') num(`${ea}.magnitude`, e.magnitude, -1e6, 1e6);
   else num(`${ea}.magnitude`, e.magnitude, 0, 1);
   if (k === 'flood') {
     if (e.level === undefined) bad(`${ea}.level`, 'a flood needs its level (world z); its magnitude is a 0..1 strength');
