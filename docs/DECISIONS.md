@@ -14,6 +14,11 @@ each was implemented.
   it and just normal rendering."
 - → The pixel post pass is off by default (`?pixel=<css px>` turns it on; not tuned further); the effort goes into the
   light (shafts, candle pools, a darker ambient), the framing and hiding the outside. BACKLOG INT6.
+- The user, verbatim (relayed by main), on the d-shots: "Those are looking better! And yeah the dust is a bit of an
+  issue."
+- → The direction kept (normal rendering, zoomed in, the outside hidden). The white blobs were the world's particles
+  (dust, smoke) drawn over the room: none of the outside's particles, rain or water are drawn once inside; the shafts'
+  motes made finer and sparser. BACKLOG INT15.
 
 ## 2026-10-31 — round 120 (session 5) — after playing the run, the towns and the birches; runs redesigned
 

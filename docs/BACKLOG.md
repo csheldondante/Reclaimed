@@ -31,6 +31,7 @@ Branch `interiors` from `places`. DEVLOG "Interiors"; ARCHITECTURE "Interiors"; 
 | INT11 | Small halls get crowded and their seats sparse (seed 23: one seat reachable); the kitchen with the stair is cramped; furnishing could size the set to the room and keep a clear middle | M | open |
 | INT12 | More interiors: every building on demand as the camera comes near its door (today ?interior=1 plans one, the hall); houses, workshops, the temple's dome and towers (megas have no interior plan) | M | open |
 | INT14 | The user (round 126): "we can zoom in more and hide outside the building eventually" — the storey edge to edge; outside the footprint not drawn once inside (faded out as you enter) | S | done (`interiors`) |
+| INT15 | The user (round 126): "the dust is a bit of an issue" — the outside's particles and rain drawn indoors (none once inside), the shafts' motes finer and sparser | S | done (`interiors`; to see on the next shots) |
 | INT13 | The shafts are drawn as faces of an extruded window, lit at the core: over a prop in front they show through it slightly; a depth-aware march in the post pass would be exact | S | open |
 
 ## Round 126 (2026-11-02, session 5, `merge124`) — the living world merged into the run structure (DECISIONS round 125, newest)

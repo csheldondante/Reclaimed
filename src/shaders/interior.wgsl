@@ -287,9 +287,10 @@ fn fsShaft(in: ShaftOut) -> FOut {
   let lit = shadowLit(q, vec3<f32>(0.0, 0.0, 1.0));
   // fading off along it, and dust: specks drifting in the light
   let fade = (1.0 - in.t) * (0.35 + 0.65 * (1.0 - in.t));
-  let cell = floor(in.wpos * 22.0 + vec3<f32>(0.0, 0.0, G.time * 0.9));
+  // (fine motes: a few centimetres, sparse, drifting down and twinkling — the user: "the dust is a bit of an issue")
+  let cell = floor(in.wpos * 36.0 + vec3<f32>(0.0, 0.0, G.time * 0.7));
   let r = randv(vec3<i32>(cell));
-  let speck = smoothstep(0.985, 1.0, r) * (0.6 + 0.4 * sin(G.time * 3.0 + r * 50.0));
+  let speck = smoothstep(0.993, 1.0, r) * (0.5 + 0.5 * sin(G.time * 3.0 + r * 50.0));
   let haze = 0.15 + 0.07 * vnoise(in.wpos.xy * 1.5 + vec2<f32>(G.time * 0.15, in.wpos.z));
   let c = G.sunCol.rgb * vec3<f32>(1.1, 0.92, 0.68) * (haze * fade + speck * 1.1) * lit * in.strength * h0.w;
   o.color = vec4<f32>(c, 0.0);
