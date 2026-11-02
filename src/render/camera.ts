@@ -16,8 +16,8 @@ export const CAMERA_POS_OFFSET = CAMERA_BYTES + 64;
 /** what's cut from the view after it (render.wgsl Camera.cut, see, boxes; round 83) */
 export const CAMERA_CUT_OFFSET = CAMERA_POS_OFFSET + 16;
 /** cut (a vec4), see (4 vec4s), boxes (4 boxes, 2 vec4s each), the slice's shape (a vec4: round 121), its softness (a vec4:
- *  round 120), the region presentation's look (3 vec4s: round 124, PRE1 — render.wgsl Camera.present*) */
-export const CAMERA_CUT_BYTES = 16 + 4 * 16 + 8 * 16 + 16 + 16 + 3 * 16;
+ *  round 120), the region presentation's look (4 vec4s: round 124, PRE1 — render.wgsl Camera.present*) */
+export const CAMERA_CUT_BYTES = 16 + 4 * 16 + 8 * 16 + 16 + 16 + 4 * 16;
 
 /** What's cut from the view (api/cutaway.ts: Slice, Dither) — the sun's camera cuts nothing. */
 export interface Cut {
@@ -311,8 +311,8 @@ export class Camera {
       const pr = this.present;
       if (pr && pr.weight > 0) {
         const c = pr.canopy;
-        const flags = (c.dither ? 1 : 0) + (c.cutaway ? 2 : 0) + (c.stipple ? 4 : 0) + (pr.dapple > 0 ? 8 : 0);
-        f.set([pr.at[0], pr.at[1], pr.floor, flags, pr.radius, pr.cutHeight, pr.stippleShare, pr.weight, pr.even, pr.dapple, pr.reach, pr.at[2]], o + 60);
+        const flags = (c.dither ? 1 : 0) + (c.cutaway ? 2 : 0) + (c.stipple ? 4 : 0) + (pr.dapple > 0 ? 8 : 0) + (pr.treeScale !== 1 || pr.thin > 0 ? 16 : 0);
+        f.set([pr.at[0], pr.at[1], pr.floor, flags, pr.radius, pr.cutHeight, pr.stippleShare, pr.weight, pr.even, pr.dapple, pr.reach, pr.at[2], pr.treeScale, pr.thin, 0, 0], o + 60);
       }
     }
   }

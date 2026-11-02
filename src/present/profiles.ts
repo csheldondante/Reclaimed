@@ -25,10 +25,11 @@ export function baseProfile(id: string, name: string): PresentationProfile {
   return {
     id,
     name,
-    camera: { zoom: null, elevation: null, routeFacing: false, lookAhead: 0, speedOut: 0 },
+    camera: { zoom: null, elevation: null, azimuth: null, routeFacing: false, lookAhead: 0, speedOut: 0 },
     canopy: { dither: false, cutaway: false, stipple: false, radius: 9, cutHeight: 3, stippleShare: 0.55 },
     light: { dapple: 0 },
     transition: { style: 'zoom', seconds: 1.6 },
+    scale: { hero: 1, trees: 1, thin: 0 },
   };
 }
 
@@ -52,7 +53,24 @@ export const TRANSITIONS: { id: TransitionStyle; icon: string; label: string; hi
 /** close in under the canopy: CSS px a cell (the bike's chase is 12-22) */
 export const FOREST_ZOOM = 44;
 
+/**
+ * (the user, round 124: "If a cell is 1-2M the villager agents are closer to the true size the PC should be ... if the
+ * PC was approximately .25-1 trunk width") the scale variants, draw only: today's; the hero at the villagers' size
+ * (the lich 2.0 cells tall against their 1.4-1.5: x0.7); and the birches near it twice as big (a trunk ~1.2 cells,
+ * two villager widths), half of them left out so the stand stays open; and with stumps: the trunks in front of the
+ * hero cut low (0.8 cells), the rest of the wood whole.
+ */
+export type ForestScale = 'game' | 'true' | 'trees' | 'stumps';
+export const FOREST_SCALES: { id: ForestScale; icon: string; label: string; hint: string }[] = [
+  { id: 'game', icon: '1', label: 'today', hint: 'the hero as it is drawn today (the lich 2 cells tall)' },
+  { id: 'true', icon: '↓', label: 'true', hint: "the hero at the villagers' true size (x0.7)" },
+  { id: 'trees', icon: '🌲', label: '+trees', hint: 'true size, and the birches near it twice as big, half of them left out' },
+  { id: 'stumps', icon: '🪵', label: '+stumps', hint: 'true size, bigger birches, and the trunks in front of the hero cut low as stumps' },
+];
+export const HERO_TRUE = 0.7;
+
 export interface ForestPick {
+  scale: ForestScale;
   vis: ForestVis[];
   light: boolean;
   transition: TransitionStyle;
@@ -61,7 +79,7 @@ export interface ForestPick {
   seconds: number;
 }
 
-export const FOREST_DEFAULT: ForestPick = { vis: ['rig'], light: false, transition: 'zoom', zoom: FOREST_ZOOM, elevation: 30, seconds: 1.8 };
+export const FOREST_DEFAULT: ForestPick = { scale: 'game', vis: ['rig'], light: false, transition: 'zoom', zoom: FOREST_ZOOM, elevation: 30, seconds: 1.8 };
 
 export function forestProfile(p: ForestPick): PresentationProfile {
   const b = baseProfile('forest', 'A · Birch forest');
@@ -75,6 +93,12 @@ export function forestProfile(p: ForestPick): PresentationProfile {
   b.canopy.cutHeight = 3;
   b.light.dapple = p.light ? 1 : 0;
   b.transition = { style: p.transition, seconds: p.seconds };
+  if (p.scale !== 'game') b.scale.hero = HERO_TRUE;
+  if (p.scale === 'trees' || p.scale === 'stumps') b.scale = { hero: HERO_TRUE, trees: 2, thin: 0.5 };
+  if (p.scale === 'stumps') {
+    b.canopy.cutaway = true;
+    b.canopy.cutHeight = 0.8;
+  }
   return b;
 }
 
@@ -120,13 +144,36 @@ export const CLIFF_CAMS: { id: CliffCam; icon: string; label: string; hint: stri
 
 export function cliffProfile(cam: CliffCam): PresentationProfile {
   const b = baseProfile('cliff', 'C · Cliffside');
+  // (the face looks south, -y: the eye from the south, -90°, to see the face square on)
   if (cam === 'profile') {
     b.camera.elevation = 12;
-    b.camera.zoom = 26;
+    b.camera.azimuth = -90;
+    b.camera.zoom = 18;
   } else if (cam === 'down') {
     b.camera.elevation = 68;
-    b.camera.zoom = 20;
+    b.camera.azimuth = -90;
+    b.camera.zoom = 16;
   }
   b.transition = { style: 'zoom', seconds: 1.2 };
+  return b;
+}
+
+// ---- D: the throne room -------------------------------------------------------------------------------------------
+
+/** how the hall is entered from its door: the handoff's "direct zoom into existing building geometry" against "zoom +
+ *  dither/dissolve into the distinct interior", and "a short occlusion/loading transition as fallback" */
+export type ThroneEntry = 'zoom' | 'iris' | 'fade' | 'cut';
+export const THRONE_ENTRIES: { id: ThroneEntry; icon: string; label: string; hint: string }[] = [
+  { id: 'zoom', icon: '🔍', label: 'zoom only', hint: "a direct zoom into the building's own geometry at the door (no interior)" },
+  { id: 'iris', icon: '◌', label: 'zoom+iris', hint: 'the zoom into the door, the hall dissolving in from the door outward' },
+  { id: 'fade', icon: '▒', label: 'zoom+fade', hint: 'the zoom into the door, the hall dissolving in evenly' },
+  { id: 'cut', icon: '■', label: 'cut', hint: 'a short dark cut (the loading fallback)' },
+];
+
+export function throneProfile(entry: ThroneEntry): PresentationProfile {
+  const b = baseProfile('throne', 'D · Throne room');
+  b.camera.zoom = entry === 'zoom' ? 150 : 90;
+  b.camera.elevation = 30;
+  b.transition = { style: 'zoom', seconds: entry === 'cut' ? 0.3 : 1.1 };
   return b;
 }

@@ -20,6 +20,12 @@ fn miKind(vi: u32) -> u32 {
   for (var i = 0u; i < MI_N; i++) { if (vi >= MI_KINDS[i].x && vi < MI_KINDS[i].y) { k = i; } }
   return k;
 }
+/** (round 124, PRE1) is mesh kind k a birch (the flora library's kinds, every level of detail)? */
+fn miBirch(k: u32) -> bool {
+  let r = array<vec2<u32>, 3>(FL_BIRCH, FL_BIRCH_L1, FL_BIRCH_L2);
+  for (var i = 0u; i < 3u; i++) { if (k >= r[i].x && k < r[i].x + r[i].y) { return true; } }
+  return false;
+}
 fn miRow(i: u32, r: u32) -> vec4<f32> { return bitcast<vec4<f32>>(instances[i * 4u + r]); }
 
 @vertex
@@ -50,6 +56,18 @@ fn vsInst(@location(0) a: vec4<f32>, @builtin(vertex_index) vi: u32, @builtin(in
   let fl = fpart >= 3u;
   if (fl) { sway = fract(aw); }
   var wp = vec3<f32>(dot(r0.xyz, l) + r0.w, dot(r1.xyz, l) + r1.w, dot(r2.xyz, l) + r2.w);
+  // (round 124, presentation: PRE1 — the scale variant, draw only) the birches near the hero drawn bigger round their
+  // foot, a hashed share of them left out so the stand stays open; their sight, shadows and the world as they are
+  if ((u32(CAM.present.w + 0.5) & 16u) != 0u && miBirch(k)) {
+    let foot = vec3<f32>(r0.w, r1.w, r2.w);
+    let near = (1.0 - smoothstep(45.0, 60.0, length(foot.xy - CAM.present.xy))) * clamp(CAM.presentB.w, 0.0, 1.0);
+    let h = fract(sin(dot(foot.xy, vec2<f32>(39.346, 11.135))) * 24634.6345);
+    if (h < CAM.presentD.y * near) {
+      o.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+      return o;
+    }
+    wp = foot + (wp - foot) * mix(1.0, CAM.presentD.x, near);
+  }
   // the wind: the column's lean (sway.wgsl's spring) and a slow flutter, the crown shifting with the trunk's top
   let cell = clampCell(cellAt(vec2<f32>(r0.w, r1.w)));
   let lean = bend[colIdxI(cell)].xy;

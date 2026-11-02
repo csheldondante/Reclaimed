@@ -5,6 +5,7 @@ import { boxWorld } from '../play/camera/testworld';
 import { PresentMode, regionWeight } from './mode';
 import { canyonProfile, CANYON_DEFAULT, FOREST_DEFAULT, forestProfile } from './profiles';
 import { densestStand, rideStart, standRoute } from './stand';
+import { petitionsOf } from './throne';
 
 const SCREEN = { w: 412, h: 915, margin: 56 };
 const pose = (x: number, y: number, vx = 0, vy = 0): CamPose => ({ at: [x, y, 0], floor: 0, heading: Math.atan2(vy, vx), vel: [vx, vy], fast: Math.min(1, Math.hypot(vx, vy) / 30) });
@@ -107,5 +108,21 @@ describe('region presentation (PRE1)', () => {
     expect(route.some((p) => p.speed < 1)).toBe(true);
     const k = rideStart(route, s.at, 24);
     expect(Math.hypot(route[k].at[0] - s.at[0], route[k].at[1] - s.at[1])).toBeGreaterThanOrEqual(24);
+  });
+
+  it('the throne room petitions come from the settlement record (needs, story, condition), at most four', () => {
+    const ps = petitionsOf({
+      name: 'Ashford',
+      faction: null,
+      condition: 'struggling',
+      people: [{ role: 'miner', count: 5 }, { role: 'raider', count: 3, hostile: true }],
+      needs: [{ kind: 'mine', at: [0, 0], priority: 1 }, { kind: 'mine', at: [1, 0], priority: 1 }, { kind: 'haul', at: [0, 1], priority: 1 }],
+      story: { founding: 'x', owner: null, events: [{ what: 'raided', run: 1, note: 'raiders took the mill' }] },
+    });
+    expect(ps.length).toBeLessThanOrEqual(4);
+    expect(ps[0].issue).toContain('mine');
+    expect(ps.some((p) => p.issue === 'raiders took the mill')).toBe(true);
+    expect(ps.some((p) => p.from.startsWith('condition'))).toBe(true);
+    expect(ps.every((p) => p.role === 'miner')).toBe(true);
   });
 });

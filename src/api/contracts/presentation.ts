@@ -38,6 +38,8 @@ export interface PresentationProfile {
     zoom: number | null;
     /** degrees over the horizon at full weight; null: whatever the rig's modes gave (30° the fixed view) */
     elevation: number | null;
+    /** degrees round the target the eye is at full weight (C: facing a cliff's face); null: the rig's own */
+    azimuth: number | null;
     /** turn the view so the way the hero is going points up the screen (B: the canyon's route-facing camera) */
     routeFacing: boolean;
     /** seconds of the hero's velocity the screen's centre leads by (0: the chase's own lead) */
@@ -59,6 +61,18 @@ export interface PresentationProfile {
     dapple: number;
   };
   transition: { style: TransitionStyle; seconds: number };
+  /**
+   * (the user, round 124: "the PC was approximately .25-1 trunk width") scale as presented — draw only: the hero's
+   * body, reach and framing, the trees' sight and shadows stay as they are
+   */
+  scale: {
+    /** the hero drawn at this size (0.7: the villagers' true size) */
+    hero: number;
+    /** the birches drawn this much bigger round their foot, near the hero */
+    trees: number;
+    /** the share of the birches left out where they're bigger (the stand thinned so its spacing stays open) */
+    thin: number;
+  };
 }
 
 /** Where a profile applies: a disc, its weight 1 inside `radius` and falling to 0 over `edge` cells beyond it. */
@@ -86,4 +100,7 @@ export interface PresentLook {
   dapple: number;
   /** the region's reach (cells round `at`) for the light */
   reach: number;
+  /** the birches' scale and thinning near the hero (1, 0: as they are) */
+  treeScale: number;
+  thin: number;
 }

@@ -21,7 +21,8 @@ const sceneArg = (() => {
 const LEVELS = {
   forest: { level: 'atlas', at: '13728,4768', play: 'lich', present: 'forest' },
   canyon: { level: 'herolab', station: 'canyon', present: 'canyon' },
-  cliff: { level: 'herolab', station: 'cliff', present: 'cliff' },
+  cliff: { level: 'herolab', station: 'cliff', hero: 'lich', present: 'cliff' },
+  throne: { level: 'atlas', town: '1', play: 'lich', present: 'throne' },
 };
 
 await run({ name: `present-${sceneArg}`, kind: COST ? 'timing' : 'behaviour', size: '412x915', dpr: COST ? 2.6 : 1, echo: true }, async (R) => {
@@ -82,6 +83,32 @@ await run({ name: `present-${sceneArg}`, kind: COST ? 'timing' : 'behaviour', si
     return { n: s.length, p50: s[Math.floor(s.length / 2)], p95: s[Math.floor(s.length * 0.95)], mean: s.reduce((x, y) => x + y, 0) / s.length };
   };
 
+  if (sceneArg === 'throne') {
+    const P = 'window.reclaimed.present';
+    await shot('0-street');
+    for (const e of arg('entries', 'iris|fade|zoom|cut').split('|')) {
+      await pick({ entry: e });
+      await p.evaluate(`${P}.leaveHall(); ${P}.mode.hold = 'out'; ${P}.mode.w = 0; ${P}.room.shown = 0`);
+      await sleep(1500);
+      await p.evaluate(`${P}.enterHall()`);
+      if (R.argv.includes('--gifs') && e === 'iris') await gif(path.join(out, 'throne-enter-iris.gif'), 24);
+      else {
+        await sleep(700);
+        await shot(`1-${e}-mid`);
+        await sleep(2500);
+      }
+      await shot(`2-${e}-in`);
+    }
+    // a petition: the stub opportunity panel
+    const spots = await p.evaluate(`${P}.room.petitionerSpots`);
+    R.log(`petitioners ${JSON.stringify(spots)}`);
+    if (spots.length) {
+      await p.mouse.click(spots[0].x, spots[0].y);
+      await sleep(800);
+      await shot('3-petition');
+    }
+    return;
+  }
   if (sceneArg === 'forest') {
     const VIS = arg('vis', 'rig|none|dither|cutaway|stipple|dither+stipple|cutaway+stipple').split('|');
     if (COST) {
@@ -114,6 +141,25 @@ await run({ name: `present-${sceneArg}`, kind: COST ? 'timing' : 'behaviour', si
       // the overworld out of the region (the profile's weight 0) against the experiments off altogether is the
       // driveprofile's job (scripts/driveprofile.mjs against places)
       fs.writeFileSync(path.join(out, 'forest-cost.json'), JSON.stringify(rows, null, 1));
+      return;
+    }
+    if (R.argv.includes('--scales')) {
+      // (round 124, the user on scale) the scale variants, stills at the parked spot and rides, under one visibility
+      R.log(`stand ${JSON.stringify(st.stand)}`);
+      const vis = arg('scalevis', 'stipple');
+      for (const sc of arg('scaleset', 'game|true|trees|stumps').split('|')) {
+        await pick({ scale: sc, visibility: vis, light: 'light', transition: 'zoom' });
+        await park(1);
+        await sleep(3000);
+        await shot(`3-scale-${sc}`);
+      }
+      if (R.argv.includes('--gifs'))
+        for (const sc of arg('scalerides', 'game|true|stumps').split('|')) {
+          await pick({ scale: sc, visibility: vis, light: 'light', transition: 'zoom' });
+          await p.evaluate(() => window.reclaimed.present.ride());
+          await sleep(1500);
+          await gif(path.join(out, `forest-scale-${sc}.gif`));
+        }
       return;
     }
     // stills: the overworld, then each visibility variant under the canopy (light off, then on)
@@ -152,12 +198,71 @@ await run({ name: `present-${sceneArg}`, kind: COST ? 'timing' : 'behaviour', si
     }
   } else {
     const CAMS = arg('cams', sceneArg === 'canyon' ? 'overworld|steep|route|steep+route' : 'overworld|profile|down').split('|');
+    const steer = [];
     for (const c of CAMS) {
       await pick({ camera: c });
-      await sleep(4000);
+      // (the ride from the station's start: the same route each variant)
+      await p.evaluate((st) => window.reclaimed.lab.go(st), sceneArg);
+      // (C: the climb proxy from the face's foot; B: the ride)
+      if (sceneArg === 'cliff') await p.evaluate(() => window.reclaimed.present.climb());
+      await sleep(Number(arg('ridein', sceneArg === 'cliff' ? 10 : 6)) * 1000);
       await shot(c.replace(/\+/g, '_'));
       if (R.argv.includes('--gifs')) await gif(path.join(out, `${sceneArg}-${c.replace(/\+/g, '_')}.gif`));
+      if (sceneArg === 'canyon') {
+        // the steering check: a thumb holding the stick one way on the screen while the view does what it does — up
+        // (the way ahead, if the view faces the route), then right; the view's turn a frame and the hero's heading
+        for (const [name, dir, secs] of [['up', [0, -1], 8], ['right', [1, 0], 4]]) {
+          await p.evaluate((st) => window.reclaimed.lab.go(st), sceneArg);
+          await sleep(1500);
+          await p.evaluate((d) => window.reclaimed.present.holdStick(d), dir);
+          const tr = await p.evaluate(
+            (secs) =>
+              new Promise((res) => {
+                const P = window.reclaimed.present;
+                const out = [];
+                const t0 = performance.now();
+                const f = () => {
+                  const s = P.state();
+                  out.push({ t: performance.now() - t0, az: s.azimuth, h: s.hero });
+                  if (performance.now() - t0 < secs * 1000) requestAnimationFrame(f);
+                  else res(out);
+                };
+                requestAnimationFrame(f);
+              }),
+            secs,
+          );
+          await p.evaluate(() => window.reclaimed.present.holdStick(null));
+          const wrap = (a) => ((a + 540) % 360) - 180;
+          let azMax = 0;
+          let azTot = 0;
+          let headTot = 0;
+          let dist = 0;
+          let lastHead = null;
+          for (let i = 1; i < tr.length; i++) {
+            const d = Math.abs(wrap(tr[i].az - tr[i - 1].az));
+            // (deg/s: the headless frame rate varies)
+            // (over a tenth of a second back: two frames' timestamps can be nearly equal)
+            let j = i;
+            while (j > 0 && tr[i].t - tr[j].t < 100) j--;
+            if (tr[i].t - tr[j].t >= 100) azMax = Math.max(azMax, Math.abs(wrap(tr[i].az - tr[j].az)) / ((tr[i].t - tr[j].t) / 1000));
+            azTot += d;
+            const dx = tr[i].h[0] - tr[i - 1].h[0];
+            const dy = tr[i].h[1] - tr[i - 1].h[1];
+            const l = Math.hypot(dx, dy);
+            if (l < 20) dist += l;
+            if (l > 0.05 && l < 20) {
+              const hd = (Math.atan2(dy, dx) * 180) / Math.PI;
+              if (lastHead !== null) headTot += Math.abs(wrap(hd - lastHead));
+              lastHead = hd;
+            }
+          }
+          const row = { cam: c, hold: name, secs, azMaxDegPerS: +azMax.toFixed(0), frames: tr.length, azTurned: +azTot.toFixed(0), headingTurned: +headTot.toFixed(0), cells: +dist.toFixed(0) };
+          steer.push(row);
+          R.log(`steer ${JSON.stringify(row)}`);
+        }
+      }
     }
+    if (steer.length) fs.writeFileSync(path.join(out, `${sceneArg}-steer.json`), JSON.stringify(steer, null, 1));
   }
   await R.fatal(p);
 });

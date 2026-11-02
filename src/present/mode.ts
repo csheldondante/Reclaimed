@@ -40,6 +40,8 @@ export class PresentMode implements CameraMode {
   private lead: [number, number] = [0, 0];
   /** the heading the route-facing turn follows (radians), held while the hero is slow */
   private heading: number | null = null;
+  /** seconds the velocity has pointed back against the heading */
+  private reversal = 0;
 
   constructor(
     public profile: PresentationProfile,
@@ -89,10 +91,16 @@ export class PresentMode implements CameraMode {
     // rate-limited, a dead zone so small weaves don't swing the view
     if (c.routeFacing) {
       const sp = Math.hypot(pose.vel[0], pose.vel[1]);
-      if (sp > 2) {
+      // (only at speed; a reversal — a bounce off a wall — must hold half a second before the view follows it)
+      if (sp > 4) {
         const h = Math.atan2(pose.vel[1], pose.vel[0]);
-        if (this.heading === null || Math.abs(wrap(h - this.heading)) > 25 * DEG) this.heading = h;
-        else this.heading = wrap(this.heading + wrap(h - this.heading) * Math.min(1, ctx.dt * 1.5));
+        const off = this.heading === null ? 0 : Math.abs(wrap(h - this.heading));
+        if (off > 110 * DEG) this.reversal += ctx.dt;
+        else this.reversal = 0;
+        if (this.heading === null || this.reversal > 0.5) {
+          this.heading = h;
+          this.reversal = 0;
+        } else if (off <= 110 * DEG) this.heading = wrap(this.heading + wrap(h - this.heading) * Math.min(1, ctx.dt * 2));
       }
       if (this.az === null) this.az = v.azimuth;
       if (this.heading !== null) {
@@ -105,6 +113,9 @@ export class PresentMode implements CameraMode {
         this.az = wrap(this.az + this.azSpeed * ctx.dt);
       }
       v.azimuth = wrap(v.azimuth + wrap(this.az - v.azimuth) * e);
+    } else if (c.azimuth !== null) {
+      v.azimuth = wrap(v.azimuth + wrap(c.azimuth * DEG - v.azimuth) * e);
+      this.az = v.azimuth;
     } else this.az = v.azimuth;
     // the look-ahead: the screen's centre further along the hero's velocity
     const want: [number, number] = [pose.vel[0] * c.lookAhead * e, pose.vel[1] * c.lookAhead * e];
@@ -115,7 +126,8 @@ export class PresentMode implements CameraMode {
     v.target[1] += this.lead[1];
     // the look: the canopy's treatments and the light, by the transition's style
     const cp = P.canopy;
-    const any = cp.dither || cp.cutaway || cp.stipple || P.light.dapple > 0;
+    const sc = P.scale;
+    const any = cp.dither || cp.cutaway || cp.stipple || P.light.dapple > 0 || sc.trees !== 1 || sc.thin > 0;
     if (!any || this.w <= 0) return;
     const style = P.transition.style;
     frame.present = {
@@ -130,6 +142,8 @@ export class PresentMode implements CameraMode {
       even: style === 'crossfade' ? 1 : 0,
       dapple: P.light.dapple,
       reach: Math.max(cp.radius * 2.6, 24),
+      treeScale: sc.trees,
+      thin: sc.thin,
     };
   }
 }

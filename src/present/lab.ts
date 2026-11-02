@@ -29,17 +29,23 @@ import {
   CLIFF_CAMS,
   cliffProfile,
   FOREST_DEFAULT,
+  FOREST_SCALES,
   FOREST_VIS,
   forestProfile,
   SCENES,
+  THRONE_ENTRIES,
+  throneProfile,
   TRANSITIONS,
   type CanyonCam,
   type CliffCam,
   type ForestPick,
   type ForestVis,
   type SceneId,
+  type ThroneEntry,
 } from './profiles';
 import { birchStand, rideStart, standRoute } from './stand';
+import { ThroneRoom } from './throne';
+import type { Settlement } from '../api/contracts/settlement';
 import '../play/lab/herolab.css';
 import './present.css';
 
@@ -54,7 +60,16 @@ export interface PresentDeps {
   plants?: Plants;
   /** (B, C: the hero lab) its station and camera chips, as the lab's own picker sets them; absent: the session's */
   lab?: { pick(o: { station?: string; cam?: string }): void };
+  /** (D) the settlements: the live one's record and its buildings' doors (world units) */
+  settlements?: { live(): Settlement | null; places(id: string): { centre: V2; radius: number; doors: { at: V2; ref: string }[] } | null; toWindow(at: V2): V2 };
+  /** (D) the land's height at a window point */
+  ground?: (x: number, y: number) => number | null;
 }
+
+/** (C) the hero lab's cliff (play/lab/terrains.ts CLIFF: the massif 30..66 x 34..84, 36 high over the ground at 10): a
+ *  spot 1.5 cells off its south face, west of the notch, and the float that reaches its top */
+const CLIFF_FACE: V2 = [36, 32.5];
+const CLIFF_TOP = 37;
 
 /** seconds the route yields after the player touches the stick */
 const TAKE_OVER = 2;
@@ -78,6 +93,8 @@ export class PresentLab {
   cliff: CliffCam = 'overworld';
   /** (A) the stand found and the route round it */
   region: PresentRegion | null = null;
+  /** (A) the stand's trees and their spacing (cells) */
+  standStats: { trees: number; birches: number; meanNearest: number; minNearest: number; area: number } | null = null;
   route: AutoPath[] = [];
 
   private constructor(readonly d: PresentDeps) {
@@ -102,7 +119,8 @@ export class PresentLab {
     if (d.scene === 'forest') lab.setupForest();
     else if (d.scene === 'canyon') lab.setupCanyon();
     else if (d.scene === 'cliff') lab.setupCliff();
-    else throw new Error(`?present=${d.scene}: an outdoor scene is forest, canyon or cliff (the throne room is its own scene)`);
+    else if (d.scene === 'throne') await lab.setupThrone();
+    else throw new Error(`?present=${d.scene}: the scenes are forest, canyon, cliff and throne`);
     d.session.rig.setPresent(lab.mode);
     lab.loop();
     return lab;
@@ -135,6 +153,7 @@ export class PresentLab {
     }
     f.light = (list('plight') ?? (f.light ? ['light'] : [])).includes('light');
     f.transition = oneOf('ptrans', TRANSITIONS, f.transition);
+    f.scale = oneOf('pscale', FOREST_SCALES, f.scale);
     f.zoom = num('pzoom', f.zoom);
     f.elevation = num('pel', this.d.scene === 'forest' ? f.elevation : this.canyon.elevation);
     f.seconds = num('psecs', f.seconds);
@@ -154,12 +173,20 @@ export class PresentLab {
     const h = session.hero.position();
     const stand = birchStand(plants, this.d.near ?? [h[0], h[1]], 140);
     this.region = { id: 'birch', centre: stand.at, radius: 12, edge: 12 };
+    // (the stand's spacing: each tree's nearest neighbour, centre to centre, within the region)
+    const trees = plants.treesNear(stand.at[0], stand.at[1], this.region.radius);
+    const nn = trees.map((t) => Math.min(...trees.filter((u) => u !== t).map((u) => Math.hypot(u.x - t.x, u.y - t.y))));
+    this.standStats = { trees: trees.length, birches: trees.filter((t) => t.species === 'birch').length, meanNearest: nn.reduce((a, b) => a + b, 0) / Math.max(1, nn.length), minNearest: Math.min(...nn), area: Math.PI * this.region.radius ** 2 };
     this.mode.region = this.region;
     this.route = standRoute(stand.at, (x, y) => session.world.depth(x, y) < 0.05 && session.world.top(x, y) > -1e8);
     this.pilot = new Autopilot(this.route, 6);
     this.steer();
     this.restart();
     const f = this.forest;
+    this.picker('scale', FOREST_SCALES, [f.scale], 'pscale', false, (v) => {
+      f.scale = v[0] as ForestPick['scale'];
+      this.apply();
+    });
     this.picker('visibility', FOREST_VIS, f.vis, 'pvis', true, (v) => {
       f.vis = v as ForestVis[];
       this.apply();
@@ -200,8 +227,44 @@ export class PresentLab {
       this.cliff = v[0] as CliffCam;
       this.apply();
     });
+    const row = el('div', 'lab-row', this.panel);
+    const b = el('button', 'play-chip lab-chip', row) as HTMLButtonElement;
+    b.innerHTML = '<span>🧗</span><small>climb</small>';
+    b.title = 'PROXY: no hero climbs yet — the lich parked at the cliff face, its float raised up the face to the top and back (a labelled stand-in for vertical movement)';
+    b.addEventListener('pointerdown', (e) => e.stopPropagation());
+    b.addEventListener('click', () => this.climb());
     this.tools();
     this.apply();
+  }
+
+  /** (C) the climb proxy's progress (seconds; null: not climbing) */
+  private climbT: number | null = null;
+  private tagSet = false;
+
+  /** (C, a PROXY) the lich parked 1.5 cells off the cliff's south face, its float raised up the face and back down */
+  climb(): void {
+    const h = this.d.session.hero as unknown as { hover?: number };
+    if (typeof h.hover !== 'number') throw new Error('present=cliff: the climb proxy needs the lich (&hero=lich)');
+    if (this.d.lab) (this.d.lab as unknown as { auto: boolean }).auto = false;
+    this.d.session.respawn(CLIFF_FACE);
+    this.climbT = 0;
+    this.tag.style.display = '';
+    this.tag.textContent = 'PROXY climb: the lich floated up the face';
+    this.tagSet = true;
+  }
+
+  /** each frame: the climb proxy's float (up 16 s, a pause, down 8 s) */
+  private climbFrame(dt: number): void {
+    if (this.climbT === null) return;
+    const h = this.d.session.hero as unknown as { hover: number };
+    this.climbT += dt;
+    const t = this.climbT;
+    const top = CLIFF_TOP;
+    h.hover = t < 16 ? 1.6 + (top - 1.6) * (t / 16) : t < 19 ? top : t < 27 ? top - (top - 1.6) * ((t - 19) / 8) : 1.6;
+    if (t >= 27) {
+      this.climbT = null;
+      if (this.tagSet) this.tag.style.display = 'none';
+    }
   }
 
   /** the profile for the scene's picks now */
@@ -213,26 +276,127 @@ export class PresentLab {
         return canyonProfile(this.canyon);
       case 'cliff':
         return cliffProfile(this.cliff);
+      case 'throne':
+        return throneProfile(this.entry);
       default:
-        throw new Error(`present: no outdoor profile for ${this.d.scene}`);
+        throw new Error(`present: no profile for ${this.d.scene}`);
     }
   }
 
   /** the picks into the mode and the rig's own modes */
   apply(): void {
     this.mode.profile = this.profile();
+    this.d.session.drawScale = this.mode.profile.scale.hero;
     const s = this.d.scene;
     // (the rig's modes: A's baseline is today's default camera (cut + tilt), its treatments the chase alone with the
     // canopy's; B and C: the overworld's default camera, or the chase + cut under a pitch of the profile's own)
     let cams: readonly string[];
     if (s === 'forest') cams = this.forest.vis.includes('rig') ? DEFAULT_CAM : ['chase'];
     else if (s === 'canyon') cams = this.canyon.cam === 'overworld' ? DEFAULT_CAM : ['chase', 'cutaway'];
+    else if (s === 'throne') cams = ['chase'];
     else cams = this.cliff === 'overworld' ? DEFAULT_CAM : ['chase', 'cutaway'];
     const cam = cams.filter((c) => c !== 'chase').join('+') || 'chase';
     if (this.d.lab) this.d.lab.pick({ cam });
     else this.d.session.setCam(cams as typeof DEFAULT_CAM);
     // (the rig's modes changed: the present mode stays given)
     this.d.session.rig.setPresent(this.mode);
+  }
+
+  // ---- D: the throne room ---------------------------------------------------------------------------------------
+
+  entry: ThroneEntry = 'iris';
+  room: ThroneRoom | null = null;
+  /** the door the hall is entered by (window coordinates, its ground) */
+  door: [number, number, number] | null = null;
+  /** in (1) or out (0) of the hall: where the entry's walking to */
+  private inside = 0;
+  private cutT = 0;
+
+  private async setupThrone(): Promise<void> {
+    const S = this.d.settlements;
+    if (!S) throw new Error('present=throne: needs the settlements (the atlas level, towns on)');
+    // (the live settlement: the town the level started at, once its plan is in)
+    let s: Settlement | null = null;
+    let doors: { at: V2; ref: string }[] = [];
+    let centre: V2 = [0, 0];
+    for (let k = 0; k < 120 && !doors.length; k++) {
+      s = S.live();
+      const pl = s ? S.places(s.id) : null;
+      if (pl && pl.doors.length) {
+        doors = pl.doors;
+        centre = pl.centre;
+      } else await new Promise((r) => setTimeout(r, 500));
+    }
+    if (!s || !doors.length) throw new Error('present=throne: no live settlement with doors near the start (start at one: &town=1)');
+    // (the hall's door: the building door nearest the settlement's middle)
+    const d0 = doors.reduce((a, b) => (Math.hypot(b.at[0] - centre[0], b.at[1] - centre[1]) < Math.hypot(a.at[0] - centre[0], a.at[1] - centre[1]) ? b : a));
+    const w = S.toWindow(d0.at);
+    this.door = [w[0], w[1], this.d.ground?.(w[0], w[1]) ?? 0];
+    this.d.session.respawn([w[0], w[1]]);
+    this.room = new ThroneRoom(this.d.ui, s);
+    this.room.onExit = () => this.leaveHall();
+    this.mode.hold = 'out';
+    this.mode.w = 0;
+    this.picker('entry', THRONE_ENTRIES, [this.entry], 'pentry', false, (v) => {
+      this.entry = v[0] as ThroneEntry;
+      this.apply();
+    });
+    const row = el('div', 'lab-row', this.panel);
+    const b = el('button', 'play-chip lab-chip', row) as HTMLButtonElement;
+    b.innerHTML = '<span>🚪</span><small>enter</small>';
+    b.title = `enter ${s.name}'s hall by its door (${d0.ref})`;
+    b.addEventListener('pointerdown', (e) => e.stopPropagation());
+    b.addEventListener('click', () => (this.inside ? this.leaveHall() : this.enterHall()));
+    this.tools();
+    this.apply();
+  }
+
+  /** into the hall: the zoom into the door, then the hall by the entry's transition */
+  enterHall(): void {
+    if (!this.door || !this.room) return;
+    this.d.session.respawn([this.door[0], this.door[1]]);
+    this.mode.hold = 'in';
+    this.inside = 1;
+    this.cutT = 0;
+    this.room.even = this.entry === 'fade' ? 1 : 0;
+  }
+
+  /** back out to the street: the hall dissolves away, the zoom eases out */
+  leaveHall(): void {
+    this.inside = 0;
+    this.cutT = 0;
+  }
+
+  /** (D) each frame: the hall's dissolve by the zoom's progress (or the cut's dark), drawn */
+  private throneFrame(dt: number): void {
+    const r = this.room;
+    if (!r || !this.door) return;
+    const cam = this.d.camera;
+    const p = cam.project(this.door[0], this.door[1], this.door[2] + 1);
+    r.from = [p[0], p[1]];
+    const z = this.mode.w;
+    if (this.entry === 'zoom') r.shown = 0;
+    else if (this.entry === 'cut') {
+      // (a dark beat, then the hall: the loading fallback)
+      this.cutT += dt;
+      r.shown = this.inside ? (this.cutT > 0.35 ? 1 : 0) : 0;
+      this.dark(this.inside ? Math.max(0, 1 - Math.abs(this.cutT - 0.35) / 0.35) : 0);
+    } else {
+      // (the hall comes in over the last 60 % of the zoom, and goes on the way out before the zoom eases back)
+      const want = this.inside ? Math.max(0, (z - 0.4) / 0.6) : 0;
+      r.shown += Math.sign(want - r.shown) * Math.min(Math.abs(want - r.shown), dt / 0.9);
+      if (!this.inside && r.shown <= 0) this.mode.hold = 'out';
+    }
+    if (!this.inside && (this.entry === 'zoom' || this.entry === 'cut')) this.mode.hold = 'out';
+    r.frame(dt);
+  }
+  private darkEl: HTMLElement | null = null;
+  private dark(a: number): void {
+    if (!this.darkEl) {
+      this.darkEl = el('div', '', this.d.ui);
+      Object.assign(this.darkEl.style, { position: 'absolute', inset: '0', background: '#000', zIndex: '9', pointerEvents: 'none' });
+    }
+    this.darkEl.style.opacity = String(a);
   }
 
   /** (A) the route's stick: the autopilot unless the player touched the stick lately */
@@ -335,9 +499,11 @@ export class PresentLab {
   label(): string {
     switch (this.d.scene) {
       case 'forest':
-        return `${this.forest.vis.join('+') || 'none'}${this.forest.light ? ' +light' : ''} · ${this.forest.transition}`;
+        return `${this.forest.scale !== 'game' ? `scale ${this.forest.scale} · ` : ''}${this.forest.vis.join('+') || 'none'}${this.forest.light ? ' +light' : ''} · ${this.forest.transition}`;
       case 'canyon':
         return `${this.canyon.cam}${this.canyon.speed ? ' · speed' : ' · fixed'}`;
+      case 'throne':
+        return `${this.entry}${this.inside ? ' · inside' : ''}`;
       default:
         return this.cliff;
     }
@@ -352,6 +518,8 @@ export class PresentLab {
         this.dts.push(dt * 1000);
         if (this.dts.length > 120) this.dts.shift();
         this.yieldT -= dt;
+        this.throneFrame(dt);
+        this.climbFrame(dt);
         if (this.ab.on) {
           this.ab.t += dt;
           if (this.ab.t > 3) {
@@ -375,6 +543,8 @@ export class PresentLab {
   shift(dx: number, dy: number): void {
     if (this.region) this.region.centre = [this.region.centre[0] + dx, this.region.centre[1] + dy];
     for (const p of this.route) p.at = [p.at[0] + dx, p.at[1] + dy];
+    // (D: the hall's door too — the second shot's zoom went to where the door had been before a slide, into a field)
+    if (this.door) this.door = [this.door[0] + dx, this.door[1] + dy, this.door[2]];
   }
 
   // ---- for the scripts (scripts/present.mjs) ----------------------------------------------------------------------
@@ -384,7 +554,8 @@ export class PresentLab {
     for (const [k, v] of Object.entries(o)) {
       const p = this.pickers.find((x) => x.title === k);
       if (!p) throw new Error(`present.pick: no picker "${k}" (${this.pickers.map((x) => x.title).join(', ')})`);
-      p.set(v === 'none' ? [] : v.split('+'));
+      // (a single choice's id may have a '+' in it: steep+route)
+      p.set(v === 'none' ? [] : p.choices.some((c) => c.id === v) ? [v] : v.split('+'));
     }
   }
 
@@ -406,11 +577,33 @@ export class PresentLab {
     this.restart();
   }
 
+  /**
+   * (B: the steering check) a player holding the stick one way on the screen (x right, y down; null: give the stick
+   * back): the hero is steered toward that screen direction as the camera shows it each frame — what a thumb does
+   * while the view turns under it.
+   */
+  holdStick(dir: V2 | null): void {
+    const s = this.d.session;
+    if (!dir) {
+      if (this.heldSteer !== undefined) s.steer = this.heldSteer;
+      this.heldSteer = undefined;
+      return;
+    }
+    if (this.heldSteer === undefined) this.heldSteer = s.steer;
+    const cam = this.d.camera;
+    s.steer = () => {
+      const w = cam.screenDeltaToWorld(dir[0], dir[1]);
+      const l = Math.hypot(w[0], w[1]) || 1;
+      return [w[0] / l, w[1] / l];
+    };
+  }
+  private heldSteer: PlaySession['steer'] | undefined = undefined;
+
   /** the numbers now (scripts) */
   state() {
     const h = this.d.session.hero.position();
     const cam = this.d.camera;
-    return { screen: cam.project(h[0], h[1], h[2] + 1), w: this.mode.w, hold: this.mode.hold, zoom: this.d.camera.zoom, elevation: (this.d.camera.elevation * 180) / Math.PI, azimuth: (this.d.camera.azimuth * 180) / Math.PI, hero: h, region: this.region, label: this.label(), present: !!this.d.camera.present, frames: this.dts.slice() };
+    return { stand: this.standStats, screen: cam.project(h[0], h[1], h[2] + 1), w: this.mode.w, hold: this.mode.hold, zoom: this.d.camera.zoom, elevation: (this.d.camera.elevation * 180) / Math.PI, azimuth: (this.d.camera.azimuth * 180) / Math.PI, hero: h, region: this.region, label: this.label(), present: !!this.d.camera.present, frames: this.dts.slice() };
   }
 
   dispose(): void {
@@ -420,5 +613,7 @@ export class PresentLab {
     for (const p of this.pickers) p.dispose();
     this.panel.remove();
     this.tag.remove();
+    this.room?.dispose();
+    this.darkEl?.remove();
   }
 }

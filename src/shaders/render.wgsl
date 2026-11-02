@@ -35,6 +35,8 @@ struct Camera {
   // x the transition's form (0 an iris from the hero, 1 an even dissolve), y the understory light 0..1, z its reach
   // (cells round the hero), w the hero's z
   presentC: vec4<f32>,
+  // (flag 16) x the birches' scale round their foot near the hero, y the share of them left out; zw spare
+  presentD: vec4<f32>,
 };
 
 /** 4 × 4 ordered dither, 0..1 (a pixel's threshold) */
@@ -215,6 +217,11 @@ fn presentReach(p: vec3<f32>, base: vec3<f32>, leaf: bool) -> f32 {
   // the upper canopy stippled: foliage over the trunks' height, a wider reach round the hero, a fixed share left out
   if ((flags & 4u) != 0u && leaf) {
     k = max(k, B.z * smoothstep(2.5, 4.5, p.z - base.z) * (1.0 - smoothstep(R * 1.8, R * 2.6, d)));
+  }
+  // (with the stipple, a small keyhole: what stands right in front of the hero — trunks, branches — dithered out round it, so
+  // the hero always reads; the main's review: in stipple alone the lich was lost behind the trunks)
+  if ((flags & 4u) != 0u) {
+    k = max(k, (1.0 - smoothstep(R * 0.22, R * 0.38, d)) * smoothstep(0.5, 1.5, along) * smoothstep(0.3, 0.8, p.z - base.z));
   }
   // the transition: an iris opening from the hero outward (form 0) or an even dissolve (form 1), by the weight
   let w = clamp(B.w, 0.0, 1.0);

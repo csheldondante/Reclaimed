@@ -3112,3 +3112,8 @@ breakdown node-phases.json), test/support/judgeworld.ts (RockWorld's passes thro
   the region and the route (src/present/stand.ts: the densest birch stand from `Plants.treesNear`, a loop through it),
   the review overlay; started by scenes/level.ts only with `?present=` (forest on the atlas's play sandbox, canyon and
   cliff on the hero lab). `?present=menu` is the review menu (src/present/menu.ts), before any level.
+- (B-D, the scale) The profile has `camera.azimuth` (C: face the cliff square on) and `scale` (the hero's draw scale:
+  PlaySession.drawScale -> VoxelDraw.scale; the birches' scale and thinning: render.wgsl Camera.presentD, meshinst.wgsl
+  vsInst by FL_BIRCH* — draw only, shadows and sight unscaled). D is a separate scene drawn by present/throne.ts on a
+  Canvas2D over the game, entered from `Settlements.places()`'s door nearest the live settlement's middle; its
+  petitions come from the settlement's record and open a labelled stub (the opportunity UI isn't on this base).

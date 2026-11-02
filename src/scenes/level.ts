@@ -2015,10 +2015,10 @@ export class LevelScene implements Scene {
   present?: import('../present/lab').PresentLab;
   private async startPresent(id: string, session: import('../play/session').PlaySession, lab: import('../play/lab/herolab').HeroLab | undefined): Promise<void> {
     const { PresentLab } = await import('../present/lab');
-    const ids = ['forest', 'canyon', 'cliff'];
-    if (!ids.includes(id)) throw new Error(`?present=${id}: on a level the scenes are ${ids.join(', ')} (the menu and the throne room: ?present=menu, ?present=throne)`);
+    const ids = ['forest', 'canyon', 'cliff', 'throne'];
+    if (!ids.includes(id)) throw new Error(`?present=${id}: on a level the scenes are ${ids.join(', ')} (the menu: ?present=menu)`);
     const api = (this.worldApi ??= attachSim(this.core));
-    this.present = await PresentLab.start({ ui: this.host.ui, session, camera: this.core.camera, scene: id as 'forest', plants: api.plants, lab, near: [this.core.dims.w / 2, (this.core.dims.h * ROW_H) / 2] });
+    this.present = await PresentLab.start({ ui: this.host.ui, session, camera: this.core.camera, scene: id as 'forest', plants: api.plants, lab, settlements: this.settlements, ground: (x, y) => api.terrain?.heightAt(x, y) ?? null, near: [this.core.dims.w / 2, (this.core.dims.h * ROW_H) / 2] });
     (window as unknown as { reclaimed: Record<string, unknown> }).reclaimed.present = this.present;
     // (the window slid: the region and the route move with what's kept in window coordinates)
     this.core.onShift.push((dx, dy) => this.present?.shift(-dx, -dy));

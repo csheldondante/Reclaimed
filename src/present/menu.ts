@@ -10,7 +10,7 @@ export const SCENE_URLS: Record<SceneId | 'off', string> = {
   forest: '?skipmenu=1&level=atlas&tutorial=0&at=13728,4768&play=lich&present=forest',
   canyon: '?skipmenu=1&level=herolab&station=canyon&present=canyon',
   cliff: '?skipmenu=1&level=herolab&station=cliff&hero=lich&present=cliff',
-  throne: '?present=throne',
+  throne: '?skipmenu=1&level=atlas&tutorial=0&town=1&play=lich&present=throne',
   off: '?skipmenu=1&level=atlas&tutorial=0&at=13728,4768&play=lich',
 };
 

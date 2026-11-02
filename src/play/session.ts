@@ -135,6 +135,11 @@ export class PlaySession {
     return this.rig.chase.chase;
   }
 
+  /** (round 124, PRE1: a presentation toggle) the hero drawn at this size round its feet; its body, reach and framing as they are */
+  set drawScale(s: number) {
+    this.draw.scale = s;
+  }
+
   /** (round 121) the camera modes now (the chase always) */
   setCam(ids: readonly CamModeId[]): void {
     this.rig.use(ids);
