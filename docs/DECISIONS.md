@@ -424,6 +424,9 @@ each was implemented.
 
 - The user, verbatim, on the forest branch's under-canopy shot: "For the forest, I think the screenshot you shared actually shows trees and roots but they are huge and the zoom is actually too big now (I want more vertical trunk) it may be better in portrait though." → under the canopy the camera zooms out until a good length of vertical trunk shows above the roots; checked in portrait and landscape.
 
+- The user, verbatim: "Those are looking better! And yeah the dust is a bit of an issue." (on interiors with normal rendering, zoomed in, the outside hidden) → that direction is kept; indoor dust is fine motes in the light shafts only.
+- The user, verbatim, on the zoomed-out forest shots: "I think we still want to be at the foot of the trees and to cut away the trunks in front of the PC so they look like stumps that fade" → the camera stays at the foot of the trees; trunks between the camera and the hero are cut low into stumps whose tops fade; trunks behind and beside the hero keep their height.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
