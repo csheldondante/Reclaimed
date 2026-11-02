@@ -1,6 +1,7 @@
 // ---- opps/dealer.ts -----------------------------------------------------------------------------------------------
 // (round 120, `opportunities`; BACKLOG RN2-2) The dealer: of everything the templates propose this turn, what is
-// offered on the map. Generic (no slice in it): templates propose (src/opps/horde.ts for slice A), the dealer filters,
+// offered on the map. Generic (no slice in it): the living engine's templates propose (src/living/engine.ts; slice A's
+// are src/living/horde.ts since merge124; the card lab's deck its own), the dealer filters,
 // picks a tier, scores, deals within the limits, and keeps the guarantees — and says why for every one it dealt and
 // every one it didn't (the debug overlay shows the report).
 // The user (round 120): "Part of the challenge here is designing a mechanical way to filter these and deal just the

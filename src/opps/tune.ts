@@ -36,7 +36,7 @@ const SPEC = {
   },
   horde: {
     title: 'Slice A: the horde run',
-    owner: 'opps/horde.ts (the templates and the conflict\'s numbers)',
+    owner: 'living/horde.ts (the run\'s templates and the conflict\'s numbers)',
     params: {
       holdSupplies: { label: 'the hold\'s supplies', units: 'supplies', min: 0, max: 10, step: 1, def: 2, help: 'given with the levy when the word is carried' },
       fordDelay: { label: 'the ford holds', units: 'min a tier', min: 0, max: 6, step: 0.25, def: 1.5, help: 'minutes the host is delayed at the ford, times the tier dealt (triumph ×1.5, a cost ×0.75)' },

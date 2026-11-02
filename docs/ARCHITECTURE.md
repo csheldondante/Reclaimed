@@ -2925,6 +2925,63 @@ engine's `locus` (the ruled city) and the staked. Each template's `RewardSpec` (
 unlocks as the player's `capability` tags `mode:what`) goes through the contract's resolve (goods, agents), the
 holdings' bonuses (the engine fires 'turn' gains; 'commit' shortens through the contract's commit) and the fact layer.
 
+## The run on the living world (merge124; BACKLOG M124-1..M124-9)
+
+The user (DECISIONS round 125): "Please proceed with getting it ready to merge into our run structure for now." One
+engine, one dealer, one oppcheck for the run and the inspector:
+
+- **The run's cards are living templates** (`src/living/horde.ts` HORDE_TEMPLATES: outriders; the ways on ride, muster,
+  warn, lead-out; the detours rescue, scout, chase; the crews' ford, harvest, vanguard, watchtower, weir). Each binds the
+  atlas world's real entities (the town the host comes for and the hold, marked `condition.target_of` / `hold_of`; the
+  host as an `army` entity, a member of the threat's faction; the run's areas as `site`s and its ways on as `route`s; the
+  hold's fields) and is presented by a named person of the locus's voice (its holder, else its largest cohort) with a
+  reward. The old template path (`src/opps/horde.ts`, proposals made in code) is deleted.
+- **The run's conflict is a Stage** (`dsl.ts` Stage; `horde.ts` HordeStage): the situation run (runsit/state.ts) owns
+  the clock, where the hero is and the host on its road; the stage stages them in the fact layer at the start (removed
+  by `unstage` at the end; what the run did stays in the history) and registers the helpers the templates name —
+  predicates (atEdge, fordReach, detourOpen …), the conflict's operations as effects (`conflict` delay/hasten/thin/swell/
+  rally/intel, never applied in a dry run), and what a card needs of the run: `vars` (names and the tune's numbers for
+  texts and amounts), `odds`, `challenge` (what's played at a site, its encounter, its minutes), `expiry`, `locate`.
+- **The engine generalised** (`engine.ts`): TemplateDef gains `play` (a played card: forced, climax, toward the climax),
+  `tiers`, `odds` (or a helper), tiered `outcomes` (text, effects, losses, tags, goods, reward), `expiry`, `locate`,
+  `offer`, `vars`, `parts`, `hooks`, `live` (re-evaluated every deal), `once`, `passable` (a way not taken is no slight),
+  `turnsVar`. EngineOptions: the stage, the dealer's tune (live), `onePerPlace` (false for the run: warn and lead out
+  both at the town), `economy` (off for a run), `rng`, `at`/`dist`, `hooks`, `clock`. New calls: `resolve(id, tier)`
+  (a played card at its challenge's tier; a crew's at its roll), `expire(due)` (by minute too), `redeal()`, `running()`.
+  A run's card is dry-run only once dealt and only when it touches the world (its stage operations don't).
+- **opps/run.ts OppRun** is the run's driver over the engine and the situation run: the turn (area done → `advance`),
+  the climax (running crews resolved, the rest lapsed, supplies and the levy), the levy's record. Its public surface is
+  the old one (offered, play, commitResources, areaDone, arrive, finish, report …) so `level-opps.ts` and the scripts
+  are unchanged but for the world it is given.
+- **The fact layer from the atlas world** (`src/living/seed.ts`): `seedLocus(w, locus, seed)` — the factions' standing
+  (Faction.relations → rival_of / friend_of, once a world), the locus's cohorts (a role each of its people), and a cast of
+  5-8 named people living there when the save has none (CharacterRecords + person entities: they ride in the snapshot).
+  The locus is the run's starting settlement (its first area's, else the nearest standing one).
+- **The world model holds the agents** (the user: "update the world model so all this data lives in it"):
+  `WorldSnapshot.holdings` / `MemoryWorldState.holdings` — the hero, the levy and every agent with `at`, `march` (an
+  army on the march: from where since when — on the agent, not in the run), `committed`, tags and parts; the goods, the
+  effects held; `commitments` (CommitmentRecord: what, where, the turn it resolves). FactWorld reads and writes them
+  there. A run ends with each army stationed where it went; a commitment left under way (the hero fell) is recalled at
+  the next run's start. The contract's `resolve` lets an agent the holdings already have rejoin (the levy mustered again).
+- **One oppcheck** (`gm/oppcheck.ts`): `checkOpportunity` (the contract: references, consequences, a challenge only with
+  the player and every challenge an encounter with enemies, odds, tiers, affordability, expiry) and `checkLiving`
+  (bindings in the facts, stores, one card a place or one offer of a template a place, a binding once, the outcome
+  realisable, the hand's limits). `checkOpps` over a DealReport is gone.
+- **Mutations reach the game world where the player looks**: `MemoryWorldState.onEvent` tells listeners every event.
+  `Settlements.useWorld(world)` (the level wires it at a run's start) moves the settlements' rights agreements into the
+  world's facts (LW-F10) and realises the settlement events: `settlement-condition` (setCondition: charred), `-owner`
+  (the record's holder: its units spawn for it), `migrate` (people moved: the refugees spawn there), `-stores`,
+  `-building` (the seed's `placed`; the plan made again when the land is next made: structures' `CitySpec.placed` raises
+  each as a landmark tower, `CityPlan.placed` says which building). The level's `useRiverWorld` keeps the regions'
+  inflow factors (`river-inflow`), and the river-wetness field carries (climate + storm water) × factor − climate per
+  node (`CatchmentWet.inflow`, `RiverWetField.write`).
+- **Settlement condition has one owner**: the `settlement-condition` event — `finishSituation` applies it (it no longer
+  writes the record) and `LevelSit.end` no longer calls setCondition (SettlementsView lost it).
+- `WorldState.fork()` (copy-on-write regions) and `lightSnapshot()` (no history; only the regions whose inflow isn't 1)
+  make the engine's dry runs and diffs cheap on the atlas world (a snapshot 28 ms, a restore 58 ms on seed 1).
+- Tests: test/unit/run-world.test.ts, opps.test.ts (over the engine), src/settle/plan.test.ts (a placed tower);
+  headless: scripts/opps.mjs, scripts/m124world.mjs (`--case tower|weir|lead`), scripts/inspector.mjs.
+
 ## Tests in Node (round 117, `testkit`; docs/TESTING.md)
 
 - `npm test` runs two vitest projects, unit (test/unit/**, src/**/*.test.ts) then gpu (test/gpu/**). Neither uses a

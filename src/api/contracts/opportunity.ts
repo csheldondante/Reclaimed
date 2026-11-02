@@ -12,9 +12,10 @@
 // with which agents (`meet`), committing (`commit`: the agents locked, the costs spent) and resolving (`resolve`: the
 // survivors back with their new tags, the goods and agents gained). Pure: no DOM, no GPU, no clock of its own; every
 // function returns new holdings and never changes what it was given (unit-tested in Node: test/unit/opportunity.test.ts).
-// What is not here: which opportunities exist (templates, src/opps/), which are offered (the dealer, src/opps/dealer.ts)
-// and what a conflict does with its effects (the run's conflict, src/opps/horde.ts for slice A). An effect of kind
-// 'conflict' is carried as data and applied by whoever owns the conflict; 'atlas' effects go to WorldState.apply.
+// What is not here: which opportunities exist (the living engine's templates, src/living/: merge124), which are offered
+// (the dealer, src/opps/dealer.ts) and what a conflict does (the run's stage, src/living/horde.ts for slice A: its
+// operations are the templates' effect helpers). 'atlas' effects go to WorldState.apply. (merge124) The holdings are the
+// world model's: WorldSnapshot.holdings.
 
 import type { AtlasEvent, RegionId } from './world';
 

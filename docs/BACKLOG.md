@@ -12,6 +12,26 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 126 (2026-11-02, session 5, `merge124`) — the living world merged into the run structure (DECISIONS round 125, newest)
+
+The user (verbatim): "Please proceed with getting it ready to merge into our run structure for now." and, on the levy's
+march state: "Oh yeah definitely update the world model so all this data lives in it." `facts` (5aa6d0f, holding
+`opportunities`) onto `places` 2051bf6. DEVLOG merge124; the structure review in C:/Projects/shots88/merge124/STRUCTURE.md.
+
+| id | item | size | status |
+|---|---|---|---|
+| M124-1 | The run's cards from the living engine: slice A's cards as living templates (src/living/horde.ts: outriders, ride, muster, warn, lead-out, rescue, scout, chase, ford, harvest, vanguard) with presenters and rewards, bound to the atlas world's entities (the town, the hold, the threat's faction, the locus's voice); the run's conflict as the engine's Stage; one engine, one dealer, one oppcheck. src/opps/horde.ts deleted; checkOpps folded into checkLiving | L | done (`merge124`) |
+| M124-2 | The fact layer seeded from the atlas world (src/living/seed.ts): the factions' standing as relations, the locus's cohorts, a cast of 5-8 named people at the run's locus when the save has none; persisted through the snapshot | M | done (`merge124`) |
+| M124-3 | The world model holds the agents (the user's ask): WorldSnapshot.holdings — agents with `at`, `march` (the levy's march state on the agent, not in the run), `committed`, tags; `commitments` (what, where, the turn it resolves); armies stationed where they went at a run's end; a commitment left under way recalled at the next run | M | done (`merge124`) |
+| M124-4 | Mutations realised where the player looks: WorldState.onEvent; Settlements.useWorld (condition, owner, migration, stores, a placed structure → the plan made again, structures' CitySpec.placed raising a landmark tower); the river field's per-region inflow factor. Two run cards that change the world: the watchtower (a placed structure) and the hold's weir (a dried river); warn/lead-out's failure gives the town to the dead (owner), lead-out's success moves its people to the hold (migration) | L | done (`merge124`) |
+| M124-5 | One owner of settlement condition: the `settlement-condition` event (finishSituation applies it; LevelSit no longer sets it) | S | done (`merge124`; M123-4's first half) |
+| LW-F10 | settle/settlements.ts's diplomacy over the world's fact store once wired (useWorld) | S | done (`merge124`) |
+| M124-6 | The atlas world's settlement records have no people until the settlements system plans the town (the wiki's snapshot: 140 settlements, none with people): the locus's cohorts are empty in a fresh world and the cast all speaks for the holder. Plan-time people should reach the world's records (an event, or the records' people from purpose and size) | S | open |
+| M124-7 | A run's deal on seed 1's atlas world ~15-30 ms in Node (was < 5 ms with the code templates): the engine's evaluation and a fork of the world for each dealt card that touches it; acceptable at an edge, measure on the phone | S | open |
+| M124-8 | A placed structure is realised as a landmark tower on a lone lot; its own look (burrows, a granary, a watchtower's shape) is the structures track's (STR) | S | open |
+| M124-9 | The far land (past the window) shows a placed structure only once the town's exact plan is made again (its far plan is the old one until then) | S | open |
+| M124-10 | The UI is known-bad (the user): the card shows the presenter's line in the pitch and "You get" — to be experimented with later; dialogs, interiors, portraits, camera/zoom, foliage next | M | open (the user) |
+
 ## Round 125 (2026-11-02, session 5, `facts`) — the living world: the fact layer, the template engine, the world inspector (DECISIONS round 124/125, docs/design/FACTIONS_WORLD_STATE.md)
 
 The user's design documents (docs/design/FACTIONS_WORLD_STATE.md, OPPORTUNITY_CATALOG.md) and answers: real pawns and
@@ -28,7 +48,7 @@ stores, turns of days, instant plausible mutations, Briar Hollow first. DEVLOG r
 | LW-F7 | Traits at the opportunity scale (src/living/traits.ts; the user: "Undead may work tirelessly with no sleep. Gnoll knights may regenerate"): one vocabulary with traits.ts; species, tags and parts (Agent.parts: bodies and gear) give a pawn's traits; one rule table: undead labour faster, no upkeep, the living object; regenerating losses recover; flying travel faster | M | done (`facts`) |
 | LW-F8 | The seeded Briar Hollow world (src/living/briar.ts): noble houses, serfs, gnolls with communal childcare and housing, the Lantern Guild, the Briar Crown with serfdom legal, Millbrook downstream, the Vell March neutral | S | done (`facts`) |
 | LW-F9 | The world inspector (cardlab.html; the deck lab at ?deck=1): entities, tags by scope, relations, claims, history, invariants; the dealer's cards with why each was or wasn't dealt; commit and advance; every change as a diff | M | done (`facts`) |
-| LW-F10 | settle/settlements.ts makes its own MemoryDiplomacy over its own store: give it the world's fact store when the settlement system is wired to the world state | S | open |
+| LW-F10 | settle/settlements.ts makes its own MemoryDiplomacy over its own store: give it the world's fact store when the settlement system is wired to the world state | S | done (`merge124`: Settlements.useWorld) |
 | LW-F11 | The settlement economy's atlas step: the engine moves stores by their rates each turn (an instant step); it belongs to the settlement system's atlas tick | S | open |
 | LW-F12 | Roads as real map connectivity: the corridor's route is a fact-layer entity; the region generator should lay the road (a LinearFeature) when the land is realised | M | open |
 | LW-F13 | The simulated agents read the same traits where the player looks (an undead worker doesn't go home at night) through the trait modules' CAPS word — a hook for the agents' track | M | open |
@@ -70,7 +90,7 @@ iterate on this" (the gaps: STR50-52). `cities` (a659a7c) and `traits` (85e935d)
 | M123-1 | cities and traits merged onto places: settlements with purposes and stories, ports and ships, dressing and night lights; the trait system on the GPU agents (five-vec4 units, UNIT_V, beside the solver's unitsG()) | M | done (`merge123`) |
 | M123-2 | The traits station moved off the playground (merge121's slide/house/metal stations took its back row) to its own level, The Traits Lab (`?level=traitlab`, on the title screen: levels/traitlab.ts); scripts/traitshot.mjs goes there | S | done (`merge123`) |
 | M123-3 | Play's lich raises the dead through the trait system (LW1-1, M122-7): a 💀 raise button (raiseReach 9, raiseEvery 3 s, tunable) calls PlayWorld.raise, put together in scenes/level.ts from `traits.apply({ op: 'raise', group: RAISED_GROUP })`; those raised are ordered to follow the hero and are no longer hostile. Play had no raise logic of its own: nothing deleted | S | done (`merge123`) |
-| M123-4 | Settlement condition has one owner: the world state (runsit's finishSituation writes it; Settlements.setCondition realises it charred). cities' story only reads the world state's events and region state for its marks, never the condition. The story doesn't read `condition` yet: a ruined town shows its burned quarter only if the run's outcome put a `burn` event in the region — the run-loop's `settlement-condition` AtlasEvent through WorldState.apply would let it (not built here) | S | open |
+| M123-4 | (merge124: the event is now the one owner — M124-5; the story reading it is still open) Settlement condition has one owner: the world state (runsit's finishSituation writes it; Settlements.setCondition realises it charred). cities' story only reads the world state's events and region state for its marks, never the condition. The story doesn't read `condition` yet: a ruined town shows its burned quarter only if the run's outcome put a `burn` event in the region — the run-loop's `settlement-condition` AtlasEvent through WorldState.apply would let it (not built here) | S | open |
 | M123-5 | The cities stand-in: dockers share the farmers' fields (life.ts ROUTINE; STR38) — noted, not fixed | S | open |
 | M123-6 | Play's lich predicts throws with UNIT_GRAVITY = 20 ("agents.ts AGENT_GRAVITY"), but the units now fall by unitsG() = world gravity × TUNE.units.gravity (merge121): the comment names a constant that's gone; the prediction drifts if the tuning moves | S | open |
 | M123-7 | The lich's own blows (slam, push, storm) strike its raised followers too: a hit doesn't know sides | S | open |
