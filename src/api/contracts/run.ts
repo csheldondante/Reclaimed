@@ -236,6 +236,11 @@ export interface CharacterRecord {
   gear: string[];
   /** lasting conditions: 'wounded', 'cursed', 'captive:f-hollow-court', 'famed' … */
   statuses: string[];
+  /** (round 120, opportunities) what unlocks special opportunities for them ('veteran', 'named' …): the user's "tags so
+   *  named characters are also knights or whatever"; persists into later runs (absent in older saves) */
+  tags?: string[];
+  /** (round 120, opportunities) the resolution bonuses they won (contracts/opportunity.ts Bonus, without `holder`) */
+  bonuses?: import('./opportunity').BonusRecord[];
 }
 
 export type CharacterChange =
@@ -246,7 +251,9 @@ export type CharacterChange =
   | { kind: 'gear'; id: string; add?: string[]; remove?: string[] }
   | { kind: 'status'; id: string; add?: string[]; remove?: string[] }
   | { kind: 'move'; id: string; region: RegionId | null }
-  | { kind: 'die'; id: string; text: string };
+  | { kind: 'die'; id: string; text: string }
+  /** (round 120, opportunities) tags and bonuses won or lost (the bonuses replace those with the same `why`) */
+  | { kind: 'tags'; id: string; add?: string[]; remove?: string[]; bonuses?: import('./opportunity').BonusRecord[] };
 
 // ---- consequences as the generators read them (the user: "Make it eternal night or flood a region and make a new
 // shallow sea or bury a ruin under sand") ---------------------------------------------------------------------------

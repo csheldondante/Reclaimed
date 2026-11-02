@@ -94,6 +94,11 @@ export interface SituationArea {
   play: AreaPlay;
   /** lines said on arrival (the narrator's, or a speaker's name in `by`) */
   say?: Bark[];
+  /**
+   * (round 124, opportunities) more of the threat in this area than its play brings: foes on the way to its goal and
+   * outriders behind (the user: "Enemies, combat and pursuers must be present") — the threat's role and faction
+   */
+  threat?: { foes: number; pursuers: number };
 }
 
 /** What the hero plays in an area. Each ends at the area's edge (the map and the choices), or in the finale. */
@@ -107,7 +112,14 @@ export type AreaPlay =
   /** someone on the road with things to trade: reach them, take one of their offers */
   | { kind: 'trader'; offers: string[] }
   /** the finale at the target: defend it, or (warned, choosing it) lead its people to the refuge */
-  | { kind: 'town' };
+  | { kind: 'town' }
+  /** (round 124) run them down: quarry already fleeing a few seconds ahead (PL23: a chase starts close, in pursuit) —
+   *  cut them all down before they reach their escape (`escape` cells off), or they get away */
+  | { kind: 'chase'; quarry: number; role: string; faction: FactionId | null; escape: number }
+  /** (round 124) captives held by guards: cut the guards down, reach the captives, lead them to the way on */
+  | { kind: 'rescue'; captives: number; guards: number; role: string; faction: FactionId | null }
+  /** (round 124) a lookout over the threat's road, patrols on the way: reach it (what it sees is the reward) */
+  | { kind: 'scout'; patrols: number; role: string; faction: FactionId | null };
 
 export interface SituationChoice {
   id: string;

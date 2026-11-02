@@ -2786,6 +2786,56 @@ The user (round 119): "I need to actually play a generated run and try it out." 
 - Scripts: `scripts/situation.mjs` (fill and check in Node via Vite's SSR loader), `scripts/runsit.mjs` (the headless
   playthrough: `--want saved|burned|evacuated`, `--ff`), `scripts/storycheck.mjs` (stories and situations).
 
+## Opportunities: the contract and the dealer (round 124, `opportunities`; BACKLOG RN2-1..RN2-7; docs/design/RUN_LOOP.md rev. 4)
+
+`?skipmenu=1&level=atlas&run=opps` (`&hero=lich`): slice A, runsit's horde run as opportunities on the atlas map. The
+situation flow stays behind `?runplan=` until this replaces it.
+
+- **Contract** `src/api/contracts/opportunity.ts` (pure): `Agent` (kind, count, tags, statuses, `at`, `committed`),
+  `Holdings` (agents, goods, rules, bonuses), `Requirement`, `Bonus` (negate, instant; `holder` an agent), `Opportunity`
+  (location, requires, tier of tiers, costs, duration in minutes for the player's / turns for agents', challenge iff the
+  player is required, odds iff not, outcomes by tier, visibility, expiry and `onExpire`, forced, climax, themes, hooks,
+  the dealer's `because`, `affordable`/`missing`), `Commitment`, `Resolution`. Rules: `available`, `meet`, `affords`,
+  `commit` (locks, spends, rolls), `resolve` (bonuses, losses, tags, gains; `out` = the effects for others: `conflict`
+  operations for the conflict's owner, `atlas` events for WorldState.apply), `scaleOf` (derived). No clock, no DOM.
+- **CharacterRecord** (contracts/run.ts) gained optional `tags` and `bonuses` (`BonusRecord`), and CharacterChange
+  `tags`; MemoryWorldState applies it. Tags and bonuses persist with named characters run to run.
+- **Dealer** `src/opps/dealer.ts` (generic): `deal(proposals, ctx) → DealReport` — steps sense, reach, tier (largest
+  affordable), score (weights × parts), one offer a template a place, forced alone, limits, guarantees (a way toward the
+  climax; tied to the conflict); every proposal not dealt has its step and why. Templates propose (`Proposal`: tiers,
+  `make(tier)`, sense lines, score parts, place, hooks). Tuning: `src/opps/tune.ts` OPP_TUNING (CPU registry; groups
+  `dealer` and `horde`), the `dealer` panel on the page.
+- **Validator** `src/gm/oppcheck.ts` `checkOpps(report, world, holdings, tune)`: references, consequences, sane deals;
+  OppRun runs it on every deal (`check` option) and a problem throws.
+- **Slice A** `src/opps/horde.ts` (the templates: outriders, ride/warn/lead-out, ford, harvest, vanguard; `fordAt`: where
+  the levy meets the host's road first), `src/opps/run.ts` OppRun (wraps runsit's SituationRun, which keeps the clock,
+  route, pursuers, finale setup and endings; adds holdings, deals, commitments, expiry, the conflict's ops
+  delay/hasten/thin, the climax), `src/opps/finish.ts` (finishSituation, then the named agents' records),
+  `src/opps/level-opps.ts` LevelOpps (extends LevelSit through its protected hooks makeRun/areaDone/arrived/finishRun/
+  finishRecord/travel/render/drawOnMap: markers on the AtlasMap — `AtlasMap.onTap` — the detail sheet and Commit, the
+  why-list). SituationRun gained `thinned` and `provisioned` (read by finaleSetup).
+- Tests: test/unit/opportunity.test.ts, test/unit/opps.test.ts, test/unit/deck.test.ts; headless: scripts/opps.mjs, scripts/cardlab.mjs.
+- **Effects (relics), round 124**: `Bonus` = { why, on: Trigger, themes?, effect: Effect, holder? (an agent) | building?
+  (Holdings.buildings), charges?, cooldown?, ready? }. Triggers dealt, expiring, commit, resolve, turn, threat,
+  agent-lost; effects negate, delay, shorten, extend, instant, better, unlock, gain, discount. `relics(h, on, opp?,
+  agents?)` is the one query; the contract fires commit and resolve, the run the rest; `dropOwned` removes an owner's
+  effects with it. CharacterRecord keeps an agent's as `BonusRecord` (no owner).
+- **Encounters, round 124**: `Challenge.encounter` (kind + foes + pursuers + horde); oppcheck refuses an encounter with
+  no enemies. `SituationArea.threat` adds foes and pursuers to an area's play; AreaPlay kinds chase, rescue, scout.
+- **No-odds path, round 124**: an opportunity without odds resolves to 'success' after its turns; a player opportunity
+  without a challenge resolves the same way (the card lab). A challenge only with the player.
+- **Settlement AtlasEvents, round 124**: `settlement-condition`, `settlement-owner`, `migrate`, applied only by
+  WorldState.apply (MemoryWorldState.applySettlement). runsit's finishSituation still writes the condition directly
+  (to move onto the event: open).
+- **The card lab** (cardlab.html → src/cardlab/main.ts; src/opps/deck.ts DeckRun, simulate; data/cards/lab.json): the
+  same contract and dealer as the map, another front end. The dealer's `Proposal.event`: on the board whatever is held,
+  outside the limits.
+- **Kingdoms and value, round 124 (RN3)**: src/opps/kingdom.ts `generateKingdom(library, seed, size)` makes a LabDeck from
+  the library's stacks (StackDef: where it can be by owner and purpose; cards made per place, goods scaled by size,
+  world ops aimed at @here/@home/@enemy); CardDef.stack (unlocks name stacks). DeckRun.ev (points a turn: direct +
+  engine − costs − losses + the penalty avoided, over the horizon to the climax); the dealer's `ev` score part; the bots
+  (`autoTurn`: ev, bigmoney, engine, random, greedy) and `tournament` (bots × kingdoms, viability).
+
 ## Tests in Node (round 117, `testkit`; docs/TESTING.md)
 
 - `npm test` runs two vitest projects, unit (test/unit/**, src/**/*.test.ts) then gpu (test/gpu/**). Neither uses a

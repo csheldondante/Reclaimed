@@ -117,6 +117,7 @@ export class MemoryWorldState implements WorldState {
         f.relations[t] = Math.max(-1, Math.min(1, (f.relations[t] ?? 0) + m));
       }
     }
+    if (e.kind === 'settlement-condition' || e.kind === 'settlement-owner' || e.kind === 'migrate') this.applySettlement(e);
     if (e.kind === 'faction-attitude') {
       const f = this.factions.get(e.detail?.faction as FactionId);
       if (!f) throw new Error(`AtlasEvent ${e.id}: faction-attitude needs detail.faction, a known faction`);
@@ -124,6 +125,41 @@ export class MemoryWorldState implements WorldState {
     }
     this.events.push(e);
     this.version++;
+  }
+
+  /** (round 124) the settlement events: one owner for a settlement's condition, holder and people */
+  private applySettlement(e: AtlasEvent): void {
+    const d = e.detail ?? {};
+    const need = (key: string) => {
+      const s = this.settlements.find((x) => x.id === d[key]);
+      if (!s) throw new Error(`AtlasEvent ${e.id}: ${e.kind} needs detail.${key}, a settlement of the world (${String(d[key])})`);
+      return s;
+    };
+    if (e.kind === 'settlement-condition') {
+      const c = d.condition as import('./settlement').Settlement['condition'];
+      if (!['thriving', 'struggling', 'besieged', 'abandoned', 'ruined'].includes(c)) throw new Error(`AtlasEvent ${e.id}: no settlement condition ${String(c)}`);
+      need('settlement').condition = c;
+    } else if (e.kind === 'settlement-owner') {
+      const f = d.faction as FactionId | null;
+      if (f !== null && !this.factions.has(f)) throw new Error(`AtlasEvent ${e.id}: settlement-owner needs detail.faction, a known faction or null`);
+      need('settlement').faction = f;
+    } else {
+      const from = need('from');
+      const to = need('to');
+      const share = Math.max(0, Math.min(1, e.magnitude));
+      let moved = 0;
+      for (const p of from.people) {
+        const n = Math.round(p.count * share);
+        p.count -= n;
+        moved += n;
+      }
+      from.people = from.people.filter((p) => p.count > 0);
+      if (moved) {
+        const r = to.people.find((p) => p.role === 'refugee');
+        if (r) r.count += moved;
+        else to.people.push({ role: 'refugee', count: moved });
+      }
+    }
   }
 
   /** (round 117, runplan) a character the world remembers */
@@ -156,6 +192,11 @@ export class MemoryWorldState implements WorldState {
       case 'status': r.statuses = [...r.statuses.filter((g) => !c.remove?.includes(g)), ...(c.add ?? []).filter((g) => !r.statuses.includes(g))]; break;
       case 'move': r.region = c.region; break;
       case 'die': r.alive = false; r.history.push({ run, text: c.text }); break;
+      case 'tags': {
+        r.tags = [...(r.tags ?? []).filter((g) => !c.remove?.includes(g)), ...(c.add ?? []).filter((g) => !(r.tags ?? []).includes(g))];
+        if (c.bonuses) r.bonuses = [...(r.bonuses ?? []).filter((b) => !c.bonuses!.some((n) => n.why === b.why)), ...structuredClone(c.bonuses)];
+        break;
+      }
     }
     this.version++;
   }

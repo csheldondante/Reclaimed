@@ -71,7 +71,15 @@ export type AtlasEventKind =
   | 'faction-relation'
   /** (round 117, runplan) a faction's strength in the world (detail.faction; −1..1, applied once): the user's "factions and their relationships and power" */
   | 'faction-power'
-  | 'mark';
+  | 'mark'
+  /** (round 124, opportunities; RUN_LOOP §8 item 1) a settlement's condition (detail.settlement, detail.condition):
+   *  WorldState.apply is its one owner — runsit's finishSituation wrote it directly before */
+  | 'settlement-condition'
+  /** (round 124) who holds a settlement (detail.settlement, detail.faction: an occupation, a vassal sworn, a town lost) */
+  | 'settlement-owner'
+  /** (round 124) people moving: refugees fleeing (detail.from, detail.to settlements; magnitude: the share of `from`'s
+   *  people who go, 0..1) — they arrive at `to` as 'refugee' */
+  | 'migrate';
 
 export interface AtlasEvent {
   id: string;

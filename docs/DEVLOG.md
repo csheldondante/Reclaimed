@@ -15724,3 +15724,256 @@ plain blow.
 - Shots: C:/Projects/shots88/merge123/ — towns/ (m123-port, -mining, -hold: day, night, near), traits/ (the station:
   crowd, smite, raise.gif, sanctuary, petrify), lich/ (01-raiders, 02-fallen, 03-raise.gif, 03-raised: the raised in
   green and bone round the lich), runsit-saved/, tilegate/, tilegate-places/, drive-*.log; STRUCTURE.md.
+
+## Round 124 (2026-11-01, session 5, `opportunities`) — slice A of the opportunity system (DECISIONS round 120)
+
+The user's correction (docs/design/STRATEGIC_MAP.md) and the newest answers (DECISIONS round 120): opportunities are
+uniform; cards only behind the scenes, shown on the map; the dealer deals what makes sense, the most expensive you can
+afford; tags persist; the dealer tuned by iteration. RUN_LOOP.md came over from `runloop` as revision 4 with those
+answers folded in (its "hands" and "at least two player cards" marked stale). BACKLOG RN2-1..RN2-7.
+
+**The contract** (src/api/contracts/opportunity.ts). Resources are the player, agents (kind, count, tags, statuses,
+where they are) and goods. The rules are pure functions that return new holdings: `available` (with the player or at
+a settlement the character rules; not committed, not wounded: the user's "they must be available to your
+character"), `meet` (kinds, counts and tags, fewest-tagged first so a veteran is kept for what needs one), `affords`,
+`commit` (agents locked, costs spent; a resource opportunity's tier rolled at commitment from the odds the card showed),
+`resolve` (bonuses lift the tier, the survivors return with their losses and new tags, goods and agents gained; the
+conflict's and the atlas's effects passed on in `out`, for their owners). Why the conflict's effects are data with an
+`op` and not functions: the contract stays one concern (what a commitment does to the holdings); what "delay the host"
+means is the conflict's, so slice A's run applies `delay`/`hasten`/`thin` to the situation and a ruler's run will
+apply its own. Durations: a player opportunity's in run minutes (its leg and play), a resource one's in turns (the user:
+"resolve or pop up each turn"). Bonuses: `negate` (a tier on a theme lifted to the next better: a veteran levy's
+disaster on a fight becomes a failure) and `instant` (resolves the turn it's committed).
+
+**The dealer** (src/opps/dealer.ts) is generic: templates propose, the dealer decides, in named steps (sense, reach,
+tier, score, one offer a template a place, forced alone, limits, the guarantees), and every proposal it does not deal
+is reported with its step and why. "The most expensive you can afford" is step 3: the largest tier what's available
+meets, and a `tier` part in the score (`wTier`) so a richer deal outranks a poorer one. "One option a turn when that's
+what makes sense": the limits are limits, not targets, and the guarantee is a way toward the climax, not two cards.
+Every weight and limit is a slider (src/opps/tune.ts, a CPU registry the tuning panel edits). 0.1-0.5 ms a deal in Node.
+
+**Slice A** (src/opps/horde.ts, run.ts). runsit's SituationRun keeps its clock, route, pursuers, the town's fate and
+the finale's setup (two fields added: `thinned`, `provisioned`), so the endings work as today; OppRun keeps the
+holdings, the deals, commitments, expiry and the climax. The templates: the outriders (forced, the start), the ways on
+(one per situation choice: ride / warn / lead-out, the GM's travel rule a choice of destinations), Hold the ford (army
+1/2/3 + supplies; delays the host by the tier; survivors veterans), Bring in the harvest (army 1/2; supplies feed the
+warned town's defenders at the climax; let go, it rots and the host comes on sooner), Break the vanguard (only for
+veterans: the tag opportunity). Deliver won is an outcome that gains an army agent (`levy:<hold>`) and supplies —
+runsit's special case in finaleSetup becomes a resource gained; the levy reinforces the finale only if it isn't
+committed, from wherever it was freed. At the climax what is still out resolves (its roll was made at commitment) and
+what is still offered expires.
+
+Why the ford is offered only where the levy can meet the host's road first (`fordAt`: the first point ahead of the
+host the levy reaches 0.25 min before it, at runsit's LEVY_PACE): on seed 1 the hold path is late by construction (the
+hold won at minute 9.0, the host at the town at 9.1 — fill.ts sets the clock at the straight road + 2.5), and a ford
+dealt there would be a lie. The dealer says so ("the levy can't reach the host's road before it passes: 5.3 min to the
+nearest of it; the host at the town in 5 s"), deals the harvest and the one way on. Where the hold is by the host's
+road (the Node tests move it there) the ford is dealt at the tier the levy meets, committed, resolved the next turn.
+That seed 1 never offers it is RN2-7 for the user: the GM's or the template's way after the hold needs a turn or two.
+
+**Persistence.** CharacterRecord gained `tags` and `bonuses` (optional: older saves load), with a `tags`
+CharacterChange; finishOpps writes the named agents the run leaves (a levy that stood in a saved town comes back
+veteran, with the negate bonus; one wiped out dies), and the next run's levy comes with its record — which opens the
+vanguard. oppcheck (src/gm/oppcheck.ts) runs on every deal; a problem throws.
+
+Tests: test/unit/opportunity.test.ts (10), test/unit/opps.test.ts (18: the dealer's tiers, forced, limits, one-offer,
+guarantees, reach, variety, sliders; slice A on seed 1: the outriders forced, the ways on, the levy, the harvest
+committed and let rot, the ford where it makes sense at tier 1 and at tier 2 with two armies, played through to saved
+and to burned, the veteran levy into the next run, oppcheck catching a broken deal, under 5 ms a deal).
+
+**The map** (src/opps/level-opps.ts, `?run=opps`; RN2-6). LevelOpps extends runsit's LevelSit through protected hooks
+(makeRun, areaDone, arrived, finishRun, finishRecord, travel, render, drawOnMap) so the live play, the legs, the finale
+and the end card are runsit's own code, not a copy. At an edge (and at the start, for the forced outriders) the atlas
+map opens fitted to the player, what's offered and the host, with the card at the bottom: gold pins for the player's
+opportunities (a dashed line from where the hero is), blue diamonds for the agents', grey when unaffordable, a red ring
+on a forced one and a white one on the climax, ⏳ diamonds with the turns left for what's committed. Two at one place
+(warn and lead out, both at the town) are fanned apart with their labels stacked. A tap (AtlasMap.onTap, new: it runs
+before the warp rule) shows needs (and which agents would go), costs (and what's held), how long, the odds (or "how you
+play it"), each tier's consequence, what letting it go does, then Commit. No list of opportunities is on the card. The
+`dealer` button (over the map, `.play-on` no longer hides it) opens every weight and limit; moving one deals the turn
+again. "why? (the dealer)" lists what was dealt and why and what wasn't and why.
+
+Headless (scripts/opps.mjs, 412x785, the GM's situation for seed 1, every system at 1x):
+- burned (hold path, the levy committed to the harvest): turn 0 the outriders alone; turn 1 three ways on; turn 2 one
+  way on and the harvest (the ford rejected: the levy can't reach the host's road first); the harvest committed (⏳ 1
+  turn), resolved at the climax at a cost (2 supplies, 1 of 12 lost), the levy came in at minute 12.5 (the dead at 8.8),
+  Bumku burned. Finale frames p50 9.8 / p95 11.6 ms, GPU 13.6 ms; hero main thread 0.053 ms.
+- saved (the straight road, warned): outriders, three ways on, two at the road's edge (fanned), Bumku held. Finale p50
+  9.9 / p95 15.6 ms, GPU 14.3 ms. Deals 0.2-0.6 ms in the page.
+- smoke: atlas loads, no fatal, sim running. `?run=opps` adds nothing to the default page (a branch in level.ts and a
+  lazily imported module), so driveprofile was not re-run.
+- Shots: C:/Projects/shots88/opportunities/ (hoverbike-burned-1-start-map, -1-edge-map, -2-harvest-detail,
+  -2-harvest-committed, -2-way-detail, -9-end; hoverbike-saved-*; saved-finale.gif; fan2/ the fanned pair), logs beside.
+
+**Slice A rework, part 1** (the user on the phone, round 124, DECISIONS: no roster, no intro, no stats, opportunities
+not over their places nor timed, not several to choose from, "just drive to a flag no enemies or combat no pursuers").
+In Node so far (7e0f2ff): every player opportunity names its encounter (contracts/opportunity.ts `Encounter`: flee,
+ambush, gauntlet, skirmish, chase, rescue, patrol, defend, evacuate, race) with its enemies; oppcheck refuses one with
+none ("a ride to a flag"). Why the old runs had none: the outriders were the run's only pursuers and a won flee left
+none, so the hall and the trader were rides to a flag. Halls and traders now carry a threat of their own
+(`SituationArea.threat`, armThreats from tune: riders between the hero and the hall, raiders round the trader, who must
+be driven off before it trades). Three detours are dealt beside the ways on, each a new area off the road that leads on
+to where it was taken (AreaPlay gained chase — PL23: the quarry already running a few seconds ahead — rescue and
+scout). playerMax 4. Timers by turn or by run minute (`expires.minute`). RN2-7: the slack after the hold (`holdSlack`,
+1.5 min): the host's arrival is moved out until the levy can meet its road; seed 1 now deals the ford and the harvest at
+the hold. RN2-8: the evacuation run ended "saved" because the horde stalled ~130 cells out (walk/go, not advancing:
+the town's water) and the timed hold counted from its spawn; the hold now counts from when the dead first reach the
+town's edge (FinaleRules.reachedAt). The stall itself is still open (RN2-8). Still to do: the roster, the intro, the
+anchored timed markers on the map, the headless encounter check (RN2-10).
+
+**The card lab** (cardlab.html, src/opps/deck.ts, src/cardlab/main.ts, data/cards/lab.json; RN2-9), ahead of the
+rework at the user's word: "making a playground for the card mechanics that has no playable encounters ... Think deck
+builder". Then, in turn: world consequences visible ("A occupied city, refugees fleeing, a toppled empire, a flooded
+civilization"); no rolls ("you assign resources it resolves one way and if not it may trigger an on expires effect");
+abilities as relics ("just active effects tied to triggers") owned by units and buildings ("unit abilities and tags and
+things you have built").
+- The same contract and dealer as the map. The contract's no-odds path: an opportunity with no odds resolves to its one
+  outcome ('success') after its turns; a player opportunity with no challenge resolves the same way (the lab's). Odds
+  stay in the contract, unused here.
+- One effect mechanism (`Bonus`: why, trigger, themes, effect, owner, charges, cooldown). Triggers: dealt, expiring,
+  commit, resolve, turn, threat, agent-lost. Effects: negate, delay, shorten, extend, instant, better, unlock, gain,
+  discount. The contract reads commit (instant, shorten) and resolve (negate a tier, better). The run reads the rest.
+  Every effect has an owner (an agent: lose it and the effect goes; a building, `Holdings.buildings`: lost when its
+  settlement burns or is taken). Slice A's veteran levy is one: `on: resolve, themes: fight, negate disaster`.
+- Three settlement AtlasEvents with one owner, WorldState.apply (RUN_LOOP §8 item 1): `settlement-condition`,
+  `settlement-owner`, `migrate` (refugees from one settlement to another). The lab's cards write world ops that become
+  these (and faction-power, flood, shadow, raise-dead…). The page draws them: owners' colours, condition marks, refugee
+  arrows, floods, the dead, what's built.
+- The dealer gained `event` proposals: a happening with a consequence for letting it go is on the board whatever is held
+  and outside the limits (the tribute demanded, the climax come). Hiding it would make its penalty unfair.
+- Duration is distance: whole turns of travel at `pace` from where the player is, plus work, less the shorten effects.
+- The simulator: win rate, run length, choices a turn, each card dealt/taken/rate/won-when-taken, never and always
+  taken, each effect's fires a run and win rate when it fired vs not, world changes a run. Seed 1, 200 runs, random:
+  6.5 % won, 28.6 turns, 2.5 choices a turn; greedy (the dealer's order) 0 % won — it forages forever, the lab's first
+  finding (it never builds the walls or allies Town 3, the strength never reaches the climax's 8).
+- Tests: test/unit/deck.test.ts (8). Headless: scripts/cardlab.mjs (no GPU), shots in
+  C:/Projects/shots88/opportunities/cardlab/.
+
+**Slice A rework, part 2: the map** (RN2-10). `?run=opps` now opens on a hero roster: one card for each play hero.
+Each card shows the hero's line, stats from its ControllerProfile (speed, jump, flight, how much it breaks), the
+tags, effects and deeds on its CharacterRecord, and its game modes as icons. Ride and race, chase and flee, and combat
+come from its encounter likes. Raise and command comes from a raise parameter. Build is not yet any hero's. The choice
+sets the run. An intro follows, before the first turn: what is happening (who, how many, from where), how bad it gets
+(the burned ending), what the hero is trying to do, and the clock (with the GM's clock beside it when the hold's slack
+moved it). A "☰ the situation" panel stays on the card all run. On the map each opportunity is drawn at its place
+with its encounter's icon and a timer over it: this turn, n turns, or m minutes (orange when it happens anyway if let
+go). Tapping one shows the effect card: the encounter and its enemies, the timer, needs, costs, duration, each tier's
+outcome and what letting it go does. Detours are placed on land the situation already knows: the captives' camp in
+the refuge's hills, the herald and the lookout on the host's own road. The first try ran a straight line toward the
+town and put the camp in the lake by Bumku.
+
+Headless (scripts/opps.mjs at 412x785, `tod=0.35`, every system at 1x; it now checks for hostiles round the hero in
+every area):
+- burned, with `--detour chase`: the roster, then the intro, then the forced outriders (3 hostile). Turn 1 dealt four
+  options (the hold, the river road, the straight road, run down the herald). The chase had 3 hostile, the hall 11,
+  and the town 25. The herald got away (+3 dead). The captives and the harvest expired with their penalties. Bumku
+  burned. Finale p95 11.7 ms, GPU 13.7 ms.
+- saved, with `--detour rescue`: flee (3), ambush (5), and at the road's edge four options (warn, lead out, free the
+  captives with 6 min left, scout). Rescue had 3 hostile, the town 16. The horde was broken at t 100: saved. Finale
+  p95 13.5 ms.
+- smoke: passed.
+- Shots: C:/Projects/shots88/opportunities/rework/.
+  - hoverbike-burned-0-roster and -0-intro: the roster and the intro.
+  - hoverbike-saved-2-edge-map and hoverbike-burned-3-edge-map: several anchored, timed opportunities.
+  - hoverbike-burned-1-chase-detail and hoverbike-saved-2-rescue-detail: effect cards.
+  - hoverbike-saved-4-town-enemies: the dead in the shallows at the town.
+  - hoverbike-saved-finale.gif.
+
+Still open: the enemy check counts within 400 cells, so a hero far ahead of its outriders isn't shown with them on
+screen. A close-quarters shot is next. The chase autopilot lost the herald. Whether the chase is catchable on the
+phone is for the user to judge.
+
+**The card lab, after Dominion** (RN3; the user: "Dominion each round has decks that you can purchase and permuting them
+changes what strategy is viable each time you play. Here the opportunities are like the cards you can purchase ... not
+all uniform within a stack and the world state is what generates them"; "converting your actions into expected point
+values and trying to maximize the per turn points over approximately the game time frame").
+- **Kingdoms** (src/opps/kingdom.ts). data/cards/lab.json is now a library of 24 stacks over a world of 9 places, each
+  place with an owner and a purpose. Each stack says where it can be: an owner (yours, an enemy's, no one's), a
+  purpose (hold, farming, trading, mining, port), or a place with no settlement. Every place that fits makes one card
+  of it, so the cards in a stack differ:
+  - the card is titled with its place;
+  - with `scale`, its goods go up with the settlement's size (City 5's stores are double Fort 4's);
+  - its world consequences aim at '@here', '@home' or '@enemy', the nearest enemy settlement.
+
+  A kingdom is the 4 core stacks (forage, arm, muster, the climax) plus 10 more, drawn from the seed and weighted by
+  how many places fit. An unlock names a stack. A stack whose unlocker isn't in the kingdom starts open. The page has
+  a New kingdom button and lists the kingdom's stacks. Why forage, arm and muster are core: like Dominion's base
+  cards, they make sure every kingdom has a way to the climax's strength. Before them, kingdoms without muster were
+  unwinnable for every bot.
+- **Expected value a turn** (DeckRun.ev). Points are renown; the climax met is +10.
+  - Goods are priced in points. The climax's good (strength) is priced from `winPoints` ÷ the need, dearer the
+    further behind the need is for the turns left. A good is also worth what a card in the deck turns it into
+    strength at, but only as a gain; a cost is priced at its own worth.
+  - A turn of doom is worth `turnPoints`.
+  - Agents are priced by what they can do over the turns left, and effects by their expected fires.
+  - An unlock is priced by its stack's cards, discounted by the time left.
+  - A card's value a turn = (direct + engine − costs − losses + the penalty it avoids) ÷ its turns.
+  - The board shows it under the EV toggle. The dealer reads it as a score part (`wEv`, 0.3).
+- **The bots** (autoTurn): `ev` (most points a turn), `bigmoney` (Dominion's baseline: the most direct reward a turn,
+  never an engine), `engine` (agents, effects and unlocks while more than half the time is left, then bigmoney),
+  `random`, `greedy` (the dealer's own order, which now includes `ev`). `tournament` runs every bot on N kingdoms. A
+  bot is viable in a kingdom when it wins at least half as often as the best and scores within 80 % of the best of
+  those. A lost run scores half its renown.
+- **First results** (kingdoms 1-6; each bot's win rate / score):
+
+  | kingdom | ev | bigmoney | engine | greedy | random | viable |
+  |---|---|---|---|---|---|---|
+  | 1 | 100% / 12 | 100% / 10 | 100% / 14 | 100% / 12 | 40% / 7.7 | ev, engine, greedy |
+  | 2 | 0% / 6.5 | 100% / 10 | 0% / 6 | 100% / 23 | 0% / 5.1 | greedy |
+  | 3 | 100% / 17 | 100% / 26 | 100% / 20 | 100% / 16 | 0% / 0.8 | bigmoney |
+  | 4 | 100% / 10 | 100% / 10 | 100% / 10 | 100% / 12 | 20% / 2 | ev, bigmoney, engine, greedy |
+  | 5 | 100% / 10 | 100% / 24 | 100% / 10 | 100% / 18 | 0% / 0.6 | bigmoney |
+  | 6 | 100% / 10 | 100% / 10 | 100% / 10 | 100% / 17 | 80% / 9.2 | greedy |
+
+  Different kingdoms favour different strategies, and none is the only viable one everywhere. But only 2 of 6
+  kingdoms have two or more viable, against the target of most. Bigmoney wins every kingdom (the festivals and the
+  trade are cheap renown), and the ev bot lost kingdom 2. That's the balance work ahead, with the sliders and the
+  JSON. In the page (kingdoms 1-8): 4 of 8 kingdoms with two or more viable strategies. Viable counts: ev 3,
+  bigmoney 4, engine 3, greedy 5. Shots: C:/Projects/shots88/opportunities/cardlab/ (2b-place-tapped-ev,
+  4-bots-x-kingdoms).
+- **Readability.** On the world panel each place with something on offer has a timer over it: the shortest stay,
+  ×count, ⏳ for what's running there; orange when one happens anyway if let go. Tapping a place shows its cards under
+  the world.
+
+**The card lab, simplified** (the user: "Way too many resources. Labor, influence, power then tags that are hidden to
+the user but filter what pawns the player can assign to things. Then everything is about getting new opportunities to
+increase those things and deal with the threat cards").
+- Three resources: labor, influence, power. checkDeck refuses any other in a cost, a reward or the start. Power is
+  what meets the climax (8). Labor and influence buy power and everything else.
+- Pawns are the agents. Their kinds and tags still filter what they can be assigned to, but the page never shows
+  them. A card says "Assign: you + a pawn (Militia of Town 1, Swords of Port 8 — busy)" or "a pawn you don't have
+  yet". Effects still ride on pawns and on what's built (✦, with a tooltip).
+- Cards are opportunities (raise labor, influence or power, or open new cards) or threats (`threat: true`; dealt
+  with by committing pawns and resources, else they fire their expiry and change the world). New threats:
+  - raiders (core: a power or a militia, or the stores burn and the threat comes a turn sooner);
+  - sickness;
+  - the Empire's envoy.
+
+  The old tribute, fields, refugees and the climax are threats too. The 24 stacks are re-cast into the three
+  resources, with their world consequences kept.
+- Score: 10 for meeting the climax, 2 for each threat dealt with, −1 for each threat let fire. EV is priced in the
+  three resources: power from the climax's need, the others from what they buy, plus `threatPoints` (2) for a threat
+  dealt with. An effect's worth counts only the turns after the card that brings it. Before that, a granary five
+  turns away looked better than mustering.
+- The page: three counters, the pawns, the board (threats in red, labelled THREAT; opportunities labelled), the world
+  with a timer over each place. Everything else (log, world log, the dealer, tuning, the library, the simulator) is
+  folded under "Lab tools".
+- Bots × kingdoms 1-6 (each bot's win rate / score):
+
+  | kingdom | ev | bigmoney | engine | greedy | random | viable |
+  |---|---|---|---|---|---|---|
+  | 1 | 0% / 0 | 100% / 1 | 0% / −9 | 100% / 13 | 0% / −3 | greedy |
+  | 2 | 100% / 12 | 100% / 3 | 100% / 3 | 100% / 15 | 80% / 7.6 | ev, greedy |
+  | 3 | 100% / 13 | 100% / 4 | 100% / 4 | 100% / 16 | 0% / −3 | ev, greedy |
+  | 4 | 100% / 17 | 100% / 2 | 0% / −8 | 100% / 20 | 60% / 2.8 | ev, greedy |
+  | 5 | 100% / 11 | 100% / 2 | 0% / −8 | 100% / 14 | 0% / −1.4 | greedy |
+  | 6 | 100% / 20 | 100% / 2 | 100% / 2 | 100% / 20 | 0% / −0.8 | ev, greedy |
+
+  4 of 6 kingdoms have two viable. But the two (ev, and greedy, the dealer's order, which weighs ev) are close
+  cousins: the real finding is that dealing with threats pays (score 11-20) while bigmoney wins with scores of 1-4 by
+  ignoring them. Engine builds too long and loses. RN3-1 stays open: give the engine a payoff, and make letting
+  threats fire cost the climax (not only the score).
+- In the page (kingdoms 1-8): 6 of 8 have two viable, ev and greedy. Bigmoney wins all 8 with scores of 0-4.
+  Fixed: a card that left the board and came back kept its old stay, so its timer read −2 (City 5's raid); a stay
+  now ends when a card isn't dealt. Shots: C:/Projects/shots88/opportunities/cardlab/ (1-turn6, 2b-place-tapped-ev,
+  4-bots-x-kingdoms).

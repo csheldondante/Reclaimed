@@ -12,6 +12,25 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 124 (2026-11-01, session 5, `opportunities`) — slice A of the opportunity system: the horde run as opportunities on the map (DECISIONS round 120)
+
+The user's text docs/design/STRATEGIC_MAP.md and the newest DECISIONS round 120 entries ("show them as events or
+opportunities on the map not as a hand", "deal just the ones that make sense ... most expensive cards you can afford",
+tags persist, "tune the dealer ... via iteration"). Design: docs/design/RUN_LOOP.md revision 4. DEVLOG round 124.
+
+| id | item | size | status |
+|---|---|---|---|
+| RN2-1 | The opportunity contract (contracts/opportunity.ts): agents with tags, goods, holdings, `available`, `meet`, `affords`, `commit` (agents locked, costs spent, the roll), `resolve` (losses, tags and bonuses for the survivors, goods and agents gained, conflict and atlas effects passed on), bonuses (negate, instant); pure, unit-tested | M | done (`opportunities`) |
+| RN2-2 | The dealer (opps/dealer.ts): sense filters, reach, the largest affordable tier, scores, one offer a template a place, forced alone, limits, unaffordable and next-tier slots, the guarantees (a way toward the climax; tied to the conflict); every weight and limit a slider (opps/tune.ts, the `dealer` panel); a report of what was dealt and why and what was not and why | M | done (`opportunities`) |
+| RN2-3 | Slice A (opps/horde.ts, opps/run.ts): the outriders forced, the ways on as player opportunities, the Red Hold's levy an army agent, Hold the ford (army 1/2/3, only where the levy can meet the host's road before it), Bring in the harvest (rots if let go: the host sooner), Break the vanguard (veterans only); commitments over turns, the climax settles what's out; the town's fate and the endings as runsit's | L | done in Node (`opportunities`) |
+| RN2-4 | oppcheck (gm/oppcheck.ts): references, consequences realisable, sane deals; run on every deal (a problem throws) | S | done (`opportunities`) |
+| RN2-5 | Persistence: CharacterRecord `tags` and `bonuses` (+ the `tags` CharacterChange); the levy's record (`levy:<hold>`) keeps `veteran` and its bonus into later runs | S | done (`opportunities`) |
+| RN2-6 | The map: opportunities as markers on the AtlasMap (tap: needs, costs, duration, odds, consequences, Commit), ongoing commitments with turns left, no hand UI; the dealer's debug overlay; `?run=opps` beside `?runplan=` | M | done (`opportunities`; headless saved and burned) |
+| RN2-8 | The evacuation path ended saved, not evacuated: the horde stalled ~130 cells out (walk/go, not advancing: the port town's water between) and the timed hold counted from its spawn. Fixed: the hold counts from when the dead reach the town's edge (FinaleRules.reachedAt). Open: why the horde stalls (the agents' fields over water) | S | half done (`opportunities`) |
+| RN2-7 | Seed 1's hold path was late by construction (the hold at 9.0 min, the host at the town at 9.1): the levy's opportunities never mattered. Fixed: `holdSlack` moves the host's arrival out until the levy can meet its road; the ford and the harvest are dealt at the hold on seed 1 | M | done (`opportunities`) |
+| RN2-9 | The card lab (cardlab.html): the loop as a deck builder, no encounters, no rolls; world consequences as real WorldState changes (settlement-condition, -owner, migrate AtlasEvents); effects as relics owned by agents and buildings, fired by triggers; sacrifice as a card; events always on the board; a card library as JSON; the simulator (win rate, choices, never/always taken, effects fired and their impact, world change) | L | done (`opportunities`) |
+| RN2-10 | Slice A rework (the user on the phone): a hero roster card (description, stats and tags, game modes), the run's intro and a situation panel, opportunities anchored over their places with timers and an effect card, several to choose from, every opportunity a real encounter with enemies (done in Node: encounters, detours chase/rescue/scout, armed halls and traders); the headless check that enemies spawn in each | L | done (`opportunities`; headless saved and burned, every encounter with enemies) |
+
 ## Round 123 (2026-10-31, session 5, `merge123`) — cities and traits merged into places (DECISIONS round 120)
 
 The user (round 120): "This looks good to merge ... so merge and just take notes of gaps and a Todo to come back and
@@ -360,7 +379,9 @@ tests work and do quick smoke tests to find failures early." docs/TESTING.md.
 | UI10 | The title screen's level list doesn't fit a phone (Pixel 9a): the Traits Lab and later entries are off screen; scroll or wrap the list (round 120, the user) | S | open |
 | CAM11 | Cut only real occluders (a surface rising less steeply than the camera's sight line can't hide anything; gentle hills never cut); toggle (on) to never cut behind the player; cut height rises quadratically with distance from the hero (h0 + k·d²); dithered edges in the default cut (round 120, the user) | M | next (herolab) |
 | PL32 | Bike handling v2: turn radius by speed + brake/drift, a speed governor in narrow corridors, a carve control, more turning acceleration; still poor except forest and hills (round 120, the user) | M | next (herolab) |
-| RN3 | Dominion-style kingdoms: the world state generates each run's opportunity stacks (varied within a stack), permuting viable strategies; EV-per-turn card valuation; simulator bots (EV-per-turn, Big-Money-like baseline, engine builder, random); balance = several strategies viable per kingdom | M | next (card lab) |
+| RN3 | Dominion-style kingdoms: the world state generates each run's opportunity stacks (varied within a stack), permuting viable strategies; EV-per-turn card valuation; simulator bots (EV-per-turn, Big-Money-like baseline, engine builder, random); balance = several strategies viable per kingdom | M | done, first pass (`opportunities`: kingdoms, EV, the bots, the tournament; balance: 2 of 6 kingdoms with two strategies viable — tuning ahead, RN3-1) |
+| RN3-1 | Card lab balance: most kingdoms with two or more viable strategies, none dominating (bigmoney wins everywhere today; the ev bot loses kingdom 2) — through the stacks JSON and the value sliders | M | open |
+| RN3-2 | The card lab simplified (the user): three resources (labor, influence, power), pawns whose tags are hidden and only filter assignment, opportunities and threats; the 24 stacks re-cast; score = climax + threats dealt with − let fire; minimal UI | M | done (`opportunities`; balance in RN3-1) |
 | RN4 | Faeria-style positioning: dispatched agents hold positions on the map that matter (locking down enemies, holding a pass) | L | deferred (simpler version first) |
 | FLO21 | Birch cost on the phone: the user's result good — done (flora 18c3bdb, unmerged) | S | done |
 
