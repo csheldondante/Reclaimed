@@ -363,6 +363,7 @@ tests work and do quick smoke tests to find failures early." docs/TESTING.md.
 | RN3 | Dominion-style kingdoms: the world state generates each run's opportunity stacks (varied within a stack), permuting viable strategies; EV-per-turn card valuation; simulator bots (EV-per-turn, Big-Money-like baseline, engine builder, random); balance = several strategies viable per kingdom | M | next (card lab) |
 | RN4 | Faeria-style positioning: dispatched agents hold positions on the map that matter (locking down enemies, holding a pass) | L | deferred (simpler version first) |
 | FLO30 | Wind-responsive foliage lab (docs/design/FOLIAGE_WIND.md, the user's): static baselines, then 1A wind-shading ripple + 1B instanced vertex bending (grass) and 1A + 1C coarse lattice deformation (trees), reusing the GPU wind field; phone benchmark by matched static/animated pairs; stop at the first technique that clears the visual bar | M | open (low priority) |
+| PRE1 | Region presentation prototypes (docs/design/REGION_PRESENTATION.md): A birch forest canopy->understory (first), B canyon camera, C cliff climb, D throne-room interior with petitioners; presentation profiles, review overlay, repeatable A/B | L | wip (presentation) |
 | FLO21 | Birch cost on the phone: the user's result good — done (flora 18c3bdb, unmerged) | S | done |
 
 ## Round 118 (2026-10-30, session 5, `places`) — found while reviewing the tracks

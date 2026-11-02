@@ -396,6 +396,8 @@ each was implemented.
 
 - The user, verbatim: "Oh yeah definitely update the world model so all this data lives in it. Sounds good!" (on agents' and armies' whereabouts and commitments kept inside run code) → all pawn and army state lives in the world model and persists through the snapshot. And: "Ok here is a doc I wrote about experimenting with cool plant rendering. It's sort of low priority but I really want to improve the visuals around flora." → kept verbatim at docs/design/FOLIAGE_WIND.md (wind-responsive foliage, GPU-only, prioritised experiments with a stop/go rule); BACKLOG FLO30, low priority.
 
+- The user's camera and presentation handoff, kept verbatim at docs/design/REGION_PRESENTATION.md ("Ok here is the document on cameras"): four reviewable prototypes with region presentation profiles: (A, first) birch forest canopy to understory; (B) hoverbike canyon; (C) cliffside climb; (D) a throne-room interior as a separate scene with petitioners opening the opportunity UI. Perceptual continuity, not geometric; reuse the world; keep isometric by default; toggles off by default; repeatable A/B and a review overlay. → branch  from herolab (camera contract, cut/tilt, lab framework) with places merged; BACKLOG PRE1.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
