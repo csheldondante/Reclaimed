@@ -11,9 +11,8 @@ import { MemoryWorldState } from '../../src/api/contracts/world-state';
 import { deal, type DealContext, type Proposal } from '../../src/opps/dealer';
 import { OPP_TUNING, OPP_TUNE } from '../../src/opps/tune';
 import { OppRun } from '../../src/opps/run';
-import { CONFLICT_OPS } from '../../src/opps/horde';
 import { finishOpps } from '../../src/opps/finish';
-import { checkOpps, type OppWorld } from '../../src/gm/oppcheck';
+import { checkLiving, type OppWorld } from '../../src/gm/oppcheck';
 import { fillSituation, situationMap } from '../../src/runsit/fill';
 import { FinaleRules } from '../../src/runsit/finale';
 import { along } from '../../src/runsit/state';
@@ -112,9 +111,9 @@ describe('the dealer (dealer.ts)', () => {
 const snap = () => seed1().wiki.snapshot;
 const fill = (world = snap()) => fillSituation({ graph: seed1Graph(), world, seed: 1, from: seed1().wiki.spawn.region, at: seed1().wiki.spawn.at as [number, number] });
 const graph = seed1Graph();
-const oppWorld = (sit: Situation, world = snap()): OppWorld => ({ region: (id) => !!graph.node(id), settlement: (id) => world.settlements.some((s) => s.id === id), situation: sit, ops: CONFLICT_OPS });
-/** a run with oppcheck on every deal (a problem throws) */
-const make = (sit = fill(), w?: MemoryWorldState) => new OppRun(sit, situationMap(graph, snap()), { seed: 1, hero: 'hoverbike', character: w ? (id) => w.character(id) : undefined, check: (rep, h) => checkOpps(rep, oppWorld(sit), h, OPP_TUNE.dealer) });
+const oppWorld = (sit: Situation): OppWorld => ({ region: (id) => !!graph.node(id), situation: sit });
+/** a run with oppcheck on every deal (a problem throws), over a world (a fresh restore of seed 1's, or a save) */
+const make = (sit = fill(), w: MemoryWorldState = MemoryWorldState.restore(structuredClone(snap()))) => new OppRun(sit, situationMap(graph, snap()), { seed: 1, hero: 'hoverbike', world: w, check: (rep, e) => checkLiving(e, rep, oppWorld(sit)) });
 const checked = (r: OppRun) => expect(r.reports.length).toBeGreaterThan(0);
 const way = (r: OppRun, choice: string) => r.forPlayer.find((o) => o.offer === choice)!.id;
 /** the finale played by its rules: `kill` the hero cuts the host down, else they stand in the town setting fires */
@@ -159,7 +158,8 @@ describe('slice A: the horde run as opportunities (run.ts, horde.ts)', () => {
     expect(r.holdings.goods.supplies).toBe(OPP_TUNE.horde.holdSupplies);
     expect(r.sr.reinforce).toBeNull();
     expect(r.forPlayer.map((o) => o.offer)).toContain('c-levy');
-    expect(r.forResources.map((o) => [o.template, o.tier, o.affordable]).sort()).toEqual([['ford', 1, true], ['harvest', 1, true]]);
+    // (merge124: beside them the levy's world cards — a watchtower at the town, the hold's weir)
+    expect(r.forResources.map((o) => [o.template, o.tier, o.affordable]).sort()).toEqual([['ford', 1, true], ['harvest', 1, true], ['watchtower', 1, true], ['weir', 1, true]]);
     expect(r.sit.threat.arrives).toBeGreaterThan(r.clockWas);
     // (the GM's clock kept: the ford out of the levy's reach, and the dealer says why)
     OPP_TUNING.set('horde.holdSlack', -2);
@@ -183,7 +183,7 @@ describe('slice A: the horde run as opportunities (run.ts, horde.ts)', () => {
     r.play(way(r, 'c-hold'));
     r.arrive();
     r.areaDone({ seconds: 170, won: true });
-    const h = r.forResources[0];
+    const h = r.forResources.find((o) => o.template === 'harvest')!;
     const c = r.commitResources(h.id);
     expect(c.agents).toEqual(['levy']);
     expect(r.running()).toEqual([{ c, turnsLeft: 1 }]);
@@ -251,8 +251,8 @@ describe('slice A where the ford makes sense (the hold by the host\'s road)', ()
     const res = r.resolutions.find((x) => x.opp === ford.id)!;
     expect(res).toBeTruthy();
     const levy = r.holdings.agents.find((a) => a.id === 'levy');
-    // (the host: the ford's delay at its tier, less the rot of the harvest let go at the climax)
-    const delay = res.out.reduce((s, e) => s + (e.kind === 'conflict' && e.op === 'delay' ? e.amount : 0), 0);
+    // (the host: the ford's delay at its tier — the stage's operation, by the tune — less the rot of the harvest let go)
+    const delay = +(({ triumph: 1.5, success: 1, cost: 0.75 } as Record<string, number>)[res.tier] ?? 0) * OPP_TUNE.horde.fordDelay * ford.tier;
     const rotted = r.expired.some((e) => e.opp.template === 'harvest') ? OPP_TUNE.horde.rot : 0;
     expect(r.sr.hordeArrives()).toBeCloseTo(before + delay - rotted, 6);
     if (res.tier !== 'failure') {
@@ -341,31 +341,33 @@ describe('slice A played through: saved and burned, and what lasts', () => {
 });
 
 describe('oppcheck (gm/oppcheck.ts)', () => {
-  it('passes the deals above and finds what makes a deal unsound', () => {
+  it('passes the deals above and finds what makes a deal unsound (one oppcheck: the living engine\'s)', () => {
     const r = make();
     r.play(r.offered[0].id);
     r.areaDone({ seconds: 150, won: true, pursuers: 1 });
-    const rep = structuredClone(r.report!);
+    const rep = { ...r.engine.report!, dealt: r.engine.report!.dealt.map((x) => ({ ...x, opp: structuredClone(x.opp) })) };
     const o = rep.dealt[0].opp;
     o.location.region = 999999;
-    o.challenge = undefined;
+    o.challenge!.encounter = { kind: 'race', foes: 0, pursuers: 0, text: '' };
     o.outcomes.success!.effects.push({ kind: 'conflict', op: 'teleport', amount: 1 });
     o.tier = 4;
-    rep.dealt.push(structuredClone(rep.dealt[0]));
-    const p = checkOpps(rep, oppWorld(r.sit), r.holdings, OPP_TUNE.dealer);
-    for (const m of [/region 999999 isn't on the map/, /a challenge iff the player/, /no operation teleport/, /tier 4 of 1/, /dealt twice/]) expect(p.some((x) => m.test(x)), String(m)).toBe(true);
+    rep.dealt.push(rep.dealt[0]);
+    const p = checkLiving(r.engine, rep, oppWorld(r.sit));
+    for (const m of [/region 999999 isn't on the map/, /a ride to a flag/, /the stage's \(an effect helper\)/, /tier 4 of 1/, /dealt twice/]) expect(p.some((x) => m.test(x)), String(m)).toBe(true);
   });
-  it('deals in well under 5 ms a turn', () => {
+  it('deals in well under 25 ms a turn on the atlas world (the living engine: each card dry-run on a copy of it)', () => {
     const r = make();
-    for (let i = 0; i < 20; i++) r.deal();
-    const ms = r.reports.slice(1).map((x) => x.ms).sort((a, b) => a - b);
-    expect(ms[Math.floor(ms.length / 2)]).toBeLessThan(5);
+    r.play(r.offered[0].id);
+    r.areaDone({ seconds: 150, won: true, pursuers: 0 });
+    for (let i = 0; i < 10; i++) r.deal();
+    const ms = r.reports.slice(2).map((x) => x.ms).sort((a, b) => a - b);
+    expect(ms[Math.floor(ms.length / 2)]).toBeLessThan(25);
   });
 });
 
 describe('every player opportunity is a real encounter (round 124: "no enemies or combat no pursuers")', () => {
   it('each area of the run, armed, and each detour maps to an encounter with enemies in it', async () => {
-    const { encounterOf, detourArea, DETOURS } = await import('../../src/opps/horde');
+    const { encounterOf, detourArea, DETOURS } = await import('../../src/living/horde');
     const r = make();
     for (const a of r.sit.areas) {
       const e = encounterOf(r.sr, a);
@@ -374,7 +376,7 @@ describe('every player opportunity is a real encounter (round 124: "no enemies o
     r.play(r.offered[0].id);
     r.areaDone({ seconds: 150, won: true, pursuers: 0 });
     for (const d of DETOURS) {
-      const area = detourArea({ sr: r.sr, turn: r.turn, at: r.at(), tune: OPP_TUNE.horde, harvest: 'open', taken: new Set(), firstSeen: () => ({ turn: 0, minute: 0 }), intel: 0 }, d);
+      const area = detourArea(r.sr, OPP_TUNE.horde, d);
       const e = encounterOf(r.sr, area);
       expect(e.foes + e.pursuers, d).toBeGreaterThan(0);
     }
@@ -393,6 +395,7 @@ describe('every player opportunity is a real encounter (round 124: "no enemies o
     expect(r.sr.at).toBe(chase.challenge!.area);
     r.areaDone({ seconds: 100, won: true });
     expect(r.sit.choices.filter((c) => c.from === r.sr.at && !c.to.startsWith('d-')).map((c) => c.to).sort()).toEqual(ons.filter((x) => !x.startsWith('d-')));
-    expect(r.resolutions.at(-1)!.out.length + r.resolutions.at(-1)!.outcome.effects.length).toBeGreaterThan(0);
+    // (it did something to the host: the stage's operations — fewer or more dead, the freed, the lookout's word)
+    expect(Math.abs(r.sr.thinned) + r.stage.rallied + r.stage.intel).toBeGreaterThan(0);
   });
 });

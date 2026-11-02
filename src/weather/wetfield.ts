@@ -58,21 +58,25 @@ export class RiverWetField {
     this.wet = true;
   }
 
-  /** the texels from the nodes' storm water; uploaded if any is wet (or was) */
-  write(ex: Float32Array): void {
+  /** the texels from the nodes' storm water; uploaded if any is wet (or was). (merge124) `inflow` per node: a region's
+   *  rivers' inflow factor — the field carries (climate + storm water) × factor − climate, so riverWetAt (climate + field)
+   *  gives the river its region's share: a card's drought dries it, a diversion swells it */
+  write(ex: Float32Array, inflow?: Float32Array, climate = 1): void {
     const t0 = performance.now();
-    this.upload(ex);
+    this.upload(ex, inflow, climate);
     this.writes++;
     this.msMean += (performance.now() - t0 - this.msMean) / Math.min(this.writes, 600);
   }
 
-  private upload(ex: Float32Array): void {
+  private upload(ex: Float32Array, inflow: Float32Array | undefined, climate: number): void {
     const { node, vals } = this;
     let any = false;
     for (let t = 0; t < vals.length; t++) {
-      const v = node[t] >= 0 ? ex[node[t]] : 0;
+      const n = node[t];
+      const k = n >= 0 && inflow ? inflow[n] : 1;
+      const v = n >= 0 ? ex[n] * k + climate * (k - 1) : 0;
       vals[t] = v;
-      if (v > 1e-4) any = true;
+      if (Math.abs(v) > 1e-4) any = true;
     }
     if (!any && !this.wet) return;
     this.wet = any;

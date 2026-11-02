@@ -23,12 +23,11 @@ import { PLAY_TITLE, along, type AreaResult, type SituationRun, type V2 } from '
 import type { SituationEnd } from '../api/contracts/situation';
 import { ROW_H } from '../world/lattice';
 import { TunePanel } from '../ui/tunepanel';
-import { checkOpps } from '../gm/oppcheck';
+import { checkLiving } from '../gm/oppcheck';
 import { reportLines } from './dealer';
-import { CONFLICT_OPS } from './horde';
 import { finishOpps } from './finish';
 import { OppRun } from './run';
-import { OPP_TUNE, OPP_TUNING } from './tune';
+import { OPP_TUNING } from './tune';
 
 const toCell = (p: V2): [number, number] => [p[0], p[1] / ROW_H];
 const GLYPH: Record<string, string> = { flee: '⇢', ambush: '⚔', deliver: '✉', trader: '⚖', town: '♜', ford: '≈', harvest: '❦', vanguard: '⚔' };
@@ -67,11 +66,13 @@ export class LevelOpps extends LevelSit {
   protected makeRun(sit: Situation, snap: ReturnType<MemoryWorldState['snapshot']>): SituationRun {
     const world = this.world;
     const g = this.graph;
+    // (merge124) the run's cards from the living engine over this world (its fact layer, its holdings), checked by the
+    // one oppcheck on every deal
     this.opps = new OppRun(sit, situationMap(g, snap), {
       seed: this.d.atlas.p.seed,
       hero: this.d.hero,
-      character: (id) => world.character(id),
-      check: (r, h) => checkOpps(r, { region: (id) => !!g.node(id), settlement: (id) => snap.settlements.some((s) => s.id === id), situation: sit, ops: CONFLICT_OPS }, h, OPP_TUNE.dealer),
+      world,
+      check: (r, e) => checkLiving(e, r, { region: (id) => !!g.node(id), situation: sit }),
     });
     this.selected = this.opps.offered.find((o) => o.forced)?.id ?? null;
     this.why = false;
@@ -404,6 +405,9 @@ export class LevelOpps extends LevelSit {
     });
     if (o.onExpire) cons.push(`if let go: ${o.onExpire.text}`);
     h('div', cons.join('\n'), `${muted};white-space:pre-line;margin-top:2px`);
+    // (merge124: the living engine's card — who presents it, and what the player gets besides the world change)
+    const card = this.opps.engine.offers.find((x) => x.id === o.id);
+    if (card) h('div', `✦ You get: ${card.reward}`, 'font-size:12px;margin-top:2px;color:#9fe0a0');
     if (o.affordable) btn(player ? (o.challenge?.area === this.run.at ? '▶ Commit: play it' : '▶ Commit: ride there') : `Commit ${who || 'them'}`, () => this.commit(o.id), true);
     btn('Back', () => {
       this.selected = null;

@@ -13,7 +13,6 @@
 
 import type { RegionGraph, RunRecord, TravelLeg } from '../api/contracts/run';
 import type { Situation } from '../api/contracts/situation';
-import type { Settlement } from '../api/contracts/settlement';
 import type { UnitId, Units } from '../api/contracts/units';
 import type { Terrain } from '../api/contracts/terrain';
 import type { Sim } from '../api/world';
@@ -34,10 +33,11 @@ import { situationFor } from './gm';
 import { carried, displaced, totals } from './items';
 import { PLAY_TITLE, SituationRun, along, delta, LEVY_PACE, type V2 } from './state';
 
-/** what the run needs of the settlements system (its public API: settlements.ts) */
+/** what the run needs of the settlements system (its public API: settlements.ts). (merge124) A settlement's condition
+ *  isn't set from here: the world state's `settlement-condition` event is its one owner, and the settlements system,
+ *  wired to the run's world (Settlements.useWorld), realises it */
 export interface SettlementsView {
   places(id: string): { centre: V2; radius: number; doors: { at: V2; ref: string }[] } | null;
-  setCondition(id: string, c: Settlement['condition']): void;
 }
 
 export interface LevelSitDeps {
@@ -62,6 +62,9 @@ export interface LevelSitDeps {
   remake: () => Promise<void>;
   /** false: the template even where the GM wrote one (?runsitgm=0) */
   gm?: boolean;
+  /** (merge124) the world the run plays in (the level's: the settlements and the rivers realise its events); absent, one
+   *  made here from the wiki's snapshot */
+  world?: MemoryWorldState;
 }
 
 const toCell = (x: number, y: number): [number, number] => [x, y / ROW_H];
@@ -98,7 +101,7 @@ export class LevelSit {
     const facts = atlasFacts(d.atlas);
     this.wiki = buildWiki(facts);
     this.graph = runGraph(d.terrain.atlasGraph(), { names: { regions: this.wiki.regions, settlements: this.wiki.snapshot.settlements }, facts });
-    this.world = MemoryWorldState.restore(structuredClone(this.wiki.snapshot));
+    this.world = d.world ?? MemoryWorldState.restore(structuredClone(this.wiki.snapshot));
     this.followers = new UnitFollowers(d.units, 'hero');
     this.card = document.createElement('div');
     this.card.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);top:8px;width:min(92vw,440px);max-height:62vh;overflow:auto;z-index:60;background:rgba(18,16,12,0.93);color:#efe6d2;font:13px/1.4 system-ui,sans-serif;padding:8px 10px;border-radius:9px;border:1px solid #5a4a30;pointer-events:auto;';
@@ -233,10 +236,9 @@ export class LevelSit {
     this.record = this.finishRecord();
     const ending = run.sit.endings[run.end!];
     if (ending.settlement === 'ruined' || ending.settlement === 'abandoned') {
-      // (the settlements system realises it charred from now on; the window is made again once the fires have had their
-      // time, so what stands of a town of plaster and tile — which the fire's heat only cracks — comes down to its stumps:
-      // DEVLOG round 120)
-      this.d.settlements.setCondition(run.sit.target.settlement, ending.settlement);
+      // (the settlements system realises it charred from now on — told by the world's `settlement-condition` event, which
+      // finishRecord applied; the window is made again once the fires have had their time, so what stands of a town of
+      // plaster and tile — which the fire's heat only cracks — comes down to its stumps: DEVLOG round 120)
       const n = this.runs;
       setTimeout(() => {
         if (this.runs === n && !this.journey) void this.d.remake().then(() => this.log.push(`${run.sit.target.name}: the window made again, the town charred`));

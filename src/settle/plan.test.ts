@@ -90,6 +90,17 @@ describe('settlements on the structures contract', () => {
     expect(roofs(st)).toBeGreaterThan(0);
   });
 
+  it('(merge124) a structure the world placed (a card\'s outcome) is raised as a landmark tower through the structures contract, with its uses', () => {
+    const plain = planSettlement(input('town'));
+    const p = planSettlement({ ...input('town'), placed: [{ id: 'burrows', name: 'the communal burrows', use: ['burrows', 'housing'] }] });
+    expect(p.city.placed).toHaveLength(1);
+    const b = p.city.buildings[p.city.placed![0].building];
+    expect(b.mega).toBe('tower');
+    expect(p.city.megas.filter((m) => m.kind === 'tower').length).toBe(plain.city.megas.filter((m) => m.kind === 'tower').length + 1);
+    const rec = p.rec.buildings.find((x) => x.id === `${p.rec.id}:b${b.id}`)!;
+    expect(rec.use).toEqual(expect.arrayContaining(['burrows', 'housing']));
+  });
+
   it('the same seed and ground, the same settlement', () => {
     const a = planSettlement(input('village'));
     const c = planSettlement(input('village'));

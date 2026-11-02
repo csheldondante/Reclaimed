@@ -51,6 +51,7 @@ import { GPUGEN } from '../atlas/finish';
 import type { MapData } from '../world/mapgen';
 import { settleLand, settleTol, Sleep } from '../sim/sleep';
 import { RiverWet } from '../weather/riverwet';
+import { MemoryWorldState } from '../api/contracts/world-state';
 import { CatchmentWet } from '../weather/catchwet';
 import { RiverWetField } from '../weather/wetfield';
 import { riverMode, useRivers } from '../sim/world-gpu';
@@ -195,6 +196,9 @@ export class LevelScene implements Scene {
   private reclaimed = 0;
   /** (round 84) the rivers' wetness (weather/riverwet.ts) */
   private riverWet = new RiverWet();
+  /** (merge124) the regions' rivers' inflow factors the run's world set (a card's drought or diversion: WorldState's
+   *  `river-inflow`), realised in the river-wetness field where the player looks */
+  private riverInflow = new Map<number, number>();
   /** (round 109) the atlas level's: each watershed's storm water (weather/catchwet.ts), its field over the window
    *  (weather/wetfield.ts), and the window's origin they were fitted to */
   private catchWet?: CatchmentWet;
@@ -2030,7 +2034,13 @@ export class LevelScene implements Scene {
     const W = a.atlas.worldW;
     const H = a.atlas.p.rows * ROW_H;
     const wrap = (d: number, n: number) => d - Math.round(d / n) * n;
+    // (merge124) one world for the run and the systems that realise it: the settlements (condition, holder, people, a
+    // structure placed; their diplomacy over its facts: LW-F10) and the rivers (a region's inflow)
+    const world = MemoryWorldState.restore(structuredClone(st.wiki.snapshot));
+    st.useWorld(world);
+    this.useRiverWorld(world);
     const sit = new Run({
+      world,
       atlas: a.atlas,
       terrain: this.terrainSystem(),
       map: this.atlasMap,
@@ -2056,6 +2066,17 @@ export class LevelScene implements Scene {
     R.runsit = sit;
     if (opps) R.opps = sit;
     R.runhero = session;
+  }
+
+  /** (merge124) a world's rivers' inflow (WorldState's `river-inflow`, the regions' wetness) realised in the river field */
+  private useRiverWorld(world: MemoryWorldState): void {
+    for (const r of world.snapshot().regions) if (r.state.wetness !== 1) this.riverInflow.set(r.id, r.state.wetness);
+    world.onEvent.push((e) => {
+      if (e.kind !== 'river-inflow') return;
+      for (const r of e.regions) this.riverInflow.set(r, e.magnitude);
+      // (the field's nodes take it the next frame: the window's catchments fitted again)
+      this.catchAt = '';
+    });
   }
 
   /** ?runplan=<hero>&runstages=1: a run planned from the spawn on this atlas; its legs travelled on the atlas map while the land loads */
@@ -2441,10 +2462,11 @@ export class LevelScene implements Scene {
       if (key !== this.catchAt) {
         this.catchAt = key;
         this.catchWet.setWindow(S.origin[0], S.origin[1], dims.w, dims.h);
+        if (this.settlements) this.catchWet.setInflow((x, y) => this.settlements!.regionAt(x, y), this.riverInflow);
         this.wetField.map(this.catchWet);
       }
       this.catchWet.update(dt * this.speed, weather);
-      this.wetField.write(this.catchWet.ex);
+      this.wetField.write(this.catchWet.ex, this.catchWet.inflow, this.riverWet.value);
       globals.riverWet = this.riverWet.update(dt * this.speed, globals.season ?? 0, []);
     } else globals.riverWet = this.riverWet.update(dt * this.speed, globals.season ?? 0, weather.storms);
     // (round 80) what's awake this frame: round the player (the camera's target), the events, the storms

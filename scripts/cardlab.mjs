@@ -9,7 +9,7 @@ await run({ name: 'cardlab', kind: 'behaviour', size: '412x785' }, async (R) => 
   const dir = R.opt('out', 'C:/Projects/shots88/opportunities/cardlab');
   fs.mkdirSync(dir, { recursive: true });
   const p = await R.page();
-  await p.goto(`${R.url}/cardlab.html?seed=1`, { waitUntil: 'load' });
+  await p.goto(`${R.url}/cardlab.html?deck=1&seed=1`, { waitUntil: 'load' });
   await p.waitForFunction(() => window.cardlab || document.querySelector('.fatal'), { timeout: 30000 });
   await R.fatal(p);
   const shot = async (name, full = false) => {

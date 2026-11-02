@@ -10,6 +10,7 @@
 import { CLAIM_BASES, type ClaimBasis, type EntityId, type EntityKind, type RelationType, type ScopedTag, type TagScope, type INTENSITIES } from '../api/contracts/facts';
 import { homeOf, lawAt, polityOf } from '../api/contracts/facts-rules';
 import type { Agreement } from '../api/contracts/diplomacy';
+import type { Challenge, Tier } from '../api/contracts/opportunity';
 import { adjustStores, migrate, placeStructure, setCondition, setControl, setRiverInflow, shiftPower } from './mutations';
 import { entityTraits } from './traits';
 import type { FactWorld } from './world';
@@ -67,11 +68,11 @@ export type Effect =
   | { event: string; by: Ref[]; to: Ref[]; note: string; weight?: number; halfLife?: number }
   /** a diplomacy agreement (relations through MemoryDiplomacy) */
   | { agree: { kind: Agreement['kind']; parties: Ref[]; flows?: { what: string; perDay: number }[] } }
-  | { inflow: Ref; factor?: number; delta?: number; note: string }
+  | { inflow: Ref; factor?: number | string; delta?: number; note: string }
   | { stores: [Ref, string, number]; rate?: number; note?: string }
   | { power: [Ref, number] }
   | { condition: [Ref, 'thriving' | 'struggling' | 'besieged' | 'abandoned' | 'ruined'] }
-  | { migrate: [Ref, Ref, number]; note: string }
+  | { migrate: [Ref, Ref, number | string]; note: string }
   | { place: { at: Ref; id: string; name: string; use: string[]; tags?: Omit<ScopedTag, 'since'>[]; by?: Ref } }
   /** a new entity (an incident, a route); `links`: entities `connected_by` it (a road's ends) */
   | { spawn: { id: string; kind: EntityKind; name: string; at: Ref; tags?: Omit<ScopedTag, 'since'>[]; links?: Ref[] } }
@@ -86,6 +87,34 @@ export interface Ctx {
   b: Bind;
   /** the cause written on every change (the opportunity, or the arc's stage) */
   cause: string;
+  /** (merge124) the run's conflict (stage.ts): its own helpers (where the hero is, the host on its road, the clock) and
+   *  its operations; absent for a world without a run (the inspector's) */
+  stage?: Stage;
+  /** the requirement tier the card was dealt at (a tiered outcome's numbers scale by it) */
+  tier?: number;
+  /** values for texts and numbers (a template's `vars`: the run's names, the tune's numbers) */
+  vars?: Record<string, string | number>;
+  /** a dry run (on a copy of the world): the stage's operations are not applied — they change the run, not the world */
+  dry?: boolean;
+}
+
+/** (merge124) The run's conflict as the templates see it: named helpers (predicates over the run, its operations as
+ *  effects, values for texts) — the conflict's owner registers them; a template names them like any helper. */
+export interface Stage {
+  helpers: Record<string, Helper>;
+}
+
+/** a helper by name: the stage's first, then the world's */
+export function helper(c: Ctx, name: string): Helper | undefined {
+  return c.stage?.helpers[name] ?? HELPERS[name];
+}
+
+/** a number given as a number or as a var's name (the run's tune: 'fordDelay') */
+export function num(c: Ctx, x: number | string): number {
+  if (typeof x === 'number') return x;
+  const v = c.vars?.[x];
+  if (typeof v !== 'number') throw new Error(`template: no number ${x} in its vars`);
+  return v;
 }
 
 // ---- references and text ----------------------------------------------------------------------------------------------
@@ -113,7 +142,9 @@ function tryRef(c: Ctx, r: Ref): EntityId | undefined {
 export function text(c: Ctx, s: string): string {
   return s.replace(/\{(\$?[a-z][\w.]*)\}/gi, (_, k: string) => {
     const id = tryRef(c, k.startsWith('$') ? k : `$${k}`);
-    return id ? c.w.name(id) : `{${k}}`;
+    if (id) return c.w.name(id);
+    const v = c.vars?.[k];
+    return v !== undefined ? String(v) : `{${k}}`;
   });
 }
 
@@ -165,7 +196,7 @@ export function holds(c: Ctx, p: Pred): boolean {
   if ('not' in p) return !holds(c, p.not);
   if ('any' in p) return p.any.some((x) => holds(c, x));
   if ('all' in p) return p.all.every((x) => holds(c, x));
-  const h = HELPERS[p.helper];
+  const h = helper(c, p.helper);
   if (!h?.pred) throw new Error(`template: no predicate helper ${p.helper}`);
   return h.pred(c, p.args ?? []);
 }
@@ -193,7 +224,7 @@ export function describe(c: Ctx, p: Pred): string {
   if ('not' in p) return `not (${describe(c, p.not)})`;
   if ('any' in p) return p.any.map((x) => describe(c, x)).join(' or ');
   if ('all' in p) return p.all.map((x) => describe(c, x)).join(' and ');
-  return HELPERS[p.helper]?.text?.(c, p.args ?? []) ?? `${p.helper}(${(p.args ?? []).join(', ')})`;
+  return helper(c, p.helper)?.text?.(c, p.args ?? []) ?? `${p.helper}(${(p.args ?? []).join(', ')})`;
 }
 
 // ---- effects ------------------------------------------------------------------------------------------------------------
@@ -255,11 +286,11 @@ function applyOne(c: Ctx, e: Effect): void {
     });
     return;
   }
-  if ('inflow' in e) return void setRiverInflow(w, ref(c, e.inflow), e.factor !== undefined ? { factor: e.factor } : { delta: e.delta ?? 0 }, cause, text(c, e.note));
+  if ('inflow' in e) return void setRiverInflow(w, ref(c, e.inflow), e.factor !== undefined ? { factor: num(c, e.factor) } : { delta: e.delta ?? 0 }, cause, text(c, e.note));
   if ('stores' in e) return adjustStores(w, ref(c, e.stores[0]), e.stores[1], e.stores[2], e.rate ?? 0, cause, e.note ? text(c, e.note) : undefined);
   if ('power' in e) return shiftPower(w, ref(c, e.power[0]), e.power[1], cause);
   if ('condition' in e) return setCondition(w, ref(c, e.condition[0]), e.condition[1], cause);
-  if ('migrate' in e) return migrate(w, ref(c, e.migrate[0]), ref(c, e.migrate[1]), e.migrate[2], cause, text(c, e.note));
+  if ('migrate' in e) return migrate(w, ref(c, e.migrate[0]), ref(c, e.migrate[1]), num(c, e.migrate[2]), cause, text(c, e.note));
   if ('place' in e) {
     const x = e.place;
     const at = ref(c, x.at);
@@ -286,7 +317,7 @@ function applyOne(c: Ctx, e: Effect): void {
     return;
   }
   if ('when' in e) return apply(c, holds(c, e.when) ? e.do : (e.else ?? []));
-  const h = HELPERS[e.helper];
+  const h = helper(c, e.helper);
   if (!h?.effect) throw new Error(`template: no effect helper ${e.helper}`);
   h.effect(c, e.args ?? []);
 }
@@ -297,6 +328,17 @@ export interface Helper {
   pred?(c: Ctx, args: (Ref | number | string)[]): boolean;
   effect?(c: Ctx, args: (Ref | number | string)[]): void;
   text?(c: Ctx, args: (Ref | number | string)[]): string;
+  // (merge124: what a run's stage answers for its cards — living/horde.ts)
+  /** the values a template's texts and numbers read */
+  vars?(c: Ctx, args: (Ref | number | string)[]): Record<string, string | number>;
+  /** a crew's odds at the card's tier */
+  odds?(c: Ctx, args: (Ref | number | string)[]): Partial<Record<Tier, number>>;
+  /** what the player plays at a bound site: the challenge, and the minutes it takes (the ride there and its play) */
+  challenge?(c: Ctx, args: (Ref | number | string)[]): { challenge: Challenge; minutes: number };
+  /** when the card leaves the board */
+  expiry?(c: Ctx, args: (Ref | number | string)[]): { turn: number; minute?: number };
+  /** where the card stands */
+  locate?(c: Ctx, args: (Ref | number | string)[]): { region: number; at: [number, number]; settlement?: string; name?: string } | null;
 }
 
 /** a holder's standing on what it controls, against a rival's claim (a recognised control stands stronger) */

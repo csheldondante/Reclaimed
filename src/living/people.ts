@@ -25,7 +25,11 @@ export interface PresenterSpec {
 
 /** the names a made person draws from, by species (deterministic: the next unused) */
 const NAMES: Record<string, string[]> = {
-  human: ['Hal Brenning', 'Wenna Ashby', 'Osric Pell', 'Tilda Marsh', 'Bram Cotter', 'Elsa Wyck', 'Corin Hale', 'Maud Fenner'],
+  human: ['Hal Brenning', 'Wenna Ashby', 'Osric Pell', 'Tilda Marsh', 'Bram Cotter', 'Elsa Wyck', 'Corin Hale', 'Maud Fenner',
+    // (merge124: a run's cast and its petitioners draw from these too — more of them before the numbered fallback)
+    'Aldo Venn', 'Brisa Hollow', 'Cade Merrow', 'Dorrit Lane', 'Edda Rook', 'Fenn Carver', 'Gilda Thorn', 'Hob Ashdown',
+    'Ilse Brand', 'Jory Kettle', 'Kit Mallory', 'Lenna Frost', 'Mott Graves', 'Nell Harrow', 'Odo Pike', 'Perrin Shaw',
+    'Quill Abney', 'Rosa Teague', 'Sim Barrow', 'Tamsa Wren', 'Ulf Ridley', 'Vera Coyle', 'Wat Fairley', 'Yara Dunne'],
   gnoll: ['Rukk', 'Shesha', 'Grawl', 'Ikka', 'Tarn', 'Vosk', 'Hessa', 'Brakka'],
 };
 
@@ -54,21 +58,23 @@ function speciesOf(w: FactWorld, group: EntityId): string {
   return 'human';
 }
 
-/** Make a person of a group (when the card is shown): a character the world remembers, and their fact entity. */
-export function makePresenter(w: FactWorld, group: EntityId, role: string, cause: string): EntityId {
+/** Make a person of a group (when the card is shown): a character the world remembers, and their fact entity. `opts`:
+ *  where they live (default the group's settlement), and whether the player has met them (a run's cast is made before the
+ *  player meets anyone: merge124) */
+export function makePresenter(w: FactWorld, group: EntityId, role: string, cause: string, opts: { home?: EntityId; met?: boolean } = {}): EntityId {
   const species = speciesOf(w, group);
   const names = NAMES[species] ?? NAMES.human;
   const used = new Set(w.ws.characters().map((c) => c.name));
   const base = names.find((n) => !used.has(n)) ?? `${names[0]} ${w.ws.characters().length}`;
   const id = `person:${base.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
-  const home = w.settlementOf(group);
+  const home = opts.home ? w.settlement(opts.home) : w.settlementOf(group);
   const g = w.facts.entity(group);
   const faction = g?.ref && 'faction' in g.ref ? g.ref.faction : null;
   w.ws.applyCharacter({ kind: 'meet', character: { id, name: base, role, faction, hero: false, alive: true, region: home?.region ?? null, motivation: `speak for ${w.name(group)}` } });
   w.facts.add({ id, kind: 'person', name: base, ref: { character: id }, at: home ? w.placeAt(home.id) : {}, tags: [{ scope: 'biology', key: 'species', value: species, since: w.turn }], cause });
   if (!faction) w.facts.relate({ type: 'member_of', from: id, to: group, cause });
   if (home) w.facts.relate({ type: 'resident_at', from: id, to: home.id, cause });
-  w.facts.record({ kind: 'met', by: ['player'], to: [id], about: { opp: cause }, note: `you met ${base}, ${role} of ${w.name(group)}` });
+  if (opts.met ?? true) w.facts.record({ kind: 'met', by: ['player'], to: [id], about: { opp: cause }, note: `you met ${base}, ${role} of ${w.name(group)}` });
   return id;
 }
 

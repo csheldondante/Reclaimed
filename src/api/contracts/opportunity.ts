@@ -49,8 +49,12 @@ export interface Agent {
   parts?: { body?: string[]; gear?: string[]; training?: string[]; /** a species it rides (its movement traits count: a griffin flies) */ mount?: string };
   /** where it is: with the player, or stationed at a settlement (availability reads this) */
   at: { with: 'player' } | { settlement: string };
-  /** the commitment that holds it, if any */
+  /** the commitment that holds it, if any (Holdings.commitments has its record: where, what, the turns left) */
   committed?: string;
+  /** (merge124) on the march: from where (world units) since when (run minutes) — an army freed marches for the run's
+   *  town (the levy); its place now is the run's to work out from this. The agent's own state, kept in the world model
+   *  (WorldSnapshot.holdings), never inside a run */
+  march?: { from: [number, number]; since: number };
 }
 
 /** Everything the player holds. The scale is derived from it, never stored. */
@@ -63,10 +67,28 @@ export interface Holdings {
   bonuses: Bonus[];
   /** (round 124) things built, where they stand */
   buildings: Building[];
+  /** (merge124) what the agents are committed to: where, what, when it resolves — so a later run (or a ruler with several
+   *  armies) finds each where it was (the user: "update the world model so all this data lives in it") */
+  commitments?: CommitmentRecord[];
+}
+
+/** (merge124) a commitment as the world model keeps it (the opportunity itself is the run's; this is what lasts) */
+export interface CommitmentRecord {
+  id: string;
+  template: string;
+  title: string;
+  agents: string[];
+  /** where the agents went */
+  location: OppLocation;
+  /** the turn it was made, and the turn it resolves (absent: the player's, when its challenge is played) */
+  turn: number;
+  resolvesTurn?: number;
+  /** a crew's tier, rolled when it was made */
+  rolled?: Tier;
 }
 
 export function emptyHoldings(): Holdings {
-  return { agents: [], goods: {}, rules: [], bonuses: [], buildings: [] };
+  return { agents: [], goods: {}, rules: [], bonuses: [], buildings: [], commitments: [] };
 }
 
 /**
@@ -456,7 +478,17 @@ export function resolve(h: Holdings, c: Commitment, at: { now: number; turn: num
   for (const b of [...better, ...fx.filter((x) => x.effect.kind === 'negate' && notes.some((n) => n.startsWith(x.why)))]) fired(out, b, at.turn);
   for (const e of outcome.effects) {
     if (e.kind === 'goods') for (const [g, n] of Object.entries(e.goods)) out.goods[g] = Math.max(0, (out.goods[g] ?? 0) + (n > 0 ? Math.round(n * k) : n));
-    else if (e.kind === 'agent') out.agents.push(structuredClone(e.agent));
+    else if (e.kind === 'agent') {
+      // (merge124: an agent the holdings already have — the hold's levy, stationed where an earlier run left it —
+      // rejoins: at full strength, with the player, its tags and effects kept)
+      const had = out.agents.find((a) => a.id === e.agent.id);
+      if (had) {
+        had.count = Math.max(had.count, e.agent.count);
+        had.at = structuredClone(e.agent.at);
+        for (const t of e.agent.tags) if (!had.tags.includes(t)) had.tags.push(t);
+        delete had.march;
+      } else out.agents.push(structuredClone(e.agent));
+    }
     else if (e.kind !== 'tag') rest.push(e);
   }
   return { holdings: out, resolution: { commitment: c.id, opp: c.opp.id, tier, rolled, outcome, returns, lost, bonuses: notes, out: rest, at: at.now, turn: at.turn } };

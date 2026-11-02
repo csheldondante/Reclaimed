@@ -18,7 +18,8 @@ import { MemoryWorldState } from '../api/contracts/world-state';
 /** days a turn (the user: "turns were on the order of days") */
 export const DAYS_PER_TURN = 3;
 
-/** everything a dry run needs to restore, and a diff compares */
+/** everything a dry run needs to restore, and a diff compares (the holdings ride in the world's snapshot: `holdings` is
+ *  that same record, kept here for the diff's reading) */
 export interface FullSnapshot {
   world: WorldSnapshot;
   holdings: Holdings;
@@ -27,14 +28,23 @@ export interface FullSnapshot {
 
 export class FactWorld {
   ws: MemoryWorldState;
-  holdings: Holdings;
   diplomacy: MemoryDiplomacy;
   private seq = 0;
 
-  constructor(ws: MemoryWorldState, holdings: Holdings) {
+  /** (merge124) the holdings are the world model's (WorldState.holdings, saved in its snapshot): `holdings` given here
+   *  replaces them (a test world's pawns); absent, the world's own are read */
+  constructor(ws: MemoryWorldState, holdings?: Holdings) {
     this.ws = ws;
-    this.holdings = holdings;
+    if (holdings) ws.holdings = holdings;
     this.diplomacy = new MemoryDiplomacy(ws.facts);
+  }
+
+  /** the player's holdings: the world model's record */
+  get holdings(): Holdings {
+    return this.ws.holdings;
+  }
+  set holdings(h: Holdings) {
+    this.ws.holdings = h;
   }
 
   get facts() {
@@ -47,20 +57,18 @@ export class FactWorld {
 
   // ---- snapshots (dry runs, diffs, saves) ----------------------------------------------------------------------------
 
+  /** what a diff compares (WorldState's light snapshot: no history, only the regions a card can change) */
   full(): FullSnapshot {
-    return { world: this.ws.snapshot(), holdings: structuredClone(this.holdings), seq: this.seq };
+    const world = this.ws.lightSnapshot();
+    return { world, holdings: world.holdings!, seq: this.seq };
   }
 
-  static from(s: FullSnapshot): FactWorld {
-    const w = new FactWorld(MemoryWorldState.restore(structuredClone(s.world)), structuredClone(s.holdings));
-    w.seq = s.seq;
-    w.diplomacy.run = s.world.run;
-    return w;
-  }
-
-  /** a copy to try things on */
+  /** a copy to try things on (WorldState.fork: the regions shared until touched) */
   clone(): FactWorld {
-    return FactWorld.from(this.full());
+    const w = new FactWorld(this.ws.fork());
+    w.seq = this.seq;
+    w.diplomacy.run = this.ws.run;
+    return w;
   }
 
   // ---- reads through the owners --------------------------------------------------------------------------------------
@@ -218,9 +226,11 @@ export function diffWorld(a: FullSnapshot, b: FullSnapshot, name: (id: string) =
   const known = new Set(fa.events.map((e) => e.id));
   for (const e of fb.events) if (!known.has(e.id)) out.push(`+ event ${e.kind}: ${e.note}`);
   // (the owners' records)
-  for (const r of b.world.regions) {
-    const o = a.world.regions.find((x) => x.id === r.id);
-    if (o && o.state.wetness !== r.state.wetness) out.push(`~ ${r.name}: rivers' inflow ${fmt(o.state.wetness)} → ${fmt(r.state.wetness)}`);
+  // (light snapshots: a region is listed when its inflow isn't the atlas's own, 1)
+  for (const r of [...b.world.regions, ...a.world.regions.filter((x) => !b.world.regions.some((y) => y.id === x.id))]) {
+    const was = a.world.regions.find((x) => x.id === r.id)?.state.wetness ?? 1;
+    const now = b.world.regions.find((x) => x.id === r.id)?.state.wetness ?? 1;
+    if (was !== now) out.push(`~ ${r.name}: rivers' inflow ${fmt(was)} → ${fmt(now)}`);
   }
   for (const s of b.world.settlements) {
     const o = a.world.settlements.find((x) => x.id === s.id);

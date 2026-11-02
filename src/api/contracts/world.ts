@@ -172,6 +172,10 @@ export interface WorldSnapshot {
   /** (round 125, facts) the fact layer: entities, scoped tags, relations (diplomacy's agreements among them), claims and
    *  the event history (diplomacy's interactions among them); absent in older saves (restore migrates them) */
   facts?: import('./facts').FactSnapshot;
+  /** (merge124) the player's holdings: the agents and pawns (the hero, armies, knights, envoys, crews) with where each is,
+   *  what it is committed to and its tags, the goods, the effects held and the commitments under way — the world
+   *  model's, so a later run sees each one where it was; absent in older saves (restored empty) */
+  holdings?: import('./opportunity').Holdings;
 }
 
 /** The world between runs: the one place AtlasEvents are applied. */
