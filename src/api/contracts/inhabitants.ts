@@ -135,6 +135,10 @@ export interface SpeciesSpec {
   threat?: number;
   /** how hard the wind must blow to knock it over goes with it (default by size) */
   mass?: number;
+  /** (round 125, facts) its intrinsic traits (traits.ts: living, undead, flying, regenerating …) — the one source the
+   *  agents' trait bits (spawned members are seeded with these: a hook for the GPU trait system, BACKLOG LW-F13) and the
+   *  living world's pawns and cohorts read (src/living/traits.ts) */
+  traits?: import('./traits').IntrinsicName[];
 }
 
 export type SpeciesId = number;

@@ -6,6 +6,7 @@ import type { SpeciesSpec } from '../api/contracts/inhabitants';
 export const SPECIES = {
   deer: {
     id: 'deer',
+    traits: ['living'],
     plan: 'quadruped',
     seed: 3,
     proportions: { size: 1.15, legs: 1.15, neck: 1.1, tail: 0.35 },
@@ -18,6 +19,7 @@ export const SPECIES = {
   },
   wolf: {
     id: 'wolf',
+    traits: ['living'],
     plan: 'quadruped',
     seed: 7,
     proportions: { size: 0.85, legs: 0.95, neck: 0.55, head: 1.25, tail: 1.4, girth: 1.05 },
@@ -32,6 +34,7 @@ export const SPECIES = {
   },
   goat: {
     id: 'goat',
+    traits: ['living'],
     plan: 'quadruped',
     seed: 11,
     proportions: { size: 0.8, legs: 0.85, girth: 1.15, neck: 0.8, tail: 0.25 },
@@ -43,6 +46,7 @@ export const SPECIES = {
   },
   bear: {
     id: 'bear',
+    traits: ['living'],
     plan: 'beast',
     seed: 5,
     proportions: { size: 1.25, tail: 0.15 },
@@ -55,6 +59,7 @@ export const SPECIES = {
   },
   crow: {
     id: 'crow',
+    traits: ['living', 'flying'],
     plan: 'bird',
     seed: 2,
     proportions: { size: 0.4 },
@@ -65,6 +70,7 @@ export const SPECIES = {
   },
   gull: {
     id: 'gull',
+    traits: ['living', 'flying'],
     plan: 'bird',
     seed: 9,
     proportions: { size: 0.42, wings: 1.25 },
@@ -75,6 +81,7 @@ export const SPECIES = {
   },
   serpent: {
     id: 'serpent',
+    traits: ['living'],
     plan: 'serpent',
     seed: 4,
     proportions: { size: 0.3, segments: 12 },
@@ -86,6 +93,7 @@ export const SPECIES = {
   },
   beetle: {
     id: 'beetle',
+    traits: ['living'],
     plan: 'insect',
     seed: 6,
     proportions: { size: 0.4, segments: 2 },
@@ -96,6 +104,7 @@ export const SPECIES = {
   },
   wanderer: {
     id: 'wanderer',
+    traits: ['living'],
     plan: 'biped',
     seed: 1,
     proportions: { size: 0.9 },
@@ -107,6 +116,7 @@ export const SPECIES = {
   },
   townsfolk: {
     id: 'townsfolk',
+    traits: ['living'],
     plan: 'biped',
     seed: 8,
     proportions: { size: 0.85, girth: 1.1 },
@@ -118,6 +128,7 @@ export const SPECIES = {
   },
   dragon: {
     id: 'dragon',
+    traits: ['living', 'flying', 'fire_immune'],
     plan: 'winged',
     seed: 13,
     proportions: { size: 2.2 },
@@ -133,7 +144,61 @@ export const SPECIES = {
     threat: 1,
     mass: 12,
   },
+  // (round 125, facts: the living world's peoples — the user: "Gnolls from the existing creature generator"; "They should
+  // unify with the agent traits and the creature builder")
+  human: {
+    id: 'human',
+    traits: ['living'],
+    plan: 'biped',
+    seed: 21,
+    proportions: { size: 0.9 },
+    palette: { body: '#6a5a8a', belly: '#e8c09a', accent: '#3a2c24', eye: '#111111' },
+    behaviour: { kind: 'townsfolk' },
+    walk: 1.4,
+    run: 4.5,
+  },
+  gnoll: {
+    id: 'gnoll',
+    traits: ['living', 'regenerating'],
+    plan: 'biped',
+    seed: 23,
+    proportions: { size: 1.05, head: 1.3, neck: 1.2, girth: 1.1, tail: 0.6 },
+    palette: { body: '#a08048', belly: '#d8c090', accent: '#3a2a18', eye: '#ffb030' },
+    secondary: { fur: 0.7, fur_colour: '#5a4020', tailFlex: 0.5 },
+    behaviour: { kind: 'townsfolk' },
+    walk: 1.5,
+    run: 6,
+  },
+  skeleton: {
+    id: 'skeleton',
+    traits: ['undead'],
+    plan: 'biped',
+    seed: 29,
+    proportions: { size: 0.9, girth: 0.6 },
+    palette: { body: '#d8d0bc', belly: '#ece6d4', accent: '#2a2620', eye: '#60e0ff' },
+    behaviour: { kind: 'wander' },
+    walk: 1.2,
+    run: 3.5,
+  },
+  griffin: {
+    id: 'griffin',
+    traits: ['living', 'flying'],
+    plan: 'winged',
+    seed: 31,
+    proportions: { size: 1.4, neck: 0.7, tail: 0.8 },
+    palette: { body: '#b08840', belly: '#f0e8d8', accent: '#e0b020', eye: '#111111' },
+    behaviour: { kind: 'wander' },
+    walk: 1.6,
+    run: 10,
+    sight: 50,
+    threat: 0.5,
+  },
 } satisfies Record<string, SpeciesSpec>;
+
+/** (round 125, facts) a species' intrinsic traits, from its spec (none known: none) */
+export function speciesTraits(id: string): readonly string[] {
+  return (SPECIES as Record<string, SpeciesSpec>)[id]?.traits ?? [];
+}
 
 export type PresetName = keyof typeof SPECIES;
 export const PRESETS = Object.keys(SPECIES) as PresetName[];

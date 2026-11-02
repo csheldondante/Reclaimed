@@ -12,6 +12,53 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 125 (2026-11-02, session 5, `facts`) — the living world: the fact layer, the template engine, the world inspector (DECISIONS round 124/125, docs/design/FACTIONS_WORLD_STATE.md)
+
+The user's design documents (docs/design/FACTIONS_WORLD_STATE.md, OPPORTUNITY_CATALOG.md) and answers: real pawns and
+stores, turns of days, instant plausible mutations, Briar Hollow first. DEVLOG round 125.
+
+| id | what | size | status |
+|---|---|---|---|
+| LW-F1 | The fact layer contract (src/api/contracts/facts.ts, facts-store.ts): entities on existing ids with refs to their owners, scoped tags (8 scopes, kinds per scope, intensities bounded, quantities refused), directed typed relations with history edges, claims apart from control, the append-only history, indexes, changed-entity tracking | L | done (`facts`) |
+| LW-F2 | Centralised invariants (facts-rules.ts): bound labour only where legal or explicitly illegal, exclusive policies, laws on jurisdictions only, court needs nobility or a pretender, war and alliance never both, no claim on what one controls; law resolution with settlement overrides | M | done (`facts`) |
+| LW-F3 | Diplomacy merged into the facts: MemoryDiplomacy is the Diplomacy API over a FactStore (agreements are relations, interactions are events); persistence through WorldSnapshot.facts with migration of older saves | M | done (`facts`) |
+| LW-F4 | The fact world (src/living/world.ts): quantities read from their owners, derived relations (a settlement's holder controls it), the full snapshot and the diff | M | done (`facts`) |
+| LW-F5 | The template engine (src/living/dsl.ts, engine.ts, mutations.ts): templates as data (predicates, bindings, setup, requirements in real pawns and stores, turns, outcomes, presentation), helpers for the complex cases; the dealer reused with capability/unlocks/urgency/neglect parts and one card a place; cooldowns, finite subjects, dedup; setup only when shown, once per binding; outcomes as instant mutations through the owners (setRiverInflow, placeStructure …; the user: no simulation for a falling river or a building) | L | done (`facts`) |
+| LW-F6 | The first templates and the drought arc (src/living/library.ts): burrows, abolish serfdom, trade corridor, arbitrate a holding; toll dispute, noble conspiracy, integrate refugees, divert the river, river treaty, rationing; chains verified without hand-made links; oppcheck's checkTemplates/checkLiving | L | done (`facts`) |
+| LW-F7 | Traits at the opportunity scale (src/living/traits.ts; the user: "Undead may work tirelessly with no sleep. Gnoll knights may regenerate"): one vocabulary with traits.ts; species, tags and parts (Agent.parts: bodies and gear) give a pawn's traits; one rule table: undead labour faster, no upkeep, the living object; regenerating losses recover; flying travel faster | M | done (`facts`) |
+| LW-F8 | The seeded Briar Hollow world (src/living/briar.ts): noble houses, serfs, gnolls with communal childcare and housing, the Lantern Guild, the Briar Crown with serfdom legal, Millbrook downstream, the Vell March neutral | S | done (`facts`) |
+| LW-F9 | The world inspector (cardlab.html; the deck lab at ?deck=1): entities, tags by scope, relations, claims, history, invariants; the dealer's cards with why each was or wasn't dealt; commit and advance; every change as a diff | M | done (`facts`) |
+| LW-F10 | settle/settlements.ts makes its own MemoryDiplomacy over its own store: give it the world's fact store when the settlement system is wired to the world state | S | open |
+| LW-F11 | The settlement economy's atlas step: the engine moves stores by their rates each turn (an instant step); it belongs to the settlement system's atlas tick | S | open |
+| LW-F12 | Roads as real map connectivity: the corridor's route is a fact-layer entity; the region generator should lay the road (a LinearFeature) when the land is realised | M | open |
+| LW-F13 | The simulated agents read the same traits where the player looks (an undead worker doesn't go home at night) through the trait modules' CAPS word — a hook for the agents' track | M | open |
+| LW-F14 | Player choice among outcomes (arbitration rules for the stronger right today; uphold or award could be two offers, or a dialog with the claimants — the round-125 legibility answer) | M | open (the user: dialogs as a resolution mechanic, a game in mind for it — to hear) |
+| LW-F15 | Named presenters (src/living/people.ts): every card presented by a member of a bound group with a line, from the cast (Briar Hollow: eight across the factions) or made as a real character when no one is free; committing, refusing (Refuse) or ignoring is a relationship fact (owes_favor_to / grievance_against, a weighted event, the character record) kept between runs | M | done (`facts`) |
+| LW-F16 | The player's attachment in the dealer (src/living/attachment.ts): stakes (provenance in the history: what the player's cards made, places chosen, people answered) and locus (relation hops from the run centre and the staked) as score parts | M | done (`facts`) |
+| LW-F17 | Mechanical rewards on all ten templates (pawns, goods, engine pieces as the holdings' triggered effects, unlocks for the city builder, travel and units as the player's capability tags), shown beside the world change | M | done (`facts`) |
+| LW-F18 | Species traits in the creature generator's species data (SpeciesSpec.traits; human, gnoll, skeleton, griffin presets); the unit builder's seam unitTraits(creature, tags, body, training, gear, mount) | S | done (`facts`) |
+| LW-F19 | Dialogue as a resolution mechanic: the presenter and their person entity are ready; the user has a game in mind for it (to hear before building) | L | asked |
+| LW-F20 | Other modes read the unlocks (the city builder's buildings, travel's roads and passages, units' militia) from the player's capability tags | M | open |
+
+## Round 124 (2026-11-01, session 5, `opportunities`) — slice A of the opportunity system: the horde run as opportunities on the map (DECISIONS round 120)
+
+The user's text docs/design/STRATEGIC_MAP.md and the newest DECISIONS round 120 entries ("show them as events or
+opportunities on the map not as a hand", "deal just the ones that make sense ... most expensive cards you can afford",
+tags persist, "tune the dealer ... via iteration"). Design: docs/design/RUN_LOOP.md revision 4. DEVLOG round 124.
+
+| id | item | size | status |
+|---|---|---|---|
+| RN2-1 | The opportunity contract (contracts/opportunity.ts): agents with tags, goods, holdings, `available`, `meet`, `affords`, `commit` (agents locked, costs spent, the roll), `resolve` (losses, tags and bonuses for the survivors, goods and agents gained, conflict and atlas effects passed on), bonuses (negate, instant); pure, unit-tested | M | done (`opportunities`) |
+| RN2-2 | The dealer (opps/dealer.ts): sense filters, reach, the largest affordable tier, scores, one offer a template a place, forced alone, limits, unaffordable and next-tier slots, the guarantees (a way toward the climax; tied to the conflict); every weight and limit a slider (opps/tune.ts, the `dealer` panel); a report of what was dealt and why and what was not and why | M | done (`opportunities`) |
+| RN2-3 | Slice A (opps/horde.ts, opps/run.ts): the outriders forced, the ways on as player opportunities, the Red Hold's levy an army agent, Hold the ford (army 1/2/3, only where the levy can meet the host's road before it), Bring in the harvest (rots if let go: the host sooner), Break the vanguard (veterans only); commitments over turns, the climax settles what's out; the town's fate and the endings as runsit's | L | done in Node (`opportunities`) |
+| RN2-4 | oppcheck (gm/oppcheck.ts): references, consequences realisable, sane deals; run on every deal (a problem throws) | S | done (`opportunities`) |
+| RN2-5 | Persistence: CharacterRecord `tags` and `bonuses` (+ the `tags` CharacterChange); the levy's record (`levy:<hold>`) keeps `veteran` and its bonus into later runs | S | done (`opportunities`) |
+| RN2-6 | The map: opportunities as markers on the AtlasMap (tap: needs, costs, duration, odds, consequences, Commit), ongoing commitments with turns left, no hand UI; the dealer's debug overlay; `?run=opps` beside `?runplan=` | M | done (`opportunities`; headless saved and burned) |
+| RN2-8 | The evacuation path ended saved, not evacuated: the horde stalled ~130 cells out (walk/go, not advancing: the port town's water between) and the timed hold counted from its spawn. Fixed: the hold counts from when the dead reach the town's edge (FinaleRules.reachedAt). Open: why the horde stalls (the agents' fields over water) | S | half done (`opportunities`) |
+| RN2-7 | Seed 1's hold path was late by construction (the hold at 9.0 min, the host at the town at 9.1): the levy's opportunities never mattered. Fixed: `holdSlack` moves the host's arrival out until the levy can meet its road; the ford and the harvest are dealt at the hold on seed 1 | M | done (`opportunities`) |
+| RN2-9 | The card lab (cardlab.html): the loop as a deck builder, no encounters, no rolls; world consequences as real WorldState changes (settlement-condition, -owner, migrate AtlasEvents); effects as relics owned by agents and buildings, fired by triggers; sacrifice as a card; events always on the board; a card library as JSON; the simulator (win rate, choices, never/always taken, effects fired and their impact, world change) | L | done (`opportunities`) |
+| RN2-10 | Slice A rework (the user on the phone): a hero roster card (description, stats and tags, game modes), the run's intro and a situation panel, opportunities anchored over their places with timers and an effect card, several to choose from, every opportunity a real encounter with enemies (done in Node: encounters, detours chase/rescue/scout, armed halls and traders); the headless check that enemies spawn in each | L | done (`opportunities`; headless saved and burned, every encounter with enemies) |
+
 ## Round 123 (2026-10-31, session 5, `merge123`) — cities and traits merged into places (DECISIONS round 120)
 
 The user (round 120): "This looks good to merge ... so merge and just take notes of gaps and a Todo to come back and
@@ -360,7 +407,9 @@ tests work and do quick smoke tests to find failures early." docs/TESTING.md.
 | UI10 | The title screen's level list doesn't fit a phone (Pixel 9a): the Traits Lab and later entries are off screen; scroll or wrap the list (round 120, the user) | S | open |
 | CAM11 | Cut only real occluders (a surface rising less steeply than the camera's sight line can't hide anything; gentle hills never cut); toggle (on) to never cut behind the player; cut height rises quadratically with distance from the hero (h0 + k·d²); dithered edges in the default cut (round 120, the user) | M | next (herolab) |
 | PL32 | Bike handling v2: turn radius by speed + brake/drift, a speed governor in narrow corridors, a carve control, more turning acceleration; still poor except forest and hills (round 120, the user) | M | next (herolab) |
-| RN3 | Dominion-style kingdoms: the world state generates each run's opportunity stacks (varied within a stack), permuting viable strategies; EV-per-turn card valuation; simulator bots (EV-per-turn, Big-Money-like baseline, engine builder, random); balance = several strategies viable per kingdom | M | next (card lab) |
+| RN3 | Dominion-style kingdoms: the world state generates each run's opportunity stacks (varied within a stack), permuting viable strategies; EV-per-turn card valuation; simulator bots (EV-per-turn, Big-Money-like baseline, engine builder, random); balance = several strategies viable per kingdom | M | done, first pass (`opportunities`: kingdoms, EV, the bots, the tournament; balance: 2 of 6 kingdoms with two strategies viable — tuning ahead, RN3-1) |
+| RN3-1 | Card lab balance: most kingdoms with two or more viable strategies, none dominating (bigmoney wins everywhere today; the ev bot loses kingdom 2) — through the stacks JSON and the value sliders | M | open |
+| RN3-2 | The card lab simplified (the user): three resources (labor, influence, power), pawns whose tags are hidden and only filter assignment, opportunities and threats; the 24 stacks re-cast; score = climax + threats dealt with − let fire; minimal UI | M | done (`opportunities`; balance in RN3-1) |
 | RN4 | Faeria-style positioning: dispatched agents hold positions on the map that matter (locking down enemies, holding a pass) | L | deferred (simpler version first) |
 | FLO21 | Birch cost on the phone: the user's result good — done (flora 18c3bdb, unmerged) | S | done |
 

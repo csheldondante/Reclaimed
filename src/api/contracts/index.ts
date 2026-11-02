@@ -19,3 +19,6 @@ export * from './flora';
 export * from './situation';
 export * from './items';
 export * from './orders';
+export * from './facts';
+export * from './facts-store';
+export * from './facts-rules';

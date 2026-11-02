@@ -1,0 +1,166 @@
+{
+  "world": {
+    "player": "f-you",
+    "factions": [
+      { "id": "f-you", "name": "Your League", "attitude": 1, "power": 0.4 },
+      { "id": "f-empire", "name": "The Empire", "attitude": -0.2, "power": 0.7 },
+      { "id": "f-host", "name": "The Host", "attitude": -1, "power": 0.6 }
+    ],
+    "places": [
+      { "id": "P1", "name": "Place 1", "at": [2, 10], "region": 1, "purpose": "hold", "settlement": { "name": "Town 1", "faction": "f-you", "people": 300, "size": "town" } },
+      { "id": "P2", "name": "Place 2", "at": [8, 4], "region": 2, "purpose": "farming", "settlement": { "name": "Village 2", "faction": "f-you", "people": 160, "size": "village" } },
+      { "id": "P3", "name": "Place 3", "at": [8, 16], "region": 3, "purpose": "trading", "settlement": { "name": "Town 3", "faction": null, "people": 200, "size": "town" } },
+      { "id": "P4", "name": "Place 4", "at": [14, 10], "region": 4, "purpose": "hold", "settlement": { "name": "Fort 4", "faction": "f-empire", "people": 120, "size": "village" } },
+      { "id": "P5", "name": "Place 5", "at": [19, 4], "region": 5, "purpose": "trading", "settlement": { "name": "City 5", "faction": "f-empire", "people": 500, "size": "city" } },
+      { "id": "P6", "name": "Place 6", "at": [18, 17], "region": 6 },
+      { "id": "P7", "name": "Place 7", "at": [13, 1], "region": 7, "purpose": "mining", "settlement": { "name": "Mine 7", "faction": null, "people": 90, "size": "hamlet" } },
+      { "id": "P8", "name": "Place 8", "at": [3, 18], "region": 8, "purpose": "port", "settlement": { "name": "Port 8", "faction": "f-you", "people": 140, "size": "village" } },
+      { "id": "P9", "name": "Place 9", "at": [11, 13], "region": 9 }
+    ]
+  },
+  "start": { "at": "P1", "agents": [], "goods": { "labor": 4, "influence": 3, "power": 1 }, "build": [] },
+  "stacks": [
+    {
+      "id": "forage", "title": "Work the land at {town} (+labor)", "core": true, "start": true, "at": { "owner": ["player"] }, "max": 2, "scale": true, "work": 1, "themes": ["labour"],
+      "tiers": [{ "requires": [{ "kind": "player", "count": 1 }], "costs": {} }],
+      "reward": { "text": "the land round {town} is worked", "goods": { "labor": 2 }, "world": [{ "kind": "region", "place": "@here", "event": "rebuild", "magnitude": 0.03 }] }
+    },
+    {
+      "id": "arm", "title": "Arm {town} (labor into power)", "core": true, "start": true, "at": { "owner": ["player"] }, "max": 1, "work": 1, "themes": ["fight", "train"],
+      "tiers": [{ "requires": [], "costs": { "labor": 2 } }, { "requires": [], "costs": { "labor": 2, "influence": 2 } }],
+      "reward": { "text": "{town} is armed", "goods": { "power": 1 }, "world": [{ "kind": "power", "faction": "f-you", "amount": 0.02 }] }
+    },
+    {
+      "id": "muster", "title": "Muster {town}'s militia (+a pawn, +power)", "core": true, "start": true, "once": true, "at": { "owner": ["player"] }, "max": 3, "work": 1, "themes": ["fight", "muster"],
+      "tiers": [{ "requires": [{ "kind": "player", "count": 1 }], "costs": { "labor": 1 } }],
+      "reward": { "text": "{town}'s militia stands", "agents": [{ "kind": "army", "name": "Militia of {town}", "count": 6 }], "goods": { "power": 1 }, "unlock": ["drill", "sacrifice"], "world": [{ "kind": "power", "faction": "f-you", "amount": 0.05 }] }
+    },
+    {
+      "id": "climax", "title": "The Host comes for {town} (needs 8 power)", "core": true, "climax": true, "threat": true, "at": { "owner": ["player"], "purpose": ["hold"] }, "max": 1, "work": 0, "themes": ["fight", "conflict"],
+      "tiers": [{ "requires": [{ "kind": "player", "count": 1 }], "costs": { "power": 8 } }],
+      "reward": { "text": "the Host breaks on {town}", "end": "won", "world": [{ "kind": "power", "faction": "f-host", "amount": -0.5 }, { "kind": "region", "place": "@here", "event": "lay-dead", "magnitude": 0.5 }] },
+      "onExpire": { "text": "the Host takes {town}", "end": "lost", "world": [{ "kind": "condition", "settlement": "@here", "condition": "ruined" }, { "kind": "owner", "settlement": "@here", "faction": "f-host" }, { "kind": "refugees", "from": "@here", "to": "P3", "share": 0.6 }] }
+    },
+    {
+      "id": "raiders", "title": "Raiders strike {town}", "core": true, "start": true, "once": true, "threat": true, "expires": 2, "at": { "owner": ["player"] }, "when": { "doomAtLeast": 2 }, "work": 1, "themes": ["fight", "conflict"],
+      "tiers": [{ "requires": [], "costs": { "power": 1 } }, { "requires": [{ "kind": "army", "count": 1 }], "costs": {} }],
+      "reward": { "text": "the raiders are driven from {town}", "goods": { "influence": 1 }, "world": [{ "kind": "power", "faction": "f-host", "amount": -0.05 }] },
+      "onExpire": { "text": "raiders burn {town}'s stores", "goods": { "labor": -2 }, "doom": 1, "world": [{ "kind": "condition", "settlement": "@here", "condition": "struggling" }, { "kind": "refugees", "from": "@here", "to": "@home", "share": 0.15 }] }
+    },
+    {
+      "id": "drill", "title": "Drill at {town} (a militia fights faster; +power)", "once": true, "at": { "owner": ["player"], "purpose": ["hold"] }, "work": 2, "themes": ["fight", "train"],
+      "tiers": [{ "requires": [{ "kind": "army", "count": 1 }], "costs": { "labor": 1 } }],
+      "reward": { "text": "drilled", "tags": ["veteran"], "relics": [{ "why": "Drilled", "on": "commit", "themes": ["fight"], "effect": { "kind": "shorten", "turns": 1 } }], "goods": { "power": 1 }, "world": [{ "kind": "power", "faction": "f-you", "amount": 0.05 }] }
+    },
+    {
+      "id": "raid", "title": "Raid {town} (+influence +power by its size)", "start": true, "expires": 2, "scale": true, "at": { "owner": ["enemy"] }, "work": 1, "when": { "holdsAgent": "army" }, "themes": ["fight", "raid"],
+      "tiers": [{ "requires": [{ "kind": "army", "count": 1 }], "costs": {} }, { "requires": [{ "kind": "army", "count": 2 }], "costs": {} }],
+      "reward": { "text": "{town}'s stores are ours", "goods": { "influence": 1, "power": 1 }, "world": [{ "kind": "power", "faction": "f-empire", "amount": -0.1 }, { "kind": "condition", "settlement": "@here", "condition": "struggling" }] }
+    },
+    {
+      "id": "walls", "title": "Build walls at {town} (holds the threat back; +power)", "start": true, "once": true, "at": { "owner": ["player"] }, "max": 2, "work": 2, "themes": ["build"],
+      "tiers": [{ "requires": [{ "kind": "player", "count": 1 }], "costs": { "labor": 3 } }],
+      "reward": { "text": "walls rise at {town}", "build": { "name": "Walls", "relics": [{ "why": "Walls", "on": "threat", "effect": { "kind": "delay", "turns": 1 }, "cooldown": 3 }] }, "goods": { "power": 2 }, "world": [{ "kind": "region", "place": "@here", "event": "rebuild", "magnitude": 0.2 }] }
+    },
+    {
+      "id": "granary", "title": "Granary at {town} (+1 labor a turn)", "start": true, "once": true, "at": { "purpose": ["farming"], "owner": ["player", "neutral"] }, "work": 2, "themes": ["build", "labour"],
+      "tiers": [{ "requires": [{ "kind": "player", "count": 1 }], "costs": { "influence": 2 } }],
+      "reward": { "text": "a granary at {town}", "build": { "name": "Granary", "relics": [{ "why": "Granary", "on": "turn", "effect": { "kind": "gain", "goods": { "labor": 1 } } }] }, "world": [{ "kind": "region", "place": "@here", "event": "rebuild", "magnitude": 0.2 }] }
+    },
+    {
+      "id": "road", "title": "A road from {town} (everything 1 turn faster)", "once": true, "at": { "owner": ["player"] }, "max": 1, "work": 2, "themes": ["build", "labour"],
+      "tiers": [{ "requires": [{ "kind": "workers", "count": 1 }], "costs": { "labor": 2 } }],
+      "reward": { "text": "a road", "build": { "name": "Road", "relics": [{ "why": "Road", "on": "commit", "effect": { "kind": "shorten", "turns": 1 } }] }, "world": [{ "kind": "region", "place": "@here", "event": "rebuild", "magnitude": 0.1 }] }
+    },
+    {
+      "id": "shelter", "title": "Refugees at {town} (shelter them: +a pawn)", "start": true, "once": true, "threat": true, "expires": 2, "at": { "owner": ["neutral"] }, "when": { "doomAtLeast": 3 }, "work": 1, "themes": ["labour", "conflict"],
+      "tiers": [{ "requires": [], "costs": { "labor": 3 } }],
+      "reward": { "text": "{town}'s refugees stay and work", "agents": [{ "kind": "workers", "name": "Hands from {town}", "count": 6, "relics": [{ "why": "Many hands", "on": "resolve", "themes": ["labour"], "effect": { "kind": "better", "factor": 1.5 } }] }], "unlock": ["road"], "world": [{ "kind": "refugees", "from": "@here", "to": "@home", "share": 0.3 }] },
+      "onExpire": { "text": "{town}'s refugees go to the Empire", "world": [{ "kind": "refugees", "from": "@here", "to": "@enemy", "share": 0.4 }, { "kind": "power", "faction": "f-empire", "amount": 0.1 }] }
+    },
+    {
+      "id": "scouts", "title": "Hire scouts at {town} (+a pawn: fights cost less)", "start": true, "once": true, "at": { "purpose": ["trading", "port"] }, "max": 1, "work": 0, "themes": ["intel"],
+      "tiers": [{ "requires": [], "costs": { "influence": 2 } }],
+      "reward": { "text": "scouts from {town}", "agents": [{ "kind": "scout", "name": "Scouts of {town}", "count": 1, "relics": [{ "why": "Scouts' word", "on": "dealt", "themes": ["fight"], "effect": { "kind": "discount", "goods": { "labor": 1 } } }] }], "unlock": ["sabotage"], "world": [{ "kind": "region", "place": "@here", "event": "light", "magnitude": 0.2 }] }
+    },
+    {
+      "id": "sabotage", "title": "Sabotage {town} (the threat 2 turns later)", "expires": 2, "at": { "owner": ["enemy"] }, "work": 2, "themes": ["intel", "conflict"],
+      "tiers": [{ "requires": [{ "kind": "scout", "count": 1 }], "costs": {} }],
+      "reward": { "text": "{town} burns", "doom": -2, "world": [{ "kind": "condition", "settlement": "@here", "condition": "ruined" }, { "kind": "refugees", "from": "@here", "to": "@enemy", "share": 0.6 }, { "kind": "power", "faction": "f-empire", "amount": -0.15 }] }
+    },
+    {
+      "id": "sacrifice", "title": "Hold {place} to the last (lose a militia: the threat 3 turns later)", "at": { "settlement": false }, "max": 2, "work": 0, "themes": ["sacrifice", "conflict"],
+      "tiers": [{ "requires": [{ "kind": "army", "count": 1 }], "costs": {} }],
+      "reward": { "text": "they held {place} to the last", "losses": 1, "doom": -3, "world": [{ "kind": "region", "place": "@here", "event": "raise-dead", "magnitude": 0.2 }] }
+    },
+    {
+      "id": "ally", "title": "Ally {town} (+a champion, +power; it swears to you)", "start": true, "once": true, "at": { "owner": ["neutral"] }, "work": 1, "themes": ["diplomacy"],
+      "tiers": [{ "requires": [{ "kind": "player", "count": 1 }], "costs": { "influence": 3 } }],
+      "reward": { "text": "{town}'s champion rides with you", "agents": [{ "kind": "knight", "name": "Champion of {town}", "count": 1, "tags": ["named"], "relics": [{ "why": "Champion's vow", "on": "agent-lost", "effect": { "kind": "gain", "goods": { "power": 2 } } }] }], "goods": { "power": 2 }, "unlock": ["topple"], "world": [{ "kind": "owner", "settlement": "@here", "faction": "f-you" }] }
+    },
+    {
+      "id": "flood", "title": "Break the dam at {place} (the threat 3 turns later; the enemy downstream drowns)", "once": true, "expires": 2, "at": { "settlement": false }, "max": 1, "work": 2, "themes": ["labour", "conflict"],
+      "tiers": [{ "requires": [{ "kind": "workers", "count": 1 }], "costs": { "labor": 1 } }],
+      "reward": { "text": "the dam at {place} breaks", "doom": -3, "world": [{ "kind": "region", "place": "@here", "event": "flood", "magnitude": 1 }, { "kind": "condition", "settlement": "@enemy", "condition": "abandoned" }, { "kind": "refugees", "from": "@enemy", "to": "P3", "share": 0.7 }] }
+    },
+    {
+      "id": "topple", "title": "Topple {town}'s governor (+power by its size; {town} yours)", "once": true, "scale": true, "at": { "owner": ["enemy"], "purpose": ["trading", "hold"] }, "work": 3, "themes": ["fight", "conflict"],
+      "tiers": [{ "requires": [{ "kind": "knight", "count": 1 }, { "kind": "army", "count": 1 }], "costs": { "labor": 2 } }],
+      "reward": { "text": "the Empire is toppled at {town}", "goods": { "power": 2 }, "world": [{ "kind": "owner", "settlement": "@here", "faction": "f-you" }, { "kind": "power", "faction": "f-empire", "amount": -0.3 }] }
+    },
+    {
+      "id": "trade", "title": "Trade at {town} (+influence by its size)", "start": true, "expires": 2, "scale": true, "at": { "purpose": ["trading", "port"] }, "work": 1, "themes": ["trade", "travel"],
+      "tiers": [{ "requires": [{ "kind": "player", "count": 1 }], "costs": {} }],
+      "reward": { "text": "{town}'s market pays", "goods": { "influence": 2 }, "world": [{ "kind": "region", "place": "@here", "event": "rebuild", "magnitude": 0.1 }] }
+    },
+    {
+      "id": "tribute", "title": "The Empire demands tribute for {town}", "start": true, "once": true, "threat": true, "expires": 2, "at": { "owner": ["player"] }, "max": 2, "when": { "doomAtLeast": 5 }, "work": 0, "themes": ["conflict", "diplomacy"],
+      "tiers": [{ "requires": [], "costs": { "influence": 3 } }],
+      "reward": { "text": "tribute paid for {town}", "world": [{ "kind": "power", "faction": "f-empire", "amount": 0.05 }] },
+      "onExpire": { "text": "the Empire occupies {town}", "doom": 1, "world": [{ "kind": "owner", "settlement": "@here", "faction": "f-empire" }, { "kind": "condition", "settlement": "@here", "condition": "besieged" }, { "kind": "refugees", "from": "@here", "to": "@home", "share": 0.3 }] }
+    },
+    {
+      "id": "fields", "title": "The Host comes for {town}'s fields", "start": true, "once": true, "threat": true, "expires": 2, "at": { "owner": ["player"], "purpose": ["farming"] }, "when": { "doomAtLeast": 8 }, "work": 1, "themes": ["labour", "conflict"],
+      "tiers": [{ "requires": [{ "kind": "workers", "count": 1 }], "costs": {} }, { "requires": [{ "kind": "army", "count": 1 }], "costs": { "labor": 2 } }],
+      "reward": { "text": "{town}'s fields are saved", "goods": { "labor": 2 }, "world": [{ "kind": "region", "place": "@here", "event": "rebuild", "magnitude": 0.2 }] },
+      "onExpire": { "text": "the Host burns {town}", "goods": { "labor": -2 }, "world": [{ "kind": "condition", "settlement": "@here", "condition": "ruined" }, { "kind": "region", "place": "@here", "event": "burn", "magnitude": 0.8 }, { "kind": "refugees", "from": "@here", "to": "@home", "share": 0.6 }] }
+    },
+    {
+      "id": "plague", "title": "Sickness at {town}", "start": true, "once": true, "threat": true, "expires": 2, "at": { "owner": ["player", "neutral"] }, "max": 2, "when": { "doomAtLeast": 4 }, "work": 1, "themes": ["labour", "conflict"],
+      "tiers": [{ "requires": [], "costs": { "labor": 2, "influence": 1 } }],
+      "reward": { "text": "{town} is tended", "goods": { "influence": 1 }, "world": [{ "kind": "region", "place": "@here", "event": "light", "magnitude": 0.1 }] },
+      "onExpire": { "text": "the sickness empties {town}", "goods": { "labor": -1 }, "world": [{ "kind": "condition", "settlement": "@here", "condition": "struggling" }, { "kind": "refugees", "from": "@here", "to": "P3", "share": 0.3 }] }
+    },
+    {
+      "id": "envoy", "title": "The Empire's envoy at {town}", "start": true, "once": true, "threat": true, "expires": 2, "at": { "owner": ["player"], "purpose": ["hold"] }, "when": { "doomAtLeast": 6 }, "work": 0, "themes": ["diplomacy", "conflict"],
+      "tiers": [{ "requires": [{ "kind": "player", "count": 1 }], "costs": { "influence": 2 } }],
+      "reward": { "text": "the envoy leaves with promises", "goods": { "power": 1 }, "world": [{ "kind": "power", "faction": "f-empire", "amount": -0.05 }] },
+      "onExpire": { "text": "the Empire marches with the Host", "doom": 2, "world": [{ "kind": "power", "faction": "f-empire", "amount": 0.15 }] }
+    },
+    {
+      "id": "mine", "title": "Open the mine at {town} (+1 influence a turn)", "start": true, "once": true, "at": { "purpose": ["mining"] }, "work": 2, "themes": ["build", "labour"],
+      "tiers": [{ "requires": [{ "kind": "player", "count": 1 }], "costs": { "labor": 3 } }, { "requires": [{ "kind": "workers", "count": 1 }], "costs": { "labor": 1 } }],
+      "reward": { "text": "the mine at {town} runs", "build": { "name": "Mine", "relics": [{ "why": "Mine", "on": "turn", "effect": { "kind": "gain", "goods": { "influence": 1 } } }] }, "world": [{ "kind": "owner", "settlement": "@here", "faction": "f-you" }] }
+    },
+    {
+      "id": "mercs", "title": "Hire swords at {town} (+a pawn, +power, for influence)", "start": true, "at": { "purpose": ["trading", "port"] }, "max": 2, "work": 0, "themes": ["fight", "trade"],
+      "tiers": [{ "requires": [], "costs": { "influence": 4 } }],
+      "reward": { "text": "sell-swords from {town}", "agents": [{ "kind": "army", "name": "Swords of {town}", "count": 5 }], "goods": { "power": 1 }, "world": [{ "kind": "power", "faction": "f-you", "amount": 0.05 }] }
+    },
+    {
+      "id": "shrine", "title": "Raise a shrine at {town} (+1 influence every other turn)", "start": true, "once": true, "at": { "owner": ["player"] }, "max": 1, "work": 2, "themes": ["build", "faith"],
+      "tiers": [{ "requires": [{ "kind": "player", "count": 1 }], "costs": { "labor": 2, "influence": 1 } }],
+      "reward": { "text": "a shrine at {town}", "build": { "name": "Shrine", "relics": [{ "why": "Shrine", "on": "turn", "effect": { "kind": "gain", "goods": { "influence": 1 } }, "cooldown": 2 }] }, "world": [{ "kind": "region", "place": "@here", "event": "light", "magnitude": 0.3 }] }
+    },
+    {
+      "id": "festival", "title": "A festival at {town} (+influence)", "start": true, "scale": true, "at": { "owner": ["player"] }, "max": 2, "work": 1, "themes": ["faith"],
+      "tiers": [{ "requires": [{ "kind": "player", "count": 1 }], "costs": { "labor": 2 } }],
+      "reward": { "text": "{town} dances", "goods": { "influence": 2 }, "world": [{ "kind": "region", "place": "@here", "event": "rebuild", "magnitude": 0.05 }] }
+    },
+    {
+      "id": "levy", "title": "Call up {town}'s fleet (+a pawn, +power)", "start": true, "once": true, "at": { "purpose": ["port"], "owner": ["player"] }, "work": 1, "themes": ["fight", "muster"],
+      "tiers": [{ "requires": [{ "kind": "player", "count": 1 }], "costs": { "influence": 2 } }],
+      "reward": { "text": "{town}'s fleet sails", "agents": [{ "kind": "army", "name": "Fleet of {town}", "count": 6, "relics": [{ "why": "Fleet", "on": "commit", "themes": ["raid"], "effect": { "kind": "shorten", "turns": 2 } }] }], "goods": { "power": 1 }, "world": [{ "kind": "power", "faction": "f-you", "amount": 0.05 }] }
+    }
+  ]
+}

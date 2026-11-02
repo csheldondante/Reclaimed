@@ -1927,7 +1927,11 @@ export class LevelScene implements Scene {
     if (storyId) void this.startStory(storyId);
     // round 88 (runstory): ?run=bell — a run story as a hero on the atlas level
     const runId = host.params.get('run');
-    if (runId) void this.startRun(runId);
+    // (round 124, opportunities) ?run=opps: the horde run as opportunities on the map (src/opps/level-opps.ts); the
+    // situation flow stays behind ?runplan= until this replaces it. `&hero=lich` for the lich.
+    if (runId === 'opps')
+      this.startSituationRun(host.params.get('hero') ?? 'hoverbike', true).catch((e: unknown) => showFatal(`the run couldn't start: ${e instanceof Error ? e.message : String(e)}`));
+    else if (runId) void this.startRun(runId);
     // round 117 (runplan): ?runplan=<hero> — a planned run travelled on the atlas map (src/runplan/level-run.ts)
     const planHero = host.params.get('runplan');
     // (round 120, runsit: a run is a situation on the live map — the old arcade stages only with &runstages=1, kept for
@@ -1995,9 +1999,9 @@ export class LevelScene implements Scene {
     return (x, y, radius) => void this.traits.apply({ op: 'raise', group: RAISED_GROUP, at: [x, y], radius });
   }
 
-  private async startSituationRun(hero: string): Promise<void> {
+  private async startSituationRun(hero: string, opps = false): Promise<void> {
     const a = this.opts.atlas;
-    if (!a || !this.stream || !this.atlasMap) throw new Error('?runplan= plays on the atlas level (?level=atlas)');
+    if (!a || !this.stream || !this.atlasMap) throw new Error(`${opps ? '?run=opps' : '?runplan='} plays on the atlas level (?level=atlas)`);
     const id = hero === 'bike' ? 'hoverbike' : hero;
     if (id !== 'hoverbike' && id !== 'lich') throw new Error(`?runplan=${hero}: a situation run is played by a play hero (hoverbike, lich)`);
     const units = this.units;
@@ -2006,6 +2010,7 @@ export class LevelScene implements Scene {
     const S = this.stream;
     const dims = this.core.dims;
     const { LevelSit } = await import('../runsit/level-sit');
+    const Run = opps ? (await import('../opps/level-opps')).LevelOpps : LevelSit;
     const { PlaySession } = await import('../play/session');
     this.editor?.setVisible(false);
     this.host.ui.classList.add('play-on');
@@ -2025,7 +2030,7 @@ export class LevelScene implements Scene {
     const W = a.atlas.worldW;
     const H = a.atlas.p.rows * ROW_H;
     const wrap = (d: number, n: number) => d - Math.round(d / n) * n;
-    const sit = new LevelSit({
+    const sit = new Run({
       atlas: a.atlas,
       terrain: this.terrainSystem(),
       map: this.atlasMap,
@@ -2049,6 +2054,7 @@ export class LevelScene implements Scene {
     sitNow = sit;
     const R = (window as unknown as { reclaimed: Record<string, unknown> }).reclaimed;
     R.runsit = sit;
+    if (opps) R.opps = sit;
     R.runhero = session;
   }
 
