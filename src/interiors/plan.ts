@@ -532,26 +532,62 @@ function furnish(st: InteriorStorey, room: InteriorRoom, g: WalkGrid, corners: M
         if (ci >= 0) light('candle', [cp[0], cp[1], st.z + 0.35]);
         break;
       }
-      const placedT = inMiddle('longtable', 0.08) ?? inMiddle('table', 0.08);
-      const m = placedT ?? middle();
-      const tab = placedT?.i ?? -1;
-      if (tab >= 0) {
-        const p = st.props[tab];
-        const [, sy] = size(p.prop);
-        const ny: V2 = [-m.ax[1], m.ax[0]];
+      // the long table and its seats as one: tried at each middle, kept where it seats the most (at least two)
+      let m = middle();
+      let best: { n: number; m: { at: V2; ax: V2 } } | null = null;
+      const seatSet = (mm: { at: V2; ax: V2 }, prop: string, commit: boolean): number => {
+        const mark = { props: st.props.length, spots: st.spots.length, lights: st.lights.length, free: g.free.slice() };
+        const tab = tryPlace(prop, mm.at, mm.ax, { pad: 0.08 });
+        if (tab < 0) return -1;
+        const [, sy] = size(prop);
+        const ny: V2 = [-mm.ax[1], mm.ax[0]];
+        let seats = 0;
         for (const sgn of [-1, 1]) {
-          const off = sy / 2 + size('bench')[0] / 2 + 0.06;
-          const bp: V2 = [m.at[0] + ny[0] * sgn * off, m.at[1] + ny[1] * sgn * off];
           const face: V2 = [-ny[0] * sgn, -ny[1] * sgn];
+          const off = sy / 2 + size('bench')[0] / 2 + 0.12;
+          const bp: V2 = [mm.at[0] + ny[0] * sgn * off, mm.at[1] + ny[1] * sgn * off];
           // (a bench's front is its sitting side: toward the table, its length along it)
           const bi = tryPlace('bench', bp, face, { pad: 0.02 });
-          if (bi >= 0) for (const k of [-0.45, 0.45]) spot('sit', [bp[0] + m.ax[0] * k, bp[1] + m.ax[1] * k], face, bi);
+          if (bi >= 0) {
+            for (const k of [-0.45, 0.45]) spot('sit', [bp[0] + mm.ax[0] * k, bp[1] + mm.ax[1] * k], face, bi);
+            seats += 2;
+            continue;
+          }
+          // (no room for a bench: stools along that side)
+          const so = sy / 2 + size('stool')[0] / 2 + 0.1;
+          for (const k of [-0.55, 0.55]) {
+            const sp: V2 = [mm.at[0] + ny[0] * sgn * so + mm.ax[0] * k, mm.at[1] + ny[1] * sgn * so + mm.ax[1] * k];
+            const si = tryPlace('stool', sp, face, { pad: 0.02 });
+            if (si >= 0) {
+              spot('sit', sp, face, si);
+              seats++;
+            }
+          }
         }
-        const h = tableTop(p.prop);
+        if (!commit) {
+          st.props.length = mark.props;
+          st.spots.length = mark.spots;
+          st.lights.length = mark.lights;
+          g.free.set(mark.free);
+          return seats;
+        }
+        const p = st.props[tab];
+        const h = tableTop(prop);
         light('candle', [p.at[0], p.at[1], st.z + h + 0.3]);
         onTop(tab, 'candles', h, 0);
         onTop(tab, 'pot', h, 0.35);
-        spot('gather', [m.at[0] + m.ax[0] * 1.6, m.at[1] + m.ax[1] * 1.6], [-m.ax[0], -m.ax[1]]);
+        spot('gather', [mm.at[0] + mm.ax[0] * 1.6, mm.at[1] + mm.ax[1] * 1.6], [-mm.ax[0], -mm.ax[1]]);
+        return seats;
+      };
+      let bestProp = 'longtable';
+      for (const prop of ['longtable', 'table'])
+        for (const mm of middles()) {
+          const n = seatSet(mm, prop, false);
+          if (n > (best?.n ?? 1)) (best = { n, m: mm }), (bestProp = prop);
+        }
+      if (best) {
+        seatSet(best.m, bestProp, true);
+        m = best.m;
       }
       // (as many as the floor has room for: about one a 5 m² beyond the table's)
       const area = room.tiles.reduce((a, q) => a + quadAreaOf(corners.get(q)!), 0);
@@ -587,7 +623,8 @@ function furnish(st: InteriorStorey, room: InteriorRoom, g: WalkGrid, corners: M
         const [sx, sy] = size('table').map((v) => v * 0.8);
         const ny: V2 = [-m.ax[1], m.ax[0]];
         for (const [a, bq] of [[0, 1], [0, -1], [1, 0], [-1, 0]] as const) {
-          const off = a !== 0 ? sx / 2 + 0.32 : sy / 2 + 0.32;
+          // (the seat's middle its own half-depth off the table's edge, and a hand's gap)
+          const off = (a !== 0 ? sx / 2 : sy / 2) + size('stool')[0] / 2 + 0.1;
           const sp: V2 = [m.at[0] + (m.ax[0] * a + ny[0] * bq) * off, m.at[1] + (m.ax[1] * a + ny[1] * bq) * off];
           const face: V2 = [-(m.ax[0] * a + ny[0] * bq), -(m.ax[1] * a + ny[1] * bq)];
           const si = tryPlace('stool', sp, face, { pad: 0.02 });
@@ -657,7 +694,7 @@ function furnish(st: InteriorStorey, room: InteriorRoom, g: WalkGrid, corners: M
         const [sx, sy] = size('table');
         const ny: V2 = [-m.ax[1], m.ax[0]];
         for (const [a, bq] of [[0, 1], [0, -1], [1, 0], [-1, 0]] as const) {
-          const off = a !== 0 ? sx / 2 + 0.3 : sy / 2 + 0.3;
+          const off = (a !== 0 ? sx / 2 : sy / 2) + size('chair')[0] / 2 + 0.1;
           const sp: V2 = [m.at[0] + (m.ax[0] * a + ny[0] * bq) * off, m.at[1] + (m.ax[1] * a + ny[1] * bq) * off];
           const face: V2 = [-(m.ax[0] * a + ny[0] * bq), -(m.ax[1] * a + ny[1] * bq)];
           const si = tryPlace('chair', sp, face, { pad: 0.02 });

@@ -3,7 +3,7 @@
   "props": [
     { "id": "table", "obj": "mini-dungeon/x/Models/OBJ format/table.obj", "height": 0.8, "credit": "kenney-mini-dungeon" },
     { "id": "longtable", "obj": "furniture-kit/x/Models/OBJ format/tableCloth.obj", "height": 0.8, "credit": "kenney-furniture-kit" },
-    { "id": "chair", "obj": "mini-dungeon/x/Models/OBJ format/chair.obj", "height": 0.95, "credit": "kenney-mini-dungeon" },
+    { "id": "chair", "obj": "mini-dungeon/x/Models/OBJ format/chair.obj", "height": 0.82, "credit": "kenney-mini-dungeon" },
     { "id": "throne", "obj": "mini-dungeon/x/Models/OBJ format/chair.obj", "height": 1.6, "credit": "kenney-mini-dungeon" },
     { "id": "bench", "obj": "graveyard-kit/x/Models/OBJ format/bench.obj", "size": 1.5, "credit": "kenney-graveyard-kit" },
     { "id": "bed", "obj": "furniture-kit/x/Models/OBJ format/bedSingle.obj", "size": 2.0, "credit": "kenney-furniture-kit" },
@@ -29,7 +29,7 @@
     { "id": "banner", "obj": "fantasy-town-kit/x/Models/OBJ format/banner-red.obj", "height": 2.4, "credit": "kenney-fantasy-town-kit" },
     { "id": "bannergreen", "obj": "fantasy-town-kit/x/Models/OBJ format/banner-green.obj", "height": 2.4, "credit": "kenney-fantasy-town-kit" },
     { "id": "shield", "obj": "mini-dungeon/x/Models/OBJ format/shield-round.obj", "size": 0.7, "credit": "kenney-mini-dungeon" },
-    { "id": "stool", "obj": "fantasy-town-kit/x/Models/OBJ format/stall-stool.obj", "height": 0.5, "credit": "kenney-fantasy-town-kit" },
+    { "id": "stool", "obj": "fantasy-town-kit/x/Models/OBJ format/stall-stool.obj", "height": 0.45, "credit": "kenney-fantasy-town-kit" },
     { "id": "rug", "obj": "furniture-kit/x/Models/OBJ format/rugRectangle.obj", "size": 2.4, "credit": "kenney-furniture-kit" },
     { "id": "plant", "obj": "furniture-kit/x/Models/OBJ format/pottedPlant.obj", "height": 0.8, "credit": "kenney-furniture-kit" },
     { "id": "cabinet", "obj": "furniture-kit/x/Models/OBJ format/kitchenCabinet.obj", "height": 0.9, "credit": "kenney-furniture-kit" },

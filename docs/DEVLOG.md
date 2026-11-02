@@ -16254,3 +16254,11 @@ walls and roof; then water comes in at the door, fire burns the floors and units
 - plan 20-31 ms, mesh 34-81 ms (once, on entering's prepare), 32 562 triangles (28 094 the props'), 4.4 MB vertices;
   only the shown storey and the one under it are drawn (the shadow pass draws all: upper floors keep the sun off);
 - the props' prepass: 35 models, 376 KB of voxels; greedy faces ~0.3 a surface voxel.
+
+**After main's first review** (the plumbing right, the look far below the bar): the camera frames the shown storey to
+fill the screen (its footprint's spread across and up the screen); the town past a tight cut falls to a cold near-black
+(Cut.focus in haze(): no dithered bowl of the town); the level's panels and labels are put away inside; the walls in
+front are dark silhouettes with a thin lit rim at the cut; the sun's patches and shafts warmer and stronger, the candle
+pools stronger at night; bubbles only over people on the shown storey. The planner: the hall's long table and its seats
+placed as one set at the middle that seats the most (benches, else stools), seats a hand's gap off the table, store
+rooms filled to their size, a room kept 85% one floor, the flight's top kept clear, the window's slide rebuilds the draw.

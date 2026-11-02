@@ -109,6 +109,7 @@ export class InteriorScene {
     const planned: PlannedInterior = planInterior(city, b, use, propSize);
     this.stats.planMs = +(performance.now() - t0).toFixed(1);
     this.active?.draw.dispose();
+    this.frame = frame;
     const draw = new InteriorDraw(h.device, h.renderer, planned.plan, frame);
     draw.view.assemble = 0;
     draw.on = false;
@@ -123,7 +124,7 @@ export class InteriorScene {
       plan: planned.plan,
       grids: planned.grids,
       draw,
-      toWindow: (p, z) => [p[0] + frame.dx, p[1] + frame.dy, z - frame.oz],
+      toWindow: (p, z) => [p[0] + this.frame.dx, p[1] + this.frame.dy, z - this.frame.oz],
       storey: 0,
     };
     for (const f of this.onEnter) f(this.active);
@@ -184,10 +185,24 @@ export class InteriorScene {
     return { x, y, z, zoom, r: Math.hypot(x1 - x0, y1 - y0) / 2 + 0.5 };
   }
 
+  /** where the plan's frame sits in the window (moves when the window slides) */
+  private frame = { dx: 0, dy: 0, oz: 0 };
+
   update(dt: number): void {
     const a = this.active;
     const cam = this.host.camera;
     if (!a) return;
+    // (the window slid: the inside made again in the window's new frame — the camera came with the window)
+    const fr = this.host.view.planFrame(a.settlement);
+    if (fr && (fr.dx !== this.frame.dx || fr.dy !== this.frame.dy || fr.oz !== this.frame.oz)) {
+      const old = a.draw;
+      this.frame = fr;
+      a.draw = new InteriorDraw(this.host.device, this.host.renderer, a.plan, fr);
+      a.draw.view = { ...old.view };
+      a.draw.on = old.on;
+      a.draw.shaftsOn = old.shaftsOn;
+      old.dispose();
+    }
     const d = a.draw;
     this.t += dt;
     const night = this.host.night();

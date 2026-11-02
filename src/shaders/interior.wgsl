@@ -157,6 +157,9 @@ fn fsInterior(in: IVOut) -> FOut {
   let shown = u32(h0.y);
   let floorz = floorZ(storey);
   let px = in.pos.xy;
+  // (a cut wall's stub: its share of being in front — the silhouette's dark — and the cut's edge, a light rim)
+  var front = 0.0;
+  var rim = 0.0;
   // the storey's cut: nothing over its ceiling
   if (in.wpos.z > h0.z) { discard; }
   // the storey under: only what's seen down the stair's hole (under the shown floor anyway)
@@ -174,7 +177,10 @@ fn fsInterior(in: IVOut) -> FOut {
     let stub = stubH;
     // (a wall facing the eye: its top over the stub goes; one side-on fades in between)
     let cut = smoothstep(0.05, 0.35, facing);
-    if (cut > 0.0 && up > stub + (1.0 - cut) * 6.0 + (bayer4(px) - 0.5) * 0.25) { discard; }
+    let edge = stub + (1.0 - cut) * 6.0;
+    if (cut > 0.0 && up > edge + (bayer4(px) - 0.5) * 0.12) { discard; }
+    front = cut * select(1.0, 0.0, (in.info & 131072u) != 0u);
+    rim = cut * (1.0 - smoothstep(0.0, 0.07, edge - up));
   }
   // the assembly: each object comes in by its own share of the dither as the interior assembles
   let objId = in.info >> 18u;
@@ -194,6 +200,9 @@ fn fsInterior(in: IVOut) -> FOut {
   // (the sun's patch warm and strong: the room's brightest thing by day)
   var light = amb + G.sunCol.rgb * vec3<f32>(1.15, 0.98, 0.78) * ndl * lit * 2.2 + windowLight(in.wpos, n, storey) * 0.65 + localLight(in.wpos, n);
   var col = alb * light;
+  // (the walls in front of the room: dark silhouettes against its light, their cut edge a thin lit line)
+  col = mix(col, col * 0.22 + vec3<f32>(0.004, 0.004, 0.008), front * 0.85);
+  col = mix(col, vec3<f32>(0.42, 0.36, 0.28) * (0.35 + 0.65 * (1.0 - h3.z)), rim * 0.9);
   if (mat == M_FLAME) { col = vec3<f32>(1.6, 0.8, 0.3) * (0.85 + 0.15 * sin(G.time * 17.0 + in.wpos.x * 40.0)); }
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), 1.0);
