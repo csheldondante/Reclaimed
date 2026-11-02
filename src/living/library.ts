@@ -1,0 +1,310 @@
+// ---- living/library.ts --------------------------------------------------------------------------------------------
+// (round 125, `facts`; BACKLOG LW-F6) The first templates, as data. The user's four (FACTIONS_WORLD_STATE.md §8):
+// build communal burrows, abolish serfdom, open a trade corridor, arbitrate a contested holding. Then the ones that
+// consume their outcomes and the drought's — never chained by hand: each only reads the world (OPPORTUNITY_CATALOG.md
+// guardrail 1: "Use state mutations so unrelated templates can respond to outcomes"):
+//   toll dispute      ← a road and a guild grown strong (the corridor raises the guild's power)
+//   noble conspiracy  ← nobles with a grievance against their crown (abolition gives them one)
+//   integrate refugees← a cohort that can shelter them and refugees in its town (burrows; the drought's migrants)
+//   divert the river  ← a town in drought upstream of another (the drought arc)
+//   river treaty      ← a water claim and a grievance (the diversion gives the downstream town both)
+//   ration the grain  ← a town in drought with its grain running low
+// And the drought: an arc of four stages, each an instant mutation (the rivers' inflow lowered, the fields' rate cut,
+// unrest, migrants), plus the stores' fall each turn.
+
+import type { ArcDef, TemplateDef } from './engine';
+
+export const TEMPLATES: TemplateDef[] = [
+  {
+    id: 'build-burrows',
+    title: 'Dig communal burrows for {cohort}',
+    pitch: '{cohort} live in shared burrows and raise their young together. Give them room to dig at {town}.',
+    themes: ['housing', 'growth', 'custom'],
+    bind: [
+      { as: 'cohort', kind: 'cohort', tag: { scope: 'custom', key: 'communal_housing' } },
+      { as: 'town', kind: 'settlement', via: ['$cohort', 'resident_at', '$'] },
+    ],
+    eligible: [{ helper: 'noBuilding', args: ['$town', 'burrows'] }],
+    at: 'cohort',
+    requires: { agents: [{ kind: 'workers', count: 1 }], stores: [{ at: '$town', good: 'stone', amount: 20 }, { at: '$town', good: 'grain', amount: 10, upkeep: true }] },
+    turns: 4,
+    work: 'labour',
+    outcome: [
+      { place: { at: '$town', id: 'burrows', name: 'the communal burrows and nursery of {cohort}', use: ['burrows', 'nursery', 'housing'], tags: [{ scope: 'economy', key: 'communal_ownership', value: true }], by: '$cohort' } },
+      { bump: ['$cohort', 'prosperity', 0.2] },
+      { setTag: ['$cohort', 'capability', 'shelter_refugees', true] },
+      { event: 'founding', by: ['$cohort'], to: ['$town'], note: '{cohort} dug their communal burrows at {town}' },
+    ],
+    outcomeText: 'Burrows and a shared nursery at {town}: housing for families, labour freed for other work, room to shelter the displaced.',
+    fit: [{ tag: ['$cohort', 'custom', 'communal_childcare'] }],
+    capability: [{ trait: ['$cohort', 'regenerating'] }],
+  },
+  {
+    id: 'abolish-serfdom',
+    title: 'Abolish serfdom in {polity}',
+    pitch: '{serfs} are bound to the land of {polity}. A decree could free them — and the lords will remember it.',
+    themes: ['law', 'labour', 'reform'],
+    bind: [
+      { as: 'polity', kind: 'polity', tag: { scope: 'law', key: 'serfdom', value: 'legal' } },
+      { as: 'serfs', kind: 'cohort', tag: { scope: 'economy', key: 'labor', value: 'serf' }, where: [{ helper: 'inPolity', args: ['$serfs', '$polity'] }] },
+    ],
+    at: 'polity',
+    requires: { agents: [{ kind: 'diplomat', count: 1 }], goods: { influence: 4 } },
+    turns: 2,
+    work: 'talk',
+    outcome: [
+      { setTag: ['$polity', 'law', 'serfdom', 'abolished'] },
+      { forEach: { as: 'c', kind: 'cohort', where: [{ tag: ['$c', 'economy', 'labor'], is: 'serf' }, { helper: 'inPolity', args: ['$c', '$polity'] }] }, do: [{ setTag: ['$c', 'economy', 'labor', 'free_tenant'] }, { bump: ['$c', 'support', 0.3] }, { bump: ['$c', 'unrest', -0.2] }] },
+      { forEach: { as: 'n', kind: 'faction', where: [{ tag: ['$n', 'government', 'hereditary_nobility'] }, { rel: ['$n', 'vassal_of', '$polity'] }] }, do: [{ relate: ['$n', 'grievance_against', '$polity'], add: 0.4 }, { power: ['$n', -0.1] }] },
+      { event: 'emancipation', by: ['$polity'], to: ['$serfs'], note: '{polity} abolished serfdom; {serfs} are free tenants', weight: 0.5 },
+    ],
+    outcomeText: 'Serfdom ends in {polity}: the bound become free tenants, the lords lose their dues and gain a grievance.',
+    fit: [{ intensity: ['$serfs', 'unrest'], gte: 0.2 }],
+  },
+  {
+    id: 'open-corridor',
+    title: 'Open a trade road from {from} to {to}',
+    pitch: '{guild} wants a road to {to}. Stone from {from}, a work gang, and coin for the tolls of the way.',
+    themes: ['trade', 'infrastructure'],
+    bind: [
+      { as: 'guild', kind: 'faction', tag: { scope: 'culture', key: 'mercantile' } },
+      { as: 'from', kind: 'settlement', via: ['$guild', 'resident_at', '$'] },
+      { as: 'to', kind: 'settlement', where: [{ not: { rel: ['$from', 'connected_by', '$to'] } }, { helper: 'notAtWar', args: ['$from', '$to'] }] },
+    ],
+    at: 'to',
+    requires: { agents: [{ kind: 'workers', count: 1 }], stores: [{ at: '$from', good: 'stone', amount: 15 }], goods: { coin: 20 } },
+    turns: 3,
+    work: 'labour',
+    outcome: [
+      { spawn: { id: 'route:{from}-{to}', kind: 'route', name: 'the road from {from} to {to}', at: '$from', links: ['$from', '$to'], tags: [{ scope: 'economy', key: 'trade_road', value: true }] } },
+      { relate: ['$from', 'connected_by', '$to'], symmetric: true },
+      { agree: { kind: 'trade', parties: ['$guild', '$to.controller'], flows: [{ what: 'grain', perDay: 1 }] } },
+      { power: ['$guild', 0.2] },
+      { stores: ['$from', 'grain', 0], rate: 1, note: 'grain comes up the new road to {from}' },
+      { event: 'founding', by: ['$guild'], to: ['$from', '$to'], note: 'the road from {from} to {to} opened' },
+    ],
+    outcomeText: 'A road from {from} to {to}: trade with its holders, grain on the move, {guild} grows in power.',
+    fit: [{ tag: ['$guild', 'economy', 'guild_controlled'] }],
+  },
+  {
+    id: 'arbitrate-holding',
+    title: 'Arbitrate the claim to {site}',
+    pitch: '{rival} says {site} is theirs by right; {holder} holds it. Someone must rule.',
+    themes: ['claims', 'nobility', 'land'],
+    bind: [
+      { as: 'site', kind: ['site', 'deposit'], tag: { scope: 'economy', key: 'holding' } },
+      { as: 'holder', kind: 'faction', via: ['$', 'controls', '$site'] },
+      { as: 'rival', kind: 'faction', where: [{ helper: 'plausibleClaim', args: ['$rival', '$site'] }] },
+      { as: 'arbiter', kind: 'polity', where: [{ helper: 'inPolity', args: ['$site', '$arbiter'] }] },
+    ],
+    at: 'site',
+    setup: [{ helper: 'pressClaim', args: ['$rival', '$site'] }],
+    requires: { agents: [{ kind: 'player', count: 1 }] },
+    turns: 1,
+    work: 'talk',
+    outcome: [{ helper: 'awardHolding', args: ['$site', '$holder', '$rival', '$arbiter'] }],
+    outcomeText: 'A ruling on {site}: the stronger right prevails; the loser keeps a grievance (and a claim, if it lost the land).',
+    onExpire: [{ relate: ['$rival', 'grievance_against', '$holder'], add: 0.2 }, { event: 'feud', by: ['$rival'], to: ['$holder'], note: 'no one ruled on {site}: {rival} and {holder} feud over it' }],
+    expireText: 'Left unruled, the claim festers into a feud.',
+    fit: [{ tag: ['$rival', 'government', 'hereditary_nobility'] }],
+  },
+  {
+    id: 'toll-dispute',
+    title: 'Tolls on {route}',
+    pitch: '{guild} has grown strong on {route}; {lord}, who holds {town}, wants a share of what passes.',
+    themes: ['trade', 'claims', 'nobility'],
+    bind: [
+      { as: 'route', kind: 'route' },
+      { as: 'town', kind: 'settlement', via: ['$', 'connected_by', '$route'] },
+      { as: 'guild', kind: 'faction', tag: { scope: 'culture', key: 'mercantile' }, where: [{ qty: ['$guild', 'power'], gte: 0.65 }] },
+      { as: 'lord', kind: 'faction', via: ['$', 'controls', '$town'], where: [{ tag: ['$lord', 'government', 'hereditary_nobility'] }] },
+    ],
+    at: 'route',
+    setup: [{ claim: { by: '$lord', on: '$route', what: 'tolls', basis: 'ancestral', strength: 0.5 } }, { event: 'claim-pressed', by: ['$lord'], to: ['$route'], note: '{lord} claims the tolls of {route}' }],
+    requires: { agents: [{ kind: 'diplomat', count: 1 }], goods: { influence: 2 } },
+    turns: 1,
+    work: 'talk',
+    outcome: [
+      { recognise: { on: '$route', by: '$lord', what: 'tolls', recognisedBy: '$guild' } },
+      { relate: ['$guild', 'pays_tribute_to', '$lord'], strength: 0.3 },
+      { power: ['$guild', -0.05] },
+      { event: 'charter', by: ['$lord'], to: ['$guild'], note: 'a toll charter: {guild} pays {lord} for passage on {route}', weight: 0.2 },
+    ],
+    outcomeText: 'A charter: {guild} pays {lord} a toll and keeps the road open.',
+    onExpire: [{ relate: ['$lord', 'grievance_against', '$guild'], add: 0.3 }],
+    expireText: '{lord} takes it ill.',
+  },
+  {
+    id: 'noble-conspiracy',
+    title: "Uncover {noble}'s plot",
+    pitch: '{noble} has not forgiven {polity}. Letters pass at night.',
+    themes: ['nobility', 'intrigue'],
+    bind: [
+      { as: 'polity', kind: 'polity' },
+      { as: 'noble', kind: 'faction', where: [{ tag: ['$noble', 'government', 'hereditary_nobility'] }, { rel: ['$noble', 'grievance_against', '$polity'], gte: 0.3 }] },
+    ],
+    at: 'noble',
+    requires: { agents: [{ kind: 'player', count: 1 }] },
+    turns: 1,
+    work: 'talk',
+    outcome: [{ power: ['$noble', -0.15] }, { setTag: ['$noble', 'condition', 'disgraced', true] }, { event: 'conspiracy-exposed', by: ['player'], to: ['$noble'], note: "{noble}'s plot against {polity} exposed", weight: -0.4 }],
+    outcomeText: '{noble} is exposed and disgraced; their power wanes.',
+    onExpire: [{ power: ['$noble', 0.1] }, { event: 'conspiracy', by: ['$noble'], to: ['$polity'], note: '{noble} gathers allies against {polity}' }],
+    expireText: 'The plot grows.',
+  },
+  {
+    id: 'integrate-refugees',
+    title: '{cohort} take in the refugees at {town}',
+    pitch: 'Refugees crowd {town}. {cohort} have room in their burrows and the custom to share it.',
+    themes: ['housing', 'migration', 'water'],
+    bind: [
+      { as: 'cohort', kind: 'cohort', tag: { scope: 'capability', key: 'shelter_refugees' } },
+      { as: 'town', kind: 'settlement', via: ['$cohort', 'resident_at', '$'], where: [{ qty: ['$town', 'refugee'], gte: 5 }] },
+    ],
+    at: 'town',
+    requires: { agents: [{ kind: 'workers', count: 1 }], stores: [{ at: '$town', good: 'grain', amount: 10 }] },
+    turns: 2,
+    work: 'labour',
+    outcome: [
+      { helper: 'refugeeCohort', args: ['$town', '$cohort'] },
+      { bump: ['$cohort', 'prosperity', -0.1] },
+      { event: 'sheltered', by: ['$cohort'], to: ['$town'], note: '{cohort} took the refugees of {town} into their burrows', weight: 0.3 },
+    ],
+    outcomeText: 'The refugees are housed in the burrows and become a cohort of {town}.',
+    urgency: { qty: ['$town', 'refugee'], low: 40, high: 0 },
+  },
+  {
+    id: 'divert-river',
+    title: 'Divert {river} to the fields of {town}',
+    pitch: 'The drought dries the fields of {town}. A cut and a weir would send {river} to them — and away from {down}.',
+    themes: ['water', 'infrastructure', 'drought'],
+    bind: [
+      { as: 'town', kind: 'settlement', tag: { scope: 'condition', key: 'drought' } },
+      { as: 'river', kind: 'site', via: ['$town', 'depends_on', '$'], tag: { scope: 'economy', key: 'river' } },
+      { as: 'down', kind: 'settlement', via: ['$', 'downstream_of', '$town'], where: [{ rel: ['$down', 'depends_on', '$river'] }] },
+    ],
+    at: 'river',
+    requires: { agents: [{ kind: 'workers', count: 1 }], stores: [{ at: '$town', good: 'stone', amount: 25 }, { at: '$town', good: 'timber', amount: 10 }] },
+    turns: 3,
+    work: 'labour',
+    outcome: [
+      { inflow: '$town', delta: 0.3, note: '{river} turned into the fields of {town}' },
+      { inflow: '$down', delta: -0.3, note: 'less of {river} reaches {down}' },
+      { stores: ['$town', 'grain', 0], rate: 3 },
+      { stores: ['$down', 'grain', 0], rate: -2 },
+      { relate: ['$down.controller', 'grievance_against', '$town.controller'], add: 0.5 },
+      { claim: { by: '$down.controller', on: '$river', what: 'water_access', basis: 'ancestral', strength: 0.6 } },
+      { event: 'river-diverted', by: ['$town.controller'], to: ['$down.controller'], note: '{town} diverted {river}; {down} goes short', weight: -0.5, halfLife: 6 },
+    ],
+    outcomeText: 'The fields of {town} drink again; {down} has less, and will say so.',
+    urgency: { qty: ['$town', 'inflow'], low: 0.3, high: 1 },
+  },
+  {
+    id: 'river-treaty',
+    title: 'Settle the water of {river} with {claimant}',
+    pitch: '{claimant} claims its share of {river} and has a grievance against {holder}. Compensation and a treaty could end it.',
+    themes: ['water', 'diplomacy', 'claims'],
+    bind: [
+      { as: 'river', kind: 'site', tag: { scope: 'economy', key: 'river' } },
+      { as: 'claimant', kind: ['faction', 'polity'], where: [{ claim: { by: '$claimant', on: '$river', what: 'water_access' } }] },
+      { as: 'holder', kind: ['faction', 'polity'], via: ['$claimant', 'grievance_against', '$'], where: [{ rel: ['$claimant', 'grievance_against', '$holder'], gte: 0.3 }] },
+      { as: 'town', kind: 'settlement', via: ['$holder', 'controls', '$'], where: [{ rel: ['$town', 'depends_on', '$river'] }] },
+      { as: 'down', kind: 'settlement', via: ['$claimant', 'controls', '$'] },
+    ],
+    at: 'river',
+    requires: { agents: [{ kind: 'diplomat', count: 1 }], stores: [{ at: '$town', good: 'grain', amount: 30 }] },
+    turns: 2,
+    work: 'talk',
+    outcome: [
+      { stores: ['$town', 'grain', -30], note: '{town} sends 30 grain to {down} in compensation' },
+      { stores: ['$down', 'grain', 30] },
+      { inflow: '$down', delta: 0.15, note: 'the weir shares {river} with {down}' },
+      { recognise: { on: '$river', by: '$claimant', what: 'water_access', recognisedBy: '$holder' } },
+      { relate: ['$claimant', 'grievance_against', '$holder'], add: -0.4 },
+      { event: 'treaty', by: ['$holder'], to: ['$claimant'], note: 'a treaty on the water of {river}', weight: 0.4 },
+    ],
+    outcomeText: "Compensation paid, the weir shared, {claimant}'s right to the water recognised.",
+    onExpire: [{ relate: ['$claimant', 'grievance_against', '$holder'], add: 0.2 }],
+    expireText: 'The grievance deepens.',
+  },
+  {
+    id: 'ration-grain',
+    title: 'Ration the grain of {town}',
+    pitch: 'The granaries of {town} are falling. Rationing would stretch them — not gladly.',
+    themes: ['drought', 'law', 'food'],
+    bind: [{ as: 'town', kind: 'settlement', tag: { scope: 'condition', key: 'drought' }, where: [{ qty: ['$town', 'grain'], lte: 110 }, { not: { tag: ['$town', 'law', 'rationing'] } }] }],
+    at: 'town',
+    requires: { agents: [{ kind: 'workers', count: 1 }] },
+    turns: 1,
+    work: 'talk',
+    outcome: [
+      { setTag: ['$town', 'law', 'rationing', true] },
+      { stores: ['$town', 'grain', 0], rate: 2, note: 'rationing: {town} eats less' },
+      { forEach: { as: 'c', kind: 'cohort', where: [{ helper: 'livesIn', args: ['$c', '$town'] }] }, do: [{ bump: ['$c', 'unrest', 0.1] }] },
+      { event: 'rationing', by: ['$town'], to: ['$town'], note: 'rationing at {town}' },
+    ],
+    outcomeText: 'Rationing: the grain lasts longer, the queues grow restless.',
+    urgency: { qty: ['$town', 'grain'], low: 20, high: 110 },
+  },
+];
+
+/** The long drought (OPPORTUNITY_CATALOG.md D): instant mutations by stage — never a hydrology simulation; the held
+ *  rivers dry when their region is next realised with the lowered inflow. Bound to a town and its downstream neighbour. */
+export function droughtArc(town: string, down: string, cohorts: string[]): ArcDef {
+  return {
+    id: 'drought',
+    name: 'The Long Drought',
+    themes: ['water', 'drought', 'food', 'migration'],
+    bind: { town, down, ...Object.fromEntries(cohorts.map((c, i) => [`c${i}`, c])) },
+    stages: [
+      {
+        name: 'Subtle shortage',
+        turn: 1,
+        text: 'the river narrows; dry patches in the fields',
+        effects: [
+          { setTag: ['$town', 'condition', 'drought', true] },
+          { setTag: ['$down', 'condition', 'drought', true] },
+          { inflow: '$town', factor: 0.7, note: 'the drought: the river narrows at {town}' },
+          { inflow: '$down', factor: 0.75, note: 'the drought reaches {down}' },
+          { stores: ['$town', 'grain', 0], rate: -4 },
+          { stores: ['$down', 'grain', 0], rate: -3 },
+        ],
+      },
+      {
+        name: 'Rationing',
+        turn: 4,
+        text: 'the harvest fails; the stores fall',
+        effects: [
+          { inflow: '$town', delta: -0.2, note: 'the river falls again at {town}' },
+          { inflow: '$down', delta: -0.2, note: 'the river falls again at {down}' },
+          { stores: ['$town', 'grain', 0], rate: -3 },
+          { stores: ['$down', 'grain', 0], rate: -2 },
+          ...cohorts.map((_, i) => ({ bump: [`$c${i}`, 'unrest', 0.2] as [string, 'unrest', number] })),
+        ],
+      },
+      {
+        name: 'Fracture',
+        turn: 7,
+        text: 'downstream farms fail; the displaced move',
+        effects: [
+          { inflow: '$down', delta: -0.15, note: 'the river at {down} is a trickle' },
+          { condition: ['$down', 'struggling'] },
+          { migrate: ['$down', '$town', 0.15], note: 'farmers of {down} flee upriver to {town}' },
+          ...cohorts.map((_, i) => ({ bump: [`$c${i}`, 'unrest', 0.15] as [string, 'unrest', number] })),
+        ],
+      },
+      {
+        name: 'Climax',
+        turn: 10,
+        text: 'the shortage reaches its threshold',
+        effects: [
+          {
+            when: { qty: ['$town', 'grain'], lte: 30 },
+            do: [{ condition: ['$town', 'struggling'] }, { event: 'riot', by: ['$c0'], to: ['$town'], note: 'bread riots in {town}' }, ...cohorts.map((_, i) => ({ bump: [`$c${i}`, 'unrest', 0.3] as [string, 'unrest', number] }))],
+            else: [{ event: 'survived', by: ['$town'], to: ['$town'], note: '{town} holds out through the drought' }],
+          },
+        ],
+      },
+    ],
+  };
+}

@@ -2836,6 +2836,84 @@ situation flow stays behind `?runplan=` until this replaces it.
   engine − costs − losses + the penalty avoided, over the horizon to the climax); the dealer's `ev` score part; the bots
   (`autoTurn`: ev, bigmoney, engine, random, greedy) and `tournament` (bots × kingdoms, viability).
 
+## The living world: the fact layer and the template engine (round 125, `facts`; BACKLOG LW-F1..F9; docs/design/FACTIONS_WORLD_STATE.md, OPPORTUNITY_CATALOG.md)
+
+`cardlab.html` is the world inspector (the round-124 deck lab at `cardlab.html?deck=1`).
+
+**The fact layer** (`src/api/contracts/facts.ts`, store `facts-store.ts` MemoryFacts, rules `facts-rules.ts`): the
+user's "small fact layer over the existing simulation", no graph database, no rule engine.
+- `Entity`: id (the owner's own id where there is one), kind (person, faction, cohort, polity, settlement, site, route,
+  army, unit, building, relic, deposit, arc), location, `ref` to the owner's record, scoped tags, small attrs.
+- `ScopedTag`: scope (biology, custom, economy, government, law, culture, capability, condition) × key × value.
+  `SCOPE_KINDS` says which kinds may carry a scope (law only on a polity or a settlement's override). Rules are
+  booleans/enums; intensities (support, unrest, enforcement, prosperity, piety, fear) are 0..1; a quantity's name is
+  refused as a tag.
+- `Relation`: directed, typed from a closed list in five families (membership, political, control, economic,
+  kinship); `symmetric` for war, alliance, peace and trade; ending allied_with/at_war_with leaves former_* history edges.
+- `Claim`: claimant, real target, `what` (an office, water access), basis, strength, recognised by, expiry. Never control.
+- `FactEvent`: the one append-only history by turn (and run), real participants; with a weight and half-life it is
+  also a diplomacy interaction.
+- Indexes by kind, tag, region, settlement, relation type and end; `drainChanged()` gives the entities changed since.
+- Invariants (`INVARIANTS`, `checkInvariants`, `affectedBy`): bound labour only where its law allows or as an explicit
+  illegal_* exception; exclusive policies; laws on jurisdictions only; a hereditary court needs nobility or a pretender;
+  never at war and allied; no claim on what one controls. `lawAt` resolves the law in force (the settlement's override,
+  else its polity's). Checked per batch by whoever applies it.
+- Persistence: `MemoryWorldState.facts`, carried in `WorldSnapshot.facts`; a save without facts migrates
+  (`migrateFacts`: factions, settlements, characters as entities referring to their records).
+
+**One source of truth.** Nothing another system owns is copied into the fact layer. A settlement's holder, stores and
+people, a region's rivers' inflow (RegionState.wetness), a faction's power stay in WorldState and change through
+WorldState.apply (new kinds: `river-inflow`, `settlement-stores`, `settlement-building`). The fact world
+(`src/living/world.ts` FactWorld) reads them: `qty(id, what)` from the owner, `relations()` adds derived ones (a
+settlement's holder `controls` it; a character is `member_of` its faction), `controllerOf`, `settlementOf`, `locate`.
+
+**Diplomacy merged.** `MemoryDiplomacy` is the Diplomacy API over a FactStore. Agreements in force are relations
+(war → at_war_with, alliance → allied_with, peace, truce, trade → trades_with, land/mineral rights and passage →
+has_rights, tribute → pays_tribute_to, vassalage → vassal_of) carrying the Agreement; interactions are FactEvents with
+a weight. The facts hold, diplomacy reads: the engine and the inspector need war, alliance, rights and history beside
+every other relation, while dialog, the GM and units keep their API. `importDiplomacy` brings an old record across.
+(settle/settlements.ts still makes its own MemoryDiplomacy, over its own store: not yet the world's — BACKLOG LW-F10.)
+
+**The template engine** (`src/living/`):
+- `dsl.ts`: templates are data. `Pred` (tag, intensity, law, rel, claim, qty, trait, same, event, not/any/all,
+  helper), `BindSpec` (an index lookup or a relation from a bound entity, with `where`), `Effect` (setTag, bump,
+  relate/unrelate, claim/recognise/dropClaims, control, event, agree, inflow, stores, power, condition, migrate, place,
+  spawn, forEach, when, helper). References are `$name` (or `$name.controller` / `.home` / `.polity`). `HELPERS`: the
+  named procedures for the complex cases (plausibleClaim, pressClaim, awardHolding, refugeeCohort …). `describe()` puts
+  any predicate in words: the why of every card not dealt.
+- `mutations.ts`: the outcome helpers, each a near-instant, cheap mutation of authoritative state through its owner
+  plus an event: `setRiverInflow` (the held steady rivers' discharge is Q × the region's inflow factor: a drought or a
+  diversion is this one change), `placeStructure` (Settlement.buildings plus its fact entity: placed directly, no agents
+  building it; the region generator lays it out on arrival), `adjustStores`, `shiftPower`, `setCondition`, `migrate`,
+  `setControl`. Nothing simulates. **"Visible" means the next time the player looks**: the streamed window realises the
+  mutated state when it arrives; full simulation runs only there, and it reflects the mutation rather than producing it.
+- `engine.ts` LivingEngine: `enumerate` (bindings + the failing predicate), `deal` (eligible → dedup → cooldown →
+  finite subjects → one card a place → real stores → the dealer), `commit` (the contract's commit for the pawns, the
+  stores spent at their settlement, the trait rules), `advance` (stores move by their rates over the turn's days,
+  regenerated pawns return, cards resolve or lapse, the arc's stage, claims lapse, the next deal), `dryRun` (setup +
+  outcome on a copy: the preview diff and the templates it would make eligible), `applyBatch` (one batch, invariants of
+  everything touched checked after, the world restored and an error thrown on a break). Templates are evaluated on
+  change (kinds they bind, or the owners' records for templates that read quantities).
+- The dealer (`opps/dealer.ts`) is reused: the engine's proposals carry its score parts, four new ones among them
+  (capability, unlocks, urgency, neglect; weights in the tuning registry) and `onePerPlace`.
+- Setup lifecycle: an incident is made only when its card is dealt (shown), once per binding; a lapsed card's binding
+  and its template at its place rest `cooldown` turns; the incident stays in the history.
+- `oppcheck.ts` `checkTemplates` (static: a setup never makes a capability, law or government tag, an alliance, trade,
+  vassalage, membership, control or rights — "the generator may create incidents but never invent an ally") and
+  `checkLiving` (references, real pawns and stores, one card a place, the outcome realisable under the invariants).
+- `library.ts`: build communal burrows, abolish serfdom, open a trade corridor, arbitrate a contested holding; toll
+  dispute, noble conspiracy, integrate refugees, divert the river, river treaty, ration the grain; the drought arc
+  (four stages of instant mutations). `briar.ts`: the seeded Briar Hollow world.
+
+**Traits at the opportunity scale** (`src/living/traits.ts`): one vocabulary with the agents' trait bits
+(contracts/traits.ts). A pawn's traits are `traitsOfTags` of its tags, its species' (`SPECIES_TRAITS`: gnoll → living,
+regenerating; skeleton → undead; griffin → flying) and its parts (`Agent.parts`: the creature generator's body parts
+and, later, gear — the slot for modular units). A cohort's come from its biology tags the same way. `TRAIT_RULES` is the
+one table the engine reads for every card: undead → labour in half the turns, no food upkeep, living cohorts there take
+unrest; regenerating → losses back by the next turn; flying → travel in half the turns. The hook for the simulated
+agents: the same traits drive behaviour where the player looks through the trait modules' CAPS word (an undead worker
+doesn't go home at night) — the agents' track's to build.
+
 ## Tests in Node (round 117, `testkit`; docs/TESTING.md)
 
 - `npm test` runs two vitest projects, unit (test/unit/**, src/**/*.test.ts) then gpu (test/gpu/**). Neither uses a

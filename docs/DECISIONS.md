@@ -370,6 +370,22 @@ each was implemented.
   merged). First slice: Briar Hollow in a drought. Plan phases 0 (fact layer), 1 (template engine + world inspector),
   2 (Briar Hollow), 3 (catalog batches), 4 (the army arc).
 
+- (round 125, while `facts` was built) The user, verbatim, on simulation:
+
+> Does the river falling or a structure going up need simulation? I think we already have steady flows computed so you can just lower the flow factor coming in and it will dry up. A building going up can just place the structure instead of simulating agents building them. We only need full simulation where the player is looking but our world is robust enough I think that we can do lots of this as near instant cheap mutations.
+
+- → Every outcome is a near-instant, cheap mutation of authoritative state (a river's inflow factor set, a structure
+  placed); "visible" means the next time the player looks. No "needs simulation" marking.
+
+- The user, verbatim, on traits:
+
+> Note that this should probably interact with our unit traits and modular units. Undead may work tirelessly with no sleep. Gnoll knights may regenerate etc
+
+- → One vocabulary with the agents' traits (traits.ts): a pawn's traits from its species, tags and parts (bodies, later
+  gear); one table of trait rules on requirements, duration and outcomes (undead labour faster with no upkeep and the
+  living object; regenerating losses recover; flying travel faster); the simulated agents read the same traits where
+  the player looks (a hook).
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:

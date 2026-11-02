@@ -23,9 +23,10 @@
 import { affords, needsPlayer, type Goods, type Holdings, type Opportunity, type Requirement } from '../api/contracts/opportunity';
 import type { DealerTune } from './tune';
 
-export type ScorePart = 'theme' | 'foreshadow' | 'variety' | 'synergy' | 'difficulty' | 'hero' | 'tier' | 'ev';
-export const SCORE_PARTS: readonly ScorePart[] = ['theme', 'foreshadow', 'variety', 'synergy', 'difficulty', 'hero', 'tier', 'ev'];
-const WEIGHT: Record<ScorePart, keyof DealerTune> = { theme: 'wTheme', foreshadow: 'wForeshadow', variety: 'wVariety', synergy: 'wSynergy', difficulty: 'wDifficulty', hero: 'wHero', tier: 'wTier', ev: 'wEv' };
+// (round 125, facts: capability, unlocks, urgency, neglect — the living world's templates give them; 0 from the rest)
+export type ScorePart = 'theme' | 'foreshadow' | 'variety' | 'synergy' | 'difficulty' | 'hero' | 'tier' | 'ev' | 'capability' | 'unlocks' | 'urgency' | 'neglect';
+export const SCORE_PARTS: readonly ScorePart[] = ['theme', 'foreshadow', 'variety', 'synergy', 'difficulty', 'hero', 'tier', 'ev', 'capability', 'unlocks', 'urgency', 'neglect'];
+const WEIGHT: Record<ScorePart, keyof DealerTune> = { theme: 'wTheme', foreshadow: 'wForeshadow', variety: 'wVariety', synergy: 'wSynergy', difficulty: 'wDifficulty', hero: 'wHero', tier: 'wTier', ev: 'wEv', capability: 'wCapability', unlocks: 'wUnlocks', urgency: 'wUrgency', neglect: 'wNeglect' };
 
 export interface TierOffer {
   requires: Requirement[];
@@ -72,6 +73,9 @@ export interface DealContext {
   /** what was dealt on earlier turns (variety) */
   recent: { template: string; place: string; turn: number }[];
   tune: DealerTune;
+  /** (round 125, facts) at most one card a place, whatever its template (the user's doc: "at most one displayed
+   *  opportunity per location"); else one offer of a template a place */
+  onePerPlace?: boolean;
 }
 
 export interface Dealt {
@@ -156,6 +160,10 @@ export function deal(props: Proposal[], ctx: DealContext): DealReport {
       tier: p.tiers.length > 1 ? (t - 1) / (p.tiers.length - 1) : 1,
       // (round 124: the proposal's expected points a turn, 0..1 — the card lab's ev; the map's templates give none yet)
       ev: p.parts.ev ?? 0,
+      capability: p.parts.capability ?? 0,
+      unlocks: p.parts.unlocks ?? 0,
+      urgency: p.parts.urgency ?? 0,
+      neglect: p.parts.neglect ?? 0,
     };
     const score = SCORE_PARTS.reduce((s, k) => s + T[WEIGHT[k]] * parts[k], 0);
     const because = [
@@ -168,10 +176,10 @@ export function deal(props: Proposal[], ctx: DealContext): DealReport {
   // 5 one offer of a template at a place
   const best = new Map<string, Cand>();
   for (const c of [...cands].sort((a, b) => Number(b.affordable) - Number(a.affordable) || b.score - a.score)) {
-    const k = `${c.p.template}@${c.p.place}`;
+    const k = ctx.onePerPlace ? c.p.place : `${c.p.template}@${c.p.place}`;
     const had = best.get(k);
     if (!had) best.set(k, c);
-    else reject(c.p, 'one', `one offer of ${c.p.template} at ${c.p.place}: "${had.p.title}" is dealt instead`, c.score);
+    else reject(c.p, 'one', ctx.onePerPlace ? `one card a place: "${had.p.title}" scores higher at ${c.p.place}` : `one offer of ${c.p.template} at ${c.p.place}: "${had.p.title}" is dealt instead`, c.score);
   }
   const pool = [...best.values()].sort((a, b) => b.score - a.score);
   const guarantees: string[] = [];

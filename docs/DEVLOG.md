@@ -16021,3 +16021,64 @@ mutations). One contract, `src/api/contracts/facts.ts`, its store `facts-store.t
   `settlement-stores` (a good's stock and rate) and `settlement-building` (a structure placed directly, laid out by the
   region generator on arrival). storycheck knows them.
 - Tests: test/unit/facts.test.ts, 17.
+
+## 2026-11-02 — round 125 (`facts`): the template engine, traits at the opportunity scale, the world inspector (phase 1; BACKLOG LW-F4..F9)
+
+- **Templates are data** (src/living/dsl.ts): predicates, bindings and effects as plain objects, with a few named
+  helpers for the complex cases. A predicate can always be put in words, so every card that isn't dealt says why
+  ("rival House Morrow: not House Morrow has a past with Thornfield"; "The Lantern Guild's power ≥ 0.65 (now 0.5)").
+- **Every outcome is an instant, cheap mutation through its owner** (mutations.ts). The user, while this was being
+  built: "Does the river falling or a structure going up need simulation? … you can just lower the flow factor coming
+  in and it will dry up. A building going up can just place the structure". So:
+  - a drought or a diversion is `setRiverInflow`: the region's inflow factor, which the held rivers' discharge
+    scales by;
+  - a building is `placeStructure`: Settlement.buildings, laid out by the region generator on arrival;
+  - stores, power, condition, migration and control are set directly.
+
+  The "needs simulation" marking the brief asked for is dropped: "visible" means the next time the player looks.
+- **The dealer is reused** (opps/dealer.ts). It gains four score parts: capability, unlocks, urgency, neglect. All
+  default to 0, so the card lab and the map deal as before. It also gains `onePerPlace`. The engine's own steps run
+  before it, each rejection naming its step:
+  - eligibility;
+  - dedup;
+  - cooldown (by binding, and by template at a place: without the second, Thornfield was arbitrated again the next
+    turn with the parties swapped);
+  - finite subjects;
+  - one card a place;
+  - the real stores.
+- **Unlocks are measured, not declared.** Each candidate is dry-run on a copy of the world (its setup, then its outcome),
+  and the engine counts the templates that become eligible. This gives the card's "unlocks" line and its preview diff.
+  The chains it finds without any hand-made link:
+  - the corridor unlocks the toll dispute (the guild's power 0.5 → 0.7, the gate 0.65);
+  - abolition unlocks the noble conspiracy (the lords' grievance 0.4 ≥ 0.3);
+  - the diversion unlocks the river treaty (Millbrook's council gets a grievance of 0.5 and an ancestral water_access
+    claim on the Briar);
+  - burrows plus the drought's migrants unlock taking in the refugees.
+- **Setup lifecycle.** An incident (Thornfield's ancestral claim pressed, a toll claim) is made only when its card is
+  dealt, and only once per binding. A lapsed card's binding rests. Its incident stays in the history (a feud, if the
+  claim was left unruled).
+- **Traits: one vocabulary with the agents** (the user: "Undead may work tirelessly with no sleep. Gnoll knights may
+  regenerate"). A pawn's traits are traits.ts `traitsOfTags` of its tags, its species' and its parts (`Agent.parts`,
+  the slot for modular bodies and gear). One table of rules is read for every card, never per template:
+  - an undead crew builds the burrows in 2 turns instead of 4 and carries no grain upkeep, but the serfs' unrest rises
+    from 0.25 to 0.35;
+  - a regenerating gnoll knight band that lost half its number (4 → 2) is back at 4 the next turn (a human band stays
+    at 2);
+  - a flying crew travels in half the turns.
+- **Measured** (Node; the inspector's in-page numbers match):
+  - Briar Hollow (21 entities, 10 templates) deals in 12.7 ms on the first turn, including a dry run for every
+    candidate;
+  - afterwards 0.4-8 ms, with 6 of 10 templates re-evaluated on a quiet turn.
+- **The world inspector** (cardlab.html; the deck lab is at ?deck=1) shows:
+  - counters (the grain, the rivers' inflow, the serfs' unrest, the drought's stage);
+  - the pawns with their traits;
+  - the board, each card with its needs, turns, outcome, expiry, unlocks, setup incident, dry-run diff and why;
+  - why the others weren't dealt;
+  - what changed each turn, as diffs;
+  - an entity browser (tags by scope, quantities from the owners, relations with the derived ones marked, claims,
+    history);
+  - the relations, claims, history and invariants whole.
+
+  Checked headless at 1000 and 412 wide (C:/Projects/shots88/facts/: 1-inspector-turn0, 2-inspector-turn2,
+  3-inspector-phone). On a phone the counters overflowed sideways, so they wrap now.
+- Tests: test/unit/living.test.ts, 19 (with facts.test.ts: 36). The unit suite is 518 passing.

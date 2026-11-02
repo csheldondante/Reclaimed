@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Reclaimed card lab</title>
+    <title>Reclaimed world inspector</title>
     <style>
       :root { --bg: #17191d; --card: #23262c; --ink: #ece6d8; --dim: #a59d8c; --gold: #f2c14e; --blue: #5ab0f0; --red: #ff7a5c; --green: #8fd16a; --violet: #b48cf0; }
       html, body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.4 system-ui, sans-serif; }
@@ -50,12 +50,16 @@
       summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
       .slider { display: grid; grid-template-columns: 1fr 120px 52px; gap: 6px; align-items: center; font-size: 12px; margin: 3px 0; }
       table { border-collapse: collapse; font-size: 12px; width: 100%; }
-      td, th { padding: 2px 4px; border-bottom: 1px solid #30343b; text-align: left; }
+      td, th { padding: 2px 4px; border-bottom: 1px solid #30343b; text-align: left; vertical-align: top; }
+      pre.diff { max-height: 30vh; }
+      .counters { flex-wrap: wrap; } .counters > div { min-width: 84px; } a { color: var(--blue); }
+      .ents { margin: 4px 0; } .pawn.sel { outline: 1px solid var(--gold); } a.ent { color: var(--blue); }
+      ul { margin: 2px 0; padding-left: 18px; font-size: 12.5px; }
       .fatal { background: #5a1e1e; padding: 10px; border-radius: 8px; white-space: pre-wrap; }
     </style>
   </head>
   <body>
     <div id="app"></div>
-    <script type="module" src="/src/cardlab/main.ts"></script>
+    <script type="module" src="/src/cardlab/entry.ts"></script>
   </body>
 </html>

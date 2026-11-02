@@ -43,6 +43,9 @@ export interface Agent {
   tags: string[];
   /** lasting conditions (CharacterRecord.statuses' words); a 'wounded' agent isn't available */
   statuses: string[];
+  /** (round 125, facts) what it is made of and carries: the creature generator's body parts and (later) its gear, as tags
+   *  — they add traits like its own tags do (src/living/traits.ts pawnTraits: one vocabulary with traits.ts) */
+  parts?: { body?: string[]; gear?: string[] };
   /** where it is: with the player, or stationed at a settlement (availability reads this) */
   at: { with: 'player' } | { settlement: string };
   /** the commitment that holds it, if any */

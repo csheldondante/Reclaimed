@@ -109,3 +109,76 @@ function outcomeProblems(at: string, oc: OppOutcome, w: OppWorld): string[] {
   }
   return p;
 }
+
+// ---- (round 125, `facts`; BACKLOG LW-F6) the living world's family -------------------------------------------------
+// The template engine's cards (src/living/engine.ts), checked as the user's guardrails ask (OPPORTUNITY_CATALOG.md E):
+//   references    every bound entity exists in the fact layer; the card's place is a region of the world and its
+//                 settlement real; the pawns asked for are agent kinds; the stores asked for are goods the settlement keeps;
+//   consequences  the outcome dry-runs on a copy of the world without error and every invariant holds after it;
+//   hands         one card a place; not expired; a binding dealt once;
+//   setup         an incident never fabricates a prerequisite: no capability, law or government tag, no alliance, trade,
+//                 vassalage, membership, control or rights (checkTemplates, statically, over the setup's data) —
+//                 "The generator may create incidents, but it should not fabricate the prerequisite capabilities or
+//                 relationships (e.g., allied reinforcements require an ally)".
+import type { EngineReport, LivingEngine, TemplateDef } from '../living/engine';
+import type { Effect } from '../living/dsl';
+
+/** relations a setup may never make: they are prerequisites, earned through play */
+export const PREREQ_RELATIONS = ['allied_with', 'trades_with', 'vassal_of', 'member_of', 'governs', 'part_of_polity', 'controls', 'owns', 'has_rights', 'has_access_to', 'at_peace_with', 'friend_of', 'owes_favor_to', 'employs', 'supplies', 'loyal_to'];
+const PREREQ_SCOPES = ['capability', 'law', 'government'];
+
+export function checkTemplates(ts: TemplateDef[]): string[] {
+  const p: string[] = [];
+  const ids = new Set<string>();
+  const walk = (at: string, es: Effect[]) => {
+    for (const e of es) {
+      if ('relate' in e && PREREQ_RELATIONS.includes(e.relate[1])) p.push(`${at}: its setup fabricates ${e.relate[1]} (a prerequisite relationship)`);
+      if ('setTag' in e && PREREQ_SCOPES.includes(e.setTag[1])) p.push(`${at}: its setup fabricates ${e.setTag[1]} ${e.setTag[2]} (a prerequisite)`);
+      if ('agree' in e || 'control' in e || 'place' in e) p.push(`${at}: its setup makes ${Object.keys(e)[0]} — a setup only makes incidents (claims, events, conditions)`);
+      if ('forEach' in e) walk(at, e.do);
+      if ('when' in e) walk(at, [...e.do, ...(e.else ?? [])]);
+    }
+  };
+  for (const t of ts) {
+    if (ids.has(t.id)) p.push(`template ${t.id}: the id is used twice`);
+    ids.add(t.id);
+    if (!t.bind.some((b) => b.as === t.at)) p.push(`template ${t.id}: its place (${t.at}) isn't one of its bindings`);
+    if (!(t.turns >= 1)) p.push(`template ${t.id}: turns ${t.turns}`);
+    for (const r of t.requires.agents) if (!AGENT_KINDS.includes(r.kind)) p.push(`template ${t.id}: no agent kind ${r.kind}`);
+    if (t.setup) walk(`template ${t.id}`, t.setup);
+  }
+  return p;
+}
+
+export function checkLiving(e: LivingEngine, r: EngineReport): string[] {
+  const p: string[] = [];
+  const w = e.w;
+  const places = new Set<string>();
+  const keys = new Set<string>();
+  const regions = new Set(w.ws.snapshot().regions.map((x) => x.id));
+  for (const o of [...r.dealt, ...r.kept]) {
+    const at = `${o.opp.title}`;
+    for (const [k, id] of Object.entries(o.bind)) if (!w.facts.entity(id)) p.push(`${at}: ${k} = ${id} isn't in the fact layer`);
+    if (!regions.has(o.opp.location.region)) p.push(`${at}: region ${o.opp.location.region} isn't in the world`);
+    if (o.opp.location.settlement && !w.settlement(o.opp.location.settlement)) p.push(`${at}: settlement ${o.opp.location.settlement} isn't in the world`);
+    for (const q of o.opp.requires) if (!AGENT_KINDS.includes(q.kind)) p.push(`${at}: no agent kind ${q.kind}`);
+    const t = e.template(o.template);
+    for (const s of t.requires.stores ?? []) {
+      const sid = s.at.startsWith('$') ? o.bind[s.at.slice(1)] : s.at;
+      const st = w.settlementOf(sid);
+      if (!st) p.push(`${at}: its stores are at ${sid}, not a settlement`);
+      else if (!(s.good in st.stores)) p.push(`${at}: ${st.name} keeps no ${s.good}`);
+    }
+    if (places.has(o.place)) p.push(`${at}: a second card at ${o.place}`);
+    places.add(o.place);
+    if (keys.has(o.key)) p.push(`${at}: its binding is dealt twice`);
+    keys.add(o.key);
+    if (o.expires < r.turn) p.push(`${at}: expired (turn ${o.expires}) but on the board at ${r.turn}`);
+    try {
+      e.dryRun(t, o.bind);
+    } catch (err) {
+      p.push(`${at}: its outcome can't be realised: ${(err as Error).message}`);
+    }
+  }
+  return p;
+}
