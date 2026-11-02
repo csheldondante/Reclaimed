@@ -416,6 +416,8 @@ each was implemented.
   fitting the building's real multi-level irregular footprint, characters from the existing generator who interact and
   talk; CC art voxelised and stylised with filters and geometric prepasses).
 
+- The user, verbatim, on the forest pass: "I think once it fades you don't need to render the canopy at all", "Just the s shadows and the trunks" and "No I think those belong in the shot. They don't obscure visibility but make it feel like you are under the leaves and we can make darker areas and streams and other effects that will feel varied and interesting" → under the canopy the trees draw only trunks and the canopy's floor shadows (the dither is only the transition); falling leaves, light shafts, mist and litter stay; the understory varies (dark groves, sunlit clearings, streams) without hiding the hero or the way ahead.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
