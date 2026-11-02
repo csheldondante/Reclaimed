@@ -46,7 +46,9 @@ await run({ name: 'interiorshot', kind: 'behaviour', size: '412x915', dpr: 1, ec
       gif.finish();
       fs.writeFileSync(`${OUT}/${out}-enter-${tod}.gif`, gif.bytes());
     }
-    await sleep(3200);
+    // (inside: the walk in done, however long the frames took)
+    await p.waitForFunction(() => window.reclaimed.interior.phase === 'inside', { timeout: 60000, polling: 200 });
+    await sleep(1200);
     const n = st.storeys.length;
     for (let s = 0; s < n; s++) {
       await p.evaluate((k) => window.reclaimed.interior.setStorey(k), s);
@@ -54,6 +56,13 @@ await run({ name: 'interiorshot', kind: 'behaviour', size: '412x915', dpr: 1, ec
       await sleep(s === 0 ? 5000 : 1500);
       await p.screenshot({ path: `${OUT}/${out}-storey${s}-${tod}.png` });
     }
+    // two talking: wait for a talk, go to its storey, shoot with the bubble up
+    const ts = await p.waitForFunction(() => window.reclaimed.interiorPeople.talkingStorey() >= 0 && document.querySelector('.int-bubble'), { timeout: 60000, polling: 200 }).then(() => p.evaluate(() => window.reclaimed.interiorPeople.talkingStorey())).catch(() => -1);
+    if (ts >= 0) {
+      await p.evaluate((k) => window.reclaimed.interior.setStorey(k), ts);
+      await sleep(900);
+      await p.screenshot({ path: `${OUT}/${out}-talk-${tod}.png` });
+    } else R.log('  no talk in 60 s');
     const ps = await p.evaluate(() => window.reclaimed.interiorPeople?.stats);
     R.log(`  people: ${JSON.stringify(ps)}`);
     await p.evaluate(() => window.reclaimed.interior.setStorey(0));

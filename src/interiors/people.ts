@@ -322,6 +322,11 @@ export class InteriorPeople {
     }
   }
 
+  /** the storey a talk is going on (-1: none) — the shots go there */
+  talkingStorey(): number {
+    return this.convo ? this.convo.a.storey : -1;
+  }
+
   /** (set by the scene: the storey shown, -1 on the street — no one inside is seen then) */
   shown = -1;
 

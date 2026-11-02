@@ -179,7 +179,8 @@ fn fsInterior(in: IVOut) -> FOut {
     // (a wall facing the eye: its top over the stub goes; one side-on fades in between)
     let cut = smoothstep(0.05, 0.35, facing);
     let edge = stub + (1.0 - cut) * 6.0;
-    if (cut > 0.0 && up > edge + (bayer4(px) - 0.5) * 0.12) { discard; }
+    // (a clean cut, as a dollhouse's: no dither on the edge — the cap below closes it)
+    if (cut > 0.0 && up > edge) { discard; }
     front = cut * select(1.0, 0.0, (in.info & 131072u) != 0u);
     rim = cut * (1.0 - smoothstep(0.0, 0.07, edge - up));
   }
@@ -191,7 +192,14 @@ fn fsInterior(in: IVOut) -> FOut {
   let mat = (in.col >> 24u) & 255u;
   let base = toLinear(vec3<f32>(f32((in.col >> 16u) & 255u), f32((in.col >> 8u) & 255u), f32(in.col & 255u)) / 255.0);
   var n = normalize(in.nrm);
-  let alb = interiorAlbedo(mat, base, in.wpos, n, floorz);
+  var alb = interiorAlbedo(mat, base, in.wpos, n, floorz);
+  // (a wall's inside seen down through its cut — the slice's or a stub's: drawn as its solid top, the cap)
+  // (seen from behind: its outward normal away from the eye)
+  if (dot(n, toEye(in.wpos)) < -0.02 && (kind == K_WALL || kind == K_TRIM)) {
+    n = vec3<f32>(0.0, 0.0, 1.0);
+    alb = toLinear(vec3<f32>(0.36, 0.32, 0.27));
+    rim = 0.0;
+  }
   // the sun through the windows (the shadow map: the outside still casts), the cool light off the openings, a dark
   // ambient (the Rain World mood), the warm local lights
   let sun = sunDir();

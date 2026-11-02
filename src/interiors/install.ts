@@ -179,7 +179,7 @@ export class InteriorScene {
     const w = hi - lo + 0.6;
     const h = (fhi - flo) * Math.sin(el) + 1.6 * Math.cos(el) + 0.6;
     // (the user: "we can zoom in more" — the storey edge to edge)
-    const zoom = Math.min((cam.viewportW * 1.04) / w, (cam.viewportH * 0.86) / h);
+    const zoom = Math.min((cam.viewportW * 1.16) / w, (cam.viewportH * 0.95) / h);
     const sm = (lo + hi) / 2, fm = (flo + fhi) / 2;
     const m: V2 = [rx * sm + fx * fm, ry * sm + fy * fm];
     const [x, y, z] = a.toWindow(m, st.z);

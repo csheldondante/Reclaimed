@@ -1486,7 +1486,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
     }
     if (!SKIP.has('lit')) this.drawLit(pass, false);
     // (round 120, cities) the towns' light pools at night, over everything opaque, under the water
-    if (this.structs?.glow && this.structNight > 0.3 && this.structs.sg.glow.length && !SKIP.has('structures') && !SKIP.has('pools')) {
+    if (this.structs?.glow && this.structNight > 0.3 && this.structs.sg.glow.length && !SKIP.has('structures') && !SKIP.has('pools') && !focusOnly) {
       this.structGroups();
       pass.setPipeline(this.structs.glow);
       pass.setBindGroup(0, this.structs.group!);
@@ -1495,14 +1495,15 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
     if (!SKIP.has('lit')) this.drawLit(pass, true);
     // (watersurf) the water's surface, then the blended prisms (oil, ice and crystal; without the field mesh the water)
     const flat = SKIP.has('waterflat');
-    if (this.waterSurf && this.waterSurfPipe && !SKIP.has('water')) {
+    // (interiors: a building entered alone in the dark draws none of the outside's water, motes, smoke or rain)
+    if (this.waterSurf && this.waterSurfPipe && !SKIP.has('water') && !focusOnly) {
       pass.setPipeline(flat ? this.waterFlatPipe : this.waterSurfPipe);
       pass.setBindGroup(0, this.blendGroup);
       this.waterSurf.draw(pass);
     }
     pass.setPipeline(flat && !this.waterSurf ? this.waterFlatPipe : this.blendPipe);
     pass.setBindGroup(0, this.blendGroup);
-    if (!SKIP.has(this.waterSurf ? 'blend' : 'water')) pass.drawIndirect(this.indirect, 16);
+    if (!SKIP.has(this.waterSurf ? 'blend' : 'water') && !focusOnly) pass.drawIndirect(this.indirect, 16);
     for (const s of SKIP.has('blend') || SKIP.has('water') ? [] : this.blendSources) {
       pass.setBindGroup(0, s.group);
       pass.drawIndirect(s.indirect, 0);
@@ -1510,9 +1511,9 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
     }
     pass.setPipeline(this.partPipe);
     pass.setBindGroup(0, this.partGroup);
-    if (!SKIP.has('particles')) pass.draw(6, this.world.particleCap);
+    if (!SKIP.has('particles') && !focusOnly) pass.draw(6, this.world.particleCap);
     this.profiler.draws++;
-    if (opts.rainParticles > 0 && !SKIP.has('rain')) {
+    if (opts.rainParticles > 0 && !SKIP.has('rain') && !focusOnly) {
       pass.setPipeline(this.rainPipe);
       pass.setBindGroup(0, this.rainGroup);
       pass.draw(6, opts.rainParticles);
