@@ -422,6 +422,8 @@ each was implemented.
 
 - The user, verbatim: "I don't love the shader used on the town zoom in. I think I would prefer without it and just normal rendering." → interiors and the zoom into a town use the engine's normal rendering by default; the pixel-art post pass (low-res, palette quantisation, outlines, dither) is off, kept at most as a toggle.
 
+- The user, verbatim, on the forest branch's under-canopy shot: "For the forest, I think the screenshot you shared actually shows trees and roots but they are huge and the zoom is actually too big now (I want more vertical trunk) it may be better in portrait though." → under the canopy the camera zooms out until a good length of vertical trunk shows above the roots; checked in portrait and landscape.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
