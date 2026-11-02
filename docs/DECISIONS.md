@@ -10,6 +10,10 @@ each was implemented.
 - → Inside, the shown storey framed edge to edge, and everything outside the building's footprint not drawn at all
   (Cut.focus with the storey's tiles); the walk in from the street keeps the outside going away as you enter. BACKLOG
   INT14.
+- The user, verbatim (relayed by main): "I don't love the shader used on the town zoom in. I think I would prefer without
+  it and just normal rendering."
+- → The pixel post pass is off by default (`?pixel=<css px>` turns it on; not tuned further); the effort goes into the
+  light (shafts, candle pools, a darker ambient), the framing and hiding the outside. BACKLOG INT6.
 
 ## 2026-10-31 — round 120 (session 5) — after playing the run, the towns and the birches; runs redesigned
 

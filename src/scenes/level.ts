@@ -2176,8 +2176,9 @@ export class LevelScene implements Scene {
   private interiorFrame(dt: number): void {
     const { core, host } = this;
     if (!this.interior) {
-      // (the pixel-art post pass: ?pixel=<CSS px an art pixel>, 2 by default here; 0 off)
-      const px = Number(host.params.get('pixel') ?? 2);
+      // (the pixel-art post pass: ?pixel=<CSS px an art pixel>; off by default — the user, round 126: "I would prefer
+      // without it and just normal rendering")
+      const px = Number(host.params.get('pixel') ?? 0);
       if (px > 0 && !core.post) {
         const post = new PixelPost(host.gpu.device, core.renderer, host.gpu.format);
         post.look.px = px;
