@@ -348,6 +348,14 @@ each was implemented.
   pawns can be assigned to which opportunities. The whole loop: opportunities that raise labor, influence and power or
   open new opportunities, and threat cards to deal with.
 
+- The user, verbatim, with two design documents (kept verbatim at docs/design/FACTIONS_WORLD_STATE.md and docs/design/OPPORTUNITY_CATALOG.md): "Ok this is decent! I think in hindsight while it is interesting to treat opportunities as a strategy layer on top of the world that should be secondary to them producing interesting world state mutations. I've drafted a few documents I would like you to consider for planning going forward. Don't take them as dogma but please discuss them and help me find the plan here."
+  → Opportunities' first purpose is interesting world-state mutations (the strategy layer secondary). The documents' core:
+  polities, factions and cohorts kept distinct with scoped tags (Master of Orion II's population vs government traits);
+  typed relations and claims (claim distinct from control) and an append-only event history, as a small fact layer over
+  the existing world state; one opportunity kind (eligibility, bindings, optional setup incident, requirements incl.
+  player, duration, outcomes as real mutations); one major arc per run with visible progress and long horizons;
+  catalog first in batches of ten, reduce to a basis later. Under discussion; a plan to follow.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
