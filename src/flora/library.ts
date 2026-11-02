@@ -8,7 +8,7 @@
 
 import { generate } from './generate';
 import { hashSeed } from './rng';
-import { SPECIES, type RGB, type SpeciesId } from './species';
+import { SPECIES, type RGB, type SpeciesDef, type SpeciesId } from './species';
 import type { FloraMesh } from './mesh';
 
 export interface LibraryKind {
@@ -43,9 +43,60 @@ export const GAME_LIBRARY: LibrarySpec = {
     { id: 'flower', variants: 2 },
     { id: 'fern', variants: 2 },
     { id: 'reed', variants: 2 },
+    // (round 125, forest: the elder woods' mossy boulders)
+    { id: 'boulder', variants: 2 },
   ],
   seed: 117,
 };
+
+const v4 = (c: RGB | undefined, w: number) => {
+  const x = c ?? [0.8, 0.8, 0.8];
+  return `vec4<f32>(${x[0].toFixed(3)}, ${x[1].toFixed(3)}, ${x[2].toFixed(3)}, ${w.toFixed(3)})`;
+};
+
+/**
+ * The kinds' WGSL tables (the game's library and the viewer's scenes both: one layout). FLORA_COL, 6 vec4s a kind:
+ * bark (w deciduous), bark mark (w sway stiffness), leaf dark (w moss at the foot 0..1), leaf light (w the bark's
+ * marks: 0 lenticels, 1 ridged), autumn (w the mesh's height), flower/accent (w the mesh's radius; round 125: the
+ * wind's lattice spans the plant). FLORA_ACC: the accent a kind (where the flower colour stands in for it: seed heads,
+ * cattails).
+ */
+export function floraTables(kinds: { sp: SpeciesDef; mesh: { height: number; radius: number; verts?: Float32Array } }[]): string {
+  const rows: string[] = [];
+  // (round 125, forest) FLORA_CROWN: a tree kind's crown base (local z: the lowest fifth of its leaves) and its bole's
+  // radius — under the canopy only the trunk is drawn (the user: "Just the shadows and the trunks"): its wood below the
+  // crown base, and above it only within ~1.6 bole radii of the axis (the leader on up; the limbs go). (1e9, 0) for
+  // the rest (never cut).
+  const crown = kinds.map(({ sp, mesh }): [number, number] => {
+    if (sp.form !== 'tree' || !mesh.verts) return [1e9, 0];
+    const zs: number[] = [];
+    let bole = 0;
+    for (let i = 0; i < mesh.verts.length; i += 4) {
+      const part = Math.floor(mesh.verts[i + 3] % 16);
+      if (part === 4) zs.push(mesh.verts[i + 2]);
+      if (part === 3 && mesh.verts[i + 2] < mesh.height * 0.05) bole = Math.max(bole, Math.hypot(mesh.verts[i], mesh.verts[i + 1]));
+    }
+    if (!zs.length) return [1e9, 0];
+    zs.sort((a, b) => a - b);
+    return [zs[Math.floor(zs.length * 0.2)], bole];
+  });
+  for (const { sp, mesh } of kinds) {
+    const c = sp.colours;
+    rows.push(
+      v4(c.bark, c.deciduous ? 1 : 0),
+      v4(c.barkMark ?? c.bark, sp.sway),
+      v4(c.leafDark, sp.moss ?? 0),
+      v4(c.leafLight, sp.barkStyle === 'ridged' ? 1 : 0),
+      v4(c.autumn, mesh.height),
+      v4(c.flower ?? c.accent, mesh.radius),
+    );
+  }
+  const acc = kinds.map(({ sp }) => v4(sp.colours.accent ?? sp.colours.leafLight, 0));
+  const crownW = `const FLORA_CROWN = array<vec2<f32>, ${crown.length}>(${crown.map(([z, r]) => `vec2<f32>(${z >= 1e9 ? '1e9' : z.toFixed(3)}, ${r.toFixed(3)})`).join(', ')});`;
+  return `${crownW}
+const FLORA_COL = array<vec4<f32>, ${rows.length}>(${rows.join(', ')});
+const FLORA_ACC = array<vec4<f32>, ${acc.length}>(${acc.join(', ')});`;
+}
 
 export class FloraLibrary {
   readonly kinds: LibraryKind[] = [];
@@ -71,7 +122,7 @@ export class FloraLibrary {
         for (let v = 0; v < variants; v++) {
           const mesh = generate(id, hashSeed(spec.seed, v, id.charCodeAt(0), id.length), { px, lod: lod as 0 | 1 | 2 });
           this.kinds.push({ name: `${id}-${v}${lod ? `-l${lod}` : ''}`, species: id, variant: v, lod, mesh, verts: mesh.verts, index: mesh.index });
-          this.shadowKinds.push(SPECIES[id].form === 'tree' || SPECIES[id].form === 'shrub');
+          this.shadowKinds.push(SPECIES[id].form === 'tree' || SPECIES[id].form === 'shrub' || SPECIES[id].form === 'rock');
         }
       }
       this.ranges.set(id, lr[0]);
@@ -87,7 +138,7 @@ export class FloraLibrary {
     const lines = [...ids].map((id) => `const FL_${id.toUpperCase()} = vec2<u32>(0u, 1u);`);
     for (const id of ids) if (SPECIES[id].form === 'tree') lines.push(`const FL_${id.toUpperCase()}_L1 = vec2<u32>(0u, 1u);`, `const FL_${id.toUpperCase()}_L2 = vec2<u32>(0u, 1u);`);
     lines.push('const FL_SHRUB_L1 = vec2<u32>(0u, 1u);');
-    lines.push(`const FLORA_COL = array<vec4<f32>, 6>(${[z, z, z, z, z, z].join(', ')});`, `const FLORA_ACC = array<vec4<f32>, 1>(${z});`);
+    lines.push(`const FLORA_COL = array<vec4<f32>, 6>(${[z, z, z, z, z, z].join(', ')});`, `const FLORA_ACC = array<vec4<f32>, 1>(${z});`, 'const FLORA_CROWN = array<vec2<f32>, 1>(vec2<f32>(1e9, 0.0));');
     return lines.join('\n') + '\n';
   }
 
@@ -100,34 +151,15 @@ export class FloraLibrary {
   /**
    * WGSL constants for the kernels and the draw (appended after meshinst.ts's): each species' first kind and variant
    * count (FL_<ID>), and per kind its colours and wind response (FLORA_COL: 6 vec4s a kind — bark, bark mark, leaf
-   * dark, leaf light, autumn, flower/accent; w of the first: deciduous; w of the second: sway).
+   * dark, leaf light, autumn, flower/accent; w of the first: deciduous; w of the second: sway; of the third: moss; of
+   * the fourth: the bark's marks).
    */
   wgsl(): string {
     const lines: string[] = [];
     for (const [id, r] of this.ranges) lines.push(`const FL_${id.toUpperCase()} = vec2<u32>(${r.first}u, ${r.count}u);`);
     // (round 119) a tree's coarse and far levels: FL_<ID>_L1, FL_<ID>_L2
     for (const [id, lr] of this.lods) lr.slice(1).forEach((r, i) => lines.push(`const FL_${id.toUpperCase()}_L${i + 1} = vec2<u32>(${r.first}u, ${r.count}u);`));
-    const v4 = (c: RGB | undefined, w: number) => {
-      const x = c ?? [0.8, 0.8, 0.8];
-      return `vec4<f32>(${x[0].toFixed(3)}, ${x[1].toFixed(3)}, ${x[2].toFixed(3)}, ${w.toFixed(3)})`;
-    };
-    const rows: string[] = [];
-    for (const k of this.kinds) {
-      const sp = SPECIES[k.species];
-      const c = sp.colours;
-      rows.push(
-        v4(c.bark, c.deciduous ? 1 : 0),
-        v4(c.barkMark ?? c.bark, sp.sway),
-        v4(c.leafDark, 0),
-        v4(c.leafLight, 0),
-        v4(c.autumn, 0),
-        v4(c.flower ?? c.accent, 0),
-      );
-    }
-    lines.push(`const FLORA_COL = array<vec4<f32>, ${rows.length}>(${rows.join(', ')});`);
-    // the accent colour where the flower colour stands in for it (grass seed heads, cattails)
-    const acc = this.kinds.map((k) => v4(SPECIES[k.species].colours.accent ?? SPECIES[k.species].colours.leafLight, 0));
-    lines.push(`const FLORA_ACC = array<vec4<f32>, ${acc.length}>(${acc.join(', ')});`);
+    lines.push(floraTables(this.kinds.map((k) => ({ sp: SPECIES[k.species], mesh: k.mesh }))));
     return lines.join('\n') + '\n';
   }
 }

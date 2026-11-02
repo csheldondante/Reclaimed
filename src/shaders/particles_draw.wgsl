@@ -222,6 +222,12 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   o.soft = soft;
   let mote = kind == 1u || kind == 21u || kind == 22u || kind == 23u || kind == 24u;
   o.shapeInfo = vec2<f32>(select(select(0.0, 2.0, mote), 1.0, kind == 10u), select(sin(G.time * 12.0 + sr * 60.0), 0.35, perched));
+  // (round 125, forest: a falling leaf over a few pixels on screen — the close view under a canopy — is a pixel leaf,
+  // turning as it tumbles (understory_draw.wgsl's 7 x 7 shape), not a flat square; resting, it lies still)
+  if (kind == 3u && px > 3.5) {
+    let resting = (P.m.z & 1u) != 0u;
+    o.shapeInfo = vec2<f32>(3.0, select(G.time * (2.0 + 2.0 * sr) + sr * 40.0, sr * 6.28, resting));
+  }
   return o;
 }
 
@@ -234,7 +240,18 @@ struct FOut {
 fn fs(in: VOut) -> FOut {
   var o: FOut;
   var a = in.col.a;
-  if (in.shapeInfo.x > 1.5) {
+  if (in.shapeInfo.x > 2.5) {
+    // (round 125) a pixel leaf: the 7 x 7 maple, turned and flipped by its spin
+    let t = in.shapeInfo.y;
+    let cs = cos(t);
+    let sn = sin(t);
+    var q = vec2<f32>(in.uv.x * cs + in.uv.y * sn, -in.uv.x * sn + in.uv.y * cs);
+    q.x = q.x / max(abs(cos(t * 1.7)), 0.3);
+    let g = vec2<i32>(floor((q * 0.5 + 0.5) * 7.0));
+    if (any(g < vec2<i32>(0)) || any(g > vec2<i32>(6))) { discard; }
+    let rows = array<u32, 7>(0x08u, 0x2au, 0x3eu, 0x7fu, 0x3eu, 0x1cu, 0x08u);
+    if (((rows[6 - g.y] >> u32(g.x)) & 1u) == 0u) { discard; }
+  } else if (in.shapeInfo.x > 1.5) {
     // a round mote: dense centre, soft rim
     a *= smoothstep(1.0, 0.3, length(in.uv));
     if (a < 0.01) { discard; }

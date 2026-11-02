@@ -28,7 +28,7 @@ import type { ControllerProfile } from './play';
 /** A species' id (src/flora/species.ts SpeciesId; open-ended so new species need no contract change). */
 export type FloraSpeciesId = string;
 
-export type FloraForm = 'tree' | 'shrub' | 'grass' | 'reed' | 'fern' | 'flower' | 'moss' | 'vine';
+export type FloraForm = 'tree' | 'shrub' | 'grass' | 'reed' | 'fern' | 'flower' | 'moss' | 'vine' | 'rock';
 
 /** What a plant grows on: terrain, or instanced onto other geometry (rock, a wall or ruin, a cave's floor). */
 export type FloraHost = 'ground' | 'bank' | 'rock' | 'wall' | 'cave';

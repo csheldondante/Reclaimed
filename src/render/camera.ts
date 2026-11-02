@@ -6,6 +6,8 @@
 // position (render.wgsl Camera.pos), so what's drawn toward the eye is drawn
 // toward where the eye is, not one fixed way.
 
+import type { UnderstoryLook } from '../api/contracts/understory';
+
 export type Mat4 = Float32Array;
 
 export const CAMERA_BYTES = 96;
@@ -13,8 +15,8 @@ export const CAMERA_BYTES = 96;
 export const CAMERA_POS_OFFSET = CAMERA_BYTES + 64;
 /** what's cut from the view after it (render.wgsl Camera.cut, see, boxes; round 83) */
 export const CAMERA_CUT_OFFSET = CAMERA_POS_OFFSET + 16;
-/** cut (a vec4), see (4 vec4s), boxes (4 boxes, 2 vec4s each) */
-export const CAMERA_CUT_BYTES = 16 + 4 * 16 + 8 * 16;
+/** cut (a vec4), see (4 vec4s), boxes (4 boxes, 2 vec4s each), the understory's look (4 vec4s: round 125, render.wgsl Camera.under) */
+export const CAMERA_CUT_BYTES = 16 + 4 * 16 + 8 * 16 + 4 * 16;
 
 /** What's cut from the view (api/cutaway.ts: Slice, Dither) — the sun's camera cuts nothing. */
 export interface Cut {
@@ -105,6 +107,12 @@ export class Camera {
   fly: Fly | null = null;
   /** (round 83, V21) what's cut from the view: api/cutaway.ts writes it */
   cut: Cut = { slice: null, see: [], boxes: [] };
+  /**
+   * (round 125, forest: FLO32) under the canopy: the trees in the way dithered, the sun in flecks, mist, rays, leaves
+   * falling (render.wgsl Camera.under; api/contracts/understory.ts). null or weight 0: the draw as it was. The sun's
+   * camera has none (its shadow map keeps every leaf).
+   */
+  understory: UnderstoryLook | null = null;
 
   /** the way a flying camera looks, and its right and up */
   basis(): { f: [number, number, number]; r: [number, number, number]; u: [number, number, number] } {
@@ -286,6 +294,11 @@ export class Camera {
       f.set([c.slice ?? 0, c.see.length, c.boxes.length, c.slice === null ? 0 : 1], o);
       c.see.forEach((p, i) => f.set(p, o + 4 + i * 4));
       c.boxes.forEach((b, i) => f.set([b[0], b[1], b[2], 0, b[3], b[4], b[5], 0], o + 20 + i * 8));
+      const u = this.understory;
+      if (u && u.weight > 0) {
+        const t = u.treatments;
+        f.set([u.at[0], u.at[1], u.at[2], u.weight, u.canopyZ, u.radius, t.canopy, 0, t.dither, t.dapple, t.rays, t.mist, t.leaves, u.leaf[0], u.leaf[1], u.leaf[2]], o + 52);
+      }
     }
   }
 }

@@ -16207,3 +16207,48 @@ places: the merge added none of its own). The structure review: C:/Projects/shot
   (two runs each): p50 9.9/9.9 vs 9.9/9.9 ms, p95 12.3/13.4 vs 12.3/12.4, GPU 12.1/13.9 vs 13.4/12.1 ms — within the
   spread. Shots: C:/Projects/shots88/merge124/ (1-roster, 2-run-turn-presenter-card, 3-effect-card-reward,
   4-encounter-enemies, 5-mutation-watchtower-before-after, 5b-mutation-weir-river-before-after, opps/, inspector-*).
+
+## 2026-11-02 — round 125 (`forest`): the flora improvement epic, first pass — trees composed, the elder woods, under the canopy (FLO30-FLO37)
+
+The user (DECISIONS round 124, verbatim there): forests "impressive like the cliffs ... seas of leaves", trees bigger and
+spaced apart in the main map, and under the canopy "another world": the trees in the way dithered, stencilled leaf
+shadows, leaves falling, crepuscular rays, litter blowing; the reference docs/design/ref/forest-floor.png. Then, on the
+first shots (via main): "once it fades you don't need to render the canopy at all", "Just the s shadows and the
+trunks"; the leaves, shafts, mist and litter "belong in the shot", and the wood should vary (dark groves, glades,
+streams). Main's review of the first shots: no trunks in frame, haze washing everything into one value, no visible
+dapple or rays, the camera too close, the hero lost.
+
+**Why each piece.**
+- *Placement* (flora/spacing.ts, vegplan.wgsl): the old rule (any wooded column whose hash was under 0.045) is a Poisson
+  scatter — clumps two cells apart beside holes; under the canopy busy, from above thin. A jittered grid of slots in
+  world columns (blue noise, ~7 cells apart, never under ~3) composes: even stands, open floor between. Node tests on
+  the spacing (src/flora/spacing.test.ts), the CPU port and the kernel the same on Dawn (flora-plan.test.ts, now also
+  over a window inside an elder wood).
+- *Scale*: the birch 11-17 → 17-25 (trunk ~0.9 across, the lich's width: the user's "0.25-1 trunk width" for the PC),
+  broadleaf 9-15, conifer 12-20, and the elder 24-32 with a ~3-cell bole (the lich 0.4 of it, a villager a quarter).
+- *The elder*: the reference's tree as parameters (species.ts: a massive bole, three or four great limbs, small copper
+  clusters; buttress roots as fins + sprawl, generate.ts flareSegments; ridged pale bark, moss on the foot's up faces in
+  floralook.wgsl). Iterated on a software render of the meshes (Node, pngjs) before the browser: shots88/forest/mesh-*.
+  Triangles 2.2-4.3k (the elder's budget the area's: one to four of the other trees' slots; flora.test.ts).
+- *The atlas's woods*: the first lab runs found no forest — the atlas's woods were small patches (in the best tile near
+  the spawn ~2 % of a temperate window's columns at succession ≥ 3.9; 35 trees within 150 cells). woods.wgsl's
+  elderWoods lays old woods (4.2) through the elder woods' noise on land that grows plants. Vegetation only:
+  test/gpu/seed1-unchanged.test.ts builds seed 1 on Dawn and checks regions, the spawn, sites and roads deep-equal
+  data/atlas/seed1.json (passes: no cache regenerated). Town layouts do read the woods (settle/plan.ts dWood).
+- *Under the canopy* (forest/, understory.wgsl, understory_draw.wgsl; ARCHITECTURE "The forest and the understory"): one
+  look from the hero and the flora plan (no GPU readback), eased by the canopy's cover over a disc (no flicker past a
+  trunk: a Node test). The canopy left out of the eye's draw (dithered in, then not drawn: the fill saved; the shadow
+  pass keeps it, so the floor's dapple stays), a keyhole through the trunks in front of the hero only (they frame the
+  scene), the sun through a stencil of the canopy's holes as pinhole ellipses in three steps, shafts down the stencil's
+  big holes, falling pixel leaves, litter slid along by the integrated wind (G.env) and hopping in strong gusts, groves
+  and glades by slow noise, mist only far behind, a light pool round the hero so its figure reads. The dither mask is
+  tested on Dawn with the shipped function, Camera struct and the camera's own uniform write (test/gpu/understory.test.ts).
+- *Wind on foliage* (the user's matrix): FWIND as a pipeline override (`?fwind=`): static / sway (as it was: the grass's
+  1B bending) / 1A ripple / 1C lattice (eight control points of a traveling gust field, the foot anchored) / both.
+- *Past the window*: the tiles' painted crowns now walk the same slot blocks (tiles.wgsl), so a wood keeps its trees as
+  they leave the window; the far rings and the atlas map's bake still have the old lattice (FLO36).
+
+**Found on the way.** The lab's stand was kept in window coordinates and not moved when the window slid (the first
+parked shots stood the lich in a lake): ForestLab.shift on the core's onShift. The scratchpad is shared with other
+agents: a file named arch.md was overwritten by another track's between writing and reading it (caught in the diff;
+this branch's scratch files now live in scratchpad/forest/).

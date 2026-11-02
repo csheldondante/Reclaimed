@@ -4,14 +4,21 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { testGpu } from './dawn';
 import commonWgsl from '../../src/shaders/common.wgsl?raw';
 import materialsWgsl from '../../src/shaders/materials.wgsl?raw';
-import vegplanWgsl from '../../src/shaders/vegplan.wgsl?raw';
+import vegplanOwn from '../../src/shaders/vegplan.wgsl?raw';
+import woodsWgsl from '../../src/shaders/woods.wgsl?raw';
+const vegplanWgsl = woodsWgsl + vegplanOwn;
 import terrainShapeWgsl from '../../src/shaders/terrainshape.wgsl?raw';
 import meshStateWgsl from '../../src/shaders/meshstate.wgsl?raw';
 import meshRegionWgsl from '../../src/shaders/meshregion.wgsl?raw';
 import vegprepWgsl from '../../src/shaders/vegprep.wgsl?raw';
 import floraPutWgsl from '../../src/shaders/floraput.wgsl?raw';
 import floraFieldWgsl from '../../src/shaders/florafield.wgsl?raw';
-import renderWgsl from '../../src/shaders/render.wgsl?raw';
+import renderWgslOwn from '../../src/shaders/render.wgsl?raw';
+import understoryWgsl from '../../src/shaders/understory.wgsl?raw';
+import understoryDrawWgsl from '../../src/shaders/understory_draw.wgsl?raw';
+// (round 125: render.wgsl goes with the understory's look appended, as renderer.ts RENDER)
+const renderWgsl = `${renderWgslOwn}
+${understoryWgsl}`;
 import meshInstWgsl from '../../src/shaders/meshinst.wgsl?raw';
 import floraLookWgsl from '../../src/shaders/floralook.wgsl?raw';
 import { pagesCode } from '../../src/gpu/pages-mode';
@@ -21,6 +28,10 @@ import viewerWgsl from '../../src/flora/viewer.wgsl?raw';
 import layersWgsl from '../../src/shaders/layers.wgsl?raw';
 import meshSourceWgsl from '../../src/shaders/meshsource.wgsl?raw';
 import meshDrawWgsl from '../../src/shaders/meshdraw.wgsl?raw';
+import coverFieldWgsl from '../../src/shaders/coverfield.wgsl?raw';
+import tilesWgsl from '../../src/shaders/tiles.wgsl?raw';
+import particlesDrawWgsl from '../../src/shaders/particles_draw.wgsl?raw';
+import { riverHeld } from '../../src/sim/systems';
 import { MI_ARGS_WORD, MI_CAP } from '../../src/render/meshinst';
 
 let device: GPUDevice;
@@ -69,12 +80,23 @@ ${mi}${floraWgsl}`;
     const floraWgsl = `const FLORA: bool = true;const FLORA_RPX: f32 = 0.5;\n${lib.wgsl()}`;
     expect(await errors('meshinst', [commonWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, miWgsl(lib.kinds), floraWgsl, renderWgsl, floraLookWgsl, meshInstWgsl])).toEqual([]);
   });
+  it('the tiles (round 125: the trees past the window on the slot grid)', async () => {
+    const riverFoam = 'const RIVER_FOAM_SPEED: bool = false;' + String.fromCharCode(10);
+    expect(await errors('tiles', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, vegplanWgsl, meshStateWgsl, meshRegionWgsl, 'const MESH_LOOK: u32 = 0u;', 'const TUFTS_DRAWN: bool = true;', meshSourceWgsl, meshDrawWgsl, coverFieldWgsl, riverHeld(), tilesWgsl])).toEqual([]);
+  });
+  it('the particles draw (round 125: pixel leaves close up)', async () => {
+    expect(await errors('particles-draw', [commonWgsl, materialsWgsl, particlesDrawWgsl])).toEqual([]);
+  });
+  it('the understory draw (round 125: light shafts, falling leaves)', async () => {
+    const riverFoam = 'const RIVER_FOAM_SPEED: bool = false;' + String.fromCharCode(10);
+    expect(await errors('understory', [commonWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, understoryDrawWgsl])).toEqual([]);
+  });
   it('the viewer page (ruin scene: hosts, ivy, moss)', async () => {
     const sc = buildScene('ruin', 1);
     expect(await errors('viewer', [commonWgsl, materialsWgsl, sceneWgsl(sc.kinds), floraLookWgsl, viewerWgsl])).toEqual([]);
   });
   it('the field mesh draw (the woodland floor in leaf litter)', async () => {
     const riverFoam = 'const RIVER_FOAM_SPEED: bool = false;' + String.fromCharCode(10);
-    expect(await errors('mesh-draw', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, meshStateWgsl, meshRegionWgsl, 'const MESH_LOOK: u32 = 0u;', 'const TUFTS_DRAWN: bool = true;', meshSourceWgsl, meshDrawWgsl])).toEqual([]);
+    expect(await errors('mesh-draw', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, vegplanWgsl, meshStateWgsl, meshRegionWgsl, 'const MESH_LOOK: u32 = 0u;', 'const TUFTS_DRAWN: bool = true;', meshSourceWgsl, meshDrawWgsl])).toEqual([]);
   });
 });

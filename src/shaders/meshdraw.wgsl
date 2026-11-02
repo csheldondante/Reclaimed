@@ -426,13 +426,25 @@ fn meshSurf(in: MOut) -> Surf {
       // (succession past 3.7) the cover is leaf litter in drifts, green between them; last year's leaves brown, this
       // fall's bright. A look only (the material stays): the baked climate's MAT_LEAFLIT is the real thing, rarely laid
       if (isTop) {
-        let litter = smoothstep(3.7, 4.5, v) * smoothstep(0.3, 0.62, fbm2(wo(in.wpos.xy) * 0.3));
-        // (in half-cell flakes, not per pixel: at the phone's half render scale a finer speckle reads as noise)
-        let fl = randv(vec3<i32>(vec2<i32>(floor(wo(in.wpos.xy) * 2.0)), 4417));
-        let fc = randv(vec3<i32>(vec2<i32>(floor(wo(in.wpos.xy) * 2.0)), 4418));
+        // (round 125, forest: the elder woods' floor is a deep carpet of the elders' copper and orange leaves — the
+        // reference's "deep carpet of red and orange leaves"; vegplan.wgsl elderWoodW, the same woods the elders stand in)
+        let ew = smoothstep(0.25, 0.75, elderWoodW(cellAt(in.wpos.xy) + vec2<i32>(i32(G.org.z), i32(G.org.w)))) * smoothstep(3.5, 3.9, v);
+        let litter = max(smoothstep(3.7, 4.5, v) * smoothstep(0.3, 0.62, fbm2(wo(in.wpos.xy) * 0.3)), ew * 0.97);
+        // (in flakes, not per pixel: at the phone's half render scale a finer speckle reads as noise — half a cell far
+        // out, finer as the view closes in under the canopy, a few pixels a leaf either way)
+        let fk = clamp(floor(CAM.viewport.z / 9.0), 2.0, 5.0);
+        let fp = vec2<i32>(floor(wo(in.wpos.xy) * fk));
+        let fl = randv(vec3<i32>(fp, 4417));
+        let fc = randv(vec3<i32>(fp, 4418));
         if (fl < litter) {
           var lc = autumnLeaf(select(0u, 2u, fc > 0.5), fract(fc * 3.7));
           lc = mix(lc, vec3<f32>(0.42, 0.31, 0.18), 0.5 - 0.35 * seasonShed());
+          if (ew > 0.0) {
+            // copper reds, crimson, a little orange and a little brown: the elders' own, through the year
+            let pal = array<vec3<f32>, 5>(vec3<f32>(0.55, 0.09, 0.06), vec3<f32>(0.74, 0.15, 0.07), vec3<f32>(0.86, 0.3, 0.08), vec3<f32>(0.93, 0.52, 0.14), vec3<f32>(0.42, 0.16, 0.09));
+            let ec = pal[min(u32(fract(fc * 7.3) * 5.0), 4u)];
+            lc = mix(lc, ec, ew);
+          }
           alb = toLinear(lc) * (0.8 + 0.25 * n1);
         }
       }

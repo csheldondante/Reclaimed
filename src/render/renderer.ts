@@ -9,10 +9,16 @@ import commonWgsl from '../shaders/common.wgsl?raw';
 import layersWgsl from '../shaders/layers.wgsl?raw';
 import materialsWgsl from '../shaders/materials.wgsl?raw';
 import renderprepWgsl from '../shaders/renderprep.wgsl?raw';
-import vegplanWgsl from '../shaders/vegplan.wgsl?raw';
+import vegplanOwn from '../shaders/vegplan.wgsl?raw';
+import woodsWgsl from '../shaders/woods.wgsl?raw';
+// (round 125: vegplan.wgsl reads the woods' fields — woods.wgsl, shared with the atlas)
+const vegplanWgsl = woodsWgsl + vegplanOwn;
 import terrainShapeWgsl from '../shaders/terrainshape.wgsl?raw';
 import vegprepWgsl from '../shaders/vegprep.wgsl?raw';
-import renderWgsl from '../shaders/render.wgsl?raw';
+import renderWgslOwn from '../shaders/render.wgsl?raw';
+import understoryWgsl from '../shaders/understory.wgsl?raw';
+import understoryDrawWgsl from '../shaders/understory_draw.wgsl?raw';
+import { FWIND } from '../flora/wind';
 import rainWgsl from '../shaders/rain.wgsl?raw';
 import particlesDrawWgsl from '../shaders/particles_draw.wgsl?raw';
 import gridsWgsl from '../shaders/grids.wgsl?raw';
@@ -57,6 +63,9 @@ import { record } from '../gpu/cpustat'; // (round 100, hitchrec: timing)
 import { BGCHECK, BgCheck } from './bgcheck';
 
 /** the draw shaders' camera (render.wgsl Camera): the view's, then the sun's shadow matrix */
+/** (round 125, forest) render.wgsl with the understory's look appended (understory.wgsl: its functions are render.wgsl's) */
+const renderWgsl = `${renderWgslOwn}
+${understoryWgsl}`;
 const CAM_BYTES = CAMERA_BYTES + 64 + 16 + CAMERA_CUT_BYTES;
 /** the sun's shadow map, texels a side (the whole map: ~0.15 cells a texel on 256²) */
 const SHADOW_SIZE = 2048;
@@ -174,6 +183,17 @@ export class Renderer {
   private waterSurfPipe?: GPURenderPipeline;
   private rainPipe!: GPURenderPipeline;
   private partPipe!: GPURenderPipeline;
+  /** (round 125, forest: FLO32) the understory's light shafts (additive) and falling leaves (cut-out); drawn only under a canopy */
+  private underRayPipe?: GPURenderPipeline;
+  private underLeafPipe?: GPURenderPipeline;
+  private underLitterPipe?: GPURenderPipeline;
+  private underGroup?: GPUBindGroup;
+  /** this frame's camera has an understory look (encode reads it) */
+  private underOn = false;
+  /** (round 125) the shafts' and leaves' instances (understory_draw.wgsl: a 4 x 4 lattice; the leaves' box) */
+  static readonly UNDER_RAYS = 16;
+  static readonly UNDER_LEAVES = 160;
+  static readonly UNDER_LITTER = 260;
   private partGroup: GPUBindGroup;
   private opaqueGroup: GPUBindGroup;
   private plantGroup: GPUBindGroup;
@@ -709,9 +729,12 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
     }, (p) => (this.skinPipe = p));
 
     // (round 99, ?meshinst=1) the instanced meshes: render.wgsl's bindings and look, their own vertex stage
+    // (round 125, forest: the wind's treatments on foliage — floralook.wgsl FWIND, ?fwind=; flora/wind.ts)
+    const fwind = { FWIND };
     const miVertex = (module: GPUShaderModule): GPUVertexState => ({
       module,
       entryPoint: 'vsInst',
+      constants: fwind,
       buffers: [{ arrayStride: 16, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x4' }] }],
     });
     const miModule = this.meshInst ? makeModule(device, 'meshinst', [commonWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, this.meshInst.wgsl(), this.floraWgsl, renderWgsl, floraLookWgsl, meshInstWgsl]) : undefined;
@@ -720,7 +743,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
         label: 'meshinst',
         layout: pl,
         vertex: miVertex(miModule),
-        fragment: { module: miModule, entryPoint: 'fsInst', targets: [{ format }, { format: PICK_FORMAT }] },
+        fragment: { module: miModule, entryPoint: 'fsInst', constants: fwind, targets: [{ format }, { format: PICK_FORMAT }] },
         primitive: { topology: 'triangle-list', cullMode: 'none' },
         depthStencil: depthStencil(true),
       }, (p) => (this.miPipe = p));
@@ -744,7 +767,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       // (the interval's material and the lighting only), flat (grey by the normal: the geometry alone))
       const look = { full: 0, lookup: 1, flat: 2 }[new URLSearchParams(location.search).get('look') ?? 'full'];
       if (look === undefined) throw new Error('?look= must be full, lookup or flat');
-      const meshModule = makeModule(device, 'mesh-draw', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, meshStateWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`, meshSourceWgsl, meshDrawWgsl]);
+      const meshModule = makeModule(device, 'mesh-draw', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, vegplanWgsl, meshStateWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`, meshSourceWgsl, meshDrawWgsl]);
       renderPipe(device, {
         label: 'mesh',
         layout: device.createPipelineLayout({ bindGroupLayouts: [meshLayout] }),
@@ -886,7 +909,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
           VF,
           { 3: GPUShaderStage.VERTEX, 5: GPUShaderStage.VERTEX, 11: VF, 31: GPUShaderStage.VERTEX, 32: GPUShaderStage.VERTEX, 33: GPUShaderStage.VERTEX, 34: GPUShaderStage.VERTEX, 35: GPUShaderStage.VERTEX, ...Object.fromEntries([1, 4, 6, 7, 8, 9, 13].map((b) => [b, GPUShaderStage.FRAGMENT])) },
         );
-        const module = makeModule(device, 'rock-mesh', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, meshStateWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`, meshSourceWgsl, meshDrawWgsl, rockMeshWgsl]);
+        const module = makeModule(device, 'rock-mesh', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, vegplanWgsl, meshStateWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`, meshSourceWgsl, meshDrawWgsl, rockMeshWgsl]);
         const pipe = device.createRenderPipeline({
           label: 'rock-mesh',
           layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
@@ -909,7 +932,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       };
       // (round 103, ?tiles=1: the tile cache — the mesh's module with tiles.wgsl, the resolve's layout and its own)
       if (TILES) {
-        const tileModule = makeModule(device, 'tiles', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, meshStateWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`, meshSourceWgsl, meshDrawWgsl, coverFieldWgsl, riverHeld(), tilesWgsl]);
+        const tileModule = makeModule(device, 'tiles', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, vegplanWgsl, meshStateWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`, meshSourceWgsl, meshDrawWgsl, coverFieldWgsl, riverHeld(), tilesWgsl]);
         const drawLayout = makeLayout(
           device,
           'tiles-draw',
@@ -1006,6 +1029,36 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       depthStencil: depthStencil(false),
     }, (p) => (this.partPipe = p));
     this.partGroup = makeBindGroup(device, 'particles-draw', partLayout, { 0: world.globals, 2: world.materials, 3: world.particles, 10: this.camBuf });
+
+    // (round 125, forest: FLO32) the understory's own draw — the draw layout's bindings (camera, Globals, the surface,
+    // the shadow map), its module render.wgsl + understory.wgsl + understory_draw.wgsl
+    const underModule = makeModule(device, 'understory', [commonWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, understoryDrawWgsl]);
+    const add: GPUBlendState = { color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' }, alpha: { srcFactor: 'zero', dstFactor: 'one', operation: 'add' } };
+    renderPipe(device, {
+      label: 'understory-rays',
+      layout: pl,
+      vertex: { module: underModule, entryPoint: 'vsRay' },
+      fragment: { module: underModule, entryPoint: 'fsRay', targets: [{ format, blend: add }, { format: PICK_FORMAT, writeMask: 0 }] },
+      primitive: { topology: 'triangle-list', cullMode: 'none' },
+      depthStencil: depthStencil(false),
+    }, (p) => (this.underRayPipe = p));
+    renderPipe(device, {
+      label: 'understory-leaves',
+      layout: pl,
+      vertex: { module: underModule, entryPoint: 'vsLeaf' },
+      fragment: { module: underModule, entryPoint: 'fsLeaf', targets: [{ format }, { format: PICK_FORMAT, writeMask: 0 }] },
+      primitive: { topology: 'triangle-list', cullMode: 'none' },
+      depthStencil: depthStencil(true),
+    }, (p) => (this.underLeafPipe = p));
+    renderPipe(device, {
+      label: 'understory-litter',
+      layout: pl,
+      vertex: { module: underModule, entryPoint: 'vsLitter' },
+      fragment: { module: underModule, entryPoint: 'fsLeaf', targets: [{ format }, { format: PICK_FORMAT, writeMask: 0 }] },
+      primitive: { topology: 'triangle-list', cullMode: 'none' },
+      depthStencil: depthStencil(true),
+    }, (p) => (this.underLitterPipe = p));
+    this.underGroup = groupFor(this.instOpaque);
   }
 
   /**
@@ -1203,6 +1256,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
     this.syncMeshPool();
     this.syncInst();
     cam.write(this.camData);
+    this.underOn = (cam.understory?.weight ?? 0) > 0;
     // look flags (render.wgsl Camera.eye.w)
     new Float32Array(this.camData)[19] = (this.flatTops ? 1 : 0) | (this.fieldMesh.on ? 2 : 0) | (Renderer.opts.noDetail << 2);
     this.fieldMesh.cull(cam);
@@ -1435,6 +1489,27 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
     pass.setBindGroup(0, this.partGroup);
     if (!SKIP.has('particles')) pass.draw(6, this.world.particleCap);
     this.profiler.draws++;
+    // (round 125, forest) under a canopy: the falling leaves, then the light shafts over everything
+    if (this.underOn && this.underGroup && !SKIP.has('understory')) {
+      if (this.underLeafPipe) {
+        pass.setPipeline(this.underLeafPipe);
+        pass.setBindGroup(0, this.underGroup);
+        pass.draw(6, Renderer.UNDER_LEAVES);
+        this.profiler.draws++;
+      }
+      if (this.underLitterPipe) {
+        pass.setPipeline(this.underLitterPipe);
+        pass.setBindGroup(0, this.underGroup);
+        pass.draw(6, Renderer.UNDER_LITTER);
+        this.profiler.draws++;
+      }
+      if (this.underRayPipe) {
+        pass.setPipeline(this.underRayPipe);
+        pass.setBindGroup(0, this.underGroup);
+        pass.draw(6, Renderer.UNDER_RAYS);
+        this.profiler.draws++;
+      }
+    }
     if (opts.rainParticles > 0 && !SKIP.has('rain')) {
       pass.setPipeline(this.rainPipe);
       pass.setBindGroup(0, this.rainGroup);

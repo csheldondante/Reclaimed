@@ -18,6 +18,11 @@ struct Camera {
   see: array<vec4<f32>, 4>,
   // what may be dithered: lo xyz, hi xyz (two a box)
   boxes: array<vec4<f32>, 8>,
+  // (round 125, forest: FLO32 — render/camera.ts understory; all 0: none) under the canopy: [0] the hero's feet xyz,
+  // w the weight 0..1; [1] x the canopy's underside (z), y the hole's radius (world units on screen), z the canopy
+  // left out (meshinst.wgsl); [2] the
+  // treatments dither, dapple, rays, mist; [3] x leaves (understory.wgsl)
+  under: array<vec4<f32>, 4>,
 };
 
 /** 4 × 4 ordered dither, 0..1 (a pixel's threshold) */
@@ -729,6 +734,8 @@ fn lighting(wpos: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
   // (perfopt, ?nodetail=shadow: eye.w bit 7 — no shadow lookups, every draw's)
   if (((u32(CAM.eye.w) >> 2u) & 32u) != 0u) { lit = 1.0; }
   else if ((u32(CAM.eye.w) & 2u) != 0u) { lit = shadowLit(wpos, nrm); } else { lit = sunLit(wpos, nrm, sc); }
+  // (round 125, forest: under the canopy the sun comes through as a leaf stencil — understory.wgsl; as it was outside)
+  lit = underDapple(wpos, lit);
   // storm shade, and the light shadow of passing fair-weather clouds
   let cloud = max(cloudShade(wpos.xy), fairCloud(wpos.xy) * 0.22);
   // light comes from the day/night cycle (src/weather/daynight.ts)
@@ -753,7 +760,7 @@ fn lighting(wpos: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
   // (round 117: under a roof the sky's light and the bounce fade, deeper darker; the sun too — the shadow map sees most
   // roofs, the heightfield march not all)
   let cov = underCover(wpos, nrm);
-  let shade = mix(1.0, 0.1, cov);
+  let shade = mix(1.0, 0.1, cov) * underAmbient(wpos);
   return (ambient + fill) * shade + flash + firelight + sunCol * ndl * lit * (1.0 - cloud * 0.9) * mix(1.0, 0.2, cov);
 }
 
@@ -814,6 +821,8 @@ fn haze(c: vec3<f32>, wpos: vec3<f32>) -> vec3<f32> {
   let h = mix(clean, dirty, G.pollution) * mix(1.0, 0.15, G.sky.w);
   let lowFog = smoothstep(24.0, 0.0, wpos.z) * 0.06;
   var o = mix(c, toLinear(h), 0.03 + 0.1 * G.pollution + lowFog);
+  // (round 125, forest: the mist under the canopy — understory.wgsl)
+  o = underMist(o, wpos);
   // beyond the reach: a dim, colourless fog (the land not yet reached)
   let fog = 1.0 - smoothstep(0.05, 0.5, reachAt(wpos.xy));
   if (fog > 0.0) {

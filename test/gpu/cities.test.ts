@@ -13,7 +13,11 @@ import { planCity } from '../../src/structures/plan';
 import commonWgsl from '../../src/shaders/common.wgsl?raw';
 import materialsWgsl from '../../src/shaders/materials.wgsl?raw';
 import terrainShapeWgsl from '../../src/shaders/terrainshape.wgsl?raw';
-import renderWgsl from '../../src/shaders/render.wgsl?raw';
+import renderWgslOwn from '../../src/shaders/render.wgsl?raw';
+import understoryWgsl from '../../src/shaders/understory.wgsl?raw';
+// (round 125: render.wgsl goes with the understory's look appended, as renderer.ts RENDER)
+const renderWgsl = `${renderWgslOwn}
+${understoryWgsl}`;
 import structMeshWgsl from '../../src/shaders/structmesh.wgsl?raw';
 import structGameWgsl from '../../src/shaders/structgame.wgsl?raw';
 import viewerWgsl from '../../src/structures/viewer/viewer.wgsl?raw';

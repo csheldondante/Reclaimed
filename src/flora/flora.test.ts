@@ -99,7 +99,9 @@ describe('species meshes', () => {
       expect(a.tris).toBeGreaterThan(0);
       expect(a.height).toBeGreaterThanOrEqual(sp.height[0] - 1e-3);
       expect(a.height).toBeLessThanOrEqual(sp.height[1] + 1e-3);
-      const budget = sp.form === 'tree' ? 3200 : 400;
+      // (round 125: the elder stands one to a 2 x 2 of the other trees' slots — flora/spacing.ts — so its budget is the
+      // area's: up to 5000 a tree, a quarter as many trees)
+      const budget = id === 'giant' ? 5000 : sp.form === 'tree' ? 3200 : 400;
       expect(a.tris, `${id} tris`).toBeLessThanOrEqual(budget);
       // indices in range; parts and sway well-formed
       const nv = a.verts.length / 4;

@@ -30,6 +30,7 @@ import terrainGorgeW from '../terrain/gorge.wgsl?raw';
 import terrainSeaW from '../terrain/sea.wgsl?raw';
 import formsW from './forms.wgsl?raw';
 import noiseW from './noise.wgsl?raw';
+import woodsW from '../shaders/woods.wgsl?raw';
 import patsimW from './patsim.wgsl?raw';
 import patternsW from './patterns.wgsl?raw';
 import { defineRegions, dryness, KIND_IDS, KINDS, REGION_WORDS, warmth, type RegionDef, type RegionStat } from './regions';
@@ -564,7 +565,8 @@ const RIVER_SHEET: f32 = ${RIVER_SHEET.toFixed(2)};
 const RIVER_LEVEE: f32 = ${RIVER_LEVEE.toFixed(2)};
 `;
     // (round 117: terrain/river.wgsl — the rivers' course and cross-section, the terrain track's)
-    return [noiseW, commonW, patternsW, composeW, terrainRiverW, terrainCaveW, terrainGorgeW, terrainSeaW, rivers, ...own];
+    // (round 125, forest: woods.wgsl — the elder woods, old woods the window's elders stand in)
+    return [noiseW, woodsW, commonW, patternsW, composeW, terrainRiverW, terrainCaveW, terrainGorgeW, terrainSeaW, rivers, ...own];
   }
 
   writeParams(e: Extra = {}, into = this.paramBuf): void {

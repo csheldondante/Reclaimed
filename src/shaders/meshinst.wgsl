@@ -11,6 +11,12 @@ struct MIOut {
   @location(1) @interpolate(flat) info: vec4<u32>,
   // local height share up the part (0 its foot, 1 its top): the crown darker underneath
   @location(2) h: f32,
+  // (round 125, forest) the instance's foot (world): the understory's dither asks where the tree stands
+  @location(3) @interpolate(flat) foot: vec3<f32>,
+  // (round 125, 1A) the wind over the plant: xy the way it blows, z its strength (the column's lean over its full)
+  @location(4) @interpolate(flat) wind: vec3<f32>,
+  // (round 125) how far into the canopy's cut this vertex is (0 kept .. 1 gone: compared with the dither)
+  @location(5) cut: f32,
 };
 
 fn miKind(vi: u32) -> u32 {
@@ -58,8 +64,36 @@ fn vsInst(@location(0) a: vec4<f32>, @builtin(vertex_index) vi: u32, @builtin(in
   if (!fl) {
     wp = wp + vec3<f32>((lean + flutter) * sway, 0.0);
   } else {
-    // (flora: floralook.wgsl, shared with the viewer page)
-    wp = wp + floraSway(k, fpart, a.xyz, sway, vec2<f32>(r0.w, r1.w), lean, seed, G.time);
+    // (flora: floralook.wgsl, shared with the viewer page; round 125: FWIND's treatments — 0 the static baseline)
+    let foot = vec3<f32>(r0.w, r1.w, r2.w);
+    var off = vec3<f32>(0.0);
+    if ((FWIND & 1u) != 0u) { off = floraSway(k, fpart, a.xyz, sway, vec2<f32>(r0.w, r1.w), lean, seed, G.time); }
+    let H = FLORA_COL[k * 6u + 4u].w;
+    if ((FWIND & 4u) != 0u && H > 5.0 && (fpart == 3u || fpart == 4u)) {
+      // (a tree: its crown through the coarse lattice, the column's spring's share of the lean taken off — the lattice
+      // carries the gust; scaled into the instance's height)
+      let hs = length(r2.xyz);
+      off = off * 0.5 + floraLattice(wp, foot, H * hs, FLORA_COL[k * 6u + 5u].w * hs * 0.6, sway, lean, FLORA_COL[k * 6u + 1u].w, G.org.xy, G.time);
+    }
+    wp = wp + off;
+  }
+  // (round 125, forest: under the canopy only the trunks are drawn — the user: "Just the s shadows and the trunks". A tree's
+  // leaves, and its wood over the crown's base away from the bole's axis (the limbs), dither out with the understory's
+  // weight round the hero and once it's whole aren't drawn at all — the fill saved; the sun's camera has no understory,
+  // so the shadow pass keeps every leaf and the floor's dapple stays)
+  o.cut = 0.0;
+  if (fl && CAM.under[0].w > 0.0) {
+    let cb = FLORA_CROWN[k];
+    let limb = fpart == 4u || (fpart == 3u && a.z > cb.x && length(a.xy) > cb.y * 1.6);
+    if (cb.x < 1e8 && limb) {
+      let foot = vec3<f32>(r0.w, r1.w, r2.w);
+      let c = CAM.under[0].w * CAM.under[1].z * (1.0 - smoothstep(48.0, 62.0, length(foot.xy - CAM.under[0].xy)));
+      if (c >= 0.999) {
+        o.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+        return o;
+      }
+      o.cut = c;
+    }
   }
   o.pos = CAM.viewProj * vec4<f32>(wp, 1.0);
   o.wpos = wp;
@@ -67,6 +101,8 @@ fn vsInst(@location(0) a: vec4<f32>, @builtin(vertex_index) vi: u32, @builtin(in
   o.info = vec4<u32>(k, select(part, fpart, fl), winIdx(cell), u32(seed * 65535.0));
   // (flora: the sway weight stands in for the height share up the plant — it rises with it)
   o.h = select(a.z, sway, fl);
+  o.foot = vec3<f32>(r0.w, r1.w, r2.w);
+  o.wind = vec3<f32>(dir, amp);
   return o;
 }
 
@@ -76,6 +112,8 @@ fn fsInst(in: MIOut) -> FOut {
   var n = normalize(cross(dpdx(in.wpos), dpdy(in.wpos)));
   if (dot(n, toEye(in.wpos)) < 0.0) { n = -n; }
   if (cutAway(in.wpos, in.pos.xy)) { discard; }
+  // (round 125, forest: under the canopy, what hides the floor round the hero dithered out — understory.wgsl)
+  if (max(underHide(in.wpos, in.foot), in.cut) > bayer4(in.pos.xy)) { discard; }
   let k = in.info.x;
   let part = in.info.y;
   let rnd = f32(in.info.w) / 65535.0;
@@ -87,6 +125,12 @@ fn fsInst(in: MIOut) -> FOut {
     if (fl.w < 0.0) { discard; }
     mat = u32(fl.w);
     alb = toLinear(fl.rgb);
+    // (round 125, 1A: the wind-shading ripple — a gust's front brightens the leaves and blades it turns over, the
+    // trough behind it darker; the silhouette stays)
+    if ((FWIND & 2u) != 0u && (part == 4u || part == 5u)) {
+      let g = floraGust(in.wpos.xy, G.org.xy, in.wind.xy, in.wind.z, G.time);
+      alb *= 1.0 + (g - 0.5) * (0.12 + 0.25 * min(in.wind.z, 1.5));
+    }
   } else if (part == 0u) {
     alb = toLinear(MATS[MAT_WOOD].albedo.rgb) * (0.85 + 0.2 * rnd);
     if (k == 2u) {
