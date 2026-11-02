@@ -12,6 +12,20 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 126 (2026-11-02, session 5, `dialog2`) — petitions as dialogs, the cast, plain writing (DECISIONS round 126)
+
+Branch `dialog2` (b9139b7): docs/WRITING.md, a style lint, every player string rewritten, the cast generator, petitions delivered in talks. The branch's own rows are DLG-7..12.
+
+| id | item | size | status |
+|---|---|---|---|
+| DLG-Q1 | Voices: say more in character, or keep the content plain and put personality in greetings and asides only? | S | asked |
+| DLG-Q2 | Every card a full talk, or travel choices ("Ride to X") a quick tap? | S | asked |
+| DLG-Q3 | Is "Can you give a little more?" the right first negotiation? What is the dialog minigame, so the `Persuasion` interface fits it? | M | asked |
+| DLG-Q4 | Refusing someone drops their group's trust by half as much as theirs. Right size? | S | asked |
+| DLG-R1 | Main's review: the intro says the march twice ("The Hollow Host is marching on Muru" then "An army of the walking dead has risen… It is marching on Muru"). Mid-sentence "The Hollow Court" has a capital "The". "They reach Muru at minute 14.3" reads like a timer, not speech. | S | open |
+| DLG-R2 | Main's review: the muster card's "Takes" lists the encounter ("3 walking dead stand between you and the hall") as well as the time. Takes should be the cost only; the danger belongs in the ask. | S | open |
+| DLG-R3 | Map labels pile up near the hold (timers and card names overlap). This predates dialog2. | M | open |
+
 ## Round 126 (2026-11-02, session 5, `merge124`) — the living world merged into the run structure (DECISIONS round 125, newest)
 
 The user (verbatim): "Please proceed with getting it ready to merge into our run structure for now." and, on the levy's
