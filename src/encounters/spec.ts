@@ -48,17 +48,17 @@ export const QUARRY_PACE = 0.75;
 export const BEHIND: [number, number] = [8, 14];
 export const AHEAD: [number, number] = [10, 16];
 /** cells clear of every pursuer, held this long, that count as lost */
-export const CLEAR = { cells: 45, seconds: 3 };
+export const CLEAR = { cells: 60, seconds: 4 };
 /** the hero's health share at which it's beaten */
 export const BEATEN = 0.3;
 /** a fight's foes break when this share is down */
 export const MORALE = 0.6;
-/** seconds a chase's quarry runs before it's away (its escape: that far at its pace), and cells off the hero that's lost */
+/** seconds a chase's quarry runs before it's away (its escape: that far at its pace), and cells off the hero (past the screen and then some) that is lost */
 export const ESCAPE_S = 14;
-export const ESCAPE_FAR = 70;
+export const ESCAPE_FAR = 160;
 /** a hall's gate: seconds of the hero's cruise ahead (kept within a few screens) */
-export const HAVEN_S = 6;
-export const HAVEN_CELLS: [number, number] = [45, 200];
+export const HAVEN_S = 12;
+export const HAVEN_CELLS: [number, number] = [60, 400];
 /** cells/s the riders who come for an escort's people ride at: faster than the people walk (a worker's 2.4), slower
  *  than any hero — the hero has to turn and meet them */
 export const ESCORT_RIDERS = 6;

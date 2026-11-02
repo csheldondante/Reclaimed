@@ -12,6 +12,7 @@
 // came, the result tier, and whether a flag was the objective. Shots at 4 s, at the first engagement and the end;
 // --gif 1 a GIF of the engagement.
 //
+//   --play trader (a way on by what its area plays: the trader's scene) · --give supplies:2 (goods to bargain with)
 //   node scripts/encounters.mjs --card outriders|ride|muster|warn|lead-out|rescue|scout|chase [--hero hoverbike|lich]
 //        [--mode win|lose] [--answer fight|yield|bargain] [--out C:/Projects/shots88/encounters] [--gif 1] [--settle 25000]
 import gifenc from 'gifenc';
@@ -112,6 +113,16 @@ await run({ name: `encounter-${card}-${hero}-${mode}`, kind: 'behaviour', size: 
     s = await state();
   }
   if (!committed) throw new Error(`${card}: never committed`);
+  // (--give supplies:2 — goods put in the holdings before the encounter: a scene's bargain needs something to pay with)
+  const give = R.opt('give', '');
+  if (give) {
+    const [g, n] = give.split(':');
+    await p.evaluate((g, n) => {
+      const H = window.reclaimed.opps.opps.holdings.goods;
+      H[g] = (H[g] ?? 0) + n;
+    }, g, Number(n));
+    R.log(`gave ${n} ${g}`);
+  }
   R.log(`committed ${committed.template} (${committed.kind})`);
   // the leg there, then the area played
   for (let i = 0; i < 500 && (await state()).journey; i++) await sleep(400);
@@ -135,6 +146,10 @@ await run({ name: `encounter-${card}-${hero}-${mode}`, kind: 'behaviour', size: 
         // (a scene's talk open: its answer by id — the encounter's `shown` order — else the only button, the reply's)
         const dlg = document.querySelector('.dlg.on');
         if (dlg) {
+          // (read for two seconds first, as a player would — and for the shot)
+          window.__talkAt ??= performance.now();
+          if (performance.now() - window.__talkAt < 2500) return 'reading';
+          window.__talkAt = undefined;
           const bs = [...dlg.querySelectorAll('.dlg-choices button, button')];
           if (!bs.length) {
             dlg.click();
@@ -184,8 +199,9 @@ await run({ name: `encounter-${card}-${hero}-${mode}`, kind: 'behaviour', size: 
           C.script = { stick: [0, 0], buttons: [slam && n % 2 === 0] };
           return `lich ${dist.toFixed(1)}${slam ? ' slam' : ''}`;
         }
-        const m = aim?.slow ? 0.25 : fight && dist < 10 ? 0.55 : 1;
-        C.script = { stick: [(dx / l) * m, (dy / l) * m], buttons: [!fight && !aim?.slow && dist > 25] };
+        // (at a foe: slow as it nears, so the bike's blows land instead of flying past at 30 cells/s)
+        const m = aim?.slow ? 0.25 : fight && dist < 18 ? Math.max(0.12, Math.min(0.6, dist / 24)) : 1;
+        C.script = { stick: [(dx / l) * m, (dy / l) * m], buttons: [!aim?.slow && dist > 25] };
         if (fight && dist < 7 && n % 2 === 0) C.inject({ kind: 'flick', from: [b[0] - 30, b[1]], to: [b[0] + 30, b[1]], dir: [1, 0], speed: 2200 });
         return `bike ${dist.toFixed(0)}${fight ? ' fight' : ''}`;
       },
@@ -224,6 +240,7 @@ await run({ name: `encounter-${card}-${hero}-${mode}`, kind: 'behaviour', size: 
     });
   const samples = [];
   let shot4 = false;
+  let shotTalk = false;
   let shotEngage = false;
   let gifDone = R.opt('gif', '0') !== '1';
   let lastLog = 0;
@@ -235,6 +252,11 @@ await run({ name: `encounter-${card}-${hero}-${mode}`, kind: 'behaviour', size: 
     const smp = await sample();
     if (smp) {
       samples.push(smp);
+      if (!shotTalk && smp.talk) {
+        shotTalk = true;
+        await sleep(1500);
+        await shot('a-talk');
+      }
       if (!shot4 && smp.t > 4) {
         shot4 = true;
         await shot('a-4s');

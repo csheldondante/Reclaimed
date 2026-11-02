@@ -71,6 +71,7 @@ export class LiveEncounter {
   readonly ids: Record<Band['part'], UnitId[]> = { pursuers: [], foes: [], quarry: [], guards: [], people: [] };
   private startOf = new Map<UnitId, V2>();
   private quarryT = 0;
+  private escapedLogged = false;
   private escapeAt: V2 | null = null;
   haven: V2 | null;
   camp: V2 | null;
@@ -82,6 +83,7 @@ export class LiveEncounter {
   /** a scene's answers as shown, by id (a check picks one by its index) */
   shown: string[] = [];
   readonly log: string[] = [];
+  private offDied: () => void;
 
   constructor(
     readonly spec: EncounterSpec,
@@ -95,6 +97,15 @@ export class LiveEncounter {
     this.haven = at.haven ?? (spec.haven !== undefined ? d.place([at.entry[0] + ux * spec.haven, at.entry[1] + uy * spec.haven]) : null);
     if (spec.escape) this.escapeAt = [at.entry[0] + ux * (spec.escape.cells + 20), at.entry[1] + uy * (spec.escape.cells + 20)];
     for (const b of spec.bands) this.spawn(b);
+    // (who killed each of its units: the hero, another unit, the world — a fall, the water — told in the log)
+    const died = (u: { id: UnitId; role: string }, by: UnitId | string | null) => {
+      if (Object.values(this.ids).some((ids) => ids.includes(u.id))) this.log.push(`${u.role} ${u.id} down at t ${this.t.toFixed(1)} by ${by === null ? 'the world' : by}`);
+    };
+    d.units.died.push(died);
+    this.offDied = () => {
+      const i = d.units.died.indexOf(died);
+      if (i >= 0) d.units.died.splice(i, 1);
+    };
     if (spec.scene && this.camp) {
       const s = spec.scene.speaker;
       this.speaker = d.units.spawn('raider', this.camp, null, { name: s.name, role: s.title, hostile: false, health: 4, sight: 0, colour: s.colour, job: { kind: 'guard', at: this.camp, radius: 1 } });
@@ -178,7 +189,12 @@ export class LiveEncounter {
     if (this.ids.quarry.length) {
       const q = this.alive(this.ids.quarry);
       const esc = this.spec.escape!;
-      o.quarry = { alive: q.length, total: this.ids.quarry.length, escaped: q.some((id) => this.dist(id, this.startOf.get(id)!) >= esc.cells || this.dist(id, me) >= esc.far) };
+      const away = q.find((id) => this.dist(id, this.startOf.get(id)!) >= esc.cells || this.dist(id, me) >= esc.far);
+      if (away !== undefined && !this.escapedLogged) {
+        this.escapedLogged = true;
+        this.log.push(`quarry ${away} away at t ${this.t.toFixed(1)}: ${this.dist(away, this.startOf.get(away)!).toFixed(0)} cells from its start (${esc.cells.toFixed(0)}), ${this.dist(away, me).toFixed(0)} off the hero (${esc.far})`);
+      }
+      o.quarry = { alive: q.length, total: this.ids.quarry.length, escaped: away !== undefined };
     }
     if (this.ids.people.length) {
       const P = this.alive(this.ids.people);
@@ -364,7 +380,9 @@ export class LiveEncounter {
       const cy = P.reduce((a, p) => a + p[1], 0) / Math.max(1, P.length);
       const threat = this.alive(this.ids.pursuers).map((id) => this.unitAt(id)!).find((p) => Math.hypot(p[0] - cx, p[1] - cy) < 14);
       if (threat) return { at: threat, fight: true };
-      return { at: this.safety, fight: false, slow: Math.hypot(cx - me[0], cy - me[1]) > 6 };
+      // (back to them if they've fallen behind; else on to safety at their walk)
+      if (P.length && Math.hypot(cx - me[0], cy - me[1]) > 12) return { at: [cx, cy], fight: false, slow: true };
+      return { at: this.safety, fight: false, slow: true };
     }
     const f = this.nearest(s.kind === 'escort' && !this.freed && this.rules.guardsClear(this.observe()) ? [] : [...this.ids.foes, ...this.ids.guards, ...this.ids.pursuers]);
     if (f) return { at: f, fight: true };
@@ -394,6 +412,7 @@ export class LiveEncounter {
   /** its units gone */
   dispose(): void {
     this.done = true;
+    this.offDied();
     for (const ids of Object.values(this.ids)) for (const id of ids) this.d.units.remove(id);
     if (this.trader !== null) this.d.units.remove(this.trader);
   }

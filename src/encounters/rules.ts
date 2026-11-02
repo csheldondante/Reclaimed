@@ -161,7 +161,7 @@ export class EncounterRules {
         throw new Error('encounter: defend is the finale (runsit/finale.ts)');
     }
     if (o.t > s.limit) {
-      const why = s.kind === 'flee' ? 'they ran you ragged' : s.kind === 'chase' ? 'they got away' : s.kind === 'escort' ? 'too slow: the people were caught' : 'they held the road';
+      const why = s.kind === 'flee' ? 'they ran you ragged' : s.kind === 'chase' ? 'they got away' : s.kind === 'escort' ? (o.people?.freed ? 'too slow: the people were caught' : 'the guards held the captives') : 'they held the road';
       return end(false, 'failure', why);
     }
     return this.status;
