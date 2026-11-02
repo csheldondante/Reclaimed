@@ -356,6 +356,20 @@ each was implemented.
   player, duration, outcomes as real mutations); one major arc per run with visible progress and long horizons;
   catalog first in batches of ten, reduce to a basis later. Under discussion; a plan to follow.
 
+- The user's answers on the plan (1 real resources, 2 turns as world time, 3 gnolls, 4 first slice), verbatim:
+
+> 1. Yes resources and real pawns but we need to work on legibility for the opportunity screen. Zooming in to places, presenting them as dialogs with characters or emmisaries, showing the resources on the map or clearly somewhere on screen and limiting it to the relevant resources for the current opportunities and maybe keeping that set smallish for the player.
+> 2. Yes I was already thinking what turns were on the order of days. You spend a few days doing x y or z. I don't think we need to worry too much about times being realistic. I'm also not sure how much simulation we actually need vs just instant mutations. Our default is to do less compute as long as our state change is plausible.
+> 3. I think the creature editor as it is now is fine to merge and use for gnolls. It's not great but it's a good basis and we can improve that later without breaking other systems.
+> 4. Yeah I like that recommendation.
+
+- → Real pawns and real stores, with a legible opportunity screen: zoom to the place, present it as a dialog with a
+  character or emissary, show only the resources relevant to the current opportunities (a small set) on the map or
+  clearly on screen. A turn is a few days; times need not be realistic. Default to instant, plausible mutations and
+  simulate only where the change needs it (less compute). Gnolls from the existing creature generator (inhabitants,
+  merged). First slice: Briar Hollow in a drought. Plan phases 0 (fact layer), 1 (template engine + world inspector),
+  2 (Briar Hollow), 3 (catalog batches), 4 (the army arc).
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
