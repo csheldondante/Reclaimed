@@ -3091,3 +3091,24 @@ is its own params, not the Globals.
 Tests: test/gpu/judge-shapes.test.ts (A and B on every shape, B asserted from the stone estimate; JUDGE_LOG=1 writes
 data/perf/judge/shapes.md), test/gpu/judge-equal.test.ts (B's fast paths against its oracle: shapes, 40 random caves), test/gpu/judge-perf.test.ts (JUDGE_PERF=1: data/perf/judge/node-*.json and the phase
 breakdown node-phases.json), test/support/judgeworld.ts (RockWorld's passes through a judge).
+
+## Region presentation profiles (round 124, branch `presentation`; BACKLOG PRE1-PRE8, docs/design/REGION_PRESENTATION.md)
+
+- **Contract** src/api/contracts/presentation.ts: a `PresentationProfile` (camera: zoom, pitch, route-facing,
+  look-ahead, speed zoom-out; canopy: dither / cutaway / stipple with a radius, a cut height and a stipple share; light:
+  dapple; transition: zoom, zoom+iris, zoom+dissolve and its seconds), a `PresentRegion` (a disc with an edge band) and a
+  `PresentLook` (what reaches the renderer each frame).
+- **The camera mode `present`** (src/present/mode.ts, stage 2.5: after the chase, the turn and the tilt, before the
+  cuts): given to the rig from outside (`CameraRig.setPresent`), it blends its profile in by the region's weight
+  (approached at 1/transition seconds) and writes `CamFrame.present`. Pure; Node tests in src/present/present.test.ts.
+  `CamModeId` has `present`; it isn't a `?cam=` chip.
+- **The renderer** reads it through the camera uniform only: render/camera.ts `Camera.present` → render.wgsl
+  `Camera.present / presentB / presentC` (three vec4s at the end of the cut block, so the sun's camera, the tile bakes
+  and tileland's bake camera — which zero the cut block — have none). `presentReach` leaves tree fragments out in
+  meshinst.wgsl fsInst (by the tree's own foot, passed flat from vsInst); `presentLight` scales the direct and ambient
+  light in `lighting()` under the canopy's height. All zero: the draw as it was. Nothing leaves the world: the shadow
+  map, the wind, the sight queries and the simulation keep every tree.
+- **The lab** (src/present/lab.ts) is the browser boundary: the scene's profile from its picks (src/present/profiles.ts),
+  the region and the route (src/present/stand.ts: the densest birch stand from `Plants.treesNear`, a loop through it),
+  the review overlay; started by scenes/level.ts only with `?present=` (forest on the atlas's play sandbox, canyon and
+  cliff on the hero lab). `?present=menu` is the review menu (src/present/menu.ts), before any level.

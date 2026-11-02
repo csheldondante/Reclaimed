@@ -92,6 +92,8 @@ export function applyFrame(cam: Camera, f: CamFrame, own: Applied): Applied {
   cam.zoom = v.zoom;
   if (own.turn) cam.azimuth = v.azimuth;
   if (own.tilt) cam.elevation = v.elevation;
+  // (round 124, PRE1: the region's presentation look — none unless the present mode wrote one this frame)
+  cam.present = f.present ?? null;
   if (own.cut) {
     const s = f.cut.slice;
     cam.cut.slice = s ? s.z : null;

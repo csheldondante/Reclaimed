@@ -15886,3 +15886,54 @@ tight wiggles make it scrape (tight's 350 hits/min is the drift grinding a wall:
 the governor is what makes the turning ones work there: grip+ with the governor has the fewest crashes in both (11.8,
 10.8) and the city's best lap; the full assist with tight laps the canyon fastest. The rider model can't say how any
 of it feels: the user's thumb decides (PL31).
+
+## 2026-11-02 — round 124 (`presentation`): region presentation, scene A — the birch forest (PRE1, PRE2)
+
+The user's handoff, verbatim in docs/design/REGION_PRESENTATION.md: "Prototype ways to make the existing persistent 3D
+world feel intimate, cinematic, and readable at character scale without sacrificing its impressive overworld
+presentation ... Start with what exists ... Visibility is at least as important as fidelity ... Keep isometric framing
+by default." Priorities followed: the unchanged baseline, then the forest's visibility, then light.
+
+**Built.**
+- A presentation profile (api/contracts/presentation.ts) and its camera mode `present` (present/mode.ts): given to the
+  rig from outside, after the chase, the turn and the tilt; it blends the profile in by the region's weight (a disc,
+  1 inside, 0 past an edge band, approached at 1/transition seconds) and writes `CamFrame.present`.
+- The renderer's look through the camera uniform only (render.wgsl `presentReach` in meshinst's fragment, `presentLight`
+  in `lighting()`); all zero when off. Canopy treatments, by the tree's own foot:
+  - dither: foliage and wood over 1.6-3 cells up its own trunk, within 9 cells of the hero on screen, not far behind;
+  - cut front: the trees whose foot is nearer the eye than the hero's, within reach, cut 3 cells over the lower of
+    their foot and the hero's floor, the cut thinned over a cell;
+  - stipple: foliage over 2.5-4.5 cells up, a fixed 55 % screen-space stipple within ~2.5x the radius.
+  The heights are the tree's own because the first cut used the hero's floor and on the showcase's slope the crowns
+  downhill in front (lower than the hero) were never touched.
+- The understory light: under the canopy's height the sun comes through in flecks blown along by the prevailing wind
+  (G.env), the ambient 30 % deeper. Faked: the shadow map is too coarse at this zoom to dapple (the first try, flecks
+  only where the shadow map shaded, was barely visible).
+- Transitions: zoom (the treatment on at once), zoom+iris (an iris of the treatment opening from the hero over the
+  transition), zoom+dissolve (an even dither crossfade). Camera tilt kept at 30° for the baseline.
+- The scene: `?level=atlas&at=13728,4768&play=lich&present=forest` — the densest birch stand within 140 cells of the
+  window's middle (Plants.treesNear; at least 12 birches within 12 cells, else an error), a loop of radius 20 whose near side runs through
+  it, ridden by the lab's autopilot (slower under the trees), starting 32 cells out so each lap rides in and out.
+- The review overlay (present/lab.ts): visibility (today, dither, cut front, stipple: combine), light, transition,
+  zoom / pitch / transition seconds, replay, hold out/in, the route, back to its start, A/B (the pick against the
+  baseline every 3 s), the menu; FPS and frame time (p50/p95), the weight, the zoom and pitch. Every pick is in the
+  address. `?present=menu` (and a title-screen button) lists the four scenes.
+- scripts/present.mjs: stills of every variant at one parked spot (repeatable A/B), GIFs of the route per transition,
+  `--cost` A/B/A/B frame windows on the phone proxy.
+
+**Findings.**
+- Today's default camera (cut + tilt) doesn't open the birch canopy at all: the trees aren't land to its occluder test
+  (CAM12), so under the birches the hero is hidden (PRE7). The tilt does climb to 72° outside the wood.
+- The bike is too fast for a forest route: 40+ cells/s, the autopilot lost the loop and never entered the region; the
+  scene rides the lich (PRE8).
+- Falling birch leaves are 15 px flat squares at zoom 44 (PRE6): the biggest thing that reads as "not the same detail".
+- The stippled canopy reads best (the trunks rise whole, the canopy stays as a veil); dither opens the most floor;
+  the cut is the most disorienting (crowns gone in a band in front).
+
+**Measured** (scripts/present.mjs --cost, Intel Xe-LPG iGPU, 412x915 dpr 2.6 q=low, uncapped, every system in play,
+parked in the stand at zoom 44; mean frame interval, 3 rounds x 4 s each way; the frame pacing makes the p50 bimodal
+so the means are the number): today's cut+tilt +0.20 ms, dither -0.20, cut front +0.26, stipple -0.14, dither+stipple
+-0.60, light +0.02 — all within the run's noise (means 8.8-10.0 ms). The treatments are a few ALU and a discard in two
+fragment paths; no readback, no pass.
+
+Shots and GIFs: C:/Projects/shots88/presentation/forest-*.png, forest-ride-*.gif.

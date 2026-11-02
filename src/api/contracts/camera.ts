@@ -12,6 +12,8 @@
 // metrics run along an autopilot without a browser; the browser's adapter (play/camera/apply.ts) writes the frame
 // into the renderer's Camera (target, zoom, azimuth, elevation, cut).
 
+import type { PresentLook } from './presentation';
+
 export type V2 = [number, number];
 export type V3 = [number, number, number];
 
@@ -135,6 +137,8 @@ export interface CamFrame {
   view: CamView;
   cut: CamCut;
   signals: CamSignal[];
+  /** (round 124, presentation: PRE1) the region's presentation look (the canopy's treatments, the local light); absent: none */
+  present?: PresentLook | null;
 }
 
 export interface CamContext {
@@ -145,7 +149,8 @@ export interface CamContext {
   world: SightWorld;
 }
 
-export type CamModeId = 'chase' | 'rotate' | 'tilt' | 'cutaway' | 'cutfade' | 'edge' | 'dither';
+/** ('present': round 124, the region presentation prototypes — a mode given to the rig from outside: CameraRig.extra) */
+export type CamModeId = 'chase' | 'rotate' | 'tilt' | 'cutaway' | 'cutfade' | 'edge' | 'dither' | 'present';
 
 /** One camera variant: it reads the frame so far and writes its own part. */
 export interface CameraMode {

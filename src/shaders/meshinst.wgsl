@@ -11,6 +11,8 @@ struct MIOut {
   @location(1) @interpolate(flat) info: vec4<u32>,
   // local height share up the part (0 its foot, 1 its top): the crown darker underneath
   @location(2) h: f32,
+  // (round 124, PRE1) the instance's foot (world): the presentation's foreground cut asks where the tree stands
+  @location(3) @interpolate(flat) base: vec3<f32>,
 };
 
 fn miKind(vi: u32) -> u32 {
@@ -67,6 +69,7 @@ fn vsInst(@location(0) a: vec4<f32>, @builtin(vertex_index) vi: u32, @builtin(in
   o.info = vec4<u32>(k, select(part, fpart, fl), winIdx(cell), u32(seed * 65535.0));
   // (flora: the sway weight stands in for the height share up the plant — it rises with it)
   o.h = select(a.z, sway, fl);
+  o.base = vec3<f32>(r0.w, r1.w, r2.w);
   return o;
 }
 
@@ -78,6 +81,8 @@ fn fsInst(in: MIOut) -> FOut {
   if (cutAway(in.wpos, in.pos.xy)) { discard; }
   let k = in.info.x;
   let part = in.info.y;
+  // (round 124, PRE1) the region presentation's canopy treatments (render.wgsl presentReach; 0 unless one is on)
+  if (presentReach(in.wpos, in.base, part == 4u || part == 1u) > bayer4(in.pos.xy)) { discard; }
   let rnd = f32(in.info.w) / 65535.0;
   var alb: vec3<f32>;
   var mat = MAT_WOOD;
