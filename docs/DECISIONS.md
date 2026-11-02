@@ -370,7 +370,7 @@ each was implemented.
   merged). First slice: Briar Hollow in a drought. Plan phases 0 (fact layer), 1 (template engine + world inspector),
   2 (Briar Hollow), 3 (catalog batches), 4 (the army arc).
 
- The user, verbatim: "Does the river falling or a structure going up need simulation? I think we already have steady flows computed so you can just lower the flow factor coming in and it will dry up. A building going up can just place the structure instead of simulating agents building them. We only need full simulation where the player is looking but our world is robust enough I think that we can do lots of this as near instant cheap mutations." → every opportunity outcome is a near-instant mutation of authoritative state (a river falls by lowering its steady flow's inflow; a structure is placed directly); full simulation only where the player is looking, which reflects the mutated state when it streams in.
+- The user, verbatim: "Does the river falling or a structure going up need simulation? I think we already have steady flows computed so you can just lower the flow factor coming in and it will dry up. A building going up can just place the structure instead of simulating agents building them. We only need full simulation where the player is looking but our world is robust enough I think that we can do lots of this as near instant cheap mutations." → every opportunity outcome is a near-instant mutation of authoritative state (a river falls by lowering its steady flow's inflow; a structure is placed directly); full simulation only where the player is looking, which reflects the mutated state when it streams in.
 
 - The user, verbatim: "Note that this should probably interact with our unit traits and modular units. Undead may work tirelessly with no sleep. Gnoll knights may regenerate etc" → one trait vocabulary across the fact layer and the GPU unit traits; a pawn's traits come from kind, species, role, tags and (later) its composed body and gear; traits modify opportunity requirements, durations and outcomes (undead work around the clock, regenerating pawns recover between turns, flyers shorten routes) and drive agent behaviour where the player looks.
 
@@ -393,6 +393,10 @@ each was implemented.
   → facts (with opportunities) readied and merged into the run structure on merge124: the run's cards come from the fact
   layer's templates with presenters and rewards. The interface is known-bad and to be experimented with later. Next:
   dialogs, interiors, character portraits, camera management and zoom, foliage; the user has documents to share.
+
+- The user, verbatim: "Oh yeah definitely update the world model so all this data lives in it. Sounds good!" (on agents' and armies' whereabouts and commitments kept inside run code) → all pawn and army state lives in the world model and persists through the snapshot. And: "Ok here is a doc I wrote about experimenting with cool plant rendering. It's sort of low priority but I really want to improve the visuals around flora." → kept verbatim at docs/design/FOLIAGE_WIND.md (wind-responsive foliage, GPU-only, prioritised experiments with a stop/go rule); BACKLOG FLO30, low priority.
+
+- The user's camera and presentation handoff, kept verbatim at docs/design/REGION_PRESENTATION.md ("Ok here is the document on cameras"): four reviewable prototypes with region presentation profiles: (A, first) birch forest canopy to understory; (B) hoverbike canyon; (C) cliffside climb; (D) a throne-room interior as a separate scene with petitioners opening the opportunity UI. Perceptual continuity, not geometric; reuse the world; keep isometric by default; toggles off by default; repeatable A/B and a review overlay. → branch presentation from herolab (camera contract, cut/tilt, lab framework) with places merged; BACKLOG PRE1.
 
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
