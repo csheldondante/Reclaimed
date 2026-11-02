@@ -131,7 +131,11 @@
 .dlg-fact.good .dlg-fact-v { color: #a8e08a; }
 .dlg-fact.bad .dlg-fact-v { color: #ffad8a; }
 .dlg.petition, .dlg-scrim.petition { position: fixed; }
-.dlg.petition { z-index: 71; max-height: 78vh; max-height: 78dvh; }
+.dlg.petition { z-index: 71; max-height: 86vh; max-height: 86dvh; padding-top: 10px; }
+.dlg.petition .dlg-text { font-size: 17px; }
+.dlg.petition .dlg-choices { gap: 6px; margin-top: 10px; }
+.dlg.petition .dlg-choice { min-height: 46px; padding: 7px 12px; }
+.dlg.petition .dlg-facts { margin-top: 8px; padding: 6px 10px; }
 .dlg-scrim.petition { z-index: 70; }
 .dlg.petition .dlg-portrait { width: 72px; height: 72px; border-radius: 14px; background-color: #1a1612; image-rendering: pixelated; }
 .dlg-choice.off { filter: grayscale(1) brightness(0.7); cursor: default; }

@@ -59,9 +59,8 @@ await run({ name: 'dialog2-petitions', kind: 'behaviour', size: '412x915' }, asy
     });
   /** the line typed out (a tap shows it all), then the answers */
   const typed = async () => {
-    await sleep(400);
-    await p.evaluate(() => document.querySelector('.dlg.petition .dlg-text')?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
-    await sleep(700);
+    // (a tap on a line still typing shows it all; on a finished line with no answers it would close the talk: wait)
+    await sleep(3500);
   };
   const answer = async (text) => {
     const ok = await p.evaluate((t) => {

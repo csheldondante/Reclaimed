@@ -16294,3 +16294,8 @@ you need to do that with dialogs." Branch `dialog2` from places 5b24d9a.
   save and rolled for an old record; the petition from the template; commit, refuse and haggle as outcomes and
   relationship facts with the presenter and the group; greetings that remember into the next run; the run's forced
   and passable cards), test/unit/writing.test.ts 8. npm test: 552 passed (2 expected fail).
+- Headless (scripts/dialog.mjs, the atlas level with every system, 412x915, passed): the forced outriders open as a talk
+  with Bram Cotter (portrait, aside, the panel, no refuse); the muster haggled and refused by a stubborn scout, the talk
+  opened again at his answer; the harvest refused (the signal said, the grain rotted at once); the watchtower agreed
+  (the thanks, the crew running on the map). Shots and a GIF in C:/Projects/shots88/dialog2/. The petition panel was
+  tightened so five answers fit at 412x915.
