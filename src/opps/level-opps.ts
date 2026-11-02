@@ -95,6 +95,17 @@ export class LevelOpps extends LevelSit {
     this.opps.arrive();
     this.log.push(...this.opps.log.splice(0));
   }
+  /** (round 126) a scene's bargain and its yield read the holdings: goods, and renown (a good) */
+  protected held(): { goods: Record<string, number>; renown: number } {
+    const g = this.opps.holdings.goods as Record<string, number>;
+    return { goods: { ...g }, renown: g.renown ?? 0 };
+  }
+  protected pay(goods: string, count: number): void {
+    const g = this.opps.holdings.goods as Record<string, number>;
+    if ((g[goods] ?? 0) < count) throw new Error(`opportunities: a toll of ${count} ${goods}, ${g[goods] ?? 0} held`);
+    g[goods] -= count;
+    this.log.push(`paid ${count} ${goods}`);
+  }
   protected finishRecord(): RunRecord {
     return finishOpps(this.world, this.opps, this.d.hero);
   }
@@ -224,7 +235,8 @@ export class LevelOpps extends LevelSit {
     const c = library.get(id);
     const e = c?.profile().encounters;
     return [
-      { icon: '🏁', name: 'ride and race', on: (e?.race ?? 0) >= 0.5 },
+      // (round 126: no race without an arena with jumps and crowds — none exists yet, so no hero plays one)
+      { icon: '🏁', name: 'race (needs an arena)', on: false },
       { icon: '⇢', name: 'chase and flee', on: (e?.chase ?? 0) >= 0.5 },
       { icon: '⚔', name: 'combat', on: (e?.fight ?? 0) >= 0.5 },
       { icon: '💀', name: 'raise and command', on: !!c?.params.some((x) => x.id === 'raiseReach') },

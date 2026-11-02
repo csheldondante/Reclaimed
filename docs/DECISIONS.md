@@ -3,6 +3,19 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-11-02 — round 126 (session 5, `encounters`) — the hero missions are still a race with a flag
+
+- The user, verbatim, after playing the living-world run on places:
+
+> Lastly, the actual hero missions are still the race with a flag and not actually any of the in world things we discussed like chases or fights or scenes with conversations and combat.
+
+- → Every played card is an encounter in the world (BACKLOG EN1-EN13, DEVLOG round 126 `encounters`): chases (the
+  quarry already running close ahead), fleeing (riders on your tail, lose them or cut them down), fights and ambushes
+  (won by killing or breaking them), the town defended (the vanguard at the gates at once), escorts (followers ordered to
+  safety under pursuit), scenes with conversation and combat (what's said starts a fight, makes them yield, or buys them
+  off). Each has its enemies on screen within seconds, a way to lose, and reports its tier to the opportunity. No goal
+  flag is the objective; races only with an arena (none yet: no race is dealt).
+
 ## 2026-10-31 — round 120 (session 5) — after playing the run, the towns and the birches; runs redesigned
 
 - The user, verbatim:

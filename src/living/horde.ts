@@ -29,6 +29,7 @@ import type { HordeTune } from '../opps/tune';
 import type { Ctx, Helper, Stage } from './dsl';
 import type { TemplateDef } from './engine';
 import type { FactWorld } from './world';
+import { encounterSpec, specCtx } from '../encounters/spec';
 
 /** what a levy that has stood in a fight carries (the ford's tag, a saved town): a disaster on a fight lifted */
 export const VETERANS: BonusRecord = { why: 'veterans hold', on: 'resolve', themes: ['fight'], effect: { kind: 'negate', tier: 'disaster' } };
@@ -54,37 +55,17 @@ export function wayTemplate(c: SituationChoice, to: SituationArea): string {
 }
 
 /**
- * (round 124) The encounter an area is: its play, with the threat in it (its own foes and pursuers, the area's
- * `threat`, the outriders still on the hero). Every player card shows it; a Node test holds that none is empty.
+ * (round 124) The encounter an area is, for its card: (round 126) read off the area's EncounterSpec
+ * (encounters/spec.ts), the same spec the live play plays — so a card can't promise a chase that plays as a ride to a
+ * flag. Its counts don't depend on the hero (a spec's distances and paces do: the live play makes it with the hero's
+ * cruise). Every player card shows it; a Node test holds that none is empty.
  */
 export function encounterOf(sr: SituationRun, a: SituationArea, evacuate = false): Encounter {
-  const p = a.play;
-  const x = a.threat ?? { foes: 0, pursuers: 0 };
-  const behind = (sr.pursuers?.count ?? 0) + x.pursuers;
-  const th = sr.sit.threat;
-  const tail = behind ? `, ${behind} ${th.role} behind you` : '';
-  switch (p.kind) {
-    case 'flee':
-      return { kind: 'flee', foes: 0, pursuers: (th.outriders?.count ?? 0) + x.pursuers, text: `${(th.outriders?.count ?? 0) + x.pursuers} outriders on your heels: get away, or cut them down` };
-    case 'ambush':
-      return { kind: 'ambush', foes: p.foes + x.foes, pursuers: behind, text: `${p.foes + x.foes} ${p.role} in the road${tail}` };
-    case 'deliver':
-      return { kind: 'gauntlet', foes: x.foes, pursuers: behind, text: `${x.foes} ${th.role} between you and the hall${tail}; ${Math.round(p.limit)} s to get the word in` };
-    case 'trader':
-      return { kind: 'skirmish', foes: x.foes, pursuers: behind, text: `${x.foes} ${th.role} round the trader: drive them off, then it trades${tail}` };
-    case 'chase':
-      return { kind: 'chase', foes: p.quarry, pursuers: behind, text: `${p.quarry} ${p.role} already running, a few seconds ahead: cut them all down before they get away${tail}` };
-    case 'rescue':
-      return { kind: 'rescue', foes: p.guards, pursuers: behind, text: `${p.guards} ${p.role} guard ${p.captives} captives: cut them down, then lead the captives out${tail}` };
-    case 'scout':
-      return { kind: 'patrol', foes: p.patrols * 2, pursuers: behind, text: `${p.patrols * 2} ${p.role} patrol the way to the lookout${tail}` };
-    case 'town': {
-      const n = Math.max(1, th.count - sr.thinned);
-      return evacuate
-        ? { kind: 'evacuate', foes: 0, pursuers: behind, horde: n, text: `${n} of ${th.name} come for the town: lead its people out to ${sr.sit.refuge.name} before they're caught` }
-        : { kind: 'defend', foes: 0, pursuers: behind, horde: n, text: `${n} of ${th.name} come for the town: hold it, or it burns` };
-    }
-  }
+  const s = encounterSpec(a, specCtx(sr, { id: 'card', cruise: 1 }, evacuate));
+  const n = (part: string) => s.bands.filter((b) => b.part === part).reduce((k, b) => k + b.count, 0) + (part === 'pursuers' && s.escort ? s.escort.pursuers.count : 0);
+  const kind: Encounter['kind'] = { flee: 'flee', ambush: 'ambush', deliver: 'gauntlet', trader: 'skirmish', chase: 'chase', rescue: 'rescue', scout: 'patrol', town: evacuate ? 'evacuate' : 'defend' }[a.play.kind] as Encounter['kind'];
+  if (s.finale) return { kind, plays: s.kind, foes: 0, pursuers: (sr.pursuers?.count ?? 0), horde: n('foes'), text: s.goal };
+  return { kind, plays: s.kind, foes: n('foes') + n('guards') + n('quarry'), pursuers: n('pursuers'), text: s.goal };
 }
 
 /** (round 124) a hall or a trader with no threat of its own gets one: nothing the player plays is a ride to a flag */

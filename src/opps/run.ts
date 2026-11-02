@@ -317,7 +317,8 @@ export class OppRun {
     if (!p) throw new Error('opportunities: areaDone with no player commitment');
     const a = this.sr.area();
     this.sr.areaDone(r);
-    const tier: Tier = r.heroDied ? 'disaster' : r.won ? (a.play.kind === 'flee' && (r.pursuers ?? 1) === 0 ? 'triumph' : 'success') : 'failure';
+    // (round 126: the encounter judges its own tier — encounters/rules.ts; a test's result without one, the old rule)
+    const tier: Tier = r.tier ?? (r.heroDied ? 'disaster' : r.won ? (a.play.kind === 'flee' && (r.pursuers ?? 1) === 0 ? 'triumph' : 'success') : 'failure');
     this.engine.resolve(p.id, tier);
     this.playing = null;
     const levy = this.holdings.agents.find((x) => x.id === 'levy');

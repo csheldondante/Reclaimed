@@ -22,3 +22,4 @@ export * from './orders';
 export * from './facts';
 export * from './facts-store';
 export * from './facts-rules';
+export * from './encounter';

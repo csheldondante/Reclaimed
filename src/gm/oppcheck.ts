@@ -45,6 +45,9 @@ export function checkOpportunity(o: Opportunity, h: Holdings, turn: number, w: O
     const e = o.challenge.encounter;
     if (!e) p.push(`${at}: a played card names its encounter`);
     else if (e.foes + e.pursuers + (e.horde ?? 0) <= 0) p.push(`${at}: its encounter (${e.kind}) has no enemies in it: a ride to a flag`);
+    // (round 126: the game it plays, read off its EncounterSpec; a race only with an arena — none exists)
+    if (e && !e.plays) p.push(`${at}: its encounter (${e.kind}) names no game it plays (encounters/spec.ts)`);
+    else if (e?.plays === 'race' || e?.kind === 'race') p.push(`${at}: a race, and no arena (the user: "Don't have races unless you have arenas with jumps and crowds")`);
     if (!('minutes' in o.duration)) p.push(`${at}: a played card's duration is in minutes`);
   } else if (!('turns' in o.duration) || o.duration.turns < 0) p.push(`${at}: a crew's card's duration is in turns, not negative`);
   if (o.odds) {

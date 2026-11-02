@@ -52,6 +52,9 @@ export interface AreaResult {
   heroDied?: boolean;
   /** outriders still hunting the hero when it left (0: lost or cut down) */
   pursuers?: number;
+  /** (round 126) the encounter's own judgement of how it went (encounters/rules.ts), and its line */
+  tier?: import('../api/contracts/opportunity').Tier;
+  why?: string;
 }
 
 export interface ChoiceOption {

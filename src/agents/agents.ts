@@ -593,6 +593,15 @@ export class Agents implements SimSystem {
     return this.kinds[i];
   }
 
+  /** (round 126, encounters) Kind `i`'s walking speed changed (cells/s), its look kept: written with the next tick's
+   *  params (a kind's model is uploaded once, by defineKind) */
+  setKindSpeed(i: number, speed: number): void {
+    const k = this.kinds[i];
+    if (!k) throw new Error(`agents: setKindSpeed on undefined kind ${i}`);
+    if (!(speed > 0)) throw new Error(`agents: a kind's speed must be positive (${speed})`);
+    this.kinds[i] = { ...k, speed };
+  }
+
   /** (LW1) Bodies lying as corpses now (corpse mode). */
   get corpseCount(): number {
     return this.corpses.size;

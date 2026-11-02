@@ -12,7 +12,29 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
-## Round 126 (2026-11-02, session 5, `merge124`) — the living world merged into the run structure (DECISIONS round 125, newest)
+## Round 126 (2026-11-02, session 5, `encounters`) — every played card a scene in the world (DECISIONS round 126, newest)
+
+The user (verbatim, after playing the living-world run on places): "Lastly, the actual hero missions are still the race
+with a flag and not actually any of the in world things we discussed like chases or fights or scenes with conversations
+and combat." DEVLOG round 126 (`encounters`) has the diagnosis and the measurements.
+
+| id | item | size | status |
+|---|---|---|---|
+| EN1 | Why the cards were a race with a flag (headless, per card): the road plays (flee, ambush, deliver, scout) were won by reaching a goal flag 100-500 cells off; AgentUnits ignored SpawnOpts.speed (riders asked at 24 cells/s walked at 3.1, the dead at 1.5) and runsit's pursue() deleted and re-spawned them off the screen; the rescue's guards counted as gone once they chased the hero 30 cells off; the only way to lose was dying | S | done (`encounters`) |
+| EN2 | The encounter contract (contracts/encounter.ts EncounterSpec / EncounterResult), the one spec per area (encounters/spec.ts), the pure rules with tiers (encounters/rules.ts), the live play (encounters/live.ts); the card's `plays` read off the same spec | M | wip (`encounters`: headless check pending) |
+| EN3 | Units honour SpawnOpts.speed: riders (kind 7, a beast with a rider) at the pace asked; pursue()'s delete/re-spawn removed | S | wip (`encounters`: headless check pending) |
+| EN4 | Chase: the quarry running 9-13 cells ahead at 0.75 of the hero's cruise; run down, or it's away | S | wip (`encounters`: headless check pending) |
+| EN5 | Flee: riders 8-14 cells on the hero's tail at 0.85 of its cruise; lose them (45 cells clear for 3 s) or cut them down; caught, they swing; beaten at 30 % health. The word to a hall is a flee to its gate | S | wip (`encounters`: headless check pending) |
+| EN6 | Fight: the ambush and the ridge's patrol come at the hero at once; won when down or their morale breaks (60 %) | S | wip (`encounters`: headless check pending) |
+| EN7 | Escort: break the guards, the captives freed as followers (☞ Follow me / ✋ Hold here), riders come for them; half safe wins | S | wip (`encounters`: headless check pending) |
+| EN8 | Scene: the trader's raiders' chief talks (DialogTalk over src/dialog behind encounters/talk.ts, for dialog2 to replace): fight, they back down (renown, or a lich), or a toll paid (supplies) | S | wip (`encounters`: headless check pending) |
+| EN9 | Defend: the horde's vanguard at the gates from the start (a quarter, at least 3), the rest from its road as before | S | wip (`encounters`: headless check pending) |
+| EN10 | Races only with an arena: the spec refuses one without; no card is a race; the roster's "race" mode off | S | wip (`encounters`: headless check pending) |
+| EN11 | "Lose them in cover" (a flee broken by line of sight: woods, a ravine) — the flee is won on distance only today | M | open |
+| EN12 | Riders in one window share one pace (the GPU's speed is a kind's): per-unit speed on the agents (a speed scale in the unit's record) would let riders of different paces meet | M | open |
+| EN13 | The dead on foot (shamblers, reach 1.1) rarely land a blow on the hovering bike: a fight against them is lost only on its time limit | S | open |
+
+## Round 126 (2026-11-02, session 5, `merge124`) — the living world merged into the run structure (DECISIONS round 125)
 
 The user (verbatim): "Please proceed with getting it ready to merge into our run structure for now." and, on the levy's
 march state: "Oh yeah definitely update the world model so all this data lives in it." `facts` (5aa6d0f, holding

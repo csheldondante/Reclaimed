@@ -26,6 +26,7 @@ import { runGraph } from '../runplan/graph';
 import { Journey, type JourneyState } from '../runplan/travel';
 import { ROW_H } from '../world/lattice';
 import { AreaPlay, type AreaEnd, type TownPlaces } from './area';
+import { DialogTalk, type Talk } from '../encounters/talk';
 import { situationMap } from './fill';
 import { finishSituation } from './finish';
 import { UnitFollowers } from './followers';
@@ -91,6 +92,8 @@ export class LevelSit {
   runs = 0;
   readonly log: string[] = [];
   protected followers: UnitFollowers;
+  /** (round 126) how the encounters' scenes speak (src/dialog's box, behind encounters/talk.ts) */
+  protected talk: Talk;
   /** (the scripts hide it for a look at the town) */
   readonly card: HTMLDivElement;
   protected warping = false;
@@ -103,6 +106,7 @@ export class LevelSit {
     this.graph = runGraph(d.terrain.atlasGraph(), { names: { regions: this.wiki.regions, settlements: this.wiki.snapshot.settlements }, facts });
     this.world = d.world ?? MemoryWorldState.restore(structuredClone(this.wiki.snapshot));
     this.followers = new UnitFollowers(d.units, 'hero');
+    this.talk = new DialogTalk(d.ui);
     this.card = document.createElement('div');
     this.card.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);top:8px;width:min(92vw,440px);max-height:62vh;overflow:auto;z-index:60;background:rgba(18,16,12,0.93);color:#efe6d2;font:13px/1.4 system-ui,sans-serif;padding:8px 10px;border-radius:9px;border:1px solid #5a4a30;pointer-events:auto;';
     this.card.addEventListener('pointerdown', (e) => e.stopPropagation());
@@ -152,6 +156,15 @@ export class LevelSit {
     return finishSituation(this.world, this.run, this.d.hero);
   }
 
+  /** (round 126) what the hero has to bargain with in a scene (a situation run alone holds nothing: the opportunities
+   *  run's holdings do) */
+  protected held(): { goods: Record<string, number>; renown: number } {
+    return { goods: {}, renown: 0 };
+  }
+  protected pay(goods: string, count: number): void {
+    throw new Error(`runsit: a toll of ${count} ${goods} with nothing held`);
+  }
+
   get sit(): Situation {
     return this.run.sit;
   }
@@ -181,7 +194,7 @@ export class LevelSit {
     const S = this.d.session;
     S.respawn();
     S.paused = false;
-    const a = new AreaPlay({ ui: this.d.ui, api: this.d.api, units: this.d.units, session: S, run: this.run, followers: this.followers, toWin: this.d.toWin, bounds: this.d.bounds, places: this.places, townsfolk: this.townsfolk }, this.cameFrom);
+    const a = new AreaPlay({ ui: this.d.ui, api: this.d.api, units: this.d.units, session: S, run: this.run, followers: this.followers, toWin: this.d.toWin, bounds: this.d.bounds, places: this.places, townsfolk: this.townsfolk, talk: this.talk, held: () => this.held(), pay: (g, n) => this.pay(g, n) }, this.cameFrom);
     this.area = a;
     for (const b of a.area.say ?? []) this.d.say(b.line, b.seconds ?? 4);
     this.render();
@@ -492,6 +505,7 @@ export class LevelSit {
 
   dispose(): void {
     this.area?.dispose();
+    this.talk.dispose();
     this.card.remove();
     this.d.map.overlay = undefined;
     this.d.map.playerAt = undefined;

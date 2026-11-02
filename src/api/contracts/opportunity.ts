@@ -210,6 +210,9 @@ export const ENCOUNTER: Record<EncounterKind, { icon: string; name: string }> = 
 /** an encounter: its kind, the enemies in it (foes in the way, pursuers behind, a horde), and a line for the card */
 export interface Encounter {
   kind: EncounterKind;
+  /** (round 126) the game it is played as (contracts/encounter.ts EncounterSpec kind: chase, flee, fight, defend,
+   *  escort, scene; a race only with an arena) */
+  plays?: import('./encounter').EncounterSpecKind;
   foes: number;
   pursuers: number;
   horde?: number;

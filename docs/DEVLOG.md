@@ -16207,3 +16207,69 @@ places: the merge added none of its own). The structure review: C:/Projects/shot
   (two runs each): p50 9.9/9.9 vs 9.9/9.9 ms, p95 12.3/13.4 vs 12.3/12.4, GPU 12.1/13.9 vs 13.4/12.1 ms — within the
   spread. Shots: C:/Projects/shots88/merge124/ (1-roster, 2-run-turn-presenter-card, 3-effect-card-reward,
   4-encounter-enemies, 5-mutation-watchtower-before-after, 5b-mutation-weir-river-before-after, opps/, inspector-*).
+
+## 2026-11-02 — round 126 (`encounters`): every played card a scene in the world (BACKLOG EN1-EN13)
+
+The user, after playing the living-world run on places: "Lastly, the actual hero missions are still the race with a flag
+and not actually any of the in world things we discussed like chases or fights or scenes with conversations and combat."
+Branch `encounters` from places 5b24d9a.
+
+**Why it was a race with a flag (EN1).** scripts/encounters.mjs plays one card headless as the deployed page runs it (the
+atlas level, every system, 1x, 412x915): the run skipped (won) to the first edge that offers the card, the card committed
+from the map, its leg travelled, its area played by an autopilot through the real controls (`--mode win`) or by a hero
+that idles (`--mode lose`), sampling four times a second the hostiles within 20/40 cells, how many chase or swing, the
+hero's health, the goal flag. On places' code (hoverbike unless said):
+
+| card | what played | first foe within 20 cells | closest | how it ended |
+|---|---|---|---|---|
+| outriders (flee) | a flag 513 cells off; 3 outriders spawned 36 cells back, "lost" at 6 s | never | 28.6 | triumph in 18 s, at the flag |
+| outriders, idle | the riders walk up and hit | 9 s | 0.1 | the hero died at 46 s (the only loss: the run ends) |
+| ride → ambush | a flag ~500 cells off, 5 foes midway | never | 44 | success in 22 s, at the flag |
+| ride → ambush (lich) | the same, 110 cells | 10 s | 8.7 | success in 24 s, at the flag |
+| muster (gauntlet) | the hall 5.6 s off | 0.3 s | 6.2 | success in 6 s |
+| chase | the quarry "a few seconds ahead" at a walk | 0.3 s | 1.4 | failure at 78 s (no blow struck: the quarry walked at 3 cells/s) |
+| rescue | guards round the captives | 6.1 s | 3.2 | success in 8 s: freed without a blow |
+| scout (patrol) | a flag on the ridge, patrols on the way | 4.5 s | 0.9 | success in 16 s, at the flag |
+| warn (defend) | the horde marches on the town | 15 s | 0.1 | saved at 193 s — the one real scene |
+
+The causes, at the root:
+- **The objective was the flag.** runsit/area.ts won flee, ambush, deliver and scout on reaching a goal (8 cells of it);
+  the area was sized to 16 s of the hero's cruise (110-520 cells: ~500 for the bike), the foes on it optional.
+- **The units ignored SpawnOpts.speed.** AgentUnits read it only as slow or not (under 2.2 cells/s: a shambler); a
+  kind's speed is fixed on the GPU (raider 3.1, the dead 1.5). The outriders asked for at 0.75 × the bike's cruise
+  (24 cells/s) walked at 1.5-3.1, and runsit's `pursue()` hid it: past 70 cells it deleted them and re-spawned them 35
+  cells behind a slow hero, or dropped them past 140 from a fast one — the bike "lost" all three in 6 s. The chase's
+  quarry crawled the same way.
+- **The rescue's guards counted as gone** once they chased the hero 30 cells off the camp: freed without a fight.
+- **No way to lose but dying** (which ends the run), and the time limits (the hall's word, the chase's 120 s).
+
+**What each encounter is now (EN2-EN10).** One contract (contracts/encounter.ts), one spec per area (encounters/spec.ts),
+pure rules with tiers (encounters/rules.ts), one live play (encounters/live.ts); runsit's AreaPlay is the area round it
+(ARCHITECTURE "Encounters"). The card's text and counts are read off the same spec, and the card names the game it plays
+(`plays`).
+- flee (the outriders): riders on the hero's tail from the first second (8-14 cells back, at 0.85 of its cruise: a cruise
+  doesn't shake them, a boost or a jump does); lost when 45 cells clear of every one for 3 s, or all cut down; caught,
+  they swing; beaten at 30 % health (a failure that doesn't end the run), dead a disaster.
+- the word to a hall (muster): a flee to the hall's gate (6 s of cruise, 45-200 cells), riders on the tail and more
+  across the way; the gate pointed at (a green banner, like the refuge's), the riders the play.
+- fight (the ambush; the scout's ridge, now "Break the patrol"): the foes 10-16 cells ahead come at the hero at once;
+  won when down or broken (60 % down: the rest run); past 100 s they held the road.
+- chase: the quarry 9-13 cells ahead, running for its escape at 0.75 of the hero's cruise; run down (any blow), or it's
+  away (14 s of its pace from its start, or 70 cells off the hero).
+- escort (rescue): the guards on the captives' pen 16 cells ahead; broken, the captives follow (☞ Follow me / ✋ Hold
+  here on the bar) and riders come for them; half of them at safety (45-80 cells off the road) wins.
+- scene (the trader): the raiders' chief speaks as the hero comes up (DialogTalk: src/dialog's DialogBox behind
+  encounters/talk.ts, for dialog2 to replace); fight (they turn hostile), they back down (before renown, or a lich:
+  a triumph), or a toll of 2 supplies (a cost; offered only when held).
+- defend (the town): the finale's rules as before, and a vanguard — a quarter of the horde, at least 3 — 16 cells ahead
+  of the hero at the start, coming at it; the rest from its road at `hordeIn` (up to a minute).
+- races: refused without an arena (none exists): no card is one; the roster's race mode is off.
+- **Units honour SpawnOpts.speed (EN3)**: asked for at 5 cells/s or more, a unit is a rider (kind 7: a beast with a rider
+  on it, its own voxels) at the pace asked (Agents.setKindSpeed). The GPU's speed is a kind's, so the riders in a window
+  share one pace (EN12); a spec asks one (specProblems refuses two). pursue() is deleted.
+
+Tests: test/unit/encounters.test.ts (13): every player template (outriders, ride, muster, warn, lead-out, rescue, scout,
+chase) and every area and detour of seed 1's run, for the bike and the lich, is a spec with enemies or a quarry within a
+screen, a way to lose, and no race; the cards dealt name the game they play, read off the spec played; the riders' pace
+and place; the rules for each kind (flee lost/beaten/ragged/cut down; haven; chase caught/away; fight morale and a dear
+win; escort freed/safe/lost; scene fight/yield/refused/bargain; race refused); the encounter's tier resolves the card.
