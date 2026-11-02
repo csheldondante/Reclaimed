@@ -3,6 +3,14 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-11-02 — round 126 (session 5, `interiors`) — on the first interior shots
+
+- The user, verbatim (relayed by main): "Interiors are coming along. I think we can zoom in more and hide outside the
+  building eventually"
+- → Inside, the shown storey framed edge to edge, and everything outside the building's footprint not drawn at all
+  (Cut.focus with the storey's tiles); the walk in from the street keeps the outside going away as you enter. BACKLOG
+  INT14.
+
 ## 2026-10-31 — round 120 (session 5) — after playing the run, the towns and the birches; runs redesigned
 
 - The user, verbatim:

@@ -30,6 +30,8 @@ struct Camera {
   // (interiors) the local lights (camera.ts LocalLight): x how many; then two a light (xyz, radius | colour, flicker)
   nLights: vec4<f32>,
   lights: array<vec4<f32>, 32>,
+  // (interiors) the focus's footprint: veil.z quads, two vec4s a quad (its four corners' xy), veil.w the margin
+  focusQuads: array<vec4<f32>, 16>,
 };
 
 /**
@@ -130,7 +132,33 @@ fn inCut(p: vec3<f32>) -> bool { return CAM.cut.w > 0.5 || seeReach(p) > 0.5; }
  */
 fn cutAway(p: vec3<f32>, px: vec2<f32>) -> bool {
   let b = bayer4(px);
-  return sliceReach(p) > b || seeReach(p) > b;
+  // (interiors: past the focus, once it's whole, nothing is drawn — the building alone in the dark)
+  return sliceReach(p) > b || seeReach(p) > b || focusOut(p) * smoothstep(0.9, 1.0, CAM.focus.w) > b;
+}
+
+/** (interiors) how far past the focus p is, 0..1 by its amount: past its radius on screen from the focus point */
+fn focusOut(p: vec3<f32>) -> f32 {
+  if (CAM.focus.w <= 0.0) { return 0.0; }
+  // (far from its middle: out at once)
+  if (length(p.xy - CAM.focus.xy) > CAM.focus.z + 2.0) { return CAM.focus.w; }
+  // the footprint's quads: inside one (by the margin), shown; the distance out of the nearest, the fade
+  let n = u32(CAM.veil.z);
+  var best = 1e9;
+  for (var i = 0u; i < n; i++) {
+    let a = CAM.focusQuads[i * 2u];
+    let b = CAM.focusQuads[i * 2u + 1u];
+    let c = array<vec2<f32>, 4>(a.xy, a.zw, b.xy, b.zw);
+    var out = -1e9;
+    for (var k = 0u; k < 4u; k++) {
+      let s0 = c[k];
+      let s1 = c[(k + 1u) % 4u];
+      let dir = normalize(s1 - s0);
+      // (counter-clockwise: the inside on the left; outward the right)
+      out = max(out, dot(p.xy - s0, vec2<f32>(dir.y, -dir.x)));
+    }
+    best = min(best, out);
+  }
+  return smoothstep(CAM.veil.w, CAM.veil.w + 0.6, best) * CAM.focus.w;
 }
 
 /** toward the eye from p: one way for the fixed (orthographic) view, from where it is for the free one */
@@ -878,12 +906,9 @@ fn haze(c: vec3<f32>, wpos: vec3<f32>) -> vec3<f32> {
   var o = mix(c, toLinear(h), 0.03 + 0.1 * G.pollution + lowFog);
   // (interiors) the focus: past its radius on screen the world falls into a cold dark (a building entered holds the eye)
   if (CAM.focus.w > 0.0) {
-    let v = wpos - vec3<f32>(CAM.focus.xy, CAM.veil.y);
-    let e = toEye(wpos);
-    let d = length(v - dot(v, e) * e);
-    let k = smoothstep(CAM.focus.z, CAM.focus.z + 3.0, d) * CAM.focus.w;
+    let k = focusOut(wpos);
     let g = dot(o, vec3<f32>(0.3, 0.59, 0.11));
-    o = mix(o, vec3<f32>(0.012, 0.013, 0.02) + vec3<f32>(g) * 0.06, k);
+    o = mix(o, vec3<f32>(0.012, 0.013, 0.02) + vec3<f32>(g) * 0.06 * (1.0 - CAM.focus.w), k);
   }
   // beyond the reach: a dim, colourless fog (the land not yet reached)
   let fog = 1.0 - smoothstep(0.05, 0.5, reachAt(wpos.xy));
@@ -2017,7 +2042,7 @@ fn drapeTop(p: vec3<f32>) -> f32 {
 @fragment
 fn fsBody(in: VOut) -> FOut {
   // (interiors: a slice hides what's over it — the people upstairs too, not only the floors)
-  if (sliceReach(in.wpos) > bayer4(in.pos.xy)) { discard; }
+  if (sliceReach(in.wpos) > bayer4(in.pos.xy) || focusOut(in.wpos) * smoothstep(0.9, 1.0, CAM.focus.w) > bayer4(in.pos.xy)) { discard; }
   let word = in.info.x;
   let mat = word & 0xffu;
   // a little per-voxel variation so a tumbling slab doesn't read as one block

@@ -178,7 +178,8 @@ export class InteriorScene {
     const el = Math.PI / 6;
     const w = hi - lo + 0.6;
     const h = (fhi - flo) * Math.sin(el) + 1.6 * Math.cos(el) + 0.6;
-    const zoom = Math.min((cam.viewportW * 0.94) / w, (cam.viewportH * 0.62) / h);
+    // (the user: "we can zoom in more" — the storey edge to edge)
+    const zoom = Math.min((cam.viewportW * 1.04) / w, (cam.viewportH * 0.86) / h);
     const sm = (lo + hi) / 2, fm = (flo + fhi) / 2;
     const m: V2 = [rx * sm + fx * fm, ry * sm + fy * fm];
     const [x, y, z] = a.toWindow(m, st.z);
@@ -259,7 +260,9 @@ export class InteriorScene {
     // the town round it falls into the dark as the inside comes in (a building entered holds the eye; nothing of the
     // town is dithered — the slice is tight to the building)
     const open = this.phase === 'street' ? 0 : d.view.assemble;
-    cam.cut.focus = open > 0.01 ? { x: f.x, y: f.y, z: f.z, radius: f.r + 0.4, amount: 0.94 * open } : null;
+    // (the user: "hide outside the building" — wholly, once inside; the transition takes it away as you enter)
+    const quads = a.plan.storeys[a.storey].tiles.map((q) => a.plan.corners.get(q)!.map((c) => [c[0] + this.frame.dx, c[1] + this.frame.dy] as [number, number]));
+    cam.cut.focus = open > 0.01 ? { x: f.x, y: f.y, z: f.z, radius: f.r + 0.2, amount: open, margin: 0.15, quads } : null;
     this.hideUi(this.phase !== 'street');
     // the storey's lights
     const lights: LocalLight[] = [];

@@ -16,7 +16,8 @@ export const CAMERA_CUT_OFFSET = CAMERA_POS_OFFSET + 16;
 /** cut (a vec4), see (4 vec4s), boxes (4 boxes, 2 vec4s each), the slice's shape (2 vec4s: herolab's round 121, ported
  *  as it is there); (interiors) the veil (a vec4), the local lights' count (a vec4) and the lights (2 vec4s each) */
 export const MAX_LOCAL_LIGHTS = 16;
-export const CAMERA_CUT_BYTES = 16 + 4 * 16 + 8 * 16 + 16 + 16 + 16 + 16 + 16 + MAX_LOCAL_LIGHTS * 32;
+export const MAX_FOCUS_QUADS = 8;
+export const CAMERA_CUT_BYTES = 16 + 4 * 16 + 8 * 16 + 16 + 16 + 16 + 16 + 16 + MAX_LOCAL_LIGHTS * 32 + MAX_FOCUS_QUADS * 32;
 
 /** (interiors) A small light the shared lighting adds (render.wgsl localLight): candles, a hearth, lanterns. */
 export interface LocalLight {
@@ -47,9 +48,10 @@ export interface Cut {
   /** (interiors) how far veiled structures are dithered away (0 shown .. 1 gone; the pieces flagged VEIL — a building
    *  entered: its outside goes, its inside is drawn in its place) */
   veil?: number;
-  /** (interiors) everything farther than `radius` on screen from (x, y, z) fades toward black by `amount` (0..1): a
-   *  building entered holds the eye, the town round it falls into the dark */
-  focus?: { x: number; y: number; z: number; radius: number; amount: number } | null;
+  /** (interiors) everything outside the footprint `quads` (window xy, four corners each; at most MAX_FOCUS_QUADS) by more
+   *  than `margin` fades to black by `amount` (0..1), and at 1 isn't drawn at all: a building entered alone in the dark
+   *  (the user: "hide outside the building"). (x, y, z, radius): its middle and reach (the haze's cheap first test). */
+  focus?: { x: number; y: number; z: number; radius: number; amount: number; margin: number; quads: [number, number][][] } | null;
 }
 
 /** the free camera: where it is (world), which way it looks (radians), its vertical field of view */
@@ -317,11 +319,13 @@ export class Camera {
       const sh = c.slice === null ? null : c.sliceShape;
       if (sh) f.set([sh.x, sh.y, sh.radius, sh.rim, sh.fade ?? 0, sh.fadeR ?? 0, sh.bowl ?? 0, (sh.nearOnly ? 1 : 0) + (sh.occluders ? 2 : 0)], o + 52);
       // (interiors) the veil, then the local lights
-      f.set([c.veil ?? 0, c.focus?.z ?? 0, 0, 0], o + 60);
+      const fq = c.focus?.quads.slice(0, MAX_FOCUS_QUADS) ?? [];
+      f.set([c.veil ?? 0, c.focus?.z ?? 0, fq.length, c.focus?.margin ?? 0], o + 60);
       if (c.focus) f.set([c.focus.x, c.focus.y, c.focus.radius, c.focus.amount], o + 64);
       const ls = this.lights.slice(0, MAX_LOCAL_LIGHTS);
       f.set([ls.length, 0, 0, 0], o + 68);
       ls.forEach((l, i) => f.set([l.at[0], l.at[1], l.at[2], l.radius, l.colour[0], l.colour[1], l.colour[2], l.flicker], o + 72 + i * 8));
+      fq.forEach((q, i) => f.set([q[0][0], q[0][1], q[1][0], q[1][1], q[2][0], q[2][1], q[3][0], q[3][1]], o + 72 + MAX_LOCAL_LIGHTS * 8 + i * 8));
     }
   }
 }
