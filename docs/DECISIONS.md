@@ -370,21 +370,24 @@ each was implemented.
   merged). First slice: Briar Hollow in a drought. Plan phases 0 (fact layer), 1 (template engine + world inspector),
   2 (Briar Hollow), 3 (catalog batches), 4 (the army arc).
 
-- (round 125, while `facts` was built) The user, verbatim, on simulation:
+ The user, verbatim: "Does the river falling or a structure going up need simulation? I think we already have steady flows computed so you can just lower the flow factor coming in and it will dry up. A building going up can just place the structure instead of simulating agents building them. We only need full simulation where the player is looking but our world is robust enough I think that we can do lots of this as near instant cheap mutations." → every opportunity outcome is a near-instant mutation of authoritative state (a river falls by lowering its steady flow's inflow; a structure is placed directly); full simulation only where the player is looking, which reflects the mutated state when it streams in.
 
-> Does the river falling or a structure going up need simulation? I think we already have steady flows computed so you can just lower the flow factor coming in and it will dry up. A building going up can just place the structure instead of simulating agents building them. We only need full simulation where the player is looking but our world is robust enough I think that we can do lots of this as near instant cheap mutations.
+- The user, verbatim: "Note that this should probably interact with our unit traits and modular units. Undead may work tirelessly with no sleep. Gnoll knights may regenerate etc" → one trait vocabulary across the fact layer and the GPU unit traits; a pawn's traits come from kind, species, role, tags and (later) its composed body and gear; traits modify opportunity requirements, durations and outcomes (undead work around the clock, regenerating pawns recover between turns, flyers shorten routes) and drive agent behaviour where the player looks.
 
-- → Every outcome is a near-instant, cheap mutation of authoritative state (a river's inflow factor set, a structure
-  placed); "visible" means the next time the player looks. No "needs simulation" marking.
+- The user's answers on the world inspector (1 choosing outcomes, 2 trait rules, 3 species traits), verbatim:
 
-- The user, verbatim, on traits:
+> 1. Yes I do think dialogs would be good to add as a resolution mechanic I even have some ideas about a fun game based around it. 2. Those seem fine. We will iterate on this stuff eventually we are building the proof of concept here first.
+> 3. Agreed. They should unify with the agent traits and the creature builder. Eventually we want our unit builder to link traits and abilities and stats to the creature, training, gear and mount.
+>
+> One important thing to keep in mind as we refine our skill for generating opportunities is making the choices interesting. In some sense mechanical choices are intrinsically motivating to many players so having the impact on what the player gets in terms of resources, pawns, abilities or unlocking things for different modes is good and choices that offer compelling rewards like engine building or unique units are going to make this gameplay more fun. The other side is choosing world changes based on things the player (not just the character) is likely to care about. A town the player built or a diplomatic relationship they created being threatened is far more compelling then a random named settlement. I think we will want to grow our focus out from a single locus and cast of characters and places we establish to the world at large. This is an added constraint but hopefully one that guides the meta helpfully. Named characters with charming dialogues are going to feel much more meaningful as a sacrifice or a reward than a random marsh. Even in the gnoll example having a named gnoll character petition to build barrows will make the steaks feel real and it becomes a relationship fact that can come up in future runs.
 
-> Note that this should probably interact with our unit traits and modular units. Undead may work tirelessly with no sleep. Gnoll knights may regenerate etc
-
-- → One vocabulary with the agents' traits (traits.ts): a pawn's traits from its species, tags and parts (bodies, later
-  gear); one table of trait rules on requirements, duration and outcomes (undead labour faster with no upkeep and the
-  living object; regenerating losses recover; flying travel faster); the simulated agents read the same traits where
-  the player looks (a hook).
+- → Dialogs as a resolution mechanic (the user has ideas for a game around it: to hear). Trait rules fine for the proof of
+  concept. Species traits unify with agent traits and the creature builder; later a unit builder links traits, abilities
+  and stats to creature, training, gear and mount. Opportunity generation principles: (a) mechanically compelling
+  rewards (resources, pawns, abilities, unlocks for other modes, engine building, unique units); (b) stakes in what the
+  PLAYER cares about (a town they built, a relationship they made) over random places; grow outward from a locus and an
+  established cast to the wider world; named characters with charming dialog present cards (a named gnoll petitions for
+  the burrows), and each such exchange becomes a relationship fact that can return in later runs.
 
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
