@@ -5,6 +5,10 @@ import type { Ambience } from '../audio/ambience';
 import { Nature, reclamation, worldHealth } from '../game/nature';
 import { Powers } from '../game/powers';
 import { Director } from '../game/director';
+import { InteriorScene } from '../interiors/install';
+import { InteriorPeople } from '../interiors/people';
+import { DialogBoxSpeech } from '../interiors/speech';
+import { PixelPost } from '../render/pixelpost';
 import { Reach } from '../game/reach';
 import { gatesOf, levelById, type LevelDef } from '../game/levels';
 import { Trial } from '../game/trial';
@@ -389,6 +393,9 @@ export class LevelScene implements Scene {
   private integrity?: Integrity;
   /** (round 117, structures: ?city=) the structures track's city on the window's ground */
   private settlementsView?: SettlementsView;
+  /** (interiors, ?interior=1) a town's hall planned inside and entered from the street (src/interiors) */
+  private interior?: InteriorScene;
+  private interiorWait = 0;
   private shipsView?: ShipsView;
   /** (round 108, AR5/AR8) the tuning panel, the bug report, the playground's stations */
   private tunePanel?: TunePanel;
@@ -2156,10 +2163,72 @@ export class LevelScene implements Scene {
         this.editor?.setVisible(false);
         mountViewer(host.ui, life, core, this.heightAt);
       }
-      else if (mode !== 'empty') wilderness(life, [t[0], t[1]], { herd: Number(host.params.get('lifeherd') ?? 12), dragon: mode === 'dragon', town: mode === 'town', ground: this.heightAt });
+      else if (mode && mode !== 'empty') wilderness(life, [t[0], t[1]], { herd: Number(host.params.get('lifeherd') ?? 12), dragon: mode === 'dragon', town: mode === 'town', ground: this.heightAt });
     }
     lifeFocus(life, core);
     life.update(dt);
+  }
+
+  /**
+   * (interiors) ?interior=1: the town's hall (?ib=<building> another) planned inside once its settlement is planned and
+   * shown; entered with the ⏏ button or Enter (?enter=<s>: by itself after that many seconds — the scripted shots')
+   */
+  private interiorFrame(dt: number): void {
+    const { core, host } = this;
+    if (!this.interior) {
+      // (the pixel-art post pass: ?pixel=<CSS px an art pixel>, 2 by default here; 0 off)
+      const px = Number(host.params.get('pixel') ?? 2);
+      if (px > 0 && !core.post) {
+        const post = new PixelPost(host.gpu.device, core.renderer, host.gpu.format);
+        post.look.px = px;
+        core.setPost(post);
+        (window as unknown as { reclaimed: Record<string, unknown> }).reclaimed.post = post;
+      }
+      const st = this.settlements!;
+      const t = core.camera.target;
+      const town = host.params.get('town');
+      const near = st.near(st.toWorld([t[0], t[1]]), 1e9);
+      const id = town && town !== '1' ? town : near.find((x) => (x.size === 'town' || x.size === 'city') && !!st.plan(x.id))?.id;
+      if (!id || !st.plan(id) || !this.settlementsView!.planFrame(id)) return;
+      this.interior = new InteriorScene({
+        device: host.gpu.device,
+        renderer: core.renderer,
+        camera: core.camera,
+        settlements: st,
+        view: this.settlementsView!,
+        ui: host.ui,
+        params: host.params,
+        night: () => core.light.night,
+        time: () => core.globals.time,
+        sun: () => [core.light.dir[0], core.light.dir[1], core.light.dir[2]],
+      });
+      // (its people: the inhabitants' generator's, driven as puppets — installed here when ?life= didn't)
+      this.inhabitants ??= installInhabitants(core);
+      const life = this.inhabitants;
+      let people: InteriorPeople | null = null;
+      this.interior.onEnter.push((it) => {
+        people?.dispose();
+        people = new InteriorPeople(life, it, new DialogBoxSpeech(host.ui, core.camera), core.camera, Number(host.params.get('ipeople') ?? 5));
+        (window as unknown as { reclaimed: Record<string, unknown> }).reclaimed.interiorPeople = people;
+      });
+      const scene = this.interior;
+      this.interior.onFrame.push((dt, it) => people?.update(dt * this.speed, scene.phase === 'inside' ? it.storey : -1));
+      const ib = host.params.get('ib');
+      this.interior.prepare(id, ib === null ? undefined : Number(ib));
+      (window as unknown as { reclaimed: Record<string, unknown> }).reclaimed.interior = this.interior;
+      // (the camera to the street in front of its door, near; the editor's panel away)
+      const [x, y] = this.interior.doorStep();
+      core.camera.target[0] = x;
+      core.camera.target[1] = y;
+      core.camera.zoom = Math.max(core.camera.zoom, 14);
+      this.editor?.setVisible(false);
+      this.interiorWait = Number(host.params.get('enter') ?? -1);
+    }
+    if (this.interiorWait > 0) {
+      this.interiorWait -= dt;
+      if (this.interiorWait <= 0) this.interior.enter();
+    }
+    this.interior.update(dt);
   }
 
   /** ?run=<id>: the GM's story staged near the spawn, played as a hero (story/hero-run.ts; round 97: through story/atlas-run.ts, as any game starts one) */
@@ -2359,6 +2428,7 @@ export class LevelScene implements Scene {
     this.settlements?.farUpdate(dt);
     // (round 119) the settlements' pieces: made again when a plan, a storey or the window changed
     this.settlementsView?.update();
+    if (this.host.params.get('interior') && this.settlementsView && this.settlements) this.interiorFrame(dt);
     this.shipsView?.update();
     if (this.inhabitants) this.lifeFrame(dt * this.speed);
     if (this.units && !this.stream?.busy) {

@@ -22,6 +22,9 @@ export const DRAPE = 4;
 export const WIND = 8;
 /** (round 120) flags: an affine piece spins about its local y axis (a waterwheel, a windmill's sails) */
 export const SPIN = 16;
+/** (interiors) flags: veiled — a host's mark (never the plan's): the piece dithers away by the camera's veil (a building
+ *  entered: its inside drawn in its place); it still casts its shadow */
+export const VEIL = 64;
 /** (round 120) look bits (over the style's, under 2^24 so a float keeps them): what history left on a piece — soot, a
  *  waterline, fresh stone */
 export const LOOK_BURNED = 1 << 20;

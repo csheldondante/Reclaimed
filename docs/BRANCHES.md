@@ -49,6 +49,7 @@ worked on in parallel:
 | `heroapi` | `C:/Projects/Reclaimed-heroapi` | `npm run dev -- --port 5251` |
 | `runstream` | `C:/Projects/Reclaimed-runstream` | `npm run dev -- --port 5279` |
 | `play` | `C:/Projects/Reclaimed-play` | `node scripts/run.mjs serve`, or `npm run dev -- --port 5241 --force` |
+| `interiors` | `C:/Projects/Reclaimed-interiors` | `node scripts/interiorshot.mjs` (the runner's build server) |
 
 | Branch | Game | Builds on | Backlog |
 |---|---|---|---|
@@ -70,6 +71,7 @@ worked on in parallel:
 | `runplan` | Run planning, GM consequences and travel (round 117, docs/RUNPLAN.md): a branching 15-50 min run planned on the region graph for the hero's capabilities (stand-ins for terrain's graph and play's controllers), terrain requests (fun obstacles, exits), outcomes and the GM's failure rules as AtlasEvents and character changes (history, gear, statuses; faction power and relations), RegionState realised per generator (flood-fill requests for a new shallow sea or a ruin under sand), travel on the atlas map with en-route events and precache. Viewer: /Reclaimed/runplan/?runplan=view&seed=1&hero=bike | `places` (140b4e3) | RP1–RP7 |
 | `settlements` | Settlements with agents working round them (round 88, docs/SYSTEMS.md systems 6, 7, 12): every atlas site a Settlement record (the city game's contract) with a people's profile (data/recipes/), districts on overlay grids (radial, contour-Voronoi, irregular, orthogonal), buildings as Instances realised in the columns as land arrives (walls, plaza, fields, ruins adapted, raiders' camps); its people as units (the Units contract on the GPU agents) on their rounds, a raid met by guards. /Reclaimed/settlements/?skipmenu=1&level=atlas&town=1 (`&towndebug=1` the grid and jobs) | `places` | R4, R6, ST1–ST8 |
 | `traits` | Living World slice 1 (round 120, LW1): one trait system on the GPU agents (traits as data, effects as operations, the game's interaction rules as modular kernels over CAPS/LOOK), healing vs necromancy; the playground's traits station. /Reclaimed/traits/?skipmenu=1&level=playground (station 7) | `places` (a91730a) | LW1 |
+| `interiors` | Polished isometric interiors (round 126): a town's hall planned inside from its structures plan (storeys, rooms, the façade's windows and doors, stairs), CC0 props voxelised, drawn in its place with window light, shafts and candles, a pixel-art post pass, people from the inhabitants' generator talking; entered from the street. /Reclaimed/interiors/?skipmenu=1&level=atlas&town=1&interior=1&enter=6 | `places` (5b24d9a) | INT1-INT13 |
 | `perf` | Profiling and experiments for phones (round 61): what's a clear win merges into `grids`; the user validates the feel on a phone | `grids` (with `agents`) | G16, Q20 |
 | `physics` | The sandbox as a destruction playground and terrain for other games: physics voxels (one GPU solver: metal bends, stone cracks), heat beam, then meteors and volcanoes (docs/PHYSICS.md) | grids' engine and look | F13 |
 

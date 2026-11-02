@@ -44,6 +44,8 @@ struct SGOut {
   @location(1) @interpolate(flat) info: vec4<u32>,
   @location(2) @interpolate(flat) base: vec3<f32>,
   @location(3) w: f32,
+  // (interiors) the piece's flags (pieces.ts: VEIL 64)
+  @location(4) @interpolate(flat) flags: u32,
 };
 
 @vertex
@@ -55,7 +57,16 @@ fn vsStruct(@location(0) a: vec4<f32>, @builtin(instance_index) ii: u32) -> SGOu
   o.info = vec4<u32>(sv.part, sv.look, bitcast<u32>(sv.seed), winIdx(clampCell(cellAt(sv.wpos.xy))));
   o.base = sv.base;
   o.w = sv.w;
+  o.flags = u32(spRow(ii, 3u).w);
   return o;
+}
+
+/** (interiors) The sun's view of a piece: glass lets the light through (a window's patch of sun on the floor inside). */
+@vertex
+fn vsStructShadow(@location(0) a: vec4<f32>, @builtin(instance_index) ii: u32) -> @builtin(position) vec4<f32> {
+  if (u32(a.w + 0.5) == 3u) { return vec4<f32>(2.0, 2.0, 2.0, 1.0); }
+  let sv = spVertex(a, ii);
+  return CAM.viewProj * vec4<f32>(sv.wpos, 1.0);
 }
 
 @fragment
@@ -64,6 +75,8 @@ fn fsStruct(in: SGOut) -> FOut {
   var n = normalize(cross(dpdx(in.wpos), dpdy(in.wpos)));
   if (dot(n, toEye(in.wpos)) < 0.0) { n = -n; }
   if (cutAway(in.wpos, in.pos.xy)) { discard; }
+  // (interiors) a veiled piece — the outside of a building entered — dithers away by the camera's veil
+  if ((in.flags & 64u) != 0u && CAM.veil.x > bayer4(in.pos.xy)) { discard; }
   var sv: SpVert;
   sv.wpos = in.wpos;
   sv.w = in.w;

@@ -3041,6 +3041,76 @@ want to be able to flood a basin and bury things".
   sums, 47 verts, 48 draw args, 49 surface, 50 fire, 51 water; 15, 17, 21 common.wgsl's wind, drift and body textures.
   Layouts mirrored in src/inhabitants/pack.ts (species), paths.ts (paths) and system.ts (agents, params).
 
+## Interiors (round 126, branch `interiors`; src/interiors, contract src/api/contracts/interiors.ts; CREDITS.md)
+
+A building's inside, in the same world space as its outside: planned from the structures plan, drawn where the building
+stands, entered from the street. `?interior=1` on the atlas level (`&town=`, `&ib=<building>`, `&enter=<s>`,
+`&pixel=<css px>`, `&ipeople=<n>`).
+
+**The plan** (`planInterior(city, building, use, propSize)`, src/interiors/plan.ts; pure, Node-tested):
+- reads only the CityPlan: the building's tiles and their tops (each tile's own storey count — the stepped skyline,
+  round((quadTop − base) / storeyH)), its façades, the tiles' adjacency;
+- per storey: the tiles standing at that height; outer walls where a side meets another building, the street or a
+  lower tile, their openings exactly the façade modules' holes (modules.ts wallSet's fractions: window, window2, door,
+  shop, balcony); rooms by purpose (the street door's tiles the hall or living room, the farthest ground tile the
+  kitchen, a chamber and sleeping rooms up the house, stores under the roof); partitions with a doorway between rooms;
+- stairs where the storeys stack: a straight flight along an outside wall of a tile standing on both storeys (no door
+  on it, blank walls first, turning from the flight below), the floor above opened over it;
+- furniture by purpose against walls and in the middle, each placement checked on a walk grid (WalkGrid, 0.125 m
+  cells: the floor less walls, stairs and props) so every doorway, stair and spot stays reachable; spots (sit, stand,
+  work, gather, sleep) with the free floor to approach them from; lights (candles, the hearth, lanterns).
+- Everything inside a tile in the tile's unit frame warped bilinearly (frame.ts), as the structures' modules are.
+- Output: `InteriorPlan` (contract) + per storey the walk grid (the people's).
+
+**The props** (scripts/props/voxelise.mjs, data/props/manifest.json → data/props/props.json; src/interiors/props.ts):
+CC0 models (Kenney) as data only — downloaded to an untrusted folder outside the repo, never executed; OBJ + MTL +
+colormap parsed, voxelised at 16 voxels a metre (the renderer's finest voxel size), the outside flood-filled so only
+surface voxels stay, each voxel's area-weighted colour mapped to the prop palette (scripts/props/palette.mjs: 25 muted
+colours). The mesh builder greedy-merges each prop's faces by colour (mesh.ts).
+
+**The draw** (src/interiors/draw.ts, shaders/interior.wgsl): one triangle list a building (CPU, once: floors, walls with
+their openings and window frames, stairs, rails, props; 8 u32 a vertex), after a 64-vec4 header in one storage buffer,
+through **`Renderer.addLitDraw`** (new: a system's own shading over the renderer's bindings — its WGSL after
+render.wgsl, its buffer at binding 3, opaque in the world pass with the pick, `blend: 'add'` after the opaque world,
+`shadowVs` into the sun's shadow map). Shading: a dark ambient, the sun only through the shadow map (the building's
+veiled outside still casts; glass casts nothing), a cool daylight off each window, the camera's local lights. Walls
+between the eye and the room cut to a stub (per vertex its outward angle; partitions from either side). The sun's
+shafts: each window's opening pushed along −sun into the room, drawn added, lit by the shadow map at the shaft's core,
+dust specks drifting in it.
+
+**Shared-renderer additions** (each small, each behind a contract):
+- `Camera.lights: LocalLight[]` (≤ 16) → render.wgsl `localLight`, added in `lighting()`: every lit surface (terrain,
+  structures, creatures) gets an interior's candles.
+- `Cut.veil` (0..1) and the pieces' flag `VEIL` (pieces.ts 64; SettlementsView.veil(settlement, building)): a
+  building's outside dithers away in the colour pass, keeps its shadow.
+- `Cut.sliceShape` — herolab's (round 121) slice within a radius, its fade and feather, ported with herolab's own field
+  layout (Camera.sliceShape / sliceSoft after `boxes`) so a merge of herolab finds them in place; fsBody (bodies,
+  creatures, voxels) is sliced too now (the people upstairs go with their floor).
+- The structures' shadow pass: glass casts no shadow (vsStructShadow), so the sun comes in at every window.
+- `PixelPost` (render/pixelpost.ts, shaders/pixelpost.wgsl; WorldCore.setPost): the world rendered small (an art pixel
+  `px` CSS px), then drawn in blocks with a dark outline at depth steps, a palette of 32 with ordered dither, the darks
+  lifted to a cold blue. The renderer keeps its depth for it (`keepDepth`); picks scale (`pickScale`).
+- The inhabitants' **puppet** order (contract GroupOrder `puppet`): the CPU says where a group of one is each frame,
+  its heading, pose (stand, sit, talk, sittalk) and floor; the GPU animates it with its feet on that floor (not the
+  column's top — the roof, inside a building) — inhabitants.wgsl floorOf. Only changed groups' orders are uploaded.
+
+**The people** (src/interiors/people.ts): a cast of six from the inhabitants' generator (biped specs: proportions,
+palette, gear), each a puppet; they choose spots they like (by role and room), walk there on the storeys' grids (A*,
+pulled straight; up and down the flights), sit, work, stand at windows; two at rest near each other talk — short plain
+exchanges by role — as bubbles over them; the player taps one to talk. Speech behind `InteriorSpeech`
+(src/interiors/speech.ts; today `DialogBoxSpeech`: src/dialog's DialogBox for the talk, bubbles drawn there) so
+dialog2's system can replace it.
+
+**The transition** (src/interiors/install.ts `InteriorScene`): street → the camera down to the real doorway (1.4 s) →
+the outside veiled and dithered away while the inside assembles object by object (a per-object share of a dither) and
+the slice lowers to the storey's ceiling (to 2.6 s) → inside: one storey at a time (▲▼, [ ]), its lights on the camera.
+Leaving reverses it.
+
+Tests: src/interiors/plan.test.ts (four towns' tallest buildings: every storey, façades' walls and openings, stairs,
+furniture, spots reachable, deterministic, a path round the table), mesh.test.ts, test/gpu/interiors-wgsl.test.ts (the
+shaders the interiors touch compile on Dawn), test/unit/interiors-sheet.test.ts (PLAN_SHEET=<dir>: top-down drawings).
+Shots: scripts/interiorshot.mjs; cost: scripts/interiorperf.mjs.
+
 ## Flora (round 117, branch `flora`; src/flora, contract src/api/contracts/flora.ts)
 
 The user (DECISIONS round 117): "For plants, L systems are great for branches and then cellular autonoma for roots. I am

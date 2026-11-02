@@ -16207,3 +16207,50 @@ places: the merge added none of its own). The structure review: C:/Projects/shot
   (two runs each): p50 9.9/9.9 vs 9.9/9.9 ms, p95 12.3/13.4 vs 12.3/12.4, GPU 12.1/13.9 vs 13.4/12.1 ms — within the
   spread. Shots: C:/Projects/shots88/merge124/ (1-roster, 2-run-turn-presenter-card, 3-effect-card-reward,
   4-encounter-enemies, 5-mutation-watchtower-before-after, 5b-mutation-weir-river-before-after, opps/, inspector-*).
+
+## 2026-11-02 — Interiors (branch `interiors`, round 126; BACKLOG INT1-INT13)
+
+The user (DECISIONS round 125): "What would you do if someone asked for a polished isometric interior with a pixel
+art/rainworld art style and characters that can interact and talk to each other and that fits the dimensions of the
+exterior building (which has multiple levels and an irregular footprint). What you created is a super baseic isometric
+drawn room with no art. Use our existing character generator for now … Let's generate the interiors and use tricks like
+CC art we can voxelize/stylize with filters and geometric prepasses." The earlier throne room (presentation, scene D)
+was a Canvas2D room apart from the world; this starts again in the engine, in the building's own place.
+
+**Why each piece is the way it is.**
+- *The plan from the structures plan, not drawn by hand* (src/interiors/plan.ts): the inside has to fit the outside —
+  so it reads the same tiles, each tile's own storey count (the stepped skyline the façades show) and the façades
+  themselves. A window inside is exactly where the façade module has its hole (modules.ts wallSet's fractions), so the
+  sun that comes through it is the real sun through the real window. Rooms, stairs and furniture are derived, so every
+  town's every hall has an inside without authoring.
+- *Tiles' unit frames*: the irregular tiles are free quads; placing things in a tile's (u, v) frame warped bilinearly is
+  what the structures' modules already do, so floors, stairs and walls follow any tile shape.
+- *A walk grid for the furnishing and the people* (grid.ts, 1/8 m): one representation answers "does it fit", "is the
+  room still joined", and "how do I get there" (A*, pulled straight). Pockets behind furniture are let go so a spot or a
+  stair's end always snaps onto the shared floor; separate wings keep their floors.
+- *CC props voxelised, then stylised in the shared look*: Kenney's CC0 kits give real furniture; voxelising at 1/16 cell
+  and mapping to one muted palette (by lightness and opponent colours, so a teal banner stays teal) makes five packs one
+  set, and the pixel post makes them one with the world. The downloads stay outside the repo as data; only the voxel
+  JSON is committed (CREDITS.md).
+- *Drawn through the renderer, not beside it* (Renderer.addLitDraw): the interior is one more draw over the renderer's
+  bindings — the same camera, the same shadow map, the same depth — so the outside's shadow falls in at the windows, the
+  people are lit by the candles, and the transition is seamless because nothing changes but what's veiled and cut.
+- *Light by the shadow map*: the building's outside is veiled only in the colour pass; it still casts, and glass no
+  longer does, so the patches of sun on the floor are where the real windows let the real sun in, at any hour.
+- *Puppets for the people*: the inhabitants' agents walk the column's top (the roof, inside a building) and orders are
+  per group; a puppet order (a group of one, the CPU says where) lets the director walk them on the storeys' grids and up
+  the stairs, while the GPU keeps its procedural animation (gait, IK, capes). The feet go on the puppet's floor.
+- *Speech behind an interface*: dialog2 is building the next dialog; InteriorSpeech is small (say a line over someone;
+  talk with someone), today on src/dialog's DialogBox.
+- *One look for everything, as a post pass*: the world rendered small and drawn in blocks with outlines, a palette and
+  dither applies to terrain, structures, props and people alike — the brief's "tune it as a post pass so it's shared".
+
+**Flagged (structural):** the building's columns are claimed solid from foundation to roof (settle/view.ts; the external
+registry's "at most one interval a column an instance"), so to the sims and the GPU agents a house has no inside. The
+interior works around it only for its own people (puppets with their own floor). The root fix is INT8: claim floors,
+walls and roof; then water comes in at the door, fire burns the floors and units can walk in.
+
+**Measured** (the real town s84's hall: 3 storeys, rooms hall/kitchen | chamber/sleeping | stores/stores, 52 props):
+- plan 20-31 ms, mesh 34-81 ms (once, on entering's prepare), 32 562 triangles (28 094 the props'), 4.4 MB vertices;
+  only the shown storey and the one under it are drawn (the shadow pass draws all: upper floors keep the sun off);
+- the props' prepass: 35 models, 376 KB of voxels; greedy faces ~0.3 a surface voxel.

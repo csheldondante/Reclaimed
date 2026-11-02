@@ -13,8 +13,21 @@ export const CAMERA_BYTES = 96;
 export const CAMERA_POS_OFFSET = CAMERA_BYTES + 64;
 /** what's cut from the view after it (render.wgsl Camera.cut, see, boxes; round 83) */
 export const CAMERA_CUT_OFFSET = CAMERA_POS_OFFSET + 16;
-/** cut (a vec4), see (4 vec4s), boxes (4 boxes, 2 vec4s each) */
-export const CAMERA_CUT_BYTES = 16 + 4 * 16 + 8 * 16;
+/** cut (a vec4), see (4 vec4s), boxes (4 boxes, 2 vec4s each), the slice's shape (2 vec4s: herolab's round 121, ported
+ *  as it is there); (interiors) the veil (a vec4), the local lights' count (a vec4) and the lights (2 vec4s each) */
+export const MAX_LOCAL_LIGHTS = 16;
+export const CAMERA_CUT_BYTES = 16 + 4 * 16 + 8 * 16 + 16 + 16 + 16 + 16 + 16 + MAX_LOCAL_LIGHTS * 32;
+
+/** (interiors) A small light the shared lighting adds (render.wgsl localLight): candles, a hearth, lanterns. */
+export interface LocalLight {
+  at: [number, number, number];
+  /** reach (world units) */
+  radius: number;
+  /** linear colour × strength */
+  colour: [number, number, number];
+  /** how much it flickers (0 steady .. 1 a candle's) */
+  flicker: number;
+}
 
 /** What's cut from the view (api/cutaway.ts: Slice, Dither) — the sun's camera cuts nothing. */
 export interface Cut {
@@ -24,6 +37,19 @@ export interface Cut {
   see: [number, number, number, number][];
   /** what may be dithered (lo xyz, hi xyz; world): none marked, anything */
   boxes: [number, number, number, number, number, number][];
+  /**
+   * (round 121, herolab: the cutaway camera mode; ported to interiors as herolab has it) the slice only within `radius`
+   * (world units on screen) of (x, y) at the slice's height, thinning over `fade` cells under it and the outer `fadeR`
+   * share of the radius; absent: the whole view (round 83's slice). (bowl, nearOnly, occluders, rim: herolab's, not drawn
+   * here yet — written so a merge of herolab finds them in place.)
+   */
+  sliceShape?: { x: number; y: number; radius: number; rim: number; fade?: number; fadeR?: number; bowl?: number; nearOnly?: boolean; occluders?: boolean } | null;
+  /** (interiors) how far veiled structures are dithered away (0 shown .. 1 gone; the pieces flagged VEIL — a building
+   *  entered: its outside goes, its inside is drawn in its place) */
+  veil?: number;
+  /** (interiors) everything farther than `radius` on screen from (x, y, z) fades toward black by `amount` (0..1): a
+   *  building entered holds the eye, the town round it falls into the dark */
+  focus?: { x: number; y: number; z: number; radius: number; amount: number } | null;
 }
 
 /** the free camera: where it is (world), which way it looks (radians), its vertical field of view */
@@ -105,6 +131,8 @@ export class Camera {
   fly: Fly | null = null;
   /** (round 83, V21) what's cut from the view: api/cutaway.ts writes it */
   cut: Cut = { slice: null, see: [], boxes: [] };
+  /** (interiors) the local lights every lit surface gets (at most MAX_LOCAL_LIGHTS; a system's own, e.g. an interior's) */
+  lights: LocalLight[] = [];
 
   /** the way a flying camera looks, and its right and up */
   basis(): { f: [number, number, number]; r: [number, number, number]; u: [number, number, number] } {
@@ -286,6 +314,14 @@ export class Camera {
       f.set([c.slice ?? 0, c.see.length, c.boxes.length, c.slice === null ? 0 : 1], o);
       c.see.forEach((p, i) => f.set(p, o + 4 + i * 4));
       c.boxes.forEach((b, i) => f.set([b[0], b[1], b[2], 0, b[3], b[4], b[5], 0], o + 20 + i * 8));
+      const sh = c.slice === null ? null : c.sliceShape;
+      if (sh) f.set([sh.x, sh.y, sh.radius, sh.rim, sh.fade ?? 0, sh.fadeR ?? 0, sh.bowl ?? 0, (sh.nearOnly ? 1 : 0) + (sh.occluders ? 2 : 0)], o + 52);
+      // (interiors) the veil, then the local lights
+      f.set([c.veil ?? 0, c.focus?.z ?? 0, 0, 0], o + 60);
+      if (c.focus) f.set([c.focus.x, c.focus.y, c.focus.radius, c.focus.amount], o + 64);
+      const ls = this.lights.slice(0, MAX_LOCAL_LIGHTS);
+      f.set([ls.length, 0, 0, 0], o + 68);
+      ls.forEach((l, i) => f.set([l.at[0], l.at[1], l.at[2], l.radius, l.colour[0], l.colour[1], l.colour[2], l.flicker], o + 72 + i * 8));
     }
   }
 }

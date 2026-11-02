@@ -87,6 +87,11 @@ fn groundAt(p: vec2<f32>) -> f32 {
   // as the particles' ground, particles.wgsl)
   return groundZ(c, f32(sfZ(surface[colIdxI(c)])));
 }
+/** (interiors) the floor a creature stands on: a puppet's own (its order's floor), else the column's top */
+fn floorOf(puppet: bool, floorz: f32, p: vec2<f32>) -> f32 {
+  if (puppet) { return floorz; }
+  return groundAt(p);
+}
 fn waterAt(p: vec2<f32>) -> f32 {
   let c = cellAt(p);
   if (!inMap(c)) { return 0.0; }
@@ -196,6 +201,30 @@ fn behave(@builtin(global_invocation_id) gid: vec3<u32>) {
   var timer = a2.z - dt;
   var pos = a0.xyz;
   var vel = a1.xyz;
+
+  // (interiors) a puppet: where the CPU says (o0.xyz), its gait from how fast that moves; standing, it turns to o1.x
+  if (o0.w == 5.0) {
+    let np = o0.xyz;
+    var v = (np - pos) / max(dt, 1e-3);
+    // (a jump — placed, a teleport — isn't a run)
+    if (length(v) > 8.0) { v = vec3<f32>(0.0); }
+    vel = mix(vel, v, 1.0 - exp(-dt * 12.0));
+    pos = np;
+    let hs = length(vel.xy);
+    var heading = a1.w;
+    var want = o1.x;
+    if (hs > 0.25) { want = atan2(vel.y, vel.x); }
+    var dh = want - heading;
+    dh = dh - TAU * floor((dh + 3.14159265) / TAU);
+    heading += clamp(dh, -dt * 7.0, dt * 7.0);
+    state = select(S_IDLE, S_WALK, hs > 0.2);
+    agents[i * AS] = vec4<f32>(pos, a0.w);
+    agents[i * AS + 1u] = vec4<f32>(vel, heading);
+    agents[i * AS + 2u] = vec4<f32>(a2.x, state, timer, a2.w);
+    agents[i * AS + 3u] = vec4<f32>(a3.xyz, 0.0);
+    agents[i * AS + 4u] = a4;
+    return;
+  }
 
   // ---- neighbours (3×3 bins): boids sums, the nearest threat, the nearest prey
   var sep = vec2<f32>(0.0);
@@ -578,6 +607,15 @@ fn animate(@builtin(global_invocation_id) gid: vec3<u32>) {
   let flying = agents[i * AS + 3u].w > 0.5;
   let base = i * MAXP * 2u;
   let hf = vec3<f32>(cos(a1.w), sin(a1.w), 0.0);
+  // (interiors) a puppet's floor (its order's: upstairs, a stair — not the column's top, which is the roof) and pose
+  let og = u32(a2.x);
+  let po0 = orders[og * 2u];
+  let po1 = orders[og * 2u + 1u];
+  let puppet = po0.w == 5.0;
+  let pposeK = select(0u, u32(po1.y), puppet);
+  let floorz = po1.z;
+  let sitting = pposeK == 1u || pposeK == 3u;
+  let talking = pposeK == 2u || pposeK == 3u;
 
   // feet stepping now, by gait group (last tick's): a foot steps only when the other group's are all down
   var steppingG = array<u32, 2>(0u, 0u);
@@ -615,6 +653,8 @@ fn animate(@builtin(global_invocation_id) gid: vec3<u32>) {
         // R_ROOT: where behave put it; a bob with the gait; lying when knocked over; a serpent's wave
         var hgt = pp.x;
         if (state == S_DOWN) { hgt *= 0.35; }
+        // (interiors) sat: the root is the seat's height (a0.z the seat's top)
+        if (sitting) { hgt = 0.06; }
         // (a stalk is low: the body sinks, the legs fold under it — the knees' IK does the rest)
         if (state == S_STALK) { hgt *= 0.72; }
         hgt += 0.03 * pp.x * cos(phase * TAU * 2.0) * clamp(speed / max(walkV, 0.1), 0.0, 1.5);
@@ -629,8 +669,8 @@ fn animate(@builtin(global_invocation_id) gid: vec3<u32>) {
         var dir = p - parP;
         if (fresh || dot(dir, dir) < 1e-6) { dir = -parF; }
         p = parP + normalize(dir) * len;
-        let tz = groundAt(p.xy) + pp.x;
-        let pull = pp.y * (1.0 - fl);
+        let tz = floorOf(puppet, floorz, p.xy) + pp.x;
+        let pull = pp.y * (1.0 - fl) * select(1.0, 0.0, sitting);
         p.z = mix(p.z, tz, pull);
         if (fl > 0.5) { p.z = mix(p.z, parP.z, 0.3); }
         p = parP + normalize(p - parP) * len;
@@ -650,6 +690,8 @@ fn animate(@builtin(global_invocation_id) gid: vec3<u32>) {
           if (state == S_STALK) { want = 0.6; }
           if (state == S_REST) { want = 0.8; }
           if (state == S_DOWN) { want = 0.5; }
+          // (a puppet doesn't graze: it looks at whom it talks to)
+          if (puppet) { want = 0.0; }
           var gz = prv.w;
           gz = mix(gz, want, 1.0 - exp(-dt * 3.0));
           // a look about now and then
@@ -668,7 +710,9 @@ fn animate(@builtin(global_invocation_id) gid: vec3<u32>) {
         let other = 1u - grp;
         let len = length(rest);
         var ideal = parP + inFrame(parF, vec3<f32>(rest.x, rest.y, 0.0)) + parF * stride * pp.y * clamp(speed / max(walkV, 0.1), 0.0, 1.6) * 0.5 + vec3<f32>(a1.xy, 0.0) * stepT * 0.5;
-        ideal.z = groundAt(ideal.xy);
+        // (sat: the feet forward of the seat, on the floor)
+        if (sitting) { ideal = parP + inFrame(parF, vec3<f32>(len * 0.55, rest.y * 1.2, 0.0)); }
+        ideal.z = floorOf(puppet, floorz, ideal.xy);
         if (fresh) {
           p = ideal;
           q = vec4<f32>(ideal, 0.0);
@@ -692,14 +736,14 @@ fn animate(@builtin(global_invocation_id) gid: vec3<u32>) {
             let xy = p.xy + (tgt.xy - p.xy) * min(1.0, dp / left);
             prog = prog + dp;
             if (prog >= 1.0) {
-              p = vec3<f32>(tgt.xy, groundAt(tgt.xy));
+              p = vec3<f32>(tgt.xy, floorOf(puppet, floorz, tgt.xy));
               prog = 0.0;
             } else {
-              let gz = mix(groundAt(xy), tgt.z, prog);
-              p = vec3<f32>(xy, max(gz, groundAt(xy)) + sin(prog * 3.14159265) * lift * (1.0 + run01));
+              let gz = mix(floorOf(puppet, floorz, xy), tgt.z, prog);
+              p = vec3<f32>(xy, max(gz, floorOf(puppet, floorz, xy)) + sin(prog * 3.14159265) * lift * (1.0 + run01));
             }
           } else {
-            p.z = groundAt(p.xy);
+            p.z = floorOf(puppet, floorz, p.xy);
           }
           // too far (a teleport, a respawn): put it down where it should be
           if (length(p - parP) > len * 3.0 + 1.0) { p = ideal; prog = 0.0; }
@@ -742,7 +786,7 @@ fn animate(@builtin(global_invocation_id) gid: vec3<u32>) {
           var nq = p + v + vec3<f32>(0.0, 0.0, -pp.y) * dt * dt;
           nq = mix(nq, goal, pp.x * 0.5);
           nq = parP + normalize(nq - parP + vec3<f32>(0.0, 0.0, 1e-5)) * len;
-          nq.z = max(nq.z, groundAt(nq.xy) + 0.03);
+          nq.z = max(nq.z, floorOf(puppet, floorz, nq.xy) + 0.03);
           q = vec4<f32>(p, 0.0);
           p = nq;
         }
@@ -761,7 +805,13 @@ fn animate(@builtin(global_invocation_id) gid: vec3<u32>) {
       case 7u: {
         // R_SWING: an arm swinging with the gait (against the legs)
         let amp = pp.x * clamp(speed / max(walkV, 0.1), 0.1, 1.4);
-        let ang = amp * sin(phase * TAU + pp.y);
+        var ang = amp * sin(phase * TAU + pp.y);
+        // (interiors) talking: the arms lift and turn as it speaks, each its own way; sat, they rest forward
+        if (talking) {
+          let side = sign(rest.y);
+          let tt = P.time * (1.7 + 0.3 * side) + f32(seed % 31u) + side * 1.3;
+          ang = -0.5 - 0.45 * (0.5 + 0.5 * sin(tt)) * select(0.6, 1.0, side > 0.0) - 0.25 * max(0.0, sin(tt * 2.3));
+        } else if (sitting) { ang = -0.55; }
         let r = vec3<f32>(rest.x * cos(ang) - rest.z * sin(ang), rest.y, rest.x * sin(ang) + rest.z * cos(ang));
         p = parP + inFrame(parF, r);
         if (state == S_DOWN) { p = parP + inFrame(parF, vec3<f32>(rest.z * 0.5, rest.y * 3.0, 0.0)); }

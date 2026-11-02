@@ -9,13 +9,13 @@
 // z less its oz). Each settlement's pieces are made once a change (its plan, a storey raised, a building lost) and
 // moved into the window's frame when drawn; the window's slides move them, and a building leaving the window lets go
 // of its columns (to air) and claims them again when it's all back (as the resting rock's do).
-import type { ColumnSpan, StructurePieces } from '../api/contracts/structures';
+import type { CityPlan, ColumnSpan, StructurePieces } from '../api/contracts/structures';
 import type { ExternalInstance, ExternalRegistry } from '../sim/external';
 import { OWNER_STRUCT } from '../sim/external';
 import { MAT } from '../world/materials';
 import { ROW_H } from '../world/lattice';
 import { StructureGpu } from '../structures/gpu';
-import { piecesOf, PIECE_FLOATS, REL } from '../structures/pieces';
+import { piecesOf, PIECE_FLOATS, REL, VEIL } from '../structures/pieces';
 import { columnsOf } from '../structures/columns';
 import { standingPlan } from '../structures/plan';
 import { library } from '../structures/modules';
@@ -64,6 +64,8 @@ export class SettlementsView {
   private lastOrigin = '';
   /** (debugging) draw only the pieces whose module name starts with this */
   only = '';
+  /** (interiors) the building whose outside is veiled (its pieces flagged VEIL: they dither away by the camera's veil) */
+  private veiled: { settlement: string; building: number } | null = null;
   /** (debugging) the last pieces set, in the window's frame */
   last: { module: Uint16Array; data: Float32Array } | null = null;
   readonly stats = { settlements: 0, drawn: 0, pieces: 0, claimed: 0, columns: 0, lost: 0, piecesMs: 0 };
@@ -230,6 +232,31 @@ export class SettlementsView {
     return out;
   }
 
+  /**
+   * (interiors) Veil a building's outside (its pieces flagged VEIL; the camera's `cut.veil` says how far they're dithered
+   * away — they still cast their shadows, so its windows still let the sun in), or none.
+   */
+  veil(settlement: string | null, building = -1): void {
+    const v = settlement === null ? null : { settlement, building };
+    if (JSON.stringify(v) === JSON.stringify(this.veiled)) return;
+    this.veiled = v;
+    this.dirty = true;
+  }
+
+  /** (interiors) Where a settlement's plan frame (its box's metres, z world) sits in the window now: add (dx, dy), take oz. */
+  planFrame(settlement: string): { dx: number; dy: number; oz: number } | null {
+    const s = this.shown.get(settlement);
+    if (!s) return null;
+    const [dx, dyRows] = this.offset(s);
+    return { dx, dy: dyRows * ROW_H, oz: this.io.oz() };
+  }
+
+  /** (interiors) The settlement's plan as drawn (standing storeys), for what's inside its buildings. */
+  standing(settlement: string): CityPlan | null {
+    const s = this.shown.get(settlement);
+    return s ? standingPlan(s.plan.city, s.plan.standing) : null;
+  }
+
   /** each frame: the pieces again when something changed or the window moved */
   update(): void {
     const o = this.io.origin();
@@ -243,7 +270,7 @@ export class SettlementsView {
     const t0 = performance.now();
     const [fx, fy] = this.io.focus();
     const oz = this.io.oz();
-    const parts: { p: StructurePieces; dx: number; dy: number }[] = [];
+    const parts: { p: StructurePieces; dx: number; dy: number; id: string }[] = [];
     let drawn = 0;
     for (const s of this.shown.values()) {
       const [dx, dyRows] = this.offset(s);
@@ -253,7 +280,7 @@ export class SettlementsView {
       const my = dy + (s.seed.box.h * ROW_H) / 2;
       if (Math.hypot(mx - fx, my - fy) > REACH) continue;
       s.pieces ??= piecesOf(standingPlan(s.plan.city, s.plan.standing));
-      parts.push({ p: s.pieces, dx, dy });
+      parts.push({ p: s.pieces, dx, dy, id: s.seed.rec.id });
       drawn++;
     }
     let n = 0;
@@ -262,12 +289,14 @@ export class SettlementsView {
     const data = new Float32Array(n * PIECE_FLOATS);
     const building = new Int32Array(n);
     let k = 0;
-    for (const { p, dx, dy } of parts) {
+    for (const { p, dx, dy, id } of parts) {
       module.set(p.module, k);
       building.set(p.building, k);
       data.set(p.data, k * PIECE_FLOATS);
+      const veil = this.veiled && this.veiled.settlement === id ? this.veiled.building : -2;
       for (let i = k; i < k + p.count; i++) {
         const o = i * PIECE_FLOATS;
+        if (veil >= -1 && (veil === -1 || building[i] === veil)) data[o + 15] = data[o + 15] + VEIL;
         const flags = data[o + 15];
         if (flags & 2) {
           data[o + 3] += dx;

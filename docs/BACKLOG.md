@@ -12,6 +12,26 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 126 (2026-11-02, session 5, `interiors`) — polished isometric interiors (DECISIONS round 125: "What would you do if someone asked for a polished isometric interior with a pixel art/rainworld art style and characters that can interact and talk to each other and that fits the dimensions of the exterior building")
+
+Branch `interiors` from `places`. DEVLOG "Interiors"; ARCHITECTURE "Interiors"; CREDITS.md.
+
+| id | item | size | status |
+|---|---|---|---|
+| INT1 | Interior plans from the structures plan: every storey of a building from its tiles' own storey counts, outer walls on the façade's line with its openings exactly where the façade modules have them, rooms by purpose, partitions with doorways, stairs where storeys stack, the floor opened over them (src/interiors/plan.ts) | L | done (`interiors`) |
+| INT2 | The CC prop pipeline: CC0 Kenney models downloaded as data, voxelised at 1/16 cell, solid-filled, palette-mapped (scripts/props/voxelise.mjs), greedy-meshed in the game; CREDITS.md | M | done (`interiors`) |
+| INT3 | Furnishing by purpose on a walk grid (props against walls clear of doors, tables and benches, a throne and banners, the cook's fire, beds), spots and lights | M | done (`interiors`) |
+| INT4 | Drawn in the engine in the building's place (Renderer.addLitDraw; interior.wgsl): the sun through the windows by the shadow map, window daylight, local lights with flicker, the shafts and their dust, walls toward the eye cut to a stub, one storey at a time | L | done (`interiors`) |
+| INT5 | The outside veiled (pieces' VEIL flag, Cut.veil) and the slice in a radius (herolab's sliceShape ported) for the walk in; glass casts no shadow | M | done (`interiors`) |
+| INT6 | The pixel-art post pass, shared (render/pixelpost.ts): low-res targets, outlines at depth steps, a 32-colour palette with ordered dither, darks lifted | M | done (`interiors`) |
+| INT7 | People from the inhabitants' generator as puppets (the GroupOrder `puppet`: floor-aware feet, sit, talk gestures); a cast with roles walking, sitting, working, talking in bubbles; tap to talk (DialogBox behind InteriorSpeech, for dialog2) | L | done (`interiors`) |
+| INT8 | The building's columns are claimed solid to the roof (settle/view.ts, one External interval a column): the sims and the GPU agents see no inside. The root fix: claim floors, walls and roof only (several intervals a column an instance — sim/external.ts is "at most one a column"), so water comes in at the door, fire burns the floors, units walk in; then the inhabitants' groundAt could read the floor under a creature from the intervals instead of a puppet's own floor | L | open |
+| INT9 | The character generator's gaps (requirements for the future one): faces (eyes, mouths: a speaker shows only by gesture), hands that hold things, a real sit (hips and knees, not a lowered root), lying down, clothing beyond the gear slots, per-creature orders (a group of one each today), a look-at target for the head | L | open |
+| INT10 | The window slides while inside (a long stay at the window's edge): the interior's frame isn't moved (InteriorScene keeps the frame it was planned in) — rebuild or shift it on the streamer's slide | S | open |
+| INT11 | Small halls get crowded and their seats sparse (seed 23: one seat reachable); the kitchen with the stair is cramped; furnishing could size the set to the room and keep a clear middle | M | open |
+| INT12 | More interiors: every building on demand as the camera comes near its door (today ?interior=1 plans one, the hall); houses, workshops, the temple's dome and towers (megas have no interior plan) | M | open |
+| INT13 | The shafts are drawn as faces of an extruded window, lit at the core: over a prop in front they show through it slightly; a depth-aware march in the post pass would be exact | S | open |
+
 ## Round 126 (2026-11-02, session 5, `merge124`) — the living world merged into the run structure (DECISIONS round 125, newest)
 
 The user (verbatim): "Please proceed with getting it ready to merge into our run structure for now." and, on the levy's

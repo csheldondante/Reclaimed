@@ -20,6 +20,7 @@ import type { MapData } from '../world/mapgen';
 import { unpackColumns } from '../world/mapfile';
 import { looseIntoGrid } from '../world/loose';
 import { DayNight, type Daylight } from '../weather/daynight';
+import type { PixelPost } from '../render/pixelpost';
 import { Weather } from '../weather/weather';
 import { Structures } from '../grids/structures';
 import { Places } from '../game/places';
@@ -306,6 +307,17 @@ export class WorldCore {
     return Math.min(1, Math.max(0, this.clock.acc / TICK_DT));
   }
 
+  /** (interiors) the pixel-art post pass (render/pixelpost.ts): the world drawn small into its target, then onto the screen */
+  post: PixelPost | null = null;
+  private screen = { rw: 1, rh: 1, cw: 1, ch: 1 };
+
+  /** (interiors) set or clear the post pass (the targets sized again) */
+  setPost(p: PixelPost | null): void {
+    this.post = p;
+    const s = this.screen;
+    this.resize(s.rw, s.rh, s.cw, s.ch);
+  }
+
   render(): void {
     const { device, context } = this.host.gpu;
     const prof = this.host.profiler;
@@ -321,12 +333,14 @@ export class WorldCore {
       after?.();
       return;
     }
-    this.renderer.encode(enc, context.getCurrentTexture().createView(), this.camera, {
+    const screen = context.getCurrentTexture().createView();
+    this.renderer.encode(enc, this.post ? this.post.target() : screen, this.camera, {
       // (round 82, V21: under a slice what's cut open of the rock, past every surface, is dark — a section)
       clear: this.camera.cut.slice !== null ? SECTION_DARK : flashSky(this.light.clear, this.globals.flash),
       sun: this.light.dir,
       rainParticles: Math.round(this.weather.storms.reduce((a, st) => a + q.rain * 0.55 * st.intensity * (st.radius / 26), 0)),
     });
+    this.post?.encode(enc, screen);
     const afterProfile = prof.endFrame(enc);
     device.queue.submit([enc.finish()]);
     this.renderer.afterSubmit();
@@ -334,8 +348,18 @@ export class WorldCore {
   }
 
   resize(renderW: number, renderH: number, cssW: number, cssH: number): void {
+    this.screen = { rw: renderW, rh: renderH, cw: cssW, ch: cssH };
     this.camera.viewportW = cssW;
     this.camera.viewportH = cssH;
+    if (this.post) {
+      // (the targets an art pixel a few CSS px: the post draws them onto the screen in blocks)
+      const [w, h] = this.post.lowSize(renderW, renderH, cssW);
+      this.post.resize(renderW, renderH, w, h);
+      this.renderer.pickScale = w / renderW;
+      this.renderer.resize(w, h);
+      return;
+    }
+    this.renderer.pickScale = 1;
     this.renderer.resize(renderW, renderH);
   }
 

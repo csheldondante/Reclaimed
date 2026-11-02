@@ -155,7 +155,17 @@ export type GroupOrder =
   /** walk the given paths (townsfolk) */
   | { kind: 'paths' }
   /** a director's order: circle a point at a gait, whatever the behaviour (the viewer; a cutscene) */
-  | { kind: 'pace'; gait: 'idle' | 'walk' | 'run' | 'fly'; around: V2; radius: number };
+  | { kind: 'pace'; gait: 'idle' | 'walk' | 'run' | 'fly'; around: V2; radius: number }
+  /**
+   * (interiors) A puppet: the CPU says where it is each frame (`at`, z its floor — an upstairs floor, a stair), which way
+   * it faces when it stands, and its pose; the GPU animates it (the gait from how fast `at` moves, the feet on that
+   * floor, not the column's top). For a group of one: a scripted person in a room. Poses: stand, sit (on a seat `at`'s
+   * height — z the seat's top, the feet on `floor`), talk (gestures), the gait set by the motion.
+   */
+  | { kind: 'puppet'; at: V3; heading: number; pose: PuppetPose; floor?: number };
+
+/** (interiors) what a puppet is doing */
+export type PuppetPose = 'stand' | 'sit' | 'talk' | 'sittalk';
 
 /**
  * Walkable paths baked into structures (r117: "bake paths into the tiles we generate so agents can interact with

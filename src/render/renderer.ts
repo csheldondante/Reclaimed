@@ -285,6 +285,8 @@ export class Renderer {
   gridDrawn = 0;
   /** further opaque draws in the world pass, with the sky's colour (round 73: the atlas's far land) */
   readonly extraDraws: ((pass: GPURenderPassEncoder, clear: [number, number, number]) => void)[] = [];
+  /** (interiors) draws of a system's own shading over the renderer's bindings (addLitDraw) */
+  private litDraws: { d: LitDraw; data?: GPUBuffer; group?: GPUBindGroup; shadowGroup?: GPUBindGroup; pipe?: GPURenderPipeline; shadow?: GPURenderPipeline }[] = [];
   /** what an extra draw renders into, and the camera it reads (render.wgsl Camera) */
   get targets(): { format: GPUTextureFormat; pickFormat: GPUTextureFormat; depthFormat: GPUTextureFormat; camera: GPUBuffer; mesh?: { state: GPUBuffer; grid: [number, number, number] }; tileMask: GPUBuffer } {
     // (round 83: the field mesh's state, when it draws the ground — far.ts's rings fill the chunks not built yet)
@@ -1063,6 +1065,69 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
     });
   }
 
+  /**
+   * (interiors) A draw with its own shading over the renderer's bindings: `wgsl` is appended after render.wgsl (its
+   * Camera, lighting, shadowLit, cutAway, bayer4, FOut and toSrgb are there to use), its data buffer bound at binding 3
+   * (`instances`: the shader pulls its vertices by index from it), `count()` vertices drawn as a triangle list. Opaque
+   * draws go in the world pass after the skins (depth tested and written, the pick written); `blend: 'add'` ones after
+   * the opaque world, one + one, depth tested only (light shafts, glows). `shadowVs`: also drawn into the sun's shadow
+   * map (depth only, its vertex stage). A new data buffer (grown) is picked up on the next frame.
+   */
+  addLitDraw(d: LitDraw): void {
+    const device = this.device;
+    const riverFoam = `const RIVER_FOAM_SPEED: bool = ${riverMode() === 'table'};\n`;
+    const module = makeModule(device, d.label, [commonWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, d.wgsl]);
+    const e: Renderer['litDraws'][number] = { d };
+    this.litDraws.push(e);
+    const add = d.blend === 'add';
+    renderPipe(device, {
+      label: d.label,
+      layout: this.drawPl,
+      vertex: { module, entryPoint: d.vs },
+      fragment: {
+        module,
+        entryPoint: d.fs,
+        targets: add
+          ? [{ format: this.colorFormat, blend: { color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' }, alpha: { srcFactor: 'zero', dstFactor: 'one', operation: 'add' } } }, { format: PICK_FORMAT, writeMask: 0 }]
+          : [{ format: this.colorFormat }, { format: PICK_FORMAT }],
+      },
+      primitive: { topology: 'triangle-list', cullMode: d.cull ?? 'none' },
+      depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: !add, depthCompare: add ? 'less-equal' : 'less' },
+    }, (p) => (e.pipe = p));
+    if (d.shadowVs && this.noShadowView)
+      renderPipe(device, {
+        label: `shadow-${d.label}`,
+        layout: this.drawPl,
+        vertex: { module, entryPoint: d.shadowVs },
+        primitive: { topology: 'triangle-list', cullMode: 'none' },
+        depthStencil: { format: SHADOW_FORMAT, depthWriteEnabled: true, depthCompare: 'less', depthBias: 2, depthBiasSlopeScale: 2 },
+      }, (p) => (e.shadow = p));
+  }
+
+  removeLitDraw(d: LitDraw): void {
+    this.litDraws = this.litDraws.filter((e) => e.d !== d);
+  }
+
+  private litGroups(e: Renderer['litDraws'][number]): void {
+    if (e.data === e.d.data()) return;
+    e.data = e.d.data();
+    e.group = this.groupFor(e.data);
+    if (this.noShadowView) e.shadowGroup = this.groupFor(e.data, this.lightCamBuf, this.noShadowView);
+  }
+
+  private drawLit(pass: GPURenderPassEncoder, add: boolean): void {
+    for (const e of this.litDraws) {
+      if ((e.d.blend === 'add') !== add || !e.pipe) continue;
+      const n = e.d.count();
+      if (n <= 0) continue;
+      this.litGroups(e);
+      pass.setPipeline(e.pipe);
+      pass.setBindGroup(0, e.group!);
+      pass.draw(n, 1, e.d.first?.() ?? 0);
+      this.profiler.draws++;
+    }
+  }
+
   /** Draw these prisms (renderprep's instance form) with the opaque pipeline too. */
   addPrisms(inst: GPUBuffer, indirect: GPUBuffer): void {
     this.prismSources.push({ indirect, group: this.groupFor(inst) });
@@ -1081,11 +1146,19 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
     this.pickTex?.destroy();
   }
 
+  /** (interiors, the pixel post pass) the depth kept after the world pass and sampled (pixelpost.ts: its outlines) */
+  keepDepth = false;
+  /** (the pixel post) render-target pixels a pick's coordinate (its caller's) — the targets drawn smaller than the screen */
+  pickScale = 1;
+  get depthTexture(): GPUTexture {
+    return this.depth!;
+  }
+
   resize(w: number, h: number): void {
     this.depth?.destroy();
     this.pickTex?.destroy();
     // (round 112, ?bgcheck=1: the depth and the pick sampled after the world pass — bgcheck.ts)
-    const sampled = BGCHECK ? GPUTextureUsage.TEXTURE_BINDING : 0;
+    const sampled = BGCHECK || this.keepDepth ? GPUTextureUsage.TEXTURE_BINDING : 0;
     this.depth = this.device.createTexture({ size: [w, h], format: DEPTH_FORMAT, usage: GPUTextureUsage.RENDER_ATTACHMENT | sampled });
     this.pickTex = this.device.createTexture({
       size: [w, h],
@@ -1100,7 +1173,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
   pick(x: number, y: number): Promise<PickHit | null> {
     return new Promise((resolve) => {
       this.pickRequest?.resolve(null);
-      this.pickRequest = { x, y, resolve };
+      this.pickRequest = { x: x * this.pickScale, y: y * this.pickScale, resolve };
     });
   }
 
@@ -1303,8 +1376,8 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       ],
       // (round 112, ?bgcheck=1: both kept for bgcheck.ts)
       depthStencilAttachment: def
-        ? { view: this.depth!.createView(), depthLoadOp: 'load', depthStoreOp: BGCHECK ? 'store' : 'discard' }
-        : { view: this.depth!.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: BGCHECK ? 'store' : 'discard' },
+        ? { view: this.depth!.createView(), depthLoadOp: 'load', depthStoreOp: BGCHECK || this.keepDepth ? 'store' : 'discard' }
+        : { view: this.depth!.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: BGCHECK || this.keepDepth ? 'store' : 'discard' },
       timestampWrites: this.profiler.timestamps('draw'),
     });
     if (tcMode) {
@@ -1409,6 +1482,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       pass.drawIndirect(v.indirect, 0);
       this.profiler.draws++;
     }
+    if (!SKIP.has('lit')) this.drawLit(pass, false);
     // (round 120, cities) the towns' light pools at night, over everything opaque, under the water
     if (this.structs?.glow && this.structNight > 0.3 && this.structs.sg.glow.length && !SKIP.has('structures') && !SKIP.has('pools')) {
       this.structGroups();
@@ -1416,6 +1490,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       pass.setBindGroup(0, this.structs.group!);
       this.profiler.draws += this.structs.sg.drawGlow(pass);
     }
+    if (!SKIP.has('lit')) this.drawLit(pass, true);
     // (watersurf) the water's surface, then the blended prisms (oil, ice and crystal; without the field mesh the water)
     const flat = SKIP.has('waterflat');
     if (this.waterSurf && this.waterSurfPipe && !SKIP.has('water')) {
@@ -1854,6 +1929,15 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       pass.setBindGroup(0, v.shadow);
       pass.drawIndirect(v.indirect, 0);
     }
+    for (const e of this.litDraws) {
+      if (!e.shadow) continue;
+      const n = e.d.shadowCount?.() ?? e.d.count();
+      if (n <= 0) continue;
+      this.litGroups(e);
+      pass.setPipeline(e.shadow);
+      pass.setBindGroup(0, e.shadowGroup!);
+      pass.draw(n);
+    }
     pass.end();
     this.profiler.draws += 4;
   }
@@ -2057,7 +2141,8 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       renderPipe(device, {
         label: 'shadow-structures',
         layout: this.drawPl,
-        vertex,
+        // (interiors: glass casts no shadow — the sun comes in at the windows)
+        vertex: { module, entryPoint: 'vsStructShadow', buffers: [StructureGpu.vertexLayout()] },
         primitive: { topology: 'triangle-list', cullMode: 'none' },
         depthStencil: { format: SHADOW_FORMAT, depthWriteEnabled: true, depthCompare: 'less', depthBias: 2, depthBiasSlopeScale: 2 },
       }, (p) => (st.shadow = p));
@@ -2130,4 +2215,23 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
 /** (round 83) is anything cut from the camera's view (a slice, a hole round a point kept seen)? */
 function cutOn(cam: Camera): boolean {
   return cam.cut.slice !== null || cam.cut.see.length > 0;
+}
+
+/** (interiors) a draw with its own shading (Renderer.addLitDraw) */
+export interface LitDraw {
+  label: string;
+  /** WGSL appended after render.wgsl */
+  wgsl: string;
+  vs: string;
+  fs: string;
+  /** a depth-only vertex stage for the sun's shadow map (none: casts no shadow) */
+  shadowVs?: string;
+  /** the buffer at binding 3 (asked each frame: a grown one is bound again) */
+  data: () => GPUBuffer;
+  /** vertices to draw this frame (0: none), from `first()` (0 by default; the shadow pass draws from 0, `shadowCount()`) */
+  count: () => number;
+  first?: () => number;
+  shadowCount?: () => number;
+  blend?: 'add';
+  cull?: GPUCullMode;
 }

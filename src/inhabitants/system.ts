@@ -35,7 +35,9 @@ const ROW_H = Math.sqrt(3) / 2;
 /** what a creature is doing (inhabitants.wgsl S_*) */
 export const STATE = ['idle', 'walk', 'run', 'stalk', 'rest', 'fly', 'down'] as const;
 
-const ORDER_KIND = { roam: 0, go: 1, flee: 2, paths: 3, pace: 4 } as const;
+const ORDER_KIND = { roam: 0, go: 1, flee: 2, paths: 3, pace: 4, puppet: 5 } as const;
+/** (interiors) inhabitants.wgsl's puppet poses */
+const POSE = { stand: 0, sit: 1, talk: 2, sittalk: 3 } as const;
 const GAIT = { idle: 0, walk: 1, run: 2, fly: 3 } as const;
 
 interface Group {
@@ -93,6 +95,8 @@ export class InhabitantsGpu implements SimSystem, Inhabitants {
   private live = 0;
   private orders = new Float32Array((MAX_GROUPS * 2 + PATH_NODES * 2 + PATH_EDGES) * 4);
   private ordersDirty = true;
+  /** (interiors) the groups whose orders alone changed since the upload (a puppet's every frame): only theirs go up */
+  private ordersGroups = new Set<number>();
   private paths: { nodes: number; edges: number } = { nodes: 0, edges: 0 };
   private pathData: WalkPaths | null = null;
   private params = new ArrayBuffer(PARAMS_BYTES);
@@ -146,7 +150,7 @@ export class InhabitantsGpu implements SimSystem, Inhabitants {
     const specs: Record<string, BindSpec> = {
       binIt: { ...base, 42: 'rw', 44: 'rw', 46: 'rw' },
       behave: { ...base, 15: 'tex', 17: 'tex', 21: 'tex', 42: 'rw', 44: 'rw', 45: 'read', 46: 'rw', 49: 'read', 50: 'read', 51: 'read' },
-      animate: { ...base, 15: 'tex', 17: 'tex', 21: 'tex', 42: 'rw', 43: 'rw', 49: 'read' },
+      animate: { ...base, 15: 'tex', 17: 'tex', 21: 'tex', 42: 'rw', 43: 'rw', 45: 'read', 49: 'read' },
       meshIt: { ...base, 17: 'tex', 21: 'tex', 42: 'rw', 43: 'rw', 47: 'rw', 48: 'rw', 49: 'read' },
       meshArgs: { ...base, 48: 'rw' },
       shiftIt: { ...base, 42: 'rw', 43: 'rw' },
@@ -259,7 +263,7 @@ export class InhabitantsGpu implements SimSystem, Inhabitants {
     else if (order.kind === 'pace') {
       g.home = [order.around[0], order.around[1]];
       g.radius = order.radius;
-    }
+    } else if (order.kind === 'puppet') g.home = [order.at[0], order.at[1]];
     this.writeOrder(g);
   }
 
@@ -313,6 +317,7 @@ export class InhabitantsGpu implements SimSystem, Inhabitants {
       if (g.order.kind === 'roam') g.order = { ...g.order, around: g.home };
       if (g.order.kind === 'go') g.order = { ...g.order, to: g.home };
       if (g.order.kind === 'pace') g.order = { ...g.order, around: g.home };
+      if (g.order.kind === 'puppet') g.order = { ...g.order, at: [g.order.at[0] - dx, g.order.at[1] - dy, g.order.at[2] - dz], floor: g.order.floor === undefined ? undefined : g.order.floor - dz };
       this.writeOrder(g);
     }
     if (this.pathData)
@@ -368,6 +373,10 @@ export class InhabitantsGpu implements SimSystem, Inhabitants {
       this.device.queue.writeBuffer(this.bufs.table, 0, this.table);
       this.tableDirty = false;
     }
+    if (!this.ordersDirty && this.ordersGroups.size) {
+      for (const g of this.ordersGroups) this.device.queue.writeBuffer(this.bufs.orders, g * 32, this.orders, g * 8, 8);
+    }
+    this.ordersGroups.clear();
     if (this.ordersDirty) {
       this.device.queue.writeBuffer(this.bufs.orders, 0, this.orders);
       this.ordersDirty = false;
@@ -453,6 +462,14 @@ export class InhabitantsGpu implements SimSystem, Inhabitants {
   private writeOrder(g: Group): void {
     const o = this.orders;
     const b = g.id * 8;
+    if (g.order.kind === 'puppet') {
+      // (a puppet: where it is (xyz), its heading, pose, floor)
+      const q = g.order;
+      o.set([q.at[0], q.at[1], q.at[2], ORDER_KIND.puppet], b);
+      o.set([q.heading, POSE[q.pose], q.floor ?? q.at[2], g.species], b + 4);
+      this.ordersGroups.add(g.id);
+      return;
+    }
     // (pace: o1.x the gait)
     const fromXY = g.order.kind === 'flee' ? g.order.from : g.order.kind === 'pace' ? [GAIT[g.order.gait], 0] : [0, 0];
     o.set([g.home[0], g.home[1], g.radius, ORDER_KIND[g.order.kind]], b);

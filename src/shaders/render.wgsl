@@ -18,7 +18,42 @@ struct Camera {
   see: array<vec4<f32>, 4>,
   // what may be dithered: lo xyz, hi xyz (two a box)
   boxes: array<vec4<f32>, 8>,
+  // (round 121, herolab: the cutaway camera mode; ported by interiors as herolab has it) the slice's shape: xy the point
+  // it's round (at the slice's height), z its radius on screen (world units; 0: the whole view), w the rim's depth (unused here)
+  sliceShape: vec4<f32>,
+  // x cells under the slice it thins out over, y the outer share of the radius (0: hard); z, w herolab's bowl and flags
+  sliceSoft: vec4<f32>,
+  // (interiors) x: how far veiled structure pieces are dithered away (0..1); y the focus's height
+  veil: vec4<f32>,
+  // (interiors) the focus: xy the point, z its radius on screen (world units), w how far the rest fades (0..1)
+  focus: vec4<f32>,
+  // (interiors) the local lights (camera.ts LocalLight): x how many; then two a light (xyz, radius | colour, flicker)
+  nLights: vec4<f32>,
+  lights: array<vec4<f32>, 32>,
 };
+
+/**
+ * (interiors) The local lights at a point (linear): candles, a hearth, lanterns (camera.ts LocalLight) — each falling
+ * off to its radius (smooth, squared), lit faces toward it, a flicker by its own clock. No shadows: a small light's
+ * pool is enough (as the towns' light pools, round 120).
+ */
+fn localLight(wpos: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
+  let n = u32(CAM.nLights.x);
+  var acc = vec3<f32>(0.0);
+  for (var i = 0u; i < n; i++) {
+    let a = CAM.lights[i * 2u];
+    let b = CAM.lights[i * 2u + 1u];
+    let d = a.xyz - wpos;
+    let r = length(d);
+    if (r >= a.w) { continue; }
+    let fall = 1.0 - r / a.w;
+    let ndl = clamp(dot(nrm, d / max(r, 1e-3)) * 0.75 + 0.25, 0.0, 1.0);
+    let t = G.time * 9.0 + a.x * 3.1 + a.y * 1.7;
+    let flick = 1.0 - b.w * (0.16 + 0.12 * sin(t) + 0.08 * sin(t * 2.3 + 1.0));
+    acc += b.rgb * fall * fall * ndl * flick;
+  }
+  return acc;
+}
 
 /** 4 × 4 ordered dither, 0..1 (a pixel's threshold) */
 fn bayer4(px: vec2<f32>) -> f32 {
@@ -57,8 +92,34 @@ fn seeReach(p: vec3<f32>) -> f32 {
   return k;
 }
 
-/** over the slice (round 83, V21: api/cutaway.ts Slice) */
-fn sliced(p: vec3<f32>) -> bool { return CAM.cut.w > 0.5 && p.z > CAM.cut.x; }
+/** within the slice's radius on screen (round 121, herolab: everywhere when it has none) */
+fn inSliceRadius(p: vec3<f32>) -> bool {
+  let sh = CAM.sliceShape;
+  if (sh.z <= 0.0) { return true; }
+  let v = p - vec3<f32>(sh.xy, CAM.cut.x);
+  let e = toEye(p);
+  return length(v - dot(v, e) * e) < sh.z;
+}
+
+/** over the slice (round 83, V21: api/cutaway.ts Slice; round 121: within its radius) */
+fn sliced(p: vec3<f32>) -> bool { return CAM.cut.w > 0.5 && p.z > CAM.cut.x && inSliceRadius(p); }
+
+/** (round 120, herolab's dithered cut — its fade and radius, not its bowl or occluders) how far into the cut p is, 0..1 */
+fn sliceReach(p: vec3<f32>) -> f32 {
+  if (CAM.cut.w < 0.5) { return 0.0; }
+  let sh = CAM.sliceShape;
+  let sf = CAM.sliceSoft;
+  let z0 = CAM.cut.x;
+  var kz = select(0.0, 1.0, p.z > z0);
+  if (sf.x > 0.0) { kz = smoothstep(z0 - sf.x, z0, p.z); }
+  if (kz <= 0.0 || sh.z <= 0.0) { return kz; }
+  let v = p - vec3<f32>(sh.xy, z0);
+  let e = toEye(p);
+  let d = length(v - dot(v, e) * e);
+  var kr = select(0.0, 1.0, d < sh.z);
+  if (sf.y > 0.0) { kr = 1.0 - smoothstep(sh.z * (1.0 - sf.y), sh.z, d); }
+  return kz * kr;
+}
 
 /** Is p where the view was cut open (the slice on, or in a hole)? A surface seen from inside the solid there is drawn dark (a section). */
 fn inCut(p: vec3<f32>) -> bool { return CAM.cut.w > 0.5 || seeReach(p) > 0.5; }
@@ -68,7 +129,8 @@ fn inCut(p: vec3<f32>) -> bool { return CAM.cut.w > 0.5 || seeReach(p) > 0.5; }
  * opens and closes as an iris). The shadow pass doesn't cut: the light stays.
  */
 fn cutAway(p: vec3<f32>, px: vec2<f32>) -> bool {
-  return sliced(p) || seeReach(p) > bayer4(px);
+  let b = bayer4(px);
+  return sliceReach(p) > b || seeReach(p) > b;
 }
 
 /** toward the eye from p: one way for the fixed (orthographic) view, from where it is for the free one */
@@ -754,7 +816,7 @@ fn lighting(wpos: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
   // roofs, the heightfield march not all)
   let cov = underCover(wpos, nrm);
   let shade = mix(1.0, 0.1, cov);
-  return (ambient + fill) * shade + flash + firelight + sunCol * ndl * lit * (1.0 - cloud * 0.9) * mix(1.0, 0.2, cov);
+  return (ambient + fill) * shade + flash + firelight + sunCol * ndl * lit * (1.0 - cloud * 0.9) * mix(1.0, 0.2, cov) + localLight(wpos, nrm);
 }
 
 // the player's reach on a story level (game/reach.ts): 1 inside, 0.5 at
@@ -814,6 +876,15 @@ fn haze(c: vec3<f32>, wpos: vec3<f32>) -> vec3<f32> {
   let h = mix(clean, dirty, G.pollution) * mix(1.0, 0.15, G.sky.w);
   let lowFog = smoothstep(24.0, 0.0, wpos.z) * 0.06;
   var o = mix(c, toLinear(h), 0.03 + 0.1 * G.pollution + lowFog);
+  // (interiors) the focus: past its radius on screen the world falls into a cold dark (a building entered holds the eye)
+  if (CAM.focus.w > 0.0) {
+    let v = wpos - vec3<f32>(CAM.focus.xy, CAM.veil.y);
+    let e = toEye(wpos);
+    let d = length(v - dot(v, e) * e);
+    let k = smoothstep(CAM.focus.z, CAM.focus.z + 3.0, d) * CAM.focus.w;
+    let g = dot(o, vec3<f32>(0.3, 0.59, 0.11));
+    o = mix(o, vec3<f32>(0.012, 0.013, 0.02) + vec3<f32>(g) * 0.06, k);
+  }
   // beyond the reach: a dim, colourless fog (the land not yet reached)
   let fog = 1.0 - smoothstep(0.05, 0.5, reachAt(wpos.xy));
   if (fog > 0.0) {
@@ -1945,6 +2016,8 @@ fn drapeTop(p: vec3<f32>) -> f32 {
 
 @fragment
 fn fsBody(in: VOut) -> FOut {
+  // (interiors: a slice hides what's over it — the people upstairs too, not only the floors)
+  if (sliceReach(in.wpos) > bayer4(in.pos.xy)) { discard; }
   let word = in.info.x;
   let mat = word & 0xffu;
   // a little per-voxel variation so a tumbling slab doesn't read as one block
