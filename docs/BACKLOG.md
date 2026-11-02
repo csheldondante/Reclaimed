@@ -30,6 +30,8 @@ march state: "Oh yeah definitely update the world model so all this data lives i
 | M124-7 | A run's deal on seed 1's atlas world ~15-30 ms in Node (was < 5 ms with the code templates): the engine's evaluation and a fork of the world for each dealt card that touches it; acceptable at an edge, measure on the phone | S | open |
 | M124-8 | A placed structure is realised as a landmark tower on a lone lot; its own look (burrows, a granary, a watchtower's shape) is the structures track's (STR) | S | open |
 | M124-9 | The far land (past the window) shows a placed structure only once the town's exact plan is made again (its far plan is the old one until then) | S | open |
+| M124-11 | Refugees a run moved into a town farm with its farmers (life.ts ROUTINE refugee → farmer): a round of their own (a camp at the town's edge, asking for work) | S | open |
+| M124-12 | A structure placed in a town that stands in the window waits until the window has left it (planned again under the player's feet, its old walls came down as rubble); the structures track could add one building in place instead | S | open |
 | M124-10 | The UI is known-bad (the user): the card shows the presenter's line in the pitch and "You get" — to be experimented with later; dialogs, interiors, portraits, camera/zoom, foliage next | M | open (the user) |
 
 ## Round 125 (2026-11-02, session 5, `facts`) — the living world: the fact layer, the template engine, the world inspector (DECISIONS round 124/125, docs/design/FACTIONS_WORLD_STATE.md)

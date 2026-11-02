@@ -279,6 +279,9 @@ export class OppRun {
     this.flush();
     if (o.template === 'outriders') return { travel: false };
     if (this.sr.offers.length) this.sr.take(null);
+    // (the way to the climax: what the crews were sent to do comes off as the hero sets out — the town's land, made on
+    // arrival, is made with what they built)
+    if (o.climax) for (const { c } of this.running()) this.engine.resolve(c.id);
     let choice = o.offer;
     if ((DETOURS as readonly string[]).includes(o.template)) {
       // (a detour: its area (staged at this edge) made part of the situation, off the road, leading on to where this

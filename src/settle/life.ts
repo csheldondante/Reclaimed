@@ -94,6 +94,9 @@ export const ROUTINE: Record<string, 'farmer' | 'woodcutter' | 'miner' | 'builde
   farmer: 'farmer', woodcutter: 'woodcutter', miner: 'miner', builder: 'builder', guard: 'guard',
   sawyer: 'woodcutter', raftsman: 'woodcutter', carter: 'miner', smith: 'builder',
   miller: 'farmer', stablehand: 'farmer', docker: 'farmer', sailor: 'farmer', fisher: 'farmer', trader: 'farmer',
+  // (merge124: the people a run moved here — led out of a town, sheltering — work the fields with the farmers; a round of
+  // their own, a camp at the edge of town, is M124-11)
+  refugee: 'farmer',
 };
 export function routineOf(role: string): (typeof ROUTINE)[string] {
   const r = ROUTINE[role];

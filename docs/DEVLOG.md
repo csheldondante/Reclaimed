@@ -16142,3 +16142,68 @@ from a locus and a cast, and named characters present the cards.
     a human on a griffin flies. `Agent.parts` gained `training` and `mount`.
   - Spawned agents seeded with their species' traits is a hook (LW-F13).
 - Tests: living-people.test.ts, 10. The unit suite is 528 passing.
+
+## 2026-11-02 — merge124: the living world merged into the run structure (BACKLOG M124-1..10, LW-F10)
+
+The user (DECISIONS round 125, newest): "Please proceed with getting it ready to merge into our run structure for now"
+— and, while this was built, on the levy's march state: "Oh yeah definitely update the world model so all this data
+lives in it." `facts` 5aa6d0f (holding `opportunities`) onto `places` 2051bf6, then places 42c6698 (DECISIONS taken from
+places: the merge added none of its own). The structure review: C:/Projects/shots88/merge124/STRUCTURE.md.
+
+- **The run's cards come from the living engine.** `?run=opps` dealt from its own code templates (src/opps/horde.ts:
+  proposals built in code each turn); now slice A's cards are living templates (src/living/horde.ts) and the run uses
+  the inspector's engine, dealer and oppcheck. Why one engine: the user's "merge it into the run structure" — the
+  inspector's presenters, rewards, stakes and locus should be what the run deals, and two template paths would drift.
+  - The run's conflict became the engine's **Stage**: the situation run keeps the clock and the host on its road; the
+    stage stages them in the fact layer (the host an army of the threat's faction, the areas sites, the ways on routes,
+    the hold's fields) and registers the helpers the templates name. Run scaffolding is removed at the run's end.
+  - The engine gained tiered and rolled cards, played cards (a challenge at a site), minute expiry, per-card vars from
+    the tune, `once`, `passable` (a way not taken is no slight to its presenter), `redeal`, `resolve(id, tier)`,
+    `withdraw` (a detour left behind). EngineOptions carry the stage, the live tune and where the player is.
+  - Every card is presented by a named person of the locus's voice (Maud Fenner offers the watchtower; Hal Brenning
+    points the quick road) with a reward ("You get" on the card).
+  - Removed: src/opps/horde.ts, `checkOpps`, OppRun's own march map, `taken`/`seen`/`harvest` state.
+- **The fact layer seeded from the atlas world** (src/living/seed.ts): the factions' standing as rival_of/friend_of, the
+  locus's cohorts, and a cast of 5-8 named people at the run's starting settlement when the save has none. Seed 1: the
+  locus Bumku, its voice the Baummask Moot, a cast of eight (Bram Cotter, scout; Corin Hale, herbalist; Elsa Wyck,
+  elder; Hal Brenning, smith; Maud Fenner, priest; Osric Pell, captain; Tilda Marsh, trader; Wenna Ashby, reeve). They
+  persist through the snapshot; the next run meets them and makes no one new.
+- **The world model holds the agents.** WorldSnapshot.holdings: every agent with `at`, `march` (the levy's march, on the
+  agent), `committed`, tags; the goods and effects; `commitments` (what, where, the turn it resolves). Test: an army
+  committed in one run is still at its place and committed in the restored snapshot; an army on the march ends the run
+  stationed at the town.
+- **Mutations reach the game world when the player looks.** WorldState.onEvent tells the systems that realise it:
+  Settlements.useWorld (also LW-F10: their rights agreements now live in the world's facts) and the level's river field.
+  Two crew cards change the world (the levy does one): raise a watchtower at the town, close the hold's weir; warn and
+  lead-out's failure gives the town to the dead, lead-out's success moves its people to the hold. Verified headless on
+  seed 1 (scripts/m124world.mjs):
+  - placed structure: the watchtower's `settlement-building` → Muru's plan made again with a landmark tower (structures'
+    CitySpec.placed; towers at (155,105) and now (161,101)) — shots88/merge124/world-tower-compare.png;
+  - condition and owner: Muru burned → ruined (the condition event, its one owner now) and held by the Hollow Court;
+  - river: the weir → Brauhag Fields' rivers at 0.15 → the river through Huggek runs dry
+    (world-weir-river-before/after.png);
+  - migration: 40% of Muru's people led out → 16 to Huggek → 5 of them out as units when the hold is looked at.
+  - Found and fixed on the way: a town re-planned while it stood in the window had its old walls come down as rubble,
+    so a structure placed there waits until the window has left it; the crews' commitments now come off as the hero
+    sets out for the climax, so the town's land is made with them; a hero chosen again left the first run's
+    scaffolding behind (`HordeStage.clear`); detours offered at an area left behind are withdrawn; a refugee had no
+    round in a town's life (they farm for now).
+- **Settlement condition has one owner**: the `settlement-condition` event (finishSituation applies it; LevelSit no
+  longer sets it).
+- **Measured** (Node, seed 1's atlas world: 140 settlements, 2.1 MB of region states):
+  - a world snapshot 28 ms and a restore 58 ms, which made the first port of the deal 3 s a turn (a dry run per card on a
+    full copy);
+  - WorldState.fork (copy-on-write regions) and a light snapshot for diffs, run cards dry-run only once dealt and only
+    when they touch the world, and one dry run a deal shared with oppcheck: a turn's deal 15-25 ms (Briar Hollow's
+    inspector unchanged: 10.5 ms in the page);
+  - the old code path dealt in < 5 ms. A deal happens at an area's edge, once a turn, while the map opens (M124-7).
+- Tests: test/unit/run-world.test.ts 7, opps.test.ts 20 (over the engine), plan.test.ts +1. npm test 639 passed.
+- **Gate**: typecheck; npm test 639 passed (2 expected fail); smoke on atlas, playground and rocklab passed; opps.mjs
+  saved (the straight road, warned, held) and burned (the hold's levy, the watchtower committed, Muru burned) passed,
+  every encounter with enemies; m124world tower, weir and lead passed; the inspector headless clean over four turns
+  (scripts/inspector.mjs) and the deck lab (cardlab.mjs, now `?deck=1`); tilegate parked coverage 0 on every view — its
+  golden diffs (z2.2/z1.3 28-38 %, a framing shift, the same scene) and fast-pan misses (flaky run to run: desktop z8
+  20.7 % then 2.3 %) fail on places itself too (12 failures there, 16 and then 5 here); driveprofile against places
+  (two runs each): p50 9.9/9.9 vs 9.9/9.9 ms, p95 12.3/13.4 vs 12.3/12.4, GPU 12.1/13.9 vs 13.4/12.1 ms — within the
+  spread. Shots: C:/Projects/shots88/merge124/ (1-roster, 2-run-turn-presenter-card, 3-effect-card-reward,
+  4-encounter-enemies, 5-mutation-watchtower-before-after, 5b-mutation-weir-river-before-after, opps/, inspector-*).

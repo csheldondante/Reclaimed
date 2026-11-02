@@ -105,8 +105,16 @@ await run({ name: `m124world-${which}`, kind: 'behaviour', size: arg('size', '41
       return O.sr.map.areaAt(O.sit.areas.find((a) => a.play.kind === 'deliver'));
     });
     const townAt0 = await p.evaluate(() => window.reclaimed.opps.opps.sr.map.areaAt(window.reclaimed.opps.opps.sr.finaleArea));
-    if (which === 'tower') {
+    // (--before 1: the town looked at before the card, in this page — its land then made again where the player stood:
+    // the realistic run never sees the town before it gets there)
+    if (which === 'tower' && R.opt('before', '0') === '1') {
       await lookAt(townAt0, 'town-before', 25000, 5);
+      const before = await p.evaluate(() => {
+        const O = window.reclaimed.opps.opps;
+        const pl = window.reclaimed.opps.d.settlements.plan(O.sit.target.settlement);
+        return pl ? pl.city.megas.filter((m) => m.kind === 'tower').map((m) => m.frame[0].map((v) => Math.round(v))) : null;
+      });
+      R.log(`the town's towers before: ${JSON.stringify(before)}`);
       // (back to the hold, where the levy is committed: the town is looked at again when the run gets there)
       await lookAt(holdAt, 'at-hold', 8000);
     }
@@ -147,7 +155,7 @@ await run({ name: `m124world-${which}`, kind: 'behaviour', size: arg('size', '41
       const plan = await p.evaluate(() => {
         const O = window.reclaimed.opps.opps;
         const pl = window.reclaimed.opps.d.settlements.plan(O.sit.target.settlement);
-        return pl ? { placed: pl.city.placed ?? null, towers: pl.city.megas.filter((m) => m.kind === 'tower').length } : null;
+        return pl ? { placed: pl.city.placed ?? null, towers: pl.city.megas.filter((m) => m.kind === 'tower').map((m) => m.frame[0].map((v) => Math.round(v))) } : null;
       });
       R.log(`the town's plan now: ${JSON.stringify(plan)}`);
       R.check('the town, looked at, stands with the watchtower raised (the plan made again with it)', !!plan?.placed?.length, plan);
@@ -187,6 +195,9 @@ await run({ name: `m124world-${which}`, kind: 'behaviour', size: arg('size', '41
       const S = window.reclaimed.opps.d.settlements;
       return { hold, people: JSON.stringify(S.settlement(hold)?.people ?? []), town: JSON.stringify(S.settlement(O.sit.target.settlement)?.people ?? []) };
     });
+    // (the town looked at: its plan says who lives there — the finale is played in it)
+    const townAt = await p.evaluate(() => window.reclaimed.opps.opps.sr.map.areaAt(window.reclaimed.opps.opps.sr.finaleArea));
+    await lookAt(townAt, 'town', 20000, 4);
     await ride('lead-out');
     const after = await p.evaluate(() => {
       const L = window.reclaimed.opps;
@@ -195,10 +206,10 @@ await run({ name: `m124world-${which}`, kind: 'behaviour', size: arg('size', '41
       L.end();
       const S = L.d.settlements;
       const hold = O.sit.areas.find((a) => a.play.kind === 'deliver')?.settlement;
-      return { people: S.settlement(hold)?.people ?? [], world: O.w.ws.settlements.find((s) => s.id === hold)?.people ?? [], town: S.settlement(O.sit.target.settlement)?.people ?? [], history: O.w.ws.history().filter((e) => e.kind === 'migrate').length };
+      return { people: S.settlement(hold)?.people ?? [], waiting: S.refugees?.get(hold) ?? 0, world: O.w.ws.settlements.find((s) => s.id === hold)?.people ?? [], town: S.settlement(O.sit.target.settlement)?.people ?? [], history: O.w.ws.history().filter((e) => e.kind === 'migrate').length };
     });
     R.log(`the hold's people before ${before.people}, after ${JSON.stringify(after.people)}; the town's before ${before.town}, after ${JSON.stringify(after.town)}; migrate events ${after.history}`);
-    R.check('led out: the town\'s people moved to the hold (migrate), in the world and the settlements system', after.history > 0 && after.people.some((x) => x.role === 'refugee' && x.count > 0), after);
+    R.check('led out: the town\'s people moved toward the hold (the migrate event; the settlements system holds them for the hold\'s plan)', after.history > 0 && (after.waiting > 0 || after.people.some((x) => x.role === 'refugee' && x.count > 0)), after);
     const holdAt = await p.evaluate(() => {
       const O = window.reclaimed.opps.opps;
       return O.sr.map.areaAt(O.sit.areas.find((a) => a.play.kind === 'deliver'));
