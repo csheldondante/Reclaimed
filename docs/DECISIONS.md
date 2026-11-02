@@ -394,6 +394,8 @@ each was implemented.
   layer's templates with presenters and rewards. The interface is known-bad and to be experimented with later. Next:
   dialogs, interiors, character portraits, camera management and zoom, foliage; the user has documents to share.
 
+- The user, verbatim: "Oh yeah definitely update the world model so all this data lives in it. Sounds good!" (on agents' and armies' whereabouts and commitments kept inside run code) → all pawn and army state lives in the world model and persists through the snapshot. And: "Ok here is a doc I wrote about experimenting with cool plant rendering. It's sort of low priority but I really want to improve the visuals around flora." → kept verbatim at docs/design/FOLIAGE_WIND.md (wind-responsive foliage, GPU-only, prioritised experiments with a stop/go rule); BACKLOG FLO30, low priority.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
