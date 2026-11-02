@@ -420,6 +420,8 @@ each was implemented.
 
 - The user, verbatim, on the interiors branch's first hall: "Interiors are coming along. I think we can zoom in more and hide outside the building eventually" → inside a building the camera zooms in further so the storey fills the screen, and everything outside the building is hidden (not only darkened); the outside goes away as you enter.
 
+- The user, verbatim: "I don't love the shader used on the town zoom in. I think I would prefer without it and just normal rendering." → interiors and the zoom into a town use the engine's normal rendering by default; the pixel-art post pass (low-res, palette quantisation, outlines, dither) is off, kept at most as a toggle.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
