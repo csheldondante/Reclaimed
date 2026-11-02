@@ -22,7 +22,7 @@
 // Templates are evaluated on change: a template is re-evaluated only when an entity of a kind it binds changed, or (for
 // one reading quantities) the world's records did; the report counts how many were.
 
-import { affords, commit as commitOpp, resolve as resolveOpp, type Agent, type Commitment, type Goods, type Opportunity, type Requirement } from '../api/contracts/opportunity';
+import { affords, commit as commitOpp, fired, relics, resolve as resolveOpp, type Agent, type AgentKind, type BonusRecord, type Commitment, type Goods, type OppEffect, type Opportunity, type Requirement } from '../api/contracts/opportunity';
 import type { EntityId } from '../api/contracts/facts';
 import { affectedBy, checkInvariants } from '../api/contracts/facts-rules';
 import { deal, type DealReport, type Proposal } from '../opps/dealer';
@@ -30,7 +30,9 @@ import { checkTemplates } from '../gm/oppcheck';
 import { OPP_TUNE } from '../opps/tune';
 import { apply, describe, holds, ref, text, type Bind, type BindSpec, type Ctx, type Effect, type Pred, type Ref } from './dsl';
 import { adjustStores } from './mutations';
-import { crewRules, crewTurns, type WorkKind } from './traits';
+import { crewRules, crewTurns, pawnTraits, type WorkKind } from './traits';
+import { answer, makePresenter, pickPresenter, type PresenterSpec } from './people';
+import { attachment, hops, stakes } from './attachment';
 import { DAYS_PER_TURN, diffWorld, FactWorld } from './world';
 
 export interface StoreNeed {
@@ -39,6 +41,18 @@ export interface StoreNeed {
   amount: number;
   /** food carried for the work: not needed by a crew that eats nothing (the trait rules) */
   upkeep?: boolean;
+}
+
+/** (round 125) What the player gets besides the world change: the user's "mechanical choices are intrinsically
+ *  motivating … resources, pawns, abilities or unlocking things for different modes … engine building or unique units".
+ *  Goods and pawns go to the holdings (the contract's resolve), engine pieces are the holdings' own triggered effects
+ *  (Bonus), unlocks are the player's capabilities in the fact layer ('city:burrows' — another mode reads them). */
+export interface RewardSpec {
+  text: string;
+  goods?: Goods;
+  agents?: { kind: AgentKind; name: string; count: number; tags: string[]; parts?: Agent['parts'] }[];
+  bonuses?: BonusRecord[];
+  unlocks?: { mode: 'city' | 'travel' | 'units'; what: string }[];
 }
 
 /** A template: data (the doc's eligibility, bindings, setup, requirements, duration, outcomes, presentation). */
@@ -58,6 +72,9 @@ export interface TemplateDef {
   work: WorkKind;
   outcome: Effect[];
   outcomeText: string;
+  /** (round 125) who presents it (a named person of a bound group) and what the player gets */
+  presenter: PresenterSpec;
+  reward: RewardSpec;
   /** the share of each committed group lost (a costly card) */
   losses?: number;
   onExpire?: Effect[];
@@ -90,7 +107,10 @@ export interface Offer {
   dealt: number;
   expires: number;
   opp: Opportunity;
-  status: 'offered' | 'committed' | 'resolved' | 'expired';
+  status: 'offered' | 'committed' | 'resolved' | 'expired' | 'refused';
+  /** (round 125) who presents it, and what they say */
+  presenter: EntityId;
+  line: string;
   /** what it would change (a dry run when dealt), what it unlocks, the incident its setup made */
   preview: string[];
   unlocks: string[];
@@ -133,6 +153,21 @@ const keyOf = (t: TemplateDef, b: Bind) => `${t.id}:${Object.keys(b).sort().map(
 const kinds = (s: BindSpec) => (Array.isArray(s.kind) ? s.kind : [s.kind]);
 /** a template reads the owners' records (quantities, holders, buildings): world changes make it re-evaluate */
 const readsWorld = (t: TemplateDef) => /"qty"|\.controller|noBuilding|notAtWar|"law"/.test(JSON.stringify([t.bind, t.eligible]));
+
+/** a reward's rough worth (the dealer's value part): goods, pawns by head and traits, engine pieces, unlocks */
+export function rewardValue(r: RewardSpec): number {
+  const goods = Object.values(r.goods ?? {}).reduce((a, n) => a + n, 0) / 4;
+  const pawns = (r.agents ?? []).reduce((a, x) => a + 2 + x.count / 2 + pawnTraits(x).filter((t) => t !== 'living').length * 2, 0);
+  return goods + pawns + (r.bonuses?.length ?? 0) * 4 + (r.unlocks?.length ?? 0) * 3;
+}
+
+/** the reward's goods and pawns as the contract's outcome effects (its resolve adds them to the holdings) */
+export function rewardEffects(r: RewardSpec, key: string, home: EntityId): OppEffect[] {
+  return [
+    ...(r.goods ? [{ kind: 'goods' as const, goods: { ...r.goods } }] : []),
+    ...(r.agents ?? []).map((a, i) => ({ kind: 'agent' as const, agent: { id: `${key}:${i}`, kind: a.kind, name: a.name, count: a.count, tags: [...a.tags], statuses: [], at: { settlement: home }, ...(a.parts ? { parts: structuredClone(a.parts) } : {}) } })),
+  ];
+}
 
 /** Every binding of a template, and why the others fail (first few). */
 export function enumerate(w: FactWorld, t: TemplateDef, limit = 4): { ok: Bind[]; fails: string[] } {
@@ -178,12 +213,14 @@ export function enumerate(w: FactWorld, t: TemplateDef, limit = 4): { ok: Bind[]
 
 /** Apply effects as one batch: the invariants of everything it touched checked after, the world restored and an error
  *  thrown on a break (never a silent fix). Returns the diff. */
-export function applyBatch(w: FactWorld, effects: Effect[], b: Bind, cause: string): string[] {
+export function applyBatch(w: FactWorld, effects: Effect[], b: Bind, cause: string, changed?: Set<EntityId>): string[] {
   const before = w.full();
   w.facts.drainChanged();
   const c: Ctx = { w, b, cause };
   apply(c, effects);
-  const touched = [...w.facts.drainChanged()].flatMap((id) => affectedBy(w.facts, id));
+  const drained = w.facts.drainChanged();
+  for (const id of drained) changed?.add(id);
+  const touched = [...drained].flatMap((id) => affectedBy(w.facts, id));
   const broken = checkInvariants(w.facts, new Set(touched));
   if (broken.length) {
     const back = FactWorld.from(before);
@@ -219,8 +256,12 @@ export class LivingEngine {
   private cache = new Map<string, { ok: Bind[]; fails: string[] }>();
   private worldVersion = -1;
 
-  constructor(w: FactWorld, templates: TemplateDef[], arc?: ArcDef) {
+  /** (round 125) the run's locus: focus grows outward from it and its cast */
+  locus: EntityId;
+
+  constructor(w: FactWorld, templates: TemplateDef[], arc?: ArcDef, locus?: EntityId) {
     this.w = w;
+    this.locus = locus ?? w.holdings.rules[0] ?? w.ws.settlements[0]?.id ?? '';
     this.templates = templates;
     this.arc = arc;
     // (templates with problems are refused where they're used: never patched)
@@ -302,8 +343,12 @@ export class LivingEngine {
     const ev = this.evaluate();
     const notProposed = [...ev.fails];
     const was = LivingEngine.eligibleKeys(this.w, this.templates);
+    // (what the player cares about: their stakes, and the distance from the run's locus and its cast)
+    const st = stakes(this.w);
+    const dist = hops(this.w, this.locus, st.keys());
     const props: Proposal[] = [];
-    const meta = new Map<string, { c: Cand; preview: string[]; unlocks: string[]; subjects: string[]; place: string }>();
+    const meta = new Map<string, { c: Cand; preview: string[]; unlocks: string[]; subjects: string[]; place: string; presenter: EntityId | null; group: EntityId }>();
+    const presenting = new Set(live.map((o) => o.presenter));
     for (const c of ev.cands) {
       const { t, b, key } = c;
       const title = text({ w: this.w, b, cause: t.id }, t.title);
@@ -330,6 +375,10 @@ export class LivingEngine {
         continue;
       }
       const ctx: Ctx = { w: this.w, b, cause: t.id };
+      // (its presenter: a free member of the group from the cast, else one is made when it is shown)
+      const group = ref(ctx, t.presenter.of);
+      const presenter = pickPresenter(this.w, group, new Set([...busy, ...presenting]));
+      if (presenter) subjects.push(presenter);
       const stores = (t.requires.stores ?? []).map((s) => {
         const at = ref(ctx, s.at);
         const have = this.w.qty(at, s.good) ?? 0;
@@ -360,6 +409,8 @@ export class LivingEngine {
         unlocks: Math.min(1, unlocks.length / 2),
         urgency,
         neglect: Math.min(1, (turn - lastTaken) / 6),
+        ev: Math.min(1, rewardValue(t.reward) / 12),
+        ...attachment([...Object.values(b), ...(presenter ? [presenter] : [])], st, dist),
       };
       const expires = turn + (t.offerTurns ?? 2) - 1;
       const elig = (t.eligible ?? []).map((p) => describe(ctx, p));
@@ -376,7 +427,7 @@ export class LivingEngine {
           pitch: text(ctx, t.pitch),
           location: { region: loc.region, ...(loc.settlement ? { settlement: loc.settlement } : {}), at: loc.at, name: this.w.name(place) },
           duration: { turns: t.turns },
-          outcomes: { success: { text: text(ctx, t.outcomeText), effects: [], ...(t.losses ? { losses: t.losses } : {}) } },
+          outcomes: { success: { text: text(ctx, t.outcomeText), effects: rewardEffects(t.reward, key, this.locus), ...(t.losses ? { losses: t.losses } : {}) } },
           visibility: 'known',
           expires: { turn: expires },
           ...(t.onExpire ? { onExpire: { text: text(ctx, t.expireText ?? 'it lapses'), effects: [] } } : {}),
@@ -388,7 +439,7 @@ export class LivingEngine {
         at: loc.at,
         hooks: t.themes,
       });
-      meta.set(key, { c, preview: diff, unlocks, subjects, place });
+      meta.set(key, { c, preview: diff, unlocks, subjects, place, presenter, group });
     }
     const tune = { ...OPP_TUNE.dealer, reach: 1e9, playerMax: 2, resourceMax: 4, unaffordable: 1, nextTier: 0 };
     const dealer = props.length ? deal(props, { holdings: this.w.holdings, turn, at: [0, 0], dist: () => 0, conflictHooks: this.arc?.themes ?? [], recent: this.recent, tune, onePerPlace: true }) : null;
@@ -396,10 +447,24 @@ export class LivingEngine {
     for (const d of dealer?.dealt ?? []) {
       const m = meta.get(d.opp.offer)!;
       const { t, b, key } = m.c;
-      const o: Offer = { id: `${key}@${turn}`, key, template: t.id, bind: { ...b }, place: m.place, subjects: m.subjects, dealt: turn, expires: d.opp.expires.turn, opp: d.opp, status: 'offered', preview: m.preview, unlocks: m.unlocks, setup: [], because: d.opp.because };
+      const id = `${key}@${turn}`;
+      // (its presenter: made now it's shown, when the cast had no one free — a real person the world remembers)
+      let setup: string[] = [];
+      let presenter = m.presenter;
+      if (!presenter || presenting.has(presenter)) {
+        const before = this.w.full();
+        presenter = makePresenter(this.w, m.group, t.presenter.role, id);
+        setup = diffWorld(before, this.w.full(), (x) => this.w.name(x));
+      }
+      presenting.add(presenter);
+      const bind = { ...b, presenter };
+      const pctx: Ctx = { w: this.w, b: bind, cause: id };
+      const line = text(pctx, t.presenter.line);
+      const opp = { ...d.opp, pitch: `${this.w.name(presenter)} ${t.presenter.verb}: “${line}” ${d.opp.pitch}` };
+      const o: Offer = { id, key, template: t.id, bind, place: m.place, subjects: [...m.subjects.filter((x) => x !== m.presenter), presenter], dealt: turn, expires: d.opp.expires.turn, opp, status: 'offered', presenter, line, preview: m.preview, unlocks: m.unlocks, setup, because: d.opp.because };
       // (the incident, made now it's shown — once per binding)
       if (t.setup && !this.setupDone.has(key)) {
-        o.setup = applyBatch(this.w, t.setup, o.bind, o.id);
+        o.setup = [...setup, ...applyBatch(this.w, t.setup, o.bind, o.id)];
         this.setupDone.add(key);
       }
       this.offers.push(o);
@@ -425,7 +490,9 @@ export class LivingEngine {
     const labour = crewAgents.filter((x) => x.kind === 'workers' || x.kind === 'army');
     const crew = t.work === 'labour' ? labour : crewAgents;
     const rules = crewRules(crew);
-    const timing = crewTurns(t.turns, t.work, crew);
+    // (the contract's own commit effects first — an engine piece that shortens — then the crew's traits)
+    const timing = crewTurns(Math.max(1, (commitment.resolvesTurn ?? this.turn + t.turns) - this.turn), t.work, crew);
+    if (commitment.fired?.length) timing.why.unshift(...commitment.fired.map((f) => `${f}: fewer turns`));
     // (the real stores, spent at the settlement that holds them; upkeep waived for a crew that eats nothing)
     for (const s of t.requires.stores ?? []) {
       const at = ref(ctx, s.at);
@@ -451,6 +518,7 @@ export class LivingEngine {
         if (living.length) this.w.facts.record({ kind: 'objection', by: living.map((c) => c.id), to: ['player'], about: { opp: o.id }, note: `${rule.objection.why} (${living.map((c) => c.name).join(', ')})` });
         notes.push(rule.objection.why);
       }
+    answer(this.w, o.presenter, 'committed', o.opp.title, o.id);
     this.w.facts.record({ kind: 'committed', by: ['player'], to: [o.place], about: { opp: o.id }, note: `${o.opp.title}: ${commitment.agents.map((id) => holdings.agents.find((x) => x.id === id)?.name ?? id).join(', ')} committed` });
     o.status = 'committed';
     o.commitment = commitment;
@@ -460,6 +528,24 @@ export class LivingEngine {
     this.changes.push({ turn: this.turn, what: `committed: ${o.opp.title}`, lines: o.spent });
     for (const th of t.themes) this.taken.set(th, this.turn);
     this.log.push(`turn ${this.turn}: committed to "${o.opp.title}" — resolves turn ${o.resolvesTurn}${notes.length ? ` (${notes.join('; ')})` : ''}`);
+    return o;
+  }
+
+  /** (round 125) the player turns a card down: its presenter remembers it, its binding rests */
+  refuse(offerId: string): Offer {
+    const o = this.offers.find((x) => x.id === offerId && x.status === 'offered');
+    if (!o) throw new Error(`no offer ${offerId} on the board`);
+    const t = this.template(o.template);
+    const before = this.w.full();
+    answer(this.w, o.presenter, 'refused', o.opp.title, o.id);
+    o.status = 'refused';
+    o.result = diffWorld(before, this.w.full(), (id) => this.w.name(id));
+    this.rest.set(o.key, this.turn + (t.cooldown ?? 3));
+    this.rest.set(`${o.template}@${o.place}`, this.turn + (t.cooldown ?? 3));
+    this.offers = this.offers.filter((x) => x !== o);
+    this.past.push(o);
+    this.changes.push({ turn: this.turn, what: `refused: ${o.opp.title}`, lines: o.result });
+    this.log.push(`turn ${this.turn}: refused "${o.opp.title}" — ${this.w.name(o.presenter)} remembers`);
     return o;
   }
 
@@ -474,7 +560,18 @@ export class LivingEngine {
       if (rules.some((r) => r.rule.recovers)) this.recovering.push({ ...structuredClone(had), committed: undefined });
     }
     this.w.holdings = out.holdings;
-    applyBatch(this.w, t.outcome, o.bind, o.id);
+    const made = new Set<EntityId>();
+    applyBatch(this.w, t.outcome, o.bind, o.id, made);
+    // (what the player gets: engine pieces and unlocks — the goods and pawns came with the contract's resolve)
+    for (const b of t.reward.bonuses ?? []) if (!this.w.holdings.bonuses.some((x) => x.why === b.why && !x.holder)) this.w.holdings.bonuses.push(structuredClone(b));
+    const player = this.w.diplomacy.idOf({ player: true });
+    for (const u of t.reward.unlocks ?? []) {
+      this.w.facts.setTag(player, 'capability', `${u.mode}:${u.what}`, true, o.id);
+      this.w.facts.record({ kind: 'unlocked', by: [player], to: [player], about: { opp: o.id }, note: `unlocked for the ${u.mode === 'city' ? 'city builder' : u.mode}: ${u.what}` });
+    }
+    // (provenance: what the player's card made or changed is theirs — the dealer's stakes read it)
+    made.delete(player);
+    if (made.size) this.w.facts.record({ kind: 'player-made', by: [player], to: [...made].sort(), about: { opp: o.id }, note: `made by your hand: ${o.opp.title}` });
     o.status = 'resolved';
     o.result = diffWorld(before, this.w.full(), (id) => this.w.name(id));
     this.rest.set(o.key, this.turn + (t.cooldown ?? 3));
@@ -495,6 +592,13 @@ export class LivingEngine {
     // (the turn's economy: each settlement's stores move by their rates over the turn's days — an instant step)
     for (const s of w.ws.settlements)
       for (const [g, st] of Object.entries(s.stores)) if (st.rate) adjustStores(w, s.id, g, st.rate * DAYS_PER_TURN, 0, `turn ${this.turn}`);
+    // (the holdings' engine pieces that fire each turn: a toll charter's coin)
+    for (const b of relics(w.holdings, 'turn', undefined, undefined, this.turn))
+      if (b.effect.kind === 'gain') {
+        for (const [g, n] of Object.entries(b.effect.goods)) w.holdings.goods[g] = (w.holdings.goods[g] ?? 0) + n;
+        fired(w.holdings, b, this.turn);
+        this.log.push(`turn ${this.turn}: ${b.why}: ${Object.entries(b.effect.goods).map(([g, n]) => `+${n} ${g}`).join(', ')}`);
+      }
     // (regenerating pawns back at full strength)
     for (const a of this.recovering.splice(0)) {
       const h = w.holdings.agents.find((x) => x.id === a.id);
@@ -505,7 +609,10 @@ export class LivingEngine {
     for (const o of this.offers.filter((x) => x.status === 'committed' && (x.resolvesTurn ?? Infinity) <= this.turn)) this.resolveOffer(o);
     for (const o of this.offers.filter((x) => x.status === 'offered' && x.expires < this.turn)) {
       const t = this.template(o.template);
-      o.result = t.onExpire ? applyBatch(w, t.onExpire, o.bind, `${o.id}:lapsed`) : [];
+      const before = w.full();
+      if (t.onExpire) applyBatch(w, t.onExpire, o.bind, `${o.id}:lapsed`);
+      answer(w, o.presenter, 'ignored', o.opp.title, o.id);
+      o.result = diffWorld(before, w.full(), (id) => w.name(id));
       o.status = 'expired';
       this.rest.set(o.key, this.turn + (t.cooldown ?? 3));
       this.rest.set(`${o.template}@${o.place}`, this.turn + (t.cooldown ?? 3));

@@ -16082,3 +16082,63 @@ mutations). One contract, `src/api/contracts/facts.ts`, its store `facts-store.t
   Checked headless at 1000 and 412 wide (C:/Projects/shots88/facts/: 1-inspector-turn0, 2-inspector-turn2,
   3-inspector-phone). On a phone the counters overflowed sideways, so they wrap now.
 - Tests: test/unit/living.test.ts, 19 (with facts.test.ts: 36). The unit suite is 518 passing.
+
+## 2026-11-02 — round 125 (`facts`): people present the cards, what the player cares about, mechanical rewards, species traits from the creature generator (BACKLOG LW-F15..F18)
+
+The user's answers on the inspector are in DECISIONS (round 125, newest entry). Their principle: make choices
+interesting through mechanically compelling rewards, and through stakes in what the PLAYER made. Focus grows outward
+from a locus and a cast, and named characters present the cards.
+
+- **Named presenters** (src/living/people.ts). Every template names who presents it: a member of a bound group, in a
+  role, with one line.
+  - The engine takes a free member from the cast. Matron Grisk petitions for the burrows, Ada Thorne asks for
+    abolition, Guildmaster Pell offers the road.
+  - When no one in the group is free, it makes a person as the card is shown. That person is a real
+    CharacterRecord in WorldState, so later runs meet them, and a fact entity with species, membership and home.
+    With Grisk dead, the burrows card is presented by Rukk, a gnoll the engine made.
+  - Briar Hollow's cast is now eight: Edric Aldren, Isolde Morrow, Pell, Grisk, Tamsin, Ada Thorne, Chancellor
+    Wendel Crane and Kestrel Vane of the Vell March.
+- **The player's answer is a relationship fact.** It updates the relation, a weighted event that diplomacy's opinion
+  reads, and the person's own record (feeling toward the player, a line of history), all saved between runs:
+  - committing: the presenter owes_favor_to the player (+0.3);
+  - refusing (a new Refuse button): grievance_against the player (0.3);
+  - ignoring until the card lapses: grievance_against the player (0.15).
+
+  This is ready for dialogue as a resolution mechanic, which the user has a game in mind for and which is not built yet.
+- **What the player cares about** (src/living/attachment.ts). Two new dealer score parts, both read off the history's
+  provenance:
+  - `stakes` (weight 0.45): entities and relations made by the outcomes of cards the player committed to. Each
+    resolution records a 'player-made' event listing what its batch changed. Also counted: the places the player
+    committed at, and the people they answered.
+  - `locus` (weight 0.25): relation hops from the run's locus (Briar Hollow, the city the player rules) and from
+    everything the player has a stake in. 1 at the locus, a quarter less per hop: Millbrook is 1 hop, Vellford
+    further.
+
+  A threat to a player-made thing scores the full stakes term; the same threat elsewhere scores none.
+- **Mechanical rewards on every card**, shown as "you get" next to the world change. Goods and pawns come through the
+  contract's resolve. Engine pieces are the holdings' own triggered effects; the engine now fires 'turn' gains, and
+  'commit' shortens through the contract's commit. Unlocks become the player's capability tags in the fact layer
+  (`city:communal burrows`), for other modes to read.
+
+  | template | reward |
+  |---|---|
+  | burrows | 4 regenerating gnoll diggers; burrows unlocked in the city builder |
+  | abolition | a free-tenant levy of 6; +2 influence |
+  | corridor | +15 coin; Lantern caravans (+3 coin a turn); trade roads unlocked for travel |
+  | arbitration | Ser Cato, a named knight; +2 influence |
+  | tolls | a toll charter (+2 coin a turn); +1 influence |
+  | conspiracy | the turned courier as a scout; +3 influence |
+  | refugees | 5 refugee hands; the refugee militia unlocked for units |
+  | diversion | weir-cut channels (water and infrastructure cards a turn shorter); the weir unlocked in the city builder |
+  | treaty | Millbrook's clerk as an envoy; river passage unlocked for travel |
+  | rationing | ration tallies (+1 influence a turn, three times); the granary unlocked in the city builder |
+
+  The dealer's value part is the reward's rough worth.
+- **Species traits come from the creature generator.** `SpeciesSpec.traits` (the inhabitants contract) is the one
+  source. The presets carry them, with human, gnoll, skeleton and griffin added as bodies, and `speciesTraits(id)`
+  reads them. The living world's species table is gone.
+  - The seam for the unit builder (the user: "link traits and abilities and stats to the creature, training, gear
+    and mount") is `unitTraits({ creature, tags, body, training, gear, mount })`. A mount lends its movement traits:
+    a human on a griffin flies. `Agent.parts` gained `training` and `mount`.
+  - Spawned agents seeded with their species' traits is a hook (LW-F13).
+- Tests: living-people.test.ts, 10. The unit suite is 528 passing.

@@ -4,11 +4,13 @@
 // probably interact with our unit traits and modular units. Undead may work tirelessly with no sleep. Gnoll knights may
 // regenerate etc".
 //
-// Where a pawn's traits come from (each a list of tags, made traits by traits.ts `traitsOfTags`, the same function a
-// recipe Kind's tags seed the GPU trait bits with):
-//   - its species ('species:gnoll' → SPECIES_TRAITS.gnoll),
-//   - its own tags (a trait named outright: 'undead'),
-//   - its parts: the creature generator's body parts and, later, its gear (Agent.parts).
+// Where a pawn's traits come from — the seam for the unit builder (the user: "Eventually we want our unit builder to
+// link traits and abilities and stats to the creature, training, gear and mount"): `unitTraits` of
+//   - its creature: the species' traits from the creature generator's own species data (inhabitants/species.ts
+//     SpeciesSpec.traits — one source with the agents' trait bits; 'species:gnoll' in its tags names it),
+//   - its own tags (a trait named outright: 'undead'), its body parts and training,
+//   - its gear (tags; later, the items' traits),
+//   - its mount's movement traits (a griffin's flying).
 // A cohort's come from its biology tags the same way (biology:species = gnoll; biology:undead = true).
 //
 // What traits do to an opportunity is one table (TRAIT_RULES), read by the template engine for every card — never a
@@ -20,33 +22,45 @@
 // worker doesn't go home at night): a hook for the agents' track (docs/ARCHITECTURE.md "Traits at the opportunity
 // scale"), not built here.
 
-import { traitsOfTags, type IntrinsicName } from '../api/contracts/traits';
+import { INTRINSIC, traitsOfTags, type IntrinsicName } from '../api/contracts/traits';
 import type { Agent } from '../api/contracts/opportunity';
 import type { EntityId, FactStore } from '../api/contracts/facts';
+import { speciesTraits } from '../inhabitants/species';
 
-/** a species' intrinsic traits (the creature generator's species; a new species is a row) */
-export const SPECIES_TRAITS: Record<string, IntrinsicName[]> = {
-  human: ['living'],
-  gnoll: ['living', 'regenerating'],
-  skeleton: ['undead'],
-  ghoul: ['undead'],
-  griffin: ['living', 'flying'],
-  golem: ['construct'],
-};
+/** the movement traits a mount lends its rider */
+const MOUNT_LENDS: readonly IntrinsicName[] = ['flying'];
 
-/** tags → the tags they stand for ('species:gnoll' → living, regenerating) */
+/** tags → the tags they stand for ('species:gnoll' → living, regenerating, from the creature generator) */
 function expand(tags: Iterable<string>): string[] {
   const out: string[] = [];
   for (const t of tags) {
     out.push(t);
-    if (t.startsWith('species:')) out.push(...(SPECIES_TRAITS[t.slice(8)] ?? []));
+    if (t.startsWith('species:')) out.push(...speciesTraits(t.slice(8)));
   }
   return out;
 }
 
-/** a pawn's traits: its tags, its species', its body's and gear's */
+/** A unit as the unit builder will compose it: creature, training, gear, mount (and its own tags). */
+export interface UnitSpec {
+  creature?: string;
+  tags?: string[];
+  body?: string[];
+  training?: string[];
+  gear?: string[];
+  mount?: string;
+}
+
+/** a unit's traits, in the traits.ts order */
+export function unitTraits(u: UnitSpec): IntrinsicName[] {
+  const own = traitsOfTags(expand([...(u.creature ? [`species:${u.creature}`] : []), ...(u.tags ?? []), ...(u.body ?? []), ...(u.training ?? []), ...(u.gear ?? [])]));
+  const lent = u.mount ? (speciesTraits(u.mount) as IntrinsicName[]).filter((t) => MOUNT_LENDS.includes(t)) : [];
+  const all = new Set([...own, ...lent]);
+  return INTRINSIC.filter((t) => all.has(t));
+}
+
+/** a pawn's traits: its tags, its species', its parts' (the contract's Agent as a UnitSpec) */
 export function pawnTraits(a: Pick<Agent, 'tags' | 'parts'>): IntrinsicName[] {
-  return traitsOfTags(expand([...a.tags, ...(a.parts?.body ?? []), ...(a.parts?.gear ?? [])]));
+  return unitTraits({ tags: a.tags, body: a.parts?.body, training: a.parts?.training, gear: a.parts?.gear, mount: a.parts?.mount });
 }
 
 /** an entity's traits from its biology tags (species, or a trait named outright) */

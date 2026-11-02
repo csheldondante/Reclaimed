@@ -32,7 +32,13 @@ stores, turns of days, instant plausible mutations, Briar Hollow first. DEVLOG r
 | LW-F11 | The settlement economy's atlas step: the engine moves stores by their rates each turn (an instant step); it belongs to the settlement system's atlas tick | S | open |
 | LW-F12 | Roads as real map connectivity: the corridor's route is a fact-layer entity; the region generator should lay the road (a LinearFeature) when the land is realised | M | open |
 | LW-F13 | The simulated agents read the same traits where the player looks (an undead worker doesn't go home at night) through the trait modules' CAPS word — a hook for the agents' track | M | open |
-| LW-F14 | Player choice among outcomes (arbitration rules for the stronger right today; uphold or award could be two offers, or a dialog with the claimants — the round-125 legibility answer) | M | asked |
+| LW-F14 | Player choice among outcomes (arbitration rules for the stronger right today; uphold or award could be two offers, or a dialog with the claimants — the round-125 legibility answer) | M | open (the user: dialogs as a resolution mechanic, a game in mind for it — to hear) |
+| LW-F15 | Named presenters (src/living/people.ts): every card presented by a member of a bound group with a line, from the cast (Briar Hollow: eight across the factions) or made as a real character when no one is free; committing, refusing (Refuse) or ignoring is a relationship fact (owes_favor_to / grievance_against, a weighted event, the character record) kept between runs | M | done (`facts`) |
+| LW-F16 | The player's attachment in the dealer (src/living/attachment.ts): stakes (provenance in the history: what the player's cards made, places chosen, people answered) and locus (relation hops from the run centre and the staked) as score parts | M | done (`facts`) |
+| LW-F17 | Mechanical rewards on all ten templates (pawns, goods, engine pieces as the holdings' triggered effects, unlocks for the city builder, travel and units as the player's capability tags), shown beside the world change | M | done (`facts`) |
+| LW-F18 | Species traits in the creature generator's species data (SpeciesSpec.traits; human, gnoll, skeleton, griffin presets); the unit builder's seam unitTraits(creature, tags, body, training, gear, mount) | S | done (`facts`) |
+| LW-F19 | Dialogue as a resolution mechanic: the presenter and their person entity are ready; the user has a game in mind for it (to hear before building) | L | asked |
+| LW-F20 | Other modes read the unlocks (the city builder's buildings, travel's roads and passages, units' militia) from the player's capability tags | M | open |
 
 ## Round 124 (2026-11-01, session 5, `opportunities`) — slice A of the opportunity system: the horde run as opportunities on the map (DECISIONS round 120)
 

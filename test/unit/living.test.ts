@@ -77,7 +77,7 @@ describe('the four templates', () => {
     // (the gnolls' customs untouched: scopes kept apart)
     expect(e.w.facts.tag('cohort:briar-hollow:gnoll', 'custom', 'communal_childcare')?.value).toBe(true);
     expect(r.result).toEqual(expect.arrayContaining(['~ The Briar Crown: law.serfdom legal → abolished', expect.stringMatching(/House Aldren grievance_against The Briar Crown \(0.4\)/), expect.stringMatching(/House Aldren: power 0.55 → 0.45/)]));
-    expect(e.w.holdings.goods.influence).toBe(2);
+    expect(e.w.holdings.goods.influence).toBe(4);
   });
   test('open a trade corridor: a route, a trade agreement (a relation), the guild grows', () => {
     const e = only(['open-corridor']);
@@ -246,6 +246,8 @@ describe('traits: one vocabulary with the agents', () => {
       losses: 0.5,
       outcome: [{ event: 'battle', by: ['$town'], to: ['$town'], note: 'the ford held' }],
       outcomeText: 'held, at a cost',
+      presenter: { of: 'house-aldren', role: 'marshal', verb: 'asks', line: 'Hold the ford.' },
+      reward: { text: 'none' },
     };
     const run = (tags: string[]) => {
       const base = briarEngine(false);

@@ -22,6 +22,8 @@ const SPEC = {
       wUnlocks: { label: 'unlocks weight', units: '×', min: 0, max: 2, step: 0.05, def: 0.2, help: '(round 125, facts) a dry run of its outcome makes other templates eligible: downstream unlocks' },
       wUrgency: { label: 'urgency weight', units: '×', min: 0, max: 2, step: 0.05, def: 0.25, help: '(round 125, facts) a quantity it answers is running low (grain, water)' },
       wNeglect: { label: 'neglect weight', units: '×', min: 0, max: 2, step: 0.05, def: 0.1, help: '(round 125, facts) turns since a card of its theme was taken: neglected development' },
+      wStakes: { label: 'stakes weight', units: '×', min: 0, max: 2, step: 0.05, def: 0.45, help: "(round 125, facts) the player's stake in its subjects: what their cards made, the places they chose, the people they answered (the user: a town the player built outranks a random one)" },
+      wLocus: { label: 'locus weight', units: '×', min: 0, max: 2, step: 0.05, def: 0.25, help: '(round 125, facts) nearness to the run locus and its cast (relation hops): focus grows outward from one place' },
       wTier: { label: 'expensive weight', units: '×', min: 0, max: 2, step: 0.05, def: 0.3, help: 'the user\'s "most expensive cards you can afford": a higher tier dealt scores more' },
       playerMax: { label: 'player opps at most', units: 'cards', min: 1, max: 6, step: 1, def: 4, help: '(round 124: 4, the user wants several to choose from) a limit, not a target: a forced one is dealt alone' },
       resourceMax: { label: 'resource opps at most', units: 'cards', min: 0, max: 8, step: 1, def: 3, help: 'opportunities for agents, at most this many at once' },

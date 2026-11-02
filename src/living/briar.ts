@@ -52,7 +52,13 @@ const CHARACTERS = [
   { id: 'guildmaster-pell', name: 'Guildmaster Pell', role: 'merchant', faction: 'lantern-guild', region: 11, motivation: 'open every road' },
   { id: 'matron-grisk', name: 'Matron Grisk', role: 'elder', faction: null, region: 11, motivation: 'room for the young' },
   { id: 'reeve-tamsin', name: 'Reeve Tamsin', role: 'reeve', faction: 'millbrook-council', region: 12, motivation: 'keep the mills turning' },
+  // (round 125: the cast across the factions — every card has a presenter, and these are the first asked)
+  { id: 'ada-thorne', name: 'Ada Thorne', role: 'elder', faction: null, region: 11, motivation: 'land of their own for the bound families' },
+  { id: 'wendel-crane', name: 'Chancellor Wendel Crane', role: 'chancellor', faction: 'briar-crown', region: 11, motivation: 'keep the Crown solvent and its lords in line' },
+  { id: 'kestrel-vane', name: 'Kestrel Vane', role: 'envoy', faction: 'vell-march', region: 13, motivation: 'watch the Crown, keep the March free' },
 ];
+/** the cast members who belong to a cohort, not a faction (their membership is a fact, not a record's faction) */
+const COHORT_OF: Record<string, string> = { 'matron-grisk': 'cohort:briar-hollow:gnoll', 'ada-thorne': 'cohort:briar-hollow:serf' };
 
 /** the player's pawns and goods: real agents, stationed at the city they rule */
 export function briarHoldings(): Holdings {
@@ -100,7 +106,7 @@ export function briarWorld(): FactWorld {
   f.relate({ type: 'governs', from: 'briar-crown', to: 'briar-hollow' });
   for (const x of ['cohort:briar-hollow:serf', 'cohort:briar-hollow:gnoll', 'house-aldren', 'house-morrow', 'lantern-guild']) f.relate({ type: 'resident_at', from: x, to: 'briar-hollow' });
   f.relate({ type: 'resident_at', from: 'millbrook-council', to: 'millbrook' });
-  f.relate({ type: 'member_of', from: 'matron-grisk', to: 'cohort:briar-hollow:gnoll' });
+  for (const [who, c] of Object.entries(COHORT_OF)) f.relate({ type: 'member_of', from: who, to: c });
   // control and the river
   f.relate({ type: 'controls', from: 'house-morrow', to: 'thornfield' });
   f.relate({ type: 'depends_on', from: 'briar-hollow', to: 'briar-river', meta: { what: 'water' } });

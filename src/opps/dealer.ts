@@ -23,10 +23,11 @@
 import { affords, needsPlayer, type Goods, type Holdings, type Opportunity, type Requirement } from '../api/contracts/opportunity';
 import type { DealerTune } from './tune';
 
-// (round 125, facts: capability, unlocks, urgency, neglect — the living world's templates give them; 0 from the rest)
-export type ScorePart = 'theme' | 'foreshadow' | 'variety' | 'synergy' | 'difficulty' | 'hero' | 'tier' | 'ev' | 'capability' | 'unlocks' | 'urgency' | 'neglect';
-export const SCORE_PARTS: readonly ScorePart[] = ['theme', 'foreshadow', 'variety', 'synergy', 'difficulty', 'hero', 'tier', 'ev', 'capability', 'unlocks', 'urgency', 'neglect'];
-const WEIGHT: Record<ScorePart, keyof DealerTune> = { theme: 'wTheme', foreshadow: 'wForeshadow', variety: 'wVariety', synergy: 'wSynergy', difficulty: 'wDifficulty', hero: 'wHero', tier: 'wTier', ev: 'wEv', capability: 'wCapability', unlocks: 'wUnlocks', urgency: 'wUrgency', neglect: 'wNeglect' };
+// (round 125, facts: capability, unlocks, urgency, neglect, and the player's attachment — stakes in what they made or
+// chose, nearness to the run's locus and cast; the living world's templates give them; 0 from the rest)
+export type ScorePart = 'theme' | 'foreshadow' | 'variety' | 'synergy' | 'difficulty' | 'hero' | 'tier' | 'ev' | 'capability' | 'unlocks' | 'urgency' | 'neglect' | 'stakes' | 'locus';
+export const SCORE_PARTS: readonly ScorePart[] = ['theme', 'foreshadow', 'variety', 'synergy', 'difficulty', 'hero', 'tier', 'ev', 'capability', 'unlocks', 'urgency', 'neglect', 'stakes', 'locus'];
+const WEIGHT: Record<ScorePart, keyof DealerTune> = { theme: 'wTheme', foreshadow: 'wForeshadow', variety: 'wVariety', synergy: 'wSynergy', difficulty: 'wDifficulty', hero: 'wHero', tier: 'wTier', ev: 'wEv', capability: 'wCapability', unlocks: 'wUnlocks', urgency: 'wUrgency', neglect: 'wNeglect', stakes: 'wStakes', locus: 'wLocus' };
 
 export interface TierOffer {
   requires: Requirement[];
@@ -164,6 +165,8 @@ export function deal(props: Proposal[], ctx: DealContext): DealReport {
       unlocks: p.parts.unlocks ?? 0,
       urgency: p.parts.urgency ?? 0,
       neglect: p.parts.neglect ?? 0,
+      stakes: p.parts.stakes ?? 0,
+      locus: p.parts.locus ?? 0,
     };
     const score = SCORE_PARTS.reduce((s, k) => s + T[WEIGHT[k]] * parts[k], 0);
     const because = [

@@ -80,7 +80,20 @@ function holdings(): HTMLElement {
     h('h2', {}, 'Your pawns and goods'),
     h('div', {}, ...H.agents.map((a) => h('span', { class: 'pawn', title: a.tags.join(', ') }, `${a.name}${a.count > 1 ? ` ×${a.count}` : ''} · ${a.kind} · ${pawnTraits(a).join(', ') || 'no traits'}${a.committed ? ' · busy' : ''}`))),
     h('div', { class: 'status' }, Object.entries(H.goods).map(([g, n]) => `${g} ${n}`).join(' · ')),
+    H.bonuses.length ? h('div', { class: 'status' }, 'engine pieces: ', H.bonuses.map((b) => `${b.why} (${b.on})`).join(' · ')) : null,
+    (() => {
+      const u = e.w.facts.entity('player')?.tags.filter((t) => t.scope === 'capability').map((t) => t.key) ?? [];
+      return u.length ? h('div', { class: 'status' }, 'unlocked: ', u.join(' · ')) : null;
+    })(),
   );
+}
+
+/** the people who owe the player, or hold it against them (what returns in later runs) */
+function people(): HTMLElement | null {
+  const f = e.w.facts;
+  const rels = [...f.relations({ type: 'owes_favor_to', to: 'player' }), ...f.relations({ type: 'grievance_against', to: 'player' })];
+  if (!rels.length) return null;
+  return h('div', {}, h('h2', {}, 'Your people'), h('ul', {}, ...rels.map((r) => h('li', {}, ent(r.from), r.type === 'owes_favor_to' ? ` owes you a favour (${r.strength})` : ` holds a grievance against you (${r.strength})`))));
 }
 
 function card(o: Offer): HTMLElement {
@@ -93,10 +106,12 @@ function card(o: Offer): HTMLElement {
     { class: `card ${o.opp.requires.some((r) => r.kind === 'player') ? 'player' : 'agents'}${o.opp.affordable ? '' : ' no'}` },
     h('div', { class: 'kind' }, `${t.themes.join(' · ').toUpperCase()} — AT ${e.w.name(o.place).toUpperCase()}`),
     h('div', { class: 't' }, o.opp.title),
+    h('div', { class: 'r' }, h('span', { class: 'k' }, 'presented by '), ent(o.presenter), ` — ${e.w.ws.character(o.presenter)?.role ?? 'person'}`),
     h('div', { class: 'r' }, o.opp.pitch),
     h('div', { class: 'r' }, h('span', { class: 'k' }, 'needs '), needs.join(', ')),
     h('div', { class: 'r' }, h('span', { class: 'k' }, 'takes '), committed ? `resolves turn ${o.resolvesTurn}` : `${t.turns} turn${t.turns > 1 ? 's' : ''} of ${t.work} · offered until turn ${o.expires}`),
     h('div', { class: 'r' }, h('span', { class: 'k' }, 'then '), o.opp.outcomes.success?.text ?? ''),
+    h('div', { class: 'r ok' }, h('span', { class: 'k' }, 'you get '), t.reward.text),
     o.opp.onExpire ? h('div', { class: 'r' }, h('span', { class: 'k' }, 'if let go '), o.opp.onExpire.text) : null,
     o.unlocks.length ? h('div', { class: 'r ok' }, `unlocks: ${o.unlocks.join(', ')}`) : null,
     o.crew?.length ? h('div', { class: 'r ok' }, o.crew.join('; ')) : null,
@@ -104,7 +119,7 @@ function card(o: Offer): HTMLElement {
     o.setup.length ? h('details', {}, h('summary', {}, 'the incident its setup made'), diffList(o.setup)) : null,
     h('details', {}, h('summary', {}, committed ? 'what committing changed' : 'what it would change (a dry run)'), diffList(committed ? (o.spent ?? []) : o.preview)),
     h('details', {}, h('summary', {}, 'why it was dealt'), h('pre', {}, o.because.join('\n'))),
-    committed ? null : btn('Commit', () => e.commit(o.id), 'main', !o.opp.affordable),
+    committed ? null : h('div', { class: 'bar' }, btn('Commit', () => e.commit(o.id), 'main', !o.opp.affordable), btn('Refuse', () => e.refuse(o.id))),
   );
 }
 
@@ -207,6 +222,7 @@ function render(): void {
     problems.length ? h('pre', { class: 'bad', id: 'problems' }, problems.join('\n')) : null,
     counters(),
     holdings(),
+    people(),
     board(),
     changes(),
     entityPanel(),

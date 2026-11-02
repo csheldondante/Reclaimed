@@ -2906,13 +2906,24 @@ every other relation, while dialog, the GM and units keep their API. `importDipl
   (four stages of instant mutations). `briar.ts`: the seeded Briar Hollow world.
 
 **Traits at the opportunity scale** (`src/living/traits.ts`): one vocabulary with the agents' trait bits
-(contracts/traits.ts). A pawn's traits are `traitsOfTags` of its tags, its species' (`SPECIES_TRAITS`: gnoll → living,
-regenerating; skeleton → undead; griffin → flying) and its parts (`Agent.parts`: the creature generator's body parts
-and, later, gear — the slot for modular units). A cohort's come from its biology tags the same way. `TRAIT_RULES` is the
+(contracts/traits.ts). Species traits live in the creature generator's species data (`SpeciesSpec.traits`,
+`inhabitants/species.ts speciesTraits`: gnoll → living, regenerating; skeleton → undead; griffin → flying). The unit
+builder's seam is `unitTraits({ creature, tags, body, training, gear, mount })` (a mount lends its movement traits);
+a pawn's are its tags and `Agent.parts` through it. A cohort's come from its biology tags the same way. `TRAIT_RULES` is the
 one table the engine reads for every card: undead → labour in half the turns, no food upkeep, living cohorts there take
 unrest; regenerating → losses back by the next turn; flying → travel in half the turns. The hook for the simulated
 agents: the same traits drive behaviour where the player looks through the trait modules' CAPS word (an undead worker
 doesn't go home at night) — the agents' track's to build.
+
+**People and attachment** (round 125; LW-F15..F17). Every template names a presenter (`PresenterSpec`: a member of a
+bound group, a role, a verb, a line). The engine takes a free cast member (`people.ts pickPresenter`) or makes a real
+one when the card is shown (`makePresenter`: a CharacterRecord via WorldState.applyCharacter and a fact entity). The
+player's answer (`answer`: committed / refused / ignored) writes owes_favor_to or grievance_against the player, a
+weighted event, and the character record. The dealer adds `stakes` and `locus` (`attachment.ts`): provenance from
+the history ('player-made' events recorded at each resolution, 'committed', the answers) and relation hops from the
+engine's `locus` (the ruled city) and the staked. Each template's `RewardSpec` (goods, pawns, engine-piece Bonuses,
+unlocks as the player's `capability` tags `mode:what`) goes through the contract's resolve (goods, agents), the
+holdings' bonuses (the engine fires 'turn' gains; 'commit' shortens through the contract's commit) and the fact layer.
 
 ## Tests in Node (round 117, `testkit`; docs/TESTING.md)
 
