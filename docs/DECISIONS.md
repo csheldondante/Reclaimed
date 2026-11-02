@@ -398,6 +398,8 @@ each was implemented.
 
 - The user's camera and presentation handoff, kept verbatim at docs/design/REGION_PRESENTATION.md ("Ok here is the document on cameras"): four reviewable prototypes with region presentation profiles: (A, first) birch forest canopy to understory; (B) hoverbike canyon; (C) cliffside climb; (D) a throne-room interior as a separate scene with petitioners opening the opportunity UI. Perceptual continuity, not geometric; reuse the world; keep isometric by default; toggles off by default; repeatable A/B and a review overlay. → branch presentation from herolab (camera contract, cut/tilt, lab framework) with places merged; BACKLOG PRE1.
 
+- The user, verbatim, on scene A: "If I recall aren't the characters much larger than they should be right now? If a cell is 1-2M the villager agents are closer to the true size the PC should be. I wonder if you scaled the trees relative to that and had the stumps (which I assume would be wider relative to the character) render low in front of the PC if that would look good. The visual there is nice but too busy. I'm wondering if the distance between trees and therefore the navugability of the open space would feel better if the PC was approximately .25-1 trunk width and how well that scale works with the agents today?" → measure hero, agent and trunk sizes and the stand's spacing; a scale variant in scene A (heroes at agents' true size, trees possibly scaled up to 1-4 PC widths a trunk with stands thinned, foreground trunks drawn as low stumps); what a true hero scale would need retuned.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
