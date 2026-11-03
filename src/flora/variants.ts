@@ -53,6 +53,9 @@ export function decodeLink<T>(s: string): T {
  * A new variant of a species: a new seed and its shape and crown parameters nudged at random (± `amount` of each
  * slider's range), the rest as given — "new variant from this species".
  */
+/** the parameters that pick a kind of thing (a style, a shape, on/off): a new variant keeps them */
+const SWITCHES = new Set(['cStyle', 'cLobeShape', 'sEnvelope', 'sLeader', 'cCore', 'tOrders', 'sForks', 'cLayers']);
+
 export function newVariant(species: SpeciesId, over: Record<string, number | string>, seed: number, amount = 0.12): Record<string, number | string> {
   const r = rng(seed ^ 0x7a1e);
   const sp = SPECIES[species];
@@ -61,7 +64,7 @@ export function newVariant(species: SpeciesId, over: Record<string, number | str
     if (p.group !== 'shape' && p.group !== 'crown' && p.group !== 'stem') continue;
     if ((p.shape && !sp.colonize) || (p.crown && !sp.crown) || (p.woody && !(sp.turtle && sp.stem)) || (p.twigs && !sp.twigs)) continue;
     // (the switches — style, shape, leader — kept: a variant is the same kind of tree)
-    if (p.step >= 1 && p.max - p.min <= 5) continue;
+    if (SWITCHES.has(p.key)) continue;
     const base = typeof out[p.key] === 'number' ? (out[p.key] as number) : p.get(sp);
     const v = base + (r() * 2 - 1) * amount * (p.max - p.min);
     out[p.key] = Math.min(p.max, Math.max(p.min, Math.round(v / p.step) * p.step));

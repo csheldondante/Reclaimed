@@ -372,7 +372,7 @@ export interface CrownLook {
   droop: number;
   /** (round 128, the user: "You could even have completely opaque canopy of leaves with random gaps") 'sprays' the
    *  cards; 'solid' an opaque leaf mass — lumpy shells round clumps of the crown's leaf sites, holes punched through */
-  style?: 'sprays' | 'solid' | 'lobecards' | 'hybrid' | 'layers' | 'cones';
+  style?: 'sprays' | 'solid' | 'lobecards' | 'hybrid' | 'layers' | 'cones' | 'needlepads';
   /** cones: the tiers (colonize.ts's: at, width, depth — shares of `coneH`), set by the generator from the species' crown */
   coneTiers?: { at: number; width: number; depth: number }[];
   coneH?: number;
@@ -444,7 +444,7 @@ export function buildPlant(sk: Skeleton, leaf: LeafLook, seed: number, opts: { s
   const minR = opts.minRadius ?? 0;
   // (round 128: a solid crown hides its thin branches — inside the leaf mass — so they aren't drawn: the stems under
   // ~0.12 cells, and no fine twigs)
-  const solid = opts.crown?.style === 'solid' || opts.crown?.style === 'hybrid' || opts.crown?.style === 'layers' || opts.crown?.style === 'cones';
+  const solid = opts.crown?.style === 'solid' || opts.crown?.style === 'hybrid' || opts.crown?.style === 'layers' || opts.crown?.style === 'cones' || opts.crown?.style === 'needlepads';
   const cutR = Math.max(opts.minTwig ?? 0.035, minR * 0.5, solid ? (opts.crown?.hideBelow ?? 0.12) / (opts.scale ?? 1) : 0);
   const sidesAt = (r0: number) => (r0 > 0.25 ? sides : r0 > 0.08 ? Math.max(3, sides - 2) : 3);
   if (opts.stem) {
@@ -468,6 +468,17 @@ export function buildPlant(sk: Skeleton, leaf: LeafLook, seed: number, opts: { s
   opts.extra?.(mb, cutR);
   // (round 128: the fine twigs past the last order)
   if (opts.twigs && !solid) addTwigs(mb, sk, leaf.minDepth, opts.twigs, opts.scale ?? 1, r01, opts.px);
+  if (opts.crown && leaf.style === 'cluster' && opts.crown.style === 'needlepads') {
+    // (round 128: needle pads — main: the Scots pine's pads "flat discs with stray cards" — closed pad-shaped shells,
+    // `layers` of them a needle apart, the needles' look, the outer one's rim in tufts)
+    const c = opts.crown;
+    const k = opts.scale ?? 1;
+    const L = crownLobes(sk, leaf.minDepth, (c.clump ?? 6) / k, r01, c.separate ?? 0.2);
+    const K = Math.max(1, Math.round(c.layers ?? 2));
+    const gap = ((c.layerGap ?? 0.35) * c.size) / k;
+    for (let li = K - 1; li >= 0; li--) addSolidCrown(mb, sk, leaf.minDepth, { ...c, gaps: 0 }, k, r01, opts.px, opts.bake, 0, L, li * gap + 1e-6, li);
+    return mb.done();
+  }
   if (opts.crown && leaf.style === 'cluster' && opts.crown.style === 'cones') {
     addConeCrown(mb, opts.crown, opts.scale ?? 1, opts.bake);
     return mb.done();
@@ -704,7 +715,7 @@ function lobeAo(L: Lobes, li: number, p: V3, nrm: V3): number {
   return Math.max(0.2, Math.min(1, 1 - occ)) * (0.55 + 0.45 * hz) * (nrm[2] < 0 ? 0.75 + 0.25 * (1 + nrm[2]) : 1);
 }
 
-function addSolidCrown(mb: MeshBuilder, sk: Skeleton, minDepth: number, c: CrownLook, k: number, r01: () => number, px?: number, bake = false, core = 1, lobesIn?: Lobes, inset = 0): Lobes {
+function addSolidCrown(mb: MeshBuilder, sk: Skeleton, minDepth: number, c: CrownLook, k: number, r01: () => number, px?: number, bake = false, core = 1, lobesIn?: Lobes, inset = 0, needleShell = -1): Lobes {
   const R = (c.clump ?? 3) / k;
   const gaps = core < 1 || inset > 0 ? 0 : (c.gaps ?? 0.05);
   const lumps = c.lumps ?? 0.3;
@@ -751,12 +762,18 @@ function addSolidCrown(mb: MeshBuilder, sk: Skeleton, minDepth: number, c: Crown
       const key = `${v[0].toFixed(4)},${v[1].toFixed(4)},${v[2].toFixed(4)}`;
       let id = cache.get(key);
       if (id === undefined) {
-        const ls = lobeSurface(v, shape(v) * lb.r, c.lobeShape);
+        // (a needle pad's outer shell: its rim cut into tufts round it — the cones' jagged edge)
+        const ang = Math.atan2(v[1], v[0]);
+        const tuft = needleShell === 0 ? 1 + 0.16 * Math.sign(Math.sin(ang * 14)) * (1 - Math.abs(v[2])) : 1;
+        const ls = lobeSurface(v, shape(v) * lb.r * tuft, c.lobeShape);
         const p: V3 = [lb.m[0] + ls.off[0], lb.m[1] + ls.off[1], lb.m[2] + ls.off[2]];
         const nrm = ls.n;
         // the occlusion: other lobes crowding this point, and its height in the crown
         const ao = lobeAo(L, li, p, nrm);
-        id = mb.vert(p, PART.leaf, 0.12 + 0.05 * Math.max(0, v[2]), -1, ao, nrm);
+        // (needles: uv as a cone's shell — round, then shell × 2 + up the pad: floralook.wgsl's needle strokes)
+        id = needleShell >= 0
+          ? mb.vert(p, PART.leaf, 0.12 + 0.05 * Math.max(0, v[2]), -10 + (ang / (Math.PI * 2) + 0.5), needleShell * 2 + Math.min(0.999, 0.5 + 0.5 * v[2]), nrm)
+          : mb.vert(p, PART.leaf, 0.12 + 0.05 * Math.max(0, v[2]), -1, ao, nrm);
         cache.set(key, id);
       }
       return id;
