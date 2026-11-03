@@ -6,6 +6,7 @@ import { expand, interpret, norm, type V3 } from './lsystem';
 import { buildPlant, MeshBuilder, PART, sprayAt, type FloraMesh } from './mesh';
 import { growRoots, rootSegments } from './roots';
 import { addEpiphytes } from './epiphytes';
+import { cached, meshKey, remember } from './meshcache';
 import { colonize } from './colonize';
 import { rng, hashSeed } from './rng';
 import { BARK_PLAIN, SPECIES, type Flare, type SpeciesDef, type SpeciesId } from './species';
@@ -44,6 +45,18 @@ function scaleTo(m: FloraMesh, h: number): FloraMesh {
 export type Lod = 'bake' | 'close' | 0 | 1 | 2;
 
 export function generate(id: SpeciesId, seed: number, opts: { growth?: number; px?: number; lod?: Lod; def?: SpeciesDef; legacy?: boolean } = {}): FloraMesh {
+  // (round 128: the trees' and thickets' meshes kept between loads — meshcache.ts; the small plants are cheap)
+  const def0 = opts.legacy ? legacyDef(opts.def ?? SPECIES[id]) : (opts.def ?? SPECIES[id]);
+  if (def0.form !== 'tree' && def0.form !== 'shrub') return make(id, seed, opts);
+  const key = meshKey(def0, seed, `${String(opts.lod ?? 0)}|${opts.growth ?? 1}`, opts.px);
+  const had = cached(key);
+  if (had) return had;
+  const m = make(id, seed, opts);
+  remember(key, m);
+  return m;
+}
+
+function make(id: SpeciesId, seed: number, opts: { growth?: number; px?: number; lod?: Lod; def?: SpeciesDef; legacy?: boolean }): FloraMesh {
   // (round 128, treegen: `def` a species edited in the viewer — its sliders; `legacy` the stems as round 117 made them,
   // the viewer's "old" side of its old/new pair: the turtle's new variances off and a prism a step)
   const sp0 = opts.legacy ? legacyDef(opts.def ?? SPECIES[id]) : (opts.def ?? SPECIES[id]);

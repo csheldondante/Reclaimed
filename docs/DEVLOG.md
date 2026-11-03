@@ -16726,3 +16726,14 @@ too floaty they should be closer together. Probably no more than a leaf width fo
   dense copper canopy, trunks below); under the canopy (r2-lab-under-all: the hero by an elder's trunk, the floor's
   litter, the ride GIF); the wind clips (r2-wind-static / 1A1C: 0.7% vs 2.1% of pixels change a frame — the parked
   hero is still too close to a trunk for a canopy clip: the station's framing for wind is the next fix).
+- The library's build time (main: "Don't add load time on the phone"): the trees' and thickets' meshes are kept in
+  IndexedDB (flora/meshcache.ts) keyed by the species' whole definition, the seed, the level, the px and MESH_VERSION
+  (bumped when the generator's code changes what a definition makes); main.ts reads the store before the first scene
+  and writes the new meshes after it. A first load builds (~1 s on the desktop: per tree the colonized skeleton 4-58 ms,
+  each level's mesh 5-74 ms; the colonization now finds the nearest node through a grid and grows a skeleton once for
+  all of a tree's levels); later loads read. The colonized skeletons are memoised in memory too.
+- main's question on r2-lab-under-all's "16.6/1058.2 ms": the readout's p95 over the last 120 frames, taken while the
+  headless browser was capturing — a screenshot stalls the page's frames (earlier stills read 175-308 ms the same way),
+  so this is the capture, not the game; the phone bench is the measure. Under the canopy the hero's elder trunk is the
+  understory's stump rule (cut and faded in front of the hero) at the phone tier's half resolution: blocky because the
+  low tier renders 205 x 457; to look at again with the new trunks in the next slot.
