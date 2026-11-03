@@ -133,14 +133,16 @@ export function encounterSpec(a: SituationArea, c: SpecCtx): EncounterSpec {
         title: 'Free the captives',
         goal: `${p.guards} ${p.role} guard ${p.captives} captives: break them, then lead the people out`,
         bands: [
-          band({ part: 'guards', role: p.role, faction: p.faction, count: p.guards, from: 'camp', range: [3, 8], health: 3, hostile: true }),
-          band({ part: 'people', role: 'captive', faction: null, count: p.captives, from: 'camp', range: [1, 3], health: 4, hostile: false }),
+          // (the guards stand off the pen: a blow over an area — the lich's slam — at them misses the people; round 126's
+          // headless lich run, guards at 3-8 cells and the people at 1-3, slammed three of the four with them)
+          band({ part: 'guards', role: p.role, faction: p.faction, count: p.guards, from: 'camp', range: [6, 10], health: 3, hostile: true }),
+          band({ part: 'people', role: 'captive', faction: null, count: p.captives, from: 'camp', range: [0.5, 1.5], health: 4, hostile: false }),
           ...tail(c.carried + x.pursuers, ESCORT_RIDERS / cruise),
         ],
         limit: 150,
         beaten: BEATEN,
         morale: MORALE,
-        camp: 16,
+        camp: 13,
         escort: { safeShare: 0.5, safety, pursuers: band({ part: 'pursuers', role: ridersOf(c), faction: p.faction, count: Math.max(2, Math.ceil(p.guards / 2)), from: 'behind', range: [14, 20], pace: ESCORT_RIDERS / cruise, health: 3, hostile: true }) },
       };
     }

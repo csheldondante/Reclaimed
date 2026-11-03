@@ -200,7 +200,7 @@ await run({ name: `encounter-${card}-${hero}-${mode}`, kind: 'behaviour', size: 
           return `lich ${dist.toFixed(1)}${slam ? ' slam' : ''}`;
         }
         // (at a foe: slow as it nears, so the bike's blows land instead of flying past at 30 cells/s)
-        const m = aim?.slow ? 0.25 : fight && dist < 18 ? Math.max(0.12, Math.min(0.6, dist / 24)) : 1;
+        const m = aim?.slow ? (dist < 8 ? 0 : 0.3) : fight && dist < 18 ? Math.max(0.12, Math.min(0.6, dist / 24)) : 1;
         C.script = { stick: [(dx / l) * m, (dy / l) * m], buttons: [!aim?.slow && dist > 25] };
         if (fight && dist < 7 && n % 2 === 0) C.inject({ kind: 'flick', from: [b[0] - 30, b[1]], to: [b[0] + 30, b[1]], dir: [1, 0], speed: 2200 });
         return `bike ${dist.toFixed(0)}${fight ? ' fight' : ''}`;
@@ -319,8 +319,14 @@ await run({ name: `encounter-${card}-${hero}-${mode}`, kind: 'behaviour', size: 
   };
   R.log(`REPORT ${JSON.stringify(rep)}`);
   fs.writeFileSync(path.join(dir, `${tag}.json`), JSON.stringify({ rep, samples }, null, 1));
-  R.check(`${card}: a foe within 20 cells inside 6 s`, !!first20 && first20.t <= 6, first20);
-  R.check(`${card}: the foes engage (chase or swing at the hero)`, !!firstEngage, firstEngage);
+  // (a chase's quarry runs: it's engaged when the hero is on it; a scene settled by talk — they yielded, a toll paid —
+  // ends with no blow, by design)
+  const talked = mode === 'win' && ['yield', 'bargain'].includes(answer) && out.last?.result?.why && rep.kind === 'scene';
+  if (!talked) {
+    R.check(`${card}: a foe within 20 cells inside 6 s`, !!first20 && first20.t <= 6, first20);
+    if (rep.kind === 'chase') R.check(`${card}: the hero on the quarry (within 6 cells)`, rep.closest !== null && rep.closest < 6, rep.closest);
+    else R.check(`${card}: the foes engage (chase or swing at the hero)`, !!firstEngage, firstEngage);
+  }
   R.check(`${card}: a result tier reported`, !!out.tier, out.tier);
   if (mode === 'lose') R.check(`${card}: idling loses`, out.tier === 'failure' || out.tier === 'disaster', out.tier);
   else R.check(`${card}: the autopilot wins`, ['triumph', 'success', 'cost'].includes(out.tier), out.tier);

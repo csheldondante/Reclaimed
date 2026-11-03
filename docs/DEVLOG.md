@@ -16248,15 +16248,15 @@ pure rules with tiers (encounters/rules.ts), one live play (encounters/live.ts);
 (ARCHITECTURE "Encounters"). The card's text and counts are read off the same spec, and the card names the game it plays
 (`plays`).
 - flee (the outriders): riders on the hero's tail from the first second (8-14 cells back, at 0.85 of its cruise: a cruise
-  doesn't shake them, a boost or a jump does); lost when 45 cells clear of every one for 3 s, or all cut down; caught,
+  doesn't shake them, a boost or a jump does); lost when 60 cells clear of every one for 4 s, or all cut down; caught,
   they swing; beaten at 30 % health (a failure that doesn't end the run), dead a disaster.
-- the word to a hall (muster): a flee to the hall's gate (6 s of cruise, 45-200 cells), riders on the tail and more
+- the word to a hall (muster): a flee to the hall's gate (12 s of cruise, 60-400 cells; at most half the window in practice), riders on the tail and more
   across the way; the gate pointed at (a green banner, like the refuge's), the riders the play.
 - fight (the ambush; the scout's ridge, now "Break the patrol"): the foes 10-16 cells ahead come at the hero at once;
   won when down or broken (60 % down: the rest run); past 100 s they held the road.
 - chase: the quarry 9-13 cells ahead, running for its escape at 0.75 of the hero's cruise; run down (any blow), or it's
-  away (14 s of its pace from its start, or 70 cells off the hero).
-- escort (rescue): the guards on the captives' pen 16 cells ahead; broken, the captives follow (☞ Follow me / ✋ Hold
+  away (14 s of its pace from its start, or 160 cells off the hero).
+- escort (rescue): the guards round the captives' pen 13 cells ahead; broken, the captives follow (☞ Follow me / ✋ Hold
   here on the bar) and riders come for them; half of them at safety (45-80 cells off the road) wins.
 - scene (the trader): the raiders' chief speaks as the hero comes up (DialogTalk: src/dialog's DialogBox behind
   encounters/talk.ts, for dialog2 to replace); fight (they turn hostile), they back down (before renown, or a lich:
@@ -16273,3 +16273,30 @@ chase) and every area and detour of seed 1's run, for the bike and the lich, is 
 screen, a way to lose, and no race; the cards dealt name the game they play, read off the spec played; the riders' pace
 and place; the rules for each kind (flee lost/beaten/ragged/cut down; haven; chase caught/away; fight morale and a dear
 win; escort freed/safe/lost; scene fight/yield/refused/bargain; race refused); the encounter's tier resolves the card.
+
+**Headless, on this branch** (scripts/encounters.mjs, 412x915, every system at 1x, the deployed build; GIFs of the
+engagement and shots at 4 s, engaged and the end in C:/Projects/shots88/encounters/, logs in its logs/):
+
+| card (plays) | hero, mode | first foe within 20 cells | engaged | how it ended |
+|---|---|---|---|---|
+| outriders (flee) | bike, win | 1.5-2 s (riders swinging at 1 cell) | 1.5 s | success: all cut down / lost them (6 s with the old 45-cell rule; now 60 cells for 4 s) |
+| outriders (flee) | bike, idle | 1.8 s | 1.8 s | failure: beaten in ~4 s (6 of 10 health), the run goes on |
+| outriders (flee) | lich, win | 1.8 s | 1.8 s | success: lost them at 24 s |
+| ride → ambush (fight) | bike, win | 0.1 s | 1 s | success: 3 down, the rest broke |
+| ride → ambush (fight) | bike, idle | 0.1 s | 0.6 s | failure at 100 s: they held the road |
+| ride → ambush (fight) | lich, win | 0.1 s | 1 s | triumph: all down |
+| chase | bike, win | 0.2 s | on it at 1.6 cells | triumph: all three run down in 7 s |
+| chase | bike, idle | 0.1 s | — | failure: they got away |
+| muster (flee to the gate) | bike, win | 0.2 s | 2.8 s | success: the gate in 27 s (was 5 s before the gate was moved to 12 s of cruise) |
+| ride → trader (scene) | bike, bargain (2 supplies given) | — (talked) | — | cost: "A fair toll. Off you go." |
+| ride → trader (scene) | bike, yield (no renown) | 3.7 s | 4.7 s | refused → fight: success, they broke (pass 2) |
+| ride → trader (scene) | bike, fight then idle | 4.7 s | 5 s | success: the raiders drowned in the crossing's river coming at the hero (killed "by the world") |
+| rescue (escort) | bike, idle | 0.1 s | 0.7 s | failure at 150 s: the guards held the captives |
+| rescue (escort) | bike, win | 0.1 s | 0.5 s | failure: the guards broken and the 4 freed at 30 s, but the autopilot can't lead walkers on a bike (it rode 800 cells off) |
+| rescue (escort) | lich, win | 0.1 s | 0.7 s | failure: the lich's slam took three captives with their guards (guards now stand 6-10 cells off the pen, the people within 1.5) |
+| warn (defend) | bike, win | 0.2 s (the vanguard) | 2.8 s | saved at 221 s |
+| warn (defend) | bike, idle | 0.2 s | 2.6 s | disaster: the hero fell at 45 s |
+
+What wasn't shown headless: an escort won (a player leads the people; the autopilot doesn't), a scene lost (the raiders
+drowned at that crossing), the lich in a chase or a scene. AgentUnits defines one more kind (the rider, 77 voxels); the
+default page spawns none, so driveprofile wasn't re-run.
