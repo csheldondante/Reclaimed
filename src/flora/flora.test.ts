@@ -106,7 +106,8 @@ describe('species meshes', () => {
       // (round 128: space-colonized crowns and lobe canopies — a tree 6000, the elder 14000; a tree stands one to a 14 x 16
       // block, the elder one to 28 x 32 (TREE_SCALE): per area still under round 125's budgets)
       // (the willow: the viewer's, not in the game's plan yet — its curtains of twigs 14000)
-      const budget = id === 'giant' || id === 'willow' ? 18000 : sp.form === 'tree' ? 7500 : 500;
+      // (round 128: the thicket grown as the trees — a lobed crown: 1600)
+      const budget = id === 'giant' || id === 'willow' ? 18000 : sp.form === 'tree' ? 7500 : sp.form === 'shrub' ? 1600 : 500;
       expect(a.tris, `${id} tris`).toBeLessThanOrEqual(budget);
       // indices in range; parts and sway well-formed
       const nv = a.verts.length / 4;
@@ -313,7 +314,7 @@ describe('the close-up level (round 128: the flora LOD ladder)', () => {
       const close = generate(id, 3, { lod: 'close' });
       expect(close.tris, id).toBeGreaterThan(full.tris);
       expect(close.height).toBeCloseTo(full.height, 5);
-      const budget = id === 'giant' ? 32000 : SPECIES[id].form === 'tree' ? 16000 : 1600;
+      const budget = id === 'giant' ? 32000 : SPECIES[id].form === 'tree' ? 16000 : SPECIES[id].form === 'shrub' ? 3600 : 1600;
       expect(close.tris, `${id} close tris`).toBeLessThanOrEqual(budget);
     }
   });

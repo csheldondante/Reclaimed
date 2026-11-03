@@ -167,6 +167,8 @@ export interface BarkLook {
 export const BARK_PLAIN: BarkLook = { furrows: 0, furrowFreq: 3, plates: 0, plateSize: 0.6, stripes: 0, stripeFreq: 7, roughness: 0.15 };
 
 const C = (r: number, g: number, b: number): RGB => [r, g, b];
+/** (round 128) a thicket's colonized crown: stems from the ground (a short foot, then several) into a low dome */
+const SHRUB_DOME: ColonizeSpec = { height: 4, crownBase: 0.06, width: 0.62, envelope: 'dome', points: 140, influence: 6, kill: 1.6, step: 0.35, upBend: 0.3, weep: 0, maxAngle: 50, leader: false, forks: 4, trunkRadius: 0.11, tipRadius: 0.012, thin: 0.6, rounds: 50, straight: 0.5 };
 /** (round 128) a tree's height range: round 125's × TREE_SCALE (flora/spacing.ts) */
 const tall = (a: number, b: number): [number, number] => [a * TREE_SCALE, b * TREE_SCALE];
 
@@ -522,9 +524,12 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
       kinkChance: 0.3,
       kinkAngle: 20,
     },
+    // (round 128, the user: "Can tree gen move onto grasses and shrubs and adopt the same techniques that worked for
+    // trees?" — the thicket grown as the trees are: stems from the ground into a low dome, layered leaves on its lobes)
+    colonize: SHRUB_DOME,
     leaf: { style: 'cluster', size: 0.42, per: 1, minDepth: 0 },
-    stem: { sides: 4, noise: 0.1, noiseFreq: 1, knots: 0, knotSize: 0, ring: 1 },
-    crown: { size: 0.55, perTwig: 2, spacing: 0.35, fill: 0.8, leaves: 4, droop: 0.15 },
+    stem: { sides: 5, noise: 0.1, noiseFreq: 1, knots: 1, knotSize: 0.2, ring: 0.4 },
+    crown: { size: 0.55, perTwig: 2, spacing: 0.35, fill: 0.8, leaves: 4, droop: 0.15, style: 'layers', clump: 1.3, gaps: 0, lumps: 0.3, hideBelow: 0.02, shell: 1.6, lobeBlend: 0.8, layers: 2, layerGap: 0.35, depthDark: 0.55, bend: 1, core: 1, separate: 0.2 },
     bark: BARK_PLAIN,
     epiphytes: { lichen: 0.1, moss: 0, plants: 0, vines: 0, lines: 0 },
     blossom: 0.45,

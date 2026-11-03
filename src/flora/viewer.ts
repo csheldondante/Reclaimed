@@ -372,6 +372,7 @@ async function main() {
     $('row-growth').style.display = state.mode === 'plant' ? '' : 'none';
     $('row-density').style.display = state.mode === 'scene' ? '' : 'none';
     $('params').style.display = state.mode === 'plant' ? '' : 'none';
+    $('params-body').style.display = state.mode === 'plant' ? '' : 'none';
   };
   const atlasLink = $<HTMLAnchorElement>('atlas');
   const worldLink = $<HTMLAnchorElement>('world');
@@ -457,27 +458,47 @@ async function main() {
       syncUrl();
     }, 60);
   };
+  let openSec = '';
   function buildParams() {
     paramsEl.innerHTML = '';
     const def = applyParams(state.species, state.over);
     const woody = !!def.turtle && !!def.stem;
-    let group = '';
+    // (round 128: a collapsible section a group, closed but the one last opened)
+    const NAMES: Record<string, string> = { shape: 'Shape', stem: 'Trunk & branches', crown: 'Crown', twigs: 'Twigs', bark: 'Bark', epiphytes: 'Moss, vines & seasons' };
+    const secs = new Map<string, HTMLElement>();
+    const secOf = (g: string) => {
+      let d = secs.get(g);
+      if (!d) {
+        const det = document.createElement('details');
+        det.className = 'sec';
+        det.open = openSec === g;
+        det.ontoggle = () => {
+          if (det.open) openSec = g;
+        };
+        const sum = document.createElement('summary');
+        sum.textContent = NAMES[g] ?? g;
+        det.appendChild(sum);
+        paramsEl.appendChild(det);
+        secs.set(g, det);
+        d = det;
+      }
+      return d;
+    };
     for (const p of PARAMS) {
       if (p.woody && !woody) continue;
       if (p.crown && !def.crown) continue;
       if (p.twigs && !def.twigs) continue;
       if (p.shape && !def.colonize) continue;
-      if (p.group !== group) {
-        group = p.group;
-        const h = document.createElement('div');
-        h.className = 'grp';
-        h.textContent = group;
-        paramsEl.appendChild(h);
-      }
+      const sec = secOf(p.group);
       const row = document.createElement('div');
       row.className = 'row';
       const lab = document.createElement('label');
       lab.textContent = p.label;
+      // (its hint in plain words, on a tap of the label)
+      const hint = document.createElement('div');
+      hint.className = 'hint';
+      hint.textContent = p.hint ?? '';
+      lab.onclick = () => hint.classList.toggle('on');
       if (p.options) {
         // (round 128: a choice as a list, not a slider with its options in the label)
         const sel = document.createElement('select');
@@ -488,7 +509,7 @@ async function main() {
           later();
         };
         row.append(lab, sel);
-        paramsEl.appendChild(row);
+        sec.append(row, hint);
         continue;
       }
       const inp = document.createElement('input');
@@ -509,7 +530,7 @@ async function main() {
         later();
       };
       row.append(lab, inp, val);
-      paramsEl.appendChild(row);
+      sec.append(row, hint);
     }
     const row = document.createElement('div');
     row.className = 'row';
@@ -525,7 +546,7 @@ async function main() {
       };
       row.append(lab, inp);
     }
-    paramsEl.appendChild(row);
+    secOf('bark').appendChild(row);
   }
   // ---- (round 128) the user's variants: new, save, load, A | B against one, export, import ----
   const savedSel = $<HTMLSelectElement>('saved');

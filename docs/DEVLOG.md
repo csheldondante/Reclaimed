@@ -16768,3 +16768,11 @@ epiphytes and seasons and states. Leafless and burned could also be useful state
   A variant in the world (editor-world.png): the link opened the atlas without errors (the view a meadow: the next
   batch frames a wood). The burned wood (burn-*.png): six lightning strikes into the elder wood lit nothing visible in a
   minute — to look into (the strikes' place, the wood's moisture) in the next slot.
+- The editor laid out for a phone (main's review, round 128): the panel is a bottom sheet of at most 45% of the screen
+  that scrolls inside itself (a 380 px side drawer from 760 px wide), and the canvas fills only the rest, so the tree
+  stays framed above it and turns by drag. The parameters sit in collapsible sections — Tree (species, seed, season,
+  state, growth) open, then Shape, Trunk & branches, Crown, Twigs, Bark, Moss/vines & seasons, Compare & save — closed
+  but the last one opened (it stays open across a rebuild). The buttons (new variant, save, export, import, see it in
+  the world) are one sticky row. Every label is in plain words (docs/WRITING.md: "branch length", not "sStep") with a
+  one-line hint shown on a tap of the label. The shrub now grows by space colonisation in a dome (SHRUB_DOME) with a
+  layered crown, its budgets 1600 / 3600 triangles (close).
