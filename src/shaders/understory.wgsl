@@ -30,7 +30,11 @@ fn underHide(p: vec3<f32>, foot: vec3<f32>) -> f32 {
   let side = abs(dot(fv, vec2<f32>(-ex.y, ex.x)));
   // (every tree in front of the hero across the screen's width, not only on its line: main's review — the front trunks
   // filled the bottom of the frame)
-  let front = smoothstep(0.0, 1.5, along) * (1.0 - smoothstep(R * 3.0, R * 3.6, side)) * (1.0 - smoothstep(R * 5.0, R * 6.5, along));
+  // (in front = its foot below the hero on screen — main's review: in portrait the front reaches further down the screen
+  // than any band on the ground; the foot's height counts: a tree downhill stands lower on the screen)
+  let ez = max(e.z, 0.05);
+  let below = along * ez - (foot.z - hero.z) * length(e.xy);
+  let front = smoothstep(0.0, 0.8, below) * (1.0 - smoothstep(R * 4.0, R * 4.8, side));
   // (the stump: cut at the hero's knee-to-hip height over its own foot — a clean cut, its top darkening into it, no
   // stipple: meshinst.wgsl fsInst darkens by underStumpFade)
   let stump = step(1.1, p.z - foot.z);
@@ -64,11 +68,16 @@ fn underStumpFade(p: vec3<f32>, foot: vec3<f32>) -> f32 {
   if (w <= 0.0) { return 0.0; }
   let hero = CAM.under[0].xyz;
   let R = max(CAM.under[1].y, 1.0);
-  let ex = normalize(toEye(p).xy + vec2<f32>(1e-5, 0.0));
+  let e = toEye(p);
+  let ex = normalize(e.xy + vec2<f32>(1e-5, 0.0));
   let fv = foot.xy - hero.xy;
   let along = dot(fv, ex);
   let side = abs(dot(fv, vec2<f32>(-ex.y, ex.x)));
-  let front = smoothstep(0.0, 1.5, along) * (1.0 - smoothstep(R * 3.0, R * 3.6, side)) * (1.0 - smoothstep(R * 5.0, R * 6.5, along));
+  // (in front = its foot below the hero on screen — main's review: in portrait the front reaches further down the screen
+  // than any band on the ground; the foot's height counts: a tree downhill stands lower on the screen)
+  let ez = max(e.z, 0.05);
+  let below = along * ez - (foot.z - hero.z) * length(e.xy);
+  let front = smoothstep(0.0, 0.8, below) * (1.0 - smoothstep(R * 4.0, R * 4.8, side));
   return w * front * smoothstep(0.3, 1.1, p.z - foot.z);
 }
 
@@ -78,7 +87,7 @@ fn underFlecks(q: vec2<f32>, stretch: vec2<f32>, open: f32) -> f32 {
   var best = 0.0;
   // (two layers: big patches where the canopy opens a little, small flecks between)
   for (var l = 0; l < 2; l++) {
-    let s = select(2.6, 1.15, l == 1);
+    let s = select(3.4, 1.3, l == 1);
     let p = q / s;
     // (the 2 x 2 cells nearest p — a hole reaches less than half a cell past its own: 8 cells for both layers, not 18,
     // on every fragment under the canopy)
@@ -131,7 +140,10 @@ fn underDapple(wpos: vec3<f32>, lit: f32) -> f32 {
   let fq = floor(f * 2.99) / 2.0;
   // under the crowns (the shadow map's shade): the sun only through the stencil's holes, flecks in deep shade — main's
   // review: the dapple must be the floor's dominant light shapes; in a gap or a clearing (lit): kept, its edge broken
-  var res = mix(mix(0.04, 1.0, fq), lit * (0.8 + 0.2 * fq), smoothstep(0.35, 0.75, lit));
+  // (the canopy covers by design — its own shadow at a low sun falls far off: lab7's floor came out evenly lit — so the
+  // stencil is the floor's light wherever the canopy is; only a glade (underGrove) lets the open sun in)
+  let glade = smoothstep(0.78, 0.95, underGrove(wpos.xy));
+  var res = mix(min(lit, mix(0.03, 1.0, fq)), lit * (0.8 + 0.2 * fq), glade);
   // (a pool of light round the hero, so its figure reads against the dark floor — the stage's spot)
   let pool = 1.0 - smoothstep(1.2, 2.6, length(wpos.xy - hero.xy));
   res = max(res, pool * 0.85 * lit);

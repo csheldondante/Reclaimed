@@ -66,7 +66,7 @@ fn probe(@builtin(global_invocation_id) id: vec3<u32>) {
     at(18 * (1 / tanE), 18, 18 * (1 / tanE));
     at(40, 18, 40); // 4 a crown far in front at the canopy's height: the canopy in front goes too (the floor opens)
     at(-12, 18, -12); // 5 a crown beyond the hero: kept (the canopy overhead, at the top of the screen)
-    at(60, 4, 60); // 6 a trunk far in front (past the screen), under the canopy: kept
+    at(60, 4, 60); // 6 a trunk far in front: below the hero on screen, so a stump
     const pts = dev.createBuffer({ size: P.length * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     dev.queue.writeBuffer(pts, 0, new Float32Array(P));
     const out = dev.createBuffer({ size: (P.length / 4) * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
@@ -99,13 +99,13 @@ fn probe(@builtin(global_invocation_id) id: vec3<u32>) {
     // (4: a tree 40 cells in front, still in the stumps' band: its upper part faded too)
     expect(on[4]).toBeGreaterThan(0.5);
     expect(on[5]).toBe(0);
-    expect(on[6]).toBe(0);
+    // (6: below the hero on screen however far: a stump too — main's review, portrait's long front)
+    expect(on[6]).toBeGreaterThan(0.9);
     // the canopy kept: the crowns in front of the hero go, the ones beyond stay
     expect(kept[0]).toBeGreaterThan(0.9);
     expect(kept[3]).toBeGreaterThan(0.9);
     expect(kept[4]).toBeGreaterThan(0.9);
     expect(kept[5]).toBe(0);
-    expect(kept[6]).toBe(0);
     for (const v of off) expect(v).toBe(0);
   });
 });

@@ -16283,3 +16283,9 @@ the foot of the trees and to cut away the trunks in front of the PC so they look
 
 Shots: C:/Projects/shots88/forest/lab3..lab6 (portrait 412x915), lab5L, lab6L (landscape 915x412), mesh-* (the meshes'
 software render).
+- *lab7's review* (main): landscape read; in portrait three trunks in front stood whole — the stumps' "in front" is now
+  the foot below the hero on screen (its height counted), not a band on the ground. The floor came out evenly lit (the
+  crowns' own shadow at a low sun falls far off), so the stencil is the floor's light wherever the canopy is; only a
+  glade lets the open sun in; bigger flecks and shafts. The pale-green blades round the trunks were tall grass: a tree's
+  own column under the woods fell through vegprep's floraSmall to the meadows' rule (flora/placement.ts never did) —
+  fixed, the GPU now as the CPU.

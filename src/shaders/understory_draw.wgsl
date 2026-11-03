@@ -38,7 +38,7 @@ fn vsRay(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> Ra
   // same hashes — so it lands on the floor's big fleck: the stencil's lattice in the canopy's plane round the hero's,
   // every other cell of a 7 x 7 block)
   let up = max(cz - hero.z, 0.0) / max(sun.z, 0.2);
-  let S = 2.6;
+  let S = 3.4;
   let hq = wo(hero.xy + sun.xy * up);
   let c = floor(hq / S) + vec2<f32>(f32(i32(ii % 4u) - 2), f32(i32(ii / 4u) - 2)) * 2.0;
   let h = randv(vec3<i32>(i32(c.x), i32(c.y), 9133));
@@ -74,7 +74,7 @@ fn fsRay(in: RayOut) -> FOut {
   var a = across * across * smoothstep(0.0, 0.2, v) * (1.0 - smoothstep(0.35, 1.0, v));
   // banded by the mist drifting through it
   let n = vnoise(vec2<f32>(u * 1.3 + in.uv.w * 40.0, v * 5.0 - G.time * 0.25)) * 0.6 + vnoise(vec2<f32>(u * 3.0 - G.time * 0.1, v * 11.0 + in.uv.w * 9.0)) * 0.4;
-  a *= (0.35 + 0.85 * n) * in.uv.z * 0.16;
+  a *= (0.35 + 0.85 * n) * in.uv.z * 0.24;
   // (pixel art without bars: eight faint steps, dithered between — each pixel adds a little light, never a slab)
   let st = a * 8.0;
   let qa = (floor(st) + select(0.0, 1.0, fract(st) > bayer4(in.pos.xy))) / 8.0;
