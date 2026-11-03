@@ -271,7 +271,8 @@ export class Powers {
     const hz = hit.z;
     this.lastStrike = globals.time;
     const surf = await this.d.readSurface();
-    const top = (x: number, y: number) => (this.topAt ? this.topAt(x, y) : sfZ(surf[y * dims.w + x]));
+    // (round 120, JB6: the ground's top from the surface, a fallen body's over it where one sleeps)
+    const top = (x: number, y: number) => Math.max(sfZ(surf[y * dims.w + x]), this.topAt?.(x, y) ?? -1);
     let bx = tx;
     let by = ty;
     let best = -Infinity;
@@ -328,7 +329,7 @@ export class Powers {
   onCyclone?: (x: number, y: number) => void;
   /** how many metal voxels are connected to the one tapped at (x, y, z) — the size of the drum or tank */
   metalSize?: (x: number, y: number, z: number) => Promise<number>;
-  /** the visible top of a column (loose ground, fallen bodies) for lightning to seek; default: the solid top */
+  /** a fallen body's top over a column (-1: none) for lightning to seek, over the surface's top (round 120, JB6) */
   topAt?: (x: number, y: number) => number;
   /** lightning struck here (x, y, the visible top): the level breaks fallen bodies there */
   onStrike?: (x: number, y: number, z: number) => void;

@@ -245,6 +245,19 @@ export function fieldMeshed(m: number): boolean {
   return MATERIALS[m]?.state !== MatState.Solid || m === MAT.Stone || m === MAT.Trash || m === MAT.Basalt || m === MAT.Sandstone || (m >= MAT.Flesh && m <= MAT.Quartz) || m === MAT.Bedrock;
 }
 
+/**
+ * (round 120, the user: "when bodies hit the ground with heavy impacts in soft material like sand or dirt they should
+ * displace material and dampen energy that way … I really want it to push into the ground a bit") How soft a loose
+ * ground is: 0 for anything not granular (rock, what's built: the hard-ground rules), else by what it bears
+ * (`bear`: sand 0.15 → 2, soil 0.3 → 1), at most 2. (Round 120, JB6: in the GPU's table too, look.z — the blow is the
+ * edit pass's.)
+ */
+export function softnessOf(mat: number): number {
+  const d = MATERIALS[mat];
+  if (!d || d.state !== MatState.Granular) return 0;
+  return Math.min(2, 0.3 / Math.max(0.15, d.bear ?? 0.3));
+}
+
 export function packMaterialTable(): Float32Array {
   if (MATERIALS.length > MAX_MATERIALS) throw new Error('material table overflow');
   const out = new Float32Array(MAX_MATERIALS * MATERIAL_STRIDE_FLOATS);
@@ -253,7 +266,8 @@ export function packMaterialTable(): Float32Array {
     out.set([m.albedo[0], m.albedo[1], m.albedo[2], m.emissive], o);
     out.set([m.state, m.reposeDry, m.reposeWet, m.strength], o + 4);
     out.set([m.growthCap, m.suitability, m.specular, m.porosity], o + 8);
-    out.set([m.smooth, m.glass ?? 0, 0, 0], o + 12);
+    // (round 120, JB6: z — how soft it is to a blow, softnessOf: the edit pass's blow sinks bodies in by it)
+    out.set([m.smooth, m.glass ?? 0, softnessOf(i), 0], o + 12);
     out.set([m.windLift, m.airborne, m.washMobility, m.washFlow], o + 16);
   });
   return out;
