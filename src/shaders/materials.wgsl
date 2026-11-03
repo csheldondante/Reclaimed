@@ -4,7 +4,7 @@ struct Material {
   albedo: vec4<f32>, // rgb (sRGB), emissive
   sim: vec4<f32>,    // state, reposeDry, reposeWet, strength
   eco: vec4<f32>,    // growthCap, suitability, specular, porosity
-  look: vec4<f32>,   // smooth (cells; 0 = hard steps), see-through (ice, crystal), unused ×2
+  look: vec4<f32>,   // smooth (cells; 0 = hard steps), see-through (ice, crystal), softness to a blow (softnessOf, round 120 JB6), unused
   loose: vec4<f32>,  // wind lift (cells/s; ≥ 1e8 never), airborne share, water mobility, wash flow
 };
 @group(0) @binding(2) var<uniform> MATS: array<Material, 40>; // MAX_MATERIALS (materials.ts)

@@ -80,6 +80,76 @@ fn isLoose(m: u32) -> bool { return m == 2u || m == 3u || m == 4u || m == 17u ||
 
 const UPLIFT_RATE: f32 = 3.0; // cells/s bedrock rises
 
+// (round 120, JB6: "no CPU readback on the hot path") A blow — a body striking the ground (Integrity.groundBlow): OP_SMASH
+// with tag BLOW_TAG (code bits 10-15); x, y where it struck, z the footprint's reach + BLOW_BRUSH (its rim), w the blow's
+// energy (½mv²). Decided here on the columns as the GPU has them, no CPU copy: struck loose ground (the column's top
+// softer than 0 — the material table's look.z, softnessOf) sinks: each footprint column's top run cut by
+// depth · (1 − ½(d/reach)²), depth = impact.softSink · softness · ∛E over the footprint's side (at most 3; under 0.15
+// none), what's dug out a share sprayed (impact.spray: the CPU's dust) and the rest laid as a rim round it through the
+// deposit; struck solid ground with more than impact.groundEnergy smashes, a ball of 0.8·∛(E / groundEnergy) (at most 3)
+// at its top (OP_SMASH's rule). (It was the CPU's softBlow/groundBlow over its copy of the columns, game/blows.ts.)
+const BLOW_TAG: u32 = 1u;
+const BLOW_RIM: f32 = 2.5;
+const BLOW_BRUSH: f32 = 3.0;
+const PI_E: f32 = 3.14159265;
+
+/** the top interval of column c as the tick began (IV_NONE: empty) */
+fn topIv(c: vec2<i32>) -> vec4<u32> {
+  let cs = colSlots(u32(c.x), u32(c.y));
+  var t = IV_NONE;
+  for (var k = 0u; k < cs.y; k++) {
+    let v = layersIn[cs.x + k];
+    if (ivEmpty(v)) { break; }
+    t = v;
+  }
+  return t;
+}
+
+/** how soft a material is to a blow (materials.ts softnessOf: 0 for what isn't loose) */
+fn softOf(m: u32) -> f32 { return MATS[m].look.z; }
+
+/** how deep a blow of energy e on ground this soft sinks a footprint of this reach (blows.ts sinkDepth) */
+fn sinkDepthOf(e: f32, soft: f32, reach: f32) -> f32 {
+  if (!(soft > 0.0) || !(e > 0.0)) { return 0.0; }
+  let d = min(3.0, G.tune.impactSoftSink * soft * pow(e, 1.0 / 3.0) / max(1.0, reach * sqrt(PI_E)));
+  return select(d, 0.0, d < 0.15);
+}
+
+/** what a sinking blow cuts off a footprint column's top run `top`, d from where it struck (none under 0.02) */
+fn sinkCut(top: vec4<u32>, d: f32, reach: f32, depth: f32) -> f32 {
+  if (ivEmpty(top) || !(softOf(ivMat(top)) > 0.0)) { return 0.0; }
+  let want = depth * (1.0 - 0.5 * (d / reach) * (d / reach));
+  let cut = min(want, ivZ1(top) - ivZ0(top));
+  return select(cut, 0.0, cut < 0.02);
+}
+
+/** OP_SMASH's hole [lo, hi) in a column (n intervals, k slots): its new count */
+fn smashCol(arr: ptr<function, array<vec4<u32>, MAX_K>>, n: u32, k: u32, lo: f32, hi: f32) -> u32 {
+  var out: array<vec4<u32>, MAX_K>;
+  var m = 0u;
+  // rubble only where the hole is open above: under what's left it would
+  // go on holding that up (a tower on a pedestal of its own base)
+  let open = n == 0u || ivZ1((*arr)[n - 1u]) <= hi;
+  for (var j = 0u; j < n; j++) {
+    let v = (*arr)[j];
+    let mt = ivMat(v);
+    let z0 = ivZ0(v);
+    let z1 = ivZ1(v);
+    let hole0 = max(lo, 2.0);
+    if (z1 <= hole0 || z0 >= hi || hi <= hole0) { out[m] = v; m += 1u; continue; }
+    // keep what lies below and above the hole (room permitting); a solid's
+    // share of the hole becomes its rubble
+    if (z0 < hole0) { out[m] = ivPack(z0, hole0, mt, ivAux(v)); m += 1u; }
+    if (open && matState(mt) == ST_SOLID && m < k) { out[m] = ivPack(max(z0, hole0), min(z1, hi), rubbleOf(mt), 0u); m += 1u; }
+    if (z1 > hi && m < k) { out[m] = ivPack(hi, z1, mt, ivAux(v)); m += 1u; }
+  }
+  if (m <= k) {
+    for (var j = 0u; j < MAX_K; j++) { (*arr)[j] = select(IV_NONE, out[j], j < m); }
+    return m;
+  }
+  return n;
+}
+
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
@@ -204,32 +274,61 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let fall = 1.0 - d * d;
     let amt = ev.w * fall;
+    if (op == OP_SMASH && (code >> 10u) == BLOW_TAG) {
+      let reach = max(ev.z - BLOW_BRUSH, 0.5);
+      let dp = length(cellPos(p) - ev.xy);
+      let cc = cellAt(ev.xy);
+      if (!inMap(cc)) { continue; }
+      let ct = topIv(cc);
+      if (ivEmpty(ct)) { continue; }
+      let cm = ivMat(ct);
+      let soft = softOf(cm);
+      if (soft > 0.0) {
+        let depth = sinkDepthOf(ev.w, soft, reach);
+        if (depth <= 0.0) { continue; }
+        if (dp <= reach) {
+          if (n > 0u) {
+            let t = arr[n - 1u];
+            let cut = sinkCut(t, dp, reach, depth);
+            if (cut > 0.0) {
+              if (ivZ1(t) - cut > ivZ0(t) + 1e-3) { arr[n - 1u] = ivPack(ivZ0(t), ivZ1(t) - cut, ivMat(t), ivAux(t)); }
+              else { n -= 1u; arr[n] = IV_NONE; }
+            }
+          }
+        } else if (dp <= reach + BLOW_RIM) {
+          // the rim: what the whole footprint gave (each column as the tick began), over the ring's columns
+          let R = i32(ceil(reach)) + 1;
+          var removed = 0.0;
+          var ring = 0.0;
+          for (var j = cc.y - 2 * (R + 3); j <= cc.y + 2 * (R + 3); j++) {
+            for (var ii = cc.x - R - 3; ii <= cc.x + R + 3; ii++) {
+              let q = vec2<i32>(ii, j);
+              if (!inMap(q)) { continue; }
+              let dq = length(cellPos(q) - ev.xy);
+              if (dq > reach && dq <= reach + BLOW_RIM) { ring += 1.0; }
+              if (dq <= reach && abs(j - cc.y) <= 2 * R && abs(ii - cc.x) <= R) { removed += sinkCut(topIv(q), dq, reach, depth); }
+            }
+          }
+          if (ring > 0.0) {
+            deposit[i].y += removed * (1.0 - G.tune.impactSpray) / ring;
+            deposit[i].z = f32(cm);
+          }
+        }
+        continue;
+      }
+      // (solid ground: a hard enough blow smashes it where it struck)
+      if (matState(cm) != ST_SOLID || !(ev.w >= G.tune.impactGroundEnergy)) { continue; }
+      let r = min(3.0, 0.8 * pow(ev.w / G.tune.impactGroundEnergy, 1.0 / 3.0));
+      let ds = dp / r;
+      if (ds >= 1.0) { continue; }
+      let hz = r * sqrt(1.0 - ds * ds);
+      let zc = ivZ1(ct) - 0.3;
+      n = smashCol(&arr, n, cs.y, floor(max(zc - hz, 0.0) + 0.5), floor(max(zc + hz, 0.0) + 0.5));
+      continue;
+    }
     if (op == OP_SMASH) {
       let hz = ev.z * sqrt(fall);
-      let lo = floor(max(ev.w - hz, 0.0) + 0.5);
-      let hi = floor(max(ev.w + hz, 0.0) + 0.5);
-      var out: array<vec4<u32>, MAX_K>;
-      var m = 0u;
-      // rubble only where the hole is open above: under what's left it would
-      // go on holding that up (a tower on a pedestal of its own base)
-      let open = n == 0u || ivZ1(arr[n - 1u]) <= hi;
-      for (var k = 0u; k < n; k++) {
-        let v = arr[k];
-        let mt = ivMat(v);
-        let z0 = ivZ0(v);
-        let z1 = ivZ1(v);
-        let hole0 = max(lo, 2.0);
-        if (z1 <= hole0 || z0 >= hi || hi <= hole0) { out[m] = v; m += 1u; continue; }
-        // keep what lies below and above the hole (room permitting); a solid's
-        // share of the hole becomes its rubble
-        if (z0 < hole0) { out[m] = ivPack(z0, hole0, mt, ivAux(v)); m += 1u; }
-        if (open && matState(mt) == ST_SOLID && m < cs.y) { out[m] = ivPack(max(z0, hole0), min(z1, hi), rubbleOf(mt), 0u); m += 1u; }
-        if (z1 > hi && m < cs.y) { out[m] = ivPack(hi, z1, mt, ivAux(v)); m += 1u; }
-      }
-      if (m <= cs.y) {
-        for (var k = 0u; k < MAX_K; k++) { arr[k] = select(IV_NONE, out[k], k < m); }
-        n = m;
-      }
+      n = smashCol(&arr, n, cs.y, floor(max(ev.w - hz, 0.0) + 0.5), floor(max(ev.w + hz, 0.0) + 0.5));
       continue;
     }
     if (op == OP_WATER) {

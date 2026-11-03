@@ -16207,3 +16207,74 @@ places: the merge added none of its own). The structure review: C:/Projects/shot
   (two runs each): p50 9.9/9.9 vs 9.9/9.9 ms, p95 12.3/13.4 vs 12.3/12.4, GPU 12.1/13.9 vs 13.4/12.1 ms — within the
   spread. Shots: C:/Projects/shots88/merge124/ (1-roster, 2-run-turn-presenter-card, 3-effect-card-reward,
   4-encounter-enemies, 5-mutation-watchtower-before-after, 5b-mutation-weir-river-before-after, opps/, inspector-*).
+## 2026-10-31 — round 120 (jb6): JB6, no CPU readback on the hot path
+
+**Why.** The user (round 120): "I suspect it will win after JB6 since my understanding is the readbacks are very slow
+and it isn't clear what we need that for." Judge B (sections) reads the GPU's columns in place, but Integrity still read
+the layers back before every pass whatever the judge (the chunks round what it looks at; all of the window, 1-16 MB,
+after any slide), to keep a CPU copy that its other readers walked.
+
+**The readers of the CPU copy, and what each needed** (game/integrity.ts before this):
+- every pass: judge A (fracture.ts analyseRock: the copy, around the seeds); applying a verdict (crumbleRuns cut out,
+  spillRubble's neighbours' tops, spawnRigid's subtract, the structures' crushed cells); External's verify (the claimed
+  cells as they are) and orphans (after a whole read); the structures' analyse on every dirty box (each cut marks one);
+- every frame: the impacts (latticeBlows/groundBlow/softBlow: the material and top where struck, a dig written back);
+  the CPU rigid rock's ground (rockbodies.ts columnsGround: the old variant's step, any variant's spawn and fast-forward);
+  the pieces falling in the columns (colbodies.ts); the cube bodies (bodies.ts, never spawned now); topAt (lightning);
+- on events: the metal flood (wakeMetal: a tanker struck, metal in a verdict), the drop tool's ground, the settlements'
+  and the resting rock's claims (External), the tests' scan/judgeAll.
+
+**What moved where.**
+- Changes to the columns are the GPU's (game/colapply.ts, shaders/colapply.wgsl): a verdict's cuts (subtract, then the
+  rubble rule past K), the crumbs spilled to the lowest open neighbour (added into the deposit), loose ground laid
+  (added, never overwritten: the CPU's 2-tick overwrite rule is gone), External spans let go (sim/external.ts
+  releaseSpan), orphans made ground (orphanColumn). Each rule has one CPU statement; the copy, where kept, is changed by
+  it so it stays the GPU's. Node tests (test/gpu/colapply.test.ts) hold the GPU to the CPU on the judges' shapes, 40
+  random caves (judge B's verdicts), random cuts past K, random External release and orphans.
+- Blows are the edit pass's (edit.wgsl, OP.SMASH with BLOW_TAG): it reads the struck column's top on the GPU and sinks
+  loose ground (depth from impact.softSink, the rim from impact.spray — now GPU tune parameters — and the material's
+  softness, look.z of the material table) or smashes hard ground past impact.groundEnergy. The dust's colour is the
+  ground's own, looked up by the particles (payload GROUND_DUST).
+- A small GPU question (game/colquery.ts) says whether a dirty box holds anything built before its chunks are read for
+  the structures' analyse; External's verify fetches only the chunks with claimed cells near the cut; the metal flood,
+  the drop tool and the settlements' claims fetch the chunks they need (game/colcopy.ts `fetch`, readable in the same
+  task: a column not fetched throws, never a stale read).
+- The copy (game/colcopy.ts, out of Integrity) is kept whole, and read before each pass as before, only where a CPU
+  consumer walks it: judge A, the CPU rigid rock (old, nodes, hybrid: RockBodies' ground at spawn and fast-forward), the
+  pieces falling in the columns (no rigid rock, or the old variant's structures). The default, lattice x runs, keeps it
+  (judge A); lattice x sections keeps none. `?jb6=0` keeps it everywhere, for measuring only.
+
+**Judge A**: kept with the copy, not moved to a Web Worker. Its cost is the readback (its latency on the phone, 15-650
+ms), not its CPU time (judge A's whole cost in the round-120c battery is mostly the read); a worker fed by a narrow
+readback would still wait for that readback, and the copy's other readers (the CPU rigid rock) would still need it.
+
+Tests: test/gpu/jb6.test.ts (the lattice with the sections judge: a cut freeing an overhang judged, cut out on the GPU and
+falling as a lattice body; a block sinking into sand; a block smashing stone — `readBytes` 0 throughout; a claimed thing
+dug into: only its chunks fetched, its owner told, let go on the GPU; with judge A the copy is read again).
+test/gpu/integrity.test.ts's blows now look at the GPU's columns (the CPU no longer knows which blow sank or smashed).
+
+**Measured (jb6, desktop iGPU intel-xe-lpg, the phone proxy: atlas, 412 x 915, dpr 2.6, q=low, every system, 1x).**
+- The toggle (scripts/jb6toggle.mjs; lattice x sections, `?jb6=0` against JB6, alternated; 30 s of a bowl dug round the
+  camera every 1.2 s and a stone block dropped every 3 s; data/perf/jb6/toggle-lattice-sections*.json):
+
+  | run | frames p50 / p95 / p99 / max (ms) | > 33 ms | GPU mean / p95 (ms) | read back | passes |
+  |---|---|---|---|---|---|
+  | jb6=0, 1 | 9.8 / 11.7 / 12.8 / 92.6 | 1 of 3045 | — | 120.9 MB | 67 |
+  | jb6, 1 | 9.9 / 11.4 / 12.5 / 98.4 | 3 of 3030 | — | 0 | 65 |
+  | jb6=0, 2 | 9.9 / 11.4 / 12.4 / 73.1 | 2 of 3046 | — | 119.3 MB | 66 |
+  | jb6, 2 | 9.9 / 11.4 / 12.9 / 69.7 | 3 of 3032 | — | 0 | 65 |
+  | jb6=0 (perf=1) | 9.9 / 10.6 / 11.5 / 68.8 | 1 of 3040 | 6.45 / 9.81 | 125.2 MB | 70 |
+  | jb6 (perf=1) | 9.9 / 10.7 / 11.8 / 67.6 | 1 of 3036 | 6.34 / 9.67 | 0 | 68 |
+
+  The copy cost about 1.8 MB a pass (the chunks ±24 round each cut, read again each look) — 4 MB/s of readback while
+  cutting; with JB6, none. On this desktop the frames don't show it (its readback is fast and off the frame); the phone
+  is where it was slow (the round-120 judges' battery: 15-650 ms a read) — the phone bench is the judge of that.
+- The physics bench headless (playground, lattice:runs vs lattice:sections; data/perf/jb6/physbench-headless.json): the
+  frames alike (p95 10.5 / 10.6, p99 11.2 / 11.5 ms); toggled costs within noise for both. Runs read back 1.1-3.7 MB a
+  stage (9-16 reads of 10-14 ms each) and judged on the main thread 0.2-1.35 ms a pass (worst 4.5); sections read none
+  but its verdict — 32 KB used (97 KB mapped) — its judging 0.4-2.6 ms of GPU and 12-16 ms from submit to verdict
+  (the readback's wait, off the main thread). So on the desktop it's a tie on frames; sections now does what runs did
+  with no copy read back and no CPU judging on the main thread — whether it beats runs on the phone is the phone bench's
+  call (Pages build of `jb6`, `?physbench=1&pairs=lattice:runs,lattice:sections`).
+- Gate: typecheck; `npm test` 351 passed (2 expected fail, 5 skipped) (unit and GPU on Dawn); `npm run smoke` atlas, playground, rocklab; the atlas
+  with judge B, a pillar's foot cut (it toppled as one rock-mesh body) and a tanker dropped (C:/Projects/shots88/jb6/).
