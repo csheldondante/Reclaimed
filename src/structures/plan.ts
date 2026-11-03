@@ -327,6 +327,28 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn, den
       megas.push({ kind: 'tower', quads: [q], frame: quadCorners(tiles, q), z0: b.base, z1: quadTop[q] });
     }
   }
+  // (merge124) structures the world placed (a card's outcome — WorldState's `settlement-building`, realised when the land
+  // is made): each raised as a landmark tower on a lone lot with open ground beside it, nearest the middle — through this
+  // contract, so the town draws it like its own
+  const placed: { id: string; building: number }[] = [];
+  if (spec.placed?.length) {
+    const openQ = (q: number) => [0, 1, 2, 3].some((s) => {
+      const n = adj[q * 4 + s];
+      return n >= 0 && (tiles.use[n] === 'street' || tiles.use[n] === 'plaza' || tiles.use[n] === 'yard');
+    });
+    const midD = (b: BuildingRec) => Math.hypot(quadCentre(tiles, b.quads[0])[0] - cx, quadCentre(tiles, b.quads[0])[1] - cy);
+    for (const p of spec.placed) {
+      const b = buildings.filter((x) => (x.kind === 'house' || x.kind === 'hut') && !x.mega && x.quads.length === 1 && openQ(x.quads[0])).sort((a, c) => midD(a) - midD(c))[0];
+      if (!b) break;
+      const q = b.quads[0];
+      b.mega = 'tower';
+      b.storeys = Math.max(b.storeys + 4, Math.round(sMid) + 4);
+      quadStoreys[q] = b.storeys;
+      quadTop[q] = b.base + b.storeys * b.storeyH;
+      megas.push({ kind: 'tower', quads: [q], frame: quadCorners(tiles, q), z0: b.base, z1: quadTop[q] });
+      placed.push({ id: p.id, building: b.id });
+    }
+  }
   const plaza = Array.from({ length: nq }, (_, q) => q).filter((q) => tiles.use[q] === 'plaza');
   if (spec.system === 'radial' && plaza.length) {
     // Bulwark's heart: a great round keep in the middle of the plaza (a ring of the plaza left round it)
@@ -415,6 +437,7 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn, den
     roofRise,
     order: buildOrder(buildings, tiles, spec),
     megas,
+    ...(placed.length ? { placed } : {}),
     linear,
     works,
     berths,

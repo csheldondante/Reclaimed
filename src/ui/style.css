@@ -362,5 +362,8 @@ canvas#world {
 /* (round 111, TG1) the noise lab's panel (noiselab/control.ts): the tuning panel's, its preview on top */
 .tune-panel .tune-choice { flex: 0 1 60%; min-width: 0; }
 .tune-panel.lab { width: min(380px, calc(100vw - 16px)); }
+/* (round 124, opportunities) the dealer's panel: over the atlas map and the run's card, under the map's rose */
+.play-on .tune-btn.dealer { display: inline-block !important; z-index: 70; top: calc(max(8px, env(safe-area-inset-top)) + 84px); bottom: auto; }
+.tune-panel.dealer { z-index: 71; top: calc(max(8px, env(safe-area-inset-top)) + 128px); }
 .lab-top { margin: 2px 0 6px; }
 .lab-preview { display: block; width: 100%; aspect-ratio: 256 / 222; image-rendering: pixelated; border-radius: 6px; background: #111; }

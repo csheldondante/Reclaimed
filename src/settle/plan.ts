@@ -91,6 +91,8 @@ export interface PlanInput {
   sea: number;
   /** (the level's ?city= override: this settlement's town planned with another tile system or style) */
   override?: Partial<CitySpec>;
+  /** (merge124) structures the world placed here (records.ts SettlementSeed.placed): raised as landmarks */
+  placed?: { id: string; name: string; use: string[] }[];
   /** (round 120) the ways its roads leave by (records.ts) */
   approaches?: [number, number][];
 }
@@ -390,6 +392,7 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
     works: purpose === 'mining' && quarrySpot ? { at: quarrySpot.at, dir: quarrySpot.dir } : undefined,
     approaches: inp.approaches?.length ? inp.approaches : undefined,
     marks: marks.length ? marks : undefined,
+    ...(inp.placed?.length ? { placed: inp.placed.map((p) => ({ id: p.id, use: [...p.use] })) } : {}),
     ...inp.override,
   };
   const city = planCity(spec, groundAt, water, density);
@@ -777,6 +780,16 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
   }
 
   // ---- the record: buildings, people, stores, needs -------------------------------------------------------
+  // (merge124) what the world placed: the building each became carries its name and uses (a card's burrows, a watchtower)
+  for (const p of city.placed ?? []) {
+    const id = `${rec.id}:b${p.building}`;
+    const want = inp.placed?.find((x) => x.id === p.id);
+    const b = buildings.find((x) => x.id === id);
+    if (!b || !want) continue;
+    b.use = [...new Set([...b.use, ...want.use])];
+    const t = things.get(id);
+    if (t) t.name = `${want.name}`;
+  }
   rec.buildings = buildings;
   const role = (name: string, f: number) => ({ role: name, count: Math.max(1, Math.round(people * f)) });
   // (round 120) the purpose decides who's there: its trades (purpose.ts) take their share from the farmers' and the

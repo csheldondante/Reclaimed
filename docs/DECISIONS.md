@@ -284,7 +284,7 @@ each was implemented.
   the card says so).
 
 - The jb6 phone bench (Pixel 9a): lattice x runs p95 20.2 / p99 37.1, judge 1.7 ms (worst 17); lattice x sections p95 21.7 / p99 74.7, 0 bytes read back, judge 30 ms (worst 420 ms, frames to 367 ms). The user, verbatim:
-
+
 > Are they not prewarmed? How reliable are the number without that? I think use the faster technique regardless for now and let's defer further work for the time being. However, I want to come back to physics later and do it properly with dispatches that do integration, course collision, fine collision and then only do the lattice work for colliding bodies (and possibly prioritize those the player is interacting with and those over a certain size). Then we pass to the solver and we populate a buffer of collision events that the CPU can readback asynchronously and other systems can use to trigger effects. Record that design and that it needs collaborative review with an agent. Then let's move on to the run structure and other priorities. I think the biggest priority is making the runs more fun and having the full vertical slice more or less settled.
 >
 > The single biggest gameplay improvement is fixing the camera. I don't know the best fix. Thing occlude not only the PC but also things the PC cares about. Case in point riding the hoverbike near the foot of cliffs is cool and cinematic but when you turn around a cliff sometimes it's a cool new direction to go and sometimes it's a dead end that kills momentum. I want a hero lab for both hero abilities and moves and puzzles and enemies and camera modes so we can iterate many variants and see what works best. We have options like rotating the camera or going top down or using dithering or cutting tall objects down to a short height above the traversable surface the bike is on. Foreground objects occluding can also be atmospheric if it occludes only edges or the bottom or top of the screen. This is all just to point out we need a variety of settings to try in different terrains to see what works.
@@ -295,20 +295,186 @@ each was implemented.
 >
 >
 > Lastly at some point let's consider baking trees into isometric sprites for the lower LOD so that there is more visual continuity. (Defer it for now but note it as a thing to do)
-
-- → Physics deferred. The design for later (PH1, revised): dispatches for integration, coarse collision, fine collision;
-  the lattice only for colliding bodies (priority to what the player handles and to bodies past a size); then the
-  solver; a GPU collision-event buffer the CPU reads back asynchronously for other systems to trigger effects. It needs
-  a collaborative design review with an agent before building. Priorities now: the runs fun and the full vertical slice;
-  the camera first (a hero lab: abilities, moves, puzzles, enemies, camera modes as variants across terrains: rotate,
-  top-down, dither, cut tall things down above the traversable surface, occlusion only at the screen's edges); action
-  combat controls and a gym; then the run structure (city builder, overmap, dispatch, choices, the world state), with
-  a process for generating location opportunities from what is there, the hero and the run (thematic, real world
+
+- → Physics deferred. The design for later (PH1, revised): dispatches for integration, coarse collision, fine collision;
+  the lattice only for colliding bodies (priority to what the player handles and to bodies past a size); then the
+  solver; a GPU collision-event buffer the CPU reads back asynchronously for other systems to trigger effects. It needs
+  a collaborative design review with an agent before building. Priorities now: the runs fun and the full vertical slice;
+  the camera first (a hero lab: abilities, moves, puzzles, enemies, camera modes as variants across terrains: rotate,
+  top-down, dither, cut tall things down above the traversable surface, occlusion only at the screen's edges); action
+  combat controls and a gym; then the run structure (city builder, overmap, dispatch, choices, the world state), with
+  a process for generating location opportunities from what is there, the hero and the run (thematic, real world
   consequences, gameplay bonuses). Deferred: trees baked into isometric sprites for the low LOD.
-
+
 - The user, verbatim: "I meant the current technique. The section judge was slower on phone I thought? My main point is they were all fine for now and I want to defer working on physics and focus on the gameplay so let's do that." → lattice x runs stays the default; jb6 stays unmerged on its branch; physics deferred (PH1).
 
 - The user, verbatim, on the cities shots: "This looks good to merge but it's not clear that it has the townscaper property of being able to build vertically and it really doesn't showcase building on varied terrain and the towns don't look that different based on purpose but they do look cool so merge and just take notes of gaps and a Todo to come back and iterate on this" → cities and traits merged (merge123); gaps filed as STR50-STR52.
+
+- The user, verbatim, after trying the Traits Lab on the phone: "Traits are great. Super cool." → LW1 accepted as the base for effects; the open calls (bodies everywhere, the sanctuary sparing allied undead, the look) stay at their defaults until the user says otherwise.
+
+- The user corrected the run-loop draft with "Living World — Strategic Map and Opportunity System", kept verbatim at docs/design/STRATEGIC_MAP.md (authoritative over RUN_LOOP.md where they differ). Its core: every opportunity has resource requirements, costs, duration, outcomes and a location; the player commits resources (no manual allocation, no separate dispatch category); the player resource makes an opportunity the round's playable challenge (character control or building); other resources resolve it autonomously over time; committed resources are locked until it resolves; opportunities run concurrently; commits only from the current strategic location; the GM sets the travel freedom; scouting, rumours and diplomacy reveal opportunities; new resources unlock new kinds; unaffordable ones may stay visible. Three priority systems: the atlas/opportunity map, character control, building. "Opportunities are uniform."
+
+- The user's answers to the run-loop questions (1 agents available where, 2 forced opportunities, 3 sibling offers, 4 travel, 5 agent quality), verbatim:
+
+> 1. I think for simplicity they must be available to your character. Am empire might have access to resources from many constalation settlements but the leader of a city only what is at the city. I would limit the number of opportunities and instead show ones that require more resources. If you have multiple armies you start seeing opportunities that require multiple armies. That way the scale still can grow and be epic but players are never overwhelmed with choices. We want the mechanical and world effects of the choices and potential synergy to be what makes each turn fun. Think of it sort of like a set of cards you can purchase or assign resources to that can resolve or pop up each turn. Some can have negative effects for letting them expire. Which goes right into your second question. Opportunities can trigger player interactions and consequences. 3. I would only show one option to the player and keep player opportunities separate. 4.i would treat it as opportunities that require the player and therefore playing travels you to them. Think of slay the spire or FTL where you have a choice of next destination but you have to keep going. I would have the story progress players to the conclusion with interesting choices along the way. 5. Interchangeable but I would have tags so named characters are also knights or whatever and then have special opportunities that only show up for them. Imagine that one of the ways your party can level up is by gaining better opportunities or resolution bonuses. Negate a negative effect of certain types of opportunity or resolve some instantly etc
+
+- → Resources: only what is available to your character (a city's ruler commits what is at the city; an empire what its
+  settlements hold). Few opportunities at a time, scaling up in what they require (two armies -> two-army opportunities):
+  epic without overwhelming; each turn's fun is the choices' mechanical and world effects and their synergy. Cards you
+  buy or assign resources to, that resolve or appear each turn; some have penalties when they expire; opportunities can
+  trigger player interactions and consequences (the night assault). One option shown; player opportunities kept separate.
+  Travel = player opportunities: playing one travels you there (Slay the Spire / FTL: choose the next destination, keep
+  going); the story drives to the conclusion. Agents interchangeable by kind, with tags (a named character is also a
+  knight) unlocking special opportunities; levelling up = better opportunities and resolution bonuses (negate a kind's
+  negative effects, resolve some instantly).
+
+- The user, verbatim, on the run-loop revision's questions (hand size, persistence, a ruler riding out):
+
+> 1. Even if we use cards behind the scenes the game should show them as events or opportunities on the map not as a hand. The player may only have one option a turn depending on what makes sense. A ruler may just get city builder or respond to attacks or maybe an opportunity to ride out and back but it costs turns so it is expensive. Part of the challenge here is designing a mechanical way to filter these and deal just the ones that make sense. I like your suggestion of most expensive cards you can afford.
+> 2. Yes I think that we want them to persist.
+> 3. I think we will need to tune the dealer and learn what is fun for play via iteration.
+
+- → Cards are internal only: shown as events and opportunities on the atlas map, never as a hand. A turn may offer one
+  option where that is what makes sense (a ruler: building, answering attacks, or riding out and back at a cost in
+  turns). The dealer filters to what makes sense and deals the most expensive cards you can afford. Tags and bonuses
+  persist with named characters across runs. The dealer is tuned by iteration: it needs its own tuning panel and a way
+  to watch what it deals and why. → Slice A (the horde run as opportunities on the map) starts on branch opportunities.
+
+- The user, verbatim, after trying slice A (opportunities dde0f56) on the phone: "This is not really what we discussed. There is not hero card for selecting heros from a roster. No description of the hero or current events and what they are trying to do. No stats/tags and no indicator of what game modes. The opportunities do not appear over the places they are happening or have clear timers or a card to view their effects on expiring or being successfully completed and there are not multiple to select from and the game mode when I select is just drive to a flag no enemies or combat no pursuers no race."
+  → Slice A reworked: a hero roster to choose from (description, stats and tags, which game modes each plays); a run
+  intro with the current events, the conflict and the hero's goal; opportunities anchored over their places with clear
+  timers and a card showing success and expiry effects; several to choose from; every played opportunity a real
+  encounter (enemies and combat, pursuers, chases, defence; races only with an arena), never a drive to a flag.
+
+- The user, verbatim: "I recommend making a playground for the card mechanics that has no playable encounters. It would just be getting rewards that get new opportunities, decrease time spent to deal with card (distance based maybe) decrease resources etc. Think deck builder in terms of the design then we will work on thematic fits so they feel plausible in the world. That's the semi hard part." → a card lab first (no encounters; every card resolves by its odds; abstract cards; deck-builder rewards: unlocks, shorter durations, lower costs, bonuses, new agents and tags; distance-based duration; an auto-play simulator for win rate and dominant strategies), on the same contract and dealer as the map; theme comes after.
+
+- The user, verbatim: "Each should have world consequences that are visible. A occupied city, refugees fleeing, a toppled empire, a flooded civilization etc" → every card's outcomes and expiry carry real world-state changes (settlement conditions, refugee flows, faction power and owners, region statuses) through WorldState.apply, shown in the card lab's world panel and log, and listed on each card beside its gameplay reward.
+
+- The user, verbatim: "Let's not even have rolls for now. Let's assume you assign resources it resolves one way and if not it may trigger an on expires effect" → the card lab is deterministic: a committed card resolves to its one outcome after its duration; an uncommitted one may fire its onExpire when it expires. Odds stay possible in the contract for later.
+
+- The user, verbatim: "We can have abilities and deck building that negates these or decreases time to address etc.  you could have things like sacrificing units to delay an approaching army for example" → abilities as part of the deck-building (negate an expiry, cut the time to address, extend an expiry, resolve instantly), plus sacrifices (spend an agent or goods for good to delay a threat, negate an expiry, or force a card); one system with the bonus kinds plus delay and sacrifice.
+
+- The user, verbatim: "I don't think it needs a separate abilities section this is like relics in slay the spire. They are just active effects tied to triggers" → no abilities section: relics, i.e. held effects with a trigger (card dealt/expiring of a kind, commit, resolve, turn start, threat advancing, agent lost) and an effect (negate, delay, shorten, extend, instant, better, unlock, gain), firing automatically; agents' bonuses and tags are relics they carry; sacrifice stays an opportunity whose cost is an agent or goods.
+
+- The user, verbatim: "The relics here are unit abilities and tags and things you have built to be clear but yeah they work like relics" → relic effects are owned by their source: an agent's abilities and tags (lost with the agent) or things built (walls, watchtower, granary, road; held by the settlement or region, lost if it burns or is taken). No free-floating relic inventory; rewards grant agents, tags/abilities on agents, or buildings.
+
+- The user, verbatim:
+
+> How are you at boardgames? Do you know the basic trick of converting your actions into  expected point values and trying to maximize the per turn points over approximately the game time frame?
+> I wonder if we can borrow ideas from two of my favorite games Dominion and Faeria. Dominion each round has decks that you can purchase and permuting them changes what strategy is viable each time you play. Here the opportunities are like the cards you can purchase in Dominion but they are not all uniform within a stack and the world state is what generates them and permutes what is available for each run. For readability I would make a timer over each location oportunite and clicking it would show the card for you to read.
+>
+> Faeria also adds positioning to the game and spreading your lands. I think we should ignore that for now but a potentially interesting thing is having the resources you dispatch have board position that impacts things (locking down enemies etc) let's do the simpler version first.
+
+- → Dominion's kingdom: the world state generates each run's set of opportunity stacks (not uniform within a stack),
+  permuting which strategies are viable run to run. Card values in expected points per turn over the remaining horizon;
+  the simulator's bots include an EV-per-turn player and a simple baseline (Dominion's Big Money) so balance means more
+  than one strategy viable per kingdom. A timer over each location; tapping shows the card. Faeria-style positioning of
+  dispatched agents (locking down enemies) deferred: the simpler version first.
+
+- The user, verbatim, on the card lab with kingdoms and bots: "Way too many resources. Labor, influence, power then tags that are hidden to the user but filter what pawns the player can assign to things. Then everything is about getting new opportunities to increase those things and deal with the threat cards"
+  → Three resources only: labor, influence, power. Pawns (the agents) carry tags hidden from the player that filter which
+  pawns can be assigned to which opportunities. The whole loop: opportunities that raise labor, influence and power or
+  open new opportunities, and threat cards to deal with.
+
+- The user, verbatim, with two design documents (kept verbatim at docs/design/FACTIONS_WORLD_STATE.md and docs/design/OPPORTUNITY_CATALOG.md): "Ok this is decent! I think in hindsight while it is interesting to treat opportunities as a strategy layer on top of the world that should be secondary to them producing interesting world state mutations. I've drafted a few documents I would like you to consider for planning going forward. Don't take them as dogma but please discuss them and help me find the plan here."
+  → Opportunities' first purpose is interesting world-state mutations (the strategy layer secondary). The documents' core:
+  polities, factions and cohorts kept distinct with scoped tags (Master of Orion II's population vs government traits);
+  typed relations and claims (claim distinct from control) and an append-only event history, as a small fact layer over
+  the existing world state; one opportunity kind (eligibility, bindings, optional setup incident, requirements incl.
+  player, duration, outcomes as real mutations); one major arc per run with visible progress and long horizons;
+  catalog first in batches of ten, reduce to a basis later. Under discussion; a plan to follow.
+
+- The user's answers on the plan (1 real resources, 2 turns as world time, 3 gnolls, 4 first slice), verbatim:
+
+> 1. Yes resources and real pawns but we need to work on legibility for the opportunity screen. Zooming in to places, presenting them as dialogs with characters or emmisaries, showing the resources on the map or clearly somewhere on screen and limiting it to the relevant resources for the current opportunities and maybe keeping that set smallish for the player.
+> 2. Yes I was already thinking what turns were on the order of days. You spend a few days doing x y or z. I don't think we need to worry too much about times being realistic. I'm also not sure how much simulation we actually need vs just instant mutations. Our default is to do less compute as long as our state change is plausible.
+> 3. I think the creature editor as it is now is fine to merge and use for gnolls. It's not great but it's a good basis and we can improve that later without breaking other systems.
+> 4. Yeah I like that recommendation.
+
+- → Real pawns and real stores, with a legible opportunity screen: zoom to the place, present it as a dialog with a
+  character or emissary, show only the resources relevant to the current opportunities (a small set) on the map or
+  clearly on screen. A turn is a few days; times need not be realistic. Default to instant, plausible mutations and
+  simulate only where the change needs it (less compute). Gnolls from the existing creature generator (inhabitants,
+  merged). First slice: Briar Hollow in a drought. Plan phases 0 (fact layer), 1 (template engine + world inspector),
+  2 (Briar Hollow), 3 (catalog batches), 4 (the army arc).
+
+- The user, verbatim: "Does the river falling or a structure going up need simulation? I think we already have steady flows computed so you can just lower the flow factor coming in and it will dry up. A building going up can just place the structure instead of simulating agents building them. We only need full simulation where the player is looking but our world is robust enough I think that we can do lots of this as near instant cheap mutations." → every opportunity outcome is a near-instant mutation of authoritative state (a river falls by lowering its steady flow's inflow; a structure is placed directly); full simulation only where the player is looking, which reflects the mutated state when it streams in.
+
+- The user, verbatim: "Note that this should probably interact with our unit traits and modular units. Undead may work tirelessly with no sleep. Gnoll knights may regenerate etc" → one trait vocabulary across the fact layer and the GPU unit traits; a pawn's traits come from kind, species, role, tags and (later) its composed body and gear; traits modify opportunity requirements, durations and outcomes (undead work around the clock, regenerating pawns recover between turns, flyers shorten routes) and drive agent behaviour where the player looks.
+
+- The user's answers on the world inspector (1 choosing outcomes, 2 trait rules, 3 species traits), verbatim:
+
+> 1. Yes I do think dialogs would be good to add as a resolution mechanic I even have some ideas about a fun game based around it. 2. Those seem fine. We will iterate on this stuff eventually we are building the proof of concept here first.
+> 3. Agreed. They should unify with the agent traits and the creature builder. Eventually we want our unit builder to link traits and abilities and stats to the creature, training, gear and mount.
+>
+> One important thing to keep in mind as we refine our skill for generating opportunities is making the choices interesting. In some sense mechanical choices are intrinsically motivating to many players so having the impact on what the player gets in terms of resources, pawns, abilities or unlocking things for different modes is good and choices that offer compelling rewards like engine building or unique units are going to make this gameplay more fun. The other side is choosing world changes based on things the player (not just the character) is likely to care about. A town the player built or a diplomatic relationship they created being threatened is far more compelling then a random named settlement. I think we will want to grow our focus out from a single locus and cast of characters and places we establish to the world at large. This is an added constraint but hopefully one that guides the meta helpfully. Named characters with charming dialogues are going to feel much more meaningful as a sacrifice or a reward than a random marsh. Even in the gnoll example having a named gnoll character petition to build barrows will make the steaks feel real and it becomes a relationship fact that can come up in future runs.
+
+- → Dialogs as a resolution mechanic (the user has ideas for a game around it: to hear). Trait rules fine for the proof of
+  concept. Species traits unify with agent traits and the creature builder; later a unit builder links traits, abilities
+  and stats to creature, training, gear and mount. Opportunity generation principles: (a) mechanically compelling
+  rewards (resources, pawns, abilities, unlocks for other modes, engine building, unique units); (b) stakes in what the
+  PLAYER cares about (a town they built, a relationship they made) over random places; grow outward from a locus and an
+  established cast to the wider world; named characters with charming dialog present cards (a named gnoll petitions for
+  the burrows), and each such exchange becomes a relationship fact that can return in later runs.
+
+- The user, verbatim, on the reworked world inspector (facts 5aa6d0f): "This is much better! We will still have to experiment with how we present this to players as the interface is bad but the choices and payoffs and description of the characters presenting them is great. Please proceed with getting it ready to merge into our run structure for now. Next we may add dialogs, interiors, character portraits, and better camera management and zoom handling and foliage. I have a few documents I'll share when you have the bandwidth."
+  → facts (with opportunities) readied and merged into the run structure on merge124: the run's cards come from the fact
+  layer's templates with presenters and rewards. The interface is known-bad and to be experimented with later. Next:
+  dialogs, interiors, character portraits, camera management and zoom, foliage; the user has documents to share.
+
+- The user, verbatim: "Oh yeah definitely update the world model so all this data lives in it. Sounds good!" (on agents' and armies' whereabouts and commitments kept inside run code) → all pawn and army state lives in the world model and persists through the snapshot. And: "Ok here is a doc I wrote about experimenting with cool plant rendering. It's sort of low priority but I really want to improve the visuals around flora." → kept verbatim at docs/design/FOLIAGE_WIND.md (wind-responsive foliage, GPU-only, prioritised experiments with a stop/go rule); BACKLOG FLO30, low priority.
+
+- The user's camera and presentation handoff, kept verbatim at docs/design/REGION_PRESENTATION.md ("Ok here is the document on cameras"): four reviewable prototypes with region presentation profiles: (A, first) birch forest canopy to understory; (B) hoverbike canyon; (C) cliffside climb; (D) a throne-room interior as a separate scene with petitioners opening the opportunity UI. Perceptual continuity, not geometric; reuse the world; keep isometric by default; toggles off by default; repeatable A/B and a review overlay. → branch presentation from herolab (camera contract, cut/tilt, lab framework) with places merged; BACKLOG PRE1.
+
+- The user, verbatim, on scene A: "If I recall aren't the characters much larger than they should be right now? If a cell is 1-2M the villager agents are closer to the true size the PC should be. I wonder if you scaled the trees relative to that and had the stumps (which I assume would be wider relative to the character) render low in front of the PC if that would look good. The visual there is nice but too busy. I'm wondering if the distance between trees and therefore the navugability of the open space would feel better if the PC was approximately .25-1 trunk width and how well that scale works with the agents today?" → measure hero, agent and trunk sizes and the stand's spacing; a scale variant in scene A (heroes at agents' true size, trees possibly scaled up to 1-4 PC widths a trunk with stands thinned, foreground trunks drawn as low stumps); what a true hero scale would need retuned.
+
+- The user, verbatim, after trying the living-world run on places (3130243):
+
+> Oi this is significantly worse than all the examples I gave and worked through with you.  The writing is incomprehensible.  "You get: Huggek's levy, yours to command (it comes with its record: a veteran levy stays one), and supplies"  That's gibberish.  Use simple plain language like in the worked examples and fix whatever in the prompt produced that monstrosity.  I want a cast of characters with interesting personality quirks and rolled for traits to make them likable.  Introduce characters as needed and have them deliver the petition but you can't do that with cards you need to do that with dialogs so first priority cut a new agent session to make the dialog system. All the examples we gave were things like a trade route getting going missing leads to a diplomatic opportunity to find them.  They were really clearly written.  The consequences were things like relationships getting tense with you and another faction if you don't send aid.  They were clear mechanical signals.  As for the other work on cameras and on interiors it's just not up to par witht the rest of this project. Please spin off clean agents without bogged down context.  What would you do if someone asked for a polished isometric interior with a pixel art/rainworld art style and characters that can interact and talk to each other and that fits the dimensions of the exterior building (which has multiple levels and an irregular footprint).  What you created is a super baseic isometric drawn room with no art.  Use our existing character generator for now and let's work on improving one for the future if you don't yet have what you need.  Let's generate the interiors and use tricks like CC art we can voxelize/stylize with filters and geometric prepasses.  Likewise for the forest view, it's definitely a slight improvement but think about composition of the scene. Let's make the trees bigger and further spaced appart in the main map if need be to get the look we want. I want forests to be impressive like the cliffs.  They should be seas of leaves or branches and when we pass under their canopy it should be like entering another world.  Dither out the leaves and trees that are in the way and make leave shadows stencil, make leaves fall from above, have corpuscular rays and leafs on the ground (already in the engine) blowing with wind. Make it like a new little world within a world.  We are trying to create a seamless transition so maybe we do the flora improvement pass first I'll send a sample shot of what I'd like a forest floor to look like roughly.
+
+- And a reference image for the forest floor, kept at docs/design/ref/forest-floor.png: huge pale trunks with flaring
+  mossy roots, a deep carpet of red and orange leaves, crepuscular rays through mist, dappled light, mossy rocks.
+- → Player-facing text in plain language, written like the user's worked examples (docs/design/OPPORTUNITY_CATALOG.md);
+  a style guide and a check replace the compressed doc prose that leaked into the game. A cast with personality quirks
+  and rolled likable traits, introduced as needed, delivering petitions in dialogs (first priority: the dialog system).
+  Consequences as clear mechanical signals (relations with a faction grow tense if you don't send aid). Fresh agents
+  for the flora pass (forests impressive as the cliffs: big, well-spaced trees, seas of leaves, under the canopy a world
+  within the world: dithered occluders, leaf-shadow stencils, falling leaves, crepuscular rays, litter blowing in the
+  wind; flora first for the seamless transition) and for interiors (polished isometric pixel-art, Rain World feel,
+  fitting the building's real multi-level irregular footprint, characters from the existing generator who interact and
+  talk; CC art voxelised and stylised with filters and geometric prepasses).
+
+- The user, verbatim, on the forest pass: "I think once it fades you don't need to render the canopy at all", "Just the s shadows and the trunks" and "No I think those belong in the shot. They don't obscure visibility but make it feel like you are under the leaves and we can make darker areas and streams and other effects that will feel varied and interesting" → under the canopy the trees draw only trunks and the canopy's floor shadows (the dither is only the transition); falling leaves, light shafts, mist and litter stay; the understory varies (dark groves, sunlit clearings, streams) without hiding the hero or the way ahead.
+
+- The user, verbatim, on the interiors branch's first hall: "Interiors are coming along. I think we can zoom in more and hide outside the building eventually" → inside a building the camera zooms in further so the storey fills the screen, and everything outside the building is hidden (not only darkened); the outside goes away as you enter.
+
+- The user, verbatim: "I don't love the shader used on the town zoom in. I think I would prefer without it and just normal rendering." → interiors and the zoom into a town use the engine's normal rendering by default; the pixel-art post pass (low-res, palette quantisation, outlines, dither) is off, kept at most as a toggle.
+
+- The user, verbatim, on the forest branch's under-canopy shot: "For the forest, I think the screenshot you shared actually shows trees and roots but they are huge and the zoom is actually too big now (I want more vertical trunk) it may be better in portrait though." → under the canopy the camera zooms out until a good length of vertical trunk shows above the roots; checked in portrait and landscape.
+
+- The user, verbatim: "Those are looking better! And yeah the dust is a bit of an issue." (on interiors with normal rendering, zoomed in, the outside hidden) → that direction is kept; indoor dust is fine motes in the light shafts only.
+- The user, verbatim, on the zoomed-out forest shots: "I think we still want to be at the foot of the trees and to cut away the trunks in front of the PC so they look like stumps that fade" → the camera stays at the foot of the trees; trunks between the camera and the hero are cut low into stumps whose tops fade; trunks behind and beside the hero keep their height.
+
+## 2026-11-02 — round 127 (session 5) — taking stock after dialog2, encounters, interiors and forest
+
+- The user, verbatim:
+
+> I disagree. I actually think the under the canopy shot is stronger than the overworld and both are decent. There is plenty of room for improvement: the cut trees should draw a bit higher and fade to transparent or dither out, the corpuscular rays should widen a bit and hit the trees and leaves ( maybe use a stronger lighting model with stencils) and the tree models themselves could use better geometry and more detail (I can help with that on the flora generator and animation push). Assuming the dither transition works though this is already much more compelling and a huge step.  The interiors read pretty well but I would expect the floor to be much bigger in a civic building and it looks like the footprint here is only 3 irregular cells wide. That's probably fine for small homes but a civic building should probably be many times bigger than the screen when zoomed in. I'll have to think more about ways to improve this as I do like not having a loading screen. In general I think we may want some LOD for when the camera pulls in for cities, interiors, forests, narrow paths, dialogs etc.  this is great progress so far though. I think the weakest part is the atlas and I think it's a mix of still weak writing and bad UX. We should make a ux playground like we have for other views and mechanics. Speaking of I still want to make a gauntlet for the characters, add a normal on foot hero with a sword and the left joy plus swipe to slash and change weapons in the bottom right or activate secondary abilities with a tap. There was a whole project that built this and it was fun. The character lunged in the direction you swipe for slashes and aimed slightly towards enemies, they could switch to a bow that you draw back in the opposite direction you want to fire which was pretty fun and they had an arcady spin move with the blade that let them flick around as a top and bounce of enemies. Faster on foot than the lich by a bit but slower than the bike and a Dodge button in the bottom right with the weapon/ability select button. Anyway that would be good to add back as I think the encounter system is struggling with enemies that can chase the bike (they likely need to be on bikes or mounts) and it is still missing endings like losing pursuers or getting caught. It still has the red flag. Before resuming work tell me what you think we should do given that feedback?
+
+- And on the atlas, verbatim:
+
+> For the atlas consider showing animations on the map like an enemy army token approaching or an icon to represent a drought and pan the camera, show a portrait pop-up, and then iconography to show the mechanical effects of success/failure. I would also experiment with a hand of cards for each opportunity and you can tap to see details and play one with your current resources clearly indicated on screen so your can see what the tradeoff is. I might also experiment with having the decision happen in the world view and then have your character choose by heading off in a direction and then show the atlas for the travel. You could literally do petitions in a throne room or character equivalent (camp fire, caravan etc)
+
+- → Forest: under the canopy is the stronger view; next, cut trunks drawn higher and fading or dithering out, wider rays that light trunks and leaves (a stencilled light model), the transition proven; tree geometry with the user's flora generator and animation push. Interiors: civic buildings many screens big when zoomed in, no loading screen; a shared close-up level of detail for cities, interiors, forests, narrow paths and dialogs (design talk). The atlas is the weakest part (writing and UX): a UX playground with these experiments: map animations (army tokens, drought icons, camera pans), portrait pop-ups and effect icons; a hand of cards per opportunity with resources and the trade-off on screen; decisions in the world view (petitions in a throne room, campfire or caravan; choose by heading off in a direction; the atlas shows the travel). A knight on foot (swipe slashes with lunge and aim lean, a bow drawn opposite the aim, a spinning-top move bouncing off enemies, dodge and weapon/ability buttons; between the lich and the bike in speed), ported from GameplayGM's iso-adventure, with a gauntlet. Encounters: pursuers mounted to match the bike; endings for losing pursuers and getting caught; no red flag.
+
+- The user, verbatim, correcting my reading of "a hand of cards": "No each opportunity does not deal a hand of ways to deal with it. This needs to be clear. Each opportunity is a card. It has a cost, an effect if played and an effect if not dealt with before it expires. That's the format of every card. Some that the player as a resource and need to be played. Some just make a resource like a companion or army unavailable for several turns and some expend a resource permanently. Is that clear?" → the hand is the set of open opportunities, one card each. Every card has exactly three parts: a cost, an effect if played, and an effect if it expires unplayed. Costs come in three kinds: the player (the hero goes and plays it in the world), a resource locked for some turns (a companion or an army), or a resource spent for good.
+
+## 2026-11-03 — round 128 (session 5) — the knight played; jb6 should have merged
+
+- The user, verbatim, after playing the knight branch: "This is good! I think the bow is better than the previous version. The sword is ok but I think we want the default lunge to be further. In a crowd we want to be able to use the lunge to move our way through the crowd. I think we will also want to add some enemies that dodge or block except when winding up to hit. Or where you have to wait until after they lung and then stay stunned a moment to get your hit in or else they dodge or block."
+- → The bow stays as ported. Every slash lunges further by default, far enough to carry the knight through a crowd (KN-Q1 answered). New enemy kinds: ones that dodge or block except while winding up a hit, and ones that lunge and are open only in the moment they stay stunned after it.
+- The user, verbatim, on the physics branch: "I didn't realize that the physics work was never merged. It should have been. Making the proper physics engine was intended to be future work but not block all of the improvements of that branch."
+- → My mistake: I read "defer" (round 120) as keeping jb6 off places. jb6 (the GPU making every change to the columns; no CPU read-back on the hot path) merges into places through the gate. PH1, the proper physics engine, stays future work.
 
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 

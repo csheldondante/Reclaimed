@@ -31,6 +31,9 @@ export interface SettlementSeed {
   approaches: [number, number][];
   /** (the level's ?city=) its town planned with another tile system or style */
   override?: Partial<import('../api/contracts/structures').CitySpec>;
+  /** (merge124) structures the world placed here (WorldState's `settlement-building`: a card's outcome) — the plan raises
+   *  each as a landmark (structures' CitySpec.placed) */
+  placed?: { id: string; name: string; use: string[] }[];
 }
 
 export function recordsFrom(wiki: WorldWiki, seed: number): SettlementSeed[] {

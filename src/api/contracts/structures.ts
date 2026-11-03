@@ -70,6 +70,9 @@ export interface CitySpec {
   approaches?: V2[];
   /** its history in its fabric (round 120: "a burned quarter, newer walls, a flooded lower town") */
   marks?: CityMark[];
+  /** (merge124) structures the world placed in the town (a card's outcome, WorldState's `settlement-building`): each
+   *  raised as a landmark (a tower on a lone lot near the middle); the plan says which building each became */
+  placed?: { id: string; use: string[] }[];
 }
 
 /** (round 120) What a city is for (contracts/settlement.ts SettlementPurpose: the same words). */
@@ -239,6 +242,8 @@ export interface CityPlan {
   /** the roof's rise a unit of the tile (m), per building */
   roofRise: number[];
   megas: MegaFeature[];
+  /** (merge124) the spec's placed structures: the building each became */
+  placed?: { id: string; building: number }[];
   linear: LinearFeature[];
   /** (round 120) the purpose's work site (null: none found — a port with no water near says so here) */
   works?: { at: V2; dir: V2 } | null;

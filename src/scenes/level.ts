@@ -51,6 +51,7 @@ import { GPUGEN } from '../atlas/finish';
 import type { MapData } from '../world/mapgen';
 import { settleLand, settleTol, Sleep } from '../sim/sleep';
 import { RiverWet } from '../weather/riverwet';
+import { MemoryWorldState } from '../api/contracts/world-state';
 import { CatchmentWet } from '../weather/catchwet';
 import { RiverWetField } from '../weather/wetfield';
 import { riverMode, useRivers } from '../sim/world-gpu';
@@ -195,6 +196,9 @@ export class LevelScene implements Scene {
   private reclaimed = 0;
   /** (round 84) the rivers' wetness (weather/riverwet.ts) */
   private riverWet = new RiverWet();
+  /** (merge124) the regions' rivers' inflow factors the run's world set (a card's drought or diversion: WorldState's
+   *  `river-inflow`), realised in the river-wetness field where the player looks */
+  private riverInflow = new Map<number, number>();
   /** (round 109) the atlas level's: each watershed's storm water (weather/catchwet.ts), its field over the window
    *  (weather/wetfield.ts), and the window's origin they were fitted to */
   private catchWet?: CatchmentWet;
@@ -1929,7 +1933,11 @@ export class LevelScene implements Scene {
     if (storyId) void this.startStory(storyId);
     // round 88 (runstory): ?run=bell — a run story as a hero on the atlas level
     const runId = host.params.get('run');
-    if (runId) void this.startRun(runId);
+    // (round 124, opportunities) ?run=opps: the horde run as opportunities on the map (src/opps/level-opps.ts); the
+    // situation flow stays behind ?runplan= until this replaces it. `&hero=lich` for the lich.
+    if (runId === 'opps')
+      this.startSituationRun(host.params.get('hero') ?? 'hoverbike', true).catch((e: unknown) => showFatal(`the run couldn't start: ${e instanceof Error ? e.message : String(e)}`));
+    else if (runId) void this.startRun(runId);
     // round 117 (runplan): ?runplan=<hero> — a planned run travelled on the atlas map (src/runplan/level-run.ts)
     const planHero = host.params.get('runplan');
     // (round 120, runsit: a run is a situation on the live map — the old arcade stages only with &runstages=1, kept for
@@ -2024,9 +2032,9 @@ export class LevelScene implements Scene {
     return (x, y, radius) => void this.traits.apply({ op: 'raise', group: RAISED_GROUP, at: [x, y], radius });
   }
 
-  private async startSituationRun(hero: string): Promise<void> {
+  private async startSituationRun(hero: string, opps = false): Promise<void> {
     const a = this.opts.atlas;
-    if (!a || !this.stream || !this.atlasMap) throw new Error('?runplan= plays on the atlas level (?level=atlas)');
+    if (!a || !this.stream || !this.atlasMap) throw new Error(`${opps ? '?run=opps' : '?runplan='} plays on the atlas level (?level=atlas)`);
     const id = hero === 'bike' ? 'hoverbike' : hero;
     if (id !== 'hoverbike' && id !== 'lich') throw new Error(`?runplan=${hero}: a situation run is played by a play hero (hoverbike, lich)`);
     const units = this.units;
@@ -2035,6 +2043,7 @@ export class LevelScene implements Scene {
     const S = this.stream;
     const dims = this.core.dims;
     const { LevelSit } = await import('../runsit/level-sit');
+    const Run = opps ? (await import('../opps/level-opps')).LevelOpps : LevelSit;
     const { PlaySession } = await import('../play/session');
     this.editor?.setVisible(false);
     this.host.ui.classList.add('play-on');
@@ -2054,7 +2063,13 @@ export class LevelScene implements Scene {
     const W = a.atlas.worldW;
     const H = a.atlas.p.rows * ROW_H;
     const wrap = (d: number, n: number) => d - Math.round(d / n) * n;
-    const sit = new LevelSit({
+    // (merge124) one world for the run and the systems that realise it: the settlements (condition, holder, people, a
+    // structure placed; their diplomacy over its facts: LW-F10) and the rivers (a region's inflow)
+    const world = MemoryWorldState.restore(structuredClone(st.wiki.snapshot));
+    st.useWorld(world);
+    this.useRiverWorld(world);
+    const sit = new Run({
+      world,
       atlas: a.atlas,
       terrain: this.terrainSystem(),
       map: this.atlasMap,
@@ -2078,7 +2093,19 @@ export class LevelScene implements Scene {
     sitNow = sit;
     const R = (window as unknown as { reclaimed: Record<string, unknown> }).reclaimed;
     R.runsit = sit;
+    if (opps) R.opps = sit;
     R.runhero = session;
+  }
+
+  /** (merge124) a world's rivers' inflow (WorldState's `river-inflow`, the regions' wetness) realised in the river field */
+  private useRiverWorld(world: MemoryWorldState): void {
+    for (const r of world.snapshot().regions) if (r.state.wetness !== 1) this.riverInflow.set(r.id, r.state.wetness);
+    world.onEvent.push((e) => {
+      if (e.kind !== 'river-inflow') return;
+      for (const r of e.regions) this.riverInflow.set(r, e.magnitude);
+      // (the field's nodes take it the next frame: the window's catchments fitted again)
+      this.catchAt = '';
+    });
   }
 
   /** ?runplan=<hero>&runstages=1: a run planned from the spawn on this atlas; its legs travelled on the atlas map while the land loads */
@@ -2465,10 +2492,11 @@ export class LevelScene implements Scene {
       if (key !== this.catchAt) {
         this.catchAt = key;
         this.catchWet.setWindow(S.origin[0], S.origin[1], dims.w, dims.h);
+        if (this.settlements) this.catchWet.setInflow((x, y) => this.settlements!.regionAt(x, y), this.riverInflow);
         this.wetField.map(this.catchWet);
       }
       this.catchWet.update(dt * this.speed, weather);
-      this.wetField.write(this.catchWet.ex);
+      this.wetField.write(this.catchWet.ex, this.catchWet.inflow, this.riverWet.value);
       globals.riverWet = this.riverWet.update(dt * this.speed, globals.season ?? 0, []);
     } else globals.riverWet = this.riverWet.update(dt * this.speed, globals.season ?? 0, weather.storms);
     // (round 80) what's awake this frame: round the player (the camera's target), the events, the storms

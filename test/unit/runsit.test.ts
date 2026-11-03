@@ -141,8 +141,13 @@ describe('the finale (finale.ts)', () => {
     b.step(1, { t: 40, heroAlive: false, hordeCame: true, hordeLeft: 5, hordeInside: 0 });
     expect(b.status).toMatchObject({ end: 'fell' });
     const c = new FinaleRules(setup());
+    c.step(1, { t: 30, heroAlive: true, hordeCame: true, hordeLeft: 3, hordeInside: 0 });
     c.step(1, { t: 30 + HOLD_S + 1, heroAlive: true, hordeCame: true, hordeLeft: 3, hordeInside: 0 });
     expect(c.status).toMatchObject({ end: 'saved' });
+    // (round 124, RN2-8: a horde stalled out on the land never reaches the town: the hold's clock hasn't started)
+    const d = new FinaleRules(setup());
+    for (const t of [30, 30 + HOLD_S + 1, 30 + 3 * HOLD_S]) d.step(1, { t, heroAlive: true, hordeCame: true, hordeLeft: 3, hordeInside: 0, hordeNear: false });
+    expect(d.status).toEqual({ state: 'playing' });
   });
   it('evacuation: half the people at the refuge is the end, and the town still burns behind them', () => {
     const f = new FinaleRules(setup('evacuate', 2));

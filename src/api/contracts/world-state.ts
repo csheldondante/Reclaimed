@@ -4,11 +4,15 @@
 
 import { freshRegion, type AtlasEvent, type Faction, type FactionId, type RegionId, type RegionState, type WorldSnapshot, type WorldState } from './world';
 import type { CharacterChange, CharacterRecord, RunRecord } from './run';
+import { MemoryFacts, migrateFacts } from './facts-store.ts';
+import { emptyHoldings, type Holdings } from './opportunity.ts';
 
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
 
 export class MemoryWorldState implements WorldState {
   private regions = new Map<RegionId, RegionState>();
+  /** (merge124) a fork's regions still shared with the world it was forked from (copied on first touch) */
+  private borrowed = new Set<RegionId>();
   private events: AtlasEvent[] = [];
   private factions = new Map<FactionId, Faction>();
   readonly runs: RunRecord[] = [];
@@ -16,9 +20,17 @@ export class MemoryWorldState implements WorldState {
   readonly settlements: import('./settlement').Settlement[] = [];
   /** (round 117, runplan) the characters the world remembers (heroes and the people they met), by id */
   private chars = new Map<string, CharacterRecord>();
+  /** (round 125, facts) the fact layer kept with the world (facts-store.ts): saved in the snapshot, its own store */
+  facts = new MemoryFacts();
+  /** (merge124) the player's holdings: agents and pawns with where they are and what they're committed to (the world
+   *  model's, saved in the snapshot: opportunity.ts Holdings) */
+  holdings: Holdings = emptyHoldings();
   version = 0;
   run = 0;
   onChange: ((region: RegionId, before: RegionState, after: RegionState) => void)[] = [];
+  /** (merge124) told after every event applied: the systems that realise the world where the player looks (the
+   *  settlements: condition, holder, people, a structure placed; the rivers: their inflow) listen */
+  onEvent: ((e: AtlasEvent) => void)[] = [];
 
   constructor(
     /** the atlas's seed */
@@ -47,10 +59,15 @@ export class MemoryWorldState implements WorldState {
     for (const c of structuredClone(s.characters ?? [])) w.chars.set(c.id, c);
     w.version = s.version;
     w.run = s.run;
+    // (a save from before the fact layer: its factions, settlements and characters become entities)
+    w.facts = s.facts ? MemoryFacts.restore(s.facts) : migrateFacts(s);
+    w.holdings = s.holdings ? structuredClone(s.holdings) : emptyHoldings();
+    w.holdings.commitments ??= [];
     return w;
   }
 
   region(id: RegionId): RegionState {
+    if (this.borrowed.delete(id)) this.regions.set(id, structuredClone(this.regions.get(id)!));
     let r = this.regions.get(id);
     if (!r) this.regions.set(id, (r = freshRegion()));
     return r;
@@ -98,6 +115,11 @@ export class MemoryWorldState implements WorldState {
         case 'faction-attitude':
           // (a faction's, not a region's: applied once, below)
           break;
+        case 'river-inflow': {
+          if (!(m >= 0 && m <= 2)) throw new Error(`AtlasEvent ${e.id}: a river inflow factor is 0..2 (${m})`);
+          r.wetness = m;
+          break;
+        }
         case 'mark': {
           if (!d.name || !d.kind) throw new Error(`AtlasEvent ${e.id}: a mark needs detail.name and detail.kind`);
           r.marks.push({ id: e.id, name: String(d.name), kind: String(d.kind), at: d.at as [number, number] | undefined, cause: e.id });
@@ -117,6 +139,7 @@ export class MemoryWorldState implements WorldState {
         f.relations[t] = Math.max(-1, Math.min(1, (f.relations[t] ?? 0) + m));
       }
     }
+    if (e.kind === 'settlement-condition' || e.kind === 'settlement-owner' || e.kind === 'migrate' || e.kind === 'settlement-stores' || e.kind === 'settlement-building') this.applySettlement(e);
     if (e.kind === 'faction-attitude') {
       const f = this.factions.get(e.detail?.faction as FactionId);
       if (!f) throw new Error(`AtlasEvent ${e.id}: faction-attitude needs detail.faction, a known faction`);
@@ -124,6 +147,56 @@ export class MemoryWorldState implements WorldState {
     }
     this.events.push(e);
     this.version++;
+    for (const f of this.onEvent) f(e);
+  }
+
+  /** (round 124) the settlement events: one owner for a settlement's condition, holder and people */
+  private applySettlement(e: AtlasEvent): void {
+    const d = e.detail ?? {};
+    const need = (key: string) => {
+      const s = this.settlements.find((x) => x.id === d[key]);
+      if (!s) throw new Error(`AtlasEvent ${e.id}: ${e.kind} needs detail.${key}, a settlement of the world (${String(d[key])})`);
+      return s;
+    };
+    if (e.kind === 'settlement-condition') {
+      const c = d.condition as import('./settlement').Settlement['condition'];
+      if (!['thriving', 'struggling', 'besieged', 'abandoned', 'ruined'].includes(c)) throw new Error(`AtlasEvent ${e.id}: no settlement condition ${String(c)}`);
+      need('settlement').condition = c;
+    } else if (e.kind === 'settlement-owner') {
+      const f = d.faction as FactionId | null;
+      if (f !== null && !this.factions.has(f)) throw new Error(`AtlasEvent ${e.id}: settlement-owner needs detail.faction, a known faction or null`);
+      need('settlement').faction = f;
+    } else if (e.kind === 'settlement-stores') {
+      const g = d.good;
+      if (typeof g !== 'string' || !g) throw new Error(`AtlasEvent ${e.id}: settlement-stores needs detail.good`);
+      const s = need('settlement');
+      const st = (s.stores[g] ??= { stock: 0, rate: 0 });
+      st.stock = Math.max(0, st.stock + e.magnitude);
+      if (typeof d.rate === 'number') st.rate += d.rate;
+    } else if (e.kind === 'settlement-building') {
+      const id = d.building;
+      if (typeof id !== 'string' || !id) throw new Error(`AtlasEvent ${e.id}: settlement-building needs detail.building`);
+      const s = need('settlement');
+      if (s.buildings.some((b) => b.id === id)) throw new Error(`AtlasEvent ${e.id}: ${s.id} already has a building ${id}`);
+      // (placed: its cells and grid are the region generator's to choose when the land is realised)
+      s.buildings.push({ id, thing: id, grid: '', cells: [], storeys: 1, use: Array.isArray(d.use) ? (d.use as string[]) : [] });
+    } else {
+      const from = need('from');
+      const to = need('to');
+      const share = Math.max(0, Math.min(1, e.magnitude));
+      let moved = 0;
+      for (const p of from.people) {
+        const n = Math.round(p.count * share);
+        p.count -= n;
+        moved += n;
+      }
+      from.people = from.people.filter((p) => p.count > 0);
+      if (moved) {
+        const r = to.people.find((p) => p.role === 'refugee');
+        if (r) r.count += moved;
+        else to.people.push({ role: 'refugee', count: moved });
+      }
+    }
   }
 
   /** (round 117, runplan) a character the world remembers */
@@ -156,6 +229,11 @@ export class MemoryWorldState implements WorldState {
       case 'status': r.statuses = [...r.statuses.filter((g) => !c.remove?.includes(g)), ...(c.add ?? []).filter((g) => !r.statuses.includes(g))]; break;
       case 'move': r.region = c.region; break;
       case 'die': r.alive = false; r.history.push({ run, text: c.text }); break;
+      case 'tags': {
+        r.tags = [...(r.tags ?? []).filter((g) => !c.remove?.includes(g)), ...(c.add ?? []).filter((g) => !(r.tags ?? []).includes(g))];
+        if (c.bonuses) r.bonuses = [...(r.bonuses ?? []).filter((b) => !c.bonuses!.some((n) => n.why === b.why)), ...structuredClone(c.bonuses)];
+        break;
+      }
     }
     this.version++;
   }
@@ -170,6 +248,46 @@ export class MemoryWorldState implements WorldState {
     return region === undefined ? [...this.events] : this.events.filter((e) => e.regions.includes(region));
   }
 
+  /**
+   * (merge124) A copy to try things on (the living engine's dry runs, a batch undone when it breaks an invariant): the
+   * regions are shared until one is touched (copy-on-write). Why: the atlas world's two thousand region states are most
+   * of a snapshot (seed 1: 2.1 MB of 2.3; a snapshot 28 ms, a restore 58 ms) and a card changes one or two.
+   */
+  fork(): MemoryWorldState {
+    const w = new MemoryWorldState(this.seed, this.names, structuredClone([...this.factions.values()]));
+    w.regions = new Map(this.regions);
+    w.borrowed = new Set(this.regions.keys());
+    w.events = [...this.events];
+    w.runs.push(...this.runs);
+    w.settlements.push(...structuredClone(this.settlements));
+    for (const c of this.chars.values()) w.chars.set(c.id, structuredClone(c));
+    w.facts = MemoryFacts.restore(this.facts.snapshot());
+    w.holdings = structuredClone(this.holdings);
+    w.version = this.version;
+    w.run = this.run;
+    return w;
+  }
+
+  /**
+   * (merge124) What a diff compares, light: the settlements, factions, characters, facts and holdings whole, and of the
+   * regions only those whose rivers' inflow isn't the atlas's own (the one region state a card changes); no history.
+   */
+  lightSnapshot(): WorldSnapshot {
+    return {
+      version: this.version,
+      seed: this.seed,
+      run: this.run,
+      regions: this.names.filter((n) => (this.regions.get(n.id)?.wetness ?? 1) !== 1).map((n) => ({ ...n, state: structuredClone(this.regions.get(n.id)!), settlements: [] })),
+      factions: structuredClone([...this.factions.values()]),
+      settlements: structuredClone(this.settlements),
+      history: [],
+      runs: [],
+      characters: structuredClone(this.characters()),
+      facts: this.facts.snapshot(),
+      holdings: structuredClone(this.holdings),
+    };
+  }
+
   snapshot(): WorldSnapshot {
     return {
       version: this.version,
@@ -182,6 +300,8 @@ export class MemoryWorldState implements WorldState {
       history: this.history(),
       runs: [...this.runs],
       characters: structuredClone(this.characters()),
+      facts: this.facts.snapshot(),
+      holdings: structuredClone(this.holdings),
     };
   }
 }

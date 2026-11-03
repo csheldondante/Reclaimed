@@ -1,7 +1,8 @@
 // ---- runsit/finish.ts -------------------------------------------------------------------------------------------
 // (round 120, `runsit`) A situation run's end written into the world state: the ending's Outcome (AtlasEvents and
 // attitudes, through the same applyEffects a planned run uses), the target settlement's condition (a burned town is
-// 'ruined': the next run's template won't send the dead for it again, and the settlements system realises it charred),
+// 'ruined': the next run's template won't send the dead for it again, and the settlements system realises it charred —
+// merge124: as a `settlement-condition` event, its one owner),
 // the hero's history, the RunRecord. The world state is the one place the world changes between runs
 // (contracts/world.ts WorldState) — this only calls it.
 // The user (round 117): "Decisions should impact the world for the next run"; (round 120) "when possible make the
@@ -23,9 +24,11 @@ export function finishSituation(w: MemoryWorldState, r: SituationRun, hero: stri
   const ending = sit.endings[r.end];
   if (!w.character(hero)) w.applyCharacter({ kind: 'meet', character: { id: hero, name: HERO_NAMES[hero] ?? hero, role: hero, faction: null, hero: true, alive: true, region: sit.areas[0].region, motivation: 'see the run through' } }, run);
   const events = applyEffects(w, ending.outcome, run, `${sit.id}-${r.end}`);
-  if (ending.settlement) {
-    const s = w.settlements.find((x) => x.id === sit.target.settlement);
-    if (s) s.condition = ending.settlement;
+  // (merge124: one owner of a settlement's condition — the `settlement-condition` event through WorldState.apply; the
+  // settlements system realises it where the player looks, through WorldState.onEvent: settle/settlements.ts useWorld)
+  if (ending.settlement && w.settlements.some((x) => x.id === sit.target.settlement)) {
+    const t = w.settlements.find((x) => x.id === sit.target.settlement)!;
+    w.apply({ id: `${sit.id}-${r.end}-condition`, run, kind: 'settlement-condition', regions: [t.region], magnitude: 1, detail: { settlement: t.id, condition: ending.settlement }, cause: { by: 'world', ref: sit.id } });
   }
   const deeds = [
     ...r.taken.map((id) => sit.choices.find((c) => c.id === id)!.text),

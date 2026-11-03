@@ -17,6 +17,9 @@ import type { Instance } from '../api/contracts/recipe';
 import type { RegionId } from '../api/contracts/world';
 import type { UnitView, UnitId, V2 } from '../api/contracts/units';
 import { MemoryDiplomacy } from '../api/contracts/diplomacy-memory';
+import type { Agreement } from '../api/contracts/diplomacy';
+import type { FactStore } from '../api/contracts/facts';
+import type { AtlasEvent } from '../api/contracts/world';
 import type { Atlas } from '../atlas/atlas';
 import type { StampOps } from '../atlas/stamps';
 import { GPUGEN } from '../atlas/finish';
@@ -94,7 +97,14 @@ export class Settlements {
   private plans = new Map<string, Promise<SettlementPlan>>();
   private done = new Map<string, SettlementPlan>();
   readonly things = new Map<string, Instance>();
-  readonly diplomacy = new MemoryDiplomacy();
+  /** what units ask before they mine (rights); (merge124, LW-F10) over the world's fact layer once the system is wired to
+   *  the world state (useWorld), so the run, the GM and the units read one diplomacy */
+  diplomacy = new MemoryDiplomacy();
+  /** the agreements this system makes (moved into the world's facts by useWorld) */
+  private agreements: Agreement[] = [];
+  /** the world state it realises, once wired (useWorld) */
+  private world: { facts: FactStore; onEvent: ((e: AtlasEvent) => void)[] } | null = null;
+  private listener: ((e: AtlasEvent) => void) | null = null;
   readonly events: SettlementEvents = { built: [], died: [], raided: [] };
   private cols: number;
   private rows: number;
@@ -161,9 +171,10 @@ export class Settlements {
     for (const [f, regions] of own) {
       const near = new Set<RegionId>(regions);
       for (const r of regions) for (const nb of this.wiki.regions[r]?.neighbours ?? []) if (this.wiki.regions[nb]?.land && (nb * 2654435761) % 5 < 2) near.add(nb);
-      this.diplomacy.agree({ id: `${f}:land`, kind: 'land-rights', parties: [{ faction: f }, { faction: f }], where: { regions: [...regions] }, covers: ['settle', 'farm', 'fell', 'build'], since: { run: 0 }, status: 'active', cause: { by: 'world' } });
-      this.diplomacy.agree({ id: `${f}:minerals`, kind: 'mineral-rights', parties: [{ faction: f }, { faction: f }], where: { regions: [...near] }, covers: ['stone', 'ore'], share: 1, since: { run: 0 }, status: 'active', cause: { by: 'world' } });
+      this.agreements.push({ id: `${f}:land`, kind: 'land-rights', parties: [{ faction: f }, { faction: f }], where: { regions: [...regions] }, covers: ['settle', 'farm', 'fell', 'build'], since: { run: 0 }, status: 'active', cause: { by: 'world' } });
+      this.agreements.push({ id: `${f}:minerals`, kind: 'mineral-rights', parties: [{ faction: f }, { faction: f }], where: { regions: [...near] }, covers: ['stone', 'ore'], share: 1, since: { run: 0 }, status: 'active', cause: { by: 'world' } });
     }
+    for (const a of this.agreements) this.diplomacy.agree(a);
     this.stats.recordsMs = +(performance.now() - t0).toFixed(1);
     // (round 102: what's built as stamps — atlas/stamps.ts — the GPU's path and the CPU's build the same from them)
     atlas.stampHooks.push((ops, x0, y0, w, h, spread, plan) => this.stampLand(ops, x0, y0, w, h, spread, plan));
@@ -250,6 +261,104 @@ export class Settlements {
       for (const p of s.rec.people) if (!p.hostile) p.count = 0;
     } else this.charred.delete(id);
     for (const f of this.atlas.stampsChanged) f(s.box.x0, s.box.y0, s.box.w, s.box.h);
+  }
+
+  /**
+   * (merge124) Wired to a world state (the run's, the level's): its diplomacy is the world's (LW-F10: the rights this
+   * system grants live in the world's fact layer, beside every other agreement), and what the world's events do to a
+   * settlement is realised here, where the player looks — the condition, the holder, the people, a structure placed,
+   * the stores. The world state stays the one owner of those facts; this is how its settlements become land.
+   */
+  useWorld(w: { facts: FactStore; onEvent: ((e: AtlasEvent) => void)[] }): void {
+    if (this.world === w) return;
+    if (this.world && this.listener) this.world.onEvent.splice(this.world.onEvent.indexOf(this.listener), 1);
+    this.world = w;
+    this.diplomacy = new MemoryDiplomacy(w.facts);
+    for (const a of this.agreements) this.diplomacy.agree(a);
+    this.listener = (e) => this.realise(e);
+    w.onEvent.push(this.listener);
+  }
+
+  /** an event of the world realised in its settlement (the settlement events; the rest aren't this system's) */
+  realise(e: AtlasEvent): void {
+    const d = e.detail ?? {};
+    const seed = (key: string) => {
+      const s = this.byId.get(String(d[key]));
+      if (!s) throw new Error(`settlements: ${e.kind} ${e.id} names no settlement of the atlas (${String(d[key])})`);
+      return s;
+    };
+    if (e.kind === 'settlement-condition') this.setCondition(seed('settlement').rec.id, d.condition as Settlement['condition']);
+    else if (e.kind === 'settlement-owner') seed('settlement').rec.faction = (d.faction as string | null) ?? null;
+    else if (e.kind === 'settlement-stores') {
+      const s = seed('settlement').rec;
+      const st = (s.stores[String(d.good)] ??= { stock: 0, rate: 0 });
+      st.stock = Math.max(0, st.stock + e.magnitude);
+      if (typeof d.rate === 'number') st.rate += d.rate;
+    } else if (e.kind === 'migrate') {
+      // (its people leave as a share of each role and arrive as refugees: the live town spawns who's left. A town not
+      // planned yet has no people here — its plan says who lives there — so the move waits for its plan)
+      const from = seed('from');
+      const to = seed('to');
+      const share = Math.max(0, Math.min(1, e.magnitude));
+      if (this.done.has(from.rec.id)) this.moveOut(from.rec, to.rec.id, share);
+      else (this.leaving.get(from.rec.id) ?? this.leaving.set(from.rec.id, []).get(from.rec.id)!).push({ to: to.rec.id, share });
+    } else if (e.kind === 'settlement-building') {
+      // (placed directly — no builders: the town's plan is made again with it, its land when the player next looks)
+      const s = seed('settlement');
+      const id = String(d.building);
+      if ((s.placed ??= []).some((p) => p.id === id)) return;
+      s.placed.push({ id, name: String(d.name ?? id), use: Array.isArray(d.use) ? (d.use as string[]) : [] });
+      // (a town standing in the window isn't planned again under the player's feet — its old walls would come down as
+      // rubble: it waits until the window has left it, then its land is made again with the structure)
+      if (this.inWindow(s)) this.replan.add(s.rec.id);
+      else this.planAgain(s);
+    }
+  }
+
+  /** (merge124) people the world moved: shares waiting for a town's plan (who lives there), and the refugees each town
+   *  took in (kept over its plan: a plan sets its people from its size and purpose) */
+  private leaving = new Map<string, { to: string; share: number }[]>();
+  private refugees = new Map<string, number>();
+
+  private moveOut(from: Settlement, to: string, share: number): void {
+    let moved = 0;
+    for (const p of from.people) {
+      if (p.hostile) continue;
+      const n = Math.round(p.count * share);
+      p.count -= n;
+      moved += n;
+    }
+    from.people = from.people.filter((p) => p.count > 0);
+    if (!moved) return;
+    this.refugees.set(to, (this.refugees.get(to) ?? 0) + moved);
+    const t = this.recs.get(to);
+    if (t && this.done.has(to)) this.takeIn(t, moved);
+  }
+
+  private takeIn(rec: Settlement, n: number): void {
+    const r = rec.people.find((p) => p.role === 'refugee');
+    if (r) r.count += n;
+    else rec.people.push({ role: 'refugee', count: n });
+  }
+
+  /** (merge124) settlements to plan again once the window has left them (a structure placed while they stood in it) */
+  private replan = new Set<string>();
+
+  private planAgain(s: SettlementSeed): void {
+    this.plans.delete(s.rec.id);
+    this.done.delete(s.rec.id);
+    this.exactStamps.delete(s.rec.id);
+    for (const f of this.atlas.stampsChanged) f(s.box.x0, s.box.y0, s.box.w, s.box.h);
+  }
+
+  /** whether a settlement's box meets the window (the live land) */
+  private inWindow(s: SettlementSeed): boolean {
+    if (!this.io) return false;
+    const [ox, oy] = this.io.origin();
+    const { w, h } = this.io.dims;
+    const b = s.box;
+    const meets = (a0: number, an: number, b0: number, bn: number, n: number) => this.mod(b0 - a0, n) < an || this.mod(a0 - b0, n) < bn;
+    return meets(ox, w, b.x0, b.w, this.cols) && meets(oy, h, b.y0, b.h, this.rows);
   }
 
   /** send the live settlement's camp on it (false: no camp, or a raid's on) */
@@ -394,6 +503,11 @@ export class Settlements {
     for (const [k, t] of plan.things) this.things.set(k, t);
     if (plan.camp) this.recs.set(plan.camp.id, plan.camp);
     this.done.set(s.rec.id, plan);
+    // (merge124: the world's moves of people — who left before the plan said who lived here, who came in)
+    const took = this.refugees.get(s.rec.id);
+    if (took) this.takeIn(s.rec, took);
+    for (const m of this.leaving.get(s.rec.id) ?? []) this.moveOut(s.rec, m.to, m.share);
+    this.leaving.delete(s.rec.id);
     this.stats.planned++;
     this.stats.planMs += plan.ms;
     for (const f of this.events.built) f(s.rec, { buildings: s.rec.buildings.length, ms: plan.ms });
@@ -617,6 +731,12 @@ export class Settlements {
   /** each frame: the stores' rates, which settlement's alive */
   update(dt: number): void {
     this.clock += dt;
+    for (const id of this.replan) {
+      const s = this.byId.get(id)!;
+      if (this.inWindow(s)) continue;
+      this.replan.delete(id);
+      this.planAgain(s);
+    }
     // (atlas scale: every settlement not in play goes on by its rates, a few times a minute)
     if (this.clock - this.lastAdvance > 10) {
       const days = (this.clock - this.lastAdvance) / DAY_S;

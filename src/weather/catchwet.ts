@@ -73,9 +73,14 @@ export class CatchmentWet {
   updates = 0;
   private rainIn = 0;
 
+  /** (merge124) per node: its region's rivers' inflow factor (WorldState RegionState.wetness, 0..2; 1 the atlas's own) —
+   *  a card's drought or diversion (living/mutations.ts setRiverInflow), realised here where the player looks */
+  readonly inflow: Float32Array;
+
   constructor(private g: RiverGraph) {
     const count = (this.count = g.catchments.own.length);
     this.ex = new Float32Array(count);
+    this.inflow = new Float32Array(count).fill(1);
     this.next = new Int32Array(count);
     this.tau = new Float32Array(count);
     this.R = new Float32Array(count);
@@ -163,6 +168,12 @@ export class CatchmentWet {
     this.sy = Float32Array.from(sy);
     this.sn = Int32Array.from(sn);
     this.sw = Float32Array.from(sw);
+  }
+
+  /** (merge124) the regions' inflow factors (those not 1), by the region each node is in */
+  setInflow(regionAt: (x: number, y: number) => number, factors: ReadonlyMap<number, number>): void {
+    const f = new Float32Array(this.g.nodes.buffer, this.g.nodes.byteOffset, this.g.nodes.length);
+    for (let k = 0; k < this.count; k++) this.inflow[k] = factors.size ? (factors.get(regionAt(f[k * NODE_WORDS], f[k * NODE_WORDS + 1])) ?? 1) : 1;
   }
 
   /** a step of dt seconds (game time) with the storms' rain */
