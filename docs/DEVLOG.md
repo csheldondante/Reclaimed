@@ -16674,3 +16674,21 @@ here for the knight and to know it generalizes to the hoverbike."
 - The hill station (moves; the hills' south strip): a run-up, the ramp, a top; Run-up and Standing start buttons.
 - Main's review: on the tour the auto camera left the knight hidden behind the cave's mountain. Auto is a zoom and
   tilt rule; occlusion still needs handling, so the tour's tests and the bench run `auto+cutfade`.
+
+**The horse (PL42).** The user (round 128): "A horseback option instead of the hover bike that auto steers around
+obstacles for you and will slow down stop in the canyon or turn around the bend for you if you angle that way."
+- A fourth play hero, `horse` (controllers/horse.ts, heroes/horse.ts; the library and `?play=horse`). Its root motion
+  is the physical drive on foot (core/foot.ts with HORSE_DRIVE: vMax 15, between the knight's 9 and the bike's 22;
+  a0 12, brake 30, lateral 30, gravity 0.9; it stops when let go).
+- The assist is the point (core/mount.ts `mountSteer`, pure, over core/steer.ts's corridor, aroundSmall and freeRun):
+  the stick within 60 deg of the open way takes the bend when its own line is blocked sooner; something small dead
+  ahead is gone round; the stick's length is capped so it can still brake to a stop 1.5 cells short of the wall along
+  its way, v <= sqrt(2 brake (free - margin)); a stick more than 75 deg off its way is the rider's own (no bend; the
+  stop still holds). Lab chips: assist strong / light / off (`?assist=`).
+- Body: the generator's quadruped (HORSE_BODY), posed on the CPU by draw/rigpose.ts, which now takes a quadruped: no
+  hands, the feet by gait — walk (four beats), trot (diagonal pairs), canter (three beats), gallop — by its pace; the
+  knight's body sits on its back.
+- Node (play/lab/horse.test.ts): a sloppy thumb (re-aims every 0.25 s, 16 directions) on the canyon for 60 s, the
+  assist off -> strong: 0.85 -> 2.87 laps, wall contacts 0.13 -> 0.07 a minute; held straight at a 20-cell wall from
+  30 cells off on open ground, it stops between 35 and 40 without touching it.
+- The test menu: Horse — canyon, city, forest, tour. The hero bench gains the horse's pair (chase, cut and tilt).

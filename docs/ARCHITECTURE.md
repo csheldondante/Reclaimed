@@ -2269,6 +2269,13 @@ replaced; the sheer step stays), core/bike.ts `stepBike(..., drive)` (thrust, gr
 top speed replaced; boosting, its push and top are the boost's; the slide, barricades, cushion and flight as they
 were), core/levitate.ts `stepLevitate(..., drive)` (the velocity's easing replaced).
 
+### The horse (round 128, branch `herolab`; BACKLOG PL42)
+
+A mount hero on the physical drive (core/foot.ts + HORSE_DRIVE). Its stick goes through `core/mount.ts mountSteer`
+first (pure: the corridor's open way within a cone, round small things, the speed capped to what it can brake from
+before the wall along its way; a hard steer is the rider's). The body: draw/rigpose.ts PosedBody now poses a
+quadruped too (no hands; the feet by gait: walk, trot, canter, gallop by pace); the rider is the knight's body.
+
 ### The knight (round 128, branch `knight`; BACKLOG PL5)
 
 A third play hero, on foot with a sword and a bow (`?play=knight`; the station `&station=1`). Each concern its own part:

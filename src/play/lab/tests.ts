@@ -51,7 +51,7 @@ export const STATION_WORDS: Record<string, string> = {
   enemy: 'the raiders\' field',
 };
 
-export const HERO_WORDS: Record<PlayHeroId, string> = { hoverbike: 'Bike', lich: 'Lich', knight: 'Knight' };
+export const HERO_WORDS: Record<PlayHeroId, string> = { hoverbike: 'Bike', lich: 'Lich', knight: 'Knight', horse: 'Horse' };
 
 export const HANDLING_WORDS: Record<HandlingId, string> = {
   stock: 'as it is',
@@ -125,6 +125,16 @@ export const LAB_TESTS: LabTestGroup[] = [
       { id: 'knight-tour-auto', hero: 'knight', station: 'tour', cam: 'auto+cutfade', label: 'Tour, auto zoom', ask: 'Does the zoom follow what is around you? Does the tilt by the cliff help?' },
       { id: 'knight-forest', hero: 'knight', station: 'forest', label: 'Forest', ask: 'Can you see the knight under the trees?' },
       { id: 'knight-canyon', hero: 'knight', station: 'canyon', label: 'Canyon', ask: 'Does the cut show the knight in the narrow walls?' },
+    ],
+  },
+  {
+    hero: 'horse',
+    title: 'Horse',
+    tests: [
+      { id: 'horse-canyon', hero: 'horse', station: 'canyon', label: 'Canyon', ask: 'Steer it yourself. Does the horse take the canyon for you without feeling on rails?' },
+      { id: 'horse-city', hero: 'horse', station: 'city', label: 'City', ask: 'Point it down the streets. Does it turn the corners and stop before walls?' },
+      { id: 'horse-forest', hero: 'horse', station: 'forest', label: 'Forest', ask: 'Does it weave through the trees for you?' },
+      { id: 'horse-tour', hero: 'horse', station: 'tour', cam: 'auto+cutfade', label: 'Tour', ask: 'Does the horse feel like a horse? Walk, trot, canter, gallop?' },
     ],
   },
   {

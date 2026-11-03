@@ -4,11 +4,12 @@
 // The user: "we plan to make an expanding library of controllers to interact with the world."
 
 import type { ControllerInfo, Playbook } from '../api/contracts/play';
+import { horse } from './controllers/horse';
 import { hoverbike } from './controllers/hoverbike';
 import { knight } from './controllers/knight';
 import { lich } from './controllers/lich';
 
-const ALL: readonly ControllerInfo[] = [hoverbike, lich, knight];
+const ALL: readonly ControllerInfo[] = [hoverbike, lich, knight, horse];
 
 export const library: Playbook = {
   controllers: () => ALL,

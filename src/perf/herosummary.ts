@@ -2,7 +2,7 @@
 
 import type { Toggle } from './physsummary';
 
-export const HERO_BENCH_HEROES = ['hoverbike', 'lich', 'knight'] as const;
+export const HERO_BENCH_HEROES = ['hoverbike', 'lich', 'knight', 'horse'] as const;
 export const HERO_BENCH_CAMS = ['chase', 'cutaway+tilt'] as const;
 /**
  * every pair, `hero:cam[@station]` (the canyon when no station): each hero under the chase, then the cut and tilt
@@ -12,7 +12,7 @@ export const HERO_BENCH_PAIRS = [...HERO_BENCH_HEROES.flatMap((h) => HERO_BENCH_
 
 /** a pair's hero, camera and station */
 export function parsePair(pair: string): { hero: string; cam: string; station: string } {
-  const m = /^(hoverbike|lich|knight):([a-z+]+)(?:@([a-z-]+))?$/.exec(pair);
+  const m = /^(hoverbike|lich|knight|horse):([a-z+]+)(?:@([a-z-]+))?$/.exec(pair);
   if (!m) throw new Error(`herobench: a pair is hero:cam or hero:cam@station, not "${pair}"`);
   return { hero: m[1], cam: m[2], station: m[3] ?? 'canyon' };
 }

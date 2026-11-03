@@ -53,20 +53,25 @@ export class PosedBody {
   /** the world positions of the last pose */
   readonly pts: V3[];
 
+  /** (round 128, the horse) a four-legged body's feet by leg (fl, fr, bl, br): their gait offsets; null for a biped */
+  private readonly legs: (string | null)[] | null;
+
   constructor(spec: SpeciesSpec) {
-    if (spec.plan !== 'biped') throw new Error(`rigpose: a hero's body is a biped (got "${spec.plan}")`);
+    if (spec.plan !== 'biped' && spec.plan !== 'quadruped') throw new Error(`rigpose: a hero's body is a biped or a quadruped (got "${spec.plan}")`);
     this.rig = buildRig(spec);
     const idx = (name: string) => {
       const i = this.rig.points.findIndex((p) => p.name === name);
-      if (i < 0) throw new Error(`rigpose: the biped rig has no "${name}"`);
+      if (i < 0) throw new Error(`rigpose: the ${spec.plan} rig has no "${name}"`);
       return i;
     };
-    this.handR = idx('handR');
-    this.handL = idx('handL');
-    this.shoulderR = idx('shoulderR');
-    this.shoulderL = idx('shoulderL');
-    const h = this.rig.points[this.handR].rest;
+    const biped = spec.plan === 'biped';
+    this.handR = biped ? idx('handR') : -1;
+    this.handL = biped ? idx('handL') : -1;
+    this.shoulderR = biped ? idx('shoulderR') : -1;
+    this.shoulderL = biped ? idx('shoulderL') : -1;
+    const h = biped ? this.rig.points[this.handR].rest : [0, 0, 0];
     this.arm = Math.hypot(h[0], h[1], h[2]);
+    this.legs = biped ? null : this.rig.points.map((p) => (p.role === Role.Foot ? p.name.split('.')[0] : null));
     this.mats = this.rig.segments.map((s) => nearestMat(s.colour));
     this.pts = this.rig.points.map(() => [0, 0, 0] as V3);
     this.chestLean = this.rig.points.find((p) => p.name === 'chest')?.p[0] ?? 0;
@@ -112,7 +117,8 @@ export class PosedBody {
           break;
         case Role.Foot: {
           const hip = parent!;
-          const g = pt.p[0] ? Math.PI : 0;
+          // (a biped's feet opposite; a four-legged body's by its gait: walk, trot, canter, gallop by its pace)
+          const g = this.legs ? gaitOffset(pace, this.legs[i] ?? '') : pt.p[0] ? Math.PI : 0;
           const swing = Math.sin(p.phase + g);
           const stride = rig.stride * 0.55 * pace;
           const x = hip[0] + c * swing * stride;
@@ -212,6 +218,22 @@ export class PosedBody {
 }
 
 const dist = (a: V3, b: V3) => Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+
+/** (round 128, the horse) each leg's place in the stride (a share of the cycle) by gait: a four-beat walk, the trot's
+ *  diagonal pairs, the canter's three beats, the gallop's near-paired hind then fore */
+export const GAITS: Record<'walk' | 'trot' | 'canter' | 'gallop', Record<string, number>> = {
+  walk: { fl: 0, br: 0.25, fr: 0.5, bl: 0.75 },
+  trot: { fl: 0, br: 0, fr: 0.5, bl: 0.5 },
+  canter: { bl: 0, br: 0.33, fl: 0.33, fr: 0.66 },
+  gallop: { bl: 0, br: 0.1, fl: 0.5, fr: 0.6 },
+};
+
+/** the gait at a pace (0..1 of its top speed) */
+export const gaitAt = (pace: number): keyof typeof GAITS => (pace < 0.25 ? 'walk' : pace < 0.5 ? 'trot' : pace < 0.8 ? 'canter' : 'gallop');
+
+function gaitOffset(pace: number, leg: string): number {
+  return (GAITS[gaitAt(pace)][leg] ?? 0) * Math.PI * 2;
+}
 
 /** Two-bone IK: the joint between `a` and `b` with these lengths, bent toward `pole`. */
 export function ik(a: V3, b: V3, l1: number, l2: number, pole: V3): V3 {

@@ -36,7 +36,7 @@ import { Autopilot, lookFor, type AutoPath } from './autopilot';
 import { applyTurn, assistOn, HANDLING, HANDLING_VARIANTS, parseHandling, steerParams, useHandling, type HandlingId } from './handling';
 import { STATION_KINDS, Stations, urlParam, VariantPicker, type LabStation, type StationKind } from './lab';
 import { HILL, HILL_RIDE, LAB_TERRAINS, TOUR, type LabTerrain } from './terrains';
-import { DRIVE_CHOICES, parseDrive, type DriveChoice } from './drivechoice';
+import { ASSIST_CHOICES, ASSIST_LEVEL, DRIVE_CHOICES, parseAssist, parseDrive, type AssistChoice, type DriveChoice } from './drivechoice';
 import { describe, findTest, LAB_TESTS, type LabTest } from './tests';
 import '../sandbox/sandbox.css';
 import './herolab.css';
@@ -78,6 +78,7 @@ export class HeroLab {
   private stationPicker: VariantPicker<string> | null = null;
   private handPicker: VariantPicker<HandlingId>;
   private drivePicker: VariantPicker<DriveChoice>;
+  private assistPicker: VariantPicker<AssistChoice>;
   kind: StationKind;
   /** the autopilot round the station's path; null: the player rides */
   pilot: Autopilot | null = null;
@@ -135,6 +136,7 @@ export class HeroLab {
         { id: 'hoverbike', icon: '🏍', label: 'bike' },
         { id: 'lich', icon: '💀', label: 'lich' },
         { id: 'knight', icon: '🗡️', label: 'knight' },
+        { id: 'horse', icon: '🐎', label: 'horse' },
       ], {
         param: 'hero',
         initial: [hero],
@@ -175,6 +177,17 @@ export class HeroLab {
       },
     });
     this.byName.set('drive', this.drivePicker as unknown as VariantPicker<string>);
+    // (round 128, the horse) how hard the horse helps: strong (the point), light, off
+    this.assistPicker = new VariantPicker<AssistChoice>(this.bar, 'assist', ASSIST_CHOICES, {
+      param: 'assist',
+      initial: [parseAssist(urlParam.get('assist'))],
+      format: (v) => (v[0] === 'strong' ? '' : v[0]),
+      onChange: () => {
+        this.applyDrive();
+        this.paintNow();
+      },
+    });
+    this.byName.set('assist', this.assistPicker as unknown as VariantPicker<string>);
     this.kindRow = el('div', 'lab-slot', this.bar);
     // (the bike's handling variants: the moves stations show them)
     const hs = urlParam.get('handtune');
@@ -404,7 +417,14 @@ export class HeroLab {
   private applyDrive(): void {
     if (!this.drivePicker) return;
     const v = this.drivePicker.value[0];
-    (this.session.hero.params as Record<string, number>).drive = v === 'own' ? 0 : v === 'brute' && this.session.heroId === 'knight' ? 2 : 1;
+    const params = this.session.hero.params as Record<string, number>;
+    const horse = this.session.heroId === 'horse';
+    // (the horse has only the physical drive; its assist from the chips)
+    params.drive = horse || v !== 'own' ? (v === 'brute' && this.session.heroId === 'knight' ? 2 : 1) : 0;
+    if (this.assistPicker) {
+      this.assistPicker.el.style.display = horse ? '' : 'none';
+      if (horse) params.assist = ASSIST_LEVEL[this.assistPicker.value[0]];
+    }
   }
 
   /** the handling's numbers into the bike: its turning onto its params, the assist onto the session */

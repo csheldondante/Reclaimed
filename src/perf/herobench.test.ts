@@ -9,7 +9,7 @@ const row = (pair: string, p50: number, cut = false): HeroBenchRow => ({
 
 describe('hero bench', () => {
   it('pairs every hero with the chase and the cut, the chase first; the tour under auto', () => {
-    expect(HERO_BENCH_PAIRS).toEqual(['hoverbike:chase', 'hoverbike:cutaway+tilt', 'lich:chase', 'lich:cutaway+tilt', 'knight:chase', 'knight:cutaway+tilt', 'hoverbike:chase@tour', 'hoverbike:auto+cutfade@tour']);
+    expect(HERO_BENCH_PAIRS).toEqual(['hoverbike:chase', 'hoverbike:cutaway+tilt', 'lich:chase', 'lich:cutaway+tilt', 'knight:chase', 'knight:cutaway+tilt', 'horse:chase', 'horse:cutaway+tilt', 'hoverbike:chase@tour', 'hoverbike:auto+cutfade@tour']);
     expect(parsePair('knight:cutaway+tilt')).toEqual({ hero: 'knight', cam: 'cutaway+tilt', station: 'canyon' });
     expect(parsePair('hoverbike:auto+cutfade@tour')).toEqual({ hero: 'hoverbike', cam: 'auto+cutfade', station: 'tour' });
     expect(() => parsePair('walker:chase')).toThrow(/hero:cam/);

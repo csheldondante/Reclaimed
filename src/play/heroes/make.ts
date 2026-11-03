@@ -4,18 +4,20 @@
 import type { ControllerInfo, Params } from '../../api/contracts/play';
 import type { V2 } from '../../api/contracts/units';
 import type { BikeParams } from '../controllers/hoverbike';
+import type { HorseParams } from '../controllers/horse';
 import type { KnightParams } from '../controllers/knight';
 import type { LichParams } from '../controllers/lich';
 import { library } from '../library';
 import type { PlayWorld } from '../world';
 import type { PlayHero } from './base';
 import { BikeHero } from './bike';
+import { HorseHero } from './horse';
 import { KnightHero } from './knight';
 import { LichHero } from './lich';
 
-export type PlayHeroId = 'hoverbike' | 'lich' | 'knight';
+export type PlayHeroId = 'hoverbike' | 'lich' | 'knight' | 'horse';
 
-export const isPlayHero = (id: string): id is PlayHeroId => id === 'hoverbike' || id === 'lich' || id === 'knight';
+export const isPlayHero = (id: string): id is PlayHeroId => id === 'hoverbike' || id === 'lich' || id === 'knight' || id === 'horse';
 
 export const heroes = (): readonly ControllerInfo[] => library.controllers();
 
@@ -30,5 +32,7 @@ export function makeHero(id: PlayHeroId, world: PlayWorld, at: V2, params?: Para
       return new LichHero(world, at, p as unknown as LichParams);
     case 'knight':
       return new KnightHero(world, at, p as unknown as KnightParams);
+    case 'horse':
+      return new HorseHero(world, at, p as unknown as HorseParams);
   }
 }

@@ -121,3 +121,6 @@ export const BRUTE_DRIVE: DriveProfile = { vMax: 14, a0: 7, brake: 14, lateral: 
 export const LICH_DRIVE: DriveProfile = { vMax: 7, a0: 6, brake: 8, lateral: 10, gravity: 0, drag: 0, coast: 0 };
 /** the bike: the same drive, a high top, a modest push, a low grip, a brake; stick let go it coasts */
 export const BIKE_DRIVE: DriveProfile = { vMax: 22, a0: 30, brake: 45, lateral: 40, gravity: 0.7, drag: 0.2, coast: 1 };
+/** (round 128) the horse: a top between the knight's and the bike's, a steady push, a firm brake (it stops short of
+ *  walls: core/mount.ts), a fair grip; it stops when let go */
+export const HORSE_DRIVE: DriveProfile = { vMax: 15, a0: 12, brake: 30, lateral: 30, gravity: 0.9, drag: 0, coast: 0 };

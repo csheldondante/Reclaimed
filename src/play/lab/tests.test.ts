@@ -21,7 +21,7 @@ suite('lab tests', () => {
     expect(new Set(all.map((t) => t.id)).size).toBe(all.length);
   });
   it('every hero has tests', () => {
-    expect(LAB_TESTS.map((g) => g.hero).sort()).toEqual(['hoverbike', 'knight', 'lich']);
+    expect(LAB_TESTS.map((g) => g.hero).sort()).toEqual(['horse', 'hoverbike', 'knight', 'lich']);
   });
   it('plain words: no parentheses, colons or semicolons in a question', () => {
     for (const t of all) expect(t.ask, t.id).not.toMatch(/[();:]/);

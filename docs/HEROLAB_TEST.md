@@ -39,7 +39,9 @@ and pulls back on open ground, and tilts only by cliffs. It is a variant to try,
    wall, a city street. Does the zoom follow what's around you? Closer in the tall woods, pulled back on the field
    and among shrubs? Does it pump in and out? Does the tilt by the cliff help? (The camera chips have **auto+town**
    too, which also tilts between buildings. Try it on the city street and say which you like.)
-10. **Lich, raise the dead / raiders / cliffs.** Tap Crowd, then Smite and Raise. Is building an army fun? (We still
+10. **Horse (new).** Canyon, city, forest, tour. Steer it yourself. Does the horse take the canyon for you without
+    feeling on rails? Does it stop before walls? Try the assist chips under settings: strong, light, off.
+11. **Lich, raise the dead / raiders / cliffs.** Tap Crowd, then Smite and Raise. Is building an army fun? (We still
    owe the lich a design talk. This is only to remind you how it plays now.)
 
 ## The phone benches

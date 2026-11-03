@@ -8,7 +8,7 @@ const lich = library.get('lich')!;
 
 describe('controller library', () => {
   it('lists the hoverbike, the lich and the knight with parameters within their slider ranges', () => {
-    expect(library.controllers().map((c) => c.id)).toEqual(['hoverbike', 'lich', 'knight']);
+    expect(library.controllers().map((c) => c.id)).toEqual(['hoverbike', 'lich', 'knight', 'horse']);
     for (const c of library.controllers())
       for (const p of c.params) {
         const v = c.defaults[p.id];

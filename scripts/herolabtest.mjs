@@ -16,7 +16,7 @@ const PERF = process.argv.includes('--perf');
 await run({ name: 'herolabtest', kind: PERF ? 'timing' : 'behaviour', size: '412x915', dpr: PERF ? 2.6 : 1 }, async (R) => {
   const out = R.opt('out', 'C:/Projects/shots88/herolab2');
   fs.mkdirSync(out, { recursive: true });
-  const only = new Set(R.opt('only', 'menu,grid,tests,gifs,knight,cut,auto').split(','));
+  const only = new Set(R.opt('only', 'menu,grid,tests,gifs,knight,cut,auto,drive').split(','));
   const page = await R.page();
   await page.setViewport({ width: 412, height: 915, deviceScaleFactor: PERF ? 2.6 : 1, hasTouch: true, isMobile: true });
   // (no ?station=: the test menu first, as the user's link lands)
@@ -199,12 +199,13 @@ await run({ name: 'herolabtest', kind: PERF ? 'timing' : 'behaviour', size: '412
   // ---- (round 128) the auto camera on the tour: the zoom by what sticks up, the tilt by the cliff
   if (only.has('auto'))
     for (const hero of ['hoverbike', 'knight']) {
-      await p.evaluate((h) => window.reclaimed.lab.pick({ hero: h, station: 'tour', cam: 'auto' }), hero);
+      await p.evaluate((h) => window.reclaimed.lab.pick({ hero: h, station: 'tour', cam: 'auto+cutfade' }), hero);
       await sleep(2000);
       const log = [];
       await gif(`tour-auto-${hero}.gif`, hero === 'knight' ? 60 : 64, 300, async () => {
         for (let k = 0; k < (hero === 'knight' ? 18 : 19); k++) {
           await sleep(1000);
+          if (k % 3 === 0) await shot(`tour-${hero}-${String(k).padStart(2, '0')}.png`);
           log.push(await p.evaluate(() => {
             const l = window.reclaimed.lab;
             const a = l.session.rig.all?.auto ?? l.session.rig['all'].auto;
@@ -214,6 +215,29 @@ await run({ name: 'herolabtest', kind: PERF ? 'timing' : 'behaviour', size: '412
         }
       });
       R.log(`tour ${hero}: ${log.join(' | ')}`);
+    }
+
+  // ---- (round 128, PL41) the physical drive on the hill: the highest it gets from a run-up and from standing
+  if (only.has('drive'))
+    for (const [hero, drive] of [['knight', 'physical'], ['knight', 'brute'], ['knight', 'own']]) {
+      const top = async (label, secs) => {
+        await p.evaluate((o) => window.reclaimed.lab.pick(o), { hero, station: 'hill', drive, cam: 'cutaway+tilt' });
+        await sleep(800);
+        await p.evaluate((l) => window.reclaimed.lab.act(l), label);
+        let best = -1e9;
+        let base = null;
+        for (let k = 0; k < secs * 5; k++) {
+          await sleep(200);
+          const z = await p.evaluate(() => window.reclaimed.lab.session.hero.position()[2]);
+          base ??= z;
+          best = Math.max(best, z - base);
+        }
+        return +best.toFixed(2);
+      };
+      const run = await top('Run-up', 6);
+      await shot(`hill-${hero}-${drive}-run.png`);
+      const stand = await top('Standing start', 4);
+      R.log(`hill ${hero} ${drive}: run-up climbs ${run}, standing ${stand}`);
     }
 
   // ---- the cut (CAM11) at the canyon and the cliffs, against the chase alone

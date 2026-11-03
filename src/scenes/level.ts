@@ -1985,7 +1985,7 @@ export class LevelScene implements Scene {
     if (!a || !this.stream) throw new Error('?play= plays on the atlas level (?level=atlas)');
     if (!this.units) throw new Error('?play=: needs the atlas level units (the settlements are off: ?towns=0)');
     const hero = id === '1' ? 'hoverbike' : id;
-    if (hero !== 'hoverbike' && hero !== 'lich' && hero !== 'knight') throw new Error(`?play=${id}: no such hero (hoverbike, lich, knight)`);
+    if (hero !== 'hoverbike' && hero !== 'lich' && hero !== 'knight' && hero !== 'horse') throw new Error(`?play=${id}: no such hero (hoverbike, lich, knight, horse)`);
     const { PlaySandbox } = await import('../play/sandbox/sandbox');
     const api = (this.worldApi ??= attachSim(this.core));
     this.editor?.setVisible(false);
