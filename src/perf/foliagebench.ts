@@ -15,8 +15,8 @@
 
 import { postDev } from './report-io';
 import { deviceFacts, keepAwake, letSleep, Panel, reportButtons, wakeLog } from './bench';
-import { GRASS_VARIANTS, summaryLines, variantSettings, VARIANTS, type FoliageRow } from './foliagecard';
-export { GRASS_VARIANTS, summaryLines, variantSettings, VARIANTS, type FoliageRow };
+import { BURN_VARIANTS, GRASS_VARIANTS, summaryLines, variantSettings, VARIANTS, type FoliageRow } from './foliagecard';
+export { BURN_VARIANTS, GRASS_VARIANTS, summaryLines, variantSettings, VARIANTS, type FoliageRow };
 
 const KEY = 'reclaimed.foliagebench';
 const LAST = 'reclaimed.foliagebench.last';
@@ -94,7 +94,7 @@ interface State {
   wakeLog: string[];
 }
 
-const KNOWN = ['fwind', 'treescale', 'flod', 'fseason', 'fgrass'];
+const KNOWN = ['fwind', 'treescale', 'flod', 'fseason', 'fgrass', 'burn'];
 
 function goTo(v: string, step: number): void {
   const u = new URL(location.href);
@@ -120,7 +120,8 @@ export async function foliageBench(params: URLSearchParams): Promise<void> {
   }
   const asked = (params.get('variants') ?? '').split(',').filter(Boolean);
   const meadow = params.get('set') === 'grass';
-  const variants = asked.length ? asked : meadow ? GRASS_VARIANTS : VARIANTS;
+  const set = params.get('set');
+  const variants = asked.length ? asked : meadow ? GRASS_VARIANTS : set === 'burn' ? BURN_VARIANTS : VARIANTS;
   if (!params.get('foliagebenchstep') || !st) {
     for (const v of variants) variantSettings(v);
     // (the first page waits for the world, as every bench page does, so the device's facts have a GPU to ask)
@@ -159,6 +160,20 @@ export async function foliageBench(params: URLSearchParams): Promise<void> {
   const park = meadow ? meadowSpot(R) : (R.forest.stand.park ?? R.forest.stand.at);
   R.play.session.hero.place(park);
   await sleep(3000);
+  // (round 128, set=burn: the stand set alight as the player does — lightning called down round it — 10 s before)
+  if (params.get('burn') === '1') {
+    panel.say(`${tag} — the wood set alight…`);
+    const [sx, sy] = R.forest.stand.at;
+    const ROW_H = Math.sqrt(3) / 2;
+    for (let k = 0; k < 4; k++) {
+      const wy = sy + Math.floor(k / 2) * 10 - 5;
+      const ty = Math.round(wy / ROW_H - 0.5);
+      const tx = Math.round(sx + (k % 2) * 12 - 6 - 0.5 - 0.5 * (ty & 1));
+      R.powers.scriptStrike(tx, ty, 0);
+      await sleep(400);
+    }
+    await sleep(10000);
+  }
   const P = R.core.host.profiler;
   P.active = true;
   calm = null;
@@ -192,7 +207,7 @@ export async function foliageBench(params: URLSearchParams): Promise<void> {
       tris = Math.round(mi.kinds.reduce((a: number, k: { index: Uint32Array }, i: number) => a + (k.index.length / 3) * c[i], 0));
     }
     const fr = P.framesResolved as number;
-    st.rows.push({ variant: here, stage: s.name, frames: d.length, fps: +(d.length / ((t[t.length - 1] - t[0]) / 1000)).toFixed(1), p50: q(0.5), p95: q(0.95), p99: q(0.99), worst: +f[f.length - 1].toFixed(1), gpu: fr ? +(P.gpuTotalMs / fr).toFixed(2) : null, plants, tris, draws });
+    st.rows.push({ variant: here, stage: s.name, frames: d.length, fps: +(d.length / ((t[t.length - 1] - t[0]) / 1000)).toFixed(1), p50: q(0.5), p95: q(0.95), p99: q(0.99), worst: +f[f.length - 1].toFixed(1), gpu: fr ? +(P.gpuTotalMs / fr).toFixed(2) : null, plants, tris, draws, ...(R.sleepStats ? R.sleepStats() : {}) });
   }
   galeOn(R, false);
   st.wakeLog.push(...wakeLog.map((l) => `${here} ${l}`));
