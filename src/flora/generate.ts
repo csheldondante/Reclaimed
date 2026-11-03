@@ -3,7 +3,7 @@
 // range by the seed, so variants differ in shape and size but read as one species.
 
 import { expand, interpret, norm, type V3 } from './lsystem';
-import { buildPlant, MeshBuilder, PART, type FloraMesh } from './mesh';
+import { buildPlant, MeshBuilder, PART, sprayAt, type FloraMesh } from './mesh';
 import { growRoots, rootSegments } from './roots';
 import { addEpiphytes } from './epiphytes';
 import { rng, hashSeed } from './rng';
@@ -58,8 +58,9 @@ export function generate(id: SpeciesId, seed: number, opts: { growth?: number; p
       if (opts.lod === 1) return scaleTo(woody(sp, seed, h, 2.2, false), h);
       return scaleTo(woody(sp, seed, h, opts.lod === 'close' ? undefined : opts.px, true, opts.lod === 'close'), h);
     case 'shrub':
-      // (round 119: a thicket far off is a lump — a few triangles, from the same skeleton)
-      if (opts.lod === 2) return scaleTo(farTree(sp, seed), h);
+      // (round 119: a thicket far off is a lump — a few triangles, from the same skeleton; round 128, main's review: the
+      // lump's octahedra read as brown pyramids on the woods' floor — now a few big spray cards on its main stems)
+      if (opts.lod === 2) return scaleTo(farShrub(sp, seed), h);
       return scaleTo(woody(sp, seed, h, opts.lod === 'close' ? undefined : opts.px, true, opts.lod === 'close'), h);
     case 'fern':
       return scaleTo(woody(sp, seed, h, opts.px), h);
@@ -180,6 +181,20 @@ function farTree(sp: SpeciesDef, seed: number): FloraMesh {
       mb.blob(c, e, PART.leaf, r01, 0.12);
     }
   }
+  return mb.done();
+}
+
+/** (round 128) A far thicket: its first stems as thin prisms and a few big sprays of cards at some of its leaf sites
+ *  (~40-60 triangles; the crown's look, not round 119's octahedra). */
+function farShrub(sp: SpeciesDef, seed: number): FloraMesh {
+  const sk = interpret(expand(sp.lsystem!, hashSeed(seed, 1)), sp.turtle!, hashSeed(seed, 2));
+  const H = Math.max(sk.height, 0.3);
+  const mb = new MeshBuilder((p) => Math.pow(Math.max(0, p[2]) / H, 1.6) * 0.8);
+  for (const g of sk.segments) if (g.depth <= 1) mb.tube(g, 3, PART.wood);
+  const r01 = rng(hashSeed(seed, 9));
+  const sites = sk.leaves.filter((_, i) => i % Math.max(1, Math.floor(sk.leaves.length / 6)) === 0);
+  const size = Math.max(H * 0.45, 0.1);
+  for (const l of sites) sprayAt(mb, l.p, l.d, size, 3, sp.crown?.droop ?? 0.2, r01);
   return mb.done();
 }
 

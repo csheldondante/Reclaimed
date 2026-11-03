@@ -216,7 +216,8 @@ async function main() {
     if (state.mode === 'plant' && !cam.userMoved) {
       const m = scene.kinds[scene.kinds.length - 1].mesh;
       cam.at = [0, 0, m.height * 0.45];
-      cam.dist = Math.max(4, m.height * (state.compare ? 2.6 : 1.9));
+      // (the pair side by side: far enough back that both fit a portrait phone's width)
+      cam.dist = Math.max(4, m.height * (state.compare ? 2.6 : 1.9) * (state.compare ? Math.max(1, 1.3 / Math.max(0.3, canvas.clientWidth / Math.max(1, canvas.clientHeight)) * 0.6) : 1));
     } else if (!cam.userMoved) {
       cam.at = [0, 0, 3];
       cam.dist = 34;

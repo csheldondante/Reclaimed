@@ -38,6 +38,16 @@ await run({ name: 'spriteshot', kind: 'behaviour', size: '412x915', dpr: 1, echo
       await p.evaluate((z) => (window.reclaimed.camera.zoom = z), z);
       await sleep(4000);
       await R.fatal(p);
+      // (the stills without the UI over them: every positioned element that holds no canvas hidden)
+      if (R.opt('clean', '1') === '1')
+        await p.evaluate(() => {
+          const cv = [...document.querySelectorAll('canvas')];
+          for (const el of document.body.querySelectorAll('*')) {
+            if (el.tagName === 'CANVAS' || cv.some((c) => el.contains(c))) continue;
+            const pos = getComputedStyle(el).position;
+            if (pos === 'fixed' || pos === 'absolute') el.style.visibility = 'hidden';
+          }
+        });
       const f = `${out}/${tag}-${flod}-z${z}.png`;
       await p.screenshot({ path: f });
       const counts = await p.evaluate(async () => {

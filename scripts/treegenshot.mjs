@@ -12,13 +12,14 @@ await run({ name: 'treegenshot', kind: 'behaviour', size: '412x915', dpr: 1, ech
   const out = opt('out', 'C:/Projects/shots88/treegen');
   const tag = opt('tag', 'm1');
   const extra = opt('q', '');
+  const season = opt('season', '0.2');
   const only = opt('only', 'birch,oak,pine,giant,shrub').split(',');
   const views = opt('views', 'pair,bark').split(',');
   fs.mkdirSync(out, { recursive: true });
   const page = await R.page();
   for (const sp of only) {
     for (const view of views) {
-      const q = `mode=plant&species=${sp}&seed=3&wind=0.15&season=0.2&compare=${view === 'pair' ? 1 : 0}${extra ? `&${extra}` : ''}`;
+      const q = `mode=plant&species=${sp}&seed=3&wind=0.15&season=${season}&compare=${view === 'pair' ? 1 : 0}${extra ? `&${extra}` : ''}`;
       await page.goto(`${R.url}/flora.html?${q}`, { waitUntil: 'load' });
       await sleep(2000);
       await R.fatal(page);

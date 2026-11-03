@@ -16537,3 +16537,20 @@ set". And: "the conifer in winter goes fully white".
   out where a twig would be under ~4 render px, at least ~0.7 px wide. The birch's droop (weeping), the elder's long.
   Triangles (seed 1, full): birch 2808, broadleaf 1824, elder 9668 (budgets: trees 3200, the elder 10500, the close-up
   7200 / 21000). Renders: twigs-winter.png, twigs-bare-px6.png, twigs-winter-px6.png.
+
+### The first browser batch (round 128, treegen; C:/Projects/shots88/treegen)
+
+- The flora viewer pairs (v-leaf-*, v-winter-*): the viewer's haze and framing make them weaker than the Dawn renders
+  (crown-*.png); the pair's camera is now set back by the portrait's width.
+- The far trees as sprites (m6c-mesh-z2 / m6c-sprite-z2 .. z7, at the elder wood 13728,5216): the sprite pass draws
+  with no GPU errors and where the far level shows (the right edge at zoom 2: the woods' edge) the sprites are the
+  near trees' shape, where the far mesh drew cones and octahedra. main's read: "sprite vs mesh at z7 nearly
+  indistinguishable. The match works." The tool panel hid a third of the frame: spriteshot hides positioned UI now.
+- Tree size (m3-ts1-z7 / m3-ts2-z7, ?treescale=1 vs 2): the elder wood's trunks fill the frame at x2; m3-z7-before-after.
+- The forest station at the elder wood (m3-lab-elder-*): 6 elders round the stand at x2 (the earlier "elders 0" shot was
+  at the default spot, a birch/oak wood). Found: the hero was parked 4 cells in front of a trunk now ~5 across — inside
+  or against it, so the station's stills and the wind GIFs show bark only. parkSpot's distance is 4 × TREE_SCALE + 2 now;
+  the wind clips are to be retaken (m4-wind-*.gif are not usable for scoring).
+- main saw brown pyramids on a birch/oak wood's floor (m3-lab-ts2-under-all): the thicket's far lump (round 119's
+  octahedra in the leaf colours, autumn at the station's season). The far thicket is now its first stems and a few big
+  spray cards (~60-80 triangles; the lump's 16).

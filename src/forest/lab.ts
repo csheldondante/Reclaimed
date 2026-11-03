@@ -141,7 +141,8 @@ export class ForestLab {
     // (the composed shot's spot: in front of the trunk the most trunks stand round — elders first)
     const near = d.plants.treesNear(stand.at[0], stand.at[1], 20 * TREE_SCALE);
     const big = near.filter((t) => t.species === 'giant');
-    stand.park = parkSpot((big.length >= 2 ? big : near).map((t): V2 => [t.x, t.y]), d.eye ?? [Math.SQRT1_2, Math.SQRT1_2]) ?? undefined;
+    // (round 128: in front of the trunk by TREE_SCALE × as much — the elder's bole is ~5 cells across now, the hero was inside it)
+    stand.park = parkSpot((big.length >= 2 ? big : near).map((t): V2 => [t.x, t.y]), d.eye ?? [Math.SQRT1_2, Math.SQRT1_2], 4 * TREE_SCALE + 2) ?? undefined;
     lab.rider = new LoopRider(standLoop(stand));
     // (start out in the open, the far side of the loop from the stand, so the first lap rides in)
     const at = lab.rider.start(0);

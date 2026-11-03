@@ -487,6 +487,32 @@ function addTwigs(mb: MeshBuilder, sk: Skeleton, minDepth: number, t: TwigLook, 
   }
 }
 
+/** (round 128) one spray of `leaves` leaf cards round `at` along `d` (cells in the mesh's units), drooping by `droop` */
+export function sprayAt(mb: MeshBuilder, at: V3, d: V3, size: number, leaves: number, droop: number, r01: () => number): void {
+  const rnd = (): V3 => norm([r01() * 2 - 1, r01() * 2 - 1, r01() * 2 - 1]);
+    // (a little off the twig: the sprays follow the branch, not a ball round its tip)
+    const ctr: V3 = add(at, mul(rnd(), size * 0.3));
+    for (let j = 0; j < leaves; j++) {
+      // a card: out from the spray's middle, along the twig and away, bent down by the droop
+      const out = rnd();
+      const ax = norm(add(add(mul(d, 0.6), mul(out, 0.9)), [0, 0, -droop * 1.2]));
+      const side = norm(cross(ax, Math.abs(ax[2]) < 0.9 ? ([0, 0, 1] as V3) : ([1, 0, 0] as V3)));
+      // (the card tilted about its axis: faces turned up, down and to the sides, so the light breaks over the spray)
+      const tilt = (r01() - 0.5) * 1.6;
+      const up = cross(side, ax);
+      const sd = norm(add(mul(side, Math.cos(tilt)), mul(up, Math.sin(tilt))));
+      const L = size * (0.55 + 0.45 * r01());
+      const W = L * (0.45 + 0.2 * r01());
+      const base = add(ctr, mul(out, size * 0.15));
+      const a = mb.vert(base, PART.leaf, 0.12);
+      const b = mb.vert(add(add(base, mul(ax, L * 0.45)), mul(sd, W / 2)), PART.leaf, 0.14);
+      const t = mb.vert(add(base, mul(ax, L)), PART.leaf, 0.16);
+      const e = mb.vert(add(add(base, mul(ax, L * 0.45)), mul(sd, -W / 2)), PART.leaf, 0.14);
+      mb.tri(a, b, t);
+      mb.tri(a, t, e);
+    }
+}
+
 /** (round 128) the crown's sprays (CrownLook): `k` world cells a skeleton unit, `minLeaf` (skeleton units) the phone's
  *  least spray — under it the sprays grow and fewer are made, the crown's cover about kept */
 function addCrown(mb: MeshBuilder, sk: Skeleton, minDepth: number, c: CrownLook, k: number, minLeaf: number, r01: () => number, px?: number): void {
@@ -504,30 +530,7 @@ function addCrown(mb: MeshBuilder, sk: Skeleton, minDepth: number, c: CrownLook,
     keep = Math.min(1, keep * 1.2);
   }
   const step = c.spacing / k;
-  const rnd = (): V3 => norm([r01() * 2 - 1, r01() * 2 - 1, r01() * 2 - 1]);
-  const spray = (at: V3, d: V3) => {
-    // (a little off the twig: the sprays follow the branch, not a ball round its tip)
-    const ctr: V3 = add(at, mul(rnd(), size * 0.3));
-    for (let j = 0; j < leaves; j++) {
-      // a card: out from the spray's middle, along the twig and away, bent down by the droop
-      const out = rnd();
-      const ax = norm(add(add(mul(d, 0.6), mul(out, 0.9)), [0, 0, -c.droop * 1.2]));
-      const side = norm(cross(ax, Math.abs(ax[2]) < 0.9 ? ([0, 0, 1] as V3) : ([1, 0, 0] as V3)));
-      // (the card tilted about its axis: faces turned up, down and to the sides, so the light breaks over the spray)
-      const tilt = (r01() - 0.5) * 1.6;
-      const up = cross(side, ax);
-      const sd = norm(add(mul(side, Math.cos(tilt)), mul(up, Math.sin(tilt))));
-      const L = size * (0.55 + 0.45 * r01());
-      const W = L * (0.45 + 0.2 * r01());
-      const base = add(ctr, mul(out, size * 0.15));
-      const a = mb.vert(base, PART.leaf, 0.12);
-      const b = mb.vert(add(add(base, mul(ax, L * 0.45)), mul(sd, W / 2)), PART.leaf, 0.14);
-      const t = mb.vert(add(base, mul(ax, L)), PART.leaf, 0.16);
-      const e = mb.vert(add(add(base, mul(ax, L * 0.45)), mul(sd, -W / 2)), PART.leaf, 0.14);
-      mb.tri(a, b, t);
-      mb.tri(a, t, e);
-    }
-  };
+  const spray = (at: V3, d: V3) => sprayAt(mb, at, d, size, leaves, c.droop, r01);
   // the twigs' ends: `per` sprays each, back along the twig
   for (const l of sk.leaves) {
     if (l.depth < minDepth) continue;
