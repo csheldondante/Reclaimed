@@ -26,6 +26,14 @@ Branch `dialog2` (b9139b7): docs/WRITING.md, a style lint, every player string r
 | DLG-R2 | Main's review: the muster card's "Takes" lists the encounter ("3 walking dead stand between you and the hall") as well as the time. Takes should be the cost only; the danger belongs in the ask. | S | open |
 | DLG-R3 | Map labels pile up near the hold (timers and card names overlap). This predates dialog2. | M | open |
 
+## Round 126 (2026-11-02, session 5, `encounters`) — every card a real encounter (DECISIONS round 126)
+
+Branch `encounters` (e0b39da, dialog2 merged in): flee, chase, fight, escort, a talking scene, defend; AgentUnits honours SpawnOpts.speed; the respawn trick removed. The branch's own rows are EN11..17.
+
+| id | item | size | status |
+|---|---|---|---|
+| EN-Q1 | Raiders drowned crossing a river toward an idle hero, and the scene counted as won. Should enemy deaths the hero didn't cause count toward a win? (EN15) | S | asked |
+
 ## Round 126 (2026-11-02, session 5, `merge124`) — the living world merged into the run structure (DECISIONS round 125, newest)
 
 The user (verbatim): "Please proceed with getting it ready to merge into our run structure for now." and, on the levy's
