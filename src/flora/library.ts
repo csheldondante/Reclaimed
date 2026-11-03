@@ -114,14 +114,19 @@ const FLORA_EPI = array<vec4<f32>, ${epi.length}>(${epi.join(', ')});`;
 }
 
 /** (round 128) the sprite constants (meshinst.wgsl's draw, florasprite.wgsl's bake) */
-function spriteConsts(n: number, a: string[], b: string[]): string {
+function spriteConsts(n: number, a: string[], b: string[], byIdx: string[] = ['vec4<f32>(1.0, 0.0, 1.0, -1.0)'], byIdx2: string[] = ['vec4<f32>(1.0, 0.0, 0.0, 0.0)'], ranges: Record<string, [number, number]> = {}): string {
+  const ids = ['oak', 'pine', 'birch', 'giant'];
+  const fl = ids.map((id) => `const FL_SPR_${id.toUpperCase()} = vec2<u32>(${(ranges[id] ?? [0, 1])[0]}u, ${(ranges[id] ?? [0, 1])[1]}u);`).join('\n');
   return `const FLORA_SPRITES: bool = ${a.some((x) => !x.startsWith('vec4<f32>(-1.0'))};
 const FLORA_SPR_YAWS: u32 = ${SPR_YAWS}u;
 const FLORA_SPR_CELL: u32 = ${SPR_CELL}u;
 const FLORA_SPR_LEVELS: u32 = ${sprLevels(SPR_CELL)}u;
 const FLORA_SPR_COLS: u32 = ${SPR_COLS}u;
 const FLORA_SPR = array<vec4<f32>, ${n}>(${a.join(', ')});
-const FLORA_SPR2 = array<vec4<f32>, ${n}>(${b.join(', ')});`;
+const FLORA_SPR2 = array<vec4<f32>, ${n}>(${b.join(', ')});
+const FLORA_SPRB = array<vec4<f32>, ${byIdx.length}>(${byIdx.join(', ')});
+const FLORA_SPRB2 = array<vec4<f32>, ${byIdx2.length}>(${byIdx2.join(', ')});
+${fl}`;
 }
 
 /** (round 128) the species with a close-up level: the trees, the thicket and the tall grass (the LOD ladder's top) */
@@ -235,6 +240,18 @@ export class FloraLibrary {
       a[s.kind] = `vec4<f32>(${s.idx}.0, ${s.b.R.toFixed(4)}, ${s.b.v0.toFixed(4)}, ${s.b.v1.toFixed(4)})`;
       b[s.kind] = `vec4<f32>(${s.b.d0.toFixed(4)}, ${s.b.d1.toFixed(4)}, 0.0, 0.0)`;
     }
-    return spriteConsts(this.kinds.length, a, b);
+    if (!this.sprites.length) return spriteConsts(this.kinds.length, a, b);
+    // (round 128: by sprite index too — the tiles' painted trees past the window sample the atlas — and each tree
+    // species' sprites, FL_SPR_<ID>: the variants in the library's order)
+    const byIdx = this.sprites.map((s) => `vec4<f32>(${s.b.R.toFixed(4)}, ${s.b.v0.toFixed(4)}, ${s.b.v1.toFixed(4)}, ${s.b.d0.toFixed(4)})`);
+    const byIdx2 = this.sprites.map((s) => `vec4<f32>(${s.b.d1.toFixed(4)}, 0.0, 0.0, 0.0)`);
+    const ranges: Record<string, [number, number]> = {};
+    for (const s of this.sprites) {
+      const id = this.kinds[s.kind].species;
+      const r = ranges[id] ?? [s.idx, 0];
+      r[1]++;
+      ranges[id] = r;
+    }
+    return spriteConsts(this.kinds.length, a, b, byIdx, byIdx2, ranges);
   }
 }

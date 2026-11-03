@@ -59,6 +59,8 @@ export interface TileLandGpuHost {
   profiler: Profiler;
   meshLayout: GPUBindGroupLayout;
   resolveLayout: GPUBindGroupLayout;
+  /** (round 128) the flora sprites' atlas for the bake's painted trees (bindings 49, 50) */
+  spriteViews: () => [GPUTextureView, GPUTextureView];
   gridPipe: () => GPURenderPipeline | undefined;
   drawGrid: (pass: GPURenderPassEncoder, which: Uint8Array) => void;
   meshResources: (cam: GPUBuffer) => Record<number, GPUBuffer | GPUTextureView | GPUSampler>;
@@ -219,7 +221,7 @@ export class TileLandGpu {
     const ent = (r: typeof res) => Object.entries(r).map(([b, x]) => ({ binding: Number(b), resource: x instanceof GPUBuffer ? { buffer: x } : x }));
     const [g0, g1] = this.cache.gbufViews;
     sl.g = h.device.createBindGroup({ label: 'tileland-gpu grid', layout: h.meshLayout, entries: ent(res) });
-    sl.r = h.device.createBindGroup({ label: 'tileland-gpu resolve', layout: h.resolveLayout, entries: [...ent(res), { binding: 40, resource: g0 }, { binding: 41, resource: g1 }, { binding: 22, resource: tw.riverFlowView }, { binding: 47, resource: this.host.world.coverView }, { binding: 62, resource: tw.riverWetView }] });
+    sl.r = h.device.createBindGroup({ label: 'tileland-gpu resolve', layout: h.resolveLayout, entries: [...ent(res), { binding: 40, resource: g0 }, { binding: 41, resource: g1 }, { binding: 22, resource: tw.riverFlowView }, { binding: 47, resource: this.host.world.coverView }, { binding: 62, resource: tw.riverWetView }, { binding: 49, resource: this.host.spriteViews()[0] }, { binding: 50, resource: this.host.spriteViews()[1] }] });
     return sl;
   }
 

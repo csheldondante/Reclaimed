@@ -16679,3 +16679,9 @@ render at higher resolution plus mips and they remain more readable and we get o
   bench to decide (64 vs 128 vs 256).
 - Lobe definition (main): the layered crown's lobes stand apart (`separate`), the cards darker where they come near
   another lobe's surface (the crevices), the outer shell's tops a little brighter (the occlusion past 1 brightens).
+- The tiles' painted trees past the window (main: "the top-right corner ... still draws the old big red cone and the
+  green ellipsoid blobs"): with ?flod=sprite, tiles.wgsl tileTrees samples the same atlas — for each candidate tree (the
+  slot grid's, the window's hashes: its species' variant, its turn, its scale) the line from the tile's texel toward
+  the eye crosses its sprite's quad; the texel there at the mip for the tile's resolution, the nearest along the line
+  winning; the ground shadow as before. The atlas is bound in the tiles' bake (49, 50; renderer.spriteViews). Without
+  sprites, the crown discs as before. Not yet: far.wgsl's rings (the LOD rings past the tiles) — the next step.

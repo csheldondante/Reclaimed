@@ -174,6 +174,8 @@ export interface TileHost {
   module: GPUShaderModule;
   /** the mesh's resolve layout, and that with the tiles' bindings (42-45) */
   resolveLayout: GPUBindGroupLayout;
+  /** (round 128) the flora sprites' atlas for the bake's painted trees (bindings 49, 50) */
+  spriteViews: () => [GPUTextureView, GPUTextureView];
   drawLayout: GPUBindGroupLayout;
   camBytes: number;
   camBuf: GPUBuffer;
@@ -1039,7 +1041,7 @@ export class TileCache {
     return h.device.createBindGroup({
       label: 'tiles-resolve',
       layout: h.resolveLayout,
-      entries: [...h.meshEntries(src, cam), { binding: 40, resource: this.gb0.createView() }, { binding: 41, resource: this.gb1.createView() }, { binding: 22, resource: h.world.riverFlowView }, { binding: 47, resource: h.world.coverView }, { binding: 62, resource: h.world.riverWetView }],
+      entries: [...h.meshEntries(src, cam), { binding: 40, resource: this.gb0.createView() }, { binding: 41, resource: this.gb1.createView() }, { binding: 22, resource: h.world.riverFlowView }, { binding: 47, resource: h.world.coverView }, { binding: 62, resource: h.world.riverWetView }, { binding: 49, resource: h.spriteViews()[0] }, { binding: 50, resource: h.spriteViews()[1] }],
     });
   }
 

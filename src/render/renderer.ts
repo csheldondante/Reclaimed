@@ -340,6 +340,7 @@ export class Renderer {
         profiler: this.profiler,
         meshLayout: this.meshLayoutT,
         resolveLayout: this.tileBakeLayout!,
+        spriteViews: () => this.spriteViews(),
         gridPipe: () => this.gridPipes?.g,
         drawGrid: (pass, which) => void this.drawGrid(pass, which),
         meshResources: (cam) => this.meshResources(cam, this.shadowView, { mesh: this.fieldMesh, chunks: this.world.chunks, layers: this.world.layers }),
@@ -356,6 +357,14 @@ export class Renderer {
   coverSeed?: (enc: GPUCommandEncoder, src: CoverSource, side: number, lo: number, hi: number) => void;
   /** (round 108) the tiles' bake's resolve layout: the mesh's and the held rivers' table (22) */
   private tileBakeLayout?: GPUBindGroupLayout;
+  private sprNoneTex?: GPUTexture;
+  /** (round 128) the flora sprites' atlas (albedo, normal-depth) for the tiles' bake, or a texel of nothing */
+  spriteViews(): [GPUTextureView, GPUTextureView] {
+    if (this.floraSprites) return [this.floraSprites.albedo.createView(), this.floraSprites.nd.createView()];
+    this.sprNoneTex ??= this.device.createTexture({ label: 'flora sprites none (tiles)', size: [1, 1], format: 'rgba8unorm', usage: GPUTextureUsage.TEXTURE_BINDING });
+    const v = this.sprNoneTex.createView();
+    return [v, v];
+  }
   /** (round 104) the mesh's draw layout (the render-only land's groups) */
   private meshLayoutT?: GPUBindGroupLayout;
   private meshGroup?: GPUBindGroup;
@@ -822,7 +831,8 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       this.meshResolveLayout = resolveLayout;
       // (round 108, TC20: the tiles' bake resolves with the held rivers' table too — their depths go in the river plane)
       // (and the weather's cover: what it was where the tile's own snow lies, as baked)
-      if (TILES) this.tileBakeLayout = makeLayout(device, 'tiles-bake', { ...resolveSpec, 22: 'tex', 47: 'tex', 62: 'tex' }, VF, resolveStages);
+      // (round 128: and the flora sprites' atlas, 49 50 — the tiles' trees past the window are the sprites)
+      if (TILES) this.tileBakeLayout = makeLayout(device, 'tiles-bake', { ...resolveSpec, 22: 'tex', 47: 'tex', 62: 'tex', 49: 'tex', 50: 'tex' }, VF, resolveStages);
       this.meshLayoutT = meshLayout;
       this.meshPipesReady = (async () => {
         const g = (entryPoint: string, cullMode: GPUCullMode = 'none') =>
@@ -970,7 +980,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       };
       // (round 103, ?tiles=1: the tile cache — the mesh's module with tiles.wgsl, the resolve's layout and its own)
       if (TILES) {
-        const tileModule = makeModule(device, 'tiles', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, vegplanWgsl, meshStateWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`, meshSourceWgsl, meshDrawWgsl, coverFieldWgsl, riverHeld(), tilesWgsl]);
+        const tileModule = makeModule(device, 'tiles', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, vegplanWgsl, meshStateWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`, meshSourceWgsl, meshDrawWgsl, coverFieldWgsl, riverHeld(), this.floraWgsl, tilesWgsl]);
         const drawLayout = makeLayout(
           device,
           'tiles-draw',
@@ -988,6 +998,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
           depthFormat: DEPTH_FORMAT,
           module: tileModule,
           resolveLayout: this.tileBakeLayout!,
+          spriteViews: () => this.spriteViews(),
           drawLayout,
           camBytes: CAM_BYTES,
           camBuf: this.camBuf,

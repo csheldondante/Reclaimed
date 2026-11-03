@@ -92,7 +92,8 @@ ${mi}${floraWgsl}`;
   });
   it('the tiles (round 125: the trees past the window on the slot grid)', async () => {
     const riverFoam = 'const RIVER_FOAM_SPEED: bool = false;' + String.fromCharCode(10);
-    expect(await errors('tiles', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, vegplanWgsl, meshStateWgsl, meshRegionWgsl, 'const MESH_LOOK: u32 = 0u;', 'const TUFTS_DRAWN: bool = true;', meshSourceWgsl, meshDrawWgsl, coverFieldWgsl, riverHeld(), tilesWgsl])).toEqual([]);
+    expect(await errors('tiles', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, vegplanWgsl, meshStateWgsl, meshRegionWgsl, 'const MESH_LOOK: u32 = 0u;', 'const TUFTS_DRAWN: bool = true;', meshSourceWgsl, meshDrawWgsl, coverFieldWgsl, riverHeld(), `const FLORA: bool = true;const FLORA_RPX: f32 = 0.5;${String.fromCharCode(10)}${new FloraLibrary(undefined, undefined, 'sprite').wgsl()}`, tilesWgsl])).toEqual([]);
+    expect(await errors('tiles-nosprites', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, vegplanWgsl, meshStateWgsl, meshRegionWgsl, 'const MESH_LOOK: u32 = 0u;', 'const TUFTS_DRAWN: bool = true;', meshSourceWgsl, meshDrawWgsl, coverFieldWgsl, riverHeld(), FloraLibrary.stubWgsl(), tilesWgsl])).toEqual([]);
   });
   it('the particles draw (round 125: pixel leaves close up)', async () => {
     expect(await errors('particles-draw', [commonWgsl, materialsWgsl, particlesDrawWgsl])).toEqual([]);
