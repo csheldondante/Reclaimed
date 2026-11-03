@@ -89,7 +89,7 @@ describe('root automaton', () => {
 });
 
 describe('species meshes', () => {
-  it('every species makes a mesh, deterministically, within its height range and triangle budget', () => {
+  it('every species makes a mesh, deterministically, within its height range and triangle budget', { timeout: 30000 }, () => {
     // phone budget (tris a plant): trees ≤ 3200, small plants ≤ 400 — hundreds of trees and thousands of clumps a view
     for (const id of SPECIES_IDS) {
       const sp = SPECIES[id];
@@ -110,11 +110,18 @@ describe('species meshes', () => {
       expect(a.tris, `${id} tris`).toBeLessThanOrEqual(budget);
       // indices in range; parts and sway well-formed
       const nv = a.verts.length / 4;
-      for (const i of a.index) expect(i).toBeLessThan(nv);
+      // (one expect a check, not a vertex: the meshes are thousands of vertices now)
+      let maxI = 0;
+      for (const i of a.index) maxI = Math.max(maxI, i);
+      expect(maxI).toBeLessThan(nv);
+      let lo = 99;
+      let hi = 0;
       for (let k = 3; k < a.verts.length; k += 4) {
-        expect(Math.floor(a.verts[k])).toBeGreaterThanOrEqual(3);
-        expect(Math.floor(a.verts[k])).toBeLessThanOrEqual(14);
+        lo = Math.min(lo, Math.floor(a.verts[k]));
+        hi = Math.max(hi, Math.floor(a.verts[k]));
       }
+      expect(lo).toBeGreaterThanOrEqual(3);
+      expect(hi).toBeLessThanOrEqual(14);
     }
   });
   it('variants differ', () => {
