@@ -23,7 +23,7 @@ describe('the tour, auto camera', () => {
     const at = (p: V2) => around(s, [p[0], p[1], s.top(p[0], p[1])], s.top(p[0], p[1]), P.auto, false);
     expect(at([130, 135]).up).toBeLessThan(0.05);
     expect(at([215, 72]).up).toBeGreaterThan(at([195, 100]).up);
-    expect(at([130, 109]).wall).toBeGreaterThan(0.2);
+    expect(at([130, 109]).wall).toBeGreaterThan(0.15);
     expect(at([70.5, 125]).wall).toBe(0);
     expect(around(s, [70.5, 125, s.top(70.5, 125)], s.top(70.5, 125), P.auto, true).wall).toBeGreaterThan(0.2);
   });

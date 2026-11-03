@@ -2268,6 +2268,8 @@ Where it's plugged in: core/foot.ts `stepFoot(..., drive)` (the walk, its uphill
 replaced; the sheer step stays), core/bike.ts `stepBike(..., drive)` (thrust, grip, the slope's pull, drag and the
 top speed replaced; boosting, its push and top are the boost's; the slide, barricades, cushion and flight as they
 were), core/levitate.ts `stepLevitate(..., drive)` (the velocity's easing replaced).
+On the bike the grip scales with the load (the slope's cos; riding a wall, + v^2 / (wallR g)); over `wallMin` it rides
+faces up to `wallClimb` and banks with the surface (BikeTuning wallRide, wallMin, wallClimb, wallR, wallBank).
 
 ### The horse (round 128, branch `herolab`; BACKLOG PL42)
 

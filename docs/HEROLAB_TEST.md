@@ -41,7 +41,9 @@ and pulls back on open ground, and tilts only by cliffs. It is a variant to try,
    too, which also tilts between buildings. Try it on the city street and say which you like.)
 10. **Horse (new).** Canyon, city, forest, tour. Steer it yourself. Does the horse take the canyon for you without
     feeling on rails? Does it stop before walls? Try the assist chips under settings: strong, light, off.
-11. **Lich, raise the dead / raiders / cliffs.** Tap Crowd, then Smite and Raise. Is building an army fun? (We still
+11. **Bike, canyon walls (new).** The canyon's walls now slope. On the physical drive, ride fast up onto them. Can you
+    ride along them? Can you tell when you will slide off?
+12. **Lich, raise the dead / raiders / cliffs.** Tap Crowd, then Smite and Raise. Is building an army fun? (We still
    owe the lich a design talk. This is only to remind you how it plays now.)
 
 ## The phone benches

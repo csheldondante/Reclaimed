@@ -16692,3 +16692,24 @@ obstacles for you and will slow down stop in the canyon or turn around the bend 
   assist off -> strong: 0.85 -> 2.87 laps, wall contacts 0.13 -> 0.07 a minute; held straight at a 20-cell wall from
   30 cells off on open ground, it stops between 35 and 40 without touching it.
 - The test menu: Horse — canyon, city, forest, tour. The hero bench gains the horse's pair (chase, cut and tilt).
+
+**Wall riding (PL43) and the tapered canyon.** The user (round 128): "Could hoverbikes use the new controller to slide
+up walls and bank on vertical or nearly vertical surfaces? Maybe we can make canyons have some taper so it reads?"
+- The lab's canyon walls taper: u + 0.5 u^2 over the floor's edge (rise over run 1 + u: 45 deg at the foot, ~80 deg
+  five cells up; was a straight 6, 80 deg, from the floor). The stock bike's canyon by the autopilot: 2.37 -> 3.37
+  laps a minute; the sloppy rider's hits 42 -> 29.5, crashes 18.5 -> 12.8 a minute.
+- core/bike.ts with the physical drive: the grip is as good as what presses the bike to the ground — the slope's cos,
+  and when it's riding a wall (faster than `wallMin` 12 cells/s) its speed round the wall's curve, v^2 / (wallR g),
+  capped at 1.5x. Riding a wall it takes faces up to `wallClimb` 8 rise over run (was 1.5), and banks with the
+  surface (`wallBank` of the cross-slope's angle, up to 77 deg). Too slow, the slope's pull beats the grip and it
+  slides down. The lab's physical drive turns it on for the bike (`wallRide`).
+- Node (core/wallride.test.ts), along a tapered flank 2.5 cells out (5.6 up): at 20 cells/s, full stick, it holds
+  3.5 up and banks 62 deg; at a quarter stick (5 cells/s) it slides to 1.4 (the 45-deg foot); without wall riding the
+  same fast bike slides to 1.4.
+- Found: on the physical drive the bike gets pinned where the autopilot drives it straight into something (a
+  boulder head on, a building's corner): the drive's grip holds the stick's line, where the bike's own glanced off and
+  slid along. Against a face it just glanced off, the stick's push into it now goes along it (`touch`, 0.3 s), which
+  frees a corner but not a rock met head on. The autopilot's rides on the physical drive: canyon 0.87 laps a minute
+  (stopped at a boulder), city 0.66, tour 1.62, hills 4.11. A thumb steers round; the sloppy-rider metric is the
+  next measure.
+- The terrain track's row for the real map's canyons: TER20.

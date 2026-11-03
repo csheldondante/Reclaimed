@@ -16,7 +16,7 @@ const PERF = process.argv.includes('--perf');
 await run({ name: 'herolabtest', kind: PERF ? 'timing' : 'behaviour', size: '412x915', dpr: PERF ? 2.6 : 1 }, async (R) => {
   const out = R.opt('out', 'C:/Projects/shots88/herolab2');
   fs.mkdirSync(out, { recursive: true });
-  const only = new Set(R.opt('only', 'menu,grid,tests,gifs,knight,cut,auto,drive').split(','));
+  const only = new Set(R.opt('only', 'menu,grid,tests,gifs,knight,cut,auto,drive,horse').split(','));
   const page = await R.page();
   await page.setViewport({ width: 412, height: 915, deviceScaleFactor: PERF ? 2.6 : 1, hasTouch: true, isMobile: true });
   // (no ?station=: the test menu first, as the user's link lands)
@@ -239,6 +239,17 @@ await run({ name: 'herolabtest', kind: PERF ? 'timing' : 'behaviour', size: '412
       const stand = await top('Standing start', 4);
       R.log(`hill ${hero} ${drive}: run-up climbs ${run}, standing ${stand}`);
     }
+
+  // ---- (round 128, PL42) the horse: the canyon by the autopilot, a still at the city
+  if (only.has('horse')) {
+    await p.evaluate(() => window.reclaimed.lab.pick({ hero: 'horse', station: 'canyon', cam: 'cutaway+tilt' }));
+    await sleep(2500);
+    await gif('horse-canyon.gif', 40, 150);
+    R.log(`horse: ${await p.evaluate(() => window.reclaimed.lab.session.hero.status())}`);
+    await p.evaluate(() => window.reclaimed.lab.pick({ station: 'city' }));
+    await sleep(4000);
+    await shot('horse-city.png');
+  }
 
   // ---- the cut (CAM11) at the canyon and the cliffs, against the chase alone
   if (only.has('cut'))

@@ -81,6 +81,18 @@ export type BikeTuning = {
    */
   grip: number;
   turnRate: number;
+  /**
+   * (round 128, the user: "Could hoverbikes use the new controller to slide up walls and bank on vertical or nearly
+   * vertical surfaces?") with the physical drive: faster than `wallMin` (cells/s) it rides faces up to `wallClimb`
+   * rise over run; the slope's pull is gravity's along the fall line, held off by its grip plus what its speed presses
+   * it into a curved wall with (v² / `wallR`); too slow, it slides down. It banks with the surface (`wallBank` of the
+   * cross-slope's angle). 0: off.
+   */
+  wallRide: number;
+  wallMin: number;
+  wallClimb: number;
+  wallR: number;
+  wallBank: number;
 };
 
 export const BIKE: BikeTuning = {
@@ -120,6 +132,11 @@ export const BIKE: BikeTuning = {
   carry: 1,
   grip: 0,
   turnRate: 6,
+  wallRide: 0,
+  wallMin: 12,
+  wallClimb: 8,
+  wallR: 6,
+  wallBank: 0.85,
 };
 
 export interface Bike {
@@ -153,6 +170,10 @@ export interface Bike {
   crash: number;
   /** seconds into an Akira slide (0: not sliding) */
   slide: number;
+  /** (round 128, the physical drive) the face it last glanced off (the way into it) and for how long it's remembered:
+   *  the stick pushed into it slides it along it instead of pinning it there */
+  touch?: [number, number] | null;
+  touchT?: number;
 }
 
 export type HeightAt = (x: number, y: number) => number;
@@ -165,7 +186,7 @@ export interface Solid {
 }
 
 export function makeBike(x: number, y: number, heightAt: HeightAt, t: BikeTuning = BIKE): Bike {
-  return { x, y, z: heightAt(x, y) + t.hover, vx: 0, vy: 0, vz: 0, heading: 0, pitch: 0, bank: 0, hit: 0, air: 0, landed: 0, ramp: 0, fuel: 1, boosting: false, crashed: 0, spin: 0, crash: 0, slide: 0 };
+  return { x, y, z: heightAt(x, y) + t.hover, vx: 0, vy: 0, vz: 0, heading: 0, pitch: 0, bank: 0, hit: 0, air: 0, landed: 0, ramp: 0, fuel: 1, boosting: false, crashed: 0, spin: 0, crash: 0, slide: 0, touch: null, touchT: 0 };
 }
 
 export const speedOf = (b: Bike) => Math.hypot(b.vx, b.vy);
@@ -221,7 +242,9 @@ export function stepBike(b: Bike, stick: [number, number], dt: number, heightAt:
   b.boosting = boost && b.fuel > 0;
   if (b.boosting) b.fuel = Math.max(0, b.fuel - dt / t.boostTime);
   else if (!boost) b.fuel = Math.min(1, b.fuel + t.refill * dt);
-  const climb = b.boosting ? t.boostClimb : t.climb;
+  // ((round 128) riding a wall: fast, on the physical drive)
+  const walling = !!drive && (t.wallRide ?? 0) > 0 && speedOf(b) > (t.wallMin ?? 12) && b.air < 0.2;
+  const climb = b.boosting ? t.boostClimb : walling ? Math.max(t.climb, t.wallClimb) : t.climb;
   const pvx = b.vx;
   const pvy = b.vy;
   // the Akira slide: fast, the stick hauled round against the way it's going (on the cushion, or just off it)
@@ -245,17 +268,31 @@ export function stepBike(b: Bike, stick: [number, number], dt: number, heightAt:
   // the flight as they were)
   if (drive) {
     let pull: [number, number] = [0, 0];
+    // (the grip is as good as what presses it to the ground: the slope's cos, and on a wall, its speed round the
+    // wall's curve, v² / r against gravity — slow on a steep face it slides down, fast it holds)
+    let load = 1;
+    const v0 = speedOf(b);
     if (onCushion) {
       let [gx, gy] = gradient(b.x, b.y, heightAt, 1);
       const gl = Math.hypot(gx, gy);
+      load = 1 / Math.sqrt(1 + gl * gl) + (walling ? (v0 * v0) / (Math.max(1, t.wallR) * t.gravity) : 0);
+      // (a face too steep to ride: its edge isn't a hill to slide off — the barricade's business)
       if (gl > climb) {
         gx *= climb / gl;
         gy *= climb / gl;
       }
       pull = slopePull([gx, gy], t.gravity, drive.gravity);
     }
-    const prof = b.boosting ? { ...drive, a0: t.boost, vMax: t.boostMax } : b.air > 0.1 ? { ...drive, a0: 0, lateral: 0, brake: 0 } : drive;
-    [b.vx, b.vy] = stepDrive([b.vx, b.vy], b.boosting ? [push[0] / Math.max(sm, 1e-6), push[1] / Math.max(sm, 1e-6)] : push, prof, pull, dt);
+    const base = { ...drive, lateral: drive.lateral * Math.min(1.5, load) };
+    const prof = b.boosting ? { ...base, a0: t.boost, vMax: t.boostMax } : b.air > 0.1 ? { ...base, a0: 0, lateral: 0, brake: 0 } : base;
+    let want: [number, number] = b.boosting ? [push[0] / Math.max(sm, 1e-6), push[1] / Math.max(sm, 1e-6)] : [push[0], push[1]];
+    // (against a face it just glanced off, the stick's push into it goes along it: the drive's grip held it pinned)
+    b.touchT = Math.max(0, (b.touchT ?? 0) - dt);
+    if (b.touch && b.touchT > 0) {
+      const into = want[0] * b.touch[0] + want[1] * b.touch[1];
+      if (into > 0) want = [want[0] - into * b.touch[0], want[1] - into * b.touch[1]];
+    }
+    [b.vx, b.vy] = stepDrive([b.vx, b.vy], want, prof, pull, dt);
   }
   if (sm > 0 && !drive) {
     const [accel, top, power] = b.boosting ? [t.boost, t.boostMax, 1] : [t.accel * (b.slide > 0 ? t.slideBrake : 1), t.max, sm];
@@ -332,6 +369,8 @@ export function stepBike(b: Bike, stick: [number, number], dt: number, heightAt:
         b.vz = Math.max(b.vz, into * 0.3);
         b.spin = (b.vx * uy - b.vy * ux >= 0 ? 1 : -1) * Math.min(14, into * 0.8);
       } else {
+        b.touch = [ux, uy];
+        b.touchT = 0.3;
         b.vx -= (1 + t.bounce) * into * ux;
         b.vy -= (1 + t.bounce) * into * uy;
       }
@@ -433,6 +472,12 @@ export function stepBike(b: Bike, stick: [number, number], dt: number, heightAt:
   const ax = (b.vx - pvx) / Math.max(dt, 1e-4);
   const ay = (b.vy - pvy) / Math.max(dt, 1e-4);
   const lateral = -ax * Math.sin(b.heading) + ay * Math.cos(b.heading);
-  const want = Math.max(-0.6, Math.min(0.6, lateral * 0.02));
+  let want = Math.max(-0.6, Math.min(0.6, lateral * 0.02));
+  // ((round 128) on a wall it lies with the surface: the cross-slope's angle, toward vertical)
+  if (walling && !flying) {
+    const [gx, gy] = gradient(b.x, b.y, heightAt, 0.8);
+    const cross = -gx * Math.sin(b.heading) + gy * Math.cos(b.heading);
+    want = Math.max(-1.35, Math.min(1.35, want + Math.atan(cross) * (t.wallBank ?? 0.85)));
+  }
   b.bank += (want - b.bank) * Math.min(1, dt * 6);
 }

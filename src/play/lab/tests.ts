@@ -101,6 +101,7 @@ export const LAB_TESTS: LabTestGroup[] = [
       { id: 'bike-city-carve', hero: 'hoverbike', station: 'moves-city', handling: 'carve', label: 'City, carve', ask: 'Can you ride round the blocks without hitting walls?' },
       { id: 'bike-tour-auto', hero: 'hoverbike', station: 'tour', cam: 'auto+cutfade', label: 'Tour, auto zoom', ask: 'Does the zoom follow what is around you? Closer in tall woods, pulled back on the field?' },
       { id: 'bike-physical', hero: 'hoverbike', station: 'moves-canyon', drive: 'physical', label: 'Canyon, physical drive', ask: 'The same drive as the knight now. Does the bike feel like the same bike?' },
+      { id: 'bike-wallride', hero: 'hoverbike', station: 'canyon', drive: 'physical', label: 'Canyon walls', ask: 'Ride fast up onto the sloped canyon walls. Can you ride along them? Can you tell when you will slide off?' },
       { id: 'bike-hills', hero: 'hoverbike', station: 'hills', label: 'Hills', ask: 'Does the camera stay still on gentle hills?' },
       { id: 'bike-cliff', hero: 'hoverbike', station: 'cliff', label: 'Cliffs', ask: 'Does the cut show you the bike and the turn ahead?' },
     ],

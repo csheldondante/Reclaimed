@@ -421,6 +421,8 @@ export class HeroLab {
     const horse = this.session.heroId === 'horse';
     // (the horse has only the physical drive; its assist from the chips)
     params.drive = horse || v !== 'own' ? (v === 'brute' && this.session.heroId === 'knight' ? 2 : 1) : 0;
+    // (round 128, the user's wall riding: the bike on the physical drive rides walls)
+    if (this.session.heroId === 'hoverbike') params.wallRide = params.drive ? 1 : 0;
     if (this.assistPicker) {
       this.assistPicker.el.style.display = horse ? '' : 'none';
       if (horse) params.assist = ASSIST_LEVEL[this.assistPicker.value[0]];

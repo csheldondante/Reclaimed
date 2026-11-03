@@ -171,8 +171,11 @@ function canyonColumn(x: number, y: number): LabColumn {
   const d = Math.min(distToPath([x, y], RING, true), distToPath([x, y], BRANCH, false) + 1);
   const half = CANYON.width / 2 + (noise(x / 4, y / 4) - 0.5) * 1.5;
   if (d < half) return { top: G + noise(x / 7, y / 7) * 0.6, skin: MAT.Sand };
-  // (the walls rise steep, then the plateau's top, banded)
-  const top = G + Math.min(CANYON.h, (d - half) * 6) + (noise(x / 8, y / 8) - 0.5) * 2;
+  // (round 128, the user: "Maybe we can make canyons have some taper so it reads?" — the walls taper: 45 deg at the
+  // foot steepening to near vertical higher up (u + 0.5 u²: rise over run 1 + u), so a wall run reads and is
+  // learnable; was a straight 6 rise over run, 80 deg, from the floor — then the plateau's top, banded)
+  const u = d - half;
+  const top = G + Math.min(CANYON.h, u + 0.5 * u * u) + (noise(x / 8, y / 8) - 0.5) * 2 * Math.min(1, u / 3);
   return { top, skin: MAT.Sandstone };
 }
 
