@@ -11,7 +11,15 @@
 //   spillPlan     each crumbled cell's rubble goes to the lowest-topped column of the 3 x 3 round it (offset coordinates,
 //                 dy then dx, the first lowest) that isn't a crumbled column; a target gets a cell's worth each, and the
 //                 loose material most of them gave (looseFrom; ties: the lowest material id)
-//   releaseSpan, orphanColumn   sim/external.ts
+//   releaseSpan, orphanColumn, claimColumn   sim/external.ts
+//   takeCells     world/layout.ts (the voxel lattice's wake: whole cells of some materials taken out)
+//   seatColumn    world/models.ts (a model placed in the columns: the sandbox editor)
+//
+// (round 128, INT16) Every change is written to the layers and the layersNext alike (GpuColumns.next): the column
+// passes write layersNext for the chunks that run and copy it back over the layers whole, so a change to the layers
+// alone was undone by the next copy-back wherever its chunk didn't run — a town's building claimed in a chunk the
+// hybrid's filter kept asleep lost its claim within a tick and fell to rubble. The claims, the wake's take and the
+// editor's placing are stamps here too (WorldCore.stampColumns): the CPU says what changes, the GPU changes its columns.
 import colapplyWgsl from '../shaders/colapply.wgsl?raw';
 import { makeBindGroup, makeLayout } from '../gpu/pipeline';
 import { subtract } from './colbodies';
@@ -88,6 +96,12 @@ export interface GpuColumns {
   slots: GPUBuffer;
   chunks: GPUBuffer;
   packed: PackedWorld;
+  /**
+   * (round 128, INT16) the column passes' second buffer (WorldGpu.layersNext), written alike by every change
+   * ColumnApply makes (null: none — a test's bare columns, no pass copies over them). Required by ColumnApply; the
+   * readers (colquery) leave it out.
+   */
+  next?: GPUBuffer | null;
 }
 
 /** Where loose ground lands: the per-column deposit buffer and the window's page table (sim/pages.ts). */
@@ -108,15 +122,21 @@ export interface ApplyStage {
   deposits?: { x: number; y: number; amount: number; mat: number }[];
   /** External spans let go (to their fallback, or air) */
   release?: { x: number; y: number; z0: number; z1: number; fallback: number; toAir: boolean }[];
+  /** (round 128) External spans claimed: [z0, z1) cut out and made External, aux its fallback (claimColumn) */
+  claim?: { x: number; y: number; z0: number; z1: number; aux: number }[];
+  /** (round 128) whole cells (x, y, z) of these materials taken out of the columns (takeCells) */
+  take?: { cells: { x: number; y: number; z: number }[]; materials: ReadonlySet<number> };
+  /** (round 128) a model's runs (world z) seated in columns over `base`, the new runs' aux `aux` (seatColumn) */
+  seat?: { cols: { x: number; y: number; runs: Interval[] }[]; base: number; aux: number };
 }
 
 const MAX_CUTS = 32;
-const PARAM_BYTES = 128;
+const PARAM_BYTES = 144;
 const PARAM_STRIDE = 256;
-const KERNELS = ['applyCuts', 'spillTarget', 'spillDeposit', 'depositAdd', 'release', 'orphans'] as const;
+const KERNELS = ['applyCuts', 'spillTarget', 'spillDeposit', 'depositAdd', 'release', 'orphans', 'claim', 'take', 'seat'] as const;
 type Kernel = (typeof KERNELS)[number];
-const BINDS = { 0: 'uniform', 1: 'read', 2: 'rw', 3: 'read', 4: 'rw', 5: 'rw' } as const;
-type ParamKey = 'nOps' | 'nSpill' | 'nGone' | 'hashCap' | 'opOff' | 'cutOff' | 'spillOff' | 'goneOff' | 'nDep' | 'depOff' | 'nKeys' | 'keyOff' | 'refOff' | 'spanOff';
+const BINDS = { 0: 'uniform', 1: 'read', 2: 'rw', 3: 'read', 4: 'rw', 5: 'rw', 6: 'rw' } as const;
+type ParamKey = 'nOps' | 'nSpill' | 'nGone' | 'hashCap' | 'opOff' | 'cutOff' | 'spillOff' | 'goneOff' | 'nDep' | 'depOff' | 'nKeys' | 'keyOff' | 'refOff' | 'spanOff' | 'maskLo' | 'maskHi' | 'seatBase' | 'seatAux';
 
 interface Dispatch {
   kernel: Kernel;
@@ -145,6 +165,8 @@ export class ColumnApply {
   private hash: GPUBuffer | null = null;
   /** a deposit buffer for runs that lay nothing */
   private noDeposit: GPUBuffer;
+  /** the layersNext binding when the columns have none (P.twin 0: never touched) */
+  private noNext: GPUBuffer;
   /** bytes uploaded by the last run (its whole cost on the bus: nothing comes back) */
   lastBytes = 0;
 
@@ -154,6 +176,7 @@ export class ColumnApply {
     const pl = device.createPipelineLayout({ label: 'colapply', bindGroupLayouts: [this.layout] });
     this.pipes = Object.fromEntries(KERNELS.map((k) => [k, device.createComputePipeline({ label: `colapply ${k}`, layout: pl, compute: { module, entryPoint: k } })])) as Record<Kernel, GPUComputePipeline>;
     this.noDeposit = device.createBuffer({ label: 'colapply no deposit', size: 16, usage: GPUBufferUsage.STORAGE });
+    this.noNext = device.createBuffer({ label: 'colapply no layersNext', size: 16, usage: GPUBufferUsage.STORAGE });
   }
 
   /** The stages applied in order, in one submit. A stage that spills or lays loose ground needs `target`. */
@@ -173,6 +196,8 @@ export class ColumnApply {
 
   private encode(cols: GpuColumns, stages: ApplyStage[], claimed: Map<number, { z0: number; z1: number }[]> | null, target?: SpillTarget): GPUCommandEncoder | null {
     const { packed } = cols;
+    if (cols.next === undefined) throw new Error('ColumnApply: the columns need their layersNext (GpuColumns.next; null: none) — a change to the layers alone is undone by the next column pass');
+    const twin = cols.next ? 1 : 0;
     const W = packed.dims.w;
     const H = packed.dims.h;
     const words: number[] = [];
@@ -198,7 +223,9 @@ export class ColumnApply {
       pu.set([W, H, packed.chunksX, CHUNK, v.nOps ?? 0, v.nSpill ?? 0, v.nGone ?? 0, v.hashCap ?? 1, v.opOff ?? 0, v.cutOff ?? 0, v.spillOff ?? 0, v.goneOff ?? 0, pageOff, looseOff, W / CHUNK]);
       pf[15] = packed.dims.zMax;
       pu.set([...LOOSE, 0, 0], 16);
-      pu.set([v.nDep ?? 0, v.depOff ?? 0, v.nKeys ?? 0, v.keyOff ?? 0, v.refOff ?? 0, v.spanOff ?? 0, 0, 0], 24);
+      pu.set([v.nDep ?? 0, v.depOff ?? 0, v.nKeys ?? 0, v.keyOff ?? 0, v.refOff ?? 0, v.spanOff ?? 0, twin, v.maskLo ?? 0, v.maskHi ?? 0], 24);
+      pf[33] = v.seatBase ?? 0;
+      pu[34] = v.seatAux ?? 0;
       if (groups > 0) dispatches.push({ kernel, groups, params: b });
     };
     for (const st of stages) {
@@ -256,6 +283,49 @@ export class ColumnApply {
         for (const e of rel) for (const r of e.items) words.push(bits(r.z0), bits(r.z1), r.fallback, r.toAir ? 1 : 0);
         param('release', Math.ceil(rel.length / 64), { nOps: rel.length, opOff, cutOff });
       }
+      const cl = byColumn(st.claim ?? [], W, H, (c) => [c]);
+      if (cl.length) {
+        const opOff = words.length;
+        let first = 0;
+        for (const e of cl) {
+          words.push(e.x, e.y, first, e.items.length);
+          first += e.items.length;
+        }
+        const cutOff = words.length;
+        for (const e of cl) for (const c of e.items) words.push(bits(c.z0), bits(c.z1), c.aux & 0xff, 0);
+        param('claim', Math.ceil(cl.length / 64), { nOps: cl.length, opOff, cutOff });
+      }
+      if (st.take?.cells.length) {
+        let maskLo = 0;
+        let maskHi = 0;
+        for (const m of st.take.materials) {
+          if (m < 0 || m >= 64) throw new Error(`ColumnApply: take of material ${m} (the mask holds 0..63)`);
+          if (m < 32) maskLo |= 1 << m;
+          else maskHi |= 1 << (m - 32);
+        }
+        const tk = byColumn(st.take.cells, W, H, (c) => [c.z]);
+        const opOff = words.length;
+        let first = 0;
+        for (const e of tk) {
+          words.push(e.x, e.y, first, e.items.length);
+          first += e.items.length;
+        }
+        const cutOff = words.length;
+        for (const e of tk) words.push(...e.items);
+        param('take', Math.ceil(tk.length / 64), { nOps: tk.length, opOff, cutOff, maskLo: maskLo >>> 0, maskHi: maskHi >>> 0 });
+      }
+      if (st.seat?.cols.length) {
+        const se = byColumn(st.seat.cols, W, H, (c) => c.runs);
+        const opOff = words.length;
+        let first = 0;
+        for (const e of se) {
+          words.push(e.x, e.y, first, e.items.length);
+          first += e.items.length;
+        }
+        const cutOff = words.length;
+        for (const e of se) for (const r of e.items) words.push(bits(r.z0), bits(r.z1), r.mat, 0);
+        param('seat', Math.ceil(se.length / 64), { nOps: se.length, opOff, cutOff, seatBase: st.seat.base, seatAux: st.seat.aux });
+      }
     }
     if (claimed) {
       const keys = [...claimed.keys()].sort((a, b) => a - b);
@@ -293,6 +363,7 @@ export class ColumnApply {
         3: this.inp!,
         4: hash,
         5: target?.deposit ?? this.noDeposit,
+        6: cols.next ?? this.noNext,
       });
       // (a pass each: every dispatch sees the last one's writes)
       const pass = enc.beginComputePass({ label: `colapply ${d.kernel}` });
@@ -309,6 +380,7 @@ export class ColumnApply {
     this.params?.destroy();
     this.hash?.destroy();
     this.noDeposit.destroy();
+    this.noNext.destroy();
   }
 }
 

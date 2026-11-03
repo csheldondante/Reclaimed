@@ -3269,3 +3269,32 @@ no copy of them unless a CPU consumer walks one, and every change it makes to th
   grown when the metal reaches past what it fetched), the drop tool's ground, the settlements' claims — each a few chunks,
   on purpose, never the window before every pass. Judge B's own verdict (its header and the records' room, 97 KB to
   start, grown when a judging overflows it).
+
+## Who writes the columns (round 128, `merge128`: jb6 on places, INT16)
+
+The columns are WorldGpu.layers, and the column passes (structure, edit, the layer pulls; sim/systems.ts `columnPass`)
+write WorldGpu.layersNext for the chunks that run and copy it back over the layers whole (without `?inplace=1`). So a
+change made to the layers alone is undone by the next copy-back wherever its chunk didn't run — asleep, or outside the
+hybrid's `only` filter (Sleep.wake refuses those). **Every writer of the columns writes the layers and the layersNext
+alike**, and every change the CPU asks for is the GPU's to make (jb6's rule), through one instance of game/colapply.ts
+`ColumnApply` on the WorldCore (`core.columnApply`; `core.columnsGpu()` gives it both buffers, GpuColumns.next —
+ColumnApply throws without it):
+
+| writer | what | how, after merge128 |
+|---|---|---|
+| Integrity: a verdict's cuts and spills, loose ground, External let go, orphans | colapply `applyCuts`, `spillTarget`/`spillDeposit`, `depositAdd`, `release`, `orphans` | GPU (jb6), both buffers (merge128) |
+| ExternalRegistry.claim (settlements' buildings: settle/view.ts; the resting rock: Integrity.restRigid) | colapply `claim` (claimColumn: each span cut out, External with its fallback as aux) via ColumnAccess.claim → Integrity.edit | GPU stamp, both buffers (merge128, INT16). The CPU still decides the free spans from the columns it fetched (the registry needs the spans it holds) |
+| the voxel lattice's wake (physics/wake.ts: a ruin's piece made bodies) | colapply `take` (layout.ts takeCells) via core.stampColumns | GPU stamp, both buffers. It still reads the whole layers back to flood the piece (BACKLOG M128-2) |
+| the sandbox editor's model placed (LevelScene.placeModel) | colapply `seat` (models.ts seatColumn) via core.stampColumns | GPU stamp, both buffers. It still reads the layers back for the resting base and the room check (M128-2) |
+| ColumnCopy.write: a settled rigid body baked (Integrity.settleRigid with nothing to claim), the pieces falling in the columns (colbodies.ts, through the kept copy) | the whole column made on the CPU from the copy | `queue.writeBuffer` to both buffers — still a CPU-made column (M128-1) |
+| WorldCore.restoreChunks (undo, warps) | the pristine copy's pages | GPU copy into both buffers |
+| WorldCore.replaceWindow (the noise lab's new land) | the whole window | upload into both buffers |
+| the streamer (a region's pages in, a slide) | pages | both buffers (round 98) |
+| WorldGpu's construction | the map | upload into both buffers (merge128) |
+
+The CPU's statement of each GPU rule (cutColumn, spillPlan, releaseSpan, orphanColumn, claimColumn, takeCells,
+seatColumn) is held equal to the GPU's by test/gpu/colapply.test.ts, which also checks that the layersNext comes out as
+the layers. test/gpu/cpu-write-asleep.test.ts steps a world with every chunk asleep: stamps survive, a write to the
+layers alone is undone (the cause, kept as a test). Every stamp fits a column to its K slots as before (colapply
+`store`: the bottom K − 1 kept, the rest's height as rubble on top) — the INT8 hollow-claim risk (a building's
+intervals above K − 1 turned to rubble) is unchanged by this, not made worse.

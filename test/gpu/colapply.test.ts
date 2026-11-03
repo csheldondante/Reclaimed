@@ -1,13 +1,15 @@
 // (round 120, JB6) Verdicts applied on the GPU (game/colapply.ts, shaders/colapply.wgsl) equal the CPU's application
 // (cutColumn, spillPlan) — the columns word for word, the spilled rubble's deposits — on the judges' shapes and random
 // caves (judge B's verdicts: crumbled runs cut and spilled, then the pieces cut), and on random columns with random
-// cuts (splits past a column's K slots: the rubble rule).
+// cuts (splits past a column's K slots: the rubble rule). (Round 128, INT16: claims, cells taken and a model seated —
+// claimColumn, takeCells, seatColumn — and every change written to the layersNext alike.)
 import { describe, expect, test } from 'vitest';
 import { ColumnApply, cutColumn, fitColumn, spillPlan, type ApplyStage } from '../../src/game/colapply';
-import { orphanColumn, releaseSpan } from '../../src/sim/external';
+import { claimColumn, orphanColumn, releaseSpan } from '../../src/sim/external';
+import { seatColumn } from '../../src/world/models';
 import { SectionsJudge } from '../../src/game/judge';
 import type { Fracture, Voxel } from '../../src/game/fracture';
-import { columnSlots, readColumn, type Interval } from '../../src/world/layout';
+import { columnSlots, readColumn, takeCells, type Interval } from '../../src/world/layout';
 import { MAT } from '../../src/world/materials';
 import { RockWorld } from '../support/rockworld';
 import { gpuCols } from '../support/judgeworld';
@@ -60,6 +62,16 @@ function cpuApply(w: RockWorld, stages: ApplyStage[]): Map<number, { amount: num
       const out = releaseSpan(w.read(r.x, r.y), r, r.fallback, r.toAir);
       if (out) w.write(r.x, r.y, fitColumn(out, columnSlots(w.packed, r.x, r.y).k, w.packed.dims.zMax));
     }
+    const fit = (x: number, y: number, col: Interval[]) => w.write(x, y, fitColumn(col, columnSlots(w.packed, x, y).k, w.packed.dims.zMax));
+    const claims = new Map<number, { z0: number; z1: number; aux: number }[]>();
+    for (const c of st.claim ?? []) claims.set(c.y * w.W + c.x, [...(claims.get(c.y * w.W + c.x) ?? []), c]);
+    for (const [k, cs] of claims) fit(k % w.W, Math.floor(k / w.W), claimColumn(w.read(k % w.W, Math.floor(k / w.W)), cs));
+    if (st.take) {
+      const zs = new Map<number, Set<number>>();
+      for (const c of st.take.cells) zs.set(c.y * w.W + c.x, (zs.get(c.y * w.W + c.x) ?? new Set()).add(c.z));
+      for (const [k, z] of zs) fit(k % w.W, Math.floor(k / w.W), takeCells(w.read(k % w.W, Math.floor(k / w.W)), z, st.take.materials));
+    }
+    for (const c of st.seat?.cols ?? []) fit(c.x, c.y, seatColumn(w.read(c.x, c.y), c.runs, st.seat!.base, st.seat!.aux));
   }
   return dep;
 }
@@ -75,10 +87,16 @@ async function gpuApply(w: RockWorld, stages: ApplyStage[], claimed?: Map<number
   // (the identity ring: page (cx, cy) at slot cy * nx + cx)
   const nx = w.W / 16;
   const pages = new Uint16Array(nx * (w.H / 16)).map((_, i) => i);
+  // (round 128, INT16: the layersNext, as the world's — every change written to it alike)
+  const next = dev.createBuffer({ label: 'test slots next', size: w.packed.slots.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
+  dev.queue.writeBuffer(next, 0, w.packed.slots);
   const ap = new ColumnApply(dev);
-  ap.run({ slots: cols.slots, chunks: cols.chunks, packed: w.packed }, stages, { deposit, pages });
-  if (claimed) ap.orphans({ slots: cols.slots, chunks: cols.chunks, packed: w.packed }, claimed);
+  ap.run({ slots: cols.slots, next, chunks: cols.chunks, packed: w.packed }, stages, { deposit, pages });
+  if (claimed) ap.orphans({ slots: cols.slots, next, chunks: cols.chunks, packed: w.packed }, claimed);
   const slots = new Uint32Array(await gpu.read(cols.slots, w.packed.slots.byteLength));
+  const twin = new Uint32Array(await gpu.read(next, w.packed.slots.byteLength));
+  expect(twin, 'the layersNext written alike').toEqual(slots);
+  next.destroy();
   const D = new Float32Array(await gpu.read(deposit, N * 16));
   const dep = new Map<number, { amount: number; mat: number }>();
   for (let y = 0; y < w.H; y++)
@@ -114,7 +132,7 @@ async function check(w: RockWorld, stages: ApplyStage[], what: string, claimed?:
     }
   expect([...got.dep].sort((a, b) => a[0] - b[0]), `${what}: deposits`).toEqual([...dep].sort((a, b) => a[0] - b[0]));
   // (and something was applied: the tests aren't vacuous)
-  if (stages.some((s) => s.cuts.length || s.release?.length) || claimed) expect(w.packed.slots, what).not.toEqual(before);
+  if (stages.some((s) => s.cuts.length || s.release?.length || s.claim?.length || s.take?.cells.length || s.seat?.cols.length) || claimed) expect(w.packed.slots, what).not.toEqual(before);
 }
 
 async function verdict(w: RockWorld, seeds: [number, number][]): Promise<Fracture> {
@@ -265,6 +283,103 @@ describe('External intervals: let go and orphans (sim/external.ts releaseSpan, o
   }, 120_000);
 });
 
+describe('stamps (round 128, INT16): claims, cells taken, a model seated (claimColumn, takeCells, seatColumn)', () => {
+  /** columns of ground, water, External and built runs with gaps (air) between, aux on the External runs */
+  function stampWorld(seed: number): RockWorld {
+    const r = rng(seed);
+    const mats = [MAT.Stone, MAT.Sand, MAT.Brick, MAT.Concrete, MAT.Steel, MAT.Water, MAT.External];
+    const cols = new Map<number, Interval[]>();
+    const w = new RockWorld(32, 32, 64, (x, y) => {
+      const col: Interval[] = [];
+      let z = 0;
+      for (let i = 0; i < 1 + Math.floor(r() * 6); i++) {
+        const z0 = z + (i && r() < 0.5 ? Math.round(r() * 3 * 4) / 4 : 0);
+        const z1 = z0 + 0.5 + Math.round(r() * 5 * 4) / 4;
+        if (z1 > 50) break;
+        const mat = mats[Math.floor(r() * mats.length)];
+        col.push({ z0, z1, mat, aux: mat === MAT.External ? MAT.Rubble : 0 });
+        z = z1;
+      }
+      cols.set(y * 65536 + x, col);
+      return col;
+    });
+    for (const [k, col] of cols) w.write(k % 65536, Math.floor(k / 65536), col);
+    return w;
+  }
+
+  test('claims: spans cut out and made External (aux the fallback), joined, fitted', async () => {
+    for (let s = 1; s <= 10; s++) {
+      const w = stampWorld(s * 211);
+      const r = rng(s * 13);
+      const claim: NonNullable<ApplyStage['claim']> = [];
+      for (let i = 0; i < 300; i++) {
+        const x = Math.floor(r() * w.W);
+        const y = Math.floor(r() * w.H);
+        const col = w.read(x, y);
+        const top = col.length ? col[col.length - 1].z1 : 0;
+        // (over the top, in a gap, across runs, or two spans in a column)
+        const z0 = r() < 0.5 ? top : Math.round(r() * 40 * 4) / 4;
+        claim.push({ x, y, z0, z1: z0 + 0.25 + Math.round(r() * 8 * 4) / 4, aux: [MAT.Rubble, MAT.Stone, MAT.Brick][Math.floor(r() * 3)] });
+        if (r() < 0.2) claim.push({ x, y, z0: z0 + 12, z1: z0 + 14, aux: MAT.Rubble });
+      }
+      // (two spans of one column in one stage overlap only by chance: drop overlaps, as a registry's claim has none)
+      const seen = new Map<number, { z0: number; z1: number }[]>();
+      const ok = claim.filter((c) => {
+        const k = c.y * w.W + c.x;
+        const l = seen.get(k) ?? [];
+        if (l.some((o) => o.z0 < c.z1 + 1e-3 && c.z0 < o.z1 + 1e-3)) return false;
+        seen.set(k, [...l, c]);
+        return true;
+      });
+      await check(w, [{ cuts: [], claim: ok }], `claim ${s}`);
+    }
+  }, 120_000);
+
+  test('cells taken: whole cells of the masked materials out of their runs (the wake)', async () => {
+    for (let s = 1; s <= 10; s++) {
+      const w = stampWorld(s * 307);
+      const r = rng(s * 17);
+      const cells: { x: number; y: number; z: number }[] = [];
+      for (let i = 0; i < 400; i++) {
+        const x = Math.floor(r() * w.W);
+        const y = Math.floor(r() * w.H);
+        const col = w.read(x, y);
+        if (!col.length) continue;
+        const iv = col[Math.floor(r() * col.length)];
+        // (a cell of a run, at its ends or inside it; some runs taken whole)
+        if (r() < 0.2) for (let z = Math.ceil(iv.z0 - 0.5); z < Math.ceil(iv.z1 - 0.5); z++) cells.push({ x, y, z });
+        else cells.push({ x, y, z: Math.ceil(iv.z0 - 0.5) + Math.floor(r() * Math.max(1, iv.z1 - iv.z0)) });
+      }
+      const materials = new Set<number>(s % 2 ? [MAT.Brick, MAT.Concrete, MAT.Steel] : [MAT.Brick, MAT.Stone, MAT.External]);
+      await check(w, [{ cuts: [], take: { cells, materials } }], `take ${s}`);
+    }
+  }, 120_000);
+
+  test('a model seated: a dip filled with the top, its runs over what was there, fitted', async () => {
+    for (let s = 1; s <= 10; s++) {
+      const w = stampWorld(s * 401);
+      const r = rng(s * 19);
+      const base = 4 + Math.round(r() * 20);
+      const cols: { x: number; y: number; runs: Interval[] }[] = [];
+      const x0 = Math.floor(r() * 20);
+      const y0 = Math.floor(r() * 20);
+      for (let y = y0; y < y0 + 10; y++)
+        for (let x = x0; x < x0 + 10; x++) {
+          const runs: Interval[] = [];
+          let z = base;
+          for (let i = 0; i < 1 + Math.floor(r() * 3); i++) {
+            const z0 = z + (i ? Math.floor(r() * 3) : 0);
+            const z1 = z0 + 1 + Math.floor(r() * 4);
+            runs.push({ z0, z1, mat: [MAT.Steel, MAT.Rust, MAT.Concrete][Math.floor(r() * 3)] });
+            z = z1;
+          }
+          cols.push({ x, y, runs });
+        }
+      await check(w, [{ cuts: [], seat: { cols, base, aux: 15 << 4 } }], `seat ${s}`);
+    }
+  }, 120_000);
+});
+
 describe('the GPU asked of its columns (game/colquery.ts)', () => {
   test('how many columns of each box hold something built', async () => {
     const { ColumnQuery } = await import('../../src/game/colquery');
@@ -310,7 +425,7 @@ describe('the CPU copy (game/colcopy.ts)', () => {
     const cols = gpuCols(gpu.device, w);
     gpu.device.queue.writeBuffer(cols.slots, 0, w.packed.slots);
     let epoch = 0;
-    const copy = new ColumnCopy({ device: gpu.device, packed: w.packed, layers: () => cols.slots, epoch: () => epoch, readWhole: async () => new Float32Array(await gpu.read(cols.slots, w.packed.slots.byteLength)) }, 'sparse');
+    const copy = new ColumnCopy({ device: gpu.device, packed: w.packed, layers: () => cols.slots, layersNext: () => cols.slots, epoch: () => epoch, readWhole: async () => new Float32Array(await gpu.read(cols.slots, w.packed.slots.byteLength)) }, 'sparse');
     expect(() => copy.read(3, 3)).toThrow(/isn't held/);
     const fetching = copy.fetch([copy.chunkOf(3, 3)]);
     // (written while the fetch is in flight: the copy keeps this, not what the read brought)

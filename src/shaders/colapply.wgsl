@@ -17,6 +17,17 @@
 //                 the column's touching runs of a material joined, then fitted
 //   orphans       a thread a window column: the parts of its External intervals no claimed span covers become their
 //                 fallback material (aux; 0: stone), joined, fitted
+//   claim         (round 128, INT16) a thread a column: each span [z0, z1) cut out (sim/external.ts cutOut) and made
+//                 External with its fallback as aux, sorted, joined, fitted (claimColumn)
+//   take          (round 128) a thread a column: the listed whole cells of the masked materials taken out of it (the
+//                 voxel lattice's wake, physics/wake.ts takeCells), fitted
+//   seat          (round 128) a thread a column: a model's runs seated in it (world/models.ts seatColumn: a dip below
+//                 the base filled with the top's material, the runs over what was there), fitted
+//
+// Every kernel that writes a column writes it to `slots` (WorldGpu.layers) and, with P.twin, to `slotsNext`
+// (WorldGpu.layersNext) alike (round 128, INT16): the column passes (structure, edit, the layer pulls) write layersNext
+// for the chunks that run and copy it back over the layers whole, so a change to the layers alone was undone by the
+// next copy-back wherever its chunk didn't run (asleep, or outside the hybrid's `only` filter).
 //
 // `inp` (u32) holds every list at the offsets the params give; f32s as their bits.
 
@@ -29,7 +40,9 @@ struct Params {
   looseMat: array<vec4<u32>, 2>,
   /** depositAdd: entries (x, y, amount, mat); orphans: claimed column keys (sorted), their (first, count), spans */
   nDep: u32, depOff: u32, nKeys: u32, keyOff: u32,
-  refOff: u32, spanOff: u32, pad0: u32, pad1: u32,
+  refOff: u32, spanOff: u32, twin: u32, maskLo: u32,
+  /** take: the materials taken (bits 32..63); seat: the base and the new runs' aux */
+  maskHi: u32, seatBase: f32, seatAux: u32, pad0: u32,
 }
 
 @group(0) @binding(0) var<uniform> P: Params;
@@ -39,6 +52,8 @@ struct Params {
 /** 8 words an entry: key + 1 (0: empty), cells, six votes */
 @group(0) @binding(4) var<storage, read_write> hash: array<atomic<u32>>;
 @group(0) @binding(5) var<storage, read_write> deposit: array<vec4<f32>>;
+/** WorldGpu.layersNext, laid out as `slots` (written with P.twin) */
+@group(0) @binding(6) var<storage, read_write> slotsNext: array<vec4<u32>>;
 
 const MAX_K: u32 = 16u;
 /** a column's intervals while changed: K (16 at most) plus a split a cut (the host keeps an op's cuts to 32) */
@@ -100,7 +115,23 @@ fn store(b: vec2<u32>, a: ptr<function, array<vec4<u32>, MAX_IV>>, n0: u32) {
     n = k;
   }
   for (var s = 0u; s < k; s++) {
-    if (s < n) { slots[b.x + s] = vec4<u32>((*a)[s].xyz, 0u); } else { slots[b.x + s] = vec4<u32>(0u); }
+    var v = vec4<u32>(0u);
+    if (s < n) { v = vec4<u32>((*a)[s].xyz, 0u); }
+    slots[b.x + s] = v;
+    if (P.twin != 0u) { slotsNext[b.x + s] = v; }
+  }
+}
+
+/** `a` (n intervals) sorted by z0, stable (insertion) */
+fn sortIv(a: ptr<function, array<vec4<u32>, MAX_IV>>, n: u32) {
+  for (var i = 1u; i < n; i++) {
+    let v = (*a)[i];
+    var j = i;
+    while (j > 0u && z0Of((*a)[j - 1u]) > z0Of(v)) {
+      (*a)[j] = (*a)[j - 1u];
+      j--;
+    }
+    (*a)[j] = v;
   }
 }
 
@@ -361,4 +392,142 @@ fn orphans(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (!changed) { return; }
   let nj = join(&out, min(m, MAX_IV));
   store(b, &out, nj);
+}
+
+@compute @workgroup_size(64)
+fn claim(@builtin(global_invocation_id) gid: vec3<u32>) {
+  if (gid.x >= P.nOps) { return; }
+  let o = P.opOff + gid.x * 4u;
+  let b = colBase(inp[o], inp[o + 1u]);
+  let s0 = inp[o + 2u];
+  let ns = inp[o + 3u];
+  var a: array<vec4<u32>, MAX_IV>;
+  var n = load(b, &a);
+  // (each span in turn — sim/external.ts claimColumn: cut out, then External with its fallback as aux)
+  for (var s = 0u; s < ns; s++) {
+    let so = P.cutOff + (s0 + s) * 4u;
+    let cz0 = f(so);
+    let cz1 = f(so + 1u);
+    var nx: array<vec4<u32>, MAX_IV>;
+    var m = 0u;
+    for (var i = 0u; i < n; i++) {
+      let v = a[i];
+      let z0 = z0Of(v);
+      let z1 = z1Of(v);
+      if (z1 <= cz0 + EPS_X || z0 >= cz1 - EPS_X) { if (m < MAX_IV) { nx[m] = v; } m++; continue; }
+      if (z0 < cz0 - EPS_X) { if (m < MAX_IV) { nx[m] = vec4<u32>(v.x, bitcast<u32>(cz0), v.z, 0u); } m++; }
+      if (z1 > cz1 + EPS_X) { if (m < MAX_IV) { nx[m] = vec4<u32>(bitcast<u32>(cz1), v.y, v.z, 0u); } m++; }
+    }
+    if (m < MAX_IV) { nx[m] = iv(cz0, cz1, MAT_EXTERNAL, inp[so + 2u]); }
+    m++;
+    a = nx;
+    n = min(m, MAX_IV);
+  }
+  sortIv(&a, n);
+  store(b, &a, join(&a, n));
+}
+
+/** is material m one the take stage's mask holds */
+fn masked(m: u32) -> bool {
+  if (m < 32u) { return ((P.maskLo >> m) & 1u) != 0u; }
+  if (m < 64u) { return ((P.maskHi >> (m - 32u)) & 1u) != 0u; }
+  return false;
+}
+
+@compute @workgroup_size(64)
+fn take(@builtin(global_invocation_id) gid: vec3<u32>) {
+  if (gid.x >= P.nOps) { return; }
+  let o = P.opOff + gid.x * 4u;
+  let b = colBase(inp[o], inp[o + 1u]);
+  let c0 = inp[o + 2u];
+  let nc = inp[o + 3u];
+  var a: array<vec4<u32>, MAX_IV>;
+  let n = load(b, &a);
+  var out: array<vec4<u32>, MAX_IV>;
+  var m = 0u;
+  for (var i = 0u; i < n; i++) {
+    let v = a[i];
+    if (!masked(matOf(v))) { if (m < MAX_IV) { out[m] = v; } m++; continue; }
+    // (layout.ts cellRange: the cells whose centre lies inside it; the runs of them kept, at the ends its own z0, z1)
+    let e0 = i32(ceil(z0Of(v) - 0.5));
+    let e1 = i32(ceil(z1Of(v) - 0.5));
+    var run = -1;
+    for (var z = e0; z <= e1; z++) {
+      var gone = false;
+      for (var c = 0u; c < nc; c++) { gone = gone || i32(inp[P.cutOff + c0 + c]) == z; }
+      let keep = z < e1 && !gone;
+      if (keep && run < 0) { run = z; }
+      if (!keep && run >= 0) {
+        var lo = f32(run);
+        if (run == e0) { lo = z0Of(v); }
+        var hi = f32(z);
+        if (z == e1) { hi = z1Of(v); }
+        if (m < MAX_IV) { out[m] = vec4<u32>(bitcast<u32>(lo), bitcast<u32>(hi), v.z, 0u); }
+        m++;
+        run = -1;
+      }
+    }
+  }
+  store(b, &out, min(m, MAX_IV));
+}
+
+@compute @workgroup_size(64)
+fn seat(@builtin(global_invocation_id) gid: vec3<u32>) {
+  if (gid.x >= P.nOps) { return; }
+  let o = P.opOff + gid.x * 4u;
+  let b = colBase(inp[o], inp[o + 1u]);
+  let r0 = inp[o + 2u];
+  let nr = inp[o + 3u];
+  var a: array<vec4<u32>, MAX_IV>;
+  var n = load(b, &a);
+  // (a dip below the base filled up to it with the column's top material)
+  if (n > 0u && z1Of(a[n - 1u]) < P.seatBase && n < MAX_IV) {
+    a[n] = iv(z1Of(a[n - 1u]), P.seatBase, matOf(a[n - 1u]), P.seatAux);
+    n++;
+  }
+  // (models.ts mergeColumn: what was there cut round every run, the runs added, sorted, touching runs of a material joined)
+  var out: array<vec4<u32>, MAX_IV>;
+  var m = 0u;
+  for (var i = 0u; i < n; i++) {
+    var pieces: array<vec2<f32>, 24>;
+    var np = 1u;
+    pieces[0] = vec2<f32>(z0Of(a[i]), z1Of(a[i]));
+    for (var r = 0u; r < nr; r++) {
+      let rz0 = f(P.cutOff + (r0 + r) * 4u);
+      let rz1 = f(P.cutOff + (r0 + r) * 4u + 1u);
+      var nx: array<vec2<f32>, 24>;
+      var q = 0u;
+      for (var p = 0u; p < np; p++) {
+        let pc = pieces[p];
+        if (rz1 <= pc.x || rz0 >= pc.y) { if (q < 24u) { nx[q] = pc; } q++; continue; }
+        if (pc.x < rz0) { if (q < 24u) { nx[q] = vec2<f32>(pc.x, rz0); } q++; }
+        if (pc.y > rz1) { if (q < 24u) { nx[q] = vec2<f32>(rz1, pc.y); } q++; }
+      }
+      pieces = nx;
+      np = min(q, 24u);
+    }
+    for (var p = 0u; p < np; p++) {
+      if (m < MAX_IV) { out[m] = vec4<u32>(bitcast<u32>(pieces[p].x), bitcast<u32>(pieces[p].y), a[i].z, 0u); }
+      m++;
+    }
+  }
+  for (var r = 0u; r < nr; r++) {
+    let ro = P.cutOff + (r0 + r) * 4u;
+    if (m < MAX_IV) { out[m] = iv(f(ro), f(ro + 1u), inp[ro + 2u], P.seatAux); }
+    m++;
+  }
+  m = min(m, MAX_IV);
+  sortIv(&out, m);
+  // (exactly touching, one material: one — the lower one's aux kept)
+  var k = 0u;
+  for (var i = 0u; i < m; i++) {
+    let v = out[i];
+    if (k > 0u && out[k - 1u].y == v.x && matOf(out[k - 1u]) == matOf(v)) {
+      out[k - 1u] = vec4<u32>(out[k - 1u].x, v.y, out[k - 1u].z, 0u);
+      continue;
+    }
+    out[k] = v;
+    k++;
+  }
+  store(b, &out, k);
 }

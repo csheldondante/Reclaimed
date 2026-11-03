@@ -26,7 +26,7 @@ import { BUILD_FRAMES, type RockDraw, type RockMesh } from '../render/rockmesh';
 import type { Physics } from '../physics/physics';
 import { TUNE, worldG } from '../tune/params';
 import { record } from '../gpu/cpustat'; // (round 100, hitchrec: timing)
-import { ExternalRegistry, OWNER_ROCK, orphanColumn, releaseSpan, type ExternalCol, type ExternalInstance } from '../sim/external';
+import { claimColumn, ExternalRegistry, OWNER_ROCK, orphanColumn, releaseSpan, type ExternalCol, type ExternalInstance } from '../sim/external';
 import { fieldMeshed } from '../world/materials';
 import { Solver } from '../solver/solver';
 import { ROUTING, solverVariant, type Routing, type SolverVariant } from '../solver/variant';
@@ -241,6 +241,7 @@ export class Integrity {
         device: core.host.gpu.device,
         packed: core.packed,
         layers: () => core.world.layers,
+        layersNext: () => core.world.layersNext,
         epoch: () => core.windowEpoch,
         readWhole: () => core.readBuffer('layers'),
         // (round 80: a column written under a sleeping chunk wakes it — its surface, its water, its slumping)
@@ -248,7 +249,7 @@ export class Integrity {
       },
       'kept',
     );
-    this.gpuEdit = new ColumnApply(core.host.gpu.device);
+    this.gpuEdit = core.columnApply;
     this.query = new ColumnQuery(core.host.gpu.device);
     // (round 120: judge B's pipelines made ahead of the first cut)
     void this.judge.warm?.(core.host.gpu.device);
@@ -307,6 +308,8 @@ export class Integrity {
           read: (x, y) => this.cols.read(x, y),
           write: (x, y, col) => this.writeColumn(x, y, col),
           release: (spans) => this.edit([{ cuts: [], release: spans }]),
+          // (round 128, INT16: a claim is the GPU's stamp too — into the layers and layersNext alike)
+          claim: (spans) => this.edit([{ cuts: [], claim: spans }]),
         });
         // (round 110, BACKLOG MI5) one cut or found hanging free wakes, its own mesh as it lay: not ground again
         ext.owner(OWNER_ROCK, { name: 'rock', onLost: (inst, why) => this.wakeResting(inst, why) });
@@ -2559,7 +2562,7 @@ export class Integrity {
 
   /** (round 120, JB6) the GPU's columns as colapply and colquery take them */
   private gpuCols(): GpuColumns {
-    return { slots: this.core.world.layers, chunks: this.core.world.chunks, packed: this.core.packed };
+    return this.core.columnsGpu();
   }
 
   /**
@@ -2568,7 +2571,8 @@ export class Integrity {
    * so it stays the GPU's. The columns changed are woken.
    */
   private edit(stages: ApplyStage[]): void {
-    if (!stages.some((s) => s.cuts.length || s.spill?.length || s.deposits?.length || s.release?.length)) return;
+    if (!stages.some((s) => s.cuts.length || s.spill?.length || s.deposits?.length || s.release?.length || s.claim?.length)) return;
+    if (stages.some((s) => s.take || s.seat)) throw new Error('Integrity.edit: take and seat are WorldCore.stampColumns\' (the copy isn\'t told of them)');
     const ring = this.core.ring;
     this.gpuEdit.run(this.gpuCols(), stages, { deposit: this.core.world.deposit, pages: ring.slots(0, 0, this.core.dims.w, this.core.dims.h) });
     const zMax = this.core.dims.zMax;
@@ -2590,6 +2594,17 @@ export class Integrity {
         if (!this.cols.has(r.x, r.y)) continue;
         const out = releaseSpan(this.cols.read(r.x, r.y), r, r.fallback, r.toAir);
         if (out) this.cols.mirror(r.x, r.y, out);
+      }
+      const claims = new Map<number, { z0: number; z1: number; aux: number }[]>();
+      for (const c of st.claim ?? []) {
+        const k = c.y * 65536 + c.x;
+        claims.set(k, [...(claims.get(k) ?? []), c]);
+      }
+      for (const [k, cs] of claims) {
+        const x = k % 65536;
+        const y = Math.floor(k / 65536);
+        touched.add(k);
+        if (this.cols.has(x, y)) this.cols.mirror(x, y, claimColumn(this.cols.read(x, y), cs));
       }
     }
     // (round 80: the chunks under what changed woken — their surface, their water, their slumping)

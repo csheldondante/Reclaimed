@@ -72,6 +72,11 @@ export interface ColumnAccess {
    * GPU, colapply.wgsl `release`) — no column read. Absent: the registry reads and writes each column (a CPU world).
    */
   release?(spans: (ExternalCol & { fallback: number; toAir: boolean })[]): void;
+  /**
+   * (round 128, INT16) Make these spans External in the columns themselves (claimColumn's rule; the GPU's, colapply.wgsl
+   * `claim`, into the layers and layersNext alike). Absent: the registry writes each column (a CPU world).
+   */
+  claim?(spans: (ExternalCol & { aux: number })[]): void;
 }
 
 const EPS = 1e-3;
@@ -88,6 +93,20 @@ export function cutOut(col: Interval[], z0: number, z1: number): Interval[] {
     if (iv.z1 > z1 + EPS) out.push({ ...iv, z0: z1 });
   }
   return out;
+}
+
+/**
+ * (round 128, INT16) The column with each span [z0, z1) cut out and made External, its aux the span's (the thing's
+ * fallback), its touching runs joined. The rule ExternalRegistry.claim applies on the CPU and colapply.wgsl `claim` on
+ * the GPU (test/gpu/colapply.test.ts holds them equal).
+ */
+export function claimColumn(col: Interval[], spans: { z0: number; z1: number; aux: number }[]): Interval[] {
+  let out = col;
+  for (const c of spans) {
+    out = cutOut(out, c.z0, c.z1);
+    out.push({ z0: c.z0, z1: c.z1, mat: MAT.External, aux: c.aux & 0xff });
+  }
+  return join(out);
 }
 
 /**
@@ -196,8 +215,11 @@ export class ExternalRegistry {
    */
   claim(owner: OwnerId, want: ExternalCol[], fallback: number = MAT.Stone): ExternalInstance | null {
     const cols: ExternalCol[] = [];
+    // (round 128: the GPU's stamp, given — what this claim takes in a column read before it's stamped is matter here)
+    const stamp = this.cols.claim ? new Map<number, Interval[]>() : null;
     for (const w of want) {
-      const col = this.cols.read(w.x, w.y);
+      const k = w.y * 65536 + w.x;
+      const col = stamp?.has(k) ? [...this.cols.read(w.x, w.y), ...stamp.get(k)!] : this.cols.read(w.x, w.y);
       // (the free spans of [z0, z1): what isn't matter)
       let free: [number, number][] = [[w.z0, w.z1]];
       for (const iv of col) {
@@ -213,18 +235,17 @@ export class ExternalRegistry {
         }
         free = next;
       }
-      let out = col;
+      const spans: { z0: number; z1: number; aux: number }[] = [];
       for (const [a, b] of free) {
         if (b - a < 0.05) continue;
-        out = cutOut(out, a, b);
-        out.push({ z0: a, z1: b, mat: MAT.External, aux: fallback & 0xff });
+        spans.push({ z0: a, z1: b, aux: fallback & 0xff });
         cols.push({ x: w.x, y: w.y, z0: a, z1: b });
       }
-      if (out !== col) {
-        out.sort((p, q) => p.z0 - q.z0);
-        this.cols.write(w.x, w.y, join(out));
-      }
+      if (!spans.length) continue;
+      if (stamp) stamp.set(k, [...(stamp.get(k) ?? []), ...spans.map((c) => ({ z0: c.z0, z1: c.z1, mat: MAT.External, aux: c.aux }))]);
+      else this.cols.write(w.x, w.y, claimColumn(col, spans));
     }
+    if (stamp && cols.length) this.cols.claim!(cols.map((c) => ({ ...c, aux: fallback & 0xff })));
     if (!cols.length) return null;
     const inst: ExternalInstance = { id: this.nextId++, owner, cols, fallback };
     this.list.set(inst.id, inst);

@@ -16278,3 +16278,48 @@ test/gpu/integrity.test.ts's blows now look at the GPU's columns (the CPU no lon
   call (Pages build of `jb6`, `?physbench=1&pairs=lattice:runs,lattice:sections`).
 - Gate: typecheck; `npm test` 351 passed (2 expected fail, 5 skipped) (unit and GPU on Dawn); `npm run smoke` atlas, playground, rocklab; the atlas
   with judge B, a pillar's foot cut (it toppled as one rock-mesh body) and a tanker dropped (C:/Projects/shots88/jb6/).
+
+## 2026-11-03 — round 128 (merge128): jb6 on places; INT16 fixed the jb6 way
+
+**Why.** The user (round 128): "I didn't realize that the physics work was never merged. It should have been. Making
+the proper physics engine was intended to be future work but not block all of the improvements of that branch." PH1
+stays future work. And INT16 (a town's hall turned to rubble seconds after play): the user approved writing both
+buffers but asked why a CPU copy and not a GPU stamp — the system is meant to be fully GPU resident.
+
+**The merge.** `jb6` (63c7373, 5 commits on 62a7345) into places (2aacb50, 131 commits since): conflicts only in
+docs/BRANCHES.md and docs/DEVLOG.md (both appended at the end: both kept, places first). The code merged clean
+(level.ts, common.wgsl's Tune: places added no tune fields since). No column writer was added on places after jb6
+branched.
+
+**INT16, the cause** (the hallfall branch's diagnosis, confirmed here). The column passes (structure, edit, the layer
+pulls) write layersNext for the chunks that run and copy it back over the layers whole. A change written to the layers
+alone survived only if its chunk ran before the next copy-back; Sleep.wake refuses chunks outside the hybrid's `only`
+filter, so a settlement's claim (ExternalRegistry.claim → Integrity.writeColumn → ColumnCopy.write: the layers only) was
+undone within a tick, the registry's verify found the building cut, and settle/view.ts lost() let it go to rubble. jb6
+didn't route claims through the GPU, and its own GPU changes (colapply's cuts, release, orphans) wrote the layers only
+too: the same hole. hallcheck on merge128 before the fix: **3 buildings lost of 318 claimed over 6 towns** (seed 0 towns
+1 and s53, seed 7 town 1; nothing touched them).
+
+**The fix, the jb6 way.** The CPU says what changes; the GPU changes its columns, into the layers and the layersNext
+alike:
+- colapply.wgsl's `store` writes both buffers (GpuColumns.next = WorldGpu.layersNext; ColumnApply throws without it),
+  so every jb6 change (cuts, spills, release, orphans) is safe too.
+- New stamps: `claim` (sim/external.ts claimColumn: each span cut out, External with its fallback as aux, joined; the
+  registry's claim calls ColumnAccess.claim → Integrity.edit, the kept copy mirrored as for jb6's changes), `take`
+  (layout.ts takeCells: the voxel lattice's wake, physics/wake.ts) and `seat` (models.ts seatColumn: the editor's
+  placeModel), through one ColumnApply on the WorldCore (`core.columnApply`, `core.stampColumns`).
+- The writers that still make a whole column on the CPU (a baked rigid body, the falling pieces: ColumnCopy.write), the
+  restore and replace of chunks (WorldCore) and WorldGpu's first upload write both buffers. The table of every writer is
+  in ARCHITECTURE "Who writes the columns".
+- Left (BACKLOG M128-1, M128-2): the bake and the falling pieces as GPU stamps; the wake's and placeModel's whole-layers
+  readback (they decide on the CPU). INT8's hollow-claim risk is unchanged: a stamp fits a column to K as before.
+
+Tests: test/gpu/colapply.test.ts — claims, cells taken and a model seated on random columns (water, gaps, External,
+built runs) equal to claimColumn/takeCells/seatColumn word for word, and the layersNext equal to the layers after every
+stage; test/gpu/cpu-write-asleep.test.ts (ported from hallfall) — with every chunk asleep and every system stepping, a
+claim, a take and a seat survive 60 ticks, and a write to the layers alone is still undone (the cause, kept as a test).
+`npm test` 668 passed (2 expected fail, 5 skipped); typecheck clean.
+
+**Not all of INT16.** hallcheck after this fix: still 3 lost of 318 (the same towns). scripts/hallprobe.mjs (from hallfall)
+shows a second mechanism: the lost building's chunk is awake (in the filter), and one of its columns has the top of its
+External run lowered (111.38 to 110.93) — not the copy-back. Followed up in the next commit.

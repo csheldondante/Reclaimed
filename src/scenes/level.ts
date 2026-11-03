@@ -92,7 +92,7 @@ const ARRIVE_PREP = new URLSearchParams(location.search).get('arriveprep') !== '
 /** (round 98) ?flyspeed=: the free camera's speed (cells a second; Shift 120) — on a phone, the speed ✈'s ⇧ flies at */
 const FLY_SPEED = Number(new URLSearchParams(location.search).get('flyspeed') ?? 35);
 import { cpuLine, cpuStats, frameSteps, record, timed } from '../gpu/cpustat';
-import { type Interval, CHUNK, columnSlots, K_HEADROOM, packColumn, readColumn, SLOT_WORDS, sfMat, sfZ, sfPack, windowZMax } from '../world/layout';
+import { type Interval, CHUNK, columnSlots, K_HEADROOM, readColumn, SLOT_WORDS, sfMat, sfZ, sfPack, windowZMax } from '../world/layout';
 import { modelById, modelColumns, restingBase, seatColumn, type VoxelModel } from '../world/models';
 import { Integrity, type Grab } from '../game/integrity';
 import { WorldVox } from '../game/fracture';
@@ -3431,31 +3431,26 @@ export class LevelScene implements Scene {
       this.hud.say('Too high to place that here.', 2);
       return;
     }
-    const writes: { at: number; data: Uint32Array }[] = [];
+    // placed at full support: the structure system bleeds it away only where something is really unsupported
+    // (starting at 0, every overhang would collapse before support could spread to it)
+    const aux = 15 << 4;
+    const seat: { x: number; y: number; runs: { z0: number; z1: number; mat: number }[] }[] = [];
     for (let fy = 0; fy < fd; fy++)
       for (let fx = 0; fx < fw; fx++) {
         const x = x0 + fx;
         const y = y0 + fy;
         const runs = cols[fx + fw * fy];
         if (!runs.length || !inMap(x, y)) continue;
-        const merged = seatColumn(
-          readColumn(packed, slots, x, y),
-          runs.map((r) => ({ z0: r.z0 + base, z1: r.z1 + base, mat: r.mat })),
-          base,
-          // placed at full support: the structure system bleeds it away only
-          // where something is really unsupported (starting at 0, every
-          // overhang would collapse before support could spread to it)
-          15 << 4,
-        );
-        const { base: at, k } = columnSlots(packed, x, y);
-        if (merged.length > k) {
+        const at = runs.map((r) => ({ z0: r.z0 + base, z1: r.z1 + base, mat: r.mat }));
+        // (the column as read: room for it checked here; the GPU seats it in its own column)
+        if (seatColumn(readColumn(packed, slots, x, y), at, base, aux).length > columnSlots(packed, x, y).k) {
           this.hud.say('Too many layers here to fit that model.', 2);
           return;
         }
-        writes.push({ at, data: packColumn(merged, k) });
+        seat.push({ x, y, runs: at });
       }
-    const { device } = this.host.gpu;
-    for (const w of writes) device.queue.writeBuffer(core.world.layers, w.at * SLOT_WORDS * 4, w.data);
+    // (round 128, INT16: the GPU's stamp — colapply.wgsl seat, seatColumn's rule — into the layers and layersNext alike)
+    core.stampColumns([{ cuts: [], seat: { cols: seat, base, aux } }]);
     core.sleep?.wake(x0 + fw / 2, (y0 + fd / 2) * ROW_H, Math.max(fw, fd) + 16, Sleep.EVENT_S, performance.now() / 1000);
     // (the loose ground under it stays in the layers, under the model)
     if (!this.physics) this.integrity?.markBox(x0 - 2, y0 - 2, x0 + fw + 2, y0 + fd + 2);
