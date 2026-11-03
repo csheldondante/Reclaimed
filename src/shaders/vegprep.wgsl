@@ -220,7 +220,7 @@ fn treeInstance(c: vec2<u32>, top: f32, pl: VegPlan) {
     // (round 125, forest: the trees' real reach — the elder ~32 tall and ~16 across its crown — for the cull)
     let tall = (pl.trunk + pl.crown) * 1.15 + 2.0;
     // (round 128: its state — 2 burned (a snag stands), 1 dead (browned: leafless, grey), 0 alive)
-    let sn = textureLoad(snagTex, vec2<i32>(c), 0).x;
+    let sn = textureLoad(snagTex, texCol(vec2<i32>(c)), 0).x;
     let st = select(select(0.0, 1.0, wilt[colIdx(c.x, c.y)].y > 0.6), 2.0, sn > 0.0);
     floraInstanceS(r, c, top, age, 0.05, tall, select(9.0, 16.0, pl.species == 3u) * TREE_SCALE, st);
     return;
@@ -335,7 +335,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     if (lay > 0.0 && !buriedAt(vec2<i32>(id.xy))) { top = f32(sfZ(s)) + lay; }
     let gm = groundMatAt(vec2<i32>(id.xy), sfMat(s));
     // (round 128: a burned wood's snag keeps its tree standing, charred — the plan as a wood's)
-    let snag = textureLoad(snagTex, vec2<i32>(id.xy), 0).x;
+    let snag = textureLoad(snagTex, texCol(vec2<i32>(id.xy)), 0).x;
     pl = vegPlan(id.x, id.y, select(veg[i], max(veg[i], 3.6), snag > 0.0), gm);
     plF = pl;
     // (perfopt, ?tufts=0: no grass tufts — quarter-cell boxes, a third of a pixel at low; the mesh's plant cover draws the grass)

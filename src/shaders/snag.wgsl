@@ -12,7 +12,10 @@
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
   let i = colIdx(id.x, id.y);
-  var s = textureLoad(snagIn, vec2<i32>(id.xy), 0).x;
+  // (round 128: the texel of the column — texCol: the window's pages, as the streamer moves them; raw id.xy scrambled
+  // the snags once the window slid)
+  let tc = texCol(vec2<i32>(id.xy));
+  var s = textureLoad(snagIn, tc, 0).x;
   let v = veg[i];
   if (fire[i] > 0.15 && v >= 3.0) {
     s = 1.0;
@@ -20,5 +23,5 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // (a wood grown back: a living tree again; else the snag weathers and falls, ~a season of play at 1x)
     if (v >= 3.6) { s = 0.0; } else { s = max(0.0, s - 0.00004 * simStep()); }
   }
-  textureStore(snagOut, vec2<i32>(id.xy), vec4<f32>(s, 0.0, 0.0, 0.0));
+  textureStore(snagOut, tc, vec4<f32>(s, 0.0, 0.0, 0.0));
 }

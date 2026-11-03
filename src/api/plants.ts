@@ -252,7 +252,7 @@ export class Plants {
   private snagAt(cx: number, cy: number): number {
     const t = this.mirror.f32('snag');
     if (!t) return 0;
-    return t[this.core.ring.idx(cx, cy) * 4] ?? 0;
+    return t[this.core.ring.t(cx, cy) * 4] ?? 0;
   }
 
   /** (round 128) the willow at window column (cx, cy), or null (as of the mirror's last read) */

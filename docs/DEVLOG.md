@@ -17026,3 +17026,8 @@ noisy; the phone bench decides cost — Pages build of `merge128`, `?bench=1` an
   mean |dI| / share of pixels changing > 12 — static 3.9-4.1 / 4.8-5.9% (the grass's own life, particles), sway
   7.9-10.7 / 13-19%, 1A 9.6-11.7 / 17-24%, 1C 11.2-13.1 / 20-25%, 1A1C 10.6-14.8 / 19-30%. The motion grows row on row
   as designed; whether 1C is rubbery is for the eye (the GIFs).
+- Why the burned trees didn't show (round 128, the burn shots): the snag texture was read and written at the raw
+  window column (id.xy) while every texel-a-column texture lives at texCol (the window's pages: the streamer moves them
+  page by page, and the ring's offset changes on a slide) — so after the camera moved and the window slid, the snags
+  stood under other columns, and the trees on the burn read none. snag.wgsl and vegprep.wgsl now use texCol; the
+  flora plan's CPU mirror reads the snag at ring.t (the texel's index), not ring.idx (a per-column buffer's).
