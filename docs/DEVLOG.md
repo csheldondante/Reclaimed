@@ -16339,3 +16339,15 @@ an undermined claim should go to the judge is BACKLOG M128-5. The heap under the
 
 Test: test/gpu/external-take.test.ts — claims stamped on two columns, sand put on one, builders' takes off both: the
 claims' z0/z1 and aux exactly as they were, the sand taken (fails without the edit.wgsl change: the claim lost its top).
+
+**tilegate rebased on places 2aacb50** (a commit of its own: the gate was blind). The committed baselines were merge120's
+(950d419, round 120); places 2aacb50 failed against them as merge128 did (phone z2.2/z1.3 42%, desktop z1.3 37%, z2.2
+21% changed; the near zooms 1-4%). Rewritten from places' own run (`--update`, places 2aacb50 unchanged,
+C:/Projects/shots88/merge128/tilegate-rebase/), looked at beside the old ones: the same spot and the same scene — the
+spires, the road, the town by the river — the near zooms differing in grass, flowers and the trees' sway; the wide zooms
+framed differently (they're drawn at the zoom floor now: z1.3 at 1.95 on the desktop, 2.67 on the phone) and showing the
+towns, fields and land places gained in rounds 121-127. Places' own run fails the absolute thresholds on this shared
+iGPU, which is the baseline merge128 is judged against (a diff, not the absolute bar — main, round 128; fast-pan coverage
+is M120-1): desktop-z2.2 parked undrawn 0.17%; desktop-z5 fast pan undrawn 3.99% / far land 9.98%; desktop-z8 fast pan
+far land 1.07%; phone-z3.5 and z2.2 slow pan far land 1.27% / 1.18%; phone-z8 fast pan undrawn 0.16%; w384-phone-z5 fast
+pan undrawn 27.8% / far land 39.6%; run-desktop-z14 p99 38.5 ms (max 40.1), run-desktop-z8 p99 23.1 ms.
