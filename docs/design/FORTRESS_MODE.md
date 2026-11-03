@@ -129,3 +129,10 @@ dealer (runloop / opportunities); recipes and tags (contracts/recipe.ts); the st
 | Physics / walls | judges, rigid bodies, solver, craters, fire through towns | game/integrity.ts, solver/ | 4 | no wall damage tied to the economy, no repair job |
 
 The five biggest gaps: an economy runtime (inventories, recipes over time, hauling); typed painted structures; jobs and population; ranged and army combat; the fortress's time and threat loop (day counter, plan pause, a siege in N days).
+
+## The building mode (the user, round 128c, verbatim: the rule for every build plan)
+
+> "Please remember the building mode I want is to select the what then plan it with tiles like townscraper.  That's imporant for making towns with a bunch of small huts or apartments and for making your fortress which sounds like a good thing to keep adding onto for power."
+
+Select WHAT (the structure type), then plan its shape with Townscaper-like stacking tiles: many small huts or
+apartments make a town; the fortress (the power tower) is something you keep adding onto for more power.
