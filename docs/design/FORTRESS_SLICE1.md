@@ -48,3 +48,14 @@ Heaps can wash or blow away (snapshot the ledger from them when a build starts);
 4. Ore: a share of quarry stone, or quarry cells on marked veins?
 5. Walls: block stacks (flat top) or following cell edges?
 6. Repurposing out of slice 1?
+
+## The user's answers (round 128c, verbatim)
+
+> "1 Town start is fine but these don't seem meaningfully different other than starting with income and resources in stores maybe 2. I think we can tune this once it is payable 3. I would require grain or food per person yes 4. Sure but let's add ore deposits later it sounds pretty easy 5. No you need to make tiles that fit together 6. Yes but I don't think this sounds hard to add"
+
+- Start in a town (a town start mostly means starting with income and stores).
+- Day length and the army's timing: tuned once it's playable.
+- Food: grain (or food) required per person.
+- Ore: a share of quarry stone now; ore deposits soon after (easy).
+- Walls: wall TILES that fit together with their neighbours (Townscaper-style, auto-joined), not plain stacks.
+- Repurposing: out of slice 1 but soon after (not hard).
