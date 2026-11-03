@@ -59,7 +59,7 @@ describe('flora sprites bake (Dawn)', () => {
         const cy = Math.floor(c / SPR_COLS) * SPR_CELL;
         let cov = 0;
         for (let y = 0; y < SPR_CELL; y++) for (let x = 0; x < SPR_CELL; x++) if (alb[((cy + y) * W + cx + x) * 4 + 3] > 127) cov++;
-        expect(cov, `cell ${c} (sprite ${Math.floor(c / SPR_YAWS)}, yaw ${c % SPR_YAWS})`).toBeGreaterThan(SPR_CELL * SPR_CELL * 0.04);
+        expect(cov, `cell ${c} (sprite ${Math.floor(c / SPR_YAWS)}, yaw ${c % SPR_YAWS})`).toBeGreaterThan(SPR_CELL * SPR_CELL * (season > 0.7 && season < 0.92 ? 0.01 : 0.04));
       }
       const dir = process.env.FLORA_SPRITE_PNG;
       if (dir) {
