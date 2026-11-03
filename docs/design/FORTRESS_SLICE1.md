@@ -59,3 +59,4 @@ Heaps can wash or blow away (snapshot the ledger from them when a build starts);
 - Ore: a share of quarry stone now; ore deposits soon after (easy).
 - Walls: wall TILES that fit together with their neighbours (Townscaper-style, auto-joined), not plain stacks.
 - Repurposing: out of slice 1 but soon after (not hard).
+- The user, verbatim: "We can also have some that don't join like mideival row homes might not for example. I think the bricks we paint could also be tech dependent eventually. Not for the first draft though." → whether tiles join is per type (walls join; medieval row homes may stay separate units); tech-dependent brick sets later, the look kept data-driven.
