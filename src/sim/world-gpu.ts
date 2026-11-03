@@ -113,6 +113,12 @@ export class WorldGpu {
    * reads and clears it (Sleep.holdUnsettled keeps a woken chunk awake until it's under the tolerance).
    */
   readonly waterChange: GPUBuffer;
+  /**
+   * (round 128, treegen) Per chunk slot (2 048 at most), the strongest fire in it or within reach of its edge since the
+   * CPU last read it, as an f32's bits (atomicMax). firewatch.wgsl writes it (FireWatchSystem); the level reads and
+   * clears it (Sleep.holdBurning keeps a burning chunk awake and wakes the ones its fire reaches).
+   */
+  readonly fireChunks: GPUBuffer;
 
   // oil: second liquid, floats on water (oil system owns writes)
   readonly oil: GPUBuffer;
@@ -381,6 +387,7 @@ export class WorldGpu {
     this.flux = this.buf('flux', N * DIRS_BYTES, S);
     this.waterSource = this.buf('waterSource', N * 4, S);
     this.waterChange = this.buf('waterChange', 2048 * 4, S);
+    this.fireChunks = this.buf('fireChunks', 2048 * 4, S);
     device.queue.writeBuffer(this.water, 0, r.toStore(map.water));
     device.queue.writeBuffer(this.waterSource, 0, r.toStore(map.waterSource));
 

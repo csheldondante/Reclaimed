@@ -236,6 +236,37 @@ export class LevelScene implements Scene {
       },
     );
   }
+  /** (round 128, treegen) when the fire's hold was last read (world-gpu fireChunks), and whether a read is in flight */
+  private burnReadAt = 0;
+  private burnReading = false;
+  /** (round 128) the fire's per-chunk strength since the last read, cleared; burning chunks stay awake and the ones a
+   *  fire reaches wake (Sleep.holdBurning) — twice a second */
+  private readBurning(): void {
+    const now = performance.now() / 1000;
+    if (this.burnReading || now - this.burnReadAt < 0.5) return;
+    this.burnReadAt = now;
+    this.burnReading = true;
+    const dev = this.host.gpu.device;
+    const src = this.core.world.fireChunks;
+    const tmp = dev.createBuffer({ size: src.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const enc = dev.createCommandEncoder();
+    enc.copyBufferToBuffer(src, 0, tmp, 0, src.size);
+    enc.clearBuffer(src);
+    dev.queue.submit([enc.finish()]);
+    tmp.mapAsync(GPUMapMode.READ).then(
+      () => {
+        const ch = new Float32Array(tmp.getMappedRange().slice(0));
+        tmp.destroy();
+        this.burnReading = false;
+        this.sleep?.holdBurning(ch, performance.now() / 1000);
+      },
+      (e) => {
+        tmp.destroy();
+        this.burnReading = false;
+        ignoreTeardown(e);
+      },
+    );
+  }
   private completed = false;
   private saveTimer = 0;
   private speed: number;
@@ -1387,6 +1418,8 @@ export class LevelScene implements Scene {
       globals,
       nature: this.nature,
       powers: this.powers,
+      // (round 128: the chunks awake and held by fire — the burn demo's count)
+      sleepStats: () => ({ awake: this.sleep?.awake ?? null, burning: this.sleep?.burning ?? null }),
       readBuffer: (n: Parameters<WorldCore['readBuffer']>[0]) => core.readBuffer(n),
       probe: (...a: Parameters<WorldCore['probe']>) => core.probe(...a),
       integrity: () => this.integrity,
@@ -2511,6 +2544,7 @@ export class LevelScene implements Scene {
     } else globals.riverWet = this.riverWet.update(dt * this.speed, globals.season ?? 0, weather.storms);
     // (round 80) what's awake this frame: round the player (the camera's target), the events, the storms
     if (this.sleep && settleTol() > 0) this.readSettling();
+    if (this.sleep) this.readBurning();
     if (this.sleep) {
       globals.sleep = this.sleep.update(performance.now() / 1000, [camera.target[0], camera.target[1], 40], globals.events, weather.storms, core.sim.tick);
       globals.drowse = this.sleep.drowse;

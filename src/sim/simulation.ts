@@ -11,6 +11,7 @@ import {
   OilSystem,
   RenderFieldsSystem,
   FireSystem,
+  FireWatchSystem,
   StatsSystem,
   SwaySystem,
   WindFieldSystem,
@@ -101,6 +102,8 @@ export class Simulation {
       new ContaminationSystem(device, world, profiler),
       new MoistureSystem(device, world, profiler),
       new FireSystem(device, world, profiler),
+      // (round 128: a burning chunk stays awake — sim/sleep.ts holdBurning)
+      new FireWatchSystem(device, world, profiler),
       new SedimentSystem(device, world, profiler),
       new ClimateSystem(device, world, profiler),
       // (round 108, TC20: after the climate and the surface — it measures what they leave)

@@ -1067,6 +1067,15 @@ its edge:
   storms over 0.2 intensity, a slide's new chunks (1.5 s), everything
   after a slide in z (2 s), coarse events in sight, integrity's column
   writes, placed models (WorldCore.sleep). `?sleep=0` off.
+  (round 128, treegen) Fire holds its chunks: FireWatchSystem (firewatch.wgsl,
+  period 15, every column asleep or not) writes per chunk slot the strongest
+  fire (≥ 0.02) in it or within 3 columns of its edge into world-gpu
+  `fireChunks` (atomicMax of the f32 bits); the level reads and clears it
+  twice a second (LevelScene.readBurning) and Sleep.holdBurning keeps those
+  chunks awake 1.5 s past the read — a burning chunk stays awake, the one its
+  fire reaches wakes, and it sleeps on its usual time once the fire's out. No
+  cap (a big fire wakes every chunk it burns in); the hybrid's filter holds.
+  Before, a fire froze where it stood 8 s after the event that set it.
   (perfopt, round 83; the low tier's defaults from index.html, `?phone=0`
   off) `settle=0`: land that comes in doesn't wake to settle — drowsy at
   once; a river come in takes the pipes' steady flux for its levels while

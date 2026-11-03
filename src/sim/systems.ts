@@ -18,6 +18,7 @@ import contamWgsl from '../shaders/contamination.wgsl?raw';
 import moistureWgsl from '../shaders/moisture.wgsl?raw';
 import ecologyWgsl from '../shaders/ecology.wgsl?raw';
 import snagWgsl from '../shaders/snag.wgsl?raw';
+import fireWatchWgsl from '../shaders/firewatch.wgsl?raw';
 import renderFieldsWgsl from '../shaders/renderfields.wgsl?raw';
 import meshRegionWgsl from '../shaders/meshregion.wgsl?raw';
 import meshStateWgsl from '../shaders/meshstate.wgsl?raw';
@@ -455,6 +456,23 @@ export class SnagSystem implements SimSystem {
   encode(enc: GPUCommandEncoder): void {
     run(enc, this.prof, this.name, this.s, this.world);
     enc.copyTextureToTexture({ texture: this.world.snagNext }, { texture: this.world.snag }, { width: this.world.w, height: this.world.h });
+  }
+}
+
+/**
+ * (round 128, treegen) The fire's hold on sleep (firewatch.wgsl): per chunk slot, the strongest fire in it or near its
+ * edge, into world.fireChunks — read and cleared by the level (Sleep.holdBurning). Every column, asleep or not; four
+ * times a second of sim (period 15), cheap: a column that isn't burning returns at once.
+ */
+export class FireWatchSystem implements SimSystem {
+  readonly name = 'firewatch';
+  readonly period = 15;
+  private s;
+  constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
+    this.s = kernel(device, world, 'firewatch', fireWatchWgsl, { 3: 'read', 4: 'rw' }, { 3: world.fire, 4: world.fireChunks });
+  }
+  encode(enc: GPUCommandEncoder): void {
+    run(enc, this.prof, this.name, this.s, this.world);
   }
 }
 

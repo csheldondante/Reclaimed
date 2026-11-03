@@ -16993,3 +16993,15 @@ noisy; the phone bench decides cost — Pages build of `merge128`, `?bench=1` an
   holds; nothing toppled — the cut was small, as merge121's), a tanker dropped (small on screen), a town's building cut
   at its side (the town whole after 8 s; the bowl behind the editor panel). They show no breakage but don't show a
   collapse either — a scene that brings one down is JB8's.
+- A fire keeps its chunks awake (root fix in shared code; main approved, round 128). The burn shots showed the
+  lightning-set elder wood's fire field identical to 3 decimals from 20 s to 60 s: a woken chunk sleeps 8 s after its
+  event (sim/sleep.ts EVENT_S) and a sleeping chunk's fire is carried through unchanged — water has its hold
+  (holdUnsettled), fire had none. Now FireWatchSystem (firewatch.wgsl, period 15, every column, asleep or not) writes per
+  chunk slot the strongest fire in it or within 3 columns of its edge into world-gpu fireChunks; the level reads and
+  clears it twice a second and Sleep.holdBurning keeps those chunks awake 1.5 s past the read — the burning one, and
+  the one its fire is about to reach. Out (under 0.02), the chunk sleeps on its usual time. No cap (the no-caps rule):
+  the burn demo logs the chunks awake and held (window.reclaimed.sleepStats) as the desktop proxy. Test (Dawn,
+  fire-sleep.test.ts, the level's loop in sim time): a fire set near a chunk's edge in a wood still holds its chunk
+  awake at 12 s, its field still changing between 12 s and 40 s, burning in a neighbouring chunk by 40 s, while a
+  chunk woken by an event with nothing to burn is asleep at 12 s; with the hold call taken out the test fails ("the
+  burning chunk held awake at 12 s").

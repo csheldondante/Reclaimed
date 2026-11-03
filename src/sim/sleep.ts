@@ -66,6 +66,9 @@ export function settleTol(): number {
 }
 /** the longest a chunk is kept awake for its water still settling (s) */
 const SETTLE_MAX_S = 60;
+/** (round 128) how far past now a burning chunk is kept (s): longer than the level reads fireChunks (2 Hz) and the
+ *  watch writes it (4 Hz of sim), with room for a slow frame */
+const BURN_HOLD_S = 1.5;
 /** how far past now an unsettled chunk is kept (s): longer than the level reads waterChange */
 const SETTLE_HOLD_S = 0.75;
 
@@ -180,6 +183,28 @@ export class Sleep {
   }
   /** chunks kept awake at the last holdUnsettled */
   unsettled = 0;
+
+  /**
+   * (round 128, treegen) The fire's hold: per slot, the strongest fire in the chunk or near its edge since the last
+   * read (world-gpu fireChunks, firewatch.wgsl). A burning chunk stays awake BURN_HOLD_S past `now`, and a chunk its fire
+   * is reaching wakes — so a fire burns on and spreads chunk to chunk; once it's out (under firewatch's FIRE_HOLD) the
+   * chunk sleeps on its usual time. No cap: a big fire wakes every chunk it burns in (the rule: no caps). The hybrid's
+   * filter still holds (a chunk that may not wake doesn't). Returns the chunks held.
+   */
+  holdBurning(fire: Float32Array, now: number): number {
+    let held = 0;
+    for (let k = 0; k < this.until.length; k++) {
+      if (!(fire[k] > 0)) continue;
+      if (this.filter && !this.filter[k]) continue;
+      if (this.until[k] <= now) this.wokeAt[k] = now;
+      this.until[k] = Math.max(this.until[k], now + BURN_HOLD_S);
+      held++;
+    }
+    this.burning = held;
+    return held;
+  }
+  /** chunks held awake by fire at the last holdBurning */
+  burning = 0;
 
   /** land come in everywhere (the first window, a slide in z, a warp): woken to settle for `secs` — or, with
    *  ?settle=0, only drowsy (asleep at once, its layers carried through) */
