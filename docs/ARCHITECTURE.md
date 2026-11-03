@@ -2219,6 +2219,14 @@ abilities and moves and puzzles and enemies and camera modes so we can iterate m
   `Cut.sliceShape` → render.wgsl `Camera.sliceShape` (one vec4 after `boxes`; CAMERA_CUT_BYTES + 16): `sliced()` only
   within the radius, `sliceRim()`/`withRim()` light the band just under the cut (fsBox, meshShade). Absent: round 83's
   whole-view slice, no rim.
+- **Auto (round 128, `auto`, `autocity`; the user's camera intent)**: `AutoMode` (stage 0.5, after the chase) samples
+  the hero's point and three rings of twelve out to `radius`: each sample's height over the hero's floor (the land's
+  top or a tree's crown, SightWorld.top and props), counted 0 under `low` and 1 from `tall`, the mean is how much
+  sticks up; the zoom is the chase's times field..close by it, re-aimed only past a dead band and eased (in faster than
+  out). The share of samples whose land stands `wallAt` over the floor and isn't built (`SightWorld.built?`, new: the
+  column's top is concrete, brick, plaster or steel; `autocity` counts buildings too) tilts the view toward `tilt`.
+  Every number in CAM_TUNING's `auto` group. The tour station (play/lab/terrains.ts `TOUR`) rides field, shrubs, low
+  trees, the old woods, the canyon plateau's wall, a city street.
 - **PlaySession** (play/session.ts) owns a `CameraRig` instead of the bare Chase (`SessionDeps.cam`; absent: the chase
   alone, as before, no signal HUD); `session.chase` still reads the chase; `steer` lets the lab's autopilot hold the
   stick.
@@ -2617,6 +2625,15 @@ clears them).
   the fastest smooth speed and what failed next), then `rows` and the pages. `benchrun.mjs --pan`.
 - **Scripts:** scripts/benchrun.mjs runs it headless and writes the JSON (data/bench/desktop-igpu.json is the desktop
   baseline); scripts/benchdiff.mjs prints two reports' measures side by side with their ratio.
+- **The hero bench (round 128, `herolab`, `?herobench=1` on `?level=herolab`; src/perf/herobench.ts, the pure rows and
+  card in herosummary.ts):** the physics bench's pattern (Panel, keepAwake, deviceFacts, reportButtons, state in
+  localStorage `reclaimed.herobench`, cleared at the end). One page per pair `hero:cam` (default: each hero with
+  `chase`, then with `cutaway+tilt`, on the canyon; then the bike on the tour with `chase`, then `auto`; a pair is
+  `hero:cam[@station]`), the station ridden by its autopilot: settle 12 s, 20 s of frames (p50, p95,
+  p99, fps, the GPU's frame where timed, the play session's main-thread ms, cells ridden), and on the cut's pages the
+  cut toggled against the chase within the page (src/perf/toggle.ts `toggled`, shared with the physics bench since
+  round 128). Report `kind: 'reclaimed-herobench'`, `version: 1`. scripts/herolabtest.mjs `--perf` runs it headless
+  (the desktop proxy).
 
 ## The tile cache (round 103, branch `tilecache`, `?tiles=1`)
 

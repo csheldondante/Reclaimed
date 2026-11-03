@@ -119,6 +119,29 @@ export const CAM_SPEC = {
       ease: { label: 'open in', units: 's', min: 0.05, max: 2, step: 0.05, def: 0.4 },
     },
   },
+  // (round 128, the user: "zoom in when going into forests that would otherwise obscure visibility ... not low trees or
+  // shrubs. On fields I like the pulled back view ... a function of how much things stick up around the player. Cliffs
+  // are a slight exception where we need to actually vary the camera ... generally the camera is isometric and doesn't
+  // tilt except around cliffs and maybe cities")
+  auto: {
+    title: 'Auto (zoom by what sticks up, tilt by cliffs)',
+    owner: 'play/camera/modes.ts AutoMode (the chase\'s zoom times its own; Camera.elevation near cliffs)',
+    params: {
+      radius: { label: 'looks round', units: 'cells', min: 3, max: 30, step: 0.5, def: 10, help: 'how far round the hero it measures what sticks up' },
+      low: { label: 'low is', units: 'cells over the floor', min: 0, max: 20, step: 0.5, def: 5, help: 'anything lower than this counts for nothing (shrubs, low trees)' },
+      tall: { label: 'tall is', units: 'cells over the floor', min: 2, max: 40, step: 0.5, def: 10, help: 'this high counts in full (the old woods\' canopy, walls)' },
+      field: { label: 'zoom in the open', units: '×', min: 0.4, max: 1.5, step: 0.05, def: 0.85, help: 'the chase\'s zoom times this where nothing sticks up: pulled back over fields' },
+      close: { label: 'zoom in the woods', units: '×', min: 0.6, max: 3, step: 0.05, def: 1.9, help: 'the chase\'s zoom times this when everything round sticks up' },
+      band: { label: 'dead band', units: 'share', min: 0, max: 0.5, step: 0.01, def: 0.12, help: 'what it measures must move this far from where it is aiming before it aims again (no pumping)' },
+      inRate: { label: 'zooms in at', units: '1/s', min: 0.1, max: 6, step: 0.05, def: 1.2 },
+      outRate: { label: 'pulls back at', units: '1/s', min: 0.05, max: 6, step: 0.05, def: 0.5 },
+      look: { label: 'look every', units: 's', min: 0.05, max: 1, step: 0.05, def: 0.2 },
+      wallAt: { label: 'a cliff is', units: 'cells over the floor', min: 2, max: 40, step: 0.5, def: 8, help: 'land (not trees) standing this high near the hero is a cliff' },
+      wallFull: { label: 'cliff in full at', units: 'share round', min: 0.05, max: 1, step: 0.05, def: 0.3, help: 'the share of what it looks at that is cliff for the full tilt' },
+      tilt: { label: 'tilt by cliffs', units: '°', min: 20, max: 80, step: 1, def: 48, help: 'the elevation at a cliff (30: the isometric view, no tilt)' },
+      tiltRate: { label: 'tilts at', units: '1/s', min: 0.1, max: 6, step: 0.05, def: 1.2 },
+    },
+  },
 };
 
 export const CAM_TUNING = new Registry(CAM_SPEC);

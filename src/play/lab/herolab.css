@@ -81,3 +81,72 @@
 .tune-panel.herolab-hand {
   top: calc(var(--lab-h, 140px) + 4px);
 }
+/* (round 128) what's on in plain words, and the test's question */
+.lab-now {
+  flex-basis: 100%;
+  white-space: pre-line;
+  font: 600 12px system-ui, sans-serif;
+  color: #f4efe2;
+  text-shadow: 0 1px 3px #000;
+  pointer-events: none;
+}
+/* (round 128) the knight's station tools under the bar, on the right */
+.lab-on .play-station {
+  top: calc(var(--lab-h, 140px) + 4px);
+}
+/* (round 128) the test menu: one tap a test, sized for a thumb */
+.lab-menu {
+  display: none;
+  position: absolute;
+  inset: max(8px, env(safe-area-inset-top)) 8px auto 8px;
+  max-height: calc(100% - 16px);
+  overflow-y: auto;
+  padding: 10px 12px 12px;
+  border-radius: 14px;
+  background: rgba(20, 18, 16, 0.92);
+  color: #f4efe2;
+  font: 14px system-ui, sans-serif;
+  z-index: 20;
+  pointer-events: auto;
+}
+.lab-menu.on {
+  display: block;
+}
+.lab-menu-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.lab-menu-title {
+  font: 700 17px system-ui, sans-serif;
+}
+.lab-menu-hero {
+  margin: 12px 0 6px;
+  font: 700 13px system-ui, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(244, 239, 226, 0.75);
+}
+.lab-menu-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.lab-menu-test {
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.14);
+  color: inherit;
+  font: 600 14px system-ui, sans-serif;
+}
+.lab-menu-test:active {
+  background: rgba(255, 255, 255, 0.3);
+}
+.lab-menu-foot {
+  margin-top: 12px;
+  font-size: 12px;
+  opacity: 0.75;
+}

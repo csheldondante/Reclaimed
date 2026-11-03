@@ -13,7 +13,10 @@ import { makeHero, type PlayHeroId } from '../heroes/make';
 import { input, testWorld } from '../testing';
 import { Autopilot } from './autopilot';
 import { labSight } from './labworld';
-import { LAB_TERRAINS } from './terrains';
+import { LAB_TERRAINS, TOUR } from './terrains';
+
+/** a station's land by id: the six terrains and (round 128) the tour */
+export const rideTerrain = (id: string) => [...LAB_TERRAINS, TOUR].find((x) => x.id === id);
 import type { Params } from '../../api/contracts/play';
 import { BIKE_DEFAULTS } from '../controllers/hoverbike';
 import { steerAssist, type SteerState } from '../core/steer';
@@ -35,7 +38,7 @@ export interface RideResult extends MetricsSummary {
 
 /** The rig a lab station uses: the modes and the station's points of interest as objectives. */
 export function labRig(terrain: string, modes: readonly CamModeId[], values = new Registry(CAM_SPEC).values): CameraRig {
-  const t = LAB_TERRAINS.find((x) => x.id === terrain);
+  const t = rideTerrain(terrain);
   if (!t) throw new Error(`herolab: no terrain "${terrain}"`);
   const rig = new CameraRig(modes, values);
   if (t.pois.length) {
@@ -50,7 +53,7 @@ export function ride(terrain: string, modes: readonly CamModeId[], opts: { hero?
   const secs = opts.secs ?? 40;
   const dt = opts.dt ?? 1 / 30;
   const screen = opts.screen ?? { w: 412, h: 915, margin: 56 };
-  const t = LAB_TERRAINS.find((x) => x.id === terrain)!;
+  const t = rideTerrain(terrain)!;
   const s = sight();
   const world = testWorld((x, y) => s.top(x, y), { maxHeld: 4 });
   const pilot = new Autopilot(t.path);
@@ -118,7 +121,7 @@ export function rideHandling(terrain: string, ids: readonly HandlingId[], opts: 
 function rideOnce(terrain: string, ids: readonly HandlingId[], opts: { secs?: number; dt?: number; look?: number; every?: number }, from: number): HandlingResult {
   const secs = opts.secs ?? 60;
   const dt = opts.dt ?? 1 / 60;
-  const t = LAB_TERRAINS.find((x) => x.id === terrain)!;
+  const t = rideTerrain(terrain)!;
   const s = sight();
   const world = testWorld((x, y) => s.top(x, y), { maxHeld: 4 });
   const pilot = new Autopilot(t.path, opts.look ?? 6);

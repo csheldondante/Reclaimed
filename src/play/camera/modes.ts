@@ -8,11 +8,10 @@
 import type { CamContext, CameraMode, CamFrame, CamSee, Interest, SightWorld, V3 } from '../../api/contracts/camera';
 import type { ChaseFraming } from '../../api/contracts/hero';
 import { Chase, DEFAULT_CHASE, reachAlong, type ChaseView } from '../core/chase';
-import type { CamParams } from './params';
+import { DEG, type CamParams } from './params';
 import { eyeDir, groundOnScreen, halfScreen, hiddenBy, wrap } from './sight';
 import type { CamCut } from '../../api/contracts/camera';
 
-const DEG = Math.PI / 180;
 const ease = (rate: number, dt: number) => 1 - Math.exp(-rate * dt);
 
 /** how high over its base a point is looked at (a figure's chest; a way's rider) */
@@ -339,5 +338,92 @@ export class CutawayMode implements CameraMode {
     // (both cuts on: the second leaves the first's slice when it has none of its own)
     if (this.z === null) return;
     frame.cut.slice = { z: this.z, at: [ctx.pose.at[0], ctx.pose.at[1]], radius: P.radius * halfScreen(v), rim: P.rim, fade: P.fade, fadeR: P.fadeR, bowl: P.bowl, nearOnly: P.nearOnly >= 0.5, occluders: P.occluders >= 0.5 };
+  }
+}
+
+/** what stands round the hero, from a ring of samples: how much sticks up (0..1) and the share that's cliff (0..1) */
+export interface Around {
+  up: number;
+  wall: number;
+}
+
+/** the samples: the hero's own point and three rings of twelve out to `radius` */
+const RINGS = [0.35, 0.7, 1];
+const DIRS = 12;
+
+/**
+ * (round 128) How much sticks up round the hero: each sample's height over the hero's floor (the land's top, or a
+ * tree's crown over it), counted 0 under `low` and 1 from `tall`, the mean; and the share of samples whose land (not
+ * trees) stands `wallAt` or more over the floor — a cliff, or (with `towns`) a building too. Pure.
+ */
+export function around(world: SightWorld, at: V3, floor: number, P: CamParams['auto'], towns: boolean): Around {
+  const props = world.props?.(at[0], at[1], P.radius + 3) ?? [];
+  const span = Math.max(0.5, P.tall - P.low);
+  let up = 0;
+  let wall = 0;
+  let n = 0;
+  const sample = (x: number, y: number) => {
+    const land = world.top(x, y) - floor;
+    let h = land;
+    for (const p of props) if (Math.hypot(p.x - x, p.y - y) <= p.r + 0.5) h = Math.max(h, p.z1 - floor);
+    up += Math.max(0, Math.min(1, (h - P.low) / span));
+    if (land >= P.wallAt && (towns || !world.built?.(x, y))) wall++;
+    n++;
+  };
+  sample(at[0], at[1]);
+  for (const r of RINGS)
+    for (let k = 0; k < DIRS; k++) {
+      const a = ((k + (r === 0.7 ? 0.5 : 0)) / DIRS) * Math.PI * 2;
+      sample(at[0] + Math.cos(a) * r * P.radius, at[1] + Math.sin(a) * r * P.radius);
+    }
+  return { up: up / n, wall: wall / n };
+}
+
+/**
+ * Auto (round 128, the user's intent): the isometric view, its zoom by how much sticks up round the hero — pulled
+ * back over fields, low trees and shrubs, closer in tall woods and between walls — aimed only once what it measures
+ * leaves a dead band and eased (in faster than out), so it doesn't pump; the view tilts only by cliffs (`autocity`:
+ * by buildings too). Runs after the chase (its zoom times this one's).
+ */
+export class AutoMode implements CameraMode {
+  readonly stage = 0.5;
+  /** what it's aiming at (0 open .. 1 shut in), where it is, and the cliff's share it tilts by */
+  goal = 0;
+  now = 0;
+  wall = 0;
+  last: Around = { up: 0, wall: 0 };
+  private look = 0;
+  constructor(
+    private p: CamParams,
+    readonly id: 'auto' | 'autocity' = 'auto',
+  ) {}
+
+  reset(frame: CamFrame): void {
+    this.look = 0;
+    this.goal = this.now = this.wall = 0;
+    this.primed = false;
+    frame.view.elevation = this.p.tilt.base * DEG;
+  }
+  private primed = false;
+
+  step(ctx: CamContext, frame: CamFrame): void {
+    const P = this.p.auto;
+    const v = frame.view;
+    this.look -= ctx.dt;
+    if (this.look <= 0) {
+      this.look = P.look;
+      this.last = around(ctx.world, ctx.pose.at, ctx.pose.floor, P, this.id === 'autocity');
+      // (a fresh start lands where it should at once; after that, only past the dead band)
+      if (!this.primed) {
+        this.goal = this.now = this.last.up;
+        this.primed = true;
+      } else if (Math.abs(this.last.up - this.goal) > P.band) this.goal = this.last.up;
+    }
+    this.now += (this.goal - this.now) * ease(this.goal > this.now ? P.inRate : P.outRate, ctx.dt);
+    const wantWall = Math.min(1, this.last.wall / Math.max(0.01, P.wallFull));
+    this.wall += (wantWall - this.wall) * ease(P.tiltRate, ctx.dt);
+    v.zoom *= P.field + (P.close - P.field) * this.now;
+    const base = this.p.tilt.base;
+    v.elevation = (base + (Math.max(base, P.tilt) - base) * this.wall) * DEG;
   }
 }

@@ -184,6 +184,8 @@ async function main() {
   if (params.get('florabench') === '1') void import('./flora/bench').then((m) => m.floraBench(params));
   // (round 120: ?physbench=1 — the physics phone bench, every solver × judge on the playground: src/perf/physbench.ts)
   if (params.get('physbench') === '1') void import('./perf/physbench').then((m) => m.physBench(params));
+  // (round 128: ?herobench=1 — the hero lab's phone bench, each hero on the canyon under the chase and the cut: src/perf/herobench.ts)
+  if (params.get('herobench') === '1') void import('./perf/herobench').then((m) => m.heroBench(params));
   if (pageBench === 'run') void pageBenchRun();
   if (bench === 'level')
     void benchLevel({

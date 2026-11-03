@@ -7,7 +7,8 @@
 import type { Prop, SightWorld } from '../../api/contracts/camera';
 import { planTree } from '../../api/plants';
 import { cellAt, cellPos, ROW_H } from '../../world/lattice';
-import { treeProps } from '../camera/props';
+import { BUILT, treeProps } from '../camera/props';
+import { materialName } from '../../api/common';
 import { labColumn, labLayers } from './terrains';
 
 const W = 256;
@@ -61,6 +62,7 @@ export function labSight(): SightWorld & { floor(x: number, y: number): number }
     },
     top,
     floor: top,
+    built: (x, y) => BUILT.has(materialName(labColumn(x, y).skin)),
     props: (x, y, r) => {
       const out: Prop[] = [];
       const b = bucketsOf();

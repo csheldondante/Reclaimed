@@ -7,7 +7,7 @@ import type { CamFrame, Prop, SightWorld, V2 } from '../../api/contracts/camera'
 import type { Plants } from '../../api/plants';
 import type { Terrain } from '../../api/terrain';
 import type { Camera } from '../../render/camera';
-import { treeProps } from './props';
+import { BUILT, treeProps } from './props';
 
 type Cols = { z0: number; z1: number }[] | null;
 
@@ -67,6 +67,12 @@ export function liveSight(terrain: Terrain, plants: Plants | undefined, bounds: 
           for (const p of bucket(bx, by)) out.push(p);
         }
       return out;
+    },
+    built(x, y) {
+      const ls = terrain.layersAt(x, y);
+      if (!ls) return false;
+      for (let i = ls.length - 1; i >= 0; i--) if (ls[i].state === 'solid' || ls[i].state === 'loose') return BUILT.has(ls[i].material);
+      return false;
     },
     ceiling,
     bounds,

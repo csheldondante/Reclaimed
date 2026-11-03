@@ -188,8 +188,14 @@ function forestPath(): { at: V2; speed: number }[] {
   return at(pts, 0.7);
 }
 function forestColumn(x: number, y: number): LabColumn {
-  return { top: G + noise(x / 12, y / 12) * 3, skin: MAT.Soil, veg: inBox(x, y, FOREST.x0 + 3, 3, 256 - 3, HALF - 3) ? 5 : 1.4 };
+  const top = G + noise(x / 12, y / 12) * 3;
+  // (round 128, the tour: a band south of the forest's ride, shrubs in the west to low trees in the east — vegplan.wgsl:
+  // shrubs from 2.6, young trees from 3.6 — before the old woods)
+  if (inBox(x, y, FOREST.x0 + 3, TOUR_BAND[0], 256 - 3, TOUR_BAND[1])) return { top, skin: MAT.Soil, veg: 2.8 + (1.1 * (x - FOREST.x0)) / (256 - FOREST.x0) };
+  return { top, skin: MAT.Soil, veg: inBox(x, y, FOREST.x0 + 3, 3, 256 - 3, HALF - 3) ? 5 : 1.4 };
 }
+/** (round 128) the tour's band of shrubs and low trees: rows of world y south of the forest's ride (which reaches ~90) */
+const TOUR_BAND: V2 = [93, HALF - 3];
 
 // 4. a city street: blocks of buildings on a grid, the ride lapping a few blocks along the streets, and up a blind
 // alley once a lap.
@@ -303,6 +309,47 @@ export const LAB_TERRAINS: LabTerrain[] = [
   { id: 'cave', name: 'Cave mouth', hint: 'a mountain facing away, a cave mouth in its face; the ride along its foot', rect: [W3, HALF + 1, 2 * W3, 2 * HALF], path: cavePath(), pois: [[(CAVE.mouth[0] + CAVE.mouth[1]) / 2, CAVE.face + 2]] },
   { id: 'hills', name: 'Open hills', hint: 'rolling hills: the baseline, little to hide anything', rect: [2 * W3, HALF + 1, 256, 2 * HALF], path: hillsPath(), pois: [] },
 ];
+
+/**
+ * (round 128, the user's camera intent: "zoom in when going into forests ... not low trees or shrubs. On fields I like
+ * the pulled back view") The tour: one loop through what the auto camera should tell apart — a field (the open flat
+ * by the cave), shrubs, low trees, the old woods, along the canyon plateau's wall (a cliff), past the massif, down a
+ * city street and back across the field. Its own station, over the other stations' land.
+ */
+export const TOUR: LabTerrain = {
+  id: 'tour',
+  name: 'The tour',
+  hint: 'a field, shrubs, low trees, tall woods, a cliff and a town in one loop',
+  rect: [0, 0, 256, 2 * HALF],
+  path: [
+    { at: [120, 136], speed: 0.8 },
+    { at: [150, 132], speed: 0.8 },
+    { at: [160, 120], speed: 0.6 },
+    { at: [167, 110], speed: 0.5 },
+    { at: [176, 103], speed: 0.5 },
+    { at: [190, 99], speed: 0.5 },
+    { at: [208, 99], speed: 0.45 },
+    { at: [220, 95], speed: 0.4 },
+    { at: [227, 86], speed: 0.4 },
+    { at: [226, 75], speed: 0.4 },
+    { at: [218, 66], speed: 0.4 },
+    { at: [205, 64], speed: 0.45 },
+    { at: [190, 74], speed: 0.5 },
+    { at: [180, 92], speed: 0.55 },
+    { at: [172, 108.5], speed: 0.6 },
+    { at: [150, 109], speed: 0.7 },
+    { at: [120, 109], speed: 0.7 },
+    { at: [92, 109], speed: 0.65 },
+    { at: [76, 98], speed: 0.5 },
+    { at: [70.5, 104], speed: 0.45 },
+    { at: [70.5, 116], speed: 0.45 },
+    { at: [70.5, 130], speed: 0.45 },
+    { at: [74, 141.5], speed: 0.5 },
+    { at: [86, 141.5], speed: 0.6 },
+    { at: [100, 139], speed: 0.7 },
+  ],
+  pois: [],
+};
 
 /** the station a world point lies in, or null */
 export function labTerrainAt(x: number, y: number): LabTerrain | null {

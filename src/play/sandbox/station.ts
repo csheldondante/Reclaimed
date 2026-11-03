@@ -11,7 +11,16 @@ import type { Pt } from '../core/gestures';
 import { findHills } from './hills';
 import { KnightHero } from '../heroes/knight';
 import { el } from '../session';
-import type { PlaySandbox } from './sandbox';
+import type { PlayHero } from '../heroes/base';
+import type { PlayWorld } from '../world';
+import type { SandboxDeps } from './sandbox';
+
+/** (herolab, round 128) what the station needs: the sandbox, or the hero lab's enemy station (play/lab/herolab.ts) */
+export interface StationHost {
+  readonly d: Pick<SandboxDeps, 'ui' | 'units' | 'api' | 'bounds' | 'camera'>;
+  readonly world: PlayWorld;
+  readonly hero: PlayHero;
+}
 
 /** a wave: raiders in a ring this far round the hero, the first wave's count; dummies: how many, how far ahead, apart */
 const WAVE = { ring: 13, first: 3, sight: 30, speed: 3.5, health: 3 };
@@ -28,7 +37,11 @@ export class Station {
   private offDied: () => void;
   private lastText = '';
 
-  constructor(private s: PlaySandbox) {
+  /** `place`: to a station spot near the camera at once (the sandbox); the hero lab places its own hero */
+  constructor(
+    private s: StationHost,
+    o: { place?: boolean } = {},
+  ) {
     const units = s.d.units;
     const died = (_u: unknown, by: UnitId | string | null) => {
       if (by === 'hero') this.tally.kills++;
@@ -51,7 +64,7 @@ export class Station {
     btn('Clear', () => this.clear());
     this.read = el('div', 'play-station-read', this.box);
     this.read.style.pointerEvents = 'none';
-    this.relocate();
+    if (o.place ?? true) this.relocate();
   }
 
   /**

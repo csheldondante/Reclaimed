@@ -7,7 +7,7 @@
 import { MAX_SEE, type CamFrame, type CamIntent, type CameraMode, type CamModeId, type CamPose, type CamSignal, type Interest, type InterestSource, type SightWorld } from '../../api/contracts/camera';
 import type { ChaseFraming } from '../../api/contracts/hero';
 import { heroInterest, WayAheadSource } from './interests';
-import { ChaseMode, CutawayMode, DitherMode, EdgeMode, RotateMode, TiltMode } from './modes';
+import { AutoMode, ChaseMode, CutawayMode, DitherMode, EdgeMode, RotateMode, TiltMode } from './modes';
 import { CAM, type CamParams } from './params';
 
 export const CAM_MODES: readonly { id: CamModeId; label: string; icon: string; hint: string }[] = [
@@ -18,6 +18,9 @@ export const CAM_MODES: readonly { id: CamModeId; label: string; icon: string; h
   { id: 'cutaway', label: 'cut', icon: '✂', hint: 'anything taller than a short height over the hero\'s ground is cut down round it, a rim lit' },
   { id: 'cutfade', label: 'cut~', icon: '✄', hint: 'the cut with its top and its edge thinned out by a dither instead of a hard slice' },
   { id: 'edge', label: 'edge', icon: '▣', hint: 'the centre and the way ahead kept clear; occluders only at the screen\'s edges' },
+  // (round 128, the user's camera intent: a variant, not the default)
+  { id: 'auto', label: 'auto', icon: '🔍', hint: 'isometric: zooms in where tall things stand round the hero (woods, walls), pulled back over fields; tilts only by cliffs' },
+  { id: 'autocity', label: 'auto+town', icon: '🏘', hint: 'auto, and it tilts by buildings too' },
 ];
 
 /**
@@ -73,7 +76,7 @@ export class CameraRig {
   ) {
     this.chase = new ChaseMode(p);
     this.ahead = new WayAheadSource(p);
-    this.all = { chase: this.chase, rotate: new RotateMode(p), tilt: new TiltMode(p), cutaway: new CutawayMode(p), cutfade: new CutawayMode(p, 'cutfade'), edge: new EdgeMode(p), dither: new DitherMode(p) };
+    this.all = { chase: this.chase, rotate: new RotateMode(p), tilt: new TiltMode(p), cutaway: new CutawayMode(p), cutfade: new CutawayMode(p, 'cutfade'), edge: new EdgeMode(p), dither: new DitherMode(p), auto: new AutoMode(p), autocity: new AutoMode(p, 'autocity') };
     this.use(ids);
   }
 
@@ -89,7 +92,8 @@ export class CameraRig {
     for (const m of this.modes) if (!was.has(m.id)) m.reset(this.frame);
     // (a mode turned off gives back what it held: the fixed angle, the fixed tilt, no cut)
     if (!set.has('rotate') && was.has('rotate')) this.frame.view.azimuth = this.restAz;
-    if (!set.has('tilt') && was.has('tilt')) this.frame.view.elevation = (30 * Math.PI) / 180;
+    const tilts = (s: Set<CamModeId>) => s.has('tilt') || s.has('auto') || s.has('autocity');
+    if (!tilts(set) && tilts(was)) this.frame.view.elevation = (30 * Math.PI) / 180;
   }
 
   /** the azimuth the view rests at when nothing turns it (the level's own, or the player's turn) */

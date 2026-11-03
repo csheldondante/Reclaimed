@@ -5,6 +5,9 @@
 
 import type { Prop } from '../../api/contracts/camera';
 
+/** (round 128) the materials a built column's top is (SightWorld.built): a building, a wall, a post */
+export const BUILT = new Set(['concrete', 'brick', 'plaster', 'steel']);
+
 export interface TreeLike {
   x: number;
   y: number;

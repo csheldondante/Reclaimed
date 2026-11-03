@@ -277,7 +277,7 @@ export class PlaySession {
     const frame = this.rig.step(dt, { at: [p[0], p[1], p[2]], floor: this.world.top(p[0], p[1]), heading: h.heading(), vel: [vx, vy], fast: h.fast() }, { move: input.dir }, this.sight, { w: cam.viewportW, h: cam.viewportH, margin: HUD_MARGIN });
     const ids = this.rig.ids;
     const had = (m: CamModeId) => ids.includes(m) || this.camWas.includes(m);
-    applyFrame(cam, frame, { turn: had('rotate'), tilt: had('tilt'), cut: had('cutaway') || had('cutfade') || had('edge') || had('dither') });
+    applyFrame(cam, frame, { turn: had('rotate'), tilt: had('tilt') || had('auto') || had('autocity'), cut: had('cutaway') || had('cutfade') || had('edge') || had('dither') });
     this.camWas = ids;
     this.signals?.update(frame.signals, cam, HUD_MARGIN);
     // (a jolt: the view knocked about by the hero's shake, a few cells at most, gone in a quarter second)

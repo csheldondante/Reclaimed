@@ -1,0 +1,137 @@
+// ---- play/lab/tests.ts ------------------------------------------------------------------------------------------
+// (round 128, herolab) The hero lab's test menu: the user's thumb on a phone (Pixel 9a) tries one thing at a time.
+// The user (round 128): "we need to get back to hero lab and start testing and improving the hero gameplay".
+// Each test is one tap: a hero, a station, the bike's handling and the camera, and the question to answer. Its words
+// are player text (docs/WRITING.md): plain, short, no words from the code. Pure: the Node test checks every test
+// names a real hero, station, handling and camera.
+
+import type { CamModeId } from '../../api/contracts/camera';
+import type { PlayHeroId } from '../heroes/make';
+import type { HandlingId } from './handling';
+
+export interface LabTest {
+  id: string;
+  hero: PlayHeroId;
+  /** a station's id (play/lab/herolab.ts allStations) */
+  station: string;
+  /** the bike's handling (`?handling=` form); absent: as it is */
+  handling?: string;
+  /** the camera (`?cam=` form); absent: the default, cut and tilt */
+  cam?: string;
+  /** the chip's words */
+  label: string;
+  /** what to answer after trying it */
+  ask: string;
+}
+
+export interface LabTestGroup {
+  hero: PlayHeroId;
+  title: string;
+  tests: LabTest[];
+}
+
+/** what the player calls each station */
+export const STATION_WORDS: Record<string, string> = {
+  cliff: 'the cliffs',
+  canyon: 'the canyon',
+  forest: 'the forest',
+  city: 'the city streets',
+  cave: 'the cave mouth',
+  hills: 'the hills',
+  'moves-canyon': 'the canyon',
+  'moves-city': 'the city streets',
+  traits: 'the field of the living and the dead',
+  tour: 'the tour: field, shrubs, woods, cliff, town',
+  enemy: 'the raiders\' field',
+};
+
+export const HERO_WORDS: Record<PlayHeroId, string> = { hoverbike: 'Bike', lich: 'Lich', knight: 'Knight' };
+
+export const HANDLING_WORDS: Record<HandlingId, string> = {
+  stock: 'as it is',
+  grip: 'more grip',
+  gripplus: 'much more grip',
+  tight: 'tight turns and a quick drift',
+  governor: 'slows down in narrow places',
+  carve: 'carve',
+  corridor: 'steers toward the open way',
+  avoid: 'steers round rocks',
+  magnet: 'leans toward enemies',
+};
+
+export const CAM_WORDS: Record<CamModeId, string> = {
+  chase: 'follow',
+  rotate: 'turn',
+  tilt: 'tilt',
+  dither: 'see-through',
+  cutaway: 'cut',
+  cutfade: 'soft cut',
+  edge: 'clear middle',
+  auto: 'auto zoom',
+  autocity: 'auto zoom with town tilt',
+};
+
+const canyon = (handling: string, label: string): LabTest => ({
+  id: `bike-canyon-${handling}`,
+  hero: 'hoverbike',
+  station: 'moves-canyon',
+  handling,
+  label,
+  ask: 'Can you make the turns? Which one felt best?',
+});
+
+export const LAB_TESTS: LabTestGroup[] = [
+  {
+    hero: 'hoverbike',
+    title: 'Bike',
+    tests: [
+      canyon('stock', 'Canyon, as it is'),
+      canyon('tight', 'Canyon, tight'),
+      canyon('carve', 'Canyon, carve'),
+      canyon('governor', 'Canyon, slows down'),
+      canyon('gripplus', 'Canyon, much more grip'),
+      { id: 'bike-city-carve', hero: 'hoverbike', station: 'moves-city', handling: 'carve', label: 'City, carve', ask: 'Can you ride round the blocks without hitting walls?' },
+      { id: 'bike-tour-auto', hero: 'hoverbike', station: 'tour', cam: 'auto', label: 'Tour, auto zoom', ask: 'Does the zoom follow what is around you? Closer in tall woods, pulled back on the field?' },
+      { id: 'bike-hills', hero: 'hoverbike', station: 'hills', label: 'Hills', ask: 'Does the camera stay still on gentle hills?' },
+      { id: 'bike-cliff', hero: 'hoverbike', station: 'cliff', label: 'Cliffs', ask: 'Does the cut show you the bike and the turn ahead?' },
+    ],
+  },
+  {
+    hero: 'knight',
+    title: 'Knight',
+    tests: [
+      { id: 'knight-raiders', hero: 'knight', station: 'enemy', label: 'Raiders', ask: 'Tap Wave. Lunge through the crowd. Does the sword feel strong?' },
+      { id: 'knight-bow', hero: 'knight', station: 'enemy', label: 'Bow', ask: 'Switch to the bow and shoot a wave. Is aiming easy?' },
+      { id: 'knight-tour-auto', hero: 'knight', station: 'tour', cam: 'auto', label: 'Tour, auto zoom', ask: 'Does the zoom follow what is around you? Does the tilt by the cliff help?' },
+      { id: 'knight-forest', hero: 'knight', station: 'forest', label: 'Forest', ask: 'Can you see the knight under the trees?' },
+      { id: 'knight-canyon', hero: 'knight', station: 'canyon', label: 'Canyon', ask: 'Does the cut show the knight in the narrow walls?' },
+    ],
+  },
+  {
+    hero: 'lich',
+    title: 'Lich',
+    tests: [
+      { id: 'lich-raise', hero: 'lich', station: 'traits', label: 'Raise the dead', ask: 'Tap Crowd, then Smite and Raise. Is it fun to build an army?' },
+      { id: 'lich-raiders', hero: 'lich', station: 'enemy', label: 'Raiders', ask: 'Tap Wave. Can the lich hold them off?' },
+      { id: 'lich-cliff', hero: 'lich', station: 'cliff', label: 'Cliffs', ask: 'Does the cut show the lich and the way on?' },
+    ],
+  },
+];
+
+export function findTest(id: string): LabTest {
+  for (const g of LAB_TESTS) for (const t of g.tests) if (t.id === id) return t;
+  throw new Error(`?test=${id}: no such test (${LAB_TESTS.flatMap((g) => g.tests.map((t) => t.id)).join(', ')})`);
+}
+
+/** what's on now, in plain words: "Bike in the canyon. Handling: carve. Camera: cut and tilt." */
+export function describe(o: { hero: PlayHeroId; station: string; handling: readonly HandlingId[]; cam: readonly CamModeId[] }): string {
+  const where = STATION_WORDS[o.station] ?? o.station;
+  const out = [`${HERO_WORDS[o.hero]} in ${where}.`];
+  if (o.hero === 'hoverbike') {
+    const h = o.handling.filter((x) => x !== 'stock');
+    out.push(`Handling: ${h.length ? h.map((x) => HANDLING_WORDS[x]).join(' and ') : HANDLING_WORDS.stock}.`);
+  }
+  const c = o.cam.filter((x) => x !== 'chase');
+  out.push(`Camera: ${c.length ? c.map((x) => CAM_WORDS[x]).join(' and ') : CAM_WORDS.chase}.`);
+  return out.join(' ');
+}

@@ -16449,3 +16449,52 @@ the nearest albedo here).
 within 16 cells, the flattest ground near it; Wave (raiders in a ring, one more each wave), Dummies (three that stand
 and take blows), Clear; a readout of speed and best, blows, kills, swings and lunges, arrows, spins and bounces,
 dodges, what it's taken. The start of the user's gauntlet, kept a test station.
+
+## Round 128 (2026-11-03, session 5, `herolab`) â€” the hero lab as the user's test bench; the knight in it; the auto camera
+
+The user (round 128): "we need to get back to hero lab and start testing and improving the hero gameplay." Then, on
+the camera: "I want to zoom in when going into forests that would otherwise obscure visibility. Most forests but not
+low trees or shrubs. On fields I like the pulled back view and I think that this of a function of how much things
+stick up around the player. Cliffs are a slight exception where we need to actually vary the camera. I think
+generally the camera is isometric and doesn't tilt except around cliffs and maybe cities so I'm hoping we can use
+baked sprites often without making too many angles." And the perf rule: phone benches the user runs, desktop numbers
+only a proxy.
+
+**Merges.** origin/places (81 commits: dialog2, opportunities, facts, the living world, merge124-128) and origin/knight
+(c0eeb74). Conflicts were docs only: BRANCHES, DEVLOG and ARCHITECTURE kept both; BACKLOG took places' rows and kept
+the lab's (CAM9/PL30 done; places' round-120 rows UI10/CAM11/PL32 point at the lab's round-121 rows).
+
+**The test menu** (play/lab/tests.ts, pure; HL8). With no `?station=` the lab opens on "Hero lab: what to try": per
+hero, the things worth trying, one tap each (a hero, a station, the bike's handling, the camera), buttons 44 px tall.
+A line under the bar says what's on in plain words ("Bike in the canyon. Handling: carve. Camera: cut and tilt.")
+and the test's question. `?test=<id>` keeps it in the address; a hero or station picked by hand drops it. The old
+hint line (code-voiced station descriptions) is gone from the screen.
+
+**The knight in the lab** (HL9). The hero picker offers bike, lich and knight; handling chips and the steering assist
+apply to the bike only. The knight's station (play/sandbox/station.ts) now takes a `StationHost` (the deps it reads,
+the world, the hero) instead of the PlaySandbox, so the lab's enemy station (on the hills, for every hero, no
+autopilot) runs the same Wave, Dummies, Clear and readout; `place: false` keeps the lab's own spawn spot.
+
+**The auto camera** (CAM13; play/camera/modes.ts `AutoMode`, `around`). A variant (`?cam=auto`, `auto+town`), not
+the default (main is asking the user how it squares with cut + tilt). After the chase: the hero's point and three
+rings of twelve samples out to 10 cells, each sample's height over the hero's floor (the land, or a tree crown from
+the props), counted 0 under 5 cells and 1 from 10; the mean sets the zoom between 0.85x (open) and 1.9x (shut in) of
+the chase's, re-aimed only when it moves past a 0.12 dead band, in at 1.2/s and out at 0.5/s, so it doesn't pump. The
+share of samples whose land stands 8 cells over the floor and isn't built tilts the view toward 48 deg (full at 0.3);
+`auto+town` counts buildings too. `SightWorld.built?` is new (the column's top is concrete, brick, plaster or steel;
+apply.ts live, labworld.ts in Node). Every number a slider in the camera panel's `auto` group.
+
+**The tour** (play/lab/terrains.ts `TOUR`): one loop over the other stations' land: the open flat by the cave (a field),
+a band south of the forest's ride (rows 93-107) whose succession goes from 2.8 (shrubs) in the west to 3.9 (young
+trees) in the east, the old woods, the canyon plateau's 26-cell wall, past the massif, down a city street and back.
+Node (src/play/lab/tour.test.ts), the bike by the autopilot for 60 s with `auto`, the mean zoom-in share (0 open, 1
+shut in) and elevation by leg: field 0.06 / 30.1 deg; shrubs 0.13 / 33.7; woods 0.39 / 30.1 (max 30.5: no tilt in
+the woods); the cliff leg 0.18 / 38.6 (max 41.6); town 0.25 / 31.6 (`auto`, no town tilt). The woods' zoom is x1.27
+the chase against the field's x0.90. The bike's stock handling overshoots the tour's tight turns at 30 c/s (the
+autopilot's waypoints were moved in from the map's edge after it flew off at x 264): the same complaint as PL32.
+
+**The hero bench** (`?herobench=1`, src/perf/herobench.ts, herosummary.ts; HL10): the physics bench's pattern (Panel,
+wake lock, device facts, report buttons, state in localStorage). Pairs `hero:cam[@station]`, a reload each: each hero
+on the canyon under the chase then cut + tilt, the bike on the tour under the chase then auto; settle 12 s, 20 s of
+frames, the camera toggled against the chase within the page (src/perf/toggle.ts, `toggled` moved out of
+physbench.ts to be shared). The user's phone run is the measurement; the desktop run is a proxy.

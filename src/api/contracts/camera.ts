@@ -71,6 +71,11 @@ export interface SightWorld {
   top(x: number, y: number): number;
   /** props within r of (x, y); absent: none */
   props?(x: number, y: number, r: number): readonly Prop[];
+  /**
+   * (round 128) the column's top is built (a building, a wall, a street post: concrete, brick, plaster, steel), not
+   * land — the auto camera tilts by cliffs, and by buildings only in its town variant; absent: nothing is built
+   */
+  built?(x: number, y: number): boolean;
   /** nothing is higher than this (world z) */
   readonly ceiling: number;
   /** the world's extent (x cells, y world units) */
@@ -145,7 +150,7 @@ export interface CamContext {
   world: SightWorld;
 }
 
-export type CamModeId = 'chase' | 'rotate' | 'tilt' | 'cutaway' | 'cutfade' | 'edge' | 'dither';
+export type CamModeId = 'chase' | 'rotate' | 'tilt' | 'cutaway' | 'cutfade' | 'edge' | 'dither' | 'auto' | 'autocity';
 
 /** One camera variant: it reads the frame so far and writes its own part. */
 export interface CameraMode {
