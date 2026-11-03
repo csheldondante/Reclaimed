@@ -87,6 +87,19 @@ export const PARAMS: Param[] = [
   { key: 'vines', label: 'vines', group: 'epiphytes', min: 0, max: 1, step: 0.01, woody: true, ...E('vines') },
   { key: 'lines', label: 'lines', group: 'epiphytes', min: 0, max: 1, step: 0.01, woody: true, ...E('lines') },
   {
+    key: 'winterLeaves',
+    label: 'winter leaves',
+    group: 'epiphytes',
+    min: 0,
+    max: 0.5,
+    step: 0.01,
+    woody: true,
+    get: (sp) => sp.winterLeaves ?? 0,
+    set: (sp, v) => {
+      sp.winterLeaves = v;
+    },
+  },
+  {
     key: 'blossom',
     label: 'blossom',
     group: 'epiphytes',

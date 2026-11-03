@@ -16523,3 +16523,9 @@ set". And: "the conifer in winter goes fully white".
   phone); the elder's budget 9500 (one to a 28 x 32 super-block: a quarter as many a wood as at round 125's 5000), the
   close-up's twice the full level's. Renders: C:/Projects/shots88/treegen/crown-v1..v4.png, crown-final.png,
   crown-winter.png, m2-seasons-grid-v2.png (the sprites, the five seasons).
+- Winter, main's second note ("deciduous trees in winter should be mostly bare twigs (a few marcescent leaves at most,
+  oak/beech style), snow on the limbs' tops"): a per-species `winterLeaves` (the broadleaf 0.06, the elder 0.08, the
+  rest 0; a viewer slider; FLORA_ACC.w), the drop decided over ~1.7-cell blocks (a crown is many layers of cards: a
+  per-fragment keep of a few percent showed through every layer as a brown crown), and the twig haze removed (the
+  limbs, kept at every level, are the bare tree's shape; the haze's cards read as dead leaves). Renders:
+  crown-winter-v2.png, m2-seasons-grid-v3.png.

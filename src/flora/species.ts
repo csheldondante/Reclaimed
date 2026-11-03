@@ -104,6 +104,8 @@ export interface SpeciesDef {
   moss?: number;
   /** (round 128) what grows on it (each 0..1, a density): lichens, moss on the limbs, epiphytic plants, vines, lines */
   epiphytes?: Epiphytes;
+  /** (round 128) a deciduous crown's leaves kept through the winter, dead (0..1; an oak's or a beech's marcescent few) */
+  winterLeaves?: number;
   /** (round 128) in flower (spring): the share of its leaf clusters that bloom, in colours.flower (0 / absent: none) */
   blossom?: number;
 }
@@ -279,6 +281,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     crown: { size: 3, perTwig: 3, spacing: 1.1, fill: 0.8, leaves: 9, droop: 0.25 },
     bark: { furrows: 0.55, furrowFreq: 3.5, plates: 0.25, plateSize: 0.45, stripes: 0, stripeFreq: 7, roughness: 0.45 },
     epiphytes: { lichen: 0.35, moss: 0.3, plants: 0.2, vines: 0.25, lines: 0.1 },
+    winterLeaves: 0.06,
     colours: {
       bark: C(0.36, 0.27, 0.18),
       barkMark: C(0.17, 0.12, 0.08),
@@ -416,6 +419,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     crown: { size: 3.6, perTwig: 3, spacing: 1.3, fill: 0.85, leaves: 8, droop: 0.2 },
     bark: { furrows: 0.8, furrowFreq: 3, plates: 0, plateSize: 0.6, stripes: 0, stripeFreq: 7, roughness: 0.8 },
     epiphytes: { lichen: 0.3, moss: 0.3, plants: 0.35, vines: 0.3, lines: 0.15 },
+    winterLeaves: 0.08,
     colours: {
       // (warm pale, the reference's beech: a grey-white with ochre in it)
       bark: C(0.84, 0.8, 0.72),

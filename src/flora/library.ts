@@ -92,7 +92,8 @@ export function floraTables(kinds: { sp: SpeciesDef; mesh: { height: number; rad
       v4(c.flower ?? c.accent, mesh.radius),
     );
   }
-  const acc = kinds.map(({ sp }) => v4(sp.colours.accent ?? sp.colours.leafLight, 0));
+  // (w: round 128, the share of leaves a deciduous crown keeps through the winter — species.ts winterLeaves)
+  const acc = kinds.map(({ sp }) => v4(sp.colours.accent ?? sp.colours.leafLight, sp.winterLeaves ?? 0));
   // (round 128, treegen) FLORA_BARK, 2 vec4s a kind: the bark's texture (species.ts BarkLook) — (furrows, their
   // frequency, plates, plate size), (stripes, their frequency, roughness, 0)
   const bark = kinds.flatMap(({ sp }) => {

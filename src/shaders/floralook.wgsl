@@ -165,13 +165,15 @@ fn floraLook(k: u32, part: u32, wpos: vec3<f32>, n: vec3<f32>, h: f32, rnd: f32,
     // winter: a deciduous crown thins to its twigs (faces drop out by their own hash as the season bares it) — (round
     // 128) a share stay as the twigs' haze: the crown's fine twigs, a dark grey-brown stipple round the limbs, so the
     // bare tree keeps its crown's shape and doesn't read as a pole
-    if (decid && fr < seasonBare() * 0.92) {
-      let fr2 = randv(vec3<i32>(floor(wpos * 3.1)) + vec3<i32>(9, i32(salt & 63u), 4));
-      if (fr2 > 0.38) { return vec4<f32>(0.0, 0.0, 0.0, -1.0); }
-      c = mix(FLORA_COL[b + 1u].rgb, FLORA_COL[b].rgb, 0.35) * vec3<f32>(0.62, 0.55, 0.52) * (0.8 + 0.4 * fr2);
-      mat = f32(MAT_WOOD);
-      if (seasonSnow() * 0.6 > fr2 && n.z > 0.5) { c = vec3<f32>(0.88, 0.91, 0.96); mat = f32(MAT_SNOW); }
-      return vec4<f32>(c, mat);
+    // (round 128, main's review: "deciduous trees in winter should be mostly bare twigs (a few marcescent leaves at most)":
+    // the species' share of leaves kept through the winter, FLORA_ACC.w — an oak's or a beech's few dead ones)
+    // (the drop decided over ~1.7-cell blocks, not per fragment's own small cell: a crown is many layers of cards, and
+    // a per-fragment keep of a few percent showed through every layer as a brown crown)
+    let frW = randv(vec3<i32>(floor(wpos * 0.6)) + vec3<i32>(i32(salt & 255u), 13, 2));
+    if (decid && frW < seasonBare() * (1.0 - FLORA_ACC[k].w)) {
+      // (round 128: no twig haze — the crowns' sprays sit on the limbs, which the deciduous keep at every level, so bare
+      // the branching is the tree's shape; the haze's dark cards read as dead leaves)
+      return vec4<f32>(0.0, 0.0, 0.0, -1.0);
     }
     if (decid) {
       let sc = smoothstep(0.0, 0.3, seasonColour() * 1.3 - rnd * 0.3);
