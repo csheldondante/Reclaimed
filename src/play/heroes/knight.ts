@@ -632,13 +632,27 @@ export class KnightHero extends PlayHero {
       if (dist - e.radius > d.range) continue;
       const off = Math.abs(Math.atan2(Math.sin(Math.atan2(dy, dx) - facing), Math.cos(Math.atan2(dy, dx) - facing)));
       if (dist > 0.3 && off > d.arc / 2) continue;
-      if (Math.abs(e.at[2] - f.z) > 2.5) continue;
+      if (!this.reaches(e, dist)) continue;
       a.cut.add(e.id);
       const n0: Pt = dist > 1e-3 ? [dx / dist, dy / dist] : a.dir;
       // (pass 2: knocked aside, out of the dash's line — the knight's way opens instead of driving it on ahead)
       const n: Pt = a.dash ? aside(n0, a.dash.dir, this.p.dashForward) : n0;
       this.blow(e, hits, d.damage, d.knock, n, this.p.slashLift * (a.n >= 2 || a.lunge ? 1.5 : 1), d.stun);
     }
+  }
+
+  /**
+   * (pass 2) Does the blade reach `e`'s body, `dist` cells off over the ground, in height? The swing sweeps from the
+   * knight's feet to over its head (0..2.2 cells) and, swung at someone along a slope, tilts with it: as far up or down
+   * again as the ground rises over that distance at the steepest it walks (slope 1.2 — any steeper is a wall to it). The
+   * body is its feet to its head. (It was a fixed 2.5 cells of the feet's difference: on a hillside a raider two cells
+   * up the slope was out of reach — the hero lab's hills, 0 blows landed in 7 swings.)
+   */
+  private reaches(e: Target, dist: number): boolean {
+    const tilt = dist * this.p.slope;
+    const lo = this.f.z - tilt - 0.3;
+    const hi = this.f.z + 2.2 + tilt;
+    return e.at[2] + e.height >= lo && e.at[2] <= hi;
   }
 
   /** a blow landed on `e`: the AreaHit, sparks, a jolt */
@@ -828,7 +842,7 @@ export class KnightHero extends PlayHero {
     const hand: V3 = [f.x + Math.cos(yaw) * 0.4, f.y + Math.sin(yaw) * 0.4, f.z + HAND - 0.2];
     this.trail.push({ base: hand, tip: [f.x + Math.cos(yaw) * (BODY + p.spinReach + 0.3), f.y + Math.sin(yaw) * (BODY + p.spinReach + 0.3), hand[2]], t: this.t });
     for (const e of this.targets(f.x, f.y, BODY + p.spinReach + 2)) {
-      if (Math.abs(e.at[2] - f.z) > 2.5) continue;
+      if (!this.reaches(e, Math.hypot(e.at[0] - f.x, e.at[1] - f.y))) continue;
       const sp = speedOf(f);
       // met and closing: carom off (a top bouncing off them) — at the blade's edge, not only body to body: its blow
       // shoves them off first, and the units' positions are a frame or two old, so a body-only carom seldom happened

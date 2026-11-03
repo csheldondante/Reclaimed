@@ -295,12 +295,33 @@ describe('the knight', () => {
     expect(k.health).toBe(k.maxHealth - 1);
   });
 
-  it('(pass 2) a look for every button, in the pad's order (JUMP first)', () => {
+  it("(pass 2) a look for every button, in the pad's order (JUMP first)", () => {
     const w = testWorld(flat);
     const k = new KnightHero(w, [50, 50]);
     expect(k.looks()).toHaveLength(k.pad.buttons.length);
     expect(k.pad.buttons[0].name).toBe('jump');
     expect(k.looks()[2].name).toBe('bow');
+  });
+
+  it("(pass 2) on a hillside, slashes up and down the slope land on raiders (the hero lab's hills)", () => {
+    // (a slope of 1.1 rise over run along x: a raider 2.4 cells up stands 2.6 cells higher)
+    const slope = (x: number) => 40 + (x - 50) * 1.1;
+    for (const dx of [2.4, -2.4]) {
+      const w = testWorld(slope);
+      const k = new KnightHero(w, [50, 50]);
+      const r = w.add([50 + dx, 50], 1000);
+      const sx = dx > 0 ? 660 : 540;
+      new Finger().play(k, w, line([600, 600], [sx, 600], 3));
+      idle(k, w, 30);
+      expect(struck(w, r).length).toBeGreaterThan(0);
+    }
+    // (one on a ledge far over its head is still out of reach)
+    const w = testWorld((x) => (x > 51.5 ? 46 : 40));
+    const k = new KnightHero(w, [50, 50]);
+    const high = w.add([52.4, 50], 1000);
+    new Finger().play(k, w, line([600, 600], [660, 600], 3));
+    idle(k, w, 30);
+    expect(struck(w, high)).toHaveLength(0);
   });
 
   it('swipes chain the combo: three swings, the third a wide finisher', () => {
