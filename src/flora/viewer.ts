@@ -432,6 +432,7 @@ async function main() {
     let group = '';
     for (const p of PARAMS) {
       if (p.woody && !woody) continue;
+      if (p.crown && !def.crown) continue;
       if (p.group !== group) {
         group = p.group;
         const h = document.createElement('div');

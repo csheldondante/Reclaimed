@@ -9,7 +9,7 @@
 // hero is about two cells tall), chosen for the scene the user asked for: "silver birches towering above".
 
 import type { LSystemSpec, TurtleSpec } from './lsystem';
-import type { LeafLook, StemLook } from './mesh';
+import type { CrownLook, LeafLook, StemLook } from './mesh';
 import type { RootSpec } from './roots';
 import { TREE_SCALE } from './spacing';
 
@@ -96,6 +96,8 @@ export interface SpeciesDef {
   flare?: Flare;
   /** (round 128, treegen) how its stems are extruded: sides, noise, knots (mesh.ts StemLook) — every woody plant */
   stem?: StemLook;
+  /** (round 128) a broadleaf crown's sprays (mesh.ts CrownLook) in place of the 'cluster' leaves' blobs */
+  crown?: CrownLook;
   /** (round 128) the bark's texture in the look (floralook.wgsl): colours.bark the base, colours.barkMark the marks */
   bark: BarkLook;
   /** (round 125) moss on the wood near the foot, on its upward faces, 0..1 (the accent colour) */
@@ -274,6 +276,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     leaf: { style: 'cluster', size: 0.95, per: 1, minDepth: 1 },
     roots: { half: 7, depth: 5, res: 0.35, generations: 10, growth: 0.5, down: 0.4, maxCells: 140, trunkRadius: 0.38 },
     stem: { sides: 7, noise: 0.14, noiseFreq: 0.45, knots: 3, knotSize: 0.35, ring: 1.4 },
+    crown: { size: 3, perTwig: 3, spacing: 1.1, fill: 0.8, leaves: 9, droop: 0.25 },
     bark: { furrows: 0.55, furrowFreq: 3.5, plates: 0.25, plateSize: 0.45, stripes: 0, stripeFreq: 7, roughness: 0.45 },
     epiphytes: { lichen: 0.35, moss: 0.3, plants: 0.2, vines: 0.25, lines: 0.1 },
     colours: {
@@ -371,9 +374,12 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
           { s: 'FF[+C][-C]C', w: 0.5 },
           { s: 'F[-C]F[+C]C', w: 0.5 },
         ],
+        // (round 128: the crown's twigs fork more often — a broad, full crown of many small sprays, main's review: "the
+        // elder's crowns are flat red slabs")
         C: [
-          { s: 'F[+C][&L]L', w: 0.5 },
-          { s: 'F[-C][^L]L', w: 0.5 },
+          { s: 'F[+C][-C][&L]L', w: 0.4 },
+          { s: 'F[+C][&L]L', w: 0.3 },
+          { s: 'F[-C][^L]L', w: 0.3 },
         ],
       },
       finals: { A: 'L', B: 'F[&L]L', C: 'L' },
@@ -381,11 +387,13 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     },
     turtle: {
       step: 2.2,
-      stepDecay: 0.72,
+      // (round 128: 0.72 → 0.84 and 26° → 32°: the crown's twigs longer and wider apart, so its sprays spread into a
+      // broad crown instead of a ball at each limb's end)
+      stepDecay: 0.84,
       radius: 1.55,
       radiusDecay: 0.55,
       taper: 0.95,
-      angle: 26,
+      angle: 32,
       roll: 115,
       jitter: 14,
       tropism: [0, 0, 1],
@@ -405,8 +413,9 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     // (hugging the bole's foot and tapering within a few cells — main's review: long sprawls read as logs on the floor)
     flare: { count: 6, rise: 1.8, reach: 1.7, sprawl: 0.7 },
     stem: { sides: 8, noise: 0.16, noiseFreq: 0.3, knots: 2.5, knotSize: 0.3, ring: 3.2 },
+    crown: { size: 3.6, perTwig: 3, spacing: 1.3, fill: 0.85, leaves: 8, droop: 0.2 },
     bark: { furrows: 0.8, furrowFreq: 3, plates: 0, plateSize: 0.6, stripes: 0, stripeFreq: 7, roughness: 0.8 },
-    epiphytes: { lichen: 0.3, moss: 0.5, plants: 0.35, vines: 0.3, lines: 0.15 },
+    epiphytes: { lichen: 0.3, moss: 0.3, plants: 0.35, vines: 0.3, lines: 0.15 },
     colours: {
       // (warm pale, the reference's beech: a grey-white with ochre in it)
       bark: C(0.84, 0.8, 0.72),
@@ -463,6 +472,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     },
     leaf: { style: 'cluster', size: 0.42, per: 1, minDepth: 0 },
     stem: { sides: 4, noise: 0.1, noiseFreq: 1, knots: 0, knotSize: 0, ring: 1 },
+    crown: { size: 0.55, perTwig: 2, spacing: 0.35, fill: 0.8, leaves: 4, droop: 0.15 },
     bark: BARK_PLAIN,
     epiphytes: { lichen: 0.1, moss: 0, plants: 0, vines: 0, lines: 0 },
     blossom: 0.45,

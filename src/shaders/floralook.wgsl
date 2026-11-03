@@ -170,7 +170,7 @@ fn floraLook(k: u32, part: u32, wpos: vec3<f32>, n: vec3<f32>, h: f32, rnd: f32,
       if (fr2 > 0.38) { return vec4<f32>(0.0, 0.0, 0.0, -1.0); }
       c = mix(FLORA_COL[b + 1u].rgb, FLORA_COL[b].rgb, 0.35) * vec3<f32>(0.62, 0.55, 0.52) * (0.8 + 0.4 * fr2);
       mat = f32(MAT_WOOD);
-      if (seasonSnow() * 0.8 > fr2 && n.z > 0.2) { c = vec3<f32>(0.88, 0.91, 0.96); mat = f32(MAT_SNOW); }
+      if (seasonSnow() * 0.6 > fr2 && n.z > 0.5) { c = vec3<f32>(0.88, 0.91, 0.96); mat = f32(MAT_SNOW); }
       return vec4<f32>(c, mat);
     }
     if (decid) {
@@ -189,7 +189,9 @@ fn floraLook(k: u32, part: u32, wpos: vec3<f32>, n: vec3<f32>, h: f32, rnd: f32,
     }
     // (round 128) snow on the evergreens' upper faces: the snow-laden conifer
     let sn = seasonSnow();
-    if (sn > 0.0 && n.z > 0.25 - 0.3 * fr && fr < sn * 0.9) { c = vec3<f32>(0.9, 0.93, 0.97) * (0.9 + 0.1 * fr); mat = f32(MAT_SNOW); }
+    // (on the upper faces only, and not all of them: the dark needles show under it — main's review: the winter
+    // conifer went fully white)
+    if (sn > 0.0 && n.z > 0.55 - 0.15 * fr && fr < sn * 0.75) { c = vec3<f32>(0.9, 0.93, 0.97) * (0.9 + 0.1 * fr); mat = f32(MAT_SNOW); }
   } else if (part == 5u) {
     mat = f32(MAT_GRASS);
     // blades: dark at the foot, light at the tips (so a meadow reads as blades against its ground)

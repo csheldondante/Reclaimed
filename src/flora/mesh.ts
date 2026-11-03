@@ -319,13 +319,36 @@ export interface LeafLook {
   minDepth: number;
 }
 
+/**
+ * (round 128, treegen; main's review: "leaf clusters attached along the last branch orders (many smaller clusters, gaps
+ * between them so sky and branches show through, the silhouette broken up), clusters shaped from the generator's branch
+ * tips rather than a fixed pyramid primitive, and a crown parameter set") A broadleaf crown: at each twig's end and
+ * back along it, sprays of small leaf cards — each a flat diamond turned off the twig, drooping — some left out for
+ * gaps. Replaces round 117's one faceted octahedron a leaf site (the 'cluster' style's blob), which stacked into slabs
+ * and pyramids that hid the branching. Sizes in world cells.
+ */
+export interface CrownLook {
+  /** a spray's reach (cells) */
+  size: number;
+  /** sprays a twig: one at its end, the rest back along it */
+  perTwig: number;
+  /** spacing back along the twig (cells) */
+  spacing: number;
+  /** the share of sprays kept (the gaps: 1 a full crown) */
+  fill: number;
+  /** leaf cards a spray */
+  leaves: number;
+  /** how far the cards hang (0 level with the twig .. 1 hanging) */
+  droop: number;
+}
+
 /** Wood: segments as tubes, fewer sides on thinner branches; then leaves at the sites. */
 /**
  * `minRadius` (skeleton units; round 117, the phone): wood drawn at least this thick, twigs under half of it left out —
  * a branch narrower than a pixel or two breaks into dotted dashes at a low render scale. `minLeaf`: leaf clusters at
  * least this big, fewer of them (merged), so a crown reads as masses, not specks.
  */
-export function buildPlant(sk: Skeleton, leaf: LeafLook, seed: number, opts: { sides?: number; roots?: Segment[]; minTwig?: number; minRadius?: number; minLeaf?: number; stem?: StemLook; scale?: number; keepLimbs?: boolean; extra?: (mb: MeshBuilder, cut: number) => void } = {}): FloraMesh {
+export function buildPlant(sk: Skeleton, leaf: LeafLook, seed: number, opts: { sides?: number; roots?: Segment[]; minTwig?: number; minRadius?: number; minLeaf?: number; stem?: StemLook; crown?: CrownLook; px?: number; scale?: number; keepLimbs?: boolean; extra?: (mb: MeshBuilder, cut: number) => void } = {}): FloraMesh {
   const H = Math.max(sk.height, 0.5);
   const r01 = rng(seed ^ 0x1eaf);
   // sway: nothing at the foot, rising up the plant (squared: a trunk bends near its top), and a little more out on
@@ -356,6 +379,10 @@ export function buildPlant(sk: Skeleton, leaf: LeafLook, seed: number, opts: { s
   for (const g of opts.roots ?? []) mb.tube(g, g.r0 > 0.12 ? 4 : 3, PART.root);
   // (round 128: what grows on it and winter's icicles — epiphytes.ts, by the caller)
   opts.extra?.(mb, cutR);
+  if (opts.crown && leaf.style === 'cluster') {
+    addCrown(mb, sk, leaf.minDepth, opts.crown, opts.scale ?? 1, opts.minLeaf ?? 0, r01, opts.px);
+    return mb.done();
+  }
   // (coarse leaves: bigger clusters, fewer of them — the crown's volume about kept: a site in `keep` carries one)
   const grow = opts.minLeaf && opts.minLeaf > leaf.size ? opts.minLeaf / leaf.size : 1;
   const look = grow > 1 ? { ...leaf, size: leaf.size * grow, per: Math.max(1, Math.round(leaf.per / grow)) } : leaf;
@@ -366,6 +393,78 @@ export function buildPlant(sk: Skeleton, leaf: LeafLook, seed: number, opts: { s
     addLeaves(mb, l, look, r01);
   }
   return mb.done();
+}
+
+/** (round 128) the crown's sprays (CrownLook): `k` world cells a skeleton unit, `minLeaf` (skeleton units) the phone's
+ *  least spray — under it the sprays grow and fewer are made, the crown's cover about kept */
+function addCrown(mb: MeshBuilder, sk: Skeleton, minDepth: number, c: CrownLook, k: number, minLeaf: number, r01: () => number, px?: number): void {
+  let size = c.size / k;
+  // (made for `px` render pixels a cell: a spray `size × px` pixels across holds about as many cards of ~4 px as fit —
+  // the coarse level's sprays are a few cards, not a full spray's worth of sub-pixel ones)
+  let leaves = px ? Math.max(2, Math.min(c.leaves, Math.round(((c.size * px) / 4) ** 2))) : c.leaves;
+  let per = c.perTwig;
+  let keep = c.fill;
+  if (minLeaf > size) {
+    const g = minLeaf / size;
+    size = minLeaf;
+    leaves = Math.max(2, Math.round(leaves / Math.sqrt(g)));
+    per = Math.max(1, Math.round(per / g));
+    keep = Math.min(1, keep * 1.2);
+  }
+  const step = c.spacing / k;
+  const rnd = (): V3 => norm([r01() * 2 - 1, r01() * 2 - 1, r01() * 2 - 1]);
+  const spray = (at: V3, d: V3) => {
+    // (a little off the twig: the sprays follow the branch, not a ball round its tip)
+    const ctr: V3 = add(at, mul(rnd(), size * 0.3));
+    for (let j = 0; j < leaves; j++) {
+      // a card: out from the spray's middle, along the twig and away, bent down by the droop
+      const out = rnd();
+      const ax = norm(add(add(mul(d, 0.6), mul(out, 0.9)), [0, 0, -c.droop * 1.2]));
+      const side = norm(cross(ax, Math.abs(ax[2]) < 0.9 ? ([0, 0, 1] as V3) : ([1, 0, 0] as V3)));
+      // (the card tilted about its axis: faces turned up, down and to the sides, so the light breaks over the spray)
+      const tilt = (r01() - 0.5) * 1.6;
+      const up = cross(side, ax);
+      const sd = norm(add(mul(side, Math.cos(tilt)), mul(up, Math.sin(tilt))));
+      const L = size * (0.55 + 0.45 * r01());
+      const W = L * (0.45 + 0.2 * r01());
+      const base = add(ctr, mul(out, size * 0.15));
+      const a = mb.vert(base, PART.leaf, 0.12);
+      const b = mb.vert(add(add(base, mul(ax, L * 0.45)), mul(sd, W / 2)), PART.leaf, 0.14);
+      const t = mb.vert(add(base, mul(ax, L)), PART.leaf, 0.16);
+      const e = mb.vert(add(add(base, mul(ax, L * 0.45)), mul(sd, -W / 2)), PART.leaf, 0.14);
+      mb.tri(a, b, t);
+      mb.tri(a, t, e);
+    }
+  };
+  // the twigs' ends: `per` sprays each, back along the twig
+  for (const l of sk.leaves) {
+    if (l.depth < minDepth) continue;
+    for (let i = 0; i < per; i++) if (r01() < keep) spray(add(l.p, mul(l.d, -i * step)), l.d);
+  }
+  // and along the last two branch orders, a spray every `spacing` past their first quarter: the leaves sit on the
+  // branching, so the crown's shape is the branches'
+  const paths = stemPaths(sk.segments, () => false);
+  let deepest = 0;
+  for (const p of paths) deepest = Math.max(deepest, p.depth);
+  for (const p of paths) {
+    if (p.depth < Math.max(minDepth, deepest - 1)) continue;
+    let L = 0;
+    for (let i = 1; i < p.p.length; i++) L += Math.hypot(p.p[i][0] - p.p[i - 1][0], p.p[i][1] - p.p[i - 1][1], p.p[i][2] - p.p[i - 1][2]);
+    let s = L * 0.25;
+    let acc = 0;
+    for (let i = 1; i < p.p.length && step > 0; i++) {
+      const a = p.p[i - 1];
+      const b = p.p[i];
+      const len = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+      const d = norm([b[0] - a[0], b[1] - a[1], b[2] - a[2]]);
+      while (s <= acc + len) {
+        const f = (s - acc) / Math.max(len, 1e-6);
+        if (r01() < keep) spray([a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f], d);
+        s += step;
+      }
+      acc += len;
+    }
+  }
 }
 
 function addLeaves(mb: MeshBuilder, l: LeafSite, leaf: LeafLook, r01: () => number): void {

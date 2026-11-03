@@ -9,12 +9,14 @@ export interface Param {
   /** the URL key (p.<key>) and the slider's id */
   key: string;
   label: string;
-  group: 'stem' | 'bark' | 'epiphytes';
+  group: 'stem' | 'crown' | 'bark' | 'epiphytes';
   min: number;
   max: number;
   step: number;
   /** woody plants only (needs a turtle / a stem look) */
   woody?: boolean;
+  /** (round 128) broadleaf crowns only (needs a crown look) */
+  crown?: boolean;
   get(sp: SpeciesDef): number;
   set(sp: SpeciesDef, v: number): void;
 }
@@ -35,6 +37,12 @@ const E = (k: keyof NonNullable<SpeciesDef['epiphytes']>) => ({
   get: (sp: SpeciesDef) => sp.epiphytes?.[k] ?? 0,
   set: (sp: SpeciesDef, v: number) => {
     sp.epiphytes = { ...(sp.epiphytes ?? NO_EPIPHYTES), [k]: v };
+  },
+});
+const CR = (k: keyof NonNullable<SpeciesDef['crown']>) => ({
+  get: (sp: SpeciesDef) => sp.crown?.[k] ?? 0,
+  set: (sp: SpeciesDef, v: number) => {
+    if (sp.crown) sp.crown[k] = v;
   },
 });
 const B = (k: keyof SpeciesDef['bark']) => ({
@@ -60,6 +68,12 @@ export const PARAMS: Param[] = [
   { key: 'knots', label: 'knots /10', group: 'stem', min: 0, max: 10, step: 0.1, woody: true, ...S('knots') },
   { key: 'knotSize', label: 'knot size', group: 'stem', min: 0, max: 1, step: 0.01, woody: true, ...S('knotSize') },
   { key: 'ring', label: 'ring cells', group: 'stem', min: 0.2, max: 6, step: 0.05, woody: true, ...S('ring') },
+  { key: 'cSize', label: 'spray size', group: 'crown', min: 0.3, max: 8, step: 0.05, crown: true, ...CR('size') },
+  { key: 'cPer', label: 'per twig', group: 'crown', min: 1, max: 8, step: 1, crown: true, ...CR('perTwig') },
+  { key: 'cSpacing', label: 'spacing', group: 'crown', min: 0.2, max: 4, step: 0.05, crown: true, ...CR('spacing') },
+  { key: 'cFill', label: 'fill', group: 'crown', min: 0.1, max: 1, step: 0.01, crown: true, ...CR('fill') },
+  { key: 'cLeaves', label: 'cards', group: 'crown', min: 2, max: 20, step: 1, crown: true, ...CR('leaves') },
+  { key: 'cDroop', label: 'droop', group: 'crown', min: 0, max: 1, step: 0.01, crown: true, ...CR('droop') },
   { key: 'furrows', label: 'furrows', group: 'bark', min: 0, max: 1, step: 0.01, ...B('furrows') },
   { key: 'furrowFreq', label: 'furrow freq', group: 'bark', min: 0.5, max: 8, step: 0.1, ...B('furrowFreq') },
   { key: 'plates', label: 'plates', group: 'bark', min: 0, max: 1, step: 0.01, ...B('plates') },
@@ -105,6 +119,7 @@ export function cloneDef(sp: SpeciesDef): SpeciesDef {
     ...sp,
     turtle: sp.turtle ? { ...sp.turtle, tropism: [...sp.turtle.tropism], tropismStrength: [...sp.turtle.tropismStrength] } : undefined,
     stem: sp.stem ? { ...sp.stem } : undefined,
+    crown: sp.crown ? { ...sp.crown } : undefined,
     bark: { ...sp.bark },
     epiphytes: sp.epiphytes ? { ...sp.epiphytes } : undefined,
     colours: { ...sp.colours, bark: [...sp.colours.bark], barkMark: sp.colours.barkMark ? [...sp.colours.barkMark] : undefined },

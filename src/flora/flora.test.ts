@@ -101,9 +101,9 @@ describe('species meshes', () => {
       expect(a.height).toBeLessThanOrEqual(sp.height[1] + 1e-3);
       // (round 125: the elder stands one to a 2 x 2 of the other trees' slots — flora/spacing.ts — so its budget is the
       // area's: up to 5000 a tree, a quarter as many trees)
-      // (round 128: the extruded stems close a thick end and the elder carries its epiphytes — 5600; it stands one to a
-      // 28 x 32 super-block now, TREE_SCALE)
-      const budget = id === 'giant' ? 5600 : sp.form === 'tree' ? 3200 : 400;
+      // (round 128: the crowns' sprays along the last branch orders, the extruded stems, the epiphytes — the elder 9500;
+      // it stands one to a 28 x 32 super-block now, TREE_SCALE: a quarter as many a wood. Small plants 450: the thicket's sprays)
+      const budget = id === 'giant' ? 9500 : sp.form === 'tree' ? 3200 : 450;
       expect(a.tris, `${id} tris`).toBeLessThanOrEqual(budget);
       // indices in range; parts and sway well-formed
       const nv = a.verts.length / 4;
@@ -228,6 +228,7 @@ describe('the generator\'s parameters (round 128: the viewer\'s sliders)', () =>
       const sp = SPECIES[id];
       for (const p of PARAMS) {
         if (p.woody && !(sp.turtle && sp.stem)) continue;
+        if (p.crown && !sp.crown) continue;
         const v = p.get(sp);
         expect(v, `${id}.${p.key}`).toBeGreaterThanOrEqual(p.min);
         expect(v, `${id}.${p.key}`).toBeLessThanOrEqual(p.max);
@@ -298,8 +299,28 @@ describe('the close-up level (round 128: the flora LOD ladder)', () => {
       const close = generate(id, 3, { lod: 'close' });
       expect(close.tris, id).toBeGreaterThan(full.tris);
       expect(close.height).toBeCloseTo(full.height, 5);
-      const budget = id === 'giant' ? 10000 : SPECIES[id].form === 'tree' ? 6400 : 800;
+      const budget = id === 'giant' ? 19000 : SPECIES[id].form === 'tree' ? 6400 : 1400;
       expect(close.tris, `${id} close tris`).toBeLessThanOrEqual(budget);
     }
+  });
+});
+
+describe('the crowns (round 128: sprays along the last branch orders)', () => {
+  const leafVerts = (m: { verts: Float32Array }) => {
+    let n = 0;
+    for (let i = 3; i < m.verts.length; i += 4) if (Math.floor(m.verts[i]) === 4) n++;
+    return n;
+  };
+  it('fill leaves gaps; more cards a spray, more leaves; no blobs (a card is 4 vertices)', () => {
+    const base = SPECIES.oak.crown!;
+    const full = generate('oak', 2, { def: { ...SPECIES.oak, crown: { ...base, fill: 1 } } });
+    const gappy = generate('oak', 2, { def: { ...SPECIES.oak, crown: { ...base, fill: 0.3 } } });
+    expect(leafVerts(gappy)).toBeLessThan(leafVerts(full) * 0.5);
+    const more = generate('oak', 2, { def: { ...SPECIES.oak, crown: { ...base, leaves: base.leaves * 2 } } });
+    expect(leafVerts(more)).toBeGreaterThan(leafVerts(generate('oak', 2)) * 1.5);
+    expect(leafVerts(full) % 4).toBe(0);
+  });
+  it('the coarse level makes fewer cards a spray (about one per 4 px)', () => {
+    expect(leafVerts(generate('giant', 2, { lod: 1, px: 6 }))).toBeLessThan(leafVerts(generate('giant', 2)) * 0.8);
   });
 });

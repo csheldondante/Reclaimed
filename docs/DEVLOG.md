@@ -16500,3 +16500,26 @@ were too few and too thin to see (three on an elder at density 1) — they now a
 wide and 2-6 long, and the fork plants' fronds are 1.3-2.1 cells (the trees are twice the size). Seen: the broadleaf's
 twist and kinks give it a leaning, curving trunk; the elder's bole is bulbous and knotted; conifers with lines read as
 old-man's-beard.
+
+### The crowns (main's review of the Dawn renders, round 128)
+
+main: "the crowns: they're still the old low-poly pyramid/slab clusters stuck on the branch ends. The oak "new" is one
+solid green blob that hides every branch; the elder's crowns are flat red slabs ... leaf clusters attached along the
+last branch orders (many smaller clusters, gaps between them so sky and branches show through, the silhouette broken
+up), clusters shaped from the generator's branch tips rather than a fixed pyramid primitive, and a crown parameter
+set". And: "the conifer in winter goes fully white".
+- A broadleaf crown (species `crown`, mesh.ts CrownLook; the broadleaf, the elder, the thicket) is now sprays of leaf
+  cards in place of the 'cluster' style's octahedron a leaf site: at each twig's end `perTwig` sprays back along it, and
+  along the last two branch orders a spray every `spacing` past their first quarter; each spray `leaves` flat diamond
+  cards turned out from the twig, tilted about their axes (the light breaks over them), bent down by `droop`; `fill` the
+  share kept (the gaps). Sizes in cells. The coarse level makes about one card per 4 render px of spray (`px`), so a
+  far crown isn't sub-pixel cards; the close-up level more, smaller ones and one more spray a twig. The viewer has a
+  "crown" group of sliders (spray size, per twig, spacing, fill, cards, droop).
+- The elder's crown twigs fork more (its C rule) and are longer and wider apart (stepDecay 0.72 → 0.84, angle 26° →
+  32°), so its sprays spread into a broad crown instead of a ball at each limb's end.
+- Winter: snow on the needles' upper faces only and not all of them (the dark needles show under it); the bare crowns'
+  twig haze takes snow only on its faces turned well up.
+- Triangles (seed 1, full → the phone's coarse level): broadleaf 1410 → 882, elder 8766 → 5350, thicket 422 (226 on the
+  phone); the elder's budget 9500 (one to a 28 x 32 super-block: a quarter as many a wood as at round 125's 5000), the
+  close-up's twice the full level's. Renders: C:/Projects/shots88/treegen/crown-v1..v4.png, crown-final.png,
+  crown-winter.png, m2-seasons-grid-v2.png (the sprites, the five seasons).
