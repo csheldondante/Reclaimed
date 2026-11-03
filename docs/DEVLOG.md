@@ -16637,3 +16637,25 @@ Renders: lobe-v1..v3.png, crown-styles.png, sc-v1.png, sc-solid*.png, willow-*.p
 - lobe normals — (style 2) how much the cards are lit as one round lobe.
 - and as before: taper, branch distance, angle variance, twist, kinks, knots, noise, the bark's furrows / plates /
   stripes / roughness and colours, epiphytes, twigs, winter leaves, blossom.
+
+### The crown styles, round two, and smooth stems (round 128; main's review, the user)
+
+main's review of the lobes: "smooth clay balloons": banded facets, the gaps dark holes like a broken mesh, no leafy edge;
+the lobe-normal cards near black (each card's occlusion was taken from the crowding of the other lobes — every card
+inside a neighbour's reach went dark; now by its depth into its own lobe and its height). The user: "It seems like dota
+the render multiple layers as leaves on bent lobes and then shadow the deeper layers to add depth ... the trunk should
+have way more verts or else Phong normal shading so it looks smooth and not polygonal".
+- Five crown styles (a slider): cards, lobes, lobe-normal cards, hybrid (a closed core at 0.8 of each lobe and leaf
+  cards over it, lit by the lobe), and **layers** — now the default for the broadleaf and the elder: each lobe three
+  shells of leaf cards at decreasing reach, each card a strip bent along its lobe's curve, lit by the lobe's normal, the
+  deeper shells darker and cooler (the look's occlusion ramp now cools as it darkens), a dark closed core under the last
+  shell. The outer leaves catch the light; the gaps show shadowed leaves, not sky. Sliders: layers, layer gap, depth
+  dark, card bend, core, shell density, lobe normals. The birch keeps an airy crown of sprays (main: "don't give
+  birches the solid mass").
+- Stems shade round: every stem ring's vertex carries its radial direction as a smooth normal (the plant vertex's z w),
+  the bark's bump on top of it; 8 sides at the normal level, 12 close up, 16 in the sprites' bake. A thick prism's top
+  (a stump, the viewer's old trunks) is closed.
+- Triangles (seed 1, full): broadleaf ~6000-7000, elder ~12000-15000 with the close level 15000 (budgets: a tree 7500,
+  the elder 16000, close-ups twice): the next question for the phone bench.
+Renders: crown-styles-v2.png (cards / lobes / lobe-cards / hybrid), hybrid-vs-layers.png, trunk-close-elder.png,
+trunk-close-oak.png.

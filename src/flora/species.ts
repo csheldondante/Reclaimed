@@ -220,16 +220,16 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
       kinkAngle: 6,
     },
     leaf: { style: 'cluster', size: 0.55, per: 3, minDepth: 1 },
-    // (round 128: the lobe canopy, small light lobes — the birch's airy crown as a few soft masses)
-    crown: { size: 1.8, perTwig: 3, spacing: 1, fill: 0.8, leaves: 7, droop: 0.5, style: 'solid', clump: 6, gaps: 0.08, lumps: 0.35 },
+    // (round 128: an airy crown of leaf sprays — main's review: "don't give birches the solid mass")
+    crown: { size: 2.4, perTwig: 1, spacing: 0, fill: 0.6, leaves: 4, droop: 0.5, style: 'sprays', clump: 6, gaps: 0.08, lumps: 0.35 },
     roots: { half: 8, depth: 4, res: 0.3, generations: 12, growth: 0.5, down: 0.15, maxCells: 160, trunkRadius: 0.3 },
-    stem: { sides: 6, noise: 0.07, noiseFreq: 0.5, knots: 1.5, knotSize: 0.22, ring: 1.8 },
+    stem: { sides: 8, noise: 0.07, noiseFreq: 0.5, knots: 1.5, knotSize: 0.22, ring: 1.8 },
     bark: { furrows: 0, furrowFreq: 3, plates: 0, plateSize: 0.6, stripes: 0.2, stripeFreq: 7, roughness: 0.15 },
     epiphytes: { lichen: 0.2, moss: 0, plants: 0, vines: 0, lines: 0 },
     // (catkins: hanging ochre tassels before the leaves)
     blossom: 0.35,
-    twigs: { count: 2, angle: 40, length: 1.6, falloff: 0.6, orders: 2, droop: 0.6, width: 0.05, spacing: 0 },
-    colonize: { height: 42, crownBase: 0.3, width: 0.18, envelope: 'column', points: 450, influence: 6, kill: 1.6, step: 1.1, upBend: 0.3, weep: 0.2, maxAngle: 50, leader: true, forks: 1, trunkRadius: 0.62, tipRadius: 0.03, thin: 0.6, rounds: 70, straight: 0.6 },
+    twigs: { count: 1, angle: 40, length: 1.8, falloff: 0.6, orders: 1, droop: 0.6, width: 0.05, spacing: 0 },
+    colonize: { height: 42, crownBase: 0.3, width: 0.18, envelope: 'column', points: 350, influence: 6, kill: 1.6, step: 1.1, upBend: 0.3, weep: 0.2, maxAngle: 50, leader: true, forks: 1, trunkRadius: 0.62, tipRadius: 0.03, thin: 0.6, rounds: 70, straight: 0.6 },
     colours: {
       bark: C(0.86, 0.85, 0.8),
       barkMark: C(0.16, 0.15, 0.14),
@@ -287,8 +287,8 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     },
     leaf: { style: 'cluster', size: 0.95, per: 1, minDepth: 1 },
     roots: { half: 7, depth: 5, res: 0.35, generations: 10, growth: 0.5, down: 0.4, maxCells: 140, trunkRadius: 0.38 },
-    stem: { sides: 7, noise: 0.14, noiseFreq: 0.45, knots: 3, knotSize: 0.35, ring: 1.4 },
-    crown: { size: 3, perTwig: 3, spacing: 1.2, fill: 0.85, leaves: 9, droop: 0.25, style: 'solid', clump: 7, gaps: 0.04, lumps: 0.3 },
+    stem: { sides: 8, noise: 0.14, noiseFreq: 0.45, knots: 3, knotSize: 0.35, ring: 1.4 },
+    crown: { size: 3.6, perTwig: 3, spacing: 1.2, fill: 0.85, leaves: 9, droop: 0.25, style: 'layers', clump: 7, gaps: 0.04, lumps: 0.3, shell: 0.06, lobeBlend: 0.8, layers: 3, layerGap: 0.18, depthDark: 0.6, bend: 0.7, core: 1 },
     bark: { furrows: 0.55, furrowFreq: 3.5, plates: 0.25, plateSize: 0.45, stripes: 0, stripeFreq: 7, roughness: 0.45 },
     epiphytes: { lichen: 0.35, moss: 0.3, plants: 0.2, vines: 0.25, lines: 0.1 },
     winterLeaves: 0.06,
@@ -350,7 +350,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     },
     leaf: { style: 'needles', size: 0.55, per: 1, minDepth: 1 },
     roots: { half: 6, depth: 6, res: 0.35, generations: 10, growth: 0.5, down: 0.6, maxCells: 120, trunkRadius: 0.3 },
-    stem: { sides: 6, noise: 0.06, noiseFreq: 0.6, knots: 2, knotSize: 0.25, ring: 1.8 },
+    stem: { sides: 8, noise: 0.06, noiseFreq: 0.6, knots: 2, knotSize: 0.25, ring: 1.8 },
     bark: { furrows: 0.2, furrowFreq: 3, plates: 0.7, plateSize: 0.5, stripes: 0, stripeFreq: 7, roughness: 0.3 },
     epiphytes: { lichen: 0.3, moss: 0.1, plants: 0, vines: 0, lines: 0.25 },
     colours: {
@@ -428,7 +428,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     // (hugging the bole's foot and tapering within a few cells — main's review: long sprawls read as logs on the floor)
     flare: { count: 6, rise: 1.8, reach: 1.7, sprawl: 0.7 },
     stem: { sides: 8, noise: 0.16, noiseFreq: 0.3, knots: 2.5, knotSize: 0.3, ring: 3.2 },
-    crown: { size: 3.6, perTwig: 3, spacing: 1.5, fill: 0.85, leaves: 8, droop: 0.2, style: 'solid', clump: 11, gaps: 0.04, lumps: 0.3, hideBelow: 0.45 },
+    crown: { size: 4.8, perTwig: 3, spacing: 1.5, fill: 0.85, leaves: 8, droop: 0.2, style: 'layers', clump: 11, gaps: 0.04, lumps: 0.3, hideBelow: 0.45, shell: 0.03, lobeBlend: 0.8, layers: 3, layerGap: 0.18, depthDark: 0.6, bend: 0.7, core: 1 },
     bark: { furrows: 0.8, furrowFreq: 3, plates: 0, plateSize: 0.6, stripes: 0, stripeFreq: 7, roughness: 0.8 },
     epiphytes: { lichen: 0.3, moss: 0.3, plants: 0.35, vines: 0.3, lines: 0.15 },
     winterLeaves: 0.08,
@@ -685,7 +685,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     crown: { size: 1.6, perTwig: 2, spacing: 1.1, fill: 0.85, leaves: 5, droop: 1, style: 'sprays' },
     twigs: { count: 3, angle: 20, length: 4.5, falloff: 0.7, orders: 2, droop: 1, width: 0.05, spacing: 0 },
     roots: { half: 6, depth: 4, res: 0.35, generations: 10, growth: 0.55, down: 0.25, maxCells: 120, trunkRadius: 0.5 },
-    stem: { sides: 7, noise: 0.15, noiseFreq: 0.4, knots: 3, knotSize: 0.35, ring: 1.4 },
+    stem: { sides: 8, noise: 0.15, noiseFreq: 0.4, knots: 3, knotSize: 0.35, ring: 1.4 },
     bark: { furrows: 0.7, furrowFreq: 2.5, plates: 0, plateSize: 0.6, stripes: 0, stripeFreq: 7, roughness: 0.4 },
     epiphytes: { lichen: 0.2, moss: 0.2, plants: 0, vines: 0, lines: 0.1 },
     colours: {

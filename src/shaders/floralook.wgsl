@@ -141,9 +141,10 @@ fn floraBarkH(k: u32, st: vec2<f32>, fw: f32) -> vec3<f32> {
   return vec3<f32>(h, shade, mark);
 }
 
-/** (round 128) A canopy lobe's smooth normal (uv.x = −1: the octahedral normal in uv.zw); else the face's `n`. */
+/** (round 128) A smooth normal where the vertex carries one (uv.zw, octahedral: a canopy lobe's, a stem's); else the face's `n`. */
 fn floraSmoothN(uv: vec4<f32>, n: vec3<f32>) -> vec3<f32> {
-  if (uv.x > -0.5) { return n; }
+  // (round 128: stems too carry a smooth normal — the ring's radial direction — wherever z w aren't zero)
+  if (uv.x > -0.5 && abs(uv.z) + abs(uv.w) < 1e-5) { return n; }
   var q = vec3<f32>(uv.z, uv.w, 1.0 - abs(uv.z) - abs(uv.w));
   if (q.z < 0.0) { q = vec3<f32>((1.0 - abs(q.yx)) * select(vec2<f32>(-1.0), vec2<f32>(1.0), q.xy >= vec2<f32>(0.0)), q.z); }
   return normalize(q);
@@ -273,7 +274,8 @@ fn floraLook(k: u32, part: u32, wpos: vec3<f32>, n: vec3<f32>, h: f32, rnd: f32,
       let cool = FLORA_COL[b + 2u].rgb * vec3<f32>(0.78, 0.88, 1.08);
       let warm = FLORA_COL[b + 3u].rgb * vec3<f32>(1.12, 1.06, 0.86);
       c = mix(cool, warm, smoothstep(0.15, 0.95, t));
-      c *= mix(0.45, 1.0, uv.y);
+      // (the occlusion — a crevice, a deeper shell — darker and cooler: the depth the user saw in those crowns)
+      c = mix(c * vec3<f32>(0.62, 0.72, 0.86) * 0.55, c, smoothstep(0.1, 1.0, uv.y));
       c *= 0.93 + 0.14 * vnoise(wpos.xy * 0.45 + vec2<f32>(wpos.z * 0.3, 0.0));
     }
     if (uv.y > 0.0 && fw < 0.35) {

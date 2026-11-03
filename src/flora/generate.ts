@@ -39,7 +39,9 @@ function scaleTo(m: FloraMesh, h: number): FloraMesh {
  * ladder"): 'close' the camera zoomed in — more stem sides and rings, twigs to a third the usual cut, leaf clusters
  * split into more, smaller ones, grass with more, finer, more bent blades; 0 full; 1 coarse; 2 far (a few triangles).
  */
-export type Lod = 'close' | 0 | 1 | 2;
+/** 'bake' (round 128): the sprites' source only — the close-up level and more (the lobes cut twice, every twig): baked
+ *  once a sprite, never drawn, so its triangles don't count at run time */
+export type Lod = 'bake' | 'close' | 0 | 1 | 2;
 
 export function generate(id: SpeciesId, seed: number, opts: { growth?: number; px?: number; lod?: Lod; def?: SpeciesDef; legacy?: boolean } = {}): FloraMesh {
   // (round 128, treegen: `def` a species edited in the viewer — its sliders; `legacy` the stems as round 117 made them,
@@ -61,12 +63,12 @@ export function generate(id: SpeciesId, seed: number, opts: { growth?: number; p
       // (made for ~2.2 px a cell: the trunk and main limbs kept — a birch's white trunk is what makes it read — twigs
       // and roots gone, leaves merged)
       if (opts.lod === 1) return scaleTo(woody(sp, seed, h, 2.2, false), h);
-      return scaleTo(woody(sp, seed, h, opts.lod === 'close' ? undefined : opts.px, true, opts.lod === 'close'), h);
+      return scaleTo(woody(sp, seed, h, opts.lod === 'close' || opts.lod === 'bake' ? undefined : opts.px, true, opts.lod === 'close' || opts.lod === 'bake', opts.lod === 'bake'), h);
     case 'shrub':
       // (round 119: a thicket far off is a lump — a few triangles, from the same skeleton; round 128, main's review: the
       // lump's octahedra read as brown pyramids on the woods' floor — now a few big spray cards on its main stems)
       if (opts.lod === 2) return scaleTo(farShrub(sp, seed), h);
-      return scaleTo(woody(sp, seed, h, opts.lod === 'close' ? undefined : opts.px, true, opts.lod === 'close'), h);
+      return scaleTo(woody(sp, seed, h, opts.lod === 'close' || opts.lod === 'bake' ? undefined : opts.px, true, opts.lod === 'close' || opts.lod === 'bake', opts.lod === 'bake'), h);
     case 'fern':
       return scaleTo(woody(sp, seed, h, opts.px), h);
     case 'vine':
@@ -89,7 +91,7 @@ export function generate(id: SpeciesId, seed: number, opts: { growth?: number; p
   }
 }
 
-function woody(sp: SpeciesDef, seed: number, h: number, px?: number, withRoots = true, close = false): FloraMesh {
+function woody(sp: SpeciesDef, seed: number, h: number, px?: number, withRoots = true, close = false, bake = false): FloraMesh {
   if (!sp.lsystem || !sp.turtle || !sp.leaf) throw new Error(`species ${sp.id}: a woody plant needs an L-system, a turtle and leaves`);
   // (round 128: a crown grown by space colonization where the species has one — colonize.ts; else the L-system's turtle)
   const sk = sp.colonize ? colonize(sp.colonize, hashSeed(seed, 2), { kinkChance: sp.turtle.kinkChance, kinkAngle: sp.turtle.kinkAngle, twist: sp.turtle.twist }) : interpret(expand(sp.lsystem, hashSeed(seed, 1)), sp.turtle, hashSeed(seed, 2));
@@ -107,11 +109,12 @@ function woody(sp: SpeciesDef, seed: number, h: number, px?: number, withRoots =
   if (sp.flare) roots.push(...flareSegments(sp.flare, sp.turtle.radius, hashSeed(seed, 5), withRoots).map(sc));
   // (round 128, close: the same skeleton with more of it drawn — two more sides, rings twice as close, twigs to a third
   // of the cut — and each leaf cluster split into smaller ones)
-  const stem = close && sp.stem ? { ...sp.stem, sides: sp.stem.sides + 2, ring: sp.stem.ring / 2 } : sp.stem;
+  // (round 128: the user's "way more verts" — 12 sides close up, 16 for the sprites' bake; 8 at the normal level)
+  const stem = close && sp.stem ? { ...sp.stem, sides: bake ? 16 : Math.max(12, sp.stem.sides + 2), ring: sp.stem.ring / 2 } : sp.stem;
   const leaf = close && (sp.leaf.style === 'cluster' || sp.leaf.style === 'drop') ? { ...sp.leaf, size: sp.leaf.size * 0.7, per: sp.leaf.per * 2 } : sp.leaf;
   // (the crown's sprays: close up more cards, smaller, one more spray a twig)
   const crown = sp.crown && close ? { ...sp.crown, size: sp.crown.size * 0.75, leaves: Math.round(sp.crown.leaves * 1.5), perTwig: sp.crown.perTwig + 1 } : sp.crown;
-  return buildPlant(sk, leaf, hashSeed(seed, 4), { crown, twigs: sp.twigs, px, roots, sides: sp.form === 'tree' ? 6 : 4, minTwig: sp.form === 'tree' ? (close ? 0.012 : 0.035) : 0, minRadius: sp.form === 'tree' ? minRadius : 0, minLeaf, stem, scale: k, keepLimbs: sp.colours.deciduous, extra: (mb, cut) => {
+  return buildPlant(sk, leaf, hashSeed(seed, 4), { crown, twigs: sp.twigs, px, bake, roots, sides: sp.form === 'tree' ? 6 : 4, minTwig: sp.form === 'tree' ? (close ? 0.012 : 0.035) : 0, minRadius: sp.form === 'tree' ? minRadius : 0, minLeaf, stem, scale: k, keepLimbs: sp.colours.deciduous, extra: (mb, cut) => {
     // (round 128) epiphytes (the coarse level keeps them: lines and vines are the silhouette's) and a tree's icicles
     if (sp.epiphytes) addEpiphytes(mb, sk, sp.epiphytes, hashSeed(seed, 6), k, { icicles: sp.form === 'tree' ? 14 : 0, cut });
   } });
