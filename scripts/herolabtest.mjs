@@ -87,7 +87,8 @@ await run({ name: 'herolabtest', kind: PERF ? 'timing' : 'behaviour', size: '412
 
   // ---- each hero × each station: it loads, the hero moves (the autopilot, or the stick held on the raiders' field)
   if (only.has('grid')) {
-    const stations = await p.evaluate(() => window.reclaimed.lab.stations.list.map((s) => s.id));
+    const all = await p.evaluate(() => window.reclaimed.lab.stations.list.map((s) => s.id));
+    const stations = R.opt('stations', null)?.split(',') ?? all;
     for (const id of ['hoverbike', 'lich', 'knight'])
       for (const st of stations) {
         await p.evaluate((o) => window.reclaimed.lab.pick(o), { hero: id, station: st });
@@ -160,7 +161,7 @@ await run({ name: 'herolabtest', kind: PERF ? 'timing' : 'behaviour', size: '412
         const r = window.reclaimed;
         const h = r.lab.session.hero;
         const [x, y, z] = h.position();
-        const us = r.units.query([x, y], 20);
+        const us = r.lab.d.units.query([x, y], 20);
         if (!us.length) return [1, 0];
         const a = r.core.camera.project(x, y, z);
         const b = r.core.camera.project(us[0].at[0], us[0].at[1], us[0].at[2]);

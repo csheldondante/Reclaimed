@@ -154,7 +154,9 @@ const BOULDERS: V2[] = (() => {
     run += l;
     if (run > 22) {
       run = 0;
-      const side = out.length % 2 ? 1.6 : -1.6;
+      // (round 128: 2.8 off the middle, was 1.6 — on the middle line a walker, the knight, stood against the first one;
+      // the bike's sloppy line still meets them)
+      const side = out.length % 2 ? 2.8 : -2.8;
       out.push([a[0] + (-(b[1] - a[1]) / l) * side, a[1] + ((b[0] - a[0]) / l) * side]);
     }
   }
@@ -188,7 +190,9 @@ function forestPath(): { at: V2; speed: number }[] {
   return at(pts, 0.7);
 }
 function forestColumn(x: number, y: number): LabColumn {
-  const top = G + noise(x / 12, y / 12) * 3;
+  // (round 128: the swell eased in over the forest's first 10 cells, so a walker crosses from the canyon's flat sand: the
+  // knight on the tour stood at a 2-cell step there)
+  const top = G + noise(x / 12, y / 12) * 3 * clamp((x - FOREST.x0) / 10, 0, 1);
   // (round 128, the tour: a band south of the forest's ride, shrubs in the west to low trees in the east — vegplan.wgsl:
   // shrubs from 2.6, young trees from 3.6 — before the old woods)
   if (inBox(x, y, FOREST.x0 + 3, TOUR_BAND[0], 256 - 3, TOUR_BAND[1])) return { top, skin: MAT.Soil, veg: 2.8 + (1.1 * (x - FOREST.x0)) / (256 - FOREST.x0) };
@@ -212,11 +216,15 @@ function cityPath(): { at: V2; speed: number }[] {
   const ax = CITY.streets[2] + 3.5;
   const detour: { at: V2; speed: number }[] = [
     { at: [ax - 9, ya], speed: 0.6 },
-    { at: [ax - 2.5, ya + 4], speed: 0.4 },
-    { at: [ax - 2.5, ya + 13], speed: 0.3 },
+    // (round 128: the turn into the alley from the street's middle — cut from 6.5 cells back, a walker caught the
+    // building's corner and stood there)
+    { at: [ax - 1.5, ya], speed: 0.4 },
+    { at: [ax - 1.5, ya + 4], speed: 0.4 },
+    { at: [ax - 1.5, ya + 13], speed: 0.3 },
     { at: [ax, ya + 15.5], speed: 0.25 },
-    { at: [ax + 2.5, ya + 13], speed: 0.3 },
-    { at: [ax + 2.5, ya + 4], speed: 0.4 },
+    { at: [ax + 1.5, ya + 13], speed: 0.3 },
+    { at: [ax + 1.5, ya + 4], speed: 0.4 },
+    { at: [ax + 1.5, ya], speed: 0.4 },
     { at: [ax + 9, ya], speed: 0.6 },
   ];
   const i = pts.findIndex((p) => p.at[0] > ax + 9 && Math.abs(p.at[1] - ya) < 1);

@@ -9,7 +9,7 @@ import { CAM_SPEC } from '../camera/params';
 import { CameraRig } from '../camera/rig';
 import { makeHero } from '../heroes/make';
 import { input, testWorld } from '../testing';
-import { Autopilot } from './autopilot';
+import { Autopilot, lookFor } from './autopilot';
 import { sight } from './ride';
 import { TOUR } from './terrains';
 
@@ -26,6 +26,22 @@ describe('the tour, auto camera', () => {
     expect(at([130, 109]).wall).toBeGreaterThan(0.2);
     expect(at([70.5, 125]).wall).toBe(0);
     expect(around(s, [70.5, 125, s.top(70.5, 125)], s.top(70.5, 125), P.auto, true).wall).toBeGreaterThan(0.2);
+  });
+
+  it('the knight walks the loop, no step it cannot climb', () => {
+    const s = sight();
+    const world = testWorld((x, y) => s.top(x, y), { maxHeld: 4 });
+    const pilot = new Autopilot(TOUR.path, lookFor('knight'));
+    const hero = makeHero('knight', world, pilot.start().at);
+    const dt = 1 / 30;
+    let best = 0;
+    for (let t = 0; t < 150; t += dt) {
+      const p = hero.position();
+      const dir = pilot.steer([p[0], p[1]]);
+      hero.update(dt, { move: dir, input: input({ dir }) });
+      best = Math.max(best, pilot.progress);
+    }
+    expect(best).toBeGreaterThan(0.95);
   });
 
   it('rides the loop: pulled back on the field, closer in the woods, tilted only by the cliff', () => {

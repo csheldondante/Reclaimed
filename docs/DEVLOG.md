@@ -16498,3 +16498,29 @@ wake lock, device facts, report buttons, state in localStorage). Pairs `hero:cam
 on the canyon under the chase then cut + tilt, the bike on the tour under the chase then auto; settle 12 s, 20 s of
 frames, the camera toggled against the chase within the page (src/perf/toggle.ts, `toggled` moved out of
 physbench.ts to be shared). The user's phone run is the measurement; the desktop run is a proxy.
+
+**Headless at 412x915 (round 128, scripts/herolabtest.mjs, every system at 1x; shots and GIFs in
+C:/Projects/shots88/herolab2/).** The test menu is up first, every entry on screen and 44 px tall; each of the 17
+tests by a real tap closes the menu, sets `?test=` and says its line ("Bike in the canyon. Handling: carve. Camera:
+tilt and cut. / Can you make the turns? Which one felt best?"). Each hero x each of the 11 stations loads and moves,
+no page errors. Found and fixed on the way:
+- Walkers stood still: the knight cut the canyon's first corner into a boulder (Node: 0.10 of a lap in 40 s), the
+  knight and the lich caught the city's corner into the alley, the knight stood at a 2-cell step where the forest
+  meets the canyon's sand on the tour. Now the autopilot looks 3 cells ahead for a walker (7 for the bike:
+  autopilot.ts `lookFor`), the canyon's boulders sit 2.8 off the middle (was 1.6; the bike's sloppy-rider metric on
+  the canyon, stock: hits 42 -> 24 a minute, crashes 19.8 -> 18.5), the alley's turn starts from the street's middle,
+  and the forest's swell eases in over its first 10 cells. Node, 90 s, the knight with look 3: canyon 1.63 laps, the
+  tour 1.12, every station past a lap.
+- Picking a station (a test, or a script) left the test menu over the screen; picking one now closes it.
+- The auto camera live, the bike on the tour: zoom 10.6 on the field's edge, up to 17-21 in the old woods, back to
+  12-13 out of them; elevation 30 in the woods, up to 42-46 deg along the plateau's wall, back to 32-34 past it.
+- The knight on the raiders' field, by in-page touch swipes at the nearest raider: 7 swings, 2 lunges, 0 hits, the
+  raiders round it hurting it (12). Not diagnosed headless (knighttouch.mjs lands blows on dummies placed 2.6 cells
+  off); the user's thumb on the knight test and knight pass 2 (guards, lungers, longer lunge) are the check.
+
+**Desktop proxy (Intel Xe-LPG iGPU, 412x915 dpr 2.6, q=low; `?herobench=1`, 4 pairs).** Frame p50 / p95 / p99 ms:
+the bike, canyon, cut+tilt 8.3 / 10.5 / 33.4; the lich 8.3 / 11.0 / 16.3; the knight 8.3 / 10.5 / 16.1 (it stood:
+the boulder, before the fix); the bike on the tour, auto 8.3 / 11.8 / 42.5. The camera against the chase, toggled:
+the cut +0.67 ms (bike), +1.35 (lich), -1.2 (knight, noise); auto -0.16 ms (nothing). The play layer's main thread
+0.70-0.99 ms a frame. The GPU timestamps read 26-95 ms a frame against 8-10 ms frames: unreliable on this adapter,
+kept in the JSON only. The user's Pixel 9a run is the measurement.

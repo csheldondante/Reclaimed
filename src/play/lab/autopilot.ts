@@ -11,6 +11,12 @@ export interface AutoPath {
   speed: number;
 }
 
+/**
+ * (round 128) cells ahead the stick points, by hero: a walker (the knight, the lich) looks 3 — at 7 it cut the
+ * canyon's corners into its boulders and stood there; the bike 7
+ */
+export const lookFor = (hero: string): number => (hero === 'hoverbike' ? 7 : 3);
+
 export class Autopilot {
   /** the path's index the hero is nearest (fractional: along the segment) */
   private i = 0;

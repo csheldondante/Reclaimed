@@ -32,7 +32,7 @@ import { CAM_MODES, camString, DEFAULT_CAM, parseCam } from '../camera/rig';
 import { isPlayHero, type PlayHeroId } from '../heroes/make';
 import { Station, type StationHost } from '../sandbox/station';
 import { el, PlaySession, type SessionDeps } from '../session';
-import { Autopilot, type AutoPath } from './autopilot';
+import { Autopilot, lookFor, type AutoPath } from './autopilot';
 import { applyTurn, assistOn, HANDLING, HANDLING_VARIANTS, parseHandling, steerParams, useHandling, type HandlingId } from './handling';
 import { STATION_KINDS, Stations, urlParam, VariantPicker, type LabStation, type StationKind } from './lab';
 import { LAB_TERRAINS, TOUR, type LabTerrain } from './terrains';
@@ -311,7 +311,7 @@ export class HeroLab {
       icon: kind === 'traits' ? '✨' : ICONS[t.id],
       hint,
       enter: ({ session }) => {
-        this.pilot = new Autopilot(path);
+        this.pilot = new Autopilot(path, lookFor(session.heroId));
         const st = this.pilot.start();
         session.respawn(st.at);
         const rig = session.rig;
@@ -431,6 +431,8 @@ export class HeroLab {
 
   /** (scripts/herolab.mjs) a station, the camera modes (`?cam=` form), a hero and handling, as the chips would pick them */
   pick(o: { station?: string; cam?: string; hero?: PlayHeroId; handling?: string }): void {
+    // (a station picked: the menu's done with)
+    if (o.station) this.showMenu(false);
     if (o.hero) this.byName.get('hero')!.set([o.hero]);
     if (o.cam) this.byName.get('camera')!.set(parseCam(o.cam));
     if (o.handling) this.handPicker.set(['stock', ...parseHandling(o.handling).filter((x) => x !== 'stock')]);
