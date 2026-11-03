@@ -16917,3 +16917,15 @@ canyon left the wall flying (AIR 1.9 s): the taper throws it at speed, as a ramp
   forest 2.98.
 - The horse's sloppy-thumb check after the push change: assist off 0.36 laps a minute, strong 3.15; wall contacts 0.03
   either way (the check now asks for twice the laps, and no more contacts).
+
+**Encounters as lab stations (HL11).** The user (round 128): "After that we focus on making moment to moment gameplay
+good and making fun encounters via the hero lab." An encounter is a station with a scripted setup (its enter),
+enemies, a goal and an ending: `LabStation.goal` (play/lab/lab.ts LabGoal: its text in plain words, an optional clock,
+`check` each frame: on with a share done and a note, won, or lost). `Stations` keeps the time, the goal's state and
+the result, and tells `ended` once; past the clock it's lost, "Out of time". The lab shows the goal's line under the
+bar (the goal, what's left, the seconds left) and, at the end, a result card in the middle (Done! / Knocked out. /
+Out of time., the time, Again and Tests). Two to start: "Two waves" (the raiders' station with two waves sent at
+once, won when none stand, lost if the hero's knocked out, 90 s) and "Climb the hill" (the hill with no autopilot,
+won at the top, 25 s). The knight's station gained `left()` and `spawned()` for a goal to read. Node (lab.test.ts):
+won, out of time and knocked out each end it once with the time. Ready for the encounters branch's specs: a spec's
+setup goes in `enter`, its rules' end state in `goal.check`.

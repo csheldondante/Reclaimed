@@ -43,7 +43,9 @@ and pulls back on open ground, and tilts only by cliffs. It is a variant to try,
     feeling on rails? Does it stop before walls? Try the assist chips under settings: strong, light, off.
 11. **Bike, canyon walls (new).** The canyon's walls now slope. On the physical drive, ride fast up onto them. Can you
     ride along them? Can you tell when you will slide off?
-12. **Lich, raise the dead / raiders / cliffs.** Tap Crowd, then Smite and Raise. Is building an army fun? (We still
+12. **Encounters (new).** Knight: "Encounter: two waves" and "Encounter: climb the hill". Each has a goal, a clock
+    and a result at the end. Are these the start of fun encounters? What would make them better?
+13. **Lich, raise the dead / raiders / cliffs.** Tap Crowd, then Smite and Raise. Is building an army fun? (We still
    owe the lich a design talk. This is only to remind you how it plays now.)
 
 ## The phone benches

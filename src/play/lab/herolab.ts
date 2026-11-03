@@ -34,7 +34,7 @@ import { Station, type StationHost } from '../sandbox/station';
 import { el, PlaySession, type SessionDeps } from '../session';
 import { Autopilot, lookFor, riderClimb, type AutoPath } from './autopilot';
 import { applyTurn, assistOn, HANDLING, HANDLING_VARIANTS, parseHandling, steerParams, useHandling, type HandlingId } from './handling';
-import { STATION_KINDS, Stations, urlParam, VariantPicker, type LabStation, type StationKind } from './lab';
+import { STATION_KINDS, Stations, urlParam, VariantPicker, type LabResult, type LabStation, type StationKind } from './lab';
 import { HILL, HILL_RIDE, LAB_TERRAINS, TOUR, type LabTerrain } from './terrains';
 import { ASSIST_CHOICES, ASSIST_LEVEL, DRIVE_CHOICES, parseAssist, parseDrive, type AssistChoice, type DriveChoice } from './drivechoice';
 import { describe, findTest, LAB_TESTS, type LabTest } from './tests';
@@ -104,6 +104,7 @@ export class HeroLab {
     this.auto = urlParam.get('auto') !== '0';
     const ctx: LabContext = { lab: this, session };
     this.stations = new Stations(this.allStations(), ctx);
+    this.stations.ended.push((r) => this.showResult(r));
     // (the autopilot holds the stick until the player pushes it)
     session.steer = (p: V2, stick: V2) => {
       if (Math.hypot(stick[0], stick[1]) > 0.2) this.yieldT = TAKE_OVER;
@@ -318,38 +319,82 @@ export class HeroLab {
       out.push(st);
     }
     // (round 128) the knight's raiders (play/sandbox/station.ts) on the hills, for every hero; no autopilot
+    out.push(this.enemyStation('enemy', 'Raiders', 'Wave sends raiders at you, one more each time. Dummies stand still and take hits.'));
+    // (round 128, HL11) encounters: a station with a scripted setup, enemies, a goal and an ending, the result shown
+    out.push(
+      this.enemyStation('fight-waves', 'Two waves', 'Beat two waves of raiders.', (st) => {
+        st.nextWave();
+        st.nextWave();
+      }, {
+        text: 'Beat two waves of raiders.',
+        time: 90,
+        check: ({ session }) => {
+          if (!session.hero.alive) return { state: 'lost', note: 'Knocked out' };
+          const st = this.enemy;
+          if (!st) return { state: 'on' };
+          const left = st.left();
+          return left === 0 ? { state: 'won' } : { state: 'on', done: 1 - left / Math.max(1, st.spawned()), note: `${left} raiders left` };
+        },
+      }),
+    );
     {
-      const t = LAB_TERRAINS.find((x) => x.id === 'hills')!;
-      const at: V2 = [(t.rect[0] + t.rect[2]) / 2 - 10, (t.rect[1] + t.rect[3]) / 2];
-      out.push({
-        id: 'enemy',
-        kind: 'enemy',
-        name: 'Raiders',
-        icon: '👹',
-        hint: 'Wave sends raiders at you, one more each time. Dummies stand still and take hits.',
-        enter: ({ session }) => {
-          this.pilot = null;
-          session.respawn(at);
-          this.d.camera.azimuth = session.rig.frame.view.azimuth = session.rig.restAz;
-          session.rig.sources.length = 0;
-          const host: StationHost = {
-            d: this.d,
-            world: session.world,
-            get hero() {
-              return session.hero;
-            },
-          };
-          this.enemy = new Station(host, { place: false });
-          this.showKindRow();
+      const t: LabTerrain = { id: 'hill', name: 'Hill', hint: '', rect: [HILL.x0, HILL.y0, HILL.x1, HILL.y1], path: HILL_RIDE, pois: [] };
+      const st = this.rideStation(t, 'puzzle', 'climb', 'Climb the hill', 'Get to the top of the slope.', HILL_RIDE);
+      st.icon = '🏔';
+      const top = HILL.base + HILL.height - 0.15;
+      st.goal = {
+        text: 'Get to the top of the slope.',
+        time: 25,
+        check: ({ session }) => {
+          const z = session.world.top(session.hero.position()[0], session.hero.position()[1]);
+          return z >= top ? { state: 'won' } : { state: 'on', done: Math.max(0, (z - HILL.base) / HILL.height) };
         },
-        update: () => this.enemy?.update(0),
-        leave: () => {
-          this.enemy?.dispose();
-          this.enemy = null;
-        },
-      });
+      };
+      // (the climb is the player's: no autopilot)
+      const enter = st.enter;
+      st.enter = (ctx) => {
+        enter(ctx);
+        this.pilot = null;
+      };
+      out.push(st);
     }
     return out;
+  }
+
+  /** the knight's raiders' station on the hills (play/sandbox/station.ts): `setup` once it's up, `goal` an encounter's */
+  private enemyStation(id: string, name: string, hint: string, setup?: (st: Station) => void, goal?: LabStation<LabContext>['goal']): LabStation<LabContext> {
+    const t = LAB_TERRAINS.find((x) => x.id === 'hills')!;
+    const at: V2 = [(t.rect[0] + t.rect[2]) / 2 - 10, (t.rect[1] + t.rect[3]) / 2];
+    return {
+      id,
+      kind: 'enemy',
+      name,
+      icon: goal ? '⚔' : '👹',
+      hint,
+      goal,
+      enter: ({ session }) => {
+        this.pilot = null;
+        session.respawn(at);
+        session.hero.heal();
+        this.d.camera.azimuth = session.rig.frame.view.azimuth = session.rig.restAz;
+        session.rig.sources.length = 0;
+        const host: StationHost = {
+          d: this.d,
+          world: session.world,
+          get hero() {
+            return session.hero;
+          },
+        };
+        this.enemy = new Station(host, { place: false });
+        setup?.(this.enemy);
+        this.showKindRow();
+      },
+      update: () => this.enemy?.update(0),
+      leave: () => {
+        this.enemy?.dispose();
+        this.enemy = null;
+      },
+    };
   }
 
   private traitDriver(at: V2): TraitStationDriver {
@@ -450,7 +495,48 @@ export class HeroLab {
   }
 
   go(id: string): void {
+    this.resultEl?.remove();
+    this.resultEl = null;
     this.stations.go(id);
+    this.paintNow();
+  }
+
+  // ---- (round 128, HL11) encounters: the goal's line and the result ----------------------------------------------
+
+  private lastGoal = '';
+  private resultEl: HTMLElement | null = null;
+
+  /** "Beat two waves of raiders. 3 raiders left. 52 s left." */
+  private goalLine(): string {
+    const g = this.stations.current?.goal;
+    if (!g) return '';
+    const st = this.stations.goal;
+    const parts = [g.text];
+    if (st?.note) parts.push(`${st.note}.`);
+    if (g.time !== undefined && !this.stations.result) parts.push(`${Math.max(0, Math.ceil(g.time - this.stations.t))} s left.`);
+    return parts.join(' ');
+  }
+
+  /** the result card: won or lost, how long, again or back to the tests */
+  private showResult(r: LabResult): void {
+    this.resultEl?.remove();
+    const card = el('div', 'lab-result', this.d.ui);
+    for (const ev of ['pointerdown', 'touchstart']) card.addEventListener(ev, (e) => e.stopPropagation(), { passive: true });
+    card.classList.add(r.state);
+    el('div', 'lab-result-title', card).textContent = r.state === 'won' ? 'Done!' : `${r.note || 'Lost'}.`;
+    el('div', 'lab-result-line', card).textContent = r.state === 'won' ? `In ${r.time.toFixed(1)} s.` : `After ${r.time.toFixed(1)} s.`;
+    const row = el('div', 'lab-result-row', card);
+    const again = el('button', 'play-small', row) as HTMLButtonElement;
+    again.textContent = 'Again';
+    again.addEventListener('click', () => this.go(r.station));
+    const tests = el('button', 'play-small', row) as HTMLButtonElement;
+    tests.textContent = 'Tests';
+    tests.addEventListener('click', () => {
+      this.resultEl?.remove();
+      this.resultEl = null;
+      this.showMenu(true);
+    });
+    this.resultEl = card;
     this.paintNow();
   }
 
@@ -510,7 +596,8 @@ export class HeroLab {
       urlParam.set('test', null);
     }
     const text = describe({ hero, station: cur.id, handling: this.handPicker.value, cam: this.session.rig.ids, drive: this.drivePicker?.value[0] });
-    const ask = this.test?.ask ?? (cur.kind === 'enemy' ? cur.hint : '');
+    const ask = cur.goal ? this.goalLine() : this.test?.ask ?? (cur.kind === 'enemy' ? cur.hint : '');
+    this.lastGoal = cur.goal ? ask : '';
     this.now.textContent = ask ? `${text}\n${ask}` : text;
   }
 
@@ -556,6 +643,8 @@ export class HeroLab {
   update(dt: number): void {
     this.yieldT -= dt;
     this.stations.update(dt);
+    // (an encounter's line: its goal, what's left, the clock — repainted when it reads differently)
+    if (this.stations.goal && this.goalLine() !== this.lastGoal) this.paintNow();
     this.session.update(dt);
     this.live.frames++;
     if (this.metrics) this.metrics.add(dt, this.session.rig.frame, this.session.rig.interests, this.session.camSight);
@@ -588,6 +677,7 @@ export class HeroLab {
     this.traits?.clear();
     this.enemy?.dispose();
     this.menu.remove();
+    this.resultEl?.remove();
     this.bar.remove();
     this.panel.dispose();
     this.handPanel.dispose();

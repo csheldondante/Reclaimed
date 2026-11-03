@@ -33,6 +33,38 @@ export interface LabStation<C> {
   enter(ctx: C): void;
   update?(ctx: C, dt: number): void;
   leave?(ctx: C): void;
+  /** (round 128, HL11) an encounter's goal: what to do, how it ends, the result shown; absent: free play */
+  goal?: LabGoal<C>;
+}
+
+/**
+ * (round 128, HL11; the user: "making fun encounters via the hero lab") A station's goal: an encounter is a station
+ * with a scripted setup (its enter), enemies, a goal and an ending. `check` is asked each frame from the start: won,
+ * lost, or on with a share done; past `time` seconds it's lost ("out of time"). Its words are player text.
+ */
+export interface LabGoal<C> {
+  /** what to do, plain: "Get to the top." */
+  text: string;
+  /** seconds allowed (absent: no clock) */
+  time?: number;
+  check(ctx: C, t: number): GoalState;
+}
+
+export interface GoalState {
+  state: 'on' | 'won' | 'lost';
+  /** 0..1 done (a bar), when it can say */
+  done?: number;
+  /** a short plain line: "3 raiders left", "Knocked out" */
+  note?: string;
+}
+
+/** how an encounter ended: the result shown */
+export interface LabResult {
+  station: string;
+  state: 'won' | 'lost';
+  /** seconds it took */
+  time: number;
+  note: string;
 }
 
 export interface LabAction<C> {
@@ -123,6 +155,12 @@ export class VariantPicker<T extends string> {
 /** The stations of a lab, by kind; one is current. */
 export class Stations<C> {
   current: LabStation<C> | null = null;
+  /** (HL11) seconds since the current station began, its goal's state now, and the last result */
+  t = 0;
+  goal: GoalState | null = null;
+  result: LabResult | null = null;
+  /** told when an encounter ends */
+  readonly ended: ((r: LabResult) => void)[] = [];
   constructor(
     readonly list: LabStation<C>[],
     private ctx: C,
@@ -137,11 +175,24 @@ export class Stations<C> {
     if (!s) throw new Error(`lab: no station "${id}" (${this.list.map((x) => x.id).join(', ')})`);
     this.current?.leave?.(this.ctx);
     this.current = s;
+    this.t = 0;
+    this.result = null;
+    this.goal = s.goal ? { state: 'on', done: 0 } : null;
     s.enter(this.ctx);
     return s;
   }
 
   update(dt: number): void {
-    this.current?.update?.(this.ctx, dt);
+    const s = this.current;
+    s?.update?.(this.ctx, dt);
+    if (!s?.goal || this.result) return;
+    this.t += dt;
+    let g = s.goal.check(this.ctx, this.t);
+    if (g.state === 'on' && s.goal.time !== undefined && this.t >= s.goal.time) g = { state: 'lost', note: 'Out of time' };
+    this.goal = g;
+    if (g.state !== 'on') {
+      this.result = { station: s.id, state: g.state, time: this.t, note: g.note ?? '' };
+      for (const f of this.ended) f(this.result);
+    }
   }
 }

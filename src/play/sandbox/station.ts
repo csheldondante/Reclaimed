@@ -158,6 +158,14 @@ export class Station {
     this.s.d.camera.target[1] = best[1];
   }
 
+  /** (herolab, round 128: an encounter's goal) raiders still standing, and spawned in all */
+  left(): number {
+    return this.raiders.filter((id) => this.s.d.units.get(id)?.alive).length;
+  }
+  spawned(): number {
+    return this.raiders.length;
+  }
+
   /** the next wave: raiders in a ring round the hero, one more than the last */
   nextWave(): void {
     const [x, y] = this.s.hero.position();

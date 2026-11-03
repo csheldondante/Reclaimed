@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { wayAhead } from '../camera/ahead';
 import { Autopilot } from './autopilot';
+import { Stations, type LabResult, type LabStation } from './lab';
 import { ride, sight } from './ride';
 import { G, LAB_TERRAINS } from './terrains';
 
@@ -68,4 +69,41 @@ describe('the autopilot', () => {
       expect(r.speed, t.id).toBeGreaterThan(6);
     }
   }, 60_000);
+});
+
+describe('encounters (HL11)', () => {
+  const ctx = { x: 0, dead: false };
+  const station = (id: string, time?: number): LabStation<typeof ctx> => ({
+    id,
+    kind: 'enemy',
+    name: id,
+    hint: '',
+    enter: (c) => {
+      c.x = 0;
+      c.dead = false;
+    },
+    update: (c, dt) => {
+      c.x += dt;
+    },
+    goal: { text: 'Get to 2.', time, check: (c) => (c.dead ? { state: 'lost', note: 'Knocked out' } : c.x >= 2 ? { state: 'won' } : { state: 'on', done: c.x / 2, note: `${(2 - c.x).toFixed(0)} to go` }) },
+  });
+  it('a goal is checked each frame; won, lost or out of time ends it once, with the time', () => {
+    const results: LabResult[] = [];
+    const st = new Stations([station('win'), station('slow', 1), station('die')], ctx);
+    st.ended.push((r) => results.push(r));
+    st.go('win');
+    for (let k = 0; k < 300; k++) st.update(1 / 60);
+    expect(results).toHaveLength(1);
+    expect(results[0].state).toBe('won');
+    expect(results[0].time).toBeCloseTo(2, 1);
+    st.go('slow');
+    for (let k = 0; k < 120; k++) st.update(1 / 60);
+    expect(results[1]).toMatchObject({ station: 'slow', state: 'lost', note: 'Out of time' });
+    st.go('die');
+    st.update(1 / 60);
+    ctx.dead = true;
+    st.update(1 / 60);
+    expect(results[2]).toMatchObject({ station: 'die', state: 'lost', note: 'Knocked out' });
+    expect(results).toHaveLength(3);
+  });
 });

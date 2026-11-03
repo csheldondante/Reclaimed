@@ -2271,6 +2271,14 @@ were), core/levitate.ts `stepLevitate(..., drive)` (the velocity's easing replac
 On the bike the grip scales with the load (the slope's cos; riding a wall, + v^2 / (wallR g)); over `wallMin` it rides
 faces up to `wallClimb` and banks with the surface (BikeTuning wallRide, wallMin, wallClimb, wallR, wallBank).
 
+### Encounters in the lab (round 128, branch `herolab`; BACKLOG HL11)
+
+`play/lab/lab.ts`: a `LabStation` may carry a `goal` (`LabGoal`: text, an optional `time`, `check(ctx, t)` ->
+`GoalState` on/won/lost with `done` and a `note`). `Stations` times the current station, checks its goal each frame,
+ends it once (`result`, `ended` listeners; past the clock: lost, "Out of time"). The hero lab paints the goal's line
+and a result card (Again, Tests). An encounter = a station whose `enter` sets it up (enemies through the knight's
+station, play/sandbox/station.ts, or the units directly) and whose `goal.check` reads the world through the context.
+
 ### The horse (round 128, branch `herolab`; BACKLOG PL42)
 
 A mount hero on the physical drive (core/foot.ts + HORSE_DRIVE). Its stick goes through `core/mount.ts mountSteer`

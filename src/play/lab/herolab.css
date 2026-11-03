@@ -163,3 +163,42 @@
 body.herolab-on .reclaim {
   display: none;
 }
+/* (round 128, HL11) an encounter's result: in the middle, a thumb's buttons */
+.lab-result {
+  position: absolute;
+  left: 50%;
+  top: 38%;
+  transform: translate(-50%, -50%);
+  min-width: 220px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: rgba(20, 18, 16, 0.92);
+  color: #f4efe2;
+  font: 14px system-ui, sans-serif;
+  text-align: center;
+  z-index: 20;
+  pointer-events: auto;
+}
+.lab-result.won .lab-result-title {
+  color: #9fdc7a;
+}
+.lab-result.lost .lab-result-title {
+  color: #f08a6a;
+}
+.lab-result-title {
+  font: 700 22px system-ui, sans-serif;
+}
+.lab-result-line {
+  margin: 4px 0 10px;
+  opacity: 0.85;
+}
+.lab-result-row {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+.lab-result-row .play-small {
+  min-height: 44px;
+  min-width: 80px;
+  font-size: 15px;
+}

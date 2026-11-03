@@ -7,7 +7,7 @@ import { LAB_TERRAINS } from './terrains';
 import { describe, findTest, LAB_TESTS, STATION_WORDS } from './tests';
 
 suite('lab tests', () => {
-  const stations = new Set([...LAB_TERRAINS.map((t) => t.id), 'tour', 'hill', 'moves-canyon', 'moves-city', 'traits', 'enemy']);
+  const stations = new Set([...LAB_TERRAINS.map((t) => t.id), 'tour', 'hill', 'climb', 'fight-waves', 'moves-canyon', 'moves-city', 'traits', 'enemy']);
   const all = LAB_TESTS.flatMap((g) => g.tests);
   it('name real things', () => {
     for (const t of all) {
@@ -25,6 +25,7 @@ suite('lab tests', () => {
   });
   it('plain words: no parentheses, colons or semicolons in a question', () => {
     for (const t of all) expect(t.ask, t.id).not.toMatch(/[();:]/);
+    // (an encounter's line is its goal's, not a question)
   });
   it('describes what is on', () => {
     expect(describe({ hero: 'hoverbike', station: 'moves-canyon', handling: ['stock', 'carve'], cam: ['chase', 'cutaway', 'tilt'] })).toBe(

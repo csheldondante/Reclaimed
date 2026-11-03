@@ -47,6 +47,8 @@ export const STATION_WORDS: Record<string, string> = {
   'moves-city': 'the city streets',
   traits: 'the field of the living and the dead',
   hill: 'the field below the hill',
+  climb: 'the field below the hill',
+  'fight-waves': "the raiders' field",
   tour: 'the tour: field, shrubs, woods, cliff, town',
   enemy: 'the raiders\' field',
 };
@@ -123,6 +125,8 @@ export const LAB_TESTS: LabTestGroup[] = [
       { id: 'knight-physical', hero: 'knight', station: 'enemy', drive: 'physical', press: ['Wave'], label: 'Raiders, physical drive', ask: 'Does the knight still feel snappy?' },
       { id: 'brute-hill', hero: 'knight', station: 'hill', drive: 'brute', label: 'Brute, hill', ask: 'A heavy brute. It can only get up the slope with a long run. Is that fun?' },
       { id: 'brute-raiders', hero: 'knight', station: 'enemy', drive: 'brute', press: ['Mixed'], label: 'Brute, raiders', ask: 'The brute charges and turns wide. Is charging through them fun?' },
+      { id: 'knight-fight', hero: 'knight', station: 'fight-waves', label: 'Encounter: two waves', ask: '' },
+      { id: 'knight-climb', hero: 'knight', station: 'climb', drive: 'physical', label: 'Encounter: climb the hill', ask: '' },
       { id: 'knight-tour-auto', hero: 'knight', station: 'tour', cam: 'auto+cutfade', label: 'Tour, auto zoom', ask: 'Does the zoom follow what is around you? Does the tilt by the cliff help?' },
       { id: 'knight-forest', hero: 'knight', station: 'forest', label: 'Forest', ask: 'Can you see the knight under the trees?' },
       { id: 'knight-canyon', hero: 'knight', station: 'canyon', label: 'Canyon', ask: 'Does the cut show the knight in the narrow walls?' },
