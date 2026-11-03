@@ -163,6 +163,13 @@ export class MeshBuilder {
         prev = ring;
       }
     }
+    // (a thick stem's end closed with a low dome: a bole that forks into limbs ends inside them, but its noise and
+    // knots open gaps a flat end would show — the elder's fork was a hollow pipe)
+    const rEnd = path.r[path.r.length - 1];
+    if (prev && prevT && rEnd > 0.25) {
+      const tip = this.vert(add(P[P.length - 1], mul(prevT, rEnd * 0.6)), part, extra);
+      for (let q = 0; q < n; q++) this.tri(prev[q], prev[(q + 1) % n], tip);
+    }
   }
   /** a faceted blob (an octahedron, jittered): leaf clusters, moss cushions */
   blob(c: V3, r: V3, part: number, r01: () => number, extra = 0): void {

@@ -39,10 +39,12 @@ export class FloraSprites {
     globals: GPUBuffer,
     materials: GPUBuffer,
     floraWgsl: string,
+    /** a cell's side (texels; the tests bake bigger to look at the trees) */
+    readonly cell = SPR_CELL,
   ) {
     this.cells = lib.sprites.length * SPR_YAWS;
     this.rows = Math.max(1, Math.ceil(this.cells / SPR_COLS));
-    const size = [SPR_COLS * SPR_CELL, this.rows * SPR_CELL];
+    const size = [SPR_COLS * cell, this.rows * cell];
     // (COPY_SRC: the tests read the atlas back)
     const usage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC;
     this.albedo = device.createTexture({ label: 'flora sprites albedo', size, format: 'rgba8unorm', usage });
