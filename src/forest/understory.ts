@@ -7,6 +7,7 @@
 // weight eases toward it in about a second, and every treatment scales with it.
 import type { UnderstoryLook, UnderstoryTreatments } from '../api/contracts/understory';
 import { ALL_TREATMENTS } from '../api/contracts/understory';
+import { TREE_SCALE } from '../flora/spacing';
 
 /** a tree as the plan has it (api/plants.ts Tree's fields this needs) */
 export interface PlanTree {
@@ -23,15 +24,16 @@ export interface PlanTree {
  * tips: where the canopy is closed enough to stand "under" it.
  */
 export function crownReach(t: PlanTree): number {
+  // (round 128: × TREE_SCALE, the trees' size)
   switch (t.species) {
     case 'giant':
-      return 9;
+      return 9 * TREE_SCALE;
     case 'birch':
-      return 5;
+      return 5 * TREE_SCALE;
     case 'conifer':
-      return 3.5;
+      return 3.5 * TREE_SCALE;
     default:
-      return 4;
+      return 4 * TREE_SCALE;
   }
 }
 

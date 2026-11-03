@@ -11,6 +11,7 @@ import type { UnderstoryTreatments } from '../api/contracts/understory';
 import type { Camera } from '../render/camera';
 import { SPECIES, type SpeciesId } from '../flora/species';
 import { Understory } from './understory';
+import { TREE_SCALE } from '../flora/spacing';
 
 /** the plan's species → the flora library's */
 const FLORA_OF: Record<Tree['species'], SpeciesId> = { giant: 'giant', birch: 'birch', broadleaf: 'oak', conifer: 'pine' };
@@ -39,8 +40,8 @@ export interface UnderstoryHost {
   readonly afterFrame: ((dt: number, at: [number, number, number]) => void)[];
 }
 
-/** how far round the hero the trees are asked for (cells): the widest crown (the elder's ~15) and the cover's disc */
-const NEAR = 24;
+/** how far round the hero the trees are asked for (cells): the widest crown (the elder's ~15 × TREE_SCALE) and the cover's disc */
+const NEAR = 24 * TREE_SCALE;
 /** seconds between asking the plan again (or sooner, when the hero has moved a few cells) */
 const REFRESH = 0.25;
 

@@ -14,17 +14,43 @@
 // between the massive trunks is the scene.
 //
 // One pure function of world columns, mirrored exactly in vegplan.wgsl (test/gpu/flora-plan.test.ts runs both); the
-// numbers are here and there, kept the same by that test.
+// numbers are here only (round 128: spacingWgsl() is prepended to vegplan.wgsl).
 
-/** a block of columns (x) by rows (y) holding one tree: 7 columns × 8 rows ≈ 7 × 6.9 cells */
-export const SLOT_W = 7;
-export const SLOT_H = 8;
+/**
+ * (round 128, treegen) Every tree's size: height and trunk width × this, its density ÷ this² (the slot grid's spacing ×
+ * this). The user: "Let's make all trees a bit bigger (height and trunk width scaled by 2 density quartered to match)".
+ * Read by the plan's heights (vegplan.wgsl, api/plants.ts planTree), the library's species heights, the tiles' trees,
+ * the understory's crown reach. vegplan.wgsl mirrors it (TREE_SCALE).
+ */
+export const TREE_SCALE = treeScale(typeof location !== 'undefined' ? new URLSearchParams(location.search).get('treescale') : null);
+
+/** `?treescale=` (1: round 125's trees, the phone bench's other side; 2 the default); anything else throws */
+export function treeScale(q: string | null): number {
+  if (q === null) return 2;
+  if (q !== '1' && q !== '2') throw new Error(`?treescale=${q}: 1 or 2`);
+  return Number(q);
+}
+/** a block of columns (x) by rows (y) holding one tree: 7 × TREE_SCALE columns by 8 × TREE_SCALE rows (≈ 14 × 13.9
+ *  cells at 2) */
+export const SLOT_W = 7 * TREE_SCALE;
+export const SLOT_H = 8 * TREE_SCALE;
 /** the candidate's margin inside its block (columns / rows) */
-export const SLOT_M = 1;
+export const SLOT_M = TREE_SCALE;
 /** an elder super-block: K × K blocks */
 export const ELDER_K = 2;
 /** the elder's margin inside its super-block (columns / rows) */
-export const ELDER_M = 3;
+export const ELDER_M = 3 * TREE_SCALE;
+
+/** The slot grid's constants for vegplan.wgsl (prepended to it wherever it is compiled: one source, these). */
+export function spacingWgsl(): string {
+  return `const TREE_SCALE: f32 = ${TREE_SCALE.toFixed(1)};
+const SLOT_W: i32 = ${SLOT_W};
+const SLOT_H: i32 = ${SLOT_H};
+const SLOT_M: i32 = ${SLOT_M};
+const ELDER_K: i32 = ${ELDER_K};
+const ELDER_M: i32 = ${ELDER_M};
+`;
+}
 /** the elder woods' noise: its scale (world columns) and the band it rises through */
 export const ELDER_SCALE = 96;
 export const ELDER_LO = 0.6;

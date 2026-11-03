@@ -181,7 +181,7 @@ fn tileTrees(w: vec2<f32>, v: f32, px: f32) -> TTree {
       let rel = bc - w;
       let along = dot(rel, -away);
       let off = abs(dot(rel, vec2<f32>(-away.y, away.x)));
-      if (off > 17.0 || along < -17.0 || along > 34.0 * cotE + 17.0) { continue; }
+      if (off > 17.0 * TREE_SCALE || along < -17.0 * TREE_SCALE || along > (34.0 * cotE + 17.0) * TREE_SCALE) { continue; }
       let s = blockSlot(bb);
       if (s.z == 0) { continue; }
       // (the window's hashes take window columns: the candidate's, the window's origin taken off)
@@ -199,7 +199,9 @@ fn tileTrees(w: vec2<f32>, v: f32, px: f32) -> TTree {
       if (elder) { H = 26.0 + 6.0 * hv; Rr = 9.0 + 3.0 * hv; leaf = vec3<f32>(0.66, 0.13, 0.07); }
       else if (conifer) { H = 13.0 + 7.0 * hv; Rr = 2.8 + 0.8 * hv; leaf = vec3<f32>(0.13, 0.27, 0.13); }
       else if (birch) { H = 18.0 + 6.0 * hv; Rr = 4.2 + 1.4 * hv; leaf = vec3<f32>(0.42, 0.56, 0.2); }
-      H *= 0.8 + 0.2 * dens;
+      // (round 128: every tree TREE_SCALE × round 125's)
+      H *= (0.8 + 0.2 * dens) * TREE_SCALE;
+      Rr *= TREE_SCALE;
       let foot = cellPos(s.xy);
       let ds = length(w - (foot + sh * H * 0.8)) / (Rr * 1.1);
       t.shade = max(t.shade, (1.0 - smoothstep(0.75, 1.0, ds)) * dens);

@@ -59,7 +59,7 @@ export const PARAMS: Param[] = [
   { key: 'noiseFreq', label: 'noise freq', group: 'stem', min: 0.05, max: 2, step: 0.01, woody: true, ...S('noiseFreq') },
   { key: 'knots', label: 'knots /10', group: 'stem', min: 0, max: 10, step: 0.1, woody: true, ...S('knots') },
   { key: 'knotSize', label: 'knot size', group: 'stem', min: 0, max: 1, step: 0.01, woody: true, ...S('knotSize') },
-  { key: 'ring', label: 'ring cells', group: 'stem', min: 0.2, max: 3, step: 0.05, woody: true, ...S('ring') },
+  { key: 'ring', label: 'ring cells', group: 'stem', min: 0.2, max: 6, step: 0.05, woody: true, ...S('ring') },
   { key: 'furrows', label: 'furrows', group: 'bark', min: 0, max: 1, step: 0.01, ...B('furrows') },
   { key: 'furrowFreq', label: 'furrow freq', group: 'bark', min: 0.5, max: 8, step: 0.1, ...B('furrowFreq') },
   { key: 'plates', label: 'plates', group: 'bark', min: 0, max: 1, step: 0.01, ...B('plates') },

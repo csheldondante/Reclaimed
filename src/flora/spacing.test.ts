@@ -1,7 +1,8 @@
 // Round 125 (forest): the trees' jittered grid — spacing, density, the elder woods (src/flora/spacing.ts).
 import { describe, expect, test } from 'vitest';
 import { cellPos } from '../world/lattice';
-import { ELDER_K, elderWood, SLOT_H, SLOT_W, slotAt, type Slot } from './spacing';
+import { ELDER_K, elderWood, SLOT_H, SLOT_W, slotAt, TREE_SCALE, type Slot } from './spacing';
+const T = TREE_SCALE;
 
 /** every slot of a kind in a world rectangle of columns, as world points */
 function slots(kind: Slot, x0: number, y0: number, w: number, h: number): [number, number][] {
@@ -19,20 +20,25 @@ function nearest(ps: [number, number][]): number[] {
 const mean = (a: number[]) => a.reduce((s, x) => s + x, 0) / a.length;
 
 describe('tree slots', () => {
-  test('one candidate a block, never two trees within ~3 cells, ~6-7 cells apart on average', () => {
+  // (round 128: every distance × TREE_SCALE — the trees twice the size, a quarter as many)
+  test('one candidate a block, never two trees within ~3 cells, ~6-7 cells apart on average (× TREE_SCALE)', () => {
     // (a stretch of world far from the origin, negative too: floor division)
     for (const [x0, y0] of [[-700, -400], [12000, 4800]]) {
-      const ps = [...slots('tree', x0, y0, 140, 160), ...slots('elder', x0, y0, 140, 160)];
+      const W = 140 * T;
+      const H = 160 * T;
+      const ps = [...slots('tree', x0, y0, W, H), ...slots('elder', x0, y0, W, H)];
       const nn = nearest(ps);
-      expect(Math.min(...nn)).toBeGreaterThanOrEqual(2.5);
+      // (2·SLOT_M + 1 rows apart at the least: 5 rows ≈ 4.3 cells)
+      expect(Math.min(...nn)).toBeGreaterThanOrEqual(4.3);
       // (outside elder woods ~one a block)
-      const blocks = (140 / SLOT_W) * (160 / SLOT_H);
-      const trees = slots('tree', x0, y0, 140, 160).length;
-      const elders = slots('elder', x0, y0, 140, 160).length;
+      const blocks = (W / SLOT_W) * (H / SLOT_H);
+      const trees = slots('tree', x0, y0, W, H).length;
+      const elders = slots('elder', x0, y0, W, H).length;
       expect(trees + elders * ELDER_K * ELDER_K).toBeGreaterThan(blocks * 0.9);
-      expect(trees + elders * ELDER_K * ELDER_K).toBeLessThanOrEqual(blocks);
-      expect(mean(nn)).toBeGreaterThan(4.5);
-      expect(mean(nn)).toBeLessThan(8);
+      // (the rectangle needn't fall on block edges: a partial row of blocks either side)
+      expect(trees + elders * ELDER_K * ELDER_K).toBeLessThanOrEqual(blocks * 1.06);
+      expect(mean(nn)).toBeGreaterThan(4.5 * T);
+      expect(mean(nn)).toBeLessThan(8 * T);
     }
   });
 
@@ -60,15 +66,15 @@ describe('tree slots', () => {
     expect(share).toBeLessThan(0.35);
     // the heart of a wood: find a column deep in one
     let at: [number, number] | null = null;
-    const deep = (x: number, y: number) => [0, 20, 40, 60, 80].every((i) => [0, 22, 45, 67, 90].every((j) => elderWood(x + i, y + j) > 0.99));
-    for (let y = 0; y < 6000 && !at; y += 13) for (let x = 0; x < 6000 && !at; x += 13) if (deep(x, y)) at = [x, y];
+    const deep = (x: number, y: number) => [0, 20, 40, 60, 80].every((i) => [0, 22, 45, 67, 90].every((j) => elderWood(x + i * T, y + j * T) > 0.99));
+    for (let y = 0; y < 20000 && !at; y += 13) for (let x = 0; x < 20000 && !at; x += 13) if (deep(x, y)) at = [x, y];
     expect(at).not.toBeNull();
     const [x0, y0] = at!;
-    const el = slots('elder', x0, y0, 80, 90);
+    const el = slots('elder', x0, y0, 80 * T, 90 * T);
     expect(el.length).toBeGreaterThan(14);
-    expect(slots('tree', x0, y0, 80, 90).length).toBeLessThan(el.length * 0.25);
+    expect(slots('tree', x0, y0, 80 * T, 90 * T).length).toBeLessThan(el.length * 0.25);
     const nn = nearest(el);
-    expect(Math.min(...nn)).toBeGreaterThanOrEqual(6);
-    expect(mean(nn)).toBeGreaterThan(10);
+    expect(Math.min(...nn)).toBeGreaterThanOrEqual(6 * T);
+    expect(mean(nn)).toBeGreaterThan(10 * T);
   });
 });

@@ -23,11 +23,8 @@ fn birchWood(x: u32, y: u32) -> f32 {
 // (round 125, forest) Where trees stand: a jittered grid of slots in world columns (src/flora/spacing.ts, exactly) — one
 // candidate a 7 × 8 block, at least a column in from its edges; in the elder woods one elder a 2 × 2 super-block and no
 // other tree. The user: "make the trees bigger and further spaced appart ... seas of leaves".
-const SLOT_W: i32 = 7;
-const SLOT_H: i32 = 8;
-const SLOT_M: i32 = 1;
-const ELDER_K: i32 = 2;
-const ELDER_M: i32 = 3;
+// (round 128, treegen: every tree TREE_SCALE × in height and trunk, the grid's spacing × it — density ÷ it². The
+// constants TREE_SCALE, SLOT_W, SLOT_H, SLOT_M, ELDER_K, ELDER_M come from spacing.ts spacingWgsl(), prepended)
 // (the elder woods' field, elderWoodW and ELDER_SCALE/LO/HI: woods.wgsl — the atlas lays its old woods by it too)
 fn slotRand(bx: i32, by: i32, salt: u32) -> f32 { return f32(pcg(bitcast<u32>(bx) ^ pcg(bitcast<u32>(by) ^ pcg(salt))) >> 8u) / 16777216.0; }
 fn floorDiv(a: i32, b: i32) -> i32 { return i32(floor(f32(a) / f32(b))); }
@@ -91,6 +88,9 @@ fn vegPlan(x: u32, y: u32, v: f32, m: u32) -> VegPlan {
       pl.trunk = 4.0 + floor(age * 3.0) + floor(hv * 3.0);
       pl.crown = 5.0 + floor(hv * 2.99) + select(0.0, 1.0, v > 4.5);
     }
+    // (round 128: the heights above are round 125's; every tree is TREE_SCALE × them)
+    pl.trunk *= TREE_SCALE;
+    pl.crown *= TREE_SCALE;
   } else if (v >= 2.6 && h < 0.25) {
     pl.shrub = true;
   }

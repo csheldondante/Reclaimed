@@ -205,7 +205,7 @@ fn treeInstance(c: vec2<u32>, top: f32, pl: VegPlan) {
     let age = 0.8 + 0.2 * clamp((veg[colIdx(c.x, c.y)] - 3.6) / 1.2, 0.0, 1.0);
     // (round 125, forest: the trees' real reach — the elder ~32 tall and ~16 across its crown — for the cull)
     let tall = (pl.trunk + pl.crown) * 1.15 + 2.0;
-    floraInstance(r, c, top, age, 0.05, tall, select(9.0, 16.0, pl.species == 3u));
+    floraInstance(r, c, top, age, 0.05, tall, select(9.0, 16.0, pl.species == 3u) * TREE_SCALE);
     return;
   }
   let k = min(pl.species, MI_N - 1u);

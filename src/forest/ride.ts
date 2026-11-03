@@ -2,6 +2,8 @@
 // and the stick that rides a hero round it (pure pursuit: toward the point `look` cells further along the loop than
 // the nearest). Pure, so the lab's route and pace are tested in Node.
 
+import { TREE_SCALE } from '../flora/spacing';
+
 export type V2 = [number, number];
 
 export interface Stand {
@@ -22,7 +24,7 @@ export interface Stand {
  * toward the eye (`eye`: the ground way toward the eye, unit) — so its trunk rises behind the hero and its neighbours
  * frame it.
  */
-export function parkSpot(trunks: V2[], eye: V2, ahead = 4, reach = 16): V2 | null {
+export function parkSpot(trunks: V2[], eye: V2, ahead = 4, reach = 16 * TREE_SCALE): V2 | null {
   let best: V2 | null = null;
   let most = -1;
   for (const t of trunks) {

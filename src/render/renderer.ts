@@ -10,9 +10,11 @@ import layersWgsl from '../shaders/layers.wgsl?raw';
 import materialsWgsl from '../shaders/materials.wgsl?raw';
 import renderprepWgsl from '../shaders/renderprep.wgsl?raw';
 import vegplanOwn from '../shaders/vegplan.wgsl?raw';
+import { spacingWgsl } from '../flora/spacing';
 import woodsWgsl from '../shaders/woods.wgsl?raw';
 // (round 125: vegplan.wgsl reads the woods' fields — woods.wgsl, shared with the atlas)
-const vegplanWgsl = woodsWgsl + vegplanOwn;
+// (round 128: the slot grid's constants from flora/spacing.ts, one source)
+const vegplanWgsl = woodsWgsl + spacingWgsl() + vegplanOwn;
 import terrainShapeWgsl from '../shaders/terrainshape.wgsl?raw';
 import vegprepWgsl from '../shaders/vegprep.wgsl?raw';
 import renderWgslOwn from '../shaders/render.wgsl?raw';

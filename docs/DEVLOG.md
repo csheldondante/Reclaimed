@@ -16371,3 +16371,33 @@ children; kinks bend a stem; noise and knots move the vertices, not the triangle
 legacy mesh; every species' value within its slider's range, edits clamped and the table untouched, the URL round trip;
 bare deciduous trees keep limb wood at both mesh levels; the epiphyte densities add their geometry (none without);
 icicles on trees only; the named seasons where the season functions put them.
+
+## 2026-11-03 — round 128 (`treegen`): M3, every tree x2 at a quarter the density (FLO45)
+
+The user (round 128): "Let's make all treesa bit bigger (height and trunk width scaled by 2 density quartered to
+match)". One constant, flora/spacing.ts TREE_SCALE (2; `?treescale=1` gives round 125's trees — the phone bench's other
+side and the before/after shots, the same build), read everywhere a tree's size or spacing is:
+- the slot grid: SLOT_W/H 7 x 8 → 14 x 16 columns, the margins 1 → 2 and the elder's 3 → 6 (the elder super-block 2 x 2
+  blocks, so 28 x 32). vegplan.wgsl no longer carries its own copy: spacing.ts spacingWgsl() is prepended wherever it is
+  compiled (renderer, particles, the GPU tests) — one source, which the CPU/GPU plan test still checks.
+- the plan's heights: vegplan.wgsl and api/plants.ts planTree compute round 125's trunk and crown and multiply by
+  TREE_SCALE (the same hashes: where a tree stands and what species it is only thins out; the GPU/CPU test unchanged);
+- the library: tree species' height ranges are round 125's x TREE_SCALE (species.ts `tall`), and the generator scales
+  the whole tree uniformly, so the trunk's width doubles with the height (the elder's bole ~5 cells across, the
+  lich a fifth of it);
+- the tiles' painted trees past the window (tiles.wgsl tileTrees: height, crown radius and the blocks' reach);
+- vegprep's cull radius for a crown; the understory's crown reach and the driver's radius round the hero (the
+  canopy's underside is the plan's trunk, so it rises with it); the forest station's park reach;
+- passability: a trunk's footprint x TREE_SCALE² (trees a quarter as many, each four times the area: a wood as hard to
+  cross as before);
+- logs: a tree's logs x TREE_SCALE² (a wood holds the wood it held). Judgement call for the user: felling one tree now
+  yields four times the logs.
+
+What does not change: the succession, the regions, sites, roads (test/gpu/seed1-unchanged.test.ts passes) and the
+towns' plans (settle/plan.ts dWood reads the succession, not the trees). The stem's ring spacing in cells doubled with
+the trees (so a stem has the rings it had); a tree's triangles are about what they were (birch 2004, elder 4920 at full
+detail) but four times fewer trees stand on the land. The coarse level keeps more of a big tree's limbs (its twig cut is
+in pixels: a tree twice the size has more limbs over it): birch 1684, broadleaf 702, elder 4856.
+
+Tests: the slot tests at x TREE_SCALE (the nearest neighbours ≥ 4.3 cells, ~9-16 on average; the elders ≥ 12, ~20+);
+the GPU/CPU plan test on a 128² window (the same ~73 blocks as before).

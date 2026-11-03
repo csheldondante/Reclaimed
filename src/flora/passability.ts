@@ -16,6 +16,10 @@
 import type { FloraPassage } from '../api/contracts/flora';
 import type { ControllerProfile } from '../api/contracts/play';
 import type { Barrier } from './species';
+import { TREE_SCALE } from './spacing';
+
+/** a tree's trunk footprint (cells²): one at round 125's size, × TREE_SCALE² */
+const TRUNK_FOOT = TREE_SCALE * TREE_SCALE;
 
 export interface StandPlant {
   barrier: Barrier;
@@ -36,7 +40,8 @@ export function coverage(plants: StandPlant[], area: number, h = 2): number {
   let sum = 0;
   for (const p of plants) {
     const reach = Math.min(1, p.height / Math.max(0.3, h * 0.6));
-    const foot = p.trunkOnly ? 1 : Math.PI * p.radius * p.radius;
+    // (round 128: a trunk TREE_SCALE × as wide — its footprint TREE_SCALE² — and a quarter as many: a wood as hard to cross)
+    const foot = p.trunkOnly ? TRUNK_FOOT : Math.PI * p.radius * p.radius;
     sum += p.barrier.fill * foot * reach;
   }
   return 1 - Math.exp(-sum / area);
@@ -53,7 +58,7 @@ export function passage(plants: StandPlant[], area: number, body: ControllerProf
   let cuttable = 0;
   let breakMass = 0;
   for (const p of plants) {
-    const k = p.barrier.fill * (p.trunkOnly ? 1 : Math.PI * p.radius * p.radius);
+    const k = p.barrier.fill * (p.trunkOnly ? TRUNK_FOOT : Math.PI * p.radius * p.radius);
     w += k;
     slow += k * p.barrier.slow;
     cuttable += k * (p.barrier.cuttable ? 1 : 0);

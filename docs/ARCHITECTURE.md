@@ -3133,6 +3133,10 @@ PARAMS, read by the viewer's sliders and its URL (`p.<key>=`) and applied as an 
   seasonBloom (0.92-0.13). Named points (params.ts SEASONS): flower 0.97, leaf 0.2, autumn 0.47, bare 0.76, winter
   0.85. Bare crowns keep a twig haze (a share of the leaf faces, bark-dark) and the deciduous keep their first limbs at
   every mesh level.
+- Tree size (round 128): flora/spacing.ts TREE_SCALE (2; ?treescale=1 round 125's) multiplies every tree's height and
+  trunk (the species' heights, the plan's trunk and crown, the tiles' painted trees, the understory's reach, a trunk's
+  passability footprint ×², logs ×²) and the slot grid's spacing (density ÷ TREE_SCALE²). vegplan.wgsl takes the grid's
+  constants from spacingWgsl(), prepended.
 ## The forest and the understory (round 125, branch `forest`; BACKLOG FLO30-FLO37; src/forest, contract src/api/contracts/understory.ts)
 
 The user (DECISIONS round 124): "I want forests to be impressive like the cliffs. They should be seas of leaves or

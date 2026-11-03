@@ -7,8 +7,9 @@ import { makeBindGroup, makeCompute } from '../../src/gpu/pipeline';
 import commonWgsl from '../../src/shaders/common.wgsl?raw';
 import materialsWgsl from '../../src/shaders/materials.wgsl?raw';
 import vegplanOwn from '../../src/shaders/vegplan.wgsl?raw';
+import { spacingWgsl } from '../../src/flora/spacing';
 import woodsWgsl from '../../src/shaders/woods.wgsl?raw';
-const vegplanWgsl = woodsWgsl + vegplanOwn;
+const vegplanWgsl = woodsWgsl + spacingWgsl() + vegplanOwn;
 import { GLOBALS_BYTES } from '../../src/sim/globals';
 import { packMaterialTable } from '../../src/world/materials';
 import { birchWood, planTree } from '../../src/api/plants';
@@ -21,8 +22,9 @@ beforeAll(async () => {
 });
 afterAll(() => g?.destroy());
 
-const W = 64;
-const H = 64;
+// (round 128: 128 — the slots twice as far apart, TREE_SCALE)
+const W = 128;
+const H = 128;
 const KERNEL = /* wgsl */ `
 @group(0) @binding(3) var<storage, read_write> outv: array<vec4<f32>>;
 @group(0) @binding(4) var<storage, read> vin: array<f32>;
@@ -104,7 +106,7 @@ test.each([
       expect(gpu[2]).toBe(t.trunk);
       expect(gpu[3]).toBe(t.crown);
     }
-  // (round 125: a tree a 7 × 8 block of columns — ~73 blocks in the window; an elder a 2 × 2 of them)
+  // (round 125: a tree a 7 × 8 block of columns; round 128: 14 × 16 — ~73 blocks in the 128² window; an elder a 2 × 2 of them)
   expect(trees).toBeGreaterThan(12);
   if (_name.includes('elder')) expect(giants).toBeGreaterThan(5);
   else expect(birches + trees).toBeGreaterThan(0);

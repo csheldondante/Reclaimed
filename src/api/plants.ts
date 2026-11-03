@@ -6,7 +6,7 @@
 import type { WorldCore } from '../scenes/world-core';
 import { EventKind } from '../sim/globals';
 import { cellAt, cellPos } from '../world/lattice';
-import { ELDER_VEG, slotAt } from '../flora/spacing';
+import { ELDER_VEG, slotAt, TREE_SCALE } from '../flora/spacing';
 import type { Mirror } from './mirror';
 import type { Terrain } from './terrain';
 
@@ -113,7 +113,9 @@ export function planTree(cx: number, cy: number, v: number, w: number, h: number
     crown = 5 + Math.floor(hv * 2.99) + (v > 4.5 ? 1 : 0);
   }
   const [x, y] = cellPos(cx, cy);
-  return { cx, cy, x, y, species, trunk, crown, logs: logsOf(trunk, crown) };
+  // (round 128, treegen: every tree TREE_SCALE × round 125's heights and a TREE_SCALE² share of the land — its logs ×
+  // TREE_SCALE², so a wood holds the wood it held)
+  return { cx, cy, x, y, species, trunk: trunk * TREE_SCALE, crown: crown * TREE_SCALE, logs: logsOf(trunk, crown) * TREE_SCALE * TREE_SCALE };
 }
 
 export class Plants {

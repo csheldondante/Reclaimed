@@ -11,6 +11,7 @@
 import type { LSystemSpec, TurtleSpec } from './lsystem';
 import type { LeafLook, StemLook } from './mesh';
 import type { RootSpec } from './roots';
+import { TREE_SCALE } from './spacing';
 
 export type RGB = [number, number, number];
 
@@ -155,6 +156,8 @@ export interface BarkLook {
 export const BARK_PLAIN: BarkLook = { furrows: 0, furrowFreq: 3, plates: 0, plateSize: 0.6, stripes: 0, stripeFreq: 7, roughness: 0.15 };
 
 const C = (r: number, g: number, b: number): RGB => [r, g, b];
+/** (round 128) a tree's height range: round 125's × TREE_SCALE (flora/spacing.ts) */
+const tall = (a: number, b: number): [number, number] => [a * TREE_SCALE, b * TREE_SCALE];
 
 export const SPECIES: Record<SpeciesId, SpeciesDef> = {
   // Silver birch (Betula pendula): a tall, slender white trunk with dark marks, bare low down, fine weeping twigs
@@ -165,7 +168,8 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     form: 'tree',
     // (round 125, forest: x1.5 — "trees much bigger relative to the player"; the trunk ~0.9 across, a villager's
     // width and a half, the lich's about)
-    height: [17, 25],
+    // (round 128, treegen: × TREE_SCALE — every tree twice as tall and its trunk twice as wide, a quarter as many)
+    height: tall(17, 25),
     lsystem: {
       axiom: 'FFFFA',
       rules: {
@@ -207,7 +211,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     },
     leaf: { style: 'drop', size: 0.55, per: 3, minDepth: 1 },
     roots: { half: 8, depth: 4, res: 0.3, generations: 12, growth: 0.5, down: 0.15, maxCells: 160, trunkRadius: 0.3 },
-    stem: { sides: 6, noise: 0.07, noiseFreq: 0.5, knots: 1.5, knotSize: 0.22, ring: 0.9 },
+    stem: { sides: 6, noise: 0.07, noiseFreq: 0.5, knots: 1.5, knotSize: 0.22, ring: 1.8 },
     bark: { furrows: 0, furrowFreq: 3, plates: 0, plateSize: 0.6, stripes: 0.2, stripeFreq: 7, roughness: 0.15 },
     epiphytes: { lichen: 0.2, moss: 0, plants: 0, vines: 0, lines: 0 },
     // (catkins: hanging ochre tassels before the leaves)
@@ -231,7 +235,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     id: 'oak',
     name: 'Broadleaf',
     form: 'tree',
-    height: [9, 15],
+    height: tall(9, 15),
     lsystem: {
       axiom: 'FFA',
       rules: {
@@ -269,7 +273,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     },
     leaf: { style: 'cluster', size: 0.95, per: 1, minDepth: 1 },
     roots: { half: 7, depth: 5, res: 0.35, generations: 10, growth: 0.5, down: 0.4, maxCells: 140, trunkRadius: 0.38 },
-    stem: { sides: 7, noise: 0.14, noiseFreq: 0.45, knots: 3, knotSize: 0.35, ring: 0.7 },
+    stem: { sides: 7, noise: 0.14, noiseFreq: 0.45, knots: 3, knotSize: 0.35, ring: 1.4 },
     bark: { furrows: 0.55, furrowFreq: 3.5, plates: 0.25, plateSize: 0.45, stripes: 0, stripeFreq: 7, roughness: 0.45 },
     epiphytes: { lichen: 0.35, moss: 0.3, plants: 0.2, vines: 0.25, lines: 0.1 },
     colours: {
@@ -291,7 +295,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     id: 'pine',
     name: 'Conifer',
     form: 'tree',
-    height: [12, 20],
+    height: tall(12, 20),
     lsystem: {
       axiom: 'FA',
       rules: {
@@ -328,7 +332,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     },
     leaf: { style: 'needles', size: 0.55, per: 1, minDepth: 1 },
     roots: { half: 6, depth: 6, res: 0.35, generations: 10, growth: 0.5, down: 0.6, maxCells: 120, trunkRadius: 0.3 },
-    stem: { sides: 6, noise: 0.06, noiseFreq: 0.6, knots: 2, knotSize: 0.25, ring: 0.9 },
+    stem: { sides: 6, noise: 0.06, noiseFreq: 0.6, knots: 2, knotSize: 0.25, ring: 1.8 },
     bark: { furrows: 0.2, furrowFreq: 3, plates: 0.7, plateSize: 0.5, stripes: 0, stripeFreq: 7, roughness: 0.3 },
     epiphytes: { lichen: 0.3, moss: 0.1, plants: 0, vines: 0, lines: 0.25 },
     colours: {
@@ -353,7 +357,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     id: 'giant',
     name: 'Elder',
     form: 'tree',
-    height: [24, 32],
+    height: tall(24, 32),
     lsystem: {
       // (a massive bole to the fork; three or four great limbs leaving it wide — near level — forking twice into a
       // broad, flat-topped crown, a leader carrying on up the middle)
@@ -400,7 +404,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     roots: { half: 4, depth: 4, res: 0.45, generations: 10, growth: 0.6, down: 0.3, maxCells: 90, trunkRadius: 1.55 },
     // (hugging the bole's foot and tapering within a few cells — main's review: long sprawls read as logs on the floor)
     flare: { count: 6, rise: 1.8, reach: 1.7, sprawl: 0.7 },
-    stem: { sides: 8, noise: 0.16, noiseFreq: 0.3, knots: 2.5, knotSize: 0.3, ring: 1.6 },
+    stem: { sides: 8, noise: 0.16, noiseFreq: 0.3, knots: 2.5, knotSize: 0.3, ring: 3.2 },
     bark: { furrows: 0.8, furrowFreq: 3, plates: 0, plateSize: 0.6, stripes: 0, stripeFreq: 7, roughness: 0.8 },
     epiphytes: { lichen: 0.3, moss: 0.5, plants: 0.35, vines: 0.3, lines: 0.15 },
     colours: {
