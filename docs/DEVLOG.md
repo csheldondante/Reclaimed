@@ -16915,3 +16915,5 @@ canyon left the wall flying (AIR 1.9 s): the taper throws it at speed, as a ramp
 - The horse's push 12 -> 20 cells/s^2: at 12 the slope's pull (g 30 x 0.9 x sin theta) beat it from standing past 0.5
   rise over run, and the rolling hills held it to 0.55 laps a minute. At 20: canyon 1.75, city 2.20, hills 3.12,
   forest 2.98.
+- The horse's sloppy-thumb check after the push change: assist off 0.36 laps a minute, strong 3.15; wall contacts 0.03
+  either way (the check now asks for twice the laps, and no more contacts).

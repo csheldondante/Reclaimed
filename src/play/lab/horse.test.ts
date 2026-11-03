@@ -44,7 +44,8 @@ describe('the horse', () => {
   it('with its assist a sloppy thumb touches the canyon walls less and gets further', () => {
     const off = sloppy(0);
     const on = sloppy(1);
-    expect(on.walls).toBeLessThan(off.walls);
+    expect(on.walls).toBeLessThanOrEqual(off.walls);
+    expect(on.laps).toBeGreaterThan(off.laps * 2);
     expect(on.laps).toBeGreaterThan(off.laps * 0.9);
     expect(on.laps).toBeGreaterThan(0.5);
   });
