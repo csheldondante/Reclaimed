@@ -16569,3 +16569,71 @@ The user: "I'm sure bark texture can't be hard to generate it's just scaled colo
   Replaces round 125-128's world-space cell hashes (which didn't follow the stem).
 - The leaf cards: a midrib and side veins a little lighter, the edge darker, faded where a card is a few pixels.
 - The mesh draw, the viewer and the sprites' bake share it (one function). Render: bark-uv-crop.png.
+
+### The trees' shape: crowns grown by space colonization, the lobe canopy, a willow (round 128, the user)
+
+The user, on the in-game shots: "Those trees just look bad in shape. They make too steep an angle branch from the main
+trunk." Then: "They should potentially make multiple and they should almost always have branches go up to fill the
+space above the tree with leaves since that is how most real trees work." "Well we might want willows and whatnot so
+they don't always need to curve up but yeah I agree we need to tune the parameters so the tree has leaf cover. You could
+even have completely opaque canopy of leaves with random gaps and I think it would look better." And the target: "Try
+targeting trees that look like dota 2 or heroes of the storm form above. Then when we go under the canopy we can see the
+trunk and stencils and God rays and dark forest floor".
+
+**The branching: space colonization** (colonize.ts; Runions, Lane & Prusinkiewicz 2007). Chosen over more L-system
+rules because the crown's shape becomes the input — attraction points scattered in the species' envelope (a dome, a
+cone, a column, an umbrella) — and the branching comes out of the branches competing for that space: several branches a
+node where there is room, all growing toward the space left, so the crown fills upward. A hybrid on purpose: the trunk
+below the crown is drawn (straight, a little lean), a leader carrying on up for the excurrent (the birch), several
+rising limbs at the crown's base for the decurrent (the broadleaf, the elder); the crown is grown. Biases on the growth:
+the up bend (negative: down), a willow's weep past a quarter of the height, a cap on the angle a new branch leaves its
+parent, straightness (a branch keeps some of its way: no zigzag). The radii by how much of the tree a node carries (r =
+trunk radius × share^thin: the pure pipe model made a broad trunk's twigs as thick as fingers). A stem's nodes merge where
+it runs straight (the mesh's rings follow the shape, not the growth's step). Out: the same skeleton as the L-system's, so
+the noise-swept stems, twist, knots, kinks, bark, twigs, epiphytes all work on it. Deterministic per seed; ~60-70 ms a
+tree on the CPU (the 1200-point test crown: 70 ms), once per variant. The broadleaf, the birch and the elder are grown
+this way; the conifer, the thicket and the small plants keep their L-systems (the conifer's whorls read; main's review).
+
+**The crown: the lobe canopy** (mesh.ts CrownLook.style). Three styles, a slider: 'sprays' (round 128's cards),
+'solid' — the lobe canopy, now the default for the broadleaf, the birch and the elder — and 'lobecards' (main's research:
+the stylised-foliage "normal transfer": cards taking their lobe's normal, a blend slider). The lobe canopy: the crown's
+leaf sites (where the colonized branches end) gathered into clumps `clump` cells apart; each a lobe — an icosahedron cut
+once (80 faces; 20 where a lobe is under ~24 px), flattened a little underneath, lumped — with a smooth normal a vertex
+(the plant vertex's new z w: octahedral; meshinst/viewer/bake shade lobes round, not faceted) and an ambient occlusion a
+vertex (other lobes crowding it, low in the crown, facing down); `gaps` of the faces left out. The look (floralook.wgsl):
+a painted ramp — lit tops warm and light, undersides and crevices cool and dark (the occlusion), a soft painterly
+breakup, no cards. The thin branches inside the mass aren't drawn (`hideBelow`). Compared in crown-styles.png (cards /
+lobes / lobe-cards, the broadleaf and the elder): the lobes read as full Dota-like masses; the cards and lobe-cards stay
+sparse at this density. Triangles (seed 1): broadleaf 3864, birch 3640, elder 6963 (budgets: a tree 6000, the elder
+14000 — a tree a 14 x 16 block, the elder a 28 x 32: per area under round 125's).
+
+**A weeping willow** (species 'willow', the viewer's — no slot in the game's plan yet): limbs rising from a short trunk
+then arching down past a quarter of the height (weep 0.85), curtains of long hanging twigs (twigs droop 1, 4.5 cells),
+drooping leaf sprays. willow-v1..v3.png.
+
+Renders: lobe-v1..v3.png, crown-styles.png, sc-v1.png, sc-solid*.png, willow-*.png.
+
+**The shape parameters in plain words** (the viewer's "shape" and "crown" sliders; species.ts colonize / crown):
+- crown base — how far up the trunk the crown starts (a share of the height): low for a bushy oak, high for a tall bare
+  trunk.
+- crown width — how wide the crown is against the tree's height.
+- shape — the crown's outline: dome (round), cone (pointed, wide at the bottom), column (tall and narrow), umbrella
+  (broad and flat-topped, high on the tree).
+- fill points — how many "spaces to fill" are scattered in the crown: more makes a denser, more branched crown.
+- node length — how long each grown piece of branch is: shorter is finer and twistier, longer is cleaner and cheaper.
+- reach — how far a branch "sees" empty space to grow toward.
+- up bend — how much the branches curve upward as they grow; negative bends them down.
+- weep — how much the outer branches arch over and hang (a willow near 1).
+- max branch angle — the widest a new branch may leave its parent (real trees mostly 25-50°).
+- leader — 1: the trunk carries on up through the crown (birch, conifer); 0: it splits into limbs (oak, elder).
+- limbs at the fork — how many big limbs the trunk splits into (when there is no leader).
+- trunk radius — the trunk's thickness at the foot (cells).
+- branch thinning — how quickly branches get thinner toward the tips (higher = more slender).
+- straightness — how much a branch keeps going the way it was (less = more wandering).
+- crown style — 0 leaf cards, 1 solid lobes (the Dota-like canopy), 2 cards shaded as lobes.
+- lobe size — how big each leafy lobe is (bigger = fewer, chunkier lobes).
+- gaps — how many holes are punched in the lobes (sky and limbs show through).
+- lumps — how lumpy each lobe is (0 round).
+- lobe normals — (style 2) how much the cards are lit as one round lobe.
+- and as before: taper, branch distance, angle variance, twist, kinks, knots, noise, the bark's furrows / plates /
+  stripes / roughness and colours, epiphytes, twigs, winter leaves, blossom.

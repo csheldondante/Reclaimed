@@ -40,8 +40,9 @@ export const PART = {
 
 export interface FloraMesh {
   verts: Float32Array;
-  /** (round 128) per vertex its surface coordinates (two floats): on wood u round the stem and v along it, in cells
-   *  (the bark's procedural texture); on a leaf card its card space 0..1; elsewhere 0 */
+  /** (round 128) per vertex four floats: its surface coordinates — on wood u round the stem and v along it, in cells
+   *  (the bark's procedural texture); on a leaf card its card space 0..1; on a canopy lobe u = −1, v its ambient
+   *  occlusion — and, on a lobe, its smooth normal (octahedral, z w); elsewhere 0 */
   uv: Float32Array;
   index: Uint32Array;
   /** bounds (cells): height and horizontal radius */
@@ -69,10 +70,19 @@ export class MeshBuilder {
   i: number[] = [];
   /** the sway at height z: set by the caller (plants of different heights) */
   constructor(private swayAt: (p: V3, extra: number) => number) {}
-  vert(p: V3, part: number, extra = 0, u = 0, v = 0): number {
+  vert(p: V3, part: number, extra = 0, u = 0, v = 0, nrm?: V3): number {
     const s = Math.min(0.99, Math.max(0, this.swayAt(p, extra)));
     this.v.push(p[0], p[1], p[2], part + s);
-    this.uv.push(u, v);
+    // (a smooth normal, octahedral: the canopy lobes' — meshinst.wgsl shades them round, not faceted)
+    let ox = 0;
+    let oy = 0;
+    if (nrm) {
+      const l = Math.abs(nrm[0]) + Math.abs(nrm[1]) + Math.abs(nrm[2]) || 1;
+      ox = nrm[0] / l;
+      oy = nrm[1] / l;
+      if (nrm[2] < 0) [ox, oy] = [(1 - Math.abs(oy)) * (ox >= 0 ? 1 : -1), (1 - Math.abs(ox)) * (oy >= 0 ? 1 : -1)];
+    }
+    this.uv.push(u, v, ox, oy);
     return this.v.length / 4 - 1;
   }
   tri(a: number, b: number, c: number): void {
@@ -353,6 +363,19 @@ export interface CrownLook {
   leaves: number;
   /** how far the cards hang (0 level with the twig .. 1 hanging) */
   droop: number;
+  /** (round 128, the user: "You could even have completely opaque canopy of leaves with random gaps") 'sprays' the
+   *  cards; 'solid' an opaque leaf mass — lumpy shells round clumps of the crown's leaf sites, holes punched through */
+  style?: 'sprays' | 'solid' | 'lobecards';
+  /** solid / lobecards: the stems thinner than this (cells) aren't drawn — inside the leaf mass */
+  hideBelow?: number;
+  /** lobecards: how much a card takes its lobe's normal (0 its own .. 1 the lobe's) */
+  lobeBlend?: number;
+  /** solid: a clump's reach (cells) — the shells' size */
+  clump?: number;
+  /** solid: the share of the shells' faces left out (the gaps: sky and limbs through them) */
+  gaps?: number;
+  /** solid: how lumpy a shell is (0 round .. 1) */
+  lumps?: number;
 }
 
 /**
@@ -395,7 +418,10 @@ export function buildPlant(sk: Skeleton, leaf: LeafLook, seed: number, opts: { s
   // (twigs thinner than a few hundredths of a cell are left out: under a pixel at play zoom, and most of a tree's
   // triangles — the leaves they carry still show where they are)
   const minR = opts.minRadius ?? 0;
-  const cutR = Math.max(opts.minTwig ?? 0.035, minR * 0.5);
+  // (round 128: a solid crown hides its thin branches — inside the leaf mass — so they aren't drawn: the stems under
+  // ~0.12 cells, and no fine twigs)
+  const solid = opts.crown?.style === 'solid';
+  const cutR = Math.max(opts.minTwig ?? 0.035, minR * 0.5, solid ? (opts.crown?.hideBelow ?? 0.12) / (opts.scale ?? 1) : 0);
   const sidesAt = (r0: number) => (r0 > 0.25 ? sides : r0 > 0.08 ? Math.max(3, sides - 2) : 3);
   if (opts.stem) {
     // (round 128) each branch one extruded, noise-perturbed tube
@@ -417,7 +443,11 @@ export function buildPlant(sk: Skeleton, leaf: LeafLook, seed: number, opts: { s
   // (round 128: what grows on it and winter's icicles — epiphytes.ts, by the caller)
   opts.extra?.(mb, cutR);
   // (round 128: the fine twigs past the last order)
-  if (opts.twigs) addTwigs(mb, sk, leaf.minDepth, opts.twigs, opts.scale ?? 1, r01, opts.px);
+  if (opts.twigs && !solid) addTwigs(mb, sk, leaf.minDepth, opts.twigs, opts.scale ?? 1, r01, opts.px);
+  if (opts.crown && leaf.style === 'cluster' && opts.crown.style === 'solid') {
+    addSolidCrown(mb, sk, leaf.minDepth, opts.crown, opts.scale ?? 1, r01, opts.px);
+    return mb.done();
+  }
   if (opts.crown && leaf.style === 'cluster') {
     addCrown(mb, sk, leaf.minDepth, opts.crown, opts.scale ?? 1, opts.minLeaf ?? 0, r01, opts.px);
     return mb.done();
@@ -499,7 +529,7 @@ function addTwigs(mb: MeshBuilder, sk: Skeleton, minDepth: number, t: TwigLook, 
 }
 
 /** (round 128) one spray of `leaves` leaf cards round `at` along `d` (cells in the mesh's units), drooping by `droop` */
-export function sprayAt(mb: MeshBuilder, at: V3, d: V3, size: number, leaves: number, droop: number, r01: () => number): void {
+export function sprayAt(mb: MeshBuilder, at: V3, d: V3, size: number, leaves: number, droop: number, r01: () => number, shade?: (p: V3, own: V3) => { n: V3; ao: number }): void {
   const rnd = (): V3 => norm([r01() * 2 - 1, r01() * 2 - 1, r01() * 2 - 1]);
     // (a little off the twig: the sprays follow the branch, not a ball round its tip)
     const ctr: V3 = add(at, mul(rnd(), size * 0.3));
@@ -516,13 +546,153 @@ export function sprayAt(mb: MeshBuilder, at: V3, d: V3, size: number, leaves: nu
       const W = L * (0.45 + 0.2 * r01());
       const base = add(ctr, mul(out, size * 0.15));
       // (card space: u across 0 .. 1, v from the stalk 0 to the tip 1 — the leaf's procedural look)
-      const a = mb.vert(base, PART.leaf, 0.12, 0.5, 0.001);
-      const b = mb.vert(add(add(base, mul(ax, L * 0.45)), mul(sd, W / 2)), PART.leaf, 0.14, 1, 0.45);
-      const t = mb.vert(add(base, mul(ax, L)), PART.leaf, 0.16, 0.5, 1);
-      const e = mb.vert(add(add(base, mul(ax, L * 0.45)), mul(sd, -W / 2)), PART.leaf, 0.14, 0, 0.45);
+      const pa = base;
+      const pb = add(add(base, mul(ax, L * 0.45)), mul(sd, W / 2));
+      const pt = add(base, mul(ax, L));
+      const pe = add(add(base, mul(ax, L * 0.45)), mul(sd, -W / 2));
+      let a: number, b: number, t: number, e: number;
+      if (shade) {
+        // (round 128, "lobe-normal cards": each card takes its lobe's normal — the clump shades as one soft round lobe,
+        // its edge still leaves — and the lobe's occlusion; uv.x = −1 as a lobe's)
+        const own = norm(cross(sub(pb, pa), sub(pt, pa)));
+        const v = (p: V3, sw: number) => {
+          const s = shade(p, own);
+          return mb.vert(p, PART.leaf, sw, -1, s.ao, s.n);
+        };
+        a = v(pa, 0.12);
+        b = v(pb, 0.14);
+        t = v(pt, 0.16);
+        e = v(pe, 0.14);
+      } else {
+        // (card space: u across 0 .. 1, v from the stalk 0 to the tip 1 — the leaf's procedural look)
+        a = mb.vert(pa, PART.leaf, 0.12, 0.5, 0.001);
+        b = mb.vert(pb, PART.leaf, 0.14, 1, 0.45);
+        t = mb.vert(pt, PART.leaf, 0.16, 0.5, 1);
+        e = mb.vert(pe, PART.leaf, 0.14, 0, 0.45);
+      }
       mb.tri(a, b, t);
       mb.tri(a, t, e);
     }
+}
+
+/**
+ * (round 128) A solid crown — the user's art target: "trees that look like dota 2 or heroes of the storm from above":
+ * chunky, full, opaque masses of a few big rounded lobes. The crown's leaf sites (where the colonized branches end)
+ * gathered into clumps (greedy, `clump` cells apart); each clump a lobe — an icosahedron cut once (80 faces), a little
+ * flattened underneath, lumped by `lumps` — with a smooth normal a vertex (shaded round, not faceted) and an ambient
+ * occlusion a vertex (darker where another lobe crowds it and low in the crown: the crevices); `gaps` of the faces left
+ * out (rare, small: sky and limbs through). uv = (−1, the occlusion, the normal) marks a lobe's vertex for the look.
+ */
+interface Lobes {
+  lobes: { m: V3; r: number }[];
+  zlo: number;
+  zhi: number;
+}
+
+/** (round 128) the crown's lobes: its leaf sites gathered greedily into clumps `R` apart, each a middle and a reach */
+function crownLobes(sk: Skeleton, minDepth: number, R: number, r01: () => number): Lobes {
+  const sites = sk.leaves.filter((l) => l.depth >= minDepth);
+  const cs: { c: V3; pts: V3[] }[] = [];
+  const order = sites.map((_, i) => i).sort(() => r01() - 0.5);
+  for (const i of order) {
+    const p = sites[i].p;
+    let best = -1;
+    let bd = R * R;
+    for (let j = 0; j < cs.length; j++) {
+      const q = cs[j].c;
+      const d2 = (p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2 + (p[2] - q[2]) ** 2;
+      if (d2 < bd) {
+        bd = d2;
+        best = j;
+      }
+    }
+    if (best < 0) cs.push({ c: [p[0], p[1], p[2]], pts: [p] });
+    else cs[best].pts.push(p);
+  }
+  // the lobes: middle and reach
+  const lobes = cs.map((cl) => {
+    const m: V3 = [0, 0, 0];
+    for (const p of cl.pts) for (let i = 0; i < 3; i++) m[i] += p[i] / cl.pts.length;
+    let ext = 0;
+    for (const p of cl.pts) ext = Math.max(ext, Math.hypot(p[0] - m[0], p[1] - m[1], p[2] - m[2]));
+    return { m, r: ext * 0.8 + R * 0.6 };
+  });
+  let zlo = Infinity;
+  let zhi = -Infinity;
+  for (const l of lobes) {
+    zlo = Math.min(zlo, l.m[2] - l.r);
+    zhi = Math.max(zhi, l.m[2] + l.r);
+  }
+  return { lobes, zlo, zhi };
+}
+
+/** (round 128) a point's occlusion in the crown: other lobes crowding it (`li` its own), its height, a downward face */
+function lobeAo(L: Lobes, li: number, p: V3, nrm: V3): number {
+  let occ = 0;
+  L.lobes.forEach((o, oi) => {
+    if (oi === li) return;
+    const d = Math.hypot(p[0] - o.m[0], p[1] - o.m[1], p[2] - o.m[2]) - o.r;
+    occ += Math.max(0, 1 - d / (0.7 * o.r)) * 0.5;
+  });
+  const hz = (p[2] - L.zlo) / Math.max(1e-3, L.zhi - L.zlo);
+  return Math.max(0.2, Math.min(1, 1 - occ)) * (0.55 + 0.45 * hz) * (nrm[2] < 0 ? 0.75 + 0.25 * (1 + nrm[2]) : 1);
+}
+
+function addSolidCrown(mb: MeshBuilder, sk: Skeleton, minDepth: number, c: CrownLook, k: number, r01: () => number, px?: number): void {
+  const R = (c.clump ?? 3) / k;
+  const gaps = c.gaps ?? 0.05;
+  const lumps = c.lumps ?? 0.3;
+  const L = crownLobes(sk, minDepth, R, r01);
+  const { lobes } = L;
+  // the unit icosahedron, each face cut in four (80 faces)
+  const t = (1 + Math.sqrt(5)) / 2;
+  const I: V3[] = [[-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0], [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t], [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]].map((v) => norm(v as V3));
+  const IF = [[0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11], [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8], [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9], [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1]];
+  const tris: [V3, V3, V3][] = [];
+  const coarse: [V3, V3, V3][] = IF.map(([a, b, d]) => [I[a], I[b], I[d]]);
+  for (const [a, b, d] of IF) {
+    const A = I[a];
+    const B = I[b];
+    const D = I[d];
+    const ab = norm(add(A, B));
+    const bd = norm(add(B, D));
+    const da = norm(add(D, A));
+    tris.push([A, ab, da], [ab, B, bd], [da, bd, D], [ab, bd, da]);
+  }
+  lobes.forEach((lb, li) => {
+    const seed = Math.floor(r01() * 1e9);
+    const lobeDirs = [0, 1, 2].map((q) => {
+      const a = (((seed >>> (q * 7)) & 127) / 127) * Math.PI * 2;
+      return norm([Math.cos(a), Math.sin(a), 0.5 - q * 0.4]);
+    });
+    const shape = (v: V3) => {
+      let f = 1;
+      for (const dir of lobeDirs) f += lumps * 0.3 * Math.max(0, v[0] * dir[0] + v[1] * dir[1] + v[2] * dir[2]) ** 3;
+      return f;
+    };
+    const cache = new Map<string, number>();
+    const vid = (v: V3) => {
+      const key = `${v[0].toFixed(4)},${v[1].toFixed(4)},${v[2].toFixed(4)}`;
+      let id = cache.get(key);
+      if (id === undefined) {
+        const zs = v[2] < 0 ? 0.72 : 0.95;
+        const f = shape(v) * lb.r;
+        const p: V3 = [lb.m[0] + v[0] * f, lb.m[1] + v[1] * f, lb.m[2] + v[2] * f * zs];
+        const nrm = norm([v[0], v[1], v[2] / zs]);
+        // the occlusion: other lobes crowding this point, and its height in the crown
+        const ao = lobeAo(L, li, p, nrm);
+        id = mb.vert(p, PART.leaf, 0.12 + 0.05 * Math.max(0, v[2]), -1, ao, nrm);
+        cache.set(key, id);
+      }
+      return id;
+    };
+    // (made for `px` render pixels a cell: a lobe under ~24 px across keeps the icosahedron's 20 faces)
+    const faces = px && lb.r * k * 2 * px < 24 ? coarse : tris;
+    for (const [a, b, d] of faces) {
+      if (r01() < gaps) continue;
+      mb.tri(vid(a), vid(b), vid(d));
+    }
+  });
 }
 
 /** (round 128) the crown's sprays (CrownLook): `k` world cells a skeleton unit, `minLeaf` (skeleton units) the phone's
@@ -542,7 +712,30 @@ function addCrown(mb: MeshBuilder, sk: Skeleton, minDepth: number, c: CrownLook,
     keep = Math.min(1, keep * 1.2);
   }
   const step = c.spacing / k;
-  const spray = (at: V3, d: V3) => sprayAt(mb, at, d, size, leaves, c.droop, r01);
+  // (round 128, 'lobecards': the cards shaded by the lobes they sit in — the stylised-foliage "normal transfer")
+  let shade: ((p: V3, own: V3) => { n: V3; ao: number }) | undefined;
+  if (c.style === 'lobecards') {
+    const L = crownLobes(sk, minDepth, (c.clump ?? 6) / k, r01);
+    const blend = c.lobeBlend ?? 0.85;
+    shade = (p, own) => {
+      let li = 0;
+      let bd = Infinity;
+      L.lobes.forEach((o, i) => {
+        const d = Math.hypot(p[0] - o.m[0], p[1] - o.m[1], p[2] - o.m[2]) / o.r;
+        if (d < bd) {
+          bd = d;
+          li = i;
+        }
+      });
+      const o = L.lobes[li];
+      const ln = norm([p[0] - o.m[0], p[1] - o.m[1], (p[2] - o.m[2]) * 1.2]);
+      // (the card's own normal turned to face out the same side as the lobe's: no dark backs)
+      const ow: V3 = own[0] * ln[0] + own[1] * ln[1] + own[2] * ln[2] < 0 ? [-own[0], -own[1], -own[2]] : own;
+      const n = norm([ow[0] + (ln[0] - ow[0]) * blend, ow[1] + (ln[1] - ow[1]) * blend, ow[2] + (ln[2] - ow[2]) * blend]);
+      return { n, ao: lobeAo(L, li, p, n) };
+    };
+  }
+  const spray = (at: V3, d: V3) => sprayAt(mb, at, d, size, leaves, c.droop, r01, shade);
   // the twigs' ends: `per` sprays each, back along the twig
   for (const l of sk.leaves) {
     if (l.depth < minDepth) continue;

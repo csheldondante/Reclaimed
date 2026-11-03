@@ -71,7 +71,7 @@ export class FloraSprites {
         entryPoint: 'vsBake',
         buffers: [
           { arrayStride: 16, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x4' }] },
-          { arrayStride: 8, attributes: [{ shaderLocation: 1, offset: 0, format: 'float32x2' }] },
+          { arrayStride: 16, attributes: [{ shaderLocation: 1, offset: 0, format: 'float32x4' }] },
         ],
       },
       fragment: { module, entryPoint: 'fsBake', targets: [{ format: 'rgba8unorm' }, { format: 'rgba8unorm' }] },

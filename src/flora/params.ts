@@ -9,7 +9,7 @@ export interface Param {
   /** the URL key (p.<key>) and the slider's id */
   key: string;
   label: string;
-  group: 'stem' | 'crown' | 'bark' | 'epiphytes';
+  group: 'shape' | 'stem' | 'crown' | 'bark' | 'epiphytes';
   min: number;
   max: number;
   step: number;
@@ -19,6 +19,8 @@ export interface Param {
   crown?: boolean;
   /** (round 128) plants with fine twigs only */
   twigs?: boolean;
+  /** (round 128) colonized crowns only (colonize.ts) */
+  shape?: boolean;
   get(sp: SpeciesDef): number;
   set(sp: SpeciesDef, v: number): void;
 }
@@ -41,7 +43,7 @@ const E = (k: keyof NonNullable<SpeciesDef['epiphytes']>) => ({
     sp.epiphytes = { ...(sp.epiphytes ?? NO_EPIPHYTES), [k]: v };
   },
 });
-const CR = (k: keyof NonNullable<SpeciesDef['crown']>) => ({
+const CR = (k: 'size' | 'perTwig' | 'spacing' | 'fill' | 'leaves' | 'droop') => ({
   get: (sp: SpeciesDef) => sp.crown?.[k] ?? 0,
   set: (sp: SpeciesDef, v: number) => {
     if (sp.crown) sp.crown[k] = v;
@@ -53,6 +55,13 @@ const TW = (k: keyof NonNullable<SpeciesDef['twigs']>) => ({
     if (sp.twigs) sp.twigs[k] = v;
   },
 });
+const SH = (k: 'crownBase' | 'width' | 'points' | 'step' | 'upBend' | 'weep' | 'maxAngle' | 'forks' | 'trunkRadius' | 'thin' | 'straight' | 'influence') => ({
+  get: (sp: SpeciesDef) => (sp.colonize?.[k] as number | undefined) ?? 0,
+  set: (sp: SpeciesDef, v: number) => {
+    if (sp.colonize) (sp.colonize as unknown as Record<string, number>)[k] = v;
+  },
+});
+const ENVELOPES = ['dome', 'cone', 'column', 'umbrella'] as const;
 const B = (k: keyof SpeciesDef['bark']) => ({
   get: (sp: SpeciesDef) => sp.bark[k],
   set: (sp: SpeciesDef, v: number) => {
@@ -61,6 +70,21 @@ const B = (k: keyof SpeciesDef['bark']) => ({
 });
 
 export const PARAMS: Param[] = [
+  // (round 128: the crown's shape — space colonization, colonize.ts)
+  { key: 'sCrownBase', label: 'crown base', group: 'shape', min: 0.05, max: 0.8, step: 0.01, shape: true, ...SH('crownBase') },
+  { key: 'sWidth', label: 'crown width', group: 'shape', min: 0.05, max: 0.9, step: 0.01, shape: true, ...SH('width') },
+  { key: 'sEnvelope', label: 'shape 0 dome 1 cone 2 column 3 umbrella', group: 'shape', min: 0, max: 3, step: 1, shape: true, get: (sp) => ENVELOPES.indexOf(sp.colonize?.envelope ?? 'dome'), set: (sp, v) => { if (sp.colonize) sp.colonize.envelope = ENVELOPES[Math.round(v)] ?? 'dome'; } },
+  { key: 'sPoints', label: 'fill points', group: 'shape', min: 20, max: 1500, step: 10, shape: true, ...SH('points') },
+  { key: 'sStep', label: 'node length', group: 'shape', min: 0.4, max: 4, step: 0.05, shape: true, ...SH('step') },
+  { key: 'sInfluence', label: 'reach', group: 'shape', min: 2, max: 15, step: 0.5, shape: true, ...SH('influence') },
+  { key: 'sUpBend', label: 'up bend', group: 'shape', min: -1, max: 1.5, step: 0.01, shape: true, ...SH('upBend') },
+  { key: 'sWeep', label: 'weep', group: 'shape', min: 0, max: 1, step: 0.01, shape: true, ...SH('weep') },
+  { key: 'sMaxAngle', label: 'max branch angle', group: 'shape', min: 10, max: 90, step: 1, shape: true, ...SH('maxAngle') },
+  { key: 'sLeader', label: 'leader', group: 'shape', min: 0, max: 1, step: 1, shape: true, get: (sp) => (sp.colonize?.leader ? 1 : 0), set: (sp, v) => { if (sp.colonize) sp.colonize.leader = v >= 0.5; } },
+  { key: 'sForks', label: 'limbs at the fork', group: 'shape', min: 1, max: 7, step: 1, shape: true, ...SH('forks') },
+  { key: 'sTrunk', label: 'trunk radius', group: 'shape', min: 0.1, max: 8, step: 0.05, shape: true, ...SH('trunkRadius') },
+  { key: 'sThin', label: 'branch thinning', group: 'shape', min: 0.3, max: 1, step: 0.01, shape: true, ...SH('thin') },
+  { key: 'sStraight', label: 'straightness', group: 'shape', min: 0, max: 1, step: 0.01, shape: true, ...SH('straight') },
   { key: 'taper', label: 'taper', group: 'stem', min: 0.7, max: 1, step: 0.005, woody: true, ...T('taper') },
   { key: 'taperVar', label: 'taper ±', group: 'stem', min: 0, max: 1, step: 0.01, woody: true, ...T('taperVar') },
   { key: 'spacing', label: 'branch dist', group: 'stem', min: 0.5, max: 2, step: 0.01, woody: true, ...T('spacing', 1) },
@@ -78,10 +102,15 @@ export const PARAMS: Param[] = [
   { key: 'ring', label: 'ring cells', group: 'stem', min: 0.2, max: 6, step: 0.05, woody: true, ...S('ring') },
   { key: 'cSize', label: 'spray size', group: 'crown', min: 0.3, max: 8, step: 0.05, crown: true, ...CR('size') },
   { key: 'cPer', label: 'per twig', group: 'crown', min: 1, max: 8, step: 1, crown: true, ...CR('perTwig') },
-  { key: 'cSpacing', label: 'spacing', group: 'crown', min: 0.2, max: 4, step: 0.05, crown: true, ...CR('spacing') },
+  { key: 'cSpacing', label: 'spacing', group: 'crown', min: 0, max: 4, step: 0.05, crown: true, ...CR('spacing') },
   { key: 'cFill', label: 'fill', group: 'crown', min: 0.1, max: 1, step: 0.01, crown: true, ...CR('fill') },
   { key: 'cLeaves', label: 'cards', group: 'crown', min: 2, max: 20, step: 1, crown: true, ...CR('leaves') },
   { key: 'cDroop', label: 'droop', group: 'crown', min: 0, max: 1, step: 0.01, crown: true, ...CR('droop') },
+  { key: 'cStyle', label: 'style 0 cards 1 lobes 2 lobe-cards', group: 'crown', min: 0, max: 2, step: 1, crown: true, get: (sp) => (sp.crown?.style === 'solid' ? 1 : sp.crown?.style === 'lobecards' ? 2 : 0), set: (sp, v) => { if (sp.crown) sp.crown.style = v >= 1.5 ? 'lobecards' : v >= 0.5 ? 'solid' : 'sprays'; } },
+  { key: 'cClump', label: 'lobe size', group: 'crown', min: 0.5, max: 16, step: 0.1, crown: true, get: (sp) => sp.crown?.clump ?? 6, set: (sp, v) => { if (sp.crown) sp.crown.clump = v; } },
+  { key: 'cGaps', label: 'gaps', group: 'crown', min: 0, max: 0.8, step: 0.01, crown: true, get: (sp) => sp.crown?.gaps ?? 0.05, set: (sp, v) => { if (sp.crown) sp.crown.gaps = v; } },
+  { key: 'cLumps', label: 'lumps', group: 'crown', min: 0, max: 1, step: 0.01, crown: true, get: (sp) => sp.crown?.lumps ?? 0.3, set: (sp, v) => { if (sp.crown) sp.crown.lumps = v; } },
+  { key: 'cBlend', label: 'lobe normals', group: 'crown', min: 0, max: 1, step: 0.01, crown: true, get: (sp) => sp.crown?.lobeBlend ?? 0.85, set: (sp, v) => { if (sp.crown) sp.crown.lobeBlend = v; } },
   { key: 'tCount', label: 'twigs', group: 'crown', min: 0, max: 6, step: 1, twigs: true, ...TW('count') },
   { key: 'tAngle', label: 'twig angle', group: 'crown', min: 5, max: 80, step: 1, twigs: true, ...TW('angle') },
   { key: 'tLength', label: 'twig length', group: 'crown', min: 0.2, max: 5, step: 0.05, twigs: true, ...TW('length') },
@@ -147,6 +176,7 @@ export function cloneDef(sp: SpeciesDef): SpeciesDef {
     turtle: sp.turtle ? { ...sp.turtle, tropism: [...sp.turtle.tropism], tropismStrength: [...sp.turtle.tropismStrength] } : undefined,
     stem: sp.stem ? { ...sp.stem } : undefined,
     crown: sp.crown ? { ...sp.crown } : undefined,
+    colonize: sp.colonize ? { ...sp.colonize } : undefined,
     twigs: sp.twigs ? { ...sp.twigs } : undefined,
     bark: { ...sp.bark },
     epiphytes: sp.epiphytes ? { ...sp.epiphytes } : undefined,

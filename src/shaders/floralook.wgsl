@@ -141,6 +141,14 @@ fn floraBarkH(k: u32, st: vec2<f32>, fw: f32) -> vec3<f32> {
   return vec3<f32>(h, shade, mark);
 }
 
+/** (round 128) A canopy lobe's smooth normal (uv.x = −1: the octahedral normal in uv.zw); else the face's `n`. */
+fn floraSmoothN(uv: vec4<f32>, n: vec3<f32>) -> vec3<f32> {
+  if (uv.x > -0.5) { return n; }
+  var q = vec3<f32>(uv.z, uv.w, 1.0 - abs(uv.z) - abs(uv.w));
+  if (q.z < 0.0) { q = vec3<f32>((1.0 - abs(q.yx)) * select(vec2<f32>(-1.0), vec2<f32>(1.0), q.xy >= vec2<f32>(0.0)), q.z); }
+  return normalize(q);
+}
+
 /** (round 128) The stem's tangents for the bark's bump (call in uniform control flow: derivatives): x round, y along. */
 fn floraTangents(p: vec3<f32>, uv: vec2<f32>, n: vec3<f32>) -> mat2x3<f32> {
   let dp1 = dpdx(p);
@@ -256,6 +264,18 @@ fn floraLook(k: u32, part: u32, wpos: vec3<f32>, n: vec3<f32>, h: f32, rnd: f32,
     if (FLORA_EPI[k].w > 0.5) { c *= 0.86 + 0.28 * randv(vec3<i32>(floor(wpos * 5.0)) + vec3<i32>(2, 9, 4)); }
     // (round 128) a leaf card's own look (card space: mesh.ts addCrown — u across, v stalk to tip): the midrib and side
     // veins a little lighter, the edge darker; faded where a card is under a few pixels
+    // (round 128) a canopy lobe (uv.x = −1, uv.y its occlusion; the user's target: "trees that look like dota 2 or
+    // heroes of the storm from above"): a painted ramp — the lit tops and the sun's side warm and light, the undersides
+    // and crevices cool and dark (the occlusion baked a vertex), a soft painterly breakup, no cards
+    if (uv.x < -0.5) {
+      let up = clamp(0.5 + 0.5 * n.z, 0.0, 1.0);
+      let t = clamp(up * 0.75 + (h - 0.4) * 0.5 + 0.15, 0.0, 1.0);
+      let cool = FLORA_COL[b + 2u].rgb * vec3<f32>(0.78, 0.88, 1.08);
+      let warm = FLORA_COL[b + 3u].rgb * vec3<f32>(1.12, 1.06, 0.86);
+      c = mix(cool, warm, smoothstep(0.15, 0.95, t));
+      c *= mix(0.45, 1.0, uv.y);
+      c *= 0.93 + 0.14 * vnoise(wpos.xy * 0.45 + vec2<f32>(wpos.z * 0.3, 0.0));
+    }
     if (uv.y > 0.0 && fw < 0.35) {
       let x = abs(uv.x - 0.5) * 2.0;
       let halfw = select(uv.y / 0.45, (1.0 - uv.y) / 0.55, uv.y > 0.45);

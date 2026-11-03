@@ -149,7 +149,7 @@ async function main() {
       ni += k.mesh.index.length;
     }
     const V = new Float32Array(nv * 4);
-    const U = new Float32Array(nv * 2);
+    const U = new Float32Array(nv * 4);
     const I = new Uint32Array(ni);
     draws = [];
     let bv = 0;
@@ -157,7 +157,7 @@ async function main() {
     let tris = 0;
     scene.kinds.forEach((k, i) => {
       V.set(k.mesh.verts, bv * 4);
-      U.set(k.mesh.uv, bv * 2);
+      U.set(k.mesh.uv, bv * 4);
       I.set(k.mesh.index, bi);
       const r = scene.ranges[i];
       draws.push({ first: bi, count: k.mesh.index.length, base: bv, inst0: r.first, ninst: r.count });
@@ -192,7 +192,7 @@ async function main() {
         entryPoint: 'vsPlant',
         buffers: [
           { arrayStride: 16, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x4' }] },
-          { arrayStride: 8, attributes: [{ shaderLocation: 1, offset: 0, format: 'float32x2' }] },
+          { arrayStride: 16, attributes: [{ shaderLocation: 1, offset: 0, format: 'float32x4' }] },
         ],
       },
       fragment: { module, entryPoint: 'fsPlant', targets: [{ format }] },
@@ -448,6 +448,7 @@ async function main() {
       if (p.woody && !woody) continue;
       if (p.crown && !def.crown) continue;
       if (p.twigs && !def.twigs) continue;
+      if (p.shape && !def.colonize) continue;
       if (p.group !== group) {
         group = p.group;
         const h = document.createElement('div');

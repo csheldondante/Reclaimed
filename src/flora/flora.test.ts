@@ -103,7 +103,10 @@ describe('species meshes', () => {
       // area's: up to 5000 a tree, a quarter as many trees)
       // (round 128: the crowns' sprays along the last branch orders, the extruded stems, the epiphytes — the elder 9500;
       // it stands one to a 28 x 32 super-block now, TREE_SCALE: a quarter as many a wood. Small plants 450: the thicket's sprays)
-      const budget = id === 'giant' ? 10500 : sp.form === 'tree' ? 3200 : 500;
+      // (round 128: space-colonized crowns and lobe canopies — a tree 6000, the elder 14000; a tree stands one to a 14 x 16
+      // block, the elder one to 28 x 32 (TREE_SCALE): per area still under round 125's budgets)
+      // (the willow: the viewer's, not in the game's plan yet — its curtains of twigs 14000)
+      const budget = id === 'giant' || id === 'willow' ? 14000 : sp.form === 'tree' ? 6000 : 500;
       expect(a.tris, `${id} tris`).toBeLessThanOrEqual(budget);
       // indices in range; parts and sway well-formed
       const nv = a.verts.length / 4;
@@ -137,7 +140,8 @@ describe('species meshes', () => {
 describe('the phone tier (px: render pixels a cell)', () => {
   it('coarse plants have fewer, bigger leaves and no sub-pixel twigs; grass fewer, wider blades', () => {
     const full = generate('birch', 1);
-    const phone = generate('birch', 1, { px: 6 });
+    // (round 128: px 3 — the lobe canopy keeps its full lobes down to ~24 px a lobe, which the phone's 6 px a cell still is)
+    const phone = generate('birch', 1, { px: 3 });
     expect(phone.tris).toBeLessThan(full.tris);
     expect(phone.height).toBeCloseTo(full.height, 5);
     expect(generate('tallgrass', 1, { px: 6 }).tris).toBeLessThan(generate('tallgrass', 1).tris);
@@ -230,6 +234,7 @@ describe('the generator\'s parameters (round 128: the viewer\'s sliders)', () =>
         if (p.woody && !(sp.turtle && sp.stem)) continue;
         if (p.crown && !sp.crown) continue;
         if (p.twigs && !sp.twigs) continue;
+        if (p.shape && !sp.colonize) continue;
         const v = p.get(sp);
         expect(v, `${id}.${p.key}`).toBeGreaterThanOrEqual(p.min);
         expect(v, `${id}.${p.key}`).toBeLessThanOrEqual(p.max);
@@ -300,7 +305,7 @@ describe('the close-up level (round 128: the flora LOD ladder)', () => {
       const close = generate(id, 3, { lod: 'close' });
       expect(close.tris, id).toBeGreaterThan(full.tris);
       expect(close.height).toBeCloseTo(full.height, 5);
-      const budget = id === 'giant' ? 21000 : SPECIES[id].form === 'tree' ? 7200 : 1600;
+      const budget = id === 'giant' ? 28000 : SPECIES[id].form === 'tree' ? 12000 : 1600;
       expect(close.tris, `${id} close tris`).toBeLessThanOrEqual(budget);
     }
   });
@@ -313,15 +318,38 @@ describe('the crowns (round 128: sprays along the last branch orders)', () => {
     return n;
   };
   it('fill leaves gaps; more cards a spray, more leaves; no blobs (a card is 4 vertices)', () => {
-    const base = SPECIES.oak.crown!;
+    const base = { ...SPECIES.oak.crown!, style: 'sprays' as const };
     const full = generate('oak', 2, { def: { ...SPECIES.oak, crown: { ...base, fill: 1 } } });
     const gappy = generate('oak', 2, { def: { ...SPECIES.oak, crown: { ...base, fill: 0.3 } } });
     expect(leafVerts(gappy)).toBeLessThan(leafVerts(full) * 0.5);
     const more = generate('oak', 2, { def: { ...SPECIES.oak, crown: { ...base, leaves: base.leaves * 2 } } });
-    expect(leafVerts(more)).toBeGreaterThan(leafVerts(generate('oak', 2)) * 1.5);
+    expect(leafVerts(more)).toBeGreaterThan(leafVerts(generate('oak', 2, { def: { ...SPECIES.oak, crown: base } })) * 1.5);
     expect(leafVerts(full) % 4).toBe(0);
   });
   it('the coarse level makes fewer cards a spray (about one per 4 px)', () => {
-    expect(leafVerts(generate('giant', 2, { lod: 1, px: 6 }))).toBeLessThan(leafVerts(generate('giant', 2)) * 0.8);
+    const sprays = { ...SPECIES.giant, crown: { ...SPECIES.giant.crown!, style: 'sprays' as const } };
+    expect(leafVerts(generate('giant', 2, { lod: 1, px: 6, def: sprays }))).toBeLessThan(leafVerts(generate('giant', 2, { def: sprays })) * 0.8);
+  });
+});
+
+describe('crowns grown by space colonization (round 128)', () => {
+  it('deterministic per seed; the branches stay in the envelope; they rise (upBend), a willow\'s weep down', async () => {
+    const { colonize, inEnvelope } = await import('./colonize');
+    const spec = SPECIES.oak.colonize!;
+    const a = colonize(spec, 5);
+    const b = colonize(spec, 5);
+    expect(JSON.stringify(a.segments)).toBe(JSON.stringify(b.segments));
+    const tipsOut = a.leaves.filter((l) => !inEnvelope([l.p[0] * 0.85, l.p[1] * 0.85, Math.min(l.p[2], spec.height)], { ...spec, width: spec.width * 1.3 })).length;
+    expect(tipsOut).toBeLessThan(a.leaves.length * 0.2);
+    const rise = (sk: typeof a) => sk.segments.filter((g) => g.depth > 0).reduce((s, g) => s + Math.sign(g.b[2] - g.a[2]), 0);
+    expect(rise(a)).toBeGreaterThan(0);
+    const w = colonize(SPECIES.willow.colonize!, 5);
+    const down = w.segments.filter((g) => g.depth > 0 && g.b[2] < g.a[2]).length;
+    expect(down).toBeGreaterThan(w.segments.filter((g) => g.depth > 0).length * 0.15);
+  });
+  it('several branches a fork: the decurrent crown splits into its limbs at the crown\'s base', async () => {
+    const { colonize } = await import('./colonize');
+    const sk = colonize(SPECIES.giant.colonize!, 3);
+    expect(new Set(sk.segments.map((g) => g.stem)).size).toBeGreaterThan(20);
   });
 });

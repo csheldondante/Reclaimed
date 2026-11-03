@@ -3125,7 +3125,15 @@ PARAMS, read by the viewer's sliders and its URL (`p.<key>=`) and applied as an 
 - The stem (StemLook, mesh.ts): an n-gon swept along each whole stem (lsystem.ts tags segments with `stem`, `twist`;
   `stemPaths` chains them), radius noise along and around (noise, noiseFreq), knots (knots per 10 cells, knotSize), ring
   spacing in cells. Replaces the prism a step (kept only as the viewer's `legacyDef` old side).
-- Crown (CrownLook, the broadleaves and the thicket): sprays of leaf cards at the twigs' ends and along the last two
+- Branching (round 128): space colonization for the broadleaf, the birch, the elder and the willow (colonize.ts
+  ColonizeSpec: envelope, crown base and width, points, step, reach, up bend, weep, max angle, leader / forks, trunk
+  radius, thinning, straightness) — the same Skeleton as the L-system's; the conifer, the thicket and the small plants keep
+  their L-systems.
+- Plant vertices carry four more floats (mesh.ts uv; the instanced renderer's second vertex buffer): wood (u round, v
+  along, cells: the procedural bark), leaf cards (card space: veins), canopy lobes (u = −1, v the occlusion, z w the
+  smooth normal, octahedral).
+- Crown (CrownLook, the broadleaves and the thicket): (style: 'sprays' cards, 'solid' the lobe canopy — the default
+  for the colonized broadleaves — or 'lobecards') sprays of leaf cards at the twigs' ends and along the last two
   branch orders — size, perTwig, spacing, fill (the gaps), leaves (cards a spray), droop; cards per spray by px.
 - Bark (BarkLook → FLORA_BARK, 2 vec4s a kind): furrows, furrowFreq, plates, plateSize, stripes, stripeFreq, roughness,
   over colours.bark with colours.barkMark.

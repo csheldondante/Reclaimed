@@ -6,6 +6,7 @@ import { expand, interpret, norm, type V3 } from './lsystem';
 import { buildPlant, MeshBuilder, PART, sprayAt, type FloraMesh } from './mesh';
 import { growRoots, rootSegments } from './roots';
 import { addEpiphytes } from './epiphytes';
+import { colonize } from './colonize';
 import { rng, hashSeed } from './rng';
 import { BARK_PLAIN, SPECIES, type Flare, type SpeciesDef, type SpeciesId } from './species';
 import type { Segment } from './lsystem';
@@ -45,7 +46,11 @@ export function generate(id: SpeciesId, seed: number, opts: { growth?: number; p
   // the viewer's "old" side of its old/new pair: the turtle's new variances off and a prism a step)
   const sp0 = opts.legacy ? legacyDef(opts.def ?? SPECIES[id]) : (opts.def ?? SPECIES[id]);
   const g = Math.min(1, Math.max(0.05, opts.growth ?? 1));
-  const sp = g < 1 && sp0.lsystem ? { ...sp0, lsystem: { ...sp0.lsystem, iterations: Math.max(1, Math.round(sp0.lsystem.iterations * (0.35 + 0.65 * g))) } } : sp0;
+  const sp = g < 1 && sp0.colonize
+    ? { ...sp0, colonize: { ...sp0.colonize, rounds: Math.max(2, Math.round(sp0.colonize.rounds * g)), height: sp0.colonize.height * (0.35 + 0.65 * g) } }
+    : g < 1 && sp0.lsystem
+      ? { ...sp0, lsystem: { ...sp0.lsystem, iterations: Math.max(1, Math.round(sp0.lsystem.iterations * (0.35 + 0.65 * g))) } }
+      : sp0;
   const r = rng(hashSeed(seed, id.length * 7919 + id.charCodeAt(0)));
   const h = (sp.height[0] + (sp.height[1] - sp.height[0]) * r()) * (0.25 + 0.75 * g);
   switch (sp.form) {
@@ -86,16 +91,20 @@ export function generate(id: SpeciesId, seed: number, opts: { growth?: number; p
 
 function woody(sp: SpeciesDef, seed: number, h: number, px?: number, withRoots = true, close = false): FloraMesh {
   if (!sp.lsystem || !sp.turtle || !sp.leaf) throw new Error(`species ${sp.id}: a woody plant needs an L-system, a turtle and leaves`);
-  const str = expand(sp.lsystem, hashSeed(seed, 1));
-  const sk = interpret(str, sp.turtle, hashSeed(seed, 2));
+  // (round 128: a crown grown by space colonization where the species has one — colonize.ts; else the L-system's turtle)
+  const sk = sp.colonize ? colonize(sp.colonize, hashSeed(seed, 2), { kinkChance: sp.turtle.kinkChance, kinkAngle: sp.turtle.kinkAngle, twist: sp.turtle.twist }) : interpret(expand(sp.lsystem, hashSeed(seed, 1)), sp.turtle, hashSeed(seed, 2));
   // (the scale it will be drawn at: the minimum widths in world cells, then in the skeleton's units)
   const k = h / Math.max(sk.height, 1e-3);
   const minRadius = px ? 0.85 / px / k : 0;
   const minLeaf = px ? 1.5 / px / k : 0;
   // the root automaton's surface roots, in the skeleton's units (the plant is scaled after)
-  const roots = sp.roots && withRoots ? rootSegments(growRoots(sp.roots, hashSeed(seed, 3)), sp.roots.res * 1.5, sp.turtle.radius * 0.8) : [];
+  // (round 128: a colonized crown's skeleton is in cells, its trunk `colonize.trunkRadius` — the roots and buttresses,
+  // made in the turtle's units, scaled to that trunk)
+  const rk = sp.colonize ? sp.colonize.trunkRadius / sp.turtle.radius : 1;
+  const sc = (g: Segment): Segment => ({ ...g, a: [g.a[0] * rk, g.a[1] * rk, g.a[2] * rk], b: [g.b[0] * rk, g.b[1] * rk, g.b[2] * rk], r0: g.r0 * rk, r1: g.r1 * rk });
+  const roots = sp.roots && withRoots ? rootSegments(growRoots(sp.roots, hashSeed(seed, 3)), sp.roots.res * 1.5, sp.turtle.radius * 0.8).map(sc) : [];
   // (round 125, forest: the elder's buttresses — kept at every level but the far one: they are its silhouette's foot)
-  if (sp.flare) roots.push(...flareSegments(sp.flare, sp.turtle.radius, hashSeed(seed, 5), withRoots));
+  if (sp.flare) roots.push(...flareSegments(sp.flare, sp.turtle.radius, hashSeed(seed, 5), withRoots).map(sc));
   // (round 128, close: the same skeleton with more of it drawn — two more sides, rings twice as close, twigs to a third
   // of the cut — and each leaf cluster split into smaller ones)
   const stem = close && sp.stem ? { ...sp.stem, sides: sp.stem.sides + 2, ring: sp.stem.ring / 2 } : sp.stem;
@@ -114,9 +123,9 @@ export function legacyDef(sp: SpeciesDef): SpeciesDef {
   const ridged = sp.bark.furrows > 0.5;
   const marked = !!sp.colours.barkMark && Math.hypot(...sp.colours.barkMark.map((v, i) => v - sp.colours.bark[i])) > 0.1;
   const bark = ridged ? { ...BARK_PLAIN, furrows: 0.8, roughness: 0.8 } : { ...BARK_PLAIN, roughness: 0, stripes: marked ? 0.2 : 0 };
-  if (!sp.turtle) return { ...sp, stem: undefined, crown: undefined, twigs: undefined, bark, epiphytes: undefined, blossom: undefined };
+  if (!sp.turtle) return { ...sp, stem: undefined, crown: undefined, twigs: undefined, colonize: undefined, bark, epiphytes: undefined, blossom: undefined };
   const { taperVar: _a, spacing: _b, stepVar: _c, twist: _d, kinkChance: _e, kinkAngle: _f, ...turtle } = sp.turtle;
-  return { ...sp, stem: undefined, crown: undefined, twigs: undefined, turtle, bark, epiphytes: undefined, blossom: undefined };
+  return { ...sp, stem: undefined, crown: undefined, twigs: undefined, colonize: undefined, turtle, bark, epiphytes: undefined, blossom: undefined };
 }
 
 /**
@@ -160,7 +169,7 @@ export function flareSegments(f: Flare, r: number, seed: number, detail = true):
  * tree under ~60 render pixels tall can show anyway.
  */
 function farTree(sp: SpeciesDef, seed: number): FloraMesh {
-  const sk = interpret(expand(sp.lsystem!, hashSeed(seed, 1)), sp.turtle!, hashSeed(seed, 2));
+  const sk = sp.colonize ? colonize(sp.colonize, hashSeed(seed, 2)) : interpret(expand(sp.lsystem!, hashSeed(seed, 1)), sp.turtle!, hashSeed(seed, 2));
   const H = Math.max(sk.height, 0.5);
   const mb = new MeshBuilder((p) => Math.pow(Math.max(0, p[2]) / H, 1.6) * 0.8);
   const leaves = sk.leaves.filter((l) => l.depth >= sp.leaf!.minDepth);

@@ -20,7 +20,7 @@ export const MI_ARGS_WORD = 24;
 
 export class MeshInstances {
   readonly verts: GPUBuffer;
-  /** (round 128) per vertex two floats (meshinst.wgsl's location 1: the bark's and leaf cards' coordinates) */
+  /** (round 128) per vertex four floats (meshinst.wgsl's location 1: the bark's and leaf cards' coordinates, a lobe's normal) */
   readonly uvs: GPUBuffer;
   readonly index: GPUBuffer;
   readonly instances: GPUBuffer;
@@ -53,9 +53,9 @@ export class MeshInstances {
     });
     this.verts = buf('meshinst verts', v.byteLength, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST);
     device.queue.writeBuffer(this.verts, 0, v);
-    const uv = new Float32Array(nv * 2);
+    const uv = new Float32Array(nv * 4);
     kinds.forEach((k, i) => {
-      if (k.uv) uv.set(k.uv, this.ranges[i].base * 2);
+      if (k.uv) uv.set(k.uv, this.ranges[i].base * 4);
     });
     this.uvs = buf('meshinst uvs', Math.max(16, uv.byteLength), GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST);
     device.queue.writeBuffer(this.uvs, 0, uv);

@@ -25,7 +25,7 @@ struct MIOut {
   @location(8) @interpolate(flat) spr: vec4<f32>,
   @location(9) @interpolate(flat) sprS: f32,
   // (round 128) the bark's / leaf card's coordinates (mesh.ts uv)
-  @location(10) uv: vec2<f32>,
+  @location(10) uv: vec4<f32>,
 };
 
 // (round 128, treegen: the flora sprites — flora/sprites.ts, render/florasprites.ts) the atlas: albedo and coverage;
@@ -43,7 +43,7 @@ fn miKind(vi: u32) -> u32 {
 fn miRow(i: u32, r: u32) -> vec4<f32> { return bitcast<vec4<f32>>(instances[i * 4u + r]); }
 
 @vertex
-fn vsInst(@location(0) a: vec4<f32>, @location(1) uvIn: vec2<f32>, @builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> MIOut {
+fn vsInst(@location(0) a: vec4<f32>, @location(1) uvIn: vec4<f32>, @builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> MIOut {
   var o: MIOut;
   o.uv = uvIn;
   // (round 119: the kind from the vertex's w — render/meshinst.ts adds 16 × kind — not a search of MI_KINDS)
@@ -175,8 +175,10 @@ fn fsInst(in: MIOut) -> FOut {
   var n = normalize(cross(dpdx(in.wpos), dpdy(in.wpos)));
   if (dot(n, toEye(in.wpos)) < 0.0) { n = -n; }
   // (round 128: the bark's coordinates' footprint and tangents — derivatives, so before any discard)
-  let fw = max(fwidth(in.uv).x, fwidth(in.uv).y);
-  let tb = floraTangents(in.wpos, in.uv, n);
+  let fw = max(fwidth(in.uv.xy).x, fwidth(in.uv.xy).y);
+  let tb = floraTangents(in.wpos, in.uv.xy, n);
+  // (a canopy lobe shades round: its smooth normal)
+  n = floraSmoothN(in.uv, n);
   if (cutAway(in.wpos, in.pos.xy)) { discard; }
   // (round 125, forest: under the canopy, what hides the floor round the hero dithered out — understory.wgsl)
   // (round 125: the stumps in front cut clean, no stipple; the canopy's own dither only while it fades in or out)
@@ -189,8 +191,8 @@ fn fsInst(in: MIOut) -> FOut {
   var mat = MAT_WOOD;
   if (part >= 3u) {
     // (round 117, flora) the generated species' look (floralook.wgsl, shared with the viewer page)
-    let fl = floraLook(k, part, in.wpos, n, in.h, rnd, in.info.w, in.uv, fw);
-    n = floraBump(k, part, in.uv, n, tb, fw);
+    let fl = floraLook(k, part, in.wpos, n, in.h, rnd, in.info.w, in.uv.xy, fw);
+    n = floraBump(k, part, in.uv.xy, n, tb, fw);
     if (fl.w < 0.0) { discard; }
     mat = u32(fl.w);
     alb = toLinear(fl.rgb);
