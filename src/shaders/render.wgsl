@@ -132,8 +132,9 @@ fn inCut(p: vec3<f32>) -> bool { return CAM.cut.w > 0.5 || seeReach(p) > 0.5; }
  */
 fn cutAway(p: vec3<f32>, px: vec2<f32>) -> bool {
   let b = bayer4(px);
-  // (interiors: past the focus, once it's whole, nothing is drawn — the building alone in the dark)
-  return sliceReach(p) > b || seeReach(p) > b || focusOut(p) * smoothstep(0.9, 1.0, CAM.focus.w) > b;
+  // (interiors: once the focus is whole none of the world's own geometry is drawn — terrain, structures, trees; inside
+  // the footprint too, where the building's columns stand: the interior's draw and the people are the building now)
+  return sliceReach(p) > b || seeReach(p) > b || smoothstep(0.9, 1.0, CAM.focus.w) > b;
 }
 
 /** (interiors) how far past the focus p is, 0..1 by its amount: past its radius on screen from the focus point */
