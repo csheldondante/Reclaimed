@@ -39,7 +39,7 @@ export function addEpiphytes(mb: MeshBuilder, sk: Skeleton, epi: Epiphytes, seed
       for (let f = 0; f < fronds; f++) {
         const a = t0 + (f / fronds) * Math.PI * 2;
         const d = norm([Math.cos(a) * 0.8, Math.sin(a) * 0.8, 0.9]);
-        mb.blade(at, d, w(0.8 + 0.5 * r()), w(0.22), 2, [Math.cos(a) * 0.25, Math.sin(a) * 0.25, -0.35], PART.epiphyte, 0.2);
+        mb.blade(at, d, w(1.3 + 0.8 * r()), w(0.4), 2, [Math.cos(a) * 0.25, Math.sin(a) * 0.25, -0.35], PART.epiphyte, 0.2);
       }
       n.plants++;
     }
@@ -82,18 +82,20 @@ export function addEpiphytes(mb: MeshBuilder, sk: Skeleton, epi: Epiphytes, seed
     }
   }
 
-  // lines: strands hanging from the limbs' points
+  // lines: strands hanging from the limbs' points and from inside the crown (the twigs' leaf sites: Spanish moss hangs
+  // in the canopy, not only off the bare limbs)
   if (epi.lines > 0) {
+    const hang = (at: V3) => {
+      const len = w(2 + 4 * r());
+      const b: V3 = [(r() - 0.5) * 0.08, (r() - 0.5) * 0.08, 0.04];
+      mb.blade(at, [0, 0, -1], len, w(0.3), 3, b, PART.strand, 0.35);
+      n.lines++;
+    };
     for (const p of paths) {
       if (p.depth < 1 || p.depth > 2) continue;
-      for (let i = 1; i < p.p.length; i++) {
-        if (r() > epi.lines * 0.3) continue;
-        const len = w(1.5 + 2.5 * r());
-        const b: V3 = [(r() - 0.5) * 0.08, (r() - 0.5) * 0.08, 0.04];
-        mb.blade(p.p[i], [0, 0, -1], len, w(0.12), 3, b, PART.strand, 0.35);
-        n.lines++;
-      }
+      for (let i = 1; i < p.p.length; i++) if (r() < epi.lines * 0.5) hang(p.p[i]);
     }
+    for (const l of sk.leaves) if (l.depth >= 1 && l.p[2] > H * 0.3 && r() < epi.lines * 0.12) hang(l.p);
   }
 
   // icicles: under the near-level stretches of the trunk's first limbs (winter only, by the look)

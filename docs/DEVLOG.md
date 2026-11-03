@@ -16491,3 +16491,12 @@ the birch's catkins were too few and too dull to read in flower (blossom 0.2 →
 user: the elder's crown at the phone's level is three or four big copper masses on short near-level limbs over a very
 broad bole — round 125's shape, now at twice the size; its sprite uses about a third of its cell's width, the bounds
 set by the surface roots' sprawl.
+
+Rendered old | new on Dawn (test/gpu/_look-style renders through the sprite bake at 256-512 px a tree:
+C:/Projects/shots88/treegen/m1-oldnew-full.png, crop-m1-elder.png, m2-epiphytes-close.png). Two fixes from them: the
+elder's bole, now one noisy tube, ended open at its fork — a thick stem's end is now closed with a low dome (radius over
+0.25; the elder's budget 5000 → 5600 triangles, one tree to a 28 x 32 super-block now); the epiphytes' hanging lines
+were too few and too thin to see (three on an elder at density 1) — they now also hang from the crown's twigs, 0.3 cells
+wide and 2-6 long, and the fork plants' fronds are 1.3-2.1 cells (the trees are twice the size). Seen: the broadleaf's
+twist and kinks give it a leaning, curving trunk; the elder's bole is bulbous and knotted; conifers with lines read as
+old-man's-beard.
