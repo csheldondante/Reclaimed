@@ -1952,6 +1952,31 @@ export class LevelScene implements Scene {
     if (playId) void this.startPlay(playId);
     // round 121 (herolab): the hero lab — play's hero on the lab's test terrains, the camera modes as chips
     if (this.level.heroLab) this.startHeroLab().catch((e: unknown) => showFatal(`the hero lab couldn't start: ${e instanceof Error ? e.message : String(e)}`));
+    // round 128b (playmodes): the hero course — the play modes on one loop of the world's kinds of place
+    if (this.level.heroCourse) this.startHeroCourse().catch((e: unknown) => showFatal(`the hero course couldn't start: ${e instanceof Error ? e.message : String(e)}`));
+  }
+
+  /** (round 128b, playmodes) ?level=herocourse: the hero course (src/play/course/herocourse.ts) */
+  heroCourse?: import('../play/course/herocourse').HeroCourse;
+  private async startHeroCourse(): Promise<void> {
+    const { HeroCourse } = await import('../play/course/herocourse');
+    const api = (this.worldApi ??= attachSim(this.core));
+    const units = (this.units ??= new AgentUnits(this.agents, this.traits));
+    this.editor?.setVisible(false);
+    this.host.ui.classList.add('play-on');
+    const dims = this.core.dims;
+    this.heroCourse = await HeroCourse.start({
+      ui: this.host.ui,
+      api,
+      units,
+      camera: this.core.camera,
+      renderer: this.core.renderer,
+      device: this.host.gpu.device,
+      bounds: [dims.w, dims.h * ROW_H],
+      raise: this.playRaise(units),
+      season: () => this.core.globals.season ?? 0,
+    });
+    (window as unknown as { reclaimed: Record<string, unknown> }).reclaimed.course = this.heroCourse;
   }
 
   /** (round 121, HL1/CAM1) ?level=herolab: the hero lab (src/play/lab/herolab.ts) — the level's units on its agents */
@@ -2397,7 +2422,7 @@ export class LevelScene implements Scene {
     if (this.drive) this.driveOn(dt);
     else if (this.pan && !camera.fly) this.panOn(dt);
     else if (camera.fly) this.flyKeys(dt);
-    else if (this.storyPlay?.holdsInput || this.heroRun || this.play || this.heroLab) {
+    else if (this.storyPlay?.holdsInput || this.heroRun || this.play || this.heroLab || this.heroCourse) {
       // (a talk or a story shot has the camera; a hero run has the keys)
     } else {
     if (k.has('a') || k.has('arrowleft')) kx -= 1;
@@ -2592,6 +2617,7 @@ export class LevelScene implements Scene {
     // (round 117: the play sandbox — its hero, controls and the chase camera)
     if (this.play && !camera.fly) this.play.update(dt);
     if (this.heroLab && !camera.fly) this.heroLab.update(dt);
+    if (this.heroCourse && !camera.fly) this.heroCourse.update(dt);
     // (round 119, runplay: the run's hero and the stage it plays)
     if (this.runSession && !camera.fly) {
       this.runSession.update(dt);
@@ -2601,7 +2627,7 @@ export class LevelScene implements Scene {
     this.situationRun?.update(dt);
     if (this.storyPlay || this.heroRun) record('story', performance.now() - tStory); // (round 100, hitchrec: timing)
     // (round 90: the player's turn of the view — not flying, not while a story shot or the cutaway has the camera)
-    if (this.turn && !camera.fly && !CUTAWAY && !this.storyPlay?.cam.busy && !this.heroRun && !this.play && !this.heroLab && !this.runSession) this.turn.update(dt);
+    if (this.turn && !camera.fly && !CUTAWAY && !this.storyPlay?.cam.busy && !this.heroRun && !this.play && !this.heroLab && !this.heroCourse && !this.runSession) this.turn.update(dt);
     // (round 91: the compass follows the view, flying too — the flyer's look)
     this.compass?.update(camera.fly ? camera.fly.yaw + Math.PI : camera.azimuth);
     if (CUTAWAY && !camera.fly) {
@@ -3848,6 +3874,7 @@ export class LevelScene implements Scene {
     this.play?.dispose();
     this.present?.dispose();
     this.heroLab?.dispose();
+    this.heroCourse?.dispose();
     this.plannedRun?.dispose();
     this.situationRun?.dispose();
     this.runPlayer?.dispose();

@@ -305,7 +305,7 @@ export class PlaySession {
     const ids = this.rig.ids;
     const had = (m: CamModeId) => ids.includes(m) || this.camWas.includes(m);
     // (round 124, PRE1: the presentation mode may turn and tilt the view)
-    applyFrame(cam, frame, { turn: had('rotate') || had('present'), tilt: had('tilt') || had('auto') || had('autocity') || had('present'), cut: had('cutaway') || had('cutfade') || had('edge') || had('dither') });
+    applyFrame(cam, frame, { turn: had('rotate') || had('present'), tilt: had('tilt') || had('auto') || had('autocity') || had('present'), cut: had('cutaway') || had('cutfade') || had('edge') || had('dither') || had('present') });
     this.camWas = ids;
     this.signals?.update(frame.signals, cam, HUD_MARGIN);
     // (a jolt: the view knocked about by the hero's shake, a few cells at most, gone in a quarter second)

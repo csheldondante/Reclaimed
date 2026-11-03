@@ -44,6 +44,22 @@ user) · `deferred` (agreed for later).
 | PL42 | (round 128, the user) A horse: a mount hero on the shared drive with strong assist (steers round obstacles, slows and stops before walls and dead ends, takes a bend when the stick is roughly that way; a hard steer wins); gaits by speed; canyon, city, forest, tour; assist-strength chips | L | done (herolab), the user to try |
 | PL43 | (round 128, the user) The bike rides walls: the drive's gravity along the surface the cushion is on (its normal), held on a steep wall by speed (v^2 / r), sliding or falling off too slow; banks with the surface; the lab's canyon with tapered walls (45-70 deg flanks steepening to vertical) | L | first pass done (herolab: the grip by the load, wall-riding over a speed, the bank; the lab canyon tapered), the user to try |
 | TER20 | (round 128, for the terrain track) Canyons with tapered walls on the real map (V/U profiles: 45-70 deg flanks steepening to vertical higher up), so a bike's wall run reads and is learnable (PL43) | M | open (terrain) |
+## Round 128b (2026-11-03, session 5, `playmodes`) — the hero course and play modes (DECISIONS round 128b, docs/design/PLAY_MODES.md)
+
+Branch `playmodes`: herolab + places + presentation + treegen; the PlayMode contract, the course, five experiments.
+
+| id | item | size | status |
+|---|---|---|---|
+| PM-1 | PlayMode: a presentation profile + facing + cut + controls + assists + entry; the game picks by area, a brief auto hands back on a touch; the camera pulls out with speed and leads (every mode) | M | done (playmodes), the user to try |
+| PM-2 | The hero course `?level=herocourse`: hills, forest, canyon switchbacks, cliff + cave, river + lake, ruins with steel, town in one loop; heroes one tap away; the settings drawer as chips in the address; go to any area | M | done (playmodes), the user to try |
+| PM-3 | Experiments: open ride (lead chips), canyon run (behind, lane, riders up the screen, boulders down it), woods run (side-on, profile controls), cliff (near-profile), under the trees (understory, zoom chips) | M | first pass (playmodes), the user to judge |
+| PM-4 | The woods run has no parallax (orthographic view): try the perspective (fly) camera for side views | M | open |
+| PM-5 | The canyon run: the autopilot still crashes at the exit and some hairpins; riders rarely catch a bike that runs on (spawn ahead, coming down the screen, or a slower auto speed) | S | open |
+| PM-6 | Side views: the cut's dark section fills the screen under the floor line; a lighter section colour or the dithered cut there (CAM10) | S | open |
+| PM-7 | After the treegen merge the tour's auto camera barely closes in in the woods (tour.test.ts fails: trees x2, a quarter as many) | S | gone with treegen (playmodes rebuilt without it, round 128b); tour.test to recheck |
+| PM-8 | Abilities in the drawer (the brief's list): not built; the heroes' own buttons only | S | open |
+| PM-9 | The course is built from its own column functions over the route, not the world's generators (mapgen, the level kit): fast to shape for the experiments; port to the generators once the modes are chosen | M | open |
+
 ## Round 126 (2026-11-02, session 5, `dialog2`) — petitions as dialogs, the cast, plain writing (DECISIONS round 126)
 
 Branch `dialog2` (b9139b7): docs/WRITING.md, a style lint, every player string rewritten, the cast generator, petitions delivered in talks. The branch's own rows are DLG-7..12.

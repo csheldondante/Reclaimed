@@ -17264,3 +17264,60 @@ uncapped attempt (--disable-gpu-vsync / --disable-frame-rate-limit in the runner
 the profiler's GPU totals at ~200 ms a frame: unusable; a forestcost run overlapping another page's gave 25-35 ms means
 (the GPU shared). The per-treatment A/B pairs and the wind modes' pairs (scripts/forestcost.mjs) still need a clean,
 uncapped timing run, and the phone itself (FLO30's rule).
+
+
+## 2026-11-03 — round 128b, `playmodes`: the hero course and the first play-mode experiments
+
+**What.** A branch from `herolab` with `places`, `presentation` and `forest` merged in
+(round 128b: rebuilt without `treegen` — see the entry below). A `PlayMode` contract
+(api/contracts/playmode.ts): a `PresentationProfile` for the view plus `facing` (behind / left / right of the route),
+`cut` (the near side cut down for side views), `controls` (free / lane / profile), `assists` (auto-run, speed,
+lane width) and `entry` (the brief auto's seconds). play/modes: the five modes, `ModeSwitcher` (the game picks the
+mode from the area; on a change it steers for the entry seconds and hands back on the first touch), `modeStick`
+(what the stick means per scheme), `ModeCamera` (the presentation's mode for the mode on, the previous one easing out).
+play/course: the course (`?level=herocourse`, a title-screen button): one loop of hills, forest, canyon in four
+switchbacks, cliff with a cave mouth, river with a ford and a lake, ruins with rusted steel, town, built pure from
+the route (each column belongs to its nearest stretch of road); the course UI (heroes one tap away; a drawer of
+chips mirrored in the address: try, go to, mode, forest, zoom, lead, under, controls, auto-run, pace).
+
+**Why these choices.**
+- One contract over the presentation's, not a second camera contract: PLAY_MODES.md's proposal, and the profile
+  already blends zoom, pitch, azimuth and look-ahead by a weight.
+- The camera blend keeps the old mode easing out under the new one: a mode switched off snapped back to the chase.
+- The facing is set from the route's way 4-10 cells ahead, not the velocity: a bike's weave swung the view.
+- Lane: the stick's sideways part moves the bike across at once (the user: "free sideways steering"); forward is
+  the route's, slowed into a bend (the switchbacks' hairpins at speed threw the bike into the wall).
+- Side views need the near side cut: the camera is orthographic, so at 16-20 degrees everything between the eye and
+  the hero (hills, a plateau 80 cells away) stood in front. The slice is put 2 cells in front of the hero toward the
+  eye: through the hero, the hero's own body over the cut was dithered away (the knight vanished in every woods
+  shot). The view's centre is moved away from the eye along the ground so the hero sits low; a lift in z piled up,
+  because the chase eases the target's height from frame to frame.
+- The course's canyon walls are sheer from the floor and only 12 high, the plateau only round the switchbacks: the
+  lab's 45 degree foot let the bike ride out, and the whole loop's inside as plateau hid the forest from the iso eye.
+- The forest is split: the first half old woods all round (under the trees), the second laid out for the side view
+  (grass on the near side, the woods 4 cells behind the road).
+- PresentMode's look-ahead is capped at 0.2 of the screen's short side: on top of the chase's own lead the bike went
+  off the screen.
+
+**Found.**
+- The woods run has no parallax: the view is orthographic, so every layer slides at the same speed. A real parallax
+  needs a perspective camera (the free camera's `fly`) for this mode.
+- The bike still crashes at the canyon's exit and some hairpins with the autopilot riding; riders (raiders at 16
+  cells/s from behind) come up the screen but rarely catch a bike that runs on.
+- Merging the forest fought: the presentation's canopy look and the forest's understory both grew Camera's cut block;
+  both kept (the understory at +76 floats), one instance foot in meshinst.wgsl, the forest's pixel leaf over the
+  presentation's diamond.
+
+**Verified** headless at 412x915 (shots88/playmodes): one GIF per experiment, the drawer, the menu. No perf testing
+(input work; the user's rule). Node: modes.test.ts (the switch, the hand-back on a touch, lane and profile sticks,
+the loop's order and a passable road).
+
+## 2026-11-03 — round 128b, `playmodes` rebuilt without `treegen`
+
+The user: "The new trees and plants kind of look awful in practice. I think the trees before any of the flora work
+was done were better ... Can we revert that whole branch of edits?" The branch was rebuilt: from the presentation
+merge (08d0894), `forest` merged (beb2a51: round 127's trees, the understory view and the cut stumps, which the user
+liked), resolved as the treegen merge was but without anything only treegen brought (the generator, layered crowns,
+leaf cards, grass, shrubs, plant states, TREE_SCALE, the editor, sprites), then the play modes cherry-picked with the
+trees chips and `?treescale=3` dropped. treegen's fire/sleep fix (7b48ebb: a fire keeps its chunks awake) is not
+carried; main asks the user about it separately. The old head is tag `playmodes-treegen-5db2146`.
