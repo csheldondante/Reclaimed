@@ -289,7 +289,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     leaf: { style: 'cluster', size: 0.95, per: 1, minDepth: 1 },
     roots: { half: 7, depth: 5, res: 0.35, generations: 10, growth: 0.5, down: 0.4, maxCells: 140, trunkRadius: 0.38 },
     stem: { sides: 8, noise: 0.14, noiseFreq: 0.45, knots: 3, knotSize: 0.35, ring: 1.4 },
-    crown: { size: 2.6, perTwig: 3, spacing: 1.2, fill: 0.85, leaves: 9, droop: 0.25, style: 'layers', clump: 7, gaps: 0.04, lumps: 0.3, shell: 0.075, lobeBlend: 0.8, layers: 3, layerGap: 0.35, depthDark: 0.6, bend: 1, core: 1 },
+    crown: { size: 2.6, perTwig: 3, spacing: 1.2, fill: 0.85, leaves: 9, droop: 0.25, style: 'layers', clump: 7, gaps: 0.04, lumps: 0.3, shell: 0.07, lobeBlend: 0.8, layers: 3, layerGap: 0.35, depthDark: 0.6, bend: 1, core: 1 },
     bark: { furrows: 0.55, furrowFreq: 3.5, plates: 0.25, plateSize: 0.45, stripes: 0, stripeFreq: 7, roughness: 0.45 },
     epiphytes: { lichen: 0.35, moss: 0.3, plants: 0.2, vines: 0.25, lines: 0.1 },
     winterLeaves: 0.06,
