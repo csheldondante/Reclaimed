@@ -382,6 +382,9 @@ export interface CrownLook {
   core?: number;
   /** hybrid: leaf cards a square cell of a lobe's surface */
   shell?: number;
+  /** (round 128, the user: "different shapes of cluster than just blob") each lobe's shape: round, pad (a flat cloud),
+   *  shelf (a flat pad drooping at its edge: a conifer's tier), column (tall), tear (longer below) */
+  lobeShape?: 'round' | 'pad' | 'shelf' | 'column' | 'tear';
   /** layers: how far apart the lobes stand (0 as clumped .. 1) */
   separate?: number;
   /** solid / lobecards: the stems thinner than this (cells) aren't drawn — inside the leaf mass */
@@ -609,6 +612,26 @@ export function sprayAt(mb: MeshBuilder, at: V3, d: V3, size: number, leaves: nu
  * occlusion a vertex (darker where another lobe crowds it and low in the crown: the crevices); `gaps` of the faces left
  * out (rare, small: sky and limbs through). uv = (−1, the occlusion, the normal) marks a lobe's vertex for the look.
  */
+/** (round 128) a lobe's surface along unit direction d from its middle, reach r: the offset and the outward normal */
+function lobeSurface(d: V3, r: number, shape: CrownLook['lobeShape']): { off: V3; n: V3 } {
+  let up = 0.95;
+  let down = 0.75;
+  if (shape === 'pad') [up, down] = [0.4, 0.3];
+  else if (shape === 'shelf') [up, down] = [0.38, 0.24];
+  else if (shape === 'column') [up, down] = [1.9, 1.6];
+  else if (shape === 'tear') [up, down] = [0.95, 1.6];
+  const zf = d[2] < 0 ? down : up;
+  const off: V3 = [d[0] * r, d[1] * r, d[2] * r * zf];
+  let n = norm([d[0], d[1], d[2] / zf]);
+  if (shape === 'shelf') {
+    // (the edge droops: the outer rim lower, the normal tipped out)
+    const rho = d[0] * d[0] + d[1] * d[1];
+    off[2] -= 0.4 * r * rho;
+    n = norm([n[0] + d[0] * 0.5, n[1] + d[1] * 0.5, n[2]]);
+  }
+  return { off, n };
+}
+
 interface Lobes {
   lobes: { m: V3; r: number }[];
   zlo: number;
@@ -720,10 +743,9 @@ function addSolidCrown(mb: MeshBuilder, sk: Skeleton, minDepth: number, c: Crown
       const key = `${v[0].toFixed(4)},${v[1].toFixed(4)},${v[2].toFixed(4)}`;
       let id = cache.get(key);
       if (id === undefined) {
-        const zs = v[2] < 0 ? 0.72 : 0.95;
-        const f = shape(v) * lb.r;
-        const p: V3 = [lb.m[0] + v[0] * f, lb.m[1] + v[1] * f, lb.m[2] + v[2] * f * zs];
-        const nrm = norm([v[0], v[1], v[2] / zs]);
+        const ls = lobeSurface(v, shape(v) * lb.r, c.lobeShape);
+        const p: V3 = [lb.m[0] + ls.off[0], lb.m[1] + ls.off[1], lb.m[2] + ls.off[2]];
+        const nrm = ls.n;
         // the occlusion: other lobes crowding this point, and its height in the crown
         const ao = lobeAo(L, li, p, nrm);
         id = mb.vert(p, PART.leaf, 0.12 + 0.05 * Math.max(0, v[2]), -1, ao, nrm);
@@ -786,14 +808,14 @@ function addLayeredCrown(mb: MeshBuilder, sk: Skeleton, minDepth: number, c: Cro
           const curve = norm(add(mul(d, Math.cos(t * ang)), mul(ax, Math.sin(t * ang))));
           const flat = norm(add(d, mul(ax, t * ang)));
           const dir = norm(add(mul(curve, bend), mul(flat, 1 - bend)));
-          const rr = ri * jit * (dir[2] < 0 ? 0.85 : 1);
-          return [o.m[0] + dir[0] * rr, o.m[1] + dir[1] * rr, o.m[2] + dir[2] * rr * (dir[2] < 0 ? 0.8 : 0.95)];
+          const ls = lobeSurface(dir, ri * jit, c.lobeShape);
+          return [o.m[0] + ls.off[0], o.m[1] + ls.off[1], o.m[2] + ls.off[2]];
         };
         const hz0 = (o.m[2] + d[2] * ri - L.zlo) / Math.max(1e-3, L.zhi - L.zlo);
         const ao = Math.max(0.15, (1 - dark * depth) * (0.6 + 0.4 * hz0));
         const own = norm(cross(sd, ax));
         const v = (p: V3, w: number, sw: number) => {
-          const ln = norm([p[0] - o.m[0], p[1] - o.m[1], (p[2] - o.m[2]) * 1.15]);
+          const ln = lobeSurface(norm([p[0] - o.m[0], p[1] - o.m[1], p[2] - o.m[2]]), 1, c.lobeShape).n;
           const ow: V3 = own[0] * ln[0] + own[1] * ln[1] + own[2] * ln[2] < 0 ? [-own[0], -own[1], -own[2]] : own;
           const nn = norm([ow[0] + (ln[0] - ow[0]) * blend, ow[1] + (ln[1] - ow[1]) * blend, ow[2] + (ln[2] - ow[2]) * blend]);
           // (round 128, main: "darker crevices where lobes meet ... a slightly brighter rim/top on each lobe") the crevice:

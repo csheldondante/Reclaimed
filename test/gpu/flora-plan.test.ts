@@ -103,8 +103,9 @@ test.each([
       if (t.species === 'birch') birches++;
       if (t.species === 'giant') giants++;
       expect(SP[gpu[1]], `species at ${x},${y}`).toBe(t.species);
-      expect(gpu[2]).toBe(t.trunk);
-      expect(gpu[3]).toBe(t.crown);
+      // (round 128: the tree's size a float product on both sides — f32 against f64)
+      expect(gpu[2]).toBeCloseTo(t.trunk, 3);
+      expect(gpu[3]).toBeCloseTo(t.crown, 3);
     }
   // (round 125: a tree a 7 × 8 block of columns; round 128: 14 × 16 — ~73 blocks in the 128² window; an elder a 2 × 2 of them)
   expect(trees).toBeGreaterThan(12);

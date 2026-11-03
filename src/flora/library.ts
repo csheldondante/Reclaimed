@@ -47,6 +47,9 @@ export const GAME_LIBRARY: LibrarySpec = {
     { id: 'reed', variants: 2 },
     // (round 125, forest: the elder woods' mossy boulders)
     { id: 'boulder', variants: 2 },
+    // (round 128: the Scots pine — two in five conifers — and the willow by the water, florafield.wgsl)
+    { id: 'scotspine', variants: 2 },
+    { id: 'willow', variants: 2 },
   ],
   seed: 117,
 };

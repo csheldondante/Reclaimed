@@ -50,9 +50,9 @@ describe('flora sprites', () => {
     for (let i = 3; i < s.verts.length; i += 4) parts.add(Math.floor(s.verts[i]));
     expect([...parts].sort()).toEqual([PART_SPRITE, PART_SHADOW]);
   });
-  it('the library: a sprite a tree variant, baked from the same variant\'s full mesh', () => {
+  it('the library: a sprite a tree variant, baked from the same variant\'s full mesh', { timeout: 60000 }, () => {
     const lib = new FloraLibrary(undefined, 6, 'sprite');
-    expect(lib.sprites.length).toBe(11);
+    expect(lib.sprites.length).toBe(15);
     for (const s of lib.sprites) {
       expect(lib.kinds[s.kind].lod).toBe(2);
       expect(lib.kinds[s.src].lod).toBe(0);

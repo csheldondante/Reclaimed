@@ -29,7 +29,8 @@ export type SpeciesId =
   | 'moss'
   | 'ivy'
   | 'boulder'
-  | 'willow';
+  | 'willow'
+  | 'scotspine';
 
 export type PlantForm = 'tree' | 'shrub' | 'grass' | 'reed' | 'fern' | 'flower' | 'moss' | 'vine' | 'rock';
 
@@ -348,7 +349,39 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
       kinkChance: 0.04,
       kinkAngle: 6,
     },
-    leaf: { style: 'needles', size: 0.55, per: 1, minDepth: 1 },
+    // (round 128, the user: "I would love to see pines" — a leader through tiers of drooping shelves: the colonized
+    // branches reach out into each shelf, the needles layered shells on shelf-shaped lobes; the round-117 L-system
+    // stays for the viewer's old side)
+    colonize: {
+      height: 32,
+      crownBase: 0.12,
+      width: 0.24,
+      envelope: 'cone',
+      points: 360,
+      influence: 6,
+      kill: 1.6,
+      step: 1.2,
+      upBend: 0.05,
+      weep: 0,
+      maxAngle: 80,
+      leader: true,
+      forks: 1,
+      trunkRadius: 0.75,
+      tipRadius: 0.03,
+      thin: 0.65,
+      rounds: 70,
+      straight: 0.8,
+      tiers: [
+        { at: 0.22, width: 0.24, depth: 0.07 },
+        { at: 0.36, width: 0.21, depth: 0.07 },
+        { at: 0.5, width: 0.17, depth: 0.07 },
+        { at: 0.63, width: 0.13, depth: 0.07 },
+        { at: 0.76, width: 0.09, depth: 0.07 },
+        { at: 0.88, width: 0.05, depth: 0.08 },
+      ],
+    },
+    leaf: { style: 'cluster', size: 0.55, per: 1, minDepth: 1 },
+    crown: { size: 2.4, perTwig: 2, spacing: 1, fill: 0.85, leaves: 7, droop: 0.4, style: 'layers', clump: 4.5, gaps: 0.02, lumps: 0.2, hideBelow: 0.15, shell: 0.07, lobeBlend: 0.8, layers: 2, layerGap: 0.2, depthDark: 0.6, bend: 0.8, core: 1, lobeShape: 'shelf', separate: 0.1 },
     roots: { half: 6, depth: 6, res: 0.35, generations: 10, growth: 0.5, down: 0.6, maxCells: 120, trunkRadius: 0.3 },
     stem: { sides: 8, noise: 0.06, noiseFreq: 0.6, knots: 2, knotSize: 0.25, ring: 1.8 },
     bark: { furrows: 0.2, furrowFreq: 3, plates: 0.7, plateSize: 0.5, stripes: 0, stripeFreq: 7, roughness: 0.3 },
@@ -700,6 +733,59 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     barrier: { fill: 0.2, cuttable: true, slow: 0.85, breakMass: 3 },
     sway: 1.0,
     shedsLeaves: true,
+  },
+  // (round 128, the user: "a Scots-pine variant whose lower trunk is bare with a high rounded crown"): a tall straight
+  // trunk bare to over half its height, its upper bark the species' orange, a crown of a few flat cloud pads.
+  scotspine: {
+    id: 'scotspine',
+    name: 'Scots pine',
+    form: 'tree',
+    height: tall(14, 22),
+    lsystem: { axiom: 'F', rules: {}, iterations: 0 },
+    turtle: { step: 1, stepDecay: 0.8, radius: 0.4, radiusDecay: 0.6, taper: 0.94, angle: 30, roll: 120, jitter: 10, tropism: [0, 0, 1], tropismStrength: [0, 0.05, 0.05], minRadius: 0.02, kinkChance: 0.1, kinkAngle: 7 },
+    colonize: {
+      height: 36,
+      crownBase: 0.6,
+      width: 0.22,
+      envelope: 'dome',
+      points: 300,
+      influence: 6,
+      kill: 1.6,
+      step: 1.3,
+      upBend: 0.3,
+      weep: 0,
+      maxAngle: 55,
+      leader: true,
+      forks: 1,
+      trunkRadius: 0.8,
+      tipRadius: 0.03,
+      thin: 0.6,
+      rounds: 70,
+      straight: 0.7,
+      tiers: [
+        { at: 0.7, width: 0.2, depth: 0.09 },
+        { at: 0.81, width: 0.22, depth: 0.1 },
+        { at: 0.92, width: 0.15, depth: 0.1 },
+      ],
+    },
+    leaf: { style: 'cluster', size: 0.55, per: 1, minDepth: 1 },
+    crown: { size: 2.6, perTwig: 2, spacing: 1, fill: 0.85, leaves: 7, droop: 0.3, style: 'layers', clump: 5, gaps: 0.03, lumps: 0.3, hideBelow: 0.15, shell: 0.07, lobeBlend: 0.8, layers: 2, layerGap: 0.2, depthDark: 0.55, bend: 0.8, core: 1, lobeShape: 'pad', separate: 0.2 },
+    roots: { half: 6, depth: 6, res: 0.35, generations: 10, growth: 0.5, down: 0.6, maxCells: 120, trunkRadius: 0.4 },
+    stem: { sides: 8, noise: 0.05, noiseFreq: 0.5, knots: 2, knotSize: 0.2, ring: 1.8 },
+    bark: { furrows: 0.15, furrowFreq: 3, plates: 0.75, plateSize: 0.55, stripes: 0, stripeFreq: 7, roughness: 0.25 },
+    epiphytes: { lichen: 0.25, moss: 0.05, plants: 0, vines: 0, lines: 0.1 },
+    colours: {
+      bark: C(0.66, 0.36, 0.2),
+      barkMark: C(0.24, 0.13, 0.08),
+      leafDark: C(0.08, 0.22, 0.14),
+      leafLight: C(0.26, 0.44, 0.28),
+      autumn: C(0.26, 0.44, 0.28),
+      deciduous: false,
+    },
+    niche: { veg: [3.6, 6], moisture: [0.05, 0.6], light: [0.4, 1], altitude: [20, 400], slopeMax: 1.3, hosts: ['ground'], weight: 0.6 },
+    barrier: { fill: 0.2, cuttable: true, slow: 0.9, breakMass: 3 },
+    sway: 0.6,
+    shedsLeaves: false,
   },
   // Ivy climbing walls and ruins (instanced onto other geometry: "vines on ruins"). Grows in the wall's plane (y, z),
   // its leaves standing off it (+x: the wall's outward normal).

@@ -176,7 +176,8 @@ describe('levels of detail (round 119, the phone)', () => {
     expect(lib.kinds[lr[2].first].lod).toBe(2);
     expect(lib.wgsl()).toMatch(/FL_BIRCH_L2/);
     // (round 128: + the close-up level of the trees, the thicket and the tall grass — 16 kinds, a draw each)
-    expect(lib.kinds.length).toBeLessThanOrEqual(64);
+    // (round 128: + the Scots pine and the willow, four levels each)
+    expect(lib.kinds.length).toBeLessThanOrEqual(80);
     expect(lib.wgsl()).toMatch(/FL_GIANT_C/);
   });
 });

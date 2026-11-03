@@ -59,6 +59,13 @@ export interface ColonizeSpec {
   rounds: number;
   /** how much a growing branch keeps its way, node to node (0 none: it zigzags toward the points .. 1) */
   straight: number;
+  /**
+   * (round 128, the user: "taller trees with multiple leaf clusters") the crown as separate tiers in place of one
+   * envelope: each a flattened ellipsoid at `at` (a share of the height), `width` (its half-width over the height) and
+   * `depth` (its thickness over the height) — bare trunk and limbs between them (a cloud pine's pads, a conifer's
+   * shelves, a Scots pine's high crown)
+   */
+  tiers?: { at: number; width: number; depth: number }[];
 }
 
 interface Node {
@@ -72,6 +79,16 @@ interface Node {
 
 /** Is q inside the envelope (q in the plant's frame: z up)? */
 export function inEnvelope(q: V3, c: ColonizeSpec): boolean {
+  if (c.tiers?.length) {
+    const r = Math.hypot(q[0], q[1]);
+    for (const t of c.tiers) {
+      const zc = c.height * t.at;
+      const hd = Math.max(0.05, (c.height * t.depth) / 2);
+      const W = Math.max(0.1, c.width * c.height * (t.width / Math.max(c.width, 1e-3)));
+      if ((r / W) ** 2 + ((q[2] - zc) / hd) ** 2 <= 1) return true;
+    }
+    return false;
+  }
   const z0 = c.height * c.crownBase;
   const hz = c.height - z0;
   if (q[2] < z0 || q[2] > c.height) return false;

@@ -199,14 +199,22 @@ fn treeInstance(c: vec2<u32>, top: f32, pl: VegPlan) {
     // (round 128, ?flod=sprite: the ladder close → full → sprite — the sprite's mips are its levels; the coarse mesh goes)
     let lod = select(select(select(2u, 1u, hpx >= 55.0), 2u, FLORA_SPRITES), 0u, hpx >= 150.0);
     var r = array<vec2<u32>, 3>(FL_OAK, FL_OAK_L1, FL_OAK_L2)[lod];
-    if (pl.species == 1u) { r = array<vec2<u32>, 3>(FL_PINE, FL_PINE_L1, FL_PINE_L2)[lod]; }
+    if (pl.species == 1u) {
+      // (round 128: a conifer is a pine or, two in five, a Scots pine — the same plan, the library's two shapes)
+      r = array<vec2<u32>, 3>(FL_PINE, FL_PINE_L1, FL_PINE_L2)[lod];
+      if (rand3(c.x, c.y, 577u) < 0.4) { r = array<vec2<u32>, 3>(FL_SCOTSPINE, FL_SCOTSPINE_L1, FL_SCOTSPINE_L2)[lod]; }
+    }
     if (pl.species == 2u) { r = array<vec2<u32>, 3>(FL_BIRCH, FL_BIRCH_L1, FL_BIRCH_L2)[lod]; }
     if (pl.species == 3u) { r = array<vec2<u32>, 3>(FL_GIANT, FL_GIANT_L1, FL_GIANT_L2)[lod]; }
     // (round 128, the flora LOD ladder's top: a tree over FLORA_CLOSE_PX tall on screen — the camera zoomed in — its
     // close-up level: more sides, rings, twigs and smaller leaf clusters, the bark's finer octave)
-    if (hpx >= FLORA_CLOSE_PX) { r = array<vec2<u32>, 4>(FL_OAK_C, FL_PINE_C, FL_BIRCH_C, FL_GIANT_C)[min(pl.species, 3u)]; }
+    if (hpx >= FLORA_CLOSE_PX) {
+      r = array<vec2<u32>, 4>(FL_OAK_C, FL_PINE_C, FL_BIRCH_C, FL_GIANT_C)[min(pl.species, 3u)];
+      if (pl.species == 1u && rand3(c.x, c.y, 577u) < 0.4) { r = FL_SCOTSPINE_C; }
+    }
     // (the plan's age: young woods (succession just past 3.6) stand at 0.8 of the variant's height, old ones full)
-    let age = 0.8 + 0.2 * clamp((veg[colIdx(c.x, c.y)] - 3.6) / 1.2, 0.0, 1.0);
+    // (round 128: and the tree's own size — saplings to veterans, emergents: vegplan.wgsl treeSize)
+    let age = (0.8 + 0.2 * clamp((veg[colIdx(c.x, c.y)] - 3.6) / 1.2, 0.0, 1.0)) * treeSize(vec2<i32>(i32(c.x) + i32(G.org.z), i32(c.y) + i32(G.org.w)));
     // (round 125, forest: the trees' real reach — the elder ~32 tall and ~16 across its crown — for the cull)
     let tall = (pl.trunk + pl.crown) * 1.15 + 2.0;
     floraInstance(r, c, top, age, 0.05, tall, select(9.0, 16.0, pl.species == 3u) * TREE_SCALE);

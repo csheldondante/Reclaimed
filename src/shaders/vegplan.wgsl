@@ -46,6 +46,12 @@ fn blockSlot(b: vec2<i32>) -> vec3<i32> {
   return vec3<i32>(c, 1);
 }
 
+/** (round 128) a tree's size × its species' by its world column (spacing.ts treeSize) */
+fn treeSize(w: vec2<i32>) -> f32 {
+  if (slotRand(w.x, w.y, 0x5e3u) < EMERGENT) { return EMERGENT_SIZE; }
+  return SIZE_MIN + (SIZE_MAX - SIZE_MIN) * pow(slotRand(w.x, w.y, 0x5e4u), SIZE_SKEW);
+}
+
 /** what world column w holds: 0 none, 1 its block's tree, 2 its super-block's elder (spacing.ts slotAt) */
 fn treeSlot(w: vec2<i32>) -> u32 {
   let s = blockSlot(vec2<i32>(floorDiv(w.x, SLOT_W), floorDiv(w.y, SLOT_H)));
@@ -88,9 +94,11 @@ fn vegPlan(x: u32, y: u32, v: f32, m: u32) -> VegPlan {
       pl.trunk = 4.0 + floor(age * 3.0) + floor(hv * 3.0);
       pl.crown = 5.0 + floor(hv * 2.99) + select(0.0, 1.0, v > 4.5);
     }
-    // (round 128: the heights above are round 125's; every tree is TREE_SCALE × them)
-    pl.trunk *= TREE_SCALE;
-    pl.crown *= TREE_SCALE;
+    // (round 128: the heights above are round 125's; every tree is TREE_SCALE × them, and its own size — a sapling to a
+    // veteran, now and then an emergent over the canopy: spacing.ts treeSize)
+    let sz = treeSize(vec2<i32>(i32(x) + i32(G.org.z), i32(y) + i32(G.org.w)));
+    pl.trunk *= TREE_SCALE * sz;
+    pl.crown *= TREE_SCALE * sz;
   } else if (v >= 2.6 && h < 0.25) {
     pl.shrub = true;
   }

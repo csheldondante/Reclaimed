@@ -16685,3 +16685,25 @@ render at higher resolution plus mips and they remain more readable and we get o
   the eye crosses its sprite's quad; the texel there at the mip for the tile's resolution, the nearest along the line
   winning; the ground shadow as before. The atlas is bound in the tiles' bake (49, 50; renderer.spriteViews). Without
   sprites, the crown discs as before. Not yet: far.wgsl's rings (the LOD rings past the tiles) — the next step.
+
+### Taller trees, cluster shapes, pines, willows by the water, a spread of heights (round 128, the user)
+
+The user: "For trees can we also get taller trees with multiple leaf clusters or different shapes of cluster than just
+blob? I would love to see pines and willows and to have some trees with varying heights."
+- Tiered crowns (colonize.ts `tiers`): the envelope as several flattened ellipsoids up the tree — bare trunk and limbs
+  between them; the conifer's shelves, the Scots pine's high cloud pads.
+- Lobe shapes (CrownLook `lobeShape`): round, pad (a flat cloud), shelf (a flat pad drooping at its rim), column, tear;
+  the layered shells, the core and the lobe normals follow the shape (mesh.ts lobeSurface).
+- The conifer: a leader through six drooping shelves, colonized, the needles layered shells on shelf lobes. A new Scots
+  pine: a straight trunk bare to over half its height, orange plated bark, a high crown of cloud pads; in the world two
+  conifers in five (vegprep: the same plan, the library's two shapes).
+- The willow in the world: florafield.wgsl places one on a bank — one candidate column a 9 × 10 block of world columns,
+  on dry, moist ground with open water within ~3-7 cells — at its level by size on screen. (The willow keeps its
+  curtains of sprays: as layered tear-shaped lobes it read as a bunch of grapes.) Not in the flora plan's CPU mirror
+  yet (the understory and passability don't see willows: noted).
+- A spread of heights (spacing.ts treeSize, a placement parameter mirrored in vegplan.wgsl): a tree's size × its
+  species' by its world column, 0.55 .. 1.15 skewed to the large, 5% emergents at 1.35 over the canopy; the plan's
+  trunk and crown (so the understory, the cull, the LOD) and the instance's scale alike; logs by volume (size³).
+- The library: 80 kinds now (+ the Scots pine and the willow at four levels); it takes ~0.8 s to make at start (the
+  colonized crowns: ~60 ms a tree), was ~70 ms — a cache across loads is the fix if the phone feels it.
+Renders: pines-v1.png (pine, Scots pine, willow).

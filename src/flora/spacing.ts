@@ -42,6 +42,23 @@ export const ELDER_K = 2;
 export const ELDER_M = 3 * TREE_SCALE;
 
 /** The slot grid's constants for vegplan.wgsl (prepended to it wherever it is compiled: one source, these). */
+/**
+ * (round 128, the user: "to have some trees with varying heights" — main: "a real spread of heights per species
+ * (young/old: a size distribution, saplings to veterans), and some tall emergent trees above the canopy. Make it a
+ * placement parameter") A tree's size × its species' (height and trunk alike), by its world column: most between
+ * SIZE_MIN and SIZE_MAX, skewed toward the large (pow), and an EMERGENT share standing EMERGENT_SIZE over the canopy.
+ * vegplan.wgsl mirrors it (treeSize, from spacingWgsl()).
+ */
+export const SIZE_MIN = 0.55;
+export const SIZE_MAX = 1.15;
+export const SIZE_SKEW = 0.6;
+export const EMERGENT = 0.05;
+export const EMERGENT_SIZE = 1.35;
+export function treeSize(wx: number, wy: number): number {
+  if (slotRand(wx, wy, 0x5e3) < EMERGENT) return EMERGENT_SIZE;
+  return SIZE_MIN + (SIZE_MAX - SIZE_MIN) * Math.pow(slotRand(wx, wy, 0x5e4), SIZE_SKEW);
+}
+
 export function spacingWgsl(): string {
   return `const TREE_SCALE: f32 = ${TREE_SCALE.toFixed(1)};
 const SLOT_W: i32 = ${SLOT_W};
@@ -49,6 +66,11 @@ const SLOT_H: i32 = ${SLOT_H};
 const SLOT_M: i32 = ${SLOT_M};
 const ELDER_K: i32 = ${ELDER_K};
 const ELDER_M: i32 = ${ELDER_M};
+const SIZE_MIN: f32 = ${SIZE_MIN.toFixed(3)};
+const SIZE_MAX: f32 = ${SIZE_MAX.toFixed(3)};
+const SIZE_SKEW: f32 = ${SIZE_SKEW.toFixed(3)};
+const EMERGENT: f32 = ${EMERGENT.toFixed(3)};
+const EMERGENT_SIZE: f32 = ${EMERGENT_SIZE.toFixed(3)};
 `;
 }
 /** the elder woods' noise: its scale (world columns) and the band it rises through */

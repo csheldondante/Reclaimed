@@ -84,7 +84,7 @@ ${mi}${floraWgsl}`;
   });
   it('meshinst and the bake of the sprites (round 128, ?flod=sprite)', async () => {
     const sl = new FloraLibrary(undefined, undefined, 'sprite');
-    expect(sl.sprites.length).toBe(11);
+    expect(sl.sprites.length).toBe(15);
     const riverFoam = 'const RIVER_FOAM_SPEED: bool = false;' + String.fromCharCode(10);
     const floraWgsl = `const FLORA: bool = true;const FLORA_RPX: f32 = 0.5;${String.fromCharCode(10)}${sl.wgsl()}`;
     expect(await errors('meshinst-sprite', [commonWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, miWgsl(sl.kinds), floraWgsl, renderWgsl, floraLookWgsl, meshInstWgsl])).toEqual([]);
