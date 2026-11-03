@@ -447,6 +447,8 @@ each was implemented.
 - → The bow stays as ported. Every slash lunges further by default, far enough to carry the knight through a crowd (KN-Q1 answered). New enemy kinds: ones that dodge or block except while winding up a hit, and ones that lunge and are open only in the moment they stay stunned after it.
 - The user, verbatim, on the physics branch: "I didn't realize that the physics work was never merged. It should have been. Making the proper physics engine was intended to be future work but not block all of the improvements of that branch."
 - → My mistake: I read "defer" (round 120) as keeping jb6 off places. jb6 (the GPU making every change to the columns; no CPU read-back on the hot path) merges into places through the gate. PH1, the proper physics engine, stays future work.
+- The user, verbatim: "Yes please and we need to get back to hero lab and start testing and improving the hero gameplay" → the finished branches (dialog2, encounters, interiors, forest) merge after jb6, each through the gate; herolab brought up to date with places, the knight added, and made a phone test bench with a test card for the user.
+- The user, verbatim: "Specifically I think the knight could use a jump button and maybe a tap to lock on to enemies so we can do platforming and moves like a jump attack" → the knight gets a jump button (real height, a jump course on the station), a jump attack as its own state, and a tap to lock onto an enemy (aim and lunges lean fully toward it; a tap elsewhere releases).
 
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
