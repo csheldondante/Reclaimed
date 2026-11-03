@@ -43,7 +43,8 @@ export class FloraSprites {
     this.cells = lib.sprites.length * SPR_YAWS;
     this.rows = Math.max(1, Math.ceil(this.cells / SPR_COLS));
     const size = [SPR_COLS * SPR_CELL, this.rows * SPR_CELL];
-    const usage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING;
+    // (COPY_SRC: the tests read the atlas back)
+    const usage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC;
     this.albedo = device.createTexture({ label: 'flora sprites albedo', size, format: 'rgba8unorm', usage });
     this.nd = device.createTexture({ label: 'flora sprites normal-depth', size, format: 'rgba8unorm', usage });
     this.depth = device.createTexture({ label: 'flora sprites bake depth', size, format: 'depth24plus', usage: GPUTextureUsage.RENDER_ATTACHMENT });

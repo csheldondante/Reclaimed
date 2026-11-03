@@ -16481,3 +16481,13 @@ front of the stand; per load six scripted stages (calm, a gust front, a gale, th
 gust held under the canopy), each variant a reload: fwind static, sway, 1A, 1C, 1A1C, 1A1C with sprites, static and
 1A1C at round 125's tree size, static again (drift). A result card and a JSON (p50/p95/p99, the GPU's ms where timed,
 the flora's plants, triangles and draws). Desktop numbers from it are a proxy only.
+
+**A first look without the browser** (test/gpu/flora-sprites.test.ts on Dawn: the sprite atlas baked for each named
+season, every cell holding its tree; FLORA_SPRITE_PNG=<dir> writes the atlas out — C:/Projects/shots88/treegen/
+sprites-<season>-albedo.png and m2-seasons-grid.png, broadleaf / conifer / birch / elder through flower, leaf, autumn,
+bare, winter). Fixes from looking: snow lay on the bole's tilted facets and whitewashed the trunks (now only faces
+turned well up, n.z > ~0.6); the few leaves a crown keeps into deep winter were the fall's orange (now dead brown);
+the birch's catkins were too few and too dull to read in flower (blossom 0.2 → 0.35, a warmer yellow). Seen, for the
+user: the elder's crown at the phone's level is three or four big copper masses on short near-level limbs over a very
+broad bole — round 125's shape, now at twice the size; its sprite uses about a third of its cell's width, the bounds
+set by the surface roots' sprawl.

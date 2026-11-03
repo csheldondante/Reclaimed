@@ -215,14 +215,14 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     bark: { furrows: 0, furrowFreq: 3, plates: 0, plateSize: 0.6, stripes: 0.2, stripeFreq: 7, roughness: 0.15 },
     epiphytes: { lichen: 0.2, moss: 0, plants: 0, vines: 0, lines: 0 },
     // (catkins: hanging ochre tassels before the leaves)
-    blossom: 0.2,
+    blossom: 0.35,
     colours: {
       bark: C(0.86, 0.85, 0.8),
       barkMark: C(0.16, 0.15, 0.14),
       leafDark: C(0.3, 0.47, 0.15),
       leafLight: C(0.6, 0.72, 0.3),
       autumn: C(0.92, 0.76, 0.22),
-      flower: C(0.62, 0.55, 0.32),
+      flower: C(0.86, 0.74, 0.3),
       deciduous: true,
     },
     niche: { veg: [3.2, 6], moisture: [0.25, 0.9], light: [0.5, 1], altitude: [1, 120], slopeMax: 0.9, hosts: ['ground'], weight: 1 },
