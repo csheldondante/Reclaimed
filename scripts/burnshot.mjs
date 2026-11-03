@@ -9,20 +9,28 @@ import { run, sleep } from './lib/runner.mjs';
 
 await run({ name: 'burnshot', kind: 'behaviour', size: '412x915', dpr: 1, echo: false }, async (R) => {
   const out = R.opt('out', 'C:/Projects/shots88/treegen');
-  const p = await R.level({ level: 'atlas', play: 'lich', forest: 'lab', fride: '0', fseason: '0.3', flod: 'sprite' });
-  await p.waitForFunction(() => window.reclaimed?.forest?.stand, { timeout: 120000, polling: 500 });
+  // (--lab 0: the plain atlas, the free camera — the views from above and afar; the default, the forest station with the
+  // hero, its camera the understory's — the view from under the canopy)
+  const lab = R.opt('lab', '1') === '1';
+  const p = await R.level({ level: 'atlas', at: R.opt('at', '13728,5216'), fseason: '0.3', flod: 'sprite', ...(lab ? { play: 'lich', forest: 'lab', fride: '0' } : {}) });
+  if (lab) await p.waitForFunction(() => window.reclaimed?.forest?.stand, { timeout: 120000, polling: 500 });
   await sleep(20000);
   // the hero parked in front of the stand, the ride off (as the foliage bench does)
-  const at = await p.evaluate(() => {
+  const at = await p.evaluate((lab) => {
     const r = window.reclaimed;
+    if (!lab) {
+      r.camera.zoom = 5;
+      return r.camera.target.slice(0, 2);
+    }
     r.forest.ride = false;
     const park = r.forest.stand.park ?? r.forest.stand.at;
     r.play.session.hero.place(park);
     r.camera.zoom = 5;
     return r.forest.stand.at;
-  });
+  }, lab);
   await sleep(4000);
-  await p.screenshot({ path: `${out}/burn-before-z5.png` });
+  const pre = lab ? 'lab-' : '';
+  await p.screenshot({ path: `${out}/burn-${pre}before-z5.png` });
   const strikes = await p.evaluate(
     ({ n, at }) => {
       const r = window.reclaimed;
@@ -59,7 +67,7 @@ await run({ name: 'burnshot', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
     maxAwake = Math.max(maxAwake, s.sleep?.awake ?? 0);
     maxBurning = Math.max(maxBurning, s.sleep?.burning ?? 0);
     R.log(`t+${(t + 10000) / 1000}s fire round each strike ${JSON.stringify(s.fire)} chunks ${JSON.stringify(s.sleep)}`);
-    if (t === 30000) await p.screenshot({ path: `${out}/burn-during-z5.png` });
+    if (t === 30000) await p.screenshot({ path: `${out}/burn-${pre}during-z5.png` });
   }
   await R.fatal(p);
   const snags = await p.evaluate(async () => {
@@ -70,19 +78,29 @@ await run({ name: 'burnshot', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
     return { columns: n, of: t.w * t.h };
   });
   R.log(`snag columns: ${JSON.stringify(snags)}; the most chunks awake ${maxAwake}, held by fire ${maxBurning}`);
+  // (the camera on the burn's middle: the strikes' cells, cellPos)
+  if (!lab)
+    await p.evaluate((cells) => {
+      const r = window.reclaimed;
+      const ROW_H = Math.sqrt(3) / 2;
+      const [x, y] = cells[Math.floor(cells.length / 2)];
+      r.camera.target = [x + 0.5 + 0.5 * (y & 1), (y + 0.5) * ROW_H, r.camera.target[2]];
+    }, strikes.cells);
   // from above, from afar (the sprites), and under the canopy (the understory held round the hero)
   for (const z of [5, 2]) {
     await p.evaluate((z) => (window.reclaimed.camera.zoom = z), z);
     await sleep(3000);
-    await p.screenshot({ path: `${out}/burn-after-z${z}.png` });
+    await p.screenshot({ path: `${out}/burn-${pre}after-z${z}.png` });
     R.log(`saved burn-after-z${z}.png`);
   }
-  await p.evaluate(() => {
-    const r = window.reclaimed;
-    r.camera.zoom = 12;
-    r.forest.d.driver.force = 1;
-  });
-  await sleep(4000);
-  await p.screenshot({ path: `${out}/burn-after-under.png` });
-  R.log('saved burn-after-under.png');
+  if (lab) {
+    await p.evaluate(() => {
+      const r = window.reclaimed;
+      r.camera.zoom = 12;
+      r.forest.d.driver.force = 1;
+    });
+    await sleep(4000);
+    await p.screenshot({ path: `${out}/burn-lab-after-under.png` });
+    R.log('saved burn-after-under.png');
+  }
 });

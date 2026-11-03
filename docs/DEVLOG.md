@@ -17013,3 +17013,16 @@ noisy; the phone bench decides cost — Pages build of `merge128`, `?bench=1` an
   port reads the Plants mirror's surface (topCol) and FloraSource.top for passability. Tests: flora-plan (Dawn, a hilly
   window: every column's species the same on both sides), stands.test.ts (a hillside rising 2 a column: > 75%
   conifers and 30 points over the flat; knolls 8 over their land: > 70%).
+- The fire fix in the real atlas (burnshot.mjs --lab 0, the elder wood at 13728,5216, 4 strikes of the player's
+  lightning): the fire field round the strikes 0.37 at 10 s, 0.45-0.58 at 20 s, then burning out at the middle
+  (0.2 at 30 s, 0 by 80 s) while the chunks held by fire grew 7 → 14 (the front moving out); the most chunks awake
+  16 — the desktop proxy for a big burn's sleep cost. 1 048-1 878 columns of snag after. Before the fix the same
+  strikes froze at 0.4 from 20 s on. At the forest station's willow (wet bank) the strikes barely lit (0.06) and went
+  out by 30 s: wet ground, as fire.wgsl's damp rule says. Open: the burned trees aren't seen in the shots — the elder
+  canopy over the burn looks untouched at z5 and z2 though the snag texture holds 1 000+ columns; to find with the
+  browser (where the snags are against the view; vegprep's plan on a burned elder slot: a burned column's succession
+  falls under ELDER_VEG, so the slot is planned as max(veg, 3.6), not an elder).
+  The wind matrix's clips (windclips.mjs, C:/Projects/shots88/treegen/wind): frame-to-frame change under the HUD,
+  mean |dI| / share of pixels changing > 12 — static 3.9-4.1 / 4.8-5.9% (the grass's own life, particles), sway
+  7.9-10.7 / 13-19%, 1A 9.6-11.7 / 17-24%, 1C 11.2-13.1 / 20-25%, 1A1C 10.6-14.8 / 19-30%. The motion grows row on row
+  as designed; whether 1C is rubbery is for the eye (the GIFs).
