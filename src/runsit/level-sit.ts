@@ -305,8 +305,10 @@ export class LevelSit {
 
   /** each frame */
   update(dt: number): void {
-    // (round 128, M128-6: the encounter's clock and its drive hold while a talk is open)
-    if (!this.talkOpen()) this.area?.update(dt);
+    // (round 128, M128-6: the encounter's clock and its drive hold while a talk is open, and the threats on the field stand)
+    const talking = this.talkOpen();
+    this.d.units.holdThreats(talking);
+    if (!talking) this.area?.update(dt);
     if (!this.journey || this.warping) return;
     const prev = this.jstate?.phase;
     this.jstate = this.journey.update(dt);

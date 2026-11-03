@@ -65,6 +65,9 @@ struct AgentParams {
   // units moved to another group this tick (round 63: a worker off to its
   // job, then carrying to the pile): slot | group << 16, four a vec4
   regroups: array<vec4<u32>, 16>,
+  // (round 128, M128-6) x: 1 while the game holds the threats (a talk it put up) — the hostile kinds stand: they don't
+  // close in or begin a swing, and one begun lands nothing (they still fall, burn, are pushed and thrown)
+  hold: vec4<u32>,
 };
 /**
  * A kind of unit: a (height, mass, hp, speed), b (reach, damage, swing

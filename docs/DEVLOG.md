@@ -16617,6 +16617,8 @@ it 6 s while the riders closed in (health 10 to 4 by 4.5 s). Not frame-time: the
 talk (encounters.mjs calls playArea; the game's own path commits from the talk first, but nothing held an encounter
 that started anyway). Now LevelSit.playArea waits for a talk the game put up to close (dialog/hold.ts untilClosed;
 LevelOpps' petition talk) before it spawns anything, and the area's clock and drive (AreaPlay.update) hold while one is
-open. Units already on the field — the run's pursuers after an area — still move under a talk: the agents have no hold
-(BACKLOG M128-6 notes it). encounters.mjs's pilot answers a talk open before the area (it read only scenes' talks once
+open; and the threats already on the field stand (main: close the gap): the Units contract's holdThreats, AgentUnits
+through the agents' params (agents.wgsl AgentParams.hold; units.wgsl: no closing in, no blow begun or landed; falls,
+fire, pushes go on), SimpleUnits alike — test/gpu/holdthreats.test.ts (3 raiders held 4 s land nothing and stay off;
+let go they close in; without the hold 4 blows land). encounters.mjs's pilot answers a talk open before the area (it read only scenes' talks once
 the area ran, and waited for an area that waited for the talk). Test: test/unit/talkhold.test.ts.

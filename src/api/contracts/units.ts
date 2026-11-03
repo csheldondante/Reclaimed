@@ -148,6 +148,11 @@ export interface Units {
   release?(id: UnitId, vel?: V3): void;
   /** (round 117, play) how many units `hold` keeps at once */
   readonly maxHeld?: number;
+  /**
+   * (round 128, M128-6) Hold the threats: while on, hostile units stand — no closing in, no blow begun or landed — though
+   * they still fall, burn and are pushed. The game holds them while it has a talk up over the play (a petition).
+   */
+  holdThreats(on: boolean): void;
   /** actors hostile units may attack */
   watch(actor: Actor): void;
   /** the window slid (streamed worlds): positions shift with it */

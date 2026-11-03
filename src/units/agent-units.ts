@@ -131,6 +131,10 @@ export class AgentUnits implements Units {
   /** live units at the last sync, and how long that sync took to come back (ms) */
   stats = { units: 0, hunting: 0, syncMs: 0, syncs: 0 };
 
+  holdThreats(on: boolean): void {
+    this.agents.holdingThreats = on;
+  }
+
   constructor(readonly agents: Agents) {
     agents.defineKind(K.guard, { name: 'guard', height: 1.45, mass: 1.2, hp: 10, speed: 2.7, colours: { torso: MAT.Steel, head: MAT.Steel } });
     agents.defineKind(K.character, { name: 'character', height: 1.4, mass: 1, hp: 10, speed: 2.5, colours: { torso: MAT.Brick, legs: MAT.Wood } });

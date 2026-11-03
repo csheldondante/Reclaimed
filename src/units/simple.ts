@@ -174,6 +174,12 @@ export class SimpleUnits implements Units {
     }
   }
 
+  /** (round 128, M128-6) the threats held: hostile units stand (Units.holdThreats) */
+  private held = false;
+  holdThreats(on: boolean): void {
+    this.held = on;
+  }
+
   update(dt: number): void {
     for (const [id, u] of this.units) {
       const v = u.v;
@@ -193,6 +199,11 @@ export class SimpleUnits implements Units {
       if (u.flinch > 0) {
         u.flinch -= dt;
         v.state = 'hurt';
+        continue;
+      }
+      if (this.held && v.hostile) {
+        u.swing = 0;
+        v.state = 'idle';
         continue;
       }
       // a hostile one looks for a target

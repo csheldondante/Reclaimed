@@ -3363,3 +3363,18 @@ One concern each:
 Contract for text: every string a player reads follows docs/WRITING.md; test/unit/writing.test.ts (test/support/
 writing.ts `lint`) checks the templates, the dealt cards and petitions on seed 1, Briar Hollow's, the cast, the
 screens and the GM's situation file.
+
+## A talk holds the play (round 128, `merge128`; BACKLOG M128-6)
+
+A talk the game puts up over the play (LevelOpps' petition: dialog/dialog.ts DialogBox) holds what would act on the
+player meanwhile:
+- **the area's encounter** — LevelSit.playArea awaits `talkClosed()` (dialog/hold.ts `untilClosed`) before it spawns
+  anything; while a talk is open LevelSit.update doesn't step the area (AreaPlay.update: its clock, its drive, its rules);
+- **the threats already on the field** — the Units contract's `holdThreats(on)` (set by LevelSit.update every frame
+  from `talkOpen()`): hostile units stand — no closing in, no blow begun or landed — though they still fall, burn and
+  are pushed and thrown. AgentUnits sets `Agents.holdingThreats`, written to the agents' params (agents.wgsl
+  AgentParams.hold.x); units.wgsl reads it for the kinds that notice (kind `notice` > 0): a swing begun ends with no
+  blow, the wish to move is zero. SimpleUnits stands its hostile units alike.
+A scene's own talk (encounters/talk.ts DialogTalk) is part of its encounter and isn't such a hold.
+Tests: test/unit/talkhold.test.ts (the wait), test/gpu/holdthreats.test.ts (raiders held stand and land nothing; let go,
+they close in).

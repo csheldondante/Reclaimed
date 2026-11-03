@@ -117,7 +117,9 @@ const P_TARGET_H = P_LAUNCHES + MAX_LAUNCHES * 4;
 /** units moved to another group a tick (agents.wgsl regroups) */
 const MAX_REGROUPS = 64;
 const P_REGROUPS = P_TARGET_H + MAX_TARGETS;
-const PARAMS_BYTES = (P_REGROUPS + MAX_REGROUPS) * 4;
+/** (round 128, M128-6) agents.wgsl AgentParams.hold */
+const P_HOLD = P_REGROUPS + MAX_REGROUPS;
+const PARAMS_BYTES = (P_HOLD + 4) * 4;
 /** what the tumbling units fall by (units.wgsl unitsG(), cells/s²): the world's gravity × the tuning's units.gravity
  *  (solver step 1, AR9: it was a 20 of its own; the default scale keeps that at world gravity × 1) */
 export function unitsG(): number {
@@ -1232,6 +1234,12 @@ export class Agents implements SimSystem {
     return out;
   }
 
+  /**
+   * (round 128, M128-6) While true the hostile kinds (those that notice: kind `notice` > 0) stand where they are: they
+   * don't close in or begin a swing, and one begun lands nothing; they still fall, burn and are pushed and thrown.
+   */
+  holdingThreats = false;
+
   private writeParams(hits: (HitSpec & { id: number })[]): void {
     const b = new ArrayBuffer(PARAMS_BYTES);
     const u = new Uint32Array(b);
@@ -1297,6 +1305,7 @@ export class Agents implements SimSystem {
     const regroups = this.regroups.splice(0, MAX_REGROUPS);
     u.set([holds.length, launches.length, regroups.length, clear], P_N3);
     u.set(regroups, P_REGROUPS);
+    u[P_HOLD] = this.holdingThreats ? 1 : 0;
     holds.forEach(([slot, p], i) => f.set([p[0], p[1], p[2], slot], P_HOLDS + i * 4));
     launches.forEach((l, i) => f.set(l, P_LAUNCHES + i * 4));
     this.device.queue.writeBuffer(this.params, 0, b);

@@ -576,7 +576,10 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
         reachD = g.w;
         if (reachD < kind.b.x * 1.3) { seen = sightClear(pos + vec3<f32>(0.0, 0.0, height * 0.6), g.xyz); }
       }
-      if (!worker) {
+      // (round 128, M128-6: the threats held — a talk the game put up: AgentParams.hold)
+      let held = AP.hold.x != 0u && !worker;
+      if (held && state == ST_SWING) { state = ST_CHASE; stT = 0.0; }
+      if (!worker && !held) {
         if (state == ST_WANDER && here < kind.b.w) { state = ST_CHASE; stT = 0.0; }
         if (state == ST_CHASE && here > kind.b.w * 1.5) { state = ST_WANDER; stT = 0.0; }
         if (state == ST_CHASE && reachD < kind.b.x && seen && cool <= 0.0) {
@@ -617,6 +620,7 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
       }
       let jit = vec2<f32>(rand3(u, G.tick, 1u), rand3(u, G.tick, 2u)) - 0.5;
       want += crowd * 0.25 + jit * 0.2 * max(mine - 1.0, 0.0);
+      if (held) { want = vec2<f32>(0.0); }
     }
     // wading: slower the deeper
     speed *= 1.0 - 0.6 * clamp(depth / max(height, 0.1), 0.0, 1.0);
