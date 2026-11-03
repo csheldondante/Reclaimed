@@ -68,7 +68,7 @@ describe('flora shaders compile (Dawn)', () => {
     const mi = flora ? miWgsl(lib.kinds) : 'const MI_CAP: u32 = 0u;\nconst MI_N: u32 = 1u;\nconst MI_ARGS: u32 = 24u;\n';
     it(`vegprep (flora ${flora})`, async () => {
       const treeMesh = `const TREE_MESH: bool = ${flora};\n${mi}${floraWgsl}`;
-      expect(await errors('vegprep', [commonWgsl, materialsWgsl, vegplanWgsl, terrainShapeWgsl, meshStateWgsl, meshRegionWgsl, 'const TUFTS: bool = true;', treeMesh, floraPutWgsl, vegprepWgsl])).toEqual([]);
+      expect(await errors('vegprep', [commonWgsl, materialsWgsl, vegplanWgsl, terrainShapeWgsl, meshStateWgsl, meshRegionWgsl, 'const TUFTS: bool = true; const FGRASS: f32 = 1.0;', treeMesh, floraPutWgsl, vegprepWgsl])).toEqual([]);
     });
     if (flora)
       it('florafield (reeds by water)', async () => {

@@ -300,7 +300,11 @@ fn floraSmall(c: vec2<u32>, top: f32, v: f32, pl: VegPlan) -> bool {
   if (pl.tufts > 0u && v >= 1.4 && fine) {
     // tall grass: the meadows (taller the lusher), thinning toward the woods' shade
     let lush = smoothstep(1.4, 2.6, v) * (1.0 - smoothstep(3.3, 3.8, v));
-    if (rand3(c.x, c.y, 544u) < 0.25 + 0.7 * lush) { floraPut(select(FL_TALLGRASS, FL_TALLGRASS_C, px >= FLORA_CLOSE_CELL), c, at, top, 0.7 + 0.45 * lush, 0.08, 3u); }
+    // (round 128: × FGRASS, ?fgrass= — the bench's density pairs; past 1 a second clump in the cell)
+    let gp = (0.25 + 0.7 * lush) * FGRASS;
+    let gk = select(FL_TALLGRASS, FL_TALLGRASS_C, px >= FLORA_CLOSE_CELL);
+    if (rand3(c.x, c.y, 544u) < gp) { floraPut(gk, c, at, top, 0.7 + 0.45 * lush, 0.08, 3u); }
+    if (rand3(c.x, c.y, 548u) < gp - 1.0) { floraPut(gk, c, at + vec2<f32>(0.45, 0.4), top, 0.6 + 0.4 * lush, 0.08, 6u); }
     if (pl.flower) { floraPut(FL_FLOWER, c, at + vec2<f32>(0.3, -0.2), top, 1.0, 0.1, 4u); }
     return true;
   }

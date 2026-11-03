@@ -8,6 +8,7 @@
 // Own small renderer (not the game's): a viewer must open fast on a phone without a world; what it shares with the
 // game is the generators (src/flora) and the look (floralook.wgsl), which is what it exists to show.
 
+import { kindCount, resolveKind } from './forms';
 import commonWgsl from '../shaders/common.wgsl?raw';
 import materialsWgsl from '../shaders/materials.wgsl?raw';
 import floraLookWgsl from '../shaders/floralook.wgsl?raw';
@@ -34,6 +35,8 @@ interface State {
   density: number;
   /** (round 128) one plant: the old stems (round 117) beside the new, the same seed */
   compare: boolean;
+  /** (round 128) every kind of the species in a row (a shrub's forms, a grass's clump types) */
+  lineup: boolean;
   /** (round 128) the generator's parameters as edited (params.ts; the URL's p.<key>) */
   over: Record<string, number | string>;
   /** (round 128) the A side of the A | B pair: 'old' (round 117's generator), 'species' (as written) or a saved name */
@@ -53,6 +56,7 @@ const state: State = {
   growth: Number(params.get('growth') ?? 1),
   density: Number(params.get('density') ?? 1),
   compare: params.get('compare') === '1',
+  lineup: params.get('lineup') === '1',
   over: paramsFromQuery(params),
   against: params.get('against') ?? 'old',
   pstate: Number(params.get('state') ?? 0),
@@ -131,10 +135,22 @@ async function main() {
     if (state.mode === 'scene') {
       scene = buildScene(state.biome, state.seed, { density: state.density });
     } else {
-      const def = applyParams(state.species, state.over);
+      // (round 128: the kind it's drawn as — a shrub's form, a grass's clump type — resolved once, for the mesh and its colours)
+      const def = resolveKind(applyParams(state.species, state.over), state.seed);
       const mesh = generate(state.species, state.seed, { growth: state.growth, def });
       const tree = SPECIES[state.species].form === 'tree';
-      if (state.compare) {
+      const nk = kindCount(applyParams(state.species, state.over));
+      if (state.lineup && nk > 1) {
+        // (round 128: the lineup — each kind of the species side by side, the same seed, as edited)
+        const ks = [...Array(nk).keys()].map((kind) => {
+          const d = resolveKind({ ...applyParams(state.species, state.over), kind }, kind);
+          return { species: state.species, mesh: generate(state.species, state.seed, { growth: state.growth, def: d }), def: d };
+        });
+        const gap = Math.max(...ks.map((k) => k.mesh.radius)) * 2.1 + 0.4;
+        const inst = new Float32Array(nk * 16);
+        ks.forEach((_, i) => inst.set([1, 0, 0, (i - (nk - 1) / 2) * gap, 0, 1, 0, 0, 0, 0, 1, 0, i, 0.5, 0, 0], i * 16));
+        scene = { kinds: ks, instances: inst, ranges: ks.map((_, i) => ({ first: i, count: 1 })), ground: tree ? 1 : 0, crowns: [], radius: 12 + gap * nk };
+      } else if (state.compare) {
         // (round 128: the old (round 117's stems and bark) on the left, the new on the right — the same seed, so the same
         // branching; turn the camera to see the pair from any side)
         // (the A side: the old generator, the species as written, or a saved variant)
@@ -242,6 +258,11 @@ async function main() {
       cam.at = [0, 0, m.height * 0.45];
       // (the pair side by side: far enough back that both fit a portrait phone's width)
       cam.dist = Math.max(4, m.height * (state.compare ? 2.6 : 1.9) * (state.compare ? Math.max(1, 1.3 / Math.max(0.3, canvas.clientWidth / Math.max(1, canvas.clientHeight)) * 0.6) : 1));
+      // (the lineup: back far enough that the row fits the view's width)
+      if (state.lineup && scene.kinds.length > 1) {
+        const w = scene.kinds.length * Math.max(...scene.kinds.map((k) => k.mesh.radius)) * 2.1;
+        cam.dist = Math.max(cam.dist, (w * 1.1) / Math.max(0.3, canvas.clientWidth / Math.max(1, canvas.clientHeight)));
+      }
     } else if (!cam.userMoved) {
       cam.at = [0, 0, 3];
       cam.dist = 34;
@@ -379,6 +400,7 @@ async function main() {
   const syncUrl = () => {
     const q = new URLSearchParams({ mode: state.mode, biome: state.biome, species: state.species, seed: String(state.seed), wind: state.wind.toFixed(2), season: state.season.toFixed(2), growth: state.growth.toFixed(2), density: state.density.toFixed(2) });
     if (state.compare) q.set('compare', '1');
+    if (state.lineup) q.set('lineup', '1');
     if (state.against !== 'old') q.set('against', state.against);
     if (state.pstate) q.set('state', String(state.pstate));
     for (const [k, v] of Object.entries(state.over)) q.set(`p.${k}`, typeof v === 'number' ? String(+v.toFixed(4)) : v.slice(1));
@@ -440,6 +462,14 @@ async function main() {
   }
   // ---- (round 128) the generator's parameters: a slider each (params.ts), the bark's colours, old/new ----
   const paramsEl = $('params-body');
+  const lineupIn = $<HTMLInputElement>('lineup');
+  lineupIn.checked = state.lineup;
+  lineupIn.onchange = () => {
+    state.lineup = lineupIn.checked;
+    cam.userMoved = false;
+    rebuild();
+    syncUrl();
+  };
   const compareIn = $<HTMLInputElement>('compare');
   compareIn.checked = state.compare;
   compareIn.onchange = () => {
@@ -464,7 +494,7 @@ async function main() {
     const def = applyParams(state.species, state.over);
     const woody = !!def.turtle && !!def.stem;
     // (round 128: a collapsible section a group, closed but the one last opened)
-    const NAMES: Record<string, string> = { shape: 'Shape', stem: 'Trunk & branches', crown: 'Crown', twigs: 'Twigs', bark: 'Bark', epiphytes: 'Moss, vines & seasons' };
+    const NAMES: Record<string, string> = { shape: 'Shape', stem: 'Trunk & branches', crown: 'Crown', twigs: 'Twigs', bark: 'Bark', epiphytes: 'Moss, vines & seasons', grass: 'Blades' };
     const secs = new Map<string, HTMLElement>();
     const secOf = (g: string) => {
       let d = secs.get(g);
@@ -489,6 +519,7 @@ async function main() {
       if (p.crown && !def.crown) continue;
       if (p.twigs && !def.twigs) continue;
       if (p.shape && !def.colonize) continue;
+      if (p.when && !p.when(def)) continue;
       const sec = secOf(p.group);
       const row = document.createElement('div');
       row.className = 'row';

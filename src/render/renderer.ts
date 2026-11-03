@@ -548,7 +548,12 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
     this.clampBGroup = makeBindGroup(device, 'renderprep-clamp', this.clampB.layout, this.prepEntries());
 
     // (perfopt, ?tufts=0: the grass tufts left out — most of the plant boxes, each under a pixel at low)
-    const tufts = `const TUFTS: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`;
+    // (round 128, treegen: ?fgrass=<x> the meadows' tall-grass clumps × x — the foliage bench's density pairs; 2 at most:
+    // a second clump a cell)
+    const fgrass = Number(new URLSearchParams(location.search).get('fgrass') ?? '1');
+    if (!(fgrass >= 0 && fgrass <= 2)) throw new Error(`?fgrass=${fgrass}: a number 0..2`);
+    const tufts = `const TUFTS: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};
+const FGRASS: f32 = ${fgrass.toFixed(3)};`;
     // (round 99, ?meshinst=1) the trees as instanced meshes: their instances written by vegprep (binding 10)
     // (round 117, flora: on unless ?flora=0) the flora library's generated species are the plants' meshes
     // (src/flora/library.ts): its kinds in the same renderer, its constants (each species' kinds, colours) for the kernels

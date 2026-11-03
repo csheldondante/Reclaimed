@@ -341,8 +341,14 @@ fn floraLook(k: u32, part: u32, wpos: vec3<f32>, n: vec3<f32>, h: f32, rnd: f32,
   } else if (part == 5u) {
     mat = f32(MAT_GRASS);
     // blades: dark at the foot, light at the tips (so a meadow reads as blades against its ground)
-    c = mix(FLORA_COL[b + 2u].rgb, FLORA_COL[b + 3u].rgb, clamp(0.1 + 0.95 * h + 0.15 * (fr - 0.5), 0.0, 1.0));
+    // (round 128: t the share along the blade — uv.y where the blade carries it (generate.ts grassClump), else the sway)
+    let t = max(uv.y, h);
+    c = mix(FLORA_COL[b + 2u].rgb, FLORA_COL[b + 3u].rgb, clamp(0.1 + 0.95 * t + 0.15 * (fr - 0.5), 0.0, 1.0));
     if (decid) { c = seasonGrass(c, fract(rnd * 3.7)); }
+    // (round 128) the clump's own occlusion at its foot — the blades crowd and shade each other there — and a lighter
+    // midrib where a blade is wide enough on screen to show one
+    c *= mix(0.42, 1.0, smoothstep(0.0, 0.45, t));
+    c *= 1.0 + 0.12 * (1.0 - smoothstep(0.0, 0.25, abs(uv.x - 0.5))) * (1.0 - smoothstep(0.03, 0.08, fw)) * step(0.001, uv.y);
     // (round 128) winter: the blades' tips under snow
     if (seasonSnow() * smoothstep(0.35, 0.8, h) > 0.4 + 0.3 * fr) { c = vec3<f32>(0.88, 0.91, 0.95); mat = f32(MAT_SNOW); }
   } else if (part == 6u) {

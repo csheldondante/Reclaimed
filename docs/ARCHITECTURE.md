@@ -3153,6 +3153,21 @@ PARAMS, read by the viewer's sliders and its URL (`p.<key>=`) and applied as an 
   trunk (the species' heights, the plan's trunk and crown, the tiles' painted trees, the understory's reach, a trunk's
   passability footprint ×², logs ×²) and the slot grid's spacing (density ÷ TREE_SCALE²). vegplan.wgsl takes the grid's
   constants from spacingWgsl(), prepended.
+- Kinds of a species (round 128, forms.ts): one species grown several ways, as a patch on its def — a shrub's
+  SHRUB_FORMS (round bush, spreading, upright, berry bush, bramble), a grass's GRASS_TYPES (fountain, tuft, seed
+  heads). `resolveKind(def, variant)` applies `def.kind` (the editor's pick) or the variant index round the kinds and
+  marks it done; generate() resolves once (its `kind` option: the library's variant index; absent, the seed), the
+  library's and the scenes' colour tables use the resolved def. No new species, slots or plan code: vegprep's variant
+  pick (a hash over the range) picks the kind, the same at every level. The thicket has 5 variants for it (89 kinds).
+- Grass (GrassLook on the species, forms.ts): blades, spread, lean, arch, width, segs (joints), heads (seed heads).
+  generate.ts grassClump: blades of `segs` pieces arching out and down, narrowing to a point; a vertex's sway is its
+  share along the blade (`extra`, eased ^1.6 — an arched tip bends with the gust even where it hangs low: FOLIAGE_WIND
+  1B), uv.y that share, the normal the clump's dome (lit as one tuft). The look (part 5): base-to-tip ramp on uv.y,
+  the foot's occlusion, a midrib where a blade is wide on screen; 1A's ripple as before. Close-up: ×1.6 blades, 0.7
+  width, +2 joints.
+- Berries (`berries`, 0..1): accent-coloured clusters on the crown's outer leaf vertices (generate.ts withBerries).
+- ?fgrass=<0..2> (renderer → vegprep FGRASS): the meadows' tall grass ×x, past 1 a second clump a cell — the foliage
+  bench's density pairs (`set=grass`: the meadow station, perf/foliagecard.ts GRASS_VARIANTS).
 ### The flora LOD ladder (round 128, branch `treegen`; BACKLOG FLO47-FLO48)
 
 One ladder for every plant type, chosen by size on screen (vegprep.wgsl), each level emitted by the generator from the

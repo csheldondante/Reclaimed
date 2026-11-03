@@ -8,6 +8,7 @@ import { growRoots, rootSegments } from './roots';
 import { addEpiphytes } from './epiphytes';
 import { cached, meshKey, remember } from './meshcache';
 import { colonize } from './colonize';
+import { resolveKind, type GrassLook } from './forms';
 import { rng, hashSeed } from './rng';
 import { BARK_PLAIN, SPECIES, type Flare, type SpeciesDef, type SpeciesId } from './species';
 import type { Segment } from './lsystem';
@@ -44,14 +45,17 @@ function scaleTo(m: FloraMesh, h: number): FloraMesh {
  *  once a sprite, never drawn, so its triangles don't count at run time */
 export type Lod = 'bake' | 'close' | 0 | 1 | 2;
 
-export function generate(id: SpeciesId, seed: number, opts: { growth?: number; px?: number; lod?: Lod; def?: SpeciesDef; legacy?: boolean } = {}): FloraMesh {
+/** `kind` (round 128, forms.ts): which of the species' kinds (a shrub's form, a grass's clump type) — the library's
+ *  variant index; absent: by the seed (the viewer) */
+export function generate(id: SpeciesId, seed: number, opts: { growth?: number; px?: number; lod?: Lod; def?: SpeciesDef; legacy?: boolean; kind?: number } = {}): FloraMesh {
   // (round 128: the trees' and thickets' meshes kept between loads — meshcache.ts; the small plants are cheap)
-  const def0 = opts.legacy ? legacyDef(opts.def ?? SPECIES[id]) : (opts.def ?? SPECIES[id]);
-  if (def0.form !== 'tree' && def0.form !== 'shrub') return make(id, seed, opts);
+  const def0 = resolveKind(opts.legacy ? legacyDef(opts.def ?? SPECIES[id]) : (opts.def ?? SPECIES[id]), opts.kind ?? seed);
+  const o = { ...opts, def: def0, legacy: false };
+  if (def0.form !== 'tree' && def0.form !== 'shrub') return make(id, seed, o);
   const key = meshKey(def0, seed, `${String(opts.lod ?? 0)}|${opts.growth ?? 1}`, opts.px);
   const had = cached(key);
   if (had) return had;
-  const m = make(id, seed, opts);
+  const m = make(id, seed, o);
   remember(key, m);
   return m;
 }
@@ -81,17 +85,22 @@ function make(id: SpeciesId, seed: number, opts: { growth?: number; px?: number;
       // (round 119: a thicket far off is a lump — a few triangles, from the same skeleton; round 128, main's review: the
       // lump's octahedra read as brown pyramids on the woods' floor — now a few big spray cards on its main stems)
       if (opts.lod === 2) return scaleTo(farShrub(sp, seed), h);
-      return scaleTo(woody(sp, seed, h, opts.lod === 'close' || opts.lod === 'bake' ? undefined : opts.px, true, opts.lod === 'close' || opts.lod === 'bake', opts.lod === 'bake'), h);
+      {
+        const m = woody(sp, seed, h, opts.lod === 'close' || opts.lod === 'bake' ? undefined : opts.px, true, opts.lod === 'close' || opts.lod === 'bake', opts.lod === 'bake');
+        return scaleTo(sp.berries ? withBerries(m, sp.berries, h, hashSeed(seed, 7)) : m, h);
+      }
     case 'fern':
       return scaleTo(woody(sp, seed, h, opts.px), h);
     case 'vine':
       return scaleTo(vine(sp, seed), h);
     case 'grass': {
+      // (round 128: the species' clump look — forms.ts GrassLook, its kind applied; the round-117 tuft where it has none)
+      const gl: GrassLook = sp.grass ?? { blades: 9, spread: 0.5, lean: 0.4, arch: 0.3, width: 0.16, segs: 2, heads: 0.25 };
+      // (close: more, finer blades, two more joints to bend at)
+      if (opts.lod === 'close') return grassClump(h, seed, { ...gl, blades: Math.round(gl.blades * 1.6), width: gl.width * 0.7, segs: gl.segs + 2 });
       // (a blade at least ~1.7 px wide; fewer of them when they are wide)
-      // (round 128, close: more, finer blades, bent in three)
-      if (opts.lod === 'close') return grassClump(h, seed, 15, 0.55, 0.11, 3);
-      const w = opts.px ? Math.max(0.16, 1.7 / opts.px) : 0.16;
-      return grassClump(h, seed, w > 0.22 ? 6 : 9, 0.5, w);
+      const w = opts.px ? Math.max(gl.width, 1.7 / opts.px) : gl.width;
+      return grassClump(h, seed, { ...gl, width: w, blades: w > 0.22 ? Math.max(4, Math.round(gl.blades * 0.6)) : gl.blades });
     }
     case 'reed':
       return reeds(h, seed);
@@ -243,27 +252,114 @@ function vine(sp: SpeciesDef, seed: number): FloraMesh {
 }
 
 /** Tall grass: blades from a small patch, each leaning out and curving over, the tallest in the middle. */
-export function grassClump(h: number, seed: number, blades: number, patch: number, width = 0.16, segs = 2): FloraMesh {
+/**
+ * A grass clump (round 128, the user: "gras that bends in the wind and looks higher detail"): blades of several
+ * segments rising from the clump's foot and arching over (`look.arch`), narrowing to a point, each vertex's sway
+ * its share along the blade (so an arched tip bends with the gust even where it hangs low — FOLIAGE_WIND 1B) and its
+ * normal the clump's dome (the blades lit as one rounded tuft, not as flat cards edge-on). The look darkens the
+ * foot (the clump's own occlusion) and lightens toward the tips (floralook.wgsl part 5).
+ */
+export function grassClump(h: number, seed: number, look: GrassLook): FloraMesh {
   const r = rng(hashSeed(seed, 11));
-  // the wind takes the blades' tips: sway rises with the square of the height share, nearly all of it at the tip
-  const mb = new MeshBuilder((p) => Math.pow(Math.max(0, p[2]) / h, 1.5) * 0.98);
-  for (let k = 0; k < blades; k++) {
+  // (the sway is passed as `extra`: the share along the blade, eased — nearly all of the bend at the tip)
+  const mb = new MeshBuilder((_p, e) => Math.pow(e, 1.6) * 0.98);
+  const segs = Math.max(1, Math.round(look.segs));
+  const domeC: V3 = [0, 0, -h * 0.35];
+  const domeN = (q: V3): V3 => norm([q[0] - domeC[0], q[1] - domeC[1], q[2] - domeC[2]]);
+  const vtx = (q: V3, u: number, t: number) => mb.vert(q, PART.blade, t, u, t, domeN(q));
+  // one blade from its foot p: `segs` pieces, turning out (ca, sa) and down by `arch`, narrowing to a point
+  const strip = (p: V3, d0: V3, len: number, width: number, ca: number, sa: number, arch: number) => {
+    let dir = norm(d0);
+    const side: V3 = norm([-sa, ca, 0]);
+    let at = p;
+    let L = vtx([at[0] - (side[0] * width) / 2, at[1] - (side[1] * width) / 2, at[2]], 0, 0);
+    let R = vtx([at[0] + (side[0] * width) / 2, at[1] + (side[1] * width) / 2, at[2]], 1, 0);
+    for (let s = 1; s <= segs; s++) {
+      const t = s / segs;
+      // (never under the ground: a hanging tip rests on it)
+      at = [at[0] + (dir[0] * len) / segs, at[1] + (dir[1] * len) / segs, Math.max(0.03, at[2] + (dir[2] * len) / segs)];
+      // (the arch: the blade turns out and down over its length, more toward the tip)
+      dir = norm([dir[0] + ((ca * arch * 0.9) / segs) * (0.5 + t), dir[1] + ((sa * arch * 0.9) / segs) * (0.5 + t), dir[2] - ((arch * 1.1) / segs) * (0.3 + t)]);
+      if (s === segs) {
+        mb.tri2(L, R, vtx(at, 0.5, 1));
+      } else {
+        // (widest a third of the way up, then narrowing to the point)
+        const w = width * Math.min(1.15, 0.85 + t) * (1 - t * t * 0.85);
+        const L2 = vtx([at[0] - (side[0] * w) / 2, at[1] - (side[1] * w) / 2, at[2]], 0, t);
+        const R2 = vtx([at[0] + (side[0] * w) / 2, at[1] + (side[1] * w) / 2, at[2]], 1, t);
+        mb.tri2(L, R, R2);
+        mb.tri2(L, R2, L2);
+        L = L2;
+        R = R2;
+      }
+    }
+  };
+  for (let k = 0; k < look.blades; k++) {
     const a = r() * Math.PI * 2;
-    const d = Math.sqrt(r()) * patch;
+    const d = Math.sqrt(r()) * look.spread;
     const p: V3 = [Math.cos(a) * d, Math.sin(a) * d, 0];
-    const lean = 0.25 + 0.35 * r();
-    const dir = norm([Math.cos(a) * lean, Math.sin(a) * lean, 1]);
-    const len = h * (0.6 + 0.4 * (1 - d / patch)) * (0.8 + 0.25 * r());
-    const bend: V3 = [Math.cos(a) * 0.16, Math.sin(a) * 0.16, -0.05];
-    // (blades a fifth of a cell wide: wide enough to read as blades on the phone's low tier, where a thinner one is
-    // under a pixel; two bends each)
-    mb.blade(p, dir, len, width + 0.07 * r(), segs, segs > 2 ? ([bend[0] * 0.7, bend[1] * 0.7, bend[2]] as V3) : bend, PART.blade);
-    // a few seed heads (the accent colour) on the tallest
-    if (k % 4 === 0) mb.cone([p[0] + dir[0] * len * 0.85, p[1] + dir[1] * len * 0.85, len * 0.84], dir, 0.22, 0.04, 3, PART.accent);
+    // (the outer blades lean out more and are shorter: the clump's fountain)
+    const out = d / Math.max(look.spread, 1e-3);
+    const lean = look.lean * (0.4 + 0.8 * out) * (0.7 + 0.6 * r());
+    const len = h * (0.65 + 0.35 * (1 - out)) * (0.8 + 0.3 * r());
+    const arch = look.arch * (0.6 + 0.8 * r());
+    // (each blade's own plane: facing round its lean, turned a little — so the clump shows blades at every angle)
+    const ca = Math.cos(a + (r() - 0.5) * 0.8);
+    const sa = Math.sin(a + (r() - 0.5) * 0.8);
+    strip(p, [ca * lean, sa * lean, 1], len, look.width * (0.75 + 0.5 * r()), ca, sa, arch);
+    // a seed head (the accent colour) on a share of the blades: a slim spike on a stalk of its own, upright
+    if (r() < look.heads) {
+      const sl = len * (1.05 + 0.2 * r());
+      const sd: V3 = norm([ca * lean * 0.4, sa * lean * 0.4, 1]);
+      const top: V3 = [p[0] + sd[0] * sl * 0.72, p[1] + sd[1] * sl * 0.72, sd[2] * sl * 0.72];
+      strip(p, sd, sl * 0.72, 0.035, ca, sa, 0);
+      mb.cone(top, sd, sl * 0.28, 0.06, 4, PART.accent, 0.95);
+    }
   }
   const m = mb.done();
   m.height = h;
   return m;
+}
+
+/**
+ * (round 128) Berries on a thicket's leaves (forms.ts: the berry bush, the bramble): small accent-coloured clusters on
+ * a share of the crown's outer leaf vertices, a little out along their normal so they sit on the leaves.
+ */
+function withBerries(m: FloraMesh, density: number, h: number, seed: number): FloraMesh {
+  const r = rng(seed);
+  // (the mesh is in the skeleton's units until scaleTo: a berry ~0.07 cells)
+  const k = h / Math.max(m.height, 1e-3);
+  const br = 0.07 / k;
+  const mb = new MeshBuilder(() => 0.6);
+  const nv = m.verts.length / 4;
+  let made = 0;
+  const want = Math.round(24 * density);
+  for (let tries = 0; tries < want * 30 && made < want; tries++) {
+    const i = Math.floor(r() * nv);
+    if (Math.floor(m.verts[i * 4 + 3]) !== PART.leaf) continue;
+    const p: V3 = [m.verts[i * 4], m.verts[i * 4 + 1], m.verts[i * 4 + 2]];
+    // (out along the vertex's smooth normal; where it has none, out from the axis)
+    const ox = m.uv[i * 4 + 2];
+    const oy = m.uv[i * 4 + 3];
+    const l1 = Math.abs(ox) + Math.abs(oy);
+    const n: V3 = l1 > 1e-5 && l1 <= 1 ? norm([ox, oy, 1 - l1]) : norm([p[0], p[1], 0.3 * Math.abs(p[2])]);
+    // (the outer surface only: a vertex whose normal faces in toward the axis is an inner layer's)
+    if (n[0] * p[0] + n[1] * p[1] < 0) continue;
+    const c: V3 = [p[0] + n[0] * br * 1.5, p[1] + n[1] * br * 1.5, p[2] + n[2] * br * 1.5];
+    for (let b = 0; b < 2; b++) mb.blob([c[0] + (r() - 0.5) * br * 2.2, c[1] + (r() - 0.5) * br * 2.2, c[2] + (r() - 0.5) * br * 2.2], [br, br, br], PART.accent, r, 0.6);
+    made++;
+  }
+  const add = mb.done();
+  const index = new Uint32Array(m.index.length + add.index.length);
+  index.set(m.index);
+  for (let q = 0; q < add.index.length; q++) index[m.index.length + q] = add.index[q] + nv;
+  const verts = new Float32Array(m.verts.length + add.verts.length);
+  verts.set(m.verts);
+  verts.set(add.verts, m.verts.length);
+  const uv = new Float32Array(m.uv.length + add.uv.length);
+  uv.set(m.uv);
+  uv.set(add.uv, m.uv.length);
+  return { ...m, verts, uv, index, tris: index.length / 3 };
 }
 
 /** Reeds: straight stalks, narrow leaves, cattail heads. */

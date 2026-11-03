@@ -13,6 +13,7 @@ import type { CrownLook, LeafLook, StemLook, TwigLook } from './mesh';
 import type { RootSpec } from './roots';
 import { TREE_SCALE } from './spacing';
 import type { ColonizeSpec } from './colonize';
+import type { GrassLook } from './forms';
 
 export type RGB = [number, number, number];
 
@@ -115,6 +116,14 @@ export interface SpeciesDef {
   winterLeaves?: number;
   /** (round 128) in flower (spring): the share of its leaf clusters that bloom, in colours.flower (0 / absent: none) */
   blossom?: number;
+  /** (round 128) berries at the twig tips (0..1, a density; colours.accent): a berry bush's, a bramble's */
+  berries?: number;
+  /** (round 128) a grass clump's build (forms.ts GrassLook) */
+  grass?: GrassLook;
+  /** (round 128) the kind drawn (forms.ts: a shrub's SHRUB_FORMS, a grass's GRASS_TYPES); −1 / absent: by the variant */
+  kind?: number;
+  /** (round 128) set once the kind is applied (forms.ts resolveKind) */
+  kindDone?: boolean;
 }
 
 /**
@@ -541,6 +550,8 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
       leafLight: C(0.38, 0.56, 0.2),
       autumn: C(0.72, 0.3, 0.12),
       flower: C(0.96, 0.9, 0.93),
+      // (round 128: the berry bush's berries)
+      accent: C(0.62, 0.08, 0.1),
       deciduous: true,
     },
     niche: { veg: [2.6, 4.6], moisture: [0.2, 0.9], light: [0.2, 1], altitude: [0, 200], slopeMax: 1.0, hosts: ['ground', 'bank'], weight: 1 },
@@ -554,6 +565,8 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     name: 'Tall grass',
     form: 'grass',
     height: [1.1, 1.8],
+    // (round 128: curved blades in several segments, lit as one clump — forms.ts; the variants its clump types)
+    grass: { blades: 11, spread: 0.45, lean: 0.35, arch: 0.4, width: 0.16, segs: 4, heads: 0.2 },
     bark: BARK_PLAIN,
     colours: {
       bark: C(0.3, 0.4, 0.15),

@@ -16776,3 +16776,22 @@ epiphytes and seasons and states. Leafless and burned could also be useful state
   the world) are one sticky row. Every label is in plain words (docs/WRITING.md: "branch length", not "sStep") with a
   one-line hint shown on a tap of the label. The shrub now grows by space colonisation in a dome (SHRUB_DOME) with a
   layered crown, its budgets 1600 / 3600 triangles (close).
+
+- Grass and shrubs the trees' way (the user: "Can tree gen move onto grasses and shrubs and adopt the same techniques
+  that worked for trees? I would love gras that bends in the wind and looks higher detail"; main: shrubs with species
+  variety, grass 1B with multi-segment curved blades, gradient, AO, dome normals, clump types, a close-up level, phone
+  pairs). Kinds (forms.ts): rather than five new shrub species — each a slot in the plan, a niche, a CPU mirror — a
+  species grows several ways as a patch on its def, picked by the library's variant (vegprep already hashes a variant
+  per plant, the same at every level): the thicket's round bush, spreading (umbrella envelope, pads), upright (column),
+  berry bush (blossom, berries) and bramble (weeping canes, sparse leaves, red-brown canes, dark berries); the tall
+  grass's fountain, tuft and seed-head clumps. Triangles (seed 1): bush 1036 / close 1760, spreading 1320 / 2244,
+  upright 784 / 1366, berry 1420 / 2144, bramble 1218 / 2476 (budget 1600 / 3600); grass 154-196 / 396-484. Cost: the
+  thicket's 5 variants make 89 kinds (was 80), nine more indirect draws (empty ones cost little; the bench reports
+  draws). The far thicket (lod 2) is still one shape for every kind (farShrub reads the L-system): not yet.
+  Grass blades: several joints each, arching out and down, the sway along the blade (not the height: a hanging tip
+  moves), dome normals (lit as one tuft — flat cards edge-on read as noise), the foot darkened, uv.y the ramp.
+  The editor: a "kind of shrub" and "clump type" list, a Blades section (blades, clump width, lean, arch, blade width,
+  joints, seed heads), and "every kind" (each kind in a row: the shrubs' lineup). The phone bench: `set=grass` parks
+  the hero on the lushest meadow near the wood and runs static / sway (1B) / 1A1C at ?fgrass=0.5, 1, 2 — each
+  animated run against the static one at its own density (foliagecard.ts, tested). Measurements are the user's phone
+  run; the desktop proxy and the shots come with the next browser slot.

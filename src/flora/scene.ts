@@ -4,6 +4,7 @@
 // Placement here is the viewer's own scatter (Poisson-ish by rejection) with the niche weights of species.ts; in the
 // game the plants stand where vegplan.wgsl / vegprep.wgsl put them.
 
+import { kindCount, resolveKind } from './forms';
 import { generate } from './generate';
 import type { FloraMesh } from './mesh';
 import { MeshBuilder } from './mesh';
@@ -114,9 +115,10 @@ export function buildScene(biome: Biome, seed: number, opts: { radius?: number; 
     let ks = kindOf.get(id);
     if (!ks) {
       ks = [];
-      for (let v = 0; v < V; v++) {
+      // (round 128: a variant each kind at least — a shrub's five forms, a grass's clump types; forms.ts)
+      for (let v = 0; v < Math.max(V, kindCount(SPECIES[id])); v++) {
         ks.push(kinds.length);
-        kinds.push({ species: id, mesh: generate(id, hashSeed(seed, v, id.charCodeAt(0), id.length)) });
+        kinds.push({ species: id, mesh: generate(id, hashSeed(seed, v, id.charCodeAt(0), id.length), { kind: v }), def: resolveKind(SPECIES[id], v) });
         per.push([]);
       }
       kindOf.set(id, ks);

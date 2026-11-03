@@ -4,12 +4,13 @@
 // parameters". Pure (no DOM), so it is tested.
 
 import { NO_EPIPHYTES, SPECIES, type SpeciesDef, type SpeciesId } from './species';
+import { GRASS_TYPES, SHRUB_FORMS, type GrassLook } from './forms';
 
 export interface Param {
   /** the URL key (p.<key>) and the slider's id */
   key: string;
   label: string;
-  group: 'shape' | 'stem' | 'crown' | 'twigs' | 'bark' | 'epiphytes';
+  group: 'shape' | 'stem' | 'crown' | 'twigs' | 'bark' | 'epiphytes' | 'grass';
   /** (round 128) a one-line hint in plain words (the editor shows it on tap) */
   hint?: string;
   min: number;
@@ -25,10 +26,19 @@ export interface Param {
   options?: string[];
   /** (round 128) colonized crowns only (colonize.ts) */
   shape?: boolean;
+  /** (round 128) shown only where this holds (a shrub's kinds, a grass's blades) */
+  when?: (sp: SpeciesDef) => boolean;
   get(sp: SpeciesDef): number;
   set(sp: SpeciesDef, v: number): void;
 }
 
+const G = (k: keyof GrassLook) => ({
+  when: (sp: SpeciesDef) => !!sp.grass,
+  get: (sp: SpeciesDef) => sp.grass?.[k] ?? 0,
+  set: (sp: SpeciesDef, v: number) => {
+    if (sp.grass) sp.grass[k] = v;
+  },
+});
 const T = (k: keyof NonNullable<SpeciesDef['turtle']>, d = 0) => ({
   get: (sp: SpeciesDef) => (sp.turtle?.[k] as number | undefined) ?? d,
   set: (sp: SpeciesDef, v: number) => {
@@ -75,6 +85,16 @@ const B = (k: keyof SpeciesDef['bark']) => ({
 
 export const PARAMS: Param[] = [
   // (round 128: the crown's shape — space colonization, colonize.ts)
+  // (round 128: a shrub's kind and a grass's clump type — forms.ts; "by the seed" the library's mix)
+  { key: 'kind', label: 'kind of shrub', hint: 'the shape the thicket grows in; "by the seed": each new seed picks one', options: ['by the seed', ...SHRUB_FORMS], group: 'shape', min: -1, max: SHRUB_FORMS.length - 1, step: 1, when: (sp) => sp.form === 'shrub', get: (sp) => sp.kind ?? -1, set: (sp, v) => { sp.kind = Math.round(v); } },
+  { key: 'gKind', label: 'clump type', hint: 'how the blades stand: arching, upright tuft, or with seed heads', options: ['by the seed', ...GRASS_TYPES], group: 'grass', min: -1, max: GRASS_TYPES.length - 1, step: 1, when: (sp) => sp.form === 'grass', get: (sp) => sp.kind ?? -1, set: (sp, v) => { sp.kind = Math.round(v); } },
+  { key: 'gBlades', label: 'blades', hint: 'blades in a clump (the close-up has more)', group: 'grass', min: 3, max: 40, step: 1, ...G('blades') },
+  { key: 'gSpread', label: 'clump width', hint: 'how wide the clump\'s foot is, in cells', group: 'grass', min: 0.1, max: 1.5, step: 0.01, ...G('spread') },
+  { key: 'gLean', label: 'lean', hint: 'how far the blades lean out from the foot', group: 'grass', min: 0, max: 1, step: 0.01, ...G('lean') },
+  { key: 'gArch', label: 'arch', hint: 'how much each blade curves over toward its tip', group: 'grass', min: 0, max: 1.5, step: 0.01, ...G('arch') },
+  { key: 'gWidth', label: 'blade width', hint: 'a blade\'s width at its foot, in cells', group: 'grass', min: 0.03, max: 0.4, step: 0.01, ...G('width') },
+  { key: 'gSegs', label: 'joints', hint: 'pieces along a blade: more bend more smoothly in the wind', group: 'grass', min: 1, max: 8, step: 1, ...G('segs') },
+  { key: 'gHeads', label: 'seed heads', hint: 'the share of blades with a seed head', group: 'grass', min: 0, max: 1, step: 0.01, ...G('heads') },
   { key: 'sCrownBase', label: 'crown starts at', hint: 'how far up the trunk the leaves begin', group: 'shape', min: 0.05, max: 0.8, step: 0.01, shape: true, ...SH('crownBase') },
   { key: 'sWidth', label: 'crown width', hint: 'how wide the crown is against the tree\'s height', group: 'shape', min: 0.05, max: 0.9, step: 0.01, shape: true, ...SH('width') },
   { key: 'sEnvelope', label: 'crown shape', hint: 'the outline the branches grow to fill', options: ['dome', 'cone', 'column', 'umbrella'], group: 'shape', min: 0, max: 3, step: 1, shape: true, get: (sp) => ENVELOPES.indexOf(sp.colonize?.envelope ?? 'dome'), set: (sp, v) => { if (sp.colonize) sp.colonize.envelope = ENVELOPES[Math.round(v)] ?? 'dome'; } },
@@ -192,6 +212,7 @@ export function cloneDef(sp: SpeciesDef): SpeciesDef {
     epiphytes: sp.epiphytes ? { ...sp.epiphytes } : undefined,
     colours: { ...sp.colours, bark: [...sp.colours.bark], barkMark: sp.colours.barkMark ? [...sp.colours.barkMark] : undefined },
     leaf: sp.leaf ? { ...sp.leaf } : undefined,
+    grass: sp.grass ? { ...sp.grass } : undefined,
   };
 }
 

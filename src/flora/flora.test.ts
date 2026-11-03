@@ -5,6 +5,7 @@ import { expand, interpret } from './lsystem';
 import { growRoots, rootReach, rootSegments } from './roots';
 import { generate } from './generate';
 import { SPECIES, SPECIES_IDS } from './species';
+import { kindCount, resolveKind } from './forms';
 
 describe('L-system', () => {
   const spec = { axiom: 'A', rules: { A: [{ s: 'F[+A][-A]', w: 1 }] }, iterations: 3 };
@@ -91,10 +92,11 @@ describe('root automaton', () => {
 describe('species meshes', () => {
   it('every species makes a mesh, deterministically, within its height range and triangle budget', { timeout: 30000 }, () => {
     // phone budget (tris a plant): trees ≤ 3200, small plants ≤ 400 — hundreds of trees and thousands of clumps a view
-    for (const id of SPECIES_IDS) {
-      const sp = SPECIES[id];
-      const a = generate(id, 1);
-      const b = generate(id, 1);
+    // (round 128: each of a species' kinds — forms.ts: a shrub's forms, a grass's clump types — in its own height range)
+    for (const [id, kind] of SPECIES_IDS.flatMap((id) => [...Array(kindCount(SPECIES[id])).keys()].map((k) => [id, k] as const))) {
+      const sp = resolveKind(SPECIES[id], kind);
+      const a = generate(id, 1, { kind });
+      const b = generate(id, 1, { kind });
       expect(Array.from(a.verts)).toEqual(Array.from(b.verts));
       expect(a.tris).toBeGreaterThan(0);
       expect(a.height).toBeGreaterThanOrEqual(sp.height[0] - 1e-3);
@@ -178,7 +180,8 @@ describe('levels of detail (round 119, the phone)', () => {
     expect(lib.wgsl()).toMatch(/FL_BIRCH_L2/);
     // (round 128: + the close-up level of the trees, the thicket and the tall grass — 16 kinds, a draw each)
     // (round 128: + the Scots pine and the willow, four levels each)
-    expect(lib.kinds.length).toBeLessThanOrEqual(80);
+    // (round 128: + the thicket's five forms, three levels each — 89 kinds)
+    expect(lib.kinds.length).toBeLessThanOrEqual(90);
     expect(lib.wgsl()).toMatch(/FL_GIANT_C/);
   });
 });
@@ -244,6 +247,7 @@ describe('the generator\'s parameters (round 128: the viewer\'s sliders)', () =>
         if (p.crown && !sp.crown) continue;
         if (p.twigs && !sp.twigs) continue;
         if (p.shape && !sp.colonize) continue;
+        if (p.when && !p.when(sp)) continue;
         const v = p.get(sp);
         expect(v, `${id}.${p.key}`).toBeGreaterThanOrEqual(p.min);
         expect(v, `${id}.${p.key}`).toBeLessThanOrEqual(p.max);
@@ -360,5 +364,51 @@ describe('crowns grown by space colonization (round 128)', () => {
     const { colonize } = await import('./colonize');
     const sk = colonize(SPECIES.giant.colonize!, 3);
     expect(new Set(sk.segments.map((g) => g.stem)).size).toBeGreaterThan(20);
+  });
+});
+
+describe('kinds of a species (round 128: shrubs and grass, forms.ts)', () => {
+  it('a thicket grows in five forms that differ in outline; resolving twice changes nothing', () => {
+    const shape = [0, 1, 2, 3, 4].map((kind) => {
+      const m = generate('shrub', 3, { kind });
+      return m.radius / m.height;
+    });
+    // spreading wider than the round bush, upright narrower
+    expect(shape[1]).toBeGreaterThan(shape[0] * 1.2);
+    expect(shape[2]).toBeLessThan(shape[0] * 0.8);
+    const once = resolveKind(SPECIES.shrub, 1);
+    expect(resolveKind(once, 3)).toBe(once);
+    expect(once.height[1]).toBeLessThan(SPECIES.shrub.height[1]);
+  });
+  it('berries only on the berry bush and the bramble', () => {
+    const acc = (kind: number) => {
+      const m = generate('shrub', 3, { kind });
+      let n = 0;
+      for (let i = 3; i < m.verts.length; i += 4) if (Math.floor(m.verts[i]) === 8) n++;
+      return n;
+    };
+    expect(acc(0)).toBe(0);
+    expect(acc(3)).toBeGreaterThan(0);
+    expect(acc(4)).toBeGreaterThan(0);
+  });
+  it('grass blades: several joints, a share along each (uv.y) the sway rises with, a dome normal at every vertex', () => {
+    const m = generate('tallgrass', 5, { kind: 0 });
+    let tips = 0;
+    for (let v = 0; v < m.verts.length / 4; v++) {
+      if (Math.floor(m.verts[v * 4 + 3]) !== 5) continue;
+      const t = m.uv[v * 4 + 1];
+      const sway = m.verts[v * 4 + 3] - 5;
+      expect(t).toBeGreaterThanOrEqual(0);
+      expect(t).toBeLessThanOrEqual(1);
+      if (t === 0) expect(sway).toBe(0);
+      if (t === 1) {
+        tips++;
+        expect(sway).toBeGreaterThan(0.9);
+      }
+      expect(Math.abs(m.uv[v * 4 + 2]) + Math.abs(m.uv[v * 4 + 3])).toBeGreaterThan(0);
+    }
+    expect(tips).toBeGreaterThan(5);
+    // the close-up has more triangles (more blades, more joints)
+    expect(generate('tallgrass', 5, { kind: 0, lod: 'close' }).tris).toBeGreaterThan(m.tris * 1.8);
   });
 });
