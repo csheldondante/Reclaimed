@@ -262,7 +262,7 @@ fn floraSmall(c: vec2<u32>, top: f32, v: f32, pl: VegPlan) -> bool {
   if (pl.shrub && !elderFloor && (v < 3.6 || rand3(c.x, c.y, 545u) < 0.2)) { floraPut(select(FL_SHRUB_L1, FL_SHRUB, px * 1.6 >= 25.0), c, at, top, 0.8, 0.05, 1u); }
   if (v >= 3.6 && !pl.tree) {
     // the woodland floor: ferns in the shade, here and there
-    if (fine && rand3(c.x, c.y, 543u) < select(0.16, 0.04, elderFloor)) { floraPut(FL_FERN, c, at, top, 1.0, 0.05, 2u); }
+    if (fine && rand3(c.x, c.y, 543u) < select(0.16, 0.0, elderFloor)) { floraPut(FL_FERN, c, at, top, 1.0, 0.05, 2u); }
     if (elderFloor && rand3(c.x, c.y, 547u) < 0.025) { floraPut(FL_BOULDER, c, at, top, 1.0, 0.0, 5u); }
     return true;
   }

@@ -28,9 +28,12 @@ fn underHide(p: vec3<f32>, foot: vec3<f32>) -> f32 {
   let fv = foot.xy - hero.xy;
   let along = dot(fv, ex);
   let side = abs(dot(fv, vec2<f32>(-ex.y, ex.x)));
-  let front = smoothstep(0.0, 1.5, along) * (1.0 - smoothstep(R * 0.55, R * 0.8, side)) * (1.0 - smoothstep(R * 5.0, R * 6.5, along));
-  // (the stump: whole to 1.4 cells over its foot, faded out by 3.4)
-  let stump = smoothstep(1.4, 3.4, p.z - foot.z);
+  // (every tree in front of the hero across the screen's width, not only on its line: main's review — the front trunks
+  // filled the bottom of the frame)
+  let front = smoothstep(0.0, 1.5, along) * (1.0 - smoothstep(R * 3.0, R * 3.6, side)) * (1.0 - smoothstep(R * 5.0, R * 6.5, along));
+  // (the stump: cut at the hero's knee-to-hip height over its own foot — a clean cut, its top darkening into it, no
+  // stipple: meshinst.wgsl fsInst darkens by underStumpFade)
+  let stump = step(1.1, p.z - foot.z);
   // (the canopy kept: the crowns whose line from the eye comes down in front of the hero)
   let t = (p.z - hero.z) / max(e.z, 0.05);
   let g = p.xy - e.xy * t;
@@ -38,6 +41,35 @@ fn underHide(p: vec3<f32>, foot: vec3<f32>) -> f32 {
   let crownH = smoothstep(cz - 3.0, cz - 1.0, p.z) * (1.0 - CAM.under[1].z);
   let ahead = smoothstep(-R * 0.7, -R * 0.2, dot(g - hero.xy, ex));
   return w * max(front * stump, crownH * ahead);
+}
+
+/**
+ * (round 125) A rim of warm light on the hero under the canopy (main's review: "the hero must be clearly visible near
+ * the centre"): what stands within its figure's cylinder (1.3 cells round its feet, 3.5 up) gets the sun's colour on
+ * its edges as seen from the eye — the voxels' outline glows against the dark floor.
+ */
+fn underRim(wpos: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
+  let w = CAM.under[0].w;
+  if (w <= 0.0) { return vec3<f32>(0.0); }
+  let hero = CAM.under[0].xyz;
+  let inFig = (1.0 - smoothstep(0.9, 1.3, length(wpos.xy - hero.xy))) * step(hero.z + 0.2, wpos.z) * (1.0 - smoothstep(hero.z + 3.0, hero.z + 3.6, wpos.z));
+  if (inFig <= 0.0) { return vec3<f32>(0.0); }
+  let edge = 1.0 - abs(dot(nrm, toEye(wpos)));
+  return G.sunCol.rgb * vec3<f32>(1.0, 0.8, 0.55) * (0.15 + 0.55 * edge * edge) * inFig * w;
+}
+
+/** (round 125) how dark a stump in front is toward its cut top, 0..1: the last ~0.8 cells under the cut fade to dark */
+fn underStumpFade(p: vec3<f32>, foot: vec3<f32>) -> f32 {
+  let w = CAM.under[0].w * CAM.under[2].x;
+  if (w <= 0.0) { return 0.0; }
+  let hero = CAM.under[0].xyz;
+  let R = max(CAM.under[1].y, 1.0);
+  let ex = normalize(toEye(p).xy + vec2<f32>(1e-5, 0.0));
+  let fv = foot.xy - hero.xy;
+  let along = dot(fv, ex);
+  let side = abs(dot(fv, vec2<f32>(-ex.y, ex.x)));
+  let front = smoothstep(0.0, 1.5, along) * (1.0 - smoothstep(R * 3.0, R * 3.6, side)) * (1.0 - smoothstep(R * 5.0, R * 6.5, along));
+  return w * front * smoothstep(0.3, 1.1, p.z - foot.z);
 }
 
 /** sun flecks: the sun through the canopy's holes as small ellipses on the ground (a pinhole image of the sun is a

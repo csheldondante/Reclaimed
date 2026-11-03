@@ -131,8 +131,9 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
     col = vec4<f32>(dustColour(P.m.w) * mix(1.0, 0.85, sr2), 0.2 * clamp(P.p.w / 2.0, 0.0, 1.0) * clamp(age * 6.0, 0.0, 1.0));
   }
   else if (kind == 16u) { // seed fluff: soft cream, a touch luminous so it reads in flight
-    size = 0.11 + sr * 0.05;
-    col = vec4<f32>(vec3<f32>(0.97, 0.95, 0.86) * (0.85 + 0.15 * sin(G.time * 6.0 + sr * 40.0)), 0.95);
+    // (round 125: smaller, warm and soft — under a canopy they read as motes in the light, not as snow)
+    size = 0.07 + sr * 0.04;
+    col = vec4<f32>(vec3<f32>(0.98, 0.86, 0.62) * (0.85 + 0.15 * sin(G.time * 6.0 + sr * 40.0)), 0.55);
   }
   else if (kind == 17u) { // grow-tap: green-gold sparkle (it took) or a brown fleck (it won't)
     size = 0.1;
@@ -220,7 +221,7 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   o.col = col;
   o.uv = c;
   o.soft = soft;
-  let mote = kind == 1u || kind == 21u || kind == 22u || kind == 23u || kind == 24u;
+  let mote = kind == 1u || kind == 16u || kind == 21u || kind == 22u || kind == 23u || kind == 24u;
   o.shapeInfo = vec2<f32>(select(select(0.0, 2.0, mote), 1.0, kind == 10u), select(sin(G.time * 12.0 + sr * 60.0), 0.35, perched));
   // (round 125, forest: a falling leaf over a few pixels on screen — the close view under a canopy — is a pixel leaf,
   // turning as it tumbles (understory_draw.wgsl's 7 x 7 shape), not a flat square; resting, it lies still)

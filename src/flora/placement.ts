@@ -69,7 +69,7 @@ export function standsAt(cx: number, cy: number, v: number, w: number, h: number
   const shrub = !t && !elderFloor && v >= 2.6 && hh < 0.25 && (v < 3.6 || rand3(cx, cy, 545, org) < 0.2);
   if (shrub) out.push({ species: 'shrub', cx, cy, scale: 1 });
   if (v >= 3.6) {
-    if (!t && rand3(cx, cy, 543, org) < (elderFloor ? 0.04 : 0.16)) out.push({ species: 'fern', cx, cy, scale: 1 });
+    if (!t && rand3(cx, cy, 543, org) < (elderFloor ? 0 : 0.16)) out.push({ species: 'fern', cx, cy, scale: 1 });
     if (!t && elderFloor && rand3(cx, cy, 547, org) < 0.025) out.push({ species: 'boulder', cx, cy, scale: 1 });
     return out;
   }

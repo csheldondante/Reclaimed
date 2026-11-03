@@ -3167,9 +3167,11 @@ the atlas map's bake still use their 3-unit lattice (FLO36).
   the screen) and are not drawn at all once it is whole (a degenerate vertex: the fill saved). The shadow pass draws them (the light camera has no understory), so the
   crowns' shadows and the dapple stay.
 - understory.wgsl (appended to render.wgsl as `renderWgsl` in renderer.ts):
-  - `underHide` (meshinst fsInst; the user: "cut away the trunks in front of the PC so they look like stumps that
-    fade"): the trees between the eye and the hero (in a band along the eye's line through it) are stumps — whole to
-    1.4 cells, faded out (dithered and darkening) by 3.4; the trunks behind and beside it keep their whole height. With the canopy kept, the crowns in front go too.
+  - `underHide` / `underStumpFade` (meshinst fsInst; the user: "cut away the trunks in front of the PC so they look like
+    stumps that fade"): every tree between the eye and the hero across the screen's width is a stump — cut clean at the
+    hero's knee (1.1 cells over its foot), darkening toward the cut; no stipple. The trunks behind and beside it keep
+    their height; their boles darken over their last cells into the canopy's shade (`dark`, vsInst).
+  - `underRim`: a warm rim on whatever stands in the hero's figure (its voxels), so it reads against the dark floor. With the canopy kept, the crowns in front go too.
   - `underDapple` (lighting's sun visibility): under the crowns' shade (the shadow map) the sun only through the
     stencil's holes — ellipses (a pinhole image of the sun, stretched along its way) of the canopy plane projected up
     the sun's ray, drifting with the wind, in three steps; gaps and clearings stay lit; a pool of light round the hero

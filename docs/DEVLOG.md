@@ -16252,3 +16252,34 @@ dapple or rays, the camera too close, the hero lost.
 parked shots stood the lich in a lake): ForestLab.shift on the core's onShift. The scratchpad is shared with other
 agents: a file named arch.md was overwritten by another track's between writing and reading it (caught in the diff;
 this branch's scratch files now live in scratchpad/forest/).
+
+## 2026-11-02 — round 125 (`forest`): under the canopy, the reviews' iterations (FLO32, FLO33, FLO38, FLO39)
+
+The user, verbatim (through main), on the first under-canopy shots: "I think once it fades you don't need to render the
+canopy at all"; "Just the s shadows and the trunks"; "No I think those belong in the shot. They don't obscure visibility
+but make it feel like you are under the leaves and we can make darker areas and streams and other effects that will
+feel varied and interesting"; "the screenshot you shared actually shows trees and roots but they are huge and the zoom is
+actually too big now (I want more vertical trunk) it may be better in portrait though"; "I think we still want to be at
+the foot of the trees and to cut away the trunks in front of the PC so they look like stumps that fade".
+
+**What changed, and why.**
+- *The canopy isn't drawn under it* (meshinst.wgsl): leaves and limbs (wood over the crown's base, off the bole's axis:
+  FLORA_CROWN) dither out while the weight rises and are culled at the vertex once it's whole — over ~100 cells, since a
+  crown 50 cells in front still lifts into the frame (lab5's orange screen-door at the bottom). The shadow pass keeps
+  them: the floor's dapple is their shade. The boles darken over their last cells into it (no pale caps).
+- *Stumps in front*: every tree between the eye and the hero across the screen's width is cut clean at the hero's knee
+  (1.1 cells over its foot), its top darkening into the cut — no stipple (main: "nothing should be stippled"); the
+  trunks behind and beside it keep their height. The keyhole is gone.
+- *The camera*: under the canopy the zoom is ×0.7 the lich's (more vertical trunk). Portrait and landscape both shot.
+- *Light*: the stencil now shades as well as lets through (the shadow map's crown shade → flecks in deep shade; gaps
+  stay lit), a pool and a warm rim on the hero (underRim: its figure's edges glow against the dark floor), groves and
+  glades by slow noise, the mist only far behind and thin (lab4's haze washed everything into one orange-pink value).
+- *Shafts*: down the stencil's big holes onto the big flecks; soft across, fading down their length, faint, eight
+  dithered steps added in the target's own space (toSrgb lifted a faint beam into a solid bar: lab5).
+- *The elder*: warm pale streaked bark, moss on every up-facing root, buttresses hugging the foot (the sprawl read as
+  logs), small leaf clusters (the first were slabs at the close zoom).
+- *The floor*: no thicket and no ferns in the elder woods (a fern hid the lich in lab6), mossy boulders; seed fluff
+  smaller, warm and round (read as snow).
+
+Shots: C:/Projects/shots88/forest/lab3..lab6 (portrait 412x915), lab5L, lab6L (landscape 915x412), mesh-* (the meshes'
+software render).

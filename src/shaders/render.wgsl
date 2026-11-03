@@ -761,7 +761,7 @@ fn lighting(wpos: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
   // roofs, the heightfield march not all)
   let cov = underCover(wpos, nrm);
   let shade = mix(1.0, 0.1, cov) * underAmbient(wpos);
-  return (ambient + fill) * shade + flash + firelight + sunCol * ndl * lit * (1.0 - cloud * 0.9) * mix(1.0, 0.2, cov);
+  return underRim(wpos, nrm) + (ambient + fill) * shade + flash + firelight + sunCol * ndl * lit * (1.0 - cloud * 0.9) * mix(1.0, 0.2, cov);
 }
 
 // the player's reach on a story level (game/reach.ts): 1 inside, 0.5 at

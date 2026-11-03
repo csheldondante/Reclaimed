@@ -313,8 +313,9 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     // (smaller clusters and more of them than the other trees': close up under the canopy a cluster is a few leaves'
     // worth of pixels, not a slab)
     leaf: { style: 'cluster', size: 1.3, per: 5, minDepth: 1 },
-    roots: { half: 6, depth: 4, res: 0.45, generations: 12, growth: 0.6, down: 0.1, maxCells: 160, trunkRadius: 1.55 },
-    flare: { count: 6, rise: 2.0, reach: 2.4, sprawl: 1.6 },
+    roots: { half: 4, depth: 4, res: 0.45, generations: 10, growth: 0.6, down: 0.3, maxCells: 90, trunkRadius: 1.55 },
+    // (hugging the bole's foot and tapering within a few cells — main's review: long sprawls read as logs on the floor)
+    flare: { count: 6, rise: 1.8, reach: 1.7, sprawl: 0.7 },
     colours: {
       // (warm pale, the reference's beech: a grey-white with ochre in it)
       bark: C(0.84, 0.8, 0.72),

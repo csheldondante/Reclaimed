@@ -17,6 +17,8 @@ struct MIOut {
   @location(4) @interpolate(flat) wind: vec3<f32>,
   // (round 125) how far into the canopy's cut this vertex is (0 kept .. 1 gone: compared with the dither)
   @location(5) cut: f32,
+  // (round 125) how far up into the canopy's shade a bole is under it (0 .. 1 at its cut top): it darkens into it
+  @location(6) dark: f32,
 };
 
 fn miKind(vi: u32) -> u32 {
@@ -82,8 +84,12 @@ fn vsInst(@location(0) a: vec4<f32>, @builtin(vertex_index) vi: u32, @builtin(in
   // weight round the hero and once it's whole aren't drawn at all — the fill saved; the sun's camera has no understory,
   // so the shadow pass keeps every leaf and the floor's dapple stays)
   o.cut = 0.0;
+  o.dark = 0.0;
   if (fl && CAM.under[0].w > 0.0) {
     let cb = FLORA_CROWN[k];
+    // (the bole kept under the canopy ends where its limbs went: it darkens over the last few cells into the crowns'
+    // shade — no pale cap against the dark)
+    if (cb.x < 1e8 && fpart == 3u) { o.dark = CAM.under[0].w * CAM.under[1].z * smoothstep(cb.x - 5.0, cb.x + 1.0, a.z); }
     let limb = fpart == 4u || (fpart == 3u && a.z > cb.x && length(a.xy) > cb.y * 1.15);
     if (cb.x < 1e8 && limb) {
       let foot = vec3<f32>(r0.w, r1.w, r2.w);
@@ -115,8 +121,9 @@ fn fsInst(in: MIOut) -> FOut {
   if (dot(n, toEye(in.wpos)) < 0.0) { n = -n; }
   if (cutAway(in.wpos, in.pos.xy)) { discard; }
   // (round 125, forest: under the canopy, what hides the floor round the hero dithered out — understory.wgsl)
-  let hd = underHide(in.wpos, in.foot);
-  if (max(hd, in.cut) > bayer4(in.pos.xy)) { discard; }
+  // (round 125: the stumps in front cut clean, no stipple; the canopy's own dither only while it fades in or out)
+  if (underHide(in.wpos, in.foot) > 0.5 || in.cut > bayer4(in.pos.xy)) { discard; }
+  let hd = underStumpFade(in.wpos, in.foot);
   let k = in.info.x;
   let part = in.info.y;
   let rnd = f32(in.info.w) / 65535.0;
@@ -130,7 +137,10 @@ fn fsInst(in: MIOut) -> FOut {
     alb = toLinear(fl.rgb);
     // (round 125: wood fading out into the canopy darkens as it goes — into the crowns' shade)
     // (and a stump in front darkens toward its fading top: it fades, not just thins)
-    alb *= 1.0 - 0.6 * max(in.cut, hd * 0.8);
+    alb *= 1.0 - 0.6 * in.cut;
+    alb *= 1.0 - 0.85 * in.dark;
+    // (a stump darkens toward its cut top: it fades into the floor's shade)
+    alb *= 1.0 - 0.75 * hd;
     // (round 125, 1A: the wind-shading ripple — a gust's front brightens the leaves and blades it turns over, the
     // trough behind it darker; the silhouette stays)
     if ((FWIND & 2u) != 0u && (part == 4u || part == 5u)) {
