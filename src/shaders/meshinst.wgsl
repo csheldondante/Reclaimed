@@ -109,7 +109,7 @@ fn vsInst(@location(0) a: vec4<f32>, @location(1) uvIn: vec4<f32>, @builtin(vert
     if ((FWIND & 1u) != 0u) { swp = swp + floraSway(k, 3u, a.xyz, sway, vec2<f32>(r0.w, r1.w), lean, seed, G.time); }
     o.pos = CAM.viewProj * vec4<f32>(swp, 1.0);
     o.wpos = swp;
-    o.info = vec4<u32>(k, 12u, winIdx(cell), u32(seed * 65535.0));
+    o.info = vec4<u32>(k, 12u, winIdx(cell), u32(seed * 65535.0) | (u32(p.x + 0.5) << 16u));
     o.h = sway;
     o.foot = foot;
     o.wind = vec3<f32>(dir, amp);
@@ -281,6 +281,14 @@ fn fsSprite(in: MIOut) -> SOut {
   if (cutAway(wpos, in.pos.xy)) { discard; }
   let mat = u32(round(nd.w * 64.0));
   var a3 = toLinear(alb.rgb);
+  // (round 128: a dead or burned far tree — main: "A burned forest seen from a distance has to read burned" — its
+  // sprite's leaves left out (the bake marks each texel's material), its wood greyed or charred)
+  let pst = in.info.w >> 16u;
+  if (pst > 0u) {
+    if (mat != MAT_WOOD) { discard; }
+    let l = dot(a3, vec3<f32>(0.3, 0.55, 0.15));
+    a3 = select(vec3<f32>(l) * 0.8, toLinear(vec3<f32>(0.05, 0.045, 0.04)), pst == 2u);
+  }
   // (1A: the wind-shading ripple, as the mesh's leaves)
   if ((FWIND & 2u) != 0u && mat == MAT_LEAVES) {
     let g = floraGust(wpos.xy, G.org.xy, in.wind.xy, in.wind.z, G.time);

@@ -19,6 +19,8 @@ export interface Param {
   crown?: boolean;
   /** (round 128) plants with fine twigs only */
   twigs?: boolean;
+  /** (round 128) a choice, not a number: its options' names (the editor shows a list; value = min + index) */
+  options?: string[];
   /** (round 128) colonized crowns only (colonize.ts) */
   shape?: boolean;
   get(sp: SpeciesDef): number;
@@ -73,14 +75,14 @@ export const PARAMS: Param[] = [
   // (round 128: the crown's shape — space colonization, colonize.ts)
   { key: 'sCrownBase', label: 'crown base', group: 'shape', min: 0.05, max: 0.8, step: 0.01, shape: true, ...SH('crownBase') },
   { key: 'sWidth', label: 'crown width', group: 'shape', min: 0.05, max: 0.9, step: 0.01, shape: true, ...SH('width') },
-  { key: 'sEnvelope', label: 'shape 0 dome 1 cone 2 column 3 umbrella', group: 'shape', min: 0, max: 3, step: 1, shape: true, get: (sp) => ENVELOPES.indexOf(sp.colonize?.envelope ?? 'dome'), set: (sp, v) => { if (sp.colonize) sp.colonize.envelope = ENVELOPES[Math.round(v)] ?? 'dome'; } },
+  { key: 'sEnvelope', label: 'crown shape', options: ['dome', 'cone', 'column', 'umbrella'], group: 'shape', min: 0, max: 3, step: 1, shape: true, get: (sp) => ENVELOPES.indexOf(sp.colonize?.envelope ?? 'dome'), set: (sp, v) => { if (sp.colonize) sp.colonize.envelope = ENVELOPES[Math.round(v)] ?? 'dome'; } },
   { key: 'sPoints', label: 'fill points', group: 'shape', min: 20, max: 1500, step: 10, shape: true, ...SH('points') },
   { key: 'sStep', label: 'node length', group: 'shape', min: 0.4, max: 4, step: 0.05, shape: true, ...SH('step') },
   { key: 'sInfluence', label: 'reach', group: 'shape', min: 2, max: 15, step: 0.5, shape: true, ...SH('influence') },
   { key: 'sUpBend', label: 'up bend', group: 'shape', min: -1, max: 1.5, step: 0.01, shape: true, ...SH('upBend') },
   { key: 'sWeep', label: 'weep', group: 'shape', min: 0, max: 1, step: 0.01, shape: true, ...SH('weep') },
   { key: 'sMaxAngle', label: 'max branch angle', group: 'shape', min: 10, max: 90, step: 1, shape: true, ...SH('maxAngle') },
-  { key: 'sLeader', label: 'leader', group: 'shape', min: 0, max: 1, step: 1, shape: true, get: (sp) => (sp.colonize?.leader ? 1 : 0), set: (sp, v) => { if (sp.colonize) sp.colonize.leader = v >= 0.5; } },
+  { key: 'sLeader', label: 'leader', options: ['splits into limbs', 'trunk carries on'], group: 'shape', min: 0, max: 1, step: 1, shape: true, get: (sp) => (sp.colonize?.leader ? 1 : 0), set: (sp, v) => { if (sp.colonize) sp.colonize.leader = v >= 0.5; } },
   { key: 'sForks', label: 'limbs at the fork', group: 'shape', min: 1, max: 7, step: 1, shape: true, ...SH('forks') },
   { key: 'sTrunk', label: 'trunk radius', group: 'shape', min: 0.1, max: 8, step: 0.05, shape: true, ...SH('trunkRadius') },
   { key: 'sThin', label: 'branch thinning', group: 'shape', min: 0.3, max: 1, step: 0.01, shape: true, ...SH('thin') },
@@ -106,14 +108,14 @@ export const PARAMS: Param[] = [
   { key: 'cFill', label: 'fill', group: 'crown', min: 0.1, max: 1, step: 0.01, crown: true, ...CR('fill') },
   { key: 'cLeaves', label: 'cards', group: 'crown', min: 2, max: 20, step: 1, crown: true, ...CR('leaves') },
   { key: 'cDroop', label: 'droop', group: 'crown', min: 0, max: 1, step: 0.01, crown: true, ...CR('droop') },
-  { key: 'cStyle', label: 'style 0 cards 1 lobes 2 lobe-cards 3 hybrid 4 layers 5 cones 6 needle pads', group: 'crown', min: 0, max: 6, step: 1, crown: true, get: (sp) => ['sprays', 'solid', 'lobecards', 'hybrid', 'layers', 'cones', 'needlepads'].indexOf(sp.crown?.style ?? 'sprays'), set: (sp, v) => { if (sp.crown) sp.crown.style = (['sprays', 'solid', 'lobecards', 'hybrid', 'layers', 'cones', 'needlepads'] as const)[Math.round(v)] ?? 'sprays'; } },
+  { key: 'cStyle', label: 'crown style', options: ['leaf cards', 'solid lobes', 'lobe-lit cards', 'core and cards', 'layered leaves', 'needle cones', 'needle pads'], group: 'crown', min: 0, max: 6, step: 1, crown: true, get: (sp) => ['sprays', 'solid', 'lobecards', 'hybrid', 'layers', 'cones', 'needlepads'].indexOf(sp.crown?.style ?? 'sprays'), set: (sp, v) => { if (sp.crown) sp.crown.style = (['sprays', 'solid', 'lobecards', 'hybrid', 'layers', 'cones', 'needlepads'] as const)[Math.round(v)] ?? 'sprays'; } },
   { key: 'cSeparate', label: 'lobe separation', group: 'crown', min: 0, max: 1, step: 0.01, crown: true, get: (sp) => sp.crown?.separate ?? 0.25, set: (sp, v) => { if (sp.crown) sp.crown.separate = v; } },
-  { key: 'cLobeShape', label: 'lobe 0 round 1 pad 2 shelf 3 column 4 tear', group: 'crown', min: 0, max: 4, step: 1, crown: true, get: (sp) => ['round', 'pad', 'shelf', 'column', 'tear'].indexOf(sp.crown?.lobeShape ?? 'round'), set: (sp, v) => { if (sp.crown) sp.crown.lobeShape = (['round', 'pad', 'shelf', 'column', 'tear'] as const)[Math.round(v)] ?? 'round'; } },
+  { key: 'cLobeShape', label: 'lobe shape', options: ['round', 'pad', 'shelf', 'column', 'teardrop'], group: 'crown', min: 0, max: 4, step: 1, crown: true, get: (sp) => ['round', 'pad', 'shelf', 'column', 'tear'].indexOf(sp.crown?.lobeShape ?? 'round'), set: (sp, v) => { if (sp.crown) sp.crown.lobeShape = (['round', 'pad', 'shelf', 'column', 'tear'] as const)[Math.round(v)] ?? 'round'; } },
   { key: 'cLayers', label: 'layers', group: 'crown', min: 1, max: 5, step: 1, crown: true, get: (sp) => sp.crown?.layers ?? 3, set: (sp, v) => { if (sp.crown) sp.crown.layers = v; } },
   { key: 'cLayerGap', label: 'layer gap (leaf widths)', group: 'crown', min: 0.05, max: 2, step: 0.05, crown: true, get: (sp) => sp.crown?.layerGap ?? 0.35, set: (sp, v) => { if (sp.crown) sp.crown.layerGap = v; } },
   { key: 'cDepthDark', label: 'depth dark', group: 'crown', min: 0, max: 1, step: 0.01, crown: true, get: (sp) => sp.crown?.depthDark ?? 0.6, set: (sp, v) => { if (sp.crown) sp.crown.depthDark = v; } },
   { key: 'cBend', label: 'card bend', group: 'crown', min: 0, max: 1, step: 0.01, crown: true, get: (sp) => sp.crown?.bend ?? 0.7, set: (sp, v) => { if (sp.crown) sp.crown.bend = v; } },
-  { key: 'cCore', label: 'core', group: 'crown', min: 0, max: 1, step: 1, crown: true, get: (sp) => sp.crown?.core ?? 1, set: (sp, v) => { if (sp.crown) sp.crown.core = v; } },
+  { key: 'cCore', label: 'dark core', options: ['no', 'yes'], group: 'crown', min: 0, max: 1, step: 1, crown: true, get: (sp) => sp.crown?.core ?? 1, set: (sp, v) => { if (sp.crown) sp.crown.core = v; } },
   { key: 'cShell', label: 'shell cards', group: 'crown', min: 0, max: 2, step: 0.01, crown: true, get: (sp) => sp.crown?.shell ?? 0.35, set: (sp, v) => { if (sp.crown) sp.crown.shell = v; } },
   { key: 'cClump', label: 'lobe size', group: 'crown', min: 0.5, max: 16, step: 0.1, crown: true, get: (sp) => sp.crown?.clump ?? 6, set: (sp, v) => { if (sp.crown) sp.crown.clump = v; } },
   { key: 'cGaps', label: 'gaps', group: 'crown', min: 0, max: 0.8, step: 0.01, crown: true, get: (sp) => sp.crown?.gaps ?? 0.05, set: (sp, v) => { if (sp.crown) sp.crown.gaps = v; } },
@@ -123,7 +125,7 @@ export const PARAMS: Param[] = [
   { key: 'tAngle', label: 'twig angle', group: 'crown', min: 5, max: 80, step: 1, twigs: true, ...TW('angle') },
   { key: 'tLength', label: 'twig length', group: 'crown', min: 0.2, max: 5, step: 0.05, twigs: true, ...TW('length') },
   { key: 'tFalloff', label: 'twig falloff', group: 'crown', min: 0.2, max: 1, step: 0.01, twigs: true, ...TW('falloff') },
-  { key: 'tOrders', label: 'twig orders', group: 'crown', min: 1, max: 2, step: 1, twigs: true, ...TW('orders') },
+  { key: 'tOrders', label: 'twig orders', options: ['one', 'two'], group: 'crown', min: 1, max: 2, step: 1, twigs: true, ...TW('orders') },
   { key: 'tDroop', label: 'twig droop', group: 'crown', min: 0, max: 1, step: 0.01, twigs: true, ...TW('droop') },
   { key: 'furrows', label: 'furrows', group: 'bark', min: 0, max: 1, step: 0.01, ...B('furrows') },
   { key: 'furrowFreq', label: 'furrow freq', group: 'bark', min: 0.5, max: 8, step: 0.1, ...B('furrowFreq') },

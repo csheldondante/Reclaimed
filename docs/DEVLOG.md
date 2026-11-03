@@ -16760,3 +16760,11 @@ epiphytes and seasons and states. Leafless and burned could also be useful state
   `snag` with its region; the flora plan's CPU mirror reads it (a burned tree: `burned`, a third of the logs). Why a
   texture: vegprep's eight storage buffers are all in use; a sampled texture costs none. Not yet: the far sprites
   don't bake the states (a far burned tree is drawn alive); a felled stump as a state (the fell op clears the column).
+- Far trees' states (main: "A burned forest seen from a distance has to read burned"): the sprite's draw leaves out the
+  texels the bake marked as leaves and greys (dead) or chars (burned) the wood — no more atlas memory (a state a cell
+  would triple it). The tiles past the window don't know the snags (the snag field is the window's): not yet.
+- The editor's shots (editor-phone-*.png, editor-desktop-*.png): the choices (crown style, lobe shape, crown shape,
+  leader, core, twig orders) were sliders with their options crammed into the label — now lists; labels 92 px wide.
+  A variant in the world (editor-world.png): the link opened the atlas without errors (the view a meadow: the next
+  batch frames a wood). The burned wood (burn-*.png): six lightning strikes into the elder wood lit nothing visible in a
+  minute — to look into (the strikes' place, the wood's moisture) in the next slot.

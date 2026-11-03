@@ -478,6 +478,19 @@ async function main() {
       row.className = 'row';
       const lab = document.createElement('label');
       lab.textContent = p.label;
+      if (p.options) {
+        // (round 128: a choice as a list, not a slider with its options in the label)
+        const sel = document.createElement('select');
+        p.options.forEach((o, i) => sel.add(new Option(o, String(p.min + i))));
+        sel.value = String(Math.round(p.get(def)));
+        sel.onchange = () => {
+          state.over[p.key] = Number(sel.value);
+          later();
+        };
+        row.append(lab, sel);
+        paramsEl.appendChild(row);
+        continue;
+      }
       const inp = document.createElement('input');
       inp.type = 'range';
       inp.min = String(p.min);
