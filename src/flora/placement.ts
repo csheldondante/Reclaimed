@@ -6,7 +6,7 @@
 //                   planTree, and vegprep.wgsl's floraSmall rules for thickets and tall grass), on the CPU, for
 //                   passability and queries — the same hashes, so what you can't walk through is what you see.
 import type { FloraSite } from '../api/contracts/flora';
-import { planTree } from '../api/plants';
+import { inGlade, planTree } from '../api/plants';
 import { SPECIES, SPECIES_IDS, type SpeciesId } from './species';
 import { elderWood } from './spacing';
 
@@ -66,7 +66,8 @@ export function standsAt(cx: number, cy: number, v: number, w: number, h: number
   // (vegprep floraSmall: shrubland's thicket; under the woods only a fifth of them — the floor stays open; round 125: in
   // the elder woods none, fewer ferns, a mossy boulder here and there)
   const elderFloor = v >= 3.6 && elderWood(cx + org[0], cy + org[1]) > 0.5;
-  const shrub = !t && !elderFloor && v >= 2.6 && hh < 0.25 && (v < 3.6 || rand3(cx, cy, 545, org) < 0.2);
+  // (round 128: a glade's empty tree slot has a thicket at 0.45 — vegPlan)
+  const shrub = !t && !elderFloor && v >= 2.6 && hh < (inGlade(cx, cy, v, w, h, org) ? 0.45 : 0.25) && (v < 3.6 || rand3(cx, cy, 545, org) < 0.2);
   if (shrub) out.push({ species: 'shrub', cx, cy, scale: 1 });
   if (v >= 3.6) {
     if (!t && rand3(cx, cy, 543, org) < (elderFloor ? 0 : 0.16)) out.push({ species: 'fern', cx, cy, scale: 1 });

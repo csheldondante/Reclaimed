@@ -20,6 +20,37 @@ fn birchWood(x: u32, y: u32) -> f32 {
   return smoothstep(0.52, 0.7, n);
 }
 
+// (round 128, treegen: the map's flora pass — "update the map with more flora") Two more stand-in fields of the same
+// kind (low-frequency value noise of the world cell, its own salt): conifer stands — the conifers clumped into stands
+// among the broadleaves, not one in three trees anywhere — and glades, holes in the canopy where no tree stands (the
+// meadow's grass and the thicket come into them). api/plants.ts ports them exactly.
+fn floraCornerS(x: i32, y: i32, salt: u32) -> f32 { return f32(pcg(bitcast<u32>(x) ^ pcg(bitcast<u32>(y) ^ salt)) >> 8u) / 16777216.0; }
+fn floraField(x: u32, y: u32, scale: f32, salt: u32) -> f32 {
+  let p = vec2<f32>(f32(i32(x) + i32(G.org.z)), f32(i32(y) + i32(G.org.w))) / scale;
+  let i = vec2<i32>(floor(p));
+  let f = p - floor(p);
+  let u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(floraCornerS(i.x, i.y, salt), floraCornerS(i.x + 1, i.y, salt), u.x), mix(floraCornerS(i.x, i.y + 1, salt), floraCornerS(i.x + 1, i.y + 1, salt), u.x), u.y);
+}
+fn coniferStand(x: u32, y: u32) -> f32 { return smoothstep(0.3, 0.7, floraField(x, y, 60.0, 0x9c1f3u)); }
+fn gladeAt(x: u32, y: u32) -> f32 { return smoothstep(0.7, 0.82, floraField(x, y, 46.0, 0x6a1d5u)); }
+
+/** (round 128) the tree at window column (x, y) with succession v on slot `slot` (treeSlot): 0 broadleaf, 1 conifer,
+ *  2 birch, 3 the elder / an old giant, 4 none (a glade). The one place the species is chosen: vegPlan and the tiles'
+ *  painted trees (tiles.wgsl) call it; api/plants.ts treeSpeciesAt ports it. */
+fn treeSpecies(x: u32, y: u32, v: f32, slot: u32) -> u32 {
+  if (slot == 2u && v >= ELDER_VEG) { return 3u; }
+  // (a glade: the trees thin out toward its heart — not in the elder woods, whose canopy is whole)
+  if (rand3(x, y, 334u) < gladeAt(x, y)) { return 4u; }
+  let hs = rand3(x, y, 321u);
+  let inBirch = rand3(x, y, 333u) < birchWood(x, y) * 0.85;
+  if (v > 4.7 && hs < 0.12 && !inBirch) { return 3u; }
+  // (conifers in stands: ~8% among the broadleaves, ~88% in a stand's heart — about the old 42% over the land)
+  if (!inBirch && rand3(x, y, 335u) < 0.08 + 0.8 * coniferStand(x, y)) { return 1u; }
+  if (inBirch || hs > 0.72) { return 2u; }
+  return 0u;
+}
+
 // (round 125, forest) Where trees stand: a jittered grid of slots in world columns (src/flora/spacing.ts, exactly) — one
 // candidate a 7 × 8 block, at least a column in from its edges; in the elder woods one elder a 2 × 2 super-block and no
 // other tree. The user: "make the trees bigger and further spaced appart ... seas of leaves".
@@ -67,25 +98,30 @@ fn vegPlan(x: u32, y: u32, v: f32, m: u32) -> VegPlan {
   let slot = treeSlot(vec2<i32>(i32(x) + i32(G.org.z), i32(y) + i32(G.org.w)));
   if (v >= 3.6 && slot > 0u && !edge) {
     pl.tree = true;
-    let hs = rand3(x, y, 321u);
     let hv = rand3(x, y, 7u);
     let age = clamp(v - 3.6, 0.0, 1.4);
-    let inBirch = rand3(x, y, 333u) < birchWood(x, y) * 0.85;
     // (round 125, forest: bigger trees, the heights as the flora library draws them — birch 17-25, broadleaf 9-15,
     // conifer 12-20, the elder 24-32; api/plants.ts planTree keeps them identical)
-    if (slot == 2u && v >= ELDER_VEG) {
+    // (round 128: the species from treeSpecies — stands and glades)
+    let sp = treeSpecies(x, y, v, slot);
+    pl.species = min(sp, 3u);
+    if (sp == 4u) {
+      // (a glade: no tree — a thicket here and there, the plants below take the rest)
+      pl.tree = false;
+      pl.shrub = h < 0.45;
+    } else if (sp == 3u && slot == 2u && v >= ELDER_VEG) {
       pl.species = 3u; // the elder: a massive pale trunk on flaring roots, a broad high crown (the elder woods)
       pl.trunk = 10.0 + floor(hv * 4.0);
       pl.crown = 14.0 + floor(hv * 4.0);
-    } else if (v > 4.7 && hs < 0.12 && !inBirch) {
+    } else if (sp == 3u) {
       pl.species = 3u; // an old giant on its own in old woods (the same species)
       pl.trunk = 9.0 + floor(hv * 4.0);
       pl.crown = 12.0 + floor(hv * 4.0);
-    } else if (hs < 0.42 && !inBirch) {
+    } else if (sp == 1u) {
       pl.species = 1u; // conifer: short bare trunk, tall tapering crown
       pl.trunk = 2.0 + floor(hv * 2.0);
       pl.crown = 9.0 + floor(age * 3.0) + floor(hv * 4.0);
-    } else if (hs < 0.58 || inBirch) {
+    } else if (sp == 2u) {
       // birch: a tall slender pale trunk, a light crown ("silver birches towering above")
       pl.species = 2u;
       pl.trunk = 12.0 + floor(age * 3.0) + floor(hv * 3.0);

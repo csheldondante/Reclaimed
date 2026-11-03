@@ -227,13 +227,14 @@ fn tileTrees(w: vec2<f32>, z: f32, v: f32, px: f32) -> TTree {
       if (s.z == 0) { continue; }
       // (the window's hashes take window columns: the candidate's, the window's origin taken off)
       let c = vec2<u32>(bitcast<u32>(s.x - org.x), bitcast<u32>(s.y - org.y));
-      let hs = rand3(c.x, c.y, 321u);
       let hv = rand3(c.x, c.y, 7u);
       let r0 = rand3(c.x, c.y, 4243u);
-      let inBirch = rand3(c.x, c.y, 333u) < birchWood(c.x, c.y) * 0.85;
-      let elder = s.z == 2 && v >= ELDER_VEG;
-      let conifer = !elder && hs < 0.42 && !inBirch;
-      let birch = !elder && !conifer && (hs < 0.58 || inBirch);
+      // (round 128: the species as the window would plant it — vegplan.wgsl treeSpecies: stands, glades)
+      let tsp = treeSpecies(c.x, c.y, v, u32(s.z));
+      if (tsp == 4u) { continue; }
+      let elder = tsp == 3u;
+      let conifer = tsp == 1u;
+      let birch = tsp == 2u;
       var H = 9.0 + 6.0 * hv;
       var Rr = 3.6 + 1.4 * hv;
       var leaf = vec3<f32>(0.2, 0.36, 0.13);

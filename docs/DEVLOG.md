@@ -16795,3 +16795,13 @@ epiphytes and seasons and states. Leafless and burned could also be useful state
   the hero on the lushest meadow near the wood and runs static / sway (1B) / 1A1C at ?fgrass=0.5, 1, 2 — each
   animated run against the static one at its own density (foliagecard.ts, tested). Measurements are the user's phone
   run; the desktop proxy and the shots come with the next browser slot.
+- The map's flora pass, first part (the user: "update the map with more flora"; main: pines on slopes and high ground,
+  glades, mixed stands). The species of a tree slot was a per-tree hash (42% conifers anywhere: a salt-and-pepper wood)
+  and chosen in three copies (vegplan.wgsl, api/plants.ts, tiles.wgsl — the far tiles' rule already lacked the lone
+  giants). Now one WGSL function, treeSpecies, called by vegPlan and the tiles, its exact CPU port treeSpeciesAt, and two
+  value-noise fields of the world cell like the birch woods': conifer stands (60 cells) and glades (46 cells: empty tree
+  slots, a thicket's chance raised to 0.45 there — passability's standsAt follows). Measured over a 900² window of
+  woodland (stands.test.ts): conifers 25-55% of trees (as before over the land), glades 3-25% of slots, and a conifer's
+  neighbours within 40 cells are conifers well above the land's share (clumped). Not yet: pines on slopes and high
+  ground — vegPlan has no height or slope (it takes the column, succession and material), and the CPU mirror would need
+  them too; the next part, with the before/after atlas shots.

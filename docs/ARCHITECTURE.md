@@ -3165,6 +3165,11 @@ PARAMS, read by the viewer's sliders and its URL (`p.<key>=`) and applied as an 
   1B), uv.y that share, the normal the clump's dome (lit as one tuft). The look (part 5): base-to-tip ramp on uv.y,
   the foot's occlusion, a midrib where a blade is wide on screen; 1A's ripple as before. Close-up: ×1.6 blades, 0.7
   width, +2 joints.
+- Stands and glades (round 128, the map's flora pass): vegplan.wgsl `treeSpecies(x, y, v, slot)` is the one place a
+  tree slot's species is chosen (vegPlan and the tiles' painted trees call it; api/plants.ts treeSpeciesAt ports it,
+  flora-plan.test.ts checks them column by column): the elder, a glade (no tree: `gladeAt`, value noise at 46 cells —
+  a thicket at 0.45 there), a lone giant, a conifer by `coniferStand` (value noise at 60 cells: ~8% among broadleaves,
+  ~88% in a stand), a birch (the birch woods, or 28%), else a broadleaf.
 - Berries (`berries`, 0..1): accent-coloured clusters on the crown's outer leaf vertices (generate.ts withBerries).
 - ?fgrass=<0..2> (renderer → vegprep FGRASS): the meadows' tall grass ×x, past 1 a second clump a cell — the foliage
   bench's density pairs (`set=grass`: the meadow station, perf/foliagecard.ts GRASS_VARIANTS).

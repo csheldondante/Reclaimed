@@ -68,6 +68,58 @@ export function birchWood(cx: number, cy: number, org: [number, number] = ORG): 
   return t * t * (3 - 2 * t);
 }
 
+/** (round 128) vegplan.wgsl floraCornerS / floraField / coniferStand / gladeAt, exactly */
+function floraCornerS(x: number, y: number, salt: number): number {
+  return (pcg(((x >>> 0) ^ pcg(((y >>> 0) ^ salt) >>> 0)) >>> 0) >>> 8) / 16777216;
+}
+function floraField(cx: number, cy: number, scale: number, salt: number, org: [number, number]): number {
+  const px = Math.fround((cx + org[0]) / scale);
+  const py = Math.fround((cy + org[1]) / scale);
+  const ix = Math.floor(px);
+  const iy = Math.floor(py);
+  const fx = px - ix;
+  const fy = py - iy;
+  const ux = fx * fx * (3 - 2 * fx);
+  const uy = fy * fy * (3 - 2 * fy);
+  const a = floraCornerS(ix, iy, salt) + (floraCornerS(ix + 1, iy, salt) - floraCornerS(ix, iy, salt)) * ux;
+  const b = floraCornerS(ix, iy + 1, salt) + (floraCornerS(ix + 1, iy + 1, salt) - floraCornerS(ix, iy + 1, salt)) * ux;
+  return a + (b - a) * uy;
+}
+const smoothT = (a: number, b: number, x: number) => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
+export function coniferStand(cx: number, cy: number, org: [number, number] = ORG): number {
+  return smoothT(0.3, 0.7, floraField(cx, cy, 60, 0x9c1f3, org));
+}
+export function gladeAt(cx: number, cy: number, org: [number, number] = ORG): number {
+  return smoothT(0.7, 0.82, floraField(cx, cy, 46, 0x6a1d5, org));
+}
+
+/**
+ * (round 128) vegplan.wgsl treeSpecies: the species on a tree slot (the elder's, or a block's), or 'glade' — the
+ * conifers in stands, glades in the canopy. `org` must be set (planTree sets it).
+ */
+export function treeSpeciesAt(cx: number, cy: number, v: number, slot: 'tree' | 'elder', org: [number, number]): TreeSpecies | 'glade' {
+  ORG = org;
+  if (slot === 'elder' && v >= ELDER_VEG) return 'giant';
+  if (rand3(cx, cy, 334) < gladeAt(cx, cy, org)) return 'glade';
+  const hs = rand3(cx, cy, 321);
+  const inBirch = rand3(cx, cy, 333) < birchWood(cx, cy, org) * 0.85;
+  if (v > 4.7 && hs < 0.12 && !inBirch) return 'giant';
+  if (!inBirch && rand3(cx, cy, 335) < 0.08 + 0.8 * coniferStand(cx, cy, org)) return 'conifer';
+  if (inBirch || hs > 0.72) return 'birch';
+  return 'broadleaf';
+}
+
+/** (round 128) is window column (cx, cy) a tree slot left empty by a glade? (vegPlan: a thicket's chance there) */
+export function inGlade(cx: number, cy: number, v: number, w: number, h: number, org: [number, number]): boolean {
+  const edge = cx < 2 || cy < 2 || cx + 3 >= w || cy + 3 >= h;
+  const slot = slotAt(cx + org[0], cy + org[1]);
+  if (!(v >= 3.6) || edge || slot === 'none') return false;
+  return treeSpeciesAt(cx, cy, v, slot, org) === 'glade';
+}
+
 /** Logs a tree makes: its trunk's wood and some of its crown's limbs (cells³). */
 function logsOf(trunk: number, crown: number): number {
   return Math.round((0.3 * trunk + 0.15 * crown) * 100) / 100;
@@ -84,33 +136,29 @@ export function planTree(cx: number, cy: number, v: number, w: number, h: number
   // (round 125, forest: a jittered grid of slots in world columns — flora/spacing.ts — not a hash under 0.045 a column)
   const slot = slotAt(cx + org[0], cy + org[1]);
   if (!(v >= 3.6) || edge || slot === 'none') return null;
-  const hs = rand3(cx, cy, 321);
   const hv = rand3(cx, cy, 7);
   const age = Math.min(Math.max(v - 3.6, 0), 1.4);
-  let species: TreeSpecies;
   let trunk: number;
   let crown: number;
-  const inBirch = rand3(cx, cy, 333) < birchWood(cx, cy) * 0.85;
+  // (round 128: the species from treeSpeciesAt — conifer stands, glades)
+  const pick = treeSpeciesAt(cx, cy, v, slot, org);
+  if (pick === 'glade') return null;
+  const species: TreeSpecies = pick;
   // (round 125, forest: bigger trees, as drawn — the flora library's heights: birch 17-25, broadleaf 9-15, conifer
   // 12-20, the elder 24-32; trunk the bare stem to the crown, crown the rest)
-  if (slot === 'elder' && v >= ELDER_VEG) {
-    species = 'giant';
+  if (species === 'giant' && slot === 'elder' && v >= ELDER_VEG) {
     trunk = 10 + Math.floor(hv * 4);
     crown = 14 + Math.floor(hv * 4);
-  } else if (v > 4.7 && hs < 0.12 && !inBirch) {
-    species = 'giant';
+  } else if (species === 'giant') {
     trunk = 9 + Math.floor(hv * 4);
     crown = 12 + Math.floor(hv * 4);
-  } else if (hs < 0.42 && !inBirch) {
-    species = 'conifer';
+  } else if (species === 'conifer') {
     trunk = 2 + Math.floor(hv * 2);
     crown = 9 + Math.floor(age * 3) + Math.floor(hv * 4);
-  } else if (hs < 0.58 || inBirch) {
-    species = 'birch';
+  } else if (species === 'birch') {
     trunk = 12 + Math.floor(age * 3) + Math.floor(hv * 3);
     crown = 7;
   } else {
-    species = 'broadleaf';
     trunk = 4 + Math.floor(age * 3) + Math.floor(hv * 3);
     crown = 5 + Math.floor(hv * 2.99) + (v > 4.5 ? 1 : 0);
   }
