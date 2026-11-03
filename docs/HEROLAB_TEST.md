@@ -1,3 +1,30 @@
+# Hero course: test card (round 128b, `playmodes`)
+
+Open this on the phone:
+
+https://csheldondante.github.io/Reclaimed/playmodes/?skipmenu=1&level=herocourse
+
+The top row has the heroes (bike, knight, horse, lich), **settings**, **auto** (rides the loop for you; touch the
+screen to take over) and **restart**. Settings opens rows of chips. **Try** has the five experiments. **Go to**
+drops you in any area. The address keeps every chip, so copy the link and tell me what you thought.
+
+The game picks how each place is played. When it changes, it steers for a moment, then hands control back the
+moment you touch the screen.
+
+1. **Open ride** (bike, hills). The camera pulls out as you speed up and looks ahead of you. Try **lead**: centred,
+   ahead, far ahead. Is it far enough?
+2. **Canyon run** (bike). The camera is behind you and the canyon steers. Slide left and right past the rocks and
+   the riders coming up behind. Try **pace** and **auto-run**. Is it fun?
+3. **Woods run** (knight). Side-on through the woods. Push along the path to run, the other way to go back. Does it
+   feel good? (No parallax yet: the layers move together.)
+4. **Cliff** (lich). Side-on to the cliff with the cave mouth. Can you read how high you are?
+5. **Under the trees** (knight). The camera drops under the canopy and cuts the trunks in front. Try **under**
+   (a little, closer, closest) and **trees** (small, big, huge: reloads). Better than the woods run?
+
+Also try **mode** (force one mode anywhere) and **controls: free stick** (the mode's camera with the plain stick).
+
+---
+
 # Hero lab: test card (round 128)
 
 Open this on the phone:

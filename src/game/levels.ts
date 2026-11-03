@@ -16,6 +16,7 @@ import { generateTraitlab, TRAITLAB_STATIONS } from '../levels/traitlab';
 import { generateNoiselab } from '../levels/noiselab';
 import { generateBestiary } from '../levels/bestiary';
 import { generateHeroLab } from '../levels/herolab';
+import { generateHeroCourse } from '../levels/herocourse';
 import type { FlowKit } from '../flow/install';
 import type { RiverMode } from '../sim/world-gpu';
 import type { GateSpec } from '../world/kit';
@@ -45,6 +46,8 @@ export interface LevelDef {
   zoom?: number;
   /** its height limit (cells; default 64): the wilds' ranges want more (round 64) */
   zMax?: number;
+  /** (round 128b, playmodes) the hero course: play's hero with the play modes (src/play/course/herocourse.ts) */
+  heroCourse?: boolean;
   /** the world is a window onto land without an edge (round 66: scenes/streamer.ts) */
   stream?: boolean;
   /** its land comes from an atlas made when it starts (round 67: atlas/atlas.ts; ?a.<param>=, ?at=x,y) */
@@ -210,6 +213,17 @@ export const LEVELS: LevelDef[] = [
     hidden: true,
     zMax: 96,
     heroLab: true,
+  },
+  {
+    id: 'herocourse',
+    name: 'The Hero Course',
+    blurb: 'One loop through hills, a forest, a canyon, a cliff, a river, ruins and a town, each played its own way (round 128b, play modes).',
+    model: 'sign',
+    generate: (dims) => generateHeroCourse(dims),
+    sandbox: true,
+    hidden: true,
+    zMax: 96,
+    heroCourse: true,
   },
   {
     id: 'sandbox',

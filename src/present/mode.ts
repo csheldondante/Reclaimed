@@ -119,6 +119,11 @@ export class PresentMode implements CameraMode {
     } else this.az = v.azimuth;
     // the look-ahead: the screen's centre further along the hero's velocity
     const want: [number, number] = [pose.vel[0] * c.lookAhead * e, pose.vel[1] * c.lookAhead * e];
+    // (round 128b, playmodes: capped so the hero stays on screen — on the chase's own lead, the bike at full speed went
+    // off the edge: at most 0.2 of the screen's short side from the centre)
+    const cap = (0.2 * Math.min(v.w, v.h)) / Math.max(v.zoom, 1);
+    const wl = Math.hypot(want[0], want[1]);
+    if (wl > cap) (want[0] *= cap / wl), (want[1] *= cap / wl);
     const k = 1 - Math.exp(-3 * ctx.dt);
     this.lead[0] += (want[0] - this.lead[0]) * k;
     this.lead[1] += (want[1] - this.lead[1]) * k;

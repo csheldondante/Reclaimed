@@ -1,0 +1,51 @@
+/* (round 128b, playmodes) the hero course's bar: the heroes and the tools on one row, the settings drawer under it */
+.course-bar {
+  position: absolute;
+  top: max(6px, env(safe-area-inset-top));
+  left: 6px;
+  right: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  z-index: 30;
+  pointer-events: none;
+}
+.course-bar > * {
+  pointer-events: auto;
+}
+.course-top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+.course-tools {
+  display: flex;
+  gap: 3px;
+  margin-left: auto;
+}
+.course-now {
+  white-space: pre-line;
+  font: 600 12px system-ui, sans-serif;
+  color: #f4efe2;
+  text-shadow: 0 1px 3px #000;
+  pointer-events: none !important;
+}
+.course-drawer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 55vh;
+  overflow-y: auto;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(16, 14, 12, 0.55);
+}
+.course-drawer.collapsed {
+  display: none;
+}
+.course-foot {
+  flex-basis: 100%;
+  font: 500 11px system-ui, sans-serif;
+  color: rgba(244, 239, 226, 0.8);
+}

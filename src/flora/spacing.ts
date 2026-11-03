@@ -24,10 +24,11 @@
  */
 export const TREE_SCALE = treeScale(typeof location !== 'undefined' ? new URLSearchParams(location.search).get('treescale') : null);
 
-/** `?treescale=` (1: round 125's trees, the phone bench's other side; 2 the default); anything else throws */
+/** `?treescale=` (1: round 125's trees, the phone bench's other side; 2 the default; 3 bigger and further apart —
+ *  round 128b, the hero course's under-the-trees experiment); anything else throws */
 export function treeScale(q: string | null): number {
   if (q === null) return 2;
-  if (q !== '1' && q !== '2') throw new Error(`?treescale=${q}: 1 or 2`);
+  if (q !== '1' && q !== '2' && q !== '3') throw new Error(`?treescale=${q}: 1, 2 or 3`);
   return Number(q);
 }
 /** a block of columns (x) by rows (y) holding one tree: 7 × TREE_SCALE columns by 8 × TREE_SCALE rows (≈ 14 × 13.9

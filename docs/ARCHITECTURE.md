@@ -3672,6 +3672,28 @@ One concern each:
 Contract for text: every string a player reads follows docs/WRITING.md; test/unit/writing.test.ts (test/support/
 writing.ts `lint`) checks the templates, the dealt cards and petitions on seed 1, Briar Hollow's, the cast, the
 screens and the GM's situation file.
+## Play modes and the hero course (round 128b, branch `playmodes`; docs/design/PLAY_MODES.md)
+
+- **Contract** src/api/contracts/playmode.ts: a `PlayMode` = `view` (a PresentationProfile), `facing` (the eye behind
+  the route's way or off its left/right; null: the profile's own azimuth), `cut` (side views: everything between the
+  eye and the hero over the floor + cut is sliced off, land and trees), `controls` (`free` the stick as is, `lane` the
+  route steers and the stick moves across, `profile` the hero held on the route's line and the stick runs along it),
+  `assists` (autoRun, speed, laneHalf), `entry.autoSeconds`.
+- **play/modes/modes.ts** (pure): `MODES` (open, canyon, woods, climb, under), `ModeSwitcher` (the game's pick by
+  area, the brief auto, the hand-back on a touch, a forced mode from the settings), `modeStick` (the stick through
+  the controls, given the route at the hero: tangent, normal, offset), `facingAzimuth`.
+- **play/modes/blend.ts** `ModeCamera`: the rig's `present` mode (CameraRig.setPresent) — a PresentMode for the mode
+  on, the previous ones easing out; writes the side views' slice (2 cells in front of the hero toward the eye) and
+  moves the view's centre away from the eye so the hero sits low. Session: `applyFrame` owns the cut while `present`
+  is on.
+- **play/course/course.ts** (pure): the route (a closed polyline: nearest point with s, tangent, normal, offset and
+  area; `pointAt`, `span`), the areas, `courseColumn` (each column shaped by its nearest stretch of road), boulders,
+  the cave. levels/herocourse.ts builds the map from it (water standing in the river and the lake).
+- **play/course/herocourse.ts** `HeroCourse`: a PlaySession, the switcher, the ModeCamera, the autopilot round the
+  route, the understory's driver (forest/driver.ts) while `under` or `woods` is on, the canyon's riders (Units), the
+  bar and the drawer (VariantPicker chips mirrored to the address). It talks to the session only through `steer`,
+  `rig.setPresent`, `zoomScale` and `respawn`.
+
 ## Region presentation profiles (round 124, branch `presentation`; BACKLOG PRE1-PRE8, docs/design/REGION_PRESENTATION.md)
 
 - **Contract** src/api/contracts/presentation.ts: a `PresentationProfile` (camera: zoom, pitch, route-facing,
