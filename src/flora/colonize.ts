@@ -114,7 +114,21 @@ export function inEnvelope(q: V3, c: ColonizeSpec): boolean {
   return r <= R;
 }
 
+/** (round 128) the skeletons grown, by spec and seed: a tree's levels (close, full, coarse, far, the sprite's bake) all
+ *  grow from the same skeleton — grown once (the library's start: ~0.8 s → a fifth). The meshes copy what they use. */
+const grown = new Map<string, Skeleton>();
+
 export function colonize(c: ColonizeSpec, seed: number, opts: { kinkChance?: number; kinkAngle?: number; twist?: number } = {}): Skeleton {
+  const key = `${seed}|${JSON.stringify(c)}|${opts.kinkChance ?? 0}|${opts.kinkAngle ?? 0}|${opts.twist ?? 0}`;
+  const had = grown.get(key);
+  if (had) return had;
+  if (grown.size > 256) grown.clear();
+  const sk = grow(c, seed, opts);
+  grown.set(key, sk);
+  return sk;
+}
+
+function grow(c: ColonizeSpec, seed: number, opts: { kinkChance?: number; kinkAngle?: number; twist?: number }): Skeleton {
   const r = rng(seed ^ 0xc010);
   const D = c.step;
   const di = c.influence * D;
@@ -161,17 +175,36 @@ export function colonize(c: ColonizeSpec, seed: number, opts: { kinkChance?: num
   for (let round = 0; round < c.rounds && pts.length; round++) {
     // each point to its nearest node within the influence
     const pull = new Map<number, V3>();
+    // (the nodes in a grid of cells `di` across: a point asks its 27 neighbouring cells, not every node)
+    const cell = (v: number) => Math.floor(v / di);
+    const grid = new Map<string, number[]>();
+    for (let i = 0; i < nodes.length; i++) {
+      const p = nodes[i].p;
+      const key = `${cell(p[0])},${cell(p[1])},${cell(p[2])}`;
+      const g = grid.get(key);
+      if (g) g.push(i);
+      else grid.set(key, [i]);
+    }
     for (const q of pts) {
       let best = -1;
       let bd = di * di;
-      for (let i = 0; i < nodes.length; i++) {
-        const p = nodes[i].p;
-        const d2 = (q[0] - p[0]) ** 2 + (q[1] - p[1]) ** 2 + (q[2] - p[2]) ** 2;
-        if (d2 < bd) {
-          bd = d2;
-          best = i;
-        }
-      }
+      const qx = cell(q[0]);
+      const qy = cell(q[1]);
+      const qz = cell(q[2]);
+      for (let dz = -1; dz <= 1; dz++)
+        for (let dy = -1; dy <= 1; dy++)
+          for (let dx = -1; dx <= 1; dx++) {
+            const g = grid.get(`${qx + dx},${qy + dy},${qz + dz}`);
+            if (!g) continue;
+            for (const i of g) {
+              const p = nodes[i].p;
+              const d2 = (q[0] - p[0]) ** 2 + (q[1] - p[1]) ** 2 + (q[2] - p[2]) ** 2;
+              if (d2 < bd || (d2 === bd && i < best)) {
+                bd = d2;
+                best = i;
+              }
+            }
+          }
       if (best < 0) continue;
       // (only from the crown: the bare trunk below the fork doesn't sprout — the decurrent's limbs and the leader do)
       if (nodes[best].p[2] < z0 * 0.98 && nodes[best].kids.length) continue;

@@ -783,13 +783,17 @@ function addConeCrown(mb: MeshBuilder, c: CrownLook, k: number, bake = false): v
   const H = (c.coneH ?? 30) / k;
   const K = Math.max(1, Math.round(c.layers ?? 2));
   const inset = ((c.layerGap ?? 1) * c.size) / k;
-  const N = bake ? 24 : 14;
+  // (main's review: "smooth plastic Christmas-tree cones" — the rim cut into tufts (every other vertex out and down: a
+  // jagged, bristly edge) and the surface lumped by noise)
+  const N = bake ? 40 : 24;
   const ROWS = bake ? 6 : 4;
+  let ti = 0;
   const droop = c.droop ?? 0.35;
   for (const t of tiers) {
     const W0 = (t.width / Math.max(1e-3, 1)) * (c.coneH ?? 30) / k;
     const zb = H * t.at - (H * t.depth) / 2;
     const za = H * t.at + (H * t.depth) / 2 + W0 * 0.9;
+    ti++;
     for (let li = 0; li < K; li++) {
       const W = Math.max(W0 * 0.25, W0 - li * inset);
       const base = zb + li * inset * 0.3;
@@ -808,7 +812,11 @@ function addConeCrown(mb: MeshBuilder, c: CrownLook, k: number, bake = false): v
           const ca = Math.cos(a);
           const sa = Math.sin(a);
           const n = norm([ca * dz, sa * dz, -dr]);
-          row.push(mb.vert([ca * rad, sa * rad, z], PART.leaf, 0.1 + 0.06 * s, -10 + q / N, li * 2 + Math.min(0.999, s), n));
+          const qq = q % N;
+          const tuft = r === 0 && li === 0 ? (qq % 2 === 0 ? 1.22 : 0.92) : 1;
+          const lump = 1 + 0.1 * Math.sin(qq * 2.3 + r * 1.7 + ti * 3.1) * (1 - s) * (li === 0 ? 1 : 0.5);
+          const zt = r === 0 && li === 0 && qq % 2 === 0 ? -W * 0.08 : 0;
+          row.push(mb.vert([ca * rad * tuft * lump, sa * rad * tuft * lump, z + zt], PART.leaf, 0.1 + 0.06 * s, -10 + q / N, li * 2 + Math.min(0.999, s), n));
         }
         rows.push(row);
       }

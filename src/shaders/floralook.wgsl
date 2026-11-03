@@ -272,13 +272,19 @@ fn floraLook(k: u32, part: u32, wpos: vec3<f32>, n: vec3<f32>, h: f32, rnd: f32,
       let u = uv.x + 10.0;
       let layer = floor(uv.y * 0.5);
       let t = uv.y - layer * 2.0;
-      let ns = fract(u * 72.0 + 0.6 * sin(t * 23.0 + u * 40.0) + 0.3 * t);
-      let fade = 1.0 - smoothstep(0.004, 0.012, fw);
-      let stroke = mix(0.6, 1.0 - smoothstep(0.12, 0.32, abs(ns - 0.5)), fade);
-      if (t < 0.07 && stroke < 0.45 && layer < 0.5) { return vec4<f32>(0.0, 0.0, 0.0, -1.0); }
-      let dark = FLORA_COL[b + 2u].rgb * vec3<f32>(0.85, 0.95, 1.1);
-      let lite = FLORA_COL[b + 3u].rgb * vec3<f32>(1.05, 1.1, 1.0);
-      c = mix(dark * 0.7, lite, stroke * (0.55 + 0.45 * (1.0 - t)));
+      // (main: "larger, higher-contrast strokes ... lighter tips catching the light": tufts 24 round, three rows up the
+      // slant, each a fan of strokes lighter at its tip)
+      let tu = u * 24.0 + 0.5 * floor(t * 3.0);
+      let tf = fract(tu);
+      let tr = fract(t * 3.0);
+      let ns = fract(tf * 5.0 + 0.4 * tr);
+      let fade = 1.0 - smoothstep(0.01, 0.04, fw);
+      let stroke = mix(0.55, 1.0 - smoothstep(0.15, 0.4, abs(ns - 0.5)), fade);
+      let tip = smoothstep(0.35, 1.0, 1.0 - tr) * (1.0 - smoothstep(0.0, 0.5, abs(tf - 0.5)));
+      if (t < 0.05 && stroke < 0.5 && layer < 0.5) { return vec4<f32>(0.0, 0.0, 0.0, -1.0); }
+      let dark = FLORA_COL[b + 2u].rgb * vec3<f32>(0.8, 0.95, 1.12);
+      let lite = FLORA_COL[b + 3u].rgb * vec3<f32>(1.25, 1.3, 1.05);
+      c = mix(dark * 0.55, lite, clamp(stroke * (0.35 + 0.65 * tip), 0.0, 1.0));
       c *= 0.85 + 0.25 * clamp(0.5 + 0.5 * n.z, 0.0, 1.0);
       c *= 1.0 - FLORA_EPI[k].z * 0.0 - 0.45 * min(layer, 1.0);
       let sn = seasonSnow();
