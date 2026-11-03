@@ -110,8 +110,10 @@ fn floraLook(k: u32, part: u32, wpos: vec3<f32>, n: vec3<f32>, h: f32, rnd: f32,
     if (moss > 0.0) {
       let low = select(1.0 - smoothstep(0.004, 0.03, h), 1.0, part == 7u);
       // (the roots' flares mossier: a root is moss wherever it faces at all up)
-      let up = select(smoothstep(0.15, 0.6, n.z + 0.25 * (fr - 0.5)), smoothstep(-0.15, 0.35, n.z + 0.3 * (fr - 0.5)), part == 7u);
-      let m = moss * low * up;
+      // (on the roots' tops only, in patches: lab8 — moss on every root face read as giant green leaves at the foot)
+      let up = smoothstep(0.35, 0.75, n.z + 0.25 * (fr - 0.5));
+      let spot = select(1.0, step(0.45, randv(vec3<i32>(floor(wpos * 0.9)) + vec3<i32>(17, 3, 9))), part == 7u);
+      let m = moss * low * up * spot;
       if (m > 0.35) { c = FLORA_ACC[k].rgb * (0.75 + 0.45 * fr); }
     }
   } else if (part == 4u) {

@@ -16289,3 +16289,15 @@ software render).
   glade lets the open sun in; bigger flecks and shafts. The pale-green blades round the trunks were tall grass: a tree's
   own column under the woods fell through vegprep's floraSmall to the meadows' rule (flora/placement.ts never did) —
   fixed, the GPU now as the CPU.
+- *lab8* (shots88/forest/lab8*, over8-z7/z14, *-vs-ref.png): the floor dark with lit patches, shafts showing, stumps low
+  in front in both orientations; the overworld at zoom 7-14 is a red-orange sea of crowns over pale boles. The green
+  "blades" left at the trunks' feet were the roots' moss on every face: moss now on their tops in patches. (A `patch`
+  variable broke WGSL — reserved word; caught by the next page load, fixed.)
+
+**Measured (incomplete).** scripts/frameparked.mjs, parked at the elder wood (at 13728,5216) with the lich, phone proxy
+(412x915 dpr 2.6, q=low), every system in play: places 8.33-8.44 ms mean, forest 8.33-8.42, forest `?under=0`
+8.33-8.38 — all at the headless page's 120 Hz cap, so the forest's cost is under the cap here, not resolved. The
+uncapped attempt (--disable-gpu-vsync / --disable-frame-rate-limit in the runner's daemon page) gave rAF at ~0.8 ms and
+the profiler's GPU totals at ~200 ms a frame: unusable; a forestcost run overlapping another page's gave 25-35 ms means
+(the GPU shared). The per-treatment A/B pairs and the wind modes' pairs (scripts/forestcost.mjs) still need a clean,
+uncapped timing run, and the phone itself (FLO30's rule).

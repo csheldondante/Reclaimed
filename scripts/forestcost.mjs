@@ -7,13 +7,17 @@
 import fs from 'node:fs';
 import { run, sleep } from './lib/runner.mjs';
 
-await run({ name: 'forestcost', kind: 'timing', size: '412x915', dpr: 2.6, chromeArgs: ['--disable-gpu-vsync', '--disable-frame-rate-limit'] }, async (R) => {
+// (the runner's timing kind as scripts/present.mjs's --cost: no extra switches — with --disable-gpu-vsync and
+// --disable-frame-rate-limit this daemon page's rAF ran at ~0.8 ms, unpaced by the GPU, and the profiler's totals a frame
+// came out at ~200 ms: neither measured anything)
+await run({ name: 'forestcost', kind: 'timing', size: '412x915', dpr: 2.6 }, async (R) => {
   const out = R.opt('out', 'C:/Projects/shots88/forest');
   const win = Number(R.opt('window', '4'));
   const rounds = Number(R.opt('rounds', '3'));
   const at = R.opt('at', '13728,4768');
   const modes = R.opt('modes', 'static,sway,1A,1C,1A1C').split(',');
   const rows = [];
+  // (the mean frame interval over the window: the user's rule — toggle each treatment, compare frame times)
   const mean = async (p) => {
     return p.evaluate(async (s) => {
       const t = [];
