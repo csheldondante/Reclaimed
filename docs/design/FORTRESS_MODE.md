@@ -102,3 +102,11 @@ dealer (runloop / opportunities); recipes and tags (contracts/recipe.ts); the st
    different sizes and colours for creatures and units; the voxel hero models usable. A **unit editor** to make
    the recipes work. Better art later through better editors (what the user wants) and/or downloaded animated
    CC/asset-store models with body sections mutated for gear.
+
+## More answers (round 128c)
+
+- **Start:** a small town, or the player picks the site of the fortress.
+- **First buildings:** houses, farms, lumber camp, quarry, warehouse, walls, blacksmith, barracks (so soldiers can
+  be made).
+- **Power (mana income):** a power structure (a shrine or temple, or the player's tower), raised by opportunities
+  to find nodes of power and channel ley lines back to it.
