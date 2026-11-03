@@ -325,6 +325,7 @@ export class WorldCore {
       // (round 82, V21: under a slice what's cut open of the rock, past every surface, is dark — a section)
       clear: this.camera.cut.slice !== null ? SECTION_DARK : flashSky(this.light.clear, this.globals.flash),
       sun: this.light.dir,
+      season: this.globals.season ?? 0,
       rainParticles: Math.round(this.weather.storms.reduce((a, st) => a + q.rain * 0.55 * st.intensity * (st.radius / 26), 0)),
     });
     const afterProfile = prof.endFrame(enc);

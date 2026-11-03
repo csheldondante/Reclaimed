@@ -16435,3 +16435,49 @@ forest/understory.ts `occluders` from the flora plan's trees the understory driv
 plan's mirror: no GPU readback; the camera is CPU-side, so a GPU buffer would need a readback to reach it). Read it as
 `driver.occluder` (forest/driver.ts, refreshed with the trees every 0.25 s or 3 cells). Shrubs and grass are not
 trees in the plan, so a thicket or a meadow is 0; a lone low broadleaf is a fraction of a stand of elders (a test).
+
+## 2026-11-03 — round 128 (`treegen`): M6 first pass, the far trees as baked sprites (?flod=sprite) and the foliage phone bench (FLO46, FLO48)
+
+The user (round 128): "ideally instead of the low poly lod we have now we can bake and instance sprites"; "I imagine
+sprites of trees can be small and rendered on demand (likely we render normal and albedo and let sceenspace lighting
+take over right?)"; "the camera is isometric and doesn't tilt except around cliffs and maybe cities so I'm hoping we
+can use baked sprites often without making too many angles."
+
+**The camera's turns today** (what the yaw steps must cover): the pitch is fixed (render/camera.ts ELEVATION, 30°);
+the azimuth turns by the player's turn control in steps of a sixth of a turn, eased (render/turn.ts TURN_STEP), or
+continuously while a turn button is held, and the cutaway's orbit may turn it continuously to keep the hero seen
+(api/cutaway.ts). Every tree instance is turned by its own random yaw, so whatever the camera does, the trees show
+every angle at once: the yaw steps are of the tree, not the camera.
+
+**What a sprite is** (flora/sprites.ts, render/florasprites.ts, shaders/florasprite.wgsl, meshinst.wgsl fsSprite):
+- baked on the GPU from the same variant's full mesh (the generator's own; the far tree is the near one), at the iso
+  pitch, SPR_YAWS = 8 yaw steps (?fyaws= to try others), a 64² cell each (the far level is a tree under ~55 render px
+  tall: about a texel a pixel): per texel the look's albedo and coverage, its normal in the tree's frame (octahedral),
+  its depth along the view and its material. Baked when the atlas is made and again whenever the season has moved on
+  by 1/96 of the year (the leaves, blossom, snow are the season's): 11 tree kinds × 8 = 88 draws of the full meshes into
+  one pass, no readback. "On demand" at this granularity: every tree kind shows every yaw at once, so a forest needs
+  all 88 cells; the atlas is 1024 × 384 (two rgba8 targets, 3 MB with its bake depth 1.5 MB more) — per angle count
+  ~0.37 MB (11 kinds × 64² × 8 B).
+- drawn as one quad an instance through the same instanced renderer (the far kind's mesh is the quad, part 12, plus the
+  far mesh as part 13 for the shadow pass only), facing the eye from the instance's foot; the fragment picks the yaw
+  step the eye is at in the tree's frame and dissolves into the next by the ordered dither as the camera or the tree
+  turns; the normal turned by the instance's yaw; the point rebuilt from the depth; lit by render.wgsl `lighting` (the
+  sun, the sky, the shadow map) and haze exactly as the mesh trees are, and written to the depth buffer at that point
+  (frag_depth: its own pipeline, so the mesh kinds keep early depth), so it meets the ground and its neighbours.
+- Why forward and not into the terrain's G-buffer: the trees are drawn forward (meshinst.wgsl lights each fragment),
+  and the G-buffer's resolve is the terrain's look (its structure words). The sprite carries what a G-buffer would
+  (albedo, normal, depth, material) and is lit by the same function the mesh trees are — teaching the terrain's resolve
+  the flora's look would conflate the two.
+- Shadows: the far mesh (~20-30 triangles) in the shadow pass, the quad never. The sun's view is not the bake's, so a
+  quad turned to the light would cast the wrong silhouette; the far mesh's shadow is what the far level cast before.
+- Wind: the quad's top sways with the trunk's lean (floraSway, row 1's), and 1A's shading ripple runs in the sprite's
+  fragment on its leaf texels — the sprite's answer to the matrix's rows; 1C's lattice has no sprite form (the far
+  trees are under 55 px: the ripple is what shows).
+Default off (?flod=sprite) until main has shown the user the boundary shots and the phone bench's pair.
+
+**The foliage phone bench** (src/perf/foliagebench.ts; the user's PERF RULE): /?skipmenu=1&level=atlas&play=lich&
+forest=lab&fride=0&fseason=0.5&foliagebench=1 — one tap, the screen kept awake, the forest station, the hero parked in
+front of the stand; per load six scripted stages (calm, a gust front, a gale, the wind reversed in the open; calm and a
+gust held under the canopy), each variant a reload: fwind static, sway, 1A, 1C, 1A1C, 1A1C with sprites, static and
+1A1C at round 125's tree size, static again (drift). A result card and a JSON (p50/p95/p99, the GPU's ms where timed,
+the flora's plants, triangles and draws). Desktop numbers from it are a proxy only.

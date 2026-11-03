@@ -22,6 +22,7 @@ const renderWgsl = `${renderWgslOwn}
 ${understoryWgsl}`;
 import meshInstWgsl from '../../src/shaders/meshinst.wgsl?raw';
 import floraLookWgsl from '../../src/shaders/floralook.wgsl?raw';
+import floraSpriteWgsl from '../../src/shaders/florasprite.wgsl?raw';
 import { pagesCode } from '../../src/gpu/pages-mode';
 import { FloraLibrary } from '../../src/flora/library';
 import { buildScene, sceneWgsl } from '../../src/flora/scene';
@@ -80,6 +81,14 @@ ${mi}${floraWgsl}`;
     const riverFoam = 'const RIVER_FOAM_SPEED: bool = false;\n';
     const floraWgsl = `const FLORA: bool = true;const FLORA_RPX: f32 = 0.5;\n${lib.wgsl()}`;
     expect(await errors('meshinst', [commonWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, miWgsl(lib.kinds), floraWgsl, renderWgsl, floraLookWgsl, meshInstWgsl])).toEqual([]);
+  });
+  it('meshinst and the bake of the sprites (round 128, ?flod=sprite)', async () => {
+    const sl = new FloraLibrary(undefined, undefined, 'sprite');
+    expect(sl.sprites.length).toBe(11);
+    const riverFoam = 'const RIVER_FOAM_SPEED: bool = false;' + String.fromCharCode(10);
+    const floraWgsl = `const FLORA: bool = true;const FLORA_RPX: f32 = 0.5;${String.fromCharCode(10)}${sl.wgsl()}`;
+    expect(await errors('meshinst-sprite', [commonWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, miWgsl(sl.kinds), floraWgsl, renderWgsl, floraLookWgsl, meshInstWgsl])).toEqual([]);
+    expect(await errors('flora-sprite-bake', [commonWgsl, materialsWgsl, floraWgsl, floraLookWgsl, floraSpriteWgsl])).toEqual([]);
   });
   it('the tiles (round 125: the trees past the window on the slot grid)', async () => {
     const riverFoam = 'const RIVER_FOAM_SPEED: bool = false;' + String.fromCharCode(10);

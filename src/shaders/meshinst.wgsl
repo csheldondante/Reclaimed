@@ -19,7 +19,19 @@ struct MIOut {
   @location(5) cut: f32,
   // (round 125) how far up into the canopy's shade a bole is under it (0 .. 1 at its cut top): it darkens into it
   @location(6) dark: f32,
+  // (round 128, ?flod=sprite) a sprite's quad: its corner (0..1 across, up) and, flat, the two yaw cells it dissolves
+  // between, the share of the second, the instance's yaw; its scale
+  @location(7) suv: vec2<f32>,
+  @location(8) @interpolate(flat) spr: vec4<f32>,
+  @location(9) @interpolate(flat) sprS: f32,
 };
+
+// (round 128, treegen: the flora sprites — flora/sprites.ts, render/florasprites.ts) the atlas: albedo and coverage;
+// the normal (the tree's frame, octahedral), the depth along the view (0 nearest), the material
+@group(0) @binding(44) var sprAlb: texture_2d<f32>;
+@group(0) @binding(45) var sprNd: texture_2d<f32>;
+// (the shadow pass's pipeline sets it: a sprite kind casts its far mesh's shadow — part 13 — and draws no quad)
+override SHADOW_PASS: bool = false;
 
 fn miKind(vi: u32) -> u32 {
   var k = 0u;
@@ -60,6 +72,11 @@ fn vsInst(@location(0) a: vec4<f32>, @builtin(vertex_index) vi: u32, @builtin(in
     o.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0);
     return o;
   }
+  // (round 128, ?flod=sprite: a sprite kind is a quad for the eye (part 12) and its far mesh for the sun (part 13))
+  if (fl && ((fpart == 12u && SHADOW_PASS) || (fpart == 13u && !SHADOW_PASS))) {
+    o.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+    return o;
+  }
   var wp = vec3<f32>(dot(r0.xyz, l) + r0.w, dot(r1.xyz, l) + r1.w, dot(r2.xyz, l) + r2.w);
   // the wind: the column's lean (sway.wgsl's spring) and a slow flutter, the crown shifting with the trunk's top
   let cell = clampCell(cellAt(vec2<f32>(r0.w, r1.w)));
@@ -68,6 +85,36 @@ fn vsInst(@location(0) a: vec4<f32>, @builtin(vertex_index) vi: u32, @builtin(in
   let dir = lean / max(length(lean), 1e-4);
   let seed = fract(sin(dot(vec2<f32>(r0.w, r1.w), vec2<f32>(12.9898, 78.233))) * 43758.5453);
   let flutter = dir * sin(G.time * 2.2 + seed * 30.0) * 0.05 * (0.3 + amp);
+  if (fl && fpart == 12u) {
+    // (round 128) the sprite: a quad facing the eye from the instance's foot, the bake's bounds × its scale; the yaw
+    // step the eye is at in the tree's frame and the next, dissolved between in the fragment
+    let sp = FLORA_SPR[k];
+    let foot = vec3<f32>(r0.w, r1.w, r2.w);
+    let s = length(vec2<f32>(r0.x, r1.x));
+    let yaw = atan2(r1.x, r0.x);
+    let e = normalize(CAM.eye.xyz);
+    let right = normalize(vec3<f32>(-e.y, e.x, 0.0));
+    let up = cross(e, right);
+    let N = f32(FLORA_SPR_YAWS);
+    var t = (atan2(e.y, e.x) - yaw) / 6.2831853 * N;
+    t = t - floor(t / N) * N;
+    let j0 = min(u32(floor(t)), FLORA_SPR_YAWS - 1u);
+    let j1 = (j0 + 1u) % FLORA_SPR_YAWS;
+    let base = u32(sp.x) * FLORA_SPR_YAWS;
+    var swp = foot + right * ((a.x - 0.5) * 2.0 * sp.y * s) + up * ((sp.z + a.y * (sp.w - sp.z)) * s);
+    // (the wind: the trunk's sway at the quad's top — floraSway's lean for wood — and 1A in the fragment)
+    if ((FWIND & 1u) != 0u) { swp = swp + floraSway(k, 3u, a.xyz, sway, vec2<f32>(r0.w, r1.w), lean, seed, G.time); }
+    o.pos = CAM.viewProj * vec4<f32>(swp, 1.0);
+    o.wpos = swp;
+    o.info = vec4<u32>(k, 12u, winIdx(cell), u32(seed * 65535.0));
+    o.h = sway;
+    o.foot = foot;
+    o.wind = vec3<f32>(dir, amp);
+    o.suv = a.xy;
+    o.spr = vec4<f32>(f32(base + j0), f32(base + j1), t - floor(t), yaw);
+    o.sprS = s;
+    return o;
+  }
   if (!fl) {
     wp = wp + vec3<f32>((lean + flutter) * sway, 0.0);
   } else {
@@ -182,5 +229,55 @@ fn fsInst(in: MIOut) -> FOut {
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), 1.0);
   o.pick = vec2<u32>(in.info.z + 1u, pickInfo(mat, in.wpos.z, 0u));
+  return o;
+}
+
+// ---- (round 128, ?flod=sprite) the flora sprites' draw ----------------------------------------------------------
+// A texel of the yaw step's cell (dissolved into the next by the ordered dither as the eye turns): its albedo, its
+// normal turned by the instance's yaw, its point rebuilt from the depth along the view — lit as the mesh trees are
+// (lighting: the sun, the sky, the shadow map; haze) and written to the depth buffer at that point, so a sprite meets
+// the ground and its neighbours where the mesh tree would.
+struct SOut {
+  @location(0) color: vec4<f32>,
+  @location(1) pick: vec2<u32>,
+  @builtin(frag_depth) depth: f32,
+};
+
+@fragment
+fn fsSprite(in: MIOut) -> SOut {
+  let cell = u32(select(in.spr.x, in.spr.y, bayer4(in.pos.xy) < in.spr.z));
+  let C = f32(FLORA_SPR_CELL);
+  let cx = f32(cell % FLORA_SPR_COLS);
+  let cy = f32(cell / FLORA_SPR_COLS);
+  let tx = vec2<i32>(i32(cx * C + clamp(in.suv.x, 0.0, 0.999) * C), i32(cy * C + (1.0 - clamp(in.suv.y, 0.001, 1.0)) * C));
+  let alb = textureLoad(sprAlb, tx, 0);
+  if (alb.a < 0.5) { discard; }
+  let nd = textureLoad(sprNd, tx, 0);
+  let q = nd.xy * 2.0 - 1.0;
+  var nl = vec3<f32>(q, 1.0 - abs(q.x) - abs(q.y));
+  if (nl.z < 0.0) { nl = vec3<f32>((1.0 - abs(nl.yx)) * select(vec2<f32>(-1.0), vec2<f32>(1.0), nl.xy >= vec2<f32>(0.0)), nl.z); }
+  nl = normalize(nl);
+  let cw = cos(in.spr.w);
+  let sw = sin(in.spr.w);
+  let n = vec3<f32>(cw * nl.x - sw * nl.y, sw * nl.x + cw * nl.y, nl.z);
+  let k = in.info.x;
+  let b2 = FLORA_SPR2[k];
+  let along = (b2.x + (1.0 - nd.z) * (b2.y - b2.x)) * in.sprS;
+  let wpos = in.wpos + normalize(CAM.eye.xyz) * along;
+  if (cutAway(wpos, in.pos.xy)) { discard; }
+  let mat = u32(round(nd.w * 64.0));
+  var a3 = toLinear(alb.rgb);
+  // (1A: the wind-shading ripple, as the mesh's leaves)
+  if ((FWIND & 2u) != 0u && mat == MAT_LEAVES) {
+    let g = floraGust(wpos.xy, G.org.xy, in.wind.xy, in.wind.z, G.time);
+    a3 *= 1.0 + (g - 0.5) * (0.12 + 0.25 * min(in.wind.z, 1.5));
+  }
+  var col = a3 * lighting(wpos, n);
+  col = haze(col, wpos);
+  var o: SOut;
+  o.color = vec4<f32>(toSrgb(col), 1.0);
+  o.pick = vec2<u32>(in.info.z + 1u, pickInfo(mat, wpos.z, 0u));
+  let cp = CAM.viewProj * vec4<f32>(wpos, 1.0);
+  o.depth = clamp(cp.z / cp.w, 0.0, 1.0);
   return o;
 }

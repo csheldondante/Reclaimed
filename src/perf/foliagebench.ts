@@ -21,9 +21,11 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * The variants, each a reload (URL settings, '+' between): the wind matrix's rows on the trees as they are (x2), the
- * trees at round 125's size (?treescale=1) static and animated, and the static baseline again at the end.
+ * far trees as baked sprites (?flod=sprite), the trees at round 125's size (?treescale=1) static and animated, and the
+ * static baseline again at the end.
  */
-export const VARIANTS = ['fwind:static', 'fwind:sway', 'fwind:1A', 'fwind:1C', 'fwind:1A1C', 'fwind:static+treescale:1', 'fwind:1A1C+treescale:1', 'fwind:static'];
+// (round 128, M6: the far level as sprites against the low-poly far mesh, both with the default wind)
+export const VARIANTS = ['fwind:static', 'fwind:sway', 'fwind:1A', 'fwind:1C', 'fwind:1A1C', 'fwind:1A1C+flod:sprite', 'fwind:static+treescale:1', 'fwind:1A1C+treescale:1', 'fwind:static'];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Rec = any;

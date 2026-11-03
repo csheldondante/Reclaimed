@@ -10,6 +10,7 @@ import { generate } from './generate';
 import { hashSeed } from './rng';
 import { SPECIES, type RGB, type SpeciesDef, type SpeciesId } from './species';
 import type { FloraMesh } from './mesh';
+import { SPR_CELL, SPR_COLS, SPR_YAWS, spriteBounds, spriteKindMesh, type Flod } from './sprites';
 
 export interface LibraryKind {
   name: string;
@@ -110,6 +111,15 @@ const FLORA_BARK = array<vec4<f32>, ${bark.length}>(${bark.join(', ')});
 const FLORA_EPI = array<vec4<f32>, ${epi.length}>(${epi.join(', ')});`;
 }
 
+/** (round 128) the sprite constants (meshinst.wgsl's draw, florasprite.wgsl's bake) */
+function spriteConsts(n: number, a: string[], b: string[]): string {
+  return `const FLORA_SPR_YAWS: u32 = ${SPR_YAWS}u;
+const FLORA_SPR_CELL: u32 = ${SPR_CELL}u;
+const FLORA_SPR_COLS: u32 = ${SPR_COLS}u;
+const FLORA_SPR = array<vec4<f32>, ${n}>(${a.join(', ')});
+const FLORA_SPR2 = array<vec4<f32>, ${n}>(${b.join(', ')});`;
+}
+
 /** (round 128) the species with a close-up level: the trees, the thicket and the tall grass (the LOD ladder's top) */
 export function hasClose(id: SpeciesId): boolean {
   const f = SPECIES[id].form;
@@ -129,8 +139,12 @@ export class FloraLibrary {
    *  their shadows are under a pixel and they are most of the triangles) */
   readonly shadowKinds: boolean[] = [];
 
-  /** `px`: render pixels a cell the plants are made for (generate's; absent: full detail) */
-  constructor(readonly spec: LibrarySpec = GAME_LIBRARY, readonly px?: number) {
+  /** (round 128) the trees' far level as baked sprites (?flod=sprite; flora/sprites.ts): each sprite kind, the kind
+   *  baked into it (the same variant's full mesh), its index in the atlas (× SPR_YAWS cells) and its bounds */
+  readonly sprites: { kind: number; src: number; idx: number; b: ReturnType<typeof spriteBounds> }[] = [];
+
+  /** `px`: render pixels a cell the plants are made for (generate's; absent: full detail); `flod` the far level */
+  constructor(readonly spec: LibrarySpec = GAME_LIBRARY, readonly px?: number, readonly flod: Flod = 'mesh') {
     const t = performance.now();
     for (const { id, variants } of spec.species) {
       // (trees: full, coarse, far; thickets: full and far — FL_SHRUB_L1 is the far one)
@@ -140,7 +154,14 @@ export class FloraLibrary {
       for (const lod of lodsOf) {
         lr.push({ first: this.kinds.length, count: variants });
         for (let v = 0; v < variants; v++) {
-          const mesh = generate(id, hashSeed(spec.seed, v, id.charCodeAt(0), id.length), { px, lod: lod as 0 | 1 | 2 });
+          let mesh = generate(id, hashSeed(spec.seed, v, id.charCodeAt(0), id.length), { px, lod: lod as 0 | 1 | 2 });
+          // (round 128, ?flod=sprite: a tree's far level is its sprite — a quad, the far mesh kept for the shadow pass)
+          if (flod === 'sprite' && lod === 2 && SPECIES[id].form === 'tree') {
+            const src = lr[0].first + v;
+            const m0 = this.kinds[src].mesh;
+            this.sprites.push({ kind: this.kinds.length, src, idx: this.sprites.length, b: spriteBounds(m0.height, m0.radius) });
+            mesh = spriteKindMesh(mesh);
+          }
           this.kinds.push({ name: `${id}-${v}${lod ? `-l${lod}` : ''}`, species: id, variant: v, lod, mesh, verts: mesh.verts, index: mesh.index });
           this.shadowKinds.push(SPECIES[id].form === 'tree' || SPECIES[id].form === 'shrub' || SPECIES[id].form === 'rock');
         }
@@ -167,6 +188,7 @@ export class FloraLibrary {
     for (const id of ids) if (SPECIES[id].form === 'tree') lines.push(`const FL_${id.toUpperCase()}_L1 = vec2<u32>(0u, 1u);`, `const FL_${id.toUpperCase()}_L2 = vec2<u32>(0u, 1u);`);
     lines.push('const FL_SHRUB_L1 = vec2<u32>(0u, 1u);');
     for (const id of ids) if (hasClose(id)) lines.push(`const FL_${id.toUpperCase()}_C = vec2<u32>(0u, 1u);`);
+    lines.push(spriteConsts(1, ['vec4<f32>(-1.0, 0.0, 0.0, 0.0)'], [z]));
     lines.push(`const FLORA_COL = array<vec4<f32>, 6>(${[z, z, z, z, z, z].join(', ')});`, `const FLORA_ACC = array<vec4<f32>, 1>(${z});`, `const FLORA_BARK = array<vec4<f32>, 2>(${z}, ${z});`, `const FLORA_EPI = array<vec4<f32>, 1>(${z});`, 'const FLORA_CROWN = array<vec2<f32>, 1>(vec2<f32>(1e9, 0.0));');
     return lines.join('\n') + '\n';
   }
@@ -191,6 +213,18 @@ export class FloraLibrary {
     // (round 128) the close-up level: FL_<ID>_C
     for (const [id, r] of this.closes) lines.push(`const FL_${id.toUpperCase()}_C = vec2<u32>(${r.first}u, ${r.count}u);`);
     lines.push(floraTables(this.kinds.map((k) => ({ sp: SPECIES[k.species], mesh: k.mesh, close: k.lod === -1 }))));
+    lines.push(this.spriteWgsl());
     return lines.join('\n') + '\n';
+  }
+
+  /** (round 128) the sprites' table: FLORA_SPR a kind (its sprite's index or −1, R, v0, v1), FLORA_SPR2 (d0, d1) */
+  spriteWgsl(): string {
+    const a = this.kinds.map(() => 'vec4<f32>(-1.0, 0.0, 0.0, 0.0)');
+    const b = this.kinds.map(() => 'vec4<f32>(0.0)');
+    for (const s of this.sprites) {
+      a[s.kind] = `vec4<f32>(${s.idx}.0, ${s.b.R.toFixed(4)}, ${s.b.v0.toFixed(4)}, ${s.b.v1.toFixed(4)})`;
+      b[s.kind] = `vec4<f32>(${s.b.d0.toFixed(4)}, ${s.b.d1.toFixed(4)}, 0.0, 0.0)`;
+    }
+    return spriteConsts(this.kinds.length, a, b);
   }
 }

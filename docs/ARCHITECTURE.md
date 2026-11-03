@@ -2540,6 +2540,9 @@ clears them).
   the fastest smooth speed and what failed next), then `rows` and the pages. `benchrun.mjs --pan`.
 - **Scripts:** scripts/benchrun.mjs runs it headless and writes the JSON (data/bench/desktop-igpu.json is the desktop
   baseline); scripts/benchdiff.mjs prints two reports' measures side by side with their ratio.
+- (round 128, branch `treegen`) The foliage bench: ?foliagebench=1 at the forest station (src/perf/foliagebench.ts) —
+  the wind matrix's rows (?fwind=), the far trees as sprites (?flod=sprite) and the trees' size (?treescale=1) by
+  reload, six scripted wind stages in the open and under the canopy; bench.ts's Panel, wake lock and report buttons.
 
 ## The tile cache (round 103, branch `tilecache`, `?tiles=1`)
 
@@ -3148,6 +3151,11 @@ same species parameters so they match:
 - **coarse** (lod 1): twigs and roots gone, leaves merged; from 55 px (the deciduous keep their first limbs: bare in
   winter they are the tree's shape).
 - **far** (lod 2): a trunk and the crown's masses, ~20-30 triangles — to be replaced by the baked sprite (M6).
+- **the baked sprite** (?flod=sprite, default off until shown): the far level's kinds become a quad (part 12) and
+  the far mesh for the shadow pass (part 13); flora/sprites.ts (the views, bounds, mesh), render/florasprites.ts (the
+  atlas: 64² cells, SPR_YAWS = 8 yaw steps a tree kind, baked on the GPU at the iso pitch when the season moves on),
+  meshinst.wgsl fsSprite (lit per texel by `lighting`, its depth written). Contract: FLORA_SPR / FLORA_SPR2 per kind
+  (the library's WGSL), bindings 44/45 in the instanced meshes' layout.
 - **the far tiles** past the window (tiles.wgsl tileTrees): painted crowns.
 The camera rule (herolab's) reads `driver.occluder` (contracts/understory.ts OccluderSignal: how much sticks up round
 the hero, from the flora plan) to decide when to zoom in; zooming in is what lifts plants up the ladder.
