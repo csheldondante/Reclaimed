@@ -51,6 +51,7 @@ Branch `interiors` (28d1fbc): plan from the structures plan, CC0 Kenney props vo
 | M128-7 | (the user, round 128) Physics: some terrain failed to wake; the collapse is overly aggressive for terrain; falls lack quality (fractures not occurring where they should). Noted, not being fixed now (gameplay first) | L | open |
 | M128-8 | (the user, round 128) Sediment: spires of material form that should reach an angle of repose and collapse; the handling of the layer limit looks buggy | M | open |
 | M128-9 | (the user, round 128) Encounters open with a forced petition talk; they should drop the player into the action at speed (enemies swinging, a moving camera), then hand over control: show, don't tell | M | open |
+| M128-10 | (the user, round 128b) Visual bug: during zoom in and out the city sometimes flickers | S | open |
 | M128-2 | Two writers stamp on the GPU but still read the whole layers back to decide: the voxel lattice's wake (physics/wake.ts floods the piece on the CPU) and the editor's placeModel (resting base, room check). A GPU flood / a GPU base would spare the readback | M | open |
 | INT8 | Building columns are claimed solid from foundation to roof, so the sims and agents see no inside. Claim floors, walls and roof only (several intervals per column in sim/external.ts), so water, fire and units can come in. Structural; it needs a design pass. | L | open |
 
