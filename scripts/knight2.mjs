@@ -241,10 +241,7 @@ await run({ name: 'knight2', kind: 'behaviour', size: '412x915', dpr: 1 }, async
       await sleep(900);
       // (its wind-up: the units' state 'swing' — then a swipe while it's still winding up)
       inWind = await waitFor(async () => (await unit(g))?.state === 'swing', 6000);
-      if (inWind) {
-        await sleep(120);
-        await swipeAt(g);
-      }
+      if (inWind) await swipeAt(g);
       await sleep(1500);
     });
     const t1 = await tally();
@@ -277,7 +274,10 @@ await run({ name: 'knight2', kind: 'behaviour', size: '412x915', dpr: 1 }, async
           const [x, y] = r.play.hero.position();
           return { state: u?.state, d: u ? Math.hypot(u.at[0] - x, u.at[1] - y) : null, act: r.play.hero.act.kind };
         }, l);
-        await swipeAt(l);
+        // (it lies a few cells off: two quick swipes at it, the double swipe's long lunge)
+        const dd = await wayTo(l);
+        await stroke(line(S, [S[0] + dd[0] * 70, S[1] + dd[1] * 70], 4), 12);
+        await stroke(line(S, [S[0] + dd[0] * 70, S[1] + dd[1] * 70], 4), 12);
         await sleep(200);
         const aim = await p.evaluate(() => window.reclaimed.play.hero.lastAim);
         R.log(`lunger at the swipe: ${JSON.stringify(st)}; aim ${JSON.stringify(aim)}`);
@@ -352,6 +352,14 @@ await run({ name: 'knight2', kind: 'behaviour', size: '412x915', dpr: 1 }, async
     await sleep(800);
     const j0 = await hero();
     const ja0 = await tally();
+    // (every blow the knight deals, logged with the raider's height: a diagnosis if the slam misses)
+    await p.evaluate(() => {
+      const r = window.reclaimed;
+      const u = r.play.world.units;
+      window.__strikes = [];
+      const f = u.strike;
+      u.strike = (h) => (window.__strikes.push({ at: h.at, z: h.z, radius: h.radius, damage: h.damage, overhead: h.overhead }), f(h));
+    });
     await gif('jump-attack.gif', 30, 90, async () => {
       await p.evaluate(() => (window.reclaimed.play.controls.script = { stick: [0, 0], buttons: [true] }));
       await waitFor(() => p.evaluate(() => window.reclaimed.play.hero.act.kind === 'jump'), 2000);
@@ -362,7 +370,7 @@ await run({ name: 'knight2', kind: 'behaviour', size: '412x915', dpr: 1 }, async
     });
     const j1 = await hero();
     const ja1 = await tally();
-    R.log(`jump attack: plunges ${j1.stats.plunges - j0.stats.plunges}, slams ${j1.stats.slams - j0.stats.slams}, landed ${ja1.landed - ja0.landed}`);
+    R.log(`jump attack: plunges ${j1.stats.plunges - j0.stats.plunges}, slams ${j1.stats.slams - j0.stats.slams}, landed ${ja1.landed - ja0.landed}; blows ${JSON.stringify(await p.evaluate(() => window.__strikes))}; the raider ${JSON.stringify((await unit(r))?.at)}, the knight ${JSON.stringify(j1.at)}`);
     R.check('a swipe in the air slams down on the raider', j1.stats.slams > j0.stats.slams && ja1.landed > ja0.landed, { slams: j1.stats.slams - j0.stats.slams, landed: ja1.landed - ja0.landed });
     await removeAll([r]);
 

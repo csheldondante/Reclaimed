@@ -280,6 +280,12 @@ export class KnightHero extends PlayHero {
     }
     const holding = pm === 3 && !!b[4];
     this.blockT = holding && this.blocking ? this.blockT + dt : 0;
+    // (BLOCK raised: the guard snaps round to the one it's raised against at once — a turn eased in over a few frames
+    // let a blow just in time come from the side)
+    if (holding && !this.blocking) {
+      const g = this.guardFacing();
+      if (g !== null) this.f.heading = g;
+    }
     this.blocking = holding;
     this.prevButtons = [...b];
     this.turnedBack(dt);

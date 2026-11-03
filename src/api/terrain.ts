@@ -124,9 +124,13 @@ export class RaiseStroke {
     const mesa = this.shape === 'mesa';
     const height = this.opts.height ?? (mesa ? 10 : 22);
     if (mesa && this.level === undefined) {
-      const g = this.owner.heightAt(x, y);
-      if (g === null) throw new Error('world.terrain.raise: the ground is not read yet (await terrain.refresh())');
-      this.level = this.opts.level ?? g + height;
+      // (knight pass 2: a level given needs no ground read — it threw when the stroke began where the mirror hadn't read)
+      if (this.opts.level !== undefined) this.level = this.opts.level;
+      else {
+        const g = this.owner.heightAt(x, y);
+        if (g === null) throw new Error('world.terrain.raise: the ground is not read yet (await terrain.refresh())');
+        this.level = g + height;
+      }
     }
     this.owner.queueStamp({
       from: this.last ?? [x, y],

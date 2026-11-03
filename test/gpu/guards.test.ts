@@ -161,3 +161,14 @@ test('the lunger dodges while it stands and while it lunges; down after its lung
   r = await step(3);
   expect(hurtOf(r.events, ln)).toHaveLength(1);
 });
+
+test('a slam from above (an outward push, no dir) lands on a plain unit and throws it', async () => {
+  const { agents, step } = await world();
+  const [u] = agents.spawn(1, 20, 20, { kind: 0, spread: 0 });
+  let r = await step(4);
+  const a = r.units.get(u)!;
+  agents.hit({ x: a.x + 0.8, y: a.y, z: a.z + 0.6, radius: 2, damage: 6, push: 9, outward: true, lift: 4, stun: 0.7, overhead: true });
+  r = await step(3);
+  expect(hurtOf(r.events, u)).toHaveLength(1);
+  expect(r.units.get(u)!.state).toBe('tumble');
+});
