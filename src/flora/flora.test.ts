@@ -229,6 +229,7 @@ describe('the generator\'s parameters (round 128: the viewer\'s sliders)', () =>
       for (const p of PARAMS) {
         if (p.woody && !(sp.turtle && sp.stem)) continue;
         if (p.crown && !sp.crown) continue;
+        if (p.twigs && !sp.twigs) continue;
         const v = p.get(sp);
         expect(v, `${id}.${p.key}`).toBeGreaterThanOrEqual(p.min);
         expect(v, `${id}.${p.key}`).toBeLessThanOrEqual(p.max);

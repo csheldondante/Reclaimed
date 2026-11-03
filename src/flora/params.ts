@@ -17,6 +17,8 @@ export interface Param {
   woody?: boolean;
   /** (round 128) broadleaf crowns only (needs a crown look) */
   crown?: boolean;
+  /** (round 128) plants with fine twigs only */
+  twigs?: boolean;
   get(sp: SpeciesDef): number;
   set(sp: SpeciesDef, v: number): void;
 }
@@ -43,6 +45,12 @@ const CR = (k: keyof NonNullable<SpeciesDef['crown']>) => ({
   get: (sp: SpeciesDef) => sp.crown?.[k] ?? 0,
   set: (sp: SpeciesDef, v: number) => {
     if (sp.crown) sp.crown[k] = v;
+  },
+});
+const TW = (k: keyof NonNullable<SpeciesDef['twigs']>) => ({
+  get: (sp: SpeciesDef) => sp.twigs?.[k] ?? 0,
+  set: (sp: SpeciesDef, v: number) => {
+    if (sp.twigs) sp.twigs[k] = v;
   },
 });
 const B = (k: keyof SpeciesDef['bark']) => ({
@@ -74,6 +82,12 @@ export const PARAMS: Param[] = [
   { key: 'cFill', label: 'fill', group: 'crown', min: 0.1, max: 1, step: 0.01, crown: true, ...CR('fill') },
   { key: 'cLeaves', label: 'cards', group: 'crown', min: 2, max: 20, step: 1, crown: true, ...CR('leaves') },
   { key: 'cDroop', label: 'droop', group: 'crown', min: 0, max: 1, step: 0.01, crown: true, ...CR('droop') },
+  { key: 'tCount', label: 'twigs', group: 'crown', min: 0, max: 6, step: 1, twigs: true, ...TW('count') },
+  { key: 'tAngle', label: 'twig angle', group: 'crown', min: 5, max: 80, step: 1, twigs: true, ...TW('angle') },
+  { key: 'tLength', label: 'twig length', group: 'crown', min: 0.2, max: 5, step: 0.05, twigs: true, ...TW('length') },
+  { key: 'tFalloff', label: 'twig falloff', group: 'crown', min: 0.2, max: 1, step: 0.01, twigs: true, ...TW('falloff') },
+  { key: 'tOrders', label: 'twig orders', group: 'crown', min: 1, max: 2, step: 1, twigs: true, ...TW('orders') },
+  { key: 'tDroop', label: 'twig droop', group: 'crown', min: 0, max: 1, step: 0.01, twigs: true, ...TW('droop') },
   { key: 'furrows', label: 'furrows', group: 'bark', min: 0, max: 1, step: 0.01, ...B('furrows') },
   { key: 'furrowFreq', label: 'furrow freq', group: 'bark', min: 0.5, max: 8, step: 0.1, ...B('furrowFreq') },
   { key: 'plates', label: 'plates', group: 'bark', min: 0, max: 1, step: 0.01, ...B('plates') },
@@ -133,6 +147,7 @@ export function cloneDef(sp: SpeciesDef): SpeciesDef {
     turtle: sp.turtle ? { ...sp.turtle, tropism: [...sp.turtle.tropism], tropismStrength: [...sp.turtle.tropismStrength] } : undefined,
     stem: sp.stem ? { ...sp.stem } : undefined,
     crown: sp.crown ? { ...sp.crown } : undefined,
+    twigs: sp.twigs ? { ...sp.twigs } : undefined,
     bark: { ...sp.bark },
     epiphytes: sp.epiphytes ? { ...sp.epiphytes } : undefined,
     colours: { ...sp.colours, bark: [...sp.colours.bark], barkMark: sp.colours.barkMark ? [...sp.colours.barkMark] : undefined },
