@@ -16401,3 +16401,37 @@ in pixels: a tree twice the size has more limbs over it): birch 1684, broadleaf 
 
 Tests: the slot tests at x TREE_SCALE (the nearest neighbours ≥ 4.3 cells, ~9-16 on average; the elders ≥ 12, ~20+);
 the GPU/CPU plan test on a 128² window (the same ~73 blocks as before).
+
+## 2026-11-03 — round 128 (`treegen`): M5, the flora LOD ladder's close-up level and the occluder signal (FLO47)
+
+The user (round 128): "I want to also have the same transition to the forest floor for the other plant types", then
+"I think we only need to zoom in for certain things and when we do we may want to enhance the geometry and textures
+with basic lod", and on the camera: "I want to zoom in when going into forests that would otherwise obscure visibility.
+Most forests but not low trees or shrubs. On fields I like the pulled back view and I think that this of a function of
+how much things stick up around the player."
+
+So not a zoom-in mode per biome: one LOD ladder for flora, chosen by size on screen, with the generator emitting every
+level from the same parameters — close-up → full → coarse → far (→ the baked sprite, M6 → the far tiles).
+- The close-up level (generate's `lod: 'close'`): the same skeleton with more of it drawn — two more stem sides, the
+  rings twice as close, twigs down to a third of the usual cut — and each leaf cluster split into twice as many at 0.7
+  the size; the thicket the same; tall grass 15 blades bent in three (9 in two). Its look adds a finer octave (the
+  close kinds are flagged in FLORA_EPI.w): the bark's grain, the leaves' own variation within a cluster. Triangles (seed
+  3, full → close): birch 2786 → 5652, broadleaf 1212 → 2374, conifer 1844 → 2638, elder 3898 → 7402, thicket 278 →
+  568, tall grass 72 → 174 (the test's budget: twice the full level's).
+- The library adds it for the trees, the thicket and the tall grass (FL_<ID>_C; 48 → 64 kinds, a draw each; the
+  instance buffer grows by 16 kinds × 4096 × 64 B = 4 MB — per-kind caps would take it back, noted).
+- vegprep picks it by size on screen: a tree over 420 render px tall (FLORA_CLOSE_PX; full from 150, coarse from 55 as
+  before), a thicket or a clump of grass where a cell is over 18 render px (FLORA_CLOSE_CELL). The phone's low tier at
+  its normal zoom (~7 px a cell) never reaches it; zoomed in under an elder wood it does. Everything the forest built
+  under the canopy (the canopy cut, the dither, the stumps in front) is per kind from FLORA_CROWN, so the close kinds
+  get it too.
+- Ferns, reeds, ivy, flowers and moss stay at one level (a few hundred triangles; their close-up is the next step if a
+  zoomed-in shot asks for it).
+
+The occluder signal for the camera rule (herolab owns the rule): contracts/understory.ts OccluderSignal — `height` (the
+crowns' tops round the hero over a 12-cell disc, weighted by how much of the disc each covers, scaled down where the
+cover is under a half), `top` (the tallest crown reaching the disc), `cover`, `trees`, `radius` — computed by
+forest/understory.ts `occluders` from the flora plan's trees the understory driver already asks for (CPU, from the
+plan's mirror: no GPU readback; the camera is CPU-side, so a GPU buffer would need a readback to reach it). Read it as
+`driver.occluder` (forest/driver.ts, refreshed with the trees every 0.25 s or 3 cells). Shrubs and grass are not
+trees in the plan, so a thicket or a meadow is 0; a lone low broadleaf is a fraction of a stand of elders (a test).

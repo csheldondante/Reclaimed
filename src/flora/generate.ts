@@ -33,7 +33,14 @@ function scaleTo(m: FloraMesh, h: number): FloraMesh {
  * least ~3 px, grass has fewer, wider blades — so the phone's half-scale render reads as a forest, not noise. Absent:
  * full detail (the viewer, the desktop).
  */
-export function generate(id: SpeciesId, seed: number, opts: { growth?: number; px?: number; lod?: 0 | 1 | 2; def?: SpeciesDef; legacy?: boolean } = {}): FloraMesh {
+/**
+ * A level of detail (the flora LOD ladder, round 128: close-up → full → coarse → far; ARCHITECTURE "The flora LOD
+ * ladder"): 'close' the camera zoomed in — more stem sides and rings, twigs to a third the usual cut, leaf clusters
+ * split into more, smaller ones, grass with more, finer, more bent blades; 0 full; 1 coarse; 2 far (a few triangles).
+ */
+export type Lod = 'close' | 0 | 1 | 2;
+
+export function generate(id: SpeciesId, seed: number, opts: { growth?: number; px?: number; lod?: Lod; def?: SpeciesDef; legacy?: boolean } = {}): FloraMesh {
   // (round 128, treegen: `def` a species edited in the viewer — its sliders; `legacy` the stems as round 117 made them,
   // the viewer's "old" side of its old/new pair: the turtle's new variances off and a prism a step)
   const sp0 = opts.legacy ? legacyDef(opts.def ?? SPECIES[id]) : (opts.def ?? SPECIES[id]);
@@ -49,17 +56,19 @@ export function generate(id: SpeciesId, seed: number, opts: { growth?: number; p
       // (made for ~2.2 px a cell: the trunk and main limbs kept — a birch's white trunk is what makes it read — twigs
       // and roots gone, leaves merged)
       if (opts.lod === 1) return scaleTo(woody(sp, seed, h, 2.2, false), h);
-      return scaleTo(woody(sp, seed, h, opts.px), h);
+      return scaleTo(woody(sp, seed, h, opts.lod === 'close' ? undefined : opts.px, true, opts.lod === 'close'), h);
     case 'shrub':
       // (round 119: a thicket far off is a lump — a few triangles, from the same skeleton)
       if (opts.lod === 2) return scaleTo(farTree(sp, seed), h);
-      return scaleTo(woody(sp, seed, h, opts.px), h);
+      return scaleTo(woody(sp, seed, h, opts.lod === 'close' ? undefined : opts.px, true, opts.lod === 'close'), h);
     case 'fern':
       return scaleTo(woody(sp, seed, h, opts.px), h);
     case 'vine':
       return scaleTo(vine(sp, seed), h);
     case 'grass': {
       // (a blade at least ~1.7 px wide; fewer of them when they are wide)
+      // (round 128, close: more, finer blades, bent in three)
+      if (opts.lod === 'close') return grassClump(h, seed, 15, 0.55, 0.11, 3);
       const w = opts.px ? Math.max(0.16, 1.7 / opts.px) : 0.16;
       return grassClump(h, seed, w > 0.22 ? 6 : 9, 0.5, w);
     }
@@ -74,7 +83,7 @@ export function generate(id: SpeciesId, seed: number, opts: { growth?: number; p
   }
 }
 
-function woody(sp: SpeciesDef, seed: number, h: number, px?: number, withRoots = true): FloraMesh {
+function woody(sp: SpeciesDef, seed: number, h: number, px?: number, withRoots = true, close = false): FloraMesh {
   if (!sp.lsystem || !sp.turtle || !sp.leaf) throw new Error(`species ${sp.id}: a woody plant needs an L-system, a turtle and leaves`);
   const str = expand(sp.lsystem, hashSeed(seed, 1));
   const sk = interpret(str, sp.turtle, hashSeed(seed, 2));
@@ -86,7 +95,11 @@ function woody(sp: SpeciesDef, seed: number, h: number, px?: number, withRoots =
   const roots = sp.roots && withRoots ? rootSegments(growRoots(sp.roots, hashSeed(seed, 3)), sp.roots.res * 1.5, sp.turtle.radius * 0.8) : [];
   // (round 125, forest: the elder's buttresses — kept at every level but the far one: they are its silhouette's foot)
   if (sp.flare) roots.push(...flareSegments(sp.flare, sp.turtle.radius, hashSeed(seed, 5), withRoots));
-  return buildPlant(sk, sp.leaf, hashSeed(seed, 4), { roots, sides: sp.form === 'tree' ? 6 : 4, minTwig: sp.form === 'tree' ? 0.035 : 0, minRadius: sp.form === 'tree' ? minRadius : 0, minLeaf, stem: sp.stem, scale: k, keepLimbs: sp.colours.deciduous, extra: (mb, cut) => {
+  // (round 128, close: the same skeleton with more of it drawn — two more sides, rings twice as close, twigs to a third
+  // of the cut — and each leaf cluster split into smaller ones)
+  const stem = close && sp.stem ? { ...sp.stem, sides: sp.stem.sides + 2, ring: sp.stem.ring / 2 } : sp.stem;
+  const leaf = close && (sp.leaf.style === 'cluster' || sp.leaf.style === 'drop') ? { ...sp.leaf, size: sp.leaf.size * 0.7, per: sp.leaf.per * 2 } : sp.leaf;
+  return buildPlant(sk, leaf, hashSeed(seed, 4), { roots, sides: sp.form === 'tree' ? 6 : 4, minTwig: sp.form === 'tree' ? (close ? 0.012 : 0.035) : 0, minRadius: sp.form === 'tree' ? minRadius : 0, minLeaf, stem, scale: k, keepLimbs: sp.colours.deciduous, extra: (mb, cut) => {
     // (round 128) epiphytes (the coarse level keeps them: lines and vines are the silhouette's) and a tree's icicles
     if (sp.epiphytes) addEpiphytes(mb, sk, sp.epiphytes, hashSeed(seed, 6), k, { icicles: sp.form === 'tree' ? 14 : 0, cut });
   } });
@@ -187,7 +200,7 @@ function vine(sp: SpeciesDef, seed: number): FloraMesh {
 }
 
 /** Tall grass: blades from a small patch, each leaning out and curving over, the tallest in the middle. */
-export function grassClump(h: number, seed: number, blades: number, patch: number, width = 0.16): FloraMesh {
+export function grassClump(h: number, seed: number, blades: number, patch: number, width = 0.16, segs = 2): FloraMesh {
   const r = rng(hashSeed(seed, 11));
   // the wind takes the blades' tips: sway rises with the square of the height share, nearly all of it at the tip
   const mb = new MeshBuilder((p) => Math.pow(Math.max(0, p[2]) / h, 1.5) * 0.98);
@@ -201,7 +214,7 @@ export function grassClump(h: number, seed: number, blades: number, patch: numbe
     const bend: V3 = [Math.cos(a) * 0.16, Math.sin(a) * 0.16, -0.05];
     // (blades a fifth of a cell wide: wide enough to read as blades on the phone's low tier, where a thinner one is
     // under a pixel; two bends each)
-    mb.blade(p, dir, len, width + 0.07 * r(), 2, bend, PART.blade);
+    mb.blade(p, dir, len, width + 0.07 * r(), segs, segs > 2 ? ([bend[0] * 0.7, bend[1] * 0.7, bend[2]] as V3) : bend, PART.blade);
     // a few seed heads (the accent colour) on the tallest
     if (k % 4 === 0) mb.cone([p[0] + dir[0] * len * 0.85, p[1] + dir[1] * len * 0.85, len * 0.84], dir, 0.22, 0.04, 3, PART.accent);
   }

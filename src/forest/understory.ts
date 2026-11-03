@@ -6,7 +6,7 @@
 // over a small disc round the hero (not its one point: walking past a trunk's foot shouldn't flicker the look), the
 // weight eases toward it in about a second, and every treatment scales with it.
 import type { UnderstoryLook, UnderstoryTreatments } from '../api/contracts/understory';
-import { ALL_TREATMENTS } from '../api/contracts/understory';
+import { ALL_TREATMENTS, type OccluderSignal } from '../api/contracts/understory';
 import { TREE_SCALE } from '../flora/spacing';
 
 /** a tree as the plan has it (api/plants.ts Tree's fields this needs) */
@@ -69,6 +69,33 @@ export function canopyOver(trees: readonly PlanTree[], x: number, y: number, r =
     if (c.cover > 0.2) under = Math.min(under, c.under);
   }
   return { cover, under: Number.isFinite(under) ? under : 0 };
+}
+
+/**
+ * (round 128) How much sticks up round (x, y) within `r` cells (contracts/understory.ts OccluderSignal): each tree
+ * whose crown reaches the disc counts its top (trunk + crown) by the share of the crown over it. Shrubs and grass are
+ * not trees in the plan: they never count.
+ */
+export function occluders(trees: readonly PlanTree[], x: number, y: number, r = 12): OccluderSignal {
+  let w = 0;
+  let hw = 0;
+  let top = 0;
+  let n = 0;
+  for (const t of trees) {
+    const R = crownReach(t);
+    const d = Math.hypot(t.x - x, t.y - y);
+    if (d > r + R) continue;
+    // (the crown's share over the disc: whole when it is inside, falling off as it reaches only the rim)
+    const k = 1 - smooth(Math.max(0, r - R), r + R, d);
+    if (k <= 0) continue;
+    n++;
+    const h = t.trunk + t.crown;
+    top = Math.max(top, h);
+    w += k * R * R;
+    hw += k * R * R * h;
+  }
+  const cover = canopyOver(trees, x, y, Math.min(r, 6)).cover;
+  return { height: w > 0 ? (hw / w) * Math.min(1, cover / 0.5) : 0, top, cover, trees: n, radius: r };
 }
 
 export interface UnderstoryOpts {

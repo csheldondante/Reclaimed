@@ -15,7 +15,7 @@ export interface LibraryKind {
   name: string;
   species: SpeciesId;
   variant: number;
-  /** level of detail (trees: 0 full, 1 coarse, 2 far — round 119); 0 for the rest */
+  /** level of detail (trees: 0 full, 1 coarse, 2 far — round 119; -1 close-up — round 128); 0 for the rest */
   lod: number;
   mesh: FloraMesh;
   /** meshinst.ts's MeshKind view of it */
@@ -61,7 +61,7 @@ const v4 = (c: RGB | undefined, w: number) => {
  * wind's lattice spans the plant). FLORA_ACC: the accent a kind (where the flower colour stands in for it: seed heads,
  * cattails).
  */
-export function floraTables(kinds: { sp: SpeciesDef; mesh: { height: number; radius: number; verts?: Float32Array } }[]): string {
+export function floraTables(kinds: { sp: SpeciesDef; mesh: { height: number; radius: number; verts?: Float32Array }; close?: boolean }[]): string {
   const rows: string[] = [];
   // (round 125, forest) FLORA_CROWN: a tree kind's crown base (local z: the lowest fifth of its leaves) and its bole's
   // radius — under the canopy only the trunk is drawn (the user: "Just the shadows and the trunks"): its wood below the
@@ -100,7 +100,8 @@ export function floraTables(kinds: { sp: SpeciesDef; mesh: { height: number; rad
     return [`vec4<f32>(${f(k.furrows)}, ${f(k.furrowFreq)}, ${f(k.plates)}, ${f(k.plateSize)})`, `vec4<f32>(${f(k.stripes)}, ${f(k.stripeFreq)}, ${f(k.roughness)}, 0.0)`];
   });
   // (round 128) FLORA_EPI, a vec4 a kind: (lichen, moss on the limbs, blossom share, 0) — the epiphytes drawn in the look
-  const epi = kinds.map(({ sp }) => `vec4<f32>(${(sp.epiphytes?.lichen ?? 0).toFixed(3)}, ${(sp.epiphytes?.moss ?? 0).toFixed(3)}, ${(sp.blossom ?? 0).toFixed(3)}, 0.0)`);
+  // (w: 1 a close-up kind — the look adds its finer detail, the bark's second octave and the leaves' veins)
+  const epi = kinds.map(({ sp, close }) => `vec4<f32>(${(sp.epiphytes?.lichen ?? 0).toFixed(3)}, ${(sp.epiphytes?.moss ?? 0).toFixed(3)}, ${(sp.blossom ?? 0).toFixed(3)}, ${close ? '1.0' : '0.0'})`);
   const crownW = `const FLORA_CROWN = array<vec2<f32>, ${crown.length}>(${crown.map(([z, r]) => `vec2<f32>(${z >= 1e9 ? '1e9' : z.toFixed(3)}, ${r.toFixed(3)})`).join(', ')});`;
   return `${crownW}
 const FLORA_COL = array<vec4<f32>, ${rows.length}>(${rows.join(', ')});
@@ -109,12 +110,20 @@ const FLORA_BARK = array<vec4<f32>, ${bark.length}>(${bark.join(', ')});
 const FLORA_EPI = array<vec4<f32>, ${epi.length}>(${epi.join(', ')});`;
 }
 
+/** (round 128) the species with a close-up level: the trees, the thicket and the tall grass (the LOD ladder's top) */
+export function hasClose(id: SpeciesId): boolean {
+  const f = SPECIES[id].form;
+  return f === 'tree' || f === 'shrub' || f === 'grass';
+}
+
 export class FloraLibrary {
   readonly kinds: LibraryKind[] = [];
   /** per species: its first kind and variant count (a tree's full-detail level) */
   readonly ranges = new Map<SpeciesId, { first: number; count: number }>();
   /** (round 119) per tree species: each level of detail's kinds (0 full, 1 coarse, 2 far) */
   readonly lods = new Map<SpeciesId, { first: number; count: number }[]>();
+  /** (round 128) the close-up level (the flora LOD ladder's top): trees, thickets and tall grass — FL_<ID>_C */
+  readonly closes = new Map<SpeciesId, { first: number; count: number }>();
   readonly ms: number;
   /** per kind: does it cast a shadow (trees and thickets; grass, flowers and ferns are left out of the shadow pass —
    *  their shadows are under a pixel and they are most of the triangles) */
@@ -138,6 +147,14 @@ export class FloraLibrary {
       }
       this.ranges.set(id, lr[0]);
       if (levels > 1) this.lods.set(id, lr);
+      if (hasClose(id)) {
+        this.closes.set(id, { first: this.kinds.length, count: variants });
+        for (let v = 0; v < variants; v++) {
+          const mesh = generate(id, hashSeed(spec.seed, v, id.charCodeAt(0), id.length), { lod: 'close' });
+          this.kinds.push({ name: `${id}-${v}-c`, species: id, variant: v, lod: -1, mesh, verts: mesh.verts, index: mesh.index });
+          this.shadowKinds.push(SPECIES[id].form !== 'grass');
+        }
+      }
     }
     this.ms = performance.now() - t;
   }
@@ -149,6 +166,7 @@ export class FloraLibrary {
     const lines = [...ids].map((id) => `const FL_${id.toUpperCase()} = vec2<u32>(0u, 1u);`);
     for (const id of ids) if (SPECIES[id].form === 'tree') lines.push(`const FL_${id.toUpperCase()}_L1 = vec2<u32>(0u, 1u);`, `const FL_${id.toUpperCase()}_L2 = vec2<u32>(0u, 1u);`);
     lines.push('const FL_SHRUB_L1 = vec2<u32>(0u, 1u);');
+    for (const id of ids) if (hasClose(id)) lines.push(`const FL_${id.toUpperCase()}_C = vec2<u32>(0u, 1u);`);
     lines.push(`const FLORA_COL = array<vec4<f32>, 6>(${[z, z, z, z, z, z].join(', ')});`, `const FLORA_ACC = array<vec4<f32>, 1>(${z});`, `const FLORA_BARK = array<vec4<f32>, 2>(${z}, ${z});`, `const FLORA_EPI = array<vec4<f32>, 1>(${z});`, 'const FLORA_CROWN = array<vec2<f32>, 1>(vec2<f32>(1e9, 0.0));');
     return lines.join('\n') + '\n';
   }
@@ -170,7 +188,9 @@ export class FloraLibrary {
     for (const [id, r] of this.ranges) lines.push(`const FL_${id.toUpperCase()} = vec2<u32>(${r.first}u, ${r.count}u);`);
     // (round 119) a tree's coarse and far levels: FL_<ID>_L1, FL_<ID>_L2
     for (const [id, lr] of this.lods) lr.slice(1).forEach((r, i) => lines.push(`const FL_${id.toUpperCase()}_L${i + 1} = vec2<u32>(${r.first}u, ${r.count}u);`));
-    lines.push(floraTables(this.kinds.map((k) => ({ sp: SPECIES[k.species], mesh: k.mesh }))));
+    // (round 128) the close-up level: FL_<ID>_C
+    for (const [id, r] of this.closes) lines.push(`const FL_${id.toUpperCase()}_C = vec2<u32>(${r.first}u, ${r.count}u);`);
+    lines.push(floraTables(this.kinds.map((k) => ({ sp: SPECIES[k.species], mesh: k.mesh, close: k.lod === -1 }))));
     return lines.join('\n') + '\n';
   }
 }

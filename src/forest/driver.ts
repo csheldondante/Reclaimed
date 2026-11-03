@@ -7,10 +7,10 @@
 // It runs wherever a hero is played (the play sandbox, a run), not only at the forest station: the main map's woods
 // are where the user walks in. `?under=0` turns it off (the draw exactly as before).
 import type { Plants, Tree } from '../api/plants';
-import type { UnderstoryTreatments } from '../api/contracts/understory';
+import type { OccluderSignal, UnderstoryTreatments } from '../api/contracts/understory';
 import type { Camera } from '../render/camera';
 import { SPECIES, type SpeciesId } from '../flora/species';
-import { Understory } from './understory';
+import { occluders, Understory } from './understory';
 import { TREE_SCALE } from '../flora/spacing';
 
 /** the plan's species → the flora library's */
@@ -70,6 +70,9 @@ export class UnderstoryDriver {
     return this.model.o.treatments;
   }
 
+  /** (round 128) how much sticks up round the hero (the camera rule reads it; contracts/understory.ts OccluderSignal) */
+  occluder: OccluderSignal = { height: 0, top: 0, cover: 0, trees: 0, radius: 12 };
+
   /** the trees round the hero as of the last ask (the lab reads them) */
   get near(): readonly Tree[] {
     return this.trees;
@@ -82,6 +85,7 @@ export class UnderstoryDriver {
       this.since = 0;
       this.asked = [at[0], at[1]];
       this.model.leaf = leafColour(this.trees, [at[0], at[1]], this.season());
+      this.occluder = occluders(this.trees, at[0], at[1]);
     }
     const look = this.model.step(dt, at, this.trees, this.force);
     this.camera.understory = look.weight > 0 ? look : null;

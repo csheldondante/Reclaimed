@@ -122,6 +122,8 @@ fn floraLook(k: u32, part: u32, wpos: vec3<f32>, n: vec3<f32>, h: f32, rnd: f32,
       c *= (1.0 - 0.25 * bk1.z) + 0.4 * bk1.z * streak;
       c = mix(c, c * vec3<f32>(1.08, 1.0, 0.86), min(1.0, bk1.z / 0.8) * smoothstep(0.6, 0.9, randv(vec3<i32>(floor(wpos * 0.5)) + vec3<i32>(11, 2, 5))));
     }
+    // (round 128, the close-up level — FLORA_EPI.w: the bark's finer octave, a grain of short vertical strands)
+    if (FLORA_EPI[k].w > 0.5) { c *= 0.88 + 0.24 * randv(vec3<i32>(floor(wpos * vec3<f32>(8.0, 8.0, 1.6))) + vec3<i32>(7, 1, 3)); }
     let ridged = FLORA_COL[b + 3u].w > 0.5;
     c = c * select(1.0, select(0.7, 0.92, ridged), part == 7u) * (0.88 + 0.2 * rnd);
     // (round 125) moss on the foot's upward faces — the roots' backs, the buttresses' tops (the accent colour)
@@ -174,6 +176,8 @@ fn floraLook(k: u32, part: u32, wpos: vec3<f32>, n: vec3<f32>, h: f32, rnd: f32,
       let sc = smoothstep(0.0, 0.3, seasonColour() * 1.3 - rnd * 0.3);
       c = mix(c, FLORA_COL[b + 4u].rgb * (0.75 + 0.35 * fr) * (0.72 + 0.3 * n.z), sc);
     }
+    // (round 128, close-up: the leaves' own grain, finer than a cluster)
+    if (FLORA_EPI[k].w > 0.5) { c *= 0.86 + 0.28 * randv(vec3<i32>(floor(wpos * 5.0)) + vec3<i32>(2, 9, 4)); }
     // (round 128) in flower: a share of the clusters bloom (spring, as the crowns come back)
     let bl = FLORA_EPI[k].z * seasonBloom();
     if (bl > 0.0 && randv(vec3<i32>(floor(wpos * 1.1)) + vec3<i32>(3, 3, 41)) < bl) {

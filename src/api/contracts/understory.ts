@@ -47,5 +47,24 @@ export interface UnderstoryLook {
   treatments: UnderstoryTreatments;
 }
 
+/**
+ * (round 128, treegen; for the camera rule — herolab's) How much sticks up round the hero, from the flora plan (the
+ * trees the understory already asks for: CPU, no readback). The user: "I want to zoom in when going into forests that
+ * would otherwise obscure visibility. Most forests but not low trees or shrubs. On fields I like the pulled back view
+ * and I think that this of a function of how much things stick up around the player."
+ */
+export interface OccluderSignal {
+  /** cells over the hero's ground: the crowns' tops round it, weighted by how much of the disc each covers (0 open) */
+  height: number;
+  /** the tallest crown top reaching the disc (cells over the ground) */
+  top: number;
+  /** the canopy's cover over the disc 0..1 */
+  cover: number;
+  /** trees whose crowns reach the disc */
+  trees: number;
+  /** the disc's radius (cells) */
+  radius: number;
+}
+
 export const NO_TREATMENTS: UnderstoryTreatments = { canopy: 0, dither: 0, dapple: 0, rays: 0, mist: 0, leaves: 0 };
 export const ALL_TREATMENTS: UnderstoryTreatments = { canopy: 1, dither: 1, dapple: 1, rays: 1, mist: 1, leaves: 1 };

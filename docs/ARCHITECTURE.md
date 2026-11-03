@@ -3137,6 +3137,21 @@ PARAMS, read by the viewer's sliders and its URL (`p.<key>=`) and applied as an 
   trunk (the species' heights, the plan's trunk and crown, the tiles' painted trees, the understory's reach, a trunk's
   passability footprint ×², logs ×²) and the slot grid's spacing (density ÷ TREE_SCALE²). vegplan.wgsl takes the grid's
   constants from spacingWgsl(), prepended.
+### The flora LOD ladder (round 128, branch `treegen`; BACKLOG FLO47-FLO48)
+
+One ladder for every plant type, chosen by size on screen (vegprep.wgsl), each level emitted by the generator from the
+same species parameters so they match:
+- **close-up** (`lod: 'close'`, FL_<ID>_C; trees, the thicket, tall grass): more stem sides and rings, finer twigs,
+  smaller and more leaf clusters, more and finer blades; the look's finer octave (FLORA_EPI.w). A tree over
+  FLORA_CLOSE_PX = 420 render px tall, a small plant where a cell is over FLORA_CLOSE_CELL = 18 render px.
+- **full** (lod 0): from 150 render px tall.
+- **coarse** (lod 1): twigs and roots gone, leaves merged; from 55 px (the deciduous keep their first limbs: bare in
+  winter they are the tree's shape).
+- **far** (lod 2): a trunk and the crown's masses, ~20-30 triangles — to be replaced by the baked sprite (M6).
+- **the far tiles** past the window (tiles.wgsl tileTrees): painted crowns.
+The camera rule (herolab's) reads `driver.occluder` (contracts/understory.ts OccluderSignal: how much sticks up round
+the hero, from the flora plan) to decide when to zoom in; zooming in is what lifts plants up the ladder.
+
 ## The forest and the understory (round 125, branch `forest`; BACKLOG FLO30-FLO37; src/forest, contract src/api/contracts/understory.ts)
 
 The user (DECISIONS round 124): "I want forests to be impressive like the cliffs. They should be seas of leaves or

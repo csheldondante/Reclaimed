@@ -51,3 +51,17 @@ describe('understory', () => {
     expect(w).toBe(1);
   });
 });
+
+describe('the occluder signal (round 128: the camera rule reads it)', () => {
+  test('open ground nothing; a stand of elders its crowns tops; a lone low tree far less', async () => {
+    const { occluders } = await import('./understory');
+    expect(occluders([], 0, 0).height).toBe(0);
+    const stand = [elder(0, 0), elder(14, 6), elder(-12, 9), elder(4, -15)];
+    const o = occluders(stand, 0, 0);
+    expect(o.trees).toBe(4);
+    expect(o.top).toBe(26);
+    expect(o.height).toBeGreaterThan(20);
+    const lone = occluders([{ x: 10, y: 0, species: 'broadleaf', trunk: 5, crown: 6 }], 0, 0);
+    expect(lone.height).toBeLessThan(o.height * 0.3);
+  });
+});

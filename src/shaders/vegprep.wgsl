@@ -201,6 +201,9 @@ fn treeInstance(c: vec2<u32>, top: f32, pl: VegPlan) {
     if (pl.species == 1u) { r = array<vec2<u32>, 3>(FL_PINE, FL_PINE_L1, FL_PINE_L2)[lod]; }
     if (pl.species == 2u) { r = array<vec2<u32>, 3>(FL_BIRCH, FL_BIRCH_L1, FL_BIRCH_L2)[lod]; }
     if (pl.species == 3u) { r = array<vec2<u32>, 3>(FL_GIANT, FL_GIANT_L1, FL_GIANT_L2)[lod]; }
+    // (round 128, the flora LOD ladder's top: a tree over FLORA_CLOSE_PX tall on screen — the camera zoomed in — its
+    // close-up level: more sides, rings, twigs and smaller leaf clusters, the bark's finer octave)
+    if (hpx >= FLORA_CLOSE_PX) { r = array<vec2<u32>, 4>(FL_OAK_C, FL_PINE_C, FL_BIRCH_C, FL_GIANT_C)[min(pl.species, 3u)]; }
     // (the plan's age: young woods (succession just past 3.6) stand at 0.8 of the variant's height, old ones full)
     let age = 0.8 + 0.2 * clamp((veg[colIdx(c.x, c.y)] - 3.6) / 1.2, 0.0, 1.0);
     // (round 125, forest: the trees' real reach — the elder ~32 tall and ~16 across its crown — for the cull)
@@ -240,6 +243,10 @@ fn floraInstance(r: vec2<u32>, c: vec2<u32>, top: f32, scale: f32, lean: f32, ta
  * grassland, a clump each, jittered in the cell), wildflowers, ferns on the woodland floor (the shade plant: under the
  * canopy), a thicket shrub. Returns true when it drew the column's small plants (the tufts' boxes are then left out).
  */
+/** (round 128) the flora LOD ladder's close-up thresholds (render px): a tree this tall on screen, a cell this wide */
+const FLORA_CLOSE_PX: f32 = 420.0;
+const FLORA_CLOSE_CELL: f32 = 18.0;
+
 fn floraSmall(c: vec2<u32>, top: f32, v: f32, pl: VegPlan) -> bool {
   if (pl.tufts == 0u && !pl.shrub && !pl.flower && v < 3.6) { return false; }
   let jit = (vec2<f32>(rand3(c.x, c.y, 541u), rand3(c.x, c.y, 542u)) - 0.5) * 0.7;
@@ -259,7 +266,8 @@ fn floraSmall(c: vec2<u32>, top: f32, v: f32, pl: VegPlan) -> bool {
   // (round 125, forest: the elder woods' floor is the reference's open carpet of leaves between the trunks — no
   // thicket, few ferns, a mossy boulder here and there; flora/placement.ts standsAt keeps the same rule)
   let elderFloor = v >= 3.6 && elderWoodW(vec2<i32>(i32(c.x) + i32(G.org.z), i32(c.y) + i32(G.org.w))) > 0.5;
-  if (pl.shrub && !elderFloor && (v < 3.6 || rand3(c.x, c.y, 545u) < 0.2)) { floraPut(select(FL_SHRUB_L1, FL_SHRUB, px * 1.6 >= 25.0), c, at, top, 0.8, 0.05, 1u); }
+  // (round 128: the close-up level when a cell is over FLORA_CLOSE_CELL render px — the camera zoomed in)
+  if (pl.shrub && !elderFloor && (v < 3.6 || rand3(c.x, c.y, 545u) < 0.2)) { floraPut(select(select(FL_SHRUB_L1, FL_SHRUB, px * 1.6 >= 25.0), FL_SHRUB_C, px >= FLORA_CLOSE_CELL), c, at, top, 0.8, 0.05, 1u); }
   if (v >= 3.6) {
     // the woodland floor: ferns in the shade, here and there (not at a tree's own foot)
     // (round 125: a tree's own column under the woods was falling through to the meadows' tall grass below — a clump of
@@ -272,7 +280,7 @@ fn floraSmall(c: vec2<u32>, top: f32, v: f32, pl: VegPlan) -> bool {
   if (pl.tufts > 0u && v >= 1.4 && fine) {
     // tall grass: the meadows (taller the lusher), thinning toward the woods' shade
     let lush = smoothstep(1.4, 2.6, v) * (1.0 - smoothstep(3.3, 3.8, v));
-    if (rand3(c.x, c.y, 544u) < 0.25 + 0.7 * lush) { floraPut(FL_TALLGRASS, c, at, top, 0.7 + 0.45 * lush, 0.08, 3u); }
+    if (rand3(c.x, c.y, 544u) < 0.25 + 0.7 * lush) { floraPut(select(FL_TALLGRASS, FL_TALLGRASS_C, px >= FLORA_CLOSE_CELL), c, at, top, 0.7 + 0.45 * lush, 0.08, 3u); }
     if (pl.flower) { floraPut(FL_FLOWER, c, at + vec2<f32>(0.3, -0.2), top, 1.0, 0.1, 4u); }
     return true;
   }

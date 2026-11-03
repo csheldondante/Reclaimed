@@ -162,7 +162,9 @@ describe('levels of detail (round 119, the phone)', () => {
     expect(lr[0].count).toBe(lr[2].count);
     expect(lib.kinds[lr[2].first].lod).toBe(2);
     expect(lib.wgsl()).toMatch(/FL_BIRCH_L2/);
-    expect(lib.kinds.length).toBeLessThanOrEqual(48);
+    // (round 128: + the close-up level of the trees, the thicket and the tall grass — 16 kinds, a draw each)
+    expect(lib.kinds.length).toBeLessThanOrEqual(64);
+    expect(lib.wgsl()).toMatch(/FL_GIANT_C/);
   });
 });
 
@@ -284,5 +286,18 @@ describe('epiphytes and seasons (round 128, treegen)', () => {
     expect(snow(at.winter)).toBeGreaterThan(0.95);
     expect(bloom(at.flower)).toBeGreaterThan(0.95);
     expect(bloom(at.leaf) + bare(at.leaf) + snow(at.leaf)).toBe(0);
+  });
+});
+
+describe('the close-up level (round 128: the flora LOD ladder)', () => {
+  it('more geometry than full detail, the same height; a budget of twice the full level', () => {
+    for (const id of ['birch', 'oak', 'pine', 'giant', 'shrub', 'tallgrass'] as const) {
+      const full = generate(id, 3);
+      const close = generate(id, 3, { lod: 'close' });
+      expect(close.tris, id).toBeGreaterThan(full.tris);
+      expect(close.height).toBeCloseTo(full.height, 5);
+      const budget = id === 'giant' ? 10000 : SPECIES[id].form === 'tree' ? 6400 : 800;
+      expect(close.tris, `${id} close tris`).toBeLessThanOrEqual(budget);
+    }
   });
 });
