@@ -6,10 +6,13 @@ import { afterAll, beforeAll, expect, test } from 'vitest';
 import { makeBindGroup, makeCompute } from '../../src/gpu/pipeline';
 import commonWgsl from '../../src/shaders/common.wgsl?raw';
 import materialsWgsl from '../../src/shaders/materials.wgsl?raw';
-import vegplanWgsl from '../../src/shaders/vegplan.wgsl?raw';
+import vegplanOwn from '../../src/shaders/vegplan.wgsl?raw';
+import woodsWgsl from '../../src/shaders/woods.wgsl?raw';
+const vegplanWgsl = woodsWgsl + vegplanOwn;
 import { GLOBALS_BYTES } from '../../src/sim/globals';
 import { packMaterialTable } from '../../src/world/materials';
 import { birchWood, planTree } from '../../src/api/plants';
+import { elderWood } from '../../src/flora/spacing';
 import { testGpu, type TestGpu } from './dawn';
 
 let g: TestGpu;
@@ -33,10 +36,19 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 `;
 
-test('vegPlan (GPU) and planTree (CPU) put the same trees in the same places', async () => {
+/** (round 125, forest) a window origin deep in an elder wood (spacing.ts elderWood over the whole window) */
+function elderOrigin(): [number, number] {
+  for (let y = 0; y < 8000; y += 16)
+    for (let x = 0; x < 8000; x += 14) if ([0, 32, 63].every((i) => [0, 32, 63].every((j) => elderWood(x + i, y + j) > 0.99))) return [x, y];
+  throw new Error('no elder wood found');
+}
+
+test.each([
+  ['a window far into the world', [-1234, 5678] as [number, number]],
+  ['a window in an elder wood', elderOrigin()],
+])('vegPlan (GPU) and planTree (CPU) put the same trees in the same places: %s', async (_name, org) => {
   const dev = g.device;
-  // a window far into the world (the origin goes into every hash), succession ramping 3.4 → 5.4 across it
-  const org: [number, number] = [-1234, 5678];
+  // (the origin goes into every hash), succession ramping 3.4 → 5.4 across it
   const glob = new ArrayBuffer(GLOBALS_BYTES);
   const u = new Uint32Array(glob);
   const f = new Float32Array(glob);
@@ -74,6 +86,7 @@ test('vegPlan (GPU) and planTree (CPU) put the same trees in the same places', a
   const SP = ['broadleaf', 'conifer', 'birch', 'giant'];
   let trees = 0;
   let birches = 0;
+  let giants = 0;
   let maxWood = 0;
   for (let y = 0; y < H; y++)
     for (let x = 0; x < W; x++) {
@@ -86,12 +99,15 @@ test('vegPlan (GPU) and planTree (CPU) put the same trees in the same places', a
       if (!t) continue;
       trees++;
       if (t.species === 'birch') birches++;
+      if (t.species === 'giant') giants++;
       expect(SP[gpu[1]], `species at ${x},${y}`).toBe(t.species);
       expect(gpu[2]).toBe(t.trunk);
       expect(gpu[3]).toBe(t.crown);
     }
-  expect(trees).toBeGreaterThan(40);
-  expect(birches).toBeGreaterThan(0);
+  // (round 125: a tree a 7 × 8 block of columns — ~73 blocks in the window; an elder a 2 × 2 of them)
+  expect(trees).toBeGreaterThan(12);
+  if (_name.includes('elder')) expect(giants).toBeGreaterThan(5);
+  else expect(birches + trees).toBeGreaterThan(0);
 });
 
 test('birch woods exist: a world-scale patchwork, about a fifth of the land in one', () => {

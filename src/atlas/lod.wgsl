@@ -59,7 +59,9 @@ fn startVeg(p: vec2<f32>, R: Region, g: Ground, h: f32, snowy: bool, wet: bool) 
   let woods = smoothstep(0.05, 0.35, pfbm(torusU(p), perOf(55.0), 3u, AP.seed + 6u)) * smoothstep(AP.sea + 60.0, AP.sea + 20.0, h);
   let x = i32(floor(p.x));
   let y = i32(floor(p.y / ROW_H_A));
-  let v = clamp(R.veg * (1.0 + m * 1.6 + woods * 2.2) + (hf(hash2u(x, y, AP.seed + 7u)) - 0.5) * 0.6, 0.0, 4.2);
+  var v = clamp(R.veg * (1.0 + m * 1.6 + woods * 2.2) + (hf(hash2u(x, y, AP.seed + 7u)) - 0.5) * 0.6, 0.0, 4.2);
+  // (round 125, forest: the elder woods — forms.wgsl colFinish's, the same)
+  v = max(v, elderWoods(vec2<i32>(x, y), R.veg) * smoothstep(AP.sea + 60.0, AP.sea + 20.0, h));
   let lz = select(0.0, g.loose, g.loose > 0.05 && g.lmat != 0u);
   return v * clamp(1.0 - lz * 2.0, 0.0, 1.0);
 }

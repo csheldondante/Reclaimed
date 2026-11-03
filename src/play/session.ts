@@ -105,6 +105,10 @@ export class PlaySession {
   afterHero: ((dt: number) => void) | null = null;
   /** (round 120, runsit) the share of a unit's blow the hero takes (a run's helmet or mail: items.ts 'guard'; 1 none) */
   damageTaken = 1;
+  /** (round 125, forest) the chase zoom times this (the understory's closer view under the canopy; 1 as it was) */
+  zoomScale = 1;
+  /** (round 125, forest) each frame after the camera's framing, with the hero's feet (the understory's driver) */
+  readonly afterFrame: ((dt: number, at: [number, number, number]) => void)[] = [];
   /** paused: the hero isn't stepped or drawn and the camera is left alone (a run's travel on the map) */
   paused = false;
   /** the main thread's cost of the play layer each frame (ms: its input, hero, draw writes; scripts/perf/play.mjs) */
@@ -310,6 +314,9 @@ export class PlaySession {
       cam.target[0] += (Math.random() - 0.5) * 2 * j;
       cam.target[1] += (Math.random() - 0.5) * 2 * j;
     }
+    // (round 125, forest) the understory's closer view under the canopy; then its per-frame hook
+    cam.zoom *= this.zoomScale;
+    for (const f of this.afterFrame) f(dt, [p[0], p[1], this.world.floor(p[0], p[1])]);
     // the HUD
     this.hp.style.setProperty('--hp', String(h.health / h.maxHealth));
     const s = h.alive ? (this.statusLine?.() ?? h.status()) : this.d.respawnAfter !== null ? 'DOWN — back up in a moment' : 'DOWN';

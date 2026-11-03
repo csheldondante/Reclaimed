@@ -8,7 +8,8 @@ import { generate } from './generate';
 import type { FloraMesh } from './mesh';
 import { MeshBuilder } from './mesh';
 import { hashSeed, rng } from './rng';
-import { SPECIES, type RGB, type SpeciesId } from './species';
+import { floraTables } from './library';
+import { SPECIES, type SpeciesId } from './species';
 
 export type Biome = 'birchwood' | 'mixedwood' | 'meadow' | 'riverbank' | 'ruin' | 'cave';
 
@@ -232,18 +233,7 @@ export function buildScene(biome: Biome, seed: number, opts: { radius?: number; 
 
 /** the library's colour table for the scene's kinds (as FloraLibrary.wgsl, per scene kind) */
 export function sceneWgsl(kinds: SceneKind[]): string {
-  const v4 = (c: RGB | undefined, w: number) => {
-    const x = c ?? [0.5, 0.5, 0.5];
-    return `vec4<f32>(${x[0].toFixed(3)}, ${x[1].toFixed(3)}, ${x[2].toFixed(3)}, ${w.toFixed(3)})`;
-  };
-  const rows: string[] = [];
-  const acc: string[] = [];
-  for (const k of kinds) {
-    const sp = k.species === 'host' ? SPECIES.moss : SPECIES[k.species];
-    const c = sp.colours;
-    rows.push(v4(c.bark, c.deciduous ? 1 : 0), v4(c.barkMark ?? c.bark, sp.sway), v4(c.leafDark, 0), v4(c.leafLight, 0), v4(c.autumn, 0), v4(c.flower ?? c.accent, 0));
-    acc.push(v4(c.accent ?? c.leafLight, 0));
-  }
-  return `const FLORA_COL = array<vec4<f32>, ${rows.length}>(${rows.join(', ')});\nconst FLORA_ACC = array<vec4<f32>, ${acc.length}>(${acc.join(', ')});\n`;
+  // (round 125: the library's own tables, one layout for the game and the viewer)
+  return `${floraTables(kinds.map((k) => ({ sp: k.species === 'host' ? SPECIES.moss : SPECIES[k.species], mesh: k.mesh })))}\n`;
 }
 

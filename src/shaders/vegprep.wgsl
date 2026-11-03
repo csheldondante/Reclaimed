@@ -203,7 +203,9 @@ fn treeInstance(c: vec2<u32>, top: f32, pl: VegPlan) {
     if (pl.species == 3u) { r = array<vec2<u32>, 3>(FL_GIANT, FL_GIANT_L1, FL_GIANT_L2)[lod]; }
     // (the plan's age: young woods (succession just past 3.6) stand at 0.8 of the variant's height, old ones full)
     let age = 0.8 + 0.2 * clamp((veg[colIdx(c.x, c.y)] - 3.6) / 1.2, 0.0, 1.0);
-    floraInstance(r, c, top, age, 0.05);
+    // (round 125, forest: the trees' real reach — the elder ~32 tall and ~16 across its crown — for the cull)
+    let tall = (pl.trunk + pl.crown) * 1.15 + 2.0;
+    floraInstance(r, c, top, age, 0.05, tall, select(9.0, 16.0, pl.species == 3u));
     return;
   }
   let k = min(pl.species, MI_N - 1u);
@@ -227,9 +229,9 @@ fn treeInstance(c: vec2<u32>, top: f32, pl: VegPlan) {
   instTree[o + 3u] = vec4<f32>(pl.trunk + 0.5, base, pl.crown + select(0.0, 0.5, k == 3u), half);
 }
 
-fn floraInstance(r: vec2<u32>, c: vec2<u32>, top: f32, scale: f32, lean: f32) {
-  // (round 117, perf: a tree off screen, its shadow too, isn't drawn — up to 20 cells tall, 6 across)
-  if (!floraSeen(cellPos(vec2<i32>(c)), top, 20.0, 6.0)) { return; }
+fn floraInstance(r: vec2<u32>, c: vec2<u32>, top: f32, scale: f32, lean: f32, tall: f32, across: f32) {
+  // (round 117, perf: a tree off screen, its shadow too, isn't drawn — `tall` cells, `across` its crown's half-width)
+  if (!floraSeen(cellPos(vec2<i32>(c)), top, tall, across)) { return; }
   floraPut(r, c, cellPos(vec2<i32>(c)), top, scale, lean, 0u);
 }
 
@@ -254,10 +256,17 @@ fn floraSmall(c: vec2<u32>, top: f32, v: f32, pl: VegPlan) -> bool {
   // (shrubland — succession 2.6 to 3.6 — is the thicket, a soft barrier; under the woods' canopy only a few: the
   // forest floor stays open, ferns and leaf litter)
   // (round 119: a thicket under ~25 render px tall is drawn as its far lump, ~16 triangles)
-  if (pl.shrub && (v < 3.6 || rand3(c.x, c.y, 545u) < 0.2)) { floraPut(select(FL_SHRUB_L1, FL_SHRUB, px * 1.6 >= 25.0), c, at, top, 0.8, 0.05, 1u); }
-  if (v >= 3.6 && !pl.tree) {
-    // the woodland floor: ferns in the shade, here and there
-    if (fine && rand3(c.x, c.y, 543u) < 0.16) { floraPut(FL_FERN, c, at, top, 1.0, 0.05, 2u); }
+  // (round 125, forest: the elder woods' floor is the reference's open carpet of leaves between the trunks — no
+  // thicket, few ferns, a mossy boulder here and there; flora/placement.ts standsAt keeps the same rule)
+  let elderFloor = v >= 3.6 && elderWoodW(vec2<i32>(i32(c.x) + i32(G.org.z), i32(c.y) + i32(G.org.w))) > 0.5;
+  if (pl.shrub && !elderFloor && (v < 3.6 || rand3(c.x, c.y, 545u) < 0.2)) { floraPut(select(FL_SHRUB_L1, FL_SHRUB, px * 1.6 >= 25.0), c, at, top, 0.8, 0.05, 1u); }
+  if (v >= 3.6) {
+    // the woodland floor: ferns in the shade, here and there (not at a tree's own foot)
+    // (round 125: a tree's own column under the woods was falling through to the meadows' tall grass below — a clump of
+    // giant blades at every trunk's foot under the canopy; flora/placement.ts standsAt always stopped here)
+    if (pl.tree) { return true; }
+    if (fine && rand3(c.x, c.y, 543u) < select(0.16, 0.0, elderFloor)) { floraPut(FL_FERN, c, at, top, 1.0, 0.05, 2u); }
+    if (elderFloor && rand3(c.x, c.y, 547u) < 0.025) { floraPut(FL_BOULDER, c, at, top, 1.0, 0.0, 5u); }
     return true;
   }
   if (pl.tufts > 0u && v >= 1.4 && fine) {

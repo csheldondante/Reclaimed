@@ -760,7 +760,9 @@ fn colFinish(@builtin(global_invocation_id) gid: vec3<u32>) {
   o.veg = 0.0;
   if (o.water == 0.0 && o.lava == 0.0 && !snowy && R.veg > 0.0 && surf < AP.sea + 70.0) {
     let woods = smoothstep(0.05, 0.35, pfbm(torusU(p), perOf(55.0), 3u, AP.seed + 6u)) * smoothstep(AP.sea + 60.0, AP.sea + 20.0, surf);
-    let v = clamp(R.veg * (1.0 + m * 1.6 + woods * 2.2) + (hf(hash2u(x, y, AP.seed + 7u)) - 0.5) * 0.6, 0.0, 4.2);
+    var v = clamp(R.veg * (1.0 + m * 1.6 + woods * 2.2) + (hf(hash2u(x, y, AP.seed + 7u)) - 0.5) * 0.6, 0.0, 4.2);
+    // (round 125, forest: the elder woods are old woods — woods.wgsl; on land that grows plants, under the treeline)
+    v = max(v, elderWoods(vec2<i32>(x, y), R.veg) * smoothstep(AP.sea + 60.0, AP.sea + 20.0, surf));
     if (open && (o.cover > 0.0 || lz > 0.0)) { o.veg = v; } else if (surfForm) { o.veg = v * 0.35; }
     // (buried: under half a cell of ash or rubble nothing's left; thinner, it thins)
     o.veg *= clamp(1.0 - lz * 2.0, 0.0, 1.0);

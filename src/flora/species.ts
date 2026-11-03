@@ -25,9 +25,10 @@ export type SpeciesId =
   | 'fern'
   | 'flower'
   | 'moss'
-  | 'ivy';
+  | 'ivy'
+  | 'boulder';
 
-export type PlantForm = 'tree' | 'shrub' | 'grass' | 'reed' | 'fern' | 'flower' | 'moss' | 'vine';
+export type PlantForm = 'tree' | 'shrub' | 'grass' | 'reed' | 'fern' | 'flower' | 'moss' | 'vine' | 'rock';
 
 /** What a plant can grow on (its host). Ground plants stand on terrain; the others are instanced onto other geometry. */
 export type Host = 'ground' | 'bank' | 'rock' | 'wall' | 'cave';
@@ -90,6 +91,21 @@ export interface SpeciesDef {
   sway: number;
   /** it lets its leaves go all year (a few), more in the fall and in a wind (falling leaves) */
   shedsLeaves: boolean;
+  /** (round 125) buttress roots flaring from the trunk's foot and sprawling over the ground (mesh.ts buildPlant) */
+  flare?: Flare;
+  /** (round 125) the bark's marks: 'lenticels' (a birch's dark dashes across, the default) or 'ridged' (long grooves) */
+  barkStyle?: 'lenticels' | 'ridged';
+  /** (round 125) moss on the wood near the foot, on its upward faces, 0..1 (the accent colour) */
+  moss?: number;
+}
+
+/** Buttress roots (round 125), in the turtle's units (its trunk radius r): `count` fins, each leaving the trunk `rise`
+ *  radii up, reaching the ground `reach` radii out, then sprawling `sprawl` radii further along it, thinning. */
+export interface Flare {
+  count: number;
+  rise: number;
+  reach: number;
+  sprawl: number;
 }
 
 const C = (r: number, g: number, b: number): RGB => [r, g, b];
@@ -101,7 +117,9 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     id: 'birch',
     name: 'Silver birch',
     form: 'tree',
-    height: [11, 17],
+    // (round 125, forest: x1.5 — "trees much bigger relative to the player"; the trunk ~0.9 across, a villager's
+    // width and a half, the lich's about)
+    height: [17, 25],
     lsystem: {
       axiom: 'FFFFA',
       rules: {
@@ -155,7 +173,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     id: 'oak',
     name: 'Broadleaf',
     form: 'tree',
-    height: [6, 10],
+    height: [9, 15],
     lsystem: {
       axiom: 'FFA',
       rules: {
@@ -205,7 +223,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     id: 'pine',
     name: 'Conifer',
     form: 'tree',
-    height: [8, 14],
+    height: [12, 20],
     lsystem: {
       axiom: 'FA',
       rules: {
@@ -248,54 +266,72 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     sway: 0.7,
     shedsLeaves: false,
   },
-  // The old giant: a thick, flaring trunk on buttress roots (the root automaton's surface roots shown), a broad,
-  // high crown. Rare, in old woods.
+  // The elder (round 125, forest; was "the old giant"): the reference's tree (docs/design/ref/forest-floor.png) — a
+  // massive pale trunk, grey-white and ridged, on flaring buttress roots that sprawl over the floor, mossy at its foot;
+  // a few great limbs forking into a broad, high crown of copper-red leaves that go orange in the fall. Its own woods
+  // (flora/spacing.ts: the elder woods, one a 14 x 16 super-block) and, rarely, alone in old woods. Its trunk is
+  // ~2.5 cells across: the lich (1 wide) is 0.4 of it, a villager a quarter — the user's "0.25-1 trunk width".
   giant: {
     id: 'giant',
-    name: 'Old giant',
+    name: 'Elder',
     form: 'tree',
-    height: [14, 20],
+    height: [24, 32],
     lsystem: {
-      axiom: 'FFFA',
+      // (a massive bole to the fork; three or four great limbs leaving it wide — near level — forking twice into a
+      // broad, flat-topped crown, a leader carrying on up the middle)
+      axiom: 'FFFFA',
       rules: {
         A: [
-          { s: 'F[&&B]/[&&B]//[&&B]/[&B]', w: 0.6 },
-          { s: 'F[&&B]///[&&B]F[&&B]', w: 0.4 },
+          { s: 'F[&&&B]//[&&&B]//[&&&B]', w: 0.5 },
+          { s: 'F[&&&B]/[&&&B]//[&&B]//[&&&B]F[&L]L', w: 0.5 },
         ],
         B: [
-          { s: 'F[+B]F[-B]B', w: 0.4 },
-          { s: 'F[-B]/[+B]L', w: 0.4 },
-          { s: 'FFL', w: 0.2 },
+          { s: 'FF[+C][-C]C', w: 0.5 },
+          { s: 'F[-C]F[+C]C', w: 0.5 },
+        ],
+        C: [
+          { s: 'F[+C][&L]L', w: 0.5 },
+          { s: 'F[-C][^L]L', w: 0.5 },
         ],
       },
-      finals: { A: 'L', B: 'FL' },
-      iterations: 4,
+      finals: { A: 'L', B: 'F[&L]L', C: 'L' },
+      iterations: 5,
     },
     turtle: {
       step: 2.2,
-      stepDecay: 0.66,
-      radius: 0.8,
+      stepDecay: 0.72,
+      radius: 1.55,
       radiusDecay: 0.55,
-      taper: 0.88,
-      angle: 30,
+      taper: 0.95,
+      angle: 26,
       roll: 115,
-      jitter: 15,
+      jitter: 14,
       tropism: [0, 0, 1],
-      tropismStrength: [0, 0.04, 0.06],
+      tropismStrength: [0, 0.02, 0.06],
       minRadius: 0.05,
     },
-    leaf: { style: 'cluster', size: 1.5, per: 1, minDepth: 1 },
-    roots: { half: 10, depth: 6, res: 0.45, generations: 14, growth: 0.55, down: 0.25, maxCells: 260, trunkRadius: 0.8 },
+    // (smaller clusters and more of them than the other trees': close up under the canopy a cluster is a few leaves'
+    // worth of pixels, not a slab)
+    leaf: { style: 'cluster', size: 1.3, per: 5, minDepth: 1 },
+    roots: { half: 4, depth: 4, res: 0.45, generations: 10, growth: 0.6, down: 0.3, maxCells: 90, trunkRadius: 1.55 },
+    // (hugging the bole's foot and tapering within a few cells — main's review: long sprawls read as logs on the floor)
+    flare: { count: 6, rise: 1.8, reach: 1.7, sprawl: 0.7 },
     colours: {
-      bark: C(0.3, 0.25, 0.2),
-      leafDark: C(0.1, 0.24, 0.09),
-      leafLight: C(0.25, 0.43, 0.15),
-      autumn: C(0.75, 0.45, 0.12),
+      // (warm pale, the reference's beech: a grey-white with ochre in it)
+      bark: C(0.84, 0.8, 0.72),
+      barkMark: C(0.5, 0.47, 0.44),
+      leafDark: C(0.42, 0.06, 0.05),
+      leafLight: C(0.86, 0.24, 0.1),
+      // (the fall: a deeper red-orange, so the wood stays the reference's red and orange, not all orange)
+      autumn: C(0.93, 0.34, 0.09),
+      accent: C(0.42, 0.46, 0.13),
       deciduous: true,
     },
-    niche: { veg: [4.7, 6], moisture: [0.3, 0.9], light: [0.3, 1], altitude: [0, 60], slopeMax: 0.5, hosts: ['ground'], weight: 0.15 },
+    barkStyle: 'ridged',
+    moss: 0.85,
+    niche: { veg: [3.9, 6], moisture: [0.3, 0.9], light: [0.3, 1], altitude: [0, 80], slopeMax: 0.5, hosts: ['ground'], weight: 0.15 },
     barrier: { fill: 0.4, cuttable: false, slow: 0.8, breakMass: 4 },
-    sway: 0.45,
+    sway: 0.4,
     shedsLeaves: true,
   },
   // Understorey shrub: a dense, low dome of twigs and leaf clusters — the thicket that makes a soft barrier.
@@ -455,6 +491,30 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     },
     niche: { veg: [0.5, 6], moisture: [0.35, 1], light: [0.05, 0.8], altitude: [-50, 300], slopeMax: 99, hosts: ['rock', 'wall', 'cave'], weight: 1 },
     barrier: { fill: 0, cuttable: true, slow: 1, breakMass: 0 },
+    sway: 0,
+    shedsLeaves: false,
+  },
+  // (round 125, forest) A mossy boulder on the elder woods' floor — the reference's "mossy rocks": a few faceted lumps of
+  // grey stone, moss on their tops (the accent colour). Not a plant, but dressed by the same placement and draw as the
+  // floor's plants (vegprep.wgsl floraSmall), and a hard barrier where it stands.
+  boulder: {
+    id: 'boulder',
+    name: 'Mossy boulder',
+    form: 'rock',
+    height: [0.7, 1.6],
+    colours: {
+      bark: C(0.5, 0.5, 0.5),
+      barkMark: C(0.38, 0.38, 0.4),
+      leafDark: C(0.3, 0.33, 0.12),
+      leafLight: C(0.45, 0.5, 0.18),
+      autumn: C(0.45, 0.5, 0.18),
+      accent: C(0.4, 0.47, 0.14),
+      deciduous: false,
+    },
+    barkStyle: 'ridged',
+    moss: 1,
+    niche: { veg: [3.6, 6], moisture: [0.2, 1], light: [0, 1], altitude: [-50, 300], slopeMax: 1, hosts: ['ground'], weight: 0.1 },
+    barrier: { fill: 0.7, cuttable: false, slow: 0.3, breakMass: 4 },
     sway: 0,
     shedsLeaves: false,
   },

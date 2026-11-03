@@ -151,10 +151,13 @@ const POR_MAX: f32 = 0.6;
 fn tRand(p: vec3<i32>) -> f32 { return f32(pcg(bitcast<u32>(p.x) ^ pcg(bitcast<u32>(p.y) ^ pcg(bitcast<u32>(p.z)))) >> 8u) / 16777216.0; }
 
 struct TTree { crown: f32, shade: f32, alb: vec3<f32>, n: vec3<f32> };
-/** world units a tree's lattice step, and the share of its squares with one (far.wgsl G_TREE_STEP, G_TREE_P) */
-const T_TREE_STEP: f32 = 3.0;
-const T_TREE_P: f32 = 0.34;
-/** (far.wgsl gTrees, unlit) the trees over ground point w (world units), v the plants there, px world units a texel */
+/**
+ * The trees over ground point w (world units), v the plants there, px world units a texel. (Round 125, forest: the
+ * window's own trees, painted — vegplan.wgsl's slot grid walked block by block, each slot's candidate a tree where the
+ * plants are a wood's, its species by the same hashes the window draws by (the birch and elder woods), its crown the
+ * flora library's size — so the trees past the window are where and as big as the window's, and walking out of the
+ * window doesn't change the wood. Its height from the plants at w, not its own column's: an approximation.)
+ */
 fn tileTrees(w: vec2<f32>, v: f32, px: f32) -> TTree {
   var t = TTree(0.0, 0.0, vec3<f32>(0.0), vec3<f32>(0.0, 0.0, 1.0));
   let dens = smoothstep(3.3, 3.8, v);
@@ -164,23 +167,44 @@ fn tileTrees(w: vec2<f32>, v: f32, px: f32) -> TTree {
   let cotE = eh / max(CAM.eye.z, 0.05);
   let sun = sunDir();
   let sh = -sun.xy / max(sun.z, 0.25);
-  let b0 = vec2<i32>(floor(w / T_TREE_STEP));
+  // (the blocks whose crowns can reach w: toward the eye as far as the tallest crown is lifted up the screen)
+  let wc = cellAt(w);
+  let b0 = vec2<i32>(floorDiv(wc.x, SLOT_W), floorDiv(wc.y, SLOT_H));
   let sx = select(1, -1, away.x < 0.0);
   let sy = select(1, -1, away.y < 0.0);
-  for (var j = -3; j <= 1; j++) {
-    for (var i = -3; i <= 1; i++) {
-      let bq = b0 + vec2<i32>(i * sx, j * sy);
-      let r0 = tRand(vec3<i32>(bq, 4242));
-      if (r0 >= T_TREE_P * dens) { continue; }
-      let r1 = tRand(vec3<i32>(bq, 321));
-      let r2 = tRand(vec3<i32>(bq, 7));
-      let foot = (vec2<f32>(bq) + vec2<f32>(0.2 + 0.6 * r1, 0.2 + 0.6 * r2)) * T_TREE_STEP;
-      let conifer = r1 < 0.42;
-      let H = select(3.0 + 3.0 * r2, 3.5 + 4.0 * r2, conifer);
-      let Rr = select(1.3 + 0.7 * r1, 0.9 + 0.5 * r2, conifer);
+  let org = vec2<i32>(i32(G.org.z), i32(G.org.w));
+  for (var j = -6; j <= 1; j++) {
+    for (var i = -6; i <= 1; i++) {
+      let bb = b0 + vec2<i32>(i * sx, j * sy);
+      // (cheap first: a block whose trees can't reach w — off the line from w toward the eye, past the crowns' reach)
+      let bc = (vec2<f32>(bb) + 0.5) * vec2<f32>(f32(SLOT_W), f32(SLOT_H) * ROW_H);
+      let rel = bc - w;
+      let along = dot(rel, -away);
+      let off = abs(dot(rel, vec2<f32>(-away.y, away.x)));
+      if (off > 17.0 || along < -17.0 || along > 34.0 * cotE + 17.0) { continue; }
+      let s = blockSlot(bb);
+      if (s.z == 0) { continue; }
+      // (the window's hashes take window columns: the candidate's, the window's origin taken off)
+      let c = vec2<u32>(bitcast<u32>(s.x - org.x), bitcast<u32>(s.y - org.y));
+      let hs = rand3(c.x, c.y, 321u);
+      let hv = rand3(c.x, c.y, 7u);
+      let r0 = rand3(c.x, c.y, 4243u);
+      let inBirch = rand3(c.x, c.y, 333u) < birchWood(c.x, c.y) * 0.85;
+      let elder = s.z == 2 && v >= ELDER_VEG;
+      let conifer = !elder && hs < 0.42 && !inBirch;
+      let birch = !elder && !conifer && (hs < 0.58 || inBirch);
+      var H = 9.0 + 6.0 * hv;
+      var Rr = 3.6 + 1.4 * hv;
+      var leaf = vec3<f32>(0.2, 0.36, 0.13);
+      if (elder) { H = 26.0 + 6.0 * hv; Rr = 9.0 + 3.0 * hv; leaf = vec3<f32>(0.66, 0.13, 0.07); }
+      else if (conifer) { H = 13.0 + 7.0 * hv; Rr = 2.8 + 0.8 * hv; leaf = vec3<f32>(0.13, 0.27, 0.13); }
+      else if (birch) { H = 18.0 + 6.0 * hv; Rr = 4.2 + 1.4 * hv; leaf = vec3<f32>(0.42, 0.56, 0.2); }
+      H *= 0.8 + 0.2 * dens;
+      let foot = cellPos(s.xy);
       let ds = length(w - (foot + sh * H * 0.8)) / (Rr * 1.1);
-      t.shade = max(t.shade, 1.0 - smoothstep(0.75, 1.0, ds));
-      let cc = foot + away * H * cotE;
+      t.shade = max(t.shade, (1.0 - smoothstep(0.75, 1.0, ds)) * dens);
+      // (the crown's middle a little under the top)
+      let cc = foot + away * H * 0.82 * cotE;
       let q = (w - cc) / Rr;
       var dd = length(q);
       if (conifer) {
@@ -188,12 +212,13 @@ fn tileTrees(w: vec2<f32>, v: f32, px: f32) -> TTree {
         dd = length(q - away * up * 0.55);
       }
       let edge = clamp(px / Rr, 0.05, 0.5);
-      let cov = 1.0 - smoothstep(1.0 - edge, 1.0, dd);
+      let cov = (1.0 - smoothstep(1.0 - edge, 1.0, dd)) * step(r0, dens * 1.2);
       if (cov > t.crown) {
         t.crown = cov;
         t.n = normalize(vec3<f32>(q * 0.8, sqrt(max(1.0 - min(dot(q, q), 1.0), 0.0)) + 0.25));
-        var leaf = select(vec3<f32>(0.2, 0.36, 0.13), vec3<f32>(0.13, 0.27, 0.13), conifer) * (0.85 + 0.3 * r0 / T_TREE_P);
-        if (!conifer) { leaf = seasonGrass(leaf, r2) * 0.5 + leaf * 0.5; }
+        leaf = leaf * (0.85 + 0.3 * r0);
+        if (elder) { leaf = mix(leaf, vec3<f32>(0.93, 0.5, 0.13) * (0.85 + 0.3 * r0), seasonColour() * 0.7); }
+        else if (!conifer) { leaf = seasonGrass(leaf, hv) * 0.5 + leaf * 0.5; }
         t.alb = toLinear(leaf);
       }
     }

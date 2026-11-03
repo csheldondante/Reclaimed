@@ -17171,3 +17171,96 @@ places p50 9.9 / 9.9, p95 13.0 / 14.3, GPU 13.66 / 14.70. The same within the ru
 
 Shots and GIFs: C:/Projects/shots88/presentation/ (forest-3-scale-*.png, forest-scale-*.gif, canyon-*, cliff-*,
 throne-*; canyon-steer.json).
+## 2026-11-02 — round 125 (`forest`): the flora improvement epic, first pass — trees composed, the elder woods, under the canopy (FLO30-FLO37)
+
+The user (DECISIONS round 124, verbatim there): forests "impressive like the cliffs ... seas of leaves", trees bigger and
+spaced apart in the main map, and under the canopy "another world": the trees in the way dithered, stencilled leaf
+shadows, leaves falling, crepuscular rays, litter blowing; the reference docs/design/ref/forest-floor.png. Then, on the
+first shots (via main): "once it fades you don't need to render the canopy at all", "Just the s shadows and the
+trunks"; the leaves, shafts, mist and litter "belong in the shot", and the wood should vary (dark groves, glades,
+streams). Main's review of the first shots: no trunks in frame, haze washing everything into one value, no visible
+dapple or rays, the camera too close, the hero lost.
+
+**Why each piece.**
+- *Placement* (flora/spacing.ts, vegplan.wgsl): the old rule (any wooded column whose hash was under 0.045) is a Poisson
+  scatter — clumps two cells apart beside holes; under the canopy busy, from above thin. A jittered grid of slots in
+  world columns (blue noise, ~7 cells apart, never under ~3) composes: even stands, open floor between. Node tests on
+  the spacing (src/flora/spacing.test.ts), the CPU port and the kernel the same on Dawn (flora-plan.test.ts, now also
+  over a window inside an elder wood).
+- *Scale*: the birch 11-17 → 17-25 (trunk ~0.9 across, the lich's width: the user's "0.25-1 trunk width" for the PC),
+  broadleaf 9-15, conifer 12-20, and the elder 24-32 with a ~3-cell bole (the lich 0.4 of it, a villager a quarter).
+- *The elder*: the reference's tree as parameters (species.ts: a massive bole, three or four great limbs, small copper
+  clusters; buttress roots as fins + sprawl, generate.ts flareSegments; ridged pale bark, moss on the foot's up faces in
+  floralook.wgsl). Iterated on a software render of the meshes (Node, pngjs) before the browser: shots88/forest/mesh-*.
+  Triangles 2.2-4.3k (the elder's budget the area's: one to four of the other trees' slots; flora.test.ts).
+- *The atlas's woods*: the first lab runs found no forest — the atlas's woods were small patches (in the best tile near
+  the spawn ~2 % of a temperate window's columns at succession ≥ 3.9; 35 trees within 150 cells). woods.wgsl's
+  elderWoods lays old woods (4.2) through the elder woods' noise on land that grows plants. Vegetation only:
+  test/gpu/seed1-unchanged.test.ts builds seed 1 on Dawn and checks regions, the spawn, sites and roads deep-equal
+  data/atlas/seed1.json (passes: no cache regenerated). Town layouts do read the woods (settle/plan.ts dWood).
+- *Under the canopy* (forest/, understory.wgsl, understory_draw.wgsl; ARCHITECTURE "The forest and the understory"): one
+  look from the hero and the flora plan (no GPU readback), eased by the canopy's cover over a disc (no flicker past a
+  trunk: a Node test). The canopy left out of the eye's draw (dithered in, then not drawn: the fill saved; the shadow
+  pass keeps it, so the floor's dapple stays), a keyhole through the trunks in front of the hero only (they frame the
+  scene), the sun through a stencil of the canopy's holes as pinhole ellipses in three steps, shafts down the stencil's
+  big holes, falling pixel leaves, litter slid along by the integrated wind (G.env) and hopping in strong gusts, groves
+  and glades by slow noise, mist only far behind, a light pool round the hero so its figure reads. The dither mask is
+  tested on Dawn with the shipped function, Camera struct and the camera's own uniform write (test/gpu/understory.test.ts).
+- *Wind on foliage* (the user's matrix): FWIND as a pipeline override (`?fwind=`): static / sway (as it was: the grass's
+  1B bending) / 1A ripple / 1C lattice (eight control points of a traveling gust field, the foot anchored) / both.
+- *Past the window*: the tiles' painted crowns now walk the same slot blocks (tiles.wgsl), so a wood keeps its trees as
+  they leave the window; the far rings and the atlas map's bake still have the old lattice (FLO36).
+
+**Found on the way.** The lab's stand was kept in window coordinates and not moved when the window slid (the first
+parked shots stood the lich in a lake): ForestLab.shift on the core's onShift. The scratchpad is shared with other
+agents: a file named arch.md was overwritten by another track's between writing and reading it (caught in the diff;
+this branch's scratch files now live in scratchpad/forest/).
+
+## 2026-11-02 — round 125 (`forest`): under the canopy, the reviews' iterations (FLO32, FLO33, FLO38, FLO39)
+
+The user, verbatim (through main), on the first under-canopy shots: "I think once it fades you don't need to render the
+canopy at all"; "Just the s shadows and the trunks"; "No I think those belong in the shot. They don't obscure visibility
+but make it feel like you are under the leaves and we can make darker areas and streams and other effects that will
+feel varied and interesting"; "the screenshot you shared actually shows trees and roots but they are huge and the zoom is
+actually too big now (I want more vertical trunk) it may be better in portrait though"; "I think we still want to be at
+the foot of the trees and to cut away the trunks in front of the PC so they look like stumps that fade".
+
+**What changed, and why.**
+- *The canopy isn't drawn under it* (meshinst.wgsl): leaves and limbs (wood over the crown's base, off the bole's axis:
+  FLORA_CROWN) dither out while the weight rises and are culled at the vertex once it's whole — over ~100 cells, since a
+  crown 50 cells in front still lifts into the frame (lab5's orange screen-door at the bottom). The shadow pass keeps
+  them: the floor's dapple is their shade. The boles darken over their last cells into it (no pale caps).
+- *Stumps in front*: every tree between the eye and the hero across the screen's width is cut clean at the hero's knee
+  (1.1 cells over its foot), its top darkening into the cut — no stipple (main: "nothing should be stippled"); the
+  trunks behind and beside it keep their height. The keyhole is gone.
+- *The camera*: under the canopy the zoom is ×0.7 the lich's (more vertical trunk). Portrait and landscape both shot.
+- *Light*: the stencil now shades as well as lets through (the shadow map's crown shade → flecks in deep shade; gaps
+  stay lit), a pool and a warm rim on the hero (underRim: its figure's edges glow against the dark floor), groves and
+  glades by slow noise, the mist only far behind and thin (lab4's haze washed everything into one orange-pink value).
+- *Shafts*: down the stencil's big holes onto the big flecks; soft across, fading down their length, faint, eight
+  dithered steps added in the target's own space (toSrgb lifted a faint beam into a solid bar: lab5).
+- *The elder*: warm pale streaked bark, moss on every up-facing root, buttresses hugging the foot (the sprawl read as
+  logs), small leaf clusters (the first were slabs at the close zoom).
+- *The floor*: no thicket and no ferns in the elder woods (a fern hid the lich in lab6), mossy boulders; seed fluff
+  smaller, warm and round (read as snow).
+
+Shots: C:/Projects/shots88/forest/lab3..lab6 (portrait 412x915), lab5L, lab6L (landscape 915x412), mesh-* (the meshes'
+software render).
+- *lab7's review* (main): landscape read; in portrait three trunks in front stood whole — the stumps' "in front" is now
+  the foot below the hero on screen (its height counted), not a band on the ground. The floor came out evenly lit (the
+  crowns' own shadow at a low sun falls far off), so the stencil is the floor's light wherever the canopy is; only a
+  glade lets the open sun in; bigger flecks and shafts. The pale-green blades round the trunks were tall grass: a tree's
+  own column under the woods fell through vegprep's floraSmall to the meadows' rule (flora/placement.ts never did) —
+  fixed, the GPU now as the CPU.
+- *lab8* (shots88/forest/lab8*, over8-z7/z14, *-vs-ref.png): the floor dark with lit patches, shafts showing, stumps low
+  in front in both orientations; the overworld at zoom 7-14 is a red-orange sea of crowns over pale boles. The green
+  "blades" left at the trunks' feet were the roots' moss on every face: moss now on their tops in patches. (A `patch`
+  variable broke WGSL — reserved word; caught by the next page load, fixed.)
+
+**Measured (incomplete).** scripts/frameparked.mjs, parked at the elder wood (at 13728,5216) with the lich, phone proxy
+(412x915 dpr 2.6, q=low), every system in play: places 8.33-8.44 ms mean, forest 8.33-8.42, forest `?under=0`
+8.33-8.38 — all at the headless page's 120 Hz cap, so the forest's cost is under the cap here, not resolved. The
+uncapped attempt (--disable-gpu-vsync / --disable-frame-rate-limit in the runner's daemon page) gave rAF at ~0.8 ms and
+the profiler's GPU totals at ~200 ms a frame: unusable; a forestcost run overlapping another page's gave 25-35 ms means
+(the GPU shared). The per-treatment A/B pairs and the wind modes' pairs (scripts/forestcost.mjs) still need a clean,
+uncapped timing run, and the phone itself (FLO30's rule).

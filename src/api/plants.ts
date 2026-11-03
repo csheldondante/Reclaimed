@@ -6,6 +6,7 @@
 import type { WorldCore } from '../scenes/world-core';
 import { EventKind } from '../sim/globals';
 import { cellAt, cellPos } from '../world/lattice';
+import { ELDER_VEG, slotAt } from '../flora/spacing';
 import type { Mirror } from './mirror';
 import type { Terrain } from './terrain';
 
@@ -78,7 +79,9 @@ function logsOf(trunk: number, crown: number): number {
 export function planTree(cx: number, cy: number, v: number, w: number, h: number, org: [number, number]): Tree | null {
   ORG = org;
   const edge = cx < 2 || cy < 2 || cx + 3 >= w || cy + 3 >= h;
-  if (!(v >= 3.6) || edge || rand3(cx, cy, 4242) >= 0.045) return null;
+  // (round 125, forest: a jittered grid of slots in world columns — flora/spacing.ts — not a hash under 0.045 a column)
+  const slot = slotAt(cx + org[0], cy + org[1]);
+  if (!(v >= 3.6) || edge || slot === 'none') return null;
   const hs = rand3(cx, cy, 321);
   const hv = rand3(cx, cy, 7);
   const age = Math.min(Math.max(v - 3.6, 0), 1.4);
@@ -86,23 +89,28 @@ export function planTree(cx: number, cy: number, v: number, w: number, h: number
   let trunk: number;
   let crown: number;
   const inBirch = rand3(cx, cy, 333) < birchWood(cx, cy) * 0.85;
-  if (v > 4.7 && hs < 0.12 && !inBirch) {
+  // (round 125, forest: bigger trees, as drawn — the flora library's heights: birch 17-25, broadleaf 9-15, conifer
+  // 12-20, the elder 24-32; trunk the bare stem to the crown, crown the rest)
+  if (slot === 'elder' && v >= ELDER_VEG) {
     species = 'giant';
-    trunk = 5 + Math.floor(hv * 4);
-    crown = 3 + Math.floor(hv * 2);
+    trunk = 10 + Math.floor(hv * 4);
+    crown = 14 + Math.floor(hv * 4);
+  } else if (v > 4.7 && hs < 0.12 && !inBirch) {
+    species = 'giant';
+    trunk = 9 + Math.floor(hv * 4);
+    crown = 12 + Math.floor(hv * 4);
   } else if (hs < 0.42 && !inBirch) {
     species = 'conifer';
-    trunk = 1 + Math.floor(hv * 2);
-    crown = 4 + Math.floor(age * 2) + Math.floor(hv * 3);
+    trunk = 2 + Math.floor(hv * 2);
+    crown = 9 + Math.floor(age * 3) + Math.floor(hv * 4);
   } else if (hs < 0.58 || inBirch) {
     species = 'birch';
-    // (round 117, flora: towering birches — vegplan.wgsl's heights, kept identical)
-    trunk = 8 + Math.floor(age * 2) + Math.floor(hv * 2);
-    crown = 5;
+    trunk = 12 + Math.floor(age * 3) + Math.floor(hv * 3);
+    crown = 7;
   } else {
     species = 'broadleaf';
-    trunk = 2 + Math.floor(age * 2.5) + Math.floor(hv * 3);
-    crown = 2 + Math.floor(hv * 1.99) + (v > 4.5 ? 1 : 0);
+    trunk = 4 + Math.floor(age * 3) + Math.floor(hv * 3);
+    crown = 5 + Math.floor(hv * 2.99) + (v > 4.5 ? 1 : 0);
   }
   const [x, y] = cellPos(cx, cy);
   return { cx, cy, x, y, species, trunk, crown, logs: logsOf(trunk, crown) };

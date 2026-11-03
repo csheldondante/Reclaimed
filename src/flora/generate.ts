@@ -6,7 +6,8 @@ import { expand, interpret, norm, type V3 } from './lsystem';
 import { buildPlant, MeshBuilder, PART, type FloraMesh } from './mesh';
 import { growRoots, rootSegments } from './roots';
 import { rng, hashSeed } from './rng';
-import { SPECIES, type SpeciesDef, type SpeciesId } from './species';
+import { SPECIES, type Flare, type SpeciesDef, type SpeciesId } from './species';
+import type { Segment } from './lsystem';
 
 /** Scale a mesh in place so its height is h (about its foot). */
 function scaleTo(m: FloraMesh, h: number): FloraMesh {
@@ -65,6 +66,8 @@ export function generate(id: SpeciesId, seed: number, opts: { growth?: number; p
       return flower(h, seed);
     case 'moss':
       return scaleTo(moss(h, seed), h);
+    case 'rock':
+      return scaleTo(boulder(h, seed), h);
   }
 }
 
@@ -78,7 +81,44 @@ function woody(sp: SpeciesDef, seed: number, h: number, px?: number, withRoots =
   const minLeaf = px ? 1.5 / px / k : 0;
   // the root automaton's surface roots, in the skeleton's units (the plant is scaled after)
   const roots = sp.roots && withRoots ? rootSegments(growRoots(sp.roots, hashSeed(seed, 3)), sp.roots.res * 1.5, sp.turtle.radius * 0.8) : [];
+  // (round 125, forest: the elder's buttresses — kept at every level but the far one: they are its silhouette's foot)
+  if (sp.flare) roots.push(...flareSegments(sp.flare, sp.turtle.radius, hashSeed(seed, 5), withRoots));
   return buildPlant(sk, sp.leaf, hashSeed(seed, 4), { roots, sides: sp.form === 'tree' ? 6 : 4, minTwig: sp.form === 'tree' ? 0.035 : 0, minRadius: sp.form === 'tree' ? minRadius : 0, minLeaf });
+}
+
+/**
+ * Buttress roots (round 125, forest; the reference's "flaring mossy roots"): `count` fins round the trunk, each a thick
+ * tapered tube from `rise` radii up the trunk out and down to the ground `reach` radii away, then a sprawl along the
+ * ground, forking once, thinning (in the skeleton's units; r the trunk's radius). The coarse level keeps the fins and
+ * drops the sprawl's forks.
+ */
+export function flareSegments(f: Flare, r: number, seed: number, detail = true): Segment[] {
+  const rnd = rng(seed ^ 0xf1a4e);
+  const out: Segment[] = [];
+  const t0 = rnd() * Math.PI * 2;
+  for (let k = 0; k < f.count; k++) {
+    const a = t0 + ((k + (rnd() - 0.5) * 0.5) / f.count) * Math.PI * 2;
+    const reach = f.reach * (0.75 + 0.5 * rnd());
+    const c = Math.cos(a);
+    const sn = Math.sin(a);
+    const rise = f.rise * (0.8 + 0.4 * rnd());
+    // the fin: from inside the trunk (so it grows out of it), out and down to the ground
+    const top: V3 = [c * r * 0.35, sn * r * 0.35, r * rise];
+    const knee: V3 = [c * r * reach * 0.55, sn * r * reach * 0.55, r * rise * 0.3];
+    const foot: V3 = [c * r * reach, sn * r * reach, r * 0.08];
+    out.push({ a: top, b: knee, r0: r * 0.62, r1: r * 0.4, depth: 0 });
+    out.push({ a: knee, b: foot, r0: r * 0.4, r1: r * 0.24, depth: 0 });
+    // the sprawl: on along the ground, bending, thinning (a fork off it)
+    const b = a + (rnd() - 0.5) * 0.7;
+    const end: V3 = [foot[0] + Math.cos(b) * r * f.sprawl, foot[1] + Math.sin(b) * r * f.sprawl, r * 0.02];
+    out.push({ a: foot, b: end, r0: r * 0.24, r1: r * 0.1, depth: 1 });
+    if (detail) {
+      const fb = b + (rnd() < 0.5 ? -1 : 1) * (0.6 + 0.5 * rnd());
+      const mid: V3 = [(foot[0] + end[0]) / 2, (foot[1] + end[1]) / 2, r * 0.05];
+      out.push({ a: mid, b: [mid[0] + Math.cos(fb) * r * f.sprawl * 0.6, mid[1] + Math.sin(fb) * r * f.sprawl * 0.6, r * 0.02], r0: r * 0.14, r1: r * 0.06, depth: 2 });
+    }
+  }
+  return out;
 }
 
 /**
@@ -204,6 +244,21 @@ function flower(h: number, seed: number): FloraMesh {
   const m = mb.done();
   m.height = h;
   return m;
+}
+
+/** (round 125) A boulder: two or three faceted lumps of stone, flattened, leaning on each other (wood part: the bark's
+ *  ridged stone colours, moss on the up faces by the species' moss — floralook.wgsl). No sway. */
+function boulder(h: number, seed: number): FloraMesh {
+  const r = rng(hashSeed(seed, 15));
+  const mb = new MeshBuilder(() => 0);
+  const n = 2 + Math.floor(r() * 2);
+  for (let k = 0; k < n; k++) {
+    const a = r() * Math.PI * 2;
+    const d = k === 0 ? 0 : 0.5 + 0.4 * r();
+    const s = (k === 0 ? 1 : 0.55 + 0.3 * r()) * h;
+    mb.blob([Math.cos(a) * d * h, Math.sin(a) * d * h, s * 0.42], [s * (0.8 + 0.4 * r()), s * (0.7 + 0.4 * r()), s * 0.5], PART.wood, r, 0);
+  }
+  return mb.done();
 }
 
 /** Moss: a few low cushions on a patch about a cell across. */
