@@ -197,12 +197,22 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   // world-size square in screen space: viewport.z = px per world unit (the free camera's at
   // distance 1: divided by the depth, clip w — 1 in the fixed view)
   let cw = max(center.w, 1e-4);
-  let px = max(size * CAM.viewport.z / cw, select(1.0, 0.0, soft > 0.5));
+  var px = max(size * CAM.viewport.z / cw, select(1.0, 0.0, soft > 0.5));
+  // (round 124, PRE6) a falling leaf seen close (over 3.5 px half-size: the close zoom) stays a few pixels, a tumbling
+  // diamond turning as it falls, not a flat 15 px square; at the overworld's zooms it is drawn as before
+  let bigLeaf = kind == 3u && px > 3.5;
+  if (bigLeaf) { px = 3.5; }
   var shape = vec2<f32>(1.0);
+  if (bigLeaf) { shape = vec2<f32>(1.0, 0.3 + 0.7 * abs(sin(G.time * 4.0 + sr * 40.0))); }
   if (kind == 13u) { shape = vec2<f32>(1.7, 0.9); }
   if (kind == 14u) { shape = vec2<f32>(1.3, 1.0); }
   if (kind == 10u) { shape = vec2<f32>(1.6, 0.8); }
   var ndc = c * shape * px * 2.0 / CAM.viewport.xy;
+  if (bigLeaf) {
+    let ang = G.time * 1.7 + sr2 * 6.28;
+    let q = c * shape;
+    ndc = vec2<f32>(q.x * cos(ang) - q.y * sin(ang), q.x * sin(ang) + q.y * cos(ang)) * px * 2.0 / CAM.viewport.xy;
+  }
   // (spray: stretched along where it goes on screen - the streak it draws in ~1/40 s)
   if (kind == 24u) {
     let ahead = CAM.viewProj * vec4<f32>(P.p.xyz + P.v.xyz * 0.012, 1.0);
@@ -221,7 +231,7 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   o.uv = c;
   o.soft = soft;
   let mote = kind == 1u || kind == 21u || kind == 22u || kind == 23u || kind == 24u;
-  o.shapeInfo = vec2<f32>(select(select(0.0, 2.0, mote), 1.0, kind == 10u), select(sin(G.time * 12.0 + sr * 60.0), 0.35, perched));
+  o.shapeInfo = vec2<f32>(select(select(select(0.0, 2.0, mote), 1.0, kind == 10u), 3.0, bigLeaf), select(sin(G.time * 12.0 + sr * 60.0), 0.35, perched));
   return o;
 }
 
@@ -234,7 +244,10 @@ struct FOut {
 fn fs(in: VOut) -> FOut {
   var o: FOut;
   var a = in.col.a;
-  if (in.shapeInfo.x > 1.5) {
+  if (in.shapeInfo.x > 2.5) {
+    // (round 124, PRE6) a leaf close up: a diamond
+    if (abs(in.uv.x) + abs(in.uv.y) > 1.0) { discard; }
+  } else if (in.shapeInfo.x > 1.5) {
     // a round mote: dense centre, soft rim
     a *= smoothstep(1.0, 0.3, length(in.uv));
     if (a < 0.01) { discard; }

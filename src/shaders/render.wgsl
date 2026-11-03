@@ -25,6 +25,18 @@ struct Camera {
   // (round 120, the user's second try) z the bowl: the cut rises k cells a cell² away from the hero (h = h0 + k d²),
   // w flags: 1 the near side only (nothing beyond the hero from the eye is cut), 2 real occluders only
   sliceSoft: vec4<f32>,
+  // (round 124, presentation: PRE1 — render/camera.ts present; all 0: none) the region presentation's look:
+  // xy the hero, z the floor it's on, w flags (1 the canopy dithered round the hero, 2 the trees in front cut down,
+  // 4 the upper canopy stippled, 8 the understory light)
+  present: vec4<f32>,
+  // x the hole's radius (world units on screen), y the cut's height over the floor, z the stipple's share left out,
+  // w the treatment's weight 0..1 (the transition)
+  presentB: vec4<f32>,
+  // x the transition's form (0 an iris from the hero, 1 an even dissolve), y the understory light 0..1, z its reach
+  // (cells round the hero), w the hero's z
+  presentC: vec4<f32>,
+  // (flag 16) x the birches' scale round their foot near the hero, y the share of them left out; zw spare
+  presentD: vec4<f32>,
 };
 
 /** 4 × 4 ordered dither, 0..1 (a pixel's threshold) */
@@ -161,6 +173,81 @@ fn inCut(p: vec3<f32>) -> bool { return CAM.cut.w > 0.5 || seeReach(p) > 0.5; }
 fn cutAway(p: vec3<f32>, px: vec2<f32>) -> bool {
   let b = bayer4(px);
   return sliceReach(p) > b || seeReach(p) > b;
+}
+
+// ---- (round 124, presentation: PRE1) the region presentation's canopy treatments and understory light ------------
+// The user's handoff (docs/design/REGION_PRESENTATION.md): "Rendering a canopy or wall as absent/transparent must not
+// remove it from the world simulation, wind, collision, or shadow logic" — these only leave fragments out of the eye's
+// draw (the sun's camera has no present look: its shadow map keeps every leaf).
+
+/**
+ * How far a tree's point p is into the presentation's canopy treatments (0 kept .. 1 left out; compared with the
+ * screen's 4 x 4 dither, so it thins out stably): `base` the tree's foot, `leaf` whether p is foliage.
+ */
+fn presentReach(p: vec3<f32>, base: vec3<f32>, leaf: bool) -> f32 {
+  let flags = u32(CAM.present.w + 0.5);
+  if ((flags & 7u) == 0u) { return 0.0; }
+  let P = CAM.present;
+  let B = CAM.presentB;
+  let C = CAM.presentC;
+  let fl = P.z;
+  let R = max(B.x, 0.5);
+  let hero = vec3<f32>(P.xy, C.w + 1.2);
+  let e = toEye(p);
+  let v = p - hero;
+  let along = dot(v, e);
+  // (its distance from the hero on screen, world units)
+  let d = length(v - along * e);
+  var k = 0.0;
+  // the canopy round the hero dithered out: over head height, near the hero on screen, not far behind it
+  if ((flags & 1u) != 0u) {
+    // (over the tree's own trunk height, not the hero's: on a slope the crowns downhill in front are lower than the hero)
+    k = max(k, (1.0 - smoothstep(R * 0.55, R, d)) * smoothstep(1.6, 3.0, p.z - base.z) * smoothstep(-4.0, 0.0, along));
+  }
+  // the trees standing in front of the hero (their foot nearer the eye over the ground, within reach) cut down to the
+  // cut's height, the cut's edge thinned over a cell
+  if ((flags & 2u) != 0u) {
+    let ex = normalize(e.xy + vec2<f32>(1e-5, 0.0));
+    let bv = base.xy - hero.xy;
+    let front = smoothstep(-1.5, 0.5, dot(bv, ex));
+    let near = 1.0 - smoothstep(R * 1.0, R * 1.4, length(bv));
+    let cz = min(fl, base.z) + B.y;
+    k = max(k, front * near * smoothstep(cz - 0.6, cz + 0.6, p.z));
+  }
+  // the upper canopy stippled: foliage over the trunks' height, a wider reach round the hero, a fixed share left out
+  if ((flags & 4u) != 0u && leaf) {
+    k = max(k, B.z * smoothstep(2.5, 4.5, p.z - base.z) * (1.0 - smoothstep(R * 1.8, R * 2.6, d)));
+  }
+  // (with the stipple, a small keyhole: what stands right in front of the hero — trunks, branches — dithered out round it, so
+  // the hero always reads; the main's review: in stipple alone the lich was lost behind the trunks)
+  if ((flags & 4u) != 0u) {
+    k = max(k, (1.0 - smoothstep(R * 0.22, R * 0.38, d)) * smoothstep(0.5, 1.5, along) * smoothstep(0.3, 0.8, p.z - base.z));
+  }
+  // the transition: an iris opening from the hero outward (form 0) or an even dissolve (form 1), by the weight
+  let w = clamp(B.w, 0.0, 1.0);
+  let reach = R * 3.0 * w;
+  let iris = 1.0 - smoothstep(reach - R * 0.5, reach, d);
+  return k * mix(iris * smoothstep(0.0, 0.15, w), w, clamp(C.x, 0.0, 1.0));
+}
+
+/**
+ * (round 124, PRE1) The understory light round the hero: under the canopy's height the sun comes through only in
+ * flecks, drifting with the wind (a stand-in for the canopy's own shade: the shadow map is too coarse at this zoom to
+ * dapple), the ambient a little deeper; the canopy itself, over it, lit as it was. x the direct light's multiplier,
+ * y the ambient's. (1, 1): none.
+ */
+fn presentLight(wpos: vec3<f32>) -> vec2<f32> {
+  let flags = u32(CAM.present.w + 0.5);
+  if ((flags & 8u) == 0u) { return vec2<f32>(1.0, 1.0); }
+  let C = CAM.presentC;
+  let reach = max(C.z, 1.0);
+  let k = C.y * clamp(CAM.presentB.w, 0.0, 1.0) * (1.0 - smoothstep(reach * 0.7, reach, length(wpos.xy - CAM.present.xy)));
+  if (k <= 0.0) { return vec2<f32>(1.0, 1.0); }
+  let under = k * (1.0 - smoothstep(CAM.present.z + 3.0, CAM.present.z + 7.0, wpos.z));
+  // (world-fixed and blown along by the prevailing wind; two scales: patches of flecks, flecks in them)
+  let q = wpos.xy + G.org.xy - G.env.xy * 0.35 + vec2<f32>(wpos.z * 0.3, wpos.z * 0.2);
+  let fleck = smoothstep(0.58, 0.68, vnoise(q * 1.5 + vec2<f32>(G.time * 0.08, 0.0))) * smoothstep(0.3, 0.6, vnoise(q * 0.22 + 7.3));
+  return vec2<f32>(mix(1.0, 0.22 + 1.25 * fleck, under), 1.0 - 0.3 * under);
 }
 
 /** toward the eye from p: one way for the fixed (orthographic) view, from where it is for the free one */
@@ -846,7 +933,9 @@ fn lighting(wpos: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
   // roofs, the heightfield march not all)
   let cov = underCover(wpos, nrm);
   let shade = mix(1.0, 0.1, cov);
-  return (ambient + fill) * shade + flash + firelight + sunCol * ndl * lit * (1.0 - cloud * 0.9) * mix(1.0, 0.2, cov);
+  // (round 124, PRE1: the region presentation's understory light — (0, 1) unless a presentation asks for it)
+  let pl = presentLight(wpos);
+  return (ambient + fill) * shade * pl.y + flash + firelight + sunCol * ndl * lit * pl.x * (1.0 - cloud * 0.9) * mix(1.0, 0.2, cov);
 }
 
 // the player's reach on a story level (game/reach.ts): 1 inside, 0.5 at

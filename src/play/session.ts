@@ -139,6 +139,11 @@ export class PlaySession {
     return this.rig.chase.chase;
   }
 
+  /** (round 124, PRE1: a presentation toggle) the hero drawn at this size round its feet; its body, reach and framing as they are */
+  set drawScale(s: number) {
+    this.draw.scale = s;
+  }
+
   /** (round 121) the camera modes now (the chase always) */
   setCam(ids: readonly CamModeId[]): void {
     this.rig.use(ids);
@@ -295,7 +300,8 @@ export class PlaySession {
     frame.view.target[1] += this.frameOff[1];
     const ids = this.rig.ids;
     const had = (m: CamModeId) => ids.includes(m) || this.camWas.includes(m);
-    applyFrame(cam, frame, { turn: had('rotate'), tilt: had('tilt') || had('auto') || had('autocity'), cut: had('cutaway') || had('cutfade') || had('edge') || had('dither') });
+    // (round 124, PRE1: the presentation mode may turn and tilt the view)
+    applyFrame(cam, frame, { turn: had('rotate') || had('present'), tilt: had('tilt') || had('auto') || had('autocity') || had('present'), cut: had('cutaway') || had('cutfade') || had('edge') || had('dither') });
     this.camWas = ids;
     this.signals?.update(frame.signals, cam, HUD_MARGIN);
     // (a jolt: the view knocked about by the hero's shake, a few cells at most, gone in a quarter second)

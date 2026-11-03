@@ -6,6 +6,8 @@
 // position (render.wgsl Camera.pos), so what's drawn toward the eye is drawn
 // toward where the eye is, not one fixed way.
 
+import type { PresentLook } from '../api/contracts/presentation';
+
 export type Mat4 = Float32Array;
 
 export const CAMERA_BYTES = 96;
@@ -13,8 +15,9 @@ export const CAMERA_BYTES = 96;
 export const CAMERA_POS_OFFSET = CAMERA_BYTES + 64;
 /** what's cut from the view after it (render.wgsl Camera.cut, see, boxes; round 83) */
 export const CAMERA_CUT_OFFSET = CAMERA_POS_OFFSET + 16;
-/** cut (a vec4), see (4 vec4s), boxes (4 boxes, 2 vec4s each), the slice's shape (a vec4: round 121) */
-export const CAMERA_CUT_BYTES = 16 + 4 * 16 + 8 * 16 + 16 + 16;
+/** cut (a vec4), see (4 vec4s), boxes (4 boxes, 2 vec4s each), the slice's shape (a vec4: round 121), its softness (a vec4:
+ *  round 120), the region presentation's look (4 vec4s: round 124, PRE1 — render.wgsl Camera.present*) */
+export const CAMERA_CUT_BYTES = 16 + 4 * 16 + 8 * 16 + 16 + 16 + 4 * 16;
 
 /** What's cut from the view (api/cutaway.ts: Slice, Dither) — the sun's camera cuts nothing. */
 export interface Cut {
@@ -110,6 +113,11 @@ export class Camera {
   fly: Fly | null = null;
   /** (round 83, V21) what's cut from the view: api/cutaway.ts writes it */
   cut: Cut = { slice: null, see: [], boxes: [] };
+  /**
+   * (round 124, presentation: PRE1) the region presentation's look: the canopy's treatments and the understory light round
+   * the hero (render.wgsl presentHide, presentLight); null: none (the draw as it was). The sun's camera has none.
+   */
+  present: PresentLook | null = null;
 
   /** the way a flying camera looks, and its right and up */
   basis(): { f: [number, number, number]; r: [number, number, number]; u: [number, number, number] } {
@@ -300,6 +308,12 @@ export class Camera {
       c.boxes.forEach((b, i) => f.set([b[0], b[1], b[2], 0, b[3], b[4], b[5], 0], o + 20 + i * 8));
       const sh = c.slice === null ? null : c.sliceShape;
       if (sh) f.set([sh.x, sh.y, sh.radius, sh.rim, sh.fade ?? 0, sh.fadeR ?? 0, sh.bowl ?? 0, (sh.nearOnly ? 1 : 0) + (sh.occluders ? 2 : 0)], o + 52);
+      const pr = this.present;
+      if (pr && pr.weight > 0) {
+        const c = pr.canopy;
+        const flags = (c.dither ? 1 : 0) + (c.cutaway ? 2 : 0) + (c.stipple ? 4 : 0) + (pr.dapple > 0 ? 8 : 0) + (pr.treeScale !== 1 || pr.thin > 0 ? 16 : 0);
+        f.set([pr.at[0], pr.at[1], pr.floor, flags, pr.radius, pr.cutHeight, pr.stippleShare, pr.weight, pr.even, pr.dapple, pr.reach, pr.at[2], pr.treeScale, pr.thin, 0, 0], o + 60);
+      }
     }
   }
 }

@@ -17052,3 +17052,122 @@ p99 136-325 / 60-142 (merge / places; one slow first load after the dev server's
 tilegate (one run, diffed against places'): desktop-z3.5 parked undrawn 1.60% at the same cells places' own run showed
 (0.42%: r233,217 r239,223 ...), the wide goldens 35-50% (the zoom floor's calibration), near 1.5%, fast pans scattered as
 on places.
+
+## 2026-11-02 — round 124 (`presentation`): region presentation, scene A — the birch forest (PRE1, PRE2)
+
+The user's handoff, verbatim in docs/design/REGION_PRESENTATION.md: "Prototype ways to make the existing persistent 3D
+world feel intimate, cinematic, and readable at character scale without sacrificing its impressive overworld
+presentation ... Start with what exists ... Visibility is at least as important as fidelity ... Keep isometric framing
+by default." Priorities followed: the unchanged baseline, then the forest's visibility, then light.
+
+**Built.**
+- A presentation profile (api/contracts/presentation.ts) and its camera mode `present` (present/mode.ts): given to the
+  rig from outside, after the chase, the turn and the tilt; it blends the profile in by the region's weight (a disc,
+  1 inside, 0 past an edge band, approached at 1/transition seconds) and writes `CamFrame.present`.
+- The renderer's look through the camera uniform only (render.wgsl `presentReach` in meshinst's fragment, `presentLight`
+  in `lighting()`); all zero when off. Canopy treatments, by the tree's own foot:
+  - dither: foliage and wood over 1.6-3 cells up its own trunk, within 9 cells of the hero on screen, not far behind;
+  - cut front: the trees whose foot is nearer the eye than the hero's, within reach, cut 3 cells over the lower of
+    their foot and the hero's floor, the cut thinned over a cell;
+  - stipple: foliage over 2.5-4.5 cells up, a fixed 55 % screen-space stipple within ~2.5x the radius.
+  The heights are the tree's own because the first cut used the hero's floor and on the showcase's slope the crowns
+  downhill in front (lower than the hero) were never touched.
+- The understory light: under the canopy's height the sun comes through in flecks blown along by the prevailing wind
+  (G.env), the ambient 30 % deeper. Faked: the shadow map is too coarse at this zoom to dapple (the first try, flecks
+  only where the shadow map shaded, was barely visible).
+- Transitions: zoom (the treatment on at once), zoom+iris (an iris of the treatment opening from the hero over the
+  transition), zoom+dissolve (an even dither crossfade). Camera tilt kept at 30° for the baseline.
+- The scene: `?level=atlas&at=13728,4768&play=lich&present=forest` — the densest birch stand within 140 cells of the
+  window's middle (Plants.treesNear; at least 12 birches within 12 cells, else an error), a loop of radius 20 whose near side runs through
+  it, ridden by the lab's autopilot (slower under the trees), starting 32 cells out so each lap rides in and out.
+- The review overlay (present/lab.ts): visibility (today, dither, cut front, stipple: combine), light, transition,
+  zoom / pitch / transition seconds, replay, hold out/in, the route, back to its start, A/B (the pick against the
+  baseline every 3 s), the menu; FPS and frame time (p50/p95), the weight, the zoom and pitch. Every pick is in the
+  address. `?present=menu` (and a title-screen button) lists the four scenes.
+- scripts/present.mjs: stills of every variant at one parked spot (repeatable A/B), GIFs of the route per transition,
+  `--cost` A/B/A/B frame windows on the phone proxy.
+
+**Findings.**
+- Today's default camera (cut + tilt) doesn't open the birch canopy at all: the trees aren't land to its occluder test
+  (CAM12), so under the birches the hero is hidden (PRE7). The tilt does climb to 72° outside the wood.
+- The bike is too fast for a forest route: 40+ cells/s, the autopilot lost the loop and never entered the region; the
+  scene rides the lich (PRE8).
+- Falling birch leaves are 15 px flat squares at zoom 44 (PRE6): the biggest thing that reads as "not the same detail".
+- The stippled canopy reads best (the trunks rise whole, the canopy stays as a veil); dither opens the most floor;
+  the cut is the most disorienting (crowns gone in a band in front).
+
+**Measured** (scripts/present.mjs --cost, Intel Xe-LPG iGPU, 412x915 dpr 2.6 q=low, uncapped, every system in play,
+parked in the stand at zoom 44; mean frame interval, 3 rounds x 4 s each way; the frame pacing makes the p50 bimodal
+so the means are the number): today's cut+tilt +0.20 ms, dither -0.20, cut front +0.26, stipple -0.14, dither+stipple
+-0.60, light +0.02 — all within the run's noise (means 8.8-10.0 ms). The treatments are a few ALU and a discard in two
+fragment paths; no readback, no pass.
+
+Shots and GIFs: C:/Projects/shots88/presentation/forest-*.png, forest-ride-*.gif.
+
+## 2026-11-02 — round 124 (`presentation`): B canyon, C cliff, D throne room, A's scale variant (PRE3-PRE11)
+
+**A, fixed after main's review.** Falling birch leaves were 15 px flat squares at zoom 44: a leaf whose half-size passes
+3.5 px is now capped there and drawn as a tumbling, turning diamond (particles_draw.wgsl; at the overworld's zooms the
+leaf is drawn as before). With the stipple alone the lich was lost behind the trunks: the stipple now opens a small
+keyhole — what stands right in front of the hero within ~0.3 of the hole's radius is dithered out.
+
+**A, scale (the user, verbatim: "If I recall aren't the characters much larger than they should be right now? If a cell
+is 1-2M the villager agents are closer to the true size the PC should be ... I'm wondering if the distance between trees
+and therefore the navugability of the open space would feel better if the PC was approximately .25-1 trunk width").**
+Measured in cells, from the code:
+- the lich (shapes.ts buildLich): robe 2.0 tall, 1.0 wide at the hem, staff to 2.75; it floats 1.6 over the floor;
+- the bike and rider (buildBike): 2.25 long, 0.75 wide, 1.75 tall;
+- the agents (units/agent-units.ts): 1.4-1.45 tall; the inhabitants' bipeds (rig.ts): ~1.3-1.5 tall, ~0.6 wide (rig
+  radius 0.30-0.33);
+- the birch (flora/species.ts): 11-17 tall, the turtle's radius 0.3, so ~0.6 across at the base;
+- the scene-A stand (the region's 12 cells: 19 trees, 17 of them birches): the nearest trunk 2.03 cells centre to centre
+  on average (at least 1.0), so ~1.4 cells open between trunks: 1.4 lich widths, 2.4 agent widths.
+The lich is x1.4 the villagers' height and 1.7 trunks wide; a villager is about one trunk wide. The user's 0.25-1 PC per
+trunk with the PC at a villager's width means trunks of 0.6-2.4 cells: the birches x1-4.
+
+`&pscale=` (draw only — the profile's `scale`):
+- `true`: the hero drawn x0.7 round its feet (VoxelDraw.scale; the voxel edge rounded up so it has no gaps);
+- `trees`: and the birches within ~50 cells drawn x2 round their foot (a trunk ~1.2 cells: two villager widths), half of
+  them left out by a hash so the stand stays open (mean nearest ~2.9 centre to centre, ~1.7 open: ~2.8 villager widths);
+- `stumps`: and the trunks between the eye and the hero cut to 0.8 cells (the foreground cut at a stump's height,
+  dithered at the cut), the rest of the wood whole.
+What it doesn't change, and would need retuning before a true-size hero leaves the lab (PRE10): the hero's body (the
+levitation's foot, the bike's 1.2-cell wall), its reaches (carry 1.5, force 8, pull 10, slam), its float (1.6-10, now
+two of its heights), the camera (the lich's zoom 30 and LOOK_Z 1.2: on screen it is simply smaller; the cut's h0 2.5),
+the bike's speeds and turning against obstacles sized for today's bike, and the shadows and sight of the scaled birches
+(they're the unscaled trees').
+
+**B, the canyon** (the hero lab's ring canyon, the bike on its autopilot): the overworld's default camera (cut + tilt:
+it tilts to ~70° in the canyon), steep (a fixed 55°, zoom 20 out to x0.6 with speed, 0.45 s look-ahead), route-facing
+(the view turned so the heading points up the screen: sprung, 75°/s at most, a 25° dead zone, a reversal must hold
+0.5 s), and both. Steep reads best: the walls frame the floor and the way ahead is on screen. Route-facing at 30° puts
+the near wall between the eye and the bike; the near-side cut then shows its big dark sections (CAM10) and the hero is
+lost. A held-stick check (a thumb holding up, then right, on the screen while the view does what it does; the view's
+fastest turn over 0.1 s, cells covered): fixed views 0°/s; route 88°/s, steep+route 86-125°/s — no flips after the
+reversal hysteresis (before it, a bounce off a wall swung the goal 180°). But a screen-relative stick under a turning
+view is a loop: held right, route covered 3 cells (circling against a wall) where steep+route covered 69 (PRE11).
+
+**C, the cliff — a proxy.** No hero climbs: the lich is parked 1.5 cells off the hero lab cliff's south face and its float
+raised up the face to the top (37 cells) and back, labelled PROXY on screen. Near-profile (12°, the eye square on to the
+face) shows the face's relief and the lich small against it: the height reads best. Looking down (68°) shows the drop
+foreshortened. The overworld's camera tilts top-down (72°) and the cut takes the face away: nothing says "cliff".
+
+**D, the throne room.** A separate 2.5D scene (Canvas2D over the game; the world keeps running behind): floor of the
+purpose's stone, banners, windows with drifting light shafts, pillars, a dais and throne with its ruler, braziers that
+flicker, a carpet to the door. Mapped from the world (anchors only): the live settlement's name, purpose and condition,
+and the door it's entered by — `Settlements.places()`'s door nearest the settlement's middle; the arch at the front shows
+the street's daylight. Petitioners come from the settlement's record (its people's roles; its needs by kind; its story's
+last raid or burning; its condition; its purpose): tapping one opens a labelled STUB of the opportunity UI (the real one is
+on facts / merge124, not on this base; nothing is stored). Entries: zoom only (into the building's own geometry: the town's
+voxels at zoom 150 read as blocks, not an interior), zoom + iris (the hall dissolves in by a 3 px 4x4 dither from the
+door's point), zoom + fade (even), cut (a dark beat: the loading fallback). Found on the way: the door was kept in window
+coordinates and not moved when the window slid — the second entry zoomed into a field (fixed: the lab's shift moves it).
+
+**Measured.** The gates against places (experiments off): tilegate on the phone, parked, coverage ok on every view; the
+golden diffs 1.17 % / 1.41 % (z8 / z3.5) against places' own 1.01 % / 0.91 % on the same machine (a first run showed 34 %
+at z3.5-1.3: its measured zoom floor came out 3.95 instead of 3.12 — the tile calibration, not this branch). driveprofile
+(q=low 412x915 dpr 2.6, two runs each): presentation p50 9.9 / 9.9 ms, p95 13.5 / 12.8, GPU 14.46 / 14.59 ms a frame;
+places p50 9.9 / 9.9, p95 13.0 / 14.3, GPU 13.66 / 14.70. The same within the runs' spread.
+
+Shots and GIFs: C:/Projects/shots88/presentation/ (forest-3-scale-*.png, forest-scale-*.gif, canyon-*, cliff-*,
+throne-*; canyon-steer.json).

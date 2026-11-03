@@ -67,7 +67,12 @@ export class CameraRig {
   readonly frame: CamFrame = { view: { target: [0, 0, 0], zoom: 30, azimuth: Math.PI / 4, elevation: (30 * Math.PI) / 180, w: 1, h: 1, margin: 56 }, cut: { slice: null, see: [] }, signals: [] };
   /** this frame's interests (the hero first) */
   interests: Interest[] = [];
-  private all: Record<CamModeId, CameraMode>;
+  private all: Record<Exclude<CamModeId, 'present'>, CameraMode>;
+  /**
+   * (round 124, presentation: PRE1) the region presentation's mode (src/present/mode.ts), given from outside: it runs
+   * in its stage's order with the picked modes, whatever they are; null: none
+   */
+  private presentMode: CameraMode | null = null;
   private fresh = true;
 
   constructor(
@@ -84,11 +89,20 @@ export class CameraRig {
     return this.modes.map((m) => m.id);
   }
 
+  /** (round 124, PRE1) the presentation mode on (or off: null), the picked modes kept */
+  setPresent(m: CameraMode | null): void {
+    const ids = this.ids.filter((i) => i !== 'present');
+    this.presentMode = m;
+    this.use(ids);
+  }
+
   /** the modes on (the chase always); the others start from the frame as it is */
   use(ids: readonly CamModeId[]): void {
-    const set = new Set<CamModeId>(['chase', ...ids]);
+    const set = new Set<CamModeId>(['chase', ...ids.filter((i) => i !== 'present')]);
     const was = new Set(this.modes.map((m) => m.id));
-    this.modes = [...set].map((id) => this.all[id]).sort((a, b) => a.stage - b.stage);
+    this.modes = [...set].map((id) => this.all[id as Exclude<CamModeId, 'present'>]);
+    if (this.presentMode) this.modes.push(this.presentMode);
+    this.modes.sort((a, b) => a.stage - b.stage);
     for (const m of this.modes) if (!was.has(m.id)) m.reset(this.frame);
     // (a mode turned off gives back what it held: the fixed angle, the fixed tilt, no cut)
     if (!set.has('rotate') && was.has('rotate')) this.frame.view.azimuth = this.restAz;
@@ -117,6 +131,7 @@ export class CameraRig {
     t[1] += dy;
     t[2] += dz;
     for (const m of Object.values(this.all)) m.shift?.(dx, dy, dz);
+    this.presentMode?.shift?.(dx, dy, dz);
   }
 
   step(dt: number, pose: CamPose, intent: CamIntent, world: SightWorld, screen: RigScreen): CamFrame {
@@ -132,6 +147,7 @@ export class CameraRig {
     this.interests = [heroInterest(pose), ...this.ahead.interests(pose, world), ...this.sources.flatMap((s) => s.interests(pose, world))];
     f.cut.slice = null;
     f.cut.see = [];
+    f.present = null;
     const ctx = { dt, pose, intent, interests: this.interests, world };
     for (const m of this.modes) m.step(ctx, f);
     // (the renderer keeps MAX_SEE holes: the hero's first, then as the interests rank)

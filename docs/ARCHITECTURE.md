@@ -3490,3 +3490,28 @@ One concern each:
 Contract for text: every string a player reads follows docs/WRITING.md; test/unit/writing.test.ts (test/support/
 writing.ts `lint`) checks the templates, the dealt cards and petitions on seed 1, Briar Hollow's, the cast, the
 screens and the GM's situation file.
+## Region presentation profiles (round 124, branch `presentation`; BACKLOG PRE1-PRE8, docs/design/REGION_PRESENTATION.md)
+
+- **Contract** src/api/contracts/presentation.ts: a `PresentationProfile` (camera: zoom, pitch, route-facing,
+  look-ahead, speed zoom-out; canopy: dither / cutaway / stipple with a radius, a cut height and a stipple share; light:
+  dapple; transition: zoom, zoom+iris, zoom+dissolve and its seconds), a `PresentRegion` (a disc with an edge band) and a
+  `PresentLook` (what reaches the renderer each frame).
+- **The camera mode `present`** (src/present/mode.ts, stage 2.5: after the chase, the turn and the tilt, before the
+  cuts): given to the rig from outside (`CameraRig.setPresent`), it blends its profile in by the region's weight
+  (approached at 1/transition seconds) and writes `CamFrame.present`. Pure; Node tests in src/present/present.test.ts.
+  `CamModeId` has `present`; it isn't a `?cam=` chip.
+- **The renderer** reads it through the camera uniform only: render/camera.ts `Camera.present` → render.wgsl
+  `Camera.present / presentB / presentC` (three vec4s at the end of the cut block, so the sun's camera, the tile bakes
+  and tileland's bake camera — which zero the cut block — have none). `presentReach` leaves tree fragments out in
+  meshinst.wgsl fsInst (by the tree's own foot, passed flat from vsInst); `presentLight` scales the direct and ambient
+  light in `lighting()` under the canopy's height. All zero: the draw as it was. Nothing leaves the world: the shadow
+  map, the wind, the sight queries and the simulation keep every tree.
+- **The lab** (src/present/lab.ts) is the browser boundary: the scene's profile from its picks (src/present/profiles.ts),
+  the region and the route (src/present/stand.ts: the densest birch stand from `Plants.treesNear`, a loop through it),
+  the review overlay; started by scenes/level.ts only with `?present=` (forest on the atlas's play sandbox, canyon and
+  cliff on the hero lab). `?present=menu` is the review menu (src/present/menu.ts), before any level.
+- (B-D, the scale) The profile has `camera.azimuth` (C: face the cliff square on) and `scale` (the hero's draw scale:
+  PlaySession.drawScale -> VoxelDraw.scale; the birches' scale and thinning: render.wgsl Camera.presentD, meshinst.wgsl
+  vsInst by FL_BIRCH* — draw only, shadows and sight unscaled). D is a separate scene drawn by present/throne.ts on a
+  Canvas2D over the game, entered from `Settlements.places()`'s door nearest the live settlement's middle; its
+  petitions come from the settlement's record and open a labelled stub (the opportunity UI isn't on this base).

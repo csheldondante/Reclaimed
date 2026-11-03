@@ -33,14 +33,22 @@ export class VoxelDraw {
   }
 
   /** Each frame: these parts. */
+  /**
+   * (round 124, presentation: PRE1 — a presentation toggle only) the models drawn at this size round their feet: the
+   * hero at the villagers' true size. What they collide with, reach and frame by is unchanged.
+   */
+  scale = 1;
+
   draw(parts: Part[]): void {
     let n = 0;
+    const s = this.scale;
     for (const { voxels, at, q, flash, size } of parts) {
-      const code = size ? Math.max(1, Math.min(63, Math.round(size * 16))) : SIZE_CODE;
+      // (scaled: the voxel's edge rounded up to the renderer's sixteenths, so a smaller model has no gaps)
+      const code = s === 1 ? (size ? Math.max(1, Math.min(63, Math.round(size * 16))) : SIZE_CODE) : Math.max(1, Math.min(63, Math.ceil((size ?? VOXEL) * s * 16)));
       const glow = flash && flash > 0 ? PHYS_BIT | (Math.round(Math.min(1, flash) * 255) << 16) : 0;
       for (const v of voxels) {
         if (n >= this.max) break;
-        const c = modelToWorld(at, q, v.at);
+        const c = s === 1 ? modelToWorld(at, q, v.at) : modelToWorld(at, q, [v.at[0] * s, v.at[1] * s, v.at[2] * s]);
         const o = n * 8;
         this.f[o] = c[0];
         this.f[o + 1] = c[1];

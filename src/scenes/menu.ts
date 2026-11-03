@@ -79,7 +79,7 @@ export class MenuScene implements Scene {
     const line = LINES.find(([t]) => p >= t)![1];
     this.el.innerHTML = `<div><h1>RECLAIMED</h1><p class="line">${line}</p></div>
       <div class="actions"><span class="level-name"></span>
-      <span class="play-row"><button data-a="play"></button><button data-a="free" title="The old rules: green grows wherever you touch, the whole valley open">Free play</button><button data-a="sandbox" title="Build, pour, place and break things; summon weather — the physics playground">Sandbox</button><button data-a="playground" title="The physics and water playground: stations to collapse and flood, every physics number live (round 108)">Playground</button><button data-a="noiselab" title="The noise lab: layers and masks of noise blended into land, live (round 111)">Noise lab</button><button data-a="herolab" title="The hero lab: test terrains, camera modes, the bike's handling, traits with a hero (round 121)">Hero lab</button></span>
+      <span class="play-row"><button data-a="play"></button><button data-a="free" title="The old rules: green grows wherever you touch, the whole valley open">Free play</button><button data-a="sandbox" title="Build, pour, place and break things; summon weather — the physics playground">Sandbox</button><button data-a="playground" title="The physics and water playground: stations to collapse and flood, every physics number live (round 108)">Playground</button><button data-a="noiselab" title="The noise lab: layers and masks of noise blended into land, live (round 111)">Noise lab</button><button data-a="herolab" title="The hero lab: test terrains, camera modes, the bike's handling, traits with a hero (round 121)">Hero lab</button><button data-a="present" title="The region presentation prototypes: a birch forest, a canyon, a cliff, a throne room (round 124, PRE1)">Presentation</button></span>
       <span class="level-list" title="every place on the title screen (BACKLOG UI10: on a phone some models lie off the screen)">${LEVELS.map((l) => `<button data-level="${l.id}">${l.name.replace(/^The /, '')}</button>`).join('')}</span>
       <span class="small level-info"></span>
       <span class="small">pick a place: click its model · some lie under the dust · sound on</span>
@@ -132,6 +132,8 @@ export class MenuScene implements Scene {
       audio.start();
       await this.onPlay('herolab');
     });
+    // (round 124, PRE1) the presentation prototypes' review menu (present/menu.ts)
+    this.el.querySelector('[data-a="present"]')!.addEventListener('click', () => (location.search = '?present=menu'));
     // (BACKLOG UI10) every place as a button too: on a phone the diorama's models don't all fit the screen
     for (const b of this.el.querySelectorAll<HTMLButtonElement>('[data-level]')) b.addEventListener('click', () => this.select(levelById(b.dataset.level)));
     this.select(levelById(host.params.get('level')));

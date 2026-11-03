@@ -31,6 +31,11 @@ const QUALITY: Record<string, Quality> = {
 async function main() {
   bootMark('module');
   const params = new URLSearchParams(location.search);
+  // (round 124, presentation: PRE1) ?present=menu — the region presentation prototypes' review menu (no level behind it)
+  if (params.get('present') === 'menu') {
+    (await import('./present/menu')).showPresentMenu(document.getElementById('ui')!);
+    return;
+  }
   // (low by default, for phones: round 54; ?q=medium|high on a desktop)
   const qualityName = params.get('q') ?? 'low';
   const quality = QUALITY[qualityName];

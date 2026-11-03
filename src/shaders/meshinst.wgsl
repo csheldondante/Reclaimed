@@ -11,12 +11,20 @@ struct MIOut {
   @location(1) @interpolate(flat) info: vec4<u32>,
   // local height share up the part (0 its foot, 1 its top): the crown darker underneath
   @location(2) h: f32,
+  // (round 124, PRE1) the instance's foot (world): the presentation's foreground cut asks where the tree stands
+  @location(3) @interpolate(flat) base: vec3<f32>,
 };
 
 fn miKind(vi: u32) -> u32 {
   var k = 0u;
   for (var i = 0u; i < MI_N; i++) { if (vi >= MI_KINDS[i].x && vi < MI_KINDS[i].y) { k = i; } }
   return k;
+}
+/** (round 124, PRE1) is mesh kind k a birch (the flora library's kinds, every level of detail)? */
+fn miBirch(k: u32) -> bool {
+  let r = array<vec2<u32>, 3>(FL_BIRCH, FL_BIRCH_L1, FL_BIRCH_L2);
+  for (var i = 0u; i < 3u; i++) { if (k >= r[i].x && k < r[i].x + r[i].y) { return true; } }
+  return false;
 }
 fn miRow(i: u32, r: u32) -> vec4<f32> { return bitcast<vec4<f32>>(instances[i * 4u + r]); }
 
@@ -48,6 +56,18 @@ fn vsInst(@location(0) a: vec4<f32>, @builtin(vertex_index) vi: u32, @builtin(in
   let fl = fpart >= 3u;
   if (fl) { sway = fract(aw); }
   var wp = vec3<f32>(dot(r0.xyz, l) + r0.w, dot(r1.xyz, l) + r1.w, dot(r2.xyz, l) + r2.w);
+  // (round 124, presentation: PRE1 — the scale variant, draw only) the birches near the hero drawn bigger round their
+  // foot, a hashed share of them left out so the stand stays open; their sight, shadows and the world as they are
+  if ((u32(CAM.present.w + 0.5) & 16u) != 0u && miBirch(k)) {
+    let foot = vec3<f32>(r0.w, r1.w, r2.w);
+    let near = (1.0 - smoothstep(45.0, 60.0, length(foot.xy - CAM.present.xy))) * clamp(CAM.presentB.w, 0.0, 1.0);
+    let h = fract(sin(dot(foot.xy, vec2<f32>(39.346, 11.135))) * 24634.6345);
+    if (h < CAM.presentD.y * near) {
+      o.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+      return o;
+    }
+    wp = foot + (wp - foot) * mix(1.0, CAM.presentD.x, near);
+  }
   // the wind: the column's lean (sway.wgsl's spring) and a slow flutter, the crown shifting with the trunk's top
   let cell = clampCell(cellAt(vec2<f32>(r0.w, r1.w)));
   let lean = bend[colIdxI(cell)].xy;
@@ -67,6 +87,7 @@ fn vsInst(@location(0) a: vec4<f32>, @builtin(vertex_index) vi: u32, @builtin(in
   o.info = vec4<u32>(k, select(part, fpart, fl), winIdx(cell), u32(seed * 65535.0));
   // (flora: the sway weight stands in for the height share up the plant — it rises with it)
   o.h = select(a.z, sway, fl);
+  o.base = vec3<f32>(r0.w, r1.w, r2.w);
   return o;
 }
 
@@ -78,6 +99,8 @@ fn fsInst(in: MIOut) -> FOut {
   if (cutAway(in.wpos, in.pos.xy)) { discard; }
   let k = in.info.x;
   let part = in.info.y;
+  // (round 124, PRE1) the region presentation's canopy treatments (render.wgsl presentReach; 0 unless one is on)
+  if (presentReach(in.wpos, in.base, part == 4u || part == 1u) > bayer4(in.pos.xy)) { discard; }
   let rnd = f32(in.info.w) / 65535.0;
   var alb: vec3<f32>;
   var mat = MAT_WOOD;

@@ -1977,6 +1977,9 @@ export class LevelScene implements Scene {
       traitScene: (at) => new TraitStation(this.agents, this.traits, at),
     });
     (window as unknown as { reclaimed: Record<string, unknown> }).reclaimed.lab = this.heroLab;
+    // (round 124, PRE1) ?present=canyon|cliff: the region presentation prototypes on the lab's terrains
+    const pres = this.host.params.get('present');
+    if (pres) await this.startPresent(pres, this.heroLab.session, this.heroLab);
   }
 
   /** ?play=<hero>: the play layer's sandbox on the atlas level (src/play/sandbox/sandbox.ts) */
@@ -2014,6 +2017,22 @@ export class LevelScene implements Scene {
       this.play?.warped([c[0], c[1]]);
     });
     (window as unknown as { reclaimed: Record<string, unknown> }).reclaimed.play = this.play;
+    // (round 124, PRE1) ?present=forest: the region presentation prototype on the atlas (a birch wood near the start)
+    const pres = this.host.params.get('present');
+    if (pres) await this.startPresent(pres, this.play.session, undefined);
+  }
+
+  /** (round 124, PRE1) the region presentation prototypes (src/present/lab.ts) on play's hero; off without ?present= */
+  present?: import('../present/lab').PresentLab;
+  private async startPresent(id: string, session: import('../play/session').PlaySession, lab: import('../play/lab/herolab').HeroLab | undefined): Promise<void> {
+    const { PresentLab } = await import('../present/lab');
+    const ids = ['forest', 'canyon', 'cliff', 'throne'];
+    if (!ids.includes(id)) throw new Error(`?present=${id}: on a level the scenes are ${ids.join(', ')} (the menu: ?present=menu)`);
+    const api = (this.worldApi ??= attachSim(this.core));
+    this.present = await PresentLab.start({ ui: this.host.ui, session, camera: this.core.camera, scene: id as 'forest', plants: api.plants, lab, settlements: this.settlements, ground: (x, y) => api.terrain?.heightAt(x, y) ?? null, near: [this.core.dims.w / 2, (this.core.dims.h * ROW_H) / 2] });
+    (window as unknown as { reclaimed: Record<string, unknown> }).reclaimed.present = this.present;
+    // (the window slid: the region and the route move with what's kept in window coordinates)
+    this.core.onShift.push((dx, dy) => this.present?.shift(-dx, -dy));
   }
 
   /**
@@ -3787,6 +3806,7 @@ export class LevelScene implements Scene {
     this.storyPlay?.dispose();
     this.heroRun?.dispose();
     this.play?.dispose();
+    this.present?.dispose();
     this.heroLab?.dispose();
     this.plannedRun?.dispose();
     this.situationRun?.dispose();

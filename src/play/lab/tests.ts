@@ -78,6 +78,7 @@ export const CAM_WORDS: Record<CamModeId, string> = {
   cutfade: 'soft cut',
   edge: 'clear middle',
   auto: 'auto zoom',
+  present: 'presented',
   autocity: 'auto zoom with town tilt',
 };
 
