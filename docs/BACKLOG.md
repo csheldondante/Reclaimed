@@ -26,6 +26,17 @@ Branch `dialog2` (b9139b7): docs/WRITING.md, a style lint, every player string r
 | DLG-R2 | Main's review: the muster card's "Takes" lists the encounter ("3 walking dead stand between you and the hall") as well as the time. Takes should be the cost only; the danger belongs in the ask. | S | open |
 | DLG-R3 | Map labels pile up near the hold (timers and card names overlap). This predates dialog2. | M | open |
 
+## Round 127 (2026-11-02, session 5, `knight`) — the knight ported as a third play hero (DECISIONS round 127)
+
+Branch `knight` (c0eeb74): swipe slashes with a lunge and aim lean, the bow drawn opposite the aim, the spin, dodge, weapon and second-move buttons, a knight station. Ported from GameplayGM iso-adventure (read only). The branch's own rows are PL33..40.
+
+| id | item | size | status |
+|---|---|---|---|
+| KN-Q1 | Should every slash lunge further, or is the double swipe the lunge the user remembers? | S | asked |
+| KN-Q2 | Three buttons (dodge, weapon switch, second move), or one weapon button where a tap fires the second move? | S | asked |
+| KN-Q3 | The shield block and the hook vault next? | S | asked |
+| KN-R1 | Main's review: the station's help card sits over the hero at the start, with a second copy of the text showing through behind it. | S | open |
+
 ## Round 126 (2026-11-02, session 5, `interiors`) — the first full interior: town s84's hall (DECISIONS round 126)
 
 Branch `interiors` (28d1fbc): plan from the structures plan, CC0 Kenney props voxelised, lit by real windows, people talking, normal rendering, outside hidden inside. The branch's own rows are INT1..17.
