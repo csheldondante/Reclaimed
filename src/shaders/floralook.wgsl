@@ -78,8 +78,96 @@ fn floraSway(k: u32, part: u32, a: vec3<f32>, sway: f32, at: vec2<f32>, lean: ve
   return vec3<f32>(off * sway, -dot(off, off) * sway * sway * 0.25);
 }
 
+/** (round 128) Voronoi: x the nearest feature's distance, y the second's, z the nearest cell's hash */
+fn floraVoronoi(p: vec2<f32>) -> vec3<f32> {
+  let i = floor(p);
+  var f1 = 9.0;
+  var f2 = 9.0;
+  var id = 0.0;
+  for (var y = -1; y <= 1; y++) {
+    for (var x = -1; x <= 1; x++) {
+      let c = i + vec2<f32>(f32(x), f32(y));
+      let ci = vec2<i32>(c);
+      let q = c + vec2<f32>(randv(vec3<i32>(ci, 77)), randv(vec3<i32>(ci, 78)));
+      let d = length(p - q);
+      if (d < f1) {
+        f2 = f1;
+        f1 = d;
+        id = randv(vec3<i32>(ci, 79));
+      } else if (d < f2) {
+        f2 = d;
+      }
+    }
+  }
+  return vec3<f32>(f1, f2, id);
+}
+
+/**
+ * (round 128) The bark's height at stem coordinates st (u round, v along, cells): x the height 0 (in a groove or
+ * crack) .. 1 (the bark's face), y the plate's own shade, z 1 on a lenticel (a birch's dash). By the species' BarkLook
+ * (FLORA_BARK): furrows (ridges along the stem, wandering), plates (Voronoi cells and the cracks between them), stripes
+ * (horizontal dashes). `fw` cells a pixel: a feature under ~2 pixels fades out (no shimmer).
+ */
+fn floraBarkH(k: u32, st: vec2<f32>, fw: f32) -> vec3<f32> {
+  let bk0 = FLORA_BARK[k * 2u];
+  let bk1 = FLORA_BARK[k * 2u + 1u];
+  var h = 1.0;
+  var shade = 1.0;
+  var mark = 0.0;
+  if (bk0.x > 0.0) {
+    let ff = max(bk0.y, 0.1);
+    let a = 1.0 - smoothstep(0.25, 0.5, fw * ff);
+    let x = st.x * ff + 0.7 * vnoise(vec2<f32>(st.x * ff * 0.5, st.y * 0.22));
+    // (a groove a third of the period wide, its depth wandering; and short breaks along the ridges)
+    let ridge = smoothstep(0.15, 0.75, abs(fract(x) - 0.5) * 2.0);
+    let brk = vnoise(vec2<f32>(st.x * ff * 2.0, st.y * 1.3));
+    h -= bk0.x * a * ((1.0 - ridge) * (0.7 + 0.6 * vnoise(st * vec2<f32>(0.8, 0.3))) + 0.35 * smoothstep(0.55, 0.8, brk));
+  }
+  if (bk0.z > 0.0) {
+    let ps = max(bk0.w, 0.05);
+    let a = 1.0 - smoothstep(0.12, 0.3, fw / ps);
+    let vq = floraVoronoi(st / vec2<f32>(ps, ps * 1.7));
+    let crack = 1.0 - smoothstep(0.03, 0.14, vq.y - vq.x);
+    h -= bk0.z * crack * 0.85 * a;
+    shade = mix(1.0, 0.8 + 0.4 * vq.z, bk0.z);
+  }
+  if (bk1.x > 0.0) {
+    let a = 1.0 - smoothstep(0.3, 0.6, fw * bk1.y);
+    let d = vnoise(st * vec2<f32>(2.2, bk1.y)) * (0.6 + 0.4 * vnoise(st * vec2<f32>(0.4, 0.6) + vec2<f32>(5.0, 1.0)));
+    mark = step(1.0 - bk1.x * 0.9, d) * step(0.5, a);
+    h -= mark * 0.3;
+  }
+  if (bk1.z > 0.0) { h -= bk1.z * 0.2 * vnoise(st * 6.0) * (1.0 - smoothstep(0.08, 0.2, fw)); }
+  return vec3<f32>(h, shade, mark);
+}
+
+/** (round 128) The stem's tangents for the bark's bump (call in uniform control flow: derivatives): x round, y along. */
+fn floraTangents(p: vec3<f32>, uv: vec2<f32>, n: vec3<f32>) -> mat2x3<f32> {
+  let dp1 = dpdx(p);
+  let dp2 = dpdy(p);
+  let du1 = dpdx(uv);
+  let du2 = dpdy(uv);
+  let p2 = cross(dp2, n);
+  let p1 = cross(n, dp1);
+  let t = p2 * du1.x + p1 * du2.x;
+  let b = p2 * du1.y + p1 * du2.y;
+  let m = inverseSqrt(max(max(dot(t, t), dot(b, b)), 1e-12));
+  return mat2x3<f32>(t * m, b * m);
+}
+
+/** (round 128) The bark's normal: the face's, tilted by the height's slope along the stem's tangents. */
+fn floraBump(k: u32, part: u32, uv: vec2<f32>, n: vec3<f32>, tb: mat2x3<f32>, fw: f32) -> vec3<f32> {
+  if (!(part == 3u || part == 7u) || fw > 0.5) { return n; }
+  let e = max(fw, 0.03);
+  let h0 = floraBarkH(k, uv, fw).x;
+  let hu = floraBarkH(k, uv + vec2<f32>(e, 0.0), fw).x;
+  let hv = floraBarkH(k, uv + vec2<f32>(0.0, e), fw).x;
+  let g = vec2<f32>(hu - h0, hv - h0) / e;
+  return normalize(n - 0.12 * (tb[0] * g.x + tb[1] * g.y));
+}
+
 /** A flora fragment's colour (sRGB-ish albedo, before toLinear) and, in w, its material (MAT_*), or −1: discard. */
-fn floraLook(k: u32, part: u32, wpos: vec3<f32>, n: vec3<f32>, h: f32, rnd: f32, salt: u32) -> vec4<f32> {
+fn floraLook(k: u32, part: u32, wpos: vec3<f32>, n: vec3<f32>, h: f32, rnd: f32, salt: u32, uv: vec2<f32>, fw: f32) -> vec4<f32> {
   let b = k * 6u;
   let fr = randv(vec3<i32>(floor(wpos * 1.7)) + vec3<i32>(i32(salt & 255u), 5, 11));
   let decid = FLORA_COL[b].w > 0.5;
@@ -92,38 +180,21 @@ fn floraLook(k: u32, part: u32, wpos: vec3<f32>, n: vec3<f32>, h: f32, rnd: f32,
     // ridges, the birch's lenticels) are two settings of it
     let bk0 = FLORA_BARK[k * 2u];
     let bk1 = FLORA_BARK[k * 2u + 1u];
-    if (bk0.x > 0.0) {
-      // furrows: long vertical grooves, darker in them
-      let q = vec3<i32>(floor(wpos * vec3<f32>(bk0.y, bk0.y, 0.6)));
-      let groove = randv(q) < bk0.x * 0.375;
-      c = mix(c, markC, select(0.0, 0.8, groove) + 0.3 * bk0.x * fr);
+    // (round 128, the user: "bark texture ... it's just scaled colored noise and normals" — in the stem's own
+    // coordinates now (mesh.ts: u round the stem, v along it, in cells), not world space: furrows wander along the
+    // stem, plates are Voronoi cells, a birch's lenticels horizontal dashes; floraBump turns the same height into the
+    // normal. Details finer than a pixel fade (fw: cells a pixel).)
+    if (part != 14u) {
+      let bh = floraBarkH(k, uv, fw);
+      c = mix(markC, c, clamp(bh.x, 0.0, 1.0)) * bh.y;
+      if (bh.z > 0.5) { c = markC; }
+      if (bk1.z > 0.0) {
+        // roughness: broad pale and grey streaks along the stem, warm patches (the elder's reference beech)
+        let streak = vnoise(uv * vec2<f32>(0.6, 0.12) + vec2<f32>(3.0, 7.0));
+        c *= (1.0 - 0.25 * bk1.z) + 0.4 * bk1.z * streak;
+        c = mix(c, c * vec3<f32>(1.08, 1.0, 0.86), min(1.0, bk1.z / 0.8) * smoothstep(0.6, 0.9, vnoise(uv * 0.25 + vec2<f32>(11.0, 2.0))));
+      }
     }
-    if (bk0.z > 0.0) {
-      // plates: the face's across-coordinate and its height cut into staggered plates, cracks between them in the
-      // mark colour, each plate its own shade (a pine's scales)
-      let t = normalize(vec2<f32>(-n.y, n.x) + vec2<f32>(1e-4, 0.0));
-      var pq = vec2<f32>(dot(wpos.xy, t), wpos.z / 1.7) / max(bk0.w, 0.05);
-      let row = floor(pq.y);
-      pq.x += 0.5 * fract(row * 0.5) * 2.0 + 0.3 * randv(vec3<i32>(i32(row), 41, 7));
-      let id = floor(pq);
-      let f = fract(pq);
-      let edge = min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y) * 1.4);
-      let shade = 0.82 + 0.36 * randv(vec3<i32>(i32(id.x), i32(id.y), 23));
-      c = mix(c, mix(markC, c * shade, smoothstep(0.04, 0.14, edge)), bk0.z);
-    }
-    if (bk1.x > 0.0) {
-      // stripes: dark dashes across the trunk (a birch's lenticels)
-      let q = vec3<i32>(floor(wpos * vec3<f32>(2.5, 2.5, bk1.y)));
-      if (randv(q) < bk1.x) { c = markC; }
-    }
-    if (bk1.z > 0.0) {
-      // roughness: broad pale and grey streaks up the trunk, and warm patches (the elder's reference beech)
-      let streak = randv(vec3<i32>(floor(wpos * vec3<f32>(0.9, 0.9, 0.22))) + vec3<i32>(3, 7, 1));
-      c *= (1.0 - 0.25 * bk1.z) + 0.4 * bk1.z * streak;
-      c = mix(c, c * vec3<f32>(1.08, 1.0, 0.86), min(1.0, bk1.z / 0.8) * smoothstep(0.6, 0.9, randv(vec3<i32>(floor(wpos * 0.5)) + vec3<i32>(11, 2, 5))));
-    }
-    // (round 128, the close-up level — FLORA_EPI.w: the bark's finer octave, a grain of short vertical strands)
-    if (FLORA_EPI[k].w > 0.5) { c *= 0.88 + 0.24 * randv(vec3<i32>(floor(wpos * vec3<f32>(8.0, 8.0, 1.6))) + vec3<i32>(7, 1, 3)); }
     let ridged = FLORA_COL[b + 3u].w > 0.5;
     c = c * select(1.0, select(0.7, 0.92, ridged), part == 7u) * (0.88 + 0.2 * rnd);
     // (round 125) moss on the foot's upward faces — the roots' backs, the buttresses' tops (the accent colour)
@@ -183,6 +254,17 @@ fn floraLook(k: u32, part: u32, wpos: vec3<f32>, n: vec3<f32>, h: f32, rnd: f32,
     }
     // (round 128, close-up: the leaves' own grain, finer than a cluster)
     if (FLORA_EPI[k].w > 0.5) { c *= 0.86 + 0.28 * randv(vec3<i32>(floor(wpos * 5.0)) + vec3<i32>(2, 9, 4)); }
+    // (round 128) a leaf card's own look (card space: mesh.ts addCrown — u across, v stalk to tip): the midrib and side
+    // veins a little lighter, the edge darker; faded where a card is under a few pixels
+    if (uv.y > 0.0 && fw < 0.35) {
+      let x = abs(uv.x - 0.5) * 2.0;
+      let halfw = select(uv.y / 0.45, (1.0 - uv.y) / 0.55, uv.y > 0.45);
+      let edge = clamp(x / max(halfw, 1e-3), 0.0, 1.0);
+      let rib = 1.0 - smoothstep(0.0, 0.1, x);
+      let side = 1.0 - smoothstep(0.0, 0.18, abs(fract(uv.y * 4.0 - x * 1.4) - 0.5) * 2.0 - 0.75);
+      let a = 1.0 - smoothstep(0.15, 0.35, fw);
+      c *= 1.0 + a * (0.14 * rib + 0.07 * side - 0.28 * smoothstep(0.65, 1.0, edge));
+    }
     // (round 128) in flower: a share of the clusters bloom (spring, as the crowns come back)
     let bl = FLORA_EPI[k].z * seasonBloom();
     if (bl > 0.0 && randv(vec3<i32>(floor(wpos * 1.1)) + vec3<i32>(3, 3, 41)) < bl) {

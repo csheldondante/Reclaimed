@@ -16554,3 +16554,18 @@ set". And: "the conifer in winter goes fully white".
 - main saw brown pyramids on a birch/oak wood's floor (m3-lab-ts2-under-all): the thicket's far lump (round 119's
   octahedra in the leaf colours, autumn at the station's season). The far thicket is now its first stems and a few big
   spray cards (~60-80 triangles; the lump's 16).
+
+### Procedural bark and leaf textures in the stems' own coordinates (round 128, the user)
+
+The user: "I'm sure bark texture can't be hard to generate it's just scaled colored noise and normals correct?" — yes:
+- Every plant vertex now carries two more floats (mesh.ts `uv`, the instanced renderer's second vertex buffer, location
+  1): on wood u round the stem and v along it, in cells (the seam's column of vertices doubled so u runs 0 .. the
+  circumference); on a leaf card its card space (u across, v stalk to tip); 0 elsewhere.
+- floralook.wgsl floraBarkH: the bark's height from the species' BarkLook in those coordinates — furrows (ridges along
+  the stem, wandering, with breaks), plates (Voronoi cells and the cracks between them), a birch's lenticels
+  (horizontal dashes), roughness (fine noise and broad streaks) — the colour ramp from the mark colour (grooves,
+  cracks) to the bark colour; floraBump turns the height's slope along the stem's tangents (floraTangents, from the
+  derivatives) into the normal, so the lighting reads the furrows. Features under ~2 pixels fade (fw, cells a pixel).
+  Replaces round 125-128's world-space cell hashes (which didn't follow the stem).
+- The leaf cards: a midrib and side veins a little lighter, the edge darker, faded where a card is a few pixels.
+- The mesh draw, the viewer and the sprites' bake share it (one function). Render: bark-uv-crop.png.

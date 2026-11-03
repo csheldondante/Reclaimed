@@ -20,6 +20,8 @@ export const MI_ARGS_WORD = 24;
 
 export class MeshInstances {
   readonly verts: GPUBuffer;
+  /** (round 128) per vertex two floats (meshinst.wgsl's location 1: the bark's and leaf cards' coordinates) */
+  readonly uvs: GPUBuffer;
   readonly index: GPUBuffer;
   readonly instances: GPUBuffer;
   /** per kind: first index, index count, base vertex, vertex count */
@@ -51,6 +53,12 @@ export class MeshInstances {
     });
     this.verts = buf('meshinst verts', v.byteLength, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST);
     device.queue.writeBuffer(this.verts, 0, v);
+    const uv = new Float32Array(nv * 2);
+    kinds.forEach((k, i) => {
+      if (k.uv) uv.set(k.uv, this.ranges[i].base * 2);
+    });
+    this.uvs = buf('meshinst uvs', Math.max(16, uv.byteLength), GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST);
+    device.queue.writeBuffer(this.uvs, 0, uv);
     this.index = buf('meshinst index', Math.ceil(ix.byteLength / 4) * 4, GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST);
     device.queue.writeBuffer(this.index, 0, ix);
     this.instances = buf('meshinst instances', kinds.length * cap * MI_STRIDE * 16, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);
@@ -87,6 +95,7 @@ export class MeshInstances {
    *  flora: the shadow pass) a flag a kind, those left out not drawn. */
   draw(pass: GPURenderPassEncoder, indirect: GPUBuffer, only?: boolean[]): number {
     pass.setVertexBuffer(0, this.verts);
+    pass.setVertexBuffer(1, this.uvs);
     pass.setIndexBuffer(this.index, 'uint32');
     let n = 0;
     for (let k = 0; k < this.kinds.length; k++) {

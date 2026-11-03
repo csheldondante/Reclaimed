@@ -757,7 +757,11 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       module,
       entryPoint: 'vsInst',
       constants: { ...fwind, SHADOW_PASS: shadow ? 1 : 0 },
-      buffers: [{ arrayStride: 16, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x4' }] }],
+      // (round 128: and the bark's / leaf cards' coordinates, location 1)
+      buffers: [
+        { arrayStride: 16, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x4' }] },
+        { arrayStride: 8, attributes: [{ shaderLocation: 1, offset: 0, format: 'float32x2' }] },
+      ],
     });
     const miModule = this.meshInst ? makeModule(device, 'meshinst', [commonWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, this.meshInst.wgsl(), this.floraWgsl, renderWgsl, floraLookWgsl, meshInstWgsl]) : undefined;
     if (this.meshInst && miModule) {

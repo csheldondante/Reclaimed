@@ -111,6 +111,7 @@ async function main() {
   let groundGroup: GPUBindGroup;
   let leafGroup: GPUBindGroup;
   let vbuf: GPUBuffer;
+  let uvbuf: GPUBuffer;
   let ibuf: GPUBuffer;
   let instBuf: GPUBuffer;
   let draws: { first: number; count: number; base: number; inst0: number; ninst: number }[] = [];
@@ -148,6 +149,7 @@ async function main() {
       ni += k.mesh.index.length;
     }
     const V = new Float32Array(nv * 4);
+    const U = new Float32Array(nv * 2);
     const I = new Uint32Array(ni);
     draws = [];
     let bv = 0;
@@ -155,6 +157,7 @@ async function main() {
     let tris = 0;
     scene.kinds.forEach((k, i) => {
       V.set(k.mesh.verts, bv * 4);
+      U.set(k.mesh.uv, bv * 2);
       I.set(k.mesh.index, bi);
       const r = scene.ranges[i];
       draws.push({ first: bi, count: k.mesh.index.length, base: bv, inst0: r.first, ninst: r.count });
@@ -163,6 +166,9 @@ async function main() {
       bi += k.mesh.index.length;
     });
     vbuf?.destroy();
+    uvbuf?.destroy();
+    uvbuf = device.createBuffer({ size: Math.max(16, U.byteLength), usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(uvbuf, 0, U);
     ibuf?.destroy();
     instBuf?.destroy();
     vbuf = device.createBuffer({ size: Math.max(16, V.byteLength), usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
@@ -181,7 +187,14 @@ async function main() {
     const ds: GPUDepthStencilState = { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' };
     const plant = device.createRenderPipeline({
       layout: 'auto',
-      vertex: { module, entryPoint: 'vsPlant', buffers: [{ arrayStride: 16, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x4' }] }] },
+      vertex: {
+        module,
+        entryPoint: 'vsPlant',
+        buffers: [
+          { arrayStride: 16, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x4' }] },
+          { arrayStride: 8, attributes: [{ shaderLocation: 1, offset: 0, format: 'float32x2' }] },
+        ],
+      },
       fragment: { module, entryPoint: 'fsPlant', targets: [{ format }] },
       primitive: { topology: 'triangle-list', cullMode: 'none' },
       depthStencil: ds,
@@ -598,6 +611,7 @@ async function main() {
       pass.setPipeline(pipes.plant);
       pass.setBindGroup(0, group);
       pass.setVertexBuffer(0, vbuf);
+      pass.setVertexBuffer(1, uvbuf);
       pass.setIndexBuffer(ibuf, 'uint32');
       for (const d of draws) if (d.ninst > 0) pass.drawIndexed(d.count, d.ninst, d.first, d.base, d.inst0);
       pass.setPipeline(pipes.leaf);

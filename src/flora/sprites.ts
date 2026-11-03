@@ -86,5 +86,7 @@ export function spriteKindMesh(far: FloraMesh): FloraMesh {
   const index = new Uint32Array(far.index.length + 6);
   index.set(far.index);
   index.set([nv, nv + 1, nv + 2, nv, nv + 2, nv + 3], far.index.length);
-  return { verts: v, index, height: far.height, radius: far.radius, tris: index.length / 3 };
+  const uv = new Float32Array((nv + 4) * 2);
+  uv.set(far.uv);
+  return { verts: v, uv, index, height: far.height, radius: far.radius, tris: index.length / 3 };
 }

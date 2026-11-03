@@ -21,10 +21,11 @@ struct BOut {
   @location(1) @interpolate(flat) info: vec2<u32>,
   @location(2) h: f32,
   @location(3) @interpolate(flat) eye: vec3<f32>,
+  @location(4) uv: vec2<f32>,
 };
 
 @vertex
-fn vsBake(@location(0) a: vec4<f32>, @builtin(instance_index) ii: u32) -> BOut {
+fn vsBake(@location(0) a: vec4<f32>, @location(1) uvIn: vec2<f32>, @builtin(instance_index) ii: u32) -> BOut {
   let bk = bakes[ii];
   let k = u32(floor(a.w / 16.0));
   let aw = a.w - f32(k) * 16.0;
@@ -50,6 +51,7 @@ fn vsBake(@location(0) a: vec4<f32>, @builtin(instance_index) ii: u32) -> BOut {
   o.info = vec2<u32>(k, part);
   o.h = fract(aw);
   o.eye = e;
+  o.uv = uvIn;
   return o;
 }
 
@@ -63,7 +65,10 @@ fn fsBake(in: BOut) -> BFrag {
   var n = normalize(cross(dpdx(in.p), dpdy(in.p)));
   if (dot(n, in.eye) < 0.0) { n = -n; }
   // (the per-instance random a mesh tree takes from its column: the middle)
-  let fl = floraLook(in.info.x, in.info.y, in.p, n, in.h, 0.5, 7u);
+  let fw = max(fwidth(in.uv).x, fwidth(in.uv).y);
+  let tb = floraTangents(in.p, in.uv, n);
+  let fl = floraLook(in.info.x, in.info.y, in.p, n, in.h, 0.5, 7u, in.uv, fw);
+  n = floraBump(in.info.x, in.info.y, in.uv, n, tb, fw);
   if (fl.w < 0.0) { discard; }
   var o: BFrag;
   o.alb = vec4<f32>(fl.rgb, 1.0);

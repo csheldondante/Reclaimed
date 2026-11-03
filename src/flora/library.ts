@@ -21,6 +21,7 @@ export interface LibraryKind {
   mesh: FloraMesh;
   /** meshinst.ts's MeshKind view of it */
   verts: Float32Array;
+  uv: Float32Array;
   index: Uint32Array;
 }
 
@@ -163,7 +164,7 @@ export class FloraLibrary {
             this.sprites.push({ kind: this.kinds.length, src, idx: this.sprites.length, b: spriteBounds(m0.height, m0.radius) });
             mesh = spriteKindMesh(mesh);
           }
-          this.kinds.push({ name: `${id}-${v}${lod ? `-l${lod}` : ''}`, species: id, variant: v, lod, mesh, verts: mesh.verts, index: mesh.index });
+          this.kinds.push({ name: `${id}-${v}${lod ? `-l${lod}` : ''}`, species: id, variant: v, lod, mesh, verts: mesh.verts, uv: mesh.uv, index: mesh.index });
           this.shadowKinds.push(SPECIES[id].form === 'tree' || SPECIES[id].form === 'shrub' || SPECIES[id].form === 'rock');
         }
       }
@@ -173,7 +174,7 @@ export class FloraLibrary {
         this.closes.set(id, { first: this.kinds.length, count: variants });
         for (let v = 0; v < variants; v++) {
           const mesh = generate(id, hashSeed(spec.seed, v, id.charCodeAt(0), id.length), { lod: 'close' });
-          this.kinds.push({ name: `${id}-${v}-c`, species: id, variant: v, lod: -1, mesh, verts: mesh.verts, index: mesh.index });
+          this.kinds.push({ name: `${id}-${v}-c`, species: id, variant: v, lod: -1, mesh, verts: mesh.verts, uv: mesh.uv, index: mesh.index });
           this.shadowKinds.push(SPECIES[id].form !== 'grass');
         }
       }

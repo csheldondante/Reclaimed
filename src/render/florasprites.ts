@@ -66,7 +66,14 @@ export class FloraSprites {
     this.pipe = device.createRenderPipeline({
       label: 'flora-sprite-bake',
       layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
-      vertex: { module, entryPoint: 'vsBake', buffers: [{ arrayStride: 16, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x4' }] }] },
+      vertex: {
+        module,
+        entryPoint: 'vsBake',
+        buffers: [
+          { arrayStride: 16, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x4' }] },
+          { arrayStride: 8, attributes: [{ shaderLocation: 1, offset: 0, format: 'float32x2' }] },
+        ],
+      },
       fragment: { module, entryPoint: 'fsBake', targets: [{ format: 'rgba8unorm' }, { format: 'rgba8unorm' }] },
       primitive: { topology: 'triangle-list', cullMode: 'none' },
       depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' },
@@ -91,6 +98,7 @@ export class FloraSprites {
     pass.setPipeline(this.pipe);
     pass.setBindGroup(0, this.group);
     pass.setVertexBuffer(0, this.mi.verts);
+    pass.setVertexBuffer(1, this.mi.uvs);
     pass.setIndexBuffer(this.mi.index, 'uint32');
     for (const s of this.lib.sprites) {
       const r = this.mi.ranges[s.src];

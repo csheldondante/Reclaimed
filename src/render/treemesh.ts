@@ -11,6 +11,8 @@ export interface MeshKind {
   verts: Float32Array;
   /** triangles (indices into verts) */
   index: Uint32Array;
+  /** (round 128) per vertex two floats (flora: the bark's and the leaf card's coordinates); absent: zeros */
+  uv?: Float32Array;
 }
 
 class Builder {

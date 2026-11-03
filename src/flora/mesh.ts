@@ -40,6 +40,9 @@ export const PART = {
 
 export interface FloraMesh {
   verts: Float32Array;
+  /** (round 128) per vertex its surface coordinates (two floats): on wood u round the stem and v along it, in cells
+   *  (the bark's procedural texture); on a leaf card its card space 0..1; elsewhere 0 */
+  uv: Float32Array;
   index: Uint32Array;
   /** bounds (cells): height and horizontal radius */
   height: number;
@@ -62,12 +65,14 @@ function across(d: V3): [V3, V3] {
 
 export class MeshBuilder {
   v: number[] = [];
+  uv: number[] = [];
   i: number[] = [];
   /** the sway at height z: set by the caller (plants of different heights) */
   constructor(private swayAt: (p: V3, extra: number) => number) {}
-  vert(p: V3, part: number, extra = 0): number {
+  vert(p: V3, part: number, extra = 0, u = 0, v = 0): number {
     const s = Math.min(0.99, Math.max(0, this.swayAt(p, extra)));
     this.v.push(p[0], p[1], p[2], part + s);
+    this.uv.push(u, v);
     return this.v.length / 4 - 1;
   }
   tri(a: number, b: number, c: number): void {
@@ -82,14 +87,17 @@ export class MeshBuilder {
     const [u, w] = across(d);
     const lo: number[] = [];
     const hi: number[] = [];
-    for (let k = 0; k < n; k++) {
+    // (round 128: u round, v along — a seam's column of vertices doubled so u runs 0 .. the circumference)
+    const L = Math.hypot(g.b[0] - g.a[0], g.b[1] - g.a[1], g.b[2] - g.a[2]);
+    const C = Math.PI * 2 * g.r0;
+    for (let k = 0; k <= n; k++) {
       const t = (k / n) * Math.PI * 2;
       const o: V3 = add(mul(u, Math.cos(t)), mul(w, Math.sin(t)));
-      lo.push(this.vert(add(g.a, mul(o, g.r0)), part, extra));
-      hi.push(this.vert(add(g.b, mul(o, g.r1)), part, extra));
+      lo.push(this.vert(add(g.a, mul(o, g.r0)), part, extra, (k / n) * C, 0));
+      hi.push(this.vert(add(g.b, mul(o, g.r1)), part, extra, (k / n) * C, L));
     }
     for (let k = 0; k < n; k++) {
-      const j = (k + 1) % n;
+      const j = k + 1;
       this.tri(lo[k], lo[j], hi[j]);
       this.tri(lo[k], hi[j], hi[k]);
     }
@@ -108,6 +116,7 @@ export class MeshBuilder {
     const S = [0];
     for (let i = 1; i < P.length; i++) S.push(S[i - 1] + Math.hypot(P[i][0] - P[i - 1][0], P[i][1] - P[i - 1][1], P[i][2] - P[i - 1][2]) * k);
     const L = S[S.length - 1];
+    const C0 = Math.PI * 2 * path.r[0] * k;
     // knots: where, which way round, how wide and big
     const kn: { s: number; a: number; w: number; m: number }[] = [];
     const nk = Math.floor((L * look.knots) / 10 + r01());
@@ -149,15 +158,17 @@ export class MeshBuilder {
         prevT = t;
         const v = norm(cross(t, u));
         const ring: number[] = [];
-        for (let q = 0; q < n; q++) {
+        // (round 128: the bark's coordinates — u round the stem in cells of its foot's circumference, v along it in
+        // cells; the seam's column doubled so u runs 0 .. C)
+        for (let q = 0; q <= n; q++) {
           const th = (q / n) * Math.PI * 2;
           const tq = th + tw;
           const o: V3 = add(mul(u, Math.cos(tq)), mul(v, Math.sin(tq)));
-          ring.push(this.vert(add(at, mul(o, radius(s, r, th))), part, extra));
+          ring.push(this.vert(add(at, mul(o, radius(s, r, th % (Math.PI * 2)))), part, extra, (q / n) * C0, s));
         }
         if (prev) {
           for (let q = 0; q < n; q++) {
-            const w = (q + 1) % n;
+            const w = q + 1;
             this.tri(prev[q], prev[w], ring[w]);
             this.tri(prev[q], ring[w], ring[q]);
           }
@@ -169,8 +180,8 @@ export class MeshBuilder {
     // knots open gaps a flat end would show — the elder's fork was a hollow pipe)
     const rEnd = path.r[path.r.length - 1];
     if (prev && prevT && rEnd > 0.25) {
-      const tip = this.vert(add(P[P.length - 1], mul(prevT, rEnd * 0.6)), part, extra);
-      for (let q = 0; q < n; q++) this.tri(prev[q], prev[(q + 1) % n], tip);
+      const tip = this.vert(add(P[P.length - 1], mul(prevT, rEnd * 0.6)), part, extra, C0 / 2, L + rEnd * k * 0.6);
+      for (let q = 0; q < n; q++) this.tri(prev[q], prev[q + 1], tip);
     }
   }
   /** a faceted blob (an octahedron, jittered): leaf clusters, moss cushions */
@@ -206,18 +217,18 @@ export class MeshBuilder {
     const [u] = across(d);
     let at = p;
     let dir = norm(d);
-    let prevL = this.vert(add(at, mul(u, -width / 2)), part, extra);
-    let prevR = this.vert(add(at, mul(u, width / 2)), part, extra);
+    let prevL = this.vert(add(at, mul(u, -width / 2)), part, extra, 0, 0);
+    let prevR = this.vert(add(at, mul(u, width / 2)), part, extra, 1, 0);
     for (let s = 1; s <= segs; s++) {
       at = add(at, mul(dir, len / segs));
       dir = norm(add(dir, bend));
       const wdt = width * (1 - s / segs) * 0.9 + width * 0.05;
       if (s === segs) {
-        const tip = this.vert(at, part, extra);
+        const tip = this.vert(at, part, extra, 0.5, 1);
         this.tri2(prevL, prevR, tip);
       } else {
-        const L = this.vert(add(at, mul(u, -wdt / 2)), part, extra);
-        const R = this.vert(add(at, mul(u, wdt / 2)), part, extra);
+        const L = this.vert(add(at, mul(u, -wdt / 2)), part, extra, 0, s / segs);
+        const R = this.vert(add(at, mul(u, wdt / 2)), part, extra, 1, s / segs);
         this.tri2(prevL, prevR, R);
         this.tri2(prevL, R, L);
         prevL = L;
@@ -232,7 +243,7 @@ export class MeshBuilder {
       height = Math.max(height, this.v[k + 2]);
       radius = Math.max(radius, Math.hypot(this.v[k], this.v[k + 1]));
     }
-    return { verts: new Float32Array(this.v), index: new Uint32Array(this.i), height, radius, tris: this.i.length / 3 };
+    return { verts: new Float32Array(this.v), uv: new Float32Array(this.uv), index: new Uint32Array(this.i), height, radius, tris: this.i.length / 3 };
   }
 }
 
@@ -432,10 +443,10 @@ function addTwigs(mb: MeshBuilder, sk: Skeleton, minDepth: number, t: TwigLook, 
   const strip = (a: V3, d: V3, len: number, w: number) => {
     const b = add(a, mul(d, len));
     const side = norm(cross(d, Math.abs(d[2]) < 0.9 ? ([0, 0, 1] as V3) : ([1, 0, 0] as V3)));
-    const p0 = mb.vert(add(a, mul(side, w / 2)), PART.twig, 0.15);
-    const p1 = mb.vert(add(a, mul(side, -w / 2)), PART.twig, 0.15);
-    const p2 = mb.vert(add(b, mul(side, w * 0.15)), PART.twig, 0.2);
-    const p3 = mb.vert(add(b, mul(side, -w * 0.15)), PART.twig, 0.2);
+    const p0 = mb.vert(add(a, mul(side, w / 2)), PART.twig, 0.15, 0, 0);
+    const p1 = mb.vert(add(a, mul(side, -w / 2)), PART.twig, 0.15, 1, 0);
+    const p2 = mb.vert(add(b, mul(side, w * 0.15)), PART.twig, 0.2, 0, len);
+    const p3 = mb.vert(add(b, mul(side, -w * 0.15)), PART.twig, 0.2, 1, len);
     mb.tri(p0, p1, p3);
     mb.tri(p0, p3, p2);
     return b;
@@ -504,10 +515,11 @@ export function sprayAt(mb: MeshBuilder, at: V3, d: V3, size: number, leaves: nu
       const L = size * (0.55 + 0.45 * r01());
       const W = L * (0.45 + 0.2 * r01());
       const base = add(ctr, mul(out, size * 0.15));
-      const a = mb.vert(base, PART.leaf, 0.12);
-      const b = mb.vert(add(add(base, mul(ax, L * 0.45)), mul(sd, W / 2)), PART.leaf, 0.14);
-      const t = mb.vert(add(base, mul(ax, L)), PART.leaf, 0.16);
-      const e = mb.vert(add(add(base, mul(ax, L * 0.45)), mul(sd, -W / 2)), PART.leaf, 0.14);
+      // (card space: u across 0 .. 1, v from the stalk 0 to the tip 1 — the leaf's procedural look)
+      const a = mb.vert(base, PART.leaf, 0.12, 0.5, 0.001);
+      const b = mb.vert(add(add(base, mul(ax, L * 0.45)), mul(sd, W / 2)), PART.leaf, 0.14, 1, 0.45);
+      const t = mb.vert(add(base, mul(ax, L)), PART.leaf, 0.16, 0.5, 1);
+      const e = mb.vert(add(add(base, mul(ax, L * 0.45)), mul(sd, -W / 2)), PART.leaf, 0.14, 0, 0.45);
       mb.tri(a, b, t);
       mb.tri(a, t, e);
     }
