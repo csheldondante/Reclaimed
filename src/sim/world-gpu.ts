@@ -370,7 +370,8 @@ export class WorldGpu {
 
     this.layers = this.buf('layers', packed.slots.byteLength, S);
     this.layersNext = this.buf('layersNext', packed.slots.byteLength, S);
-    device.queue.writeBuffer(this.layers, 0, packed.slots);
+    // (round 128, INT16: the layersNext alike — a chunk asleep before its first pass would get it copied back)
+    for (const b of [this.layers, this.layersNext]) device.queue.writeBuffer(b, 0, packed.slots);
     this.surface = this.buf('surface', N * 4, S);
 
     this.water = this.buf('water', N * 4, S);

@@ -22,6 +22,9 @@ const MAX_CYCLONES: u32 = 4u;
 struct Tune {
   worldGravity: f32,
   worldGravityX: f32,
+  impactSoftSink: f32,
+  impactSpray: f32,
+  impactGroundEnergy: f32,
   voxelsGravity: f32,
   voxelsAirDrag: f32,
   voxelsStepUp: f32,
@@ -71,7 +74,8 @@ struct Tune {
   sprayDrops: f32,
   spraySplash: f32,
   sprayMist: f32,
-  pad51: f32,
+  pad54: f32,
+  pad55: f32,
 };
 
 struct Globals {

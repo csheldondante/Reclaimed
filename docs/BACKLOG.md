@@ -12,6 +12,53 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 126 (2026-11-02, session 5, `dialog2`) — petitions as dialogs, the cast, plain writing (DECISIONS round 126)
+
+Branch `dialog2` (b9139b7): docs/WRITING.md, a style lint, every player string rewritten, the cast generator, petitions delivered in talks. The branch's own rows are DLG-7..12.
+
+| id | item | size | status |
+|---|---|---|---|
+| DLG-Q1 | Voices: say more in character, or keep the content plain and put personality in greetings and asides only? | S | asked |
+| DLG-Q2 | Every card a full talk, or travel choices ("Ride to X") a quick tap? | S | asked |
+| DLG-Q3 | Is "Can you give a little more?" the right first negotiation? What is the dialog minigame, so the `Persuasion` interface fits it? | M | asked |
+| DLG-Q4 | Refusing someone drops their group's trust by half as much as theirs. Right size? | S | asked |
+| DLG-R1 | Main's review: the intro says the march twice ("The Hollow Host is marching on Muru" then "An army of the walking dead has risen… It is marching on Muru"). Mid-sentence "The Hollow Court" has a capital "The". "They reach Muru at minute 14.3" reads like a timer, not speech. | S | open |
+| DLG-R2 | Main's review: the muster card's "Takes" lists the encounter ("3 walking dead stand between you and the hall") as well as the time. Takes should be the cost only; the danger belongs in the ask. | S | open |
+| DLG-R3 | Map labels pile up near the hold (timers and card names overlap). This predates dialog2. | M | open |
+
+## Round 127 (2026-11-02, session 5, `knight`) — the knight ported as a third play hero (DECISIONS round 127)
+
+Branch `knight` (c0eeb74): swipe slashes with a lunge and aim lean, the bow drawn opposite the aim, the spin, dodge, weapon and second-move buttons, a knight station. Ported from GameplayGM iso-adventure (read only). The branch's own rows are PL33..40.
+
+| id | item | size | status |
+|---|---|---|---|
+| KN-Q1 | Should every slash lunge further, or is the double swipe the lunge the user remembers? | S | asked |
+| KN-Q2 | Three buttons (dodge, weapon switch, second move), or one weapon button where a tap fires the second move? | S | asked |
+| KN-Q3 | The shield block and the hook vault next? | S | asked |
+| KN-R1 | Main's review: the station's help card sits over the hero at the start, with a second copy of the text showing through behind it. | S | open |
+
+## Round 126 (2026-11-02, session 5, `interiors`) — the first full interior: town s84's hall (DECISIONS round 126)
+
+Branch `interiors` (28d1fbc): plan from the structures plan, CC0 Kenney props voxelised, lit by real windows, people talking, normal rendering, outside hidden inside. The branch's own rows are INT1..17.
+
+| id | item | size | status |
+|---|---|---|---|
+| INT16 | A real places bug: town s84's hall is cut and released to rubble within ~5 s of play, with nobody touching it. Branch `hallfall` is chasing the root cause and adding a lost-buildings count to the merge gate. | M | done (`merge128`: the copy-back hole closed — the claims a GPU stamp, colapply `claim`, and every column writer writes the layers and layersNext alike — the column passes' copy-back undid a claim in a chunk the hybrid's filter kept asleep; scripts/hallcheck.mjs in the gate; and a unit's exact take (edit.wgsl OP_TAKE: a builder's load off a heap planned under a roof) never takes External; DEVLOG round 128 merge128) |
+| M128-1 | Two column writers still make a whole column on the CPU from the kept copy (written to both buffers now): a settled rigid body baked (Integrity.settleRigid with nothing to claim; it also needs the cells over zMax for `above`) and the pieces falling in the columns (colbodies.ts). As GPU stamps they'd need no copy | M | open |
+| M128-3 | `terrain.put` of a material ≥ 32 (Tile, Flesh, Coral, Obsidian, Quartz, Sinter, Bedrock, External) is mis-encoded: the Edit event's z is op · 32 + material, so the material's sixth bit lands in the op (External 39 → op 0 with STROKE_START: seen in hallprobe2 as a builder put back what it took off a roof). Widen the event's material field (edit.wgsl decodes `code % 32`) or refuse it loudly | S | open |
+| M128-4 | A town's builders' heap (settle/life.ts `piles`) was planned under a building's roof (town 1, column 162,194): the builders fetch nothing there now (a take never takes External) — the plan should keep heaps off the footprints | S | open |
+| M128-5 | The user (round 128): an undermined claim — ground eroded from under a building, leaving air below its External (the External's z0/z1 never move) — should go to the judge (and later the physics: buildings as sleeping bodies woken by big impacts, a branch of its own) | M | open |
+| M128-2 | Two writers stamp on the GPU but still read the whole layers back to decide: the voxel lattice's wake (physics/wake.ts floods the piece on the CPU) and the editor's placeModel (resting base, room check). A GPU flood / a GPU base would spare the readback | M | open |
+| INT8 | Building columns are claimed solid from foundation to roof, so the sims and agents see no inside. Claim floors, walls and roof only (several intervals per column in sim/external.ts), so water, fire and units can come in. Structural; it needs a design pass. | L | open |
+
+## Round 126 (2026-11-02, session 5, `encounters`) — every card a real encounter (DECISIONS round 126)
+
+Branch `encounters` (e0b39da, dialog2 merged in): flee, chase, fight, escort, a talking scene, defend; AgentUnits honours SpawnOpts.speed; the respawn trick removed. The branch's own rows are EN11..17.
+
+| id | item | size | status |
+|---|---|---|---|
+| EN-Q1 | Raiders drowned crossing a river toward an idle hero, and the scene counted as won. Should enemy deaths the hero didn't cause count toward a win? (EN15) | S | asked |
+
 ## Round 126 (2026-11-02, session 5, `merge124`) — the living world merged into the run structure (DECISIONS round 125, newest)
 
 The user (verbatim): "Please proceed with getting it ready to merge into our run structure for now." and, on the levy's
@@ -198,7 +245,11 @@ The user: "I think just make a new layer you own so I can work from one session"
 | JB3 | B's window: a piece reaching its side (the seeds' box + 32 columns) is held there, as A's neck keys into the land past 16 columns — a hanging piece longer than the margin isn't judged whole | S | open |
 | JB4 | B's neck checks one horizontal section (at the piece's lowest point), not every height of a leg (a leg narrowest lower down isn't checked there); buckling isn't modelled (A's buckle) | S | open |
 | JB5 | B's thrust check: the abutments' side of the thrust (H on the legs: an arch's legs pushed apart) isn't checked; a meeting component deeper than level 1 skips bending without its own thrust check | S | open |
-| JB6 | AR6 remainder: B reads no columns back, but Integrity still keeps its CPU copy (apply's writes, External, the structures' analyse) and reads it before each pass whichever judge is picked | M | open |
+| JB6 | AR6 remainder: B reads no columns back, but Integrity still keeps its CPU copy (apply's writes, External, the structures' analyse) and reads it before each pass whichever judge is picked | M | done (`jb6`: the GPU makes every change to the columns; the copy kept only for judge A, the CPU rigid rock and the falling pieces; lattice x sections reads back only what a pass fetches on purpose — DEVLOG round 120 jb6); on places through `merge128` (round 128) |
+| JB14 | `?jb6=0` (the CPU copy kept everywhere, as before JB6) is for measuring only: take it out once the phone bench has compared jb6 with it | S | open |
+| JB15 | The node solver's and hybrid's rigid rock still walk the CPU copy (RockBodies' ground at spawn — allowOverlap — and fast-forward; settleRigid/restRigid/erodeUnder/wakeResting read the columns): with them the copy is kept whatever the judge. On the GPU: the solver's own first-tick overlap, its rest written by the GPU | M | open |
+| JB16 | A blow is judged by its Edit event (two looks round it) even when it only sank into sand: the CPU no longer knows which it was (the edit pass decides). Cheap with judge B; a flag back from the edit pass would spare it | S | open |
+| JB17 | The metal flood (wakeMetal), the drop tool and the settlements' claims fetch their columns on the sections path: the metal waits a readback before it wakes (the frames between, it hangs in the columns) | S | open |
 | JB7 | The solver lab's variant switch: list `JUDGES` in its panel (the solver agent's side, branch `solver`; not edited here) | S | open |
 | JB8 | Feel tests in the browser: A vs B on the atlas on the phone proxy — scripts/judgebattery.mjs runs (DEVLOG round 120, `judge`), but its built rock didn't collapse under either judge: a cut that really brings down a mesa or a cliff in the atlas (find one in the land, or build bigger) is still to do, and the phone itself | S | open |
 | JB10 | B on the atlas: 8–20 ms a pass as first built → about 1 ms on a quiet GPU (least 0.8–1.6 ms; 1.5–6.5 with other agents on the GPU) after culling, the window from the pieces and the level pass/pairs by depth (round 120c). The readback Integrity still makes (JB6) is the remaining cost B doesn't remove | M | done (`judge`) |

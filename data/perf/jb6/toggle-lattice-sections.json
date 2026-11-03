@@ -1,0 +1,101 @@
+{
+ "when": "2026-10-31T21:31:01.819Z",
+ "solver": "lattice",
+ "judge": "sections",
+ "seconds": 30,
+ "viewport": "412x915 dpr 2.6 q=low",
+ "runs": [
+  {
+   "jb6": false,
+   "frames": {
+    "n": 3045,
+    "mean": 9.85,
+    "p50": 9.8,
+    "p95": 11.7,
+    "p99": 12.8,
+    "max": 92.6,
+    "over33": 1
+   },
+   "gpu": {
+    "n": 0,
+    "mean": 0,
+    "p50": 0,
+    "p95": 0
+   },
+   "readKB": 120896,
+   "passes": 67,
+   "keepsCopy": true,
+   "cuts": 26,
+   "drops": 10
+  },
+  {
+   "jb6": true,
+   "frames": {
+    "n": 3030,
+    "mean": 9.9,
+    "p50": 9.9,
+    "p95": 11.4,
+    "p99": 12.5,
+    "max": 98.4,
+    "over33": 3
+   },
+   "gpu": {
+    "n": 0,
+    "mean": 0,
+    "p50": 0,
+    "p95": 0
+   },
+   "readKB": 0,
+   "passes": 65,
+   "keepsCopy": false,
+   "cuts": 26,
+   "drops": 10
+  },
+  {
+   "jb6": false,
+   "frames": {
+    "n": 3046,
+    "mean": 9.85,
+    "p50": 9.9,
+    "p95": 11.4,
+    "p99": 12.4,
+    "max": 73.1,
+    "over33": 2
+   },
+   "gpu": {
+    "n": 0,
+    "mean": 0,
+    "p50": 0,
+    "p95": 0
+   },
+   "readKB": 119296,
+   "passes": 66,
+   "keepsCopy": true,
+   "cuts": 26,
+   "drops": 10
+  },
+  {
+   "jb6": true,
+   "frames": {
+    "n": 3032,
+    "mean": 9.9,
+    "p50": 9.9,
+    "p95": 11.4,
+    "p99": 12.9,
+    "max": 69.7,
+    "over33": 3
+   },
+   "gpu": {
+    "n": 0,
+    "mean": 0,
+    "p50": 0,
+    "p95": 0
+   },
+   "readKB": 0,
+   "passes": 65,
+   "keepsCopy": false,
+   "cuts": 26,
+   "drops": 10
+  }
+ ]
+}

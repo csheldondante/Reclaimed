@@ -92,7 +92,7 @@ const ARRIVE_PREP = new URLSearchParams(location.search).get('arriveprep') !== '
 /** (round 98) ?flyspeed=: the free camera's speed (cells a second; Shift 120) — on a phone, the speed ✈'s ⇧ flies at */
 const FLY_SPEED = Number(new URLSearchParams(location.search).get('flyspeed') ?? 35);
 import { cpuLine, cpuStats, frameSteps, record, timed } from '../gpu/cpustat';
-import { type Interval, CHUNK, columnSlots, K_HEADROOM, packColumn, readColumn, SLOT_WORDS, sfMat, sfZ, sfPack, windowZMax } from '../world/layout';
+import { type Interval, CHUNK, columnSlots, K_HEADROOM, readColumn, SLOT_WORDS, sfMat, sfZ, sfPack, windowZMax } from '../world/layout';
 import { modelById, modelColumns, restingBase, seatColumn, type VoxelModel } from '../world/models';
 import { Integrity, type Grab } from '../game/integrity';
 import { WorldVox } from '../game/fracture';
@@ -1149,7 +1149,7 @@ export class LevelScene implements Scene {
       core.integrity = integ;
       // lightning seeks what you see (loose ground, fallen bodies) and breaks
       // the bodies it strikes (round 19)
-      this.powers.topAt = (x, y) => integ.topAt(x, y);
+      this.powers.topAt = (x, y) => integ.bodyTopAt(x, y);
       this.powers.onStrike = (x, y, z) => {
         integ.breakBodies([x, y, z], 2.6);
         integ.markDirty(x, y, 16);
@@ -1818,7 +1818,7 @@ export class LevelScene implements Scene {
             device: host.gpu.device,
             renderer: core.renderer,
             external: () => this.integrity?.external ?? null,
-            ready: () => this.integrity?.ensureCopy() ?? Promise.resolve(),
+            columns: (cols, then) => this.integrity?.columnsReady(cols, then) ?? Promise.resolve(),
             dims: { w: dims.w, h: dims.h },
             origin: () => [S.origin[0], S.origin[1]],
             oz: () => S.oz,
@@ -3206,14 +3206,13 @@ export class LevelScene implements Scene {
     // (round 120: the map's tankers and cars wake into the picked solver variant — ?solver= — like the metal the judge
     // frees; the rest of the ruin, concrete and brick, as before)
     const ig = this.integrity;
-    if (ig?.rigid && ig.wakeMetalNear(x, y, z, r)) {
-      return this.waker.wake(x, y, z, r, { materials: NON_METAL }).then(({ full }) => {
+    const waker = this.waker;
+    // (round 120, JB6: the metal found where the columns are read — the copy, or fetched — so it answers later)
+    return (ig?.rigid ? ig.wakeMetalNear(x, y, z, r) : Promise.resolve(false))
+      .then((metal) => waker.wake(x, y, z, r, metal ? { materials: NON_METAL } : undefined))
+      .then(({ full }) => {
         if (full) this.hud.say('No room for more bodies.', 2);
       }, ignoreTeardown);
-    }
-    return this.waker.wake(x, y, z, r).then(({ full }) => {
-      if (full) this.hud.say('No room for more bodies.', 2);
-    }, ignoreTeardown);
   }
 
   /** A meteor at what's under the pointer: it comes in from the sky, smoking (stepMeteors). */
@@ -3359,7 +3358,7 @@ export class LevelScene implements Scene {
       const ig = this.integrity;
       if (ig?.rigid) {
         const kinds = ed.dropAll ? LINEUP.map((id) => BODIES.find((b) => b.id === id)!) : [kind];
-        const n = ig.dropModels(kinds.map((k) => k.make()), hit.cell % core.dims.w, Math.floor(hit.cell / core.dims.w), ed.dropHeight);
+        const n = await ig.dropModels(kinds.map((k) => k.make()), hit.cell % core.dims.w, Math.floor(hit.cell / core.dims.w), ed.dropHeight);
         if (n < kinds.length) this.hud.say('No room for more bodies.', 2);
         return;
       }
@@ -3472,31 +3471,26 @@ export class LevelScene implements Scene {
       this.hud.say('Too high to place that here.', 2);
       return;
     }
-    const writes: { at: number; data: Uint32Array }[] = [];
+    // placed at full support: the structure system bleeds it away only where something is really unsupported
+    // (starting at 0, every overhang would collapse before support could spread to it)
+    const aux = 15 << 4;
+    const seat: { x: number; y: number; runs: { z0: number; z1: number; mat: number }[] }[] = [];
     for (let fy = 0; fy < fd; fy++)
       for (let fx = 0; fx < fw; fx++) {
         const x = x0 + fx;
         const y = y0 + fy;
         const runs = cols[fx + fw * fy];
         if (!runs.length || !inMap(x, y)) continue;
-        const merged = seatColumn(
-          readColumn(packed, slots, x, y),
-          runs.map((r) => ({ z0: r.z0 + base, z1: r.z1 + base, mat: r.mat })),
-          base,
-          // placed at full support: the structure system bleeds it away only
-          // where something is really unsupported (starting at 0, every
-          // overhang would collapse before support could spread to it)
-          15 << 4,
-        );
-        const { base: at, k } = columnSlots(packed, x, y);
-        if (merged.length > k) {
+        const at = runs.map((r) => ({ z0: r.z0 + base, z1: r.z1 + base, mat: r.mat }));
+        // (the column as read: room for it checked here; the GPU seats it in its own column)
+        if (seatColumn(readColumn(packed, slots, x, y), at, base, aux).length > columnSlots(packed, x, y).k) {
           this.hud.say('Too many layers here to fit that model.', 2);
           return;
         }
-        writes.push({ at, data: packColumn(merged, k) });
+        seat.push({ x, y, runs: at });
       }
-    const { device } = this.host.gpu;
-    for (const w of writes) device.queue.writeBuffer(core.world.layers, w.at * SLOT_WORDS * 4, w.data);
+    // (round 128, INT16: the GPU's stamp — colapply.wgsl seat, seatColumn's rule — into the layers and layersNext alike)
+    core.stampColumns([{ cuts: [], seat: { cols: seat, base, aux } }]);
     core.sleep?.wake(x0 + fw / 2, (y0 + fd / 2) * ROW_H, Math.max(fw, fd) + 16, Sleep.EVENT_S, performance.now() / 1000);
     // (the loose ground under it stays in the layers, under the model)
     if (!this.physics) this.integrity?.markBox(x0 - 2, y0 - 2, x0 + fw + 2, y0 + fd + 2);
@@ -3699,7 +3693,7 @@ export class LevelScene implements Scene {
           return k;
         });
         if (!this.integrity?.rigid) throw new Error('station dropModels: no solvers here (the level needs the rigid rock)');
-        this.integrity.dropModels(kinds.map((k) => k.make()), x, y, above, wrap);
+        void this.integrity.dropModels(kinds.map((k) => k.make()), x, y, above, wrap);
         const [wx, wy] = cellPos(x, y);
         this.sleep?.wake(wx, wy, 40, Sleep.EVENT_S, now());
       },

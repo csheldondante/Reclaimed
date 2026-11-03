@@ -59,6 +59,32 @@ export function cellRange(z0: number, z1: number): [number, number] {
   return [Math.ceil(z0 - 0.5), Math.ceil(z1 - 0.5)];
 }
 
+/**
+ * (round 128) The column with whole cells `zs` of the materials `take` taken out: each such interval keeps the runs of
+ * its cells (cellRange) not taken, its own z0 and z1 at its ends. The voxel lattice's wake (physics/wake.ts) as the GPU
+ * makes it (colapply.wgsl take; test/gpu/colapply.test.ts holds them equal).
+ */
+export function takeCells(col: Interval[], zs: ReadonlySet<number>, take: ReadonlySet<number>): Interval[] {
+  const out: Interval[] = [];
+  for (const iv of col) {
+    if (!take.has(iv.mat)) {
+      out.push(iv);
+      continue;
+    }
+    const [c0, c1] = cellRange(iv.z0, iv.z1);
+    let run = -1;
+    for (let z = c0; z <= c1; z++) {
+      const keep = z < c1 && !zs.has(z);
+      if (keep && run < 0) run = z;
+      if (!keep && run >= 0) {
+        out.push({ ...iv, z0: run === c0 ? iv.z0 : run, z1: z === c1 ? iv.z1 : z });
+        run = -1;
+      }
+    }
+  }
+  return out;
+}
+
 /** The surface buffer's packing (surface.wgsl, common.wgsl sfPack): z in 9.8 fixed point (round 100: to 511.99,
  *  the atlas's whole height in the window), material, slot count. */
 export const sfZ = (v: number) => (v & 0x1ffff) / 256;

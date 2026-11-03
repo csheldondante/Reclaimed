@@ -1,0 +1,55 @@
+{
+ "when": "2026-10-31T21:44:26.159Z",
+ "solver": "lattice",
+ "judge": "sections",
+ "seconds": 30,
+ "viewport": "412x915 dpr 2.6 q=low",
+ "runs": [
+  {
+   "jb6": false,
+   "frames": {
+    "n": 3040,
+    "mean": 9.87,
+    "p50": 9.9,
+    "p95": 10.6,
+    "p99": 11.5,
+    "max": 68.8,
+    "over33": 1
+   },
+   "gpu": {
+    "n": 3004,
+    "mean": 6.45,
+    "p50": 6.64,
+    "p95": 9.81
+   },
+   "readKB": 125248,
+   "passes": 70,
+   "keepsCopy": true,
+   "cuts": 26,
+   "drops": 10
+  },
+  {
+   "jb6": true,
+   "frames": {
+    "n": 3036,
+    "mean": 9.88,
+    "p50": 9.9,
+    "p95": 10.7,
+    "p99": 11.8,
+    "max": 67.6,
+    "over33": 1
+   },
+   "gpu": {
+    "n": 3010,
+    "mean": 6.34,
+    "p50": 6.48,
+    "p95": 9.67
+   },
+   "readKB": 0,
+   "passes": 68,
+   "keepsCopy": false,
+   "cuts": 26,
+   "drops": 10
+  }
+ ]
+}

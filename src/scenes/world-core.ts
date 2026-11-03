@@ -23,6 +23,7 @@ import { DayNight, type Daylight } from '../weather/daynight';
 import { Weather } from '../weather/weather';
 import { Structures } from '../grids/structures';
 import { Places } from '../game/places';
+import { ColumnApply, type ApplyStage, type GpuColumns } from '../game/colapply';
 import { bootMark } from '../perf/boot-marks';
 import { restoreWorld, type WorldSnapshot } from '../sim/snapshot';
 
@@ -341,8 +342,34 @@ export class WorldCore {
   }
 
   destroy(): void {
+    this.colApply?.destroy();
     this.renderer.destroy();
     this.world.destroy();
+  }
+
+  private colApply: ColumnApply | null = null;
+
+  /**
+   * (round 128, INT16) Changes to the columns made by the GPU (game/colapply.ts) — one instance for every system that
+   * changes them (the integrity system, the voxel lattice's wake, the editor's placing).
+   */
+  get columnApply(): ColumnApply {
+    return (this.colApply ??= new ColumnApply(this.host.gpu.device));
+  }
+
+  /** The columns as ColumnApply changes them: the layers, and the layersNext written alike. */
+  columnsGpu(): GpuColumns {
+    return { slots: this.world.layers, next: this.world.layersNext, chunks: this.world.chunks, packed: this.packed };
+  }
+
+  /**
+   * (round 128, INT16) Stamp these changes into the columns on the GPU (claims, cells taken, a model seated: no loose
+   * ground — that's the integrity system's, with the deposit) — into the layers and layersNext alike, so a column pass's
+   * copy-back can't undo them wherever a chunk didn't run.
+   */
+  stampColumns(stages: ApplyStage[]): void {
+    for (const st of stages) if (st.spill?.length || st.deposits?.length) throw new Error('stampColumns: loose ground is laid through the integrity system (it needs the deposit)');
+    this.columnApply.run(this.columnsGpu(), stages);
   }
 
   /** (round 105, ringwin) where each window column's per-column data lies (sim/ring.ts) */
@@ -545,7 +572,8 @@ export class WorldCore {
         if (cx < 0 || cy < 0 || cx >= p.chunksX || cy >= p.chunksY) throw new Error(`restoreChunks: chunk ${cx},${cy} off the window`);
         const ci = cy * p.chunksX + cx;
         const off = p.chunkTable[ci * 2] * 16;
-        enc.copyBufferToBuffer(pr.layers, off, this.world.layers, off, p.chunkTable[ci * 2 + 1] * COLS * 16);
+        // (round 128, INT16: and the layersNext — a column pass's copy-back would put back what a chunk that didn't run held)
+        for (const b of [this.world.layers, this.world.layersNext]) enc.copyBufferToBuffer(pr.layers, off, b, off, p.chunkTable[ci * 2 + 1] * COLS * 16);
         // (its first column's place: the chunk's columns follow it — sim/pages.ts i())
         const first = this.world.ring.i(cx * CHUNK, cy * CHUNK);
         if (this.world.ring.i(cx * CHUNK + CHUNK - 1, cy * CHUNK + CHUNK - 1) !== first + COLS - 1) throw new Error('restoreChunks: a chunk’s columns are not contiguous');
@@ -567,7 +595,8 @@ export class WorldCore {
     if (slots.byteLength !== w.layers.size) throw new Error(`replaceWindow: ${slots.byteLength} bytes of layers for a ${w.layers.size}-byte buffer`);
     const N = this.dims.w * this.dims.h;
     if (water.length !== N || surface.length !== N) throw new Error('replaceWindow: water and surface are a float a column');
-    device.queue.writeBuffer(w.layers, 0, slots);
+    // (round 128, INT16: the layersNext alike — the land is new everywhere, asleep or not)
+    for (const b of [w.layers, w.layersNext]) device.queue.writeBuffer(b, 0, slots);
     const enc = device.createCommandEncoder({ label: 'replace window' });
     for (const n of WorldCore.RESTORED) enc.clearBuffer(w[n] as GPUBuffer);
     enc.clearBuffer(w.deposit);
