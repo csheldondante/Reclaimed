@@ -57,6 +57,8 @@ const STORE = 'reclaimed.play.params.';
 
 export class PlaySession {
   hero!: PlayHero;
+  /** (knight) the controller id of the hero in play (its library entry) */
+  heroId!: PlayHeroId;
   controls!: Controls;
   readonly world: PlayWorld;
   private draw: VoxelDraw;
@@ -175,6 +177,7 @@ export class PlaySession {
     if (prev && 'dropAll' in prev) (prev as unknown as { dropAll(): void }).dropAll();
     this.controls?.dispose();
     this.hero = makeHero(id, this.world, where, tunedParams(id));
+    this.heroId = id;
     this.controls = new Controls(this.d.ui, this.hero.pad);
     this.rig.setHero(this.hero.camera.chase, this.hero.camera.zoom);
     this.last = null;

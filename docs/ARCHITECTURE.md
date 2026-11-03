@@ -2244,6 +2244,24 @@ abilities and moves and puzzles and enemies and camera modes so we can iterate m
 - **Measured**: `test/unit/herolab-metrics.test.ts` (Node: `ride()` — play's hero by the autopilot on the lab's columns
   and planTree's trees) and `scripts/herolab.mjs` (the live world: shots, GIFs, metrics; `--cost`: frame time by
   toggling each mode against the chase on the phone proxy).
+### The knight (round 128, branch `knight`; BACKLOG PL5)
+
+A third play hero, on foot with a sword and a bow (`?play=knight`; the station `&station=1`). Each concern its own part:
+
+| part | what |
+|---|---|
+| core/foot.ts | the on-foot drive: a snappy run to the stick, what's over the run (a lunge, a dodge, a knock) bled off by friction; steps, walls, slopes, drops, wading; the spin's slide and `carom` off a body. Pure |
+| core/swordplay.ts | the knight's reading of a stroke as it's drawn (ThumbReader: sword strikes at 30 px and spins on a circle; the bow's draw back, loose and roll; the spinning top's fling), `isDouble` (the lunge), StickyAim (the bow). Screen px in, events out. Pure |
+| core/aim.ts `leanAim` | the slash's lean toward the enemy a swipe most likely means |
+| controllers/knight.ts | KNIGHT_DEFAULTS (iso-adventure's numbers, scaled; DEVLOG round 128), the tune panel's specs, the profile, its camera, KNIGHT_BODY (the generator's spec) |
+| heroes/knight.ts | KnightHero: buttons on the press, strokes read, the swing's phases and chain, the spin, the bow and its arrows, the dodge's i-frames; blows out as AreaHits (knock, a little lift, the agents' stun) |
+| draw/rigpose.ts | PosedBody: the character generator's rig (inhabitants/rig.ts buildRig) posed on the CPU and drawn as voxel parts — the hero's body is the generator's, not a second model |
+| sandbox/station.ts | the test station: a dry spot with flat ground and a slope, waves of raiders, dummies, a readout |
+
+Input contract additions (play/input/types.ts): `PlayInput.thumbs` (the strokes drawn this frame, screen px and s, the
+one held and those let go, with `endedAt`) and `PlayInput.basis` (the camera's screen-to-ground map), for a hero that
+reads a stroke while it's drawn; `ButtonLook.icon`/`name` (a button whose label follows the hero's state). The bike and
+the lich ignore them. The sandbox's tune panel now follows `PlaySession.heroId` (it guessed bike-or-lich by role).
 
 ## Things and diplomacy (round 85, src/api/contracts)
 

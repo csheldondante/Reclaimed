@@ -9,7 +9,7 @@
 // Screen pixels only; input/read.ts takes it onto the ground through the camera.
 
 import { Stroke, type Gesture, type Pt } from '../core/gestures';
-import type { ButtonLook, Pad } from './types';
+import type { ButtonLook, Pad, Thumb } from './types';
 
 /** The stick: its radius (px), dead zone, and the zone a thumb grabs it in (share of the screen from the bottom-left). */
 const STICK = { radius: 60, dead: 8, zoneX: 0.45, zoneY: 0.5 };
@@ -18,14 +18,17 @@ const BUTTON_KEYS = [' ', 'e', 'q', 'r'];
 export class Controls {
   readonly el: HTMLDivElement;
   private keys = new Set<string>();
-  private stroke: { id: number; s: Stroke } | null = null;
+  private stroke: { id: number; n: number; s: Stroke } | null = null;
   private done: Gesture[] = [];
+  /** (knight) strokes let go since the last read (their samples), and the strokes' count */
+  private ended: Thumb[] = [];
+  private strokes = 0;
   private held: boolean[];
   private pressed: boolean[];
   private stick: { id: number; centre: Pt; at: Pt } | null = null;
   private ring: HTMLDivElement;
   private knob: HTMLDivElement;
-  private btns: { el: HTMLButtonElement; ring: HTMLDivElement }[] = [];
+  private btns: { el: HTMLButtonElement; ring: HTMLDivElement; html?: string }[] = [];
   private abort = new AbortController();
   private off = false;
   /** a scripted thumb (headless tests): the stick and the buttons as if held; null: the player's own */
@@ -81,7 +84,7 @@ export class Controls {
         return;
       }
       if (this.stroke) return;
-      this.stroke = { id: e.pointerId, s: new Stroke(p, e.timeStamp / 1000) };
+      this.stroke = { id: e.pointerId, n: ++this.strokes, s: new Stroke(p, e.timeStamp / 1000) };
     }, sig);
     el.addEventListener('pointermove', (e) => {
       const p: Pt = [e.clientX, e.clientY];
@@ -103,6 +106,7 @@ export class Controls {
         const g = this.stroke.s.end(e.timeStamp / 1000);
         this.note(`gesture ${g.kind} ${Math.round((e.timeStamp / 1000 - this.stroke.s.samples[0].t) * 1000)} ms ${Math.round(this.stroke.s.length)} px`);
         this.done.push(g);
+        this.ended.push({ id: this.stroke.n, samples: this.stroke.s.samples, ended: true, endedAt: e.timeStamp / 1000 });
         this.stroke = null;
       }
     };
@@ -146,6 +150,7 @@ export class Controls {
       this.stroke = null;
       this.stick = null;
       this.done = [];
+      this.ended = [];
       this.held.fill(false);
       this.drawStick();
     }
@@ -190,6 +195,15 @@ export class Controls {
       b.ring.style.display = l.gauge === undefined ? 'none' : '';
       if (l.gauge !== undefined) b.ring.style.setProperty('--g', String(Math.max(0, Math.min(1, l.gauge))));
       b.el.classList.toggle('lit', !!l.lit);
+      if (l.icon !== undefined || l.name !== undefined) {
+        const html = `<span>${l.icon ?? this.pad.buttons[i].icon}</span><small>${l.name ?? this.pad.buttons[i].name}</small>`;
+        if (b.html !== html) {
+          b.html = html;
+          // (the gauge ring is the button's own child: keep it)
+          b.el.querySelector('span')!.textContent = l.icon ?? this.pad.buttons[i].icon;
+          b.el.querySelector('small')!.textContent = l.name ?? this.pad.buttons[i].name;
+        }
+      }
     });
   }
 
@@ -197,6 +211,14 @@ export class Controls {
   drag(): { from: Pt; at: Pt } | null {
     if (!this.stroke) return null;
     return { from: this.stroke.s.from, at: this.stroke.s.at };
+  }
+
+  /** (knight) The strokes drawn: the one held now and those let go since the last call, as samples on the screen. */
+  thumbs(): Thumb[] {
+    const out = this.ended;
+    this.ended = [];
+    if (this.stroke) out.push({ id: this.stroke.n, samples: this.stroke.s.samples, ended: false });
+    return out;
   }
 
   /** The gestures finished since the last call. */

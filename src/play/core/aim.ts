@@ -37,6 +37,20 @@ export function assist(from: Pt, dir: Pt, targets: Pt[], cone: number, range: nu
   return best;
 }
 
+/**
+ * (knight, round 128) A swipe's way, leaned slightly toward the enemy it most likely means: the target `assist` picks
+ * within `cone` and `range`, turned toward by `k` of the angle off (the user: "lunged in the direction you swipe for
+ * slashes and aimed slightly towards enemies"). Nothing in the cone: the swipe's way as it was. Unit `dir` in and out.
+ */
+export function leanAim(from: Pt, dir: Pt, targets: Pt[], cone: number, range: number, k: number): { dir: Pt; i: number | null } {
+  const a = assist(from, dir, targets, cone, range);
+  if (!a) {
+    const l = Math.hypot(dir[0], dir[1]) || 1;
+    return { dir: [dir[0] / l, dir[1] / l], i: null };
+  }
+  return { dir: lean(dir, a.dir, k), i: a.i };
+}
+
 /** Turn `dir` toward `to` by at most `k` (0..1) of the angle between them. */
 export function lean(dir: Pt, to: Pt, k: number): Pt {
   const a = Math.atan2(dir[1], dir[0]);

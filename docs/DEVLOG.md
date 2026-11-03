@@ -16368,3 +16368,84 @@ places: the merge added none of its own). The structure review: C:/Projects/shot
   (two runs each): p50 9.9/9.9 vs 9.9/9.9 ms, p95 12.3/13.4 vs 12.3/12.4, GPU 12.1/13.9 vs 13.4/12.1 ms — within the
   spread. Shots: C:/Projects/shots88/merge124/ (1-roster, 2-run-turn-presenter-card, 3-effect-card-reward,
   4-encounter-enemies, 5-mutation-watchtower-before-after, 5b-mutation-weir-river-before-after, opps/, inspector-*).
+
+## 2026-11-02 — round 128, branch `knight`: the knight, a third play hero (BACKLOG PL5)
+
+The user (round 127, DECISIONS): "add a normal on foot hero with a sword and the left joy plus swipe to slash and change
+weapons in the bottom right or activate secondary abilities with a tap. There was a whole project that built this and
+it was fun. The character lunged in the direction you swipe for slashes and aimed slightly towards enemies, they could
+switch to a bow that you draw back in the opposite direction you want to fire which was pretty fun and they had an
+arcady spin move with the blade that let them flick around as a top and bounce of enemies. Faster on foot than the lich
+by a bit but slower than the bike and a Dodge button in the bottom right with the weapon/ability select button."
+
+**What was ported, from where.** GameplayGM `runtime/iso-adventure` (read only): the gestures (src/app/gestures.ts
+Blade, Slingshot, Fling, Winding; aimassist.ts StickyAim), the swing phases and the run (src/sim/combat.ts: windup,
+active, recovery, the chain at 0.4 of the recovery, ACCEL 70, FRICTION 14 × 0.6; the dodge), the sword's numbers
+(src/sim/data/weapons.ts sword combo, lungeSwing, moves.circle; the bow; DODGE; LUNGE), the spin (src/sim/lab/
+momentum.ts SLIDES.spin and moves.ts spinFlick). Its architecture was left there: Reclaimed's heroes are PlayHeroes on
+the Units contract, the swing's blows are AreaHits, the body is the character generator's.
+
+| | iso-adventure | here | why |
+|---|---|---|---|
+| run | 6 cells/s | 9 cells/s | set against the other heroes: the lich floats at 7, the bike cruises at 32 ("faster than the lich by a bit") |
+| distances, speeds | as written | × 1.3 (`SCALE`) | a body there is 0.35 cells across the middle; a unit here is 0.45 |
+| times (windup, active, recovery, draw, dodge, rehit) | as written | the same | they are the feel |
+| light swing | range 1.55, arc 130°, dmg 2, knock 6, lunge 3.5 | 2.0, 130°, 2, 7.8, 4.5 | scaled |
+| finisher | 1.8, 170°, 3, 12, 6 | 2.35, 170°, 3, 15.6, 7.8 | scaled |
+| double-swipe lunge | 1.7, 100°, 3, 11, lunge 15 | 2.2, 100°, 3, 14.3, 19.5 | scaled |
+| spin | fuel 4 s, 18 rad/s, restitution 0.82, reach 1, flick 8-24 | 4 s, 18, 0.82, 1.3, 10.4-31.2 | scaled |
+| bow | draw 0.7 s, speed 11-32, dmg 1-4, knock 2-13 | 0.7 s, 14.3-41.6, 1-4, 2.6-16.9 | scaled |
+| dodge | 0.28 s, i-frames 0.24, 15 cells/s, cooldown 0.45 | 0.28, 0.24, 19.5, 0.45 | scaled |
+| health | 12 | 12 | |
+
+New here, not in iso-adventure (each a slider in the tune panel):
+- **The aim lean** (core/aim.ts `leanAim`): the user remembered the slash "aimed slightly towards enemies"; iso-adventure
+  has no melee assist (its 130° arc did the work), so the swipe now turns a third of the way toward the enemy `assist`
+  picks within 35° and 4.5 cells. A miss the player earned is still a miss.
+- **Swipes during the windup queue** (two at most): iso-adventure only queued once the blade was out; under a thumb a
+  quick second swipe was dropped and read as a missed slash.
+- **The spin caroms at the blade's edge** (`spinTouch` 0.78 cells past the body): body-to-body only, the blade's blow
+  shoved the raider off first and their read-back positions are a frame or two old, so in the station the top
+  bounced once in four runs. Now it bounces off what it cuts — "flick around as a top and bounce of enemies".
+- **A blow throws a little and stuns** (the agents' AreaHit `lift` 2-3 cells/s, `stun` 0.25 / 0.5 / 0.6 s for a light
+  swing, the finisher, the lunge): the units' status is the traits system's stun; readable at play zoom.
+- The run's ground (core/foot.ts): steps up 0.9 cells, a face steeper than 1.2 and taller than a step is a wall (slid
+  along walking, bounced off spinning), uphill slows it, off a drop it falls, water past 1.2 cells is a wall.
+
+**Controls as played.** Left thumb: the floating stick. Right thumb anywhere else: a swipe slashes the moment it's 30
+px long (no lift needed: the Controls now hand the knight the stroke as it's drawn — PlayInput `thumbs` and `basis`;
+the bike and lich keep the released gestures); two swipes within 0.3 s and 40° lunge; a circle (300° over 90 px) spins;
+spinning, a drag let go flicks the top that way. Bow: pull back from anywhere, the aim opposite the pull and sticky over
+an enemy, let go to loose; a quick long flick on the bow rolls. Bottom right, stacked: DODGE (Space), the weapon button
+(E: to the bow, to the sword — its icon shows the other weapon), the second move (Q: the spin with the sword, a volley of
+three with the bow). Desktop: WASD and the mouse as the right thumb.
+
+**The body** is the character generator's (src/inhabitants/rig.ts `buildRig` of a biped spec: helmet in the hood slot,
+red cape; controllers/knight.ts KNIGHT_BODY), posed on the CPU (play/draw/rigpose.ts: the generator's roles simply —
+feet stepping, two-bone IK knees and elbows, arms swinging unless a hand is placed, the cape trailing) and drawn as voxels
+along its bones beside the other heroes' parts (~250 voxels). What the generator lacks for a hero (PL35): a pose of one
+body driven from outside (its animation is a GPU kernel for groups behaviours drive), hand targets, a held-item slot that
+isn't a rigid bone (the sword and bow are the hero's own parts), and colours as the voxel draw's materials (mapped to
+the nearest albedo here).
+
+**Measured.**
+- Speeds on the same atlas spot, the stick held up the screen 3 s (scripts/knighttouch.mjs, every system at 1x): knight
+  9.0, lich 7.0, hoverbike 31.8 cells/s top (boost 46 not held). Node: knight 9.0 within 0.2 s of the stick (foot.test).
+- scripts/perf/play.mjs (timing, 412x915 dpr 2.6, q=low, Intel Xe-LPG iGPU): the knight among raiders running in a
+  circle, a swipe every 0.4 s, a spin every 4 s: fps 94.8, p50 8.3 ms, p95 14.3 ms; the play layer's main-thread cost
+  0.315 ms a frame (max 1.4) vs the lich's 0.167 and the ride's 0.182. The lich phase in the same run p95 10.9 ms (it
+  stands still; the knight's run streams the window as the ride's does: ride p95 68.7 ms). The profiler's GPU frame
+  read 0 in this check for every phase (not the knight's: the script doesn't turn the profiler on).
+- Tests: core/swordplay.test.ts 11, core/aim.test.ts 3, core/foot.test.ts 7, heroes/knight.test.ts 10, library +1.
+  scripts/knighttouch.mjs (behaviour, real touches through CDP and in-page touch pointer events): speeds, slashes
+  landing on dummies, a double swipe lunging, ⇄ to the bow, arrows landing, the spin cutting and bouncing, DODGE,
+  the raiders hitting back. GIFs and contact sheets: C:/Projects/shots88/knight/.
+- Found on the way: CDP touches cost ~90 ms an event under the loaded GPU, so a 60 ms swipe arrived as 350 ms and two
+  swipes never made a lunge; the swipes in the check are dispatched in the page with a finger's timing. A bow drawn,
+  held still and let go read as a roll: a thumb held still adds no samples, so the release time is now the Thumb's
+  `endedAt`, not its last sample's.
+
+**The station** (`?skipmenu=1&level=atlas&play=knight&station=1`, play/sandbox/station.ts): a hilly spot with no water
+within 16 cells, the flattest ground near it; Wave (raiders in a ring, one more each wave), Dummies (three that stand
+and take blows), Clear; a readout of speed and best, blows, kills, swings and lunges, arrows, spins and bounces,
+dodges, what it's taken. The start of the user's gauntlet, kept a test station.

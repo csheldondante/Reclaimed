@@ -7,8 +7,8 @@ const bike = library.get('hoverbike')!;
 const lich = library.get('lich')!;
 
 describe('controller library', () => {
-  it('lists the hoverbike and the lich with parameters within their slider ranges', () => {
-    expect(library.controllers().map((c) => c.id)).toEqual(['hoverbike', 'lich']);
+  it('lists the hoverbike, the lich and the knight with parameters within their slider ranges', () => {
+    expect(library.controllers().map((c) => c.id)).toEqual(['hoverbike', 'lich', 'knight']);
     for (const c of library.controllers())
       for (const p of c.params) {
         const v = c.defaults[p.id];
@@ -22,6 +22,17 @@ describe('controller library', () => {
     const hard = bike.profile({ ...bike.defaults, launchMax: bike.defaults.launchMax * 1.5 });
     expect(hard.jump.gap).toBeGreaterThan(base.jump.gap);
     expect(hard.jump.height).toBeGreaterThan(base.jump.height);
+  });
+});
+
+describe('the knight profile (round 128)', () => {
+  it('runs between the lich and the bike, fights and delves, crosses no gaps', () => {
+    const k = library.get('knight')!.profile();
+    expect(k.speed.cruise).toBeGreaterThan(lich.profile().speed.cruise);
+    expect(k.speed.cruise).toBeLessThan(bike.profile().speed.cruise);
+    expect(k.encounters.fight).toBe(1);
+    expect(crossCost(k, { gap: 2 })).toBe(Infinity);
+    expect(crossCost(k, { slope: 0.5 })).toBeGreaterThan(1);
   });
 });
 
