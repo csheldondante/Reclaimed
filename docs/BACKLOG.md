@@ -38,7 +38,21 @@ and combat." DEVLOG round 126 (`encounters`) has the diagnosis and the measureme
 | EN16 | The hall's gate is at most half the window (~200 cells) from where the hero comes in: a 5-25 s sprint for the bike. A longer gauntlet needs the hero warped short of the hall, not beside it | S | open |
 | EN17 | Riders are drawn as a crude beast-and-rider voxel model (units/agent-units.ts RIDER_MODEL); the creature generator's mounts later | S | open |
 
-## Round 126 (2026-11-02, session 5, `merge124`) — the living world merged into the run structure (DECISIONS round 125)
+## Round 126 (2026-11-02, session 5, `dialog2`) — petitions as dialogs, the cast, plain writing (DECISIONS round 126)
+
+Branch `dialog2` (b9139b7): docs/WRITING.md, a style lint, every player string rewritten, the cast generator, petitions delivered in talks. The branch's own rows are DLG-7..12.
+
+| id | item | size | status |
+|---|---|---|---|
+| DLG-Q1 | Voices: say more in character, or keep the content plain and put personality in greetings and asides only? | S | asked |
+| DLG-Q2 | Every card a full talk, or travel choices ("Ride to X") a quick tap? | S | asked |
+| DLG-Q3 | Is "Can you give a little more?" the right first negotiation? What is the dialog minigame, so the `Persuasion` interface fits it? | M | asked |
+| DLG-Q4 | Refusing someone drops their group's trust by half as much as theirs. Right size? | S | asked |
+| DLG-R1 | Main's review: the intro says the march twice ("The Hollow Host is marching on Muru" then "An army of the walking dead has risen… It is marching on Muru"). Mid-sentence "The Hollow Court" has a capital "The". "They reach Muru at minute 14.3" reads like a timer, not speech. | S | open |
+| DLG-R2 | Main's review: the muster card's "Takes" lists the encounter ("3 walking dead stand between you and the hall") as well as the time. Takes should be the cost only; the danger belongs in the ask. | S | open |
+| DLG-R3 | Map labels pile up near the hold (timers and card names overlap). This predates dialog2. | M | open |
+
+## Round 126 (2026-11-02, session 5, `merge124`) — the living world merged into the run structure (DECISIONS round 125, newest)
 
 The user (verbatim): "Please proceed with getting it ready to merge into our run structure for now." and, on the levy's
 march state: "Oh yeah definitely update the world model so all this data lives in it." `facts` (5aa6d0f, holding
@@ -461,6 +475,7 @@ tests work and do quick smoke tests to find failures early." docs/TESTING.md.
 | RN4 | Faeria-style positioning: dispatched agents hold positions on the map that matter (locking down enemies, holding a pass) | L | deferred (simpler version first) |
 | FLO30 | Wind-responsive foliage lab (docs/design/FOLIAGE_WIND.md, the user's): static baselines, then 1A wind-shading ripple + 1B instanced vertex bending (grass) and 1A + 1C coarse lattice deformation (trees), reusing the GPU wind field; phone benchmark by matched static/animated pairs; stop at the first technique that clears the visual bar | M | open (low priority) |
 | PRE1 | Region presentation prototypes (docs/design/REGION_PRESENTATION.md): A birch forest canopy->understory (first), B canyon camera, C cliff climb, D throne-room interior with petitioners; presentation profiles, review overlay, repeatable A/B | L | wip (presentation) |
+| ART1 | Import the user's Unity asset packs (most of Synty's POLYGON range, other low-poly packs): unpack .unitypackage as data, convert FBX meshes, normalise to cell scale, simplify, voxelise or stylise, palette-map (Synty colours come from one atlas texture, easy per face), catalogue by tags. Raw packs stay outside the public repo; only converted game data is committed, after checking each pack's licence. Waiting on the user for the folder path | L | asked (path) |
 | FLO21 | Birch cost on the phone: the user's result good — done (flora 18c3bdb, unmerged) | S | done |
 
 ## Round 118 (2026-10-30, session 5, `places`) — found while reviewing the tracks

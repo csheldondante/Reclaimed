@@ -429,6 +429,17 @@ each was implemented.
   fitting the building's real multi-level irregular footprint, characters from the existing generator who interact and
   talk; CC art voxelised and stylised with filters and geometric prepasses).
 
+- The user, verbatim, on the forest pass: "I think once it fades you don't need to render the canopy at all", "Just the s shadows and the trunks" and "No I think those belong in the shot. They don't obscure visibility but make it feel like you are under the leaves and we can make darker areas and streams and other effects that will feel varied and interesting" → under the canopy the trees draw only trunks and the canopy's floor shadows (the dither is only the transition); falling leaves, light shafts, mist and litter stay; the understory varies (dark groves, sunlit clearings, streams) without hiding the hero or the way ahead.
+
+- The user, verbatim, on the interiors branch's first hall: "Interiors are coming along. I think we can zoom in more and hide outside the building eventually" → inside a building the camera zooms in further so the storey fills the screen, and everything outside the building is hidden (not only darkened); the outside goes away as you enter.
+
+- The user, verbatim: "I don't love the shader used on the town zoom in. I think I would prefer without it and just normal rendering." → interiors and the zoom into a town use the engine's normal rendering by default; the pixel-art post pass (low-res, palette quantisation, outlines, dither) is off, kept at most as a toggle.
+
+- The user, verbatim, on the forest branch's under-canopy shot: "For the forest, I think the screenshot you shared actually shows trees and roots but they are huge and the zoom is actually too big now (I want more vertical trunk) it may be better in portrait though." → under the canopy the camera zooms out until a good length of vertical trunk shows above the roots; checked in portrait and landscape.
+
+- The user, verbatim: "Those are looking better! And yeah the dust is a bit of an issue." (on interiors with normal rendering, zoomed in, the outside hidden) → that direction is kept; indoor dust is fine motes in the light shafts only.
+- The user, verbatim, on the zoomed-out forest shots: "I think we still want to be at the foot of the trees and to cut away the trunks in front of the PC so they look like stumps that fade" → the camera stays at the foot of the trees; trunks between the camera and the hero are cut low into stumps whose tops fade; trunks behind and beside the hero keep their height.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
