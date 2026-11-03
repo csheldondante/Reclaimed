@@ -703,6 +703,13 @@ export class Agents implements SimSystem {
     this.translator.run(this.units, MAX_UNITS, UNIT_V, 0b1, [dx, dy, dz]);
     this.translator.run(this.flyBuf, MAX_FLY, 2, 0b1, [dx, dy, dz]);
     for (const f of this.flights) f.pos = [f.pos[0] - dx, f.pos[1] - dy, f.pos[2] - dz];
+    // (knight pass 2: the game's hits still queued for the next tick slide with the land too — a hero's slam queued
+    // the frame the window slid landed 64 cells off, on nobody)
+    for (const h of this.hits) {
+      h.x -= dx;
+      h.y -= dy;
+      if (h.z !== undefined) h.z -= dz;
+    }
     // (round 104, simscale: the scope's box with the land; the strips come in start over)
     this.scope?.shift(dx, Math.round(dy / ROW_H));
     const b = this.lastBox;

@@ -16317,8 +16317,8 @@ swing. Now (1) the blade knocks what it hits ASIDE, out of the dash's line (`asi
 of it forward), (2) the dash turns up to 14° toward the side with more room (`slip`) and, ending inside a body, carries
 on past it (at most 1.2 cells). Node: slashes alone through a pack of eight (two staggered columns, 4 cells deep), from
 3 cells before it to 3 past: 5 slashes in 1.8 s spaced 0.4 s; 3 swipes in 0.8 s spaced 0.27 s (two read as double
-swipes). Headless, with the GPU raiders moving and hitting back: (headless check pending: the shared browser). GIF C:/Projects/shots88/knight2/crowd.gif.
-KN-R1: (headless check pending: the shared browser)
+swipes). Headless, with the GPU raiders moving and hitting back: through a pack of 8 GPU raiders (3.5 and 5.5 cells ahead, chasing and hitting back), slashes only, 0.33 s apart: past the pack's far column by 3.1 cells after 4 slashes in 2.8 s of wall time (with the GIF capture's load; 11 blows landed, the knight unhurt); the raiders are seen thrown aside in the GIF. (The first headless runs measured progress in window x: the streamed window slides under the knight, so it's measured against a standing anchor now.). GIF C:/Projects/shots88/knight2/crowd.gif.
+KN-R1: the "second copy" was the station's readout showing through the translucent hint toast, which sat at 30% over the hero; the toast is one at a time now, opaque, under the top bar (start-card.png), and the station card is compact (buttons.png).
 
 **M2 — the guard and the lunger** (one enemy system: Units/AgentUnits, the agents' step, the traits system). GameplayGM
 iso-adventure (read only) has no enemy that blocks or dodges — only the player's SHIELD (perfectWindow 0.16 s, arc 130°,
@@ -16349,7 +16349,7 @@ lunger's 0.45 s crouch and a 13 cells/s leap (the wolf's 10 × the knight's 1.3)
 - Tests on Dawn (test/gpu/guards.test.ts, the real step and caps): a guard standing blocks (no hurt, a 'blocked' event,
   hp the same, never thrown); its wind-up event says 0.7; a blow in it lands; up again it blocks; from above it lands.
   A lunger standing dodges (a sidestep of more than 0.25 cells), crouches, leaps (a blow in flight dodged), lands past
-  its target with its blow struck, and a blow while it lies down lands. Headless: (headless check pending: the shared browser)
+  its target with its blow struck, and a blow while it lies down lands. Headless: guard.gif — a slash as it comes is blocked (sparks, the knight knocked back, BLOCKED; 2 blocked in run 3), a slash once its wind-up shows lands (runs 2-4); lunger.gif — a slash before its lunge is dodged (runs 1, 3, 4), its crouch flashes, it dives flat beside the knight (its blow lands: the knight hurt); the slash on it lying down landed in run 2 but not in runs 3-4 (dodged: it was hit before it had settled or after it got up — headless timing under the capture's load; the rule itself is the Dawn test's).
 
 **M3 — jump, the jump attack, lock-on.** GameplayGM had neither (its dodge roll carried over 2-cell gaps). Each jump
 move its own state with its own profile:
@@ -16371,7 +16371,7 @@ move its own state with its own profile:
   DODGE beside it, the weapon above JUMP, its second move above DODGE, the parry above the weapon. Desktop: Space jump,
   Shift dodge, E weapon, Q second, F parry.
 - The station's Course: three stone steps a layer and a half apart (the first already over a walking step), a gap dug,
-  a last ledge with a raider on it. Headless: (headless check pending: the shared browser)
+  a last ledge with a raider on it. Headless: jump-course.gif — up the mesa steps (rises 1.4, 2.9, 4.4, a 3.6-deep gap, 5.9) to the last ledge, 5.8 cells over the start (run 3; run 4's scripted jumper stalled at the second step, 3.0 — its JUMP is pressed from a polled readback, frame pacing under capture); jump-attack.gif — the dive and slam (plunges and slams 1 each); lock-chase.gif — a tap on a raider locks it (the ring under it), the rough swipes then go at it. Found on the way: a slam queued the frame the streamed window slid landed 64 cells off — the agents' queued hits didn't slide with the land; they do now (agents.ts shift). And Terrain.raise('mesa') with a `level` given still read the ground first and threw where the mirror hadn't read; it doesn't now. The herolab's report (7 swings on its hills, 0 blows) — the blade's reach in height was a fixed 2.5 cells of the feet's difference; it now spans the knight's feet to over its head tilted by the slope over the distance (Node test on a 1.1 slope, up and down).
 
 **M4 — the parry (PL34, as variants) and the hook gun (PL33).** The parry is three variants to compare, chips on the
 station (the knight's `parryMode`): Button — PARRY pressed within 0.16 s before a blow lands parries it; Swipe — a
@@ -16382,8 +16382,8 @@ stars). iso-adventure's SHIELD numbers, ported as they were. The hook gun is the
 the knight through a narrow HookBody (the bike's Bike or the knight's Foot) — no second hook: a third weapon on ⇄; a
 tap on a foe yanks it in (lobbed to land 1.3 cells short of the knight) and locks it; a tap on the ground or a ledge top
 zips the knight there at 22 cells/s (over gaps and water, up a ledge); ✦ fires at the locked enemy. A yanked guard
-lands thrown, so down, so open. Headless: (headless check pending: the shared browser)
+lands thrown, so down, so open. Headless: parry-button.gif, parry-hold.gif, parry-swipe.gif — each variant parried the guard (1 each, unhurt; run 4; Button and Hold are timed in the page: pressed 0.6 s after the wind-up shows); hook-yank.gif — a raider 5 cells off yanked to 1.3 (run 3); hook-zip.gif — the zip didn't run headless (run 3: the course hadn't built — the mesa bug above; run 4: the weapon button's label read before it changed) — the Node test zips onto a 4-cell ledge.
 
-**Perf.** (headless check pending: the shared browser) The phone bench: ?knightbench=1 (src/perf/knightbench.ts: no enemies, 7 raiders, a mixed wave, as
+**Perf.** Desktop proxy (Intel Xe-LPG iGPU, 412×915, the station with 12 raiders, a scripted fight 15 s: the stick round, a swipe every 0.4 s): this pass p50 8.3 / p95 25.0 / p99 66.8 ms (1348 frames); c0eeb74 the same script p50 8.3 / p95 25.1 / p99 91.6 ms (1291 frames) — within the spread; not a phone number. The phone bench: ?knightbench=1 (src/perf/knightbench.ts: no enemies, 7 raiders, a mixed wave, as
 matched pairs by reload; the screen kept awake, a report to download) —
 https://csheldondante.github.io/Reclaimed/knight/?skipmenu=1&level=atlas&play=knight&station=1&tutorial=0&knightbench=1
