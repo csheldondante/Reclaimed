@@ -38,7 +38,7 @@ export function parkSpot(trunks: V2[], eye: V2, ahead = 4, reach = 16 * TREE_SCA
 }
 
 /** A loop of `n` points: its middle `shift` cells from the stand's toward the open, `radius` round, so about half of it is in the wood. */
-export function standLoop(s: Stand, radius = 17, shift = 15, n = 36): V2[] {
+export function standLoop(s: Stand, radius = 17 * TREE_SCALE, shift = 15 * TREE_SCALE, n = 36): V2[] {
   const c: V2 = [s.at[0] + s.out[0] * shift, s.at[1] + s.out[1] * shift];
   const out: V2[] = [];
   for (let k = 0; k < n; k++) {
@@ -49,7 +49,7 @@ export function standLoop(s: Stand, radius = 17, shift = 15, n = 36): V2[] {
 }
 
 /** The way from (x, y) toward the open: of `dirs` ways, the one whose point `dist` out has the fewest trees within `r` (`count`). */
-export function openWay(x: number, y: number, count: (x: number, y: number, r: number) => number, dist = 30, r = 9, dirs = 8): V2 {
+export function openWay(x: number, y: number, count: (x: number, y: number, r: number) => number, dist = 30 * TREE_SCALE, r = 9 * TREE_SCALE, dirs = 8): V2 {
   let best: V2 = [1, 0];
   let fewest = Infinity;
   for (let k = 0; k < dirs; k++) {

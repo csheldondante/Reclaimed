@@ -13,6 +13,7 @@ import type { UnderstoryTreatments } from '../api/contracts/understory';
 import type { PlaySession } from '../play/session';
 import type { UnderstoryDriver } from './driver';
 import { LoopRider, openWay, parkSpot, standLoop, type Stand, type V2 } from './ride';
+import { TREE_SCALE } from '../flora/spacing';
 
 export interface ForestLabDeps {
   ui: HTMLElement;
@@ -37,12 +38,14 @@ const KEYS: (keyof UnderstoryTreatments)[] = ['canopy', 'dither', 'dapple', 'ray
 
 /** the densest stand round `near`: elders count three times */
 export function findStand(plants: Plants, near: V2, reach = 120, step = 12): Stand | null {
+  // (round 128: the trees TREE_SCALE × bigger and sparser — a stand counted over a TREE_SCALE × wider disc)
+  const R = 16 * TREE_SCALE;
   let best: Stand | null = null;
   let bs = 0;
   for (let dy = -reach; dy <= reach; dy += step)
     for (let dx = -reach; dx <= reach; dx += step) {
       const at: V2 = [near[0] + dx, near[1] + dy];
-      const ts = plants.treesNear(at[0], at[1], 16);
+      const ts = plants.treesNear(at[0], at[1], R);
       const elders = ts.filter((t) => t.species === 'giant').length;
       const score = elders * 3 + ts.length - Math.hypot(dx, dy) * 0.02;
       if (score > bs) {
@@ -136,7 +139,7 @@ export class ForestLab {
     if (!stand) throw new Error('?forest=lab: no wood within 120 cells of the window’s middle');
     lab.stand = stand;
     // (the composed shot's spot: in front of the trunk the most trunks stand round — elders first)
-    const near = d.plants.treesNear(stand.at[0], stand.at[1], 20);
+    const near = d.plants.treesNear(stand.at[0], stand.at[1], 20 * TREE_SCALE);
     const big = near.filter((t) => t.species === 'giant');
     stand.park = parkSpot((big.length >= 2 ? big : near).map((t): V2 => [t.x, t.y]), d.eye ?? [Math.SQRT1_2, Math.SQRT1_2]) ?? undefined;
     lab.rider = new LoopRider(standLoop(stand));
