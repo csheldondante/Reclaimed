@@ -110,3 +110,22 @@ dealer (runloop / opportunities); recipes and tags (contracts/recipe.ts); the st
   be made).
 - **Power (mana income):** a power structure (a shrine or temple, or the player's tower), raised by opportunities
   to find nodes of power and channel ley lines back to it.
+
+## Inventory of what exists (round 128c, read from places and the branches)
+
+| Area | What exists | Where | Ready (1-5) | Gap |
+|---|---|---|---|---|
+| Atlas + macro map | GPU world, regions, sites, ways, rivers; a pannable map with labels; travel on the map | atlas/atlas.ts, api/atlas-map.ts, runplan/travel.ts | 4 | no strategic layer (pawns, carts, conscripts, region-changed overlay); STRATEGIC_MAP.md is design only |
+| Opportunities / situations | Opportunity contract (holdings, commitments, expiry), dealer, template engine, card lab; SituationRun with a clock and `threat.arrives` (the horde on its route); petitions as dialogs; cast | api/contracts/opportunity.ts, situation.ts; opps/; living/; runsit/ | 4 | clock in run minutes, not days; pawns not promotable named characters; a "siege in N days" template |
+| Creatures | inhabitants: 7 body plans, gear, palettes, GPU procedural animation, bestiary viewer | api/contracts/inhabitants.ts; inhabitants/ | 3 | not combat units (separate from agents); no unit editor; agents capped at 8 kinds |
+| Stacking tiles / city | `Town` Townscaper blocks (8 levels) + the editor's town tool; CityPlan (tiles → WFC façades → modules → claims → nav) | build/town.ts; structures/plan.ts, modules.ts | 3 | blocks untyped; CityPlan generated, not painted; no typed brush, size→cost/output, upgrade, repurpose; town tool breaks after a slide (Q32) |
+| Workers | GPU agents (8192), BuildCrew; SettlementLife: miners dig real pits, woodcutters fell real trees, builders carry storey by storey, farmers to the granary | agents/; units/agent-units.ts; settle/life.ts | 4 | hard-coded roles; no jobs from buildings, no idle pool, no hauling between any buildings, no warehouses; one live settlement |
+| Economy | Settlement.stores {stock, rate} by DAY_S off-screen | settle/settlements.ts | 2 | no per-building inventory, logistics or production chains |
+| Recipes / tags | Recipe{assemble, craft, train, adapt, salvage}, needs facilities/knowledge, CivProfile knowledge | api/contracts/recipe.ts; data/recipes | 2 | data model only: nothing runs recipes in buildings, no people→units, no research unlocks (adapt ≈ repurpose) |
+| Traits | GPU traits, statuses, effects, raise | traits/ | 4 | spell/research tags, city-spell effects |
+| Powers / effects | grow, lightning, wind, storms, cyclone; editor tools (dig, smash, drop, telekinesis, beam, volcano, meteor, water, drain, plant, mesa, bedrock); the lich's raise; dragon breath | game/powers.ts; ui/editor.ts | 4 | no mana, runes, spellbook; no mind control or summoning (raise only); mesa/bedrock are the seed of raising walls |
+| Time | DayNight (480 s), sim pause, editor speeds, the talk hold (merge128) | weather/daynight.ts; sim/simulation.ts | 3 | no day counter (DAY_S 600 vs dayLength 480), no plan-mode pause, no slow-mo for casting |
+| Combat | GPU melee (reach, damage, period per kind), hunts, guards, raids | agents.wgsl, units.wgsl | 3 | no ranged agents or projectiles, no garrisons on walls, no formations |
+| Physics / walls | judges, rigid bodies, solver, craters, fire through towns | game/integrity.ts, solver/ | 4 | no wall damage tied to the economy, no repair job |
+
+The five biggest gaps: an economy runtime (inventories, recipes over time, hauling); typed painted structures; jobs and population; ranged and army combat; the fortress's time and threat loop (day counter, plan pause, a siege in N days).
