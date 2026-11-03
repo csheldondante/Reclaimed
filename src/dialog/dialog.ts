@@ -36,6 +36,8 @@ export interface DialogOptions {
   entry?: (tree: DialogTree) => string | undefined;
   /** characters a second the line is typed at (default 50; prefers-reduced-motion: all at once) */
   cps?: number;
+  /** (dialog2) a class on the panel besides .dlg ('petition': the bigger portrait) */
+  className?: string;
 }
 
 type Path = { node: string; choice: number }[];
@@ -53,6 +55,9 @@ export class DialogBox implements Dialog {
   private nameEl: HTMLDivElement;
   private titleEl: HTMLDivElement;
   private textEl: HTMLDivElement;
+  /** (dialog2) a node's narration and its summary panel */
+  private asideEl: HTMLDivElement;
+  private factsEl: HTMLDivElement;
   private choicesEl: HTMLDivElement;
   private moreEl: HTMLDivElement;
   private talk: { tree: DialogTree; node: string; path: Path; done: (p: Path) => void } | null = null;
@@ -69,8 +74,8 @@ export class DialogBox implements Dialog {
   ) {
     const reduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
     this.cps = reduced ? Infinity : (opts.cps ?? 50);
-    this.scrim = el('div', 'dlg-scrim');
-    this.panel = el('div', 'dlg');
+    this.scrim = el('div', opts.className ? `dlg-scrim ${opts.className}` : 'dlg-scrim');
+    this.panel = el('div', opts.className ? `dlg ${opts.className}` : 'dlg');
     this.panel.setAttribute('role', 'dialog');
     this.panel.setAttribute('aria-modal', 'true');
     const head = el('div', 'dlg-head');
@@ -80,11 +85,13 @@ export class DialogBox implements Dialog {
     this.titleEl = el('div', 'dlg-title');
     who.append(this.nameEl, this.titleEl);
     head.append(this.portrait, who);
+    this.asideEl = el('div', 'dlg-aside');
     this.textEl = el('div', 'dlg-text');
     this.textEl.setAttribute('aria-live', 'polite');
+    this.factsEl = el('div', 'dlg-facts');
     this.choicesEl = el('div', 'dlg-choices');
     this.moreEl = el('div', 'dlg-more');
-    this.panel.append(head, this.textEl, this.choicesEl, this.moreEl);
+    this.panel.append(head, this.asideEl, this.textEl, this.factsEl, this.choicesEl, this.moreEl);
     root.append(this.scrim, this.panel);
     const signal = this.abort.signal;
     // (a tap anywhere but an answer: the line all at once, or on past a line with no answers)
@@ -179,7 +186,21 @@ export class DialogBox implements Dialog {
     this.moreEl.classList.remove('on');
     this.panel.classList.remove('answering');
     this.textEl.textContent = '';
-    this.typing = { full: t.tree.nodes[node].text, shown: 0 };
+    const n = t.tree.nodes[node];
+    this.asideEl.textContent = n.aside ?? '';
+    this.asideEl.classList.toggle('on', !!n.aside);
+    this.factsEl.replaceChildren();
+    this.factsEl.classList.toggle('on', !!n.facts?.length);
+    for (const f of n.facts ?? []) {
+      const row = el('div', `dlg-fact ${f.tone ?? 'plain'}`);
+      const k = el('span', 'dlg-fact-k');
+      k.textContent = f.label;
+      const v = el('span', 'dlg-fact-v');
+      v.textContent = f.text;
+      row.append(k, v);
+      this.factsEl.append(row);
+    }
+    this.typing = { full: n.text, shown: 0 };
     this.last = performance.now();
     cancelAnimationFrame(this.raf);
     this.raf = requestAnimationFrame(this.type);
@@ -219,10 +240,18 @@ export class DialogBox implements Dialog {
       b.style.setProperty('--k', String(k));
       b.innerHTML = `<span class="dlg-key">${k + 1}</span><span class="dlg-say"></span>`;
       b.querySelector('.dlg-say')!.textContent = c.text;
+      if (c.disabled) {
+        // (dialog2: shown with why it can't be chosen — a commit the player can't afford)
+        b.disabled = true;
+        b.classList.add('off');
+        const why = el('span', 'dlg-why');
+        why.textContent = c.disabled;
+        b.querySelector('.dlg-say')!.append(why);
+      }
       b.addEventListener('pointerdown', (e) => e.stopPropagation());
       b.addEventListener('click', (e) => {
         e.stopPropagation();
-        this.choose(i);
+        if (!c.disabled) this.choose(i);
       });
       this.choicesEl.append(b);
     });

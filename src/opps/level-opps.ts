@@ -13,13 +13,20 @@
 import type { Situation } from '../api/contracts/situation';
 import type { RunRecord } from '../api/contracts/run';
 import type { MemoryWorldState } from '../api/contracts/world-state';
-import { ENCOUNTER, meet, needsPlayer, TIERS, type Opportunity } from '../api/contracts/opportunity';
+import { ENCOUNTER, needsPlayer, type Opportunity } from '../api/contracts/opportunity';
+import type { Persuasion } from '../api/contracts/dialog';
+import { DialogBox, type Speaker } from '../dialog/dialog';
+import { actOf, petitionTree, traitPersuasion, type PetitionState } from '../dialog/petition';
+import { capitalise } from '../living/plain';
+import { portraitUrl } from '../dialog/portrait';
+import { meetPerson, petitionOf } from '../living/present';
+import { introLines, mapHint, rosterLines, situationLines, statusLines } from './words';
 import { library } from '../play/library';
 import { HERO_NAMES } from '../runplan/consequences';
 import type { PlayHeroId } from '../play/heroes/make';
 import { LevelSit, type LevelSitDeps } from '../runsit/level-sit';
 import { situationMap } from '../runsit/fill';
-import { PLAY_TITLE, along, type AreaResult, type SituationRun, type V2 } from '../runsit/state';
+import { along, type AreaResult, type SituationRun, type V2 } from '../runsit/state';
 import type { SituationEnd } from '../api/contracts/situation';
 import { ROW_H } from '../world/lattice';
 import { TunePanel } from '../ui/tunepanel';
@@ -34,8 +41,7 @@ const GLYPH: Record<string, string> = { flee: '⇢', ambush: '⚔', deliver: '�
 const GOLD = '#f2c14e';
 const BLUE = '#5ab0f0';
 const LOCKED = '#b48cf0';
-const TIER_WORD: Record<string, string> = { triumph: 'triumph', success: 'success', cost: 'at a cost', failure: 'failure', disaster: 'disaster' };
-const fmtMin = (m: number) => (m < 1 ? `${Math.round(m * 60)} s` : `${m.toFixed(1)} min`);
+const fmtMin = (m: number) => (m < 1 ? `${Math.round(m * 60)} seconds` : `${+m.toFixed(1)} minutes`);
 
 export class LevelOpps extends LevelSit {
   /** (declared: set in newRun, which the base's constructor calls before this class's fields would be) */
@@ -47,6 +53,12 @@ export class LevelOpps extends LevelSit {
   declare stage: 'roster' | 'intro' | 'play';
   declare sitOpen: boolean;
   readonly panel: TunePanel;
+  /** (dialog2) petitions are dialogs: a character asks, the player answers (dialog/petition.ts) */
+  readonly talk: DialogBox;
+  /** who speaks in the talk now (the dialog asks by id) */
+  private speakers = new Map<string, Speaker>();
+  /** how a haggle is settled: the characters' traits now; a dialog minigame later (contracts/dialog.ts Persuasion) */
+  persuasion: Persuasion = traitPersuasion;
   private offTune: () => void;
 
   constructor(d: LevelSitDeps) {
@@ -61,6 +73,16 @@ export class LevelOpps extends LevelSit {
       }
     });
     d.map.onTap = (x, y) => this.tap(x, y);
+    this.talk = new DialogBox(d.ui, {
+      className: 'petition',
+      speaker: (id) => {
+        const sp = this.speakers.get(id);
+        if (!sp) throw new Error(`petition: no speaker ${id}`);
+        return sp;
+      },
+      check: () => true,
+    });
+    this.render();
   }
 
   protected makeRun(sit: Situation, snap: ReturnType<MemoryWorldState['snapshot']>): SituationRun {
@@ -186,9 +208,47 @@ export class LevelOpps extends LevelSit {
       if (d <= h.r && (!best || d < best.d)) best = { id: h.id, d };
     }
     if (!best) return false;
+    if (this.talk?.isOpen) return true;
     this.selected = best.id;
     this.render();
     return true;
+  }
+
+  /** the hero's name, as characters say it */
+  private heroName(): string {
+    return this.opps.holdings.agents.find((a) => a.kind === 'player')?.name ?? 'friend';
+  }
+
+  /**
+   * (dialog2) An offer as a talk with the person presenting it: their greeting and ask, the player's questions, the
+   * summary panel; then what the player answered (commit, refuse, ask for more, not now). A haggle is settled by
+   * `persuasion` and the talk opened again where they answer it.
+   */
+  async petition(id: string, state: PetitionState = {}, at?: string): Promise<void> {
+    if (!this.talk || this.talk.isOpen) return;
+    const { petition, speaker } = petitionOf(this.opps.engine, id);
+    meetPerson(this.opps.w, speaker.id, id);
+    const tree = petitionTree(petition, speaker, this.heroName(), state);
+    this.speakers.set(speaker.id, { name: speaker.name, title: capitalise(`${speaker.role} of ${speaker.group}`), colour: speaker.persona.portrait.cloth, portrait: portraitUrl(speaker.persona.portrait) });
+    this.card.style.display = 'none';
+    if (!this.d.map.isOpen) this.fitMap();
+    const path = await this.talk.open(tree, at);
+    const last = path.at(-1);
+    const act = last ? actOf(tree, last.node, last.choice) : undefined;
+    this.log.push(`petition ${petition.title}: ${act ?? 'closed'}`);
+    if (act === 'commit') return this.commit(id);
+    if (act === 'refuse') {
+      this.opps.refuse(id);
+      this.log.push(...this.opps.log.splice(0));
+    } else if (act === 'haggle') {
+      const r = await this.persuasion.settle({ speaker: speaker.id, traits: speaker.persona.traits, feeling: speaker.feeling, what: petition.haggle ?? '' });
+      this.opps.haggle(id, r.agreed);
+      this.log.push(...this.opps.log.splice(0));
+      return this.petition(id, { haggled: r.agreed ? 'yes' : 'no' }, 'haggle');
+    }
+    this.selected = null;
+    this.render();
+    if (this.d.map.isOpen) this.d.map.redraw();
   }
 
   /** the map open on what's offered: the player and every marker in view */
@@ -246,7 +306,7 @@ export class LevelOpps extends LevelSit {
 
   private renderRoster(h: (tag: string, text: string, css?: string) => HTMLElement, btn: (text: string, f: () => void, main?: boolean, css?: string) => HTMLButtonElement, muted: string): void {
     h('div', 'Choose your hero', 'font:600 16px Georgia,serif;color:#ffd9a0');
-    h('div', 'Each plays the run its own way: the modes it is good at, what it can cross, what it carries from earlier runs.', muted);
+    h('div', 'Each hero plays differently. Some are fast, some fight, some fly. They keep what they earn from run to run.', muted);
     for (const c of library.controllers()) {
       const p = c.profile();
       const rec = this.world.character(c.id);
@@ -259,12 +319,10 @@ export class LevelOpps extends LevelSit {
         e.style.cssText = css;
         box.appendChild(e);
       };
-      line(`${c.icon} ${c.name}${rec ? ` — ${rec.name}${rec.alive ? '' : ' ✝'}` : ` — ${HERO_NAMES[c.id] ?? c.id}`}`, 'font:600 14px Georgia,serif');
-      line(c.line, 'font-size:12px');
-      line(`speed ${p.speed.cruise.toFixed(0)}/${p.speed.top.toFixed(0)} cells/s · jump ${p.jump.height ? `${p.jump.height.toFixed(1)} high, ${p.jump.gap.toFixed(0)} across` : 'none'} · ${p.fly.ceiling ? `flies ${p.fly.ceiling.toFixed(0)} up` : 'on the ground'} · breaks ${Math.round(p.destruction * 100)}%`, muted);
-      const tags = [...(rec?.tags ?? []), ...(rec?.bonuses ?? []).map((b) => `✦ ${b.why}`), ...(rec?.statuses ?? [])];
-      line(`tags: ${tags.length ? tags.join(' · ') : 'none yet'}${rec?.history.length ? ` · ${rec.history.length} deeds` : ''}`, muted);
-      line(`modes: ${LevelOpps.modes(c.id).map((m) => `${m.on ? m.icon : '·'} ${m.on ? m.name : `(${m.name})`}`).join('  ')}`, 'font-size:12px');
+      // (dialog2: plain words, opps/words.ts)
+      const r = rosterLines({ icon: c.icon, name: c.name, who: rec?.name ?? HERO_NAMES[c.id] ?? c.id, dead: !!rec && !rec.alive, line: c.line, top: p.speed.top, jump: p.jump, fly: p.fly.ceiling, breaks: p.destruction, earned: [...(rec?.tags ?? []), ...(rec?.bonuses ?? []).map((b) => b.why), ...(rec?.statuses ?? [])], deeds: rec?.history.length ?? 0, modes: LevelOpps.modes(c.id) });
+      line(r.head, 'font:600 14px Georgia,serif');
+      r.lines.forEach((t, i) => line(t, i === 0 ? 'font-size:13px' : muted));
       const b = btn(`Play ${c.name}`, () => this.pickHero(c.id), c.id === this.d.hero);
       box.appendChild(b);
     }
@@ -275,12 +333,11 @@ export class LevelOpps extends LevelSit {
     const sit = run.sit;
     const th = sit.threat;
     const fac = this.world.faction(th.faction)?.name ?? th.faction;
-    h('div', sit.title, 'font:600 16px Georgia,serif;color:#ffd9a0');
-    h('div', `What is happening: ${th.count} ${th.role} of ${th.name} (${fac}) march over ${th.route.length} regions for ${sit.target.name}.${th.outriders ? ` ${th.outriders.count} outriders ride ahead of them — and they have seen you.` : ''}`, 'margin-top:4px;font-size:13px');
-    h('div', `How bad: if they reach ${sit.target.name} and nothing stops them, it burns (${sit.endings.burned.text})`, 'margin-top:4px;font-size:13px');
-    h('div', `What you are trying to do: ${sit.premise}`, 'margin-top:4px;font-size:13px');
-    h('div', `The clock: they reach ${sit.target.name} at minute ${run.hordeArrives().toFixed(1)}${this.opps.clockWas !== sit.threat.arrives ? ` (the GM's clock was ${this.opps.clockWas})` : ''}. Every ride and every fight spends it.`, 'margin-top:4px;font-size:13px');
-    h('div', `You play ${library.get(this.d.hero)?.icon ?? ''} ${library.get(this.d.hero)?.name ?? this.d.hero}. ${this.by === 'gm' ? 'Written by the GM for this world.' : 'The template, filled from this world.'}`, muted);
+    // (dialog2: plain words, opps/words.ts)
+    const t = introLines({ title: sit.title, threat: th.name, count: th.count, role: th.role, faction: fac, target: sit.target.name, outriders: th.outriders?.count ?? 0, premise: sit.premise, arrives: run.hordeArrives(), hero: `${library.get(this.d.hero)?.icon ?? ''} ${library.get(this.d.hero)?.name ?? this.d.hero}`.trim(), byGM: this.by === 'gm' });
+    h('div', t.title, 'font:600 16px Georgia,serif;color:#ffd9a0');
+    for (const l of t.lines) h('div', l, 'margin-top:4px;font-size:14px');
+    h('div', t.foot, muted);
     btn('▶ Begin', () => {
       this.stage = 'play';
       this.render();
@@ -296,14 +353,7 @@ export class LevelOpps extends LevelSit {
     const run = this.run;
     const sit = run.sit;
     const left = run.hordeArrives() - run.clock;
-    h('div', [
-      `${sit.title}`,
-      `${sit.threat.name}: ${Math.max(1, sit.threat.count - run.thinned)} ${sit.threat.role}, at ${sit.target.name} ${left > 0 ? `in ${left.toFixed(1)} min` : `${(-left).toFixed(1)} min ago`}`,
-      `aim: ${sit.premise}`,
-      `you: ${library.get(this.d.hero)?.name ?? this.d.hero} · modes ${LevelOpps.modes(this.d.hero).filter((m) => m.on).map((m) => m.icon).join(' ')}`,
-      this.opps.intel ? `the lookout's word: the ford's odds +${Math.round(this.opps.intel * 100)}%` : '',
-      this.opps.rallied ? `${this.opps.rallied} freed stand with ${sit.target.name}` : '',
-    ].filter(Boolean).join('\n'), `${muted};white-space:pre-line;margin-top:4px;border-left:3px solid #6b5b3e;padding-left:6px`);
+    h('div', situationLines({ title: sit.title, threat: sit.threat.name, count: Math.max(1, sit.threat.count - run.thinned), role: sit.threat.role, target: sit.target.name, left, premise: sit.premise, hero: library.get(this.d.hero)?.name ?? this.d.hero, intelPct: Math.round(this.opps.intel * 100), rallied: this.opps.rallied }).join('\n'), `${muted};white-space:pre-line;margin-top:4px;border-left:3px solid #6b5b3e;padding-left:6px`);
   }
 
   protected render(): void {
@@ -315,6 +365,11 @@ export class LevelOpps extends LevelSit {
       return;
     }
     const C = this.card;
+    // (dialog2: a talk is open — the card waits under it)
+    if (this.talk?.isOpen) {
+      C.style.display = 'none';
+      return;
+    }
     C.innerHTML = '';
     C.style.display = '';
     C.style.top = 'auto';
@@ -343,18 +398,20 @@ export class LevelOpps extends LevelSit {
     const o = this.selected ? this.opps.offered.find((x) => x.id === this.selected) : undefined;
     this.status(h, muted);
     if (this.sitOpen) this.renderSituation(h, muted);
-    if (o) this.detail(o, h, btn, muted);
-    else {
-      h('div', 'Tap an opportunity on the map: gold you ride to, blue for your agents.', 'margin-top:6px;font-size:13px');
-      const n = this.opps.offered.length;
-      h('div', n === 1 ? 'One makes sense this turn.' : `${n} on offer this turn.`, muted);
+    if (o && this.talk) {
+      // (dialog2: a petition is a talk with its presenter, not a card)
+      void this.petition(o.id);
+      return;
     }
+    const hint = mapHint(this.opps.offered.length);
+    h('div', hint[0], 'margin-top:6px;font-size:14px');
+    h('div', hint[1], muted);
     btn(this.d.map.isOpen ? '🗺 Hide the map' : '🗺 The map', () => {
       if (this.d.map.isOpen) this.d.map.close();
       else this.fitMap();
       this.render();
     });
-    btn(this.sitOpen ? '☰ ▲' : '☰ the situation', () => {
+    btn(this.sitOpen ? '☰ ▲' : '☰ What is happening', () => {
       this.sitOpen = !this.sitOpen;
       this.render();
     });
@@ -375,64 +432,26 @@ export class LevelOpps extends LevelSit {
     const run = this.run;
     const sit = run.sit;
     const left = run.hordeArrives() - run.clock;
-    const held = this.opps.holdings.agents.filter((a) => a.kind !== 'player').map((a) => `${a.name} (${a.count}${a.tags.length ? `, ${a.tags.join(', ')}` : ''}${a.committed ? ', committed' : ''})`);
-    const goods = Object.entries(this.opps.holdings.goods).filter(([, n]) => n > 0).map(([g, n]) => `${n} ${g}`);
-    const lines = [
-      `turn ${this.opps.turn} · ⏱ minute ${run.clock.toFixed(1)} · ☠ ${sit.threat.name} at ${sit.target.name} ${left > 0 ? `in ${left.toFixed(1)} min` : `${(-left).toFixed(1)} min ago`}`,
-      held.length || goods.length ? `you hold: ${[...held, ...goods].join(' · ')}` : 'you hold: only yourself',
-      ...this.opps.running().map(({ c, turnsLeft }) => `⏳ ${c.opp.title}: ${turnsLeft ? `${turnsLeft} turn${turnsLeft > 1 ? 's' : ''} left` : 'resolves now'}`),
-      ...this.opps.resolutions.filter((r) => r.turn === this.opps.turn && !this.opps.commitments.find((c) => c.id === r.commitment)?.opp.challenge).map((r) => `✔ ${r.outcome.text}`),
-      ...this.opps.expired.filter((e) => e.opp.expires.turn === this.opps.turn - 1).map((e) => `✘ ${e.text}`),
-      run.warned ? (run.evacuate ? '☞ the town warned: its people to be led out' : '⚑ the town warned') : '',
-    ].filter(Boolean);
+    // (dialog2: plain words, opps/words.ts)
+    const lines = statusLines({
+      turn: this.opps.turn, clock: run.clock, threat: sit.threat.name, target: sit.target.name, left,
+      held: this.opps.holdings.agents.filter((a) => a.kind !== 'player').map((a) => ({ name: a.name, count: a.count, veteran: a.tags.includes('veteran'), busy: !!a.committed })),
+      goods: this.opps.holdings.goods,
+      running: this.opps.running().map(({ c, turnsLeft }) => ({ title: c.opp.title, turns: turnsLeft })),
+      done: this.opps.resolutions.filter((r) => r.turn === this.opps.turn && !this.opps.commitments.find((c) => c.id === r.commitment)?.opp.challenge).map((r) => r.outcome.text),
+      lapsed: this.opps.expired.filter((e) => e.opp.expires.turn === this.opps.turn - 1).map((e) => e.text),
+      warned: run.warned, evacuate: !!run.evacuate,
+    });
     h('div', lines.join('\n'), `${muted};white-space:pre-line;margin-top:4px`);
-  }
-
-  /** an opportunity, tapped: what it needs, costs, takes, its odds and consequences, Commit */
-  private detail(o: Opportunity, h: (tag: string, text: string, css?: string) => HTMLElement, btn: (text: string, f: () => void, main?: boolean, css?: string) => HTMLButtonElement, muted: string): void {
-    const player = needsPlayer(o);
-    const col = !o.affordable ? '#9a9a9a' : player ? GOLD : BLUE;
-    h('div', `${GLYPH[o.challenge?.play ?? o.template] ?? '◆'} ${o.title}`, `margin-top:6px;font:600 14px Georgia,serif;color:${col}`);
-    h('div', `${o.location.name}${o.forced ? ' · forced: it must be played now' : ''}${o.climax ? ' · the climax' : ''}`, muted);
-    h('div', o.pitch, 'margin:2px 0;font-size:12px');
-    const m = meet(o.requires, this.opps.holdings);
-    const who = m.ok ? m.agents.map((id) => this.opps.holdings.agents.find((a) => a.id === id)!).map((a) => (a.kind === 'player' ? 'you' : `${a.name} (${a.count})`)).join(', ') : '';
-    const need = o.requires.map((r) => `${r.count} ${r.kind}${r.tags?.length ? ` (${r.tags.join(', ')})` : ''}`).join(', ');
-    const cost = Object.entries(o.costs).filter(([, n]) => n > 0).map(([g, n]) => `${n} ${g} (${this.opps.holdings.goods[g] ?? 0} held)`).join(', ') || 'nothing';
-    const dur = 'minutes' in o.duration ? `about ${fmtMin(o.duration.minutes)}: the ride and ${PLAY_TITLE[o.challenge!.play as keyof typeof PLAY_TITLE]?.toLowerCase() ?? o.challenge!.play}` : `${o.duration.turns} turn${o.duration.turns === 1 ? '' : 's'}`;
-    const e = o.challenge?.encounter;
-    if (e) h('div', `${ENCOUNTER[e.kind].icon} ${ENCOUNTER[e.kind].name}: ${e.text}`, 'margin-top:2px;font:600 12.5px system-ui,sans-serif;color:#ffb38a');
-    h('div', `⏱ ${this.timer(o)}`, 'font-size:12px;color:#ffd35a');
-    const rows = [
-      `Needs: ${need}${who ? ` — ${who}` : ''}${o.tiers > 1 ? ` · tier ${o.tier} of ${o.tiers}` : ''}`,
-      `Costs: ${cost}`,
-      `Takes: ${dur}`,
-      o.odds ? `Odds: ${TIERS.filter((t) => (o.odds![t] ?? 0) > 0).map((t) => `${TIER_WORD[t]} ${Math.round(o.odds![t]! * 100)}%`).join(' · ')}` : 'Odds: how you play it',
-    ];
-    if (!o.affordable) rows.push(`Missing: ${o.missing.join('; ')}`);
-    h('div', rows.join('\n'), 'white-space:pre-line;font-size:12px;margin-top:2px');
-    const cons = TIERS.filter((t) => o.outcomes[t] && (!o.odds || (o.odds[t] ?? 0) > 0)).map((t) => {
-      const oc = o.outcomes[t]!;
-      return `${TIER_WORD[t]}: ${oc.text}${oc.losses ? ` (${Math.round(oc.losses * 100)}% lost)` : ''}`;
-    });
-    if (o.onExpire) cons.push(`if let go: ${o.onExpire.text}`);
-    h('div', cons.join('\n'), `${muted};white-space:pre-line;margin-top:2px`);
-    // (merge124: the living engine's card — who presents it, and what the player gets besides the world change)
-    const card = this.opps.engine.offers.find((x) => x.id === o.id);
-    if (card) h('div', `✦ You get: ${card.reward}`, 'font-size:12px;margin-top:2px;color:#9fe0a0');
-    if (o.affordable) btn(player ? (o.challenge?.area === this.run.at ? '▶ Commit: play it' : '▶ Commit: ride there') : `Commit ${who || 'them'}`, () => this.commit(o.id), true);
-    btn('Back', () => {
-      this.selected = null;
-      this.render();
-    });
   }
 
   /** how long an opportunity stays: this turn, n turns, m minutes of the run's clock */
   timer(o: Opportunity): string {
     const turns = o.expires.turn - this.opps.turn;
     const mins = o.expires.minute !== undefined ? o.expires.minute - this.run.clock : Infinity;
-    if (Number.isFinite(mins) && mins < 30) return `${fmtMin(Math.max(0, mins))} left${o.onExpire ? ' — then it happens anyway' : ''}`;
-    return turns <= 0 ? `this turn only${o.onExpire ? ' — then it happens anyway' : ''}` : `${turns + 1} turns${o.onExpire ? ' — then it happens anyway' : ''}`;
+    const then = o.onExpire ? ' Then it happens anyway.' : '';
+    if (Number.isFinite(mins) && mins < 30) return `${fmtMin(Math.max(0, mins))} left.${then}`;
+    return turns <= 0 ? `This turn only.${then}` : `${turns + 1} turns left.${then}`;
   }
 
   /** the roster and the intro, before the first turn */
@@ -502,7 +521,7 @@ export class LevelOpps extends LevelSit {
       const p = P(c.opp.location.at as V2);
       this.line(ctx, here, p, LOCKED, 2, [4, 4]);
       this.diamond(ctx, p, 12, LOCKED, '⏳');
-      this.label(ctx, p, `${c.opp.title} · ${turnsLeft ? `${turnsLeft} turn${turnsLeft > 1 ? 's' : ''}` : 'now'}`, LOCKED);
+      this.label(ctx, p, `${c.opp.title}: ${turnsLeft ? `${turnsLeft} turn${turnsLeft > 1 ? 's' : ''}` : 'now'}`, LOCKED);
     }
     // what's offered (two at one place — warn and lead out, both at the town — fanned round it so each can be tapped)
     const placed = this.opps.offered.map((o) => P(o.location.at as V2));
@@ -527,7 +546,7 @@ export class LevelOpps extends LevelSit {
       else this.diamond(ctx, p, sel ? 16 : 14, col, glyph);
       this.label(ctx, [p[0], p[1] + labelDy[i] * 2], o.title.length > 30 && !sel ? `${o.title.slice(0, 28)}…` : o.title, sel ? '#ffffff' : col);
       // (its timer over it: the user — "clear timers")
-      this.badge(ctx, [p[0], p[1] - 22], `⏱ ${this.timer(o).split(' — ')[0]}`, o.onExpire ? '#ff8a5a' : '#ffd35a');
+      this.badge(ctx, [p[0], p[1] - 22], `⏱ ${this.timer(o).split('.')[0]}`, o.onExpire ? '#ff8a5a' : '#ffd35a');
       hits.push({ x: p[0], y: p[1], r: 26, id: o.id });
     }
     this.hits = hits;
@@ -619,5 +638,6 @@ export class LevelOpps extends LevelSit {
     this.d.map.onTap = undefined;
     this.offTune();
     this.panel.dispose();
+    this.talk.dispose();
   }
 }

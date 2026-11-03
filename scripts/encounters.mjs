@@ -148,7 +148,7 @@ await run({ name: `encounter-${card}-${hero}-${mode}`, kind: 'behaviour', size: 
         if (dlg) {
           // (read for two seconds first, as a player would — and for the shot)
           window.__talkAt ??= performance.now();
-          if (performance.now() - window.__talkAt < 2500) return 'reading';
+          if (performance.now() - window.__talkAt < 6000) return 'reading';
           window.__talkAt = undefined;
           const bs = [...dlg.querySelectorAll('.dlg-choices button, button')];
           if (!bs.length) {
@@ -254,7 +254,8 @@ await run({ name: `encounter-${card}-${hero}-${mode}`, kind: 'behaviour', size: 
       samples.push(smp);
       if (!shotTalk && smp.talk) {
         shotTalk = true;
-        await sleep(1500);
+        // (the line types out at 50 characters a second: the shot once it's all there)
+        await sleep(4000);
         await shot('a-talk');
       }
       if (!shot4 && smp.t > 4) {

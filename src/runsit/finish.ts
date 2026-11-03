@@ -32,7 +32,7 @@ export function finishSituation(w: MemoryWorldState, r: SituationRun, hero: stri
   }
   const deeds = [
     ...r.taken.map((id) => sit.choices.find((c) => c.id === id)!.text),
-    ...r.path.filter((p) => sit.areas.find((a) => a.id === p.area)?.play.kind === 'deliver' && p.won).map(() => `carried the word: the levy marched`),
+    ...r.path.filter((p) => sit.areas.find((a) => a.id === p.area)?.play.kind === 'deliver' && p.won).map(() => `You carried the word. The soldiers marched.`),
     ending.text,
   ];
   w.applyCharacter(r.end === 'fell' ? { kind: 'die', id: hero, text: `fell defending ${sit.target.name}` } : { kind: 'history', id: hero, text: `${sit.title}: ${ending.text}` }, run);

@@ -195,3 +195,90 @@ describe('the rules judge each kind', () => {
     expect(r.resolutions.at(-1)!.tier).toBe('cost');
   });
 });
+
+// ---- what the player reads (docs/WRITING.md, the dialog2 lint) ------------------------------------------------------
+
+import type { UnitId, UnitView, Units } from '../../src/api/contracts/units';
+import { LiveEncounter } from '../../src/encounters/live';
+import { lintAll } from '../support/writing';
+
+/** just enough Units for an encounter's words: units stand where they're put */
+function fakeUnits(): Units {
+  const all = new Map<UnitId, UnitView>();
+  let next = 1;
+  const U = {
+    died: [],
+    hurt: [],
+    noticed: [],
+    spawn: (kind: string, at: [number, number], faction: string | null, o: Record<string, unknown> = {}) => {
+      const id = next++;
+      all.set(id, { id, kind, role: (o.role as string) ?? kind, faction, at: [at[0], at[1], 0], heading: 0, health: 3, maxHealth: 3, hostile: !!o.hostile, alive: true, job: { kind: 'idle' }, state: 'idle', colour: '#fff' } as UnitView);
+      return id;
+    },
+    get: (id: UnitId) => all.get(id) ?? null,
+    query: () => [],
+    byCharacter: () => null,
+    order: () => {},
+    setHostile: () => {},
+    hit: () => {},
+    remove: (id: UnitId) => void all.delete(id),
+    watch: () => {},
+    shift: () => {},
+    update: () => {},
+  };
+  return U as unknown as Units;
+}
+
+describe('the encounters speak plainly (docs/WRITING.md)', () => {
+  it("every spec's title, goal and scene, the banner each kind shows, and every way it can end pass the lint", () => {
+    const { r, list } = areas();
+    const lines: { where: string; text: string }[] = [];
+    for (const hero of [BIKE, LICH])
+      for (const a of list) {
+        const s = encounterSpec(a, specCtx(r.sr, hero));
+        lines.push({ where: `${a.id}.title`, text: s.title }, { where: `${a.id}.goal`, text: s.goal });
+        for (const x of s.scene ? [s.scene.line, ...s.scene.answers.flatMap((y) => [y.text, y.reply, y.refused ?? ''])] : []) lines.push({ where: `${a.id}.scene`, text: x });
+        if (s.finale) continue;
+        const enc = new LiveEncounter(s, { units: fakeUnits(), hero: () => ({ position: () => [0, 0, 0], health: 10, maxHealth: 10, alive: true, cruise: hero.cruise, id: hero.id }), followers: { leader: 'hero', recruit: () => {}, dismiss: () => {}, order: () => {}, members: () => [] }, talk: { ask: async () => 0, tell: async () => {}, isOpen: false, dispose: () => {} }, place: (p) => p, held: () => ({ goods: {}, renown: 0 }), pay: () => {}, say: () => {} }, { entry: [0, 0], way: [1, 0] });
+        lines.push({ where: `${a.id}.banner`, text: enc.line().replace(/^\S+ /, '') });
+        enc.dispose();
+      }
+    // every way a rule can end it
+    const ends: string[] = [];
+    const take = (R: EncounterRules, o: EncounterObs) => {
+      const st = R.step(o);
+      if (st.state === 'ended') ends.push(st.result.why);
+    };
+    for (const k of ['flee', 'chase', 'fight', 'escort'] as const) {
+      const s = spec(k, { clear: { cells: 45, seconds: 0 }, escape: { cells: 9, far: 9 }, morale: 0.5, escort: { safeShare: 0.5, safety: 9, pursuers: { part: 'pursuers', role: 'r', faction: null, count: 1, from: 'behind', range: [1, 2], health: 1, hostile: true } } });
+      take(new EncounterRules(s), base(1, { heroAlive: false, health: 0 }));
+      take(new EncounterRules(s), base(1, { health: 0.1 }));
+      take(new EncounterRules(s), base(99, { pursuers: { alive: 1, nearest: 1 }, quarry: { alive: 1, total: 1, escaped: false }, foes: { alive: 2, total: 2 }, people: { freed: true, alive: 2, safe: 0, total: 2 } }));
+      take(new EncounterRules(s), base(99, { pursuers: { alive: 1, nearest: 1 }, quarry: { alive: 1, total: 1, escaped: false }, foes: { alive: 2, total: 2 }, people: { freed: false, alive: 2, safe: 0, total: 2 } }));
+      take(new EncounterRules(s), base(5, { pursuers: { alive: 0, nearest: Infinity }, quarry: { alive: 0, total: 2, escaped: false }, foes: { alive: 0, total: 2 }, people: { freed: true, alive: 2, safe: 2, total: 2 } }));
+      take(new EncounterRules(s), base(5, { pursuers: { alive: 2, nearest: 90 }, quarry: { alive: 1, total: 2, escaped: true }, foes: { alive: 1, total: 2 }, people: { freed: true, alive: 0, safe: 0, total: 2 } }));
+    }
+    take(new EncounterRules(spec('flee', { haven: 9 })), base(5, { pursuers: { alive: 2, nearest: 5 }, atHaven: true }));
+    for (const w of new Set(ends)) lines.push({ where: 'ends', text: w });
+    expect(new Set(ends).size).toBeGreaterThan(10);
+    expect(lintAll(lines)).toEqual([]);
+    // ("cells" is the code's unit, not a word a player says — main's review of the first banner, round 126)
+    expect(lines.filter((l) => /cells?/.test(l.text))).toEqual([]);
+  });
+});
+
+import { changeLines } from '../../src/runsit/words';
+import type { AtlasEventKind } from '../../src/api/contracts/world';
+
+describe("the end card's changes in plain sentences", () => {
+  it('every kind of world change reads as a sentence that passes the lint', () => {
+    const kinds: AtlasEventKind[] = ['sink', 'raise', 'bury', 'overgrow', 'freeze', 'thaw', 'storm', 'clear-storm', 'shadow', 'light', 'raise-dead', 'lay-dead', 'flood', 'drain', 'burn', 'ruin', 'rebuild', 'faction-presence', 'faction-attitude', 'faction-relation', 'faction-power', 'mark', 'settlement-condition', 'settlement-owner', 'migrate', 'river-inflow', 'settlement-stores', 'settlement-building'];
+    const names = { region: (id: number) => ['Bra Flats', 'Brogarn Flats', 'Mask Flats', 'Har Flats'][id] ?? 'Ban Flats', faction: () => 'the Grey Muster', settlement: () => 'Muru' };
+    const ev = kinds.flatMap((kind) => [1, -1].map((m) => ({ kind, regions: [0, 1, 2], magnitude: m * 0.5, detail: { faction: 'f', toward: 'g', settlement: 's', condition: 'ruined', name: 'the burned town of Muru', from: 'a', to: 'b', good: 'grain' } })));
+    const lines = changeLines(ev, names);
+    expect(lines.length).toBeGreaterThan(kinds.length);
+    expect(lines).toContain('Muru burned.');
+    expect(lintAll(lines.map((text) => ({ where: 'end', text })))).toEqual([]);
+    for (const l of lines) expect(l, l).toMatch(/^[A-Z].*\.$/);
+  });
+});

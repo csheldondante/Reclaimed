@@ -232,7 +232,7 @@ export class LiveEncounter {
     if (this.spec.escort && !this.freed && this.rules.guardsClear(o) && this.camp && Math.hypot(this.camp[0] - me[0], this.camp[1] - me[1]) < 14) this.free();
     const wasBroken = this.rules.broke;
     const st = this.rules.step(o);
-    if (!wasBroken && this.rules.broke) this.rout('they break and run!');
+    if (!wasBroken && this.rules.broke) this.rout('They break and run!');
     if (st.state === 'ended') this.finish();
   }
 
@@ -252,7 +252,7 @@ export class LiveEncounter {
       const at = this.d.place([c[0] + ux * r + uy * (i - b.count / 2) * 3, c[1] + uy * r - ux * (i - b.count / 2) * 3]);
       this.ids.pursuers.push(this.d.units.spawn(b.role, at, b.faction, { hostile: true, sight: SIGHT, speed: b.pace ? b.pace * this.d.hero().cruise : undefined, health: b.health, role: b.role, job: { kind: 'attack', target: 'hero' } }));
     }
-    this.d.say(`${people.length} freed: lead them out!`);
+    this.d.say(`${people.length} freed. Lead them out!`);
     this.log.push(`freed ${people.length} at t ${this.t.toFixed(1)}; ${b.count} ${b.role} come`);
   }
 
@@ -298,7 +298,7 @@ export class LiveEncounter {
     const st = this.rules.status;
     const H = this.d.hero();
     const me = this.me();
-    const res = st.state === 'ended' ? st.result : { tier: 'disaster' as const, won: false, heroDied: !H.alive, why: 'the hero fell' };
+    const res = st.state === 'ended' ? st.result : { tier: 'disaster' as const, won: false, heroDied: !H.alive, why: 'You fell.' };
     const tail = this.alive(this.ids.pursuers).filter((id) => this.dist(id, me) < TAIL).length;
     // (it's over: what still stands stops coming at the hero — a beaten hero gets away, a won fight's rest run)
     if (H.alive) this.rout('');
@@ -311,25 +311,26 @@ export class LiveEncounter {
   line(): string {
     const s = this.spec;
     const o = this.observe();
-    if (this.rules.status.state === 'talk') return `${s.title}: ${this.talking ? 'they talk' : 'ride up to them'}`;
+    if (this.rules.status.state === 'talk') return this.talking ? `${s.title}. They are talking.` : `${s.title}. Ride up and talk.`;
+    // (plain words, docs/WRITING.md: whole sentences, no code words — "cells" isn't one a player says)
+    const riders = (n: number) => (n === 1 ? '1 rider' : `${n} riders`);
     switch (s.kind) {
       case 'flee': {
         const n = o.pursuers!.alive;
-        const near = Number.isFinite(o.pursuers!.nearest) ? `${o.pursuers!.nearest.toFixed(0)} cells back` : '';
-        return this.haven ? `✉ Carry the word: ${n} on your tail ${near} · the gate ${this.toHaven().toFixed(0)} cells` : `⇢ Lose them: ${n} on your tail ${near}`;
+        const close = o.pursuers!.nearest < 20;
+        if (this.haven) return n ? `✉ ${riders(n)} ${close ? 'right behind you' : 'on your trail'}. Ride for the hall's gate!` : "✉ Ride for the hall's gate!";
+        return close ? `⇢ ${riders(n)} right behind you. Lose them!` : `⇢ ${riders(n)} on your trail. Keep going!`;
       }
-      case 'chase':
-        return `⇉ Run them down: ${o.quarry!.alive} of ${o.quarry!.total} running`;
+      case 'chase': {
+        const q = o.quarry!;
+        return `⇉ ${q.alive} of ${q.total} still running. Catch them!`;
+      }
       case 'escort':
-        return this.freed ? `☞ Lead them out: ${o.people!.alive} with you, ${o.people!.safe} safe` : `⛓ Break the guards: ${o.foes!.alive} of ${o.foes!.total} stand`;
+        if (this.freed) return `☞ ${o.people!.alive} people with you. ${o.people!.safe} safe. Lead them out!`;
+        return `⛓ ${o.foes!.alive} ${o.foes!.alive === 1 ? 'guard' : 'guards'} left. Beat them!`;
       default:
-        return `⚔ ${s.title}: ${o.foes?.alive ?? 0} of ${o.foes?.total ?? 0} stand`;
+        return `⚔ ${s.title}! ${o.foes?.alive ?? 0} of ${o.foes?.total ?? 0} still standing.`;
     }
-  }
-
-  private toHaven(): number {
-    const me = this.me();
-    return Math.hypot(this.haven![0] - me[0], this.haven![1] - me[1]);
   }
 
   /** where the screen's arrow points: the haven, the safety, else the nearest enemy */

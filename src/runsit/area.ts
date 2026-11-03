@@ -116,7 +116,8 @@ export class AreaPlay {
   ) {
     this.area = d.run.area();
     this.result = new Promise((res) => (this.resolve = res));
-    this.banner = div(d.ui, 'position:absolute;left:50%;transform:translateX(-50%);top:calc(max(8px, env(safe-area-inset-top)) + 4px);max-width:min(78vw,440px);padding:6px 12px;border-radius:9px;background:rgba(18,16,12,0.8);color:#f3e8cf;font:600 13px/1.3 system-ui,sans-serif;text-align:center;pointer-events:none;z-index:7;');
+    // (round 126: below the streaming pill, the health bar, the narration line and the tuning button — main's review: it sat over them)
+    this.banner = div(d.ui, 'position:absolute;left:50%;transform:translateX(-50%);top:calc(max(8px, env(safe-area-inset-top)) + 150px);max-width:min(78vw,440px);padding:6px 12px;border-radius:9px;background:rgba(18,16,12,0.8);color:#f3e8cf;font:600 13px/1.3 system-ui,sans-serif;text-align:center;pointer-events:none;z-index:7;');
     this.arrow = div(d.ui, 'position:absolute;width:0;height:0;border-left:13px solid transparent;border-right:13px solid transparent;border-bottom:26px solid #ffd35a;filter:drop-shadow(0 1px 3px rgba(0,0,0,.7));pointer-events:none;z-index:7;display:none;');
     this.big = div(d.ui, 'position:absolute;left:50%;top:30%;transform:translate(-50%,-50%);color:#fff3c4;font:800 34px system-ui,sans-serif;text-align:center;text-shadow:0 3px 12px rgba(0,0,0,.8);pointer-events:none;z-index:7;max-width:90vw;');
     // (orders and items: a column on the right, over the play controls' empty middle)
@@ -548,7 +549,7 @@ export class AreaPlay {
   private finish(r: AreaResult): void {
     if (this.done) return;
     this.done = true;
-    this.big.textContent = r.heroDied ? 'DOWN' : r.won ? (r.tier === 'triumph' ? 'TRIUMPH' : '') : (r.why ?? 'lost').toUpperCase();
+    this.big.textContent = r.heroDied ? 'DOWN' : r.won ? (r.tier === 'triumph' ? 'TRIUMPH' : '') : (r.why ?? 'Lost.').replace(/\.$/, '').toUpperCase();
     this.arrow.style.display = 'none';
     this.log.push(`${this.area.id} done: ${JSON.stringify(r)}`);
     this.resolve({ kind: 'area', result: r });

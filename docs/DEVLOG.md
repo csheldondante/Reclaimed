@@ -16300,3 +16300,109 @@ engagement and shots at 4 s, engaged and the end in C:/Projects/shots88/encounte
 What wasn't shown headless: an escort won (a player leads the people; the autopilot doesn't), a scene lost (the raiders
 drowned at that crossing), the lich in a chase or a scene. AgentUnits defines one more kind (the rider, 77 voxels); the
 default page spawns none, so driveprofile wasn't re-run.
+## 2026-11-02 — dialog2: petitions as dialogs, a cast with quirks, plain words (BACKLOG DLG-1..DLG-12)
+
+The user, after trying the living-world run on places (DECISIONS, the newest entry): "The writing is
+incomprehensible. 'You get: Huggek's levy, yours to command (it comes with its record: a veteran levy stays one), and
+supplies' That's gibberish. ... I want a cast of characters with interesting personality quirks and rolled for traits to
+make them likable. Introduce characters as needed and have them deliver the petition but you can't do that with cards
+you need to do that with dialogs." Branch `dialog2` from places 5b24d9a.
+
+- **What produced the gibberish.** The player's text was written in the register of our code comments and docs:
+  ideas packed into parentheses, colons and semicolons, our own words for things (record, tier, the host, a levy that
+  "stays one"). The agents writing the templates had no rule that player text is different. The fix is a rule and a
+  check, not one rewritten line: **docs/WRITING.md** (plain words, one idea a sentence, who/what/where, concrete costs
+  and rewards, consequences as signals, no code words, no parenthetical asides; good and bad examples, the user's
+  catalog as the standard) and **test/unit/writing.test.ts**, a lint that fails on code words, parentheses,
+  semicolons, joining dashes, unfilled braces and sentences over 20 words. It reads every template as written, and
+  every card and petition as dealt on seed 1 along two paths (the hold with crews sent, the straight road), Briar
+  Hollow's over four turns, the cast's voices and quirks, the roster, the intro, the status line and the GM's
+  situation file. CLAUDE.md and docs/GM.md point at WRITING.md.
+- **Everything the player reads, rewritten**: the run's templates (living/horde.ts), Briar Hollow's (library.ts), the
+  encounters' lines, the ways' notes (runsit/state.ts: whole sentences, "minutes" not "min"), the template situation
+  (runsit/fill.ts) and the GM's seed 1 situation (data/situations/grey-muster-bumku.json: premise, choices, briefs,
+  items, endings), the roster, the intro, the status line, the map's hint and timers (opps/words.ts, pure, linted),
+  the two heroes' lines. A region with no area is named from the world wiki, never "region 2141"
+  (SituationMap.regionName). Filled texts start their sentences with a capital (living/plain.ts).
+  Before and after:
+  1. "Huggek's levy, yours to command (it comes with its record: a veteran levy stays one), and supplies." →
+     "8 soldiers from Huggek join you. +2 supplies."
+  2. "The word is carried: Huggek's levy (8 guards) is yours to command, and 2 supplies." → "Huggek's lord sends his
+     soldiers. 8 soldiers march with you. +2 supplies."
+  3. "The ford ran red; the host waited 2.3 min to cross." → "The ford ran red. The dead are 2.3 minutes late."
+  4. "The host's road is known: the ford's odds +15%, its time to Bumku certain." → "You counted them from the ridge.
+     Holding the ford is 15% more likely."
+  5. "A watchtower over the town — it stands after the run; watchtowers unlock in the city builder." → "A watchtower at
+     Bumku. It stays after this run. You can build watchtowers in the city builder."
+  6. "Time: the quick road." → "You save time."
+  7. "3 walking dead between you and the hall, 3 walking dead behind you; 150 s to get the word in" → "3 walking dead
+     stand between you and the hall. You have 150 seconds to get the word in. 3 more are behind you."
+  8. "(you'd reach Bumku 4.3 min before the dead)" → "You would reach Bumku 4.3 minutes before the dead."
+  9. "Four burrow-born gnoll diggers join you (they regenerate); the communal burrows unlock in the city builder." →
+     "4 gnoll diggers join you. They heal between turns. You can build burrows in the city builder."
+  10. "Weir-cut channels: every water or infrastructure card after takes a turn less; the weir unlocks in the city
+      builder." → "Water and building work takes a turn less. You can build weirs in the city builder."
+  11. "What is happening: 16 walking dead of the Hollow Host (the Hollow Court) march over 4 regions for Bumku. 3
+      outriders ride ahead of them — and they have seen you." → "The Hollow Host is marching on Bumku. That is 16
+      walking dead, sent by the Hollow Court. 3 of their riders are out ahead, and they have seen you."
+  12. "you hold: the levy of Huggek (8, veteran) · 2 supplies" → "With you: Huggek's soldiers, 8 strong, veterans. 2
+      supplies."
+  13. "Ride round the Teeth to Muru, the Red Hold, for its levy (late, but in force)" → "Ride to Muru, the Red Hold, for
+      its soldiers. Slower, but they come with you"
+  14. "Left unruled, the claim festers into a feud." → "Nobody rules on Thornfield. House Aldren and House Morrow start a
+      feud."
+- **The cast** (living/cast.ts, contract contracts/cast.ts `Persona`): 2-3 distinct quirks from 28 (the user's
+  examples among them: counts everything twice, quotes their late mother, terrified of geese; species-only ones for
+  gnolls; a role makes its own quirks three times as likely), a voice of seven (warm, blunt, formal, nervous, grand,
+  dry, cheerful: intro, again, fond, cold, thanks, hurt, later, yes, no), two likable traits, a want by role and a
+  portrait spec from the creature generator's species preset (palette, head, girth, fur, a hat and cloth by role).
+  Rolled from the world's seed and the person's id: stable, and kept on the CharacterRecord (`persona`, new optional
+  field; CharacterChange `persona`) so the next run meets the same person. makePresenter rolls it when a person is made
+  for a card (their motivation is now their want); someone from an older save gets one the first time they speak
+  (`personaOf`).
+- **Petitions are dialogs** (dialog/petition.ts, living/present.ts). A card's presenter greets in their voice (who
+  they are the first time; then fond, neutral or cold by how they feel about the player, which persists across runs),
+  makes the ask, and answers "What's in it for me?" and "What if I say no?". Data-driven: a template's PresenterSpec
+  supplies `line` (the ask), `gain` and `refuse` in plain words, and optionally `haggle` (what asking for more adds:
+  the muster +2 supplies, the trade road +5 coin); the voice wraps them, a quirk adds an aside. No quest has a written
+  tree. The answers carry an `act` the run reads: commit (their thanks and the signal: "Shesha will owe you a favour.
+  The gnolls of the Warrens will trust you more."), refuse (their reaction and "... will hold it against you. ... will
+  trust you less." plus what lapsing does), later, haggle (the talk closes, a `Persuasion` settles it: traitPersuasion
+  by default, generous and kind say yes, proud and stubborn no, others by feeling; the talk opens again at their
+  answer). The Persuasion interface (contracts/dialog.ts) is the room left for the user's dialog minigame.
+  - The summary panel inside the dialog: Needs, Takes (time, the encounter, the chance it goes well), You get, If you
+    refuse. The card's own detail panel is gone; the map's hint says "Tap someone on the map to hear them out."
+  - Relationship facts: an answer now also moves the group the presenter speaks for (a faction, cohort or polity), by
+    half: the user's "relationships getting tense with you and another faction if you don't send aid". Refusing a card
+    lets it go now: its lapse happens (the grain rots, the captives are taken). A way on is not refused, only left
+    ("I'll think about another way"); the forced outriders can't be refused. Asking for more costs a little goodwill
+    (`haggled`, grievance 0.1). A first talk writes `talked` (and `met` if the card's setup didn't).
+  - The pitch is the card's own words; the presenter's line is no longer glued onto it ("Wenna Ashby urges: ...").
+  - DialogBox (round 83) gained a node's `aside` and `facts` panel, choices with `disabled` (why the player can't
+    agree yet: "You need soldiers to send.") and a `className` ('petition': above the map, a 72 px pixel portrait).
+  - Portraits (dialog/portrait.ts): a 32 px bust drawn from the PortraitSpec on a canvas, shown pixelated. A stand-in
+    until the creature generator can draw a bust of the real rig (DLG-7).
+- Tests: test/unit/dialog-petition.test.ts 9 (the roll stable and distinct, species quirks, the persona kept across a
+  save and rolled for an old record; the petition from the template; commit, refuse and haggle as outcomes and
+  relationship facts with the presenter and the group; greetings that remember into the next run; the run's forced
+  and passable cards), test/unit/writing.test.ts 8. npm test: 552 passed (2 expected fail).
+- Headless (scripts/dialog.mjs, the atlas level with every system, 412x915, passed): the forced outriders open as a talk
+  with Bram Cotter (portrait, aside, the panel, no refuse); the muster haggled and refused by a stubborn scout, the talk
+  opened again at his answer; the harvest refused (the signal said, the grain rotted at once); the watchtower agreed
+  (the thanks, the crew running on the map). Shots and a GIF in C:/Projects/shots88/dialog2/. The petition panel was
+  tightened so five answers fit at 412x915.
+
+**Plain words (main's review of the shots; docs/WRITING.md from `dialog2`, merged in).** The banner read "Lose them: 3
+on your tail 1 cells back" — broken, and "cells" is the code's unit. Every encounter's title, goal, banner and ending
+is now a whole sentence ("3 riders right behind you. Lose them!", "You caught them all.", "The guards kept the
+captives."); the card's encounter line is the spec's goal, so the petition's Takes row reads the same. The end card's
+"What changed in the world" was the event's kind and its regions ("ruin: Bra Flats", "raise-dead: Bra Flats, Brogarn
+Flats…"): now runsit/words.ts writes each change as a sentence ("Muru burned.", "The dead rise in Bra Flats and the land
+round it."). "Bra Flats" is the region's whole generated name, not cut short. A dead hero's line and the play-again
+button are plain sentences; a fallen hero's ending reads "Muru fell too.". The banner sits below the streaming pill,
+the health bar and the narration (150 px down). Kesh Half-Ear's line wasn't cut: the shot was taken while it typed out;
+the check now shoots the talk 4 s in. Tests: the dialog2 lint (test/support/writing.ts) over every spec's words, each
+kind's banner, every way the rules end one and every kind of world change, and no "cells" in any of them.
+Merging `dialog2`: one conflict, living/horde.ts encounterOf — kept the spec-read version (its text in the spec now
+plain); the petitions' DialogBox and the encounters' DialogTalk are two boxes (LevelOpps `talk`, LevelSit
+`encounterTalk`).

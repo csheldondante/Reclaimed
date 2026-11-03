@@ -81,23 +81,23 @@ export function encounterSpec(a: SituationArea, c: SpecCtx): EncounterSpec {
   switch (p.kind) {
     case 'flee': {
       const n = Math.max(1, (c.carried || (th.outriders?.count ?? 0)) + x.pursuers);
-      return { kind: 'flee', title: 'Flee the outriders', goal: `${n} riders on your tail: lose them, or cut them down`, bands: tail(n), limit: 75, beaten: BEATEN, clear: CLEAR };
+      return { kind: 'flee', title: 'Get away from the riders', goal: `${n} riders are right behind you. Lose them, or cut them down.`, bands: tail(n), limit: 75, beaten: BEATEN, clear: CLEAR };
     }
     case 'ambush': {
       const n = p.foes + x.foes;
-      return { kind: 'fight', title: 'Break the ambush', goal: `${n} ${p.role} across the road: cut them down or break them`, bands: [...foes(n, p.role, p.faction), ...tail(c.carried + x.pursuers)], limit: 100, beaten: BEATEN, morale: MORALE };
+      return { kind: 'fight', title: 'Break the ambush', goal: `${n} ${p.role} wait in the road. Cut them down, or make them run.`, bands: [...foes(n, p.role, p.faction), ...tail(c.carried + x.pursuers)], limit: 100, beaten: BEATEN, morale: MORALE };
     }
     case 'deliver': {
       const n = Math.max(2, x.pursuers + c.carried);
       const haven = Math.max(HAVEN_CELLS[0], Math.min(HAVEN_CELLS[1], cruise * HAVEN_S));
-      return { kind: 'flee', title: 'Carry the word', goal: `riders on your tail and ${x.foes} across the way: get to the hall's gate`, bands: [...tail(n), ...foes(x.foes, th.role, th.faction, 'ahead', [haven * 0.35, haven * 0.55])], limit: Math.min(p.limit, 60 + haven / cruise), beaten: BEATEN, haven };
+      return { kind: 'flee', title: 'Carry the word', goal: `Riders are right behind you.${x.foes ? ` ${x.foes} more block the way.` : ''} Get to the hall's gate.`, bands: [...tail(n), ...foes(x.foes, th.role, th.faction, 'ahead', [haven * 0.35, haven * 0.55])], limit: Math.min(p.limit, 60 + haven / cruise), beaten: BEATEN, haven };
     }
     case 'trader': {
       const n = Math.max(3, x.foes);
       return {
         kind: 'scene',
         title: 'Raiders at the trader',
-        goal: `${n} raiders round the trader: talk, pay, or fight`,
+        goal: `${n} raiders surround the trader. Talk to them, pay them, or fight.`,
         bands: [band({ part: 'foes', role: 'raider', faction: th.faction, count: n, from: 'camp', range: [3, 7], health: 3, hostile: false }), ...tail(c.carried + x.pursuers)],
         limit: 100,
         beaten: BEATEN,
@@ -119,7 +119,7 @@ export function encounterSpec(a: SituationArea, c: SpecCtx): EncounterSpec {
       return {
         kind: 'chase',
         title: 'Run them down',
-        goal: `${p.quarry} ${p.role} running ahead: cut them down before they get away`,
+        goal: `${p.quarry} ${p.role} are running a few seconds ahead. Catch them before they get away.`,
         bands: [band({ part: 'quarry', role: ridersOf(c), faction: p.faction, count: p.quarry, from: 'ahead', range: [9, 13], pace, health: 2, hostile: false }), ...tail(c.carried + x.pursuers, pace)],
         limit: ESCAPE_S * 2 + 10,
         beaten: BEATEN,
@@ -131,7 +131,7 @@ export function encounterSpec(a: SituationArea, c: SpecCtx): EncounterSpec {
       return {
         kind: 'escort',
         title: 'Free the captives',
-        goal: `${p.guards} ${p.role} guard ${p.captives} captives: break them, then lead the people out`,
+        goal: `${p.guards} ${p.role} guard ${p.captives} captives. Beat the guards, then lead the captives out.`,
         bands: [
           // (the guards stand off the pen: a blow over an area — the lich's slam — at them misses the people; round 126's
           // headless lich run, guards at 3-8 cells and the people at 1-3, slammed three of the four with them)
@@ -148,11 +148,11 @@ export function encounterSpec(a: SituationArea, c: SpecCtx): EncounterSpec {
     }
     case 'scout': {
       const n = Math.max(2, p.patrols * 2);
-      return { kind: 'fight', title: 'Break the patrol', goal: `${n} ${p.role} hold the ridge: break them to count the host`, bands: [...foes(n, p.role, p.faction, 'around', [10, 15]), ...tail(c.carried + x.pursuers)], limit: 100, beaten: BEATEN, morale: 0.5 };
+      return { kind: 'fight', title: 'Break the patrol', goal: `${n} ${p.role} hold the ridge. Beat them, and you can count the army.`, bands: [...foes(n, p.role, p.faction, 'around', [10, 15]), ...tail(c.carried + x.pursuers)], limit: 100, beaten: BEATEN, morale: 0.5 };
     }
     case 'town': {
       const n = Math.max(1, th.count - (c.thinned ?? 0));
-      return { kind: 'defend', title: c.evacuate ? 'Lead them out' : 'Defend the town', goal: c.evacuate ? `${n} of ${th.name} come: lead the people out` : `${n} of ${th.name} assail the town: hold it, or it burns`, bands: [band({ part: 'foes', role: th.role, faction: th.faction, count: n, from: 'ahead', range: [20, 40], health: 3, hostile: true })], limit: Infinity, beaten: 0, finale: c.evacuate ? 'evacuate' : 'defend' };
+      return { kind: 'defend', title: c.evacuate ? 'Lead them out' : 'Defend the town', goal: c.evacuate ? `${n} of ${th.name} are coming for the town. Lead its people out before they are caught.` : `${n} of ${th.name} are coming for the town. Hold it, or it burns.`, bands: [band({ part: 'foes', role: th.role, faction: th.faction, count: n, from: 'ahead', range: [20, 40], health: 3, hostile: true })], limit: Infinity, beaten: 0, finale: c.evacuate ? 'evacuate' : 'defend' };
     }
   }
 }

@@ -37,20 +37,29 @@ and combat." DEVLOG round 126 (`encounters`) has the diagnosis and the measureme
 | EN15 | The trader's crossroads is on a river: raiders who come at a hero on the water drown ("by the world") and the scene counts as won — whether deaths not by the hero should count is the user's call (today they do: they're down) | S | asked |
 | EN16 | The hall's gate is at most half the window (~200 cells) from where the hero comes in: a 5-25 s sprint for the bike. A longer gauntlet needs the hero warped short of the hall, not beside it | S | open |
 | EN17 | Riders are drawn as a crude beast-and-rider voxel model (units/agent-units.ts RIDER_MODEL); the creature generator's mounts later | S | open |
+| EN18 | Plain words in every encounter's banner, goal and ending and on the end card (docs/WRITING.md; main's review: "Lose them: 3 on your tail 1 cells back", "ruin: Bra Flats"); the dialog2 lint over them in Node; the banner below the top HUD | S | done (`encounters`) |
 
-## Round 126 (2026-11-02, session 5, `dialog2`) — petitions as dialogs, the cast, plain writing (DECISIONS round 126)
+## Round 127 (2026-11-02, session 5, `dialog2`) — petitions as dialogs, a cast with quirks, plain words (DECISIONS, the newest entry: "The writing is incomprehensible")
 
-Branch `dialog2` (b9139b7): docs/WRITING.md, a style lint, every player string rewritten, the cast generator, petitions delivered in talks. The branch's own rows are DLG-7..12.
+The user (verbatim): "Use simple plain language like in the worked examples and fix whatever in the prompt produced that
+monstrosity. I want a cast of characters with interesting personality quirks and rolled for traits to make them
+likable. Introduce characters as needed and have them deliver the petition but you can't do that with cards you need
+to do that with dialogs." DEVLOG dialog2.
 
 | id | item | size | status |
 |---|---|---|---|
-| DLG-Q1 | Voices: say more in character, or keep the content plain and put personality in greetings and asides only? | S | asked |
-| DLG-Q2 | Every card a full talk, or travel choices ("Ride to X") a quick tap? | S | asked |
-| DLG-Q3 | Is "Can you give a little more?" the right first negotiation? What is the dialog minigame, so the `Persuasion` interface fits it? | M | asked |
-| DLG-Q4 | Refusing someone drops their group's trust by half as much as theirs. Right size? | S | asked |
-| DLG-R1 | Main's review: the intro says the march twice ("The Hollow Host is marching on Muru" then "An army of the walking dead has risen… It is marching on Muru"). Mid-sentence "The Hollow Court" has a capital "The". "They reach Muru at minute 14.3" reads like a timer, not speech. | S | open |
-| DLG-R2 | Main's review: the muster card's "Takes" lists the encounter ("3 walking dead stand between you and the hall") as well as the time. Takes should be the cost only; the danger belongs in the ask. | S | open |
-| DLG-R3 | Map labels pile up near the hold (timers and card names overlap). This predates dialog2. | M | open |
+| DLG-1 | docs/WRITING.md: the style guide for player-facing text, good and bad examples, the user's catalog as the standard; CLAUDE.md and docs/GM.md point at it | S | done (`dialog2`) |
+| DLG-2 | Every player-facing string rewritten: the run's and Briar Hollow's templates, encounters, the ways' notes, the template situation and the GM's seed 1 situation, roster, intro, status, map hint and timers, hero lines; regions named from the wiki | M | done (`dialog2`) |
+| DLG-3 | The style lint (test/unit/writing.test.ts): code words, parentheses, semicolons, joining dashes, unfilled braces, sentences over 20 words — over templates, seed 1's dealt cards and petitions, Briar Hollow, the cast, the screens, the GM file | S | done (`dialog2`) |
+| DLG-4 | The cast generator (living/cast.ts, contracts/cast.ts): quirks, voice, traits, want, portrait spec; rolled from the seed, kept on the CharacterRecord | M | done (`dialog2`) |
+| DLG-5 | Petitions as dialogs (dialog/petition.ts, living/present.ts): greeting in voice (remembering the player), the ask, "What's in it for me?", "What if I say no?", ask for more; answers → commit, refuse, later, haggle; the summary panel inside the dialog; relationship facts with the presenter and their group; wired on the map (level-opps.ts) | L | done (`dialog2`) |
+| DLG-6 | The Persuasion interface (contracts/dialog.ts): where the user's dialog minigame plugs in; the default reads traits | S | done (`dialog2`; the minigame: the user's ideas to hear) |
+| DLG-7 | Portraits are a 32 px canvas bust from the PortraitSpec; a bust of the real creature rig (inhabitants) and better art later | M | open |
+| DLG-8 | Quirk asides ignore the moment (a hand shaken for a long time while riders are on you): asides tagged calm/urgent, picked by the card's themes | S | open |
+| DLG-9 | Voices are English templates round the content; pronouns are "they" throughout. A character's pronouns, and a few voice tics inside the template's lines (a nervous speaker's "um"), would make them read more alive | S | open |
+| DLG-10 | The inspector (cardlab.html) still shows cards, not petitions: open the same petition there | S | open |
+| DLG-11 | The area play's own card (runsit/level-sit.ts: briefs, the edge card) and barks follow WRITING.md but aren't in the lint yet | S | open |
+| DLG-12 | Negotiation beyond "a little more" (a smaller tier for less, a favour owed instead of goods) where a template allows it | M | open |
 
 ## Round 126 (2026-11-02, session 5, `merge124`) — the living world merged into the run structure (DECISIONS round 125, newest)
 
@@ -72,7 +81,7 @@ march state: "Oh yeah definitely update the world model so all this data lives i
 | M124-9 | The far land (past the window) shows a placed structure only once the town's exact plan is made again (its far plan is the old one until then) | S | open |
 | M124-11 | Refugees a run moved into a town farm with its farmers (life.ts ROUTINE refugee → farmer): a round of their own (a camp at the town's edge, asking for work) | S | open |
 | M124-12 | A structure placed in a town that stands in the window waits until the window has left it (planned again under the player's feet, its old walls came down as rubble); the structures track could add one building in place instead | S | open |
-| M124-10 | The UI is known-bad (the user): the card shows the presenter's line in the pitch and "You get" — to be experimented with later; dialogs, interiors, portraits, camera/zoom, foliage next | M | open (the user) |
+| M124-10 | The UI is known-bad (the user): the card shows the presenter's line in the pitch and "You get" — to be experimented with later; dialogs, interiors, portraits, camera/zoom, foliage next | M | dialogs done (`dialog2`, DLG-5: a petition is a talk with its presenter, the card a summary panel in it); interiors, camera, foliage are other tracks |
 
 ## Round 125 (2026-11-02, session 5, `facts`) — the living world: the fact layer, the template engine, the world inspector (DECISIONS round 124/125, docs/design/FACTIONS_WORLD_STATE.md)
 
@@ -475,7 +484,6 @@ tests work and do quick smoke tests to find failures early." docs/TESTING.md.
 | RN4 | Faeria-style positioning: dispatched agents hold positions on the map that matter (locking down enemies, holding a pass) | L | deferred (simpler version first) |
 | FLO30 | Wind-responsive foliage lab (docs/design/FOLIAGE_WIND.md, the user's): static baselines, then 1A wind-shading ripple + 1B instanced vertex bending (grass) and 1A + 1C coarse lattice deformation (trees), reusing the GPU wind field; phone benchmark by matched static/animated pairs; stop at the first technique that clears the visual bar | M | open (low priority) |
 | PRE1 | Region presentation prototypes (docs/design/REGION_PRESENTATION.md): A birch forest canopy->understory (first), B canyon camera, C cliff climb, D throne-room interior with petitioners; presentation profiles, review overlay, repeatable A/B | L | wip (presentation) |
-| ART1 | Import the user's Unity asset packs (most of Synty's POLYGON range, other low-poly packs): unpack .unitypackage as data, convert FBX meshes, normalise to cell scale, simplify, voxelise or stylise, palette-map (Synty colours come from one atlas texture, easy per face), catalogue by tags. Raw packs stay outside the public repo; only converted game data is committed, after checking each pack's licence. Waiting on the user for the folder path | L | asked (path) |
 | FLO21 | Birch cost on the phone: the user's result good — done (flora 18c3bdb, unmerged) | S | done |
 
 ## Round 118 (2026-10-30, session 5, `places`) — found while reviewing the tracks

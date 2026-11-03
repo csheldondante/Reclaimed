@@ -30,6 +30,7 @@ import type { Ctx, Helper, Stage } from './dsl';
 import type { TemplateDef } from './engine';
 import type { FactWorld } from './world';
 import { encounterSpec, specCtx } from '../encounters/spec';
+import { capitalise } from './plain';
 
 /** what a levy that has stood in a fight carries (the ford's tag, a saved town): a disaster on a fight lifted */
 export const VETERANS: BonusRecord = { why: 'veterans hold', on: 'resolve', themes: ['fight'], effect: { kind: 'negate', tier: 'disaster' } };
@@ -44,7 +45,8 @@ const DETOUR_AT: Record<Detour, number> = { rescue: 0.3, chase: 0.45, scout: 0.6
 /** minutes the levy must be at the ford before the host to hold it */
 const FORD_LEAD = 0.25;
 
-const fmt = (m: number) => (m < 1 ? `${Math.round(m * 60)} s` : `${m.toFixed(1)} min`);
+/** minutes as the player reads them (docs/WRITING.md) */
+const fmt = (m: number) => (m < 1 ? `${Math.round(m * 60)} seconds` : `${+m.toFixed(1)} minute${+m.toFixed(1) === 1 ? '' : 's'}`);
 
 /** the template a way on is: what it sets going */
 export function wayTemplate(c: SituationChoice, to: SituationArea): string {
@@ -92,8 +94,8 @@ export function detourArea(sr: SituationRun, T: HordeTune, d: Detour): Situation
     d === 'rescue' ? { kind: 'rescue', captives: T.rescueCaptives, guards: T.rescueGuards, role: th.role, faction: th.faction }
     : d === 'chase' ? { kind: 'chase', quarry: T.chaseQuarry, role: th.role, faction: th.faction, escape: 0 }
     : { kind: 'scout', patrols: T.patrols, role: th.role, faction: th.faction };
-  const name = d === 'rescue' ? `the dead's camp in ${sr.sit.refuge.name}` : d === 'chase' ? `the herald's road` : `the lookout over ${th.name}`;
-  const brief = d === 'rescue' ? `Outriders of ${th.name} hold people taken off the roads. Free them and they stand with ${sr.sit.target.name}.` : d === 'chase' ? `${th.name}'s herald rides for the barrows to wake more dead. It is a few seconds ahead of you.` : `A ridge looks over ${th.name}'s road. Patrols watch the way up.`;
+  const name = d === 'rescue' ? `the camp in ${sr.sit.refuge.name}` : d === 'chase' ? `the herald's road` : `the ridge over ${th.name}`;
+  const brief = d === 'rescue' ? `Riders of ${th.name} hold people taken from the roads. Free them, and they will fight for ${sr.sit.target.name}.` : d === 'chase' ? `${capitalise(th.name)}'s herald rides to the barrows to wake more dead. It is a few seconds ahead of you.` : `A ridge looks over the road of ${th.name}. Patrols watch the way up.`;
   return { id: `d-${d}-${from.id}`, name, region: pick.r, at, brief, minutes: T.detourMinutes, play, threat: { foes: 0, pursuers: d === 'scout' ? 1 : 0 } };
 }
 
@@ -375,6 +377,7 @@ export class HordeStage implements Stage {
           const v: Record<string, string | number> = {
             host: th.name,
             role: th.role,
+            outriders: th.outriders?.count ?? 0,
             townName: town.name,
             refuge: sr.sit.refuge.name,
             holdName: hold?.name ?? 'the hold',
@@ -407,18 +410,17 @@ export class HordeStage implements Stage {
             shelterPct: Math.round(t.shelterShare * 100),
           };
           const ford = fordAt(sr, this.armyAt(c.w));
-          v.fordName = ford ? this.regionName(ford.region) : "the host's road";
+          v.fordName = ford ? this.regionName(ford.region) : 'the road';
           const wayId = c.b.way;
           if (wayId) {
             const way = wayOf(c, '$way');
-            const to = sr.area(way.to);
             v.choice = way.id;
             v.wayText = way.text;
-            v.done = `${PLAY_TITLE[to.play.kind].toLowerCase()} — done`;
-            const sets = way.effects.map((e) => (e.kind === 'warn' ? `${sr.sit.target.name} warned` : e.kind === 'evacuate' ? `its people led into ${sr.sit.refuge.name}` : `the host slowed ${fmt(e.minutes)}`));
-            v.sets = sets.length ? ` ${sets.join('; ')}.` : '';
+            // (dialog2: what the way sets going, as whole sentences)
+            const sets = way.effects.map((e) => (e.kind === 'warn' ? `${sr.sit.target.name} is warned.` : e.kind === 'evacuate' ? `Its people will go to ${sr.sit.refuge.name}.` : `The dead are slowed by ${fmt(e.minutes)}.`));
+            v.sets = sets.length ? ` ${sets.join(' ')}` : '';
             const opt = sr.phase === 'edge' && way.from === sr.at ? sr.options().find((x) => x.choice.id === way.id) : undefined;
-            v.note = opt ? ` (${opt.note})` : '';
+            v.note = opt ? ` ${opt.note}` : '';
           }
           return v;
         },
@@ -467,14 +469,14 @@ export class HordeStage implements Stage {
         locate: (c) => {
           const ford = fordAt(sr, this.armyAt(c.w));
           const at = ford?.at ?? this.at();
-          return { region: ford?.region ?? sr.sit.threat.route[0], at: [at[0], at[1]], name: ford ? this.regionName(ford.region) : "the host's road" };
+          return { region: ford?.region ?? sr.sit.threat.route[0], at: [at[0], at[1]], name: ford ? this.regionName(ford.region) : 'the road' };
         },
       },
       vanguardLocate: {
         locate: (c) => {
           const ford = fordAt(sr, this.armyAt(c.w));
           const at = ford?.at ?? sr.hordeAt();
-          return { region: ford?.region ?? sr.sit.threat.route[0], at: [at[0], at[1]], name: `${sr.sit.threat.name}'s vanguard` };
+          return { region: ford?.region ?? sr.sit.threat.route[0], at: [at[0], at[1]], name: `the front of ${sr.sit.threat.name}` };
         },
       },
     };
@@ -483,18 +485,23 @@ export class HordeStage implements Stage {
   regionName(r: number): string {
     const a = this.sit.areas.find((x) => x.region === r);
     if (a) return a.name;
-    return r === this.sit.refuge.region ? this.sit.refuge.name : `region ${r}`;
+    if (r === this.sit.refuge.region) return this.sit.refuge.name;
+    // (dialog2: the region's own name — never "region 2141" on a card)
+    return this.sr.map.regionName?.(r) || 'the road';
   }
 }
 
 // ---- the templates (data) -------------------------------------------------------------------------------------------
+// (dialog2) Every line a player reads is plain words: docs/WRITING.md, checked by test/unit/writing.test.ts. A
+// presenter's `line` is the ask, `gain` their answer to "What's in it for me?", `refuse` to "What if I say no?"; their
+// voice wraps them (living/cast.ts). The reward is concrete things.
 
 const PLAYER = { kind: 'player' as const, count: 1 };
 const army = (n: number, tags?: string[]) => ({ kind: 'army' as const, count: n, ...(tags ? { tags } : {}) });
 // (the run's own entities are found by their marks — an index — never by searching every faction or settlement)
 const voice = { as: 'voice', kind: ['faction', 'cohort', 'settlement'] as ('faction' | 'cohort' | 'settlement')[], shared: true, tag: { scope: 'condition' as const, key: 'voice_of' } };
 const host = { as: 'host', kind: 'army' as const, shared: true, tag: { scope: 'condition' as const, key: 'host_of' } };
-const fell = { text: 'The hero fell.' };
+const fell = { text: 'You fell.' };
 const town = { as: 'town', kind: 'settlement' as const, shared: true, tag: { scope: 'condition' as const, key: 'target_of' } };
 const hold = { as: 'hold', kind: 'settlement' as const, shared: true, tag: { scope: 'condition' as const, key: 'hold_of' } };
 const foe = { as: 'foe', kind: 'faction' as const, shared: true, via: ['$host', 'member_of', '$'] as [string, 'member_of', string] };
@@ -534,7 +541,7 @@ export const HORDE_TEMPLATES: TemplateDef[] = [
     id: 'outriders',
     ...RUN,
     title: PLAY_TITLE.flee,
-    pitch: "{host}'s outriders have seen you. Get clear of them — or cut them down.",
+    pitch: '{outriders} riders from {host} have seen you. Outrun them, or cut them down.',
     themes: ['flee', 'pursuit'],
     hooks: ['horde'],
     bind: [{ as: 'start', kind: 'site', shared: true, tag: { scope: 'condition', key: 'start_of' } }, host, voice],
@@ -544,72 +551,77 @@ export const HORDE_TEMPLATES: TemplateDef[] = [
     play: { area: '$start', forced: true },
     outcomes: {
       triumph: { text: 'You lost them on the road.' },
-      success: { text: 'You got clear, with riders still behind.' },
+      success: { text: 'You got away. Some riders are still behind you.' },
       failure: { text: 'They ran you ragged.' },
       disaster: fell,
     },
-    presenter: { of: '$voice', role: 'herder', verb: 'shouts', line: 'Riders on the ridge — the dead ride with them. They have seen you. Go!' },
-    reward: { text: 'Your life, and the word of what comes.' },
+    presenter: { of: '$voice', role: 'herder', verb: 'shouts', line: 'Riders on the ridge! The dead ride with them. They have seen you. Go!', gain: 'You get to live. And someone has to warn the others.' },
+    reward: { text: 'You get away alive, with news of the army.' },
     parts: { theme: 1, foreshadow: 1, difficulty: 0.6, hero: 0.8 },
     expiry: 'thisTurn',
     passable: true,
   },
   way('ride', {
     title: '{wayText}',
-    pitch: 'The road to {to}.{note}',
+    pitch: 'Take the road to {to}.{note}',
     hooks: [],
-    outcomes: { success: { text: '{to}: {done}.{sets}' }, failure: { text: '{to}: it went badly.' }, disaster: fell },
-    presenter: { of: '$voice', role: 'scout', verb: 'points', line: 'The quick way is through {to}. Something waits in the ditches there, mind.' },
-    reward: { text: 'Time: the quick road.' },
+    outcomes: { success: { text: 'You made it through {to}.{sets}' }, failure: { text: 'It went badly at {to}.' }, disaster: fell },
+    presenter: { of: '$voice', role: 'scout', verb: 'points', line: 'The quick way is through {to}. Something waits in the ditches there, mind.', gain: 'Time. The quick road saves you time, and time is what {townName} needs.' },
+    reward: { text: 'You save time.' },
     parts: { theme: 0.6, foreshadow: 0.4, synergy: 0.3, difficulty: 0.5, hero: 0.6 },
   }),
   way('muster', {
     title: '{wayText}',
-    pitch: '{to} keeps a levy. Carry the word to its hall and it marches for {townName} — slower than you.{note}',
+    pitch: '{holdName} has {levyCount} soldiers. Tell its lord, and they march for {townName}. They are slower than you.{note}',
     hooks: ['horde'],
     outcomes: {
-      success: { text: "The word is carried: {to}'s levy ({levyCount} {levyRole}s) is yours to command, and {holdSupplies} supplies.{sets}" },
-      failure: { text: "{to}'s hall didn't hear you in time: no levy." },
+      success: { text: "{holdName}'s lord sends his soldiers. {levyCount} soldiers march with you. +{holdSupplies} supplies.{sets}" },
+      failure: { text: "{holdName}'s hall did not hear you in time. No soldiers come." },
       disaster: fell,
     },
-    presenter: { of: '$voice', role: 'reeve', verb: 'urges', line: '{holdName} owes us that much. Ride to its hall; its lord keeps a levy and the levy keeps its oaths.' },
-    reward: { text: "{holdName}'s levy, yours to command (it comes with its record: a veteran levy stays one), and supplies.", goods: { supplies: 'holdSupplies' }, agents: [{ id: 'levy', kind: 'army', name: 'the levy of {holdName}', character: 'levy:{holdId}', count: 'levyCount', tags: [] }] },
+    presenter: {
+      of: '$voice', role: 'reeve', verb: 'urges',
+      line: '{holdName} owes us. Ride to its hall. Its lord keeps soldiers, and they keep their oaths.',
+      gain: 'Its lord will send {levyCount} soldiers with you. And {holdSupplies} supplies, if I know him.',
+      haggle: { goods: { supplies: 2 } },
+    },
+    reward: { text: '{levyCount} soldiers from {holdName} join you. +{holdSupplies} supplies.', goods: { supplies: 'holdSupplies' }, agents: [{ id: 'levy', kind: 'army', name: "{holdName}'s soldiers", character: 'levy:{holdId}', count: 'levyCount', tags: [] }] },
     parts: { theme: 0.6, foreshadow: 1, synergy: 0.3, difficulty: 0.5, hero: 0.6 },
   }),
   way('warn', {
     title: '{wayText}',
-    pitch: '{townName}, with the dead on the road behind.{note}',
+    pitch: '{townName} has walls but no warning. Get there before the dead.{note}',
     climax: true,
     hooks: ['horde', 'town'],
     bind: [host, town, foe],
     // (the finale is this card's play: lost, the town is the dead's — its holder changes in the world: settlement-owner)
-    outcomes: { success: { text: '{to}: the climax.{sets}' }, failure: { text: '{townName} falls: the dead hold its ruins.', effects: [{ when: { helper: 'worldFaction', args: ['$foe'] }, do: [{ control: ['$foe', '$town'] }] }] }, disaster: fell },
-    presenter: { of: '$voice', role: 'reeve', verb: 'begs', line: '{townName} has walls and no warning. Get there before the dead and they will hold.' },
-    reward: { text: "{townName}'s thanks: renown.", goods: { renown: 1 } },
+    outcomes: { success: { text: 'You reached {townName}. Now hold it.{sets}' }, failure: { text: '{townName} falls. The dead hold its ruins.', effects: [{ when: { helper: 'worldFaction', args: ['$foe'] }, do: [{ control: ['$foe', '$town'] }] }] }, disaster: fell },
+    presenter: { of: '$voice', role: 'reeve', verb: 'begs', line: '{townName} has walls and no warning. Get there before the dead, and they will hold.', gain: '{townName} will thank you. People will say your name in the taverns.' },
+    reward: { text: '+1 renown. {townName} will be grateful.', goods: { renown: 1 } },
     parts: { theme: 1, foreshadow: 1, synergy: 0.3, difficulty: 0.5, hero: 0.6 },
   }),
   way('lead-out', {
     title: '{wayText}',
-    pitch: '{townName}, with the dead on the road behind: its people to be led into {refuge}.{note}',
+    pitch: 'Warn {townName} and lead its people to {refuge}. The town itself may burn.{note}',
     climax: true,
     hooks: ['horde', 'town'],
     bind: [host, town, foe, hold],
     // (led out, its people go on to the hold — they move there in the world: migrate; lost, the town is the dead's)
     outcomes: {
-      success: { text: '{to}: the climax.{sets} {shelterPct}% of its people go on to shelter at {holdName}.', effects: [{ migrate: ['$town', '$hold', 'shelterShare'], note: "{townName}'s people led out to shelter at {holdName}" }] },
-      failure: { text: '{townName} falls: the dead hold its ruins.', effects: [{ when: { helper: 'worldFaction', args: ['$foe'] }, do: [{ control: ['$foe', '$town'] }] }] },
+      success: { text: 'You reached {townName}. Now lead them out.{sets} {shelterPct}% of its people will shelter at {holdName}.', effects: [{ migrate: ['$town', '$hold', 'shelterShare'], note: "{townName}'s people led out to shelter at {holdName}" }] },
+      failure: { text: '{townName} falls. The dead hold its ruins.', effects: [{ when: { helper: 'worldFaction', args: ['$foe'] }, do: [{ control: ['$foe', '$town'] }] }] },
       disaster: fell,
     },
-    presenter: { of: '$voice', role: 'elder', verb: 'pleads', line: 'Walls burn. People walk. Lead them into {refuge} and let the dead have the stones.' },
-    reward: { text: 'The people you lead out remember: renown.', goods: { renown: 1 } },
+    presenter: { of: '$voice', role: 'elder', verb: 'pleads', line: 'Walls burn. People walk. Lead them to {refuge}, and let the dead have the stones.', gain: 'The people you save will remember you. So will I.' },
+    reward: { text: '+1 renown. The people you save will remember you.', goods: { renown: 1 } },
     parts: { theme: 1, foreshadow: 1, synergy: 0.3, difficulty: 0.5, hero: 0.6 },
   }),
   ...(['rescue', 'scout', 'chase'] as const).map(
     (d): TemplateDef => ({
       id: d,
       ...RUN,
-      title: d === 'rescue' ? 'Free the captives' : d === 'chase' ? 'Run down the herald' : 'Scout the host from the ridge',
-      pitch: d === 'rescue' ? '{host} holds people taken off the roads. Free them and they stand with {townName}.' : d === 'chase' ? "{host}'s herald rides for the barrows to wake more dead. It is a few seconds ahead of you." : "A ridge looks over {host}'s road. Patrols watch the way up.",
+      title: d === 'rescue' ? 'Free the captives' : d === 'chase' ? 'Run down the herald' : 'Scout the army from the ridge',
+      pitch: d === 'rescue' ? 'The dead hold {rescueCaptives} people taken from the roads. Free them, and they will fight for {townName}.' : d === 'chase' ? "{host}'s herald rides to the barrows to wake more dead. It is a few seconds ahead of you." : "A ridge looks over {host}'s road. Patrols watch the way up.",
       themes: ['travel', d],
       hooks: ['horde'],
       bind: [{ as: 'detour', kind: 'site', tag: { scope: 'economy', key: 'detour', value: d }, where: [{ helper: 'offHere', args: ['$detour'] }] }, voice],
@@ -621,22 +633,22 @@ export const HORDE_TEMPLATES: TemplateDef[] = [
       ...(d === 'rescue' ? { setup: [{ helper: 'markSeen', args: ['rescue', 'detour'] }] } : {}),
       outcomes:
         d === 'rescue'
-          ? { success: { text: '{rescueCaptives} freed: they stand with {townName}\'s defenders (+{rescueCaptives}).', effects: [{ helper: 'conflict', args: ['rally', 'rescueCaptives'] }] }, failure: { text: 'The captives are dragged to the host: {rescueCaptives} more dead.', effects: [{ helper: 'conflict', args: ['swell', 'rescueCaptives'] }] }, disaster: fell }
+          ? { success: { text: 'You freed {rescueCaptives} people. They will fight for {townName}.', effects: [{ helper: 'conflict', args: ['rally', 'rescueCaptives'] }] }, failure: { text: 'The captives were dragged to the army. That is {rescueCaptives} more dead.', effects: [{ helper: 'conflict', args: ['swell', 'rescueCaptives'] }] }, disaster: fell }
           : d === 'chase'
-            ? { success: { text: 'The herald is down: {heraldDead} fewer of the dead rise.', effects: [{ helper: 'conflict', args: ['thin', 'heraldDead'] }] }, failure: { text: 'The herald got away: {heraldDead} more dead rise.', effects: [{ helper: 'conflict', args: ['swell', 'heraldDead'] }] }, disaster: fell }
-            : { success: { text: "The host's road is known: the ford's odds +{intelPct}%, its time to {townName} certain.", effects: [{ helper: 'conflict', args: ['intel', 'intel'] }] }, failure: { text: 'The patrols drove you off the ridge: nothing learned.' }, disaster: fell },
+            ? { success: { text: 'The herald is down. {heraldDead} fewer dead rise.', effects: [{ helper: 'conflict', args: ['thin', 'heraldDead'] }] }, failure: { text: 'The herald got away. {heraldDead} more dead rise.', effects: [{ helper: 'conflict', args: ['swell', 'heraldDead'] }] }, disaster: fell }
+            : { success: { text: 'You counted them from the ridge. Holding the ford is {intelPct}% more likely.', effects: [{ helper: 'conflict', args: ['intel', 'intel'] }] }, failure: { text: 'The patrols drove you off the ridge. You learned nothing.' }, disaster: fell },
       ...(d === 'rescue'
-        ? { onExpire: [{ helper: 'conflict', args: ['swell', 'rescueCaptives'] }, { helper: 'closeDetour', args: ['rescue'] }], expireText: 'The captives are taken to the host: {rescueCaptives} more dead.', expiry: 'rescueExpiry', passable: false }
+        ? { onExpire: [{ helper: 'conflict', args: ['swell', 'rescueCaptives'] }, { helper: 'closeDetour', args: ['rescue'] }], expireText: 'The captives are taken to the army. That is {rescueCaptives} more dead.', expiry: 'rescueExpiry', passable: false }
         : d === 'chase'
-          ? { onExpire: [{ helper: 'conflict', args: ['swell', 'heraldDead'] }, { helper: 'closeDetour', args: ['chase'] }], expireText: 'The herald reaches the barrows: {heraldDead} more dead rise.', expiry: 'thisTurn', passable: true }
+          ? { onExpire: [{ helper: 'conflict', args: ['swell', 'heraldDead'] }, { helper: 'closeDetour', args: ['chase'] }], expireText: 'The herald reaches the barrows. {heraldDead} more dead rise.', expiry: 'thisTurn', passable: true }
           : { expiry: 'thisTurn', passable: true }),
       presenter:
         d === 'rescue'
-          ? { of: '$voice', role: 'herbalist', verb: 'pleads', line: 'They took my brother off the Fen road. They keep them penned like sheep for the host. Please.' }
+          ? { of: '$voice', role: 'herbalist', verb: 'pleads', line: 'They took my brother off the Fen road. They keep them penned like sheep. Please.', gain: 'Everyone you free will fight for {townName}. My brother most of all.', refuse: 'Then they are dragged to the army. And they get up again as the dead.' }
           : d === 'chase'
-            ? { of: '$voice', role: 'scout', verb: 'warns', line: 'Their herald rides for the barrows. Every grave it passes gets up and follows. Run it down.' }
-            : { of: '$voice', role: 'scout', verb: 'offers', line: 'From the ridge you can count them and time them. The levy will want to know where to stand.' },
-      reward: d === 'rescue' ? { text: 'The freed fight beside you, and renown.', goods: { renown: 1 } } : d === 'chase' ? { text: 'Fewer dead at the walls.' } : { text: "The ford's odds, and the host's time to the town." },
+            ? { of: '$voice', role: 'scout', verb: 'warns', line: 'Their herald rides for the barrows. Every grave it passes gets up and follows. Run it down.', gain: 'That is {heraldDead} fewer dead at the walls.', refuse: 'Then {heraldDead} more of the dead get up and follow it.' }
+            : { of: '$voice', role: 'scout', verb: 'offers', line: 'From the ridge you can count them and time them. Our soldiers will want to know where to stand.', gain: 'Holding the ford gets {intelPct}% more likely. And you learn when they reach {townName}.' },
+      reward: d === 'rescue' ? { text: '{rescueCaptives} people fight for {townName}. +1 renown.', goods: { renown: 1 } } : d === 'chase' ? { text: '{heraldDead} fewer dead reach {townName}.' } : { text: 'Holding the ford is {intelPct}% more likely.' },
       parts: { theme: d === 'rescue' ? 0.4 : 0.3, foreshadow: d === 'scout' ? 0.6 : 0.5, synergy: 0.4, difficulty: 0.6, hero: d === 'chase' ? 0.9 : 0.6 },
     }),
   ),
@@ -644,7 +656,7 @@ export const HORDE_TEMPLATES: TemplateDef[] = [
     id: 'ford',
     ...RUN,
     title: 'Hold the ford at {fordName}',
-    pitch: 'The host must cross at {fordName}. Put the levy in the water and hold them there while you ride on.',
+    pitch: 'The dead must cross at {fordName}. Send soldiers to hold them in the water while you ride on.',
     themes: ['fight', 'delay'],
     hooks: ['horde', 'route'],
     bind: [host, voice],
@@ -655,13 +667,13 @@ export const HORDE_TEMPLATES: TemplateDef[] = [
     odds: 'fordOdds',
     turnsVar: 'fordTurns',
     outcomes: {
-      triumph: { text: 'The ford ran red; the host waited {fordDelayHi} to cross.', effects: [{ helper: 'conflict', args: ['delay', 'fordDelay', 1.5, 1] }], losses: 'fordLossHi', tag: { add: ['veteran'], bonuses: [VETERANS] } },
-      success: { text: 'The ford held: the host is {fordDelay} late.', effects: [{ helper: 'conflict', args: ['delay', 'fordDelay', 1, 1] }], losses: 'fordLoss', tag: { add: ['veteran'], bonuses: [VETERANS] } },
-      cost: { text: 'The ford held a while, dearly: the host {fordDelayLo} late.', effects: [{ helper: 'conflict', args: ['delay', 'fordDelay', 0.75, 1] }], losses: 'fordLossCost', tag: { add: ['veteran'], bonuses: [VETERANS] } },
+      triumph: { text: 'The ford ran red. The dead are {fordDelayHi} late.', effects: [{ helper: 'conflict', args: ['delay', 'fordDelay', 1.5, 1] }], losses: 'fordLossHi', tag: { add: ['veteran'], bonuses: [VETERANS] } },
+      success: { text: 'The ford held. The dead are {fordDelay} late.', effects: [{ helper: 'conflict', args: ['delay', 'fordDelay', 1, 1] }], losses: 'fordLoss', tag: { add: ['veteran'], bonuses: [VETERANS] } },
+      cost: { text: 'The ford held for a while, at a high price. The dead are {fordDelayLo} late.', effects: [{ helper: 'conflict', args: ['delay', 'fordDelay', 0.75, 1] }], losses: 'fordLossCost', tag: { add: ['veteran'], bonuses: [VETERANS] } },
       failure: { text: 'The ford broke at the first rush.', losses: 'fordLossFail' },
     },
-    presenter: { of: '$voice', role: 'captain', verb: 'reports', line: 'There is one ford they must take. Give me the levy and I will make them pay for every yard of it.' },
-    reward: { text: 'Time for the town, and veterans who come back from it.' },
+    presenter: { of: '$voice', role: 'captain', verb: 'reports', line: 'There is one ford they must take. Give me soldiers, and I will make them pay for every step.', gain: 'Every minute we hold them is a minute for {townName}. And the soldiers who come back will be veterans.', refuse: 'Then the dead cross the ford whenever they like.' },
+    reward: { text: 'Time for {townName}. The soldiers who come back become veterans.' },
     parts: { theme: 0.6, foreshadow: 0.9, synergy: 0.6, difficulty: 0.5 },
     expiry: 'fordExpiry',
     locate: 'fordLocate',
@@ -672,7 +684,7 @@ export const HORDE_TEMPLATES: TemplateDef[] = [
     ...RUN,
     work: 'labour',
     title: 'Bring in the harvest at {holdName}',
-    pitch: "{holdName}'s fields are ripe and the host will forage them. Bring the grain in and {townName}'s defenders eat; leave it and it rots.",
+    pitch: "{holdName}'s fields are ripe, and the dead will trample them. Bring the grain in, and {townName}'s defenders eat.",
     themes: ['harvest', 'labour'],
     hooks: ['town'],
     bind: [{ as: 'fields', kind: 'site', tag: { scope: 'economy', key: 'harvest', value: 'ripe' } }, voice],
@@ -684,13 +696,13 @@ export const HORDE_TEMPLATES: TemplateDef[] = [
     tiers: [1, 2].map((n) => ({ agents: [army(n)] })),
     odds: { success: 0.85, cost: 0.15 },
     outcomes: {
-      success: { text: 'The grain is in: {harvestYield} supplies.', effects: [{ setTag: ['$fields', 'economy', 'harvest', 'in'] }], goods: { supplies: 'harvestYield' } },
-      cost: { text: 'Half the grain is in before the rain: {harvestHalf} supplies.', effects: [{ setTag: ['$fields', 'economy', 'harvest', 'in'] }], goods: { supplies: 'harvestHalf' }, losses: 0.1 },
+      success: { text: 'The grain is in. +{harvestYield} supplies.', effects: [{ setTag: ['$fields', 'economy', 'harvest', 'in'] }], goods: { supplies: 'harvestYield' } },
+      cost: { text: 'Half the grain is in before the rain. +{harvestHalf} supplies.', effects: [{ setTag: ['$fields', 'economy', 'harvest', 'in'] }], goods: { supplies: 'harvestHalf' }, losses: 0.1 },
     },
     onExpire: [{ setTag: ['$fields', 'economy', 'harvest', 'rotted'] }, { helper: 'conflict', args: ['hasten', 'rot'] }],
-    expireText: "The grain rots in {holdName}'s fields; the host forages and comes on {rot} sooner.",
-    presenter: { of: '$voice', role: 'trader', verb: 'asks', line: "Grain in a barn feeds the walls. Grain in a field feeds them. Lend us the levy's backs for a day." },
-    reward: { text: 'Supplies: the warned town feeds more defenders.' },
+    expireText: "The grain rots in {holdName}'s fields. The dead come {rot} sooner.",
+    presenter: { of: '$voice', role: 'trader', verb: 'asks', line: 'Grain in a barn feeds the walls. Grain in a field feeds nobody. Lend us your soldiers for a day.', gain: "{harvestYield} supplies for {townName}'s defenders. Fed soldiers fight longer.", refuse: 'Then the grain rots, and the dead come on faster.' },
+    reward: { text: '+{harvestYield} supplies.' },
     parts: { theme: 0.8, foreshadow: 0.5, synergy: 0.5, difficulty: 0.9 },
     expiry: 'harvestExpiry',
     once: true,
@@ -700,7 +712,7 @@ export const HORDE_TEMPLATES: TemplateDef[] = [
     ...RUN,
     work: 'labour',
     title: 'Raise a watchtower at {townName}',
-    pitch: "Timber and the levy's backs: a tower over {townName}'s gate sees the dead coming and keeps its defenders together.",
+    pitch: "Timber and some strong backs. A tower over {townName}'s gate sees the dead coming.",
     themes: ['build', 'defence'],
     hooks: ['town'],
     bind: [town, voice],
@@ -710,11 +722,11 @@ export const HORDE_TEMPLATES: TemplateDef[] = [
     odds: { success: 0.9, cost: 0.1 },
     // (a structure placed directly — no builders simulated: the town's plan raises it when the player next looks)
     outcomes: {
-      success: { text: 'A watchtower stands over {townName}: {towerDefenders} more of its defenders hold together.', effects: [{ place: { at: '$town', id: 'watchtower', name: 'the watchtower of {townName}', use: ['defence', 'watch'] } }, { helper: 'conflict', args: ['rally', 'towerDefenders'] }] },
-      cost: { text: 'The tower is up, hastily, and the levy spent on it.', effects: [{ place: { at: '$town', id: 'watchtower', name: 'the watchtower of {townName}', use: ['defence', 'watch'] } }], losses: 0.2 },
+      success: { text: 'A watchtower stands over {townName}. {towerDefenders} more defenders hold together.', effects: [{ place: { at: '$town', id: 'watchtower', name: 'the watchtower of {townName}', use: ['defence', 'watch'] } }, { helper: 'conflict', args: ['rally', 'towerDefenders'] }] },
+      cost: { text: 'The tower is up, but it was rushed. Some soldiers were hurt building it.', effects: [{ place: { at: '$town', id: 'watchtower', name: 'the watchtower of {townName}', use: ['defence', 'watch'] } }], losses: 0.2 },
     },
-    presenter: { of: '$voice', role: 'smith', verb: 'offers', line: 'Lend me the levy for a day and {townName} gets a tower that will outlast all of us.' },
-    reward: { text: 'A watchtower over the town — it stands after the run; watchtowers unlock in the city builder.', unlocks: [{ mode: 'city', what: 'watchtower' }] },
+    presenter: { of: '$voice', role: 'smith', verb: 'offers', line: 'Lend me soldiers for a day, and {townName} gets a tower that will outlast all of us.', gain: '{towerDefenders} more defenders hold together at {townName}. And the tower stays after this fight.' },
+    reward: { text: 'A watchtower at {townName}. It stays after this run. You can build watchtowers in the city builder.', unlocks: [{ mode: 'city', what: 'watchtower' }] },
     parts: { theme: 0.7, foreshadow: 0.8, synergy: 0.5, difficulty: 0.6 },
     expiry: 'thisTurn',
     once: true,
@@ -724,7 +736,7 @@ export const HORDE_TEMPLATES: TemplateDef[] = [
     ...RUN,
     work: 'labour',
     title: 'Close the weir at {holdName}',
-    pitch: "The host drinks from {holdName}'s river on its road. Close the weir and the river below runs dry: thirsty dead march slow.",
+    pitch: "The dead drink from {holdName}'s river on their way. Close the weir, and the river below runs dry. Thirsty dead march slowly.",
     themes: ['water', 'delay'],
     hooks: ['horde'],
     bind: [{ as: 'fields', kind: 'site', shared: true, tag: { scope: 'economy', key: 'farm' } }, voice],
@@ -734,11 +746,11 @@ export const HORDE_TEMPLATES: TemplateDef[] = [
     odds: { success: 0.8, cost: 0.2 },
     // (the rivers' inflow factor of the hold's region: the held rivers' discharge scales by it — dry where the player looks)
     outcomes: {
-      success: { text: "The weir is shut: {holdName}'s river runs at {weirPct}% and the host is {weirDelay} slower.", effects: [{ inflow: '$fields', factor: 'weirFactor', note: "{holdName}'s weir closed: the river below runs dry" }, { helper: 'conflict', args: ['delay', 'weirDelay'] }] },
-      cost: { text: 'The weir is shut, but the water found the old channel: the host barely slowed.', effects: [{ inflow: '$fields', factor: 'weirFactor', note: "{holdName}'s weir closed: the river below runs dry" }], losses: 0.1 },
+      success: { text: "The weir is shut. {holdName}'s river runs at {weirPct}%. The dead are {weirDelay} slower.", effects: [{ inflow: '$fields', factor: 'weirFactor', note: "{holdName}'s weir closed: the river below runs dry" }, { helper: 'conflict', args: ['delay', 'weirDelay'] }] },
+      cost: { text: 'The weir is shut, but the water found an old channel. The dead barely slowed.', effects: [{ inflow: '$fields', factor: 'weirFactor', note: "{holdName}'s weir closed: the river below runs dry" }], losses: 0.1 },
     },
-    presenter: { of: '$voice', role: 'trader', verb: 'suggests', line: "The dead still drink. Shut {holdName}'s weir and let them find the river dry." },
-    reward: { text: "The host slowed — and {holdName}'s river runs dry after the run." },
+    presenter: { of: '$voice', role: 'trader', verb: 'suggests', line: "The dead still drink. Shut {holdName}'s weir, and let them find the river dry.", gain: "The dead are {weirDelay} slower. But {holdName}'s river stays low after this." },
+    reward: { text: "The dead are slowed. {holdName}'s river runs dry after this run." },
     parts: { theme: 0.5, foreshadow: 0.7, synergy: 0.4, difficulty: 0.5 },
     expiry: 'thisTurn',
     once: true,
@@ -746,8 +758,8 @@ export const HORDE_TEMPLATES: TemplateDef[] = [
   {
     id: 'vanguard',
     ...RUN,
-    title: "Break the host's vanguard",
-    pitch: 'Veterans know how the dead march. Strike the head of the host and fewer of them reach {townName}.',
+    title: "Break the army's vanguard",
+    pitch: 'Veterans know how the dead fight. Strike the front of the army, and fewer of them reach {townName}.',
     themes: ['fight'],
     hooks: ['horde'],
     bind: [host, voice],
@@ -756,12 +768,12 @@ export const HORDE_TEMPLATES: TemplateDef[] = [
     requires: { agents: [army(1, ['veteran'])] },
     odds: { success: 0.6, cost: 0.3, failure: 0.1 },
     outcomes: {
-      success: { text: 'The vanguard is broken: {vanguardThin} fewer of the dead.', effects: [{ helper: 'conflict', args: ['thin', 'vanguardThin'] }], losses: 0.2 },
-      cost: { text: 'The vanguard bled them: {vanguardHalf} fewer of the dead.', effects: [{ helper: 'conflict', args: ['thin', 'vanguardHalf'] }], losses: 0.4 },
-      failure: { text: 'The dead closed round them.', losses: 0.6 },
+      success: { text: 'The vanguard is broken. {vanguardThin} fewer dead.', effects: [{ helper: 'conflict', args: ['thin', 'vanguardThin'] }], losses: 0.2 },
+      cost: { text: 'The vanguard bled them. {vanguardHalf} fewer dead.', effects: [{ helper: 'conflict', args: ['thin', 'vanguardHalf'] }], losses: 0.4 },
+      failure: { text: 'The dead closed around them.', losses: 0.6 },
     },
-    presenter: { of: '$voice', role: 'captain', verb: 'proposes', line: 'Your veterans have seen the dead fight. Let them find the head of the thing and cut it off.' },
-    reward: { text: 'Fewer of the dead at the walls.' },
+    presenter: { of: '$voice', role: 'captain', verb: 'proposes', line: 'Your veterans have seen the dead fight. Let them find the head of the thing and cut it off.', gain: '{vanguardThin} fewer dead reach {townName}.' },
+    reward: { text: 'Fewer dead at the walls.' },
     parts: { theme: 0.7, foreshadow: 1, synergy: 0.5, difficulty: 0.4 },
     locate: 'vanguardLocate',
     expiry: 'thisTurn',

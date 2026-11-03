@@ -40,6 +40,8 @@ export interface SituationMap {
   world: { w: number; h: number };
   areaAt(a: SituationArea): V2;
   regionCentre(r: RegionId): V2;
+  /** (dialog2) a region's name, as the player reads it (the world wiki's) */
+  regionName?(r: RegionId): string;
 }
 
 export type Phase = 'area' | 'edge' | 'travel' | 'ended';
@@ -220,14 +222,15 @@ export class SituationRun {
         const after = to.id === target.id ? 0 : estimateOn(this, to, target);
         const there = arriveAt + after;
         const lead = hordeAt - there;
+        // (dialog2: whole sentences in plain words, docs/WRITING.md — the cards show them as they are)
         const note =
           to.id === target.id
             ? lead >= 0
-              ? `you'd reach ${target.name} ${fmt(lead)} before the dead`
-              : `the dead would be in ${target.name} ${fmt(-lead)} before you`
+              ? `You would reach ${target.name} ${fmt(lead)} before the dead.`
+              : `The dead would reach ${target.name} ${fmt(-lead)} before you.`
             : lead >= 0
-              ? `${target.name} by about minute ${there.toFixed(0)}, ${fmt(lead)} before the dead`
-              : `${target.name} by about minute ${there.toFixed(0)}, ${fmt(-lead)} after the dead`;
+              ? `You would reach ${target.name} by minute ${there.toFixed(0)}. That is ${fmt(lead)} before the dead.`
+              : `You would reach ${target.name} by minute ${there.toFixed(0)}. That is ${fmt(-lead)} after the dead.`;
         return { choice, to, legMinutes, arriveAt, hordeAt, note };
       });
   }
@@ -386,12 +389,12 @@ export function along(pts: V2[], t: number, world: { w: number; h: number }): V2
 }
 
 function fmt(m: number): string {
-  return m < 1 ? `${Math.round(m * 60)} s` : `${m.toFixed(1)} min`;
+  return m < 1 ? `${Math.round(m * 60)} seconds` : `${+m.toFixed(1)} minute${+m.toFixed(1) === 1 ? '' : 's'}`;
 }
 
 /** the kinds of play, for a card */
 export const PLAY_TITLE: Record<AreaPlay['kind'], string> = {
-  flee: 'Outriders on your heels',
+  flee: 'Riders on your trail',
   ambush: 'An ambush on the road',
   deliver: 'The message',
   trader: 'A trader at the crossroads',

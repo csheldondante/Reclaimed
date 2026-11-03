@@ -107,8 +107,8 @@ export class EncounterRules {
       return this.status;
     };
     const winTier = (clean: boolean, dear = false): Tier => (o.health < COSTLY || dear ? 'cost' : clean && o.health >= TRIUMPH ? 'triumph' : 'success');
-    if (!o.heroAlive) return end(false, 'disaster', 'the hero fell');
-    if (o.health <= s.beaten) return end(false, 'failure', 'beaten: you got away with your life');
+    if (!o.heroAlive) return end(false, 'disaster', 'You fell.');
+    if (o.health <= s.beaten) return end(false, 'failure', 'You are badly hurt. You got away with your life.');
     const foes = o.foes;
     // (a fight, or a scene's fight, or an escort's guards: the foes down, or their morale broken)
     const fightWon = (): boolean => {
@@ -123,34 +123,34 @@ export class EncounterRules {
         const p = o.pursuers ?? { alive: 0, nearest: Infinity };
         // (a haven: only getting there carries the word; cut down or not, they're the danger on the way)
         if (s.haven !== undefined) {
-          if (o.atHaven) return end(true, winTier(p.alive === 0), 'you reached the gate');
+          if (o.atHaven) return end(true, winTier(p.alive === 0), 'You reached the gate.');
           break;
         }
-        if (p.alive === 0) return end(true, winTier(true), 'they are all down');
+        if (p.alive === 0) return end(true, winTier(true), 'They are all down.');
         const clear = s.clear!;
         if (p.nearest >= clear.cells) {
           this.clearSince ??= o.t;
-          if (o.t - this.clearSince >= clear.seconds) return end(true, winTier(false), 'you lost them');
+          if (o.t - this.clearSince >= clear.seconds) return end(true, winTier(false), 'You lost them.');
         } else this.clearSince = null;
         break;
       }
       case 'chase': {
         const q = o.quarry!;
-        if (q.alive === 0) return end(true, winTier(true), 'they are all run down');
-        if (q.escaped) return end(false, 'failure', 'they got away');
+        if (q.alive === 0) return end(true, winTier(true), 'You caught them all.');
+        if (q.escaped) return end(false, 'failure', 'They got away.');
         break;
       }
       case 'fight':
-        if (fightWon()) return end(true, winTier(foes!.alive === 0), foes!.alive === 0 ? 'they are all down' : 'they broke and ran');
+        if (fightWon()) return end(true, winTier(foes!.alive === 0), foes!.alive === 0 ? 'They are all down.' : 'They broke and ran.');
         break;
       case 'scene':
-        if (this.fighting && fightWon()) return end(true, winTier(foes!.alive === 0, this.paid), foes!.alive === 0 ? 'they are all down' : 'they broke and ran');
+        if (this.fighting && fightWon()) return end(true, winTier(foes!.alive === 0, this.paid), foes!.alive === 0 ? 'They are all down.' : 'They broke and ran.');
         break;
       case 'escort': {
         const P = o.people!;
         const need = Math.ceil(P.total * s.escort!.safeShare);
-        if (P.freed && P.safe >= need && (P.safe >= P.alive || P.safe === P.total)) return end(true, winTier(P.safe === P.total, P.safe < P.total), `${P.safe} of ${P.total} safe`);
-        if (P.alive < need) return end(false, 'failure', `${P.total - P.alive} of ${P.total} lost`);
+        if (P.freed && P.safe >= need && (P.safe >= P.alive || P.safe === P.total)) return end(true, winTier(P.safe === P.total, P.safe < P.total), `${P.safe} of ${P.total} people are safe.`);
+        if (P.alive < need) return end(false, 'failure', `${P.total - P.alive} of ${P.total} people were lost.`);
         // (the guards first: once they're down or broken the people are free)
         if (!P.freed) fightWon();
         break;
@@ -161,7 +161,7 @@ export class EncounterRules {
         throw new Error('encounter: defend is the finale (runsit/finale.ts)');
     }
     if (o.t > s.limit) {
-      const why = s.kind === 'flee' ? 'they ran you ragged' : s.kind === 'chase' ? 'they got away' : s.kind === 'escort' ? (o.people?.freed ? 'too slow: the people were caught' : 'the guards held the captives') : 'they held the road';
+      const why = s.kind === 'flee' ? 'They wore you down.' : s.kind === 'chase' ? 'They got away.' : s.kind === 'escort' ? (o.people?.freed ? 'Too slow. The people were caught.' : 'The guards kept the captives.') : 'They held the road.';
       return end(false, 'failure', why);
     }
     return this.status;
