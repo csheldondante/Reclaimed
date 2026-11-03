@@ -16595,3 +16595,18 @@ kind's banner, every way the rules end one and every kind of world change, and n
 Merging `dialog2`: one conflict, living/horde.ts encounterOf — kept the spec-read version (its text in the spec now
 plain); the petitions' DialogBox and the encounters' DialogTalk are two boxes (LevelOpps `talk`, LevelSit
 `encounterTalk`).
+
+## 2026-11-03 — round 128 (merge128 train 2 of 4): encounters merged
+
+`encounters` (e0b39da, dialog2 in it) onto merge128 after dialog2 (places 86aeeee merged in). Conflicts only in the
+docs: BACKLOG (places' sections kept, the branch's EN1-EN18 rows re-added), BRANCHES, DEVLOG (both kept). Gate (desktop
+proxy): typecheck; `npm test` 701 passed (2 expected fail: TK4, SV1); smoke atlas, playground; hallcheck 0 of 172 over
+3 towns; driveprofile alternated 2 + 2: p95 16.2 / 12.9 against places' 17.8 / 22.5, p99 173 / 241 against 298 / 185 —
+noise; tilegate diffed against places: the same flaky views (desktop-z2.2 parked 0.64% at places' cells, the wide
+goldens 22-38%, fast pans scattered). scripts/encounters.mjs (C:/Projects/shots88/merge128/encounters/): the idle flee
+loses as it should; the autopilot's wins didn't — outriders "badly hurt" in 7 s, the chase "They got away." at 38 s, the
+trader's play routed into the outriders' flee first and lost it the same way — and origin/encounters itself, run now in
+a scratch worktree (C:/Projects/shots88/merge128/encounters-branch/), fails both the same way: not this merge. Its
+DEVLOG table of wins predates its dialog2 merge; the shot at the first engagement shows the forced outriders' petition
+talk still open over the flee while the riders close in (BACKLOG M128-6). Strings read: "3 riders right behind you.
+Lose them!", Bram Cotter's petition, "Good. That was almost painless." — plain.
