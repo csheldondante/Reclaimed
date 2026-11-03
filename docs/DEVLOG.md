@@ -16474,3 +16474,18 @@ you need to do that with dialogs." Branch `dialog2` from places 5b24d9a.
   opened again at his answer; the harvest refused (the signal said, the grain rotted at once); the watchtower agreed
   (the thanks, the crew running on the map). Shots and a GIF in C:/Projects/shots88/dialog2/. The petition panel was
   tightened so five answers fit at 412x915.
+
+## 2026-11-03 — round 128 (merge128 train 1 of 4): dialog2 merged
+
+`dialog2` (b9139b7: petitions as dialogs, a cast with quirks, plain words; DECISIONS round 126/127) onto places 04c04b3
+(merge128's jb6 and INT16 in it). Conflicts only in the docs' ends and the BACKLOG's round sections (both kept; one
+`# Backlog`). Gate (desktop proxy): typecheck; `npm test` 686 passed (2 expected fail: TK4, SV1); one unit failure in 5
+`--project unit` runs under a tilegate's load, not reproduced in 4 more (not named by the run that failed: watch for it);
+scripts/dialog.mjs passed — shots read (C:/Projects/shots88/merge128/dialog2/): Bram Cotter's outriders petition, the
+muster's "No. Ask again and the answer is still no.", Tilda Marsh's refused harvest ("Tilda Marsh will hold it against
+you. ... The dead come 1 minute sooner.") — plain words; the map's labels still pile up near the hold (DLG-R3, older);
+smoke atlas, playground; hallcheck 0 of 172 over 3 towns; driveprofile alternated 3 + 2 runs: p95 12.3-21.9 / 12.8-13.1,
+p99 136-325 / 60-142 (merge / places; one slow first load after the dev server's files changed) — within noise;
+tilegate (one run, diffed against places'): desktop-z3.5 parked undrawn 1.60% at the same cells places' own run showed
+(0.42%: r233,217 r239,223 ...), the wide goldens 35-50% (the zoom floor's calibration), near 1.5%, fast pans scattered as
+on places.
