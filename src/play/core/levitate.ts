@@ -7,6 +7,7 @@
 // hover units' code (air, camera, model) reads it the same.
 
 import { speedOf, type Bike, type HeightAt } from "./bike";
+import { stepDrive, type DriveProfile } from "./drive";
 
 export interface LevitateTuning {
   /** height over the land (cells) */
@@ -43,7 +44,7 @@ function landUnder(b: Bike, heightAt: HeightAt, t: LevitateTuning): number {
   return Math.min(g, under + t.step);
 }
 
-export function stepLevitate(b: Bike, stick: [number, number], dt: number, heightAt: HeightAt, bounds: [number, number], t: LevitateTuning = LEVITATE): void {
+export function stepLevitate(b: Bike, stick: [number, number], dt: number, heightAt: HeightAt, bounds: [number, number], t: LevitateTuning = LEVITATE, drive: DriveProfile | null = null): void {
   b.hit = 0;
   b.landed = 0;
   b.crash = 0;
@@ -51,9 +52,13 @@ export function stepLevitate(b: Bike, stick: [number, number], dt: number, heigh
   const pvx = b.vx;
   const pvy = b.vy;
   // to the stick's velocity, smoothly
-  const k = 1 - Math.exp(-t.accel * dt);
-  b.vx += (stick[0] * t.max - b.vx) * k;
-  b.vy += (stick[1] * t.max - b.vy) * k;
+  // ((round 128) the physical drive, a lab variant: the lich's profile — no slope's pull, as it was)
+  if (drive) [b.vx, b.vy] = stepDrive([b.vx, b.vy], stick, drive, [0, 0], dt);
+  else {
+    const k = 1 - Math.exp(-t.accel * dt);
+    b.vx += (stick[0] * t.max - b.vx) * k;
+    b.vy += (stick[1] * t.max - b.vy) * k;
+  }
   if (Math.hypot(b.vx, b.vy) < 1e-3 && stick[0] === 0 && stick[1] === 0) b.vx = b.vy = 0;
   // up first, then over (user 2026-10-25: "at a steady pace set by the player trying to go that
   // direction"): it moves on only where the land is below it (along each axis, so it slides

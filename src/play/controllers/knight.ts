@@ -25,6 +25,8 @@ const deg = (d: number) => (d * Math.PI) / 180;
 const s = (v: number) => +(v * SCALE).toFixed(2);
 
 export const KNIGHT_DEFAULTS = {
+  /** (round 128) the root motion: 0 its own; 1 the physical drive (core/drive.ts); 2 the brute's profile on the knight's body — a lab variant */
+  drive: 0,
   // ---- on foot (core/foot.ts)
   /** the run (cells/s): iso-adventure's 6 × 1.5 — set between the lich (7) and the bike (32) */
   speed: 9,

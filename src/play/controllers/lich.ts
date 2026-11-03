@@ -8,6 +8,8 @@ import type { ControllerInfo, ControllerProfile, ParamSpec, Params } from '../..
 import { LEVITATE } from '../core/levitate';
 
 export const LICH_DEFAULTS = {
+  /** (round 128) the root motion: 0 its own; 1 the physical drive (core/drive.ts) — a lab variant */
+  drive: 0,
   // the levitation (core/levitate.ts LevitateTuning)
   max: 7,
   accel: 4,

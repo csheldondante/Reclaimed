@@ -19,6 +19,7 @@
 import type { V2, V3 } from '../../api/contracts/units';
 import { leanAim } from '../core/aim';
 import { aside, slip } from '../core/slip';
+import { BRUTE_DRIVE, KNIGHT_DRIVE } from '../core/drive';
 import { carom, makeFoot, speedOf, stepFoot, type Foot, type FootTuning, type SlideTuning } from '../core/foot';
 import type { Pt } from '../core/gestures';
 import { isDouble, StickyAim, STICKY, ThumbReader, type ThumbEvent, type ThumbMode } from '../core/swordplay';
@@ -342,7 +343,9 @@ export class KnightHero extends PlayHero {
       }
       foot = { ...foot, gravity: 0 };
     }
-    stepFoot(f, want, dt, this.world.floor, this.world.depth, this.world.bounds, foot, a.kind === 'spin' ? this.slide : null);
+    // ((round 128) the physical drive, a lab variant: not while a dodge or a lunge's dash drives it — their own profile)
+    const drive = a.kind === 'dodge' || dash ? null : p.drive === 1 ? KNIGHT_DRIVE : p.drive === 2 ? BRUTE_DRIVE : null;
+    stepFoot(f, want, dt, this.world.floor, this.world.depth, this.world.bounds, foot, a.kind === 'spin' ? this.slide : null, drive);
     if (a.kind === 'jump') {
       a.t += dt;
       if (f.air === 0 && a.t > 0.05) {

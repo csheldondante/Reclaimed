@@ -10,6 +10,7 @@
 //   slide   (the spin) drag and deceleration, no steering by default, walls and bodies bounced off (the hero
 //           caroms off the units itself: it knows them)
 
+import { slopePull, stepDrive, type DriveProfile } from './drive';
 import type { Pt } from './gestures';
 
 export type HeightAt = (x: number, y: number) => number;
@@ -74,15 +75,16 @@ export const speedOf = (f: Foot): number => Math.hypot(f.vx, f.vy);
 const PROBE = 1.5;
 
 /** What it can stand on at (x, y) from its feet at z: the floor there, or null (a wall: too high a step, or deep water). */
-function footing(f: Foot, x: number, y: number, floor: HeightAt, depth: HeightAt | null, t: FootTuning): number | null {
+function footing(f: Foot, x: number, y: number, floor: HeightAt, depth: HeightAt | null, t: FootTuning, physical = false): number | null {
   const g = floor(x, y);
   if (depth && depth(x, y) > t.wade) return null;
   // (a sheer step taller than its stride takes)
   if (g - f.z > t.step) return null;
   // (a face steeper than it walks and taller than a step, measured over PROBE cells ahead: a kerb is stepped up, a
   // hillside too steep is a wall — but only once it starts up it)
+  // ((round 128) the physical drive: no slope rule — the slope's pull says how far up it gets)
   const run = Math.hypot(x - f.x, y - f.y);
-  if (run > 1e-6 && g > f.z + 0.02) {
+  if (!physical && run > 1e-6 && g > f.z + 0.02) {
     const far = floor(f.x + ((x - f.x) / run) * PROBE, f.y + ((y - f.y) / run) * PROBE) - floor(f.x, f.y);
     if (far > t.step && far / PROBE > t.slope) return null;
   }
@@ -94,11 +96,21 @@ function footing(f: Foot, x: number, y: number, floor: HeightAt, depth: HeightAt
  * spin's profile instead of walking (then `want` is only the stick, steering it by slide.steer). `depth`: water
  * standing (null: none).
  */
-export function stepFoot(f: Foot, want: Pt, dt: number, floor: HeightAt, depth: HeightAt | null, bounds: [number, number], t: FootTuning = FOOT, slide: SlideTuning | null = null): void {
+export function stepFoot(f: Foot, want: Pt, dt: number, floor: HeightAt, depth: HeightAt | null, bounds: [number, number], t: FootTuning = FOOT, slide: SlideTuning | null = null, drive: DriveProfile | null = null): void {
   f.wall = null;
   f.landed = 0;
   const wading = depth ? depth(f.x, f.y) > 0.4 : false;
-  if (slide) {
+  // ((round 128) `drive`: the physical drive on the ground instead of the walk — `want` over the run's speed is the
+  // stick; the slope's pull is gravity's, not the walk's uphill multiplier)
+  const physical = !!drive && !slide;
+  if (physical && f.air === 0) {
+    const mul = wading ? t.wadeMul : 1;
+    const run = Math.max(t.speed, 1e-3);
+    const stick: Pt = [(want[0] * mul) / run, (want[1] * mul) / run];
+    const e = 0.5;
+    const grad: Pt = [(floor(f.x + e, f.y) - floor(f.x - e, f.y)) / (2 * e), (floor(f.x, f.y + e) - floor(f.x, f.y - e)) / (2 * e)];
+    [f.vx, f.vy] = stepDrive([f.vx, f.vy], stick, drive, slopePull(grad, t.gravity, drive.gravity), dt);
+  } else if (slide) {
     let sp = speedOf(f);
     const k = Math.exp(-slide.drag * dt);
     const after = Math.max(0, sp * k - slide.decel * dt);
@@ -118,7 +130,7 @@ export function stepFoot(f: Foot, want: Pt, dt: number, floor: HeightAt, depth: 
         f.vy *= cap / now;
       }
     }
-  } else if (f.air === 0) {
+  } else if (f.air === 0 && !physical) {
     // (snappy: hard toward the wanted velocity; over its speed — a lunge, a dodge, a knock — bleeds off by friction)
     const mul = wading ? t.wadeMul : 1;
     const tx = want[0] * mul;
@@ -141,13 +153,13 @@ export function stepFoot(f: Foot, want: Pt, dt: number, floor: HeightAt, depth: 
   for (let s = 0; s < steps; s++) {
     // uphill slows the walk, downhill a little faster (a slide keeps its speed: it's a top, not a walker)
     let k = 1;
-    if (!slide && f.air === 0 && sp > 0.1) {
+    if (!slide && !physical && f.air === 0 && sp > 0.1) {
       const ahead = floor(f.x + (f.vx / sp) * 0.5, f.y + (f.vy / sp) * 0.5) - f.z;
       k = Math.max(0.45, Math.min(1.15, 1 - ahead * 0.6));
     }
     const nx = Math.max(0.5, Math.min(bounds[0] - 0.5, f.x + (f.vx * k * dt) / steps));
     const ny = Math.max(0.5, Math.min(bounds[1] - 0.5, f.y + (f.vy * k * dt) / steps));
-    const up = (x: number, y: number) => (f.air > 0 ? (floor(x, y) <= f.z + t.step ? floor(x, y) : null) : footing(f, x, y, floor, depth, t));
+    const up = (x: number, y: number) => (f.air > 0 ? (floor(x, y) <= f.z + t.step ? floor(x, y) : null) : footing(f, x, y, floor, depth, t, physical));
     if (up(nx, f.y) !== null) f.x = nx;
     else bump(f, 'x', slide);
     if (up(f.x, ny) !== null) f.y = ny;

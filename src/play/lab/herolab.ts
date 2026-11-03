@@ -35,7 +35,8 @@ import { el, PlaySession, type SessionDeps } from '../session';
 import { Autopilot, lookFor, type AutoPath } from './autopilot';
 import { applyTurn, assistOn, HANDLING, HANDLING_VARIANTS, parseHandling, steerParams, useHandling, type HandlingId } from './handling';
 import { STATION_KINDS, Stations, urlParam, VariantPicker, type LabStation, type StationKind } from './lab';
-import { LAB_TERRAINS, TOUR, type LabTerrain } from './terrains';
+import { HILL, HILL_RIDE, LAB_TERRAINS, TOUR, type LabTerrain } from './terrains';
+import { DRIVE_CHOICES, parseDrive, type DriveChoice } from './drivechoice';
 import { describe, findTest, LAB_TESTS, type LabTest } from './tests';
 import '../sandbox/sandbox.css';
 import './herolab.css';
@@ -76,6 +77,7 @@ export class HeroLab {
   private kindRow: HTMLElement;
   private stationPicker: VariantPicker<string> | null = null;
   private handPicker: VariantPicker<HandlingId>;
+  private drivePicker: VariantPicker<DriveChoice>;
   kind: StationKind;
   /** the autopilot round the station's path; null: the player rides */
   pilot: Autopilot | null = null;
@@ -139,6 +141,7 @@ export class HeroLab {
         onChange: (v) => {
           session.choose(v[0]);
           this.applyHandling();
+          this.applyDrive();
           this.go(this.stations.current?.id ?? 'cliff');
         },
       }) as unknown as VariantPicker<string>,
@@ -159,6 +162,19 @@ export class HeroLab {
       }) as unknown as VariantPicker<string>,
     );
     this.live.cam = camString(cam);
+    // (round 128, the user: "velocity based controllers for the root motion ... I would be curious to use that here for
+    // the knight and to know it generalizes to the hoverbike") the root motion: the hero's own, the physical drive
+    // (core/drive.ts), or the brute's profile on the knight
+    this.drivePicker = new VariantPicker<DriveChoice>(this.bar, 'drive', DRIVE_CHOICES, {
+      param: 'drive',
+      initial: [parseDrive(urlParam.get('drive'))],
+      format: (v) => (v[0] === 'own' ? '' : v[0]),
+      onChange: () => {
+        this.applyDrive();
+        this.paintNow();
+      },
+    });
+    this.byName.set('drive', this.drivePicker as unknown as VariantPicker<string>);
     this.kindRow = el('div', 'lab-slot', this.bar);
     // (the bike's handling variants: the moves stations show them)
     const hs = urlParam.get('handtune');
@@ -242,6 +258,7 @@ export class HeroLab {
     });
     session.setCam(cam);
     this.applyHandling();
+    this.applyDrive();
     this.showStations(first);
     const t = urlParam.get('test');
     if (t) this.runTest(findTest(t));
@@ -274,6 +291,17 @@ export class HeroLab {
       const mid: V2 = [(t.rect[0] + t.rect[2]) / 2, (t.rect[1] + t.rect[3]) / 2];
       const st = this.rideStation(t, 'traits', 'traits', 'Traits', 'the living and the walking dead: smite them, raise the fallen with the lich (💀 raise), ride the bike through the sanctuary that heals the living and burns the undead', figureEight(mid, 13, 16));
       st.actions = TRAIT_SCENES.map((sc) => ({ label: sc.label, icon: sc.icon, run: () => runTraitScene(this.traitDriver(mid), sc.id) }));
+      out.push(st);
+    }
+    // (round 128, the physical drive) the hill: a run-up, then a ramp steeper than the knight climbs from standing
+    {
+      const t: LabTerrain = { id: 'hill', name: 'Hill', hint: 'a run-up, then a slope too steep to walk up from standing', rect: [HILL.x0, HILL.y0, HILL.x1, HILL.y1], path: HILL_RIDE, pois: [] };
+      const st = this.rideStation(t, 'moves', 'hill', t.name, t.hint, HILL_RIDE);
+      st.icon = '⛰';
+      st.actions = [
+        { label: 'Run-up', icon: '🏃', run: ({ session }) => session.respawn(HILL_RIDE[0].at) },
+        { label: 'Standing start', icon: '🧍', run: ({ session }) => session.respawn([HILL.foot - 0.2, HILL_RIDE[0].at[1]]) },
+      ];
       out.push(st);
     }
     // (round 128) the knight's raiders (play/sandbox/station.ts) on the hills, for every hero; no autopilot
@@ -357,7 +385,7 @@ export class HeroLab {
   /** the kind's own row: the handling chips (moves), the station's actions (traits) */
   private showKindRow(): void {
     const s = this.stations.current;
-    this.handPicker.el.style.display = s?.kind === 'moves' ? '' : 'none';
+    this.handPicker.el.style.display = s?.kind === 'moves' && this.session.heroId === 'hoverbike' ? '' : 'none';
     this.kindRow.querySelector('.lab-actions')?.remove();
     if (s?.actions?.length) {
       const row = el('div', 'lab-row lab-actions lab-keep', this.kindRow);
@@ -370,6 +398,13 @@ export class HeroLab {
         b.addEventListener('click', () => a.run({ lab: this, session: this.session }));
       }
     }
+  }
+
+  /** (round 128) the drive picked into the hero's params (0 its own, 1 physical, 2 the brute's — the knight's only) */
+  private applyDrive(): void {
+    if (!this.drivePicker) return;
+    const v = this.drivePicker.value[0];
+    (this.session.hero.params as Record<string, number>).drive = v === 'own' ? 0 : v === 'brute' && this.session.heroId === 'knight' ? 2 : 1;
   }
 
   /** the handling's numbers into the bike: its turning onto its params, the assist onto the session */
@@ -427,7 +462,7 @@ export class HeroLab {
   /** a test from the menu: its hero, station, handling and camera, as the chips would pick them */
   runTest(t: LabTest): void {
     this.showMenu(false);
-    this.pick({ hero: t.hero, station: t.station, cam: t.cam ?? camString(DEFAULT_CAM), handling: t.handling ?? 'stock' });
+    this.pick({ hero: t.hero, station: t.station, cam: t.cam ?? camString(DEFAULT_CAM), handling: t.handling ?? 'stock', drive: t.drive ?? 'own' });
     this.test = t;
     urlParam.set('test', t.id);
     this.paintNow();
@@ -450,18 +485,19 @@ export class HeroLab {
       this.test = null;
       urlParam.set('test', null);
     }
-    const text = describe({ hero, station: cur.id, handling: this.handPicker.value, cam: this.session.rig.ids });
+    const text = describe({ hero, station: cur.id, handling: this.handPicker.value, cam: this.session.rig.ids, drive: this.drivePicker?.value[0] });
     const ask = this.test?.ask ?? (cur.kind === 'enemy' ? cur.hint : '');
     this.now.textContent = ask ? `${text}\n${ask}` : text;
   }
 
   /** (scripts/herolab.mjs) a station, the camera modes (`?cam=` form), a hero and handling, as the chips would pick them */
-  pick(o: { station?: string; cam?: string; hero?: PlayHeroId; handling?: string }): void {
+  pick(o: { station?: string; cam?: string; hero?: PlayHeroId; handling?: string; drive?: string }): void {
     // (a station picked: the menu's done with)
     if (o.station) this.showMenu(false);
     if (o.hero) this.byName.get('hero')!.set([o.hero]);
     if (o.cam) this.byName.get('camera')!.set(parseCam(o.cam));
     if (o.handling) this.handPicker.set(['stock', ...parseHandling(o.handling).filter((x) => x !== 'stock')]);
+    if (o.drive) this.drivePicker.set([parseDrive(o.drive)]);
     if (o.station) {
       const s = this.stations.list.find((x) => x.id === o.station);
       if (!s) throw new Error(`pick: no station ${o.station}`);

@@ -16643,3 +16643,34 @@ shows with the bike only, the goal meter is gone. The city: the bike rode 33.8 c
 lich 4.3, the knight 7.8. The knight's crowd test by swipes: 5 blows landed, 2 kills (0 before pass 2's slope-reach
 fix). The guards and lungers test threw "a blocker needs the trait system on the agents": the hero lab made its units
 without the trait system; now `new AgentUnits(agents, traits)` as the atlas does (not yet re-run headless).
+
+**The physical drive (PL41).** The user (round 128): "For the character controller, in the past I've built velocity
+based controllers for the root motion that have a max acceleration and max speed and where they optionally convert
+GPE to KE based on acceleration. The joy is treated as desired velocity relative to their max so that at zero they
+attempt to arrest motion but push in a direction and they will solve for max acceleration to go that direction. I
+liked that scheme a lot because of the physicality and it made running up hills interesting as a running start could
+help you up a hill. It also made it so we could differentiate large charcets by giving them slower acceleration and if
+they still had high top speed they would essentially be stuck charging which was fun. I would be curious to use that
+here for the knight and to know it generalizes to the hoverbike."
+- One drive, core/drive.ts (ARCHITECTURE "The physical drive"): the falling push a(v) = a0 (1 - v / (stick vMax))
+  carried past the top as negative, a brake and a lateral (grip) limit, the slope's pull g sin theta x share on top.
+- Profiles: knight vMax 9, a0 28, brake 80, lateral 70, gravity 1.2 (from standing it can't climb past ~1.25 rise over
+  run: its old walking limit, 1.2, falls out); brute vMax 14, a0 7, brake 14, lateral 9, gravity 0.6; lich vMax 7,
+  a0 6, brake 8, lateral 10, no slope; bike vMax 22, a0 30, brake 45, lateral 40, gravity 0.7, drag 0.2, coasts.
+- Node (core/drive.test.ts), the hill ramp (1.6 rise over run, 1.6 high): the knight from standing at its foot gets
+  under 0.6 up, with a 25-cell run-up over the top; the brute from standing 0, with a 40-cell run-up over the top. Let
+  go, every arresting profile stops within vMax / brake; the bike coasts (over 75 % of its speed after 1 s). Turning
+  hard at full speed the brute carries ~11 cells on its old way, the knight ~0.6. A lunge's 24 cells/s comes back
+  near the run's 9 in ~1.1 s with the stick held (the falling push is gentle near the top: a lunge carries further
+  than with the old friction, which bled it in ~0.2 s).
+- Rides, 60 s by the autopilot (laps, own -> physical): canyon bike 2.37 -> 2.38, knight 1.09 -> 1.05, lich 0.83 ->
+  0.84; hills bike 1.04 -> 4.09; tour bike 2.11 -> 1.62; city bike 2.60 -> 0.66 (pinned on a building's corner the
+  autopilot cuts: the drive keeps pushing along the stick into it, where the bike's own glanced off).
+- The bike's handling variants on this drive: grip and grip+ are the lateral limit (70, 150); carve (a heading
+  approached at 4 rad/s at 10 c/s, slower the faster) is a lateral limit of 4 x 10 = 40, the profile's default;
+  tight is a lower lateral with a harder brake (the brake is the drift: the stick hauled back); the governor needs to
+  know where it's narrow (the corridor field), so it stays an assist that lowers the wanted speed. Stick let go: coast
+  reads better for a hover (arrest slammed it to a stop); the stick hauled back brakes.
+- The hill station (moves; the hills' south strip): a run-up, the ramp, a top; Run-up and Standing start buttons.
+- Main's review: on the tour the auto camera left the knight hidden behind the cave's mountain. Auto is a zoom and
+  tilt rule; occlusion still needs handling, so the tour's tests and the bench run `auto+cutfade`.

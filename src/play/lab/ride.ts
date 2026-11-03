@@ -48,7 +48,7 @@ export function labRig(terrain: string, modes: readonly CamModeId[], values = ne
   return rig;
 }
 
-export function ride(terrain: string, modes: readonly CamModeId[], opts: { hero?: PlayHeroId; secs?: number; dt?: number; screen?: { w: number; h: number; margin: number }; tune?: Record<string, number> } = {}): RideResult {
+export function ride(terrain: string, modes: readonly CamModeId[], opts: { hero?: PlayHeroId; secs?: number; dt?: number; screen?: { w: number; h: number; margin: number }; tune?: Record<string, number>; params?: Record<string, number> } = {}): RideResult {
   const heroId = opts.hero ?? 'hoverbike';
   const secs = opts.secs ?? 40;
   const dt = opts.dt ?? 1 / 30;
@@ -58,7 +58,7 @@ export function ride(terrain: string, modes: readonly CamModeId[], opts: { hero?
   const world = testWorld((x, y) => s.top(x, y), { maxHeld: 4 });
   const pilot = new Autopilot(t.path, lookFor(heroId));
   const st = pilot.start();
-  const hero = makeHero(heroId, world, st.at);
+  const hero = makeHero(heroId, world, st.at, opts.params);
   const reg = new Registry(CAM_SPEC);
   for (const [k, v] of Object.entries(opts.tune ?? {})) reg.set(k, v);
   const rig = labRig(terrain, modes, reg.values);

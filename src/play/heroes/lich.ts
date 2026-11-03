@@ -26,6 +26,7 @@ import type { UnitId, V2, V3 } from '../../api/contracts/units';
 import { makeBike, speedOf, type Bike } from '../core/bike';
 import { TOUCH, type Pt } from '../core/gestures';
 import { flingPlanner, FLING_ASSIST } from '../core/fling';
+import { LICH_DRIVE } from '../core/drive';
 import { LEVITATE, stepLevitate, type LevitateTuning } from '../core/levitate';
 import { LICH_DEFAULTS, type LichParams } from '../controllers/lich';
 import { buildLich, qAxis, qMul, type Part } from '../draw/shapes';
@@ -174,7 +175,7 @@ export class LichHero extends PlayHero {
       if (d < MOVE.arrive) this.goal = null;
       else stick = [(dx / d) * Math.min(1, d / MOVE.slow), (dy / d) * Math.min(1, d / MOVE.slow)];
     }
-    stepLevitate(b, stick, dt, this.world.floor, this.world.bounds, this.float());
+    stepLevitate(b, stick, dt, this.world.floor, this.world.bounds, this.float(), this.p.drive === 1 || this.p.drive === 2 ? LICH_DRIVE : null);
     // its height, dragged up or down from the lich
     const drag = input.drag;
     if (drag?.self && this.touched === null && !this.carried) {

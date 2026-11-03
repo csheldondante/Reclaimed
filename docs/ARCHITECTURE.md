@@ -2252,6 +2252,23 @@ abilities and moves and puzzles and enemies and camera modes so we can iterate m
 - **Measured**: `test/unit/herolab-metrics.test.ts` (Node: `ride()` — play's hero by the autopilot on the lab's columns
   and planTree's trees) and `scripts/herolab.mjs` (the live world: shots, GIFs, metrics; `--cost`: frame time by
   toggling each mode against the chase on the phone proxy).
+### The physical drive (round 128, branch `herolab`; BACKLOG PL41)
+
+`play/core/drive.ts` `stepDrive(v, stick, profile, ext, dt)`, pure, one for every hero, a lab variant (the `drive`
+chip, `?drive=physical|brute`; each controller's `drive` param: 0 its own, 1 physical, 2 the brute's on the knight).
+The stick is the velocity wanted as a share of `vMax` (0: arrest at `brake`, or coast, per profile). Along the stick
+the push falls with speed, a(v) = a0 (1 - v / (stick vMax)), negative past the top and no harder than `brake`;
+against its way it brakes at `brake`; across its way it swings at most `lateral` (the grip; a turn's radius v^2 /
+lateral). Outside accelerations are added on top: `slopePull(grad, g, share)` (g sin theta down the fall line x the
+profile's share) and drag; so where a slope pulls harder than a0 it can't climb from standing, and a running start
+carries it up. Impulses (a lunge's dash, a dodge, a knock, a zip) are velocity set or added by the hero; the drive
+brings them back with its own limits (the dash and the dodge keep their own profile while they last). Profiles:
+KNIGHT_DRIVE, BRUTE_DRIVE (a weak push, a high top, little grip), LICH_DRIVE (no slope pull), BIKE_DRIVE (coasts).
+Where it's plugged in: core/foot.ts `stepFoot(..., drive)` (the walk, its uphill multiplier and its slope wall
+replaced; the sheer step stays), core/bike.ts `stepBike(..., drive)` (thrust, grip, the slope's pull, drag and the
+top speed replaced; boosting, its push and top are the boost's; the slide, barricades, cushion and flight as they
+were), core/levitate.ts `stepLevitate(..., drive)` (the velocity's easing replaced).
+
 ### The knight (round 128, branch `knight`; BACKLOG PL5)
 
 A third play hero, on foot with a sword and a bow (`?play=knight`; the station `&station=1`). Each concern its own part:

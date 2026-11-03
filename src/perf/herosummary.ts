@@ -8,7 +8,7 @@ export const HERO_BENCH_CAMS = ['chase', 'cutaway+tilt'] as const;
  * every pair, `hero:cam[@station]` (the canyon when no station): each hero under the chase, then the cut and tilt
  * (matched by reload); then (round 128, the user's camera intent) the bike on the tour under the chase, then auto
  */
-export const HERO_BENCH_PAIRS = [...HERO_BENCH_HEROES.flatMap((h) => HERO_BENCH_CAMS.map((c) => `${h}:${c}`)), 'hoverbike:chase@tour', 'hoverbike:auto@tour'];
+export const HERO_BENCH_PAIRS = [...HERO_BENCH_HEROES.flatMap((h) => HERO_BENCH_CAMS.map((c) => `${h}:${c}`)), 'hoverbike:chase@tour', 'hoverbike:auto+cutfade@tour'];
 
 /** a pair's hero, camera and station */
 export function parsePair(pair: string): { hero: string; cam: string; station: string } {

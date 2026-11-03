@@ -25,6 +25,8 @@ export interface LabTest {
   /** (knight pass 2) the station's own buttons pressed in turn once it's up, by their words (Wave, Guards, Course, a
    *  parry chip: Button, Swipe, Hold) */
   press?: string[];
+  /** (round 128) the root motion: own (absent), physical, brute (the knight) */
+  drive?: 'physical' | 'brute';
 }
 
 export interface LabTestGroup {
@@ -44,6 +46,7 @@ export const STATION_WORDS: Record<string, string> = {
   'moves-canyon': 'the canyon',
   'moves-city': 'the city streets',
   traits: 'the field of the living and the dead',
+  hill: 'the hill',
   tour: 'the tour: field, shrubs, woods, cliff, town',
   enemy: 'the raiders\' field',
 };
@@ -61,6 +64,8 @@ export const HANDLING_WORDS: Record<HandlingId, string> = {
   avoid: 'steers round rocks',
   magnet: 'leans toward enemies',
 };
+
+export const DRIVE_WORDS: Record<string, string> = { physical: 'physical', brute: 'heavy brute' };
 
 export const CAM_WORDS: Record<CamModeId, string> = {
   chase: 'follow',
@@ -94,7 +99,8 @@ export const LAB_TESTS: LabTestGroup[] = [
       canyon('governor', 'Canyon, slows down'),
       canyon('gripplus', 'Canyon, much more grip'),
       { id: 'bike-city-carve', hero: 'hoverbike', station: 'moves-city', handling: 'carve', label: 'City, carve', ask: 'Can you ride round the blocks without hitting walls?' },
-      { id: 'bike-tour-auto', hero: 'hoverbike', station: 'tour', cam: 'auto', label: 'Tour, auto zoom', ask: 'Does the zoom follow what is around you? Closer in tall woods, pulled back on the field?' },
+      { id: 'bike-tour-auto', hero: 'hoverbike', station: 'tour', cam: 'auto+cutfade', label: 'Tour, auto zoom', ask: 'Does the zoom follow what is around you? Closer in tall woods, pulled back on the field?' },
+      { id: 'bike-physical', hero: 'hoverbike', station: 'moves-canyon', drive: 'physical', label: 'Canyon, physical drive', ask: 'The same drive as the knight now. Does the bike feel like the same bike?' },
       { id: 'bike-hills', hero: 'hoverbike', station: 'hills', label: 'Hills', ask: 'Does the camera stay still on gentle hills?' },
       { id: 'bike-cliff', hero: 'hoverbike', station: 'cliff', label: 'Cliffs', ask: 'Does the cut show you the bike and the turn ahead?' },
     ],
@@ -112,7 +118,11 @@ export const LAB_TESTS: LabTestGroup[] = [
       { id: 'knight-parry-hold', hero: 'knight', station: 'enemy', press: ['Lungers', 'Hold'], label: 'Parry, hold', ask: 'Hold Block as a lunger comes. Which parry feels best, button, swipe or hold?' },
       { id: 'knight-bow', hero: 'knight', station: 'enemy', press: ['Wave'], label: 'Bow', ask: 'Switch to the bow and shoot a wave. Is aiming easy?' },
       { id: 'knight-hook', hero: 'knight', station: 'enemy', press: ['Wave'], label: 'Hook', ask: 'Switch to the hook. Tap a raider to yank it in. Tap the ground to zip there. Is it fun?' },
-      { id: 'knight-tour-auto', hero: 'knight', station: 'tour', cam: 'auto', label: 'Tour, auto zoom', ask: 'Does the zoom follow what is around you? Does the tilt by the cliff help?' },
+      { id: 'knight-hill', hero: 'knight', station: 'hill', drive: 'physical', label: 'Hill, physical drive', ask: 'Run at the slope from far back, then tap Standing start. Does the running start up the hill feel right?' },
+      { id: 'knight-physical', hero: 'knight', station: 'enemy', drive: 'physical', press: ['Wave'], label: 'Raiders, physical drive', ask: 'Does the knight still feel snappy?' },
+      { id: 'brute-hill', hero: 'knight', station: 'hill', drive: 'brute', label: 'Brute, hill', ask: 'A heavy brute. It can only get up the slope with a long run. Is that fun?' },
+      { id: 'brute-raiders', hero: 'knight', station: 'enemy', drive: 'brute', press: ['Mixed'], label: 'Brute, raiders', ask: 'The brute charges and turns wide. Is charging through them fun?' },
+      { id: 'knight-tour-auto', hero: 'knight', station: 'tour', cam: 'auto+cutfade', label: 'Tour, auto zoom', ask: 'Does the zoom follow what is around you? Does the tilt by the cliff help?' },
       { id: 'knight-forest', hero: 'knight', station: 'forest', label: 'Forest', ask: 'Can you see the knight under the trees?' },
       { id: 'knight-canyon', hero: 'knight', station: 'canyon', label: 'Canyon', ask: 'Does the cut show the knight in the narrow walls?' },
     ],
@@ -123,6 +133,7 @@ export const LAB_TESTS: LabTestGroup[] = [
     tests: [
       { id: 'lich-raise', hero: 'lich', station: 'traits', label: 'Raise the dead', ask: 'Tap Crowd, then Smite and Raise. Is it fun to build an army?' },
       { id: 'lich-raiders', hero: 'lich', station: 'enemy', label: 'Raiders', ask: 'Tap Wave. Can the lich hold them off?' },
+      { id: 'lich-physical', hero: 'lich', station: 'hill', drive: 'physical', label: 'Hill, physical drive', ask: 'Does the lich still float the way it should?' },
       { id: 'lich-cliff', hero: 'lich', station: 'cliff', label: 'Cliffs', ask: 'Does the cut show the lich and the way on?' },
     ],
   },
@@ -134,13 +145,14 @@ export function findTest(id: string): LabTest {
 }
 
 /** what's on now, in plain words: "Bike in the canyon. Handling: carve. Camera: cut and tilt." */
-export function describe(o: { hero: PlayHeroId; station: string; handling: readonly HandlingId[]; cam: readonly CamModeId[] }): string {
+export function describe(o: { hero: PlayHeroId; station: string; handling: readonly HandlingId[]; cam: readonly CamModeId[]; drive?: string }): string {
   const where = STATION_WORDS[o.station] ?? o.station;
   const out = [`${HERO_WORDS[o.hero]} in ${where}.`];
   if (o.hero === 'hoverbike') {
     const h = o.handling.filter((x) => x !== 'stock');
     out.push(`Handling: ${h.length ? h.map((x) => HANDLING_WORDS[x]).join(' and ') : HANDLING_WORDS.stock}.`);
   }
+  if (o.drive && o.drive !== 'own') out.push(`Drive: ${DRIVE_WORDS[o.drive] ?? o.drive}.`);
   const c = o.cam.filter((x) => x !== 'chase');
   out.push(`Camera: ${c.length ? c.map((x) => CAM_WORDS[x]).join(' and ') : CAM_WORDS.chase}.`);
   return out.join(' ');

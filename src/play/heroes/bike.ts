@@ -16,6 +16,7 @@ import type { HeroCamera } from '../../api/contracts/hero';
 import type { V2, V3 } from '../../api/contracts/units';
 import { assist as aimAssist, lean } from '../core/aim';
 import { makeBike, speedOf, stepBike, type Bike, type BikeTuning } from '../core/bike';
+import { BIKE_DRIVE } from '../core/drive';
 import type { Pt } from '../core/gestures';
 import { ASSIST, passPlanner, segmentDistance, type PassBudget, type PassPlan } from '../core/intercept';
 import { IntentLog, type IntentRecord } from '../core/intent';
@@ -137,7 +138,7 @@ export class BikeHero extends PlayHero {
     // (a swipe while hooked is the hook's: it cuts the line, or reels a foe in — not a slash)
     const acts = input.acts.filter((a) => !(a.kind === 'flick' && !a.self && this.hook.flick(a.from, a.dir)));
     const stick = this.hook.stick(input.dir);
-    stepBike(b, stick, dt, this.world.top, this.world.bounds, this.tuning(), !!input.buttons[0]);
+    stepBike(b, stick, dt, this.world.top, this.world.bounds, this.tuning(), !!input.buttons[0], p.drive === 1 || p.drive === 2 ? BIKE_DRIVE : null);
     this.hook.step(dt, hits);
     if (b.air > this.bestAir) this.bestAir = b.air;
     this.air(dt);

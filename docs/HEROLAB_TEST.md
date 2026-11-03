@@ -31,11 +31,15 @@ and pulls back on open ground, and tilts only by cliffs. It is a variant to try,
    **Parry, three ways:** try Parry button, Parry swipe and Parry hold against the lungers. Which feels best?
    **Bow and hook:** switch weapons. Is aiming the bow easy? With the hook, tap a raider to yank it in, or tap the
    ground to zip there. Is it fun? The forest and canyon tests ask whether you can see the knight.
-8. **Bike and knight, the tour (auto zoom).** One loop: a field, shrubs, low trees, tall woods, the canyon's cliff
+8. **The physical drive (movement as one physics for every hero).** Knight, hill: run at the slope from far back,
+   then tap Standing start. Does the running start up the hill feel right? Knight, raiders, physical: does the knight
+   still feel snappy? Bike, canyon, physical: does the bike feel like the same bike? Brute, a heavy body on the knight:
+   it charges and turns wide. Is that fun? Lich, hill: does it still float?
+9. **Bike and knight, the tour (auto zoom).** One loop: a field, shrubs, low trees, tall woods, the canyon's cliff
    wall, a city street. Does the zoom follow what's around you? Closer in the tall woods, pulled back on the field
    and among shrubs? Does it pump in and out? Does the tilt by the cliff help? (The camera chips have **auto+town**
    too, which also tilts between buildings. Try it on the city street and say which you like.)
-9. **Lich, raise the dead / raiders / cliffs.** Tap Crowd, then Smite and Raise. Is building an army fun? (We still
+10. **Lich, raise the dead / raiders / cliffs.** Tap Crowd, then Smite and Raise. Is building an army fun? (We still
    owe the lich a design talk. This is only to remind you how it plays now.)
 
 ## The phone benches

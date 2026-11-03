@@ -4,6 +4,8 @@
 // Reclaimed's terrain. Pure: it knows the ground only through `heightAt`, so it runs in
 // tests without a GPU. Units are Reclaimed's: world cells, cells/s, z in cells.
 
+import { slopePull, stepDrive, type DriveProfile } from './drive';
+
 export type BikeTuning = {
   /** thrust at full stick (cells/s²) */
   accel: number;
@@ -206,7 +208,7 @@ export function landingPoint(b: Bike, heightAt: HeightAt, t: BikeTuning = BIKE, 
  * One step. `stick` is the wanted direction in world xy (length 0..1); `bounds` the
  * world's extent; `boost` held.
  */
-export function stepBike(b: Bike, stick: [number, number], dt: number, heightAt: HeightAt, bounds: [number, number], t: BikeTuning = BIKE, boost = false): void {
+export function stepBike(b: Bike, stick: [number, number], dt: number, heightAt: HeightAt, bounds: [number, number], t: BikeTuning = BIKE, boost = false, drive: DriveProfile | null = null): void {
   b.hit = 0;
   b.landed = 0;
   b.crash = 0;
@@ -235,7 +237,27 @@ export function stepBike(b: Bike, stick: [number, number], dt: number, heightAt:
   let push = stick;
   if (b.boosting && Math.hypot(stick[0], stick[1]) < 0.2) push = [Math.cos(b.heading), Math.sin(b.heading)];
   const sm = Math.hypot(push[0], push[1]);
-  if (sm > 0) {
+  const reach = t.hover * 1.6;
+  const g0 = groundUnder(b.x, b.y, heightAt);
+  const onCushion = b.z - g0 < reach;
+  // ((round 128) the physical drive, a lab variant: thrust, grip, the slope's pull, drag and the top speed are the
+  // drive's (core/drive.ts) — boosting, its push and top are the boost's; the slide, the barricades, the cushion and
+  // the flight as they were)
+  if (drive) {
+    let pull: [number, number] = [0, 0];
+    if (onCushion) {
+      let [gx, gy] = gradient(b.x, b.y, heightAt, 1);
+      const gl = Math.hypot(gx, gy);
+      if (gl > climb) {
+        gx *= climb / gl;
+        gy *= climb / gl;
+      }
+      pull = slopePull([gx, gy], t.gravity, drive.gravity);
+    }
+    const prof = b.boosting ? { ...drive, a0: t.boost, vMax: t.boostMax } : b.air > 0.1 ? { ...drive, a0: 0, lateral: 0, brake: 0 } : drive;
+    [b.vx, b.vy] = stepDrive([b.vx, b.vy], b.boosting ? [push[0] / Math.max(sm, 1e-6), push[1] / Math.max(sm, 1e-6)] : push, prof, pull, dt);
+  }
+  if (sm > 0 && !drive) {
     const [accel, top, power] = b.boosting ? [t.boost, t.boostMax, 1] : [t.accel * (b.slide > 0 ? t.slideBrake : 1), t.max, sm];
     const [ux, uy] = [push[0] / sm, push[1] / sm];
     const along = b.vx * ux + b.vy * uy;
@@ -244,7 +266,7 @@ export function stepBike(b: Bike, stick: [number, number], dt: number, heightAt:
     b.vy += uy * accel * dt * room * power;
   }
   // (round 120) grip: the velocity swung toward the stick, on the cushion (not flying, not sliding)
-  if ((t.grip ?? 0) > 0 && b.air < 0.1 && b.slide === 0 && sm > 0.1) {
+  if (!drive && (t.grip ?? 0) > 0 && b.air < 0.1 && b.slide === 0 && sm > 0.1) {
     const v = speedOf(b);
     if (v > 1) {
       const d = angleTo(Math.atan2(b.vy, b.vx), Math.atan2(push[1], push[0]));
@@ -257,11 +279,8 @@ export function stepBike(b: Bike, stick: [number, number], dt: number, heightAt:
       b.vx = vx;
     }
   }
-  const reach = t.hover * 1.6;
   // on the cushion, gravity pulls it along the slope: it keeps some of what it gains downhill
-  const g0 = groundUnder(b.x, b.y, heightAt);
-  const onCushion = b.z - g0 < reach;
-  if (onCushion) {
+  if (onCushion && !drive) {
     // (over a cell either way: the lie of the land, not the rock under it)
     let [gx, gy] = gradient(b.x, b.y, heightAt, 1);
     // (only a slope it can ride counts: a wall's edge isn't a hill to slide off)
@@ -273,11 +292,11 @@ export function stepBike(b: Bike, stick: [number, number], dt: number, heightAt:
     b.vx -= t.gravity * t.slope * gx * dt;
     b.vy -= t.gravity * t.slope * gy * dt;
   }
-  const keep = Math.exp(-(sm > 0 ? t.drag : t.coastDrag) * dt);
+  const keep = drive ? 1 : Math.exp(-(sm > 0 ? t.drag : t.coastDrag) * dt);
   b.vx *= keep;
   b.vy *= keep;
   const sp = speedOf(b);
-  if (sp > t.limit) {
+  if (!drive && sp > t.limit) {
     b.vx *= t.limit / sp;
     b.vy *= t.limit / sp;
   }

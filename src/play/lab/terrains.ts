@@ -305,7 +305,15 @@ function hillsPath(): { at: V2; speed: number }[] {
   }
   return at(pts, 0.85);
 }
+/**
+ * (round 128, the physical drive) the hill station, in the hills' south strip: a flat run-up, then a ramp rising
+ * `height` at `slope` rise over run (steeper than the knight's push climbs from standing: core/drive.ts KNIGHT_DRIVE),
+ * then a flat top; the ride climbs it on one lane and comes down the other
+ */
+export const HILL = { x0: 176, x1: 252, y0: 206, y1: 219, foot: 226, slope: 1.6, height: 1.6, base: G + 1 };
+export const hillAt = (x: number) => HILL.base + Math.max(0, Math.min(HILL.height, (x - HILL.foot) * HILL.slope));
 function hillsColumn(x: number, y: number): LabColumn {
+  if (inBox(x, y, HILL.x0, HILL.y0, HILL.x1, HILL.y1)) return { top: hillAt(x), skin: MAT.Soil, veg: 0 };
   const h = 7 * (0.5 + 0.5 * Math.sin(x / 9.5) * Math.cos(y / 11)) + noise(x / 10, y / 10) * 3;
   // (a soil skin: grass is a plant layer, not ground — the agents stood on the stone under it, out of sight)
   return { top: G + h, skin: MAT.Soil, veg: 0 };
@@ -360,6 +368,18 @@ export const TOUR: LabTerrain = {
   ],
   pois: [],
 };
+
+/** (round 128) the hill station's ride: up the ramp on the north lane from a run-up, back down on the south lane */
+export const HILL_RIDE: { at: V2; speed: number }[] = [
+  { at: [182, 209.5], speed: 1 },
+  { at: [215, 209.5], speed: 1 },
+  { at: [240, 209.5], speed: 1 },
+  { at: [247, 212.5], speed: 0.5 },
+  { at: [240, 215.5], speed: 0.6 },
+  { at: [210, 215.5], speed: 0.8 },
+  { at: [183, 215.5], speed: 0.6 },
+  { at: [178, 212.5], speed: 0.5 },
+];
 
 /** the station a world point lies in, or null */
 export function labTerrainAt(x: number, y: number): LabTerrain | null {

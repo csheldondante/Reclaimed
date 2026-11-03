@@ -7,7 +7,7 @@ import { LAB_TERRAINS } from './terrains';
 import { describe, findTest, LAB_TESTS, STATION_WORDS } from './tests';
 
 suite('lab tests', () => {
-  const stations = new Set([...LAB_TERRAINS.map((t) => t.id), 'tour', 'moves-canyon', 'moves-city', 'traits', 'enemy']);
+  const stations = new Set([...LAB_TERRAINS.map((t) => t.id), 'tour', 'hill', 'moves-canyon', 'moves-city', 'traits', 'enemy']);
   const all = LAB_TESTS.flatMap((g) => g.tests);
   it('name real things', () => {
     for (const t of all) {

@@ -52,8 +52,9 @@ export const BIKE_CAMERA: HeroCamera = {
   chase: { lead: 0.45, leadMax: 40, leadShare: 0.6, ahead: 0.8, minZoom: 12, back: 0, follow: 3, zoomOut: 1.5, zoomIn: 0.6, speedEase: 1.5 },
 };
 
-export type BikeParams = BikeTuning & typeof BIKE_WEAPONS;
-export const BIKE_DEFAULTS: BikeParams = { ...BIKE, ...BIKE_FASTER, ...BIKE_WEAPONS };
+export type BikeParams = BikeTuning & typeof BIKE_WEAPONS & { drive: number };
+/** (round 128) drive: 0 the bike's own; 1 the physical drive (core/drive.ts BIKE_DRIVE) — a lab variant */
+export const BIKE_DEFAULTS: BikeParams = { ...BIKE, ...BIKE_FASTER, ...BIKE_WEAPONS, drive: 0 };
 
 const P = (id: keyof BikeParams, label: string, min: number, max: number, step: number, group: string, help?: string): ParamSpec => ({ id, label, min, max, step, group, help });
 
