@@ -28,6 +28,7 @@ const H = 128;
 const KERNEL = /* wgsl */ `
 @group(0) @binding(3) var<storage, read_write> outv: array<vec4<f32>>;
 @group(0) @binding(4) var<storage, read> vin: array<f32>;
+@group(0) @binding(5) var<storage, read> surface: array<u32>;
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= ${W}u || id.y >= ${H}u) { return; }
@@ -62,19 +63,26 @@ test.each([
   f[279] = org[1];
   const v = new Float32Array(W * H);
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) v[y * W + x] = 3.4 + (2 * (x + y)) / (W + H);
+  // (round 128: hills — the plan's conifers on the slopes and the high ground; the surface packed as sfZ reads it)
+  const topOf = (x: number, y: number) => Math.round((20 + 9 * Math.sin(x / 9) * Math.cos(y / 7) + 0.6 * x) * 256) / 256;
+  const surf = new Uint32Array(W * H);
+  // (in the buffers' page-major order, common.wgsl colIdx with the ring at 0: 16² pages, row by row)
+  const colIdx = (x: number, y: number) => ((y >> 4) * (W >> 4) + (x >> 4)) * 256 + (y & 15) * 16 + (x & 15);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) surf[colIdx(x, y)] = Math.round(topOf(x, y) * 256) & 0x1ffff;
   const mk = (size: number, usage: number, data?: ArrayBufferView | ArrayBuffer) => {
     const b = dev.createBuffer({ size, usage: usage | GPUBufferUsage.COPY_DST });
     if (data) dev.queue.writeBuffer(b, 0, data as ArrayBuffer);
     return b;
   };
   const mats = packMaterialTable();
-  const k = makeCompute(dev, 'flora-plan', [commonWgsl, materialsWgsl, vegplanWgsl, KERNEL], { 0: 'uniform', 2: 'uniform', 3: 'rw', 4: 'read' });
+  const k = makeCompute(dev, 'flora-plan', [commonWgsl, materialsWgsl, vegplanWgsl, KERNEL], { 0: 'uniform', 2: 'uniform', 3: 'rw', 4: 'read', 5: 'read' });
   const out = mk(W * H * 32, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
   const bg = makeBindGroup(dev, 'flora-plan', k.layout, {
     0: mk(GLOBALS_BYTES, GPUBufferUsage.UNIFORM, glob),
     2: mk(mats.byteLength, GPUBufferUsage.UNIFORM, mats),
     3: out,
     4: mk(v.byteLength, GPUBufferUsage.STORAGE, v),
+    5: mk(surf.byteLength, GPUBufferUsage.STORAGE, surf),
   });
   const enc = dev.createCommandEncoder();
   const pass = enc.beginComputePass();
@@ -93,7 +101,7 @@ test.each([
   for (let y = 0; y < H; y++)
     for (let x = 0; x < W; x++) {
       const i = y * W + x;
-      const t = planTree(x, y, v[i], W, H, org);
+      const t = planTree(x, y, v[i], W, H, org, topOf);
       const gpu = r.subarray(i * 8, i * 8 + 8);
       expect(gpu[4]).toBeCloseTo(birchWood(x, y, org), 4);
       maxWood = Math.max(maxWood, gpu[4]);

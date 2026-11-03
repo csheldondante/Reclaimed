@@ -17005,3 +17005,11 @@ noisy; the phone bench decides cost — Pages build of `merge128`, `?bench=1` an
   awake at 12 s, its field still changing between 12 s and 40 s, burning in a neighbouring chunk by 40 s, while a
   chunk woken by an event with nothing to burn is asleep at 12 s; with the hold call taken out the test fails ("the
   burning chunk held awake at 12 s").
+- Pines on the slopes and the high ground (the map's flora pass, second part; main: "give the plan height and slope;
+  CPU mirror too"). vegPlan had only the column, the succession and the material. Now treeSpecies takes the ground's
+  shape — groundAt in vegplan.wgsl from the solid tops (`surface`, which every kernel including vegplan.wgsl binds):
+  the steepest rise to an axis neighbour, and the rise over the tops 6 columns out — and `uplands` (slope 0.7-1.6,
+  rise 2-6) lifts the conifers' chance up to 0.85, in the birch woods too (they keep their birches on the flat). The CPU
+  port reads the Plants mirror's surface (topCol) and FloraSource.top for passability. Tests: flora-plan (Dawn, a hilly
+  window: every column's species the same on both sides), stands.test.ts (a hillside rising 2 a column: > 75%
+  conifers and 30 points over the flat; knolls 8 over their land: > 70%).

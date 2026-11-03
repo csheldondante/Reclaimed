@@ -6,6 +6,7 @@
 import type { WorldCore } from '../scenes/world-core';
 import { EventKind } from '../sim/globals';
 import { cellAt, cellPos } from '../world/lattice';
+import { sfZ } from '../world/layout';
 import { ELDER_VEG, slotAt, slotRand, TREE_SCALE, treeSize } from '../flora/spacing';
 import type { Mirror } from './mirror';
 import type { Terrain } from './terrain';
@@ -96,18 +97,39 @@ export function gladeAt(cx: number, cy: number, org: [number, number] = ORG): nu
   return smoothT(0.7, 0.82, floraField(cx, cy, 46, 0x6a1d5, org));
 }
 
+/** (round 128) a window column's solid top (sfZ of its surface), as the plan reads it */
+export type TopFn = (cx: number, cy: number) => number;
+/** vegplan.wgsl GROUND_R */
+const GROUND_R = 6;
+/** (round 128) vegplan.wgsl groundAt: [the slope (the steepest rise to an axis neighbour), the rise over the four tops
+ *  GROUND_R out], the offsets clamped to the w × h window */
+export function groundOf(cx: number, cy: number, w: number, h: number, top: TopFn): [number, number] {
+  const t = (x: number, y: number) => top(Math.min(w - 1, Math.max(0, x)), Math.min(h - 1, Math.max(0, y)));
+  const t0 = t(cx, cy);
+  const s = Math.max(Math.abs(t(cx + 1, cy) - t0), Math.abs(t(cx - 1, cy) - t0), Math.abs(t(cx, cy + 1) - t0), Math.abs(t(cx, cy - 1) - t0));
+  const m = (t(cx + GROUND_R, cy) + t(cx - GROUND_R, cy) + t(cx, cy + GROUND_R) + t(cx, cy - GROUND_R)) * 0.25;
+  return [s, t0 - m];
+}
+/** vegplan.wgsl uplands */
+export function uplands(g: [number, number]): number {
+  return Math.max(smoothT(0.7, 1.6, g[0]), smoothT(2.0, 6.0, g[1]));
+}
+
 /**
  * (round 128) vegplan.wgsl treeSpecies: the species on a tree slot (the elder's, or a block's), or 'glade' — the
- * conifers in stands, glades in the canopy. `org` must be set (planTree sets it).
+ * conifers in stands and on the slopes and high ground (`ground`: groundOf), glades in the canopy. `org` must be set
+ * (planTree sets it).
  */
-export function treeSpeciesAt(cx: number, cy: number, v: number, slot: 'tree' | 'elder', org: [number, number]): TreeSpecies | 'glade' {
+export function treeSpeciesAt(cx: number, cy: number, v: number, slot: 'tree' | 'elder', org: [number, number], ground: [number, number]): TreeSpecies | 'glade' {
   ORG = org;
   if (slot === 'elder' && v >= ELDER_VEG) return 'giant';
   if (rand3(cx, cy, 334) < gladeAt(cx, cy, org)) return 'glade';
   const hs = rand3(cx, cy, 321);
   const inBirch = rand3(cx, cy, 333) < birchWood(cx, cy, org) * 0.85;
   if (v > 4.7 && hs < 0.12 && !inBirch) return 'giant';
-  if (!inBirch && rand3(cx, cy, 335) < 0.08 + 0.8 * coniferStand(cx, cy, org)) return 'conifer';
+  // (the birch woods keep their birches on the flat; the slopes and the high ground go to the conifers anyway)
+  const cs = inBirch ? 0 : coniferStand(cx, cy, org);
+  if (rand3(cx, cy, 335) < (inBirch ? 0 : 0.08) + 0.85 * Math.max(cs, uplands(ground))) return 'conifer';
   if (inBirch || hs > 0.72) return 'birch';
   return 'broadleaf';
 }
@@ -117,7 +139,8 @@ export function inGlade(cx: number, cy: number, v: number, w: number, h: number,
   const edge = cx < 2 || cy < 2 || cx + 3 >= w || cy + 3 >= h;
   const slot = slotAt(cx + org[0], cy + org[1]);
   if (!(v >= 3.6) || edge || slot === 'none') return false;
-  return treeSpeciesAt(cx, cy, v, slot, org) === 'glade';
+  // (the glade is decided before the ground is read)
+  return treeSpeciesAt(cx, cy, v, slot, org, [0, 0]) === 'glade';
 }
 
 /** Logs a tree makes: its trunk's wood and some of its crown's limbs (cells³). */
@@ -130,7 +153,7 @@ function logsOf(trunk: number, crown: number): number {
  * (round 117: a pure function, so a Dawn test checks it against the kernel: test/gpu/flora-plan.test.ts). `org`: the
  * window's world origin (Globals.origin), w × h its size.
  */
-export function planTree(cx: number, cy: number, v: number, w: number, h: number, org: [number, number]): Tree | null {
+export function planTree(cx: number, cy: number, v: number, w: number, h: number, org: [number, number], top: TopFn): Tree | null {
   ORG = org;
   const edge = cx < 2 || cy < 2 || cx + 3 >= w || cy + 3 >= h;
   // (round 125, forest: a jittered grid of slots in world columns — flora/spacing.ts — not a hash under 0.045 a column)
@@ -141,7 +164,7 @@ export function planTree(cx: number, cy: number, v: number, w: number, h: number
   let trunk: number;
   let crown: number;
   // (round 128: the species from treeSpeciesAt — conifer stands, glades)
-  const pick = treeSpeciesAt(cx, cy, v, slot, org);
+  const pick = treeSpeciesAt(cx, cy, v, slot, org, groundOf(cx, cy, w, h, top));
   if (pick === 'glade') return null;
   const species: TreeSpecies = pick;
   // (round 125, forest: bigger trees, as drawn — the flora library's heights: birch 17-25, broadleaf 9-15, conifer
@@ -214,6 +237,15 @@ export class Plants {
     mirror.addBuffer('water', core.world.water);
     // (round 128: the fire's standing burned trees — a snag keeps its tree standing, charred)
     mirror.addTexture('snag', core.world.snag);
+    // (round 128: the ground's shape — the plan's conifers on the slopes and the high ground, vegplan.wgsl groundAt)
+    mirror.addBuffer('surface', core.world.surface);
+  }
+
+  /** (round 128) window column (cx, cy)'s solid top (sfZ of its surface, as the mirror last read it; 0 before) */
+  topCol(cx: number, cy: number): number {
+    const s = this.mirror.u32('surface');
+    if (!s) return 0;
+    return sfZ(s[this.core.ring.idx(cx, cy)]);
   }
 
   /** (round 128) the snag at window column (cx, cy): > 0 a burned wood's tree stands there charred */
@@ -251,7 +283,7 @@ export class Plants {
   /** vegplan.wgsl's tree at column (cx, cy) with veg v, or null. */
   private planAt(cx: number, cy: number, v: number): Tree | null {
     const burned = this.snagAt(cx, cy) > 0;
-    const t = planTree(cx, cy, burned ? Math.max(v, 3.6) : v, this.core.dims.w, this.core.dims.h, this.core.globals.origin ?? [0, 0]);
+    const t = planTree(cx, cy, burned ? Math.max(v, 3.6) : v, this.core.dims.w, this.core.dims.h, this.core.globals.origin ?? [0, 0], (x, y) => this.topCol(x, y));
     // (a charred snag makes no logs worth the felling: a third)
     return t && burned ? { ...t, burned: true, logs: t.logs / 3 } : t;
   }

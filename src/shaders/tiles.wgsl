@@ -230,7 +230,7 @@ fn tileTrees(w: vec2<f32>, z: f32, v: f32, px: f32) -> TTree {
       let hv = rand3(c.x, c.y, 7u);
       let r0 = rand3(c.x, c.y, 4243u);
       // (round 128: the species as the window would plant it — vegplan.wgsl treeSpecies: stands, glades)
-      let tsp = treeSpecies(c.x, c.y, v, u32(s.z));
+      let tsp = treeSpecies(c.x, c.y, v, u32(s.z), groundAt(c.x, c.y));
       if (tsp == 4u) { continue; }
       let elder = tsp == 3u;
       let conifer = tsp == 1u;

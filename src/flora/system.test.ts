@@ -11,6 +11,7 @@ const field = (v: (cx: number, cy: number) => number, w = 96, h = 96): FloraSour
   dims: () => ({ w, h }),
   origin: () => [0, 0],
   veg: (cx, cy) => v(cx, cy),
+  top: () => 10,
 });
 const rect = (x0: number, y0: number, x1: number, y1: number) => ({ x0, y0: y0 * ROW_H, x1, y1: y1 * ROW_H });
 // (merge122) bodies as play's profiles: the walker without its sword, a charging knight, a swordsman, a bird

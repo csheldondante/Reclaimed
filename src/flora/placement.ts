@@ -6,7 +6,7 @@
 //                   planTree, and vegprep.wgsl's floraSmall rules for thickets and tall grass), on the CPU, for
 //                   passability and queries — the same hashes, so what you can't walk through is what you see.
 import type { FloraSite } from '../api/contracts/flora';
-import { inGlade, planTree } from '../api/plants';
+import { inGlade, planTree, type TopFn } from '../api/plants';
 import { SPECIES, SPECIES_IDS, type SpeciesId } from './species';
 import { elderWood } from './spacing';
 
@@ -58,9 +58,9 @@ const TREE_SPECIES: Record<string, SpeciesId> = { broadleaf: 'oak', conifer: 'pi
  * floraSmall). Grass needs soil-like ground on the GPU (MATS eco); here it is assumed (the CPU has no material per
  * column without a layers read) — passability over bare rock slightly overcounts grass.
  */
-export function standsAt(cx: number, cy: number, v: number, w: number, h: number, org: [number, number]): Stand[] {
+export function standsAt(cx: number, cy: number, v: number, w: number, h: number, org: [number, number], top: TopFn): Stand[] {
   const out: Stand[] = [];
-  const t = planTree(cx, cy, v, w, h, org);
+  const t = planTree(cx, cy, v, w, h, org, top);
   if (t) out.push({ species: TREE_SPECIES[t.species], cx, cy, scale: 0.8 + 0.2 * Math.min(1, Math.max(0, (v - 3.6) / 1.2)) });
   const hh = rand3(cx, cy, 4242, org);
   // (vegprep floraSmall: shrubland's thicket; under the woods only a fifth of them — the floor stays open; round 125: in

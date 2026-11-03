@@ -3179,6 +3179,10 @@ PARAMS, read by the viewer's sliders and its URL (`p.<key>=`) and applied as an 
   flora-plan.test.ts checks them column by column): the elder, a glade (no tree: `gladeAt`, value noise at 46 cells —
   a thicket at 0.45 there), a lone giant, a conifer by `coniferStand` (value noise at 60 cells: ~8% among broadleaves,
   ~88% in a stand), a birch (the birch woods, or 28%), else a broadleaf.
+  The ground (round 128): `groundAt` reads the including kernel's `surface` (every kernel that takes vegplan.wgsl
+  has one) — x the slope (the steepest rise to an axis neighbour), y the rise over four tops 6 columns out; `uplands`
+  (slope 0.7-1.6, rise 2-6) raises the conifers' chance as a stand does, and in the birch woods too. The CPU port:
+  groundOf on the Plants mirror's `surface` (Plants.topCol; FloraSource.top for passability).
 - Berries (`berries`, 0..1): accent-coloured clusters on the crown's outer leaf vertices (generate.ts withBerries).
 - ?fgrass=<0..2> (renderer → vegprep FGRASS): the meadows' tall grass ×x, past 1 a second clump a cell — the foliage
   bench's density pairs (`set=grass`: the meadow station, perf/foliagecard.ts GRASS_VARIANTS).

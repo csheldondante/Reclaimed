@@ -15,6 +15,8 @@ export interface FloraSource {
   origin(): [number, number];
   /** the succession field at window column (cx, cy), null before the first read */
   veg(cx: number, cy: number): number | null;
+  /** (round 128) window column (cx, cy)'s solid top (the plan's ground: conifers on the slopes and high ground) */
+  top(cx: number, cy: number): number;
   /** read the fields again (the CPU mirror) */
   refresh?(): Promise<void>;
 }
@@ -87,7 +89,7 @@ export class FloraWorld implements Flora {
       for (let cx = x0; cx < x1; cx++) {
         const v = this.src.veg(cx, cy);
         if (v === null) continue;
-        out.push(...standsAt(cx, cy, v, w, h, org));
+        out.push(...standsAt(cx, cy, v, w, h, org, (x, y) => this.src.top(x, y)));
       }
     return out;
   }

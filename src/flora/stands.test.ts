@@ -13,7 +13,7 @@ describe('stands and glades', () => {
   let glades = 0;
   for (let y = 0; y < N; y++)
     for (let x = 0; x < N; x++) {
-      const t = planTree(x, y, 4.2, N, N, org);
+      const t = planTree(x, y, 4.2, N, N, org, () => 10);
       if (t) {
         slots++;
         at.set(`${x},${y}`, t.species);
@@ -55,5 +55,42 @@ describe('stands and glades', () => {
       if (n > 20000) break;
     }
     expect(same / n).toBeGreaterThan(share('conifer') + 0.15);
+  });
+});
+
+describe('conifers on the slopes and the high ground (round 128: groundOf, vegplan.wgsl groundAt)', () => {
+  const share = (top: (x: number, y: number) => number) => {
+    let c = 0;
+    let n = 0;
+    for (let y = 0; y < N; y++)
+      for (let x = 0; x < N; x++) {
+        const t = planTree(x, y, 4.2, N, N, org, top);
+        if (!t) continue;
+        n++;
+        if (t.species === 'conifer') c++;
+      }
+    return c / n;
+  };
+  it('a steep hillside (a rise of 2 a column) is mostly conifers; flat land keeps the stands’ mix', () => {
+    const flat = share(() => 10);
+    const steep = share((x) => 10 + x * 2);
+    expect(steep).toBeGreaterThan(0.75);
+    expect(steep).toBeGreaterThan(flat + 0.3);
+  });
+  it('knolls: tops standing 8 over the land round them are mostly conifers', () => {
+    // (a bump every 24 columns: the slot's own top high, the land GROUND_R out low — gentle, not steep, near the top)
+    const knolls = (x: number, y: number) => 10 + 8 * Math.max(0, 1 - Math.hypot(((x % 24) - 12) / 6, ((y % 24) - 12) / 6) ** 2);
+    let c = 0;
+    let n = 0;
+    for (let y = 0; y < N; y++)
+      for (let x = 0; x < N; x++) {
+        if (Math.hypot((x % 24) - 12, (y % 24) - 12) > 1.5) continue;
+        const t = planTree(x, y, 4.2, N, N, org, knolls);
+        if (!t) continue;
+        n++;
+        if (t.species === 'conifer') c++;
+      }
+    expect(n).toBeGreaterThan(5);
+    expect(c / n).toBeGreaterThan(0.7);
   });
 });

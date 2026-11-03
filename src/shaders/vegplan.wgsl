@@ -35,18 +35,43 @@ fn floraField(x: u32, y: u32, scale: f32, salt: u32) -> f32 {
 fn coniferStand(x: u32, y: u32) -> f32 { return smoothstep(0.3, 0.7, floraField(x, y, 60.0, 0x9c1f3u)); }
 fn gladeAt(x: u32, y: u32) -> f32 { return smoothstep(0.7, 0.82, floraField(x, y, 46.0, 0x6a1d5u)); }
 
+/**
+ * (round 128, the map's flora pass: "pines on slopes and high ground") The ground a tree slot stands on, from the solid
+ * tops (the including kernel's `surface`, sfZ — every kernel that takes vegplan.wgsl has it; api/plants.ts groundOf
+ * reads the same from its mirror): x the slope, the steepest rise to a neighbour (cells a cell, the four axis
+ * neighbours); y its rise over the land GROUND_R columns out (the mean of four tops there): > 0 a knoll, a ridge. The
+ * offsets clamped to the window.
+ */
+const GROUND_R: i32 = 6;
+fn planTop(x: i32, y: i32) -> f32 {
+  let q = vec2<i32>(clamp(x, 0, i32(G.mapW) - 1), clamp(y, 0, i32(G.mapH) - 1));
+  return sfZ(surface[colIdxI(q)]);
+}
+fn groundAt(x: u32, y: u32) -> vec2<f32> {
+  let p = vec2<i32>(i32(x), i32(y));
+  let t0 = planTop(p.x, p.y);
+  let s = max(max(abs(planTop(p.x + 1, p.y) - t0), abs(planTop(p.x - 1, p.y) - t0)), max(abs(planTop(p.x, p.y + 1) - t0), abs(planTop(p.x, p.y - 1) - t0)));
+  let m = (planTop(p.x + GROUND_R, p.y) + planTop(p.x - GROUND_R, p.y) + planTop(p.x, p.y + GROUND_R) + planTop(p.x, p.y - GROUND_R)) * 0.25;
+  return vec2<f32>(s, t0 - m);
+}
+/** (round 128) 0..1 how much a slot is upland — steep (a slope over ~0.7) or standing over its surroundings (~2+) */
+fn uplands(g: vec2<f32>) -> f32 { return max(smoothstep(0.7, 1.6, g.x), smoothstep(2.0, 6.0, g.y)); }
+
 /** (round 128) the tree at window column (x, y) with succession v on slot `slot` (treeSlot): 0 broadleaf, 1 conifer,
  *  2 birch, 3 the elder / an old giant, 4 none (a glade). The one place the species is chosen: vegPlan and the tiles'
  *  painted trees (tiles.wgsl) call it; api/plants.ts treeSpeciesAt ports it. */
-fn treeSpecies(x: u32, y: u32, v: f32, slot: u32) -> u32 {
+fn treeSpecies(x: u32, y: u32, v: f32, slot: u32, ground: vec2<f32>) -> u32 {
   if (slot == 2u && v >= ELDER_VEG) { return 3u; }
   // (a glade: the trees thin out toward its heart — not in the elder woods, whose canopy is whole)
   if (rand3(x, y, 334u) < gladeAt(x, y)) { return 4u; }
   let hs = rand3(x, y, 321u);
   let inBirch = rand3(x, y, 333u) < birchWood(x, y) * 0.85;
   if (v > 4.7 && hs < 0.12 && !inBirch) { return 3u; }
-  // (conifers in stands: ~8% among the broadleaves, ~88% in a stand's heart — about the old 42% over the land)
-  if (!inBirch && rand3(x, y, 335u) < 0.08 + 0.8 * coniferStand(x, y)) { return 1u; }
+  // (conifers in stands: ~8% among the broadleaves, ~88% in a stand's heart — about the old 42% over the land; and on
+  // the slopes and the high ground, `ground` — groundAt)
+  // (the birch woods keep their birches on the flat; the slopes and the high ground go to the conifers anyway)
+  let cs = select(coniferStand(x, y), 0.0, inBirch);
+  if (rand3(x, y, 335u) < select(0.08, 0.0, inBirch) + 0.85 * max(cs, uplands(ground))) { return 1u; }
   if (inBirch || hs > 0.72) { return 2u; }
   return 0u;
 }
@@ -103,7 +128,7 @@ fn vegPlan(x: u32, y: u32, v: f32, m: u32) -> VegPlan {
     // (round 125, forest: bigger trees, the heights as the flora library draws them — birch 17-25, broadleaf 9-15,
     // conifer 12-20, the elder 24-32; api/plants.ts planTree keeps them identical)
     // (round 128: the species from treeSpecies — stands and glades)
-    let sp = treeSpecies(x, y, v, slot);
+    let sp = treeSpecies(x, y, v, slot, groundAt(x, y));
     pl.species = min(sp, 3u);
     if (sp == 4u) {
       // (a glade: no tree — a thicket here and there, the plants below take the rest)
