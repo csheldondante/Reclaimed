@@ -35,6 +35,7 @@ import { answer, makePresenter, pickPresenter, type PresenterSpec } from './peop
 import { attachment, hops, stakes } from './attachment';
 import { DAYS_PER_TURN, diffWorld, type FactWorld } from './world';
 import { MemoryDiplomacy } from '../api/contracts/diplomacy-memory';
+import { capitalise } from './plain';
 
 export interface StoreNeed {
   at: Ref;
@@ -183,6 +184,17 @@ export interface Offer {
   /** (round 125) who presents it, and what they say */
   presenter: EntityId;
   line: string;
+  /** (dialog2) the group they speak for (their answer moves its relation too), and their other lines, filled: the
+   *  answer to "What's in it for me?" and to "What if I say no?" (absent: the petition says the reward and the
+   *  consequence plainly) */
+  group: EntityId;
+  gain?: string;
+  refuseLine?: string;
+  /** a way not taken: saying no is no slight */
+  passable: boolean;
+  /** (dialog2) what asking for more would add, and what a yes did add (given when it's committed) */
+  haggle?: Goods;
+  extra?: Goods;
   /** (merge124) what the player gets, in words (its reward's line, its names filled) */
   reward: string;
   /** what it would change (a dry run when dealt), what it unlocks, the incident its setup made */
@@ -225,6 +237,8 @@ interface Cand {
 }
 
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+/** (dialog2) a player-facing text filled: its sentences start with a capital (a filled name may not) */
+const say = (c: Ctx, s: string) => capitalise(text(c, s));
 const keyOf = (t: TemplateDef, b: Bind) => `${t.id}:${Object.keys(b).sort().map((k) => b[k]).join(',')}`;
 const kinds = (s: BindSpec) => (Array.isArray(s.kind) ? s.kind : [s.kind]);
 /** a template reads the owners' records (quantities, holders, buildings): world changes make it re-evaluate */
@@ -483,7 +497,7 @@ export class LivingEngine {
     const outcomes: Partial<Record<Tier, OppOutcome>> = {};
     for (const [tr, o] of Object.entries(outcomesOf(t)) as [Tier, TierOutcome][]) {
       outcomes[tr] = {
-        text: text(c, o.text),
+        text: say(c, o.text),
         effects: [...(rewarded(tr, o) ? rewardEffects(t.reward, key, t.play ? '' : this.locus, c) : []), ...(o.goods ? rewardEffects({ text: '', goods: o.goods }, key, '', c) : []), ...(o.tag ? [{ kind: 'tag' as const, add: [...o.tag.add], ...(o.tag.bonuses ? { bonuses: structuredClone(o.tag.bonuses) } : {}) }] : [])],
         ...(o.losses !== undefined ? { losses: num(c, o.losses) } : {}),
       };
@@ -507,7 +521,7 @@ export class LivingEngine {
       template: t.id,
       offer: t.offer ? text(c, t.offer) : key,
       title,
-      pitch: text(c, t.pitch),
+      pitch: say(c, t.pitch),
       location: { region: loc.region, ...(loc.settlement ? { settlement: loc.settlement } : {}), at: loc.at, name: loc.name ?? this.w.name(place) },
       duration: t.play ? { minutes: +minutes.toFixed(2) } : { turns: t.turnsVar ? num(c, t.turnsVar) : t.turns },
       ...(challenge ? { challenge } : {}),
@@ -515,7 +529,7 @@ export class LivingEngine {
       outcomes,
       visibility: 'known',
       expires: expires ?? { turn: this.turn + (t.offerTurns ?? 2) - 1 },
-      ...(t.onExpire ? { onExpire: { text: text(c, t.expireText ?? 'it lapses'), effects: [] } } : {}),
+      ...(t.onExpire ? { onExpire: { text: say(c, t.expireText ?? 'It lapses.'), effects: [] } } : {}),
       ...(t.play?.forced ? { forced: true } : {}),
       ...(t.play?.climax ? { climax: true } : {}),
       themes: t.themes,
@@ -547,7 +561,7 @@ export class LivingEngine {
     for (const c of ev.cands) {
       const { t, b, key } = c;
       const ctx = this.ctx(t, b);
-      const title = text(ctx, t.title);
+      const title = say(ctx, t.title);
       const np = (step: NotProposed['step'], why: string) => notProposed.push({ template: t.id, title, step, why });
       if (liveKeys.has(key)) {
         np('dedup', 'already on the board or under way');
@@ -648,9 +662,17 @@ export class LivingEngine {
       presenting.add(presenter);
       const bind = { ...b, presenter };
       const pctx = { ...this.ctx(t, bind, id), b: bind };
-      const line = text(pctx, t.presenter.line);
-      const opp: Opportunity = { ...d.opp, id, pitch: `${this.w.name(presenter)} ${t.presenter.verb}: “${line}” ${d.opp.pitch}` };
-      const o: Offer = { id, key, template: t.id, bind, place: m.place, subjects: [...m.subjects.filter((x) => x !== m.presenter), presenter], dealt: turn, expires: d.opp.expires.turn, opp, status: 'offered', presenter, line, reward: text(pctx, t.reward.text), preview: m.preview, unlocks: m.unlocks, setup, because: d.opp.because };
+      const line = say(pctx, t.presenter.line);
+      // (dialog2: the pitch is the card's own plain words; the presenter's line is said in the dialog, not glued on)
+      const opp: Opportunity = { ...d.opp, id };
+      const hg = t.presenter.haggle ? Object.fromEntries(Object.entries(t.presenter.haggle.goods).map(([g, x]) => [g, num(pctx, x)])) : undefined;
+      const o: Offer = {
+        id, key, template: t.id, bind, place: m.place, subjects: [...m.subjects.filter((x) => x !== m.presenter), presenter], dealt: turn, expires: d.opp.expires.turn, opp, status: 'offered', presenter, line, reward: say(pctx, t.reward.text), preview: m.preview, unlocks: m.unlocks, setup, because: d.opp.because,
+        group: m.group, passable: !!t.passable,
+        ...(t.presenter.gain ? { gain: say(pctx, t.presenter.gain) } : {}),
+        ...(t.presenter.refuse ? { refuseLine: say(pctx, t.presenter.refuse) } : {}),
+        ...(hg ? { haggle: hg } : {}),
+      };
       // (the incident, made now it's shown — once per binding)
       if (t.setup && !this.setupDone.has(key)) {
         o.setup = [...setup, ...applyBatch(this.w, t.setup, o.bind, o.id, undefined, { stage: this.opts.stage, vars: pctx.vars })];
@@ -745,7 +767,9 @@ export class LivingEngine {
     } else this.w.holdings = holdings;
     // (the world model keeps what the agents are committed to: where, what, when — a later run finds them there)
     (this.w.holdings.commitments ??= []).push({ id: o.id, template: o.template, title: o.opp.title, agents: [...commitment.agents], location: structuredClone(o.opp.location), turn: this.turn, ...(resolvesTurn !== undefined ? { resolvesTurn } : {}), ...(commitment.rolled ? { rolled: commitment.rolled } : {}) });
-    answer(this.w, o.presenter, 'committed', o.opp.title, o.id);
+    // (dialog2: what asking for more won comes with the commitment)
+    for (const [g, n] of Object.entries(o.extra ?? {})) this.w.holdings.goods[g] = (this.w.holdings.goods[g] ?? 0) + n;
+    answer(this.w, o.presenter, 'committed', o.opp.title, o.id, o.group);
     this.w.facts.record({ kind: 'committed', by: ['player'], to: [o.place], about: { opp: o.id }, note: `${o.opp.title}: ${commitment.agents.map((id) => holdings.agents.find((x) => x.id === id)?.name ?? id).join(', ')} committed` });
     o.status = 'committed';
     o.commitment = commitment;
@@ -765,7 +789,13 @@ export class LivingEngine {
     const o = this.offer(offerId);
     const t = this.template(o.template);
     const before = this.w.full();
-    answer(this.w, o.presenter, 'refused', o.opp.title, o.id);
+    // (a way not taken is no slight: refusing it only takes it off the board)
+    if (!t.passable) answer(this.w, o.presenter, 'refused', o.opp.title, o.id, o.group);
+    // (dialog2: saying no lets it go — what happens when it lapses happens now: the grain rots, the captives are taken)
+    if (t.onExpire) {
+      const c = this.ctx(t, o.bind, `${o.id}:refused`, o.opp.tier);
+      applyBatch(this.w, t.onExpire, o.bind, `${o.id}:refused`, undefined, { stage: this.opts.stage, vars: c.vars, tier: o.opp.tier });
+    }
     o.status = 'refused';
     o.result = diffWorld(before, this.w.full(), (id) => this.w.name(id));
     this.rest.set(o.key, this.turn + (t.cooldown ?? 3));
@@ -774,6 +804,21 @@ export class LivingEngine {
     this.past.push(o);
     this.changes.push({ turn: this.turn, what: `refused: ${o.opp.title}`, lines: o.result });
     this.log.push(`turn ${this.turn}: refused "${o.opp.title}" — ${this.w.name(o.presenter)} remembers`);
+    return o;
+  }
+
+  /** (dialog2) the player asked the presenter for more: agreed, what the template allows is added to the reward when
+   *  the card is committed, and the presenter thinks a little less of the player for pushing; refused, nothing
+   *  changes. Once a card. */
+  haggle(offerId: string, agreed: boolean): Offer {
+    const o = this.offer(offerId);
+    if (!o.haggle) throw new Error(`haggle ${o.opp.title}: its template allows no haggling`);
+    if (o.extra) throw new Error(`haggle ${o.opp.title}: already agreed`);
+    if (agreed) {
+      o.extra = { ...o.haggle };
+      answer(this.w, o.presenter, 'haggled', o.opp.title, o.id);
+    }
+    this.log.push(`turn ${this.turn}: asked ${this.w.name(o.presenter)} for more on "${o.opp.title}": ${agreed ? 'agreed' : 'refused'}`);
     return o;
   }
 
@@ -845,7 +890,7 @@ export class LivingEngine {
         const c = this.ctx(t, o.bind, `${o.id}:lapsed`, o.opp.tier);
         applyBatch(w, t.onExpire, o.bind, `${o.id}:lapsed`, undefined, { stage: this.opts.stage, vars: c.vars, tier: o.opp.tier });
       }
-      if (!t.passable) answer(w, o.presenter, 'ignored', o.opp.title, o.id);
+      if (!t.passable) answer(w, o.presenter, 'ignored', o.opp.title, o.id, o.group);
       o.result = diffWorld(before, w.full(), (id) => w.name(id));
       o.status = 'expired';
       this.rest.set(o.key, this.turn + (t.cooldown ?? 3));

@@ -21,7 +21,7 @@ describe('named presenters', () => {
     const e = only(['build-burrows', 'abolish-serfdom', 'open-corridor']);
     e.deal();
     expect(offer(e, 'build-burrows').presenter).toBe('matron-grisk');
-    expect(offer(e, 'build-burrows').opp.pitch).toMatch(/^Matron Grisk petitions: “The pups sleep three to a hollow/);
+    expect(offer(e, 'build-burrows').line).toMatch(/^The pups sleep three to a hollow/);
     expect(offer(e, 'abolish-serfdom').presenter).toBe('ada-thorne');
     expect(offer(e, 'open-corridor').presenter).toBe('guildmaster-pell');
   });
@@ -35,7 +35,7 @@ describe('named presenters', () => {
     expect(e.w.facts.tag(r.presenter, 'biology', 'species')?.value).toBe('gnoll');
     expect(e.w.facts.relations({ type: 'member_of', from: r.presenter, to: 'cohort:briar-hollow:gnoll' })).toHaveLength(1);
     expect(r.setup.join(' | ')).toMatch(/\+ person /);
-    expect(r.opp.pitch).toMatch(/^Rukk petitions/);
+    expect(e.w.name(r.presenter)).toBe('Rukk');
   });
   test('committing, refusing and ignoring are relationship facts with the presenter that persist in their record', () => {
     const e = only(['build-burrows', 'abolish-serfdom', 'open-corridor']);

@@ -5,7 +5,7 @@
 // the way on for the outcome asked for committed by tapping nothing but the run's own commit():
 //   --want saved      warn the town and hold it (fight)
 //   --want burned     ride for the hold's levy (late), then stand aside in the town: the dead fire it
-// Shots: the start (the forced outriders on the map), each edge's map with what's offered, an opportunity's detail,
+// Shots: the start (the forced outriders on the map), each edge's map with what's offered, an opportunity's petition,
 // the committed levy (⏳ on the map), the finale and the end; the dealer's report at each deal in the log.
 //
 //   node scripts/opps.mjs [--hero hoverbike|lich] [--want saved|burned] [--commit harvest|ford|none]
@@ -223,7 +223,11 @@ await run({ name: `opps-${hero}-${want}`, kind: 'behaviour', size: arg('size', '
         await sleep(2500);
         await shot(`${k}-start-map`);
         await logDeal();
-        await p.evaluate((id) => window.reclaimed.opps.commit(id), f.id);
+        await p.evaluate((id) => {
+          // (dialog2: the petition is a dialog — the script answers for the player: closes it, then commits)
+          window.reclaimed.opps.talk.close();
+          window.reclaimed.opps.commit(id);
+        }, f.id);
       } else await p.evaluate(() => void window.reclaimed.runsit.playArea());
       await sleep(600);
       s = await state();
@@ -308,7 +312,11 @@ await run({ name: `opps-${hero}-${want}`, kind: 'behaviour', size: arg('size', '
         }, res.id);
         await sleep(1200);
         await shot(`${k}-${res.template}-detail`);
-        await p.evaluate((id) => window.reclaimed.opps.commit(id), res.id);
+        await p.evaluate((id) => {
+          // (dialog2: the petition is a dialog — the script answers for the player: closes it, then commits)
+          window.reclaimed.opps.talk.close();
+          window.reclaimed.opps.commit(id);
+        }, res.id);
         await sleep(1500);
         s = await state();
         R.check(`${res.template} committed: running with its turns left`, s.running.length > 0, s.running);
@@ -327,7 +335,11 @@ await run({ name: `opps-${hero}-${want}`, kind: 'behaviour', size: arg('size', '
         }, dOpp.id);
         await sleep(1000);
         await shot(`${k}-${det}-detail`);
-        await p.evaluate((id) => window.reclaimed.opps.commit(id), dOpp.id);
+        await p.evaluate((id) => {
+          // (dialog2: the petition is a dialog — the script answers for the player: closes it, then commits)
+          window.reclaimed.opps.talk.close();
+          window.reclaimed.opps.commit(id);
+        }, dOpp.id);
         await sleep(4000);
         s = await state();
         continue;
@@ -341,7 +353,11 @@ await run({ name: `opps-${hero}-${want}`, kind: 'behaviour', size: arg('size', '
       }, o.oid);
       await sleep(1000);
       await shot(`${k}-way-detail`);
-      await p.evaluate((id) => window.reclaimed.opps.commit(id), o.oid);
+      await p.evaluate((id) => {
+          // (dialog2: the petition is a dialog — the script answers for the player: closes it, then commits)
+          window.reclaimed.opps.talk.close();
+          window.reclaimed.opps.commit(id);
+        }, o.oid);
       let shotMap = false;
       // (merge122: a journey that never arrives was a silent hang — its phase logged every 10 s)
       let jLog = Date.now();
