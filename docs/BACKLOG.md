@@ -56,7 +56,7 @@ Branch `playmodes`: herolab + places + presentation + treegen; the PlayMode cont
 | PM-4 | The woods run has no parallax (orthographic view): try the perspective (fly) camera for side views | M | open |
 | PM-5 | The canyon run: the autopilot still crashes at the exit and some hairpins; riders rarely catch a bike that runs on (spawn ahead, coming down the screen, or a slower auto speed) | S | open |
 | PM-6 | Side views: the cut's dark section fills the screen under the floor line; a lighter section colour or the dithered cut there (CAM10) | S | open |
-| PM-7 | After the treegen merge the tour's auto camera barely closes in in the woods (tour.test.ts fails: trees x2, a quarter as many) | S | gone with treegen (playmodes rebuilt without it, round 128b); tour.test to recheck |
+| PM-7 | After the treegen merge the tour's auto camera barely closes in in the woods (tour.test.ts fails: trees x2, a quarter as many) | S | open: still fails rebuilt without treegen (0.23 vs > 0.31) — it comes with `forest`'s spacing (FLO31), passes on 08d0894 |
 | PM-8 | Abilities in the drawer (the brief's list): not built; the heroes' own buttons only | S | open |
 | PM-9 | The course is built from its own column functions over the route, not the world's generators (mapgen, the level kit): fast to shape for the experiments; port to the generators once the modes are chosen | M | open |
 
