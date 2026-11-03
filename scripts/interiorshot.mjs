@@ -56,18 +56,18 @@ await run({ name: 'interiorshot', kind: 'behaviour', size: '412x915', dpr: 1, ec
       await sleep(s === 0 ? 5000 : 1500);
       await p.screenshot({ path: `${OUT}/${out}-storey${s}-${tod}.png` });
     }
-    // two talking: wait for a talk, go to its storey, shoot with the bubble up
-    const ts = await p.waitForFunction(() => window.reclaimed.interiorPeople.talkingStorey() >= 0 && document.querySelector('.int-bubble'), { timeout: 60000, polling: 200 }).then(() => p.evaluate(() => window.reclaimed.interiorPeople.talkingStorey())).catch(() => -1);
+    // two talking: wait for a talk's first line, go to its storey and shoot it; then its answer
+    const P = () => window.reclaimed.interiorPeople;
+    const ts = await p.waitForFunction(() => window.reclaimed.interiorPeople.talkLine() === 1, { timeout: 90000, polling: 100 }).then(() => p.evaluate(() => window.reclaimed.interiorPeople.talkingStorey())).catch(() => -1);
+    void P;
     if (ts >= 0) {
       await p.evaluate((k) => window.reclaimed.interior.setStorey(k), ts);
-      await sleep(900);
-      await p.screenshot({ path: `${OUT}/${out}-talk-${tod}.png` });
-      // (and the reply: the next line's bubble)
-      const n0 = await p.evaluate(() => window.reclaimed.interiorPeople.stats.lines);
-      await p.waitForFunction((n) => window.reclaimed.interiorPeople.stats.lines > n, { timeout: 15000, polling: 100 }, n0).catch(() => {});
       await sleep(700);
+      await p.screenshot({ path: `${OUT}/${out}-talk-${tod}.png` });
+      await p.waitForFunction(() => window.reclaimed.interiorPeople.talkLine() >= 2, { timeout: 15000, polling: 100 }).catch(() => {});
+      await sleep(600);
       await p.screenshot({ path: `${OUT}/${out}-talk-reply-${tod}.png` });
-    } else R.log('  no talk in 60 s');
+    } else R.log('  no talk in 90 s');
     const ps = await p.evaluate(() => window.reclaimed.interiorPeople?.stats);
     R.log(`  people: ${JSON.stringify(ps)}`);
     await p.evaluate(() => window.reclaimed.interior.setStorey(0));

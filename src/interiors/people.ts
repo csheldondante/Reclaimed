@@ -327,6 +327,11 @@ export class InteriorPeople {
     return this.convo ? this.convo.a.storey : -1;
   }
 
+  /** the lines said so far in the talk going on (-1: none) */
+  talkLine(): number {
+    return this.convo ? this.convo.i : -1;
+  }
+
   /** (set by the scene: the storey shown, -1 on the street — no one inside is seen then) */
   shown = -1;
 
