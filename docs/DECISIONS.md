@@ -449,6 +449,7 @@ each was implemented.
 - → My mistake: I read "defer" (round 120) as keeping jb6 off places. jb6 (the GPU making every change to the columns; no CPU read-back on the hot path) merges into places through the gate. PH1, the proper physics engine, stays future work.
 - The user, verbatim: "Yes please and we need to get back to hero lab and start testing and improving the hero gameplay" → the finished branches (dialog2, encounters, interiors, forest) merge after jb6, each through the gate; herolab brought up to date with places, the knight added, and made a phone test bench with a test card for the user.
 - The user, verbatim: "Specifically I think the knight could use a jump button and maybe a tap to lock on to enemies so we can do platforming and moves like a jump attack" → the knight gets a jump button (real height, a jump course on the station), a jump attack as its own state, and a tap to lock onto an enemy (aim and lunges lean fully toward it; a tap elsewhere releases).
+- The user, verbatim: "We should also experiment with parrying and add back in the grapling hook gun." → parry as lab variants to compare (a timed parry button, a swipe into the wind-up, hold-to-block with a perfect window; iso-adventure's timings), a parried enemy opened; the grappling hook gun on the knight (the bike's hook reused: yank foes, zip to ledges and over gaps and water). The knight's pass lands in milestones (lunge, enemies, jump and lock-on, parry and hook), each merged into the hero lab.
 
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
