@@ -58,6 +58,8 @@ export class PlaySession {
   private deadT = 0;
   /** (round 120, PL20) the chase camera's framing: the lead ahead of the hero and the zoom (play/core/chase.ts) */
   readonly chase = new Chase(DEFAULT_CHASE, 30);
+  /** (knight pass 2) the view's offset toward what the hero keeps framed, eased */
+  private frameOff: [number, number] = [0, 0];
   /** where the hero was last frame (its velocity for the framing: any hero, whatever moves it) */
   private last: [number, number] | null = null;
   private keepFresh: (() => void) | null = null;
@@ -203,6 +205,22 @@ export class PlaySession {
     const k = 1 - Math.exp(-this.chase.f.follow * dt);
     cam.target[0] = p[0] + this.chase.lead[0];
     cam.target[1] = p[1] + this.chase.lead[1];
+    // (knight pass 2) a point the hero keeps framed (a locked enemy): the view eased toward between them — a third of the
+    // way, at most 4 cells, so both stay on screen at the knight's zoom
+    const fr = h.framing();
+    if (fr) {
+      const fx = fr[0] - p[0];
+      const fy = fr[1] - p[1];
+      const fl = Math.hypot(fx, fy);
+      const k3 = fl > 0 ? Math.min(fl / 3, 4) / fl : 0;
+      this.frameOff[0] += (fx * k3 - this.frameOff[0]) * Math.min(1, dt * 4);
+      this.frameOff[1] += (fy * k3 - this.frameOff[1]) * Math.min(1, dt * 4);
+    } else {
+      this.frameOff[0] *= Math.max(0, 1 - dt * 4);
+      this.frameOff[1] *= Math.max(0, 1 - dt * 4);
+    }
+    cam.target[0] += this.frameOff[0];
+    cam.target[1] += this.frameOff[1];
     cam.target[2] += (p[2] - cam.target[2]) * k;
     // (a jolt: the view knocked about by the hero's shake, a few cells at most, gone in a quarter second)
     if (h.shake > 0) {

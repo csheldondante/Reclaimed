@@ -24,6 +24,8 @@ export class Controls {
   private ended: Thumb[] = [];
   private strokes = 0;
   private held: boolean[];
+  /** each button's desktop key */
+  private keyOf: string[];
   private pressed: boolean[];
   private stick: { id: number; centre: Pt; at: Pt } | null = null;
   private ring: HTMLDivElement;
@@ -49,11 +51,15 @@ export class Controls {
     this.ring = div('play-stick', this.el);
     this.knob = div('play-knob', this.ring);
     this.held = pad.buttons.map(() => false);
+    this.keyOf = pad.buttons.map((b, i) => b.key ?? BUTTON_KEYS[i] ?? '');
     this.pressed = pad.buttons.map(() => false);
     pad.buttons.forEach((action, i) => {
       const btn = document.createElement('button');
-      btn.className = 'play-btn';
-      btn.style.bottom = `calc(${20 + i * 92}px + env(safe-area-inset-bottom))`;
+      btn.className = action.big ? 'play-btn big' : 'play-btn';
+      // (knight pass 2: a hero may lay its buttons out as a cluster under the right thumb)
+      const [right, bottom] = action.at ?? [16, 20 + i * 92];
+      btn.style.bottom = `calc(${bottom}px + env(safe-area-inset-bottom))`;
+      btn.style.right = `max(${right}px, calc(env(safe-area-inset-right) + ${right}px))`;
       btn.innerHTML = `<span>${action.icon}</span><small>${action.name}</small>`;
       this.el.append(btn);
       this.btns.push({ el: btn, ring: div('play-btn-ring', btn) });
@@ -116,7 +122,7 @@ export class Controls {
       if ((e.target as HTMLElement | null)?.tagName === 'INPUT') return;
       const key = e.key.toLowerCase();
       this.keys.add(key);
-      const b = BUTTON_KEYS.indexOf(key);
+      const b = this.keyOf.indexOf(key);
       if (b >= 0 && b < this.pressed.length) this.pressed[b] = true;
     }, sig);
     window.addEventListener('keyup', (e) => this.keys.delete(e.key.toLowerCase()), sig);
@@ -182,7 +188,7 @@ export class Controls {
   /** Each button (or its key) held, or pressed since the last call. */
   buttons(): boolean[] {
     if (this.script) return this.held.map((_, i) => !!this.script!.buttons[i]);
-    const b = this.held.map((h, i) => h || this.pressed[i] || this.keys.has(BUTTON_KEYS[i] ?? ''));
+    const b = this.held.map((h, i) => h || this.pressed[i] || this.keys.has(this.keyOf[i] ?? ''));
     this.pressed.fill(false);
     return b;
   }
@@ -195,6 +201,8 @@ export class Controls {
       b.ring.style.display = l.gauge === undefined ? 'none' : '';
       if (l.gauge !== undefined) b.ring.style.setProperty('--g', String(Math.max(0, Math.min(1, l.gauge))));
       b.el.classList.toggle('lit', !!l.lit);
+      const disp = l.hidden ? 'none' : '';
+      if (b.el.style.display !== disp) b.el.style.display = disp;
       if (l.icon !== undefined || l.name !== undefined) {
         const html = `<span>${l.icon ?? this.pad.buttons[i].icon}</span><small>${l.name ?? this.pad.buttons[i].name}</small>`;
         if (b.html !== html) {

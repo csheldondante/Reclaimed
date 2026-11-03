@@ -41,6 +41,9 @@ const CAP_NO_BURN: u32 = 1u;
 const CAP_NO_DROWN: u32 = 2u;
 const CAP_ROOTED: u32 = 4u;
 const CAP_FLEE: u32 = 8u;
+// (knight pass 2) blocks but in its own wind-up, down, or from above; dodges but down (units.wgsl)
+const CAP_GUARD: u32 = 16u;
+const CAP_EVADE: u32 = 32u;
 
 @group(0) @binding(7) var<storage, read_write> units: array<vec4<f32>>;
 @group(0) @binding(13) var<storage, read_write> events: array<atomic<u32>>;

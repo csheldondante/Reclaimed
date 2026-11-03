@@ -116,3 +116,28 @@ describe('sticky aim', () => {
     expect(1.4 - b).toBeLessThanOrEqual((14 * Math.PI) / 180 + 1e-6);
   });
 });
+
+// (knight pass 2) a tap locks on: it must never be read from a swipe or a draw, nor a swipe from a tap
+describe('a tap (the lock-on) against a swipe and a draw', () => {
+  const read = (mode: ThumbMode, pts: Pt[], secs: number): ThumbEvent['kind'][] => {
+    const r = new ThumbReader(mode, { at: pts[0], t: 0 });
+    pts.slice(1).forEach((p, i) => r.move({ at: p, t: ((i + 1) / (pts.length - 1)) * secs }));
+    r.end({ at: pts[pts.length - 1], t: secs });
+    return r.drain().map((e) => e.kind);
+  };
+  it('sword: a thumb that wobbles under tapMove and lifts quickly is a tap, not a strike', () => {
+    expect(read('sword', [[100, 100], [104, 103], [108, 105]], 0.15)).toEqual(['tap']);
+  });
+  it('sword: between a tap and a swipe (20 px) is neither; a swipe (30 px) strikes and is no tap', () => {
+    expect(read('sword', [[100, 100], [110, 100], [120, 100]], 0.15)).toEqual([]);
+    expect(read('sword', [[100, 100], [116, 100], [132, 100]], 0.1)).toEqual(['strike']);
+  });
+  it('sword: a press held past tapTime is no tap', () => {
+    expect(read('sword', [[100, 100], [102, 100]], THUMB.tapTime + 0.1)).toEqual([]);
+  });
+  it('bow: a quick tap is a tap; a draw past slingDead looses, no tap', () => {
+    expect(read('bow', [[100, 100], [103, 102]], 0.12)).toEqual(['tap']);
+    const k = read('bow', [[100, 100], [80, 100], [40, 100]], 0.6);
+    expect(k).toEqual(['loose']);
+  });
+});

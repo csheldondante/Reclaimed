@@ -61,6 +61,7 @@ export class PlaySandbox {
   readonly rivals: Rival[] = [];
   /** (knight, round 128) the test station's tools, with ?station=1 */
   station: Station | null = null;
+  private lastToast: HTMLElement | null = null;
 
   private constructor(
     readonly d: SandboxDeps,
@@ -278,7 +279,10 @@ export class PlaySandbox {
   }
 
   private toast(text: string): void {
+    // (KN-R1: one at a time — a second toast (a hero chosen, then the station's spot) was showing through behind the first)
+    this.lastToast?.remove();
     const t = el('div', 'play-toast', this.d.ui);
+    this.lastToast = t;
     // (inline: the UI layer's own rules give its children pointer events, and a toast over the middle ate the lich's taps)
     t.style.pointerEvents = 'none';
     t.textContent = text;

@@ -2205,6 +2205,33 @@ one held and those let go, with `endedAt`) and `PlayInput.basis` (the camera's s
 reads a stroke while it's drawn; `ButtonLook.icon`/`name` (a button whose label follows the hero's state). The bike and
 the lich ignore them. The sandbox's tune panel now follows `PlaySession.heroId` (it guessed bike-or-lich by role).
 
+#### Pass 2 (round 128): the lunge, the guard and the lunger, jump, lock-on, parry, the hook gun
+
+| part | what |
+|---|---|
+| core/slip.ts | a slash's dash through a crowd: `slip` (turn ≤ 14° toward room, carry on past a body it would end in), `aside` (a dash's blow knocks out of its line). Pure |
+| heroes/knight.ts | the knight's states, each its own: idle, swing (with its `dash`), dodge, draw, spin, `jump` (its own gravity up and down, air steer), `plunge` (the jump attack: a dive at `vel`), `land` (the slam's lag). The lock (`lock`, `locked()`, `framing()`), the parry variants (`parryMode` 0-3; `take(damage, from, by)`), the hook gun (`hook`: heroes/hook.ts), the blows turned aside (`turnedBack`, from PlayUnits.turned) |
+| heroes/hook.ts | the one grappling hook, now over a `HookBody` (the bike's Bike or the knight's Foot): the bike's swing, line and alongside; the knight's `zip(at)` and `yank(foe)` |
+| sandbox/station.ts | + Guards, Lungers, Mixed (a ring of them), Course (stone steps, a gap, a ledge with a raider), the parry variant chips; the readout's landed / blocked / dodged from the units' own events |
+| perf/knightbench.ts | `?knightbench=1`: the phone bench (see Benchmark) |
+
+The enemies that turn blows aside are the units' (one enemy system): **the guard** (AgentUnits kind 'blocker', agents
+kind 7) and **the lunger** ('lunger', agents kind 1 — the agents' default raider slot; with AgentUnits on them
+`kindId('raider')` finds its raider, 5). Their stats are units/agent-units.ts `GUARDS`; their rules are traits:
+
+| | blocks / dodges | open | its attack | tells |
+|---|---|---|---|---|
+| guard (`guarded` → CAP_GUARD) | every blow blocked: no damage, throw or stun; shoved back ≤ 3.5 cells/s | its own wind-up (0.7 s), down, a blow from above (`overhead`) | stands and swings at reach 1.45, every 1.6 s | a steel block held in front; flashes in the wind-up (the block gone); stars when down |
+| lunger (`evasive` → CAP_EVADE) | every blow dodged: a 4.5 cells/s sidestep across it | down (after its lunge: 0.6 + 0.9 s; or thrown, by a parry, a yank, the wind) | 4 cells off: a 0.45 s crouch, a leap at ≤ 13 cells/s, its blow in flight | flashes in the crouch; dives flat, lies face down; stars when down |
+
+Contract changes: traits.ts INTRINSIC + `guarded`, `evasive`; units.ts AreaHit `overhead`, Units `blocked?` listeners,
+`release?(id, vel, { stun })`; agents.ts KindSpec `windup`, `lunge`, HitSpec `overhead`, AgentEvent `blocked`, Kind's
+fourth vec4 `d` (agents.wgsl ↔ agents.ts KIND_WORDS 16); units.wgsl CAP_GUARD 16, CAP_EVADE 32 (prelude.wgsl,
+game/traits/modules.ts CAP mirror them), EV_BLOCK 8; play/world.ts PlayUnits `turned()`, `release(id, vel, stun)`,
+PlayWorld `cue?` (a sound hook: no sound system plays it yet); input/types.ts PadButton `key`, `at`, `big`, ButtonLook
+`hidden`; PlayHero `framing()`, `take(damage, from, by?)`. AgentUnits takes the trait system (`new AgentUnits(agents,
+traits)`): without it, spawning a guard or a lunger throws.
+
 ## Things and diplomacy (round 85, src/api/contracts)
 
 - **recipe.ts.** Everything made is an `Instance` of a `Kind` (tags, base stats, slots). Its `parts` fill slots by
@@ -2501,6 +2528,15 @@ cheap pool of light ("Yes absolutely enough"). One concern a file:
   slide, `refresh(true)`); `?mirror=full` reads everything every time.
 
 ## Benchmark (round 101, branch `bench`)
+
+**The knight's bench (knight pass 2, round 128): `?knightbench=1`** on the knight's station
+(https://csheldondante.github.io/Reclaimed/knight/?skipmenu=1&level=atlas&play=knight&station=1&tutorial=0&knightbench=1):
+src/perf/knightbench.ts, on bench.ts's Panel, keepAwake, deviceFacts and reportButtons. Six pages by reload — no
+enemies, 7 raiders, a mixed wave (3 raiders, 2 guards, 2 lungers), then the same back (matched pairs) — each 20 s to
+settle, then 15 s of a scripted fight (the stick round a circle, a swipe every 0.4 s, a jump every 3 s): frame
+p50/p95/p99, the GPU frame where timed, the play layer's main-thread ms, the units' sync ms and count, the knight's
+counts. State in localStorage `reclaimed.knightbench` (cleared at the end), the last report in
+`reclaimed.knightbench.last`.
 
 **How to run it on the phone.** Plug the Pixel in if you can, open
 https://csheldondante.github.io/Reclaimed/bench/?bench=1 in Chrome, tap **Start benchmark** and put the phone down

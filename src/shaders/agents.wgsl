@@ -70,13 +70,16 @@ struct AgentParams {
  * A kind of unit: a (height, mass, hp, speed), b (reach, damage, swing
  * period s, notice: 0 a worker that always follows its field; else how far
  * along the field it notices a target), c (legs, head, torso materials;
- * torso 0: its group's colour)
+ * torso 0: its group's colour), d (knight pass 2, round 128: the wind-up s before
+ * its blow lands, 0: SWING_HIT; a lunge's speed cells/s, 0: it swings where it
+ * stands; the lunge's hop cells/s up; the stun s it lies down after a lunge)
  */
-struct Kind { a: vec4<f32>, b: vec4<f32>, c: vec4<u32> };
+struct Kind { a: vec4<f32>, b: vec4<f32>, c: vec4<u32>, d: vec4<f32> };
 /**
  * A hit from the game: a (x, y, z, radius), b (the push's direction xy, cos
- * of the cone's half angle: -2 a circle, damage), c (push cells/s, 1 outward
- * else along the direction, 1 sets alight, its id), d (the cone's axis xy)
+ * of the cone's half angle: -2 a circle, damage), c (push cells/s; y: bit 0
+ * outward else along the direction, bit 1 overhead — from above, past a guard's
+ * shield (knight pass 2); 1 sets alight, its id), d (the cone's axis xy)
  */
 struct Hit { a: vec4<f32>, b: vec4<f32>, c: vec4<f32>, d: vec4<f32> };
 @group(0) @binding(10) var<uniform> AP: AgentParams;

@@ -46,6 +46,14 @@
   pointer-events: auto;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
 }
+.play-btn.big {
+  width: 88px;
+  height: 88px;
+}
+.play-btn.big .play-btn-ring {
+  -webkit-mask: radial-gradient(circle, transparent 42px, #000 43px);
+  mask: radial-gradient(circle, transparent 42px, #000 43px);
+}
 .play-btn span {
   font-size: 30px;
   line-height: 1;
@@ -118,7 +126,8 @@
 .play-toast {
   position: absolute;
   left: 50%;
-  top: 30%;
+  /* (KN-R1: above the hero, below the station's card — at 30% it sat over the hero at the start) */
+  top: 22%;
   transform: translateX(-50%);
   max-width: min(88vw, 520px);
   padding: 10px 14px;
@@ -225,9 +234,17 @@
   z-index: 5;
 }
 .play-station-row {
+  flex-wrap: wrap;
   display: flex;
   gap: 6px;
   margin-bottom: 4px;
+}
+.play-station-label {
+  align-self: center;
+  opacity: 0.8;
+}
+.play-chip.on {
+  background: rgba(214, 120, 40, 0.85);
 }
 .play-station-read {
   white-space: pre-line;

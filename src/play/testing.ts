@@ -7,7 +7,7 @@
 import type { AreaHit, UnitId, UnitView, V3 } from '../api/contracts/units';
 import type { Pt } from './core/gestures';
 import type { Act, Drag, PlayInput } from './input/types';
-import type { Blow, PlayWorld, Vehicle } from './world';
+import type { Blow, PlayWorld, Turned, Vehicle } from './world';
 
 export const PX = 20;
 
@@ -25,6 +25,13 @@ export interface TestWorld extends PlayWorld {
   craters: { x: number; y: number; r: number }[];
   blasts: number;
   add(at: [number, number], health?: number): UnitId;
+  /** (knight pass 2) report a blow on unit `id` turned aside (as AgentUnits' blocked event), `dodged` or blocked */
+  turn(id: UnitId, dodged: boolean): void;
+  turnedList: Turned[];
+  /** (knight pass 2) every release (a throw, a parry's stagger, a hook's reel) */
+  releases: { id: UnitId; vel?: V3; stun?: number }[];
+  /** (knight pass 2) a unit's state as the view shows it (default 'idle'): set 'swing' for one winding up */
+  state: Map<UnitId, UnitView['state']>;
   /** move the units a step (released ones fly and land) */
   tick(dt: number): void;
 }
@@ -33,8 +40,10 @@ export function testWorld(height: (x: number, y: number) => number, opts: { wate
   const list: FakeUnit[] = [];
   const strikes: AreaHit[] = [];
   const craters: { x: number; y: number; r: number }[] = [];
+  const turnedList: Turned[] = [];
+  const releases: { id: UnitId; vel?: V3; stun?: number }[] = [];
   let next = 1;
-  const view = (u: FakeUnit): UnitView => ({ id: u.id, kind: 'raider', role: 'raider', faction: null, at: [...u.at], heading: 0, health: u.health, maxHealth: 3, hostile: true, alive: u.health > 0, job: { kind: 'idle' }, state: 'idle', colour: '#fff' });
+  const view = (u: FakeUnit): UnitView => ({ id: u.id, kind: 'raider', role: 'raider', faction: null, at: [...u.at], heading: 0, health: u.health, maxHealth: 3, hostile: true, alive: u.health > 0, job: { kind: 'idle' }, state: w.state.get(u.id) ?? 'idle', colour: '#fff' });
   const blow = (): Blow => ({ set: () => {}, stop: () => {}, alive: true });
   const w: TestWorld = {
     list,
@@ -63,13 +72,22 @@ export function testWorld(height: (x: number, y: number) => number, opts: { wate
         u.at = [...at];
         return true;
       },
-      release: (id, vel) => {
+      release: (id, vel, stun) => {
+        releases.push({ id, vel, stun });
         const u = list.find((v) => v.id === id);
         if (!u) return;
         u.held = false;
         u.vel = vel ? [...vel] : [0, 0, 0];
       },
       maxHeld: opts.maxHeld ?? 8,
+      turned: () => turnedList,
+    },
+    turnedList,
+    releases,
+    state: new Map(),
+    turn(id, dodged) {
+      const u = list.find((v) => v.id === id)!;
+      turnedList.push({ seq: turnedList.length + 1, id, at: [...u.at], dodged });
     },
     burst: () => {},
     wake: () => {},

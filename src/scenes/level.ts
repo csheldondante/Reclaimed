@@ -1766,7 +1766,8 @@ export class LevelScene implements Scene {
       // first window); lived in near the camera — their people as units on the agents
       const st = a?.settlements;
       if (st) {
-        const units = new AgentUnits(this.agents);
+        // (knight pass 2) with the trait system: the guard and the lunger turn blows aside by their traits
+        const units = new AgentUnits(this.agents, this.traits);
         // (LW1) the walking dead are undead (AgentUnits' 'shambler' kind): the sanctuary burns them, raise passes them by
         this.traits.kindTraits('shambler', ['undead']);
         this.units = units;

@@ -184,6 +184,9 @@ async function main() {
   if (params.get('florabench') === '1') void import('./flora/bench').then((m) => m.floraBench(params));
   // (round 120: ?physbench=1 — the physics phone bench, every solver × judge on the playground: src/perf/physbench.ts)
   if (params.get('physbench') === '1') void import('./perf/physbench').then((m) => m.physBench(params));
+  // (knight pass 2, round 128: ?knightbench=1 — the knight's station under a scripted fight, no enemies / raiders / a mixed
+  // wave as matched pairs by reload: src/perf/knightbench.ts)
+  if (params.get('knightbench') === '1') void import('./perf/knightbench').then((m) => m.knightBench(params));
   if (pageBench === 'run') void pageBenchRun();
   if (bench === 'level')
     void benchLevel({

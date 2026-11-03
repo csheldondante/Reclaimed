@@ -32,10 +32,22 @@ Branch `knight` (c0eeb74): swipe slashes with a lunge and aim lean, the bow draw
 
 | id | item | size | status |
 |---|---|---|---|
-| KN-Q1 | Should every slash lunge further, or is the double swipe the lunge the user remembers? | S | asked |
+| KN-Q1 | Should every slash lunge further, or is the double swipe the lunge the user remembers? | S | answered (round 128: "we want the default lunge to be further"): every slash dashes 1.6 cells (finisher 2.4, double swipe 4.8), slipping through a crowd — `knight` pass 2 M1 |
 | KN-Q2 | Three buttons (dodge, weapon switch, second move), or one weapon button where a tap fires the second move? | S | asked |
 | KN-Q3 | The shield block and the hook vault next? | S | asked |
-| KN-R1 | Main's review: the station's help card sits over the hero at the start, with a second copy of the text showing through behind it. | S | open |
+| KN-R1 | Main's review: the station's help card sits over the hero at the start, with a second copy of the text showing through behind it. | S | done (`knight` pass 2 M1: one toast at a time, at 22%) |
+| KN-1 | Round 128: the lunge goes further and through a crowd (every slash a dash; knocked aside; slip between bodies) | M | done (`knight` pass 2 M1) |
+| KN-2 | Round 128: enemies that block except in their wind-up (the guard) and that dodge except when down after their lunge (the lunger), on the units and traits, with tells | L | done (`knight` pass 2 M2) |
+| KN-3 | Round 128: JUMP (platforming up ledges), the jump attack, tap to lock on | M | done (`knight` pass 2 M3) |
+| KN-4 | Round 128: parry variants to compare (button, swipe in the wind-up, hold to block) — the user to pick one | M | done as variants (`knight` pass 2 M4); asked which |
+| KN-5 | Round 128: the grappling hook gun on the knight (yank a foe, zip to a ledge; the bike's hook shared) | M | done (`knight` pass 2 M4) |
+| KN-6 | The knight's phone bench `?knightbench=1` (no enemies / raiders / mixed wave): the user to run it | S | open (the user) |
+| KN-7 | Arrows are blocked and dodged like any blow — keep, or let a full draw break a guard's block? | S | asked |
+| KN-8 | Jump-attack from above opens a guard (not a lunger) — keep? | S | asked |
+| KN-9 | The hook pulls the knight to a foe too heavy to yank (an ogre, a vehicle)? Units have no weight in their view yet | S | open |
+| KN-10 | A tap means lock-on with the sword or bow, but fire with the hook in hand — one meaning for a tap instead? | S | asked |
+| KN-11 | Sound: the `cue` hook (block, dodge, parry, jump, land, slam, lock, hook) has no sound system to play it | M | open |
+| KN-12 | The floor model: play heroes stand on the top surface (Terrain.heightAt) — under an overhang, a bridge or into a cave they can't go (HL5) | M | open |
 
 ## Round 126 (2026-11-02, session 5, `interiors`) — the first full interior: town s84's hall (DECISIONS round 126)
 
@@ -220,8 +232,8 @@ The user: "I think just make a new layer you own so I can work from one session"
 | PL3 | The play sandbox: ?skipmenu=1&level=atlas&play=hoverbike (or lich) — hero switch, live tune panel with the profile, spawn raiders, respawn; phone controls | M | done (play) — for the user to try on the phone |
 | PL4 | scripts/perf/play.mjs (timing, phone proxy) and scripts/playtest.mjs (behaviour, GIFs) | S | done (play) |
 | PL5 | Port the knight (delving: sword flicks, lunge, spin, bow, hook vault), then the gorilla, tank, mech, as play heroes with profiles | L | done for the knight (`knight`, round 128: sword swipes with lunges and the aim lean, the combo, the double-swipe lunge, the spin flicked as a top, the bow drawn back, volley, dodge; `?play=knight&station=1`); the hook vault is PL33, the gorilla, tank and mech PL39 |
-| PL33 | The knight's hook vault (iso-adventure's hookshot/grapple: over gaps and water, foes yanked in) — the bike's heroes/hook.ts is the start | M | open |
-| PL34 | The knight's shield: hold still to block, a block just in time staggers the attacker (iso-adventure SHIELD, perfectWindow 0.16 s) — left out of round 128 as the user didn't ask for it | S | open |
+| PL33 | The knight's hook vault (iso-adventure's hookshot/grapple: over gaps and water, foes yanked in) — the bike's heroes/hook.ts is the start | M | done as the hook gun (`knight` pass 2 M4, KN-5) |
+| PL34 | The knight's shield: hold still to block, a block just in time staggers the attacker (iso-adventure SHIELD, perfectWindow 0.16 s) — left out of round 128 as the user didn't ask for it | S | done as the parry variants (`knight` pass 2 M4, KN-4) |
 | PL35 | A hero body from the character generator: what the generator lacks (a pose of one body driven from outside — its animation is a GPU kernel for groups; hand targets; a held-item slot that isn't a rigid bone; voxel materials for its colours). play/draw/rigpose.ts poses the rig on the CPU meanwhile | M | open |
 | PL36 | The gauntlet for the characters (the user, round 127): rooms keyed to each hero's capabilities (iso-adventure gen/gauntlet.ts), grown from the knight's station — the design with the user first | L | open (design talk) |
 | PL37 | Enemies that can chase the bike: raiders on bikes or mounts (the user, round 127: "the encounter system is struggling with enemies that can chase the bike") | M | open |
