@@ -1987,9 +1987,20 @@ export class LevelScene implements Scene {
     if (under && this.host.params.get('forest') === 'lab') {
       const { ForestLab } = await import('../forest/lab');
       const c = this.core.camera.target;
-      const lab = await ForestLab.start({ ui: this.host.ui, session: this.play.session, plants: api.plants!, driver: under, params: this.host.params, near: [c[0], c[1]], eye: this.groundEye(), setSeason: (s) => (this.core.globals.season = s) });
+      const lab = await ForestLab.start({ ui: this.host.ui, session: this.play.session, plants: api.plants!, driver: under, params: this.host.params, near: [c[0], c[1]], eye: this.groundEye(), wind: this.labWind(), setSeason: (s) => (this.core.globals.season = s) });
       this.core.onShift.push((dx, dy) => lab.shift(-dx, -dy));
     }
+  }
+
+  /** (round 125, forest) the forest station's test winds: the weather's prevailing wind and a gust */
+  private labWind() {
+    const W = this.core.weather;
+    const G = this.core.globals;
+    return {
+      base: (): [number, number] => [W.params.baseWindX, W.params.baseWindY],
+      setBase: (b: [number, number]) => ((W.params.baseWindX = b[0]), (W.params.baseWindY = b[1])),
+      gust: (g: { x: number; y: number; radius: number; strength: number; dx: number; dy: number; len: number }) => G.gusts.push(g),
+    };
   }
 
   /** (round 125, forest) the ground way toward the eye (unit): the forest station frames its shots by it */

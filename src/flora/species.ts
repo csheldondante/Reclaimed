@@ -316,8 +316,9 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     roots: { half: 6, depth: 4, res: 0.45, generations: 12, growth: 0.6, down: 0.1, maxCells: 160, trunkRadius: 1.55 },
     flare: { count: 6, rise: 2.0, reach: 2.4, sprawl: 1.6 },
     colours: {
-      bark: C(0.78, 0.76, 0.72),
-      barkMark: C(0.52, 0.5, 0.5),
+      // (warm pale, the reference's beech: a grey-white with ochre in it)
+      bark: C(0.84, 0.8, 0.72),
+      barkMark: C(0.5, 0.47, 0.44),
       leafDark: C(0.42, 0.06, 0.05),
       leafLight: C(0.86, 0.24, 0.1),
       // (the fall: a deeper red-orange, so the wood stays the reference's red and orange, not all orange)

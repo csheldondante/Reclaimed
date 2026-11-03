@@ -75,6 +75,26 @@ await run({ name: 'forestshot', kind: 'behaviour', size: '412x915', dpr: 1, echo
     await p.screenshot({ path: f });
     R.log(`saved ${f}`);
   };
+  // --wind "sway,1A1C": per wind mode (a reload each), the station held out at the overworld's zoom, a gust run across the
+  // stand, a GIF of the canopy in it (the foliage matrix's matched-time clips)
+  if (R.opt('wind', null)) {
+    for (const m of R.opt('wind').split(',')) {
+      const p = await R.level({ level: 'atlas', at, play: 'lich', forest: 'lab', fseason: season, fwind: m, fride: '0', fhold: 'out', ...extra });
+      await p.waitForFunction(() => window.reclaimed?.forest?.stand, { timeout: 120000, polling: 500 });
+      await p.evaluate(() => {
+        const r = window.reclaimed;
+        r.play.session.hero.place(r.forest.stand.park ?? r.forest.stand.at);
+      });
+      await sleep(settle);
+      await p.evaluate(() => window.reclaimed.forest.gust());
+      await sleep(400);
+      const g = `${out}/${tag}-wind-${m}.gif`;
+      await gif(p, g, Number(R.opt('frames', '30')), Number(R.opt('every', '120')));
+      R.log(`saved ${g}`);
+      await p.close();
+    }
+    return;
+  }
   if (!R.flag('lab')) {
     const p = await R.level({ level: 'atlas', at, ...extra });
     await p.evaluate((s) => (window.reclaimed.globals.season = Number(s)), season);

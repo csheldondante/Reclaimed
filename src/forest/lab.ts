@@ -26,6 +26,11 @@ export interface ForestLabDeps {
   setSeason?: (s: number) => void;
   /** the ground way toward the eye (unit; the camera's) */
   eye?: V2;
+  /**
+   * (the foliage matrix's test winds: docs/design/FOLIAGE_WIND.md "a deterministic traveling gust, a strong steady wind,
+   * and a direction reversal") the weather's prevailing wind (cells/s), and a gust pushed as the player's drag makes one
+   */
+  wind?: { base(): V2; setBase(w: V2): void; gust(g: { x: number; y: number; radius: number; strength: number; dx: number; dy: number; len: number }): void };
 }
 
 const KEYS: (keyof UnderstoryTreatments)[] = ['canopy', 'dither', 'dapple', 'rays', 'mist', 'leaves'];
@@ -96,6 +101,21 @@ export class ForestLab {
     };
     for (const k of KEYS) chip(k, () => d.driver.treatments[k] > 0, () => (d.driver.treatments[k] = d.driver.treatments[k] > 0 ? 0 : 1));
     chip('ride', () => this.ride, () => (this.ride = !this.ride));
+    // (the matrix's winds: a gust front run across the stand; a gale (the prevailing wind x3); the wind turned round)
+    if (d.wind) {
+      const w = d.wind;
+      const calm = w.base();
+      chip('gust', () => false, () => this.gust());
+      chip('gale', () => Math.hypot(...w.base()) > Math.hypot(...calm) * 2, () => {
+        const b = w.base();
+        const strong = Math.hypot(...b) > Math.hypot(...calm) * 2;
+        w.setBase(strong ? [Math.sign(b[0]) * Math.abs(calm[0]), Math.sign(b[1]) * Math.abs(calm[1])] : [b[0] * 3, b[1] * 3]);
+      });
+      chip('reverse', () => w.base()[0] * calm[0] < 0, () => {
+        const b = w.base();
+        w.setBase([-b[0], -b[1]]);
+      });
+    }
     chip('hold in', () => d.driver.force === 1, () => (d.driver.force = d.driver.force === 1 ? null : 1));
     chip('hold out', () => d.driver.force === 0, () => (d.driver.force = d.driver.force === 0 ? null : 0));
     this.panel.append(chips);
@@ -150,6 +170,23 @@ export class ForestLab {
       this.raf = requestAnimationFrame(tick);
     };
     this.raf = requestAnimationFrame(tick);
+  }
+
+  /** a gust front across the stand, downwind, for 2.5 s (as florashot's: the wind field's impulse, the player's kind) */
+  gust(): void {
+    const w = this.d.wind;
+    const s = this.stand;
+    if (!w || !s) return;
+    const b = w.base();
+    const l = Math.hypot(b[0], b[1]) || 1;
+    const dx = b[0] / l;
+    const dy = b[1] / l;
+    let n = 0;
+    const t = setInterval(() => {
+      const k = n / 40;
+      w.gust({ x: s.at[0] - dx * 30 + dx * 60 * k, y: s.at[1] - dy * 30 + dy * 60 * k, radius: 22, strength: 14, dx, dy, len: 16 });
+      if (++n > 40) clearInterval(t);
+    }, 60);
   }
 
   /** the window slid (WorldCore.onShift's step, negated, as the play session's): what's kept in window coordinates moves */

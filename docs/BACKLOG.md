@@ -444,6 +444,8 @@ tests work and do quick smoke tests to find failures early." docs/TESTING.md.
 | FLO35 | The elder woods are real old woods in the atlas (woods.wgsl elderWoods in forms.wgsl / lod.wgsl's succession: before, the atlas's woods were small patches, ~2% of a temperate window at 3.9+); vegetation only — seed 1's regions, sites and roads unchanged (test/gpu/seed1-unchanged.test.ts); town layouts in an elder wood plan against the new woods (settle/plan.ts dWood) | M | done (forest) |
 | FLO36 | The trees past the window (tiles.wgsl tileTrees) on the same slot grid as the window's, sized like the library's — the wood doesn't change as it leaves the window; far.wgsl's rings and the atlas map's bake still paint the old 3-unit lattice | M | first pass (forest); rings and bake open |
 | FLO37 | Particle leaves (particles.wgsl K_LEAF) over 3.5 px on screen drawn as a 7 x 7 pixel leaf tumbling (was a flat square: PRE6's finding) | S | done (forest) |
+| FLO38 | A varied wood (the user, round 125: "darker areas and streams and other effects that will feel varied and interesting"; none of it hiding the hero or the way ahead): dark groves and bright glades (understory.wgsl underGrove: the stencil's holes, the ambient, the shafts) done; streams through the floor (the flow model and the atlas's rivers through the elder woods), more to come | M | first pass (forest): groves and glades |
+| FLO39 | The wind matrix's test winds in the station: a gust front across the stand, a gale (the prevailing wind x3), a reversal (forest/lab.ts chips gust, gale, reverse); clips per mode (forestshot.mjs --wind) | S | done (forest) |
 
 ## Round 118 (2026-10-30, session 5, `places`) — found while reviewing the tracks
 

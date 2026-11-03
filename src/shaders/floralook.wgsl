@@ -93,6 +93,10 @@ fn floraLook(k: u32, part: u32, wpos: vec3<f32>, n: vec3<f32>, h: f32, rnd: f32,
       let q = vec3<i32>(floor(wpos * vec3<f32>(3.0, 3.0, 0.6)));
       let groove = randv(q) < 0.3;
       c = mix(c, markC, select(0.0, 0.8, groove) + 0.25 * fr);
+      // (value through the bark: broad pale and grey streaks up the trunk, and warm patches — the reference's beech)
+      let streak = randv(vec3<i32>(floor(wpos * vec3<f32>(0.9, 0.9, 0.22))) + vec3<i32>(3, 7, 1));
+      c *= 0.8 + 0.32 * streak;
+      c = mix(c, c * vec3<f32>(1.08, 1.0, 0.86), smoothstep(0.6, 0.9, randv(vec3<i32>(floor(wpos * 0.5)) + vec3<i32>(11, 2, 5))));
       // (roots as pale as the trunk: the reference's sprawl is the same bark)
     } else if (length(markC - c) > 0.1) {
       // birch bark: white, with dark lenticel marks across the trunk
@@ -105,7 +109,9 @@ fn floraLook(k: u32, part: u32, wpos: vec3<f32>, n: vec3<f32>, h: f32, rnd: f32,
     let moss = FLORA_COL[b + 2u].w;
     if (moss > 0.0) {
       let low = select(1.0 - smoothstep(0.004, 0.03, h), 1.0, part == 7u);
-      let m = moss * low * smoothstep(0.15, 0.6, n.z + 0.25 * (fr - 0.5));
+      // (the roots' flares mossier: a root is moss wherever it faces at all up)
+      let up = select(smoothstep(0.15, 0.6, n.z + 0.25 * (fr - 0.5)), smoothstep(-0.15, 0.35, n.z + 0.3 * (fr - 0.5)), part == 7u);
+      let m = moss * low * up;
       if (m > 0.35) { c = FLORA_ACC[k].rgb * (0.75 + 0.45 * fr); }
     }
   } else if (part == 4u) {

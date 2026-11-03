@@ -3157,26 +3157,27 @@ the atlas map's bake still use their 3-unit lattice (FLO36).
 - In: the hero's feet each frame (PlaySession.afterFrame) and the trees round it from the flora plan
   (Plants.treesNear, every 0.25 s or 3 cells moved) — no GPU readback. Out: `UnderstoryLook` (weight 0..1 eased over
   ~1 s from the canopy's cover over a disc round the hero; the canopy's underside; the hole's radius; the falling
-  leaves' colour; six treatment strengths) on `Camera.understory`; PlaySession.zoomScale (the driver's zoomUnder: 1,
-  the default zoom kept).
+  leaves' colour; six treatment strengths) on `Camera.understory`; PlaySession.zoomScale (the driver's zoomUnder:
+  0.7 under the canopy — the user: "the zoom is actually too big now (I want more vertical trunk)").
 - The renderer writes it into the eye's camera uniform (render.wgsl Camera.under, 4 vec4s in the cut block); the sun's
   camera and the tile cache's are zeroed, so shadows keep every leaf. Weight 0: every term is 1 or 0, and the
   understory's own draw is skipped (renderer.ts underOn) — the draw exactly as before.
 - **The canopy left out** (meshinst.wgsl vsInst): a tree's leaves, and its wood over the crown's base away from the
-  bole's axis, dither out with the weight round the hero (within ~50 cells) and are not drawn at all once it is whole
-  (a degenerate vertex: the fill saved). The shadow pass draws them (the light camera has no understory), so the
+  bole's axis, dither out with the weight round the hero (within ~100 cells: a crown 50 cells in front still lifts into
+  the screen) and are not drawn at all once it is whole (a degenerate vertex: the fill saved). The shadow pass draws them (the light camera has no understory), so the
   crowns' shadows and the dapple stay.
 - understory.wgsl (appended to render.wgsl as `renderWgsl` in renderer.ts):
-  - `underHide` (meshinst fsInst): a keyhole round the hero on screen through the trunks in front of it, over a stump's
-    height; the trunks round it stay whole and frame the scene. With the canopy kept, the crowns in front go too.
+  - `underHide` (meshinst fsInst; the user: "cut away the trunks in front of the PC so they look like stumps that
+    fade"): the trees between the eye and the hero (in a band along the eye's line through it) are stumps — whole to
+    1.4 cells, faded out (dithered and darkening) by 3.4; the trunks behind and beside it keep their whole height. With the canopy kept, the crowns in front go too.
   - `underDapple` (lighting's sun visibility): under the crowns' shade (the shadow map) the sun only through the
     stencil's holes — ellipses (a pinhole image of the sun, stretched along its way) of the canopy plane projected up
     the sun's ray, drifting with the wind, in three steps; gaps and clearings stay lit; a pool of light round the hero
     so its figure reads. `underGrove`: slow world-fixed noise — dark groves (few holes, deep ambient), bright glades.
   - `underAmbient`: the sky's share deeper under the crowns, by the grove. `underMist` (haze): thin, far behind only.
 - understory_draw.wgsl (its own pipelines on the draw layout, after the particles): light shafts (`vsRay`: down the
-  stencil's big holes — underFlecks' first layer, the same hashes — to the floor's big flecks; additive, banded by
-  drifting mist, in dithered steps), falling leaves (`vsLeaf`: 160 in a world-fixed box round the hero, tumbling,
+  stencil's big holes — underFlecks' first layer, the same hashes — to the floor's big flecks; soft across, fading down
+  their length, faint and additive in eight dithered steps, banded by drifting mist), falling leaves (`vsLeaf`: 160 in a world-fixed box round the hero, tumbling,
   fluttering, carried by the integrated prevailing wind G.env; a 7 × 7 pixel maple leaf), litter (`vsLitter`: 260
   fallen leaves lying round the hero, slid along by G.env × their looseness, hopping and turning where windAt is strong
   — the player's gusts too). Stateless (hashes of the instance and the time). particles_draw.wgsl draws the engine's

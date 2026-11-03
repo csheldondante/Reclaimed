@@ -58,7 +58,7 @@ fn probe(@builtin(global_invocation_id) id: vec3<u32>) {
     // a point at `d` cells toward the eye from the hero (along the ground) and `z` over the floor, on a tree whose foot is there
     const P: number[] = [];
     const at = (d: number, z: number, foot = d) => P.push(hero[0] + ex[0] * d, hero[1] + ex[1] * d, hero[2] + z, foot);
-    at(3, 6); // 0 a trunk 3 cells in front of the hero, over head height: hides the hero's floor
+    at(3, 4); // 0 a trunk 3 cells in front of the hero, over a stump's height: faded out (a stump in front)
     at(3, 1); // 1 the same trunk at its foot: a stump, kept
     at(-6, 6); // 2 a trunk 6 cells beyond the hero: kept (it frames the scene)
     // 3 a crown leaf high in front: its line from the eye lands on the hero (z / tan(elevation) cells on)
@@ -66,7 +66,7 @@ fn probe(@builtin(global_invocation_id) id: vec3<u32>) {
     at(18 * (1 / tanE), 18, 18 * (1 / tanE));
     at(40, 18, 40); // 4 a crown far in front at the canopy's height: the canopy in front goes too (the floor opens)
     at(-12, 18, -12); // 5 a crown beyond the hero: kept (the canopy overhead, at the top of the screen)
-    at(40, 4, 40); // 6 a trunk far in front, under the canopy: kept
+    at(60, 4, 60); // 6 a trunk far in front (past the screen), under the canopy: kept
     const pts = dev.createBuffer({ size: P.length * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     dev.queue.writeBuffer(pts, 0, new Float32Array(P));
     const out = dev.createBuffer({ size: (P.length / 4) * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
@@ -91,13 +91,13 @@ fn probe(@builtin(global_invocation_id) id: vec3<u32>) {
     const off = await runWith(0);
     if (process.env.FOREST_LOG) console.log('underHide on', [...on], 'off', [...off]);
     expect(g.takeErrors()).toEqual([]);
-    // the canopy left out (meshinst.wgsl's cut): only the keyhole through what stands in front of the hero
+    // the canopy left out (meshinst.wgsl's cut): the trees in front of the hero are stumps that fade
     expect(on[0]).toBeGreaterThan(0.9);
     expect(on[1]).toBe(0);
     expect(on[2]).toBe(0);
-    // (3: on the eye's line through the hero — in the keyhole whatever it is)
-    expect(on[3]).toBeGreaterThan(0.9);
-    expect(on[4]).toBe(0);
+    // (3, the crown over the hero's feet on the eye's line: left out by the canopy's cut, meshinst.wgsl — not the keyhole's)
+    // (4: a tree 40 cells in front, still in the stumps' band: its upper part faded too)
+    expect(on[4]).toBeGreaterThan(0.5);
     expect(on[5]).toBe(0);
     expect(on[6]).toBe(0);
     // the canopy kept: the crowns in front of the hero go, the ones beyond stay

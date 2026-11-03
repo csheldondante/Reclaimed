@@ -84,10 +84,12 @@ fn vsInst(@location(0) a: vec4<f32>, @builtin(vertex_index) vi: u32, @builtin(in
   o.cut = 0.0;
   if (fl && CAM.under[0].w > 0.0) {
     let cb = FLORA_CROWN[k];
-    let limb = fpart == 4u || (fpart == 3u && a.z > cb.x && length(a.xy) > cb.y * 1.6);
+    let limb = fpart == 4u || (fpart == 3u && a.z > cb.x && length(a.xy) > cb.y * 1.15);
     if (cb.x < 1e8 && limb) {
       let foot = vec3<f32>(r0.w, r1.w, r2.w);
-      let c = CAM.under[0].w * CAM.under[1].z * (1.0 - smoothstep(48.0, 62.0, length(foot.xy - CAM.under[0].xy)));
+      // (round the hero as far as a crown can reach onto the screen: the crowns of trees 50+ cells in front lift into
+      // its lower half)
+      let c = CAM.under[0].w * CAM.under[1].z * (1.0 - smoothstep(100.0, 120.0, length(foot.xy - CAM.under[0].xy)));
       if (c >= 0.999) {
         o.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0);
         return o;
@@ -113,7 +115,8 @@ fn fsInst(in: MIOut) -> FOut {
   if (dot(n, toEye(in.wpos)) < 0.0) { n = -n; }
   if (cutAway(in.wpos, in.pos.xy)) { discard; }
   // (round 125, forest: under the canopy, what hides the floor round the hero dithered out — understory.wgsl)
-  if (max(underHide(in.wpos, in.foot), in.cut) > bayer4(in.pos.xy)) { discard; }
+  let hd = underHide(in.wpos, in.foot);
+  if (max(hd, in.cut) > bayer4(in.pos.xy)) { discard; }
   let k = in.info.x;
   let part = in.info.y;
   let rnd = f32(in.info.w) / 65535.0;
@@ -125,6 +128,9 @@ fn fsInst(in: MIOut) -> FOut {
     if (fl.w < 0.0) { discard; }
     mat = u32(fl.w);
     alb = toLinear(fl.rgb);
+    // (round 125: wood fading out into the canopy darkens as it goes — into the crowns' shade)
+    // (and a stump in front darkens toward its fading top: it fades, not just thins)
+    alb *= 1.0 - 0.6 * max(in.cut, hd * 0.8);
     // (round 125, 1A: the wind-shading ripple — a gust's front brightens the leaves and blades it turns over, the
     // trough behind it darker; the silhouette stays)
     if ((FWIND & 2u) != 0u && (part == 4u || part == 5u)) {

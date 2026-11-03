@@ -49,7 +49,7 @@ export class UnderstoryDriver {
   /** the lab's hold: 1 in, 0 out, null: the canopy decides */
   force: number | null = null;
   /** the chase zoom under the canopy, times (1: as outside) */
-  zoomUnder = 1;
+  zoomUnder = 0.7;
   private trees: Tree[] = [];
   private since = Infinity;
   private asked: [number, number] = [Infinity, Infinity];

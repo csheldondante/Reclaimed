@@ -56,7 +56,7 @@ fn vsRay(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> Ra
   let axis = normalize(top - bot);
   let side = normalize(cross(axis, CAM.eye.xyz) + vec3<f32>(1e-5, 0.0, 0.0));
   // (as wide as its hole: underFlecks' radius)
-  let wid = (0.25 + 0.55 * h3) * S * 0.55;
+  let wid = (0.25 + 0.55 * h3) * S * 0.4;
   let q = array<vec2<f32>, 6>(vec2<f32>(-1.0, 0.0), vec2<f32>(1.0, 0.0), vec2<f32>(1.0, 1.0), vec2<f32>(-1.0, 0.0), vec2<f32>(1.0, 1.0), vec2<f32>(-1.0, 1.0))[vi];
   let p = mix(top, bot, q.y) + side * q.x * wid * mix(0.8, 1.2, q.y);
   o.pos = CAM.viewProj * vec4<f32>(p, 1.0);
@@ -68,19 +68,21 @@ fn vsRay(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> Ra
 fn fsRay(in: RayOut) -> FOut {
   let u = in.uv.x;
   let v = in.uv.y;
-  // the beam's body: brightest along its middle, fading in under the canopy and out at the floor
-  var a = (1.0 - u * u) * smoothstep(0.0, 0.25, v) * (1.0 - smoothstep(0.82, 1.0, v));
+  // the beam's body: soft across (no edge), brightest under the canopy's hole and fading out down its length before
+  // the floor — main's review: "soft, faint and additive, fading along their length, like the reference's misty shafts"
+  let across = 1.0 - u * u;
+  var a = across * across * smoothstep(0.0, 0.2, v) * (1.0 - smoothstep(0.35, 1.0, v));
   // banded by the mist drifting through it
   let n = vnoise(vec2<f32>(u * 1.3 + in.uv.w * 40.0, v * 5.0 - G.time * 0.25)) * 0.6 + vnoise(vec2<f32>(u * 3.0 - G.time * 0.1, v * 11.0 + in.uv.w * 9.0)) * 0.4;
-  a *= (0.45 + 0.75 * n) * in.uv.z * 0.5;
-  // (pixel art: the light in three steps, the steps' edges dithered)
-  let st = a * 3.0;
-  let qa = (floor(st) + select(0.0, 1.0, fract(st) > bayer4(in.pos.xy))) / 3.0;
+  a *= (0.35 + 0.85 * n) * in.uv.z * 0.16;
+  // (pixel art without bars: eight faint steps, dithered between — each pixel adds a little light, never a slab)
+  let st = a * 8.0;
+  let qa = (floor(st) + select(0.0, 1.0, fract(st) > bayer4(in.pos.xy))) / 8.0;
   if (qa <= 0.0) { discard; }
-  // (warm, and only a share of the sun's: a beam in mist, not a lamp)
-  let col = toLinear(G.sunCol.rgb * vec3<f32>(0.95, 0.74, 0.5)) * qa * 0.75;
+  // (added to the target as it is — sRGB — so a faint beam stays faint: toSrgb would lift it into a bar)
+  let col = G.sunCol.rgb * vec3<f32>(0.95, 0.76, 0.52) * qa;
   var o: FOut;
-  o.color = vec4<f32>(toSrgb(col), 1.0);
+  o.color = vec4<f32>(col, 1.0);
   o.pick = vec2<u32>(0u, 0u);
   return o;
 }

@@ -10,12 +10,12 @@ fn underWeight() -> f32 { return CAM.under[0].w; }
 fn underHero() -> vec3<f32> { return CAM.under[0].xyz; }
 
 /**
- * How far a tree's fragment at p (its tree's foot `foot`) is into the dither, 0 kept .. 1 left out (compared with the
- * 4 x 4 ordered dither, so it thins out stably in pixel-art steps). With the canopy left out under it (meshinst.wgsl),
- * only what would hide the hero goes: a keyhole round the hero on screen through the trunks and roots in front of it,
- * over a stump's height — the massive trunks round it stay whole and frame the scene, as in the reference (main's
- * review of the first shots: "no trunks in frame"). With the canopy kept (its treatment off), the crowns in front of
- * the hero go too, so the floor still shows.
+ * How far a tree's fragment at p (its tree's foot `foot`) is into the fade, 0 kept .. 1 left out (compared with the
+ * 4 x 4 ordered dither, so it fades out in pixel-art steps). The user (round 125, verbatim): "I think we still want to be
+ * at the foot of the trees and to cut away the trunks in front of the PC so they look like stumps that fade". So the
+ * trees standing between the eye and the hero (their foot in front of it, near the eye's line through it) are stumps:
+ * kept to a stump's height, fading out over the couple of cells above it. The trunks behind and beside the hero keep
+ * their whole height. With the canopy kept (its treatment off), the crowns in front of the hero go too.
  */
 fn underHide(p: vec3<f32>, foot: vec3<f32>) -> f32 {
   let w = CAM.under[0].w * CAM.under[2].x;
@@ -24,19 +24,20 @@ fn underHide(p: vec3<f32>, foot: vec3<f32>) -> f32 {
   let R = max(CAM.under[1].y, 1.0);
   let e = toEye(p);
   let ex = normalize(e.xy + vec2<f32>(1e-5, 0.0));
-  // the keyhole: near the hero's figure on screen (its middle a cell and a bit up), and nearer the eye than it
-  let c = hero + vec3<f32>(0.0, 0.0, 2.2);
-  let v = p - c;
-  let along = dot(v, e);
-  let d = length(v - along * e);
-  let key = (1.0 - smoothstep(R * 0.3, R * 0.45, d)) * smoothstep(0.5, 1.5, along) * smoothstep(1.0, 1.8, p.z - foot.z);
+  // (where the tree stands from the hero: along the ground toward the eye, and beside the eye's line)
+  let fv = foot.xy - hero.xy;
+  let along = dot(fv, ex);
+  let side = abs(dot(fv, vec2<f32>(-ex.y, ex.x)));
+  let front = smoothstep(0.0, 1.5, along) * (1.0 - smoothstep(R * 0.55, R * 0.8, side)) * (1.0 - smoothstep(R * 5.0, R * 6.5, along));
+  // (the stump: whole to 1.4 cells over its foot, faded out by 3.4)
+  let stump = smoothstep(1.4, 3.4, p.z - foot.z);
   // (the canopy kept: the crowns whose line from the eye comes down in front of the hero)
   let t = (p.z - hero.z) / max(e.z, 0.05);
   let g = p.xy - e.xy * t;
   let cz = CAM.under[1].x;
   let crownH = smoothstep(cz - 3.0, cz - 1.0, p.z) * (1.0 - CAM.under[1].z);
   let ahead = smoothstep(-R * 0.7, -R * 0.2, dot(g - hero.xy, ex));
-  return w * max(key, crownH * ahead);
+  return w * max(front * stump, crownH * ahead);
 }
 
 /** sun flecks: the sun through the canopy's holes as small ellipses on the ground (a pinhole image of the sun is a
@@ -47,9 +48,11 @@ fn underFlecks(q: vec2<f32>, stretch: vec2<f32>, open: f32) -> f32 {
   for (var l = 0; l < 2; l++) {
     let s = select(2.6, 1.15, l == 1);
     let p = q / s;
-    let c = floor(p);
-    for (var j = -1; j <= 1; j++) {
-      for (var i = -1; i <= 1; i++) {
+    // (the 2 x 2 cells nearest p — a hole reaches less than half a cell past its own: 8 cells for both layers, not 18,
+    // on every fragment under the canopy)
+    let c = floor(p - 0.5);
+    for (var j = 0; j <= 1; j++) {
+      for (var i = 0; i <= 1; i++) {
         let cc = c + vec2<f32>(f32(i), f32(j));
         let h = randv(vec3<i32>(i32(cc.x), i32(cc.y), 9133 + l * 17));
         let h2 = randv(vec3<i32>(i32(cc.x), i32(cc.y), 9134 + l * 17));
