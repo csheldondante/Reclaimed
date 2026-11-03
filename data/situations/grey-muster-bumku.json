@@ -1,7 +1,7 @@
 {
   "id": "grey-muster-bumku",
   "title": "The Grey Muster Comes for Bumku",
-  "premise": "The Hollow Court has woken the Peaks of Thuhold, and what came out of them has gathered on the Teeth of Kaudru: the Grey Muster, the dead of every barrow in those hills, marching down through Bethorn Downs on Bumku, the Baummask Moot's port on the Fields of Karkmo. Bumku has fences, not walls, and no idea what is coming. Ride round the Teeth to Muru, the Red Hold on Bra Flats, and its levy will march back by the north road — late, but in force. Or take the road to Bumku yourself: warn it and man its fences, or lead its people up onto the rises of Varrn Plain and let the town go. And there is the crossing on the Bethorn water, where the Muster must come over: burn it under them and buy the town time, if you can get through their vanguard.",
+  "premise": "The Hollow Court has woken the barrows on the Teeth of Kaudru. The Grey Muster, an army of the dead, is marching on Bumku. Bumku is a port of the Baummask Moot. It has fences, not walls, and no warning. You can ride to Muru, the Red Hold, for its soldiers. They will come late, but in force. You can ride to Bumku yourself and warn it. Then hold its fences, or lead its people to the Varrn rises. Or you can burn the Bethorn crossing under the dead to buy the town time.",
   "from": {
     "worldVersion": 0,
     "run": 0,
@@ -46,7 +46,7 @@
         13716,
         4794
       ],
-      "brief": "Dry river flats. A Choir singer runs past you shouting that the dead are down off Kaudru, bound for Bumku — and three of them are already on your trail.",
+      "brief": "Dry river flats. A Choir singer runs past, shouting that the dead are coming for Bumku. Three of them are already on your trail.",
       "minutes": 2.5,
       "play": {
         "kind": "flee"
@@ -65,7 +65,7 @@
       "name": "Muru, the Red Hold",
       "region": 2023,
       "settlement": "s84",
-      "brief": "The Moot's hold on Bra Flats, beyond the Peaks of Thuhold. Its hall keeps the levy of the north road; carry the word up to it before the reeve shuts the doors.",
+      "brief": "The Moot's hold on Bra Flats. Its hall keeps the soldiers of the north road. Get the word to the reeve before the doors shut.",
       "minutes": 3.5,
       "play": {
         "kind": "deliver",
@@ -83,10 +83,10 @@
       },
       "say": [
         {
-          "line": "Muru's red gate. The hall is at the top of the street — and the reeve doesn't wait for strangers."
+          "line": "Muru's red gate. The hall is at the top of the street. The reeve does not wait for strangers."
         },
         {
-          "line": "Twelve spears for Bumku, by the north road round the Teeth. They'll march, but they won't run."
+          "line": "Twelve spears for Bumku, by the north road. They will march, but they will not run."
         }
       ]
     },
@@ -94,7 +94,7 @@
       "id": "a-ferry",
       "name": "The Herd Flats landing",
       "region": 2227,
-      "brief": "A Salt Fleet barge tied up on the Herd Flats river, its crew salvaging what the herders left when they ran. They'll trade — briefly, and for whatever you have.",
+      "brief": "A Salt Fleet barge is tied up at the Herd Flats river. Its crew will trade, but only for a moment.",
       "minutes": 1.5,
       "play": {
         "kind": "trader",
@@ -106,7 +106,7 @@
       },
       "say": [
         {
-          "line": "\"You're running toward it? Mad. Here — take something, and be quick, we're casting off.\""
+          "line": "You're running toward it? Mad. Here, take something. Be quick, we're leaving."
         }
       ]
     },
@@ -114,7 +114,7 @@
       "id": "a-varrn",
       "name": "The Varrn road",
       "region": 2233,
-      "brief": "The straight road to Bumku over Varrn Plain. The Muster's outriders have gone ahead of it and lie in the ditches.",
+      "brief": "The straight road to Bumku over Varrn Plain. The dead's riders went ahead and hide in the ditches.",
       "minutes": 2.5,
       "play": {
         "kind": "ambush",
@@ -132,7 +132,7 @@
       "id": "a-crossing",
       "name": "The Bethorn crossing",
       "region": 2159,
-      "brief": "The herders' timber crossing over the Bethorn water, the one way the Muster can bring its whole body over. Its vanguard is already on the near bank; the rest is coming down off Kaudru.",
+      "brief": "The herders' timber crossing over the Bethorn water. It is the only way the whole army can cross. Their vanguard is already on the near bank.",
       "minutes": 2.5,
       "play": {
         "kind": "ambush",
@@ -142,7 +142,7 @@
       },
       "say": [
         {
-          "line": "The crossing. Pitch on the beams, a torch in your hand — and the vanguard between you and it."
+          "line": "The crossing. Pitch on the beams, a torch in your hand. The vanguard stands between you and it."
         }
       ]
     },
@@ -151,7 +151,7 @@
       "name": "Bumku",
       "region": 2171,
       "settlement": "s53",
-      "brief": "A timber port on the Fields of Karkmo, its granaries full from the harvest; fences, not walls. The Muster comes over the Bethorn side.",
+      "brief": "A timber port on the Fields of Karkmo. Its granaries are full. It has fences, not walls. The dead come from the Bethorn side.",
       "minutes": 5,
       "play": {
         "kind": "town"
@@ -171,28 +171,28 @@
       "id": "c-red-hold",
       "from": "a-flats",
       "to": "a-muru",
-      "text": "Ride round the Teeth to Muru, the Red Hold, for its levy (late, but in force)",
+      "text": "Ride to Muru, the Red Hold, for its soldiers. Slower, but they come with you",
       "effects": []
     },
     {
       "id": "c-river-road",
       "from": "a-flats",
       "to": "a-ferry",
-      "text": "Take the river road by Herd Flats, where a Salt Fleet barge trades (a little slower)",
+      "text": "Take the river road past the Salt Fleet barge. A little slower",
       "effects": []
     },
     {
       "id": "c-straight",
       "from": "a-flats",
       "to": "a-varrn",
-      "text": "Run the straight road over Varrn Plain to Bumku",
+      "text": "Take the straight road over Varrn Plain to Bumku",
       "effects": []
     },
     {
       "id": "c-ahead-of-levy",
       "from": "a-muru",
       "to": "a-bumku",
-      "text": "Ride ahead of the levy and tell Bumku help is coming",
+      "text": "Ride ahead of the soldiers and tell Bumku help is coming",
       "effects": [
         {
           "kind": "warn"
@@ -203,21 +203,21 @@
       "id": "c-ferry-on",
       "from": "a-ferry",
       "to": "a-varrn",
-      "text": "On to Bumku by the Varrn road",
+      "text": "Go on to Bumku by the Varrn road",
       "effects": []
     },
     {
       "id": "c-to-crossing",
       "from": "a-ferry",
       "to": "a-crossing",
-      "text": "Cut east to the Bethorn crossing and burn it under the Muster",
+      "text": "Ride east to the Bethorn crossing and burn it under the dead",
       "effects": []
     },
     {
       "id": "c-hold-fences",
       "from": "a-varrn",
       "to": "a-bumku",
-      "text": "Warn Bumku and man its fences",
+      "text": "Warn Bumku and hold its fences",
       "effects": [
         {
           "kind": "warn"
@@ -228,7 +228,7 @@
       "id": "c-to-the-rises",
       "from": "a-varrn",
       "to": "a-bumku",
-      "text": "Warn Bumku and lead its people up onto the Varrn rises; let the town go",
+      "text": "Warn Bumku and lead its people to the Varrn rises",
       "effects": [
         {
           "kind": "warn"
@@ -242,7 +242,7 @@
       "id": "c-fire-crossing",
       "from": "a-crossing",
       "to": "a-bumku",
-      "text": "Fire the crossing and race the smoke back to Bumku",
+      "text": "Burn the crossing, then race back to Bumku",
       "effects": [
         {
           "kind": "delay",
@@ -259,7 +259,7 @@
       "id": "red-horn",
       "name": "The Red Horn of Muru",
       "slot": "held",
-      "text": "Blow it and four of the Muru levy run ahead to you (twice) — but it fills your hand",
+      "text": "Blow it, and four of Muru's soldiers run to you. Works twice. It takes up a hand.",
       "effects": [
         {
           "kind": "call-allies",
@@ -272,7 +272,7 @@
       "id": "muru-courser",
       "name": "A Muru courser",
       "slot": "mount",
-      "text": "A post-horse from the hold's stable: the roads take 40% less time and the dead close slower — you reach Bumku sooner, alone",
+      "text": "A fast horse from the hold. Roads take 40% less time, and the dead catch up slower. You ride alone.",
       "effects": [
         {
           "kind": "pace",
@@ -284,7 +284,7 @@
       "id": "dead-bell",
       "name": "A drowned ship's bell",
       "slot": "held",
-      "text": "Ring it: the dead within 45 cells turn to it for 30 s (twice). Ring it away from the houses",
+      "text": "Ring it, and the dead within 45 cells turn to it for 30 seconds. Works twice. Ring it away from the houses.",
       "effects": [
         {
           "kind": "lure",
@@ -298,7 +298,7 @@
       "id": "sail-cloak",
       "name": "Salt-soaked sailcloth cloak",
       "slot": "cape",
-      "text": "No fire takes within 25 cells of you: stand by the granaries and they won't burn",
+      "text": "No fire starts within 25 cells of you. Stand by the granaries, and they will not burn.",
       "effects": [
         {
           "kind": "fire-ward",
@@ -313,7 +313,7 @@
       "also": [
         "cape"
       ],
-      "text": "Half the harm comes through — but it's huge: it fills your hand and your back",
+      "text": "Only half the harm gets through. It is huge, and takes up your hand and your back.",
       "effects": [
         {
           "kind": "guard",
@@ -324,7 +324,7 @@
   ],
   "endings": {
     "saved": {
-      "text": "Bumku stands. The Grey Muster broke on its fences, and the Karkmo fields are full of the dead lying down again.",
+      "text": "Bumku stands. The Grey Muster broke on its fences. The dead lie still in the Karkmo fields.",
       "outcome": {
         "atlas": [
           {
@@ -398,7 +398,7 @@
       "settlement": "struggling"
     },
     "burned": {
-      "text": "Bumku burned with its harvest in it. The Muster walks the ashes, and Kaudru's barrows have new tenants.",
+      "text": "Bumku burned with its harvest in it. The dead walk the ashes.",
       "outcome": {
         "atlas": [
           {
@@ -489,7 +489,7 @@
       "settlement": "ruined"
     },
     "evacuated": {
-      "text": "Bumku's people live, camped on the Varrn rises under the Choir's eyes; the town is ash behind them.",
+      "text": "Bumku's people live. They camp on the Varrn rises. The town is ash behind them.",
       "outcome": {
         "atlas": [
           {
@@ -584,7 +584,7 @@
       "settlement": "abandoned"
     },
     "fell": {
-      "text": "The hero fell on the road. No one warned Bumku; the Muster found it asleep, and spread on over Varrn Plain.",
+      "text": "You fell on the road. Nobody warned Bumku. The dead found it asleep.",
       "outcome": {
         "atlas": [
           {

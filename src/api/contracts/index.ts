@@ -2,6 +2,7 @@
 export * from './world';
 export * from './story';
 export * from './dialog';
+export * from './cast';
 export * from './run';
 export * from './settlement';
 export * from './world-state';

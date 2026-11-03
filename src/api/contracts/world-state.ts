@@ -234,6 +234,7 @@ export class MemoryWorldState implements WorldState {
         if (c.bonuses) r.bonuses = [...(r.bonuses ?? []).filter((b) => !c.bonuses!.some((n) => n.why === b.why)), ...structuredClone(c.bonuses)];
         break;
       }
+      case 'persona': r.persona = structuredClone(c.persona); break;
     }
     this.version++;
   }

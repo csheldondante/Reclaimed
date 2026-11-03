@@ -259,6 +259,22 @@ export class OppRun {
     return x.commitment!;
   }
 
+  /** (dialog2) the player says no to a petition: its presenter and the group behind them remember it, and what happens
+   *  when it lapses happens now. A forced card can't be refused; a way not taken is simply left (it isn't refused). */
+  refuse(id: string): void {
+    const o = this.opp(id);
+    if (o.forced) throw new Error(`opportunities: ${id} is forced: it can't be refused`);
+    if (this.engine.offers.find((x) => x.id === id)?.passable) throw new Error(`opportunities: ${id} is a way on: leave it, don't refuse it`);
+    this.engine.refuse(id);
+    this.flush();
+  }
+
+  /** (dialog2) the player asked the presenter for more, and they agreed or not (a Persuasion settled it) */
+  haggle(id: string, agreed: boolean): void {
+    this.engine.haggle(id, agreed);
+    this.flush();
+  }
+
   private flush(): void {
     this.log.push(...this.engine.log.splice(0), ...this.stage.log.splice(0));
   }

@@ -3462,3 +3462,31 @@ the layers. test/gpu/cpu-write-asleep.test.ts steps a world with every chunk asl
 layers alone is undone (the cause, kept as a test). Every stamp fits a column to its K slots as before (colapply
 `store`: the bottom K − 1 kept, the rest's height as rubble on top) — the INT8 hollow-claim risk (a building's
 intervals above K − 1 turned to rubble) is unchanged by this, not made worse.
+## Petitions, the cast and plain words (dialog2; BACKLOG DLG-1..DLG-12; docs/WRITING.md)
+
+One concern each:
+
+- **contracts/cast.ts** `Persona` (quirks, voice, traits, want, PortraitSpec): who a character is. It lives on their
+  `CharacterRecord.persona` (run.ts; CharacterChange `persona`) and nowhere else, so it rides the world snapshot.
+- **living/cast.ts**: the generator (QUIRKS, VOICES, TRAITS, wants by role, the portrait from inhabitants' SPECIES
+  presets). `rollPersona(seed, id, species, role)` is pure and stable; `personaOf(w, id)` returns the record's, or rolls
+  and writes one. people.ts `makePresenter` rolls it for a person made for a card.
+- **living/engine.ts** `Offer` carries what a petition needs from the card, filled: `line` (the ask), `gain`,
+  `refuseLine`, `group` (who the presenter speaks for), `passable`, `haggle` / `extra`. `refuse` applies the card's
+  lapse; `haggle(id, agreed)`; `answer(…, group)` moves the group's relation by half as much as the presenter's.
+- **living/present.ts** `petitionOf(engine, offerId)`: the offer, the opportunity contract and the holdings converted to
+  the dialog's data (`Petition`: the summary rows in plain words, the agree text or why not, the signals; and the
+  `PetitionSpeaker`). Also `meetPerson` (`talked`, `met`).
+- **dialog/petition.ts** `petitionTree(petition, speaker, hero, state)`: pure, a DialogTree (start, gain, ifno, haggle,
+  thanks, refused) whose choices carry an `act` (commit, refuse, later, haggle). `traitPersuasion` is the default
+  `Persuasion` (contracts/dialog.ts) — the interface a dialog minigame implements later.
+- **dialog/dialog.ts** (round 83) plays any tree; it renders a node's `aside` and `facts`, a choice's `disabled`, and
+  never reads `act`. **dialog/portrait.ts** draws a PortraitSpec.
+- **opps/level-opps.ts** opens the petition when an offer is tapped (or the forced one is selected), reads the last
+  act and calls the run (OppRun `commit`/`play`, `refuse`, `haggle`). **opps/words.ts**: the run's screens' sentences
+  (roster, intro, status, situation, hint), pure.
+- **living/plain.ts** `capitalise`: filled texts start their sentences with a capital.
+
+Contract for text: every string a player reads follows docs/WRITING.md; test/unit/writing.test.ts (test/support/
+writing.ts `lint`) checks the templates, the dealt cards and petitions on seed 1, Briar Hollow's, the cast, the
+screens and the GM's situation file.

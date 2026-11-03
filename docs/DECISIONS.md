@@ -503,6 +503,50 @@ each was implemented.
 - The user, verbatim: "I would love to have a mechanic with the telekinesis where pulling harder (further away) increases force and can wrench stone or buildings apart to hurl pieces of them." → a wrench for the telekinesis: grab the ground, rock or a building; the pull's force grows with how far the thumb drags; past what the material holds, a piece tears out along its weakest seam and hangs on the tether as a body, to be hurled. Stone first, after the physics merge lands; buildings once they are sleeping bodies.
 - The user, verbatim: "Can tree gen move onto grasses and shrubs and adopt the same techniques that worked for trees? I would love gras that bends in the wind and looks higher detail." → treegen moves on to shrubs (the same branching, layered leaf shells, textures, seasons, states and sprites; several kinds) and grass (root-anchored, segmented blade clumps bent by the world's wind with the gusts sweeping across a meadow, the shading ripple, AO to the base, soft normals; reeds, ferns, flowers; a close-up level), all in the editor and the phone bench.
 - The user, verbatim: "Also, two more ideas: 1. A horseback option instead of the hover bike that auto steers around obstacles for you and will slow down stop in the canyon or turn around the bend for you if you angle that way. 2. Could hoverbikes use the new controller to slide up walls and bank on vertical or nearly vertical surfaces? Maybe we can make canyons have some taper so it reads?" → a horse as a mount hero with strong assist (steers round obstacles, slows and stops before walls, takes a bend when the stick points roughly along it; a hard steer still wins), on the shared drive; the bike rides on its surface's normal, running up and along steep walls while speed holds it there and sliding off when slow; canyons tapered (sloped flanks steepening to vertical) so a wall run reads: in the lab now, and as a request for the map's canyons.
+- The user, verbatim, on the editor's renders: "I will say the latest screenshots on tree gen the foliage doesn't look like it has multiple layers visible and it looks like a few sparse leaves over a solid color which is wrong." → crowns must show leaves on leaves, several visible layers each darker than the last, and never a smooth solid core; dense, overlapping cards (or leaf-cluster cards) tangent to the lobe.
+- The user, verbatim: "The grass looks good though" and "I want the leaf cluster cards that was what I asked for" → grass kept as it is. Crowns built from leaf-cluster cards: each card a baked texture of several overlapping leaves (procedural, per species, season and state, in one atlas shared with the sprite bake), bent along the lobes in layers darkening with depth; conifers the same with needle clusters.
+
+## 2026-11-03 — round 128b (session 5) — stop and focus: gameplay first
+
+- The user, verbatim: "Actually my tokens are going to fast so please pause and give me an update on work then let me prioritize and we will focus on one thing at a time."
+- The user, verbatim: "Ok so can you commit each of the other agents with a status note for a future session to continue and close them out.
+
+> The physics is cool but still has bugs. I have some terrain that failed to wake and the collapse is overly aggressive when it is terrain and then lacks quality during the fall with fractures not occurring where they should.
+>
+> Note this but do not fix it now. Our only focus until we succeed or run out of tokens this week is fixing the gameplay.
+>
+> The most important things for that are the hero playground and efficiently letting me test movement, camera, combat, ordering units, building things, and in session dialog which should pause background logic for now. Don't rush into implementing anything. I want to plan with you and another agent so that you build what I want the first time.
+>
+> The hero playground should build a course of interesting terrain and representative regions of the world and have easy character selection with an expandable menu to test various camera and control settings and hero abilities.
+>
+> I don't need you to test for balance yet and I don't think it makes sense to test for performance for input work. I expect it to be cheap.
+>
+> I'm not sure how I feel about the flora improvements or city interiors. I think they slightly miss the more general principal and the problem I see us as facing.
+>
+> The terrain is cool and has very cool memorable areas (although caves, plains, rivers, forests, tundra ocean and beaches all need work). The single coolest thing is that you can destroy and modify terrain and water and wind and sediment reacts accordingly. And sediment is definitely still buggy as there are spires of material that form because of the rules. That clearly should hit an angle of repose and collapse and I think the handling of the layer limit is buggy.
+>
+> The effects that destroy terrain and melt rock and cause water or sand to spill are amazing.
+>
+> The destructible structure physics especially for metal is extremely cool.
+>
+> The agent simulation is extremely cool and the traits system is very cool.
+>
+> The opportunities system is cool but poorly executed in terms of presentation and it doesn't currently help the run to feel coherent.
+>
+> The controls are mediocre and the sandbox tools are vastoy more satisfying then the hero controls at the moment which is wasted potential.
+>
+> Good cameras also look cool but are actually not well designed for gameplay. Rotation messes up screen relative controls and the exciting terrain blocks readable screen in the  isometric perspective on a device with limited screen real estate.
+>
+> The lack of decent animations, sound effects, screen shake, and limitations of input on a phone undermine the quality of the character controllers fun.
+>
+> We need to focus on the shortest gameplay loops first and make them fun then build the outer loops to motivate the player to interact with them and see the cool premise of the legacy world.
+>
+> I think the pieces are there but we have real issues we need to focus and solve. Please stop and give me initial thoughts and then I will continue."
+
+- → Every agent paused, committed and pushed, with a status note per branch (docs/HANDOFF.md, round 128). Physics bugs (M128-7) and sediment spires (M128-8) noted, not fixed now. The only focus this week: gameplay, the shortest loops first. No implementation until it is planned with the user and a second agent. The hero playground: a course of interesting terrain and representative regions, easy hero choice, an expandable menu for camera, control settings and abilities; for testing movement, camera, combat, ordering units, building and in-session dialog (dialog pauses background logic for now). No balance or performance testing for input work. Flora and interiors on hold (the user unsure they address the core problem).
+- The user, verbatim: "Yes I think that makes sense but I disagree that a fixed camera angle and cutaway is the solution. At a minimum having the camera pull out when you move fast and move you off center to show you further ahead is great. I think even more than that though one of the strengths of this game is the cool generated world and we want the camera to show that off. Furthermore, I think the camera is actually one of the best ways to make the game play better by choosing views and controls that work well for the type of encounter. For example, the bike chase right now is a fast open world race across the terrain. Which is cool because it makes use of the hoverbike launching off terrain which is very fun. However, we already know that some places are hard to control and not fun for the hoverbike. The player can't maneuver in a canyon or up switchbacks without lots of frustrating crashes. However, we could zoom in and have the camera follow the bike as it auto steers through such areas and then have riders come up the screen or obstacles come down the screen that the player has to avoid. We could go into a profile view and get a parallax race through the woods where the player just looks at a 2D plane of movement. I'm not claiming those are winners but I'm claiming that is exactly the sort of experiment we should set up for the player to try in the sandboxes. 2. I was imaging drag friendly units to your character to order them to follow, drag to enemies to order them to attack, drag them to resources to pillage (context can depend on the unit). I was also imagining a more traditional double tap to select all of a type on screen and order them with dragging, a towscraper pallet of different building types to paint your settlements and fortresses into the land."
+- And: "1. I think free sideways steering 2. Yes I think the game should decide and take over controls only long enough to transition with some brief auto that exits as soon as the player touches things."
+- → Play modes: camera, controls, assists and entry/exit chosen per situation; the camera pulls out with speed and leads off-centre everywhere; experiments side by side in the hero course (open-world chase, a canyon run with auto-steer and free sideways dodging, a profile woods run, a cliff climb); the game picks the mode and hands back control as soon as the player touches the screen. Followers by dragging from a unit (to the hero: follow; to an enemy: attack; to a resource: gather or pillage); double-tap to select a type; a Townscaper-like palette to paint buildings. Plan: docs/design/PLAY_MODES.md (v1, for the user to correct).
 
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 

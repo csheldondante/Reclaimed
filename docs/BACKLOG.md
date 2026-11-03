@@ -64,22 +64,10 @@ Branch `knight` (c0eeb74): swipe slashes with a lunge and aim lean, the bow draw
 
 | id | item | size | status |
 |---|---|---|---|
-| KN-Q1 | Should every slash lunge further, or is the double swipe the lunge the user remembers? | S | answered (round 128: "we want the default lunge to be further"): every slash dashes 1.6 cells (finisher 2.4, double swipe 4.8), slipping through a crowd — `knight` pass 2 M1 |
+| KN-Q1 | Should every slash lunge further, or is the double swipe the lunge the user remembers? | S | asked |
 | KN-Q2 | Three buttons (dodge, weapon switch, second move), or one weapon button where a tap fires the second move? | S | asked |
 | KN-Q3 | The shield block and the hook vault next? | S | asked |
-| KN-R1 | Main's review: the station's help card sits over the hero at the start, with a second copy of the text showing through behind it. | S | done (`knight` pass 2 M1: one toast at a time, at 22%) |
-| KN-1 | Round 128: the lunge goes further and through a crowd (every slash a dash; knocked aside; slip between bodies) | M | done (`knight` pass 2 M1) |
-| KN-2 | Round 128: enemies that block except in their wind-up (the guard) and that dodge except when down after their lunge (the lunger), on the units and traits, with tells | L | done (`knight` pass 2 M2) |
-| KN-3 | Round 128: JUMP (platforming up ledges), the jump attack, tap to lock on | M | done (`knight` pass 2 M3) |
-| KN-4 | Round 128: parry variants to compare (button, swipe in the wind-up, hold to block) — the user to pick one | M | done as variants (`knight` pass 2 M4); asked which |
-| KN-5 | Round 128: the grappling hook gun on the knight (yank a foe, zip to a ledge; the bike's hook shared) | M | done (`knight` pass 2 M4) |
-| KN-6 | The knight's phone bench `?knightbench=1` (no enemies / raiders / mixed wave): the user to run it | S | open (the user) |
-| KN-7 | Arrows are blocked and dodged like any blow — keep, or let a full draw break a guard's block? | S | asked |
-| KN-8 | Jump-attack from above opens a guard (not a lunger) — keep? | S | asked |
-| KN-9 | The hook pulls the knight to a foe too heavy to yank (an ogre, a vehicle)? Units have no weight in their view yet | S | open |
-| KN-10 | A tap means lock-on with the sword or bow, but fire with the hook in hand — one meaning for a tap instead? | S | asked |
-| KN-11 | Sound: the `cue` hook (block, dodge, parry, jump, land, slam, lock, hook) has no sound system to play it | M | open |
-| KN-12 | The floor model: play heroes stand on the top surface (Terrain.heightAt) — under an overhang, a bridge or into a cave they can't go (HL5) | M | open |
+| KN-R1 | Main's review: the station's help card sits over the hero at the start, with a second copy of the text showing through behind it. | S | open |
 
 ## Round 126 (2026-11-02, session 5, `interiors`) — the first full interior: town s84's hall (DECISIONS round 126)
 
@@ -92,6 +80,9 @@ Branch `interiors` (28d1fbc): plan from the structures plan, CC0 Kenney props vo
 | M128-3 | `terrain.put` of a material ≥ 32 (Tile, Flesh, Coral, Obsidian, Quartz, Sinter, Bedrock, External) is mis-encoded: the Edit event's z is op · 32 + material, so the material's sixth bit lands in the op (External 39 → op 0 with STROKE_START: seen in hallprobe2 as a builder put back what it took off a roof). Widen the event's material field (edit.wgsl decodes `code % 32`) or refuse it loudly | S | open |
 | M128-4 | A town's builders' heap (settle/life.ts `piles`) was planned under a building's roof (town 1, column 162,194): the builders fetch nothing there now (a take never takes External) — the plan should keep heaps off the footprints | S | open |
 | M128-5 | The user (round 128): an undermined claim — ground eroded from under a building, leaving air below its External (the External's z0/z1 never move) — should go to the judge (and later the physics: buildings as sleeping bodies woken by big impacts, a branch of its own) | M | open |
+| M128-7 | (the user, round 128) Physics: some terrain failed to wake; the collapse is overly aggressive for terrain; falls lack quality (fractures not occurring where they should). Noted, not being fixed now (gameplay first) | L | open |
+| M128-8 | (the user, round 128) Sediment: spires of material form that should reach an angle of repose and collapse; the handling of the layer limit looks buggy | M | open |
+| M128-9 | (the user, round 128) Encounters open with a forced petition talk; they should drop the player into the action at speed (enemies swinging, a moving camera), then hand over control: show, don't tell | M | open |
 | M128-2 | Two writers stamp on the GPU but still read the whole layers back to decide: the voxel lattice's wake (physics/wake.ts floods the piece on the CPU) and the editor's placeModel (resting base, room check). A GPU flood / a GPU base would spare the readback | M | open |
 | INT8 | Building columns are claimed solid from foundation to roof, so the sims and agents see no inside. Claim floors, walls and roof only (several intervals per column in sim/external.ts), so water, fire and units can come in. Structural; it needs a design pass. | L | open |
 
@@ -102,6 +93,27 @@ Branch `encounters` (e0b39da, dialog2 merged in): flee, chase, fight, escort, a 
 | id | item | size | status |
 |---|---|---|---|
 | EN-Q1 | Raiders drowned crossing a river toward an idle hero, and the scene counted as won. Should enemy deaths the hero didn't cause count toward a win? (EN15) | S | asked |
+## Round 127 (2026-11-02, session 5, `dialog2`) — petitions as dialogs, a cast with quirks, plain words (DECISIONS, the newest entry: "The writing is incomprehensible")
+
+The user (verbatim): "Use simple plain language like in the worked examples and fix whatever in the prompt produced that
+monstrosity. I want a cast of characters with interesting personality quirks and rolled for traits to make them
+likable. Introduce characters as needed and have them deliver the petition but you can't do that with cards you need
+to do that with dialogs." DEVLOG dialog2.
+
+| id | item | size | status |
+|---|---|---|---|
+| DLG-1 | docs/WRITING.md: the style guide for player-facing text, good and bad examples, the user's catalog as the standard; CLAUDE.md and docs/GM.md point at it | S | done (`dialog2`) |
+| DLG-2 | Every player-facing string rewritten: the run's and Briar Hollow's templates, encounters, the ways' notes, the template situation and the GM's seed 1 situation, roster, intro, status, map hint and timers, hero lines; regions named from the wiki | M | done (`dialog2`) |
+| DLG-3 | The style lint (test/unit/writing.test.ts): code words, parentheses, semicolons, joining dashes, unfilled braces, sentences over 20 words — over templates, seed 1's dealt cards and petitions, Briar Hollow, the cast, the screens, the GM file | S | done (`dialog2`) |
+| DLG-4 | The cast generator (living/cast.ts, contracts/cast.ts): quirks, voice, traits, want, portrait spec; rolled from the seed, kept on the CharacterRecord | M | done (`dialog2`) |
+| DLG-5 | Petitions as dialogs (dialog/petition.ts, living/present.ts): greeting in voice (remembering the player), the ask, "What's in it for me?", "What if I say no?", ask for more; answers → commit, refuse, later, haggle; the summary panel inside the dialog; relationship facts with the presenter and their group; wired on the map (level-opps.ts) | L | done (`dialog2`) |
+| DLG-6 | The Persuasion interface (contracts/dialog.ts): where the user's dialog minigame plugs in; the default reads traits | S | done (`dialog2`; the minigame: the user's ideas to hear) |
+| DLG-7 | Portraits are a 32 px canvas bust from the PortraitSpec; a bust of the real creature rig (inhabitants) and better art later | M | open |
+| DLG-8 | Quirk asides ignore the moment (a hand shaken for a long time while riders are on you): asides tagged calm/urgent, picked by the card's themes | S | open |
+| DLG-9 | Voices are English templates round the content; pronouns are "they" throughout. A character's pronouns, and a few voice tics inside the template's lines (a nervous speaker's "um"), would make them read more alive | S | open |
+| DLG-10 | The inspector (cardlab.html) still shows cards, not petitions: open the same petition there | S | open |
+| DLG-11 | The area play's own card (runsit/level-sit.ts: briefs, the edge card) and barks follow WRITING.md but aren't in the lint yet | S | open |
+| DLG-12 | Negotiation beyond "a little more" (a smaller tier for less, a favour owed instead of goods) where a template allows it | M | open |
 
 ## Round 126 (2026-11-02, session 5, `merge124`) — the living world merged into the run structure (DECISIONS round 125, newest)
 
@@ -123,7 +135,7 @@ march state: "Oh yeah definitely update the world model so all this data lives i
 | M124-9 | The far land (past the window) shows a placed structure only once the town's exact plan is made again (its far plan is the old one until then) | S | open |
 | M124-11 | Refugees a run moved into a town farm with its farmers (life.ts ROUTINE refugee → farmer): a round of their own (a camp at the town's edge, asking for work) | S | open |
 | M124-12 | A structure placed in a town that stands in the window waits until the window has left it (planned again under the player's feet, its old walls came down as rubble); the structures track could add one building in place instead | S | open |
-| M124-10 | The UI is known-bad (the user): the card shows the presenter's line in the pitch and "You get" — to be experimented with later; dialogs, interiors, portraits, camera/zoom, foliage next | M | open (the user) |
+| M124-10 | The UI is known-bad (the user): the card shows the presenter's line in the pitch and "You get" — to be experimented with later; dialogs, interiors, portraits, camera/zoom, foliage next | M | dialogs done (`dialog2`, DLG-5: a petition is a talk with its presenter, the card a summary panel in it); interiors, camera, foliage are other tracks |
 
 ## Round 125 (2026-11-02, session 5, `facts`) — the living world: the fact layer, the template engine, the world inspector (DECISIONS round 124/125, docs/design/FACTIONS_WORLD_STATE.md)
 
@@ -268,15 +280,7 @@ The user: "I think just make a new layer you own so I can work from one session"
 | PL2 | The hoverbike and the lich ported from GameplayGM onto Reclaimed's contracts, with the slice's pure modules and tests; the lich's slam (wrecking ball); the bike's ramp `carry` fix | M | done (play) |
 | PL3 | The play sandbox: ?skipmenu=1&level=atlas&play=hoverbike (or lich) — hero switch, live tune panel with the profile, spawn raiders, respawn; phone controls | M | done (play) — for the user to try on the phone |
 | PL4 | scripts/perf/play.mjs (timing, phone proxy) and scripts/playtest.mjs (behaviour, GIFs) | S | done (play) |
-| PL5 | Port the knight (delving: sword flicks, lunge, spin, bow, hook vault), then the gorilla, tank, mech, as play heroes with profiles | L | done for the knight (`knight`, round 128: sword swipes with lunges and the aim lean, the combo, the double-swipe lunge, the spin flicked as a top, the bow drawn back, volley, dodge; `?play=knight&station=1`); the hook vault is PL33, the gorilla, tank and mech PL39 |
-| PL33 | The knight's hook vault (iso-adventure's hookshot/grapple: over gaps and water, foes yanked in) — the bike's heroes/hook.ts is the start | M | done as the hook gun (`knight` pass 2 M4, KN-5) |
-| PL34 | The knight's shield: hold still to block, a block just in time staggers the attacker (iso-adventure SHIELD, perfectWindow 0.16 s) — left out of round 128 as the user didn't ask for it | S | done as the parry variants (`knight` pass 2 M4, KN-4) |
-| PL35 | A hero body from the character generator: what the generator lacks (a pose of one body driven from outside — its animation is a GPU kernel for groups; hand targets; a held-item slot that isn't a rigid bone; voxel materials for its colours). play/draw/rigpose.ts poses the rig on the CPU meanwhile | M | open |
-| PL36 | The gauntlet for the characters (the user, round 127): rooms keyed to each hero's capabilities (iso-adventure gen/gauntlet.ts), grown from the knight's station — the design with the user first | L | open (design talk) |
-| PL37 | Enemies that can chase the bike: raiders on bikes or mounts (the user, round 127: "the encounter system is struggling with enemies that can chase the bike") | M | open |
-| PL38 | The knight in runs: runplan's knight delves (RPL4) and WALKER_PROFILE's stand-in can use play's knight (`library.get('knight').profile()`) | S | open |
-| PL39 | The gorilla, the tank and the mech as play heroes (from PL5) | L | open |
-| PL40 | The knight's feel on the phone: the numbers are iso-adventure's scaled by 1.3 and checked headless only — the user to play the station and tune (run 9, lunge 19.5, spin flick 10-31, arrows 14-42 cells/s; the tune panel has them) | S | open (the user) |
+| PL5 | Port the knight (delving: sword flicks, lunge, spin, bow, hook vault), then the gorilla, tank, mech, as play heroes with profiles | L | open |
 | PL6 | The lich's spellbook (zap, fireball, raise dead) and throws of physics bodies and torn-out rocks — needs a world API for bodies (GameplayGM's bodies.ts/rocks.ts reach into the engine) | M | open |
 | PL7 | Bike: the grappling hook (a tap: a foe yanked in, or the ground swung round — done, play); tricks scored (airtime, spins, slides), a race (checkpoints, a rival) still open — the user's "I would like to add more later" | L | wip (hook done) |
 | PL8 | Vegetation in the controllers: slowed in a thicket, cut through, once flora's contract has a density query; the profile already says what each is meant to do | M | open — flora's query is there and reads play's profile (merge122, M122-2); the drives don't call it yet |
@@ -519,19 +523,19 @@ tests work and do quick smoke tests to find failures early." docs/TESTING.md.
 | LW5 | Later: node-powered rituals (structures + an effect graph + a power source + upkeep; magic nodes as atlas features); castle court → knights on missions → reports; the GM choosing and switching loops mid-run (accepting leadership → a city-management run) | L | open |
 | LI2 | The lich pulls up pieces of terrain or structure with telekinesis and hurls them (the judge frees the piece, the solver carries it; impacts through the break rules) | M | open |
 | RN1 | Run styles: (2+3) stronghold + encounter map as one loop, building as one kind of encounter (design talk round 120); (1) folk hero free adventure with an enemy progress track tied to real world changes, later | L | asked (design session) |
-| CAM1 | The camera, the biggest gameplay fix: occluders hide the hero and what the hero cares about (a cliff's turn: new way or dead end). A hero lab to try camera modes as variants across terrains: rotate, top-down, dither, cut tall things down to a short height above the traversable surface, occlusion allowed only at the screen's edges/top/bottom (atmospheric) | L | first pass done (herolab: CAM2-CAM4; the user tried it, round 120: CAM9, PL30) |
-| HL1 | Hero lab: stations for hero abilities and moves, puzzles, enemies and camera modes, every setting a variant to compare | L | first pass done (herolab: HL2; stations HL3) |
+| CAM1 | The camera, the biggest gameplay fix: occluders hide the hero and what the hero cares about (a cliff's turn: new way or dead end). A hero lab to try camera modes as variants across terrains: rotate, top-down, dither, cut tall things down to a short height above the traversable surface, occlusion allowed only at the screen's edges/top/bottom (atmospheric) | L | next |
+| HL1 | Hero lab: stations for hero abilities and moves, puzzles, enemies and camera modes, every setting a variant to compare | L | next |
 | CB1 | Action combat controls improved, and a combat gym | L | next (design talk) |
 | RN2 | Run structure: city builder + overmap + dispatch + choices tied to the world state; a process generating location opportunities from what is at the place, the hero and the run (thematic, real consequences, gameplay bonuses) | L | next (design) |
 | TR40 | Trees baked into isometric sprites for the low LOD (visual continuity with the near trees) | M | deferred |
 | STR50 | Townscaper verticality: build up as well as out (stacked tiles, storeys over streets, bridges between towers, terraces); not evident in today's towns (round 120) | L | todo (iterate) |
 | STR51 | Towns on varied terrain: showcase hills, cliffs, terraces, rivers and coves in the viewer and the atlas (today the viewer is mostly flat ground) | M | todo (iterate) |
 | STR52 | Purpose that reads at a glance: a mining town, a port and a lumber camp should look clearly different (silhouette, layout, materials, works dominating), not the same town with extras | M | todo (iterate) |
-| CAM9 | cut + tilt the default camera (the user: cut easiest to use, tilt best looking, cut + tilt best for readability); a cut + dither variant | S | done (herolab: DEFAULT_CAM chase + cutaway + tilt; `cut~` the dithered cut) |
-| PL30 | Bike handling where precision matters (canyon, city): turn acceleration and rate, steering assist from a corridor flow field, small-obstacle avoidance, target magnetism toward enemies (reusing play's aim assist); player intent always wins | M | first pass done (herolab: grip/turn rate, corridor, avoid, magnet chips on the moves stations; Node metrics) — the user to try |
-| UI10 | The title screen's level list doesn't fit a phone (Pixel 9a): the Traits Lab and later entries are off screen; scroll or wrap the list (round 120, the user) | S | done (herolab, round 121 rows) |
-| CAM11 | Cut only real occluders (a surface rising less steeply than the camera's sight line can't hide anything; gentle hills never cut); toggle (on) to never cut behind the player; cut height rises quadratically with distance from the hero (h0 + k·d²); dithered edges in the default cut (round 120, the user) | M | done (herolab, round 121 rows) |
-| PL32 | Bike handling v2: turn radius by speed + brake/drift, a speed governor in narrow corridors, a carve control, more turning acceleration; still poor except forest and hills (round 120, the user) | M | done (herolab, round 121 rows) |
+| CAM9 | cut + tilt the default camera (the user: cut easiest to use, tilt best looking, cut + tilt best for readability); a cut + dither variant | S | next (herolab) |
+| PL30 | Bike handling where precision matters (canyon, city): turn acceleration and rate, steering assist from a corridor flow field, small-obstacle avoidance, target magnetism toward enemies (reusing play's aim assist); player intent always wins | M | next (herolab) |
+| UI10 | The title screen's level list doesn't fit a phone (Pixel 9a): the Traits Lab and later entries are off screen; scroll or wrap the list (round 120, the user) | S | open |
+| CAM11 | Cut only real occluders (a surface rising less steeply than the camera's sight line can't hide anything; gentle hills never cut); toggle (on) to never cut behind the player; cut height rises quadratically with distance from the hero (h0 + k·d²); dithered edges in the default cut (round 120, the user) | M | next (herolab) |
+| PL32 | Bike handling v2: turn radius by speed + brake/drift, a speed governor in narrow corridors, a carve control, more turning acceleration; still poor except forest and hills (round 120, the user) | M | next (herolab) |
 | RN3 | Dominion-style kingdoms: the world state generates each run's opportunity stacks (varied within a stack), permuting viable strategies; EV-per-turn card valuation; simulator bots (EV-per-turn, Big-Money-like baseline, engine builder, random); balance = several strategies viable per kingdom | M | done, first pass (`opportunities`: kingdoms, EV, the bots, the tournament; balance: 2 of 6 kingdoms with two strategies viable — tuning ahead, RN3-1) |
 | RN3-1 | Card lab balance: most kingdoms with two or more viable strategies, none dominating (bigmoney wins everywhere today; the ev bot loses kingdom 2) — through the stacks JSON and the value sliders | M | open |
 | RN3-2 | The card lab simplified (the user): three resources (labor, influence, power), pawns whose tags are hidden and only filter assignment, opportunities and threats; the 24 stacks re-cast; score = climax + threats dealt with − let fire; minimal UI | M | done (`opportunities`; balance in RN3-1) |

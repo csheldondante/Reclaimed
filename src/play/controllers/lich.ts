@@ -103,7 +103,7 @@ export const lich: ControllerInfo = {
   id: 'lich',
   name: 'Lich',
   icon: '💀',
-  line: 'Untouched by the world: lift, smash and fling your foes; slam the earth.',
+  line: 'Nothing on the ground can touch you. Lift, smash and fling your foes. Slam the earth.',
   controls: 'Tap: glide there · tap a foe: float it, again: drain it · drag a foe: swing it, let go: fling · flick away: force push · tap the lich: slam · drag up from the lich: rise · draw a circle: storm',
   params: LICH_PARAMS,
   defaults: LICH_DEFAULTS,
