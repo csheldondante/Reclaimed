@@ -1,4 +1,35 @@
-# Handoff — 2026-10-10 (end of session 3)
+# Handoff — 2026-11-03 (session 5, round 128) — all agents paused; the focus is gameplay
+
+Read first: `docs/DECISIONS.md` round 128 (the user's own words, including the direction below), then `docs/BACKLOG.md`.
+
+## The direction (the user, round 128, verbatim in DECISIONS)
+
+Until it succeeds or the week's tokens run out, the only focus is **gameplay**: the shortest loops first (movement,
+camera, combat, ordering units, building, in-session dialog that pauses background logic), made fun, then the outer
+loops. Plan with the user before building anything. No balance or performance testing for input work. Physics,
+flora, interiors and the merge train are paused (state below), not abandoned.
+
+## Branches as left (all pushed; nothing uncommitted)
+
+| Branch | Head | State | Next when resumed |
+|---|---|---|---|
+| places | (this commit) | jb6 + INT16 (hall fix) + dialog2 merged and gated | — |
+| merge128 | 87e10e1 | places + encounters (07b91a1, gate c1c2732) + M128-6 (a talk holds the encounter and the threats: 5e36be4, 87e10e1). Not on places yet | re-check `run-world.test.ts` "a burned town is ruined…" (1 failure, maybe load-flaky); rerun encounters.mjs outriders/chase wins; merge encounters to places; redo interiors (parked local branch m128int 1a90473, view.ts import conflict keeps both) + its gate; merge forest + its gate. Scratch worktrees scratchpad/merge128/{places128,hallfix128,int,enc} |
+| herolab | 8edae7b | the lab: test menu (14-item card, docs/HEROLAB_TEST.md), knight pass 2 merged, auto camera (+ dithered cut), physical drive (play/core/drive.ts, PL41), horse (PL42), bike wall riding + tapered lab canyon (PL43), autopilot look-ahead, encounters as stations (HL11: goal, clock, result card), ?herobench=1. The gentler hill ramp is Node-checked only | the user's test card; the gameplay plan |
+| knight | c18e7f1 | knight pass 2: lunge 0.11→1.63 cells with slip-through, guard + lunger (traits guarded/evasive), jump + jump attack, tap lock-on, parry variants (button/swipe/hold), hook gun, ?knightbench=1. Merged into herolab | the user's five questions (KN-7..10) |
+| treegen | 23000fd | flora: colonized branching, layered crowns with leaf-cluster cards, cone pines with needle textures, Scots pine, willows by water, height spread, shrubs (5 kinds), segmented grass bending in wind (the user liked it), dead/burned states tied to fire (snag field), pines on slopes, the tree editor (flora.html), phone benches (foliagebench sets forest/grass/burn), the FIRE/SLEEP ROOT FIX (7b48ebb: fires used to stop 8 s after they started) | the user is unsure flora is the right priority. Open: crowns still read as evenly textured balls; burn demo re-shoot (the snag addressing fix is pushed); wind clips on a canopy; map before/after on a hilly wood; sprite LOD redesign (high-detail bake, mips); triangle budgets raised (tree 10k, elder/willow 26k) for the phone bench to judge. The fire/sleep fix (7b48ebb) should reach places on its own even if flora waits |
+| interiors | 28d1fbc | parked (the user unsure of the direction) | — |
+| forest | beb2a51 | parked (merge pending in the train) | — |
+| hallfall | (uncommitted worktree) | superseded by merge128's INT16 fix; delete the worktree | — |
+
+## Known bugs noted this round, not being fixed now (BACKLOG M128-7..M128-9)
+
+- Physics: some terrain failed to wake; collapse too aggressive for terrain; falls lack quality (fractures not where they should be).
+- Sediment: spires form that should reach an angle of repose and collapse; the layer limit's handling looks buggy.
+- Encounters: open with a forced petition instead of dropping the player into the action (show, don't tell).
+
+
+# Older: handoff — 2026-10-10 (end of session 3)
 
 For the next agent session. Read in this order: `CLAUDE.md` (rules,
 commands, gotchas) → **`docs/BACKLOG.md`** (every open suggestion, with

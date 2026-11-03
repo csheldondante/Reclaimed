@@ -478,6 +478,45 @@ each was implemented.
 - The user, verbatim, on the editor's renders: "I will say the latest screenshots on tree gen the foliage doesn't look like it has multiple layers visible and it looks like a few sparse leaves over a solid color which is wrong." → crowns must show leaves on leaves, several visible layers each darker than the last, and never a smooth solid core; dense, overlapping cards (or leaf-cluster cards) tangent to the lobe.
 - The user, verbatim: "The grass looks good though" and "I want the leaf cluster cards that was what I asked for" → grass kept as it is. Crowns built from leaf-cluster cards: each card a baked texture of several overlapping leaves (procedural, per species, season and state, in one atlas shared with the sprite bake), bent along the lobes in layers darkening with depth; conifers the same with needle clusters.
 
+## 2026-11-03 — round 128b (session 5) — stop and focus: gameplay first
+
+- The user, verbatim: "Actually my tokens are going to fast so please pause and give me an update on work then let me prioritize and we will focus on one thing at a time."
+- The user, verbatim: "Ok so can you commit each of the other agents with a status note for a future session to continue and close them out.
+
+> The physics is cool but still has bugs. I have some terrain that failed to wake and the collapse is overly aggressive when it is terrain and then lacks quality during the fall with fractures not occurring where they should.
+>
+> Note this but do not fix it now. Our only focus until we succeed or run out of tokens this week is fixing the gameplay.
+>
+> The most important things for that are the hero playground and efficiently letting me test movement, camera, combat, ordering units, building things, and in session dialog which should pause background logic for now. Don't rush into implementing anything. I want to plan with you and another agent so that you build what I want the first time.
+>
+> The hero playground should build a course of interesting terrain and representative regions of the world and have easy character selection with an expandable menu to test various camera and control settings and hero abilities.
+>
+> I don't need you to test for balance yet and I don't think it makes sense to test for performance for input work. I expect it to be cheap.
+>
+> I'm not sure how I feel about the flora improvements or city interiors. I think they slightly miss the more general principal and the problem I see us as facing.
+>
+> The terrain is cool and has very cool memorable areas (although caves, plains, rivers, forests, tundra ocean and beaches all need work). The single coolest thing is that you can destroy and modify terrain and water and wind and sediment reacts accordingly. And sediment is definitely still buggy as there are spires of material that form because of the rules. That clearly should hit an angle of repose and collapse and I think the handling of the layer limit is buggy.
+>
+> The effects that destroy terrain and melt rock and cause water or sand to spill are amazing.
+>
+> The destructible structure physics especially for metal is extremely cool.
+>
+> The agent simulation is extremely cool and the traits system is very cool.
+>
+> The opportunities system is cool but poorly executed in terms of presentation and it doesn't currently help the run to feel coherent.
+>
+> The controls are mediocre and the sandbox tools are vastoy more satisfying then the hero controls at the moment which is wasted potential.
+>
+> Good cameras also look cool but are actually not well designed for gameplay. Rotation messes up screen relative controls and the exciting terrain blocks readable screen in the  isometric perspective on a device with limited screen real estate.
+>
+> The lack of decent animations, sound effects, screen shake, and limitations of input on a phone undermine the quality of the character controllers fun.
+>
+> We need to focus on the shortest gameplay loops first and make them fun then build the outer loops to motivate the player to interact with them and see the cool premise of the legacy world.
+>
+> I think the pieces are there but we have real issues we need to focus and solve. Please stop and give me initial thoughts and then I will continue."
+
+- → Every agent paused, committed and pushed, with a status note per branch (docs/HANDOFF.md, round 128). Physics bugs (M128-7) and sediment spires (M128-8) noted, not fixed now. The only focus this week: gameplay, the shortest loops first. No implementation until it is planned with the user and a second agent. The hero playground: a course of interesting terrain and representative regions, easy hero choice, an expandable menu for camera, control settings and abilities; for testing movement, camera, combat, ordering units, building and in-session dialog (dialog pauses background logic for now). No balance or performance testing for input work. Flora and interiors on hold (the user unsure they address the core problem).
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
