@@ -222,10 +222,15 @@ function farTree(sp: SpeciesDef, seed: number): FloraMesh {
 /** (round 128) A far thicket: its first stems as thin prisms and a few big sprays of cards at some of its leaf sites
  *  (~40-60 triangles; the crown's look, not round 119's octahedra). */
 function farShrub(sp: SpeciesDef, seed: number): FloraMesh {
-  const sk = interpret(expand(sp.lsystem!, hashSeed(seed, 1)), sp.turtle!, hashSeed(seed, 2));
+  // (round 128: from the colonized skeleton where it has one — so each kind's far lump keeps its outline: wide, upright)
+  const sk = sp.colonize
+    ? colonize(sp.colonize, hashSeed(seed, 2), { kinkChance: sp.turtle?.kinkChance, kinkAngle: sp.turtle?.kinkAngle, twist: sp.turtle?.twist })
+    : interpret(expand(sp.lsystem!, hashSeed(seed, 1)), sp.turtle!, hashSeed(seed, 2));
   const H = Math.max(sk.height, 0.3);
   const mb = new MeshBuilder((p) => Math.pow(Math.max(0, p[2]) / H, 1.6) * 0.8);
-  for (const g of sk.segments) if (g.depth <= 1) mb.tube(g, 3, PART.wood);
+  // (the main stems only: a colonized skeleton's depth counts every fork — keep its thick ones)
+  const rMax = Math.max(...sk.segments.map((g) => g.r0));
+  for (const g of sk.segments) if (sp.colonize ? g.r0 >= rMax * 0.55 : g.depth <= 1) mb.tube(g, 3, PART.wood);
   const r01 = rng(hashSeed(seed, 9));
   const sites = sk.leaves.filter((_, i) => i % Math.max(1, Math.floor(sk.leaves.length / 6)) === 0);
   const size = Math.max(H * 0.45, 0.1);

@@ -16787,7 +16787,7 @@ epiphytes and seasons and states. Leafless and burned could also be useful state
   grass's fountain, tuft and seed-head clumps. Triangles (seed 1): bush 1036 / close 1760, spreading 1320 / 2244,
   upright 784 / 1366, berry 1420 / 2144, bramble 1218 / 2476 (budget 1600 / 3600); grass 154-196 / 396-484. Cost: the
   thicket's 5 variants make 89 kinds (was 80), nine more indirect draws (empty ones cost little; the bench reports
-  draws). The far thicket (lod 2) is still one shape for every kind (farShrub reads the L-system): not yet.
+  draws). The far thicket (lod 2) is grown from the kind's colonized skeleton too (its thick stems and six sprays: 72-78 triangles), so a far spreading bush is wide and an upright one narrow.
   Grass blades: several joints each, arching out and down, the sway along the blade (not the height: a hanging tip
   moves), dome normals (lit as one tuft — flat cards edge-on read as noise), the foot darkened, uv.y the ramp.
   The editor: a "kind of shrub" and "clump type" list, a Blades section (blades, clump width, lean, arch, blade width,
