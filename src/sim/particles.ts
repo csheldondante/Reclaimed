@@ -7,7 +7,12 @@ import commonWgsl from '../shaders/common.wgsl?raw';
 import materialsWgsl from '../shaders/materials.wgsl?raw';
 import particlesWgsl from '../shaders/particles.wgsl?raw';
 import tiersWgsl from '../shaders/tiers.wgsl?raw';
-import vegplanWgsl from '../shaders/vegplan.wgsl?raw';
+import vegplanOwn from '../shaders/vegplan.wgsl?raw';
+import { spacingWgsl } from '../flora/spacing';
+import woodsWgsl from '../shaders/woods.wgsl?raw';
+// (round 125: vegplan.wgsl reads the woods' fields — woods.wgsl, shared with the atlas)
+// (round 128: the slot grid's constants from flora/spacing.ts, one source)
+const vegplanWgsl = woodsWgsl + spacingWgsl() + vegplanOwn;
 import { dispatch, type SimSystem } from './system';
 import { AWAY, LIVE, TILES_BINDING, cullKernel, dispatchTiles } from './cull';
 import type { BindKind } from '../gpu/pipeline';

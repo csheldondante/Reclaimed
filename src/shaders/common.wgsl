@@ -183,6 +183,10 @@ fn seasonColour() -> f32 { let s = G.rules.w; return smoothstep(0.35, 0.55, s) *
 fn seasonBare() -> f32 { let s = G.rules.w; return smoothstep(0.55, 0.78, s) * (1.0 - smoothstep(0.9, 1.0, s)); }
 /** 0..1 how fast the leaves are coming down (the fall). */
 fn seasonShed() -> f32 { let s = G.rules.w; return smoothstep(0.46, 0.56, s) * (1.0 - smoothstep(0.72, 0.8, s)); }
+/** (round 128) 0..1 the deep winter: snow on the plants, ice on the bark, icicles (the bare months' middle). */
+fn seasonSnow() -> f32 { let s = G.rules.w; return smoothstep(0.79, 0.82, s) * (1.0 - smoothstep(0.88, 0.91, s)); }
+/** (round 128) 0..1 in flower: early spring, as the crowns leaf again (the year's turn: 0.93 .. 0.12). */
+fn seasonBloom() -> f32 { let s = G.rules.w; return smoothstep(0.92, 0.97, s) + 1.0 - smoothstep(0.06, 0.13, s); }
 /**
  * Grass through the year (round 51): green in summer, gold and straw in the
  * fall (patches at their own pace, by h 0..1), a dull dry brown in winter,

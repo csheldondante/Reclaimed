@@ -6,8 +6,9 @@
 //                   planTree, and vegprep.wgsl's floraSmall rules for thickets and tall grass), on the CPU, for
 //                   passability and queries — the same hashes, so what you can't walk through is what you see.
 import type { FloraSite } from '../api/contracts/flora';
-import { planTree } from '../api/plants';
+import { inGlade, planTree, type TopFn } from '../api/plants';
 import { SPECIES, SPECIES_IDS, type SpeciesId } from './species';
+import { elderWood } from './spacing';
 
 /** 1 at a range's middle, falling to 0 at its ends (and 0 outside) */
 function inRange(v: number, [lo, hi]: [number, number]): number {
@@ -57,16 +58,20 @@ const TREE_SPECIES: Record<string, SpeciesId> = { broadleaf: 'oak', conifer: 'pi
  * floraSmall). Grass needs soil-like ground on the GPU (MATS eco); here it is assumed (the CPU has no material per
  * column without a layers read) — passability over bare rock slightly overcounts grass.
  */
-export function standsAt(cx: number, cy: number, v: number, w: number, h: number, org: [number, number]): Stand[] {
+export function standsAt(cx: number, cy: number, v: number, w: number, h: number, org: [number, number], top: TopFn): Stand[] {
   const out: Stand[] = [];
-  const t = planTree(cx, cy, v, w, h, org);
+  const t = planTree(cx, cy, v, w, h, org, top);
   if (t) out.push({ species: TREE_SPECIES[t.species], cx, cy, scale: 0.8 + 0.2 * Math.min(1, Math.max(0, (v - 3.6) / 1.2)) });
   const hh = rand3(cx, cy, 4242, org);
-  // (vegprep floraSmall: shrubland's thicket; under the woods only a fifth of them — the floor stays open)
-  const shrub = !t && v >= 2.6 && hh < 0.25 && (v < 3.6 || rand3(cx, cy, 545, org) < 0.2);
+  // (vegprep floraSmall: shrubland's thicket; under the woods only a fifth of them — the floor stays open; round 125: in
+  // the elder woods none, fewer ferns, a mossy boulder here and there)
+  const elderFloor = v >= 3.6 && elderWood(cx + org[0], cy + org[1]) > 0.5;
+  // (round 128: a glade's empty tree slot has a thicket at 0.45 — vegPlan)
+  const shrub = !t && !elderFloor && v >= 2.6 && hh < (inGlade(cx, cy, v, w, h, org) ? 0.45 : 0.25) && (v < 3.6 || rand3(cx, cy, 545, org) < 0.2);
   if (shrub) out.push({ species: 'shrub', cx, cy, scale: 1 });
   if (v >= 3.6) {
-    if (!t && rand3(cx, cy, 543, org) < 0.16) out.push({ species: 'fern', cx, cy, scale: 1 });
+    if (!t && rand3(cx, cy, 543, org) < (elderFloor ? 0 : 0.16)) out.push({ species: 'fern', cx, cy, scale: 1 });
+    if (!t && elderFloor && rand3(cx, cy, 547, org) < 0.025) out.push({ species: 'boulder', cx, cy, scale: 1 });
     return out;
   }
   // tall grass where tufts grow (vegPlan: v ≥ 1.2, chance by smoothstep(1.2, 2.5, v) × 0.9) and floraSmall's share

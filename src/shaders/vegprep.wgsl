@@ -19,6 +19,8 @@
 // (round 99, ?meshinst=1: TREE_MESH) the trees as instances of their species' mesh (render/meshinst.ts: four vec4s
 // each, CAP a species), their draw args' instance counts in `indirect` from MI_ARGS (five words a species)
 @group(0) @binding(10) var<storage, read_write> instTree: array<vec4<f32>>;
+// (round 128, treegen) standing burned trees (snag.wgsl): a slot's tree drawn charred where the fire burned its wood
+@group(0) @binding(64) var snagTex: texture_2d<f32>;
 
 // (round 93) The instance lists may be smaller than their worst case (renderer.ts instgrow, ?instgrow=0 off): a write past
 // one's room is left out, the count clamped after (clampVeg) and the raw count kept for the CPU, which grows it.
@@ -196,14 +198,31 @@ fn treeInstance(c: vec2<u32>, top: f32, pl: VegPlan) {
     // coarse tree (no twigs, merged leaves, ~120-550 triangles) from 55, below that the far tree (~20-30 triangles).
     // On the phone's low tier at zoom 14 a birch is ~90 px: the coarse one)
     let hpx = (pl.trunk + pl.crown) * PC.viewport.z * FLORA_RPX;
-    let lod = select(select(2u, 1u, hpx >= 55.0), 0u, hpx >= 150.0);
+    // (round 128, ?flod=sprite: the ladder close → full → sprite — the sprite's mips are its levels; the coarse mesh goes)
+    let lod = select(select(select(2u, 1u, hpx >= 55.0), 2u, FLORA_SPRITES), 0u, hpx >= 150.0);
     var r = array<vec2<u32>, 3>(FL_OAK, FL_OAK_L1, FL_OAK_L2)[lod];
-    if (pl.species == 1u) { r = array<vec2<u32>, 3>(FL_PINE, FL_PINE_L1, FL_PINE_L2)[lod]; }
+    if (pl.species == 1u) {
+      // (round 128: a conifer is a pine or, two in five, a Scots pine — the same plan, the library's two shapes)
+      r = array<vec2<u32>, 3>(FL_PINE, FL_PINE_L1, FL_PINE_L2)[lod];
+      if (rand3(c.x, c.y, 577u) < 0.4) { r = array<vec2<u32>, 3>(FL_SCOTSPINE, FL_SCOTSPINE_L1, FL_SCOTSPINE_L2)[lod]; }
+    }
     if (pl.species == 2u) { r = array<vec2<u32>, 3>(FL_BIRCH, FL_BIRCH_L1, FL_BIRCH_L2)[lod]; }
     if (pl.species == 3u) { r = array<vec2<u32>, 3>(FL_GIANT, FL_GIANT_L1, FL_GIANT_L2)[lod]; }
+    // (round 128, the flora LOD ladder's top: a tree over FLORA_CLOSE_PX tall on screen — the camera zoomed in — its
+    // close-up level: more sides, rings, twigs and smaller leaf clusters, the bark's finer octave)
+    if (hpx >= FLORA_CLOSE_PX) {
+      r = array<vec2<u32>, 4>(FL_OAK_C, FL_PINE_C, FL_BIRCH_C, FL_GIANT_C)[min(pl.species, 3u)];
+      if (pl.species == 1u && rand3(c.x, c.y, 577u) < 0.4) { r = FL_SCOTSPINE_C; }
+    }
     // (the plan's age: young woods (succession just past 3.6) stand at 0.8 of the variant's height, old ones full)
-    let age = 0.8 + 0.2 * clamp((veg[colIdx(c.x, c.y)] - 3.6) / 1.2, 0.0, 1.0);
-    floraInstance(r, c, top, age, 0.05);
+    // (round 128: and the tree's own size — saplings to veterans, emergents: vegplan.wgsl treeSize)
+    let age = (0.8 + 0.2 * clamp((veg[colIdx(c.x, c.y)] - 3.6) / 1.2, 0.0, 1.0)) * treeSize(vec2<i32>(i32(c.x) + i32(G.org.z), i32(c.y) + i32(G.org.w)));
+    // (round 125, forest: the trees' real reach — the elder ~32 tall and ~16 across its crown — for the cull)
+    let tall = (pl.trunk + pl.crown) * 1.15 + 2.0;
+    // (round 128: its state — 2 burned (a snag stands), 1 dead (browned: leafless, grey), 0 alive)
+    let sn = textureLoad(snagTex, texCol(vec2<i32>(c)), 0).x;
+    let st = select(select(0.0, 1.0, wilt[colIdx(c.x, c.y)].y > 0.6), 2.0, sn > 0.0);
+    floraInstanceS(r, c, top, age, 0.05, tall, select(9.0, 16.0, pl.species == 3u) * TREE_SCALE, st);
     return;
   }
   let k = min(pl.species, MI_N - 1u);
@@ -227,9 +246,15 @@ fn treeInstance(c: vec2<u32>, top: f32, pl: VegPlan) {
   instTree[o + 3u] = vec4<f32>(pl.trunk + 0.5, base, pl.crown + select(0.0, 0.5, k == 3u), half);
 }
 
-fn floraInstance(r: vec2<u32>, c: vec2<u32>, top: f32, scale: f32, lean: f32) {
-  // (round 117, perf: a tree off screen, its shadow too, isn't drawn — up to 20 cells tall, 6 across)
-  if (!floraSeen(cellPos(vec2<i32>(c)), top, 20.0, 6.0)) { return; }
+fn floraInstanceS(r: vec2<u32>, c: vec2<u32>, top: f32, scale: f32, lean: f32, tall: f32, across: f32, state: f32) {
+  if (!floraSeen(cellPos(vec2<i32>(c)), top, tall, across)) { return; }
+  let o = floraPut(r, c, cellPos(vec2<i32>(c)), top, scale, lean, 0u);
+  if (o != 0xffffffffu) { instTree[o + 3u].x = state; }
+}
+
+fn floraInstance(r: vec2<u32>, c: vec2<u32>, top: f32, scale: f32, lean: f32, tall: f32, across: f32) {
+  // (round 117, perf: a tree off screen, its shadow too, isn't drawn — `tall` cells, `across` its crown's half-width)
+  if (!floraSeen(cellPos(vec2<i32>(c)), top, tall, across)) { return; }
   floraPut(r, c, cellPos(vec2<i32>(c)), top, scale, lean, 0u);
 }
 
@@ -238,6 +263,10 @@ fn floraInstance(r: vec2<u32>, c: vec2<u32>, top: f32, scale: f32, lean: f32) {
  * grassland, a clump each, jittered in the cell), wildflowers, ferns on the woodland floor (the shade plant: under the
  * canopy), a thicket shrub. Returns true when it drew the column's small plants (the tufts' boxes are then left out).
  */
+/** (round 128) the flora LOD ladder's close-up thresholds (render px): a tree this tall on screen, a cell this wide */
+const FLORA_CLOSE_PX: f32 = 420.0;
+const FLORA_CLOSE_CELL: f32 = 18.0;
+
 fn floraSmall(c: vec2<u32>, top: f32, v: f32, pl: VegPlan) -> bool {
   if (pl.tufts == 0u && !pl.shrub && !pl.flower && v < 3.6) { return false; }
   let jit = (vec2<f32>(rand3(c.x, c.y, 541u), rand3(c.x, c.y, 542u)) - 0.5) * 0.7;
@@ -254,16 +283,28 @@ fn floraSmall(c: vec2<u32>, top: f32, v: f32, pl: VegPlan) -> bool {
   // (shrubland — succession 2.6 to 3.6 — is the thicket, a soft barrier; under the woods' canopy only a few: the
   // forest floor stays open, ferns and leaf litter)
   // (round 119: a thicket under ~25 render px tall is drawn as its far lump, ~16 triangles)
-  if (pl.shrub && (v < 3.6 || rand3(c.x, c.y, 545u) < 0.2)) { floraPut(select(FL_SHRUB_L1, FL_SHRUB, px * 1.6 >= 25.0), c, at, top, 0.8, 0.05, 1u); }
-  if (v >= 3.6 && !pl.tree) {
-    // the woodland floor: ferns in the shade, here and there
-    if (fine && rand3(c.x, c.y, 543u) < 0.16) { floraPut(FL_FERN, c, at, top, 1.0, 0.05, 2u); }
+  // (round 125, forest: the elder woods' floor is the reference's open carpet of leaves between the trunks — no
+  // thicket, few ferns, a mossy boulder here and there; flora/placement.ts standsAt keeps the same rule)
+  let elderFloor = v >= 3.6 && elderWoodW(vec2<i32>(i32(c.x) + i32(G.org.z), i32(c.y) + i32(G.org.w))) > 0.5;
+  // (round 128: the close-up level when a cell is over FLORA_CLOSE_CELL render px — the camera zoomed in)
+  if (pl.shrub && !elderFloor && (v < 3.6 || rand3(c.x, c.y, 545u) < 0.2)) { floraPut(select(select(FL_SHRUB_L1, FL_SHRUB, px * 1.6 >= 25.0), FL_SHRUB_C, px >= FLORA_CLOSE_CELL), c, at, top, 0.8, 0.05, 1u); }
+  if (v >= 3.6) {
+    // the woodland floor: ferns in the shade, here and there (not at a tree's own foot)
+    // (round 125: a tree's own column under the woods was falling through to the meadows' tall grass below — a clump of
+    // giant blades at every trunk's foot under the canopy; flora/placement.ts standsAt always stopped here)
+    if (pl.tree) { return true; }
+    if (fine && rand3(c.x, c.y, 543u) < select(0.16, 0.0, elderFloor)) { floraPut(FL_FERN, c, at, top, 1.0, 0.05, 2u); }
+    if (elderFloor && rand3(c.x, c.y, 547u) < 0.025) { floraPut(FL_BOULDER, c, at, top, 1.0, 0.0, 5u); }
     return true;
   }
   if (pl.tufts > 0u && v >= 1.4 && fine) {
     // tall grass: the meadows (taller the lusher), thinning toward the woods' shade
     let lush = smoothstep(1.4, 2.6, v) * (1.0 - smoothstep(3.3, 3.8, v));
-    if (rand3(c.x, c.y, 544u) < 0.25 + 0.7 * lush) { floraPut(FL_TALLGRASS, c, at, top, 0.7 + 0.45 * lush, 0.08, 3u); }
+    // (round 128: × FGRASS, ?fgrass= — the bench's density pairs; past 1 a second clump in the cell)
+    let gp = (0.25 + 0.7 * lush) * FGRASS;
+    let gk = select(FL_TALLGRASS, FL_TALLGRASS_C, px >= FLORA_CLOSE_CELL);
+    if (rand3(c.x, c.y, 544u) < gp) { floraPut(gk, c, at, top, 0.7 + 0.45 * lush, 0.08, 3u); }
+    if (rand3(c.x, c.y, 548u) < gp - 1.0) { floraPut(gk, c, at + vec2<f32>(0.45, 0.4), top, 0.6 + 0.4 * lush, 0.08, 6u); }
     if (pl.flower) { floraPut(FL_FLOWER, c, at + vec2<f32>(0.3, -0.2), top, 1.0, 0.1, 4u); }
     return true;
   }
@@ -293,7 +334,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     let lay = driftAt(vec2<i32>(id.xy));
     if (lay > 0.0 && !buriedAt(vec2<i32>(id.xy))) { top = f32(sfZ(s)) + lay; }
     let gm = groundMatAt(vec2<i32>(id.xy), sfMat(s));
-    pl = vegPlan(id.x, id.y, veg[i], gm);
+    // (round 128: a burned wood's snag keeps its tree standing, charred — the plan as a wood's)
+    let snag = textureLoad(snagTex, texCol(vec2<i32>(id.xy)), 0).x;
+    pl = vegPlan(id.x, id.y, select(veg[i], max(veg[i], 3.6), snag > 0.0), gm);
     plF = pl;
     // (perfopt, ?tufts=0: no grass tufts — quarter-cell boxes, a third of a pixel at low; the mesh's plant cover draws the grass)
     if (!TUFTS) { pl.tufts = 0u; }

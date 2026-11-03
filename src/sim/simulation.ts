@@ -6,11 +6,12 @@ import { EventKind, MAX_EVENTS, writeGlobals, GLOBALS_HEAD_BYTES, globalsBytes, 
 import type { SimSystem } from './system';
 import {
   ContaminationSystem,
-  EcologySystem,
+  EcologySystem, SnagSystem,
   MoistureSystem,
   OilSystem,
   RenderFieldsSystem,
   FireSystem,
+  FireWatchSystem,
   StatsSystem,
   SwaySystem,
   WindFieldSystem,
@@ -101,12 +102,16 @@ export class Simulation {
       new ContaminationSystem(device, world, profiler),
       new MoistureSystem(device, world, profiler),
       new FireSystem(device, world, profiler),
+      // (round 128: a burning chunk stays awake — sim/sleep.ts holdBurning)
+      new FireWatchSystem(device, world, profiler),
       new SedimentSystem(device, world, profiler),
       new ClimateSystem(device, world, profiler),
       // (round 108, TC20: after the climate and the surface — it measures what they leave)
       (this.cover = new WeatherCoverSystem(device, world, profiler)),
       new WiltSystem(device, world, profiler),
       new EcologySystem(device, world, profiler),
+      // (round 128, treegen: the fire's standing burned trees)
+      new SnagSystem(device, world, profiler),
       this.particles,
       new StructTickSystem(device, world, profiler),
       new SwaySystem(device, world, profiler),

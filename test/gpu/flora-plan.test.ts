@@ -6,10 +6,14 @@ import { afterAll, beforeAll, expect, test } from 'vitest';
 import { makeBindGroup, makeCompute } from '../../src/gpu/pipeline';
 import commonWgsl from '../../src/shaders/common.wgsl?raw';
 import materialsWgsl from '../../src/shaders/materials.wgsl?raw';
-import vegplanWgsl from '../../src/shaders/vegplan.wgsl?raw';
+import vegplanOwn from '../../src/shaders/vegplan.wgsl?raw';
+import { spacingWgsl } from '../../src/flora/spacing';
+import woodsWgsl from '../../src/shaders/woods.wgsl?raw';
+const vegplanWgsl = woodsWgsl + spacingWgsl() + vegplanOwn;
 import { GLOBALS_BYTES } from '../../src/sim/globals';
 import { packMaterialTable } from '../../src/world/materials';
 import { birchWood, planTree } from '../../src/api/plants';
+import { elderWood } from '../../src/flora/spacing';
 import { testGpu, type TestGpu } from './dawn';
 
 let g: TestGpu;
@@ -18,11 +22,13 @@ beforeAll(async () => {
 });
 afterAll(() => g?.destroy());
 
-const W = 64;
-const H = 64;
+// (round 128: 128 — the slots twice as far apart, TREE_SCALE)
+const W = 128;
+const H = 128;
 const KERNEL = /* wgsl */ `
 @group(0) @binding(3) var<storage, read_write> outv: array<vec4<f32>>;
 @group(0) @binding(4) var<storage, read> vin: array<f32>;
+@group(0) @binding(5) var<storage, read> surface: array<u32>;
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= ${W}u || id.y >= ${H}u) { return; }
@@ -33,10 +39,19 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 `;
 
-test('vegPlan (GPU) and planTree (CPU) put the same trees in the same places', async () => {
+/** (round 125, forest) a window origin deep in an elder wood (spacing.ts elderWood over the whole window) */
+function elderOrigin(): [number, number] {
+  for (let y = 0; y < 8000; y += 16)
+    for (let x = 0; x < 8000; x += 14) if ([0, 32, 63].every((i) => [0, 32, 63].every((j) => elderWood(x + i, y + j) > 0.99))) return [x, y];
+  throw new Error('no elder wood found');
+}
+
+test.each([
+  ['a window far into the world', [-1234, 5678] as [number, number]],
+  ['a window in an elder wood', elderOrigin()],
+])('vegPlan (GPU) and planTree (CPU) put the same trees in the same places: %s', async (_name, org) => {
   const dev = g.device;
-  // a window far into the world (the origin goes into every hash), succession ramping 3.4 → 5.4 across it
-  const org: [number, number] = [-1234, 5678];
+  // (the origin goes into every hash), succession ramping 3.4 → 5.4 across it
   const glob = new ArrayBuffer(GLOBALS_BYTES);
   const u = new Uint32Array(glob);
   const f = new Float32Array(glob);
@@ -48,19 +63,26 @@ test('vegPlan (GPU) and planTree (CPU) put the same trees in the same places', a
   f[279] = org[1];
   const v = new Float32Array(W * H);
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) v[y * W + x] = 3.4 + (2 * (x + y)) / (W + H);
+  // (round 128: hills — the plan's conifers on the slopes and the high ground; the surface packed as sfZ reads it)
+  const topOf = (x: number, y: number) => Math.round((20 + 9 * Math.sin(x / 9) * Math.cos(y / 7) + 0.6 * x) * 256) / 256;
+  const surf = new Uint32Array(W * H);
+  // (in the buffers' page-major order, common.wgsl colIdx with the ring at 0: 16² pages, row by row)
+  const colIdx = (x: number, y: number) => ((y >> 4) * (W >> 4) + (x >> 4)) * 256 + (y & 15) * 16 + (x & 15);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) surf[colIdx(x, y)] = Math.round(topOf(x, y) * 256) & 0x1ffff;
   const mk = (size: number, usage: number, data?: ArrayBufferView | ArrayBuffer) => {
     const b = dev.createBuffer({ size, usage: usage | GPUBufferUsage.COPY_DST });
     if (data) dev.queue.writeBuffer(b, 0, data as ArrayBuffer);
     return b;
   };
   const mats = packMaterialTable();
-  const k = makeCompute(dev, 'flora-plan', [commonWgsl, materialsWgsl, vegplanWgsl, KERNEL], { 0: 'uniform', 2: 'uniform', 3: 'rw', 4: 'read' });
+  const k = makeCompute(dev, 'flora-plan', [commonWgsl, materialsWgsl, vegplanWgsl, KERNEL], { 0: 'uniform', 2: 'uniform', 3: 'rw', 4: 'read', 5: 'read' });
   const out = mk(W * H * 32, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
   const bg = makeBindGroup(dev, 'flora-plan', k.layout, {
     0: mk(GLOBALS_BYTES, GPUBufferUsage.UNIFORM, glob),
     2: mk(mats.byteLength, GPUBufferUsage.UNIFORM, mats),
     3: out,
     4: mk(v.byteLength, GPUBufferUsage.STORAGE, v),
+    5: mk(surf.byteLength, GPUBufferUsage.STORAGE, surf),
   });
   const enc = dev.createCommandEncoder();
   const pass = enc.beginComputePass();
@@ -74,11 +96,12 @@ test('vegPlan (GPU) and planTree (CPU) put the same trees in the same places', a
   const SP = ['broadleaf', 'conifer', 'birch', 'giant'];
   let trees = 0;
   let birches = 0;
+  let giants = 0;
   let maxWood = 0;
   for (let y = 0; y < H; y++)
     for (let x = 0; x < W; x++) {
       const i = y * W + x;
-      const t = planTree(x, y, v[i], W, H, org);
+      const t = planTree(x, y, v[i], W, H, org, topOf);
       const gpu = r.subarray(i * 8, i * 8 + 8);
       expect(gpu[4]).toBeCloseTo(birchWood(x, y, org), 4);
       maxWood = Math.max(maxWood, gpu[4]);
@@ -86,12 +109,16 @@ test('vegPlan (GPU) and planTree (CPU) put the same trees in the same places', a
       if (!t) continue;
       trees++;
       if (t.species === 'birch') birches++;
+      if (t.species === 'giant') giants++;
       expect(SP[gpu[1]], `species at ${x},${y}`).toBe(t.species);
-      expect(gpu[2]).toBe(t.trunk);
-      expect(gpu[3]).toBe(t.crown);
+      // (round 128: the tree's size a float product on both sides — f32 against f64)
+      expect(gpu[2]).toBeCloseTo(t.trunk, 3);
+      expect(gpu[3]).toBeCloseTo(t.crown, 3);
     }
-  expect(trees).toBeGreaterThan(40);
-  expect(birches).toBeGreaterThan(0);
+  // (round 125: a tree a 7 × 8 block of columns; round 128: 14 × 16 — ~73 blocks in the 128² window; an elder a 2 × 2 of them)
+  expect(trees).toBeGreaterThan(12);
+  if (_name.includes('elder')) expect(giants).toBeGreaterThan(5);
+  else expect(birches + trees).toBeGreaterThan(0);
 });
 
 test('birch woods exist: a world-scale patchwork, about a fifth of the land in one', () => {

@@ -16713,6 +16713,616 @@ up walls and bank on vertical or nearly vertical surfaces? Maybe we can make can
   (stopped at a boulder), city 0.66, tour 1.62, hills 4.11. A thumb steers round; the sloppy-rider metric is the
   next measure.
 - The terrain track's row for the real map's canyons: TER20.
+## 2026-11-02 — round 125 (`forest`): the flora improvement epic, first pass — trees composed, the elder woods, under the canopy (FLO30-FLO37)
+
+The user (DECISIONS round 124, verbatim there): forests "impressive like the cliffs ... seas of leaves", trees bigger and
+spaced apart in the main map, and under the canopy "another world": the trees in the way dithered, stencilled leaf
+shadows, leaves falling, crepuscular rays, litter blowing; the reference docs/design/ref/forest-floor.png. Then, on the
+first shots (via main): "once it fades you don't need to render the canopy at all", "Just the s shadows and the
+trunks"; the leaves, shafts, mist and litter "belong in the shot", and the wood should vary (dark groves, glades,
+streams). Main's review of the first shots: no trunks in frame, haze washing everything into one value, no visible
+dapple or rays, the camera too close, the hero lost.
+
+**Why each piece.**
+- *Placement* (flora/spacing.ts, vegplan.wgsl): the old rule (any wooded column whose hash was under 0.045) is a Poisson
+  scatter — clumps two cells apart beside holes; under the canopy busy, from above thin. A jittered grid of slots in
+  world columns (blue noise, ~7 cells apart, never under ~3) composes: even stands, open floor between. Node tests on
+  the spacing (src/flora/spacing.test.ts), the CPU port and the kernel the same on Dawn (flora-plan.test.ts, now also
+  over a window inside an elder wood).
+- *Scale*: the birch 11-17 → 17-25 (trunk ~0.9 across, the lich's width: the user's "0.25-1 trunk width" for the PC),
+  broadleaf 9-15, conifer 12-20, and the elder 24-32 with a ~3-cell bole (the lich 0.4 of it, a villager a quarter).
+- *The elder*: the reference's tree as parameters (species.ts: a massive bole, three or four great limbs, small copper
+  clusters; buttress roots as fins + sprawl, generate.ts flareSegments; ridged pale bark, moss on the foot's up faces in
+  floralook.wgsl). Iterated on a software render of the meshes (Node, pngjs) before the browser: shots88/forest/mesh-*.
+  Triangles 2.2-4.3k (the elder's budget the area's: one to four of the other trees' slots; flora.test.ts).
+- *The atlas's woods*: the first lab runs found no forest — the atlas's woods were small patches (in the best tile near
+  the spawn ~2 % of a temperate window's columns at succession ≥ 3.9; 35 trees within 150 cells). woods.wgsl's
+  elderWoods lays old woods (4.2) through the elder woods' noise on land that grows plants. Vegetation only:
+  test/gpu/seed1-unchanged.test.ts builds seed 1 on Dawn and checks regions, the spawn, sites and roads deep-equal
+  data/atlas/seed1.json (passes: no cache regenerated). Town layouts do read the woods (settle/plan.ts dWood).
+- *Under the canopy* (forest/, understory.wgsl, understory_draw.wgsl; ARCHITECTURE "The forest and the understory"): one
+  look from the hero and the flora plan (no GPU readback), eased by the canopy's cover over a disc (no flicker past a
+  trunk: a Node test). The canopy left out of the eye's draw (dithered in, then not drawn: the fill saved; the shadow
+  pass keeps it, so the floor's dapple stays), a keyhole through the trunks in front of the hero only (they frame the
+  scene), the sun through a stencil of the canopy's holes as pinhole ellipses in three steps, shafts down the stencil's
+  big holes, falling pixel leaves, litter slid along by the integrated wind (G.env) and hopping in strong gusts, groves
+  and glades by slow noise, mist only far behind, a light pool round the hero so its figure reads. The dither mask is
+  tested on Dawn with the shipped function, Camera struct and the camera's own uniform write (test/gpu/understory.test.ts).
+- *Wind on foliage* (the user's matrix): FWIND as a pipeline override (`?fwind=`): static / sway (as it was: the grass's
+  1B bending) / 1A ripple / 1C lattice (eight control points of a traveling gust field, the foot anchored) / both.
+- *Past the window*: the tiles' painted crowns now walk the same slot blocks (tiles.wgsl), so a wood keeps its trees as
+  they leave the window; the far rings and the atlas map's bake still have the old lattice (FLO36).
+
+**Found on the way.** The lab's stand was kept in window coordinates and not moved when the window slid (the first
+parked shots stood the lich in a lake): ForestLab.shift on the core's onShift. The scratchpad is shared with other
+agents: a file named arch.md was overwritten by another track's between writing and reading it (caught in the diff;
+this branch's scratch files now live in scratchpad/forest/).
+
+## 2026-11-02 — round 125 (`forest`): under the canopy, the reviews' iterations (FLO32, FLO33, FLO38, FLO39)
+
+The user, verbatim (through main), on the first under-canopy shots: "I think once it fades you don't need to render the
+canopy at all"; "Just the s shadows and the trunks"; "No I think those belong in the shot. They don't obscure visibility
+but make it feel like you are under the leaves and we can make darker areas and streams and other effects that will
+feel varied and interesting"; "the screenshot you shared actually shows trees and roots but they are huge and the zoom is
+actually too big now (I want more vertical trunk) it may be better in portrait though"; "I think we still want to be at
+the foot of the trees and to cut away the trunks in front of the PC so they look like stumps that fade".
+
+**What changed, and why.**
+- *The canopy isn't drawn under it* (meshinst.wgsl): leaves and limbs (wood over the crown's base, off the bole's axis:
+  FLORA_CROWN) dither out while the weight rises and are culled at the vertex once it's whole — over ~100 cells, since a
+  crown 50 cells in front still lifts into the frame (lab5's orange screen-door at the bottom). The shadow pass keeps
+  them: the floor's dapple is their shade. The boles darken over their last cells into it (no pale caps).
+- *Stumps in front*: every tree between the eye and the hero across the screen's width is cut clean at the hero's knee
+  (1.1 cells over its foot), its top darkening into the cut — no stipple (main: "nothing should be stippled"); the
+  trunks behind and beside it keep their height. The keyhole is gone.
+- *The camera*: under the canopy the zoom is ×0.7 the lich's (more vertical trunk). Portrait and landscape both shot.
+- *Light*: the stencil now shades as well as lets through (the shadow map's crown shade → flecks in deep shade; gaps
+  stay lit), a pool and a warm rim on the hero (underRim: its figure's edges glow against the dark floor), groves and
+  glades by slow noise, the mist only far behind and thin (lab4's haze washed everything into one orange-pink value).
+- *Shafts*: down the stencil's big holes onto the big flecks; soft across, fading down their length, faint, eight
+  dithered steps added in the target's own space (toSrgb lifted a faint beam into a solid bar: lab5).
+- *The elder*: warm pale streaked bark, moss on every up-facing root, buttresses hugging the foot (the sprawl read as
+  logs), small leaf clusters (the first were slabs at the close zoom).
+- *The floor*: no thicket and no ferns in the elder woods (a fern hid the lich in lab6), mossy boulders; seed fluff
+  smaller, warm and round (read as snow).
+
+Shots: C:/Projects/shots88/forest/lab3..lab6 (portrait 412x915), lab5L, lab6L (landscape 915x412), mesh-* (the meshes'
+software render).
+- *lab7's review* (main): landscape read; in portrait three trunks in front stood whole — the stumps' "in front" is now
+  the foot below the hero on screen (its height counted), not a band on the ground. The floor came out evenly lit (the
+  crowns' own shadow at a low sun falls far off), so the stencil is the floor's light wherever the canopy is; only a
+  glade lets the open sun in; bigger flecks and shafts. The pale-green blades round the trunks were tall grass: a tree's
+  own column under the woods fell through vegprep's floraSmall to the meadows' rule (flora/placement.ts never did) —
+  fixed, the GPU now as the CPU.
+- *lab8* (shots88/forest/lab8*, over8-z7/z14, *-vs-ref.png): the floor dark with lit patches, shafts showing, stumps low
+  in front in both orientations; the overworld at zoom 7-14 is a red-orange sea of crowns over pale boles. The green
+  "blades" left at the trunks' feet were the roots' moss on every face: moss now on their tops in patches. (A `patch`
+  variable broke WGSL — reserved word; caught by the next page load, fixed.)
+
+**Measured (incomplete).** scripts/frameparked.mjs, parked at the elder wood (at 13728,5216) with the lich, phone proxy
+(412x915 dpr 2.6, q=low), every system in play: places 8.33-8.44 ms mean, forest 8.33-8.42, forest `?under=0`
+8.33-8.38 — all at the headless page's 120 Hz cap, so the forest's cost is under the cap here, not resolved. The
+uncapped attempt (--disable-gpu-vsync / --disable-frame-rate-limit in the runner's daemon page) gave rAF at ~0.8 ms and
+the profiler's GPU totals at ~200 ms a frame: unusable; a forestcost run overlapping another page's gave 25-35 ms means
+(the GPU shared). The per-treatment A/B pairs and the wind modes' pairs (scripts/forestcost.mjs) still need a clean,
+uncapped timing run, and the phone itself (FLO30's rule).
+
+## 2026-11-03 — round 128 (`treegen`): the flora generator push, M1 the stems and bark, M2 epiphytes and seasons (FLO40-FLO44)
+
+The user (round 128): "I want to update the flora generator to extrude a noise perturbed poly stem and to have
+parameters for taper, branching distance and angle plus variance, whether we twist branches as we go, to have knots and
+direction changes and epiphyte density for lichens, mosses, other plants, vines and lines. Then to have seasonal
+variants with and without leaves and with flowers. Bark color and texture parameters." And: "Also a winter variant with
+snow and ice."
+
+**The stem (M1).** What it replaces: round 117's wood was one capless tapered prism per turtle step
+(mesh.ts `tube`, a segment each) — a seam at every step, a perfectly round straight stick between forks, nothing for the
+noise to live on. Now the turtle tags each segment with its stem (one branch, fork to tip) and its accumulated twist;
+mesh.ts `stemPaths` chains a stem's steps and `MeshBuilder.stem` sweeps one n-gon along it: rings shared between steps,
+each ring across the mean of its two steps' directions, carried by parallel transport (no flips), subdivided to the
+species' ring spacing so the noise shows, the radius perturbed by two octaves of smooth value noise along and around
+(periodic round the stem), bulged at knots (a Gaussian along the stem × a cos² lobe on one side: burls and branch
+scars). The old prism path is kept only as the viewer's "old" side of its old | new pair (`legacyDef`), so the user can
+compare; the game and the library always take the new one.
+
+**The growth parameters**, each with a variance (TurtleSpec, all optional): taper ± taperVar; the branching distance
+(`spacing`, the internode length, so the spacing of the branches along their parent) ± stepVar; the branching angle ±
+`jitter` (the existing variance); `twist` (a roll about the heading after each step: children leave in a spiral and the
+stem's facets turn with it; 0 off); kinks (`kinkChance` a step, `kinkAngle`: the heading turned about a random axis
+across it). The variances draw from their own random stream, so turning one on bends the same tree (the branching and
+leaf sites are the old one's: a test), which is what makes the viewer's old | new pair the same tree.
+
+**Bark (M1)**, in the existing look (floralook.wgsl), per species (BarkLook → FLORA_BARK, two vec4s a kind): furrows
+(depth, frequency round), plates (the face's across-coordinate and height cut into staggered plates, cracks in the mark
+colour, each plate its own shade — a pine's scales), stripes (a birch's lenticels, frequency up), roughness (the
+elder's streaks and warm patches). Round 125's two styles (`barkStyle` lenticels / ridged) are two settings of it: the
+elder's furrows 0.8 + roughness 0.8 reproduce its ridges exactly; the birch is stripes 0.2 at 7 a cell. The bark and
+mark colours are steerable too. New: oak furrowed with a few plates, pine plated in red-brown.
+
+**Epiphytes (M2)**, densities 0..1 per species (Epiphytes): lichens (pale grey-green and ochre crusts on the bark, in
+the look: FLORA_EPI), mosses on the limbs' upper faces all the way up (the look; round 125's `moss` stays the foot's),
+plants (frond tufts in the forks above a quarter of the height), vines (up to three climbers spiralling up the trunk to
+about its first limbs, a 3-sided stem with leaf blobs), lines — read as hanging lines: lianas and Spanish-moss /
+old-man's-beard strands from the limbs, swinging (part 10; the alternative reading, guy-lines of web or rope, is a
+question for the user). New mesh parts: 9 an epiphyte's green (evergreen), 10 a strand, 11 ice; the viewer's host
+stone moved from part 9 to 15. epiphytes.ts adds the geometry through buildPlant's `extra` hook (no cycle with mesh.ts).
+
+**Seasons (M2)**, on the existing season (G.rules.w, ?fseason= in the forest station, the viewer's slider, now with
+named points: flower 0.97, leaf 0.2, autumn 0.47, bare 0.76, winter 0.85; common.wgsl gains seasonSnow 0.79-0.91 and
+seasonBloom 0.92-0.13):
+- In flower: a species' `blossom` share of its leaf clusters in colours.flower as the crowns leaf again (the thicket
+  white, the birch's catkins ochre).
+- Bare: the leaf faces that drop out with the season used to vanish, so a bare birch's coarse level was a pole (its
+  limbs are under the twig cut at the phone's coarse level: 1 stem of 43 drawn). Two fixes: the deciduous keep their
+  first limbs at every mesh level (thickened to the minimum width; `keepLimbs`), and a share (~38%) of the dropped leaf
+  faces stay as the twigs' haze — a dark grey-brown stipple round the limbs that keeps the crown's shape, as a bare
+  wood reads from a distance. Judgement call for the user: the haze's share and colour.
+- Winter: snow on the upper faces of wood, of the evergreens' needles (the snow-laden conifer), of the shrubs' leaves,
+  on the grass blades' tips and the epiphytes; the bark glazed (paler, bluer); icicles under the near-level limbs
+  (part 11, ~14 a tree, collapsed off screen in the vertex shader outside deep winter, so they cost vertices only).
+
+**Numbers** (triangles a plant, seed 1, old → new; the triangle budgets' test unchanged: trees ≤ 3200, the elder ≤
+5000): full detail birch 1878 → 2004, broadleaf 444 → 780, conifer 1646 → 1832, elder 4128 → 4920; the phone's coarse
+level (px 6, lod 1) birch 760 → 1186 (its limbs kept), broadleaf 200 → 538, conifer 1036 → 1060, elder 4024 → 4760;
+thicket and fern unchanged (190, 260). Frame cost: not measured yet — M4's phone bench covers the generator's meshes
+(the new vs old library by reload).
+
+**The viewer** (flora.html, one plant): a "generator" panel with a slider for every parameter (params.ts PARAMS: stem,
+bark, epiphytes, blossom), the bark and mark colours, mirrored to the URL as p.<key>=, a reset, and `old | new` (the
+legacy mesh and look on the left, the edited one on the right, the same seed).
+
+Tests (src/flora/flora.test.ts): a stem's steps are one path; the variances keep the branching; twist spirals the
+children; kinks bend a stem; noise and knots move the vertices, not the triangle count; the viewer's old side is the
+legacy mesh; every species' value within its slider's range, edits clamped and the table untouched, the URL round trip;
+bare deciduous trees keep limb wood at both mesh levels; the epiphyte densities add their geometry (none without);
+icicles on trees only; the named seasons where the season functions put them.
+
+## 2026-11-03 — round 128 (`treegen`): M3, every tree x2 at a quarter the density (FLO45)
+
+The user (round 128): "Let's make all treesa bit bigger (height and trunk width scaled by 2 density quartered to
+match)". One constant, flora/spacing.ts TREE_SCALE (2; `?treescale=1` gives round 125's trees — the phone bench's other
+side and the before/after shots, the same build), read everywhere a tree's size or spacing is:
+- the slot grid: SLOT_W/H 7 x 8 → 14 x 16 columns, the margins 1 → 2 and the elder's 3 → 6 (the elder super-block 2 x 2
+  blocks, so 28 x 32). vegplan.wgsl no longer carries its own copy: spacing.ts spacingWgsl() is prepended wherever it is
+  compiled (renderer, particles, the GPU tests) — one source, which the CPU/GPU plan test still checks.
+- the plan's heights: vegplan.wgsl and api/plants.ts planTree compute round 125's trunk and crown and multiply by
+  TREE_SCALE (the same hashes: where a tree stands and what species it is only thins out; the GPU/CPU test unchanged);
+- the library: tree species' height ranges are round 125's x TREE_SCALE (species.ts `tall`), and the generator scales
+  the whole tree uniformly, so the trunk's width doubles with the height (the elder's bole ~5 cells across, the
+  lich a fifth of it);
+- the tiles' painted trees past the window (tiles.wgsl tileTrees: height, crown radius and the blocks' reach);
+- vegprep's cull radius for a crown; the understory's crown reach and the driver's radius round the hero (the
+  canopy's underside is the plan's trunk, so it rises with it); the forest station's park reach;
+- passability: a trunk's footprint x TREE_SCALE² (trees a quarter as many, each four times the area: a wood as hard to
+  cross as before);
+- logs: a tree's logs x TREE_SCALE² (a wood holds the wood it held). Judgement call for the user: felling one tree now
+  yields four times the logs.
+
+What does not change: the succession, the regions, sites, roads (test/gpu/seed1-unchanged.test.ts passes) and the
+towns' plans (settle/plan.ts dWood reads the succession, not the trees). The stem's ring spacing in cells doubled with
+the trees (so a stem has the rings it had); a tree's triangles are about what they were (birch 2004, elder 4920 at full
+detail) but four times fewer trees stand on the land. The coarse level keeps more of a big tree's limbs (its twig cut is
+in pixels: a tree twice the size has more limbs over it): birch 1684, broadleaf 702, elder 4856.
+
+Tests: the slot tests at x TREE_SCALE (the nearest neighbours ≥ 4.3 cells, ~9-16 on average; the elders ≥ 12, ~20+);
+the GPU/CPU plan test on a 128² window (the same ~73 blocks as before).
+
+## 2026-11-03 — round 128 (`treegen`): M5, the flora LOD ladder's close-up level and the occluder signal (FLO47)
+
+The user (round 128): "I want to also have the same transition to the forest floor for the other plant types", then
+"I think we only need to zoom in for certain things and when we do we may want to enhance the geometry and textures
+with basic lod", and on the camera: "I want to zoom in when going into forests that would otherwise obscure visibility.
+Most forests but not low trees or shrubs. On fields I like the pulled back view and I think that this of a function of
+how much things stick up around the player."
+
+So not a zoom-in mode per biome: one LOD ladder for flora, chosen by size on screen, with the generator emitting every
+level from the same parameters — close-up → full → coarse → far (→ the baked sprite, M6 → the far tiles).
+- The close-up level (generate's `lod: 'close'`): the same skeleton with more of it drawn — two more stem sides, the
+  rings twice as close, twigs down to a third of the usual cut — and each leaf cluster split into twice as many at 0.7
+  the size; the thicket the same; tall grass 15 blades bent in three (9 in two). Its look adds a finer octave (the
+  close kinds are flagged in FLORA_EPI.w): the bark's grain, the leaves' own variation within a cluster. Triangles (seed
+  3, full → close): birch 2786 → 5652, broadleaf 1212 → 2374, conifer 1844 → 2638, elder 3898 → 7402, thicket 278 →
+  568, tall grass 72 → 174 (the test's budget: twice the full level's).
+- The library adds it for the trees, the thicket and the tall grass (FL_<ID>_C; 48 → 64 kinds, a draw each; the
+  instance buffer grows by 16 kinds × 4096 × 64 B = 4 MB — per-kind caps would take it back, noted).
+- vegprep picks it by size on screen: a tree over 420 render px tall (FLORA_CLOSE_PX; full from 150, coarse from 55 as
+  before), a thicket or a clump of grass where a cell is over 18 render px (FLORA_CLOSE_CELL). The phone's low tier at
+  its normal zoom (~7 px a cell) never reaches it; zoomed in under an elder wood it does. Everything the forest built
+  under the canopy (the canopy cut, the dither, the stumps in front) is per kind from FLORA_CROWN, so the close kinds
+  get it too.
+- Ferns, reeds, ivy, flowers and moss stay at one level (a few hundred triangles; their close-up is the next step if a
+  zoomed-in shot asks for it).
+
+The occluder signal for the camera rule (herolab owns the rule): contracts/understory.ts OccluderSignal — `height` (the
+crowns' tops round the hero over a 12-cell disc, weighted by how much of the disc each covers, scaled down where the
+cover is under a half), `top` (the tallest crown reaching the disc), `cover`, `trees`, `radius` — computed by
+forest/understory.ts `occluders` from the flora plan's trees the understory driver already asks for (CPU, from the
+plan's mirror: no GPU readback; the camera is CPU-side, so a GPU buffer would need a readback to reach it). Read it as
+`driver.occluder` (forest/driver.ts, refreshed with the trees every 0.25 s or 3 cells). Shrubs and grass are not
+trees in the plan, so a thicket or a meadow is 0; a lone low broadleaf is a fraction of a stand of elders (a test).
+
+## 2026-11-03 — round 128 (`treegen`): M6 first pass, the far trees as baked sprites (?flod=sprite) and the foliage phone bench (FLO46, FLO48)
+
+The user (round 128): "ideally instead of the low poly lod we have now we can bake and instance sprites"; "I imagine
+sprites of trees can be small and rendered on demand (likely we render normal and albedo and let sceenspace lighting
+take over right?)"; "the camera is isometric and doesn't tilt except around cliffs and maybe cities so I'm hoping we
+can use baked sprites often without making too many angles."
+
+**The camera's turns today** (what the yaw steps must cover): the pitch is fixed (render/camera.ts ELEVATION, 30°);
+the azimuth turns by the player's turn control in steps of a sixth of a turn, eased (render/turn.ts TURN_STEP), or
+continuously while a turn button is held, and the cutaway's orbit may turn it continuously to keep the hero seen
+(api/cutaway.ts). Every tree instance is turned by its own random yaw, so whatever the camera does, the trees show
+every angle at once: the yaw steps are of the tree, not the camera.
+
+**What a sprite is** (flora/sprites.ts, render/florasprites.ts, shaders/florasprite.wgsl, meshinst.wgsl fsSprite):
+- baked on the GPU from the same variant's full mesh (the generator's own; the far tree is the near one), at the iso
+  pitch, SPR_YAWS = 8 yaw steps (?fyaws= to try others), a 64² cell each (the far level is a tree under ~55 render px
+  tall: about a texel a pixel): per texel the look's albedo and coverage, its normal in the tree's frame (octahedral),
+  its depth along the view and its material. Baked when the atlas is made and again whenever the season has moved on
+  by 1/96 of the year (the leaves, blossom, snow are the season's): 11 tree kinds × 8 = 88 draws of the full meshes into
+  one pass, no readback. "On demand" at this granularity: every tree kind shows every yaw at once, so a forest needs
+  all 88 cells; the atlas is 1024 × 384 (two rgba8 targets, 3 MB with its bake depth 1.5 MB more) — per angle count
+  ~0.37 MB (11 kinds × 64² × 8 B).
+- drawn as one quad an instance through the same instanced renderer (the far kind's mesh is the quad, part 12, plus the
+  far mesh as part 13 for the shadow pass only), facing the eye from the instance's foot; the fragment picks the yaw
+  step the eye is at in the tree's frame and dissolves into the next by the ordered dither as the camera or the tree
+  turns; the normal turned by the instance's yaw; the point rebuilt from the depth; lit by render.wgsl `lighting` (the
+  sun, the sky, the shadow map) and haze exactly as the mesh trees are, and written to the depth buffer at that point
+  (frag_depth: its own pipeline, so the mesh kinds keep early depth), so it meets the ground and its neighbours.
+- Why forward and not into the terrain's G-buffer: the trees are drawn forward (meshinst.wgsl lights each fragment),
+  and the G-buffer's resolve is the terrain's look (its structure words). The sprite carries what a G-buffer would
+  (albedo, normal, depth, material) and is lit by the same function the mesh trees are — teaching the terrain's resolve
+  the flora's look would conflate the two.
+- Shadows: the far mesh (~20-30 triangles) in the shadow pass, the quad never. The sun's view is not the bake's, so a
+  quad turned to the light would cast the wrong silhouette; the far mesh's shadow is what the far level cast before.
+- Wind: the quad's top sways with the trunk's lean (floraSway, row 1's), and 1A's shading ripple runs in the sprite's
+  fragment on its leaf texels — the sprite's answer to the matrix's rows; 1C's lattice has no sprite form (the far
+  trees are under 55 px: the ripple is what shows).
+Default off (?flod=sprite) until main has shown the user the boundary shots and the phone bench's pair.
+
+**The foliage phone bench** (src/perf/foliagebench.ts; the user's PERF RULE): /?skipmenu=1&level=atlas&play=lich&
+forest=lab&fride=0&fseason=0.5&foliagebench=1 — one tap, the screen kept awake, the forest station, the hero parked in
+front of the stand; per load six scripted stages (calm, a gust front, a gale, the wind reversed in the open; calm and a
+gust held under the canopy), each variant a reload: fwind static, sway, 1A, 1C, 1A1C, 1A1C with sprites, static and
+1A1C at round 125's tree size, static again (drift). A result card and a JSON (p50/p95/p99, the GPU's ms where timed,
+the flora's plants, triangles and draws). Desktop numbers from it are a proxy only.
+
+**A first look without the browser** (test/gpu/flora-sprites.test.ts on Dawn: the sprite atlas baked for each named
+season, every cell holding its tree; FLORA_SPRITE_PNG=<dir> writes the atlas out — C:/Projects/shots88/treegen/
+sprites-<season>-albedo.png and m2-seasons-grid.png, broadleaf / conifer / birch / elder through flower, leaf, autumn,
+bare, winter). Fixes from looking: snow lay on the bole's tilted facets and whitewashed the trunks (now only faces
+turned well up, n.z > ~0.6); the few leaves a crown keeps into deep winter were the fall's orange (now dead brown);
+the birch's catkins were too few and too dull to read in flower (blossom 0.2 → 0.35, a warmer yellow). Seen, for the
+user: the elder's crown at the phone's level is three or four big copper masses on short near-level limbs over a very
+broad bole — round 125's shape, now at twice the size; its sprite uses about a third of its cell's width, the bounds
+set by the surface roots' sprawl.
+
+Rendered old | new on Dawn (test/gpu/_look-style renders through the sprite bake at 256-512 px a tree:
+C:/Projects/shots88/treegen/m1-oldnew-full.png, crop-m1-elder.png, m2-epiphytes-close.png). Two fixes from them: the
+elder's bole, now one noisy tube, ended open at its fork — a thick stem's end is now closed with a low dome (radius over
+0.25; the elder's budget 5000 → 5600 triangles, one tree to a 28 x 32 super-block now); the epiphytes' hanging lines
+were too few and too thin to see (three on an elder at density 1) — they now also hang from the crown's twigs, 0.3 cells
+wide and 2-6 long, and the fork plants' fronds are 1.3-2.1 cells (the trees are twice the size). Seen: the broadleaf's
+twist and kinks give it a leaning, curving trunk; the elder's bole is bulbous and knotted; conifers with lines read as
+old-man's-beard.
+
+### The crowns (main's review of the Dawn renders, round 128)
+
+main: "the crowns: they're still the old low-poly pyramid/slab clusters stuck on the branch ends. The oak "new" is one
+solid green blob that hides every branch; the elder's crowns are flat red slabs ... leaf clusters attached along the
+last branch orders (many smaller clusters, gaps between them so sky and branches show through, the silhouette broken
+up), clusters shaped from the generator's branch tips rather than a fixed pyramid primitive, and a crown parameter
+set". And: "the conifer in winter goes fully white".
+- A broadleaf crown (species `crown`, mesh.ts CrownLook; the broadleaf, the elder, the thicket) is now sprays of leaf
+  cards in place of the 'cluster' style's octahedron a leaf site: at each twig's end `perTwig` sprays back along it, and
+  along the last two branch orders a spray every `spacing` past their first quarter; each spray `leaves` flat diamond
+  cards turned out from the twig, tilted about their axes (the light breaks over them), bent down by `droop`; `fill` the
+  share kept (the gaps). Sizes in cells. The coarse level makes about one card per 4 render px of spray (`px`), so a
+  far crown isn't sub-pixel cards; the close-up level more, smaller ones and one more spray a twig. The viewer has a
+  "crown" group of sliders (spray size, per twig, spacing, fill, cards, droop).
+- The elder's crown twigs fork more (its C rule) and are longer and wider apart (stepDecay 0.72 → 0.84, angle 26° →
+  32°), so its sprays spread into a broad crown instead of a ball at each limb's end.
+- Winter: snow on the needles' upper faces only and not all of them (the dark needles show under it); the bare crowns'
+  twig haze takes snow only on its faces turned well up.
+- Triangles (seed 1, full → the phone's coarse level): broadleaf 1410 → 882, elder 8766 → 5350, thicket 422 (226 on the
+  phone); the elder's budget 9500 (one to a 28 x 32 super-block: a quarter as many a wood as at round 125's 5000), the
+  close-up's twice the full level's. Renders: C:/Projects/shots88/treegen/crown-v1..v4.png, crown-final.png,
+  crown-winter.png, m2-seasons-grid-v2.png (the sprites, the five seasons).
+- Winter, main's second note ("deciduous trees in winter should be mostly bare twigs (a few marcescent leaves at most,
+  oak/beech style), snow on the limbs' tops"): a per-species `winterLeaves` (the broadleaf 0.06, the elder 0.08, the
+  rest 0; a viewer slider; FLORA_ACC.w), the drop decided over ~1.7-cell blocks (a crown is many layers of cards: a
+  per-fragment keep of a few percent showed through every layer as a brown crown), and the twig haze removed (the
+  limbs, kept at every level, are the bare tree's shape; the haze's cards read as dead leaves). Renders:
+  crown-winter-v2.png, m2-seasons-grid-v3.png.
+- The fine twigs (main: "A bare tree reads from its fine twigs. Add one or two finer branch orders (thin, many,
+  generator-driven: count, angle, length falloff)"): species `twigs` (mesh.ts TwigLook: count, angle, length, falloff,
+  orders, droop, width, spacing), thin flat strips (two triangles) from each twig end and along the last two orders, a
+  second order off each; part 14, coloured the bark toward its mark (a birch's twigs dark), snow on the level ones in
+  deep winter; drawn all year (under the leaves they are the crown's branching), cut with the canopy under it, left
+  out where a twig would be under ~4 render px, at least ~0.7 px wide. The birch's droop (weeping), the elder's long.
+  Triangles (seed 1, full): birch 2808, broadleaf 1824, elder 9668 (budgets: trees 3200, the elder 10500, the close-up
+  7200 / 21000). Renders: twigs-winter.png, twigs-bare-px6.png, twigs-winter-px6.png.
+
+### The first browser batch (round 128, treegen; C:/Projects/shots88/treegen)
+
+- The flora viewer pairs (v-leaf-*, v-winter-*): the viewer's haze and framing make them weaker than the Dawn renders
+  (crown-*.png); the pair's camera is now set back by the portrait's width.
+- The far trees as sprites (m6c-mesh-z2 / m6c-sprite-z2 .. z7, at the elder wood 13728,5216): the sprite pass draws
+  with no GPU errors and where the far level shows (the right edge at zoom 2: the woods' edge) the sprites are the
+  near trees' shape, where the far mesh drew cones and octahedra. main's read: "sprite vs mesh at z7 nearly
+  indistinguishable. The match works." The tool panel hid a third of the frame: spriteshot hides positioned UI now.
+- Tree size (m3-ts1-z7 / m3-ts2-z7, ?treescale=1 vs 2): the elder wood's trunks fill the frame at x2; m3-z7-before-after.
+- The forest station at the elder wood (m3-lab-elder-*): 6 elders round the stand at x2 (the earlier "elders 0" shot was
+  at the default spot, a birch/oak wood). Found: the hero was parked 4 cells in front of a trunk now ~5 across — inside
+  or against it, so the station's stills and the wind GIFs show bark only. parkSpot's distance is 4 × TREE_SCALE + 2 now;
+  the wind clips are to be retaken (m4-wind-*.gif are not usable for scoring).
+- main saw brown pyramids on a birch/oak wood's floor (m3-lab-ts2-under-all): the thicket's far lump (round 119's
+  octahedra in the leaf colours, autumn at the station's season). The far thicket is now its first stems and a few big
+  spray cards (~60-80 triangles; the lump's 16).
+
+### Procedural bark and leaf textures in the stems' own coordinates (round 128, the user)
+
+The user: "I'm sure bark texture can't be hard to generate it's just scaled colored noise and normals correct?" — yes:
+- Every plant vertex now carries two more floats (mesh.ts `uv`, the instanced renderer's second vertex buffer, location
+  1): on wood u round the stem and v along it, in cells (the seam's column of vertices doubled so u runs 0 .. the
+  circumference); on a leaf card its card space (u across, v stalk to tip); 0 elsewhere.
+- floralook.wgsl floraBarkH: the bark's height from the species' BarkLook in those coordinates — furrows (ridges along
+  the stem, wandering, with breaks), plates (Voronoi cells and the cracks between them), a birch's lenticels
+  (horizontal dashes), roughness (fine noise and broad streaks) — the colour ramp from the mark colour (grooves,
+  cracks) to the bark colour; floraBump turns the height's slope along the stem's tangents (floraTangents, from the
+  derivatives) into the normal, so the lighting reads the furrows. Features under ~2 pixels fade (fw, cells a pixel).
+  Replaces round 125-128's world-space cell hashes (which didn't follow the stem).
+- The leaf cards: a midrib and side veins a little lighter, the edge darker, faded where a card is a few pixels.
+- The mesh draw, the viewer and the sprites' bake share it (one function). Render: bark-uv-crop.png.
+
+### The trees' shape: crowns grown by space colonization, the lobe canopy, a willow (round 128, the user)
+
+The user, on the in-game shots: "Those trees just look bad in shape. They make too steep an angle branch from the main
+trunk." Then: "They should potentially make multiple and they should almost always have branches go up to fill the
+space above the tree with leaves since that is how most real trees work." "Well we might want willows and whatnot so
+they don't always need to curve up but yeah I agree we need to tune the parameters so the tree has leaf cover. You could
+even have completely opaque canopy of leaves with random gaps and I think it would look better." And the target: "Try
+targeting trees that look like dota 2 or heroes of the storm form above. Then when we go under the canopy we can see the
+trunk and stencils and God rays and dark forest floor".
+
+**The branching: space colonization** (colonize.ts; Runions, Lane & Prusinkiewicz 2007). Chosen over more L-system
+rules because the crown's shape becomes the input — attraction points scattered in the species' envelope (a dome, a
+cone, a column, an umbrella) — and the branching comes out of the branches competing for that space: several branches a
+node where there is room, all growing toward the space left, so the crown fills upward. A hybrid on purpose: the trunk
+below the crown is drawn (straight, a little lean), a leader carrying on up for the excurrent (the birch), several
+rising limbs at the crown's base for the decurrent (the broadleaf, the elder); the crown is grown. Biases on the growth:
+the up bend (negative: down), a willow's weep past a quarter of the height, a cap on the angle a new branch leaves its
+parent, straightness (a branch keeps some of its way: no zigzag). The radii by how much of the tree a node carries (r =
+trunk radius × share^thin: the pure pipe model made a broad trunk's twigs as thick as fingers). A stem's nodes merge where
+it runs straight (the mesh's rings follow the shape, not the growth's step). Out: the same skeleton as the L-system's, so
+the noise-swept stems, twist, knots, kinks, bark, twigs, epiphytes all work on it. Deterministic per seed; ~60-70 ms a
+tree on the CPU (the 1200-point test crown: 70 ms), once per variant. The broadleaf, the birch and the elder are grown
+this way; the conifer, the thicket and the small plants keep their L-systems (the conifer's whorls read; main's review).
+
+**The crown: the lobe canopy** (mesh.ts CrownLook.style). Three styles, a slider: 'sprays' (round 128's cards),
+'solid' — the lobe canopy, now the default for the broadleaf, the birch and the elder — and 'lobecards' (main's research:
+the stylised-foliage "normal transfer": cards taking their lobe's normal, a blend slider). The lobe canopy: the crown's
+leaf sites (where the colonized branches end) gathered into clumps `clump` cells apart; each a lobe — an icosahedron cut
+once (80 faces; 20 where a lobe is under ~24 px), flattened a little underneath, lumped — with a smooth normal a vertex
+(the plant vertex's new z w: octahedral; meshinst/viewer/bake shade lobes round, not faceted) and an ambient occlusion a
+vertex (other lobes crowding it, low in the crown, facing down); `gaps` of the faces left out. The look (floralook.wgsl):
+a painted ramp — lit tops warm and light, undersides and crevices cool and dark (the occlusion), a soft painterly
+breakup, no cards. The thin branches inside the mass aren't drawn (`hideBelow`). Compared in crown-styles.png (cards /
+lobes / lobe-cards, the broadleaf and the elder): the lobes read as full Dota-like masses; the cards and lobe-cards stay
+sparse at this density. Triangles (seed 1): broadleaf 3864, birch 3640, elder 6963 (budgets: a tree 6000, the elder
+14000 — a tree a 14 x 16 block, the elder a 28 x 32: per area under round 125's).
+
+**A weeping willow** (species 'willow', the viewer's — no slot in the game's plan yet): limbs rising from a short trunk
+then arching down past a quarter of the height (weep 0.85), curtains of long hanging twigs (twigs droop 1, 4.5 cells),
+drooping leaf sprays. willow-v1..v3.png.
+
+Renders: lobe-v1..v3.png, crown-styles.png, sc-v1.png, sc-solid*.png, willow-*.png.
+
+**The shape parameters in plain words** (the viewer's "shape" and "crown" sliders; species.ts colonize / crown):
+- crown base — how far up the trunk the crown starts (a share of the height): low for a bushy oak, high for a tall bare
+  trunk.
+- crown width — how wide the crown is against the tree's height.
+- shape — the crown's outline: dome (round), cone (pointed, wide at the bottom), column (tall and narrow), umbrella
+  (broad and flat-topped, high on the tree).
+- fill points — how many "spaces to fill" are scattered in the crown: more makes a denser, more branched crown.
+- node length — how long each grown piece of branch is: shorter is finer and twistier, longer is cleaner and cheaper.
+- reach — how far a branch "sees" empty space to grow toward.
+- up bend — how much the branches curve upward as they grow; negative bends them down.
+- weep — how much the outer branches arch over and hang (a willow near 1).
+- max branch angle — the widest a new branch may leave its parent (real trees mostly 25-50°).
+- leader — 1: the trunk carries on up through the crown (birch, conifer); 0: it splits into limbs (oak, elder).
+- limbs at the fork — how many big limbs the trunk splits into (when there is no leader).
+- trunk radius — the trunk's thickness at the foot (cells).
+- branch thinning — how quickly branches get thinner toward the tips (higher = more slender).
+- straightness — how much a branch keeps going the way it was (less = more wandering).
+- crown style — 0 leaf cards, 1 solid lobes (the Dota-like canopy), 2 cards shaded as lobes.
+- lobe size — how big each leafy lobe is (bigger = fewer, chunkier lobes).
+- gaps — how many holes are punched in the lobes (sky and limbs show through).
+- lumps — how lumpy each lobe is (0 round).
+- lobe normals — (style 2) how much the cards are lit as one round lobe.
+- and as before: taper, branch distance, angle variance, twist, kinks, knots, noise, the bark's furrows / plates /
+  stripes / roughness and colours, epiphytes, twigs, winter leaves, blossom.
+
+### The crown styles, round two, and smooth stems (round 128; main's review, the user)
+
+main's review of the lobes: "smooth clay balloons": banded facets, the gaps dark holes like a broken mesh, no leafy edge;
+the lobe-normal cards near black (each card's occlusion was taken from the crowding of the other lobes — every card
+inside a neighbour's reach went dark; now by its depth into its own lobe and its height). The user: "It seems like dota
+the render multiple layers as leaves on bent lobes and then shadow the deeper layers to add depth ... the trunk should
+have way more verts or else Phong normal shading so it looks smooth and not polygonal".
+- Five crown styles (a slider): cards, lobes, lobe-normal cards, hybrid (a closed core at 0.8 of each lobe and leaf
+  cards over it, lit by the lobe), and **layers** — now the default for the broadleaf and the elder: each lobe three
+  shells of leaf cards at decreasing reach, each card a strip bent along its lobe's curve, lit by the lobe's normal, the
+  deeper shells darker and cooler (the look's occlusion ramp now cools as it darkens), a dark closed core under the last
+  shell. The outer leaves catch the light; the gaps show shadowed leaves, not sky. Sliders: layers, layer gap, depth
+  dark, card bend, core, shell density, lobe normals. The birch keeps an airy crown of sprays (main: "don't give
+  birches the solid mass").
+- Stems shade round: every stem ring's vertex carries its radial direction as a smooth normal (the plant vertex's z w),
+  the bark's bump on top of it; 8 sides at the normal level, 12 close up, 16 in the sprites' bake. A thick prism's top
+  (a stump, the viewer's old trunks) is closed.
+- Triangles (seed 1, full): broadleaf ~6000-7000, elder ~12000-15000 with the close level 15000 (budgets: a tree 7500,
+  the elder 16000, close-ups twice): the next question for the phone bench.
+Renders: crown-styles-v2.png (cards / lobes / lobe-cards / hybrid), hybrid-vs-layers.png, trunk-close-elder.png,
+trunk-close-oak.png.
+
+### Sprites at a higher resolution with mips, from a bake-only mesh (round 128, the user)
+
+The user: "is there any way we can rende them higher poly and in more detail with better textures for the sprites? One
+render at higher resolution plus mips and they remain more readable and we get our LOD for free right?"
+- The bake's source is a bake-only mesh from the same parameters (generate's lod 'bake': 16-sided stems, every twig,
+  the lobes cut twice — baked once a sprite, never drawn); the library makes it with the sprite (its bounds the quad's).
+- Cells of 128² by default (?fcell=64|128|256) with a full mip chain made by our own downsample
+  (shaders/florasprite_mip.wgsl): a coverage-keeping alpha (a quarter of the children covered keeps a texel: leaf cards
+  and twigs don't thin away), the colour of the covered children, normals averaged and renormalised, the nearest depth
+  (an average would shrink and float the silhouette), the most covered child's material.
+- The draw picks the level by the sprite's size on screen (its texels a pixel ≈ 1): the sprite's LOD.
+- The ladder with ?flod=sprite: close-up mesh (over 420 px tall) → full mesh (over 150) → the sprite with its mips (the
+  coarse mesh and the far mesh are gone: the mips are their levels) → the tiles' painted crowns past the window (next:
+  sprites there too). Why the full mesh stays: wind, the canopy's cut under it, parallax close by.
+- Memory (8 yaws × 11 tree kinds, one season resident — the bake is per season step): 64² 3.4 MB, 128² 13.6 MB,
+  256² 54 MB (two rgba8 textures with mips + the bake's depth). 256 is too much for the phone; 128 the default, the phone
+  bench to decide (64 vs 128 vs 256).
+- Lobe definition (main): the layered crown's lobes stand apart (`separate`), the cards darker where they come near
+  another lobe's surface (the crevices), the outer shell's tops a little brighter (the occlusion past 1 brightens).
+- The tiles' painted trees past the window (main: "the top-right corner ... still draws the old big red cone and the
+  green ellipsoid blobs"): with ?flod=sprite, tiles.wgsl tileTrees samples the same atlas — for each candidate tree (the
+  slot grid's, the window's hashes: its species' variant, its turn, its scale) the line from the tile's texel toward
+  the eye crosses its sprite's quad; the texel there at the mip for the tile's resolution, the nearest along the line
+  winning; the ground shadow as before. The atlas is bound in the tiles' bake (49, 50; renderer.spriteViews). Without
+  sprites, the crown discs as before. Not yet: far.wgsl's rings (the LOD rings past the tiles) — the next step.
+
+### Taller trees, cluster shapes, pines, willows by the water, a spread of heights (round 128, the user)
+
+The user: "For trees can we also get taller trees with multiple leaf clusters or different shapes of cluster than just
+blob? I would love to see pines and willows and to have some trees with varying heights."
+- Tiered crowns (colonize.ts `tiers`): the envelope as several flattened ellipsoids up the tree — bare trunk and limbs
+  between them; the conifer's shelves, the Scots pine's high cloud pads.
+- Lobe shapes (CrownLook `lobeShape`): round, pad (a flat cloud), shelf (a flat pad drooping at its rim), column, tear;
+  the layered shells, the core and the lobe normals follow the shape (mesh.ts lobeSurface).
+- The conifer: a leader through six drooping shelves, colonized, the needles layered shells on shelf lobes. A new Scots
+  pine: a straight trunk bare to over half its height, orange plated bark, a high crown of cloud pads; in the world two
+  conifers in five (vegprep: the same plan, the library's two shapes).
+- The willow in the world: florafield.wgsl places one on a bank — one candidate column a 9 × 10 block of world columns,
+  on dry, moist ground with open water within ~3-7 cells — at its level by size on screen. (The willow keeps its
+  curtains of sprays: as layered tear-shaped lobes it read as a bunch of grapes.) Not in the flora plan's CPU mirror
+  yet (the understory and passability don't see willows: noted).
+- A spread of heights (spacing.ts treeSize, a placement parameter mirrored in vegplan.wgsl): a tree's size × its
+  species' by its world column, 0.55 .. 1.15 skewed to the large, 5% emergents at 1.35 over the canopy; the plan's
+  trunk and crown (so the understory, the cull, the LOD) and the instance's scale alike; logs by volume (size³).
+- The library: 80 kinds now (+ the Scots pine and the willow at four levels); it takes ~0.8 s to make at start (the
+  colonized crowns: ~60 ms a tree), was ~70 ms — a cache across loads is the fix if the phone feels it.
+Renders: pines-v1.png (pine, Scots pine, willow).
+
+### Pines as needle cones, tighter layers, willows in the plan's mirror; the second in-game batch (round 128)
+
+The user: "Pines should use cones and use baked needlg patterns instead of leaves." and "The leaf layers look a little
+too floaty they should be closer together. Probably no more than a leaf width for the outer layer". main: the pine
+"doesn't read as a conifer"; the elder's "ragged flyaway cards".
+- The conifer's crown style 'cones': each tier a cone shell with a drooping rim, its apex above the tier so the tiers
+  stack to a point, two shells a needle's length apart (the inner darker); smooth normals from the cone's profile; the
+  look draws needles in the shell's coordinates (radiating strokes, lighter tips, a bristly rim cut between strokes,
+  fading under a pixel) — procedural, so the mesh, the viewer and the sprites' bake share it. lineup-v2.png.
+- The layer gap is in leaf widths now (default 1; the slider 0.2-3); the core sits a third of a gap under the inner
+  shell; cards lie on the lobe's curve (bend 1) and barely jitter off it. The elder: bigger cards, two shells half a leaf
+  apart: elder-v8.png — leafy, lobed and clean.
+- Willows in the flora plan's CPU mirror (api/plants.ts planWillow, florafield.wgsl's rule; the mirror reads the water
+  and the moisture): the understory and passability see them.
+- In game (the second batch, C:/Projects/shots88/treegen/r2-*): the elder wood from above at zoom 3-8 (r2-mesh-z5 a
+  dense copper canopy, trunks below); under the canopy (r2-lab-under-all: the hero by an elder's trunk, the floor's
+  litter, the ride GIF); the wind clips (r2-wind-static / 1A1C: 0.7% vs 2.1% of pixels change a frame — the parked
+  hero is still too close to a trunk for a canopy clip: the station's framing for wind is the next fix).
+- The library's build time (main: "Don't add load time on the phone"): the trees' and thickets' meshes are kept in
+  IndexedDB (flora/meshcache.ts) keyed by the species' whole definition, the seed, the level, the px and MESH_VERSION
+  (bumped when the generator's code changes what a definition makes); main.ts reads the store before the first scene
+  and writes the new meshes after it. A first load builds (~1 s on the desktop: per tree the colonized skeleton 4-58 ms,
+  each level's mesh 5-74 ms; the colonization now finds the nearest node through a grid and grows a skeleton once for
+  all of a tree's levels); later loads read. The colonized skeletons are memoised in memory too.
+- main's question on r2-lab-under-all's "16.6/1058.2 ms": the readout's p95 over the last 120 frames, taken while the
+  headless browser was capturing — a screenshot stalls the page's frames (earlier stills read 175-308 ms the same way),
+  so this is the capture, not the game; the phone bench is the measure. Under the canopy the hero's elder trunk is the
+  understory's stump rule (cut and faded in front of the hero) at the phone tier's half resolution: blocky because the
+  low tier renders 205 x 457; to look at again with the new trunks in the next slot.
+
+### The tree editor, needle pads, the dead and burned states (round 128, the user)
+
+The user: "I would love a generator to play with the parameters or make new tree variants. We also still want the
+epiphytes and seasons and states. Leafless and burned could also be useful states visually."
+- The tree editor (flora.html, plant mode, the generator panel): every parameter a slider in plain words, in groups
+  (shape, stem, crown, bark, epiphytes); "new variant" (a new seed, the shape and crown nudged, the style switches kept:
+  variants.ts newVariant); "save…" a named variant (localStorage); a saved list to load; A | B against the old
+  generator, the species as written, or a saved variant; export / import JSON; the whole parameter set in the URL; "see
+  it in the world" opens the atlas with `?ftree=` (base64url { species: overrides }) — the game's flora library builds
+  that species with them (library.ts defOf). A state picker (alive, dead, burned).
+- The Scots pine's crown as needle pads ('needlepads'): closed pad-shaped shells a needle apart, the needles' look, the
+  outer one's rim in tufts (scots-v2.png).
+- States: a plant's state rides in its instance (instTree[o + 3].x — 0 alive, 1 dead, 2 burned; meshinst.wgsl passes it
+  in the info word's high bits to floraLook): dead — no leaves, grey bark, the twigs' tips broken; burned — no leaves,
+  the bark charred black with grey ash on its tops and flickering ember glints, the twigs and some upper limbs gone.
+  Tied to the world: a new contract field, WorldGpu `snag` (rgba32float, a texel a column; snag.wgsl, SnagSystem after
+  ecology, ping-pong into `snagNext`): where the fire burns a wood (succession 3+), a charred snag stands; it clears
+  when the wood grows back past 3.6 (a living tree again) or weathers away (a season of play). vegprep.wgsl plans a
+  slot's tree on a snag as a wood's and draws it burned; a browned tree (wilt.y > 0.6) is drawn dead. The streamer keeps
+  `snag` with its region; the flora plan's CPU mirror reads it (a burned tree: `burned`, a third of the logs). Why a
+  texture: vegprep's eight storage buffers are all in use; a sampled texture costs none. Not yet: the far sprites
+  don't bake the states (a far burned tree is drawn alive); a felled stump as a state (the fell op clears the column).
+- Far trees' states (main: "A burned forest seen from a distance has to read burned"): the sprite's draw leaves out the
+  texels the bake marked as leaves and greys (dead) or chars (burned) the wood — no more atlas memory (a state a cell
+  would triple it). The tiles past the window don't know the snags (the snag field is the window's): not yet.
+- The editor's shots (editor-phone-*.png, editor-desktop-*.png): the choices (crown style, lobe shape, crown shape,
+  leader, core, twig orders) were sliders with their options crammed into the label — now lists; labels 92 px wide.
+  A variant in the world (editor-world.png): the link opened the atlas without errors (the view a meadow: the next
+  batch frames a wood). The burned wood (burn-*.png): six lightning strikes into the elder wood lit nothing visible in a
+  minute — to look into (the strikes' place, the wood's moisture) in the next slot.
+- The editor laid out for a phone (main's review, round 128): the panel is a bottom sheet of at most 45% of the screen
+  that scrolls inside itself (a 380 px side drawer from 760 px wide), and the canvas fills only the rest, so the tree
+  stays framed above it and turns by drag. The parameters sit in collapsible sections — Tree (species, seed, season,
+  state, growth) open, then Shape, Trunk & branches, Crown, Twigs, Bark, Moss/vines & seasons, Compare & save — closed
+  but the last one opened (it stays open across a rebuild). The buttons (new variant, save, export, import, see it in
+  the world) are one sticky row. Every label is in plain words (docs/WRITING.md: "branch length", not "sStep") with a
+  one-line hint shown on a tap of the label. The shrub now grows by space colonisation in a dome (SHRUB_DOME) with a
+  layered crown, its budgets 1600 / 3600 triangles (close).
+
+- Grass and shrubs the trees' way (the user: "Can tree gen move onto grasses and shrubs and adopt the same techniques
+  that worked for trees? I would love gras that bends in the wind and looks higher detail"; main: shrubs with species
+  variety, grass 1B with multi-segment curved blades, gradient, AO, dome normals, clump types, a close-up level, phone
+  pairs). Kinds (forms.ts): rather than five new shrub species — each a slot in the plan, a niche, a CPU mirror — a
+  species grows several ways as a patch on its def, picked by the library's variant (vegprep already hashes a variant
+  per plant, the same at every level): the thicket's round bush, spreading (umbrella envelope, pads), upright (column),
+  berry bush (blossom, berries) and bramble (weeping canes, sparse leaves, red-brown canes, dark berries); the tall
+  grass's fountain, tuft and seed-head clumps. Triangles (seed 1): bush 1036 / close 1760, spreading 1320 / 2244,
+  upright 784 / 1366, berry 1420 / 2144, bramble 1218 / 2476 (budget 1600 / 3600); grass 154-196 / 396-484. Cost: the
+  thicket's 5 variants make 89 kinds (was 80), nine more indirect draws (empty ones cost little; the bench reports
+  draws). The far thicket (lod 2) is grown from the kind's colonized skeleton too (its thick stems and six sprays: 72-78 triangles), so a far spreading bush is wide and an upright one narrow.
+  Grass blades: several joints each, arching out and down, the sway along the blade (not the height: a hanging tip
+  moves), dome normals (lit as one tuft — flat cards edge-on read as noise), the foot darkened, uv.y the ramp.
+  The editor: a "kind of shrub" and "clump type" list, a Blades section (blades, clump width, lean, arch, blade width,
+  joints, seed heads), and "every kind" (each kind in a row: the shrubs' lineup). The phone bench: `set=grass` parks
+  the hero on the lushest meadow near the wood and runs static / sway (1B) / 1A1C at ?fgrass=0.5, 1, 2 — each
+  animated run against the static one at its own density (foliagecard.ts, tested). Measurements are the user's phone
+  run; the desktop proxy and the shots come with the next browser slot.
+- The map's flora pass, first part (the user: "update the map with more flora"; main: pines on slopes and high ground,
+  glades, mixed stands). The species of a tree slot was a per-tree hash (42% conifers anywhere: a salt-and-pepper wood)
+  and chosen in three copies (vegplan.wgsl, api/plants.ts, tiles.wgsl — the far tiles' rule already lacked the lone
+  giants). Now one WGSL function, treeSpecies, called by vegPlan and the tiles, its exact CPU port treeSpeciesAt, and two
+  value-noise fields of the world cell like the birch woods': conifer stands (60 cells) and glades (46 cells: empty tree
+  slots, a thicket's chance raised to 0.45 there — passability's standsAt follows). Measured over a 900² window of
+  woodland (stands.test.ts): conifers 25-55% of trees (as before over the land), glades 3-25% of slots, and a conifer's
+  neighbours within 40 cells are conifers well above the land's share (clumped). Not yet: pines on slopes and high
+  ground — vegPlan has no height or slope (it takes the column, succession and material), and the CPU mirror would need
+  them too; the next part, with the before/after atlas shots.
+- The grass-and-shrubs shots (C:/Projects/shots88/treegen: shrubs-lineup*.png, grass-lineup.png, grass-close.png,
+  grass-viewer-meadow.gif, grass-meadow-z*.png/.gif, editor-*.png, burn-*.png). Fixed from them:
+  - the lineup ran off the view diagonally: now across the view, in rows of three on a portrait screen
+  - the tall grass read as a few leek leaves: 18 thinner blades (0.09), the foot's occlusion softened (0.55)
+  - the far thicket's big spray cards read as pale crumpled paper at the gameplay zoom (that's the level drawn there:
+    vegprep draws the near one only past 25 px a cell): now the crown's own lobes, an icosahedron each (70-280 tris)
+  - the editor's variant in the world is an elder variant (the default spot is an elder wood)
+  The burned wood: the player's lightning (Powers.scriptStrike, 4 strikes) lit the elder wood — the fire field round
+  the strikes is ~0.4 after 10 s — then it froze: the same values to 3 decimals at 20, 30 ... 60 s. A woken chunk sleeps
+  8 s after the event (sim/sleep.ts EVENT_S) and a sleeping chunk's fire is carried through unchanged (fire.wgsl
+  `asleep`); nothing keeps a burning chunk awake (water has holdUnsettled, fire has nothing), so a fire stops spreading
+  and burning where it is 8 s after it was set — and under the elders' canopy the ground fire isn't seen from above.
+  Reported to main as a sleep/fire contract issue (not treegen's to change).
 ## 2026-10-31 — round 120 (jb6): JB6, no CPU readback on the hot path
 
 **Why.** The user (round 120): "I suspect it will win after JB6 since my understanding is the readbacks are very slow
@@ -17171,3 +17781,57 @@ places p50 9.9 / 9.9, p95 13.0 / 14.3, GPU 13.66 / 14.70. The same within the ru
 
 Shots and GIFs: C:/Projects/shots88/presentation/ (forest-3-scale-*.png, forest-scale-*.gif, canyon-*, cliff-*,
 throne-*; canyon-steer.json).
+- A fire keeps its chunks awake (root fix in shared code; main approved, round 128). The burn shots showed the
+  lightning-set elder wood's fire field identical to 3 decimals from 20 s to 60 s: a woken chunk sleeps 8 s after its
+  event (sim/sleep.ts EVENT_S) and a sleeping chunk's fire is carried through unchanged — water has its hold
+  (holdUnsettled), fire had none. Now FireWatchSystem (firewatch.wgsl, period 15, every column, asleep or not) writes per
+  chunk slot the strongest fire in it or within 3 columns of its edge into world-gpu fireChunks; the level reads and
+  clears it twice a second and Sleep.holdBurning keeps those chunks awake 1.5 s past the read — the burning one, and
+  the one its fire is about to reach. Out (under 0.02), the chunk sleeps on its usual time. No cap (the no-caps rule):
+  the burn demo logs the chunks awake and held (window.reclaimed.sleepStats) as the desktop proxy. Test (Dawn,
+  fire-sleep.test.ts, the level's loop in sim time): a fire set near a chunk's edge in a wood still holds its chunk
+  awake at 12 s, its field still changing between 12 s and 40 s, burning in a neighbouring chunk by 40 s, while a
+  chunk woken by an event with nothing to burn is asleep at 12 s; with the hold call taken out the test fails ("the
+  burning chunk held awake at 12 s").
+- Pines on the slopes and the high ground (the map's flora pass, second part; main: "give the plan height and slope;
+  CPU mirror too"). vegPlan had only the column, the succession and the material. Now treeSpecies takes the ground's
+  shape — groundAt in vegplan.wgsl from the solid tops (`surface`, which every kernel including vegplan.wgsl binds):
+  the steepest rise to an axis neighbour, and the rise over the tops 6 columns out — and `uplands` (slope 0.7-1.6,
+  rise 2-6) lifts the conifers' chance up to 0.85, in the birch woods too (they keep their birches on the flat). The CPU
+  port reads the Plants mirror's surface (topCol) and FloraSource.top for passability. Tests: flora-plan (Dawn, a hilly
+  window: every column's species the same on both sides), stands.test.ts (a hillside rising 2 a column: > 75%
+  conifers and 30 points over the flat; knolls 8 over their land: > 70%).
+- The fire fix in the real atlas (burnshot.mjs --lab 0, the elder wood at 13728,5216, 4 strikes of the player's
+  lightning): the fire field round the strikes 0.37 at 10 s, 0.45-0.58 at 20 s, then burning out at the middle
+  (0.2 at 30 s, 0 by 80 s) while the chunks held by fire grew 7 → 14 (the front moving out); the most chunks awake
+  16 — the desktop proxy for a big burn's sleep cost. 1 048-1 878 columns of snag after. Before the fix the same
+  strikes froze at 0.4 from 20 s on. At the forest station's willow (wet bank) the strikes barely lit (0.06) and went
+  out by 30 s: wet ground, as fire.wgsl's damp rule says. Open: the burned trees aren't seen in the shots — the elder
+  canopy over the burn looks untouched at z5 and z2 though the snag texture holds 1 000+ columns; to find with the
+  browser (where the snags are against the view; vegprep's plan on a burned elder slot: a burned column's succession
+  falls under ELDER_VEG, so the slot is planned as max(veg, 3.6), not an elder).
+  The wind matrix's clips (windclips.mjs, C:/Projects/shots88/treegen/wind): frame-to-frame change under the HUD,
+  mean |dI| / share of pixels changing > 12 — static 3.9-4.1 / 4.8-5.9% (the grass's own life, particles), sway
+  7.9-10.7 / 13-19%, 1A 9.6-11.7 / 17-24%, 1C 11.2-13.1 / 20-25%, 1A1C 10.6-14.8 / 19-30%. The motion grows row on row
+  as designed; whether 1C is rubbery is for the eye (the GIFs).
+- Why the burned trees didn't show (round 128, the burn shots): the snag texture was read and written at the raw
+  window column (id.xy) while every texel-a-column texture lives at texCol (the window's pages: the streamer moves them
+  page by page, and the ring's offset changes on a slide) — so after the camera moved and the window slid, the snags
+  stood under other columns, and the trees on the burn read none. snag.wgsl and vegprep.wgsl now use texCol; the
+  flora plan's CPU mirror reads the snag at ring.t (the texel's index), not ring.idx (a per-column buffer's).
+- Leaf-cluster cards (the user: "the foliage doesn't look like it has multiple layers visible and it looks like a few
+  sparse leaves over a solid color which is wrong"; "I want the leaf cluster cards"). The layered crown was a smooth
+  dark core ball under a sparse scatter of single-leaf cards (the oak's shell density 0.07 a cell²: ~13% of a lobe
+  covered). Now: a leaf-cluster atlas (leafatlas.ts — a row a species: oak lobed, elder broad round, birch diamond,
+  willow narrow hanging, thicket oval; four clusters a row of 6-15 overlapping leaves, veins, darker edges, the shadow
+  of the leaves above, alpha and normals; mips that keep the coverage), made once on the CPU, bound at 66 by the
+  instanced draw, the sprite bake and the viewer. Each lobe takes 3 shells of square cluster cards bent on its curve,
+  as many as cover ~80% of the shell (a card's leaves fill ~42% of its square), each deeper shell darker and in bigger
+  cards; under them a 4th shell of dark clusters, twice as dense, where the smooth core was — the holes end in shadowed
+  leaves. Cards inside a neighbouring lobe are left out. Cards ~14 px or under on screen (the coarse level) are 1.6×
+  bigger and fewer. Birch and willow moved to this crown too; the conifers keep their needle shells. Triangles (seed 1):
+  oak 9 470 / close 14 270 / coarse 5 094, elder 24 252 / 33 644, birch 9 332 / 11 636 / 6 084, willow 8 794 / 13 832 /
+  4 968, thicket ≤ 2 400. Budgets raised to match: a tree 10 000 (close 20 000), elder and willow 26 000 (close 36 000),
+  thicket 2 400 — trees stand at a quarter of round 125's density (TREE_SCALE), the phone bench to judge.
+  The thickets' blossom (main: "harsh white pixel noise") blooms whole clusters, cream-tinted and shaded by the dome.
+  Every in-world shot hides the sandbox's tool panel.

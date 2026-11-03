@@ -2,6 +2,7 @@
 // the level. Each scene owns its world and is disposed when left.
 
 // (perfopt: the phone's flags into the URL first — the modules below read it as they load; src/phone-flags.ts)
+import { flushMeshes as flushFloraMeshes, preloadMeshes as preloadFloraMeshes } from './flora/meshcache';
 import './phone-flags-boot';
 
 import { Ambience } from './audio/ambience';
@@ -182,8 +183,18 @@ async function main() {
   else if (params.get('terrain') === 'view') show(await (await import('./terrain/viewer')).TerrainView.create(host));
   // (round 117, runplan) ?runplan=view: the run-plan viewer (src/runplan/viewer.ts)
   else if (params.get('runplan') === 'view') show(await (await import('./runplan/viewer')).RunPlanView.create(host));
-  else if (params.get('skipmenu') === '1') await startLevel(params.get('level') ?? 'valley');
-  else await startMenu();
+  // (round 128: the flora library's meshes from the browser's store — meshcache.ts — before the first scene builds it,
+  // and the new ones stored once the scene is up)
+  else if (params.get('skipmenu') === '1') {
+    await preloadFloraMeshes();
+    await startLevel(params.get('level') ?? 'valley');
+    void flushFloraMeshes();
+  }
+  else {
+    await preloadFloraMeshes();
+    await startMenu();
+    void flushFloraMeshes();
+  }
   bootMark('level-ready');
   // (round 119, flora: ?florabench=1 — the birch wood's phone bench, flora on then off: src/flora/bench.ts)
   if (params.get('florabench') === '1') void import('./flora/bench').then((m) => m.floraBench(params));
@@ -194,6 +205,8 @@ async function main() {
   // (knight pass 2, round 128: ?knightbench=1 — the knight's station under a scripted fight, no enemies / raiders / a mixed
   // wave as matched pairs by reload: src/perf/knightbench.ts)
   if (params.get('knightbench') === '1') void import('./perf/knightbench').then((m) => m.knightBench(params));
+  // (round 128, treegen: ?foliagebench=1 — the wind matrix's and the trees' phone bench at the forest station: src/perf/foliagebench.ts)
+  if (params.get('foliagebench') === '1') void import('./perf/foliagebench').then((m) => m.foliageBench(params));
   if (pageBench === 'run') void pageBenchRun();
   if (bench === 'level')
     void benchLevel({

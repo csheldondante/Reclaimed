@@ -1067,6 +1067,15 @@ its edge:
   storms over 0.2 intensity, a slide's new chunks (1.5 s), everything
   after a slide in z (2 s), coarse events in sight, integrity's column
   writes, placed models (WorldCore.sleep). `?sleep=0` off.
+  (round 128, treegen) Fire holds its chunks: FireWatchSystem (firewatch.wgsl,
+  period 15, every column asleep or not) writes per chunk slot the strongest
+  fire (≥ 0.02) in it or within 3 columns of its edge into world-gpu
+  `fireChunks` (atomicMax of the f32 bits); the level reads and clears it
+  twice a second (LevelScene.readBurning) and Sleep.holdBurning keeps those
+  chunks awake 1.5 s past the read — a burning chunk stays awake, the one its
+  fire reaches wakes, and it sleeps on its usual time once the fire's out. No
+  cap (a big fire wakes every chunk it burns in); the hybrid's filter holds.
+  Before, a fire froze where it stood 8 s after the event that set it.
   (perfopt, round 83; the low tier's defaults from index.html, `?phone=0`
   off) `settle=0`: land that comes in doesn't wake to settle — drowsy at
   once; a river come in takes the pipes' steady flux for its levels while
@@ -2704,6 +2713,9 @@ clears them).
   cut toggled against the chase within the page (src/perf/toggle.ts `toggled`, shared with the physics bench since
   round 128). Report `kind: 'reclaimed-herobench'`, `version: 1`. scripts/herolabtest.mjs `--perf` runs it headless
   (the desktop proxy).
+- (round 128, branch `treegen`) The foliage bench: ?foliagebench=1 at the forest station (src/perf/foliagebench.ts) —
+  the wind matrix's rows (?fwind=), the far trees as sprites (?flod=sprite) and the trees' size (?treescale=1) by
+  reload, six scripted wind stages in the open and under the canopy; bench.ts's Panel, wake lock and report buttons.
 
 ## The tile cache (round 103, branch `tilecache`, `?tiles=1`)
 
@@ -3276,6 +3288,176 @@ like slowing you down or requiring you to cut through) is a good thing".
 - The library is made for the tier’s render pixels a CSS pixel (FLORA_RPX; the renderer’s floraRpx).
 - A vertex’s w carries its kind (+16 × kind, baked by render/meshinst.ts), so the draw finds the kind in one step.
 - Phone bench: ?florabench=1 (src/flora/bench.ts).
+
+**The generator's parameters** (round 128, branch `treegen`; BACKLOG FLO40-FLO44). One table, src/flora/params.ts
+PARAMS, read by the viewer's sliders and its URL (`p.<key>=`) and applied as an edited copy of a species
+(`applyParams`); the game's library uses species.ts as written.
+- Growth (TurtleSpec, each with a variance; all optional, absent = off): taper ± taperVar, branching distance
+  (`spacing`, the internode) ± stepVar, angle ± jitter, twist (degrees a step), kinks (kinkChance, kinkAngle). The
+  variances have their own random stream: the branching stays the seed's.
+- The stem (StemLook, mesh.ts): an n-gon swept along each whole stem (lsystem.ts tags segments with `stem`, `twist`;
+  `stemPaths` chains them), radius noise along and around (noise, noiseFreq), knots (knots per 10 cells, knotSize), ring
+  spacing in cells. Replaces the prism a step (kept only as the viewer's `legacyDef` old side).
+- Branching (round 128): space colonization for the broadleaf, the birch, the elder and the willow (colonize.ts
+  ColonizeSpec: envelope, crown base and width, points, step, reach, up bend, weep, max angle, leader / forks, trunk
+  radius, thinning, straightness) — the same Skeleton as the L-system's; the conifer, the thicket and the small plants keep
+  their L-systems.
+- Plant vertices carry four more floats (mesh.ts uv; the instanced renderer's second vertex buffer): wood (u round, v
+  along, cells: the procedural bark), leaf cards (card space: veins), canopy lobes (u = −1, v the occlusion, z w the
+  smooth normal, octahedral).
+- Crown (CrownLook, the broadleaves and the thicket): (style: 'sprays' cards, 'solid' the lobe canopy — the default
+  for the colonized broadleaves — or 'lobecards') sprays of leaf cards at the twigs' ends and along the last two
+  branch orders — size, perTwig, spacing, fill (the gaps), leaves (cards a spray), droop; cards per spray by px.
+- Bark (BarkLook → FLORA_BARK, 2 vec4s a kind): furrows, furrowFreq, plates, plateSize, stripes, stripeFreq, roughness,
+  over colours.bark with colours.barkMark.
+- Epiphytes (Epiphytes, 0..1 densities): lichen and moss on the limbs in the look (FLORA_EPI.xy); plants, vines and
+  lines as geometry (epiphytes.ts through buildPlant's `extra` hook). `blossom` (FLORA_EPI.z) the share of leaf clusters
+  in flower.
+- Mesh parts (w = part + sway): 3 wood, 4 leaf, 5 blade, 6 petal, 7 root, 8 accent, 9 epiphyte green, 10 strand
+  (hanging lines), 11 ice (icicles; collapsed in the vertex shader outside deep winter). The viewer's host stone is 15.
+- Seasons (G.rules.w; common.wgsl): seasonColour, seasonBare, seasonShed, and (round 128) seasonSnow (0.79-0.91) and
+  seasonBloom (0.92-0.13). Named points (params.ts SEASONS): flower 0.97, leaf 0.2, autumn 0.47, bare 0.76, winter
+  0.85. Bare crowns keep a twig haze (a share of the leaf faces, bark-dark) and the deciduous keep their first limbs at
+  every mesh level.
+- Plant states (round 128): the instance's p.x (instTree[o + 3].x: 0 alive, 1 dead, 2 burned), from vegprep: a
+  WorldGpu `snag` texel > 0 (snag.wgsl: the fire's standing burned trees; streamed with its region) → burned, wilt.y >
+  0.6 → dead. The tree editor's variants enter the world through `?ftree=` (variants.ts; library.ts defOf).
+- Tree size (round 128): flora/spacing.ts TREE_SCALE (2; ?treescale=1 round 125's) multiplies every tree's height and
+  trunk (the species' heights, the plan's trunk and crown, the tiles' painted trees, the understory's reach, a trunk's
+  passability footprint ×², logs ×²) and the slot grid's spacing (density ÷ TREE_SCALE²). vegplan.wgsl takes the grid's
+  constants from spacingWgsl(), prepended.
+- Kinds of a species (round 128, forms.ts): one species grown several ways, as a patch on its def — a shrub's
+  SHRUB_FORMS (round bush, spreading, upright, berry bush, bramble), a grass's GRASS_TYPES (fountain, tuft, seed
+  heads). `resolveKind(def, variant)` applies `def.kind` (the editor's pick) or the variant index round the kinds and
+  marks it done; generate() resolves once (its `kind` option: the library's variant index; absent, the seed), the
+  library's and the scenes' colour tables use the resolved def. No new species, slots or plan code: vegprep's variant
+  pick (a hash over the range) picks the kind, the same at every level. The thicket has 5 variants for it (89 kinds).
+- Grass (GrassLook on the species, forms.ts): blades, spread, lean, arch, width, segs (joints), heads (seed heads).
+  generate.ts grassClump: blades of `segs` pieces arching out and down, narrowing to a point; a vertex's sway is its
+  share along the blade (`extra`, eased ^1.6 — an arched tip bends with the gust even where it hangs low: FOLIAGE_WIND
+  1B), uv.y that share, the normal the clump's dome (lit as one tuft). The look (part 5): base-to-tip ramp on uv.y,
+  the foot's occlusion, a midrib where a blade is wide on screen; 1A's ripple as before. Close-up: ×1.6 blades, 0.7
+  width, +2 joints.
+- Stands and glades (round 128, the map's flora pass): vegplan.wgsl `treeSpecies(x, y, v, slot)` is the one place a
+  tree slot's species is chosen (vegPlan and the tiles' painted trees call it; api/plants.ts treeSpeciesAt ports it,
+  flora-plan.test.ts checks them column by column): the elder, a glade (no tree: `gladeAt`, value noise at 46 cells —
+  a thicket at 0.45 there), a lone giant, a conifer by `coniferStand` (value noise at 60 cells: ~8% among broadleaves,
+  ~88% in a stand), a birch (the birch woods, or 28%), else a broadleaf.
+  The ground (round 128): `groundAt` reads the including kernel's `surface` (every kernel that takes vegplan.wgsl
+  has one) — x the slope (the steepest rise to an axis neighbour), y the rise over four tops 6 columns out; `uplands`
+  (slope 0.7-1.6, rise 2-6) raises the conifers' chance as a stand does, and in the birch woods too. The CPU port:
+  groundOf on the Plants mirror's `surface` (Plants.topCol; FloraSource.top for passability).
+- Berries (`berries`, 0..1): accent-coloured clusters on the crown's outer leaf vertices (generate.ts withBerries).
+- ?fgrass=<0..2> (renderer → vegprep FGRASS): the meadows' tall grass ×x, past 1 a second clump a cell — the foliage
+  bench's density pairs (`set=grass`: the meadow station, perf/foliagecard.ts GRASS_VARIANTS).
+### The flora LOD ladder (round 128, branch `treegen`; BACKLOG FLO47-FLO48)
+
+One ladder for every plant type, chosen by size on screen (vegprep.wgsl), each level emitted by the generator from the
+same species parameters so they match:
+- **close-up** (`lod: 'close'`, FL_<ID>_C; trees, the thicket, tall grass): more stem sides and rings, finer twigs,
+  smaller and more leaf clusters, more and finer blades; the look's finer octave (FLORA_EPI.w). A tree over
+  FLORA_CLOSE_PX = 420 render px tall, a small plant where a cell is over FLORA_CLOSE_CELL = 18 render px.
+- **full** (lod 0): from 150 render px tall.
+- **coarse** (lod 1): twigs and roots gone, leaves merged; from 55 px (the deciduous keep their first limbs: bare in
+  winter they are the tree's shape).
+- **far** (lod 2): a trunk and the crown's masses, ~20-30 triangles — to be replaced by the baked sprite (M6).
+- **the baked sprite** (?flod=sprite, default off until shown): the far level's kinds become a quad (part 12) and
+  the far mesh for the shadow pass (part 13); flora/sprites.ts (the views, bounds, mesh), render/florasprites.ts (the
+  atlas: 64² cells, SPR_YAWS = 8 yaw steps a tree kind, baked on the GPU at the iso pitch when the season moves on),
+  meshinst.wgsl fsSprite (lit per texel by `lighting`, its depth written). Contract: FLORA_SPR / FLORA_SPR2 per kind
+  (the library's WGSL), bindings 44/45 in the instanced meshes' layout.
+- **the far tiles** past the window (tiles.wgsl tileTrees): painted crowns.
+The camera rule (herolab's) reads `driver.occluder` (contracts/understory.ts OccluderSignal: how much sticks up round
+the hero, from the flora plan) to decide when to zoom in; zooming in is what lifts plants up the ladder.
+
+## The forest and the understory (round 125, branch `forest`; BACKLOG FLO30-FLO37; src/forest, contract src/api/contracts/understory.ts)
+
+The user (DECISIONS round 124): "I want forests to be impressive like the cliffs. They should be seas of leaves or
+branches and when we pass under their canopy it should be like entering another world. Dither out the leaves and trees
+that are in the way and make leave shadows stencil, make leaves fall from above, have corpuscular rays and leafs on the
+ground (already in the engine) blowing with wind. Make it like a new little world within a world." Then, on the first
+shots: "once it fades you don't need to render the canopy at all", "Just the s shadows and the trunks", and the falling
+leaves, shafts, mist and litter "belong in the shot ... we can make darker areas and streams and other effects that will
+feel varied and interesting". Reference: docs/design/ref/forest-floor.png.
+
+**Where trees stand** (flora/spacing.ts, vegplan.wgsl `blockSlot` / `treeSlot`, api/plants.ts `planTree`; exactly the
+same, tested on Dawn by test/gpu/flora-plan.test.ts):
+- A jittered grid of slots in world columns: one candidate a 7 × 8 block, at least a column in from its edges (two trees
+  ≥ ~3 cells apart, ~6-7 on average). The candidate is a tree when its column is woods (succession ≥ 3.6). Before: any
+  wooded column with a hash under 0.045 (a Poisson scatter of clumps and holes).
+- The elder woods: a second stand-in biome field (woods.wgsl `elderWoodW`, value noise at 96 columns, like the birch
+  woods). A 2 × 2 super-block of slots in one holds one elder on its own candidate (≥ 3 columns in: elders ≥ ~7 cells
+  apart, ~14 on average) and no other tree. Its column under ELDER_VEG (3.9) grows an ordinary tree.
+- Heights as drawn (the flora library's): birch 17-25, broadleaf 9-15, conifer 12-20, the elder 24-32 (species.ts).
+
+**The woods in the atlas** (woods.wgsl, shared by vegplan.wgsl and the atlas's kernels through Atlas.parts):
+`elderWoods(w, regionVeg)` is the succession forms.wgsl colFinish and lod.wgsl startVeg lay in the elder woods (old
+woods, 4.2, on land that grows plants: the region kind's veg ≥ ~0.7, under the treeline). Before, the atlas's woods were
+small patches (~2 % of a temperate window at 3.9 or more): no forest to stand under. Vegetation only: regions,
+settlement sites and roads don't read it (test/gpu/seed1-unchanged.test.ts holds seed 1 to data/atlas/seed1.json); a
+town's layout does (settle/plan.ts plans against the woods).
+
+**The elder** (species `giant`, "Elder"): the reference's tree — a massive pale bole (~3 cells across) on buttress
+roots (species `flare`: fins from the trunk out and down to the ground, then sprawling; generate.ts flareSegments, part
+7 root), ridged bark (`barkStyle: 'ridged'`), moss on the foot's upward faces (`moss`, the accent colour), a broad
+crown of small copper-red leaf clusters, red-orange in the fall. Its floor (vegprep.wgsl floraSmall, flora/placement.ts
+standsAt the same): no thicket, a quarter of the ferns, mossy boulders (species `boulder`, form `rock`); the field mesh
+paints it a carpet of the elders' copper and orange leaves (meshdraw.wgsl, finer flakes as the view closes in). The
+kinds' tables (library.ts `floraTables`, one layout for the game and the viewer page): FLORA_COL's spare w's carry
+moss, the bark style, the mesh's height and radius (the wind lattice); FLORA_CROWN a kind's crown base and bole radius.
+
+**Past the window**: tiles.wgsl tileTrees walks vegplan.wgsl's slot blocks (`blockSlot`) toward the eye, so the painted
+crowns stand where the window's trees stand, sized like the library's (the elder's ~10 across, red). far.wgsl's rings and
+the atlas map's bake still use their 3-unit lattice (FLO36).
+
+**The understory** (the look under a canopy; forest/understory.ts the model, forest/driver.ts the driver):
+- In: the hero's feet each frame (PlaySession.afterFrame) and the trees round it from the flora plan
+  (Plants.treesNear, every 0.25 s or 3 cells moved) — no GPU readback. Out: `UnderstoryLook` (weight 0..1 eased over
+  ~1 s from the canopy's cover over a disc round the hero; the canopy's underside; the hole's radius; the falling
+  leaves' colour; six treatment strengths) on `Camera.understory`; PlaySession.zoomScale (the driver's zoomUnder:
+  0.7 under the canopy — the user: "the zoom is actually too big now (I want more vertical trunk)").
+- The renderer writes it into the eye's camera uniform (render.wgsl Camera.under, 4 vec4s in the cut block); the sun's
+  camera and the tile cache's are zeroed, so shadows keep every leaf. Weight 0: every term is 1 or 0, and the
+  understory's own draw is skipped (renderer.ts underOn) — the draw exactly as before.
+- **The canopy left out** (meshinst.wgsl vsInst): a tree's leaves, and its wood over the crown's base away from the
+  bole's axis, dither out with the weight round the hero (within ~100 cells: a crown 50 cells in front still lifts into
+  the screen) and are not drawn at all once it is whole (a degenerate vertex: the fill saved). The shadow pass draws them (the light camera has no understory), so the
+  crowns' shadows and the dapple stay.
+- understory.wgsl (appended to render.wgsl as `renderWgsl` in renderer.ts):
+  - `underHide` / `underStumpFade` (meshinst fsInst; the user: "cut away the trunks in front of the PC so they look like
+    stumps that fade"): every tree between the eye and the hero across the screen's width is a stump — cut clean at the
+    hero's knee (1.1 cells over its foot), darkening toward the cut; no stipple. The trunks behind and beside it keep
+    their height; their boles darken over their last cells into the canopy's shade (`dark`, vsInst).
+  - `underRim`: a warm rim on whatever stands in the hero's figure (its voxels), so it reads against the dark floor. With the canopy kept, the crowns in front go too.
+  - `underDapple` (lighting's sun visibility): under the crowns' shade (the shadow map) the sun only through the
+    stencil's holes — ellipses (a pinhole image of the sun, stretched along its way) of the canopy plane projected up
+    the sun's ray, drifting with the wind, in three steps; gaps and clearings stay lit; a pool of light round the hero
+    so its figure reads. `underGrove`: slow world-fixed noise — dark groves (few holes, deep ambient), bright glades.
+  - `underAmbient`: the sky's share deeper under the crowns, by the grove. `underMist` (haze): thin, far behind only.
+- understory_draw.wgsl (its own pipelines on the draw layout, after the particles): light shafts (`vsRay`: down the
+  stencil's big holes — underFlecks' first layer, the same hashes — to the floor's big flecks; soft across, fading down
+  their length, faint and additive in eight dithered steps, banded by drifting mist), falling leaves (`vsLeaf`: 160 in a world-fixed box round the hero, tumbling,
+  fluttering, carried by the integrated prevailing wind G.env; a 7 × 7 pixel maple leaf), litter (`vsLitter`: 260
+  fallen leaves lying round the hero, slid along by G.env × their looseness, hopping and turning where windAt is strong
+  — the player's gusts too). Stateless (hashes of the instance and the time). particles_draw.wgsl draws the engine's
+  own falling leaves (K_LEAF) as the same pixel leaf once over 3.5 px.
+- `?under=0` off. It runs wherever play's hero does (the sandbox, situation and planned runs).
+
+**The wind on foliage** (the user's matrix, docs/design/FOLIAGE_WIND.md; flora/wind.ts, floralook.wgsl): `FWIND`, a
+pipeline override on the instanced draw (`?fwind=static|sway|1A|1C|1A1C`): 1 the sway as it was (the column's lean
+from sway.wgsl, the leaves' flutter, the meadow's wave — the grass's 1B vertex bending), 2 the 1A wind-shading ripple
+(fsInst: leaves and blades brighten and darken as a traveling gust passes; the silhouette stays), 4 the 1C coarse
+lattice (`floraLattice`: a tree's crown moved by eight control points of the traveling gust field `floraGust`,
+trilinear, its foot anchored by the sway weight). 0 is the static baseline. GPU only; the gust field is world-anchored
+(the window's origin) and its strength the column's lean (the engine's wind field through sway.wgsl).
+
+**The forest station** (forest/lab.ts, forest/ride.ts): `?level=atlas&play=lich&forest=lab` — the densest stand
+(elders first) within 120 cells of the window's middle, a loop half in it and half in the open (standLoop, the way out
+by openWay), the lich ridden round it (PlaySession.steer, a scripted stick), a park spot for the composed shot in front
+of the trunk with the most neighbours (parkSpot), chips for each treatment, the ride and the hold (in / out), and a
+readout (fps, weight, cover, trees). `&fvis= &fhold= &fride=0 &fseason=`. Scripts: scripts/forestshot.mjs (stills;
+`--lab`: parked A/B and the ride GIF; `--find elder`), scripts/forestcost.mjs (the phone proxy's A/B/A/B frame
+intervals per treatment, the wind modes by reload), scripts/vsref.mjs (a shot beside the reference).
 
 ## The node solver (round 120, branch `solver`; BACKLOG AR4, the physics design of round 106)
 

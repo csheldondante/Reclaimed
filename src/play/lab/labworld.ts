@@ -37,7 +37,7 @@ export function labSight(): SightWorld & { floor(x: number, y: number): number }
         const [wx, wy] = cellPos(cx, cy);
         const veg = labColumn(wx, wy).veg ?? 0;
         if (veg < 3.6) continue;
-        const tr = planTree(cx, cy, veg, W, H, [0, 0]);
+        const tr = planTree(cx, cy, veg, W, H, [0, 0], (x, y) => { const k = colAt(x, y); return k[k.length - 1].z1; });
         if (!tr) continue;
         const c = colAt(cx, cy);
         const k = Math.floor(wy / B) * 1024 + Math.floor(wx / B);

@@ -8,10 +8,10 @@
  * turned, scaled by `scale` (± 10 %), leaning up to `lean` (a skew: the foot stays put). Offset within the cell by
  * `off` (quarter cells, so small plants don't line up on the grid). Its sway comes from the column's bend in the draw.
  */
-fn floraPut(r: vec2<u32>, c: vec2<u32>, at: vec2<f32>, top: f32, scale: f32, lean: f32, salt: u32) {
+fn floraPut(r: vec2<u32>, c: vec2<u32>, at: vec2<f32>, top: f32, scale: f32, lean: f32, salt: u32) -> u32 {
   let k = r.x + min(u32(rand3(c.x, c.y, 530u + salt) * f32(r.y)), r.y - 1u);
   let j = atomicAdd(&indirect[MI_ARGS + k * 5u + 1u], 1u);
-  if (j >= MI_CAP) { return; }
+  if (j >= MI_CAP) { return 0xffffffffu; }
   let yaw = rand3(c.x, c.y, 517u + salt) * 6.2831853;
   let lx = (rand3(c.x, c.y, 518u + salt) - 0.5) * 2.0 * lean;
   let ly = (rand3(c.x, c.y, 519u + salt) - 0.5) * 2.0 * lean;
@@ -22,7 +22,9 @@ fn floraPut(r: vec2<u32>, c: vec2<u32>, at: vec2<f32>, top: f32, scale: f32, lea
   instTree[o] = vec4<f32>(cs, -sn, lx * s, at.x);
   instTree[o + 1u] = vec4<f32>(sn, cs, ly * s, at.y);
   instTree[o + 2u] = vec4<f32>(0.0, 0.0, s, top);
+  // (x: the plant's state — round 128: 0 alive, 1 dead, 2 burned; vegprep.wgsl sets a tree's)
   instTree[o + 3u] = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+  return o;
 }
 // (round 117, flora) the view, as renderprep.wgsl's PrepCam (the renderer's camera buffer: render.wgsl Camera's head)
 struct PrepCam {

@@ -30,6 +30,26 @@ each was implemented.
   from the hero (a bowl), its edges dithered (the default cut is the dithered one). The bike: more handling variants:
   tighter when slow with a quicker drift, a governor that slows it into narrow places, a carve, a bigger bump in
   turning acceleration; measured as before (the rider model is not the user's thumb). BACKLOG CAM11, PL32.
+## 2026-11-03 — round 128 — the flora generator push and the wind experiments (branch `treegen`)
+
+- The user, verbatim:
+
+> Then look at the foliage test matrix for animated wind on trees and grass and spawn a subagent to start building out those experiments. I want to update the flora generator to extrude a noise perturbed poly stem and to have parameters for taper, branching distance and angle plus variance, whether we twist branches as we go, to have knots and direction changes and epiphyte density for lichens, mosses, other plants, vines and lines. Then to have seasonal variants with and without leaves and with flowers. Bark color and texture parameters. Then the wind tricks that work best. Let's make all treesa bit bigger (height and trunk width scaled by 2 density quartered to match)
+
+> Also a winter variant with snow and ice. I want to also have the same transition to the forest floor for the other plant types and ideally instead of the low poly lod we have now we can bake and instance sprites
+
+> I think we only need to zoom in for certain things and when we do we may want to enhance the geometry and textures with basic lod
+
+> I want to zoom in when going into forests that would otherwise obscure visibility. Most forests but not low trees or shrubs. On fields I like the pulled back view and I think that this of a function of how much things stick up around the player. Cliffs are a slight exception where we need to actually vary the camera. I think generally the camera is isometric and doesn't tilt except around cliffs and maybe cities so I'm hoping we can use baked sprites often without making too many angles.
+
+> Let's test it but I think that is a good lever for performance. I imagine sprites of trees can be small and rendered on demand (likely we render normal and albedo and let sceenspace lighting take over right?)
+
+> No performance tests all need to be done and benchmarks I run on my phone via the existing pattern which keeps the screen awake and generates downloadable reports. Desktop performance is used as a proxy while waiting for me to test. This is true of all features the need perf tests
+
+- → treegen M1-M6 (BACKLOG FLO40-FLO48): the stem and its parameters, bark, epiphytes, seasons (flower, bare, winter),
+  every tree x2 at a quarter the density, the wind per the matrix with a phone bench, one flora LOD ladder (close-up →
+  normal → baked sprite → far tiles) chosen by on-screen size, sprites baked on demand as deferred impostors at the iso
+  pitch's yaw steps.
 
 ## 2026-10-31 — round 120 (session 5) — after playing the run, the towns and the birches; runs redesigned
 

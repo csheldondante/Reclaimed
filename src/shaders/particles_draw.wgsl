@@ -131,8 +131,9 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
     col = vec4<f32>(dustColour(P.m.w) * mix(1.0, 0.85, sr2), 0.2 * clamp(P.p.w / 2.0, 0.0, 1.0) * clamp(age * 6.0, 0.0, 1.0));
   }
   else if (kind == 16u) { // seed fluff: soft cream, a touch luminous so it reads in flight
-    size = 0.11 + sr * 0.05;
-    col = vec4<f32>(vec3<f32>(0.97, 0.95, 0.86) * (0.85 + 0.15 * sin(G.time * 6.0 + sr * 40.0)), 0.95);
+    // (round 125: smaller, warm and soft — under a canopy they read as motes in the light, not as snow)
+    size = 0.07 + sr * 0.04;
+    col = vec4<f32>(vec3<f32>(0.98, 0.86, 0.62) * (0.85 + 0.15 * sin(G.time * 6.0 + sr * 40.0)), 0.55);
   }
   else if (kind == 17u) { // grow-tap: green-gold sparkle (it took) or a brown fleck (it won't)
     size = 0.1;
@@ -197,22 +198,12 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   // world-size square in screen space: viewport.z = px per world unit (the free camera's at
   // distance 1: divided by the depth, clip w — 1 in the fixed view)
   let cw = max(center.w, 1e-4);
-  var px = max(size * CAM.viewport.z / cw, select(1.0, 0.0, soft > 0.5));
-  // (round 124, PRE6) a falling leaf seen close (over 3.5 px half-size: the close zoom) stays a few pixels, a tumbling
-  // diamond turning as it falls, not a flat 15 px square; at the overworld's zooms it is drawn as before
-  let bigLeaf = kind == 3u && px > 3.5;
-  if (bigLeaf) { px = 3.5; }
+  let px = max(size * CAM.viewport.z / cw, select(1.0, 0.0, soft > 0.5));
   var shape = vec2<f32>(1.0);
-  if (bigLeaf) { shape = vec2<f32>(1.0, 0.3 + 0.7 * abs(sin(G.time * 4.0 + sr * 40.0))); }
   if (kind == 13u) { shape = vec2<f32>(1.7, 0.9); }
   if (kind == 14u) { shape = vec2<f32>(1.3, 1.0); }
   if (kind == 10u) { shape = vec2<f32>(1.6, 0.8); }
   var ndc = c * shape * px * 2.0 / CAM.viewport.xy;
-  if (bigLeaf) {
-    let ang = G.time * 1.7 + sr2 * 6.28;
-    let q = c * shape;
-    ndc = vec2<f32>(q.x * cos(ang) - q.y * sin(ang), q.x * sin(ang) + q.y * cos(ang)) * px * 2.0 / CAM.viewport.xy;
-  }
   // (spray: stretched along where it goes on screen - the streak it draws in ~1/40 s)
   if (kind == 24u) {
     let ahead = CAM.viewProj * vec4<f32>(P.p.xyz + P.v.xyz * 0.012, 1.0);
@@ -230,8 +221,14 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   o.col = col;
   o.uv = c;
   o.soft = soft;
-  let mote = kind == 1u || kind == 21u || kind == 22u || kind == 23u || kind == 24u;
-  o.shapeInfo = vec2<f32>(select(select(select(0.0, 2.0, mote), 1.0, kind == 10u), 3.0, bigLeaf), select(sin(G.time * 12.0 + sr * 60.0), 0.35, perched));
+  let mote = kind == 1u || kind == 16u || kind == 21u || kind == 22u || kind == 23u || kind == 24u;
+  o.shapeInfo = vec2<f32>(select(select(0.0, 2.0, mote), 1.0, kind == 10u), select(sin(G.time * 12.0 + sr * 60.0), 0.35, perched));
+  // (round 125, forest: a falling leaf over a few pixels on screen — the close view under a canopy — is a pixel leaf,
+  // turning as it tumbles (understory_draw.wgsl's 7 x 7 shape), not a flat square; resting, it lies still)
+  if (kind == 3u && px > 3.5) {
+    let resting = (P.m.z & 1u) != 0u;
+    o.shapeInfo = vec2<f32>(3.0, select(G.time * (2.0 + 2.0 * sr) + sr * 40.0, sr * 6.28, resting));
+  }
   return o;
 }
 
@@ -245,8 +242,16 @@ fn fs(in: VOut) -> FOut {
   var o: FOut;
   var a = in.col.a;
   if (in.shapeInfo.x > 2.5) {
-    // (round 124, PRE6) a leaf close up: a diamond
-    if (abs(in.uv.x) + abs(in.uv.y) > 1.0) { discard; }
+    // (round 125) a pixel leaf: the 7 x 7 maple, turned and flipped by its spin
+    let t = in.shapeInfo.y;
+    let cs = cos(t);
+    let sn = sin(t);
+    var q = vec2<f32>(in.uv.x * cs + in.uv.y * sn, -in.uv.x * sn + in.uv.y * cs);
+    q.x = q.x / max(abs(cos(t * 1.7)), 0.3);
+    let g = vec2<i32>(floor((q * 0.5 + 0.5) * 7.0));
+    if (any(g < vec2<i32>(0)) || any(g > vec2<i32>(6))) { discard; }
+    let rows = array<u32, 7>(0x08u, 0x2au, 0x3eu, 0x7fu, 0x3eu, 0x1cu, 0x08u);
+    if (((rows[6 - g.y] >> u32(g.x)) & 1u) == 0u) { discard; }
   } else if (in.shapeInfo.x > 1.5) {
     // a round mote: dense centre, soft rim
     a *= smoothstep(1.0, 0.3, length(in.uv));

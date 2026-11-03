@@ -9,8 +9,11 @@
 // hero is about two cells tall), chosen for the scene the user asked for: "silver birches towering above".
 
 import type { LSystemSpec, TurtleSpec } from './lsystem';
-import type { LeafLook } from './mesh';
+import type { CrownLook, LeafLook, StemLook, TwigLook } from './mesh';
 import type { RootSpec } from './roots';
+import { TREE_SCALE } from './spacing';
+import type { ColonizeSpec } from './colonize';
+import type { GrassLook } from './forms';
 
 export type RGB = [number, number, number];
 
@@ -25,9 +28,12 @@ export type SpeciesId =
   | 'fern'
   | 'flower'
   | 'moss'
-  | 'ivy';
+  | 'ivy'
+  | 'boulder'
+  | 'willow'
+  | 'scotspine';
 
-export type PlantForm = 'tree' | 'shrub' | 'grass' | 'reed' | 'fern' | 'flower' | 'moss' | 'vine';
+export type PlantForm = 'tree' | 'shrub' | 'grass' | 'reed' | 'fern' | 'flower' | 'moss' | 'vine' | 'rock';
 
 /** What a plant can grow on (its host). Ground plants stand on terrain; the others are instanced onto other geometry. */
 export type Host = 'ground' | 'bank' | 'rock' | 'wall' | 'cave';
@@ -90,9 +96,90 @@ export interface SpeciesDef {
   sway: number;
   /** it lets its leaves go all year (a few), more in the fall and in a wind (falling leaves) */
   shedsLeaves: boolean;
+  /** (round 125) buttress roots flaring from the trunk's foot and sprawling over the ground (mesh.ts buildPlant) */
+  flare?: Flare;
+  /** (round 128, treegen) how its stems are extruded: sides, noise, knots (mesh.ts StemLook) — every woody plant */
+  stem?: StemLook;
+  /** (round 128) a crown grown by space colonization (colonize.ts) in place of the L-system's branching */
+  colonize?: ColonizeSpec;
+  /** (round 128) the fine twigs past the L-system's last order (mesh.ts TwigLook): a bare tree's silhouette */
+  twigs?: TwigLook;
+  /** (round 128) a broadleaf crown's sprays (mesh.ts CrownLook) in place of the 'cluster' leaves' blobs */
+  crown?: CrownLook;
+  /** (round 128) the bark's texture in the look (floralook.wgsl): colours.bark the base, colours.barkMark the marks */
+  bark: BarkLook;
+  /** (round 125) moss on the wood near the foot, on its upward faces, 0..1 (the accent colour) */
+  moss?: number;
+  /** (round 128) what grows on it (each 0..1, a density): lichens, moss on the limbs, epiphytic plants, vines, lines */
+  epiphytes?: Epiphytes;
+  /** (round 128) a deciduous crown's leaves kept through the winter, dead (0..1; an oak's or a beech's marcescent few) */
+  winterLeaves?: number;
+  /** (round 128) in flower (spring): the share of its leaf clusters that bloom, in colours.flower (0 / absent: none) */
+  blossom?: number;
+  /** (round 128) berries at the twig tips (0..1, a density; colours.accent): a berry bush's, a bramble's */
+  berries?: number;
+  /** (round 128) a grass clump's build (forms.ts GrassLook) */
+  grass?: GrassLook;
+  /** (round 128) the kind drawn (forms.ts: a shrub's SHRUB_FORMS, a grass's GRASS_TYPES); −1 / absent: by the variant */
+  kind?: number;
+  /** (round 128) set once the kind is applied (forms.ts resolveKind) */
+  kindDone?: boolean;
 }
 
+/**
+ * (round 128, treegen) Epiphytes, each a density 0..1. Lichens and moss are drawn in the bark's look (patches, no
+ * triangles); plants, vines and lines are geometry the generator adds (mesh part 9 the green ones, 10 the lines):
+ *   lichen  pale grey-green and ochre crusts on the bark, anywhere
+ *   moss    moss on the limbs' upper faces, all the way up (`moss` above is the foot's)
+ *   plants  small ferns / bromeliad tufts in the forks of the trunk and limbs
+ *   vines   climbers spiralling up the trunk, leafy
+ *   lines   hanging lines from the limbs: lianas and Spanish-moss / old-man's-beard strands (the reading taken for
+ *           "lines"; the other is guy-lines of web or rope — say if that was meant)
+ */
+export interface Epiphytes {
+  lichen: number;
+  moss: number;
+  plants: number;
+  vines: number;
+  lines: number;
+}
+
+export const NO_EPIPHYTES: Epiphytes = { lichen: 0, moss: 0, plants: 0, vines: 0, lines: 0 };
+
+/** Buttress roots (round 125), in the turtle's units (its trunk radius r): `count` fins, each leaving the trunk `rise`
+ *  radii up, reaching the ground `reach` radii out, then sprawling `sprawl` radii further along it, thinning. */
+export interface Flare {
+  count: number;
+  rise: number;
+  reach: number;
+  sprawl: number;
+}
+
+/**
+ * (round 128, treegen) The bark's texture, drawn in world space by floralook.wgsl over the base colour (colours.bark)
+ * with the mark colour (colours.barkMark). Each 0..1 unless noted; replaces round 125's two styles (lenticels/ridged).
+ */
+export interface BarkLook {
+  /** long vertical furrows (ridged bark: oak, the elder), how deep they read, and how many a cell round */
+  furrows: number;
+  furrowFreq: number;
+  /** plates (a pine's scaly bark): the cracks between them and the plates' own shades; their size (cells) */
+  plates: number;
+  plateSize: number;
+  /** horizontal dashes (a birch's lenticels): their share, and how many a cell up */
+  stripes: number;
+  stripeFreq: number;
+  /** value noise through the bark (streaks, warm patches) */
+  roughness: number;
+}
+
+export const BARK_PLAIN: BarkLook = { furrows: 0, furrowFreq: 3, plates: 0, plateSize: 0.6, stripes: 0, stripeFreq: 7, roughness: 0.15 };
+
 const C = (r: number, g: number, b: number): RGB => [r, g, b];
+/** (round 128) a thicket's colonized crown: stems from the ground (a short foot, then several) into a low dome */
+const SHRUB_DOME: ColonizeSpec = { height: 4, crownBase: 0.06, width: 0.62, envelope: 'dome', points: 140, influence: 6, kill: 1.6, step: 0.35, upBend: 0.3, weep: 0, maxAngle: 50, leader: false, forks: 4, trunkRadius: 0.11, tipRadius: 0.012, thin: 0.6, rounds: 50, straight: 0.5 };
+/** (round 128) a tree's height range: round 125's × TREE_SCALE (flora/spacing.ts) */
+const tall = (a: number, b: number): [number, number] => [a * TREE_SCALE, b * TREE_SCALE];
 
 export const SPECIES: Record<SpeciesId, SpeciesDef> = {
   // Silver birch (Betula pendula): a tall, slender white trunk with dark marks, bare low down, fine weeping twigs
@@ -101,7 +188,10 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     id: 'birch',
     name: 'Silver birch',
     form: 'tree',
-    height: [11, 17],
+    // (round 125, forest: x1.5 — "trees much bigger relative to the player"; the trunk ~0.9 across, a villager's
+    // width and a half, the lich's about)
+    // (round 128, treegen: × TREE_SCALE — every tree twice as tall and its trunk twice as wide, a quarter as many)
+    height: tall(17, 25),
     lsystem: {
       axiom: 'FFFFA',
       rules: {
@@ -134,15 +224,32 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
       tropism: [0, 0, -1],
       tropismStrength: [0, 0.1, 0.42],
       minRadius: 0.012,
+      taperVar: 0.2,
+      spacing: 1,
+      stepVar: 0.1,
+      twist: 0,
+      kinkChance: 0.08,
+      kinkAngle: 6,
     },
-    leaf: { style: 'drop', size: 0.55, per: 3, minDepth: 1 },
+    leaf: { style: 'cluster', size: 0.55, per: 3, minDepth: 1 },
+    // (round 128: an airy crown of leaf sprays — main's review: "don't give birches the solid mass")
+    // (round 128, the user: "I want the leaf cluster cards": the birch's crown as layered leaf clusters, small diamond leaves)
+    crown: { size: 2.4, perTwig: 1, spacing: 0, fill: 0.6, leaves: 4, droop: 0.5, style: 'layers', clump: 5, gaps: 0.08, lumps: 0.35, lobeBlend: 0.8, layers: 3, layerGap: 0.35, depthDark: 0.55, bend: 1, core: 1, cluster: 2.8, cover: 0.72, lobeShape: 'tear', separate: 0.3 },
     roots: { half: 8, depth: 4, res: 0.3, generations: 12, growth: 0.5, down: 0.15, maxCells: 160, trunkRadius: 0.3 },
+    stem: { sides: 8, noise: 0.07, noiseFreq: 0.5, knots: 1.5, knotSize: 0.22, ring: 1.8 },
+    bark: { furrows: 0, furrowFreq: 3, plates: 0, plateSize: 0.6, stripes: 0.2, stripeFreq: 7, roughness: 0.15 },
+    epiphytes: { lichen: 0.2, moss: 0, plants: 0, vines: 0, lines: 0 },
+    // (catkins: hanging ochre tassels before the leaves)
+    blossom: 0.35,
+    twigs: { count: 1, angle: 40, length: 1.8, falloff: 0.6, orders: 1, droop: 0.6, width: 0.05, spacing: 0 },
+    colonize: { height: 42, crownBase: 0.3, width: 0.18, envelope: 'column', points: 350, influence: 6, kill: 1.6, step: 1.1, upBend: 0.3, weep: 0.2, maxAngle: 50, leader: true, forks: 1, trunkRadius: 0.62, tipRadius: 0.03, thin: 0.6, rounds: 70, straight: 0.6 },
     colours: {
       bark: C(0.86, 0.85, 0.8),
       barkMark: C(0.16, 0.15, 0.14),
       leafDark: C(0.3, 0.47, 0.15),
       leafLight: C(0.6, 0.72, 0.3),
       autumn: C(0.92, 0.76, 0.22),
+      flower: C(0.86, 0.74, 0.3),
       deciduous: true,
     },
     niche: { veg: [3.2, 6], moisture: [0.25, 0.9], light: [0.5, 1], altitude: [1, 120], slopeMax: 0.9, hosts: ['ground'], weight: 1 },
@@ -155,7 +262,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     id: 'oak',
     name: 'Broadleaf',
     form: 'tree',
-    height: [6, 10],
+    height: tall(9, 15),
     lsystem: {
       axiom: 'FFA',
       rules: {
@@ -184,11 +291,25 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
       tropism: [0, 0, 1],
       tropismStrength: [0, 0.06, 0.1],
       minRadius: 0.03,
+      taperVar: 0.25,
+      spacing: 1,
+      stepVar: 0.2,
+      twist: 7,
+      kinkChance: 0.3,
+      kinkAngle: 16,
     },
     leaf: { style: 'cluster', size: 0.95, per: 1, minDepth: 1 },
     roots: { half: 7, depth: 5, res: 0.35, generations: 10, growth: 0.5, down: 0.4, maxCells: 140, trunkRadius: 0.38 },
+    stem: { sides: 8, noise: 0.14, noiseFreq: 0.45, knots: 3, knotSize: 0.35, ring: 1.4 },
+    crown: { size: 2.6, perTwig: 3, spacing: 1.2, fill: 0.85, leaves: 9, droop: 0.25, style: 'layers', clump: 7, gaps: 0.04, lumps: 0.3, shell: 0.07, lobeBlend: 0.8, layers: 3, layerGap: 0.35, depthDark: 0.6, bend: 1, core: 1, cluster: 3.4, cover: 0.8 },
+    bark: { furrows: 0.55, furrowFreq: 3.5, plates: 0.25, plateSize: 0.45, stripes: 0, stripeFreq: 7, roughness: 0.45 },
+    epiphytes: { lichen: 0.35, moss: 0.3, plants: 0.2, vines: 0.25, lines: 0.1 },
+    winterLeaves: 0.06,
+    twigs: { count: 2, angle: 45, length: 1.4, falloff: 0.6, orders: 2, droop: 0.05, width: 0.07, spacing: 1.2 },
+    colonize: { height: 24, crownBase: 0.4, width: 0.45, envelope: 'dome', points: 320, influence: 6, kill: 1.6, step: 1.5, upBend: 0.35, weep: 0, maxAngle: 45, leader: false, forks: 3, trunkRadius: 1.0, tipRadius: 0.03, thin: 0.6, rounds: 70, straight: 0.6 },
     colours: {
       bark: C(0.36, 0.27, 0.18),
+      barkMark: C(0.17, 0.12, 0.08),
       leafDark: C(0.13, 0.3, 0.1),
       leafLight: C(0.32, 0.53, 0.18),
       autumn: C(0.8, 0.36, 0.1),
@@ -205,7 +326,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     id: 'pine',
     name: 'Conifer',
     form: 'tree',
-    height: [8, 14],
+    height: tall(12, 20),
     lsystem: {
       axiom: 'FA',
       rules: {
@@ -233,11 +354,54 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
       tropism: [0, 0, -1],
       tropismStrength: [0, 0.08, 0.08],
       minRadius: 0.012,
+      taperVar: 0.1,
+      spacing: 1,
+      stepVar: 0.1,
+      twist: 0,
+      kinkChance: 0.04,
+      kinkAngle: 6,
     },
-    leaf: { style: 'needles', size: 0.55, per: 1, minDepth: 1 },
+    // (round 128, the user: "I would love to see pines" — a leader through tiers of drooping shelves: the colonized
+    // branches reach out into each shelf, the needles layered shells on shelf-shaped lobes; the round-117 L-system
+    // stays for the viewer's old side)
+    colonize: {
+      height: 32,
+      crownBase: 0.12,
+      width: 0.24,
+      envelope: 'cone',
+      points: 360,
+      influence: 6,
+      kill: 1.6,
+      step: 1.2,
+      upBend: 0.05,
+      weep: 0,
+      maxAngle: 80,
+      leader: true,
+      forks: 1,
+      trunkRadius: 0.75,
+      tipRadius: 0.03,
+      thin: 0.65,
+      rounds: 70,
+      straight: 0.8,
+      tiers: [
+        { at: 0.22, width: 0.24, depth: 0.07 },
+        { at: 0.36, width: 0.21, depth: 0.07 },
+        { at: 0.5, width: 0.17, depth: 0.07 },
+        { at: 0.63, width: 0.13, depth: 0.07 },
+        { at: 0.76, width: 0.09, depth: 0.07 },
+        { at: 0.88, width: 0.05, depth: 0.08 },
+      ],
+    },
+    leaf: { style: 'cluster', size: 0.55, per: 1, minDepth: 1 },
+    // (round 128, the user: "Pines should use cones and use baked needlg patterns instead of leaves")
+    crown: { size: 0.9, perTwig: 2, spacing: 1, fill: 0.85, leaves: 7, droop: 0.35, style: 'cones', hideBelow: 0.15, layers: 2, layerGap: 1, depthDark: 0.6 },
     roots: { half: 6, depth: 6, res: 0.35, generations: 10, growth: 0.5, down: 0.6, maxCells: 120, trunkRadius: 0.3 },
+    stem: { sides: 8, noise: 0.06, noiseFreq: 0.6, knots: 2, knotSize: 0.25, ring: 1.8 },
+    bark: { furrows: 0.2, furrowFreq: 3, plates: 0.7, plateSize: 0.5, stripes: 0, stripeFreq: 7, roughness: 0.3 },
+    epiphytes: { lichen: 0.3, moss: 0.1, plants: 0, vines: 0, lines: 0.25 },
     colours: {
-      bark: C(0.3, 0.2, 0.14),
+      bark: C(0.42, 0.25, 0.16),
+      barkMark: C(0.16, 0.1, 0.07),
       leafDark: C(0.06, 0.18, 0.11),
       leafLight: C(0.16, 0.34, 0.2),
       autumn: C(0.16, 0.34, 0.2),
@@ -248,54 +412,89 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     sway: 0.7,
     shedsLeaves: false,
   },
-  // The old giant: a thick, flaring trunk on buttress roots (the root automaton's surface roots shown), a broad,
-  // high crown. Rare, in old woods.
+  // The elder (round 125, forest; was "the old giant"): the reference's tree (docs/design/ref/forest-floor.png) — a
+  // massive pale trunk, grey-white and ridged, on flaring buttress roots that sprawl over the floor, mossy at its foot;
+  // a few great limbs forking into a broad, high crown of copper-red leaves that go orange in the fall. Its own woods
+  // (flora/spacing.ts: the elder woods, one a 14 x 16 super-block) and, rarely, alone in old woods. Its trunk is
+  // ~2.5 cells across: the lich (1 wide) is 0.4 of it, a villager a quarter — the user's "0.25-1 trunk width".
   giant: {
     id: 'giant',
-    name: 'Old giant',
+    name: 'Elder',
     form: 'tree',
-    height: [14, 20],
+    height: tall(24, 32),
     lsystem: {
-      axiom: 'FFFA',
+      // (a massive bole to the fork; three or four great limbs leaving it wide — near level — forking twice into a
+      // broad, flat-topped crown, a leader carrying on up the middle)
+      axiom: 'FFFFA',
       rules: {
         A: [
-          { s: 'F[&&B]/[&&B]//[&&B]/[&B]', w: 0.6 },
-          { s: 'F[&&B]///[&&B]F[&&B]', w: 0.4 },
+          { s: 'F[&&&B]//[&&&B]//[&&&B]', w: 0.5 },
+          { s: 'F[&&&B]/[&&&B]//[&&B]//[&&&B]F[&L]L', w: 0.5 },
         ],
         B: [
-          { s: 'F[+B]F[-B]B', w: 0.4 },
-          { s: 'F[-B]/[+B]L', w: 0.4 },
-          { s: 'FFL', w: 0.2 },
+          { s: 'FF[+C][-C]C', w: 0.5 },
+          { s: 'F[-C]F[+C]C', w: 0.5 },
+        ],
+        // (round 128: the crown's twigs fork more often — a broad, full crown of many small sprays, main's review: "the
+        // elder's crowns are flat red slabs")
+        C: [
+          { s: 'F[+C][-C][&L]L', w: 0.4 },
+          { s: 'F[+C][&L]L', w: 0.3 },
+          { s: 'F[-C][^L]L', w: 0.3 },
         ],
       },
-      finals: { A: 'L', B: 'FL' },
-      iterations: 4,
+      finals: { A: 'L', B: 'F[&L]L', C: 'L' },
+      iterations: 5,
     },
     turtle: {
       step: 2.2,
-      stepDecay: 0.66,
-      radius: 0.8,
+      // (round 128: 0.72 → 0.84 and 26° → 32°: the crown's twigs longer and wider apart, so its sprays spread into a
+      // broad crown instead of a ball at each limb's end)
+      stepDecay: 0.84,
+      radius: 1.55,
       radiusDecay: 0.55,
-      taper: 0.88,
-      angle: 30,
+      taper: 0.95,
+      angle: 32,
       roll: 115,
-      jitter: 15,
+      jitter: 14,
       tropism: [0, 0, 1],
-      tropismStrength: [0, 0.04, 0.06],
+      tropismStrength: [0, 0.02, 0.06],
       minRadius: 0.05,
+      taperVar: 0.2,
+      spacing: 1,
+      stepVar: 0.15,
+      twist: 4,
+      kinkChance: 0.2,
+      kinkAngle: 12,
     },
-    leaf: { style: 'cluster', size: 1.5, per: 1, minDepth: 1 },
-    roots: { half: 10, depth: 6, res: 0.45, generations: 14, growth: 0.55, down: 0.25, maxCells: 260, trunkRadius: 0.8 },
+    // (smaller clusters and more of them than the other trees': close up under the canopy a cluster is a few leaves'
+    // worth of pixels, not a slab)
+    leaf: { style: 'cluster', size: 1.3, per: 5, minDepth: 1 },
+    roots: { half: 4, depth: 4, res: 0.45, generations: 10, growth: 0.6, down: 0.3, maxCells: 90, trunkRadius: 1.55 },
+    // (hugging the bole's foot and tapering within a few cells — main's review: long sprawls read as logs on the floor)
+    flare: { count: 6, rise: 1.8, reach: 1.7, sprawl: 0.7 },
+    stem: { sides: 8, noise: 0.16, noiseFreq: 0.3, knots: 2.5, knotSize: 0.3, ring: 3.2 },
+    crown: { size: 4.2, perTwig: 3, spacing: 1.5, fill: 0.85, leaves: 8, droop: 0.2, style: 'layers', clump: 11, gaps: 0.04, lumps: 0.3, hideBelow: 0.45, shell: 0.05, lobeBlend: 0.8, layers: 3, layerGap: 0.3, depthDark: 0.6, bend: 1, core: 1, cluster: 5.2, cover: 0.8 },
+    bark: { furrows: 0.8, furrowFreq: 3, plates: 0, plateSize: 0.6, stripes: 0, stripeFreq: 7, roughness: 0.8 },
+    epiphytes: { lichen: 0.3, moss: 0.3, plants: 0.35, vines: 0.3, lines: 0.15 },
+    winterLeaves: 0.08,
+    twigs: { count: 1, angle: 40, length: 2.4, falloff: 0.6, orders: 2, droop: 0.05, width: 0.1, spacing: 3 },
+    colonize: { height: 56, crownBase: 0.5, width: 0.5, envelope: 'umbrella', points: 420, influence: 6, kill: 1.6, step: 2.2, upBend: 0.4, weep: 0, maxAngle: 40, leader: false, forks: 4, trunkRadius: 4.5, tipRadius: 0.05, thin: 0.6, rounds: 70, straight: 0.6 },
     colours: {
-      bark: C(0.3, 0.25, 0.2),
-      leafDark: C(0.1, 0.24, 0.09),
-      leafLight: C(0.25, 0.43, 0.15),
-      autumn: C(0.75, 0.45, 0.12),
+      // (warm pale, the reference's beech: a grey-white with ochre in it)
+      bark: C(0.84, 0.8, 0.72),
+      barkMark: C(0.5, 0.47, 0.44),
+      leafDark: C(0.42, 0.06, 0.05),
+      leafLight: C(0.86, 0.24, 0.1),
+      // (the fall: a deeper red-orange, so the wood stays the reference's red and orange, not all orange)
+      autumn: C(0.93, 0.34, 0.09),
+      accent: C(0.42, 0.46, 0.13),
       deciduous: true,
     },
-    niche: { veg: [4.7, 6], moisture: [0.3, 0.9], light: [0.3, 1], altitude: [0, 60], slopeMax: 0.5, hosts: ['ground'], weight: 0.15 },
+    moss: 0.85,
+    niche: { veg: [3.9, 6], moisture: [0.3, 0.9], light: [0.3, 1], altitude: [0, 80], slopeMax: 0.5, hosts: ['ground'], weight: 0.15 },
     barrier: { fill: 0.4, cuttable: false, slow: 0.8, breakMass: 4 },
-    sway: 0.45,
+    sway: 0.4,
     shedsLeaves: true,
   },
   // Understorey shrub: a dense, low dome of twigs and leaf clusters — the thicket that makes a soft barrier.
@@ -328,14 +527,32 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
       tropism: [0, 0, 1],
       tropismStrength: [0.2, 0.12, 0.05],
       minRadius: 0.01,
+      taperVar: 0.25,
+      spacing: 1,
+      stepVar: 0.25,
+      twist: 0,
+      kinkChance: 0.3,
+      kinkAngle: 20,
     },
+    // (round 128, the user: "Can tree gen move onto grasses and shrubs and adopt the same techniques that worked for
+    // trees?" — the thicket grown as the trees are: stems from the ground into a low dome, layered leaves on its lobes)
+    colonize: SHRUB_DOME,
     leaf: { style: 'cluster', size: 0.42, per: 1, minDepth: 0 },
+    stem: { sides: 5, noise: 0.1, noiseFreq: 1, knots: 1, knotSize: 0.2, ring: 0.4 },
+    crown: { size: 0.55, perTwig: 2, spacing: 0.35, fill: 0.8, leaves: 4, droop: 0.15, style: 'layers', clump: 1.3, gaps: 0, lumps: 0.3, hideBelow: 0.02, shell: 1.6, lobeBlend: 0.8, layers: 3, layerGap: 0.35, depthDark: 0.55, bend: 1, core: 1, cluster: 1.0, cover: 0.8, separate: 0.2 },
+    bark: BARK_PLAIN,
+    epiphytes: { lichen: 0.1, moss: 0, plants: 0, vines: 0, lines: 0 },
+    blossom: 0.45,
+    twigs: { count: 1, angle: 40, length: 0.4, falloff: 0.6, orders: 1, droop: 0, width: 0.03, spacing: 0.5 },
     colours: {
       bark: C(0.3, 0.22, 0.15),
       // (lighter than the trees': a thicket under the sun reads as bushes, not a dark carpet)
       leafDark: C(0.17, 0.33, 0.12),
       leafLight: C(0.38, 0.56, 0.2),
       autumn: C(0.72, 0.3, 0.12),
+      flower: C(0.96, 0.9, 0.93),
+      // (round 128: the berry bush's berries)
+      accent: C(0.62, 0.08, 0.1),
       deciduous: true,
     },
     niche: { veg: [2.6, 4.6], moisture: [0.2, 0.9], light: [0.2, 1], altitude: [0, 200], slopeMax: 1.0, hosts: ['ground', 'bank'], weight: 1 },
@@ -349,6 +566,9 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     name: 'Tall grass',
     form: 'grass',
     height: [1.1, 1.8],
+    // (round 128: curved blades in several segments, lit as one clump — forms.ts; the variants its clump types)
+    grass: { blades: 18, spread: 0.4, lean: 0.35, arch: 0.4, width: 0.09, segs: 4, heads: 0.2 },
+    bark: BARK_PLAIN,
     colours: {
       bark: C(0.3, 0.4, 0.15),
       leafDark: C(0.22, 0.4, 0.12),
@@ -368,6 +588,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     name: 'Reeds',
     form: 'reed',
     height: [2.0, 3.2],
+    bark: BARK_PLAIN,
     colours: {
       bark: C(0.4, 0.45, 0.2),
       leafDark: C(0.3, 0.42, 0.18),
@@ -408,6 +629,8 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
       minRadius: 0.005,
     },
     leaf: { style: 'leaflet', size: 0.32, per: 1, minDepth: 0 },
+    stem: { sides: 3, noise: 0, noiseFreq: 1, knots: 0, knotSize: 0, ring: 1 },
+    bark: BARK_PLAIN,
     colours: {
       bark: C(0.2, 0.32, 0.1),
       leafDark: C(0.1, 0.3, 0.1),
@@ -426,6 +649,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     name: 'Wildflower',
     form: 'flower',
     height: [0.5, 0.9],
+    bark: BARK_PLAIN,
     colours: {
       bark: C(0.25, 0.4, 0.15),
       leafDark: C(0.2, 0.38, 0.12),
@@ -446,6 +670,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     name: 'Moss',
     form: 'moss',
     height: [0.15, 0.35],
+    bark: BARK_PLAIN,
     colours: {
       bark: C(0.2, 0.3, 0.1),
       leafDark: C(0.18, 0.32, 0.08),
@@ -456,6 +681,131 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     niche: { veg: [0.5, 6], moisture: [0.35, 1], light: [0.05, 0.8], altitude: [-50, 300], slopeMax: 99, hosts: ['rock', 'wall', 'cave'], weight: 1 },
     barrier: { fill: 0, cuttable: true, slow: 1, breakMass: 0 },
     sway: 0,
+    shedsLeaves: false,
+  },
+  // (round 125, forest) A mossy boulder on the elder woods' floor — the reference's "mossy rocks": a few faceted lumps of
+  // grey stone, moss on their tops (the accent colour). Not a plant, but dressed by the same placement and draw as the
+  // floor's plants (vegprep.wgsl floraSmall), and a hard barrier where it stands.
+  boulder: {
+    id: 'boulder',
+    name: 'Mossy boulder',
+    form: 'rock',
+    height: [0.7, 1.6],
+    bark: { furrows: 0.8, furrowFreq: 3, plates: 0, plateSize: 0.6, stripes: 0, stripeFreq: 7, roughness: 0.8 },
+    colours: {
+      bark: C(0.5, 0.5, 0.5),
+      barkMark: C(0.38, 0.38, 0.4),
+      leafDark: C(0.3, 0.33, 0.12),
+      leafLight: C(0.45, 0.5, 0.18),
+      autumn: C(0.45, 0.5, 0.18),
+      accent: C(0.4, 0.47, 0.14),
+      deciduous: false,
+    },
+    moss: 1,
+    niche: { veg: [3.6, 6], moisture: [0.2, 1], light: [0, 1], altitude: [-50, 300], slopeMax: 1, hosts: ['ground'], weight: 0.1 },
+    barrier: { fill: 0.7, cuttable: false, slow: 0.3, breakMass: 4 },
+    sway: 0,
+    shedsLeaves: false,
+  },
+  // (round 128, treegen) A weeping willow — the proof that the colonized crown covers weeping forms (the user: "we might
+  // want willows and whatnot so they don't always need to curve up"): limbs rising from a short trunk, then arching
+  // over and down past a quarter of the height (`weep`), curtains of long hanging twigs and leaf sprays (droop 1).
+  // Not yet in the game's plan (no slot asks for it): the flora viewer shows it.
+  willow: {
+    id: 'willow',
+    name: 'Weeping willow',
+    form: 'tree',
+    height: tall(10, 15),
+    lsystem: { axiom: 'F', rules: {}, iterations: 0 },
+    turtle: {
+      step: 1,
+      stepDecay: 0.8,
+      radius: 0.5,
+      radiusDecay: 0.6,
+      taper: 0.92,
+      angle: 35,
+      roll: 120,
+      jitter: 12,
+      tropism: [0, 0, 1],
+      tropismStrength: [0, 0.05, 0.05],
+      minRadius: 0.02,
+      twist: 3,
+      kinkChance: 0.15,
+      kinkAngle: 8,
+    },
+    colonize: { height: 25, crownBase: 0.28, width: 0.55, envelope: 'dome', points: 220, influence: 6, kill: 1.6, step: 1.3, upBend: 0.45, weep: 0.85, maxAngle: 45, leader: false, forks: 3, trunkRadius: 1.0, tipRadius: 0.03, thin: 0.6, rounds: 70, straight: 0.6 },
+    leaf: { style: 'cluster', size: 0.5, per: 3, minDepth: 1 },
+    // (round 128: layered leaf clusters of long narrow hanging leaves on drooping lobes)
+    crown: { size: 1.6, perTwig: 2, spacing: 1.1, fill: 0.85, leaves: 5, droop: 1, style: 'layers', clump: 6, gaps: 0.05, lumps: 0.3, lobeBlend: 0.8, layers: 3, layerGap: 0.35, depthDark: 0.6, bend: 1, core: 1, cluster: 3.4, cover: 0.72, lobeShape: 'tear', separate: 0.25 },
+    twigs: { count: 3, angle: 20, length: 4.5, falloff: 0.7, orders: 2, droop: 1, width: 0.05, spacing: 0 },
+    roots: { half: 6, depth: 4, res: 0.35, generations: 10, growth: 0.55, down: 0.25, maxCells: 120, trunkRadius: 0.5 },
+    stem: { sides: 8, noise: 0.15, noiseFreq: 0.4, knots: 3, knotSize: 0.35, ring: 1.4 },
+    bark: { furrows: 0.7, furrowFreq: 2.5, plates: 0, plateSize: 0.6, stripes: 0, stripeFreq: 7, roughness: 0.4 },
+    epiphytes: { lichen: 0.2, moss: 0.2, plants: 0, vines: 0, lines: 0.1 },
+    colours: {
+      bark: C(0.42, 0.37, 0.3),
+      barkMark: C(0.2, 0.17, 0.14),
+      leafDark: C(0.33, 0.48, 0.18),
+      leafLight: C(0.66, 0.76, 0.32),
+      autumn: C(0.85, 0.75, 0.3),
+      deciduous: true,
+    },
+    niche: { veg: [3, 6], moisture: [0.6, 1], light: [0.4, 1], altitude: [-1, 20], slopeMax: 0.6, hosts: ['bank', 'ground'], weight: 0.3 },
+    barrier: { fill: 0.2, cuttable: true, slow: 0.85, breakMass: 3 },
+    sway: 1.0,
+    shedsLeaves: true,
+  },
+  // (round 128, the user: "a Scots-pine variant whose lower trunk is bare with a high rounded crown"): a tall straight
+  // trunk bare to over half its height, its upper bark the species' orange, a crown of a few flat cloud pads.
+  scotspine: {
+    id: 'scotspine',
+    name: 'Scots pine',
+    form: 'tree',
+    height: tall(14, 22),
+    lsystem: { axiom: 'F', rules: {}, iterations: 0 },
+    turtle: { step: 1, stepDecay: 0.8, radius: 0.4, radiusDecay: 0.6, taper: 0.94, angle: 30, roll: 120, jitter: 10, tropism: [0, 0, 1], tropismStrength: [0, 0.05, 0.05], minRadius: 0.02, kinkChance: 0.1, kinkAngle: 7 },
+    colonize: {
+      height: 36,
+      crownBase: 0.6,
+      width: 0.22,
+      envelope: 'dome',
+      points: 300,
+      influence: 6,
+      kill: 1.6,
+      step: 1.3,
+      upBend: 0.3,
+      weep: 0,
+      maxAngle: 55,
+      leader: true,
+      forks: 1,
+      trunkRadius: 0.8,
+      tipRadius: 0.03,
+      thin: 0.6,
+      rounds: 70,
+      straight: 0.7,
+      tiers: [
+        { at: 0.7, width: 0.2, depth: 0.09 },
+        { at: 0.81, width: 0.22, depth: 0.1 },
+        { at: 0.92, width: 0.15, depth: 0.1 },
+      ],
+    },
+    leaf: { style: 'cluster', size: 0.55, per: 1, minDepth: 1 },
+    crown: { size: 2.6, perTwig: 2, spacing: 1, fill: 0.85, leaves: 7, droop: 0.3, style: 'needlepads', clump: 5, gaps: 0, lumps: 0.3, hideBelow: 0.15, layers: 2, layerGap: 0.5, depthDark: 0.55, lobeShape: 'pad', separate: 0.2 },
+    roots: { half: 6, depth: 6, res: 0.35, generations: 10, growth: 0.5, down: 0.6, maxCells: 120, trunkRadius: 0.4 },
+    stem: { sides: 8, noise: 0.05, noiseFreq: 0.5, knots: 2, knotSize: 0.2, ring: 1.8 },
+    bark: { furrows: 0.15, furrowFreq: 3, plates: 0.75, plateSize: 0.55, stripes: 0, stripeFreq: 7, roughness: 0.25 },
+    epiphytes: { lichen: 0.25, moss: 0.05, plants: 0, vines: 0, lines: 0.1 },
+    colours: {
+      bark: C(0.66, 0.36, 0.2),
+      barkMark: C(0.24, 0.13, 0.08),
+      leafDark: C(0.08, 0.22, 0.14),
+      leafLight: C(0.26, 0.44, 0.28),
+      autumn: C(0.26, 0.44, 0.28),
+      deciduous: false,
+    },
+    niche: { veg: [3.6, 6], moisture: [0.05, 0.6], light: [0.4, 1], altitude: [20, 400], slopeMax: 1.3, hosts: ['ground'], weight: 0.6 },
+    barrier: { fill: 0.2, cuttable: true, slow: 0.9, breakMass: 3 },
+    sway: 0.6,
     shedsLeaves: false,
   },
   // Ivy climbing walls and ruins (instanced onto other geometry: "vines on ruins"). Grows in the wall's plane (y, z),
@@ -496,6 +846,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
       planar: true,
     },
     leaf: { style: 'cluster', size: 0.32, per: 1, minDepth: 0 },
+    bark: BARK_PLAIN,
     colours: {
       bark: C(0.25, 0.2, 0.13),
       leafDark: C(0.08, 0.22, 0.08),

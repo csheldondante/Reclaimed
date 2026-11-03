@@ -90,7 +90,7 @@ fn tileBake(px: vec2<i32>, a: vec4<u32>) -> BakeOut {
   // (round 104, TC7: the woods' trees painted in — the rings' rule (far.wgsl gTrees): a crown on a lattice square
   // where the plants are a wood's, drawn where the screen shows it, its shadow on the ground; the crown lit live by
   // its ball's normal. The window's own trees are instances the tile doesn't hold)
-  let t = tileTrees(wo(m.wpos.xy), cellFields(m.wpos.xy).y, CAM.viewport.w);
+  let t = tileTrees(wo(m.wpos.xy), m.wpos.z, cellFields(m.wpos.xy).y, CAM.viewport.w);
   alb *= 1.0 - 0.45 * t.shade * (1.0 - t.crown);
   if (t.crown > 0.0) {
     alb = mix(alb, t.alb, t.crown);
@@ -151,12 +151,56 @@ const POR_MAX: f32 = 0.6;
 fn tRand(p: vec3<i32>) -> f32 { return f32(pcg(bitcast<u32>(p.x) ^ pcg(bitcast<u32>(p.y) ^ pcg(bitcast<u32>(p.z)))) >> 8u) / 16777216.0; }
 
 struct TTree { crown: f32, shade: f32, alb: vec3<f32>, n: vec3<f32> };
-/** world units a tree's lattice step, and the share of its squares with one (far.wgsl G_TREE_STEP, G_TREE_P) */
-const T_TREE_STEP: f32 = 3.0;
-const T_TREE_P: f32 = 0.34;
-/** (far.wgsl gTrees, unlit) the trees over ground point w (world units), v the plants there, px world units a texel */
-fn tileTrees(w: vec2<f32>, v: f32, px: f32) -> TTree {
+// (round 128, treegen: the flora sprites — the painted trees past the window sample the same atlas the window's far
+// trees are drawn from, so the land past the window holds the same trees, not crown discs)
+@group(0) @binding(49) var tileSprAlb: texture_2d<f32>;
+@group(0) @binding(50) var tileSprNd: texture_2d<f32>;
+struct TSpr { hit: bool, t: f32, alb: vec3<f32>, n: vec3<f32> };
+/** Where the line from ground point W toward the eye crosses sprite `si`'s quad (its tree's foot `foot`, turned `yaw`,
+ *  scaled `s`): the texel there at the mip for `px` world units a texel, and how far along the line its surface is. */
+fn tileSprite(si: u32, yaw: f32, s: f32, foot: vec3<f32>, W: vec3<f32>, px: f32) -> TSpr {
+  var o = TSpr(false, 0.0, vec3<f32>(0.0), vec3<f32>(0.0, 0.0, 1.0));
+  let e = normalize(CAM.eye.xyz);
+  let right = normalize(vec3<f32>(-e.y, e.x, 0.0));
+  let up = cross(e, right);
+  let b = FLORA_SPRB[si];
+  let t0 = dot(foot - W, e);
+  let q = W + e * t0;
+  let u = dot(q - foot, right) / s / (2.0 * b.x) + 0.5;
+  let v = (dot(q - foot, up) / s - b.y) / (b.z - b.y);
+  if (u < 0.0 || u > 1.0 || v < 0.0 || v > 1.0) { return o; }
+  let N = f32(FLORA_SPR_YAWS);
+  var tt = (atan2(e.y, e.x) - yaw) / 6.2831853 * N;
+  tt = tt - floor(tt / N) * N;
+  let j = u32(floor(tt + 0.5)) % FLORA_SPR_YAWS;
+  let cell = si * FLORA_SPR_YAWS + j;
+  let lvl = u32(clamp(floor(log2(max(f32(FLORA_SPR_CELL) * px / (2.0 * b.x * s), 1.0))), 0.0, f32(FLORA_SPR_LEVELS - 1u)));
+  let C = f32(FLORA_SPR_CELL >> lvl);
+  let tx = vec2<i32>(i32(f32(cell % FLORA_SPR_COLS) * C + min(u, 0.999) * C), i32(f32(cell / FLORA_SPR_COLS) * C + (1.0 - max(v, 0.001)) * C));
+  let a = textureLoad(tileSprAlb, tx, i32(lvl));
+  if (a.a < 0.5) { return o; }
+  let nd = textureLoad(tileSprNd, tx, i32(lvl));
+  let oq = nd.xy * 2.0 - 1.0;
+  var nl = vec3<f32>(oq, 1.0 - abs(oq.x) - abs(oq.y));
+  if (nl.z < 0.0) { nl = vec3<f32>((1.0 - abs(nl.yx)) * select(vec2<f32>(-1.0), vec2<f32>(1.0), nl.xy >= vec2<f32>(0.0)), nl.z); }
+  nl = normalize(nl);
+  o.hit = true;
+  o.t = t0 + (b.w + (1.0 - nd.z) * (FLORA_SPRB2[si].x - b.w)) * s;
+  o.alb = toLinear(a.rgb);
+  o.n = vec3<f32>(cos(yaw) * nl.x - sin(yaw) * nl.y, sin(yaw) * nl.x + cos(yaw) * nl.y, nl.z);
+  return o;
+}
+
+/**
+ * The trees over ground point w (world units), v the plants there, px world units a texel. (Round 125, forest: the
+ * window's own trees, painted — vegplan.wgsl's slot grid walked block by block, each slot's candidate a tree where the
+ * plants are a wood's, its species by the same hashes the window draws by (the birch and elder woods), its crown the
+ * flora library's size — so the trees past the window are where and as big as the window's, and walking out of the
+ * window doesn't change the wood. Its height from the plants at w, not its own column's: an approximation.)
+ */
+fn tileTrees(w: vec2<f32>, z: f32, v: f32, px: f32) -> TTree {
   var t = TTree(0.0, 0.0, vec3<f32>(0.0), vec3<f32>(0.0, 0.0, 1.0));
+  var nearest = -1e9;
   let dens = smoothstep(3.3, 3.8, v);
   if (dens <= 0.0) { return t; }
   let eh = length(CAM.eye.xy);
@@ -164,23 +208,65 @@ fn tileTrees(w: vec2<f32>, v: f32, px: f32) -> TTree {
   let cotE = eh / max(CAM.eye.z, 0.05);
   let sun = sunDir();
   let sh = -sun.xy / max(sun.z, 0.25);
-  let b0 = vec2<i32>(floor(w / T_TREE_STEP));
+  // (the blocks whose crowns can reach w: toward the eye as far as the tallest crown is lifted up the screen)
+  let wc = cellAt(w);
+  let b0 = vec2<i32>(floorDiv(wc.x, SLOT_W), floorDiv(wc.y, SLOT_H));
   let sx = select(1, -1, away.x < 0.0);
   let sy = select(1, -1, away.y < 0.0);
-  for (var j = -3; j <= 1; j++) {
-    for (var i = -3; i <= 1; i++) {
-      let bq = b0 + vec2<i32>(i * sx, j * sy);
-      let r0 = tRand(vec3<i32>(bq, 4242));
-      if (r0 >= T_TREE_P * dens) { continue; }
-      let r1 = tRand(vec3<i32>(bq, 321));
-      let r2 = tRand(vec3<i32>(bq, 7));
-      let foot = (vec2<f32>(bq) + vec2<f32>(0.2 + 0.6 * r1, 0.2 + 0.6 * r2)) * T_TREE_STEP;
-      let conifer = r1 < 0.42;
-      let H = select(3.0 + 3.0 * r2, 3.5 + 4.0 * r2, conifer);
-      let Rr = select(1.3 + 0.7 * r1, 0.9 + 0.5 * r2, conifer);
+  let org = vec2<i32>(i32(G.org.z), i32(G.org.w));
+  for (var j = -6; j <= 1; j++) {
+    for (var i = -6; i <= 1; i++) {
+      let bb = b0 + vec2<i32>(i * sx, j * sy);
+      // (cheap first: a block whose trees can't reach w — off the line from w toward the eye, past the crowns' reach)
+      let bc = (vec2<f32>(bb) + 0.5) * vec2<f32>(f32(SLOT_W), f32(SLOT_H) * ROW_H);
+      let rel = bc - w;
+      let along = dot(rel, -away);
+      let off = abs(dot(rel, vec2<f32>(-away.y, away.x)));
+      if (off > 17.0 * TREE_SCALE || along < -17.0 * TREE_SCALE || along > (34.0 * cotE + 17.0) * TREE_SCALE) { continue; }
+      let s = blockSlot(bb);
+      if (s.z == 0) { continue; }
+      // (the window's hashes take window columns: the candidate's, the window's origin taken off)
+      let c = vec2<u32>(bitcast<u32>(s.x - org.x), bitcast<u32>(s.y - org.y));
+      let hv = rand3(c.x, c.y, 7u);
+      let r0 = rand3(c.x, c.y, 4243u);
+      // (round 128: the species as the window would plant it — vegplan.wgsl treeSpecies: stands, glades)
+      let tsp = treeSpecies(c.x, c.y, v, u32(s.z), groundAt(c.x, c.y));
+      if (tsp == 4u) { continue; }
+      let elder = tsp == 3u;
+      let conifer = tsp == 1u;
+      let birch = tsp == 2u;
+      var H = 9.0 + 6.0 * hv;
+      var Rr = 3.6 + 1.4 * hv;
+      var leaf = vec3<f32>(0.2, 0.36, 0.13);
+      if (elder) { H = 26.0 + 6.0 * hv; Rr = 9.0 + 3.0 * hv; leaf = vec3<f32>(0.66, 0.13, 0.07); }
+      else if (conifer) { H = 13.0 + 7.0 * hv; Rr = 2.8 + 0.8 * hv; leaf = vec3<f32>(0.13, 0.27, 0.13); }
+      else if (birch) { H = 18.0 + 6.0 * hv; Rr = 4.2 + 1.4 * hv; leaf = vec3<f32>(0.42, 0.56, 0.2); }
+      // (round 128: every tree TREE_SCALE × round 125's)
+      H *= (0.8 + 0.2 * dens) * TREE_SCALE;
+      Rr *= TREE_SCALE;
+      let foot = cellPos(s.xy);
       let ds = length(w - (foot + sh * H * 0.8)) / (Rr * 1.1);
-      t.shade = max(t.shade, 1.0 - smoothstep(0.75, 1.0, ds));
-      let cc = foot + away * H * cotE;
+      t.shade = max(t.shade, (1.0 - smoothstep(0.75, 1.0, ds)) * dens);
+      if (FLORA_SPRITES) {
+        // (round 128: the sprite of the tree the window would draw there — its species' variant by the same hash, its
+        // turn and scale; the nearest along the line to the eye wins)
+        if (r0 > dens * 1.2) { continue; }
+        var rg = FL_SPR_OAK;
+        if (elder) { rg = FL_SPR_GIANT; } else if (conifer) { rg = FL_SPR_PINE; } else if (birch) { rg = FL_SPR_BIRCH; }
+        let si = rg.x + min(u32(rand3(c.x, c.y, 530u) * f32(rg.y)), rg.y - 1u);
+        let yaw = rand3(c.x, c.y, 517u) * 6.2831853;
+        let sc = (0.8 + 0.2 * dens) * (0.9 + 0.2 * rand3(c.x, c.y, 520u));
+        let sp = tileSprite(si, yaw, sc, vec3<f32>(foot, z), vec3<f32>(w, z), px);
+        if (sp.hit && sp.t > nearest) {
+          nearest = sp.t;
+          t.crown = 1.0;
+          t.alb = sp.alb;
+          t.n = sp.n;
+        }
+        continue;
+      }
+      // (the crown's middle a little under the top)
+      let cc = foot + away * H * 0.82 * cotE;
       let q = (w - cc) / Rr;
       var dd = length(q);
       if (conifer) {
@@ -188,12 +274,13 @@ fn tileTrees(w: vec2<f32>, v: f32, px: f32) -> TTree {
         dd = length(q - away * up * 0.55);
       }
       let edge = clamp(px / Rr, 0.05, 0.5);
-      let cov = 1.0 - smoothstep(1.0 - edge, 1.0, dd);
+      let cov = (1.0 - smoothstep(1.0 - edge, 1.0, dd)) * step(r0, dens * 1.2);
       if (cov > t.crown) {
         t.crown = cov;
         t.n = normalize(vec3<f32>(q * 0.8, sqrt(max(1.0 - min(dot(q, q), 1.0), 0.0)) + 0.25));
-        var leaf = select(vec3<f32>(0.2, 0.36, 0.13), vec3<f32>(0.13, 0.27, 0.13), conifer) * (0.85 + 0.3 * r0 / T_TREE_P);
-        if (!conifer) { leaf = seasonGrass(leaf, r2) * 0.5 + leaf * 0.5; }
+        leaf = leaf * (0.85 + 0.3 * r0);
+        if (elder) { leaf = mix(leaf, vec3<f32>(0.93, 0.5, 0.13) * (0.85 + 0.3 * r0), seasonColour() * 0.7); }
+        else if (!conifer) { leaf = seasonGrass(leaf, hv) * 0.5 + leaf * 0.5; }
         t.alb = toLinear(leaf);
       }
     }

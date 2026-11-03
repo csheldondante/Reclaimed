@@ -4,11 +4,13 @@
 // Placement here is the viewer's own scatter (Poisson-ish by rejection) with the niche weights of species.ts; in the
 // game the plants stand where vegplan.wgsl / vegprep.wgsl put them.
 
+import { kindCount, resolveKind } from './forms';
 import { generate } from './generate';
 import type { FloraMesh } from './mesh';
 import { MeshBuilder } from './mesh';
 import { hashSeed, rng } from './rng';
-import { SPECIES, type RGB, type SpeciesId } from './species';
+import { floraTables } from './library';
+import { SPECIES, type SpeciesDef, type SpeciesId } from './species';
 
 export type Biome = 'birchwood' | 'mixedwood' | 'meadow' | 'riverbank' | 'ruin' | 'cave';
 
@@ -24,6 +26,8 @@ export const BIOMES: { id: Biome; name: string }[] = [
 export interface SceneKind {
   species: SpeciesId | 'host';
   mesh: FloraMesh;
+  /** (round 128) the species as edited (the viewer's sliders, or the legacy look of its old/new pair); absent: as listed */
+  def?: SpeciesDef;
 }
 
 export interface FloraScene {
@@ -84,13 +88,13 @@ const MIX: Record<Biome, { ground: number; parts: { id: SpeciesId; per100: numbe
   cave: { ground: 1, parts: [{ id: 'fern', per100: 28 }, { id: 'moss', per100: 10 }] },
 };
 
-/** A box (a wall, a pillar, a boulder's block) as a host mesh: part 9 (the viewer's stone). */
+/** A box (a wall, a pillar, a boulder's block) as a host mesh: part 15 (the viewer's stone; round 128: was 9, now the epiphytes'). */
 function hostBox(sx: number, sy: number, sz: number): FloraMesh {
   const mb = new MeshBuilder(() => 0);
   const P = [
     [-sx, -sy, 0], [sx, -sy, 0], [sx, sy, 0], [-sx, sy, 0],
     [-sx, -sy, sz], [sx, -sy, sz], [sx, sy, sz], [-sx, sy, sz],
-  ].map((p) => mb.vert(p as [number, number, number], 9));
+  ].map((p) => mb.vert(p as [number, number, number], 15));
   const F = [[0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7], [4, 5, 6, 7]];
   for (const [a, b, c, d] of F) {
     mb.tri(P[a], P[b], P[c]);
@@ -111,9 +115,10 @@ export function buildScene(biome: Biome, seed: number, opts: { radius?: number; 
     let ks = kindOf.get(id);
     if (!ks) {
       ks = [];
-      for (let v = 0; v < V; v++) {
+      // (round 128: a variant each kind at least — a shrub's five forms, a grass's clump types; forms.ts)
+      for (let v = 0; v < Math.max(V, kindCount(SPECIES[id])); v++) {
         ks.push(kinds.length);
-        kinds.push({ species: id, mesh: generate(id, hashSeed(seed, v, id.charCodeAt(0), id.length)) });
+        kinds.push({ species: id, mesh: generate(id, hashSeed(seed, v, id.charCodeAt(0), id.length), { kind: v }), def: resolveKind(SPECIES[id], v) });
         per.push([]);
       }
       kindOf.set(id, ks);
@@ -232,18 +237,7 @@ export function buildScene(biome: Biome, seed: number, opts: { radius?: number; 
 
 /** the library's colour table for the scene's kinds (as FloraLibrary.wgsl, per scene kind) */
 export function sceneWgsl(kinds: SceneKind[]): string {
-  const v4 = (c: RGB | undefined, w: number) => {
-    const x = c ?? [0.5, 0.5, 0.5];
-    return `vec4<f32>(${x[0].toFixed(3)}, ${x[1].toFixed(3)}, ${x[2].toFixed(3)}, ${w.toFixed(3)})`;
-  };
-  const rows: string[] = [];
-  const acc: string[] = [];
-  for (const k of kinds) {
-    const sp = k.species === 'host' ? SPECIES.moss : SPECIES[k.species];
-    const c = sp.colours;
-    rows.push(v4(c.bark, c.deciduous ? 1 : 0), v4(c.barkMark ?? c.bark, sp.sway), v4(c.leafDark, 0), v4(c.leafLight, 0), v4(c.autumn, 0), v4(c.flower ?? c.accent, 0));
-    acc.push(v4(c.accent ?? c.leafLight, 0));
-  }
-  return `const FLORA_COL = array<vec4<f32>, ${rows.length}>(${rows.join(', ')});\nconst FLORA_ACC = array<vec4<f32>, ${acc.length}>(${acc.join(', ')});\n`;
+  // (round 125: the library's own tables, one layout for the game and the viewer)
+  return `${floraTables(kinds.map((k) => ({ sp: k.def ?? (k.species === 'host' ? SPECIES.moss : SPECIES[k.species]), mesh: k.mesh })))}\n`;
 }
 

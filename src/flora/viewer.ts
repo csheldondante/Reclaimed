@@ -8,13 +8,17 @@
 // Own small renderer (not the game's): a viewer must open fast on a phone without a world; what it shares with the
 // game is the generators (src/flora) and the look (floralook.wgsl), which is what it exists to show.
 
+import { leafAtlasTexture } from './leafatlas';
+import { kindCount, resolveKind } from './forms';
 import commonWgsl from '../shaders/common.wgsl?raw';
 import materialsWgsl from '../shaders/materials.wgsl?raw';
 import floraLookWgsl from '../shaders/floralook.wgsl?raw';
 import viewerWgsl from './viewer.wgsl?raw';
 import { requestGpu, UnsupportedError } from '../gpu/device';
 import { GLOBALS_BYTES } from '../sim/globals';
-import { generate } from './generate';
+import { generate, legacyDef } from './generate';
+import { applyParams, COLOUR_PARAMS, hex, paramsFromQuery, PARAMS, SEASONS } from './params';
+import { encodeLink, isVariant, loadVariants, newVariant, saveVariants, type Variant } from './variants';
 import { BIOMES, buildScene, sceneWgsl, type Biome, type FloraScene } from './scene';
 import { SPECIES, SPECIES_IDS, type RGB, type SpeciesId } from './species';
 import { rng } from './rng';
@@ -30,6 +34,16 @@ interface State {
   season: number;
   growth: number;
   density: number;
+  /** (round 128) one plant: the old stems (round 117) beside the new, the same seed */
+  compare: boolean;
+  /** (round 128) every kind of the species in a row (a shrub's forms, a grass's clump types) */
+  lineup: boolean;
+  /** (round 128) the generator's parameters as edited (params.ts; the URL's p.<key>) */
+  over: Record<string, number | string>;
+  /** (round 128) the A side of the A | B pair: 'old' (round 117's generator), 'species' (as written) or a saved name */
+  against: string;
+  /** (round 128) the plant's state: 0 alive, 1 dead, 2 burned */
+  pstate: number;
 }
 
 const params = new URLSearchParams(location.search);
@@ -42,6 +56,11 @@ const state: State = {
   season: Number(params.get('season') ?? 0.42),
   growth: Number(params.get('growth') ?? 1),
   density: Number(params.get('density') ?? 1),
+  compare: params.get('compare') === '1',
+  lineup: params.get('lineup') === '1',
+  over: paramsFromQuery(params),
+  against: params.get('against') ?? 'old',
+  pstate: Number(params.get('state') ?? 0),
 };
 
 function fail(msg: string): never {
@@ -104,8 +123,11 @@ async function main() {
   let groundGroup: GPUBindGroup;
   let leafGroup: GPUBindGroup;
   let vbuf: GPUBuffer;
+  let uvbuf: GPUBuffer;
   let ibuf: GPUBuffer;
   let instBuf: GPUBuffer;
+  // (round 128) the leaf-cluster atlas (leafatlas.ts)
+  let leafTex: GPUTexture | undefined;
   let draws: { first: number; count: number; base: number; inst0: number; ninst: number }[] = [];
   let stats = '';
 
@@ -116,10 +138,50 @@ async function main() {
     if (state.mode === 'scene') {
       scene = buildScene(state.biome, state.seed, { density: state.density });
     } else {
-      const mesh = generate(state.species, state.seed, { growth: state.growth });
-      const inst = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0.5, 0, 0]);
-      scene = { kinds: [{ species: state.species, mesh }], instances: inst, ranges: [{ first: 0, count: 1 }], ground: SPECIES[state.species].form === 'tree' ? 1 : 0, crowns: SPECIES[state.species].form === 'tree' ? [{ x: 0, y: 0, z: mesh.height * 0.7, r: mesh.radius * 0.7, species: state.species }] : [], radius: 12 };
+      // (round 128: the kind it's drawn as — a shrub's form, a grass's clump type — resolved once, for the mesh and its colours)
+      const def = resolveKind(applyParams(state.species, state.over), state.seed);
+      const mesh = generate(state.species, state.seed, { growth: state.growth, def });
+      const tree = SPECIES[state.species].form === 'tree';
+      const nk = kindCount(applyParams(state.species, state.over));
+      if (state.lineup && nk > 1) {
+        // (round 128: the lineup — each kind of the species side by side, the same seed, as edited)
+        const ks = [...Array(nk).keys()].map((kind) => {
+          const d = resolveKind({ ...applyParams(state.species, state.over), kind }, kind);
+          return { species: state.species, mesh: generate(state.species, state.seed, { growth: state.growth, def: d }), def: d };
+        });
+        // (across the view — perpendicular to the eye's bearing — in rows of 3 on a portrait screen, the back row behind)
+        const gap = Math.max(...ks.map((k) => k.mesh.radius)) * 2.1 + 0.4;
+        const cols = canvas.clientWidth < canvas.clientHeight * 1.2 ? 3 : nk;
+        const rows = Math.ceil(nk / cols);
+        const ax = [-Math.sin(cam.yaw), Math.cos(cam.yaw)];
+        const bk = [-Math.cos(cam.yaw), -Math.sin(cam.yaw)];
+        const inst = new Float32Array(nk * 16);
+        ks.forEach((_, i) => {
+          const c = i % cols;
+          const r = Math.floor(i / cols);
+          const n = Math.min(cols, nk - r * cols);
+          const u = (c - (n - 1) / 2) * gap;
+          const v = (r - (rows - 1) / 2) * gap;
+          inst.set([1, 0, 0, ax[0] * u + bk[0] * v, 0, 1, 0, ax[1] * u + bk[1] * v, 0, 0, 1, 0, i, 0.5, 0, 0], i * 16);
+        });
+        scene = { kinds: ks, instances: inst, ranges: ks.map((_, i) => ({ first: i, count: 1 })), ground: tree ? 1 : 0, crowns: [], radius: 12 + gap * nk };
+      } else if (state.compare) {
+        // (round 128: the old (round 117's stems and bark) on the left, the new on the right — the same seed, so the same
+        // branching; turn the camera to see the pair from any side)
+        // (the A side: the old generator, the species as written, or a saved variant)
+        const sv = loadVariants().find((v) => v.name === state.against && v.species === state.species);
+        const oldDef = state.against === 'old' ? legacyDef(SPECIES[state.species]) : sv ? applyParams(sv.species, sv.over) : SPECIES[state.species];
+        const old = generate(state.species, sv ? sv.seed : state.seed, { growth: state.growth, def: oldDef });
+        const d = Math.max(mesh.radius, old.radius) * 1.05 + 0.5;
+        const inst = new Float32Array([1, 0, 0, -d, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0.5, 0, 0, 1, 0, 0, d, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0.5, 0, 0]);
+        scene = { kinds: [{ species: state.species, mesh: old, def: oldDef }, { species: state.species, mesh, def }], instances: inst, ranges: [{ first: 0, count: 1 }, { first: 1, count: 1 }], ground: tree ? 1 : 0, crowns: [], radius: 12 + d };
+      } else {
+        const inst = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0.5, 0, 0]);
+        scene = { kinds: [{ species: state.species, mesh, def }], instances: inst, ranges: [{ first: 0, count: 1 }], ground: tree ? 1 : 0, crowns: tree ? [{ x: 0, y: 0, z: mesh.height * 0.7, r: mesh.radius * 0.7, species: state.species }] : [], radius: 12 };
+      }
     }
+    // (round 128: the state shown — the instances' p.z)
+    if (state.mode === 'plant') for (let i = 0; i < scene.instances.length; i += 16) scene.instances[i + 14] = state.pstate;
     const genMs = performance.now() - t0;
     // one vertex and one index buffer for all kinds
     let nv = 0;
@@ -129,6 +191,7 @@ async function main() {
       ni += k.mesh.index.length;
     }
     const V = new Float32Array(nv * 4);
+    const U = new Float32Array(nv * 4);
     const I = new Uint32Array(ni);
     draws = [];
     let bv = 0;
@@ -136,6 +199,7 @@ async function main() {
     let tris = 0;
     scene.kinds.forEach((k, i) => {
       V.set(k.mesh.verts, bv * 4);
+      U.set(k.mesh.uv, bv * 4);
       I.set(k.mesh.index, bi);
       const r = scene.ranges[i];
       draws.push({ first: bi, count: k.mesh.index.length, base: bv, inst0: r.first, ninst: r.count });
@@ -144,6 +208,9 @@ async function main() {
       bi += k.mesh.index.length;
     });
     vbuf?.destroy();
+    uvbuf?.destroy();
+    uvbuf = device.createBuffer({ size: Math.max(16, U.byteLength), usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(uvbuf, 0, U);
     ibuf?.destroy();
     instBuf?.destroy();
     vbuf = device.createBuffer({ size: Math.max(16, V.byteLength), usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
@@ -162,7 +229,14 @@ async function main() {
     const ds: GPUDepthStencilState = { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' };
     const plant = device.createRenderPipeline({
       layout: 'auto',
-      vertex: { module, entryPoint: 'vsPlant', buffers: [{ arrayStride: 16, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x4' }] }] },
+      vertex: {
+        module,
+        entryPoint: 'vsPlant',
+        buffers: [
+          { arrayStride: 16, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x4' }] },
+          { arrayStride: 16, attributes: [{ shaderLocation: 1, offset: 0, format: 'float32x4' }] },
+        ],
+      },
       fragment: { module, entryPoint: 'fsPlant', targets: [{ format }] },
       primitive: { topology: 'triangle-list', cullMode: 'none' },
       depthStencil: ds,
@@ -182,21 +256,30 @@ async function main() {
       depthStencil: ds,
     });
     pipes = { plant, ground, leaf };
-    group = device.createBindGroup({ layout: plant.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: globals } }, { binding: 1, resource: { buffer: viewBuf } }, { binding: 3, resource: { buffer: instBuf } }] });
+    leafTex ??= leafAtlasTexture(device);
+    group = device.createBindGroup({ layout: plant.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: globals } }, { binding: 1, resource: { buffer: viewBuf } }, { binding: 3, resource: { buffer: instBuf } }, { binding: 66, resource: leafTex.createView() }] });
     groundGroup = device.createBindGroup({ layout: ground.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: globals } }, { binding: 1, resource: { buffer: viewBuf } }] });
     leafGroup = device.createBindGroup({ layout: leaf.getBindGroupLayout(0), entries: [{ binding: 1, resource: { buffer: viewBuf } }, { binding: 4, resource: { buffer: leafBuf } }] });
     const plants = scene.ranges.reduce((a, r) => a + r.count, 0);
     stats = `${plants} plants · ${scene.kinds.length} meshes · ${(tris / 1000).toFixed(1)}k triangles · generated in ${genMs.toFixed(0)} ms`;
     if (state.mode === 'plant') {
-      const m = scene.kinds[0].mesh;
-      stats = `${SPECIES[state.species].name} · seed ${state.seed} · ${m.tris} triangles · ${m.height.toFixed(1)} cells tall · ${genMs.toFixed(1)} ms`;
+      const m = scene.kinds[scene.kinds.length - 1].mesh;
+      stats = `${SPECIES[state.species].name} · seed ${state.seed} · ${m.tris} triangles${state.compare ? ` (old ${scene.kinds[0].mesh.tris})` : ''} · ${m.height.toFixed(1)} cells tall · ${genMs.toFixed(1)} ms`;
     }
     statsEl.textContent = stats;
     resetLeaves();
     // the camera: close for one plant, through the wood for a scene
-    if (state.mode === 'plant') {
-      cam.at = [0, 0, scene.kinds[0].mesh.height * 0.45];
-      cam.dist = Math.max(4, scene.kinds[0].mesh.height * 1.9);
+    if (state.mode === 'plant' && !cam.userMoved) {
+      const m = scene.kinds[scene.kinds.length - 1].mesh;
+      cam.at = [0, 0, m.height * 0.45];
+      // (the pair side by side: far enough back that both fit a portrait phone's width)
+      cam.dist = Math.max(4, m.height * (state.compare ? 2.6 : 1.9) * (state.compare ? Math.max(1, 1.3 / Math.max(0.3, canvas.clientWidth / Math.max(1, canvas.clientHeight)) * 0.6) : 1));
+      // (the lineup: back far enough that the row fits the view's width)
+      if (state.lineup && scene.kinds.length > 1) {
+        const cols = canvas.clientWidth < canvas.clientHeight * 1.2 ? 3 : scene.kinds.length;
+        const w = Math.min(cols, scene.kinds.length) * Math.max(...scene.kinds.map((k) => k.mesh.radius)) * 2.1;
+        cam.dist = Math.max(cam.dist, (w * 1.9) / Math.max(0.3, canvas.clientWidth / Math.max(1, canvas.clientHeight)));
+      }
     } else if (!cam.userMoved) {
       cam.at = [0, 0, 3];
       cam.dist = 34;
@@ -326,12 +409,22 @@ async function main() {
     $('row-species').style.display = state.mode === 'plant' ? '' : 'none';
     $('row-growth').style.display = state.mode === 'plant' ? '' : 'none';
     $('row-density').style.display = state.mode === 'scene' ? '' : 'none';
+    $('params').style.display = state.mode === 'plant' ? '' : 'none';
+    $('params-body').style.display = state.mode === 'plant' ? '' : 'none';
   };
   const atlasLink = $<HTMLAnchorElement>('atlas');
+  const worldLink = $<HTMLAnchorElement>('world');
   const syncUrl = () => {
     const q = new URLSearchParams({ mode: state.mode, biome: state.biome, species: state.species, seed: String(state.seed), wind: state.wind.toFixed(2), season: state.season.toFixed(2), growth: state.growth.toFixed(2), density: state.density.toFixed(2) });
+    if (state.compare) q.set('compare', '1');
+    if (state.lineup) q.set('lineup', '1');
+    if (state.against !== 'old') q.set('against', state.against);
+    if (state.pstate) q.set('state', String(state.pstate));
+    for (const [k, v] of Object.entries(state.over)) q.set(`p.${k}`, typeof v === 'number' ? String(+v.toFixed(4)) : v.slice(1));
     history.replaceState(null, '', `?${q}`);
     atlasLink.href = `./?skipmenu=1&level=atlas&tutorial=0&flora=1`;
+    // (round 128: this species as edited, in the world — the game's library builds it with these parameters)
+    worldLink.href = `./?skipmenu=1&level=atlas&tutorial=0&ftree=${encodeLink({ [state.species]: state.over })}`;
   };
   modeSel.onchange = () => {
     state.mode = modeSel.value as Mode;
@@ -347,6 +440,11 @@ async function main() {
   };
   spSel.onchange = () => {
     state.species = spSel.value as SpeciesId;
+    state.over = {};
+    state.against = 'old';
+    buildParams();
+    fillSaved();
+    cam.userMoved = false;
     rebuild();
     syncUrl();
   };
@@ -379,6 +477,226 @@ async function main() {
       syncUrl();
     };
   }
+  // ---- (round 128) the generator's parameters: a slider each (params.ts), the bark's colours, old/new ----
+  const paramsEl = $('params-body');
+  const lineupIn = $<HTMLInputElement>('lineup');
+  lineupIn.checked = state.lineup;
+  lineupIn.onchange = () => {
+    state.lineup = lineupIn.checked;
+    cam.userMoved = false;
+    rebuild();
+    syncUrl();
+  };
+  const compareIn = $<HTMLInputElement>('compare');
+  compareIn.checked = state.compare;
+  compareIn.onchange = () => {
+    state.compare = compareIn.checked;
+    cam.userMoved = false;
+    rebuild();
+    syncUrl();
+  };
+  let pend = 0;
+  const later = () => {
+    // (a drag re-makes the plant at most every ~60 ms)
+    if (pend) return;
+    pend = window.setTimeout(() => {
+      pend = 0;
+      rebuild();
+      syncUrl();
+    }, 60);
+  };
+  let openSec = '';
+  function buildParams() {
+    paramsEl.innerHTML = '';
+    const def = applyParams(state.species, state.over);
+    const woody = !!def.turtle && !!def.stem;
+    // (round 128: a collapsible section a group, closed but the one last opened)
+    const NAMES: Record<string, string> = { shape: 'Shape', stem: 'Trunk & branches', crown: 'Crown', twigs: 'Twigs', bark: 'Bark', epiphytes: 'Moss, vines & seasons', grass: 'Blades' };
+    const secs = new Map<string, HTMLElement>();
+    const secOf = (g: string) => {
+      let d = secs.get(g);
+      if (!d) {
+        const det = document.createElement('details');
+        det.className = 'sec';
+        det.open = openSec === g;
+        det.ontoggle = () => {
+          if (det.open) openSec = g;
+        };
+        const sum = document.createElement('summary');
+        sum.textContent = NAMES[g] ?? g;
+        det.appendChild(sum);
+        paramsEl.appendChild(det);
+        secs.set(g, det);
+        d = det;
+      }
+      return d;
+    };
+    for (const p of PARAMS) {
+      if (p.woody && !woody) continue;
+      if (p.crown && !def.crown) continue;
+      if (p.twigs && !def.twigs) continue;
+      if (p.shape && !def.colonize) continue;
+      if (p.when && !p.when(def)) continue;
+      const sec = secOf(p.group);
+      const row = document.createElement('div');
+      row.className = 'row';
+      const lab = document.createElement('label');
+      lab.textContent = p.label;
+      // (its hint in plain words, on a tap of the label)
+      const hint = document.createElement('div');
+      hint.className = 'hint';
+      hint.textContent = p.hint ?? '';
+      lab.onclick = () => hint.classList.toggle('on');
+      if (p.options) {
+        // (round 128: a choice as a list, not a slider with its options in the label)
+        const sel = document.createElement('select');
+        p.options.forEach((o, i) => sel.add(new Option(o, String(p.min + i))));
+        sel.value = String(Math.round(p.get(def)));
+        sel.onchange = () => {
+          state.over[p.key] = Number(sel.value);
+          later();
+        };
+        row.append(lab, sel);
+        sec.append(row, hint);
+        continue;
+      }
+      const inp = document.createElement('input');
+      inp.type = 'range';
+      inp.min = String(p.min);
+      inp.max = String(p.max);
+      inp.step = String(p.step);
+      inp.value = String(p.get(def));
+      inp.id = `p-${p.key}`;
+      const val = document.createElement('span');
+      val.className = 'val';
+      val.textContent = (+p.get(def).toFixed(3)).toString();
+      if (p.key in state.over) val.classList.add('edited');
+      inp.oninput = () => {
+        state.over[p.key] = Number(inp.value);
+        val.textContent = (+Number(inp.value).toFixed(3)).toString();
+        val.classList.add('edited');
+        later();
+      };
+      row.append(lab, inp, val);
+      sec.append(row, hint);
+    }
+    const row = document.createElement('div');
+    row.className = 'row';
+    for (const c of COLOUR_PARAMS) {
+      const lab = document.createElement('label');
+      lab.textContent = c === 'bark' ? 'bark' : 'marks';
+      const inp = document.createElement('input');
+      inp.type = 'color';
+      inp.value = hex(def.colours[c] ?? def.colours.bark);
+      inp.oninput = () => {
+        state.over[c] = inp.value;
+        later();
+      };
+      row.append(lab, inp);
+    }
+    secOf('bark').appendChild(row);
+  }
+  // ---- (round 128) the user's variants: new, save, load, A | B against one, export, import ----
+  const savedSel = $<HTMLSelectElement>('saved');
+  const againstSel = $<HTMLSelectElement>('against');
+  const fillSaved = () => {
+    const list = loadVariants();
+    savedSel.innerHTML = '<option value="">—</option>';
+    while (againstSel.options.length > 2) againstSel.remove(2);
+    for (const v of list) {
+      savedSel.add(new Option(`${v.name} (${SPECIES[v.species].name})`, v.name));
+      if (v.species === state.species) againstSel.add(new Option(`saved: ${v.name}`, v.name));
+    }
+    againstSel.value = state.against;
+    if (againstSel.value !== state.against) againstSel.value = 'old';
+  };
+  const loadVariant = (v: Variant) => {
+    state.species = v.species;
+    spSel.value = v.species;
+    state.seed = v.seed;
+    seedIn.value = String(v.seed);
+    state.over = { ...v.over };
+    buildParams();
+    fillSaved();
+    rebuild();
+    syncUrl();
+  };
+  $<HTMLButtonElement>('newvar').onclick = () => {
+    state.seed = Math.floor(Math.random() * 100000);
+    seedIn.value = String(state.seed);
+    state.over = newVariant(state.species, state.over, state.seed);
+    buildParams();
+    rebuild();
+    syncUrl();
+  };
+  $<HTMLButtonElement>('save').onclick = () => {
+    const name = prompt('A name for this variant', `${SPECIES[state.species].name} ${state.seed}`);
+    if (!name) return;
+    const list = loadVariants().filter((v) => v.name !== name);
+    list.push({ name, species: state.species, seed: state.seed, over: { ...state.over } });
+    saveVariants(list);
+    fillSaved();
+    savedSel.value = name;
+  };
+  savedSel.onchange = () => {
+    const v = loadVariants().find((x) => x.name === savedSel.value);
+    if (v) loadVariant(v);
+  };
+  againstSel.onchange = () => {
+    state.against = againstSel.value;
+    state.compare = true;
+    compareIn.checked = true;
+    rebuild();
+    syncUrl();
+  };
+  $<HTMLButtonElement>('export').onclick = () => {
+    const body = JSON.stringify({ kind: 'reclaimed-tree-variants', variants: loadVariants(), current: { name: 'current', species: state.species, seed: state.seed, over: state.over } }, null, 1);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([body], { type: 'application/json' }));
+    a.download = 'reclaimed-tree-variants.json';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  };
+  const fileIn = $<HTMLInputElement>('importfile');
+  $<HTMLButtonElement>('import').onclick = () => fileIn.click();
+  fileIn.onchange = async () => {
+    const f = fileIn.files?.[0];
+    if (!f) return;
+    const j = JSON.parse(await f.text()) as { variants?: unknown[] };
+    const got = (j.variants ?? []).filter(isVariant) as Variant[];
+    const names = new Set(got.map((v) => v.name));
+    saveVariants([...loadVariants().filter((v) => !names.has(v.name)), ...got]);
+    fillSaved();
+    if (got[0]) loadVariant(got[0]);
+  };
+  fillSaved();
+  const stateSel = $<HTMLSelectElement>('pstate');
+  stateSel.value = String(state.pstate);
+  stateSel.onchange = () => {
+    state.pstate = Number(stateSel.value);
+    rebuild();
+    syncUrl();
+  };
+  $<HTMLButtonElement>('reset').onclick = () => {
+    state.over = {};
+    buildParams();
+    rebuild();
+    syncUrl();
+  };
+  // (round 128) the season's named points: a button each (the slider stays for between)
+  const seasonsEl = $('seasons');
+  for (const sn of SEASONS) {
+    const b = document.createElement('button');
+    b.textContent = sn.name;
+    b.onclick = () => {
+      state.season = sn.at;
+      $<HTMLInputElement>('season').value = String(sn.at);
+      resetLeaves();
+      syncUrl();
+    };
+    seasonsEl.appendChild(b);
+  }
+  buildParams();
   showModes();
   syncUrl();
   rebuild();
@@ -475,6 +793,7 @@ async function main() {
       pass.setPipeline(pipes.plant);
       pass.setBindGroup(0, group);
       pass.setVertexBuffer(0, vbuf);
+      pass.setVertexBuffer(1, uvbuf);
       pass.setIndexBuffer(ibuf, 'uint32');
       for (const d of draws) if (d.ninst > 0) pass.drawIndexed(d.count, d.ninst, d.first, d.base, d.inst0);
       pass.setPipeline(pipes.leaf);

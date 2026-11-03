@@ -56,6 +56,22 @@ export interface TurtleSpec {
   minRadius: number;
   /** keep the first frame unturned (a vine stays in its wall's plane: + and - turn within y, z) */
   planar?: boolean;
+  // ---- round 128 (treegen): the stem's growth parameters, each with a variance (all optional: absent = off). The
+  // branching angle's variance is `jitter` above. ----
+  /** ± relative variance of `taper` per step (0.3: each F thins by taper^(1 ± 0.3)) */
+  taperVar?: number;
+  /** the branching distance: each step's length × this (the internode, so the spacing of the branches along their
+   *  parent; 1 as the L-system made it) */
+  spacing?: number;
+  /** ± relative variance of each step's length */
+  stepVar?: number;
+  /** the branches twist as they grow: a roll about the heading after each F (degrees a step; 0 off). The children
+   *  then leave the parent in a spiral, and the stem's facets turn with it (mesh.ts) */
+  twist?: number;
+  /** direction changes along a stem: after each F, with this chance, the heading kinks by `kinkAngle` (± its half)
+   *  about a random axis across it */
+  kinkChance?: number;
+  kinkAngle?: number;
 }
 
 export interface Segment {
@@ -64,6 +80,11 @@ export interface Segment {
   r0: number;
   r1: number;
   depth: number;
+  /** (round 128) the stem (one branch from its fork to its tip) it is a step of: consecutive segments of one stem
+   *  join end to start, so mesh.ts extrudes the stem as one tube. Absent: a lone segment (roots, flares). */
+  stem?: number;
+  /** the ring phase at its start (radians): the stem's accumulated twist */
+  twist?: number;
 }
 
 export interface LeafSite {
@@ -140,6 +161,9 @@ interface Turtle {
   depth: number;
   r: number;
   alive: boolean;
+  /** the stem being drawn, and its twist so far (radians) */
+  stem: number;
+  tw: number;
 }
 
 /** Walk the string with a 3D turtle: wood segments and leaf sites. Deterministic from the seed (the jitter). */
@@ -147,7 +171,17 @@ export function interpret(str: string, t: TurtleSpec, seed: number): Skeleton {
   const r = rng(seed ^ 0x9e3779b9);
   const D = Math.PI / 180;
   const jit = () => (r() * 2 - 1) * t.jitter * D;
-  let s: Turtle = { p: [0, 0, 0], h: [0, 0, 1], l: [0, 1, 0], u: [-1, 0, 0], depth: 0, r: t.radius, alive: true };
+  // (round 128: the stem's variances draw from their own stream, so turning one on leaves the tree's branching as it
+  // was — the viewer's old/new pair are the same tree)
+  const rv = rng(seed ^ 0x51ed27);
+  const taperVar = t.taperVar ?? 0;
+  const stepVar = t.stepVar ?? 0;
+  const spacing = t.spacing ?? 1;
+  const twist = (t.twist ?? 0) * D;
+  const kinkChance = t.kinkChance ?? 0;
+  const kinkAngle = (t.kinkAngle ?? 0) * D;
+  let stems = 0;
+  let s: Turtle = { p: [0, 0, 0], h: [0, 0, 1], l: [0, 1, 0], u: [-1, 0, 0], depth: 0, r: t.radius, alive: true, stem: stems++, tw: 0 };
   // the first branch's start is turned by the seed, so variants don't all face one way
   const yaw0 = t.planar ? 0 : r() * Math.PI * 2;
   s.l = rot(s.l, s.h, yaw0);
@@ -166,13 +200,25 @@ export function interpret(str: string, t: TurtleSpec, seed: number): Skeleton {
       case 'F':
       case 'f': {
         if (!s.alive) break;
-        const len = t.step * Math.pow(t.stepDecay, s.depth);
+        const len = t.step * Math.pow(t.stepDecay, s.depth) * spacing * (stepVar ? 1 + (rv() * 2 - 1) * stepVar : 1);
         const b = add(s.p, mul(s.h, len));
-        const r1 = s.r * t.taper;
-        if (ch === 'F') segments.push({ a: s.p, b, r0: s.r, r1, depth: s.depth });
+        const r1 = s.r * (taperVar ? Math.pow(t.taper, Math.max(0, 1 + (rv() * 2 - 1) * taperVar)) : t.taper);
+        if (ch === 'F') segments.push({ a: s.p, b, r0: s.r, r1, depth: s.depth, stem: s.stem, twist: s.tw });
+        else s.stem = stems++; // (a gap: what follows is a new stem)
         s.p = b;
         s.r = r1;
         if (s.r < t.minRadius) s.alive = false;
+        // (round 128) the twist: the frame rolls about the heading as the stem grows (children leave in a spiral)
+        if (twist) {
+          turn(s.h, twist);
+          s.tw += twist;
+        }
+        // a kink: the heading turns about a random axis across it
+        if (kinkChance && rv() < kinkChance) {
+          const a = rv() * Math.PI * 2;
+          const ax = norm(add(mul(s.l, Math.cos(a)), mul(s.u, Math.sin(a))));
+          turn(ax, kinkAngle * (0.5 + rv()));
+        }
         // tropism: bend the heading toward the pull, more where the heading is across it
         const k = t.tropismStrength[Math.min(2, s.depth)];
         if (k !== 0) {
@@ -208,7 +254,7 @@ export function interpret(str: string, t: TurtleSpec, seed: number): Skeleton {
         break;
       case '[':
         stack.push({ ...s });
-        s = { ...s, depth: s.depth + 1, r: s.r * t.radiusDecay };
+        s = { ...s, depth: s.depth + 1, r: s.r * t.radiusDecay, stem: stems++ };
         if (s.r < t.minRadius) s.alive = false;
         break;
       case ']': {

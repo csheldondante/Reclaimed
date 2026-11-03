@@ -173,7 +173,7 @@ export function attachSim(core: WorldCore, mods: SimModules = ALL, warm?: Warmup
     core,
     terrain,
     plants,
-    flora: plants ? new FloraWorld({ dims: () => core.dims, origin: () => core.globals.origin ?? [0, 0], veg: (cx, cy) => plants.vegCol(cx, cy), refresh: () => mirror.refresh() }) : undefined,
+    flora: plants ? new FloraWorld({ dims: () => core.dims, origin: () => core.globals.origin ?? [0, 0], veg: (cx, cy) => plants.vegCol(cx, cy), top: (cx, cy) => plants.topCol(cx, cy), refresh: () => mirror.refresh() }) : undefined,
     water: mods.water ? new Water(core, mirror) : undefined,
     fire: mods.fire ? new Fire(core, mirror) : undefined,
     wind: mods.wind ? new Wind(core, mirror) : undefined,

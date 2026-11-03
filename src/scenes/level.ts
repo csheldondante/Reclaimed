@@ -236,6 +236,37 @@ export class LevelScene implements Scene {
       },
     );
   }
+  /** (round 128, treegen) when the fire's hold was last read (world-gpu fireChunks), and whether a read is in flight */
+  private burnReadAt = 0;
+  private burnReading = false;
+  /** (round 128) the fire's per-chunk strength since the last read, cleared; burning chunks stay awake and the ones a
+   *  fire reaches wake (Sleep.holdBurning) — twice a second */
+  private readBurning(): void {
+    const now = performance.now() / 1000;
+    if (this.burnReading || now - this.burnReadAt < 0.5) return;
+    this.burnReadAt = now;
+    this.burnReading = true;
+    const dev = this.host.gpu.device;
+    const src = this.core.world.fireChunks;
+    const tmp = dev.createBuffer({ size: src.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const enc = dev.createCommandEncoder();
+    enc.copyBufferToBuffer(src, 0, tmp, 0, src.size);
+    enc.clearBuffer(src);
+    dev.queue.submit([enc.finish()]);
+    tmp.mapAsync(GPUMapMode.READ).then(
+      () => {
+        const ch = new Float32Array(tmp.getMappedRange().slice(0));
+        tmp.destroy();
+        this.burnReading = false;
+        this.sleep?.holdBurning(ch, performance.now() / 1000);
+      },
+      (e) => {
+        tmp.destroy();
+        this.burnReading = false;
+        ignoreTeardown(e);
+      },
+    );
+  }
   private completed = false;
   private saveTimer = 0;
   private speed: number;
@@ -1389,6 +1420,8 @@ export class LevelScene implements Scene {
       globals,
       nature: this.nature,
       powers: this.powers,
+      // (round 128: the chunks awake and held by fire — the burn demo's count)
+      sleepStats: () => ({ awake: this.sleep?.awake ?? null, burning: this.sleep?.burning ?? null }),
       readBuffer: (n: Parameters<WorldCore['readBuffer']>[0]) => core.readBuffer(n),
       probe: (...a: Parameters<WorldCore['probe']>) => core.probe(...a),
       integrity: () => this.integrity,
@@ -2020,6 +2053,14 @@ export class LevelScene implements Scene {
     // (round 124, PRE1) ?present=forest: the region presentation prototype on the atlas (a birch wood near the start)
     const pres = this.host.params.get('present');
     if (pres) await this.startPresent(pres, this.play.session, undefined);
+    // (round 125, forest) under the canopy: the understory's look round the hero; ?forest=lab the forest station
+    const under = await this.attachUnderstory(this.play.session, api);
+    if (under && this.host.params.get('forest') === 'lab') {
+      const { ForestLab } = await import('../forest/lab');
+      const c = this.core.camera.target;
+      const lab = await ForestLab.start({ ui: this.host.ui, session: this.play.session, plants: api.plants!, driver: under, params: this.host.params, near: [c[0], c[1]], eye: this.groundEye(), wind: this.labWind(), setSeason: (s) => (this.core.globals.season = s) });
+      this.core.onShift.push((dx, dy) => lab.shift(-dx, -dy));
+    }
   }
 
   /** (round 124, PRE1) the region presentation prototypes (src/present/lab.ts) on play's hero; off without ?present= */
@@ -2033,6 +2074,35 @@ export class LevelScene implements Scene {
     (window as unknown as { reclaimed: Record<string, unknown> }).reclaimed.present = this.present;
     // (the window slid: the region and the route move with what's kept in window coordinates)
     this.core.onShift.push((dx, dy) => this.present?.shift(-dx, -dy));
+  }
+
+  /** (round 125, forest) the forest station's test winds: the weather's prevailing wind and a gust */
+  private labWind() {
+    const W = this.core.weather;
+    const G = this.core.globals;
+    return {
+      base: (): [number, number] => [W.params.baseWindX, W.params.baseWindY],
+      setBase: (b: [number, number]) => ((W.params.baseWindX = b[0]), (W.params.baseWindY = b[1])),
+      gust: (g: { x: number; y: number; radius: number; strength: number; dx: number; dy: number; len: number }) => G.gusts.push(g),
+    };
+  }
+
+  /** (round 125, forest) the ground way toward the eye (unit): the forest station frames its shots by it */
+  private groundEye(): [number, number] {
+    const e = this.core.camera.eye;
+    const l = Math.hypot(e[0], e[1]) || 1;
+    return [e[0] / l, e[1] / l];
+  }
+
+  /**
+   * (round 125, forest: BACKLOG FLO32) The understory's driver on a played hero (forest/driver.ts): under a wood's canopy
+   * the trees in the way dithered, the sun in flecks, mist, rays, falling leaves, the view closer. `?under=0`: off.
+   */
+  private async attachUnderstory(session: import('../play/session').PlaySession, api: Sim): Promise<import('../forest/driver').UnderstoryDriver | null> {
+    if (this.host.params.get('under') === '0') return null;
+    if (!api.plants) throw new Error('the understory needs the world API plants');
+    const { UnderstoryDriver } = await import('../forest/driver');
+    return new UnderstoryDriver(api.plants, this.core.camera, session, () => this.core.globals.season ?? 0);
   }
 
   /**
@@ -2074,6 +2144,8 @@ export class LevelScene implements Scene {
     const session = await PlaySession.start({ ui: this.host.ui, api, units, camera: this.core.camera, renderer: this.core.renderer, device: this.host.gpu.device, bounds, respawnAfter: null, cam: this.host.params.get('cam'), raise: this.playRaise(units) });
     const c = this.core.camera.target;
     session.choose(id, session.dryNear([c[0], c[1]]));
+    // (round 125, forest: the understory under a wood's canopy, as in the sandbox)
+    await this.attachUnderstory(session, api);
     this.runSession = session;
     // (in step with the window from the moment the hero exists — round 120's phone bug: this was registered after the
     // run was made, so when making it failed every slide left the hero a region off: "teleports me around the map")
@@ -2156,6 +2228,7 @@ export class LevelScene implements Scene {
       const session = await PlaySession.start({ ui: this.host.ui, api, units, camera: this.core.camera, renderer: this.core.renderer, device: this.host.gpu.device, bounds, respawnAfter: null, cam: this.host.params.get('cam'), raise: this.playRaise(units) });
       const c = this.core.camera.target;
       session.choose(playId, session.dryNear([c[0], c[1]]));
+      await this.attachUnderstory(session, api);
       const enc = this.host.params.get('runencounter') as import('../api/contracts/run').EncounterKind | null;
       const p = new RunPlayer({ ui: this.host.ui, api, units, session, bounds, encounter: enc ?? undefined });
       player = p;
@@ -2523,6 +2596,7 @@ export class LevelScene implements Scene {
     } else globals.riverWet = this.riverWet.update(dt * this.speed, globals.season ?? 0, weather.storms);
     // (round 80) what's awake this frame: round the player (the camera's target), the events, the storms
     if (this.sleep && settleTol() > 0) this.readSettling();
+    if (this.sleep) this.readBurning();
     if (this.sleep) {
       globals.sleep = this.sleep.update(performance.now() / 1000, [camera.target[0], camera.target[1], 40], globals.events, weather.storms, core.sim.tick);
       globals.drowse = this.sleep.drowse;

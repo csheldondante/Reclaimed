@@ -113,6 +113,12 @@ export class WorldGpu {
    * reads and clears it (Sleep.holdUnsettled keeps a woken chunk awake until it's under the tolerance).
    */
   readonly waterChange: GPUBuffer;
+  /**
+   * (round 128, treegen) Per chunk slot (2 048 at most), the strongest fire in it or within reach of its edge since the
+   * CPU last read it, as an f32's bits (atomicMax). firewatch.wgsl writes it (FireWatchSystem); the level reads and
+   * clears it (Sleep.holdBurning keeps a burning chunk awake and wakes the ones its fire reaches).
+   */
+  readonly fireChunks: GPUBuffer;
 
   // oil: second liquid, floats on water (oil system owns writes)
   readonly oil: GPUBuffer;
@@ -152,6 +158,11 @@ export class WorldGpu {
    * wind, ba whole wind (map wind + painted; windfield.wgsl). Everything that
    * feels wind reads it. `windField` is read, `windFieldNext` written.
    */
+  /** (round 128, treegen) standing burned trees: x 1 a wood the fire burned stands charred there, decaying (snag.wgsl
+   *  writes it — SnagSystem, ping-pong snag → snagNext → snag; vegprep.wgsl and the flora plan's mirror read it) */
+  readonly snag: GPUTexture;
+  readonly snagNext: GPUTexture;
+  readonly snagView: GPUTextureView;
   readonly windField: GPUTexture;
   readonly windFieldNext: GPUTexture;
   readonly windFieldView: GPUTextureView;
@@ -376,6 +387,7 @@ export class WorldGpu {
     this.flux = this.buf('flux', N * DIRS_BYTES, S);
     this.waterSource = this.buf('waterSource', N * 4, S);
     this.waterChange = this.buf('waterChange', 2048 * 4, S);
+    this.fireChunks = this.buf('fireChunks', 2048 * 4, S);
     device.queue.writeBuffer(this.water, 0, r.toStore(map.water));
     device.queue.writeBuffer(this.waterSource, 0, r.toStore(map.waterSource));
 
@@ -413,6 +425,10 @@ export class WorldGpu {
     this.windField = device.createTexture({ label: 'windField', size: wsize, format: 'rgba32float', usage: tusage });
     this.windFieldNext = device.createTexture({ label: 'windFieldNext', size: wsize, format: 'rgba32float', usage: tusage });
     this.textures.push(this.windField, this.windFieldNext);
+    this.snag = device.createTexture({ label: 'snag', size: { width: this.w, height: this.h }, format: 'rgba32float', usage: tusage });
+    this.snagNext = device.createTexture({ label: 'snagNext', size: { width: this.w, height: this.h }, format: 'rgba32float', usage: tusage });
+    this.textures.push(this.snag, this.snagNext);
+    this.snagView = this.snag.createView();
     this.windFieldView = this.windField.createView();
     this.physPuff = this.buf('physPuff', wsize.width * wsize.height * 4, S | GPUBufferUsage.COPY_DST);
     this.windBlows = this.buf('windBlows', (1 + MAX_BLOWS * 3) * 16, S | GPUBufferUsage.COPY_DST);
