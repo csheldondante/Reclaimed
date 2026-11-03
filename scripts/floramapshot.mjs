@@ -10,6 +10,8 @@ await run({ name: 'floramapshot', kind: 'behaviour', size: '412x915', dpr: 1, ec
   const zooms = R.opt('zooms', '2,3,5').split(',').map(Number);
   fs.mkdirSync(out, { recursive: true });
   const p = await R.level({ level: 'atlas', at: R.opt('at', '13728,5216'), fseason: '0.25' });
+  // (main: the sandbox's tool panel hidden in every in-world shot)
+  await p.addStyleTag({ content: '.editor{display:none!important}' });
   await sleep(20000);
   for (const z of zooms) {
     await p.evaluate((z) => (window.reclaimed.camera.zoom = z), z);

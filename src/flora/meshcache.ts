@@ -11,7 +11,7 @@
 import type { FloraMesh } from './mesh';
 
 /** bump when the generator's code (not a species' parameters) changes what a definition makes */
-export const MESH_VERSION = 'r128-6';
+export const MESH_VERSION = 'r128-7';
 
 const mem = new Map<string, FloraMesh>();
 const fresh = new Map<string, FloraMesh>();

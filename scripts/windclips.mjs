@@ -28,6 +28,8 @@ await run({ name: 'windclips', kind: 'behaviour', size: '412x915', dpr: 1, echo:
   };
   for (const row of rows) {
     const p = await R.level({ level: 'atlas', play: 'lich', forest: 'lab', fride: '0', fseason: '0.25', fwind: row });
+    // (main: the sandbox's tool panel hidden in every in-world shot)
+    await p.addStyleTag({ content: '.editor{display:none!important}' });
     await p.waitForFunction(() => window.reclaimed?.forest?.stand, { timeout: 120000, polling: 500 });
     await sleep(20000);
     await p.evaluate((zoom) => {

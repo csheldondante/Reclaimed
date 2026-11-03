@@ -14,6 +14,12 @@
 // static baseline (nothing moves), the matrix's row 0.
 override FWIND: u32 = 7u;
 
+// (round 128) the leaf-cluster atlas (src/flora/leafatlas.ts): every pipeline that takes this file binds it at 66;
+// FLORA_LEAF (the library's tables) a kind's row, −1 none
+@group(0) @binding(66) var leafAtlas: texture_2d<f32>;
+const LEAF_TILE: u32 = 64u;
+const LEAF_LEVELS: u32 = 7u;
+
 /**
  * (round 125, 1C/1A) The traveling gust at world point q (window xy + the window's origin `org`, so it stays with the
  * land): 0..1, a front running downwind `wd` with a slow wobble across it; `amp` the wind's strength (the column's
@@ -303,10 +309,52 @@ fn floraLook(k: u32, part: u32, wpos: vec3<f32>, n: vec3<f32>, h: f32, rnd: f32,
       if (sn > 0.0 && n.z > 0.5 && layer < 0.5 && fr < sn * 0.75) { c = vec3<f32>(0.9, 0.93, 0.97); mat = f32(MAT_SNOW); }
       return vec4<f32>(c, mat);
     }
+    // (round 128, the user: "I want the leaf cluster cards") a leaf-cluster card of the layered crown (mesh.ts
+    // addLayeredCrown: uv.x = −2 − u, uv.y = ⌊occlusion × 64⌋ + 64 × cluster + 256 × ⌊side × 4⌋ + v × 0.98): one tile of
+    // the leaf atlas (leafatlas.ts — several overlapping leaves of the species' shape, veins, edges, the shadow of the
+    // leaves above, their alpha), read at the level its texels a pixel ask for, tinted by the species' ramp (cool under,
+    // warm on top, the lobe's normal shading it round), the season, and the card's occlusion (the deeper shells and
+    // the crevices darker and cooler). The gaps between the leaves show the shell under them.
+    var cluster = false;
+    if (uv.x < -1.5 && uv.x > -3.5 && FLORA_LEAF[k] >= 0) {
+      cluster = true;
+      let cu = clamp(vec2<f32>(-2.0 - uv.x, fract(uv.y) / 0.98), vec2<f32>(0.0), vec2<f32>(0.999));
+      let ip = u32(floor(uv.y));
+      let ao = f32(ip & 63u) / 64.0;
+      let vi = (ip >> 6u) & 3u;
+      let side = f32(ip >> 8u) * 0.25;
+      // (the level: the tile's texels over a pixel — LEAF_TILE texels across `side` cells, fw cells a pixel)
+      let lod = u32(clamp(log2(max(1.0, f32(LEAF_TILE) / max(side, 0.05) * fw)), 0.0, f32(LEAF_LEVELS - 1u)));
+      let t = LEAF_TILE >> lod;
+      let tc = vec2<u32>(vi * t, u32(FLORA_LEAF[k]) * t) + min(vec2<u32>(cu * f32(t)), vec2<u32>(t - 1u));
+      let lt = textureLoad(leafAtlas, vec2<i32>(tc), i32(lod));
+      if (lt.r < 0.5) { return vec4<f32>(0.0, 0.0, 0.0, -1.0); }
+      let up = clamp(0.5 + 0.5 * n.z, 0.0, 1.0);
+      let lh = randv(vec3<i32>(floor(wpos * 0.9)) + vec3<i32>(i32(vi), 17, i32(salt & 255u)));
+      let tt = clamp(up * 0.7 + (h - 0.4) * 0.4 + 0.2 + 0.15 * (lh - 0.5), 0.0, 1.0);
+      let cool = FLORA_COL[b + 2u].rgb * vec3<f32>(0.8, 0.9, 1.06);
+      let warm = FLORA_COL[b + 3u].rgb * vec3<f32>(1.1, 1.05, 0.88);
+      var cc = mix(cool, warm, smoothstep(0.1, 0.95, tt));
+      // (the autumn's turn and the winter's few dead leaves, as `c` carries them)
+      if (decid) { cc = mix(cc, c, clamp(smoothstep(0.0, 0.3, seasonColour() * 1.3 - lh * 0.3) + seasonSnow() * 0.85, 0.0, 1.0)); }
+      // the leaves' own shade from the atlas (veins, edges, the leaves above them), and their crease lit from above
+      let tn = lt.ba * 2.0 - 1.0;
+      cc *= (0.35 + 0.85 * lt.g) * (1.0 + 0.25 * clamp(-tn.y * 0.7 + tn.x * 0.3, -1.0, 1.0));
+      // the occlusion: the deeper shells and the crevices darker and cooler
+      cc = mix(cc * vec3<f32>(0.6, 0.7, 0.85) * 0.45, cc, smoothstep(0.08, 1.0, ao));
+      c = cc;
+      // (in flower: whole clusters of a share bloom — a cream-to-the-species' tint, shaded by the dome and the shell)
+      let bl = FLORA_EPI[k].z * seasonBloom();
+      if (bl > 0.0 && randv(vec3<i32>(floor(wpos * 0.5)) + vec3<i32>(i32(vi), 3, 41)) < bl * 0.7 && ao > 0.45) {
+        let tint = mix(vec3<f32>(0.96, 0.9, 0.78), FLORA_COL[b + 5u].rgb, 0.45);
+        c = tint * (0.62 + 0.38 * up) * (0.55 + 0.45 * min(ao, 1.0)) * (0.6 + 0.5 * lt.g);
+        mat = f32(MAT_FLOWER);
+      }
+    }
     // (round 128) a canopy lobe (uv.x = −1, uv.y its occlusion; the user's target: "trees that look like dota 2 or
     // heroes of the storm from above"): a painted ramp — the lit tops and the sun's side warm and light, the undersides
     // and crevices cool and dark (the occlusion baked a vertex), a soft painterly breakup, no cards
-    if (uv.x < -0.5) {
+    if (!cluster && uv.x < -0.5) {
       let up = clamp(0.5 + 0.5 * n.z, 0.0, 1.0);
       let t = clamp(up * 0.75 + (h - 0.4) * 0.5 + 0.15, 0.0, 1.0);
       let cool = FLORA_COL[b + 2u].rgb * vec3<f32>(0.78, 0.88, 1.08);
@@ -318,7 +366,7 @@ fn floraLook(k: u32, part: u32, wpos: vec3<f32>, n: vec3<f32>, h: f32, rnd: f32,
       c *= 1.0 + max(0.0, uv.y - 1.0) * vec3<f32>(1.2, 1.1, 0.8);
       c *= 0.93 + 0.14 * vnoise(wpos.xy * 0.45 + vec2<f32>(wpos.z * 0.3, 0.0));
     }
-    if (uv.y > 0.0 && fw < 0.35) {
+    if (!cluster && uv.y > 0.0 && fw < 0.35) {
       let x = abs(uv.x - 0.5) * 2.0;
       let halfw = select(uv.y / 0.45, (1.0 - uv.y) / 0.55, uv.y > 0.45);
       let edge = clamp(x / max(halfw, 1e-3), 0.0, 1.0);
@@ -328,9 +376,11 @@ fn floraLook(k: u32, part: u32, wpos: vec3<f32>, n: vec3<f32>, h: f32, rnd: f32,
       c *= 1.0 + a * (0.14 * rib + 0.07 * side - 0.28 * smoothstep(0.65, 1.0, edge));
     }
     // (round 128) in flower: a share of the clusters bloom (spring, as the crowns come back)
+    // (main's review: the thickets' blossom read as harsh white pixel noise — larger blocks, a cream tint, shaded by the
+    // dome)
     let bl = FLORA_EPI[k].z * seasonBloom();
-    if (bl > 0.0 && randv(vec3<i32>(floor(wpos * 1.1)) + vec3<i32>(3, 3, 41)) < bl) {
-      c = FLORA_COL[b + 5u].rgb * (0.86 + 0.22 * fr);
+    if (!cluster && bl > 0.0 && randv(vec3<i32>(floor(wpos * 0.6)) + vec3<i32>(3, 3, 41)) < bl * 0.7) {
+      c = mix(vec3<f32>(0.96, 0.9, 0.78), FLORA_COL[b + 5u].rgb, 0.45) * (0.62 + 0.38 * clamp(0.5 + 0.5 * n.z, 0.0, 1.0)) * (0.9 + 0.12 * fr);
       mat = f32(MAT_FLOWER);
     }
     // (round 128) snow on the evergreens' upper faces: the snow-laden conifer

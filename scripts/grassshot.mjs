@@ -56,6 +56,7 @@ await run({ name: 'grassshot', kind: 'behaviour', size: '412x915', dpr: 1, echo:
     await page.waitForFunction(() => window.__boot?.at['level-ready'] || document.querySelector('.fatal'), { timeout: 300000, polling: 250 });
     await R.fatal(page);
     await sleep(25000);
+    await page.addStyleTag({ content: '.editor{display:none!important}' });
     // the open meadow: 16² blocks with the most columns at succession 1.8-2.5 (tall grass, under the thickets' 2.6),
     // the fewest at 2.6+ (thickets, woods), nearest the start
     const spot = await page.evaluate(async () => {

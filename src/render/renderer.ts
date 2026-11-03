@@ -21,6 +21,7 @@ import renderWgslOwn from '../shaders/render.wgsl?raw';
 import understoryWgsl from '../shaders/understory.wgsl?raw';
 import understoryDrawWgsl from '../shaders/understory_draw.wgsl?raw';
 import { FWIND } from '../flora/wind';
+import { leafAtlasTexture } from '../flora/leafatlas';
 import rainWgsl from '../shaders/rain.wgsl?raw';
 import particlesDrawWgsl from '../shaders/particles_draw.wgsl?raw';
 import gridsWgsl from '../shaders/grids.wgsl?raw';
@@ -656,7 +657,7 @@ const FGRASS: f32 = ${fgrass.toFixed(3)};`;
       } as const;
     const drawLayout = makeLayout(device, 'draw', drawSpec, VF);
     // (round 128, treegen: the instanced meshes' layout — the draw's and the flora sprites' atlas, 44 and 45)
-    const miLayout = makeLayout(device, 'meshinst', { ...drawSpec, 44: 'tex', 45: 'tex' }, VF);
+    const miLayout = makeLayout(device, 'meshinst', { ...drawSpec, 44: 'tex', 45: 'tex', 66: 'tex' }, VF);
     const miPl = device.createPipelineLayout({ bindGroupLayouts: [miLayout] });
     // (round 84, ?rivers=table: foam by the water's speed — render.wgsl fsWater)
     const riverFoam = `const RIVER_FOAM_SPEED: bool = ${riverMode() === 'table'};\n`;
@@ -708,7 +709,9 @@ const FGRASS: f32 = ${fgrass.toFixed(3)};`;
 
     // (round 128) the flora sprites' atlas for the instanced meshes' groups (a texel of nothing without sprites)
     const sprNone = device.createTexture({ label: 'flora sprites none', size: [1, 1], format: 'rgba8unorm', usage: GPUTextureUsage.TEXTURE_BINDING }).createView();
-    const sprViews = () => ({ 44: this.floraSprites?.albedo.createView() ?? sprNone, 45: this.floraSprites?.nd.createView() ?? sprNone });
+    // (round 128: and the leaf-cluster atlas — leafatlas.ts, the layered crowns' cards)
+    const leafView = leafAtlasTexture(device).createView();
+    const sprViews = () => ({ 44: this.floraSprites?.albedo.createView() ?? sprNone, 45: this.floraSprites?.nd.createView() ?? sprNone, 66: leafView });
     const groupFor = (inst: GPUBuffer | GPUBufferBinding, cam: GPUBuffer = this.camBuf, shadow: GPUTextureView = this.shadowView, mi = false) =>
       makeBindGroup(device, mi ? 'meshinst' : 'draw', mi ? miLayout : drawLayout, {
         ...((mi ? sprViews() : {}) as Record<number, GPUTextureView>),

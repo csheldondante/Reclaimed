@@ -44,6 +44,8 @@ await run({ name: 'editorshot', kind: 'behaviour', size: '412x915', dpr: 1, echo
   const enc = (v) => Buffer.from(JSON.stringify(v)).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   const ft = enc({ [R.opt('wspecies', 'giant')]: { sWidth: 0.3, cLobeShape: 1, sCrownBase: 0.55 } });
   const p = await R.level({ level: 'atlas', at: R.opt('at', '13728,5216'), ftree: ft });
+  // (main: the sandbox's tool panel hidden in every in-world shot)
+  await p.addStyleTag({ content: '.editor{display:none!important}' });
   await sleep(30000);
   await p.evaluate(() => (window.reclaimed.camera.zoom = 7));
   await sleep(4000);

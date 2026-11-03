@@ -18,6 +18,7 @@ import floraLookWgsl from '../shaders/floralook.wgsl?raw';
 import spriteWgsl from '../shaders/florasprite.wgsl?raw';
 import mipWgsl from '../shaders/florasprite_mip.wgsl?raw';
 import { makeBindGroup, makeLayout, makeModule } from '../gpu/pipeline';
+import { leafAtlasTexture } from '../flora/leafatlas';
 import { bakeView, SPR_CELL, SPR_COLS, SPR_YAWS, sprLevels, type spriteBounds } from '../flora/sprites';
 import type { FloraMesh } from '../flora/mesh';
 
@@ -109,7 +110,7 @@ export class FloraSprites {
     });
     const bakeBuf = device.createBuffer({ label: 'flora sprite bakes', size: B.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     device.queue.writeBuffer(bakeBuf, 0, B);
-    const layout = makeLayout(device, 'flora-sprite-bake', { 0: 'uniform', 1: 'read', 2: 'uniform' }, GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT);
+    const layout = makeLayout(device, 'flora-sprite-bake', { 0: 'uniform', 1: 'read', 2: 'uniform', 66: 'tex' }, GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT);
     const module = makeModule(device, 'flora-sprite-bake', [commonWgsl, materialsWgsl, floraWgsl, floraLookWgsl, spriteWgsl]);
     this.pipe = device.createRenderPipeline({
       label: 'flora-sprite-bake',
@@ -126,7 +127,8 @@ export class FloraSprites {
       primitive: { topology: 'triangle-list', cullMode: 'none' },
       depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' },
     });
-    this.group = makeBindGroup(device, 'flora-sprite-bake', layout, { 0: globals, 1: bakeBuf, 2: materials });
+    // (round 128: the leaf-cluster atlas, as the instanced draw's)
+    this.group = makeBindGroup(device, 'flora-sprite-bake', layout, { 0: globals, 1: bakeBuf, 2: materials, 66: leafAtlasTexture(device).createView() });
     // the mips: each level from the one above (its two textures as single-level views)
     const mipLayout = makeLayout(device, 'flora-sprite-mip', { 0: 'tex', 1: 'tex' }, GPUShaderStage.FRAGMENT);
     const mipModule = makeModule(device, 'flora-sprite-mip', [mipWgsl]);

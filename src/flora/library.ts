@@ -7,6 +7,7 @@
 // generator is cheap (a few ms for the whole library), so the library could be re-made per biome or per run later.
 
 import { resolveKind } from './forms';
+import { leafRow } from './leafatlas';
 import { generate } from './generate';
 import { applyParams } from './params';
 import { hashSeed } from './rng';
@@ -115,7 +116,8 @@ export function floraTables(kinds: { sp: SpeciesDef; mesh: { height: number; rad
 const FLORA_COL = array<vec4<f32>, ${rows.length}>(${rows.join(', ')});
 const FLORA_ACC = array<vec4<f32>, ${acc.length}>(${acc.join(', ')});
 const FLORA_BARK = array<vec4<f32>, ${bark.length}>(${bark.join(', ')});
-const FLORA_EPI = array<vec4<f32>, ${epi.length}>(${epi.join(', ')});`;
+const FLORA_EPI = array<vec4<f32>, ${epi.length}>(${epi.join(', ')});
+const FLORA_LEAF = array<i32, ${kinds.length}>(${kinds.map(({ sp }) => `${sp.crown?.style === 'layers' ? leafRow(sp.id) : -1}`).join(', ')});`;
 }
 
 /** (round 128) the sprite constants (meshinst.wgsl's draw, florasprite.wgsl's bake) */
@@ -216,7 +218,7 @@ export class FloraLibrary {
     lines.push('const FL_SHRUB_L1 = vec2<u32>(0u, 1u);');
     for (const id of ids) if (hasClose(id)) lines.push(`const FL_${id.toUpperCase()}_C = vec2<u32>(0u, 1u);`);
     lines.push(spriteConsts(1, ['vec4<f32>(-1.0, 0.0, 0.0, 0.0)'], [z]));
-    lines.push(`const FLORA_COL = array<vec4<f32>, 6>(${[z, z, z, z, z, z].join(', ')});`, `const FLORA_ACC = array<vec4<f32>, 1>(${z});`, `const FLORA_BARK = array<vec4<f32>, 2>(${z}, ${z});`, `const FLORA_EPI = array<vec4<f32>, 1>(${z});`, 'const FLORA_CROWN = array<vec2<f32>, 1>(vec2<f32>(1e9, 0.0));');
+    lines.push(`const FLORA_COL = array<vec4<f32>, 6>(${[z, z, z, z, z, z].join(', ')});`, 'const FLORA_LEAF = array<i32, 1>(-1);', `const FLORA_ACC = array<vec4<f32>, 1>(${z});`, `const FLORA_BARK = array<vec4<f32>, 2>(${z}, ${z});`, `const FLORA_EPI = array<vec4<f32>, 1>(${z});`, 'const FLORA_CROWN = array<vec2<f32>, 1>(vec2<f32>(1e9, 0.0));');
     return lines.join('\n') + '\n';
   }
 

@@ -13,6 +13,8 @@ await run({ name: 'burnshot', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
   // hero, its camera the understory's — the view from under the canopy)
   const lab = R.opt('lab', '1') === '1';
   const p = await R.level({ level: 'atlas', at: R.opt('at', '13728,5216'), fseason: '0.3', flod: 'sprite', ...(lab ? { play: 'lich', forest: 'lab', fride: '0' } : {}) });
+  // (main: the sandbox's tool panel hidden in every in-world shot)
+  await p.addStyleTag({ content: '.editor{display:none!important}' });
   if (lab) await p.waitForFunction(() => window.reclaimed?.forest?.stand, { timeout: 120000, polling: 500 });
   await sleep(20000);
   // the hero parked in front of the stand, the ride off (as the foliage bench does)

@@ -17031,3 +17031,19 @@ noisy; the phone bench decides cost — Pages build of `merge128`, `?bench=1` an
   page by page, and the ring's offset changes on a slide) — so after the camera moved and the window slid, the snags
   stood under other columns, and the trees on the burn read none. snag.wgsl and vegprep.wgsl now use texCol; the
   flora plan's CPU mirror reads the snag at ring.t (the texel's index), not ring.idx (a per-column buffer's).
+- Leaf-cluster cards (the user: "the foliage doesn't look like it has multiple layers visible and it looks like a few
+  sparse leaves over a solid color which is wrong"; "I want the leaf cluster cards"). The layered crown was a smooth
+  dark core ball under a sparse scatter of single-leaf cards (the oak's shell density 0.07 a cell²: ~13% of a lobe
+  covered). Now: a leaf-cluster atlas (leafatlas.ts — a row a species: oak lobed, elder broad round, birch diamond,
+  willow narrow hanging, thicket oval; four clusters a row of 6-15 overlapping leaves, veins, darker edges, the shadow
+  of the leaves above, alpha and normals; mips that keep the coverage), made once on the CPU, bound at 66 by the
+  instanced draw, the sprite bake and the viewer. Each lobe takes 3 shells of square cluster cards bent on its curve,
+  as many as cover ~80% of the shell (a card's leaves fill ~42% of its square), each deeper shell darker and in bigger
+  cards; under them a 4th shell of dark clusters, twice as dense, where the smooth core was — the holes end in shadowed
+  leaves. Cards inside a neighbouring lobe are left out. Cards ~14 px or under on screen (the coarse level) are 1.6×
+  bigger and fewer. Birch and willow moved to this crown too; the conifers keep their needle shells. Triangles (seed 1):
+  oak 9 470 / close 14 270 / coarse 5 094, elder 24 252 / 33 644, birch 9 332 / 11 636 / 6 084, willow 8 794 / 13 832 /
+  4 968, thicket ≤ 2 400. Budgets raised to match: a tree 10 000 (close 20 000), elder and willow 26 000 (close 36 000),
+  thicket 2 400 — trees stand at a quarter of round 125's density (TREE_SCALE), the phone bench to judge.
+  The thickets' blossom (main: "harsh white pixel noise") blooms whole clusters, cream-tinted and shaded by the dome.
+  Every in-world shot hides the sandbox's tool panel.

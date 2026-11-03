@@ -383,6 +383,10 @@ export interface CrownLook {
   depthDark?: number;
   bend?: number;
   core?: number;
+  /** (round 128, layers) a leaf-cluster card's side (cells; absent: 0.55 × size) and the share of its lobe a shell covers
+   *  (0.8: the gaps show the shell under it) */
+  cluster?: number;
+  cover?: number;
   /** hybrid: leaf cards a square cell of a lobe's surface */
   shell?: number;
   /** (round 128, the user: "different shapes of cluster than just blob") each lobe's shape: round, pad (a flat cloud),
@@ -848,82 +852,98 @@ function addConeCrown(mb: MeshBuilder, c: CrownLook, k: number, bake = false): v
 
 /**
  * (round 128, the user: "It seems like dota the render multiple layers as leaves on bent lobes and then shadow the deeper
- * layers to add depth") The layered crown: each lobe `layers` shells of leaf cards at decreasing reach (`layerGap` apart),
- * each card a strip bent along its lobe's curve (`bend`), lit by the lobe's normal; the deeper the shell the darker and
- * cooler (`depthDark`: uv.y, the look's occlusion), so the outer leaves catch the light and the gaps show the shadowed
- * leaves under them, not the sky; a dark closed core under the last shell (`core`) where the shells leave holes.
+ * layers to add depth"; then: "the foliage doesn't look like it has multiple layers visible and it looks like a few
+ * sparse leaves over a solid color which is wrong") The layered crown: leaves on leaves. Each lobe `layers` shells of
+ * leaf-cluster cards (each card a square tangent to the lobe and bent on its curve, its leaves cut out in the look —
+ * floralook.wgsl's cluster alpha, several leaves a card), dense enough that a shell covers ~`cover` of its lobe (0.8:
+ * the gaps show the next shell), each shell `layerGap` leaf widths under the last and darker by `depthDark`; under them
+ * (`core`) one more shell of dark clusters, twice as dense — the holes end in deep shadowed leaves, never a smooth
+ * surface. Every card takes its lobe's normal at its corners (`lobeBlend`), so the clump shades as one soft round mass.
+ * A card's uv: x = −2 − u (u across, 0..1), y = ⌊occlusion × 64⌋ + 64 × cluster + 256 × ⌊side × 4⌋ + v × 0.98.
  */
 function addLayeredCrown(mb: MeshBuilder, sk: Skeleton, minDepth: number, c: CrownLook, k: number, r01: () => number, px?: number, bake = false): void {
   const L = crownLobes(sk, minDepth, (c.clump ?? 6) / k, r01, c.separate ?? 0.25);
   const K = Math.max(1, Math.round(c.layers ?? 3));
-  // (round 128, the user: "The leaf layers look a little too floaty they should be closer together. Probably no more
-  // than a leaf width for the outer layer" — the gap in leaf widths now, 1 by default; the shells' reach in cells)
-  const gapCells = (c.layerGap ?? 0.35) * c.size;
+  // (a cluster card's side, cells: `cluster`, else from the leaf size)
+  const S = (c.cluster ?? c.size * 0.55) / k;
+  const gap = ((c.layerGap ?? 0.35) * (c.cluster ?? c.size * 0.55)) / k;
   const dark = c.depthDark ?? 0.6;
-  const bend = c.bend ?? 0.7;
-  const dens = c.shell ?? 0.06;
+  const bend = c.bend ?? 0.85;
+  const cover = c.cover ?? 0.8;
   const blend = c.lobeBlend ?? 0.85;
-  const size = c.size / k;
-  if ((c.core ?? 1) > 0) {
-    // the core: a closed lobe inside the last shell
-    addSolidCrown(mb, sk, minDepth, { ...c, gaps: 0 }, k, r01, px, bake, 0, L, ((K - 1 + 0.6) * gapCells) / k);
-  }
+  const core = (c.core ?? 1) > 0;
+  // (the cards a shell needs for `cover`: a card's leaves fill ~42% of its square (leafatlas.ts), cards fall at random — a share
+  // 1 − e^(−n a / A) of the shell covered)
+  const perArea = -Math.log(Math.max(0.02, 1 - cover)) / (0.42 * S * S);
   const rnd = (): V3 => norm([r01() * 2 - 1, r01() * 2 - 1, r01() * 2 - 1]);
+  // (made for `px`: a card under ~14 px shows its leaves as a few pixels — bigger cards (×1.6), fewer of them, the
+  // shells' cover kept)
+  const coarse = px !== undefined && S * k * px < 14;
+  const cz = coarse ? 1.6 : 1;
+  const shells = K + (core ? 1 : 0);
   for (const o of L.lobes) {
-    for (let li = 0; li < K; li++) {
-      const ri = Math.max(o.r * 0.3, o.r - (li * gapCells) / k);
-      const depth = K > 1 ? li / (K - 1) : 0;
-      const area = 4 * Math.PI * (ri * k) ** 2;
-      // (made for `px`: no card under ~3 px; the deeper shells a little thinner)
-      const n = px && size * k * px < 3 ? 0 : Math.round(area * dens * (bake ? 1.5 : 1) * (1 - 0.3 * depth));
+    for (let li = 0; li < shells; li++) {
+      const inner = li === K;
+      const ri = Math.max(o.r * 0.35, o.r - (li * gap));
+      const depth = inner ? 1 : K > 1 ? li / (K - 1) : 0;
+      const area = 4 * Math.PI * ri * ri;
+      // (the deeper shells, seen only through the gaps, in bigger cards — fewer of them: the clusters a third bigger a
+      // shell; the dark shell under them twice the outer's)
+      const grow = inner ? 2 : 1 + 0.35 * li;
+      const n = Math.round((area * perArea * (bake ? 1.2 : 1)) / (grow * grow * cz * cz));
       for (let i = 0; i < n; i++) {
         let d = rnd();
-        if (d[2] < 0 && r01() < 0.55) d = [d[0], d[1], -d[2]];
+        // (fewer underneath: the lower half half as dense — it's seen less and lit less)
+        if (d[2] < 0 && r01() < 0.4) d = [d[0], d[1], -d[2]];
         const t0 = norm(cross(d, Math.abs(d[2]) < 0.9 ? ([0, 0, 1] as V3) : ([1, 0, 0] as V3)));
         const t1 = cross(d, t0);
         const a = r01() * Math.PI * 2;
         const ax = norm(add(mul(t0, Math.cos(a)), mul(t1, Math.sin(a))));
         const sd = norm(cross(d, ax));
-        const Lc = size * (0.6 + 0.5 * r01());
-        const W = Lc * (0.45 + 0.2 * r01());
-        // three rows along the card: on the lobe's curve by `bend`, straight off its tangent otherwise
-        const ang = Lc / Math.max(ri, 1e-3);
-        const jit = 0.99 + 0.02 * r01();
-        const row = (t: number): V3 => {
-          const curve = norm(add(mul(d, Math.cos(t * ang)), mul(ax, Math.sin(t * ang))));
-          const flat = norm(add(d, mul(ax, t * ang)));
-          const dir = norm(add(mul(curve, bend), mul(flat, 1 - bend)));
-          const ls = lobeSurface(dir, ri * jit, c.lobeShape);
-          return [o.m[0] + ls.off[0], o.m[1] + ls.off[1], o.m[2] + ls.off[2]];
+        const s = S * grow * cz * (0.8 + 0.4 * r01());
+        // the card's occlusion, one value (the look decodes it from uv.y's integer part): its shell, its height in the
+        // crown, the crevices where lobes meet; the outer shell's top a little over 1 (the lit rim)
+        const cp = (() => {
+          const ls = lobeSurface(d, ri, c.lobeShape);
+          return [o.m[0] + ls.off[0], o.m[1] + ls.off[1], o.m[2] + ls.off[2]] as V3;
+        })();
+        let crev = 0;
+        let buried = false;
+        for (const q of L.lobes) {
+          if (q === o) continue;
+          const dd = Math.hypot(cp[0] - q.m[0], cp[1] - q.m[1], cp[2] - q.m[2]) - q.r;
+          crev += Math.max(0, 1 - dd / (0.35 * q.r));
+          // (inside a neighbouring lobe's outer shell, under its leaves: never seen — no card)
+          if (dd < -s * 0.6) buried = true;
+        }
+        if (buried) continue;
+        const hz = (cp[2] - L.zlo) / Math.max(1e-3, L.zhi - L.zlo);
+        const rim = li === 0 ? 1 + 0.2 * Math.max(0, d[2]) * Math.max(0, 1 - crev) : 1;
+        const ao = inner ? 0.12 : Math.max(0.15, (1 - dark * depth) * (0.62 + 0.38 * hz) * (1 - 0.45 * Math.min(1, crev)) * rim);
+        // (the integer part: the occlusion in 64ths, and the card's side in quarter cells × 64 — the look sizes the leaves'
+        // cut-out fade by it)
+        // (the integer part: the occlusion in 64ths, the card's cluster (leafatlas.ts, one of CLUSTER_VARIANTS) × 64, and
+        // its side in quarter cells × 256 — the look picks the atlas level by it)
+        const A = Math.min(63, Math.floor(Math.min(0.99, ao) * 64)) + 64 * Math.floor(r01() * 4) + 256 * Math.min(60, Math.round(s * k * 4));
+        const corner = (u: number, v: number) => {
+          // on the lobe's curve by `bend` (a flat tangent card otherwise), lifted a hair per card so cards don't z-fight
+          const off = add(mul(ax, (u - 0.5) * s), mul(sd, (v - 0.5) * s));
+          const onCurve = norm(add(d, mul(off, 1 / Math.max(ri, 1e-3))));
+          const ls = lobeSurface(onCurve, ri * (1 + 0.01 * r01()), c.lobeShape);
+          const curved: V3 = [o.m[0] + ls.off[0], o.m[1] + ls.off[1], o.m[2] + ls.off[2]];
+          const flat = add(cp, off);
+          const p: V3 = [curved[0] * bend + flat[0] * (1 - bend), curved[1] * bend + flat[1] * (1 - bend), curved[2] * bend + flat[2] * (1 - bend)];
+          const ln = ls.n;
+          const own = d;
+          const nn = norm([own[0] + (ln[0] - own[0]) * blend, own[1] + (ln[1] - own[1]) * blend, own[2] + (ln[2] - own[2]) * blend]);
+          return mb.vert(p, PART.leaf, 0.12 + 0.05 * Math.max(0, d[2]), -2 - u, A + v * 0.98, nn);
         };
-        const hz0 = (o.m[2] + d[2] * ri - L.zlo) / Math.max(1e-3, L.zhi - L.zlo);
-        const ao = Math.max(0.15, (1 - dark * depth) * (0.6 + 0.4 * hz0));
-        const own = norm(cross(sd, ax));
-        const v = (p: V3, w: number, sw: number) => {
-          const ln = lobeSurface(norm([p[0] - o.m[0], p[1] - o.m[1], p[2] - o.m[2]]), 1, c.lobeShape).n;
-          const ow: V3 = own[0] * ln[0] + own[1] * ln[1] + own[2] * ln[2] < 0 ? [-own[0], -own[1], -own[2]] : own;
-          const nn = norm([ow[0] + (ln[0] - ow[0]) * blend, ow[1] + (ln[1] - ow[1]) * blend, ow[2] + (ln[2] - ow[2]) * blend]);
-          // (round 128, main: "darker crevices where lobes meet ... a slightly brighter rim/top on each lobe") the crevice:
-          // how close this point is to another lobe's surface; the rim: the outer shell's top, a little over 1 (the look
-          // brightens past 1)
-          let crev = 0;
-          for (const q of L.lobes) {
-            if (q === o) continue;
-            const dd = Math.hypot(p[0] - q.m[0], p[1] - q.m[1], p[2] - q.m[2]) - q.r;
-            crev += Math.max(0, 1 - dd / (0.35 * q.r));
-          }
-          const rim = li === 0 ? 1 + 0.25 * Math.max(0, ln[2]) * Math.max(0, 1 - crev) : 1;
-          return mb.vert(add(p, mul(sd, w)), PART.leaf, sw, -1, ao * (1 - 0.45 * Math.min(1, crev)) * rim, nn);
-        };
-        const p0 = row(0);
-        const p1 = row(0.5);
-        const p2 = row(1);
-        const a0 = v(p0, 0, 0.12);
-        const b1 = v(p1, W / 2, 0.14);
-        const c1 = v(p1, -W / 2, 0.14);
-        const t2 = v(p2, 0, 0.16);
-        mb.tri(a0, b1, c1);
-        mb.tri(c1, b1, t2);
+        const q00 = corner(0, 0);
+        const q10 = corner(1, 0);
+        const q11 = corner(1, 1);
+        const q01 = corner(0, 1);
+        mb.tri(q00, q10, q11);
+        mb.tri(q00, q11, q01);
       }
     }
   }

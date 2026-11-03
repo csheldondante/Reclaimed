@@ -8,6 +8,7 @@
 // Own small renderer (not the game's): a viewer must open fast on a phone without a world; what it shares with the
 // game is the generators (src/flora) and the look (floralook.wgsl), which is what it exists to show.
 
+import { leafAtlasTexture } from './leafatlas';
 import { kindCount, resolveKind } from './forms';
 import commonWgsl from '../shaders/common.wgsl?raw';
 import materialsWgsl from '../shaders/materials.wgsl?raw';
@@ -125,6 +126,8 @@ async function main() {
   let uvbuf: GPUBuffer;
   let ibuf: GPUBuffer;
   let instBuf: GPUBuffer;
+  // (round 128) the leaf-cluster atlas (leafatlas.ts)
+  let leafTex: GPUTexture | undefined;
   let draws: { first: number; count: number; base: number; inst0: number; ninst: number }[] = [];
   let stats = '';
 
@@ -253,7 +256,8 @@ async function main() {
       depthStencil: ds,
     });
     pipes = { plant, ground, leaf };
-    group = device.createBindGroup({ layout: plant.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: globals } }, { binding: 1, resource: { buffer: viewBuf } }, { binding: 3, resource: { buffer: instBuf } }] });
+    leafTex ??= leafAtlasTexture(device);
+    group = device.createBindGroup({ layout: plant.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: globals } }, { binding: 1, resource: { buffer: viewBuf } }, { binding: 3, resource: { buffer: instBuf } }, { binding: 66, resource: leafTex.createView() }] });
     groundGroup = device.createBindGroup({ layout: ground.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: globals } }, { binding: 1, resource: { buffer: viewBuf } }] });
     leafGroup = device.createBindGroup({ layout: leaf.getBindGroupLayout(0), entries: [{ binding: 1, resource: { buffer: viewBuf } }, { binding: 4, resource: { buffer: leafBuf } }] });
     const plants = scene.ranges.reduce((a, r) => a + r.count, 0);
