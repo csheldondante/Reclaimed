@@ -264,7 +264,7 @@ function endings(o: { town: Settlement; hold: Settlement; hills: RegionId; route
       settlement: 'abandoned',
     },
     fell: {
-      text: `You fell on the road. ${T} fell with you.`,
+      text: `You fell on the road. ${T} fell too.`,
       outcome: { atlas: [...burnt, ...(o.dead ? [ev({ kind: 'raise-dead', regions: [r, ...o.route.slice(-3)], magnitude: 0.3 })] : [])] },
       settlement: 'ruined',
     },

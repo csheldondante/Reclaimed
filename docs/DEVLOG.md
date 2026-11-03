@@ -16383,6 +16383,98 @@ noisy; the phone bench decides cost — Pages build of `merge128`, `?bench=1` an
   at its side (the town whole after 8 s; the bowl behind the editor panel). They show no breakage but don't show a
   collapse either — a scene that brings one down is JB8's.
 
+## 2026-11-02 — round 126 (`encounters`): every played card a scene in the world (BACKLOG EN1-EN13)
+
+The user, after playing the living-world run on places: "Lastly, the actual hero missions are still the race with a flag
+and not actually any of the in world things we discussed like chases or fights or scenes with conversations and combat."
+Branch `encounters` from places 5b24d9a.
+
+**Why it was a race with a flag (EN1).** scripts/encounters.mjs plays one card headless as the deployed page runs it (the
+atlas level, every system, 1x, 412x915): the run skipped (won) to the first edge that offers the card, the card committed
+from the map, its leg travelled, its area played by an autopilot through the real controls (`--mode win`) or by a hero
+that idles (`--mode lose`), sampling four times a second the hostiles within 20/40 cells, how many chase or swing, the
+hero's health, the goal flag. On places' code (hoverbike unless said):
+
+| card | what played | first foe within 20 cells | closest | how it ended |
+|---|---|---|---|---|
+| outriders (flee) | a flag 513 cells off; 3 outriders spawned 36 cells back, "lost" at 6 s | never | 28.6 | triumph in 18 s, at the flag |
+| outriders, idle | the riders walk up and hit | 9 s | 0.1 | the hero died at 46 s (the only loss: the run ends) |
+| ride → ambush | a flag ~500 cells off, 5 foes midway | never | 44 | success in 22 s, at the flag |
+| ride → ambush (lich) | the same, 110 cells | 10 s | 8.7 | success in 24 s, at the flag |
+| muster (gauntlet) | the hall 5.6 s off | 0.3 s | 6.2 | success in 6 s |
+| chase | the quarry "a few seconds ahead" at a walk | 0.3 s | 1.4 | failure at 78 s (no blow struck: the quarry walked at 3 cells/s) |
+| rescue | guards round the captives | 6.1 s | 3.2 | success in 8 s: freed without a blow |
+| scout (patrol) | a flag on the ridge, patrols on the way | 4.5 s | 0.9 | success in 16 s, at the flag |
+| warn (defend) | the horde marches on the town | 15 s | 0.1 | saved at 193 s — the one real scene |
+
+The causes, at the root:
+- **The objective was the flag.** runsit/area.ts won flee, ambush, deliver and scout on reaching a goal (8 cells of it);
+  the area was sized to 16 s of the hero's cruise (110-520 cells: ~500 for the bike), the foes on it optional.
+- **The units ignored SpawnOpts.speed.** AgentUnits read it only as slow or not (under 2.2 cells/s: a shambler); a
+  kind's speed is fixed on the GPU (raider 3.1, the dead 1.5). The outriders asked for at 0.75 × the bike's cruise
+  (24 cells/s) walked at 1.5-3.1, and runsit's `pursue()` hid it: past 70 cells it deleted them and re-spawned them 35
+  cells behind a slow hero, or dropped them past 140 from a fast one — the bike "lost" all three in 6 s. The chase's
+  quarry crawled the same way.
+- **The rescue's guards counted as gone** once they chased the hero 30 cells off the camp: freed without a fight.
+- **No way to lose but dying** (which ends the run), and the time limits (the hall's word, the chase's 120 s).
+
+**What each encounter is now (EN2-EN10).** One contract (contracts/encounter.ts), one spec per area (encounters/spec.ts),
+pure rules with tiers (encounters/rules.ts), one live play (encounters/live.ts); runsit's AreaPlay is the area round it
+(ARCHITECTURE "Encounters"). The card's text and counts are read off the same spec, and the card names the game it plays
+(`plays`).
+- flee (the outriders): riders on the hero's tail from the first second (8-14 cells back, at 0.85 of its cruise: a cruise
+  doesn't shake them, a boost or a jump does); lost when 60 cells clear of every one for 4 s, or all cut down; caught,
+  they swing; beaten at 30 % health (a failure that doesn't end the run), dead a disaster.
+- the word to a hall (muster): a flee to the hall's gate (12 s of cruise, 60-400 cells; at most half the window in practice), riders on the tail and more
+  across the way; the gate pointed at (a green banner, like the refuge's), the riders the play.
+- fight (the ambush; the scout's ridge, now "Break the patrol"): the foes 10-16 cells ahead come at the hero at once;
+  won when down or broken (60 % down: the rest run); past 100 s they held the road.
+- chase: the quarry 9-13 cells ahead, running for its escape at 0.75 of the hero's cruise; run down (any blow), or it's
+  away (14 s of its pace from its start, or 160 cells off the hero).
+- escort (rescue): the guards round the captives' pen 13 cells ahead; broken, the captives follow (☞ Follow me / ✋ Hold
+  here on the bar) and riders come for them; half of them at safety (45-80 cells off the road) wins.
+- scene (the trader): the raiders' chief speaks as the hero comes up (DialogTalk: src/dialog's DialogBox behind
+  encounters/talk.ts, for dialog2 to replace); fight (they turn hostile), they back down (before renown, or a lich:
+  a triumph), or a toll of 2 supplies (a cost; offered only when held).
+- defend (the town): the finale's rules as before, and a vanguard — a quarter of the horde, at least 3 — 16 cells ahead
+  of the hero at the start, coming at it; the rest from its road at `hordeIn` (up to a minute).
+- races: refused without an arena (none exists): no card is one; the roster's race mode is off.
+- **Units honour SpawnOpts.speed (EN3)**: asked for at 5 cells/s or more, a unit is a rider (kind 7: a beast with a rider
+  on it, its own voxels) at the pace asked (Agents.setKindSpeed). The GPU's speed is a kind's, so the riders in a window
+  share one pace (EN12); a spec asks one (specProblems refuses two). pursue() is deleted.
+
+Tests: test/unit/encounters.test.ts (13): every player template (outriders, ride, muster, warn, lead-out, rescue, scout,
+chase) and every area and detour of seed 1's run, for the bike and the lich, is a spec with enemies or a quarry within a
+screen, a way to lose, and no race; the cards dealt name the game they play, read off the spec played; the riders' pace
+and place; the rules for each kind (flee lost/beaten/ragged/cut down; haven; chase caught/away; fight morale and a dear
+win; escort freed/safe/lost; scene fight/yield/refused/bargain; race refused); the encounter's tier resolves the card.
+
+**Headless, on this branch** (scripts/encounters.mjs, 412x915, every system at 1x, the deployed build; GIFs of the
+engagement and shots at 4 s, engaged and the end in C:/Projects/shots88/encounters/, logs in its logs/):
+
+| card (plays) | hero, mode | first foe within 20 cells | engaged | how it ended |
+|---|---|---|---|---|
+| outriders (flee) | bike, win | 1.5-2 s (riders swinging at 1 cell) | 1.5 s | success: all cut down / lost them (6 s with the old 45-cell rule; now 60 cells for 4 s) |
+| outriders (flee) | bike, idle | 1.8 s | 1.8 s | failure: beaten in ~4 s (6 of 10 health), the run goes on |
+| outriders (flee) | lich, win | 1.8 s | 1.8 s | success: lost them at 24 s |
+| ride → ambush (fight) | bike, win | 0.1 s | 1 s | success: 3 down, the rest broke |
+| ride → ambush (fight) | bike, idle | 0.1 s | 0.6 s | failure at 100 s: they held the road |
+| ride → ambush (fight) | lich, win | 0.1 s | 1 s | triumph: all down |
+| chase | bike, win | 0.2 s | on it at 1.6 cells | triumph: all three run down in 7 s |
+| chase | bike, idle | 0.1 s | — | failure: they got away |
+| muster (flee to the gate) | bike, win | 0.2 s | 2.8 s | success: the gate in 27 s (was 5 s before the gate was moved to 12 s of cruise) |
+| ride → trader (scene) | bike, bargain (2 supplies given) | — (talked) | — | cost: "A fair toll. Off you go." |
+| ride → trader (scene) | bike, yield (no renown) | 3.7 s | 4.7 s | refused → fight: success, they broke (pass 2) |
+| ride → trader (scene) | bike, fight then idle | 4.7 s | 5 s | success: the raiders drowned in the crossing's river coming at the hero (killed "by the world") |
+| rescue (escort) | bike, idle | 0.1 s | 0.7 s | failure at 150 s: the guards held the captives |
+| rescue (escort) | bike, win | 0.1 s | 0.5 s | failure: the guards broken and the 4 freed at 30 s, but the autopilot can't lead walkers on a bike (it rode 800 cells off) |
+| rescue (escort) | lich, win | 0.1 s | 0.7 s | failure: the lich's slam took three captives with their guards (guards now stand 6-10 cells off the pen, the people within 1.5) |
+| warn (defend) | bike, win | 0.2 s (the vanguard) | 2.8 s | saved at 221 s |
+| warn (defend) | bike, idle | 0.2 s | 2.6 s | disaster: the hero fell at 45 s |
+
+What wasn't shown headless: an escort won (a player leads the people; the autopilot doesn't), a scene lost (the raiders
+drowned at that crossing), the lich in a chase or a scene. AgentUnits defines one more kind (the rider, 77 voxels); the
+default page spawns none, so driveprofile wasn't re-run.
 ## 2026-11-02 — dialog2: petitions as dialogs, a cast with quirks, plain words (BACKLOG DLG-1..DLG-12)
 
 The user, after trying the living-world run on places (DECISIONS, the newest entry): "The writing is
@@ -16489,3 +16581,17 @@ p99 136-325 / 60-142 (merge / places; one slow first load after the dev server's
 tilegate (one run, diffed against places'): desktop-z3.5 parked undrawn 1.60% at the same cells places' own run showed
 (0.42%: r233,217 r239,223 ...), the wide goldens 35-50% (the zoom floor's calibration), near 1.5%, fast pans scattered as
 on places.
+**Plain words (main's review of the shots; docs/WRITING.md from `dialog2`, merged in).** The banner read "Lose them: 3
+on your tail 1 cells back" — broken, and "cells" is the code's unit. Every encounter's title, goal, banner and ending
+is now a whole sentence ("3 riders right behind you. Lose them!", "You caught them all.", "The guards kept the
+captives."); the card's encounter line is the spec's goal, so the petition's Takes row reads the same. The end card's
+"What changed in the world" was the event's kind and its regions ("ruin: Bra Flats", "raise-dead: Bra Flats, Brogarn
+Flats…"): now runsit/words.ts writes each change as a sentence ("Muru burned.", "The dead rise in Bra Flats and the land
+round it."). "Bra Flats" is the region's whole generated name, not cut short. A dead hero's line and the play-again
+button are plain sentences; a fallen hero's ending reads "Muru fell too.". The banner sits below the streaming pill,
+the health bar and the narration (150 px down). Kesh Half-Ear's line wasn't cut: the shot was taken while it typed out;
+the check now shoots the talk 4 s in. Tests: the dialog2 lint (test/support/writing.ts) over every spec's words, each
+kind's banner, every way the rules end one and every kind of world change, and no "cells" in any of them.
+Merging `dialog2`: one conflict, living/horde.ts encounterOf — kept the spec-read version (its text in the spec now
+plain); the petitions' DialogBox and the encounters' DialogTalk are two boxes (LevelOpps `talk`, LevelSit
+`encounterTalk`).

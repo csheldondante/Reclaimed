@@ -58,6 +58,33 @@ Branch `encounters` (e0b39da, dialog2 merged in): flee, chase, fight, escort, a 
 | id | item | size | status |
 |---|---|---|---|
 | EN-Q1 | Raiders drowned crossing a river toward an idle hero, and the scene counted as won. Should enemy deaths the hero didn't cause count toward a win? (EN15) | S | asked |
+## Round 126 (2026-11-02, session 5, `encounters`) — every played card a scene in the world (DECISIONS round 126, newest)
+
+The user (verbatim, after playing the living-world run on places): "Lastly, the actual hero missions are still the race
+with a flag and not actually any of the in world things we discussed like chases or fights or scenes with conversations
+and combat." DEVLOG round 126 (`encounters`) has the diagnosis and the measurements.
+
+| id | item | size | status |
+|---|---|---|---|
+| EN1 | Why the cards were a race with a flag (headless, per card): the road plays (flee, ambush, deliver, scout) were won by reaching a goal flag 100-500 cells off; AgentUnits ignored SpawnOpts.speed (riders asked at 24 cells/s walked at 3.1, the dead at 1.5) and runsit's pursue() deleted and re-spawned them off the screen; the rescue's guards counted as gone once they chased the hero 30 cells off; the only way to lose was dying | S | done (`encounters`) |
+| EN2 | The encounter contract (contracts/encounter.ts EncounterSpec / EncounterResult), the one spec per area (encounters/spec.ts), the pure rules with tiers (encounters/rules.ts), the live play (encounters/live.ts); the card's `plays` read off the same spec | M | done (`encounters`) |
+| EN3 | Units honour SpawnOpts.speed: riders (kind 7, a beast with a rider) at the pace asked; pursue()'s delete/re-spawn removed | S | done (`encounters`) |
+| EN4 | Chase: the quarry running 9-13 cells ahead at 0.75 of the hero's cruise; run down, or it's away | S | done (`encounters`) |
+| EN5 | Flee: riders 8-14 cells on the hero's tail at 0.85 of its cruise; lose them (60 cells clear for 4 s) or cut them down; caught, they swing; beaten at 30 % health. The word to a hall is a flee to its gate | S | done (`encounters`) |
+| EN6 | Fight: the ambush and the ridge's patrol come at the hero at once; won when down or their morale breaks (60 %) | S | done (`encounters`) |
+| EN7 | Escort: break the guards, the captives freed as followers (☞ Follow me / ✋ Hold here), riders come for them; half safe wins | S | done (`encounters`; won only in Node — the headless autopilot can't lead walkers: EN14) |
+| EN8 | Scene: the trader's raiders' chief talks (DialogTalk over src/dialog behind encounters/talk.ts, for dialog2 to replace): fight, they back down (renown, or a lich), or a toll paid (supplies) | S | done (`encounters`) |
+| EN9 | Defend: the horde's vanguard at the gates from the start (a quarter, at least 3), the rest from its road as before | S | done (`encounters`) |
+| EN10 | Races only with an arena: the spec refuses one without; no card is a race; the roster's "race" mode off | S | done (`encounters`) |
+| EN11 | "Lose them in cover" (a flee broken by line of sight: woods, a ravine) — the flee is won on distance only today | M | open |
+| EN12 | Riders in one window share one pace (the GPU's speed is a kind's): per-unit speed on the agents (a speed scale in the unit's record) would let riders of different paces meet | M | open |
+| EN13 | The dead on foot (shamblers, reach 1.1) rarely land a blow on the hovering bike: a fight against them is lost only on its time limit | S | open |
+| EN14 | An escort won in a headless playthrough: the bike's autopilot rides off from the people it leads, the lich's slam took the captives with their guards (guards now 6-10 cells off the pen) — to see on the phone, and the autopilot to lead at a walk | S | open |
+| EN15 | The trader's crossroads is on a river: raiders who come at a hero on the water drown ("by the world") and the scene counts as won — whether deaths not by the hero should count is the user's call (today they do: they're down) | S | asked |
+| EN16 | The hall's gate is at most half the window (~200 cells) from where the hero comes in: a 5-25 s sprint for the bike. A longer gauntlet needs the hero warped short of the hall, not beside it | S | open |
+| EN17 | Riders are drawn as a crude beast-and-rider voxel model (units/agent-units.ts RIDER_MODEL); the creature generator's mounts later | S | open |
+| EN18 | Plain words in every encounter's banner, goal and ending and on the end card (docs/WRITING.md; main's review: "Lose them: 3 on your tail 1 cells back", "ruin: Bra Flats"); the dialog2 lint over them in Node; the banner below the top HUD | S | done (`encounters`) |
+
 ## Round 127 (2026-11-02, session 5, `dialog2`) — petitions as dialogs, a cast with quirks, plain words (DECISIONS, the newest entry: "The writing is incomprehensible")
 
 The user (verbatim): "Use simple plain language like in the worked examples and fix whatever in the prompt produced that
@@ -507,7 +534,6 @@ tests work and do quick smoke tests to find failures early." docs/TESTING.md.
 | RN4 | Faeria-style positioning: dispatched agents hold positions on the map that matter (locking down enemies, holding a pass) | L | deferred (simpler version first) |
 | FLO30 | Wind-responsive foliage lab (docs/design/FOLIAGE_WIND.md, the user's): static baselines, then 1A wind-shading ripple + 1B instanced vertex bending (grass) and 1A + 1C coarse lattice deformation (trees), reusing the GPU wind field; phone benchmark by matched static/animated pairs; stop at the first technique that clears the visual bar | M | open (low priority) |
 | PRE1 | Region presentation prototypes (docs/design/REGION_PRESENTATION.md): A birch forest canopy->understory (first), B canyon camera, C cliff climb, D throne-room interior with petitioners; presentation profiles, review overlay, repeatable A/B | L | wip (presentation) |
-| ART1 | Import the user's Unity asset packs (most of Synty's POLYGON range, other low-poly packs): unpack .unitypackage as data, convert FBX meshes, normalise to cell scale, simplify, voxelise or stylise, palette-map (Synty colours come from one atlas texture, easy per face), catalogue by tags. Raw packs stay outside the public repo; only converted game data is committed, after checking each pack's licence. Waiting on the user for the folder path | L | asked (path) |
 | FLO21 | Birch cost on the phone: the user's result good — done (flora 18c3bdb, unmerged) | S | done |
 
 ## Round 118 (2026-10-30, session 5, `places`) — found while reviewing the tracks

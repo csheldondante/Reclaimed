@@ -4,6 +4,9 @@
 // hall, the trader stands at the crossroads, and in the finale the horde really marches on the town, its people follow
 // the hero when told, the hold's levy comes in from its side of the map, and the dead fire the houses through the
 // world API's fire (the fire system spreads it on the timber and the fields; its heat brings them down).
+// (round 126, `encounters`) Every area but the town is an encounter (src/encounters: its spec, its rules, its live
+// play); this class is the area round it — where the hero comes in, the HUD, the town's finale. The old plays (a ride to
+// the area's edge or a hall with a goal flag, the outriders moved off the screen to keep up) are gone: DEVLOG round 126.
 // Everything goes through contracts: the world API (heights through the play world, fire.ignite), Units (spawn, order,
 // query), the followers (contracts/orders.ts), the settlements' places (where the town's middle and doors are). The
 // rules are finale.ts and state.ts (pure); this is their live half. Window coordinates (x cells, y world units).
@@ -21,28 +24,23 @@ import { FinaleRules, INSIDE, fireSite, FALL_AT, type FinaleStatus } from './fin
 import { totals, use } from './items';
 import type { UnitFollowers } from './followers';
 import type { AreaResult, FinaleSetup, SituationRun, V2 } from './state';
+import { LiveEncounter } from '../encounters/live';
+import { encounterSpec, specCtx } from '../encounters/spec';
+import type { Talk } from '../encounters/talk';
 
-/** seconds of the hero's cruise from where it comes in to the area's edge (the way on), and the cells that's kept
- *  within: 1-3 screens (the user: "areas of 1-3 screens"; round 120's first playthrough had the bike across 110 cells
- *  in 3 s — a ride, not an area) */
-export const EDGE_S = 16;
-export const EDGE_CELLS: [number, number] = [110, 520];
 /** cells off the hall or the town where the hero comes in (it rides in, it isn't dropped at the door) */
 export const ENTRY_R = 80;
-/** cells to a goal that count as there */
-export const THERE = 8;
 /**
  * The march: units walk their goal fields only near the goal (round 120's probe: a go 40 cells off arrived, 80 and 120
  * stood — the agents' fields are a few chunks round what they do), so a horde 150 cells out is walked in by a front a
  * stride ahead of it, moved on as it gets near: every MARCH_S, MARCH_STRIDE cells on toward the town.
  */
 const MARCH_S = 3;
+/** (round 126) the share of the horde at the town before the hero, at least VANGUARD_MIN, VANGUARD_AT cells ahead of it */
+const VANGUARD = 0.25;
+const VANGUARD_MIN = 3;
+const VANGUARD_AT = 16;
 const MARCH_STRIDE = 22;
-/** outriders farther than this from the hero are off the screen: they gain on a slow hero there, or lose a fast one */
-const PURSUIT_FAR = 70;
-/** outriders: cells a minute behind, at least, at most */
-const BEHIND_CELLS: [number, number, number] = [60, 22, 110];
-
 export interface TownPlaces {
   /** window coordinates */
   centre: V2;
@@ -64,6 +62,10 @@ export interface AreaDeps {
   places: (settlement: string) => TownPlaces | null;
   /** the town's own people standing now (its settlement's units, not hostile) */
   townsfolk: (settlement: string) => UnitId[];
+  /** (round 126) how a scene speaks, and what the hero holds to bargain with or pays */
+  talk: Talk;
+  held: () => { goods: Record<string, number>; renown: number };
+  pay: (goods: string, count: number) => void;
 }
 
 export type AreaEnd = { kind: 'area'; result: AreaResult } | { kind: 'finale'; end: SituationEnd; why: string; seconds: number };
@@ -78,25 +80,13 @@ export class AreaPlay {
   readonly result: Promise<AreaEnd>;
   private resolve!: (e: AreaEnd) => void;
   readonly log: string[] = [];
-  private pursuers: UnitId[] = [];
-  /** the outriders' pace and the hero's over the last few seconds (who's gaining) */
-  private pursuitPace = 4.2;
-  private pursuitAt: { t: number; at: V2 } | null = null;
+  /** (round 126) the area's encounter (every area but the town) */
+  enc: LiveEncounter | null = null;
+  private allies: UnitId[] = [];
+  private entry: V2;
   /** the horde's front: the one point it walks to, moved on toward the town as it gets there (MARCH) */
   private front: V2 | null = null;
   private frontT = 0;
-  private foes: UnitId[] = [];
-  private allies: UnitId[] = [];
-  private trader: UnitId | null = null;
-  /** (round 124) a chase's quarry and where it runs; a rescue's camp, its guards and captives; a scout's patrols */
-  private quarry: UnitId[] = [];
-  private escape: V2 | null = null;
-  private quarryT = 0;
-  private camp: V2 | null = null;
-  private captives: UnitId[] = [];
-  private freed = false;
-  private edgeAt: V2 | null = null;
-  private entry: V2;
   // the finale
   setup: FinaleSetup | null = null;
   rules: FinaleRules | null = null;
@@ -105,6 +95,8 @@ export class AreaPlay {
   private loggedAt = -1e9;
   private horde: UnitId[] = [];
   private hordeCame = false;
+  /** (round 126) of the horde, at the town already when the hero comes (vanguard) */
+  private vanguardN = 0;
   private reinforced = false;
   private burning = new Set<number>();
   refuge: V2 | null = null;
@@ -124,7 +116,8 @@ export class AreaPlay {
   ) {
     this.area = d.run.area();
     this.result = new Promise((res) => (this.resolve = res));
-    this.banner = div(d.ui, 'position:absolute;left:50%;transform:translateX(-50%);top:calc(max(8px, env(safe-area-inset-top)) + 4px);max-width:min(78vw,440px);padding:6px 12px;border-radius:9px;background:rgba(18,16,12,0.8);color:#f3e8cf;font:600 13px/1.3 system-ui,sans-serif;text-align:center;pointer-events:none;z-index:7;');
+    // (round 126: below the streaming pill, the health bar, the narration line and the tuning button — main's review: it sat over them)
+    this.banner = div(d.ui, 'position:absolute;left:50%;transform:translateX(-50%);top:calc(max(8px, env(safe-area-inset-top)) + 150px);max-width:min(78vw,440px);padding:6px 12px;border-radius:9px;background:rgba(18,16,12,0.8);color:#f3e8cf;font:600 13px/1.3 system-ui,sans-serif;text-align:center;pointer-events:none;z-index:7;');
     this.arrow = div(d.ui, 'position:absolute;width:0;height:0;border-left:13px solid transparent;border-right:13px solid transparent;border-bottom:26px solid #ffd35a;filter:drop-shadow(0 1px 3px rgba(0,0,0,.7));pointer-events:none;z-index:7;display:none;');
     this.big = div(d.ui, 'position:absolute;left:50%;top:30%;transform:translate(-50%,-50%);color:#fff3c4;font:800 34px system-ui,sans-serif;text-align:center;text-shadow:0 3px 12px rgba(0,0,0,.8);pointer-events:none;z-index:7;max-width:90vw;');
     // (orders and items: a column on the right, over the play controls' empty middle)
@@ -133,11 +126,16 @@ export class AreaPlay {
     // where the hero comes in: the area's own spot (the start, a road), or a ride off a hall or a town
     const here = d.toWin(d.run.map.areaAt(this.area));
     const p = this.area.play;
-    if ((p.kind === 'deliver' || p.kind === 'town' || p.kind === 'trader') && from) {
-      const f = d.toWin(from);
-      const [ux, uy] = unit([f[0] - here[0], f[1] - here[1]]);
-      const r = p.kind === 'town' ? ENTRY_R : Math.max(ENTRY_R, this.reach() * 0.8);
-      this.entry = this.inside([here[0] + ux * r, here[1] + uy * r], 16);
+    // (round 126: a hall's gate and a trader's camp are met within a few screens — the encounter's spec says how far)
+    const spec = p.kind === 'town' ? null : encounterSpec(this.area, specCtx(d.run, { id: this.heroId(), cruise: this.cruise() }));
+    const off = p.kind === 'town' ? ENTRY_R : p.kind === 'deliver' ? spec!.haven! : p.kind === 'trader' ? spec!.camp! : 0;
+    if (off > 0 && (from || p.kind !== 'town')) {
+      let back: V2 = [-this.wayOn()[0], -this.wayOn()[1]];
+      if (from) {
+        const f = d.toWin(from);
+        back = unit([f[0] - here[0], f[1] - here[1]]);
+      }
+      this.entry = this.inside([here[0] + back[0] * off, here[1] + back[1] * off], 16);
     } else this.entry = this.inside(here);
     this.entry = d.session.dryNear(this.entry);
     d.session.warped(this.entry);
@@ -148,19 +146,14 @@ export class AreaPlay {
   private get hero() {
     return this.d.session.hero;
   }
+  private heroId(): string {
+    return this.d.session.hero.role === 'lich' ? 'lich' : 'hoverbike';
+  }
   /** the hero's cruise (cells/s: play's profile, as the sandbox tunes it) */
   private cruise(): number {
-    const h = this.hero;
-    const c = library.get(h.role === 'lich' ? 'lich' : 'hoverbike');
-    return c ? c.profile(h.params).speed.cruise : 6;
-  }
-  /** the area's reach for this hero: its cruise for EDGE_S seconds, in EDGE_CELLS */
-  private reach(): number {
-    return Math.max(EDGE_CELLS[0], Math.min(EDGE_CELLS[1], this.cruise() * EDGE_S));
-  }
-  /** a point `r` cells from the entry along `dir` — past the window's edge if it must be: the window slides with the hero */
-  private out(dir: V2, r: number): V2 {
-    return [this.entry[0] + dir[0] * r, this.entry[1] + dir[1] * r];
+    const c = library.get(this.heroId());
+    if (!c) throw new Error(`runsit: no controller in the library for ${this.heroId()}`);
+    return c.profile(this.d.session.hero.params).speed.cruise;
   }
   private heroAt(): V2 {
     const p = this.hero.position();
@@ -199,104 +192,56 @@ export class AreaPlay {
     return out;
   }
 
-  /** the outriders, `behind` minutes back along the way the hero came (or behind it, at the start) */
-  private spawnPursuers(away: V2, extra = 0): void {
-    const run = this.d.run.pursuers;
-    // (round 124: an area's own threat brings outriders of its own, on top of any still hunting the hero)
-    const P = { count: (run?.count ?? 0) + extra, behind: run ? run.behind : 0.4 };
-    if (P.count <= 0) return;
-    const cells = Math.max(BEHIND_CELLS[1], Math.min(BEHIND_CELLS[2], BEHIND_CELLS[0] * Math.max(0, P.behind)));
-    const c = this.inside([this.entry[0] - away[0] * cells, this.entry[1] - away[1] * cells], 10);
-    const th = this.d.run.sit.threat;
-    // (they ride as fast as most of the hero's cruise: a chase, not a stroll — at least a running corpse's pace)
-    this.pursuitPace = Math.max(4.2, this.cruise() * 0.75);
-    this.pursuers.push(...this.spawnAround(c, P.count, 2, 6, th.role, th.faction, { hostile: true, sight: 70, speed: Math.max(4.2, this.cruise() * 0.75), health: 3, job: { kind: 'attack', target: 'hero' } }));
-    this.log.push(`${P.count} outriders ${cells.toFixed(0)} cells behind`);
-  }
-
   private setUp(here: V2): void {
     const p = this.area.play;
-    const way = this.wayOn();
-    const edge = (): V2 => this.out(way, this.reach());
-    const th = this.d.run.sit.threat;
-    const extra = this.area.threat ?? { foes: 0, pursuers: 0 };
-    switch (p.kind) {
-      case 'flee':
-        this.goal = edge();
-        this.goalName = 'the way on';
-        this.spawnPursuers(way, extra.pursuers);
-        break;
-      case 'chase': {
-        // (PL23: it starts close and already in pursuit: the quarry a few seconds ahead, running for its escape)
-        this.escape = this.inside(this.out(way, this.reach()), 10);
-        const start = this.out(way, 16);
-        this.quarry = this.spawnAround(start, p.quarry, 1, 4, p.role, p.faction, { hostile: true, sight: 0, speed: Math.max(3.2, this.cruise() * 0.65), health: 2, job: { kind: 'go', to: this.toward(start, this.escape, 22) } });
-        this.goal = start;
-        this.goalName = 'the quarry';
-        this.spawnPursuers(way, extra.pursuers);
-        break;
-      }
-      case 'rescue': {
-        this.camp = this.d.session.dryNear(this.inside(this.out(way, this.reach() * 0.55), 14));
-        this.edgeAt = edge();
-        this.goal = this.camp;
-        this.goalName = 'the captives';
-        this.foes = this.spawnAround(this.camp, p.guards, 3, 9, p.role, p.faction, { hostile: true, sight: 20, speed: 3.4, health: 3, job: { kind: 'guard', at: this.camp, radius: 10 } });
-        this.captives = this.spawnAround(this.camp, p.captives, 1, 3, 'captive', null, { hostile: false, sight: 0, speed: 3.2, health: 4, role: 'captive', colour: '#e8e0c8', job: { kind: 'guard', at: this.camp, radius: 1 } });
-        this.spawnPursuers(way, extra.pursuers);
-        break;
-      }
-      case 'scout': {
-        this.goal = edge();
-        this.goalName = 'the lookout';
-        const n = Math.max(1, p.patrols);
-        for (let i = 0; i < n; i++) {
-          const k = (i + 1) / (n + 1);
-          const at: V2 = [this.entry[0] + (this.goal[0] - this.entry[0]) * k, this.entry[1] + (this.goal[1] - this.entry[1]) * k];
-          this.foes.push(...this.spawnAround(at, 2, 4, 10, p.role, p.faction, { hostile: true, sight: 26, speed: 3.8, health: 3, job: { kind: 'guard', at, radius: 14 } }));
-        }
-        this.spawnPursuers(way, extra.pursuers);
-        break;
-      }
-      case 'ambush': {
-        this.goal = edge();
-        this.goalName = 'the way on';
-        const mid: V2 = [(this.entry[0] + this.goal[0]) / 2, (this.entry[1] + this.goal[1]) / 2];
-        this.foes = this.spawnAround(mid, p.foes + extra.foes, 6, 22, p.role, p.faction, { hostile: true, sight: 24, speed: 3.6, health: 3 });
-        this.spawnPursuers(way, extra.pursuers);
-        break;
-      }
-      case 'deliver': {
-        const pl = this.d.places(p.settlement);
-        this.goal = pl ? this.inside(pl.centre) : this.inside(here);
-        this.goalName = `the hall of ${this.area.name}`;
-        const [ux, uy] = unit([this.entry[0] - this.goal[0], this.entry[1] - this.goal[1]]);
-        // (round 124: riders between the hero and the hall)
-        if (extra.foes) {
-          const mid: V2 = [(this.entry[0] + this.goal[0]) / 2, (this.entry[1] + this.goal[1]) / 2];
-          this.foes = this.spawnAround(mid, extra.foes, 6, 18, th.role, th.faction, { hostile: true, sight: 24, speed: 3.6, health: 3 });
-        }
-        this.spawnPursuers([-ux, -uy], extra.pursuers);
-        break;
-      }
-      case 'trader': {
-        this.goal = this.inside(here);
-        this.goalName = 'the trader';
-        this.trader = this.d.units.spawn('trader', this.goal, null, { name: 'the trader', role: 'trader', hostile: false, health: 5, colour: '#e8c66a', job: { kind: 'guard', at: this.goal, radius: 1 } });
-        const [ux, uy] = unit([this.entry[0] - this.goal[0], this.entry[1] - this.goal[1]]);
-        // (round 124: raiders beset the trader: drive them off, and then it trades)
-        if (extra.foes) this.foes = this.spawnAround(this.goal, extra.foes, 5, 12, th.role, th.faction, { hostile: true, sight: 22, speed: 3.6, health: 3, job: { kind: 'guard', at: this.goal, radius: 12 } });
-        this.spawnPursuers([-ux, -uy], extra.pursuers);
-        break;
-      }
-      case 'town':
-        this.setup = this.d.run.finaleSetup();
-        this.rules = new FinaleRules(this.setup);
-        this.goalName = this.area.name;
-        this.goal = this.inside(here);
-        break;
+    if (p.kind === 'town') {
+      this.setup = this.d.run.finaleSetup();
+      this.rules = new FinaleRules(this.setup);
+      this.goalName = this.area.name;
+      this.goal = this.inside(here);
+      this.log.push(`${this.area.id} town: in at ${this.entry.map((v) => v.toFixed(0))}`);
+      return;
     }
-    this.log.push(`${this.area.id} ${p.kind}: in at ${this.entry.map((v) => v.toFixed(0))}, goal ${this.goal?.map((v) => v.toFixed(0))}`);
+    // (round 126) the encounter: its bands in round the hero now; a hall's gate or a trader's camp where the area has
+    // them, the way on otherwise
+    const spec = encounterSpec(this.area, specCtx(this.d.run, { id: this.heroId(), cruise: this.cruise() }));
+    let haven: V2 | undefined;
+    let camp: V2 | undefined;
+    let way = this.wayOn();
+    if (p.kind === 'deliver') {
+      const pl = this.d.places(p.settlement);
+      haven = this.d.session.dryNear(pl ? this.inside(pl.centre) : this.inside(here));
+      way = unit([haven[0] - this.entry[0], haven[1] - this.entry[1]]);
+    } else if (p.kind === 'trader') {
+      camp = this.d.session.dryNear(this.inside(here));
+      way = unit([camp[0] - this.entry[0], camp[1] - this.entry[1]]);
+    }
+    const S = this.d.session;
+    const cruise = this.cruise();
+    const id = this.heroId();
+    this.enc = new LiveEncounter(
+      spec,
+      {
+        units: this.d.units,
+        hero: () => ({ position: () => S.hero.position(), health: S.hero.health, maxHealth: S.hero.maxHealth, alive: S.hero.alive, cruise, id }),
+        followers: this.d.followers,
+        talk: this.d.talk,
+        place: (q) => S.dryNear(this.inside(q, 8)),
+        held: this.d.held,
+        pay: this.d.pay,
+        say: (x) => this.say(x),
+      },
+      { entry: this.entry, way, haven, camp },
+    );
+    this.goalName = spec.title;
+    this.goal = this.enc.pointAt();
+    const enc = this.enc;
+    void enc.result.then((r) => {
+      this.log.push(...enc.log.splice(0));
+      this.finish({ seconds: r.seconds, won: r.won, heroDied: r.heroDied, pursuers: r.pursuers, tier: r.tier, why: r.why });
+    });
+    this.log.push(`${this.area.id} ${p.kind} as ${spec.kind}: in at ${this.entry.map((v) => v.toFixed(0))}`, ...enc.log.splice(0));
+    this.renderBar(true);
   }
 
   /** `d` cells from a toward b (b itself when nearer) */
@@ -328,37 +273,6 @@ export class AreaPlay {
     this.d.units.order(dead.filter((u) => u.state !== 'chase' && u.state !== 'swing').map((u) => u.id), { kind: 'go', to: next });
   }
 
-  /**
-   * The outriders off the screen: a hero slower than them over the last seconds is caught up with (they come in again
-   * PURSUIT_FAR / 2 behind it), a faster one leaves them (they're lost past twice PURSUIT_FAR). The user (round 120):
-   * "time pressure like pursuers"; (PL23) "I think fleeing is better than chasing".
-   */
-  private pursue(me: V2): void {
-    if (!this.pursuitAt) this.pursuitAt = { t: this.t, at: me };
-    const dt = this.t - this.pursuitAt.t;
-    if (dt < 3) return;
-    const pace = Math.hypot(me[0] - this.pursuitAt.at[0], me[1] - this.pursuitAt.at[1]) / dt;
-    const back: V2 = pace > 0.5 ? [(this.pursuitAt.at[0] - me[0]) / (pace * dt), (this.pursuitAt.at[1] - me[1]) / (pace * dt)] : [0, 0];
-    this.pursuitAt = { t: this.t, at: me };
-    const th = this.d.run.sit.threat;
-    this.pursuers = this.pursuers.flatMap((id) => {
-      const u = this.d.units.get(id);
-      if (!u?.alive) return [id];
-      const d = Math.hypot(u.at[0] - me[0], u.at[1] - me[1]);
-      if (d < PURSUIT_FAR) return [id];
-      if (pace >= this.pursuitPace) {
-        if (d < PURSUIT_FAR * 2) return [id];
-        this.d.units.remove(id);
-        this.log.push(`an outrider lost at t ${this.t.toFixed(0)}`);
-        return [];
-      }
-      this.d.units.remove(id);
-      const r = PURSUIT_FAR / 2;
-      const at = this.d.session.dryNear([me[0] + back[0] * r + (Math.random() - 0.5) * 8, me[1] + back[1] * r + (Math.random() - 0.5) * 8]);
-      return [this.d.units.spawn(th.role, at, th.faction, { hostile: true, sight: 70, speed: this.pursuitPace, health: u.health, job: { kind: 'attack', target: 'hero' } })];
-    });
-  }
-
   /** the finale's town in place (its plan made: the places known) */
   private townReady(): boolean {
     if (this.town) return true;
@@ -382,9 +296,27 @@ export class AreaPlay {
     // a town the dead reached first is burning already
     for (let i = 0; i < setup.burning; i++) this.setFire(this.town.centre);
     if (setup.hordeIn <= 0) this.hordeComes(true);
+    else this.vanguard();
     this.log.push(`town ${sid}: centre ${c.map((v) => v.toFixed(0))} r ${this.town.radius}, ${this.town.doors.length} doors, ${this.led} people out, refuge ${this.refuge.map((v) => v.toFixed(0))}; horde in ${setup.hordeIn.toFixed(0)} s, ${setup.burning} burning`);
     this.renderBar(true);
     return true;
+  }
+
+  /**
+   * (round 126) The horde's vanguard: a share of it is at the town already, between the hero and the walls, and comes at
+   * the hero — the brief: "every encounter must have its enemies visible near the hero within seconds". The rest comes
+   * from its road at `hordeIn` (up to a minute: HORDE_CAP_S) as before.
+   */
+  private vanguard(): void {
+    const s = this.setup!;
+    const n = Math.min(s.horde, Math.max(VANGUARD_MIN, Math.ceil(s.horde * VANGUARD)));
+    const me = this.heroAt();
+    const [ux, uy] = unit([this.town!.centre[0] - me[0], this.town!.centre[1] - me[1]]);
+    const at: V2 = [me[0] + ux * VANGUARD_AT, me[1] + uy * VANGUARD_AT];
+    this.horde.push(...this.spawnAround(at, n, 2, 7, s.role, s.faction, { hostile: true, sight: 40, speed: 3.0, health: 3, job: { kind: 'attack', target: 'hero' } }));
+    this.vanguardN = n;
+    this.say('The dead are on the road to the gates!');
+    this.log.push(`vanguard of ${n} at ${at.map((v) => v.toFixed(0))}, ${VANGUARD_AT} cells from the hero (t ${this.t.toFixed(0)} s)`);
   }
 
   /** the horde arrives: from its road, out past the town's edge — or (late) at its edge, the first houses burning */
@@ -396,7 +328,7 @@ export class AreaPlay {
     const at: V2 = this.inside([c[0] + s.from[0] * r, c[1] + s.from[1] * r], 12);
     this.front = this.toward(at, c, MARCH_STRIDE);
     this.frontT = 0;
-    this.horde = this.spawnAround(at, s.horde, 2, 14, s.role, s.faction, { hostile: true, sight: 14, speed: 3.0, health: 3, job: { kind: 'go', to: this.front } });
+    this.horde.push(...this.spawnAround(at, Math.max(1, s.horde - this.vanguardN), 2, 14, s.role, s.faction, { hostile: true, sight: 14, speed: 3.0, health: 3, job: { kind: 'go', to: this.front } }));
     this.hordeCame = true;
     this.say(late ? 'The dead are in the streets!' : 'The dead are at the gates!');
     this.log.push(`horde of ${s.horde} at ${at.map((v) => v.toFixed(0))} (t ${this.t.toFixed(0)} s)`);
@@ -473,7 +405,9 @@ export class AreaPlay {
   parts(): Part[] {
     const out: Part[] = [];
     const w = this.d.session.world;
-    if (this.goal && this.area.play.kind !== 'town' && !this.done) out.push({ voxels: GOAL, at: [this.goal[0], this.goal[1], w.top(this.goal[0], this.goal[1])], q: Q0, size: 0.5 });
+    // (round 126: no goal flag — a hall's gate, an escort's safety are marked as the refuge is: where to go, not the play)
+    const mark = this.enc && !this.done ? (this.enc.haven ?? this.enc.safety) : null;
+    if (mark) out.push({ voxels: REFUGE, at: [mark[0], mark[1], w.top(mark[0], mark[1])], q: Q0, size: 0.5 });
     if (this.refuge) out.push({ voxels: REFUGE, at: [this.refuge[0], this.refuge[1], w.top(this.refuge[0], this.refuge[1])], q: Q0, size: 0.5 });
     return out;
   }
@@ -482,15 +416,12 @@ export class AreaPlay {
   shift(dx: number, dy: number): void {
     const mv = (p: V2 | null): V2 | null => (p ? [p[0] + dx, p[1] + dy] : null);
     this.goal = mv(this.goal);
-    this.escape = mv(this.escape);
-    this.camp = mv(this.camp);
-    this.edgeAt = mv(this.edgeAt);
+    this.enc?.shift(dx, dy);
     this.refuge = mv(this.refuge);
     this.entry = mv(this.entry)!;
     if (this.town) this.town = { ...this.town, centre: mv(this.town.centre)!, doors: this.town.doors.map((p) => mv(p)!) };
     if (this.lure) this.lure.at = mv(this.lure.at)!;
     this.front = mv(this.front);
-    if (this.pursuitAt) this.pursuitAt.at = mv(this.pursuitAt.at)!;
     this.d.followers.shift(dx, dy);
   }
 
@@ -504,100 +435,13 @@ export class AreaPlay {
     const me = this.heroAt();
     const p = this.area.play;
     if (p.kind === 'town') return this.updateTown(dt, me);
-    if (this.done) return;
-    // the outriders keep after the hero
-    if (this.pursuers.length) this.pursue(me);
-    if (!this.hero.alive) return this.finish({ seconds: this.t, won: false, heroDied: true, pursuers: this.alive(this.pursuers).length });
-    const at = this.goal!;
-    const dist = Math.hypot(at[0] - me[0], at[1] - me[1]);
-    let won = false;
-    let line = '';
-    const chasing = this.alive(this.pursuers).length;
-    switch (p.kind) {
-      case 'flee':
-        line = `⇢ Get away: ride for the way on · ${chasing} on your heels · ${dist.toFixed(0)} cells`;
-        won = dist < THERE;
-        break;
-      case 'ambush': {
-        const left = this.alive(this.foes).length;
-        line = `⚔ Break through: ${left} of ${p.foes} in the road · ${dist.toFixed(0)} cells to the way on`;
-        won = dist < THERE || left === 0;
-        break;
-      }
-      case 'deliver': {
-        const left = Math.max(0, p.limit - this.t);
-        line = `✉ Carry the word to ${this.goalName} · ${dist.toFixed(0)} cells · ⏱ ${clock(left)}`;
-        won = dist < THERE;
-        if (!won && left <= 0) return this.finish({ seconds: this.t, won: false, pursuers: chasing });
-        break;
-      }
-      case 'trader': {
-        const left = this.alive(this.foes).length;
-        line = left ? `⚖ Drive off the raiders round the trader: ${left} left · ${dist.toFixed(0)} cells` : `⚖ Reach the trader · ${dist.toFixed(0)} cells`;
-        won = dist < THERE && left === 0;
-        break;
-      }
-      case 'chase': {
-        const q = this.alive(this.quarry);
-        this.quarryT += dt;
-        // (units walk their goal only near it: the quarry's goal moved on a stride at a time, toward the escape)
-        if (this.quarryT > 1.5) {
-          this.quarryT = 0;
-          for (const id of q) {
-            const u = this.d.units.get(id)!;
-            this.d.units.order([id], { kind: 'go', to: this.toward([u.at[0], u.at[1]], this.escape!, 22) });
-          }
-        }
-        let near: V2 | null = null;
-        let nd = Infinity;
-        let away = Infinity;
-        for (const id of q) {
-          const u = this.d.units.get(id)!;
-          const dd = Math.hypot(u.at[0] - me[0], u.at[1] - me[1]);
-          if (dd < nd) (nd = dd), (near = [u.at[0], u.at[1]]);
-          away = Math.min(away, Math.hypot(u.at[0] - this.escape![0], u.at[1] - this.escape![1]));
-        }
-        if (near) this.goal = near;
-        line = `⇉ Run them down: ${q.length} of ${p.quarry} running · ${Number.isFinite(nd) ? nd.toFixed(0) : '-'} cells · ${Number.isFinite(away) ? away.toFixed(0) : '-'} cells from getting away`;
-        won = q.length === 0;
-        if (!won && (away < THERE || this.t > 120)) return this.finish({ seconds: this.t, won: false, pursuers: chasing });
-        break;
-      }
-      case 'rescue': {
-        const left = this.alive(this.foes).filter((id) => {
-          const u = this.d.units.get(id)!;
-          return Math.hypot(u.at[0] - this.camp![0], u.at[1] - this.camp![1]) < 30;
-        }).length;
-        if (!this.freed && left === 0 && Math.hypot(this.camp![0] - me[0], this.camp![1] - me[1]) < THERE) {
-          this.freed = true;
-          const ids = this.alive(this.captives);
-          this.d.followers.recruit(ids);
-          this.d.followers.order({ kind: 'follow', distance: 3 });
-          this.goal = this.edgeAt;
-          this.say(`${ids.length} freed: lead them out!`);
-          this.log.push(`rescue: ${ids.length} freed at t ${this.t.toFixed(0)}`);
-        }
-        const withMe = this.d.followers.members().length;
-        line = this.freed ? `⛓ Lead them to the way on: ${withMe} with you · ${dist.toFixed(0)} cells` : left ? `⛓ Cut down the guards: ${left} round the captives · ${dist.toFixed(0)} cells` : `⛓ Reach the captives · ${dist.toFixed(0)} cells`;
-        won = this.freed && dist < THERE;
-        break;
-      }
-      case 'scout': {
-        line = `👁 Reach the lookout past the patrols · ${this.alive(this.foes).length} out · ${dist.toFixed(0)} cells`;
-        won = dist < THERE;
-        break;
-      }
-    }
-    this.text(line);
-    this.point(at, me);
-    if (won) {
-      // (outriders still close behind leave with the hero; ones far back have lost it)
-      const still = this.alive(this.pursuers).filter((id) => {
-        const u = this.d.units.get(id)!;
-        return Math.hypot(u.at[0] - me[0], u.at[1] - me[1]) < 70;
-      }).length;
-      this.finish({ seconds: this.t, won: true, pursuers: still });
-    }
+    if (this.done || !this.enc) return;
+    this.enc.update(dt);
+    if (this.enc.done) return;
+    this.text(this.enc.line());
+    this.goal = this.enc.pointAt();
+    this.point(this.goal, me);
+    this.renderBar(false);
   }
 
   private updateTown(dt: number, me: V2): void {
@@ -611,7 +455,6 @@ export class AreaPlay {
     const T = this.town!;
     if (!this.hordeCame && this.t >= s.hordeIn) this.hordeComes(false);
     this.march(dt);
-    if (this.pursuers.length && this.hero.alive) this.pursue(me);
     if (s.reinforce && !this.reinforced && this.t >= s.reinforce.in) {
       this.reinforced = true;
       const run = this.d.run;
@@ -706,7 +549,7 @@ export class AreaPlay {
   private finish(r: AreaResult): void {
     if (this.done) return;
     this.done = true;
-    this.big.textContent = r.heroDied ? 'DOWN' : r.won ? '' : 'TOO LATE';
+    this.big.textContent = r.heroDied ? 'DOWN' : r.won ? (r.tier === 'triumph' ? 'TRIUMPH' : '') : (r.why ?? 'Lost.').replace(/\.$/, '').toUpperCase();
     this.arrow.style.display = 'none';
     this.log.push(`${this.area.id} done: ${JSON.stringify(r)}`);
     this.resolve({ kind: 'area', result: r });
@@ -729,7 +572,8 @@ export class AreaPlay {
     const run = this.d.run;
     const usable = totals(run.loadout, run.item).usable.filter((u) => u.uses > 0);
     const town = this.area.play.kind === 'town' && !!this.town;
-    const key = `${town}|${usable.map((u) => `${u.id}:${u.uses}`).join(',')}`;
+    const orders = this.enc && !this.enc.done ? this.enc.orders() : [];
+    const key = `${town}|${orders.length}|${usable.map((u) => `${u.id}:${u.uses}`).join(',')}`;
     if (!force && key === this.barKey) return;
     this.barKey = key;
     this.bar.innerHTML = '';
@@ -748,6 +592,7 @@ export class AreaPlay {
       btn('☞ Follow me', () => void this.orderFollow());
       btn('✋ Hold here', () => this.orderHold());
     }
+    for (const o of orders) btn(o.label, o.f);
     for (const u of usable) btn(`${u.kind === 'lure' ? '🔔' : '📯'} ${u.name} (${u.uses})`, () => void this.useItem(u.id));
   }
 
@@ -787,8 +632,8 @@ export class AreaPlay {
     this.arrow.remove();
     this.big.remove();
     this.bar.remove();
-    for (const id of [...this.pursuers, ...this.foes, ...this.allies, ...this.horde, ...this.quarry, ...this.captives]) this.d.units.remove(id);
-    if (this.trader !== null) this.d.units.remove(this.trader);
+    this.enc?.dispose();
+    for (const id of [...this.allies, ...this.horde]) this.d.units.remove(id);
     this.d.followers.dismiss(this.d.followers.members().map((m) => m.unit.id));
   }
 }
@@ -801,7 +646,6 @@ function flag(cloth: number, pole = MAT.Wood, h = 8): Voxels {
   for (let f = 0; f < 4; f++) for (let u = h - 3; u < h; u++) v.push({ at: [f * 0.5 + 0.5, 0, u * 0.5 + 0.25], mat: cloth });
   return v;
 }
-const GOAL = flag(MAT.Lava, MAT.Wood, 10);
 const REFUGE = flag(MAT.Leaves, MAT.Wood, 10);
 
 function div(parent: HTMLElement, css: string): HTMLDivElement {
@@ -822,8 +666,4 @@ function delta(a: V2, b: V2, world: { w: number; h: number }): V2 {
   dx -= Math.round(dx / world.w) * world.w;
   dy -= Math.round(dy / world.h) * world.h;
   return [dx, dy];
-}
-
-function clock(s: number): string {
-  return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 }

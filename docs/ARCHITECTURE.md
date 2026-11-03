@@ -2982,6 +2982,43 @@ engine, one dealer, one oppcheck for the run and the inspector:
 - Tests: test/unit/run-world.test.ts, opps.test.ts (over the engine), src/settle/plan.test.ts (a placed tower);
   headless: scripts/opps.mjs, scripts/m124world.mjs (`--case tower|weir|lead`), scripts/inspector.mjs.
 
+## Encounters: what a played card is on the screen (round 126, `encounters`; BACKLOG EN1-EN12)
+
+The user (round 126, after playing the living-world run): "the actual hero missions are still the race with a flag and
+not actually any of the in world things we discussed like chases or fights or scenes with conversations and combat."
+
+- **The contract** (`src/api/contracts/encounter.ts`). An `EncounterSpec` is data: its kind (`chase`, `flee`, `fight`,
+  `defend`, `escort`, `scene`; `race` only with an `arena`), bands of units (`part`: pursuers, foes, quarry, guards,
+  people; `from`: behind, ahead, around, the camp; `range`: cells off the hero, a screen or less; `pace`: riders as a
+  share of the hero's cruise), how it is lost without the hero dying (`beaten`: a share of its health; `limit` seconds;
+  a quarry's `escape`; an escort's `safeShare`), a flee's `clear` or `haven`, a fight's `morale`, a scene's speaker and
+  answers (fight / yield with what they back down before / bargain with its cost). An `EncounterResult` carries the
+  Tier back. The opportunity's card `Encounter` gains `plays` (the spec's kind): what it's called and what it is.
+- **One place decides it** (`src/encounters/spec.ts` `encounterSpec(area, ctx)`): every situation area's play maps to a
+  spec — flee → flee; ambush → fight; deliver → flee to the hall's gate (`haven`); trader → scene; chase → chase;
+  rescue → escort; scout → fight; town → defend/evacuate (the finale). The card's text and counts are read off the same
+  spec (`living/horde.ts encounterOf`), so the card can't promise what isn't played. `specProblems` (a Node test over
+  every player template, both heroes) refuses: no enemies, the nearest band past a screen, no way to lose, a race
+  without an arena, riders at two paces, a scene without a fight in it. oppcheck refuses a card with no `plays` or a race.
+- **The rules** (`src/encounters/rules.ts` EncounterRules) are pure (Node tests): won, lost, and the tier between —
+  disaster (the hero died), failure (beaten, past the limit, the quarry away, the people lost, a yield refused and the
+  fight lost), cost (a dear win: under 40 % health, people lost, a toll paid), success, triumph (75 % health or more and
+  every foe down, every quarry caught, everyone safe, or they backed down). The town keeps runsit/finale.ts.
+- **The live play** (`src/encounters/live.ts` LiveEncounter) spawns the bands round the hero through Units, drives them
+  (the quarry told on toward its escape a stride at a time, the people freed and recruited as Followers, the broken sent
+  running), observes, judges, and resolves its result. It knows Units, Followers, a Talk and the hero's position, health
+  and cruise; nothing of the run or the cards. `aim()` is a check's autopilot hook only.
+- **Talk** (`src/encounters/talk.ts`): `ask(speaker, line, answers) → index`, `tell(speaker, line)`; today `DialogTalk`
+  over src/dialog's DialogBox (the Dialog contract), so the dialog2 branch's system can replace it at this seam.
+- **AreaPlay** (`src/runsit/area.ts`) is the area round the encounter: where the hero comes in (a hall's gate or a
+  trader's camp a spec's distance off), the HUD (banner, arrow, the order bar), the town's finale (now with a vanguard
+  at the gates from the start). LevelSit gives it the Talk and the purse (`held`/`pay`: LevelOpps reads the holdings).
+- **Units honour SpawnOpts.speed** (`src/units/agent-units.ts`): a unit asked for at RIDER_MIN (5 cells/s) or more is a
+  rider — kind 7, a beast with a rider on it (its own voxel model), at the pace asked (`Agents.setKindSpeed`). The GPU's
+  speed is a kind's, so the riders in the window share one pace (the last asked; a spec asks one); a rider is a hostile
+  kind, so a peaceful one throws, and a quarry is a hostile rider with sight 0. The run's old pursue() (outriders deleted
+  and re-spawned off the screen to fake their pace) is gone.
+
 ## Tests in Node (round 117, `testkit`; docs/TESTING.md)
 
 - `npm test` runs two vitest projects, unit (test/unit/**, src/**/*.test.ts) then gpu (test/gpu/**). Neither uses a

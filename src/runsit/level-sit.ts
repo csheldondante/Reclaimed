@@ -26,11 +26,13 @@ import { runGraph } from '../runplan/graph';
 import { Journey, type JourneyState } from '../runplan/travel';
 import { ROW_H } from '../world/lattice';
 import { AreaPlay, type AreaEnd, type TownPlaces } from './area';
+import { DialogTalk, type Talk } from '../encounters/talk';
 import { situationMap } from './fill';
 import { finishSituation } from './finish';
 import { UnitFollowers } from './followers';
 import { situationFor } from './gm';
 import { carried, displaced, totals } from './items';
+import { changeLines } from './words';
 import { PLAY_TITLE, SituationRun, along, delta, LEVY_PACE, type V2 } from './state';
 
 /** what the run needs of the settlements system (its public API: settlements.ts). (merge124) A settlement's condition
@@ -91,6 +93,8 @@ export class LevelSit {
   runs = 0;
   readonly log: string[] = [];
   protected followers: UnitFollowers;
+  /** (round 126) how the encounters' scenes speak (src/dialog's box, behind encounters/talk.ts) */
+  protected encounterTalk: Talk;
   /** (the scripts hide it for a look at the town) */
   readonly card: HTMLDivElement;
   protected warping = false;
@@ -103,6 +107,7 @@ export class LevelSit {
     this.graph = runGraph(d.terrain.atlasGraph(), { names: { regions: this.wiki.regions, settlements: this.wiki.snapshot.settlements }, facts });
     this.world = d.world ?? MemoryWorldState.restore(structuredClone(this.wiki.snapshot));
     this.followers = new UnitFollowers(d.units, 'hero');
+    this.encounterTalk = new DialogTalk(d.ui);
     this.card = document.createElement('div');
     this.card.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);top:8px;width:min(92vw,440px);max-height:62vh;overflow:auto;z-index:60;background:rgba(18,16,12,0.93);color:#efe6d2;font:13px/1.4 system-ui,sans-serif;padding:8px 10px;border-radius:9px;border:1px solid #5a4a30;pointer-events:auto;';
     this.card.addEventListener('pointerdown', (e) => e.stopPropagation());
@@ -152,6 +157,15 @@ export class LevelSit {
     return finishSituation(this.world, this.run, this.d.hero);
   }
 
+  /** (round 126) what the hero has to bargain with in a scene (a situation run alone holds nothing: the opportunities
+   *  run's holdings do) */
+  protected held(): { goods: Record<string, number>; renown: number } {
+    return { goods: {}, renown: 0 };
+  }
+  protected pay(goods: string, count: number): void {
+    throw new Error(`runsit: a toll of ${count} ${goods} with nothing held`);
+  }
+
   get sit(): Situation {
     return this.run.sit;
   }
@@ -181,7 +195,7 @@ export class LevelSit {
     const S = this.d.session;
     S.respawn();
     S.paused = false;
-    const a = new AreaPlay({ ui: this.d.ui, api: this.d.api, units: this.d.units, session: S, run: this.run, followers: this.followers, toWin: this.d.toWin, bounds: this.d.bounds, places: this.places, townsfolk: this.townsfolk }, this.cameFrom);
+    const a = new AreaPlay({ ui: this.d.ui, api: this.d.api, units: this.d.units, session: S, run: this.run, followers: this.followers, toWin: this.d.toWin, bounds: this.d.bounds, places: this.places, townsfolk: this.townsfolk, talk: this.encounterTalk, held: () => this.held(), pay: (g, n) => this.pay(g, n) }, this.cameFrom);
     this.area = a;
     for (const b of a.area.say ?? []) this.d.say(b.line, b.seconds ?? 4);
     this.render();
@@ -399,23 +413,21 @@ export class LevelSit {
     const R = this.record!;
     const run = this.run;
     const end = run.end!;
-    const title = { saved: `${run.sit.target.name} stands`, burned: `${run.sit.target.name} burned`, evacuated: `${run.sit.target.name}'s people live`, fell: 'The hero fell' }[end];
+    const title = { saved: `${run.sit.target.name} stands`, burned: `${run.sit.target.name} burned`, evacuated: `${run.sit.target.name}'s people live`, fell: 'You fell' }[end];
     h('div', title, `font:600 16px Georgia,serif;color:${end === 'saved' || end === 'evacuated' ? '#9be07a' : '#ff8a70'}`);
     for (const d of R.deeds) h('div', `• ${d}`, 'font-size:13px');
     h('div', 'What changed in the world', 'margin-top:8px;font:600 13px Georgia,serif');
-    const name = (id: number) => this.graph.node(id)?.name ?? `region ${id}`;
-    const seen = new Set<string>();
-    for (const e of R.events) {
-      const f = e.detail?.faction ? ` (${this.world.faction(String(e.detail.faction))?.name ?? e.detail.faction})` : '';
-      const where = e.kind === 'faction-attitude' ? 'toward you' : e.regions.length > 4 ? `${name(e.regions[0])} and ${e.regions.length - 1} regions round it` : e.regions.map(name).join(', ');
-      const line = `${e.kind}${f}: ${where}${e.kind === 'mark' && e.detail?.name ? ` — ${e.detail.name}` : ''}`;
-      if (seen.has(line)) continue;
-      seen.add(line);
-      h('div', `· ${line}`, muted);
-    }
+    // (round 126: plain sentences, docs/WRITING.md — runsit/words.ts)
+    const towns = this.world.snapshot().settlements;
+    const lines = changeLines(R.events, {
+      region: (id) => this.graph.node(id)?.name ?? 'a far place',
+      faction: (id) => this.world.faction(id)?.name ?? 'A faction',
+      settlement: (id) => towns.find((s) => s.id === id)?.name ?? 'A town',
+    });
+    for (const l of lines) h('div', `· ${l}`, muted);
     const c = this.world.character(this.d.hero);
-    if (c && !c.alive) h('div', 'The hero is dead: the next run needs another (the world remembers).', 'margin-top:6px;font-size:12px');
-    else btn('▶ Another run — the world as you left it', () => this.again(), true);
+    if (c && !c.alive) h('div', 'Your hero is dead. Pick another hero for the next run. The world remembers what happened.', 'margin-top:6px;font-size:12px');
+    else btn('▶ Play again. The world stays as you left it.', () => this.again(), true);
   }
 
   protected drawOnMap(ctx: CanvasRenderingContext2D, px: (cx: number, cy: number) => [number, number]): void {
@@ -492,6 +504,7 @@ export class LevelSit {
 
   dispose(): void {
     this.area?.dispose();
+    this.encounterTalk.dispose();
     this.card.remove();
     this.d.map.overlay = undefined;
     this.d.map.playerAt = undefined;

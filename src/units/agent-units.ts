@@ -36,7 +36,36 @@ export const G = { strike: 0, stand: 1, goal0: 2, foes: 5, hunt: 6, wander: 7 } 
  *  bound to their raiser until the game orders them (the play hero's: follow it) */
 export const RAISED_GROUP = G.stand;
 /** agents' kinds (0 worker, 1 raider, 2 ogre are the defaults the others use) */
-const K = { worker: 0, guard: 3, character: 4, raider: 5, shambler: 6 } as const;
+const K = { worker: 0, guard: 3, character: 4, raider: 5, shambler: 6, rider: 7 } as const;
+/**
+ * (round 126, encounters) SpawnOpts.speed was read only as slow or not (a shambler under 2.2 cells/s, else the kind's
+ * walk): riders asked for at a bike's pace walked at 3.1 cells/s, and the run hid it by moving them off the screen
+ * (runsit's old pursue()). A unit asked for at RIDER_MIN or faster is a rider: the mounted kind, at the pace asked.
+ * The GPU's speed is a kind's, so the riders in the window share one pace — the last asked (an encounter asks one).
+ * Riders are a hostile kind (they hunt what their sight lets them notice); a peaceful one isn't a kind yet and throws.
+ */
+export const RIDER_MIN = 5;
+const RIDER_PACE_MAX = 40;
+/** a beast with a rider on it, voxels of RIDER_VOXEL cells, nose along +x (the heading) */
+const RIDER_VOXEL = 0.25;
+const RIDER_MODEL: (readonly [number, number, number, number])[] = (() => {
+  const v: [number, number, number, number][] = [];
+  const box = (x0: number, x1: number, y0: number, y1: number, z0: number, z1: number, m: number) => {
+    for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) for (let z = z0; z <= z1; z++) v.push([x, y, z, m]);
+  };
+  // the beast: four legs, a barrel, a neck and head ahead (carrion-grey), a tail
+  for (const lx of [-3, 3]) for (const ly of [-1, 1]) box(lx, lx, ly, ly, 0, 3, MAT.Ash);
+  box(-4, 4, -1, 1, 4, 6, MAT.Ash);
+  box(5, 6, 0, 0, 6, 8, MAT.Ash);
+  box(7, 8, 0, 0, 8, 9, MAT.Bone);
+  box(-5, -5, 0, 0, 4, 5, MAT.Basalt);
+  // the rider: legs astride, a torso, a head
+  box(-1, 0, -2, -2, 5, 6, MAT.Basalt);
+  box(-1, 0, 2, 2, 5, 6, MAT.Basalt);
+  box(-1, 0, -1, 1, 7, 10, MAT.Brick);
+  box(-1, 0, 0, 0, 11, 12, MAT.Bone);
+  return v;
+})();
 const TARGETS = 8;
 const REACH = 1.5;
 const STRIKE = 1.0;
@@ -65,6 +94,8 @@ export interface UnitRec {
   cool: number;
   /** the goal key it holds */
   goal: string | null;
+  /** (round 126) the pace it was asked for (SpawnOpts.speed): RIDER_MIN or more, a rider */
+  speed: number;
   /** the routine's own state */
   work?: any; // eslint-disable-line @typescript-eslint/no-explicit-any
   patrolAt?: V2;
@@ -107,6 +138,7 @@ export class AgentUnits implements Units {
     agents.defineKind(K.shambler, { name: 'shambler', height: 1.4, mass: 1, hp: 10, speed: 1.5, reach: 1.1, damage: 1, swingPeriod: 1.6, notice: 50, colours: { torso: MAT.Bone, legs: MAT.Ash, head: MAT.Bone } });
     // (round 88: people a third of a storey tall, in a yellow tunic — at the phone's half resolution a 1-cell figure
     // in canvas was lost against plaster and grass)
+    agents.defineKind(K.rider, { name: 'rider', height: 3, mass: 2.5, hp: 10, speed: 12, reach: 1.8, damage: 1, swingPeriod: 1.0, notice: 160, model: { voxels: RIDER_MODEL, voxel: RIDER_VOXEL } });
     agents.defineKind(K.worker, { name: 'worker', height: 1.4, mass: 1, hp: 10, speed: 2.4, colours: { torso: MAT.Flower, legs: MAT.Wood, head: MAT.Sand } });
     agents.follow(G.stand, -1);
     agents.follow(G.strike, -1);
@@ -141,8 +173,13 @@ export class AgentUnits implements Units {
       state: 'idle',
       colour: o.colour ?? this.colourOf(faction),
     };
-    const u: UnitRec = { v, gpu: -1, sight: o.sight ?? 10, damage: o.damage ?? 1, group: -1, target: null, cool: 0, goal: null };
-    u.gpu = this.place(u, at, (o.speed ?? 3) < 2.2);
+    const u: UnitRec = { v, gpu: -1, sight: o.sight ?? 10, damage: o.damage ?? 1, group: -1, target: null, cool: 0, goal: null, speed: o.speed ?? 3 };
+    if (u.speed >= RIDER_MIN) {
+      if (!hostile) throw new Error(`units: a peaceful unit at ${u.speed} cells/s — riders are a hostile kind on the GPU (a quarry is a hostile rider that notices nothing: sight 0)`);
+      if (u.speed > RIDER_PACE_MAX) throw new Error(`units: a rider at ${u.speed} cells/s (at most ${RIDER_PACE_MAX}: a unit steps a cell a tick)`);
+      this.agents.setKindSpeed(K.rider, u.speed);
+    }
+    u.gpu = this.place(u, at, u.speed < 2.2);
     this.recs.set(id, u);
     this.assign(u);
     return id;
@@ -187,11 +224,12 @@ export class AgentUnits implements Units {
   setHostile(id: UnitId, hostile: boolean): void {
     const u = this.recs.get(id);
     if (!u || u.v.hostile === hostile || !u.v.alive) return;
+    if (!hostile && u.speed >= RIDER_MIN) throw new Error(`units: ${u.v.role} is a rider (${u.speed} cells/s): riders are a hostile kind`);
     // (a hostile kind on the GPU is another kind: put it there again as one, where it stands, as hurt as it was)
     u.v.hostile = hostile;
     this.byGpu.delete(u.gpu);
     this.agents.remove([u.gpu]);
-    u.gpu = this.place(u, [u.v.at[0], u.v.at[1]], false);
+    u.gpu = this.place(u, [u.v.at[0], u.v.at[1]], u.speed < 2.2);
     u.group = -1;
     this.assign(u);
   }
@@ -315,6 +353,7 @@ export class AgentUnits implements Units {
   }
 
   private kindOf(u: UnitRec, slow: boolean): number {
+    if (u.speed >= RIDER_MIN) return K.rider;
     if (u.v.hostile) return slow || u.v.role.includes('dead') ? K.shambler : K.raider;
     if (u.v.role === 'guard') return K.guard;
     if (u.v.name || u.v.character) return K.character;
