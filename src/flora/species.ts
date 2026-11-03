@@ -462,7 +462,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     // (hugging the bole's foot and tapering within a few cells — main's review: long sprawls read as logs on the floor)
     flare: { count: 6, rise: 1.8, reach: 1.7, sprawl: 0.7 },
     stem: { sides: 8, noise: 0.16, noiseFreq: 0.3, knots: 2.5, knotSize: 0.3, ring: 3.2 },
-    crown: { size: 4.2, perTwig: 3, spacing: 1.5, fill: 0.85, leaves: 8, droop: 0.2, style: 'layers', clump: 11, gaps: 0.04, lumps: 0.3, hideBelow: 0.45, shell: 0.055, lobeBlend: 0.8, layers: 2, layerGap: 0.25, depthDark: 0.6, bend: 1, core: 1 },
+    crown: { size: 4.2, perTwig: 3, spacing: 1.5, fill: 0.85, leaves: 8, droop: 0.2, style: 'layers', clump: 11, gaps: 0.04, lumps: 0.3, hideBelow: 0.45, shell: 0.05, lobeBlend: 0.8, layers: 2, layerGap: 0.25, depthDark: 0.6, bend: 1, core: 1 },
     bark: { furrows: 0.8, furrowFreq: 3, plates: 0, plateSize: 0.6, stripes: 0, stripeFreq: 7, roughness: 0.8 },
     epiphytes: { lichen: 0.3, moss: 0.3, plants: 0.35, vines: 0.3, lines: 0.15 },
     winterLeaves: 0.08,
