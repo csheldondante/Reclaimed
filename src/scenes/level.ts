@@ -113,6 +113,11 @@ import { buildWiki } from '../gm/wiki';
 import { StreamPlanner } from './planner';
 import { SettlementsView } from '../settle/view';
 import { ShipsView } from '../settle/shipsview';
+import { Fortress } from '../fortress/fortress';
+import { FortressBar } from '../fortress/ui';
+import { START_STORES } from '../fortress/defs';
+import { fortressPieces } from '../fortress/pieces';
+import type { StructurePieces } from '../api/contracts/structures';
 import type { GridStyle } from '../api/contracts/settlement';
 import type { CitySpec } from '../api/contracts/structures';
 
@@ -124,7 +129,7 @@ export interface LevelOptions {
   /** sandbox: restart with a loaded map, or a fresh one (undefined) */
   onLoadMap?: (map: MapData | undefined) => void;
   /** (create's, for an atlas level: the atlas, the window it made, and where that window is) */
-  atlas?: { atlas: Atlas; map: MapData; origin: [number, number]; oz: number; outside: Interval[][]; ground: Float32Array; settlements?: Settlements };
+  atlas?: { atlas: Atlas; map: MapData; origin: [number, number]; oz: number; outside: Interval[][]; ground: Float32Array; settlements?: Settlements; startTown?: string };
 }
 
 /** sandbox: column slots per chunk, so placed models and strata have room */
@@ -359,6 +364,9 @@ export class LevelScene implements Scene {
   settlements?: Settlements;
   units?: AgentUnits;
   private townDebug?: TownDebug;
+  /** (fortress slice 1, ?fortress=1 with ?town=) the town held as the player's fortress, and its planning bar */
+  private fortress?: Fortress;
+  private fortressBar?: FortressBar;
   /** the world as modules (docs/WORLD_API.md), made on first use of reclaimed.world */
   private worldApi?: Sim;
   /** round 83, V21: ?cutaway (api/puck.ts, api/cutaway.ts) */
@@ -934,6 +942,7 @@ export class LevelScene implements Scene {
       const at = host.params.get('at');
       // (?town=s12: start at that settlement; ?town=1 the nearest to the spawn)
       const town = host.params.get('town');
+      let startTown: string | undefined;
       let [cx, cy] = at ? (at.split(',').map(Number) as [number, number]) : atlas.spawn();
       if (town && settlements) {
         const sp = atlas.spawn();
@@ -943,6 +952,7 @@ export class LevelScene implements Scene {
         if (!s) throw new Error(`?town=${town}: no such settlement`);
         cx = Math.round(s.at[0]);
         cy = Math.round(s.at[1] / ROW_H);
+        startTown = s.id;
       }
       // (round 117/119, structures: ?city=<tile system>&cstyle=&cseed= — every settlement is planned by the structures
       // system now; this starts at the town or city nearest the start and plans its town with that tile system / style)
@@ -978,7 +988,7 @@ export class LevelScene implements Scene {
       atlas.profiler = host.profiler;
       // (round 102: the tile pacer's GPU budget by the timestamps, when they're read)
       atlas.pacer.profiler = host.profiler;
-      opts = { ...opts, atlas: { atlas, map, origin, oz, outside, ground, settlements } };
+      opts = { ...opts, atlas: { atlas, map, origin, oz, outside, ground, settlements, startTown } };
     }
     (globalThis as { __benchStage?: string }).__benchStage = 'making the level';
     // (round 112, testspeed: the pipelines its making asks for, compiled together off the GPU's main thread)
@@ -1212,6 +1222,7 @@ export class LevelScene implements Scene {
         if (held()) return void this.storyPlay!.cam.skip();
         // (round 83: flying, the pointer only turns the view)
         if (camera.fly) return;
+        if (this.fortress) return void this.fortressAt(sx, sy);
         if (this.editor?.tool === 'smash') return void this.smashAt(sx, sy, true);
         if (this.editor?.tool === 'place') return void this.placeAtPick(sx, sy);
         if (this.editor?.tool === 'town') return void this.townAtPick(sx, sy);
@@ -1836,6 +1847,7 @@ export class LevelScene implements Scene {
         S.onSlide.push(() => view.slid());
         S.onWarp.push(() => view.slid());
         if (host.params.get('towndebug') === '1') this.townDebug = new TownDebug(host.ui, st, core.camera, (x, y) => this.heightAt(x, y));
+        if (host.params.get('fortress') === '1') this.startFortress(st, view, a!.startTown);
       }
     }
     (window as unknown as { reclaimed: unknown }).reclaimed = Object.assign(api, {
@@ -1845,6 +1857,8 @@ export class LevelScene implements Scene {
       // events (built, died, raided); units: the Units contract (api/contracts/units.ts) on the agents
       settlements: this.settlements,
       units: this.units,
+      // (fortress slice 1) the fortress: plan (FortressPlan), town, paint/erase/setGate, cellAt/centre/ringCells, tool
+      fortress: this.fortress,
       townDebug: this.townDebug,
       // (?flow=1) the flow model: flow.water / flow.lava (LiquidSystem: addSpring), flow.steady (last read),
       // flow.breach() (the lab's plug dug out), flow.sleep (awake chunks)
@@ -2256,7 +2270,7 @@ export class LevelScene implements Scene {
       setTimeout(() => this.hud.say(`Life clings on by the pond. Tap the green to loose its seeds; drag to make wind and carry them to ground that is ready (${lens}: blue). ${look}`, 10), 800);
       return;
     }
-    if (this.level.sandbox) {
+    if (this.level.sandbox && !this.fortress) {
       setTimeout(() => this.hud.say('Sandbox: pick a tool on the right. Try 💥 Break on the towers and overhangs in the physics garden (bottom left), or on a wall of the sand basin.', 10), 800);
       return;
     }
@@ -2278,6 +2292,8 @@ export class LevelScene implements Scene {
     // alone would allow (the map is a diamond, its middle is what matters)
     // (a story level opens close on its green)
     if (first) this.core.camera.zoom = this.story ? 7 : (this.level.zoom ?? Math.max(1.5, Math.min(cssW * 1.9, cssH * 1.6) / 300));
+    // (fortress: close enough on the town to tap a cell)
+    if (first && this.fortress) this.core.camera.zoom = Math.max(this.core.camera.zoom, 6);
   }
 
   frame(now: number, dt: number): void {
@@ -2917,6 +2933,76 @@ export class LevelScene implements Scene {
     core.renderer.pick((sx / camera.viewportW) * this.renderW, (sy / camera.viewportH) * this.renderH).then((hit) => {
       this.smashPicking = false;
       this.smashHover = hit ? [...cellPos(hit.cell % core.dims.w, Math.floor(hit.cell / core.dims.w)), hit.z] : undefined;
+    }, ignoreTeardown);
+  }
+
+  /**
+   * (fortress slice 1, milestone 1) The town at the start becomes the player's fortress: pinned (live, no houses of its
+   * own), its stores started if empty, a Town on its own world-anchored box round it, the planning bar, time stopped.
+   */
+  private startFortress(st: Settlements, view: SettlementsView, id: string | undefined): void {
+    if (!id) throw new Error('?fortress=1 needs ?town= (the town that becomes the fortress)');
+    const S = this.stream;
+    if (!S) throw new Error('?fortress=1 needs the atlas level');
+    const rec = st.pin(id);
+    for (const [k, v] of Object.entries(START_STORES)) {
+      const have = (rec.stores[k] ??= { stock: 0, rate: 0 });
+      have.stock = Math.max(have.stock, v.stock);
+      have.rate = Math.max(have.rate, v.rate);
+    }
+    const { core } = this;
+    const dims = core.dims;
+    const W = 240;
+    const H = 2 * Math.round(240 / ROW_H / 2);
+    // (the box round the town, its row origin even: the lattice's odd rows shift the same in the box and the window)
+    const ox = Math.round(rec.at[0] - W / 2);
+    const oy = 2 * Math.round((rec.at[1] / ROW_H - H / 2) / 2);
+    const fort = new Fortress({ origin: [ox, oy], w: W, h: H }, {
+      windowOrigin: () => [S.origin[0], S.origin[1]],
+      dims: { w: dims.w, h: dims.h, zMax: dims.zMax },
+      ground: (x, y) => this.heightAt(x, y),
+      stores: () => Object.fromEntries(Object.entries(rec.stores).map(([k, v]) => [k, v.stock])),
+      changed: () => view.touch(),
+    });
+    this.fortress = fort;
+    // drawn with the towns' pieces (fortress/pieces.ts), in the box's frame, moved into the window's by its offset
+    let pieces: StructurePieces | null = null;
+    fort.onChange.push(() => (pieces = null));
+    view.extra = () => {
+      if (!fort.plan.structures().length) return null;
+      pieces ??= fortressPieces({ plan: fort.plan, town: fort.town, grid: fort.grid, ground: (x, y) => this.heightAt(...fort.toWindow(x, y)), zOff: S.oz });
+      const [dx, dy] = fort.offset();
+      return { p: pieces, dx, dy: dy * ROW_H };
+    };
+    // the ground under every column known before the first plan (a far chunk's surface words aren't made till it wakes):
+    // made now over the whole window and read back
+    core.prepareArrived();
+    void core.readBuffer('surface', true).then((f) => {
+      this.surfaceCache = new Uint32Array(f.buffer);
+      fort.ready = true;
+    }, ignoreTeardown);
+    S.onSlide.push(() => fort.slid());
+    S.onWarp.push(() => fort.slid());
+    this.fortressBar = new FortressBar(this.host.ui, fort);
+    // (the sandbox's tool panel isn't the fortress's: the bar is)
+    const ed = this.host.ui.querySelector<HTMLElement>('.editor');
+    if (ed) ed.style.display = 'none';
+    // the view on the town
+    const [tx, ty] = st.toWindow(rec.at);
+    core.camera.target[0] = tx;
+    core.camera.target[1] = ty;
+    // time stops while planning (the speed-0 path: the sim, the units, the settlements and the day all wait)
+    // (?fpause=0: time runs while planning — to compare)
+    if (this.host.params.get('fpause') !== '0') this.speed = 0;
+  }
+
+  /** Fortress: a tap plans (or erases, or gates) the block it lands on (Townscaper's way: town.pickBlock). */
+  private fortressAt(sx: number, sy: number): void {
+    const { core } = this;
+    const { camera } = core;
+    const fort = this.fortress!;
+    core.renderer.pick((sx / camera.viewportW) * this.renderW, (sy / camera.viewportH) * this.renderH).then((hit) => {
+      if (hit) fort.press(hit.cell, hit.z + 0.5);
     }, ignoreTeardown);
   }
 
@@ -3743,6 +3829,7 @@ export class LevelScene implements Scene {
   dispose(): void {
     this.abort.abort();
     this.tunePanel?.dispose();
+    this.fortressBar?.dispose();
     this.bugReport?.dispose();
     this.stationsBar?.dispose();
     this.noiseLab?.dispose();

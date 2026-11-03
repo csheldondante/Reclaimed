@@ -16489,3 +16489,42 @@ p99 136-325 / 60-142 (merge / places; one slow first load after the dev server's
 tilegate (one run, diffed against places'): desktop-z3.5 parked undrawn 1.60% at the same cells places' own run showed
 (0.42%: r233,217 r239,223 ...), the wide goldens 35-50% (the zoom floor's calibration), near 1.5%, fast pans scattered as
 on places.
+
+## 2026-11-03 — round 128c (`fortress`): fortress mode slice 1, milestone 1 — plan a typed structure, time stopped
+
+From `places` 7b5a021, the plan in docs/design/FORTRESS_SLICE1.md and the user's answers there. The rule the user
+stressed: select what, then plan it with Townscaper-like stacking tiles that fit together.
+
+**What.** `?skipmenu=1&level=atlas&town=1&fortress=1`: the town at the start is pinned as the fortress
+(`Settlements.pin`: live, no houses of its own), its stores topped up (120 wood, 80 stone, 150 grain, untuned), time
+stopped (the speed-0 path), a phone bar of the eight types with Erase and Gate. Painted cells belong to a structure
+(next to the same type joins it); the panel shows the type's per-block cost and capacity, the structure just painted
+(blocks × per block), and the whole plan against the stores ("You need 134 stone more." in red). Per-type joining is a
+`StructureDef.joins` flag (the user, mid-task: row homes may stand apart); the look is data per type so tech-dependent
+block sets can swap it later.
+
+**Why pieces, not stamped matter.** The first version stamped the Town as column matter with a per-type style hook
+(walls as bands with merlons, gates as arches, yards as furrows). In the atlas world that matter is drawn by the
+window's heightfield: a planned ring and its houses came out as a mossy mound with plaster stubs (the hybrid on and off
+alike). The settlements are drawn as the structures module library's pieces for that reason (round 119), so the
+fortress plan is made into a CityPlan a style and drawn with the same pieces: half-timbered houses with tile roofs
+that join across a building, ramparts with merlons on every side that meets no wall, a tower where a run ends, meets
+another or turns by more than 50 degrees (the irregular grid bends a little at every cell: with a tower at every
+corner tile a ring was all towers), gate arches. The matter hook was taken out of build/town.ts again.
+
+**Other fixes on the way.** The Town's ground came from the level's surface cache, which holds zeros for chunks that
+never woke (a house planted 98 m under the grass): planning waits for one `prepareArrived` and surface read over the
+whole window (`Fortress.ready`). The first resize set the zoom after the scene's own; the fortress's closer zoom is set
+there. The atlas level is a sandbox, so its editor panel is hidden in fortress mode.
+
+**Checks.** Unit (src/fortress/fortress.test.ts, 9): cost and capacity, a yard flat, the type limit, joining and
+merging, the wall tiles (post, end, straight, corner, tee, cross; a gate only in a straight run), the pieces (3
+ramparts and 8 merlons for a 3-cell run, towers at its ends, 2 gate arches, a corner), the types' modules (plaster
+walls and roofs, dressed stone, crops, spoil, crane, banner), joining per type (one building, or one a cell), and the
+panel's lines through the writing lint. Unit tier 562 passed. Headless at 412x915 (C:/Projects/shots88/fortress/): six
+houses and a 31-cell wall ring planned by the API, `globals.tick` 1799 and the time of day 0.32 before and after (time
+doesn't move); the picker tapped (Walls) and walls planned by taps, a tap on a planned cell stacking it; m1-picker.png,
+m1-houses.png, m1-walls.png (corners with towers, a gate's arch), m1-types.png. Strings read: "Time is stopped while
+you plan.", "Walls. Each block costs 6 stone. Stack it up to 3 high. 2 archers can stand on each block.", "This wall
+has 31 blocks. It costs 186 stone. 62 archers can stand on it.", "Your plan costs 56 wood and 214 stone. Your stores
+have 120 wood and 80 stone.", "You need 134 stone more."

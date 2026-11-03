@@ -218,6 +218,24 @@ export class Settlements {
     s.override = spec;
   }
 
+  /** (fortress slice 1) the settlement the player holds as a fortress: live whenever it's in the window, not grown */
+  private pinned: string | null = null;
+
+  /**
+   * (fortress slice 1) Hold a settlement as the player's fortress: it's the live one whenever its plan is in the
+   * window (not the one nearest the view), and it doesn't grow houses of its own (the player builds).
+   */
+  pin(id: string): Settlement {
+    const s = this.byId.get(id);
+    if (!s) throw new Error(`settlements.pin: no settlement ${id}`);
+    this.pinned = id;
+    return s.rec;
+  }
+
+  get pinnedId(): string | null {
+    return this.pinned;
+  }
+
   /** the live settlement, if any */
   live(): Settlement | null {
     return this.life?.rec ?? null;
@@ -592,6 +610,7 @@ export class Settlements {
    */
   private grow(p: SettlementPlan, s: SettlementSeed): void {
     const rec = s.rec;
+    if (rec.id === this.pinned) return;
     const grain = rec.stores.grain;
     const people = rec.people.filter((x) => !x.hostile).reduce((a, x) => a + x.count, 0);
     if (!grain || grain.stock < people * 0.5) return;
@@ -759,8 +778,8 @@ export class Settlements {
       const [wx, wy] = this.toWindow(s.rec.at);
       const m = 40;
       if (wx < m || wy < m || wx > io.dims.w - m || wy > io.dims.h * ROW_H - m) continue;
-      if (d < bd) {
-        bd = d;
+      if (d < bd || s.rec.id === this.pinned) {
+        bd = s.rec.id === this.pinned ? -1 : d;
         best = s;
       }
     }

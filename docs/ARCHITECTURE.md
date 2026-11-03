@@ -3326,3 +3326,33 @@ One concern each:
 Contract for text: every string a player reads follows docs/WRITING.md; test/unit/writing.test.ts (test/support/
 writing.ts `lint`) checks the templates, the dealt cards and petitions on seed 1, Briar Hollow's, the cast, the
 screens and the GM's situation file.
+
+## Fortress mode (round 128c, `fortress`; contract src/api/contracts/fortress.ts; docs/design/FORTRESS_SLICE1.md)
+
+The building rule (the user's): select what (a structure type), then plan it with stacking tiles.
+
+- **The plan** (`fortress/plan.ts`, pure): per cell of the fortress Town's grid its structure id, its levels (a bit a
+  level) and a gate flag. Painting a type next to the same type joins that structure (a cell between two joins them
+  into one). A structure's cost and capacity are blocks × the type's per-block numbers (`fortress/defs.ts`:
+  `StructureDef` cost, perBlock {beds, storage, jobs, posts, makes}, form block | wall | yard, maxLevels, joins, look).
+  `wallTileOf` names a wall tile by which sides meet a wall (post, end, straight, corner, tee, cross); a gate only on a
+  straight run.
+- **The Town's box** (`fortress/fortress.ts`): a `Town` (build/town.ts) on its own world-anchored box round the town
+  (240 world units; its row origin even, so the hex lattice's odd-row shift is the same in the box and the window). Its
+  columns are box-local: the TownIO maps them through the box's origin and the window's, so a slide only changes the
+  offset. Milestone 1 keeps the plan in `Town.plans` (floors lined up with the neighbours'); nothing is stamped (the
+  Town's stamp throws: milestone 2's builders stamp).
+- **The look** (`fortress/pieces.ts`): the plan made into one CityPlan per style and drawn by the towns' pieces
+  (structures/pieces.ts `piecesOf`): blocks are lots with a building a structure and floor (a building a cell for a
+  type whose `joins` is false), a façade on every storey side no block of the same building covers; walls are wall and
+  gate tiles (rampart, merlons on sides that meet no wall, gate arches) plus a tower where a run ends, meets another or
+  turns by more than 50 degrees; farms are fields, the quarry a yard; each type's props set down. Why pieces, not
+  matter: in the atlas world the window's land is drawn as a heightfield, where a Town stamped as column matter reads
+  as a lumpy mound (DEVLOG round 128c). The pieces join the settlements' (one draw): `SettlementsView.extra`, in the
+  box's frame, moved into the window's by the box's offset.
+- **The level** (`?fortress=1` with `?town=`): `Settlements.pin(id)` keeps the town live wherever the camera is and
+  stops its `grow()`; its stores are topped up to `START_STORES`; the level's speed is 0 (the existing pause: sim,
+  units, settlements and the day wait; `?fpause=0` to compare); the sandbox's editor panel is hidden; planning waits
+  for one surface read over the whole window (`Fortress.ready`: a far chunk's surface words aren't made till it
+  wakes). A tap picks (renderer.pick) and presses with the bar's tool (`Fortress.press` → `Town.pickBlock` on the
+  plan). `window.reclaimed.fortress` for scripted checks.

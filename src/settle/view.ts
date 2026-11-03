@@ -245,6 +245,17 @@ export class SettlementsView {
     return out;
   }
 
+  /**
+   * (fortress slice 1) Other pieces drawn with the towns' (one structures draw): in their own frame (x, y world units
+   * from (dx, dy) in the window; z world), moved into the window's as a settlement's are. null: none.
+   */
+  extra: (() => { p: StructurePieces; dx: number; dy: number } | null) | null = null;
+
+  /** the pieces made again next update (an `extra` source changed) */
+  touch(): void {
+    this.dirty = true;
+  }
+
   /** each frame: the pieces again when something changed or the window moved */
   update(): void {
     const o = this.io.origin();
@@ -271,6 +282,8 @@ export class SettlementsView {
       parts.push({ p: s.pieces, dx, dy });
       drawn++;
     }
+    const ex = this.extra?.();
+    if (ex && ex.p.count) parts.push(ex);
     let n = 0;
     for (const x of parts) n += x.p.count;
     const module = new Uint16Array(n);

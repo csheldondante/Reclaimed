@@ -12,6 +12,24 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 128c (2026-11-03, session 5, `fortress`) — fortress mode slice 1 (docs/design/FORTRESS_SLICE1.md)
+
+Branch `fortress`: milestone 1 built; milestones 2-5 wait for the user's test of it.
+
+| id | item | size | status |
+|---|---|---|---|
+| FT-1 | Milestone 1: `?level=atlas&town=1&fortress=1` — the town pinned as the fortress (its stores topped up to a start), time stopped while planning, a phone bar of the 8 types with an erase and a gate toggle, painted cells owned by a structure (next to the same type joins it), the plan drawn as the towns' pieces, each structure's cost and capacity and the plan against the stores | L | done (this commit) |
+| FT-2 | Milestone 2: workers build the plan from the warehouse (blocks stand, stone down by the cost); built vs planned drawn apart (planned as a ghost or outline) | L | next (after the user's test) |
+| FT-3 | Milestone 3: quarry, lumber camp, hauling, houses fill (food per person: the user's answer 3) | L | deferred |
+| FT-4 | Milestone 4: jobs and recipes (blacksmith weapons from ore, barracks trains soldiers) | L | deferred |
+| FT-5 | Milestone 5: day counter and the army | L | deferred |
+| FT-6 | Joining per type (the user, round 128c: "medieval row homes might not" join): `StructureDef.joins`, true for all 8 now; a row-homes type (or a house option) to come | S | open |
+| FT-7 | Tech-dependent block sets (the user: later): the look is data per type (`StructureDef.look`: style, building kind, props, chimney); a tech level would swap it per structure | M | deferred |
+| FT-8 | Repurpose a structure into another type at less cost (the user's answer 6: soon after slice 1) | M | deferred |
+| FT-9 | Rough: the irregular grid turns a wall ring at many cells, so a round ring gets many towers (one where a run turns by more than 50 degrees). Walls are a whole cell thick (about 6 m) | S | open |
+| FT-10 | Rough: trees and the town's own buildings stay where cells are planned (workers fell and clear in milestone 2); cells can be planned on water | S | open |
+| FT-11 | Rough: a tap on a planned cell always stacks on it (Townscaper's tap-a-side-to-add-beside not yet); blacksmith and barracks read alike (both stone and slate); farm and quarry are flat and easy to miss under trees | S | open |
+
 ## Round 126 (2026-11-02, session 5, `dialog2`) — petitions as dialogs, the cast, plain writing (DECISIONS round 126)
 
 Branch `dialog2` (b9139b7): docs/WRITING.md, a style lint, every player string rewritten, the cast generator, petitions delivered in talks. The branch's own rows are DLG-7..12.
