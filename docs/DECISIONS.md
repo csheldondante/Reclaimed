@@ -441,6 +441,13 @@ each was implemented.
 
 - The user, verbatim, correcting my reading of "a hand of cards": "No each opportunity does not deal a hand of ways to deal with it. This needs to be clear. Each opportunity is a card. It has a cost, an effect if played and an effect if not dealt with before it expires. That's the format of every card. Some that the player as a resource and need to be played. Some just make a resource like a companion or army unavailable for several turns and some expend a resource permanently. Is that clear?" → the hand is the set of open opportunities, one card each. Every card has exactly three parts: a cost, an effect if played, and an effect if it expires unplayed. Costs come in three kinds: the player (the hero goes and plays it in the world), a resource locked for some turns (a companion or an army), or a resource spent for good.
 
+## 2026-11-03 — round 128 (session 5) — the knight played; jb6 should have merged
+
+- The user, verbatim, after playing the knight branch: "This is good! I think the bow is better than the previous version. The sword is ok but I think we want the default lunge to be further. In a crowd we want to be able to use the lunge to move our way through the crowd. I think we will also want to add some enemies that dodge or block except when winding up to hit. Or where you have to wait until after they lung and then stay stunned a moment to get your hit in or else they dodge or block."
+- → The bow stays as ported. Every slash lunges further by default, far enough to carry the knight through a crowd (KN-Q1 answered). New enemy kinds: ones that dodge or block except while winding up a hit, and ones that lunge and are open only in the moment they stay stunned after it.
+- The user, verbatim, on the physics branch: "I didn't realize that the physics work was never merged. It should have been. Making the proper physics engine was intended to be future work but not block all of the improvements of that branch."
+- → My mistake: I read "defer" (round 120) as keeping jb6 off places. jb6 (the GPU making every change to the columns; no CPU read-back on the hot path) merges into places through the gate. PH1, the proper physics engine, stays future work.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
