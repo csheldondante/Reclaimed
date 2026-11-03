@@ -14,7 +14,7 @@ import { occluders, Understory } from './understory';
 import { TREE_SCALE } from '../flora/spacing';
 
 /** the plan's species → the flora library's */
-const FLORA_OF: Record<Tree['species'], SpeciesId> = { giant: 'giant', birch: 'birch', broadleaf: 'oak', conifer: 'pine' };
+const FLORA_OF: Record<Tree['species'], SpeciesId> = { giant: 'giant', birch: 'birch', broadleaf: 'oak', conifer: 'pine', willow: 'willow' };
 const sm = (a: number, b: number, x: number) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);

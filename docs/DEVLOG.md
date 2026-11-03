@@ -16707,3 +16707,22 @@ blob? I would love to see pines and willows and to have some trees with varying 
 - The library: 80 kinds now (+ the Scots pine and the willow at four levels); it takes ~0.8 s to make at start (the
   colonized crowns: ~60 ms a tree), was ~70 ms — a cache across loads is the fix if the phone feels it.
 Renders: pines-v1.png (pine, Scots pine, willow).
+
+### Pines as needle cones, tighter layers, willows in the plan's mirror; the second in-game batch (round 128)
+
+The user: "Pines should use cones and use baked needlg patterns instead of leaves." and "The leaf layers look a little
+too floaty they should be closer together. Probably no more than a leaf width for the outer layer". main: the pine
+"doesn't read as a conifer"; the elder's "ragged flyaway cards".
+- The conifer's crown style 'cones': each tier a cone shell with a drooping rim, its apex above the tier so the tiers
+  stack to a point, two shells a needle's length apart (the inner darker); smooth normals from the cone's profile; the
+  look draws needles in the shell's coordinates (radiating strokes, lighter tips, a bristly rim cut between strokes,
+  fading under a pixel) — procedural, so the mesh, the viewer and the sprites' bake share it. lineup-v2.png.
+- The layer gap is in leaf widths now (default 1; the slider 0.2-3); the core sits a third of a gap under the inner
+  shell; cards lie on the lobe's curve (bend 1) and barely jitter off it. The elder: bigger cards, two shells half a leaf
+  apart: elder-v8.png — leafy, lobed and clean.
+- Willows in the flora plan's CPU mirror (api/plants.ts planWillow, florafield.wgsl's rule; the mirror reads the water
+  and the moisture): the understory and passability see them.
+- In game (the second batch, C:/Projects/shots88/treegen/r2-*): the elder wood from above at zoom 3-8 (r2-mesh-z5 a
+  dense copper canopy, trunks below); under the canopy (r2-lab-under-all: the hero by an elder's trunk, the floor's
+  litter, the ride GIF); the wind clips (r2-wind-static / 1A1C: 0.7% vs 2.1% of pixels change a frame — the parked
+  hero is still too close to a trunk for a canopy clip: the station's framing for wind is the next fix).

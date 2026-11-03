@@ -372,8 +372,11 @@ export interface CrownLook {
   droop: number;
   /** (round 128, the user: "You could even have completely opaque canopy of leaves with random gaps") 'sprays' the
    *  cards; 'solid' an opaque leaf mass — lumpy shells round clumps of the crown's leaf sites, holes punched through */
-  style?: 'sprays' | 'solid' | 'lobecards' | 'hybrid' | 'layers';
-  /** layers: shells of cards a lobe, how far apart (a share of its reach), how much darker each deeper one, how much a
+  style?: 'sprays' | 'solid' | 'lobecards' | 'hybrid' | 'layers' | 'cones';
+  /** cones: the tiers (colonize.ts's: at, width, depth — shares of `coneH`), set by the generator from the species' crown */
+  coneTiers?: { at: number; width: number; depth: number }[];
+  coneH?: number;
+  /** layers: shells of cards a lobe, how far apart (leaf widths: 1 a card's size), how much darker each deeper one, how much a
    *  card bends to follow its lobe (0 flat .. 1 on the curve), and a dark closed core under them (0 / 1) */
   layers?: number;
   layerGap?: number;
@@ -441,7 +444,7 @@ export function buildPlant(sk: Skeleton, leaf: LeafLook, seed: number, opts: { s
   const minR = opts.minRadius ?? 0;
   // (round 128: a solid crown hides its thin branches — inside the leaf mass — so they aren't drawn: the stems under
   // ~0.12 cells, and no fine twigs)
-  const solid = opts.crown?.style === 'solid' || opts.crown?.style === 'hybrid' || opts.crown?.style === 'layers';
+  const solid = opts.crown?.style === 'solid' || opts.crown?.style === 'hybrid' || opts.crown?.style === 'layers' || opts.crown?.style === 'cones';
   const cutR = Math.max(opts.minTwig ?? 0.035, minR * 0.5, solid ? (opts.crown?.hideBelow ?? 0.12) / (opts.scale ?? 1) : 0);
   const sidesAt = (r0: number) => (r0 > 0.25 ? sides : r0 > 0.08 ? Math.max(3, sides - 2) : 3);
   if (opts.stem) {
@@ -465,6 +468,10 @@ export function buildPlant(sk: Skeleton, leaf: LeafLook, seed: number, opts: { s
   opts.extra?.(mb, cutR);
   // (round 128: the fine twigs past the last order)
   if (opts.twigs && !solid) addTwigs(mb, sk, leaf.minDepth, opts.twigs, opts.scale ?? 1, r01, opts.px);
+  if (opts.crown && leaf.style === 'cluster' && opts.crown.style === 'cones') {
+    addConeCrown(mb, opts.crown, opts.scale ?? 1, opts.bake);
+    return mb.done();
+  }
   if (opts.crown && leaf.style === 'cluster' && opts.crown.style === 'layers') {
     addLayeredCrown(mb, sk, leaf.minDepth, opts.crown, opts.scale ?? 1, r01, opts.px, opts.bake);
     return mb.done();
@@ -697,12 +704,13 @@ function lobeAo(L: Lobes, li: number, p: V3, nrm: V3): number {
   return Math.max(0.2, Math.min(1, 1 - occ)) * (0.55 + 0.45 * hz) * (nrm[2] < 0 ? 0.75 + 0.25 * (1 + nrm[2]) : 1);
 }
 
-function addSolidCrown(mb: MeshBuilder, sk: Skeleton, minDepth: number, c: CrownLook, k: number, r01: () => number, px?: number, bake = false, core = 1, lobesIn?: Lobes): Lobes {
+function addSolidCrown(mb: MeshBuilder, sk: Skeleton, minDepth: number, c: CrownLook, k: number, r01: () => number, px?: number, bake = false, core = 1, lobesIn?: Lobes, inset = 0): Lobes {
   const R = (c.clump ?? 3) / k;
-  const gaps = core < 1 ? 0 : (c.gaps ?? 0.05);
+  const gaps = core < 1 || inset > 0 ? 0 : (c.gaps ?? 0.05);
   const lumps = c.lumps ?? 0.3;
   const L = lobesIn ?? crownLobes(sk, minDepth, R, r01);
-  const lobes = L.lobes.map((l) => ({ m: l.m, r: l.r * core }));
+  // (`core` a share of each lobe's reach, or `inset` (skeleton units) in from it: the layered crown's core under its shells)
+  const lobes = L.lobes.map((l) => ({ m: l.m, r: inset > 0 ? Math.max(l.r * 0.25, l.r - inset) : l.r * core }));
   // the unit icosahedron, each face cut in four (80 faces)
   const t = (1 + Math.sqrt(5)) / 2;
   const I: V3[] = [[-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0], [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t], [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]].map((v) => norm(v as V3));
@@ -764,6 +772,56 @@ function addSolidCrown(mb: MeshBuilder, sk: Skeleton, minDepth: number, c: Crown
 }
 
 /**
+ * (round 128, the user: "Pines should use cones and use baked needlg patterns instead of leaves") A conifer's crown:
+ * each tier a cone shell — its rim drooping, its apex well above the tier so the tiers overlap up to a pointed top —
+ * and `layers` of them, each a needle's length (`layerGap` × size) inside the last, darker. Smooth normals from the
+ * cone's profile; uv marks a needle shell (x = −10 + round, y = layer × 2 + up the slant): floralook.wgsl draws the
+ * needles (radiating strokes, lighter tips, a bristly rim cut by the strokes' alpha). Sizes in cells.
+ */
+function addConeCrown(mb: MeshBuilder, c: CrownLook, k: number, bake = false): void {
+  const tiers = c.coneTiers ?? [];
+  const H = (c.coneH ?? 30) / k;
+  const K = Math.max(1, Math.round(c.layers ?? 2));
+  const inset = ((c.layerGap ?? 1) * c.size) / k;
+  const N = bake ? 24 : 14;
+  const ROWS = bake ? 6 : 4;
+  const droop = c.droop ?? 0.35;
+  for (const t of tiers) {
+    const W0 = (t.width / Math.max(1e-3, 1)) * (c.coneH ?? 30) / k;
+    const zb = H * t.at - (H * t.depth) / 2;
+    const za = H * t.at + (H * t.depth) / 2 + W0 * 0.9;
+    for (let li = 0; li < K; li++) {
+      const W = Math.max(W0 * 0.25, W0 - li * inset);
+      const base = zb + li * inset * 0.3;
+      const apex = za - li * inset * 0.6;
+      const rows: number[][] = [];
+      for (let r = 0; r <= ROWS; r++) {
+        const s = r / ROWS; // 0 the rim .. 1 the apex
+        const rad = W * Math.pow(1 - s, 0.85);
+        const z = base + (apex - base) * s - droop * W * 0.35 * (1 - s) * (1 - s);
+        // the profile's slope: d(rad)/ds and dz/ds, the normal outward across it
+        const dr = -W * 0.85 * Math.pow(Math.max(1e-3, 1 - s), -0.15);
+        const dz = apex - base + droop * W * 0.7 * (1 - s);
+        const row: number[] = [];
+        for (let q = 0; q <= N; q++) {
+          const a = (q / N) * Math.PI * 2;
+          const ca = Math.cos(a);
+          const sa = Math.sin(a);
+          const n = norm([ca * dz, sa * dz, -dr]);
+          row.push(mb.vert([ca * rad, sa * rad, z], PART.leaf, 0.1 + 0.06 * s, -10 + q / N, li * 2 + Math.min(0.999, s), n));
+        }
+        rows.push(row);
+      }
+      for (let r = 0; r < ROWS; r++)
+        for (let q = 0; q < N; q++) {
+          mb.tri(rows[r][q], rows[r][q + 1], rows[r + 1][q + 1]);
+          mb.tri(rows[r][q], rows[r + 1][q + 1], rows[r + 1][q]);
+        }
+    }
+  }
+}
+
+/**
  * (round 128, the user: "It seems like dota the render multiple layers as leaves on bent lobes and then shadow the deeper
  * layers to add depth") The layered crown: each lobe `layers` shells of leaf cards at decreasing reach (`layerGap` apart),
  * each card a strip bent along its lobe's curve (`bend`), lit by the lobe's normal; the deeper the shell the darker and
@@ -773,7 +831,9 @@ function addSolidCrown(mb: MeshBuilder, sk: Skeleton, minDepth: number, c: Crown
 function addLayeredCrown(mb: MeshBuilder, sk: Skeleton, minDepth: number, c: CrownLook, k: number, r01: () => number, px?: number, bake = false): void {
   const L = crownLobes(sk, minDepth, (c.clump ?? 6) / k, r01, c.separate ?? 0.25);
   const K = Math.max(1, Math.round(c.layers ?? 3));
-  const gap = c.layerGap ?? 0.18;
+  // (round 128, the user: "The leaf layers look a little too floaty they should be closer together. Probably no more
+  // than a leaf width for the outer layer" — the gap in leaf widths now, 1 by default; the shells' reach in cells)
+  const gapCells = (c.layerGap ?? 1) * c.size;
   const dark = c.depthDark ?? 0.6;
   const bend = c.bend ?? 0.7;
   const dens = c.shell ?? 0.06;
@@ -781,12 +841,12 @@ function addLayeredCrown(mb: MeshBuilder, sk: Skeleton, minDepth: number, c: Cro
   const size = c.size / k;
   if ((c.core ?? 1) > 0) {
     // the core: a closed lobe inside the last shell
-    addSolidCrown(mb, sk, minDepth, { ...c, gaps: 0 }, k, r01, px, bake, Math.max(0.3, 1 - K * gap * 0.95), L);
+    addSolidCrown(mb, sk, minDepth, { ...c, gaps: 0 }, k, r01, px, bake, 0, L, ((K - 1 + 0.35) * gapCells) / k);
   }
   const rnd = (): V3 => norm([r01() * 2 - 1, r01() * 2 - 1, r01() * 2 - 1]);
   for (const o of L.lobes) {
     for (let li = 0; li < K; li++) {
-      const ri = o.r * (1 - li * gap);
+      const ri = Math.max(o.r * 0.3, o.r - (li * gapCells) / k);
       const depth = K > 1 ? li / (K - 1) : 0;
       const area = 4 * Math.PI * (ri * k) ** 2;
       // (made for `px`: no card under ~3 px; the deeper shells a little thinner)
@@ -803,7 +863,7 @@ function addLayeredCrown(mb: MeshBuilder, sk: Skeleton, minDepth: number, c: Cro
         const W = Lc * (0.45 + 0.2 * r01());
         // three rows along the card: on the lobe's curve by `bend`, straight off its tangent otherwise
         const ang = Lc / Math.max(ri, 1e-3);
-        const jit = 0.97 + 0.06 * r01();
+        const jit = 0.99 + 0.02 * r01();
         const row = (t: number): V3 => {
           const curve = norm(add(mul(d, Math.cos(t * ang)), mul(ax, Math.sin(t * ang))));
           const flat = norm(add(d, mul(ax, t * ang)));

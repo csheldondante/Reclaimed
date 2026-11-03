@@ -13,7 +13,7 @@ import { TREE_SCALE } from '../flora/spacing';
 export interface PlanTree {
   x: number;
   y: number;
-  species: 'broadleaf' | 'conifer' | 'birch' | 'giant';
+  species: 'broadleaf' | 'conifer' | 'birch' | 'giant' | 'willow';
   trunk: number;
   crown: number;
 }
@@ -32,6 +32,8 @@ export function crownReach(t: PlanTree): number {
       return 5 * TREE_SCALE;
     case 'conifer':
       return 3.5 * TREE_SCALE;
+    case 'willow':
+      return 6;
     default:
       return 4 * TREE_SCALE;
   }

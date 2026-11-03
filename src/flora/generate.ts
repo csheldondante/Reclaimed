@@ -113,7 +113,8 @@ function woody(sp: SpeciesDef, seed: number, h: number, px?: number, withRoots =
   const stem = close && sp.stem ? { ...sp.stem, sides: bake ? 16 : Math.max(12, sp.stem.sides + 2), ring: sp.stem.ring / 2 } : sp.stem;
   const leaf = close && (sp.leaf.style === 'cluster' || sp.leaf.style === 'drop') ? { ...sp.leaf, size: sp.leaf.size * 0.7, per: sp.leaf.per * 2 } : sp.leaf;
   // (the crown's sprays: close up more cards, smaller, one more spray a twig)
-  const crown = sp.crown && close ? { ...sp.crown, size: sp.crown.size * 0.75, leaves: Math.round(sp.crown.leaves * 1.5), perTwig: sp.crown.perTwig + 1 } : sp.crown;
+  const crown0 = sp.crown && sp.crown.style === 'cones' && sp.colonize ? { ...sp.crown, coneTiers: sp.colonize.tiers, coneH: sp.colonize.height } : sp.crown;
+  const crown = crown0 && close && crown0.style !== 'cones' ? { ...crown0, size: crown0.size * 0.75, leaves: Math.round(crown0.leaves * 1.5), perTwig: crown0.perTwig + 1 } : crown0;
   return buildPlant(sk, leaf, hashSeed(seed, 4), { crown, twigs: sp.twigs, px, bake, roots, sides: sp.form === 'tree' ? 6 : 4, minTwig: sp.form === 'tree' ? (close ? 0.012 : 0.035) : 0, minRadius: sp.form === 'tree' ? minRadius : 0, minLeaf, stem, scale: k, keepLimbs: sp.colours.deciduous, extra: (mb, cut) => {
     // (round 128) epiphytes (the coarse level keeps them: lines and vines are the silhouette's) and a tree's icicles
     if (sp.epiphytes) addEpiphytes(mb, sk, sp.epiphytes, hashSeed(seed, 6), k, { icicles: sp.form === 'tree' ? 14 : 0, cut });

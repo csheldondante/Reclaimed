@@ -265,6 +265,26 @@ fn floraLook(k: u32, part: u32, wpos: vec3<f32>, n: vec3<f32>, h: f32, rnd: f32,
     if (FLORA_EPI[k].w > 0.5) { c *= 0.86 + 0.28 * randv(vec3<i32>(floor(wpos * 5.0)) + vec3<i32>(2, 9, 4)); }
     // (round 128) a leaf card's own look (card space: mesh.ts addCrown — u across, v stalk to tip): the midrib and side
     // veins a little lighter, the edge darker; faded where a card is under a few pixels
+    // (round 128, the user: "baked needle patterns instead of leaves") a conifer's needle shell (uv.x = −10 + round,
+    // uv.y = layer × 2 + up the slant): radiating needle strokes, dark blue-green with lighter tips toward the rim, the
+    // rim bristly (cut between the strokes), the inner shells darker; the strokes fade where they're under a pixel
+    if (uv.x < -5.0) {
+      let u = uv.x + 10.0;
+      let layer = floor(uv.y * 0.5);
+      let t = uv.y - layer * 2.0;
+      let ns = fract(u * 72.0 + 0.6 * sin(t * 23.0 + u * 40.0) + 0.3 * t);
+      let fade = 1.0 - smoothstep(0.004, 0.012, fw);
+      let stroke = mix(0.6, 1.0 - smoothstep(0.12, 0.32, abs(ns - 0.5)), fade);
+      if (t < 0.07 && stroke < 0.45 && layer < 0.5) { return vec4<f32>(0.0, 0.0, 0.0, -1.0); }
+      let dark = FLORA_COL[b + 2u].rgb * vec3<f32>(0.85, 0.95, 1.1);
+      let lite = FLORA_COL[b + 3u].rgb * vec3<f32>(1.05, 1.1, 1.0);
+      c = mix(dark * 0.7, lite, stroke * (0.55 + 0.45 * (1.0 - t)));
+      c *= 0.85 + 0.25 * clamp(0.5 + 0.5 * n.z, 0.0, 1.0);
+      c *= 1.0 - FLORA_EPI[k].z * 0.0 - 0.45 * min(layer, 1.0);
+      let sn = seasonSnow();
+      if (sn > 0.0 && n.z > 0.5 && layer < 0.5 && fr < sn * 0.75) { c = vec3<f32>(0.9, 0.93, 0.97); mat = f32(MAT_SNOW); }
+      return vec4<f32>(c, mat);
+    }
     // (round 128) a canopy lobe (uv.x = −1, uv.y its occlusion; the user's target: "trees that look like dota 2 or
     // heroes of the storm from above"): a painted ramp — the lit tops and the sun's side warm and light, the undersides
     // and crevices cool and dark (the occlusion baked a vertex), a soft painterly breakup, no cards

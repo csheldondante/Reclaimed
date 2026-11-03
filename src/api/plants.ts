@@ -6,7 +6,7 @@
 import type { WorldCore } from '../scenes/world-core';
 import { EventKind } from '../sim/globals';
 import { cellAt, cellPos } from '../world/lattice';
-import { ELDER_VEG, slotAt, TREE_SCALE, treeSize } from '../flora/spacing';
+import { ELDER_VEG, slotAt, slotRand, TREE_SCALE, treeSize } from '../flora/spacing';
 import type { Mirror } from './mirror';
 import type { Terrain } from './terrain';
 
@@ -15,7 +15,7 @@ import { OP, STROKE_START } from '../sim/edit-ops';
 /** edit.wgsl ops (sim/edit-ops.ts) */
 const { FELL: OP_FELL, PLANT: OP_PLANT } = OP;
 
-export type TreeSpecies = 'broadleaf' | 'conifer' | 'birch' | 'giant';
+export type TreeSpecies = 'broadleaf' | 'conifer' | 'birch' | 'giant' | 'willow';
 
 export interface Tree {
   /** its trunk's column (cell) and its centre in world coordinates */
@@ -120,6 +120,38 @@ export function planTree(cx: number, cy: number, v: number, w: number, h: number
   return { cx, cy, x, y, species, trunk: trunk * TREE_SCALE * sz, crown: crown * TREE_SCALE * sz, logs: logsOf(trunk, crown) * TREE_SCALE * TREE_SCALE * sz * sz * sz };
 }
 
+/**
+ * (round 128) florafield.wgsl willowAt, on the CPU: a willow on a bank at window column (cx, cy) — the candidate column
+ * of its 9 × 10 block of world columns, dry and moist, open water within ~3-7 cells (`water`, `moisture` the mirror's,
+ * window order through `idx`). The GPU's also asks the ground's material and the sea's level; this doesn't (a willow
+ * there is rare: the understory's and passability's count may differ by one at a sea cliff's foot).
+ */
+export function planWillow(cx: number, cy: number, w: number, h: number, org: [number, number], water: Float32Array, moisture: Float32Array, idx: (x: number, y: number) => number): Tree | null {
+  if (cx < 2 || cy < 2 || cx + 2 >= w || cy + 2 >= h) return null;
+  const i = idx(cx, cy);
+  if (water[i] > 0.02 || moisture[i] < 0.5) return null;
+  const wx = cx + org[0];
+  const wy = cy + org[1];
+  const bx = Math.floor(wx / 9);
+  const by = Math.floor(wy / 10);
+  if (wx !== bx * 9 + 1 + Math.floor(slotRand(bx, by, 0x3111) * 7) || wy !== by * 10 + 1 + Math.floor(slotRand(bx, by, 0x3112) * 8)) return null;
+  let near = 0;
+  for (let k = 0; k < 8; k++) {
+    const a = k * 0.785398;
+    for (let r = 3; r <= 7; r += 2) {
+      const x = cx + Math.round(Math.cos(a) * r);
+      const y = cy + Math.round(Math.sin(a) * r);
+      if (x < 0 || y < 0 || x >= w || y >= h) continue;
+      near = Math.max(near, water[idx(x, y)]);
+    }
+  }
+  if (near < 0.35) return null;
+  const sz = 0.7 + 0.45 * slotRand(wx, wy, 0x3113);
+  const [x, y] = cellPos(cx, cy);
+  // (the willow's mesh is ~26 cells tall at size 1: a short trunk under its arching crown)
+  return { cx, cy, x, y, species: 'willow', trunk: 26 * sz * 0.3, crown: 26 * sz * 0.7, logs: logsOf(26 * sz * 0.3, 26 * sz * 0.7) };
+}
+
 export class Plants {
   constructor(
     private core: WorldCore,
@@ -127,6 +159,17 @@ export class Plants {
     private terrain: Terrain,
   ) {
     mirror.addBuffer('veg', core.world.veg);
+    // (round 128: the willows by the water — planWillow reads the water and the moisture)
+    mirror.addBuffer('moisture', core.world.moisture);
+    mirror.addBuffer('water', core.world.water);
+  }
+
+  /** (round 128) the willow at window column (cx, cy), or null (as of the mirror's last read) */
+  private willowAt(cx: number, cy: number): Tree | null {
+    const wa = this.mirror.f32('water');
+    const mo = this.mirror.f32('moisture');
+    if (!wa || !mo) return null;
+    return planWillow(cx, cy, this.core.dims.w, this.core.dims.h, this.core.globals.origin ?? [0, 0], wa, mo, (x, y) => this.core.ring.idx(x, y));
   }
 
   /** The succession field at (x, y): 0 bare … ~1.2 grass, 2.6 shrubs, 3.6+ woods (null before the first read). */
@@ -169,7 +212,7 @@ export class Plants {
     const out: (Tree & { d: number })[] = [];
     for (let cy = Math.max(0, c0y - r); cy <= Math.min(h - 1, c0y + r); cy++) {
       for (let cx = Math.max(0, c0x - r); cx <= Math.min(w - 1, c0x + r); cx++) {
-        const t = this.planAt(cx, cy, v[this.core.ring.idx(cx, cy)]);
+        const t = this.planAt(cx, cy, v[this.core.ring.idx(cx, cy)]) ?? this.willowAt(cx, cy);
         if (!t) continue;
         const d = Math.hypot(t.x - x, t.y - y);
         if (d <= radius) out.push({ ...t, d });

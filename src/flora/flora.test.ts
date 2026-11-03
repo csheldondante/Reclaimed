@@ -106,7 +106,7 @@ describe('species meshes', () => {
       // (round 128: space-colonized crowns and lobe canopies — a tree 6000, the elder 14000; a tree stands one to a 14 x 16
       // block, the elder one to 28 x 32 (TREE_SCALE): per area still under round 125's budgets)
       // (the willow: the viewer's, not in the game's plan yet — its curtains of twigs 14000)
-      const budget = id === 'giant' || id === 'willow' ? 16000 : sp.form === 'tree' ? 7500 : 500;
+      const budget = id === 'giant' || id === 'willow' ? 18000 : sp.form === 'tree' ? 7500 : 500;
       expect(a.tris, `${id} tris`).toBeLessThanOrEqual(budget);
       // indices in range; parts and sway well-formed
       const nv = a.verts.length / 4;
