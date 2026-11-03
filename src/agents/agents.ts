@@ -108,7 +108,9 @@ const P_GMAT = P_GFIELD + 16;
 const P_FPLACE = P_GMAT + 16;
 const P_N2 = P_FPLACE + 12;
 const P_KINDS = P_N2 + 4;
-const P_HITS = P_KINDS + MAX_KINDS * 12;
+/** (knight pass 2) a kind is four vec4 now: d its wind-up and lunge (units.wgsl Kind) */
+const KIND_WORDS = 16;
+const P_HITS = P_KINDS + MAX_KINDS * KIND_WORDS;
 const P_TARGETS = P_HITS + MAX_HITS * 16;
 const P_N3 = P_TARGETS + MAX_TARGETS * 4;
 const P_HOLDS = P_N3 + 4;
@@ -156,6 +158,13 @@ export interface KindSpec {
   swingPeriod?: number;
   /** how far along its field it notices a target (0: a worker) */
   notice?: number;
+  /** (knight pass 2, round 128) seconds from a swing's start to its blow (default 0.3: units.wgsl SWING_HIT) — its
+   *  wind-up, a guard's open window; the follow-through after it stays 0.3 s */
+  windup?: number;
+  /** (knight pass 2) at the wind-up's end it doesn't swing where it stands but leaps at its target (reach is how near it
+   *  starts): at up to `speed` cells/s, `hop` cells/s up; its blow lands on the first target it comes within reach of in
+   *  flight; once down it lies `stun` s more than the usual getting up */
+  lunge?: { speed: number; hop: number; stun: number };
   /** the default figure's materials (MAT ids); torso default: its group's colour */
   colours?: { legs?: number; head?: number; torso?: number };
   /** its own look: voxels [x, y, z, material] in voxel units round its feet (z from 0 up), `voxel` cells each */
@@ -182,6 +191,8 @@ export interface HitSpec {
   stun?: number;
   /** sets them alight */
   fire?: boolean;
+  /** (knight pass 2) from above: a guard's shield (CAP_GUARD) doesn't stop it */
+  overhead?: boolean;
   /** only these groups' units feel it (round 63: a lich's fireball spares its raised dead) */
   groups?: readonly number[];
   /** these groups' units don't feel it */
@@ -213,6 +224,9 @@ export type AgentEvent =
   | { type: 'death'; id: number; by: number | 'fire' | 'water' | 'impact' | 'lava' | 'effect'; x: number; y: number; z: number }
   /** (LW1, corpse mode) a corpse raised by an effect (`by`, its id) into `group`: the same id, alive again */
   | { type: 'raised'; id: number; by: number; group: number; x: number; y: number; z: number }
+  /** (knight pass 2) a hit it turned aside: a guard's block (CAP_GUARD) or a nimble one's sidestep (`dodged`, CAP_EVADE) —
+   *  no damage, no throw, no stun; `hit` the game's hit id */
+  | { type: 'blocked'; id: number; hit: number; dodged: boolean; x: number; y: number; z: number }
   /** (LW1, corpse mode) a corpse gone to dust: its slot is free */
   | { type: 'decayed'; id: number; x: number; y: number; z: number }
   | { type: 'alight'; id: number; by: number | 'fire'; x: number; y: number; z: number }
@@ -689,6 +703,13 @@ export class Agents implements SimSystem {
     this.translator.run(this.units, MAX_UNITS, UNIT_V, 0b1, [dx, dy, dz]);
     this.translator.run(this.flyBuf, MAX_FLY, 2, 0b1, [dx, dy, dz]);
     for (const f of this.flights) f.pos = [f.pos[0] - dx, f.pos[1] - dy, f.pos[2] - dz];
+    // (knight pass 2: the game's hits still queued for the next tick slide with the land too — a hero's slam queued
+    // the frame the window slid landed 64 cells off, on nobody)
+    for (const h of this.hits) {
+      h.x -= dx;
+      h.y -= dy;
+      if (h.z !== undefined) h.z -= dz;
+    }
     // (round 104, simscale: the scope's box with the land; the strips come in start over)
     this.scope?.shift(dx, Math.round(dy / ROW_H));
     const b = this.lastBox;
@@ -1157,7 +1178,7 @@ export class Agents implements SimSystem {
         } else if (kind === 7) {
           events.push({ type: 'raised', id, by: eu[o + 2], group: Math.round(ef[o + 3]), ...p });
           this.corpses.delete(id % MAX_UNITS);
-        }
+        } else if (kind === 8) events.push({ type: 'blocked', id, hit: eu[o + 2], dodged: ef[o + 3] > 0.5, ...p });
       }
       if (n) {
         const uf = new Float32Array(b, evBytes, n * UF);
@@ -1256,9 +1277,10 @@ export class Agents implements SimSystem {
     this.clearNow = clear;
     this.kinds.forEach((k, i) => {
       if (!k) return;
-      const o = P_KINDS + i * 12;
+      const o = P_KINDS + i * KIND_WORDS;
       f.set([k.height, k.mass, k.hp, k.speed, k.reach ?? 0, k.damage ?? 0, k.swingPeriod ?? 1, k.notice ?? 0], o);
       u.set([k.colours?.legs ?? 0, k.colours?.head ?? 0, k.colours?.torso ?? 0, 0], o + 8);
+      f.set([k.windup ?? 0, k.lunge?.speed ?? 0, k.lunge?.hop ?? 0, k.lunge?.stun ?? 0], o + 12);
     });
     hits.forEach((h, i) => {
       const o = P_HITS + i * 16;
@@ -1277,7 +1299,7 @@ export class Agents implements SimSystem {
         for (const g of h.groups) only |= 1 << g;
         spare |= ~only & 0xffff;
       }
-      f.set([h.x, h.y, h.z ?? -1e9, h.radius, dir[0], dir[1], cone, h.damage ?? 0, h.push ?? 0, h.outward ? 1 : 0, (h.fire ? 1 : 0) + spare * 2, h.id, axis[0], axis[1], h.lift ?? 0, Math.min(Math.max(h.stun ?? 0, 0), MAX_STUN)], o);
+      f.set([h.x, h.y, h.z ?? -1e9, h.radius, dir[0], dir[1], cone, h.damage ?? 0, h.push ?? 0, (h.outward ? 1 : 0) + (h.overhead ? 2 : 0), (h.fire ? 1 : 0) + spare * 2, h.id, axis[0], axis[1], h.lift ?? 0, Math.min(Math.max(h.stun ?? 0, 0), MAX_STUN)], o);
     });
     this.targets.forEach((t, i) => {
       f.set([t.x, t.y, t.z, t.radius ?? 0.5], P_TARGETS + i * 4);

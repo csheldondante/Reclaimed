@@ -431,6 +431,12 @@ export class HeroLab {
     this.test = t;
     urlParam.set('test', t.id);
     this.paintNow();
+    // (knight pass 2) the station's own buttons the test starts with (a wave, guards, the course, a parry chip)
+    for (const label of t.press ?? []) {
+      const b = [...this.d.ui.querySelectorAll<HTMLButtonElement>('.play-station button')].find((x) => x.textContent === label);
+      if (!b) throw new Error(`lab test ${t.id}: the station has no "${label}" button`);
+      b.click();
+    }
   }
 
   /** the line under the bar: what's on in plain words, and the test's question */

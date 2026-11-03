@@ -194,7 +194,7 @@ await run({ name: 'knighttouch', kind: 'behaviour', size: '412x915', dpr: 1 }, a
   await p.evaluate((at) => window.reclaimed.play.hero.place([at[0], at[1]]), start);
   await station('Dummies');
   await sleep(800);
-  await button(1);
+  await button(2);
   const arm = (await hero()).arm;
   R.check('⇄ switches to the bow', arm === 'bow', { arm });
   await p.evaluate(() => window.reclaimed.play.hero.place([window.reclaimed.play.hero.position()[0], window.reclaimed.play.hero.position()[1]]));
@@ -215,7 +215,7 @@ await run({ name: 'knighttouch', kind: 'behaviour', size: '412x915', dpr: 1 }, a
   });
   const b1 = await hero();
   R.check('drawn back and let go, arrows fly and land', b1.stats.arrows - b0.stats.arrows >= 2 && b1.stats.arrowHits > b0.stats.arrowHits, { arrows: b1.stats.arrows - b0.stats.arrows, hits: b1.stats.arrowHits - b0.stats.arrowHits });
-  await button(1);
+  await button(2);
 
   // ---- the spin: a circle drawn, then flicked into the dummies; a wave round it to bounce off
   const home = () => p.evaluate((at) => window.reclaimed.play.hero.place([at[0], at[1]]), start);
@@ -250,11 +250,11 @@ await run({ name: 'knighttouch', kind: 'behaviour', size: '412x915', dpr: 1 }, a
     await down(0, 90, 780);
     for (let i = 1; i <= 5; i++) await move(0, 90 + i * 12, 780);
     await sleep(400);
-    await button(0);
+    await button(1);
     await sleep(900);
     for (let i = 1; i <= 5; i++) await move(0, 90, 780 - i * 12);
     await sleep(200);
-    await button(0);
+    await button(1);
     await sleep(600);
     await up(0);
   });

@@ -49,6 +49,11 @@ const CAP_NO_BURN: u32 = 1u;
 const CAP_NO_DROWN: u32 = 2u;
 const CAP_ROOTED: u32 = 4u;
 const CAP_FLEE: u32 = 8u;
+// (knight pass 2, round 128) guarded: every hit is blocked but in its own
+// wind-up, while it lies down, or from above; evasive: every hit is dodged (a
+// sidestep) but while it lies down — after its lunge (Kind.d), or knocked over
+const CAP_GUARD: u32 = 16u;
+const CAP_EVADE: u32 = 32u;
 // LOOK: bits 0-7 the torso's material (0: as its kind), 8-15 the head's, 16-23
 // a halo's material, then a halo over its head (glowing), sparks about it, and
 // (not alive) its body lying where it fell
@@ -102,6 +107,18 @@ const EV_DEATH: u32 = 3u;
 const EV_ALIGHT: u32 = 4u;
 // a swing begins: the target, and how long (s) until the blow lands (a parry's window)
 const EV_WINDUP: u32 = 5u;
+// (knight pass 2) a hit turned aside: the hit's id, amount 0 blocked, 1 dodged
+const EV_BLOCK: u32 = 8u;
+// a block's shove back (cells/s, the most of it: past TUMBLE_PUSH it would
+// throw it, and down it's open), its share of the hit's push (iso-adventure
+// SHIELD.knockbackTaken 0.35); a dodge's sidestep (cells/s)
+const BLOCK_SHOVE: f32 = 3.5;
+const BLOCK_SHARE: f32 = 0.35;
+const DODGE_STEP: f32 = 4.5;
+// a lunge's blow lands on a target it comes this near in flight (cells), armed
+// this long after it leaps (s, on top of the kind's swing period in `cool`)
+const LUNGE_REACH: f32 = 0.55;
+const LUNGE_ARMED: f32 = 0.8;
 const BY_FIRE: u32 = 0xffffffffu;
 const BY_WATER: u32 = 0xfffffffeu;
 const BY_IMPACT: u32 = 0xfffffffdu;
@@ -351,6 +368,16 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
   var killedBy = 0u;
   var dead = false;
   if (noBurn) { alight = false; burn = 0.0; }
+  // (knight pass 2) open to a hit: not guarded or evasive; down (settled on the
+  // ground: stT counts only while it lies still); a guard in its own wind-up
+  let wind = select(SWING_HIT, kind.d.x, kind.d.x > 0.0);
+  let guarded = (caps & CAP_GUARD) != 0u;
+  let evasive = (caps & CAP_EVADE) != 0u;
+  let down = state == ST_TUMBLE && dd.y > 0.05;
+  let open = (!guarded && !evasive) || down || (guarded && state == ST_SWING && dd.y < wind && kind.d.y <= 0.0);
+  var turned = vec2<f32>(0.0);
+  var lunged = false;
+  var lungeV = vec3<f32>(0.0);
 
   // the game's hits
   for (var h = 0u; h < AP.n2.x; h++) {
@@ -364,18 +391,37 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
     let hz = u32(hit.c.z + 0.5);
     if (((hz >> (1u + grp)) & 1u) != 0u) { continue; }
     let hid = u32(hit.c.w);
+    let hy = u32(hit.c.y + 0.5);
+    let outward = (hy & 1u) != 0u;
+    // (knight pass 2) blocked or dodged: no damage, no throw, no stun — a shove
+    // back off the shield, or a sidestep across the blow (to the side it's on)
+    if (!open && !(guarded && (hy & 2u) != 0u)) {
+      let along = select(hit.b.xy, off.xy / max(r, 0.01), outward || length(hit.b.xy) < 0.1);
+      if (guarded) {
+        turned += along * min(hit.c.x * BLOCK_SHARE, BLOCK_SHOVE) / mass;
+      } else {
+        let side = select(-1.0, 1.0, along.x * off.y - along.y * off.x >= 0.0);
+        turned += vec2<f32>(-along.y, along.x) * side * DODGE_STEP;
+      }
+      emit(EV_BLOCK, uid, hid, select(0.0, 1.0, !guarded), pos);
+      continue;
+    }
     if (hit.b.w > 0.0) {
       hp -= hit.b.w;
       flash = 0.15;
       emit(EV_HURT, uid, hid, hit.b.w, pos);
       if (hp <= 0.0 && !dead) { dead = true; killedBy = hid; }
     }
-    let away = select(hit.b.xy, off.xy / max(r, 0.01), hit.c.y > 0.5);
+    let away = select(hit.b.xy, off.xy / max(r, 0.01), outward);
     push += away * hit.c.x / mass;
     if (hit.d.z != 0.0) { lift += hit.d.z / mass; lifted = true; }
     stunHit = max(stunHit, hit.d.w);
     if ((hz & 1u) != 0u && !alight && !noBurn) { alight = true; burn = BURN_TIME; emit(EV_ALIGHT, uid, hid, 0.0, pos); }
   }
+
+  // (a block's shove, a dodge's step: never past a throw — down, it would be open)
+  let tl = length(turned);
+  if (tl > 0.0) { push += turned / tl * min(tl, TUMBLE_PUSH * 0.9); }
 
   // held by the game, or launched: holds and launches name its slot
   var held = false;
@@ -525,6 +571,9 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
       vel.z = select(0.0, impact * BOUNCE, impact > 2.0);
       // (a landing takes some of its speed along the ground too, as a skid)
       vel = vec3<f32>(vel.xy * max(1.0 - ROLL_GRIP * dt, 0.0) * select(1.0, LAND_SKID, impact > 2.0), vel.z);
+      // (knight pass 2) a lunger's dive lands flat and stops there — it lies where it came down, open, not skidding
+      // on out of reach for the best part of its window
+      if (kind.d.y > 0.0 && impact > 1.0) { vel = vec3<f32>(vel.xy * 0.1, 0.0); }
       if (length(vel) > 0.6) { stT = 0.0; }
       // settled long enough: up again
       if (stT > GETUP + stun) {
@@ -538,9 +587,27 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
       stT = 0.0;
     }
     if (hp <= 0.0 && !dead) { dead = true; killedBy = BY_IMPACT; }
+    // (knight pass 2) a lunger's lunge, armed: its blow on the first target it comes within reach of
+    if (kind.d.y > 0.0 && cool > kind.b.z && stT > 0.0) {
+      // (down and still: the lunge is over, disarmed)
+      cool = kind.b.z;
+    } else if (kind.d.y > 0.0 && cool > kind.b.z) {
+      for (var t = 0u; t < AP.n2.y; t++) {
+        if (targetGap(t, np, height).w < LUNGE_REACH) {
+          emit(EV_SWING, uid, t, kind.b.y, np);
+          cool = kind.b.z;
+          break;
+        }
+      }
+    }
     if (state == ST_TUMBLE) {
-      // rolling along its throw (the draw turns it about the axis across it)
-      wanderH += length(vel) * dt / max(height * 0.5, 0.2);
+      if (kind.d.y > 0.0) {
+        // (a lunger dives flat, head first, and lies so: not rolled along)
+        wanderH = min(wanderH + dt * 9.0, 1.45);
+      } else {
+        // rolling along its throw (the draw turns it about the axis across it)
+        wanderH += length(vel) * dt / max(height * 0.5, 0.2);
+      }
       if (length(vel.xy) > 0.3) { heading = atan2(vel.y, vel.x); }
     }
     // what it carries knocks over the units in its way
@@ -582,17 +649,28 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
         if (state == ST_CHASE && reachD < kind.b.x && seen && cool <= 0.0) {
           state = ST_SWING;
           stT = 0.0;
-          emit(EV_WINDUP, uid, u32(tgt), SWING_HIT, pos);
+          emit(EV_WINDUP, uid, u32(tgt), wind, pos);
         }
       }
       if (state == ST_SWING) {
         speed = 0.0;
         if (tgt >= 0) { heading = atan2(AP.targets[tgt].y - pos.y, AP.targets[tgt].x - pos.x); }
-        // (the blow lands once, partway into the swing, if it's still in reach)
-        if (stT >= SWING_HIT && stT - dt < SWING_HIT && reachD < kind.b.x * 1.3 && seen) {
-          emit(EV_SWING, uid, u32(tgt), kind.b.y, pos);
+        // (the blow lands once, at the wind-up's end, if it's still in reach — or,
+        // a lunger (Kind.d.y), it leaps at the target then: its blow lands in flight)
+        if (stT >= wind && stT - dt < wind && reachD < kind.b.x * 1.3 && seen) {
+          if (kind.d.y > 0.0 && tgt >= 0) {
+            let to = AP.targets[tgt].xy - pos.xy;
+            let l = max(length(to), 0.01);
+            // (to land a little past where the target stands, no faster than its lunge)
+            let flight = 2.0 * kind.d.z / max(unitsG(), 1.0);
+            let sp = min(kind.d.y, (l + 0.8) / max(flight, 0.05));
+            lungeV = vec3<f32>(to / l * sp, kind.d.z);
+            lunged = true;
+          } else {
+            emit(EV_SWING, uid, u32(tgt), kind.b.y, pos);
+          }
         }
-        if (stT > SWING_END) { state = ST_CHASE; stT = 0.0; cool = kind.b.z; }
+        if (stT > wind + (SWING_END - SWING_HIT)) { state = ST_CHASE; stT = 0.0; cool = kind.b.z; }
       } else if (state == ST_WANDER && !worker) {
         // (a new heading now and then; slower than closing in)
         if (rand3(u, G.tick, 7u) < dt * 0.4) { wanderH = rand3(u, G.tick, 8u) * 6.2832; }
@@ -654,6 +732,17 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
     np = vec3<f32>(p2, z);
     vel = vec3<f32>(v2, 0.0);
     if (length(v2) > 0.05 && state != ST_SWING) { heading = atan2(v2.y, v2.x); }
+    if (lunged) {
+      // (the lunge: off the ground at its target, head first; it lies `d.w` s once down; armed in flight)
+      np = pos;
+      vel = lungeV;
+      heading = atan2(lungeV.y, lungeV.x);
+      state = ST_TUMBLE;
+      stT = 0.0;
+      stun = kind.d.w;
+      wanderH = 0.0;
+      cool = kind.b.z + LUNGE_ARMED;
+    }
   }
   if (dead) {
     emit(EV_DEATH, uid, killedBy, 0.0, pos);
@@ -727,7 +816,8 @@ fn unitDraw(@builtin(global_invocation_id) id: vec3<u32>) {
   let working = ((((gm >> 8u) & 1u) != 0u && state < ST_TUMBLE) || swinging) && !corpse;
   if (working) {
     let ph = f32(G.tick) * 0.13 + f32(u) * 1.7;
-    let bend = select(0.2 + 0.3 * max(sin(ph), -0.3), 0.55 * sin(min(dd.y / 0.6, 1.0) * 3.1416), swinging);
+    let swingT = select(SWING_HIT, kind.d.x, kind.d.x > 0.0) + (SWING_END - SWING_HIT);
+    let bend = select(0.2 + 0.3 * max(sin(ph), -0.3), 0.55 * sin(min(dd.y / swingT, 1.0) * 3.1416), swinging);
     let ax = vec3<f32>(-sin(yaw), cos(yaw), 0.0);
     q = qmul(vec4<f32>(ax * sin(bend * 0.5), cos(bend * 0.5)), q);
   }
@@ -738,6 +828,17 @@ fn unitDraw(@builtin(global_invocation_id) id: vec3<u32>) {
   var heat = 0.0;
   if (alight && !corpse) { heat = 0.45 + 0.25 * rand3(u, G.tick / 3u, 11u); }
   if (dd.x > 0.0 && !corpse) { heat = 1.0; }
+  // (knight pass 2) the guards' tells: the shield held up while it blocks (steel, in front); in its wind-up it flashes
+  // (the shield is down: open); down, stars over its head (open)
+  let tcaps = bitcast<u32>(units[u * UNIT_V + 4u].x);
+  let tguard = (tcaps & CAP_GUARD) != 0u;
+  let tgarded = (tcaps & (CAP_GUARD | CAP_EVADE)) != 0u && !corpse;
+  let twind = select(SWING_HIT, kind.d.x, kind.d.x > 0.0);
+  let winding = state == ST_SWING && dd.y < twind;
+  let downed = state == ST_TUMBLE && dd.y > 0.05;
+  let shield = tgarded && tguard && !winding && state != ST_TUMBLE;
+  let stars = tgarded && downed;
+  if (tgarded && winding) { heat = max(heat, 0.55 + 0.45 * sin(f32(G.tick) * 0.9)); }
   let glow = select(0u, PHYS_BIT | (u32(heat * 255.0) << 16u), heat > 0.0);
   let n = select(3u, km.y, km.y > 0u);
   let cv = carried[u];
@@ -746,7 +847,21 @@ fn unitDraw(@builtin(global_invocation_id) id: vec3<u32>) {
   let halo = (look & LOOK_HALO) != 0u && !corpse;
   let sparks = (look & LOOK_SPARKS) != 0u && !corpse;
   let extra = select(0u, 1u, holds) + select(0u, 1u, working);
-  let base = atomicAdd(&drawArgs[1], n + extra + select(0u, 1u, halo) + select(0u, 2u, sparks));
+  let tells = select(0u, 1u, shield) + select(0u, 2u, stars);
+  let base = atomicAdd(&drawArgs[1], n + extra + select(0u, 1u, halo) + select(0u, 2u, sparks) + tells);
+  let tb = base + n + extra + select(0u, 1u, halo) + select(0u, 2u, sparks);
+  if (shield) {
+    // a block of steel at its front, chest high: half its height, turned its way
+    let sh = h * 0.5;
+    putVoxel(tb, a.xyz + vec3<f32>(cos(yaw) * 0.38, sin(yaw) * 0.38, h * 0.52), 20u | (min(u32(sh * 16.0), 63u) << 24u) | glow, vec4<f32>(0.0, 0.0, sin(yaw * 0.5), cos(yaw * 0.5)));
+  }
+  if (stars) {
+    // two bright motes going round over where its head lies
+    for (var j = 0u; j < 2u; j++) {
+      let ang = f32(G.tick) * 0.25 + f32(j) * 3.1416;
+      putVoxel(tb + select(0u, 1u, shield) + j, a.xyz + vec3<f32>(cos(ang) * 0.35 + cos(yaw) * h * 0.5, sin(ang) * 0.35 + sin(yaw) * h * 0.5, 0.65), 15u | (3u << 24u) | PHYS_BIT | (250u << 16u), vec4<f32>(0.0, 0.0, 0.0, 1.0));
+    }
+  }
   let centre = select(a.xyz + mid + vec3<f32>(0.0, 0.0, bob), a.xyz + vec3<f32>(0.0, 0.0, h * 0.14), corpse);
   if (halo) {
     // a small glowing light over its head (a share of its melting point: the heat glow's white end)

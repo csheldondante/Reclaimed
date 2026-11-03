@@ -22,11 +22,15 @@ and pulls back on open ground, and tilts only by cliffs. It is a variant to try,
 3. **Bike, hills.** Does the camera stay still on gentle hills now? (The cut should not fire there at all.)
 4. **Bike, cliffs.** Ride round the massif. Does the cut show you the bike and the turn ahead? Is the bowl's rise
    right, too steep or too flat?
-5. **Knight, raiders.** Tap **Wave** two or three times. Swipe to slash, swipe twice fast to lunge through the crowd,
-   draw a circle to spin. Does the sword feel strong? Is the lunge long enough?
-6. **Knight, bow.** Tap the weapon button to switch to the bow. Pull back away from a raider and let go. Is aiming
-   easy?
-7. **Knight, forest and canyon.** Can you see the knight under the trees and between the canyon walls?
+5. **Knight, crowd.** Two waves come. Swipe twice fast to lunge through the crowd. Do you slip through and come out
+   the other side? Is the lunge long enough now?
+6. **Knight, guards and lungers.** Guards block from the front. Lungers wind up, then charge. Can you tell when to hit
+   them?
+7. **Knight, jump course and lock on.** Jump up the steps and over the gap, and swipe in the air to jump attack. Does
+   the jump feel right? Then tap a raider to lock on. Do your slashes and arrows go where you want?
+   **Parry, three ways:** try Parry button, Parry swipe and Parry hold against the lungers. Which feels best?
+   **Bow and hook:** switch weapons. Is aiming the bow easy? With the hook, tap a raider to yank it in, or tap the
+   ground to zip there. Is it fun? The forest and canyon tests ask whether you can see the knight.
 8. **Bike and knight, the tour (auto zoom).** One loop: a field, shrubs, low trees, tall woods, the canyon's cliff
    wall, a city street. Does the zoom follow what's around you? Closer in the tall woods, pulled back on the field
    and among shrubs? Does it pump in and out? Does the tilt by the cliff help? (The camera chips have **auto+town**
@@ -34,14 +38,20 @@ and pulls back on open ground, and tilts only by cliffs. It is a variant to try,
 9. **Lich, raise the dead / raiders / cliffs.** Tap Crowd, then Smite and Raise. Is building an army fun? (We still
    owe the lich a design talk. This is only to remind you how it plays now.)
 
-## The phone bench (about 6 minutes)
+## The phone benches
 
+Heroes and cameras, about 6 minutes:
 https://csheldondante.github.io/Reclaimed/herolab/?skipmenu=1&level=herolab&tutorial=0&herobench=1
 
 One tap on the link, then leave the phone alone; it keeps the screen awake. It rides the canyon six times: each hero
 with the plain follow camera, then with cut and tilt. Then the bike rides the tour twice: plain follow, then auto. It
 reloads between runs. At the end, tap Download and send me the JSON. It tells us what each hero, the cut and the
 auto camera cost on your phone.
+
+The knight, a scripted fight with no enemies, raiders, then a mixed wave:
+https://csheldondante.github.io/Reclaimed/herolab/?skipmenu=1&level=atlas&tutorial=0&play=knight&station=1&knightbench=1
+
+Both keep the screen awake. At the end of each, tap Download and send me the JSON.
 
 ## What to send back
 

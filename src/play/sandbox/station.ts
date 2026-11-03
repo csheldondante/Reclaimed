@@ -24,7 +24,20 @@ export interface StationHost {
 
 /** a wave: raiders in a ring this far round the hero, the first wave's count; dummies: how many, how far ahead, apart */
 const WAVE = { ring: 13, first: 3, sight: 30, speed: 3.5, health: 3 };
+/** (pass 2) the parry variants, by the knight's parryMode */
+const PARRY = ['Off', 'Button', 'Swipe', 'Hold'];
 const DUMMY = { count: 3, ahead: 5, apart: 3, health: 400 };
+/** (pass 2) the jump course: flat-topped steps (cells ahead, radius, top over the start's ground), a gap dug before the
+ *  last — each step's rise over the last is more than a walking step (0.9) and less than a jump reaches (2.9) */
+const COURSE = {
+  steps: [
+    { ahead: 5, radius: 2.2, rise: 1.5 },
+    { ahead: 10, radius: 2.2, rise: 3 },
+    { ahead: 15, radius: 2.2, rise: 4.5 },
+    { ahead: 22, radius: 2.6, rise: 6 },
+  ],
+  gap: { ahead: 18.6, radius: 1.4, layers: 4 },
+};
 
 export class Station {
   private box: HTMLElement;
@@ -32,10 +45,12 @@ export class Station {
   private wave = 0;
   private raiders: UnitId[] = [];
   private dummies: UnitId[] = [];
-  /** blows that killed (the units' `died` naming the hero), what the hero took */
-  readonly tally = { kills: 0, taken: 0, waves: 0 };
+  /** blows that killed (the units' `died` naming the hero), what the hero took; (pass 2) blows that landed, were blocked
+   *  or dodged — the units' own `hurt` and `blocked` events naming the hero, not the knight's guess */
+  readonly tally = { kills: 0, taken: 0, waves: 0, landed: 0, blocked: 0, dodged: 0 };
   private offDied: () => void;
   private lastText = '';
+  private chips: HTMLButtonElement[] = [];
 
   /** `place`: to a station spot near the camera at once (the sandbox); the hero lab places its own hero */
   constructor(
@@ -46,10 +61,20 @@ export class Station {
     const died = (_u: unknown, by: UnitId | string | null) => {
       if (by === 'hero') this.tally.kills++;
     };
+    const hurt = (_u: unknown, _d: number, by: UnitId | string | null) => {
+      if (by === 'hero') this.tally.landed++;
+    };
+    const blocked = (_u: unknown, by: UnitId | string | null, dodged: boolean) => {
+      if (by === 'hero') this.tally[dodged ? 'dodged' : 'blocked']++;
+    };
     units.died.push(died);
+    units.hurt.push(hurt);
+    units.blocked?.push(blocked);
     this.offDied = () => {
-      const i = units.died.indexOf(died);
-      if (i >= 0) units.died.splice(i, 1);
+      for (const [list, f] of [[units.died, died], [units.hurt, hurt], [units.blocked ?? [], blocked]] as [unknown[], unknown][]) {
+        const i = list.indexOf(f);
+        if (i >= 0) list.splice(i, 1);
+      }
     };
     this.box = el('div', 'play-station', s.d.ui);
     for (const ev of ['pointerdown', 'pointerup', 'touchstart']) this.box.addEventListener(ev, (e) => e.stopPropagation());
@@ -62,6 +87,33 @@ export class Station {
     btn('Wave', () => this.nextWave());
     btn('Dummies', () => this.placeDummies());
     btn('Clear', () => this.clear());
+    btn('Course', () => this.course());
+    // (pass 2) the guard and the lunger (units/agent-units.ts GUARDS), three of each, or a mixed wave
+    const row2 = el('div', 'play-station-row', this.box);
+    const btn2 = (label: string, f: () => void) => {
+      const b = el('button', 'play-small', row2) as HTMLButtonElement;
+      b.textContent = label;
+      b.addEventListener('click', f);
+    };
+    btn2('Guards', () => this.ring(['blocker', 'blocker', 'blocker'], 7));
+    btn2('Lungers', () => this.ring(['lunger', 'lunger', 'lunger'], 9));
+    btn2('Mixed', () => this.ring(['raider', 'raider', 'raider', 'blocker', 'blocker', 'lunger', 'lunger'], 11));
+    // (pass 2) the parry variants to compare (the knight's parryMode): a chip each, the one in play lit
+    const row3 = el('div', 'play-station-row', this.box);
+    const lab = el('span', 'play-station-label', row3);
+    lab.textContent = 'Parry';
+    PARRY.forEach((name, i) => {
+      const b = el('button', 'play-small play-chip', row3) as HTMLButtonElement;
+      b.textContent = name;
+      b.addEventListener('click', () => {
+        const pr = this.s.hero.params as Record<string, number>;
+        if ('parryMode' in pr) pr.parryMode = i;
+        this.chips.forEach((c, j) => c.classList.toggle('on', j === i));
+      });
+      this.chips.push(b);
+    });
+    const pm = (this.s.hero.params as Record<string, number>).parryMode;
+    this.chips.forEach((c, j) => c.classList.toggle('on', j === pm));
     this.read = el('div', 'play-station-read', this.box);
     this.read.style.pointerEvents = 'none';
     if (o.place ?? true) this.relocate();
@@ -119,6 +171,46 @@ export class Station {
     }
   }
 
+  /**
+   * (pass 2) The jump course, built ahead of the knight (the way it faces): three flat-topped steps each 1.5 cells over
+   * the last (more than a walking step), a gap dug before the last, and on the last ledge a raider (to jump-attack from
+   * below or reach by the hook). JUMP onto each; a walk only reaches the first's foot.
+   */
+  course(): void {
+    const t = this.s.d.api.terrain;
+    if (!t) return;
+    const h = this.s.hero;
+    const [x, y] = h.position();
+    const a = h.heading();
+    const f = [Math.cos(a), Math.sin(a)];
+    const at = (k: number): [number, number] => [x + f[0] * k, y + f[1] * k];
+    // (flat-topped steps: the terrain's mesa brush, each at its own level over the ground where the knight stands)
+    const g0 = t.heightAt(x, y) ?? h.position()[2];
+    COURSE.steps.forEach((s) => {
+      const [cx, cy] = at(s.ahead);
+      const m = t.raise('mesa', { radius: s.radius, level: g0 + s.rise });
+      m.to(cx - f[0] * 0.5, cy - f[1] * 0.5);
+      m.to(cx + f[0] * 0.5, cy + f[1] * 0.5);
+      m.end();
+    });
+    const [gx, gy] = at(COURSE.gap.ahead);
+    t.dig(gx, gy, { radius: COURSE.gap.radius, layers: COURSE.gap.layers });
+    const top = COURSE.steps[COURSE.steps.length - 1];
+    const [rx, ry] = at(top.ahead);
+    // (the raider once the stone is up: the edit lands over the next frames)
+    setTimeout(() => this.raiders.push(this.s.d.units.spawn('raider', [rx, ry], 'f-raiders', { hostile: true, health: WAVE.health, sight: 6, speed: 0.01, role: 'raider', job: { kind: 'guard', at: [rx, ry], radius: 1 } })), 1500);
+  }
+
+  /** (pass 2) these kinds in a ring this far round the hero, hostile (a guard: 'blocker'; a lunger: 'lunger') */
+  ring(kinds: string[], r: number): void {
+    const [x, y] = this.s.hero.position();
+    kinds.forEach((kind, i) => {
+      const a = (i / kinds.length) * Math.PI * 2 + Math.random() * 0.3;
+      const at: [number, number] = [x + Math.cos(a) * r, y + Math.sin(a) * r];
+      this.raiders.push(this.s.d.units.spawn(kind, at, 'f-raiders', { hostile: true, health: WAVE.health, sight: WAVE.sight, speed: WAVE.speed, role: kind }));
+    });
+  }
+
   /** three dummies in a row ahead of the hero: they stand, take blows and don't hit back */
   placeDummies(): void {
     for (const id of this.dummies) this.s.d.units.remove(id);
@@ -148,10 +240,10 @@ export class Station {
     const alive = this.raiders.filter((id) => this.s.d.units.get(id)?.alive).length;
     this.tally.taken = h.maxHealth - h.health;
     const lines = [
-      `speed ${h.speed().toFixed(1)} c/s${st ? ` · best ${st.best.toFixed(1)}` : ''}`,
-      st ? `hits ${st.hits} · kills ${this.tally.kills} · swings ${st.swings} (lunges ${st.lunges})` : `kills ${this.tally.kills}`,
-      st ? `arrows ${st.arrowHits}/${st.arrows} · spins ${st.spins} (bounces ${st.bounces}) · dodges ${st.dodges}` : '',
-      `wave ${this.wave} · raiders left ${alive} · hurt ${this.tally.taken.toFixed(0)}`,
+      `speed ${h.speed().toFixed(1)}${st ? ` best ${st.best.toFixed(1)}` : ''} · kills ${this.tally.kills} · left ${alive} · hurt ${this.tally.taken.toFixed(0)}`,
+      `landed ${this.tally.landed} · blocked ${this.tally.blocked} · dodged ${this.tally.dodged}`,
+      st ? `swings ${st.swings} lunges ${st.lunges} · arrows ${st.arrowHits}/${st.arrows} · spins ${st.spins}/${st.bounces}` : '',
+      st ? `jumps ${st.jumps} slams ${st.slams} · parries ${st.parries} · hooks ${st.hooks} zips ${st.zips}` : '',
     ].filter(Boolean);
     const text = lines.join('\n');
     if (text !== this.lastText) {

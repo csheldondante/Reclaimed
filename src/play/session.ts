@@ -92,6 +92,8 @@ export class PlaySession {
   private steerState: SteerState = { carve: null };
   /** the hero's velocity last frame (cells/s, differenced) */
   private vel: V2 = [0, 0];
+  /** (knight pass 2) the view's offset toward what the hero keeps framed (a locked enemy), eased */
+  private frameOff: [number, number] = [0, 0];
   /** where the hero was last frame (its velocity for the framing: any hero, whatever moves it) */
   private last: [number, number] | null = null;
   private keepFresh: (() => void) | null = null;
@@ -275,6 +277,22 @@ export class PlaySession {
     // (round 121: the camera rig — the chase as before, and the modes picked over it: play/camera)
     this.sight.frame();
     const frame = this.rig.step(dt, { at: [p[0], p[1], p[2]], floor: this.world.top(p[0], p[1]), heading: h.heading(), vel: [vx, vy], fast: h.fast() }, { move: input.dir }, this.sight, { w: cam.viewportW, h: cam.viewportH, margin: HUD_MARGIN });
+    // (knight pass 2, on the rig since the herolab merge) a point the hero keeps framed (a locked enemy): the view eased
+    // toward between them — a third of the way, at most 4 cells, so both stay on screen at the knight's zoom
+    const fr = h.framing();
+    if (fr) {
+      const fx = fr[0] - p[0];
+      const fy = fr[1] - p[1];
+      const fl = Math.hypot(fx, fy);
+      const k3 = fl > 0 ? Math.min(fl / 3, 4) / fl : 0;
+      this.frameOff[0] += (fx * k3 - this.frameOff[0]) * Math.min(1, dt * 4);
+      this.frameOff[1] += (fy * k3 - this.frameOff[1]) * Math.min(1, dt * 4);
+    } else {
+      this.frameOff[0] *= Math.max(0, 1 - dt * 4);
+      this.frameOff[1] *= Math.max(0, 1 - dt * 4);
+    }
+    frame.view.target[0] += this.frameOff[0];
+    frame.view.target[1] += this.frameOff[1];
     const ids = this.rig.ids;
     const had = (m: CamModeId) => ids.includes(m) || this.camWas.includes(m);
     applyFrame(cam, frame, { turn: had('rotate'), tilt: had('tilt') || had('auto') || had('autocity'), cut: had('cutaway') || had('cutfade') || had('edge') || had('dither') });

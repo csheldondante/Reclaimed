@@ -18,8 +18,23 @@ export interface PlayUnits {
   get(id: UnitId): UnitView | null;
   strike(h: AreaHit): void;
   hold(id: UnitId, at: V3): boolean;
-  release(id: UnitId, vel?: V3): void;
+  /** let go (or throw) at `vel`; (knight pass 2) `stun`: s it lies once down (a parry's stagger) */
+  release(id: UnitId, vel?: V3, stun?: number): void;
   readonly maxHeld: number;
+  /** (knight pass 2) the hero's blows a unit turned aside lately (a guard's block, a lunger's dodge), oldest first, each
+   *  with a rising `seq` — a hero shows them (sparks, a recoil) as they come back from the units */
+  turned(): readonly Turned[];
+}
+
+/** (knight pass 2) the sounds a hero cues (PlayWorld.cue) */
+export type PlayCue = 'block' | 'dodge' | 'parry' | 'jump' | 'land' | 'slam' | 'lock' | 'hook';
+
+/** (knight pass 2) a blow of the hero's turned aside: where the unit stood, blocked or dodged */
+export interface Turned {
+  seq: number;
+  id: UnitId;
+  at: V3;
+  dodged: boolean;
 }
 
 /** A wind held round a point (the lich's downdraft, its storm): moved each frame, stopped when done. */
@@ -61,6 +76,9 @@ export interface PlayWorld {
   groundAt(screen: Pt): Pt;
   /** (round 118) the other riders and vehicles in play (a hook reels up alongside them); absent: none */
   vehicles?(): Vehicle[];
+  /** (knight pass 2) a sound hook: a cue for what just happened there (a blow blocked, dodged). No sound system plays
+   *  them yet (BACKLOG KN-11); absent: silent */
+  cue?(name: PlayCue, at: V3): void;
   /** (merge123, BACKLOG LW1-1) the fallen within `radius` of (x, y) rise undead and follow the hero (the trait
    *  system's raise effect, put together at the boundary: makePlayWorld's `raise`); absent: no raising here */
   raise?(x: number, y: number, radius: number): void;
@@ -70,12 +88,20 @@ export interface PlayWorld {
 function playUnits(u: Units): PlayUnits {
   const { strike, hold, release } = u;
   if (!strike || !hold || !release) throw new Error('play: the units implementation has no strike/hold/release (the Units contract, round 117) — AgentUnits has them');
+  const turned: Turned[] = [];
+  let seq = 0;
+  u.blocked?.push((v, by, dodged) => {
+    if (by !== 'hero') return;
+    turned.push({ seq: ++seq, id: v.id, at: [...v.at], dodged });
+    if (turned.length > 32) turned.shift();
+  });
   return {
+    turned: () => turned,
     near: (x, y, r) => u.query([x, y], r),
     get: (id) => u.get(id),
     strike: (h) => strike.call(u, h, 'hero'),
     hold: (id, at) => hold.call(u, id, at),
-    release: (id, vel) => release.call(u, id, vel),
+    release: (id, vel, stun) => release.call(u, id, vel, { stun }),
     maxHeld: u.maxHeld ?? 8,
   };
 }

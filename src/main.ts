@@ -186,6 +186,9 @@ async function main() {
   if (params.get('physbench') === '1') void import('./perf/physbench').then((m) => m.physBench(params));
   // (round 128: ?herobench=1 — the hero lab's phone bench, each hero on the canyon under the chase and the cut: src/perf/herobench.ts)
   if (params.get('herobench') === '1') void import('./perf/herobench').then((m) => m.heroBench(params));
+  // (knight pass 2, round 128: ?knightbench=1 — the knight's station under a scripted fight, no enemies / raiders / a mixed
+  // wave as matched pairs by reload: src/perf/knightbench.ts)
+  if (params.get('knightbench') === '1') void import('./perf/knightbench').then((m) => m.knightBench(params));
   if (pageBench === 'run') void pageBenchRun();
   if (bench === 'level')
     void benchLevel({

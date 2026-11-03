@@ -43,7 +43,10 @@ export const KNIGHT_DEFAULTS = {
   slashArc: deg(130),
   slashDamage: 2,
   slashKnock: s(6),
-  slashLunge: s(3.5),
+  /** (pass 2, round 128: "we want the default lunge to be further") each swing DASHES this far (cells) along its way,
+   *  over its active time and the recovery up to the chain (core/slip.ts: through a crowd, not stopped by it); round
+   *  128's first pass was iso-adventure's impulse (3.5 × 1.3 cells/s) that friction bled in a few frames: 0.11 cells */
+  slashLunge: 1.6,
   finWindup: 0.12,
   finActive: 0.12,
   finRecovery: 0.32,
@@ -51,7 +54,8 @@ export const KNIGHT_DEFAULTS = {
   finArc: deg(170),
   finDamage: 3,
   finKnock: s(12),
-  finLunge: s(6),
+  /** the finisher's dash (cells; first pass: an impulse of 6 × 1.3 cells/s) */
+  finLunge: 2.4,
   /** the double swipe's lunge: a dash-strike that way */
   lungeWindup: 0.04,
   lungeActive: 0.16,
@@ -60,7 +64,15 @@ export const KNIGHT_DEFAULTS = {
   lungeArc: deg(100),
   lungeDamage: 3,
   lungeKnock: s(11),
-  lungeSpeed: s(15),
+  /** the double swipe's dash (cells; first pass: an impulse of 15 × 1.3 cells/s, which carried 2.5): still the big move */
+  lungeSpeed: 4.8,
+  /** the share of the dash's way it turns to slip between bodies at most (radians), how far past a body it carries on
+   *  rather than end inside it (cells), and the share of a dash's blow knocked along it (the rest aside) */
+  slipTurn: deg(14),
+  /** a blow a guard blocks knocks the knight back this fast (cells/s) and ends its dash */
+  blockRecoil: 6,
+  slipExtend: 1.2,
+  dashForward: 0.45,
   /** the throw up a blow gives (cells/s; new here: the units fly a little, readable at play zoom) and the stun (s,
    *  the agents' status: they stay down) of a light swing, the finisher and the lunge */
   slashLift: 2,
@@ -114,6 +126,58 @@ export const KNIGHT_DEFAULTS = {
   volleyArrows: 3,
   volleySpread: 0.32,
   volleyEvery: 0.8,
+  // ---- (pass 2, round 128) the jump and the jump attack: the user, "the knight could use a jump button and maybe a tap
+  // to lock on to enemies so we can do platforming and moves like a jump attack". GameplayGM iso-adventure has no jump
+  // (its dodge roll carried over 2-cell gaps): these are new. Each its own state with its own profile (the user's
+  // earlier guidance: "jump variants are separate states, not bonus fields on one jump state").
+  /** the jump: up at this (cells/s), pulled down at `jumpRise` going up and `jumpFall` coming down (cells/s²: a quick
+   *  fall reads as weight), steered in the air at `jumpSteer` (cells/s²) toward the stick's run. Up 11 at 30: 2 cells
+   *  high, so a ledge 2.9 cells up (with the 0.9 step) is reached; 0.37 s up, 0.29 s down */
+  jumpUp: 11,
+  jumpRise: 30,
+  jumpFall: 48,
+  jumpSteer: 40,
+  /** the jump attack (a swipe in the air): a dive at `plungeSpeed` (cells/s) — onto the enemy the swipe means (or the
+   *  locked one) within `plungeReach` cells, else down along the swipe at `plungeAngle` below level; on landing a shockwave of `slamRadius` cells (damage, an outward push, a throw, a stun) and a stomp
+   *  on what it lands on; then `plungeLag` s to stand up. From above: a guard's shield doesn't stop it */
+  plungeSpeed: 24,
+  plungeReach: 5,
+  plungeAngle: deg(55),
+  plungeLag: 0.28,
+  slamRadius: 2,
+  slamDamage: 2,
+  slamPush: 9,
+  slamLift: 4,
+  slamStun: 0.7,
+  stompDamage: 4,
+  // ---- (pass 2) the lock-on: a tap on an enemy (within this many px of its middle on the screen) locks it; it's let go
+  // past `lockRange` cells. Locked, slashes within `lockCone` of it go at it, the bow aims at it, a jump attack lands on it
+  lockPick: 46,
+  lockRange: 18,
+  lockCone: deg(75),
+  // ---- (pass 2, round 128) the hook gun: the user, "add back in the grapling hook gun". The bike's hook (heroes/hook.ts)
+  // carried by the knight: a tap on a foe yanks it in (lobbed to land 1.3 cells short of the knight), a tap on the ground
+  // or a ledge zips the knight there (over a gap, water, up a ledge); ✦ fires at the locked enemy
+  hookRange: 14,
+  hookTime: 1.2,
+  hookTurn: Math.PI,
+  hookYank: 0.45,
+  hookZip: 22,
+  // ---- (pass 2) the parry, as variants to compare (the user: "We should also experiment with parrying"): 0 off; 1 a
+  // PARRY button — pressed within parryWindow before a blow lands, it's parried; 2 a swipe at an enemy in its wind-up;
+  // 3 hold BLOCK — blows from the front (blockArc) are blocked (blockTaken of their knock), and a block begun within
+  // parryWindow of the blow parries it. A parried enemy is thrown back and lies parryStagger s: open, whatever its kind.
+  // iso-adventure's SHIELD: perfectWindow 0.16 s, arc 130°, moveMul 0.45, knockbackTaken 0.35, the attacker staggered
+  // 0.75 s and pushed back 5 cells/s — ported as they were (× 1.3 for the push)
+  parryMode: 1,
+  parryWindow: 0.16,
+  parryStagger: 0.75,
+  parryPush: s(5),
+  parryEvery: 0.5,
+  parryReach: 2.6,
+  blockArc: deg(130),
+  blockTaken: 0.35,
+  blockMove: 0.45,
   // ---- the dodge (weapons.ts DODGE)
   dodgeTime: 0.28,
   dodgeGuard: 0.24,
@@ -165,10 +229,13 @@ export const KNIGHT_PARAMS: ParamSpec[] = [
   P('slashArc', 'arc', 0.5, 3.2, 0.05, 'sword', 'radians'),
   P('slashDamage', 'damage', 0, 6, 0.5, 'sword'),
   P('slashKnock', 'knock', 0, 30, 0.5, 'sword', 'cells/s'),
-  P('slashLunge', 'swing lunge', 0, 20, 0.5, 'sword', 'cells/s forward each swing'),
+  P('slashLunge', 'swing lunge', 0, 5, 0.1, 'sword', 'cells each swing dashes'),
   P('finDamage', 'finisher damage', 0, 8, 0.5, 'sword'),
   P('finKnock', 'finisher knock', 0, 40, 0.5, 'sword'),
-  P('lungeSpeed', 'double-swipe lunge', 0, 40, 0.5, 'sword', 'cells/s'),
+  P('finLunge', 'finisher lunge', 0, 6, 0.1, 'sword', 'cells'),
+  P('lungeSpeed', 'double-swipe lunge', 0, 10, 0.1, 'sword', 'cells'),
+  P('slipTurn', 'slip turn', 0, 0.6, 0.02, 'sword', 'radians a dash turns to slip between bodies'),
+  P('dashForward', 'knock ahead', 0, 1.5, 0.05, 'sword', 'share of a dash blow knocked ahead (the rest aside)'),
   P('lungeDamage', 'lunge damage', 0, 8, 0.5, 'sword'),
   P('swingMove', 'run while swinging', 0, 1, 0.05, 'sword'),
   P('aimCone', 'aim cone', 0, 1.2, 0.05, 'aim', 'radians either side a swipe looks for an enemy'),
@@ -188,6 +255,16 @@ export const KNIGHT_PARAMS: ParamSpec[] = [
   P('arrowKnockHigh', 'arrow knock', 0, 30, 0.5, 'bow'),
   P('bowMove', 'run while drawing', 0, 1, 0.05, 'bow'),
   P('volleyArrows', 'volley', 1, 9, 1, 'bow', 'arrows'),
+  P('jumpUp', 'jump', 4, 20, 0.5, 'jump', 'cells/s up'),
+  P('jumpFall', 'fall', 10, 90, 1, 'jump', 'cells/s² coming down'),
+  P('jumpSteer', 'air steer', 0, 100, 2, 'jump', 'cells/s² in the air'),
+  P('plungeSpeed', 'dive', 8, 40, 1, 'jump', 'the jump attack, cells/s'),
+  P('slamRadius', 'slam reach', 0.5, 5, 0.1, 'jump', 'cells'),
+  P('hookRange', 'hook range', 4, 30, 0.5, 'hook', 'cells'),
+  P('hookZip', 'zip speed', 5, 50, 1, 'hook', 'cells/s'),
+  P('parryMode', 'parry variant', 0, 3, 1, 'parry', '0 off, 1 button, 2 swipe in its wind-up, 3 hold to block'),
+  P('parryWindow', 'parry window', 0.05, 0.5, 0.01, 'parry', 's'),
+  P('parryStagger', 'stagger', 0.1, 2, 0.05, 'parry', 's it lies open'),
   P('dodgeSpeed', 'dodge speed', 5, 40, 0.5, 'dodge'),
   P('dodgeTime', 'dodge time', 0.1, 0.8, 0.02, 'dodge'),
   P('dodgeEvery', 'dodge cooldown', 0, 2, 0.05, 'dodge'),

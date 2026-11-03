@@ -22,6 +22,7 @@ import type { Actor, AreaHit, SpawnOpts, UnitId, UnitJob, UnitView, Units, V2, V
 import type { FactionId } from '../api/contracts/world';
 import type { Agents, AgentEvent, AgentState, Target } from '../agents/agents';
 import { MAT } from '../world/materials';
+import type { TraitsApi } from '../api/contracts/traits';
 import { timed } from '../gpu/cpustat';
 
 /** GPU hit points per contract health point */
@@ -35,8 +36,26 @@ export const G = { strike: 0, stand: 1, goal0: 2, foes: 5, hunt: 6, wander: 7 } 
 /** (merge123, LW1-1) the group a raise effect stands the fallen up in (contracts/traits.ts raise `group`): standing,
  *  bound to their raiser until the game orders them (the play hero's: follow it) */
 export const RAISED_GROUP = G.stand;
-/** agents' kinds (0 worker, 1 raider, 2 ogre are the defaults the others use) */
-const K = { worker: 0, guard: 3, character: 4, raider: 5, shambler: 6 } as const;
+/** agents' kinds (0 worker, 1 raider, 2 ogre are the defaults the others use; with the units on them, 1 is the lunger:
+ *  kindId('raider') then finds 5) — (knight pass 2) 7 the guard raider ('blocker': the settlements' 'guard' role is the
+ *  friendly steel-clad one), 1 the lunger */
+const K = { worker: 0, lunger: 1, guard: 3, character: 4, raider: 5, shambler: 6, blocker: 7 } as const;
+/**
+ * (knight pass 2, round 128) The two enemies that turn blows aside — the user: "enemies that dodge or block except when
+ * winding up to hit. Or where you have to wait until after they lung and then stay stunned a moment to get your hit in
+ * or else they dodge or block". Their rules are the traits system's (`guarded`, `evasive` → the step's CAP_GUARD /
+ * CAP_EVADE: units.wgsl); their timings are their kinds' (GameplayGM iso-adventure had no enemy that blocks; its foe
+ * wind-ups were the telegraph — the bandit's rusty sword 0.38 s, the brute's club 0.75 s, the wolf's bite 0.3 s with a
+ * lunge of 10 cells/s; these are those, made longer to read at phone size, the lunge × 1.3 as the knight's numbers).
+ *   the guard   a shield up: blocks all but in its 0.7 s wind-up (it flashes, the shield down), down, or from above;
+ *               swings every 1.6 s
+ *   the lunger  quick on its feet: dodges all but while down; 4 cells off it crouches 0.45 s (flashing), leaps at up to
+ *               13 cells/s, and once down lies 0.6 + 0.9 s: then it's open
+ */
+export const GUARDS = {
+  blocker: { name: 'blocker', height: 1.5, mass: 1.4, hp: 10, speed: 2.6, reach: 1.45, damage: 1, swingPeriod: 1.6, notice: 160, windup: 0.7, colours: { torso: MAT.Steel, legs: MAT.Basalt, head: MAT.Rust } },
+  lunger: { name: 'lunger', height: 1.3, mass: 0.9, hp: 10, speed: 3.8, reach: 4, damage: 1, swingPeriod: 1.2, notice: 160, windup: 0.45, lunge: { speed: 13, hop: 3.2, stun: 0.9 }, colours: { torso: MAT.Sand, legs: MAT.Basalt, head: MAT.Ash } },
+} as const;
 const TARGETS = 8;
 const REACH = 1.5;
 const STRIKE = 1.0;
@@ -100,7 +119,19 @@ export class AgentUnits implements Units {
   /** live units at the last sync, and how long that sync took to come back (ms) */
   stats = { units: 0, hunting: 0, syncMs: 0, syncs: 0 };
 
-  constructor(readonly agents: Agents) {
+  /** (knight pass 2) a hit it turned aside: blocked, or dodged (`dodged`) — the guard and the lunger (GUARDS) */
+  readonly blocked: ((u: UnitView, by: UnitId | string | null, dodged: boolean) => void)[] = [];
+
+  /** `traits`: the trait system on these agents — the guard and the lunger need it (their rules are traits); without it
+   *  spawning one throws (no silent unguarded guards) */
+  constructor(
+    readonly agents: Agents,
+    private traits: TraitsApi | null = null,
+  ) {
+    agents.defineKind(K.blocker, GUARDS.blocker);
+    agents.defineKind(K.lunger, GUARDS.lunger);
+    traits?.kindTraits(K.blocker, ['living', 'guarded']);
+    traits?.kindTraits(K.lunger, ['living', 'evasive']);
     agents.defineKind(K.guard, { name: 'guard', height: 1.45, mass: 1.2, hp: 10, speed: 2.7, colours: { torso: MAT.Steel, head: MAT.Steel } });
     agents.defineKind(K.character, { name: 'character', height: 1.4, mass: 1, hp: 10, speed: 2.5, colours: { torso: MAT.Brick, legs: MAT.Wood } });
     agents.defineKind(K.raider, { name: 'raider', height: 1.45, mass: 1, hp: 10, speed: 3.1, reach: 1.35, damage: 1, swingPeriod: 1.1, notice: 160, colours: { torso: MAT.Brick, legs: MAT.Basalt, head: MAT.Basalt } });
@@ -120,6 +151,7 @@ export class AgentUnits implements Units {
   // ---- the contract -------------------------------------------------------------------------------
 
   spawn(kind: string, at: V2, faction: FactionId | null, o: SpawnOpts = {}): UnitId {
+    if ((kind === 'blocker' || kind === 'lunger') && !this.traits) throw new Error(`units: a ${kind} needs the trait system on the agents (its block or dodge is a trait: new AgentUnits(agents, traits))`);
     const id = this.next++;
     const hp = o.health ?? 3;
     const hostile = !!o.hostile;
@@ -217,9 +249,13 @@ export class AgentUnits implements Units {
       damage: h.damage * HPK,
       push: h.push,
       dir: h.dir,
+      // (knight pass 2: the contract's "out from `at` without one" — it was dropped here, so a push with no dir did
+      // nothing: the lich's slam threw without shoving)
+      outward: !h.dir,
       lift: h.lift,
       // (the agents' cone is its full angle in degrees; ours radians either side)
       cone: h.cone === undefined ? undefined : (h.cone * 2 * 180) / Math.PI,
+      overhead: h.overhead,
       axis: h.axis ?? (h.cone !== undefined && !h.dir ? [1, 0] : undefined),
       stun: h.stun,
       fire: h.fire,
@@ -235,10 +271,10 @@ export class AgentUnits implements Units {
   }
 
   /** (round 117, play) let go at `vel` (or thrown, if it wasn't held) */
-  release(id: UnitId, vel?: V3): void {
+  release(id: UnitId, vel?: V3, opts: { stun?: number } = {}): void {
     const u = this.recs.get(id);
     if (!u) return;
-    if (vel) this.agents.launch(u.gpu, vel);
+    if (vel) this.agents.launch(u.gpu, vel, { stun: opts.stun });
     else this.agents.release(u.gpu);
   }
 
@@ -315,6 +351,8 @@ export class AgentUnits implements Units {
   }
 
   private kindOf(u: UnitRec, slow: boolean): number {
+    if (u.v.kind === 'blocker') return K.blocker;
+    if (u.v.kind === 'lunger') return K.lunger;
     if (u.v.hostile) return slow || u.v.role.includes('dead') ? K.shambler : K.raider;
     if (u.v.role === 'guard') return K.guard;
     if (u.v.name || u.v.character) return K.character;
@@ -504,6 +542,12 @@ export class AgentUnits implements Units {
         u.v.hostile = false;
         this.byGpu.set(e.id, u.v.id);
         for (const f of this.raised) f(this.view(u), e.group);
+      } else if (e.type === 'blocked') {
+        const id = this.byGpu.get(e.id);
+        const u = id !== undefined ? this.recs.get(id) : undefined;
+        if (!u) continue;
+        const by = this.hitBy.get(e.hit) ?? null;
+        for (const f of this.blocked) f(this.view(u), by, e.dodged);
       } else if (e.type === 'decayed') this.fallen.delete(e.id);
     }
     // (the dead are kept for `query({ dead: true })` a while, then forgotten)

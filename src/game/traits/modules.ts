@@ -14,7 +14,7 @@ import capsWgsl from './caps.wgsl?raw';
 import lookWgsl from './look.wgsl?raw';
 
 /** units.wgsl / prelude.wgsl CAP_* (the engine's verbs) */
-export const CAP = { noBurn: 1, noDrown: 2, rooted: 4, flee: 8 } as const;
+export const CAP = { noBurn: 1, noDrown: 2, rooted: 4, flee: 8, guard: 16, evade: 32 } as const;
 /** units.wgsl LOOK_* */
 export const LOOK = { halo: 0x1000000, sparks: 0x2000000, corpse: 0x4000000 } as const;
 
@@ -77,6 +77,9 @@ export function capsModule(rows: { any: TraitName[]; caps: number }[] = [
   { any: ['undead', 'construct', 'petrified'], caps: CAP.noDrown },
   { any: ['petrified'], caps: CAP.rooted },
   { any: ['frightened'], caps: CAP.flee },
+  // (knight pass 2: the guard's shield, the lunger's footwork)
+  { any: ['guarded'], caps: CAP.guard },
+  { any: ['evasive'], caps: CAP.evade },
 ]): TraitModule {
   return { name: 'caps', wgsl: capsWgsl, order: 900, table: packTable(rows.map((r) => [m(r.any), { u: r.caps }])) };
 }

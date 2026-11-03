@@ -71,6 +71,12 @@ export interface PadButton {
   name: string;
   /** held (kept down) rather than pressed */
   held?: boolean;
+  /** (knight pass 2) its desktop key (KeyboardEvent.key, lower case; default by its place: Space, E, Q, R) */
+  key?: string;
+  /** (knight pass 2) where it sits: px from the screen's right and bottom edges (default: stacked up the right edge),
+   *  and a bigger button (the one under the thumb's rest) */
+  at?: [number, number];
+  big?: boolean;
 }
 
 /** How a hero is played: a stick or not, its buttons, a hint. */
@@ -85,6 +91,8 @@ export interface Pad {
 export interface ButtonLook {
   gauge?: number;
   lit?: boolean;
+  /** (knight pass 2) not shown now (a button only one variant uses) */
+  hidden?: boolean;
   /** (knight) its icon and name now (the weapon in hand), when they change with the hero's state */
   icon?: string;
   name?: string;

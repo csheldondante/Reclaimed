@@ -142,12 +142,11 @@ await run({ name: 'herolabtest', kind: PERF ? 'timing' : 'behaviour', size: '412
     }
 
   // ---- the knight among raiders: a wave, then real swipes at the nearest
-  if (only.has('knight')) {
-    await p.evaluate(() => window.reclaimed.lab.pick({ hero: 'knight', station: 'enemy', cam: 'cutaway+tilt' }));
-    await sleep(1500);
-    await station('Wave');
-    await station('Wave');
-    await sleep(2500);
+  if (only.has('knight'))
+  for (const test of ['knight-raiders', 'knight-guards']) {
+    await p.evaluate(() => window.reclaimed.lab.showMenu(true));
+    await p.evaluate((t) => document.querySelector(`.lab-menu-test[data-test="${t}"]`).click(), test);
+    await sleep(4000);
     const S = [230, 560];
     const swipe = (d) =>
       p.evaluate(
@@ -177,16 +176,24 @@ await run({ name: 'herolabtest', kind: PERF ? 'timing' : 'behaviour', size: '412
         const d = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
         return [(b[0] - a[0]) / d, (b[1] - a[1]) / d];
       });
-    await gif('knight-raiders.gif', 45, 120, async () => {
+    await gif(`${test}.gif`, 45, 120, async () => {
       for (const gap of [500, 60, 700, 400, 60, 700, 400, 60, 700]) {
         await swipe(await toNearest());
         await sleep(gap);
       }
     });
+    // (why no blow lands, if none: the knight's place against the raiders' — the blade checks reach, arc and height)
+    const near = await p.evaluate(() => {
+      const r = window.reclaimed;
+      const h = r.lab.session.hero;
+      const at = h.position();
+      return { knight: at.map((v) => +v.toFixed(2)), raiders: r.lab.d.units.query([at[0], at[1]], 8).slice(0, 4).map((u) => ({ at: u.at.map((v) => +v.toFixed(2)), d: +Math.hypot(u.at[0] - at[0], u.at[1] - at[1]).toFixed(2), radius: u.radius, hostile: u.hostile })) };
+    });
+    R.log(`knight vs raiders: ${JSON.stringify(near)}`);
     const read = await p.evaluate(() => document.querySelector('.play-station-read')?.textContent ?? '');
     R.log(`knight station: ${read.replace(/\n/g, ' / ')}`);
-    R.check('the knight lands blows on the raiders', /hits [1-9]/.test(read), read);
-    await shot('knight-raiders-end.png');
+    R.check(`${test}: the knight lands blows`, /landed [1-9]/.test(read), read);
+    await shot(`${test}-end.png`);
   }
 
   // ---- (round 128) the auto camera on the tour: the zoom by what sticks up, the tilt by the cliff

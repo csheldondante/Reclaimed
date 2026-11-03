@@ -65,7 +65,7 @@ export abstract class PlayHero implements Hero {
       faction: null,
       position: () => (this.alive ? this.position() : null),
       alive: () => this.alive,
-      hurt: (damage, by) => this.take(damage, [by.at[0], by.at[1]]),
+      hurt: (damage, by) => this.take(damage, [by.at[0], by.at[1]], by.id),
     };
   }
 
@@ -98,6 +98,10 @@ export abstract class PlayHero implements Hero {
   looks(): ButtonLook[] {
     return [];
   }
+  /** (knight pass 2) a point the chase camera keeps in view along with the hero (a locked enemy), none by default */
+  framing(): V3 | null {
+    return null;
+  }
   /** lines drawn over the world while out (a rope, a bolt), none by default */
   beams(): { from: V3; to: V3 }[] {
     return [];
@@ -112,8 +116,8 @@ export abstract class PlayHero implements Hero {
     for (const h of hits) this.world.units.strike(h);
   }
 
-  /** an enemy's blow */
-  take(damage: number, from: V2): void {
+  /** an enemy's blow (`by`: the unit that dealt it, when a unit did) */
+  take(damage: number, from: V2, _by?: UnitId): void {
     if (!this.alive) return;
     this.hp = Math.max(0, this.hp - damage);
     this.hurtT = 0;

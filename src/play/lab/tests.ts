@@ -22,6 +22,9 @@ export interface LabTest {
   label: string;
   /** what to answer after trying it */
   ask: string;
+  /** (knight pass 2) the station's own buttons pressed in turn once it's up, by their words (Wave, Guards, Course, a
+   *  parry chip: Button, Swipe, Hold) */
+  press?: string[];
 }
 
 export interface LabTestGroup {
@@ -100,8 +103,15 @@ export const LAB_TESTS: LabTestGroup[] = [
     hero: 'knight',
     title: 'Knight',
     tests: [
-      { id: 'knight-raiders', hero: 'knight', station: 'enemy', label: 'Raiders', ask: 'Tap Wave. Lunge through the crowd. Does the sword feel strong?' },
-      { id: 'knight-bow', hero: 'knight', station: 'enemy', label: 'Bow', ask: 'Switch to the bow and shoot a wave. Is aiming easy?' },
+      { id: 'knight-raiders', hero: 'knight', station: 'enemy', press: ['Wave', 'Wave'], label: 'Crowd', ask: 'Swipe twice fast to lunge through the crowd. Do you slip through and come out the other side?' },
+      { id: 'knight-guards', hero: 'knight', station: 'enemy', press: ['Guards', 'Lungers'], label: 'Guards and lungers', ask: 'Guards block from the front. Lungers wind up, then charge. Can you tell when to hit them?' },
+      { id: 'knight-jump', hero: 'knight', station: 'enemy', press: ['Course'], label: 'Jump course', ask: 'Jump up the steps and over the gap. Swipe in the air to jump attack. Does the jump feel right?' },
+      { id: 'knight-lockon', hero: 'knight', station: 'enemy', press: ['Wave'], label: 'Lock on', ask: 'Tap a raider to lock on. Do your slashes and arrows go where you want?' },
+      { id: 'knight-parry-button', hero: 'knight', station: 'enemy', press: ['Lungers', 'Button'], label: 'Parry, button', ask: 'Press Parry just before a lunger hits. Which parry feels best, button, swipe or hold?' },
+      { id: 'knight-parry-swipe', hero: 'knight', station: 'enemy', press: ['Lungers', 'Swipe'], label: 'Parry, swipe', ask: 'Swipe at a lunger while it winds up. Which parry feels best, button, swipe or hold?' },
+      { id: 'knight-parry-hold', hero: 'knight', station: 'enemy', press: ['Lungers', 'Hold'], label: 'Parry, hold', ask: 'Hold Block as a lunger comes. Which parry feels best, button, swipe or hold?' },
+      { id: 'knight-bow', hero: 'knight', station: 'enemy', press: ['Wave'], label: 'Bow', ask: 'Switch to the bow and shoot a wave. Is aiming easy?' },
+      { id: 'knight-hook', hero: 'knight', station: 'enemy', press: ['Wave'], label: 'Hook', ask: 'Switch to the hook. Tap a raider to yank it in. Tap the ground to zip there. Is it fun?' },
       { id: 'knight-tour-auto', hero: 'knight', station: 'tour', cam: 'auto', label: 'Tour, auto zoom', ask: 'Does the zoom follow what is around you? Does the tilt by the cliff help?' },
       { id: 'knight-forest', hero: 'knight', station: 'forest', label: 'Forest', ask: 'Can you see the knight under the trees?' },
       { id: 'knight-canyon', hero: 'knight', station: 'canyon', label: 'Canyon', ask: 'Does the cut show the knight in the narrow walls?' },

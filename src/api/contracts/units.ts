@@ -115,6 +115,8 @@ export interface AreaHit {
   /** seconds a unit it throws stays down */
   stun?: number;
   fire?: boolean;
+  /** (knight pass 2) a blow from above (a jump attack): a guard's shield doesn't stop it */
+  overhead?: boolean;
 }
 
 /** The units system as a game uses it. */
@@ -145,7 +147,7 @@ export interface Units {
    */
   hold?(id: UnitId, at: V3): boolean;
   /** (round 117, play — optional) let a held unit go (or throw any unit) at `vel` (cells/s); it tumbles and gets up */
-  release?(id: UnitId, vel?: V3): void;
+  release?(id: UnitId, vel?: V3, opts?: { stun?: number }): void;
   /** (round 117, play) how many units `hold` keeps at once */
   readonly maxHeld?: number;
   /** actors hostile units may attack */
@@ -158,4 +160,6 @@ export interface Units {
   readonly hurt: ((u: UnitView, damage: number, by: UnitId | string | null) => void)[];
   /** a hostile unit noticed a target (a unit's id or an actor's) */
   readonly noticed: ((u: UnitView, target: UnitId | string) => void)[];
+  /** (knight pass 2, optional) a blow a unit turned aside — a guard's block, a lunger's dodge (`dodged`): no damage */
+  readonly blocked?: ((u: UnitView, by: UnitId | string | null, dodged: boolean) => void)[];
 }

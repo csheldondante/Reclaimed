@@ -14,7 +14,6 @@
 // the swing turned (till it's let go): holding the stick the old way doesn't haul the bike back into a slide.
 
 import type { V2, V3 } from '../../api/contracts/units';
-import type { Bike } from '../core/bike';
 import type { Pt } from '../core/gestures';
 import type { PlayWorld, Vehicle } from '../world';
 import type { Hit, Target } from './base';
@@ -24,6 +23,22 @@ export interface HookParams {
   hookTime: number;
   hookTurn: number;
   hookYank: number;
+  /** (knight pass 2) a zip's speed (cells/s); only a carrier that zips has it */
+  hookZip?: number;
+}
+
+/**
+ * (knight pass 2) What carries the hook: a body it pulls (the bike's core/bike.ts Bike, the knight's core/foot.ts Foot).
+ * `slide` (the bike's): taken off while the rope holds it; `vz` (on foot): set by a zip, which goes up as well as along.
+ */
+export interface HookBody {
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  vz?: number;
+  slide?: number;
 }
 
 /** A foe on the line: how fast it's dragged before it's hurt (cells/s), how hard, and the blow it deals what it hits. */
@@ -35,7 +50,9 @@ type State =
   | { kind: 'anchor'; at: [number, number]; len: number; t: number; swept: number; a: number; way0: number }
   | { kind: 'line'; id: number; at: V3; vel: V3; len: number; t: number }
   | { kind: 'vehicle'; id: string; t: number; side: 1 | -1 }
-  | { kind: 'reel'; id: number; t: number };
+  | { kind: 'reel'; id: number; t: number }
+  /** (knight pass 2) zipping to a point (over a gap, water, up onto a ledge): pulled straight there */
+  | { kind: 'zip'; at: V3; t: number };
 
 export class Hook {
   state: State | null = null;
@@ -43,7 +60,7 @@ export class Hook {
   private turned: number | null = null;
 
   constructor(
-    private b: Bike,
+    private b: HookBody,
     private world: PlayWorld,
     private p: () => HookParams,
   ) {}
@@ -54,7 +71,30 @@ export class Hook {
 
   status(): string | null {
     const s = this.state;
-    return !s ? null : s.kind === 'anchor' ? 'SWING' : s.kind === 'line' ? 'ON THE LINE' : s.kind === 'vehicle' ? 'ALONGSIDE' : 'REEL IN';
+    return !s ? null : s.kind === 'anchor' ? 'SWING' : s.kind === 'line' ? 'ON THE LINE' : s.kind === 'vehicle' ? 'ALONGSIDE' : s.kind === 'zip' ? 'ZIP' : 'REEL IN';
+  }
+
+  /**
+   * (knight pass 2: the hook gun) Pull the carrier straight to `at` (a point on the ground or a ledge's top): up as well
+   * as along, over what's between; it ends there, or at hookTime. False: out of range (or too near to bother).
+   */
+  zip(at: V3): boolean {
+    const p = this.p();
+    const d = Math.hypot(at[0] - this.b.x, at[1] - this.b.y);
+    if (!p.hookZip || d < 1.5 || d > p.hookRange) return false;
+    this.cut();
+    this.state = { kind: 'zip', at: [...at], t: 0 };
+    return true;
+  }
+
+  /** (knight pass 2: the hook gun) A foe yanked in: off its feet and lobbed to land where the carrier will be. */
+  yank(foe: { id: number; at: V3 }): boolean {
+    const p = this.p();
+    if (Math.hypot(foe.at[0] - this.b.x, foe.at[1] - this.b.y) > p.hookRange) return false;
+    this.cut();
+    if (!this.world.units.hold(foe.id, foe.at)) return false;
+    this.reel({ kind: 'line', id: foe.id, at: [...foe.at], vel: [0, 0, 0], len: 0, t: 0 }, 1.3);
+    return true;
   }
 
   /** A tap (not on the bike): throw at what's under it — a vehicle, a foe (as they're seen, within 48 px), else the ground. */
@@ -126,7 +166,7 @@ export class Hook {
     if (s?.kind === 'vehicle') return [0, 0];
     if (s?.kind === 'anchor') {
       const t = this.tangent(s.at);
-      this.b.slide = 0;
+      if (this.b.slide !== undefined) this.b.slide = 0;
       return [t[0] * m, t[1] * m];
     }
     if (this.turned !== null) {
@@ -188,7 +228,26 @@ export class Hook {
       if (cl > ALONGSIDE.close) [cx, cy] = [(cx / cl) * ALONGSIDE.close, (cy / cl) * ALONGSIDE.close];
       b.vx += (v.vel[0] + cx - b.vx) * k;
       b.vy += (v.vel[1] + cy - b.vy) * k;
-      b.slide = 0;
+      if (b.slide !== undefined) b.slide = 0;
+      return;
+    }
+    if (s.kind === 'zip') {
+      // (straight at it, at hookZip; there — or out of time — it lets go and the carrier drops onto it)
+      const dx = s.at[0] - b.x;
+      const dy = s.at[1] - b.y;
+      const dz = s.at[2] + 0.4 - b.z;
+      const d = Math.hypot(dx, dy, dz);
+      const v = p.hookZip ?? 0;
+      if (d < 0.6 || s.t > p.hookTime) {
+        b.vx *= 0.3;
+        b.vy *= 0.3;
+        if (b.vz !== undefined) b.vz = 0;
+        this.state = null;
+        return;
+      }
+      b.vx = (dx / d) * v;
+      b.vy = (dy / d) * v;
+      if (b.vz !== undefined) b.vz = (dz / d) * v;
       return;
     }
     // a foe on the line: dragged behind at the rope's length, falling to the ground, bouncing along
@@ -228,6 +287,7 @@ export class Hook {
     const s = this.state;
     if (!s) return null;
     if (s.kind === 'anchor') return [s.at[0], s.at[1], this.world.floor(s.at[0], s.at[1]) + 0.2];
+    if (s.kind === 'zip') return [s.at[0], s.at[1], s.at[2] + 0.2];
     if (s.kind === 'line') return [s.at[0], s.at[1], s.at[2] + 0.8];
     if (s.kind === 'reel') {
       const u = this.world.units.get(s.id);
@@ -240,13 +300,17 @@ export class Hook {
   shift(dx: number, dy: number, dz: number): void {
     const s = this.state;
     if (s?.kind === 'anchor') s.at = [s.at[0] + dx, s.at[1] + dy];
-    if (s?.kind === 'line') s.at = [s.at[0] + dx, s.at[1] + dy, s.at[2] + dz];
+    if (s?.kind === 'line' || s?.kind === 'zip') s.at = [s.at[0] + dx, s.at[1] + dy, s.at[2] + dz];
   }
 
-  private reel(s: Extract<State, { kind: 'line' }>): void {
+  /** a foe on the line lobbed to where the carrier will be (`short` cells short of it, on the foe's side) */
+  private reel(s: Extract<State, { kind: 'line' }>, short = 0): void {
     const b = this.b;
     const T = this.p().hookYank;
-    const to: V3 = [b.x + b.vx * T, b.y + b.vy * T, b.z + 0.5];
+    const fx = s.at[0] - b.x;
+    const fy = s.at[1] - b.y;
+    const fl = Math.hypot(fx, fy) || 1;
+    const to: V3 = [b.x + b.vx * T + (fx / fl) * short, b.y + b.vy * T + (fy / fl) * short, b.z + 0.5];
     this.world.units.release(s.id, [(to[0] - s.at[0]) / T, (to[1] - s.at[1]) / T, (to[2] - s.at[2] + 0.5 * 20 * T * T) / T]);
     this.state = { kind: 'reel', id: s.id, t: 0 };
   }

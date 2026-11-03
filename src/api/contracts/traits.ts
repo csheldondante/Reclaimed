@@ -26,7 +26,11 @@ import type { Tag } from './recipe';
 // ---- 1. traits ------------------------------------------------------------------------------------------------
 
 /** Intrinsic traits (bits 0..15 of an entity's trait word). Names, not schema: a game may add its own in the free bits. */
-export const INTRINSIC = ['living', 'undead', 'flying', 'construct', 'fire_immune', 'regenerating', 'invisible', 'incorporeal'] as const;
+export const INTRINSIC = ['living', 'undead', 'flying', 'construct', 'fire_immune', 'regenerating', 'invisible', 'incorporeal', 'guarded', 'evasive'] as const;
+// (knight pass 2, round 128: "enemies that dodge or block except when winding up to hit") `guarded`: a shield up — every
+// blow is blocked but in its own wind-up, while it lies down, or from above; `evasive`: every blow is dodged (a sidestep)
+// but while it lies down (a lunger after its lunge). The game's caps module turns them into the step's CAP_GUARD /
+// CAP_EVADE (game/traits/modules.ts).
 /** Statuses (bits 16..23): each has an expiry (a tick, or for ever). `burning` mirrors the agents' own fire; `corpse` is
  *  a fallen agent's body, kept for a while so it can be raised (then it decays and its slot is freed). */
 export const STATUSES = ['burning', 'frightened', 'healing', 'raised', 'petrified', 'corpse', 'harmed', 'blessed'] as const;

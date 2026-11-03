@@ -55,7 +55,7 @@ function hitchSink(): Plugin {
           // report from the tuning panel's 🐞 — src/ui/bugreport.ts; else a hitch report)
           const k = new URL(req.url ?? '/', 'http://x').searchParams.get('kind');
           // (round 120: ?kind=physbench, the physics phone bench — src/perf/physbench.ts)
-          const kind = k === 'bench' || k === 'bug' || k === 'physbench' || k === 'herobench' ? k : 'hitch';
+          const kind = k === 'bench' || k === 'bug' || k === 'physbench' || k === 'herobench' || k === 'knightbench' ? k : 'hitch';
           const name = `${kind}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
           fs.writeFileSync(path.join(dir, name), body);
           res.end(`perf-reports/${name}`);
