@@ -16529,3 +16529,11 @@ set". And: "the conifer in winter goes fully white".
   per-fragment keep of a few percent showed through every layer as a brown crown), and the twig haze removed (the
   limbs, kept at every level, are the bare tree's shape; the haze's cards read as dead leaves). Renders:
   crown-winter-v2.png, m2-seasons-grid-v3.png.
+- The fine twigs (main: "A bare tree reads from its fine twigs. Add one or two finer branch orders (thin, many,
+  generator-driven: count, angle, length falloff)"): species `twigs` (mesh.ts TwigLook: count, angle, length, falloff,
+  orders, droop, width, spacing), thin flat strips (two triangles) from each twig end and along the last two orders, a
+  second order off each; part 14, coloured the bark toward its mark (a birch's twigs dark), snow on the level ones in
+  deep winter; drawn all year (under the leaves they are the crown's branching), cut with the canopy under it, left
+  out where a twig would be under ~4 render px, at least ~0.7 px wide. The birch's droop (weeping), the elder's long.
+  Triangles (seed 1, full): birch 2808, broadleaf 1824, elder 9668 (budgets: trees 3200, the elder 10500, the close-up
+  7200 / 21000). Renders: twigs-winter.png, twigs-bare-px6.png, twigs-winter-px6.png.

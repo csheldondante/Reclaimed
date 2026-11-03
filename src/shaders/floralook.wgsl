@@ -215,6 +215,12 @@ fn floraLook(k: u32, part: u32, wpos: vec3<f32>, n: vec3<f32>, h: f32, rnd: f32,
     // (round 128) hanging lines: Spanish-moss grey-green, a few darker lianas
     mat = f32(MAT_LEAVES);
     c = select(vec3<f32>(0.6, 0.64, 0.52), vec3<f32>(0.3, 0.26, 0.17), fr < 0.2) * (0.85 + 0.25 * rnd);
+  } else if (part == 14u) {
+    // (round 128) the fine twigs: the bark toward its mark colour (a birch's twigs dark, an oak's darker brown); snow on
+    // the ones lying level in deep winter
+    mat = f32(MAT_WOOD);
+    c = mix(FLORA_COL[b].rgb, FLORA_COL[b + 1u].rgb, 0.65) * (0.75 + 0.3 * fr);
+    if (seasonSnow() > 0.5 && n.z > 0.75 && fr < 0.6) { c = vec3<f32>(0.88, 0.91, 0.96); mat = f32(MAT_SNOW); }
   } else if (part == 11u) {
     // (round 128) icicles: only in deep winter
     if (seasonSnow() < 0.5) { return vec4<f32>(0.0, 0.0, 0.0, -1.0); }

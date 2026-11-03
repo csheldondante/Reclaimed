@@ -34,6 +34,8 @@ export const PART = {
   strand: 10,
   /** (round 128) icicles: drawn only in winter (floralook.wgsl seasonSnow) */
   ice: 11,
+  /** (round 128) the fine twigs (TwigLook): the bark darkened toward its mark colour — a birch's twigs are dark */
+  twig: 14,
 } as const;
 
 export interface FloraMesh {
@@ -342,13 +344,37 @@ export interface CrownLook {
   droop: number;
 }
 
+/**
+ * (round 128, main's review of the bare trees: "A bare tree reads from its fine twigs. Add one or two finer branch
+ * orders (thin, many, generator-driven: count, angle, length falloff)") The twigs past the L-system's last order: from
+ * each twig end and along the last two branch orders, `count` thin flat strips (two triangles each) leaving at `angle`
+ * from the branch, `length` cells long, and on each `orders` − 1 more of `falloff` × its length from its middle. Drawn
+ * all year (under the leaves, the crown's branching; bare, its fine silhouette), as wood. Sizes in cells.
+ */
+export interface TwigLook {
+  count: number;
+  /** degrees off the branch */
+  angle: number;
+  length: number;
+  /** a child twig's length over its parent's */
+  falloff: number;
+  /** 1 or 2 orders */
+  orders: number;
+  /** how far they hang (0 as they grow .. 1 down: a birch's weeping twigs) */
+  droop: number;
+  /** a twig's width (cells; at least ~0.7 px where the plant is made for `px`) */
+  width: number;
+  /** spacing along the last orders (cells) */
+  spacing: number;
+}
+
 /** Wood: segments as tubes, fewer sides on thinner branches; then leaves at the sites. */
 /**
  * `minRadius` (skeleton units; round 117, the phone): wood drawn at least this thick, twigs under half of it left out —
  * a branch narrower than a pixel or two breaks into dotted dashes at a low render scale. `minLeaf`: leaf clusters at
  * least this big, fewer of them (merged), so a crown reads as masses, not specks.
  */
-export function buildPlant(sk: Skeleton, leaf: LeafLook, seed: number, opts: { sides?: number; roots?: Segment[]; minTwig?: number; minRadius?: number; minLeaf?: number; stem?: StemLook; crown?: CrownLook; px?: number; scale?: number; keepLimbs?: boolean; extra?: (mb: MeshBuilder, cut: number) => void } = {}): FloraMesh {
+export function buildPlant(sk: Skeleton, leaf: LeafLook, seed: number, opts: { sides?: number; roots?: Segment[]; minTwig?: number; minRadius?: number; minLeaf?: number; stem?: StemLook; crown?: CrownLook; twigs?: TwigLook; px?: number; scale?: number; keepLimbs?: boolean; extra?: (mb: MeshBuilder, cut: number) => void } = {}): FloraMesh {
   const H = Math.max(sk.height, 0.5);
   const r01 = rng(seed ^ 0x1eaf);
   // sway: nothing at the foot, rising up the plant (squared: a trunk bends near its top), and a little more out on
@@ -379,6 +405,8 @@ export function buildPlant(sk: Skeleton, leaf: LeafLook, seed: number, opts: { s
   for (const g of opts.roots ?? []) mb.tube(g, g.r0 > 0.12 ? 4 : 3, PART.root);
   // (round 128: what grows on it and winter's icicles — epiphytes.ts, by the caller)
   opts.extra?.(mb, cutR);
+  // (round 128: the fine twigs past the last order)
+  if (opts.twigs) addTwigs(mb, sk, leaf.minDepth, opts.twigs, opts.scale ?? 1, r01, opts.px);
   if (opts.crown && leaf.style === 'cluster') {
     addCrown(mb, sk, leaf.minDepth, opts.crown, opts.scale ?? 1, opts.minLeaf ?? 0, r01, opts.px);
     return mb.done();
@@ -393,6 +421,70 @@ export function buildPlant(sk: Skeleton, leaf: LeafLook, seed: number, opts: { s
     addLeaves(mb, l, look, r01);
   }
   return mb.done();
+}
+
+/** (round 128) the fine twigs (TwigLook): none where a twig would be under ~4 render px long (`px` a cell) */
+function addTwigs(mb: MeshBuilder, sk: Skeleton, minDepth: number, t: TwigLook, k: number, r01: () => number, px?: number): void {
+  if (px && t.length * px < 4) return;
+  const width = Math.max(t.width, px ? 0.7 / px : 0) / k;
+  const len0 = t.length / k;
+  const rnd = (): V3 => norm([r01() * 2 - 1, r01() * 2 - 1, r01() * 2 - 1]);
+  const strip = (a: V3, d: V3, len: number, w: number) => {
+    const b = add(a, mul(d, len));
+    const side = norm(cross(d, Math.abs(d[2]) < 0.9 ? ([0, 0, 1] as V3) : ([1, 0, 0] as V3)));
+    const p0 = mb.vert(add(a, mul(side, w / 2)), PART.twig, 0.15);
+    const p1 = mb.vert(add(a, mul(side, -w / 2)), PART.twig, 0.15);
+    const p2 = mb.vert(add(b, mul(side, w * 0.15)), PART.twig, 0.2);
+    const p3 = mb.vert(add(b, mul(side, -w * 0.15)), PART.twig, 0.2);
+    mb.tri(p0, p1, p3);
+    mb.tri(p0, p3, p2);
+    return b;
+  };
+  const ang = (t.angle * Math.PI) / 180;
+  const off = (d: V3): V3 => {
+    // (a direction `angle` off d, round it at random, bent down by the droop)
+    const r = rnd();
+    const ax = norm(cross(d, r));
+    const c = Math.cos(ang);
+    const sn = Math.sin(ang);
+    const q = norm(add(mul(d, c), mul(cross(ax, d), sn)));
+    return norm(add(q, [0, 0, -t.droop * 1.5]));
+  };
+  const sprout = (at: V3, d: V3) => {
+    for (let i = 0; i < t.count; i++) {
+      const dir = off(d);
+      const len = len0 * (0.7 + 0.6 * r01());
+      const end = strip(at, dir, len, width);
+      if (t.orders > 1) {
+        const mid = add(at, mul(dir, len * (0.4 + 0.3 * r01())));
+        strip(mid, off(dir), len * t.falloff, width * 0.8);
+        strip(end, off(dir), len * t.falloff * 0.8, width * 0.7);
+      }
+    }
+  };
+  for (const l of sk.leaves) if (l.depth >= minDepth) sprout(l.p, l.d);
+  // (along the last two orders, every `spacing`)
+  const paths = stemPaths(sk.segments, () => false);
+  let deepest = 0;
+  for (const p of paths) deepest = Math.max(deepest, p.depth);
+  const step = t.spacing / k;
+  for (const p of paths) {
+    if (p.depth < Math.max(minDepth, deepest - 1) || step <= 0) continue;
+    let acc = 0;
+    let s = step * 0.5;
+    for (let i = 1; i < p.p.length; i++) {
+      const a = p.p[i - 1];
+      const b = p.p[i];
+      const len = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+      const d = norm([b[0] - a[0], b[1] - a[1], b[2] - a[2]]);
+      while (s <= acc + len) {
+        const f = (s - acc) / Math.max(len, 1e-6);
+        sprout([a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f], d);
+        s += step;
+      }
+      acc += len;
+    }
+  }
 }
 
 /** (round 128) the crown's sprays (CrownLook): `k` world cells a skeleton unit, `minLeaf` (skeleton units) the phone's

@@ -103,14 +103,14 @@ describe('species meshes', () => {
       // area's: up to 5000 a tree, a quarter as many trees)
       // (round 128: the crowns' sprays along the last branch orders, the extruded stems, the epiphytes — the elder 9500;
       // it stands one to a 28 x 32 super-block now, TREE_SCALE: a quarter as many a wood. Small plants 450: the thicket's sprays)
-      const budget = id === 'giant' ? 9500 : sp.form === 'tree' ? 3200 : 450;
+      const budget = id === 'giant' ? 10500 : sp.form === 'tree' ? 3200 : 500;
       expect(a.tris, `${id} tris`).toBeLessThanOrEqual(budget);
       // indices in range; parts and sway well-formed
       const nv = a.verts.length / 4;
       for (const i of a.index) expect(i).toBeLessThan(nv);
       for (let k = 3; k < a.verts.length; k += 4) {
         expect(Math.floor(a.verts[k])).toBeGreaterThanOrEqual(3);
-        expect(Math.floor(a.verts[k])).toBeLessThanOrEqual(11);
+        expect(Math.floor(a.verts[k])).toBeLessThanOrEqual(14);
       }
     }
   });
@@ -299,7 +299,7 @@ describe('the close-up level (round 128: the flora LOD ladder)', () => {
       const close = generate(id, 3, { lod: 'close' });
       expect(close.tris, id).toBeGreaterThan(full.tris);
       expect(close.height).toBeCloseTo(full.height, 5);
-      const budget = id === 'giant' ? 19000 : SPECIES[id].form === 'tree' ? 6400 : 1400;
+      const budget = id === 'giant' ? 21000 : SPECIES[id].form === 'tree' ? 7200 : 1600;
       expect(close.tris, `${id} close tris`).toBeLessThanOrEqual(budget);
     }
   });

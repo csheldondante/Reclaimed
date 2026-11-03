@@ -9,7 +9,7 @@
 // hero is about two cells tall), chosen for the scene the user asked for: "silver birches towering above".
 
 import type { LSystemSpec, TurtleSpec } from './lsystem';
-import type { CrownLook, LeafLook, StemLook } from './mesh';
+import type { CrownLook, LeafLook, StemLook, TwigLook } from './mesh';
 import type { RootSpec } from './roots';
 import { TREE_SCALE } from './spacing';
 
@@ -96,6 +96,8 @@ export interface SpeciesDef {
   flare?: Flare;
   /** (round 128, treegen) how its stems are extruded: sides, noise, knots (mesh.ts StemLook) — every woody plant */
   stem?: StemLook;
+  /** (round 128) the fine twigs past the L-system's last order (mesh.ts TwigLook): a bare tree's silhouette */
+  twigs?: TwigLook;
   /** (round 128) a broadleaf crown's sprays (mesh.ts CrownLook) in place of the 'cluster' leaves' blobs */
   crown?: CrownLook;
   /** (round 128) the bark's texture in the look (floralook.wgsl): colours.bark the base, colours.barkMark the marks */
@@ -220,6 +222,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     epiphytes: { lichen: 0.2, moss: 0, plants: 0, vines: 0, lines: 0 },
     // (catkins: hanging ochre tassels before the leaves)
     blossom: 0.35,
+    twigs: { count: 2, angle: 40, length: 1.6, falloff: 0.6, orders: 2, droop: 0.6, width: 0.05, spacing: 0 },
     colours: {
       bark: C(0.86, 0.85, 0.8),
       barkMark: C(0.16, 0.15, 0.14),
@@ -282,6 +285,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     bark: { furrows: 0.55, furrowFreq: 3.5, plates: 0.25, plateSize: 0.45, stripes: 0, stripeFreq: 7, roughness: 0.45 },
     epiphytes: { lichen: 0.35, moss: 0.3, plants: 0.2, vines: 0.25, lines: 0.1 },
     winterLeaves: 0.06,
+    twigs: { count: 2, angle: 45, length: 1.4, falloff: 0.6, orders: 2, droop: 0.05, width: 0.07, spacing: 1.2 },
     colours: {
       bark: C(0.36, 0.27, 0.18),
       barkMark: C(0.17, 0.12, 0.08),
@@ -420,6 +424,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     bark: { furrows: 0.8, furrowFreq: 3, plates: 0, plateSize: 0.6, stripes: 0, stripeFreq: 7, roughness: 0.8 },
     epiphytes: { lichen: 0.3, moss: 0.3, plants: 0.35, vines: 0.3, lines: 0.15 },
     winterLeaves: 0.08,
+    twigs: { count: 1, angle: 40, length: 2.4, falloff: 0.6, orders: 2, droop: 0.05, width: 0.1, spacing: 3 },
     colours: {
       // (warm pale, the reference's beech: a grey-white with ochre in it)
       bark: C(0.84, 0.8, 0.72),
@@ -480,6 +485,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     bark: BARK_PLAIN,
     epiphytes: { lichen: 0.1, moss: 0, plants: 0, vines: 0, lines: 0 },
     blossom: 0.45,
+    twigs: { count: 1, angle: 40, length: 0.4, falloff: 0.6, orders: 1, droop: 0, width: 0.03, spacing: 0.5 },
     colours: {
       bark: C(0.3, 0.22, 0.15),
       // (lighter than the trees': a thicket under the sun reads as bushes, not a dark carpet)

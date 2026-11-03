@@ -25,6 +25,8 @@ describe('flora sprites', () => {
   it('every vertex of the source mesh projects inside its cell, at every yaw', () => {
     const m = generate('giant', 5);
     const b = spriteBounds(m.height, m.radius);
+    let lo = Infinity;
+    let hi = -Infinity;
     for (let j = 0; j < 8; j++) {
       const { eye, right, up } = bakeView(j, 8);
       for (let i = 0; i < m.verts.length; i += 4) {
@@ -32,15 +34,13 @@ describe('flora sprites', () => {
         const u = (p[0] * right[0] + p[1] * right[1] + p[2] * right[2]) / (2 * b.R) + 0.5;
         const v = (p[0] * up[0] + p[1] * up[1] + p[2] * up[2] - b.v0) / (b.v1 - b.v0);
         const d = (p[0] * eye[0] + p[1] * eye[1] + p[2] * eye[2] - b.d0) / (b.d1 - b.d0);
-        // (the roots dip a little under the foot: a hair of slack)
-        expect(u).toBeGreaterThanOrEqual(-0.001);
-        expect(u).toBeLessThanOrEqual(1.001);
-        expect(v).toBeGreaterThanOrEqual(-0.02);
-        expect(v).toBeLessThanOrEqual(1.001);
-        expect(d).toBeGreaterThanOrEqual(-0.02);
-        expect(d).toBeLessThanOrEqual(1.001);
+        lo = Math.min(lo, u, v + 0.019, d + 0.019);
+        hi = Math.max(hi, u, v, d);
       }
     }
+    // (the roots dip a little under the foot: a hair of slack)
+    expect(lo).toBeGreaterThanOrEqual(-0.001);
+    expect(hi).toBeLessThanOrEqual(1.001);
   });
   it('a sprite kind: the far mesh for the shadow pass, a quad for the eye', () => {
     const far = generate('oak', 2, { lod: 2 });

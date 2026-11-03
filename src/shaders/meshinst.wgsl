@@ -123,7 +123,7 @@ fn vsInst(@location(0) a: vec4<f32>, @builtin(vertex_index) vi: u32, @builtin(in
     var off = vec3<f32>(0.0);
     if ((FWIND & 1u) != 0u) { off = floraSway(k, fpart, a.xyz, sway, vec2<f32>(r0.w, r1.w), lean, seed, G.time); }
     let H = FLORA_COL[k * 6u + 4u].w;
-    if ((FWIND & 4u) != 0u && H > 5.0 && (fpart == 3u || fpart == 4u)) {
+    if ((FWIND & 4u) != 0u && H > 5.0 && (fpart == 3u || fpart == 4u || fpart == 14u)) {
       // (a tree: its crown through the coarse lattice, the column's spring's share of the lean taken off — the lattice
       // carries the gust; scaled into the instance's height)
       let hs = length(r2.xyz);
@@ -142,7 +142,7 @@ fn vsInst(@location(0) a: vec4<f32>, @builtin(vertex_index) vi: u32, @builtin(in
     // (the bole kept under the canopy ends where its limbs went: it darkens over the last few cells into the crowns'
     // shade — no pale cap against the dark)
     if (cb.x < 1e8 && fpart == 3u) { o.dark = CAM.under[0].w * CAM.under[1].z * smoothstep(cb.x - 5.0, cb.x + 1.0, a.z); }
-    let limb = fpart == 4u || (fpart == 3u && a.z > cb.x && length(a.xy) > cb.y * 1.15);
+    let limb = fpart == 4u || fpart == 14u || (fpart == 3u && a.z > cb.x && length(a.xy) > cb.y * 1.15);
     if (cb.x < 1e8 && limb) {
       let foot = vec3<f32>(r0.w, r1.w, r2.w);
       // (round the hero as far as a crown can reach onto the screen: the crowns of trees 50+ cells in front lift into
