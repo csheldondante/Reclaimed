@@ -219,6 +219,13 @@ export class KnightHero extends PlayHero {
     super.take(damage, from);
   }
 
+  /** (pass 2) BLOCK held: it turns its guard to the locked enemy, else the nearest within 3 cells (the angle), or null */
+  private guardFacing(): number | null {
+    const f = this.f;
+    const t = this.locked() ?? this.targets(f.x, f.y, 3)[0] ?? null;
+    return t ? Math.atan2(t.at[1] - f.y, t.at[0] - f.x) : null;
+  }
+
   /** (pass 2) a blow parried: no harm; the one who dealt it thrown back and down parryStagger s — open, guard or not */
   private parried(by: UnitId): void {
     const p = this.p;
@@ -367,6 +374,7 @@ export class KnightHero extends PlayHero {
     if (a.kind === 'swing') this.face(Math.atan2(a.dir[1], a.dir[0]), dt, 30);
     else if (a.kind === 'draw') this.face(Math.atan2(a.dir[1], a.dir[0]), dt, 20);
     else if (a.kind === 'spin') f.heading += p.spinRate * dt;
+    else if (this.blocking && this.guardFacing()) this.face(this.guardFacing()!, dt, 18);
     else if (speedOf(f) > 0.6) this.face(Math.atan2(f.vy, f.vx), dt, 14);
     const sp = speedOf(f);
     this.phase += dt * Math.min(sp, p.speed * 1.2) / Math.max(0.2, this.body.rig.stride * 0.55) * 1.1;
