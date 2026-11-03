@@ -2,6 +2,8 @@
 // the phone proxy (412x915, dpr 2.6, q=low), a timing check (the GPU alone). Two phases after the level settles:
 //   ride   the hoverbike flat out with boost for `--ride` s (the window streaming after it), raiders spawned ahead
 //   lich   the lich among raiders: a storm drawn, slams every 2 s, for `--lich` s
+//   knight (round 128) the knight among raiders: running in a circle, a swipe every 0.4 s, a spin every 4 s, for
+//          `--knight` s
 // Per phase: frame times (p50, p95, worst, frames over 50 ms), the GPU's frame (the profiler), the play layer's own
 // main-thread cost (PlaySandbox.stats). JSON to data/perf/play-<adapter>.json. Under 2 minutes.
 //   node scripts/perf/play.mjs [--ride 20] [--lich 15] [--settle 20000]
@@ -12,6 +14,7 @@ import { ROOT, run, sleep } from '../lib/runner.mjs';
 await run({ name: 'perf-play', kind: 'timing', size: '412x915', dpr: 2.6 }, async (R) => {
   const ride = Number(R.opt('ride', 20));
   const lichS = Number(R.opt('lich', 15));
+  const knightS = Number(R.opt('knight', 15));
   const settle = Number(R.opt('settle', 20000));
   const p = await R.level({ level: 'atlas', play: 'hoverbike' });
   await p.waitForFunction(() => window.reclaimed?.play?.hero, { timeout: 120000, polling: 250 });
@@ -100,10 +103,43 @@ await run({ name: 'perf-play', kind: 'timing', size: '412x915', dpr: 2.6 }, asyn
   }
   const lichR = await end();
   R.log(`lich ${JSON.stringify(lichR)}`);
-  const out = { when: new Date().toISOString(), adapter, size: `${R.W}x${R.H}`, dpr: R.dpr, q: 'low', ride: rideR, lich: lichR };
+  // the knight
+  await p.evaluate(() => {
+    const s = window.reclaimed.play;
+    s.controls.script = null;
+    s.choose('knight');
+    s.spawn();
+    s.spawn();
+  });
+  await sleep(2000);
+  await begin();
+  for (let k = 0; k < knightS * 2.5; k++) {
+    const a = k * 0.5;
+    await p.evaluate(
+      async (a, k) => {
+        const s = window.reclaimed.play;
+        s.controls.script = { stick: [Math.cos(a), Math.sin(a)], buttons: [false, false, k % 10 === 9] };
+        const pad = document.querySelector('.play-pad');
+        const ev = (type, x, y) => pad.dispatchEvent(new PointerEvent(type, { pointerId: 90 + k, pointerType: 'touch', clientX: x, clientY: y, bubbles: true }));
+        const wait = (t) => new Promise((r) => setTimeout(r, t));
+        ev('pointerdown', 230, 330);
+        for (let i = 1; i <= 4; i++) {
+          await wait(14);
+          ev('pointermove', 230 + Math.cos(a + 1) * 18 * i, 330 + Math.sin(a + 1) * 18 * i);
+        }
+        ev('pointerup', 230 + Math.cos(a + 1) * 72, 330 + Math.sin(a + 1) * 72);
+      },
+      a,
+      k,
+    );
+    await sleep(340);
+  }
+  const knightR = await end();
+  R.log(`knight ${JSON.stringify(knightR)}`);
+  const out = { when: new Date().toISOString(), adapter, size: `${R.W}x${R.H}`, dpr: R.dpr, q: 'low', ride: rideR, lich: lichR, knight: knightR };
   const f = path.join(ROOT, 'data', 'perf', `play-${adapter}.json`);
   fs.mkdirSync(path.dirname(f), { recursive: true });
   fs.writeFileSync(f, JSON.stringify(out, null, 1));
   R.log(`wrote ${f}`);
-  R.check('the play layer costs under 1 ms of main thread a frame (both phases)', rideR.playCpu < 1 && lichR.playCpu < 1, { ride: rideR.playCpu, lich: lichR.playCpu });
+  R.check('the play layer costs under 1 ms of main thread a frame (every phase)', rideR.playCpu < 1 && lichR.playCpu < 1 && knightR.playCpu < 1, { ride: rideR.playCpu, lich: lichR.playCpu, knight: knightR.playCpu });
 });

@@ -49,7 +49,10 @@ export function readInput(controls: Controls, v: ReadView): PlayInput {
     drag = { from: v.groundAt(held.from), at: v.groundAt(held.at), dir: px > 4 ? groundDir(dx, dy) : [0, 0], extent: Math.min(1, px / DRAG_PX), up: -dy, self: onSelf(held.from), screen: held.from, screenAt: held.at };
   }
   const acts = controls.gestures().map((g) => toAct(g, v, groundDir, onSelf)).filter((a): a is Act => a !== null);
-  return { dir, buttons: controls.buttons(), drag, acts };
+  // (knight: the strokes as drawn, and the camera's screen-to-ground map for their directions)
+  const bx = v.screenDeltaToWorld(1, 0);
+  const by = v.screenDeltaToWorld(0, 1);
+  return { dir, buttons: controls.buttons(), drag, acts, thumbs: controls.thumbs(), basis: [bx, by] };
 }
 
 const scale = (p: Pt, k: number): Pt => [p[0] * k, p[1] * k];

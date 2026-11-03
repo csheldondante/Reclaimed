@@ -210,3 +210,27 @@
 .play-on .editor {
   display: none !important;
 }
+/* (knight, round 128) the knight's test station (play/sandbox/station.ts): its buttons and readout, top right */
+.play-station {
+  position: absolute;
+  top: calc(max(8px, env(safe-area-inset-top)) + 56px);
+  right: 8px;
+  max-width: min(58vw, 260px);
+  padding: 6px 8px;
+  border-radius: 10px;
+  background: rgba(20, 18, 16, 0.6);
+  color: #f4efe2;
+  font: 600 12px/1.35 system-ui, sans-serif;
+  pointer-events: auto;
+  z-index: 5;
+}
+.play-station-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.play-station-read {
+  white-space: pre-line;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}

@@ -25,6 +25,7 @@ import { el, PlaySession, saveTuned, type SessionDeps } from '../session';
 import { findHills } from './hills';
 import { LAP, Rival } from './rival';
 import { BIKE_DEFAULTS } from '../controllers/hoverbike';
+import { Station } from './station';
 import './sandbox.css';
 
 export interface SandboxDeps {
@@ -42,6 +43,8 @@ export interface SandboxDeps {
   tune?: boolean;
   /** (merge123, LW1-1) the world's raise dead (SessionDeps.raise) */
   raise?: SessionDeps['raise'];
+  /** (knight, round 128) ?station=1: the knight's test station's tools (play/sandbox/station.ts) */
+  station?: boolean;
 }
 
 /** raiders spawned at a time, how far ahead (cells) */
@@ -56,6 +59,8 @@ export class PlaySandbox {
   private spawned: number[] = [];
   /** (round 118) rival riders lapping near where they were called: something to hook onto and ride alongside */
   readonly rivals: Rival[] = [];
+  /** (knight, round 128) the test station's tools, with ?station=1 */
+  station: Station | null = null;
 
   private constructor(
     readonly d: SandboxDeps,
@@ -98,10 +103,12 @@ export class PlaySandbox {
     const session = await PlaySession.start({ ...d, respawnAfter: 2 });
     const s = new PlaySandbox(d, session);
     const c: Pt = [d.camera.target[0], d.camera.target[1]];
-    // (round 118: the bike starts where there are hills to ride, if any are near — found for the hero's own climb)
+    // (round 118: the bike starts where there are hills to ride, if any are near — found for the hero's own climb; the
+    // knight's station too: flat ground and a slope)
     s.session.choose(d.hero, c);
-    s.choose(d.hero, (d.hero === 'hoverbike' ? s.hills(c, null)?.at : null) ?? session.dryNear(c));
+    s.choose(d.hero, (d.hero === 'hoverbike' || d.station ? s.hills(c, null)?.at : null) ?? session.dryNear(c));
     if (d.tune) s.togglePanel();
+    if (d.station) s.station = new Station(s);
     return s;
   }
 
@@ -196,6 +203,7 @@ export class PlaySandbox {
   /** Each frame, before the camera's update and the draw. */
   update(dt: number): void {
     this.session.update(dt);
+    this.station?.update(dt);
   }
 
   /** The tune panel: a slider per parameter, live; the profile they give above. */
@@ -206,7 +214,7 @@ export class PlaySandbox {
       return;
     }
     const h = this.hero;
-    const info = library.get(h.role === 'lich' ? 'lich' : 'hoverbike')!;
+    const info = library.get(this.session.heroId)!;
     const panel = (this.panel = el('div', 'play-panel', this.d.ui) as HTMLDivElement);
     for (const ev of ['pointerdown', 'pointermove', 'pointerup', 'wheel', 'touchstart']) panel.addEventListener(ev, (e) => e.stopPropagation());
     const head = el('div', 'play-panel-head', panel);
@@ -287,6 +295,7 @@ export class PlaySandbox {
     this.session.dispose();
     this.bar.remove();
     this.panel?.remove();
+    this.station?.dispose();
     for (const id of this.spawned) this.d.units.remove(id);
   }
 }

@@ -91,6 +91,29 @@ export function buildLance(): Voxels {
 }
 export const LANCE_LENGTH = 22 * VOXEL;
 
+/** (knight, round 128) The knight's sword along +x from the hand: a grip, a cross-guard, a long bright edge. */
+export function buildSword(): Voxels {
+  return new Shape().box(-1, 2, 0, 1, 0, 1, MAT.Log).box(2, 3, -2, 3, 0, 1, MAT.Rust).box(3, 13, 0, 1, -1, 1, MAT.Steel).box(13, 14, 0, 1, 0, 1, MAT.Bone).voxels();
+}
+export const SWORD_LENGTH = 14 * VOXEL;
+
+/** (knight) The bow, held at its grip (the origin), limbs up and down, curving back toward the archer (-x). */
+export function buildBow(): Voxels {
+  const s = new Shape();
+  for (let u = -7; u <= 7; u++) {
+    const f = Math.round(-2.2 * (u / 7) ** 2);
+    s.box(f, f + 1, 0, 1, u, u + 1, Math.abs(u) <= 1 ? MAT.Rust : MAT.Log);
+  }
+  return s.voxels();
+}
+/** the bow's tips: half its height (cells) and how far back of the grip they curve */
+export const BOW = { half: 7.5 * VOXEL, back: 2.2 * VOXEL };
+
+/** (knight) an arrow along +x from its nock: a shaft and a pale head */
+export function buildArrow(): Voxels {
+  return new Shape().box(0, 8, 0, 1, 0, 1, MAT.Log).box(8, 10, 0, 1, 0, 1, MAT.Bone).box(-1, 1, -1, 2, 0, 1, MAT.Canvas).voxels();
+}
+
 /** rotation about a unit axis */
 export function qAxis(axis: V3, a: number): Q {
   const s = Math.sin(a / 2);

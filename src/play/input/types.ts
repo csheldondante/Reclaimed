@@ -28,6 +28,20 @@ export type Act =
   | { kind: 'flick'; from: Pt; /** over the ground, unit */ dir: Pt; /** 0..1 */ power: number; screen: Pt; self: boolean }
   | { kind: 'circle'; centre: Pt; ccw: boolean; turns: number };
 
+/**
+ * (knight, round 128) The right thumb's stroke as drawn so far, on the screen (px, s): for a hero that reads a stroke
+ * while it's drawn (the knight's swipe strikes the moment it's long enough, no lift needed — core/swordplay.ts). The
+ * samples are the stroke's own (moves under 2 px dropped); `ended`: let go this frame (its last sample is the lift).
+ */
+export interface Thumb {
+  /** the same number every frame of one stroke */
+  id: number;
+  samples: readonly { at: Pt; t: number }[];
+  ended: boolean;
+  /** when it was let go (s; the last sample can be older: a thumb held still before it lifts adds none) */
+  endedAt?: number;
+}
+
 export interface PlayInput {
   /** the wanted direction over the ground (world xy, length 0..1) */
   dir: Pt;
@@ -35,9 +49,21 @@ export interface PlayInput {
   buttons: boolean[];
   drag: Drag | null;
   acts: Act[];
+  /** (knight) the strokes drawn this frame (the one held, and any let go since the last), on the screen */
+  thumbs?: Thumb[];
+  /** (knight) a screen step (px) as a ground step: the ground vectors of screen +x and +y (the camera's, this frame) */
+  basis?: [Pt, Pt];
 }
 
 export const NO_INPUT: PlayInput = { dir: [0, 0], buttons: [], drag: null, acts: [] };
+
+/** (knight) a screen direction on the ground through `basis`, unit length (or [0, 0]) */
+export function onGround(basis: [Pt, Pt], d: Pt): Pt {
+  const x = basis[0][0] * d[0] + basis[1][0] * d[1];
+  const y = basis[0][1] * d[0] + basis[1][1] * d[1];
+  const l = Math.hypot(x, y);
+  return l > 0 ? [x / l, y / l] : [0, 0];
+}
 
 /** A hero's button, as the controls draw it. */
 export interface PadButton {
@@ -59,4 +85,7 @@ export interface Pad {
 export interface ButtonLook {
   gauge?: number;
   lit?: boolean;
+  /** (knight) its icon and name now (the weapon in hand), when they change with the hero's state */
+  icon?: string;
+  name?: string;
 }

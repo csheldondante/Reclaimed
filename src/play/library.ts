@@ -5,9 +5,10 @@
 
 import type { ControllerInfo, Playbook } from '../api/contracts/play';
 import { hoverbike } from './controllers/hoverbike';
+import { knight } from './controllers/knight';
 import { lich } from './controllers/lich';
 
-const ALL: readonly ControllerInfo[] = [hoverbike, lich];
+const ALL: readonly ControllerInfo[] = [hoverbike, lich, knight];
 
 export const library: Playbook = {
   controllers: () => ALL,

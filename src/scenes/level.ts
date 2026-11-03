@@ -371,7 +371,7 @@ export class LevelScene implements Scene {
   private storyCut?: { dither: Dither; slice: Slice };
   /** round 88 (runstory): ?run=bell on the atlas level — a run story played as a hero (story/hero-run.ts) */
   heroRun?: HeroRun;
-  /** round 117 (play): ?play=hoverbike|lich on the atlas level — the play layer's sandbox (src/play: heroes, controllers, controls) */
+  /** round 117 (play): ?play=hoverbike|lich|knight on the atlas level — the play layer's sandbox (src/play: heroes, controllers, controls) */
   play?: import('../play/sandbox/sandbox').PlaySandbox;
   /** the landform brush's stroke (range, mesa; round 64) */
   private raising?: import('../api/terrain').RaiseStroke;
@@ -1955,7 +1955,7 @@ export class LevelScene implements Scene {
     if (!a || !this.stream) throw new Error('?play= plays on the atlas level (?level=atlas)');
     if (!this.units) throw new Error('?play=: needs the atlas level units (the settlements are off: ?towns=0)');
     const hero = id === '1' ? 'hoverbike' : id;
-    if (hero !== 'hoverbike' && hero !== 'lich') throw new Error(`?play=${id}: no such hero (hoverbike, lich)`);
+    if (hero !== 'hoverbike' && hero !== 'lich' && hero !== 'knight') throw new Error(`?play=${id}: no such hero (hoverbike, lich, knight)`);
     const { PlaySandbox } = await import('../play/sandbox/sandbox');
     const api = (this.worldApi ??= attachSim(this.core));
     this.editor?.setVisible(false);
@@ -1974,6 +1974,7 @@ export class LevelScene implements Scene {
       hero,
       tune: this.host.params.get('tune') === '1',
       raise: this.playRaise(this.units),
+      station: this.host.params.get('station') === '1',
     });
     // (the window slid: the hero moves with what's kept in window coordinates; the map's warp drops it where the camera is)
     this.core.onShift.push((dx, dy, dz) => this.play?.shift(-dx, -dy, -dz));

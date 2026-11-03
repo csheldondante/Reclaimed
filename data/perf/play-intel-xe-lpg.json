@@ -1,37 +1,55 @@
 {
- "when": "2026-10-30T15:59:48.082Z",
+ "when": "2026-11-03T04:34:22.826Z",
  "adapter": "intel-xe-lpg",
  "size": "412x915",
  "dpr": 2.6,
  "q": "low",
  "ride": {
-  "frames": 1888,
-  "fps": 94.2,
-  "p50": 9.8,
-  "p95": 15,
-  "worst": 119.4,
-  "over50": 6,
+  "frames": 1257,
+  "fps": 62.9,
+  "p50": 8.3,
+  "p95": 68.7,
+  "worst": 268.6,
+  "over50": 110,
   "gpuFrame": 0,
-  "playCpu": 0.125,
-  "playCpuMax": 0.8,
+  "gpuFrameMs": 0,
+  "playCpu": 0.182,
+  "playCpuMax": 0.5,
   "hero": {
-   "status": "79 km/h",
-   "speed": 22
+   "status": "114 km/h",
+   "speed": 31.6
   }
  },
  "lich": {
-  "frames": 1599,
-  "fps": 99.5,
-  "p50": 9.9,
-  "p95": 11.9,
-  "worst": 61.7,
-  "over50": 2,
+  "frames": 1796,
+  "fps": 111.7,
+  "p50": 8.3,
+  "p95": 10.9,
+  "worst": 145,
+  "over50": 14,
   "gpuFrame": 0,
-  "playCpu": 0.119,
-  "playCpuMax": 1.3,
+  "gpuFrameMs": 0,
+  "playCpu": 0.167,
+  "playCpuMax": 1,
   "hero": {
    "status": "levitating · 1.6 up",
    "speed": 0
+  }
+ },
+ "knight": {
+  "frames": 1470,
+  "fps": 94.8,
+  "p50": 8.3,
+  "p95": 14.3,
+  "worst": 373.4,
+  "over50": 25,
+  "gpuFrame": 0,
+  "gpuFrameMs": 0,
+  "playCpu": 0.315,
+  "playCpuMax": 1.4,
+  "hero": {
+   "status": "SPIN · 16 c/s",
+   "speed": 16.2
   }
  }
 }
