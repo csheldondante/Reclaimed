@@ -77,6 +77,28 @@ the sandbox powers; integrity/physics for walls and metal collapsing; fire throu
 dealer (runloop / opportunities); recipes and tags (contracts/recipe.ts); the strategic map design
 (docs/design/STRATEGIC_MAP.md); M128-6's hold (dialog pauses play).
 
-## Open questions (to talk through before planning the build)
+## Answers (round 128c, verbatim in DECISIONS)
 
-See the conversation; main's list is kept here once answered.
+1. **One place under direct control, on purpose.** Direct control only where you are; a few pawns with growing
+   resources take opportunities elsewhere. This avoids the unwieldy late empire of 4X/RTS. Show the region changed
+   when an opportunity completes (deferred unless easy); reflect it on the macro map, and with carts arriving
+   (from mines, trade) and conscripts coming in from nearby villages.
+2. **Threats through the opportunity system** (raids, cultists, floods, droughts: then drainage, water stockpiles,
+   aqueducts). **For now one big opportunity: an approaching army that arrives after some number of day/night
+   cycles.** Building is faster than life: ordered buildings complete within days or the same day. This is the
+   same persistent game (the legacy world), a reprioritisation of the run structure, not a separate game.
+3. **Brushes:** the grids' brush system (3D tiles that stack). Select the structure type, then paint brushes set
+   its size and look, which set its cost and output. Upgrade by adding to a structure later; select a structure
+   and repurpose it into something else at less cost than building new (good for the legacy mechanic).
+4. **Raids:** by default your agents form armies and line up inside the walls (if any); you send them out to meet
+   enemies, or let them autobattle while you cast. Archers and ranged units garrison walls and fire on their own.
+   Time pauses or slows while casting or ordering. Panning: single tap to pan and double tap to order, or a small
+   on-screen pan joystick (drag may not work across a battlefield).
+5. **Runes:** to be played with: drawing leaves a trail on screen; compare with picking from a wheel.
+6. **Time:** paused while planning a build; otherwise agents build what you planned, mine and move goods.
+7. **Order: building and resources first, then combat.** Plan the city, watch agents build it, see resources
+   accumulate. Use the existing opportunity system if easy. Combat and spells are already fun to watch; later scry
+   the enemy army and cast at it (storms, lightning, rockfalls). Units: the procedural unit generator for now,
+   different sizes and colours for creatures and units; the voxel hero models usable. A **unit editor** to make
+   the recipes work. Better art later through better editors (what the user wants) and/or downloaded animated
+   CC/asset-store models with body sections mutated for gear.
