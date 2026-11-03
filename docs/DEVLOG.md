@@ -16351,3 +16351,34 @@ iGPU, which is the baseline merge128 is judged against (a diff, not the absolute
 is M120-1): desktop-z2.2 parked undrawn 0.17%; desktop-z5 fast pan undrawn 3.99% / far land 9.98%; desktop-z8 fast pan
 far land 1.07%; phone-z3.5 and z2.2 slow pan far land 1.27% / 1.18%; phone-z8 fast pan undrawn 0.16%; w384-phone-z5 fast
 pan undrawn 27.8% / far land 39.6%; run-desktop-z14 p99 38.5 ms (max 40.1), run-desktop-z8 p99 23.1 ms.
+
+**The jb6 gate on merge128** (desktop proxy: the iGPU shared with other agents' runs, so frame and GPU numbers are
+noisy; the phone bench decides cost — Pages build of `merge128`, `?bench=1` and `?skipmenu=1&level=playground&physbench=1`).
+- `npm test` 669 passed (2 expected fail — test/unit/buried.test.ts, TK4: a buried thing with only ground over it stays
+  up; test/unit/judge-shapes.test.ts, SV1: the keystone cut out of an arch — both open findings on places too; 5
+  skipped); typecheck clean; smoke ok (atlas, playground, rocklab).
+- hallcheck (6 towns on seeds 0 and 7, 30 s with nothing done): 3 lost of 318 on jb6 merged; 3 of 318 with the GPU
+  stamps (the copy-back hole was real but not these towns'); **0 of 321** with the take rule.
+- jb6toggle (atlas, 412 x 915, q=low, 30 s of a bowl dug every 1.2 s and a block dropped every 3 s;
+  data/perf/merge128/toggle-*.json): lattice:sections reads **0 KB** back (`?jb6=0`: 92.5 MB in 47 passes), frames p50
+  8.3 / p95 11.3 / p99 13.3 ms, 2 over 33 ms (jb6=0: 10.7 / 15.8, 21 over); lattice:runs (the default) keeps the copy
+  for judge A: 92-103 MB a 30 s, as places (92 MB) — p95 10.6-11.6, p99 15.8-17.7 on both.
+- driveprofile (atlas drive, alternated with places 2aacb50): p50 8.3 / 8.3, p95 27 / 21.1, p99 170 / 193 against
+  places' 8.3 / 8.3, 16.4 / 19.7, 167 / 186 — within this machine's noise (another agent's runs on the GPU).
+- physbench headless (data/perf/merge128/physbench-m.json): runs read back 1.2-2.5 MB a stage (4-12 reads of 120-457 ms
+  under contention), sections none but its verdict (32 KB; 75-215 ms submit to verdict under contention).
+- tilegate: places 2aacb50's own run failed against the committed baselines as merge128's did (the baselines were
+  stale: the same views changed on both, the shots the same scene, no holes) — rebased on places first (the commit
+  before this one), then merge128 run twice against them, as a diff with places' own run: parked coverage desktop-z2.2
+  undrawn 0.54% / 0.64% (places 0.17% here, 0.64% in its run on the old baselines), every other parked view whole on both;
+  slow-pan far land 1.0-1.15% (places 1.18-1.27%); fast pans scattered on both (merge: desktop-z8 12.7% / -, z5 - / 3.35%,
+  phone-z8 0.90% / -, w384 z5 - / 0.19%; places: desktop-z5 3.99%, phone-z8 0.16%, w384 z5 27.8%); run-desktop-z14 p99
+  22.5 ms / ok (places 38.5). The near goldens 1.2-1.6% changed (grass, sway: places' own near views moved 1-4% between
+  its runs); the wide ones (z2.2, z1.3) 31-40%: looked at — the same scene framed tighter, their zoom floor set by the
+  run's tile-fill calibration (cal.rate measured per run), so those views aren't reproducible between runs on this
+  machine; no holes in any shot (C:/Projects/shots88/merge128/tilegate-m1, -m2). No regression from merge128 beyond
+  the noise.
+- Atlas shots at 412 x 915 (C:/Projects/shots88/merge128/atlas/): a stone pillar built and its foot cut (a cave the judge
+  holds; nothing toppled — the cut was small, as merge121's), a tanker dropped (small on screen), a town's building cut
+  at its side (the town whole after 8 s; the bowl behind the editor panel). They show no breakage but don't show a
+  collapse either — a scene that brings one down is JB8's.
