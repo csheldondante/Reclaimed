@@ -16,6 +16,7 @@ import type { MemoryWorldState } from '../api/contracts/world-state';
 import { ENCOUNTER, needsPlayer, type Opportunity } from '../api/contracts/opportunity';
 import type { Persuasion } from '../api/contracts/dialog';
 import { DialogBox, type Speaker } from '../dialog/dialog';
+import { untilClosed } from '../dialog/hold';
 import { actOf, petitionTree, traitPersuasion, type PetitionState } from '../dialog/petition';
 import { capitalise } from '../living/plain';
 import { portraitUrl } from '../dialog/portrait';
@@ -117,6 +118,14 @@ export class LevelOpps extends LevelSit {
     this.opps.arrive();
     this.log.push(...this.opps.log.splice(0));
   }
+  /** (round 128, M128-6) a petition's talk holds the area's encounter: it starts, and its clock runs, once it closes */
+  protected override talkOpen(): boolean {
+    return !!this.talk?.isOpen;
+  }
+  protected override talkClosed(): Promise<void> {
+    return untilClosed(this.talk);
+  }
+
   /** (round 126) a scene's bargain and its yield read the holdings: goods, and renown (a good) */
   protected held(): { goods: Record<string, number>; renown: number } {
     const g = this.opps.holdings.goods as Record<string, number>;

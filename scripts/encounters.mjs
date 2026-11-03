@@ -139,12 +139,13 @@ await run({ name: `encounter-${card}-${hero}-${mode}`, kind: 'behaviour', size: 
         const S = R.runhero;
         const A = R.opps.area;
         const C = S.controls;
-        if (!A || A.done) {
+        // (a talk open — a scene's, or a petition the game put up before the area, which holds its encounter (round 128,
+        // M128-6) — answered after the read: by id in the encounter's `shown` order, else the first button)
+        const dlg = document.querySelector('.dlg.on');
+        if (!dlg && (!A || A.done)) {
           C.script = { stick: [0, 0], buttons: [false] };
           return null;
         }
-        // (a scene's talk open: its answer by id — the encounter's `shown` order — else the only button, the reply's)
-        const dlg = document.querySelector('.dlg.on');
         if (dlg) {
           // (read for two seconds first, as a player would — and for the shot)
           window.__talkAt ??= performance.now();
@@ -155,7 +156,7 @@ await run({ name: `encounter-${card}-${hero}-${mode}`, kind: 'behaviour', size: 
             dlg.click();
             return 'skipping the line';
           }
-          const shown = A.enc?.shown ?? [];
+          const shown = A?.enc?.shown ?? [];
           const i = bs.length === shown.length ? shown.indexOf(mode === 'lose' ? 'fight' : answer) : -1;
           const b = bs[i >= 0 ? i : 0];
           b.click();
@@ -247,7 +248,10 @@ await run({ name: `encounter-${card}-${hero}-${mode}`, kind: 'behaviour', size: 
   const tA = Date.now();
   while (Date.now() - tA < 300000) {
     const st = await state();
-    if (!st.playing) break;
+    // (round 128: a petition's talk open before the area holds it — answered by the pilot, then the area plays)
+    const talking = await p.evaluate(() => !!document.querySelector('.dlg.on'));
+    if (!st.playing && !talking && samples.length) break;
+    if (!st.playing && !talking && Date.now() - tA > 20000) break;
     const r = await pilot();
     const smp = await sample();
     if (smp) {

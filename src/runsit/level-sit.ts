@@ -187,8 +187,22 @@ export class LevelSit {
       .map((u) => u.id);
   };
 
+  /**
+   * (round 128, M128-6) A talk the game put up over the play (a petition): open, the area's encounter doesn't start and
+   * its clock doesn't run — the threats round the hero wait for it (none here; LevelOpps' petitions).
+   */
+  protected talkOpen(): boolean {
+    return false;
+  }
+  /** resolves once no such talk is open */
+  protected talkClosed(): Promise<void> {
+    return Promise.resolve();
+  }
+
   /** play the area the run is at */
   async playArea(): Promise<void> {
+    // (round 128, M128-6: never under a talk — its spawns, clock and pursuers start when it closes)
+    await this.talkClosed();
     if (this.playing || this.run.phase !== 'area' || this.journey || this.warping) return;
     this.playing = true;
     this.area?.dispose();
@@ -291,7 +305,8 @@ export class LevelSit {
 
   /** each frame */
   update(dt: number): void {
-    this.area?.update(dt);
+    // (round 128, M128-6: the encounter's clock and its drive hold while a talk is open)
+    if (!this.talkOpen()) this.area?.update(dt);
     if (!this.journey || this.warping) return;
     const prev = this.jstate?.phase;
     this.jstate = this.journey.update(dt);

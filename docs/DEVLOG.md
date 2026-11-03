@@ -16610,3 +16610,13 @@ a scratch worktree (C:/Projects/shots88/merge128/encounters-branch/), fails both
 DEVLOG table of wins predates its dialog2 merge; the shot at the first engagement shows the forced outriders' petition
 talk still open over the flee while the riders close in (BACKLOG M128-6). Strings read: "3 riders right behind you.
 Lose them!", Bram Cotter's petition, "Good. That was almost painless." — plain.
+
+**M128-6, the encounter under a petition (main: "while a talk is open, the encounter doesn't start or advance").** The
+samples of the lost runs (outriders-hoverbike-win.json): the petition's talk open from 1.1 s to the end; the pilot read
+it 6 s while the riders closed in (health 10 to 4 by 4.5 s). Not frame-time: the encounter had been started under the
+talk (encounters.mjs calls playArea; the game's own path commits from the talk first, but nothing held an encounter
+that started anyway). Now LevelSit.playArea waits for a talk the game put up to close (dialog/hold.ts untilClosed;
+LevelOpps' petition talk) before it spawns anything, and the area's clock and drive (AreaPlay.update) hold while one is
+open. Units already on the field — the run's pursuers after an area — still move under a talk: the agents have no hold
+(BACKLOG M128-6 notes it). encounters.mjs's pilot answers a talk open before the area (it read only scenes' talks once
+the area ran, and waited for an area that waited for the talk). Test: test/unit/talkhold.test.ts.
