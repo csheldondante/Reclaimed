@@ -1,7 +1,7 @@
 // Round 128 (treegen): the grass and the shrubs the trees' way — in the flora viewer the shrubs' lineup (each kind of
 // thicket in a row) and the tall grass's clump types, a close-up of one clump; then in the real atlas the lushest meadow
 // near the start at the gameplay zoom and close in (the close-up level), and a GIF of a gust crossing it.
-//   node scripts/grassshot.mjs [--out C:/Projects/shots88/treegen] [--zooms "5,14"] [--extra "&q=low"] [--viewer 1] [--atlas 1]
+//   node scripts/grassshot.mjs [--out C:/Projects/shots88/treegen] [--zooms "14,24"] [--extra "&q=low"] [--viewer 1] [--atlas 1]
 // Every system in play, 1x speed: only the camera is moved, and the gust pushed as the player's drag makes it.
 import fs from 'node:fs';
 import gifenc from 'gifenc';
@@ -12,7 +12,7 @@ const { GIFEncoder, quantize, applyPalette } = gifenc;
 await run({ name: 'grassshot', kind: 'behaviour', size: '412x915', dpr: 1, echo: true }, async (R) => {
   const out = R.opt('out', 'C:/Projects/shots88/treegen');
   const extra = R.opt('extra', '');
-  const zooms = R.opt('zooms', '5,14').split(',').map(Number);
+  const zooms = R.opt('zooms', '14,24').split(',').map(Number);
   fs.mkdirSync(out, { recursive: true });
   const gifOf = async (page, name, frames = 36) => {
     const enc = GIFEncoder();
@@ -56,7 +56,8 @@ await run({ name: 'grassshot', kind: 'behaviour', size: '412x915', dpr: 1, echo:
     await page.waitForFunction(() => window.__boot?.at['level-ready'] || document.querySelector('.fatal'), { timeout: 300000, polling: 250 });
     await R.fatal(page);
     await sleep(25000);
-    // the lushest meadow: 16² blocks with the most columns at succession 2.0-3.2 (the tall grass's band), nearest the start
+    // the open meadow: 16² blocks with the most columns at succession 1.8-2.5 (tall grass, under the thickets' 2.6),
+    // the fewest at 2.6+ (thickets, woods), nearest the start
     const spot = await page.evaluate(async () => {
       const r = window.reclaimed;
       const v = await r.core.readBuffer('veg');
@@ -72,8 +73,8 @@ await run({ name: 'grassshot', kind: 'behaviour', size: '412x915', dpr: 1, echo:
           for (let y = by * B; y < by * B + B; y++)
             for (let x = bx * B; x < bx * B + B; x++) {
               const s = v[y * w + x];
-              if (s >= 2.0 && s <= 3.2) n++;
-              if (s >= 3.6) wood++;
+              if (s >= 1.8 && s <= 2.5) n++;
+              if (s >= 2.6) wood++;
             }
           const cx = bx * B + B / 2;
           const cy = by * B + B / 2;

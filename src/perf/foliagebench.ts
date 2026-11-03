@@ -45,7 +45,7 @@ const STAGES: Stage[] = [
 ];
 
 /**
- * (round 128) The meadow station: the lushest tall grass (the succession field 2.0-3.2, flora's meadows) on rings out
+ * (round 128) The meadow station: the lushest open tall grass (the succession field 1.8-2.5: under the thickets' 2.6) on rings out
  * from the stand, no tree within 8 cells — the same spot every load (the world is the same). None: an error, no stand-in.
  */
 function meadowSpot(R: Rec): [number, number] {
@@ -58,16 +58,16 @@ function meadowSpot(R: Rec): [number, number] {
       const x = Math.round(sx + Math.cos((a / 32) * Math.PI * 2) * r);
       const y = Math.round(sy + Math.sin((a / 32) * Math.PI * 2) * r);
       const v = pl.vegAt(x, y);
-      if (v === null || v < 2.0 || v > 3.2) continue;
+      if (v === null || v < 1.8 || v > 2.5) continue;
       if (pl.treesNear(x, y, 8).length) continue;
-      // (the lushest: nearest 2.6, the middle of the meadows' band)
-      const score = 1 - Math.abs(v - 2.6);
+      // (the lushest open meadow: nearest 2.3 — under the thickets' 2.6)
+      const score = 1 - Math.abs(v - 2.3);
       if (score > bestV) {
         bestV = score;
         best = [x, y];
       }
     }
-  if (!best) throw new Error('foliagebench set=grass: no meadow (veg 2.0-3.2, no tree within 8) within 90 cells of the stand');
+  if (!best) throw new Error('foliagebench set=grass: no meadow (veg 1.8-2.5, no tree within 8) within 90 cells of the stand');
   return best;
 }
 
