@@ -228,6 +228,7 @@ await run({ name: 'herolabtest', kind: PERF ? 'timing' : 'behaviour', size: '412
         let base = null;
         for (let k = 0; k < secs * 5; k++) {
           await sleep(200);
+          if (label === 'Run-up' && k % 10 === 0) await shot(`hill-${hero}-${drive}-${String(k / 5).padStart(2, '0')}s.png`);
           const z = await p.evaluate(() => window.reclaimed.lab.session.hero.position()[2]);
           base ??= z;
           best = Math.max(best, z - base);
@@ -249,6 +250,16 @@ await run({ name: 'herolabtest', kind: PERF ? 'timing' : 'behaviour', size: '412
     await p.evaluate(() => window.reclaimed.lab.pick({ station: 'city' }));
     await sleep(4000);
     await shot('horse-city.png');
+    // (main's review: a pale crescent beside the horse in the street — the cut's lit rim? the same street with the
+    // chase alone, and the cut with no rim)
+    await p.evaluate(() => window.reclaimed.lab.pick({ cam: 'chase' }));
+    await sleep(2500);
+    await shot('horse-city-chase.png');
+    await p.evaluate(() => window.reclaimed.lab.pick({ cam: 'cutaway+tilt' }));
+    await p.evaluate(() => { const r = window.reclaimed.lab.session.rig.p; r.cutaway.rim = 0; });
+    await sleep(2500);
+    await shot('horse-city-cut-norim.png');
+    await p.evaluate(() => { const r = window.reclaimed.lab.session.rig.p; r.cutaway.rim = 0.25; });
   }
 
   // ---- (round 128, PL43) the bike on the physical drive in the tapered canyon, held hard against the outer wall

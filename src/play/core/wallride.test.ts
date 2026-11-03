@@ -35,4 +35,19 @@ describe('wall riding', () => {
     const on = ride(20, 1);
     expect(on.up).toBeGreaterThan(off.up);
   });
+  it('steered up onto the wall at speed, it stays on it: no launch off the taper', () => {
+    const t = { ...BIKE, wallRide: 1 };
+    const b = makeBike(20, 50, canyon, t);
+    b.vx = 20;
+    let air = 0;
+    let up = 0;
+    for (let k = 0; k < 3 * 60; k++) {
+      // (a second angled up onto the wall, then along it)
+      stepBike(b, k < 45 ? [0.9, 0.45] : [1, 0], 1 / 60, canyon, [600, 100], t, false, BIKE_DRIVE);
+      if (b.air > 0) air += 1 / 60;
+      up = Math.max(up, canyon(b.x, b.y) - 10);
+    }
+    expect(up).toBeGreaterThan(2);
+    expect(air).toBeLessThan(0.15);
+  });
 });

@@ -32,7 +32,7 @@ import { CAM_MODES, camString, DEFAULT_CAM, parseCam } from '../camera/rig';
 import { isPlayHero, type PlayHeroId } from '../heroes/make';
 import { Station, type StationHost } from '../sandbox/station';
 import { el, PlaySession, type SessionDeps } from '../session';
-import { Autopilot, lookFor, type AutoPath } from './autopilot';
+import { Autopilot, lookFor, riderClimb, type AutoPath } from './autopilot';
 import { applyTurn, assistOn, HANDLING, HANDLING_VARIANTS, parseHandling, steerParams, useHandling, type HandlingId } from './handling';
 import { STATION_KINDS, Stations, urlParam, VariantPicker, type LabStation, type StationKind } from './lab';
 import { HILL, HILL_RIDE, LAB_TERRAINS, TOUR, type LabTerrain } from './terrains';
@@ -367,6 +367,8 @@ export class HeroLab {
       hint,
       enter: ({ session }) => {
         this.pilot = new Autopilot(path, lookFor(session.heroId));
+        // (round 128: the rider model steers round what's in its line, as a thumb would)
+        this.pilot.eyes = { top: (x, y) => session.world.top(x, y), climb: riderClimb(session.hero.profileClimb()) };
         const st = this.pilot.start();
         session.respawn(st.at);
         const rig = session.rig;

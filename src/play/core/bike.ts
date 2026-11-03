@@ -422,7 +422,12 @@ export function stepBike(b: Bike, stick: [number, number], dt: number, heightAt:
       // (the ground's rise speed under it, smoothed over a cell either side so a pebble isn't a ramp)
       const sp = speedOf(b);
       let up = 0;
-      if (sp > 0.5 && t.carry > 0) {
+      // ((round 128) on a wall — a face steeper than it rides, with wall riding on — it follows the surface: the rise it
+      // climbed onto the wall isn't carried, which threw it off the taper as off a ramp (1.15 s in the air in
+      // core/wallride.test.ts); it leaves a wall by steering off it or by slowing till it slides)
+      const [fgx, fgy] = drive && (t.wallRide ?? 0) > 0 ? gradient(b.x, b.y, heightAt, 0.8) : [0, 0];
+      const onFace = Math.hypot(fgx, fgy) > t.climb;
+      if (sp > 0.5 && t.carry > 0 && !onFace) {
         const [ux, uy] = [b.vx / sp, b.vy / sp];
         // (behind it only: the rise of the cell it has just climbed — a central difference looked past a kicker's lip,
         // saw the drop, and threw nothing at the very step it should)

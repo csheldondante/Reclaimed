@@ -11,7 +11,7 @@ import { CAM_SPEC } from '../camera/params';
 import { CameraRig } from '../camera/rig';
 import { makeHero, type PlayHeroId } from '../heroes/make';
 import { input, testWorld } from '../testing';
-import { Autopilot, lookFor } from './autopilot';
+import { Autopilot, lookFor, riderClimb } from './autopilot';
 import { labSight } from './labworld';
 import { LAB_TERRAINS, TOUR } from './terrains';
 
@@ -59,6 +59,7 @@ export function ride(terrain: string, modes: readonly CamModeId[], opts: { hero?
   const pilot = new Autopilot(t.path, lookFor(heroId));
   const st = pilot.start();
   const hero = makeHero(heroId, world, st.at, opts.params);
+  pilot.eyes = { top: (x, y) => s.top(x, y), climb: riderClimb(hero.profileClimb()) };
   const reg = new Registry(CAM_SPEC);
   for (const [k, v] of Object.entries(opts.tune ?? {})) reg.set(k, v);
   const rig = labRig(terrain, modes, reg.values);

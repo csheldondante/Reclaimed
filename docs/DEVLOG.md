@@ -16897,3 +16897,21 @@ cave's mountain). The horse on the canyon by the autopilot: trotting at 7.4 cell
 6 s, too short for the 44-cell run-up at 9 cells/s (the knight at speed on the flat, not yet at the ramp): lengthened
 to 12 s for the next batch; the climb itself is Node-checked (core/drive.test.ts). The physical bike in the tapered
 canyon left the wall flying (AIR 1.9 s): the taper throws it at speed, as a ramp does.
+
+**The open problems after the first drive batch (round 128, main's review).**
+- The physical bike pinned on a boulder or a building's corner was the rider model, not the drive: the autopilot aimed
+  straight at a point 7 cells along the path, through whatever stood in the line. It now has eyes (lab/autopilot.ts
+  `eyes`: the ground's top and the hero's climb): a line to the point that's blocked within 8 cells is steered round,
+  round a small thing (core/steer.ts aroundSmall) or else the open way in a 60-deg fan (corridor), as a thumb would.
+  The drive is unchanged. Node, 60 s by the autopilot, the physical bike: canyon 0.87 -> 2.39 laps a minute, city 0.66
+  -> 3.19, cliff 3.20, tour 1.62; the bike's own: canyon 3.32, city 2.68; the horse canyon 1.71, city 2.16.
+- The physical bike thrown off the tapered wall was the cushion's `carry` (the ground's rise speed kept under it, so a
+  ramp throws it), not the launch rule and not the normal: angled up onto the wall, it carried the rise it climbed, and
+  turning along the wall it flew on (core/wallride.test.ts: 1.15 s in the air in 3 s; with carry off, none). On a face
+  steeper than it rides with wall riding on, the rise isn't carried now: 0 s in the air, held 2+ cells up the wall.
+- The rider's eyes take rises half again steeper than the hero climbs as walls (riderClimb): at the hero's own climb it
+  detoured off the hills' crests (the bike's hills 25-s ride fell under its 0.6-lap test). Node, 60 s, with them: the
+  bike's own hills 1.04 -> 4.04 laps, canyon 3.38, city 2.68; physical canyon 2.39, city 3.19, hills 4.11.
+- The horse's push 12 -> 20 cells/s^2: at 12 the slope's pull (g 30 x 0.9 x sin theta) beat it from standing past 0.5
+  rise over run, and the rolling hills held it to 0.55 laps a minute. At 20: canyon 1.75, city 2.20, hills 3.12,
+  forest 2.98.

@@ -5,6 +5,7 @@
 // near itself (a detour into a dead end and out) isn't short-cut. Pure.
 
 import type { V2 } from '../../api/contracts/camera';
+import { aroundSmall, corridor, freeRun } from '../core/steer';
 
 export interface AutoPath {
   at: V2;
@@ -17,7 +18,23 @@ export interface AutoPath {
  */
 export const lookFor = (hero: string): number => (hero === 'hoverbike' ? 7 : 3);
 
+/** (round 128) what the rider steers round: rises half again steeper than the hero climbs (a rolling hill's bumps
+ *  aren't walls to a thumb; at the hero's own climb the rider detoured off the hills' crests) */
+export const riderClimb = (heroClimb: number): number => heroClimb * 1.5;
+
+/** (round 128) what the rider sees: the ground's top and the steepest it rides up (rise over run) */
+export interface RiderEyes {
+  top: (x: number, y: number) => number;
+  climb: number;
+}
+
 export class Autopilot {
+  /**
+   * (round 128) the rider's eyes: with them, a line to the path's point that runs into something (a boulder, a
+   * building's corner the pursuit cuts) is steered round as a thumb would — round a small thing, else the open way in
+   * a fan toward the point. Without them it aims straight at the point (the old model).
+   */
+  eyes: RiderEyes | null = null;
   /** the path's index the hero is nearest (fractional: along the segment) */
   private i = 0;
   private cum: number[] = [];
@@ -102,7 +119,16 @@ export class Autopilot {
     const dy = target.at[1] - p[1];
     const l = Math.hypot(dx, dy) || 1;
     const m = Math.max(0, Math.min(1, target.speed * this.throttle));
-    return [(dx / l) * m, (dy / l) * m];
+    let a = Math.atan2(dy, dx);
+    const e = this.eyes;
+    if (e) {
+      const near = Math.max(3, Math.min(l, 8));
+      if (freeRun(e.top, p[0], p[1], a, near, e.climb) < near) {
+        const round = aroundSmall(e.top, p, a, near, 2.5, e.climb);
+        a = round ?? corridor(e.top, p, a, near, Math.PI / 3, e.climb, 9).way;
+      }
+    }
+    return [Math.cos(a) * m, Math.sin(a) * m];
   }
 
   /** laps so far (progress / length), for the metrics */
