@@ -18,15 +18,16 @@ const WAVE = { ring: 13, first: 3, sight: 30, speed: 3.5, health: 3 };
 /** (pass 2) the parry variants, by the knight's parryMode */
 const PARRY = ['Off', 'Button', 'Swipe', 'Hold'];
 const DUMMY = { count: 3, ahead: 5, apart: 3, health: 400 };
-/** (pass 2) the jump course: steps (cells ahead, radius, layers of stone), a gap dug before the last */
+/** (pass 2) the jump course: flat-topped steps (cells ahead, radius, top over the start's ground), a gap dug before the
+ *  last — each step's rise over the last is more than a walking step (0.9) and less than a jump reaches (2.9) */
 const COURSE = {
   steps: [
-    { ahead: 4, radius: 1.6, layers: 1.5 },
-    { ahead: 7.5, radius: 1.6, layers: 3 },
-    { ahead: 11, radius: 1.6, layers: 4.5 },
-    { ahead: 17, radius: 2.4, layers: 6 },
+    { ahead: 5, radius: 2.2, rise: 1.5 },
+    { ahead: 10, radius: 2.2, rise: 3 },
+    { ahead: 15, radius: 2.2, rise: 4.5 },
+    { ahead: 22, radius: 2.6, rise: 6 },
   ],
-  gap: { ahead: 14, radius: 1.3, layers: 3 },
+  gap: { ahead: 18.6, radius: 1.4, layers: 4 },
 };
 
 export class Station {
@@ -158,9 +159,9 @@ export class Station {
   }
 
   /**
-   * (pass 2) The jump course, built ahead of the knight (the way it faces) in stone: three steps each a layer higher
-   * than the last (the first already more than a walking step), a gap dug before the last, and on the last ledge a
-   * raider (to jump-attack from below or reach by the hook). JUMP onto each; a walk only reaches the first's foot.
+   * (pass 2) The jump course, built ahead of the knight (the way it faces): three flat-topped steps each 1.5 cells over
+   * the last (more than a walking step), a gap dug before the last, and on the last ledge a raider (to jump-attack from
+   * below or reach by the hook). JUMP onto each; a walk only reaches the first's foot.
    */
   course(): void {
     const t = this.s.d.api.terrain;
@@ -170,9 +171,14 @@ export class Station {
     const a = h.heading();
     const f = [Math.cos(a), Math.sin(a)];
     const at = (k: number): [number, number] => [x + f[0] * k, y + f[1] * k];
+    // (flat-topped steps: the terrain's mesa brush, each at its own level over the ground where the knight stands)
+    const g0 = t.heightAt(x, y) ?? h.position()[2];
     COURSE.steps.forEach((s) => {
       const [cx, cy] = at(s.ahead);
-      t.build(cx, cy, 'stone', { radius: s.radius, layers: s.layers });
+      const m = t.raise('mesa', { radius: s.radius, level: g0 + s.rise });
+      m.to(cx - f[0] * 0.5, cy - f[1] * 0.5);
+      m.to(cx + f[0] * 0.5, cy + f[1] * 0.5);
+      m.end();
     });
     const [gx, gy] = at(COURSE.gap.ahead);
     t.dig(gx, gy, { radius: COURSE.gap.radius, layers: COURSE.gap.layers });
@@ -221,12 +227,10 @@ export class Station {
     const alive = this.raiders.filter((id) => this.s.d.units.get(id)?.alive).length;
     this.tally.taken = h.maxHealth - h.health;
     const lines = [
-      `speed ${h.speed().toFixed(1)} c/s${st ? ` · best ${st.best.toFixed(1)}` : ''}`,
-      st ? `hits ${st.hits} · kills ${this.tally.kills} · swings ${st.swings} (lunges ${st.lunges})` : `kills ${this.tally.kills}`,
-      st ? `arrows ${st.arrowHits}/${st.arrows} · spins ${st.spins} (bounces ${st.bounces}) · dodges ${st.dodges}` : '',
-      st ? `jumps ${st.jumps} · slams ${st.slams} · parries ${st.parries} · hooks ${st.hooks} · zips ${st.zips}` : '',
+      `speed ${h.speed().toFixed(1)}${st ? ` best ${st.best.toFixed(1)}` : ''} · kills ${this.tally.kills} · left ${alive} · hurt ${this.tally.taken.toFixed(0)}`,
       `landed ${this.tally.landed} · blocked ${this.tally.blocked} · dodged ${this.tally.dodged}`,
-      `wave ${this.wave} · enemies left ${alive} · hurt ${this.tally.taken.toFixed(0)}`,
+      st ? `swings ${st.swings} lunges ${st.lunges} · arrows ${st.arrowHits}/${st.arrows} · spins ${st.spins}/${st.bounces}` : '',
+      st ? `jumps ${st.jumps} slams ${st.slams} · parries ${st.parries} · hooks ${st.hooks} zips ${st.zips}` : '',
     ].filter(Boolean);
     const text = lines.join('\n');
     if (text !== this.lastText) {

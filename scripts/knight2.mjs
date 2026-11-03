@@ -160,7 +160,9 @@ await run({ name: 'knight2', kind: 'behaviour', size: '412x915', dpr: 1 }, async
           const xs = ids.map((id) => r.units.get(id)).filter((u) => u && u.alive).map((u) => u.at[0]);
           return xs.length ? x - Math.max(...xs) : 99;
         }, ids);
-        if (far > 1 && h.at[0] - c0.at[0] > 6.5) break;
+        // (the window may slide under it: x is measured against the pack, not the start)
+        if (far > 1) break;
+        void h;
         await stroke(line(S, [S[0] + d[0] * 70, S[1] + d[1] * 70], 4), 14);
         slashes++;
         await sleep(330);
@@ -170,7 +172,7 @@ await run({ name: 'knight2', kind: 'behaviour', size: '412x915', dpr: 1 }, async
     const c1 = await hero();
     const secs = (Date.now() - t0) / 1000;
     R.log(`crowd: ${slashes} slashes, ${secs.toFixed(1)} s (incl. the capture's load), moved ${(c1.at[0] - c0.at[0]).toFixed(1)} cells along x, past the last raider by ${far.toFixed(1)}; lunges ${c1.stats.lunges - c0.stats.lunges}, dashed ${(c1.stats.dashed - c0.stats.dashed).toFixed(1)} cells, hits ${c1.stats.hits - c0.stats.hits}, hurt ${c0.hp - c1.hp}`);
-    R.check('slashes carry the knight through the pack to the far side', far > 1 && c1.at[0] - c0.at[0] > 6.5, { slashes, far, moved: c1.at[0] - c0.at[0] });
+    R.check('slashes carry the knight through the pack to the far side', far > 1, { slashes, far });
     await p.screenshot({ path: path.join(out, 'crowd-end.png') });
     await p.evaluate((ids) => ids.forEach((id) => window.reclaimed.units.remove(id)), ids);
   }
@@ -221,14 +223,19 @@ await run({ name: 'knight2', kind: 'behaviour', size: '412x915', dpr: 1 }, async
     await home();
     await station('Clear');
     await sleep(500);
-    const g = await spawnAt('blocker', 2.4, 0);
-    await sleep(1200);
+    const g = await spawnAt('blocker', 5, 0);
+    await sleep(300);
     const t0 = await tally();
     let inWind = false;
-    await gif('guard.gif', 46, 90, async () => {
+    await gif('guard.gif', 50, 90, async () => {
+      // (as it comes, not yet winding up, within a slash's reach and dash: blocked)
+      await waitFor(async () => {
+        const u = await unit(g);
+        const h = await hero();
+        return u && u.state !== 'swing' && Math.hypot(u.at[0] - h.at[0], u.at[1] - h.at[1]) < 3;
+      }, 6000);
       await swipeAt(g);
-      await sleep(700);
-      await swipeAt(g);
+      await sleep(900);
       // (its wind-up: the units' state 'swing' — then a swipe while it's still winding up)
       inWind = await waitFor(async () => (await unit(g))?.state === 'swing', 6000);
       if (inWind) {
@@ -261,7 +268,16 @@ await run({ name: 'knight2', kind: 'behaviour', size: '412x915', dpr: 1 }, async
       lunged = await waitFor(async () => (await unit(l))?.state === 'hurt', 6000);
       if (lunged) {
         await sleep(650);
+        const st = await p.evaluate((id) => {
+          const r = window.reclaimed;
+          const u = r.units.get(id);
+          const [x, y] = r.play.hero.position();
+          return { state: u?.state, d: u ? Math.hypot(u.at[0] - x, u.at[1] - y) : null, act: r.play.hero.act.kind };
+        }, l);
         await swipeAt(l);
+        await sleep(200);
+        const aim = await p.evaluate(() => window.reclaimed.play.hero.lastAim);
+        R.log(`lunger at the swipe: ${JSON.stringify(st)}; aim ${JSON.stringify(aim)}`);
       }
       await sleep(1600);
     });
@@ -287,30 +303,33 @@ await run({ name: 'knight2', kind: 'behaviour', size: '412x915', dpr: 1 }, async
     const heights = await p.evaluate(() => {
       const r = window.reclaimed;
       const [x, y] = r.play.hero.position();
-      return [4, 7.5, 11, 14, 17].map((k) => +r.play.world.floor(x + k, y).toFixed(2));
+      return [5, 10, 15, 18.6, 22].map((k) => +r.play.world.floor(x + k, y).toFixed(2));
     });
-    R.log(`course ground ${ground.toFixed(2)}, tops at 4/7.5/11/gap 14/17 cells: ${JSON.stringify(heights)}`);
+    R.log(`course ground ${ground.toFixed(2)}, tops at 5/10/15/gap 18.6/22 cells: ${JSON.stringify(heights)}`);
     const fwd = await screenDir(1, 0);
     let top = ground;
     // (the scripted stick is on the screen: the course's way, +x on the ground, as the screen shows it)
-    await gif('jump-course.gif', 60, 90, async () => {
-      await p.evaluate((fwd) => (window.reclaimed.play.controls.script = { stick: fwd, buttons: [] }), fwd);
-      for (let k = 0; k < 5; k++) {
-        await sleep(k === 0 ? 150 : 480);
-        await p.evaluate((fwd) => (window.reclaimed.play.controls.script = { stick: fwd, buttons: [true] }), fwd);
-        await sleep(50);
-        await p.evaluate((fwd) => (window.reclaimed.play.controls.script = { stick: fwd, buttons: [] }), fwd);
-        for (let i = 0; i < 8; i++) {
-          await sleep(60);
-          top = Math.max(top, (await hero()).at[2]);
-        }
+    await gif('jump-course.gif', 70, 90, async () => {
+      // (the stick up the course; JUMP pressed when the ground 1.6 cells ahead stands more than a step over the feet)
+      const t0 = Date.now();
+      while (Date.now() - t0 < 7000) {
+        const s = await p.evaluate((fwd) => {
+          const r = window.reclaimed;
+          const h = r.play.hero;
+          const [x, y, z] = h.position();
+          const ahead = r.play.world.floor(x + 1.6, y);
+          const go = h.f.air === 0 && ahead - z > 0.8;
+          r.play.controls.script = { stick: fwd, buttons: [go] };
+          return { z, go };
+        }, fwd);
+        top = Math.max(top, s.z);
+        await sleep(s.go ? 80 : 40);
       }
-      await sleep(600);
       await p.evaluate(() => (window.reclaimed.play.controls.script = null));
     });
     const end = await hero();
-    R.log(`jump course: reached z ${end.at[2].toFixed(2)} (ground ${ground.toFixed(2)}, highest ${top.toFixed(2)}), x +${(end.at[0] - start[0]).toFixed(1)}, jumps ${end.stats.jumps}`);
-    R.check('JUMP takes the knight up the course', end.at[2] - ground > 2.5, { rise: end.at[2] - ground, jumps: end.stats.jumps });
+    R.log(`jump course: reached z ${end.at[2].toFixed(2)} (ground ${ground.toFixed(2)}, highest ${top.toFixed(2)}), jumps ${end.stats.jumps}`);
+    R.check('JUMP takes the knight up the course', top - ground > 4, { rise: end.at[2] - ground, top: top - ground, jumps: end.stats.jumps });
     await p.screenshot({ path: path.join(out, 'jump-course-end.png') });
 
     // ---- the jump attack on a raider
@@ -339,8 +358,25 @@ await run({ name: 'knight2', kind: 'behaviour', size: '412x915', dpr: 1 }, async
     await sleep(400);
     const ids = [await spawnAt('raider', 6, 3), await spawnAt('raider', -5, 4), await spawnAt('raider', 1, -6)];
     await sleep(900);
-    const u = await unit(ids[0]);
-    const sp = await screenOf(u.at[0], u.at[1], u.at[2] + 0.8);
+    // (one on the screen where a right thumb taps: not in the stick's zone, not under the station's card)
+    let pick = ids[0];
+    let sp = null;
+    for (const id of ids) {
+      const u = await unit(id);
+      const q = await screenOf(u.at[0], u.at[1], u.at[2] + 0.8);
+      if (q[0] > 20 && q[0] < 392 && q[1] > 340 && q[1] < 880 && !(q[0] < 412 * 0.45 && q[1] > 915 * 0.5) && !(q[0] > 290 && q[1] > 600)) {
+        pick = id;
+        sp = q;
+        break;
+      }
+    }
+    if (!sp) {
+      const u = await unit(ids[0]);
+      sp = await screenOf(u.at[0], u.at[1], u.at[2] + 0.8);
+    }
+    ids.splice(ids.indexOf(pick), 1);
+    ids.unshift(pick);
+    R.log(`lock: tapping ${pick} at ${sp.map(Math.round)}`);
     const k0 = await hero();
     let locked = null;
     await gif('lock-chase.gif', 50, 90, async () => {
@@ -421,8 +457,8 @@ await run({ name: 'knight2', kind: 'behaviour', size: '412x915', dpr: 1 }, async
     const ledge = await p.evaluate(() => {
       const r = window.reclaimed;
       const [x, y] = r.play.hero.position();
-      const z = r.play.world.floor(x + 11, y);
-      return r.core.camera.project(x + 11, y, z);
+      const z = r.play.world.floor(x + 10, y);
+      return r.core.camera.project(x + 10, y, z);
     });
     await gif('hook-zip.gif', 30, 90, async () => {
       await tap(ledge);

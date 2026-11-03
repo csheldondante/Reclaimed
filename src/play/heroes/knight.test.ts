@@ -295,6 +295,14 @@ describe('the knight', () => {
     expect(k.health).toBe(k.maxHealth - 1);
   });
 
+  it('(pass 2) a look for every button, in the pad's order (JUMP first)', () => {
+    const w = testWorld(flat);
+    const k = new KnightHero(w, [50, 50]);
+    expect(k.looks()).toHaveLength(k.pad.buttons.length);
+    expect(k.pad.buttons[0].name).toBe('jump');
+    expect(k.looks()[2].name).toBe('bow');
+  });
+
   it('swipes chain the combo: three swings, the third a wide finisher', () => {
     const w = testWorld(flat);
     const k = new KnightHero(w, [50, 50]);

@@ -571,6 +571,9 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
       vel.z = select(0.0, impact * BOUNCE, impact > 2.0);
       // (a landing takes some of its speed along the ground too, as a skid)
       vel = vec3<f32>(vel.xy * max(1.0 - ROLL_GRIP * dt, 0.0) * select(1.0, LAND_SKID, impact > 2.0), vel.z);
+      // (knight pass 2) a lunger's dive lands flat and stops there — it lies where it came down, open, not skidding
+      // on out of reach for the best part of its window
+      if (kind.d.y > 0.0 && impact > 1.0) { vel = vec3<f32>(vel.xy * 0.1, 0.0); }
       if (length(vel) > 0.6) { stT = 0.0; }
       // settled long enough: up again
       if (stT > GETUP + stun) {

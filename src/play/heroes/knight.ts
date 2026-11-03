@@ -1074,6 +1074,7 @@ export class KnightHero extends PlayHero {
   looks(): ButtonLook[] {
     const p = this.p;
     return [
+      { lit: this.f.air > 0 },
       { gauge: 1 - this.cool.dodge / Math.max(0.01, p.dodgeEvery + p.dodgeTime), lit: this.act.kind === 'dodge' },
       ARM_LOOK[ARMS[(ARMS.indexOf(this.arm) + 1) % ARMS.length]],
       this.arm === 'sword'
