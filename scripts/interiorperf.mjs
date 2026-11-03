@@ -37,13 +37,10 @@ await run({ name: 'interiorperf', kind: 'timing', size: '412x915', dpr: 2.6, chr
     return r;
   };
   const set = (js) => p.evaluate(js);
-  const street = await measure('street (post on)');
+  const street = await measure('street');
   await set(() => window.reclaimed.interior.enter());
   await sleep(3500);
   const inside = await measure('inside, everything');
-  await set(() => (window.reclaimed.post.look.on = false));
-  await measure('inside, post filters off');
-  await set(() => (window.reclaimed.post.look.on = true));
   await set(() => (window.reclaimed.interior.active.draw.shaftsOn = false));
   await measure('inside, shafts off');
   await set(() => (window.reclaimed.interior.active.draw.shaftsOn = true));
@@ -51,7 +48,5 @@ await run({ name: 'interiorperf', kind: 'timing', size: '412x915', dpr: 2.6, chr
   await set(() => (window.reclaimed.interior.active.draw.on = false));
   await measure('inside, interior draw off');
   await set(() => (window.reclaimed.interior.active.draw.on = true));
-  await set(() => window.reclaimed.core.setPost(null));
-  await measure('inside, no post pass (full res)');
   R.log(`inside − street: ${(inside.p50 - street.p50).toFixed(2)} ms p50`);
 });

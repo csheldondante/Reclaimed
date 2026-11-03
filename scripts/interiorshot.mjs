@@ -62,6 +62,11 @@ await run({ name: 'interiorshot', kind: 'behaviour', size: '412x915', dpr: 1, ec
       await p.evaluate((k) => window.reclaimed.interior.setStorey(k), ts);
       await sleep(900);
       await p.screenshot({ path: `${OUT}/${out}-talk-${tod}.png` });
+      // (and the reply: the next line's bubble)
+      const n0 = await p.evaluate(() => window.reclaimed.interiorPeople.stats.lines);
+      await p.waitForFunction((n) => window.reclaimed.interiorPeople.stats.lines > n, { timeout: 15000, polling: 100 }, n0).catch(() => {});
+      await sleep(700);
+      await p.screenshot({ path: `${OUT}/${out}-talk-reply-${tod}.png` });
     } else R.log('  no talk in 60 s');
     const ps = await p.evaluate(() => window.reclaimed.interiorPeople?.stats);
     R.log(`  people: ${JSON.stringify(ps)}`);

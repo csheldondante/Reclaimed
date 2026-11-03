@@ -162,7 +162,7 @@ fn fsInterior(in: IVOut) -> FOut {
   var rim = 0.0;
   // the storey's cut: nothing over its ceiling; the storey under it only its flight (seen up through the hole)
   if (in.wpos.z > h0.z) { discard; }
-  if (storey < shown && (kind != 3u || in.wpos.z < floorZ(shown) - 1.1)) { discard; }
+  if (storey < shown && (kind != 3u || in.wpos.z < floorZ(shown) - 0.5)) { discard; }
   // the storey under: only what's seen down the stair's hole (under the shown floor anyway)
   // walls between the eye and the room: cut down to a stub (a dithered edge), so the room shows
   if ((in.info & 65536u) != 0u && storey == shown) {

@@ -160,7 +160,8 @@ fn focusOut(p: vec3<f32>) -> f32 {
     }
     best = min(best, out);
   }
-  return smoothstep(CAM.veil.w, CAM.veil.w + 0.6, best) * CAM.focus.w;
+  // (a hard edge: a neighbour's party wall, on its own side of the shared line, goes whole — no stipple)
+  return select(0.0, 1.0, best > CAM.veil.w) * CAM.focus.w;
 }
 
 /** toward the eye from p: one way for the fixed (orthographic) view, from where it is for the free one */

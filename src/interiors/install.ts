@@ -179,7 +179,7 @@ export class InteriorScene {
     const w = hi - lo + 0.6;
     const h = (fhi - flo) * Math.sin(el) + 1.6 * Math.cos(el) + 0.6;
     // (the user: "we can zoom in more" — the storey edge to edge)
-    const zoom = Math.min((cam.viewportW * 1.16) / w, (cam.viewportH * 0.95) / h);
+    const zoom = Math.min((cam.viewportW * 0.98) / w, (cam.viewportH * 0.92) / h);
     const sm = (lo + hi) / 2, fm = (flo + fhi) / 2;
     const m: V2 = [rx * sm + fx * fm, ry * sm + fy * fm];
     const [x, y, z] = a.toWindow(m, st.z);
@@ -230,13 +230,13 @@ export class InteriorScene {
       cam.cut.veil = k2;
       d.view.assemble = k2;
       cam.cut.slice = k2 > 0.02 ? ceiling + (1 - k2) * 30 : null;
-      cam.cut.sliceShape = { x: f.x, y: f.y, radius: f.r + 0.6, rim: 0, fade: 0.4, fadeR: 0.08 };
+      cam.cut.sliceShape = { x: f.x, y: f.y, radius: f.r + 0.6, rim: 0, fade: 0, fadeR: 0 };
       if (this.t >= 2.6) this.phase = 'inside';
     } else if (this.phase === 'inside') {
       cam.cut.veil = 1;
       d.view.assemble = 1;
       cam.cut.slice = ceiling;
-      cam.cut.sliceShape = { x: f.x, y: f.y, radius: f.r + 0.6, rim: 0, fade: 0.4, fadeR: 0.08 };
+      cam.cut.sliceShape = { x: f.x, y: f.y, radius: f.r + 0.6, rim: 0, fade: 0, fadeR: 0 };
       // (the camera on the shown storey, framed to fill the screen; eased when the storey changes)
       const k = 1 - Math.exp(-dt * 6);
       cam.target[0] += (f.x - cam.target[0]) * k;
@@ -262,7 +262,7 @@ export class InteriorScene {
     const open = this.phase === 'street' ? 0 : d.view.assemble;
     // (the user: "hide outside the building" — wholly, once inside; the transition takes it away as you enter)
     const quads = a.plan.storeys[a.storey].tiles.map((q) => a.plan.corners.get(q)!.map((c) => [c[0] + this.frame.dx, c[1] + this.frame.dy] as [number, number]));
-    cam.cut.focus = open > 0.01 ? { x: f.x, y: f.y, z: f.z, radius: f.r + 0.2, amount: open, margin: 0.15, quads } : null;
+    cam.cut.focus = open > 0.01 ? { x: f.x, y: f.y, z: f.z, radius: f.r + 0.2, amount: open, margin: 0.03, quads } : null;
     this.hideUi(this.phase !== 'street');
     // the storey's lights
     const lights: LocalLight[] = [];
