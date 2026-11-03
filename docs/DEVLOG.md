@@ -16262,3 +16262,23 @@ front are dark silhouettes with a thin lit rim at the cut; the sun's patches and
 pools stronger at night; bubbles only over people on the shown storey. The planner: the hall's long table and its seats
 placed as one set at the middle that seats the most (benches, else stools), seats a hand's gap off the table, store
 rooms filled to their size, a room kept 85% one floor, the flight's top kept clear, the window's slide rebuilds the draw.
+
+**The rest of the review rounds** (main's, on the c-g shots; the user: "Interiors are coming along. I think we can zoom
+in more and hide outside the building eventually", "I would prefer without it and just normal rendering", "the dust is a
+bit of an issue"): normal rendering by default (the pixel post behind `?pixel=`); the storey edge to edge; once inside
+none of the world's own geometry, water, particles or rain is drawn (Cut.focus whole: the far land, tiles and the
+outside's motes skipped, the clear near-black) — inside the footprint too; a hard edge to what's hidden (a neighbour's
+party wall had stippled in its fade); a clean dollhouse cut with the walls' tops drawn as solid caps (their inside seen
+through the cut shaded as a top); only the top steps of the flight from below; the shots wait for the walk in and catch
+a line and its answer.
+
+**Found on the way (INT16, a world bug, places too):** the "grey sheets" over the upper storeys were the hall's own
+columns: its External claim is cut within ~5 s of play on s84 (registry cut 1, view lost 1), so settle/view.ts releases
+it to rubble and drops the building — from the street a rubble heap where the hall stood. scripts/interiorground.mjs
+shows it with the interior's draw off.
+
+**Cost (INT17): not measured.** scripts/interiorperf.mjs on the phone proxy (412×915, dpr 2.6, q=low, Chrome launched
+without vsync or a frame cap): street p50 17.5 / p95 19.5 ms, inside 17.5 / 19.7, shafts off 17.4, the interior's draw
+off 17.5 — every case the same frame, so it's paced, not GPU-bound; the interior's cost is under that floor. Static
+numbers: the hall's mesh 29-33 k triangles (the props' 25-28 k), drawn for the shown storey and the one under it; plan
+20-77 ms and mesh 33-101 ms once when its town is shown.

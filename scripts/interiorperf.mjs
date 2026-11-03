@@ -49,4 +49,16 @@ await run({ name: 'interiorperf', kind: 'timing', size: '412x915', dpr: 2.6, chr
   await measure('inside, interior draw off');
   await set(() => (window.reclaimed.interior.active.draw.on = true));
   R.log(`inside − street: ${(inside.p50 - street.p50).toFixed(2)} ms p50`);
+  // (is the frame paced? the same page with nothing drawn: if it's as slow, the frame time is the pacing, not the GPU)
+  if (R.opt('floor', '1') === '1') {
+    await p.close();
+    const q = await R.level({ level: 'atlas', town, interior: '1', tod, day: '100000', skip: 'render' });
+    await R.simSeconds(q, 4);
+    const m2 = async (label) => {
+      await sleep(800);
+      const r = await q.evaluate((s) => new Promise((res) => { const ts = []; let last = performance.now(); const t0 = last; const f = () => { const n = performance.now(); ts.push(n - last); last = n; if (n - t0 < s * 1000) requestAnimationFrame(f); else { ts.sort((a, b) => a - b); res({ p50: ts[Math.floor(ts.length * 0.5)], n: ts.length }); } }; requestAnimationFrame(f); }), secs);
+      R.log(`${label.padEnd(34)} p50 ${r.p50.toFixed(2)} ms (${r.n} frames)`);
+    };
+    await m2('nothing drawn (?skip=render)');
+  }
 });
