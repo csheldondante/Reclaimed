@@ -16288,3 +16288,102 @@ the nearest albedo here).
 within 16 cells, the flattest ground near it; Wave (raiders in a ring, one more each wave), Dummies (three that stand
 and take blows), Clear; a readout of speed and best, blows, kills, swings and lunges, arrows, spins and bounces,
 dodges, what it's taken. The start of the user's gauntlet, kept a test station.
+
+## 2026-11-03 — round 128, branch `knight`, pass 2: the lunge through a crowd, the guard and the lunger, jump, lock-on, parry, the hook gun
+
+The user (round 128, DECISIONS): "This is good! I think the bow is better than the previous version. The sword is ok but
+I think we want the default lunge to be further. In a crowd we want to be able to use the lunge to move our way through
+the crowd. I think we will also want to add some enemies that dodge or block except when winding up to hit. Or where
+you have to wait until after they lung and then stay stunned a moment to get your hit in or else they dodge or block."
+Then: "Specifically I think the knight could use a jump button and maybe a tap to lock on to enemies so we can do
+platforming and moves like a jump attack", and "We should also experiment with parrying and add back in the grapling
+hook gun." The bow is left as it was.
+
+**M1 — the lunge (KN-Q1 answered: every slash lunges further).** Each swing is now a DASH of a set distance, not
+iso-adventure's impulse that friction ate in a few frames (play/core/slip.ts, heroes/knight.ts swingStep):
+
+| | before (c0eeb74) | now |
+|---|---|---|
+| one slash from standing | 0.11 cells | 1.63 (slashLunge 1.6) |
+| one slash running (over the run) | -0.20 (the swing keeps 0.9 of the run) | +1.33 |
+| three-swing combo | 0.59 | 5.67 (1.6 + 1.6 + the finisher's 2.4) |
+| the double swipe | 2.51 | 6.63 (the first swipe's 1.6 + 4.8): still the big move |
+
+The dash runs over the blade's active time and the recovery up to the chain (a slash: 0.16 s, ~10 cells/s on top of
+whatever run it had along that way), ends back at that run, and walls still stop it. Through a crowd — decided: the
+knight's body never collides with the units (it never did; the hero is the units' target, not an obstacle), so what
+stopped a lunge was the impulse dying and the blow driving the body on ahead along the line, to be met again next
+swing. Now (1) the blade knocks what it hits ASIDE, out of the dash's line (`aside`: the perpendicular part, plus 0.45
+of it forward), (2) the dash turns up to 14° toward the side with more room (`slip`) and, ending inside a body, carries
+on past it (at most 1.2 cells). Node: slashes alone through a pack of eight (two staggered columns, 4 cells deep), from
+3 cells before it to 3 past: 5 slashes in 1.8 s spaced 0.4 s; 3 swipes in 0.8 s spaced 0.27 s (two read as double
+swipes). Headless, with the GPU raiders moving and hitting back: (headless check pending: the shared browser). GIF C:/Projects/shots88/knight2/crowd.gif.
+KN-R1: (headless check pending: the shared browser)
+
+**M2 — the guard and the lunger** (one enemy system: Units/AgentUnits, the agents' step, the traits system). GameplayGM
+iso-adventure (read only) has no enemy that blocks or dodges — only the player's SHIELD (perfectWindow 0.16 s, arc 130°,
+moveMul 0.45, knockbackTaken 0.35, the attacker staggered 0.75 s) — and its foe wind-ups are the telegraph: the
+bandit's rusty sword 0.38 s, the brute's club 0.75 s, the wolf's bite 0.3 s with a lunge of 10 cells/s, a red arc on the
+ground fading in over the wind-up. Ported: the guard's wind-up 0.7 s (near the club's: readable at phone size), the
+lunger's 0.45 s crouch and a 13 cells/s leap (the wolf's 10 × the knight's 1.3), the block's 0.35 knock share.
+- The rule lives where the blow lands, the agents' step (units.wgsl): two new intrinsic traits, `guarded` and `evasive`
+  (contracts/traits.ts), which the game's caps module turns into the step's CAP_GUARD / CAP_EVADE (as petrified becomes
+  rooted). Open to a hit: down (settled after a throw), a guard in its own wind-up, and — for a guard — a blow from above
+  (AreaHit `overhead`, the jump attack). Otherwise a guard BLOCKS (no damage, no throw, no stun; shoved back by 0.35 of
+  the push, at most 3.5 cells/s: never a throw, or down it would be open) and a lunger DODGES (a 4.5 cells/s sidestep
+  across the blow). Each turned blow is an event (EV_BLOCK → agents 'blocked' → Units `blocked` → PlayUnits `turned()`),
+  so the knight shows it (sparks and a recoil that ends its dash for a block, dust for a dodge, BLOCKED / DODGED on the
+  HUD, a `cue` sound hook) and the station counts landed / blocked / dodged from the units' own events.
+- The kinds (units/agent-units.ts GUARDS; the agents' Kind grew a fourth vec4, `d`: the wind-up, a lunge's speed, hop
+  and stun): the guard (kind 'blocker' — the settlements' friendly 'guard' role keeps its name) 1.5 tall, steel, reach
+  1.45, wind-up 0.7 s, a swing every 1.6 s; the lunger 1.3 tall, sand, quick (3.8), starts its crouch 4 cells off,
+  leaps at up to 13 cells/s with a 3.2 cells/s hop (aimed to land 0.8 past where you stand), its blow on the first
+  target it comes within 0.55 of in flight; once down it lies 0.6 + 0.9 s: that's its open window (~1.5 s).
+- The tells (unitDraw): a guard holds a steel block in front while it blocks (gone in its wind-up); in a wind-up both
+  flash (the heat glow pulsing); a lunger dives flat and lies face down (not rolled along); two bright stars go round
+  over a guard's or lunger's head while it lies open. A wind knocking one over opens it too (down is down).
+- Arrows: blocked and dodged like any blow — one rule to learn by watching; the bow stays the tool for raiders and for
+  the open windows from range (a lunger lying 3-4 cells off after it missed).
+- Found on the way: AgentUnits.strike dropped the contract's "a push with no dir shoves out from `at`" — the lich's slam
+  threw without shoving. It passes `outward` now.
+- Tests on Dawn (test/gpu/guards.test.ts, the real step and caps): a guard standing blocks (no hurt, a 'blocked' event,
+  hp the same, never thrown); its wind-up event says 0.7; a blow in it lands; up again it blocks; from above it lands.
+  A lunger standing dodges (a sidestep of more than 0.25 cells), crouches, leaps (a blow in flight dodged), lands past
+  its target with its blow struck, and a blow while it lies down lands. Headless: (headless check pending: the shared browser)
+
+**M3 — jump, the jump attack, lock-on.** GameplayGM had neither (its dodge roll carried over 2-cell gaps). Each jump
+move its own state with its own profile:
+- JUMP (`jump`): 11 cells/s up, 30 cells/s² rising, 48 falling (a quick fall reads as weight), steered 40 cells/s² in
+  the air toward the run: 2.0 cells high (Node), so a ledge 2.9 up with the 0.9 step. It lands on whatever top it's over
+  (the floor model is Terrain.heightAt, the top surface: the knight can't go under an overhang — BACKLOG HL5).
+- The jump attack (`plunge`, a swipe in the air): a dive at 24 cells/s onto the enemy the swipe means (or the locked
+  one) within 5 cells, at least 25° down; none, down the swipe at 55°. Landing (`land`, 0.28 s to stand): a stomp (4)
+  on what it lands on and a shockwave 2 cells round (2 damage, a 9 cells/s outward push, a 4 cells/s throw, 0.7 s stun),
+  both `overhead`. Decided: a guard's shield doesn't stop a blow from above (it reads — the shield faces you, not the
+  sky — and gives a second answer to a guard besides its wind-up); a lunger still dodges it (its one rule: after its
+  lunge).
+- Lock-on: a tap (under 14 px and 0.3 s; a swipe strikes at 30 px, a draw starts at 20 — Node tests read the three
+  apart) on an enemy's middle within 46 px on the screen locks it; a ring of glowing red voxels turns under it; slashes
+  within 75° of it, the bow's aim, the jump attack and the hook go straight at it; the camera eases a third of the way
+  toward it (at most 4 cells: PlayHero.framing, session.ts); a tap on it again or on empty ground lets go; its death or
+  18 cells drop it.
+- The buttons: a cluster under the right thumb at 412×915 (PadButton `at`, `big`): JUMP the big one in the corner,
+  DODGE beside it, the weapon above JUMP, its second move above DODGE, the parry above the weapon. Desktop: Space jump,
+  Shift dodge, E weapon, Q second, F parry.
+- The station's Course: three stone steps a layer and a half apart (the first already over a walking step), a gap dug,
+  a last ledge with a raider on it. Headless: (headless check pending: the shared browser)
+
+**M4 — the parry (PL34, as variants) and the hook gun (PL33).** The parry is three variants to compare, chips on the
+station (the knight's `parryMode`): Button — PARRY pressed within 0.16 s before a blow lands parries it; Swipe — a
+swipe at an enemy in its wind-up (the units' 'swing') parries it; Hold — BLOCK held: blows from the front 130° blocked
+(0.35 of the knock felt), and a block begun within 0.16 s of the blow parries. A parry: no harm, the attacker thrown
+back (5 × 1.3 cells/s) and down 0.75 s — down is open, so a parried guard or lunger is opened (the same tells: the
+stars). iso-adventure's SHIELD numbers, ported as they were. The hook gun is the bike's hook (heroes/hook.ts) carried by
+the knight through a narrow HookBody (the bike's Bike or the knight's Foot) — no second hook: a third weapon on ⇄; a
+tap on a foe yanks it in (lobbed to land 1.3 cells short of the knight) and locks it; a tap on the ground or a ledge top
+zips the knight there at 22 cells/s (over gaps and water, up a ledge); ✦ fires at the locked enemy. A yanked guard
+lands thrown, so down, so open. Headless: (headless check pending: the shared browser)
+
+**Perf.** (headless check pending: the shared browser) The phone bench: ?knightbench=1 (src/perf/knightbench.ts: no enemies, 7 raiders, a mixed wave, as
+matched pairs by reload; the screen kept awake, a report to download) —
+https://csheldondante.github.io/Reclaimed/knight/?skipmenu=1&level=atlas&play=knight&station=1&tutorial=0&knightbench=1
