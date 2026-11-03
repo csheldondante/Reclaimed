@@ -16,6 +16,7 @@ import { requestGpu, UnsupportedError } from '../gpu/device';
 import { GLOBALS_BYTES } from '../sim/globals';
 import { generate, legacyDef } from './generate';
 import { applyParams, COLOUR_PARAMS, hex, paramsFromQuery, PARAMS, SEASONS } from './params';
+import { encodeLink, isVariant, loadVariants, newVariant, saveVariants, type Variant } from './variants';
 import { BIOMES, buildScene, sceneWgsl, type Biome, type FloraScene } from './scene';
 import { SPECIES, SPECIES_IDS, type RGB, type SpeciesId } from './species';
 import { rng } from './rng';
@@ -35,6 +36,8 @@ interface State {
   compare: boolean;
   /** (round 128) the generator's parameters as edited (params.ts; the URL's p.<key>) */
   over: Record<string, number | string>;
+  /** (round 128) the A side of the A | B pair: 'old' (round 117's generator), 'species' (as written) or a saved name */
+  against: string;
 }
 
 const params = new URLSearchParams(location.search);
@@ -49,6 +52,7 @@ const state: State = {
   density: Number(params.get('density') ?? 1),
   compare: params.get('compare') === '1',
   over: paramsFromQuery(params),
+  against: params.get('against') ?? 'old',
 };
 
 function fail(msg: string): never {
@@ -130,8 +134,10 @@ async function main() {
       if (state.compare) {
         // (round 128: the old (round 117's stems and bark) on the left, the new on the right — the same seed, so the same
         // branching; turn the camera to see the pair from any side)
-        const oldDef = legacyDef(SPECIES[state.species]);
-        const old = generate(state.species, state.seed, { growth: state.growth, def: oldDef });
+        // (the A side: the old generator, the species as written, or a saved variant)
+        const sv = loadVariants().find((v) => v.name === state.against && v.species === state.species);
+        const oldDef = state.against === 'old' ? legacyDef(SPECIES[state.species]) : sv ? applyParams(sv.species, sv.over) : SPECIES[state.species];
+        const old = generate(state.species, sv ? sv.seed : state.seed, { growth: state.growth, def: oldDef });
         const d = Math.max(mesh.radius, old.radius) * 1.05 + 0.5;
         const inst = new Float32Array([1, 0, 0, -d, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0.5, 0, 0, 1, 0, 0, d, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0.5, 0, 0]);
         scene = { kinds: [{ species: state.species, mesh: old, def: oldDef }, { species: state.species, mesh, def }], instances: inst, ranges: [{ first: 0, count: 1 }, { first: 1, count: 1 }], ground: tree ? 1 : 0, crowns: [], radius: 12 + d };
@@ -363,12 +369,16 @@ async function main() {
     $('params').style.display = state.mode === 'plant' ? '' : 'none';
   };
   const atlasLink = $<HTMLAnchorElement>('atlas');
+  const worldLink = $<HTMLAnchorElement>('world');
   const syncUrl = () => {
     const q = new URLSearchParams({ mode: state.mode, biome: state.biome, species: state.species, seed: String(state.seed), wind: state.wind.toFixed(2), season: state.season.toFixed(2), growth: state.growth.toFixed(2), density: state.density.toFixed(2) });
     if (state.compare) q.set('compare', '1');
+    if (state.against !== 'old') q.set('against', state.against);
     for (const [k, v] of Object.entries(state.over)) q.set(`p.${k}`, typeof v === 'number' ? String(+v.toFixed(4)) : v.slice(1));
     history.replaceState(null, '', `?${q}`);
     atlasLink.href = `./?skipmenu=1&level=atlas&tutorial=0&flora=1`;
+    // (round 128: this species as edited, in the world — the game's library builds it with these parameters)
+    worldLink.href = `./?skipmenu=1&level=atlas&tutorial=0&ftree=${encodeLink({ [state.species]: state.over })}`;
   };
   modeSel.onchange = () => {
     state.mode = modeSel.value as Mode;
@@ -385,7 +395,9 @@ async function main() {
   spSel.onchange = () => {
     state.species = spSel.value as SpeciesId;
     state.over = {};
+    state.against = 'old';
     buildParams();
+    fillSaved();
     cam.userMoved = false;
     rebuild();
     syncUrl();
@@ -496,6 +508,80 @@ async function main() {
     }
     paramsEl.appendChild(row);
   }
+  // ---- (round 128) the user's variants: new, save, load, A | B against one, export, import ----
+  const savedSel = $<HTMLSelectElement>('saved');
+  const againstSel = $<HTMLSelectElement>('against');
+  const fillSaved = () => {
+    const list = loadVariants();
+    savedSel.innerHTML = '<option value="">—</option>';
+    while (againstSel.options.length > 2) againstSel.remove(2);
+    for (const v of list) {
+      savedSel.add(new Option(`${v.name} (${SPECIES[v.species].name})`, v.name));
+      if (v.species === state.species) againstSel.add(new Option(`saved: ${v.name}`, v.name));
+    }
+    againstSel.value = state.against;
+    if (againstSel.value !== state.against) againstSel.value = 'old';
+  };
+  const loadVariant = (v: Variant) => {
+    state.species = v.species;
+    spSel.value = v.species;
+    state.seed = v.seed;
+    seedIn.value = String(v.seed);
+    state.over = { ...v.over };
+    buildParams();
+    fillSaved();
+    rebuild();
+    syncUrl();
+  };
+  $<HTMLButtonElement>('newvar').onclick = () => {
+    state.seed = Math.floor(Math.random() * 100000);
+    seedIn.value = String(state.seed);
+    state.over = newVariant(state.species, state.over, state.seed);
+    buildParams();
+    rebuild();
+    syncUrl();
+  };
+  $<HTMLButtonElement>('save').onclick = () => {
+    const name = prompt('A name for this variant', `${SPECIES[state.species].name} ${state.seed}`);
+    if (!name) return;
+    const list = loadVariants().filter((v) => v.name !== name);
+    list.push({ name, species: state.species, seed: state.seed, over: { ...state.over } });
+    saveVariants(list);
+    fillSaved();
+    savedSel.value = name;
+  };
+  savedSel.onchange = () => {
+    const v = loadVariants().find((x) => x.name === savedSel.value);
+    if (v) loadVariant(v);
+  };
+  againstSel.onchange = () => {
+    state.against = againstSel.value;
+    state.compare = true;
+    compareIn.checked = true;
+    rebuild();
+    syncUrl();
+  };
+  $<HTMLButtonElement>('export').onclick = () => {
+    const body = JSON.stringify({ kind: 'reclaimed-tree-variants', variants: loadVariants(), current: { name: 'current', species: state.species, seed: state.seed, over: state.over } }, null, 1);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([body], { type: 'application/json' }));
+    a.download = 'reclaimed-tree-variants.json';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  };
+  const fileIn = $<HTMLInputElement>('importfile');
+  $<HTMLButtonElement>('import').onclick = () => fileIn.click();
+  fileIn.onchange = async () => {
+    const f = fileIn.files?.[0];
+    if (!f) return;
+    const j = JSON.parse(await f.text()) as { variants?: unknown[] };
+    const got = (j.variants ?? []).filter(isVariant) as Variant[];
+    const names = new Set(got.map((v) => v.name));
+    saveVariants([...loadVariants().filter((v) => !names.has(v.name)), ...got]);
+    fillSaved();
+    if (got[0]) loadVariant(got[0]);
+  };
+  fillSaved();
   $<HTMLButtonElement>('reset').onclick = () => {
     state.over = {};
     buildParams();

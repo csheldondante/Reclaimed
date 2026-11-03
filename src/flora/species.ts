@@ -289,7 +289,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     leaf: { style: 'cluster', size: 0.95, per: 1, minDepth: 1 },
     roots: { half: 7, depth: 5, res: 0.35, generations: 10, growth: 0.5, down: 0.4, maxCells: 140, trunkRadius: 0.38 },
     stem: { sides: 8, noise: 0.14, noiseFreq: 0.45, knots: 3, knotSize: 0.35, ring: 1.4 },
-    crown: { size: 2.6, perTwig: 3, spacing: 1.2, fill: 0.85, leaves: 9, droop: 0.25, style: 'layers', clump: 7, gaps: 0.04, lumps: 0.3, shell: 0.09, lobeBlend: 0.8, layers: 3, layerGap: 1, depthDark: 0.6, bend: 1, core: 1 },
+    crown: { size: 2.6, perTwig: 3, spacing: 1.2, fill: 0.85, leaves: 9, droop: 0.25, style: 'layers', clump: 7, gaps: 0.04, lumps: 0.3, shell: 0.075, lobeBlend: 0.8, layers: 3, layerGap: 0.35, depthDark: 0.6, bend: 1, core: 1 },
     bark: { furrows: 0.55, furrowFreq: 3.5, plates: 0.25, plateSize: 0.45, stripes: 0, stripeFreq: 7, roughness: 0.45 },
     epiphytes: { lichen: 0.35, moss: 0.3, plants: 0.2, vines: 0.25, lines: 0.1 },
     winterLeaves: 0.06,
@@ -462,7 +462,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     // (hugging the bole's foot and tapering within a few cells — main's review: long sprawls read as logs on the floor)
     flare: { count: 6, rise: 1.8, reach: 1.7, sprawl: 0.7 },
     stem: { sides: 8, noise: 0.16, noiseFreq: 0.3, knots: 2.5, knotSize: 0.3, ring: 3.2 },
-    crown: { size: 4.2, perTwig: 3, spacing: 1.5, fill: 0.85, leaves: 8, droop: 0.2, style: 'layers', clump: 11, gaps: 0.04, lumps: 0.3, hideBelow: 0.45, shell: 0.055, lobeBlend: 0.8, layers: 2, layerGap: 0.5, depthDark: 0.6, bend: 1, core: 1 },
+    crown: { size: 4.2, perTwig: 3, spacing: 1.5, fill: 0.85, leaves: 8, droop: 0.2, style: 'layers', clump: 11, gaps: 0.04, lumps: 0.3, hideBelow: 0.45, shell: 0.055, lobeBlend: 0.8, layers: 2, layerGap: 0.25, depthDark: 0.6, bend: 1, core: 1 },
     bark: { furrows: 0.8, furrowFreq: 3, plates: 0, plateSize: 0.6, stripes: 0, stripeFreq: 7, roughness: 0.8 },
     epiphytes: { lichen: 0.3, moss: 0.3, plants: 0.35, vines: 0.3, lines: 0.15 },
     winterLeaves: 0.08,

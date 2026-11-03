@@ -62,6 +62,7 @@ import { MESHINST } from '../sim/external';
 import { FLORA } from '../flora/flags';
 import { FloraLibrary, GAME_LIBRARY } from '../flora/library';
 import { FLOD } from '../flora/sprites';
+import { worldOverrides } from '../flora/variants';
 import { FloraSprites } from './florasprites';
 import { record } from '../gpu/cpustat'; // (round 100, hitchrec: timing)
 import { BGCHECK, BgCheck } from './bgcheck';
@@ -480,7 +481,7 @@ export class Renderer {
     // water's and plants' counts before they were held to their lists' room; (round 99, meshinst) [24..] the
     // instanced meshes' indexed draws, five words a kind
     // (round 117, flora: the library's kinds — dozens, not four — each its five words)
-    const miKinds = FLORA ? (this.flora ??= new FloraLibrary(GAME_LIBRARY, 12 * this.floraRpx, FLOD)).kinds.length : 4;
+    const miKinds = FLORA ? (this.flora ??= new FloraLibrary(GAME_LIBRARY, 12 * this.floraRpx, FLOD, worldOverrides(new URLSearchParams(location.search)))).kinds.length : 4;
     this.indirect = world.buf(
       'indirect',
       MI_ARGS_WORD * 4 + 4 * 5 * miKinds,
@@ -552,7 +553,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
     // (round 117, flora: on unless ?flora=0) the flora library's generated species are the plants' meshes
     // (src/flora/library.ts): its kinds in the same renderer, its constants (each species' kinds, colours) for the kernels
     if (FLORA) {
-      this.flora ??= new FloraLibrary(GAME_LIBRARY, 12 * this.floraRpx, FLOD);
+      this.flora ??= new FloraLibrary(GAME_LIBRARY, 12 * this.floraRpx, FLOD, worldOverrides(new URLSearchParams(location.search)));
       // (round 119: 4096 a kind — ~45 kinds; the view cull keeps a kind's on-screen count far under it)
       this.meshInst = new MeshInstances(device, this.flora.kinds, (l, n, u) => world.buf(l, n, u), 4096);
     } else if (MESHINST) this.meshInst = new MeshInstances(device, treeKinds(), (l, n, u) => world.buf(l, n, u));

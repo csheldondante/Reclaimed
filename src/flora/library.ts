@@ -7,6 +7,7 @@
 // generator is cheap (a few ms for the whole library), so the library could be re-made per biome or per run later.
 
 import { generate } from './generate';
+import { applyParams } from './params';
 import { hashSeed } from './rng';
 import { SPECIES, type RGB, type SpeciesDef, type SpeciesId } from './species';
 import type { FloraMesh } from './mesh';
@@ -161,7 +162,14 @@ export class FloraLibrary {
   }
 
   /** `px`: render pixels a cell the plants are made for (generate's; absent: full detail); `flod` the far level */
-  constructor(readonly spec: LibrarySpec = GAME_LIBRARY, readonly px?: number, readonly flod: Flod = 'mesh') {
+  /** (round 128) the user's variants in the world (?ftree=: { species: overrides } — variants.ts): a species as edited */
+  private defs = new Map<SpeciesId, SpeciesDef>();
+  defOf(id: SpeciesId): SpeciesDef {
+    return this.defs.get(id) ?? SPECIES[id];
+  }
+
+  constructor(readonly spec: LibrarySpec = GAME_LIBRARY, readonly px?: number, readonly flod: Flod = 'mesh', overrides: Partial<Record<SpeciesId, Record<string, number | string>>> = {}) {
+    for (const [id, o] of Object.entries(overrides)) this.defs.set(id as SpeciesId, applyParams(id as SpeciesId, o!));
     const t = performance.now();
     for (const { id, variants } of spec.species) {
       // (trees: full, coarse, far; thickets: full and far — FL_SHRUB_L1 is the far one)
@@ -171,12 +179,12 @@ export class FloraLibrary {
       for (const lod of lodsOf) {
         lr.push({ first: this.kinds.length, count: variants });
         for (let v = 0; v < variants; v++) {
-          let mesh = generate(id, hashSeed(spec.seed, v, id.charCodeAt(0), id.length), { px, lod: lod as 0 | 1 | 2 });
+          let mesh = generate(id, hashSeed(spec.seed, v, id.charCodeAt(0), id.length), { px, lod: lod as 0 | 1 | 2, def: this.defOf(id) });
           // (round 128, ?flod=sprite: a tree's far level is its sprite — a quad, the far mesh kept for the shadow pass)
           if (flod === 'sprite' && lod === 2 && SPECIES[id].form === 'tree') {
             const src = lr[0].first + v;
             // (the bake's source: the bake-only mesh — every twig, 16-sided stems, the lobes cut twice — its bounds the quad's)
-            const bake = generate(id, hashSeed(spec.seed, v, id.charCodeAt(0), id.length), { lod: 'bake' });
+            const bake = generate(id, hashSeed(spec.seed, v, id.charCodeAt(0), id.length), { lod: 'bake', def: this.defOf(id) });
             this.sprites.push({ kind: this.kinds.length, src, idx: this.sprites.length, b: spriteBounds(bake.height, bake.radius), bake });
             mesh = spriteKindMesh(mesh);
           }
@@ -189,7 +197,7 @@ export class FloraLibrary {
       if (hasClose(id)) {
         this.closes.set(id, { first: this.kinds.length, count: variants });
         for (let v = 0; v < variants; v++) {
-          const mesh = generate(id, hashSeed(spec.seed, v, id.charCodeAt(0), id.length), { lod: 'close' });
+          const mesh = generate(id, hashSeed(spec.seed, v, id.charCodeAt(0), id.length), { lod: 'close', def: this.defOf(id) });
           this.kinds.push({ name: `${id}-${v}-c`, species: id, variant: v, lod: -1, mesh, verts: mesh.verts, uv: mesh.uv, index: mesh.index });
           this.shadowKinds.push(SPECIES[id].form !== 'grass');
         }
@@ -230,7 +238,7 @@ export class FloraLibrary {
     for (const [id, lr] of this.lods) lr.slice(1).forEach((r, i) => lines.push(`const FL_${id.toUpperCase()}_L${i + 1} = vec2<u32>(${r.first}u, ${r.count}u);`));
     // (round 128) the close-up level: FL_<ID>_C
     for (const [id, r] of this.closes) lines.push(`const FL_${id.toUpperCase()}_C = vec2<u32>(${r.first}u, ${r.count}u);`);
-    lines.push(floraTables(this.kinds.map((k) => ({ sp: SPECIES[k.species], mesh: k.mesh, close: k.lod === -1 }))));
+    lines.push(floraTables(this.kinds.map((k) => ({ sp: this.defOf(k.species), mesh: k.mesh, close: k.lod === -1 }))));
     lines.push(this.spriteWgsl());
     return lines.join('\n') + '\n';
   }

@@ -36,7 +36,14 @@
       <div class="row" id="row-growth"><label>growth</label><input id="growth" type="range" min="0.05" max="1" step="0.01" /></div>
       <div class="row" id="row-density"><label>density</label><input id="density" type="range" min="0.2" max="2" step="0.05" /></div>
       <details id="params">
-        <summary>generator <label style="width:auto"><input id="compare" type="checkbox" /> old | new</label> <button id="reset">reset</button></summary>
+        <summary>generator <label style="width:auto"><input id="compare" type="checkbox" /> A | B</label> <button id="reset">reset</button></summary>
+        <div class="row" style="flex-wrap: wrap; gap: 4px">
+          <button id="newvar">new variant</button><button id="save">save…</button><button id="export">export</button><button id="import">import</button>
+          <input id="importfile" type="file" accept=".json,application/json" style="display: none" />
+        </div>
+        <div class="row"><label>saved</label><select id="saved"><option value="">—</option></select></div>
+        <div class="row"><label>A (left)</label><select id="against"><option value="old">the old generator</option><option value="species">the species as written</option></select></div>
+        <div class="row"><a id="world" href="./">see it in the world →</a></div>
         <div id="params-body"></div>
       </details>
       <div id="stats"></div>

@@ -841,7 +841,7 @@ function addLayeredCrown(mb: MeshBuilder, sk: Skeleton, minDepth: number, c: Cro
   const K = Math.max(1, Math.round(c.layers ?? 3));
   // (round 128, the user: "The leaf layers look a little too floaty they should be closer together. Probably no more
   // than a leaf width for the outer layer" — the gap in leaf widths now, 1 by default; the shells' reach in cells)
-  const gapCells = (c.layerGap ?? 1) * c.size;
+  const gapCells = (c.layerGap ?? 0.35) * c.size;
   const dark = c.depthDark ?? 0.6;
   const bend = c.bend ?? 0.7;
   const dens = c.shell ?? 0.06;
@@ -849,7 +849,7 @@ function addLayeredCrown(mb: MeshBuilder, sk: Skeleton, minDepth: number, c: Cro
   const size = c.size / k;
   if ((c.core ?? 1) > 0) {
     // the core: a closed lobe inside the last shell
-    addSolidCrown(mb, sk, minDepth, { ...c, gaps: 0 }, k, r01, px, bake, 0, L, ((K - 1 + 0.35) * gapCells) / k);
+    addSolidCrown(mb, sk, minDepth, { ...c, gaps: 0 }, k, r01, px, bake, 0, L, ((K - 1 + 0.6) * gapCells) / k);
   }
   const rnd = (): V3 => norm([r01() * 2 - 1, r01() * 2 - 1, r01() * 2 - 1]);
   for (const o of L.lobes) {
