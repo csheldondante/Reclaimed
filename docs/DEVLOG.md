@@ -16323,3 +16323,19 @@ claim, a take and a seat survive 60 ticks, and a write to the layers alone is st
 **Not all of INT16.** hallcheck after this fix: still 3 lost of 318 (the same towns). scripts/hallprobe.mjs (from hallfall)
 shows a second mechanism: the lost building's chunk is awake (in the filter), and one of its columns has the top of its
 External run lowered (111.38 to 110.93) — not the copy-back. Followed up in the next commit.
+
+**INT16's second mechanism: a unit's take off a roof.** scripts/hallprobe2.mjs logged every Edit event, ColumnApply
+stage and copy write near the lost column: at tick 2532 an exact take (edit.wgsl OP_TAKE, 0.45 — settle/life.ts LOAD: a
+builder fetching a load off the higher heap) at column 162,194, three ticks before the loss; the heap was planned under a
+building's roof, and OP_TAKE takes "off the top interval, whatever it is" — the claim's External. The same spot was taken
+from again at 3088 and 3817 (and the builder put back what it couldn't use: External, material 39, which the event's
+5-bit material field turns into op 0 — BACKLOG M128-3). The rule (main, round 128): a thing's External cells change only
+by their owner or a real cut (the player's tools, a blow over threshold, the judge); edits by agents never take External,
+and dust or sand lying on a building is its own interval, taken as any loose ground. edit.wgsl's take now skips an
+External top. The sims never move an External interval: sediment moves granular intervals only and leaves loose ground
+under a solid pinned (round 88), the structure pass copies non-structural intervals as they are, the blow's sink cuts only
+a soft top, climate melts only snow and ice. Ground eroded from under a claim leaves air under it (its z0/z1 kept); that
+an undermined claim should go to the judge is BACKLOG M128-5. The heap under the roof is M128-4.
+
+Test: test/gpu/external-take.test.ts — claims stamped on two columns, sand put on one, builders' takes off both: the
+claims' z0/z1 and aux exactly as they were, the sand taken (fails without the edit.wgsl change: the claim lost its top).

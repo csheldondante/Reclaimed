@@ -58,7 +58,7 @@ const OP_SMASH: u32 = 12u;
 const OP_CRATER: u32 = 13u;
 // exact (round 63: units carry what they take and put down): one column, the
 // one whose centre lies within the radius; w cells. take: off the top
-// interval (whatever it is; the map keeps z 2); put: material `mat` on top
+// interval (whatever it is but External — round 128; the map keeps z 2); put: material `mat` on top
 // (onto the top interval if the same, else a new one: a full column takes
 // none). What it did goes to editResult at the tag (code bits 10-15).
 const OP_TAKE: u32 = 14u;
@@ -197,7 +197,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (op == OP_TAKE || op == OP_PUT) {
       var got = 0.0;
       var gm = mat;
-      if (op == OP_TAKE && n > 0u) {
+      // (round 128, INT16: never a thing's External cells — a claimed building's roof is its owner's; a unit taking
+      // off it took a slice of the claim, the registry found the building cut and let it go to rubble. Dust or snow
+      // lying on it is its own interval on top, and taken as any loose ground)
+      if (op == OP_TAKE && n > 0u && ivMat(arr[n - 1u]) != MAT_EXTERNAL) {
         let t = arr[n - 1u];
         gm = ivMat(t);
         got = clamp(ev.w, 0.0, ivZ1(t) - max(ivZ0(t), 2.0));
