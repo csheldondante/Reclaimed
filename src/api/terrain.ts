@@ -340,7 +340,8 @@ export class Terrain {
 
   /**
    * Take `amount` cellsÂ³ off the top of the column at (x, y), exactly: off
-   * its top interval only (one material; the map keeps z 2). Resolves with
+   * its top interval only (one material; the map keeps z 2; never External — a thing's cells are its owner's,
+   * round 128: nothing taken there). Resolves with
    * what was taken, once the tick that took it has been read back (a frame
    * or two). Round 63: what a unit picks up.
    */

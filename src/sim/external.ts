@@ -67,6 +67,16 @@ export interface ExternalOwner {
 export interface ColumnAccess {
   read(x: number, y: number): Interval[];
   write(x: number, y: number, col: Interval[]): void;
+  /**
+   * (round 120, JB6) Let these spans go in the columns themselves (releaseSpan's rule; the integrity system's on the
+   * GPU, colapply.wgsl `release`) — no column read. Absent: the registry reads and writes each column (a CPU world).
+   */
+  release?(spans: (ExternalCol & { fallback: number; toAir: boolean })[]): void;
+  /**
+   * (round 128, INT16) Make these spans External in the columns themselves (claimColumn's rule; the GPU's, colapply.wgsl
+   * `claim`, into the layers and layersNext alike). Absent: the registry writes each column (a CPU world).
+   */
+  claim?(spans: (ExternalCol & { aux: number })[]): void;
 }
 
 const EPS = 1e-3;
@@ -83,6 +93,84 @@ export function cutOut(col: Interval[], z0: number, z1: number): Interval[] {
     if (iv.z1 > z1 + EPS) out.push({ ...iv, z0: z1 });
   }
   return out;
+}
+
+/**
+ * (round 128, INT16) The column with each span [z0, z1) cut out and made External, its aux the span's (the thing's
+ * fallback), its touching runs joined. The rule ExternalRegistry.claim applies on the CPU and colapply.wgsl `claim` on
+ * the GPU (test/gpu/colapply.test.ts holds them equal).
+ */
+export function claimColumn(col: Interval[], spans: { z0: number; z1: number; aux: number }[]): Interval[] {
+  let out = col;
+  for (const c of spans) {
+    out = cutOut(out, c.z0, c.z1);
+    out.push({ z0: c.z0, z1: c.z1, mat: MAT.External, aux: c.aux & 0xff });
+  }
+  return join(out);
+}
+
+/**
+ * (round 120, JB6) The column with the External intervals within [c.z0, c.z1) let go — to `fallback` (0: stone), or air
+ * (`toAir`) — its touching runs joined; null when nothing there was External. The rule ExternalRegistry.release applies
+ * on the CPU and colapply.wgsl `release` on the GPU (test/gpu/colapply.test.ts holds them equal).
+ */
+export function releaseSpan(col: Interval[], c: { z0: number; z1: number }, fallback: number, toAir: boolean): Interval[] | null {
+  let changed = false;
+  const out: Interval[] = [];
+  for (const iv of col) {
+    if (iv.mat !== MAT.External || iv.z1 <= c.z0 + EPS || iv.z0 >= c.z1 - EPS) {
+      out.push(iv);
+      continue;
+    }
+    changed = true;
+    if (iv.z0 < c.z0 - EPS) out.push({ ...iv, z1: c.z0 });
+    if (!toAir) out.push({ z0: Math.max(iv.z0, c.z0), z1: Math.min(iv.z1, c.z1), mat: fallback || MAT.Stone });
+    if (iv.z1 > c.z1 + EPS) out.push({ ...iv, z0: c.z1 });
+  }
+  return changed ? join(out) : null;
+}
+
+/**
+ * (round 120, JB6) The column with the parts of its External intervals that none of `mine` (the claimed spans there, in
+ * the registry's order) holds made their fallback material (aux; 0: stone), joined; null when every part is held. The
+ * rule ExternalRegistry.orphans applies on the CPU and colapply.wgsl `orphans` on the GPU.
+ */
+export function orphanColumn(col: Interval[], mine: { z0: number; z1: number }[]): Interval[] | null {
+  if (!col.some((iv) => iv.mat === MAT.External)) return null;
+  let changed = false;
+  const out: Interval[] = [];
+  for (const iv of col) {
+    if (iv.mat !== MAT.External) {
+      out.push(iv);
+      continue;
+    }
+    // (the parts of it no instance holds)
+    let rest: [number, number][] = [[iv.z0, iv.z1]];
+    for (const c of mine) {
+      const next: [number, number][] = [];
+      for (const [a, b] of rest) {
+        if (c.z1 <= a + EPS || c.z0 >= b - EPS) next.push([a, b]);
+        else {
+          if (c.z0 > a + EPS) next.push([a, c.z0]);
+          if (c.z1 < b - EPS) next.push([c.z1, b]);
+        }
+      }
+      rest = next;
+    }
+    if (!rest.length) {
+      out.push(iv);
+      continue;
+    }
+    changed = true;
+    let z = iv.z0;
+    for (const [a, b] of rest) {
+      if (a > z + EPS) out.push({ ...iv, z0: z, z1: a });
+      out.push({ z0: a, z1: b, mat: iv.aux || MAT.Stone });
+      z = b;
+    }
+    if (iv.z1 > z + EPS) out.push({ ...iv, z0: z });
+  }
+  return changed ? join(out) : null;
 }
 
 /** Is [z0, z1) of the column all External? */
@@ -127,8 +215,11 @@ export class ExternalRegistry {
    */
   claim(owner: OwnerId, want: ExternalCol[], fallback: number = MAT.Stone): ExternalInstance | null {
     const cols: ExternalCol[] = [];
+    // (round 128: the GPU's stamp, given — what this claim takes in a column read before it's stamped is matter here)
+    const stamp = this.cols.claim ? new Map<number, Interval[]>() : null;
     for (const w of want) {
-      const col = this.cols.read(w.x, w.y);
+      const k = w.y * 65536 + w.x;
+      const col = stamp?.has(k) ? [...this.cols.read(w.x, w.y), ...stamp.get(k)!] : this.cols.read(w.x, w.y);
       // (the free spans of [z0, z1): what isn't matter)
       let free: [number, number][] = [[w.z0, w.z1]];
       for (const iv of col) {
@@ -144,18 +235,17 @@ export class ExternalRegistry {
         }
         free = next;
       }
-      let out = col;
+      const spans: { z0: number; z1: number; aux: number }[] = [];
       for (const [a, b] of free) {
         if (b - a < 0.05) continue;
-        out = cutOut(out, a, b);
-        out.push({ z0: a, z1: b, mat: MAT.External, aux: fallback & 0xff });
+        spans.push({ z0: a, z1: b, aux: fallback & 0xff });
         cols.push({ x: w.x, y: w.y, z0: a, z1: b });
       }
-      if (out !== col) {
-        out.sort((p, q) => p.z0 - q.z0);
-        this.cols.write(w.x, w.y, join(out));
-      }
+      if (!spans.length) continue;
+      if (stamp) stamp.set(k, [...(stamp.get(k) ?? []), ...spans.map((c) => ({ z0: c.z0, z1: c.z1, mat: MAT.External, aux: c.aux }))]);
+      else this.cols.write(w.x, w.y, claimColumn(col, spans));
     }
+    if (stamp && cols.length) this.cols.claim!(cols.map((c) => ({ ...c, aux: fallback & 0xff })));
     if (!cols.length) return null;
     const inst: ExternalInstance = { id: this.nextId++, owner, cols, fallback };
     this.list.set(inst.id, inst);
@@ -182,22 +272,13 @@ export class ExternalRegistry {
     const inst = this.list.get(id);
     if (!inst) return;
     this.forget(inst);
-    for (const c of inst.cols) {
-      const col = this.cols.read(c.x, c.y);
-      let changed = false;
-      const out: Interval[] = [];
-      for (const iv of col) {
-        if (iv.mat !== MAT.External || iv.z1 <= c.z0 + EPS || iv.z0 >= c.z1 - EPS) {
-          out.push(iv);
-          continue;
-        }
-        changed = true;
-        if (iv.z0 < c.z0 - EPS) out.push({ ...iv, z1: c.z0 });
-        if (!toAir) out.push({ z0: Math.max(iv.z0, c.z0), z1: Math.min(iv.z1, c.z1), mat: inst.fallback || MAT.Stone });
-        if (iv.z1 > c.z1 + EPS) out.push({ ...iv, z0: c.z1 });
+    // (round 120, JB6: given the columns' own release — the GPU's, no column read — it's theirs to do)
+    if (this.cols.release) this.cols.release(inst.cols.map((c) => ({ ...c, fallback: inst.fallback, toAir })));
+    else
+      for (const c of inst.cols) {
+        const out = releaseSpan(this.cols.read(c.x, c.y), c, inst.fallback, toAir);
+        if (out) this.cols.write(c.x, c.y, out);
       }
-      if (changed) this.cols.write(c.x, c.y, join(out));
-    }
     this.stats.released++;
     this.count();
   }
@@ -260,45 +341,23 @@ export class ExternalRegistry {
     for (const k of cols) {
       const x = k % 65536;
       const y = Math.floor(k / 65536);
-      const col = this.cols.read(x, y);
-      if (!col.some((iv) => iv.mat === MAT.External)) continue;
-      const mine = this.at(x, y).flatMap((i) => i.cols.filter((c) => c.x === x && c.y === y));
-      let changed = false;
-      const out: Interval[] = [];
-      for (const iv of col) {
-        if (iv.mat !== MAT.External) {
-          out.push(iv);
-          continue;
-        }
-        // (the parts of it no instance holds)
-        let rest: [number, number][] = [[iv.z0, iv.z1]];
-        for (const c of mine) {
-          const next: [number, number][] = [];
-          for (const [a, b] of rest) {
-            if (c.z1 <= a + EPS || c.z0 >= b - EPS) next.push([a, b]);
-            else {
-              if (c.z0 > a + EPS) next.push([a, c.z0]);
-              if (c.z1 < b - EPS) next.push([c.z1, b]);
-            }
-          }
-          rest = next;
-        }
-        if (!rest.length) {
-          out.push(iv);
-          continue;
-        }
-        changed = true;
-        this.stats.orphans++;
-        let z = iv.z0;
-        for (const [a, b] of rest) {
-          if (a > z + EPS) out.push({ ...iv, z0: z, z1: a });
-          out.push({ z0: a, z1: b, mat: iv.aux || MAT.Stone });
-          z = b;
-        }
-        if (iv.z1 > z + EPS) out.push({ ...iv, z0: z });
-      }
-      if (changed) this.cols.write(x, y, join(out));
+      const out = orphanColumn(this.cols.read(x, y), this.claimedAt(x, y));
+      if (!out) continue;
+      this.stats.orphans++;
+      this.cols.write(x, y, out);
     }
+  }
+
+  /** (round 120, JB6) every column's claimed spans (column key y · 65536 + x → spans in the registry's order) */
+  claimedSpans(): Map<number, { z0: number; z1: number }[]> {
+    const out = new Map<number, { z0: number; z1: number }[]>();
+    for (const k of this.byCol.keys()) out.set(k, this.claimedAt(k % 65536, Math.floor(k / 65536)));
+    return out;
+  }
+
+  /** the spans claimed in column (x, y), in the registry's order (orphans' `mine`) */
+  private claimedAt(x: number, y: number): { z0: number; z1: number }[] {
+    return this.at(x, y).flatMap((i) => i.cols.filter((c) => c.x === x && c.y === y));
   }
 
   /** The judge found these intervals hanging free (or giving): their instances are loose — owners told. */

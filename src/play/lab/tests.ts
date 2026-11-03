@@ -46,7 +46,7 @@ export const STATION_WORDS: Record<string, string> = {
   'moves-canyon': 'the canyon',
   'moves-city': 'the city streets',
   traits: 'the field of the living and the dead',
-  hill: 'the hill',
+  hill: 'the field below the hill',
   tour: 'the tour: field, shrubs, woods, cliff, town',
   enemy: 'the raiders\' field',
 };

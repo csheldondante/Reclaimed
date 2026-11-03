@@ -16713,3 +16713,187 @@ up walls and bank on vertical or nearly vertical surfaces? Maybe we can make can
   (stopped at a boulder), city 0.66, tour 1.62, hills 4.11. A thumb steers round; the sloppy-rider metric is the
   next measure.
 - The terrain track's row for the real map's canyons: TER20.
+## 2026-10-31 — round 120 (jb6): JB6, no CPU readback on the hot path
+
+**Why.** The user (round 120): "I suspect it will win after JB6 since my understanding is the readbacks are very slow
+and it isn't clear what we need that for." Judge B (sections) reads the GPU's columns in place, but Integrity still read
+the layers back before every pass whatever the judge (the chunks round what it looks at; all of the window, 1-16 MB,
+after any slide), to keep a CPU copy that its other readers walked.
+
+**The readers of the CPU copy, and what each needed** (game/integrity.ts before this):
+- every pass: judge A (fracture.ts analyseRock: the copy, around the seeds); applying a verdict (crumbleRuns cut out,
+  spillRubble's neighbours' tops, spawnRigid's subtract, the structures' crushed cells); External's verify (the claimed
+  cells as they are) and orphans (after a whole read); the structures' analyse on every dirty box (each cut marks one);
+- every frame: the impacts (latticeBlows/groundBlow/softBlow: the material and top where struck, a dig written back);
+  the CPU rigid rock's ground (rockbodies.ts columnsGround: the old variant's step, any variant's spawn and fast-forward);
+  the pieces falling in the columns (colbodies.ts); the cube bodies (bodies.ts, never spawned now); topAt (lightning);
+- on events: the metal flood (wakeMetal: a tanker struck, metal in a verdict), the drop tool's ground, the settlements'
+  and the resting rock's claims (External), the tests' scan/judgeAll.
+
+**What moved where.**
+- Changes to the columns are the GPU's (game/colapply.ts, shaders/colapply.wgsl): a verdict's cuts (subtract, then the
+  rubble rule past K), the crumbs spilled to the lowest open neighbour (added into the deposit), loose ground laid
+  (added, never overwritten: the CPU's 2-tick overwrite rule is gone), External spans let go (sim/external.ts
+  releaseSpan), orphans made ground (orphanColumn). Each rule has one CPU statement; the copy, where kept, is changed by
+  it so it stays the GPU's. Node tests (test/gpu/colapply.test.ts) hold the GPU to the CPU on the judges' shapes, 40
+  random caves (judge B's verdicts), random cuts past K, random External release and orphans.
+- Blows are the edit pass's (edit.wgsl, OP.SMASH with BLOW_TAG): it reads the struck column's top on the GPU and sinks
+  loose ground (depth from impact.softSink, the rim from impact.spray — now GPU tune parameters — and the material's
+  softness, look.z of the material table) or smashes hard ground past impact.groundEnergy. The dust's colour is the
+  ground's own, looked up by the particles (payload GROUND_DUST).
+- A small GPU question (game/colquery.ts) says whether a dirty box holds anything built before its chunks are read for
+  the structures' analyse; External's verify fetches only the chunks with claimed cells near the cut; the metal flood,
+  the drop tool and the settlements' claims fetch the chunks they need (game/colcopy.ts `fetch`, readable in the same
+  task: a column not fetched throws, never a stale read).
+- The copy (game/colcopy.ts, out of Integrity) is kept whole, and read before each pass as before, only where a CPU
+  consumer walks it: judge A, the CPU rigid rock (old, nodes, hybrid: RockBodies' ground at spawn and fast-forward), the
+  pieces falling in the columns (no rigid rock, or the old variant's structures). The default, lattice x runs, keeps it
+  (judge A); lattice x sections keeps none. `?jb6=0` keeps it everywhere, for measuring only.
+
+**Judge A**: kept with the copy, not moved to a Web Worker. Its cost is the readback (its latency on the phone, 15-650
+ms), not its CPU time (judge A's whole cost in the round-120c battery is mostly the read); a worker fed by a narrow
+readback would still wait for that readback, and the copy's other readers (the CPU rigid rock) would still need it.
+
+Tests: test/gpu/jb6.test.ts (the lattice with the sections judge: a cut freeing an overhang judged, cut out on the GPU and
+falling as a lattice body; a block sinking into sand; a block smashing stone — `readBytes` 0 throughout; a claimed thing
+dug into: only its chunks fetched, its owner told, let go on the GPU; with judge A the copy is read again).
+test/gpu/integrity.test.ts's blows now look at the GPU's columns (the CPU no longer knows which blow sank or smashed).
+
+**Measured (jb6, desktop iGPU intel-xe-lpg, the phone proxy: atlas, 412 x 915, dpr 2.6, q=low, every system, 1x).**
+- The toggle (scripts/jb6toggle.mjs; lattice x sections, `?jb6=0` against JB6, alternated; 30 s of a bowl dug round the
+  camera every 1.2 s and a stone block dropped every 3 s; data/perf/jb6/toggle-lattice-sections*.json):
+
+  | run | frames p50 / p95 / p99 / max (ms) | > 33 ms | GPU mean / p95 (ms) | read back | passes |
+  |---|---|---|---|---|---|
+  | jb6=0, 1 | 9.8 / 11.7 / 12.8 / 92.6 | 1 of 3045 | — | 120.9 MB | 67 |
+  | jb6, 1 | 9.9 / 11.4 / 12.5 / 98.4 | 3 of 3030 | — | 0 | 65 |
+  | jb6=0, 2 | 9.9 / 11.4 / 12.4 / 73.1 | 2 of 3046 | — | 119.3 MB | 66 |
+  | jb6, 2 | 9.9 / 11.4 / 12.9 / 69.7 | 3 of 3032 | — | 0 | 65 |
+  | jb6=0 (perf=1) | 9.9 / 10.6 / 11.5 / 68.8 | 1 of 3040 | 6.45 / 9.81 | 125.2 MB | 70 |
+  | jb6 (perf=1) | 9.9 / 10.7 / 11.8 / 67.6 | 1 of 3036 | 6.34 / 9.67 | 0 | 68 |
+
+  The copy cost about 1.8 MB a pass (the chunks ±24 round each cut, read again each look) — 4 MB/s of readback while
+  cutting; with JB6, none. On this desktop the frames don't show it (its readback is fast and off the frame); the phone
+  is where it was slow (the round-120 judges' battery: 15-650 ms a read) — the phone bench is the judge of that.
+- The physics bench headless (playground, lattice:runs vs lattice:sections; data/perf/jb6/physbench-headless.json): the
+  frames alike (p95 10.5 / 10.6, p99 11.2 / 11.5 ms); toggled costs within noise for both. Runs read back 1.1-3.7 MB a
+  stage (9-16 reads of 10-14 ms each) and judged on the main thread 0.2-1.35 ms a pass (worst 4.5); sections read none
+  but its verdict — 32 KB used (97 KB mapped) — its judging 0.4-2.6 ms of GPU and 12-16 ms from submit to verdict
+  (the readback's wait, off the main thread). So on the desktop it's a tie on frames; sections now does what runs did
+  with no copy read back and no CPU judging on the main thread — whether it beats runs on the phone is the phone bench's
+  call (Pages build of `jb6`, `?physbench=1&pairs=lattice:runs,lattice:sections`).
+- Gate: typecheck; `npm test` 351 passed (2 expected fail, 5 skipped) (unit and GPU on Dawn); `npm run smoke` atlas, playground, rocklab; the atlas
+  with judge B, a pillar's foot cut (it toppled as one rock-mesh body) and a tanker dropped (C:/Projects/shots88/jb6/).
+
+## 2026-11-03 — round 128 (merge128): jb6 on places; INT16 fixed the jb6 way
+
+**Why.** The user (round 128): "I didn't realize that the physics work was never merged. It should have been. Making
+the proper physics engine was intended to be future work but not block all of the improvements of that branch." PH1
+stays future work. And INT16 (a town's hall turned to rubble seconds after play): the user approved writing both
+buffers but asked why a CPU copy and not a GPU stamp — the system is meant to be fully GPU resident.
+
+**The merge.** `jb6` (63c7373, 5 commits on 62a7345) into places (2aacb50, 131 commits since): conflicts only in
+docs/BRANCHES.md and docs/DEVLOG.md (both appended at the end: both kept, places first). The code merged clean
+(level.ts, common.wgsl's Tune: places added no tune fields since). No column writer was added on places after jb6
+branched.
+
+**INT16, the cause** (the hallfall branch's diagnosis, confirmed here). The column passes (structure, edit, the layer
+pulls) write layersNext for the chunks that run and copy it back over the layers whole. A change written to the layers
+alone survived only if its chunk ran before the next copy-back; Sleep.wake refuses chunks outside the hybrid's `only`
+filter, so a settlement's claim (ExternalRegistry.claim → Integrity.writeColumn → ColumnCopy.write: the layers only) was
+undone within a tick, the registry's verify found the building cut, and settle/view.ts lost() let it go to rubble. jb6
+didn't route claims through the GPU, and its own GPU changes (colapply's cuts, release, orphans) wrote the layers only
+too: the same hole. hallcheck on merge128 before the fix: **3 buildings lost of 318 claimed over 6 towns** (seed 0 towns
+1 and s53, seed 7 town 1; nothing touched them).
+
+**The fix, the jb6 way.** The CPU says what changes; the GPU changes its columns, into the layers and the layersNext
+alike:
+- colapply.wgsl's `store` writes both buffers (GpuColumns.next = WorldGpu.layersNext; ColumnApply throws without it),
+  so every jb6 change (cuts, spills, release, orphans) is safe too.
+- New stamps: `claim` (sim/external.ts claimColumn: each span cut out, External with its fallback as aux, joined; the
+  registry's claim calls ColumnAccess.claim → Integrity.edit, the kept copy mirrored as for jb6's changes), `take`
+  (layout.ts takeCells: the voxel lattice's wake, physics/wake.ts) and `seat` (models.ts seatColumn: the editor's
+  placeModel), through one ColumnApply on the WorldCore (`core.columnApply`, `core.stampColumns`).
+- The writers that still make a whole column on the CPU (a baked rigid body, the falling pieces: ColumnCopy.write), the
+  restore and replace of chunks (WorldCore) and WorldGpu's first upload write both buffers. The table of every writer is
+  in ARCHITECTURE "Who writes the columns".
+- Left (BACKLOG M128-1, M128-2): the bake and the falling pieces as GPU stamps; the wake's and placeModel's whole-layers
+  readback (they decide on the CPU). INT8's hollow-claim risk is unchanged: a stamp fits a column to K as before.
+
+Tests: test/gpu/colapply.test.ts — claims, cells taken and a model seated on random columns (water, gaps, External,
+built runs) equal to claimColumn/takeCells/seatColumn word for word, and the layersNext equal to the layers after every
+stage; test/gpu/cpu-write-asleep.test.ts (ported from hallfall) — with every chunk asleep and every system stepping, a
+claim, a take and a seat survive 60 ticks, and a write to the layers alone is still undone (the cause, kept as a test).
+`npm test` 668 passed (2 expected fail, 5 skipped); typecheck clean.
+
+**Not all of INT16.** hallcheck after this fix: still 3 lost of 318 (the same towns). scripts/hallprobe.mjs (from hallfall)
+shows a second mechanism: the lost building's chunk is awake (in the filter), and one of its columns has the top of its
+External run lowered (111.38 to 110.93) — not the copy-back. Followed up in the next commit.
+
+**INT16's second mechanism: a unit's take off a roof.** scripts/hallprobe2.mjs logged every Edit event, ColumnApply
+stage and copy write near the lost column: at tick 2532 an exact take (edit.wgsl OP_TAKE, 0.45 — settle/life.ts LOAD: a
+builder fetching a load off the higher heap) at column 162,194, three ticks before the loss; the heap was planned under a
+building's roof, and OP_TAKE takes "off the top interval, whatever it is" — the claim's External. The same spot was taken
+from again at 3088 and 3817 (and the builder put back what it couldn't use: External, material 39, which the event's
+5-bit material field turns into op 0 — BACKLOG M128-3). The rule (main, round 128): a thing's External cells change only
+by their owner or a real cut (the player's tools, a blow over threshold, the judge); edits by agents never take External,
+and dust or sand lying on a building is its own interval, taken as any loose ground. edit.wgsl's take now skips an
+External top. The sims never move an External interval: sediment moves granular intervals only and leaves loose ground
+under a solid pinned (round 88), the structure pass copies non-structural intervals as they are, the blow's sink cuts only
+a soft top, climate melts only snow and ice. Ground eroded from under a claim leaves air under it (its z0/z1 kept); that
+an undermined claim should go to the judge is BACKLOG M128-5. The heap under the roof is M128-4.
+
+Test: test/gpu/external-take.test.ts — claims stamped on two columns, sand put on one, builders' takes off both: the
+claims' z0/z1 and aux exactly as they were, the sand taken (fails without the edit.wgsl change: the claim lost its top).
+
+**tilegate rebased on places 2aacb50** (a commit of its own: the gate was blind). The committed baselines were merge120's
+(950d419, round 120); places 2aacb50 failed against them as merge128 did (phone z2.2/z1.3 42%, desktop z1.3 37%, z2.2
+21% changed; the near zooms 1-4%). Rewritten from places' own run (`--update`, places 2aacb50 unchanged,
+C:/Projects/shots88/merge128/tilegate-rebase/), looked at beside the old ones: the same spot and the same scene — the
+spires, the road, the town by the river — the near zooms differing in grass, flowers and the trees' sway; the wide zooms
+framed differently (they're drawn at the zoom floor now: z1.3 at 1.95 on the desktop, 2.67 on the phone) and showing the
+towns, fields and land places gained in rounds 121-127. Places' own run fails the absolute thresholds on this shared
+iGPU, which is the baseline merge128 is judged against (a diff, not the absolute bar — main, round 128; fast-pan coverage
+is M120-1): desktop-z2.2 parked undrawn 0.17%; desktop-z5 fast pan undrawn 3.99% / far land 9.98%; desktop-z8 fast pan
+far land 1.07%; phone-z3.5 and z2.2 slow pan far land 1.27% / 1.18%; phone-z8 fast pan undrawn 0.16%; w384-phone-z5 fast
+pan undrawn 27.8% / far land 39.6%; run-desktop-z14 p99 38.5 ms (max 40.1), run-desktop-z8 p99 23.1 ms.
+
+**The jb6 gate on merge128** (desktop proxy: the iGPU shared with other agents' runs, so frame and GPU numbers are
+noisy; the phone bench decides cost — Pages build of `merge128`, `?bench=1` and `?skipmenu=1&level=playground&physbench=1`).
+- `npm test` 669 passed (2 expected fail — test/unit/buried.test.ts, TK4: a buried thing with only ground over it stays
+  up; test/unit/judge-shapes.test.ts, SV1: the keystone cut out of an arch — both open findings on places too; 5
+  skipped); typecheck clean; smoke ok (atlas, playground, rocklab).
+- hallcheck (6 towns on seeds 0 and 7, 30 s with nothing done): 3 lost of 318 on jb6 merged; 3 of 318 with the GPU
+  stamps (the copy-back hole was real but not these towns'); **0 of 321** with the take rule.
+- jb6toggle (atlas, 412 x 915, q=low, 30 s of a bowl dug every 1.2 s and a block dropped every 3 s;
+  data/perf/merge128/toggle-*.json): lattice:sections reads **0 KB** back (`?jb6=0`: 92.5 MB in 47 passes), frames p50
+  8.3 / p95 11.3 / p99 13.3 ms, 2 over 33 ms (jb6=0: 10.7 / 15.8, 21 over); lattice:runs (the default) keeps the copy
+  for judge A: 92-103 MB a 30 s, as places (92 MB) — p95 10.6-11.6, p99 15.8-17.7 on both.
+- driveprofile (atlas drive, alternated with places 2aacb50): p50 8.3 / 8.3, p95 27 / 21.1, p99 170 / 193 against
+  places' 8.3 / 8.3, 16.4 / 19.7, 167 / 186 — within this machine's noise (another agent's runs on the GPU).
+- physbench headless (data/perf/merge128/physbench-m.json): runs read back 1.2-2.5 MB a stage (4-12 reads of 120-457 ms
+  under contention), sections none but its verdict (32 KB; 75-215 ms submit to verdict under contention).
+- tilegate: places 2aacb50's own run failed against the committed baselines as merge128's did (the baselines were
+  stale: the same views changed on both, the shots the same scene, no holes) — rebased on places first (the commit
+  before this one), then merge128 run twice against them, as a diff with places' own run: parked coverage desktop-z2.2
+  undrawn 0.54% / 0.64% (places 0.17% here, 0.64% in its run on the old baselines), every other parked view whole on both;
+  slow-pan far land 1.0-1.15% (places 1.18-1.27%); fast pans scattered on both (merge: desktop-z8 12.7% / -, z5 - / 3.35%,
+  phone-z8 0.90% / -, w384 z5 - / 0.19%; places: desktop-z5 3.99%, phone-z8 0.16%, w384 z5 27.8%); run-desktop-z14 p99
+  22.5 ms / ok (places 38.5). The near goldens 1.2-1.6% changed (grass, sway: places' own near views moved 1-4% between
+  its runs); the wide ones (z2.2, z1.3) 31-40%: looked at — the same scene framed tighter, their zoom floor set by the
+  run's tile-fill calibration (cal.rate measured per run), so those views aren't reproducible between runs on this
+  machine; no holes in any shot (C:/Projects/shots88/merge128/tilegate-m1, -m2). No regression from merge128 beyond
+  the noise.
+- Atlas shots at 412 x 915 (C:/Projects/shots88/merge128/atlas/): a stone pillar built and its foot cut (a cave the judge
+  holds; nothing toppled — the cut was small, as merge121's), a tanker dropped (small on screen), a town's building cut
+  at its side (the town whole after 8 s; the bowl behind the editor panel). They show no breakage but don't show a
+  collapse either — a scene that brings one down is JB8's.
+
+**Headless (412x915) after the drive, the horse and wall riding.** Guards and lungers on the trait system now: the
+knight's swipes landed 2, were blocked 2 and dodged 3 (it threw before). The crowd: 2 landed, 1 kill. The tour with
+auto and the dithered cut, the bike: zoom 10.8 on the field's edge to 15-16 in the woods, the cliff leg tilted to 39-41
+deg with the zoom to 19, the town's street 23-26; the knight's frames show it at every stop (no longer hidden by the
+cave's mountain). The horse on the canyon by the autopilot: trotting at 7.4 cells/s. The hill's run-up check measured
+6 s, too short for the 44-cell run-up at 9 cells/s (the knight at speed on the flat, not yet at the ramp): lengthened
+to 12 s for the next batch; the climb itself is Node-checked (core/drive.test.ts). The physical bike in the tapered
+canyon left the wall flying (AIR 1.9 s): the taper throws it at speed, as a ramp does.

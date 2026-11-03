@@ -16,7 +16,7 @@ const PERF = process.argv.includes('--perf');
 await run({ name: 'herolabtest', kind: PERF ? 'timing' : 'behaviour', size: '412x915', dpr: PERF ? 2.6 : 1 }, async (R) => {
   const out = R.opt('out', 'C:/Projects/shots88/herolab2');
   fs.mkdirSync(out, { recursive: true });
-  const only = new Set(R.opt('only', 'menu,grid,tests,gifs,knight,cut,auto,drive,horse').split(','));
+  const only = new Set(R.opt('only', 'menu,grid,tests,gifs,knight,cut,auto,drive,horse,wall').split(','));
   const page = await R.page();
   await page.setViewport({ width: 412, height: 915, deviceScaleFactor: PERF ? 2.6 : 1, hasTouch: true, isMobile: true });
   // (no ?station=: the test menu first, as the user's link lands)
@@ -234,7 +234,7 @@ await run({ name: 'herolabtest', kind: PERF ? 'timing' : 'behaviour', size: '412
         }
         return +best.toFixed(2);
       };
-      const run = await top('Run-up', 6);
+      const run = await top('Run-up', 12);
       await shot(`hill-${hero}-${drive}-run.png`);
       const stand = await top('Standing start', 4);
       R.log(`hill ${hero} ${drive}: run-up climbs ${run}, standing ${stand}`);
@@ -249,6 +249,14 @@ await run({ name: 'herolabtest', kind: PERF ? 'timing' : 'behaviour', size: '412
     await p.evaluate(() => window.reclaimed.lab.pick({ station: 'city' }));
     await sleep(4000);
     await shot('horse-city.png');
+  }
+
+  // ---- (round 128, PL43) the bike on the physical drive in the tapered canyon, held hard against the outer wall
+  if (only.has('wall')) {
+    await p.evaluate(() => window.reclaimed.lab.pick({ hero: 'hoverbike', station: 'canyon', drive: 'physical', cam: 'cutaway+tilt' }));
+    await sleep(3000);
+    await gif('bike-canyon-physical.gif', 40, 150);
+    R.log(`wall: ${await p.evaluate(() => { const b = window.reclaimed.lab.session.hero; return `${b.status()} bank ${(b.b?.bank ?? 0).toFixed(2)}`; })}`);
   }
 
   // ---- the cut (CAM11) at the canyon and the cliffs, against the chase alone

@@ -193,6 +193,8 @@ export class SectionsJudge implements RockJudge {
   cull = PAGE_Q?.get('jbcull') !== '0';
   /** (JB13; ?jbgrow=0) start from a window the leg walk fits in and grow it as asked; false: the margin's window */
   grow = PAGE_Q?.get('jbgrow') !== '0';
+  /** the output's size (words): its header and the records' room, grown when a judging overflows it */
+  private outCap = O_REC0 + 16384;
   /** (perf battery only) stop judge.wgsl's single-workgroup kernels before this phase; 0: every phase */
   stopAt = 0;
 
@@ -226,7 +228,9 @@ export class SectionsJudge implements RockJudge {
     const kit = this.kitFor(g.device);
     let ncap = 0;
     let pcap = 0;
-    let outCap = O_REC0 + 65536;
+    // (round 120, JB6: the verdict's records start at 64 KB — the whole output is copied back each judging, so it's
+    // kept to what judgings have needed: grown ×4 when one overflows, and kept grown)
+    let outCap = this.outCap;
     this.stats.windows = 0;
     for (let attempt = 0; ; attempt++) {
       const wx0 = Math.max(0, x0 - m);
@@ -255,7 +259,7 @@ export class SectionsJudge implements RockJudge {
       if (r.over) {
         if (attempt > 8) throw new Error(`judge B: the window ${ww}×${wh} still overflows (${r.over})`);
         if (r.over & 4) ncap = ww * wh * p.maxK + 1024;
-        if (r.over & 2) outCap = O_REC0 + (outCap - O_REC0) * 4;
+        if (r.over & 2) this.outCap = outCap = O_REC0 + (outCap - O_REC0) * 4;
         if (r.over & 16) pcap = Math.max(pcap * 4, r.pairs + 1024);
         if (r.over & 8) throw new Error(`judge B: a piece more than ${MAX_LEVELS} runs from what holds it`);
         if (r.over & 1) throw new Error('judge B: more than 1024 pieces in one judging');

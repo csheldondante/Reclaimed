@@ -1,0 +1,55 @@
+{
+ "when": "2026-11-03T09:45:17.985Z",
+ "solver": "lattice",
+ "judge": "sections",
+ "seconds": 30,
+ "viewport": "412x915 dpr 2.6 q=low",
+ "runs": [
+  {
+   "jb6": false,
+   "frames": {
+    "n": 3378,
+    "mean": 8.88,
+    "p50": 8.3,
+    "p95": 10.7,
+    "p99": 15.8,
+    "max": 410.8,
+    "over33": 21
+   },
+   "gpu": {
+    "n": 319,
+    "mean": 39.65,
+    "p50": 24.29,
+    "p95": 160.5
+   },
+   "readKB": 92544,
+   "passes": 47,
+   "keepsCopy": true,
+   "cuts": 26,
+   "drops": 10
+  },
+  {
+   "jb6": true,
+   "frames": {
+    "n": 3578,
+    "mean": 8.38,
+    "p50": 8.3,
+    "p95": 11.3,
+    "p99": 13.3,
+    "max": 142,
+    "over33": 2
+   },
+   "gpu": {
+    "n": 2211,
+    "mean": 9.89,
+    "p50": 8.94,
+    "p95": 18.24
+   },
+   "readKB": 0,
+   "passes": 62,
+   "keepsCopy": false,
+   "cuts": 26,
+   "drops": 10
+  }
+ ]
+}

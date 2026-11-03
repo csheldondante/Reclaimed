@@ -7,7 +7,7 @@
 // cells within the radius (a chunk torn out of rock), none pinned.
 
 import { ignoreTeardown } from '../gpu/pipeline';
-import { cellRange, columnSlots, packColumn, readColumn, SLOT_WORDS, type Interval } from '../world/layout';
+import { cellRange, readColumn, type Interval } from '../world/layout';
 import { cellAt, cellPos } from '../world/lattice';
 import { MAT } from '../world/materials';
 import type { WorldCore } from '../scenes/world-core';
@@ -156,37 +156,10 @@ export class Waker {
     // (no room for them all in the solver: nothing is taken)
     const need = parts.reduce((a, p) => a + (p.hi[0] - p.lo[0] + 1) * (p.hi[1] - p.lo[1] + 1) * (p.hi[2] - p.lo[2] + 1), 0);
     if (!phys.hasRoom(need, parts.length)) return { bodies: [], full: parts.length };
-    // out of the layers: each touched column keeps the parts of its intervals not taken
-    const dev = core.host.gpu.device;
-    const byCol = new Map<number, Set<number>>();
-    for (const c of piece.values()) {
-      const k = c.y * dims.w + c.x;
-      if (!byCol.has(k)) byCol.set(k, new Set());
-      byCol.get(k)!.add(c.z);
-    }
-    for (const [k, zs] of byCol) {
-      const x = k % dims.w;
-      const y = (k - x) / dims.w;
-      const out: Interval[] = [];
-      for (const iv of colAt(x, y)) {
-        if (!take.has(iv.mat)) {
-          out.push(iv);
-          continue;
-        }
-        const [c0, c1] = cellRange(iv.z0, iv.z1);
-        let run = -1;
-        for (let z = c0; z <= c1; z++) {
-          const keep = z < c1 && !zs.has(z);
-          if (keep && run < 0) run = z;
-          if (!keep && run >= 0) {
-            out.push({ ...iv, z0: run === c0 ? iv.z0 : run, z1: z === c1 ? iv.z1 : z });
-            run = -1;
-          }
-        }
-      }
-      const { base, k: K } = columnSlots(packed, x, y);
-      dev.queue.writeBuffer(core.world.layers, base * SLOT_WORDS * 4, packColumn(out, K));
-    }
+    // out of the layers: each touched column keeps the parts of its intervals not taken (round 128, INT16: the GPU's
+    // stamp — colapply.wgsl take, layout.ts takeCells' rule — into the layers and layersNext alike, so a column pass's
+    // copy-back over a chunk that didn't run can't put the piece back)
+    core.stampColumns([{ cuts: [], take: { cells: [...piece.values()].map(({ x, y, z }) => ({ x, y, z })), materials: take } }]);
     const bodies: PhysBody[] = [];
     let full = 0;
     for (const { part, lo, hi } of parts) {

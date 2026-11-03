@@ -10,7 +10,7 @@
 // moved into the window's frame when drawn; the window's slides move them, and a building leaving the window lets go
 // of its columns (to air) and claims them again when it's all back (as the resting rock's do).
 import type { ColumnSpan, StructurePieces } from '../api/contracts/structures';
-import type { ExternalInstance, ExternalRegistry } from '../sim/external';
+import type { ExternalCol, ExternalInstance, ExternalRegistry } from '../sim/external';
 import { OWNER_STRUCT } from '../sim/external';
 import { MAT } from '../world/materials';
 import { ROW_H } from '../world/lattice';
@@ -28,8 +28,11 @@ export interface ViewIO {
   renderer: { enableStructures(sg: StructureGpu): void };
   /** the External registry (null: none — drawn, nothing claimed) */
   external: () => ExternalRegistry | null;
-  /** resolves once the registry's columns can be read */
-  ready: () => Promise<void>;
+  /**
+   * `then` run once these columns (window x, y) can be read — the registry's claim reads them (round 120, JB6: the
+   * integrity system fetches them; its CPU copy isn't kept everywhere). Not run if the window slid meanwhile.
+   */
+  columns: (cols: [number, number][], then: () => void) => Promise<void>;
   dims: { w: number; h: number };
   /** the window's world cell (0, 0) and its oz */
   origin: () => [number, number];
@@ -60,7 +63,6 @@ export class SettlementsView {
   readonly sg: StructureGpu;
   private shown = new Map<string, Shown>();
   private dirty = true;
-  private copyIn = false;
   private lastOrigin = '';
   /** (debugging) draw only the pieces whose module name starts with this */
   only = '';
@@ -77,10 +79,7 @@ export class SettlementsView {
     const ext = io.external();
     if (ext) {
       ext.owner(OWNER_STRUCT, { name: 'settlements', onLost: (inst) => this.lost(inst) });
-      void io.ready().then(() => {
-        this.copyIn = true;
-        for (const s of this.shown.values()) this.claimAll(s);
-      });
+      for (const s of this.shown.values()) this.claimAll(s);
     }
   }
 
@@ -92,7 +91,7 @@ export class SettlementsView {
     this.shown.set(id, s);
     this.stats.settlements = this.shown.size;
     this.dirty = true;
-    if (this.copyIn) this.claimAll(s);
+    this.claimAll(s);
   }
 
   /** a building's columns as the plan has it standing (box frame) */
@@ -112,10 +111,10 @@ export class SettlementsView {
     return [Math.round(x), Math.round(y / ROW_H)];
   }
 
-  private claim(s: Shown, b: number): void {
-    const ext = this.io.external();
+  /** a building's columns in the window as it would claim them (null: not wholly in the window — away if partly) */
+  private want(s: Shown, b: number): ExternalCol[] | null {
     const cs = s.cols.get(b);
-    if (!ext || !cs) return;
+    if (!cs) return null;
     const [dx, dy] = this.offset(s);
     const { w, h } = this.io.dims;
     const oz = this.io.oz();
@@ -123,8 +122,32 @@ export class SettlementsView {
     if (!want.every((c) => c.x >= 0 && c.y >= 0 && c.x < w && c.y < h)) {
       // (wholly in the window or not at all: one instance a building)
       if (want.some((c) => c.x >= 0 && c.y >= 0 && c.x < w && c.y < h)) s.away.add(b);
-      return;
+      return null;
     }
+    return want;
+  }
+
+  /** these buildings of a settlement (all of them: those not claimed) claim their columns, once those can be read */
+  private claimAll(s: Shown, only?: number[]): void {
+    if (!this.io.external()) return;
+    const wants = new Map<number, ExternalCol[]>();
+    for (const b of only ?? [...s.cols.keys()]) {
+      if (s.claims.has(b)) continue;
+      const want = this.want(s, b);
+      if (want) wants.set(b, want);
+    }
+    if (!wants.size) return;
+    const cols = [...wants.values()].flatMap((w) => w.map((c) => [c.x, c.y] as [number, number]));
+    void this.io.columns(cols, () => {
+      // (still shown, still standing, still unclaimed: the plan may have changed while the columns came)
+      if (this.shown.get(s.seed.rec.id) !== s) return;
+      for (const [b, want] of wants) if (s.cols.has(b) && !s.claims.has(b)) this.claimNow(s, b, want);
+    });
+  }
+
+  private claimNow(s: Shown, b: number, want: ExternalCol[]): void {
+    const ext = this.io.external();
+    if (!ext) return;
     const inst = ext.claim(OWNER_STRUCT, want, MAT.Rubble);
     s.away.delete(b);
     if (!inst) return;
@@ -143,10 +166,6 @@ export class SettlementsView {
       this.io.touched(x0, y0, x1, y1);
     }
     this.count();
-  }
-
-  private claimAll(s: Shown): void {
-    for (const b of s.cols.keys()) if (!s.claims.has(b)) this.claim(s, b);
   }
 
   private release(s: Shown, b: number, toAir: boolean): void {
@@ -176,7 +195,7 @@ export class SettlementsView {
     this.dirty = true;
     this.release(s, b, true);
     this.columnsOf(s);
-    if (this.copyIn) this.claim(s, b);
+    this.claimAll(s, [b]);
   }
 
   /** a building's cells were cut or it hangs free: it's let go to rubble where it stood, its pieces gone behind dust */
@@ -211,12 +230,8 @@ export class SettlementsView {
   /** after it slid (the registry moved the claims with the land): the pieces move, the buildings all back claim again */
   slid(): void {
     this.dirty = true;
-    if (!this.copyIn) return;
-    for (const s of this.shown.values()) {
-      for (const b of [...s.away]) this.claim(s, b);
-      // (a settlement that came into the window: its buildings claim)
-      this.claimAll(s);
-    }
+    // (those away back, and a settlement that came into the window: its buildings claim)
+    for (const s of this.shown.values()) this.claimAll(s);
   }
 
   /** (tests, debugging) a settlement's pieces in its box's frame: module name and the 16 floats */
