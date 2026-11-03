@@ -16805,3 +16805,16 @@ epiphytes and seasons and states. Leafless and burned could also be useful state
   neighbours within 40 cells are conifers well above the land's share (clumped). Not yet: pines on slopes and high
   ground — vegPlan has no height or slope (it takes the column, succession and material), and the CPU mirror would need
   them too; the next part, with the before/after atlas shots.
+- The grass-and-shrubs shots (C:/Projects/shots88/treegen: shrubs-lineup*.png, grass-lineup.png, grass-close.png,
+  grass-viewer-meadow.gif, grass-meadow-z*.png/.gif, editor-*.png, burn-*.png). Fixed from them:
+  - the lineup ran off the view diagonally: now across the view, in rows of three on a portrait screen
+  - the tall grass read as a few leek leaves: 18 thinner blades (0.09), the foot's occlusion softened (0.55)
+  - the far thicket's big spray cards read as pale crumpled paper at the gameplay zoom (that's the level drawn there:
+    vegprep draws the near one only past 25 px a cell): now the crown's own lobes, an icosahedron each (70-280 tris)
+  - the editor's variant in the world is an elder variant (the default spot is an elder wood)
+  The burned wood: the player's lightning (Powers.scriptStrike, 4 strikes) lit the elder wood — the fire field round
+  the strikes is ~0.4 after 10 s — then it froze: the same values to 3 decimals at 20, 30 ... 60 s. A woken chunk sleeps
+  8 s after the event (sim/sleep.ts EVENT_S) and a sleeping chunk's fire is carried through unchanged (fire.wgsl
+  `asleep`); nothing keeps a burning chunk awake (water has holdUnsettled, fire has nothing), so a fire stops spreading
+  and burning where it is 8 s after it was set — and under the elders' canopy the ground fire isn't seen from above.
+  Reported to main as a sleep/fire contract issue (not treegen's to change).

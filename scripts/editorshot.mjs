@@ -9,7 +9,7 @@ await run({ name: 'editorshot', kind: 'behaviour', size: '412x915', dpr: 1, echo
   const out = R.opt('out', 'C:/Projects/shots88/treegen');
   const species = R.opt('species', 'oak');
   fs.mkdirSync(out, { recursive: true });
-  for (const [tag, size] of [['phone', null], ['desktop', { w: 1280, h: 800 }]]) {
+  for (const [tag, size] of R.opt('viewer', '1') === '1' ? [['phone', null], ['desktop', { w: 1280, h: 800 }]] : []) {
     const page = await R.page(size ? { size: `${size.w}x${size.h}` } : {});
     await page.goto(`${R.url}/flora.html?mode=plant&species=${species}&seed=3&season=0.2`, { waitUntil: 'load' });
     await sleep(2500);
@@ -39,9 +39,10 @@ await run({ name: 'editorshot', kind: 'behaviour', size: '412x915', dpr: 1, echo
     R.log(`saved editor-${tag}-0..2.png`);
     await page.close();
   }
-  // a variant in the world on a wood: the oak narrower and pad-lobed
+  // a variant in the world on a wood: a species (--wspecies, the wood's own: the elder at the default spot) narrower,
+  // pad-lobed and with its crown higher
   const enc = (v) => Buffer.from(JSON.stringify(v)).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  const ft = enc({ oak: { sWidth: 0.3, cLobeShape: 1, sCrownBase: 0.55 } });
+  const ft = enc({ [R.opt('wspecies', 'giant')]: { sWidth: 0.3, cLobeShape: 1, sCrownBase: 0.55 } });
   const p = await R.level({ level: 'atlas', at: R.opt('at', '13728,5216'), ftree: ft });
   await sleep(30000);
   await p.evaluate(() => (window.reclaimed.camera.zoom = 7));

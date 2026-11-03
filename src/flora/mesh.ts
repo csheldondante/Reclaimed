@@ -715,7 +715,7 @@ function lobeAo(L: Lobes, li: number, p: V3, nrm: V3): number {
   return Math.max(0.2, Math.min(1, 1 - occ)) * (0.55 + 0.45 * hz) * (nrm[2] < 0 ? 0.75 + 0.25 * (1 + nrm[2]) : 1);
 }
 
-function addSolidCrown(mb: MeshBuilder, sk: Skeleton, minDepth: number, c: CrownLook, k: number, r01: () => number, px?: number, bake = false, core = 1, lobesIn?: Lobes, inset = 0, needleShell = -1): Lobes {
+export function addSolidCrown(mb: MeshBuilder, sk: Skeleton, minDepth: number, c: CrownLook, k: number, r01: () => number, px?: number, bake = false, core = 1, lobesIn?: Lobes, inset = 0, needleShell = -1): Lobes {
   const R = (c.clump ?? 3) / k;
   const gaps = core < 1 || inset > 0 ? 0 : (c.gaps ?? 0.05);
   const lumps = c.lumps ?? 0.3;

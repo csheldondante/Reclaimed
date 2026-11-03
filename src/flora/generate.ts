@@ -3,7 +3,7 @@
 // range by the seed, so variants differ in shape and size but read as one species.
 
 import { expand, interpret, norm, type V3 } from './lsystem';
-import { buildPlant, MeshBuilder, PART, sprayAt, type FloraMesh } from './mesh';
+import { addSolidCrown, buildPlant, MeshBuilder, PART, sprayAt, type FloraMesh } from './mesh';
 import { growRoots, rootSegments } from './roots';
 import { addEpiphytes } from './epiphytes';
 import { cached, meshKey, remember } from './meshcache';
@@ -232,6 +232,14 @@ function farShrub(sp: SpeciesDef, seed: number): FloraMesh {
   const rMax = Math.max(...sk.segments.map((g) => g.r0));
   for (const g of sk.segments) if (sp.colonize ? g.r0 >= rMax * 0.55 : g.depth <= 1) mb.tube(g, 3, PART.wood);
   const r01 = rng(hashSeed(seed, 9));
+  if (sp.colonize && sp.crown) {
+    // (round 128, the grass-and-shrubs shots: the far sprays read as pale paper at the gameplay zoom — now the crown's own
+    // lobes, an icosahedron each (20 faces), painted as the near crown's (the lobe ramp, the crevices' occlusion), the
+    // clumps a fifth bigger so there are a few of them: 70-280 triangles)
+    const k = (sp.height[0] + sp.height[1]) / 2 / H;
+    addSolidCrown(mb, sk, 0, { ...sp.crown, gaps: 0, clump: (sp.crown.clump ?? 1.3) * 1.2 }, k, r01, 1);
+    return mb.done();
+  }
   const sites = sk.leaves.filter((_, i) => i % Math.max(1, Math.floor(sk.leaves.length / 6)) === 0);
   const size = Math.max(H * 0.45, 0.1);
   for (const l of sites) sprayAt(mb, l.p, l.d, size, 3, sp.crown?.droop ?? 0.2, r01);

@@ -146,9 +146,21 @@ async function main() {
           const d = resolveKind({ ...applyParams(state.species, state.over), kind }, kind);
           return { species: state.species, mesh: generate(state.species, state.seed, { growth: state.growth, def: d }), def: d };
         });
+        // (across the view — perpendicular to the eye's bearing — in rows of 3 on a portrait screen, the back row behind)
         const gap = Math.max(...ks.map((k) => k.mesh.radius)) * 2.1 + 0.4;
+        const cols = canvas.clientWidth < canvas.clientHeight * 1.2 ? 3 : nk;
+        const rows = Math.ceil(nk / cols);
+        const ax = [-Math.sin(cam.yaw), Math.cos(cam.yaw)];
+        const bk = [-Math.cos(cam.yaw), -Math.sin(cam.yaw)];
         const inst = new Float32Array(nk * 16);
-        ks.forEach((_, i) => inst.set([1, 0, 0, (i - (nk - 1) / 2) * gap, 0, 1, 0, 0, 0, 0, 1, 0, i, 0.5, 0, 0], i * 16));
+        ks.forEach((_, i) => {
+          const c = i % cols;
+          const r = Math.floor(i / cols);
+          const n = Math.min(cols, nk - r * cols);
+          const u = (c - (n - 1) / 2) * gap;
+          const v = (r - (rows - 1) / 2) * gap;
+          inst.set([1, 0, 0, ax[0] * u + bk[0] * v, 0, 1, 0, ax[1] * u + bk[1] * v, 0, 0, 1, 0, i, 0.5, 0, 0], i * 16);
+        });
         scene = { kinds: ks, instances: inst, ranges: ks.map((_, i) => ({ first: i, count: 1 })), ground: tree ? 1 : 0, crowns: [], radius: 12 + gap * nk };
       } else if (state.compare) {
         // (round 128: the old (round 117's stems and bark) on the left, the new on the right — the same seed, so the same
@@ -260,8 +272,9 @@ async function main() {
       cam.dist = Math.max(4, m.height * (state.compare ? 2.6 : 1.9) * (state.compare ? Math.max(1, 1.3 / Math.max(0.3, canvas.clientWidth / Math.max(1, canvas.clientHeight)) * 0.6) : 1));
       // (the lineup: back far enough that the row fits the view's width)
       if (state.lineup && scene.kinds.length > 1) {
-        const w = scene.kinds.length * Math.max(...scene.kinds.map((k) => k.mesh.radius)) * 2.1;
-        cam.dist = Math.max(cam.dist, (w * 1.1) / Math.max(0.3, canvas.clientWidth / Math.max(1, canvas.clientHeight)));
+        const cols = canvas.clientWidth < canvas.clientHeight * 1.2 ? 3 : scene.kinds.length;
+        const w = Math.min(cols, scene.kinds.length) * Math.max(...scene.kinds.map((k) => k.mesh.radius)) * 2.1;
+        cam.dist = Math.max(cam.dist, (w * 1.9) / Math.max(0.3, canvas.clientWidth / Math.max(1, canvas.clientHeight)));
       }
     } else if (!cam.userMoved) {
       cam.at = [0, 0, 3];

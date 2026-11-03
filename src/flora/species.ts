@@ -566,7 +566,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     form: 'grass',
     height: [1.1, 1.8],
     // (round 128: curved blades in several segments, lit as one clump — forms.ts; the variants its clump types)
-    grass: { blades: 11, spread: 0.45, lean: 0.35, arch: 0.4, width: 0.16, segs: 4, heads: 0.2 },
+    grass: { blades: 18, spread: 0.4, lean: 0.35, arch: 0.4, width: 0.09, segs: 4, heads: 0.2 },
     bark: BARK_PLAIN,
     colours: {
       bark: C(0.3, 0.4, 0.15),
