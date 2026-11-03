@@ -3,6 +3,17 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-11-03 — round 128b (session 5, `playmodes`) — the trees reverted, the canyon run as meant
+
+- The user, verbatim:
+
+> It's certainly interesting. The new trees and plants kind of look awful in practice. I think the trees before any of the flora work was done were better and I can't believe it looks this bad. The intermediary shots some were so promising. Can we revert that whole branch of edits? It's genuinely a massive regression and part of why I don't want you to work without me so much. Did you ever build the version of the bike that banks along the inside of the cliff? I think the failure of the cliff mode here is a failure of the implementation. I was imagining zoomed in so far the canyon walls were only in in the background and the camera followed as the bike auto steers around which this is not at all.
+
+- → The play modes rebuilt without `treegen` (branch `pm-notreegen`; the old head is tag `playmodes-treegen-5db2146`).
+- → The canyon run: zoomed in on the bike and the floor round it, the walls at the edges and behind; the camera turns
+  with the route; the game steers the bike round; the bike rides up the walls at speed (herolab's wall riding, PL43).
+  BACKLOG PM-10..PM-14.
+
 ## 2026-10-31 — round 120 (session 5, `herolab`) — the user tried the hero lab
 
 - The user, verbatim:

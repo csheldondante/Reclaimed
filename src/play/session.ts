@@ -92,6 +92,10 @@ export class PlaySession {
   private steerState: SteerState = { carve: null };
   /** the hero's velocity last frame (cells/s, differenced) */
   private vel: V2 = [0, 0];
+  /** (round 128b) the hero's velocity last frame (cells/s): the course's canyon run steers by it */
+  get velocity(): V2 {
+    return [this.vel[0], this.vel[1]];
+  }
   /** (knight pass 2) the view's offset toward what the hero keeps framed (a locked enemy), eased */
   private frameOff: [number, number] = [0, 0];
   /** where the hero was last frame (its velocity for the framing: any hero, whatever moves it) */

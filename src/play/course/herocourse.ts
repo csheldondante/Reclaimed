@@ -18,13 +18,16 @@ import type { Sim } from '../../api/world';
 import type { Camera } from '../../render/camera';
 import type { Renderer } from '../../render/renderer';
 import { UnderstoryDriver } from '../../forest/driver';
-import { isPlayHero, type PlayHeroId } from '../heroes/make';
+import { isPlayHero, makeHero, type PlayHeroId } from '../heroes/make';
+import type { PlayHero } from '../heroes/base';
+import { NO_INPUT } from '../input/types';
 import { Autopilot, lookFor, riderClimb } from '../lab/autopilot';
 import { urlParam, VariantPicker, type Choice } from '../lab/lab';
 import { el, PlaySession, type SessionDeps } from '../session';
 import { ModeCamera } from '../modes/blend';
 import { facingAzimuth, isModeId, MODES, ModeSwitcher, modeStick, type ModeId } from '../modes/modes';
-import { AREAS, areaStart, ROUTE, type AreaId } from './course';
+import { CANYON, canyonState, canyonStick } from '../modes/canyon';
+import { AREAS, areaStart, BOULDERS, ROUTE, type AreaId } from './course';
 import '../sandbox/sandbox.css';
 import '../lab/herolab.css';
 import './course.css';
@@ -58,7 +61,7 @@ interface Experiment {
 
 const EXPERIMENTS: Experiment[] = [
   { id: 'chase', icon: '🏍', label: 'open ride', area: 'hills', hero: 'hoverbike', ask: 'The camera pulls out as you speed up and looks ahead of you. Is it far enough?' },
-  { id: 'canyon', icon: '🏜', label: 'canyon run', area: 'canyon', hero: 'hoverbike', ask: 'The canyon steers. Slide left and right past rocks and riders. Is it fun?' },
+  { id: 'canyon', icon: '🏜', label: 'canyon run', area: 'canyon', hero: 'hoverbike', ask: 'The canyon steers you round. Push left or right to ride up a wall. Watch for rocks and riders. Is it fun?' },
   { id: 'woods', icon: '🏃', label: 'woods run', area: 'forest', at: 0.5, hero: 'knight', forest: 'woods', ask: 'Side-on through the woods. Push along the path to run, the other way to go back. Does it feel good?' },
   { id: 'climb', icon: '🧗', label: 'cliff', area: 'cliff', hero: 'lich', ask: 'Side-on to the cliff. Can you read how high you are and where the cave is?' },
   { id: 'under', icon: '🌳', label: 'under trees', area: 'forest', at: 0, hero: 'knight', forest: 'under', ask: 'The camera drops under the trees and cuts the trunks in front. Better than the woods run?' },
@@ -77,6 +80,8 @@ const ZOOMS: Record<string, number> = { near: 1.35, mid: 1, far: 0.7 };
 const LEADS: Record<string, number> = { none: -1, some: 0, lots: 0.3 };
 /** under the trees: the view drawn in to this share of the chase's */
 const UNDER_ZOOM: Record<string, number> = { little: 0.75, more: 0.55, most: 0.4 };
+/** (the canyon run) the bike this share of the screen's height below the middle: the way ahead fills the screen */
+const CANYON_LOW = 0.18;
 /** the route's throttle */
 const PACES: Record<string, number> = { slow: 0.4, mid: 0.55, fast: 0.8 };
 
@@ -104,8 +109,17 @@ export class HeroCourse {
   private lastMode: ModeId | null = null;
   private paintedArea: AreaId | '' = '';
   private onTouch = () => (this.touched = true);
+  /** (the canyon run) its line's state, the frame's step, and the bike's drive as it was before the run put it on the
+   *  physical drive with wall riding (restored when the run ends) */
+  private canyon = canyonState();
+  private dt = 1 / 60;
+  private bikeWas: { params: Record<string, number>; drive: number; wallRide: number; wallMin: number } | null = null;
+  /** (the bike's canyon run) the riders: bikes of the same make on the same run, coming up from behind faster, each in
+   *  its own lane; one that touches the hero knocks it (the raiders on foot, 3 cells/s, never caught a bike) */
+  private rivals: { hero: PlayHero; st: ReturnType<typeof canyonState>; lane: number; t: number; hitT: number }[] = [];
+  private rivalT = 1.5;
   /** live numbers for the shot scripts */
-  readonly live = { mode: '' as ModeId | '', auto: false, area: '' as AreaId | '' };
+  readonly live = { mode: '' as ModeId | '', auto: false, area: '' as AreaId | '', overRoad: 0, off: 0, push: 0, line: 0 };
 
   private constructor(
     readonly d: CourseDeps,
@@ -117,6 +131,7 @@ export class HeroCourse {
     this.switcher = new ModeSwitcher((p) => this.pick(p), [at[0], at[1]]);
     session.rig.setPresent(this.cam);
     session.steer = (p, stick) => this.steer(p, stick);
+    session.extraParts = () => this.rivals.flatMap((r) => r.hero.parts());
     window.addEventListener('pointerdown', this.onTouch);
     window.addEventListener('keydown', this.onTouch);
     this.bar = el('div', 'course-bar', d.ui);
@@ -259,6 +274,7 @@ export class HeroCourse {
     this.pilot.start(this.hint);
     this.switcher.reset(st.at);
     this.clearRiders();
+    this.clearRivals();
     this.applyMode(false, true);
     this.paint();
   }
@@ -294,7 +310,26 @@ export class HeroCourse {
       this.session.zoomScale = m.view.camera.zoom === null ? z : 1;
     }
     if (m.id !== 'canyon') this.clearRiders();
+    this.bikeRun(m.id === 'canyon');
+    // (the side views: the hero a tenth low, the land behind it filling the rest; the canyon run: low, the way ahead)
+    this.cam.low = m.id === 'canyon' ? CANYON_LOW : m.cut !== null ? 0.1 : 0;
+    this.cam.anchor = m.id === 'canyon';
     this.lastMode = m.id as ModeId;
+  }
+
+  /** (the canyon run) the bike on the physical drive with wall riding while it's on (herolab's PL43), else as it was */
+  private bikeRun(on: boolean): void {
+    const params = this.session.hero.params as Record<string, number>;
+    if (this.bikeWas && (!on || this.bikeWas.params !== params)) {
+      const w = this.bikeWas;
+      Object.assign(w.params, { drive: w.drive, wallRide: w.wallRide, wallMin: w.wallMin });
+      this.bikeWas = null;
+    }
+    if (on && !this.bikeWas && this.session.heroId === 'hoverbike') {
+      this.bikeWas = { params, drive: params.drive, wallRide: params.wallRide, wallMin: params.wallMin };
+      Object.assign(params, { drive: 1, wallRide: 1, wallMin: CANYON.wallMin });
+      this.canyon = canyonState();
+    }
   }
 
   private modeNow(): PlayMode {
@@ -326,6 +361,18 @@ export class HeroCourse {
     const m = this.modeNow();
     const auto = this.switcher.autoLeft > 0;
     if (this.val('controls') === 'free') return auto ? this.pilot.steer(p) : s;
+    // (the bike's canyon run: the route carries it round, the stick across rides it up a wall; the game riding — the
+    // brief auto, ▶ — goes round the boulders)
+    if (m.id === 'canyon' && this.bikeWas) {
+      const gameRides = auto || (this.auto && this.yieldT <= 0);
+      const pace = PACES[this.val('pace')] / PACES.mid;
+      const fwd = Math.max(0, stick[0] * here.tan[0] + stick[1] * here.tan[1]);
+      const cruise = Math.min(CANYON.vMax, CANYON.cruise * pace) * (this.val('auto-run') === 'off' && !gameRides ? fwd : 1);
+      this.live.push = stick[0] * here.nrm[0] + stick[1] * here.nrm[1];
+      const out = canyonStick(ROUTE, p, this.session.velocity, stick, this.canyon, this.dt, { ...CANYON, cruise }, !gameRides, BOULDERS);
+      this.live.line = this.canyon.off;
+      return out;
+    }
     const mode: PlayMode = { ...m, assists: { ...m.assists, speed: PACES[this.val('pace')] * (m.assists.speed / 0.55), autoRun: m.assists.autoRun || this.val('auto-run') === 'on' } };
     if (m.controls === 'lane' && this.val('auto-run') === 'off') mode.assists.speed = 0;
     // (slower into a bend: the switchbacks' hairpins at the canyon's speed threw the bike into the wall)
@@ -340,6 +387,7 @@ export class HeroCourse {
   }
 
   update(dt: number): void {
+    this.dt = dt;
     this.yieldT -= dt;
     const p = this.session.hero.position();
     const st = this.switcher.step(dt, [p[0], p[1]], this.touched);
@@ -370,7 +418,15 @@ export class HeroCourse {
       const d = ((((goal - cur) % 360) + 540) % 360) - 180;
       prof.camera.azimuth = cur + d * Math.min(1, dt * 2.5);
     }
-    if (m.id === 'canyon') this.canyonRiders(dt);
+    if (m.id === 'canyon' && this.bikeWas) this.canyonRivals(dt);
+    else if (m.id === 'canyon') this.canyonRiders(dt);
+    if (m.id !== 'canyon' || !this.bikeWas) this.clearRivals();
+    // (for the shot scripts: how high over the road's own ground the hero is — up a wall — and how far off the road)
+    {
+      const h = ROUTE.nearest([p[0], p[1]], this.hint, 8);
+      this.live.overRoad = p[2] - this.session.world.top(h.at[0], h.at[1]);
+      this.live.off = h.off;
+    }
     this.session.update(dt);
   }
 
@@ -381,10 +437,13 @@ export class HeroCourse {
     const here = ROUTE.nearest([p[0], p[1]], this.hint, 8);
     if (this.riderT <= 0 && this.riders.length < 4) {
       this.riderT = 3;
-      const back = ROUTE.pointAt(here.s - 14);
+      // (round 128b: just below the screen's bottom edge at the run's zoom — the bike sits low, ~8 cells of floor behind
+      // it — and faster than the bike's cruise, so they come up the screen; from 14 cells back at 16 cells/s they never
+      // caught a bike that ran on)
+      const back = ROUTE.pointAt(here.s - 10);
       const side = (Math.random() - 0.5) * 4;
       const at: V2 = [back.at[0] - back.tan[1] * side, back.at[1] + back.tan[0] * side];
-      const id = this.d.units.spawn('raider', at, 'f-raiders', { hostile: true, health: 2, sight: 40, speed: 16, role: 'raider' });
+      const id = this.d.units.spawn('raider', at, 'f-raiders', { hostile: true, health: 2, sight: 40, speed: 24, role: 'raider' });
       this.riders.push({ id, t: 0 });
     }
     for (const r of this.riders) r.t += dt;
@@ -396,6 +455,53 @@ export class HeroCourse {
       else keep.push(r);
     }
     this.riders = keep;
+  }
+
+  /** (the bike's canyon run) a rider every few seconds just below the screen's bottom edge, a little faster than the
+   *  hero; each rides the run's line in its lane, passes, and is gone once well ahead or left behind */
+  private canyonRivals(dt: number): void {
+    const p = this.session.hero.position();
+    const here = ROUTE.nearest([p[0], p[1]], this.hint, 8);
+    this.rivalT -= dt;
+    if (this.rivalT <= 0 && this.rivals.length < 2) {
+      this.rivalT = 4;
+      const back = ROUTE.pointAt(here.s - 9);
+      const lane = Math.random() < 0.5 ? -0.4 : 0.4;
+      const n: V2 = [-back.tan[1], back.tan[0]];
+      const at: V2 = [back.at[0] + n[0] * lane * 6, back.at[1] + n[1] * lane * 6];
+      // (on the bike's own drive — its top 32 — so they come past a hero on the run's physical drive, top 22)
+      const hero = makeHero('hoverbike', this.session.world, at, { drive: 0 });
+      const v = this.session.velocity;
+      const sp = Math.hypot(v[0], v[1]) + 5;
+      const b = (hero as unknown as { b: { vx: number; vy: number; heading: number } }).b;
+      b.vx = back.tan[0] * sp;
+      b.vy = back.tan[1] * sp;
+      b.heading = Math.atan2(back.tan[1], back.tan[0]);
+      this.rivals.push({ hero, st: canyonState(), lane, t: 0, hitT: 0 });
+    }
+    const keep: typeof this.rivals = [];
+    for (const r of this.rivals) {
+      r.t += dt;
+      r.hitT -= dt;
+      const q = r.hero.position();
+      const h = ROUTE.nearest([q[0], q[1]], r.st.hint, 8);
+      const push: V2 = [h.nrm[0] * r.lane, h.nrm[1] * r.lane];
+      const vel: V2 = [Math.cos(r.hero.heading()) * r.hero.speed(), Math.sin(r.hero.heading()) * r.hero.speed()];
+      const dir = canyonStick(ROUTE, [q[0], q[1]], vel, push, r.st, dt, { ...CANYON, cruise: CANYON.vMax }, true, BOULDERS);
+      r.hero.update(dt, { move: dir, input: { ...NO_INPUT, dir } });
+      // (a rider's touch knocks the hero)
+      if (r.hitT <= 0 && Math.hypot(q[0] - p[0], q[1] - p[1]) < 1.3 && Math.abs(q[2] - p[2]) < 1.5) {
+        r.hitT = 1;
+        this.session.hero.take(1, [q[0], q[1]]);
+      }
+      const ahead = h.s - here.s;
+      if (r.t < 14 && ahead < 30 && ahead > -20 && h.area === 'canyon') keep.push(r);
+    }
+    this.rivals = keep;
+  }
+
+  private clearRivals(): void {
+    this.rivals = [];
   }
 
   private clearRiders(): void {
@@ -415,6 +521,7 @@ export class HeroCourse {
 
   shift(dx: number, dy: number, dz: number): void {
     this.session.shift(dx, dy, dz);
+    for (const r of this.rivals) r.hero.shift(dx, dy, dz);
   }
 
   get stats() {
@@ -425,6 +532,8 @@ export class HeroCourse {
     window.removeEventListener('pointerdown', this.onTouch);
     window.removeEventListener('keydown', this.onTouch);
     this.clearRiders();
+    this.clearRivals();
+    this.bikeRun(false);
     this.under?.dispose();
     this.session.rig.setPresent(null);
     for (const p of this.pickers.values()) p.dispose();

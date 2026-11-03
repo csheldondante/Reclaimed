@@ -14,6 +14,11 @@ export class ModeCamera implements CameraMode {
   private out: PresentMode[] = [];
   /** cells over the hero's floor the near side is cut down to (side views); null: none */
   cut: number | null = null;
+  /** the hero this share of the screen's height below its middle — the view's centre moved ahead of it, away from the
+   *  eye along the ground — so what's ahead (the canyon run) or behind (the side views) fills the screen; 0: centred */
+  low = 0;
+  /** the view centred on the hero (then `low`), not on the chase's lead ahead of it */
+  anchor = false;
 
   /** the view on now (its own transition eases it in; the one before eases out over its own) */
   set(profile: PresentationProfile, instant = false): void {
@@ -56,9 +61,17 @@ export class ModeCamera implements CameraMode {
     // (the side views: the hero low on the screen — under the floor's line is only the cut's dark section — the land
     // behind it filling the rest: the view's centre moved away from the eye along the ground, a tenth of the screen up.
     // Along the ground, not up: the chase eases the target's height from frame to frame, so a lift there piled up)
-    if (this.cut !== null && this.now) {
+    // (the canyon run: the view on the hero itself, the chase's lead along the velocity dropped — in a hairpin the
+    // velocity runs across the screen and the lead put the bike at its edge; the way ahead comes from `low` instead)
+    if (this.anchor && this.now) {
       const v = frame.view;
-      const d = ((0.1 * v.h) / Math.max(v.zoom, 1) / Math.max(Math.sin(v.elevation), 0.1)) * this.now.w;
+      v.target[0] += (ctx.pose.at[0] - v.target[0]) * this.now.w;
+      v.target[1] += (ctx.pose.at[1] - v.target[1]) * this.now.w;
+    }
+    const low = this.low;
+    if (low > 0 && this.now) {
+      const v = frame.view;
+      const d = ((low * v.h) / Math.max(v.zoom, 1) / Math.max(Math.sin(v.elevation), 0.1)) * this.now.w;
       v.target[0] -= Math.cos(v.azimuth) * d;
       v.target[1] -= Math.sin(v.azimuth) * d;
     }

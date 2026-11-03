@@ -392,7 +392,9 @@ export function stepBike(b: Bike, stick: [number, number], dt: number, heightAt:
     const k = Math.exp(-t.bump * rise);
     b.vx *= k;
     b.vy *= k;
-    if (moved > 0 && rise / moved > t.launchSlope) {
+    // ((round 128b) riding a wall it follows the surface: the rise of a flank climbed across isn't a ramp's lip — on the
+    // canyon run's flanks it threw the bike up and over the rim)
+    if (moved > 0 && rise / moved > t.launchSlope && !walling) {
       b.ramp += rise;
       const cap = Math.min(t.launchMax, Math.sqrt(2 * t.gravity * b.ramp * t.launchHeight));
       b.vz = Math.max(b.vz, Math.min(cap, (rise / dt) * t.launch - t.launchSoak));

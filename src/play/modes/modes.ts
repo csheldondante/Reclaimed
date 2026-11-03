@@ -3,7 +3,8 @@
 // stick means in each. Pure: Node tests (modes.test.ts) step the switch and the controls.
 //
 //   open    today's chase, the pull-out and the lead made stronger (experiment 1)
-//   canyon  behind the bike, the canyon steering, free sideways (experiment 2)
+//   canyon  close behind the bike, the canyon steering it round; the stick across rides it up a wall (experiment 2;
+//           the bike's run: canyon.ts)
 //   woods   side-on, a 2D plane through the trees (experiment 3)
 //   climb   near-profile, facing the cliff (experiment 4)
 //   under   the chase, drawn in under the canopy, the stumps cut and faded (experiment 5: the forest's other option)
@@ -45,10 +46,15 @@ export const MODES: Record<ModeId, PlayMode> = {
     id: 'canyon',
     name: 'Canyon run',
     icon: '🏜',
-    // (close in behind, tilted up so the canyon runs up the screen; out a third with speed; the lead up the screen)
-    view: view('canyon', { zoom: 26, elevation: 38, lookAhead: 0.45, speedOut: 0.3 }, 1),
+    // (round 128b, the user: "zoomed in so far the canyon walls were only in the background and the camera followed as
+    // the bike auto steers around". Close: ~8 cells across a phone, the floor filling the screen and the walls at its
+    // edges and rising out of it; behind the way ahead (the facing), the bike low (HeroCourse: ModeCamera.low), a
+    // little out with speed. Was zoom 26 (~16 cells across: the walls filled the frame) with a 0.45 s lead)
+    // (the cut: the rock between the eye and the bike sliced off 3 cells over its floor — in a hairpin the eye looks
+    // across the rock it turns round, and at this zoom the rock was the whole screen)
+    view: view('canyon', { zoom: 50, elevation: 45, lookAhead: 0, speedOut: 0.12 }, 1, 3),
     facing: 'behind',
-    cut: null,
+    cut: 3,
     controls: 'lane',
     assists: { autoRun: true, speed: 0.55, laneHalf: 3.2 },
     entry: { autoSeconds: 1.5 },

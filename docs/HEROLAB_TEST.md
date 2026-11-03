@@ -13,8 +13,9 @@ moment you touch the screen.
 
 1. **Open ride** (bike, hills). The camera pulls out as you speed up and looks ahead of you. Try **lead**: centred,
    ahead, far ahead. Is it far enough?
-2. **Canyon run** (bike). The camera is behind you and the canyon steers. Slide left and right past the rocks and
-   the riders coming up behind. Try **pace** and **auto-run**. Is it fun?
+2. **Canyon run** (bike). Close in behind the bike: the floor fills the screen and the walls stand at its edges. The
+   canyon steers you round every bend. Push left or right to ride up that wall; let go to come back down. Riders come
+   up from behind, rocks come down the screen. Try **pace** and **auto-run**. Is it fun?
 3. **Woods run** (knight). Side-on through the woods. Push along the path to run, the other way to go back. Does it
    feel good? (No parallax yet: the layers move together.)
 4. **Cliff** (lich). Side-on to the cliff with the cave mouth. Can you read how high you are?

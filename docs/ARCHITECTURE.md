@@ -3589,17 +3589,25 @@ screens and the GM's situation file.
 - **play/modes/modes.ts** (pure): `MODES` (open, canyon, woods, climb, under), `ModeSwitcher` (the game's pick by
   area, the brief auto, the hand-back on a touch, a forced mode from the settings), `modeStick` (the stick through
   the controls, given the route at the hero: tangent, normal, offset), `facingAzimuth`.
+- **play/modes/canyon.ts** (pure, round 128b): the bike's canyon run — `canyonStick(route, p, vel, stick, state, dt)`:
+  pure pursuit of a point ahead on the route moved across by the wanted offset (its error counted `lateral` times),
+  the speed cut to √(grip · r) of the tightest bend ahead, the player's sideways push = the offset (full: up that
+  wall), let go: the bobsled's line up the outside of a bend, round boulders ahead (`dodgeOffset`). Node: canyon.test.ts
+  rides the course's canyon on the physical drive with wall riding over the ground as the game reads it (per cell).
 - **play/modes/blend.ts** `ModeCamera`: the rig's `present` mode (CameraRig.setPresent) — a PresentMode for the mode
   on, the previous ones easing out; writes the side views' slice (2 cells in front of the hero toward the eye) and
-  moves the view's centre away from the eye so the hero sits low. Session: `applyFrame` owns the cut while `present`
+  moves the view's centre away from the eye so the hero sits `low` (a share of the screen); `anchor` centres it on the
+  hero first, dropping the chase's lead (the canyon run). Session: `applyFrame` owns the cut while `present`
   is on.
 - **play/course/course.ts** (pure): the route (a closed polyline: nearest point with s, tangent, normal, offset and
   area; `pointAt`, `span`), the areas, `courseColumn` (each column shaped by its nearest stretch of road), boulders,
   the cave. levels/herocourse.ts builds the map from it (water standing in the river and the lake).
 - **play/course/herocourse.ts** `HeroCourse`: a PlaySession, the switcher, the ModeCamera, the autopilot round the
-  route, the understory's driver (forest/driver.ts) while `under` or `woods` is on, the canyon's riders (Units), the
-  bar and the drawer (VariantPicker chips mirrored to the address). It talks to the session only through `steer`,
-  `rig.setPresent`, `zoomScale` and `respawn`.
+  route, the understory's driver (forest/driver.ts) while `under` or `woods` is on, the canyon's riders (Units; for
+  the bike, rival BikeHeroes on the run's line, drawn through `extraParts`), the bar and the drawer (VariantPicker
+  chips mirrored to the address). It talks to the session only through `steer`, `velocity`, `extraParts`,
+  `rig.setPresent`, `zoomScale` and `respawn`; in the canyon run it puts the bike's params on the physical drive with
+  wall riding (`drive` 1, `wallRide` 1, `wallMin` 7) and restores them when the run ends.
 
 ## Region presentation profiles (round 124, branch `presentation`; BACKLOG PRE1-PRE8, docs/design/REGION_PRESENTATION.md)
 

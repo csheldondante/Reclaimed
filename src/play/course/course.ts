@@ -39,6 +39,17 @@ export const AREAS: CourseArea[] = [
 
 // ---- the route ----------------------------------------------------------------------------------------------------
 
+/** a switchback's half circle (radius 10) round `c`: in along its bottom, out along its top, on the `side` of `c` */
+function hairpin(c: V2, side: 'east' | 'west'): { at: V2; area: AreaId }[] {
+  const out: { at: V2; area: AreaId }[] = [];
+  const k = side === 'east' ? 1 : -1;
+  for (const deg of [-90, -45, 0, 45, 90]) {
+    const a = (deg * Math.PI) / 180;
+    out.push({ at: [c[0] + k * 10 * Math.cos(a), c[1] + 10 * Math.sin(a)], area: 'canyon' });
+  }
+  return out;
+}
+
 /** the route's control points: each starts a stretch of its area (the loop closes back to the first) */
 const CONTROL: { at: V2; area: AreaId }[] = [
   // the hills, east along the bottom
@@ -50,16 +61,17 @@ const CONTROL: { at: V2; area: AreaId }[] = [
   { at: [140, 32], area: 'forest' },
   { at: [170, 20], area: 'forest' },
   { at: [205, 24], area: 'forest' },
-  // the canyon: up the east side in four switchbacks
-  { at: [236, 28], area: 'canyon' },
-  { at: [240, 44], area: 'canyon' },
-  { at: [186, 46], area: 'canyon' },
-  { at: [184, 64], area: 'canyon' },
-  { at: [238, 66], area: 'canyon' },
-  { at: [240, 84], area: 'canyon' },
-  { at: [186, 86], area: 'canyon' },
-  { at: [184, 104], area: 'canyon' },
-  { at: [238, 106], area: 'canyon' },
+  // the canyon: up the east side in four switchbacks. (round 128b, the canyon run: each hairpin a half circle of
+  // radius 10 round the rock it turns on, not two corners — the corners rounded to a radius of 5, tighter than the
+  // bike turns at any speed worth riding, and the bike met the hairpin's inside rock)
+  { at: [224, 25], area: 'canyon' },
+  ...hairpin([232, 35], 'east'),
+  ...hairpin([192, 55], 'west'),
+  ...hairpin([232, 75], 'east'),
+  ...hairpin([192, 95], 'west'),
+  { at: [230, 105], area: 'canyon' },
+  { at: [237, 108], area: 'canyon' },
+  { at: [240, 115], area: 'canyon' },
   { at: [240, 140], area: 'canyon' },
   // the cliff: west along the top, the massif on the inside (south), its face toward the road
   { at: [236, 192], area: 'cliff' },
@@ -244,7 +256,7 @@ export interface CourseColumn extends LabColumn {
 /** the canyon's floor climbs this many cells from its start to its end (the switchbacks) */
 const CANYON_RISE = 14;
 /** the walls' height over the floor (the plateau between the switchbacks; taller hid the forest and the road from the iso eye) */
-const CANYON_WALL = 12;
+const CANYON_WALL = 14;
 const CANYON_HALF = 4.2;
 /** the lake's and the river's water level */
 const WATER = G - 0.6;
@@ -254,7 +266,12 @@ export const BOULDERS: V2[] = (() => {
   const [s0, s1] = ROUTE.span('canyon');
   const out: V2[] = [];
   let k = 0;
-  for (let s = s0 + 20; s < s1 - 10; s += 18, k++) {
+  for (let s = s0 + 20; s < s1 - 10; s += 18) {
+    // (on the straights only: one in a hairpin was met blind, mid-turn, on the line the bend forces)
+    const a = ROUTE.pointAt(s - 8).tan;
+    const c = ROUTE.pointAt(s + 8).tan;
+    if (a[0] * c[0] + a[1] * c[1] < 0.97) continue;
+    k++;
     const p = ROUTE.pointAt(s);
     const side = k % 2 ? 2 : -2;
     out.push([p.at[0] - p.tan[1] * side, p.at[1] + p.tan[0] * side]);
@@ -283,7 +300,9 @@ function hillsColumn(x: number, y: number, h: RouteHit): CourseColumn {
 }
 
 function forestColumn(x: number, y: number, h: RouteHit): CourseColumn {
-  const top = G + noise(x / 12, y / 12) * 2.5;
+  // (eased to the land's height at the stretch's end, so the road meets the canyon's floor level)
+  const [, e1] = ROUTE.span('forest');
+  const top = G + noise(x / 12, y / 12) * 2.5 * (1 - ramp(e1 - 16, e1, h.s));
   // (the first half: old woods all round the road, kept to shrubs on the road itself — under the trees. The second half
   // is laid out for a side view from the loop's inside: grass on the road and the near side, the old woods from 4 cells
   // behind the road (the backdrop) — a tall tree on the near side would stand in front of the hero)
@@ -298,7 +317,9 @@ function forestColumn(x: number, y: number, h: RouteHit): CourseColumn {
 function canyonColumn(x: number, y: number, h: RouteHit): CourseColumn {
   if (BOULDERS.some((b) => Math.hypot(x - b[0], y - b[1]) < 1.4)) {
     const [s0, s1] = ROUTE.span('canyon');
-    return { top: G + CANYON_RISE * Math.sin(Math.PI * clamp((h.s - s0) / (s1 - s0), 0, 1)) + 3, skin: MAT.Stone };
+    // (7 over the floor, sheer: too steep to ride even wall riding (core/bike.ts wallClimb: 8 rise over run) — at 3
+    // the wall-riding bike rode over them as bumps)
+    return { top: G + CANYON_RISE * Math.sin(Math.PI * clamp((h.s - s0) / (s1 - s0), 0, 1)) + 7, skin: MAT.Stone };
   }
   const [s0, s1] = ROUTE.span('canyon');
   const u = clamp((h.s - s0) / (s1 - s0), 0, 1);
@@ -310,8 +331,10 @@ function canyonColumn(x: number, y: number, h: RouteHit): CourseColumn {
   // inside as plateau stood between the iso eye and the forest)
   if (h.d > 20) return { top: G + noise(x / 9, y / 9) * 0.8, skin: MAT.Soil, veg: 1.4 };
   const w = h.d - half;
-  // (sheer from the floor: 4 cells at the foot then steeper — the lab's 45° foot let the bike ride up out of the run)
-  const top = Math.min(floor + CANYON_WALL, floor + 4 + 2 * w + 0.5 * w * w) + (noise(x / 8, y / 8) - 0.5) * 2 * Math.min(1, w / 3);
+  // (round 128b, the canyon run: a U for wall riding — 30° at the foot, steepening toward the rim (0.6 + 0.5 w rise
+  // over run: 63° three cells out, 72° at six), the herolab canyon's tapered profile (PL43, TER20); the bike rides the
+  // flank at speed, banked with it. Was sheer from the floor, a 4-cell step the bike crashed into)
+  const top = Math.min(floor + CANYON_WALL, floor + 0.6 * w + 0.25 * w * w) + (noise(x / 8, y / 8) - 0.5) * 1.5 * ramp(2, 5, w);
   return { top: Math.max(G, top - Math.max(0, h.d - 14) * 3), skin: MAT.Sandstone };
 }
 

@@ -17321,3 +17321,53 @@ liked), resolved as the treegen merge was but without anything only treegen brou
 leaf cards, grass, shrubs, plant states, TREE_SCALE, the editor, sprites), then the play modes cherry-picked with the
 trees chips and `?treescale=3` dropped. treegen's fire/sleep fix (7b48ebb: a fire keeps its chunks awake) is not
 carried; main asks the user about it separately. The old head is tag `playmodes-treegen-5db2146`.
+
+## 2026-11-03 — round 128b, `pm-notreegen`: the canyon run as the user meant it (BACKLOG PM-10)
+
+The user: "I was imagining zoomed in so far the canyon walls were only in the background and the camera followed as
+the bike auto steers around which this is not at all", and "Did you ever build the version of the bike that banks
+along the inside of the cliff?" (herolab had it, PL43, on the physical drive; the course never used it).
+
+**What was wrong, measured** (Node, src/play/modes/canyon.test.ts's ride before the change: the course's canyon, the
+old lane controls and the bike's own drive): 12 crashes in one pass, the first 8 cells in (the sheer 4-cell step at
+each wall's foot, met at speed in the corners); with the walls tapered and the old lane, 2. The view was zoom 26 (~16
+cells across a phone): the walls filled the frame. The riders were raiders on foot (3.1 cells/s): they never came up
+the screen. The hairpins were two corners rounded by Chaikin to a radius of 5: tighter than the bike turns at any speed
+worth riding, and a line on their inside met the rock.
+
+**What changed.**
+- **The view** (modes.ts canyon): zoom 50 (~8 cells across: the floor fills the screen, the walls at its edges and
+  rising out of it), pitch 45, the eye behind the route's way ahead (the facing, as before), out 12 % with speed. The
+  chase's own lead dropped (`ModeCamera.anchor`: in a hairpin the velocity runs across the screen and the lead put the
+  bike at the edge); the bike 18 % of the screen below the middle (`low`), so ~20 cells ahead are on screen and ~8
+  behind. The near rock cut 3 cells over the floor (the mode's `cut`): in a hairpin the eye looks across the rock it
+  turns round, and at this zoom it was the whole screen.
+- **The steering** (play/modes/canyon.ts `canyonStick`, pure): pure pursuit of a point 3 cells + 0.3 s ahead on the
+  route, moved across by the wanted offset (its error counted twice: the pursuit alone asked a few degrees toward a
+  wall, less than the flank's pull back down); the speed the cruise (21 cells/s) cut to √(34 · r) of the tightest bend
+  in the next second (× 1.3 grip on the bobsled's line); the player's sideways push is the offset (full: 6.2 cells
+  out, up that wall); let go, the bobsled's line out toward the outside wall of a bend and round boulders ahead
+  (`dodgeOffset`); never far onto a tight bend's inside. The course gives it the bike when the run is on: the physical
+  drive with wall riding (`drive` 1, `wallRide` 1, `wallMin` 7 — at the lab's 12 the run's bends kept it under the
+  threshold, and the flank turned into a barricade), restored after.
+- **The land** (course.ts): the walls a U (0.6 w + 0.25 w², 30° at the foot, 72° six cells out, cap 14), not sheer;
+  the hairpins half circles of radius 10; the forest eased to the land's height at its end (the road met the canyon
+  in a 2-cell step once the canyon started earlier); boulders on the straights only, 7 high (at 3 the wall-riding bike,
+  which climbs faces to 8 rise over run, rode over them).
+- **The bike** (core/bike.ts): riding a wall, the rise of a flank crossed isn't a ramp's lip (no launch): on the run's
+  flanks it threw the bike over the rim (16 cells over the road in the headless run).
+- **The riders**: for the bike, rival bikes (BikeHeroes on their own drive, top 32) on the run's line in a lane each,
+  from 9 cells behind (just under the screen's bottom edge) at the hero's speed + 5: they come up the screen and pass;
+  a touch knocks the hero.
+
+**Measured.** Node (canyon.test.ts, the ground per cell as the game reads it): the run let alone, 0 crashes, the
+canyon in 24-27 s, 1.3-2.4 cells up the outside walls; pushed on a straight, 2-5 cells up the flank, banked 0.5 rad,
+back on the floor 2.5 s after letting go; a player weaving full or 0.6 left/right every 0.8-3.4 s: 0 crashes (before
+the boulders went to 7 high). Headless at 412x915 (scripts/canyonrun.mjs, ▶ on, a push held 1.3 s on the third run;
+shots88/playmodes2/canyon-*): 0 crashes, mean 16 cells/s, up to 2.3-3.8 cells over the road, banked up to 0.6-0.9 rad,
+riders on screen most of the pass.
+
+**Honest read.** The frame is what the user described: the bike and the floor, the walls at the edges, the view
+turning with the road, the bike carried round every bend and out of the exit. The wall riding reads weakly: the bike
+goes 1-3 cells up the flank, mostly in the hairpins (PM-11). The cut's dark section shows at the screen's bottom in
+the bends (PM-12). The riders pass but don't fight (PM-13).

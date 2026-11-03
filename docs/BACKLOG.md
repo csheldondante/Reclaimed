@@ -52,9 +52,9 @@ Branch `playmodes`: herolab + places + presentation + treegen; the PlayMode cont
 |---|---|---|---|
 | PM-1 | PlayMode: a presentation profile + facing + cut + controls + assists + entry; the game picks by area, a brief auto hands back on a touch; the camera pulls out with speed and leads (every mode) | M | done (playmodes), the user to try |
 | PM-2 | The hero course `?level=herocourse`: hills, forest, canyon switchbacks, cliff + cave, river + lake, ruins with steel, town in one loop; heroes one tap away; the settings drawer as chips in the address; go to any area | M | done (playmodes), the user to try |
-| PM-3 | Experiments: open ride (lead chips), canyon run (behind, lane, riders up the screen, boulders down it), woods run (side-on, profile controls), cliff (near-profile), under the trees (understory, zoom chips) | M | first pass (playmodes), the user to judge |
+| PM-3 | Experiments: open ride (lead chips), canyon run (round 128b second pass, PM-10), canyon run first pass (behind, lane, riders up the screen, boulders down it), woods run (side-on, profile controls), cliff (near-profile), under the trees (understory, zoom chips) | M | first pass (playmodes), the user to judge |
 | PM-4 | The woods run has no parallax (orthographic view): try the perspective (fly) camera for side views | M | open |
-| PM-5 | The canyon run: the autopilot still crashes at the exit and some hairpins; riders rarely catch a bike that runs on (spawn ahead, coming down the screen, or a slower auto speed) | S | open |
+| PM-5 | The canyon run: the autopilot still crashes at the exit and some hairpins; riders rarely catch a bike that runs on (spawn ahead, coming down the screen, or a slower auto speed) | S | done (pm-notreegen, PM-10): the run's line carries it round (0 crashes, Node and headless), hairpins half circles, riders are bikes |
 | PM-6 | Side views: the cut's dark section fills the screen under the floor line; a lighter section colour or the dithered cut there (CAM10) | S | open |
 | PM-7 | After the treegen merge the tour's auto camera barely closes in in the woods (tour.test.ts fails: trees x2, a quarter as many) | S | open: still fails rebuilt without treegen (0.23 vs > 0.31) — it comes with `forest`'s spacing (FLO31), passes on 08d0894 |
 | PM-8 | Abilities in the drawer (the brief's list): not built; the heroes' own buttons only | S | open |
@@ -1790,3 +1790,16 @@ Order decided: C4, C3, C5 → C2 → C1 (with A6/A15 sediment) → C6 → C7 →
 | SL27 | The rock mesh's room: a rock body with no slot was drawn with the body mesh (a fallback) and the slots were a cap (72 blocks, 18 one-chunk slots, 40 draws). Now the copy is packed in 4-cell squares (regions share mesh chunks), its storage and its draws grow on demand to what one binding of the device holds, resting rock gives its slot back at once when room's needed (it was kept for its afterglow, so every resting rock went), and a copy full of moving rock throws. test/gpu/rockmesh-room.test.ts | M | done (this commit) |
 | SL26 | The node solver on phone GPUs: 25–45 ms of the Pixel 9a's Mali while bodies move (1–5 on the desktop); nodes × sections p99 443 ms (the judge's verdict and the column readback stalled behind it) — the rework waits for the user's call | L | open (the user decides) |
 | SL20 | A tanker truck dropped 2 cells on the node solver changes its rest shape by ~2 cells (test/gpu/solver.test.ts logs): its bend at landing is too soft — check the load walk's blow clamp and the cab–tank joint | M | open |
+
+## Round 128b (2026-11-03, `pm-notreegen`) — the canyon run as the user meant it (DECISIONS round 128b)
+
+The user: "Did you ever build the version of the bike that banks along the inside of the cliff? ... I was imagining
+zoomed in so far the canyon walls were only in the background and the camera followed as the bike auto steers around".
+
+| id | item | size | status |
+|---|---|---|---|
+| PM-10 | The canyon run, second pass: close (zoom 50, ~8 cells across), behind the way ahead, the bike low on the screen, the near rock cut in the hairpins; the run's line (play/modes/canyon.ts) carries the bike round; the stick across rides it up a wall (the physical drive with wall riding, PL43); tapered U walls; half-circle hairpins; boulders 7 high on the straights; riders are bikes coming up from behind | M | first pass (pm-notreegen), the user to judge |
+| PM-11 | Wall riding on the run reads weakly: the bike rides 1-3 cells up the flank, banked 25-40°, mostly in the hairpins and when pushed; the drive's grip holds it to the stick's line, so the wall's v²/r carries little. Stronger: a wall-riding stick (want velocity along the flank) or the drive's grip on the wall from the load | M | open |
+| PM-12 | The cut's dark section (CAM10, PM-6) shows at the bottom of the canyon run's screen in the bends | S | open |
+| PM-13 | The riders don't fight: a touch knocks the hero (1 damage); no ramming, no shots, no score for passing | S | open |
+| PM-14 | A player pushing straight into a boulder crashes again and again: the run dodges only when the stick is let go (or nearly stopped) | S | open (by design for now: the player's line is the player's) |
