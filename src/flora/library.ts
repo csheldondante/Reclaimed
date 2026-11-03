@@ -10,7 +10,7 @@ import { generate } from './generate';
 import { hashSeed } from './rng';
 import { SPECIES, type RGB, type SpeciesDef, type SpeciesId } from './species';
 import type { FloraMesh } from './mesh';
-import { SPR_CELL, SPR_COLS, SPR_YAWS, spriteBounds, spriteKindMesh, type Flod } from './sprites';
+import { SPR_CELL, SPR_COLS, SPR_YAWS, spriteBounds, spriteKindMesh, sprLevels, type Flod } from './sprites';
 
 export interface LibraryKind {
   name: string;
@@ -115,8 +115,10 @@ const FLORA_EPI = array<vec4<f32>, ${epi.length}>(${epi.join(', ')});`;
 
 /** (round 128) the sprite constants (meshinst.wgsl's draw, florasprite.wgsl's bake) */
 function spriteConsts(n: number, a: string[], b: string[]): string {
-  return `const FLORA_SPR_YAWS: u32 = ${SPR_YAWS}u;
+  return `const FLORA_SPRITES: bool = ${a.some((x) => !x.startsWith('vec4<f32>(-1.0'))};
+const FLORA_SPR_YAWS: u32 = ${SPR_YAWS}u;
 const FLORA_SPR_CELL: u32 = ${SPR_CELL}u;
+const FLORA_SPR_LEVELS: u32 = ${sprLevels(SPR_CELL)}u;
 const FLORA_SPR_COLS: u32 = ${SPR_COLS}u;
 const FLORA_SPR = array<vec4<f32>, ${n}>(${a.join(', ')});
 const FLORA_SPR2 = array<vec4<f32>, ${n}>(${b.join(', ')});`;
@@ -143,7 +145,12 @@ export class FloraLibrary {
 
   /** (round 128) the trees' far level as baked sprites (?flod=sprite; flora/sprites.ts): each sprite kind, the kind
    *  baked into it (the same variant's full mesh), its index in the atlas (× SPR_YAWS cells) and its bounds */
-  readonly sprites: { kind: number; src: number; idx: number; b: ReturnType<typeof spriteBounds> }[] = [];
+  readonly sprites: { kind: number; src: number; idx: number; b: ReturnType<typeof spriteBounds>; bake: FloraMesh }[] = [];
+
+  /** (round 128) what the sprites are baked from (render/florasprites.ts): each its look's row, bake mesh and bounds */
+  spriteSources(): { kind: number; mesh: FloraMesh; b: ReturnType<typeof spriteBounds> }[] {
+    return this.sprites.map((s) => ({ kind: s.src, mesh: s.bake, b: s.b }));
+  }
 
   /** `px`: render pixels a cell the plants are made for (generate's; absent: full detail); `flod` the far level */
   constructor(readonly spec: LibrarySpec = GAME_LIBRARY, readonly px?: number, readonly flod: Flod = 'mesh') {
@@ -160,8 +167,9 @@ export class FloraLibrary {
           // (round 128, ?flod=sprite: a tree's far level is its sprite — a quad, the far mesh kept for the shadow pass)
           if (flod === 'sprite' && lod === 2 && SPECIES[id].form === 'tree') {
             const src = lr[0].first + v;
-            const m0 = this.kinds[src].mesh;
-            this.sprites.push({ kind: this.kinds.length, src, idx: this.sprites.length, b: spriteBounds(m0.height, m0.radius) });
+            // (the bake's source: the bake-only mesh — every twig, 16-sided stems, the lobes cut twice — its bounds the quad's)
+            const bake = generate(id, hashSeed(spec.seed, v, id.charCodeAt(0), id.length), { lod: 'bake' });
+            this.sprites.push({ kind: this.kinds.length, src, idx: this.sprites.length, b: spriteBounds(bake.height, bake.radius), bake });
             mesh = spriteKindMesh(mesh);
           }
           this.kinds.push({ name: `${id}-${v}${lod ? `-l${lod}` : ''}`, species: id, variant: v, lod, mesh, verts: mesh.verts, uv: mesh.uv, index: mesh.index });

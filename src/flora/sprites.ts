@@ -30,7 +30,17 @@ export const FLOD: Flod = flodMode(typeof location !== 'undefined' ? new URLSear
 /** yaw steps baked a kind (the tree turned in N steps; the camera's turn picks the nearest two and dissolves between) */
 export const SPR_YAWS = Number((typeof location !== 'undefined' && new URLSearchParams(location.search).get('fyaws')) || 8);
 /** a cell's side (texels): the far level is a tree under ~55 render px tall, so 64 is about a texel a pixel */
-export const SPR_CELL = 64;
+export const SPR_CELL = sprCell(typeof location !== 'undefined' ? new URLSearchParams(location.search).get('fcell') : null);
+/** `?fcell=` a cell's side: 64, 128 (the default) or 256 texels; anything else throws */
+export function sprCell(q: string | null): number {
+  if (q === null) return 128;
+  if (q !== '64' && q !== '128' && q !== '256') throw new Error(`?fcell=${q}: 64, 128 or 256`);
+  return Number(q);
+}
+/** the mip levels of a cell `cell` texels across: down to 1 */
+export function sprLevels(cell: number): number {
+  return Math.round(Math.log2(cell)) + 1;
+}
 /** cells across the atlas */
 export const SPR_COLS = 16;
 /** the iso pitch (render/camera.ts ELEVATION): the bake's and the draw's */

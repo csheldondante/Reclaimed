@@ -16659,3 +16659,23 @@ have way more verts or else Phong normal shading so it looks smooth and not poly
   the elder 16000, close-ups twice): the next question for the phone bench.
 Renders: crown-styles-v2.png (cards / lobes / lobe-cards / hybrid), hybrid-vs-layers.png, trunk-close-elder.png,
 trunk-close-oak.png.
+
+### Sprites at a higher resolution with mips, from a bake-only mesh (round 128, the user)
+
+The user: "is there any way we can rende them higher poly and in more detail with better textures for the sprites? One
+render at higher resolution plus mips and they remain more readable and we get our LOD for free right?"
+- The bake's source is a bake-only mesh from the same parameters (generate's lod 'bake': 16-sided stems, every twig,
+  the lobes cut twice — baked once a sprite, never drawn); the library makes it with the sprite (its bounds the quad's).
+- Cells of 128² by default (?fcell=64|128|256) with a full mip chain made by our own downsample
+  (shaders/florasprite_mip.wgsl): a coverage-keeping alpha (a quarter of the children covered keeps a texel: leaf cards
+  and twigs don't thin away), the colour of the covered children, normals averaged and renormalised, the nearest depth
+  (an average would shrink and float the silhouette), the most covered child's material.
+- The draw picks the level by the sprite's size on screen (its texels a pixel ≈ 1): the sprite's LOD.
+- The ladder with ?flod=sprite: close-up mesh (over 420 px tall) → full mesh (over 150) → the sprite with its mips (the
+  coarse mesh and the far mesh are gone: the mips are their levels) → the tiles' painted crowns past the window (next:
+  sprites there too). Why the full mesh stays: wind, the canopy's cut under it, parallax close by.
+- Memory (8 yaws × 11 tree kinds, one season resident — the bake is per season step): 64² 3.4 MB, 128² 13.6 MB,
+  256² 54 MB (two rgba8 textures with mips + the bake's depth). 256 is too much for the phone; 128 the default, the phone
+  bench to decide (64 vs 128 vs 256).
+- Lobe definition (main): the layered crown's lobes stand apart (`separate`), the cards darker where they come near
+  another lobe's surface (the crevices), the outer shell's tops a little brighter (the occlusion past 1 brightens).

@@ -276,6 +276,8 @@ fn floraLook(k: u32, part: u32, wpos: vec3<f32>, n: vec3<f32>, h: f32, rnd: f32,
       c = mix(cool, warm, smoothstep(0.15, 0.95, t));
       // (the occlusion — a crevice, a deeper shell — darker and cooler: the depth the user saw in those crowns)
       c = mix(c * vec3<f32>(0.62, 0.72, 0.86) * 0.55, c, smoothstep(0.1, 1.0, uv.y));
+      // (a lobe's lit rim and top: the occlusion past 1 brightens, warm)
+      c *= 1.0 + max(0.0, uv.y - 1.0) * vec3<f32>(1.2, 1.1, 0.8);
       c *= 0.93 + 0.14 * vnoise(wpos.xy * 0.45 + vec2<f32>(wpos.z * 0.3, 0.0));
     }
     if (uv.y > 0.0 && fw < 0.35) {

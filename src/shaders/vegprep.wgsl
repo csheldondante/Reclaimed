@@ -196,7 +196,8 @@ fn treeInstance(c: vec2<u32>, top: f32, pl: VegPlan) {
     // coarse tree (no twigs, merged leaves, ~120-550 triangles) from 55, below that the far tree (~20-30 triangles).
     // On the phone's low tier at zoom 14 a birch is ~90 px: the coarse one)
     let hpx = (pl.trunk + pl.crown) * PC.viewport.z * FLORA_RPX;
-    let lod = select(select(2u, 1u, hpx >= 55.0), 0u, hpx >= 150.0);
+    // (round 128, ?flod=sprite: the ladder close → full → sprite — the sprite's mips are its levels; the coarse mesh goes)
+    let lod = select(select(select(2u, 1u, hpx >= 55.0), 2u, FLORA_SPRITES), 0u, hpx >= 150.0);
     var r = array<vec2<u32>, 3>(FL_OAK, FL_OAK_L1, FL_OAK_L2)[lod];
     if (pl.species == 1u) { r = array<vec2<u32>, 3>(FL_PINE, FL_PINE_L1, FL_PINE_L2)[lod]; }
     if (pl.species == 2u) { r = array<vec2<u32>, 3>(FL_BIRCH, FL_BIRCH_L1, FL_BIRCH_L2)[lod]; }

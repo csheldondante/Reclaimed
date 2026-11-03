@@ -6,10 +6,10 @@ import fs from 'node:fs';
 import { PNG } from 'pngjs';
 import { testGpu, type TestGpu } from './dawn';
 import { FloraLibrary } from '../../src/flora/library';
-import { MeshInstances } from '../../src/render/meshinst';
 import { FloraSprites } from '../../src/render/florasprites';
 import { GLOBALS_BYTES } from '../../src/sim/globals';
-import { SPR_CELL, SPR_COLS, SPR_YAWS } from '../../src/flora/sprites';
+import { SPR_COLS, SPR_YAWS } from '../../src/flora/sprites';
+const SPR_CELL = 64;
 
 let g: TestGpu;
 beforeAll(async () => {
@@ -37,7 +37,6 @@ describe('flora sprites bake (Dawn)', () => {
     it(`every cell holds its tree (${name})`, async () => {
       const dev = g.device;
       const lib = new FloraLibrary(undefined, 6, 'sprite');
-      const mi = new MeshInstances(dev, lib.kinds, (label, size, usage) => dev.createBuffer({ label, size, usage }), 16);
       const globals = dev.createBuffer({ size: GLOBALS_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
       const gd = new ArrayBuffer(GLOBALS_BYTES);
       // (the season: Globals.rules.w — sim/globals.ts writes it at float 275, as the viewer page does)
@@ -45,7 +44,7 @@ describe('flora sprites bake (Dawn)', () => {
       dev.queue.writeBuffer(globals, 0, gd);
       const mats = dev.createBuffer({ size: 40 * 80, usage: GPUBufferUsage.UNIFORM });
       const floraWgsl = `const FLORA: bool = true;const FLORA_RPX: f32 = 0.5;\n${lib.wgsl()}`;
-      const spr = new FloraSprites(dev, lib, mi, globals, mats, floraWgsl);
+      const spr = new FloraSprites(dev, lib.spriteSources(), globals, mats, floraWgsl, 64);
       const enc = dev.createCommandEncoder();
       spr.bake(enc, season);
       dev.queue.submit([enc.finish()]);

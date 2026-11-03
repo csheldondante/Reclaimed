@@ -550,7 +550,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
     this.floraWgsl = `const FLORA: bool = ${!!this.flora};\nconst FLORA_RPX: f32 = ${this.floraRpx.toFixed(3)};\n${this.flora ? this.flora.wgsl() : FloraLibrary.stubWgsl()}`;
     // (round 128, ?flod=sprite: the trees' far level baked into an atlas on the GPU — render/florasprites.ts)
     if (this.flora && this.meshInst && this.flora.sprites.length) {
-      this.floraSprites = new FloraSprites(device, this.flora, this.meshInst, world.globals, world.materials, this.floraWgsl);
+      this.floraSprites = new FloraSprites(device, this.flora.spriteSources(), world.globals, world.materials, this.floraWgsl);
       const sk = new Set(this.flora.sprites.map((x) => x.kind));
       this.spriteKinds = this.flora.kinds.map((_, i) => sk.has(i));
       this.meshKinds = this.spriteKinds.map((x) => !x);

@@ -107,6 +107,7 @@ export const PARAMS: Param[] = [
   { key: 'cLeaves', label: 'cards', group: 'crown', min: 2, max: 20, step: 1, crown: true, ...CR('leaves') },
   { key: 'cDroop', label: 'droop', group: 'crown', min: 0, max: 1, step: 0.01, crown: true, ...CR('droop') },
   { key: 'cStyle', label: 'style 0 cards 1 lobes 2 lobe-cards 3 hybrid 4 layers', group: 'crown', min: 0, max: 4, step: 1, crown: true, get: (sp) => ['sprays', 'solid', 'lobecards', 'hybrid', 'layers'].indexOf(sp.crown?.style ?? 'sprays'), set: (sp, v) => { if (sp.crown) sp.crown.style = (['sprays', 'solid', 'lobecards', 'hybrid', 'layers'] as const)[Math.round(v)] ?? 'sprays'; } },
+  { key: 'cSeparate', label: 'lobe separation', group: 'crown', min: 0, max: 1, step: 0.01, crown: true, get: (sp) => sp.crown?.separate ?? 0.25, set: (sp, v) => { if (sp.crown) sp.crown.separate = v; } },
   { key: 'cLayers', label: 'layers', group: 'crown', min: 1, max: 5, step: 1, crown: true, get: (sp) => sp.crown?.layers ?? 3, set: (sp, v) => { if (sp.crown) sp.crown.layers = v; } },
   { key: 'cLayerGap', label: 'layer gap', group: 'crown', min: 0.05, max: 0.35, step: 0.01, crown: true, get: (sp) => sp.crown?.layerGap ?? 0.18, set: (sp, v) => { if (sp.crown) sp.crown.layerGap = v; } },
   { key: 'cDepthDark', label: 'depth dark', group: 'crown', min: 0, max: 1, step: 0.01, crown: true, get: (sp) => sp.crown?.depthDark ?? 0.6, set: (sp, v) => { if (sp.crown) sp.crown.depthDark = v; } },

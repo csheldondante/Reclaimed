@@ -255,13 +255,18 @@ struct SOut {
 @fragment
 fn fsSprite(in: MIOut) -> SOut {
   let cell = u32(select(in.spr.x, in.spr.y, bayer4(in.pos.xy) < in.spr.z));
-  let C = f32(FLORA_SPR_CELL);
+  // (round 128: the mip by the sprite's size on screen — its texels a pixel, the level where that's about one: the
+  // sprite's level of detail)
+  let k = in.info.x;
+  let quadPx = 2.0 * FLORA_SPR[k].y * in.sprS * CAM.viewport.z;
+  let lvl = u32(clamp(floor(log2(max(f32(FLORA_SPR_CELL) / max(quadPx, 1.0), 1.0))), 0.0, f32(FLORA_SPR_LEVELS - 1u)));
+  let C = f32(FLORA_SPR_CELL >> lvl);
   let cx = f32(cell % FLORA_SPR_COLS);
   let cy = f32(cell / FLORA_SPR_COLS);
   let tx = vec2<i32>(i32(cx * C + clamp(in.suv.x, 0.0, 0.999) * C), i32(cy * C + (1.0 - clamp(in.suv.y, 0.001, 1.0)) * C));
-  let alb = textureLoad(sprAlb, tx, 0);
+  let alb = textureLoad(sprAlb, tx, i32(lvl));
   if (alb.a < 0.5) { discard; }
-  let nd = textureLoad(sprNd, tx, 0);
+  let nd = textureLoad(sprNd, tx, i32(lvl));
   let q = nd.xy * 2.0 - 1.0;
   var nl = vec3<f32>(q, 1.0 - abs(q.x) - abs(q.y));
   if (nl.z < 0.0) { nl = vec3<f32>((1.0 - abs(nl.yx)) * select(vec2<f32>(-1.0), vec2<f32>(1.0), nl.xy >= vec2<f32>(0.0)), nl.z); }
@@ -269,7 +274,6 @@ fn fsSprite(in: MIOut) -> SOut {
   let cw = cos(in.spr.w);
   let sw = sin(in.spr.w);
   let n = vec3<f32>(cw * nl.x - sw * nl.y, sw * nl.x + cw * nl.y, nl.z);
-  let k = in.info.x;
   let b2 = FLORA_SPR2[k];
   let along = (b2.x + (1.0 - nd.z) * (b2.y - b2.x)) * in.sprS;
   let wpos = in.wpos + normalize(CAM.eye.xyz) * along;

@@ -382,6 +382,8 @@ export interface CrownLook {
   core?: number;
   /** hybrid: leaf cards a square cell of a lobe's surface */
   shell?: number;
+  /** layers: how far apart the lobes stand (0 as clumped .. 1) */
+  separate?: number;
   /** solid / lobecards: the stems thinner than this (cells) aren't drawn — inside the leaf mass */
   hideBelow?: number;
   /** lobecards: how much a card takes its lobe's normal (0 its own .. 1 the lobe's) */
@@ -614,7 +616,7 @@ interface Lobes {
 }
 
 /** (round 128) the crown's lobes: its leaf sites gathered greedily into clumps `R` apart, each a middle and a reach */
-function crownLobes(sk: Skeleton, minDepth: number, R: number, r01: () => number): Lobes {
+function crownLobes(sk: Skeleton, minDepth: number, R: number, r01: () => number, sep = 0): Lobes {
   const sites = sk.leaves.filter((l) => l.depth >= minDepth);
   const cs: { c: V3; pts: V3[] }[] = [];
   const order = sites.map((_, i) => i).sort(() => r01() - 0.5);
@@ -641,6 +643,16 @@ function crownLobes(sk: Skeleton, minDepth: number, R: number, r01: () => number
     for (const p of cl.pts) ext = Math.max(ext, Math.hypot(p[0] - m[0], p[1] - m[1], p[2] - m[2]));
     return { m, r: ext * 0.8 + R * 0.6 };
   });
+  // (round 128, main: "lobes a bit more separated in the envelope" — `sep` pushes the lobes out from the crown's middle
+  // and shrinks them a little, so they stand apart as lobes)
+  if (sep > 0 && lobes.length > 1) {
+    const mid: V3 = [0, 0, 0];
+    for (const l of lobes) for (let i = 0; i < 3; i++) mid[i] += l.m[i] / lobes.length;
+    for (const l of lobes) {
+      for (let i = 0; i < 3; i++) l.m[i] = mid[i] + (l.m[i] - mid[i]) * (1 + sep * 0.35);
+      l.r *= 1 - sep * 0.15;
+    }
+  }
   let zlo = Infinity;
   let zhi = -Infinity;
   for (const l of lobes) {
@@ -737,7 +749,7 @@ function addSolidCrown(mb: MeshBuilder, sk: Skeleton, minDepth: number, c: Crown
  * leaves under them, not the sky; a dark closed core under the last shell (`core`) where the shells leave holes.
  */
 function addLayeredCrown(mb: MeshBuilder, sk: Skeleton, minDepth: number, c: CrownLook, k: number, r01: () => number, px?: number, bake = false): void {
-  const L = crownLobes(sk, minDepth, (c.clump ?? 6) / k, r01);
+  const L = crownLobes(sk, minDepth, (c.clump ?? 6) / k, r01, c.separate ?? 0.25);
   const K = Math.max(1, Math.round(c.layers ?? 3));
   const gap = c.layerGap ?? 0.18;
   const dark = c.depthDark ?? 0.6;
@@ -784,7 +796,17 @@ function addLayeredCrown(mb: MeshBuilder, sk: Skeleton, minDepth: number, c: Cro
           const ln = norm([p[0] - o.m[0], p[1] - o.m[1], (p[2] - o.m[2]) * 1.15]);
           const ow: V3 = own[0] * ln[0] + own[1] * ln[1] + own[2] * ln[2] < 0 ? [-own[0], -own[1], -own[2]] : own;
           const nn = norm([ow[0] + (ln[0] - ow[0]) * blend, ow[1] + (ln[1] - ow[1]) * blend, ow[2] + (ln[2] - ow[2]) * blend]);
-          return mb.vert(add(p, mul(sd, w)), PART.leaf, sw, -1, ao, nn);
+          // (round 128, main: "darker crevices where lobes meet ... a slightly brighter rim/top on each lobe") the crevice:
+          // how close this point is to another lobe's surface; the rim: the outer shell's top, a little over 1 (the look
+          // brightens past 1)
+          let crev = 0;
+          for (const q of L.lobes) {
+            if (q === o) continue;
+            const dd = Math.hypot(p[0] - q.m[0], p[1] - q.m[1], p[2] - q.m[2]) - q.r;
+            crev += Math.max(0, 1 - dd / (0.35 * q.r));
+          }
+          const rim = li === 0 ? 1 + 0.25 * Math.max(0, ln[2]) * Math.max(0, 1 - crev) : 1;
+          return mb.vert(add(p, mul(sd, w)), PART.leaf, sw, -1, ao * (1 - 0.45 * Math.min(1, crev)) * rim, nn);
         };
         const p0 = row(0);
         const p1 = row(0.5);
