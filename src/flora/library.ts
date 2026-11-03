@@ -86,16 +86,27 @@ export function floraTables(kinds: { sp: SpeciesDef; mesh: { height: number; rad
       v4(c.bark, c.deciduous ? 1 : 0),
       v4(c.barkMark ?? c.bark, sp.sway),
       v4(c.leafDark, sp.moss ?? 0),
-      v4(c.leafLight, sp.barkStyle === 'ridged' ? 1 : 0),
+      v4(c.leafLight, sp.bark.furrows > 0.5 ? 1 : 0),
       v4(c.autumn, mesh.height),
       v4(c.flower ?? c.accent, mesh.radius),
     );
   }
   const acc = kinds.map(({ sp }) => v4(sp.colours.accent ?? sp.colours.leafLight, 0));
+  // (round 128, treegen) FLORA_BARK, 2 vec4s a kind: the bark's texture (species.ts BarkLook) — (furrows, their
+  // frequency, plates, plate size), (stripes, their frequency, roughness, 0)
+  const bark = kinds.flatMap(({ sp }) => {
+    const k = sp.bark;
+    const f = (x: number) => x.toFixed(3);
+    return [`vec4<f32>(${f(k.furrows)}, ${f(k.furrowFreq)}, ${f(k.plates)}, ${f(k.plateSize)})`, `vec4<f32>(${f(k.stripes)}, ${f(k.stripeFreq)}, ${f(k.roughness)}, 0.0)`];
+  });
+  // (round 128) FLORA_EPI, a vec4 a kind: (lichen, moss on the limbs, blossom share, 0) — the epiphytes drawn in the look
+  const epi = kinds.map(({ sp }) => `vec4<f32>(${(sp.epiphytes?.lichen ?? 0).toFixed(3)}, ${(sp.epiphytes?.moss ?? 0).toFixed(3)}, ${(sp.blossom ?? 0).toFixed(3)}, 0.0)`);
   const crownW = `const FLORA_CROWN = array<vec2<f32>, ${crown.length}>(${crown.map(([z, r]) => `vec2<f32>(${z >= 1e9 ? '1e9' : z.toFixed(3)}, ${r.toFixed(3)})`).join(', ')});`;
   return `${crownW}
 const FLORA_COL = array<vec4<f32>, ${rows.length}>(${rows.join(', ')});
-const FLORA_ACC = array<vec4<f32>, ${acc.length}>(${acc.join(', ')});`;
+const FLORA_ACC = array<vec4<f32>, ${acc.length}>(${acc.join(', ')});
+const FLORA_BARK = array<vec4<f32>, ${bark.length}>(${bark.join(', ')});
+const FLORA_EPI = array<vec4<f32>, ${epi.length}>(${epi.join(', ')});`;
 }
 
 export class FloraLibrary {
@@ -138,7 +149,7 @@ export class FloraLibrary {
     const lines = [...ids].map((id) => `const FL_${id.toUpperCase()} = vec2<u32>(0u, 1u);`);
     for (const id of ids) if (SPECIES[id].form === 'tree') lines.push(`const FL_${id.toUpperCase()}_L1 = vec2<u32>(0u, 1u);`, `const FL_${id.toUpperCase()}_L2 = vec2<u32>(0u, 1u);`);
     lines.push('const FL_SHRUB_L1 = vec2<u32>(0u, 1u);');
-    lines.push(`const FLORA_COL = array<vec4<f32>, 6>(${[z, z, z, z, z, z].join(', ')});`, `const FLORA_ACC = array<vec4<f32>, 1>(${z});`, 'const FLORA_CROWN = array<vec2<f32>, 1>(vec2<f32>(1e9, 0.0));');
+    lines.push(`const FLORA_COL = array<vec4<f32>, 6>(${[z, z, z, z, z, z].join(', ')});`, `const FLORA_ACC = array<vec4<f32>, 1>(${z});`, `const FLORA_BARK = array<vec4<f32>, 2>(${z}, ${z});`, `const FLORA_EPI = array<vec4<f32>, 1>(${z});`, 'const FLORA_CROWN = array<vec2<f32>, 1>(vec2<f32>(1e9, 0.0));');
     return lines.join('\n') + '\n';
   }
 

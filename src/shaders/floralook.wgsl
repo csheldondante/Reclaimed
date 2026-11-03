@@ -67,7 +67,7 @@ fn floraSway(k: u32, part: u32, a: vec3<f32>, sway: f32, at: vec2<f32>, lean: ve
   if (length(lean) < 1e-3) { wd = vec2<f32>(0.8, 0.6); }
   let stiff = FLORA_COL[k * 6u + 1u].w;
   var off = lean * stiff;
-  if (part == 4u || part == 5u || part == 6u || part == 8u) {
+  if (part == 4u || part == 5u || part == 6u || part == 8u || part == 9u || part == 10u) {
     let beat = sin(time * (3.1 + seed * 1.7) + a.x * 5.0 + a.y * 4.0 + seed * 40.0);
     off = off + wd * beat * (0.035 + 0.05 * amp) * stiff;
   }
@@ -87,21 +87,40 @@ fn floraLook(k: u32, part: u32, wpos: vec3<f32>, n: vec3<f32>, h: f32, rnd: f32,
   var mat = f32(MAT_WOOD);
   if (part == 3u || part == 7u) {
     let markC = FLORA_COL[b + 1u].rgb;
-    if (FLORA_COL[b + 3u].w > 0.5) {
-      // (round 125, forest) ridged bark (the elder): long vertical grooves, darker in them, and a broad light and dark
-      // banding round the trunk — a pale trunk that reads as bark, not plaster, in a few pixels
-      let q = vec3<i32>(floor(wpos * vec3<f32>(3.0, 3.0, 0.6)));
-      let groove = randv(q) < 0.3;
-      c = mix(c, markC, select(0.0, 0.8, groove) + 0.25 * fr);
-      // (value through the bark: broad pale and grey streaks up the trunk, and warm patches — the reference's beech)
+    // (round 128, treegen) the bark's texture by the species' parameters (species.ts BarkLook, FLORA_BARK): furrows,
+    // plates, stripes and roughness over the base colour, in the mark colour — round 125's two styles (the elder's
+    // ridges, the birch's lenticels) are two settings of it
+    let bk0 = FLORA_BARK[k * 2u];
+    let bk1 = FLORA_BARK[k * 2u + 1u];
+    if (bk0.x > 0.0) {
+      // furrows: long vertical grooves, darker in them
+      let q = vec3<i32>(floor(wpos * vec3<f32>(bk0.y, bk0.y, 0.6)));
+      let groove = randv(q) < bk0.x * 0.375;
+      c = mix(c, markC, select(0.0, 0.8, groove) + 0.3 * bk0.x * fr);
+    }
+    if (bk0.z > 0.0) {
+      // plates: the face's across-coordinate and its height cut into staggered plates, cracks between them in the
+      // mark colour, each plate its own shade (a pine's scales)
+      let t = normalize(vec2<f32>(-n.y, n.x) + vec2<f32>(1e-4, 0.0));
+      var pq = vec2<f32>(dot(wpos.xy, t), wpos.z / 1.7) / max(bk0.w, 0.05);
+      let row = floor(pq.y);
+      pq.x += 0.5 * fract(row * 0.5) * 2.0 + 0.3 * randv(vec3<i32>(i32(row), 41, 7));
+      let id = floor(pq);
+      let f = fract(pq);
+      let edge = min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y) * 1.4);
+      let shade = 0.82 + 0.36 * randv(vec3<i32>(i32(id.x), i32(id.y), 23));
+      c = mix(c, mix(markC, c * shade, smoothstep(0.04, 0.14, edge)), bk0.z);
+    }
+    if (bk1.x > 0.0) {
+      // stripes: dark dashes across the trunk (a birch's lenticels)
+      let q = vec3<i32>(floor(wpos * vec3<f32>(2.5, 2.5, bk1.y)));
+      if (randv(q) < bk1.x) { c = markC; }
+    }
+    if (bk1.z > 0.0) {
+      // roughness: broad pale and grey streaks up the trunk, and warm patches (the elder's reference beech)
       let streak = randv(vec3<i32>(floor(wpos * vec3<f32>(0.9, 0.9, 0.22))) + vec3<i32>(3, 7, 1));
-      c *= 0.8 + 0.32 * streak;
-      c = mix(c, c * vec3<f32>(1.08, 1.0, 0.86), smoothstep(0.6, 0.9, randv(vec3<i32>(floor(wpos * 0.5)) + vec3<i32>(11, 2, 5))));
-      // (roots as pale as the trunk: the reference's sprawl is the same bark)
-    } else if (length(markC - c) > 0.1) {
-      // birch bark: white, with dark lenticel marks across the trunk
-      let q = vec3<i32>(floor(wpos * vec3<f32>(2.5, 2.5, 7.0)));
-      if (randv(q) < 0.2) { c = markC; }
+      c *= (1.0 - 0.25 * bk1.z) + 0.4 * bk1.z * streak;
+      c = mix(c, c * vec3<f32>(1.08, 1.0, 0.86), min(1.0, bk1.z / 0.8) * smoothstep(0.6, 0.9, randv(vec3<i32>(floor(wpos * 0.5)) + vec3<i32>(11, 2, 5))));
     }
     let ridged = FLORA_COL[b + 3u].w > 0.5;
     c = c * select(1.0, select(0.7, 0.92, ridged), part == 7u) * (0.88 + 0.2 * rnd);
@@ -116,25 +135,80 @@ fn floraLook(k: u32, part: u32, wpos: vec3<f32>, n: vec3<f32>, h: f32, rnd: f32,
       let m = moss * low * up * spot;
       if (m > 0.35) { c = FLORA_ACC[k].rgb * (0.75 + 0.45 * fr); }
     }
+    // (round 128, treegen) epiphytes in the look (FLORA_EPI): lichen crusts anywhere on the bark, moss on the limbs'
+    // upper faces all the way up
+    let ep = FLORA_EPI[k];
+    if (ep.x > 0.0 && part == 3u) {
+      let lc = randv(vec3<i32>(floor(wpos * 2.2)) + vec3<i32>(5, 29, 13));
+      if (lc < ep.x * 0.3) { c = mix(vec3<f32>(0.66, 0.7, 0.58), vec3<f32>(0.78, 0.62, 0.3), step(0.8, fr)) * (0.85 + 0.25 * fr); }
+    }
+    if (ep.y > 0.0 && part == 3u) {
+      let up = smoothstep(0.3, 0.7, n.z + 0.3 * (fr - 0.5));
+      let spot = randv(vec3<i32>(floor(wpos * 1.3)) + vec3<i32>(31, 7, 2));
+      if (up * step(1.0 - ep.y, spot) > 0.5) { c = vec3<f32>(0.3, 0.42, 0.13) * (0.75 + 0.45 * fr); }
+    }
+    // (round 128) winter: ice glazes the bark (paler, bluer), snow lies on its upper faces
+    let snow = seasonSnow();
+    if (snow > 0.0) {
+      c = mix(c, c * 0.7 + vec3<f32>(0.2, 0.25, 0.32), 0.35 * snow);
+      if (n.z > 0.45 - 0.2 * fr && fr < snow * 0.95) {
+        c = vec3<f32>(0.9, 0.93, 0.97) * (0.92 + 0.08 * fr);
+        mat = f32(MAT_SNOW);
+      }
+    }
   } else if (part == 4u) {
     mat = f32(MAT_LEAVES);
-    // winter: a deciduous crown thins to its twigs (faces drop out by their own hash as the season bares it)
-    if (decid && fr < seasonBare() * 0.92) { return vec4<f32>(0.0, 0.0, 0.0, -1.0); }
     c = mix(FLORA_COL[b + 2u].rgb, FLORA_COL[b + 3u].rgb, clamp(0.2 + 0.5 * h + 0.25 * n.z + 0.25 * (fr - 0.5) + 0.12 * (rnd - 0.5), 0.0, 1.0));
+    // winter: a deciduous crown thins to its twigs (faces drop out by their own hash as the season bares it) — (round
+    // 128) a share stay as the twigs' haze: the crown's fine twigs, a dark grey-brown stipple round the limbs, so the
+    // bare tree keeps its crown's shape and doesn't read as a pole
+    if (decid && fr < seasonBare() * 0.92) {
+      let fr2 = randv(vec3<i32>(floor(wpos * 3.1)) + vec3<i32>(9, i32(salt & 63u), 4));
+      if (fr2 > 0.38) { return vec4<f32>(0.0, 0.0, 0.0, -1.0); }
+      c = mix(FLORA_COL[b + 1u].rgb, FLORA_COL[b].rgb, 0.35) * vec3<f32>(0.62, 0.55, 0.52) * (0.8 + 0.4 * fr2);
+      mat = f32(MAT_WOOD);
+      if (seasonSnow() * 0.8 > fr2 && n.z > 0.2) { c = vec3<f32>(0.88, 0.91, 0.96); mat = f32(MAT_SNOW); }
+      return vec4<f32>(c, mat);
+    }
     if (decid) {
       let sc = smoothstep(0.0, 0.3, seasonColour() * 1.3 - rnd * 0.3);
       c = mix(c, FLORA_COL[b + 4u].rgb * (0.75 + 0.35 * fr) * (0.72 + 0.3 * n.z), sc);
     }
+    // (round 128) in flower: a share of the clusters bloom (spring, as the crowns come back)
+    let bl = FLORA_EPI[k].z * seasonBloom();
+    if (bl > 0.0 && randv(vec3<i32>(floor(wpos * 1.1)) + vec3<i32>(3, 3, 41)) < bl) {
+      c = FLORA_COL[b + 5u].rgb * (0.86 + 0.22 * fr);
+      mat = f32(MAT_FLOWER);
+    }
+    // (round 128) snow on the evergreens' upper faces: the snow-laden conifer
+    let sn = seasonSnow();
+    if (sn > 0.0 && n.z > 0.25 - 0.3 * fr && fr < sn * 0.9) { c = vec3<f32>(0.9, 0.93, 0.97) * (0.9 + 0.1 * fr); mat = f32(MAT_SNOW); }
   } else if (part == 5u) {
     mat = f32(MAT_GRASS);
     // blades: dark at the foot, light at the tips (so a meadow reads as blades against its ground)
     c = mix(FLORA_COL[b + 2u].rgb, FLORA_COL[b + 3u].rgb, clamp(0.1 + 0.95 * h + 0.15 * (fr - 0.5), 0.0, 1.0));
     if (decid) { c = seasonGrass(c, fract(rnd * 3.7)); }
+    // (round 128) winter: the blades' tips under snow
+    if (seasonSnow() * smoothstep(0.35, 0.8, h) > 0.4 + 0.3 * fr) { c = vec3<f32>(0.88, 0.91, 0.95); mat = f32(MAT_SNOW); }
   } else if (part == 6u) {
     mat = f32(MAT_FLOWER);
     // each flower its own colour from a meadow palette, tinted by the species
     let pal = array<vec3<f32>, 4>(vec3<f32>(0.95, 0.95, 0.98), vec3<f32>(0.95, 0.8, 0.2), vec3<f32>(0.75, 0.4, 0.85), vec3<f32>(0.9, 0.3, 0.3));
     c = pal[min(u32(rnd * 4.0), 3u)] * FLORA_COL[b + 5u].rgb * 1.08;
+  } else if (part == 9u) {
+    // (round 128) an epiphyte's green: ferns in the forks, a vine's leaves — evergreen, snow on top in winter
+    mat = f32(MAT_LEAVES);
+    c = mix(vec3<f32>(0.14, 0.3, 0.1), vec3<f32>(0.34, 0.52, 0.18), clamp(0.3 + 0.4 * n.z + 0.3 * (fr - 0.5), 0.0, 1.0));
+    if (seasonSnow() > 0.5 && n.z > 0.3) { c = vec3<f32>(0.88, 0.91, 0.96); mat = f32(MAT_SNOW); }
+  } else if (part == 10u) {
+    // (round 128) hanging lines: Spanish-moss grey-green, a few darker lianas
+    mat = f32(MAT_LEAVES);
+    c = select(vec3<f32>(0.6, 0.64, 0.52), vec3<f32>(0.3, 0.26, 0.17), fr < 0.2) * (0.85 + 0.25 * rnd);
+  } else if (part == 11u) {
+    // (round 128) icicles: only in deep winter
+    if (seasonSnow() < 0.5) { return vec4<f32>(0.0, 0.0, 0.0, -1.0); }
+    mat = f32(MAT_ICE);
+    c = vec3<f32>(0.78, 0.88, 0.97) * (0.9 + 0.15 * fr);
   } else {
     mat = f32(MAT_GRASS);
     c = FLORA_ACC[k].rgb * (0.85 + 0.3 * fr);

@@ -14,7 +14,8 @@ import floraLookWgsl from '../shaders/floralook.wgsl?raw';
 import viewerWgsl from './viewer.wgsl?raw';
 import { requestGpu, UnsupportedError } from '../gpu/device';
 import { GLOBALS_BYTES } from '../sim/globals';
-import { generate } from './generate';
+import { generate, legacyDef } from './generate';
+import { applyParams, COLOUR_PARAMS, hex, paramsFromQuery, PARAMS, SEASONS } from './params';
 import { BIOMES, buildScene, sceneWgsl, type Biome, type FloraScene } from './scene';
 import { SPECIES, SPECIES_IDS, type RGB, type SpeciesId } from './species';
 import { rng } from './rng';
@@ -30,6 +31,10 @@ interface State {
   season: number;
   growth: number;
   density: number;
+  /** (round 128) one plant: the old stems (round 117) beside the new, the same seed */
+  compare: boolean;
+  /** (round 128) the generator's parameters as edited (params.ts; the URL's p.<key>) */
+  over: Record<string, number | string>;
 }
 
 const params = new URLSearchParams(location.search);
@@ -42,6 +47,8 @@ const state: State = {
   season: Number(params.get('season') ?? 0.42),
   growth: Number(params.get('growth') ?? 1),
   density: Number(params.get('density') ?? 1),
+  compare: params.get('compare') === '1',
+  over: paramsFromQuery(params),
 };
 
 function fail(msg: string): never {
@@ -116,9 +123,21 @@ async function main() {
     if (state.mode === 'scene') {
       scene = buildScene(state.biome, state.seed, { density: state.density });
     } else {
-      const mesh = generate(state.species, state.seed, { growth: state.growth });
-      const inst = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0.5, 0, 0]);
-      scene = { kinds: [{ species: state.species, mesh }], instances: inst, ranges: [{ first: 0, count: 1 }], ground: SPECIES[state.species].form === 'tree' ? 1 : 0, crowns: SPECIES[state.species].form === 'tree' ? [{ x: 0, y: 0, z: mesh.height * 0.7, r: mesh.radius * 0.7, species: state.species }] : [], radius: 12 };
+      const def = applyParams(state.species, state.over);
+      const mesh = generate(state.species, state.seed, { growth: state.growth, def });
+      const tree = SPECIES[state.species].form === 'tree';
+      if (state.compare) {
+        // (round 128: the old (round 117's stems and bark) on the left, the new on the right — the same seed, so the same
+        // branching; turn the camera to see the pair from any side)
+        const oldDef = legacyDef(SPECIES[state.species]);
+        const old = generate(state.species, state.seed, { growth: state.growth, def: oldDef });
+        const d = Math.max(mesh.radius, old.radius) * 1.05 + 0.5;
+        const inst = new Float32Array([1, 0, 0, -d, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0.5, 0, 0, 1, 0, 0, d, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0.5, 0, 0]);
+        scene = { kinds: [{ species: state.species, mesh: old, def: oldDef }, { species: state.species, mesh, def }], instances: inst, ranges: [{ first: 0, count: 1 }, { first: 1, count: 1 }], ground: tree ? 1 : 0, crowns: [], radius: 12 + d };
+      } else {
+        const inst = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0.5, 0, 0]);
+        scene = { kinds: [{ species: state.species, mesh, def }], instances: inst, ranges: [{ first: 0, count: 1 }], ground: tree ? 1 : 0, crowns: tree ? [{ x: 0, y: 0, z: mesh.height * 0.7, r: mesh.radius * 0.7, species: state.species }] : [], radius: 12 };
+      }
     }
     const genMs = performance.now() - t0;
     // one vertex and one index buffer for all kinds
@@ -188,15 +207,16 @@ async function main() {
     const plants = scene.ranges.reduce((a, r) => a + r.count, 0);
     stats = `${plants} plants · ${scene.kinds.length} meshes · ${(tris / 1000).toFixed(1)}k triangles · generated in ${genMs.toFixed(0)} ms`;
     if (state.mode === 'plant') {
-      const m = scene.kinds[0].mesh;
-      stats = `${SPECIES[state.species].name} · seed ${state.seed} · ${m.tris} triangles · ${m.height.toFixed(1)} cells tall · ${genMs.toFixed(1)} ms`;
+      const m = scene.kinds[scene.kinds.length - 1].mesh;
+      stats = `${SPECIES[state.species].name} · seed ${state.seed} · ${m.tris} triangles${state.compare ? ` (old ${scene.kinds[0].mesh.tris})` : ''} · ${m.height.toFixed(1)} cells tall · ${genMs.toFixed(1)} ms`;
     }
     statsEl.textContent = stats;
     resetLeaves();
     // the camera: close for one plant, through the wood for a scene
-    if (state.mode === 'plant') {
-      cam.at = [0, 0, scene.kinds[0].mesh.height * 0.45];
-      cam.dist = Math.max(4, scene.kinds[0].mesh.height * 1.9);
+    if (state.mode === 'plant' && !cam.userMoved) {
+      const m = scene.kinds[scene.kinds.length - 1].mesh;
+      cam.at = [0, 0, m.height * 0.45];
+      cam.dist = Math.max(4, m.height * (state.compare ? 2.6 : 1.9));
     } else if (!cam.userMoved) {
       cam.at = [0, 0, 3];
       cam.dist = 34;
@@ -326,10 +346,13 @@ async function main() {
     $('row-species').style.display = state.mode === 'plant' ? '' : 'none';
     $('row-growth').style.display = state.mode === 'plant' ? '' : 'none';
     $('row-density').style.display = state.mode === 'scene' ? '' : 'none';
+    $('params').style.display = state.mode === 'plant' ? '' : 'none';
   };
   const atlasLink = $<HTMLAnchorElement>('atlas');
   const syncUrl = () => {
     const q = new URLSearchParams({ mode: state.mode, biome: state.biome, species: state.species, seed: String(state.seed), wind: state.wind.toFixed(2), season: state.season.toFixed(2), growth: state.growth.toFixed(2), density: state.density.toFixed(2) });
+    if (state.compare) q.set('compare', '1');
+    for (const [k, v] of Object.entries(state.over)) q.set(`p.${k}`, typeof v === 'number' ? String(+v.toFixed(4)) : v.slice(1));
     history.replaceState(null, '', `?${q}`);
     atlasLink.href = `./?skipmenu=1&level=atlas&tutorial=0&flora=1`;
   };
@@ -347,6 +370,9 @@ async function main() {
   };
   spSel.onchange = () => {
     state.species = spSel.value as SpeciesId;
+    state.over = {};
+    buildParams();
+    cam.userMoved = false;
     rebuild();
     syncUrl();
   };
@@ -379,6 +405,100 @@ async function main() {
       syncUrl();
     };
   }
+  // ---- (round 128) the generator's parameters: a slider each (params.ts), the bark's colours, old/new ----
+  const paramsEl = $('params-body');
+  const compareIn = $<HTMLInputElement>('compare');
+  compareIn.checked = state.compare;
+  compareIn.onchange = () => {
+    state.compare = compareIn.checked;
+    cam.userMoved = false;
+    rebuild();
+    syncUrl();
+  };
+  let pend = 0;
+  const later = () => {
+    // (a drag re-makes the plant at most every ~60 ms)
+    if (pend) return;
+    pend = window.setTimeout(() => {
+      pend = 0;
+      rebuild();
+      syncUrl();
+    }, 60);
+  };
+  function buildParams() {
+    paramsEl.innerHTML = '';
+    const def = applyParams(state.species, state.over);
+    const woody = !!def.turtle && !!def.stem;
+    let group = '';
+    for (const p of PARAMS) {
+      if (p.woody && !woody) continue;
+      if (p.group !== group) {
+        group = p.group;
+        const h = document.createElement('div');
+        h.className = 'grp';
+        h.textContent = group;
+        paramsEl.appendChild(h);
+      }
+      const row = document.createElement('div');
+      row.className = 'row';
+      const lab = document.createElement('label');
+      lab.textContent = p.label;
+      const inp = document.createElement('input');
+      inp.type = 'range';
+      inp.min = String(p.min);
+      inp.max = String(p.max);
+      inp.step = String(p.step);
+      inp.value = String(p.get(def));
+      inp.id = `p-${p.key}`;
+      const val = document.createElement('span');
+      val.className = 'val';
+      val.textContent = (+p.get(def).toFixed(3)).toString();
+      if (p.key in state.over) val.classList.add('edited');
+      inp.oninput = () => {
+        state.over[p.key] = Number(inp.value);
+        val.textContent = (+Number(inp.value).toFixed(3)).toString();
+        val.classList.add('edited');
+        later();
+      };
+      row.append(lab, inp, val);
+      paramsEl.appendChild(row);
+    }
+    const row = document.createElement('div');
+    row.className = 'row';
+    for (const c of COLOUR_PARAMS) {
+      const lab = document.createElement('label');
+      lab.textContent = c === 'bark' ? 'bark' : 'marks';
+      const inp = document.createElement('input');
+      inp.type = 'color';
+      inp.value = hex(def.colours[c] ?? def.colours.bark);
+      inp.oninput = () => {
+        state.over[c] = inp.value;
+        later();
+      };
+      row.append(lab, inp);
+    }
+    paramsEl.appendChild(row);
+  }
+  $<HTMLButtonElement>('reset').onclick = () => {
+    state.over = {};
+    buildParams();
+    rebuild();
+    syncUrl();
+  };
+  // (round 128) the season's named points: a button each (the slider stays for between)
+  const seasonsEl = $('seasons');
+  for (const sn of SEASONS) {
+    const b = document.createElement('button');
+    b.textContent = sn.name;
+    b.onclick = () => {
+      state.season = sn.at;
+      $<HTMLInputElement>('season').value = String(sn.at);
+      resetLeaves();
+      syncUrl();
+    };
+    seasonsEl.appendChild(b);
+  }
+  buildParams();
   showModes();
   syncUrl();
   rebuild();

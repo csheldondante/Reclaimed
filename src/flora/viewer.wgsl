@@ -42,9 +42,9 @@ fn vsPlant(@location(0) a: vec4<f32>, @builtin(instance_index) ii: u32) -> PO {
   let p = inst[ii * 4u + 3u];
   let k = u32(p.x);
   let part = u32(floor(a.w));
-  let sway = select(fract(a.w), 0.0, part >= 9u);
+  let sway = select(fract(a.w), 0.0, part >= 15u);
   var wp = vec3<f32>(dot(r0.xyz, a.xyz) + r0.w, dot(r1.xyz, a.xyz) + r1.w, dot(r2.xyz, a.xyz) + r2.w);
-  if (part < 9u) {
+  if (part < 15u) {
     // (a gust passes over the scene as a wave: each plant leans a little more or less by its place)
     let at = vec2<f32>(r0.w, r1.w);
     let g = 0.75 + 0.35 * sin(dot(at, vec2<f32>(0.11, 0.07)) - V.lean.z * 0.9);
@@ -52,6 +52,8 @@ fn vsPlant(@location(0) a: vec4<f32>, @builtin(instance_index) ii: u32) -> PO {
   }
   var o: PO;
   o.pos = V.viewProj * vec4<f32>(wp, 1.0);
+  // (round 128) icicles only in deep winter (as meshinst.wgsl)
+  if (part == 11u && seasonSnow() < 0.5) { o.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0); }
   o.wpos = wp;
   o.info = vec4<u32>(k, part, u32(p.y * 65535.0), 0u);
   o.h = sway;
@@ -62,7 +64,7 @@ fn vsPlant(@location(0) a: vec4<f32>, @builtin(instance_index) ii: u32) -> PO {
 fn fsPlant(in: PO) -> @location(0) vec4<f32> {
   var n = normalize(cross(dpdx(in.wpos), dpdy(in.wpos)));
   if (dot(n, V.eye.xyz - in.wpos) < 0.0) { n = -n; }
-  if (in.info.y >= 9u) {
+  if (in.info.y >= 15u) {
     // a host: stone (a ruin's wall, a boulder) for the plants instanced onto it
     let s = 0.5 + 0.12 * randv(vec3<i32>(floor(in.wpos * 2.0)));
     return shade(vec3<f32>(s, s * 0.98, s * 0.93), n, in.wpos);

@@ -5,8 +5,9 @@
 import { expand, interpret, norm, type V3 } from './lsystem';
 import { buildPlant, MeshBuilder, PART, type FloraMesh } from './mesh';
 import { growRoots, rootSegments } from './roots';
+import { addEpiphytes } from './epiphytes';
 import { rng, hashSeed } from './rng';
-import { SPECIES, type Flare, type SpeciesDef, type SpeciesId } from './species';
+import { BARK_PLAIN, SPECIES, type Flare, type SpeciesDef, type SpeciesId } from './species';
 import type { Segment } from './lsystem';
 
 /** Scale a mesh in place so its height is h (about its foot). */
@@ -32,8 +33,10 @@ function scaleTo(m: FloraMesh, h: number): FloraMesh {
  * least ~3 px, grass has fewer, wider blades — so the phone's half-scale render reads as a forest, not noise. Absent:
  * full detail (the viewer, the desktop).
  */
-export function generate(id: SpeciesId, seed: number, opts: { growth?: number; px?: number; lod?: 0 | 1 | 2 } = {}): FloraMesh {
-  const sp0 = SPECIES[id];
+export function generate(id: SpeciesId, seed: number, opts: { growth?: number; px?: number; lod?: 0 | 1 | 2; def?: SpeciesDef; legacy?: boolean } = {}): FloraMesh {
+  // (round 128, treegen: `def` a species edited in the viewer — its sliders; `legacy` the stems as round 117 made them,
+  // the viewer's "old" side of its old/new pair: the turtle's new variances off and a prism a step)
+  const sp0 = opts.legacy ? legacyDef(opts.def ?? SPECIES[id]) : (opts.def ?? SPECIES[id]);
   const g = Math.min(1, Math.max(0.05, opts.growth ?? 1));
   const sp = g < 1 && sp0.lsystem ? { ...sp0, lsystem: { ...sp0.lsystem, iterations: Math.max(1, Math.round(sp0.lsystem.iterations * (0.35 + 0.65 * g))) } } : sp0;
   const r = rng(hashSeed(seed, id.length * 7919 + id.charCodeAt(0)));
@@ -83,7 +86,21 @@ function woody(sp: SpeciesDef, seed: number, h: number, px?: number, withRoots =
   const roots = sp.roots && withRoots ? rootSegments(growRoots(sp.roots, hashSeed(seed, 3)), sp.roots.res * 1.5, sp.turtle.radius * 0.8) : [];
   // (round 125, forest: the elder's buttresses — kept at every level but the far one: they are its silhouette's foot)
   if (sp.flare) roots.push(...flareSegments(sp.flare, sp.turtle.radius, hashSeed(seed, 5), withRoots));
-  return buildPlant(sk, sp.leaf, hashSeed(seed, 4), { roots, sides: sp.form === 'tree' ? 6 : 4, minTwig: sp.form === 'tree' ? 0.035 : 0, minRadius: sp.form === 'tree' ? minRadius : 0, minLeaf });
+  return buildPlant(sk, sp.leaf, hashSeed(seed, 4), { roots, sides: sp.form === 'tree' ? 6 : 4, minTwig: sp.form === 'tree' ? 0.035 : 0, minRadius: sp.form === 'tree' ? minRadius : 0, minLeaf, stem: sp.stem, scale: k, keepLimbs: sp.colours.deciduous, extra: (mb, cut) => {
+    // (round 128) epiphytes (the coarse level keeps them: lines and vines are the silhouette's) and a tree's icicles
+    if (sp.epiphytes) addEpiphytes(mb, sk, sp.epiphytes, hashSeed(seed, 6), k, { icicles: sp.form === 'tree' ? 14 : 0, cut });
+  } });
+}
+
+/** (round 128) a species as round 117-125 grew it: no stem look (prisms a step), the turtle's new variances off */
+export function legacyDef(sp: SpeciesDef): SpeciesDef {
+  // (the bark as round 125 drew it: a birch's lenticels where the mark colour differs, the elder's ridges, else plain)
+  const ridged = sp.bark.furrows > 0.5;
+  const marked = !!sp.colours.barkMark && Math.hypot(...sp.colours.barkMark.map((v, i) => v - sp.colours.bark[i])) > 0.1;
+  const bark = ridged ? { ...BARK_PLAIN, furrows: 0.8, roughness: 0.8 } : { ...BARK_PLAIN, roughness: 0, stripes: marked ? 0.2 : 0 };
+  if (!sp.turtle) return { ...sp, stem: undefined, bark, epiphytes: undefined, blossom: undefined };
+  const { taperVar: _a, spacing: _b, stepVar: _c, twist: _d, kinkChance: _e, kinkAngle: _f, ...turtle } = sp.turtle;
+  return { ...sp, stem: undefined, turtle, bark, epiphytes: undefined, blossom: undefined };
 }
 
 /**

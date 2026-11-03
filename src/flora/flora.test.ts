@@ -108,7 +108,7 @@ describe('species meshes', () => {
       for (const i of a.index) expect(i).toBeLessThan(nv);
       for (let k = 3; k < a.verts.length; k += 4) {
         expect(Math.floor(a.verts[k])).toBeGreaterThanOrEqual(3);
-        expect(Math.floor(a.verts[k])).toBeLessThanOrEqual(8);
+        expect(Math.floor(a.verts[k])).toBeLessThanOrEqual(11);
       }
     }
   });
@@ -119,7 +119,8 @@ describe('species meshes', () => {
     for (let s = 0; s < 6; s++) {
       const m = generate('birch', s);
       expect(m.height).toBeGreaterThan(10);
-      expect(m.radius).toBeLessThan(m.height * 0.5);
+      // (round 128: the stems kink and vary their spacing — a seed or two spread wider than half their height)
+      expect(m.radius).toBeLessThan(m.height * 0.6);
     }
   });
   it('the wind moves the top, not the foot', () => {
@@ -162,5 +163,126 @@ describe('levels of detail (round 119, the phone)', () => {
     expect(lib.kinds[lr[2].first].lod).toBe(2);
     expect(lib.wgsl()).toMatch(/FL_BIRCH_L2/);
     expect(lib.kinds.length).toBeLessThanOrEqual(48);
+  });
+});
+
+describe('the stems (round 128, treegen)', () => {
+  it('a branch is one extruded tube: its steps share rings (no seams)', async () => {
+    const { stemPaths } = await import('./mesh');
+    const t = { ...SPECIES.birch.turtle!, jitter: 0, tropismStrength: [0, 0, 0] as [number, number, number], kinkChance: 0, stepVar: 0, taperVar: 0, twist: 0 };
+    const sk = interpret('FFF[&FF]FF', t, 0);
+    const paths = stemPaths(sk.segments, () => false);
+    expect(paths.length).toBe(2);
+    // the trunk's five steps one path (six points), the branch's two another
+    expect(paths.map((p) => p.p.length).sort()).toEqual([3, 6]);
+  });
+  it('the variances draw from their own stream: the branching is the old one, the new parameters only bend it', () => {
+    for (const id of ['birch', 'oak', 'pine', 'giant'] as const) {
+      const sp = SPECIES[id];
+      const str = expand(sp.lsystem!, 9);
+      const a = interpret(str, { ...sp.turtle!, taperVar: 0, stepVar: 0, twist: 0, kinkChance: 0 }, 3);
+      const b = interpret(str, sp.turtle!, 3);
+      expect(b.leaves.length).toBe(a.leaves.length);
+    }
+  });
+  it('twist rolls the frame: children leave in a spiral', () => {
+    const t = { step: 1, stepDecay: 1, radius: 0.4, radiusDecay: 0.5, taper: 1, angle: 45, roll: 0, jitter: 0, tropism: [0, 0, 1] as [number, number, number], tropismStrength: [0, 0, 0] as [number, number, number], minRadius: 0.001 };
+    const s = 'F[&F]F[&F]';
+    const plain = interpret(s, t, 1).segments.filter((g) => g.depth === 1);
+    const tw = interpret(s, { ...t, twist: 90 }, 1).segments.filter((g) => g.depth === 1);
+    const dir = (g: { a: number[]; b: number[] }) => Math.atan2(g.b[1] - g.a[1], g.b[0] - g.a[0]);
+    expect(Math.abs(dir(plain[0]) - dir(plain[1]))).toBeLessThan(1e-6);
+    expect(Math.abs(Math.cos(dir(tw[0]) - dir(tw[1])))).toBeLessThan(0.1);
+  });
+  it('kinks change direction along a stem', () => {
+    const t = { step: 1, stepDecay: 1, radius: 0.4, radiusDecay: 0.5, taper: 1, angle: 30, roll: 0, jitter: 0, tropism: [0, 0, 1] as [number, number, number], tropismStrength: [0, 0, 0] as [number, number, number], minRadius: 0.001 };
+    const straight = interpret('FFFFFFFF', t, 1);
+    const kinked = interpret('FFFFFFFF', { ...t, kinkChance: 1, kinkAngle: 20 }, 1);
+    expect(straight.segments.every((g) => Math.abs(g.b[0] - g.a[0]) < 1e-9)).toBe(true);
+    expect(kinked.segments.some((g) => Math.abs(g.b[0] - g.a[0]) > 0.05)).toBe(true);
+  });
+  it('noise and knots move the stem off its round prism', () => {
+    const base = { ...SPECIES.oak, stem: { ...SPECIES.oak.stem!, noise: 0, knots: 0 } };
+    const a = generate('oak', 2, { def: base });
+    const b = generate('oak', 2, { def: { ...SPECIES.oak, stem: { ...SPECIES.oak.stem!, noise: 0.3, knots: 6, knotSize: 0.6 } } });
+    expect(a.tris).toBe(b.tris);
+    expect(Array.from(a.verts)).not.toEqual(Array.from(b.verts));
+  });
+  it('the viewer\'s old side is round 117\'s mesh exactly', async () => {
+    const { legacyDef } = await import('./generate');
+    // (the legacy path: no stem look, no variances — the same triangles as a prism a step)
+    const m = generate('birch', 5, { def: legacyDef(SPECIES.birch) });
+    expect(m.tris).toBeGreaterThan(0);
+    expect(generate('birch', 5, { legacy: true }).tris).toBe(m.tris);
+  });
+});
+
+describe('the generator\'s parameters (round 128: the viewer\'s sliders)', () => {
+  it('every species\' value lies in its slider\'s range; edits clamp and never touch the table', async () => {
+    const { PARAMS, applyParams, paramsFromQuery } = await import('./params');
+    for (const id of SPECIES_IDS) {
+      const sp = SPECIES[id];
+      for (const p of PARAMS) {
+        if (p.woody && !(sp.turtle && sp.stem)) continue;
+        const v = p.get(sp);
+        expect(v, `${id}.${p.key}`).toBeGreaterThanOrEqual(p.min);
+        expect(v, `${id}.${p.key}`).toBeLessThanOrEqual(p.max);
+      }
+    }
+    const before = JSON.stringify(SPECIES.oak);
+    const ed = applyParams('oak', { twist: 999, noise: 0.2, bark: '#ff0000' });
+    expect(ed.turtle!.twist).toBe(40);
+    expect(ed.stem!.noise).toBe(0.2);
+    expect(ed.colours.bark[0]).toBe(1);
+    expect(JSON.stringify(SPECIES.oak)).toBe(before);
+    expect(paramsFromQuery(new URLSearchParams('p.twist=3&p.bark=00ff00&seed=2'))).toEqual({ twist: 3, bark: '#00ff00' });
+  });
+});
+
+describe('epiphytes and seasons (round 128, treegen)', () => {
+  const parts = (m: { verts: Float32Array }) => {
+    const c = new Map<number, number>();
+    for (let i = 3; i < m.verts.length; i += 4) c.set(Math.floor(m.verts[i]), (c.get(Math.floor(m.verts[i])) ?? 0) + 1);
+    return c;
+  };
+  it('bare, a deciduous tree keeps its limbs at every mesh level: wood reaches out from the trunk', () => {
+    for (const id of ['birch', 'oak', 'giant'] as const) {
+      for (const lod of [0, 1] as const) {
+        const m = generate(id, 4, { px: 6, lod });
+        let out = 0;
+        for (let i = 0; i < m.verts.length; i += 4) if (Math.floor(m.verts[i + 3]) === 3 && Math.hypot(m.verts[i], m.verts[i + 1]) > m.radius * 0.3) out++;
+        expect(out, `${id} lod ${lod}: limb vertices`).toBeGreaterThanOrEqual(16);
+      }
+    }
+  });
+  it('the densities add their geometry, and none without them', async () => {
+    const { NO_EPIPHYTES } = await import('./species');
+    const none = parts(generate('giant', 2, { def: { ...SPECIES.giant, epiphytes: NO_EPIPHYTES } }));
+    expect(none.get(9) ?? 0).toBe(0);
+    expect(none.get(10) ?? 0).toBe(0);
+    const lots = parts(generate('giant', 2, { def: { ...SPECIES.giant, epiphytes: { lichen: 1, moss: 1, plants: 1, vines: 1, lines: 1 } } }));
+    const some = parts(generate('giant', 2));
+    expect(lots.get(9)!).toBeGreaterThan(some.get(9) ?? 0);
+    expect(lots.get(10)!).toBeGreaterThan(some.get(10) ?? 0);
+  });
+  it('a tree carries icicles (drawn only in winter), a small plant none', () => {
+    expect(parts(generate('oak', 1)).get(11) ?? 0).toBeGreaterThan(0);
+    expect(parts(generate('tallgrass', 1)).get(11) ?? 0).toBe(0);
+  });
+  it('the named seasons fall where the season functions of the look say (common.wgsl)', async () => {
+    const { SEASONS } = await import('./params');
+    const ss = (a: number, b: number, x: number) => {
+      const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+      return t * t * (3 - 2 * t);
+    };
+    const bare = (s: number) => ss(0.55, 0.78, s) * (1 - ss(0.9, 1.0, s));
+    const snow = (s: number) => ss(0.79, 0.82, s) * (1 - ss(0.88, 0.91, s));
+    const bloom = (s: number) => ss(0.92, 0.97, s) + 1 - ss(0.06, 0.13, s);
+    const at = Object.fromEntries(SEASONS.map((s) => [s.name, s.at]));
+    expect(bare(at.bare)).toBeGreaterThan(0.95);
+    expect(snow(at.bare)).toBe(0);
+    expect(snow(at.winter)).toBeGreaterThan(0.95);
+    expect(bloom(at.flower)).toBeGreaterThan(0.95);
+    expect(bloom(at.leaf) + bare(at.leaf) + snow(at.leaf)).toBe(0);
   });
 });

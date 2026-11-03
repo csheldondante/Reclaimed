@@ -55,6 +55,11 @@ fn vsInst(@location(0) a: vec4<f32>, @builtin(vertex_index) vi: u32, @builtin(in
   let fpart = u32(floor(aw));
   let fl = fpart >= 3u;
   if (fl) { sway = fract(aw); }
+  // (round 128, treegen) icicles exist only in deep winter: out of it they collapse off screen (no fill)
+  if (fpart == 11u && seasonSnow() < 0.5) {
+    o.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+    return o;
+  }
   var wp = vec3<f32>(dot(r0.xyz, l) + r0.w, dot(r1.xyz, l) + r1.w, dot(r2.xyz, l) + r2.w);
   // the wind: the column's lean (sway.wgsl's spring) and a slow flutter, the crown shifting with the trunk's top
   let cell = clampCell(cellAt(vec2<f32>(r0.w, r1.w)));

@@ -16301,3 +16301,73 @@ uncapped attempt (--disable-gpu-vsync / --disable-frame-rate-limit in the runner
 the profiler's GPU totals at ~200 ms a frame: unusable; a forestcost run overlapping another page's gave 25-35 ms means
 (the GPU shared). The per-treatment A/B pairs and the wind modes' pairs (scripts/forestcost.mjs) still need a clean,
 uncapped timing run, and the phone itself (FLO30's rule).
+
+## 2026-11-03 — round 128 (`treegen`): the flora generator push, M1 the stems and bark, M2 epiphytes and seasons (FLO40-FLO44)
+
+The user (round 128): "I want to update the flora generator to extrude a noise perturbed poly stem and to have
+parameters for taper, branching distance and angle plus variance, whether we twist branches as we go, to have knots and
+direction changes and epiphyte density for lichens, mosses, other plants, vines and lines. Then to have seasonal
+variants with and without leaves and with flowers. Bark color and texture parameters." And: "Also a winter variant with
+snow and ice."
+
+**The stem (M1).** What it replaces: round 117's wood was one capless tapered prism per turtle step
+(mesh.ts `tube`, a segment each) — a seam at every step, a perfectly round straight stick between forks, nothing for the
+noise to live on. Now the turtle tags each segment with its stem (one branch, fork to tip) and its accumulated twist;
+mesh.ts `stemPaths` chains a stem's steps and `MeshBuilder.stem` sweeps one n-gon along it: rings shared between steps,
+each ring across the mean of its two steps' directions, carried by parallel transport (no flips), subdivided to the
+species' ring spacing so the noise shows, the radius perturbed by two octaves of smooth value noise along and around
+(periodic round the stem), bulged at knots (a Gaussian along the stem × a cos² lobe on one side: burls and branch
+scars). The old prism path is kept only as the viewer's "old" side of its old | new pair (`legacyDef`), so the user can
+compare; the game and the library always take the new one.
+
+**The growth parameters**, each with a variance (TurtleSpec, all optional): taper ± taperVar; the branching distance
+(`spacing`, the internode length, so the spacing of the branches along their parent) ± stepVar; the branching angle ±
+`jitter` (the existing variance); `twist` (a roll about the heading after each step: children leave in a spiral and the
+stem's facets turn with it; 0 off); kinks (`kinkChance` a step, `kinkAngle`: the heading turned about a random axis
+across it). The variances draw from their own random stream, so turning one on bends the same tree (the branching and
+leaf sites are the old one's: a test), which is what makes the viewer's old | new pair the same tree.
+
+**Bark (M1)**, in the existing look (floralook.wgsl), per species (BarkLook → FLORA_BARK, two vec4s a kind): furrows
+(depth, frequency round), plates (the face's across-coordinate and height cut into staggered plates, cracks in the mark
+colour, each plate its own shade — a pine's scales), stripes (a birch's lenticels, frequency up), roughness (the
+elder's streaks and warm patches). Round 125's two styles (`barkStyle` lenticels / ridged) are two settings of it: the
+elder's furrows 0.8 + roughness 0.8 reproduce its ridges exactly; the birch is stripes 0.2 at 7 a cell. The bark and
+mark colours are steerable too. New: oak furrowed with a few plates, pine plated in red-brown.
+
+**Epiphytes (M2)**, densities 0..1 per species (Epiphytes): lichens (pale grey-green and ochre crusts on the bark, in
+the look: FLORA_EPI), mosses on the limbs' upper faces all the way up (the look; round 125's `moss` stays the foot's),
+plants (frond tufts in the forks above a quarter of the height), vines (up to three climbers spiralling up the trunk to
+about its first limbs, a 3-sided stem with leaf blobs), lines — read as hanging lines: lianas and Spanish-moss /
+old-man's-beard strands from the limbs, swinging (part 10; the alternative reading, guy-lines of web or rope, is a
+question for the user). New mesh parts: 9 an epiphyte's green (evergreen), 10 a strand, 11 ice; the viewer's host
+stone moved from part 9 to 15. epiphytes.ts adds the geometry through buildPlant's `extra` hook (no cycle with mesh.ts).
+
+**Seasons (M2)**, on the existing season (G.rules.w, ?fseason= in the forest station, the viewer's slider, now with
+named points: flower 0.97, leaf 0.2, autumn 0.47, bare 0.76, winter 0.85; common.wgsl gains seasonSnow 0.79-0.91 and
+seasonBloom 0.92-0.13):
+- In flower: a species' `blossom` share of its leaf clusters in colours.flower as the crowns leaf again (the thicket
+  white, the birch's catkins ochre).
+- Bare: the leaf faces that drop out with the season used to vanish, so a bare birch's coarse level was a pole (its
+  limbs are under the twig cut at the phone's coarse level: 1 stem of 43 drawn). Two fixes: the deciduous keep their
+  first limbs at every mesh level (thickened to the minimum width; `keepLimbs`), and a share (~38%) of the dropped leaf
+  faces stay as the twigs' haze — a dark grey-brown stipple round the limbs that keeps the crown's shape, as a bare
+  wood reads from a distance. Judgement call for the user: the haze's share and colour.
+- Winter: snow on the upper faces of wood, of the evergreens' needles (the snow-laden conifer), of the shrubs' leaves,
+  on the grass blades' tips and the epiphytes; the bark glazed (paler, bluer); icicles under the near-level limbs
+  (part 11, ~14 a tree, collapsed off screen in the vertex shader outside deep winter, so they cost vertices only).
+
+**Numbers** (triangles a plant, seed 1, old → new; the triangle budgets' test unchanged: trees ≤ 3200, the elder ≤
+5000): full detail birch 1878 → 2004, broadleaf 444 → 780, conifer 1646 → 1832, elder 4128 → 4920; the phone's coarse
+level (px 6, lod 1) birch 760 → 1186 (its limbs kept), broadleaf 200 → 538, conifer 1036 → 1060, elder 4024 → 4760;
+thicket and fern unchanged (190, 260). Frame cost: not measured yet — M4's phone bench covers the generator's meshes
+(the new vs old library by reload).
+
+**The viewer** (flora.html, one plant): a "generator" panel with a slider for every parameter (params.ts PARAMS: stem,
+bark, epiphytes, blossom), the bark and mark colours, mirrored to the URL as p.<key>=, a reset, and `old | new` (the
+legacy mesh and look on the left, the edited one on the right, the same seed).
+
+Tests (src/flora/flora.test.ts): a stem's steps are one path; the variances keep the branching; twist spirals the
+children; kinks bend a stem; noise and knots move the vertices, not the triangle count; the viewer's old side is the
+legacy mesh; every species' value within its slider's range, edits clamped and the table untouched, the URL round trip;
+bare deciduous trees keep limb wood at both mesh levels; the epiphyte densities add their geometry (none without);
+icicles on trees only; the named seasons where the season functions put them.

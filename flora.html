@@ -7,7 +7,12 @@
     <style>
       html, body { margin: 0; height: 100%; background: #b8ccdb; font: 13px system-ui, sans-serif; color: #eef2ea; overflow: hidden; }
       #view { position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; }
-      #panel { position: fixed; left: 8px; top: 8px; max-width: min(320px, calc(100% - 16px)); background: rgba(24, 32, 24, 0.78); border-radius: 10px; padding: 8px 10px; }
+      #panel { position: fixed; left: 8px; top: 8px; max-width: min(320px, calc(100% - 16px)); max-height: calc(100% - 16px); overflow-y: auto; box-sizing: border-box; background: rgba(24, 32, 24, 0.78); border-radius: 10px; padding: 8px 10px; }
+      #params summary { cursor: pointer; margin: 4px 0; }
+      #params .grp { margin: 6px 0 2px; opacity: 0.7; text-transform: uppercase; font-size: 10px; letter-spacing: 0.08em; }
+      #params .val { width: 38px; text-align: right; font-size: 11px; opacity: 0.75; }
+      #params .val.edited { color: #f3d27a; opacity: 1; }
+      #params input[type='color'] { width: 40px; height: 22px; border: 0; padding: 0; background: none; }
       #panel .row { display: flex; align-items: center; gap: 6px; margin: 4px 0; }
       #panel label { width: 62px; opacity: 0.85; }
       #panel select, #panel input[type='number'] { flex: 1; min-width: 0; font: inherit; background: #2b3a2b; color: inherit; border: 1px solid #4b5d47; border-radius: 6px; padding: 3px; }
@@ -27,8 +32,13 @@
       <div class="row"><label>seed</label><input id="seed" type="number" min="0" step="1" /><button id="reseed">new</button><button id="grow">grow</button></div>
       <div class="row"><label>wind</label><input id="wind" type="range" min="0" max="1.5" step="0.01" /></div>
       <div class="row"><label>season</label><input id="season" type="range" min="0" max="1" step="0.01" /></div>
+      <div class="row" id="seasons" style="flex-wrap: wrap; gap: 3px"></div>
       <div class="row" id="row-growth"><label>growth</label><input id="growth" type="range" min="0.05" max="1" step="0.01" /></div>
       <div class="row" id="row-density"><label>density</label><input id="density" type="range" min="0.2" max="2" step="0.05" /></div>
+      <details id="params">
+        <summary>generator <label style="width:auto"><input id="compare" type="checkbox" /> old | new</label> <button id="reset">reset</button></summary>
+        <div id="params-body"></div>
+      </details>
       <div id="stats"></div>
       <div class="row"><a id="atlas" href="./">see the plants in the atlas →</a></div>
     </div>

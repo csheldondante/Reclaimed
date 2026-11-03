@@ -3113,6 +3113,26 @@ like slowing you down or requiring you to cut through) is a good thing".
 - A vertex’s w carries its kind (+16 × kind, baked by render/meshinst.ts), so the draw finds the kind in one step.
 - Phone bench: ?florabench=1 (src/flora/bench.ts).
 
+**The generator's parameters** (round 128, branch `treegen`; BACKLOG FLO40-FLO44). One table, src/flora/params.ts
+PARAMS, read by the viewer's sliders and its URL (`p.<key>=`) and applied as an edited copy of a species
+(`applyParams`); the game's library uses species.ts as written.
+- Growth (TurtleSpec, each with a variance; all optional, absent = off): taper ± taperVar, branching distance
+  (`spacing`, the internode) ± stepVar, angle ± jitter, twist (degrees a step), kinks (kinkChance, kinkAngle). The
+  variances have their own random stream: the branching stays the seed's.
+- The stem (StemLook, mesh.ts): an n-gon swept along each whole stem (lsystem.ts tags segments with `stem`, `twist`;
+  `stemPaths` chains them), radius noise along and around (noise, noiseFreq), knots (knots per 10 cells, knotSize), ring
+  spacing in cells. Replaces the prism a step (kept only as the viewer's `legacyDef` old side).
+- Bark (BarkLook → FLORA_BARK, 2 vec4s a kind): furrows, furrowFreq, plates, plateSize, stripes, stripeFreq, roughness,
+  over colours.bark with colours.barkMark.
+- Epiphytes (Epiphytes, 0..1 densities): lichen and moss on the limbs in the look (FLORA_EPI.xy); plants, vines and
+  lines as geometry (epiphytes.ts through buildPlant's `extra` hook). `blossom` (FLORA_EPI.z) the share of leaf clusters
+  in flower.
+- Mesh parts (w = part + sway): 3 wood, 4 leaf, 5 blade, 6 petal, 7 root, 8 accent, 9 epiphyte green, 10 strand
+  (hanging lines), 11 ice (icicles; collapsed in the vertex shader outside deep winter). The viewer's host stone is 15.
+- Seasons (G.rules.w; common.wgsl): seasonColour, seasonBare, seasonShed, and (round 128) seasonSnow (0.79-0.91) and
+  seasonBloom (0.92-0.13). Named points (params.ts SEASONS): flower 0.97, leaf 0.2, autumn 0.47, bare 0.76, winter
+  0.85. Bare crowns keep a twig haze (a share of the leaf faces, bark-dark) and the deciduous keep their first limbs at
+  every mesh level.
 ## The forest and the understory (round 125, branch `forest`; BACKLOG FLO30-FLO37; src/forest, contract src/api/contracts/understory.ts)
 
 The user (DECISIONS round 124): "I want forests to be impressive like the cliffs. They should be seas of leaves or

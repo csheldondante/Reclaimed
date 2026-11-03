@@ -9,7 +9,7 @@
 // hero is about two cells tall), chosen for the scene the user asked for: "silver birches towering above".
 
 import type { LSystemSpec, TurtleSpec } from './lsystem';
-import type { LeafLook } from './mesh';
+import type { LeafLook, StemLook } from './mesh';
 import type { RootSpec } from './roots';
 
 export type RGB = [number, number, number];
@@ -93,11 +93,37 @@ export interface SpeciesDef {
   shedsLeaves: boolean;
   /** (round 125) buttress roots flaring from the trunk's foot and sprawling over the ground (mesh.ts buildPlant) */
   flare?: Flare;
-  /** (round 125) the bark's marks: 'lenticels' (a birch's dark dashes across, the default) or 'ridged' (long grooves) */
-  barkStyle?: 'lenticels' | 'ridged';
+  /** (round 128, treegen) how its stems are extruded: sides, noise, knots (mesh.ts StemLook) — every woody plant */
+  stem?: StemLook;
+  /** (round 128) the bark's texture in the look (floralook.wgsl): colours.bark the base, colours.barkMark the marks */
+  bark: BarkLook;
   /** (round 125) moss on the wood near the foot, on its upward faces, 0..1 (the accent colour) */
   moss?: number;
+  /** (round 128) what grows on it (each 0..1, a density): lichens, moss on the limbs, epiphytic plants, vines, lines */
+  epiphytes?: Epiphytes;
+  /** (round 128) in flower (spring): the share of its leaf clusters that bloom, in colours.flower (0 / absent: none) */
+  blossom?: number;
 }
+
+/**
+ * (round 128, treegen) Epiphytes, each a density 0..1. Lichens and moss are drawn in the bark's look (patches, no
+ * triangles); plants, vines and lines are geometry the generator adds (mesh part 9 the green ones, 10 the lines):
+ *   lichen  pale grey-green and ochre crusts on the bark, anywhere
+ *   moss    moss on the limbs' upper faces, all the way up (`moss` above is the foot's)
+ *   plants  small ferns / bromeliad tufts in the forks of the trunk and limbs
+ *   vines   climbers spiralling up the trunk, leafy
+ *   lines   hanging lines from the limbs: lianas and Spanish-moss / old-man's-beard strands (the reading taken for
+ *           "lines"; the other is guy-lines of web or rope — say if that was meant)
+ */
+export interface Epiphytes {
+  lichen: number;
+  moss: number;
+  plants: number;
+  vines: number;
+  lines: number;
+}
+
+export const NO_EPIPHYTES: Epiphytes = { lichen: 0, moss: 0, plants: 0, vines: 0, lines: 0 };
 
 /** Buttress roots (round 125), in the turtle's units (its trunk radius r): `count` fins, each leaving the trunk `rise`
  *  radii up, reaching the ground `reach` radii out, then sprawling `sprawl` radii further along it, thinning. */
@@ -107,6 +133,26 @@ export interface Flare {
   reach: number;
   sprawl: number;
 }
+
+/**
+ * (round 128, treegen) The bark's texture, drawn in world space by floralook.wgsl over the base colour (colours.bark)
+ * with the mark colour (colours.barkMark). Each 0..1 unless noted; replaces round 125's two styles (lenticels/ridged).
+ */
+export interface BarkLook {
+  /** long vertical furrows (ridged bark: oak, the elder), how deep they read, and how many a cell round */
+  furrows: number;
+  furrowFreq: number;
+  /** plates (a pine's scaly bark): the cracks between them and the plates' own shades; their size (cells) */
+  plates: number;
+  plateSize: number;
+  /** horizontal dashes (a birch's lenticels): their share, and how many a cell up */
+  stripes: number;
+  stripeFreq: number;
+  /** value noise through the bark (streaks, warm patches) */
+  roughness: number;
+}
+
+export const BARK_PLAIN: BarkLook = { furrows: 0, furrowFreq: 3, plates: 0, plateSize: 0.6, stripes: 0, stripeFreq: 7, roughness: 0.15 };
 
 const C = (r: number, g: number, b: number): RGB => [r, g, b];
 
@@ -152,15 +198,27 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
       tropism: [0, 0, -1],
       tropismStrength: [0, 0.1, 0.42],
       minRadius: 0.012,
+      taperVar: 0.2,
+      spacing: 1,
+      stepVar: 0.1,
+      twist: 0,
+      kinkChance: 0.08,
+      kinkAngle: 6,
     },
     leaf: { style: 'drop', size: 0.55, per: 3, minDepth: 1 },
     roots: { half: 8, depth: 4, res: 0.3, generations: 12, growth: 0.5, down: 0.15, maxCells: 160, trunkRadius: 0.3 },
+    stem: { sides: 6, noise: 0.07, noiseFreq: 0.5, knots: 1.5, knotSize: 0.22, ring: 0.9 },
+    bark: { furrows: 0, furrowFreq: 3, plates: 0, plateSize: 0.6, stripes: 0.2, stripeFreq: 7, roughness: 0.15 },
+    epiphytes: { lichen: 0.2, moss: 0, plants: 0, vines: 0, lines: 0 },
+    // (catkins: hanging ochre tassels before the leaves)
+    blossom: 0.2,
     colours: {
       bark: C(0.86, 0.85, 0.8),
       barkMark: C(0.16, 0.15, 0.14),
       leafDark: C(0.3, 0.47, 0.15),
       leafLight: C(0.6, 0.72, 0.3),
       autumn: C(0.92, 0.76, 0.22),
+      flower: C(0.62, 0.55, 0.32),
       deciduous: true,
     },
     niche: { veg: [3.2, 6], moisture: [0.25, 0.9], light: [0.5, 1], altitude: [1, 120], slopeMax: 0.9, hosts: ['ground'], weight: 1 },
@@ -202,11 +260,21 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
       tropism: [0, 0, 1],
       tropismStrength: [0, 0.06, 0.1],
       minRadius: 0.03,
+      taperVar: 0.25,
+      spacing: 1,
+      stepVar: 0.2,
+      twist: 7,
+      kinkChance: 0.3,
+      kinkAngle: 16,
     },
     leaf: { style: 'cluster', size: 0.95, per: 1, minDepth: 1 },
     roots: { half: 7, depth: 5, res: 0.35, generations: 10, growth: 0.5, down: 0.4, maxCells: 140, trunkRadius: 0.38 },
+    stem: { sides: 7, noise: 0.14, noiseFreq: 0.45, knots: 3, knotSize: 0.35, ring: 0.7 },
+    bark: { furrows: 0.55, furrowFreq: 3.5, plates: 0.25, plateSize: 0.45, stripes: 0, stripeFreq: 7, roughness: 0.45 },
+    epiphytes: { lichen: 0.35, moss: 0.3, plants: 0.2, vines: 0.25, lines: 0.1 },
     colours: {
       bark: C(0.36, 0.27, 0.18),
+      barkMark: C(0.17, 0.12, 0.08),
       leafDark: C(0.13, 0.3, 0.1),
       leafLight: C(0.32, 0.53, 0.18),
       autumn: C(0.8, 0.36, 0.1),
@@ -251,11 +319,21 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
       tropism: [0, 0, -1],
       tropismStrength: [0, 0.08, 0.08],
       minRadius: 0.012,
+      taperVar: 0.1,
+      spacing: 1,
+      stepVar: 0.1,
+      twist: 0,
+      kinkChance: 0.04,
+      kinkAngle: 6,
     },
     leaf: { style: 'needles', size: 0.55, per: 1, minDepth: 1 },
     roots: { half: 6, depth: 6, res: 0.35, generations: 10, growth: 0.5, down: 0.6, maxCells: 120, trunkRadius: 0.3 },
+    stem: { sides: 6, noise: 0.06, noiseFreq: 0.6, knots: 2, knotSize: 0.25, ring: 0.9 },
+    bark: { furrows: 0.2, furrowFreq: 3, plates: 0.7, plateSize: 0.5, stripes: 0, stripeFreq: 7, roughness: 0.3 },
+    epiphytes: { lichen: 0.3, moss: 0.1, plants: 0, vines: 0, lines: 0.25 },
     colours: {
-      bark: C(0.3, 0.2, 0.14),
+      bark: C(0.42, 0.25, 0.16),
+      barkMark: C(0.16, 0.1, 0.07),
       leafDark: C(0.06, 0.18, 0.11),
       leafLight: C(0.16, 0.34, 0.2),
       autumn: C(0.16, 0.34, 0.2),
@@ -309,6 +387,12 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
       tropism: [0, 0, 1],
       tropismStrength: [0, 0.02, 0.06],
       minRadius: 0.05,
+      taperVar: 0.2,
+      spacing: 1,
+      stepVar: 0.15,
+      twist: 4,
+      kinkChance: 0.2,
+      kinkAngle: 12,
     },
     // (smaller clusters and more of them than the other trees': close up under the canopy a cluster is a few leaves'
     // worth of pixels, not a slab)
@@ -316,6 +400,9 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     roots: { half: 4, depth: 4, res: 0.45, generations: 10, growth: 0.6, down: 0.3, maxCells: 90, trunkRadius: 1.55 },
     // (hugging the bole's foot and tapering within a few cells — main's review: long sprawls read as logs on the floor)
     flare: { count: 6, rise: 1.8, reach: 1.7, sprawl: 0.7 },
+    stem: { sides: 8, noise: 0.16, noiseFreq: 0.3, knots: 2.5, knotSize: 0.3, ring: 1.6 },
+    bark: { furrows: 0.8, furrowFreq: 3, plates: 0, plateSize: 0.6, stripes: 0, stripeFreq: 7, roughness: 0.8 },
+    epiphytes: { lichen: 0.3, moss: 0.5, plants: 0.35, vines: 0.3, lines: 0.15 },
     colours: {
       // (warm pale, the reference's beech: a grey-white with ochre in it)
       bark: C(0.84, 0.8, 0.72),
@@ -327,7 +414,6 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
       accent: C(0.42, 0.46, 0.13),
       deciduous: true,
     },
-    barkStyle: 'ridged',
     moss: 0.85,
     niche: { veg: [3.9, 6], moisture: [0.3, 0.9], light: [0.3, 1], altitude: [0, 80], slopeMax: 0.5, hosts: ['ground'], weight: 0.15 },
     barrier: { fill: 0.4, cuttable: false, slow: 0.8, breakMass: 4 },
@@ -364,14 +450,25 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
       tropism: [0, 0, 1],
       tropismStrength: [0.2, 0.12, 0.05],
       minRadius: 0.01,
+      taperVar: 0.25,
+      spacing: 1,
+      stepVar: 0.25,
+      twist: 0,
+      kinkChance: 0.3,
+      kinkAngle: 20,
     },
     leaf: { style: 'cluster', size: 0.42, per: 1, minDepth: 0 },
+    stem: { sides: 4, noise: 0.1, noiseFreq: 1, knots: 0, knotSize: 0, ring: 1 },
+    bark: BARK_PLAIN,
+    epiphytes: { lichen: 0.1, moss: 0, plants: 0, vines: 0, lines: 0 },
+    blossom: 0.45,
     colours: {
       bark: C(0.3, 0.22, 0.15),
       // (lighter than the trees': a thicket under the sun reads as bushes, not a dark carpet)
       leafDark: C(0.17, 0.33, 0.12),
       leafLight: C(0.38, 0.56, 0.2),
       autumn: C(0.72, 0.3, 0.12),
+      flower: C(0.96, 0.9, 0.93),
       deciduous: true,
     },
     niche: { veg: [2.6, 4.6], moisture: [0.2, 0.9], light: [0.2, 1], altitude: [0, 200], slopeMax: 1.0, hosts: ['ground', 'bank'], weight: 1 },
@@ -385,6 +482,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     name: 'Tall grass',
     form: 'grass',
     height: [1.1, 1.8],
+    bark: BARK_PLAIN,
     colours: {
       bark: C(0.3, 0.4, 0.15),
       leafDark: C(0.22, 0.4, 0.12),
@@ -404,6 +502,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     name: 'Reeds',
     form: 'reed',
     height: [2.0, 3.2],
+    bark: BARK_PLAIN,
     colours: {
       bark: C(0.4, 0.45, 0.2),
       leafDark: C(0.3, 0.42, 0.18),
@@ -444,6 +543,8 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
       minRadius: 0.005,
     },
     leaf: { style: 'leaflet', size: 0.32, per: 1, minDepth: 0 },
+    stem: { sides: 3, noise: 0, noiseFreq: 1, knots: 0, knotSize: 0, ring: 1 },
+    bark: BARK_PLAIN,
     colours: {
       bark: C(0.2, 0.32, 0.1),
       leafDark: C(0.1, 0.3, 0.1),
@@ -462,6 +563,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     name: 'Wildflower',
     form: 'flower',
     height: [0.5, 0.9],
+    bark: BARK_PLAIN,
     colours: {
       bark: C(0.25, 0.4, 0.15),
       leafDark: C(0.2, 0.38, 0.12),
@@ -482,6 +584,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     name: 'Moss',
     form: 'moss',
     height: [0.15, 0.35],
+    bark: BARK_PLAIN,
     colours: {
       bark: C(0.2, 0.3, 0.1),
       leafDark: C(0.18, 0.32, 0.08),
@@ -502,6 +605,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     name: 'Mossy boulder',
     form: 'rock',
     height: [0.7, 1.6],
+    bark: { furrows: 0.8, furrowFreq: 3, plates: 0, plateSize: 0.6, stripes: 0, stripeFreq: 7, roughness: 0.8 },
     colours: {
       bark: C(0.5, 0.5, 0.5),
       barkMark: C(0.38, 0.38, 0.4),
@@ -511,7 +615,6 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
       accent: C(0.4, 0.47, 0.14),
       deciduous: false,
     },
-    barkStyle: 'ridged',
     moss: 1,
     niche: { veg: [3.6, 6], moisture: [0.2, 1], light: [0, 1], altitude: [-50, 300], slopeMax: 1, hosts: ['ground'], weight: 0.1 },
     barrier: { fill: 0.7, cuttable: false, slow: 0.3, breakMass: 4 },
@@ -556,6 +659,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
       planar: true,
     },
     leaf: { style: 'cluster', size: 0.32, per: 1, minDepth: 0 },
+    bark: BARK_PLAIN,
     colours: {
       bark: C(0.25, 0.2, 0.13),
       leafDark: C(0.08, 0.22, 0.08),
