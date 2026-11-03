@@ -310,10 +310,12 @@ function hillsPath(): { at: V2; speed: number }[] {
 }
 /**
  * (round 128, the physical drive) the hill station, in the hills' south strip: a flat run-up, then a ramp rising
- * `height` at `slope` rise over run (steeper than the knight's push climbs from standing: core/drive.ts KNIGHT_DRIVE),
- * then a flat top; the ride climbs it on one lane and comes down the other
+ * `height` at `slope` rise over run, then a flat top; the ride climbs it on one lane and comes down the other. 0.8 a
+ * cell: under the knight's stride (0.9), so the cells read as a slope, not a wall — the knight crawls up it from
+ * standing (the slope's pull nearly matches its push) and carries up with a run-up; the brute can't from standing.
+ * (Steeper, the lab's one-cell columns make it a sheer step — core/drive.test.ts checks the knight's limit smooth.)
  */
-export const HILL = { x0: 176, x1: 252, y0: 206, y1: 219, foot: 226, slope: 1.6, height: 1.6, base: G + 1 };
+export const HILL = { x0: 176, x1: 252, y0: 206, y1: 219, foot: 222, slope: 0.8, height: 2.4, base: G + 1 };
 export const hillAt = (x: number) => HILL.base + Math.max(0, Math.min(HILL.height, (x - HILL.foot) * HILL.slope));
 function hillsColumn(x: number, y: number): LabColumn {
   if (inBox(x, y, HILL.x0, HILL.y0, HILL.x1, HILL.y1)) return { top: hillAt(x), skin: MAT.Soil, veg: 0 };

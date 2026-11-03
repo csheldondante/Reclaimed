@@ -16929,3 +16929,20 @@ once, won when none stand, lost if the hero's knocked out, 90 s) and "Climb the 
 won at the top, 25 s). The knight's station gained `left()` and `spawned()` for a goal to read. Node (lab.test.ts):
 won, out of time and knocked out each end it once with the time. Ready for the encounters branch's specs: a spec's
 setup goes in `enter`, its rules' end state in `goal.check`.
+
+**Headless, the open problems' batch (412x915).**
+- The hill, a 12-s run-up: the knight on the physical drive climbed 1.6, but from standing 1.5 too; its own drive
+  1.6 both ways. The cause: the lab's ground is one-cell columns, and a 1.6-cell rise in one cell is a sheer step, not
+  a slope: the slope's pull (read over half a cell) was nearly never felt on a column's flat top, while the step rule
+  let it up. A slope steeper than ~1.25 (the knight's limit) is always more than its 0.9 stride a cell, so on cells
+  the knight's limit is its stride, not the pull. The hill is now 0.8 a cell (2.4 up over 3 cells): it reads as a
+  slope; the knight crawls up from standing (1.7 s to the top, the pull nearly matching its push) and carries up from
+  a run-up; the brute can't from standing (0.4) and gets up with a 50-cell run-up (play/lab/hill.test.ts, on the
+  lab's own cells). The card's hill question is now the brute's. The smooth ramp's check stays in core/drive.test.ts.
+- The physical bike in the tapered canyon: no flight (37 km/h, on the cushion).
+- Encounters: "Climb the hill", the stick held up it, won in 6.0 s, the result card in the middle; "Two waves" showed
+  its line "Beat two waves of raiders. 7 raiders left. 89 s left."
+- The pale crescent beside the horse in the street (and beside the bike in the city, and the tan wedge at the hill's
+  cut): the cut's lit rim (`cutaway.rim` 0.25 cells, CAM2: "the band just under the cut", lit), where the bowl-shaped
+  cut meets a building's base or the slope under it. With the rim at 0 it's gone (horse-city-cut-norim.png); the
+  dithered cut (cut~) has no rim. Left as it is: it's the user's approved default; the card asks.

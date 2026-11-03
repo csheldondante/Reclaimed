@@ -31,8 +31,8 @@ and pulls back on open ground, and tilts only by cliffs. It is a variant to try,
    **Parry, three ways:** try Parry button, Parry swipe and Parry hold against the lungers. Which feels best?
    **Bow and hook:** switch weapons. Is aiming the bow easy? With the hook, tap a raider to yank it in, or tap the
    ground to zip there. Is it fun? The forest and canyon tests ask whether you can see the knight.
-8. **The physical drive (movement as one physics for every hero).** Knight, hill: run at the slope from far back,
-   then tap Standing start. Does the running start up the hill feel right? Knight, raiders, physical: does the knight
+8. **The physical drive (movement as one physics for every hero).** Brute, hill: tap Standing start, then Run-up.
+   It can only get up with a run-up. Does the running start up the hill feel right? (The knight crawls up from standing.) Knight, raiders, physical: does the knight
    still feel snappy? Bike, canyon, physical: does the bike feel like the same bike? Brute, a heavy body on the knight:
    it charges and turns wide. Is that fun? Lich, hill: does it still float?
 9. **Bike and knight, the tour (auto zoom).** One loop: a field, shrubs, low trees, tall woods, the canyon's cliff
@@ -41,11 +41,13 @@ and pulls back on open ground, and tilts only by cliffs. It is a variant to try,
    too, which also tilts between buildings. Try it on the city street and say which you like.)
 10. **Horse (new).** Canyon, city, forest, tour. Steer it yourself. Does the horse take the canyon for you without
     feeling on rails? Does it stop before walls? Try the assist chips under settings: strong, light, off.
-11. **Bike, canyon walls (new).** The canyon's walls now slope. On the physical drive, ride fast up onto them. Can you
+11. **The cut's rim.** With cut and tilt, a pale band shows where the cut meets the ground (a crescent by a building in
+    the city). Keep it, or turn it off? (Settings, camera, rim.)
+12. **Bike, canyon walls (new).** The canyon's walls now slope. On the physical drive, ride fast up onto them. Can you
     ride along them? Can you tell when you will slide off?
-12. **Encounters (new).** Knight: "Encounter: two waves" and "Encounter: climb the hill". Each has a goal, a clock
+13. **Encounters (new).** Knight: "Encounter: two waves" and "Encounter: climb the hill". Each has a goal, a clock
     and a result at the end. Are these the start of fun encounters? What would make them better?
-13. **Lich, raise the dead / raiders / cliffs.** Tap Crowd, then Smite and Raise. Is building an army fun? (We still
+14. **Lich, raise the dead / raiders / cliffs.** Tap Crowd, then Smite and Raise. Is building an army fun? (We still
    owe the lich a design talk. This is only to remind you how it plays now.)
 
 ## The phone benches

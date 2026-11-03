@@ -16,7 +16,7 @@ const PERF = process.argv.includes('--perf');
 await run({ name: 'herolabtest', kind: PERF ? 'timing' : 'behaviour', size: '412x915', dpr: PERF ? 2.6 : 1 }, async (R) => {
   const out = R.opt('out', 'C:/Projects/shots88/herolab2');
   fs.mkdirSync(out, { recursive: true });
-  const only = new Set(R.opt('only', 'menu,grid,tests,gifs,knight,cut,auto,drive,horse,wall').split(','));
+  const only = new Set(R.opt('only', 'menu,grid,tests,gifs,knight,cut,auto,drive,horse,wall,encounter').split(','));
   const page = await R.page();
   await page.setViewport({ width: 412, height: 915, deviceScaleFactor: PERF ? 2.6 : 1, hasTouch: true, isMobile: true });
   // (no ?station=: the test menu first, as the user's link lands)
@@ -268,6 +268,30 @@ await run({ name: 'herolabtest', kind: PERF ? 'timing' : 'behaviour', size: '412
     await sleep(3000);
     await gif('bike-canyon-physical.gif', 40, 150);
     R.log(`wall: ${await p.evaluate(() => { const b = window.reclaimed.lab.session.hero; return `${b.status()} bank ${(b.b?.bank ?? 0).toFixed(2)}`; })}`);
+  }
+
+  // ---- (round 128, HL11) encounters: climb the hill with the stick held up it; two waves' goal line
+  if (only.has('encounter')) {
+    await p.evaluate(() => window.reclaimed.lab.showMenu(true));
+    await p.evaluate(() => document.querySelector('.lab-menu-test[data-test="knight-climb"]').click());
+    await sleep(800);
+    // (the stick held up the slope in world terms: the session's steer hook, as the autopilot holds it)
+    await p.evaluate(() => {
+      const ss = window.reclaimed.lab.session;
+      window.__steer = ss.steer;
+      ss.steer = () => [1, 0];
+    });
+    await sleep(12000);
+    await p.evaluate(() => (window.reclaimed.lab.session.steer = window.__steer));
+    const r = await p.evaluate(() => ({ result: window.reclaimed.lab.stations.result, line: document.querySelector('.lab-now')?.textContent }));
+    R.log(`encounter climb: ${JSON.stringify(r)}`);
+    R.check('the climb ends with a result', !!r.result, r);
+    await shot('encounter-climb-result.png');
+    await p.evaluate(() => window.reclaimed.lab.showMenu(true));
+    await p.evaluate(() => document.querySelector('.lab-menu-test[data-test="knight-fight"]').click());
+    await sleep(3000);
+    R.log(`encounter waves: ${await p.evaluate(() => document.querySelector('.lab-now')?.textContent)}`);
+    await shot('encounter-waves.png');
   }
 
   // ---- the cut (CAM11) at the canyon and the cliffs, against the chase alone
