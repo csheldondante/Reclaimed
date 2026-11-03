@@ -241,6 +241,9 @@ export interface CharacterRecord {
   tags?: string[];
   /** (round 120, opportunities) the resolution bonuses they won (contracts/opportunity.ts Bonus, without `holder`) */
   bonuses?: import('./opportunity').BonusRecord[];
+  /** (dialog2) who they are: quirks, voice, traits, want, portrait (contracts/cast.ts); rolled once, kept for later
+   *  runs (absent in older saves: rolled when first needed) */
+  persona?: import('./cast').Persona;
 }
 
 export type CharacterChange =
@@ -253,7 +256,9 @@ export type CharacterChange =
   | { kind: 'move'; id: string; region: RegionId | null }
   | { kind: 'die'; id: string; text: string }
   /** (round 120, opportunities) tags and bonuses won or lost (the bonuses replace those with the same `why`) */
-  | { kind: 'tags'; id: string; add?: string[]; remove?: string[]; bonuses?: import('./opportunity').BonusRecord[] };
+  | { kind: 'tags'; id: string; add?: string[]; remove?: string[]; bonuses?: import('./opportunity').BonusRecord[] }
+  /** (dialog2) their persona rolled (a character from an older save, met again) */
+  | { kind: 'persona'; id: string; persona: import('./cast').Persona };
 
 // ---- consequences as the generators read them (the user: "Make it eternal night or flood a region and make a new
 // shallow sea or bury a ruin under sand") ---------------------------------------------------------------------------

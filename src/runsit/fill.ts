@@ -52,6 +52,7 @@ export function situationMap(graph: RegionGraph, world: WorldSnapshot): Situatio
   const sett = new Map(world.settlements.map((s) => [s.id, s]));
   return {
     world: graph.world,
+    regionName: (r) => graph.node(r)?.name ?? '',
     regionCentre: (r) => {
       const n = graph.node(r);
       if (!n) throw new Error(`situation: region ${r} isn't on the graph`);
@@ -182,19 +183,19 @@ export function fillSituation(o: FillOptions): Situation {
       say: [{ line: `${dead ? 'The dead' : 'Raiders'} out of ${origin.name}, making for ${T}! Their riders have your scent.` }],
     },
     {
-      id: 'a-hold', name: H, region: hold.region, settlement: hold.id, brief: `${H} keeps a levy. Carry the word to its hall and it marches for ${T} — slower than you.`, minutes: 3,
+      id: 'a-hold', name: H, region: hold.region, settlement: hold.id, brief: `${H} keeps soldiers. Get word to its hall, and they march for ${T}. They are slower than you.`, minutes: 3,
       play: { kind: 'deliver', settlement: hold.id, sends: { faction: allyFaction, role: 'guard', count: 8 }, gives: ['war-horn', 'fresh-mount'], limit: 150 },
-      say: [{ line: `${H}'s gate. The hall is up the hill — ride!` }],
+      say: [{ line: `${H}'s gate. The hall is up the hill. Ride!` }],
     },
     {
-      id: 'a-road', name: roadNode.name, region: road, brief: `The road to ${T} runs through ${roadNode.name}; something waits in the ditches.`, minutes: 2.5,
+      id: 'a-road', name: roadNode.name, region: road, brief: `The road to ${T} runs through ${roadNode.name}. Something waits in the ditches.`, minutes: 2.5,
       play: { kind: 'ambush', foes: 5, role, faction: threatFaction },
       say: [{ line: dead ? 'The ditches stir. They were waiting.' : 'Riders bar the road.' }],
     },
     {
-      id: 'a-cross', name: crossNode.name, region: cross, brief: `A trader camps at the crossroads in ${crossNode.name}: a find for the one who stops, time lost to the one who does.`, minutes: 2,
+      id: 'a-cross', name: crossNode.name, region: cross, brief: `A trader camps at the crossroads in ${crossNode.name}. Stop to trade, and you lose time.`, minutes: 2,
       play: { kind: 'trader', offers: ['lure-bell', 'ash-cloak'] },
-      say: [{ line: 'A trader waves from the crossroads: "Something for the road? Quick, then."' }],
+      say: [{ line: 'A trader waves from the crossroads. Something for the road? Quick, then.' }],
     },
     {
       id: 'a-town', name: T, region: town.region, settlement: town.id, brief: `${T}, with ${dead ? 'the dead' : 'the raiders'} on the road behind.`, minutes: 5,
@@ -203,18 +204,18 @@ export function fillSituation(o: FillOptions): Situation {
     },
   ];
   const choices: SituationChoice[] = [
-    { id: 'c-hold', from: 'a-start', to: 'a-hold', text: `Ride to ${H} for its levy`, effects: [] },
+    { id: 'c-hold', from: 'a-start', to: 'a-hold', text: `Ride to ${H} for its soldiers`, effects: [] },
     { id: 'c-road', from: 'a-start', to: 'a-road', text: `Ride for ${T} by the straight road`, effects: [] },
-    { id: 'c-levy', from: 'a-hold', to: 'a-town', text: `Ride ahead of the levy to ${T}`, effects: [{ kind: 'warn' }] },
+    { id: 'c-levy', from: 'a-hold', to: 'a-town', text: `Ride ahead of the soldiers to ${T}`, effects: [{ kind: 'warn' }] },
     { id: 'c-stand', from: 'a-road', to: 'a-town', text: `Warn ${T} and hold its walls`, effects: [{ kind: 'warn' }] },
-    { id: 'c-flee', from: 'a-road', to: 'a-town', text: `Warn ${T} and lead its people into ${hills.name}`, effects: [{ kind: 'warn' }, { kind: 'evacuate' }] },
+    { id: 'c-flee', from: 'a-road', to: 'a-town', text: `Warn ${T} and lead its people to ${hills.name}`, effects: [{ kind: 'warn' }, { kind: 'evacuate' }] },
     { id: 'c-cross', from: 'a-road', to: 'a-cross', text: `Turn aside to the trader in ${crossNode.name}`, effects: [] },
-    { id: 'c-on', from: 'a-cross', to: 'a-town', text: `On to ${T}, to warn them`, effects: [{ kind: 'warn' }] },
+    { id: 'c-on', from: 'a-cross', to: 'a-town', text: `Go on to ${T} and warn them`, effects: [{ kind: 'warn' }] },
   ];
   const sit: Situation = {
     id: `horde-${o.seed}-${snap.run}`,
     title: `${dead ? 'The Dead Come' : 'Raiders Ride'} for ${T}`,
-    premise: `${dead ? 'A host of the walking dead' : 'A raiding host'} has risen in ${origin.name} and marches on ${T}. Ride to ${H} for its levy and come late but in force, or warn ${T} yourself and hold it — or lead its people into ${hills.name} and let the town go.`,
+    premise: `${dead ? 'An army of the walking dead' : 'An army of raiders'} has risen in ${origin.name}. It is marching on ${T}. You can ride to ${H} for its soldiers. They will come late, but in force. You can warn ${T} yourself and hold it. Or you can lead its people to ${hills.name} and let the town go.`,
     from: { worldVersion: snap.version, run: snap.run, seed: o.seed, print: worldPrint(snap) },
     hero: o.hero ?? 'any',
     threat: { kind: 'horde', name: dead ? 'the Hollow Host' : 'the Raiding Host', faction: threatFaction, role, count: 16, route, arrives: 0, outriders: { count: 3, role, behind: 0.6 } },
@@ -230,7 +231,7 @@ export function fillSituation(o: FillOptions): Situation {
   const straight = Math.min(...est.filter((p) => !p.areas.includes('a-hold') && !p.areas.includes('a-cross')).map((p) => p.minutes));
   sit.threat.arrives = +(straight + MARGIN).toFixed(1);
   const viaHold = est.find((p) => p.areas.includes('a-hold'));
-  if (viaHold && viaHold.minutes > sit.threat.arrives) sit.choices[0].text += ' (late, but in force)';
+  if (viaHold && viaHold.minutes > sit.threat.arrives) sit.choices[0].text += '. Slower, but they come with you';
   return sit;
 }
 
@@ -242,7 +243,7 @@ function endings(o: { town: Settlement; hold: Settlement; hills: RegionId; route
   const fac = o.town.faction;
   return {
     saved: {
-      text: `${T} stands. The host is broken on its walls.`,
+      text: `${T} stands. The army broke on its walls.`,
       outcome: {
         atlas: [ev({ kind: o.dead ? 'lay-dead' : 'faction-presence', regions: o.route, magnitude: o.dead ? 0.2 : -0.2, ...(o.dead ? {} : { detail: { faction: o.threat } }) }), ev({ kind: 'mark', regions: [r], magnitude: 1, detail: { name: `the Stand at ${T}`, kind: 'battlefield' } })],
         attitude: fac ? [{ faction: fac, delta: 0.3 }] : [],
@@ -255,7 +256,7 @@ function endings(o: { town: Settlement; hold: Settlement; hills: RegionId; route
       settlement: 'ruined',
     },
     evacuated: {
-      text: `${T}'s people live, in the hills; the town is ash behind them.`,
+      text: `${T}'s people live. They camp in the hills. The town is ash behind them.`,
       outcome: {
         atlas: [...burnt, ev({ kind: 'mark', regions: [o.hills], magnitude: 1, detail: { name: `the refuge of ${T}`, kind: 'camp' } }), ...(fac ? [ev({ kind: 'faction-presence', regions: [o.hills], magnitude: 0.2, detail: { faction: fac } })] : [])],
         attitude: fac ? [{ faction: fac, delta: 0.2 }] : [],
@@ -263,7 +264,7 @@ function endings(o: { town: Settlement; hold: Settlement; hills: RegionId; route
       settlement: 'abandoned',
     },
     fell: {
-      text: `The hero fell on the road, and ${T} with them.`,
+      text: `You fell on the road. ${T} fell with you.`,
       outcome: { atlas: [...burnt, ...(o.dead ? [ev({ kind: 'raise-dead', regions: [r, ...o.route.slice(-3)], magnitude: 0.3 })] : [])] },
       settlement: 'ruined',
     },

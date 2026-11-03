@@ -12,15 +12,25 @@
 // feeling toward the player). Ready for dialogue as a resolution mechanic (to come: the user has a game in mind for it).
 
 import type { EntityId } from '../api/contracts/facts';
+import { rollPersona } from './cast';
 import type { FactWorld } from './world';
 
-/** who presents a template's card: a member of the group `of` (a bound ref), in a role, with a line */
+/** who presents a template's card: a member of the group `of` (a bound ref), in a role, with their lines. (dialog2)
+ *  The lines are the content of a petition in plain words (docs/WRITING.md); the character's voice adds the greeting,
+ *  thanks and sign-off round them (cast.ts VOICES), so no card needs a hand-written dialog tree. */
 export interface PresenterSpec {
   of: string;
   role: string;
   /** what they do: petitions, asks, claims, warns, offers */
   verb: string;
+  /** the ask: what they want and why it matters to them */
   line: string;
+  /** their answer to "What's in it for me?" (default: the reward, plainly) */
+  gain?: string;
+  /** their answer to "What if I say no?" (default: what refusing does, plainly) */
+  refuse?: string;
+  /** (dialog2) the player may ask for more: what a yes adds (goods; an amount may be a var's name) */
+  haggle?: { goods: Record<string, number | string> };
 }
 
 /** the names a made person draws from, by species (deterministic: the next unused) */
@@ -70,7 +80,9 @@ export function makePresenter(w: FactWorld, group: EntityId, role: string, cause
   const home = opts.home ? w.settlement(opts.home) : w.settlementOf(group);
   const g = w.facts.entity(group);
   const faction = g?.ref && 'faction' in g.ref ? g.ref.faction : null;
-  w.ws.applyCharacter({ kind: 'meet', character: { id, name: base, role, faction, hero: false, alive: true, region: home?.region ?? null, motivation: `speak for ${w.name(group)}` } });
+  // (dialog2: who they are — quirks, voice, traits, a want, a portrait — rolled once and kept on their record)
+  const persona = rollPersona(w.ws.seed, id, species, role);
+  w.ws.applyCharacter({ kind: 'meet', character: { id, name: base, role, faction, hero: false, alive: true, region: home?.region ?? null, motivation: persona.want, persona } });
   w.facts.add({ id, kind: 'person', name: base, ref: { character: id }, at: home ? w.placeAt(home.id) : {}, tags: [{ scope: 'biology', key: 'species', value: species, since: w.turn }], cause });
   if (!faction) w.facts.relate({ type: 'member_of', from: id, to: group, cause });
   if (home) w.facts.relate({ type: 'resident_at', from: id, to: home.id, cause });
@@ -78,19 +90,30 @@ export function makePresenter(w: FactWorld, group: EntityId, role: string, cause
   return id;
 }
 
-export type Answer = 'committed' | 'refused' | 'ignored';
+export type Answer = 'committed' | 'refused' | 'ignored' | 'haggled';
 const ANSWER: Record<Answer, { rel: 'owes_favor_to' | 'grievance_against'; delta: number; kind: string; say: string }> = {
   committed: { rel: 'owes_favor_to', delta: 0.3, kind: 'kept-faith', say: 'you took up their cause' },
   refused: { rel: 'grievance_against', delta: 0.3, kind: 'refused', say: 'you turned them away' },
   ignored: { rel: 'grievance_against', delta: 0.15, kind: 'ignored', say: 'you let their plea lapse' },
+  haggled: { rel: 'grievance_against', delta: 0.1, kind: 'haggled', say: 'you pushed them for more' },
 };
+/** (dialog2) how much the group they speak for feels it too: the user's "relationships getting tense with you and
+ *  another faction if you don't send aid" */
+const GROUP_SHARE = 0.5;
 
-/** The player's answer to a presenter, as relationship facts: the relation, the weighted event, the character record. */
-export function answer(w: FactWorld, presenter: EntityId, how: Answer, card: string, cause: string): void {
+/** The player's answer to a presenter, as relationship facts: the relation, the weighted event, the character record.
+ *  (dialog2) With `group` (the faction or cohort they speak for), the group's relation to the player moves too, by
+ *  half as much: refusing a petition makes the people behind it cooler toward you. */
+export function answer(w: FactWorld, presenter: EntityId, how: Answer, card: string, cause: string, group?: EntityId): void {
   const a = ANSWER[how];
   const player = w.diplomacy.idOf({ player: true });
   const had = w.facts.relations({ type: a.rel, from: presenter, to: player })[0];
   w.facts.relate({ type: a.rel, from: presenter, to: player, strength: Math.min(1, +((had?.strength ?? 0) + a.delta).toFixed(3)), cause });
+  const gk = group ? w.facts.entity(group)?.kind : undefined;
+  if (group && group !== presenter && (gk === 'faction' || gk === 'cohort' || gk === 'polity')) {
+    const g = w.facts.relations({ type: a.rel, from: group, to: player })[0];
+    w.facts.relate({ type: a.rel, from: group, to: player, strength: Math.min(1, +((g?.strength ?? 0) + a.delta * GROUP_SHARE).toFixed(3)), cause });
+  }
   const sign = how === 'committed' ? 1 : -1;
   w.facts.record({ kind: a.kind, by: [player], to: [presenter], weight: sign * a.delta, halfLife: 8, about: { opp: cause }, note: `${w.name(presenter)}: ${a.say} ("${card}")` });
   if (w.ws.character(presenter)) {

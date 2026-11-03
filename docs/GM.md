@@ -111,6 +111,9 @@ people, rooms, items and history, as long as they sit in what exists.
 
   A `flood` needs `level`, a world z over some of the region's ground; no other kind has a level. `storm`
   needs `detail.storm`. `mark` needs `detail.name` and `detail.kind`.
+- **Plain words for the player** (docs/WRITING.md): everything in `title`, `premise`, `text`, briefs, choices,
+  items and endings is read by the player. One idea a sentence, under 20 words, no parentheses or semicolons, none
+  of our code's words. test/unit/writing.test.ts lints the seed 1 situation.
 - **No prose outside the fields.** No extra keys, no comments. Everything a player reads is in `title`,
   `premise`, `text`, names, `voice`, `wants` and `knows`.
 - `from` is `{ worldVersion: snapshot.version, run: snapshot.run, seed: snapshot.seed }`: the world it was
