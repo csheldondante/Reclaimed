@@ -584,6 +584,8 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       30: 'uniform',
       // (round 117, flora: the view, to leave out plants off screen — renderprep's PrepCam)
       31: 'uniform',
+      // (round 128: the standing burned trees)
+      64: 'tex',
     } as const;
     this.vegPrep = makeCompute(device, 'vegprep', [commonWgsl, materialsWgsl, vegplanWgsl, terrainShapeWgsl, meshStateWgsl, meshRegionWgsl, tufts, treeMesh, floraPutWgsl, vegprepWgsl], vegSpec);
     this.clampV = makeCompute(device, 'vegprep-clamp', [commonWgsl, materialsWgsl, vegplanWgsl, terrainShapeWgsl, meshStateWgsl, meshRegionWgsl, tufts, treeMesh, floraPutWgsl, vegprepWgsl], vegSpec, 'clampVeg');
@@ -598,6 +600,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       8: world.petals,
       9: this.instPlant,
       10: this.meshInst?.instances ?? noTrees!,
+      64: world.snagView,
       14: world.cornerView,
       17: world.driftView,
       30: this.fieldMesh.region,

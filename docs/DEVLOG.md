@@ -16737,3 +16737,26 @@ too floaty they should be closer together. Probably no more than a leaf width fo
   so this is the capture, not the game; the phone bench is the measure. Under the canopy the hero's elder trunk is the
   understory's stump rule (cut and faded in front of the hero) at the phone tier's half resolution: blocky because the
   low tier renders 205 x 457; to look at again with the new trunks in the next slot.
+
+### The tree editor, needle pads, the dead and burned states (round 128, the user)
+
+The user: "I would love a generator to play with the parameters or make new tree variants. We also still want the
+epiphytes and seasons and states. Leafless and burned could also be useful states visually."
+- The tree editor (flora.html, plant mode, the generator panel): every parameter a slider in plain words, in groups
+  (shape, stem, crown, bark, epiphytes); "new variant" (a new seed, the shape and crown nudged, the style switches kept:
+  variants.ts newVariant); "save…" a named variant (localStorage); a saved list to load; A | B against the old
+  generator, the species as written, or a saved variant; export / import JSON; the whole parameter set in the URL; "see
+  it in the world" opens the atlas with `?ftree=` (base64url { species: overrides }) — the game's flora library builds
+  that species with them (library.ts defOf). A state picker (alive, dead, burned).
+- The Scots pine's crown as needle pads ('needlepads'): closed pad-shaped shells a needle apart, the needles' look, the
+  outer one's rim in tufts (scots-v2.png).
+- States: a plant's state rides in its instance (instTree[o + 3].x — 0 alive, 1 dead, 2 burned; meshinst.wgsl passes it
+  in the info word's high bits to floraLook): dead — no leaves, grey bark, the twigs' tips broken; burned — no leaves,
+  the bark charred black with grey ash on its tops and flickering ember glints, the twigs and some upper limbs gone.
+  Tied to the world: a new contract field, WorldGpu `snag` (rgba32float, a texel a column; snag.wgsl, SnagSystem after
+  ecology, ping-pong into `snagNext`): where the fire burns a wood (succession 3+), a charred snag stands; it clears
+  when the wood grows back past 3.6 (a living tree again) or weathers away (a season of play). vegprep.wgsl plans a
+  slot's tree on a snag as a wood's and draws it burned; a browned tree (wilt.y > 0.6) is drawn dead. The streamer keeps
+  `snag` with its region; the flora plan's CPU mirror reads it (a burned tree: `burned`, a third of the logs). Why a
+  texture: vegprep's eight storage buffers are all in use; a sampled texture costs none. Not yet: the far sprites
+  don't bake the states (a far burned tree is drawn alive); a felled stump as a state (the fell op clears the column).

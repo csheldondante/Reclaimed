@@ -29,6 +29,8 @@ export interface Tree {
   crown: number;
   /** cells³ of logs it makes, felled */
   logs: number;
+  /** (round 128) a burned wood's charred snag standing (snag.wgsl): no leaves, black — absent: alive */
+  burned?: boolean;
 }
 
 // common.wgsl pcg / hash3 / rand3, on u32s
@@ -162,6 +164,15 @@ export class Plants {
     // (round 128: the willows by the water — planWillow reads the water and the moisture)
     mirror.addBuffer('moisture', core.world.moisture);
     mirror.addBuffer('water', core.world.water);
+    // (round 128: the fire's standing burned trees — a snag keeps its tree standing, charred)
+    mirror.addTexture('snag', core.world.snag);
+  }
+
+  /** (round 128) the snag at window column (cx, cy): > 0 a burned wood's tree stands there charred */
+  private snagAt(cx: number, cy: number): number {
+    const t = this.mirror.f32('snag');
+    if (!t) return 0;
+    return t[this.core.ring.idx(cx, cy) * 4] ?? 0;
   }
 
   /** (round 128) the willow at window column (cx, cy), or null (as of the mirror's last read) */
@@ -191,7 +202,10 @@ export class Plants {
 
   /** vegplan.wgsl's tree at column (cx, cy) with veg v, or null. */
   private planAt(cx: number, cy: number, v: number): Tree | null {
-    return planTree(cx, cy, v, this.core.dims.w, this.core.dims.h, this.core.globals.origin ?? [0, 0]);
+    const burned = this.snagAt(cx, cy) > 0;
+    const t = planTree(cx, cy, burned ? Math.max(v, 3.6) : v, this.core.dims.w, this.core.dims.h, this.core.globals.origin ?? [0, 0]);
+    // (a charred snag makes no logs worth the felling: a third)
+    return t && burned ? { ...t, burned: true, logs: t.logs / 3 } : t;
   }
 
   /** The tree standing at (x, y)'s column, or null. */

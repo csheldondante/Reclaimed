@@ -179,6 +179,18 @@ fn floraBump(k: u32, part: u32, uv: vec2<f32>, n: vec3<f32>, tb: mat2x3<f32>, fw
 fn floraLook(k: u32, part: u32, wpos: vec3<f32>, n: vec3<f32>, h: f32, rnd: f32, salt: u32, uv: vec2<f32>, fw: f32) -> vec4<f32> {
   let b = k * 6u;
   let fr = randv(vec3<i32>(floor(wpos * 1.7)) + vec3<i32>(i32(salt & 255u), 5, 11));
+  // (round 128, the user: "Leafless and burned could also be useful states") the plant's state, in salt's high bits:
+  // 1 dead — no leaves, the bark greyed, the twigs' tips broken; 2 burned — no leaves, the bark charred black with grey
+  // ash and ember glints, the twigs and some upper limbs gone
+  let state = salt >> 16u;
+  if (state > 0u) {
+    let leafy = part == 4u || part == 5u || part == 6u || part == 8u || part == 9u || part == 10u;
+    if (leafy) { return vec4<f32>(0.0, 0.0, 0.0, -1.0); }
+    let hb = randv(vec3<i32>(floor(wpos * 0.45)) + vec3<i32>(71, 3, 19));
+    if (part == 14u && (state == 2u || hb < 0.45)) { return vec4<f32>(0.0, 0.0, 0.0, -1.0); }
+    if (state == 2u && part == 3u && h > 0.45 && hb < 0.35) { return vec4<f32>(0.0, 0.0, 0.0, -1.0); }
+  }
+
   let decid = FLORA_COL[b].w > 0.5;
   var c = FLORA_COL[b].rgb;
   var mat = f32(MAT_WOOD);
@@ -361,6 +373,19 @@ fn floraLook(k: u32, part: u32, wpos: vec3<f32>, n: vec3<f32>, h: f32, rnd: f32,
   } else {
     mat = f32(MAT_GRASS);
     c = FLORA_ACC[k].rgb * (0.85 + 0.3 * fr);
+  }
+  // (round 128) the dead and the burned wood's colour
+  if (state == 1u && (part == 3u || part == 7u || part == 14u)) {
+    let l = dot(c, vec3<f32>(0.3, 0.55, 0.15));
+    c = mix(c, vec3<f32>(l) * vec3<f32>(0.95, 0.93, 0.9), 0.7) * 0.85;
+  }
+  if (state == 2u && (part == 3u || part == 7u || part == 14u)) {
+    let ash = randv(vec3<i32>(floor(wpos * 2.3)) + vec3<i32>(5, 41, 7));
+    c = mix(vec3<f32>(0.05, 0.045, 0.04), vec3<f32>(0.32, 0.31, 0.3), smoothstep(0.78, 0.95, ash) * clamp(n.z + 0.3, 0.0, 1.0));
+    // (embers: a few glints in the cracks, flickering with the time)
+    let em = randv(vec3<i32>(floor(wpos * 3.0)) + vec3<i32>(9, 9, i32(G.time * 2.0) & 3));
+    if (em < 0.025 && n.z < 0.6) { c = vec3<f32>(1.6, 0.55, 0.12); }
+    mat = f32(MAT_WOOD);
   }
   return vec4<f32>(c, mat);
 }

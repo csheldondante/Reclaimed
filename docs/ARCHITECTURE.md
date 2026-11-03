@@ -3146,6 +3146,9 @@ PARAMS, read by the viewer's sliders and its URL (`p.<key>=`) and applied as an 
   seasonBloom (0.92-0.13). Named points (params.ts SEASONS): flower 0.97, leaf 0.2, autumn 0.47, bare 0.76, winter
   0.85. Bare crowns keep a twig haze (a share of the leaf faces, bark-dark) and the deciduous keep their first limbs at
   every mesh level.
+- Plant states (round 128): the instance's p.x (instTree[o + 3].x: 0 alive, 1 dead, 2 burned), from vegprep: a
+  WorldGpu `snag` texel > 0 (snag.wgsl: the fire's standing burned trees; streamed with its region) → burned, wilt.y >
+  0.6 → dead. The tree editor's variants enter the world through `?ftree=` (variants.ts; library.ts defOf).
 - Tree size (round 128): flora/spacing.ts TREE_SCALE (2; ?treescale=1 round 125's) multiplies every tree's height and
   trunk (the species' heights, the plan's trunk and crown, the tiles' painted trees, the understory's reach, a trunk's
   passability footprint ×², logs ×²) and the slot grid's spacing (density ÷ TREE_SCALE²). vegplan.wgsl takes the grid's

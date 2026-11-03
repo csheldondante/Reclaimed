@@ -576,6 +576,9 @@ export class Streamer {
       tx('lavaSpring', true),
       // (round 84: the atlas's rivers at their steady state — frozen with its region, as what's held there)
       tx('riverFlow', true),
+      // (round 128: the fire's standing burned trees, frozen with their region)
+      tx('snag', true),
+      tx('snagNext', false),
       tx('drift', false),
       tx('air', false),
       tx('strata', false),

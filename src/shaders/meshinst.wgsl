@@ -161,7 +161,8 @@ fn vsInst(@location(0) a: vec4<f32>, @location(1) uvIn: vec4<f32>, @builtin(vert
   o.pos = CAM.viewProj * vec4<f32>(wp, 1.0);
   o.wpos = wp;
   // (ringwin: the pick's column in window order — the CPU reads it)
-  o.info = vec4<u32>(k, select(part, fpart, fl), winIdx(cell), u32(seed * 65535.0));
+  // (round 128: a plant's state in w's high bits — 0 alive, 1 dead, 2 burned: the instance's p.x, vegprep's)
+  o.info = vec4<u32>(k, select(part, fpart, fl), winIdx(cell), u32(seed * 65535.0) | (select(0u, u32(p.x + 0.5), fl) << 16u));
   // (flora: the sway weight stands in for the height share up the plant — it rises with it)
   o.h = select(a.z, sway, fl);
   o.foot = vec3<f32>(r0.w, r1.w, r2.w);
@@ -186,7 +187,7 @@ fn fsInst(in: MIOut) -> FOut {
   let hd = underStumpFade(in.wpos, in.foot);
   let k = in.info.x;
   let part = in.info.y;
-  let rnd = f32(in.info.w) / 65535.0;
+  let rnd = f32(in.info.w & 0xffffu) / 65535.0;
   var alb: vec3<f32>;
   var mat = MAT_WOOD;
   if (part >= 3u) {

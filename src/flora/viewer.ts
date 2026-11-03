@@ -38,6 +38,8 @@ interface State {
   over: Record<string, number | string>;
   /** (round 128) the A side of the A | B pair: 'old' (round 117's generator), 'species' (as written) or a saved name */
   against: string;
+  /** (round 128) the plant's state: 0 alive, 1 dead, 2 burned */
+  pstate: number;
 }
 
 const params = new URLSearchParams(location.search);
@@ -53,6 +55,7 @@ const state: State = {
   compare: params.get('compare') === '1',
   over: paramsFromQuery(params),
   against: params.get('against') ?? 'old',
+  pstate: Number(params.get('state') ?? 0),
 };
 
 function fail(msg: string): never {
@@ -146,6 +149,8 @@ async function main() {
         scene = { kinds: [{ species: state.species, mesh, def }], instances: inst, ranges: [{ first: 0, count: 1 }], ground: tree ? 1 : 0, crowns: tree ? [{ x: 0, y: 0, z: mesh.height * 0.7, r: mesh.radius * 0.7, species: state.species }] : [], radius: 12 };
       }
     }
+    // (round 128: the state shown — the instances' p.z)
+    if (state.mode === 'plant') for (let i = 0; i < scene.instances.length; i += 16) scene.instances[i + 14] = state.pstate;
     const genMs = performance.now() - t0;
     // one vertex and one index buffer for all kinds
     let nv = 0;
@@ -374,6 +379,7 @@ async function main() {
     const q = new URLSearchParams({ mode: state.mode, biome: state.biome, species: state.species, seed: String(state.seed), wind: state.wind.toFixed(2), season: state.season.toFixed(2), growth: state.growth.toFixed(2), density: state.density.toFixed(2) });
     if (state.compare) q.set('compare', '1');
     if (state.against !== 'old') q.set('against', state.against);
+    if (state.pstate) q.set('state', String(state.pstate));
     for (const [k, v] of Object.entries(state.over)) q.set(`p.${k}`, typeof v === 'number' ? String(+v.toFixed(4)) : v.slice(1));
     history.replaceState(null, '', `?${q}`);
     atlasLink.href = `./?skipmenu=1&level=atlas&tutorial=0&flora=1`;
@@ -582,6 +588,13 @@ async function main() {
     if (got[0]) loadVariant(got[0]);
   };
   fillSaved();
+  const stateSel = $<HTMLSelectElement>('pstate');
+  stateSel.value = String(state.pstate);
+  stateSel.onchange = () => {
+    state.pstate = Number(stateSel.value);
+    rebuild();
+    syncUrl();
+  };
   $<HTMLButtonElement>('reset').onclick = () => {
     state.over = {};
     buildParams();

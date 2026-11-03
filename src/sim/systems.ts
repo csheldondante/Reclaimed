@@ -17,6 +17,7 @@ import waterDepthWgsl from '../shaders/water_depth.wgsl?raw';
 import contamWgsl from '../shaders/contamination.wgsl?raw';
 import moistureWgsl from '../shaders/moisture.wgsl?raw';
 import ecologyWgsl from '../shaders/ecology.wgsl?raw';
+import snagWgsl from '../shaders/snag.wgsl?raw';
 import renderFieldsWgsl from '../shaders/renderfields.wgsl?raw';
 import meshRegionWgsl from '../shaders/meshregion.wgsl?raw';
 import meshStateWgsl from '../shaders/meshstate.wgsl?raw';
@@ -440,6 +441,20 @@ export class EcologySystem implements SimSystem {
   encode(enc: GPUCommandEncoder): void {
     run(enc, this.prof, this.name, this.s, this.world);
     copyBack(enc, this.prof, this.world, this.world.vegNext, this.world.veg, 1, this.s.cull);
+  }
+}
+
+/** (round 128, treegen) Standing burned trees: where the fire burns a wood, a charred snag stands (snag.wgsl). */
+export class SnagSystem implements SimSystem {
+  readonly name = 'snag';
+  readonly period = ECO_P.period;
+  private s;
+  constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
+    this.s = kernel(device, world, 'snag', fieldPass(snagWgsl, ECO_P.k), { 3: 'read', 4: 'read', 60: 'tex', 61: 'stex' }, { 3: world.fire, 4: world.veg, 60: world.snagView, 61: world.snagNext.createView() });
+  }
+  encode(enc: GPUCommandEncoder): void {
+    run(enc, this.prof, this.name, this.s, this.world);
+    enc.copyTextureToTexture({ texture: this.world.snagNext }, { texture: this.world.snag }, { width: this.world.w, height: this.world.h });
   }
 }
 

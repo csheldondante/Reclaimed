@@ -56,7 +56,8 @@ fn vsPlant(@location(0) a: vec4<f32>, @location(1) uvIn: vec4<f32>, @builtin(ins
   // (round 128) icicles only in deep winter (as meshinst.wgsl)
   if (part == 11u && seasonSnow() < 0.5) { o.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0); }
   o.wpos = wp;
-  o.info = vec4<u32>(k, part, u32(p.y * 65535.0), 0u);
+  // (round 128: the state the viewer shows — p.z: 0 alive, 1 dead, 2 burned)
+  o.info = vec4<u32>(k, part, u32(p.y * 65535.0) | (u32(p.z + 0.5) << 16u), 0u);
   o.h = sway;
   o.uv = uvIn;
   return o;
@@ -74,7 +75,7 @@ fn fsPlant(in: PO) -> @location(0) vec4<f32> {
     let s = 0.5 + 0.12 * randv(vec3<i32>(floor(in.wpos * 2.0)));
     return shade(vec3<f32>(s, s * 0.98, s * 0.93), n, in.wpos);
   }
-  let rnd = f32(in.info.z) / 65535.0;
+  let rnd = f32(in.info.z & 0xffffu) / 65535.0;
   let fl = floraLook(in.info.x, in.info.y, in.wpos, n, in.h, rnd, in.info.z, in.uv.xy, fw);
   n = floraBump(in.info.x, in.info.y, in.uv.xy, n, tb, fw);
   if (fl.w < 0.0) { discard; }

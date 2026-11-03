@@ -152,6 +152,11 @@ export class WorldGpu {
    * wind, ba whole wind (map wind + painted; windfield.wgsl). Everything that
    * feels wind reads it. `windField` is read, `windFieldNext` written.
    */
+  /** (round 128, treegen) standing burned trees: x 1 a wood the fire burned stands charred there, decaying (snag.wgsl
+   *  writes it — SnagSystem, ping-pong snag → snagNext → snag; vegprep.wgsl and the flora plan's mirror read it) */
+  readonly snag: GPUTexture;
+  readonly snagNext: GPUTexture;
+  readonly snagView: GPUTextureView;
   readonly windField: GPUTexture;
   readonly windFieldNext: GPUTexture;
   readonly windFieldView: GPUTextureView;
@@ -412,6 +417,10 @@ export class WorldGpu {
     this.windField = device.createTexture({ label: 'windField', size: wsize, format: 'rgba32float', usage: tusage });
     this.windFieldNext = device.createTexture({ label: 'windFieldNext', size: wsize, format: 'rgba32float', usage: tusage });
     this.textures.push(this.windField, this.windFieldNext);
+    this.snag = device.createTexture({ label: 'snag', size: { width: this.w, height: this.h }, format: 'rgba32float', usage: tusage });
+    this.snagNext = device.createTexture({ label: 'snagNext', size: { width: this.w, height: this.h }, format: 'rgba32float', usage: tusage });
+    this.textures.push(this.snag, this.snagNext);
+    this.snagView = this.snag.createView();
     this.windFieldView = this.windField.createView();
     this.physPuff = this.buf('physPuff', wsize.width * wsize.height * 4, S | GPUBufferUsage.COPY_DST);
     this.windBlows = this.buf('windBlows', (1 + MAX_BLOWS * 3) * 16, S | GPUBufferUsage.COPY_DST);

@@ -19,6 +19,8 @@
 // (round 99, ?meshinst=1: TREE_MESH) the trees as instances of their species' mesh (render/meshinst.ts: four vec4s
 // each, CAP a species), their draw args' instance counts in `indirect` from MI_ARGS (five words a species)
 @group(0) @binding(10) var<storage, read_write> instTree: array<vec4<f32>>;
+// (round 128, treegen) standing burned trees (snag.wgsl): a slot's tree drawn charred where the fire burned its wood
+@group(0) @binding(64) var snagTex: texture_2d<f32>;
 
 // (round 93) The instance lists may be smaller than their worst case (renderer.ts instgrow, ?instgrow=0 off): a write past
 // one's room is left out, the count clamped after (clampVeg) and the raw count kept for the CPU, which grows it.
@@ -217,7 +219,10 @@ fn treeInstance(c: vec2<u32>, top: f32, pl: VegPlan) {
     let age = (0.8 + 0.2 * clamp((veg[colIdx(c.x, c.y)] - 3.6) / 1.2, 0.0, 1.0)) * treeSize(vec2<i32>(i32(c.x) + i32(G.org.z), i32(c.y) + i32(G.org.w)));
     // (round 125, forest: the trees' real reach — the elder ~32 tall and ~16 across its crown — for the cull)
     let tall = (pl.trunk + pl.crown) * 1.15 + 2.0;
-    floraInstance(r, c, top, age, 0.05, tall, select(9.0, 16.0, pl.species == 3u) * TREE_SCALE);
+    // (round 128: its state — 2 burned (a snag stands), 1 dead (browned: leafless, grey), 0 alive)
+    let sn = textureLoad(snagTex, vec2<i32>(c), 0).x;
+    let st = select(select(0.0, 1.0, wilt[colIdx(c.x, c.y)].y > 0.6), 2.0, sn > 0.0);
+    floraInstanceS(r, c, top, age, 0.05, tall, select(9.0, 16.0, pl.species == 3u) * TREE_SCALE, st);
     return;
   }
   let k = min(pl.species, MI_N - 1u);
@@ -239,6 +244,12 @@ fn treeInstance(c: vec2<u32>, top: f32, pl: VegPlan) {
   instTree[o + 1u] = vec4<f32>(sn, cs, ly, at.y);
   instTree[o + 2u] = vec4<f32>(0.0, 0.0, 1.0, top);
   instTree[o + 3u] = vec4<f32>(pl.trunk + 0.5, base, pl.crown + select(0.0, 0.5, k == 3u), half);
+}
+
+fn floraInstanceS(r: vec2<u32>, c: vec2<u32>, top: f32, scale: f32, lean: f32, tall: f32, across: f32, state: f32) {
+  if (!floraSeen(cellPos(vec2<i32>(c)), top, tall, across)) { return; }
+  let o = floraPut(r, c, cellPos(vec2<i32>(c)), top, scale, lean, 0u);
+  if (o != 0xffffffffu) { instTree[o + 3u].x = state; }
 }
 
 fn floraInstance(r: vec2<u32>, c: vec2<u32>, top: f32, scale: f32, lean: f32, tall: f32, across: f32) {
@@ -319,7 +330,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     let lay = driftAt(vec2<i32>(id.xy));
     if (lay > 0.0 && !buriedAt(vec2<i32>(id.xy))) { top = f32(sfZ(s)) + lay; }
     let gm = groundMatAt(vec2<i32>(id.xy), sfMat(s));
-    pl = vegPlan(id.x, id.y, veg[i], gm);
+    // (round 128: a burned wood's snag keeps its tree standing, charred — the plan as a wood's)
+    let snag = textureLoad(snagTex, vec2<i32>(id.xy), 0).x;
+    pl = vegPlan(id.x, id.y, select(veg[i], max(veg[i], 3.6), snag > 0.0), gm);
     plF = pl;
     // (perfopt, ?tufts=0: no grass tufts — quarter-cell boxes, a third of a pixel at low; the mesh's plant cover draws the grass)
     if (!TUFTS) { pl.tufts = 0u; }

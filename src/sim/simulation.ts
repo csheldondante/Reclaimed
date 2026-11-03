@@ -6,7 +6,7 @@ import { EventKind, MAX_EVENTS, writeGlobals, GLOBALS_HEAD_BYTES, globalsBytes, 
 import type { SimSystem } from './system';
 import {
   ContaminationSystem,
-  EcologySystem,
+  EcologySystem, SnagSystem,
   MoistureSystem,
   OilSystem,
   RenderFieldsSystem,
@@ -107,6 +107,8 @@ export class Simulation {
       (this.cover = new WeatherCoverSystem(device, world, profiler)),
       new WiltSystem(device, world, profiler),
       new EcologySystem(device, world, profiler),
+      // (round 128, treegen: the fire's standing burned trees)
+      new SnagSystem(device, world, profiler),
       this.particles,
       new StructTickSystem(device, world, profiler),
       new SwaySystem(device, world, profiler),
