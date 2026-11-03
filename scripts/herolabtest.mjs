@@ -119,6 +119,15 @@ await run({ name: 'herolabtest', kind: PERF ? 'timing' : 'behaviour', size: '412
       await sleep(2500);
       const s = await p.evaluate(() => ({ url: location.search, menu: document.querySelector('.lab-menu').classList.contains('on') }));
       R.check(`test ${t}: the menu closes, the address says it`, !s.menu && s.url.includes(`test=${t}`), s.url);
+      // (main's review: one row by default; the handling's button the bike's only; nothing over the bar)
+      const lay = await p.evaluate(() => {
+        const bar = document.querySelector('.lab-bar').getBoundingClientRect();
+        const hand = document.querySelector('.tune-btn.herolab-hand');
+        const vis = (e) => !!e && getComputedStyle(e).display !== 'none';
+        const reclaim = document.querySelector('.reclaim');
+        return { bar: Math.round(bar.bottom), hand: vis(hand), reclaim: vis(reclaim), hero: window.reclaimed.lab.session.heroId };
+      });
+      R.check(`test ${t}: the bar one row (under 150 px), the handling button only with the bike, no goal meter`, lay.bar < 150 && lay.hand === (lay.hero === 'hoverbike') && !lay.reclaim, lay);
       R.log(`${t}: "${(await now()).replace(/\n/g, ' / ')}"`);
       await shot(`test-${t}.png`);
     }

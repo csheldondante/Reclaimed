@@ -228,7 +228,9 @@ function cityPath(): { at: V2; speed: number }[] {
     { at: [ax + 9, ya], speed: 0.6 },
   ];
   const i = pts.findIndex((p) => p.at[0] > ax + 9 && Math.abs(p.at[1] - ya) < 1);
-  return [...detour, ...pts.slice(i)].filter((p, k, a) => k === 0 || Math.hypot(p.at[0] - a[k - 1].at[0], p.at[1] - a[k - 1].at[1]) > 0.5);
+  // (round 128: the ride starts on the open street, the alley at the lap's end — from a standing start the bike met the
+  // alley's turn at once and crawled)
+  return [...pts.slice(i), ...detour].filter((p, k, a) => k === 0 || Math.hypot(p.at[0] - a[k - 1].at[0], p.at[1] - a[k - 1].at[1]) > 0.5);
 }
 /** (round 120, PL30) bollards: posts a cell across, 3 high, along the streets the ride laps, a little off their middle */
 const POSTS: V2[] = (() => {

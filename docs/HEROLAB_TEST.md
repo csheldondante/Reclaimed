@@ -5,8 +5,9 @@ Open this on the phone:
 https://csheldondante.github.io/Reclaimed/herolab/?skipmenu=1&level=herolab
 
 It opens on a menu, "Hero lab: what to try". Each button is one test. Tap it, play, then tap **☰ tests** (top row)
-to get back to the menu. The line under the top bar says what is on, in plain words, and the question. The address
-bar keeps the test, the hero and every chip, so you can copy the link and tell me what you thought.
+to get back to the menu. The line under the top bar says what is on, in plain words, and the question. The top
+bar is one row; **⚙ settings** opens the chips (station, hero, camera, the bike's handling). The address bar keeps
+the test, the hero and every chip, so you can copy the link and tell me what you thought.
 
 The camera on every test is cut and tilt (your pick from round 120), except the tour. The cut now only cuts things
 that hide something, only on the near side of the hero, and rises like a bowl away from the hero, with dithered

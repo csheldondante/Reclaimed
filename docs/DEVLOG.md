@@ -16524,3 +16524,11 @@ the boulder, before the fix); the bike on the tour, auto 8.3 / 11.8 / 42.5. The 
 the cut +0.67 ms (bike), +1.35 (lich), -1.2 (knight, noise); auto -0.16 ms (nothing). The play layer's main thread
 0.70-0.99 ms a frame. The GPU timestamps read 26-95 ms a frame against 8-10 ms frames: unreliable on this adapter,
 kept in the JSON only. The user's Pixel 9a run is the measurement.
+
+**Main's review (round 128).** The lab bar took the top third of the phone (5 rows, ~250 px) over what's being tested:
+it's one row by default now (☰ tests, ⚙ settings, auto, start, and the line saying what's on with the test's
+question); ⚙ opens the chip rows (`?bar=open` keeps them open; the chips stay in the address); a station's own
+scenes (the traits' Crowd, Smite, Raise) stay. The handling's button shows with the bike only. The level's goal
+meter ("65%", the valley's reclaim bar) is hidden in the lab: it sat under the bar. The city's ride starts on the open
+street with the alley at the lap's end: from a standing start the bike met the alley's 90-degree turn at once and
+crawled (Node, 60 s: the bike 2.24 -> 2.60 laps, the knight 1.39, the lich 1.05).

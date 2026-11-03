@@ -150,3 +150,16 @@
   font-size: 12px;
   opacity: 0.75;
 }
+/* (round 128, main's review) one row by default: the tests, ⚙ settings, auto, start and what's on; the chip rows
+   behind ⚙ (a station's own scenes stay) */
+.lab-bar.collapsed .lab-row:not(.lab-keep) {
+  display: none;
+}
+/* the handling's button is the bike's only */
+.play-on .tune-btn.herolab-hand.lab-off {
+  display: none !important;
+}
+/* the level's goal meter isn't the lab's */
+body.herolab-on .reclaim {
+  display: none;
+}

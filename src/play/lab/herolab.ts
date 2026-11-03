@@ -179,11 +179,23 @@ export class HeroLab {
     HANDLING.onChange(() => this.applyHandling());
     for (const p of this.pickers) this.byName.set(p.title, p);
     this.byName.set('handling', this.handPicker as unknown as VariantPicker<string>);
-    const tools = el('div', 'lab-row', this.bar);
+    const tools = el('div', 'lab-row lab-keep', this.bar);
     const testsBtn = el('button', 'play-chip lab-chip', tools) as HTMLButtonElement;
     testsBtn.innerHTML = '<span>☰</span><small>tests</small>';
     testsBtn.title = 'the test menu';
     testsBtn.addEventListener('click', () => this.showMenu(true));
+    // (main's review, round 128: the bar took the top third of the phone, over what's being tested — one row by default,
+    // the chip rows behind ⚙; ?bar=open keeps them open)
+    const setBtn = el('button', 'play-chip lab-chip', tools) as HTMLButtonElement;
+    setBtn.innerHTML = '<span>⚙</span><small>settings</small>';
+    setBtn.title = 'the lab, station, hero, camera and handling chips';
+    const open = (on: boolean) => {
+      this.bar.classList.toggle('collapsed', !on);
+      setBtn.classList.toggle('on', on);
+      urlParam.set('bar', on ? 'open' : null);
+    };
+    setBtn.addEventListener('click', () => open(this.bar.classList.contains('collapsed')));
+    open(urlParam.get('bar') === 'open');
     const autoBtn = el('button', 'play-chip lab-chip', tools) as HTMLButtonElement;
     autoBtn.innerHTML = '<span>▶</span><small>auto</small>';
     autoBtn.title = 'the autopilot rides the station\'s path (touch the stick to take over for a moment)';
@@ -201,6 +213,8 @@ export class HeroLab {
     this.menu = this.buildMenu();
     // (what's under the bar sits under it, however it wraps)
     d.ui.classList.add('lab-on');
+    // (the level's own goal meter, "65%", isn't the lab's: it sat under the bar)
+    document.body.classList.add('herolab-on');
     this.resize = new ResizeObserver(() => d.ui.style.setProperty('--lab-h', `${this.bar.getBoundingClientRect().bottom}px`));
     this.resize.observe(this.bar);
     // (the camera's numbers: ?camtune= a copied link's)
@@ -346,7 +360,7 @@ export class HeroLab {
     this.handPicker.el.style.display = s?.kind === 'moves' ? '' : 'none';
     this.kindRow.querySelector('.lab-actions')?.remove();
     if (s?.actions?.length) {
-      const row = el('div', 'lab-row lab-actions', this.kindRow);
+      const row = el('div', 'lab-row lab-actions lab-keep', this.kindRow);
       const t = el('span', 'lab-row-title', row);
       t.textContent = 'scenes';
       for (const a of s.actions) {
@@ -361,7 +375,13 @@ export class HeroLab {
   /** the handling's numbers into the bike: its turning onto its params, the assist onto the session */
   private applyHandling(): void {
     const h = this.session.hero;
-    if (this.session.heroId !== 'hoverbike') {
+    const bike = this.session.heroId === 'hoverbike';
+    // (the handling's button is the bike's only)
+    if (this.handPanel) {
+      this.handPanel.button.classList.toggle('lab-off', !bike);
+      if (!bike) this.handPanel.toggle(false);
+    }
+    if (!bike) {
       this.session.assist = null;
       return;
     }
@@ -495,6 +515,7 @@ export class HeroLab {
   dispose(): void {
     this.resize.disconnect();
     this.d.ui.classList.remove('lab-on');
+    document.body.classList.remove('herolab-on');
     for (const p of this.pickers) p.dispose();
     this.stationPicker?.dispose();
     this.handPicker.dispose();
