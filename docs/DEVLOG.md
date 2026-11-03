@@ -16637,3 +16637,9 @@ view eased toward a locked enemy, a third of the way, at most 4 cells) onto the 
 DEVLOG kept both. The test menu's knight: Crowd (two waves: lunge through), Guards and lungers, Jump course, Lock on,
 Parry button / swipe / hold (each sets the station's parry chip), Bow, Hook, Tour, Forest, Canyon. A test can press
 the station's own buttons once it's up (LabTest.press: Wave, Guards, Lungers, Course, a parry chip).
+
+**Headless after the knight merge (412x915).** The bar is one row on every test (under 150 px), the handling button
+shows with the bike only, the goal meter is gone. The city: the bike rode 33.8 cells in the window (was 1.6), the
+lich 4.3, the knight 7.8. The knight's crowd test by swipes: 5 blows landed, 2 kills (0 before pass 2's slope-reach
+fix). The guards and lungers test threw "a blocker needs the trait system on the agents": the hero lab made its units
+without the trait system; now `new AgentUnits(agents, traits)` as the atlas does (not yet re-run headless).

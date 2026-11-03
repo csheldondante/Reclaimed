@@ -1958,7 +1958,8 @@ export class LevelScene implements Scene {
   private async startHeroLab(): Promise<void> {
     const { HeroLab } = await import('../play/lab/herolab');
     const api = (this.worldApi ??= attachSim(this.core));
-    const units = (this.units ??= new AgentUnits(this.agents));
+    // (knight pass 2: the guard's block and the lunger's dodge are traits — the units on the trait system, as the atlas's)
+    const units = (this.units ??= new AgentUnits(this.agents, this.traits));
     this.editor?.setVisible(false);
     this.host.ui.classList.add('play-on');
     const dims = this.core.dims;
