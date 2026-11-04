@@ -15,7 +15,11 @@ import { pickFace, placeFor } from './pick';
 import { shapesOf } from './shapes';
 import { waysOf, waysNav, type Ways } from './ways';
 import type { NavGraph } from '../api/contracts/structures';
+import type { TownThing } from '../settle/thing';
 import { LEVEL_H } from '../build/town';
+
+/** (round 128e) the old town's tallest thing above its ground (m): a ray is asked about it only lower than this */
+const TOWN_H = 45;
 
 export interface FortressIO {
   /** the window's origin (world cells: x, row) — the streamer's */
@@ -32,6 +36,9 @@ export interface FortressIO {
    * API's plants.clear; done at the sim's next tick)
    */
   clearPlants?(x: number, y: number, r: number): void;
+  /** (round 128e, FT-48) what the town that was there before the fortress has at window world (x, y), if it stands up to
+   *  window z (null: nothing, or lower) */
+  townAt?(x: number, y: number, z: number): TownThing | null;
 }
 
 /** (round 128d) inspect: a tap picks the structure under it (inspect.ts) instead of planning */
@@ -50,6 +57,8 @@ export class Fortress {
   selected: number | null = null;
   /** (round 128d) the structure Inspect picked: drawn highlighted, its card in the panel (null: none) */
   inspected: number | null = null;
+  /** (round 128e, FT-48) or the thing of the old town Inspect picked (its card in the panel) */
+  inspectedTown: TownThing | null = null;
   readonly onChange: (() => void)[] = [];
   /** (round 128d, FT-20) blocks to build that no builder can walk to from the heap (FortressLife: deep water, a cliff) */
   cutOff = 0;
@@ -203,12 +212,33 @@ export class Fortress {
 
   /** (round 128d) Inspect a structure (null: close the card): it's drawn highlighted. */
   inspect(id: number | null): void {
+    if (id !== null) this.inspectedTown = null;
     if (id !== null && !this.plan.structure(id)) id = null;
     if (id === this.inspected) return;
     const cells = [this.inspected, id].flatMap((s) => (s === null ? [] : [...(this.plan.structure(s)?.cells.keys() ?? [])]));
     this.inspected = id;
     this.changedOver(cells);
     for (const h of this.onChange) h();
+  }
+
+  /**
+   * (round 128e, FT-48) The old town's thing the ray (box frame) first meets: a building or wall it goes under the top of,
+   * before it goes under the ground (null: none). Asked only within TOWN_H of the ground (the town's tallest is lower).
+   */
+  private townAlong(o: readonly number[], d: readonly number[], tMax: number, step = 0.4): TownThing | null {
+    for (let t = 0; t <= tMax; t += step) {
+      const x = o[0] + d[0] * t;
+      const y = o[1] + d[1] * t;
+      const z = o[2] + d[2] * t;
+      const [k, r] = cellAt(x, y);
+      if (k < 0 || r < 0 || k >= this.box.w || r >= this.box.h) continue;
+      const g = this.groundOfCol(r * this.box.w + k);
+      if (z > g + TOWN_H) continue;
+      const th = this.io.townAt!(...this.toWindow(x, y), z);
+      if (th) return th;
+      if (z <= g) return null;
+    }
+    return null;
   }
 
   /** The cell where the ray (box frame) first goes under the ground (-1: it doesn't, in the box). */
@@ -231,8 +261,17 @@ export class Fortress {
       // (a block's face along the ray; else the ground's cell — a yard lies on it; a tap on nothing closes the card)
       const b = this.pick(ray, groundCol) ?? this.groundPick(ray, groundCol);
       const id = b && this.plan.owner[b.cell] >= 0 ? this.plan.owner[b.cell] : null;
+      // (round 128e, FT-48: no structure of the plan there — the old town's building or wall where the tap's ray first
+      // meets the surface: its roofs and walls are in the columns, so the surface read is their top)
+      let town: TownThing | null = null;
+      if (id === null && this.io.townAt) {
+        const [bx, by] = this.toBox(ray.o[0], ray.o[1]);
+        town = this.townAlong([bx, by, ray.o[2]], ray.d, 1200);
+      }
+      this.inspectedTown = town;
       this.inspect(id);
-      return id !== null;
+      if (id === null) for (const h of this.onChange) h();
+      return id !== null || town !== null;
     }
     const b = this.pick(ray, groundCol);
     if (!b) return false;

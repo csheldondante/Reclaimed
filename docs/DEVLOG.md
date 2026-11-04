@@ -16814,3 +16814,23 @@ taps, Build: the 8 builders out and working (3 loads in, a block up within 12 s 
 Erase and Build visible, time stopped; one more house, Build again: time runs. Before the fix the Plan check failed
 (no Houses button visible).
 
+## 2026-11-04 — round 128e (`fortress`): Inspect on the town that was there (FT-48)
+
+**Why.** The user: "Inspect doesn't work on the generated town and it should." Inspect only knew the fortress's own
+plan: a tap on the start town's houses, keep or walls closed the card.
+
+**What.** settle/thing.ts (pure): what a town's CityPlan has at a point of its box — the building whose tile holds it
+(its use from the plan's lotUse: house, hall, granary, smithy, warehouse, sawmill, stable, temple, ruin, site; a
+landmark on it: keep, tower, dome, lighthouse, windmill, mine head; storeys standing, tiles, its top), else the wall
+within reach (its length, height, top). Settlements.thingAt(id, window xy). Fortress.press with Inspect on, when no
+structure of the plan is under the tap: the tap's ray is marched (box frame, from 45 m over the ground down) and the
+first town thing it goes under the top of is picked (the GPU pick's column wasn't usable for this: it landed ~100
+columns off the town at 412x915, so the ray is the plan's own way, as for planning taps). fortress/townpick.ts writes the
+card in the fortress card's words: "Tower" / "A tower over the roofs." / "10 storeys high on 1 tile." / "Part of Muru. It
+was here before your fortress."; a wall: "The wall round Muru. It runs 93 metres and stands 8 metres high."
+
+**Checks.** Unit src/fortress/townpick.test.ts (a building found in its tile and not beside it, a wall within reach,
+every card through the writing lint). Headless scripts/fortressmenu.mjs from the start menu: a grid of presses over the
+town finds a tower, the wall, a warehouse, a granary, a house, a dome, a smithy and a site; real taps on the first three
+show their cards (shot menu-inspect-town.png, looked at: the card fits the bar). Not highlighted on the map yet.
+

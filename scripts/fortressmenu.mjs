@@ -47,9 +47,36 @@ await run({ name: 'fortressmenu', kind: 'behaviour', size: '412x915', dpr: 1, ec
   await page.waitForFunction(() => window.reclaimed?.fortress?.ready || document.querySelector('.fatal'), { timeout: 120000, polling: 250 });
   await sleep(3000);
   console.log('url', await page.evaluate(() => location.search));
+  const barTop = await page.evaluate(() => document.querySelector('.fort-bar').getBoundingClientRect().top);
+  // (FT-48) Inspect on the old town: taps on its buildings (the camera starts over it) show their card
+  await tapButton('Inspect');
+  // (where on screen the town's buildings are: the same press a tap makes, over a grid — then real taps on two of them)
+  const spots = await page.evaluate((barTop) => {
+    const Rc = window.reclaimed;
+    const f = Rc.fortress;
+    const out = [];
+    const seen = new Set();
+    for (let y = 120; y < barTop - 20; y += 40)
+      for (let x = 30; x < 400; x += 40) {
+        if (!f.press(Rc.camera.ray(x, y), -1) || !f.inspectedTown) continue;
+        const k = f.inspectedTown.mega ?? f.inspectedTown.use ?? f.inspectedTown.kind;
+        if (!seen.has(k)) out.push({ x, y, k });
+        seen.add(k);
+      }
+    f.inspectedTown = null;
+    return out;
+  }, barTop);
+  console.log('town spots', JSON.stringify(spots));
+  const townCards = [];
+  for (const { x, y } of spots.slice(0, 3)) {
+    await tap(x, y);
+    townCards.push(await page.evaluate(() => [...document.querySelectorAll('.fort-info p')].map((e) => e.textContent)));
+  }
+  console.log('town cards', JSON.stringify(townCards));
+  if (OUT) await page.screenshot({ path: `${OUT}/menu-inspect-town.png` });
+  await tapButton('Inspect');
   // plan houses by finger: a few taps on the ground above the bar
   await tapButton('Houses');
-  const barTop = await page.evaluate(() => document.querySelector('.fort-bar').getBoundingClientRect().top);
   for (const [x, y] of [[206, barTop - 200], [236, barTop - 220], [176, barTop - 180], [206, barTop - 260]]) await tap(x, y);
   const planned = await page.evaluate(() => window.reclaimed.fortress.plan.totals({}).blocks);
   console.log('planned', planned);
@@ -137,6 +164,7 @@ await run({ name: 'fortressmenu', kind: 'behaviour', size: '412x915', dpr: 1, ec
     return Rc.fortressLife().ids.map((id) => Rc.units.get(id)).map((u) => Rc.camera.project(u.at[0], u.at[1], u.at[2]).map(Math.round).join(','));
   })));
   if (OUT) await page.screenshot({ path: `${OUT}/menu-builder-open.png` });
+  R.check("Inspect shows the old town's buildings", townCards.some((c) => c.length > 1 && /before your fortress/.test(c.join(' '))), JSON.stringify(townCards));
   R.check('the builders came out on Build', p1.life && p1.alive > 0, JSON.stringify(p1));
   R.check('they work (loads brought)', p2.stats?.trips > 0 || p2.built?.built > 0, JSON.stringify(p2));
   R.check('Plan brings the build menu back', menu.houses && menu.erase && menu.build && menu.mode === 'plan', JSON.stringify(menu));

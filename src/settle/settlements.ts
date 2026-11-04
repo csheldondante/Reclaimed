@@ -41,6 +41,7 @@ import type { SurfaceStamp } from '../atlas/bake';
 import { rasterPlan, stampMatch } from './raster';
 import type { ExactPlanDone, ExactPlanJob, FarPlanDone, FarPlanInit, FarPlanJob } from './plan-worker';
 import { Fleet, shipRoutes } from './ships';
+import { townThingAt, type TownThing } from './thing';
 
 const T = 64;
 /** a game day (s): the stores' rates are a day's */
@@ -390,6 +391,18 @@ export class Settlements {
   raid(id?: string): boolean {
     if (!this.life || (id && this.life.rec.id !== id)) return false;
     return this.life.startRaid();
+  }
+
+  /**
+   * (round 128e, FT-48) What a planned settlement has at window (x, y): one of its buildings, or its wall
+   * (settle/thing.ts). null: nothing of it there, or not planned.
+   */
+  thingAt(id: string, at: V2): TownThing | null {
+    const p = this.done.get(id);
+    const s = this.seeds.find((x) => x.rec.id === id);
+    if (!p || !s) return null;
+    const [bx, by] = this.toWindow([s.box.x0, s.box.y0 * ROW_H]);
+    return townThingAt(p.city, p.standing, p.lotUse, [at[0] - bx, at[1] - by]);
   }
 
   /** world (atlas units) → window, and back */

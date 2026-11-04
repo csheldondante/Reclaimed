@@ -2989,6 +2989,12 @@ export class LevelScene implements Scene {
       changed: () => view.touch(),
       // (round 128d, FT-26: the fortress's cells clear their trees — the plants module's clearing)
       clearPlants: (x, y, r) => (this.worldApi ??= attachSim(this.core)).plants!.clear(x, y, r),
+      // (round 128e, FT-48: Inspect on the town that was there)
+      townAt: (x, y, z) => {
+        const t = st.thingAt(rec.id, [x, y]);
+        // (the plan's z is the world's: the window's is less its oz)
+        return t && z <= t.top - S.oz ? t : null;
+      },
     });
     this.fortress = fort;
     // drawn with the towns' pieces (fortress/pieces.ts), in the box's frame, moved into the window's by its offset
@@ -3055,6 +3061,7 @@ export class LevelScene implements Scene {
         this.speed = 0;
       },
     });
+    this.fortressBar.townName = rec.name;
     // the power coming in: the fortress's built blocks (a ledger number: nothing spends it yet)
     fort.onChange.push(() => {
       const p = (rec.stores.power ??= { stock: 0, rate: 0 });

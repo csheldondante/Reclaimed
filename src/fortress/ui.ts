@@ -11,6 +11,7 @@ import { STRUCTURE_TYPES, type StructureType } from '../api/contracts/fortress';
 import { DEFS } from './defs';
 import type { Fortress } from './fortress';
 import { inspectCard, inspectFacts } from './inspect';
+import { townCard } from './townpick';
 import { buildingLine, cutOffLine, PAUSED_LINE, planLines, storesLine, structureLines, typeCard } from './words';
 
 const CSS = `
@@ -59,6 +60,9 @@ export class FortressBar {
   private modeLine: HTMLDivElement;
   private storeLine: HTMLDivElement;
   private frame: HTMLDivElement;
+
+  /** (round 128e, FT-48) the old town's name, for its cards */
+  townName = 'the town';
 
   constructor(parent: HTMLElement, private fort: Fortress, hooks: FortressBarHooks) {
     const style = document.createElement('style');
@@ -117,6 +121,7 @@ export class FortressBar {
       // tools hidden after Plan — the bar showed the Inspect card instead. Plan and Build put Inspect away)
       if (fort.tool.inspect) {
         fort.tool = { type: fort.tool.type, erase: false, gate: false, tower: false };
+        fort.inspectedTown = null;
         fort.inspect(null);
       }
       if (fort.mode === 'plan') hooks.build();
@@ -130,7 +135,10 @@ export class FortressBar {
     this.inspectBtn.onclick = () => {
       const on = !fort.tool.inspect;
       fort.tool = { type: fort.tool.type, erase: false, gate: false, tower: false, inspect: on };
-      if (!on) fort.inspect(null);
+      if (!on) {
+        fort.inspectedTown = null;
+        fort.inspect(null);
+      }
       this.render();
     };
     goRow.append(this.inspectBtn, this.goBtn);
@@ -151,7 +159,11 @@ export class FortressBar {
     if (f.tool.inspect) {
       // (round 128d) Inspect: the picked structure's card (inspect.ts), from its data and the ledger now
       const s = f.inspected !== null ? f.plan.structure(f.inspected) : null;
-      if (!s) out.push({ text: 'Tap a block to see what it is.' });
+      if (!s && f.inspectedTown) {
+        const card = townCard(f.inspectedTown, this.townName);
+        out.push({ text: card.title, title: true });
+        for (const l of card.lines) out.push({ text: l });
+      } else if (!s) out.push({ text: 'Tap a block or a building to see what it is.' });
       else {
         const card = inspectCard(inspectFacts(f.plan, s, (c, l) => f.town.has(c, l), stores));
         out.push({ text: card.title, title: true });
