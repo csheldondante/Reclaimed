@@ -107,7 +107,7 @@ import { Compass, NORTH_AZIMUTH } from '../ui/compass';
 import { wikiLabels } from '../gm/map-names';
 import { atlasFacts } from '../gm/atlas-facts';
 import { bootMark } from '../perf/boot-marks';
-import { beginPipelineBatch, endPipelineBatch } from '../gpu/pipeline';
+import { beginPipelineBatch, endPipelineBatch, whenPipelinesReady } from '../gpu/pipeline';
 import { captureWorld, loadSnapshot, saveSnapshot } from '../sim/snapshot';
 import { loadWarm, saveWarm, warmKey } from '../sim/warm-cache';
 import { buildWiki } from '../gm/wiki';
@@ -126,6 +126,8 @@ import { FortressLife } from '../fortress/life';
 import { ECON, START_STORES } from '../fortress/defs';
 import { fortressPieces } from '../fortress/pieces';
 import { FortressClaims } from '../fortress/claims';
+import type { FortressPiecesHost, FortressTownSource, FortressWindow } from '../fortress/host';
+import { installLab, type Lab } from '../lab/lab';
 import type { StructurePieces } from '../api/contracts/structures';
 import type { GridStyle } from '../api/contracts/settlement';
 import type { CitySpec } from '../api/contracts/structures';
@@ -1038,7 +1040,7 @@ export class LevelScene implements Scene {
     if (snapKey || warmK) bootMark(snap ? 'snap-loaded' : 'snap-missing');
     if (snap) await s.core.warmFrom(snap);
     else {
-      await s.core.warmup(opts.map ? 30 : WARMUP_TICKS, (sys) => sys.name !== 'ecology' && !(still && sys.name === 'water'));
+      await s.core.warmup(opts.map ? 30 : level.warmupTicks ?? WARMUP_TICKS, (sys) => sys.name !== 'ecology' && !(still && sys.name === 'water'));
       if (snapKey) void saveSnapshot(snapKey, captureWorld(s.core));
       else if (warmK) void saveWarm(warmK, captureWorld(s.core));
     }
@@ -1051,7 +1053,12 @@ export class LevelScene implements Scene {
     s.core.globals.debrisBoost = 1;
     // (round 108, the playground) what a station's reset puts back: the world as it opens
     if (level.stations) s.core.keepPristine();
+    // (round 128l, tooling: the pipelines attach asks for — the agents, physics, the structures draw, ~60 at a level's
+    // start — made together too: one at a time, at their first use, they held the first frames for 10-18 s)
+    beginPipelineBatch();
     s.attach();
+    await endPipelineBatch();
+    bootMark('attach-pipelines');
     return s;
   }
 
@@ -1883,7 +1890,11 @@ export class LevelScene implements Scene {
         }
       }
     }
+    // (round 128l, tooling) the behaviour lab: the fortress on the lab's own town (src/lab/)
+    if (this.level.behaviourLab) this.startLab();
     (window as unknown as { reclaimed: unknown }).reclaimed = Object.assign(api, {
+      // (round 128l, tooling) the behaviour lab's scenario API (src/lab/lab.ts; docs/TOOLING.md)
+      lab: this.lab?.api,
       // (round 117, flora) the flora contract (api/contracts/flora.ts), for scripted checks: reclaimed.flora().passability…
       flora: () => (this.worldApi ??= attachSim(this.core)).flora,
       // (round 88, the atlas level) settlements.near([x, y]) / settlement('s12') / live() / raid() / plan(id), its
@@ -2333,7 +2344,9 @@ export class LevelScene implements Scene {
     if (first && this.fortress) this.core.camera.zoom = Math.max(this.core.camera.zoom, 6);
   }
 
-  frame(now: number, dt: number): void {
+  frame(now: number, dt: number, driven = false): void {
+    // (round 128l, tooling: lab.run steps the scene itself, as fast as the GPU goes — the display's frames wait)
+    if (this.lab?.driving && !driven) return;
     const cpu0 = performance.now();
     const { core, audio, powers, hud } = this;
     const { camera, weather, globals, sim, map, dims } = core;
@@ -2424,12 +2437,13 @@ export class LevelScene implements Scene {
     this.settlements?.farUpdate(dt);
     // (round 119) the settlements' pieces: made again when a plan, a storey or the window changed
     this.settlementsView?.update();
+    this.lab?.frame();
     this.fortressClaims?.frame();
     this.shipsView?.update();
     if (this.inhabitants) this.lifeFrame(dt * this.speed);
     if (this.units && !this.stream?.busy) {
       this.units.update(dt * this.speed);
-      timed('settle', () => this.settlements!.update(dt * this.speed));
+      timed('settle', () => this.settlements?.update(dt * this.speed));
       if (this.fortressLife) {
         this.fortressLife.update(dt * this.speed);
         if (this.fortressSkip) this.skipFrame(dt * this.speed);
@@ -2560,7 +2574,8 @@ export class LevelScene implements Scene {
       core.clock.pause(simDt, this.speed);
       this.simHeld[held] = (this.simHeld[held] ?? 0) + 1;
     }
-    const ticks = held ? 0 : core.advance(now, simDt, this.speed);
+    // (round 128l: the lab may run only some of the sim's systems — lab.sims, src/lab/lab.ts)
+    const ticks = held ? 0 : core.advance(now, simDt, this.speed, this.lab?.simFilter);
     record('sim', performance.now() - tSim); // (round 100, hitchrec: timing)
     this.ticksAvg = this.ticksAvg * 0.95 + ticks * 0.05;
     // (round 83, V21: ?cutaway=1 — the camera's puck, the slice and the orbit round it; `cutFeet` a script's
@@ -3000,10 +3015,12 @@ export class LevelScene implements Scene {
    * (fortress slice 1, milestone 1) The town at the start becomes the player's fortress: pinned (live, no houses of its
    * own), its stores started if empty, a Town on its own world-anchored box round it, the planning bar, time stopped.
    */
-  private startFortress(st: Settlements, view: SettlementsView, id: string | undefined): void {
+  // (round 128l, tooling: the town, the window and the pieces' host as contracts — fortress/host.ts — so the behaviour lab,
+  // src/lab/, starts the same fortress on its own small world)
+  private startFortress(st: FortressTownSource, view: FortressPiecesHost, id: string | undefined, win: FortressWindow | undefined = this.stream): void {
     if (!id) throw new Error('?fortress=1 needs ?town= (the town that becomes the fortress)');
-    const S = this.stream;
-    if (!S) throw new Error('?fortress=1 needs the atlas level');
+    const S = win;
+    if (!S) throw new Error('?fortress=1 needs the atlas level (or the lab: ?level=lab)');
     // (its people are the fortress's builders — FortressLife — not a SettlementLife: never both, they share fields)
     const rec = st.pin(id, true);
     for (const [k, v] of Object.entries(START_STORES)) {
@@ -3087,12 +3104,14 @@ export class LevelScene implements Scene {
       return { p: pieces, dx, dy: dy * ROW_H };
     };
     // the ground under every column known before the first plan (a far chunk's surface words aren't made till it wakes):
-    // made now over the whole window and read back
-    core.prepareArrived();
-    void core.readBuffer('surface', true).then((f) => {
-      this.surfaceCache = new Uint32Array(f.buffer);
-      fort.ready = true;
-    }, ignoreTeardown);
+    // made now over the whole window and read back (round 128l: once the level's pipelines are ready — in its batch, at its end)
+    whenPipelinesReady(() => {
+      core.prepareArrived();
+      void core.readBuffer('surface', true).then((f) => {
+        this.surfaceCache = new Uint32Array(f.buffer);
+        fort.ready = true;
+      }, ignoreTeardown);
+    });
     void readCols().then(() => fort.onChange.forEach((h) => h()), ignoreTeardown);
     // (round 128f) the columns read again when planning starts (what's been built and dug since), and every few seconds
     // while building (FortressLife's cut-off check reads them)
@@ -3198,6 +3217,37 @@ export class LevelScene implements Scene {
     // time stops while planning (the speed-0 path: the sim, the units, the settlements and the day all wait)
     // (?fpause=0: time runs while planning — to compare)
     if (this.host.params.get('fpause') !== '0') this.speed = 0;
+  }
+
+  /** (round 128l, tooling) the behaviour lab (?level=lab: src/lab/) — its town, its still window, its pieces' draw */
+  lab?: Lab;
+  private startLab(): void {
+    const { core, host } = this;
+    this.units = new AgentUnits(this.agents);
+    const { w, h } = core.dims;
+    this.lab = installLab({
+      core,
+      units: this.units,
+      device: host.gpu.device,
+      params: host.params,
+      startFortress: (town, view, win) => this.startFortress(town, view, town.rec.id, win),
+      fortress: () => this.fortress,
+      life: () => this.fortressLife,
+      dropLife: () => {
+        this.fortressLife?.dispose();
+        this.fortressLife = undefined;
+        this.fortressSkip = false;
+      },
+      speed: (n?: number) => (n === undefined ? this.speed : (this.speed = n)),
+      frame: (now, dt) => this.frame(now, dt, true),
+      restoreLand: () => {
+        this.integrity?.forget(0, 0, w, h);
+        core.restoreChunks(0, 0, w / CHUNK, h / CHUNK);
+        const [x1, y1] = cellPos(w, h);
+        core.renderer.fieldMesh.urgent(0, 0, x1, y1);
+        void core.readBuffer('surface', true).then((f) => (this.surfaceCache = new Uint32Array(f.buffer)), ignoreTeardown);
+      },
+    });
   }
 
   /**

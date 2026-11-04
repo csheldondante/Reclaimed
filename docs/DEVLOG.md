@@ -17247,3 +17247,40 @@ relax: now only new shapes or a new network mark everything; the road field refi
 On a phone at 2 sweeps a tick with a capped front (FRONT_CAP 32 chunks), a player panning kept every field's front
 full of whole-scope work. Not measured on the phone (BACKLOG FT-72). Tests: roadstamp (an offset alone returns false),
 fortressoutside passes (it fails if a site outside the walls isn't standing within 150 s at 16x).
+
+## 2026-11-04 — round 128l (`tooling`): the behaviour lab — a fast loop for fortress, agents and roads checks
+
+**Why.** The user: "development seems to have slowed considerable … can you diagnose if there is some part of our
+process that is slow … I would like to speed up iterations if possible", then "Let's invest in some tooling to speed
+up the development processes." Measured in the agents' transcripts: 55-70% of their wall time was headless browser
+runs — `fortresslanes.mjs` 53 runs at ~75 s, `fortressoutside.mjs` 7 at ~3.7 min, `townbenchcheck` 13 — each booting
+`?level=atlas` (here: level ready in 55-67 s, the fortress plannable ~5-10 s later) and then playing in real time.
+**What.** (docs/TOOLING.md; ARCHITECTURE "The behaviour lab")
+- `?level=lab&lab=flat|hill|valley|walled`: a fixed 256² window of a recipe's land made on the CPU (src/lab/recipes.ts;
+  no atlas, a 120-tick warmup), the real fortress on the lab's own town. To start it there, startFortress takes three
+  small contracts (fortress/host.ts: the town source, the window, the pieces' host) that Settlements, the Streamer and
+  the SettlementsView already meet; the lab gives LabTown, a window that never slides, and LabPiecesView. Everything
+  after — Fortress, FortressLife on AgentUnits, claims, the bar — is the game's code. level.ts: a LevelDef entry and
+  a few one-line hooks (startLab, the lab's frame, the driven frame, the sim filter, `reclaimed.lab`).
+- `reclaimed.lab`: place, plan (a whole plan, built or planned), standAll, stores, build/planMode (the bar's
+  buttons), sims (which systems tick: 'fortress' leaves the land's slow processes out, ~2x), run(seconds, speed) in
+  sim time as fast as the GPU goes (the display's frames wait; drawing every 8th), snapshot (walkers, jobs, stores,
+  progress, structures, roads ridden), look/shot, reset (no reload).
+- `scripts/lab.mjs serve|run|status|stop`: one Chrome and one lab page kept open with its own static server; a run
+  reloads only on a new build or recipe, else resets. Ported: scripts/lab/fortressoutside.mjs, fortresslanes.mjs;
+  scripts/lab/example.mjs the template. The old scripts stay for the gate.
+- Every level's boot: the pipeline batch now covers attach (~60 pipelines: agents, physics, the structures draw) —
+  made one at a time at their first use they held the first frames 10-18 s (the lab's page: ready at 37 s → 23 s).
+  Work encoded at once in a constructor waits for the batch (gpu/pipeline.ts whenPipelinesReady: the agents' prime,
+  the fortress's first surface read).
+**Measured** (Arc 140T iGPU, shared with other agents' checks): the lab boots in 11-20 s on a reload; `reset()` 0.5 s
+(walled 4.7 s: its town re-planned); **a scenario edit → result 8.9 s** (example.mjs: reset 0.5 + plan, build, 20 sim
+s 8.1); a game-code edit → result ~25 s (build + reload + scenario). fortressoutside 39-61 s (90-121 sim s) against
+~3.7 min; fortresslanes 74-92 s for 100 sim s (now 60 by default) against ~75 s of real-time play. The sim is the
+ceiling: ~4-7 ms a tick over the window, ~12 ms once the builders' fields run, so run() manages 1.5-3x real time at
+16x. `dt: 0.1` (the game's longest frame, ticks capped as on a loaded phone) gives ~10x but the walkers cover less
+ground a sim second (304 s to reach the sites against 90-121). The gate after the change: scripts/fortressoutside.mjs
+on the atlas passes (all three sites stand, 102 s); the atlas boot with ?town=1&fortress=1 fortress-ready in 67 s.
+**Found, not fixed** (BACKLOG TL-5..7): ~9 MB of WGSL compiled every boot (115 modules, the prelude in each;
+`sediment-out` ~7.5 s alone); a fortress block's placement runs the reach check over the whole box (~140 ms a block).
+

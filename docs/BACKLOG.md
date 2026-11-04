@@ -12,6 +12,20 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 128l (2026-11-04, session 5, `tooling`) — the behaviour lab: faster iterations (docs/TOOLING.md)
+
+The user: "Let's invest in some tooling to speed up the development processes."
+
+| id | item | size | status |
+|---|---|---|---|
+| TL-1 | A lab level that boots in seconds: `?level=lab&lab=flat\|hill\|valley\|walled`, a fixed 256² window from a recipe, no atlas, the real fortress on its own town (fortress/host.ts contracts) | M | done (round 128l commit) |
+| TL-2 | The scenario API `reclaimed.lab`: place, plan, standAll, stores, build, sims, run (sim time, as fast as the GPU goes), snapshot, look/shot, reset | M | done (round 128l commit) |
+| TL-3 | A persistent runner `scripts/lab.mjs serve\|run\|status\|stop`: one Chrome and page kept, reload only on a new build or recipe, else reset; its own static server | M | done (round 128l commit) |
+| TL-4 | Ports: scripts/lab/fortressoutside.mjs, scripts/lab/fortresslanes.mjs (the old scripts stay for the gate); docs/TOOLING.md; the pipeline batch over attach (every level boots without the 10-18 s of serial compiles) | S | done (round 128l commit) |
+| TL-5 | Every boot compiles ~9 MB of WGSL (115 modules, the shared prelude in each, ~80 KB a module): pipelines 6-13 s of every boot, `sediment-out` ~7.5 s alone. A smaller prelude per kernel (only the snippets it reads) would cut every level's boot | M | open |
+| TL-6 | A fortress block's placement runs the reach check over the whole box (fortress/reach.ts ReachMap: ~140 ms a block, 4-5 s for a 33-block plan) — incremental reach, or one check per plan in lab.plan | M | open (the fortress track's) |
+| TL-7 | More checks onto the lab: townbenchcheck and the other fortress scripts; a lab town with a real settlement plan (its buildings, not only fortress blocks) for checks about the old town | M | open |
+
 ## Round 128c (2026-11-03, session 5, `fortress`) — fortress mode slice 1 (docs/design/FORTRESS_SLICE1.md)
 
 Branch `fortress`: milestones 1 and 2 built (round 128d: the user's fixes, the Fortress type and power); milestones 3-5 wait for the user's test.

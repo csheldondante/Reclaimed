@@ -15,6 +15,7 @@ import { generatePlayground, STATIONS, type Station } from '../levels/playground
 import { generateTraitlab, TRAITLAB_STATIONS } from '../levels/traitlab';
 import { generateNoiselab } from '../levels/noiselab';
 import { generateBestiary } from '../levels/bestiary';
+import { generateLab, labRecipe, LAB_DIMS } from '../lab/recipes';
 import type { FlowKit } from '../flow/install';
 import type { RiverMode } from '../sim/world-gpu';
 import type { GateSpec } from '../world/kit';
@@ -61,6 +62,10 @@ export interface LevelDef {
   stations?: Station[];
   /** (round 111, TG1) the noise lab: its land made and remade by a layer recipe on the GPU (noiselab/control.ts) */
   noiseLab?: boolean;
+  /** (round 128l, tooling) the behaviour lab (src/lab/: ?level=lab&lab=<recipe>): the fortress on its own town, reclaimed.lab */
+  behaviourLab?: boolean;
+  /** the warmup's ticks before the level opens (default the game's) */
+  warmupTicks?: number;
 }
 
 export const LEVELS: LevelDef[] = [
@@ -196,6 +201,20 @@ export const LEVELS: LevelDef[] = [
     generate: (dims) => generateBestiary(dims),
     sandbox: true,
     hidden: true,
+  },
+  {
+    // (round 128l, tooling: docs/TOOLING.md) scripted behaviour checks on a small fixed world — the fortress, its
+    // builders, roads and claims, no atlas; scripts/lab.mjs drives it
+    id: 'lab',
+    name: 'The Behaviour Lab',
+    blurb: 'A small fixed world from a recipe (flat, hill, valley, walled) with the fortress: scripted checks (?lab=<recipe>).',
+    model: 'sign',
+    generate: (dims) => generateLab(dims, labRecipe(new URLSearchParams(location.search).get('lab'))),
+    sandbox: true,
+    hidden: true,
+    zMax: LAB_DIMS.zMax,
+    behaviourLab: true,
+    warmupTicks: 120,
   },
   {
     id: 'sandbox',
