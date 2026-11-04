@@ -233,7 +233,8 @@ may move, join or cut intervals (sediment joins touching ones of a material and 
 
 **Owners.** The resting rock (OWNER_ROCK), the settlements' buildings (OWNER_STRUCT, settle/view.ts) and (round 128d)
 the player's fortress (OWNER_FORT, fortress/claims.ts: one instance a structure, its solid from fortress/solid.ts — a
-block its cell's columns, a wall its thin band, a gate its lintel only; only built blocks). The fortress keeps each
+block its cell's columns, a wall its thin band and its stairs' steps (fortress/ways.ts), a gate its lintel only; only
+built blocks). The fortress keeps each
 column's ground as first read (its own claims would otherwise read as ground).
 
 **What the sims may assume.** That an External interval is solid ground (they need not know of owners); that it
@@ -3423,3 +3424,17 @@ The building rule (the user's): select what (a structure type), then plan it wit
   radius to grass, no answer read back); done at the sim's next tick, so a plan's clearing waits for Build. **Input:**
   the amber frame and the banners take no presses (`#ui>.fort-frame`); a one-finger drag pans (dragStart declines in
   the fortress; `ControlHandlers.dragPans` lets the mouse's drag pan too).
+- **Round 128d (ways: the fortress bakes its own paths).** `fortress/ways.ts` `waysOf(plan, grid, courtyards)` → `Ways`
+  (per cell WAY_NONE/ROAD/SQUARE/STAIR; `doors` {structure, cell, side, out}; `stairs` {structure, wall, side, cells,
+  foot, axis}; `gates`; `cutOff`): pure, from the plan (built or not), memoised on the Fortress (`Fortress.ways()`,
+  dropped on every plan change; ~4 ms for a 240x278 box with a ring and 20 houses). Order: doors → a road tree over free
+  cells joining doors and both sides of each gate (Dijkstra from the net, 0.3x along road already laid) → stairs on
+  free cells no road or door uses (a flight never cuts a way) → the stairs' feet joined → squares. Readers: pieces.ts
+  (`PieceInputs.ways`: road and square cells become the CityPlan's 'street' and 'plaza' tiles in one style; a façade
+  door only where the ways put it; the keep's door an arch; stairs as stone steps along the axis; no merlons on the
+  face a stair meets), solid.ts (`SolidInputs.ways`: a stair's steps claimed with its wall once the wall's ground run
+  stands — each column within STAIR_HALF of the axis, from the wall's top at its band to the ground at its foot, no
+  steeper than SLOPE 0.75), `Fortress.nav()` (`waysNav`: a NavGraph of roads, doors, gates, the wall-walk and stairs —
+  data; no unit walks it yet). **Units walk the GPU field** (agents.wgsl over the columns): roads are open ground to it
+  (no preference yet, FT-46); the stairs and the wall-walk are claimed solid, so it climbs them. A gate's lintel is
+  0.8 under the wall's top (solid and drawn: FT-45).

@@ -12,6 +12,10 @@ import { cellAt, cellPos } from '../world/lattice';
 import { DEFS } from './defs';
 import { FortressPlan, typeIndex } from './plan';
 import { pickFace, placeFor } from './pick';
+import { shapesOf } from './shapes';
+import { waysOf, waysNav, type Ways } from './ways';
+import type { NavGraph } from '../api/contracts/structures';
+import { LEVEL_H } from '../build/town';
 
 export interface FortressIO {
   /** the window's origin (world cells: x, row) — the streamer's */
@@ -51,6 +55,8 @@ export class Fortress {
   cutOff = 0;
   /** the ground under the box is known (the level's surface read over every column): planning may start */
   ready = false;
+  /** (round 128d) the ways baked from the plan (ways.ts), made again after the plan changes */
+  private waysMemo: Ways | null = null;
   /** the ground's top at a box column */
   private readonly groundOfCol: (col: number) => number;
 
@@ -75,6 +81,34 @@ export class Fortress {
     }, { grid });
     this.plan = new FortressPlan(grid);
     this.grid = grid;
+  }
+
+  /**
+   * (round 128d; the user: "buildings are supposed to bake their own paths") The plan's ways: roads and squares between
+   * its doors, stairs up onto its walls, gates through them (ways.ts). From the plan, built or not.
+   */
+  ways(): Ways {
+    if (!this.waysMemo) {
+      const courts = shapesOf(this.plan, this.grid, (c) => this.town.base[c]).courtyards.flatMap((ct) => ct.cells);
+      this.waysMemo = waysOf(this.plan, this.grid, courts);
+    }
+    return this.waysMemo;
+  }
+
+  /** (round 128d) The ways as a nav graph (box frame; z the window's): roads, doors, gates, stairs, the wall-walk. */
+  nav(): NavGraph {
+    const t = this.town;
+    const groundOf = (c: number) => {
+      const cols = this.grid.columns[c];
+      let z = 0;
+      for (const col of cols) z += this.groundOfCol(col) / cols.length;
+      return cols.length ? z : t.base[c];
+    };
+    return waysNav(this.ways(), this.plan, this.grid, {
+      ground: groundOf,
+      top: (c) => t.floorZ(c, Math.max(0, this.plan.top(c))) + LEVEL_H,
+      floor: (c) => t.floorZ(c, 0),
+    });
   }
 
   /** the ground's top at a box column (window z) */
@@ -356,6 +390,7 @@ export class Fortress {
   /** The Town's plan follows the painted plan (the blocks' floors: Town.plan lines them up with the neighbours'). */
   private sync(): void {
     const changed = this.plan.takeChanged();
+    this.waysMemo = null;
     for (const c of changed) {
       const s = this.plan.structureAt(c);
       const owner = s ? s.id : 0;

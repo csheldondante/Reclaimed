@@ -7,6 +7,7 @@ import { Town } from '../build/town';
 import { TownGrid } from '../build/towngrid';
 import { library } from '../structures/modules';
 import { fortressPieces } from './pieces';
+import { noWays } from './ways';
 import { FortressPlan } from './plan';
 import { COURT_MAX, shapesOf } from './shapes';
 
@@ -32,7 +33,8 @@ function setup() {
   };
   const shapes = () => shapesOf(plan, grid, (c) => town.base[c]);
   const names = () => {
-    const p = fortressPieces({ plan, town, grid, ground: () => GROUND, zOff: 0 });
+    // (the shapes' own rules: no ways — roads and stairs are ways.test.ts's)
+    const p = fortressPieces({ plan, town, grid, ground: () => GROUND, zOff: 0, ways: noWays(grid.count) });
     const lib = library();
     const n = new Map<string, number>();
     for (let i = 0; i < p.count; i++) n.set(lib.modules[p.module[i]].name, (n.get(lib.modules[p.module[i]].name) ?? 0) + 1);

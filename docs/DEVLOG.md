@@ -16755,3 +16755,46 @@ ground closes it; after Build a tap on the keep ("1 of 2 blocks built.", "Power:
 fortresspause still passes. Shots C:/Projects/shots88/fortress/inspect-plan.png (the warehouse gold among the planned
 keep and wall), inspect-build.png, inspect-warehouse-build.png. Looked at: gold reads on a whole block; on a
 see-through block (still to build) it's faint (FT-42).
+
+## 2026-11-04 — round 128d (`fortress`): the fortress bakes its own ways — roads, squares, doors, stairs onto the walls
+
+**Why.** The user, verbatim: "Also, I believe buildings are supposed to bake their own paths so we probably want roads
+and squares between structures and the stairs up onto the walls (for example)". The towns' CityPlan bakes streets, a
+plaza and a nav graph; the fortress handed it `nav: { nodes: [], links: [] }` and no streets, so its structures had no
+ways and a wall had no way up. And a warehouse's Inspect card read "Holds 118 wood, 56 stone and 167 grain. Room for
+50." — it held more than its room (the holding was the town's stores, the room this warehouse's).
+
+**What.** `fortress/ways.ts`, pure, from the plan by rules (as shapes.ts): a door on each block structure and the keep
+(a ground-floor side onto a free cell, the side facing the keep; the keep faces its gates); a road tree over the free
+cells joining every door and both sides of every gate, grown from the keep's door to the nearest unjoined end each time
+(Dijkstra from the whole net, 0.3x along road already laid, so ways merge); squares where two doors open on one cell or
+four ways meet at a door, and the courtyards; a stair for each wall run (another every 16 cells), straight out from a
+straight stretch across free cells no road or door uses — as many as its height needs at a slope of 0.75 — its foot
+joined to the roads after. Drawn (pieces.ts) as the towns' paving: road cells become 'street' tiles, squares 'plaza'
+(kerbs where they meet a lot, a lamp a square), in one style; façade doors only where the ways put them (the keep's an
+arch); a stair as stone steps along its axis, no merlons on the face it meets. `Fortress.nav()` is the NavGraph
+(roads, doors, gates, the wall-walk a node a wall cell, stairs). **What the units use: the GPU field** (agents.wgsl over
+the columns), not the graph — so solid.ts claims each stair's steps with its wall once the wall stands (each column
+within 1.1 of the axis, the wall's top at its band down to the foot's ground), and the field climbs them onto the
+wall-walk. Roads are open ground to the field: no preference yet (FT-46). The warehouse card now speaks of one thing:
+"The town's stores hold 341 goods: …", "Your warehouses have room for 50 goods. This one gives 50 of it.", "The stores
+hold 291 more than that." A gate's lintel is 0.8 under the top (was 1.6): at a gate by the town its passage was shut in
+the field — the floor lines up with its neighbours' so it can sit under the ground, and the GPU keeps up to 1.5 m of
+loose ground on the ground read: 1.4 m of air, under the agents' 1.5 (FT-45).
+
+**Checks.** Unit src/fortress/ways.test.ts (a ring with a gate, the keep, a house, a warehouse, a farm outside: every
+door on one net that runs through the gate to both sides; no road on a structure; a stair from a straight stretch on
+the inside, free cells, long enough at SLOPE; the nav path from the house's floor through its door, along the road, up
+the stairs to the wall-walk; the solid as the GPU surfaces step it (up 1.1, down 2.6) reaches the wall-walk from the
+stair's foot, and doesn't without the stair; paving and steps drawn). An earlier draft let NaN heights through (a free
+cell has no floor: the foot's ground is now the column at the flight's end) — the test now refuses non-finite spans.
+`waysOf` ~4 ms for a 240x278 box (a 40-radius ring, 20 houses), once per plan change. Fortress 40/40, whole suite 738.
+Headless scripts/fortressroads.mjs (412x915; a ring with a gate, keep, house and warehouse, and a straight wall north
+of it, on flat dry ground found by the units' surfaces; built at once): 3 doors, a stair each run, nothing cut off; a
+field seeded on the wall-walk farthest from the stair reaches the keep's door (d 73) and outside the gate (d 85); along
+the stair the surface climbs 106.3 → 109.5 in the field. The card read. fortresspath (its "wall middle" check now: the
+band's only surface is its top — reached now, up the stair), fortressinspect (the card's new words), fortresspause,
+fortressford, fortresswake pass. Shots C:/Projects/shots88/fortress/roads-*.png at play zoom 7 and close 18, looked
+at: the straight wall's stair reads as a stone flight up to the walk (roads-stair-line-near.png); the ring's stair
+climbs its inner face, out of sight behind the near wall from the south-looking camera (FT-46); roads read as paving
+round the keep and out through the gate; the card fits the bar.

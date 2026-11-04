@@ -593,6 +593,12 @@ each was implemented.
   and a compact card says its type and size, how far it's built, what it takes in and puts out a day, its workers of
   its slots, its stock (a warehouse: what the stores hold and its room; barracks: soldiers) and the keep's power. A tap
   on bare ground closes it.
+- The user, verbatim: "Also, I believe buildings are supposed to bake their own paths so we probably want roads and
+  squares between structures and the stairs up onto the walls (for example)"
+- → The fortress bakes its ways from the plan, by rules like its shapes: a door on each building facing the keep, roads
+  joining every door and running through the gates, squares where doors meet, a stair up onto each wall run (more on
+  long ones) to a walk along its top. Drawn as paving and stone steps; the steps and the wall-walk are solid, so units
+  climb them. The warehouse's card speaks of the town's stores against all the warehouses' room, then this one's part.
 
 ## 2026-11-03 — round 128c (session 5) — the fortress mode: the user's vision
 

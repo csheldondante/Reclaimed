@@ -50,7 +50,11 @@ describe('Inspect: the card', () => {
   it('a warehouse shows what the stores hold and its room; barracks their soldiers; the keep its power', () => {
     const all = () => true;
     const w = inspectCard(make('warehouse', all).f);
-    expect(w.lines).toContain(`Holds 120 wood, 80 stone and 150 grain. Room for ${3 * DEFS.warehouse.perBlock.storage!}.`);
+    // (round 128d: the stores are the town's — held and room both of the town, then this warehouse's part)
+    const room = 3 * DEFS.warehouse.perBlock.storage!;
+    expect(w.lines).toContain("The town's stores hold 350 goods: 120 wood, 80 stone and 150 grain.");
+    expect(w.lines).toContain(`Your warehouses have room for ${room} goods. This one gives ${room} of it.`);
+    expect(w.lines).toContain(`The stores hold ${350 - room} more than that.`);
     expect(w.lines.some((l) => l.includes('blocks built'))).toBe(false);
     const b = inspectCard(make('barracks', all).f);
     expect(b.lines).toContain('Soldiers: 3.');

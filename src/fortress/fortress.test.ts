@@ -8,6 +8,7 @@ import { TownGrid } from '../build/towngrid';
 import { library } from '../structures/modules';
 import { DEFS } from './defs';
 import { cityPlanOf, fortressPieces } from './pieces';
+import { noWays } from './ways';
 import { FortressPlan, wallTileOf } from './plan';
 import { goodsText, planLines, structureLines, typeLines } from './words';
 
@@ -142,7 +143,8 @@ describe('the pieces: each type reads distinctly, walls fit together', () => {
       expect(plan.paint(c, l, t)).toBe(true);
       town.plan(c, l, true);
     };
-    const pieces = () => fortressPieces({ plan, town, grid, ground: () => 5, zOff: 0 });
+    // (bare: the shapes' own rules, no ways — roads and stairs are ways.test.ts's)
+    const pieces = (bare = false) => fortressPieces({ plan, town, grid, ground: () => 5, zOff: 0, ways: bare ? noWays(grid.count) : undefined });
     return { town, plan, paint, pieces };
   };
 
@@ -151,7 +153,7 @@ describe('the pieces: each type reads distinctly, walls fit together', () => {
     const m = inner;
     const run = [nbr(m, 0), m, nbr(m, 2)];
     for (const c of run) f.paint(c, 0, 'wall');
-    const p = f.pieces();
+    const p = f.pieces(true);
     let n = names(p);
     // a middle square a cell, a band from it to each side that meets the run: the ends one each, the middle two
     expect(n.get('rampart')).toBe(3 + 4);
@@ -168,12 +170,12 @@ describe('the pieces: each type reads distinctly, walls fit together', () => {
     // merlons: both faces of each band
     expect(n.get('merlons')).toBe(4 * 2);
     expect(f.plan.setGate(m, true)).toBe(true);
-    n = names(f.pieces());
+    n = names(f.pieces(true));
     // the gate: an arch in both faces of the middle's two bands
     expect(n.get('gatearch')).toBe(4);
     // a tower where the player put one
     expect(f.plan.setTower(m, true)).toBe(true);
-    expect(names(f.pieces()).get('tower')).toBe(3);
+    expect(names(f.pieces(true)).get('tower')).toBe(3);
     expect(f.plan.setTower(m, false)).toBe(true);
     // a corner: a cell beside an end, off the run's line, makes that end a corner (a tower still)
     const end = run[0];
@@ -182,7 +184,7 @@ describe('the pieces: each type reads distinctly, walls fit together', () => {
     f.paint(side, 0, 'wall');
     expect(f.plan.wallTile(end, 0)).toBe('corner');
     // (the run's other end and the new end; the corner too where it turns sharply)
-    const towers = names(f.pieces()).get('tower')!;
+    const towers = names(f.pieces(true)).get('tower')!;
     expect(towers === 2 || towers === 3).toBe(true);
   });
 

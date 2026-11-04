@@ -5,7 +5,8 @@
 //   its type and size (blocks, levels high); how far it's built, if it isn't yet;
 //   what it takes in and puts out a day (from its built blocks; made only once it's worked — nobody works yet: jobs come
 //   in milestone 3, recipes in 4, so nothing is taken in);
-//   its workers (assigned of its slots); its stock (a warehouse: what the stores hold, its room; barracks: the soldiers);
+//   its workers (assigned of its slots); its stock (a warehouse: what the town's stores hold against all the
+//   warehouses' room, and this one's part; barracks: the soldiers);
 //   its power (the keep: a day from its built blocks, and what's stored).
 // Pure, so the numbers are tested (inspect.test.ts) and the writing lint reads every line.
 import type { Goods, PerBlock, Structure, StructureDef, StructureType } from '../api/contracts/fortress';
@@ -32,6 +33,12 @@ export interface InspectFacts {
   beds: number;
   posts: number;
   room: number;
+  /**
+   * (round 128d) a warehouse: the room of every warehouse's built blocks. The stores are the town's, one ledger — a
+   * warehouse doesn't hold goods of its own — so the card speaks of the stores against all the warehouses' room, and
+   * this one's part of it (the user: "Holds 118 wood, 56 stone and 167 grain. Room for 50." read as more than its room)
+   */
+  allRoom: number;
   /** a warehouse: what the stores hold (the ledger); barracks: the soldiers */
   stock: Goods | null;
   soldiers: number | null;
@@ -75,12 +82,27 @@ export function inspectFacts(
     beds: (per.beds ?? 0) * done,
     posts: (per.posts ?? 0) * done,
     room: (per.storage ?? 0) * done,
+    allRoom: s.type === 'warehouse' ? roomOfAll(plan, built, defs) : 0,
     stock: s.type === 'warehouse' ? { log: stores.log ?? 0, stone: stores.stone ?? 0, grain: stores.grain ?? 0, weapons: stores.weapons ?? 0 } : null,
     soldiers: s.type === 'barracks' ? Math.floor(stores.soldiers ?? 0) : null,
     power,
     powerStored: power !== null ? Math.floor(stores.power ?? 0) : null,
   };
 }
+
+/** the room of every warehouse's built blocks */
+function roomOfAll(plan: FortressPlan, built: (cell: number, level: number) => boolean, defs: Record<StructureType, StructureDef>): number {
+  let n = 0;
+  for (const s of plan.structures()) {
+    const per = defs[s.type].perBlock.storage ?? 0;
+    if (!per) continue;
+    for (const c of s.cells.keys()) for (const L of plan.levels.each(c)) if (built(c, L)) n += per;
+  }
+  return n;
+}
+
+/** goods counted in the stores (not soldiers, not power) */
+const STORED = ['log', 'stone', 'grain', 'weapons'] as const;
 
 /** The card: a title and a few plain lines (docs/WRITING.md). */
 export function inspectCard(f: InspectFacts, defs: Record<StructureType, StructureDef> = DEFS): { title: string; lines: string[] } {
@@ -100,10 +122,14 @@ export function inspectCard(f: InspectFacts, defs: Record<StructureType, Structu
   if (def.perBlock.beds) lines.push(`Beds: ${f.beds}.`);
   if (def.perBlock.posts) lines.push(`Archers: 0 of ${f.posts} posts.`);
   if (f.stock) {
+    // (the stores are the town's: what they hold against all the warehouses' room, then this one's part — round 128d)
     const held = goodsText(f.stock);
-    // (before any block stands: the room it will have)
-    const room = f.built > 0 ? `Room for ${f.room}.` : `Room for ${(defs[f.type].perBlock.storage ?? 0) * f.blocks} once built.`;
-    lines.push(`Holds ${held === 'nothing' ? 'nothing' : held}. ${room}`);
+    const total = STORED.reduce((n, k) => n + Math.round(f.stock![k] ?? 0), 0);
+    lines.push(held === 'nothing' ? "The town's stores are empty." : `The town's stores hold ${total} goods: ${held}.`);
+    if (f.built > 0) {
+      lines.push(`Your warehouses have room for ${f.allRoom} goods. This one gives ${f.room} of it.`);
+      if (total > f.allRoom) lines.push(`The stores hold ${total - f.allRoom} more than that.`);
+    } else lines.push(`This one gives room for ${(defs[f.type].perBlock.storage ?? 0) * f.blocks} goods once built.`);
   }
   if (f.soldiers !== null) lines.push(`Soldiers: ${f.soldiers}.`);
   if (f.power !== null) lines.push(`Power: +${Math.round(f.power)} a day. ${f.powerStored} stored.`);

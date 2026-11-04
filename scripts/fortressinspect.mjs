@@ -101,7 +101,8 @@ await run({ name: 'fortressinspect', kind: 'behaviour', size: '412x915', dpr: 1,
   R.check('Inspect asks for a tap', /Tap a block to see what it is/.test(hint), hint);
   R.check('a tap on the warehouse picks it', w.id === plan.ids.warehouse, JSON.stringify([w.id, plan.ids]));
   R.check('its card: type and size', /Warehouse: 4 blocks, 2 levels high/.test(wText), wText);
-  R.check('its card: what the stores hold, its room (none built yet)', /Holds .*wood.*Room for 200 once built\./s.test(wText) && /Not built yet/.test(wText), wText);
+  // (round 128d ways commit: the stores are the town's — held and room both the town's, then this one's part)
+  R.check('its card: what the town\'s stores hold, the room it will give (none built yet)', /town's stores hold .*wood.*This one gives room for 200 goods once built\./s.test(wText) && /Not built yet/.test(wText), wText);
   R.check('the types are hidden while inspecting (the bar stays small)', await page.evaluate(() => getComputedStyle(document.querySelector('.fort-grid')).display === 'none'), '');
   // a tap on bare ground beside the heap closes it
   at = await page.evaluate((keep) => {

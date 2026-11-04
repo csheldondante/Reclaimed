@@ -21,7 +21,8 @@ import { adjacency, quadCorners } from '../structures/tiles/builder';
 import { DEFS } from './defs';
 import { towered, type FortressPlan } from './plan';
 import { shapesOf, type Courtyard, type Shapes } from './shapes';
-import { WALL_HALF, WALL_LINTEL } from './solid';
+import { STAIR_HALF, WALL_HALF, WALL_LINTEL } from './solid';
+import { alongAxis, axisLength, WAY_ROAD, WAY_SQUARE, waysOf, type Ways } from './ways';
 
 /** (round 128d) look bit 23: a block planned, not built yet — drawn see-through while building (structgame.wgsl) */
 export const LOOK_GHOST = 1 << 23;
@@ -47,7 +48,12 @@ export interface PieceInputs {
   ghost?: (cell: number, level: number) => boolean;
   /** (round 128d) the structure Inspect picked (its pieces drawn highlighted) */
   picked?: number | null;
+  /** (round 128d) the plan's ways (ways.ts: Fortress.ways): roads and squares paved, doors where they open, stairs */
+  ways?: Ways;
 }
+
+/** a stair's step along its axis (metres) */
+const STEP_LEN = 0.6;
 
 /** The pieces of every planned structure, in the box's frame (x, y box-local world units; z world). */
 export function fortressPieces(inp: PieceInputs): StructurePieces {
@@ -56,9 +62,12 @@ export function fortressPieces(inp: PieceInputs): StructurePieces {
   for (const s of inp.plan.structures()) styles.add(defs[s.type].look.style);
   // (round 128d) the painted shapes' landmarks: towers, domes, turrets, courtyards (shapes.ts)
   const shapes = shapesOf(inp.plan, inp.grid, (c) => inp.town.base[c], defs);
+  const ways = inp.ways ?? waysOf(inp.plan, inp.grid, shapes.courtyards.flatMap((ct) => ct.cells), defs);
+  // (the roads and squares paved once, in the homely style if the fortress has it: its paving and lamps)
+  const roadStyle: StructureStyleId = styles.has('hearth') ? 'hearth' : [...styles].sort()[0];
   const parts: StructurePieces[] = [];
   for (const style of styles) {
-    const cp = cityPlanOf(inp, style, defs, shapes);
+    const cp = cityPlanOf(inp, style, defs, shapes, ways, style === roadStyle);
     const p = piecesOf(cp.plan);
     ripen(p);
     drapeAny(p);
@@ -215,6 +224,8 @@ export function cityPlanOf(
   style: StructureStyleId,
   defs: Record<StructureType, StructureDef> = DEFS,
   shapes: Shapes = shapesOf(inp.plan, inp.grid, (c) => inp.town.base[c], defs),
+  ways: Ways = waysOf(inp.plan, inp.grid, shapes.courtyards.flatMap((ct) => ct.cells), defs),
+  roads = true,
 ): { plan: CityPlan; extra: StructurePieces } {
   const { plan, town, grid, zOff } = inp;
   const nq = grid.count;
@@ -271,8 +282,14 @@ export function cityPlanOf(
   /** the courtyards' faces: a block's ground-floor side, an arch instead of its wall */
   const arched = new Set<number>();
   for (const ct of shapes.courtyards) for (const f of ct.faces) arched.add(f.cell * 4 + f.side);
+  // (round 128d) the ways (ways.ts): roads and squares, the courtyards' paving apart (drawn with their style above)
+  const courtCells = new Set(shapes.courtyards.flatMap((ct) => ct.cells));
+  const paved: number[] = [];
+  if (roads) for (let c = 0; c < nq; c++) if ((ways.way[c] === WAY_ROAD || ways.way[c] === WAY_SQUARE) && !courtCells.has(c)) paved.push(c);
+  const doorOf = new Map(ways.doors.map((d) => [d.structure, d]));
+  const myStairs = ways.stairs.filter((st) => mine.some((s) => s.id === st.structure));
   // the ground under every corner of the cells drawn
-  const drawn = [...mine.flatMap((s) => [...s.cells.keys()]), ...courts.flatMap((ct) => ct.cells)];
+  const drawn = [...mine.flatMap((s) => [...s.cells.keys()]), ...courts.flatMap((ct) => ct.cells), ...paved, ...myStairs.flatMap((st) => [...st.cells, st.foot])];
   for (const c of drawn)
     for (let k = 0; k < 4; k++) {
       const v = grid.quads[c * 4 + k];
@@ -342,8 +359,15 @@ export function cityPlanOf(
               extra.add(lib.id('gatearch'), band(f[3], f[2], 0.45), lo - 0.3, zb + 0.6, L2);
             }
           }
-          extra.add(lib.id('merlons'), band(f[0], f[1], 0.22), top, top + 1.1, L2);
-          extra.add(lib.id('merlons'), band(f[3], f[2], 0.22), top, top + 1.1, L2);
+          // (a stair comes up on this cell's side: no merlons on that face — round 128d)
+          const face = (a: V2, b: V2) => {
+            const st = myStairs.find((q) => q.wall === c);
+            if (!st) return true;
+            const d = alongAxis(st.axis, 0).d;
+            return ((a[0] + b[0]) / 2 - x) * d[0] + ((a[1] + b[1]) / 2 - y) * d[1] <= 0.05;
+          };
+          if (face(f[0], f[1])) extra.add(lib.id('merlons'), band(f[0], f[1], 0.22), top, top + 1.1, L2);
+          if (face(f[3], f[2])) extra.add(lib.id('merlons'), band(f[3], f[2], 0.22), top, top + 1.1, L2);
         }
         if (!joined.length) {
           const q = square(x, y, WALL_HALF);
@@ -379,6 +403,13 @@ export function cityPlanOf(
         extra.add(lib.id('tower'), square(x, y, 2.1), under - 0.5, t, L2);
         extra.add(lib.id('spire'), square(x, y, 1.9), t, t + 4.2, L2);
       }
+      // (round 128d) its door (ways.ts): an arch in the keep's face there
+      const kd = doorOf.get(s.id);
+      if (kd) {
+        const p = quadCorners(tiles, kd.cell);
+        const z0 = town.floorZ(kd.cell, 0) + zOff;
+        extra.add(lib.id('gatearch'), sideBand(p[kd.side], p[(kd.side + 1) % 4], 0.9), z0 - 0.3, z0 + LEVEL_H * 0.8, ghostAt(kd.cell, 0) ? look | LOOK_GHOST : look);
+      }
       for (const c of s.cells.keys()) {
         const p = quadCorners(tiles, c);
         const out = (e: number) => {
@@ -402,7 +433,8 @@ export function cityPlanOf(
         g.push(c);
         groups.set(key, g);
       }
-      let doorDone = false;
+      // (round 128d) the door where the ways put it (ways.ts: the side facing the fortress's middle, on a free cell)
+      const door0 = doorOf.get(s.id);
       for (const cells of groups.values()) {
         const id = buildings.length;
         const base = town.base[cells[0]] + zOff;
@@ -447,8 +479,7 @@ export function cityPlanOf(
                 extra.add(lib.id('gatearch'), sideBand(p[side], p[(side + 1) % 4], WALL_T), z0, z0 + LEVEL_H, ghostAt(c, 0) ? look | LOOK_GHOST : look);
                 continue;
               }
-              const door = L === 0 && !doorDone;
-              if (door) doorDone = true;
+              const door = L === 0 && !!door0 && door0.cell === c && door0.side === side;
               facades.push({ quad: c, side, level: L, z0, z1: z0 + LEVEL_H, kind: door ? 'door' : hashf(c, side, L) < 0.2 ? 'blank' : 'window', building: id });
             }
           }
@@ -509,6 +540,50 @@ export function cityPlanOf(
     if (ct.cells.length === 1) extra.add(lib.id('fruittree'), square(x, y, 2.0), g - 0.1, g + 4.4, Math.floor(hashf(ct.cells[0], 33) * 4096));
     else megas.push({ kind: 'fountain', quads: ct.cells.slice(), frame: square(x, y, 1.7), z0: g - 0.1, z1: g + 2.6 });
   }
+  // (round 128d) the roads and squares (ways.ts): paved as the towns' streets and plazas (kerbs where they meet a lot); a
+  // lamp on each square
+  for (const c of paved) {
+    tiles.use[c] = ways.way[c] === WAY_SQUARE ? 'plaza' : 'street';
+    if (ways.way[c] !== WAY_SQUARE) continue;
+    const [x, y] = centre(c);
+    const p = quadCorners(tiles, c);
+    const lx = x + (p[0][0] - x) * 0.6;
+    const ly = y + (p[0][1] - y) * 0.6;
+    props.push({ kind: 'lamp', at: [lx, ly, groundAt(lx, ly)], heading: 0, size: 3.2, seed: hashf(c, 61) });
+  }
+  // (round 128d) the stairs up onto the walls: stone steps along each stair's axis, from the wall's top down to its foot
+  // cell's ground (as solid.ts claims them), see-through while the wall still stands to be built
+  for (const st of myStairs) {
+    const s = plan.structure(st.structure)!;
+    const look = Math.floor(hashf(s.id, 31) * 4096);
+    const L2 = ghostAt(st.wall, 0) ? look | LOOK_GHOST : look;
+    const top = town.floorZ(st.wall, topOf(st.wall)) + LEVEL_H + zOff;
+    // (the ground at the flight's far end: a free cell has no floor — as solid.ts)
+    const end = st.axis[st.axis.length - 1];
+    const foot = groundAt(end[0], end[1]);
+    const len = axisLength(st.axis);
+    const rise = (top - foot) / Math.max(1e-3, len - WALL_HALF);
+    const n = Math.max(1, Math.ceil((len - WALL_HALF) / STEP_LEN));
+    for (let i = 0; i < n; i++) {
+      const t0 = WALL_HALF + ((len - WALL_HALF) * i) / n - (i === 0 ? 0.3 : 0);
+      const t1 = WALL_HALF + ((len - WALL_HALF) * (i + 1)) / n;
+      const a = alongAxis(st.axis, t0);
+      const b = alongAxis(st.axis, t1);
+      const nx = (d: V2) => [-d[1] * STAIR_HALF, d[0] * STAIR_HALF] as V2;
+      const na = nx(a.d);
+      const nb = nx(b.d);
+      const fr: [V2, V2, V2, V2] = [
+        [a.p[0] - na[0], a.p[1] - na[1]],
+        [b.p[0] - nb[0], b.p[1] - nb[1]],
+        [b.p[0] + nb[0], b.p[1] + nb[1]],
+        [a.p[0] + na[0], a.p[1] + na[1]],
+      ];
+      // (each step's tread at the flight's height at its near edge)
+      const z = top - (t0 + 0.3 * (i === 0 ? 1 : 0) - WALL_HALF) * rise;
+      const g = Math.min(groundAt(a.p[0], a.p[1]), groundAt(b.p[0], b.p[1]));
+      extra.add(lib.id('rampart'), fr, g - 0.4, Math.max(z, g + 0.15), L2);
+    }
+  }
   const cityPlan: CityPlan = {
     spec: { seed: 7, system: 'irregular', style, at: [0, 0], radius: 0 },
     tiles,
@@ -525,6 +600,7 @@ export function cityPlanOf(
     berths: [],
     props,
     lights: [],
+    // (the fortress's nav is its ways', baked whole across styles: Fortress.nav — ways.ts waysNav)
     nav: { nodes: [], links: [] },
     stats: {},
   };

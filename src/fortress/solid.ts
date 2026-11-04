@@ -15,12 +15,21 @@ import type { StructureDef, StructureType } from '../api/contracts/fortress';
 import { LEVEL_H, type Town } from '../build/town';
 import type { TownGrid } from '../build/towngrid';
 import { raster } from '../structures/columns';
+import { cellPos } from '../world/lattice';
 import { DEFS } from './defs';
 import type { FortressPlan } from './plan';
+import { axisLength, onAxis, type Ways } from './ways';
 
 /** a thin wall's half width (pieces.ts WALL_HALF) and a gate's lintel (pieces.ts WALL_LINTEL) */
 export const WALL_HALF = 1.1;
-export const WALL_LINTEL = 1.6;
+/**
+ * (round 128d) A gate's lintel: its underside this far under the wall's top. It was 1.6, and the passage under it shut in
+ * the field at a gate by the town (scripts/fortressroads.mjs): a cell's floor lines up with its neighbours' (Town), so
+ * it can sit under the ground, and the GPU keeps loose ground on the ground read (1.5 m of it there) — 1.4 of air under
+ * the lintel, under the agents' AGENT_H 1.5, no surface. Now the passage is the wall's whole height but this: 3.2 over
+ * the floor, room over that loose ground.
+ */
+export const WALL_LINTEL = 0.8;
 /** how far under its floor a block's solid starts (into the ground: the registry claims only what's free) */
 const FOOT = 0.6;
 /** how far under its top a block's solid stops (a roof's moss or snow stays inside it — structures/columns.ts) */
@@ -36,7 +45,12 @@ export interface SolidInputs {
    */
   ground(col: number): number;
   defs?: Record<StructureType, StructureDef>;
+  /** (round 128d) the ways (ways.ts): a wall's stairs are solid steps, claimed with the wall once it stands */
+  ways?: Ways;
 }
+
+/** a stair's half width (its flight: two columns across) */
+export const STAIR_HALF = 1.1;
 
 /** a cell's built levels as runs [lo, hi] (inclusive), lowest first */
 function builtRuns(town: Town, c: number): [number, number][] {
@@ -114,7 +128,54 @@ export function solidSpans(inp: SolidInputs): Map<number, ColumnSpan[]> {
           }
       }
     }
+    if (def.form === 'wall' && inp.ways) stairSpans(inp, s.id, spans);
     if (spans.length) out.set(s.id, spans);
   }
   return out;
+}
+
+/**
+ * (round 128d) A wall's stairs as solid steps (ways.ts), with the wall's claim: each column along a stair's axis, within
+ * STAIR_HALF of it, from under its ground up to the flight's height there — the wall's top at the wall's band, its foot
+ * cell's ground at its far end, falling evenly (no steeper than ways.ts SLOPE: a column a step the agents take, STEP
+ * 1.1). Only once the wall cell's ground run stands; the columns the wall's own band holds are left to it.
+ */
+function stairSpans(inp: SolidInputs, id: number, spans: ColumnSpan[]): void {
+  const { town, grid } = inp;
+  const have = new Set(spans.map((q) => `${q.x},${q.y}`));
+  for (const st of inp.ways!.stairs) {
+    if (st.structure !== id) continue;
+    const run = builtRuns(town, st.wall).find(([lo]) => lo === 0);
+    if (!run) continue;
+    const top = town.floorZ(st.wall, run[1]) + LEVEL_H;
+    // (the foot: the ground at the flight's far end — the foot cell's column nearest it; a free cell has no floor)
+    const end = st.axis[st.axis.length - 1];
+    let foot = NaN;
+    let fd = Infinity;
+    for (const col of grid.columns[st.foot]) {
+      const [cx, cy] = cellPos(col % grid.w, Math.floor(col / grid.w));
+      const d = Math.hypot(cx - end[0], cy - end[1]);
+      if (d < fd) {
+        fd = d;
+        foot = inp.ground(col);
+      }
+    }
+    if (!Number.isFinite(foot)) throw new Error(`fortress: stair ${st.wall} has no ground at its foot`);
+    const L = axisLength(st.axis);
+    const rise = (top - foot) / Math.max(1e-3, L - WALL_HALF);
+    for (const c of [st.wall, ...st.cells])
+      for (const col of grid.columns[c]) {
+        const x = col % grid.w;
+        const y = Math.floor(col / grid.w);
+        if (have.has(`${x},${y}`)) continue;
+        const [wx, wy] = cellPos(x, y);
+        const a = onAxis(st.axis, wx, wy);
+        if (a.off > STAIR_HALF || a.t < WALL_HALF - 0.3) continue;
+        const z1 = top - Math.max(0, a.t - WALL_HALF) * rise;
+        const g = inp.ground(col);
+        if (z1 < g + 0.2) continue;
+        have.add(`${x},${y}`);
+        spans.push({ x, y, z0: g - FOOT, z1, building: id });
+      }
+  }
 }

@@ -200,7 +200,8 @@ await run({ name: 'fortresspath', kind: 'behaviour', size: '412x915', dpr: 1, ec
   R.check('planned: the way runs straight through the ring', planned.outsideOpposite && planned.outsideOpposite.d < R2 * 1.4, JSON.stringify(planned.outsideOpposite));
   R.check('built: the way goes round to the gate', built.outsideOpposite && built.outsideOpposite.d > planned.outsideOpposite.d + 15 && built.outsideOpposite.d < 1e8, `${planned.outsideOpposite?.d} -> ${built.outsideOpposite?.d}`);
   R.check('built: the gate is open (its passage in the field)', built.gate && isFinite(built.gate.d) && built.gate.d < 25, JSON.stringify(built.gate));
-  R.check('built: the solid is the thin wall, not the cell (the corner of a wall cell, off the band, is open ground)', built.wallNearCorner && isFinite(built.wallNearCorner.d ?? Infinity) && built.wallMiddle && !isFinite(built.wallMiddle.d ?? Infinity), JSON.stringify([built.wallMiddle, built.wallNearCorner]));
+  // (round 128d ways commit: the wall's band is solid, its only surface its top — reached now, up the ring's stair)
+  R.check('built: the solid is the thin wall, not the cell (the corner of a wall cell, off the band, is open ground)', built.wallNearCorner && isFinite(built.wallNearCorner.d ?? Infinity) && built.wallMiddle && built.inside && built.wallMiddle.z > built.inside.z + 3, JSON.stringify([built.wallMiddle, built.wallNearCorner, built.inside]));
   R.check('closed (the gate shut): no way in from outside', closed.outsideOpposite && !isFinite(closed.outsideOpposite.d ?? Infinity) && !isFinite(closed.outsideByGate.d ?? Infinity), JSON.stringify([closed.outsideOpposite, closed.outsideByGate]));
   R.check('built: walkers end inside the ring', wb.res.filter((r) => r.endR !== null && r.endR < 9).length >= 3, JSON.stringify(wb.res));
   R.check('built: walkers went round by the gate', wb.res.filter((r) => r.maxX > 8).length >= 3, JSON.stringify(wb.res));
