@@ -205,6 +205,17 @@ export class Settlements {
     return this.done.get(id) ?? null;
   }
 
+  /**
+   * (round 128g) Plan a settlement now (in the worker, spread over frames), before its land comes in: the view asks for
+   * those about to come on screen, so a town is pieces before it's seen — never the far raster's roofs turning into
+   * pieces in sight. A plan asked for already, or made, isn't asked again.
+   */
+  prepare(id: string): void {
+    const s = this.byId.get(id);
+    if (!s || this.plans.has(id)) return;
+    void this.planOf(s, true).catch((e) => console.error(`settlements: ${id}'s plan ahead of the screen failed`, e));
+  }
+
   /** (round 119) the settlements planned so far: their seed (box, civ) and plan — what the view draws */
   plannedAll(): { seed: SettlementSeed; plan: SettlementPlan }[] {
     const out: { seed: SettlementSeed; plan: SettlementPlan }[] = [];

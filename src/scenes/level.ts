@@ -1854,11 +1854,11 @@ export class LevelScene implements Scene {
             device: host.gpu.device,
             renderer: core.renderer,
             external: () => this.integrity?.external ?? null,
-            columns: (cols, then) => this.integrity?.columnsReady(cols, then) ?? Promise.resolve(),
             dims: { w: dims.w, h: dims.h },
-            origin: () => [S.origin[0], S.origin[1]],
             oz: () => S.oz,
-            focus: () => [core.camera.target[0], core.camera.target[1]],
+            viewProj: () => core.camera.viewProj,
+            focusZ: () => core.camera.focus?.[2] ?? core.camera.target[2],
+            landed: (x0, y0, x1, y1) => landedIn(S, x0, y0, x1, y1),
             touched: (x0, y0, x1, y1) => this.hybrid?.edit((x0 + x1) / 2, (y0 + y1) / 2, Math.max(x1 - x0, y1 - y0) / 2),
             dust: (x, y, z, n) => core.sim.particles.burst({ kind: PK.Dust, x, y, z, count: n, speed: 2, spread: 1.2 }),
           },
@@ -1871,6 +1871,8 @@ export class LevelScene implements Scene {
         S.onBeforeSlide.push((dx, dy) => view.beforeSlide(dx, dy));
         S.onSlide.push(() => view.slid());
         S.onWarp.push(() => view.slid());
+        // (round 128g: land written into the window — a building on it may claim now, its land no longer coming in)
+        S.onRelief.push(() => view.landed());
         if (host.params.get('towndebug') === '1') this.townDebug = new TownDebug(host.ui, st, core.camera, (x, y) => this.heightAt(x, y));
         if (host.params.get('fortress') === '1') this.startFortress(st, view, a!.startTown);
       }
@@ -2404,6 +2406,7 @@ export class LevelScene implements Scene {
     this.settlements?.farUpdate(dt);
     // (round 119) the settlements' pieces: made again when a plan, a storey or the window changed
     this.settlementsView?.update();
+    this.fortressClaims?.frame();
     this.shipsView?.update();
     if (this.inhabitants) this.lifeFrame(dt * this.speed);
     if (this.units && !this.stream?.busy) {
@@ -3048,7 +3051,8 @@ export class LevelScene implements Scene {
       dims: { w: dims.w, h: dims.h, zMax: dims.zMax },
       ground: (x, y) => this.heightAt(x, y),
       stores: () => Object.fromEntries(Object.entries(rec.stores).map(([k, v]) => [k, v.stock])),
-      changed: () => view.touch(),
+      // (round 128g: the view asks for the fortress's pieces every frame — uploaded again only when they're new)
+      changed: () => {},
       // (round 128d, FT-26: the fortress's cells clear their trees — the plants module's clearing)
       clearPlants: (x, y, r) => (this.worldApi ??= attachSim(this.core)).plants!.clear(x, y, r),
       // (round 128e, FT-48: Inspect on the town that was there)
@@ -3088,13 +3092,14 @@ export class LevelScene implements Scene {
     // (round 128d) what's built is solid to the world (fortress/claims.ts): claimed in the columns, as the towns' are
     const claims = (this.fortressClaims = new FortressClaims(fort, {
       external: () => this.integrity?.external ?? null,
-      columns: (cols, then) => this.integrity?.columnsReady(cols, then) ?? Promise.resolve(),
+      landed: (x0, y0, x1, y1) => landedIn(S, x0, y0, x1, y1),
       dims: { w: dims.w, h: dims.h },
       touched: (x0, y0, x1, y1) => this.hybrid?.edit((x0 + x1) / 2, (y0 + y1) / 2, Math.max(x1 - x0, y1 - y0) / 2),
     }));
     S.onBeforeSlide.push((dx, dy) => claims.beforeSlide(dx, dy));
     S.onSlide.push(() => claims.slid());
     S.onWarp.push(() => claims.slid());
+    S.onRelief.push(() => claims.landed());
     // (round 128d) Build: the plan goes to the builders and time runs (at ?speed=); Plan: time stops again
     // (round 128e, FT-50) the speed picked while building (1x, 4x, 16x), and Skip to done
     let runSpeed = Math.max(1, Number(this.host.params.get('speed') ?? 1));
@@ -4059,4 +4064,12 @@ export class LevelScene implements Scene {
     this.core.destroy();
     for (const el of this.host.ui.querySelectorAll('.complete')) el.remove();
   }
+}
+
+/**
+ * (round 128g) Whether the window's land in box [x0, x1) × [y0, y1) (cells, rows) is written: no region a slide is still
+ * bringing in (Streamer.unwritten) overlaps it. A claim made on land still coming in was overwritten by it.
+ */
+function landedIn(S: { unwritten: [number, number][]; R: number }, x0: number, y0: number, x1: number, y1: number): boolean {
+  return !S.unwritten.some(([ux, uy]) => ux < x1 && ux + S.R > x0 && uy < y1 && uy + S.R > y0);
 }

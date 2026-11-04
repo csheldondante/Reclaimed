@@ -600,6 +600,25 @@ each was implemented.
   long ones) to a walk along its top. Drawn as paving and stone steps; the steps and the wall-walk are solid, so units
   climb them. The warehouse's card speaks of the town's stores against all the warehouses' room, then this one's part.
 
+## 2026-11-04 — round 128g (session 5, `fortress`) — the town glitches while panning; grids on the GPU
+
+- The user, verbatim: "The town seems slightly glitchy when panning. How does it work today? Is it not just instanced
+  models with a transform offset for the lot so they always stay at the correct workspace coordinates? Do we normalize
+  coordinates ever?"
+- On the explanation of src/settle/view.ts (every piece re-copied and re-uploaded on every slide; a building at the
+  window's edge letting go of its columns and claiming them again; the near/far handoff at REACH), verbatim: "1. What the
+  fuck? Sorry but how was the built so poorly? 2. That's also crazy 3. This should only happen off screen we should
+  prioritize and keep cached the city tiles"
+- The architecture, verbatim: "There should be multiple grids with their own coordinate system on the GPU and everything
+  should be instanced without CPU readback"; "I did say that from the start because the plan is to support physics and
+  maybe floating islands or giants with grids on their back eventually. Good to architect right".
+- → A grid table on the GPU (a full rigid transform a row: position, rotation, uniform scale), every piece an instance
+  in its grid's frame, one instanced draw path; a slide writes the grids' rows only. Claims only for the sims, stamped
+  on the GPU with nothing read back; drawing never follows them. What's drawn is decided by the screen, with
+  hysteresis, pieces made ahead and kept cached, let go only off screen. Grids that move or turn aren't claimed yet (as
+  physics bodies aren't) — in the contract for later. (docs/ARCHITECTURE.md "The draw contract: grids and slabs";
+  DEVLOG round 128g.)
+
 ## 2026-11-04 — round 128f (session 5, `fortress`) — builders can't reach the edge of the town
 
 - The user, verbatim (from the phone): "I donesew a lathing issue on my phone where agents seem to not be able to path

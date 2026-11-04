@@ -1,6 +1,7 @@
 // ---- structures: warped module instances (src/structures/gpu.ts; contracts/structures.ts StructurePieces) --------
 // Shared by every host that draws a city (the structures viewer, the game's renderer). The host declares:
-//   `fn spFetch(i: u32) -> vec4<f32>` — its data buffer's vec4 i: the palette (SP_PAL vec4s: styles × parts × variants) then 4 vec4s a piece:
+//   `fn spFetch(i: u32) -> vec4<f32>` — its data buffer's vec4 i: the palette (SP_PAL vec4s: styles × parts × variants), the grid
+//      table (round 128g: SP_GRID0, two vec4s a grid — spGridOf), then from SP_PIECE0 4 vec4s a piece:
 //      (x0 y0 x1 y1) (x2 y2 x3 y3) (foot z0 z1 z2 z3) (top, look, seed, flags)
 //   `fn hostNight() -> f32` — 0 by day, 1 at night (the windows and lamps glow)
 //   `fn hostGround(xy: vec2<f32>, planned: f32) -> f32` — the ground now under a draped piece (or `planned`)
@@ -30,7 +31,29 @@ struct SpVert {
   base: vec3<f32>,
 };
 
-fn spRow(i: u32, r: u32) -> vec4<f32> { return spFetch(SP_PAL + i * 4u + r); }
+fn spRow(i: u32, r: u32) -> vec4<f32> { return spFetch(SP_PIECE0 + i * 4u + r); }
+
+// (round 128g) The grid table (src/structures/gpu.ts): a grid a row of (position xyz, uniform scale) and a unit quaternion.
+// A piece's local frame is its grid's (its id in the flags' bits 8-23); grid 0 is the identity. What a piece is placed by
+// — its corners, an affine piece's transform, the ground a draped piece is laid on — is composed grid ∘ local here, so a
+// grid moved (a slide of the window, later a physics body or a creature's bone) moves its pieces with nothing re-sent.
+struct SpGrid { pos: vec3<f32>, s: f32, q: vec4<f32> };
+fn spGridOf(flags: f32) -> SpGrid {
+  let g = (u32(flags) >> SP_GRID_SHIFT) & 0xffffu;
+  let a = spFetch(SP_GRID0 + g * 2u);
+  var o: SpGrid;
+  o.pos = a.xyz;
+  o.s = a.w;
+  o.q = spFetch(SP_GRID0 + g * 2u + 1u);
+  return o;
+}
+fn spRot(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
+  let t = 2.0 * cross(q.xyz, v);
+  return v + q.w * t + cross(q.xyz, t);
+}
+fn spGrid(g: SpGrid, p: vec3<f32>) -> vec3<f32> { return g.pos + g.s * spRot(g.q, p); }
+/** a direction in the host's frame into the grid's (its rotation undone) */
+fn spUngridDir(g: SpGrid, v: vec3<f32>) -> vec3<f32> { return spRot(vec4<f32>(-g.q.xyz, g.q.w), v); }
 
 fn spHash(x: u32) -> u32 {
   var h = x;
@@ -52,6 +75,8 @@ fn spVertex(a: vec4<f32>, piece: u32) -> SpVert {
   let xy = (1.0 - u) * (1.0 - v) * c01.xy + u * (1.0 - v) * c01.zw + u * v * c23.xy + (1.0 - u) * v * c23.zw;
   let zf = (1.0 - u) * (1.0 - v) * foot.x + u * (1.0 - v) * foot.y + u * v * foot.z + (1.0 - u) * v * foot.w;
   let rel = (u32(tp.w) & 1u) != 0u;
+  // (round 128g) its grid: everything below is in the grid's frame, composed into the host's at the end
+  let G = spGridOf(tp.w);
   // (flags & 4: draped — what lies on the ground (paving, a crop, a fence) follows the ground as the host has it now,
   // not as the plan saw it: a road graded, a bank eroded since)
   // (per piece, not per vertex: the live ground at its four corners, bilinear between them — a piece stays one plane, never
@@ -59,11 +84,21 @@ fn spVertex(a: vec4<f32>, piece: u32) -> SpVert {
   // sand slid since — the whole piece goes under the ground, out of sight, rather than hang as a curtain)
   var zf2 = zf;
   if ((u32(tp.w) & 4u) != 0u) {
-    let g0 = hostGround(c01.xy, foot.x);
-    let g1 = hostGround(c01.zw, foot.y);
-    let g2 = hostGround(c23.xy, foot.z);
-    let g3 = hostGround(c23.zw, foot.w);
-    let off = max(max(abs(g0 - foot.x), abs(g1 - foot.y)), max(abs(g2 - foot.z), abs(g3 - foot.w)));
+    // (the host's ground under each corner as the grid places it, back in the grid's z: the corner moved by the
+    // difference — straight up and down for a grid that isn't tilted, near enough for one that is)
+    let h0 = spGrid(G, vec3<f32>(c01.xy, foot.x));
+    let h1 = spGrid(G, vec3<f32>(c01.zw, foot.y));
+    let h2 = spGrid(G, vec3<f32>(c23.xy, foot.z));
+    let h3 = spGrid(G, vec3<f32>(c23.zw, foot.w));
+    let d0 = hostGround(h0.xy, h0.z) - h0.z;
+    let d1 = hostGround(h1.xy, h1.z) - h1.z;
+    let d2 = hostGround(h2.xy, h2.z) - h2.z;
+    let d3 = hostGround(h3.xy, h3.z) - h3.z;
+    let g0 = foot.x + d0 / G.s;
+    let g1 = foot.y + d1 / G.s;
+    let g2 = foot.z + d2 / G.s;
+    let g3 = foot.w + d3 / G.s;
+    let off = max(max(abs(d0), abs(d1)), max(abs(d2), abs(d3)));
     zf2 = (1.0 - u) * (1.0 - v) * g0 + u * (1.0 - v) * g1 + u * v * g2 + (1.0 - u) * v * g3;
     // (flags & 32, round 128d: a plan whose ground is only roughly known — the fortress's, read without the loose ground the
     // GPU keeps on it — follows the host's ground however far it is off: never hidden)
@@ -81,7 +116,7 @@ fn spVertex(a: vec4<f32>, piece: u32) -> SpVert {
     let at = vec2<f32>(c01.w, c23.w);
     if ((flags & 16u) != 0u) {
       // (SPIN: turning with the wind about the local y axis — a millwheel turns with its river all the same)
-      let ang = hostTime() * (0.5 + 0.6 * min(length(hostWind(at)), 2.0)) + tp.z * 6.283;
+      let ang = hostTime() * (0.5 + 0.6 * min(length(hostWind(spGrid(G, vec3<f32>(at, foot.w)).xy)), 2.0)) + tp.z * 6.283;
       let cs = cos(ang);
       let sn = sin(ang);
       lp = vec3<f32>(lp.x * cs - lp.z * sn, lp.y, lp.x * sn + lp.z * cs);
@@ -93,7 +128,7 @@ fn spVertex(a: vec4<f32>, piece: u32) -> SpVert {
       let l0 = vec4<f32>(0.0, lp.y, lp.z, 1.0);
       let base = vec3<f32>(dot(c01, l0), dot(c23, l0), dot(foot, l0));
       let d = length(o.wpos - base);
-      let w = hostWind(base.xy);
+      let w = spUngridDir(G, vec3<f32>(hostWind(spGrid(G, base).xy), 0.0)).xy;
       let ws = length(w);
       let k = clamp(ws / 1.4, 0.0, 1.0);
       var hz = (o.wpos - base).xy;
@@ -104,6 +139,7 @@ fn spVertex(a: vec4<f32>, piece: u32) -> SpVert {
       o.wpos = base + vec3<f32>(hz * d * cos(droop) + vec2<f32>(-hz.y, hz.x) * wave, -d * sin(droop) + wave * 0.4);
     }
   }
+  o.wpos = spGrid(G, o.wpos);
   o.w = a.z;
   o.part = u32(a.w + 0.5);
   o.look = u32(tp.y);
@@ -244,7 +280,8 @@ fn spPoolInfo(piece: u32) -> vec4<f32> {
   let c01 = spRow(piece, 0u);
   let c23 = spRow(piece, 1u);
   let tp = spRow(piece, 3u);
-  return vec4<f32>((c01.xy + c23.xy) * 0.5, (c23.x - c01.x) * 0.5, tp.z);
+  let G = spGridOf(tp.w);
+  return vec4<f32>(spGrid(G, vec3<f32>((c01.xy + c23.xy) * 0.5, 0.0)).xy, (c23.x - c01.x) * 0.5 * G.s, tp.z);
 }
 
 /** (round 120) The light a pool adds at a point (linear): warm, falling off to its rim, a slight flicker; only at night

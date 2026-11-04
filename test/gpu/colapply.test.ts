@@ -5,7 +5,7 @@
 // claimColumn, takeCells, seatColumn — and every change written to the layersNext alike.)
 import { describe, expect, test } from 'vitest';
 import { ColumnApply, cutColumn, fitColumn, spillPlan, type ApplyStage } from '../../src/game/colapply';
-import { claimColumn, orphanColumn, releaseSpan } from '../../src/sim/external';
+import { claimColumn, claimFreeColumn, orphanColumn, releaseSpan } from '../../src/sim/external';
 import { seatColumn } from '../../src/world/models';
 import { SectionsJudge } from '../../src/game/judge';
 import type { Fracture, Voxel } from '../../src/game/fracture';
@@ -66,6 +66,9 @@ function cpuApply(w: RockWorld, stages: ApplyStage[]): Map<number, { amount: num
     const claims = new Map<number, { z0: number; z1: number; aux: number }[]>();
     for (const c of st.claim ?? []) claims.set(c.y * w.W + c.x, [...(claims.get(c.y * w.W + c.x) ?? []), c]);
     for (const [k, cs] of claims) fit(k % w.W, Math.floor(k / w.W), claimColumn(w.read(k % w.W, Math.floor(k / w.W)), cs));
+    const frees = new Map<number, { z0: number; z1: number; aux: number }[]>();
+    for (const c of st.claimFree ?? []) frees.set(c.y * w.W + c.x, [...(frees.get(c.y * w.W + c.x) ?? []), c]);
+    for (const [k, cs] of frees) fit(k % w.W, Math.floor(k / w.W), claimFreeColumn(w.read(k % w.W, Math.floor(k / w.W)), cs));
     if (st.take) {
       const zs = new Map<number, Set<number>>();
       for (const c of st.take.cells) zs.set(c.y * w.W + c.x, (zs.get(c.y * w.W + c.x) ?? new Set()).add(c.z));
@@ -132,7 +135,7 @@ async function check(w: RockWorld, stages: ApplyStage[], what: string, claimed?:
     }
   expect([...got.dep].sort((a, b) => a[0] - b[0]), `${what}: deposits`).toEqual([...dep].sort((a, b) => a[0] - b[0]));
   // (and something was applied: the tests aren't vacuous)
-  if (stages.some((s) => s.cuts.length || s.release?.length || s.claim?.length || s.take?.cells.length || s.seat?.cols.length) || claimed) expect(w.packed.slots, what).not.toEqual(before);
+  if (stages.some((s) => s.cuts.length || s.release?.length || s.claim?.length || s.claimFree?.length || s.take?.cells.length || s.seat?.cols.length) || claimed) expect(w.packed.slots, what).not.toEqual(before);
 }
 
 async function verdict(w: RockWorld, seeds: [number, number][]): Promise<Fracture> {
@@ -332,6 +335,25 @@ describe('stamps (round 128, INT16): claims, cells taken, a model seated (claimC
         return true;
       });
       await check(w, [{ cuts: [], claim: ok }], `claim ${s}`);
+    }
+  }, 120_000);
+
+  test('claims where free (round 128g, claimFree): only the air and water parts of each span made External, in order', async () => {
+    for (let s = 1; s <= 10; s++) {
+      const w = stampWorld(s * 521);
+      const r = rng(s * 29);
+      const claim: NonNullable<ApplyStage['claimFree']> = [];
+      for (let i = 0; i < 300; i++) {
+        const x = Math.floor(r() * w.W);
+        const y = Math.floor(r() * w.H);
+        const col = w.read(x, y);
+        const top = col.length ? col[col.length - 1].z1 : 0;
+        // (a building on the ground and cut into it, one across runs and gaps, two in a column — the second over the first)
+        const z0 = r() < 0.5 ? top - Math.round(r() * 3 * 4) / 4 : Math.round(r() * 40 * 4) / 4;
+        claim.push({ x, y, z0, z1: z0 + 0.25 + Math.round(r() * 8 * 4) / 4, aux: [MAT.Rubble, MAT.Stone, MAT.Brick][Math.floor(r() * 3)] });
+        if (r() < 0.3) claim.push({ x, y, z0: z0 + 1, z1: z0 + 6, aux: MAT.Rubble });
+      }
+      await check(w, [{ cuts: [], claimFree: claim }], `claimFree ${s}`);
     }
   }, 120_000);
 

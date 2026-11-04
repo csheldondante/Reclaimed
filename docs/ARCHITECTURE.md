@@ -236,6 +236,11 @@ the player's fortress (OWNER_FORT, fortress/claims.ts: one instance a structure,
 block its cell's columns, a wall its thin band and its stairs' steps (fortress/ways.ts), a gate its lintel only; only
 built blocks). The fortress keeps each
 column's ground as first read (its own claims would otherwise read as ground).
+*At the window's edge* (round 128g): a building or structure is claimed whole or not at all — one partly out of the
+window, or on a region a slide is still bringing in, isn't claimed, so the sims see air there (water runs through it,
+the agents' surfaces don't hold it) until it's whole and its land has come; one about to leave lets go first (to air:
+it took only air). Drawing doesn't follow claims: the pieces are drawn whole either way, and the ground under them is
+the same (a claim takes only free cells, so letting go to air puts back what was there).
 
 **What the sims may assume.** That an External interval is solid ground (they need not know of owners); that it
 does not move or change by itself; that its owner draws it. What owners may assume: that the cells they claimed
@@ -2379,8 +2384,31 @@ module warps over a patch as over a tile), a radial city's keep on its plaza (it
 (STR13, `spec.sunk`): floors on the ground's low side, backs in the hill, buried walls blank. **Growth** (STR16):
 `plan.order` (the old core first) and `grown(plan, p)` — stored progress is one number. **Placed assets** (STR14): affine
 pieces (flags bit 2: a 3 × 4 transform, the module in metres) via `assetPieces`, for the terrain track's buried things.
-**Frames:** a plan's coordinates are its spec's frame (a settlement's: its box's — settle/view.ts moves its pieces and
-claims into the window's); `shiftPlan` moves a plan's own frame where a host needs it.
+**Frames:** a plan's coordinates are its spec's frame (a settlement's: its box's — on the GPU a grid of the grid table
+places it in the window's, see below; its claims are moved into the window's on the CPU); `shiftPlan` moves a plan's own
+frame where a host needs it.
+
+**The draw contract: grids and slabs** (round 128g, `cityrender`; the user: "There should be multiple grids with their
+own coordinate system on the GPU and everything should be instanced without CPU readback"). `StructureGpu`'s data buffer
+is the palette, then the **grid table** (`GRID_CAP` 256 rows of two vec4s: position xyz and a uniform scale, then a unit
+quaternion — a full rigid transform, so a grid may later be a physics body, a floating island or a creature's back, and
+move every frame), then the pieces (64 bytes each: `MOVING_CAP` ships rewritten each frame, then slabs). Grid 0 is the
+identity (the host's own frame: the viewer's world, the game's window). A **slab** (`put(key, pieces, grid)`) is one
+owner's pieces in its grid's frame, sorted by module within it, uploaded once a change — never when the grid moves —
+its grid id in each piece's flags (bits 8-23; the flags under bit 8 are the pieces' own). `structmesh.wgsl spVertex`
+works in the grid's frame (the corners, an affine piece's transform, the ground a draped piece is laid on: the host's
+ground under the corner as the grid places it, the difference taken back into the grid's z) and composes grid ∘ local
+at the end; the normals follow (the fragment shader's derivatives of the composed position). `setGrid(g, t)` writes one
+row (32 bytes); `show(key, on)` keeps a slab on the GPU without drawing it; draws are one instanced draw per module per
+shown slab. No CPU per-instance transforms, no readback. A grid isn't "one per settlement" in the table: settlements and
+the fortress use it now; grids that intersect (nature, voxel structures, WFC) take rows the same way.
+*Who draws what* (settle/view.ts, settle/onscreen.ts): a settlement's slab is drawn while any of its box is on screen,
+with hysteresis (shown from 0.35 screens off, kept to 0.75); its pieces are made ahead (one a frame, nearest first) from
+1 screen off and let go past 2; an unplanned settlement within a screen has its plan asked for
+(`Settlements.prepare`). A slide writes each grid's row and nothing else. *Claims are the sims' alone*: drawing never
+depends on them (below). *Grids that move or turn are not claimed* (as physics bodies aren't): only still, axis-aligned
+grids (the settlements', the fortress's) claim columns, through the CPU's own copy of their row (a window offset in
+whole cells and rows) — a moving grid's row may be the GPU's to write, and its matter is the physics' to say.
 
 **The far look** (STR10): walls and roofs have a far module (`Library.lodOf`: flat openings and beams on the slab; roofs'
 tops only); `StructureGpu.draw(pass, lod)` draws the same instances with it. The game picks it by zoom
@@ -3312,7 +3340,8 @@ ColumnApply throws without it):
 | writer | what | how, after merge128 |
 |---|---|---|
 | Integrity: a verdict's cuts and spills, loose ground, External let go, orphans | colapply `applyCuts`, `spillTarget`/`spillDeposit`, `depositAdd`, `release`, `orphans` | GPU (jb6), both buffers (merge128) |
-| ExternalRegistry.claim (settlements' buildings: settle/view.ts; the resting rock: Integrity.restRigid) | colapply `claim` (claimColumn: each span cut out, External with its fallback as aux) via ColumnAccess.claim → Integrity.edit | GPU stamp, both buffers (merge128, INT16). The CPU still decides the free spans from the columns it fetched (the registry needs the spans it holds) |
+| ExternalRegistry.claim (the resting rock: Integrity.restRigid) | colapply `claim` (claimColumn: each span cut out, External with its fallback as aux) via ColumnAccess.claim → Integrity.edit | GPU stamp, both buffers (merge128, INT16). The CPU still decides the free spans from the columns it fetched (the registry needs the spans it holds) |
+| ExternalRegistry.claimFree / claimFreeEach (round 128g: settlements' buildings, settle/view.ts; the fortress's structures, fortress/claims.ts) | colapply `claim` with `P.free` (claimFreeColumn: each span's free parts — air, liquids — made External in order; ground left, the thing buried in it) via ColumnAccess.claimFree → Integrity.edit | GPU stamp, both buffers; **nothing read back**: the instance holds the spans asked for (`free`), verify holds it while every part is External or ground. A town's buildings in one dispatch. Claimed only on land the streamer has written (`Streamer.unwritten`), the frame after a slide |
 | the voxel lattice's wake (physics/wake.ts: a ruin's piece made bodies) | colapply `take` (layout.ts takeCells) via core.stampColumns | GPU stamp, both buffers. It still reads the whole layers back to flood the piece (BACKLOG M128-2) |
 | the sandbox editor's model placed (LevelScene.placeModel) | colapply `seat` (models.ts seatColumn) via core.stampColumns | GPU stamp, both buffers. It still reads the layers back for the resting base and the room check (M128-2) |
 | ColumnCopy.write: a settled rigid body baked (Integrity.settleRigid with nothing to claim), the pieces falling in the columns (colbodies.ts, through the kept copy) | the whole column made on the CPU from the copy | `queue.writeBuffer` to both buffers — still a CPU-made column (M128-1) |
@@ -3378,7 +3407,7 @@ The building rule (the user's): select what (a structure type), then plan it wit
   turns by more than 50 degrees; farms are fields, the quarry a yard; each type's props set down. Why pieces, not
   matter: in the atlas world the window's land is drawn as a heightfield, where a Town stamped as column matter reads
   as a lumpy mound (DEVLOG round 128c). The pieces join the settlements' (one draw): `SettlementsView.extra`, in the
-  box's frame, moved into the window's by the box's offset.
+  box's frame, placed in the window's by a grid of its own (round 128g: uploaded again only when the pieces are new).
 - **Round 128d (milestone 2 and the user's fixes).** Types: nine (the Fortress — the keep, form `keep`: solid stone,
   crenellated, a tower at each outer corner; walls join it). `PerBlock.power`: a built block gives power × (1 +
   POWER_RISE × level) a day (`FortressPlan.power(s, only?)`); the level sets the pinned settlement's `stores.power.rate`

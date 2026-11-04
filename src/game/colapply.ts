@@ -26,6 +26,7 @@ import { subtract } from './colbodies';
 import type { Voxel } from './fracture';
 import { CHUNK, type Interval, type PackedWorld } from '../world/layout';
 import { MAT } from '../world/materials';
+import { freeMat } from '../sim/external';
 
 /** What a crumbled cell of material m becomes as loose ground. */
 export function looseFrom(m: number): number {
@@ -124,6 +125,8 @@ export interface ApplyStage {
   release?: { x: number; y: number; z0: number; z1: number; fallback: number; toAir: boolean }[];
   /** (round 128) External spans claimed: [z0, z1) cut out and made External, aux its fallback (claimColumn) */
   claim?: { x: number; y: number; z0: number; z1: number; aux: number }[];
+  /** (round 128g) External spans claimed where free: each span's free parts (air, liquids) made External, in order (claimFreeColumn) */
+  claimFree?: { x: number; y: number; z0: number; z1: number; aux: number }[];
   /** (round 128) whole cells (x, y, z) of these materials taken out of the columns (takeCells) */
   take?: { cells: { x: number; y: number; z: number }[]; materials: ReadonlySet<number> };
   /** (round 128) a model's runs (world z) seated in columns over `base`, the new runs' aux `aux` (seatColumn) */
@@ -131,12 +134,20 @@ export interface ApplyStage {
 }
 
 const MAX_CUTS = 32;
+/** (round 128g) the materials a free claim takes (sim/external.ts freeMat), as the kernel's mask */
+const FREE_LO = maskOf(0);
+const FREE_HI = maskOf(32);
+function maskOf(base: number): number {
+  let m = 0;
+  for (let i = 0; i < 32; i++) if (freeMat(base + i)) m |= 1 << i;
+  return m >>> 0;
+}
 const PARAM_BYTES = 144;
 const PARAM_STRIDE = 256;
 const KERNELS = ['applyCuts', 'spillTarget', 'spillDeposit', 'depositAdd', 'release', 'orphans', 'claim', 'take', 'seat'] as const;
 type Kernel = (typeof KERNELS)[number];
 const BINDS = { 0: 'uniform', 1: 'read', 2: 'rw', 3: 'read', 4: 'rw', 5: 'rw', 6: 'rw' } as const;
-type ParamKey = 'nOps' | 'nSpill' | 'nGone' | 'hashCap' | 'opOff' | 'cutOff' | 'spillOff' | 'goneOff' | 'nDep' | 'depOff' | 'nKeys' | 'keyOff' | 'refOff' | 'spanOff' | 'maskLo' | 'maskHi' | 'seatBase' | 'seatAux';
+type ParamKey = 'nOps' | 'nSpill' | 'nGone' | 'hashCap' | 'opOff' | 'cutOff' | 'spillOff' | 'goneOff' | 'nDep' | 'depOff' | 'nKeys' | 'keyOff' | 'refOff' | 'spanOff' | 'maskLo' | 'maskHi' | 'seatBase' | 'seatAux' | 'free';
 
 interface Dispatch {
   kernel: Kernel;
@@ -226,6 +237,7 @@ export class ColumnApply {
       pu.set([v.nDep ?? 0, v.depOff ?? 0, v.nKeys ?? 0, v.keyOff ?? 0, v.refOff ?? 0, v.spanOff ?? 0, twin, v.maskLo ?? 0, v.maskHi ?? 0], 24);
       pf[33] = v.seatBase ?? 0;
       pu[34] = v.seatAux ?? 0;
+      pu[35] = v.free ?? 0;
       if (groups > 0) dispatches.push({ kernel, groups, params: b });
     };
     for (const st of stages) {
@@ -283,8 +295,10 @@ export class ColumnApply {
         for (const e of rel) for (const r of e.items) words.push(bits(r.z0), bits(r.z1), r.fallback, r.toAir ? 1 : 0);
         param('release', Math.ceil(rel.length / 64), { nOps: rel.length, opOff, cutOff });
       }
-      const cl = byColumn(st.claim ?? [], W, H, (c) => [c]);
-      if (cl.length) {
+      // (round 128g: the claims where free after the plain ones, a dispatch each)
+      for (const [list, free] of [[st.claim ?? [], 0], [st.claimFree ?? [], 1]] as const) {
+        const cl = byColumn(list, W, H, (c) => [c]);
+        if (!cl.length) continue;
         const opOff = words.length;
         let first = 0;
         for (const e of cl) {
@@ -293,7 +307,7 @@ export class ColumnApply {
         }
         const cutOff = words.length;
         for (const e of cl) for (const c of e.items) words.push(bits(c.z0), bits(c.z1), c.aux & 0xff, 0);
-        param('claim', Math.ceil(cl.length / 64), { nOps: cl.length, opOff, cutOff });
+        param('claim', Math.ceil(cl.length / 64), { nOps: cl.length, opOff, cutOff, free, maskLo: free ? FREE_LO : 0, maskHi: free ? FREE_HI : 0 });
       }
       if (st.take?.cells.length) {
         let maskLo = 0;

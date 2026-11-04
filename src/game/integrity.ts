@@ -26,7 +26,7 @@ import { BUILD_FRAMES, type RockDraw, type RockMesh } from '../render/rockmesh';
 import type { Physics } from '../physics/physics';
 import { TUNE, worldG } from '../tune/params';
 import { record } from '../gpu/cpustat'; // (round 100, hitchrec: timing)
-import { claimColumn, ExternalRegistry, OWNER_ROCK, orphanColumn, releaseSpan, type ExternalCol, type ExternalInstance } from '../sim/external';
+import { claimColumn, claimFreeColumn, ExternalRegistry, OWNER_ROCK, orphanColumn, releaseSpan, type ExternalCol, type ExternalInstance } from '../sim/external';
 import { fieldMeshed } from '../world/materials';
 import { Solver } from '../solver/solver';
 import { ROUTING, solverVariant, type Routing, type SolverVariant } from '../solver/variant';
@@ -310,6 +310,8 @@ export class Integrity {
           release: (spans) => this.edit([{ cuts: [], release: spans }]),
           // (round 128, INT16: a claim is the GPU's stamp too — into the layers and layersNext alike)
           claim: (spans) => this.edit([{ cuts: [], claim: spans }]),
+          // (round 128g: a claim where free, nothing read — the settlements' and the fortress's)
+          claimFree: (spans) => this.edit([{ cuts: [], claimFree: spans }]),
         });
         // (round 110, BACKLOG MI5) one cut or found hanging free wakes, its own mesh as it lay: not ground again
         ext.owner(OWNER_ROCK, { name: 'rock', onLost: (inst, why) => this.wakeResting(inst, why) });
@@ -1283,9 +1285,11 @@ export class Integrity {
     // (round 99) what other systems own, as the columns now have it: an instance that lost cells is cut (its owner told)
     let verified: Promise<unknown> = Promise.resolve();
     if (ext) {
+      // (round 128g: what's claimed after the columns were asked for isn't judged by them — they can't show it yet)
+      const asOf = ext.epoch;
       const check = (known?: (x: number, y: number) => boolean) => {
         const te = performance.now();
-        ext.verify(known);
+        ext.verify(known, undefined, asOf);
         ext.stats.ms = +(performance.now() - te).toFixed(2);
       };
       if (!sparse) {
@@ -2571,7 +2575,7 @@ export class Integrity {
    * so it stays the GPU's. The columns changed are woken.
    */
   private edit(stages: ApplyStage[]): void {
-    if (!stages.some((s) => s.cuts.length || s.spill?.length || s.deposits?.length || s.release?.length || s.claim?.length)) return;
+    if (!stages.some((s) => s.cuts.length || s.spill?.length || s.deposits?.length || s.release?.length || s.claim?.length || s.claimFree?.length)) return;
     if (stages.some((s) => s.take || s.seat)) throw new Error('Integrity.edit: take and seat are WorldCore.stampColumns\' (the copy isn\'t told of them)');
     const ring = this.core.ring;
     this.gpuEdit.run(this.gpuCols(), stages, { deposit: this.core.world.deposit, pages: ring.slots(0, 0, this.core.dims.w, this.core.dims.h) });
@@ -2605,6 +2609,17 @@ export class Integrity {
         const y = Math.floor(k / 65536);
         touched.add(k);
         if (this.cols.has(x, y)) this.cols.mirror(x, y, claimColumn(this.cols.read(x, y), cs));
+      }
+      const frees = new Map<number, { z0: number; z1: number; aux: number }[]>();
+      for (const c of st.claimFree ?? []) {
+        const k = c.y * 65536 + c.x;
+        frees.set(k, [...(frees.get(k) ?? []), c]);
+      }
+      for (const [k, cs] of frees) {
+        const x = k % 65536;
+        const y = Math.floor(k / 65536);
+        touched.add(k);
+        if (this.cols.has(x, y)) this.cols.mirror(x, y, claimFreeColumn(this.cols.read(x, y), cs));
       }
     }
     // (round 80: the chunks under what changed woken — their surface, their water, their slumping. Round 128d: a claim or

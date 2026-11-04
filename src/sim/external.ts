@@ -53,6 +53,56 @@ export interface ExternalInstance {
   cols: ExternalCol[];
   /** what its cells become when it lets go */
   fallback: number;
+  /**
+   * (round 128g) claimed where free (claimFree): `cols` are the spans it asked for, made External on the GPU only where
+   * they were air or liquid — where there was ground the thing is buried in it. Nothing is read back to know which.
+   */
+  free?: boolean;
+  /** (round 128g) the registry's epoch when it was claimed: a read of the columns asked for before it doesn't judge it */
+  epoch?: number;
+}
+
+/** (round 128g) materials a claim takes (where free): air, liquids, and any id past the table */
+export function freeMat(m: number): boolean {
+  const s = MATERIALS[m]?.state;
+  return s === undefined || s === 0 || s === 3;
+}
+
+/** (round 128g) the parts of [z0, z1) of the column that are free (claimFree's rule), each at least 0.05 */
+export function freeSpans(col: Interval[], z0: number, z1: number): [number, number][] {
+  let free: [number, number][] = [[z0, z1]];
+  for (const iv of col) {
+    if (freeMat(iv.mat)) continue;
+    const next: [number, number][] = [];
+    for (const [a, b] of free) {
+      if (iv.z1 <= a + EPS || iv.z0 >= b - EPS) next.push([a, b]);
+      else {
+        if (iv.z0 > a + EPS) next.push([a, iv.z0]);
+        if (iv.z1 < b - EPS) next.push([iv.z1, b]);
+      }
+    }
+    free = next;
+  }
+  return free.filter(([a, b]) => b - a >= 0.05);
+}
+
+/**
+ * (round 128g) The column with each span, in turn, made External where it's free (air or a liquid; freeSpans) — where
+ * there's ground the thing is buried in it, untouched. The rule ExternalRegistry.claimFree has the GPU apply
+ * (colapply.wgsl `claim` with P.free) and a CPU world apply (test/gpu/colapply.test.ts holds them equal).
+ */
+export function claimFreeColumn(col: Interval[], spans: { z0: number; z1: number; aux: number }[]): Interval[] {
+  let out = col;
+  for (const s of spans) {
+    // (joined even when nothing was free: as the GPU's, which writes the column back joined)
+    out = claimColumn(out, freeSpans(out, s.z0, s.z1).map(([a, b]) => ({ z0: a, z1: b, aux: s.aux })));
+  }
+  return out;
+}
+
+/** (round 128g) Is every part of [z0, z1) of the column External or ground (not free)? — a free claim still holds */
+function heldOrBuried(col: Interval[], z0: number, z1: number): boolean {
+  return freeSpans(col, z0, z1).length === 0;
 }
 
 export interface ExternalOwner {
@@ -79,6 +129,12 @@ export interface ColumnAccess {
    * `claim`, into the layers and layersNext alike). Absent: the registry writes each column (a CPU world).
    */
   claim?(spans: (ExternalCol & { aux: number })[]): void;
+  /**
+   * (round 128g) Make these spans External where they're free (claimFreeColumn's rule; the GPU's, colapply.wgsl `claim`
+   * with P.free) — nothing read: the claim needs no copy of the columns. Absent: the registry reads and writes each
+   * column (a CPU world).
+   */
+  claimFree?(spans: (ExternalCol & { aux: number })[]): void;
 }
 
 const EPS = 1e-3;
@@ -192,7 +248,9 @@ export class ExternalRegistry {
   /** column key (y · 65536 + x) → instances with an interval there */
   private byCol = new Map<number, number[]>();
   private nextId = 1;
-  stats = { claimed: 0, cut: 0, loose: 0, released: 0, orphans: 0, live: 0, cells: 0, ms: 0 };
+  /** (round 128g) bumped by every claim: a read of the columns asked for at epoch e judges only instances claimed by then */
+  epoch = 0;
+  stats ={ claimed: 0, cut: 0, loose: 0, released: 0, orphans: 0, live: 0, cells: 0, ms: 0 };
 
   constructor(private cols: ColumnAccess) {}
 
@@ -249,12 +307,46 @@ export class ExternalRegistry {
     }
     if (stamp && cols.length) this.cols.claim!(cols.map((c) => ({ ...c, aux: fallback & 0xff })));
     if (!cols.length) return null;
-    const inst: ExternalInstance = { id: this.nextId++, owner, cols, fallback };
+    const inst: ExternalInstance = { id: this.nextId++, owner, cols, fallback, epoch: ++this.epoch };
     this.list.set(inst.id, inst);
     for (const c of cols) this.index(c.y * 65536 + c.x, inst.id);
     this.stats.claimed++;
     this.count();
     return inst;
+  }
+
+  /**
+   * (round 128g) Claim cells without reading the columns: each span made External where it's free (air or a liquid) —
+   * where there's ground the thing is buried in it — by the columns' own claimFree (the GPU's stamp), or, a CPU world, by
+   * reading and writing each column. The instance holds the spans asked for (`free`); verify holds it whole while every
+   * part of them is External or ground. Spans of one column go in order (a later one over an earlier is buried in it).
+   */
+  claimFree(owner: OwnerId, want: ExternalCol[], fallback: number = MAT.Stone): ExternalInstance | null {
+    return this.claimFreeEach(owner, [want], fallback)[0];
+  }
+
+  /** (round 128g) claimFree for several things at once, in order: one stamp for all of them (one GPU dispatch, not one each) */
+  claimFreeEach(owner: OwnerId, wants: ExternalCol[][], fallback: number = MAT.Stone): (ExternalInstance | null)[] {
+    const all: (ExternalCol & { aux: number })[] = [];
+    const out = wants.map((want) => {
+      const cols = want.filter((w) => w.z1 - w.z0 >= 0.05).map((w) => ({ ...w }));
+      if (!cols.length) return null;
+      for (const c of cols) all.push({ ...c, aux: fallback & 0xff });
+      const inst: ExternalInstance = { id: this.nextId++, owner, cols, fallback, free: true, epoch: ++this.epoch };
+      this.list.set(inst.id, inst);
+      for (const c of cols) this.index(c.y * 65536 + c.x, inst.id);
+      this.stats.claimed++;
+      return inst;
+    });
+    if (!all.length) return out;
+    if (this.cols.claimFree) this.cols.claimFree(all);
+    else {
+      const byCol = new Map<number, typeof all>();
+      for (const s of all) byCol.set(s.y * 65536 + s.x, [...(byCol.get(s.y * 65536 + s.x) ?? []), s]);
+      for (const ss of byCol.values()) this.cols.write(ss[0].x, ss[0].y, claimFreeColumn(this.cols.read(ss[0].x, ss[0].y), ss));
+    }
+    this.count();
+    return out;
   }
 
   /**
@@ -318,13 +410,16 @@ export class ExternalRegistry {
    * The columns were read (all of them, or those `known` says): every instance there that lost a cell it claimed is
    * cut — its owner told. Then the External intervals there no one claims are orphans: their fallback material.
    */
-  verify(known?: (x: number, y: number) => boolean, cols?: Iterable<number>): void {
+  verify(known?: (x: number, y: number) => boolean, cols?: Iterable<number>, asOf = Infinity): void {
     const lost: ExternalInstance[] = [];
     for (const inst of this.list.values()) {
+      // (round 128g: claimed after the read was asked for — the read can't show it yet; the next one judges it)
+      if ((inst.epoch ?? 0) > asOf) continue;
       let ok = true;
       for (const c of inst.cols) {
         if (known && !known(c.x, c.y)) continue;
-        if (!heldBy(this.cols.read(c.x, c.y), c.z0, c.z1)) {
+        const col = this.cols.read(c.x, c.y);
+        if (!(inst.free ? heldOrBuried(col, c.z0, c.z1) : heldBy(col, c.z0, c.z1))) {
           ok = false;
           break;
         }

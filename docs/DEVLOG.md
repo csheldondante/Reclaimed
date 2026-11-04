@@ -16987,3 +16987,67 @@ scripts/fortresslanes.mjs (a flat site and a hillside): runs; the shots (lanes-f
 tracks, faint at play zoom. **Not done:** the shots looked at closely and tuned (widths, the tracks' look, lanes over
 the town's fields), DECISIONS/ARCHITECTURE entries, contour roads between settlements (FT-59). Phone bench: lanes are
 recomputed on every plan change (9 ground taps a corner, a search over the structures a corner) — not timed.
+## 2026-11-04 — round 128g (`fortress`, cityrender): the town draws properly while panning — grids on the GPU (FT-60)
+
+**Why.** The user: "The town seems slightly glitchy when panning"; on how settle/view.ts worked: "This should only
+happen off screen we should prioritize and keep cached the city tiles"; the architecture: "There should be multiple
+grids with their own coordinate system on the GPU and everything should be instanced without CPU readback" (DECISIONS
+round 128g). Three root causes in settle/view.ts, plus a fourth the pan test found:
+1. Every slide re-copied every piece of every settlement in REACH into one buffer with the window's offset added on the
+   CPU, re-sorted and re-uploaded it: 141.5 KB of pieces a slide at play zoom (2.6), 123 KB at 1.3; update() up to
+   9.5 ms in a slide's frame (desktop proxy).
+2. A building at the window's edge let go of its columns and claimed them again after a readback of the columns
+   (`ViewIO.columns` → Integrity.columnsReady). **And it claimed on land a slide was still bringing in**: Streamer.slide
+   runs onSlide before the entering regions are written (over the next frames), the claim stamped External there, the
+   region's land overwrote it, the next integrity check found it cut, and the owner let the building go to rubble for
+   good. One pan up and back over town=1 at 40 cells/s: **47 buildings lost** (scripts/townpan.mjs, before; all at
+   window rows 290-299 of 320, the far edge). That was the glitch the user saw as much as the repack.
+3. The near/far handoff at REACH (1400 from the camera's point): a settlement past it stopped being pieces and the far
+   raster's roofs showed — in sight at wide zooms, and a zoom about a point moves the camera's point (M128-10).
+4. A settlement's plan arriving while on screen (plans were only made when the window's land met its box) swapped the
+   far raster's roofs for pieces in sight.
+**What.**
+- `structures/gpu.ts`: a grid table in the pieces' storage buffer (256 rows: position + uniform scale, a unit
+  quaternion — a full rigid transform, so later physics bodies, floating islands, a giant's back); slabs (`put`,
+  `drop`, `show`) — one owner's pieces in its grid's frame, uploaded once a change, sorted by module within the slab,
+  the grid id in the flags' bits 8-23; room by a first-fit allocator (`RangeAlloc`), grown by a GPU copy. No new
+  binding (≤ 8 storage buffers kept). `structmesh.wgsl spVertex` works in the grid's frame and composes grid ∘ local
+  (corners, affine pieces, draped pieces' ground sampled where the grid puts the corner, the wind turned into the
+  grid's frame, light pools); normals follow from the composed position's derivatives.
+- `settle/view.ts`: a grid and a slab per settlement and one for the fortress (`extra`, uploaded only when its pieces
+  are a new object); a slide writes grid rows only. What's drawn: `settle/onscreen.ts` — each box projected
+  (screenGap, in screens), shown from 0.35 off, kept to 0.75 (hysteresis), pieces made ahead from 1 screen off (one a
+  frame, nearest first; those on screen at once), let go past 2. Unplanned settlements within a screen get their plan
+  asked for (`Settlements.prepare`, every 15 frames). No REACH.
+- Claims (`ExternalRegistry.claimFree` / `claimFreeEach`, colapply `claim` with `P.free`, `claimFreeColumn`): a span made
+  External only where it's free (air, liquids) on the GPU, nothing read back; the instance holds the spans asked for and
+  verify holds it while every part is External or ground. Claimed only where the land is written
+  (`Streamer.unwritten`; `onRelief` asks again) — the frame after a slide, a town in one dispatch. `verify(…, asOf)`: a
+  read asked for before a claim doesn't judge it (a fetch in flight could otherwise cut a fresh claim). Same for the
+  fortress (fortress/claims.ts). Drawing never follows claims; what the sims see at the edge: a building partly out of
+  the window or on land still coming in isn't claimed — air to them — until it's whole and its land has come.
+- Phone bench `?townbench=1` (src/perf/townbench.ts): the town panned across and back at the play zoom and 1.3, frame
+  p50/p95/p99/max, hitches over 33/50 ms, the view's ms, uploads vs builds, grid rows, on-screen pops; wake lock, a JSON
+  to download.
+**Measured** (desktop proxy, 412x915, scripts/townpan.mjs, town=1, 40 cells/s, 8 s up and 8 back, 18 slides):
+
+| | before (b91561a) | after |
+|---|---|---|
+| pieces uploaded a slide, zoom 2.6 / 1.3 | 141.5 KB / 122.9 KB | 0 / 0 (grid rows: 0.8-2.6 KB of writes a slide incl. the ships) |
+| update() max in a frame, zoom 2.6 / 1.3 | 9.5 / 1.4 ms (the repack) | 4.6 / 3.6 ms (a town claiming again after a slide: the stamp's CPU side, FT-63) |
+| update() mean a frame | 0.026 ms | 0.035 ms |
+| buildings lost in the pan | 47 | 0 |
+| a town's drawing changing while on screen | (REACH not crossed in this pan) | 0 (1 before planning ahead: s7's plan arriving in sight) |
+
+Gates: typecheck; unit 645 passed (+ onscreen, grid rows, RangeAlloc, claimFree tests); GPU tier 134 passed (colapply
+`claimFree` GPU = CPU on 10 random worlds). A 30-degree grid and a moving, turning, scaled grid drawn (copies of the
+town floated over it: lit and shadowed, C:/Projects/shots88/cityrender/grids.png, grids.gif). hallcheck 0 lost of 150
+over 3 towns. tilegate diffed against places' run the same hour (C:/Projects/shots88/cityrender/tilegate-*): the same
+failures as places (the wide goldens 38-52%, fast pans over the sea scattered: desktop-z5 fast 14.7% vs places' 24.1%,
+desktop-z8 fast 1.26% vs 0.23%, phone-z5 fast 0.70% where places passed, w384 z8 fast passes where places' 12.7%
+failed); near goldens 1-3% as places'; the shots looked at: land and trees drawn, no holes. driveprofile alternated
+2 + 2: p95 17.1/14.1 vs places 15.0/14.4, p99 48.7/40.7 vs 46.5/52.1 — noise. fortressinspect: the same 4 failures
+on b91561a (text and pick checks older than this); fortressplot passed. **Readbacks left near this path** (FT-61, FT-62):
+fortress/reach.ts reads 'layers' + 'water' whole when planning starts and every 3 s while building (plan in FT-61:
+the agents' fields answer "reached?" per planned block on the GPU); the fortress's pieces stand on Level.heightAt (the
+level's 1 s surface readback); a tap's pick stays a one-off readback. **To places:** it doesn't cherry-pick cleanly (git merge-tree onto places 943a30f: conflicts in settle/view.ts, structmesh.wgsl, sim/external.ts, game/integrity.ts, scenes/level.ts, settle/settlements.ts and the docs; fortress/claims.ts isn't on places) — the fortress's additions (DRAPE_ANY, the picked flag, OWNER_FORT, extra) sit in the same lines; a port by hand, taking this view.ts, gpu.ts and the claim path whole and leaving the fortress's parts out.

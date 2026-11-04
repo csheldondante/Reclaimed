@@ -6,7 +6,9 @@
 //
 // What's claimed follows the Town (Fortress.onChange): a structure whose solid changed (a block built, one erased) lets
 // go of its old claim (to air) and claims the new. One wholly in the window or not at all: a slide that would take part
-// of it out lets it go first (beforeSlide), and it claims again when it's all back (slid). Claims are quiet (the
+// of it out lets it go first (beforeSlide), and it claims again when it's all back and its land has come in (round 128g:
+// land still being written after a slide overwrote a claim made on it, and the next check found it cut). A claim reads
+// nothing (round 128g: ExternalRegistry.claimFree, the GPU's stamp where the columns are free — no readback). Claims are quiet (the
 // integrity's edit only touches the chunks: sim/sleep.ts) — a block standing doesn't wake the ground round it.
 import type { ExternalCol, ExternalInstance, ExternalRegistry } from '../sim/external';
 import { OWNER_FORT } from '../sim/external';
@@ -18,8 +20,8 @@ import { solidSpans } from './solid';
 export interface ClaimsIO {
   /** the External registry (null: none — the fortress is drawn, nothing claimed) */
   external(): ExternalRegistry | null;
-  /** `then` once these window columns (x, y) can be read (the registry's claim reads them) */
-  columns(cols: [number, number][], then: () => void): Promise<void>;
+  /** (round 128g) whether the window's land in box [x0, x1) × [y0, y1) (cells, rows) is written (not still coming in) */
+  landed(x0: number, y0: number, x1: number, y1: number): boolean;
   dims: { w: number; h: number };
   /** the chunks over a claim (window world bounds): the hybrid draws them as voxels */
   touched?(x0: number, y0: number, x1: number, y1: number): void;
@@ -29,7 +31,8 @@ export class FortressClaims {
   private claims = new Map<number, { inst: ExternalInstance; key: string }>();
   /** structures whose claim was cut (dug, smashed): let go, not claimed again until they change */
   private lostKeys = new Map<number, string>();
-  private version = 0;
+  /** (round 128g) the claims made again on the next frame (a slide, land come in) */
+  private due = false;
   private owned: ExternalRegistry | null = null;
   readonly stats = { structures: 0, columns: 0, lost: 0 };
 
@@ -54,7 +57,6 @@ export class FortressClaims {
       this.owned = ext;
       ext.owner(OWNER_FORT, { name: 'fortress', onLost: (inst) => this.lost(inst) });
     }
-    const v = ++this.version;
     const [ox, oy] = this.fort.offset();
     const { w, h } = this.io.dims;
     const wants = new Map<number, { cols: ExternalCol[]; key: string }>();
@@ -62,6 +64,8 @@ export class FortressClaims {
       const cols = spans.map((s) => ({ x: s.x + ox, y: s.y + oy, z0: s.z0, z1: s.z1 }));
       if (!cols.every((c) => c.x >= 0 && c.y >= 0 && c.x < w && c.y < h)) continue;
       const key = cols.map((c) => `${c.x},${c.y},${c.z0.toFixed(2)},${c.z1.toFixed(2)}`).join(';');
+      // (a new claim on land still coming in: not yet — the land written there would undo it)
+      if (this.claims.get(id)?.key !== key && !this.io.landed(Math.min(...cols.map((c) => c.x)), Math.min(...cols.map((c) => c.y)), Math.max(...cols.map((c) => c.x)) + 1, Math.max(...cols.map((c) => c.y)) + 1)) continue;
       if (this.lostKeys.get(id) === key) continue;
       this.lostKeys.delete(id);
       wants.set(id, { cols, key });
@@ -73,24 +77,14 @@ export class FortressClaims {
       ext.release(c.inst.id, true);
       this.claims.delete(id);
     }
+    // (one stamp for them all)
     const fresh = [...wants].filter(([id]) => !this.claims.has(id));
+    ext.claimFreeEach(OWNER_FORT, fresh.map(([, f]) => f.cols), MAT.Rubble).forEach((inst, k) => {
+      if (!inst) return;
+      this.claims.set(fresh[k][0], { inst, key: fresh[k][1].key });
+      this.touch(inst);
+    });
     this.count();
-    if (!fresh.length) return;
-    void this.io.columns(
-      fresh.flatMap(([, f]) => f.cols.map((c) => [c.x, c.y] as [number, number])),
-      () => {
-        // (the plan moved on meanwhile: the latest update claims)
-        if (v !== this.version) return;
-        for (const [id, f] of fresh) {
-          if (this.claims.has(id)) continue;
-          const inst = ext.claim(OWNER_FORT, f.cols, MAT.Rubble);
-          if (!inst) continue;
-          this.claims.set(id, { inst, key: f.key });
-          this.touch(inst);
-        }
-        this.count();
-      },
-    );
   }
 
   /** before the window slides by (dx, dy) columns: a structure that would leave it lets go of its columns (to air) */
@@ -105,10 +99,22 @@ export class FortressClaims {
     this.count();
   }
 
-  /** after it slid (the registry moved the claims with the land): those whole in the window again claim */
+  /** after it slid (the registry moved the claims with the land): those whole in the window again claim, next frame */
   slid(): void {
     // (the claims kept moved with the land: their keys are the window's columns, made again)
     this.rekey();
+    this.due = true;
+  }
+
+  /** (round 128g) land was written into the window (the streamer's onRelief): structures on it may claim, next frame */
+  landed(): void {
+    this.due = true;
+  }
+
+  /** (round 128g) each frame: the claims made again when a slide or land coming in asked for it */
+  frame(): void {
+    if (!this.due) return;
+    this.due = false;
     this.update();
   }
 

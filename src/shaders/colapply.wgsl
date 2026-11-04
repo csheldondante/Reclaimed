@@ -42,7 +42,9 @@ struct Params {
   nDep: u32, depOff: u32, nKeys: u32, keyOff: u32,
   refOff: u32, spanOff: u32, twin: u32, maskLo: u32,
   /** take: the materials taken (bits 32..63); seat: the base and the new runs' aux */
-  maskHi: u32, seatBase: f32, seatAux: u32, pad0: u32,
+  maskHi: u32, seatBase: f32, seatAux: u32,
+  /** (round 128g) claim: only where free — the masked materials (maskLo, maskHi: air, liquids; any id past 63) */
+  free: u32,
 }
 
 @group(0) @binding(0) var<uniform> P: Params;
@@ -403,28 +405,68 @@ fn claim(@builtin(global_invocation_id) gid: vec3<u32>) {
   let ns = inp[o + 3u];
   var a: array<vec4<u32>, MAX_IV>;
   var n = load(b, &a);
-  // (each span in turn — sim/external.ts claimColumn: cut out, then External with its fallback as aux)
+  // (each span in turn — sim/external.ts claimColumn: cut out, then External with its fallback as aux; round 128g, with
+  // P.free — claimFreeColumn: only its parts that are free now, each of them so)
   for (var s = 0u; s < ns; s++) {
     let so = P.cutOff + (s0 + s) * 4u;
-    let cz0 = f(so);
-    let cz1 = f(so + 1u);
-    var nx: array<vec4<u32>, MAX_IV>;
-    var m = 0u;
-    for (var i = 0u; i < n; i++) {
-      let v = a[i];
-      let z0 = z0Of(v);
-      let z1 = z1Of(v);
-      if (z1 <= cz0 + EPS_X || z0 >= cz1 - EPS_X) { if (m < MAX_IV) { nx[m] = v; } m++; continue; }
-      if (z0 < cz0 - EPS_X) { if (m < MAX_IV) { nx[m] = vec4<u32>(v.x, bitcast<u32>(cz0), v.z, 0u); } m++; }
-      if (z1 > cz1 + EPS_X) { if (m < MAX_IV) { nx[m] = vec4<u32>(bitcast<u32>(cz1), v.y, v.z, 0u); } m++; }
+    var parts: array<vec2<f32>, 24>;
+    var np = 1u;
+    parts[0] = vec2<f32>(f(so), f(so + 1u));
+    if (P.free != 0u) {
+      // (sim/external.ts freeSpans: [z0, z1) less every interval that isn't free, the parts under 0.05 left out)
+      for (var i = 0u; i < n; i++) {
+        let v = a[i];
+        if (freeMat(matOf(v))) { continue; }
+        let iz0 = z0Of(v);
+        let iz1 = z1Of(v);
+        var nx: array<vec2<f32>, 24>;
+        var q = 0u;
+        for (var r = 0u; r < np; r++) {
+          let p = parts[r];
+          if (iz1 <= p.x + EPS_X || iz0 >= p.y - EPS_X) { if (q < 24u) { nx[q] = p; } q++; continue; }
+          if (iz0 > p.x + EPS_X) { if (q < 24u) { nx[q] = vec2<f32>(p.x, iz0); } q++; }
+          if (iz1 < p.y - EPS_X) { if (q < 24u) { nx[q] = vec2<f32>(iz1, p.y); } q++; }
+        }
+        parts = nx;
+        np = min(q, 24u);
+      }
+      var kept = 0u;
+      for (var r = 0u; r < np; r++) {
+        if (parts[r].y - parts[r].x >= 0.05) {
+          parts[kept] = parts[r];
+          kept++;
+        }
+      }
+      np = kept;
     }
-    if (m < MAX_IV) { nx[m] = iv(cz0, cz1, MAT_EXTERNAL, inp[so + 2u]); }
-    m++;
-    a = nx;
-    n = min(m, MAX_IV);
+    for (var r = 0u; r < np; r++) {
+      let cz0 = parts[r].x;
+      let cz1 = parts[r].y;
+      var nx: array<vec4<u32>, MAX_IV>;
+      var m = 0u;
+      for (var i = 0u; i < n; i++) {
+        let v = a[i];
+        let z0 = z0Of(v);
+        let z1 = z1Of(v);
+        if (z1 <= cz0 + EPS_X || z0 >= cz1 - EPS_X) { if (m < MAX_IV) { nx[m] = v; } m++; continue; }
+        if (z0 < cz0 - EPS_X) { if (m < MAX_IV) { nx[m] = vec4<u32>(v.x, bitcast<u32>(cz0), v.z, 0u); } m++; }
+        if (z1 > cz1 + EPS_X) { if (m < MAX_IV) { nx[m] = vec4<u32>(bitcast<u32>(cz1), v.y, v.z, 0u); } m++; }
+      }
+      if (m < MAX_IV) { nx[m] = iv(cz0, cz1, MAT_EXTERNAL, inp[so + 2u]); }
+      m++;
+      a = nx;
+      n = min(m, MAX_IV);
+    }
   }
   sortIv(&a, n);
   store(b, &a, join(&a, n));
+}
+
+/** (round 128g) is material m free for a claim (P.free's mask: air, liquids; an id past 63) */
+fn freeMat(m: u32) -> bool {
+  if (m < 32u) { return ((P.maskLo >> m) & 1u) != 0u; }
+  if (m < 64u) { return ((P.maskHi >> (m - 32u)) & 1u) != 0u; }
+  return true;
 }
 
 /** is material m one the take stage's mask holds */
