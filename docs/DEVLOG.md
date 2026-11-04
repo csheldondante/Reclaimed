@@ -16575,3 +16575,35 @@ amber frame, "Planning (paused)"), m2-building.png (blocks see-through, builders
 and fenced). Strings read: "Houses: 4 wood and 2 stone a block. 4 beds a block. Up to 4 high.", "This farm has 7
 blocks. It costs 7 wood. It needs 7 workers. It makes 14 grain a day.", "Wood 120 · Stone 80 · Grain 150 · Power 0, +0
 a day", "Press Plan to stop time and plan more."
+
+## 2026-11-03 — round 128d (`fortress`): painted shapes make landmarks (towers, domes, turrets, courtyards)
+
+**Why.** The user, on my offer that painted shapes produce the city generator's landmarks by local rules: "Yes please
+add those rules and the courtyards since those add a lot of charm." (DECISIONS round 128d.) Townscaper's charm is that
+shapes become something by themselves; the fortress plan drew every block cell as rooms, whatever its shape.
+
+**What.** src/fortress/shapes.ts: pure rules read off the plan and the grid (no per-city picks, nothing random):
+- *tower*: a lone block cell (no block or keep beside it) stacked 3+ levels → the building's `mega: 'tower'`: the
+  towns' round tower and spire (structures/pieces.ts draws it), no façades;
+- *dome*: a building of exactly four cells round one corner (a corner with four cells round it), all one mask → `mega:
+  'dome'` and a dome MegaFeature over the four (drum, dome, lantern: the towns' temple). A building is a structure's
+  cells on one floor (pieces.ts groups them so), so the rule takes the Town's base;
+- *turret*: a keep cell standing above every keep cell beside it → the keep's stone up to its tallest neighbour, a
+  tower drum on up to the cell's own top, a spire;
+- *courtyard*: a run of empty cells (≤ COURT_MAX = 8) with a block, a wall or the keep on every side at the ground
+  (none off the grid, no yard) → paved ('plaza' tiles; DRAPE_ANY as the crops, the fortress's ground being rough), a
+  tree in a one-cell courtyard, a fountain (MegaFeature) in a bigger one, and each block's ground-floor face on it an
+  arch (gatearch) instead of its wall. Drawn in the style pass of the structure round it that was made first.
+fortressPieces works the shapes out once and hands them to each style's cityPlanOf; the CityPlan now carries megas.
+
+**Checks.** Unit: src/fortress/shapes.test.ts (8: three levels alone a tower and spire, no window or door walls; two
+levels or a block beside not; four round a corner a drum, dome and lantern at one and two storeys; one taller or a fifth
+cell not; the keep's turret appears and goes as a neighbour rises; a one-cell courtyard paved, a tree, 4 arches; walls
+and houses round two cells a fountain; an open side or a farm beside no courtyard). All fortress tests 28/28; typecheck
+clean. Headless at 412x915 while planning (the plan drawn whole), C:/Projects/shots88/fortress/: shape-all.png (play
+zoom 6.5: the tower, the dome, the keep with its turret, the houses round the courtyard), shape-tower.png,
+shape-dome.png, shape-keep.png (closer, zoom 11) — the tower, dome and turret read clearly; shape-yard.png: the ring of
+houses joins under one roof line, but the courtyard inside is hidden by the world's pines growing in it (the fortress
+doesn't clear vegetation, BACKLOG FT-26) and by the near houses at the iso angle; the pieces are there (gatearch 4,
+fruittree 1, a fountain, read back from the view). shape-walled.png: a ring of single wall cells round two cells is
+all towers (each ring cell is a post or an end: the wall rule, not this one).

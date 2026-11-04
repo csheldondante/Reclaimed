@@ -41,6 +41,9 @@ Branch `fortress`: milestones 1 and 2 built (round 128d: the user's fixes, the F
 | FT-21 | Rough: a builder's load is the stores' (a ledger number), carried as a look; the heap's real matter isn't taken (milestone 3's hauling makes the heaps real). A builder that dies loses its load | S | open |
 | FT-22 | Rough: which block a town piece belongs to (see-through or not) is read from its middle; a façade or roof on a cell's edge may take its neighbour's look. An erased built block goes at once (no taking down, no refund) | S | open |
 | FT-23 | Rough: the fortress banner sits over the level's progress pill at the top; the keep's merlons don't step where keep cells differ in height | S | open |
+| FT-24 | (128d) Shape rules, Townscaper-style (the user: "Yes please add those rules and the courtyards since those add a lot of charm"): a lone cell 3+ high a round tower and spire; four round a corner, one height, a dome; a keep cell above the keep a turret; an enclosed empty run of cells a courtyard (paving, a tree or a fountain, arches round it). fortress/shapes.ts | M | done (round 128d shapes commit) |
+| FT-25 | Partly enclosed empty cells: a garden (the courtyard rule's open sibling) | S | open |
+| FT-26 | Rough: the world's trees grow inside the plan (courtyards, between houses) — the fortress doesn't clear vegetation from its cells, so a courtyard's paving and tree hide under pines (shape-yard.png). Also: a 2x2 painted on a slope in an order whose floors don't line up is two buildings, not a dome; the fortress's extra pieces (walls' towers, the keep's) carry no style index in their look, so they take hearth's palette | S | open |
 
 ## Round 126 (2026-11-02, session 5, `dialog2`) — petitions as dialogs, the cast, plain writing (DECISIONS round 126)
 

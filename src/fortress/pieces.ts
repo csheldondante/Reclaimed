@@ -8,18 +8,19 @@
 // doesn't join) with a façade on every storey's side no block of the same building covers; walls are wall and gate
 // tiles (ramparts, merlons on the sides that meet no wall, a gate's arch across a run) with a tower where a run turns,
 // ends or meets another; farms are fields, the quarry a yard; and each type's props set down on it.
-import type { StructurePieces, BuildingRec, CityPlan, Facade, Prop, TileMesh, TileUse, V2, StructureStyleId } from '../api/contracts/structures';
+import type { StructurePieces, BuildingRec, CityPlan, Facade, MegaFeature, Prop, TileMesh, TileUse, V2, StructureStyleId } from '../api/contracts/structures';
 import type { StructureDef, StructureType } from '../api/contracts/fortress';
 import { LEVEL_H, MAX_LEVELS, type Town } from '../build/town';
 import type { TownGrid } from '../build/towngrid';
 import { PROP_SIZE } from '../structures/dressmodules';
 import { library } from '../structures/modules';
-import { DRAPE, DRAPE_ANY, PIECE_FLOATS, piecesOf, REL } from '../structures/pieces';
+import { DRAPE, DRAPE_ANY, PIECE_FLOATS, piecesOf, REL, WALL_T } from '../structures/pieces';
 import { hashf } from '../structures/rng';
 import { styleOf } from '../structures/styles';
 import { adjacency, quadCorners } from '../structures/tiles/builder';
 import { DEFS } from './defs';
 import { towered, type FortressPlan } from './plan';
+import { shapesOf, type Courtyard, type Shapes } from './shapes';
 
 /** (round 128d) look bit 23: a block planned, not built yet — drawn see-through while building (structgame.wgsl) */
 export const LOOK_GHOST = 1 << 23;
@@ -49,11 +50,14 @@ export function fortressPieces(inp: PieceInputs): StructurePieces {
   const defs = inp.defs ?? DEFS;
   const styles = new Set<StructureStyleId>();
   for (const s of inp.plan.structures()) styles.add(defs[s.type].look.style);
+  // (round 128d) the painted shapes' landmarks: towers, domes, turrets, courtyards (shapes.ts)
+  const shapes = shapesOf(inp.plan, inp.grid, (c) => inp.town.base[c], defs);
   const parts: StructurePieces[] = [];
   for (const style of styles) {
-    const cp = cityPlanOf(inp, style, defs);
+    const cp = cityPlanOf(inp, style, defs, shapes);
     const p = piecesOf(cp.plan);
     ripen(p);
+    drapeAny(p);
     if (inp.ghost) ghostOver(p, inp);
     parts.push(p);
     parts.push(cp.extra);
@@ -149,6 +153,25 @@ function ripen(p: StructurePieces): void {
   }
 }
 
+/**
+ * (round 128d) The fortress's paving (its courtyards) follows the host's ground however far off it is, as its crops do
+ * (ripen): the fortress's ground is the surface read without the loose ground on it.
+ */
+function drapeAny(p: StructurePieces): void {
+  const pave = library().id('pave');
+  for (let i = 0; i < p.count; i++) if (p.module[i] === pave) p.data[i * PIECE_FLOATS + 15] = (p.data[i * PIECE_FLOATS + 15] | 0) | DRAPE_ANY;
+}
+
+/** a wall's frame on side a→b of a cell (counter-clockwise): along it, then in by t */
+function sideBand(a: V2, b: V2, t: number): [V2, V2, V2, V2] {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const l = Math.hypot(dx, dy) || 1;
+  const nx = (-dy / l) * t;
+  const ny = (dx / l) * t;
+  return [a, b, [b[0] + nx, b[1] + ny], [a[0] + nx, a[1] + ny]];
+}
+
 /** a band from a to b, h either side of the line (counter-clockwise from a's right) */
 function band(a: V2, b: V2, h: number): [V2, V2, V2, V2] {
   const dx = b[0] - a[0];
@@ -165,7 +188,12 @@ function square(x: number, y: number, h: number): [V2, V2, V2, V2] {
 }
 
 /** The fortress's cells of one style as a CityPlan (what piecesOf reads), and the pieces it has no rule for. */
-export function cityPlanOf(inp: PieceInputs, style: StructureStyleId, defs: Record<StructureType, StructureDef> = DEFS): { plan: CityPlan; extra: StructurePieces } {
+export function cityPlanOf(
+  inp: PieceInputs,
+  style: StructureStyleId,
+  defs: Record<StructureType, StructureDef> = DEFS,
+  shapes: Shapes = shapesOf(inp.plan, inp.grid, (c) => inp.town.base[c], defs),
+): { plan: CityPlan; extra: StructurePieces } {
   const { plan, town, grid, zOff } = inp;
   const nq = grid.count;
   const tiles: TileMesh = {
@@ -206,15 +234,30 @@ export function cityPlanOf(inp: PieceInputs, style: StructureStyleId, defs: Reco
     return Math.PI - Math.acos(Math.max(-1, Math.min(1, cos)));
   };
   const mine = plan.structures().filter((s) => defs[s.type].look.style === style);
-  // the ground under every corner of the cells drawn
-  for (const s of mine)
-    for (const c of s.cells.keys())
-      for (let k = 0; k < 4; k++) {
-        const v = grid.quads[c * 4 + k];
-        if (groundDone[v]) continue;
-        groundDone[v] = 1;
-        ground[v] = groundAt(grid.verts[v * 2], grid.verts[v * 2 + 1]);
+  const megas: MegaFeature[] = [];
+  // (a courtyard is drawn with the style of the structure round it that the plan made first)
+  const courtStyle = (ct: Courtyard) => {
+    let id = Infinity;
+    for (const c of ct.cells)
+      for (let e = 0; e < 4; e++) {
+        const o = plan.owner[grid.nbr[c * 4 + e]];
+        if (o >= 0) id = Math.min(id, o);
       }
+    return defs[plan.structure(id)!.type].look.style;
+  };
+  const courts = shapes.courtyards.filter((ct) => courtStyle(ct) === style);
+  /** the courtyards' faces: a block's ground-floor side, an arch instead of its wall */
+  const arched = new Set<number>();
+  for (const ct of shapes.courtyards) for (const f of ct.faces) arched.add(f.cell * 4 + f.side);
+  // the ground under every corner of the cells drawn
+  const drawn = [...mine.flatMap((s) => [...s.cells.keys()]), ...courts.flatMap((ct) => ct.cells)];
+  for (const c of drawn)
+    for (let k = 0; k < 4; k++) {
+      const v = grid.quads[c * 4 + k];
+      if (groundDone[v]) continue;
+      groundDone[v] = 1;
+      ground[v] = groundAt(grid.verts[v * 2], grid.verts[v * 2 + 1]);
+    }
   for (const s of mine) {
     const def = defs[s.type];
     const look = Math.floor(hashf(s.id, 31) * 4096);
@@ -283,9 +326,26 @@ export function cityPlanOf(inp: PieceInputs, style: StructureStyleId, defs: Reco
     } else if (def.form === 'keep') {
       // (round 128d) the fortress's keep: solid stone cells (the towns' rampart, crenellated where no keep cell is
       // beside), a tower at each outer corner
+      const keepTop = (c: number) => town.floorZ(c, topOf(c)) + LEVEL_H + zOff;
       for (const c of s.cells.keys()) {
         tiles.use[c] = 'wall';
-        quadTop[c] = town.floorZ(c, topOf(c)) + LEVEL_H + zOff;
+        quadTop[c] = keepTop(c);
+      }
+      // (round 128d) a keep cell standing above every keep cell beside it: a round turret (shapes.ts) — the keep's
+      // stone up to its tallest neighbour, the turret's drum on up to the cell's own top, a spire on it
+      for (const c of s.cells.keys()) {
+        if (!shapes.turrets.has(c)) continue;
+        let under = -Infinity;
+        for (let e = 0; e < 4; e++) {
+          const n = adj[c * 4 + e];
+          if (n >= 0 && plan.owner[n] === s.id) under = Math.max(under, keepTop(n));
+        }
+        quadTop[c] = under;
+        const [x, y] = centre(c);
+        const L2 = ghostAt(c, topOf(c)) ? look | LOOK_GHOST : look;
+        const t = keepTop(c);
+        extra.add(lib.id('tower'), square(x, y, 2.1), under - 0.5, t, L2);
+        extra.add(lib.id('spire'), square(x, y, 1.9), t, t + 4.2, L2);
       }
       for (const c of s.cells.keys()) {
         const p = quadCorners(tiles, c);
@@ -321,8 +381,28 @@ export function cityPlanOf(inp: PieceInputs, style: StructureStyleId, defs: Reco
           quadTop[c] = town.floorZ(c, topOf(c)) + LEVEL_H + zOff;
           storeys = Math.max(storeys, topOf(c) + 1);
         }
-        buildings.push({ id, kind: def.look.kind ?? 'house', quads: cells, base, storeys, storeyH: LEVEL_H, look });
+        // (round 128d) a landmark by its shape (shapes.ts): a lone cell stacked high a round tower and spire; four round a
+        // corner, all one height, a domed drum — both drawn whole by the towns' rules (structures/pieces.ts megas), no
+        // façades of their own
+        const tower = cells.length === 1 && shapes.towers.has(cells[0]);
+        const dome = cells.length === 4 ? shapes.domes.find((d) => d.cells.includes(cells[0])) : undefined;
+        const mega = tower ? 'tower' : dome ? 'dome' : undefined;
+        buildings.push({ id, kind: def.look.kind ?? 'house', quads: cells, base, storeys, storeyH: LEVEL_H, look, mega });
+        if (dome) {
+          const vx = grid.verts[dome.vertex * 2];
+          const vy = grid.verts[dome.vertex * 2 + 1];
+          // the patch's corners: each cell's corner opposite the shared one, counter-clockwise round it
+          const outer = cells
+            .map((c) => {
+              const k = [0, 1, 2, 3].find((i) => grid.quads[c * 4 + i] === dome.vertex)!;
+              const o = grid.quads[c * 4 + ((k + 2) % 4)];
+              return [grid.verts[o * 2], grid.verts[o * 2 + 1]] as V2;
+            })
+            .sort((a, b) => Math.atan2(a[1] - vy, a[0] - vx) - Math.atan2(b[1] - vy, b[0] - vx));
+          megas.push({ kind: 'dome', quads: cells, frame: [outer[0], outer[1], outer[2], outer[3]], z0: base, z1: quadTop[cells[0]] });
+        }
         // the walls: each storey's sides no block of this building covers at that storey
+        if (!mega)
         for (const c of cells)
           for (let L = 0; L < MAX_LEVELS; L++) {
             if (!plan.has(c, L)) continue;
@@ -330,6 +410,12 @@ export function cityPlanOf(inp: PieceInputs, style: StructureStyleId, defs: Reco
               const n = adj[c * 4 + side];
               if (n >= 0 && quadBuilding[n] === id && plan.has(n, L)) continue;
               const z0 = town.floorZ(c, L) + zOff;
+              // (round 128d) a side on a courtyard: an arch in the ground floor, not a wall (shapes.ts)
+              if (L === 0 && arched.has(c * 4 + side)) {
+                const p = quadCorners(tiles, c);
+                extra.add(lib.id('gatearch'), sideBand(p[side], p[(side + 1) % 4], WALL_T), z0, z0 + LEVEL_H, ghostAt(c, 0) ? look | LOOK_GHOST : look);
+                continue;
+              }
               const door = L === 0 && !doorDone;
               if (door) doorDone = true;
               facades.push({ quad: c, side, level: L, z0, z1: z0 + LEVEL_H, kind: door ? 'door' : hashf(c, side, L) < 0.2 ? 'blank' : 'window', building: id });
@@ -348,7 +434,7 @@ export function cityPlanOf(inp: PieceInputs, style: StructureStyleId, defs: Reco
         const kind = def.look.kind ?? 'house';
         roofRise.push((edge / ne) * (kind === 'house' ? st.pitch : kind === 'hut' ? 1.35 : kind === 'barn' ? 1.0 : 1.1) * 0.5);
         // a chimney on the building's tallest cell
-        if (def.look.chimney) {
+        if (def.look.chimney && !mega) {
           let tc = cells[0];
           for (const c of cells) if (quadTop[c] > quadTop[tc]) tc = c;
           const [x, y] = centre(tc);
@@ -378,6 +464,20 @@ export function cityPlanOf(inp: PieceInputs, style: StructureStyleId, defs: Reco
       props.push({ kind, at: [x, y, groundAt(x, y)], heading: hashf(s.id, i, 3) * Math.PI * 2, size: PROP_SIZE[kind], seed: hashf(s.id, i, 5) });
     });
   }
+  // (round 128d) the courtyards (shapes.ts): paved; one cell a tree in the middle, more a fountain
+  for (const ct of courts) {
+    for (const c of ct.cells) tiles.use[c] = 'plaza';
+    let x = 0;
+    let y = 0;
+    for (const c of ct.cells) {
+      const [cx, cy] = centre(c);
+      x += cx / ct.cells.length;
+      y += cy / ct.cells.length;
+    }
+    const g = groundAt(x, y);
+    if (ct.cells.length === 1) extra.add(lib.id('fruittree'), square(x, y, 2.0), g - 0.1, g + 4.4, Math.floor(hashf(ct.cells[0], 33) * 4096));
+    else megas.push({ kind: 'fountain', quads: ct.cells.slice(), frame: square(x, y, 1.7), z0: g - 0.1, z1: g + 2.6 });
+  }
   const cityPlan: CityPlan = {
     spec: { seed: 7, system: 'irregular', style, at: [0, 0], radius: 0 },
     tiles,
@@ -389,7 +489,7 @@ export function cityPlanOf(inp: PieceInputs, style: StructureStyleId, defs: Reco
     quadTop,
     order: buildings.map((b) => b.id),
     roofRise,
-    megas: [],
+    megas,
     linear: [],
     berths: [],
     props,

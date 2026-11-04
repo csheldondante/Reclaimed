@@ -554,6 +554,13 @@ each was implemented.
   from shrines and ley lines later (FORTRESS_MODE.md).
 - → Material and style choices per type (item 7: field or farmhouse, stone or plaster) and housing size limits
   (item 3): BACKLOG, not now.
+- The user, verbatim (context: my offer that painted shapes make the city generator's landmarks by local rules —
+  towers, domes, turrets, courtyards): "Yes please add those rules and the courtyards since those add a lot of charm."
+- → Shape rules, all local, read off the plan (no per-city picks): a lone block cell stacked 3+ levels is a round tower
+  with a spire; four cells round one corner, one building, all the same height, a drum, dome and lantern (the towns'
+  temple); a keep cell standing above every keep cell beside it a round turret with a spire; empty ground cells (up to
+  8) with blocks, walls or the keep on every side a courtyard (paving, a tree in a one-cell courtyard, a fountain in a
+  bigger one, arches in the ground floor's faces round it). Partly enclosed (a garden): later (BACKLOG FT-25).
 
 ## 2026-11-03 — round 128c (session 5) — the fortress mode: the user's vision
 
