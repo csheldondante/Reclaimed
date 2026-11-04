@@ -17097,3 +17097,23 @@ start menu at 412x915 (`scripts/fortressvariant.mjs`): a house on open ground, a
 (far cells first), the last tap put a gate in it and the panel said so; Build at 16x: the builders went through the gate
 and the house stood in 38 s; then the warning case by finger (the fourth side a warehouse), outlined and named. Shots
 `fortress/variant-gate.png`, `variant-gate-built.png`, `variant-warn.png`.
+
+## 2026-11-04 — round 128h (`fortress`): the town bench slides the window, or says it didn't (FT-66)
+
+**Why.** The user ran ?townbench=1 on the Pixel 9a: every row reported 0 slides, 0 grid writes, 0 uploads — the pan
+never slid the window, so the bench measured a still camera, not the slide path it was made for (round 128g).
+
+**What.** `src/perf/townbench.ts`: a row is legs out from the town and back, up, down, left and right of the screen,
+each out 30% of the screen's height or width (the town stays on screen) and at most 100 m (the window slides about every
+32 m of a pan: a few slides out and a few back), every way at least once, then round again till the row's time is up;
+the camera put back on the town exactly after each leg (the window's origin added back to its target: slides move the
+frame). A row with 0 slides (or slides and no grid rows, or the town on screen under half the frames) fails loudly: a red
+"FAILED — …" line at the top of the result, the bar's line says so, and the JSON has `ok: false` and `failures`
+(version 2). Rows also report `legs`, `travel` (m), `townOnScreen`, `busy` (the streamer's share of frames) and
+`settleMs` (a row waits up to 20 s for the streamer first), so a phone that doesn't slide says whether the camera
+didn't move or the streamer held it.
+
+**Measured (headless, 412x915, scripts/townbenchcheck.mjs).** Before: 14 slides a row (so the phone's 0 isn't the
+pan's distance alone — the next report's travel and busy will tell). After: zoom 2.6: 23 slides, 69 grid rows, 4 legs,
+603 m, the town on screen 100%; zoom 1.3: 26 slides, 198 grid rows, 4 legs, 786 m, 100%. The failure path: at 0.2
+cells/s the row had 0 slides and the panel showed the red line, `ok: false` and the reason in the JSON.
