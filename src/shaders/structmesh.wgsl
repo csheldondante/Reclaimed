@@ -11,7 +11,8 @@
 // bilinear height up to the top (flags & 1: the top is a height over the foot — paving that follows the ground; flags & 2:
 // an affine piece, rows 0-2 a 3 × 4 transform; flags & 8: WIND — its cloth streams downwind from where it hangs (a banner);
 // flags & 16: SPIN — an affine piece turns about its local y axis (a waterwheel, a windmill's sails); flags & 32: a draped
-// piece follows the ground however far it is from the plan's (round 128d, the fortress).
+// piece follows the ground however far it is from the plan's (round 128d, the fortress); flags & 64: picked (round 128d,
+// the fortress's Inspect) — look bit 24 set here, drawn highlighted (structgame.wgsl).
 // (round 120) look bits 20-22: what history left — soot (a burned quarter), damp (a flooded one), fresh stone (new walls).
 
 // (SP_PAL, SP_PARTS, SP_VARIANTS: from src/structures/gpu.ts wgsl(), the TS tables' sizes)
@@ -106,6 +107,8 @@ fn spVertex(a: vec4<f32>, piece: u32) -> SpVert {
   o.w = a.z;
   o.part = u32(a.w + 0.5);
   o.look = u32(tp.y);
+  // (round 128d, flags & 64: the fortress's structure Inspect picked — look bit 24, past what the float carries exactly)
+  if ((u32(tp.w) & 64u) != 0u) { o.look |= 0x1000000u; }
   o.seed = tp.z;
   // the palette: the style's slot, its variant picked per building (look's low bits, hashed per part)
   // (round 120: bits 20-22 are history's marks, not the style's)

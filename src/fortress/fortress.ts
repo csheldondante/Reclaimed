@@ -30,7 +30,8 @@ export interface FortressIO {
   clearPlants?(x: number, y: number, r: number): void;
 }
 
-export type Tool = { type: StructureType; erase: boolean; gate: boolean; tower?: boolean };
+/** (round 128d) inspect: a tap picks the structure under it (inspect.ts) instead of planning */
+export type Tool = { type: StructureType; erase: boolean; gate: boolean; tower?: boolean; inspect?: boolean };
 
 /** (round 128d) planning (time stopped, the plan drawn whole) or building (time runs, the builders at work) */
 export type FortressMode = 'plan' | 'build';
@@ -43,6 +44,8 @@ export class Fortress {
   mode: FortressMode = 'plan';
   /** the structure last painted (the panel's) */
   selected: number | null = null;
+  /** (round 128d) the structure Inspect picked: drawn highlighted, its card in the panel (null: none) */
+  inspected: number | null = null;
   readonly onChange: (() => void)[] = [];
   /** (round 128d, FT-20) blocks to build that no builder can walk to from the heap (FortressLife: deep water, a cliff) */
   cutOff = 0;
@@ -130,7 +133,7 @@ export class Fortress {
    * ground's cell under `groundCol` (the GPU pick's window column), level 0.
    */
   pick(ray: { o: readonly number[]; d: readonly number[] }, groundCol: number): Block | null {
-    const erase = this.tool.erase || this.tool.gate || !!this.tool.tower;
+    const erase = this.tool.erase || this.tool.gate || !!this.tool.tower || !!this.tool.inspect;
     const [bx, by] = this.toBox(ray.o[0], ray.o[1]);
     const t = this.town;
     const hit = pickFace(t.grid, (c, L) => t.occupied(c, L), (c) => t.built.any(c) || t.plans.any(c), (c) => t.base[c], [bx, by, ray.o[2]], ray.d, 1200);
@@ -154,6 +157,26 @@ export class Fortress {
     return c >= 0 ? { cell: c, level: 0 } : null;
   }
 
+  /** (inspect) the ground's cell the ray meets, level 0 (null: none in the box) */
+  private groundPick(ray: { o: readonly number[]; d: readonly number[] }, groundCol: number): Block | null {
+    const [bx, by] = this.toBox(ray.o[0], ray.o[1]);
+    const c0 = this.groundCellAlong([bx, by, ray.o[2]], ray.d, 1200);
+    if (c0 >= 0) return { cell: c0, level: 0 };
+    const bc = groundCol >= 0 ? this.windowToBoxCol(groundCol) : -1;
+    const c = bc >= 0 ? this.town.grid.cellOf[bc] : -1;
+    return c >= 0 ? { cell: c, level: 0 } : null;
+  }
+
+  /** (round 128d) Inspect a structure (null: close the card): it's drawn highlighted. */
+  inspect(id: number | null): void {
+    if (id !== null && !this.plan.structure(id)) id = null;
+    if (id === this.inspected) return;
+    const cells = [this.inspected, id].flatMap((s) => (s === null ? [] : [...(this.plan.structure(s)?.cells.keys() ?? [])]));
+    this.inspected = id;
+    this.changedOver(cells);
+    for (const h of this.onChange) h();
+  }
+
   /** The cell where the ray (box frame) first goes under the ground (-1: it doesn't, in the box). */
   private groundCellAlong(o: readonly number[], d: readonly number[], tMax: number, step = 0.25): number {
     for (let t = 0; t <= tMax; t += step) {
@@ -170,6 +193,13 @@ export class Fortress {
 
   /** A press with the current tool (see pick). What happened, for the panel; false: nothing. */
   press(ray: { o: readonly number[]; d: readonly number[] }, groundCol: number): boolean {
+    if (this.tool.inspect) {
+      // (a block's face along the ray; else the ground's cell — a yard lies on it; a tap on nothing closes the card)
+      const b = this.pick(ray, groundCol) ?? this.groundPick(ray, groundCol);
+      const id = b && this.plan.owner[b.cell] >= 0 ? this.plan.owner[b.cell] : null;
+      this.inspect(id);
+      return id !== null;
+    }
     const b = this.pick(ray, groundCol);
     if (!b) return false;
     if (this.tool.tower) {

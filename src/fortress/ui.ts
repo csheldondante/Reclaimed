@@ -10,6 +10,7 @@
 import { STRUCTURE_TYPES, type StructureType } from '../api/contracts/fortress';
 import { DEFS } from './defs';
 import type { Fortress } from './fortress';
+import { inspectCard, inspectFacts } from './inspect';
 import { buildingLine, cutOffLine, PAUSED_LINE, planLines, storesLine, structureLines, typeCard } from './words';
 
 const CSS = `
@@ -26,6 +27,8 @@ const CSS = `
 .fort-info p{margin:0}
 .fort-info .card{color:#f1d58a;font-weight:600}
 .fort-info .short{color:#ff9c7a}
+.fort-info .title{color:#f1d58a;font-weight:700;font-size:14px}
+.fort-row button.inspect{flex:0 0 30%}
 .fort-top{position:absolute;left:50%;top:8px;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;
   gap:3px;z-index:30;pointer-events:none;width:max-content;max-width:96vw}
 .fort-top div{background:rgba(20,22,26,.82);color:#eee;padding:4px 11px;border-radius:13px;font:13px system-ui,sans-serif;white-space:nowrap}
@@ -51,6 +54,7 @@ export class FortressBar {
   private towerBtn: HTMLButtonElement;
   private planOnly: HTMLElement[] = [];
   private goBtn: HTMLButtonElement;
+  private inspectBtn: HTMLButtonElement;
   private top: HTMLDivElement;
   private modeLine: HTMLDivElement;
   private storeLine: HTMLDivElement;
@@ -109,7 +113,17 @@ export class FortressBar {
     this.goBtn = document.createElement('button');
     this.goBtn.className = 'go';
     this.goBtn.onclick = () => (fort.mode === 'plan' ? hooks.build() : hooks.plan());
-    goRow.appendChild(this.goBtn);
+    // (round 128d) Inspect, planning or building: a tap picks a structure and shows its card; a tap on nothing closes it
+    this.inspectBtn = document.createElement('button');
+    this.inspectBtn.className = 'inspect';
+    this.inspectBtn.textContent = 'Inspect';
+    this.inspectBtn.onclick = () => {
+      const on = !fort.tool.inspect;
+      fort.tool = { type: fort.tool.type, erase: false, gate: false, tower: false, inspect: on };
+      if (!on) fort.inspect(null);
+      this.render();
+    };
+    goRow.append(this.inspectBtn, this.goBtn);
     this.root.appendChild(goRow);
     this.planOnly = [grid, row];
     // (the bar takes its own presses: none reach the map under it)
@@ -120,10 +134,21 @@ export class FortressBar {
   }
 
   /** The lines the panel shows now (the writing lint reads them too). */
-  lines(): { text: string; short?: boolean; card?: boolean }[] {
+  lines(): { text: string; short?: boolean; card?: boolean; title?: boolean }[] {
     const f = this.fort;
-    const out: { text: string; short?: boolean; card?: boolean }[] = [];
+    const out: { text: string; short?: boolean; card?: boolean; title?: boolean }[] = [];
     const stores = f.stores();
+    if (f.tool.inspect) {
+      // (round 128d) Inspect: the picked structure's card (inspect.ts), from its data and the ledger now
+      const s = f.inspected !== null ? f.plan.structure(f.inspected) : null;
+      if (!s) out.push({ text: 'Tap a block to see what it is.' });
+      else {
+        const card = inspectCard(inspectFacts(f.plan, s, (c, l) => f.town.has(c, l), stores));
+        out.push({ text: card.title, title: true });
+        for (const l of card.lines) out.push({ text: l });
+      }
+      return out;
+    }
     if (f.mode === 'build') {
       const p = f.progress();
       out.push({ text: buildingLine(p.built, p.total) });
@@ -165,8 +190,12 @@ export class FortressBar {
     this.towerBtn.classList.toggle('on', !!t.tower);
     this.gateBtn.disabled = t.type !== 'wall' && !t.gate;
     this.towerBtn.disabled = t.type !== 'wall' && !t.tower;
-    for (const el of this.planOnly) el.style.display = planning ? '' : 'none';
+    // (inspecting: the card in place of the types — the bar stays phone-sized)
+    for (const el of this.planOnly) el.style.display = planning && !t.inspect ? '' : 'none';
     this.goBtn.textContent = planning ? 'Build' : 'Plan';
+    this.inspectBtn.classList.toggle('on', !!t.inspect);
+    // (another tool picked: the card closes)
+    if (!t.inspect && f.inspected !== null) f.inspect(null);
     this.frame.style.display = planning ? '' : 'none';
     const [mode, stores] = this.topLines();
     this.modeLine.textContent = mode;
@@ -178,6 +207,7 @@ export class FortressBar {
         p.textContent = l.text;
         if (l.short) p.className = 'short';
         if (l.card) p.className = 'card';
+        if (l.title) p.className = 'title';
         return p;
       }),
     );

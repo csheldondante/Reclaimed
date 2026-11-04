@@ -78,6 +78,8 @@ fn fsStruct(in: SGOut) -> FOut {
   var col = spAlbedo(sv, n) * lighting(in.wpos, n) + spEmit(sv);
   if (sv.part == 20u) { col = spFlame(sv); }
   if (ghost) { col = mix(col, vec3<f32>(0.75, 0.85, 1.0), 0.55); }
+  // (round 128d, fortress) look bit 24: the structure Inspect picked — warm gold, a slow pulse, so it reads at a glance
+  if ((in.info.y & 0x1000000u) != 0u) { col = mix(col, vec3<f32>(1.0, 0.78, 0.25), 0.5 + 0.12 * sin(G.time * 4.0)) + vec3<f32>(0.05, 0.035, 0.0); }
   col = haze(col, in.wpos);
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), 1.0);

@@ -25,6 +25,9 @@ import { WALL_HALF, WALL_LINTEL } from './solid';
 
 /** (round 128d) look bit 23: a block planned, not built yet — drawn see-through while building (structgame.wgsl) */
 export const LOOK_GHOST = 1 << 23;
+/** (round 128d) flags bit 6: the structure Inspect picked — drawn highlighted (structmesh.wgsl sets look bit 24 from it,
+ *  structgame.wgsl tints it). A flag, not a look bit: the look travels as a float, exact only to 24 bits */
+export const PIECE_PICKED = 64;
 // (a thin wall's half width — a cell is ~5 m across — and a gate's lintel: solid.ts's, what's solid of it the same)
 
 export interface PieceInputs {
@@ -42,6 +45,8 @@ export interface PieceInputs {
    * mind that as long as we are clearly in planning mode").
    */
   ghost?: (cell: number, level: number) => boolean;
+  /** (round 128d) the structure Inspect picked (its pieces drawn highlighted) */
+  picked?: number | null;
 }
 
 /** The pieces of every planned structure, in the box's frame (x, y box-local world units; z world). */
@@ -58,6 +63,10 @@ export function fortressPieces(inp: PieceInputs): StructurePieces {
     ripen(p);
     drapeAny(p);
     if (inp.ghost) ghostOver(p, inp);
+    if (inp.picked != null) {
+      pickOver(p, inp);
+      pickOver(cp.extra, inp);
+    }
     parts.push(p);
     parts.push(cp.extra);
   }
@@ -112,6 +121,20 @@ function ghostOver(p: StructurePieces, inp: PieceInputs): void {
     const top0 = plan.top(c);
     const L = Math.max(0, Math.min(top0, Math.floor(((foot + top) / 2 - zOff - town.base[c]) / LEVEL_H)));
     if (inp.ghost!(c, L)) d[o + 13] = (d[o + 13] | 0) | LOOK_GHOST;
+  }
+}
+
+/** (round 128d) the picked structure's pieces flagged PIECE_PICKED (by the cell under each piece's middle) */
+function pickOver(p: StructurePieces, inp: PieceInputs): void {
+  const d = p.data;
+  for (let i = 0; i < p.count; i++) {
+    const o = i * PIECE_FLOATS;
+    const affine = ((d[o + 15] | 0) & 2) !== 0;
+    // (an affine piece — a prop — has its translation in row 2's last column: x, y at 3, 7)
+    const cx = affine ? d[o + 3] : (d[o] + d[o + 2] + d[o + 4] + d[o + 6]) / 4;
+    const cy = affine ? d[o + 7] : (d[o + 1] + d[o + 3] + d[o + 5] + d[o + 7]) / 4;
+    const c = inp.grid.cellAtWorld(cx, cy);
+    if (c >= 0 && inp.plan.owner[c] === inp.picked) d[o + 15] = (d[o + 15] | 0) | PIECE_PICKED;
   }
 }
 

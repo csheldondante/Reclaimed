@@ -587,6 +587,12 @@ each was implemented.
   a fortress's cells cleared of plants and a building's claim change the columns quietly (applied with the chunk
   asleep; nothing else runs there). Measured: it played no part in the drowning (the builders' way led through 2.1
   deep water before anything woke).
+- The user, verbatim: "Maybe an inspect to highlight a continuous section of structure and see its output input workers
+  and stockpiles if applicable."
+- → An Inspect button in the bar, planning or building. A tap on a block picks the structure it belongs to (drawn gold)
+  and a compact card says its type and size, how far it's built, what it takes in and puts out a day, its workers of
+  its slots, its stock (a warehouse: what the stores hold and its room; barracks: soldiers) and the keep's power. A tap
+  on bare ground closes it.
 
 ## 2026-11-03 — round 128c (session 5) — the fortress mode: the user's vision
 

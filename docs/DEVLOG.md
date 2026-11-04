@@ -16730,3 +16730,28 @@ shallow way (0.2 deep at most) or reported unreachable (a site whose only way wa
 agents' scope margin: reported, FT-40). fortresswake — 0 chunks awake while 6 blocks were built (was 55 → 6), no
 wakes, 36-305 touches, trees on the houses' cells felled (veg 4.2 → 2.2) with the chunks asleep. fortresspause
 passes. Shots C:/Projects/shots88/fortress/path-*.png.
+
+## 2026-11-04 — round 128d (`fortress`): Inspect — a structure picked, highlighted, and its card
+
+**Why.** The user, verbatim: "Maybe an inspect to highlight a continuous section of structure and see its output input
+workers and stockpiles if applicable."
+
+**What.** An Inspect button beside Build / Plan (both modes). On, a tap picks the structure under it (a block's face
+along the tap's ray, else the ground's cell — a farm lies on it) and Fortress.inspect(id) redraws it: its pieces get
+flag 64 (PIECE_PICKED, by the cell under each piece's middle), structmesh.wgsl turns that into look bit 24 (a flag, not
+a look bit, on the CPU: the look travels as a float, exact only to 24 bits) and structgame.wgsl tints it gold with a
+slow pulse. The panel shows the card in place of the type grid (the bar stays phone-sized): fortress/inspect.ts,
+pure — inspectFacts from the plan, what's built (Town.has) and the stores; inspectCard the plain lines ("Warehouse: 4
+blocks, 2 levels high", "1 of 4 blocks built.", "Holds 118 wood, 56 stone and 167 grain. Room for 50.", "In: nothing.
+Out: 6 wood a day once worked.", "Workers: 0 of 4. Nobody works here yet.", "Power: +1 a day. 0 stored."). Out a day
+counts built blocks; nothing is taken in yet (recipes, milestone 4) and nobody is assigned yet (jobs, milestone 3) —
+the card says so rather than invent numbers. A tap on bare ground, Inspect off or another tool closes it.
+
+**Checks.** Unit src/fortress/inspect.test.ts (size, progress, out a day from what stands, workers of slots, a
+warehouse's stock and room, barracks' soldiers, the keep's power by level, a farm in cells, a wall's posts; every line
+of every type through the writing lint); fortress 35/35. Headless scripts/fortressinspect.mjs at 412x915 with taps:
+Inspect asks for a tap; a tap on the warehouse picks it (13 pieces flagged), its card; the type grid hidden; bare
+ground closes it; after Build a tap on the keep ("1 of 2 blocks built.", "Power: +1 a day."); Inspect off closes it.
+fortresspause still passes. Shots C:/Projects/shots88/fortress/inspect-plan.png (the warehouse gold among the planned
+keep and wall), inspect-build.png, inspect-warehouse-build.png. Looked at: gold reads on a whole block; on a
+see-through block (still to build) it's faint (FT-42).
