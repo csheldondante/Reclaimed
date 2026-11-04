@@ -23,7 +23,7 @@ import { towered, type FortressPlan } from './plan';
 import { shapesOf, type Courtyard, type Shapes } from './shapes';
 import { rampShape, STAIR_HALF, WALL_HALF, WALL_LINTEL } from './solid';
 import { alongAxis, axisLength, WAY_SQUARE, waysOf, type Ways } from './ways';
-import { LANE_WIDTH, type Lanes } from './lanes';
+import { LANE_DRAWN, LANE_WIDTH, type Lanes } from './lanes';
 
 /**
  * (round 128d) look bit 23: a block planned, not built yet. (round 128e, FT-51) While building its pieces aren't drawn:
@@ -274,7 +274,7 @@ export function lanePieces(inp: PieceInputs, lanes: Lanes): StructurePieces {
   const z = (p: V2) => inp.ground(p[0], p[1]) + inp.zOff;
   for (const s of lanes.segs) {
     const w = LANE_WIDTH[s.kind];
-    if (w <= 0) continue;
+    if (!LANE_DRAWN[s.kind] || w <= 0) continue;
     const dx = s.b[0] - s.a[0];
     const dy = s.b[1] - s.a[1];
     const l = Math.hypot(dx, dy) || 1;

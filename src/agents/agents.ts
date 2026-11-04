@@ -21,6 +21,7 @@ import { materialId, materialName, materialState, type MaterialName } from '../a
 import type { Terrain } from '../api/terrain';
 import { FieldReader } from './fieldreader';
 import { AgentScope } from './scope';
+import { RoadStamp } from './roads';
 import { CUSTOM, TILES_BINDING, cullKernel } from '../sim/cull';
 import { ROW_H } from '../world/lattice';
 import { TUNE, worldG } from '../tune/params';
@@ -291,7 +292,8 @@ export class Agents implements SimSystem {
   private navCost: GPUBuffer;
   /** (fortress milestone 3, FT-46) per window column a bit: a road (agents.wgsl roads) — setRoads */
   private roads: GPUBuffer;
-  private roadBits: Uint32Array;
+  /** (round 128i, FT-58) the road bits stamped on the GPU from an owner's shapes (agents/roads.ts) */
+  private roadStamp: RoadStamp;
   readonly dist: GPUBuffer;
   readonly units: GPUBuffer;
   readonly inst: GPUBuffer;
@@ -436,8 +438,8 @@ export class Agents implements SimSystem {
     const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST;
     this.nav = world.buf('agentNav', cols * NAV_K * NAV_BYTES, S);
     this.navCost = world.buf('agentNavCost', cols * NAV_K * 4, S);
-    this.roadBits = new Uint32Array(Math.ceil(cols / 32));
-    this.roads = world.buf('agentRoads', this.roadBits.byteLength, S);
+    this.roads = world.buf('agentRoads', Math.ceil(cols / 32) * 4, S);
+    this.roadStamp = new RoadStamp(device, this.roads, world.w, world.h);
     this.dist = world.buf('agentDist', NFIELDS * cols * NAV_K * 4, S);
     this.units = world.buf('agentUnits', MAX_UNITS * UNIT_BYTES, S);
     this.occ = world.buf('agentOcc', 2 * cols * 4, S);
@@ -750,17 +752,15 @@ export class Agents implements SimSystem {
   }
 
   /**
-   * (fortress milestone 3, FT-46: units prefer roads) The road columns (window order, y * W + x): a step along a road
-   * costs less in every field (agents.wgsl ROAD_COST). The caller sets them again after the window slides.
+   * (fortress milestone 3, FT-46: units prefer roads; round 128i, FT-58: from shapes, on the GPU) The road shapes
+   * (agents/roads.ts packRoadShapes, in their owner's frame) and where that frame sits in the window (whole columns,
+   * rows — even): a step along a road costs less in every field (agents.wgsl ROAD_COST). The bits are stamped on the GPU
+   * (shaders/roadstamp.wgsl) when the shapes (a new array) or the offset change: call it every frame, a slide moves only
+   * the offset. No shapes: no roads.
    */
-  setRoads(cols: Iterable<number>): void {
-    const bits = new Uint32Array(this.roadBits.length);
-    for (const c of cols) if (c >= 0 && c < bits.length * 32) bits[c >> 5] |= 1 << (c & 31);
-    if (bits.every((v, i) => v === this.roadBits[i])) return;
-    this.roadBits = bits;
-    this.device.queue.writeBuffer(this.roads, 0, bits);
+  setRoads(shapes: Float32Array, ox = 0, oy = 0): void {
     // (the fields' costs changed everywhere a road came or went: every chunk of the scope relaxed again)
-    if (this.scope) this.scope.markAll = true;
+    if (this.roadStamp.set(shapes, ox, oy) && this.scope) this.scope.markAll = true;
   }
 
   /** Field `f`'s seeds (its distance is 0 there): a goal, a stockpile, a threat. */
@@ -1327,6 +1327,8 @@ export class Agents implements SimSystem {
   }
 
   encode(enc: GPUCommandEncoder): void {
+    // (round 128i: the road bits made again if their shapes or offset changed)
+    this.roadStamp.encode(enc);
     // (the tick number rides in the params: the occupancy halves swap on it)
     this.writeParams(this.hits.splice(0, MAX_HITS));
     const [gx, gy] = this.world.groups;

@@ -184,11 +184,13 @@ await run({ name: 'fortresseconomy', kind: 'behaviour', size: '412x915', dpr: 1,
       return doors.map((d) => +rd.sample(...d).dist.toFixed(1));
     };
     const withRoads = await read();
-    const keep = f.roadCols;
-    f.roadCols = () => [];
+    // (round 128i: the road shapes stamped on the GPU — none while `without` is read)
+    const keep = f.roadShapes;
+    const none = new Float32Array(0);
+    f.roadShapes = () => none;
     const without = await read();
-    f.roadCols = keep;
-    return { withRoads, without, roads: f.roadCols().length };
+    f.roadShapes = keep;
+    return { withRoads, without, roads: f.roadShapes().length / 12 };
   });
   console.log('roads', JSON.stringify(roads));
   // (the camera on a cell, its middle read at the time: the window slides as the camera goes, and window coordinates

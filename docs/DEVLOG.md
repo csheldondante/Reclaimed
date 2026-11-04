@@ -17117,3 +17117,16 @@ didn't move or the streamer held it.
 pan's distance alone — the next report's travel and busy will tell). After: zoom 2.6: 23 slides, 69 grid rows, 4 legs,
 603 m, the town on screen 100%; zoom 1.3: 26 slides, 198 grid rows, 4 legs, 786 m, 100%. The failure path: at 0.2
 cells/s the row had 0 slides and the panel showed the red line, `ok: false` and the reason in the JSON.
+## 2026-11-04 — round 128i (`fortress`): lanes, continued — WIP (FT-58, FT-65)
+
+**Why.** The brief's architecture rule: the road bit for the units' fields goes through the GPU, as the pieces do
+(the user: "everything should be instanced without CPU readback"); roads run through the new passages and ramps.
+**What (WIP, paused for a town-flicker fix).** The agents' road bits are stamped on the GPU from shapes
+(agents/roads.ts, shaders/roadstamp.wgsl): the fortress hands its lanes' bands and squares once a change, in the box's
+frame, and the box's offset each frame (a slide restamps, nothing remade on the CPU); `Fortress.roadCols` gone,
+`Fortress.roadShapes` instead. test/gpu/roadstamp.test.ts: GPU bits equal `roadBitsCpu` at three offsets. ways.ts:
+passages are ways through a block (`Ways.passages`), a ramp's cell is entered and left along its axis; lanes.ts: a
+road through a passage, a ramp's road not paved (`LANE_DRAWN`). Unit tests pass (fortress 72, the GPU stamp 1).
+scripts/fortresslanes.mjs builds and measures: flat site, walking builders on a road or lane 16% of the time against
+roads covering 9% of the ground round them (weak: tuning to do); the hill site search found none this run. **Not
+done:** shots looked at and tuned, the hill site, GIF, ARCHITECTURE/DECISIONS entries.

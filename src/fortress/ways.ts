@@ -71,13 +71,18 @@ export interface Ways {
   stairs: Stair[];
   /** gate cells: their way runs through the wall */
   gates: number[];
+  /**
+   * (round 128i, FT-65) block cells with a passage (FortressPlan.passage) the roads run through, as through a gate;
+   * a ramp's cell (FortressPlan.ramp) is a road's like any free cell, entered and left only along its axis
+   */
+  passages: number[];
   /** structures whose door (or stair) no road reaches */
   cutOff: number[];
 }
 
 /** no ways at all (tests of the shapes' own rules) */
 export function noWays(count: number): Ways {
-  return { way: new Uint8Array(count), doors: [], stairs: [], gates: [], cutOff: [] };
+  return { way: new Uint8Array(count), doors: [], stairs: [], gates: [], passages: [], cutOff: [] };
 }
 
 /** a binary min-heap of cells by cost (stale entries skipped by the caller) */
@@ -199,7 +204,14 @@ export function waysOf(plan: FortressPlan, g: WaysGrid, courtyards: readonly num
   const isGate = new Uint8Array(n);
   for (const c of gates) isGate[c] = 1;
   const taken = new Uint8Array(n);
-  const passable = (c: number) => c >= 0 && ((free(c) && !taken[c]) || isGate[c] === 1);
+  // (round 128i, FT-65: a block's passage is a way through it, as a gate is the wall's)
+  const isPassage = new Uint8Array(n);
+  for (const c of allCells) if (plan.passage?.[c] && formOf(c) === 'block' && plan.has(c, 0)) isPassage[c] = 1;
+  const passable = (c: number) => c >= 0 && ((free(c) && !taken[c]) || isGate[c] === 1 || isPassage[c] === 1);
+  // (a ramp's cell entered and left only along its axis: its high end's side and the side opposite)
+  const rampOf = (c: number) => (plan.ramp ? plan.ramp[c] : -1);
+  const alongRamp = (c: number, e: number) => rampOf(c) < 0 || e === rampOf(c) || e === (rampOf(c) + 2) % 4;
+  const step = (u: number, e: number, m: number) => alongRamp(u, e) && alongRamp(m, sideTo(g, m, u));
   const net = new Uint8Array(n);
   const cutOff = new Set<number>();
   const dist = new Float64Array(n);
@@ -227,7 +239,7 @@ export function waysOf(plan: FortressPlan, g: WaysGrid, courtyards: readonly num
         const [ux, uy] = g.centre(u);
         for (let e = 0; e < 4; e++) {
           const m = nb(u, e);
-          if (!passable(m) || done[m]) continue;
+          if (!passable(m) || done[m] || !step(u, e, m)) continue;
           const [mx, my] = g.centre(m);
           // (along road already laid it's cheap: the ways merge rather than run side by side)
           const w = Math.hypot(mx - ux, my - uy) * (net[m] ? 0.3 : 1);
@@ -359,18 +371,20 @@ export function waysOf(plan: FortressPlan, g: WaysGrid, courtyards: readonly num
   // (the stairs' feet joined to the net, their flights no way)
   for (const s of stairs) for (const c of s.cells) way[c] = WAY_STAIR;
   grow(stairs.map((s) => ({ cell: s.foot, structure: s.structure })));
-  for (let c = 0; c < n; c++) if (net[c] && !isGate[c]) way[c] = WAY_ROAD;
+  for (let c = 0; c < n; c++) if (net[c] && !isGate[c] && !isPassage[c]) way[c] = WAY_ROAD;
+  const passages: number[] = [];
+  for (let c = 0; c < n; c++) if (net[c] && isPassage[c]) passages.push(c);
 
 
   // ---- squares: where doors meet
   for (let c = 0; c < n; c++) {
-    if (way[c] !== WAY_ROAD) continue;
+    if (way[c] !== WAY_ROAD || rampOf(c) >= 0) continue;
     let ways = doorsAt[c];
     for (let e = 0; e < 4; e++) if (net[nb(c, e)]) ways++;
     if (doorsAt[c] >= 2 || (doorsAt[c] >= 1 && ways >= 4)) way[c] = WAY_SQUARE;
   }
   for (const c of court) if (free(c)) way[c] = WAY_SQUARE;
-  return { way, doors, stairs, gates, cutOff: [...cutOff] };
+  return { way, doors, stairs, gates, passages, cutOff: [...cutOff] };
 }
 
 export interface NavHeights {
@@ -407,11 +421,11 @@ export function waysNav(ways: Ways, plan: FortressPlan, g: WaysGrid, z: NavHeigh
     const [x, y] = g.centre(c);
     at[c] = node([x, y, z.ground(c) + 0.12], w === WAY_SQUARE ? 'plaza' : 'street', -1);
   }
-  for (const c of ways.gates) {
+  for (const c of [...ways.gates, ...(ways.passages ?? [])]) {
     const [x, y] = g.centre(c);
     at[c] = node([x, y, z.ground(c)], 'street', -1);
   }
-  const isGate = new Set(ways.gates);
+  const isGate = new Set([...ways.gates, ...(ways.passages ?? [])]);
   for (let c = 0; c < n; c++) {
     if (at[c] < 0) continue;
     for (let e = 0; e < 4; e++) {

@@ -4,7 +4,8 @@
 import { describe, expect, it } from 'vitest';
 import { library } from '../structures/modules';
 import { Fortress } from './fortress';
-import { LANE_WIDTH, nearSeg, type LaneOpts, type Lanes } from './lanes';
+import { LANE_DRAWN, LANE_WIDTH, nearSeg, type LaneOpts, type Lanes } from './lanes';
+import { roadBitsCpu } from '../agents/roads';
 import { cellPos } from '../world/lattice';
 import { fortressPieces } from './pieces';
 import { WAY_ROAD, WAY_SQUARE, WAY_STAIR } from './ways';
@@ -176,7 +177,57 @@ describe('lanes: roads narrower than a cell', () => {
     }
     expect(onRoad).toBeGreaterThan(0);
     expect(onRoad / cellCols).toBeLessThan(0.7);
-    expect(new Set(f.roadCols()).size).toBeGreaterThan(onRoad);
+    // (round 128i) the road bits the agents stamp from the fortress's shapes (the GPU's rule, agents/roads.ts): every
+    // column on a road's band, and of a road cell's columns only part
+    const bits = roadBitsCpu(f.roadShapes(), 0, 0, W, H);
+    const bit = (k: number) => (bits[k >> 5] >>> (k & 31)) & 1;
+    let bitCols = 0;
+    for (let c = 0; c < f.grid.count; c++) {
+      if (w.way[c] !== WAY_ROAD) continue;
+      for (const col of f.grid.columns[c]) {
+        const [x, y] = cellPos(col % W, Math.floor(col / W));
+        if (L.byCell[c].some((i) => L.segs[i].kind === 'road' && nearSeg(L.segs[i], x, y, 0))) expect(bit(col)).toBe(1);
+        bitCols += bit(col);
+      }
+    }
+    expect(bitCols).toBeGreaterThanOrEqual(onRoad);
+    expect(bitCols / cellCols).toBeLessThan(0.75);
+    // a square's every column
+    for (let c = 0; c < f.grid.count; c++) if (w.way[c] === WAY_SQUARE) for (const col of f.grid.columns[c]) expect(bit(col)).toBe(1);
+    // the same shapes until the plan changes
+    expect(f.roadShapes()).toBe(f.roadShapes());
+  });
+
+  it('the roads run through a passage and up a ramp along its axis (FT-65)', () => {
+    const f = fortress();
+    const { gate } = walled(f);
+    // the cell inside the gate built on: a block across the gate's way
+    const [cx, cy] = [W / 2, ((H / 2) * Math.sqrt(3)) / 2];
+    const inner = [0, 1, 2, 3].map((e) => f.grid.nbr[gate * 4 + e]).filter((m) => m >= 0 && f.plan.owner[m] < 0).sort((a, b) => Math.hypot(f.centre(a)[0] - cx, f.centre(a)[1] - cy) - Math.hypot(f.centre(b)[0] - cx, f.centre(b)[1] - cy))[0];
+    f.paint(inner, 0, 'house');
+    const sync = () => (f as unknown as { sync(): void }).sync();
+    sync();
+    const shut = f.ways();
+    expect(shut.passages).toEqual([]);
+    expect(f.plan.setPassage(inner, true)).toBe(true);
+    sync();
+    const w = f.ways();
+    expect(w.passages).toContain(inner);
+    const L = f.lanes();
+    expect(L.byCell[inner].some((i) => L.segs[i].kind === 'road')).toBe(true);
+    // a ramp on a road cell: the roads in it only along its axis, as a ramp (not paved: its treads are the road)
+    const road = [...Array(f.grid.count).keys()].find((c) => w.way[c] === WAY_ROAD && L.byCell[c].filter((i) => L.segs[i].kind === 'road').length === 2)!;
+    const sides = L.byCell[road].filter((i) => L.segs[i].kind === 'road').map((i) => L.segs[i].eb);
+    expect(f.plan.setRamp(road, sides[0])).toBe(true);
+    sync();
+    const L2 = f.lanes();
+    const inRamp = L2.byCell[road].map((i) => L2.segs[i]);
+    expect(inRamp.length).toBeGreaterThan(0);
+    for (const s of inRamp) {
+      expect(s.kind).toBe('ramp');
+      expect([sides[0], (sides[0] + 2) % 4]).toContain(s.eb);
+    }
+    expect(LANE_DRAWN.ramp).toBe(false);
   });
 
   it('drawn as paving a lane wide (and steps on the steep climbs)', () => {
@@ -189,7 +240,7 @@ describe('lanes: roads narrower than a cell', () => {
       for (let i = 0; i < p.count; i++) if (lib.modules[p.module[i]].name === name) n++;
       return n;
     };
-    const drawn = f.lanes().segs.filter((s) => LANE_WIDTH[s.kind] > 0).length;
+    const drawn = f.lanes().segs.filter((s) => LANE_DRAWN[s.kind] && LANE_WIDTH[s.kind] > 0).length;
     expect(count('pave', true) - count('pave', false)).toBe(drawn);
     expect(count('kerb', true)).toBeGreaterThan(count('kerb', false));
   });

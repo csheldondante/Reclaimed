@@ -190,7 +190,7 @@ export class FortressLife implements Routine {
     if (this.io.units.routine === this) this.io.units.routine = null;
     for (const f of [F.pile, F.site, F.store, F.quarry, F.fell, F.farm, F.home]) this.io.units.agents.seed(f, []);
     this.io.units.agents.keepInScope('fortress', []);
-    this.io.units.agents.setRoads([]);
+    this.io.units.agents.setRoads(new Float32Array(0));
   }
 
   /** The people alive. */
@@ -222,11 +222,12 @@ export class FortressLife implements Routine {
     const alive = this.people();
     if (alive.length !== this.ids.length) this.ids.splice(0, this.ids.length, ...alive);
     this.checkReach();
+    // (round 128i, FT-58: the road shapes stamped on the GPU — again only when the lanes or the box's offset change)
+    this.io.units.agents.setRoads(this.io.fort.roadShapes(), ...this.io.fort.offset());
     if (dt > 0) this.economy(dt);
     if (this.t - this.jobsAt >= JOBS_S) {
       this.jobsAt = this.t;
       this.jobs();
-      this.io.units.agents.setRoads(this.io.fort.roadCols());
       // (round 128f: the user, "agents seem to not be able to path through the city or farms to buildings at the
       // peripheral") every block still to build kept in the fields' scope: past the box round the units and the seeds
       // every field reads no way, so a block not yet among the sites read cut off, was never a site, never seeded, never

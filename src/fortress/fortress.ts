@@ -21,8 +21,8 @@ import { bedsOf, roomOf, type JobKind } from './economy';
 import { DROP, ReachMap, STEP, type ReachColumns } from './reach';
 import { solidSpans } from './solid';
 import { cutWarnLine, reachWhyLine, variantLine, wouldCutLine, type ReachWhy, type VariantKind } from './words';
-import { WAY_SQUARE } from './ways';
-import { LANE_DEFAULTS, lanesOf, nearSeg, type LaneOpts, type Lanes } from './lanes';
+import { LANE_DEFAULTS, lanesOf, roadShapesOf, type LaneOpts, type Lanes } from './lanes';
+import { packRoadShapes } from '../agents/roads';
 
 /** (milestone 3) A block taken out of the plan: its type, and whether it stood (Erase gives back part of its cost). */
 export interface Erased {
@@ -132,6 +132,7 @@ export class Fortress {
   warnCells: number[] = [];
   /** (round 128f) the lanes and the roads a lane wide (lanes.ts), made again after the plan changes */
   private lanesMemo: Lanes | null = null;
+  private roadShapesMemo: { of: Lanes; shapes: Float32Array } | null = null;
   /** (round 128f) the lanes' spacing per district (the town's, the fields'): the road frequency */
   private laneOptsNow: LaneOpts = { ...LANE_DEFAULTS };
   /** the ground's top at a box column */
@@ -172,25 +173,15 @@ export class Fortress {
   }
 
   /**
-   * (milestone 3, FT-46; round 128f a lane wide) the window columns under the plan's roads, lanes and squares (units
-   * prefer them): a square's every column; else a column whose middle lies on a road's or a lane's band.
+   * (milestone 3, FT-46; round 128f a lane wide; round 128i on the GPU) The road shapes the units prefer, in the box's
+   * frame (agents/roads.ts packRoadShapes: each road's and lane's band, each square whole — lanes.ts roadShapesOf): the
+   * agents stamp their road bits from them at the box's offset (Agents.setRoads(shapes, ...offset())). The same array
+   * until the lanes change.
    */
-  roadCols(): number[] {
-    const w = this.ways().way;
+  roadShapes(): Float32Array {
     const L = this.lanes();
-    const g = this.grid;
-    const out: number[] = [];
-    for (let c = 0; c < g.count; c++) {
-      const near = [c, ...[0, 1, 2, 3].map((e) => g.nbr[c * 4 + e]).filter((m) => m >= 0)].flatMap((m) => L.byCell[m]);
-      if (w[c] !== WAY_SQUARE && !near.length) continue;
-      for (const col of g.columns[c]) {
-        const [x, y] = cellPos(col % this.box.w, Math.floor(col / this.box.w));
-        if (w[c] !== WAY_SQUARE && !near.some((i) => nearSeg(L.segs[i], x, y, 0.3))) continue;
-        const wc = this.boxToWindowCol(col);
-        if (wc >= 0) out.push(wc);
-      }
-    }
-    return out;
+    if (this.roadShapesMemo?.of !== L) this.roadShapesMemo = { of: L, shapes: packRoadShapes(roadShapesOf(L, this.ways(), this.grid)) };
+    return this.roadShapesMemo.shapes;
   }
 
   /** (round 128f) the lanes' spacing per district: the town's and the fields' (m) */

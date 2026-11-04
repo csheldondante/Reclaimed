@@ -20,6 +20,7 @@
 import type { V2 } from '../api/contracts/structures';
 import type { FortressPlan } from './plan';
 import { WAY_ROAD, WAY_SQUARE, WAY_STAIR, type Ways, type WaysGrid } from './ways';
+import type { RoadShape } from '../agents/roads';
 
 export interface LaneGrid extends WaysGrid {
   readonly verts: ArrayLike<number>;
@@ -27,9 +28,10 @@ export interface LaneGrid extends WaysGrid {
   readonly columns: readonly (readonly number[])[];
 }
 
-/** road: ways.ts's main roads; plaza: a road's way across a square (paved whole: not drawn); lane: along the contours in
- *  town; cross: across them in town; ring: the town's edge; track: a lane kept on out in the fields */
-export type LaneKind = 'road' | 'plaza' | 'lane' | 'cross' | 'ring' | 'track';
+/** road: ways.ts's main roads; plaza: a road's way across a square (paved whole: not drawn); ramp: a road up a ramp
+ *  (round 128i: its treads are the road: not drawn); lane: along the contours in town; cross: across them in town; ring:
+ *  the town's edge; track: a lane kept on out in the fields */
+export type LaneKind = 'road' | 'plaza' | 'ramp' | 'lane' | 'cross' | 'ring' | 'track';
 
 export interface LaneSeg {
   cell: number;
@@ -64,7 +66,9 @@ export interface LaneOpts {
 
 export const LANE_DEFAULTS: LaneOpts = { town: 14, fields: 42, cross: 2, townReach: 18, fieldReach: 54, smooth: 4, angle: 0.35 };
 /** each kind's width (m): a cell is ~6 m across */
-export const LANE_WIDTH: Record<LaneKind, number> = { road: 2.4, plaza: 0, lane: 1.6, cross: 1.6, ring: 1.8, track: 1.1 };
+export const LANE_WIDTH: Record<LaneKind, number> = { road: 2.4, plaza: 2.4, ramp: 2.4, lane: 1.6, cross: 1.6, ring: 1.8, track: 1.1 };
+/** (round 128i) the kinds drawn as paving (a square is paved whole; a ramp's treads are its road) */
+export const LANE_DRAWN: Record<LaneKind, boolean> = { road: true, plaza: false, ramp: false, lane: true, cross: true, ring: true, track: true };
 /** a climbing lane's rise over its run past which it is stepped */
 export const STEEP = 0.3;
 
@@ -205,7 +209,8 @@ export function lanesOf(
     const mid = [0, 1, 2, 3].reduce((a, k) => a + f[g.quads[c * 4 + k]], 0) / 4 >= L;
     return mid === s[0] ? [[0, 1], [2, 3]] : [[1, 2], [3, 0]];
   };
-  const laneTile = (c: number) => g.columns[c].length > 0 && plan.owner[c] < 0 && ways.way[c] !== WAY_SQUARE && ways.way[c] !== WAY_STAIR && !blocked(c);
+  const rampOf = (c: number) => (plan.ramp ? plan.ramp[c] : -1);
+  const laneTile = (c: number) => g.columns[c].length > 0 && plan.owner[c] < 0 && ways.way[c] !== WAY_SQUARE && ways.way[c] !== WAY_STAIR && rampOf(c) < 0 && !blocked(c);
   const near = (q: V2, a: V2, b: V2): V2 => {
     const dx = b[0] - a[0];
     const dy = b[1] - a[1];
@@ -277,8 +282,10 @@ export function lanesOf(
   }
 
   // ---- the main roads (ways.ts) on top: per road cell its middle to each side that leads on
+  // (round 128i, FT-65: a block's passage as a gate; a ramp entered and left along its axis only)
   const isGate = new Uint8Array(n);
-  for (const c of ways.gates) isGate[c] = 1;
+  for (const c of [...ways.gates, ...(ways.passages ?? [])]) isGate[c] = 1;
+  const alongRamp = (c: number, e: number) => rampOf(c) < 0 || e === rampOf(c) || e === (rampOf(c) + 2) % 4;
   const doorSide = new Map<number, number[]>();
   const sideTo = (a: number, b: number) => [0, 1, 2, 3].find((e) => g.nbr[a * 4 + e] === b) ?? -1;
   const lead = (c: number, e: number) => doorSide.set(c, [...(doorSide.get(c) ?? []), e]);
@@ -293,13 +300,13 @@ export function lanesOf(
     for (let e = 0; e < 4; e++) {
       const m = g.nbr[c * 4 + e];
       // (a gate leads on only to the net; the net into a gate only where the gate's way runs)
-      if (onNet(m) && (!isGate[m] || ways.way[c] !== 0) && (!isGate[c] || ways.way[m] !== 0)) sides.add(e);
+      if (onNet(m) && (!isGate[m] || ways.way[c] !== 0) && (!isGate[c] || ways.way[m] !== 0) && alongRamp(c, e) && alongRamp(m, sideTo(m, c))) sides.add(e);
     }
     for (const e of sides) {
       if (e < 0) continue;
       const a = g.corner(c, e);
       const b = g.corner(c, e + 1);
-      push({ cell: c, a: m0, b: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], kind: w0 === WAY_SQUARE ? 'plaza' : 'road', family: -1, level: 0, ea: -1, eb: e, steps: false });
+      push({ cell: c, a: m0, b: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], kind: w0 === WAY_SQUARE ? 'plaza' : rampOf(c) >= 0 ? 'ramp' : 'road', family: -1, level: 0, ea: -1, eb: e, steps: false });
     }
   }
   return { segs, byCell, uphill: up, slope, contour: w };
@@ -313,4 +320,18 @@ export function nearSeg(s: LaneSeg, x: number, y: number, pad = 0): boolean {
   const dy = s.b[1] - s.a[1];
   const t = Math.max(0, Math.min(1, ((x - s.a[0]) * dx + (y - s.a[1]) * dy) / (dx * dx + dy * dy || 1)));
   return Math.hypot(x - s.a[0] - dx * t, y - s.a[1] - dy * t) <= half;
+}
+
+/** (round 128i) the road bit reaches this far past a band's paving: a column whose middle is this near counts */
+export const ROAD_PAD = 0.3;
+
+/**
+ * (round 128i, FT-58) The road shapes the units' fields prefer (Agents.setRoads, stamped on the GPU — agents/roads.ts),
+ * in the lanes' frame: each band a lane wide (and ROAD_PAD), each square's cell whole.
+ */
+export function roadShapesOf(lanes: Lanes, ways: Ways, g: WaysGrid): RoadShape[] {
+  const out: RoadShape[] = [];
+  for (const s of lanes.segs) if (LANE_WIDTH[s.kind] > 0) out.push({ a: s.a, b: s.b, half: LANE_WIDTH[s.kind] / 2 + ROAD_PAD });
+  for (let c = 0; c < g.count; c++) if (ways.way[c] === WAY_SQUARE) out.push({ quad: [g.corner(c, 0), g.corner(c, 1), g.corner(c, 2), g.corner(c, 3)] });
+  return out;
 }

@@ -2,12 +2,20 @@
 // sparse tracks in the fields, along the contours on a slope with stepped lanes climbing it; the main roads a lane wide.
 // A walled ring with a gate, the keep, houses and a warehouse, a farm outside, planned by the API on a flat dry site near
 // the town and again on a hillside; the lanes' numbers printed, shots at play zoom while planning and built.
+// (round 128i) Then Build: the builders at work for BUILD_S, and how often a walking builder stands on a road or lane
+// (the agents' road bits are stamped on the GPU from the fortress's shapes) against the roads' share of the ground
+// round the town; a GIF at play zoom (lanes-<kind>.gif).
 //   node scripts/fortresslanes.mjs [--out C:/Projects/Reclaimed-fortress/fortress]
+import gifenc from 'gifenc';
+import { PNG } from 'pngjs';
+import fs from 'node:fs';
 import { run, sleep } from './lib/runner.mjs';
+const { GIFEncoder, quantize, applyPalette } = gifenc;
 
 const outArg = process.argv.indexOf('--out');
 const OUT = outArg > 0 ? process.argv[outArg + 1] : null;
 const FIELD = 9;
+const BUILD_S = Number(process.env.BUILD_S ?? 40);
 await run({ name: 'fortresslanes', kind: 'behaviour', size: '412x915', dpr: 1, echo: !!process.env.DBG }, async (R) => {
   const page = await R.page();
   await page.goto(`${R.url}/?skipmenu=1&level=atlas&town=1&fortress=1&tod=0.3&day=30000&speed=6`, { waitUntil: 'load' });
@@ -112,7 +120,7 @@ await run({ name: 'fortresslanes', kind: 'behaviour', size: '412x915', dpr: 1, e
         steps: L.segs.filter((s) => s.steps).length,
         doors: w.doors.length,
         cutOff: w.cutOff.length,
-        roadCols: f.roadCols().length,
+        roadShapes: f.roadShapes().length / 12,
         bar: document.querySelector('.fort-bar')?.innerText?.replace(/\s+/g, ' ').slice(0, 300),
       };
     }, FIELD, kind);
@@ -128,5 +136,98 @@ await run({ name: 'fortresslanes', kind: 'behaviour', size: '412x915', dpr: 1, e
     });
     await sleep(1500);
     if (OUT) await page.screenshot({ path: `${OUT}/lanes-${kind}-near.png` });
+    // ---- build: the builders walk the lanes
+    await page.evaluate(() => {
+      const c = window.reclaimed.camera;
+      c.target[1] += 160 / 3.2 * 0.5 - 160 / 7 * 0.5;
+      c.zoom = 3.2;
+      [...document.querySelectorAll('.fort-bar button')].find((b) => b.textContent === 'Build').click();
+    });
+    const t0 = Date.now();
+    let on = 0;
+    let walking = 0;
+    let share = null;
+    while (Date.now() - t0 < BUILD_S * 1000) {
+      await sleep(1000);
+      await R.fatal(page);
+      const r = await page.evaluate(() => {
+        const Rc = window.reclaimed;
+        const f = Rc.fortress;
+        const life = Rc.fortressLife();
+        if (!life) return null;
+        const S = f.roadShapes();
+        const n = S.length / 12;
+        const sd = (px, py, ax, ay, bx, by) => {
+          const dx = bx - ax;
+          const dy = by - ay;
+          const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / Math.max(dx * dx + dy * dy, 1e-12)));
+          return Math.hypot(px - ax - dx * t, py - ay - dy * t);
+        };
+        // (agents/roads.ts roadInside)
+        const inside = (x, y) => {
+          for (let i = 0; i < n; i++) {
+            const o = i * 12;
+            if (S[o + 9] < 0.5) {
+              if (sd(x, y, S[o], S[o + 1], S[o + 2], S[o + 3]) <= S[o + 8]) return true;
+              continue;
+            }
+            const P = [0, 2, 4, 6].map((k) => [S[o + k], S[o + k + 1]]);
+            const cr = P.map((a, k) => {
+              const b = P[(k + 1) % 4];
+              return (b[0] - a[0]) * (y - a[1]) - (b[1] - a[1]) * (x - a[0]);
+            });
+            if (cr.every((v) => v >= 0) || cr.every((v) => v <= 0)) return true;
+          }
+          return false;
+        };
+        let on = 0;
+        let walking = 0;
+        const pts = [];
+        for (const id of life.people()) {
+          const u = Rc.units.get(id);
+          if (!u || u.state !== 'walk') continue;
+          const [bx, by] = f.toBox(u.at[0], u.at[1]);
+          walking++;
+          pts.push([bx, by]);
+          if (inside(bx, by)) on++;
+        }
+        // the roads' share of the ground the walkers walk: the box round them
+        let share = null;
+        if (pts.length) {
+          const xs = pts.map((p) => p[0]);
+          const ys = pts.map((p) => p[1]);
+          const [x0, x1, y0, y1] = [Math.min(...xs) - 4, Math.max(...xs) + 4, Math.min(...ys) - 4, Math.max(...ys) + 4];
+          let a = 0;
+          let k = 0;
+          for (let x = x0; x <= x1; x += 1.5)
+            for (let y = y0; y <= y1; y += 1.5) {
+              k++;
+              if (inside(x, y)) a++;
+            }
+          share = a / k;
+        }
+        return { on, walking, share };
+      });
+      if (!r) continue;
+      on += r.on;
+      walking += r.walking;
+      if (r.share !== null) share = share === null ? r.share : (share + r.share) / 2;
+    }
+    console.log('walkers', JSON.stringify({ kind, onRoad: on, walking, onRoadShare: walking ? +(on / walking).toFixed(2) : null, roadAreaShare: share === null ? null : +share.toFixed(2) }));
+    if (OUT) {
+      await page.screenshot({ path: `${OUT}/lanes-${kind}-build.png` });
+      const enc = GIFEncoder();
+      for (let i = 0; i < 36; i++) {
+        const png = PNG.sync.read(Buffer.from(await page.screenshot({ type: 'png' })));
+        const pal = quantize(png.data, 256);
+        enc.writeFrame(applyPalette(png.data, pal), png.width, png.height, { palette: pal, delay: 120 });
+        await sleep(120);
+      }
+      enc.finish();
+      fs.writeFileSync(`${OUT}/lanes-${kind}.gif`, enc.bytes());
+    }
+    // back to planning for the next site
+    await page.evaluate(() => [...document.querySelectorAll('.fort-bar button')].find((b) => b.textContent === 'Plan')?.click());
+    await sleep(1000);
   }
 });
