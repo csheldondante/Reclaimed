@@ -204,28 +204,45 @@ describe('farms read; blocks still to build drawn see-through while building', (
     expect(fences).toBe(6);
   });
 
-  it('planning: drawn whole; building: what isn\'t built yet is see-through, what stands isn\'t', () => {
+  it('planning: drawn whole; building: a plot outline until work starts, scaffolding once it has, then the block (FT-51)', () => {
     const town = newTown();
     const plan = new FortressPlan(grid);
     for (const l of [0, 1]) {
       plan.paint(inner, l, 'house');
       town.plan(inner, l, true);
     }
-    const ghosts = (ghost?: (c: number, l: number) => boolean) => {
-      const p = fortressPieces({ plan, town, grid, ground: () => GROUND, zOff: 0, ghost });
-      let g = 0;
-      for (let i = 0; i < p.count; i++) if ((p.data[i * 16 + 13] | 0) & LOOK_GHOST) g++;
-      return { g, n: p.count };
+    const lib = library();
+    const fence = lib.id('fence');
+    const look = (ghost?: (c: number, l: number) => boolean, started?: (c: number, l: number) => boolean) => {
+      const p = fortressPieces({ plan, town, grid, ground: () => GROUND, zOff: 0, ghost, started });
+      let fences = 0;
+      let low = 0;
+      let ghosts = 0;
+      for (let i = 0; i < p.count; i++) {
+        if ((p.data[i * 16 + 13] | 0) & LOOK_GHOST) ghosts++;
+        if (p.module[i] !== fence) continue;
+        fences++;
+        if (((p.data[i * 16 + 15] | 0) & 1) !== 0) low++;
+      }
+      return { n: p.count, fences, low, ghosts };
     };
-    expect(ghosts().g).toBe(0);
-    const all = ghosts((c, l) => !town.has(c, l));
-    expect(all.g).toBeGreaterThan(0);
+    const whole = look();
+    expect(whole.fences).toBe(0);
+    // building, nothing begun: only the plot, four low sides on the ground; nothing see-through drawn
+    const plot = look((c, l) => !town.has(c, l));
+    // (and the plan's ways — its road, paved from the start)
+    expect({ ...plot, n: 0 }).toEqual({ n: 0, fences: 4, low: 4, ghosts: 0 });
+    // work begun on the ground floor: its scaffolding (four sides a storey high), no plot
+    const scaf = look((c, l) => !town.has(c, l), (_c, l) => l === 0);
+    expect(scaf).toEqual({ n: plot.n, fences: 4, low: 0, ghosts: 0 });
+    // the ground floor stands: it's drawn; the floor above isn't begun — nothing for it yet
     town.add(inner, 0);
-    const half = ghosts((c, l) => !town.has(c, l));
-    expect(half.g).toBeGreaterThan(0);
-    expect(half.g).toBeLessThan(all.g);
+    const half = look((c, l) => !town.has(c, l));
+    expect(half.fences).toBe(0);
+    expect(half.n).toBeGreaterThan(0);
+    expect(half.n).toBeLessThan(whole.n);
     town.add(inner, 1);
-    expect(ghosts((c, l) => !town.has(c, l)).g).toBe(0);
+    expect(look((c, l) => !town.has(c, l)).n).toBe(whole.n);
   });
 });
 

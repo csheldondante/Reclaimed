@@ -16867,3 +16867,24 @@ the line; three more blocks with the stores emptied of wood and stone: it stoppe
 An earlier draft's 40-high stack stopped on "1 block can't be reached" (the top past the field's reach): that reason
 works too. Lines through the lint (build.test.ts). Shot menu-skip-short.png looked at: the row fits at 412.
 
+## 2026-11-04 — round 128e (`fortress`): a plot outline, then scaffolding, for blocks still to build (FT-51)
+
+**Why.** The user: "The temporary holder would be better as a loose plot outline or scaffolding I think" — blocks
+still to build were drawn see-through (every other pixel, pale) while building.
+
+**What.** While building (pieces.ts): the plan's pieces of blocks still to build are left out (marked as before, then
+dropped; and props on cells where nothing stands). plotsOf adds, from the fence module: a cell where nothing stands and
+no work has begun — a loose outline, stakes and two rails 0.9 m high, draped on the ground round its four sides; a block
+work has begun on (Fortress.markStarted, from FortressLife on the first load worked in that doesn't finish it) —
+scaffolding, poles and rails from its floor a storey up, 0.35 m off each side. A block above one still standing open
+shows nothing until work on it begins. Found on the way: façades on a cell's outer side were drawn before their block
+stood (their middle lies just outside the plan — FT-22): they're now placed by their building's nearest cell.
+
+**Checks.** Unit build.test.ts: two levels of a house — planning: drawn whole, no fence; building with nothing begun:
+4 low fence sides and none of the house; the ground floor begun: 4 storey-high sides; the ground floor built: drawn,
+no fence; both built: as planned. Headless scripts/fortressplot.mjs (two 2-level houses and a farm on open ground, time
+held): plot-outline.png (stakes round the cells, nothing of the houses: the module census near the cell is the plot's
+fences and a kerb only, where façades had been before the fix), plot-scaffold.png (a frame round the ground floor),
+plot-scaffold-up.png (the ground floor built, the frame above it). Looked at: the outline is low and partly hidden by
+tall grass and shrubs at play zoom.
+

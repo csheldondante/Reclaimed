@@ -24,8 +24,15 @@ import { shapesOf, type Courtyard, type Shapes } from './shapes';
 import { STAIR_HALF, WALL_HALF, WALL_LINTEL } from './solid';
 import { alongAxis, axisLength, WAY_ROAD, WAY_SQUARE, waysOf, type Ways } from './ways';
 
-/** (round 128d) look bit 23: a block planned, not built yet — drawn see-through while building (structgame.wgsl) */
+/**
+ * (round 128d) look bit 23: a block planned, not built yet. (round 128e, FT-51) While building its pieces aren't drawn:
+ * a plot outline on the ground stands for it until work starts, scaffolding once it has (plotsOf). The bit only marks
+ * them to drop (structgame.wgsl still draws it see-through, should one reach the GPU).
+ */
 export const LOOK_GHOST = 1 << 23;
+/** (round 128e, FT-51) the outline's stakes and rails over the ground (m), and how far scaffolding stands off a block */
+const PLOT_H = 0.9;
+const SCAFFOLD_OFF = 0.35;
 /** (round 128d) flags bit 6: the structure Inspect picked — drawn highlighted (structmesh.wgsl sets look bit 24 from it,
  *  structgame.wgsl tints it). A flag, not a look bit: the look travels as a float, exact only to 24 bits */
 export const PIECE_PICKED = 64;
@@ -46,6 +53,11 @@ export interface PieceInputs {
    * mind that as long as we are clearly in planning mode").
    */
   ghost?: (cell: number, level: number) => boolean;
+  /**
+   * (round 128e, FT-51) While building: whether work on a block still to build has begun (something brought to it):
+   * scaffolding round it; not begun, a plot outline on the ground of its cell.
+   */
+  started?: (cell: number, level: number) => boolean;
   /** (round 128d) the structure Inspect picked (its pieces drawn highlighted) */
   picked?: number | null;
   /** (round 128d) the plan's ways (ways.ts: Fortress.ways): roads and squares paved, doors where they open, stairs */
@@ -68,18 +80,95 @@ export function fortressPieces(inp: PieceInputs): StructurePieces {
   const parts: StructurePieces[] = [];
   for (const style of styles) {
     const cp = cityPlanOf(inp, style, defs, shapes, ways, style === roadStyle);
-    const p = piecesOf(cp.plan);
+    let p = piecesOf(cp.plan);
     ripen(p);
     drapeAny(p);
-    if (inp.ghost) ghostOver(p, inp);
+    let extra = cp.extra;
+    if (inp.ghost) {
+      ghostOver(p, inp, cp.plan);
+      // (round 128e, FT-51: the user, "The temporary holder would be better as a loose plot outline or scaffolding") what
+      // isn't built yet isn't drawn: its plot or its scaffolding is (below)
+      p = unbuiltOut(p, inp);
+      extra = unbuiltOut(extra, inp);
+    }
     if (inp.picked != null) {
       pickOver(p, inp);
-      pickOver(cp.extra, inp);
+      pickOver(extra, inp);
     }
     parts.push(p);
-    parts.push(cp.extra);
+    parts.push(extra);
   }
+  if (inp.ghost) parts.push(plotsOf(inp, defs));
   return concat(parts);
+}
+
+/**
+ * (round 128e, FT-51) The pieces without those of blocks still to build (marked LOOK_GHOST), and without the things set
+ * down (props) on cells where nothing stands yet.
+ */
+function unbuiltOut(p: StructurePieces, inp: PieceInputs): StructurePieces {
+  const keep: number[] = [];
+  const d = p.data;
+  for (let i = 0; i < p.count; i++) {
+    const o = i * PIECE_FLOATS;
+    if ((d[o + 13] | 0) & LOOK_GHOST) continue;
+    if ((d[o + 15] | 0) & 2) {
+      const c = inp.grid.cellAtWorld((d[o] + d[o + 2] + d[o + 4] + d[o + 6]) / 4, (d[o + 1] + d[o + 3] + d[o + 5] + d[o + 7]) / 4);
+      if (c >= 0 && inp.plan.levels.any(c) && !inp.town.built.any(c)) continue;
+    }
+    keep.push(i);
+  }
+  const out: StructurePieces = { module: new Uint16Array(keep.length), data: new Float32Array(keep.length * PIECE_FLOATS), building: new Int32Array(keep.length), count: keep.length };
+  keep.forEach((i, k) => {
+    out.module[k] = p.module[i];
+    out.data.set(d.subarray(i * PIECE_FLOATS, (i + 1) * PIECE_FLOATS), k * PIECE_FLOATS);
+    out.building[k] = p.building[i];
+  });
+  return out;
+}
+
+/**
+ * (round 128e, FT-51) Blocks still to build, while building: a loose plot outline — low stakes and rails round the cell,
+ * on the ground — where nothing of the cell stands or has begun; scaffolding — poles and rails a storey high, a little
+ * off each side — round each block work has begun on.
+ */
+export function plotsOf(inp: PieceInputs, defs: Record<StructureType, StructureDef> = DEFS): StructurePieces {
+  const { plan, town, grid, zOff } = inp;
+  const lib = library();
+  const fence = lib.id('fence');
+  const extra = new Extra();
+  for (const s of plan.structures()) {
+    const look = Math.floor(hashf(s.id, 31) * 4096);
+    for (const c of s.cells.keys()) {
+      const todo = [...plan.levels.each(c)].filter((L) => inp.ghost!(c, L));
+      if (!todo.length) continue;
+      const begun = todo.filter((L) => inp.started?.(c, L) ?? false);
+      const p: V2[] = [0, 1, 2, 3].map((k) => grid.corner(c, k));
+      const [mx, my] = grid.centre(c);
+      if (!begun.length && !town.built.any(c)) {
+        // (the plot: draped on the ground, its top a height over it)
+        for (let e = 0; e < 4; e++) {
+          const a = p[e];
+          const b = p[(e + 1) % 4];
+          const ga = inp.ground(a[0], a[1]) + zOff - 0.1;
+          const gb = inp.ground(b[0], b[1]) + zOff - 0.1;
+          extra.add(fence, band(a, b, 0.06), [ga, gb, gb, ga], PLOT_H, look, REL | DRAPE | DRAPE_ANY);
+        }
+        continue;
+      }
+      // (scaffolding: each side pushed out from the middle, a storey of poles and rails)
+      const out: V2[] = p.map(([x, y]) => {
+        const d = Math.hypot(x - mx, y - my) || 1;
+        return [x + ((x - mx) / d) * SCAFFOLD_OFF, y + ((y - my) / d) * SCAFFOLD_OFF];
+      });
+      const yard = defs[s.type].form === 'yard';
+      for (const L of begun) {
+        const z0 = town.floorZ(c, L) + zOff;
+        for (let e = 0; e < 4; e++) extra.add(fence, band(out[e], out[(e + 1) % 4], 0.08), z0, z0 + (yard ? PLOT_H * 2 : LEVEL_H), look);
+      }
+    }
+  }
+  return extra.done();
 }
 
 /** The towers on wall tiles that don't simply carry a run on, and the chimneys: pieces the CityPlan has no rule for. */
@@ -114,7 +203,7 @@ function concat(parts: StructurePieces[]): StructurePieces {
  * The towns' pieces of blocks still to build marked see-through: a piece's block is the cell under its middle and the
  * level at its middle height (a roof: its cell's top block).
  */
-function ghostOver(p: StructurePieces, inp: PieceInputs): void {
+function ghostOver(p: StructurePieces, inp: PieceInputs, cp?: CityPlan): void {
   const { plan, town, grid, zOff } = inp;
   const d = p.data;
   for (let i = 0; i < p.count; i++) {
@@ -123,7 +212,20 @@ function ghostOver(p: StructurePieces, inp: PieceInputs): void {
     if ((d[o + 15] | 0) & 2) continue;
     const cx = (d[o] + d[o + 2] + d[o + 4] + d[o + 6]) / 4;
     const cy = (d[o + 1] + d[o + 3] + d[o + 5] + d[o + 7]) / 4;
-    const c = grid.cellAtWorld(cx, cy);
+    let c = grid.cellAtWorld(cx, cy);
+    // (round 128e, FT-51: a façade on a cell's outer side has its middle just outside the plan — FT-22 — and was drawn
+    // while its block wasn't built: the piece's building's cell nearest its middle)
+    if ((c < 0 || !plan.levels.any(c)) && cp && p.building[i] >= 0) {
+      let best = Infinity;
+      for (const q of cp.buildings[p.building[i]]?.quads ?? []) {
+        const [qx, qy] = grid.centre(q);
+        const dd = Math.hypot(qx - cx, qy - cy);
+        if (dd < best) {
+          best = dd;
+          c = q;
+        }
+      }
+    }
     if (c < 0 || !plan.levels.any(c)) continue;
     const foot = (d[o + 8] + d[o + 9] + d[o + 10] + d[o + 11]) / 4;
     const top = (d[o + 15] | 0) & 1 ? foot + d[o + 12] : d[o + 12];

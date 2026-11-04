@@ -365,6 +365,6 @@ export class FortressLife implements Routine {
       f.markBuilt(b.cell, b.level);
       this.stats.built++;
       this.orderAt = -1;
-    }
+    } else f.markStarted(b.cell, b.level);
   }
 }

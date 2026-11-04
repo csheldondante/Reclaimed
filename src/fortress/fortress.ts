@@ -381,10 +381,28 @@ export class Fortress {
     return (c, l) => !this.town.has(c, l);
   }
 
+  /** (round 128e, FT-51) blocks still to build that work has begun on (something brought to them) */
+  private begun = new Set<string>();
+
+  /** (FT-51) whether work on a block has begun (scaffolding round it) */
+  started(): (cell: number, level: number) => boolean {
+    return (c, l) => this.begun.has(`${c}:${l}`);
+  }
+
+  /** (FT-51) the first load brought to a block: scaffolding goes up round it */
+  markStarted(cell: number, level: number): void {
+    const k = `${cell}:${level}`;
+    if (this.begun.has(k) || this.town.has(cell, level)) return;
+    this.begun.add(k);
+    this.changedOver([cell]);
+    for (const h of this.onChange) h();
+  }
+
   /** A block's cost is in: it stands (milestone 2's builders, life.ts). */
   markBuilt(cell: number, level: number): void {
     const s = this.plan.structureAt(cell);
     if (!s || !this.town.add(cell, level, s.id, typeIndex(s.type))) throw new Error(`fortress: block ${cell}:${level} couldn't stand`);
+    this.begun.delete(`${cell}:${level}`);
     // (what grew back on it since it was planned goes as it stands)
     this.clearPlants([cell]);
     this.changedOver([cell]);
@@ -443,6 +461,7 @@ export class Fortress {
       for (const l of levels) {
         const want = this.plan.has(c, l);
         if (want !== this.town.planned(c, l)) this.town.plan(c, l, want, owner, type);
+        if (!want) this.begun.delete(`${c}:${l}`);
         // (a built block erased from the plan comes down at once: taking down is a later milestone's work)
         if (!want && this.town.has(c, l)) this.town.remove(c, l);
       }
