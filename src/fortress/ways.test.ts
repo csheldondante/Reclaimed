@@ -180,7 +180,7 @@ describe('the fortress bakes its ways', () => {
     }
   });
 
-  it('roads and squares are paved, the stair drawn as steps, the door where the ways put it', () => {
+  it('squares are paved whole (roads a lane wide: lanes.test), the stair drawn as steps', () => {
     const f = fortress();
     walled(f);
     const w = f.ways();
@@ -192,9 +192,11 @@ describe('the fortress bakes its ways', () => {
       for (let i = 0; i < q.count; i++) if (lib.modules[q.module[i]].name === name) n++;
       return n;
     };
-    let paved = 0;
-    for (let c = 0; c < f.grid.count; c++) if (w.way[c] === WAY_ROAD || w.way[c] === WAY_SQUARE) paved++;
-    expect(count(p, 'pave') - count(bare, 'pave')).toBe(paved);
+    // (round 128f) a road's cell isn't paved whole any more: only the squares (the courtyards' paved either way)
+    let squares = 0;
+    for (let c = 0; c < f.grid.count; c++) if (w.way[c] === WAY_SQUARE) squares++;
+    expect(count(p, 'pave') - count(bare, 'pave')).toBeLessThanOrEqual(squares);
+    expect([...w.way].filter((x) => x === WAY_ROAD).length).toBeGreaterThan(squares);
     expect(count(p, 'rampart')).toBeGreaterThan(count(bare, 'rampart') + 6 * w.stairs.length);
   });
 });

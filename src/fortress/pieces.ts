@@ -22,7 +22,8 @@ import { DEFS } from './defs';
 import { towered, type FortressPlan } from './plan';
 import { shapesOf, type Courtyard, type Shapes } from './shapes';
 import { STAIR_HALF, WALL_HALF, WALL_LINTEL } from './solid';
-import { alongAxis, axisLength, WAY_ROAD, WAY_SQUARE, waysOf, type Ways } from './ways';
+import { alongAxis, axisLength, WAY_SQUARE, waysOf, type Ways } from './ways';
+import { LANE_WIDTH, type Lanes } from './lanes';
 
 /**
  * (round 128d) look bit 23: a block planned, not built yet. (round 128e, FT-51) While building its pieces aren't drawn:
@@ -62,6 +63,8 @@ export interface PieceInputs {
   picked?: number | null;
   /** (round 128d) the plan's ways (ways.ts: Fortress.ways): roads and squares paved, doors where they open, stairs */
   ways?: Ways;
+  /** (round 128f) the lanes and the main roads a lane wide (lanes.ts: Fortress.lanes) */
+  lanes?: Lanes;
 }
 
 /** a stair's step along its axis (metres) */
@@ -99,6 +102,7 @@ export function fortressPieces(inp: PieceInputs): StructurePieces {
     parts.push(extra);
   }
   if (inp.ghost) parts.push(plotsOf(inp, defs));
+  if (inp.lanes) parts.push(lanePieces(inp, inp.lanes));
   return concat(parts);
 }
 
@@ -165,6 +169,51 @@ export function plotsOf(inp: PieceInputs, defs: Record<StructureType, StructureD
       for (const L of begun) {
         const z0 = town.floorZ(c, L) + zOff;
         for (let e = 0; e < 4; e++) extra.add(fence, band(out[e], out[(e + 1) % 4], 0.08), z0, z0 + (yard ? PLOT_H * 2 : LEVEL_H), look);
+      }
+    }
+  }
+  return extra.done();
+}
+
+/** a lane's step (m) where a climbing lane is steep */
+const LANE_STEP = 0.7;
+
+/**
+ * (round 128f) The lanes and the main roads (lanes.ts) as paving a lane wide, draped on the ground: each piece a band
+ * along its segment, a little past its ends so the bends close; a steep climbing lane gets a step's edge across it every
+ * LANE_STEP. A road's way over a square isn't drawn (the square is paved whole).
+ */
+export function lanePieces(inp: PieceInputs, lanes: Lanes): StructurePieces {
+  const lib = library();
+  const pave = lib.id('pave');
+  const kerb = lib.id('kerb');
+  const extra = new Extra();
+  const z = (p: V2) => inp.ground(p[0], p[1]) + inp.zOff;
+  for (const s of lanes.segs) {
+    const w = LANE_WIDTH[s.kind];
+    if (w <= 0) continue;
+    const dx = s.b[0] - s.a[0];
+    const dy = s.b[1] - s.a[1];
+    const l = Math.hypot(dx, dy) || 1;
+    const ext = w * 0.35;
+    const a: V2 = [s.a[0] - (dx / l) * ext, s.a[1] - (dy / l) * ext];
+    const b: V2 = [s.b[0] + (dx / l) * ext, s.b[1] + (dy / l) * ext];
+    const fr = band(a, b, w / 2);
+    const look = Math.floor(hashf(s.kind === 'track' ? 7 : 3, 61) * 4096);
+    // (a road a hair over a lane where they cross: no fighting surfaces)
+    const top = s.kind === 'road' ? 0.4 : s.kind === 'track' ? 0.3 : 0.36;
+    extra.add(pave, fr, fr.map((p) => z(p) - 0.25) as [number, number, number, number], top, look, REL | DRAPE | DRAPE_ANY);
+    if (s.steps) {
+      const n = Math.floor(l / LANE_STEP);
+      for (let i = 1; i < n; i++) {
+        const t = i / n;
+        const m: V2 = [s.a[0] + dx * t, s.a[1] + dy * t];
+        const nx = (-dy / l) * (w / 2);
+        const ny = (dx / l) * (w / 2);
+        const p: V2 = [m[0] - nx, m[1] - ny];
+        const q: V2 = [m[0] + nx, m[1] + ny];
+        const f2 = band(p, q, 0.12);
+        extra.add(kerb, f2, f2.map((r) => z(r) - 0.2) as [number, number, number, number], 0.5, look, REL | DRAPE | DRAPE_ANY);
       }
     }
   }
@@ -387,7 +436,8 @@ export function cityPlanOf(
   // (round 128d) the ways (ways.ts): roads and squares, the courtyards' paving apart (drawn with their style above)
   const courtCells = new Set(shapes.courtyards.flatMap((ct) => ct.cells));
   const paved: number[] = [];
-  if (roads) for (let c = 0; c < nq; c++) if ((ways.way[c] === WAY_ROAD || ways.way[c] === WAY_SQUARE) && !courtCells.has(c)) paved.push(c);
+  // (round 128f: the roads are a lane wide now, drawn with the lanes — lanePieces; the squares stay paved whole)
+  if (roads) for (let c = 0; c < nq; c++) if (ways.way[c] === WAY_SQUARE && !courtCells.has(c)) paved.push(c);
   const doorOf = new Map(ways.doors.map((d) => [d.structure, d]));
   const myStairs = ways.stairs.filter((st) => mine.some((s) => s.id === st.structure));
   // the ground under every corner of the cells drawn
@@ -642,11 +692,9 @@ export function cityPlanOf(
     if (ct.cells.length === 1) extra.add(lib.id('fruittree'), square(x, y, 2.0), g - 0.1, g + 4.4, Math.floor(hashf(ct.cells[0], 33) * 4096));
     else megas.push({ kind: 'fountain', quads: ct.cells.slice(), frame: square(x, y, 1.7), z0: g - 0.1, z1: g + 2.6 });
   }
-  // (round 128d) the roads and squares (ways.ts): paved as the towns' streets and plazas (kerbs where they meet a lot); a
-  // lamp on each square
+  // (round 128d) the squares (ways.ts): paved as the towns' plazas; a lamp on each
   for (const c of paved) {
-    tiles.use[c] = ways.way[c] === WAY_SQUARE ? 'plaza' : 'street';
-    if (ways.way[c] !== WAY_SQUARE) continue;
+    tiles.use[c] = 'plaza';
     const [x, y] = centre(c);
     const p = quadCorners(tiles, c);
     const lx = x + (p[0][0] - x) * 0.6;

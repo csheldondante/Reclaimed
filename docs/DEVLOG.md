@@ -16964,3 +16964,26 @@ fix, and the 2 south-west a builder could get back from but not to; the other 10
 planned is built."). scripts/fortressroads.mjs still passes. Phone bench: the scope now spans every planned block (more
 chunks relaxed while building), a 'layers' + 'water' readback every 3 s while building, 2-4 searches over the box
 (~50k columns) per tap while planning — none timed here; for the phone bench.
+## 2026-11-04 — round 128f (`fortress`): roads narrower than a cell — work in progress (FT-58)
+
+**Why.** The user (DECISIONS round 128e on `places`): "if we want roads smaller than one cell we could have certain
+regions fill in tiles that way. Use voronoi or another offset grid too have tiles generate with roads within them at
+some desired road frequency … my reasoning for the grids is that they are cheap and parallel which is great for the
+GPU." The plan agreed with the user: a second offset grid over the tiles whose edges are lanes inside them, worked out
+per tile from its corners alone; the spacing set per district; bent along the contours on slopes; the main roads of
+ways.ts on top, a lane wide; the units' road bit at the narrower width.
+**What (so far, committed unfinished: a town-rendering fix comes first).** `fortress/lanes.ts`: two families of level
+lines of corner fields — A along the contours (the ground smoothed over 4 m, over the district's mean slope; a lattice
+turned to the land on the flat), B across them (stepped where a climb is steeper than 0.3) — marched per tile (each
+side's crossing from that side's two corners in a fixed order, so tiles meet exactly at their shared side); districts
+from the distance to the plan's structures: every lane within 18 m (the town), every third out to 54 m (tracks), a ring
+lane at the town's edge where the town's lanes end; none on structures, squares, stairs or the town that was there.
+The main roads: per road cell its middle to each side that leads on (a road, a square, a gate, its door, a stair's
+foot). Drawn as paving bands (pieces.ts lanePieces; road cells no longer paved whole, squares still are); the units'
+road columns (Fortress.roadCols) are the bands' columns. Unit src/fortress/lanes.test.ts (5): pieces meet at seams,
+town lanes end on the ring, the spacing sets the density, lanes on a slope within 15 degrees of the contour, steps only
+on climbing lanes, every door on one road network, a road cell's columns only partly road. Headless
+scripts/fortresslanes.mjs (a flat site and a hillside): runs; the shots (lanes-flat*, lanes-hill*) show grey lanes and
+tracks, faint at play zoom. **Not done:** the shots looked at closely and tuned (widths, the tracks' look, lanes over
+the town's fields), DECISIONS/ARCHITECTURE entries, contour roads between settlements (FT-59). Phone bench: lanes are
+recomputed on every plan change (9 ground taps a corner, a search over the structures a corner) — not timed.

@@ -21,7 +21,8 @@ import { bedsOf, roomOf, type JobKind } from './economy';
 import { ReachMap, type ReachColumns } from './reach';
 import { solidSpans } from './solid';
 import { reachWhyLine, wouldCutLine, type ReachWhy } from './words';
-import { WAY_ROAD, WAY_SQUARE } from './ways';
+import { WAY_SQUARE } from './ways';
+import { LANE_DEFAULTS, lanesOf, nearSeg, type LaneOpts, type Lanes } from './lanes';
 
 /** (milestone 3) A block taken out of the plan: its type, and whether it stood (Erase gives back part of its cost). */
 export interface Erased {
@@ -116,6 +117,10 @@ export class Fortress {
   readonly onMode: ((m: FortressMode) => void)[] = [];
   /** (round 128f) why the last press planned nothing (a block the stores couldn't reach): the panel says it */
   refusal: string | null = null;
+  /** (round 128f) the lanes and the roads a lane wide (lanes.ts), made again after the plan changes */
+  private lanesMemo: Lanes | null = null;
+  /** (round 128f) the lanes' spacing per district (the town's, the fields'): the road frequency */
+  private laneOptsNow: LaneOpts = { ...LANE_DEFAULTS };
   /** the ground's top at a box column */
   private readonly groundOfCol: (col: number) => number;
 
@@ -153,18 +158,57 @@ export class Fortress {
     return roomOf(this.plan, (c, l) => this.town.has(c, l));
   }
 
-  /** (milestone 3, FT-46) the window columns under the plan's roads and squares (units prefer them) */
+  /**
+   * (milestone 3, FT-46; round 128f a lane wide) the window columns under the plan's roads, lanes and squares (units
+   * prefer them): a square's every column; else a column whose middle lies on a road's or a lane's band.
+   */
   roadCols(): number[] {
     const w = this.ways().way;
+    const L = this.lanes();
+    const g = this.grid;
     const out: number[] = [];
-    for (let c = 0; c < this.grid.count; c++) {
-      if (w[c] !== WAY_ROAD && w[c] !== WAY_SQUARE) continue;
-      for (const col of this.grid.columns[c]) {
+    for (let c = 0; c < g.count; c++) {
+      const near = [c, ...[0, 1, 2, 3].map((e) => g.nbr[c * 4 + e]).filter((m) => m >= 0)].flatMap((m) => L.byCell[m]);
+      if (w[c] !== WAY_SQUARE && !near.length) continue;
+      for (const col of g.columns[c]) {
+        const [x, y] = cellPos(col % this.box.w, Math.floor(col / this.box.w));
+        if (w[c] !== WAY_SQUARE && !near.some((i) => nearSeg(L.segs[i], x, y, 0.3))) continue;
         const wc = this.boxToWindowCol(col);
         if (wc >= 0) out.push(wc);
       }
     }
     return out;
+  }
+
+  /** (round 128f) the lanes' spacing per district: the town's and the fields' (m) */
+  get laneOpts(): LaneOpts {
+    return this.laneOptsNow;
+  }
+  setLaneOpts(o: Partial<LaneOpts>): void {
+    this.laneOptsNow = { ...this.laneOptsNow, ...o };
+    this.lanesMemo = null;
+    for (const h of this.onChange) h();
+  }
+
+  /**
+   * (round 128f; the user: "if we want roads smaller than one cell ...") The lanes of a second grid over the tiles, and
+   * the main roads a lane wide (lanes.ts). From the plan and the ground as it was; not on the town that was there.
+   */
+  lanes(): Lanes {
+    if (!this.lanesMemo) {
+      const { w, h } = this.box;
+      const ground = (x: number, y: number) => {
+        const [k, r] = cellAt(x, y);
+        return this.groundOfCol(Math.max(0, Math.min(h - 1, r)) * w + Math.max(0, Math.min(w - 1, k)));
+      };
+      const g = this.grid;
+      const town = this.io.townAt;
+      const blocked = town
+        ? (c: number) => [g.centre(c), ...[0, 1, 2, 3].map((k) => g.corner(c, k))].some(([x, y]) => !!town(...this.toWindow(x, y), ground(x, y)))
+        : undefined;
+      this.lanesMemo = lanesOf(this.plan, g, this.ways(), ground, this.laneOptsNow, blocked);
+    }
+    return this.lanesMemo;
   }
 
   /**
@@ -698,6 +742,7 @@ export class Fortress {
   private sync(): void {
     const changed = this.plan.takeChanged();
     this.waysMemo = null;
+    this.lanesMemo = null;
     const erased: Erased[] = [];
     for (const c of changed) {
       const s = this.plan.structureAt(c);

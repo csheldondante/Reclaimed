@@ -3065,7 +3065,7 @@ export class LevelScene implements Scene {
     fort.onChange.push(() => (pieces = null));
     view.extra = () => {
       if (!fort.plan.structures().length) return null;
-      pieces ??= fortressPieces({ plan: fort.plan, town: fort.town, grid: fort.grid, ground: (x, y) => this.heightAt(...fort.toWindow(x, y)), zOff: S.oz, ghost: fort.ghost(), started: fort.started(), picked: fort.inspected, ways: fort.ways() });
+      pieces ??= fortressPieces({ plan: fort.plan, town: fort.town, grid: fort.grid, ground: (x, y) => this.heightAt(...fort.toWindow(x, y)), zOff: S.oz, ghost: fort.ghost(), started: fort.started(), picked: fort.inspected, ways: fort.ways(), lanes: fort.lanes() });
       const [dx, dy] = fort.offset();
       return { p: pieces, dx, dy: dy * ROW_H };
     };
