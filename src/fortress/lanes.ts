@@ -66,7 +66,9 @@ export interface LaneOpts {
 
 export const LANE_DEFAULTS: LaneOpts = { town: 14, fields: 42, cross: 2, townReach: 18, fieldReach: 54, smooth: 4, angle: 0.35 };
 /** each kind's width (m): a cell is ~6 m across */
-export const LANE_WIDTH: Record<LaneKind, number> = { road: 2.4, plaza: 2.4, ramp: 2.4, lane: 1.6, cross: 1.6, ring: 1.8, track: 1.1 };
+// (round 128i: widened from road 2.4, lanes 1.6, ring 1.8, tracks 1.1 — at play zoom (3.2 px a metre) the lanes read
+// as faint threads; a road still under half a cell)
+export const LANE_WIDTH: Record<LaneKind, number> = { road: 2.6, plaza: 2.6, ramp: 2.6, lane: 2.0, cross: 2.0, ring: 2.2, track: 1.5 };
 /** (round 128i) the kinds drawn as paving (a square is paved whole; a ramp's treads are its road) */
 export const LANE_DRAWN: Record<LaneKind, boolean> = { road: true, plaza: false, ramp: false, lane: true, cross: true, ring: true, track: true };
 /** a climbing lane's rise over its run past which it is stepped */

@@ -3530,3 +3530,16 @@ The building rule (the user's): select what (a structure type), then plan it wit
   FortressClaims stamps it at once), both read by `Fortress.reachMap` and by `FortressClaims` alike; the ramp's shape
   (`rampShape`) is shared with its pieces (`rampPieces`: the wall stairs' treads). `Fortress.variant`/`variantAt`: the
   panel's line for the way kept open. `ringCells` (FT-57) joins consecutive cells side to side along the circle.
+- **Round 128f-i (lanes: roads narrower than a cell, FT-58).** `fortress/lanes.ts` `lanesOf(plan, grid, ways, ground,
+  opts, blocked)` → `Lanes` (segments per cell, each its kind: road, plaza, ramp, lane, cross, ring, track): a second
+  grid over the tiles as two families of level lines of corner fields — A along the contours (the ground smoothed, over
+  the district's mean slope; a lattice turned to the land on the flat), B across them (stepped past `STEEP`) — marched
+  per tile from its four corners alone (a side's crossing from that side's two corners, lower id first, so tiles meet
+  exactly); the spacing per district from the distance to the plan's structures (`LaneOpts`: every line in town, every
+  k-th out in the fields, a ring lane at the town's edge); none on structures, squares, stairs, ramps, the town that was
+  there or water (`Fortress.lanes`: `blocked`, the columns' water over `LANE_WATER`); the main roads of ways.ts on top,
+  a lane wide (each road cell's middle to each side that leads on). Drawn as pieces in the fortress's grid (pieces.ts
+  `lanePieces`: paving, the tracks trodden earth — module `earth`, `Part.Soil`; steps on steep climbs); the units' road
+  bits stamped on the GPU from the same shapes (`roadShapesOf` → agents/roads.ts `RoadStamp`, shaders/roadstamp.wgsl:
+  a slide moves only the offset). Pure and memoised on the plan (made again when the plan changes or the columns are
+  first read); the corner fields are the GPU's work later (a jump flood, a blur) — today on the CPU.

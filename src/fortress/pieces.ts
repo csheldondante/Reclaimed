@@ -269,6 +269,8 @@ const LANE_STEP = 0.7;
 export function lanePieces(inp: PieceInputs, lanes: Lanes): StructurePieces {
   const lib = library();
   const pave = lib.id('pave');
+  // (round 128i) the tracks out in the fields trodden earth, not paving: brown on the grass reads at play zoom
+  const earth = lib.id('earth');
   const kerb = lib.id('kerb');
   const extra = new Extra();
   const z = (p: V2) => inp.ground(p[0], p[1]) + inp.zOff;
@@ -285,7 +287,7 @@ export function lanePieces(inp: PieceInputs, lanes: Lanes): StructurePieces {
     const look = Math.floor(hashf(s.kind === 'track' ? 7 : 3, 61) * 4096);
     // (a road a hair over a lane where they cross: no fighting surfaces)
     const top = s.kind === 'road' ? 0.4 : s.kind === 'track' ? 0.3 : 0.36;
-    extra.add(pave, fr, fr.map((p) => z(p) - 0.25) as [number, number, number, number], top, look, REL | DRAPE | DRAPE_ANY);
+    extra.add(s.kind === 'track' ? earth : pave, fr, fr.map((p) => z(p) - 0.25) as [number, number, number, number], top, look, REL | DRAPE | DRAPE_ANY);
     if (s.steps) {
       const n = Math.floor(l / LANE_STEP);
       for (let i = 1; i < n; i++) {

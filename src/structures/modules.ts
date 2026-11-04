@@ -808,6 +808,8 @@ export function library(): Library {
   modules.push(crop(), fruitTree(), fence(), hedge());
   // (round 120, cities: the purposes' and the dressing's — dressmodules.ts)
   modules.push(...dressModules());
+  // (round 128i, FT-58) a fortress's tracks out in the fields: trodden earth (fortress/pieces.ts lanePieces)
+  modules.push(slab(Part.Soil, 'earth'));
   const byName = new Map<string, number>();
   modules.forEach((m, i) => {
     if (byName.has(m.name)) throw new Error(`structures: two modules named "${m.name}"`);

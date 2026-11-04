@@ -600,6 +600,22 @@ each was implemented.
   long ones) to a walk along its top. Drawn as paving and stone steps; the steps and the wall-walk are solid, so units
   climb them. The warehouse's card speaks of the town's stores against all the warehouses' room, then this one's part.
 
+## 2026-11-04 — round 128i (session 5, `fortress`) — roads narrower than a cell
+
+- On roads smaller than a cell (DECISIONS round 128e on `places`: "if we want roads smaller than one cell we could have
+  certain regions fill in tiles that way. Use voronoi or another offset grid too have tiles generate with roads within
+  them at some desired road frequency. I think there is also a technique where you make flow field roads that follow
+  contours of the terrain ... my reasoning for the grids is that they are cheap and parallel which is great for the
+  GPU"), on the plan put to them — a second offset grid whose edges are lanes inside the tiles, worked out per tile from
+  its corners alone; the spacing set per district (dense lanes in town, sparse tracks in the fields); bent along the
+  contours on slopes so streets run along the slope and stairs climb it; the main roads of ways.ts on top, a lane wide;
+  the units' road bit at that width — the user, verbatim: "Yeah that sounds perfect!" (BACKLOG V128-8, FT-58.)
+- Contour roads between settlements across the atlas (traced once at generation): agreed for later, not this pass
+  (BACKLOG FT-59).
+- Judgement calls for the user: the tracks out in the fields are trodden earth (brown), the town's lanes and the roads
+  paving (grey, as before); the widths up a little (roads 2.6 m, lanes 2.0, the ring 2.2, tracks 1.5 — at play zoom the
+  old ones read as threads); no lanes on cells under water. (DEVLOG round 128i lanes.)
+
 ## 2026-11-04 — round 128i (session 5, `fortress`) — the town flickers while the window slides
 
 - The user, verbatim, with the Pixel 9a town bench report (fortress 11efc57 asked for; the page served was the deploy

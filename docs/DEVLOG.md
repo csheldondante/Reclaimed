@@ -17180,3 +17180,21 @@ same golden failures (the wide views 37-59%, both), the fast pans over the sea s
 vs places 14.92%, w384-z8 22.9% vs 3.2%); an A/B of w384 z14/z8 fast pans with only the frame order reverted, two runs
 each: new 14.3/36.6 and 0.8/0.3, old 0.8/16.5 and 0.8/2.3 — noise, not the order. Shots looked at: land, trees, river
 drawn; the fast-pan fails are open sea.
+
+## 2026-11-04 — round 128i (`fortress`): lanes finished — the look, no lanes under water (FT-58)
+
+**Why.** The lanes (roads narrower than a cell, the plan the user agreed: "Yeah that sounds perfect!") were committed
+unfinished in b91561a/7ec07fd: the shots showed faint grey threads at play zoom, and the hillside run found no site.
+**What.** Tracks out in the fields are trodden earth (a new `earth` module, `Part.Soil`), the town's lanes and the roads
+paving; widths up (roads 2.4 → 2.6 m, lanes 1.6 → 2.0, the ring 1.8 → 2.2, tracks 1.1 → 1.5) — at zoom 3.2 a 1.1 m
+track was 3.5 px of grey on grass. No lanes on a cell with water over 0.3 m at its middle or a corner
+(`Fortress.lanes`, the columns as last read; the lanes made again once the columns are first read): a hillside run had
+put lanes 50 m out over the sea. scripts/fortresslanes.mjs: the site search reads the fortress's own ground (the
+agents' surfaces exist only round the units, so the hillside candidates came and went between runs) and skips water;
+each candidate is planned until one takes the whole plan. Shots looked at (fortress/lanes-flat*.png,
+lanes-hill*.png: a flat site by the old town and a hillside, slope 0.05-0.06 — the steepest that took the plan this
+run): the ring lane and the contour lanes read as grey paving round the walls, the tracks brown across the fields.
+Tests: unit 652 (lanes 8: seams, density, contours within 15 degrees, doors joined, passages and ramps, paving and
+earth, no lanes under water). **Phone bench:** lanes are remade on every plan change on the CPU (9 ground taps a
+corner, a search over the structures a corner) — not timed; the corner fields are meant for the GPU (a jump flood and
+a blur) when it matters. **Next:** the people ride the lanes (V128-14, the next commit).

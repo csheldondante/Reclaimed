@@ -198,6 +198,32 @@ describe('lanes: roads narrower than a cell', () => {
     expect(f.roadShapes()).toBe(f.roadShapes());
   });
 
+  it('(round 128i) no lanes under water: a lake over part of the box', () => {
+    // (the lake: every column west of x = 40 under a metre of water)
+    const lake = (x: number) => x < 40;
+    const f = new Fortress({ origin: [0, 0], w: W, h: H }, {
+      windowOrigin: () => [0, 0],
+      dims: { w: W, h: H, zMax: 999 },
+      ground: () => 5,
+      stores: () => ({}),
+      changed: () => {},
+      columns: () => ({ w: W, h: H, runs: () => [[0, 5]], water: (x: number) => (lake(x) ? 1 : 0) }),
+    });
+    f.ready = true;
+    walled(f);
+    const L = f.lanes();
+    expect(L.segs.length).toBeGreaterThan(50);
+    const lanes = L.segs.filter((s) => s.family >= 0);
+    // (none in a cell the lake covers; some ran there without it)
+    for (const s of lanes) {
+      const [cx] = f.grid.centre(s.cell);
+      expect(lake(cx - 1), `a ${s.kind} at x ${cx.toFixed(1)}`).toBe(false);
+    }
+    const dry = fortress();
+    walled(dry);
+    expect(dry.lanes().segs.some((s) => s.family >= 0 && dry.grid.centre(s.cell)[0] < 39)).toBe(true);
+  });
+
   it('the roads run through a passage and up a ramp along its axis (FT-65)', () => {
     const f = fortress();
     const { gate } = walled(f);
@@ -241,7 +267,9 @@ describe('lanes: roads narrower than a cell', () => {
       return n;
     };
     const drawn = f.lanes().segs.filter((s) => LANE_DRAWN[s.kind] && LANE_WIDTH[s.kind] > 0).length;
-    expect(count('pave', true) - count('pave', false)).toBe(drawn);
+    // (round 128i: the tracks are trodden earth, the rest paving)
+    expect(count('pave', true) + count('earth', true) - count('pave', false)).toBe(drawn);
+    expect(count('earth', true)).toBe(f.lanes().segs.filter((s) => s.kind === 'track').length);
     expect(count('kerb', true)).toBeGreaterThan(count('kerb', false));
   });
 });

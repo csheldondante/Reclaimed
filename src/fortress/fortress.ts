@@ -52,6 +52,8 @@ export interface FortressStatus {
 
 /** (round 128h) the most gates (or ramps) tried for a placement that cut blocks off: the nearest first */
 const VARIANT_TRIES = 10;
+/** (round 128i) water deeper than this (m) over a cell's middle or a corner: no lanes on it */
+const LANE_WATER = 0.3;
 
 const dist = (a: readonly number[], b: readonly number[]) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 
@@ -132,6 +134,8 @@ export class Fortress {
   warnCells: number[] = [];
   /** (round 128f) the lanes and the roads a lane wide (lanes.ts), made again after the plan changes */
   private lanesMemo: Lanes | null = null;
+  /** (round 128i) whether the lanes were made knowing the water (the columns read): made again once they are */
+  private lanesWet = false;
   private roadShapesMemo: { of: Lanes; shapes: Float32Array } | null = null;
   /** (round 128f) the lanes' spacing per district (the town's, the fields'): the road frequency */
   private laneOptsNow: LaneOpts = { ...LANE_DEFAULTS };
@@ -196,10 +200,13 @@ export class Fortress {
 
   /**
    * (round 128f; the user: "if we want roads smaller than one cell ...") The lanes of a second grid over the tiles, and
-   * the main roads a lane wide (lanes.ts). From the plan and the ground as it was; not on the town that was there.
+   * the main roads a lane wide (lanes.ts). From the plan and the ground as it was; not on the town that was there, nor
+   * (round 128i) under water: a cell with water over LANE_WATER at its middle or a corner (the columns as last read).
    */
   lanes(): Lanes {
-    if (!this.lanesMemo) {
+    const cols = this.columnsNow();
+    if (!this.lanesMemo || (cols && !this.lanesWet)) {
+      this.lanesWet = !!cols;
       const { w, h } = this.box;
       const ground = (x: number, y: number) => {
         const [k, r] = cellAt(x, y);
@@ -207,9 +214,13 @@ export class Fortress {
       };
       const g = this.grid;
       const town = this.io.townAt;
-      const blocked = town
-        ? (c: number) => [g.centre(c), ...[0, 1, 2, 3].map((k) => g.corner(c, k))].some(([x, y]) => !!town(...this.toWindow(x, y), ground(x, y)))
-        : undefined;
+      const wet = (x: number, y: number) => {
+        if (!cols) return false;
+        const [k, r] = cellAt(...this.toWindow(x, y));
+        return k >= 0 && r >= 0 && k < cols.w && r < cols.h && cols.water(k, r) > LANE_WATER;
+      };
+      const blocked = (c: number) =>
+        [g.centre(c), ...[0, 1, 2, 3].map((k) => g.corner(c, k))].some(([x, y]) => wet(x, y) || (!!town && !!town(...this.toWindow(x, y), ground(x, y))));
       this.lanesMemo = lanesOf(this.plan, g, this.ways(), ground, this.laneOptsNow, blocked);
     }
     return this.lanesMemo;
