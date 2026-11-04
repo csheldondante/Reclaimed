@@ -17051,3 +17051,49 @@ on b91561a (text and pick checks older than this); fortressplot passed. **Readba
 fortress/reach.ts reads 'layers' + 'water' whole when planning starts and every 3 s while building (plan in FT-61:
 the agents' fields answer "reached?" per planned block on the GPU); the fortress's pieces stand on Level.heightAt (the
 level's 1 s surface readback); a tap's pick stays a one-off readback. **To places:** it doesn't cherry-pick cleanly (git merge-tree onto places 943a30f: conflicts in settle/view.ts, structmesh.wgsl, sim/external.ts, game/integrity.ts, scenes/level.ts, settle/settlements.ts and the docs; fortress/claims.ts isn't on places) — the fortress's additions (DRAPE_ANY, the picked flag, OWNER_FORT, extra) sit in the same lines; a port by hand, taking this view.ts, gpu.ts and the claim path whole and leaving the fortress's parts out.
+
+## 2026-11-04 — round 128h (`fortress`): placements keep the way open — gates, passages, ramps (V128-13, FT-57)
+
+**Why.** The user, on the round 128f reach rules (a drop walkable down but not up is no way; a fourth wall that shuts a
+block in is refused): "Yeah I would indicate that those will block or introduce block variants so they don't" (DECISIONS
+round 128h). A refusal left the player to work out where the gate goes; now the placement goes in as a variant that
+keeps the way open, and only when none can is it placed with what it cuts off outlined.
+
+**What.**
+- `Fortress.paint`: a spot the stores can't reach is refused as before, unless the reason is a cliff and a ramp up the
+  drop reaches it. Otherwise the block is painted, and the blocks still to build the stores reached before but not after
+  (judged with the block painted: the pre-paint "its cell solid" model was wrong for walls — a painted wall cell turns
+  its neighbours' ends into joins, and a ring that the model said was still open was shut) go to `keepOpen`, which tries
+  by rule: a wall gets a gate at the straight wall cell of its structure nearest the stores (up to 10 tried, nearest
+  first); a block gets a passage through its own ground floor; then a ramp (`rampTo`: the drops the agents walk down and
+  not up — a column reached one way beside one reached both ways, a rise over STEP 1.1 and within DROP 2.6 — on free
+  cells, nearest the cut-off cells first). None: `warnCells` outlined in red round their eaves (or on the ground) and the
+  panel says "That shuts the house off from the stores. Builders can't get there. It is outlined in red."
+- The plan carries the variants: `FortressPlan.passage`, `FortressPlan.ramp` (`setPassage`, `setRamp`, in the
+  contract). **One solid for both sides:** solid.ts gives a passage a lintel only (`WALL_LINTEL` under the top, as a
+  gate's: 3.2 m of room over the floor) and the ramps `rampSpans` (`RAMPS_ID` 0, planned is enough — the builders need
+  it to reach what they build); the CPU check (`reachMap`) and the GPU claims (`FortressClaims`) both read solidSpans,
+  so they can't disagree. The ramp's shape (`rampShape`: the ground just across its high side down to its far side's)
+  is shared with its pieces (`rampPieces`, the wall stairs' stone treads). A passage's ground floor is drawn with an
+  arch on each side (the courtyards' arch). The red outline: pieces flags bit 7 (PIECE_WARN) → look bit 25 → a pulsing
+  red in structgame.wgsl.
+- FT-57: `ringCells` left a 12-column gap in a radius-18 ring round (80, 80): the circle's last sample cell and its
+  first met only at a corner (the old join looked for one cell beside both, and a cell seen twice was skipped out of
+  order). Now consecutive cells are joined by the cheapest side-to-side way along the circle (Dijkstra, a step's cost
+  how far off the circle it lands) and a loop the walk makes back onto itself is cut out; it throws if the ring isn't
+  closed. A post where wall bands meet at a bend (a suspected wedge gap) was tried and dropped: the ring fix alone shut
+  every ring in the test (ring.test.ts: 6 centres x 9 radii closed on the cells, 3 rings shut in the agents' columns).
+
+**Measured.** Placement on the unit box (160 x 184 columns, Node, desktop): a plain wall 81 ms a tap (3 reach
+searches at ~22 ms: the spot, before, after — was 2), the wall closing a ring 143 ms (its gate found at the first try).
+On the phone that is a few hundred ms on a closing tap; FT-61 (the check on the GPU) is the fix, noted in FT-65.
+
+**Tests.** reach.test.ts: a closing wall gets one gate at the straight wall cell nearest the stores and without it the
+house is cut off; a house across the only gap in a cliff gets a passage and without it the hollow is cut off; a spot
+below a 2 m drop gets one ramp (drawn as steps, solid under `RAMPS_ID` while only planned) and without it no way back;
+a house shut in on four sides by walls and a warehouse is placed with the warning and one outlined cell (4 red rails),
+cleared by the next press. fortress.test.ts lints the new lines. ring.test.ts (FT-57). Headless by finger from the
+start menu at 412x915 (`scripts/fortressvariant.mjs`): a house on open ground, a ring of 15 walls round it tapped
+(far cells first), the last tap put a gate in it and the panel said so; Build at 16x: the builders went through the gate
+and the house stood in 38 s; then the warning case by finger (the fourth side a warehouse), outlined and named. Shots
+`fortress/variant-gate.png`, `variant-gate-built.png`, `variant-warn.png`.

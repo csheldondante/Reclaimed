@@ -600,6 +600,17 @@ each was implemented.
   long ones) to a walk along its top. Drawn as paving and stone steps; the steps and the wall-walk are solid, so units
   climb them. The warehouse's card speaks of the town's stores against all the warehouses' room, then this one's part.
 
+## 2026-11-04 — round 128h (session 5, `fortress`) — placements open a way instead of being refused
+
+- On the reach rules (a drop walkable down but not up counts as no way; a fourth wall that shuts a block in is
+  refused), the user, verbatim: "Yeah I would indicate that those will block or introduce block variants so they don't"
+- → A placement that would cut planned blocks off from the stores is placed as a variant that keeps the way open, chosen
+  by rule: a wall closing a ring gets a gate (the straight wall cell of it nearest the stores); a block across the only
+  way gets a passage through its ground floor (an arch each side, open under a lintel); a one-way drop in the way gets a
+  ramp (the wall stairs' steps, earthworks solid at once). Only when none keeps it open is it placed anyway, the cells
+  it cuts off outlined in red and named in the panel. A spot the stores can't reach at all is still refused, unless a
+  ramp up a drop reaches it. (DEVLOG round 128h; BACKLOG V128-13.)
+
 ## 2026-11-04 — round 128g (session 5, `fortress`) — the town glitches while panning; grids on the GPU
 
 - The user, verbatim: "The town seems slightly glitchy when panning. How does it work today? Is it not just instanced

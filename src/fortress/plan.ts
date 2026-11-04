@@ -44,6 +44,16 @@ export class FortressPlan implements FortressPlanApi {
   readonly gate: Uint8Array;
   /** (round 128d) per cell a tower the player put on a wall cell (towers stand by rule where runs end or turn) */
   readonly tower: Uint8Array;
+  /**
+   * (round 128h, V128-13) per cell a passage through a block's ground floor: an arch each side, open under a lintel — a
+   * block placed across the only way to others gets one (Fortress.paint)
+   */
+  readonly passage: Uint8Array;
+  /**
+   * (round 128h, V128-13) per free cell a ramp up a drop the agents can walk down but not up: the side (0..3) its high
+   * end meets, -1 none — earthworks, solid at once (solid.ts rampSpans), drawn as the wall stairs' steps
+   */
+  readonly ramp: Int8Array;
   private byId = new Map<number, Structure>();
   private nextId = 1;
   /** the cells whose look may have changed since the last `takeChanged` (painted, erased, their neighbours) */
@@ -54,6 +64,8 @@ export class FortressPlan implements FortressPlanApi {
     this.levels = new CellRuns(grid.count);
     this.gate = new Uint8Array(grid.count);
     this.tower = new Uint8Array(grid.count);
+    this.passage = new Uint8Array(grid.count);
+    this.ramp = new Int8Array(grid.count).fill(-1);
   }
 
   typeAt(cell: number): StructureType | null {
@@ -100,6 +112,8 @@ export class FortressPlan implements FortressPlanApi {
     if (level >= def.maxLevels || this.has(cell, level) || !this.held(cell, level)) return false;
     const here = this.typeAt(cell);
     if (here && here !== type) return false;
+    // (a block painted on a ramp's cell takes its place)
+    if (this.ramp[cell] >= 0) this.ramp[cell] = -1;
     if (!here) {
       // join the same type's structures beside it (the lowest id keeps; the others fold into it)
       const ids = new Set<number>();
@@ -144,6 +158,7 @@ export class FortressPlan implements FortressPlanApi {
       this.owner[cell] = -1;
       this.gate[cell] = 0;
       this.tower[cell] = 0;
+      this.passage[cell] = 0;
       if (!s.cells.size) this.byId.delete(s.id);
     }
     // (a gate stands on a straight run: a neighbour's run may have just broken)
@@ -161,6 +176,30 @@ export class FortressPlan implements FortressPlanApi {
     this.gate[cell] = on ? 1 : 0;
     this.touch(cell);
     return true;
+  }
+
+  /** (round 128h) a passage through a block cell's ground floor, or none; false if it isn't a block's ground floor */
+  setPassage(cell: number, on: boolean): boolean {
+    const t = this.typeAt(cell);
+    if (!t || this.defs[t].form !== 'block' || !this.has(cell, 0) || !!this.passage[cell] === on) return false;
+    this.passage[cell] = on ? 1 : 0;
+    this.touch(cell);
+    return true;
+  }
+
+  /** (round 128h) a ramp on a free cell, its high end at side `side` (-1: none); false if the cell isn't free */
+  setRamp(cell: number, side: number): boolean {
+    if (cell < 0 || cell >= this.grid.count || this.owner[cell] >= 0 || this.ramp[cell] === side) return false;
+    this.ramp[cell] = side;
+    this.touch(cell);
+    return true;
+  }
+
+  /** the cells with a ramp */
+  ramps(): number[] {
+    const out: number[] = [];
+    for (let c = 0; c < this.ramp.length; c++) if (this.ramp[c] >= 0) out.push(c);
+    return out;
   }
 
   /** (round 128d) a tower on a wall cell, or none; false if it isn't a wall */

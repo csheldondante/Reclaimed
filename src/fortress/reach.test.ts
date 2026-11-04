@@ -5,6 +5,9 @@ import { describe, expect, it } from 'vitest';
 import { cellPos } from '../world/lattice';
 import { Fortress } from './fortress';
 import { ReachMap, surfacesOf, type ReachColumns } from './reach';
+import { PIECE_WARN, rampPieces, warnPieces } from './pieces';
+import { RAMPS_ID, solidSpans } from './solid';
+import { PIECE_FLOATS } from '../structures/pieces';
 
 const W = 160;
 const H = 184;
@@ -20,11 +23,11 @@ function columns(wet: (x: number, y: number) => boolean = () => false, rock: (x:
   };
 }
 
-function fortress(cols: ReachColumns, heap: [number, number] = [20, 20]) {
+function fortress(cols: ReachColumns, heap: [number, number] = [20, 20], ground: (x: number, y: number) => number = () => GROUND) {
   const f = new Fortress({ origin: [0, 0], w: W, h: H }, {
     windowOrigin: () => [0, 0],
     dims: { w: W, h: H, zMax: 999 },
-    ground: () => GROUND,
+    ground,
     stores: () => ({}),
     changed: () => {},
     columns: () => cols,
@@ -69,19 +72,92 @@ describe('the check at placement', () => {
     expect(f.paint(near, 1, 'house')).toBe(true);
   });
 
-  it('a block that would shut a planned block in is refused, and says which', () => {
+  it('a block that shuts a planned block in, with no variant to keep the way, is placed with a warning naming it', () => {
     const f = fortress(columns(), [20, 20]);
     const house = f.cellAt(80, 80);
     expect(f.paint(house, 0, 'house')).toBe(true);
     const round = [0, 1, 2, 3].map((e) => f.grid.nbr[house * 4 + e]);
     // three sides walled: the fourth still open to the stores
     for (const c of round.slice(0, 3)) expect(f.paint(c, 0, 'wall')).toBe(true);
-    expect(f.paint(round[3], 0, 'warehouse')).toBe(false);
-    expect(f.refusal).toContain('shut the house off');
-    expect(f.plan.has(round[3], 0)).toBe(false);
-    // a farm (open ground) beside it doesn't shut it in
+    // (a builder works a block from beside it: a passage through the warehouse leaves the house no side to stand at)
+    expect(f.paint(round[3], 0, 'warehouse')).toBe(true);
+    expect(f.plan.has(round[3], 0)).toBe(true);
+    expect(f.plan.passage[round[3]]).toBe(0);
+    expect(f.warnCells).toEqual([house]);
+    expect(f.warning).toBe("That shuts the house off from the stores. Builders can't get there. It is outlined in red.");
+    expect(f.refusal).toBe(null);
+    // outlined in red: a rail a side, flagged for the red tint
+    const warn = warnPieces({ plan: f.plan, town: f.town, grid: f.grid, ground: () => GROUND, zOff: 0 }, f.warnCells);
+    expect(warn.count).toBe(4);
+    for (let i = 0; i < warn.count; i++) expect((warn.data[i * PIECE_FLOATS + 15] | 0) & PIECE_WARN).toBe(PIECE_WARN);
+    // the next press clears it; a farm (open ground) beside it doesn't shut it in
+    expect(f.erase(round[3], 0)).toBe(true);
+    expect(f.warnCells).toEqual([]);
     expect(f.paint(round[3], 0, 'farm')).toBe(true);
+    expect(f.warning).toBe(null);
     expect(f.reachedIn(f.reachMap()!, house)).toBe(true);
+  });
+
+  it('a wall closing a ring round a planned block gets a gate, at the straight wall cell nearest the stores', () => {
+    const f = fortress(columns(), [20, 20]);
+    const [cx, cy] = [90, 80];
+    const house = f.cellAt(cx, cy);
+    expect(f.paint(house, 0, 'house')).toBe(true);
+    const ring = f.ringCells(cx, cy, 16);
+    for (const c of ring) expect(f.paint(c, 0, 'wall')).toBe(true);
+    // the last wall closed the ring: a gate went in, and the builders get to the house
+    const gates = ring.filter((c) => f.plan.gate[c]);
+    expect(gates.length).toBe(1);
+    expect(f.variant).toBe('A gate goes in the wall, so builders can get in.');
+    expect(f.variantAt).toBe(gates[0]);
+    expect(f.warnCells).toEqual([]);
+    expect(f.reachedIn(f.reachMap()!, house)).toBe(true);
+    // (the nearest the stores of the straight wall cells)
+    const d = (c: number) => Math.hypot(f.centre(c)[0] - 20, f.centre(c)[1] - 20);
+    for (const c of ring) if (f.plan.wallTile(c, 0) === 'straight') expect(d(gates[0])).toBeLessThanOrEqual(d(c) + 1e-9);
+    // without the gate the house is cut off: the GPU's columns (solid.ts) would shut it in as the check did
+    f.plan.gate[gates[0]] = 0;
+    expect(f.reachedIn(f.reachMap()!, house)).toBe(false);
+  });
+
+  it('a house placed across the only way to another gets a passage through its ground floor', () => {
+    // (a thin cliff round a hollow, open where one cell on its +x side crosses it)
+    let gap = -1;
+    let f: Fortress | null = null;
+    const ring = (x: number, y: number) => Math.abs(Math.hypot(x - 100, y - 100) - 14) < 1.2;
+    f = fortress(columns(undefined, (x, y) => ring(x, y) && f!.cellAt(x, y) !== gap));
+    gap = f.cellAt(114, 100);
+    const inside = f.cellAt(100, 100);
+    expect(f.paint(inside, 0, 'house')).toBe(true);
+    expect(f.reachedIn(f.reachMap()!, inside)).toBe(true);
+    expect(f.paint(gap, 0, 'house')).toBe(true);
+    expect(f.plan.passage[gap]).toBe(1);
+    expect(f.variant).toBe('The house gets an arch through its ground floor, so builders can walk through.');
+    expect(f.reachedIn(f.reachMap()!, inside)).toBe(true);
+    // its solid: only a lintel over the ground floor (the GPU's columns the same: solid.ts)
+    f.plan.passage[gap] = 0;
+    expect(f.reachedIn(f.reachMap()!, inside)).toBe(false);
+  });
+
+  it('a spot below a drop builders walk down but not up gets a ramp', () => {
+    const ledge: ReachColumns = { w: W, h: H, runs: (x) => (x > 100 ? [[0, GROUND - 2]] : [[0, GROUND]]), water: () => 0 };
+    // (the ground the fortress reads is the columns': a ramp's heights are taken from it)
+    const f = fortress(ledge, [20, 20], (x) => (x > 100 ? GROUND - 2 : GROUND));
+    const low = f.cellAt(125, 40);
+    expect(f.paint(low, 0, 'house')).toBe(true);
+    expect(f.variant).toBe('A ramp goes up the drop, so builders can climb back to the stores.');
+    const ramps = f.plan.ramps();
+    expect(ramps.length).toBe(1);
+    expect(f.reachedIn(f.reachMap()!, low)).toBe(true);
+    // drawn as steps; its solid (what the GPU's columns are claimed with: claims.ts) its own key, there while only planned
+    const inp = { plan: f.plan, town: f.town, grid: f.grid, ground: (x: number, y: number) => (x > 100 ? GROUND - 2 : GROUND), zOff: 0 };
+    expect(rampPieces(inp).count).toBeGreaterThan(3);
+    const sp = solidSpans({ plan: f.plan, town: f.town, grid: f.grid, ground: (col) => f.groundAt(col) }).get(RAMPS_ID)!;
+    expect(sp.length).toBeGreaterThan(5);
+    for (const q of sp) expect(q.z1).toBeLessThanOrEqual(GROUND + 1e-6);
+    // without it, no way back up
+    f.plan.ramp[ramps[0]] = -1;
+    expect(f.reachedIn(f.reachMap()!, low)).toBe(false);
   });
 
   it('a spot rock walls off is said to be out of reach', () => {

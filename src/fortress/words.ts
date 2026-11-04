@@ -180,6 +180,23 @@ export function reachWhyLine(why: ReachWhy): string {
   return `Builders can't reach that spot from the stores. ${what[why]}`;
 }
 
+/** (round 128h, V128-13) what was put in so a block placed keeps the way open: a gate, a passage, a ramp */
+export type VariantKind = 'gate' | 'passage' | 'ramp';
+
+/** (round 128h) the panel's line for the way kept open */
+export function variantLine(kind: VariantKind, type: string): string {
+  const what = type === 'lumber' ? 'lumber camp' : type;
+  if (kind === 'gate') return 'A gate goes in the wall, so builders can get in.';
+  if (kind === 'passage') return `The ${what} gets an arch through its ground floor, so builders can walk through.`;
+  return 'A ramp goes up the drop, so builders can climb back to the stores.';
+}
+
+/** (round 128h) a block placed that shuts others off, when nothing keeps the way open: what's cut off, outlined */
+export function cutWarnLine(types: string[]): string {
+  const names = types.map((t) => `the ${t === 'fortress' ? 'keep' : t === 'lumber' ? 'lumber camp' : t}`);
+  return `That shuts ${list(names)} off from the stores. Builders can't get there. It is outlined in red.`;
+}
+
 /** (round 128f) a block that would shut planned blocks off from the stores isn't planned */
 export function wouldCutLine(types: string[]): string {
   const names = types.map((t) => `the ${t === 'fortress' ? 'keep' : t === 'lumber' ? 'lumber camp' : t}`);

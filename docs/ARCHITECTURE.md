@@ -3513,3 +3513,15 @@ The building rule (the user's): select what (a structure type), then plan it wit
   FortressLife's cut-off (`unreachable`, Skip's reason) is this check on each new read, not the heap's GPU field.
   `Agents.keepInScope(key, points)`: places the fields' scope (agents/scope.ts) must cover; FortressLife keeps every
   block still to build in it.
+- **Round 128h (reach: variants, V128-13).** `Fortress.paint` no longer refuses a placement that cuts planned blocks
+  off: it paints, judges the cut with the block painted (a wall cell joins its neighbours' bands), and `keepOpen` tries
+  variants by rule in the plan's own data — `FortressPlan.gate` (a closing wall: the straight wall cell nearest the
+  stores), `FortressPlan.passage` (a block's ground floor open under a lintel: `setPassage`), `FortressPlan.ramp` (a free
+  cell's ramp up to side e: `setRamp`, found by `rampTo` from `ReachMap.oneWay`/`topZ` — a column reached one way beside
+  one reached both, a rise over STEP and within DROP). None works: `Fortress.warnCells` + `warning` (pieces.ts
+  `warnPieces`, flags bit 7 PIECE_WARN → structmesh.wgsl look bit 25 → structgame.wgsl red). A spot not reached at all
+  is refused unless a ramp reaches it. **The check and the GPU agree through solid.ts:** a passage's solid is a lintel
+  (`WALL_LINTEL`, as a gate's), a ramp's is `rampSpans` under key `RAMPS_ID` (0: no structure; planned is enough, so
+  FortressClaims stamps it at once), both read by `Fortress.reachMap` and by `FortressClaims` alike; the ramp's shape
+  (`rampShape`) is shared with its pieces (`rampPieces`: the wall stairs' treads). `Fortress.variant`/`variantAt`: the
+  panel's line for the way kept open. `ringCells` (FT-57) joins consecutive cells side to side along the circle.

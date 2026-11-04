@@ -136,6 +136,10 @@ export interface FortressPlanApi {
   erase(cell: number, level: number): boolean;
   /** a wall cell's gate on or off (a straight run's ground level only); false if it can't be */
   setGate(cell: number, on: boolean): boolean;
+  /** (round 128h) a passage through a block cell's ground floor on or off; false if it can't be */
+  setPassage(cell: number, on: boolean): boolean;
+  /** (round 128h) a ramp on a free cell up to its side `side` (-1: none); false if the cell isn't free */
+  setRamp(cell: number, side: number): boolean;
   typeAt(cell: number): StructureType | null;
   structureAt(cell: number): Structure | null;
   structures(): Structure[];

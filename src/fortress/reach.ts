@@ -150,6 +150,22 @@ export class ReachMap {
     }
   }
 
+  /**
+   * (round 128h) whether column (x, y)'s top surface is reached from the stores but no way leads back (a drop walked
+   * down, not up: the ramps' search starts at its foot)
+   */
+  oneWay(x: number, y: number): boolean {
+    if (x < 0 || y < 0 || x >= this.cols.w || y >= this.cols.h) return false;
+    const i = y * this.cols.w + x;
+    return (this.there[i] & 1) !== 0 && (this.back[i] & 1) === 0;
+  }
+
+  /** (round 128h) column (x, y)'s top surface's height as searched (NaN: none, or not searched) */
+  topZ(x: number, y: number): number {
+    if (x < 0 || y < 0 || x >= this.cols.w || y >= this.cols.h) return NaN;
+    return this.surfs[y * this.cols.w + x]?.[0]?.z ?? NaN;
+  }
+
   /** whether column (x, y)'s top surface (what the field reader samples) is reached from the stores and back */
   reached(x: number, y: number): boolean {
     if (x < 0 || y < 0 || x >= this.cols.w || y >= this.cols.h) return false;

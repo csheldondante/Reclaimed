@@ -21,7 +21,7 @@ import { adjacency, quadCorners } from '../structures/tiles/builder';
 import { DEFS } from './defs';
 import { towered, type FortressPlan } from './plan';
 import { shapesOf, type Courtyard, type Shapes } from './shapes';
-import { STAIR_HALF, WALL_HALF, WALL_LINTEL } from './solid';
+import { rampShape, STAIR_HALF, WALL_HALF, WALL_LINTEL } from './solid';
 import { alongAxis, axisLength, WAY_SQUARE, waysOf, type Ways } from './ways';
 import { LANE_WIDTH, type Lanes } from './lanes';
 
@@ -37,6 +37,11 @@ const SCAFFOLD_OFF = 0.35;
 /** (round 128d) flags bit 6: the structure Inspect picked — drawn highlighted (structmesh.wgsl sets look bit 24 from it,
  *  structgame.wgsl tints it). A flag, not a look bit: the look travels as a float, exact only to 24 bits */
 export const PIECE_PICKED = 64;
+/** (round 128h, V128-13) flags bit 7: a warning outline — drawn red (structmesh.wgsl sets look bit 25 from it, structgame.wgsl
+ *  tints it): the cells a placement cut off from the stores */
+export const PIECE_WARN = 128;
+/** (round 128h) the warning outline's rails over the ground (m) */
+const WARN_H = 1.4;
 // (a thin wall's half width — a cell is ~5 m across — and a gate's lintel: solid.ts's, what's solid of it the same)
 
 export interface PieceInputs {
@@ -65,6 +70,8 @@ export interface PieceInputs {
   ways?: Ways;
   /** (round 128f) the lanes and the main roads a lane wide (lanes.ts: Fortress.lanes) */
   lanes?: Lanes;
+  /** (round 128h, V128-13) cells a placement cut off from the stores: outlined in red (Fortress.warnCells) */
+  warn?: readonly number[];
 }
 
 /** a stair's step along its axis (metres) */
@@ -103,7 +110,83 @@ export function fortressPieces(inp: PieceInputs): StructurePieces {
   }
   if (inp.ghost) parts.push(plotsOf(inp, defs));
   if (inp.lanes) parts.push(lanePieces(inp, inp.lanes));
+  parts.push(rampPieces(inp));
+  if (inp.warn?.length) parts.push(warnPieces(inp, inp.warn));
   return concat(parts);
+}
+
+/**
+ * (round 128h, V128-13) The ramps (FortressPlan.ramp) as the wall stairs' steps: stone treads across the cell from the
+ * drop's top at its high side down to its far side, at the heights solid.ts claims (rampShape) — earthworks, never ghosts.
+ */
+export function rampPieces(inp: PieceInputs): StructurePieces {
+  const { plan, grid, zOff } = inp;
+  const lib = library();
+  const extra = new Extra();
+  for (const c of plan.ramps()) {
+    const side = plan.ramp[c];
+    const r = rampShape(grid, c, side, inp.ground);
+    const [hi, lo] = r.axis;
+    const a0 = grid.corner(c, side);
+    const a1 = grid.corner(c, side + 1);
+    const half = Math.hypot(a1[0] - a0[0], a1[1] - a0[1]) * 0.42;
+    const len = Math.hypot(lo[0] - hi[0], lo[1] - hi[1]) || 1;
+    const d: V2 = [(lo[0] - hi[0]) / len, (lo[1] - hi[1]) / len];
+    const nrm: V2 = [-d[1] * half, d[0] * half];
+    const n = Math.max(1, Math.ceil(len / STEP_LEN));
+    const look = Math.floor(hashf(c, 37) * 4096);
+    for (let i = 0; i < n; i++) {
+      const t0 = (len * i) / n;
+      const t1 = (len * (i + 1)) / n;
+      const p0: V2 = [hi[0] + d[0] * t0, hi[1] + d[1] * t0];
+      const p1: V2 = [hi[0] + d[0] * t1, hi[1] + d[1] * t1];
+      const fr: [V2, V2, V2, V2] = [
+        [p0[0] - nrm[0], p0[1] - nrm[1]],
+        [p1[0] - nrm[0], p1[1] - nrm[1]],
+        [p1[0] + nrm[0], p1[1] + nrm[1]],
+        [p0[0] + nrm[0], p0[1] + nrm[1]],
+      ];
+      // (each tread at the slope's height at its near edge, as the solid's columns there)
+      const z = r.top + ((r.foot - r.top) * t0) / len + zOff;
+      const g = Math.min(inp.ground(p0[0], p0[1]), inp.ground(p1[0], p1[1])) + zOff;
+      if (z < g + 0.15) continue;
+      extra.add(lib.id('rampart'), fr, g - 0.4, z, look);
+    }
+  }
+  return extra.done();
+}
+
+/**
+ * (round 128h, V128-13) a red rail round each cell a placement cut off from the stores: round its eaves (what's walled in
+ * is seen over the walls), or draped on the ground where nothing is planned on it
+ */
+export function warnPieces(inp: PieceInputs, cells: readonly number[]): StructurePieces {
+  const { grid, zOff, plan, town } = inp;
+  const fence = library().id('fence');
+  const extra = new Extra();
+  for (const c of cells) {
+    const p: V2[] = [0, 1, 2, 3].map((k) => grid.corner(c, k));
+    const top = plan.top(c);
+    if (top >= 0) {
+      const z = town.floorZ(c, top) + LEVEL_H + zOff;
+      // (pushed out a little from the middle: round the walls' faces, not in them)
+      const [mx, my] = grid.centre(c);
+      const q: V2[] = p.map(([x, y]) => {
+        const d = Math.hypot(x - mx, y - my) || 1;
+        return [x + ((x - mx) / d) * 0.3, y + ((y - my) / d) * 0.3];
+      });
+      for (let e = 0; e < 4; e++) extra.add(fence, band(q[e], q[(e + 1) % 4], 0.16), z - 0.3, z + WARN_H, 0, PIECE_WARN);
+      continue;
+    }
+    for (let e = 0; e < 4; e++) {
+      const a = p[e];
+      const b = p[(e + 1) % 4];
+      const ga = inp.ground(a[0], a[1]) + zOff - 0.1;
+      const gb = inp.ground(b[0], b[1]) + zOff - 0.1;
+      extra.add(fence, band(a, b, 0.14), [ga, gb, gb, ga], WARN_H, 0, REL | DRAPE | DRAPE_ANY | PIECE_WARN);
+    }
+  }
+  return extra.done();
 }
 
 /**
@@ -626,7 +709,8 @@ export function cityPlanOf(
               if (n >= 0 && quadBuilding[n] === id && plan.has(n, L)) continue;
               const z0 = town.floorZ(c, L) + zOff;
               // (round 128d) a side on a courtyard: an arch in the ground floor, not a wall (shapes.ts)
-              if (L === 0 && arched.has(c * 4 + side)) {
+              // (round 128h, V128-13) a passage through the ground floor: an arch in each of its sides the same
+              if (L === 0 && (arched.has(c * 4 + side) || plan.passage[c])) {
                 const p = quadCorners(tiles, c);
                 extra.add(lib.id('gatearch'), sideBand(p[side], p[(side + 1) % 4], WALL_T), z0, z0 + LEVEL_H, ghostAt(c, 0) ? look | LOOK_GHOST : look);
                 continue;

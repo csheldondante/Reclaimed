@@ -8,7 +8,7 @@
 import { STRUCTURE_TYPES, type FortressBox, type Goods, type StructureType } from '../api/contracts/fortress';
 import { Town, type Block } from '../build/town';
 import { TownGrid } from '../build/towngrid';
-import { cellAt, cellPos } from '../world/lattice';
+import { cellAt, cellPos, nbr } from '../world/lattice';
 import { DEFS } from './defs';
 import { FortressPlan, typeIndex } from './plan';
 import { pickFace, placeFor } from './pick';
@@ -18,9 +18,9 @@ import type { NavGraph } from '../api/contracts/structures';
 import type { TownThing } from '../settle/thing';
 import { LEVEL_H } from '../build/town';
 import { bedsOf, roomOf, type JobKind } from './economy';
-import { ReachMap, type ReachColumns } from './reach';
+import { DROP, ReachMap, STEP, type ReachColumns } from './reach';
 import { solidSpans } from './solid';
-import { reachWhyLine, wouldCutLine, type ReachWhy } from './words';
+import { cutWarnLine, reachWhyLine, variantLine, wouldCutLine, type ReachWhy, type VariantKind } from './words';
 import { WAY_SQUARE } from './ways';
 import { LANE_DEFAULTS, lanesOf, nearSeg, type LaneOpts, type Lanes } from './lanes';
 
@@ -49,6 +49,11 @@ export interface FortressStatus {
   /** no grain: nobody new comes */
   hungry: boolean;
 }
+
+/** (round 128h) the most gates (or ramps) tried for a placement that cut blocks off: the nearest first */
+const VARIANT_TRIES = 10;
+
+const dist = (a: readonly number[], b: readonly number[]) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 
 /** (round 128e) the old town's tallest thing above its ground (m): a ray is asked about it only lower than this */
 const TOWN_H = 45;
@@ -117,6 +122,14 @@ export class Fortress {
   readonly onMode: ((m: FortressMode) => void)[] = [];
   /** (round 128f) why the last press planned nothing (a block the stores couldn't reach): the panel says it */
   refusal: string | null = null;
+  /**
+   * (round 128h, V128-13) after the last press: the way it kept open (a gate, a passage, a ramp — the panel's line) and
+   * the cell it went on; or the cells it cut off when nothing could (outlined in red) and the panel's line
+   */
+  variant: string | null = null;
+  variantAt = -1;
+  warning: string | null = null;
+  warnCells: number[] = [];
   /** (round 128f) the lanes and the roads a lane wide (lanes.ts), made again after the plan changes */
   private lanesMemo: Lanes | null = null;
   /** (round 128f) the lanes' spacing per district (the town's, the fields'): the road frequency */
@@ -418,12 +431,130 @@ export class Fortress {
   }
 
   paint(cell: number, level: number, type: StructureType): boolean {
-    // (round 128f: the check at placement) a block the stores can't reach isn't planned, nor one that would shut others off
-    if (!this.plan.has(cell, level)) {
-      const why = this.placeWhy(cell, level, type);
-      if (why) return this.refuse(why);
+    this.warnCells = [];
+    this.variant = null;
+    // (round 128f: the check at placement) a block the stores can't reach isn't planned — (round 128h, V128-13) unless a
+    // ramp up the drop in the way lets them
+    if (this.plan.has(cell, level) || (level > 0 && this.plan.has(cell, level - 1))) return this.apply(() => this.plan.paint(cell, level, type), cell);
+    const solid = DEFS[type].form !== 'yard';
+    const after = this.reachMap(solid ? [cell] : []);
+    if (!after) return this.apply(() => this.plan.paint(cell, level, type), cell);
+    let ramped = false;
+    if (!this.reachedIn(after, cell)) {
+      const why = this.whyNot(cell);
+      if (why !== 'cliff' || !this.rampTo([cell], () => this.reachMap(solid ? [cell] : []), cell)) return this.refuse(reachWhyLine(why));
+      ramped = true;
     }
-    return this.apply(() => this.plan.paint(cell, level, type), cell);
+    // (round 128h, V128-13; the user: "Yeah I would indicate that those will block or introduce block variants so they
+    // don't") a block that would shut planned blocks off is placed as a variant that keeps the way open — a gate in the
+    // wall, a passage through the block, a ramp up a drop — or, when none does, placed with the cut-off cells outlined
+    // (judged with the block painted: a wall cell joins its neighbours' bands — painted, not a solid cell, is what stands)
+    const before = solid ? this.reachMap() : null;
+    const was = before ? this.todoCells().filter((c) => c !== cell && this.reachedIn(before, c)) : [];
+    if (!this.apply(() => this.plan.paint(cell, level, type), cell)) return false;
+    const now = was.length ? this.reachMap()! : null;
+    const cut = now ? was.filter((c) => !this.reachedIn(now, c)) : [];
+    if (ramped) this.variant = variantLine('ramp', type);
+    if (cut.length) this.keepOpen(cell, type, cut);
+    for (const h of this.onChange) h();
+    return true;
+  }
+
+  /**
+   * (round 128h, V128-13) After a block was placed that cut `cut` (cells still to build) off from the stores: the first
+   * variant by rule that reaches them all again — a gate in the wall it closed (the straight wall cell nearest the
+   * stores), a passage through the block's ground floor, a ramp up a drop left in the way. None: the cells still cut off
+   * are outlined (warnCells) and the panel says which.
+   */
+  private keepOpen(cell: number, type: StructureType, cut: number[]): void {
+    const left = () => {
+      const m = this.reachMap();
+      return m ? [...cut, cell].filter((c) => !this.reachedIn(m, c)) : [];
+    };
+    const form = DEFS[type].form;
+    if (form === 'wall') {
+      const s = this.plan.structureAt(cell)!;
+      const at = this.storesAt()!;
+      const tries = [...s.cells.keys()]
+        .filter((c) => !this.plan.gate[c] && this.plan.levels.bottom(c) === 0 && this.plan.wallTile(c, 0) === 'straight')
+        .sort((a, b) => dist(this.centre(a), at) - dist(this.centre(b), at))
+        .slice(0, VARIANT_TRIES);
+      for (const c of tries) {
+        this.plan.setGate(c, true);
+        this.waysMemo = null;
+        if (!left().length) return this.kept('gate', type, c);
+        this.plan.setGate(c, false);
+        this.waysMemo = null;
+      }
+    } else if (form === 'block') {
+      this.plan.setPassage(cell, true);
+      this.waysMemo = null;
+      if (!left().length) return this.kept('passage', type, cell);
+      this.plan.setPassage(cell, false);
+      this.waysMemo = null;
+    }
+    const still = left();
+    if (still.length && this.rampTo(still, () => this.reachMap(), cell)) {
+      const rest = left();
+      if (!rest.length) return this.kept('ramp', type, cell);
+    }
+    this.sync();
+    this.warnCells = left();
+    const types = [...new Set(this.warnCells.map((c) => this.plan.typeAt(c)!))];
+    this.warning = this.warnCells.length ? cutWarnLine(types) : null;
+  }
+
+  private kept(kind: VariantKind, type: StructureType, at: number): void {
+    this.variant = variantLine(kind, type);
+    this.variantAt = at;
+    this.sync();
+  }
+
+  /**
+   * (round 128h, V128-13) A ramp that lets the stores reach every one of `cells` (with `map` the reach as it would be):
+   * the drops the agents walk down but not up (a column reached one way beside one reached both, a rise over a step
+   * and no more than a drop) on free cells, nearest the cells first; each tried in turn. False (and no ramp): none does.
+   */
+  private rampTo(cells: number[], map: () => ReachMap | null, also = -1): boolean {
+    const m = map();
+    if (!m) return false;
+    const g = this.grid;
+    const [ox, oy] = this.offset();
+    const [x0, y0, x1, y1] = m.box;
+    const tried = new Set<number>();
+    const tries: { cell: number; side: number; d: number }[] = [];
+    const targets = cells.map((c) => this.centre(c));
+    for (let y = y0; y < y1; y++)
+      for (let x = x0; x < x1; x++) {
+        if (!m.oneWay(x, y)) continue;
+        const zLow = m.topZ(x, y);
+        for (let d = 0; d < 6; d++) {
+          const [qx, qy] = nbr(x, y, d);
+          if (!m.reached(qx, qy)) continue;
+          const rise = m.topZ(qx, qy) - zLow;
+          if (!(rise > STEP && rise <= DROP)) continue;
+          const c = g.cellOf[(y - oy) * this.box.w + (x - ox)];
+          const n = g.cellOf[(qy - oy) * this.box.w + (qx - ox)];
+          if (c < 0 || n < 0 || c === n || c === also || this.plan.owner[c] >= 0 || this.plan.ramp[c] >= 0) continue;
+          const side = [0, 1, 2, 3].find((e) => g.nbr[c * 4 + e] === n);
+          if (side === undefined || tried.has(c * 4 + side)) continue;
+          tried.add(c * 4 + side);
+          const [wx, wy] = cellPos(x, y);
+          tries.push({ cell: c, side, d: Math.min(...targets.map((t) => dist([wx, wy], t))) });
+        }
+      }
+    tries.sort((a, b) => a.d - b.d);
+    for (const t of tries.slice(0, VARIANT_TRIES)) {
+      this.plan.setRamp(t.cell, t.side);
+      const after = map();
+      if (after && cells.every((c) => this.reachedIn(after, c, also))) {
+        this.sync();
+        return true;
+      }
+      this.plan.setRamp(t.cell, -1);
+    }
+    this.plan.takeChanged();
+    return false;
   }
 
   private refuse(why: string): boolean {
@@ -538,25 +669,6 @@ export class Fortress {
     return out;
   }
 
-  /**
-   * (round 128f; the user: "we should always be able to reach blocks where we can place and say why we can't reach a
-   * block not yet placed") Why a block can't be planned at (cell, level): the stores can't reach the cell (deep water,
-   * walled in, a cliff or a building), or planning it would shut planned blocks off. Null: it can (or the columns aren't
-   * read yet). A block over one already planned is reached as that one is.
-   */
-  placeWhy(cell: number, level: number, type: StructureType): string | null {
-    if (level > 0 && this.plan.has(cell, level - 1)) return null;
-    const solid = DEFS[type].form !== 'yard';
-    const after = this.reachMap(solid ? [cell] : []);
-    if (!after) return null;
-    if (!this.reachedIn(after, cell)) return reachWhyLine(this.whyNot(cell));
-    if (!solid) return null;
-    const before = this.reachMap()!;
-    const cut = new Set<StructureType>();
-    for (const c of this.todoCells()) if (c !== cell && this.reachedIn(before, c) && !this.reachedIn(after, c, cell)) cut.add(this.plan.typeAt(c)!);
-    return cut.size ? wouldCutLine([...cut]) : null;
-  }
-
   /** (round 128f) why shutting a gate is refused: the blocks it would shut off (null: none) */
   private gateWhy(cell: number): string | null {
     const before = this.reachMap();
@@ -616,20 +728,62 @@ export class Fortress {
       const c = this.cellAt(x + Math.cos(a) * r, y + Math.sin(a) * r);
       if (c >= 0 && seq[seq.length - 1] !== c) seq.push(c);
     }
+    while (seq.length > 1 && seq[seq.length - 1] === seq[0]) seq.pop();
     const nb = (a: number, b: number) => [0, 1, 2, 3].some((e) => g.nbr[a * 4 + e] === b);
-    const out: number[] = [];
+    // (round 128h, FT-57: the old join — one cell beside both, a cell seen twice skipped — left the ring open where the
+    // circle met its start: two cells a corner apart, a 12-column gap in a radius-18 ring. Now every two cells in turn,
+    // the last and the first too, are joined by the cheapest way along the circle, side to side; a loop the walk makes
+    // back onto itself is cut out)
+    const [bx, by] = this.toBox(x, y);
+    const off = (c: number) => {
+      const [cx, cy] = g.centre(c);
+      return Math.abs(Math.hypot(cx - bx, cy - by) - r);
+    };
+    const join = (a: number, b: number): number[] => {
+      // (Dijkstra over sides, a step costing 1 and how far off the circle it lands: the cells between a and b)
+      const cost = new Map<number, number>([[a, 0]]);
+      const from = new Map<number, number>();
+      const open = [a];
+      while (open.length) {
+        open.sort((p, q) => cost.get(q)! - cost.get(p)!);
+        const c = open.pop()!;
+        if (c === b) break;
+        if (cost.get(c)! > 40) continue;
+        for (let e = 0; e < 4; e++) {
+          const m = g.nbr[c * 4 + e];
+          if (m < 0) continue;
+          const k = cost.get(c)! + 1 + off(m) * 0.5;
+          if (k < (cost.get(m) ?? Infinity)) {
+            cost.set(m, k);
+            from.set(m, c);
+            open.push(m);
+          }
+        }
+      }
+      if (!from.has(b)) throw new Error(`fortress: ringCells couldn't join cells ${a} and ${b}`);
+      const path: number[] = [];
+      for (let c = from.get(b)!; c !== a; c = from.get(c)!) path.push(c);
+      return path.reverse();
+    };
+    let out: number[] = [];
     for (let i = 0; i < seq.length; i++) {
       const a = seq[i];
       const b = seq[(i + 1) % seq.length];
-      if (!out.includes(a)) out.push(a);
-      if (a === b || nb(a, b)) continue;
-      // (corner to corner: a cell beside both joins them)
-      for (let e = 0; e < 4; e++) {
-        const m = g.nbr[a * 4 + e];
-        if (m >= 0 && nb(m, b)) {
-          if (!out.includes(m)) out.push(m);
-          break;
+      out.push(a);
+      if (a !== b && !nb(a, b)) out.push(...join(a, b));
+    }
+    // (a cell the walk comes back to: the shorter way round between the two visits is a loop off the ring, cut out)
+    for (let again = true; again; ) {
+      again = false;
+      const at = new Map<number, number>();
+      for (let j = 0; j < out.length && !again; j++) {
+        const i = at.get(out[j]);
+        if (i === undefined) {
+          at.set(out[j], j);
+          continue;
         }
+        out = j - i <= out.length / 2 ? [...out.slice(0, i), ...out.slice(j)] : out.slice(i, j);
+        again = true;
       }
     }
     // (a cell whose two neighbours in the loop touch each other is a kink: dropped, so the loop runs one cell wide)
@@ -645,6 +799,8 @@ export class Fortress {
         }
       }
     }
+    for (let i = 0; i < out.length; i++)
+      if (!nb(out[i], out[(i + 1) % out.length])) throw new Error(`fortress: ringCells left the ring open at ${out[i]}`);
     return out;
   }
 
@@ -731,6 +887,10 @@ export class Fortress {
   private apply(f: () => boolean, cell: number): boolean {
     if (!this.ready || !f()) return false;
     this.refusal = null;
+    this.variant = null;
+    this.variantAt = -1;
+    this.warning = null;
+    this.warnCells = [];
     this.selected = this.plan.owner[cell] >= 0 ? this.plan.owner[cell] : this.selected;
     if (this.selected !== null && !this.plan.structure(this.selected)) this.selected = null;
     this.sync();

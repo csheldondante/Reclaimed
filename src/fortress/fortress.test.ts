@@ -10,7 +10,7 @@ import { DEFS } from './defs';
 import { cityPlanOf, fortressPieces } from './pieces';
 import { noWays } from './ways';
 import { FortressPlan, wallTileOf } from './plan';
-import { goodsText, planLines, structureLines, typeLines } from './words';
+import { cutWarnLine, goodsText, planLines, structureLines, typeLines, variantLine } from './words';
 
 const grid = new TownGrid(80, 92, { seed: 7 });
 const nbr = (c: number, e: number) => grid.nbr[c * 4 + e];
@@ -237,7 +237,10 @@ describe('the planning panel reads plainly (docs/WRITING.md)', () => {
     for (const t of STRUCTURE_TYPES) {
       lines.push(...typeLines(DEFS[t]));
       lines.push(...structureLines(DEFS[t], 3, { log: 6, stone: 3 }, { beds: 4, jobs: 2, posts: 2, storage: 50, makes: { grain: 2 } }));
+      // (round 128h) the ways kept open, and what a placement cut off
+      for (const k of ['gate', 'passage', 'ramp'] as const) lines.push(variantLine(k, t));
     }
+    lines.push(cutWarnLine(['house']), cutWarnLine(['house', 'farm', 'fortress']));
     lines.push(...planLines(p.totals({ log: 2 }), { log: 2 }));
     lines.push(...planLines(p.totals({ log: 99, stone: 99 }), { log: 99, stone: 99 }));
     for (const l of lines) expect(lint(l), l).toEqual([]);
