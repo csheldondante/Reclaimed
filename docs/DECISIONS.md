@@ -600,6 +600,19 @@ each was implemented.
   long ones) to a walk along its top. Drawn as paving and stone steps; the steps and the wall-walk are solid, so units
   climb them. The warehouse's card speaks of the town's stores against all the warehouses' room, then this one's part.
 
+## 2026-11-04 — round 128i (session 5, `fortress`) — the town flickers while the window slides
+
+- The user, verbatim, with the Pixel 9a town bench report (fortress 11efc57 asked for; the page served was the deploy
+  before it, cf31987 — its JSON is version 1, without legs, travel or busy): "This one was much less smooth and has
+  flickering of the town (position jumping) but the window clearly pans since I can see the seam of the fully loaded vs
+  visual only tiles"
+- → Root cause fixed: the slide (camera, window origin, what lives in window coordinates) runs right after the camera
+  moves, before the towns' grid rows, the fortress's road stamp and the rest are written that frame — not after them —
+  so a slide's frame draws the town where it is. The town's claims after a slide are spread over frames. The bench
+  splits slide frames from the rest, the view's ms by part, the steps on slide frames, and runs with the towns hidden
+  (?townview=0) to tell the town's cost from the streaming's; a report names the build that ran. (DEVLOG round 128i
+  townflicker; BACKLOG FT-67.)
+
 ## 2026-11-04 — round 128h (session 5, `fortress`) — placements open a way instead of being refused
 
 - On the reach rules (a drop walkable down but not up counts as no way; a fourth wall that shuts a block in is

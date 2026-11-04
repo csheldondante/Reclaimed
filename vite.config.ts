@@ -2,6 +2,7 @@ import { defineConfig, type Plugin } from 'vite';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { execSync } from 'node:child_process';
 import { genHash } from './scripts/lib/gen-sources.mjs';
 
 /** (round 112, testspeed) the build's content: every file of src/ and data/ and the pages — the player's warm cache
@@ -65,13 +66,23 @@ function hitchSink(): Plugin {
   };
 }
 
+/** the commit being built (short), 'unknown' outside a git checkout */
+function commitOf(): string {
+  try {
+    return execSync('git rev-parse --short HEAD', { cwd: import.meta.dirname, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+  } catch {
+    return 'unknown';
+  }
+}
+
 export default defineConfig({
   // relative asset paths: the build works from any folder (GitHub Pages serves it at /Reclaimed/)
   base: './',
   // (round 114, worldstore: __GEN_HASH__ the land generator's version — scripts/lib/gen-sources.mjs; a saved region
   // made by another is dropped and made again. The dev server reads it at start: restart it after editing the generator.)
   // (round 102, bench v3: the build's time on the benchmark's start page — src/perf/bench.ts BUILD)
-  define: { __BENCH_BUILD__: JSON.stringify(new Date().toISOString().slice(0, 16).replace('T', ' ')), __BUILD_HASH__: JSON.stringify(contentHash()), __GEN_HASH__: JSON.stringify(genHash(import.meta.dirname)) },
+  // (round 128i, FT-67: the commit built — a bench report says which build ran; a Pixel 9a report came from a stale deploy)
+  define: { __BUILD_COMMIT__: JSON.stringify(commitOf()), __BENCH_BUILD__: JSON.stringify(new Date().toISOString().slice(0, 16).replace('T', ' ')), __BUILD_HASH__: JSON.stringify(contentHash()), __GEN_HASH__: JSON.stringify(genHash(import.meta.dirname)) },
   server: { port: 5173, strictPort: true },
   // (round 117, flora: flora.html — the flora viewer page, src/flora/viewer.ts)
   // (round 112, testspeed: contract.html — the contract tier's page, src/test/contract.ts: a system on a tiny world)

@@ -252,7 +252,11 @@ export class ExternalRegistry {
   epoch = 0;
   stats ={ claimed: 0, cut: 0, loose: 0, released: 0, orphans: 0, live: 0, cells: 0, ms: 0 };
 
-  constructor(private cols: ColumnAccess) {}
+  constructor(private cols: ColumnAccess) {
+    // (round 128i, FT-67: the cells counted when they're read, not at every claim and release — that walk over every
+    // instance's every column was most of a town's claim, and ran once a building let go on a slide)
+    Object.defineProperty(this.stats, 'cells', { enumerable: true, get: () => this.cells() });
+  }
 
   /** An owner (a fixed small id). */
   owner(id: OwnerId, o: ExternalOwner): void {
@@ -497,9 +501,13 @@ export class ExternalRegistry {
 
   private count(): void {
     this.stats.live = this.list.size;
+  }
+
+  /** the cells every instance holds */
+  private cells(): number {
     let n = 0;
     for (const i of this.list.values()) for (const c of i.cols) n += c.z1 - c.z0;
-    this.stats.cells = Math.round(n);
+    return Math.round(n);
   }
 }
 

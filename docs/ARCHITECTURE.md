@@ -1011,6 +1011,11 @@ its edge:
 - The CPU's window coordinates move too: the camera, the weather
   (`Weather.shift`), the map's surface heights, the level's surface cache
   (`onSlide`); the undo ring is cleared; particles in the air are dropped.
+  **In the frame** (round 128i, FT-67): `Level.frame` runs the planner and `Streamer.update()` right after the camera
+  moves and before anything that reads or writes window coordinates (the towns' grid rows, the fortress's road stamp,
+  units, claims): the slide's synchronous part (camera, origin, `onShift`, `onSlide`) lands first, so that frame's
+  writes are for the window as it now is and reach the GPU before its draw. A consumer updated before the slide drew a
+  region off for one frame (scripts/townslide.mjs checks every frame).
 - **When** (round 98, `streamspeed`): the slide waits until every region it brings in is ready — made ahead (the
   prefetch), checked for what changed while it was away (`since`), its relief made — and then moves the window and
   writes the strip in a frame or two (`WRITE_MS`); `busy` (the sim stopped, the meshes held) only for that. The

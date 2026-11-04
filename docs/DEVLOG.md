@@ -17130,3 +17130,53 @@ road through a passage, a ramp's road not paved (`LANE_DRAWN`). Unit tests pass 
 scripts/fortresslanes.mjs builds and measures: flat site, walking builders on a road or lane 16% of the time against
 roads covering 9% of the ground round them (weak: tuning to do); the hill site search found none this run. **Not
 done:** shots looked at and tuned, the hill site, GIF, ARCHITECTURE/DECISIONS entries.
+
+## 2026-11-04 — round 128i (`fortress`, townflicker): the town no longer jumps on a slide; slide frames measured apart (FT-67)
+
+**Why.** The user's Pixel 9a town bench: "This one was much less smooth and has flickering of the town (position
+jumping) but the window clearly pans since I can see the seam of the fully loaded vs visual only tiles". Zoom 2.6: 22
+slides, frame p95 33.3 ms, 38 frames over 33 ms; zoom 1.3: 17 over 33; view ms max 12.5 / 10. The run before, with 0
+slides, was a flat 16.7 ms: the hitches come with slides. The report was version 1 (no legs, travel, busy): the page the
+phone got was cf31987, not 11efc57 — the places deploy that carried 11efc57 was queued at 16:05 UTC and finished at
+16:35, after the run (16:10); the next one (16:19) failed at deploy-pages. The deployed fortress now serves bench v2.
+
+**Cause 1, the jump (proved, fixed).** `Level.frame` ran `SettlementsView.update()` (the towns' grid rows written for
+the window as it was) and only later `Streamer.update()`, whose slide moves the camera, the window's origin and
+everything in window coordinates synchronously. That frame drew the shifted camera with the old rows: the town a
+region off for one frame, put back the next. scripts/townslide.mjs (new) projects a point of every drawn town each frame
+right after the draw, through the row the GPU holds (every setGrid mirrored) and through the row it should hold:
+before, 131.6 px off on slide frames at zoom 2.6 (65.8 at 1.3), the drawn point jumping 220 px in a frame against a
+median move of 1 px; after, 0 px off on every frame, slide frames' largest move 5.3 px, the same as other frames'.
+Fix: the planner and `Streamer.update()` run right after the camera moves, before anything that reads or writes window
+coordinates — the towns' rows, the fortress's grid and its road stamp, units, claims — so the slide and those writes
+land in the same frame, ahead of its draw (ARCHITECTURE "In the frame"). The road stamp's offset is also set from
+onSlide (`FortressLife.roads()`): its update doesn't run while the streamer's busy.
+
+**Cause 2, the hitches (measured; the town's part trimmed).** The bench now splits it. Headless (412x915, the final build), frames over 33 ms as slide / the 6 after / the rest: towns shown 2 / 5 / 21
+(zoom 2.6) and 0 / 1 / 26 (1.3); towns hidden (?townview=0) 0 / 2 / 36 and 0 / 1 / 35. Slide frames' p50 9.7 ms against
+9.6 hidden, the CPU steps on them 9.0 / 8.2 ms p50 shown against 8.6 / 7.6 hidden (slide.*, write, render): on the
+desktop the town adds well under a millisecond to a slide frame and the streaming is the rest; headless frames are
+noisy (the over-33s fall on other frames as much), the phone's report decides. The view's part on slide frames: grid rows 0.1-0.2 ms, the screen 0.1, the claims 0.2. Its worst frame was
+not the slide's but the frames after, when the town claims its buildings again (the land comes in region by region):
+claims up to 4.3 ms on the desktop proxy (the phone's 12.5 ms view max). Two changes: a building is turned down on its
+bounds before its column list is made (most are out of the window or on land still coming in, asked again on every
+region written), and at most 200 columns are claimed a frame (`CLAIM_COLS`), the rest the next frames. View ms p95
+0.3 / 0.8 → 0.1 / 0.2 ms at zooms 2.6 / 1.3; the claims' worst frame 3.5 / 2.6 ms (a single big building can pass the budget; view max 3.6 / 2.6 ms). What's
+left of a claim is the CPU's copy of the columns (FT-68: this level keeps it for judge 'runs'; ~5 µs a column read,
+claimed and mirrored); the registry's cell count no longer walks every instance at each claim and release.
+
+**The bench (version 3).** Per row: `slideFrameMs` (the frame interval a slide ran in, from the streamer's onSlide),
+`afterSlideMs` (the 6 after: the regions written), `otherFrameMs`, and their over-33 counts; `viewSlide` / `viewAll`:
+the view's ms by part (grid rows and shown, the screen, claims, the look ahead); `slideSteps`: the CPU steps on slide
+frames (cpustat taps: slide.*, write, judge.pass, render …) each with its max and mean, and `slideStepsMs`; `towns`.
+The report names the build (`build: { commit, at }`, vite's `__BUILD_COMMIT__`) and the panel shows it, so a stale
+deploy shows. `?townview=0`: no settlements view (the towns not drawn or claimed) — the slide's own cost.
+
+**Gates.** typecheck; unit 650 passed (fortress/reach.test.ts's gate test timed out at 5 s under the full run's load,
+passes alone: not this change); GPU tier 135 passed. townslide passes (above); townbenchcheck passes shown and hidden;
+townpan --expect-grid: 0 pops, 0 uploads a slide (1.0 / 2.4 KB of grid rows), 18 slides a zoom; hallcheck: 0 lost of
+114 claimed over 2 towns. tilegate against places' run the same hour (C:/Projects/shots88/townflicker/tilegate-*): the
+same golden failures (the wide views 37-59%, both), the fast pans over the sea scattered both ways (desktop-z8 7.07%
+vs places 14.92%, w384-z8 22.9% vs 3.2%); an A/B of w384 z14/z8 fast pans with only the frame order reverted, two runs
+each: new 14.3/36.6 and 0.8/0.3, old 0.8/16.5 and 0.8/2.3 — noise, not the order. Shots looked at: land, trees, river
+drawn; the fast-pan fails are open sea.

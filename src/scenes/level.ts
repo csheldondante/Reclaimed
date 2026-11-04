@@ -1847,34 +1847,40 @@ export class LevelScene implements Scene {
           ready: (at) => (this.worldApi ??= attachSim(core)).fresh && terrainApi().heightAt(at[0], at[1]) !== null,
           budget: Number(host.params.get('townfolk') ?? ((host.quality.agentSweeps ?? 8) <= 2 ? 28 : 48)),
         });
-        // (round 119) the settlements drawn as structures and their buildings' columns claimed (settle/view.ts); its
-        // slide hooks after Integrity's (the registry has moved when it claims again)
-        const view = new SettlementsView(
-          {
-            device: host.gpu.device,
-            renderer: core.renderer,
-            external: () => this.integrity?.external ?? null,
-            dims: { w: dims.w, h: dims.h },
-            oz: () => S.oz,
-            viewProj: () => core.camera.viewProj,
-            focusZ: () => core.camera.focus?.[2] ?? core.camera.target[2],
-            landed: (x0, y0, x1, y1) => landedIn(S, x0, y0, x1, y1),
-            touched: (x0, y0, x1, y1) => this.hybrid?.edit((x0 + x1) / 2, (y0 + y1) / 2, Math.max(x1 - x0, y1 - y0) / 2),
-            dust: (x, y, z, n) => core.sim.particles.burst({ kind: PK.Dust, x, y, z, count: n, speed: 2, spread: 1.2 }),
-          },
-          st,
-        );
-        this.settlementsView = view;
-        // (round 120) the sailing ships between the ports (settle/ships.ts, shipsview.ts), drawn with the towns' pieces
-        if (host.params.get('ships') !== '0')
-          this.shipsView = new ShipsView({ sg: view.sg, toWindow: (p) => st.toWindow(p), oz: () => S.oz, focus: () => [core.camera.target[0], core.camera.target[1]], time: () => core.globals.time, sea: a!.atlas.p.sea, style: 'hearth' }, st.fleet);
-        S.onBeforeSlide.push((dx, dy) => view.beforeSlide(dx, dy));
-        S.onSlide.push(() => view.slid());
-        S.onWarp.push(() => view.slid());
-        // (round 128g: land written into the window — a building on it may claim now, its land no longer coming in)
-        S.onRelief.push(() => view.landed());
-        if (host.params.get('towndebug') === '1') this.townDebug = new TownDebug(host.ui, st, core.camera, (x, y) => this.heightAt(x, y));
-        if (host.params.get('fortress') === '1') this.startFortress(st, view, a!.startTown);
+        // (round 128i, FT-67) ?townview=0: the towns not drawn nor claimed (no settlements view) — the town bench's split of
+        // a slide's cost between the towns and the terrain streaming (src/perf/townbench.ts)
+        if (host.params.get('townview') === '0') {
+          if (host.params.get('fortress') === '1') throw new Error('?fortress=1 needs the settlements view: not with ?townview=0');
+        } else {
+          // (round 119) the settlements drawn as structures and their buildings' columns claimed (settle/view.ts); its
+          // slide hooks after Integrity's (the registry has moved when it claims again)
+          const view = new SettlementsView(
+            {
+              device: host.gpu.device,
+              renderer: core.renderer,
+              external: () => this.integrity?.external ?? null,
+              dims: { w: dims.w, h: dims.h },
+              oz: () => S.oz,
+              viewProj: () => core.camera.viewProj,
+              focusZ: () => core.camera.focus?.[2] ?? core.camera.target[2],
+              landed: (x0, y0, x1, y1) => landedIn(S, x0, y0, x1, y1),
+              touched: (x0, y0, x1, y1) => this.hybrid?.edit((x0 + x1) / 2, (y0 + y1) / 2, Math.max(x1 - x0, y1 - y0) / 2),
+              dust: (x, y, z, n) => core.sim.particles.burst({ kind: PK.Dust, x, y, z, count: n, speed: 2, spread: 1.2 }),
+            },
+            st,
+          );
+          this.settlementsView = view;
+          // (round 120) the sailing ships between the ports (settle/ships.ts, shipsview.ts), drawn with the towns' pieces
+          if (host.params.get('ships') !== '0')
+            this.shipsView = new ShipsView({ sg: view.sg, toWindow: (p) => st.toWindow(p), oz: () => S.oz, focus: () => [core.camera.target[0], core.camera.target[1]], time: () => core.globals.time, sea: a!.atlas.p.sea, style: 'hearth' }, st.fleet);
+          S.onBeforeSlide.push((dx, dy) => view.beforeSlide(dx, dy));
+          S.onSlide.push(() => view.slid());
+          S.onWarp.push(() => view.slid());
+          // (round 128g: land written into the window — a building on it may claim now, its land no longer coming in)
+          S.onRelief.push(() => view.landed());
+          if (host.params.get('towndebug') === '1') this.townDebug = new TownDebug(host.ui, st, core.camera, (x, y) => this.heightAt(x, y));
+          if (host.params.get('fortress') === '1') this.startFortress(st, view, a!.startTown);
+        }
       }
     }
     (window as unknown as { reclaimed: unknown }).reclaimed = Object.assign(api, {
@@ -2389,6 +2395,18 @@ export class LevelScene implements Scene {
       }
       this.confineToReach();
     }
+    // (round 113, tilesfirst — the planner: one footprint, each layer's reach from its measured latency at the camera's
+    // speed, holes first and rendering before simulation; scenes/planner.ts)
+    this.planFrame();
+    // (a slide in progress: the sim waits for the regions coming in)
+    // (round 128i, FT-67; the user on the Pixel 9a: "flickering of the town (position jumping)") The slide runs here,
+    // right after the camera moved and before anything this frame reads or writes window coordinates: its synchronous
+    // part moves the camera, the window's origin and what the game keeps in window coordinates (onShift, onSlide), so
+    // the towns' grid rows (SettlementsView.update), the fortress's road stamp (FortressLife.update) and the rest are
+    // written for the window as it is now and land before this frame's draw. Run after them (as it was), the slide
+    // moved the camera after the rows were written: the town drew a region off for one frame (131.6 px at zoom 2.6,
+    // scripts/townslide.mjs) and jumped back the next.
+    void this.stream?.update();
     this.director.update(dt);
     // geysers (round 75)
     if (this.opts.atlas) this.stepGeysers(dt * this.speed);
@@ -2479,11 +2497,6 @@ export class LevelScene implements Scene {
     const lc = this.hoverWorld ?? [camera.target[0], camera.target[1]];
     globals.lens = [lc[0], lc[1], 24, this.lensK < 0.01 ? 0 : this.lensK];
 
-    // (round 113, tilesfirst — the planner: one footprint, each layer's reach from its measured latency at the camera's
-    // speed, holes first and rendering before simulation; scenes/planner.ts)
-    this.planFrame();
-    // (a slide in progress: the sim waits for the regions coming in)
-    void this.stream?.update();
     // (hybrid) what's voxels this frame: the events edit what they touch; the focus is the camera's target
     // (round 86) a cut's chunks (a dig, a crater) are meshed the next frame, whatever the tier's rebuild budget (fieldmesh.ts urgent)
     // (a crater's radius is its ejecta's, 2.5 times its bowl's: the dust lands later, through the sediment)
@@ -3100,6 +3113,9 @@ export class LevelScene implements Scene {
     S.onSlide.push(() => claims.slid());
     S.onWarp.push(() => claims.slid());
     S.onRelief.push(() => claims.landed());
+    // (round 128i, FT-67) the road stamp's offset moved in the slide's own frame, as the towns' grid rows are
+    S.onSlide.push(() => this.fortressLife?.roads());
+    S.onWarp.push(() => this.fortressLife?.roads());
     // (round 128d) Build: the plan goes to the builders and time runs (at ?speed=); Plan: time stops again
     // (round 128e, FT-50) the speed picked while building (1x, 4x, 16x), and Skip to done
     let runSpeed = Math.max(1, Number(this.host.params.get('speed') ?? 1));

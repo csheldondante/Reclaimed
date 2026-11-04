@@ -216,6 +216,15 @@ export class FortressLife implements Routine {
     return this.order;
   }
 
+  /**
+   * The road shapes and the box's offset in the window to the agents (stamped on the GPU when either changed). Each
+   * update, and (round 128i, FT-67) from the window's slide itself (level.ts onSlide): the offset moved in the slide's
+   * frame, before the agents' next step — update doesn't run while the streamer's busy.
+   */
+  roads(): void {
+    this.io.units.agents.setRoads(this.io.fort.roadShapes(), ...this.io.fort.offset());
+  }
+
   /** each frame (sim time): the economy, the jobs, the newcomers, the fields seeded */
   update(dt: number): void {
     this.t += dt;
@@ -223,7 +232,7 @@ export class FortressLife implements Routine {
     if (alive.length !== this.ids.length) this.ids.splice(0, this.ids.length, ...alive);
     this.checkReach();
     // (round 128i, FT-58: the road shapes stamped on the GPU — again only when the lanes or the box's offset change)
-    this.io.units.agents.setRoads(this.io.fort.roadShapes(), ...this.io.fort.offset());
+    this.roads();
     if (dt > 0) this.economy(dt);
     if (this.t - this.jobsAt >= JOBS_S) {
       this.jobsAt = this.t;
