@@ -386,6 +386,8 @@ export class Agents implements SimSystem {
   private hits: (HitSpec & { id: number })[] = [];
   private nextHit = 1;
   private targets: Target[] = [];
+  /** (round 128f) places a game keeps in the fields' scope (window world x, y) by key: keepInScope */
+  private kept = new Map<string, readonly (readonly [number, number])[]>();
   private holds = new Map<number, [number, number, number]>();
   private launches: [number, number, number, number][] = [];
   private regroups: number[] = [];
@@ -780,6 +782,18 @@ export class Agents implements SimSystem {
     }
     this.seeds = [...rest, ...seeds.map((s) => ({ ...s, field: f }))];
     this.fieldsUsed = Math.max(this.fieldsUsed, f + 1);
+  }
+
+  /**
+   * (round 128f; the user: "agents seem to not be able to path through the city or farms to buildings at the
+   * peripheral") Places (window world x, y) the fields must reach though nobody stands there and no field is seeded on
+   * them yet — a routine's far destinations, read from a field before anyone walks there (the fortress's blocks still to
+   * build, asked whether the stores' field reaches them). The scope (agents/scope.ts) is a box round what the agents
+   * do: past it every field reads no way. Replaces what `key` kept before; [] lets go.
+   */
+  keepInScope(key: string, pts: readonly (readonly [number, number])[]): void {
+    if (pts.length) this.kept.set(key, pts.slice());
+    else this.kept.delete(key);
   }
 
   /**
@@ -1383,6 +1397,7 @@ export class Agents implements SimSystem {
     const pts: [number, number][] = [];
     for (const s of this.seeds) pts.push([s.x, s.y / ROW_H]);
     for (const g of this.targets) pts.push([g.x, g.y / ROW_H]);
+    for (const k of this.kept.values()) for (const p of k) pts.push([p[0], p[1] / ROW_H]);
     for (const p of this.holds.values()) pts.push([p[0], p[1] / ROW_H]);
     for (const f of this.flights) pts.push([f.pos[0], f.pos[1] / ROW_H]);
     const { list, enter } = sc.update(pts, this.ticks);

@@ -3474,3 +3474,13 @@ The building rule (the user's): select what (a structure type), then plan it wit
   `peopleLine`) and Inspect (`InspectLive`). **Roads (FT-46):** `Agents.setRoads(window columns)` → agents.wgsl `roads`
   (binding 40, a bit per window column, window order): a step between road columns costs ROAD_COST 0.5, one end on a
   road 0.75; FortressLife sets `Fortress.roadCols()` (road and square cells) every JOBS_S (and after a slide).
+- **Round 128f (reach: the check at placement).** `fortress/reach.ts` (pure, tested): `ReachMap(columns, stores, {box,
+  extra, deep})` — the agents' rules on the CPU (AGENT_H, STEP, DROP, DEEP, NAV_K mirrored from agents.wgsl: keep them in
+  step), a search each way from the stores; `reached(x, y)` = a walker from the stores gets to the column's top surface
+  and back. `FortressIO.columns()` (`ReachColumns`: the window's solid runs and water, read by level.ts from 'layers' and
+  'water' when planning starts and every 3 s while building) and `FortressIO.townHeap()`. `Fortress.reachMap(extra,
+  {deep, fortress})` lays the plan over the columns as if built (solid.ts with a Town whose built levels are the plan's),
+  `standsOf`, `reachedIn`, `placeWhy` (paint refuses with `Fortress.refusal`, the panel's line), gates shut likewise.
+  FortressLife's cut-off (`unreachable`, Skip's reason) is this check on each new read, not the heap's GPU field.
+  `Agents.keepInScope(key, points)`: places the fields' scope (agents/scope.ts) must cover; FortressLife keeps every
+  block still to build in it.

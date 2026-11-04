@@ -16924,3 +16924,43 @@ ore up; people 8 → 24 = beds; Erase on a built house block: +2 wood +1 stone; 
 inspect), looked at: the plan stands; the pit is a small brown bowl by the crane, easy to miss at play zoom (FT-54); the
 people are a few pixels high. Pace numbers untuned (FT-53); no perf or balance testing.
 
+## 2026-11-04 — round 128f (`fortress`): builders reach the edge of the town; the check at placement (FT-55, FT-56)
+
+**Why.** The user, from the phone: "agents seem to not be able to path through the city or farms to buildings at the
+peripheral". Reproduced headless from the start menu at the phone's size (scripts/fortressfar.mjs: a house block on
+every side of the town, just past its edge and out past its farms, Build, Skip): 1 of 14 built in 150 s. Three causes:
+1. **The stores' field didn't reach blocks not yet among the sites.** The agents' fields are kept only over a box round
+   the units, the seeds and the targets plus 48 columns (agents/scope.ts). FortressLife read the heap's field at each
+   block still to build and cut a block off after 8 sim s out of it; a block not among the first 6 sites was never
+   seeded, so never in the box, so read out of the field, so cut off — never a site: cut off for good.
+2. **The cut-off timer ran in sim seconds against a field read every 500 ms of page time.** Under Skip (32x) 8 sim s
+   went by before one read; the field takes ~10 s of page time to fill 150 m and starts over when a seed moves or a chunk
+   comes into the scope (the read showed every block out of it again at t=47). Skip stopped at once: "14 blocks can't be
+   reached from the stores".
+3. **One way isn't both ways.** With 1 and 2 fixed, builders stood at the heap with loads: the stores' field reached the
+   blocks south-west (a builder there could walk back) but no field from those blocks reached the stores — a drop of
+   up to 2.6 m is a way down (agents.wgsl DROP) and no way up (STEP 1.1).
+**What.** `Agents.keepInScope(key, points)`: places the fields must cover though nobody stands there; FortressLife keeps
+every block still to build's stands in it. The cut-off check is no longer the GPU field read back: `fortress/reach.ts`
+does the agents' rules on the CPU over the window's columns (each column's solid and granular runs, the town's claims
+among them, read back from 'layers' with the water when planning starts and every 3 s while building): surfaces with
+AGENT_H of room, links within STEP up and DROP down with room over the step, the deep-water rule, the fortress's box; a
+breadth-first search from the stores **each way** (out to a block, and back). The plan's blocks count as built
+(solid.ts on a Town whose built levels are the plan's: a block its cell, a wall its band, a gate open, the stairs).
+**The check at placement** (the user: "It might be worthwhile to do the check at placement. My expectation is that we
+should always be able to reach blocks where we can place and say why we can't reach a block not yet placed. Blocks
+that lie adjacent to other blocks or planned blocks should always be reachable."): `Fortress.paint` refuses a block
+whose cell the stores don't reach, or one that would shut a planned block off (its stands all closed or cut), and
+shutting a gate on one; the panel says why in plain words: "Builders can't reach that spot from the stores. Deep water
+is in the way." / "It is walled in. Put a gate in the wall first." / "A cliff or a building is in the way." / "It is too
+far from the stores."; "That would shut the house off from the stores. Leave a way through." A yard beside a block is
+open ground (a builder stands on a farm). A block over a planned one is reached as that one is.
+**Checks.** Unit src/fortress/reach.test.ts (surfaces under an arch; deep water; a 2 m ledge reached one way only; a
+spot across a river refused "Deep water"; beside and on a planned block allowed; the fourth side of a walled house
+refused "shut the house off", a farm there allowed; a hollow in rock "A cliff or a building"). Headless
+scripts/fortressfar.mjs from the start menu by finger, 412x915: 14 dry spots round the town; 4 refused (the river to the
+north-east and the south-west: "Deep water is in the way.") — the same 2 the stores' field had never reached before the
+fix, and the 2 south-west a builder could get back from but not to; the other 10 all built under Skip ("Everything you
+planned is built."). scripts/fortressroads.mjs still passes. Phone bench: the scope now spans every planned block (more
+chunks relaxed while building), a 'layers' + 'water' readback every 3 s while building, 2-4 searches over the box
+(~50k columns) per tap while planning — none timed here; for the phone bench.

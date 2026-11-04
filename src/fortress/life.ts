@@ -50,11 +50,6 @@ const AT_SPOT = 3;
 const SITES = 6;
 /** seeds a field at most (the agents hold 48 in all) */
 const SEEDS = 6;
-/**
- * (round 128d, FT-20) sim seconds a block's stands stay out of the heap's field before it counts as unreachable (the
- * field fills outward from the heap a few sweeps a tick: a far site is out of it for a moment at first)
- */
-const CUT_OFF_S = 8;
 /** sim seconds between the JobBoard's turns (and the roads'), the trees' looks */
 const JOBS_S = 1;
 const TREES_S = 10;
@@ -127,9 +122,9 @@ export class FortressLife implements Routine {
   private t = 0;
   /** (FT-20) the heap's field read back: which sites a builder can walk to from the heap (and where a newcomer may start) */
   private reach: FieldReader;
-  private reachAt = 0;
-  /** per block (cell:level) still to build, the sim time it was first found out of the heap's field */
-  private outSince = new Map<string, number>();
+  /** (round 128f) the columns the cut-off check last ran on (Fortress.columnsNow), and the cells it found cut off */
+  private reachOn: unknown = null;
+  private cutCells = new Set<number>();
   private slots: JobSlot[] = [];
   private jobsAt = -1e9;
   private treesAt = -1e9;
@@ -194,6 +189,7 @@ export class FortressLife implements Routine {
     for (const id of this.ids) this.io.units.remove(id);
     if (this.io.units.routine === this) this.io.units.routine = null;
     for (const f of [F.pile, F.site, F.store, F.quarry, F.fell, F.farm, F.home]) this.io.units.agents.seed(f, []);
+    this.io.units.agents.keepInScope('fortress', []);
     this.io.units.agents.setRoads([]);
   }
 
@@ -204,13 +200,7 @@ export class FortressLife implements Routine {
 
   /** The stores: the first warehouse built (its door), else the town's own heap. */
   heap(): V2 {
-    const f = this.io.fort;
-    for (const s of f.plan.structures().sort((a, b) => a.id - b.id)) {
-      if (s.type !== 'warehouse') continue;
-      const d = f.doorOf(s.id);
-      if (d) return d;
-    }
-    return this.io.townHeap();
+    return this.io.fort.storesAt() ?? this.io.townHeap();
   }
 
   /** The blocks still to build, in order (buildOrder from the heap: lowest first, then nearest). */
@@ -237,6 +227,11 @@ export class FortressLife implements Routine {
       this.jobsAt = this.t;
       this.jobs();
       this.io.units.agents.setRoads(this.io.fort.roadCols());
+      // (round 128f: the user, "agents seem to not be able to path through the city or farms to buildings at the
+      // peripheral") every block still to build kept in the fields' scope: past the box round the units and the seeds
+      // every field reads no way, so a block not yet among the sites read cut off, was never a site, never seeded, never
+      // in the scope — cut off for good
+      this.io.units.agents.keepInScope('fortress', this.todo().flatMap((b) => this.standsFor(b)));
     }
     if (this.t - this.treesAt >= TREES_S) {
       this.treesAt = this.t;
@@ -421,29 +416,30 @@ export class FortressLife implements Routine {
   }
 
   /**
-   * (round 128d, FT-20) The blocks no builder can walk to from the heap: none of its stands is in the heap's field (deep
-   * water is no way to a walker — agents.wgsl DEEP — and a cliff too high none either) for CUT_OFF_S. They're left out
-   * of the sites (a builder isn't sent with a load it can't bring) and the bar says so (Fortress.cutOff).
+   * (round 128d, FT-20) The blocks no builder can walk to from the heap. They're left out of the sites (a builder isn't
+   * sent with a load it can't bring) and the bar says so (Fortress.cutOff). (Round 128f: by the CPU check on the
+   * agents' rules — fortress/reach.ts, Fortress.reachMap — not by the heap's GPU field read back: that field fills out
+   * from the heap over seconds and starts over when a seed moves or a chunk comes into its scope, and a block read out
+   * of it for 8 sim seconds — a moment under Skip — was cut off for good, the user's "agents seem to not be able to path
+   * through the city or farms to buildings at the peripheral".)
    */
   unreachable(): Block[] {
     return this.todo().filter((b) => this.isCutOff(b));
   }
 
   private isCutOff(b: Block): boolean {
-    const since = this.outSince.get(`${b.cell}:${b.level}`);
-    return since !== undefined && this.t - since >= CUT_OFF_S;
+    return this.cutCells.has(b.cell);
   }
 
+  /** (round 128f) each time the columns are read again: the blocks still to build the stores don't reach */
   private checkReach(): void {
-    if (!this.reach.readAt || this.reach.readAt === this.reachAt) return;
-    this.reachAt = this.reach.readAt;
-    const keep = new Map<string, number>();
-    for (const b of this.todo()) {
-      const k = `${b.cell}:${b.level}`;
-      const ok = this.standsFor(b).some(([x, y]) => isFinite(this.reach.sample(x, y)?.dist ?? Infinity));
-      if (!ok) keep.set(k, this.outSince.get(k) ?? this.t);
-    }
-    this.outSince = keep;
+    const f = this.io.fort;
+    const cols = f.columnsNow();
+    if (!cols || cols === this.reachOn) return;
+    this.reachOn = cols;
+    const m = f.reachMap();
+    if (!m) return;
+    this.cutCells = new Set(f.todoCells().filter((c) => !f.reachedIn(m, c)));
     const n = this.unreachable().length;
     if (n !== this.io.fort.cutOff) this.io.fort.setCutOff(n);
   }

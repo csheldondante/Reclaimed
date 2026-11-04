@@ -165,3 +165,23 @@ export const HUNGRY_LINE = 'There is no grain. Nobody new will come until there 
 
 /** (milestone 3) Every bed is taken: nobody new comes. */
 export const BEDS_LINE = 'Every bed is taken. Build houses so more people can come.';
+
+/** (round 128f) why the stores can't reach a spot: deep water, walled in, a cliff or a building, out past the fields */
+export type ReachWhy = 'deep' | 'walled' | 'cliff' | 'far';
+
+/** (round 128f) the check at placement: a block the stores can't reach isn't planned, and the panel says why */
+export function reachWhyLine(why: ReachWhy): string {
+  const what: Record<ReachWhy, string> = {
+    deep: 'Deep water is in the way.',
+    walled: 'It is walled in. Put a gate in the wall first.',
+    cliff: 'A cliff or a building is in the way.',
+    far: 'It is too far from the stores.',
+  };
+  return `Builders can't reach that spot from the stores. ${what[why]}`;
+}
+
+/** (round 128f) a block that would shut planned blocks off from the stores isn't planned */
+export function wouldCutLine(types: string[]): string {
+  const names = types.map((t) => `the ${t === 'fortress' ? 'keep' : t === 'lumber' ? 'lumber camp' : t}`);
+  return `That would shut ${list(names)} off from the stores. Leave a way through.`;
+}

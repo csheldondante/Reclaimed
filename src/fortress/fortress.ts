@@ -18,6 +18,9 @@ import type { NavGraph } from '../api/contracts/structures';
 import type { TownThing } from '../settle/thing';
 import { LEVEL_H } from '../build/town';
 import { bedsOf, roomOf, type JobKind } from './economy';
+import { ReachMap, type ReachColumns } from './reach';
+import { solidSpans } from './solid';
+import { reachWhyLine, wouldCutLine, type ReachWhy } from './words';
 import { WAY_ROAD, WAY_SQUARE } from './ways';
 
 /** (milestone 3) A block taken out of the plan: its type, and whether it stood (Erase gives back part of its cost). */
@@ -67,6 +70,13 @@ export interface FortressIO {
   /** (round 128e, FT-48) what the town that was there before the fortress has at window world (x, y), if it stands up to
    *  window z (null: nothing, or lower) */
   townAt?(x: number, y: number, z: number): TownThing | null;
+  /**
+   * (round 128f) the window's columns as last read (their solid runs and water: reach.ts), for the check at placement;
+   * null: not read yet (nothing is refused)
+   */
+  columns?(): ReachColumns | null;
+  /** (round 128f) the town's stores (window world): where the builders fetch from until a warehouse stands */
+  townHeap?(): [number, number];
 }
 
 /** (round 128d) inspect: a tap picks the structure under it (inspect.ts) instead of planning */
@@ -102,6 +112,10 @@ export class Fortress {
   ready = false;
   /** (round 128d) the ways baked from the plan (ways.ts), made again after the plan changes */
   private waysMemo: Ways | null = null;
+  /** (round 128f) told when planning or building starts */
+  readonly onMode: ((m: FortressMode) => void)[] = [];
+  /** (round 128f) why the last press planned nothing (a block the stores couldn't reach): the panel says it */
+  refusal: string | null = null;
   /** the ground's top at a box column */
   private readonly groundOfCol: (col: number) => number;
 
@@ -360,7 +374,18 @@ export class Fortress {
   }
 
   paint(cell: number, level: number, type: StructureType): boolean {
+    // (round 128f: the check at placement) a block the stores can't reach isn't planned, nor one that would shut others off
+    if (!this.plan.has(cell, level)) {
+      const why = this.placeWhy(cell, level, type);
+      if (why) return this.refuse(why);
+    }
     return this.apply(() => this.plan.paint(cell, level, type), cell);
+  }
+
+  private refuse(why: string): boolean {
+    this.refusal = why;
+    for (const h of this.onChange) h();
+    return false;
   }
 
   erase(cell: number, level: number): boolean {
@@ -368,7 +393,158 @@ export class Fortress {
   }
 
   setGate(cell: number, on: boolean): boolean {
+    // (round 128f) a gate shut that would shut blocks off from the stores stays open
+    if (!on && this.plan.gate[cell]) {
+      const why = this.gateWhy(cell);
+      if (why) return this.refuse(why);
+    }
     return this.apply(() => this.plan.setGate(cell, on), cell);
+  }
+
+  /** (round 128f) the window's columns as last read (a new object each read): null, not read yet */
+  columnsNow(): ReachColumns | null {
+    return this.io.columns?.() ?? null;
+  }
+
+  /** (round 128f) where the builders fetch from (window world): the first built warehouse's door, else the town's heap */
+  storesAt(): [number, number] | null {
+    for (const s of this.plan.structures().sort((a, b) => a.id - b.id)) {
+      if (s.type !== 'warehouse') continue;
+      const d = this.doorOf(s.id);
+      if (d) return d;
+    }
+    return this.io.townHeap?.() ?? null;
+  }
+
+  /**
+   * (round 128f) Where a builder stands to work on a cell (window world): a little out from the middle of each side that
+   * no planned or built block's ground level covers (a yard's is open ground) (FortressLife's stands, the same). `also`: a cell about to be planned.
+   */
+  standsOf(cell: number, also = -1): [number, number][] {
+    const g = this.grid;
+    const [cx, cy] = g.centre(cell);
+    const out: [number, number][] = [];
+    for (let e = 0; e < 4; e++) {
+      const n = g.nbr[cell * 4 + e];
+      if (n < 0 || n === also) continue;
+      // (a yard beside it — a farm, the quarry — is open ground a builder stands on)
+      const t = this.plan.typeAt(n);
+      if ((this.plan.has(n, 0) || this.town.has(n, 0)) && !(t && DEFS[t].form === 'yard')) continue;
+      const [ax, ay] = g.corner(cell, e);
+      const [bx, by] = g.corner(cell, e + 1);
+      const mx = (ax + bx) / 2;
+      const my = (ay + by) / 2;
+      const d = Math.hypot(mx - cx, my - cy) || 1;
+      out.push(this.toWindow(mx + ((mx - cx) / d) * 1.4, my + ((my - cy) / d) * 1.4));
+    }
+    return out;
+  }
+
+  /**
+   * (round 128f) The reach from the stores over the window's columns as last read (reach.ts), the plan's blocks solid as
+   * if built (solid.ts: a block its cell, a wall its band, a gate open under its lintel, the stairs), and `extra` cells'
+   * columns solid too (a block about to be planned). Null: the columns aren't read yet, or there are no stores.
+   */
+  reachMap(extra: number[] = [], opts: { deep?: boolean; fortress?: boolean } = {}): ReachMap | null {
+    const cols = this.io.columns?.();
+    const at = this.storesAt();
+    if (!cols || !at) return null;
+    const [ox, oy] = this.offset();
+    const W = cols.w;
+    const add = new Map<number, [number, number][]>();
+    const put = (bx: number, by: number, z0: number, z1: number) => {
+      const x = bx + ox;
+      const y = by + oy;
+      if (x < 0 || y < 0 || x >= W || y >= cols.h) return;
+      const k = y * W + x;
+      const l = add.get(k);
+      if (l) l.push([z0, z1]);
+      else add.set(k, [[z0, z1]]);
+    };
+    if (opts.fortress !== false) {
+      // (the plan as if built: what builders will have to walk round)
+      const plan = this.plan;
+      const town: Town = Object.create(this.town);
+      Object.defineProperty(town, 'built', { value: { each: (c: number) => plan.levels.each(c) } });
+      for (const spans of solidSpans({ plan, town, grid: this.grid, ground: this.groundOfCol, ways: this.ways() }).values())
+        for (const q of spans) put(q.x, q.y, q.z0, q.z1);
+      for (const c of extra)
+        for (const col of this.grid.columns[c]) {
+          const g = this.groundOfCol(col);
+          put(col % this.box.w, Math.floor(col / this.box.w), g - 0.6, g + LEVEL_H);
+        }
+    }
+    const [hx, hy] = cellAt(at[0], at[1]);
+    const box: [number, number, number, number] = [Math.max(0, ox), Math.max(0, oy), Math.min(W, ox + this.box.w), Math.min(cols.h, oy + this.box.h)];
+    return new ReachMap(cols, [hx, hy], { box, extra: add, deep: opts.deep });
+  }
+
+  /** (round 128f) whether any of a cell's stands is reached in `m` */
+  reachedIn(m: ReachMap, cell: number, also = -1): boolean {
+    return this.standsOf(cell, also).some(([x, y]) => {
+      const [cx, cy] = cellAt(x, y);
+      return m.reached(cx, cy);
+    });
+  }
+
+  /** (round 128f) the cells with blocks still to build (their ground: a builder works from beside it) */
+  todoCells(): number[] {
+    const out: number[] = [];
+    for (const s of this.plan.structures()) for (const c of s.cells.keys()) if ([...this.plan.levels.each(c)].some((l) => !this.town.has(c, l))) out.push(c);
+    return out;
+  }
+
+  /**
+   * (round 128f; the user: "we should always be able to reach blocks where we can place and say why we can't reach a
+   * block not yet placed") Why a block can't be planned at (cell, level): the stores can't reach the cell (deep water,
+   * walled in, a cliff or a building), or planning it would shut planned blocks off. Null: it can (or the columns aren't
+   * read yet). A block over one already planned is reached as that one is.
+   */
+  placeWhy(cell: number, level: number, type: StructureType): string | null {
+    if (level > 0 && this.plan.has(cell, level - 1)) return null;
+    const solid = DEFS[type].form !== 'yard';
+    const after = this.reachMap(solid ? [cell] : []);
+    if (!after) return null;
+    if (!this.reachedIn(after, cell)) return reachWhyLine(this.whyNot(cell));
+    if (!solid) return null;
+    const before = this.reachMap()!;
+    const cut = new Set<StructureType>();
+    for (const c of this.todoCells()) if (c !== cell && this.reachedIn(before, c) && !this.reachedIn(after, c, cell)) cut.add(this.plan.typeAt(c)!);
+    return cut.size ? wouldCutLine([...cut]) : null;
+  }
+
+  /** (round 128f) why shutting a gate is refused: the blocks it would shut off (null: none) */
+  private gateWhy(cell: number): string | null {
+    const before = this.reachMap();
+    if (!before) return null;
+    this.plan.gate[cell] = 0;
+    this.waysMemo = null;
+    let after: ReachMap | null;
+    try {
+      after = this.reachMap();
+    } finally {
+      this.plan.gate[cell] = 1;
+      this.waysMemo = null;
+    }
+    const cut = new Set<StructureType>();
+    for (const c of this.todoCells()) if (this.reachedIn(before, c) && !this.reachedIn(after!, c)) cut.add(this.plan.typeAt(c)!);
+    return cut.size ? wouldCutLine([...cut]) : null;
+  }
+
+  /** (round 128f) why the stores don't reach a cell: what, taken away, lets them */
+  whyNot(cell: number): ReachWhy {
+    const ok = (m: ReachMap | null) => !!m && this.reachedIn(m, cell);
+    if (!this.standsOf(cell).length) return 'walled';
+    const m = this.reachMap();
+    // (out of the box the agents' fields cover)
+    if (m && this.standsOf(cell).every(([x, y]) => {
+      const [cx, cy] = cellAt(x, y);
+      return cx < m.box[0] || cy < m.box[1] || cx >= m.box[2] || cy >= m.box[3];
+    }))
+      return 'far';
+    if (ok(this.reachMap([cell], { deep: false }))) return 'deep';
+    if (ok(this.reachMap([], { fortress: false }))) return 'walled';
+    return 'cliff';
   }
 
   /** The box cell under window world (x, y) (-1: none). */
@@ -439,6 +615,7 @@ export class Fortress {
   setMode(m: FortressMode): void {
     if (this.mode === m) return;
     this.mode = m;
+    for (const h of this.onMode) h(m);
     this.changedOver([...this.plan.structures().flatMap((s) => [...s.cells.keys()])]);
     for (const h of this.onChange) h();
   }
@@ -509,6 +686,7 @@ export class Fortress {
 
   private apply(f: () => boolean, cell: number): boolean {
     if (!this.ready || !f()) return false;
+    this.refusal = null;
     this.selected = this.plan.owner[cell] >= 0 ? this.plan.owner[cell] : this.selected;
     if (this.selected !== null && !this.plan.structure(this.selected)) this.selected = null;
     this.sync();

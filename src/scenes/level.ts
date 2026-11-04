@@ -96,7 +96,8 @@ import { type Interval, CHUNK, columnSlots, K_HEADROOM, readColumn, SLOT_WORDS, 
 import { modelById, modelColumns, restingBase, seatColumn, type VoxelModel } from '../world/models';
 import { Integrity, type Grab } from '../game/integrity';
 import { WorldVox } from '../game/fracture';
-import { MAT } from '../world/materials';
+import { MAT, MATERIALS, MatState } from '../world/materials';
+import type { ReachColumns } from '../fortress/reach';
 import { cellAt, cellPos, poiWorld, ROW_H } from '../world/lattice';
 import { qRotate, qYawPitchRoll } from '../grids/structures';
 import { HybridChunks } from './hybrid';
@@ -384,6 +385,9 @@ export class LevelScene implements Scene {
   private fortressRunSpeed = 1;
   /** (round 128d) its built blocks claimed in the columns: the agents, the water and the ground go round them */
   private fortressClaims?: FortressClaims;
+  /** (round 128f) read the window's columns again for the fortress's reach check (fortress/reach.ts) */
+  private fortressReadCols?: () => void;
+  private fortressColsAt = 0;
   /** the world as modules (docs/WORLD_API.md), made on first use of reclaimed.world */
   private worldApi?: Sim;
   /** round 83, V21: ?cutaway (api/puck.ts, api/cutaway.ts) */
@@ -2408,6 +2412,12 @@ export class LevelScene implements Scene {
       if (this.fortressLife) {
         this.fortressLife.update(dt * this.speed);
         if (this.fortressSkip) this.skipFrame(dt * this.speed);
+        // (round 128f) the columns read again every few seconds while building: what's built and dug since (the cut-off
+        // check, fortress/reach.ts, runs on each read)
+        if (this.fortress?.mode === 'build' && (this.fortressColsAt += dt) > 3) {
+          this.fortressColsAt = 0;
+          this.fortressReadCols?.();
+        }
         // (the stores and progress lines: twice a second)
         if ((this.fortressBarAt += dt) > 0.5) {
           this.fortressBarAt = 0;
@@ -2995,7 +3005,45 @@ export class LevelScene implements Scene {
     // (the box round the town, its row origin even: the lattice's odd rows shift the same in the box and the window)
     const ox = Math.round(rec.at[0] - W / 2);
     const oy = 2 * Math.round((rec.at[1] / ROW_H - H / 2) / 2);
+    // the stores until a warehouse stands: the town's stone heap (its plan's 'pile' spots)
+    const townHeap = (): [number, number] => {
+      const piles = st.spotsOf(rec.id)?.filter((s) => s.kind === 'pile') ?? [];
+      const p = piles.find((s) => s.what !== 'log') ?? piles[0];
+      if (!p) throw new Error(`fortress: the town ${rec.id} has no heap (a 'pile' spot) for its builders`);
+      return [p.w[0], p.w[1]];
+    };
+    // (round 128f: the check at placement — fortress/reach.ts) the window's columns, read when planning starts and every
+    // few seconds while building: each column's solid runs (solid and granular matter, the town's claims among them —
+    // what the agents' surfaces are peeled from) and its water
+    let reachCols: ReachColumns | null = null;
+    let reading = false;
+    const readCols = async () => {
+      if (reading) return;
+      reading = true;
+      try {
+        const [lay, water] = await Promise.all([core.readBuffer('layers'), core.readBuffer('water')]);
+        const slots = new Uint32Array(lay.buffer);
+        const { packed } = core;
+        const ww = dims.w;
+        reachCols = {
+          w: ww,
+          h: dims.h,
+          runs: (x, y) =>
+            readColumn(packed, slots, x, y)
+              .filter((iv) => {
+                const s = MATERIALS[iv.mat]?.state;
+                return s === MatState.Solid || s === MatState.Granular;
+              })
+              .map((iv) => [iv.z0, iv.z1] as const),
+          water: (x, y) => water[y * ww + x],
+        };
+      } finally {
+        reading = false;
+      }
+    };
     const fort = new Fortress({ origin: [ox, oy], w: W, h: H }, {
+      columns: () => reachCols,
+      townHeap,
       windowOrigin: () => [S.origin[0], S.origin[1]],
       dims: { w: dims.w, h: dims.h, zMax: dims.zMax },
       ground: (x, y) => this.heightAt(x, y),
@@ -3028,6 +3076,13 @@ export class LevelScene implements Scene {
       this.surfaceCache = new Uint32Array(f.buffer);
       fort.ready = true;
     }, ignoreTeardown);
+    void readCols().then(() => fort.onChange.forEach((h) => h()), ignoreTeardown);
+    // (round 128f) the columns read again when planning starts (what's been built and dug since), and every few seconds
+    // while building (FortressLife's cut-off check reads them)
+    fort.onMode.push((m) => {
+      if (m === 'plan') void readCols().catch(ignoreTeardown);
+    });
+    this.fortressReadCols = () => void readCols().catch(ignoreTeardown);
     S.onSlide.push(() => fort.slid());
     S.onWarp.push(() => fort.slid());
     // (round 128d) what's built is solid to the world (fortress/claims.ts): claimed in the columns, as the towns' are
@@ -3056,13 +3111,7 @@ export class LevelScene implements Scene {
             fort,
             settlement: rec.id,
             faction: rec.faction,
-            townHeap: () => {
-              // the stores until a warehouse stands: the town's stone heap (its plan's 'pile' spots)
-              const piles = st.spotsOf(rec.id)?.filter((s) => s.kind === 'pile') ?? [];
-              const p = piles.find((s) => s.what !== 'log') ?? piles[0];
-              if (!p) throw new Error(`fortress: the town ${rec.id} has no heap (a 'pile' spot) for its builders`);
-              return p.w;
-            },
+            townHeap,
             homes: () => (st.spotsOf(rec.id) ?? []).filter((s) => s.kind === 'home').map((s) => s.w),
             stores: () => Object.fromEntries(Object.entries(rec.stores).map(([k, v]) => [k, v.stock])),
             take: (good, n) => {

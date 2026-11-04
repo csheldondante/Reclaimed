@@ -238,6 +238,8 @@ export class FortressBar {
     else if (t.tower) out.push({ text: 'Tap a wall to put a tower on it. Tap it again to take the tower off.' });
     else if (t.erase) out.push({ text: 'Tap a block to take it away.' });
     else out.push({ text: typeCard(DEFS[t.type]), card: true });
+    // (round 128f) why the last tap planned nothing: the stores can't reach the spot, or it would shut blocks off
+    if (f.refusal) out.push({ text: f.refusal, short: true });
     // (round 128d: Houses picked showed "This wall has 2 blocks… 4 archers can stand on it" — the structure last painted,
     // of another type) the structure's lines only when it is of the type picked (Gate and Tower: a wall's)
     const s = f.selected !== null ? f.plan.structure(f.selected) : null;

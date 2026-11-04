@@ -600,6 +600,20 @@ each was implemented.
   long ones) to a walk along its top. Drawn as paving and stone steps; the steps and the wall-walk are solid, so units
   climb them. The warehouse's card speaks of the town's stores against all the warehouses' room, then this one's part.
 
+## 2026-11-04 — round 128f (session 5, `fortress`) — builders can't reach the edge of the town
+
+- The user, verbatim (from the phone): "I donesew a lathing issue on my phone where agents seem to not be able to path
+  through the city or farms to buildings at the peripheral" (they mean: they're seeing a pathing issue).
+- → Fixed at the root (FT-55): the stores' field now covers every block still to build; a block is cut off only by a
+  check on the agents' own rules, both ways (out with a load and back).
+- The user, verbatim: "It might be worthwhile to do the check at placement. My expectation is that we should always be
+  able to reach blocks where we can place and say why we can't reach a block not yet placed. Blocks that lie adjacent
+  to other blocks or planned blocks should always be reachable."
+- → The check at placement (FT-56): a spot the stores can't reach isn't planned, and the panel says why; a block that
+  would shut a planned block off isn't planned, and the panel says which. Judgement calls: a builder must be able to go
+  and come back (a drop a walker can take down but not up counts as no way); a farm or quarry beside a block is open
+  ground to stand on; the fourth wall round a block is refused rather than the block being left shut in.
+
 ## 2026-11-04 — round 128e (session 5, `fortress`) — the user played 30b77f0 on Pages
 
 - The user, verbatim: "Reopening build doesn't seem to work. Inspect doesn't work on the generated town and it should.
