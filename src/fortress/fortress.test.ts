@@ -141,20 +141,35 @@ describe('the pieces: each type reads distinctly, walls fit together', () => {
     return { town, plan, paint, pieces };
   };
 
-  it('a wall run: ramparts a cell, merlons on the sides that meet no wall, towers at its ends, and a gate arch', () => {
+  it('a wall run (round 128d: thinner than its cells): a band a joined side, merlons on both faces, towers at its ends, a gate arch', () => {
     const f = make();
     const m = inner;
     const run = [nbr(m, 0), m, nbr(m, 2)];
     for (const c of run) f.paint(c, 0, 'wall');
-    let n = names(f.pieces());
-    expect(n.get('rampart')).toBe(3);
+    const p = f.pieces();
+    let n = names(p);
+    // a middle square a cell, a band from it to each side that meets the run: the ends one each, the middle two
+    expect(n.get('rampart')).toBe(3 + 4);
+    // (thin: every rampart's frame narrower than half a cell)
+    const rampart = lib.id('rampart');
+    for (let i = 0; i < p.count; i++) {
+      if (p.module[i] !== rampart) continue;
+      const d = p.data.subarray(i * 16, i * 16 + 8);
+      const side = (a: number, b: number) => Math.hypot(d[b * 2] - d[a * 2], d[b * 2 + 1] - d[a * 2 + 1]);
+      expect(Math.min(side(0, 1), side(1, 2))).toBeLessThan(2.5);
+    }
     // (two ends: a tower each; the middle carries the run on)
     expect(n.get('tower')).toBe(2);
-    // merlons: the middle's two long sides, each end's three open sides
-    expect(n.get('merlons')).toBe(2 + 3 + 3);
+    // merlons: both faces of each band
+    expect(n.get('merlons')).toBe(4 * 2);
     expect(f.plan.setGate(m, true)).toBe(true);
     n = names(f.pieces());
-    expect(n.get('gatearch')).toBe(2);
+    // the gate: an arch in both faces of the middle's two bands
+    expect(n.get('gatearch')).toBe(4);
+    // a tower where the player put one
+    expect(f.plan.setTower(m, true)).toBe(true);
+    expect(names(f.pieces()).get('tower')).toBe(3);
+    expect(f.plan.setTower(m, false)).toBe(true);
     // a corner: a cell beside an end, off the run's line, makes that end a corner (a tower still)
     const end = run[0];
     const toMid = [0, 1, 2, 3].find((e) => nbr(end, e) === m)!;

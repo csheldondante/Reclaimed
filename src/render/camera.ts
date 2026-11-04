@@ -229,6 +229,31 @@ export class Camera {
   }
 
   /**
+   * (round 128d) The ray through a CSS pixel: a point on it and its direction (unit), into the scene. Orthographic: the
+   * point is `back` units toward the eye from the pixel's point on the plane through the target (update()'s basis).
+   */
+  ray(sx: number, sy: number, back = 400): { o: [number, number, number]; d: [number, number, number] } {
+    if (this.fly) {
+      const { f, r, u } = this.basis();
+      const g = 1 / Math.tan(this.fly.fov / 2);
+      const nx = (((sx / this.viewportW) * 2 - 1) * (this.viewportW / this.viewportH)) / g;
+      const ny = (1 - (sy / this.viewportH) * 2) / g;
+      const d = [0, 1, 2].map((i) => f[i] + r[i] * nx + u[i] * ny);
+      const l = Math.hypot(d[0], d[1], d[2]);
+      return { o: [this.fly.pos[0], this.fly.pos[1], this.fly.pos[2]], d: [d[0] / l, d[1] / l, d[2] / l] };
+    }
+    const f = [-this.eye[0], -this.eye[1], -this.eye[2]];
+    const rl = Math.hypot(f[1], f[0]);
+    const r = [f[1] / rl, -f[0] / rl, 0];
+    const u = [r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0]];
+    const a = (sx - this.viewportW / 2) / this.zoom;
+    const b = -(sy - this.viewportH / 2) / this.zoom;
+    const t = this.target;
+    const o = [0, 1, 2].map((i) => t[i] + r[i] * a + u[i] * b - f[i] * back) as [number, number, number];
+    return { o, d: [f[0], f[1], f[2]] };
+  }
+
+  /**
    * CSS pixel → world point on the terrain, given a height lookup. Raising a
    * point by dz moves it up the screen by dz·cos(elev)·zoom, so we solve for the
    * ground under the cursor by fixed-point iteration on z.

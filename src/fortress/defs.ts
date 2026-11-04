@@ -1,8 +1,19 @@
 // The eight first buildings (round 128c, the user's list) and their numbers: a block's cost and what it gives. Size
 // sets cost and capacity (blocks × these). Untuned: the user tunes once it's playable (FORTRESS_SLICE1 answer 2).
 import type { StructureDef, StructureType } from '../api/contracts/fortress';
+import { MAX_LEVELS } from '../build/town';
+
+/** How much more power a level up gives: a block at level L gives power x (1 + POWER_RISE x L) (round 128d). Untuned. */
+export const POWER_RISE = 0.5;
 
 export const DEFS: Record<StructureType, StructureDef> = {
+  // (round 128d) the player's keep: solid stone, crenellated, a tower at each outer corner; its blocks give power, the
+  // higher the more. As tall as the Town allows.
+  fortress: {
+    type: 'fortress', label: 'Fortress', one: 'fortress', many: 'fortresses', form: 'keep', joins: true, maxLevels: MAX_LEVELS,
+    cost: { stone: 8, log: 1 }, perBlock: { power: 1 },
+    look: { style: 'bastion', props: ['banner'] },
+  },
   house: {
     type: 'house', label: 'Houses', one: 'house', many: 'houses', form: 'block', joins: true, maxLevels: 4,
     cost: { log: 4, stone: 2 }, perBlock: { beds: 4 },
@@ -29,7 +40,7 @@ export const DEFS: Record<StructureType, StructureDef> = {
     look: { style: 'hearth', kind: 'warehouse', props: ['crates'] },
   },
   wall: {
-    type: 'wall', label: 'Walls', one: 'wall', many: 'walls', form: 'wall', joins: true, maxLevels: 3,
+    type: 'wall', label: 'Walls', one: 'wall', many: 'walls', form: 'wall', joins: true, maxLevels: MAX_LEVELS,
     cost: { stone: 6 }, perBlock: { posts: 2 },
     look: { style: 'bastion' },
   },

@@ -79,7 +79,7 @@ export class MenuScene implements Scene {
     const line = LINES.find(([t]) => p >= t)![1];
     this.el.innerHTML = `<div><h1>RECLAIMED</h1><p class="line">${line}</p></div>
       <div class="actions"><span class="level-name"></span>
-      <span class="play-row"><button data-a="play"></button><button data-a="free" title="The old rules: green grows wherever you touch, the whole valley open">Free play</button><button data-a="sandbox" title="Build, pour, place and break things; summon weather — the physics playground">Sandbox</button><button data-a="playground" title="The physics and water playground: stations to collapse and flood, every physics number live (round 108)">Playground</button><button data-a="noiselab" title="The noise lab: layers and masks of noise blended into land, live (round 111)">Noise lab</button></span>
+      <span class="play-row"><button data-a="play"></button><button data-a="free" title="The old rules: green grows wherever you touch, the whole valley open">Free play</button><button data-a="fortress" title="Plan a fortress in a town with time stopped, then watch your builders put it up">Fortress</button><button data-a="sandbox" title="Build, pour, place and break things; summon weather — the physics playground">Sandbox</button><button data-a="playground" title="The physics and water playground: stations to collapse and flood, every physics number live (round 108)">Playground</button><button data-a="noiselab" title="The noise lab: layers and masks of noise blended into land, live (round 111)">Noise lab</button></span>
       <span class="small level-info"></span>
       <span class="small">pick a place: click its model · some lie under the dust · sound on</span>
       <span class="small hands">touch the ground · drag to make wind</span>
@@ -103,6 +103,15 @@ export class MenuScene implements Scene {
       free.textContent = 'gathering…';
       free.disabled = true;
       await this.onPlay(this.selected.id, true);
+    });
+    // (round 128d, the user: "I didn't see any fortress option") fortress mode: the atlas level, the town at the start held
+    // as the fortress (?level=atlas&town=1&fortress=1 — the level reads its options from the address)
+    this.el.querySelector('[data-a="fortress"]')!.addEventListener('click', () => {
+      if (this.starting) return;
+      this.starting = true;
+      const q = new URLSearchParams(location.search);
+      for (const [k, v] of Object.entries({ skipmenu: '1', level: 'atlas', town: '1', fortress: '1' })) q.set(k, v);
+      location.search = q.toString();
     });
     this.el.querySelector('[data-a="sandbox"]')!.addEventListener('click', async () => {
       if (this.starting) return;

@@ -64,6 +64,10 @@ fn fsStruct(in: SGOut) -> FOut {
   var n = normalize(cross(dpdx(in.wpos), dpdy(in.wpos)));
   if (dot(n, toEye(in.wpos)) < 0.0) { n = -n; }
   if (cutAway(in.wpos, in.pos.xy)) { discard; }
+  // (round 128d, fortress) look bit 23: a block planned, not built yet — see-through (every other pixel, a screen door:
+  // the pass is opaque) and pale, so what stands reads apart from what's still to build
+  let ghost = (in.info.y & 0x800000u) != 0u;
+  if (ghost && ((u32(in.pos.x) + u32(in.pos.y)) & 1u) == 0u) { discard; }
   var sv: SpVert;
   sv.wpos = in.wpos;
   sv.w = in.w;
@@ -73,6 +77,7 @@ fn fsStruct(in: SGOut) -> FOut {
   sv.base = in.base;
   var col = spAlbedo(sv, n) * lighting(in.wpos, n) + spEmit(sv);
   if (sv.part == 20u) { col = spFlame(sv); }
+  if (ghost) { col = mix(col, vec3<f32>(0.75, 0.85, 1.0), 0.55); }
   col = haze(col, in.wpos);
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), 1.0);

@@ -7,13 +7,17 @@
 // Town's style hook) and the wall tiles that fit together. Workers, jobs, recipes, the clock and the army come in
 // milestones 2-5 (the slice plan's StructureDef already names their numbers so the plan can show them).
 
-/** The eight first buildings (the user's list, round 128c). */
-export type StructureType = 'house' | 'farm' | 'lumber' | 'quarry' | 'warehouse' | 'wall' | 'blacksmith' | 'barracks';
+/**
+ * The first buildings (the user's list, round 128c) and the fortress itself (round 128d: the player's keep, whose size
+ * and height give power — "building your fortress should add to your magic power so that players are incentivised to
+ * build ever bigger and elaborate fortresses").
+ */
+export type StructureType = 'fortress' | 'house' | 'farm' | 'lumber' | 'quarry' | 'warehouse' | 'wall' | 'blacksmith' | 'barracks';
 
-export const STRUCTURE_TYPES: readonly StructureType[] = ['house', 'farm', 'lumber', 'quarry', 'warehouse', 'wall', 'blacksmith', 'barracks'];
+export const STRUCTURE_TYPES: readonly StructureType[] = ['fortress', 'house', 'farm', 'lumber', 'quarry', 'warehouse', 'wall', 'blacksmith', 'barracks'];
 
 /** A good in the stores (settlement stores' keys: 'log' is wood). */
-export type Good = 'log' | 'stone' | 'grain' | 'weapons' | 'soldiers';
+export type Good = 'log' | 'stone' | 'grain' | 'weapons' | 'soldiers' | 'power';
 
 export type Goods = Partial<Record<Good, number>>;
 
@@ -21,10 +25,11 @@ export type Goods = Partial<Record<Good, number>>;
  * How a type's cells stand:
  *  - block: the Town's rooms (walls, windows, a door, a roof), stacking;
  *  - wall: wall tiles that join their neighbours (runs, corners, ends, towers, gates), crenellated on top, stacking;
- *  - yard: on the ground, no block (fields, the quarry's floor); one level.
+ *  - yard: on the ground, no block (fields, the quarry's floor); one level;
+ *  - keep: the fortress's solid stone blocks, crenellated on top, a tower at each outer corner; walls run into it.
  * (Blocks are the Town's (build/town.ts): a cell and a level each, its floor lined up with its neighbours'.)
  */
-export type StructureForm = 'block' | 'wall' | 'yard';
+export type StructureForm = 'block' | 'wall' | 'yard' | 'keep';
 
 /** What one block of a type gives (a structure gives blocks × these). */
 export interface PerBlock {
@@ -36,6 +41,11 @@ export interface PerBlock {
   jobs?: number;
   /** archers that can stand on it */
   posts?: number;
+  /**
+   * power a day a built block gives (the fortress: round 128d); a block at level L gives power × (1 + POWER_RISE × L):
+   * higher is worth more
+   */
+  power?: number;
   /** what it makes a day, once worked (milestones 3-4) */
   makes?: Goods;
 }
@@ -122,6 +132,8 @@ export interface FortressPlanApi {
   cost(s: Structure): Goods;
   gives(s: Structure): PerBlock;
   totals(stores: Goods): PlanTotals;
+  /** power a day these blocks give (all of the structure's, or those `only` lets through: the built ones) */
+  power(s: Structure, only?: (cell: number, level: number) => boolean): number;
   wallTile(cell: number, level: number): WallTile | null;
 }
 

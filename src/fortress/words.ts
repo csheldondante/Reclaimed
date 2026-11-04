@@ -8,9 +8,10 @@ const NAMES: Record<Good, [string, string]> = {
   grain: ['grain', 'grain'],
   weapons: ['weapon', 'weapons'],
   soldiers: ['soldier', 'soldiers'],
+  power: ['power', 'power'],
 };
 
-const ORDER: Good[] = ['log', 'stone', 'grain', 'weapons', 'soldiers'];
+const ORDER: Good[] = ['log', 'stone', 'grain', 'weapons', 'soldiers', 'power'];
 
 function list(parts: string[]): string {
   if (parts.length <= 1) return parts[0] ?? 'nothing';
@@ -34,11 +35,33 @@ export function givesLines(p: PerBlock): string[] {
   if (p.storage) out.push(`It holds ${p.storage} goods.`);
   if (p.jobs) out.push(`It needs ${p.jobs} workers.`);
   if (p.posts) out.push(`${p.posts} archers can stand on it.`);
+  if (p.power) out.push(`It gives ${Math.round(p.power)} power a day once built.`);
+  if (p.power) out.push(`It gives ${Math.round(p.power)} power a day once built.`);
   if (p.makes) {
     const m = goodsText(p.makes);
     if (m !== 'nothing') out.push(`It makes ${m} a day.`);
   }
   return out;
+}
+
+/**
+ * (round 128d, the user: "information about what building do somewhere compact but visible") One line for a type,
+ * from its data: what a block costs, what it makes, holds or needs, how high it goes.
+ * "Farms: 1 wood a block. Makes 2 grain a day. 1 worker a block. Flat."
+ */
+export function typeCard(def: StructureDef): string {
+  const p = def.perBlock;
+  const parts = [def.label, `${goodsText(def.cost)} a block`];
+  if (p.makes) parts.push(`makes ${goodsText(p.makes)} a day`);
+  if (p.power) parts.push(`power ${p.power} a block, more up high`);
+  if (p.beds) parts.push(`${p.beds} beds a block`);
+  if (p.storage) parts.push(`holds ${p.storage} a block`);
+  if (p.jobs) parts.push(`${p.jobs} ${p.jobs === 1 ? 'worker' : 'workers'} a block`);
+  if (p.posts) parts.push(`${p.posts} archers a block`);
+  parts.push(def.form === 'yard' ? 'flat' : `up to ${def.maxLevels} high`);
+  // (short sentences, not one run-on line: the writing lint's limit is 20 words a sentence)
+  const [label, ...rest] = parts;
+  return `${label}: ${rest.map((x, i) => (i ? x[0].toUpperCase() + x.slice(1) : x)).join('. ')}.`;
 }
 
 /** The picker's hint for a type: what one block costs and gives. */
@@ -67,4 +90,18 @@ export function planLines(t: PlanTotals, stores: Goods): string[] {
   return out;
 }
 
-export const PAUSED_LINE = 'Time is stopped while you plan.';
+/** (round 128d) the banners: planning (time stopped, planned blocks drawn whole) and building */
+export const PAUSED_LINE = 'Planning (paused)';
+
+/** Building: how far the plan is (counts of blocks). */
+export function buildingLine(built: number, total: number): string {
+  if (total <= 0) return 'Nothing to build. Press Plan to plan more.';
+  if (built >= total) return `All ${total} blocks are built.`;
+  return `Building: ${built} of ${total} blocks done`;
+}
+
+/** The stores strip: what's in the stores and the power coming in. */
+export function storesLine(stores: Goods, powerPerDay: number): string {
+  const n = (k: Good) => Math.floor(stores[k] ?? 0);
+  return `Wood ${n('log')} · Stone ${n('stone')} · Grain ${n('grain')} · Power ${n('power')}, +${Math.round(powerPerDay)} a day`;
+}

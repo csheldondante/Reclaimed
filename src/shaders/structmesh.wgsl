@@ -10,7 +10,8 @@
 // frame; the piece warps it: x, y bilinear over the four corners (Townscaper's deformed modules), z from the foot's
 // bilinear height up to the top (flags & 1: the top is a height over the foot — paving that follows the ground; flags & 2:
 // an affine piece, rows 0-2 a 3 × 4 transform; flags & 8: WIND — its cloth streams downwind from where it hangs (a banner);
-// flags & 16: SPIN — an affine piece turns about its local y axis (a waterwheel, a windmill's sails)).
+// flags & 16: SPIN — an affine piece turns about its local y axis (a waterwheel, a windmill's sails); flags & 32: a draped
+// piece follows the ground however far it is from the plan's (round 128d, the fortress).
 // (round 120) look bits 20-22: what history left — soot (a burned quarter), damp (a flooded one), fresh stone (new walls).
 
 // (SP_PAL, SP_PARTS, SP_VARIANTS: from src/structures/gpu.ts wgsl(), the TS tables' sizes)
@@ -63,7 +64,9 @@ fn spVertex(a: vec4<f32>, piece: u32) -> SpVert {
     let g3 = hostGround(c23.zw, foot.w);
     let off = max(max(abs(g0 - foot.x), abs(g1 - foot.y)), max(abs(g2 - foot.z), abs(g3 - foot.w)));
     zf2 = (1.0 - u) * (1.0 - v) * g0 + u * (1.0 - v) * g1 + u * v * g2 + (1.0 - u) * v * g3;
-    if (off > DRAPE_MAX) { zf2 = min(zf, zf2) - 3.0; }
+    // (flags & 32, round 128d: a plan whose ground is only roughly known — the fortress's, read without the loose ground the
+    // GPU keeps on it — follows the host's ground however far it is off: never hidden)
+    if (off > DRAPE_MAX && (u32(tp.w) & 32u) == 0u) { zf2 = min(zf, zf2) - 3.0; }
   }
   var z = mix(zf2, tp.x, a.z);
   if (rel) { z = zf2 + tp.x * a.z; }

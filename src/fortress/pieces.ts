@@ -14,12 +14,18 @@ import { LEVEL_H, MAX_LEVELS, type Town } from '../build/town';
 import type { TownGrid } from '../build/towngrid';
 import { PROP_SIZE } from '../structures/dressmodules';
 import { library } from '../structures/modules';
-import { PIECE_FLOATS, piecesOf } from '../structures/pieces';
+import { DRAPE, DRAPE_ANY, PIECE_FLOATS, piecesOf, REL } from '../structures/pieces';
 import { hashf } from '../structures/rng';
 import { styleOf } from '../structures/styles';
 import { adjacency, quadCorners } from '../structures/tiles/builder';
 import { DEFS } from './defs';
 import { towered, type FortressPlan } from './plan';
+
+/** (round 128d) look bit 23: a block planned, not built yet — drawn see-through while building (structgame.wgsl) */
+export const LOOK_GHOST = 1 << 23;
+/** a thin wall's half width (a cell is ~5 m across) and a gate's lintel */
+const WALL_HALF = 1.1;
+const WALL_LINTEL = 1.6;
 
 export interface PieceInputs {
   plan: FortressPlan;
@@ -30,6 +36,12 @@ export interface PieceInputs {
   /** added to every height (the Town's window z → the world z the pieces are drawn in) */
   zOff: number;
   defs?: Record<StructureType, StructureDef>;
+  /**
+   * (round 128d) While building: whether a block is still to build (drawn see-through, LOOK_GHOST). Absent while
+   * planning: the plan is drawn whole (the user: "No planned blocks can look complete before being built" / "I don't
+   * mind that as long as we are clearly in planning mode").
+   */
+  ghost?: (cell: number, level: number) => boolean;
 }
 
 /** The pieces of every planned structure, in the box's frame (x, y box-local world units; z world). */
@@ -40,7 +52,10 @@ export function fortressPieces(inp: PieceInputs): StructurePieces {
   const parts: StructurePieces[] = [];
   for (const style of styles) {
     const cp = cityPlanOf(inp, style, defs);
-    parts.push(piecesOf(cp.plan));
+    const p = piecesOf(cp.plan);
+    ripen(p);
+    if (inp.ghost) ghostOver(p, inp);
+    parts.push(p);
     parts.push(cp.extra);
   }
   return concat(parts);
@@ -50,9 +65,10 @@ export function fortressPieces(inp: PieceInputs): StructurePieces {
 class Extra {
   module: number[] = [];
   data: number[] = [];
-  add(mod: number, f: [V2, V2, V2, V2], foot: number, top: number, look: number): void {
+  add(mod: number, f: [V2, V2, V2, V2], foot: number | [number, number, number, number], top: number, look: number, flags = 0): void {
+    const z = typeof foot === 'number' ? [foot, foot, foot, foot] : foot;
     this.module.push(mod);
-    this.data.push(f[0][0], f[0][1], f[1][0], f[1][1], f[2][0], f[2][1], f[3][0], f[3][1], foot, foot, foot, foot, top, look, 0, 0);
+    this.data.push(f[0][0], f[0][1], f[1][0], f[1][1], f[2][0], f[2][1], f[3][0], f[3][1], z[0], z[1], z[2], z[3], top, look, 0, flags);
   }
   done(): StructurePieces {
     return { module: Uint16Array.from(this.module), data: Float32Array.from(this.data), building: new Int32Array(this.module.length).fill(-1), count: this.module.length };
@@ -71,6 +87,76 @@ function concat(parts: StructurePieces[]): StructurePieces {
     k += p.count;
   }
   return out;
+}
+
+/**
+ * The towns' pieces of blocks still to build marked see-through: a piece's block is the cell under its middle and the
+ * level at its middle height (a roof: its cell's top block).
+ */
+function ghostOver(p: StructurePieces, inp: PieceInputs): void {
+  const { plan, town, grid, zOff } = inp;
+  const d = p.data;
+  for (let i = 0; i < p.count; i++) {
+    const o = i * PIECE_FLOATS;
+    // (affine pieces — props — are set down beside: left as they are)
+    if ((d[o + 15] | 0) & 2) continue;
+    const cx = (d[o] + d[o + 2] + d[o + 4] + d[o + 6]) / 4;
+    const cy = (d[o + 1] + d[o + 3] + d[o + 5] + d[o + 7]) / 4;
+    const c = grid.cellAtWorld(cx, cy);
+    if (c < 0 || !plan.mask[c]) continue;
+    const foot = (d[o + 8] + d[o + 9] + d[o + 10] + d[o + 11]) / 4;
+    const top = (d[o + 15] | 0) & 1 ? foot + d[o + 12] : d[o + 12];
+    const top0 = 31 - Math.clz32(plan.mask[c]);
+    const L = Math.max(0, Math.min(top0, Math.floor(((foot + top) / 2 - zOff - town.base[c]) / LEVEL_H)));
+    if (inp.ghost!(c, L)) d[o + 13] = (d[o + 13] | 0) | LOOK_GHOST;
+  }
+}
+
+/** the structures' hash (structmesh.wgsl spHash), to pick a palette variant as the GPU will */
+function spHash(x: number): number {
+  let h = x >>> 0;
+  h = (h ^ (h >>> 16)) >>> 0;
+  h = Math.imul(h, 0x7feb352d) >>> 0;
+  h = (h ^ (h >>> 15)) >>> 0;
+  h = Math.imul(h, 0x846ca68b) >>> 0;
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
+/** the crop palette's ripe variants (styles.ts Part.Crop: 1 and 3 are the yellow ones) */
+const RIPE = new Set([1, 3]);
+const CROP_PART = 18;
+const CROP_VARIANTS = 5;
+
+/**
+ * (round 128d: "Farms did not build for me") The fortress's fields drawn. Two causes: a crop is draped (DRAPE: laid on
+ * the ground the host draws now, and hidden under it when any corner's ground is more than 1.5 off the plan's), and the
+ * fortress's ground is the level's surface read, without the loose ground the GPU keeps on it (the drift the host's
+ * ground adds) — more than 1.5 off round the fortress, so every field was hidden; and a crop's palette variant is a hash
+ * of its look, two in five green — on grass a farm read as nothing. So the fortress's crops follow the host's ground
+ * however far off it is (DRAPE_ANY), and are ripe: the look's low bits moved on until the variant is a ripe one.
+ */
+function ripen(p: StructurePieces): void {
+  const crop = library().id('crop');
+  for (let i = 0; i < p.count; i++) {
+    if (p.module[i] !== crop) continue;
+    const f = i * PIECE_FLOATS;
+    p.data[f + 15] = (p.data[f + 15] | 0) | DRAPE_ANY;
+    const o = f + 13;
+    const look = p.data[o] | 0;
+    let v = look & 0xffff;
+    for (let k = 0; k < 64 && !RIPE.has(spHash(((v * 31) >>> 0) + CROP_PART * 7919) % CROP_VARIANTS); k++) v = (v + 1) & 0xffff;
+    p.data[o] = (look & ~0xffff) | v;
+  }
+}
+
+/** a band from a to b, h either side of the line (counter-clockwise from a's right) */
+function band(a: V2, b: V2, h: number): [V2, V2, V2, V2] {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const l = Math.hypot(dx, dy) || 1;
+  const nx = (-dy / l) * h;
+  const ny = (dx / l) * h;
+  return [[a[0] - nx, a[1] - ny], [b[0] - nx, b[1] - ny], [b[0] + nx, b[1] + ny], [a[0] + nx, a[1] + ny]];
 }
 
 /** a square frame round (x, y), side 2h (counter-clockwise) */
@@ -100,6 +186,7 @@ export function cityPlanOf(inp: PieceInputs, style: StructureStyleId, defs: Reco
   const lib = library();
   const st = styleOf(style);
   const extra = new Extra();
+  const ghostAt = (c: number, L: number) => inp.ghost?.(c, L) ?? false;
   const topOf = (c: number) => 31 - Math.clz32(plan.mask[c]);
   const centre = (c: number): V2 => grid.centre(c);
   const groundAt = (x: number, y: number) => inp.ground(x, y) + zOff;
@@ -134,22 +221,85 @@ export function cityPlanOf(inp: PieceInputs, style: StructureStyleId, defs: Reco
     for (const c of s.cells.keys()) tiles.block[c] = s.id;
     if (def.form === 'yard') {
       for (const c of s.cells.keys()) tiles.use[c] = s.type === 'farm' ? 'field' : 'yard';
+      // (round 128d: a farm read as nothing — a green crop on green grass, unfenced) a fence round the farm's edge
+      if (s.type === 'farm')
+        for (const c of s.cells.keys()) {
+          const p = quadCorners(tiles, c);
+          const L2 = ghostAt(c, 0) ? look | LOOK_GHOST : look;
+          for (let e = 0; e < 4; e++) {
+            const n = adj[c * 4 + e];
+            if (n >= 0 && plan.owner[n] === s.id) continue;
+            const a = p[e];
+            const b = p[(e + 1) % 4];
+            // (draped on the ground as drawn, as the towns' fences: its top a height over it)
+            const ga = ground[grid.quads[c * 4 + e]] - 0.1;
+            const gb = ground[grid.quads[c * 4 + ((e + 1) % 4)]] - 0.1;
+            extra.add(lib.id('fence'), band(a, b, 0.08), [ga, gb, gb, ga], 1.15, L2, REL | DRAPE | DRAPE_ANY);
+          }
+        }
     } else if (def.form === 'wall') {
+      // (round 128d, the user: "walls can be thinner than a cell as long as the cells are marked as wall") a wall cell is
+      // a thin wall by rules: a band from its middle to each side that meets a wall (or the keep), so runs, corners and
+      // tees join; merlons along both faces; a tower where a run ends, turns or meets another, or where one was tapped;
+      // a gate's arch in both faces of a straight run where marked. The cell is still the unit of planning and cost.
       for (const c of s.cells.keys()) {
-        tiles.use[c] = plan.gate[c] ? 'gate' : 'wall';
-        quadTop[c] = town.floorZ(c, topOf(c)) + LEVEL_H + zOff;
-      }
-      // a tower where a run turns, ends or meets another (and on a lone post)
-      for (const c of s.cells.keys()) {
-        const tile = plan.wallTile(c, topOf(c));
-        if (!tile || !towered(tile)) continue;
-        // (a corner that only bends the run — the irregular grid's quads turn a little at every cell — has none: a
-        // tower where it turns by more than 50 degrees)
-        if (tile === 'corner' && turn(c) < (50 * Math.PI) / 180) continue;
+        const L = topOf(c);
+        const top = town.floorZ(c, L) + LEVEL_H + zOff;
         const [x, y] = centre(c);
+        const p = quadCorners(tiles, c);
         let lo = Infinity;
         for (let k = 0; k < 4; k++) lo = Math.min(lo, ground[grid.quads[c * 4 + k]]);
-        extra.add(lib.id('tower'), square(x, y, 2.2), lo - 0.6, quadTop[c] + 2.4, look);
+        const L2 = ghostAt(c, L) ? look | LOOK_GHOST : look;
+        const joined: number[] = [];
+        for (let e = 0; e < 4; e++) {
+          const n = adj[c * 4 + e];
+          const t = n >= 0 ? plan.typeAt(n) : null;
+          if (t === 'wall' || t === 'fortress') joined.push(e);
+        }
+        // the middle: a square the bands meet in
+        if (!plan.gate[c]) extra.add(lib.id('rampart'), square(x, y, WALL_HALF), lo - 0.6, top, L2);
+        for (const e of joined) {
+          const m: V2 = [(p[e][0] + p[(e + 1) % 4][0]) / 2, (p[e][1] + p[(e + 1) % 4][1]) / 2];
+          const f = band([x, y], m, WALL_HALF);
+          if (plan.gate[c]) {
+            // the passage crosses the run: an arch in each face, a lintel over it
+            extra.add(lib.id('gatearch'), band(f[0], f[1], 0.45), lo - 0.3, top, L2);
+            extra.add(lib.id('gatearch'), band(f[3], f[2], 0.45), lo - 0.3, top, L2);
+            extra.add(lib.id('rampart'), f, top - WALL_LINTEL, top, L2);
+          } else extra.add(lib.id('rampart'), f, lo - 0.6, top, L2);
+          extra.add(lib.id('merlons'), band(f[0], f[1], 0.22), top, top + 1.1, L2);
+          extra.add(lib.id('merlons'), band(f[3], f[2], 0.22), top, top + 1.1, L2);
+        }
+        if (!joined.length) {
+          const q = square(x, y, WALL_HALF);
+          for (let k = 0; k < 4; k++) extra.add(lib.id('merlons'), band(q[k], q[(k + 1) % 4], 0.22), top, top + 1.1, L2);
+        }
+        // a tower where the run doesn't simply carry on (a corner that only bends — the irregular grid's quads turn a
+        // little at every cell — has none: one where it turns by more than 50 degrees), or where the player put one
+        const tile = plan.wallTile(c, L);
+        const auto = !!tile && towered(tile) && !(tile === 'corner' && turn(c) < (50 * Math.PI) / 180);
+        if (auto || plan.tower[c]) extra.add(lib.id('tower'), square(x, y, 2.2), lo - 0.6, top + 2.4, L2);
+      }
+    } else if (def.form === 'keep') {
+      // (round 128d) the fortress's keep: solid stone cells (the towns' rampart, crenellated where no keep cell is
+      // beside), a tower at each outer corner
+      for (const c of s.cells.keys()) {
+        tiles.use[c] = 'wall';
+        quadTop[c] = town.floorZ(c, topOf(c)) + LEVEL_H + zOff;
+      }
+      for (const c of s.cells.keys()) {
+        const p = quadCorners(tiles, c);
+        const out = (e: number) => {
+          const n = adj[c * 4 + ((e + 4) % 4)];
+          return n < 0 || plan.owner[n] !== s.id;
+        };
+        let lo = Infinity;
+        for (let k = 0; k < 4; k++) lo = Math.min(lo, ground[grid.quads[c * 4 + k]]);
+        // (corner k lies between sides k-1 and k)
+        for (let k = 0; k < 4; k++) {
+          if (!out(k - 1) || !out(k)) continue;
+          extra.add(lib.id('tower'), square(p[k][0], p[k][1], 1.8), lo - 0.6, quadTop[c] + 3.2, ghostAt(c, topOf(c)) ? look | LOOK_GHOST : look);
+        }
       }
     } else {
       // buildings: one a floor of the structure (its cells' floors line up), or one a cell for a type that doesn't join
@@ -202,7 +352,7 @@ export function cityPlanOf(inp: PieceInputs, style: StructureStyleId, defs: Reco
           let tc = cells[0];
           for (const c of cells) if (quadTop[c] > quadTop[tc]) tc = c;
           const [x, y] = centre(tc);
-          extra.add(lib.id('chimney'), square(x, y, 0.7), quadTop[tc], quadTop[tc] + roofRise[id] + 2.4, look);
+          extra.add(lib.id('chimney'), square(x, y, 0.7), quadTop[tc], quadTop[tc] + roofRise[id] + 2.4, ghostAt(tc, topOf(tc)) ? look | LOOK_GHOST : look);
         }
       }
     }

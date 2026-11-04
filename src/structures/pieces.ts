@@ -22,6 +22,9 @@ export const DRAPE = 4;
 export const WIND = 8;
 /** (round 120) flags: an affine piece spins about its local y axis (a waterwheel, a windmill's sails) */
 export const SPIN = 16;
+/** (round 128d) flags: draped whatever the ground's distance from the plan's (structmesh.wgsl): for plans whose ground is
+ *  only roughly known (the fortress reads the surface without the loose ground drawn on it) */
+export const DRAPE_ANY = 32;
 /** (round 120) look bits (over the style's, under 2^24 so a float keeps them): what history left on a piece — soot, a
  *  waterline, fresh stone */
 export const LOOK_BURNED = 1 << 20;

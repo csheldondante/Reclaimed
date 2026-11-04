@@ -115,6 +115,7 @@ import { SettlementsView } from '../settle/view';
 import { ShipsView } from '../settle/shipsview';
 import { Fortress } from '../fortress/fortress';
 import { FortressBar } from '../fortress/ui';
+import { FortressLife } from '../fortress/life';
 import { START_STORES } from '../fortress/defs';
 import { fortressPieces } from '../fortress/pieces';
 import type { StructurePieces } from '../api/contracts/structures';
@@ -367,6 +368,9 @@ export class LevelScene implements Scene {
   /** (fortress slice 1, ?fortress=1 with ?town=) the town held as the player's fortress, and its planning bar */
   private fortress?: Fortress;
   private fortressBar?: FortressBar;
+  /** (fortress slice 1, milestone 2) its builders, from the first Build */
+  private fortressLife?: FortressLife;
+  private fortressBarAt = 0;
   /** the world as modules (docs/WORLD_API.md), made on first use of reclaimed.world */
   private worldApi?: Sim;
   /** round 83, V21: ?cutaway (api/puck.ts, api/cutaway.ts) */
@@ -1859,6 +1863,8 @@ export class LevelScene implements Scene {
       units: this.units,
       // (fortress slice 1) the fortress: plan (FortressPlan), town, paint/erase/setGate, cellAt/centre/ringCells, tool
       fortress: this.fortress,
+      // (milestone 2) its builders once Build was pressed: stats (trips, built, starved), ids, book
+      fortressLife: () => this.fortressLife,
       townDebug: this.townDebug,
       // (?flow=1) the flow model: flow.water / flow.lava (LiquidSystem: addSpring), flow.steady (last read),
       // flow.breach() (the lab's plug dug out), flow.sleep (awake chunks)
@@ -2380,6 +2386,14 @@ export class LevelScene implements Scene {
     if (this.units && !this.stream?.busy) {
       this.units.update(dt * this.speed);
       timed('settle', () => this.settlements!.update(dt * this.speed));
+      if (this.fortressLife) {
+        this.fortressLife.update(dt * this.speed);
+        // (the stores and progress lines: twice a second)
+        if ((this.fortressBarAt += dt) > 0.5) {
+          this.fortressBarAt = 0;
+          this.fortressBar?.render();
+        }
+      }
       this.townDebug?.draw();
     }
 
@@ -2944,7 +2958,8 @@ export class LevelScene implements Scene {
     if (!id) throw new Error('?fortress=1 needs ?town= (the town that becomes the fortress)');
     const S = this.stream;
     if (!S) throw new Error('?fortress=1 needs the atlas level');
-    const rec = st.pin(id);
+    // (its people are the fortress's builders — FortressLife — not a SettlementLife: never both, they share fields)
+    const rec = st.pin(id, true);
     for (const [k, v] of Object.entries(START_STORES)) {
       const have = (rec.stores[k] ??= { stock: 0, rate: 0 });
       have.stock = Math.max(have.stock, v.stock);
@@ -2970,7 +2985,7 @@ export class LevelScene implements Scene {
     fort.onChange.push(() => (pieces = null));
     view.extra = () => {
       if (!fort.plan.structures().length) return null;
-      pieces ??= fortressPieces({ plan: fort.plan, town: fort.town, grid: fort.grid, ground: (x, y) => this.heightAt(...fort.toWindow(x, y)), zOff: S.oz });
+      pieces ??= fortressPieces({ plan: fort.plan, town: fort.town, grid: fort.grid, ground: (x, y) => this.heightAt(...fort.toWindow(x, y)), zOff: S.oz, ghost: fort.ghost() });
       const [dx, dy] = fort.offset();
       return { p: pieces, dx, dy: dy * ROW_H };
     };
@@ -2983,7 +2998,47 @@ export class LevelScene implements Scene {
     }, ignoreTeardown);
     S.onSlide.push(() => fort.slid());
     S.onWarp.push(() => fort.slid());
-    this.fortressBar = new FortressBar(this.host.ui, fort);
+    // (round 128d) Build: the plan goes to the builders and time runs (at ?speed=); Plan: time stops again
+    const runSpeed = Math.max(1, Number(this.host.params.get('speed') ?? 1));
+    this.fortressBar = new FortressBar(this.host.ui, fort, {
+      build: () => {
+        // (the world API attached: the agents get the terrain, so a load a builder drops — it falls, it's knocked down —
+        // falls to the ground as the settlements' do; without it the agents' toss threw)
+        this.worldApi ??= attachSim(this.core);
+        this.fortressLife ??= new FortressLife(
+          {
+            units: this.units!,
+            fort,
+            settlement: rec.id,
+            faction: rec.faction,
+            heap: () => {
+              // the warehouse heap: the town's stone heap (its plan's 'pile' spots)
+              const piles = st.spotsOf(rec.id)?.filter((s) => s.kind === 'pile') ?? [];
+              const p = piles.find((s) => s.what !== 'log') ?? piles[0];
+              if (!p) throw new Error(`fortress: the town ${rec.id} has no heap (a 'pile' spot) for its builders`);
+              return p.w;
+            },
+            stores: () => Object.fromEntries(Object.entries(rec.stores).map(([k, v]) => [k, v.stock])),
+            take: (good, n) => {
+              const s = (rec.stores[good] ??= { stock: 0, rate: 0 });
+              s.stock -= n;
+            },
+          },
+          8,
+        );
+        fort.setMode('build');
+        this.speed = runSpeed;
+      },
+      plan: () => {
+        fort.setMode('plan');
+        this.speed = 0;
+      },
+    });
+    // the power coming in: the fortress's built blocks (a ledger number: nothing spends it yet)
+    fort.onChange.push(() => {
+      const p = (rec.stores.power ??= { stock: 0, rate: 0 });
+      p.rate = fort.powerPerDay();
+    });
     // (the sandbox's tool panel isn't the fortress's: the bar is)
     const ed = this.host.ui.querySelector<HTMLElement>('.editor');
     if (ed) ed.style.display = 'none';
@@ -3001,8 +3056,10 @@ export class LevelScene implements Scene {
     const { core } = this;
     const { camera } = core;
     const fort = this.fortress!;
+    // (the plan's own blocks are picked along the tap's ray, by face — fortress/pick.ts; the GPU pick gives the ground)
+    const ray = camera.ray(sx, sy);
     core.renderer.pick((sx / camera.viewportW) * this.renderW, (sy / camera.viewportH) * this.renderH).then((hit) => {
-      if (hit) fort.press(hit.cell, hit.z + 0.5);
+      fort.press(ray, hit ? hit.cell : -1);
     }, ignoreTeardown);
   }
 
@@ -3830,6 +3887,7 @@ export class LevelScene implements Scene {
     this.abort.abort();
     this.tunePanel?.dispose();
     this.fortressBar?.dispose();
+    this.fortressLife?.dispose();
     this.bugReport?.dispose();
     this.stationsBar?.dispose();
     this.noiseLab?.dispose();

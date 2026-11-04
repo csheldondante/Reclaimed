@@ -16528,3 +16528,50 @@ m1-houses.png, m1-walls.png (corners with towers, a gate's arch), m1-types.png. 
 you plan.", "Walls. Each block costs 6 stone. Stack it up to 3 high. 2 archers can stand on each block.", "This wall
 has 31 blocks. It costs 186 stone. 62 archers can stand on it.", "Your plan costs 56 wood and 214 stone. Your stores
 have 120 wood and 80 stone.", "You need 134 stone more."
+
+## 2026-11-03 — round 128d (`fortress`): milestone 2 (builders build the plan) and the user's fixes to milestone 1
+
+The user tried milestone 1 (DECISIONS round 128d). **What.** Build and Plan buttons: Build closes the build bar, time
+runs, eight builders (`fortress/life.ts`) fetch wood and stone from the town's stone heap — out of the stores — carry
+it to the next block (BuildCrew's order, now a pure `buildOrder`) and work it in; a block stands when its type's cost
+is in. While planning the plan is drawn whole under a "Planning (paused)" banner and an amber frame (the user: planned
+blocks may look complete "as long as we are clearly in planning mode"); while building, blocks not built yet are
+see-through. A ninth type, Fortress: the keep, power a day by blocks and height (a ledger number, "Power N, +M a day").
+A Fortress button on the start menu; a short line for the type picked from its data.
+
+**The fixes and their causes.**
+- *Side taps stacked.* The GPU pick gives a point, not a face, and `Town.pickBlock` in plan mode stacked on any cell
+  with only planned blocks (`plan && !mask[c]`). Now the tap's ray is marched through the plan's blocks
+  (`fortress/pick.ts`): a side face puts the block in the cell the ray came from, at the same level.
+- *Farms didn't show.* The fortress's crops were draped (laid on the host's ground, hidden when a corner is more than
+  1.5 off the plan's). The fortress's ground is the level's surface read; the host's adds the loose ground the GPU
+  keeps on the surface, which round the town was more than that — every field was hidden (a headless shot with the crop
+  lifted 3 m showed them all there). And the crop's colour is a hash, two in five green on grass. Now a structures
+  flag `DRAPE_ANY` (32: follow the host's ground however far off), crops ripe, a fence round the farm.
+- *Walls stopped at 3.* That was the wall type's `maxLevels`. The fortress isn't column matter, so the window's z
+  ceiling (the Town's other limit) doesn't apply: walls and the keep go to the Town's MAX_LEVELS, 8 levels (32 m; the
+  plan's mask is 8 bits).
+- *Thin walls.* A wall cell draws a band from its middle to each side that meets a wall or the keep (runs, corners, tees
+  join), merlons on both faces, a tower at ends, sharp turns and junctions or where tapped (Tower), gate arches in both
+  faces. The cell is still the unit of planning and cost.
+
+**Found on the way.** In the first headless runs every builder died. (1) They stood inside the cell they built: a block
+that stands is pieces whose columns are claimed, and they were buried — they stand just outside its open sides now (as
+BuildCrew's). (2) A site across the river: the agents' fields cost a wet step +3 and no more, so the way led through
+deep water and all eight drowned (death cause "water"); BACKLOG FT-20 (the agents' owner's call), the check plans on
+the heap's bank. (3) One shared site field led a stone carrier to the nearest site that wanted only wood, where it
+stood for ever: a field a good now (F.site stone, F.store wood). (4) The agents' toss of a dropped load threw without
+the world's terrain: Build attaches the world API (as the settlements do on their first dig).
+
+**Checks.** Unit: src/fortress/build.test.ts (11: face → cell for each side and level, a top stack, a slanted ray;
+the order; cost paid → built and the stores down by the cost; loads on their way; power with blocks and height; the
+keep's towers and a wall joining it; farms ripe and fenced; see-through only while building; the lines' writing) and
+fortress.test.ts (thin walls: 7 rampart bands, 8 merlons, 4 gate arches, a tapped tower). Headless at 412x915 (sim
+?speed=8), C:/Projects/shots88/fortress/: three houses of two storeys, a 6-cell wall with a 2-level keep at its end and
+a 7-cell farm planned by the API, Build pressed: 23 of 23 blocks built in 143 s (sim ~8x), 55 loads, stone 80 → 8
+(the plan cost 76 stone; the town's income adds), no deaths, power 2.5 a day after. m2-plan.png (the plan whole, the
+amber frame, "Planning (paused)"), m2-building.png (blocks see-through, builders at the keep and the farm, "Building:
+7 of 23 blocks done"), m2-done.png ("All 23 blocks are built.", "Power 0, +3 a day"), m2-farmzoom.png (the farm ripe
+and fenced). Strings read: "Houses: 4 wood and 2 stone a block. 4 beds a block. Up to 4 high.", "This farm has 7
+blocks. It costs 7 wood. It needs 7 workers. It makes 14 grain a day.", "Wood 120 · Stone 80 · Grain 150 · Power 0, +0
+a day", "Press Plan to stop time and plan more."

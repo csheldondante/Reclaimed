@@ -529,6 +529,32 @@ each was implemented.
 - The user, verbatim: "Out of curiosity what if we scaled the bike down to normalize the character relative to the meter scale? The canyon would be wider and the bike relatively slower right?" and "Ok I think that we want to go that direction then add LOD for another level of detail. However, I'm going to be a little chaotic and say I don't think we should focus on heroes right now. You pointed out things that have a big impact at the most fun and we have building and commanding agent armies and reshaping the land. Let's make a command mode and rts defense mode and then hone the situation system to show those changes in detail. Let's make the stronghold under attack or caravan/traveling group version and make it command and building and resource focused with epic spells."
 - → Heroes toward true scale (the bike scaled down with its speed, hover, collision and turning; another level of detail to keep them readable): the direction, later. Focus now moves from heroes to a command and RTS defense mode: building, commanding agent armies, resources, epic spells that reshape the land (the sandbox's powers); a stronghold under attack, or a caravan/travelling group; then the situation system honed to show those changes in detail. Planned with the user first.
 
+## 2026-11-03 — round 128d (session 5, `fortress`) — the user tried milestone 1
+
+- The user, verbatim, on milestone 1 (context: 1 answered "planned blocks shown as ghosts until built?", 2 answered
+  "thinner walls, towers only where tapped?"):
+
+> 1. Yes but right now there is no way to exit the build menu and see the building in progress. 2. I didn't see this when clicking calls can be thinner than a cell as long as the cells are marked as wall right? We can use rules or WFC to make anything there. 3. I think housing could have size limits where adjacent blocks don't join above some size but this is aesthetic polish you should not prioritize. 4. Fix the clicking on the side to build next to it. This should be trivial with a pick and then knowing which side and jumping to an adjacent cell at the same height. 4. I need some way to submit the build and see the workers make it. 5. Farms did not build for me. 6. Walls seemed to have some max height 7. It doesn't actually work the way I said. I said that you should click a building type then get material types for that building. Like field or farmhouse for a farm. Or stone or plaster for other buildings. Similar townscraper. Now that said, I actually like the simpler implementation you have now at least for now.
+
+- The user, verbatim, on planned blocks: "No planned blocks can look complete before being built", then: "I don't mind
+  that as long as we are clearly in planning mode".
+- → While planning, the plan is drawn whole and the mode is unmistakable: a "Planning (paused)" banner and an amber
+  frame round the screen. After Build, blocks not built yet are drawn see-through (pale, every other pixel) until
+  their cost is in.
+- The user, verbatim: "Also, I didn't see any fortress option. Also, it would be interesting to have information about
+  what building do somewhere compact but visible so I know what they consume and produce."
+- → A Fortress button on the start menu (the atlas level, the town held as the fortress). The type picked has a short
+  line made from its data: what a block costs, makes or holds, the workers it needs, how high it goes (what buildings
+  consume comes with recipes, milestone 4).
+- The user, verbatim: "No I also mean no fortress building type and we discussed building your fortress should add to
+  your magic power so that players are incentivised to build ever bigger and elaborate fortresses".
+- → A ninth type, Fortress: the player's keep (solid stone, crenellated, a tower at each outer corner; walls run into
+  it), stone-heavy. Each built block gives power a day, more the higher it stands (level L: × (1 + 0.5 L)). The power
+  is a number in the stores that grows ("Power N, +M a day" at the top); nothing spends it yet. Power will also come
+  from shrines and ley lines later (FORTRESS_MODE.md).
+- → Material and style choices per type (item 7: field or farmhouse, stone or plaster) and housing size limits
+  (item 3): BACKLOG, not now.
+
 ## 2026-11-03 — round 128c (session 5) — the fortress mode: the user's vision
 
 - The user, verbatim (the full write-up; the structured design is docs/design/FORTRESS_MODE.md):

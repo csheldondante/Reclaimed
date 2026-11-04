@@ -110,6 +110,10 @@ dealer (runloop / opportunities); recipes and tags (contracts/recipe.ts); the st
   be made).
 - **Power (mana income):** a power structure (a shrine or temple, or the player's tower), raised by opportunities
   to find nodes of power and channel ley lines back to it.
+  - (round 128d, the user: "building your fortress should add to your magic power so that players are incentivised to
+    build ever bigger and elaborate fortresses") The fortress itself gives power: the Fortress type's built blocks,
+    more the higher they stand (slice 1: power × (1 + 0.5 × level) a day, a number in the stores, nothing spends it
+    yet). Shrines and ley lines add to it later.
 
 ## Inventory of what exists (round 128c, read from places and the branches)
 

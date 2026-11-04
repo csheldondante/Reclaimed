@@ -3350,6 +3350,28 @@ The building rule (the user's): select what (a structure type), then plan it wit
   matter: in the atlas world the window's land is drawn as a heightfield, where a Town stamped as column matter reads
   as a lumpy mound (DEVLOG round 128c). The pieces join the settlements' (one draw): `SettlementsView.extra`, in the
   box's frame, moved into the window's by the box's offset.
+- **Round 128d (milestone 2 and the user's fixes).** Types: nine (the Fortress — the keep, form `keep`: solid stone,
+  crenellated, a tower at each outer corner; walls join it). `PerBlock.power`: a built block gives power × (1 +
+  POWER_RISE × level) a day (`FortressPlan.power(s, only?)`); the level sets the pinned settlement's `stores.power.rate`
+  from the built blocks, so the stores advance it (a ledger number, nothing spends it). Walls are thin by rule (a band
+  from the cell's middle to each side meeting a wall or the keep; the cell stays the unit of planning and cost); a
+  player tower per wall cell (`FortressPlan.tower`). The Town is not stamped (pieces only) and has no z ceiling: its
+  limit is MAX_LEVELS. **Picking** (`fortress/pick.ts`, pure): the tap's ray (`Camera.ray`) marched through the plan's
+  blocks; a top face stacks, a side face puts a block in the cell it came from at the same level; missing every block,
+  the GPU pick's ground cell. **Modes** (`Fortress.mode`): `plan` (speed 0; the plan drawn whole; a "Planning
+  (paused)" banner and an amber frame) and `build` (speed back to `?speed=`; blocks not built drawn see-through:
+  `PieceInputs.ghost` → look bit 23 `LOOK_GHOST`, structgame.wgsl discards every other pixel and paints it pale).
+  **Builders** (`fortress/life.ts` FortressLife, a units Routine): spawned at the town's stone heap ('pile' spot,
+  `Settlements.spotsOf`) on the first Build; heap → load out of the stores (`fortress/work.ts` BuildBook: what a block
+  lacks, loads on their way counted) → the block → worked in; a block stands (`Fortress.markBuilt` → `Town.add`) when its
+  type's cost is in. Order: `buildOrder(town, heap)` (agents/buildcrew.ts, now a pure function BuildCrew uses too).
+  Fields: F.pile (the heap), F.site (blocks lacking stone), F.store (blocks lacking wood: a field a good, or a stone
+  carrier is led to a wood-only site and stuck); groups R.toPile, R.toSite, R.toStore, R.working. Builders stand just
+  outside the cell (a block that stands claims its columns: one inside is buried). `Settlements.pin(id, true)`: no
+  SettlementLife for the pinned town — FortressLife uses the same fields and groups. NFIELDS and MAX_GROUPS unchanged.
+  The fortress's crops and fences are draped with `DRAPE_ANY` (structures flag 32, structmesh.wgsl: follow the host's
+  ground however far off the plan's): the fortress's ground is the surface read, without the loose ground the GPU
+  draws on it.
 - **The level** (`?fortress=1` with `?town=`): `Settlements.pin(id)` keeps the town live wherever the camera is and
   stops its `grow()`; its stores are topped up to `START_STORES`; the level's speed is 0 (the existing pause: sim,
   units, settlements and the day wait; `?fpause=0` to compare); the sandbox's editor panel is hidden; planning waits

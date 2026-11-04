@@ -2,7 +2,7 @@
 // structure. Select what (a type), then paint it: a cell painted next to a structure of the same type joins it (two
 // joined by one cell become one). Pure: no GPU, no DOM — the view (fortress.ts) makes Town blocks of it.
 import type { FortressPlanApi, Goods, PerBlock, PlanGrid, PlanTotals, Structure, StructureDef, StructureType, WallTile } from '../api/contracts/fortress';
-import { DEFS } from './defs';
+import { DEFS, POWER_RISE } from './defs';
 
 /** The wall tile from which of a cell's four sides join (sides 0..3 in order round the cell; e and e+2 face). */
 export function wallTileOf(joins: readonly boolean[]): WallTile {
@@ -35,6 +35,8 @@ export class FortressPlan implements FortressPlanApi {
   readonly mask: Uint8Array;
   /** per cell a gate (wall cells' ground level) */
   readonly gate: Uint8Array;
+  /** (round 128d) per cell a tower the player put on a wall cell (towers stand by rule where runs end or turn) */
+  readonly tower: Uint8Array;
   private byId = new Map<number, Structure>();
   private nextId = 1;
   /** the cells whose look may have changed since the last `takeChanged` (painted, erased, their neighbours) */
@@ -44,6 +46,7 @@ export class FortressPlan implements FortressPlanApi {
     this.owner = new Int32Array(grid.count).fill(-1);
     this.mask = new Uint8Array(grid.count);
     this.gate = new Uint8Array(grid.count);
+    this.tower = new Uint8Array(grid.count);
   }
 
   typeAt(cell: number): StructureType | null {
@@ -115,6 +118,7 @@ export class FortressPlan implements FortressPlanApi {
       s.cells.delete(cell);
       this.owner[cell] = -1;
       this.gate[cell] = 0;
+      this.tower[cell] = 0;
       if (!s.cells.size) this.byId.delete(s.id);
     }
     // (a gate stands on a straight run: a neighbour's run may have just broken)
@@ -134,12 +138,22 @@ export class FortressPlan implements FortressPlanApi {
     return true;
   }
 
+  /** (round 128d) a tower on a wall cell, or none; false if it isn't a wall */
+  setTower(cell: number, on: boolean): boolean {
+    if (this.typeAt(cell) !== 'wall' || !!this.tower[cell] === on) return false;
+    this.tower[cell] = on ? 1 : 0;
+    this.touch(cell);
+    return true;
+  }
+
   /** Which of a wall cell's sides join a wall at level L (sides 0..3). */
   wallJoins(cell: number, level: number): boolean[] {
     const out = [false, false, false, false];
     for (let e = 0; e < 4; e++) {
       const n = this.grid.nbr[cell * 4 + e];
-      out[e] = n >= 0 && this.typeAt(n) === 'wall' && this.has(n, level);
+      // (a wall runs into the fortress's keep: round 128d)
+      const t = this.typeAt(n);
+      out[e] = n >= 0 && (t === 'wall' || t === 'fortress') && this.has(n, level);
     }
     return out;
   }
@@ -170,7 +184,19 @@ export class FortressPlan implements FortressPlanApi {
   gives(s: Structure): PerBlock {
     const out: PerBlock = {};
     addPer(out, this.defs[s.type].perBlock, this.blocks(s));
+    const p = this.power(s);
+    if (p) out.power = p;
     return out;
+  }
+
+  /** Power a day: each block power x (1 + POWER_RISE x its level) — bigger and higher give more (round 128d). */
+  power(s: Structure, only?: (cell: number, level: number) => boolean): number {
+    const per = this.defs[s.type].perBlock.power ?? 0;
+    if (!per) return 0;
+    let p = 0;
+    for (const [c, m] of s.cells)
+      for (let L = 0; L < 8; L++) if ((m >> L) & 1 && (!only || only(c, L))) p += per * (1 + POWER_RISE * L);
+    return p;
   }
 
   totals(stores: Goods): PlanTotals {
@@ -182,6 +208,8 @@ export class FortressPlan implements FortressPlanApi {
       blocks += b;
       addGoods(cost, this.defs[s.type].cost, b);
       addPer(gives, this.defs[s.type].perBlock, b);
+      const p = this.power(s);
+      if (p) gives.power = (gives.power ?? 0) + p;
     }
     const short: Goods = {};
     for (const [k, v] of Object.entries(cost) as [keyof Goods, number][]) {

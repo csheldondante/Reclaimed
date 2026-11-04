@@ -225,12 +225,19 @@ export class Settlements {
    * (fortress slice 1) Hold a settlement as the player's fortress: it's the live one whenever its plan is in the
    * window (not the one nearest the view), and it doesn't grow houses of its own (the player builds).
    */
-  pin(id: string): Settlement {
+  pin(id: string, ownLife = false): Settlement {
     const s = this.byId.get(id);
     if (!s) throw new Error(`settlements.pin: no settlement ${id}`);
     this.pinned = id;
+    this.pinnedOwnLife = ownLife;
     return s.rec;
   }
+
+  /**
+   * (round 128d) the pinned settlement's people are run by its holder (the fortress's FortressLife), not a
+   * SettlementLife: the two use the same agents' fields and groups (FORTRESS_SLICE1 correction 1), so never both
+   */
+  private pinnedOwnLife = false;
 
   get pinnedId(): string | null {
     return this.pinned;
@@ -583,6 +590,16 @@ export class Settlements {
     });
   }
 
+  /**
+   * (round 128d, fortress) A planned settlement's spots in window coordinates now (its heaps, stores, homes); null: not
+   * planned yet.
+   */
+  spotsOf(id: string): LiveSpot[] | null {
+    const p = this.done.get(id);
+    const s = this.seeds.find((x) => x.rec.id === id);
+    return p && s ? this.liveSpots(p, s) : null;
+  }
+
   /** the spots of a plan in window coordinates */
   private liveSpots(p: SettlementPlan, s: SettlementSeed): LiveSpot[] {
     const ox = s.box.x0;
@@ -787,7 +804,7 @@ export class Settlements {
       this.life.dispose();
       this.life = null;
     }
-    if (best && !this.life) {
+    if (best && !this.life && !(this.pinnedOwnLife && best.rec.id === this.pinned)) {
       const s = best;
       const p = this.done.get(s.rec.id)!;
       this.life = new SettlementLife(s.rec, p.camp, {

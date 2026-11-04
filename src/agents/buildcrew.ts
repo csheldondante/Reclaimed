@@ -54,6 +54,29 @@ const SITES = 12;
 
 const key = (b: Block) => b.cell * 8 + b.level;
 
+/**
+ * What a town's plan has still to do, in order (round 65; a pure function since round 128d, the fortress's builders use
+ * it too): blocks to build whose level below stands (or the ground) — lowest first, then nearest `from` (the Town's
+ * frame) — then blocks to take down, from the top.
+ */
+export function buildOrder(t: Town, from: readonly [number, number]): { block: Block; down: boolean }[] {
+  const [px, py] = from;
+  const out: { block: Block; down: boolean; d: number }[] = [];
+  for (const b of t.delta()) {
+    const [cx, cy] = t.grid.centre(b.cell);
+    const d = Math.hypot(cx - px, cy - py);
+    if (b.add) {
+      // (on what stands: the ground, or the block under it; else later)
+      if (b.level > 0 && !t.has(b.cell, b.level - 1) && t.planned(b.cell, b.level - 1)) continue;
+      out.push({ block: { cell: b.cell, level: b.level }, down: false, d: b.level * 1000 + d });
+    } else {
+      if (t.has(b.cell, b.level + 1)) continue;
+      out.push({ block: { cell: b.cell, level: b.level }, down: true, d: -b.level * 1000 + d });
+    }
+  }
+  return out.sort((a, b) => a.d - b.d).map(({ block, down }) => ({ block, down }));
+}
+
 export class BuildCrew {
   /** what it's done: loads brought (by material), blocks built and taken down, put back on the pile (taken down, or not needed), trips, waits for material at the pile */
   readonly stats = { used: {} as Record<string, number>, built: 0, takenDown: 0, returned: 0, trips: 0, starved: 0 };
@@ -91,24 +114,9 @@ export class BuildCrew {
     return this.def.cost ?? 6;
   }
 
-  /** What's to do, in order: blocks to build whose level below stands (or the ground), then blocks to take down from the top. */
+  /** What's to do, in order (buildOrder). */
   todo(): { block: Block; down: boolean }[] {
-    const t = this.def.town;
-    const [px, py] = [this.def.pile.x, this.def.pile.y];
-    const out: { block: Block; down: boolean; d: number }[] = [];
-    for (const b of t.delta()) {
-      const [cx, cy] = t.grid.centre(b.cell);
-      const d = Math.hypot(cx - px, cy - py);
-      if (b.add) {
-        // (on what stands: the ground, or the block under it; else later)
-        if (b.level > 0 && !t.has(b.cell, b.level - 1) && t.planned(b.cell, b.level - 1)) continue;
-        out.push({ block: { cell: b.cell, level: b.level }, down: false, d: b.level * 1000 + d });
-      } else {
-        if (t.has(b.cell, b.level + 1)) continue;
-        out.push({ block: { cell: b.cell, level: b.level }, down: true, d: -b.level * 1000 + d });
-      }
-    }
-    return out.sort((a, b) => a.d - b.d);
+    return buildOrder(this.def.town, [this.def.pile.x, this.def.pile.y]);
   }
 
   private go(id: number, w: Worker, step: Step, group: number): void {

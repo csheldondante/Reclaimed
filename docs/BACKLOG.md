@@ -14,12 +14,12 @@ user) · `deferred` (agreed for later).
 
 ## Round 128c (2026-11-03, session 5, `fortress`) — fortress mode slice 1 (docs/design/FORTRESS_SLICE1.md)
 
-Branch `fortress`: milestone 1 built; milestones 2-5 wait for the user's test of it.
+Branch `fortress`: milestones 1 and 2 built (round 128d: the user's fixes, the Fortress type and power); milestones 3-5 wait for the user's test.
 
 | id | item | size | status |
 |---|---|---|---|
 | FT-1 | Milestone 1: `?level=atlas&town=1&fortress=1` — the town pinned as the fortress (its stores topped up to a start), time stopped while planning, a phone bar of the 8 types with an erase and a gate toggle, painted cells owned by a structure (next to the same type joins it), the plan drawn as the towns' pieces, each structure's cost and capacity and the plan against the stores | L | done (this commit) |
-| FT-2 | Milestone 2: workers build the plan from the warehouse (blocks stand, stone down by the cost); built vs planned drawn apart (planned as a ghost or outline) | L | next (after the user's test) |
+| FT-2 | Milestone 2: workers build the plan from the warehouse (blocks stand, stone down by the cost); built vs planned drawn apart (planned as a ghost or outline) | L | done (round 128d commit): FortressLife, Build/Plan, see-through while building |
 | FT-3 | Milestone 3: quarry, lumber camp, hauling, houses fill (food per person: the user's answer 3) | L | deferred |
 | FT-4 | Milestone 4: jobs and recipes (blacksmith weapons from ore, barracks trains soldiers) | L | deferred |
 | FT-5 | Milestone 5: day counter and the army | L | deferred |
@@ -28,7 +28,19 @@ Branch `fortress`: milestone 1 built; milestones 2-5 wait for the user's test of
 | FT-8 | Repurpose a structure into another type at less cost (the user's answer 6: soon after slice 1) | M | deferred |
 | FT-9 | Rough: the irregular grid turns a wall ring at many cells, so a round ring gets many towers (one where a run turns by more than 50 degrees). Walls are a whole cell thick (about 6 m) | S | open |
 | FT-10 | Rough: trees and the town's own buildings stay where cells are planned (workers fell and clear in milestone 2); cells can be planned on water | S | open |
-| FT-11 | Rough: a tap on a planned cell always stacks on it (Townscaper's tap-a-side-to-add-beside not yet); blacksmith and barracks read alike (both stone and slate); farm and quarry are flat and easy to miss under trees | S | open |
+| FT-11 | (side taps: FT-14; farms: FT-15) Rough: a tap on a planned cell always stacks on it (Townscaper's tap-a-side-to-add-beside not yet); blacksmith and barracks read alike (both stone and slate); farm and quarry are flat and easy to miss under trees | S | open |
+| FT-12 | (128d, item 7) Pick a type, then its material or style (farm: field or farmhouse; stone or plaster), Townscaper-like. The user likes the simpler one for now | M | deferred |
+| FT-13 | (128d, item 3) Housing size limits: next to each other above some size, blocks don't join (aesthetic polish, not a priority) | S | deferred |
+| FT-14 | (128d) Side taps build beside at the same level (a face pick along the tap's ray, fortress/pick.ts) | S | done (round 128d commit) |
+| FT-15 | (128d) Farms didn't show: crops hidden under the drawn ground (the fortress's ground lacks the GPU's loose ground; DRAPE hid them) and green on grass. Now DRAPE_ANY, ripe, fenced | S | done (round 128d commit) |
+| FT-16 | (128d) Walls' height cap was the type's maxLevels 3: now the Town's MAX_LEVELS (8 levels, 32 m; the fortress isn't column matter, so the window's z ceiling doesn't bind it) | S | done (round 128d commit) |
+| FT-17 | (128d) Thin walls by rule: a band from a wall cell's middle to each side that meets a wall or the keep; merlons on both faces; towers at ends, turns, junctions and where tapped (Tower toggle); gate arches in both faces | M | done (round 128d commit) |
+| FT-18 | (128d) A Fortress button on the start menu; a short line for the type picked (cost, makes, holds, workers, height) from its data | S | done (round 128d commit) |
+| FT-19 | (128d) The Fortress type: the keep, power a day by blocks and height, a power number in the stores ("Power N, +M a day"); nothing spends it yet (spells, runes later) | M | done (round 128d commit) |
+| FT-20 | Builders drown crossing water: the agents' fields cost a wet step +3 (agents.wgsl stepCost), deep water no more, so a site across a river sends them through it (headless: all 8 drowned). Needs a deep-water cost in the agents' fields (their owner's call) | M | open |
+| FT-21 | Rough: a builder's load is the stores' (a ledger number), carried as a look; the heap's real matter isn't taken (milestone 3's hauling makes the heaps real). A builder that dies loses its load | S | open |
+| FT-22 | Rough: which block a town piece belongs to (see-through or not) is read from its middle; a façade or roof on a cell's edge may take its neighbour's look. An erased built block goes at once (no taking down, no refund) | S | open |
+| FT-23 | Rough: the fortress banner sits over the level's progress pill at the top; the keep's merlons don't step where keep cells differ in height | S | open |
 
 ## Round 126 (2026-11-02, session 5, `dialog2`) — petitions as dialogs, the cast, plain writing (DECISIONS round 126)
 

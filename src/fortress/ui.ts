@@ -1,27 +1,42 @@
-// The fortress's planning bar (milestone 1): select what — one of the eight types — then tap to plan it. An erase
-// toggle (no shift key on a phone) and, for walls, a gate toggle. A panel over the bar says what the type costs,
-// what the structure just painted costs and gives, and the whole plan against the stores. Phone-sized: two rows of
-// four big buttons.
+// The fortress's bar. Planning (time stopped): select what — one of the nine types — then tap to plan it; Erase, and for
+// walls Gate and Tower toggles (no shift key on a phone); a compact line on the type picked (what a block costs, makes,
+// holds, how high: typeCard, from its data), the structure just painted, the plan against the stores; a big Build button.
+// Building (time runs): the bar shrinks to the progress and a Plan button, so the building can be watched. The stores
+// and the power coming in show at the top in both. Planning is unmistakable (round 128d, the user: "I don't mind that
+// as long as we are clearly in planning mode"): a "Planning (paused)" banner and an amber frame round the screen.
 import { STRUCTURE_TYPES, type StructureType } from '../api/contracts/fortress';
 import { DEFS } from './defs';
 import type { Fortress } from './fortress';
-import { PAUSED_LINE, planLines, structureLines, typeLines } from './words';
+import { buildingLine, PAUSED_LINE, planLines, storesLine, structureLines, typeCard } from './words';
 
 const CSS = `
 .fort-bar{position:absolute;left:0;right:0;bottom:0;padding:6px 8px calc(8px + env(safe-area-inset-bottom));
   background:rgba(20,22,26,.86);color:#eee;font:14px/1.3 system-ui,sans-serif;pointer-events:auto;z-index:30}
-.fort-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:5px}
-.fort-bar button{min-height:42px;border:1px solid #555;border-radius:7px;background:#2c3036;color:#eee;font:inherit;padding:2px 4px}
+.fort-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
+.fort-bar button{min-height:40px;border:1px solid #555;border-radius:7px;background:#2c3036;color:#eee;font:inherit;padding:2px 4px}
 .fort-bar button.on{background:#c8a24a;color:#111;border-color:#e6c46a;font-weight:600}
 .fort-bar button:disabled{opacity:.35}
+.fort-bar button.go{background:#3f7a3a;border-color:#6fae5f;font-weight:700;font-size:16px;min-height:46px}
 .fort-row{display:flex;gap:5px;margin-top:5px}
 .fort-row button{flex:1}
 .fort-info{margin:0 0 6px;font-size:13px;line-height:1.35}
 .fort-info p{margin:0}
+.fort-info .card{color:#f1d58a;font-weight:600}
 .fort-info .short{color:#ff9c7a}
-.fort-top{position:absolute;left:50%;top:10px;transform:translateX(-50%);background:rgba(20,22,26,.8);color:#eee;
-  padding:5px 12px;border-radius:14px;font:13px system-ui,sans-serif;z-index:30;pointer-events:none;white-space:nowrap}
+.fort-top{position:absolute;left:50%;top:8px;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;
+  gap:3px;z-index:30;pointer-events:none;width:max-content;max-width:96vw}
+.fort-top div{background:rgba(20,22,26,.82);color:#eee;padding:4px 11px;border-radius:13px;font:13px system-ui,sans-serif;white-space:nowrap}
+.fort-top .mode{font-weight:700;font-size:15px}
+.fort-top .mode.plan{background:#c8a24a;color:#111}
+.fort-frame{position:absolute;inset:0;pointer-events:none;z-index:29;box-shadow:inset 0 0 0 5px #c8a24a;background:rgba(200,162,74,.07)}
 `;
+
+export interface FortressBarHooks {
+  /** Build pressed: the plan goes to the builders, time runs */
+  build(): void;
+  /** Plan pressed: back to planning, time stops */
+  plan(): void;
+}
 
 export class FortressBar {
   readonly root: HTMLDivElement;
@@ -29,15 +44,26 @@ export class FortressBar {
   private buttons = new Map<StructureType, HTMLButtonElement>();
   private eraseBtn: HTMLButtonElement;
   private gateBtn: HTMLButtonElement;
+  private towerBtn: HTMLButtonElement;
+  private planOnly: HTMLElement[] = [];
+  private goBtn: HTMLButtonElement;
   private top: HTMLDivElement;
+  private modeLine: HTMLDivElement;
+  private storeLine: HTMLDivElement;
+  private frame: HTMLDivElement;
 
-  constructor(parent: HTMLElement, private fort: Fortress) {
+  constructor(parent: HTMLElement, private fort: Fortress, hooks: FortressBarHooks) {
     const style = document.createElement('style');
     style.textContent = CSS;
     parent.appendChild(style);
+    this.frame = document.createElement('div');
+    this.frame.className = 'fort-frame';
+    parent.appendChild(this.frame);
     this.top = document.createElement('div');
     this.top.className = 'fort-top';
-    this.top.textContent = PAUSED_LINE;
+    this.modeLine = document.createElement('div');
+    this.storeLine = document.createElement('div');
+    this.top.append(this.modeLine, this.storeLine);
     parent.appendChild(this.top);
     this.root = document.createElement('div');
     this.root.className = 'fort-bar';
@@ -59,20 +85,29 @@ export class FortressBar {
     this.root.appendChild(grid);
     const row = document.createElement('div');
     row.className = 'fort-row';
-    this.eraseBtn = document.createElement('button');
-    this.eraseBtn.textContent = 'Erase';
-    this.eraseBtn.onclick = () => {
-      fort.tool = { ...fort.tool, erase: !fort.tool.erase, gate: false };
-      this.render();
+    const toggle = (label: string, key: 'erase' | 'gate' | 'tower') => {
+      const b = document.createElement('button');
+      b.textContent = label;
+      b.onclick = () => {
+        const on = !fort.tool[key];
+        fort.tool = { type: fort.tool.type, erase: false, gate: false, tower: false, [key]: on };
+        this.render();
+      };
+      return b;
     };
-    this.gateBtn = document.createElement('button');
-    this.gateBtn.textContent = 'Gate';
-    this.gateBtn.onclick = () => {
-      fort.tool = { ...fort.tool, gate: !fort.tool.gate, erase: false };
-      this.render();
-    };
-    row.append(this.eraseBtn, this.gateBtn);
+    this.eraseBtn = toggle('Erase', 'erase');
+    this.gateBtn = toggle('Gate', 'gate');
+    this.towerBtn = toggle('Tower', 'tower');
+    row.append(this.eraseBtn, this.gateBtn, this.towerBtn);
     this.root.appendChild(row);
+    const goRow = document.createElement('div');
+    goRow.className = 'fort-row';
+    this.goBtn = document.createElement('button');
+    this.goBtn.className = 'go';
+    this.goBtn.onclick = () => (fort.mode === 'plan' ? hooks.build() : hooks.plan());
+    goRow.appendChild(this.goBtn);
+    this.root.appendChild(goRow);
+    this.planOnly = [grid, row];
     // (the bar takes its own presses: none reach the map under it)
     for (const ev of ['pointerdown', 'pointerup', 'click', 'wheel', 'touchstart']) this.root.addEventListener(ev, (e) => e.stopPropagation());
     parent.appendChild(this.root);
@@ -81,19 +116,23 @@ export class FortressBar {
   }
 
   /** The lines the panel shows now (the writing lint reads them too). */
-  lines(): { text: string; short?: boolean }[] {
+  lines(): { text: string; short?: boolean; card?: boolean }[] {
     const f = this.fort;
-    const out: { text: string; short?: boolean }[] = [];
+    const out: { text: string; short?: boolean; card?: boolean }[] = [];
+    const stores = f.stores();
+    if (f.mode === 'build') {
+      const p = f.progress();
+      out.push({ text: buildingLine(p.built, p.total) });
+      out.push({ text: 'Press Plan to stop time and plan more.' });
+      return out;
+    }
     const t = f.tool;
     if (t.gate) out.push({ text: 'Tap a straight wall to put a gate in it. Tap a gate to close it.' });
+    else if (t.tower) out.push({ text: 'Tap a wall to put a tower on it. Tap it again to take the tower off.' });
     else if (t.erase) out.push({ text: 'Tap a block to take it away.' });
-    else {
-      const def = DEFS[t.type];
-      out.push({ text: `${def.label}. ${typeLines(def).join(' ')}` });
-    }
+    else out.push({ text: typeCard(DEFS[t.type]), card: true });
     const s = f.selected !== null ? f.plan.structure(f.selected) : null;
     if (s) out.push({ text: structureLines(DEFS[s.type], f.plan.blocks(s), f.plan.cost(s), f.plan.gives(s)).join(' ') });
-    const stores = f.stores();
     const tot = f.plan.totals(stores);
     const pl = planLines(tot, stores);
     out.push({ text: pl.slice(0, -1).join(' ') || pl[0] });
@@ -101,17 +140,36 @@ export class FortressBar {
     return out;
   }
 
+  /** The banner lines at the top: the mode, and the stores with the power coming in. */
+  topLines(): string[] {
+    const f = this.fort;
+    const p = f.progress();
+    return [f.mode === 'plan' ? PAUSED_LINE : buildingLine(p.built, p.total), storesLine(f.stores(), f.powerPerDay())];
+  }
+
   render(): void {
-    const t = this.fort.tool;
-    for (const [k, b] of this.buttons) b.classList.toggle('on', !t.erase && !t.gate && k === t.type);
+    const f = this.fort;
+    const t = f.tool;
+    const planning = f.mode === 'plan';
+    for (const [k, b] of this.buttons) b.classList.toggle('on', !t.erase && !t.gate && !t.tower && k === t.type);
     this.eraseBtn.classList.toggle('on', t.erase);
     this.gateBtn.classList.toggle('on', t.gate);
+    this.towerBtn.classList.toggle('on', !!t.tower);
     this.gateBtn.disabled = t.type !== 'wall' && !t.gate;
+    this.towerBtn.disabled = t.type !== 'wall' && !t.tower;
+    for (const el of this.planOnly) el.style.display = planning ? '' : 'none';
+    this.goBtn.textContent = planning ? 'Build' : 'Plan';
+    this.frame.style.display = planning ? '' : 'none';
+    const [mode, stores] = this.topLines();
+    this.modeLine.textContent = mode;
+    this.modeLine.className = planning ? 'mode plan' : 'mode';
+    this.storeLine.textContent = stores;
     this.info.replaceChildren(
       ...this.lines().map((l) => {
         const p = document.createElement('p');
         p.textContent = l.text;
         if (l.short) p.className = 'short';
+        if (l.card) p.className = 'card';
         return p;
       }),
     );
@@ -120,5 +178,6 @@ export class FortressBar {
   dispose(): void {
     this.root.remove();
     this.top.remove();
+    this.frame.remove();
   }
 }

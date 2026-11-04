@@ -11,6 +11,7 @@ import { TownGrid } from '../build/towngrid';
 import { cellPos } from '../world/lattice';
 import { DEFS } from './defs';
 import { FortressPlan } from './plan';
+import { pickFace, placeFor } from './pick';
 
 export interface FortressIO {
   /** the window's origin (world cells: x, row) — the streamer's */
@@ -24,13 +25,17 @@ export interface FortressIO {
   changed(x0: number, y0: number, x1: number, y1: number): void;
 }
 
-export type Tool = { type: StructureType; erase: boolean; gate: boolean };
+export type Tool = { type: StructureType; erase: boolean; gate: boolean; tower?: boolean };
+
+/** (round 128d) planning (time stopped, the plan drawn whole) or building (time runs, the builders at work) */
+export type FortressMode = 'plan' | 'build';
 
 export class Fortress {
   readonly town: Town;
   readonly grid: TownGrid;
   readonly plan: FortressPlan;
   tool: Tool = { type: 'house', erase: false, gate: false };
+  mode: FortressMode = 'plan';
   /** the structure last painted (the panel's) */
   selected: number | null = null;
   readonly onChange: (() => void)[] = [];
@@ -45,11 +50,10 @@ export class Fortress {
         const [x, y] = this.boxToWindowXY(col);
         return io.ground(x, y);
       },
-      // (milestone 1 only plans: nothing stands yet, so nothing is stamped — milestone 2's builders stamp)
-      stamp: () => {
-        throw new Error('fortress: the Town stamps only when blocks stand (milestone 2)');
-      },
-      zMax: io.dims.zMax,
+      // (the fortress is drawn as pieces, not column matter — pieces.ts: nothing is stamped; so the window's z ceiling
+      // doesn't bound it either: its limit is the Town's MAX_LEVELS levels a cell, round 128d)
+      stamp: () => {},
+      zMax: Infinity,
     }, { grid });
     this.plan = new FortressPlan(grid);
     this.grid = grid;
@@ -100,22 +104,38 @@ export class Fortress {
     return [this.box.origin[0] - wx, this.box.origin[1] - wy];
   }
 
-  /** The block a press on window column `col` at height z would act on, with the current tool. */
-  pick(col: number, z: number): Block | null {
-    const bc = this.windowToBoxCol(col);
-    if (bc < 0) return null;
-    const erase = this.tool.erase || this.tool.gate;
-    const b = this.town.pickBlock(bc, z, erase, true);
-    if (!b) return null;
-    // (a yard only ever lies on the ground)
-    if (!erase && DEFS[this.tool.type].form === 'yard') return { cell: b.cell, level: 0 };
-    return b;
+  /**
+   * The block a press acts on, with the current tool: the ray through it (window frame) marched through the plan's
+   * blocks (pick.ts) — a top face stacks, a side face puts one beside it at the same level; missing every block, the
+   * ground's cell under `groundCol` (the GPU pick's window column), level 0.
+   */
+  pick(ray: { o: readonly number[]; d: readonly number[] }, groundCol: number): Block | null {
+    const erase = this.tool.erase || this.tool.gate || !!this.tool.tower;
+    const [bx, by] = this.toBox(ray.o[0], ray.o[1]);
+    const t = this.town;
+    const hit = pickFace(t.grid, (c) => t.mask[c] | t.plans[c], (c) => t.base[c], [bx, by, ray.o[2]], ray.d, 1200);
+    const yard = !erase && DEFS[this.tool.type].form === 'yard';
+    if (hit) {
+      if (erase) return { cell: hit.cell, level: hit.level };
+      const b = placeFor(hit);
+      if (!b) return null;
+      // (a yard only ever lies on the ground)
+      return yard ? { cell: b.cell, level: 0 } : b;
+    }
+    if (erase || groundCol < 0) return null;
+    const bc = this.windowToBoxCol(groundCol);
+    const c = bc >= 0 ? t.grid.cellOf[bc] : -1;
+    return c >= 0 ? { cell: c, level: 0 } : null;
   }
 
-  /** A press with the current tool on window column `col` at height z. What happened, for the panel; null: nothing. */
-  press(col: number, z: number): boolean {
-    const b = this.pick(col, z);
+  /** A press with the current tool (see pick). What happened, for the panel; false: nothing. */
+  press(ray: { o: readonly number[]; d: readonly number[] }, groundCol: number): boolean {
+    const b = this.pick(ray, groundCol);
     if (!b) return false;
+    if (this.tool.tower) {
+      const on = !this.plan.tower[b.cell];
+      return this.apply(() => this.plan.setTower(b.cell, on), b.cell);
+    }
     if (this.tool.gate) {
       const on = !this.plan.gate[b.cell];
       return this.apply(() => this.plan.setGate(b.cell, on), b.cell);
@@ -200,6 +220,48 @@ export class Fortress {
     this.changedOver(cells);
   }
 
+  /** (round 128d) Planning or building: what the view draws (see-through blocks still to build only while building). */
+  setMode(m: FortressMode): void {
+    if (this.mode === m) return;
+    this.mode = m;
+    this.changedOver([...this.plan.structures().flatMap((s) => [...s.cells.keys()])]);
+    for (const h of this.onChange) h();
+  }
+
+  /** While building: whether a block of the plan is still to build (null while planning: the plan drawn whole). */
+  ghost(): ((cell: number, level: number) => boolean) | undefined {
+    if (this.mode !== 'build') return undefined;
+    return (c, l) => !this.town.has(c, l);
+  }
+
+  /** A block's cost is in: it stands (milestone 2's builders, life.ts). */
+  markBuilt(cell: number, level: number): void {
+    if (!this.town.add(cell, level)) throw new Error(`fortress: block ${cell}:${level} couldn't stand`);
+    this.changedOver([cell]);
+    for (const h of this.onChange) h();
+  }
+
+  /** Blocks built and planned (built ones counted in both). */
+  progress(): { built: number; total: number } {
+    let built = 0;
+    let total = 0;
+    for (const s of this.plan.structures())
+      for (const [c, m] of s.cells)
+        for (let l = 0; l < 8; l++)
+          if ((m >> l) & 1) {
+            total++;
+            if (this.town.has(c, l)) built++;
+          }
+    return { built, total };
+  }
+
+  /** (round 128d) Power a day from the fortress's built blocks (bigger and higher give more: FortressPlan.power). */
+  powerPerDay(): number {
+    let p = 0;
+    for (const s of this.plan.structures()) p += this.plan.power(s, (c, l) => this.town.has(c, l));
+    return p;
+  }
+
   stores(): Goods {
     return this.io.stores();
   }
@@ -220,6 +282,8 @@ export class Fortress {
       for (let l = 0; l < 8; l++) {
         const want = this.plan.has(c, l);
         if (want !== this.town.planned(c, l)) this.town.plan(c, l, want);
+        // (a built block erased from the plan comes down at once: taking down is a later milestone's work)
+        if (!want && this.town.has(c, l)) this.town.remove(c, l);
       }
     this.changedOver(changed);
   }
