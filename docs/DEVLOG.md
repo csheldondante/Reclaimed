@@ -16631,3 +16631,51 @@ input don't read the speed. Three causes, found headless:
 and plans nothing, a tap plans a block and the view draws it (1232 pieces), a pinch zooms 6 → 20.4, the tick doesn't
 move; building — the same, the tick runs; Erase — a tap on the block takes it away. 17/17. Unit fortress/build 28/28,
 typecheck clean.
+
+## 2026-11-04 — round 128d (`fortress`): the Town keeps runs per cell — no 8-level cap, gaps; the panel shows one type; cells clear their trees
+
+**Why.** The user asked why there was a cap of 8 ("Isn't each tile stored as intervals on the irregular grid?" — it
+wasn't: a bit a level in a Uint8 per cell), then: "Yes please. I want the player fortress to be something that can grow
+huge and impressive with spires and bridges and fountains and crystals and floating stones etc. we can adorn it with
+claimed prizes from opportunities." (DECISIONS round 128d; FORTRESS_MODE.md "The fortress grows huge".) Plus two
+fixes from the last shots: the panel mixed types, and pines grew in courtyards (FT-26).
+
+**What.**
+- `build/runs.ts` `CellRuns`: per cell sorted runs [lo, hi) with an owner and a type (the round-102 spans design's
+  occupancy intervals). `set` merges touching runs of one owner and type; `clear` in a run's middle splits it; `reown`
+  / `ownAll` when structures fold; `sameLevels`, `each`, `top`, `bottom`, `levels`. Hundreds of levels are one run.
+- `Town.built` / `Town.plans` are CellRuns (were `mask` / `plans` Uint8Arrays); `MAX_LEVELS` is gone. The interface is
+  kept (`has`, `planned`, `plan`, `add`, `remove`, `set`, `delta`, `top`, `blocks`, `design`, `pickBlock`) plus
+  `occupied`, `topPlanned` and optional owner and type on `plan`/`add`. The one real limit is a stamped town's window
+  ceiling (`zMax - 2`, unchanged): a 504-high window over a floor at ~104 holds ~98 levels; the default 64-high level
+  ~13 (BACKLOG FT-30). The fortress isn't stamped. BuildCrew's and BuildBook's keys no longer pack the level in 3 bits.
+- `FortressPlan.levels` is a CellRuns (owner the structure's id, type its index); `Structure.cells` maps a cell to its
+  runs. Per-cell ownership stays an Int32Array: folding it into the runs would let two structures stack in a cell,
+  which nothing asks for, and the one-type-a-cell rule reads simpler per cell. **Gaps:** a block is allowed on the
+  ground, on the block under it, or beside a block at its level (`FortressPlan.held`) — a wall over an empty level
+  between two stacks is a bridge's span; nothing floats (FT-35 is the rule that would). A wall cell off the ground is
+  drawn from its lowest level with arches under it.
+- Caps lifted: houses 4, warehouses and barracks 3, lumber camps and blacksmiths 2 were picked under the 8 (nothing in
+  the design asked for them); fortress and walls were the 8. Left: farms and the quarry lie flat (1, design). The card
+  says "As high as you like".
+- The panel: the structure's lines only when it is of the type picked (Gate/Tower: a wall's); the power line was
+  pushed twice.
+- FT-26: the fortress's changed cells (painted and their neighbours: a courtyard among them) and each block as it
+  stands clear their plants: `world.plants.clear(x, y, r)`, edit.wgsl OP_FELL with a strength (every column in the
+  radius to grass, no editResult write — an exact fell keeps strength 0 and its tag). Edits run on ticks, so a plan's
+  clearing happens when time runs (Build); FT-32.
+
+**Checks.** Unit: src/build/runs.test.ts (12: merge, split, owners, 300 levels one run, the Town 24 levels, the window
+ceiling, a gap's pillars, the delta bottom up with gaps, runs' owner/type; the plan 20 levels, held/refused, a split);
+fortress, build, shapes, settle, structures 119/119; typecheck clean; scripts/fortresspause.mjs passes. Headless
+412x915 (sim ?speed=24), C:/Projects/shots88/fortress/: a keep of five cells 14 levels, the middle 18 (a turret and
+spire), and a three-cell wall whose middle holds only levels 2-3 (a wall painted at level 2 with nothing under or
+beside it was refused). spans-plan.png / spans-keep.png (planning: the keep 18 levels, 72 m, turret and spire, corner
+towers), spans-bridge.png (the span: end towers, arches under the middle), spans-build-1..4.png and
+spans-keep-built.png (Build: 8, 30, 53, 63 of 84 blocks at 60, 200, 380, 560 s; built blocks solid, the rest
+see-through; power +231 a day at 63). Read on screen: "Houses: 4 wood and 2 stone a block. 4 beds a block. As high as
+you like." with no wall lines under it; Walls picked: "This wall has 10 blocks. It costs 60 stone. 20 archers can
+stand on it." FT-26: a house planned on a tree's cell (85 trees near the town); after Build the tree is gone (the
+column's veg 1.5, grass) — spans-tree-plan.png / spans-tree-build.png (crowns of the trees round it still lean over). The first site, across the river from the heap, drowned 7 of 8 builders (FT-20), so the check builds
+by the heap. 84 blocks take ~10 minutes at speed 24 with 8 builders (3 trips a keep block): slow to watch, a pacing
+question, not frame cost (no perf measured: for the phone bench if a huge keep feels slow).

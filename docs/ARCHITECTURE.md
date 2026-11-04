@@ -1326,8 +1326,22 @@ brushes): `ColumnStamp`s — a column, its span [lo, hi), the design, a
 foundation flag — up to 4,096 columns a tick, written in place on the
 layers; a column queued twice keeps its latest stamp. Built matter starts
 at support 15 (aux 240). `api.town(opts)` makes the one town of a sim.
-The plan (`plans`, a mask a cell like `mask`) is what a building crew
-(agents/buildcrew.ts) builds toward; `delta()` is plan XOR what stands.
+The plan (`plans`) is what a building crew (agents/buildcrew.ts) builds
+toward; `delta()` is the plan against what stands (each cell bottom up).
+**Round 128d: occupancy as runs.** `Town.built` and `Town.plans` are
+`CellRuns` (`build/runs.ts`): per cell sorted half-open runs of levels
+[lo, hi), each with an `owner` and a `type` (the caller's: the fortress
+passes its structure's id and type index; default 0). Touching runs of one
+owner and type merge; clearing a level in a run's middle splits it. No
+level cap (it was a bit a level in a Uint8, `MAX_LEVELS` 8 — gone). The
+interface kept: `has`, `planned`, `occupied` (either), `plan(c, L, on,
+owner?, type?)`, `add(c, L, owner?, type?)`, `remove`, `set`, `delta`,
+`top`, `topPlanned`, `blocks`, `floorZ`, `design`, `pickBlock`. The one
+height limit is a stamped town's: `add`/`plan` refuse a block whose roof
+would reach the window's ceiling (`TownIO.zMax - 2`; a 504 window over a
+floor at ~104 holds ~98 levels, the default 64-high level ~13); the
+fortress isn't stamped (`zMax` Infinity). Gaps are allowed: a block over
+an empty level stands on pillars and arches (`design`).
 
 ## The flow model (round 84, branch `flow`, `?flow=1`)
 
@@ -3355,10 +3369,12 @@ The building rule (the user's): select what (a structure type), then plan it wit
   POWER_RISE × level) a day (`FortressPlan.power(s, only?)`); the level sets the pinned settlement's `stores.power.rate`
   from the built blocks, so the stores advance it (a ledger number, nothing spends it). Walls are thin by rule (a band
   from the cell's middle to each side meeting a wall or the keep; the cell stays the unit of planning and cost); a
-  player tower per wall cell (`FortressPlan.tower`). The Town is not stamped (pieces only) and has no z ceiling: its
-  limit is MAX_LEVELS. **Picking** (`fortress/pick.ts`, pure): the tap's ray (`Camera.ray`) marched through the plan's
+  player tower per wall cell (`FortressPlan.tower`). The Town is not stamped (pieces only) and has no z ceiling, and
+  (round 128d, runs) no level cap. **Picking** (`fortress/pick.ts`, pure): the tap's ray (`Camera.ray`) marched through the plan's
   blocks; a top face stacks, a side face puts a block in the cell it came from at the same level; missing every block,
-  the GPU pick's ground cell. **Modes** (`Fortress.mode`): `plan` (speed 0; the plan drawn whole; a "Planning
+  the GPU pick's ground cell (round 128d: the ground along the same ray, in the box's frame — the GPU pick's column sat
+  a column or two off the ray; the GPU column the fallback; a ray under a block's ground floor, down a level, hits its
+  foundation). **Modes** (`Fortress.mode`): `plan` (speed 0; the plan drawn whole; a "Planning
   (paused)" banner and an amber frame) and `build` (speed back to `?speed=`; blocks not built drawn see-through:
   `PieceInputs.ghost` → look bit 23 `LOOK_GHOST`, structgame.wgsl discards every other pixel and paints it pale).
   **Builders** (`fortress/life.ts` FortressLife, a units Routine): spawned at the town's stone heap ('pile' spot,
@@ -3378,3 +3394,18 @@ The building rule (the user's): select what (a structure type), then plan it wit
   for one surface read over the whole window (`Fortress.ready`: a far chunk's surface words aren't made till it
   wakes). A tap picks (renderer.pick) and presses with the bar's tool (`Fortress.press` → `Town.pickBlock` on the
   plan). `window.reclaimed.fortress` for scripted checks.
+- **Round 128d (runs, the fortress grows huge).** `FortressPlan.levels` is a `CellRuns` (owner = the structure's id,
+  type = `typeIndex(type)`), so a cell's levels have no cap and may have gaps; `Structure.cells` maps a cell to its runs
+  (`LevelRun[]`, the plan's own, read only). Cell → structure ownership stays a per-cell `owner` (a cell is one type;
+  folding it into the runs would let structures stack in a cell — not wanted yet); folding two structures re-owns the
+  folded cells' runs and the Fortress's sync re-owns the Town's (`CellRuns.ownAll`). **Gaps:** `FortressPlan.held(c,
+  L)`: a block is allowed on the ground, on the block under it, or beside a block at its level (any structure's): a wall
+  can span an empty level between two stacks (a bridge's span); nothing floats. Erasing never cascades (a block left
+  held by nothing stays). A wall cell whose lowest level is off the ground is drawn from that level's floor with an
+  arch in each face under it; a building's floating storey has its façades and no underside yet; the keep is drawn
+  solid. Block types have no height cap (`maxLevels` Infinity); yards stay 1. **Plants (FT-26):** the fortress's
+  changed cells (painted and the cells round them) and each block as it stands clear their plants
+  (`FortressIO.clearPlants` → `world.plants.clear(x, y, r)`: edit.wgsl OP_FELL with a strength — every column in the
+  radius to grass, no answer read back); done at the sim's next tick, so a plan's clearing waits for Build. **Input:**
+  the amber frame and the banners take no presses (`#ui>.fort-frame`); a one-finger drag pans (dragStart declines in
+  the fortress; `ControlHandlers.dragPans` lets the mouse's drag pan too).

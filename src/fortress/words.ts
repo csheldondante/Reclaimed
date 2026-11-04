@@ -36,7 +36,6 @@ export function givesLines(p: PerBlock): string[] {
   if (p.jobs) out.push(`It needs ${p.jobs} workers.`);
   if (p.posts) out.push(`${p.posts} archers can stand on it.`);
   if (p.power) out.push(`It gives ${Math.round(p.power)} power a day once built.`);
-  if (p.power) out.push(`It gives ${Math.round(p.power)} power a day once built.`);
   if (p.makes) {
     const m = goodsText(p.makes);
     if (m !== 'nothing') out.push(`It makes ${m} a day.`);
@@ -58,7 +57,7 @@ export function typeCard(def: StructureDef): string {
   if (p.storage) parts.push(`holds ${p.storage} a block`);
   if (p.jobs) parts.push(`${p.jobs} ${p.jobs === 1 ? 'worker' : 'workers'} a block`);
   if (p.posts) parts.push(`${p.posts} archers a block`);
-  parts.push(def.form === 'yard' ? 'flat' : `up to ${def.maxLevels} high`);
+  parts.push(def.form === 'yard' ? 'flat' : Number.isFinite(def.maxLevels) ? `up to ${def.maxLevels} high` : 'as high as you like');
   // (short sentences, not one run-on line: the writing lint's limit is 20 words a sentence)
   const [label, ...rest] = parts;
   return `${label}: ${rest.map((x, i) => (i ? x[0].toUpperCase() + x.slice(1) : x)).join('. ')}.`;
@@ -68,7 +67,7 @@ export function typeCard(def: StructureDef): string {
 export function typeLines(def: StructureDef): string[] {
   const out = [`Each block costs ${goodsText(def.cost)}.`];
   if (def.form === 'yard') out.push('It lies flat on the ground.');
-  else out.push(`Stack it up to ${def.maxLevels} high.`);
+  else out.push(Number.isFinite(def.maxLevels) ? `Stack it up to ${def.maxLevels} high.` : 'Stack it as high as you like.');
   return out.concat(givesLines(def.perBlock).map((s) => s.replace(/^It /, 'Each block ').replace(/^(\d+) archers can stand on it\./, '$1 archers can stand on each block.')));
 }
 

@@ -44,8 +44,13 @@ describe('the plan: cost and capacity', () => {
     expect(p.paint(inner, 1, 'farm')).toBe(false);
     expect(p.paint(inner, 1, 'house')).toBe(false);
     const c = nbr(inner, 2);
-    for (let l = 0; l < DEFS.house.maxLevels; l++) expect(p.paint(c, l, 'house')).toBe(true);
-    expect(p.paint(c, DEFS.house.maxLevels, 'house')).toBe(false);
+    // (round 128d: block types have no cap — the old ones were the 8 levels'; a capped type still stops at its cap)
+    expect(DEFS.house.maxLevels).toBe(Infinity);
+    for (let l = 0; l < 30; l++) expect(p.paint(c, l, 'house')).toBe(true);
+    const capped = { ...DEFS, house: { ...DEFS.house, maxLevels: 3 } };
+    const q = new FortressPlan(grid, capped);
+    for (let l = 0; l < 3; l++) expect(q.paint(c, l, 'house')).toBe(true);
+    expect(q.paint(c, 3, 'house')).toBe(false);
   });
 });
 

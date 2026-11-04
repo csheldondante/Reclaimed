@@ -46,8 +46,6 @@ export interface Shapes {
   courtyards: Courtyard[];
 }
 
-const top = (m: number) => 31 - Math.clz32(m);
-
 /**
  * The plan's shapes. `base`: a cell's ground floor (the Town's): a building is a structure's cells on one floor
  * (pieces.ts groups them so), and a dome's four cells must be one building.
@@ -96,8 +94,7 @@ export function shapesOf(plan: FortressPlan, grid: ShapeGrid, base: (c: number) 
           }
           if (stacked && lone) towers.add(c);
         } else if (g.length === 4) {
-          const m = plan.mask[g[0]];
-          if (!g.every((c) => plan.mask[c] === m)) continue;
+          if (!g.every((c) => plan.levels.sameLevels(c, g[0]))) continue;
           const set = new Set(g);
           // the corner all four share, round which there are only these four
           for (let k = 0; k < 4; k++) {
@@ -111,14 +108,14 @@ export function shapesOf(plan: FortressPlan, grid: ShapeGrid, base: (c: number) 
         }
       }
     } else if (f === 'keep') {
-      for (const [c, m] of s.cells) {
+      for (const c of s.cells.keys()) {
         let n = 0;
         let above = true;
         for (let e = 0; e < 4; e++) {
           const o = nbr(c, e);
           if (o < 0 || plan.owner[o] !== s.id) continue;
           n++;
-          if (top(plan.mask[o]) >= top(m)) above = false;
+          if (plan.top(o) >= plan.top(c)) above = false;
         }
         if (n && above) turrets.add(c);
       }

@@ -1,21 +1,28 @@
 // The eight first buildings (round 128c, the user's list) and their numbers: a block's cost and what it gives. Size
 // sets cost and capacity (blocks × these). Untuned: the user tunes once it's playable (FORTRESS_SLICE1 answer 2).
 import type { StructureDef, StructureType } from '../api/contracts/fortress';
-import { MAX_LEVELS } from '../build/town';
+
+/**
+ * (round 128d) A block type stacks as high as the player likes (the user: "I want the player fortress to be something
+ * that can grow huge and impressive"): the Town keeps runs per cell, no cap. The caps the block types had (houses 4,
+ * warehouses and barracks 3, lumber camps and blacksmiths 2) were picked under the old 8-level cap, not by design. Yards
+ * (farms, the quarry) lie flat: 1, by design.
+ */
+const NO_CAP = Infinity;
 
 /** How much more power a level up gives: a block at level L gives power x (1 + POWER_RISE x L) (round 128d). Untuned. */
 export const POWER_RISE = 0.5;
 
 export const DEFS: Record<StructureType, StructureDef> = {
   // (round 128d) the player's keep: solid stone, crenellated, a tower at each outer corner; its blocks give power, the
-  // higher the more. As tall as the Town allows.
+  // higher the more. No height cap.
   fortress: {
-    type: 'fortress', label: 'Fortress', one: 'fortress', many: 'fortresses', form: 'keep', joins: true, maxLevels: MAX_LEVELS,
+    type: 'fortress', label: 'Fortress', one: 'fortress', many: 'fortresses', form: 'keep', joins: true, maxLevels: NO_CAP,
     cost: { stone: 8, log: 1 }, perBlock: { power: 1 },
     look: { style: 'bastion', props: ['banner'] },
   },
   house: {
-    type: 'house', label: 'Houses', one: 'house', many: 'houses', form: 'block', joins: true, maxLevels: 4,
+    type: 'house', label: 'Houses', one: 'house', many: 'houses', form: 'block', joins: true, maxLevels: NO_CAP,
     cost: { log: 4, stone: 2 }, perBlock: { beds: 4 },
     look: { style: 'hearth', kind: 'house' },
   },
@@ -25,7 +32,7 @@ export const DEFS: Record<StructureType, StructureDef> = {
     look: { style: 'hearth', props: ['haystack'] },
   },
   lumber: {
-    type: 'lumber', label: 'Lumber camp', one: 'lumber camp', many: 'lumber camps', form: 'block', joins: true, maxLevels: 2,
+    type: 'lumber', label: 'Lumber camp', one: 'lumber camp', many: 'lumber camps', form: 'block', joins: true, maxLevels: NO_CAP,
     cost: { log: 3, stone: 1 }, perBlock: { jobs: 2, makes: { log: 3 } },
     look: { style: 'hearth', kind: 'sawmill', props: ['logpile'] },
   },
@@ -35,22 +42,22 @@ export const DEFS: Record<StructureType, StructureDef> = {
     look: { style: 'bastion', props: ['spoil', 'crane'] },
   },
   warehouse: {
-    type: 'warehouse', label: 'Warehouse', one: 'warehouse', many: 'warehouses', form: 'block', joins: true, maxLevels: 3,
+    type: 'warehouse', label: 'Warehouse', one: 'warehouse', many: 'warehouses', form: 'block', joins: true, maxLevels: NO_CAP,
     cost: { log: 4, stone: 4 }, perBlock: { storage: 50 },
     look: { style: 'hearth', kind: 'warehouse', props: ['crates'] },
   },
   wall: {
-    type: 'wall', label: 'Walls', one: 'wall', many: 'walls', form: 'wall', joins: true, maxLevels: MAX_LEVELS,
+    type: 'wall', label: 'Walls', one: 'wall', many: 'walls', form: 'wall', joins: true, maxLevels: NO_CAP,
     cost: { stone: 6 }, perBlock: { posts: 2 },
     look: { style: 'bastion' },
   },
   blacksmith: {
-    type: 'blacksmith', label: 'Blacksmith', one: 'blacksmith', many: 'blacksmiths', form: 'block', joins: true, maxLevels: 2,
+    type: 'blacksmith', label: 'Blacksmith', one: 'blacksmith', many: 'blacksmiths', form: 'block', joins: true, maxLevels: NO_CAP,
     cost: { log: 3, stone: 5 }, perBlock: { jobs: 2, makes: { weapons: 1 } },
     look: { style: 'bastion', kind: 'house', chimney: true, props: ['cart'] },
   },
   barracks: {
-    type: 'barracks', label: 'Barracks', one: 'barracks', many: 'barracks', form: 'block', joins: true, maxLevels: 3,
+    type: 'barracks', label: 'Barracks', one: 'barracks', many: 'barracks', form: 'block', joins: true, maxLevels: NO_CAP,
     cost: { log: 4, stone: 6 }, perBlock: { beds: 4, makes: { soldiers: 1 } },
     look: { style: 'bastion', kind: 'warehouse', props: ['banner'] },
   },

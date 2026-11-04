@@ -32,7 +32,8 @@ describe('a tap picks a face (the user: "clicking on the side to build next to i
   const town = newTown();
   town.plan(inner, 0, true);
   town.plan(inner, 1, true);
-  const occ = (c: number) => town.mask[c] | town.plans[c];
+  const has = (c: number, L: number) => town.occupied(c, L);
+  const any = (c: number) => town.built.any(c) || town.plans.any(c);
   const floor = (c: number) => town.base[c];
 
   it('a ray into a side face gives the neighbouring cell at the same level', () => {
@@ -45,7 +46,7 @@ describe('a tap picks a face (the user: "clicking on the side to build next to i
         const z = GROUND + 0.2 + (level + 0.5) * LEVEL_H;
         const d = [cx - nx, cy - ny, 0];
         const l = Math.hypot(d[0], d[1]);
-        const hit = pickFace(grid, occ, floor, [nx, ny, z], [d[0] / l, d[1] / l, 0], 20)!;
+        const hit = pickFace(grid, has, any, floor, [nx, ny, z], [d[0] / l, d[1] / l, 0], 20)!;
         expect(hit).not.toBeNull();
         expect(hit.face).toBe('side');
         expect(hit.cell).toBe(inner);
@@ -57,7 +58,7 @@ describe('a tap picks a face (the user: "clicking on the side to build next to i
 
   it('a ray down onto the top stacks; a slanted one through a side still lands beside', () => {
     const [cx, cy] = grid.centre(inner);
-    const top = pickFace(grid, occ, floor, [cx, cy, 60], [0, 0, -1], 100)!;
+    const top = pickFace(grid, has, any, floor, [cx, cy, 60], [0, 0, -1], 100)!;
     expect(top.face).toBe('top');
     expect(placeFor(top)).toEqual({ cell: inner, level: 2 });
     // (the game's camera looks down at about 30 degrees)
@@ -72,13 +73,13 @@ describe('a tap picks a face (the user: "clicking on the side to build next to i
     // start back along the ray so it crosses the side at the bottom level's middle
     const back = 3;
     const o = [nx - (dx / l) * back, ny - (dy / l) * back, z - dz * back];
-    const hit = pickFace(grid, occ, floor, o, [dx / l / dl, dy / l / dl, dz / dl], 30)!;
+    const hit = pickFace(grid, has, any, floor, o, [dx / l / dl, dy / l / dl, dz / dl], 30)!;
     expect(hit.face).toBe('side');
     expect(placeFor(hit)!.level).toBe(hit.level);
   });
 
   it('a ray that meets no block picks nothing (the ground is the GPU pick\'s)', () => {
-    expect(pickFace(grid, occ, floor, [5, 5, 60], [0, 0, -1], 100)).toBeNull();
+    expect(pickFace(grid, has, any, floor, [5, 5, 60], [0, 0, -1], 100)).toBeNull();
   });
 });
 

@@ -191,7 +191,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (op == OP_FELL) {
       let had = vegE[i];
       vegE[i] = min(had, FELLED);
-      textureStore(editResult, vec2<i32>(i32(code >> 10u), 0), vec4<f32>(had, 0.0, f32(G.tick), 1.0));
+      // (round 128d) strength > 0: a clearing (plants.clear — the fortress's cells), every column in the radius, no
+      // answer; 0: an exact fell (plants.fell), its answer at the tag
+      if (ev.w <= 0.0) {
+        textureStore(editResult, vec2<i32>(i32(code >> 10u), 0), vec4<f32>(had, 0.0, f32(G.tick), 1.0));
+      }
       continue;
     }
     if (op == OP_TAKE || op == OP_PUT) {

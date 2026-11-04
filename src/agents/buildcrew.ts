@@ -52,7 +52,8 @@ interface Worker {
 const REACH = 2;
 const SITES = 12;
 
-const key = (b: Block) => b.cell * 8 + b.level;
+// (round 128d: the Town has no 8-level cap — a stamped town's levels stay under the window's 511 z, fewer than 128)
+const key = (b: Block) => b.cell * 1024 + b.level;
 
 /**
  * What a town's plan has still to do, in order (round 65; a pure function since round 128d, the fortress's builders use

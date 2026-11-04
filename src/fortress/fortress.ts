@@ -10,7 +10,7 @@ import { Town, type Block } from '../build/town';
 import { TownGrid } from '../build/towngrid';
 import { cellAt, cellPos } from '../world/lattice';
 import { DEFS } from './defs';
-import { FortressPlan } from './plan';
+import { FortressPlan, typeIndex } from './plan';
 import { pickFace, placeFor } from './pick';
 
 export interface FortressIO {
@@ -23,6 +23,11 @@ export interface FortressIO {
   stores(): Goods;
   /** after a change (window world bounds of what changed): the view draws it again */
   changed(x0: number, y0: number, x1: number, y1: number): void;
+  /**
+   * (round 128d, FT-26) clear the plants within r of window world (x, y): a planned or built cell's trees go (the world
+   * API's plants.clear; done at the sim's next tick)
+   */
+  clearPlants?(x: number, y: number, r: number): void;
 }
 
 export type Tool = { type: StructureType; erase: boolean; gate: boolean; tower?: boolean };
@@ -54,7 +59,7 @@ export class Fortress {
     this.town = new Town(box.w, box.h, {
       ground: this.groundOfCol,
       // (the fortress is drawn as pieces, not column matter — pieces.ts: nothing is stamped; so the window's z ceiling
-      // doesn't bound it either: its limit is the Town's MAX_LEVELS levels a cell, round 128d)
+      // doesn't bound it either; and the Town keeps runs a cell, no level cap: round 128d)
       stamp: () => {},
       zMax: Infinity,
     }, { grid });
@@ -116,7 +121,7 @@ export class Fortress {
     const erase = this.tool.erase || this.tool.gate || !!this.tool.tower;
     const [bx, by] = this.toBox(ray.o[0], ray.o[1]);
     const t = this.town;
-    const hit = pickFace(t.grid, (c) => t.mask[c] | t.plans[c], (c) => t.base[c], [bx, by, ray.o[2]], ray.d, 1200);
+    const hit = pickFace(t.grid, (c, L) => t.occupied(c, L), (c) => t.built.any(c) || t.plans.any(c), (c) => t.base[c], [bx, by, ray.o[2]], ray.d, 1200);
     const yard = !erase && DEFS[this.tool.type].form === 'yard';
     if (hit) {
       if (erase) return { cell: hit.cell, level: hit.level };
@@ -239,7 +244,7 @@ export class Fortress {
   /** The window slid: the box sits elsewhere in it (the view moves its pieces). */
   slid(): void {
     const cells: number[] = [];
-    for (let c = 0; c < this.plan.mask.length; c++) if (this.plan.mask[c]) cells.push(c);
+    for (let c = 0; c < this.grid.count; c++) if (this.plan.levels.any(c)) cells.push(c);
     this.changedOver(cells);
   }
 
@@ -259,7 +264,10 @@ export class Fortress {
 
   /** A block's cost is in: it stands (milestone 2's builders, life.ts). */
   markBuilt(cell: number, level: number): void {
-    if (!this.town.add(cell, level)) throw new Error(`fortress: block ${cell}:${level} couldn't stand`);
+    const s = this.plan.structureAt(cell);
+    if (!s || !this.town.add(cell, level, s.id, typeIndex(s.type))) throw new Error(`fortress: block ${cell}:${level} couldn't stand`);
+    // (what grew back on it since it was planned goes as it stands)
+    this.clearPlants([cell]);
     this.changedOver([cell]);
     for (const h of this.onChange) h();
   }
@@ -269,12 +277,11 @@ export class Fortress {
     let built = 0;
     let total = 0;
     for (const s of this.plan.structures())
-      for (const [c, m] of s.cells)
-        for (let l = 0; l < 8; l++)
-          if ((m >> l) & 1) {
-            total++;
-            if (this.town.has(c, l)) built++;
-          }
+      for (const c of s.cells.keys())
+        for (const l of this.plan.levels.each(c)) {
+          total++;
+          if (this.town.has(c, l)) built++;
+        }
     return { built, total };
   }
 
@@ -301,14 +308,40 @@ export class Fortress {
   /** The Town's plan follows the painted plan (the blocks' floors: Town.plan lines them up with the neighbours'). */
   private sync(): void {
     const changed = this.plan.takeChanged();
-    for (const c of changed)
-      for (let l = 0; l < 8; l++) {
+    for (const c of changed) {
+      const s = this.plan.structureAt(c);
+      const owner = s ? s.id : 0;
+      const type = s ? typeIndex(s.type) : 0;
+      // (the levels either side has: the plan's and the Town's, built or planned)
+      const levels = new Set([...this.plan.levels.each(c), ...this.town.plans.each(c), ...this.town.built.each(c)]);
+      for (const l of levels) {
         const want = this.plan.has(c, l);
-        if (want !== this.town.planned(c, l)) this.town.plan(c, l, want);
+        if (want !== this.town.planned(c, l)) this.town.plan(c, l, want, owner, type);
         // (a built block erased from the plan comes down at once: taking down is a later milestone's work)
         if (!want && this.town.has(c, l)) this.town.remove(c, l);
       }
+      // (structures folded into one: the Town's runs take the plan's owner)
+      this.town.plans.ownAll(c, owner, type);
+      this.town.built.ownAll(c, owner, type);
+    }
+    // (FT-26) the trees go from the cells painted and the cells round them (a courtyard among them)
+    this.clearPlants(changed);
     this.changedOver(changed);
+  }
+
+  /** The plants on these cells cleared (each cell's quad: a disc round its middle to its farthest corner). */
+  private clearPlants(cells: number[]): void {
+    if (!this.io.clearPlants) return;
+    const g = this.town.grid;
+    for (const c of cells) {
+      const [x, y] = g.centre(c);
+      let r = 0;
+      for (let k = 0; k < 4; k++) {
+        const [cx, cy] = g.corner(c, k);
+        r = Math.max(r, Math.hypot(cx - x, cy - y));
+      }
+      this.io.clearPlants(...this.toWindow(x, y), r + 0.5);
+    }
   }
 
   /** tell the IO what changed: the window world bounds of these cells and their neighbours */

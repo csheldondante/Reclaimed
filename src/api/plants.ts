@@ -178,6 +178,15 @@ export class Plants {
   }
 
   /**
+   * (round 128d) Clear the plants within `radius` of (x, y): every column cut back to grass (edit.wgsl OP_FELL with a
+   * strength: no answer read back), the trees there gone; they grow back by succession. What a fortress does to its
+   * cells (FT-26: its courtyards were hidden under pines). Done at the next tick: while time is stopped, it waits.
+   */
+  clear(x: number, y: number, radius: number): void {
+    this.core.globals.events.push({ kind: EventKind.Edit, x, y, z: OP_FELL * 32 + STROKE_START, radius, strength: 1 });
+  }
+
+  /**
    * Fell the tree at (x, y)'s column: the column is cut back to grass (it
    * regrows by succession). Resolves with the tree as it stood (its `logs`
    * what it makes), or null when no tree stood there by then.

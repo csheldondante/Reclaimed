@@ -5,7 +5,8 @@
 import type { Good, Goods } from '../api/contracts/fortress';
 import type { Block } from '../build/town';
 
-const key = (b: Block) => b.cell * 8 + b.level;
+// (round 128d: no level cap — a key per block that doesn't pack the level into a few bits)
+const key = (b: Block) => `${b.cell}:${b.level}`;
 
 export interface Load {
   good: Good;
@@ -14,9 +15,9 @@ export interface Load {
 
 export class BuildBook {
   /** per block in the works: what's been worked in */
-  private paid = new Map<number, Goods>();
+  private paid = new Map<string, Goods>();
   /** per block: what's on its way there */
-  private coming = new Map<number, Goods>();
+  private coming = new Map<string, Goods>();
 
   /** `costOf`: what a block costs (its type's per-block cost) */
   constructor(private costOf: (b: Block) => Goods) {}
@@ -78,7 +79,7 @@ export class BuildBook {
   }
 }
 
-function add(m: Map<number, Goods>, k: number, g: Good, v: number): void {
+function add(m: Map<string, Goods>, k: string, g: Good, v: number): void {
   const o = m.get(k) ?? {};
   o[g] = (o[g] ?? 0) + v;
   if (Math.abs(o[g]!) < 1e-9) delete o[g];

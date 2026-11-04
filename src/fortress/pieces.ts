@@ -10,7 +10,7 @@
 // ends or meets another; farms are fields, the quarry a yard; and each type's props set down on it.
 import type { StructurePieces, BuildingRec, CityPlan, Facade, MegaFeature, Prop, TileMesh, TileUse, V2, StructureStyleId } from '../api/contracts/structures';
 import type { StructureDef, StructureType } from '../api/contracts/fortress';
-import { LEVEL_H, MAX_LEVELS, type Town } from '../build/town';
+import { LEVEL_H, type Town } from '../build/town';
 import type { TownGrid } from '../build/towngrid';
 import { PROP_SIZE } from '../structures/dressmodules';
 import { library } from '../structures/modules';
@@ -107,10 +107,10 @@ function ghostOver(p: StructurePieces, inp: PieceInputs): void {
     const cx = (d[o] + d[o + 2] + d[o + 4] + d[o + 6]) / 4;
     const cy = (d[o + 1] + d[o + 3] + d[o + 5] + d[o + 7]) / 4;
     const c = grid.cellAtWorld(cx, cy);
-    if (c < 0 || !plan.mask[c]) continue;
+    if (c < 0 || !plan.levels.any(c)) continue;
     const foot = (d[o + 8] + d[o + 9] + d[o + 10] + d[o + 11]) / 4;
     const top = (d[o + 15] | 0) & 1 ? foot + d[o + 12] : d[o + 12];
-    const top0 = 31 - Math.clz32(plan.mask[c]);
+    const top0 = plan.top(c);
     const L = Math.max(0, Math.min(top0, Math.floor(((foot + top) / 2 - zOff - town.base[c]) / LEVEL_H)));
     if (inp.ghost!(c, L)) d[o + 13] = (d[o + 13] | 0) | LOOK_GHOST;
   }
@@ -215,7 +215,7 @@ export function cityPlanOf(
   const st = styleOf(style);
   const extra = new Extra();
   const ghostAt = (c: number, L: number) => inp.ghost?.(c, L) ?? false;
-  const topOf = (c: number) => 31 - Math.clz32(plan.mask[c]);
+  const topOf = (c: number) => plan.top(c);
   const centre = (c: number): V2 => grid.centre(c);
   const groundAt = (x: number, y: number) => inp.ground(x, y) + zOff;
   /** how far a corner tile turns its run (radians): π less the angle between its middle's two ways out */
@@ -299,8 +299,12 @@ export function cityPlanOf(
           const t = n >= 0 ? plan.typeAt(n) : null;
           if (t === 'wall' || t === 'fortress') joined.push(e);
         }
+        // (round 128d) a wall cell whose lowest level is up off the ground spans the levels under it: its stone from that
+        // level's floor, an arch in each face under it (a bridge between what holds it — FortressPlan.held)
+        const bot = plan.levels.bottom(c);
+        const zb = bot > 0 ? town.floorZ(c, bot) + zOff : lo - 0.6;
         // the middle: a square the bands meet in
-        if (!plan.gate[c]) extra.add(lib.id('rampart'), square(x, y, WALL_HALF), lo - 0.6, top, L2);
+        if (!plan.gate[c]) extra.add(lib.id('rampart'), square(x, y, WALL_HALF), zb, top, L2);
         for (const e of joined) {
           const m: V2 = [(p[e][0] + p[(e + 1) % 4][0]) / 2, (p[e][1] + p[(e + 1) % 4][1]) / 2];
           const f = band([x, y], m, WALL_HALF);
@@ -309,7 +313,13 @@ export function cityPlanOf(
             extra.add(lib.id('gatearch'), band(f[0], f[1], 0.45), lo - 0.3, top, L2);
             extra.add(lib.id('gatearch'), band(f[3], f[2], 0.45), lo - 0.3, top, L2);
             extra.add(lib.id('rampart'), f, top - WALL_LINTEL, top, L2);
-          } else extra.add(lib.id('rampart'), f, lo - 0.6, top, L2);
+          } else {
+            extra.add(lib.id('rampart'), f, zb, top, L2);
+            if (bot > 0) {
+              extra.add(lib.id('gatearch'), band(f[0], f[1], 0.45), lo - 0.3, zb + 0.6, L2);
+              extra.add(lib.id('gatearch'), band(f[3], f[2], 0.45), lo - 0.3, zb + 0.6, L2);
+            }
+          }
           extra.add(lib.id('merlons'), band(f[0], f[1], 0.22), top, top + 1.1, L2);
           extra.add(lib.id('merlons'), band(f[3], f[2], 0.22), top, top + 1.1, L2);
         }
@@ -404,8 +414,7 @@ export function cityPlanOf(
         // the walls: each storey's sides no block of this building covers at that storey
         if (!mega)
         for (const c of cells)
-          for (let L = 0; L < MAX_LEVELS; L++) {
-            if (!plan.has(c, L)) continue;
+          for (const L of plan.levels.each(c)) {
             for (let side = 0; side < 4; side++) {
               const n = adj[c * 4 + side];
               if (n >= 0 && quadBuilding[n] === id && plan.has(n, L)) continue;

@@ -567,6 +567,15 @@ each was implemented.
   (it called a gust before; the fortress has no wind to call), a tap plans a block (or erases one with Erase), a pinch
   zooms. The pause stops only the simulation, the units, the settlements, the builders and the day. (The cause was not
   the pause: the amber planning frame covered the screen and took every press.)
+- The user asked: "Why is there a cap of 8? Isn't each tile stored as intervals on the irregular grid?" (it wasn't: the
+  Town kept a bit a level in a byte). Then, verbatim: "Yes please. I want the player fortress to be something that can
+  grow huge and impressive with spires and bridges and fountains and crystals and floating stones etc. we can adorn it
+  with claimed prizes from opportunities."
+- → The Town keeps each cell's levels as runs [lo, hi) with an owner and a type (the round-102 spans design), built and
+  planned apart: no level cap. A block over an empty level is allowed when the block under it or one beside it at its
+  level holds it (a wall spanning an empty level is a bridge's span); nothing floats yet. The block types' height caps
+  (houses 4, warehouses and barracks 3, lumber camps and blacksmiths 2) were the old 8's, not design: lifted; yards stay
+  flat. Bridges as a type, crystals, floating stones, prize adornments: BACKLOG FT-33..FT-37, not now.
 
 ## 2026-11-03 — round 128c (session 5) — the fortress mode: the user's vision
 

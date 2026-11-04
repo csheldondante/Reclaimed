@@ -43,8 +43,25 @@ Branch `fortress`: milestones 1 and 2 built (round 128d: the user's fixes, the F
 | FT-23 | Rough: the fortress banner sits over the level's progress pill at the top; the keep's merlons don't step where keep cells differ in height | S | open |
 | FT-24 | (128d) Shape rules, Townscaper-style (the user: "Yes please add those rules and the courtyards since those add a lot of charm"): a lone cell 3+ high a round tower and spire; four round a corner, one height, a dome; a keep cell above the keep a turret; an enclosed empty run of cells a courtyard (paving, a tree or a fountain, arches round it). fortress/shapes.ts | M | done (round 128d shapes commit) |
 | FT-25 | Partly enclosed empty cells: a garden (the courtyard rule's open sibling) | S | open |
-| FT-26 | Rough: the world's trees grow inside the plan (courtyards, between houses) — the fortress doesn't clear vegetation from its cells, so a courtyard's paving and tree hide under pines (shape-yard.png). Also: a 2x2 painted on a slope in an order whose floors don't line up is two buildings, not a dome; the fortress's extra pieces (walls' towers, the keep's) carry no style index in their look, so they take hearth's palette | S | open |
+| FT-26 | (trees: done, round 128d spans commit — planned and built cells clear their plants, `world.plants.clear`) Rough: the world's trees grow inside the plan (courtyards, between houses) — the fortress doesn't clear vegetation from its cells, so a courtyard's paving and tree hide under pines (shape-yard.png). Also: a 2x2 painted on a slope in an order whose floors don't line up is two buildings, not a dome; the fortress's extra pieces (walls' towers, the keep's) carry no style index in their look, so they take hearth's palette | S | open |
 | FT-27 | (128d) The user: "I think pause prevents both panning and building in build mode" / "did it add the single finger drag to move the camera in build mode?": the amber planning frame took every press (`#ui > *` outranked its pointer-events: none); a one-finger drag was a gust, now it pans in the fortress (mouse too: Controls.dragPans); a tap's ground is where the tap's ray meets the ground (the GPU pick's column landed a column or two off it); a ray under a block's ground floor hits its foundation. Headless scripts/fortresspause.mjs: drag pans, tap plans, pinch zooms, planning and building; erase | S | done (round 128d pause commit) |
+| FT-28 | (128d) Occupancy as runs per cell (build/runs.ts `CellRuns`: [lo, hi) with an owner and a type, built and planned apart): no 8-level cap; gaps where a block is held (under it or beside it at its level); erase in a run's middle splits it. Block types' caps lifted (they were the 8 levels', not design); yards stay flat | M | done (round 128d spans commit) |
+| FT-29 | (128d) The info panel mixed types (Houses picked: "This wall has 2 blocks… 4 archers can stand on it"): the structure's lines only for the type picked; the power line was written twice | S | done (round 128d spans commit) |
+| FT-30 | The window's z ceiling for stamped towns (the sandbox's town tool, settlements stamped as matter): `Town.add`/`plan` refuse a block whose roof would reach `zMax - 2` — a 504 window over a floor at ~104 holds ~98 levels, the default 64-high level ~13; nothing past Z_LIMIT 511 can be matter. The fortress isn't stamped (pieces): its pieces above the window's ceiling are untried (shadows, depth range, the tile cache) | S | open |
+| FT-31 | Rough, gaps: a building's floating storey has its façades but no underside; the keep's gaps are drawn solid; erasing never cascades (a block left held by nothing stays); the builders' order may raise a span before what holds it at its level | S | open |
+| FT-32 | Rough: a plan's plant clearing waits for the sim's next tick, so while planning (time stopped) the trees stay until Build; cleared plants grow back by succession (each block re-clears its cell as it stands) | S | open |
+
+The user, verbatim (round 128d): "I want the player fortress to be something that can grow huge and impressive with
+spires and bridges and fountains and crystals and floating stones etc. we can adorn it with claimed prizes from
+opportunities." (FORTRESS_MODE.md "The fortress grows huge".)
+
+| id | item | size | status |
+|---|---|---|---|
+| FT-33 | Bridges as a structure type (a span between two stacks or across water; now a wall over an empty level is the stand-in) | M | open |
+| FT-34 | Crystals: a growth on the fortress (power, light) | M | open |
+| FT-35 | Floating stones: a rule that lets a block float (no hold under or beside it) | M | open |
+| FT-36 | Adorn the fortress with claimed prizes from opportunities (a prize becomes a piece set on it) | M | open |
+| FT-37 | Spires and fountains as things to place (now only by shape rules: turrets, lone towers, courtyards) | S | open |
 
 ## Round 126 (2026-11-02, session 5, `dialog2`) — petitions as dialogs, the cast, plain writing (DECISIONS round 126)
 

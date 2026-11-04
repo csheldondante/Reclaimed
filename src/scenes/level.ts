@@ -2982,6 +2982,8 @@ export class LevelScene implements Scene {
       ground: (x, y) => this.heightAt(x, y),
       stores: () => Object.fromEntries(Object.entries(rec.stores).map(([k, v]) => [k, v.stock])),
       changed: () => view.touch(),
+      // (round 128d, FT-26: the fortress's cells clear their trees — the plants module's clearing)
+      clearPlants: (x, y, r) => (this.worldApi ??= attachSim(this.core)).plants!.clear(x, y, r),
     });
     this.fortress = fort;
     // drawn with the towns' pieces (fortress/pieces.ts), in the box's frame, moved into the window's by its offset

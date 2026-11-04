@@ -1,8 +1,12 @@
 // The fortress's plan (fortress slice 1, milestone 1): what the player painted, cell by cell, each cell owned by a
 // structure. Select what (a type), then paint it: a cell painted next to a structure of the same type joins it (two
 // joined by one cell become one). Pure: no GPU, no DOM — the view (fortress.ts) makes Town blocks of it.
-import type { FortressPlanApi, Goods, PerBlock, PlanGrid, PlanTotals, Structure, StructureDef, StructureType, WallTile } from '../api/contracts/fortress';
+import { STRUCTURE_TYPES, type FortressPlanApi, type Goods, type PerBlock, type PlanGrid, type PlanTotals, type Structure, type StructureDef, type StructureType, type WallTile } from '../api/contracts/fortress';
+import { CellRuns } from '../build/runs';
 import { DEFS, POWER_RISE } from './defs';
+
+/** a type's index in a run (build/runs.ts Run.type) */
+export const typeIndex = (t: StructureType): number => STRUCTURE_TYPES.indexOf(t);
 
 /** The wall tile from which of a cell's four sides join (sides 0..3 in order round the cell; e and e+2 face). */
 export function wallTileOf(joins: readonly boolean[]): WallTile {
@@ -31,8 +35,11 @@ function addPer(into: PerBlock, p: PerBlock, k: number): void {
 export class FortressPlan implements FortressPlanApi {
   /** per cell its structure's id (-1 none) */
   readonly owner: Int32Array;
-  /** per cell its levels (bit L: level L) */
-  readonly mask: Uint8Array;
+  /**
+   * per cell its levels: runs [lo, hi) owned by the cell's structure, with its type (round 128d: no level cap; gaps
+   * allowed — a block over an empty level is held by the block under it or one beside it at its level: `held`)
+   */
+  readonly levels: CellRuns;
   /** per cell a gate (wall cells' ground level) */
   readonly gate: Uint8Array;
   /** (round 128d) per cell a tower the player put on a wall cell (towers stand by rule where runs end or turn) */
@@ -44,7 +51,7 @@ export class FortressPlan implements FortressPlanApi {
 
   constructor(readonly grid: PlanGrid, readonly defs: Record<StructureType, StructureDef> = DEFS) {
     this.owner = new Int32Array(grid.count).fill(-1);
-    this.mask = new Uint8Array(grid.count);
+    this.levels = new CellRuns(grid.count);
     this.gate = new Uint8Array(grid.count);
     this.tower = new Uint8Array(grid.count);
   }
@@ -68,13 +75,29 @@ export class FortressPlan implements FortressPlanApi {
   }
 
   has(cell: number, level: number): boolean {
-    return cell >= 0 && ((this.mask[cell] >> level) & 1) === 1;
+    return this.levels.has(cell, level);
+  }
+
+  /** c's highest level (-1: none). */
+  top(cell: number): number {
+    return this.levels.top(cell);
+  }
+
+  /**
+   * (round 128d) Whether a block at level L of c would be held: on the ground (level 0), on the block under it, or
+   * beside a block at its level (any structure's) — so a wall can span an empty level between two towers, a bridge.
+   * Nothing floats yet (a later rule may let crystals and floating stones).
+   */
+  held(cell: number, level: number): boolean {
+    if (level === 0 || this.has(cell, level - 1)) return true;
+    for (let e = 0; e < 4; e++) if (this.has(this.grid.nbr[cell * 4 + e], level)) return true;
+    return false;
   }
 
   paint(cell: number, level: number, type: StructureType): boolean {
-    if (cell < 0 || cell >= this.grid.count || level < 0) return false;
+    if (cell < 0 || cell >= this.grid.count || !(level >= 0)) return false;
     const def = this.defs[type];
-    if (level >= def.maxLevels || this.has(cell, level)) return false;
+    if (level >= def.maxLevels || this.has(cell, level) || !this.held(cell, level)) return false;
     const here = this.typeAt(cell);
     if (here && here !== type) return false;
     if (!here) {
@@ -93,18 +116,20 @@ export class FortressPlan implements FortressPlanApi {
         s = this.byId.get(sorted[0])!;
         for (const other of sorted.slice(1)) {
           const o = this.byId.get(other)!;
-          for (const [c, m] of o.cells) {
-            s.cells.set(c, m);
+          for (const c of o.cells.keys()) {
+            this.levels.reown(c, other, s.id);
+            s.cells.set(c, this.levels.runsOf(c));
             this.owner[c] = s.id;
+            // (its owner changed: the view's Town follows)
+            this.changed.add(c);
           }
           this.byId.delete(other);
         }
       }
       this.owner[cell] = s.id;
-      s.cells.set(cell, 0);
     }
-    this.mask[cell] |= 1 << level;
-    this.byId.get(this.owner[cell])!.cells.set(cell, this.mask[cell]);
+    this.levels.set(cell, level, this.owner[cell], typeIndex(type));
+    this.byId.get(this.owner[cell])!.cells.set(cell, this.levels.runsOf(cell));
     this.touch(cell);
     return true;
   }
@@ -112,8 +137,8 @@ export class FortressPlan implements FortressPlanApi {
   erase(cell: number, level: number): boolean {
     if (!this.has(cell, level)) return false;
     const s = this.byId.get(this.owner[cell])!;
-    this.mask[cell] &= ~(1 << level);
-    if (this.mask[cell]) s.cells.set(cell, this.mask[cell]);
+    this.levels.clear(cell, level);
+    if (this.levels.any(cell)) s.cells.set(cell, this.levels.runsOf(cell));
     else {
       s.cells.delete(cell);
       this.owner[cell] = -1;
@@ -165,13 +190,7 @@ export class FortressPlan implements FortressPlanApi {
 
   blocks(s: Structure): number {
     let n = 0;
-    for (const m of s.cells.values()) {
-      let v = m;
-      while (v) {
-        n += v & 1;
-        v >>= 1;
-      }
-    }
+    for (const c of s.cells.keys()) n += this.levels.levels(c);
     return n;
   }
 
@@ -194,8 +213,7 @@ export class FortressPlan implements FortressPlanApi {
     const per = this.defs[s.type].perBlock.power ?? 0;
     if (!per) return 0;
     let p = 0;
-    for (const [c, m] of s.cells)
-      for (let L = 0; L < 8; L++) if ((m >> L) & 1 && (!only || only(c, L))) p += per * (1 + POWER_RISE * L);
+    for (const c of s.cells.keys()) for (const L of this.levels.each(c)) if (!only || only(c, L)) p += per * (1 + POWER_RISE * L);
     return p;
   }
 

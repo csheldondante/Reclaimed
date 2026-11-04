@@ -32,6 +32,18 @@ open questions; nothing is decided beyond what the user said. Not built yet: tal
 - Building takes time and resources, which gives a reason to want more resources for cooler structures, and makes
   destruction in raids matter.
 
+## The fortress grows huge (the user, round 128d)
+
+> "Yes please. I want the player fortress to be something that can grow huge and impressive with spires and bridges and fountains and crystals and floating stones etc. we can adorn it with claimed prizes from opportunities."
+
+- The fortress is the player's showpiece and keeps growing: no height cap (a cell's levels are runs, build/runs.ts),
+  gaps where something holds a block (a wall spanning an empty level between two stacks: a bridge's span).
+- Already by local shape rules: turrets with spires on a keep cell above its neighbours, lone towers with spires,
+  domes, courtyards with fountains (fortress/shapes.ts).
+- To come (BACKLOG FT-33..FT-37): bridges as a structure type; crystals; floating stones (a rule letting a block
+  float); claimed prizes from opportunities set on the fortress as adornments; spires and fountains placed by hand.
+- Power already rewards height (a block at level L gives × (1 + 0.5 L)), so a huge fortress is a strong one.
+
 ## Economy (a factory game)
 
 - **Extractors change the land for real:** quarries dig pits, mines dig into mountains for ore, lumber mills cut

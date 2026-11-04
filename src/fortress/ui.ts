@@ -135,8 +135,11 @@ export class FortressBar {
     else if (t.tower) out.push({ text: 'Tap a wall to put a tower on it. Tap it again to take the tower off.' });
     else if (t.erase) out.push({ text: 'Tap a block to take it away.' });
     else out.push({ text: typeCard(DEFS[t.type]), card: true });
+    // (round 128d: Houses picked showed "This wall has 2 blocks… 4 archers can stand on it" — the structure last painted,
+    // of another type) the structure's lines only when it is of the type picked (Gate and Tower: a wall's)
     const s = f.selected !== null ? f.plan.structure(f.selected) : null;
-    if (s) out.push({ text: structureLines(DEFS[s.type], f.plan.blocks(s), f.plan.cost(s), f.plan.gives(s)).join(' ') });
+    const showing = t.gate || t.tower ? 'wall' : t.erase ? s?.type : t.type;
+    if (s && s.type === showing) out.push({ text: structureLines(DEFS[s.type], f.plan.blocks(s), f.plan.cost(s), f.plan.gives(s)).join(' ') });
     const tot = f.plan.totals(stores);
     const pl = planLines(tot, stores);
     out.push({ text: pl.slice(0, -1).join(' ') || pl[0] });

@@ -14,13 +14,18 @@
 //    neighbour's floor, if that's no lower and less than a level higher, so
 //    a building's rooms line up), on a stone foundation down to the ground.
 // What stands is real matter (townstamp.wgsl): intervals in the columns.
+//
+// (round 128d) A cell's blocks are runs of levels (build/runs.ts: [lo, hi) with an owner and a type), built and planned
+// kept apart: no level cap (it was a bit a level in a byte, 8). What limits a stamped town's height is the window's z
+// ceiling (TownIO.zMax: add and plan refuse a block whose roof would reach it); the fortress isn't stamped (zMax
+// Infinity). A level may be empty under a block (a gap): it stands on pillars at its corners, arched between.
 import { TownGrid, type CellGrid, type TownGridOpts } from './towngrid';
 import { MAT } from '../world/materials';
 import { cellAt, cellPos } from '../world/lattice';
 import type { ColumnStamp } from '../sim/systems';
+import { CellRuns } from './runs';
 
 export const LEVEL_H = 4;
-export const MAX_LEVELS = 8;
 const SLAB = 0.5;
 /** a column this near an open side is wall */
 const WALL = 1.0;
@@ -47,14 +52,14 @@ type Iv = { z0: number; z1: number; mat: number };
 
 export class Town {
   readonly grid: CellGrid;
-  /** per cell, a bit a level */
-  readonly mask: Uint8Array;
+  /** per cell the blocks that stand: runs of levels (owner, type: the caller's — the fortress's structure and type) */
+  readonly built: CellRuns;
   /**
-   * per cell the blocks planned (a bit a level): what a building crew
-   * builds toward (agents/buildcrew.ts). Placing or taking away a block
-   * outright changes the plan with it; `plan` alone changes only the plan.
+   * per cell the blocks planned: what a building crew builds toward
+   * (agents/buildcrew.ts). Placing or taking away a block outright changes
+   * the plan with it; `plan` alone changes only the plan.
    */
-  readonly plans: Uint8Array;
+  readonly plans: CellRuns;
   /** per cell its ground floor (NaN: no blocks, built or planned) */
   readonly base: Float32Array;
   /** per column the top of what the town last put there (0: nothing) */
@@ -67,57 +72,80 @@ export class Town {
   /** `opts`: Townscaper's grid's, or a grid already made (round 88: the settlements' generators) */
   constructor(readonly w: number, readonly h: number, private io: TownIO, opts: TownGridOpts | { grid: CellGrid } = {}) {
     this.grid = 'grid' in opts ? opts.grid : new TownGrid(w, h, opts);
-    this.mask = new Uint8Array(this.grid.count);
-    this.plans = new Uint8Array(this.grid.count);
+    this.built = new CellRuns(this.grid.count);
+    this.plans = new CellRuns(this.grid.count);
     this.base = new Float32Array(this.grid.count).fill(NaN);
     this.builtTop = new Float32Array(w * h);
     this.builtLo = new Float32Array(w * h);
   }
 
   has(c: number, level: number): boolean {
-    return c >= 0 && level >= 0 && level < MAX_LEVELS && ((this.mask[c] >> level) & 1) === 1;
+    return this.built.has(c, level);
   }
 
   /** Whether a block is planned at level L of c. */
   planned(c: number, level: number): boolean {
-    return c >= 0 && level >= 0 && level < MAX_LEVELS && ((this.plans[c] >> level) & 1) === 1;
+    return this.plans.has(c, level);
   }
 
-  /** Plan a block (on) or its taking down (off), leaving what stands as it is; false if it can't be. */
-  plan(c: number, level: number, on: boolean): boolean {
-    if (c < 0 || c >= this.grid.count || level < 0 || level >= MAX_LEVELS || this.planned(c, level) === on) return false;
+  /** Whether level L of c stands or is planned. */
+  occupied(c: number, level: number): boolean {
+    return this.built.has(c, level) || this.plans.has(c, level);
+  }
+
+  /**
+   * Plan a block (on) or its taking down (off), leaving what stands as it is; false if it can't be. `owner`, `type`:
+   * the caller's (its run's: build/runs.ts).
+   */
+  plan(c: number, level: number, on: boolean, owner = 0, type = 0): boolean {
+    if (c < 0 || c >= this.grid.count || !(level >= 0) || this.planned(c, level) === on) return false;
     if (on) {
       const b = Number.isNaN(this.base[c]) ? this.groundFloor(c) : this.base[c];
-      if (b + (level + 1) * LEVEL_H + ROOF_T + ROOF_RISE > this.io.zMax - 2) return false;
+      if (!this.fits(b, level)) return false;
       this.base[c] = b;
-      this.plans[c] |= 1 << level;
+      this.plans.set(c, level, owner, type);
     } else {
-      this.plans[c] &= ~(1 << level);
-      if (!this.plans[c] && !this.mask[c]) this.base[c] = NaN;
+      this.plans.clear(c, level);
+      if (!this.plans.any(c) && !this.built.any(c)) this.base[c] = NaN;
     }
     return true;
   }
 
-  /** The difference between the plan and what stands: blocks to add, blocks to take down. */
+  /** The difference between the plan and what stands: blocks to add, blocks to take down (each cell bottom up). */
   delta(): (Block & { add: boolean })[] {
     const out: (Block & { add: boolean })[] = [];
     for (let c = 0; c < this.grid.count; c++) {
-      const d = this.plans[c] ^ this.mask[c];
-      if (!d) continue;
-      for (let l = 0; l < MAX_LEVELS; l++) if ((d >> l) & 1) out.push({ cell: c, level: l, add: ((this.plans[c] >> l) & 1) === 1 });
+      if (!this.plans.any(c) && !this.built.any(c)) continue;
+      const add = CellRuns.minus(this.plans, this.built, c);
+      const down = CellRuns.minus(this.built, this.plans, c);
+      let i = 0;
+      let j = 0;
+      while (i < add.length || j < down.length)
+        if (j >= down.length || (i < add.length && add[i] < down[j])) out.push({ cell: c, level: add[i++], add: true });
+        else out.push({ cell: c, level: down[j++], add: false });
     }
     return out;
   }
 
   /** The highest level in c (-1: none). */
   top(c: number): number {
-    return this.mask[c] ? 31 - Math.clz32(this.mask[c]) : -1;
+    return this.built.top(c);
+  }
+
+  /** The highest level built or planned in c (-1: none). */
+  topPlanned(c: number): number {
+    return Math.max(this.built.top(c), this.plans.top(c));
   }
 
   blocks(): Block[] {
     const out: Block[] = [];
-    for (let c = 0; c < this.grid.count; c++) for (let l = 0; l < MAX_LEVELS; l++) if (this.has(c, l)) out.push({ cell: c, level: l });
+    for (let c = 0; c < this.grid.count; c++) for (const l of this.built.each(c)) out.push({ cell: c, level: l });
     return out;
+  }
+
+  /** Whether a block at `level` over a ground floor at `b` fits under the window's ceiling (its roof too). */
+  private fits(b: number, level: number): boolean {
+    return b + (level + 1) * LEVEL_H + ROOF_T + ROOF_RISE <= this.io.zMax - 2;
   }
 
   /** Where level L of cell c starts (its floor). */
@@ -125,24 +153,24 @@ export class Town {
     return this.base[c] + level * LEVEL_H;
   }
 
-  /** Add a block; false if it can't go there (off the grid, taken, too high). */
-  add(c: number, level: number): boolean {
-    if (c < 0 || c >= this.grid.count || level < 0 || level >= MAX_LEVELS || this.has(c, level)) return false;
+  /** Add a block; false if it can't go there (off the grid, taken, too high for the window). */
+  add(c: number, level: number, owner = 0, type = 0): boolean {
+    if (c < 0 || c >= this.grid.count || !(level >= 0) || this.has(c, level)) return false;
     const b = Number.isNaN(this.base[c]) ? this.groundFloor(c) : this.base[c];
-    if (b + (level + 1) * LEVEL_H + ROOF_T + ROOF_RISE > this.io.zMax - 2) return false;
+    if (!this.fits(b, level)) return false;
     this.base[c] = b;
-    this.mask[c] |= 1 << level;
-    this.plans[c] |= 1 << level;
+    this.built.set(c, level, owner, type);
+    if (!this.plans.has(c, level)) this.plans.set(c, level, owner, type);
     this.restamp(c);
     return true;
   }
 
   remove(c: number, level: number): boolean {
     if (!this.has(c, level)) return false;
-    this.mask[c] &= ~(1 << level);
-    this.plans[c] &= ~(1 << level);
+    this.built.clear(c, level);
+    this.plans.clear(c, level);
     this.restamp(c);
-    if (!this.mask[c] && !this.plans[c]) this.base[c] = NaN;
+    if (!this.built.any(c) && !this.plans.any(c)) this.base[c] = NaN;
     return true;
   }
 
@@ -150,20 +178,20 @@ export class Town {
   set(blocks: Block[], on: boolean): void {
     const touched = new Set<number>();
     for (const { cell: c, level } of blocks) {
-      if (c < 0 || c >= this.grid.count || level < 0 || level >= MAX_LEVELS) continue;
+      if (c < 0 || c >= this.grid.count || !(level >= 0)) continue;
       if (on && !this.has(c, level)) {
         if (Number.isNaN(this.base[c])) this.base[c] = this.groundFloor(c);
-        this.mask[c] |= 1 << level;
-        this.plans[c] |= 1 << level;
+        this.built.set(c, level);
+        if (!this.plans.has(c, level)) this.plans.set(c, level);
         touched.add(c);
       } else if (!on && this.has(c, level)) {
-        this.mask[c] &= ~(1 << level);
-        this.plans[c] &= ~(1 << level);
+        this.built.clear(c, level);
+        this.plans.clear(c, level);
         touched.add(c);
       }
     }
     this.restampCells(touched);
-    for (const c of touched) if (!this.mask[c] && !this.plans[c]) this.base[c] = NaN;
+    for (const c of touched) if (!this.built.any(c) && !this.plans.any(c)) this.base[c] = NaN;
   }
 
   /** A new cell's ground floor: over the highest ground under it; a neighbour's, if that lines up. */
@@ -212,7 +240,7 @@ export class Town {
   /** The stamp for column `col` of cell c (null: the town has nothing to do there). */
   private columnStamp(c: number, col: number): ColumnStamp | null {
     const was = this.builtTop[col];
-    if (!this.mask[c]) {
+    if (!this.built.any(c)) {
       if (!was) return null;
       // (all gone: clear what the town had there)
       this.builtTop[col] = 0;
@@ -243,8 +271,7 @@ export class Town {
       dc = Math.min(dc, Math.hypot(x - cx, y - cy));
     }
     const door = this.doorEdge(c);
-    for (let L = 0; L < MAX_LEVELS; L++) {
-      if (!this.has(c, L)) continue;
+    for (const L of [...this.built.each(c)]) {
       const z0 = this.floorZ(c, L);
       const z1 = z0 + LEVEL_H;
       // over nothing: pillars at the corners, arches between
@@ -361,14 +388,13 @@ export class Town {
   pickBlock(col: number, z: number, remove: boolean, plan = false): Block | null {
     const c = this.grid.cellOf[col];
     if (c < 0) return null;
-    const occ = (n: number) => (n < 0 ? 0 : plan ? this.mask[n] | this.plans[n] : this.mask[n]);
-    const has = (n: number, l: number) => ((occ(n) >> l) & 1) === 1;
-    const t = occ(c) ? 31 - Math.clz32(occ(c)) : -1;
+    const has = (n: number, l: number) => n >= 0 && (plan ? this.occupied(n, l) : this.has(n, l));
+    const t = plan ? this.topPlanned(c) : this.top(c);
     if (t < 0 || z < this.base[c] - 0.3) return remove ? null : { cell: c, level: 0 };
     const L = Math.max(0, Math.min(t, Math.floor((z - this.base[c]) / LEVEL_H)));
     const onRoof = z >= this.floorZ(c, this.top(c) < 0 ? 0 : this.top(c)) + LEVEL_H - 0.3;
     if (remove) return { cell: c, level: onRoof || plan ? t : L };
-    if (onRoof || (plan && !this.mask[c])) return { cell: c, level: t + 1 };
+    if (onRoof || (plan && !this.built.any(c))) return { cell: c, level: t + 1 };
     // a wall: the side nearest the column
     const [x, y] = cellPos(col % this.w, Math.floor(col / this.w));
     let be = -1;

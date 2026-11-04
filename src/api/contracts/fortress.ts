@@ -27,7 +27,8 @@ export type Goods = Partial<Record<Good, number>>;
  *  - wall: wall tiles that join their neighbours (runs, corners, ends, towers, gates), crenellated on top, stacking;
  *  - yard: on the ground, no block (fields, the quarry's floor); one level;
  *  - keep: the fortress's solid stone blocks, crenellated on top, a tower at each outer corner; walls run into it.
- * (Blocks are the Town's (build/town.ts): a cell and a level each, its floor lined up with its neighbours'.)
+ * (Blocks are the Town's (build/town.ts): a cell and a level each, its floor lined up with its neighbours'; a cell's
+ * levels are runs, any height, gaps allowed where a block is held — FortressPlan.held.)
  */
 export type StructureForm = 'block' | 'wall' | 'yard' | 'keep';
 
@@ -80,19 +81,28 @@ export interface StructureDef {
    * false: each cell stands as its own unit side by side (medieval row homes). The user, round 128c.
    */
   joins: boolean;
-  /** levels a cell may stack to (yards: 1) */
+  /** levels a cell may stack to (yards: 1; Infinity: no cap — round 128d) */
   maxLevels: number;
   cost: Goods;
   perBlock: PerBlock;
   look: StructureLook;
 }
 
-/** A structure: the cells of one type that touch, each with its levels (a bit a level). */
+/** A structure: the cells of one type that touch, each with its levels. */
 export interface Structure {
   id: number;
   type: StructureType;
-  /** cell → levels (bit L: level L) */
-  cells: Map<number, number>;
+  /**
+   * cell → its levels as runs [lo, hi), bottom up (round 128d: no level cap; a gap is two runs — build/runs.ts, the
+   * plan's own runs, read only)
+   */
+  cells: Map<number, readonly LevelRun[]>;
+}
+
+/** Levels lo .. hi - 1 of a cell (build/runs.ts Run). */
+export interface LevelRun {
+  readonly lo: number;
+  readonly hi: number;
 }
 
 /** What the plan reads of the grid: cells with four neighbours each (build/towngrid.ts CellGrid). */
