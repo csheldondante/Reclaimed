@@ -53,8 +53,13 @@ export interface FortressStatus {
 
 /** (round 128h) the most gates (or ramps) tried for a placement that cut blocks off: the nearest first */
 const VARIANT_TRIES = 10;
-/** (round 128i) water deeper than this (m) over a cell's middle or a corner: no lanes on it */
-const LANE_WATER = 0.3;
+/** (round 128k) the town that was there blocks the roads where it stands this high over the ground (m): its houses
+ *  and walls — not its fields, which ringed it and cut the roads off from its gates */
+const STANDS = 1;
+/** (round 128i) water deeper than this (m) over a cell's middle or a corner: no roads on it. (round 128k: was 0.3 —
+ *  a river cut the roads off from the sites the builders reached by wading; now the agents' own limit, a ford is a way:
+ *  agents.wgsl DEEP_OFF) */
+const LANE_WATER = 0.8;
 
 const dist = (a: readonly number[], b: readonly number[]) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 
@@ -86,6 +91,8 @@ export interface FortressIO {
   columns?(): ReachColumns | null;
   /** (round 128f) the town's stores (window world): where the builders fetch from until a warehouse stands */
   townHeap?(): [number, number];
+  /** (round 128k) the town's gates (window world): where its roads start (none: its stores) */
+  townGates?(): [number, number][];
 }
 
 /** (round 128d) inspect: a tap picks the structure under it (inspect.ts) instead of planning */
@@ -255,8 +262,12 @@ export class Fortress {
         return k >= 0 && r >= 0 && k < cols.w && r < cols.h && cols.water(k, r) > LANE_WATER;
       };
       const blocked = (c: number) =>
-        [g.centre(c), ...[0, 1, 2, 3].map((k) => g.corner(c, k))].some(([x, y]) => wet(x, y) || (!!town && !!town(...this.toWindow(x, y), ground(x, y))));
-      this.lanesMemo = lanesOf(this.plan, g, this.ways(), ground, this.laneOptsNow, blocked);
+        [g.centre(c), ...[0, 1, 2, 3].map((k) => g.corner(c, k))].some(([x, y]) => wet(x, y) || (!!town && !!town(...this.toWindow(x, y), ground(x, y) + STANDS)));
+      // (round 128k) the roads start at the town's gates, else its stores
+      const gates = this.io.townGates?.() ?? [];
+      const heap = this.io.townHeap?.();
+      const roots = (gates.length ? gates : heap ? [heap] : []).map(([x, y]) => this.toBox(x, y));
+      this.lanesMemo = lanesOf(this.plan, g, this.ways(), ground, this.laneOptsNow, blocked, roots);
     }
     return this.lanesMemo;
   }

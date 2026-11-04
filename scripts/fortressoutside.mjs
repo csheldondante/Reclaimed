@@ -114,6 +114,23 @@ await run({ name: 'fortressoutside', kind: 'behaviour', size: '412x915', dpr: 1,
     console.log('planned', type, JSON.stringify(await page.evaluate((c) => window.reclaimed.fortress.plan.typeAt(c), open.sites[type])), await panel());
   }
   if (OUT) await page.screenshot({ path: `${OUT}/outside-plan.png` });
+  // (round 128k) what the fortress's check reads at the sites: dry ground (the river read under a site meant a read from
+  // before a slide looked up where the window had moved) and reached from the stores
+  const check = await page.evaluate((sites) => {
+    const f = window.reclaimed.fortress;
+    const cols = f.columnsNow();
+    const m = f.reachMap();
+    return Object.fromEntries(Object.entries(sites).map(([k, c]) => [k, {
+      water: Math.max(...f.grid.columns[c].map((col) => { const wc = f.boxToWindowCol(col); return cols.water(wc % cols.w, Math.floor(wc / cols.w)); })),
+      reached: m ? f.reachedIn(m, c) : null,
+    }]));
+  }, open.sites);
+  console.log('check', JSON.stringify(check));
+  if (Object.values(check).some((v) => v.water > 0.3 || v.reached === false)) throw new Error(`the fortress reads a site outside the walls as water or cut off: ${JSON.stringify(check)}`);
+  console.log('roads planned', JSON.stringify(await page.evaluate(() => {
+    const L = window.reclaimed.fortress.lanes();
+    return { segs: L.segs.length, tiles: L.tiles.length, joined: L.joined.length, unjoined: L.unjoined.length };
+  })));
   // (PAN=1: the camera panned far off and back before Build, the way a player looks round — the window slides)
   if (process.env.PAN) {
     for (const d of [[160, 0], [0, 0], [0, 160], [0, 0]]) {
@@ -186,6 +203,28 @@ await run({ name: 'fortressoutside', kind: 'behaviour', size: '412x915', dpr: 1,
     if (Object.values(last.built).every(Boolean)) break;
   }
   if (OUT) await page.screenshot({ path: `${OUT}/outside-build.png` });
+  // (round 128k) the roads at play zoom: between the town's stores and the sites, then closer on the sites
+  const roads = await page.evaluate((sites) => {
+    const Rc = window.reclaimed;
+    const f = Rc.fortress;
+    const L = f.lanes();
+    return { segs: L.segs.length, tiles: L.tiles.length, joined: L.joined.length, unjoined: L.unjoined.length, kinds: L.segs.reduce((a, s) => ((a[s.kind] = (a[s.kind] ?? 0) + 1), a), {}) };
+  }, open.sites);
+  console.log('roads', JSON.stringify(roads));
+  for (const [name, zoom, t] of [['outside-roads', 3.2, 0.5], ['outside-roads-near', 6, 1]]) {
+    await page.evaluate(([sites, zoom, t]) => {
+      const Rc = window.reclaimed;
+      const f = Rc.fortress;
+      const at = f.storesAt();
+      const [x, y] = f.centre(sites.lumber);
+      const c = Rc.camera;
+      c.target[0] = at[0] + (x - at[0]) * t;
+      c.target[1] = at[1] + (y - at[1]) * t + (160 / zoom) * 0.5;
+      c.zoom = zoom;
+    }, [open.sites, zoom, t]);
+    await sleep(2500);
+    if (OUT) await page.screenshot({ path: `${OUT}/${name}.png` });
+  }
   const ok = last && Object.values(last.built).every(Boolean);
   console.log(ok ? 'REACHED: every site outside the walls stands' : 'NOT REACHED', JSON.stringify(last?.built));
   if (!ok) throw new Error('the builders did not reach the sites outside the walls');

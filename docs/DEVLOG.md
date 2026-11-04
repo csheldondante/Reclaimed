@@ -17247,3 +17247,36 @@ relax: now only new shapes or a new network mark everything; the road field refi
 On a phone at 2 sweeps a tick with a capped front (FRONT_CAP 32 chunks), a player panning kept every field's front
 full of whole-scope work. Not measured on the phone (BACKLOG FT-72). Tests: roadstamp (an offset alone returns false),
 fortressoutside passes (it fails if a site outside the walls isn't standing within 150 s at 16x).
+
+## 2026-11-04 — round 128k (`fortress`): the root cause of the workers' trouble — the columns read before a slide; roads on the cell borders, to things
+
+**Why.** The user: "They fail to reach anything I build"; on the lanes: "Realistically I would expect a road to the
+lumber mill and not around an empty plot. It also, just didn't convincingly connect to the city through a gate"; then
+"testing roads between grid cells sounds reasonable and making thoroughfairs hole tiles for bug structures".
+**Root cause (A).** The fortress's CPU copy of the window's columns (level.ts readCols: layers and water, read when
+planning starts and every few seconds while building — the check at placement, the cut-off check, the roads' water)
+was looked up in the window as it is now, though read in the window as it was. A slide (the camera moving the window:
+a player pans, Build moves the camera to the work) shifts every column; until the next read, a site read the river's
+water or a cliff from tens of metres away — its placement refused ("can't reach that spot"), or planned blocks marked
+cut off (the earlier lanes runs' "28 blocks can't be reached from the stores" after a slide), and builders don't go to
+a block marked cut off. Now the read keeps the window's origin it was read at and every lookup shifts back to it; a
+slide reads again. scripts/fortressoutside.mjs checks the fortress's own reading of the sites after planning by finger:
+before the fix the lumber camp and the house (dry, on open ground) read 2.9 and 3.5 m of water; after, 0, every site
+reached, standing within 45 s at 16x.
+**Roads (B).** fortress/lanes.ts rewritten: roads on the town grid's cell borders, grown from the town's gates (its
+wall's gate posts — `FortressIO.townGates`, level.ts) to every door and yard, each time to the nearest not yet joined,
+cheapest along borders (climbing dearer, road already laid a quarter: trunks); a border is a way if a free cell lies
+beside it (not the old town's houses or walls — its fields are; not water over 0.8 m: a ford is a way, as the agents
+wade); a wall crossed only through a gate's tile. Thoroughfare tiles paved whole: gates and passages, the cells either
+side, squares, the keep's, warehouses' and barracks' door cells, the cell a town gate opens on. The level lines,
+districts, ring lanes and tracks of rounds 128f-i are gone (they ringed empty plots). Two things the first in-game run
+found: the town grid's lots each have their own vertices (merged by position now: unmerged, a road stopped at every
+lot's edge), and a gate of the old town opens on more than one piece of land (its street inside, the land outside:
+each piece within 45 m rooted). Shots at play zoom: fortress/outside-roads.png, outside-roads-near.png (the starting
+town, a lumber camp, a house and a farm outside its walls: one earth road from the town to them, along the field's
+edge) — at play zoom the earth roads are faint on dark grass at dusk; closer they read as a track to the buildings.
+The ride graph is built from the same pieces (a flat fortress: 19 nodes, walkers 45% on roads against 31% of the
+ground). Tests: unit lanes 6 (every door and yard joined from the gate along borders; no ring round an empty plot; a
+wall crossed only through the gate tile; a building outside the walls joined, the big ones' door cells tiles; no
+roads under water; paving, earth, steps, tiles drawn); GPU roadride and roadstamp updated. Deferred (FT-73): the
+contour nudge, lanes between built cells at a frequency, citygen-style streets.

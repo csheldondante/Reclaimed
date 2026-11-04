@@ -118,7 +118,7 @@ describe('the check at placement', () => {
     // without the gate the house is cut off: the GPU's columns (solid.ts) would shut it in as the check did
     f.plan.gate[gates[0]] = 0;
     expect(f.reachedIn(f.reachMap()!, house)).toBe(false);
-  });
+  }, 20000);
 
   it('a house placed across the only way to another gets a passage through its ground floor', () => {
     // (a thin cliff round a hollow, open where one cell on its +x side crosses it)

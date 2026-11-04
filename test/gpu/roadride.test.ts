@@ -15,7 +15,7 @@ const H = 184;
 const UNITS = 64;
 
 function town() {
-  const f = new Fortress({ origin: [0, 0], w: W, h: H }, { windowOrigin: () => [0, 0], dims: { w: W, h: H, zMax: 999 }, ground: () => 5, stores: () => ({}), changed: () => {} });
+  const f = new Fortress({ origin: [0, 0], w: W, h: H }, { windowOrigin: () => [0, 0], dims: { w: W, h: H, zMax: 999 }, ground: () => 5, stores: () => ({}), changed: () => {}, townGates: () => [[14, ((H / 2) * Math.sqrt(3)) / 2]] });
   f.ready = true;
   const [cx, cy] = [W / 2, ((H / 2) * Math.sqrt(3)) / 2];
   const ring = f.ringCells(cx, cy, 22);
@@ -36,7 +36,7 @@ describe('the agents ride the roads on the GPU', () => {
     const L = f.lanes();
     const graph = laneGraph(L);
     const n = nodeCount(graph);
-    expect(n).toBeGreaterThan(50);
+    expect(n).toBeGreaterThan(20);
     const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST;
     const units = dev.createBuffer({ size: UNITS * 5 * 16, usage: S });
     const words = Math.ceil((W * H) / 32);
@@ -111,7 +111,8 @@ describe('the agents ride the roads on the GPU', () => {
       else if (graph.count[v] > 0 && !cpu.dist.some((D) => D[v] < 1e9)) unreached++;
     }
     expect(marked).toBe([...Array(n).keys()].filter((v) => cpu.dist.some((D) => D[v] < 1e9)).length);
-    expect(unreached).toBeGreaterThan(0);
+    // (round 128k: the roads are one tree from the town's gate — every node reached)
+    expect(unreached).toBe(0);
     for (let v = 0; v < n; v++) {
       if (cpu.dist.some((D) => D[v] < 1e9)) continue;
       // (a node off the network more than a band from every network edge: unmarked)

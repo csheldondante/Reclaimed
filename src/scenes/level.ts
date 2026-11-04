@@ -3037,21 +3037,38 @@ export class LevelScene implements Scene {
       if (reading) return;
       reading = true;
       try {
+        // (round 128k: the window as it was when read — a slide since moves every column; the columns are asked for in
+        // the window as it is now, and shifted back to where they were read. Before, a read from before a slide was
+        // looked up where the window had moved: the river's water read under a site, a planned block "cut off" — the
+        // builders never went (the user: "They fail to reach anything I build"))
+        const at: [number, number] = [S.origin[0], S.origin[1]];
         const [lay, water] = await Promise.all([core.readBuffer('layers'), core.readBuffer('water')]);
         const slots = new Uint32Array(lay.buffer);
         const { packed } = core;
         const ww = dims.w;
+        const hh = dims.h;
+        const shift = (x: number, y: number): [number, number] | null => {
+          const kx = x + S.origin[0] - at[0];
+          const ky = y + S.origin[1] - at[1];
+          return kx >= 0 && ky >= 0 && kx < ww && ky < hh ? [kx, ky] : null;
+        };
         reachCols = {
           w: ww,
           h: dims.h,
-          runs: (x, y) =>
-            readColumn(packed, slots, x, y)
+          runs: (x, y) => {
+            const q = shift(x, y);
+            if (!q) return [];
+            return readColumn(packed, slots, q[0], q[1])
               .filter((iv) => {
                 const s = MATERIALS[iv.mat]?.state;
                 return s === MatState.Solid || s === MatState.Granular;
               })
-              .map((iv) => [iv.z0, iv.z1] as const),
-          water: (x, y) => water[y * ww + x],
+              .map((iv) => [iv.z0, iv.z1] as const);
+          },
+          water: (x, y) => {
+            const q = shift(x, y);
+            return q ? water[q[1] * ww + q[0]] : 0;
+          },
         };
       } finally {
         reading = false;
@@ -3060,6 +3077,8 @@ export class LevelScene implements Scene {
     const fort = new Fortress({ origin: [ox, oy], w: W, h: H }, {
       columns: () => reachCols,
       townHeap,
+      // (round 128k) the town's gates: its wall's gate posts — where the fortress's roads start
+      townGates: () => (st.spotsOf(rec.id) ?? []).filter((s) => s.kind === 'post' && s.ref === `${rec.id}:wall`).map((s): [number, number] => [s.w[0], s.w[1]]),
       windowOrigin: () => [S.origin[0], S.origin[1]],
       dims: { w: dims.w, h: dims.h, zMax: dims.zMax },
       ground: (x, y) => this.heightAt(x, y),
@@ -3102,6 +3121,9 @@ export class LevelScene implements Scene {
     this.fortressReadCols = () => void readCols().catch(ignoreTeardown);
     S.onSlide.push(() => fort.slid());
     S.onWarp.push(() => fort.slid());
+    // (round 128k) and read again after a slide: the part come into the window was never read
+    S.onSlide.push(() => void readCols().catch(ignoreTeardown));
+    S.onWarp.push(() => void readCols().catch(ignoreTeardown));
     // (round 128d) what's built is solid to the world (fortress/claims.ts): claimed in the columns, as the towns' are
     const claims = (this.fortressClaims = new FortressClaims(fort, {
       external: () => this.integrity?.external ?? null,

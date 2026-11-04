@@ -3560,3 +3560,16 @@ The building rule (the user's): select what (a structure type), then plan it wit
   cheapest to its nearest goal (or, nearer that goal as the crow flies, makes straight for it); on, node to node by the
   table; at the goal's node, straight to the goal, where it stands; no way made for 90 ticks, off for 120. Nothing read
   back. FortressLife rides the stores, the houses and the farms (`riding`), seeds their own fields only when they don't.
+- **Round 128k (roads on the cell borders; the columns read before a slide).** `fortress/lanes.ts lanesOf(plan,
+  grid, ways, ground, opts, blocked, roots)` → `Lanes` {segs: 'road' (by a building, paving) | 'track' (in the open,
+  earth) | 'plaza' (across a thoroughfare tile) | 'ramp', tiles, joined, unjoined}: a graph of the town grid's vertices
+  (merged by position: each lot has its own) and borders (a way if a free cell lies beside it; a vertex on a wall line
+  no way), the thoroughfare tiles' middles (gates and passages through their way's sides only; the cells beside them,
+  squares, the big buildings' door cells, the cells the roots open on), grown as a tree from `roots`
+  (`FortressIO.townGates`: the old town's wall's gate posts, box frame; each rooted on every piece of land within
+  45 m) to every door and yard, nearest first, cheapest (climb × 4, reuse × 0.25). `blocked`: the old town where it
+  stands 1 m over the ground (`STANDS`: not its fields), water over `LANE_WATER` 0.8 m. The ride graph (`laneGraph`)
+  from the same pieces. **ReachColumns after a slide:** level.ts `readCols` keeps the window origin it read at; `runs` and
+  `water` take the window as it is now and shift back (outside what was read: no solid, no water); every slide reads
+  again. `RoadStamp.set` / `RoadRide.encodeHops` return true only for new shapes / a new network (an offset alone needs
+  no relax: the fields slide with the window).

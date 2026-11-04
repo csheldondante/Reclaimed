@@ -274,6 +274,13 @@ export function lanePieces(inp: PieceInputs, lanes: Lanes): StructurePieces {
   const kerb = lib.id('kerb');
   const extra = new Extra();
   const z = (p: V2) => inp.ground(p[0], p[1]) + inp.zOff;
+  // (round 128k) the thoroughfare tiles paved whole: gates, the cells either side, the big buildings' door cells
+  for (const c of lanes.tiles) {
+    if (inp.ways?.way[c] === WAY_SQUARE) continue;
+    const q = [0, 1, 2, 3].map((k) => inp.grid.corner(c, k)) as [V2, V2, V2, V2];
+    const look = Math.floor(hashf(c, 61) * 4096);
+    extra.add(pave, q, q.map((p) => z(p) - 0.25) as [number, number, number, number], 0.38, look, REL | DRAPE | DRAPE_ANY);
+  }
   for (const s of lanes.segs) {
     const w = LANE_WIDTH[s.kind];
     if (!LANE_DRAWN[s.kind] || w <= 0) continue;
