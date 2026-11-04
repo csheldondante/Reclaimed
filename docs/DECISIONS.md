@@ -561,6 +561,12 @@ each was implemented.
   temple); a keep cell standing above every keep cell beside it a round turret with a spire; empty ground cells (up to
   8) with blocks, walls or the keep on every side a courtyard (paving, a tree in a one-cell courtyard, a fountain in a
   bigger one, arches in the ground floor's faces round it). Partly enclosed (a garden): later (BACKLOG FT-25).
+- The user, verbatim: "I think pause prevents both panning and building in build mode", then: "did it add the single
+  finger drag to move the camera in build mode?"
+- → In the fortress, planning (time stopped) and building (time runs) take the same touches: a one-finger drag pans
+  (it called a gust before; the fortress has no wind to call), a tap plans a block (or erases one with Erase), a pinch
+  zooms. The pause stops only the simulation, the units, the settlements, the builders and the day. (The cause was not
+  the pause: the amber planning frame covered the screen and took every press.)
 
 ## 2026-11-03 — round 128c (session 5) — the fortress mode: the user's vision
 

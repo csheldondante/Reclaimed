@@ -33,7 +33,9 @@ export function pickFace(cells: PickCells, occ: (c: number) => number, floor: (c
     const z = o[2] + d[2] * t;
     const c = cells.cellAtWorld(x, y);
     if (c >= 0 && occ(c)) {
-      const L = Math.floor((z - floor(c)) / LEVEL_H);
+      // (round 128d) under the ground floor, down to a level below it: its foundation (drawn solid to the ground on a
+      // slope) — the ground floor's face; a tap there on a slope went through to the ground in the block's own cell
+      const L = Math.max(z >= floor(c) - LEVEL_H ? 0 : -1, Math.floor((z - floor(c)) / LEVEL_H));
       if (L >= 0 && L < MAX_LEVELS && (occ(c) >> L) & 1) {
         if (prev === c) return { cell: c, level: L, face: prevZ > z ? 'top' : 'bottom', from: prev };
         return { cell: c, level: L, face: 'side', from: prev };

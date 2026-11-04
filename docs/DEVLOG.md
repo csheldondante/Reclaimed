@@ -16607,3 +16607,27 @@ houses joins under one roof line, but the courtyard inside is hidden by the worl
 doesn't clear vegetation, BACKLOG FT-26) and by the near houses at the iso angle; the pieces are there (gatearch 4,
 fruittree 1, a fountain, read back from the view). shape-walled.png: a ring of single wall cells round two cells is
 all towers (each ring cell is a post or an end: the wall rule, not this one).
+
+## 2026-11-04 — round 128d (`fortress`): planning takes touches again (pan, tap, pinch), paused or not
+
+**Why.** The user: "I think pause prevents both panning and building in build mode", then "did it add the single finger
+drag to move the camera in build mode?" (DECISIONS round 128d.)
+
+**What.** Not the pause: the speed-0 path stops only the sim, units, settlements, builders and the day; the camera and
+input don't read the speed. Three causes, found headless:
+- the amber planning frame (`.fort-frame`, the whole screen) has `pointer-events: none`, but ui/style.css's
+  `#ui > * { pointer-events: auto }` outranks a class rule — every press landed on the frame, planning or (before the
+  frame hid) not. `#ui>.fort-frame,#ui>.fort-top{pointer-events:none}` (the hud.css / play.css pattern);
+- a one-finger drag was the wind's gust (dragStart → powers.gustStart), which pans nothing and, time stopped, does
+  nothing. In the fortress dragStart declines and a new optional `ControlHandlers.dragPans()` lets the mouse's
+  left drag pan as a finger's does;
+- a tap's ground cell came from the GPU pick's column, which projects ~12 px (two columns) from the tap at 412x915
+  zoom 6, while the plan's blocks are picked along `camera.ray` — a tap beside a block landed in the block's own cell
+  (taken: nothing happened). The fortress now finds the ground along the same ray in its own frame (the quad the ray
+  meets the ground in), the GPU column the fallback; and a ray under a block's ground floor (down to a level, its
+  foundation on a slope) hits that block. Why the GPU pick sits off the ray is not chased here.
+
+**Checks.** scripts/fortresspause.mjs (headless 412x915, touch emulated): planning — a one-finger drag pans 62 units
+and plans nothing, a tap plans a block and the view draws it (1232 pieces), a pinch zooms 6 → 20.4, the tick doesn't
+move; building — the same, the tick runs; Erase — a tap on the block takes it away. 17/17. Unit fortress/build 28/28,
+typecheck clean.

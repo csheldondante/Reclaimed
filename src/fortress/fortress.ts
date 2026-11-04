@@ -8,7 +8,7 @@
 import type { FortressBox, Goods, StructureType } from '../api/contracts/fortress';
 import { Town, type Block } from '../build/town';
 import { TownGrid } from '../build/towngrid';
-import { cellPos } from '../world/lattice';
+import { cellAt, cellPos } from '../world/lattice';
 import { DEFS } from './defs';
 import { FortressPlan } from './plan';
 import { pickFace, placeFor } from './pick';
@@ -41,15 +41,18 @@ export class Fortress {
   readonly onChange: (() => void)[] = [];
   /** the ground under the box is known (the level's surface read over every column): planning may start */
   ready = false;
+  /** the ground's top at a box column */
+  private readonly groundOfCol: (col: number) => number;
 
   constructor(readonly box: FortressBox, private io: FortressIO, seed = 7) {
     if (box.origin[1] & 1) throw new Error('fortress box: its row origin must be even (the lattice\'s odd-row shift)');
     const grid = new TownGrid(box.w, box.h, { seed });
+    this.groundOfCol = (col) => {
+      const [x, y] = this.boxToWindowXY(col);
+      return io.ground(x, y);
+    };
     this.town = new Town(box.w, box.h, {
-      ground: (col) => {
-        const [x, y] = this.boxToWindowXY(col);
-        return io.ground(x, y);
-      },
+      ground: this.groundOfCol,
       // (the fortress is drawn as pieces, not column matter — pieces.ts: nothing is stamped; so the window's z ceiling
       // doesn't bound it either: its limit is the Town's MAX_LEVELS levels a cell, round 128d)
       stamp: () => {},
@@ -122,10 +125,30 @@ export class Fortress {
       // (a yard only ever lies on the ground)
       return yard ? { cell: b.cell, level: 0 } : b;
     }
-    if (erase || groundCol < 0) return null;
+    if (erase) return null;
+    // (round 128d) the ground the ray meets, in the plan's own frame — the same ray the blocks were picked along. The GPU
+    // pick's column landed a column or two off it at 412x915 (12 px at zoom 6), so a tap beside a block could land in
+    // the block's own cell and do nothing; the GPU pick stays the fallback (the ray meets no ground in the box)
+    const c0 = this.groundCellAlong([bx, by, ray.o[2]], ray.d, 1200);
+    if (c0 >= 0) return { cell: c0, level: 0 };
+    if (groundCol < 0) return null;
     const bc = this.windowToBoxCol(groundCol);
     const c = bc >= 0 ? t.grid.cellOf[bc] : -1;
     return c >= 0 ? { cell: c, level: 0 } : null;
+  }
+
+  /** The cell where the ray (box frame) first goes under the ground (-1: it doesn't, in the box). */
+  private groundCellAlong(o: readonly number[], d: readonly number[], tMax: number, step = 0.25): number {
+    for (let t = 0; t <= tMax; t += step) {
+      const x = o[0] + d[0] * t;
+      const y = o[1] + d[1] * t;
+      const z = o[2] + d[2] * t;
+      const [k, r] = cellAt(x, y);
+      if (k < 0 || r < 0 || k >= this.box.w || r >= this.box.h) continue;
+      // (the cell as the blocks are picked: the quad the point is in — pick.ts)
+      if (z <= this.groundOfCol(r * this.box.w + k)) return this.town.grid.cellAtWorld(x, y);
+    }
+    return -1;
   }
 
   /** A press with the current tool (see pick). What happened, for the panel; false: nothing. */

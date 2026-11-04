@@ -4,6 +4,9 @@
 // Building (time runs): the bar shrinks to the progress and a Plan button, so the building can be watched. The stores
 // and the power coming in show at the top in both. Planning is unmistakable (round 128d, the user: "I don't mind that
 // as long as we are clearly in planning mode"): a "Planning (paused)" banner and an amber frame round the screen.
+// (round 128d, the user: "I think pause prevents both panning and building in build mode": the frame covers the whole
+// screen, and ui/style.css's `#ui > * { pointer-events: auto }` outranked its own `pointer-events: none` — every press
+// landed on the frame, not the map, paused or not. The frame and the banners take no presses, at #ui's specificity.)
 import { STRUCTURE_TYPES, type StructureType } from '../api/contracts/fortress';
 import { DEFS } from './defs';
 import type { Fortress } from './fortress';
@@ -29,6 +32,7 @@ const CSS = `
 .fort-top .mode{font-weight:700;font-size:15px}
 .fort-top .mode.plan{background:#c8a24a;color:#111}
 .fort-frame{position:absolute;inset:0;pointer-events:none;z-index:29;box-shadow:inset 0 0 0 5px #c8a24a;background:rgba(200,162,74,.07)}
+#ui>.fort-frame,#ui>.fort-top{pointer-events:none}
 `;
 
 export interface FortressBarHooks {

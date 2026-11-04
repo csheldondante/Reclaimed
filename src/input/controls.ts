@@ -11,6 +11,8 @@ export interface ControlHandlers {
   tap(sx: number, sy: number): void;
   /** Return true if a drag starting here is a gesture; false lets it pan (touch) or be ignored. */
   dragStart(sx: number, sy: number): boolean;
+  /** (round 128d) Whether a one-button drag that isn't a gesture pans with the mouse too (touch always does). */
+  dragPans?(): boolean;
   dragMove(sx: number, sy: number): void;
   dragEnd(sx: number, sy: number): void;
   hover(sx: number, sy: number): void;
@@ -99,7 +101,7 @@ export class Controls {
         p.moved = true;
         if (p.button === 0) {
           p.gesture = h.dragStart(p.x0, p.y0);
-          p.panning = !p.gesture && p.touch;
+          p.panning = !p.gesture && (p.touch || !!h.dragPans?.());
         }
       }
       if (!p.moved) return;

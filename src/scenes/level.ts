@@ -1247,6 +1247,9 @@ export class LevelScene implements Scene {
           this.flyDrag = [sx, sy];
           return true;
         }
+        // (round 128d, the user: "I think pause prevents both panning and building in build mode": the fortress has no
+        // wind to call — a drag there pans, with a finger or the mouse; dragPans)
+        if (this.fortress) return false;
         if (this.editor?.tool === 'smash') {
           this.smashAt(sx, sy, true);
           this.smashing = true;
@@ -1288,6 +1291,7 @@ export class LevelScene implements Scene {
         if (this.reach && !this.reach.contains(wx, wy)) return false;
         return this.powers.gustStart(wx, wy);
       },
+      dragPans: () => !!this.fortress,
       dragMove: (sx, sy) => {
         if (this.flyDrag) {
           const [px, py] = this.flyDrag;
