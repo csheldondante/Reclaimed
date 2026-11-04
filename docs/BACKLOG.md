@@ -12,6 +12,17 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 128e (2026-11-04, session 5) — the whole-game loop (DECISIONS round 128e). The fortress's own rows FT-* are on `fortress`.
+
+| id | item | size | status |
+|---|---|---|---|
+| V128-1 | Early battle test: a raid on the walls, archers firing from them, one spell; after building works and units are produced | L | next |
+| V128-2 | City spells: crop growth, work speed, birth rate, regeneration in battle (on traits; mana from fortress power) | L | deferred |
+| V128-3 | Opportunity UX redesign: named advisors with portraits arrive at the fortress and tell you about things on the map; clean cards; a picture rendered from that map area | L | deferred |
+| V128-4 | Unit design from scavenged goods and beasts caught and raised in the city (the unit editor) | L | deferred |
+| V128-5 | Ruins from destroyed cities: resources to claim, structures to repurpose | L | deferred |
+| V128-6 | Phone perf at city/army/ship scale: stand-ins for far buildings, crowds simplified at a distance, simulation on the player's targets; phone-bench targets as each piece lands | L | open |
+
 ## Round 126 (2026-11-02, session 5, `dialog2`) — petitions as dialogs, the cast, plain writing (DECISIONS round 126)
 
 Branch `dialog2` (b9139b7): docs/WRITING.md, a style lint, every player string rewritten, the cast generator, petitions delivered in talks. The branch's own rows are DLG-7..12.

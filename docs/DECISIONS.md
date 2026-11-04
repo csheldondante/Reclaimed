@@ -553,6 +553,12 @@ each was implemented.
 - After the loop: the caravan/party version (similar), then character controllers in your world.
 - Expected order: buildings → unit generation → passes on agents, animations, battle effects, sounds → physics (buildings on deformation/destruction, cheap rigid bodies for small things, simulation prioritised on the player's targets).
 
+> "Great! That's perfect. I also like the idea of an early battle tests queued after we get the building working and unit production going. I would love it if we had spells to increase crop growth or make the population work faster or reproduce faster or regenerate in battle etc. I think that spells plus those other mechanics sounds very fun. I already know the opportunity ux needs a complete redesign but I think the basic concept and logic are sound. I might have named character portraits or advisors pop up when agents come to your fortress and then tell you about things that you can assign resources to on the map and view as cards in whatever pretty and non cluttered way is possible maybe with an image generated from that area of the map to show you what is going on."
+
+- Order: building working → unit production → an early battle test.
+- City spells on the economy and people: crop growth, work speed, birth rate, regeneration in battle.
+- The opportunity UX is to be redesigned; its concept and logic stay. Named characters or advisors (portraits) arrive at the fortress and tell you about things on the map to assign resources to, shown as clean, uncluttered cards, perhaps with a picture rendered from that area of the map.
+
 > "I want the player fortress to be something that can grow huge and impressive with spires and bridges and fountains and crystals and floating stones etc. we can adorn it with claimed prizes from opportunities." (round 128d, also on the fortress branch)
 
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
