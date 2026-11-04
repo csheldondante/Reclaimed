@@ -600,6 +600,27 @@ each was implemented.
   long ones) to a walk along its top. Drawn as paving and stone steps; the steps and the wall-walk are solid, so units
   climb them. The warehouse's card speaks of the town's stores against all the warehouses' room, then this one's part.
 
+## 2026-11-04 — round 128k (session 5, `fortress`) — workers outside the walls; roads that make sense
+
+- The user played 015d09e on the phone (?level=atlas&town=1&fortress=1), verbatim: "It doesn't look like there is a way
+  for the workers to exit the starting city at all. They fail to reach anything I build."
+- "Also, the roads don't actually look great. I think they need tuning." Asked what's off: "They just don't make sense
+  as roads. It might be because I'm looking at a lumbermill built outside the city walls but the road encloses a large
+  voronou cell around it. Realistically I would expect a road to the lumber mill and not around an empty plot. It also,
+  just didn't convincingly connect to the city through a gate or anything."
+- On how: "For roads I think: https://www.citygen.net/ has some but ideally I want to keep the speed of the irregular
+  grid and still get roads. I wonder if we can make some cells roads or else make the border between some cells roads
+  at some frequency?"
+- "And can we still nudge edges to be along contours for hills? That seems like it could get the more realistic roads
+  without the full cost of flow base roads."
+- "We can also defer and do better roads in a later pass", then: "Yeah but testing roads between grid cells sounds
+  reasonable and making thoroughfairs hole tiles for bug structures. It's ok if it doesn't look quite right for now but
+  we want roads for the trade and making them look good will help."
+- → This pass: roads on the grid's cell borders, chosen by purpose — a road from the town's gate along the borders to
+  each building, no ring round an empty plot; whole tiles as thoroughfares for gates, squares and the big buildings'
+  doors; the ride graph built from these. Deferred to a "better roads" pass (BACKLOG FT-73): the contour nudge of the
+  grid's vertices, lanes between built cells at a frequency, citygen-style streets, roads between settlements (FT-59).
+
 ## 2026-11-04 — round 128i (session 5, `fortress`) — roads narrower than a cell
 
 - On roads smaller than a cell (DECISIONS round 128e on `places`: "if we want roads smaller than one cell we could have

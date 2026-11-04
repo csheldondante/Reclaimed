@@ -17228,3 +17228,22 @@ from the network; a unit joins and heads for its next node, one near its goal go
 not riding keeps its field). **Seen, not mine to fix here:** two of eight hillside runs ended in the GPU watchdog
 ("the GPU never finished", during the people's work at speed 6); an earlier hillside run before any ride code lost
 the page mid-run (window.reclaimed gone), perhaps the same — not tracked down (BACKLOG FT-72). **Phone bench** (not run): BACKLOG FT-72.
+
+## 2026-11-04 — round 128k (`fortress`): workers outside the walls — the fields no longer start over on every slide
+
+**Why.** The user, on the phone (015d09e): "It doesn't look like there is a way for the workers to exit the starting
+city at all. They fail to reach anything I build."
+**Reproduced the way a player does it** (scripts/fortressoutside.mjs, new: by finger at 412x915, a lumber camp, a house
+and a farm on open ground 50-110 m out from the town's stores, outside its walls, Build): 13 headless runs — the URL and
+the start menu's Fortress button, ?q=low and the default tier, 1x and 16x, six directions, the camera panned 160 m off
+and back before Build. The builders got out of the town and put every site up in every run (16x: 30-80 s; 1x: the
+first block 90-140 s, a 50 m site's field 89 against 51 as the crow flies, one good a trip, every trip back to the heap
+in the old town's middle). No builder ever gave a load back (every unload logged). So no hard block headless; at 1x it
+reads slow: the builders walk back into the town between loads.
+**What changed (a cost of round 128i that bites on a phone):** a slide relaxed every field over the whole scope again —
+`RoadStamp.set` and `RoadRide.encodeHops` said "changed" on an offset alone (`scope.markAll`), and the road field
+starting over (each time the scope drew in) did the same. The fields slide with the window, so an offset alone needs no
+relax: now only new shapes or a new network mark everything; the road field refills from its network's nodes' chunks.
+On a phone at 2 sweeps a tick with a capped front (FRONT_CAP 32 chunks), a player panning kept every field's front
+full of whole-scope work. Not measured on the phone (BACKLOG FT-72). Tests: roadstamp (an offset alone returns false),
+fortressoutside passes (it fails if a site outside the walls isn't standing within 150 s at 16x).

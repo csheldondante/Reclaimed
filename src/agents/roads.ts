@@ -119,9 +119,14 @@ export class RoadStamp {
     return this.shapesBuf;
   }
 
-  /** the shapes (packRoadShapes; the same array again: unchanged) at window offset (ox, oy); true if anything changed */
+  /**
+   * the shapes (packRoadShapes; the same array again: unchanged) at window offset (ox, oy). True if the shapes changed —
+   * the roads moved on the ground; an offset alone (a slide) restamps the same roads where the window put them: the
+   * fields slid with it, nothing to relax again (round 128k)
+   */
   set(shapes: Float32Array, ox: number, oy: number): boolean {
     if (shapes === this.shapes && ox === this.off[0] && oy === this.off[1]) return false;
+    const changed = shapes !== this.shapes;
     if (oy % 2) throw new Error(`roads: the shapes' row offset ${oy} must be even (the rows' stagger)`);
     const n = shapes.length / ROAD_SHAPE_FLOATS;
     if (shapes !== this.shapes) {
@@ -131,7 +136,7 @@ export class RoadStamp {
     this.shapes = shapes;
     this.off = [ox, oy];
     this.dirty = true;
-    return true;
+    return changed;
   }
 
   /** the bits made again if the shapes or their offset changed (a pass of its own) */

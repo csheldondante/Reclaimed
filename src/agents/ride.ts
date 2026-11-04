@@ -128,6 +128,13 @@ export class RoadRide {
     return m;
   }
 
+  /** (round 128k) the graph's nodes in window world (x, y): where the road field's seeds are */
+  nodePoints(): [number, number][] {
+    const out: [number, number][] = [];
+    for (let v = 0; v < this.nodes; v++) out.push(this.toWindow([this.graph.xy[v * 2], this.graph.xy[v * 2 + 1]]));
+    return out;
+  }
+
   /** every goal of the riding groups (the graph's frame) */
   goalPoints(): P[] {
     return this.goals.flatMap((q) => q ?? []);
@@ -166,7 +173,7 @@ export class RoadRide {
   /**
    * The tables made again if the graph or the goals changed, and the network's plane of the road bits (the columns of
    * the edges that lead to a goal: the road field's seeds) if they did or the frame moved (its own pass, before the
-   * agents'). True when the plane was made again (the road field's chunks to relax again).
+   * agents'). True when the tables were made again (the road field's chunks to relax again).
    */
   encodeHops(enc: GPUCommandEncoder, units: number): boolean {
     const slots = this.writeParams(units);
@@ -190,7 +197,9 @@ export class RoadRide {
       pass.dispatchWorkgroups(Math.ceil(this.nodes / 64));
     }
     pass.end();
-    return true;
+    // (round 128k: true only when the network changed — a slide restamps the same network where the window put it, and
+    // the fields slid with it: relaxing the whole scope again each slide starved the fields while the player panned)
+    return hops;
   }
 
   /** the ride: an agents stage, after the units' step (every tick there are units) */

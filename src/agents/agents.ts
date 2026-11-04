@@ -1335,8 +1335,9 @@ export class Agents implements SimSystem {
     const clear = (this.wasSeeded & ~seeded) | this.restart;
     this.restart = 0;
     // (round 128i: the road field's seeds are the network's columns, not points the scope marks — a road field set
-    // unreachable, or starting over, is relaxed again over the whole scope to refill from them)
-    if (clear & seeded & (1 << ROAD_FIELD) && this.scope) this.scope.markAll = true;
+    // unreachable, or starting over, refills from them: round 128k, the network's nodes' chunks marked, not the whole
+    // scope relaxed again each time the scope drew in)
+    if (clear & seeded & (1 << ROAD_FIELD) && this.scope) for (const [x, y] of this.roadRide.nodePoints()) this.scope.mark(x, y / ROW_H);
     this.wasSeeded = seeded;
     this.clearNow = clear;
     this.kinds.forEach((k, i) => {

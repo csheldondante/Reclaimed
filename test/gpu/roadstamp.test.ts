@@ -55,7 +55,8 @@ describe('road bits stamped on the GPU', () => {
     const packed = packRoadShapes(shapes(7));
     let total = 0;
     for (const [ox, oy] of [[0, 0], [5, 4], [-7, -2]] as const) {
-      expect(stamp.set(packed, ox, oy)).toBe(true);
+      // (round 128k: true only for new shapes — an offset alone restamps, the fields needn't relax again)
+      expect(stamp.set(packed, ox, oy)).toBe(ox === 0 && oy === 0);
       const enc = dev.createCommandEncoder();
       stamp.encode(enc);
       dev.queue.submit([enc.finish()]);
