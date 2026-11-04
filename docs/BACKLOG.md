@@ -18,7 +18,7 @@ user) · `deferred` (agreed for later).
 |---|---|---|---|
 | V128-1 | Early battle test: a raid on the walls, archers firing from them, one spell; after building works and units are produced | L | next |
 | V128-2 | City spells: crop growth, work speed, birth rate, regeneration in battle (on traits; mana from fortress power) | L | deferred |
-| V128-3 | Opportunity UX redesign: messengers of all kinds (advisors, a rider from a village under attack, strangers, petitioners) arrive at the fortress and tell you about things on the map; clean cards; a picture rendered from that map area | L | deferred |
+| V128-3 | Opportunity UX redesign: messengers of all kinds (advisors, a rider from a village under attack, strangers, petitioners) arrive at the fortress, and from inside the city (a university finds research that unlocks structures or units) and tell you about things on the map; clean cards; a picture rendered from that map area | L | deferred |
 | V128-4 | Unit design from scavenged goods and beasts caught and raised in the city (the unit editor) | L | deferred |
 | V128-5 | Ruins from destroyed cities: resources to claim, structures to repurpose | L | deferred |
 | V128-6 | Phone perf at city/army/ship scale: stand-ins for far buildings, crowds simplified at a distance, simulation on the player's targets; phone-bench targets as each piece lands | L | open |
