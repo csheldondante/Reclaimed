@@ -582,6 +582,10 @@ each was implemented.
 - The user, verbatim: "Yes. Let's move to paged simulation, sparse 3d chunks, writing claims at load time (are new cities GPU generated?)"
 - → One storage redesign (M128-8, widened): (1) paged simulation: every per-column field paged like the layers (or ring-addressed), so a slide is a page-table/origin change plus filling the new strip; (2) sparse 3D chunks (cx, cy, cz); (3) claims written at load time from the static grids. A short design session with the user first; it goes ahead of deep quarries.
 - Cities today: planned on the CPU in a web worker (settle/plan-worker.ts, WFC), cached; their pieces live on the GPU in the grid table; claims stamped on the GPU from a CPU-built list.
+- Design session (the user chose each recommended option):
+  - Paging: "Pages + awake list": every per-column field is stored in chunk pages through the same table as the layers; a slide is a table change; sims dispatch only awake pages (a quiet world costs nothing, the window can grow). The cost, an indirection on neighbour reads at page edges, is accepted.
+  - 3D chunks: "More interval storage": columns stay interval lists; a cz chunk is extra layer pages for a height band, added only where a column runs out of K; sims stay column-based (water in a cave sits on its own interval's surface). Not 3D cells.
+  - Claims: "Static grids at load, moving live": towns and the fortress written by the kernel that writes arriving land; a fortress edit rewrites its cells on the GPU; only moving grids (bodies, floating islands, giants) claim every frame.
 
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
