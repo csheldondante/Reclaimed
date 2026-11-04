@@ -478,6 +478,17 @@ export class Streamer {
   readonly colTop: Float32Array;
   /** called after land is written into the window (or changed in it): the box (window cells, exclusive) whose relief is new */
   readonly onRelief: ((x0: number, y0: number, x1: number, y1: number) => void)[] = [];
+  /**
+   * (round 128j, claims at load) called right after a region's land is written to the GPU, in the same frame and before
+   * anything reads it: window rectangle (lx, ly, w, h) — the static grids' claims written there (sim/static-claims.ts)
+   */
+  readonly onWritten: ((lx: number, ly: number, w: number, h: number) => void)[] = [];
+  /**
+   * (round 128j) what must be ready before a region's land can be written (a slide waits for it as for the land made
+   * ahead): world region corner (wx, wy), side R — the static grids' plans over it (a settlement's, settle/settlements.ts
+   * ready); null: nothing to wait for
+   */
+  readonly readyFor: ((wx: number, wy: number, R: number) => Promise<unknown> | null)[] = [];
   /** called when land comes into the window that the structural system should judge: the box (window cells) round it */
   readonly onArrive: ((x0: number, y0: number, x1: number, y1: number) => void)[] = [];
   /** the window was moved somewhere else entirely (warp): its new origin and oz — what the game keeps in window coordinates is void */
@@ -1495,6 +1506,9 @@ export class Streamer {
     if (!f && this.store && !this.store.has(key)) this.stats.storeMiss++;
     if (!f) f = await this.generate(wx, wy);
     f = await this.since(f, wx, wy);
+    // (round 128j: the static grids over it known — their claims are written with it)
+    const ready = this.readyFor.map((h) => h(wx, wy, this.R)).filter((p) => p);
+    if (ready.length) await Promise.all(ready);
     return this.prepare(f);
   }
 
@@ -2710,6 +2724,10 @@ export class Streamer {
     if (this.verify && f.info.last !== undefined) this.verifyNow(lx, ly, key, f.how, f.info.last);
     if (f.things?.length) for (const t of this.things) t.give(f.things, lx, ly);
     record('write.gpu', performance.now() - tb);
+    // (round 128j: the static grids' claims with the land, on the GPU, before anything reads it)
+    const tcl = performance.now();
+    for (const cb of this.onWritten) cb(lx, ly, R, R);
+    record('write.claims', performance.now() - tcl);
     const tc = performance.now();
     const surf = core.map.surface;
     // (round 106: the CPU's per-column arrays where the region lies — round 107: its pages' rows at their slots)

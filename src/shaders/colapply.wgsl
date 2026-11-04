@@ -19,6 +19,8 @@
 //                 fallback material (aux; 0: stone), joined, fitted
 //   claim         (round 128, INT16) a thread a column: each span [z0, z1) cut out (sim/external.ts cutOut) and made
 //                 External with its fallback as aux, sorted, joined, fitted (claimColumn)
+//   claimGrid     (round 128j) a thread a column of a static grid (its own buffer as `inp`): claim where free, only where
+//                 the column lies in the window rectangle written now (claims written with the land: sim/static-claims.ts)
 //   take          (round 128) a thread a column: the listed whole cells of the masked materials taken out of it (the
 //                 voxel lattice's wake, physics/wake.ts takeCells), fitted
 //   seat          (round 128) a thread a column: a model's runs seated in it (world/models.ts seatColumn: a dip below
@@ -45,6 +47,10 @@ struct Params {
   maskHi: u32, seatBase: f32, seatAux: u32,
   /** (round 128g) claim: only where free — the masked materials (maskLo, maskHi: air, liquids; any id past 63) */
   free: u32,
+  /** (round 128j, claims at load) claimGrid: the grid's place in the window (its local column (0, 0) at (gx, gy); its
+   *  spans' world z plus gz: the window's), and the window rectangle written now [rx0, rx1) × [ry0, ry1) */
+  gx: i32, gy: i32, gz: f32, rx0: u32,
+  ry0: u32, rx1: u32, ry1: u32,
 }
 
 @group(0) @binding(0) var<uniform> P: Params;
@@ -400,9 +406,28 @@ fn orphans(@builtin(global_invocation_id) gid: vec3<u32>) {
 fn claim(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (gid.x >= P.nOps) { return; }
   let o = P.opOff + gid.x * 4u;
-  let b = colBase(inp[o], inp[o + 1u]);
-  let s0 = inp[o + 2u];
-  let ns = inp[o + 3u];
+  claimAt(colBase(inp[o], inp[o + 1u]), inp[o + 2u], inp[o + 3u], 0.0);
+}
+
+/**
+ * (round 128j, claims at load) A static grid's claims (a town's buildings, the fortress's blocks: sim/static-claims.ts)
+ * where its columns lie in the window rectangle being written now: a thread a column of the grid (its local x, y as
+ * i32, the first span, the count — the grid's own buffer bound as `inp`), its spans in world z made window z by P.gz.
+ * Claimed where free (P.free), as claim's: a column claimed already is unchanged (External isn't free).
+ */
+@compute @workgroup_size(64)
+fn claimGrid(@builtin(global_invocation_id) gid: vec3<u32>) {
+  if (gid.x >= P.nOps) { return; }
+  let o = P.opOff + gid.x * 4u;
+  let x = bitcast<i32>(inp[o]) + P.gx;
+  let y = bitcast<i32>(inp[o + 1u]) + P.gy;
+  if (x < i32(P.rx0) || y < i32(P.ry0) || x >= i32(P.rx1) || y >= i32(P.ry1)) { return; }
+  if (x < 0 || y < 0 || u32(x) >= P.mapW || u32(y) >= P.mapH) { return; }
+  claimAt(colBase(u32(x), u32(y)), inp[o + 2u], inp[o + 3u], P.gz);
+}
+
+/** column `b` with spans s0 .. s0 + ns (at P.cutOff: z0, z1, aux, 0; z plus dz) claimed, in turn (claimColumn's rule) */
+fn claimAt(b: vec2<u32>, s0: u32, ns: u32, dz: f32) {
   var a: array<vec4<u32>, MAX_IV>;
   var n = load(b, &a);
   // (each span in turn — sim/external.ts claimColumn: cut out, then External with its fallback as aux; round 128g, with
@@ -411,7 +436,7 @@ fn claim(@builtin(global_invocation_id) gid: vec3<u32>) {
     let so = P.cutOff + (s0 + s) * 4u;
     var parts: array<vec2<f32>, 24>;
     var np = 1u;
-    parts[0] = vec2<f32>(f(so), f(so + 1u));
+    parts[0] = vec2<f32>(f(so) + dz, f(so + 1u) + dz);
     if (P.free != 0u) {
       // (sim/external.ts freeSpans: [z0, z1) less every interval that isn't free, the parts under 0.05 left out)
       for (var i = 0u; i < n; i++) {

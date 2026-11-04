@@ -126,6 +126,7 @@ import { FortressLife } from '../fortress/life';
 import { ECON, START_STORES } from '../fortress/defs';
 import { fortressPieces } from '../fortress/pieces';
 import { FortressClaims } from '../fortress/claims';
+import { StaticClaims } from '../sim/static-claims';
 import type { StructurePieces } from '../api/contracts/structures';
 import type { GridStyle } from '../api/contracts/settlement';
 import type { CitySpec } from '../api/contracts/structures';
@@ -385,6 +386,8 @@ export class LevelScene implements Scene {
   private fortressRunSpeed = 1;
   /** (round 128d) its built blocks claimed in the columns: the agents, the water and the ground go round them */
   private fortressClaims?: FortressClaims;
+  /** (round 128j) the static grids' claims (the towns', the fortress's), written with the land (sim/static-claims.ts) */
+  private statics?: StaticClaims;
   /** (round 128f) read the window's columns again for the fortress's reach check (fortress/reach.ts) */
   private fortressReadCols?: () => void;
   private fortressColsAt = 0;
@@ -1693,6 +1696,8 @@ export class LevelScene implements Scene {
       // (round 100, meshinst) the resting rock goes with its region: its mesh and transform in the region's record
       if (this.integrity?.external) this.stream.things.push(this.integrity.regionThings());
       if (this.integrity) this.integrity.held = () => S0.columnsHeld;
+      // (round 128j: no orphan pass while a slide's land is coming in — its places hold the land that left, claims and all)
+      if (this.integrity) this.integrity.landPending = () => S0.unwritten.length > 0;
       // (round 80) a warp (the map's): the window somewhere else — what the level keeps in window coordinates again
       this.stream.onWarp.push((_ox, _oy, nz) => {
         if (a) core.globals.climate = a.atlas.climateAt(this.stream!.origin[0] + dims.w / 2, this.stream!.origin[1] + dims.h / 2, nz);
@@ -1859,12 +1864,11 @@ export class LevelScene implements Scene {
               device: host.gpu.device,
               renderer: core.renderer,
               external: () => this.integrity?.external ?? null,
+              statics: () => this.staticsFor(),
               dims: { w: dims.w, h: dims.h },
               oz: () => S.oz,
               viewProj: () => core.camera.viewProj,
               focusZ: () => core.camera.focus?.[2] ?? core.camera.target[2],
-              landed: (x0, y0, x1, y1) => landedIn(S, x0, y0, x1, y1),
-              touched: (x0, y0, x1, y1) => this.hybrid?.edit((x0 + x1) / 2, (y0 + y1) / 2, Math.max(x1 - x0, y1 - y0) / 2),
               dust: (x, y, z, n) => core.sim.particles.burst({ kind: PK.Dust, x, y, z, count: n, speed: 2, spread: 1.2 }),
             },
             st,
@@ -1873,11 +1877,8 @@ export class LevelScene implements Scene {
           // (round 120) the sailing ships between the ports (settle/ships.ts, shipsview.ts), drawn with the towns' pieces
           if (host.params.get('ships') !== '0')
             this.shipsView = new ShipsView({ sg: view.sg, toWindow: (p) => st.toWindow(p), oz: () => S.oz, focus: () => [core.camera.target[0], core.camera.target[1]], time: () => core.globals.time, sea: a!.atlas.p.sea, style: 'hearth' }, st.fleet);
-          S.onBeforeSlide.push((dx, dy) => view.beforeSlide(dx, dy));
-          S.onSlide.push(() => view.slid());
-          S.onWarp.push(() => view.slid());
-          // (round 128g: land written into the window — a building on it may claim now, its land no longer coming in)
-          S.onRelief.push(() => view.landed());
+          // (round 128j: a slide waits for the plans of the towns over the land it brings — their claims come with it)
+          S.readyFor.push((wx, wy, R) => st.ready(wx, wy, R, R));
           if (host.params.get('towndebug') === '1') this.townDebug = new TownDebug(host.ui, st, core.camera, (x, y) => this.heightAt(x, y));
           if (host.params.get('fortress') === '1') this.startFortress(st, view, a!.startTown);
         }
@@ -1896,6 +1897,8 @@ export class LevelScene implements Scene {
       fortressLife: () => this.fortressLife,
       // (round 128d) its built blocks' claims in the columns: claimed() per structure, stats
       fortressClaims: () => this.fortressClaims,
+      // (round 128j) the static grids' claims written with the land: stats, audit(slots, packed) (scripts/staticclaims.mjs)
+      statics: () => this.statics,
       townDebug: this.townDebug,
       // (?flow=1) the flow model: flow.water / flow.lava (LiquidSystem: addSpring), flow.steady (last read),
       // flow.breach() (the lab's plug dug out), flow.sleep (awake chunks)
@@ -2424,7 +2427,7 @@ export class LevelScene implements Scene {
     this.settlements?.farUpdate(dt);
     // (round 119) the settlements' pieces: made again when a plan, a storey or the window changed
     this.settlementsView?.update();
-    this.fortressClaims?.frame();
+    this.statics?.frame();
     this.shipsView?.update();
     if (this.inhabitants) this.lifeFrame(dt * this.speed);
     if (this.units && !this.stream?.busy) {
@@ -3125,16 +3128,11 @@ export class LevelScene implements Scene {
     S.onSlide.push(() => void readCols().catch(ignoreTeardown));
     S.onWarp.push(() => void readCols().catch(ignoreTeardown));
     // (round 128d) what's built is solid to the world (fortress/claims.ts): claimed in the columns, as the towns' are
-    const claims = (this.fortressClaims = new FortressClaims(fort, {
+    // (round 128j: a static grid, written with the land — sim/static-claims.ts)
+    this.fortressClaims = new FortressClaims(fort, {
       external: () => this.integrity?.external ?? null,
-      landed: (x0, y0, x1, y1) => landedIn(S, x0, y0, x1, y1),
-      dims: { w: dims.w, h: dims.h },
-      touched: (x0, y0, x1, y1) => this.hybrid?.edit((x0 + x1) / 2, (y0 + y1) / 2, Math.max(x1 - x0, y1 - y0) / 2),
-    }));
-    S.onBeforeSlide.push((dx, dy) => claims.beforeSlide(dx, dy));
-    S.onSlide.push(() => claims.slid());
-    S.onWarp.push(() => claims.slid());
-    S.onRelief.push(() => claims.landed());
+      statics: () => this.staticsFor(),
+    });
     // (round 128i, FT-67) the road stamp's offset moved in the slide's own frame, as the towns' grid rows are
     S.onSlide.push(() => this.fortressLife?.roads());
     S.onWarp.push(() => this.fortressLife?.roads());
@@ -4074,12 +4072,42 @@ export class LevelScene implements Scene {
     });
   }
 
+  /**
+   * (round 128j, claims at load) The static grids' claims (sim/static-claims.ts): made on first use, with the streamed
+   * window and the External registry — the streamer's write of arriving land claims every grid's columns there.
+   */
+  private staticsFor(): StaticClaims | null {
+    if (this.statics) return this.statics;
+    const S = this.stream;
+    const ext = this.integrity?.external;
+    if (!S || !ext) return null;
+    const core = this.core;
+    const st = new StaticClaims({
+      device: this.host.gpu.device,
+      apply: () => core.columnApply,
+      columns: () => core.columnsGpu(),
+      registry: () => this.integrity?.external ?? null,
+      dims: { w: core.dims.w, h: core.dims.h },
+      R: S.R,
+      origin: () => [S.origin[0], S.origin[1]],
+      unwritten: () => S.unwritten,
+      held: () => S.columnsHeld,
+      touched: (x0, y0, x1, y1) => this.hybrid?.edit((x0 + x1) / 2, (y0 + y1) / 2, Math.max(x1 - x0, y1 - y0) / 2),
+      quiet: (x0, y0, x1, y1) => this.sleep?.touch((x0 + x1) / 2, ((y0 + y1) / 2) * ROW_H, Math.max(x1 - x0, (y1 - y0) * ROW_H) / 2),
+    });
+    ext.statics = st;
+    S.onWritten.push((lx, ly, w, h) => st.landWritten(lx, ly, w, h));
+    this.statics = st;
+    return st;
+  }
+
   dispose(): void {
     this.abort.abort();
     this.tunePanel?.dispose();
     this.fortressBar?.dispose();
     this.fortressLife?.dispose();
     this.fortressClaims?.dispose();
+    this.statics?.dispose();
     this.bugReport?.dispose();
     this.stationsBar?.dispose();
     this.noiseLab?.dispose();
@@ -4104,10 +4132,3 @@ export class LevelScene implements Scene {
   }
 }
 
-/**
- * (round 128g) Whether the window's land in box [x0, x1) × [y0, y1) (cells, rows) is written: no region a slide is still
- * bringing in (Streamer.unwritten) overlaps it. A claim made on land still coming in was overwritten by it.
- */
-function landedIn(S: { unwritten: [number, number][]; R: number }, x0: number, y0: number, x1: number, y1: number): boolean {
-  return !S.unwritten.some(([ux, uy]) => ux < x1 && ux + S.R > x0 && uy < y1 && uy + S.R > y0);
-}

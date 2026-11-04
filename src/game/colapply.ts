@@ -133,6 +133,19 @@ export interface ApplyStage {
   seat?: { cols: { x: number; y: number; runs: Interval[] }[]; base: number; aux: number };
 }
 
+/**
+ * (round 128j, claims at load) A static grid's claims on the GPU (sim/static-claims.ts): `buf` holds `nCols` columns —
+ * (x, y as i32 in the grid's frame, first span, span count) — then their spans (z0, z1 in world z as f32 bits, aux, 0),
+ * a column's spans in order. Its local column (0, 0) lies at window column (gx, gy); window z = world z + gz.
+ */
+export interface GridClaimJob {
+  buf: GPUBuffer;
+  nCols: number;
+  gx: number;
+  gy: number;
+  gz: number;
+}
+
 const MAX_CUTS = 32;
 /** (round 128g) the materials a free claim takes (sim/external.ts freeMat), as the kernel's mask */
 const FREE_LO = maskOf(0);
@@ -142,9 +155,9 @@ function maskOf(base: number): number {
   for (let i = 0; i < 32; i++) if (freeMat(base + i)) m |= 1 << i;
   return m >>> 0;
 }
-const PARAM_BYTES = 144;
+const PARAM_BYTES = 176;
 const PARAM_STRIDE = 256;
-const KERNELS = ['applyCuts', 'spillTarget', 'spillDeposit', 'depositAdd', 'release', 'orphans', 'claim', 'take', 'seat'] as const;
+const KERNELS = ['applyCuts', 'spillTarget', 'spillDeposit', 'depositAdd', 'release', 'orphans', 'claim', 'claimGrid', 'take', 'seat'] as const;
 type Kernel = (typeof KERNELS)[number];
 const BINDS = { 0: 'uniform', 1: 'read', 2: 'rw', 3: 'read', 4: 'rw', 5: 'rw', 6: 'rw' } as const;
 type ParamKey = 'nOps' | 'nSpill' | 'nGone' | 'hashCap' | 'opOff' | 'cutOff' | 'spillOff' | 'goneOff' | 'nDep' | 'depOff' | 'nKeys' | 'keyOff' | 'refOff' | 'spanOff' | 'maskLo' | 'maskHi' | 'seatBase' | 'seatAux' | 'free';
@@ -180,6 +193,8 @@ export class ColumnApply {
   private noNext: GPUBuffer;
   /** bytes uploaded by the last run (its whole cost on the bus: nothing comes back) */
   lastBytes = 0;
+  /** (round 128j) claimGrids' params, a stride a pass */
+  private gridParams: GPUBuffer | null = null;
 
   constructor(private device: GPUDevice) {
     this.layout = makeLayout(device, 'colapply', BINDS, GPUShaderStage.COMPUTE);
@@ -203,6 +218,65 @@ export class ColumnApply {
   orphans(cols: GpuColumns, claimed: Map<number, { z0: number; z1: number }[]>): void {
     const enc = this.encode(cols, [], claimed);
     if (enc) this.device.queue.submit([enc.finish()]);
+  }
+
+  /**
+   * (round 128j, claims at load) Static grids' claims where free (claimFreeColumn's rule), only in the window rectangles
+   * given (the land written now): one pass a grid and rectangle, the grid's own buffer read where it lies on the GPU —
+   * nothing uploaded but the params. In order: a later grid's spans over an earlier's are buried in them.
+   */
+  claimGrids(cols: GpuColumns, jobs: GridClaimJob[], rects: [number, number, number, number][]): void {
+    const { packed } = cols;
+    if (cols.next === undefined) throw new Error('ColumnApply.claimGrids: the columns need their layersNext (GpuColumns.next; null: none)');
+    const W = packed.dims.w;
+    const H = packed.dims.h;
+    const passes: { job: GridClaimJob; params: ArrayBuffer }[] = [];
+    for (const job of jobs) {
+      if (!job.nCols) continue;
+      for (const [x0, y0, x1, y1] of rects) {
+        const b = new ArrayBuffer(PARAM_BYTES);
+        const pu = new Uint32Array(b);
+        const pi = new Int32Array(b);
+        const pf = new Float32Array(b);
+        pu.set([W, H, packed.chunksX, CHUNK, job.nCols, 0, 0, 1, 0, job.nCols * 4]);
+        pf[15] = packed.dims.zMax;
+        pu[30] = cols.next ? 1 : 0;
+        pu[31] = FREE_LO;
+        pu[32] = FREE_HI;
+        pu[35] = 1;
+        pi[36] = job.gx;
+        pi[37] = job.gy;
+        pf[38] = job.gz;
+        pu.set([Math.max(0, x0), Math.max(0, y0), Math.min(W, x1), Math.min(H, y1)], 39);
+        passes.push({ job, params: b });
+      }
+    }
+    if (!passes.length) return;
+    const dev = this.device;
+    this.gridParams = grow(dev, this.gridParams, 'colapply grid params', passes.length * PARAM_STRIDE, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    const pdata = new Uint8Array(passes.length * PARAM_STRIDE);
+    passes.forEach((p, i) => pdata.set(new Uint8Array(p.params), i * PARAM_STRIDE));
+    dev.queue.writeBuffer(this.gridParams, 0, pdata);
+    this.lastBytes = pdata.byteLength;
+    const hash = this.hash ?? (this.hash = grow(dev, null, 'colapply hash', 64 * 32, GPUBufferUsage.STORAGE));
+    const enc = dev.createCommandEncoder({ label: 'colapply claimGrid' });
+    passes.forEach((p, i) => {
+      const bg = makeBindGroup(dev, 'colapply claimGrid', this.layout, {
+        0: { buffer: this.gridParams!, offset: i * PARAM_STRIDE, size: PARAM_BYTES },
+        1: cols.chunks,
+        2: cols.slots,
+        3: p.job.buf,
+        4: hash,
+        5: this.noDeposit,
+        6: cols.next ?? this.noNext,
+      });
+      const pass = enc.beginComputePass({ label: 'colapply claimGrid' });
+      pass.setPipeline(this.pipes.claimGrid);
+      pass.setBindGroup(0, bg);
+      pass.dispatchWorkgroups(Math.ceil(p.job.nCols / 64));
+      pass.end();
+    });
+    dev.queue.submit([enc.finish()]);
   }
 
   private encode(cols: GpuColumns, stages: ApplyStage[], claimed: Map<number, { z0: number; z1: number }[]> | null, target?: SpillTarget): GPUCommandEncoder | null {
@@ -393,6 +467,7 @@ export class ColumnApply {
     this.inp?.destroy();
     this.params?.destroy();
     this.hash?.destroy();
+    this.gridParams?.destroy();
     this.noDeposit.destroy();
     this.noNext.destroy();
   }

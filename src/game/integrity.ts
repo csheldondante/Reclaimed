@@ -173,6 +173,12 @@ export class Integrity {
    * Streamer.columnsHeld): nothing falls and nothing is judged meanwhile (`settle` landed what was falling first)
    */
   held?: () => boolean;
+  /**
+   * (round 128j) land a slide is bringing in isn't written yet (Streamer.unwritten): its places still hold the land that
+   * left — with its towns' claims in it (claims at load: kept when a region leaves) — until it's frozen into the pool, so
+   * no orphan pass runs over the window meanwhile (it would take those claims for orphans and freeze them as rubble)
+   */
+  landPending?: () => boolean;
   /** chunks round what was touched: hybrid voxels from now on (the level: HybridChunks.edit); x0, y0, x1, y1 world */
   onTouched?: (x0: number, y0: number, x1: number, y1: number) => void;
   /** (round 86) when the last pass was asked for and done (performance.now, ms): the latency probe reads them */
@@ -1111,6 +1117,8 @@ export class Integrity {
       return;
     }
     // the layers (structures, solid ground; the loose ground on them too)
+    // (round 128j: the External claims the read can show — those made before it was asked)
+    const asOf = this.external?.epoch ?? 0;
     void this.cols.readFor(READ_NEAR ? this.wantChunks() : 'all').then((got) => {
       measured();
       // (round 92: a slide began meanwhile — what was read is of the window before it; judged again after. Round 88: the
@@ -1126,7 +1134,7 @@ export class Integrity {
       if (this.rigid) this.rigid.frozen = false;
       if (got === 'whole') this.needChunks.clear();
       // (round 120: judge B answers from the GPU — the pass waits for its verdict, and no other pass starts meanwhile)
-      return this.pass(got === 'whole', null).then(done);
+      return this.pass(got === 'whole', null, asOf).then(done);
     }, ignoreTeardown);
   }
 
@@ -1278,15 +1286,17 @@ export class Integrity {
    * dirty boxes analysed. `whole`: the copy was just read whole (kept). `want` (sparse): the chunks the pass looks at —
    * what it reads of them it fetches (round 120, JB6): the claimed cells there, a box with something built in it.
    */
-  private async pass(whole: boolean, want: Set<number> | null): Promise<void> {
+  private async pass(whole: boolean, want: Set<number> | null, readAsOf?: number): Promise<void> {
     let t0 = performance.now();
     const sparse = this.cols.mode === 'sparse';
     const ext = this.external;
     // (round 99) what other systems own, as the columns now have it: an instance that lost cells is cut (its owner told)
     let verified: Promise<unknown> = Promise.resolve();
     if (ext) {
-      // (round 128g: what's claimed after the columns were asked for isn't judged by them — they can't show it yet)
-      const asOf = ext.epoch;
+      // (round 128g: what's claimed after the columns were asked for isn't judged by them — they can't show it yet. Round
+      // 128j: the epoch when the kept copy's read was asked, not when it came back — a region written with its town's
+      // claims meanwhile isn't in it)
+      const asOf = readAsOf ?? ext.epoch;
       const check = (known?: (x: number, y: number) => boolean) => {
         const te = performance.now();
         ext.verify(known, undefined, asOf);
@@ -1299,8 +1309,11 @@ export class Integrity {
         // (round 120, JB6: the chunks with claimed cells among those the pass looks at, fetched — and checked in the
         // fetch's own task, the columns as they came)
         const near = new Set<number>();
+        const { w: W, h: H } = this.core.dims;
         for (const inst of ext.instances)
           for (const c of inst.cols) {
+            // (round 128j: a static thing's columns may lie out of the window)
+            if (c.x < 0 || c.y < 0 || c.x >= W || c.y >= H) continue;
             const ci = this.cols.chunkOf(c.x, c.y);
             if (want!.has(ci)) near.add(ci);
           }
@@ -1308,7 +1321,10 @@ export class Integrity {
       }
       // (after a whole read, or a slide or a rewrite of the window: External intervals no one owns are orphans — an undo,
       // a thaw — and go back to ground: on the GPU, and in the copy where it's kept)
-      if (whole || (sparse && this.orphanCheck)) {
+      // (round 128j: not while a slide's land is coming in — landPending — and owed till it has)
+      const pending = this.landPending?.() ?? false;
+      if (pending && whole) this.orphanCheck = true;
+      if ((whole || this.orphanCheck) && !pending) {
         this.orphanCheck = false;
         const claimed = ext.claimedSpans();
         this.gpuEdit.orphans(this.gpuCols(), claimed);
@@ -1324,7 +1340,6 @@ export class Integrity {
           }
       }
     }
-    if (!sparse) this.orphanCheck = false;
     // a sleeping body with nothing left under it (broken, dug, washed out) wakes
     for (const b of this.bodies.list) if (b.asleep && !this.bodies.supported(b)) this.bodies.wake(b);
     this.stats.passes++;

@@ -13,13 +13,15 @@
 //    each grid's row (32 bytes) and nothing else. The fortress's pieces are a grid and a slab the same way (`extra`).
 //  - Which are drawn: the screen decides (onscreen.ts) — a settlement on screen is drawn whole, with hysteresis; pieces
 //    are made ahead for those about to come on screen (one a frame) and let go only well off it.
-//  - Claims are only for the sims and change nothing drawn: a building wholly in the window, on land the streamer has
-//    written, is claimed where it's free (ExternalRegistry.claimFree: the GPU's stamp, nothing read back); one partly out
-//    of the window, or on land still coming in, isn't — the sims see air there (water runs through it, the agents'
-//    surfaces don't hold it) until it's whole and its land has come; one about to leave lets go first (beforeSlide).
+//  - Claims are only for the sims and change nothing drawn. (Round 128j, claims at load:) each settlement is a static grid
+//    (sim/static-claims.ts) — its buildings' column spans on the GPU in its box's frame — claimed where free by the kernel
+//    that writes arriving land, region by region: a building partly in the window is claimed there and the rest comes
+//    with its land; nothing is let go when it leaves nor claimed again after a slide. A change (a storey raised, a
+//    building lost) is the grid's things set again: what changed let go and claimed anew on the GPU.
 import type { ColumnSpan, StructurePieces } from '../api/contracts/structures';
-import type { ExternalCol, ExternalInstance, ExternalRegistry } from '../sim/external';
+import type { ExternalInstance, ExternalRegistry } from '../sim/external';
 import { OWNER_STRUCT } from '../sim/external';
+import type { StaticClaims, StaticGrid } from '../sim/static-claims';
 import { MAT } from '../world/materials';
 import { ROW_H } from '../world/lattice';
 import { gridApply, gridRow, StructureGpu, type GridTransform } from '../structures/gpu';
@@ -37,6 +39,8 @@ export interface ViewIO {
   renderer: { enableStructures(sg: StructureGpu): void };
   /** the External registry (null: none — drawn, nothing claimed) */
   external: () => ExternalRegistry | null;
+  /** (round 128j) the static grids' claims, written with the land (null: none — drawn, nothing claimed) */
+  statics: () => StaticClaims | null;
   dims: { w: number; h: number };
   /** the window's oz */
   oz: () => number;
@@ -44,10 +48,6 @@ export interface ViewIO {
   viewProj: () => ArrayLike<number>;
   /** the ground the screen's centre shows (window z; render/camera.ts focus) */
   focusZ: () => number;
-  /** (round 128g) whether the window's land in box [x0, x1) × [y0, y1) (cells, rows) is written (not still coming in) */
-  landed: (x0: number, y0: number, x1: number, y1: number) => boolean;
-  /** the hybrid's chunks over a claim: drawn as voxels (a heightfield chunk would stretch the ground over a building) */
-  touched?: (x0: number, y0: number, x1: number, y1: number) => void;
   /** dust where something went (window units) */
   dust?: (x: number, y: number, z: number, count: number) => void;
 }
@@ -60,8 +60,6 @@ const BUILD_BUDGET = 1;
 const PLAN_EVERY = 15;
 /** an unplanned settlement's z range for that look: round the ground the screen's centre shows (no plan: no ground) */
 const PLAN_Z = 60;
-/** (round 128i, FT-67) the most columns claimed in a frame (a building is claimed whole: one may go past it) */
-const CLAIM_COLS = 200;
 /** the fortress's slab */
 const FORT = 'fortress';
 
@@ -79,23 +77,20 @@ interface Shown {
   zr: [number, number];
   /** per building: its columns in the box's frame, its claim */
   cols: Map<number, ColumnSpan[]>;
-  /** (round 128i, FT-67) per building: its columns' bounds in the box's frame [x0, y0, x1, y1) — a building not wholly in
-   *  the window or on land still coming in is turned down on these, not column by column */
-  bounds: Map<number, [number, number, number, number]>;
   claims: Map<number, ExternalInstance>;
+  /** (round 128j) its static grid (its buildings claimed with the land); null: no claims */
+  statics: StaticGrid | null;
 }
 
 export class SettlementsView {
   readonly sg: StructureGpu;
   private shown = new Map<string, Shown>();
-  /** buildings to try claiming next update (a slide, land come in, a plan changed) */
-  private claimsDue = true;
   private fort: { p: StructurePieces | null; grid: number; gridKey: string } = { p: null, grid: 0, gridKey: '' };
   private onlyV = '';
   private frames = 0;
   /** (round 128i, FT-67) updateMs by part, the last update's: gridMs the grid rows, screenMs the screen's entries and
    *  plan (pieces made in it: piecesMs), claimMs the claims (0 when none were due), aheadMs the look ahead (0 between) */
-  readonly stats = { settlements: 0, drawn: 0, cached: 0, pieces: 0, built: 0, claimed: 0, columns: 0, lost: 0, piecesMs: 0, updateMs: 0, claimMs: 0, aheadMs: 0, gridMs: 0, screenMs: 0, claimTried: 0, claimCols: 0 };
+  readonly stats = { settlements: 0, drawn: 0, cached: 0, pieces: 0, built: 0, claimed: 0, columns: 0, lost: 0, piecesMs: 0, updateMs: 0, claimMs: 0, aheadMs: 0, gridMs: 0, screenMs: 0 };
 
   constructor(private io: ViewIO, private st: Settlements) {
     this.sg = new StructureGpu(io.device);
@@ -128,29 +123,38 @@ export class SettlementsView {
       z1 = Math.max(z1, z);
     }
     if (!g.length) throw new Error(`settlements view: ${id}'s plan has no ground`);
-    const s: Shown = { seed: sp.seed, plan: sp.plan, pieces: null, grid: 0, gridKey: '', drawn: false, zr: [z0, z1 + TOWN_TOP], cols: new Map(), bounds: new Map(), claims: new Map() };
+    const s: Shown = { seed: sp.seed, plan: sp.plan, pieces: null, grid: 0, gridKey: '', drawn: false, zr: [z0, z1 + TOWN_TOP], cols: new Map(), claims: new Map(), statics: null };
     this.columnsOf(s);
     this.shown.set(id, s);
     this.stats.settlements = this.shown.size;
-    this.claimsDue = true;
+    this.claim(s);
   }
 
   /** a building's columns as the plan has it standing (box frame) */
   private columnsOf(s: Shown): void {
     s.cols.clear();
-    s.bounds.clear();
     for (const c of columnsOf(standingPlan(s.plan.city, s.plan.standing))) {
       const l = s.cols.get(c.building);
       if (l) l.push(c);
       else s.cols.set(c.building, [c]);
-      const b = s.bounds.get(c.building);
-      if (b) {
-        b[0] = Math.min(b[0], c.x);
-        b[1] = Math.min(b[1], c.y);
-        b[2] = Math.max(b[2], c.x + 1);
-        b[3] = Math.max(b[3], c.y + 1);
-      } else s.bounds.set(c.building, [c.x, c.y, c.x + 1, c.y + 1]);
     }
+  }
+
+  /**
+   * (round 128j) The settlement's buildings as its static grid's things (its box's frame; world z): claimed where free
+   * with the land as it's written, and now over the window's written land where they changed.
+   */
+  private claim(s: Shown): void {
+    const st = this.io.statics();
+    if (!st) return;
+    s.statics ??= st.grid(`town ${s.seed.rec.id}`, OWNER_STRUCT, () => {
+      const [dx, dy] = this.offset(s);
+      return { dx, dy, dz: -this.io.oz() };
+    });
+    s.claims = st.set(
+      s.statics,
+      [...s.cols].map(([b, cs]) => ({ key: b, cols: cs.map((c) => ({ x: c.x, y: c.y, z0: c.z0, z1: c.z1 })), fallback: MAT.Rubble })),
+    );
   }
 
   /** the box's offset in the window (columns, rows) */
@@ -174,88 +178,6 @@ export class SettlementsView {
     return this.shown.get(id)?.drawn ?? false;
   }
 
-  /**
-   * A building's columns in the window as it would claim them: null when it can't be claimed now — not wholly in the
-   * window (one instance a building: all of it or nothing), or on land still coming in.
-   */
-  private want(s: Shown, b: number, off: [number, number]): ExternalCol[] | null {
-    const cs = s.cols.get(b);
-    const bb = s.bounds.get(b);
-    if (!cs?.length || !bb) return null;
-    const [dx, dy] = off;
-    const { w, h } = this.io.dims;
-    // (round 128i, FT-67: turned down on its bounds first — a slide and every region written after it ask again, and
-    // most of a town's buildings are out of the window or on land still coming in: no column list made for those)
-    const x0 = bb[0] + dx;
-    const y0 = bb[1] + dy;
-    const x1 = bb[2] + dx;
-    const y1 = bb[3] + dy;
-    if (x0 < 0 || y0 < 0 || x1 > w || y1 > h) return null;
-    if (!this.io.landed(x0, y0, x1, y1)) return null;
-    const oz = this.io.oz();
-    return cs.map((c) => ({ x: c.x + dx, y: c.y + dy, z0: c.z0 - oz, z1: c.z1 - oz }));
-  }
-
-  /** a settlement's buildings not claimed claim their columns where they can (nothing read: claimFree) */
-  private claimAll(): boolean {
-    const ext = this.io.external();
-    if (!ext) return false;
-    const who: [Shown, number][] = [];
-    const wants: ExternalCol[][] = [];
-    let tried = 0;
-    let cols = 0;
-    let more = false;
-    // (round 128i, FT-67: at most CLAIM_COLS columns a frame — a town coming back into the window claimed whole was the
-    // view's worst frame, 4.3 ms on the desktop proxy and several times that on the phone; the rest the next frames)
-    claim: for (const s of this.shown.values()) {
-      const off = this.offset(s);
-      for (const b of s.cols.keys()) {
-        if (s.claims.has(b)) continue;
-        if (cols >= CLAIM_COLS) {
-          more = true;
-          break claim;
-        }
-        tried++;
-        const want = this.want(s, b, off);
-        if (!want) continue;
-        who.push([s, b]);
-        wants.push(want);
-        cols += want.length;
-      }
-    }
-    this.stats.claimTried = tried;
-    this.stats.claimCols = cols;
-    // (one stamp for them all: a town coming back into the window is one GPU dispatch, not one a building)
-    ext.claimFreeEach(OWNER_STRUCT, wants, MAT.Rubble).forEach((inst, k) => {
-      if (!inst) return;
-      who[k][0].claims.set(who[k][1], inst);
-      this.touchCols(inst);
-    });
-    return more;
-  }
-
-  private touchCols(inst: ExternalInstance): void {
-    if (!this.io.touched) return;
-    let x0 = Infinity;
-    let y0 = Infinity;
-    let x1 = -Infinity;
-    let y1 = -Infinity;
-    for (const c of inst.cols) {
-      x0 = Math.min(x0, c.x);
-      x1 = Math.max(x1, c.x + 1);
-      y0 = Math.min(y0, c.y * ROW_H);
-      y1 = Math.max(y1, (c.y + 1) * ROW_H);
-    }
-    this.io.touched(x0, y0, x1, y1);
-  }
-
-  private release(s: Shown, b: number, toAir: boolean): void {
-    const inst = s.claims.get(b);
-    if (!inst) return;
-    this.io.external()?.release(inst.id, toAir);
-    s.claims.delete(b);
-  }
-
   private count(): void {
     let n = 0;
     let c = 0;
@@ -272,9 +194,10 @@ export class SettlementsView {
     const s = this.shown.get(id);
     if (!s) return;
     s.pieces = null;
-    this.release(s, b, true);
+    // (round 128j: its grid's things set again — the building raised let go where it stood, to air, and claimed anew)
+    void b;
     this.columnsOf(s);
-    this.claimsDue = true;
+    this.claim(s);
   }
 
   /** a building's cells were cut or it hangs free: it's let go to rubble where it stood, its pieces gone behind dust */
@@ -288,21 +211,10 @@ export class SettlementsView {
         s.cols.delete(b);
         s.pieces = null;
         this.stats.lost++;
-        if (this.io.dust) for (const c of inst.cols.filter((_, k) => k % 3 === 0)) this.io.dust(c.x + 0.5, (c.y + 0.5) * ROW_H, (c.z0 + c.z1) / 2, 6);
+        const { w, h } = this.io.dims;
+        if (this.io.dust) for (const c of inst.cols.filter((q, k) => k % 3 === 0 && q.x >= 0 && q.y >= 0 && q.x < w && q.y < h)) this.io.dust(c.x + 0.5, (c.y + 0.5) * ROW_H, (c.z0 + c.z1) / 2, 6);
         return;
       }
-  }
-
-  /** before the window slides by (dx, dy) columns: buildings that would leave let go of their columns (to air) */
-  beforeSlide(dx: number, dy: number): void {
-    const { w, h } = this.io.dims;
-    for (const s of this.shown.values())
-      for (const [b, inst] of [...s.claims]) if (inst.cols.some((c) => c.x - dx < 0 || c.y - dy < 0 || c.x - dx >= w || c.y - dy >= h)) this.release(s, b, true);
-  }
-
-  /** after it slid (the registry moved the claims with the land): the buildings back claim again next update */
-  slid(): void {
-    this.claimsDue = true;
   }
 
   /**
@@ -318,11 +230,6 @@ export class SettlementsView {
       const box: Box3 = { x0: x, y0: y, x1: x + seed.box.w, y1: y + seed.box.h * ROW_H, z0: focusZ - PLAN_Z, z1: focusZ + PLAN_Z };
       if (screenGap(vp, box) <= BUILD) this.st.prepare(id);
     }
-  }
-
-  /** (round 128g) land was written into the window (the streamer's onRelief): buildings on it may claim now */
-  landed(): void {
-    this.claimsDue = true;
   }
 
   /** (tests, debugging) a settlement's pieces in its box's frame: module name and the 16 floats */
@@ -459,12 +366,8 @@ export class SettlementsView {
       this.fort.p = null;
     }
     this.stats.gridMs = +(performance.now() - tg).toFixed(2);
-    this.stats.claimMs = 0;
-    if (this.claimsDue) {
-      const tc = performance.now();
-      this.claimsDue = this.claimAll();
-      this.stats.claimMs = +(performance.now() - tc).toFixed(2);
-    }
+    // (round 128j: nothing to claim here — the claims are written with the land; claimMs the static claims' last write)
+    this.stats.claimMs = this.io.statics()?.stats.lastMs ?? 0;
     this.count();
     this.stats.drawn = drawn;
     this.stats.cached = cached;

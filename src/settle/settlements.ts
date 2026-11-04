@@ -216,6 +216,18 @@ export class Settlements {
     void this.planOf(s, true).catch((e) => console.error(`settlements: ${id}'s plan ahead of the screen failed`, e));
   }
 
+  /**
+   * (round 128j, claims at load) The plans of the settlements meeting region (x0, y0, w, h) (world columns, rows), made:
+   * the streamer waits for this before writing the region (Streamer.readyFor), so the town's claims are written with its
+   * land. Null: none meets it. (Land made here waits for the plan already — its stamps — but land thawed from the pool or
+   * loaded from the store didn't.)
+   */
+  ready(x0: number, y0: number, w: number, h: number): Promise<unknown> | null {
+    const ss = this.meeting(x0, y0, w, h);
+    if (!ss.length) return null;
+    return Promise.all(ss.map((s) => this.planOf(s, true)));
+  }
+
   /** (round 119) the settlements planned so far: their seed (box, civ) and plan — what the view draws */
   plannedAll(): { seed: SettlementSeed; plan: SettlementPlan }[] {
     const out: { seed: SettlementSeed; plan: SettlementPlan }[] = [];
