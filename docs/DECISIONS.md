@@ -542,6 +542,19 @@ each was implemented.
 
 - The user, verbatim: "1. Lets start with maybe a small town or let the player pick a location for their fortress? 2. I would say houses, farms, lumber, quary, warehouse, walls, blacksmith and a barracks so we can at least make soldiers.  3. I think a power generating structure like a shrine or temple (your tower maybe?) and then oportunities to find nodes of power and channel the lay lines back to your tower/shrine." → start in a small town, or the player picks the fortress's site; the first buildings: houses, farms, lumber camp, quarry, warehouse, walls, blacksmith, barracks (soldiers); power from a shrine, temple or the player's tower, raised by opportunities to find nodes of power and channel ley lines back to it.
 - The user, verbatim: "OK sounds good.  Please remember the building mode I want is to select the what then plan it with tiles like townscraper.  That's imporant for making towns with a bunch of small huts or apartments and for making your fortress which sounds like a good thing to keep adding onto for power." → slice 1 approved to plan; the building mode is always: select the structure type, then plan it with Townscaper-like stacking tiles; the fortress (power) grows by adding on.
+
+## 2026-11-03 — round 128e (session 5) — the whole game's vision, after playing fortress milestone 2
+
+> "In general the goal is to have epic cities with sweeping docs, ports filled with ships coming in and out, caravans bringing goods, armies on the march. The player gets to design it to look cool and the way they want provided they have the resources and eventually will get to design the units that guard and build them from scavenged goods from fallen civilizations and beasts collected from the land and raised in the city. Then events that destroy cities and tech and magic will leave epic ruins full of resources to claim and structures to repurpose. The gameplay will focus on shaping your city (and the world through opportunities) then making cool effects that shape the world alongside exciting battles. That's the vision. Once we get that loop working we can build the traveling caravan/party version (which should be similar) and individual controllers to play as characters in your world. Is that all clear and to you like this direction? My guess is after buildings and unit generation we will have to do passes to improve the agents, animations, battle effects and sounds, and likely update the physics to make buildings use the deformation/destruction logic alongside cheaper rigid bodies for small scale and prioritizes simulation for player targets."
+
+- The loop: shape your city (and the world through opportunities), then world-shaping effects and battles. Cities epic and designed by the player within their resources: docks, ports with ships, caravans, armies on the march.
+- Units designed by the player from scavenged goods (fallen civilizations) and beasts caught and raised in the city.
+- Destruction leaves epic ruins: resources to claim, structures to repurpose (the legacy loop).
+- After the loop: the caravan/party version (similar), then character controllers in your world.
+- Expected order: buildings → unit generation → passes on agents, animations, battle effects, sounds → physics (buildings on deformation/destruction, cheap rigid bodies for small things, simulation prioritised on the player's targets).
+
+> "I want the player fortress to be something that can grow huge and impressive with spires and bridges and fountains and crystals and floating stones etc. we can adorn it with claimed prizes from opportunities." (round 128d, also on the fortress branch)
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
