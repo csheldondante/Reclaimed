@@ -16798,3 +16798,19 @@ fortressford, fortresswake pass. Shots C:/Projects/shots88/fortress/roads-*.png 
 at: the straight wall's stair reads as a stone flight up to the walk (roads-stair-line-near.png); the ring's stair
 climbs its inner face, out of sight behind the near wall from the south-looking camera (FT-46); roads read as paving
 round the keep and out through the gate; the card fits the bar.
+
+## 2026-11-04 — round 128e (`fortress`): Plan brings the build menu back (FT-47)
+
+**Why.** The user played 30b77f0 on Pages: "Reopening build doesn't seem to work." Reproduced from the start menu by
+finger at 412x915 (scripts/fortressmenu.mjs, new: the menu's Fortress button, Houses, taps on the ground, Build,
+Inspect and a tap on the town, Plan): after Plan the bar showed "Tap a block to see what it is." and no types, Erase or
+Gate. The bar hides the types while Inspect is on (the card takes their place), and Plan left Inspect on.
+
+**What.** fortress/ui.ts: Plan and Build put Inspect away (the tool back to the type picked, the card closed) before
+they switch. Nothing else about Inspect changes.
+
+**Checks.** scripts/fortressmenu.mjs (412x915, touch, ?q=low and the default tier): from the menu, 4 houses planned by
+taps, Build: the 8 builders out and working (3 loads in, a block up within 12 s at 1x); Inspect, a tap, Plan: Houses,
+Erase and Build visible, time stopped; one more house, Build again: time runs. Before the fix the Plan check failed
+(no Houses button visible).
+

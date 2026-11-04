@@ -600,6 +600,18 @@ each was implemented.
   long ones) to a walk along its top. Drawn as paving and stone steps; the steps and the wall-walk are solid, so units
   climb them. The warehouse's card speaks of the town's stores against all the warehouses' room, then this one's part.
 
+## 2026-11-04 — round 128e (session 5, `fortress`) — the user played 30b77f0 on Pages
+
+- The user, verbatim: "Reopening build doesn't seem to work. Inspect doesn't work on the generated town and it should.
+  The agents never appeared for me to begin work. There is no way to fast forward or skip time to each building being
+  completed. The temporary holder would be better as a loose plot outline or scaffolding I think"
+- → Plan and Build put Inspect away (with it on, Plan showed the Inspect card instead of the types: FT-47).
+- → Inspect works on the town that was there before the fortress (its houses, keep, walls): the same card (FT-48).
+- → The builders are shown at work: the bar counts them and says what they're doing; Build frames them (FT-49).
+- → Time controls while building: 1x, 4x, 16x, and Skip to done, which runs fast until the plan stands and stops early
+  with the reason if it can't (FT-50).
+- → Blocks still to build: a loose plot outline on the ground until work starts, scaffolding once it has (FT-51).
+
 ## 2026-11-03 — round 128c (session 5) — the fortress mode: the user's vision
 
 - The user, verbatim (the full write-up; the structured design is docs/design/FORTRESS_MODE.md):

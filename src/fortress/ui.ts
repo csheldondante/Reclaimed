@@ -112,7 +112,17 @@ export class FortressBar {
     goRow.className = 'fort-row';
     this.goBtn = document.createElement('button');
     this.goBtn.className = 'go';
-    this.goBtn.onclick = () => (fort.mode === 'plan' ? hooks.build() : hooks.plan());
+    this.goBtn.onclick = () => {
+      // (round 128e, the user: "Reopening build doesn't seem to work": Inspect left on while building kept the types and
+      // tools hidden after Plan — the bar showed the Inspect card instead. Plan and Build put Inspect away)
+      if (fort.tool.inspect) {
+        fort.tool = { type: fort.tool.type, erase: false, gate: false, tower: false };
+        fort.inspect(null);
+      }
+      if (fort.mode === 'plan') hooks.build();
+      else hooks.plan();
+      this.render();
+    };
     // (round 128d) Inspect, planning or building: a tap picks a structure and shows its card; a tap on nothing closes it
     this.inspectBtn = document.createElement('button');
     this.inspectBtn.className = 'inspect';
