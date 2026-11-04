@@ -125,6 +125,15 @@ fn costZ(s: u32) -> f32 { return select(navZ(s), f32((navCost[s] >> 2u) - 1u) / 
 fn costWet(s: u32) -> bool { return (navCost[s] & 1u) != 0u; }
 /** (round 128d, FT-20) water over DEEP on it (the top surface only): no way in from a surface that isn't */
 fn costDeep(s: u32) -> bool { return (navCost[s] & 2u) != 0u; }
+// (fortress milestone 3, FT-46: units prefer roads) per window column (window order, y * W + x), a bit: a road there.
+// A step between two road columns costs ROAD_COST of a step on open ground, one end on a road halfway between: a
+// worker goes round by the road when it's no more than a little longer. Set by the game (Agents.setRoads); all 0 none.
+@group(0) @binding(40) var<storage, read> roads: array<u32>;
+const ROAD_COST: f32 = 0.5;
+fn onRoad(p: vec2<i32>) -> f32 {
+  let w = winIdx(p);
+  return f32((roads[w >> 5u] >> (w & 31u)) & 1u);
+}
 /** (round 107) how far a distance moves before it is written and marks its chunk: below it the field keeps what it
  *  has (a twentieth of the cheapest step, so a unit's way down it is the same), and a sub-step ripple — a surface
  *  moved by hundredths — doesn't run down the whole field */
@@ -342,7 +351,9 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
           if (costDeep(t) && !deepHere) { continue; }
           let dn = dist[f * N + t];
           if (dn >= FAR) { continue; }
-          d = min(d, dn + stepCost(z, costZ(t), costWet(t)));
+          // (FT-46: cheaper along a road — both ends on one ROAD_COST, one end halfway)
+          let road = 1.0 - (1.0 - ROAD_COST) * 0.5 * (onRoad(p) + onRoad(qn));
+          d = min(d, dn + stepCost(z, costZ(t), costWet(t)) * road);
         }
       }
       // (a field cut off from its seeds counts up forever unless capped: past

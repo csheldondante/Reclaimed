@@ -611,6 +611,11 @@ each was implemented.
 - → Time controls while building: 1x, 4x, 16x, and Skip to done, which runs fast until the plan stands and stops early
   with the reason if it can't (FT-50).
 - → Blocks still to build: a loose plot outline on the ground until work starts, scaffolding once it has (FT-51).
+- Milestone 3, judgement calls for the user (from the user's answers 3 and 4 of round 128c): people eat 1 grain a day
+  each; with no grain nobody new comes, and nothing else (no starving, no slowing); ore is a fifth of the quarry's stone;
+  Erase gives back half a built block's cost (rounded down) and all that was brought to a block not yet built; a quarry
+  pit is dug as a bowl its miners can walk out of, and the dug ground doesn't wake the ground's systems (a touch, not a
+  wake: the bowl has no wall steep enough to slump).
 
 ## 2026-11-03 — round 128c (session 5) — the fortress mode: the user's vision
 

@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { lint } from '../../test/support/writing';
 import { TownGrid } from '../build/towngrid';
-import { DEFS, POWER_RISE } from './defs';
+import { DEFS, ECON, POWER_RISE } from './defs';
 import { inspectCard, inspectFacts } from './inspect';
 import { FortressPlan } from './plan';
 
@@ -43,18 +43,32 @@ describe('Inspect: the card', () => {
     const card = inspectCard(f);
     expect(card.title).toBe('Lumber camp: 3 blocks, 2 levels high');
     expect(card.lines).toContain('2 of 3 blocks built.');
-    expect(card.lines).toContain('In: nothing. Out: 6 wood a day once worked.');
+    expect(card.lines).toContain('In: nothing. Out: up to 6 wood a day.');
     expect(card.lines).toContain('Workers: 0 of 4. Nobody works here yet.');
+  });
+
+  it('(milestone 3) the live numbers: its workers, what they brought, a farm\'s ripe grain', () => {
+    const { plan, s } = make('quarry', () => true);
+    const f = inspectFacts(plan, s, () => true, STORES, undefined, { workers: 3, brought: { stone: 12.4, ore: 3.1 } });
+    const card = inspectCard(f);
+    expect(card.lines).toContain('Workers: 3 of 4.');
+    expect(card.lines).toContain('Some of the stone is ore.');
+    expect(card.lines).toContain('Brought to the stores so far: 12 stone and 3 ore.');
+    const farm = make('farm', () => true);
+    const ff = inspectCard(inspectFacts(farm.plan, farm.s, () => true, STORES, undefined, { workers: 1, ripe: 4.7 }));
+    expect(ff.lines).toContain('Ripe grain in the fields: 4.');
+    for (const l of [...card.lines, ...ff.lines]) expect(lint(l), l).toEqual([]);
   });
 
   it('a warehouse shows what the stores hold and its room; barracks their soldiers; the keep its power', () => {
     const all = () => true;
     const w = inspectCard(make('warehouse', all).f);
     // (round 128d: the stores are the town's — held and room both of the town, then this warehouse's part)
+    // (milestone 3: the stores' room is the town's own and the warehouses')
     const room = 3 * DEFS.warehouse.perBlock.storage!;
     expect(w.lines).toContain("The town's stores hold 350 goods: 120 wood, 80 stone and 150 grain.");
-    expect(w.lines).toContain(`Your warehouses have room for ${room} goods. This one gives ${room} of it.`);
-    expect(w.lines).toContain(`The stores hold ${350 - room} more than that.`);
+    expect(w.lines).toContain(`The stores have room for ${ECON.townRoom + room} goods. This one gives ${room} of it.`);
+    expect(w.lines.some((l) => l.includes('more than that'))).toBe(false);
     expect(w.lines.some((l) => l.includes('blocks built'))).toBe(false);
     const b = inspectCard(make('barracks', all).f);
     expect(b.lines).toContain('Soldiers: 3.');

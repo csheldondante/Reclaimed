@@ -3438,3 +3438,39 @@ The building rule (the user's): select what (a structure type), then plan it wit
   data; no unit walks it yet). **Units walk the GPU field** (agents.wgsl over the columns): roads are open ground to it
   (no preference yet, FT-46); the stairs and the wall-walk are claimed solid, so it climbs them. A gate's lintel is
   0.8 under the wall's top (solid and drawn: FT-45).
+- **Round 128e (the user's fixes).** Inspect also picks the town that was there (`settle/thing.ts` townThingAt on the
+  town's CityPlan, `Settlements.thingAt(id, window xy)`; `FortressIO.townAt(x, y, z)`; `Fortress.inspectedTown`;
+  card `fortress/townpick.ts`): the tap's ray is marched, box frame, to the first building or wall it goes under the top
+  of (the plan's world z less the window's oz). Plan and Build put Inspect away. While building the bar has 1x/4x/16x and
+  Skip to done (`FortressBarHooks.speed/skip/now`; level.ts `skipFrame`: SKIP_SPEED 32 until `Fortress.progress()` is
+  whole, or `FortressLife.blocked()` — all left cut off, or nobody carrying and the stores short — for SKIP_GRACE 4 sim
+  s; the reason in `Fortress.note`). `Fortress.crew` (FortressLife: builders by phase) for the bar; the first Build frames
+  `FortressLife.focus()`. Blocks still to build, while building, aren't drawn (LOOK_GHOST marks them to drop): a plot
+  outline on the ground (`plotsOf`, the fence module draped 0.9 m) until `Fortress.markStarted` (the first load in),
+  then scaffolding (the fence module a storey high, 0.35 m off each side). A façade off a cell's outer side is placed
+  by its building's nearest cell.
+- **Milestone 3 (round 128e): the economy feeds the building.** `fortress/economy.ts` (pure, tested): `JobBoard`
+  (people → slots in priority order, keeping a job while its slot still wants them), `jobSlots` (a built block of a
+  farm, quarry or lumber camp gives its type's `jobs`; ECON.builders while there's building; order JOB_ORDER farm,
+  build, quarry, lumber), `perWorker`/`workSeconds` (a worker's share of `makes` a day; the work a load of ECON.haul
+  takes), `quarryLoad` (ECON.oreShare of it ore — Good 'ore' added), `grown`/`eaten` (a farm block's grain a day; a
+  person eats ECON.eat), `bedsOf` (ECON.startBeds + house blocks' beds), `roomOf` (ECON.townRoom + warehouse blocks'
+  storage), `storedOf`/`fits`/`putIn` (goods that take room: log, stone, ore, grain, weapons), `mayArrive`, `refundOf`
+  (ECON.refund of a built block's cost), `reachOf` (a lumber camp's reach). The economy's day is ECON.daySec (60 sim s;
+  the day counter is milestone 5). `FortressLife` (life.ts) runs every person: a unit each, its job the JobBoard's
+  (every JOBS_S); phases idle/home/wait, builders toPile/toSite/working (BuildBook as before), workers
+  toWork/gather/lifting/carry. Fields (0-6, all FortressLife's): F.pile the stores (the first built warehouse's door
+  — `Fortress.doorOf` — else the town's heap), F.site/F.store sites lacking stone/wood, F.quarry the built quarry cells'
+  middles, F.fell the trees in the lumber camps' reach (`plants.treesNear`, every 10 s), F.farm the built farm cells,
+  F.home house doors and the town's homes; groups R.* (settle/life.ts). Miners dig the ground (`terrain.take`, a quiet
+  edit: sim/sleep.ts touch — the chunk isn't woken) every ECON.digSec within ECON.digR of the cell's middle, as a bowl
+  no deeper than `pitDepth(d)` (1 m down a metre in, ECON.pitMax at most) under the ground they first found there; woodcutters fell
+  (`plants.fell`, quiet). Goods reach the stores only carried (the fortress's store rates are zeroed at the start; power
+  keeps its rate). A trip isn't started when the stores' room can't take a load (`Fortress.status.full`). Grain eaten
+  each frame; a newcomer every ECON.arriveSec while `mayArrive` — at the farthest point the stores' field reaches from
+  the heap, along the road that reaches out farthest. Erase: `Fortress.onErased` → FortressLife refunds (`refundOf`; a
+  block not built: `BuildBook.forget`, all of it), as far as the room takes. `Fortress.status` (people, jobs, per
+  structure workers / brought / ripe, full, hungry) for the bar (`jobsLine`, FULL/HUNGRY/BEDS lines, top line
+  `peopleLine`) and Inspect (`InspectLive`). **Roads (FT-46):** `Agents.setRoads(window columns)` → agents.wgsl `roads`
+  (binding 40, a bit per window column, window order): a step between road columns costs ROAD_COST 0.5, one end on a
+  road 0.75; FortressLife sets `Fortress.roadCols()` (road and square cells) every JOBS_S (and after a slide).

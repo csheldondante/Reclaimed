@@ -17,7 +17,8 @@ export type StructureType = 'fortress' | 'house' | 'farm' | 'lumber' | 'quarry' 
 export const STRUCTURE_TYPES: readonly StructureType[] = ['fortress', 'house', 'farm', 'lumber', 'quarry', 'warehouse', 'wall', 'blacksmith', 'barracks'];
 
 /** A good in the stores (settlement stores' keys: 'log' is wood). */
-export type Good = 'log' | 'stone' | 'grain' | 'weapons' | 'soldiers' | 'power';
+/** (milestone 3) ore: a share of what the quarry brings in (the user's answer 4; deposits later) */
+export type Good = 'log' | 'stone' | 'ore' | 'grain' | 'weapons' | 'soldiers' | 'power';
 
 export type Goods = Partial<Record<Good, number>>;
 

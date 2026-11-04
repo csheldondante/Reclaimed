@@ -122,7 +122,7 @@ import { SKIP_DONE, skipCutOffLine, skipShortLine } from '../fortress/words';
 const SKIP_SPEED = 32;
 const SKIP_GRACE = 4;
 import { FortressLife } from '../fortress/life';
-import { START_STORES } from '../fortress/defs';
+import { ECON, START_STORES } from '../fortress/defs';
 import { fortressPieces } from '../fortress/pieces';
 import { FortressClaims } from '../fortress/claims';
 import type { StructurePieces } from '../api/contracts/structures';
@@ -2983,8 +2983,11 @@ export class LevelScene implements Scene {
     for (const [k, v] of Object.entries(START_STORES)) {
       const have = (rec.stores[k] ??= { stock: 0, rate: 0 });
       have.stock = Math.max(have.stock, v.stock);
-      have.rate = Math.max(have.rate, v.rate);
+      have.rate = v.rate;
     }
+    // (milestone 3: no income by rates — goods come in only as people carry them to the warehouse; the power's rate is
+    // the fortress's own, set below)
+    for (const v of Object.values(rec.stores)) v.rate = 0;
     const { core } = this;
     const dims = core.dims;
     const W = 240;
@@ -3008,6 +3011,7 @@ export class LevelScene implements Scene {
       },
     });
     this.fortress = fort;
+    fort.status.people = ECON.startPeople;
     // drawn with the towns' pieces (fortress/pieces.ts), in the box's frame, moved into the window's by its offset
     let pieces: StructurePieces | null = null;
     fort.onChange.push(() => (pieces = null));
@@ -3052,20 +3056,27 @@ export class LevelScene implements Scene {
             fort,
             settlement: rec.id,
             faction: rec.faction,
-            heap: () => {
-              // the warehouse heap: the town's stone heap (its plan's 'pile' spots)
+            townHeap: () => {
+              // the stores until a warehouse stands: the town's stone heap (its plan's 'pile' spots)
               const piles = st.spotsOf(rec.id)?.filter((s) => s.kind === 'pile') ?? [];
               const p = piles.find((s) => s.what !== 'log') ?? piles[0];
               if (!p) throw new Error(`fortress: the town ${rec.id} has no heap (a 'pile' spot) for its builders`);
               return p.w;
             },
+            homes: () => (st.spotsOf(rec.id) ?? []).filter((s) => s.kind === 'home').map((s) => s.w),
             stores: () => Object.fromEntries(Object.entries(rec.stores).map(([k, v]) => [k, v.stock])),
             take: (good, n) => {
               const s = (rec.stores[good] ??= { stock: 0, rate: 0 });
               s.stock -= n;
             },
+            // (milestone 3: settle/life.ts's IO — the plants' trees and fell, the terrain's take: all quiet edits)
+            trees: (at, r) => this.worldApi!.plants!.treesNear(at[0], at[1], r).map((t) => [t.x, t.y] as [number, number]),
+            fell: (at) => this.worldApi!.plants!.fell(at[0], at[1]).then((t) => t?.logs ?? 0),
+            dig: (at, n) => this.worldApi!.terrain!.take(at[0], at[1], n).then((g) => g.amount),
+            ground: (x, y) => this.heightAt(x, y),
+            speed: () => this.speed,
           },
-          8,
+          ECON.startPeople,
         );
         fort.setMode('build');
         this.speed = runSpeed;

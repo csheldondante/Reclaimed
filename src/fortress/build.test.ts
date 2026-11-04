@@ -252,7 +252,7 @@ describe('the compact lines read plainly (docs/WRITING.md)', () => {
     // (round 128e: the builders' line, Skip's)
     lines.push(crewLine({ builders: 8, toStores: 3, carrying: 3, working: 2, waiting: 0 }), crewLine({ builders: 1, toStores: 0, carrying: 0, working: 0, waiting: 1 }));
     lines.push(SKIPPING_LINE, SKIP_DONE, skipShortLine({ log: 12, stone: 3 }), skipCutOffLine(2));
-    lines.push(buildingLine(3, 10), buildingLine(10, 10), buildingLine(0, 0), storesLine({ log: 120, stone: 80, grain: 150, power: 3 }, 6));
+    lines.push(buildingLine(3, 10), buildingLine(10, 10), buildingLine(0, 0), storesLine({ log: 120, stone: 80, grain: 150, power: 3 }));
     for (const l of lines) expect(lint(l), l).toEqual([]);
     expect(typeCard(DEFS.farm)).toBe('Farms: 1 wood a block. Makes 2 grain a day. 1 worker a block. Flat.');
   });

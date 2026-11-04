@@ -289,6 +289,9 @@ export class Agents implements SimSystem {
   readonly nav: GPUBuffer;
   /** (round 107) per surface: the height and wet the fields reckon its cost by (agents.wgsl navCost) */
   private navCost: GPUBuffer;
+  /** (fortress milestone 3, FT-46) per window column a bit: a road (agents.wgsl roads) — setRoads */
+  private roads: GPUBuffer;
+  private roadBits: Uint32Array;
   readonly dist: GPUBuffer;
   readonly units: GPUBuffer;
   readonly inst: GPUBuffer;
@@ -431,6 +434,8 @@ export class Agents implements SimSystem {
     const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST;
     this.nav = world.buf('agentNav', cols * NAV_K * NAV_BYTES, S);
     this.navCost = world.buf('agentNavCost', cols * NAV_K * 4, S);
+    this.roadBits = new Uint32Array(Math.ceil(cols / 32));
+    this.roads = world.buf('agentRoads', this.roadBits.byteLength, S);
     this.dist = world.buf('agentDist', NFIELDS * cols * NAV_K * 4, S);
     this.units = world.buf('agentUnits', MAX_UNITS * UNIT_BYTES, S);
     this.occ = world.buf('agentOcc', 2 * cols * 4, S);
@@ -452,7 +457,7 @@ export class Agents implements SimSystem {
     // four layouts, each within 8 storage buffers: the peel (it reads the
     // layers and the places), the fields, the units' tick, their draw
     const peelSpec: BindSpec = { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'rw', 11: 'read', 12: 'read', 34: 'rw', 37: 'rw' };
-    const fieldSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 6: 'rw', 10: 'uniform', 34: 'rw', 35: 'rw', 37: 'rw', 38: 'uniform' };
+    const fieldSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 6: 'rw', 10: 'uniform', 34: 'rw', 35: 'rw', 37: 'rw', 38: 'uniform', 40: 'read' };
     // (round 104, simscale: agents/scope.ts)
     this.abBuf = world.buf('agentScope', 32, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     device.queue.writeBuffer(this.abBuf, 0, new Uint32Array([0, 0, world.w, world.h, 0, 0, 0, 0]));
@@ -486,7 +491,7 @@ export class Agents implements SimSystem {
       34: this.dirty[0],
       37: this.navCost,
     });
-    this.fieldGroup = makeBindGroup(device, 'agents-fields', this.k.relax.layout, { ...base, 5: this.nav, 6: this.dist, 10: this.params, 34: this.dirty[0], 35: this.dirty[1], 37: this.navCost, 38: this.abBuf });
+    this.fieldGroup = makeBindGroup(device, 'agents-fields', this.k.relax.layout, { ...base, 5: this.nav, 6: this.dist, 10: this.params, 34: this.dirty[0], 35: this.dirty[1], 37: this.navCost, 38: this.abBuf, 40: this.roads });
     if (this.scope) {
       const t = world.tiles!;
       const src = parts.join('\n');
@@ -527,8 +532,8 @@ export class Agents implements SimSystem {
         boxG: makeBindGroup(device, 'agents-unitBox', box.layout, { ...base, 7: this.units, 10: this.params, 28: this.uboxBuf }),
         resetG: makeBindGroup(device, 'agents-frontReset', reset.layout, { ...base, 33: this.frontArgs }),
         peelG: par((cur, _n, p) => makeBindGroup(device, `agents-peel scoped ${p}`, surfaces.k.layout, { ...base, 1: world.chunks, 3: world.layers, 4: world.water, 5: this.nav, 11: world.places, 12: world.placeTable, 34: cur, 37: this.navCost, [TILES_BINDING]: surfaces.buf })),
-        linksG: par((cur, next, p) => makeBindGroup(device, `agents-links scoped ${p}`, links.k.layout, { ...base, 5: this.nav, 6: this.dist, 10: this.params, 34: cur, 35: next, 37: this.navCost, 38: this.abBuf, [TILES_BINDING]: links.buf })),
-        relaxG: par((cur, next, p) => makeBindGroup(device, `agents-relax front ${p}`, relax.layout, { ...base, 5: this.nav, 6: this.dist, 10: this.params, 34: cur, 35: next, 36: this.frontList, 37: this.navCost, 38: this.abBuf })),
+        linksG: par((cur, next, p) => makeBindGroup(device, `agents-links scoped ${p}`, links.k.layout, { ...base, 5: this.nav, 6: this.dist, 10: this.params, 34: cur, 35: next, 37: this.navCost, 38: this.abBuf, 40: this.roads, [TILES_BINDING]: links.buf })),
+        relaxG: par((cur, next, p) => makeBindGroup(device, `agents-relax front ${p}`, relax.layout, { ...base, 5: this.nav, 6: this.dist, 10: this.params, 34: cur, 35: next, 36: this.frontList, 37: this.navCost, 38: this.abBuf, 40: this.roads })),
         enterG: par((cur, _n, p) => makeBindGroup(device, `agents-enter ${p}`, enter.k.layout, { ...base, 6: this.dist, 8: this.occ, 16: this.shove, 34: cur, [TILES_BINDING]: enter.buf })),
         buildG: par((cur, next, p) => makeBindGroup(device, `agents-frontBuild ${p}`, build.layout, { ...base, 10: this.params, 33: this.frontArgs, 34: cur, 35: next, 36: this.frontList, 38: this.abBuf })),
         clearG: par((cur, _n, p) => makeBindGroup(device, `agents-frontClear ${p}`, clear.layout, { ...base, 34: cur, 38: this.abBuf })),
@@ -740,6 +745,20 @@ export class Agents implements SimSystem {
   workPose(g: number, on: boolean): void {
     if (g < 0 || g >= MAX_GROUPS) throw new Error(`agents.workPose: group ${g} out of 0..${MAX_GROUPS - 1}`);
     this.groupPose[g] = on ? 1 : 0;
+  }
+
+  /**
+   * (fortress milestone 3, FT-46: units prefer roads) The road columns (window order, y * W + x): a step along a road
+   * costs less in every field (agents.wgsl ROAD_COST). The caller sets them again after the window slides.
+   */
+  setRoads(cols: Iterable<number>): void {
+    const bits = new Uint32Array(this.roadBits.length);
+    for (const c of cols) if (c >= 0 && c < bits.length * 32) bits[c >> 5] |= 1 << (c & 31);
+    if (bits.every((v, i) => v === this.roadBits[i])) return;
+    this.roadBits = bits;
+    this.device.queue.writeBuffer(this.roads, 0, bits);
+    // (the fields' costs changed everywhere a road came or went: every chunk of the scope relaxed again)
+    if (this.scope) this.scope.markAll = true;
   }
 
   /** Field `f`'s seeds (its distance is 0 there): a goal, a stockpile, a threat. */

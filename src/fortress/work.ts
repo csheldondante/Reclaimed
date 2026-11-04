@@ -73,6 +73,16 @@ export class BuildBook {
     stores[load.good] = (stores[load.good] ?? 0) + load.amount;
   }
 
+  /**
+   * (milestone 3) b taken out of the plan before it stood: what had been worked into it, for the stores (Erase gives it
+   * all back). Loads still on their way come back as their builders find the block gone (giveBack).
+   */
+  forget(b: Block): Goods {
+    const paid = this.paid.get(key(b)) ?? {};
+    this.paid.delete(key(b));
+    return { ...paid };
+  }
+
   /** What's been worked into b so far. */
   paidOf(b: Block): Goods {
     return { ...(this.paid.get(key(b)) ?? {}) };

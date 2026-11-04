@@ -5,7 +5,7 @@
 //
 // Milestone 1 plans with time stopped: the blocks are the Town's plan (Town.plans), drawn as the towns' pieces
 // (pieces.ts) — what they'll look like. Milestone 2's workers build them (Town.add: what stands).
-import type { FortressBox, Goods, StructureType } from '../api/contracts/fortress';
+import { STRUCTURE_TYPES, type FortressBox, type Goods, type StructureType } from '../api/contracts/fortress';
 import { Town, type Block } from '../build/town';
 import { TownGrid } from '../build/towngrid';
 import { cellAt, cellPos } from '../world/lattice';
@@ -17,6 +17,34 @@ import { waysOf, waysNav, type Ways } from './ways';
 import type { NavGraph } from '../api/contracts/structures';
 import type { TownThing } from '../settle/thing';
 import { LEVEL_H } from '../build/town';
+import { bedsOf, roomOf, type JobKind } from './economy';
+import { WAY_ROAD, WAY_SQUARE } from './ways';
+
+/** (milestone 3) A block taken out of the plan: its type, and whether it stood (Erase gives back part of its cost). */
+export interface Erased {
+  cell: number;
+  level: number;
+  type: StructureType;
+  built: boolean;
+}
+
+/**
+ * (milestone 3) The economy as FortressLife last left it, for the bar and Inspect: people, their jobs, what each
+ * structure's workers brought in, the grain ripe on each farm, and why the haul or the newcomers stopped.
+ */
+export interface FortressStatus {
+  people: number;
+  /** per job kind how many work at it; idle: no work */
+  jobs: Partial<Record<JobKind | 'idle', number>>;
+  /** per structure id: its workers now, what they've brought to the stores, the grain ripe on it (farms) */
+  workers: Map<number, number>;
+  made: Map<number, Goods>;
+  ripe: Map<number, number>;
+  /** the stores are too full for another load: the haul stopped */
+  full: boolean;
+  /** no grain: nobody new comes */
+  hungry: boolean;
+}
 
 /** (round 128e) the old town's tallest thing above its ground (m): a ray is asked about it only lower than this */
 const TOWN_H = 45;
@@ -64,6 +92,10 @@ export class Fortress {
   note: string | null = null;
   /** (round 128e, FT-49) what the builders are doing now (FortressLife writes it; null before the first Build) */
   crew: { builders: number; toStores: number; carrying: number; working: number; waiting: number } | null = null;
+  /** (milestone 3) blocks taken out of the plan (FortressLife gives back what they cost) */
+  readonly onErased: ((e: Erased) => void)[] = [];
+  /** (milestone 3) the economy now (FortressLife writes it; before the first Build, the town as it starts) */
+  status: FortressStatus;
   /** (round 128d, FT-20) blocks to build that no builder can walk to from the heap (FortressLife: deep water, a cliff) */
   cutOff = 0;
   /** the ground under the box is known (the level's surface read over every column): planning may start */
@@ -94,6 +126,42 @@ export class Fortress {
     }, { grid });
     this.plan = new FortressPlan(grid);
     this.grid = grid;
+    this.status = { people: 0, jobs: {}, workers: new Map(), made: new Map(), ripe: new Map(), full: false, hungry: false };
+  }
+
+  /** (milestone 3) beds: the town's own houses' and the house blocks built */
+  beds(): number {
+    return bedsOf(this.plan, (c, l) => this.town.has(c, l));
+  }
+
+  /** (milestone 3) the stores' room: the town's own and the built warehouse blocks' */
+  room(): number {
+    return roomOf(this.plan, (c, l) => this.town.has(c, l));
+  }
+
+  /** (milestone 3, FT-46) the window columns under the plan's roads and squares (units prefer them) */
+  roadCols(): number[] {
+    const w = this.ways().way;
+    const out: number[] = [];
+    for (let c = 0; c < this.grid.count; c++) {
+      if (w[c] !== WAY_ROAD && w[c] !== WAY_SQUARE) continue;
+      for (const col of this.grid.columns[c]) {
+        const wc = this.boxToWindowCol(col);
+        if (wc >= 0) out.push(wc);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * (milestone 3) Where a built structure's door opens (window world): the middle of the free cell its door gives on
+   * (ways.ts), else its first cell's middle. Null: none of its blocks stands.
+   */
+  doorOf(id: number): [number, number] | null {
+    const s = this.plan.structure(id);
+    if (!s || ![...s.cells.keys()].some((c) => this.town.built.any(c))) return null;
+    const d = this.ways().doors.find((x) => x.structure === id);
+    return this.centre(d ? d.out : [...s.cells.keys()][0]);
   }
 
   /**
@@ -452,6 +520,7 @@ export class Fortress {
   private sync(): void {
     const changed = this.plan.takeChanged();
     this.waysMemo = null;
+    const erased: Erased[] = [];
     for (const c of changed) {
       const s = this.plan.structureAt(c);
       const owner = s ? s.id : 0;
@@ -460,6 +529,11 @@ export class Fortress {
       const levels = new Set([...this.plan.levels.each(c), ...this.town.plans.each(c), ...this.town.built.each(c)]);
       for (const l of levels) {
         const want = this.plan.has(c, l);
+        // (milestone 3: a block leaving the plan, built or not: what it cost goes back, in part — FortressLife)
+        if (!want && (this.town.has(c, l) || this.town.planned(c, l))) {
+          const run = this.town.built.at(c, l) ?? this.town.plans.at(c, l);
+          if (run) erased.push({ cell: c, level: l, type: STRUCTURE_TYPES[run.type], built: this.town.has(c, l) });
+        }
         if (want !== this.town.planned(c, l)) this.town.plan(c, l, want, owner, type);
         if (!want) this.begun.delete(`${c}:${l}`);
         // (a built block erased from the plan comes down at once: taking down is a later milestone's work)
@@ -472,6 +546,7 @@ export class Fortress {
     // (FT-26) the trees go from the cells painted and the cells round them (a courtyard among them)
     this.clearPlants(changed);
     this.changedOver(changed);
+    for (const e of erased) for (const h of this.onErased) h(e);
   }
 
   /** The plants on these cells cleared (each cell's quad: a disc round its middle to its farthest corner). */

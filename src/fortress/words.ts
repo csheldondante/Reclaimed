@@ -5,13 +5,14 @@ import type { Good, Goods, PerBlock, PlanTotals, StructureDef } from '../api/con
 const NAMES: Record<Good, [string, string]> = {
   log: ['wood', 'wood'],
   stone: ['stone', 'stone'],
+  ore: ['ore', 'ore'],
   grain: ['grain', 'grain'],
   weapons: ['weapon', 'weapons'],
   soldiers: ['soldier', 'soldiers'],
   power: ['power', 'power'],
 };
 
-const ORDER: Good[] = ['log', 'stone', 'grain', 'weapons', 'soldiers', 'power'];
+const ORDER: Good[] = ['log', 'stone', 'ore', 'grain', 'weapons', 'soldiers', 'power'];
 
 function list(parts: string[]): string {
   if (parts.length <= 1) return parts[0] ?? 'nothing';
@@ -129,8 +130,38 @@ export function cutOffLine(n: number): string {
   return `${n === 1 ? '1 block' : `${n} blocks`} can't be reached from the stores. Deep water or a cliff is in the way.`;
 }
 
-/** The stores strip: what's in the stores and the power coming in. */
-export function storesLine(stores: Goods, powerPerDay: number): string {
+/** The stores strip: what's in the stores (milestone 3: ore too). */
+export function storesLine(stores: Goods): string {
   const n = (k: Good) => Math.floor(stores[k] ?? 0);
-  return `Wood ${n('log')} · Stone ${n('stone')} · Grain ${n('grain')} · Power ${n('power')}, +${Math.round(powerPerDay)} a day`;
+  return `Wood ${n('log')} · Stone ${n('stone')} · Ore ${n('ore')} · Grain ${n('grain')}`;
 }
+
+/** (milestone 3) The people strip: people, beds, and the power coming in. */
+export function peopleLine(people: number, beds: number, stores: Goods, powerPerDay: number): string {
+  return `People ${people} · Beds ${beds} · Power ${Math.floor(stores.power ?? 0)}, +${Math.round(powerPerDay)} a day`;
+}
+
+/** (milestone 3) Who does what: "4 builders, 2 farmers and 1 miner. 2 people have no work." */
+export function jobsLine(jobs: Partial<Record<'build' | 'farm' | 'quarry' | 'lumber' | 'idle', number>>): string {
+  const names: [keyof typeof jobs, string, string][] = [
+    ['build', 'builder', 'builders'],
+    ['farm', 'farmer', 'farmers'],
+    ['quarry', 'miner', 'miners'],
+    ['lumber', 'woodcutter', 'woodcutters'],
+  ];
+  const parts = names.filter(([k]) => (jobs[k] ?? 0) > 0).map(([k, one, many]) => `${jobs[k]} ${jobs[k] === 1 ? one : many}`);
+  const idle = jobs.idle ?? 0;
+  const out: string[] = [];
+  if (parts.length) out.push(`${list(parts)} at work.`);
+  if (idle) out.push(idle === 1 ? '1 person has no work.' : `${idle} people have no work.`);
+  return out.join(' ') || 'Nobody lives here.';
+}
+
+/** (milestone 3) The stores are too full for another load: the haul stops. */
+export const FULL_LINE = 'The stores are full. Workers wait until there is room. Build more warehouse blocks.';
+
+/** (milestone 3) No grain in the stores: nobody new comes. */
+export const HUNGRY_LINE = 'There is no grain. Nobody new will come until there is. Build farms.';
+
+/** (milestone 3) Every bed is taken: nobody new comes. */
+export const BEDS_LINE = 'Every bed is taken. Build houses so more people can come.';

@@ -12,7 +12,8 @@ import { DEFS } from './defs';
 import type { Fortress } from './fortress';
 import { inspectCard, inspectFacts } from './inspect';
 import { townCard } from './townpick';
-import { buildingLine, crewLine, cutOffLine, SKIP_DONE, SKIPPING_LINE, PAUSED_LINE, planLines, storesLine, structureLines, typeCard } from './words';
+import { ECON } from './defs';
+import { BEDS_LINE, buildingLine, crewLine, cutOffLine, FULL_LINE, HUNGRY_LINE, jobsLine, PAUSED_LINE, peopleLine, planLines, SKIP_DONE, SKIPPING_LINE, storesLine, structureLines, typeCard } from './words';
 
 const CSS = `
 .fort-bar{position:absolute;left:0;right:0;bottom:0;padding:6px 8px calc(8px + env(safe-area-inset-bottom));
@@ -73,6 +74,7 @@ export class FortressBar {
   private top: HTMLDivElement;
   private modeLine: HTMLDivElement;
   private storeLine: HTMLDivElement;
+  private peopleLine: HTMLDivElement;
   private frame: HTMLDivElement;
 
   private now: () => { speed: number; skipping: boolean } = () => ({ speed: 1, skipping: false });
@@ -91,7 +93,8 @@ export class FortressBar {
     this.top.className = 'fort-top';
     this.modeLine = document.createElement('div');
     this.storeLine = document.createElement('div');
-    this.top.append(this.modeLine, this.storeLine);
+    this.peopleLine = document.createElement('div');
+    this.top.append(this.modeLine, this.storeLine, this.peopleLine);
     parent.appendChild(this.top);
     this.root = document.createElement('div');
     this.root.className = 'fort-bar';
@@ -204,7 +207,10 @@ export class FortressBar {
         for (const l of card.lines) out.push({ text: l });
       } else if (!s) out.push({ text: 'Tap a block or a building to see what it is.' });
       else {
-        const card = inspectCard(inspectFacts(f.plan, s, (c, l) => f.town.has(c, l), stores));
+        // (milestone 3) the live numbers: its workers, what they brought, a farm's ripe grain (Fortress.status)
+        const st = f.status;
+        const live = { workers: st.workers.get(s.id) ?? 0, brought: st.made.get(s.id) ?? {}, ripe: st.ripe.get(s.id) ?? 0 };
+        const card = inspectCard(inspectFacts(f.plan, s, (c, l) => f.town.has(c, l), stores, undefined, live));
         out.push({ text: card.title, title: true });
         for (const l of card.lines) out.push({ text: l });
       }
@@ -216,6 +222,11 @@ export class FortressBar {
       // (round 128e, FT-49) the builders, by what they're doing: they're small among a town's roofs
       if (f.crew && p.built < p.total) out.push({ text: crewLine(f.crew) });
       if (f.cutOff > 0) out.push({ text: cutOffLine(f.cutOff), short: true });
+      // (milestone 3) who does what, and why the haul or the newcomers stopped
+      out.push({ text: jobsLine(f.status.jobs) });
+      if (f.status.full) out.push({ text: FULL_LINE, short: true });
+      if (f.status.hungry) out.push({ text: HUNGRY_LINE, short: true });
+      else if (f.status.people >= f.beds() && f.status.people < ECON.maxPeople) out.push({ text: BEDS_LINE });
       // (round 128e, FT-50) why Skip stopped, or that it's running
       if (f.note) out.push({ text: f.note, short: f.note !== SKIP_DONE });
       else if (this.now().skipping) out.push({ text: SKIPPING_LINE });
@@ -239,11 +250,12 @@ export class FortressBar {
     return out;
   }
 
-  /** The banner lines at the top: the mode, and the stores with the power coming in. */
+  /** The banner lines at the top: the mode, the stores, and (milestone 3) the people with the power coming in. */
   topLines(): string[] {
     const f = this.fort;
     const p = f.progress();
-    return [f.mode === 'plan' ? PAUSED_LINE : buildingLine(p.built, p.total), storesLine(f.stores(), f.powerPerDay())];
+    const st = f.stores();
+    return [f.mode === 'plan' ? PAUSED_LINE : buildingLine(p.built, p.total), storesLine(st), peopleLine(f.status.people, f.beds(), st, f.powerPerDay())];
   }
 
   render(): void {
@@ -268,10 +280,11 @@ export class FortressBar {
     // (another tool picked: the card closes)
     if (!t.inspect && f.inspected !== null) f.inspect(null);
     this.frame.style.display = planning ? '' : 'none';
-    const [mode, stores] = this.topLines();
+    const [mode, stores, people] = this.topLines();
     this.modeLine.textContent = mode;
     this.modeLine.className = planning ? 'mode plan' : 'mode';
     this.storeLine.textContent = stores;
+    this.peopleLine.textContent = people;
     this.info.replaceChildren(
       ...this.lines().map((l) => {
         const p = document.createElement('p');

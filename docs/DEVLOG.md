@@ -16888,3 +16888,39 @@ fences and a kerb only, where façades had been before the fix), plot-scaffold.p
 plot-scaffold-up.png (the ground floor built, the frame above it). Looked at: the outline is low and partly hidden by
 tall grass and shrubs at play zoom.
 
+## 2026-11-04 — round 128e (`fortress`): milestone 3 — the economy feeds the building (FT-3)
+
+**Why.** FORTRESS_SLICE1 milestone 3 with the user's answers: "require grain or food per person yes"; ore "a share of
+quarry stone" (deposits later). Until now goods came by rates and builders took numbers out of a ledger.
+
+**What.** fortress/economy.ts (pure): the JobBoard, the yields, food, beds, room, refunds (ARCHITECTURE "Milestone 3").
+FortressLife runs every person: the 8 town folk at the start and the newcomers. A built block of a farm, quarry or lumber
+camp opens its jobs; the builders' 4 while there's building; people fill them farm → build → quarry → lumber. Miners
+walk to the quarry's built cells and dig the ground for real (terrain take): a bowl round the cell's middle, a metre
+down a metre in — so they walk out of it — measured from the ground they first found there (the fortress's kept ground
+read 2-3 m off the nature grid's at the quarry). After a load's work (80 s at 1x) they carry 2 goods, a fifth ore, to the
+warehouse. Woodcutters fell a tree in their camp's reach (24 + 6 a block) and carry 2 logs. Grain grows on farm blocks
+(2 a day a block, up to 3 days' ripe) and farmers reap and carry it. Goods come in only carried: the fortress's store
+rates are zeroed (power keeps its rate). The warehouse is the first built warehouse's door (else the town's heap); the
+room is the town's 400 + 50 a warehouse block, and a trip isn't started when a load won't fit ("The stores are full.
+Workers wait until there is room. Build more warehouse blocks."). People eat a grain a day; with a bed free and grain, a
+newcomer every 6 s walks in from as far out as the stores' field reaches, along the road that reaches farthest. Inspect:
+"Workers: 4 of 4.", "Brought to the stores so far: 14 stone and 4 ore.", "Ripe grain in the fields: 3.", "Some of the
+stone is ore.", the warehouse card's room includes the town's. Top bar: "Wood · Stone · Ore · Grain", "People 24 · Beds
+24 · Power 0, +0 a day"; bottom: "4 farmers, 6 miners and 2 woodcutters at work. 12 people have no work.", with the
+hunger and beds lines. Erase refunds (half a built block, all of an unbuilt one's paid goods; as far as the room
+takes). **Roads (FT-46):** agents.wgsl reads a bit per window column (binding 40, `Agents.setRoads`); a step along a
+road costs half. **Sleep:** digging and felling stay quiet edits (touch) — no chunk woke in the run (`awake` 0 every 5 s);
+the pit is a bowl, so nothing needs to settle; a steeper cut would need a wake to slump (left out on purpose).
+
+**Checks.** Unit src/fortress/economy.test.ts (15: the JobBoard's priority, keeping and moving people; slots from built
+blocks; yields and work time; ore share; grain grown and eaten; beds without the barracks; arrivals; room, stored, put
+in as far as it fits; refunds; the BuildBook forgetting; the new lines through the lint); inspect.test (live numbers).
+Headless scripts/fortresseconomy.mjs (412x915, ?speed=6): on flat dry ground near the start town, a 2-level warehouse,
+4 house blocks, a 4-cell farm, a 3-cell quarry away from the trees and a lumber camp toward them; Build: all 14 blocks
+built; the pit 1.4-3.3 m deep at a quarry cell (the nature grid's ground); trees felled; 25-54 trips hauled; stone and
+ore up; people 8 → 24 = beds; Erase on a built house block: +2 wood +1 stone; the warehouse's field at the house's door
+3.5 with the roads, 7.1 without; the cards' live workers. Shots m3-*.png (town, quarry, quarry-near, lumber, farm,
+inspect), looked at: the plan stands; the pit is a small brown bowl by the crane, easy to miss at play zoom (FT-54); the
+people are a few pixels high. Pace numbers untuned (FT-53); no perf or balance testing.
+

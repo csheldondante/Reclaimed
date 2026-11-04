@@ -65,10 +65,57 @@ export const DEFS: Record<StructureType, StructureDef> = {
 
 /**
  * What a fortress starts with when its town's stores are empty (a town start mostly means stores and income: the
- * user, FORTRESS_SLICE1 answer 1). Untuned.
+ * user, FORTRESS_SLICE1 answer 1). Untuned. (milestone 3) No income by rates: goods come in only as people carry them
+ * to the warehouse (the quarry's miners, the lumber camp's woodcutters, the farmers).
  */
 export const START_STORES: Record<string, { stock: number; rate: number }> = {
-  log: { stock: 120, rate: 20 },
-  stone: { stock: 80, rate: 10 },
-  grain: { stock: 150, rate: 30 },
+  log: { stock: 120, rate: 0 },
+  stone: { stock: 80, rate: 0 },
+  grain: { stock: 150, rate: 0 },
 };
+
+/**
+ * (milestone 3) The economy's pace. All untuned (the user tunes once it's playable: FORTRESS_SLICE1 answer 2); the
+ * DEVLOG lists them.
+ */
+export const ECON = {
+  /** the economy's day (sim seconds): a type's `makes` and a person's grain are "a day" of this (the day counter and
+   *  DayNight's 480 s meet in milestone 5) */
+  daySec: 60,
+  /** goods a worker carries a trip (miners, woodcutters, farmers) */
+  haul: 2,
+  /** grain a person eats a day */
+  eat: 1,
+  /** the share of the quarry's stone that is ore (the user's answer 4: a share now, deposits later) */
+  oreShare: 0.2,
+  /** room in the town's own stores before any warehouse is built (goods) */
+  townRoom: 400,
+  /** people at the start (the town's), and the beds in the town's own houses */
+  startPeople: 8,
+  startBeds: 8,
+  /** the most people the fortress has (units on a phone) */
+  maxPeople: 40,
+  /** builders while there's something to build */
+  builders: 4,
+  /** a newcomer every this many sim seconds while there are beds and grain */
+  arriveSec: 6,
+  /** a lumber camp's reach for trees: this, and more a block (world units) */
+  reach0: 24,
+  reachPerBlock: 6,
+  /** a farmer's seconds reaping a load */
+  reapSec: 4,
+  /** a miner's dig: every this many seconds, this much ground (cells cubed), within this of the spot */
+  digSec: 4,
+  dig: 0.35,
+  digR: 2.2,
+  /** the deepest a quarry's pit is dug below the ground it had (world units) */
+  pitMax: 6,
+  /** the share of a built block's cost Erase gives back (a block not yet built: all that was brought to it) */
+  refund: 0.5,
+};
+
+/**
+ * (milestone 3) Which jobs people take first when there aren't enough for all (the JobBoard's priority): food, then the
+ * builders, then stone, then wood. The blacksmith's and the barracks' jobs come with their recipes (milestone 4).
+ */
+export const JOB_ORDER = ['farm', 'build', 'quarry', 'lumber'] as const;
