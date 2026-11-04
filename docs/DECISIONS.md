@@ -558,6 +558,7 @@ each was implemented.
 - Order: building working → unit production → an early battle test.
 - City spells on the economy and people: crop growth, work speed, birth rate, regeneration in battle.
 - The opportunity UX is to be redesigned; its concept and logic stay. Named characters or advisors (portraits) arrive at the fortress and tell you about things on the map to assign resources to, shown as clean, uncluttered cards, perhaps with a picture rendered from that area of the map.
+- The user, verbatim: "Great! It also can be a rider from a village under attack or a random character. Advisors are great but thematically it fits to get petitioner's and news from agents of all kinds." → news comes in person from all kinds of messengers: advisors, a rider from a village under attack, a passing stranger, petitioners. Each one rides or walks in through the gate as a real unit and brings one card (the petition dialogs of round 126 are the seed).
 
 > "I want the player fortress to be something that can grow huge and impressive with spires and bridges and fountains and crystals and floating stones etc. we can adorn it with claimed prizes from opportunities." (round 128d, also on the fortress branch)
 
