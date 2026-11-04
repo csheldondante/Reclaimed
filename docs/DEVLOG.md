@@ -17198,3 +17198,33 @@ Tests: unit 652 (lanes 8: seams, density, contours within 15 degrees, doors join
 earth, no lanes under water). **Phone bench:** lanes are remade on every plan change on the CPU (9 ground taps a
 corner, a search over the structures a corner) — not timed; the corner fields are meant for the GPU (a jump flood and
 a blur) when it matters. **Next:** the people ride the lanes (V128-14, the next commit).
+
+## 2026-11-04 — round 128i (`fortress`): the people ride the roads on the GPU (V128-14, FT-70)
+
+**Why.** The user (V128-14): "Can agents transfer from flow field onto paths on the GPU? That seems cheaper and also
+reliable for moving goods around. We only need the flow fields where they go off tracks or where the destinations
+switch such as resources that deplete". Measured before (scripts/fortresslanes.mjs, the road cost alone): a walking
+builder stood on a road or lane 11-18% of the time against 4-9% of the ground round them — hardly a preference.
+**What.** agents/roadgraph.ts: the graph (ends merged, pieces that cross or end on another within a cell joined),
+hopsCpu, subgraph. lanes.ts laneGraph; spurs from a road cell's middle to the lanes through it or a free cell beside it
+(the first in-game graph had the roads as an island: 35 road nodes, 133 lane nodes apart); roads over the town that
+was there or water not ridden (ways.ts lays roads by the plan alone: riders pushed into the old town's houses).
+Fortress.roadGraph: the part the most doors are on. agents/ride.ts + shaders/roadride.wgsl: `rideHops` (a workgroup a
+goal, Bellman-Ford in workgroup memory, when the graph or goals change), `rideNetStamp` (the network's plane of the
+road bits — the edges that lead to a goal — again on every slide), the ride stage after the step (off → on the edge
+under its feet → node to node → a straight last leg → stand), its steer read by the step from the unit's fifth word's
+w. ROAD_FIELD (NFIELDS 12 → 13) seeded on the network's plane — at first on every road column, which stranded riders on
+lanes cut off from their goal; and refilled over the whole scope when it starts over (its seeds aren't points the
+scope marks: the field was unreachable everywhere after the scope drew in). A rider making no way for 90 ticks gets
+off for 120. FortressLife rides the stores, the houses (the fortress's own once it has any) and the farms when every
+goal is within 6 m of a node; the sites, trees and quarry keep fields. **Measured** (fortresslanes, 40 s of the
+people's work after the plan stands: 4 farmers, 6 miners, the rest going home): walking samples on a road or lane 81%
+(flat, 237 nodes) and 76-98% (hillside, 339 nodes) against 20% and 21-31% of the ground round them; the fortress's own
+fields 7 → 4 (plus the shared road field; seeded at a time 2-3 against 7). GIFs: fortress/lanes-flat.gif,
+lanes-hill.gif (play zoom 3.2: figures are a few pixels), lanes-hill-walkers.gif (zoom 14 on the walkers: a hauler
+with grain on the road from the gate). Tests: unit (roadgraph 3; lanes 9: one network with every door on it, spurs),
+GPU test/gpu/roadride.test.ts (the tables equal hopsCpu; the network's plane marks every reached node and no node far
+from the network; a unit joins and heads for its next node, one near its goal goes straight, one at it stands, one
+not riding keeps its field). **Seen, not mine to fix here:** two of eight hillside runs ended in the GPU watchdog
+("the GPU never finished", during the people's work at speed 6); an earlier hillside run before any ride code lost
+the page mid-run (window.reclaimed gone), perhaps the same — not tracked down (BACKLOG FT-72). **Phone bench** (not run): BACKLOG FT-72.

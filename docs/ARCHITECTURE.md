@@ -3543,3 +3543,20 @@ The building rule (the user's): select what (a structure type), then plan it wit
   bits stamped on the GPU from the same shapes (`roadShapesOf` → agents/roads.ts `RoadStamp`, shaders/roadstamp.wgsl:
   a slide moves only the offset). Pure and memoised on the plan (made again when the plan changes or the columns are
   first read); the corner fields are the GPU's work later (a jump flood, a blur) — today on the CPU.
+- **Round 128i (the people ride the roads, V128-14, FT-70).** The road graph: `agents/roadgraph.ts` (pure) —
+  `graphOf(segments)` (ends merged within 2 cm; within a cell pieces that cross, or one ending on another, split and
+  joined), `hopsCpu` (the GPU's reference), `subgraph`; `lanes.ts laneGraph` (a stepped climb costs more, the main roads
+  less; `noRide` roads over the town that was there or water left out; spurs, family -2, join a road cell's middle to
+  the lanes through it or a free cell beside it); `Fortress.roadGraph()` the part the most doors are on, memoised with
+  the lanes. The agents' side (`agents/ride.ts` RoadRide, `shaders/roadride.wgsl`): `Agents.setRoadGraph(graph, ox, oy)`
+  each frame (the same object: no change) and `Agents.ride(group, goals | null)` (goals in the graph's frame; false
+  unless every goal has a node within RIDE_NEAR 6 m). When the graph or the goals change, `rideHops` (a workgroup a goal
+  slot, Bellman-Ford in workgroup memory) writes per slot and node the cost and the next node; with them, and on every
+  slide, `rideNetStamp` writes the network's plane of the road bits (the buffer's second half: the columns of edges that
+  lead to a goal). `ROAD_FIELD` (the last of NFIELDS 13) is seeded on that plane (agents.wgsl `onNet`); a riding group
+  follows it. The ride stage (after the step, a thread a unit) keeps per slot a mode (off, on, last leg), a node, a goal
+  slot and a stuck count, and writes the step's steer into the unit's fifth word's w (units.wgsl: 0 its field, < 0
+  stand, else a heading + 10): off, standing on or beside the network it joins on the edge under its feet at the end
+  cheapest to its nearest goal (or, nearer that goal as the crow flies, makes straight for it); on, node to node by the
+  table; at the goal's node, straight to the goal, where it stands; no way made for 90 ticks, off for 120. Nothing read
+  back. FortressLife rides the stores, the houses and the farms (`riding`), seeds their own fields only when they don't.

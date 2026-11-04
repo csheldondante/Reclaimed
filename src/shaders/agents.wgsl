@@ -44,7 +44,7 @@ struct AgentParams {
   groupMat: array<vec4<u32>, 4>,
   // per field: the place it's confined to (0 anywhere; bit 31 a region,
   // else a room): its distances live only on that place's surfaces
-  fieldPlace: array<vec4<u32>, 3>,
+  fieldPlace: array<vec4<u32>, 4>,
   // x hits this tick, y targets, z events capacity, w the fields with seeds (bit per field)
   n2: vec4<u32>,
   // the kinds of unit (units.wgsl Kind)
@@ -130,6 +130,16 @@ fn costDeep(s: u32) -> bool { return (navCost[s] & 2u) != 0u; }
 // worker goes round by the road when it's no more than a little longer. Set by the game (Agents.setRoads); all 0 none.
 @group(0) @binding(40) var<storage, read> roads: array<u32>;
 const ROAD_COST: f32 = 0.5;
+/** (round 128i) the riding network's plane of the road bits (roadride.wgsl rideNetStamp): a column on an edge that leads
+ *  to a riding group's goal — the road field's seeds */
+fn onNet(p: vec2<i32>) -> bool {
+  let w = winIdx(p);
+  return ((roads[arrayLength(&roads) / 2u + (w >> 5u)] >> (w & 31u)) & 1u) != 0u;
+}
+/** fields (agents.ts NFIELDS); (round 128i, V128-14) the last, ROAD_FIELD, is the shared field onto the roads: every
+ *  surface of a network column (onNet) a seed (agents.ts ROAD_FIELD; set while a group rides the roads — shaders/roadride.wgsl) */
+const NFIELDS: u32 = 13u;
+const ROAD_FIELD: u32 = 12u;
 fn onRoad(p: vec2<i32>) -> f32 {
   let w = winIdx(p);
   return f32((roads[w >> 5u] >> (w & 31u)) & 1u);
@@ -340,6 +350,7 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
         let c = cellAt(sd.xy);
         if (all(c == p) && surfaceNear(i, sd.z) == k) { d = 0.0; }
       }
+      if (f == ROAD_FIELD && onNet(p)) { d = 0.0; }
       if (d > 0.0) {
         for (var dd = 0u; dd < NDIR; dd++) {
           let l = navLink(s, dd);
@@ -438,7 +449,7 @@ fn clearFields(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
   let i = colIdx(id.x, id.y);
   let N = ns();
-  for (var f = 0u; f < 12u; f++) {
+  for (var f = 0u; f < NFIELDS; f++) {
     if (((AP.n3.w >> f) & 1u) == 0u) { continue; }
     for (var k = 0u; k < NAV_K; k++) { dist[f * N + i * NAV_K + k] = FAR; }
   }

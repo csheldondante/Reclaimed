@@ -38,7 +38,9 @@
 //      (rad; tumbling: how far it has rolled)
 //   e: (LW1, the trait system's words — 0 without it) CAPS, the verbs the step
 //      honours (u32 bits: CAP_*); LOOK, what the draw shows (u32: LOOK_*); the
-//      max hp it was spawned with; 0. The step only reads them: the trait
+//      max hp it was spawned with; (round 128i) the road ride's steer
+//      (roadride.wgsl: 0 none, < 0 stand, else heading + STEER_BIAS — read by
+//      the walking step below). The step only reads them: the trait
 //      modules derive them from the traits each tick (src/traits).
 @group(0) @binding(7) var<storage, read_write> units: array<vec4<f32>>;
 const UNIT_V: u32 = 5u;
@@ -146,6 +148,8 @@ const SHOVE_FIX: f32 = 100.0;
 // knocked over when what runs into it would move it this fast (cells/s)
 const KNOCK_SPEED: f32 = 2.5;
 const MAX_INST: u32 = 65536u;
+/** (round 128i) roadride.wgsl STEER_BIAS */
+const STEER_BIAS: f32 = 10.0;
 
 fn unitInfo(a: vec4<f32>) -> u32 { return bitcast<u32>(a.w); }
 fn unitId(u: u32, info: u32) -> u32 { return (info >> 16u) * MAX_SLOTS + u; }
@@ -172,7 +176,7 @@ fn scopeIn(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = colIdx(id.x, id.y);
   let N = ns();
   let cols = G.mapW * G.mapH;
-  for (var f = 0u; f < 12u; f++) {
+  for (var f = 0u; f < NFIELDS; f++) {
     for (var k = 0u; k < NAV_K; k++) { dist[f * N + i * NAV_K + k] = FAR; }
   }
   atomicOr(&dirtyCur[chunkOfCol(id.x, id.y)], 1u);
@@ -312,6 +316,9 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
   var cc = units[u * UNIT_V + 2u];
   var dd = units[u * UNIT_V + 3u];
   let caps = bitcast<u32>(units[u * UNIT_V + 4u].x);
+  // (round 128i, V128-14) the road ride's steer (roadride.wgsl, written after the last tick's step): 0 its field, < 0
+  // stand, else a heading + STEER_BIAS
+  let steer = units[u * UNIT_V + 4u].w;
   let noBurn = (caps & CAP_NO_BURN) != 0u;
   let rooted = (caps & CAP_ROOTED) != 0u;
   var info = unitInfo(a);
@@ -599,6 +606,9 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
         // (a new heading now and then; slower than closing in)
         if (rand3(u, G.tick, 7u) < dt * 0.4) { wanderH = rand3(u, G.tick, 8u) * 6.2832; }
         want = vec2<f32>(cos(wanderH), sin(wanderH)) * 0.4;
+      } else if (worker && steer != 0.0) {
+        // (round 128i, V128-14: riding the roads — shaders/roadride.wgsl steers it: a heading, or stand at its goal)
+        want = select(vec2<f32>(cos(steer - STEER_BIAS), sin(steer - STEER_BIAS)), vec2<f32>(0.0), steer < 0.0);
       } else if (here < FAR && here > 0.6) {
         want = downField(fld, s, c, pos.xy, here);
         // (frightened: away up its field, from what it would have gone to)
@@ -629,7 +639,7 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
     // never step where there's no link, nor off the place its field is
     // confined to: slide along instead
     let nc = clampCell(cellAt(p2));
-    let fp = select(0u, AP.fieldPlace[min(fld, 11u) / 4u][min(fld, 11u) % 4u], fld < AP.n.z);
+    let fp = select(0u, AP.fieldPlace[min(fld, NFIELDS - 1u) / 4u][min(fld, NFIELDS - 1u) % 4u], fld < AP.n.z);
     if (k < NAV_K && any(nc != c)) {
       var ok = false;
       for (var d = 0u; d < NDIR; d++) {

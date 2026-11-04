@@ -21,7 +21,8 @@ import { bedsOf, roomOf, type JobKind } from './economy';
 import { DROP, ReachMap, STEP, type ReachColumns } from './reach';
 import { solidSpans } from './solid';
 import { cutWarnLine, reachWhyLine, variantLine, wouldCutLine, type ReachWhy, type VariantKind } from './words';
-import { LANE_DEFAULTS, lanesOf, roadShapesOf, type LaneOpts, type Lanes } from './lanes';
+import { LANE_DEFAULTS, laneGraph, lanesOf, roadShapesOf, type LaneOpts, type Lanes } from './lanes';
+import { nearestNode, reached, subgraph, type RoadGraph } from '../agents/roadgraph';
 import { packRoadShapes } from '../agents/roads';
 
 /** (milestone 3) A block taken out of the plan: its type, and whether it stood (Erase gives back part of its cost). */
@@ -137,6 +138,7 @@ export class Fortress {
   /** (round 128i) whether the lanes were made knowing the water (the columns read): made again once they are */
   private lanesWet = false;
   private roadShapesMemo: { of: Lanes; shapes: Float32Array } | null = null;
+  private roadGraphMemo: { of: Lanes; graph: RoadGraph } | null = null;
   /** (round 128f) the lanes' spacing per district (the town's, the fields'): the road frequency */
   private laneOptsNow: LaneOpts = { ...LANE_DEFAULTS };
   /** the ground's top at a box column */
@@ -186,6 +188,39 @@ export class Fortress {
     const L = this.lanes();
     if (this.roadShapesMemo?.of !== L) this.roadShapesMemo = { of: L, shapes: packRoadShapes(roadShapesOf(L, this.ways(), this.grid)) };
     return this.roadShapesMemo.shapes;
+  }
+
+  /**
+   * (round 128i, V128-14) The lanes and roads as the agents' road graph (lanes.ts laneGraph), in the box's frame: the
+   * people ride it to the stores, the houses and the farms (Agents.ride). Only the network the doors are on — the part
+   * of the graph that reaches the most doors (lanes cut off from it by the old town, water or the walls are drawn, not
+   * ridden: a walker led onto one could never get off at its goal). The same object until the lanes change.
+   */
+  roadGraph(): RoadGraph {
+    const L = this.lanes();
+    if (this.roadGraphMemo?.of !== L) {
+      const all = laneGraph(L);
+      const g = this.grid;
+      const doors = this.ways().doors.map((d) => {
+        const e = [0, 1, 2, 3].find((k) => g.nbr[d.out * 4 + k] === d.cell) ?? 0;
+        const [ax, ay] = g.corner(d.out, e);
+        const [bx, by] = g.corner(d.out, e + 1);
+        return nearestNode(all, (ax + bx) / 2, (ay + by) / 2).node;
+      });
+      let from = -1;
+      let most = 0;
+      for (const v of doors) {
+        if (v < 0) continue;
+        const net = reached(all, v);
+        const k = doors.filter((u) => net.has(u)).length;
+        if (k > most) {
+          most = k;
+          from = v;
+        }
+      }
+      this.roadGraphMemo = { of: L, graph: subgraph(all, from) };
+    }
+    return this.roadGraphMemo.graph;
   }
 
   /** (round 128f) the lanes' spacing per district: the town's and the fields' (m) */

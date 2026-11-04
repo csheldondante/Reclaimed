@@ -615,6 +615,18 @@ each was implemented.
 - Judgement calls for the user: the tracks out in the fields are trodden earth (brown), the town's lanes and the roads
   paving (grey, as before); the widths up a little (roads 2.6 m, lanes 2.0, the ring 2.2, tracks 1.5 — at play zoom the
   old ones read as threads); no lanes on cells under water. (DEVLOG round 128i lanes.)
+- On the agents and the roads (BACKLOG V128-14 on `places`), the user, verbatim: "Can agents transfer from flow field
+  onto paths on the GPU? That seems cheaper and also reliable for moving goods around. We only need the flow fields
+  where they go off tracks or where the destinations switch such as resources that deplete".
+- → In place of tuning the road cost, the people ride a road graph on the GPU: the lanes and roads are its nodes and
+  edges; next-hop tables per destination node made on the GPU when the roads or the goals change; one shared field gets
+  a walker onto the network; it follows the edges and gets off at the node nearest its goal for a straight last leg.
+  Judgement calls (for the user): the legs to fixed places by the roads ride (the stores, the houses, the farms); the
+  legs to places that change (the blocks to build, the trees, the quarry's pits) keep their fields; a leg rides only
+  when every goal of it has a node within 6 m; only the part of the network the most doors are on is ridden (lanes cut
+  off from it by the old town or water are drawn, not ridden), and no road over the town that was there; a lane
+  through or beside a road's cell gets a short spur to it (else the roads were an island); idle people go to the
+  fortress's own houses once it has any (before: the town's too). (DEVLOG round 128i ride.)
 
 ## 2026-11-04 — round 128i (session 5, `fortress`) — the town flickers while the window slides
 

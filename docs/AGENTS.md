@@ -65,7 +65,15 @@ cells) of air above it.
 **Fields.** Each field holds a distance to its seeds on every surface.
 - `NFIELDS` (12; 4 until round 88) fields, shared by every group following the same one. A field
   with no seeds is set unreachable once and then skipped (round 88); with no units, nothing in
-  flight and nothing seeded, the pass does nothing at all.
+  flight and nothing seeded, the pass does nothing at all. (Round 128i: 13 — the last, `ROAD_FIELD`, is the
+  shared field onto the roads, seeded on the columns of the network's edges that lead to a riding goal: below.)
+- **Riding the roads (round 128i, V128-14).** `setRoadGraph(graph, ox, oy)` (agents/roadgraph.ts: nodes and
+  both-ways edges in the owner's frame — the road shapes' — at window offset ox, oy) and `ride(group, goals | null)`
+  (goals in that frame; false when a goal has no node within `RIDE_NEAR` 6 m): the group follows `ROAD_FIELD` onto the
+  roads, then the graph (next-hop tables per goal node, made on the GPU when the graph or the goals change:
+  shaders/roadride.wgsl rideHops), then a straight last leg to the goal, where it stands. The ride is a stage after the
+  step (one thread a unit) that writes the step's steer into the unit's fifth word's w (0 its field, < 0 stand, else
+  a heading + 10). The caller decides what the group follows (`follow(g, ROAD_FIELD)` when `ride` says true).
 - Sweeps a tick, in place: the quality's `agentSweeps` (low 2, medium 4,
   high 8; `agents.sweeps` at run time). The fields' fixed cost is the map's
   size × the sweeps (about 0.2 ms a sweep on a 256 map on a desktop GPU), so
@@ -250,7 +258,8 @@ agents.toss('stone', 2, from, vel, hit?)  // a load flying free (a boulder a gia
 agents.inFlight                           // [{ id, material, amount, x, y, z }]
 ```
 
-Limits: 8,192 units, 16 groups, 12 fields, 48 seeds (round 88); each throws past its
+Limits: 8,192 units, 16 groups, 12 fields (13 from round 128i: the road field), 48 seeds (round 88); a road graph of 1,024
+nodes and 64 ride goals (round 128i); each throws past its
 limit.
 
 ## Measured (scripts/agentstest.mjs, the 256 × 256 sandbox)

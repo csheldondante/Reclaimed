@@ -4,8 +4,9 @@
 import { describe, expect, it } from 'vitest';
 import { library } from '../structures/modules';
 import { Fortress } from './fortress';
-import { LANE_DRAWN, LANE_WIDTH, nearSeg, type LaneOpts, type Lanes } from './lanes';
+import { LANE_DRAWN, LANE_WIDTH, laneGraph, nearSeg, type LaneOpts, type Lanes } from './lanes';
 import { roadBitsCpu } from '../agents/roads';
+import { nearestNode, nodeCount, reached } from '../agents/roadgraph';
 import { cellPos } from '../world/lattice';
 import { fortressPieces } from './pieces';
 import { WAY_ROAD, WAY_SQUARE, WAY_STAIR } from './ways';
@@ -196,6 +197,33 @@ describe('lanes: roads narrower than a cell', () => {
     for (let c = 0; c < f.grid.count; c++) if (w.way[c] === WAY_SQUARE) for (const col of f.grid.columns[c]) expect(bit(col)).toBe(1);
     // the same shapes until the plan changes
     expect(f.roadShapes()).toBe(f.roadShapes());
+  });
+
+  it("(round 128i, V128-14) the lanes and roads are one network the agents ride: every door on it, most lanes joined", () => {
+    const f = fortress();
+    walled(f);
+    const g = f.roadGraph();
+    const n = nodeCount(g);
+    const w = f.ways();
+    const doorNodes = w.doors.map((d) => {
+      const e = [0, 1, 2, 3].find((k) => f.grid.nbr[d.out * 4 + k] === d.cell)!;
+      const a = f.grid.corner(d.out, e);
+      const b = f.grid.corner(d.out, e + 1);
+      const q = nearestNode(g, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2);
+      expect(q.d).toBeLessThan(1e-3);
+      return q.node;
+    });
+    // (the network ridden is the part of the graph the doors are on: every door's node, all of it reached)
+    const net = reached(g, doorNodes[0]);
+    for (const v of doorNodes) expect(net.has(v)).toBe(true);
+    expect(net.size).toBe(n);
+    // (the lanes meet the roads: spurs from the road cells to the lanes through them or beside them — nearly every lane
+    // is on the network)
+    const all = laneGraph(f.lanes());
+    expect(n / nodeCount(all)).toBeGreaterThan(0.9);
+    expect(f.lanes().segs.some((s) => s.family === -2)).toBe(true);
+    // (the same graph until the plan changes)
+    expect(f.roadGraph()).toBe(g);
   });
 
   it('(round 128i) no lanes under water: a lake over part of the box', () => {

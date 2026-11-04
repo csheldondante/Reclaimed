@@ -19,6 +19,9 @@
 // The walking is the agents' (units/agent-units.ts): each leg a shared field (life.ts's groups): the warehouse (F.pile),
 // the blocks lacking stone (F.site) or wood (F.store), the quarry's cells (F.quarry), the trees in reach (F.fell), the
 // farms (F.farm), the houses (F.home). Roads cost less to walk in every field (Agents.setRoads, FT-46).
+// (round 128i, V128-14) The legs to the stores, the houses and the farms ride the road graph instead when every goal of
+// theirs is by it (Agents.ride: the shared road field onto the network, the roads, a straight last leg) — their own
+// fields unseeded; the legs to the sites, the trees and the quarry keep their fields.
 //
 // It runs the pinned settlement's units in place of a SettlementLife (Settlements.pin(id, true)): the two share those
 // fields and groups (FORTRESS_SLICE1 correction 1), so they never run together.
@@ -30,6 +33,8 @@ import type { FieldReader } from '../agents/fieldreader';
 import type { Block } from '../build/town';
 import { R } from '../settle/life';
 import { F, G, type AgentUnits, type Routine, type UnitRec } from '../units/agent-units';
+import { ROAD_FIELD } from '../agents/agents';
+import { noGraph, type RoadGraph } from '../agents/roadgraph';
 import { DEFS, ECON } from './defs';
 import { builtBlocks, eaten, fits, grown, JobBoard, jobSlots, mayArrive, putIn, quarryLoad, reachOf, refundOf, workSeconds, type JobKind, type JobSlot } from './economy';
 import type { Erased, Fortress } from './fortress';
@@ -117,6 +122,10 @@ export class FortressLife implements Routine {
   /** (scripted checks) where the last trees were felled */
   readonly felledAt: V2[] = [];
   private seeded = '';
+  /** (round 128i, V128-14) the road graph the last seeding saw (a new one: the rides are set again) */
+  private seededGraph: RoadGraph | null = null;
+  /** (round 128i) the legs that ride the roads now (their own fields left unseeded) */
+  riding: { pile: boolean; home: boolean; farm: boolean } = { pile: false, home: false, farm: false };
   private order: Block[] = [];
   private orderAt = -1;
   private t = 0;
@@ -191,6 +200,8 @@ export class FortressLife implements Routine {
     for (const f of [F.pile, F.site, F.store, F.quarry, F.fell, F.farm, F.home]) this.io.units.agents.seed(f, []);
     this.io.units.agents.keepInScope('fortress', []);
     this.io.units.agents.setRoads(new Float32Array(0));
+    for (const g of [R.toPile, R.toHome, R.toFarm]) this.io.units.agents.ride(g, null);
+    this.io.units.agents.setRoadGraph(noGraph());
   }
 
   /** The people alive. */
@@ -223,6 +234,8 @@ export class FortressLife implements Routine {
    */
   roads(): void {
     this.io.units.agents.setRoads(this.io.fort.roadShapes(), ...this.io.fort.offset());
+    // (round 128i, V128-14: and the road graph the people ride, in the same frame)
+    this.io.units.agents.setRoadGraph(this.io.fort.roadGraph(), ...this.io.fort.offset());
   }
 
   /** each frame (sim time): the economy, the jobs, the newcomers, the fields seeded */
@@ -484,7 +497,8 @@ export class FortressLife implements Routine {
       const d = f.doorOf(s.id);
       if (d) out.push(d);
     }
-    return [...out, ...this.io.homes()].slice(0, 4);
+    // (round 128i: the fortress's own houses once there are any — its people ride its roads home — else the town's)
+    return (out.length ? out : this.io.homes()).slice(0, 4);
   }
 
   private reseed(): void {
@@ -497,17 +511,34 @@ export class FortressLife implements Routine {
     const homes = this.homes();
     const r = (v: V2[]) => v.map((p) => p.map(Math.round));
     const key = JSON.stringify([h.map(Math.round), r(stone), r(wood), r(quarry), r(farm), r(fell), r(homes)]);
-    if (key === this.seeded) return;
+    const graph = this.io.fort.roadGraph();
+    if (key === this.seeded && graph === this.seededGraph) return;
     this.seeded = key;
+    this.seededGraph = graph;
     const A = this.io.units.agents;
     const seed = (f: number, v: V2[]) => A.seed(f, v.map(([x, y]) => ({ x, y })));
-    seed(F.pile, [h]);
+    // (round 128i, V128-14; the user: "We only need the flow fields where they go off tracks or where the destinations
+    // switch") the legs to fixed places by the roads — the stores, the houses, the farms — ride the road graph when every
+    // goal of theirs is by it (Agents.ride): the shared field onto the roads, then the roads, then a straight last leg;
+    // their own fields go unseeded. The legs to changing places (the sites, the trees, the quarry's pits) keep fields.
+    const f = this.io.fort;
+    const ride = (g: number, field: number, v: V2[]): boolean => {
+      const ok = A.ride(g, v.map(([x, y]) => f.toBox(x, y)));
+      A.follow(g, ok ? ROAD_FIELD : field);
+      seed(field, ok ? [] : v);
+      return ok;
+    };
+    const was = this.riding.pile;
+    this.riding = { pile: ride(R.toPile, F.pile, [h]), home: ride(R.toHome, F.home, homes), farm: ride(R.toFarm, F.farm, farm) };
+    // (where a newcomer can come in from: the stores' field, or riding, the field onto the roads that lead to them)
+    if (was !== this.riding.pile) {
+      this.reach.stop();
+      this.reach = A.reader(this.riding.pile ? ROAD_FIELD : F.pile).start(500);
+    }
     seed(F.site, stone.slice(0, 8));
     seed(F.store, wood.slice(0, 8));
     seed(F.quarry, quarry);
-    seed(F.farm, farm);
     seed(F.fell, fell);
-    seed(F.home, homes);
   }
 
   /**

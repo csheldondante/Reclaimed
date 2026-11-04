@@ -21,6 +21,7 @@ import type { V2 } from '../api/contracts/structures';
 import type { FortressPlan } from './plan';
 import { WAY_ROAD, WAY_SQUARE, WAY_STAIR, type Ways, type WaysGrid } from './ways';
 import type { RoadShape } from '../agents/roads';
+import { graphOf, type RoadGraph } from '../agents/roadgraph';
 
 export interface LaneGrid extends WaysGrid {
   readonly verts: ArrayLike<number>;
@@ -38,7 +39,7 @@ export interface LaneSeg {
   a: V2;
   b: V2;
   kind: LaneKind;
-  /** 0 along the contours, 1 across them, 2 the ring, -1 a road */
+  /** 0 along the contours, 1 across them, 2 the ring, -1 a road, -2 a spur from a road to a lane through its cell */
   family: number;
   level: number;
   /** the side of its cell each end lies on (-1: inside the cell — a road's middle, a lane cut at a district's edge) */
@@ -46,6 +47,8 @@ export interface LaneSeg {
   eb: number;
   /** a climbing lane steep enough for steps */
   steps: boolean;
+  /** (round 128i) not ridden (the agents' road graph leaves it out): a road over the town that was there or water */
+  noRide?: boolean;
 }
 
 export interface LaneOpts {
@@ -71,6 +74,8 @@ export const LANE_DEFAULTS: LaneOpts = { town: 14, fields: 42, cross: 2, townRea
 export const LANE_WIDTH: Record<LaneKind, number> = { road: 2.6, plaza: 2.6, ramp: 2.6, lane: 2.0, cross: 2.0, ring: 2.2, track: 1.5 };
 /** (round 128i) the kinds drawn as paving (a square is paved whole; a ramp's treads are its road) */
 export const LANE_DRAWN: Record<LaneKind, boolean> = { road: true, plaza: false, ramp: false, lane: true, cross: true, ring: true, track: true };
+/** (round 128i) a spur from a road to a lane is at most this long (m): a cell is ~6 m across */
+export const SPUR_MAX = 5;
 /** a climbing lane's rise over its run past which it is stepped */
 export const STEEP = 0.3;
 
@@ -308,9 +313,51 @@ export function lanesOf(
       if (e < 0) continue;
       const a = g.corner(c, e);
       const b = g.corner(c, e + 1);
-      push({ cell: c, a: m0, b: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], kind: w0 === WAY_SQUARE ? 'plaza' : rampOf(c) >= 0 ? 'ramp' : 'road', family: -1, level: 0, ea: -1, eb: e, steps: false });
+      push({ cell: c, a: m0, b: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], kind: w0 === WAY_SQUARE ? 'plaza' : rampOf(c) >= 0 ? 'ramp' : 'road', family: -1, level: 0, ea: -1, eb: e, steps: false, noRide: blocked(c) });
     }
   }
+  // (round 128i, V128-14: the agents ride lanes and roads as one network) the roads meet the lanes: from a road cell's
+  // middle a spur to each lane line through it or through a cell beside it (across a shared side, both free) that misses
+  // the road there — to the line's nearest point, within SPUR_MAX, one a line, of the line's kind, in the lane's cell
+  // (so the graph joins it there). Again a rule of a tile and its neighbours. Without them the roads (door to door,
+  // through the gate) were an island in the lanes (a flat site by the old town: 35 road nodes, 133 lane nodes apart).
+  const hits = (p: LaneSeg, q: LaneSeg) => {
+    const d1x = p.b[0] - p.a[0];
+    const d1y = p.b[1] - p.a[1];
+    const d2x = q.b[0] - q.a[0];
+    const d2y = q.b[1] - q.a[1];
+    const den = d1x * d2y - d1y * d2x;
+    if (Math.abs(den) < 1e-9) return false;
+    const ex = q.a[0] - p.a[0];
+    const ey = q.a[1] - p.a[1];
+    const t = (ex * d2y - ey * d2x) / den;
+    const u = (ex * d1y - ey * d1x) / den;
+    return t >= 0 && t <= 1 && u >= 0 && u <= 1;
+  };
+  const lanesIn = (c: number) => byCell[c].map((i) => segs[i]).filter((s) => s.family >= 0);
+  const roadsIn = (c: number) => byCell[c].map((i) => segs[i]).filter((s) => s.family === -1);
+  const spurs: LaneSeg[] = [];
+  for (let c = 0; c < n; c++) {
+    const roads = roadsIn(c);
+    if (!roads.length) continue;
+    const m0 = g.centre(c);
+    const best = new Map<string, { s: LaneSeg; q: V2; d: number }>();
+    const cells = [c, ...[0, 1, 2, 3].map((e) => g.nbr[c * 4 + e]).filter((m) => m >= 0 && laneTile(m))];
+    // (a line that meets this road, or the road of the cell beside, needs no spur)
+    const met = new Set<string>();
+    for (const m of cells) for (const s of lanesIn(m)) if ([...roads, ...roadsIn(m)].some((r) => hits(r, s))) met.add(`${s.family}:${s.level}`);
+    for (const m of cells)
+      for (const s of lanesIn(m)) {
+        const key = `${s.family}:${s.level}`;
+        if (met.has(key)) continue;
+        const q = near(m0, s.a, s.b);
+        const d = Math.hypot(q[0] - m0[0], q[1] - m0[1]);
+        if (d < 1e-6 || d > SPUR_MAX) continue;
+        if ((best.get(key)?.d ?? Infinity) > d) best.set(key, { s, q, d });
+      }
+    for (const { s, q } of best.values()) spurs.push({ cell: s.cell, a: m0, b: q, kind: s.kind, family: -2, level: 0, ea: -1, eb: -1, steps: false, noRide: blocked(c) });
+  }
+  for (const s of spurs) push(s);
   return { segs, byCell, uphill: up, slope, contour: w };
 }
 
@@ -336,4 +383,16 @@ export function roadShapesOf(lanes: Lanes, ways: Ways, g: WaysGrid): RoadShape[]
   for (const s of lanes.segs) if (LANE_WIDTH[s.kind] > 0) out.push({ a: s.a, b: s.b, half: LANE_WIDTH[s.kind] / 2 + ROAD_PAD });
   for (let c = 0; c < g.count; c++) if (ways.way[c] === WAY_SQUARE) out.push({ quad: [g.corner(c, 0), g.corner(c, 1), g.corner(c, 2), g.corner(c, 3)] });
   return out;
+}
+
+/** (round 128i, V128-14) each kind's cost a metre in the agents' road graph: the main roads preferred, tracks least */
+export const LANE_COST: Record<LaneKind, number> = { road: 0.8, plaza: 0.8, ramp: 0.9, lane: 1, cross: 1, ring: 1, track: 1.15 };
+
+/**
+ * (round 128i, V128-14) The lanes and roads as the agents' road graph (agents/roadgraph.ts), in the lanes' frame: every
+ * piece an edge, joined where pieces meet at a tile's side or cross within a tile; a stepped climb costs more; a road
+ * over the town that was there or water (`noRide`: ways.ts lays roads by the plan alone) left out.
+ */
+export function laneGraph(lanes: Lanes): RoadGraph {
+  return graphOf(lanes.segs.filter((s) => !s.noRide).map((s) => ({ a: s.a, b: s.b, cell: s.cell, cost: LANE_COST[s.kind] * (s.steps ? 1.3 : 1) })));
 }
