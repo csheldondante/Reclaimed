@@ -575,6 +575,14 @@ each was implemented.
 
 > "I want the player fortress to be something that can grow huge and impressive with spires and bridges and fountains and crystals and floating stones etc. we can adorn it with claimed prizes from opportunities." (round 128d, also on the fortress branch)
 
+## 2026-11-04 — round 128j (session 5) — paged simulation, sparse 3D chunks, claims written at load
+
+- The user, verbatim, after the town-flicker fix (fortress b397186): "Why is the slide necessary? If we compute the town and intersect grids can't it load the terrain with the intervals for town already stored?"
+- → The window must still move (the sims are local), but nothing needs copying: today a slide shifts every per-column buffer through a scratch copy (only the layers are paged). And a town's grids are fixed, so its intervals in the terrain can be written by the same kernel that writes an arriving region: no release on leaving, no re-claim after arrival, no waiting for the land, no CPU column copy (FT-68). Only moving grids (physics, floating islands, giants) claim live.
+- The user, verbatim: "Yes. Let's move to paged simulation, sparse 3d chunks, writing claims at load time (are new cities GPU generated?)"
+- → One storage redesign (M128-8, widened): (1) paged simulation: every per-column field paged like the layers (or ring-addressed), so a slide is a page-table/origin change plus filling the new strip; (2) sparse 3D chunks (cx, cy, cz); (3) claims written at load time from the static grids. A short design session with the user first; it goes ahead of deep quarries.
+- Cities today: planned on the CPU in a web worker (settle/plan-worker.ts, WFC), cached; their pieces live on the GPU in the grid table; claims stamped on the GPU from a CPU-built list.
+
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
 - The user, verbatim:
