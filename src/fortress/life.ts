@@ -130,11 +130,35 @@ export class FortressLife implements Routine {
     return this.order;
   }
 
-  /** each frame (sim time): the fields seeded */
+  /** each frame (sim time): the fields seeded; (round 128e) what the builders are doing, for the bar */
   update(dt: number): void {
     this.t += dt;
     this.checkReach();
     this.reseed();
+    const crew = { builders: 0, toStores: 0, carrying: 0, working: 0, waiting: 0 };
+    for (const id of this.ids) {
+      const u = this.io.units.recs.get(id);
+      if (!u?.v.alive) continue;
+      crew.builders++;
+      const p = (u.work as Work | undefined)?.phase ?? 'idle';
+      if (p === 'toPile') crew.toStores++;
+      else if (p === 'toSite') crew.carrying++;
+      else if (p === 'working') crew.working++;
+      else crew.waiting++;
+    }
+    this.io.fort.crew = crew;
+  }
+
+  /**
+   * (round 128e, FT-49) Where to look when the builders start: between the stores and the first block they'll build,
+   * and how far apart those are (window world).
+   */
+  focus(): { at: V2; span: number } {
+    const h = this.io.heap();
+    const b = this.sites()[0] ?? this.todo()[0];
+    if (!b) return { at: h, span: 0 };
+    const [x, y] = this.io.fort.centre(b.cell);
+    return { at: [(h[0] + x) / 2, (h[1] + y) / 2], span: Math.hypot(x - h[0], y - h[1]) };
   }
 
   /**

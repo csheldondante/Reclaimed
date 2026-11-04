@@ -16834,3 +16834,19 @@ every card through the writing lint). Headless scripts/fortressmenu.mjs from the
 town finds a tower, the wall, a warehouse, a granary, a house, a dome, a smithy and a site; real taps on the first three
 show their cards (shot menu-inspect-town.png, looked at: the card fits the bar). Not highlighted on the map yet.
 
+## 2026-11-04 — round 128e (`fortress`): the builders are shown (FT-49)
+
+**Why.** The user: "The agents never appeared for me to begin work." Played the way the user starts it
+(scripts/fortressmenu.mjs: the menu's Fortress button, Houses, taps, Build; at the default and the low tier): the 8
+builders are spawned and work — the first loads go in within 8 s and a block stands in ~12 s at 1x — but they start at
+the town's own stores, inside its walls, figures a few pixels high at the planning zoom among the town's roofs; and the
+houses planned at the opening view land among the town's buildings too. Nothing on screen said they were there.
+
+**What.** FortressLife writes what the builders are doing (Fortress.crew: going to the stores, carrying, building,
+waiting) and the bar says it while building: "8 builders. 3 carry loads, 2 build and 3 go to the stores." The first
+Build moves the view to frame the stores and the first block (zoom from their distance, 4 to 9).
+
+**Checks.** fortressmenu: the builders alive and on screen after Build, the bar line there, then working (3 loads in,
+a block up). Shot menu-build.png looked at: the view on the town and the planned blocks; the builders are inside the
+walls, behind the roofs — still hard to see there (FT-52: an outline through roofs).
+

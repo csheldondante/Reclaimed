@@ -105,7 +105,8 @@ await run({ name: 'fortressmenu', kind: 'behaviour', size: '412x915', dpr: 1, ec
       };
     });
   const p1 = await people();
-  console.log('after Build', JSON.stringify(p1));
+  const crew = await page.evaluate(() => [...document.querySelectorAll('.fort-info p')].map((e) => e.textContent));
+  console.log('after Build', JSON.stringify(p1), JSON.stringify(crew));
   if (OUT) await page.screenshot({ path: `${OUT}/menu-build.png` });
   // a close look at the first of them
   await page.evaluate(() => {
@@ -165,7 +166,7 @@ await run({ name: 'fortressmenu', kind: 'behaviour', size: '412x915', dpr: 1, ec
   })));
   if (OUT) await page.screenshot({ path: `${OUT}/menu-builder-open.png` });
   R.check("Inspect shows the old town's buildings", townCards.some((c) => c.length > 1 && /before your fortress/.test(c.join(' '))), JSON.stringify(townCards));
-  R.check('the builders came out on Build', p1.life && p1.alive > 0, JSON.stringify(p1));
+  R.check('the builders came out on Build, on screen, and the bar says what they do', p1.life && p1.alive > 0 && p1.onScreen > 0 && crew.some((l) => /^\d+ builders\./.test(l)), JSON.stringify([p1, crew]));
   R.check('they work (loads brought)', p2.stats?.trips > 0 || p2.built?.built > 0, JSON.stringify(p2));
   R.check('Plan brings the build menu back', menu.houses && menu.erase && menu.build && menu.mode === 'plan', JSON.stringify(menu));
   R.check('Build again runs time', p2.mode === 'build' && p2.speed > 0, JSON.stringify(p2));

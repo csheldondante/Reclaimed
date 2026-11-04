@@ -3032,6 +3032,7 @@ export class LevelScene implements Scene {
         // (the world API attached: the agents get the terrain, so a load a builder drops — it falls, it's knocked down —
         // falls to the ground as the settlements' do; without it the agents' toss threw)
         this.worldApi ??= attachSim(this.core);
+        const first = !this.fortressLife;
         this.fortressLife ??= new FortressLife(
           {
             units: this.units!,
@@ -3055,6 +3056,16 @@ export class LevelScene implements Scene {
         );
         fort.setMode('build');
         this.speed = runSpeed;
+        // (round 128e, FT-49; the user: "The agents never appeared for me to begin work": they come out of the town's
+        // stores among its roofs, a figure a few pixels high at the planning zoom) the view moves to frame the stores and
+        // the first block, close enough to see them
+        // (the first Build only: later the player looks where they like)
+        if (first) {
+          const look = this.fortressLife.focus();
+          core.camera.target[0] = look.at[0];
+          core.camera.target[1] = look.at[1] + 6;
+          core.camera.zoom = Math.max(4, Math.min(9, 260 / Math.max(20, look.span)));
+        }
       },
       plan: () => {
         fort.setMode('plan');

@@ -99,6 +99,21 @@ export function buildingLine(built: number, total: number): string {
   return `Building: ${built} of ${total} blocks done`;
 }
 
+/**
+ * (round 128e, FT-49; the user: "The agents never appeared for me to begin work") What the builders are doing:
+ * "8 builders. 3 carry loads, 2 build, 3 fetch from the stores."
+ */
+export function crewLine(c: { builders: number; toStores: number; carrying: number; working: number; waiting: number }): string {
+  if (!c.builders) return 'There are no builders.';
+  const parts: string[] = [];
+  if (c.carrying) parts.push(`${c.carrying} ${c.carrying === 1 ? 'carries a load' : 'carry loads'}`);
+  if (c.working) parts.push(`${c.working} ${c.working === 1 ? 'builds' : 'build'}`);
+  if (c.toStores) parts.push(`${c.toStores} ${c.toStores === 1 ? 'goes' : 'go'} to the stores`);
+  if (c.waiting) parts.push(`${c.waiting} ${c.waiting === 1 ? 'waits' : 'wait'}`);
+  const head = `${c.builders} ${c.builders === 1 ? 'builder' : 'builders'}.`;
+  return parts.length ? `${head} ${list(parts)}.` : head;
+}
+
 /** (round 128d, FT-20) Building: blocks no builder can walk to from the heap. */
 export function cutOffLine(n: number): string {
   return `${n === 1 ? '1 block' : `${n} blocks`} can't be reached from the stores. Deep water or a cliff is in the way.`;

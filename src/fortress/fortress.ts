@@ -60,6 +60,8 @@ export class Fortress {
   /** (round 128e, FT-48) or the thing of the old town Inspect picked (its card in the panel) */
   inspectedTown: TownThing | null = null;
   readonly onChange: (() => void)[] = [];
+  /** (round 128e, FT-49) what the builders are doing now (FortressLife writes it; null before the first Build) */
+  crew: { builders: number; toStores: number; carrying: number; working: number; waiting: number } | null = null;
   /** (round 128d, FT-20) blocks to build that no builder can walk to from the heap (FortressLife: deep water, a cliff) */
   cutOff = 0;
   /** the ground under the box is known (the level's surface read over every column): planning may start */
