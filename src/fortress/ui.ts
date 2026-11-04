@@ -12,7 +12,7 @@ import { DEFS } from './defs';
 import type { Fortress } from './fortress';
 import { inspectCard, inspectFacts } from './inspect';
 import { townCard } from './townpick';
-import { buildingLine, crewLine, cutOffLine, PAUSED_LINE, planLines, storesLine, structureLines, typeCard } from './words';
+import { buildingLine, crewLine, cutOffLine, SKIP_DONE, SKIPPING_LINE, PAUSED_LINE, planLines, storesLine, structureLines, typeCard } from './words';
 
 const CSS = `
 .fort-bar{position:absolute;left:0;right:0;bottom:0;padding:6px 8px calc(8px + env(safe-area-inset-bottom));
@@ -30,6 +30,7 @@ const CSS = `
 .fort-info .short{color:#ff9c7a}
 .fort-info .title{color:#f1d58a;font-weight:700;font-size:14px}
 .fort-row button.inspect{flex:0 0 30%}
+.fort-row button.skip{flex:2}
 .fort-top{position:absolute;left:50%;top:8px;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;
   gap:3px;z-index:30;pointer-events:none;width:max-content;max-width:96vw}
 .fort-top div{background:rgba(20,22,26,.82);color:#eee;padding:4px 11px;border-radius:13px;font:13px system-ui,sans-serif;white-space:nowrap}
@@ -44,7 +45,16 @@ export interface FortressBarHooks {
   build(): void;
   /** Plan pressed: back to planning, time stops */
   plan(): void;
+  /** (round 128e, FT-50) while building: run time at this speed (1, 4, 16) */
+  speed(n: number): void;
+  /** (FT-50) Skip to done: time runs fast until the plan stands, or stops early with a reason (Fortress.note) */
+  skip(): void;
+  /** the speed time runs at now, and whether it's skipping */
+  now(): { speed: number; skipping: boolean };
 }
+
+/** (round 128e, FT-50) the speeds a tap picks while building */
+export const SPEEDS = [1, 4, 16] as const;
 
 export class FortressBar {
   readonly root: HTMLDivElement;
@@ -54,12 +64,18 @@ export class FortressBar {
   private gateBtn: HTMLButtonElement;
   private towerBtn: HTMLButtonElement;
   private planOnly: HTMLElement[] = [];
+  /** (round 128e, FT-50) while building: 1x, 4x, 16x and Skip to done */
+  private timeRow: HTMLDivElement;
+  private speedBtns: HTMLButtonElement[] = [];
+  private skipBtn: HTMLButtonElement;
   private goBtn: HTMLButtonElement;
   private inspectBtn: HTMLButtonElement;
   private top: HTMLDivElement;
   private modeLine: HTMLDivElement;
   private storeLine: HTMLDivElement;
   private frame: HTMLDivElement;
+
+  private now: () => { speed: number; skipping: boolean } = () => ({ speed: 1, skipping: false });
 
   /** (round 128e, FT-48) the old town's name, for its cards */
   townName = 'the town';
@@ -142,7 +158,30 @@ export class FortressBar {
       this.render();
     };
     goRow.append(this.inspectBtn, this.goBtn);
+    // (round 128e, FT-50; the user: "There is no way to fast forward or skip time to each building being completed")
+    this.timeRow = document.createElement('div');
+    this.timeRow.className = 'fort-row';
+    for (const n of SPEEDS) {
+      const b = document.createElement('button');
+      b.textContent = `${n}x`;
+      b.onclick = () => {
+        hooks.speed(n);
+        this.render();
+      };
+      this.speedBtns.push(b);
+      this.timeRow.appendChild(b);
+    }
+    this.skipBtn = document.createElement('button');
+    this.skipBtn.textContent = 'Skip to done';
+    this.skipBtn.className = 'skip';
+    this.skipBtn.onclick = () => {
+      hooks.skip();
+      this.render();
+    };
+    this.timeRow.appendChild(this.skipBtn);
+    this.root.appendChild(this.timeRow);
     this.root.appendChild(goRow);
+    this.now = () => hooks.now();
     this.planOnly = [grid, row];
     // (the bar takes its own presses: none reach the map under it)
     for (const ev of ['pointerdown', 'pointerup', 'click', 'wheel', 'touchstart']) this.root.addEventListener(ev, (e) => e.stopPropagation());
@@ -177,6 +216,9 @@ export class FortressBar {
       // (round 128e, FT-49) the builders, by what they're doing: they're small among a town's roofs
       if (f.crew && p.built < p.total) out.push({ text: crewLine(f.crew) });
       if (f.cutOff > 0) out.push({ text: cutOffLine(f.cutOff), short: true });
+      // (round 128e, FT-50) why Skip stopped, or that it's running
+      if (f.note) out.push({ text: f.note, short: f.note !== SKIP_DONE });
+      else if (this.now().skipping) out.push({ text: SKIPPING_LINE });
       out.push({ text: 'Press Plan to stop time and plan more.' });
       return out;
     }
@@ -216,6 +258,11 @@ export class FortressBar {
     this.towerBtn.disabled = t.type !== 'wall' && !t.tower;
     // (inspecting: the card in place of the types — the bar stays phone-sized)
     for (const el of this.planOnly) el.style.display = planning && !t.inspect ? '' : 'none';
+    // (round 128e, FT-50) the time row while building
+    this.timeRow.style.display = planning || t.inspect ? 'none' : '';
+    const now = this.now();
+    this.speedBtns.forEach((b, i) => b.classList.toggle('on', !now.skipping && now.speed === SPEEDS[i]));
+    this.skipBtn.classList.toggle('on', now.skipping);
     this.goBtn.textContent = planning ? 'Build' : 'Plan';
     this.inspectBtn.classList.toggle('on', !!t.inspect);
     // (another tool picked: the card closes)

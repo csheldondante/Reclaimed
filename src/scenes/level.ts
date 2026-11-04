@@ -115,6 +115,12 @@ import { SettlementsView } from '../settle/view';
 import { ShipsView } from '../settle/shipsview';
 import { Fortress } from '../fortress/fortress';
 import { FortressBar } from '../fortress/ui';
+import { SKIP_DONE, skipCutOffLine, skipShortLine } from '../fortress/words';
+
+/** (round 128e, FT-50) how fast Skip to done runs time (the ticks a frame are the quality tier's times this), and how
+ *  long (sim s) it lets the plan look blocked before it stops */
+const SKIP_SPEED = 32;
+const SKIP_GRACE = 4;
 import { FortressLife } from '../fortress/life';
 import { START_STORES } from '../fortress/defs';
 import { fortressPieces } from '../fortress/pieces';
@@ -372,6 +378,10 @@ export class LevelScene implements Scene {
   /** (fortress slice 1, milestone 2) its builders, from the first Build */
   private fortressLife?: FortressLife;
   private fortressBarAt = 0;
+  /** (round 128e, FT-50) Skip to done running; how long (sim s) it has found the plan blocked; the speed to go back to */
+  private fortressSkip = false;
+  private fortressSkipBlocked = 0;
+  private fortressRunSpeed = 1;
   /** (round 128d) its built blocks claimed in the columns: the agents, the water and the ground go round them */
   private fortressClaims?: FortressClaims;
   /** the world as modules (docs/WORLD_API.md), made on first use of reclaimed.world */
@@ -2397,6 +2407,7 @@ export class LevelScene implements Scene {
       timed('settle', () => this.settlements!.update(dt * this.speed));
       if (this.fortressLife) {
         this.fortressLife.update(dt * this.speed);
+        if (this.fortressSkip) this.skipFrame(dt * this.speed);
         // (the stores and progress lines: twice a second)
         if ((this.fortressBarAt += dt) > 0.5) {
           this.fortressBarAt = 0;
@@ -3026,7 +3037,9 @@ export class LevelScene implements Scene {
     S.onSlide.push(() => claims.slid());
     S.onWarp.push(() => claims.slid());
     // (round 128d) Build: the plan goes to the builders and time runs (at ?speed=); Plan: time stops again
-    const runSpeed = Math.max(1, Number(this.host.params.get('speed') ?? 1));
+    // (round 128e, FT-50) the speed picked while building (1x, 4x, 16x), and Skip to done
+    let runSpeed = Math.max(1, Number(this.host.params.get('speed') ?? 1));
+    this.fortressSkip = false;
     this.fortressBar = new FortressBar(this.host.ui, fort, {
       build: () => {
         // (the world API attached: the agents get the terrain, so a load a builder drops — it falls, it's knocked down —
@@ -3069,8 +3082,24 @@ export class LevelScene implements Scene {
       },
       plan: () => {
         fort.setMode('plan');
+        this.fortressSkip = false;
+        fort.note = null;
         this.speed = 0;
       },
+      speed: (n) => {
+        runSpeed = n;
+        this.fortressSkip = false;
+        fort.note = null;
+        if (fort.mode === 'build') this.speed = n;
+      },
+      skip: () => {
+        fort.note = null;
+        this.fortressSkip = true;
+        this.fortressSkipBlocked = 0;
+        this.fortressRunSpeed = runSpeed;
+        this.speed = SKIP_SPEED;
+      },
+      now: () => ({ speed: this.fortressSkip ? SKIP_SPEED : runSpeed, skipping: this.fortressSkip }),
     });
     this.fortressBar.townName = rec.name;
     // the power coming in: the fortress's built blocks (a ledger number: nothing spends it yet)
@@ -3088,6 +3117,26 @@ export class LevelScene implements Scene {
     // time stops while planning (the speed-0 path: the sim, the units, the settlements and the day all wait)
     // (?fpause=0: time runs while planning — to compare)
     if (this.host.params.get('fpause') !== '0') this.speed = 0;
+  }
+
+  /**
+   * (round 128e, FT-50) Skip to done, each frame: back to the speed picked when everything planned stands, or early when
+   * the plan can't be finished (cut off, or the stores lack what's left) for SKIP_GRACE sim seconds: the bar says why.
+   */
+  private skipFrame(simDt: number): void {
+    const fort = this.fortress!;
+    const stop = (note: string) => {
+      this.fortressSkip = false;
+      fort.note = note;
+      this.speed = this.fortressRunSpeed;
+      this.fortressBar?.render();
+    };
+    const p = fort.progress();
+    if (p.built >= p.total) return stop(SKIP_DONE);
+    const why = this.fortressLife!.blocked();
+    this.fortressSkipBlocked = why ? this.fortressSkipBlocked + simDt : 0;
+    if (!why || this.fortressSkipBlocked < SKIP_GRACE) return;
+    stop('short' in why ? skipShortLine(why.short) : skipCutOffLine(why.cutOff));
   }
 
   /** Fortress: a tap plans (or erases, or gates) the block it lands on (Townscaper's way: town.pickBlock). */

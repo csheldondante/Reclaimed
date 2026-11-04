@@ -13,7 +13,7 @@ import { pickFace, placeFor } from './pick';
 import { fortressPieces, LOOK_GHOST } from './pieces';
 import { FortressPlan } from './plan';
 import { BuildBook } from './work';
-import { buildingLine, storesLine, typeCard } from './words';
+import { buildingLine, crewLine, skipCutOffLine, SKIP_DONE, skipShortLine, SKIPPING_LINE, storesLine, typeCard } from './words';
 
 const grid = new TownGrid(80, 92, { seed: 7 });
 const nbr = (c: number, e: number) => grid.nbr[c * 4 + e];
@@ -232,6 +232,9 @@ describe('farms read; blocks still to build drawn see-through while building', (
 describe('the compact lines read plainly (docs/WRITING.md)', () => {
   it('every type\'s card, the building and stores lines pass the lint', () => {
     const lines = STRUCTURE_TYPES.map((t) => typeCard(DEFS[t]));
+    // (round 128e: the builders' line, Skip's)
+    lines.push(crewLine({ builders: 8, toStores: 3, carrying: 3, working: 2, waiting: 0 }), crewLine({ builders: 1, toStores: 0, carrying: 0, working: 0, waiting: 1 }));
+    lines.push(SKIPPING_LINE, SKIP_DONE, skipShortLine({ log: 12, stone: 3 }), skipCutOffLine(2));
     lines.push(buildingLine(3, 10), buildingLine(10, 10), buildingLine(0, 0), storesLine({ log: 120, stone: 80, grain: 150, power: 3 }, 6));
     for (const l of lines) expect(lint(l), l).toEqual([]);
     expect(typeCard(DEFS.farm)).toBe('Farms: 1 wood a block. Makes 2 grain a day. 1 worker a block. Flat.');

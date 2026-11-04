@@ -114,6 +114,16 @@ export function crewLine(c: { builders: number; toStores: number; carrying: numb
   return parts.length ? `${head} ${list(parts)}.` : head;
 }
 
+/** (round 128e, FT-50) Skip to done: running, done, or stopped early and why */
+export const SKIPPING_LINE = 'Skipping ahead until everything is built.';
+export const SKIP_DONE = 'Everything you planned is built.';
+export function skipShortLine(short: Goods): string {
+  return `Skip stopped. The stores need ${goodsText(short)} more to finish the plan.`;
+}
+export function skipCutOffLine(n: number): string {
+  return `Skip stopped. ${cutOffLine(n)}`;
+}
+
 /** (round 128d, FT-20) Building: blocks no builder can walk to from the heap. */
 export function cutOffLine(n: number): string {
   return `${n === 1 ? '1 block' : `${n} blocks`} can't be reached from the stores. Deep water or a cliff is in the way.`;

@@ -142,6 +142,39 @@ await run({ name: 'fortressmenu', kind: 'behaviour', size: '412x915', dpr: 1, ec
   await sleep(4000);
   const p2 = await people();
   console.log('after Build again', JSON.stringify(p2));
+  // (FT-50) the time row: 16x, then Skip to done until the plan stands
+  await tapButton('16x');
+  const sp16 = await page.evaluate(() => window.reclaimed.scene.speed);
+  await tapButton('Skip to done');
+  const skipSpeed = await page.evaluate(() => window.reclaimed.scene.speed);
+  const t0 = Date.now();
+  await page.waitForFunction(() => window.reclaimed.fortress.note, { timeout: 240000, polling: 500 });
+  const skipped = await page.evaluate(() => ({ note: window.reclaimed.fortress.note, built: window.reclaimed.fortress.progress(), speed: window.reclaimed.scene.speed, bar: [...document.querySelectorAll('.fort-info p')].map((e) => e.textContent) }));
+  console.log('skip', Math.round((Date.now() - t0) / 1000), 's', JSON.stringify({ sp16, skipSpeed, ...skipped }));
+  if (OUT) await page.screenshot({ path: `${OUT}/menu-skipped.png` });
+  // a plan the stores can't pay for: Skip stops early and says what's short
+  await tapButton('Plan');
+  const tall = await page.evaluate(() => {
+    const f = window.reclaimed.fortress;
+    const s = f.plan.structures()[0];
+    const c = [...s.cells.keys()][0];
+    let n = 0;
+    for (let l = f.plan.top(c) + 1; n < 3; l++, n++) if (!f.paint(c, l, 'house')) break;
+    // (the stores emptied of wood and stone, nothing coming in)
+    const st = window.reclaimed.settlements;
+    const rec = st.settlement(st.pinnedId);
+    for (const g of ['log', 'stone']) rec.stores[g] = { stock: 0, rate: 0 };
+    return n;
+  });
+  await tapButton('Build');
+  await tapButton('Skip to done');
+  await page.waitForFunction(() => window.reclaimed.fortress.note, { timeout: 300000, polling: 500 });
+  const short = await page.evaluate(() => ({ note: window.reclaimed.fortress.note, built: window.reclaimed.fortress.progress(), stores: window.reclaimed.fortress.stores(), speed: window.reclaimed.scene.speed }));
+  console.log('skip short', tall, JSON.stringify(short));
+  if (OUT) await page.screenshot({ path: `${OUT}/menu-skip-short.png` });
+  R.check('16x runs time at 16; Skip runs it faster', sp16 === 16 && skipSpeed > 16, JSON.stringify({ sp16, skipSpeed }));
+  R.check('Skip to done stops when the plan stands, back at the speed picked', skipped.note === 'Everything you planned is built.' && skipped.built.built === skipped.built.total && skipped.speed === 16, JSON.stringify(skipped));
+  R.check('Skip stops early when the stores run short, and says what is short', /^Skip stopped\. The stores need/.test(short.note ?? '') && short.built.built < short.built.total, JSON.stringify(short));
   // a builder out in the open, close up: is it drawn?
   const out = await page.evaluate(async () => {
     const Rc = window.reclaimed;

@@ -150,6 +150,30 @@ export class FortressLife implements Routine {
   }
 
   /**
+   * (round 128e, FT-50) Why the plan can't be finished now (Skip to done stops on it): every block left is cut off from
+   * the stores, or nobody carries a load and the stores lack what the blocks left still need. null: it's going on (or
+   * done).
+   */
+  blocked(): { cutOff: number } | { short: Goods } | null {
+    const todo = this.todo();
+    if (!todo.length) return null;
+    if (!this.sites().length) return { cutOff: this.unreachable().length };
+    const c = this.io.fort.crew;
+    if (c && (c.carrying || c.working)) return null;
+    const need: Goods = {};
+    for (const b of todo) for (const [g, v] of Object.entries(this.book.need(b)) as [Good, number][]) need[g] = (need[g] ?? 0) + v;
+    const st = this.io.stores();
+    const short: Goods = {};
+    for (const [g, v] of Object.entries(need) as [Good, number][]) {
+      const s = Math.ceil(v - (st[g] ?? 0));
+      if (s > 0) short[g] = s;
+    }
+    // (some of it is in the stores: they'll fetch it — not blocked until nothing that's there is needed)
+    const any = (Object.keys(need) as Good[]).some((g) => (st[g] ?? 0) >= 1);
+    return Object.keys(short).length && !any ? { short } : null;
+  }
+
+  /**
    * (round 128e, FT-49) Where to look when the builders start: between the stores and the first block they'll build,
    * and how far apart those are (window world).
    */

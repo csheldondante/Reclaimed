@@ -16850,3 +16850,20 @@ Build moves the view to frame the stores and the first block (zoom from their di
 a block up). Shot menu-build.png looked at: the view on the town and the planned blocks; the builders are inside the
 walls, behind the roofs — still hard to see there (FT-52: an outline through roofs).
 
+## 2026-11-04 — round 128e (`fortress`): time controls while building, Skip to done (FT-50)
+
+**Why.** The user: "There is no way to fast forward or skip time to each building being completed."
+
+**What.** While building, a row above Inspect/Plan: 1x, 4x, 16x (the one running lit) and Skip to done. Skip runs time
+at 32x (world-core caps the ticks a frame at the tier's maxTicksPerFrame times the speed, so a phone gets what it can)
+and each frame (level.ts skipFrame) checks: every planned block standing → back to the speed picked, the bar says
+"Everything you planned is built."; FortressLife.blocked() for 4 sim s → it stops and says why: every block left cut off
+from the stores (the FT-20 words, "Skip stopped." first), or nobody carrying or building and the stores lacking what the
+blocks left still need ("Skip stopped. The stores need 4 wood and 2 stone more to finish the plan."). Plan or a speed
+button ends a skip. Pace numbers untuned: SKIP_SPEED 32, SKIP_GRACE 4.
+
+**Checks.** fortressmenu (by finger): 16x runs at 16; Skip at 32 finished 5 blocks in 9 s wall and came back to 16 with
+the line; three more blocks with the stores emptied of wood and stone: it stopped with the stores line (5 of 8 built).
+An earlier draft's 40-high stack stopped on "1 block can't be reached" (the top past the field's reach): that reason
+works too. Lines through the lint (build.test.ts). Shot menu-skip-short.png looked at: the row fits at 412.
+
