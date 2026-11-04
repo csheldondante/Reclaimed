@@ -21,6 +21,7 @@ user) · `deferred` (agreed for later).
 | V128-3 | Opportunity UX redesign: messengers of all kinds (advisors, a rider from a village under attack, strangers, petitioners) arrive at the fortress, and from inside the city (a university finds research that unlocks structures or units) and tell you about things on the map; clean cards; a picture rendered from that map area | L | deferred |
 | V128-4 | Unit design from scavenged goods and beasts caught and raised in the city (the unit editor) | L | deferred |
 | V128-5 | Ruins from destroyed cities: resources to claim, structures to repurpose | L | deferred |
+| V128-7 | Art pass (far off, after the loop is fun): convert the paid Synty assets into our editor/generator formats (sprite bakers if efficient) for units, animations, flora, fauna; extracted generators over shipped meshes; textures and higher-fidelity shading for trees, terrain, structures. Raw assets stay out of the public repo (check the licence for derived data) | L | deferred |
 | V128-6 | Phone perf at city/army/ship scale: stand-ins for far buildings, crowds simplified at a distance, simulation on the player's targets; phone-bench targets as each piece lands | L | open |
 
 ## Round 126 (2026-11-02, session 5, `dialog2`) — petitions as dialogs, the cast, plain writing (DECISIONS round 126)
