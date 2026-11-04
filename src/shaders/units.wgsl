@@ -229,6 +229,8 @@ fn downField(fld: u32, s: u32, c: vec2<i32>, pos: vec2<f32>, here: f32) -> vec2<
     let l = navLink(s, d);
     if (l == 0u) { continue; }
     let t = colIdxI(nbr(c, d)) * NAV_K + l - 1u;
+    // (round 128d, FT-20: not into deep water from out of it — agents.wgsl DEEP; the relax reads it the same way)
+    if (navWater(t) > DEEP && navWater(s) <= DEEP) { continue; }
     let dn = dist[fld * N + t];
     if (dn >= FAR) { continue; }
     let toward = normalize(cellPos(nbr(c, d)) - pos);

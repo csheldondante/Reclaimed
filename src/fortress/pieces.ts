@@ -21,12 +21,11 @@ import { adjacency, quadCorners } from '../structures/tiles/builder';
 import { DEFS } from './defs';
 import { towered, type FortressPlan } from './plan';
 import { shapesOf, type Courtyard, type Shapes } from './shapes';
+import { WALL_HALF, WALL_LINTEL } from './solid';
 
 /** (round 128d) look bit 23: a block planned, not built yet — drawn see-through while building (structgame.wgsl) */
 export const LOOK_GHOST = 1 << 23;
-/** a thin wall's half width (a cell is ~5 m across) and a gate's lintel */
-const WALL_HALF = 1.1;
-const WALL_LINTEL = 1.6;
+// (a thin wall's half width — a cell is ~5 m across — and a gate's lintel: solid.ts's, what's solid of it the same)
 
 export interface PieceInputs {
   plan: FortressPlan;

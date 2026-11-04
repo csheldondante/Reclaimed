@@ -183,7 +183,8 @@ export class Plants {
    * cells (FT-26: its courtyards were hidden under pines). Done at the next tick: while time is stopped, it waits.
    */
   clear(x: number, y: number, radius: number): void {
-    this.core.globals.events.push({ kind: EventKind.Edit, x, y, z: OP_FELL * 32 + STROKE_START, radius, strength: 1 });
+    // (round 128d: quiet — the cells' plants go, the ground's systems there stay asleep: sim/sleep.ts touch)
+    this.core.globals.events.push({ kind: EventKind.Edit, x, y, z: OP_FELL * 32 + STROKE_START, radius, strength: 1, quiet: true });
   }
 
   /**

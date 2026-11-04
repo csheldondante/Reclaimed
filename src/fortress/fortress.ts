@@ -44,6 +44,8 @@ export class Fortress {
   /** the structure last painted (the panel's) */
   selected: number | null = null;
   readonly onChange: (() => void)[] = [];
+  /** (round 128d, FT-20) blocks to build that no builder can walk to from the heap (FortressLife: deep water, a cliff) */
+  cutOff = 0;
   /** the ground under the box is known (the level's surface read over every column): planning may start */
   ready = false;
   /** the ground's top at a box column */
@@ -52,9 +54,14 @@ export class Fortress {
   constructor(readonly box: FortressBox, private io: FortressIO, seed = 7) {
     if (box.origin[1] & 1) throw new Error('fortress box: its row origin must be even (the lattice\'s odd-row shift)');
     const grid = new TownGrid(box.w, box.h, { seed });
+    // (round 128d) the ground as it was before the fortress stood on it, kept a column the first time it's read: what's
+    // built is claimed in the columns (claims.ts), and the surface read after it is the wall's top, not the ground —
+    // a block's foot (solid.ts) and a cell planned beside it (Town.base) would stand on the wall
+    const kept = new Float32Array(box.w * box.h).fill(NaN);
     this.groundOfCol = (col) => {
+      if (!Number.isNaN(kept[col])) return kept[col];
       const [x, y] = this.boxToWindowXY(col);
-      return io.ground(x, y);
+      return (kept[col] = io.ground(x, y));
     };
     this.town = new Town(box.w, box.h, {
       ground: this.groundOfCol,
@@ -65,6 +72,11 @@ export class Fortress {
     }, { grid });
     this.plan = new FortressPlan(grid);
     this.grid = grid;
+  }
+
+  /** the ground's top at a box column (window z) */
+  groundAt(col: number): number {
+    return this.groundOfCol(col);
   }
 
   /** box column → its window column (-1: outside the window) */
@@ -269,6 +281,12 @@ export class Fortress {
     // (what grew back on it since it was planned goes as it stands)
     this.clearPlants([cell]);
     this.changedOver([cell]);
+    for (const h of this.onChange) h();
+  }
+
+  /** (FT-20) How many blocks the builders can't reach now (FortressLife): the bar says so. */
+  setCutOff(n: number): void {
+    this.cutOff = n;
     for (const h of this.onChange) h();
   }
 

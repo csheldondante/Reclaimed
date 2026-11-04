@@ -36,6 +36,8 @@ export type OwnerId = number;
 export const OWNER_ROCK: OwnerId = 1;
 /** (round 117/119) the settlements' buildings (src/settle/view.ts: one instance a building, a wall run, a bridge) */
 export const OWNER_STRUCT: OwnerId = 2;
+/** (round 128d) the player's fortress's built blocks (src/fortress/claims.ts: one instance a structure) */
+export const OWNER_FORT: OwnerId = 3;
 
 export interface ExternalCol {
   x: number;

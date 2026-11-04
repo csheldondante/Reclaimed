@@ -118,6 +118,7 @@ import { FortressBar } from '../fortress/ui';
 import { FortressLife } from '../fortress/life';
 import { START_STORES } from '../fortress/defs';
 import { fortressPieces } from '../fortress/pieces';
+import { FortressClaims } from '../fortress/claims';
 import type { StructurePieces } from '../api/contracts/structures';
 import type { GridStyle } from '../api/contracts/settlement';
 import type { CitySpec } from '../api/contracts/structures';
@@ -371,6 +372,8 @@ export class LevelScene implements Scene {
   /** (fortress slice 1, milestone 2) its builders, from the first Build */
   private fortressLife?: FortressLife;
   private fortressBarAt = 0;
+  /** (round 128d) its built blocks claimed in the columns: the agents, the water and the ground go round them */
+  private fortressClaims?: FortressClaims;
   /** the world as modules (docs/WORLD_API.md), made on first use of reclaimed.world */
   private worldApi?: Sim;
   /** round 83, V21: ?cutaway (api/puck.ts, api/cutaway.ts) */
@@ -1869,6 +1872,8 @@ export class LevelScene implements Scene {
       fortress: this.fortress,
       // (milestone 2) its builders once Build was pressed: stats (trips, built, starved), ids, book
       fortressLife: () => this.fortressLife,
+      // (round 128d) its built blocks' claims in the columns: claimed() per structure, stats
+      fortressClaims: () => this.fortressClaims,
       townDebug: this.townDebug,
       // (?flow=1) the flow model: flow.water / flow.lava (LiquidSystem: addSpring), flow.steady (last read),
       // flow.breach() (the lab's plug dug out), flow.sleep (awake chunks)
@@ -3004,6 +3009,16 @@ export class LevelScene implements Scene {
     }, ignoreTeardown);
     S.onSlide.push(() => fort.slid());
     S.onWarp.push(() => fort.slid());
+    // (round 128d) what's built is solid to the world (fortress/claims.ts): claimed in the columns, as the towns' are
+    const claims = (this.fortressClaims = new FortressClaims(fort, {
+      external: () => this.integrity?.external ?? null,
+      columns: (cols, then) => this.integrity?.columnsReady(cols, then) ?? Promise.resolve(),
+      dims: { w: dims.w, h: dims.h },
+      touched: (x0, y0, x1, y1) => this.hybrid?.edit((x0 + x1) / 2, (y0 + y1) / 2, Math.max(x1 - x0, y1 - y0) / 2),
+    }));
+    S.onBeforeSlide.push((dx, dy) => claims.beforeSlide(dx, dy));
+    S.onSlide.push(() => claims.slid());
+    S.onWarp.push(() => claims.slid());
     // (round 128d) Build: the plan goes to the builders and time runs (at ?speed=); Plan: time stops again
     const runSpeed = Math.max(1, Number(this.host.params.get('speed') ?? 1));
     this.fortressBar = new FortressBar(this.host.ui, fort, {
@@ -3894,6 +3909,7 @@ export class LevelScene implements Scene {
     this.tunePanel?.dispose();
     this.fortressBar?.dispose();
     this.fortressLife?.dispose();
+    this.fortressClaims?.dispose();
     this.bugReport?.dispose();
     this.stationsBar?.dispose();
     this.noiseLab?.dispose();

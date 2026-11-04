@@ -7,6 +7,8 @@ import { cellAt, cellPos, nbr } from '../world/lattice';
 import { NAV_K, type Agents } from './agents';
 
 const FAR = 1e9;
+/** (round 128d, FT-20) water a walker can't go into (agents.wgsl DEEP) */
+const DEEP = 0.9;
 
 /** What a field says at a point: the distance to its seeds and the way down it. */
 export interface FieldSample {
@@ -107,7 +109,10 @@ export class FieldReader {
       if (!l) continue;
       const [qx, qy] = nbr(cx, cy, d);
       if (qx < 0 || qy < 0 || qx >= this.w || qy >= this.h) continue;
-      const dn = this.dist[this.ring.idx(qx, qy) * NAV_K + l - 1];
+      const t = this.ring.idx(qx, qy) * NAV_K + l - 1;
+      // (round 128d, FT-20: not into deep water from out of it — agents.wgsl DEEP, units.wgsl downField)
+      if (this.navF[t * 4 + 3] > DEEP && this.navF[s * 4 + 3] <= DEEP) continue;
+      const dn = this.dist[t];
       if (dn >= FAR) continue;
       const [px, py] = cellPos(qx, qy);
       const len = Math.hypot(px - x, py - y) || 1;

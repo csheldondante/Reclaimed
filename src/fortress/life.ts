@@ -13,6 +13,7 @@ import type { Good, Goods } from '../api/contracts/fortress';
 import type { FactionId } from '../api/contracts/world';
 import type { UnitId, V2 } from '../api/contracts/units';
 import { buildOrder } from '../agents/buildcrew';
+import type { FieldReader } from '../agents/fieldreader';
 import type { Block } from '../build/town';
 import { R } from '../settle/life';
 import { F, G, type AgentUnits, type Routine, type UnitRec } from '../units/agent-units';
@@ -30,6 +31,11 @@ const THERE = 2.4;
 const REACH = 5;
 /** blocks seeded as sites at once (the builders' field leads to the nearest) */
 const SITES = 6;
+/**
+ * (round 128d, FT-20) sim seconds a block's stands stay out of the heap's field before it counts as unreachable (the
+ * field fills outward from the heap a few sweeps a tick: a far site is out of it for a moment at first)
+ */
+const CUT_OFF_S = 8;
 
 export interface FortressLifeIO {
   units: AgentUnits;
@@ -62,6 +68,11 @@ export class FortressLife implements Routine {
   private order: Block[] = [];
   private orderAt = -1;
   private t = 0;
+  /** (FT-20) the heap's field read back: which sites a builder can walk to from the heap */
+  private reach: FieldReader;
+  private reachAt = 0;
+  /** per block (cell:level) still to build, the sim time it was first found out of the heap's field */
+  private outSince = new Map<string, number>();
 
   constructor(
     private io: FortressLifeIO,
@@ -77,6 +88,7 @@ export class FortressLife implements Routine {
     A.follow(R.toStore, F.store);
     A.follow(R.working, -1);
     A.workPose(R.working, true);
+    this.reach = A.reader(F.pile).start(500);
     const h = io.heap();
     for (let i = 0; i < builders; i++) {
       const at: V2 = [h[0] + Math.cos(i * 2.4) * 4, h[1] + Math.sin(i * 2.4) * 4];
@@ -99,6 +111,7 @@ export class FortressLife implements Routine {
   }
 
   dispose(): void {
+    this.reach.stop();
     for (const id of this.ids) this.io.units.remove(id);
     if (this.io.units.routine === this) this.io.units.routine = null;
     for (const f of [F.pile, F.site, F.store]) this.io.units.agents.seed(f, []);
@@ -120,11 +133,42 @@ export class FortressLife implements Routine {
   /** each frame (sim time): the fields seeded */
   update(dt: number): void {
     this.t += dt;
+    this.checkReach();
     this.reseed();
   }
 
+  /**
+   * (round 128d, FT-20) The blocks no builder can walk to from the heap: none of its stands is in the heap's field (deep
+   * water is no way to a walker — agents.wgsl DEEP — and a cliff too high none either) for CUT_OFF_S. They're left out
+   * of the sites (a builder isn't sent with a load it can't bring) and the bar says so (Fortress.cutOff).
+   */
+  unreachable(): Block[] {
+    return this.todo().filter((b) => this.isCutOff(b));
+  }
+
+  private isCutOff(b: Block): boolean {
+    const since = this.outSince.get(`${b.cell}:${b.level}`);
+    return since !== undefined && this.t - since >= CUT_OFF_S;
+  }
+
+  private checkReach(): void {
+    if (!this.reach.readAt || this.reach.readAt === this.reachAt) return;
+    this.reachAt = this.reach.readAt;
+    const keep = new Map<string, number>();
+    for (const b of this.todo()) {
+      const k = `${b.cell}:${b.level}`;
+      const ok = this.standsFor(b).some(([x, y]) => isFinite(this.reach.sample(x, y)?.dist ?? Infinity));
+      if (!ok) keep.set(k, this.outSince.get(k) ?? this.t);
+    }
+    this.outSince = keep;
+    const n = this.unreachable().length;
+    if (n !== this.io.fort.cutOff) this.io.fort.setCutOff(n);
+  }
+
   private sites(): Block[] {
-    return this.todo().slice(0, SITES);
+    return this.todo()
+      .filter((b) => !this.isCutOff(b))
+      .slice(0, SITES);
   }
 
   /** the sites still lacking a good (counting only what's been worked in: loads on their way may yet be moved) */
@@ -196,7 +240,7 @@ export class FortressLife implements Routine {
         U.regroup(u, G.stand);
         u.v.state = 'idle';
         w.t -= dt;
-        if (w.t <= 0 && f.mode === 'build' && this.todo().length) w.phase = 'toPile';
+        if (w.t <= 0 && f.mode === 'build' && this.sites().length) w.phase = 'toPile';
         break;
       case 'toPile': {
         go(R.toPile);
@@ -205,7 +249,7 @@ export class FortressLife implements Routine {
         const j = this.nextJob();
         if (!j) {
           // (nothing to build, or nothing it lacks in the stores: wait by the heap)
-          if (this.todo().length) this.stats.starved++;
+          if (this.sites().length) this.stats.starved++;
           Object.assign(w, { phase: 'idle', t: 3 });
           break;
         }
@@ -234,7 +278,8 @@ export class FortressLife implements Routine {
         }
         if (!here) {
           // (its block erased or built under it: the load goes back, it goes back to the heap)
-          if (!this.todo().some((b) => b.cell === job.cell && b.level === job.level)) this.unload(u, w, false);
+          // (FT-20: or found cut off from the heap — no way there: the same)
+          if (!this.todo().some((b) => b.cell === job.cell && b.level === job.level) || this.isCutOff(job)) this.unload(u, w, false);
           break;
         }
         if (here.cell !== job.cell || here.level !== job.level) {

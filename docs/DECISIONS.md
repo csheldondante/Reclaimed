@@ -576,6 +576,17 @@ each was implemented.
   level holds it (a wall spanning an empty level is a bridge's span); nothing floats yet. The block types' height caps
   (houses 4, warehouses and barracks 3, lumber camps and blacksmiths 2) were the old 8's, not design: lifted; yards stay
   flat. Bridges as a type, crystals, floating stones, prize adornments: BACKLOG FT-33..FT-37, not now.
+- The user asked: "Does the flow field around the city path around structures?" (it didn't: the fortress was drawn,
+  not in the columns).
+- → What's built is solid to the world: each built structure claimed as External intervals, as the towns' buildings
+  are. A wall is solid as drawn (its thin band), not its whole cell; a gate is open under its lintel; planned blocks
+  are no obstacle. Deep water is no way for a walker (a ford or a bridge, or the site is reported unreachable).
+- The user, verbatim: "Is the terrain simulation or wind or erosion waking up because of agents? We might want to keep
+  that frozen outside of collapse, spells, or weather events. I think that could be part of the issue."
+- → Only collapse, spells and powers, weather and the player's edits wake the ground's systems. A unit's take or put,
+  a fortress's cells cleared of plants and a building's claim change the columns quietly (applied with the chunk
+  asleep; nothing else runs there). Measured: it played no part in the drowning (the builders' way led through 2.1
+  deep water before anything woke).
 
 ## 2026-11-03 — round 128c (session 5) — the fortress mode: the user's vision
 

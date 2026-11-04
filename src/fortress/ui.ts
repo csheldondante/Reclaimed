@@ -10,7 +10,7 @@
 import { STRUCTURE_TYPES, type StructureType } from '../api/contracts/fortress';
 import { DEFS } from './defs';
 import type { Fortress } from './fortress';
-import { buildingLine, PAUSED_LINE, planLines, storesLine, structureLines, typeCard } from './words';
+import { buildingLine, cutOffLine, PAUSED_LINE, planLines, storesLine, structureLines, typeCard } from './words';
 
 const CSS = `
 .fort-bar{position:absolute;left:0;right:0;bottom:0;padding:6px 8px calc(8px + env(safe-area-inset-bottom));
@@ -127,6 +127,7 @@ export class FortressBar {
     if (f.mode === 'build') {
       const p = f.progress();
       out.push({ text: buildingLine(p.built, p.total) });
+      if (f.cutOff > 0) out.push({ text: cutOffLine(f.cutOff), short: true });
       out.push({ text: 'Press Plan to stop time and plan more.' });
       return out;
     }

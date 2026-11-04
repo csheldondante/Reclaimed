@@ -16679,3 +16679,54 @@ stand on it." FT-26: a house planned on a tree's cell (85 trees near the town); 
 column's veg 1.5, grass) — spans-tree-plan.png / spans-tree-build.png (crowns of the trees round it still lean over). The first site, across the river from the heap, drowned 7 of 8 builders (FT-20), so the check builds
 by the heap. 84 blocks take ~10 minutes at speed 24 with 8 builders (3 trips a keep block): slow to watch, a pacing
 question, not frame cost (no perf measured: for the phone bench if a huge keep feels slow).
+
+## 2026-11-04 — round 128d (`fortress`): built structures are solid to the world; deep water is no way; quiet edits don't wake the ground
+
+**Why.** The user asked "Does the flow field around the city path around structures?" and, verbatim, "Is the terrain
+simulation or wind or erosion waking up because of agents? We might want to keep that frozen outside of collapse,
+spells, or weather events. I think that could be part of the issue." And FT-20: builders sent across a river drowned.
+
+**What was there (measured headless before any change).**
+- *Structures:* nothing of the fortress was in the columns (Fortress's Town stamps nothing; the pieces are only
+  drawn). A ring of 2-level walls with a gate, built: the field from the ring's middle read 26 at a point 26 outside
+  it, straight through the wall, and walkers sent there walked through (scripts/fortresspath.mjs).
+- *Drowning:* reproduced — a house across the river from the heap (the crossing whose field-led way waded deepest)
+  killed 8 of 8 builders. The field (seeded at the site, its gradient followed from the heap) led through water 2.09
+  deep: a wet step cost +3 and no more (scripts/fortressford.mjs).
+- *Waking:* every wake of the sleep counted by caller while builders worked (scripts/fortresswake.mjs, `--dev` for
+  stacks): the only wakes were EventKind.Edit from `Plants.clear` (one a block built, the fortress clearing its cells,
+  FT-26) — 8 s over the event's radius + 16. 55 chunks were awake at Build's start (the plan's clearing events, held
+  while time was stopped), down to 6 after ~25 s. The builders' take and put are ledger numbers (no edits). The
+  drowning didn't come from it: the field led through 2.09-deep water with nothing planned and nothing woken, and the
+  deaths were ~70 cells from any woken chunk.
+
+**What changed.**
+- *Deep water is a wall to walkers* (agents.wgsl): a surface is deep where its water is over `DEEP` 0.9 (a worker,
+  the shortest kind, is 1.0 tall and drowns in water over its height; hysteresis `DEEP_OFF` 0.8, carried in navCost's
+  bit 1). The relax doesn't read a deep neighbour from a surface that isn't deep; a deep surface reads all (a unit in
+  the water still finds the way out). units.wgsl downField and FieldReader.sample don't step into deep water either.
+  A cost instead (a ford cost) would still lead them in where no ford is.
+- *Unreachable sites* (fortress/life.ts): a reader of the heap's field; a block none of whose stands is in it for 8 s
+  of sim time is left out of the sites (no builder sent with a load it can't bring; one on its way gives it back) and
+  the bar says "1 block can't be reached from the stores. Deep water or a cliff is in the way."
+- *Built structures are solid* (fortress/solid.ts, claims.ts): each built structure is claimed as External intervals
+  (OWNER_FORT, one instance a structure), as the towns' buildings are: a block its cell's columns (to a metre under its
+  top); a wall its thin band (WALL_HALF either side of the line from the middle to each joined side, and the middle
+  square) — the rest of the cell is open ground; a gate only its lintel; planned blocks nothing. A structure whose
+  solid changes lets go (to air) and claims again; slides as settle/view.ts. Found on the way: the surface read after a
+  claim is the wall's top, so a block's foot (and a cell planned beside it, Town.base) stood on it — a gap under the
+  wall units walked through. The fortress now keeps each column's ground as first read.
+- *Quiet edits* (sim/sleep.ts `touch`, WorldEvent `quiet`): plants.clear/fell, terrain.exactOp (a unit's take or put)
+  and an integrity edit that only claims or releases make their chunks drowsy for 4 ticks instead of waking them for
+  8 s; edit.wgsl applies edits in a drowsy sleeping column (only quiet ones reach one: the rest woke it). Cuts, spills,
+  deposits, powers, the player's edits, storms still wake.
+
+**Checks.** Unit: src/fortress/solid.test.ts (planned = nothing; a block its cell; a wall a band, not the cell, each
+column within the band; a gate its lintel; on a slope each column's foot down to its own ground), fortress 31/31;
+typecheck clean. Headless 412x915: fortresspath — planned: 26.5 straight through; built: 84.1 (round to the gate), the
+gate's passage open (14.3), the corner of a wall cell off the band open, walkers from opposite the gate went round by
+it (max x +17) and ended inside; gate shut: no way in at all. fortressford — 0 drowned; either the site built by a
+shallow way (0.2 deep at most) or reported unreachable (a site whose only way was a ford 255 steps round, past the
+agents' scope margin: reported, FT-40). fortresswake — 0 chunks awake while 6 blocks were built (was 55 → 6), no
+wakes, 36-305 touches, trees on the houses' cells felled (veg 4.2 → 2.2) with the chunks asleep. fortresspause
+passes. Shots C:/Projects/shots88/fortress/path-*.png.

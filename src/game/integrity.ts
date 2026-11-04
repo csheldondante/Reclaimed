@@ -2607,9 +2607,19 @@ export class Integrity {
         if (this.cols.has(x, y)) this.cols.mirror(x, y, claimColumn(this.cols.read(x, y), cs));
       }
     }
-    // (round 80: the chunks under what changed woken — their surface, their water, their slumping)
+    // (round 80: the chunks under what changed woken — their surface, their water, their slumping. Round 128d: a claim or
+    // a release alone — a building raised, a fortress's block standing — only touches them: drowsy, the ground's systems
+    // asleep (sim/sleep.ts touch; the user: "keep that frozen outside of collapse, spells, or weather events"). A cut, a
+    // spill or a deposit wakes them: something broke or fell)
     const sleep = this.core.sleep;
-    if (sleep) for (const k of touched) sleep.wake((k % 65536) + 0.5, (Math.floor(k / 65536) + 0.5) * ROW_H, 16, 8, performance.now() / 1000);
+    const quiet = stages.every((s) => !s.cuts.length && !s.spill?.length && !s.deposits?.length);
+    if (sleep)
+      for (const k of touched) {
+        const x = (k % 65536) + 0.5;
+        const y = (Math.floor(k / 65536) + 0.5) * ROW_H;
+        if (quiet) sleep.touch(x, y, 1);
+        else sleep.wake(x, y, 16, 8, performance.now() / 1000);
+      }
   }
 
   /**

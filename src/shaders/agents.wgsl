@@ -109,14 +109,22 @@ const NAV_DZ: f32 = 0.25;
 /** (round 107) the water under which a wet surface counts dry again (it turns wet past WADE): a shore's ripple round
  *  WADE doesn't flip it */
 const WADE_OFF: f32 = 0.45;
+/** (round 128d, FT-20) water this deep is no way for a walker: the shortest unit (a worker, 1.0 tall) drowns in water
+ *  over its height (units.wgsl), so a field never leads a walker into it — a ford (shallower) or a bridge, or nothing.
+ *  A unit already in it still finds its way out (a deep surface reads its neighbours; a dry one doesn't read a deep). */
+const DEEP: f32 = 0.9;
+/** the water under which a deep surface counts wadeable again (hysteresis, as WADE_OFF) */
+const DEEP_OFF: f32 = 0.8;
 // (round 107, agentspike) per surface (as nav: column i, slot k): the height and the wet the fields reckon its cost by
 // (the links and the relax), apart from the exact floor in nav that the units ride. 0 none, else
-// (round(z * 8) + 1) << 1 | wet. It follows the floor with hysteresis (NAV_DZ, WADE / WADE_OFF), so sediment's
+// (round(z * 8) + 1) << 2 | deep << 1 | wet (round 128d: deep, FT-20). It follows the floor with hysteresis (NAV_DZ, WADE / WADE_OFF), so sediment's
 // hundredths and a ripple at a shore don't send a wave down every field; a change to it marks the chunk for the front
 @group(0) @binding(37) var<storage, read_write> navCost: array<u32>;
 /** (a surface not peeled since its slot was cleared — a strip come in — counts by its floor until it is) */
-fn costZ(s: u32) -> f32 { return select(navZ(s), f32((navCost[s] >> 1u) - 1u) / 8.0, navCost[s] != 0u); }
+fn costZ(s: u32) -> f32 { return select(navZ(s), f32((navCost[s] >> 2u) - 1u) / 8.0, navCost[s] != 0u); }
 fn costWet(s: u32) -> bool { return (navCost[s] & 1u) != 0u; }
+/** (round 128d, FT-20) water over DEEP on it (the top surface only): no way in from a surface that isn't */
+fn costDeep(s: u32) -> bool { return (navCost[s] & 2u) != 0u; }
 /** (round 107) how far a distance moves before it is written and marks its chunk: below it the field keeps what it
  *  has (a twentieth of the cheapest step, so a unit's way down it is the same), and a sub-step ripple — a surface
  *  moved by hundredths — doesn't run down the whole field */
@@ -191,12 +199,14 @@ fn surfaces(@builtin(global_invocation_id) id: vec3<u32>) {
       let oc = navCost[i * NAV_K + out];
       var cz = z;
       var cw = wet;
+      var cd = r == i32(n) - 1 && water[i] > DEEP;
       if (oc != 0u) {
-        let ocz = f32((oc >> 1u) - 1u) / 8.0;
+        let ocz = f32((oc >> 2u) - 1u) / 8.0;
         if (abs(z - ocz) <= NAV_DZ) { cz = ocz; }
         cw = r == i32(n) - 1 && water[i] > select(WADE, WADE_OFF, (oc & 1u) != 0u);
+        cd = r == i32(n) - 1 && water[i] > select(DEEP, DEEP_OFF, (oc & 2u) != 0u);
       }
-      let nc = ((u32(round(max(cz, 0.0) * 8.0)) + 1u) << 1u) | select(0u, 1u, cw);
+      let nc = ((u32(round(max(cz, 0.0) * 8.0)) + 1u) << 2u) | select(0u, 2u, cd) | select(0u, 1u, cw);
       navCost[i * NAV_K + out] = nc;
       // (round 104: a surface that changed for the fields marks its chunk for the front. Round 107: its cost — a
       // surface come, its height or wet as navCost has them — or its room; the headroom counts through the links,
@@ -296,6 +306,8 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
     if (navZ(s) < 0.0) { break; }
     // (round 107: the cost's heights and wet, navCost)
     let z = costZ(s);
+    // (round 128d, FT-20) this surface under deep water: its way out reads every neighbour
+    let deepHere = costDeep(s);
     // (the surfaces are packed from 0: past the last, none. Nothing links to
     // an empty slot, so what's left in its fields is never read; a slot that
     // fills again is recomputed from its neighbours the next sweep)
@@ -326,6 +338,8 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
           let qn = nbr(p, dd);
           if (!inScope(qn)) { continue; }
           let t = colIdxI(qn) * NAV_K + l - 1u;
+          // (round 128d, FT-20: no way into deep water from a surface that isn't — it drowns a walker)
+          if (costDeep(t) && !deepHere) { continue; }
           let dn = dist[f * N + t];
           if (dn >= FAR) { continue; }
           d = min(d, dn + stepCost(z, costZ(t), costWet(t)));

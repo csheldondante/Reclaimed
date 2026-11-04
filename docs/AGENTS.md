@@ -51,6 +51,11 @@ cells) of air above it.
 - Strata stacked on each other make one surface; slivers too thin to stand
   under (a jagged cliff's) drop out.
 - The top surface is wet where the water there is deeper than `WADE` (0.6).
+- (round 128d, FT-20) It is deep where the water is deeper than `DEEP` (0.9, under the shortest kind's height —
+  a worker's 1.0 — in which it drowns): no field leads from a surface that isn't deep into one that is (the relax
+  doesn't read a deep neighbour from a dry or wet one; units.wgsl downField and FieldReader.sample don't step into
+  one). A deep surface reads all its neighbours, so a unit in the water still finds its way out. navCost carries it:
+  `(round(z * 8) + 1) << 2 | deep << 1 | wet`, deep with hysteresis (`DEEP_OFF` 0.8).
 - Each surface links to one surface in each of the six neighbours: the
   nearest in height within a step up (`STEP` 1.1) or a drop (`DROP` 2.6),
   with `AGENT_H` of headroom over both.

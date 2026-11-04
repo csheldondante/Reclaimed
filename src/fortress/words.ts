@@ -99,6 +99,11 @@ export function buildingLine(built: number, total: number): string {
   return `Building: ${built} of ${total} blocks done`;
 }
 
+/** (round 128d, FT-20) Building: blocks no builder can walk to from the heap. */
+export function cutOffLine(n: number): string {
+  return `${n === 1 ? '1 block' : `${n} blocks`} can't be reached from the stores. Deep water or a cliff is in the way.`;
+}
+
 /** The stores strip: what's in the stores and the power coming in. */
 export function storesLine(stores: Goods, powerPerDay: number): string {
   const n = (k: Good) => Math.floor(stores[k] ?? 0);

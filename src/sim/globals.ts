@@ -75,6 +75,12 @@ export interface WorldEvent {
   y: number;
   radius: number;
   strength: number;
+  /**
+   * (round 128d, CPU only) A quiet edit: it changes the layers or the plants (a unit's take or put, a fortress's cells
+   * cleared) without waking the ground's systems there (sim/sleep.ts touch: drowsy a few ticks, the edit pass applies
+   * it, nothing else runs). The user: "keep that frozen outside of collapse, spells, or weather events".
+   */
+  quiet?: boolean;
 }
 
 /** A wind impulse: player gust under a storm, or the cursor breeze. */

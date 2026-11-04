@@ -231,6 +231,11 @@ may move, join or cut intervals (sediment joins touching ones of a material and 
   fallback material (`orphans`, a scan of the copy's words).
 - The owner must release or take back the instance in `onLost`; the registry releases it otherwise.
 
+**Owners.** The resting rock (OWNER_ROCK), the settlements' buildings (OWNER_STRUCT, settle/view.ts) and (round 128d)
+the player's fortress (OWNER_FORT, fortress/claims.ts: one instance a structure, its solid from fortress/solid.ts — a
+block its cell's columns, a wall its thin band, a gate its lintel only; only built blocks). The fortress keeps each
+column's ground as first read (its own claims would otherwise read as ground).
+
 **What the sims may assume.** That an External interval is solid ground (they need not know of owners); that it
 does not move or change by itself; that its owner draws it. What owners may assume: that the cells they claimed
 stay External until a sim cuts or moves them, which they hear of within a judge's pass of the read (0.35 s, at
@@ -1067,6 +1072,15 @@ its edge:
   storms over 0.2 intensity, a slide's new chunks (1.5 s), everything
   after a slide in z (2 s), coarse events in sight, integrity's column
   writes, placed models (WorldCore.sleep). `?sleep=0` off.
+  (round 128d) *Quiet* changes don't wake: a WorldEvent with `quiet: true`
+  (plants.clear/fell, a unit's take or put — terrain.exactOp) and an
+  integrity edit that only claims or releases External (a building raised,
+  a fortress block standing) `touch` their chunks instead — drowsy for 4
+  of the sim's ticks, asleep. edit.wgsl applies the edits that reach a
+  drowsy, sleeping column (an edit that isn't quiet woke its chunks on the
+  CPU, so those are the quiet ones); the other passes carry it through;
+  the mesh and the surface look at it again. Only collapse, powers and
+  spells, weather and the player's edits wake the ground's systems.
   (perfopt, round 83; the low tier's defaults from index.html, `?phone=0`
   off) `settle=0`: land that comes in doesn't wake to settle — drowsy at
   once; a river come in takes the pipes' steady flux for its levels while

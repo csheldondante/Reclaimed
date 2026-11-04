@@ -62,7 +62,8 @@ function shrinkFrame(f: V2[], k: number): V2[] {
 }
 
 /** the hex columns whose centres lie in a frame: one span each (a column already taken keeps its first) */
-function raster(p: V2[], z0: number, z1: number, id: number, seen: Set<string>, out: ColumnSpan[]): void {
+/** The hex columns whose middles lie in frame p (any polygon), each once (`seen`): a span [z0, z1) each (fortress/solid.ts too). */
+export function raster(p: V2[], z0: number, z1: number, id: number, seen: Set<string>, out: ColumnSpan[]): void {
   let x0 = Infinity;
   let x1 = -Infinity;
   let y0 = Infinity;

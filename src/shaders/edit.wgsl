@@ -158,7 +158,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (!drowsy(id.xy)) { return; }
     let cs = colSlots(id.x, id.y);
     for (var k = 0u; k < cs.y; k++) { layersOut[cs.x + k] = layersIn[cs.x + k]; }
-    return;
+    // (round 128d, sim/sleep.ts touch) a quiet edit — a unit's take or put, a fortress's cells cleared — leaves its
+    // chunk asleep, only drowsy: applied here all the same (an edit that isn't quiet woke its chunks on the CPU, so the
+    // edits reaching a sleeping column are the quiet ones)
+    var mine = false;
+    for (var e = 0u; e < numEvents(); e++) {
+      if (evKind(e) == EV_EDIT && length(cellPos(vec2<i32>(id.xy)) - G.events[e].xy) < G.events[e].z) { mine = true; }
+    }
+    if (!mine) { return; }
   }
   let p = vec2<i32>(id.xy);
   let i = colIdxI(p);

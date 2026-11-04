@@ -28,6 +28,9 @@ const DROWSE_S = 0.25;
 /** (round 83) land come in stays drowsy for this many of the sim's ticks (not seconds: a slide holds the sim, and
  *  its derived fields — the surface, the render fields — must be made before it sleeps) */
 const DROWSE_TICKS = 8;
+/** (round 128d) the ticks a quiet edit's chunks stay drowsy (touch): its event is taken within a tick or two, then the
+ *  surface and the mesh look at the chunk again */
+const TOUCH_TICKS = 4;
 /** (perfopt, settle=0) the ticks land come in settles its water for (WaterSystem's settling passes) */
 const SETTLE_TICKS = 64;
 /** (perfopt, ?settle=0 — DECISIONS round 83: "Generated land should come in settled"; "We don't need to simulate a
@@ -157,6 +160,28 @@ export class Sleep {
       }
   }
 
+  /**
+   * (round 128d) A quiet change (a unit's take or put, a fortress's cells cleared, a building's claim — the user: "We
+   * might want to keep that frozen outside of collapse, spells, or weather events"): the chunks a circle touches made
+   * drowsy for TOUCH_TICKS of the sim's ticks, not woken. Drowsy, a sleeping chunk is on the passes' lists: the edit
+   * pass applies the edits there (edit.wgsl), the others carry it through as asleep, and the mesh and the surface look
+   * at it again. Its water, its loose ground, its plants don't run. A chunk awake stays as it is.
+   */
+  touch(x: number, y: number, r: number): void {
+    const x0 = Math.max(0, Math.floor((x - r) / CHUNK));
+    const x1 = Math.min(this.cx - 1, Math.floor((x + r) / CHUNK));
+    const y0 = Math.max(0, Math.floor((y - r) / ROW_H / CHUNK));
+    const y1 = Math.min(this.cy - 1, Math.floor((y + r) / ROW_H / CHUNK));
+    for (let j = y0; j <= y1; j++)
+      for (let i = x0; i <= x1; i++) {
+        const k = this.slotOf(j * this.cx + i);
+        this.drowseTick[k] = Math.max(this.drowseTick[k], this.tick + TOUCH_TICKS);
+      }
+    this.touched++;
+  }
+  /** (tests, the perf overlay) touches so far */
+  touched = 0;
+
   /** per slot, when it last woke (s): SETTLE_MAX_S counts from it */
   private wokeAt = new Float32Array(0);
 
@@ -265,7 +290,11 @@ export class Sleep {
       this.settling.shift();
     }
     if (near && WAKE_NEAR) this.wake(near[0], near[1], near[2], NEAR_S, now);
-    for (const e of events) this.wake(e.x, e.y, e.radius + CHUNK, this.eventSecs, now);
+    // (round 128d: a quiet edit only touches its chunks — drowsy, not awake)
+    for (const e of events) {
+      if (e.quiet) this.touch(e.x, e.y, e.radius + 1);
+      else this.wake(e.x, e.y, e.radius + CHUNK, this.eventSecs, now);
+    }
     for (const s of storms) if (s.intensity > 0.2) this.wake(s.x, s.y, s.radius, NEAR_S, now);
     this.mask.fill(0);
     this.drowse.fill(0);

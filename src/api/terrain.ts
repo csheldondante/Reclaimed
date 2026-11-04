@@ -374,7 +374,8 @@ export class Terrain {
     const [cx, cy] = cellAt(x, y);
     const [px, py] = cellPos(cx, cy);
     const p = new Promise<[number, number]>((done) => this.exacts.set(tag, { tick: this.core.sim.tick, done }));
-    this.core.globals.events.push({ kind: EventKind.Edit, x: px, y: py, z: op * 32 + mat + STROKE_START + tag * 1024, radius: 0.3, strength: amount });
+    // (round 128d: quiet — a unit's take or put, a fell: the column changes, the ground's systems there stay asleep)
+    this.core.globals.events.push({ kind: EventKind.Edit, x: px, y: py, z: op * 32 + mat + STROKE_START + tag * 1024, radius: 0.3, strength: amount, quiet: true });
     if (!this.polling) void this.poll();
     return p;
   }
