@@ -50,6 +50,12 @@ export function placeSummary(r: PlaceBenchResult): string[] {
   const rounds = r.rows.flatMap((x) => (x.rounds === null ? [] : [x.rounds]));
   if (answers.length) out.push(`The answer came ${pct(answers, 0.5)} ms after the tap (at most ${Math.max(...answers)} ms), in ${pct(rounds, 0.5)} GPU rounds (at most ${Math.max(...rounds)}).`);
   out.push(`Frames over 33 ms round the taps: ${over}.`);
+  if (r.ab) {
+    const a = r.ab;
+    out.push(
+      `Reach on and off (${a.taps} taps each at ${a.point}): the worst frame after a tap was ${a.solve.worstFrame?.p50} ms with the reach and ${a.standIn.worstFrame?.p50} ms without it (${a.deltaMs !== null && a.deltaMs >= 0 ? '+' : ''}${a.deltaMs} ms). The answer came in ${a.solve.answer?.p50} ms and ${a.standIn.answer?.p50} ms.`,
+    );
+  }
   if (r.arrive.length) {
     const got = r.arrive.filter((a) => a.arrivedS !== null);
     const built = r.arrive.filter((a) => a.builtS !== null);

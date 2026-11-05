@@ -58,6 +58,7 @@ describe('the placement bench', () => {
       ],
       arriveLimitS: 240,
       arriveWallS: 30,
+      ab: { point: 'E 30 m', taps: 12, solve: { worstFrame: { unit: 'ms', n: 12, p50: 700, p95: 733, max: 733, mean: 690, min: 616 }, answer: null }, standIn: { worstFrame: { unit: 'ms', n: 12, p50: 17, p95: 18, max: 18, mean: 17, min: 16 }, answer: null }, deltaMs: 683 },
     };
     const lines = placeSummary(r);
     expect(lines[0]).toBe('4 placements at 3 points: 1 kept, 2 refused, 1 not placed, 0 with no answer.');
@@ -66,6 +67,7 @@ describe('the placement bench', () => {
     expect(lines).toContain("E 120 m: 0 of 1 kept. Not placed: outside the fortress's land.");
     expect(lines).toContain('Builders reached 1 of 2 house sites within 240 sim seconds. 1 had a block standing. That took 30 s.');
     expect(lines).toContain('Not reached: W 60 m (nearest 30 m).');
+    expect(lines.some((l) => l.startsWith('Reach on and off (12 taps each at E 30 m): the worst frame after a tap was 700 ms with the reach and 17 ms without it (+683 ms).'))).toBe(true);
     expect(reasonOf(reachWhyLine('cliff'))).toBe('A cliff or a building is in the way.');
   });
 });

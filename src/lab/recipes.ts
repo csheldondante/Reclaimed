@@ -85,7 +85,7 @@ export const LAB_RECIPES: Record<string, LabRecipe> = {
   },
   valley: {
     name: 'valley',
-    blurb: 'two slopes down to a river (a ford) running north to south east of the town; a deep lake at its foot',
+    blurb: 'two slopes down to a river running north to south east of the town; a lake at its foot',
     ground: (x, y) => {
       const d = Math.abs(x - (LAB_MID[0] + 45));
       const bank = BASE + Math.min(14, d * 0.18);
@@ -97,9 +97,7 @@ export const LAB_RECIPES: Record<string, LabRecipe> = {
     water: (x, y) => {
       const d = Math.abs(x - (LAB_MID[0] + 45));
       const lake = Math.hypot(x - (LAB_MID[0] + 45), y - (LAB_MID[1] + 85)) < 18;
-      // (round 128m: the river a ford, 0.6 m — on the 256 window its 2 m ran out of the bottom edge and was fordable by
-      // the time the lab opened; on the 320 window it stayed 2.4 m deep, and fortressrefuse's east shore was cut off)
-      return lake ? 2 : d < 3 ? 0.6 : 0;
+      return d < 3 || lake ? 2 : 0;
     },
     springs: (x, y) => (Math.abs(x - (LAB_MID[0] + 45)) < 2 && y < 6 ? 0.01 : 0),
     woods: wood([LAB_MID[0] - 75, LAB_MID[1] + 60], 20),

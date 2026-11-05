@@ -613,6 +613,17 @@ export class Fortress {
     return n;
   }
 
+  /**
+   * (round 128m, townlab: the placement bench's A/B — the frame after a tap with the reach's solve and with a stand-in
+   * that answers at once) the engine that answers the reach, swapped; the one it replaced. Waits for no check in flight.
+   */
+  async swapReach(engine: ReachEngine): Promise<ReachEngine | undefined> {
+    await this.settled();
+    const was = this.io.reach;
+    this.io.reach = engine;
+    return was;
+  }
+
   /** (RT-6) whether a block is still waiting for the reach's judgement (drawn as a ghost) */
   isPending(cell: number): boolean {
     return this.pending.has(cell);

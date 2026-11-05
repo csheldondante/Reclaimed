@@ -9,6 +9,7 @@ import type { Fortress } from '../../fortress/fortress';
 import { STRUCTURE_TYPES, type StructureType } from '../../api/contracts/fortress';
 import { placePoints, type PlacePoint, type V2 } from './points';
 import { stat, type Stat } from '../bench/defs';
+import { REACH_BITS, type ReachEngine } from '../../fortress/reach';
 
 export interface PlaceBenchIO {
   fort: Fortress;
@@ -72,14 +73,32 @@ export interface PlaceBenchResult {
   arriveWallS: number | null;
   /** (the game's run) what diagnose.ts read before the first placement */
   diagnosis?: unknown;
+  /** the reach's A/B: the same taps with the solve and with a stand-in that answers at once, alternating */
+  ab: ReachAB | null;
 }
+
+/** per side of the A/B: each tap's worst frame from the tap until a few frames after the answer, and the answer's delay */
+export interface ReachAB {
+  point: string;
+  taps: number;
+  solve: { worstFrame: Stat | null; answer: Stat | null };
+  standIn: { worstFrame: Stat | null; answer: Stat | null };
+  /** the worst frame's median, the solve's less the stand-in's (ms) */
+  deltaMs: number | null;
+}
+
+/** an engine that answers every query reached at once, dispatching nothing (the A/B's stand-in) */
+export const STAND_IN: ReachEngine = {
+  setSpans: () => {},
+  check: async (ask) => ({ bits: new Uint32Array(ask.queries.length / 4).fill(REACH_BITS.reached | REACH_BITS.dry | REACH_BITS.unplanned), ramps: [], wet: null, rounds: 0 }),
+};
 
 /** frames waited for a judgement before it counts as none (the GPU's answer comes in a few) */
 const MAX_WAIT = 600;
 /** frames measured before a placement (the frame times round it) */
 const BEFORE = 3;
 
-export async function runPlaceBench(io: PlaceBenchIO, o: { types?: StructureType[]; arriveS?: number; arrive?: boolean; diagnose?: (points: PlacePoint[]) => Promise<unknown> } = {}): Promise<PlaceBenchResult> {
+export async function runPlaceBench(io: PlaceBenchIO, o: { types?: StructureType[]; arriveS?: number; arrive?: boolean; abTaps?: number; diagnose?: (points: PlacePoint[]) => Promise<unknown> } = {}): Promise<PlaceBenchResult> {
   const f = io.fort;
   const types = o.types ?? [...STRUCTURE_TYPES];
   const arriveS = o.arriveS ?? 300;
@@ -155,6 +174,51 @@ export async function runPlaceBench(io: PlaceBenchIO, o: { types?: StructureType
       io.log?.(`${pt.name} ${type}: ${row.outcome}${row.line ? ` (${row.line})` : ''} tap ${row.tapMs} ms, answer ${row.answerMs ?? '-'} ms`);
       await clear();
     }
+  // the reach's A/B (the user: on the Mali, frame time can't be put on a system by timestamps — toggle it): a house
+  // tapped at the first point a house was kept on, taken out again, `abTaps` times each way, the solve and the
+  // stand-in alternating
+  let ab: ReachAB | null = null;
+  const abPoint = rows.find((r) => r.type === 'house' && r.outcome === 'kept');
+  const nAb = o.abTaps ?? 12;
+  if (abPoint && nAb > 0) {
+    const cell = f.cellAt(abPoint.at[0], abPoint.at[1]);
+    const side = () => ({ worst: [] as number[], answer: [] as number[] });
+    const real = side();
+    const stand = side();
+    for (let i = 0; i < 2 * nAb; i++) {
+      const useStand = i % 2 === 1;
+      const was = useStand ? await f.swapReach(STAND_IN) : null;
+      try {
+        let last = await io.frame();
+        const t0 = performance.now();
+        f.paint(cell, 0, 'house');
+        let worst = 0;
+        let n = 0;
+        while (f.isPending(cell) && n++ < MAX_WAIT) {
+          const t = await io.frame();
+          worst = Math.max(worst, t - last);
+          last = t;
+        }
+        const ans = performance.now() - t0;
+        for (let k = 0; k < BEFORE; k++) {
+          const t = await io.frame();
+          worst = Math.max(worst, t - last);
+          last = t;
+        }
+        const s = useStand ? stand : real;
+        s.worst.push(worst);
+        s.answer.push(ans);
+        await clear();
+      } finally {
+        if (was) await f.swapReach(was);
+      }
+    }
+    const st = (s: ReturnType<typeof side>) => ({ worstFrame: stat(s.worst, 'ms'), answer: stat(s.answer, 'ms') });
+    const a = st(real);
+    const b = st(stand);
+    ab = { point: abPoint.point, taps: nAb, solve: a, standIn: b, deltaMs: a.worstFrame && b.worstFrame ? +(a.worstFrame.p50 - b.worstFrame.p50).toFixed(1) : null };
+    io.log?.(`reach A/B: worst frame p50 ${a.worstFrame?.p50} ms with the solve, ${b.worstFrame?.p50} ms with the stand-in`);
+  }
   // the arrival check: houses at the points a house was kept on (the far and hard ones first, ARRIVE_SITES of them),
   // planned together, Build at 16x: when a builder stands at each, and when its first block stands
   const arrive: ArriveRow[] = [];
@@ -195,5 +259,5 @@ export async function runPlaceBench(io: PlaceBenchIO, o: { types?: StructureType
     for (const [p] of sites) arrive.push({ point: p, arrivedS: got.get(p) ?? null, builtS: built.get(p) ?? null, nearestM: near.has(p) ? +near.get(p)!.toFixed(1) : null });
     io.log?.(`arrival: ${io.walkers().length} builders seen at the end`);
   }
-  return { points, stores, rows, arrive, arriveLimitS: arriveS, arriveWallS, diagnosis };
+  return { points, stores, rows, arrive, arriveLimitS: arriveS, arriveWallS, diagnosis, ab };
 }

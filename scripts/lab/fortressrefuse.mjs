@@ -6,7 +6,8 @@
 //  2. a ring of wall round nothing: it gets a gate (cells a builder stands at only from inside); shutting the gate is
 //     refused (it opens again); a closed ring (the gate shut behind the check's back) and a house tapped inside it:
 //     refused, walled in;
-//  3. a drag of wall across the lake: only the cells in the deep water refused (both shores kept), the panel says how many.
+//  3. a drag of wall across the lake: the cells the reach says the stores reach kept, the rest refused (deep water), the
+//     panel says how many.
 // Every block planned at the end is reached. Shots at play zoom (412x915): refused-water.png, refused-ring.png,
 // refused-drag.png.
 //   node scripts/lab.mjs run scripts/lab/fortressrefuse.mjs
@@ -84,13 +85,23 @@ export default async function (lab) {
     await f.settled();
   }
 
-  // 3. a drag of wall across the lake, shore to shore
+  // 3. a drag of wall across the lake, shore to shore. (round 128m: what's kept is what the reach says the stores reach
+  // — asked of the land before the drag, not assumed: on the 320 window the river stays deep, so the far shore may be cut
+  // off by it as well as the lake)
+  const line = [];
+  for (let i = 0, n = 120; i <= n; i++) {
+    const c = f.cellAt(lx - 30 + i / 2, ly);
+    if (c >= 0 && !line.includes(c)) line.push(c);
+  }
+  const before = await f.probeReach(line);
   const cells = lab.drag('wall', lx - 30, ly, lx + 30, ly);
   await f.settled();
   const kept = cells.filter((c) => f.plan.has(c, 0));
   const off = (c) => f.centre(c)[0] - lx;
-  out.drag = { cells: cells.length, kept: kept.length, refused: cells.length - kept.length, west: kept.filter((c) => off(c) < 0).length, east: kept.filter((c) => off(c) > 0).length, nearestKept: Math.min(...kept.map((c) => Math.abs(off(c)))), farthestRefused: Math.max(...cells.filter((c) => !f.plan.has(c, 0)).map((c) => Math.abs(off(c)))), refusal: f.refusal };
-  check('the drag keeps both shores and refuses only cells in the lake, saying how many', out.drag.west > 3 && out.drag.east > 3 && out.drag.refused > 3 && out.drag.farthestRefused < 18 && f.refusal?.startsWith(`${out.drag.refused} of those ${cells.length} blocks were not planned.`), out.drag);
+  const reachedBefore = line.filter((_, i) => before[i]);
+  const wrong = cells.filter((c) => f.plan.has(c, 0) !== reachedBefore.includes(c));
+  out.drag = { cells: cells.length, kept: kept.length, refused: cells.length - kept.length, west: kept.filter((c) => off(c) < 0).length, east: kept.filter((c) => off(c) > 0).length, reachedBefore: reachedBefore.length, wrong: wrong.length, refusal: f.refusal };
+  check('the drag keeps the cells the stores reach and refuses the rest, saying how many and that deep water is why', out.drag.west > 3 && out.drag.refused > 3 && wrong.length === 0 && cells.length === line.length && f.refusal?.startsWith(`${out.drag.refused} of those ${cells.length} blocks were not planned.`) && f.refusal?.endsWith('Deep water is in the way.'), out.drag);
   lab.look(lx, ly, 6);
   out.drag.panel = panel();
   await lab.shot('refused-drag');
