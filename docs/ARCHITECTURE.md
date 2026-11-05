@@ -1195,7 +1195,7 @@ as one band. The layers already worked this way through their chunk table, and t
   position: units, bodies, particles, the camera, events, weather (docs/FRAMECOST.md FC6, FC7).)
 - **A slide's freeze** (round 106): the chunk table rotates with the ring — a chunk coming in takes the pages of the
   one that left from the same place — so what left lies untouched, pages, columns and CPU arrays, until the region
-  coming in is written there. The slide's frame only plans it (`Streamer.freezePlan`: the things taken, the coarse
+  coming in is written there. The slide's frame only plans it (`Streamer.freezePlan`, scenes/streamer/freeze.ts: the things taken, the coarse
   world's snapshots asked — Coarse.snapshot copies a task's together — the store's stage made); each region is
   copied out into the pool and its band cleared just before its place is written (`freezeAt`), its CPU parts read
   then (`SaveItem.fill`, `fillAt`); whatever else writes the CPU arrays reads every pending one first (`flushFills`:
@@ -1226,7 +1226,7 @@ The ring above is now a page table, and storage is page-major. Window coordinate
   for whole arrays; WorldCore.readBuffer / readTexture return window order. `slots` / `runs` / `texRects` / `pieces`
   cut a rectangle into what to copy: one rectangle for the identity's slots, a run of pages each otherwise.
 - **Regions** (world/region-record.ts, RECORD_FORMAT 2): a record's per-column buffers are page-major too (its pages
-  row-major, each 256 columns), so a region <-> window copy is page runs (Streamer.regionRects: the region copier's
+  row-major, each 256 columns), so a region <-> window copy is page runs (Streamer.regionRects, scenes/streamer/regions.ts: the region copier's
   gather) and TileLandGpu's scratch reads a record through colIdx at the identity (its Globals get an identity table).
   The CPU's region forms stay row-major (regionRowsToPages at toBody / fromBody); finish.wgsl writes page-major.
   The CPU arrays' region parts are read and written by the region's slots (Streamer.regionSlots), so a frozen
@@ -1315,14 +1315,14 @@ further out ahead of the camera so we never wait for them". Three tiers under th
   reload: its story starts again) unless `?runinst=` names one; the seed's earlier runs' records are dropped as it
   opens. Without `?run=` the world persists across page loads until `?world=new`.
   `?world=new` (or the ✦ button, two taps) clears it. On load, the window's regions with a record are written in
-  (`Streamer.restore`) before the window slides, and the LandSource's `restored` lets the atlas's hooks (the
+  (`Streamer.restore`, scenes/streamer/store.ts) before the window slides, and the LandSource's `restored` lets the atlas's hooks (the
   settlements' plans, a run's stage) see that land as made. A warp freezes what the window held into the pool (a
   warp back finds it); `warp(…, fresh)` (a run's stage just laid) makes the window again, using only records of
   an earlier session.
 - **Ahead**: while the camera moves (> 6 cells/s) along an axis, `AHEAD` (2, `?ahead=`) strips that way are asked
   for (`bring`: the pool's, the store's, or made; checked for coarse changes; cut at the window's oz; uploaded).
 - **Made on the GPU** (round 102, `gpugen`; default, `?gpugen=0` the CPU's way): `LandSource.regionInto(x0, y0, w, h,
-  target)` — the atlas's `regionInto` — makes a region straight into a slot (`Streamer.generateGpu`): its columns
+  target)` — the atlas's `regionInto` — makes a region straight into a slot (`Streamer.generateGpu`, scenes/streamer/generate.ts): its columns
   (colHeight, formSeed, colFinish a tile a frame), then `atlas/finish.wgsl` reads colOut/colRuns where they are and
   writes the slot's pages and kept fields in the layout above (the slot cleared first; pool pages are STORAGE too).
   Back to the CPU (`FinishMeta`, ~100 KB): per column the top and ground (window z), the top and highest gap's roof
@@ -3609,6 +3609,12 @@ module is docs/MODULES.md.
 - `scenes/level.ts` + `scenes/level/` — LevelScene: `attach.ts` (one-time wiring, composed of attach-tools,
   input-wiring, test-api, stream-setup), `frame.ts` (the per-frame update), and the tools, runs, fortress, valley,
   atlas controls, camera moves and labs.
+- `scenes/streamer.ts` + `scenes/streamer/` — Streamer: the class keeps its fields, constructor and public API
+  (update, slide, slideZ, warp, prefetch, precache, touch, saveAll, editLive, takeAbove/putAbove, genHash,
+  compareGen, and key/copyOut/regionOutside/toBody/cutRegion, which scripts and the bench call); slide.ts (follow the
+  camera, the slide), freeze.ts, generate.ts, write.ts, store.ts, jobs.ts, warp.ts, regions.ts; defs.ts its flags,
+  records and public types (re-exported by streamer.ts). In this doc `Streamer.x` names `x(S, …)` in the folder when x
+  is not on the class (docs/MODULES.md says which module).
 
 
 ## The behaviour lab (round 128l, `tooling`; docs/TOOLING.md)
