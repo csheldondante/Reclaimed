@@ -40,9 +40,9 @@ const DIG_REACH = 7;
 const PENDING_READS = 2;
 /** takes in a row that brought nothing before a column is left */
 const STUCK = 3;
-/** this module's takes in flight at most (the world API holds 64 in all: sim/world-gpu.ts EDIT_TAGS; 16, as m4 set for
- *  the miners, round 128l: the builders and everything else share the rest) */
-const IN_FLIGHT = 16;
+/** this module's takes in flight at most (the world API holds 64 in all: sim/world-gpu.ts EDIT_TAGS; m4 capped its
+ *  miners at 16 for the same reason — 40 leaves 24 for the builders and the rest, and 16 slowed the pit by a quarter) */
+const IN_FLIGHT = 40;
 
 interface PitState {
   pit: Pit;

@@ -17743,8 +17743,16 @@ external), so it says nothing here — to run alone.
 their own branches; fortress takes both. The miners' code met in fortress/life.ts: m4 capped the miners' terrain takes
 in flight at 16 (`DIGS_IN_FLIGHT` in its `digAt`, after the world API's 64-take ceiling threw with the carts keeping
 the miners at the pit); quarry replaced `digAt` and `ECON.pitMax` / `digR` with the pit's tiers (fortress/quarry.ts,
-its own cap `IN_FLIGHT` 40). The merge keeps quarry's dig and sets its cap to m4's 16, so the miners still leave the
-rest of the 64 to the builders and everything else. defs.ts keeps quarry's dig numbers and m4's carts and soldiers;
+its own cap `IN_FLIGHT` 40). The merge keeps quarry's dig and its cap of 40, which leaves 24 of the 64 to the
+builders and everything else (m4's intent). A cap of 16 was tried: in the lab (quarry.mjs, r 15) the pit was a cell
+short of its second tier at 160 sim s, against done and on to a third with 40; at 240 s both pass. defs.ts keeps quarry's dig numbers and m4's carts and soldiers;
 frame.ts runs m4's follow and then quarry's pitView (a cut, off by default); the lab IO keeps m4's tap and follow and
 quarry's restoreLand that resolves once read. quarry had turned many LF source files to CRLF; the merge keeps each
 file's line ends as fortress had them (the docs CRLF).
+Then m4fix (e4b66ba, M4-14) on top. **Gates** (after all three): typecheck; unit 78 files, 693 pass (one flaky
+failure on a run, gone on the rerun); lab quarry.mjs (r 15, 240 s), fortresscarts, fortressfollow, fortressrecipes,
+fortresslanes ok; fortressoutside reached every site; hallcheck 0 lost of 344; tilegate (`&zoomfloor=0`, `--no-pan`,
+baselines of 64ed5b0) every parked desktop and phone view unchanged; the w384 views (the sim running) 1.9-3.3% at the
+smoke columns' edges; z1.3's far-land check fails on 64ed5b0 the same. The lab server, started by a run, can open two
+pages ("__labShot already exists") and its page's requestAnimationFrame stalls (terrain takes never answer, shots
+hang): `lab.mjs serve --recipe <r>` first, then run.
