@@ -5,6 +5,7 @@
 // a scenario drives, in the page as `reclaimed.lab`:
 //   place(kind, x, y, {level, built})   one block (a structure type, or 'gate' on a wall cell), window world units
 //   plan({at, walls, blocks, built})    a whole plan at once (built: standing at once, or planned for the builders)
+//   drag(kind, x0, y0, x1, y1)          the cells along a line placed together (Fortress.paintMany: judged as one)
 //   build() / planMode()                the bar's Build and Plan (the game's own buttons)
 //   run(seconds, speed, {renderEvery})  the sim advanced `seconds` of sim time as fast as the GPU goes: the display's
 //                                       frames wait, the lab steps the scene itself, drawing every Nth frame
@@ -168,9 +169,25 @@ export class Lab {
     }
     if (!STRUCTURE_TYPES.includes(kind)) throw new Error(`lab.place: "${kind}" is not a structure type (${STRUCTURE_TYPES.join(', ')}, gate)`);
     const level = o.level ?? 0;
-    if (!f.paint(c, level, kind)) throw new Error(`lab.place: ${kind} at cell ${c} level ${level} refused: ${f.refusal ?? f.warning ?? 'no reason given'}`);
+    if (!f.paint(c, level, kind)) throw new Error(`lab.place: ${kind} at cell ${c} level ${level} refused: ${f.refusal ?? 'no reason given'}`);
     if (o.built) this.standAll();
     return c;
+  }
+
+  /**
+   * (RT-6) a drag: the cells along the line from (x0, y0) to (x1, y1), window world units, placed together
+   * (Fortress.paintMany) — the reach judges them as one, refusing only those out of reach. The cells, in order.
+   */
+  drag(kind: StructureType, x0: number, y0: number, x1: number, y1: number): number[] {
+    const f = this.fort();
+    const cells: number[] = [];
+    const n = Math.max(1, Math.ceil(Math.hypot(x1 - x0, y1 - y0) * 2));
+    for (let i = 0; i <= n; i++) {
+      const c = f.cellAt(x0 + ((x1 - x0) * i) / n, y0 + ((y1 - y0) * i) / n);
+      if (c >= 0 && !cells.includes(c)) cells.push(c);
+    }
+    f.paintMany(cells, 0, kind);
+    return cells;
   }
 
   /** a whole plan at once: walls round `at` with a gate, blocks by offset or position; built at once when asked */
@@ -197,7 +214,7 @@ export class Lab {
         skipped.push(`${b.type} at cell ${c} (a ${held} cell)`);
         continue;
       }
-      if (!f.paint(c, b.level, b.type)) throw new Error(`lab.plan: ${b.type} at cell ${c} level ${b.level} refused: ${f.refusal ?? f.warning ?? 'no reason given'}`);
+      if (!f.paint(c, b.level, b.type)) throw new Error(`lab.plan: ${b.type} at cell ${c} level ${b.level} refused: ${f.refusal ?? 'no reason given'}`);
     }
     if (p.built) this.standAll();
     const structures = f.plan.structures();
@@ -449,6 +466,7 @@ export class Lab {
         return lab.ready;
       },
       place: (kind: StructureType | 'gate', x: number, y: number, o?: { level?: number; built?: boolean }) => this.place(kind, x, y, o),
+      drag: (kind: StructureType, x0: number, y0: number, x1: number, y1: number) => this.drag(kind, x0, y0, x1, y1),
       plan: (p: LabPlan) => this.plan(p),
       /** every planned block standing at once (no builders) */
       standAll: () => this.standAll(),

@@ -39,6 +39,7 @@ warehouse stands) and the houses' doors, and what of the fortress stands at the 
 |---|---|
 | `place(kind, x, y, {level, built})` | one block of a structure type (or `'gate'` on a wall cell) at window world (x, y) |
 | `plan({at, walls: {r, gate}, blocks: [{type, d, level}], cells: [{type, at, level}], built})` | a whole plan at once: a ring of wall round `at` (default the heap) with a gate on a side, blocks by offset or position; `built: true` stands it at once. Returns `{cells, types, cutOff, skipped}` (a block whose cell the ring took is skipped, not an error) |
+| `drag(kind, x0, y0, x1, y1)` | (RT-6) the cells along a line placed together (`Fortress.paintMany`): the reach judges them as one batch and refuses only those out of reach (`fortress().refusal` says how many). Returns the cells |
 | `standAll()` | every planned block standing at once |
 | `stores({stone: 200})` | set the stores |
 | `build()` / `planMode()` | the bar's Build and Plan (the game's own buttons) |
@@ -86,7 +87,7 @@ export default async function (lab, args) {
 
 Or a plain `.js` file: the body of `async (lab, args) => { … }` — handy for a one-off probe. Throw to fail the run
 (the runner exits non-zero). Examples: `scripts/lab/example.mjs` (the template), `scripts/lab/fortressoutside.mjs`
-(do the builders get out of a walled town to sites outside it), `scripts/lab/fortresslanes.mjs` (the lanes of a walled
+(do the builders get out of a walled town to sites outside it), `scripts/lab/fortressrefuse.mjs` (unreachable placements refused: a house on the valley's lake, a block in a shut ring, a drag across the lake), `scripts/lab/fortresslanes.mjs` (the lanes of a walled
 site, and the share of walking on them).
 
 ## Measured (2026-11-04, Intel Arc 140T iGPU, other agents' checks sharing the GPU)

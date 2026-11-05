@@ -54,12 +54,11 @@ describe('reach: the agents rules (the CPU reference of fortreach.wgsl)', () => 
     const f = fortress(columns((x) => x > 60 && x < 70));
     const near = f.cellAt(40, 40);
     const far = f.cellAt(100, 40);
-    f.paint(near, 0, 'house');
-    f.paint(far, 0, 'house');
-    await f.settled();
-    expect(f.reachedNow(near)).toBe(true);
+    // (the plan's own paint: the fortress's would refuse the far one)
+    f.plan.paint(near, 0, 'house');
+    f.plan.paint(far, 0, 'house');
+    expect(await reached(f, near)).toBe(true);
     expect(f.reachedNow(far)).toBe(false);
-    expect(f.whyNot(far)).toBe('deep');
     // a 2 m drop: a way down, no way back up — both ways or it isn't reached
     const ledge: ReachColumns = { w: W, h: H, runs: (x) => (x > 100 ? [[0, GROUND - 2]] : [[0, GROUND]]), water: () => 0 };
     const g = fortress(ledge);
@@ -73,27 +72,91 @@ describe('reach: the agents rules (the CPU reference of fortreach.wgsl)', () => 
 });
 
 describe('the check at placement', () => {
-  it('a block across deep water is placed at once, then outlined, and the panel says why', async () => {
+  it('a block across deep water is pending as a ghost, then refused, and the panel says why', async () => {
     const f = fortress(columns((x) => x > 60 && x < 70));
     const far = f.cellAt(100, 40);
     expect(f.paint(far, 0, 'house')).toBe(true);
+    // (in at once, drawn as the plan's ghost and no site for the builders until the answer)
+    expect(f.plan.has(far, 0)).toBe(true);
+    expect(f.isPending(far)).toBe(true);
+    expect(f.ghost()?.(far, 0)).toBe(true);
+    expect(f.cutCells().has(far)).toBe(true);
     await f.settled();
-    expect(f.warnCells).toEqual([far]);
-    expect(f.warning).toContain('Deep water');
-    expect(f.warning).toContain('outlined in red');
+    expect(f.plan.has(far, 0)).toBe(false);
+    expect(f.isPending(far)).toBe(false);
+    expect(f.ghost()).toBe(undefined);
+    expect(f.refusal).toBe("Builders can't reach that spot from the stores. Deep water is in the way.");
     const near = f.cellAt(40, 40);
     expect(f.paint(near, 0, 'house')).toBe(true);
     await f.settled();
-    expect(f.warning).toBe(null);
+    expect(f.refusal).toBe(null);
+    expect(f.plan.has(near, 0)).toBe(true);
+    expect(f.isPending(near)).toBe(false);
     // beside a planned block, and on it: reachable
     const beside = [0, 1, 2, 3].map((e) => f.grid.nbr[near * 4 + e]).find((c) => c >= 0)!;
     expect(f.paint(beside, 0, 'house')).toBe(true);
     expect(f.paint(near, 1, 'house')).toBe(true);
     await f.settled();
+    expect(f.plan.has(beside, 0) && f.plan.has(near, 1)).toBe(true);
     expect(f.reachedNow(beside)).toBe(true);
   });
 
-  it('a block that shuts a planned block in, with no variant to keep the way, is placed with a warning naming it', async () => {
+  it('a drag across deep water refuses only the blocks out of reach, and says how many', async () => {
+    const f = fortress(columns((x) => x > 60 && x < 70));
+    // (a line of wall from x 40 to 100: the cells in the water and past it are out of reach)
+    const cells: number[] = [];
+    for (let x = 40; x <= 100; x += 1) {
+      const c = f.cellAt(x, 40);
+      if (c >= 0 && !cells.includes(c)) cells.push(c);
+    }
+    expect(f.paintMany(cells, 0, 'wall')).toBe(cells.length);
+    await f.settled();
+    const kept = cells.filter((c) => f.plan.has(c, 0));
+    const refused = cells.length - kept.length;
+    expect(kept.length).toBeGreaterThan(3);
+    expect(refused).toBeGreaterThan(3);
+    for (const c of kept) expect(f.centre(c)[0]).toBeLessThan(66);
+    expect(f.refusal).toBe(`${refused} of those ${cells.length} blocks were not planned. Builders can't reach them from the stores. Deep water is in the way.`);
+    // every block planned is reached: nothing unreachable stays
+    f.requestReach();
+    await f.settled();
+    expect(f.todoCells().every((c) => f.reachedNow(c))).toBe(true);
+  });
+
+  it('taps while a check is in flight are judged together', async () => {
+    const f = fortress(columns((x) => x > 60 && x < 70));
+    const near = f.cellAt(40, 60);
+    const far = f.cellAt(100, 60);
+    expect(f.paint(near, 0, 'farm')).toBe(true);
+    expect(f.paint(far, 0, 'farm')).toBe(true);
+    await f.settled();
+    expect(f.plan.has(near, 0)).toBe(true);
+    expect(f.plan.has(far, 0)).toBe(false);
+    expect(f.refusal).toBe("1 of those 2 blocks was not planned. Builders can't reach it from the stores. Deep water is in the way.");
+  });
+
+  it('a ring of wall round nothing gets a gate (cells a builder can only stand inside of); inside a shut ring a block is refused: walled in', async () => {
+    const f = fortress(columns(), [20, 20]);
+    const ring = f.ringCells(90, 80, 12);
+    expect(f.paintMany(ring, 0, 'wall')).toBe(ring.length);
+    await f.settled();
+    expect(ring.every((c) => f.plan.has(c, 0))).toBe(true);
+    const gates = ring.filter((c) => f.plan.gate[c]);
+    expect(gates.length).toBe(1);
+    expect(f.variant).toBe('A gate goes in the wall, so builders can get in.');
+    expect(f.refusal).toBe(null);
+    // (the gate shut behind the check's back, and asked again: a closed ring, the wall cells inside it cut off already)
+    f.plan.gate[gates[0]] = 0;
+    f.requestReach();
+    await f.settled();
+    const inside = f.cellAt(90, 80);
+    expect(f.paint(inside, 0, 'house')).toBe(true);
+    await f.settled();
+    expect(f.plan.has(inside, 0)).toBe(false);
+    expect(f.refusal).toBe("Builders can't reach that spot from the stores. It is walled in. Put a gate in the wall first.");
+  });
+
+  it('a block that shuts a planned block in, with no variant to keep the way, is refused and the panel names it', async () => {
     const f = fortress(columns(), [20, 20]);
     const house = f.cellAt(80, 80);
     expect(f.paint(house, 0, 'house')).toBe(true);
@@ -104,25 +167,19 @@ describe('the check at placement', () => {
     // (a builder works a block from beside it: a passage through the warehouse leaves the house no side to stand at)
     expect(f.paint(round[3], 0, 'warehouse')).toBe(true);
     await f.settled();
-    expect(f.plan.has(round[3], 0)).toBe(true);
+    expect(f.plan.has(round[3], 0)).toBe(false);
     expect(f.plan.passage[round[3]]).toBe(0);
-    expect(f.warnCells).toEqual([house]);
-    expect(f.warning).toBe("That shuts the house off from the stores. Builders can't get there. It is outlined in red.");
-    expect(f.refusal).toBe(null);
-    // outlined in red: a rail a side, flagged for the red tint
-    const warn = warnPieces({ plan: f.plan, town: f.town, grid: f.grid, ground: () => GROUND, zOff: 0 }, f.warnCells);
-    expect(warn.count).toBe(4);
-    for (let i = 0; i < warn.count; i++) expect((warn.data[i * PIECE_FLOATS + 15] | 0) & PIECE_WARN).toBe(PIECE_WARN);
-    // the next press clears it; a farm (open ground) beside it doesn't shut it in
-    expect(f.erase(round[3], 0)).toBe(true);
-    expect(f.warnCells).toEqual([]);
+    expect(f.refusal).toBe('That would shut the house off from the stores. Leave a way through.');
+    expect(await reached(f, house)).toBe(true);
+    // a farm (open ground) beside it doesn't shut it in
     expect(f.paint(round[3], 0, 'farm')).toBe(true);
     await f.settled();
-    expect(f.warning).toBe(null);
+    expect(f.refusal).toBe(null);
+    expect(f.plan.has(round[3], 0)).toBe(true);
     expect(await reached(f, house)).toBe(true);
   });
 
-  it('a wall closing a ring round a planned block gets a gate, at the straight wall cell nearest the stores', async () => {
+  it('a wall closing a ring round a planned block gets a gate, at the straight wall cell nearest the stores; shutting it is refused', async () => {
     const f = fortress(columns(), [20, 20]);
     const [cx, cy] = [90, 80];
     const house = f.cellAt(cx, cy);
@@ -138,14 +195,35 @@ describe('the check at placement', () => {
     expect(gates.length).toBe(1);
     expect(f.variant).toBe('A gate goes in the wall, so builders can get in.');
     expect(f.variantAt).toBe(gates[0]);
-    expect(f.warnCells).toEqual([]);
+    expect(f.refusal).toBe(null);
+    expect(ring.every((c) => f.plan.has(c, 0))).toBe(true);
     expect(await reached(f, house)).toBe(true);
     // (the nearest the stores of the straight wall cells)
     const d = (c: number) => Math.hypot(f.centre(c)[0] - 20, f.centre(c)[1] - 20);
     for (const c of ring) if (f.plan.wallTile(c, 0) === 'straight') expect(d(gates[0])).toBeLessThanOrEqual(d(c) + 1e-9);
+    // the gate shut: it opens again, and the panel says why
+    expect(f.setGate(gates[0], false)).toBe(true);
+    await f.settled();
+    expect(f.plan.gate[gates[0]]).toBe(1);
+    // (the house, and the wall cells a builder can only stand inside of)
+    expect(f.refusal).toMatch(/^That would shut the house (and the wall )?off from the stores\. Leave a way through\.$/);
     // without the gate the house is cut off: the GPU's columns (solid.ts) would shut it in as the check did
     f.plan.gate[gates[0]] = 0;
     expect(await reached(f, house)).toBe(false);
+  }, 20000);
+
+  it('a ring of wall placed at once round a planned block gets a gate too', async () => {
+    const f = fortress(columns(), [20, 20]);
+    const house = f.cellAt(90, 80);
+    expect(f.paint(house, 0, 'house')).toBe(true);
+    await f.settled();
+    const ring = f.ringCells(90, 80, 16);
+    f.paintMany(ring, 0, 'wall');
+    await f.settled();
+    expect(ring.every((c) => f.plan.has(c, 0))).toBe(true);
+    expect(ring.filter((c) => f.plan.gate[c]).length).toBe(1);
+    expect(f.variant).toBe('A gate goes in the wall, so builders can get in.');
+    expect(await reached(f, house)).toBe(true);
   }, 20000);
 
   it('a house placed across the only way to another gets a passage through its ground floor', async () => {
@@ -190,12 +268,23 @@ describe('the check at placement', () => {
     expect(await reached(f, low)).toBe(false);
   });
 
-  it('a spot rock walls off is said to be out of reach', async () => {
+  it('a spot rock walls off is refused: a cliff', async () => {
     // (a cliff round a hollow)
     const f = fortress(columns(undefined, (x, y) => Math.abs(Math.hypot(x - 100, y - 100) - 14) < 2));
     expect(f.paint(f.cellAt(100, 100), 0, 'house')).toBe(true);
     await f.settled();
-    expect(f.warnCells).toEqual([f.cellAt(100, 100)]);
-    expect(f.warning).toContain('Builders can');
+    expect(f.plan.has(f.cellAt(100, 100), 0)).toBe(false);
+    expect(f.refusal).toBe("Builders can't reach that spot from the stores. A cliff or a building is in the way.");
+  });
+});
+
+describe('the red outline (pieces.ts warnPieces)', () => {
+  it('draws a rail a side, flagged for the red tint', () => {
+    const f = fortress(columns());
+    const c = f.cellAt(80, 80);
+    f.plan.paint(c, 0, 'house');
+    const warn = warnPieces({ plan: f.plan, town: f.town, grid: f.grid, ground: () => GROUND, zOff: 0 }, [c]);
+    expect(warn.count).toBe(4);
+    for (let i = 0; i < warn.count; i++) expect((warn.data[i * PIECE_FLOATS + 15] | 0) & PIECE_WARN).toBe(PIECE_WARN);
   });
 });

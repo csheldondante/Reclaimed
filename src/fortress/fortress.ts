@@ -20,7 +20,7 @@ import { LEVEL_H } from '../build/town';
 import { bedsOf, roomOf, type JobKind } from './economy';
 import { packSpan, REACH_BITS, type ReachEngine, type ReachReply } from './reach';
 import { solidSpans } from './solid';
-import { cutWarnLine, reachWarnLine, variantLine, wouldCutLine, type ReachWhy, type VariantKind } from './words';
+import { refusedLine, variantLine, wouldCutLine, type ReachWhy, type VariantKind } from './words';
 import { LANE_DEFAULTS, laneGraph, lanesOf, roadShapesOf, type LaneOpts, type Lanes } from './lanes';
 import { nearestNode, reached, subgraph, type RoadGraph } from '../agents/roadgraph';
 import { packRoadShapes } from '../agents/roads';
@@ -61,29 +61,33 @@ const STANDS = 1;
 // middle or a corner: no roads on it. (round 128k: was 0.3 — a river cut the roads off from the sites the builders
 // reached by wading; now the agents' own limit, a ford is a way: agents.wgsl DEEP_OFF)
 
-/** (round 128l, m4) a press the next reach answer judges: what it was, and the cells reached before it */
-interface ReachEdit {
+/** (round 128l, m4) a gate shut, judged by the next reach answer: the cells reached before it */
+interface GateEdit {
   cell: number;
-  type: StructureType;
-  kind: 'paint' | 'gate';
   before: Set<number>;
 }
-/** (round 128l) a variant tried on the plan: put in, taken out */
+/** (round 128l) a variant tried on the plan: put in, taken out; `type` the structure it's for (the panel's line) */
 interface Try {
   kind: VariantKind;
   at: number;
+  type: StructureType;
   on(): boolean;
   off(): void;
 }
-/** (round 128l) the variants for an edit, tried in turn (each judged by an answer), until one reaches `targets` */
+/**
+ * (round 128l; RT-6) the variants for a batch of placed blocks, tried in turn (each judged by an answer), until one
+ * reaches every planned block the batch cut off (`cut`) or, when it cut none, one of its own blocks out of reach that a
+ * variant may mend (`mend`: below a drop, walled in by the plan). None does: the batch is judged on `base`, the answer
+ * for the plan without them.
+ */
 interface Trial {
   tries: Try[];
   i: number;
-  targets: number[];
-  type: StructureType;
-  /** the block itself out of reach and no variant for it: outlined after, with why */
-  also: number[];
-  why: ReachWhy | null;
+  cut: number[];
+  mend: number[];
+  /** the batch's blocks (level-0 cells, pending) */
+  batch: number[];
+  base: Map<number, number>;
 }
 
 const dist = (a: readonly number[], b: readonly number[]) => Math.hypot(a[0] - b[0], a[1] - b[1]);
@@ -155,16 +159,14 @@ export class Fortress {
   private waysMemo: Ways | null = null;
   /** (round 128f) told when planning or building starts */
   readonly onMode: ((m: FortressMode) => void)[] = [];
-  /** (round 128f) why the last press planned nothing (a block the stores couldn't reach): the panel says it */
-  refusal: string | null = null;
   /**
-   * (round 128h, V128-13) after the last press: the way it kept open (a gate, a passage, a ramp — the panel's line) and
-   * the cell it went on; or the cells it cut off when nothing could (outlined in red) and the panel's line
+   * (round 128f; RT-6) why the last press's blocks (some or all) were taken out of the plan again: the stores couldn't
+   * reach them, or they shut planned blocks off. The panel says it
    */
+  refusal: string | null = null;
+  /** (round 128h, V128-13) after the last press: the way it kept open (a gate, a passage, a ramp — the panel's line) and the cell it went on */
   variant: string | null = null;
   variantAt = -1;
-  warning: string | null = null;
-  warnCells: number[] = [];
   /** (round 128f) the lanes and the roads a lane wide (lanes.ts), made again after the plan changes */
   private lanesMemo: Lanes | null = null;
   /** (round 128l, m4) the reach: the last answer per cell still to build (reach.ts ReachReply bits), its ramp spots,
@@ -175,10 +177,16 @@ export class Fortress {
   private reachBusy = false;
   private reachWant = false;
   private reachWet = false;
-  private edit: ReachEdit | null = null;
+  private edit: GateEdit | null = null;
   private trial: Trial | null = null;
-  /** (round 128l) the cells a failed trial left cut off: outlined on the next answer */
-  private warnAfter: number[] | null = null;
+  /**
+   * (RT-6, round 128m: "we should not have blocks that agents can't reach") blocks placed (their level-0 cells, in the
+   * order placed) that the reach hasn't judged yet: drawn as the plan's ghost (plots) and no site for the builders
+   * until an answer keeps them (reached, or reached by a variant) or takes them out (refused, the panel says why)
+   */
+  private pending = new Set<number>();
+  /** the cells still to build the stores reached before the pending blocks went in (what they may not cut off) */
+  private pendingBefore: Set<number> | null = null;
   /** an answer has come back (the lab waits for it) */
   reachKnown = false;
   readonly reachStats = { checks: 0, rounds: 0, cpuMs: 0 };
@@ -564,24 +572,39 @@ export class Fortress {
     }
     if (this.tool.gate) {
       const on = !this.plan.gate[b.cell];
-      return this.apply(() => this.plan.setGate(b.cell, on), b.cell);
+      return this.setGate(b.cell, on);
     }
-    if (this.tool.erase) return this.apply(() => this.plan.erase(b.cell, b.level), b.cell);
+    if (this.tool.erase) return this.erase(b.cell, b.level);
     return this.paint(b.cell, b.level, this.tool.type);
   }
 
   paint(cell: number, level: number, type: StructureType): boolean {
     // (round 128l, m4; the user: "Why do fortress blocks take so long? They seem like they should be as fast as any other
-    // block") a tap commits the block at once: nothing waits on the reach. Whether the stores still reach it and what it
-    // planned before is the GPU's answer a few frames later (reachgpu.ts); a block that cut blocks off then gets its
-    // variant (a gate, a passage, a ramp — V128-13), or the cut-off cells are outlined in red
-    const before = this.reachedSet();
+    // block") a tap puts the block in at once: nothing waits on the reach. (RT-6, round 128m: "I would refuse it but in
+    // general we should not have blocks that agents can't reach") It's pending — drawn as the plan's ghost — until the
+    // GPU's answer a few frames later (reachgpu.ts) judges it: reached, or reached once a variant keeps the way open (a
+    // gate, a passage, a ramp — V128-13), it stays; else it's taken out and the panel says why (judgeBatch). Taps while
+    // a check is in flight, and placements of many blocks at once, are judged together: only the blocks out of reach go
+    const before = this.pending.size ? null : this.reachedSet();
     if (!this.apply(() => this.plan.paint(cell, level, type), cell)) return false;
-    // (a block stacked on one already planned changes nobody's reach)
-    if (level === 0) {
-      this.edit = this.edit ? { ...this.edit, cell, type, kind: 'paint' } : { cell, type, kind: 'paint', before };
+    // (a block stacked on one already planned changes nobody's reach; on a pending one it goes with it)
+    if (level === 0 && this.io.reach) {
+      if (before) this.pendingBefore = before;
+      this.pending.add(cell);
     }
     return true;
+  }
+
+  /** (RT-6) Many blocks placed at once (a drag): each as a tap, judged together. How many went in (before the judging). */
+  paintMany(cells: readonly number[], level: number, type: StructureType): number {
+    let n = 0;
+    for (const c of cells) if (this.paint(c, level, type)) n++;
+    return n;
+  }
+
+  /** (RT-6) whether a block is still waiting for the reach's judgement (drawn as a ghost) */
+  isPending(cell: number): boolean {
+    return this.pending.has(cell);
   }
 
   // ---- the reach (round 128l, m4: connected components on the GPU — reachgpu.ts, shaders/fortreach.wgsl) ----
@@ -599,9 +622,12 @@ export class Fortress {
     return b === undefined || (b & 1) === 1;
   }
 
-  /** (round 128l) the cells still to build the last answer didn't reach (FortressLife leaves them out of the sites) */
+  /**
+   * (round 128l) the cells still to build the last answer didn't reach, and (RT-6) the blocks not judged yet:
+   * FortressLife leaves them out of the sites
+   */
   cutCells(): Set<number> {
-    const out = new Set<number>();
+    const out = new Set<number>(this.pending);
     for (const [c, b] of this.reachBits) if (!(b & 1)) out.add(c);
     return out;
   }
@@ -659,6 +685,8 @@ export class Fortress {
         const edit = this.edit;
         this.edit = null;
         const trial = this.trial;
+        // (the pending blocks this answer judges: none while a variant is on trial — the plan has the variant in it)
+        const batch = trial ? null : this.pending.size ? { cells: [...this.pending], before: this.pendingBefore ?? new Set<number>() } : null;
         const t0 = performance.now();
         R.setSpans(this.spansNow());
         const cells = this.todoCells();
@@ -669,12 +697,12 @@ export class Fortress {
         this.reachStats.cpuMs = performance.now() - t0;
         let reply: ReachReply;
         try {
-          reply = await R.check({ stores: sc >= 0 ? [sc % this.box.w, Math.floor(sc / this.box.w)] : null, queries, wet, why: !!edit });
+          reply = await R.check({ stores: sc >= 0 ? [sc % this.box.w, Math.floor(sc / this.box.w)] : null, queries, wet, why: !!edit || !!batch });
         } catch (e) {
           if (e instanceof DOMException && e.name === 'AbortError') return;
           throw e;
         }
-        this.answer(cells, reply, edit, trial);
+        this.answer(cells, reply, edit, trial, batch);
       }
     } finally {
       this.reachBusy = false;
@@ -720,8 +748,8 @@ export class Fortress {
     return out;
   }
 
-  /** an answer come back: the cells' bits; the edit it judges (a variant, the red outline) or the variant on trial */
-  private answer(cells: number[], reply: ReachReply, edit: ReachEdit | null, trial: Trial | null): void {
+  /** an answer come back: the cells' bits; the variant on trial, the gate shut or the pending blocks it judges */
+  private answer(cells: number[], reply: ReachReply, edit: GateEdit | null, trial: Trial | null, batch: { cells: number[]; before: Set<number> } | null): void {
     this.reachBits = new Map(cells.map((c, i) => [c, reply.bits[i]]));
     this.reachRamps = reply.ramps;
     this.reachStats.rounds = reply.rounds;
@@ -733,11 +761,9 @@ export class Fortress {
       if (!was || was.some((v, i) => v !== reply.wet![i])) this.lanesMemo = null;
     }
     if (trial && trial === this.trial) this.judgeTrial();
-    else if (edit) this.judgeEdit(edit);
-    else if (this.warnAfter) {
-      const left = this.warnAfter.filter((c) => !this.reachedNow(c));
-      this.warnAfter = null;
-      this.warn(left, null);
+    else if (!this.trial) {
+      if (edit) this.judgeGate(edit);
+      if (batch) this.judgeBatch(batch.cells, batch.before);
     }
     for (const h of this.onReach) h();
     for (const h of this.onChange) h();
@@ -753,62 +779,96 @@ export class Fortress {
     return 'cliff';
   }
 
-  /** (round 128h, V128-13) an edit's answer: the variant that keeps the way open, or the red outline */
-  private judgeEdit(e: ReachEdit): void {
-    const { cell, type, before } = e;
-    if (e.kind === 'gate') {
-      // (round 128f) a gate shut that shuts blocks off from the stores opens again
-      const cut = [...before].filter((c) => !this.reachedNow(c));
-      if (!cut.length) return;
-      this.plan.setGate(cell, true);
-      this.sync();
-      this.refusal = wouldCutLine([...new Set(cut.map((c) => this.plan.typeAt(c)!))]);
-      return;
-    }
-    if (this.plan.typeAt(cell) !== type) return;
-    const cut = [...before].filter((c) => c !== cell && this.reachBits.has(c) && !this.reachedNow(c));
-    const self = this.reachedNow(cell);
-    const why = self ? null : this.whyNot(cell);
-    const tries: Try[] = [];
-    // (the block itself out of reach: below a drop, a ramp up it — else outlined, the panel says why)
-    if (why === 'cliff') tries.push(...this.rampTries([cell], cell));
-    if (cut.length) tries.push(...this.wayTries(cell, type), ...this.rampTries(cut, cell));
-    if (self && !cut.length) return;
-    // (the block itself out of reach, not below a drop, and nothing cut off: outlined, the panel says why)
-    if (!cut.length && why !== 'cliff') return this.warn([cell], why);
-    const targets = [...cut, ...(self || why === 'cliff' ? [cell] : [])];
-    const also = self || why === 'cliff' ? [] : [cell];
-    if (!tries.length) return this.warn([...targets.filter((c) => !this.reachedNow(c)), ...also], cut.length ? null : why);
-    this.trial = { tries, i: 0, targets, type, why, also };
+  /** (round 128f) a gate shut that shuts blocks off from the stores opens again */
+  private judgeGate(e: GateEdit): void {
+    const cut = [...e.before].filter((c) => !this.pending.has(c) && !this.reachedNow(c));
+    if (!cut.length) return;
+    this.plan.setGate(e.cell, true);
+    this.sync();
+    this.refusal = wouldCutLine([...new Set(cut.map((c) => this.plan.typeAt(c)!))]);
+  }
+
+  /**
+   * (RT-6; V128-13) The pending blocks an answer judges: all reached and nothing cut off — they stay. Else the variants
+   * that keep the way open are tried (a gate in a wall the batch closed, a passage through a block of it, a ramp up a
+   * drop to a block below it or to what it cut off); then what's still out of reach is refused (judged).
+   */
+  private judgeBatch(cells: number[], before: Set<number>): void {
+    const batch = cells.filter((c) => this.pending.has(c));
+    if (!batch.length) return;
+    const cut = [...before].filter((c) => !this.pending.has(c) && this.reachBits.has(c) && !this.reachedNow(c));
+    const out = batch.filter((c) => !this.reachedNow(c));
+    if (!cut.length && !out.length) return this.judged(batch, []);
+    // (a block of the batch below a drop: a ramp up it. Walled in by the plan — a ring of wall the batch closed, with
+    // cells a builder can only stand inside of: a gate in it, or a passage)
+    const why = new Map(out.map((c) => [c, this.whyNot(c)]));
+    const cliff = out.filter((c) => why.get(c) === 'cliff');
+    const walled = out.filter((c) => why.get(c) === 'walled');
+    const tries = this.rampTries(cliff);
+    if (cut.length || walled.length) tries.push(...this.wayTries(batch), ...this.rampTries(cut));
+    if (!tries.length) return this.judged(batch, cut);
+    this.trial = { tries, i: 0, cut, mend: [...cliff, ...walled], batch, base: new Map(this.reachBits) };
     this.nextTry();
   }
 
-  /** the cells left cut off, outlined in red, and the panel's line (why: the block itself, out of reach) */
-  private warn(cells: number[], why: ReachWhy | null): void {
-    this.warnCells = cells;
-    if (!cells.length) {
-      this.warning = null;
-      return;
+  /**
+   * The batch judged on the last answer (the plan as it is): it cut planned blocks off — the whole batch is refused
+   * (the edit that cut them off); else its blocks out of reach are refused and the rest stay. The panel says why.
+   */
+  private judged(batch: number[], cut: number[]): void {
+    const live = batch.filter((c) => this.pending.has(c));
+    if (cut.length) {
+      this.refusal = wouldCutLine([...new Set(cut.map((c) => this.plan.typeAt(c)).filter((t): t is StructureType => !!t))]);
+      return this.refuse(live);
     }
-    const types = [...new Set(cells.map((c) => this.plan.typeAt(c)).filter((t): t is StructureType => !!t))];
-    this.warning = why && cells.length === 1 ? reachWarnLine(why) : cutWarnLine(types);
-    this.changedOver(cells);
+    const out = live.filter((c) => !this.reachedNow(c));
+    if (out.length) {
+      // (the most common reason among them)
+      const count = new Map<ReachWhy, number>();
+      for (const c of out) count.set(this.whyNot(c), (count.get(this.whyNot(c)) ?? 0) + 1);
+      const why = [...count].sort((a, b) => b[1] - a[1])[0][0];
+      this.refusal = refusedLine(out.length, live.length, why);
+    }
+    const kept = live.filter((c) => this.reachedNow(c));
+    for (const c of kept) this.pending.delete(c);
+    // (blocks placed since, judged by a later answer, may not cut these off either)
+    if (this.pending.size) for (const c of kept) this.pendingBefore?.add(c);
+    this.refuse(out);
   }
 
-  /** the gate in the wall it closed (the straight cells nearest the stores first) or a passage through the block */
-  private wayTries(cell: number, type: StructureType): Try[] {
-    const form = DEFS[type].form;
+  /** blocks taken out of the plan again (every level of their cells), no longer pending */
+  private refuse(cells: number[]): void {
+    for (const c of cells) {
+      this.pending.delete(c);
+      for (const l of [...this.plan.levels.each(c)].sort((a, b) => b - a)) this.plan.erase(c, l);
+    }
+    if (!this.pending.size) this.pendingBefore = null;
+    if (!cells.length) return;
+    if (this.selected !== null && !this.plan.structure(this.selected)) this.selected = null;
+    this.waysMemo = null;
+    this.sync();
+  }
+
+  /** the gates in the walls the batch closed (their straight cells nearest the stores first), passages through its blocks */
+  private wayTries(batch: number[]): Try[] {
     const out: Try[] = [];
-    if (form === 'wall') {
-      const s = this.plan.structureAt(cell);
-      const at = this.storesAt();
-      if (!s || !at) return out;
-      const cs = [...s.cells.keys()]
-        .filter((c) => !this.plan.gate[c] && this.plan.levels.bottom(c) === 0 && this.plan.wallTile(c, 0) === 'straight')
-        .sort((a, b) => dist(this.centre(a), at) - dist(this.centre(b), at))
-        .slice(0, VARIANT_TRIES);
-      for (const c of cs) out.push({ kind: 'gate', at: c, on: () => this.plan.setGate(c, true), off: () => void this.plan.setGate(c, false) });
-    } else if (form === 'block') out.push({ kind: 'passage', at: cell, on: () => this.plan.setPassage(cell, true), off: () => void this.plan.setPassage(cell, false) });
+    const at = this.storesAt();
+    const walls = new Set<number>();
+    for (const cell of batch) {
+      const type = this.plan.typeAt(cell);
+      if (!type) continue;
+      const form = DEFS[type].form;
+      if (form === 'wall') {
+        const s = this.plan.structureAt(cell);
+        if (!s || !at || walls.has(s.id)) continue;
+        walls.add(s.id);
+        const cs = [...s.cells.keys()]
+          .filter((c) => !this.plan.gate[c] && this.plan.levels.bottom(c) === 0 && this.plan.wallTile(c, 0) === 'straight')
+          .sort((a, b) => dist(this.centre(a), at) - dist(this.centre(b), at))
+          .slice(0, VARIANT_TRIES);
+        for (const c of cs) out.push({ kind: 'gate', at: c, type, on: () => this.plan.setGate(c, true), off: () => void this.plan.setGate(c, false) });
+      } else if (form === 'block') out.push({ kind: 'passage', at: cell, type, on: () => this.plan.setPassage(cell, true), off: () => void this.plan.setPassage(cell, false) });
+    }
     return out;
   }
 
@@ -816,7 +876,8 @@ export class Fortress {
    * (round 128h, V128-13) Ramps up the drops in the way: the free cells under a drop of STEP to DROP up to the stores'
    * ground (the last answer's ramp spots), nearest the cells first.
    */
-  private rampTries(cells: number[], also: number): Try[] {
+  private rampTries(cells: number[]): Try[] {
+    if (!cells.length) return [];
     const g = this.grid;
     const { w } = this.box;
     const [ox, oy] = this.offset();
@@ -830,7 +891,8 @@ export class Fortress {
       const c = g.cellOf[col];
       const qb = (qy - oy) * w + (qx - ox);
       const n = qx - ox >= 0 && qx - ox < w && qy - oy >= 0 && qy - oy < this.box.h ? g.cellOf[qb] : -1;
-      if (c < 0 || n < 0 || c === n || c === also || this.plan.owner[c] >= 0 || this.plan.ramp[c] >= 0) continue;
+      // (on a free cell: not a planned one — the batch's own are planned)
+      if (c < 0 || n < 0 || c === n || this.plan.owner[c] >= 0 || this.plan.ramp[c] >= 0) continue;
       const side = [0, 1, 2, 3].find((e) => g.nbr[c * 4 + e] === n);
       if (side === undefined || seen.has(c * 4 + side)) continue;
       seen.add(c * 4 + side);
@@ -838,20 +900,20 @@ export class Fortress {
       tries.push({ cell: c, side, d: Math.min(...targets.map((t) => dist([wx, wy], t))) });
     }
     tries.sort((a, b) => a.d - b.d);
-    return tries.slice(0, VARIANT_TRIES).map((t) => ({ kind: 'ramp' as const, at: also, on: () => this.plan.setRamp(t.cell, t.side), off: () => void this.plan.setRamp(t.cell, -1) }));
+    return tries.slice(0, VARIANT_TRIES).map((t) => ({ kind: 'ramp' as const, at: t.cell, type: 'house' as const /* (a ramp's line names no structure) */, on: () => this.plan.setRamp(t.cell, t.side), off: () => void this.plan.setRamp(t.cell, -1) }));
   }
 
-  /** the variant on trial put in the plan and checked (none left: the cells still cut off outlined) */
+  /** the variant on trial put in the plan and checked (none left: the batch judged as the plan is without them) */
   private nextTry(): void {
     const t = this.trial!;
     while (t.i < t.tries.length && !t.tries[t.i].on()) t.i++;
     if (t.i >= t.tries.length) {
       this.trial = null;
-      // (judged on the next answer: the plan as it is again)
-      this.warnAfter = [...t.targets, ...t.also];
+      // (every variant taken out again: the plan is as the batch's own answer judged it)
+      this.reachBits = t.base;
       this.waysMemo = null;
       this.sync();
-      this.requestReach();
+      this.judged(t.batch, t.cut);
       return;
     }
     this.waysMemo = null;
@@ -861,10 +923,13 @@ export class Fortress {
   private judgeTrial(): void {
     const t = this.trial!;
     const tr = t.tries[t.i];
-    if (t.targets.every((c) => this.reachedNow(c))) {
+    // (kept: everything the batch cut off reached again, and — when it cut nothing — one of its own blocks out of reach
+    // reached; the rest of those are refused)
+    if (t.cut.every((c) => this.reachedNow(c)) && (t.cut.length > 0 || t.mend.some((c) => this.reachedNow(c)))) {
       this.trial = null;
-      this.kept(tr.kind, t.type, tr.at);
-      if (t.also.length) this.warn(t.also, t.why);
+      this.kept(tr.kind, tr.type, tr.at);
+      // (the way kept open: the batch's blocks still out of reach — not below a drop — are refused)
+      this.judged(t.batch, []);
       return;
     }
     tr.off();
@@ -873,7 +938,7 @@ export class Fortress {
     this.nextTry();
   }
 
-  /** a press while a variant is on trial: the trial's variant taken out, the trial dropped */
+  /** a press while a variant is on trial: the trial's variant taken out, the trial dropped (its batch still pending) */
   private abortTrial(): void {
     const t = this.trial;
     if (!t) return;
@@ -890,17 +955,20 @@ export class Fortress {
   }
 
   erase(cell: number, level: number): boolean {
-    return this.apply(() => this.plan.erase(cell, level), cell);
-  }
-
-  setGate(cell: number, on: boolean): boolean {
-    // (round 128f) a gate shut that shuts blocks off from the stores opens again (judged on the answer: judgeEdit)
-    const before = !on && this.plan.gate[cell] ? this.reachedSet() : null;
-    if (!this.apply(() => this.plan.setGate(cell, on), cell)) return false;
-    if (before) this.edit = { cell, type: 'wall', kind: 'gate', before };
+    // (RT-6: erasing takes solid away and frees the sides builders stand at — it cuts nothing off; a pending block
+    // erased is forgotten)
+    if (!this.apply(() => this.plan.erase(cell, level), cell)) return false;
+    if (!this.plan.has(cell, 0) && this.pending.delete(cell) && !this.pending.size) this.pendingBefore = null;
     return true;
   }
 
+  setGate(cell: number, on: boolean): boolean {
+    // (round 128f) a gate shut that shuts blocks off from the stores opens again (judged on the answer: judgeGate)
+    const before = !on && this.plan.gate[cell] ? this.reachedSet() : null;
+    if (!this.apply(() => this.plan.setGate(cell, on), cell)) return false;
+    if (before) this.edit = { cell, before };
+    return true;
+  }
   /** (round 128f) where the builders fetch from (window world): the first built warehouse's door, else the town's heap */
   storesAt(): [number, number] | null {
     for (const s of this.plan.structures().sort((a, b) => a.id - b.id)) {
@@ -1061,7 +1129,8 @@ export class Fortress {
 
   /** While building: whether a block of the plan is still to build (null while planning: the plan drawn whole). */
   ghost(): ((cell: number, level: number) => boolean) | undefined {
-    if (this.mode !== 'build') return undefined;
+    // (RT-6: while planning, the blocks the reach hasn't judged yet)
+    if (this.mode !== 'build') return this.pending.size ? (c) => this.pending.has(c) : undefined;
     return (c, l) => !this.town.has(c, l);
   }
 
@@ -1167,8 +1236,6 @@ export class Fortress {
     this.refusal = null;
     this.variant = null;
     this.variantAt = -1;
-    this.warning = null;
-    this.warnCells = [];
     this.selected = this.plan.owner[cell] >= 0 ? this.plan.owner[cell] : this.selected;
     if (this.selected !== null && !this.plan.structure(this.selected)) this.selected = null;
     this.sync();

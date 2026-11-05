@@ -17885,3 +17885,61 @@ Why: with the lab's fortress claimed (c0df418), scripts/lab/fortresscarts.mjs fa
 - Checked in a kept Chrome profile (headless, one origin): before, `reclaimed-warm` held 2 snapshots; after a load with
   `?fresh=1` the three databases are gone and only `reclaimed.difficulty.v1` is left in localStorage. Unit:
   src/fresh-start.test.ts (the flag off, what's deleted and kept, a blocked delete).
+
+## 2026-11-05 — round 128m (`refuse`): unreachable blocks are refused again (RT-6)
+
+Why: the user (DECISIONS round 128m): "I would refuse it but in general we should not have blocks that agents can't
+reach." This reverses milestone 4's change, where a block the builders couldn't reach was placed and outlined in red.
+
+- A tap still puts the block in at once (nothing waits on the reach), but it is **pending**: drawn as the plan's ghost
+  (a plot, `Fortress.ghost()` while planning) and left out of the builders' sites (`cutCells()`), until the GPU's answer
+  a few frames later judges it (`judgeBatch`). Reached: it stays. Out of reach: the variants are tried as before
+  (V128-13: a ramp up a drop to it; a gate in a wall, a passage through a block, ramps for what it cut off) and, new, a
+  gate or passage for blocks **walled in by the plan** too. Still out of reach: it is taken out again (`refuse`: every
+  level of its cell) and the panel says why in the existing words (`reachWhyLine`: deep water, walled in, a cliff or a
+  building, too far). Nothing unreachable stays in the plan.
+- Batches: the pending set is every level-0 block placed since the last judged answer — taps while a check is in
+  flight, and many placed at once (`Fortress.paintMany`, the lab's `drag`). Only the blocks out of reach go, and the
+  panel says how many (`refusedLine`: "4 of those 18 blocks were not planned. Builders can't reach them from the
+  stores. Deep water is in the way.", the most common reason). A variant is kept when it reaches everything the batch
+  cut off or, cutting nothing, at least one of its own blocks out of reach; the rest of those are refused.
+- Why the walled-in variant: a ring of wall placed at once round nothing has cells a builder can stand at only from
+  inside (on this grid a ring cell's outer sides are often other ring cells). Without a gate they were out of reach and
+  refusing them punched 4 holes in a 17-cell ring (unit test, found by the first run). With it, the ring gets one gate.
+- **Can an edit cut planned blocks off?** Checked each edit:
+  - painting (a wall closing a ring, a block filling the last gap): yes. Judged against the blocks reached before the
+    batch (`pendingBefore`; blocks kept from an earlier batch while later ones wait are added). A variant opens a way
+    (the gate, the passage, a ramp); none can: **the edit that cut them off is refused** — the whole batch, with
+    `wouldCutLine` ("That would shut the house off from the stores. Leave a way through."). Was: placed, the cut-off
+    blocks outlined in red.
+  - shutting a gate: yes; it opens again (round 128f's rule, kept). The bar's Gate tool now goes through
+    `Fortress.setGate`, so a gate shut by a tap is judged too (it went straight to the plan before and was never
+    judged).
+  - erasing: no. It takes solid away and frees the sides builders stand at; a pending block erased is forgotten.
+  - a tower: no (solid on a wall cell's top, not on the ground).
+  - a quarry: not at placement. Its pit isn't in the reach's spans (they add the plan's solid; a pit takes ground away),
+    so a pit dug across the only way to a site would cut it off while building, tier by tier. The check every few
+    seconds while building sees it and FortressLife skips the site (`cutCells`, the bar's count), as for rising water.
+    The pit's tiers keep a ramp, so this needs a pit wall to wall across a corridor. Judging it at placement needs the
+    reach to carve the planned pit: BACKLOG RT-8.
+- Tap cost (lab, desktop D3D11): the fortress's part of a tap 0.1 ms (a Set add and the reached set; no new readback —
+  the answer is the few words the reach already reads, asked `why` for a batch as for an edit before). The reach's
+  spans after it: 0.3-0.6 ms. The change handlers every edit already ran add 1-3 ms: `FortressClaims.update` (the
+  claims' solid, which recomputes the plan's ways after each change) 1.8 ms average, the bar 0.3 ms. They are not new;
+  BACKLOG RT-9.
+- Removed: `Fortress.warning` / `warnCells`, `reachWarnLine`, `cutWarnLine`, the scene's `warn` input. pieces.ts
+  `warnPieces` (the red outline) stays, tested, with nothing feeding it.
+- Tests: reach.test.ts — pending as a ghost then refused with why; a drag across deep water refuses only the cells out
+  of reach and says how many; taps in flight judged together; a ring round nothing gets a gate, a block inside a shut
+  ring is refused (walled in); a warehouse that would shut a house in is refused and names it; a ring closed tap by tap
+  and placed at once both get a gate, shutting it is refused. ring.test.ts asks its question through the refusal.
+  fortress.test.ts lints the new lines. Unit suite 716 passed.
+- Lab (`scripts/lab/fortressrefuse.mjs`, recipe valley; the river runs shallow enough to ford by the time the lab
+  opens, so the deep water is the lake): a house on the lake pending then refused "Deep water is in the way."; a ring
+  round nothing kept whole with a gate, shutting it refused, a house inside the shut ring refused "walled in"; a drag of
+  18 wall cells across the lake: 7 kept on each shore, 4 refused (all within 10.4 m of the lake's middle), "4 of those
+  18 blocks were not planned…"; every block planned at the end reached. fortressoutside (walled) passed: all three
+  outside sites built, cutOff 0. hallcheck: 0 lost of 344. Shots at 412x915, zoom 7: refused-water.png,
+  refused-ring.png, refused-drag.png (the panel lines read as above).
+- scripts/fortressvariant.mjs (full game, by finger): its last check now expects the warehouse refused and the house
+  named (not run here).

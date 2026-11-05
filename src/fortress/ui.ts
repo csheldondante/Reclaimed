@@ -307,7 +307,6 @@ export class FortressBar {
     if (f.refusal) out.push({ text: f.refusal, short: true });
     // (round 128h, V128-13) the way the last tap kept open (a gate, a passage, a ramp), or what it cut off (outlined)
     if (f.variant) out.push({ text: f.variant, short: true });
-    if (f.warning) out.push({ text: f.warning, short: true });
     // (round 128d: Houses picked showed "This wall has 2 blocks… 4 archers can stand on it" — the structure last painted,
     // of another type) the structure's lines only when it is of the type picked (Gate and Tower: a wall's)
     const s = f.selected !== null ? f.plan.structure(f.selected) : null;
