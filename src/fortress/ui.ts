@@ -52,6 +52,10 @@ export interface FortressBarHooks {
   skip(): void;
   /** the speed time runs at now, and whether it's skipping */
   now(): { speed: number; skipping: boolean };
+  /** (round 128l, m4; V128-10) the person a tap picked: its card (null: none), whether the camera follows it, Follow pressed */
+  person?(): { title: string; lines: string[] } | null;
+  following?(): boolean;
+  follow?(on: boolean): void;
 }
 
 /** (round 128e, FT-50) the speeds a tap picks while building */
@@ -76,6 +80,10 @@ export class FortressBar {
   private storeLine: HTMLDivElement;
   private peopleLine: HTMLDivElement;
   private frame: HTMLDivElement;
+  /** (m4) Follow, under a person's card */
+  private followRow: HTMLDivElement;
+  private followBtn: HTMLButtonElement;
+  private hooks: FortressBarHooks;
 
   private now: () => { speed: number; skipping: boolean } = () => ({ speed: 1, skipping: false });
 
@@ -83,6 +91,7 @@ export class FortressBar {
   townName = 'the town';
 
   constructor(parent: HTMLElement, private fort: Fortress, hooks: FortressBarHooks) {
+    this.hooks = hooks;
     const style = document.createElement('style');
     style.textContent = CSS;
     parent.appendChild(style);
@@ -183,6 +192,17 @@ export class FortressBar {
     };
     this.timeRow.appendChild(this.skipBtn);
     this.root.appendChild(this.timeRow);
+    // (round 128l, m4) a person's card: Follow keeps the camera on them until a tap lands elsewhere
+    this.followRow = document.createElement('div');
+    this.followRow.className = 'fort-row';
+    this.followBtn = document.createElement('button');
+    this.followBtn.className = 'follow';
+    this.followBtn.onclick = () => {
+      hooks.follow?.(!hooks.following?.());
+      this.render();
+    };
+    this.followRow.appendChild(this.followBtn);
+    this.root.appendChild(this.followRow);
     this.root.appendChild(goRow);
     this.now = () => hooks.now();
     this.planOnly = [grid, row];
@@ -198,6 +218,13 @@ export class FortressBar {
     const f = this.fort;
     const out: { text: string; short?: boolean; card?: boolean; title?: boolean }[] = [];
     const stores = f.stores();
+    // (round 128l, m4) a person picked: its card first, whatever the mode
+    const who = this.hooks.person?.() ?? null;
+    if (who) {
+      out.push({ text: who.title, title: true });
+      for (const l of who.lines) out.push({ text: l });
+      return out;
+    }
     if (f.tool.inspect) {
       // (round 128d) Inspect: the picked structure's card (inspect.ts), from its data and the ledger now
       const s = f.inspected !== null ? f.plan.structure(f.inspected) : null;
@@ -285,6 +312,15 @@ export class FortressBar {
     // (another tool picked: the card closes)
     if (!t.inspect && f.inspected !== null) f.inspect(null);
     this.frame.style.display = planning ? '' : 'none';
+    // (m4) Follow under a person's card; the types and the time row make way for it
+    const who = this.hooks.person?.() ?? null;
+    this.followRow.style.display = who ? '' : 'none';
+    this.followBtn.textContent = this.hooks.following?.() ? 'Stop following' : 'Follow';
+    this.followBtn.classList.toggle('on', !!this.hooks.following?.());
+    if (who) {
+      for (const el of this.planOnly) el.style.display = 'none';
+      this.timeRow.style.display = 'none';
+    }
     const [mode, stores, people] = this.topLines();
     this.modeLine.textContent = mode;
     this.modeLine.className = planning ? 'mode plan' : 'mode';

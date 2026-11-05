@@ -9,9 +9,7 @@ import { CHUNK } from '../../world/layout';
 import { cellPos } from '../../world/lattice';
 import { levelFrame } from './frame';
 import { attachSim } from '../../api/world';
-import { readColumn } from '../../world/layout';
-import { MATERIALS, MatState } from '../../world/materials';
-import type { ReachColumns } from '../../fortress/reach';
+import { FortressReachGpu } from '../../fortress/reachgpu';
 import { ROW_H } from '../../world/lattice';
 import { Fortress } from '../../fortress/fortress';
 import { FortressBar } from '../../fortress/ui';
@@ -20,6 +18,7 @@ import { FortressLife } from '../../fortress/life';
 import { ECON, START_STORES } from '../../fortress/defs';
 import { fortressPieces } from '../../fortress/pieces';
 import { FortressClaims } from '../../fortress/claims';
+import { FortressFollow, personCard } from '../../fortress/follow';
 import { StaticClaims } from '../../sim/static-claims';
 import type { StructurePieces } from '../../api/contracts/structures';
 import { SKIP_SPEED, SKIP_GRACE } from './flags';
@@ -59,54 +58,11 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
     if (!p) throw new Error(`fortress: the town ${rec.id} has no heap (a 'pile' spot) for its builders`);
     return [p.w[0], p.w[1]];
   };
-  // (round 128f: the check at placement — fortress/reach.ts) the window's columns, read when planning starts and every
-  // few seconds while building: each column's solid runs (solid and granular matter, the town's claims among them —
-  // what the agents' surfaces are peeled from) and its water
-  let reachCols: ReachColumns | null = null;
-  let reading = false;
-  const readCols = async () => {
-    if (reading) return;
-    reading = true;
-    try {
-      // (round 128k: the window as it was when read — a slide since moves every column; the columns are asked for in
-      // the window as it is now, and shifted back to where they were read. Before, a read from before a slide was
-      // looked up where the window had moved: the river's water read under a site, a planned block "cut off" — the
-      // builders never went (the user: "They fail to reach anything I build"))
-      const at: [number, number] = [S.origin[0], S.origin[1]];
-      const [lay, water] = await Promise.all([core.readBuffer('layers'), core.readBuffer('water')]);
-      const slots = new Uint32Array(lay.buffer);
-      const { packed } = core;
-      const ww = dims.w;
-      const hh = dims.h;
-      const shift = (x: number, y: number): [number, number] | null => {
-        const kx = x + S.origin[0] - at[0];
-        const ky = y + S.origin[1] - at[1];
-        return kx >= 0 && ky >= 0 && kx < ww && ky < hh ? [kx, ky] : null;
-      };
-      reachCols = {
-        w: ww,
-        h: dims.h,
-        runs: (x, y) => {
-          const q = shift(x, y);
-          if (!q) return [];
-          return readColumn(packed, slots, q[0], q[1])
-            .filter((iv) => {
-              const s = MATERIALS[iv.mat]?.state;
-              return s === MatState.Solid || s === MatState.Granular;
-            })
-            .map((iv) => [iv.z0, iv.z1] as const);
-        },
-        water: (x, y) => {
-          const q = shift(x, y);
-          return q ? water[q[1] * ww + q[0]] : 0;
-        },
-      };
-    } finally {
-      reading = false;
-    }
-  };
-  const fort = new Fortress({ origin: [ox, oy], w: W, h: H }, {
-    columns: () => reachCols,
+  // (round 128l, m4: the check at placement — the GPU's connected components over the box, fortress/reachgpu.ts; it
+  // replaced the CPU flood over the window's columns read back, ~140-210 ms a tap and a whole read every 3 s: TL-6, FT-61)
+  const reach = new FortressReachGpu(scene.host.gpu.device, core.world, W, H, () => fort.offset());
+  const fort: Fortress = new Fortress({ origin: [ox, oy], w: W, h: H }, {
+    reach,
     townHeap,
     // (round 128k) the town's gates: its wall's gate posts — where the fortress's roads start
     townGates: () => (st.spotsOf(rec.id) ?? []).filter((s) => s.kind === 'post' && s.ref === `${rec.id}:wall`).map((s): [number, number] => [s.w[0], s.w[1]]),
@@ -143,20 +99,19 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
     void core.readBuffer('surface', true).then((f) => {
       scene.surfaceCache = new Uint32Array(f.buffer);
       fort.ready = true;
+      fort.requestReach(true);
     }, ignoreTeardown);
   });
-  void readCols().then(() => fort.onChange.forEach((h) => h()), ignoreTeardown);
-  // (round 128f) the columns read again when planning starts (what's been built and dug since), and every few seconds
-  // while building (FortressLife's cut-off check reads them)
+  // (round 128l) the reach asked when planning starts (what's been built and dug since; the water for the lanes), every
+  // few seconds while building (level/frame.ts) and after a slide (the part come into the window)
   fort.onMode.push((m) => {
-    if (m === 'plan') void readCols().catch(ignoreTeardown);
+    if (m === 'plan') fort.requestReach(true);
   });
-  scene.fortressReadCols = () => void readCols().catch(ignoreTeardown);
+  scene.fortressReadCols = () => fort.requestReach(true);
   S.onSlide.push(() => fort.slid());
   S.onWarp.push(() => fort.slid());
-  // (round 128k) and read again after a slide: the part come into the window was never read
-  S.onSlide.push(() => void readCols().catch(ignoreTeardown));
-  S.onWarp.push(() => void readCols().catch(ignoreTeardown));
+  S.onSlide.push(() => fort.requestReach(true));
+  S.onWarp.push(() => fort.requestReach(true));
   // (round 128d) what's built is solid to the world (fortress/claims.ts): claimed in the columns, as the towns' are
   // (round 128j: a static grid, written with the land — sim/static-claims.ts)
   scene.fortressClaims = new FortressClaims(fort, {
@@ -166,6 +121,8 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
   // (round 128i, FT-67) the road stamp's offset moved in the slide's own frame, as the towns' grid rows are
   S.onSlide.push(() => scene.fortressLife?.roads());
   S.onWarp.push(() => scene.fortressLife?.roads());
+  // (round 128l, m4; V128-10) a tap on a person picks them (fortressAt): their card, and Follow
+  const follow = (scene.fortressFollow = new FortressFollow());
   // (round 128d) Build: the plan goes to the builders and time runs (at ?speed=); Plan: time stops again
   // (round 128e, FT-50) the speed picked while building (1x, 4x, 16x), and Skip to done
   let runSpeed = Math.max(1, Number(scene.host.params.get('speed') ?? 1));
@@ -231,6 +188,15 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
       scene.speed = SKIP_SPEED;
     },
     now: () => ({ speed: scene.fortressSkip ? SKIP_SPEED : runSpeed, skipping: scene.fortressSkip }),
+    // (round 128l, m4; V128-10) the person a tap picked
+    person: () => {
+      const id = follow.selected;
+      const facts = id !== null ? scene.fortressLife?.personFacts(id) : null;
+      if (id !== null && !facts) follow.select(null);
+      return facts ? personCard(facts) : null;
+    },
+    following: () => follow.following,
+    follow: (on) => follow.follow(on),
   });
   scene.fortressBar.townName = rec.name;
   // the power coming in: the fortress's built blocks (a ledger number: nothing spends it yet)
@@ -275,11 +241,56 @@ export function fortressAt(scene: LevelScene, sx: number, sy: number): void {
   const { core } = scene;
   const { camera } = core;
   const fort = scene.fortress!;
+  // (round 128l, m4; V128-10) a tap on a person (or a cart) picks them; a tap elsewhere while one is picked lets go. While
+  // time runs or with Inspect on: planning's taps stay the plan's
+  const follow = scene.fortressFollow;
+  if (follow && (fort.mode === 'build' || fort.tool.inspect || follow.selected !== null)) {
+    const id = personAt(scene, sx, sy);
+    if (id !== null || follow.selected !== null) {
+      follow.select(id);
+      scene.fortressBar?.render();
+      return;
+    }
+  }
   // (the plan's own blocks are picked along the tap's ray, by face — fortress/pick.ts; the GPU pick gives the ground)
   const ray = camera.ray(sx, sy);
   core.renderer.pick((sx / camera.viewportW) * scene.renderW, (sy / camera.viewportH) * scene.renderH).then((hit) => {
     fort.press(ray, hit ? hit.cell : -1);
   }, ignoreTeardown);
+}
+
+/** (round 128l, m4) the fortress's person (or cart) drawn nearest a screen point, within PICK_PX (null: none) */
+const PICK_PX = 26;
+export function personAt(scene: LevelScene, sx: number, sy: number): number | null {
+  const life = scene.fortressLife;
+  if (!life) return null;
+  const cam = scene.core.camera;
+  let best: number | null = null;
+  let bd = PICK_PX;
+  for (const id of life.everyone()) {
+    const u = scene.units?.get(id);
+    if (!u?.alive) continue;
+    // (the figure's middle, a little over its feet)
+    const [px, py] = cam.project(u.at[0], u.at[1], u.at[2] + 0.7);
+    const d = Math.hypot(px - sx, py - sy);
+    if (d < bd) {
+      bd = d;
+      best = id;
+    }
+  }
+  return best;
+}
+
+/** (round 128l, m4; V128-10) Follow, each frame: the camera on the person picked (the window slides with the camera) */
+export function followFrame(scene: LevelScene): void {
+  const f = scene.fortressFollow;
+  if (!f?.following || f.selected === null) return;
+  const u = scene.units?.get(f.selected);
+  if (!u?.alive) return void f.select(null);
+  const t = scene.core.camera.target;
+  t[0] = u.at[0];
+  t[1] = u.at[1];
+  t[2] = u.at[2];
 }
 
 /**
@@ -330,6 +341,8 @@ export function startLab(scene: LevelScene): void {
       scene.fortressSkip = false;
     },
     speed: (n?: number) => (n === undefined ? scene.speed : (scene.speed = n)),
+    tap: (sx, sy) => fortressAt(scene, sx, sy),
+    follow: () => scene.fortressFollow,
     frame: (now, dt) => levelFrame(scene, now, dt, true),
     restoreLand: () => {
       scene.integrity?.forget(0, 0, w, h);

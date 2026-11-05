@@ -17497,3 +17497,156 @@ loaded (a level took 452 s to boot).
 **vite.config: the dev server watches less** (from the coordinator): `server.watch.ignored` gets `**/.testcache/**`
 and `**/scratchpad/**`. The headless checks' Chrome profiles and builds in .testcache change all the time; watched,
 they kept each dev server at about 2 cores.
+
+
+## 2026-11-04 — round 128l (`m4`): fortress blocks as fast as any block — the reach on the GPU (TL-6, FT-61)
+
+Why: the user, "Why do fortress blocks take so long? They seem like they should be as fast as any other block", "Does it
+even need to go to the CPU?", and on the design: "I would probably do connected components of reachable things on the
+GPU myself but only because I find CPU round trips are stupidly expensive on mobile".
+
+- Measured first (the lab, flat, a 22-cell wall ring and 12 houses tapped one by one): **~210 ms a tap** (mean 208.6 ms,
+  max 303 ms), all of it the CPU reach (with the columns hidden from it, 0.1 ms a tap): `Fortress.paint` ran
+  `reachMap()` — a breadth-first search both ways over the 240-wide box — 3-6 times a tap, and the whole 'layers' and
+  'water' buffers were read back when planning started and every 3 s while building (FT-61).
+- Now (fortress/reachgpu.ts, shaders/fortreach.wgsl): a tap commits the block and returns — **0.33 ms mean, 0.8 ms max**
+  over the same ring. The plan's solid as if built goes to the GPU as two packed spans a box column (only the rows that
+  changed are written); the GPU peels the box's columns into the agents' surfaces with those spans merged in, labels
+  them, hooks to the least root round them and pointer-jumps (the atlas's flood fill) until a round changes nothing,
+  then answers a word a block still to build (a stand in the stores' component), the ramp spots and, when asked, the
+  wet columns. The answer comes back **~40 ms after the tap** (one solve of 12 iterations settled every time on the
+  lab's box; 2-7 ms of it CPU: solid.ts over the plan and the queries — BACKLOG M4-2). Asked why (an edit to judge):
+  the same solve with deep water lifted, then with the plan left out — three solves, ~130 ms, for a house planned
+  inside a gateless ring ("It is walled in. Put a gate in the wall first. It is outlined in red.").
+- The variants (V128-13) run on the answers: a block that cut planned blocks off gets its gate (the closing wall cell
+  of a ring, nearest the stores — a beat after the tap, as the brief allowed), passage or ramp, each tried by putting it
+  in the plan and reading the next answer; a gate shut that cuts blocks off opens again with the panel's line. A block
+  placed out of reach is now planned and outlined in red with the reason (it was refused).
+- Rules: the agents' (AGENT_H, STEP, DROP, DEEP, NAV_K), but a component joins two-way steps only — the places a walker
+  gets to and back from, as the CPU's "both ways" was (a loop down a drop and up a ramp elsewhere is lost: M4-3).
+- fortress/reach.ts is now the contract (`ReachEngine`, `ReachAsk`, `ReachReply`, `REACH_BITS`) and `CpuReach`, the same
+  solve on the CPU over columns — the unit tests' stand-in for the GPU (reach.test.ts, ring.test.ts, lanes.test.ts run
+  on it, awaiting `Fortress.settled()`). The lanes' "no roads under water" reads the reach's wet bits.
+- Found on the valley recipe: the river has a ford at the window's north edge (rows 0 and 2 under 0.9 m), so the far
+  bank is reached — correct by the rules.
+- Phone: three small dispatches × 12 iterations over 66k columns × 4 surfaces after an edit and every 3 s while
+  building (one solve); nothing per frame. To watch on the tiler GPU (the user's bench), not measured here (no timing
+  benches in this task).
+- scripts/lab/fortresslanes.mjs: read `L.slope` / `L.contour`, gone with round 128k's lanes; now prints tiles, joined and
+  unjoined.
+
+
+## 2026-11-04 — round 128l (`m4`): milestone 4 — the smith makes weapons, the barracks trains soldiers (FT-4)
+
+Why: FORTRESS_SLICE1 milestone 4 ("a RecipeRunner over data/recipes/fortress.json; a trained soldier = a villager
+removed + a guard unit at the barracks") and the user's "making new units ... so that we could follow a unit and see it
+go about it's day" (DECISIONS round 128l, m4).
+
+- Recipes are data (data/recipes/fortress.json): `forge` at the blacksmith (2 ore + 1 wood → a weapon, 20 s of work) and
+  `drill` at the barracks (a weapon + a person → a soldier, 30 s). recipes.ts RecipeRunner is pure (recipes.test.ts:
+  a batch over its seconds, one a worker, the barracks' beds capping soldiers, a dropped batch given back, the card's
+  In). Untuned: a smith makes 3 weapons a day (ECON.daySec 60), a recruit 2 soldiers.
+- The work is walked, not ticked: a smith goes to the stores, takes the batch out (the stores drop by it), carries it to
+  the smithy's door by road, works there (the work pose) and carries the weapon back; a recruit takes a weapon to the
+  barracks and drills, and the villager becomes a soldier — a `guard` unit (steel) standing where it stood. Soldiers
+  muster at the barracks and drill, march by road to the foot of the wall's stairs, then walk the wall-walk (the units'
+  own `go` orders, which climb the stairs: their goal fields seed on the top surface), and muster again each morning.
+- Fields and groups: main's call — the smithy and barracks legs ride the road graph (V128-14), no new fields (a field is
+  a whole-window 4-level f32 buffer, ~1.5 MB on the phone). The agents' groups went 16 → 24 (a table size: the params'
+  group arrays, the ride params). A leg with no road to its goal waits (M4-5).
+- Measured on the lab (flat; scripts/lab/fortressrecipes.mjs: a walled site with a warehouse, a blacksmith, a barracks
+  and two houses, 30 ore and 80 wood in the stores, 180 sim s at 16x): 15 weapons forged (the ore ran out at ~60 s), 4
+  soldiers trained (the barracks' 4 beds), 59 wall-walk points reached, 23 patrols walked; the legs ride (smith, barracks,
+  post: true). The bar: "Wood 65 · Stone 200 · Ore 0 · Grain 135 · Weapons 9", "People 16 · Beds 16 · Soldiers 4".
+- GIF (scripts/lab/gifsoldier.mjs + scripts/lab/frames2gif.mjs, new: lab shots into a GIF): a recruit fetching a weapon,
+  drilling, then the soldier mustering, marching and walking the wall, at zoom 18. Soldiers read grey beside the yellow
+  workers — a kit waits for the art push (M4-4).
+- Phone: nothing per frame beyond the units' own steps; the rides add destination slots (≤ 4 doors a leg).
+
+
+## 2026-11-04 — round 128l (`m4`): on the roads — carts, newcomers by road, a person's day
+
+Why: the user, "have units come in on the roads and maybe have carts? ... moving in roads so that we could follow a unit
+and see it go about it's day" (DECISIONS round 128l, m4); V128-12's carts.
+
+- Carts: a haul unit with a bigger load (8 against a walker's 2), slower (1.7 against 2.4), on the roads only (each cart
+  its own riding group: no field). The stores send carts for long hauls: a quarry, lumber camp or farm past 40 m from the
+  stores leaves its loads on its pile; walkers carry short ones (`haulBy`, economy.test.ts). Two carts, one more a
+  warehouse block, up to three. Drawn as a wooden bed on four wheels (a voxel model on the agents' kind 7).
+- Measured (the lab, flat, scripts/lab/fortresscarts.mjs: three houses, a quarry 70 m east and farms 60 m north, 200
+  sim s at 16x, sampled every 2 s): **the carts' walking samples on a road or lane: 79 of 79 (1.00)**; a cart's round
+  trip to the quarry ~76 s (38 s each way at 1.75 m/s, all on the road: scratch probe); the farms' roads didn't reach
+  them (riding farm: false), so their workers walked. Newcomers: 12 arrived, filling the beds; their walking samples on
+  a road 0.66-0.68 (the leg in from the window's edge to the nearest road is open ground).
+- Newcomers come in from the window's edge where the fortress's roads come nearest it, and ride the roads to a house
+  (before: from the box's edge along the farthest road, then the stores' field).
+- A person's day: a meal at the stores at midday (once a day), home to rest at the day's end; their day is logged for
+  the follow card (next commit). Untuned: the economy's day is still 60 sim s (ECON.daySec).
+- GIFs: a cart riding out to the quarry's pile and back, a newcomer walking in (scripts/lab/gifroad.mjs, next commit's
+  Follow drives the camera).
+- Phone: the carts are three more units and three more riding groups; nothing per frame on the CPU beyond their steps.
+
+
+## 2026-11-04 — round 128l (`m4`): follow a person through their day (V128-10, minimal)
+
+Why: the user, "so that we could follow a unit and see it go about it's day" (DECISIONS round 128l, m4).
+
+- A tap on a person or a cart (the nearest drawn within 26 px of the finger) picks it: the panel shows a card. It has
+  a title ("Lene, a farmer"; "Cart number 28"), its number, what it's doing, what it carries, its day so far ("Today:
+  home, work, haul, eat, home") and a thought. The name comes from the number; the thought comes from the number, the
+  day and what it's doing. Nothing is simulated behind the thought. Follow keeps the camera on it. The window slides
+  with the camera, so a person can be followed across the map. A tap elsewhere lets go.
+- Checked on the lab (scripts/lab/fortressfollow.mjs, flat: houses, a warehouse, a quarry and farms; a worker tapped at
+  its screen point as a finger would, Follow pressed, 66 sim s at 4x): **on screen 44 of 44 samples**. The card read,
+  in turn: "Going to the farm", "Working at the farm", "Taking goods to the stores. Carrying 1 grain", back to the farm,
+  "Today: … haul, home, eat, home, work". A tap on empty ground let go. Every card line passes the writing lint for
+  every state (follow.test.ts).
+- GIFs, all at play zoom with the camera following: a farmer's day, a cart's trip, a newcomer walking in
+  (scripts/lab/gifroad.mjs, scripts/lab/fortressfollow.mjs `shots`).
+- Judgement calls: a person picked isn't highlighted in the world, and a recruit turned soldier is a new unit, so the
+  follow lets go (M4-13). fortress/life.ts is now 1448 lines and wants splitting (M4-12).
+
+
+## 2026-11-04 — round 128l (`m4`): carts give up a pile they get no nearer; the miners' digs capped
+
+Why: the roads commit's gate (scripts/lab/fortresscarts.mjs on the gate tree) failed twice over. A cart sat `out` from
+44 s to the end, 200 sim s, without reaching the quarry's pile. The page threw "world.terrain: 64 takes and puts in flight at
+most": with the carts fetching their loads, the miners stay at the pit and dig without the walk to the stores between.
+
+- The miners' terrain takes in flight are capped at 16 (DIGS_IN_FLIGHT; the world's terrain holds 64 for everything).
+- A cart that gets no nearer its pile for 20 sim s gives that pile up for 60 s and parks (CART_STUCK, CART_RETRY;
+  `stats.cartGaveUp`); its workers keep piling, and another cart may try.
+- After: fortresscarts passes (a load in, carts' walking samples on a road 0.98, newcomers 0.66; no page error).
+
+
+## 2026-11-05 — round 128l (`m4`): carts start on the road
+
+Why: the carts' lab check still failed now and then on the gate tree. Its new log of the carts' state (`cartsState()`:
+their rides, the piles no road reaches, the piles given up) showed a cart sent out with its ride made (riding: true, its
+goal the quarry's door) that never moved from where it was parked: by the stores' heap, off the road network. Once it
+was spawned on the road's node nearest the stores, it went every time.
+
+- Carts spawn on the road graph's node nearest the stores (1.5 m apart), so they start on the network they ride.
+- A cart that makes no way for CART_REJOIN (6 s) is sent onto the nearest node by the units' own goal order, then back to
+  its round; no way for CART_STUCK (30 s): it gives the pile up for 60 s. Neither was needed in the last three runs
+  (`cartRejoins` 0, `cartGaveUp` 0).
+- scripts/lab/fortresscarts.mjs: 3 of 3 passed (a load in each, carts' walking samples on a road 0.97-0.99, newcomers
+  0.66), against 1 of 3 before.
+
+
+## 2026-11-05 — round 128l (`m4`): a cart's pile is at the road's edge, never in the pit; the cart timers gone
+
+Why: main, on the stuck carts: fix the root cause, drop the patches (the repo rule: no fallbacks or heuristics).
+
+- The cause (scripts/lab/fortresscarts.mjs with the carts' state logged): a quarry's "door" is a cell of its own pit. A
+  cart sent there drove into the pit, and its miners dug deeper while it loaded, so it never climbed out (`back` at
+  166-170, 113 for 90 sim s). Now a cart loads at `pilePoint`: the road graph's node nearest the structure's door, within
+  14 m, not on a cell the plan digs. With no such node, no cart serves that structure and its workers walk. Carts also
+  spawn on the road node nearest the stores, so they start on the network they ride.
+- Gone: CART_STUCK, CART_RETRY, CART_REJOIN, the goal-order rejoin and the 3 s wait before a ride counted as failed.
+  A ride made for a pile that fails now marks that pile at once (`cartRideFor`). Kept: the miners' 16 terrain takes in
+  flight, because the world's terrain queue limit is real: it threw at 64.
+- After (one lab run): a cart load in, carts' walking samples on a road 1.00, newcomers 0.68.
+- A second cause, named and not patched (M4-14): the other cart was sent to the farms' pile, a road node 14 m north
+  of the farm's door. It never left the stores. The farmers' own ride to the farms fails there as well (riding.farm
+  false). The farms' lanes aren't ridden from the stores, and I haven't found why yet.

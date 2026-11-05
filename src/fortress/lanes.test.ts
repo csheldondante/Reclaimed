@@ -10,14 +10,14 @@ import { nearestNode, nodeCount, reached } from '../agents/roadgraph';
 import { cellPos } from '../world/lattice';
 import { fortressPieces } from './pieces';
 import { WAY_SQUARE } from './ways';
-import type { ReachColumns } from './reach';
+import { CpuReach, type ReachColumns } from './reach';
 
 const W = 160;
 const H = 184;
 /** the town's gate: west of the box's middle (window = box frame here) */
 const GATE: [number, number] = [14, ((H / 2) * Math.sqrt(3)) / 2];
 
-function fortress(ground: (x: number, y: number) => number = () => 5, columns?: () => ReachColumns) {
+function fortress(ground: (x: number, y: number) => number = () => 5, columns?: ReachColumns) {
   const f = new Fortress({ origin: [0, 0], w: W, h: H }, {
     windowOrigin: () => [0, 0],
     dims: { w: W, h: H, zMax: 999 },
@@ -25,7 +25,7 @@ function fortress(ground: (x: number, y: number) => number = () => 5, columns?: 
     stores: () => ({}),
     changed: () => {},
     townGates: () => [GATE],
-    columns,
+    reach: columns ? new CpuReach(columns, W, H, () => [0, 0]) : undefined,
   });
   f.ready = true;
   return f;
@@ -143,9 +143,12 @@ describe('roads on the cell borders, to things', () => {
     expect(near).toBeGreaterThan(0);
   });
 
-  it('no roads under water: a lake over part of the box', () => {
+  it('no roads under water: a lake over part of the box', async () => {
     const lake = (x: number) => x < 40;
-    const f = fortress(() => 5, () => ({ w: W, h: H, runs: () => [[0, 5]], water: (x: number) => (lake(x) ? 1 : 0) }));
+    const f = fortress(() => 5, { w: W, h: H, runs: () => [[0, 5]], water: (x: number) => (lake(x) ? 1 : 0) });
+    // (the water known: the reach's wet columns)
+    f.requestReach(true);
+    await f.settled();
     walled(f);
     const L = f.lanes();
     expect(L.unjoined).toEqual([]);

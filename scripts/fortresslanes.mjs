@@ -34,6 +34,8 @@ await run({ name: 'fortresslanes', kind: 'behaviour', size: '412x915', dpr: 1, e
       const [tx, ty] = st.toWindow(rec.at);
       const rd0 = Rc.units.agents.reader(FIELD);
       await rd0.refresh();
+      // (round 128l, m4: the fortress reads no columns back any more — the water read here)
+      const wbuf = await Rc.core.readBuffer('water');
       const groundAt = (x, y) => {
         const r = Math.round(y / (Math.sqrt(3) / 2));
         const k = Math.round(x);
@@ -42,7 +44,7 @@ await run({ name: 'fortresslanes', kind: 'behaviour', size: '412x915', dpr: 1, e
         const bc = f.windowToBoxCol(r * w + k);
         if (bc < 0) return NaN;
         // (no sites in water)
-        if ((f.columnsNow()?.water(k, r) ?? 0) > 0.1) return NaN;
+        if (wbuf[r * w + k] > 0.1) return NaN;
         // (the fortress's ground as it was: the surface read, not the agents' surfaces — those are kept only round the
         // units, so the candidates came and went between runs)
         const z = f.groundOfCol(bc);

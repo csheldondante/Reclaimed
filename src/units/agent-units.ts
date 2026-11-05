@@ -36,7 +36,23 @@ export const G = { strike: 0, stand: 1, goal0: 2, foes: 5, hunt: 6, wander: 7 } 
  *  bound to their raiser until the game orders them (the play hero's: follow it) */
 export const RAISED_GROUP = G.stand;
 /** agents' kinds (0 worker, 1 raider, 2 ogre are the defaults the others use) */
-const K = { worker: 0, guard: 3, character: 4, raider: 5, shambler: 6 } as const;
+const K = { worker: 0, guard: 3, character: 4, raider: 5, shambler: 6, cart: 7 } as const;
+
+/**
+ * (round 128l, m4) A cart's look: a wooden bed on four dark wheels with a driver's seat at the front (voxels of 0.25 cells
+ * round its feet). Behaviour first — the user's art push comes after.
+ */
+function cartModel(): [number, number, number, number][] {
+  const v: [number, number, number, number][] = [];
+  for (let x = -4; x <= 3; x++)
+    for (let y = -2; y <= 2; y++) {
+      v.push([x, y, 2, MAT.Wood]);
+      if (x === -4 || x === 3 || y === -2 || y === 2) v.push([x, y, 3, MAT.Wood]);
+    }
+  for (const [x, y] of [[-3, -3], [-3, 3], [2, -3], [2, 3]]) for (const z of [0, 1, 2]) v.push([x, y, z, MAT.Basalt]);
+  for (let z = 3; z <= 5; z++) v.push([4, 0, z, MAT.Flower]);
+  return v;
+}
 const TARGETS = 8;
 const REACH = 1.5;
 const STRIKE = 1.0;
@@ -108,6 +124,8 @@ export class AgentUnits implements Units {
     // (round 88: people a third of a storey tall, in a yellow tunic — at the phone's half resolution a 1-cell figure
     // in canvas was lost against plaster and grass)
     agents.defineKind(K.worker, { name: 'worker', height: 1.4, mass: 1, hp: 10, speed: 2.4, colours: { torso: MAT.Flower, legs: MAT.Wood, head: MAT.Sand } });
+    // (round 128l, m4) the fortress's carts: slower than a walker, heavier, a load of CART_LOAD
+    agents.defineKind(K.cart, { name: 'cart', height: 1.2, mass: 4, hp: 20, speed: 1.7, model: { voxels: cartModel(), voxel: 0.25 } });
     agents.follow(G.stand, -1);
     agents.follow(G.strike, -1);
     agents.workPose(G.strike, true);
@@ -317,6 +335,7 @@ export class AgentUnits implements Units {
   private kindOf(u: UnitRec, slow: boolean): number {
     if (u.v.hostile) return slow || u.v.role.includes('dead') ? K.shambler : K.raider;
     if (u.v.role === 'guard') return K.guard;
+    if (u.v.role === 'cart') return K.cart;
     if (u.v.name || u.v.character) return K.character;
     return K.worker;
   }

@@ -1,0 +1,7 @@
+{
+  "about": "The fortress's recipes (round 128l, m4: fortress slice 1, milestone 4; docs/design/FORTRESS_SLICE1.md, FORTRESS_MODE.md 'Recipes'). A structure type turns goods into goods (craft) or a person and goods into a unit (train), a batch at a time: `in` is taken out of the stores when a worker fetches it and carried to the structure, `seconds` is the work there, `out` goes back to the stores (craft) or stands up as the unit (train: the person is that unit now). src/fortress/recipes.ts runs them. Untuned: the user tunes once it's playable.",
+  "recipes": [
+    { "id": "forge", "at": "blacksmith", "kind": "craft", "worker": "smith", "in": { "ore": 2, "log": 1 }, "out": { "weapons": 1 }, "seconds": 20 },
+    { "id": "drill", "at": "barracks", "kind": "train", "worker": "recruit", "in": { "weapons": 1 }, "people": 1, "out": { "soldiers": 1 }, "seconds": 30 }
+  ]
+}

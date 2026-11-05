@@ -19,6 +19,7 @@ import { STRUCTURE_TYPES } from '../api/contracts/fortress';
 import type { WorldCore } from '../scenes/world-core';
 import type { Fortress } from '../fortress/fortress';
 import type { FortressLife } from '../fortress/life';
+import type { FortressFollow } from '../fortress/follow';
 import type { FortressPiecesHost, FortressWindow } from '../fortress/host';
 import type { AgentUnits } from '../units/agent-units';
 import { START_STORES } from '../fortress/defs';
@@ -46,6 +47,10 @@ export interface LabSceneIO {
   frame(now: number, dt: number): void;
   /** the land put back as the level opened (WorldCore.restoreChunks over the window) */
   restoreLand(): void;
+  /** (round 128l, m4) a tap on the map at screen (x, y), as a finger's (the level's fortressAt) */
+  tap(sx: number, sy: number): void;
+  /** (m4) the person a tap picked and the follow (fortress/follow.ts) */
+  follow(): FortressFollow | undefined;
 }
 
 /** a whole plan at once (lab.plan; a recipe's `town`) */
@@ -70,6 +75,11 @@ export interface LabSnapshot {
   people: number;
   jobs: Record<string, number>;
   walkers: { id: UnitId; at: [number, number, number]; state: string; phase: string; job: string | null; onRoad: boolean }[];
+  /** (round 128l, m4) the soldiers the barracks trained */
+  soldiers: { id: UnitId; at: [number, number, number]; state: string; phase: string; onRoad: boolean }[];
+  /** (m4) the carts, and the goods waiting on each structure's pile for one */
+  carts: { id: UnitId; at: [number, number, number]; state: string; phase: string; onRoad: boolean }[];
+  piles: Record<string, number>;
   /** of the walkers walking now: how many are on a road or lane, and the roads' share of the ground round them */
   roads: { shapes: number; walking: number; onRoad: number; areaShare: number | null; riding: unknown };
   structures: { id: number; type: string; cells: number; built: number; planned: number }[];
@@ -133,7 +143,7 @@ export class Lab {
   /** the fortress ready (the ground read back), then the recipe's town standing */
   private async whenReady(): Promise<void> {
     const f = this.fort();
-    while (!f.ready || !f.columnsNow()) await new Promise((r) => setTimeout(r, 50));
+    while (!f.ready || !f.reachKnown) await new Promise((r) => setTimeout(r, 50));
     if (this.recipe.town) this.plan({ ...this.recipe.town, built: true });
     this.ready = true;
   }
@@ -321,6 +331,22 @@ export class Lab {
       const w = units.recs.get(id)?.work as { phase?: string; job?: string | null } | undefined;
       walkers.push({ id, at: [+u.at[0].toFixed(1), +u.at[1].toFixed(1), +u.at[2].toFixed(1)], state: u.state, phase: w?.phase ?? '-', job: w?.job ?? null, onRoad: onRoad(u.at[0], u.at[1]) });
     }
+    // (round 128l, m4) the soldiers: where, doing what (their routine's phase, or 'patrol' on the wall-walk)
+    const soldiers: LabSnapshot['soldiers'] = [];
+    for (const id of life?.soldiers ?? []) {
+      const u = units.get(id);
+      if (!u) continue;
+      const w = units.recs.get(id)?.work as { phase?: string } | undefined;
+      soldiers.push({ id, at: [+u.at[0].toFixed(1), +u.at[1].toFixed(1), +u.at[2].toFixed(1)], state: u.state, phase: u.job.kind === 'go' ? 'patrol' : (w?.phase ?? '-'), onRoad: onRoad(u.at[0], u.at[1]) });
+    }
+    const carts: LabSnapshot['carts'] = [];
+    for (const id of life?.carts ?? []) {
+      const u = units.get(id);
+      if (!u) continue;
+      const w = units.recs.get(id)?.work as { phase?: string } | undefined;
+      carts.push({ id, at: [+u.at[0].toFixed(1), +u.at[1].toFixed(1), +u.at[2].toFixed(1)], state: u.state, phase: w?.phase ?? '-', onRoad: onRoad(u.at[0], u.at[1]) });
+    }
+    const piles = Object.fromEntries([...(life?.piles ?? new Map())].map(([k, g]) => [k, Object.values(g as Record<string, number>).reduce((a, b) => a + b, 0)]));
     const walking = walkers.filter((w) => w.state === 'walk');
     // (the roads' share of the ground round the walkers: the box round them, 4 m out)
     let areaShare: number | null = null;
@@ -357,6 +383,9 @@ export class Lab {
       people: f.status.people,
       jobs: { ...f.status.jobs } as Record<string, number>,
       walkers,
+      soldiers,
+      carts,
+      piles,
       roads: { shapes: n, walking: walking.length, onRoad: walking.filter((w) => w.onRoad).length, areaShare, riding: life?.riding ?? null },
       structures,
       cutOff: f.cutOff,
@@ -425,6 +454,12 @@ export class Lab {
       fortress: () => this.fort(),
       life: () => this.io.life() ?? null,
       units: this.io.units,
+      /** (m4) a tap at screen (x, y), and the follow it drives */
+      tap: (sx: number, sy: number) => this.io.tap(sx, sy),
+      follow: () => this.io.follow() ?? null,
+      /** (m4) a world point on the screen (CSS pixels) */
+      project: (x: number, y: number, z: number) => this.io.core.camera.project(x, y, z),
+      viewport: () => [this.io.core.camera.viewportW, this.io.core.camera.viewportH],
     };
   }
 }

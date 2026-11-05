@@ -60,7 +60,7 @@ export default async function (lab, args) {
     segs[s.kind] = (segs[s.kind] ?? 0) + 1;
     metres[s.kind] = Math.round((metres[s.kind] ?? 0) + Math.hypot(s.b[0] - s.a[0], s.b[1] - s.a[1]));
   }
-  const lanes = { recipe: lab.recipe, at: at.map(Math.round), plan, slope: +L.slope.toFixed(3), contour: +L.contour.toFixed(2), segs, metres, steps: L.segs.filter((s) => s.steps).length, doors: w.doors.length, cutOff: w.cutOff.length, roadShapes: f.roadShapes().length / 12 };
+  const lanes = { recipe: lab.recipe, at: at.map(Math.round), plan, segs, metres, steps: L.segs.filter((s) => s.steps).length, tiles: L.tiles.length, joined: L.joined.length, unjoined: L.unjoined.length, doors: w.doors.length, cutOff: w.cutOff.length, roadShapes: f.roadShapes().length / 12 };
   console.log('lanes', JSON.stringify(lanes));
   at_('planned');
   lab.look(at[0], at[1] + 25, 3.2);

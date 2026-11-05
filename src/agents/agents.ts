@@ -94,7 +94,9 @@ export const NFIELDS = 13;
  * group rides the roads (Agents.ride; agents/ride.ts) — the riding groups follow it until they're on the network.
  */
 export const ROAD_FIELD = NFIELDS - 1;
-export const MAX_GROUPS = 16;
+/** (round 128l, m4: 16 → 24, a table size — the fortress's smiths, recruits, soldiers and carts: their legs ride the
+ *  road graph, no fields of their own; fortress/life.ts R4) */
+export const MAX_GROUPS = 24;
 export const MAX_KINDS = 8;
 const MAX_SEEDS = 48;
 /** (round 107) cells a field's seed may move and the field be relaxed in place (seed()); further, it starts over */
@@ -112,8 +114,8 @@ const PEEL_EVERY = 8;
 /** the params uniform (agents.wgsl AgentParams), in u32s */
 const P_SEEDS = 4;
 const P_GFIELD = P_SEEDS + MAX_SEEDS * 4;
-const P_GMAT = P_GFIELD + 16;
-const P_FPLACE = P_GMAT + 16;
+const P_GMAT = P_GFIELD + MAX_GROUPS;
+const P_FPLACE = P_GMAT + MAX_GROUPS;
 const P_N2 = P_FPLACE + 16;
 const P_KINDS = P_N2 + 4;
 const P_HITS = P_KINDS + MAX_KINDS * 12;

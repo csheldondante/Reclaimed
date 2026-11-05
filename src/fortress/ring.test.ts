@@ -2,27 +2,26 @@
 // painted on it shuts its middle in — on the cells and in the columns the agents walk (it left a 12-column gap on a
 // radius-18 ring round (80, 80): the circle's last cell and its first met at a corner).
 import { describe, expect, it } from 'vitest';
-import { cellPos } from '../world/lattice';
 import { Fortress } from './fortress';
-import type { ReachColumns } from './reach';
+import { CpuReach, type ReachColumns } from './reach';
 
 const W = 160;
 const H = 184;
 const GROUND = 5;
 
 function fortress() {
-  let cols: ReachColumns | null = null;
+  const cols: ReachColumns = { w: W, h: H, runs: () => [[0, GROUND]], water: () => 0 };
   const f = new Fortress({ origin: [0, 0], w: W, h: H }, {
     windowOrigin: () => [0, 0],
     dims: { w: W, h: H, zMax: 999 },
     ground: () => GROUND,
     stores: () => ({}),
     changed: () => {},
-    columns: () => cols,
+    reach: new CpuReach(cols, W, H, () => [0, 0]),
     townHeap: () => [10, 10],
   });
   f.ready = true;
-  return { f, read: () => (cols = { w: W, h: H, runs: () => [[0, GROUND]], water: () => 0 }) };
+  return { f };
 }
 
 /** the cells a flood from `mid` over sides gets to, round the ring's cells */
@@ -58,22 +57,19 @@ describe('ringCells (FT-57)', () => {
       }
   });
 
-  it('a ring of walls shuts the columns inside off from the stores (the agents\' rules)', () => {
+  it('a ring of walls shuts the cells inside off from the stores (the agents\' rules)', async () => {
     for (const [cx, cy, r] of [[80, 80, 18], [80, 80, 12], [90, 75, 18]]) {
-      const { f, read } = fortress();
+      const { f } = fortress();
       const ring = new Set(f.ringCells(cx, cy, r));
-      for (const c of ring) expect(f.paint(c, 0, 'wall')).toBe(true);
       const within = shutIn(f, ring, f.cellAt(cx, cy));
-      read();
-      const m = f.reachMap()!;
-      let inside = 0;
-      for (let y = 0; y < H; y++)
-        for (let x = 0; x < W; x++) {
-          const [wx, wy] = cellPos(x, y);
-          // (the cells the ring shuts in: not the ring's own — the wall-walk on top of them is reached up its stairs)
-          if (within.has(f.grid.cellAtWorld(wx, wy)) && m.reached(x, y)) inside++;
-        }
+      // (farms on every cell inside: the reach asks about each one)
+      const yards = [...within].filter((c) => !ring.has(c));
+      for (const c of ring) f.paint(c, 0, 'wall');
+      await f.settled();
+      for (const c of yards) f.paint(c, 0, 'farm');
+      await f.settled();
+      const inside = yards.filter((c) => f.reachedNow(c)).length;
       expect(inside, `(${cx}, ${cy}) r ${r}`).toBe(0);
     }
-  });
+  }, 30000);
 });

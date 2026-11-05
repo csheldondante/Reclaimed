@@ -53,12 +53,15 @@ export const DEFS: Record<StructureType, StructureDef> = {
   },
   blacksmith: {
     type: 'blacksmith', label: 'Blacksmith', one: 'blacksmith', many: 'blacksmiths', form: 'block', joins: true, maxLevels: NO_CAP,
-    cost: { log: 3, stone: 5 }, perBlock: { jobs: 2, makes: { weapons: 1 } },
+    // (round 128l, m4: its smiths run the recipe — data/recipes/fortress.json 'forge', a weapon every 20 s of work: 3 a
+    // day a smith, 2 smiths a block)
+    cost: { log: 3, stone: 5 }, perBlock: { jobs: 2, makes: { weapons: 6 } },
     look: { style: 'bastion', kind: 'house', chimney: true, props: ['cart'] },
   },
   barracks: {
     type: 'barracks', label: 'Barracks', one: 'barracks', many: 'barracks', form: 'block', joins: true, maxLevels: NO_CAP,
-    cost: { log: 4, stone: 6 }, perBlock: { beds: 4, makes: { soldiers: 1 } },
+    // (round 128l, m4: a recruit a block trains — 'drill', 30 s: 2 soldiers a day — while its beds have room)
+    cost: { log: 4, stone: 6 }, perBlock: { beds: 4, jobs: 1, makes: { soldiers: 2 } },
     look: { style: 'bastion', kind: 'warehouse', props: ['banner'] },
   },
 };
@@ -110,12 +113,28 @@ export const ECON = {
   digR: 2.2,
   /** the deepest a quarry's pit is dug below the ground it had (world units) */
   pitMax: 6,
+  /** (round 128l, m4) the carts: the town's at the start, and one more a warehouse block built, up to cartsMax */
+  carts: 2,
+  cartsMax: 3,
+  /** (m4) goods a cart carries a trip (a walker: haul) */
+  cartLoad: 8,
+  /** (m4) a haul longer than this (m, a structure's door to the stores, as the crow flies) goes by cart: the workers
+   *  leave their goods at their structure's pile and a cart fetches it; shorter, they carry it themselves */
+  cartDist: 40,
+  /** (m4) the most a structure's pile holds waiting for a cart (more: the workers carry it in) */
+  pileMax: 16,
+  /** (round 128l, m4) a soldier's health (a villager's is 3) */
+  soldierHealth: 5,
+  /** (m4) sim seconds a soldier drills at the barracks when it musters */
+  drillSec: 8,
+  /** (m4) wall-walk points a soldier walks before it musters again */
+  patrolPoints: 4,
   /** the share of a built block's cost Erase gives back (a block not yet built: all that was brought to it) */
   refund: 0.5,
 };
 
 /**
  * (milestone 3) Which jobs people take first when there aren't enough for all (the JobBoard's priority): food, then the
- * builders, then stone, then wood. The blacksmith's and the barracks' jobs come with their recipes (milestone 4).
+ * builders, then stone, then wood; (round 128l, milestone 4) then the smiths, then the recruits.
  */
-export const JOB_ORDER = ['farm', 'build', 'quarry', 'lumber'] as const;
+export const JOB_ORDER = ['farm', 'build', 'quarry', 'lumber', 'blacksmith', 'barracks'] as const;

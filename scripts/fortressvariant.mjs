@@ -49,11 +49,12 @@ await run({ name: 'fortressvariant', kind: 'behaviour', size: '412x915', dpr: 1,
   const barTop = await page.evaluate(() => document.querySelector('.fort-bar').getBoundingClientRect().top);
   const RING = 11;
   // (open ground for it: out of the old town, dry, in the fortress's box � the camera moved over it)
-  const open = await page.evaluate((RING) => {
+  const open = await page.evaluate(async (RING) => {
     const Rc = window.reclaimed;
     const f = Rc.fortress;
     const st = Rc.settlements;
-    const cols = f.columnsNow();
+    // (round 128l, m4: the fortress reads no columns back any more — the water read here)
+    const wbuf = await Rc.core.readBuffer('water'); const cols = { w: Rc.core.dims.w, h: Rc.core.dims.h, water: (x, y) => wbuf[y * Rc.core.dims.w + x] };
     const at = f.storesAt();
     for (const dist of [45, 55, 65, 75])
       for (let k = 0; k < 24; k++) {
@@ -147,15 +148,17 @@ await run({ name: 'fortressvariant', kind: 'behaviour', size: '412x915', dpr: 1,
   }
   await sleep(600);
   const after = await page.evaluate(
-    ({ ring, house }) => {
+    async ({ ring, house }) => {
       const f = window.reclaimed.fortress;
+      await f.settled();
+      const reached = (await f.probeReach([house]))[0];
       return {
         walls: ring.filter((c) => f.plan.typeAt(c) === 'wall').length,
         gates: ring.filter((c) => f.plan.gate[c]),
         variant: f.variant,
         warning: f.warning,
         refusal: f.refusal,
-        reached: f.reachedIn(f.reachMap(), house),
+        reached,
       };
     },
     { ring: spot.ring, house },
@@ -193,7 +196,7 @@ await run({ name: 'fortressvariant', kind: 'behaviour', size: '412x915', dpr: 1,
   // the warning path: a house shut in on all four sides by walls and a warehouse — nothing opens it (a builder works a
   // block from beside it): placed, outlined in red, named in the panel
   await tapButton('Plan');
-  const warn = await page.evaluate(() => {
+  const warn = await page.evaluate(async () => {
     const Rc = window.reclaimed;
     const f = Rc.fortress;
     const at = f.storesAt();
@@ -213,7 +216,8 @@ await run({ name: 'fortressvariant', kind: 'behaviour', size: '412x915', dpr: 1,
         if (!f.paint(c, 0, 'house')) continue;
         for (const n of round.slice(0, 3)) f.paint(n, 0, 'wall');
         // (the stores still reach it from its fourth side: else try elsewhere)
-        if (!f.reachedIn(f.reachMap(), c)) {
+        await f.settled();
+        if (!(await f.probeReach([c]))[0]) {
           for (const n of [...round.slice(0, 3), c]) f.erase(n, 0);
           continue;
         }
@@ -238,8 +242,9 @@ await run({ name: 'fortressvariant', kind: 'behaviour', size: '412x915', dpr: 1,
       return [sx, sy];
     }, warn.last);
     await tap(p[0], p[1]);
-    warned = await page.evaluate((w) => {
+    warned = await page.evaluate(async (w) => {
       const f = window.reclaimed.fortress;
+      await f.settled();
       return { cells: f.warnCells, warning: f.warning, at: f.plan.typeAt(w.last), stands: f.standsOf(w.house).length, tap: w.tap };
     }, { ...warn, tap: p });
     console.log('warn', JSON.stringify(warn), JSON.stringify(warned), JSON.stringify(await panel()));

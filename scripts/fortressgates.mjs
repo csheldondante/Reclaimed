@@ -30,20 +30,26 @@ await run({ name: 'fortressgates', kind: 'behaviour', size: '412x915', dpr: Numb
   // direction and distance from the stores (. not reached, # reached, ~ water, x no cell)
   await page.evaluate(() => window.reclaimed.scene?.fortressReadCols?.());
   await sleep(1500);
-  const ring = await page.evaluate(() => {
-    const f = window.reclaimed.fortress;
-    const cols = f.columnsNow();
-    const m = f.reachMap();
+  const ring = await page.evaluate(async () => {
+    const Rc = window.reclaimed;
+    const f = Rc.fortress;
+    const wbuf = await Rc.core.readBuffer('water'); const cols = { w: Rc.core.dims.w, h: Rc.core.dims.h, water: (x, y) => wbuf[y * Rc.core.dims.w + x] };
     const at = f.storesAt();
     const rows = [];
     for (const dist of [40, 55, 70, 90]) {
-      let s = '';
+      const cs = [];
       for (let k = 0; k < 24; k++) {
         const a = (k / 24) * Math.PI * 2;
-        const c = f.cellAt(at[0] + Math.cos(a) * dist, at[1] + Math.sin(a) * dist);
+        cs.push(f.cellAt(at[0] + Math.cos(a) * dist, at[1] + Math.sin(a) * dist));
+      }
+      const got = await f.probeReach(cs.filter((c) => c >= 0));
+      let s = '';
+      let i = 0;
+      for (const c of cs) {
         if (c < 0) { s += 'x'; continue; }
-        const wet = cols && f.grid.columns[c].some((col) => { const wc = f.boxToWindowCol(col); return wc >= 0 && cols.water(wc % cols.w, Math.floor(wc / cols.w)) > 0.3; });
-        s += wet ? '~' : m && f.reachedIn(m, c) ? '#' : '.';
+        const wet = f.grid.columns[c].some((col) => { const wc = f.boxToWindowCol(col); return wc >= 0 && cols.water(wc % cols.w, Math.floor(wc / cols.w)) > 0.3; });
+        const r = got?.[i++];
+        s += wet ? '~' : r ? '#' : '.';
       }
       rows.push(`${dist} m ${s}`);
     }

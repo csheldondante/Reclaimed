@@ -12,10 +12,11 @@ type P = readonly [number, number];
 
 /** destination slots in all (roadride.wgsl RideParams.dest) */
 export const MAX_DESTS = 64;
-const GROUPS = 16;
+/** (agents.ts MAX_GROUPS) */
+const GROUPS = 24;
 /** a goal rides only if a node is this near it (m): the last leg is straight, off the roads */
 export const RIDE_NEAR = 6;
-/** RideParams: n, off (2 vec4), group (16), dest (64), destNode (16) */
+/** RideParams: n, off (2 vec4), group (GROUPS), dest (64), destNode (16) */
 const RP_BYTES = (2 + GROUPS + MAX_DESTS + MAX_DESTS / 4) * 16;
 
 export class RoadRide {

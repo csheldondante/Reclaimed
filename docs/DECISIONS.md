@@ -600,6 +600,27 @@ each was implemented.
   long ones) to a walk along its top. Drawn as paving and stone steps; the steps and the wall-walk are solid, so units
   climb them. The warehouse's card speaks of the town's stores against all the warehouses' room, then this one's part.
 
+## 2026-11-04 — round 128l (session 5, `m4`) — milestone 4 and the life on the roads; fortress blocks as fast as any
+
+- The user, verbatim: "Why do fortress blocks take so long? They seem like they should be as fast as any other block"
+  and "Right can't we do incremental updates? Does it even need to go to the CPU?"
+- On main's design (the stores' reach from the GPU, the tap committing at once, a few words read back), verbatim: "Yes
+  that sounds like a better design as well. I would probably do connected components of reachable things on the GPU
+  myself but only because I find CPU round trips are stupidly expensive on mobile".
+- → A tap commits the block at once; connected components over the walkable surfaces on the GPU (label propagation with
+  pointer jumping, the atlas's flood fill) answer a few frames later; the variant (a gate, a passage, a ramp) or the red
+  outline comes with the answer. Judgement calls: a block placed out of reach now stays planned and is outlined in red
+  with the reason (before, it was refused); the answer is read back as a word a block still to build, not only a count
+  (the builders need to know which); the outline is drawn from those words, not from the labels in the shader (BACKLOG
+  M4-1).
+- The user, verbatim: "While that is running can you get the roads and then the actual unit production working and have
+  units come in on the roads and maybe have carts? I'm going to do an art push once the simulation is fast. The current
+  art is kind of jank in many places but don't worry about it too much as long as the behaviors are what we want. Units
+  working, really digging the map, making new units, moving in roads so that we could follow a unit and see it go about
+  it's day."
+- → Milestone 4 (recipes: the smith makes weapons, the barracks trains soldiers), carts and settlers on the roads, and
+  following a person through their day. Behaviour first; the art waits for the user's art push.
+
 ## 2026-11-04 — round 128l (session 5, `reachfix`) — towns always have gates
 
 - The user played the deployed fortress build (d2ba927) on the Pixel 9a (?skipmenu=1&level=atlas&town=1&fortress=1),

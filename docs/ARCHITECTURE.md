@@ -3573,6 +3573,72 @@ The building rule (the user's): select what (a structure type), then plan it wit
   `water` take the window as it is now and shift back (outside what was read: no solid, no water); every slide reads
   again. `RoadStamp.set` / `RoadRide.encodeHops` return true only for new shapes / a new network (an offset alone needs
   no relax: the fields slide with the window).
+- **Round 128l, m4 (reach on the GPU, TL-6 / FT-61).** The check at placement no longer reads the world back.
+  `fortress/reachgpu.ts FortressReachGpu` (shaders/fortreach.wgsl) implements `ReachEngine` (fortress/reach.ts):
+  `setSpans(spans)` (the plan's solid as if built, two packed spans a box column — `packSpan`, eighths of a metre — from
+  solid.ts with the plan's levels as built; only the rows that changed are written) and `check({stores, queries, wet,
+  why})` → `ReachReply {bits, ramps, wet, rounds}`. A check: `reachPeel` (the box's columns peeled as agents.wgsl does,
+  the spans merged in), `reachInit`, ROUND × (`reachHook`, 2 × `reachJump`: the atlas's label propagation with pointer
+  jumping) with the flag cleared before the last, `reachRamps` (box columns under a drop of STEP..DROP up to the stores'
+  component), `reachQuery` (per query — a block's up to four stands — bit 0: a stand's top surface has the stores'
+  label), `reachWet` (a bit a box column with water over 0.8 m, for the lanes); the flag and the answer words copied to
+  a staging buffer and mapped: settled → done, else another ROUND. Asked `why` (an edit to judge) with a query not
+  reached: the same solve with deep water no bar (`REACH_BITS.dry`), then with the plan's solid left out
+  (`REACH_BITS.unplanned`); neither: a cliff. Joins are two-way steps only (|rise| ≤ STEP, AGENT_H of room, both deep or
+  both dry), so a component is where a walker gets to and back from. `Fortress` asks (`requestReach(wet)`: one check in
+  flight, asks folded) after every plan change (`sync`), when planning starts (with the water), after a slide, every
+  3 s while building (level/frame.ts); `paint`/`setGate` commit at once and leave a `ReachEdit` (the cell, and the cells
+  reached before) that the answer judges (`judgeEdit`): the block itself unreached and below a drop → ramp tries; blocks
+  cut off → a `Trial` of variants (gate, passage, ramps) each put in the plan and judged by the next answer; none →
+  `warnCells` + `warning` (`reachWarnLine` / `cutWarnLine`); a gate shut that cuts blocks off opens again
+  (`wouldCutLine`). A press during a trial takes its variant out. `Fortress.cutCells()` / `reachedNow` / `whyNot` /
+  `settled()` / `onReach`; FortressLife reads `cutCells()` on each answer. `CpuReach` (reach.ts) is the same solve on the
+  CPU over `ReachColumns`, for unit tests only. `FortressIO.columns` and scenes/level/fortress.ts `readCols` are gone.
+  `Fortress.probeReach(cells)`: a check of its own for any cells (scripted checks).
+- **Round 128l, m4 (milestone 4: recipes, smiths, recruits, soldiers — FT-4).** `fortress/recipes.ts` (pure, tested):
+  `Recipe {id, at, kind: craft | train, worker, in, people?, out, seconds}` from `data/recipes/fortress.json` (`forge`:
+  the blacksmith, 2 ore + 1 wood → a weapon in 20 s; `drill`: the barracks, a weapon + a person → a soldier in 30 s);
+  `RecipeRunner` — `canStart(type, stores, TrainRoom)` (the `in` in the stores; train: a bed for one more), `start(worker,
+  type, structure, stores)` → the goods to take, `work(worker, dt)` → the out when done, `giveBack(worker)`,
+  `inProgress`, `made`; `recipeTakes(type, makes)` (Inspect's In). DEFS: blacksmith jobs 2 makes 6 weapons, barracks
+  jobs 1 makes 2 soldiers (a block a day); JOB_ORDER ends `blacksmith`, `barracks`; `jobSlots(…, cap)` lets FortressLife
+  open them only while a batch can start (or one is on its way). FortressLife: a smith or recruit `fetch`es a batch at
+  the stores, carries it (`toWork`) to its structure's door, works it (`gather` → `RecipeRunner.work`); a weapon is
+  carried to the stores (`carry`), a recruit is `enlist`ed at the next update — its unit removed, a `guard` unit (role
+  guard: agents kind 3, steel) spawned there with a `work` job, kept in `FortressLife.soldiers` (not people: no bed in
+  the houses, no grain; `stores.soldiers` follows their count). A soldier's routine (`stepSoldier`): `muster` (to the
+  barracks) → `drill` (ECON.drillSec) → `march` (to the foot of a built wall's stairs, `Ways.stairs`) → the wall-walk:
+  AgentUnits `go` orders to built wall cells' middles (the goal fields seed at the top surface), `walkTheWalls` moving
+  each on to a wall cell 8 m+ along until ECON.patrolPoints, a new economy day or PATROL_STUCK s with no way up, then
+  back to `muster`. The legs to the smithy, the barracks and the stairs ride the road graph only (groups `R4` 16-18,
+  `Agents.ride`, no fields: they wait when no road reaches the goal). **Agents:** MAX_GROUPS 16 → 24 (a table size:
+  agents.wgsl `groupField`/`groupMat` array<vec4<u32>, 6>, roadride.wgsl `group` array<vec4<u32>, 24>, ride.ts GROUPS,
+  agents.ts P_GMAT/P_FPLACE); NFIELDS unchanged (13). The bar: `storesLine` + Weapons, `peopleLine` + Soldiers, `jobsLine`
+  smiths and recruits; Inspect's In from the recipe ("In: up to 18 wood and 36 ore a day").
+- **Round 128l, m4 (on the roads: carts, newcomers, a person's day).** Carts: AgentUnits kind 7 `cart` (a voxel model: a
+  wooden bed on four wheels; speed 1.7, mass 4), role `cart`, `FortressLife.carts` (not people) — `cartsOf(warehouse
+  blocks)` (ECON.carts 2, +1 a warehouse block, ≤ cartsMax 3), spawned at the stores. A worker of a quarry, lumber camp
+  or farm whose structure's door is past ECON.cartDist (40 m) from the stores (`haulBy(dist, {carts, pile, road})`)
+  leaves its load on the structure's pile (`FortressLife.piles`, ≤ pileMax) and goes back to work; a parked cart
+  (`stepCart`: park → out → load → back) takes the fullest pile no other cart is after, rides to its pile point
+  (`pilePoint`: the road node nearest the door within 14 m that isn't on a cell the plan digs — never in a quarry's pit;
+  none: no cart serves it) on its own group, R4.cart0 + i, ride only (a ride made for that pile that fails: the pile is
+  marked and walked from then on). Carts spawn on the road node nearest the stores, takes up to ECON.cartLoad (8) and
+  rides back on R.toPile (only while it rides), where `deliver` puts it in. Newcomers: `edgeEntry` — the road graph's
+  node nearest the window's edge, the edge straight out from it; they start there in phase `arrive` (R.toHome, riding)
+  and work once at a house. A person's day: from ECON.daySec × 0.45 a meal at the stores (`eat`, once a day), from × 0.9
+  home to rest (`rest`) till the next day. `FortressLife.personFacts(id)` (follow.ts PersonFacts: job, workplace,
+  doing, carrying, today, hungry) and `everyone()`: what the follow card (round 128l C) reads; `today` is logged each
+  step (DAY_WORD).
+- **Round 128l, m4 (Follow a person, V128-10 minimal).** `fortress/follow.ts` (pure, tested and linted): `PersonFacts`,
+  `nameOf(id)` and `thoughtOf(facts)` (made up from the number, the economy's day and the state: nothing simulated),
+  `doingLine`, `personCard` (a title and plain lines: number, doing, carrying, "Today: …", a thought), `FortressFollow`
+  {selected, following, select, follow}. scenes/level/fortress.ts: `personAt(scene, sx, sy)` (the fortress's people,
+  soldiers and carts projected, the nearest within 26 px) — `fortressAt` picks one while building or with Inspect on
+  (planning's taps stay the plan's), or lets go when one is picked and the tap lands elsewhere; `followFrame` (level/frame.ts, each frame while following) puts the camera's target
+  on the person (the streamed window slides with the camera). FortressBar hooks `person`, `following`, `follow`: the card
+  first in the panel whatever the mode, a Follow / Stop following row. Lab: `lab.tap(sx, sy)` (the level's fortressAt),
+  `lab.follow()`, `lab.project`, `lab.viewport`.
 
 ## Source layout: the split classes (2026-11-04)
 
