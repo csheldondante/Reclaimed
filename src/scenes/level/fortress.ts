@@ -91,7 +91,7 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
   fort.onChange.push(() => (pieces = null));
   view.extra = () => {
     if (!fort.plan.structures().length) return null;
-    pieces ??= fortressPieces({ plan: fort.plan, town: fort.town, grid: fort.grid, ground: (x, y) => scene.heightAt(...fort.toWindow(x, y)), zOff: S.oz, ghost: fort.ghost(), started: fort.started(), picked: fort.inspected, ways: fort.ways(), lanes: fort.lanes(), warn: fort.warnCells, shut: fort.gatesShut });
+    pieces ??= fortressPieces({ plan: fort.plan, town: fort.town, grid: fort.grid, ground: (x, y) => scene.heightAt(...fort.toWindow(x, y)), zOff: S.oz, ghost: fort.ghost(), started: fort.started(), picked: fort.inspected, ways: fort.ways(), lanes: fort.lanes(), shut: fort.gatesShut });
     const [dx, dy] = fort.offset();
     return { p: pieces, dx, dy: dy * ROW_H };
   };

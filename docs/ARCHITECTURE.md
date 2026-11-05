@@ -3595,6 +3595,18 @@ The building rule (the user's): select what (a structure type), then plan it wit
   `settled()` / `onReach`; FortressLife reads `cutCells()` on each answer. `CpuReach` (reach.ts) is the same solve on the
   CPU over `ReachColumns`, for unit tests only. `FortressIO.columns` and scenes/level/fortress.ts `readCols` are gone.
   `Fortress.probeReach(cells)`: a check of its own for any cells (scripted checks).
+- **Round 128m (RT-6: unreachable blocks refused).** The placement contract: `Fortress.paint` puts a level-0 block in
+  at once and adds its cell to `pending` (`isPending(cell)`; while planning `ghost()` draws pending cells as the plan's
+  ghost; `cutCells()` includes them, so FortressLife never sites them). The next answer whose check took them
+  (`pumpReach` snapshots the pending cells and `pendingBefore`, the cells reached before the first of them; none while a
+  `Trial` runs) judges them as one batch (`judgeBatch`): all reached and nothing cut off → kept; else a `Trial` of
+  variants (ramps for blocks below a drop; gates in the batch's walls and passages through its blocks when it cut
+  planned blocks off or walls its own in; ramps for what it cut off), kept when everything cut off is reached again or,
+  cutting nothing, one of its own is; then `judged`: cut off still → the whole batch refused (`wouldCutLine`); else its
+  blocks out of reach refused (`refuse`: every level of the cell erased) with `refusedLine(refused, placed, why)` and the
+  rest kept. `paintMany(cells, level, type)` places many at once (one batch). `setGate` (also the Gate tool's tap) shut:
+  judged by `judgeGate`, opened again if it cuts blocks off. `erase` forgets a pending cell. `warning`/`warnCells` are
+  gone (pieces.ts `warnPieces` stays, unfed). Nothing unreachable stays in the plan.
 - **Round 128l, m4 (milestone 4: recipes, smiths, recruits, soldiers — FT-4).** `fortress/recipes.ts` (pure, tested):
   `Recipe {id, at, kind: craft | train, worker, in, people?, out, seconds}` from `data/recipes/fortress.json` (`forge`:
   the blacksmith, 2 ore + 1 wood → a weapon in 20 s; `drill`: the barracks, a weapon + a person → a soldier in 30 s);

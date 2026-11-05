@@ -10,7 +10,7 @@ import { DEFS } from './defs';
 import { cityPlanOf, fortressPieces } from './pieces';
 import { noWays } from './ways';
 import { FortressPlan, wallTileOf } from './plan';
-import { cutWarnLine, goodsText, planLines, structureLines, typeLines, variantLine } from './words';
+import { goodsText, refusedLine, wouldCutLine, planLines, structureLines, typeLines, variantLine } from './words';
 
 const grid = new TownGrid(80, 92, { seed: 7 });
 const nbr = (c: number, e: number) => grid.nbr[c * 4 + e];
@@ -237,10 +237,12 @@ describe('the planning panel reads plainly (docs/WRITING.md)', () => {
     for (const t of STRUCTURE_TYPES) {
       lines.push(...typeLines(DEFS[t]));
       lines.push(...structureLines(DEFS[t], 3, { log: 6, stone: 3 }, { beds: 4, jobs: 2, posts: 2, storage: 50, makes: { grain: 2 } }));
-      // (round 128h) the ways kept open, and what a placement cut off
+      // (round 128h) the ways kept open
       for (const k of ['gate', 'passage', 'ramp'] as const) lines.push(variantLine(k, t));
     }
-    lines.push(cutWarnLine(['house']), cutWarnLine(['house', 'farm', 'fortress']));
+    // (RT-6) what a placement would cut off, and the blocks refused out of a batch
+    lines.push(wouldCutLine(['house']), wouldCutLine(['house', 'farm', 'fortress']));
+    for (const why of ['deep', 'walled', 'cliff', 'far'] as const) lines.push(refusedLine(1, 1, why), refusedLine(1, 5, why), refusedLine(3, 5, why), refusedLine(5, 5, why));
     lines.push(...planLines(p.totals({ log: 2 }), { log: 2 }));
     lines.push(...planLines(p.totals({ log: 99, stone: 99 }), { log: 99, stone: 99 }));
     for (const l of lines) expect(lint(l), l).toEqual([]);

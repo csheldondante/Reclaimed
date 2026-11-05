@@ -2,7 +2,8 @@
 // (the user: "Yeah I would indicate that those will block or introduce block variants so they don't"). From the start
 // menu by finger at the phone's size (412x915): plan a house, close a ring of walls round it tap by tap — the last wall
 // puts a gate in the ring, the panel says so — then Build: the builders get through the gate and the house goes up.
-// Then the warning path: a house walled in on every side (no variant can open it) is placed, outlined in red, named.
+// Then the refusal (RT-6, round 128m): a warehouse that would wall a house in on every side (no variant can open it) is
+// taken out again and the panel names the house.
 //   node scripts/fortressvariant.mjs [--out C:/Projects/shots/fortress]
 import { run, sleep } from './lib/runner.mjs';
 
@@ -156,7 +157,6 @@ await run({ name: 'fortressvariant', kind: 'behaviour', size: '412x915', dpr: 1,
         walls: ring.filter((c) => f.plan.typeAt(c) === 'wall').length,
         gates: ring.filter((c) => f.plan.gate[c]),
         variant: f.variant,
-        warning: f.warning,
         refusal: f.refusal,
         reached,
       };
@@ -193,7 +193,7 @@ await run({ name: 'fortressvariant', kind: 'behaviour', size: '412x915', dpr: 1,
   }, house);
   await sleep(1500);
   if (OUT) await page.screenshot({ path: `${OUT}/variant-gate-built.png` });
-  // the warning path: a house shut in on all four sides by walls and a warehouse — nothing opens it (a builder works a
+  // the refusal: a house shut in on all four sides by walls and a warehouse — nothing opens it (a builder works a
   // block from beside it): placed, outlined in red, named in the panel
   await tapButton('Plan');
   const warn = await page.evaluate(async () => {
@@ -245,7 +245,7 @@ await run({ name: 'fortressvariant', kind: 'behaviour', size: '412x915', dpr: 1,
     warned = await page.evaluate(async (w) => {
       const f = window.reclaimed.fortress;
       await f.settled();
-      return { cells: f.warnCells, warning: f.warning, at: f.plan.typeAt(w.last), stands: f.standsOf(w.house).length, tap: w.tap };
+      return { refusal: f.refusal, at: f.plan.typeAt(w.last), stands: f.standsOf(w.house).length, tap: w.tap };
     }, { ...warn, tap: p });
     console.log('warn', JSON.stringify(warn), JSON.stringify(warned), JSON.stringify(await panel()));
     await page.evaluate((h) => {
@@ -263,5 +263,5 @@ await run({ name: 'fortressvariant', kind: 'behaviour', size: '412x915', dpr: 1,
   R.check('the ring was closed by finger', missed.length === 0 && after.walls === spot.ring.length, JSON.stringify({ missed, walls: after.walls, ring: spot.ring.length }));
   R.check('the closing wall put a gate in the ring, and the panel says so', after.gates.length === 1 && after.variant === 'A gate goes in the wall, so builders can get in.' && lines.includes(after.variant) && after.reached, JSON.stringify(after));
   R.check('the builders got in and built the house', built.house, JSON.stringify(built));
-  R.check('a house no variant can open is placed with a warning naming it, outlined', !!warned && warned.cells.length === 1 && /^That shuts the house off from the stores\./.test(warned.warning ?? ''), JSON.stringify(warned));
+  R.check('a warehouse that would shut a house in, no variant opening it, is refused and the panel names the house', !!warned && warned.at === null && /^That would shut the house off from the stores\./.test(warned.refusal ?? ''), JSON.stringify(warned));
 });

@@ -173,24 +173,32 @@ export const BEDS_LINE = 'Every bed is taken. Build houses so more people can co
 /** (round 128f) why the stores can't reach a spot: deep water, walled in, a cliff or a building, out past the fields */
 export type ReachWhy = 'deep' | 'walled' | 'cliff' | 'far';
 
+const WHY_WORDS: Record<ReachWhy, string> = {
+  deep: 'Deep water is in the way.',
+  walled: 'It is walled in. Put a gate in the wall first.',
+  cliff: 'A cliff or a building is in the way.',
+  far: 'It is too far from the stores.',
+};
+
 /** (round 128f) the check at placement: a block the stores can't reach isn't planned, and the panel says why */
 export function reachWhyLine(why: ReachWhy): string {
-  const what: Record<ReachWhy, string> = {
-    deep: 'Deep water is in the way.',
-    walled: 'It is walled in. Put a gate in the wall first.',
-    cliff: 'A cliff or a building is in the way.',
-    far: 'It is too far from the stores.',
-  };
-  return `Builders can't reach that spot from the stores. ${what[why]}`;
+  return `Builders can't reach that spot from the stores. ${WHY_WORDS[why]}`;
+}
+
+/**
+ * (RT-6, round 128m) blocks placed together (taps folded into one check, a drag): the ones the stores can't reach are
+ * taken out again — how many, and why (the most common reason). One block on its own: reachWhyLine
+ */
+export function refusedLine(refused: number, placed: number, why: ReachWhy): string {
+  if (placed <= 1) return reachWhyLine(why);
+  const one = refused === 1;
+  const what = one ? WHY_WORDS[why] : WHY_WORDS[why].replace(/^It is/, 'They are');
+  const head = refused >= placed ? `None of those ${placed} blocks were planned.` : `${refused} of those ${placed} blocks ${one ? 'was' : 'were'} not planned.`;
+  return `${head} Builders can't reach ${one ? 'it' : 'them'} from the stores. ${what}`;
 }
 
 /** (round 128h, V128-13) what was put in so a block placed keeps the way open: a gate, a passage, a ramp */
 export type VariantKind = 'gate' | 'passage' | 'ramp';
-
-/** (round 128l, m4) a block placed out of the stores' reach: placed at once, outlined in red when the reach comes back */
-export function reachWarnLine(why: ReachWhy): string {
-  return `${reachWhyLine(why)} It is outlined in red.`;
-}
 
 /** (round 128h) the panel's line for the way kept open */
 export function variantLine(kind: VariantKind, type: string): string {
@@ -198,12 +206,6 @@ export function variantLine(kind: VariantKind, type: string): string {
   if (kind === 'gate') return 'A gate goes in the wall, so builders can get in.';
   if (kind === 'passage') return `The ${what} gets an arch through its ground floor, so builders can walk through.`;
   return 'A ramp goes up the drop, so builders can climb back to the stores.';
-}
-
-/** (round 128h) a block placed that shuts others off, when nothing keeps the way open: what's cut off, outlined */
-export function cutWarnLine(types: string[]): string {
-  const names = types.map((t) => `the ${t === 'fortress' ? 'keep' : t === 'lumber' ? 'lumber camp' : t}`);
-  return `That shuts ${list(names)} off from the stores. Builders can't get there. It is outlined in red.`;
 }
 
 /** (round 128f) a block that would shut planned blocks off from the stores isn't planned */

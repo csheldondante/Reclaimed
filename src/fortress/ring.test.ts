@@ -64,12 +64,18 @@ describe('ringCells (FT-57)', () => {
       const within = shutIn(f, ring, f.cellAt(cx, cy));
       // (farms on every cell inside: the reach asks about each one)
       const yards = [...within].filter((c) => !ring.has(c));
-      for (const c of ring) f.paint(c, 0, 'wall');
+      // (RT-6: the ring placed gets a gate — the cells a builder stands at only from inside — shut again behind the
+      // check's back; then every farm inside is refused, walled in)
+      f.paintMany([...ring], 0, 'wall');
       await f.settled();
-      for (const c of yards) f.paint(c, 0, 'farm');
+      for (const c of ring) f.plan.gate[c] = 0;
+      f.requestReach();
       await f.settled();
-      const inside = yards.filter((c) => f.reachedNow(c)).length;
+      f.paintMany(yards, 0, 'farm');
+      await f.settled();
+      const inside = yards.filter((c) => f.plan.has(c, 0)).length;
       expect(inside, `(${cx}, ${cy}) r ${r}`).toBe(0);
+      expect(f.refusal).toMatch(/walled in/);
     }
   }, 30000);
 });
