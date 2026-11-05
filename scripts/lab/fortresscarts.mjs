@@ -51,14 +51,14 @@ export default async function (lab, args) {
       await lab.shot('cart-back');
       shot = true;
     }
-    if (t % 40 === 0) console.log(JSON.stringify({ t: s.simT, people: s.people, carts: s.carts.map((c) => `${c.phase}@${Math.round(c.at[0])},${Math.round(c.at[1])}`).join(" "), piles: s.piles, carted: s.stats.carted, arrived: s.stats.arrived, stone: Math.round(s.stores.stone ?? 0), grain: Math.round(s.stores.grain ?? 0) }));
+    if (t % 40 === 0) console.log(JSON.stringify({ t: s.simT, people: s.people, carts: s.carts.map((c) => `${c.phase}@${Math.round(c.at[0])},${Math.round(c.at[1])}`).join(" "), piles: s.piles, carted: s.stats.carted, cs: lab.life().cartsState(), rejoins: s.stats.cartRejoins, arrived: s.stats.arrived, stone: Math.round(s.stores.stone ?? 0), grain: Math.round(s.stores.grain ?? 0) }));
   }
   const s = lab.snapshot();
   const out = {
     plan,
     carts: s.carts.length,
     cartLoads: s.stats.cartLoads,
-    carted: Math.round(s.stats.carted),
+    carted: Math.round(s.stats.carted), cartRejoins: s.stats.cartRejoins, cartGaveUp: s.stats.cartGaveUp,
     piled: s.stats.piled,
     cartOnRoadShare: cart.walk ? +(cart.on / cart.walk).toFixed(2) : null,
     cartWalkSamples: cart.walk,

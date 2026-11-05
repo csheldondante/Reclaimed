@@ -17568,3 +17568,18 @@ the second page in this worktree's Chrome, on bd626f4 too); the lab's example an
 goldens (`&zoomfloor=0`, baselines of 64217ba): 0-0.14% of pixels changed at every desktop, phone and run-desktop view
 but desktop z1.3 (2.6%, tiles arriving at the edges as before); its run-phone page timed out opening, as on 64217ba.
 >>>>>>> origin/fortress
+
+
+## 2026-11-05 — round 128l (`m4`): carts start on the road
+
+Why: the carts' lab check still failed now and then on the gate tree. Its new log of the carts' state (`cartsState()`:
+their rides, the piles no road reaches, the piles given up) showed a cart sent out with its ride made (riding: true, its
+goal the quarry's door) that never moved from where it was parked: by the stores' heap, off the road network. Once it
+was spawned on the road's node nearest the stores, it went every time.
+
+- Carts spawn on the road graph's node nearest the stores (1.5 m apart), so they start on the network they ride.
+- A cart that makes no way for CART_REJOIN (6 s) is sent onto the nearest node by the units' own goal order, then back to
+  its round; no way for CART_STUCK (30 s): it gives the pile up for 60 s. Neither was needed in the last three runs
+  (`cartRejoins` 0, `cartGaveUp` 0).
+- scripts/lab/fortresscarts.mjs: 3 of 3 passed (a load in each, carts' walking samples on a road 0.97-0.99, newcomers
+  0.66), against 1 of 3 before.
