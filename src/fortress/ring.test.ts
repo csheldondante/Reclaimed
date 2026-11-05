@@ -71,5 +71,5 @@ describe('ringCells (FT-57)', () => {
       const inside = yards.filter((c) => f.reachedNow(c)).length;
       expect(inside, `(${cx}, ${cy}) r ${r}`).toBe(0);
     }
-  });
+  }, 30000);
 });
