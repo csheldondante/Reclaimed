@@ -3,6 +3,28 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-11-05 — round 128m (session 5, `fortress`) — after the overnight build: routes next
+
+- The user, verbatim, on the morning summary:
+
+> I think that is fine we can have elevator tech for deeper quarries.
+>
+> We will want to iterate on the economic complexity and unit builder. This is fine for now but I suspect we want to have two units.
+>
+> We want to iterate on the art in general. See the synty asset agents report.
+>
+> I would refuse it but in general we should not have blocks that agents can't reach.
+>
+> We should fix roads next. A huge part of the design is trade looking real and the city seaming alive. That means we want people following roads to where they go. Roads and pathing through building should build piecwise splines that we can interpolate units along and have them procedural animate rolling or walking. That way we can add thing along the route like stairs or elevators and even logic to animate cranks and things. A crain for the quary or an elevator for example, climbing scafolds and working on walls to finish them. Manning defenses or sparring. Then we only need flow fields for open areas or things that change like depleting resources.
+
+- Design answers (AskUserQuestion): first slice = roads + doors + lanes (recommended); spline source = "They look fine for now don't ever smooth them yet" (keep today's road geometry as it is, piecewise linear; no smoothing); who rides = everyone (recommended).
+- Decided:
+  - Quarry depth stays capped by the ramp tiers; deeper pits come with elevator tech (BACKLOG QY-3).
+  - Soldiers: fine for now. The economy and the unit builder get their own iteration later; expect two soldier kinds (archer and swordsman).
+  - Art: its own iteration, starting from the asset review (scratchpad/assets-review; V128-7, ART1).
+  - A block the builders can't reach is REFUSED again at placement, not placed in red. Wider rule: the game should never have blocks that agents can't reach.
+  - Routes (BACKLOG RT-1..RT-4, RT-5..): every trip on the network is a route of segments that units are interpolated along (kinematic), with walking and rolling animated procedurally by distance. Segment types later carry stairs, elevators, a quarry crane with a crank, scaffold climbing and wall work, manning defences and sparring. Flow fields remain only for open ground and for things that change, like depleting resources.
+
 ## 2026-10-31 — round 120 (session 5) — after playing the run, the towns and the birches; runs redesigned
 
 - The user, verbatim:
