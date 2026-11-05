@@ -46,6 +46,7 @@ warehouse stands) and the houses' doors, and what of the fortress stands at the 
 | `snapshot()` | JSON: sim time, mode, progress, stores, people, jobs, every walker (where, state, phase, job, on a road or not), the roads (shapes, walking, on a road, the roads' share of the ground round the walkers, which legs ride the road graph), structures (cells, planned and built blocks), cut off, the bar's note, the builders' stats |
 | `look(x, y, zoom)` / `await shot(name)` | the camera; a screenshot after two drawn frames (the runner saves `<name>.png`) |
 | `await reset()` | the builders gone, the plan erased, the land as it opened (WorldCore.restoreChunks), the stores refilled, the recipe's town put back |
+| `raid()` | (round 128l, m4) the attack wave (fortress/raiders.ts): `state()`, `callNow()`, `clock`; `lab.sims('raid')` adds the fire and the particles to the fortress preset |
 | `heap`, `recipe`, `dims`, `ground(x, y)`, `fortress()`, `life()`, `units` | where things are; the game's own objects for what the API doesn't cover |
 
 ### The runner (`scripts/lab.mjs`)

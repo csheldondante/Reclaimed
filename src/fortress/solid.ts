@@ -50,6 +50,8 @@ export interface SolidInputs {
   defs?: Record<StructureType, StructureDef>;
   /** (round 128d) the ways (ways.ts): a wall's stairs are solid steps, claimed with the wall once it stands */
   ways?: Ways;
+  /** (round 128l, m4: the attack wave) the gates are shut: a gate's cell is solid wall to the ground */
+  shut?: boolean;
 }
 
 /** (round 128h) the solid spans' key for the ramps (no structure owns them: structure ids start at 1) */
@@ -148,7 +150,7 @@ export function solidSpans(inp: SolidInputs): Map<number, ColumnSpan[]> {
         joined.push([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]);
       }
       const frames: V2[][] = joined.map((m) => band([x, y], m, WALL_HALF));
-      const gate = plan.gate[c];
+      const gate = plan.gate[c] && !inp.shut;
       if (!gate || !joined.length) frames.push(square(x, y, WALL_HALF));
       for (const [lo, hi] of runs) {
         const top = town.floorZ(c, hi) + LEVEL_H;

@@ -72,6 +72,8 @@ export interface PieceInputs {
   lanes?: Lanes;
   /** (round 128h, V128-13) cells a placement cut off from the stores: outlined in red (Fortress.warnCells) */
   warn?: readonly number[];
+  /** (round 128l, m4: the attack wave) the gates are shut: a gate's passage drawn closed */
+  shut?: boolean;
 }
 
 /** a stair's step along its axis (metres) */
@@ -596,6 +598,8 @@ export function cityPlanOf(
             extra.add(lib.id('gatearch'), band(f[0], f[1], 0.45), lo - 0.3, top, L2);
             extra.add(lib.id('gatearch'), band(f[3], f[2], 0.45), lo - 0.3, top, L2);
             extra.add(lib.id('rampart'), f, top - WALL_LINTEL, top, L2);
+            // (m4) shut: the passage closed under the lintel
+            if (inp.shut) extra.add(lib.id('rampart'), band([x, y], m, 0.35), lo - 0.3, top - WALL_LINTEL, L2);
           } else {
             extra.add(lib.id('rampart'), f, zb, top, L2);
             if (bot > 0) {

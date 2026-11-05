@@ -17650,3 +17650,40 @@ Why: main, on the stuck carts: fix the root cause, drop the patches (the repo ru
 - A second cause, named and not patched (M4-14): the other cart was sent to the farms' pile, a road node 14 m north
   of the farm's door. It never left the stores. The farmers' own ride to the farms fails there as well (riding.farm
   false). The farms' lanes aren't ridden from the stores, and I haven't found why yet.
+
+
+## 2026-11-05 — round 128l (`m4`): the attack wave, part A — the rider, the raiders, the gates, the loot, the fire
+
+Why: the user, "Also, do you want to add the attack wave?", and the design session's answers (DECISIONS round 128l
+"the attack wave"): timed and announced; the stores, then the houses; the walls and gates in the way; real destruction
+with the existing effects; repairs through the job board. Combat "benefits from being fun out of the gate because of
+the destruction effects". docs/ARCHITECTURE.md "The attack wave" has the design; fortress/raid.ts (pure) and
+fortress/raiders.ts (the runtime).
+
+- What a wave does now, in the lab's walled recipe (scripts/lab/fortressraid.mjs, `raid` sims): 4 raiders walk in from
+  the west edge; the gate shuts when they are 30 m from it; they go round to it and bash it, 24 blows of 1
+  (RAID.gateHp) in ~10 sim s; it breaks to rubble and is a planned block again; they loot 6 ore and 2 weapons at the
+  stores, torch both houses (each burns 8 s, falls, its timber burns to ash in the fire sim) and walk out with the loot.
+  After: 40 sim s of building rebuilt the gate and the houses. The open town (the same town, its wall erased): they
+  loot and burn without a blow; people caught outside on their way home die. The rider: out 1.5 days before the wave,
+  at the stores 61 sim s later with "A rider brings word. Raiders from the west, tomorrow at dusk. He counted 4 of
+  them."
+- Raiders walk on the units' goal fields, not the road graph's rides. With rides they stopped at the end of a road 12 m
+  from the stores and stood there (the flat recipe's town: node 4 to node 1, a connected graph); the villagers' own
+  rides home stood still the same way. That is the family of M4-14 (another worktree's), left alone here; the fields
+  cost less on roads, so they still come in along the road.
+- AgentUnits: `mayFight` (the game's rule over who may take on whom) and a hostile's routine stepped while it has no
+  target (before, a hostile with a 'work' job was never stepped). Raiders first fought every villager within 6 m and
+  died to them, never reaching the stores: now they notice within 3.5 m, people in at home are left alone, carts
+  neither fight nor are fought, and a raider has 8 health and hits for 2.
+- The lab's fortress was never claimed (no streamer: `staticsFor` read `scene.stream`; no External registry: the lab
+  didn't run the rigid rock). Units walked through its walls, so a raid there passed straight through the ring. Now it
+  is claimed as in the atlas. Two older lab checks change with it: fortressoutside passes but slower (the house outside
+  the wall at 181 sim s, was ~35; one run of three didn't reach it in 600), and fortresscarts fails: a cart sent out
+  sits by the stores, boxed in by the solid houses round the heap (BACKLOG AW-4). Both were measured on a fortress
+  units walked through.
+- Not measured: frame cost. For the phone bench later: a wave is RAID.size0 4 raiders growing by 2 a wave to 16 (units
+  on the agents' step and the hunt field), a goal field per place they walk to (up to 3 shared), fx bursts (chips each
+  blow, flames and smoke at 4 and 2 a second per burning house), the fire sim on a fallen house's timber, and a
+  static-claims pass on every gate shut, gate open and block broken.
+

@@ -113,6 +113,12 @@ export class AgentUnits implements Units {
   private hitBy = new Map<number, UnitId | string | null>();
   private factionCol = new Map<string, string>();
   routine: Routine | null = null;
+  /**
+   * (round 128l, m4: the attack wave) whether `u` may take on `foe` (null: anyone in sight). The game's rule over who
+   * can reach whom: the fortress's raiders don't hunt people behind a shut wall or up on the wall-walk, and its archers
+   * hold their places and shoot instead of closing in. Asked of hostiles noticing and of defenders choosing.
+   */
+  mayFight: ((u: UnitView, foe: UnitView) => boolean) | null = null;
   /** live units at the last sync, and how long that sync took to come back (ms) */
   stats = { units: 0, hunting: 0, syncMs: 0, syncs: 0 };
 
@@ -530,6 +536,11 @@ export class AgentUnits implements Units {
     if (this.fallen.size > 600) for (const [g, id] of this.fallen) if (!this.recs.has(id)) this.fallen.delete(g);
   }
 
+  /** (m4) the game's rule over who may take on whom (mayFight) */
+  private fights(u: UnitRec, foe: UnitRec): boolean {
+    return !this.mayFight || this.mayFight(u.v, foe.v);
+  }
+
   /** who's hunting whom; who's striking; the jobs' groups */
   private think(dt: number): void {
     // (LW1: the raised are their raiser's — not hunted for here, nor given jobs)
@@ -545,7 +556,8 @@ export class AgentUnits implements Units {
       }
       if (h.target !== null) {
         const p = this.posOf(h.target);
-        if (!p || d2(p, h.v.at) > Math.max(h.sight * 2, LEASH)) h.target = null;
+        const t = typeof h.target === 'number' ? this.recs.get(h.target) : undefined;
+        if (!p || d2(p, h.v.at) > Math.max(h.sight * 2, LEASH) || (t && !this.fights(h, t))) h.target = null;
       }
       if (h.target === null) {
         let best: UnitId | string | null = null;
@@ -560,7 +572,7 @@ export class AgentUnits implements Units {
           }
         }
         for (const x of live) {
-          if (!enemiesOf(h)(x)) continue;
+          if (!enemiesOf(h)(x) || !this.fights(h, x)) continue;
           const d = d2(x.v.at, h.v.at);
           if (d < bd) {
             bd = d;
@@ -576,7 +588,8 @@ export class AgentUnits implements Units {
         this.releaseGoal(h);
         this.regroup(h, G.hunt);
         hunting++;
-      } else if (h.group === G.hunt) this.assign(h);
+      } else if (h.v.job.kind === 'work' && this.routine?.takes(h)) this.routine.step(h, dt);
+      else if (h.group === G.hunt) this.assign(h);
       else if (h.group === G.stand || h.group === G.wander || (h.group >= G.goal0 && h.group < G.goal0 + GOALS)) this.assign(h);
     }
     this.stats.hunting = hunting;
@@ -588,7 +601,7 @@ export class AgentUnits implements Units {
       const p = this.posOf(t);
       if (p) cand.set(t, Math.min(cand.get(t) ?? Infinity, d2(p, h.v.at)));
       // (and whoever else of theirs is about: the hunt goes for the nearest)
-      for (const x of live) if (enemiesOf(h)(x) && d2(x.v.at, h.v.at) < h.sight) cand.set(x.v.id, Math.min(cand.get(x.v.id) ?? Infinity, d2(x.v.at, h.v.at)));
+      for (const x of live) if (enemiesOf(h)(x) && this.fights(h, x) && d2(x.v.at, h.v.at) < h.sight) cand.set(x.v.id, Math.min(cand.get(x.v.id) ?? Infinity, d2(x.v.at, h.v.at)));
     }
     const chosen = [...cand.entries()].sort((a, b) => a[1] - b[1]).slice(0, TARGETS).map((e) => e[0]);
     this.targetsPrev = this.targetsNow;
@@ -606,9 +619,14 @@ export class AgentUnits implements Units {
       if (u.v.hostile) continue;
       const j = u.v.job;
       if (j.kind === 'attack') u.target = j.target;
+      if (u.target !== null && typeof u.target === 'number') {
+        const t = this.recs.get(u.target);
+        if (t && !this.fights(u, t)) u.target = null;
+      }
       if (u.target === null && u.v.role === 'guard') {
         let bd = u.sight;
         for (const h of hostiles) {
+          if (!this.fights(u, h)) continue;
           const d = d2(h.v.at, u.v.at);
           if (d < bd) {
             bd = d;

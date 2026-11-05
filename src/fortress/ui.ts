@@ -56,6 +56,9 @@ export interface FortressBarHooks {
   person?(): { title: string; lines: string[] } | null;
   following?(): boolean;
   follow?(on: boolean): void;
+  /** (round 128l, m4) the attack wave: what the bar says of it (the rider's word, the raid, its summary), and "Call raiders now" */
+  raidLines?(): string[];
+  callRaid?(): void;
 }
 
 /** (round 128e, FT-50) the speeds a tap picks while building */
@@ -191,6 +194,17 @@ export class FortressBar {
       this.render();
     };
     this.timeRow.appendChild(this.skipBtn);
+    // (round 128l, m4) the attack wave's test button: the next wave now
+    if (hooks.callRaid) {
+      const b = document.createElement('button');
+      b.textContent = 'Call raiders now';
+      b.className = 'raid';
+      b.onclick = () => {
+        hooks.callRaid!();
+        this.render();
+      };
+      this.timeRow.appendChild(b);
+    }
     this.root.appendChild(this.timeRow);
     // (round 128l, m4) a person's card: Follow keeps the camera on them until a tap lands elsewhere
     this.followRow = document.createElement('div');
@@ -245,6 +259,8 @@ export class FortressBar {
     }
     if (f.mode === 'build') {
       const p = f.progress();
+      // (round 128l, m4) the attack wave first: the rider's word, the raid, what it did
+      for (const l of this.hooks.raidLines?.() ?? []) out.push({ text: l, short: true });
       out.push({ text: buildingLine(p.built, p.total) });
       // (round 128e, FT-49) the builders, by what they're doing: they're small among a town's roofs
       if (f.crew && p.built < p.total) out.push({ text: crewLine(f.crew) });

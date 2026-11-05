@@ -131,6 +131,8 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
     timed('settle', () => scene.settlements?.update(dt * scene.speed));
     if (scene.fortressLife) {
       scene.fortressLife.update(dt * scene.speed);
+      // (round 128l, m4) the attack wave: its clock, its raiders, the gates
+      scene.fortressRaid?.update(dt * scene.speed);
       if (scene.fortressSkip) skipFrame(scene, dt * scene.speed);
       // (round 128l, m4) Follow: the camera on the person picked
       followFrame(scene);

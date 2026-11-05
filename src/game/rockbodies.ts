@@ -37,7 +37,8 @@ export function rockbodyFor(levelId?: string): boolean {
   const p = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('rockbody');
   if (p === '1') return true;
   if (p === '0') return false;
-  return levelId === 'atlas' || levelId === 'rocklab' || levelId === 'playground';
+  // (round 128l, m4: the behaviour lab as the atlas — its registry of what other systems own holds the fortress's claims)
+  return levelId === 'atlas' || levelId === 'rocklab' || levelId === 'playground' || levelId === 'lab';
 }
 
 /** (solver step 1) the fixed step: every body moves in whole steps of this, drawn between its last two (drawPose) */

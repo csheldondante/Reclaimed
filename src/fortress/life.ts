@@ -53,6 +53,7 @@ import type { Erased, Fortress } from './fortress';
 import { WAY_ROAD } from './ways';
 import { cellAt } from '../world/lattice';
 import type { Doing, PersonFacts } from './follow';
+import type { FortressRaid } from './raiders';
 import { BuildBook, type Load } from './work';
 
 /** goods a builder carries a trip */
@@ -187,6 +188,14 @@ export class FortressLife implements Routine {
   private noCartRoad = new Set<number>();
   private day = 0;
   readonly board = new JobBoard();
+  /** (round 128l, m4: the attack wave) the raid (raiders.ts): its raiders and its rider are stepped through this routine */
+  raid: FortressRaid | null = null;
+  /** (m4) raiders are about: the villagers stay home (FortressRaid sets it) */
+  shelter = false;
+  /** (m4) the villagers in at home while raiders are about: nobody fights them there (FortressRaid.mayFight) */
+  readonly inside = new Set<UnitId>();
+  /** (m4) the doors of houses set alight (FortressRaid): nobody goes home to them */
+  unsafe: V2[] = [];
   /** (scripted checks) where the last trees were felled */
   readonly felledAt: V2[] = [];
   private seeded = '';
@@ -251,7 +260,15 @@ export class FortressLife implements Routine {
   }
 
   takes(u: UnitRec): boolean {
-    return u.v.settlement === this.io.settlement && u.v.job.kind === 'work';
+    return (u.v.settlement === this.io.settlement && u.v.job.kind === 'work') || (this.raid?.takes(u) ?? false);
+  }
+
+  /** (m4) the fortress's settlement and faction (the raid's: who is whose) */
+  get settlementId(): string {
+    return this.io.settlement;
+  }
+  get faction(): FactionId | null {
+    return this.io.faction;
   }
 
   drop(u: UnitRec): void {
@@ -357,7 +374,8 @@ export class FortressLife implements Routine {
     const grain = this.io.stores().grain ?? 0;
     const ate = Math.min(grain, eaten(this.ids.length, dt));
     if (ate > 0) this.io.take('grain', ate);
-    if (this.t >= this.arriveAt && mayArrive(this.ids.length, f.beds(), this.io.stores().grain ?? 0)) {
+    // (m4: nobody walks in while raiders are about)
+    if (!this.shelter && this.t >= this.arriveAt && mayArrive(this.ids.length, f.beds(), this.io.stores().grain ?? 0)) {
       const at = this.entry();
       if (at) {
         const id = this.spawn(at, 0);
@@ -497,7 +515,12 @@ export class FortressLife implements Routine {
    * the point on that edge straight out from it (EDGE_IN in from the edge): a newcomer starts there and walks onto the
    * road. Null: no roads.
    */
-  private edgeEntry(): V2 | null {
+  edgeEntry(): V2 | null {
+    return this.edgeWay()?.edge ?? null;
+  }
+
+  /** (m4) the road graph's node nearest the window's edge (window world), and the point on the edge straight out from it */
+  edgeWay(): { edge: V2; node: V2 } | null {
     const f = this.io.fort;
     const g = f.roadGraph();
     const n = nodeCount(g);
@@ -505,7 +528,7 @@ export class FortressLife implements Routine {
     const W = f.windowDims().w;
     const Hh = f.windowDims().h * ROW_H;
     const IN = 3;
-    let best: V2 | null = null;
+    let best: { edge: V2; node: V2 } | null = null;
     let bd = Infinity;
     for (let i = 0; i < n; i++) {
       const [x, y] = f.toWindow(g.xy[2 * i], g.xy[2 * i + 1]);
@@ -518,7 +541,7 @@ export class FortressLife implements Routine {
       for (const [d, p] of sides)
         if (d < bd) {
           bd = d;
-          best = p;
+          best = { edge: p, node: [x, y] };
         }
     }
     return best;
@@ -1054,7 +1077,9 @@ export class FortressLife implements Routine {
       if (d) out.push(d);
     }
     // (round 128i: the fortress's own houses once there are any — its people ride its roads home — else the town's)
-    return (out.length ? out : this.io.homes()).slice(0, 4);
+    // (m4: not a house the raiders set alight — those in it run to another)
+    const safe = out.filter(([x, y]) => !this.unsafe.some(([ux, uy]) => Math.hypot(ux - x, uy - y) < 1));
+    return (safe.length ? safe : out.length ? out : this.io.homes()).slice(0, 4);
   }
 
   private reseed(): void {
@@ -1158,6 +1183,7 @@ export class FortressLife implements Routine {
   }
 
   step(u: UnitRec, dtWall: number): void {
+    if (this.raid?.takes(u)) return this.raid.step(u, dtWall);
     const dt = dtWall * this.io.speed();
     const w = (u.work ??= { phase: 'idle', t: 1, job: null } satisfies Work) as Work;
     // (m4, follow) its day so far
@@ -1174,6 +1200,16 @@ export class FortressLife implements Routine {
     };
     if (u.v.role === 'guard') return this.stepSoldier(u, w, dt);
     if (u.v.role === 'cart') return this.stepCart(u, w, dt);
+    // (m4: raiders about) home, and stay there; what they were doing goes on after
+    if (this.shelter) {
+      const homes = this.homes();
+      const home = !homes.length || homes.some(([x, y]) => Math.hypot(x - at[0], y - at[1]) < AT_SPOT);
+      if (home) stand();
+      else go(R.toHome);
+      if (home) this.inside.add(u.v.id);
+      else this.inside.delete(u.v.id);
+      return;
+    }
     const slot = this.slot(w.job);
     switch (w.phase) {
       // ---- (m4) smiths and recruits: a batch out of the stores

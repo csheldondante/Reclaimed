@@ -1045,6 +1045,43 @@ export class Fortress {
     for (const h of this.onChange) h();
   }
 
+  /**
+   * (round 128l, m4: the attack wave) A built block broken (bashed by raiders, burned): it and every built level over it
+   * come down, and stay in the plan — planned blocks again, so the builders repair them as they build anything (the job
+   * board; the stores pay their cost again). Returns the levels that came down (none: nothing stood there).
+   */
+  breakBlock(cell: number, level = 0): number[] {
+    const s = this.plan.structureAt(cell);
+    const down = [...this.town.built.each(cell)].filter((l) => l >= level).sort((a, b) => b - a);
+    for (const l of down) {
+      this.town.remove(cell, l);
+      // (Town.remove takes it out of the Town's plan too: the painted plan still has it — planned again)
+      if (s && this.plan.has(cell, l)) this.town.plan(cell, l, true, s.id, typeIndex(s.type));
+      this.begun.delete(`${cell}:${l}`);
+    }
+    if (!down.length) return down;
+    this.changedOver([cell]);
+    for (const h of this.onBroken) h(cell, down);
+    for (const h of this.onChange) h();
+    return down;
+  }
+
+  /** (m4) told when blocks are broken (the cell, the levels) */
+  readonly onBroken: ((cell: number, levels: number[]) => void)[] = [];
+
+  /**
+   * (m4: the attack wave) The gates shut: each gate cell is solid wall to the ground (claims.ts, solid.ts) and drawn
+   * shut (pieces.ts) — nobody walks through until they open again.
+   */
+  gatesShut = false;
+  setGatesShut(on: boolean): void {
+    if (this.gatesShut === on) return;
+    this.gatesShut = on;
+    const gates = [...this.plan.structures()].flatMap((s) => [...s.cells.keys()].filter((c) => this.plan.gate[c]));
+    this.changedOver(gates);
+    for (const h of this.onChange) h();
+  }
+
   /** (FT-20) How many blocks the builders can't reach now (FortressLife): the bar says so. */
   setCutOff(n: number): void {
     this.cutOff = n;

@@ -75,7 +75,7 @@ export class FortressClaims {
 
   private solidInputs() {
     const f = this.fort;
-    return { plan: f.plan, town: f.town, grid: f.grid, ground: (col: number) => f.groundAt(col), ways: f.ways() };
+    return { plan: f.plan, town: f.town, grid: f.grid, ground: (col: number) => f.groundAt(col), ways: f.ways(), shut: f.gatesShut };
   }
 
   /** a structure's claim was cut (an edit, a meteor) or hangs free: let go to rubble where it stood */

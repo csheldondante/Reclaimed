@@ -68,6 +68,7 @@ import { Fortress } from '../fortress/fortress';
 import { FortressBar } from '../fortress/ui';
 import type { FortressFollow } from '../fortress/follow';
 import { FortressLife } from '../fortress/life';
+import type { FortressRaid } from '../fortress/raiders';
 import { FortressClaims } from '../fortress/claims';
 import { StaticClaims } from '../sim/static-claims';
 import type { GridStyle } from '../api/contracts/settlement';
@@ -246,6 +247,8 @@ export class LevelScene implements Scene {
   fortressBar?: FortressBar;
   /** (fortress slice 1, milestone 2) its builders, from the first Build */
   fortressLife?: FortressLife;
+  /** (round 128l, m4) the attack wave on the fortress (fortress/raiders.ts), from the first Build */
+  fortressRaid?: FortressRaid;
   fortressBarAt = 0;
   /** (round 128e, FT-50) Skip to done running; how long (sim s) it has found the plan blocked; the speed to go back to */
   fortressSkip = false;
@@ -638,6 +641,7 @@ export class LevelScene implements Scene {
     this.abort.abort();
     this.tunePanel?.dispose();
     this.fortressBar?.dispose();
+    this.fortressRaid?.dispose();
     this.fortressLife?.dispose();
     this.fortressClaims?.dispose();
     this.statics?.dispose();

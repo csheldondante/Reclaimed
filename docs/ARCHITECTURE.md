@@ -3686,12 +3686,55 @@ module is docs/MODULES.md.
   judge.wgsl mean these parts (docs/MODULES.md lists which holds what).
 
 
+## The attack wave (round 128l, `m4`: fortress M5-lite; DECISIONS round 128l "the attack wave")
+
+Raiders come for the fortress on a clock. The rules are pure (`fortress/raid.ts`, tested in raid.test.ts); the
+runtime moves them through the systems that already exist (`fortress/raiders.ts` FortressRaid, made with FortressLife
+at the first Build, updated after it each frame in sim seconds).
+
+- **The clock** (`RaidClock`): a wave at dusk (`RAID.dusk` of an economy day) on day `RAID.firstDay`, then every
+  `RAID.everyDays`; `waveSize(n)` grows by `RAID.grow` a wave to `RAID.most`. The warning sets out `RAID.warnLead` days
+  before: a rider (a unit) walks in from the window's edge to the stores, and the bar shows his line when he gets
+  there. "Call raiders now" (the bar's time row, a test button) brings the next wave at once and moves the clock on.
+- **The goal** (`raidGoal` over a `RaidLayout`, `layoutOf(fortress)`): two floods over the fortress grid's cells, one
+  from the box's edge and one from the stores, through cells nothing stands on at the ground (a farm or quarry yard is
+  open; a gate is open unless the gates are shut). Joined: the raiders go for the stores. Not: the wall cell (gate or
+  wall) touching both sides with the least health left (`blockHp`: a gate `RAID.gateHp`, a wall `RAID.wallHp` a level),
+  nearest the raiders on a tie; walls two deep, the outer cell nearest the stores. Then the houses, then out.
+- **Moving**: raiders are AgentUnits hostiles (role `raider`, faction `f-raiders`, `RAID.raiderHealth`,
+  `raiderDamage`, `raiderSight`) walking on the units' goal fields ('go' orders: one field a place, shared; roads cost
+  less on every field). They don't ride the road graph: in the lab's flat recipe the rides stopped at a road's end and
+  never went on (BACKLOG M4-14's family). Bashing and waiting are a 'work' job the raid's routine poses (FortressLife
+  routes the raid's units to it; AgentUnits now steps a hostile's routine when it has no target).
+- **Who fights whom** (`AgentUnits.mayFight`, a game rule asked by hostiles noticing and by defenders choosing): while
+  raiders are about, a raider and its foe only on the same side of the wall (the floods) and the same ground (not up on
+  the wall-walk); nobody in at home (FortressLife.inside); never a cart.
+- **Gates** (`Fortress.setGatesShut`): shut when a raider comes within `RAID.shutAt` of one, or when none of the
+  fortress's people is outside. A shut gate is solid wall to the ground (solid.ts `shut`, claimed) and drawn closed
+  (pieces.ts `shut`). Open again when the wave is over.
+- **Breaking** (`Fortress.breakBlock(cell, level)`): the block and every built level over it come down; the painted plan
+  keeps them, so they are planned blocks again and the builders rebuild them as any other (the job board, the stores
+  paying again). A broken wall pours rubble where it stood (terrain deposit) with dust and chips (fx).
+- **Burning**: a raider at a house's door torches it: flames and smoke over it for `RAID.burnSec`, its people go to
+  another house (FortressLife.unsafe), then the block falls and its timber is put on the ground (terrain put, `log`)
+  and set alight (fire.ignite): the fire sim burns it to ash.
+- **Loot**: at the stores each raider takes `RAID.loot` goods, dearest first (`LOOT_ORDER`); a raider who falls drops
+  his back into the stores; those who get out take it away. The wave runs once `RAID.breakShare` of it is down, or when
+  the houses are done.
+- **The villagers** shelter at home while raiders are about (FortressLife.shelter: no work, no newcomers); those caught
+  outside are the raiders' to kill.
+- **The bar** (`FortressBarHooks.raidLines`): the rider's word, the raid as it goes (`raidNowLine`), then the summary
+  (`raidOverLines`: what was taken, broken and burned, who fell). Words in fortress/words.ts, linted by raid.test.ts.
+
 ## The behaviour lab (round 128l, `tooling`; docs/TOOLING.md)
 
 `?level=lab&lab=<recipe>` (LevelDef `behaviourLab`, `warmupTicks: 120`): the game with less world for scripted
 behaviour checks. One fixed 256² window (the plain levels' size) of a recipe's land made on the CPU
 (`lab/recipes.ts`: flat, hill, valley, walled — the ground as a function, water, springs, woods, the heap and the
 houses' doors, what of the fortress stands at the start). No atlas, no streamer, no settlements.
+  (round 128l, `m4`) The fortress's built blocks are claimed in the lab's columns as in the atlas: the static claims
+  take the fortress's window (`staticsFor(scene, win)`), and the lab runs the rigid rock (`rockbodyFor`), whose
+  External registry holds the claims. Before, nothing was claimed in the lab and units walked through its walls.
 
 - **The fortress's start takes contracts, not the atlas** (`fortress/host.ts`): `startFortress(town, view, id, win)`
   reads a `FortressTownSource` (pin, spotsOf, thingAt, toWindow — the atlas's Settlements meets it; the lab's

@@ -15,6 +15,7 @@ import { Fortress } from '../../fortress/fortress';
 import { FortressBar } from '../../fortress/ui';
 import { SKIP_DONE, skipCutOffLine, skipShortLine } from '../../fortress/words';
 import { FortressLife } from '../../fortress/life';
+import { FortressRaid } from '../../fortress/raiders';
 import { ECON, START_STORES } from '../../fortress/defs';
 import { fortressPieces } from '../../fortress/pieces';
 import { FortressClaims } from '../../fortress/claims';
@@ -88,7 +89,7 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
   fort.onChange.push(() => (pieces = null));
   view.extra = () => {
     if (!fort.plan.structures().length) return null;
-    pieces ??= fortressPieces({ plan: fort.plan, town: fort.town, grid: fort.grid, ground: (x, y) => scene.heightAt(...fort.toWindow(x, y)), zOff: S.oz, ghost: fort.ghost(), started: fort.started(), picked: fort.inspected, ways: fort.ways(), lanes: fort.lanes(), warn: fort.warnCells });
+    pieces ??= fortressPieces({ plan: fort.plan, town: fort.town, grid: fort.grid, ground: (x, y) => scene.heightAt(...fort.toWindow(x, y)), zOff: S.oz, ghost: fort.ghost(), started: fort.started(), picked: fort.inspected, ways: fort.ways(), lanes: fort.lanes(), warn: fort.warnCells, shut: fort.gatesShut });
     const [dx, dy] = fort.offset();
     return { p: pieces, dx, dy: dy * ROW_H };
   };
@@ -116,7 +117,7 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
   // (round 128j: a static grid, written with the land — sim/static-claims.ts)
   scene.fortressClaims = new FortressClaims(fort, {
     external: () => scene.integrity?.external ?? null,
-    statics: () => staticsFor(scene),
+    statics: () => staticsFor(scene, S),
   });
   // (round 128i, FT-67) the road stamp's offset moved in the slide's own frame, as the towns' grid rows are
   S.onSlide.push(() => scene.fortressLife?.roads());
@@ -155,6 +156,23 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
         },
         ECON.startPeople,
       );
+      // (round 128l, m4) the attack wave: its clock runs from the first Build
+      scene.fortressRaid ??= new FortressRaid({
+        units: scene.units!,
+        fort,
+        life: scene.fortressLife,
+        stores: () => Object.fromEntries(Object.entries(rec.stores).map(([k, v]) => [k, v.stock])),
+        take: (good, n) => {
+          const s = (rec.stores[good] ??= { stock: 0, rate: 0 });
+          s.stock -= n;
+        },
+        ignite: (x, y, r) => scene.worldApi!.fire?.ignite(x, y, { radius: r, intensity: 1 }),
+        pour: (x, y, m, r, layers) => scene.worldApi!.terrain!.deposit(x, y, m, { radius: r, layers }),
+        put: (x, y, m, n) => void scene.worldApi!.terrain!.put(x, y, m, n).catch(ignoreTeardown),
+        burst: (name, x, y, z, o) => scene.worldApi!.fx?.burst(name, x, y, z, o),
+        ground: (x, y) => scene.heightAt(x, y),
+        dims: { w: dims.w, h: dims.h * ROW_H },
+      });
       fort.setMode('build');
       scene.speed = runSpeed;
       // (round 128e, FT-49; the user: "The agents never appeared for me to begin work": they come out of the town's
@@ -197,6 +215,9 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
     },
     following: () => follow.following,
     follow: (on) => follow.follow(on),
+    // (round 128l, m4) the attack wave: its lines on the bar, and the test button
+    raidLines: () => scene.fortressRaid?.lines ?? [],
+    callRaid: () => scene.fortressRaid?.callNow(),
   });
   scene.fortressBar.townName = rec.name;
   // the power coming in: the fortress's built blocks (a ledger number: nothing spends it yet)
@@ -297,9 +318,12 @@ export function followFrame(scene: LevelScene): void {
  * (round 128j, claims at load) The static grids' claims (sim/static-claims.ts): made on first use, with the streamed
  * window and the External registry — the streamer's write of arriving land claims every grid's columns there.
  */
-export function staticsFor(scene: LevelScene): StaticClaims | null {
+// (round 128l, m4: the lab's fortress was never claimed — the lab has no streamer, so nothing was solid there and units
+// walked through its walls. The window is the fortress's: the streamer's, or the lab's still one, whose land is written
+// once at the start and never arrives again)
+export function staticsFor(scene: LevelScene, win: FortressWindow | undefined = scene.stream): StaticClaims | null {
   if (scene.statics) return scene.statics;
-  const S = scene.stream;
+  const S = win;
   const ext = scene.integrity?.external;
   if (!S || !ext) return null;
   const core = scene.core;
@@ -312,12 +336,12 @@ export function staticsFor(scene: LevelScene): StaticClaims | null {
     R: S.R,
     origin: () => [S.origin[0], S.origin[1]],
     unwritten: () => S.unwritten,
-    held: () => S.columnsHeld,
+    held: () => scene.stream?.columnsHeld ?? false,
     touched: (x0, y0, x1, y1) => scene.hybrid?.edit((x0 + x1) / 2, (y0 + y1) / 2, Math.max(x1 - x0, y1 - y0) / 2),
     quiet: (x0, y0, x1, y1) => scene.sleep?.touch((x0 + x1) / 2, ((y0 + y1) / 2) * ROW_H, Math.max(x1 - x0, (y1 - y0) * ROW_H) / 2),
   });
   ext.statics = st;
-  S.onWritten.push((lx, ly, w, h) => st.landWritten(lx, ly, w, h));
+  scene.stream?.onWritten.push((lx, ly, w, h) => st.landWritten(lx, ly, w, h));
   scene.statics = st;
   return st;
 }
@@ -335,7 +359,10 @@ export function startLab(scene: LevelScene): void {
     startFortress: (town, view, win) => startFortress(scene, town, view, town.rec.id, win),
     fortress: () => scene.fortress,
     life: () => scene.fortressLife,
+    raid: () => scene.fortressRaid,
     dropLife: () => {
+      scene.fortressRaid?.dispose();
+      scene.fortressRaid = undefined;
       scene.fortressLife?.dispose();
       scene.fortressLife = undefined;
       scene.fortressSkip = false;

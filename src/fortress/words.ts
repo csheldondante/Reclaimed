@@ -211,3 +211,45 @@ export function wouldCutLine(types: string[]): string {
   const names = types.map((t) => `the ${t === 'fortress' ? 'keep' : t === 'lumber' ? 'lumber camp' : t}`);
   return `That would shut ${list(names)} off from the stores. Leave a way through.`;
 }
+
+// ---- (round 128l, m4) the attack wave (raiders.ts): the rider's word, the raid, the summary after it
+
+/** the rider's word, a day before the wave */
+export function raidWarnLine(side: string, size: number): string {
+  return `A rider brings word. Raiders from the ${side}, tomorrow at dusk. He counted ${size} of them.`;
+}
+
+/** the wave is here */
+export function raidArrivedLine(side: string, size: number): string {
+  return `${size} raiders are coming from the ${side}. Your people run inside. The gates will shut.`;
+}
+
+/** the wave's summary: what it took, broke and burned, who fell */
+export function raidOverLines(r: { taken: Goods; broken: Record<string, number>; housesBurned: number; fallen: (string | null)[]; soldiersFallen: number; raidersFallen: number; raidersOut: number }): string[] {
+  const out = ['The raid is over.'];
+  const took = Object.values(r.taken).some((n) => (n ?? 0) >= 1) ? goodsText(r.taken) : '';
+  out.push(took ? `The raiders got away with ${took}.` : 'The raiders took nothing.');
+  const broke: string[] = [];
+  for (const [what, n] of Object.entries(r.broken)) {
+    if (what === 'house' || n <= 0) continue;
+    broke.push(n === 1 ? `the ${what === 'fortress' ? 'keep' : what}` : `${n} ${what === 'fortress' ? 'keep' : what} blocks`);
+  }
+  if (broke.length) out.push(`They broke ${list(broke)}.`);
+  if (r.housesBurned) out.push(r.housesBurned === 1 ? 'A house burned down.' : `${r.housesBurned} houses burned down.`);
+  if (broke.length || r.housesBurned) out.push('Builders will rebuild what broke when the stores can pay.');
+  const people = r.fallen.length - r.soldiersFallen;
+  if (people > 0) out.push(people === 1 ? 'One of your people died.' : `${people} of your people died.`);
+  if (r.soldiersFallen > 0) out.push(r.soldiersFallen === 1 ? 'One soldier died.' : `${r.soldiersFallen} soldiers died.`);
+  if (!r.fallen.length) out.push('Nobody of yours died.');
+  out.push(`${r.raidersFallen} ${r.raidersFallen === 1 ? 'raider' : 'raiders'} died. ${r.raidersOut} got away.`);
+  return out;
+}
+
+/** the raid as it goes: what the raiders are doing now */
+export function raidNowLine(stage: string, alive: number, broke: string | null): string {
+  const n = alive === 1 ? 'One raider is' : `${alive} raiders are`;
+  if (stage === 'breach') return `The gates are shut. ${n} at the walls, breaking in.`;
+  if (stage === 'stores') return broke ? `The raiders broke the ${broke}. They are going for the stores.` : 'The raiders are going for the stores.';
+  if (stage === 'houses') return 'The raiders are setting fire to the houses.';
+  return `${n} running off.`;
+}

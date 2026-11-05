@@ -600,6 +600,23 @@ each was implemented.
   long ones) to a walk along its top. Drawn as paving and stone steps; the steps and the wall-walk are solid, so units
   climb them. The warehouse's card speaks of the town's stores against all the warehouses' room, then this one's part.
 
+## 2026-11-05 — round 128l (session 5, `m4`) — the attack wave
+
+- The user, verbatim: "Also, do you want to add the attack wave?" The design session (main, with the user; the user
+  chose each recommended option):
+- Trigger → timed and announced. A rider warns a day ahead ("Raiders from the east, tomorrow at dusk"). The wave walks
+  in along a road from the window's edge. Waves grow every few days. A button calls one early for testing.
+- Goals → the stores, then the houses. Raiders head for the warehouse to loot and torch houses on the way. Walls and
+  gates are in the way, so they bash the gate or the weakest wall. Losses: goods, buildings, people caught outside.
+- Defence → automatic posts. Soldiers (archers once trained) man the walls and the gate on their own. Archers shoot from
+  the wall-walk; swordsmen meet raiders at the gate. You defend by what you built.
+- Damage → real destruction with the existing effects. Bashed gates and walls break to rubble, torched houses burn (the
+  fire sim), and repairs cost builders and goods (the job board: a broken block becomes a planned block again).
+- Judgement calls (agent, part A): the rider sets out 1.5 days ahead so he reaches the stores about a day before; the
+  gates shut when a raider is 30 m from one or nobody is outside; people at home are safe, people caught outside are
+  not; a house burns 8 s, then falls and its timber burns in the fire sim; a fallen raider's loot goes back to the
+  stores; the wave runs when 60% of it is down. All numbers in fortress/raid.ts RAID, untuned.
+
 ## 2026-11-04 — round 128l (session 5, `m4`) — milestone 4 and the life on the roads; fortress blocks as fast as any
 
 - The user, verbatim: "Why do fortress blocks take so long? They seem like they should be as fast as any other block"

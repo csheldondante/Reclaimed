@@ -28,6 +28,7 @@ import { Renderer } from '../render/renderer';
 import { labRecipe, type LabRecipe, type LabTownSpec } from './recipes';
 import { LabTown, stillWindow } from './town';
 import { LabPiecesView } from './view';
+import type { FortressRaid } from '../fortress/raiders';
 
 /** what the lab needs of the scene (scenes/level.ts startLab) */
 export interface LabSceneIO {
@@ -39,6 +40,8 @@ export interface LabSceneIO {
   startFortress(town: LabTown, view: FortressPiecesHost, win: FortressWindow): void;
   fortress(): Fortress | undefined;
   life(): FortressLife | undefined;
+  /** (round 128l, m4) the attack wave (fortress/raiders.ts), from the first Build */
+  raid(): FortressRaid | undefined;
   /** the builders let go (FortressLife.dispose), so the next Build starts afresh */
   dropLife(): void;
   /** the sim's speed (0: time stopped), read or set */
@@ -101,6 +104,8 @@ const DT = 1 / 60;
 export const LAB_SIMS: Record<string, readonly string[] | null> = {
   all: null,
   fortress: ['edit', 'layerpull', 'landbrush', 'townstamp', 'placeop', 'project', 'structure', 'surface', 'water', 'physics', 'traits', 'agents', 'structtick', 'renderfields'],
+  // (round 128l, m4: the attack wave) the fortress's, and the fire and the particles: houses burn, chips and dust fly
+  raid: ['edit', 'layerpull', 'landbrush', 'townstamp', 'placeop', 'project', 'structure', 'surface', 'water', 'physics', 'traits', 'agents', 'structtick', 'renderfields', 'fire', 'particles'],
 };
 
 export class Lab {
@@ -453,6 +458,8 @@ export class Lab {
       /** the game's own objects, for what the API doesn't cover */
       fortress: () => this.fort(),
       life: () => this.io.life() ?? null,
+      /** (m4) the attack wave: its state, "Call raiders now" */
+      raid: () => this.io.raid() ?? null,
       units: this.io.units,
       /** (m4) a tap at screen (x, y), and the follow it drives */
       tap: (sx: number, sy: number) => this.io.tap(sx, sy),
