@@ -17359,3 +17359,32 @@ before window.reclaimed is put together; `lab` on window.reclaimed (level/test-a
 lab's frame hook, `settlements?.update` and the sim filter in level/frame.ts. Docs: the four conflicts were both
 sides' appended sections, kept in order.
 
+
+## 2026-11-04 — round 128l (`reachfix`): towns always have gates (FT-75)
+
+Why: the user, on the deployed fortress build (d2ba927, Pixel 9a, low tier): "It says that can't reach the buildings
+anywhere outside the city. Is it possible the link is stale or the city only has a sea exit?" — then "The city has ports
+and a wall but I don't see any gate so the only exit does look like it is into the sea" and "I mean towns should always
+have gates".
+
+- Not stale: the live townbench chunk on Pages embeds `commit: d2ba9278` (built 22:46 UTC), which carries 9c17baa.
+- The start town (?town=1, s84: a port, irregular, R 30, walled) is planned with `roads: 0` (settle/plan.ts plans every
+  town so: the atlas's roads come in as `approaches`, which only placed caravan yards). structures/linear.ts routes()
+  opened the wall only where its own roads went out (none) and where the ring met water (damp > 0.05) — so its two
+  gaps were the river and the sea. Measured in the game's columns (scripts/fortressoutside.mjs, phone size, dpr 2.625,
+  low tier): gaps at 48-112° and 154-228°, 3.19 m and 3.03 m of water through their middles. Headless, a dry bank at a
+  gap's edge (0-0.21 m) let the builders out; on the phone nothing did (the cut-off line for every block outside).
+- Fix, at generation (linear.ts `landGates`, `landWay`): every town wall gets land gates — one toward each road in
+  (`spec.approaches`) where the ring there is a way out by land (dry under 0.3 m, no step over 0.9 m, from 5 m inside to
+  16 m out), then the ring's points facing the most land, a quarter turn apart where they can be, until it has
+  `landGatesFor(R)`: 1 for a village, 2 a town, 3 a city. An island town may have none (its harbour is its way out). The
+  wall's run ends at a gate already get posts (settle/plan.ts), so the fortress's roads start from them. No fallback.
+  The radial rampart (holds) keeps its spoke gates.
+- After: s84 has a third gap (302-334°) centred on dry land (0 m); builders put up a lumber camp, a house and a farm
+  outside the walls in two directions after pans (16x, low tier, 412x915 at dpr 2.625), cutOff 0 throughout.
+- Checks: src/structures/gates.test.ts — 5 grounds (plain, coast, river, a river mouth like s84, a mountain's foot) × 4
+  tile systems × R 30/42 × 6 seeds: at least min(2, landGatesFor(R)) land gates (radial 1); an island has none; a road
+  in gets its gate. scripts/fortressoutside.mjs now first checks the start town has a gap centred on land (fails before:
+  "the starting town's wall has no gate on land", passes after); `DPR=` sets the device scale. scripts/fortressgates.mjs:
+  the start town's walls, posts, the reach round the stores by direction, shots (`GATE_DEG=` near a gate). Unit 661/661.
+- Not done: joining a town's gates through it by a paved thoroughfare (FT-73, with the user's roads-on-borders idea).

@@ -9,7 +9,9 @@ import { run, sleep } from './lib/runner.mjs';
 const outArg = process.argv.indexOf('--out');
 const OUT = outArg > 0 ? process.argv[outArg + 1] : null;
 const LIMIT_S = Number(process.env.LIMIT_S ?? 150);
-await run({ name: 'fortressoutside', kind: 'behaviour', size: '412x915', dpr: 1, echo: !!process.env.DBG }, async (R) => {
+/** (round 128l) a land gate's way through the wall: no deeper water than this (m) from 5 m in to 16 m out */
+const GATE_DRY = Number(process.env.GATE_DRY ?? 0.3);
+await run({ name: 'fortressoutside', kind: 'behaviour', size: '412x915', dpr: Number(process.env.DPR ?? 1), echo: !!process.env.DBG }, async (R) => {
   const page = await R.page();
   const cdp = await page.createCDPSession();
   await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
@@ -49,6 +51,73 @@ await run({ name: 'fortressoutside', kind: 'behaviour', size: '412x915', dpr: 1,
   await R.fatal(page);
   await page.waitForFunction(() => window.reclaimed?.fortress?.ready || document.querySelector('.fatal'), { timeout: 120000, polling: 250 });
   await sleep(3000);
+  // (round 128l) the starting town's wall has a gate on land: round its ring a degree at a time, the gaps between its
+  // wall's runs whose ground the fortress's columns read dry (water under 0.3 m) from 5 m inside to 16 m out. Before,
+  // the user's town (a port in a river's fork, walled, no roads of its own) had its gaps only in the river and the sea:
+  // "the only exit does look like it is into the sea" — wading deeper than 0.9 m, no builder got out
+  const gates = await page.evaluate(() => {
+    const Rc = window.reclaimed;
+    const st = Rc.settlements;
+    const f = Rc.fortress;
+    const p = st.plan(st.pinnedId);
+    const walls = p.city.linear.filter((l) => l.kind === 'wall');
+    if (!walls.length && !p.city.tiles.use.includes('gate')) return { walled: false };
+    const s0 = st.spotsOf(st.pinnedId)[0];
+    const s0l = p.spots.find((s) => s.ref === s0.ref && s.kind === s0.kind);
+    const off = [s0.w[0] - s0l.at[0], s0.w[1] - s0l.at[1]];
+    const cols = f.columnsNow();
+    const waterAt = (lx, ly) => {
+      const c = f.cellAt(lx + off[0], ly + off[1]);
+      if (c < 0) return 99;
+      return Math.max(...f.grid.columns[c].map((col) => {
+        const wc = f.boxToWindowCol(col);
+        return wc < 0 ? 99 : cols.water(wc % cols.w, Math.floor(wc / cols.w));
+      }));
+    };
+    const near = (x, y) => walls.some((l) => l.points.some((a, i) => {
+      if (i === l.points.length - 1 && !l.closed) return false;
+      const b = l.points[(i + 1) % l.points.length];
+      const vx = b[0] - a[0];
+      const vy = b[1] - a[1];
+      const t = Math.max(0, Math.min(1, ((x - a[0]) * vx + (y - a[1]) * vy) / (vx * vx + vy * vy || 1)));
+      return Math.hypot(a[0] + vx * t - x, a[1] + vy * t - y) < 3;
+    }));
+    const [cx, cy] = p.city.spec.at;
+    const R = p.city.spec.radius;
+    // per degree: in the wall, or the deepest water on the way through (5 m in to 16 m out)
+    const deg = [];
+    for (let k = 0; k < 360; k++) {
+      const a = (k / 360) * Math.PI * 2;
+      let wall = false;
+      for (let rr = R; rr <= R * 1.12 && !wall; rr += 0.5) wall = near(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr);
+      let w = 0;
+      if (!wall) for (let d = R * 1.06 - 5; d <= R * 1.06 + 16; d += 1.5) w = Math.max(w, waterAt(cx + Math.cos(a) * d, cy + Math.sin(a) * d));
+      deg.push(wall ? -1 : w);
+    }
+    // the gaps (runs of open degrees), each with its driest way through
+    const k0 = deg.findIndex((v) => v < 0);
+    const gaps = [];
+    let g = null;
+    for (let i = 1; i <= 360; i++) {
+      const k = (k0 + i) % 360;
+      if (deg[k] >= 0) {
+        g ??= { from: k, n: 0, driest: 99 };
+        g.n++;
+        g.driest = Math.min(g.driest, +deg[k].toFixed(2));
+      } else if (g) {
+        gaps.push(g);
+        g = null;
+      }
+    }
+    if (g) gaps.push(g);
+    // (a gate is a gap centred on land: the water on the way through its middle degree — a gap the planner left for a
+    // river or the sea is centred on the water, its dry edge a bank)
+    for (const q of gaps) q.mid = +deg[(q.from + Math.floor(q.n / 2)) % 360].toFixed(2);
+    return { walled: true, runs: walls.length, gaps };
+  });
+  console.log('town gates', JSON.stringify(gates));
+  if (process.env.GATES_ONLY) return;
+  if (gates.walled && !gates.gaps.some((g) => g.mid <= GATE_DRY)) throw new Error("the starting town's wall has no gate on land: its only ways out are by water");
   // open ground outside the old town: dry, free of the town's things, three cells in a row with a free ring round them
   const open = await page.evaluate(([K0, DISTS]) => {
     const Rc = window.reclaimed;

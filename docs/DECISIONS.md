@@ -600,6 +600,23 @@ each was implemented.
   long ones) to a walk along its top. Drawn as paving and stone steps; the steps and the wall-walk are solid, so units
   climb them. The warehouse's card speaks of the town's stores against all the warehouses' room, then this one's part.
 
+## 2026-11-04 — round 128l (session 5, `reachfix`) — towns always have gates
+
+- The user played the deployed fortress build (d2ba927) on the Pixel 9a (?skipmenu=1&level=atlas&town=1&fortress=1),
+  verbatim: "I get the same issue. It says that can't reach the buildings anywhere outside the city. Is it possible the
+  link is stale or the city only has a sea exit?"
+- "But it says that literally anywhere outside the city. The city has ports and a wall but I don't see any gate so the
+  only exit does look like it is into the sea"
+- "I mean towns should always have gates"
+- → Every walled town the generator makes gets land gates in its wall: one toward each road in from the atlas where the
+  land there is a way out, then the ring's points facing the most land until it has 1 (a village), 2 (a town) or 3 (a
+  city). Only an island town may have none (its ways out are by water: its harbour). No "start outside the walls"
+  fallback. A unit test over seeds, tile systems, sizes and grounds holds it.
+- On roads (for the deferred better-roads pass, FT-73), verbatim: "Do roads go on the borders between different types?
+  That could look good I'm not sure. A main thoroughfairs also probably looks good"
+- → Later: roads along the borders between land uses (fields against houses, the town's edge), and main thoroughfares
+  (gate to gate, gate to square: wide, paved, whole cells — the spine the lanes branch from).
+
 ## 2026-11-04 — round 128k (session 5, `fortress`) — workers outside the walls; roads that make sense
 
 - The user played 015d09e on the phone (?level=atlas&town=1&fortress=1), verbatim: "It doesn't look like there is a way

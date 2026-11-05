@@ -109,6 +109,81 @@ export function profile(g: number[], ds: number, wet: boolean[]): { z: number[];
   return { z, bridge: b2 };
 }
 
+/** the land gates a town wall gets at the least, by the town's radius (a village 1, a town 2, a city 3) */
+export const landGatesFor = (R: number): number => (R < 25 ? 1 : R < 40 ? 2 : 3);
+/** how far out (m) a land gate's ground must be dry and walkable */
+export const GATE_REACH = 16;
+/** water deeper than this (m) is no way for a land gate (people wade to about 0.8 m) */
+const GATE_WET = 0.3;
+/** the steepest rise between two metre samples on a gate's way (m): steeper is a cliff */
+const GATE_STEP = 0.9;
+
+/**
+ * Is (x, y) on a wall ring round (cx, cy) a way out by land? Dry and walkable from a little inside the ring (the town's
+ * side) out to GATE_REACH past it, no cliff on the way. Returns how far out (m) the land goes, up to `far` (0: not a
+ * land gate).
+ */
+export function landWay(cx: number, cy: number, x: number, y: number, ground: GroundFn, water: GroundFn | undefined, far = GATE_REACH): number {
+  const dx = x - cx;
+  const dy = y - cy;
+  const L = Math.hypot(dx, dy) || 1;
+  const ux = dx / L;
+  const uy = dy / L;
+  const wet = (px: number, py: number) => (water ? water(px, py) > GATE_WET : false);
+  let prev = ground(x - ux * 6, y - uy * 6);
+  for (let d = -5; d <= far; d += 1) {
+    const px = x + ux * d;
+    const py = y + uy * d;
+    const g = ground(px, py);
+    if (wet(px, py) || Math.abs(g - prev) > GATE_STEP) return d <= GATE_REACH ? 0 : d;
+    prev = g;
+  }
+  return far;
+}
+
+/**
+ * The wall's land gates (round 128l): one toward each road in (spec.approaches) where the ring there is a way out by
+ * land, then the ring's points facing the most land, spread round it, until the town has landGatesFor(R) land gates
+ * (counting the roads' gates `have` that are on land). An island town gets none: its only ways out are by water.
+ */
+function landGates(spec: CitySpec, ring: { x: number; y: number }[], ground: GroundFn, water: GroundFn | undefined, have: V2[]): V2[] {
+  const [cx, cy] = spec.at;
+  const n = ring.length;
+  const far = spec.radius * 2;
+  const way = ring.map((p) => landWay(cx, cy, p.x, p.y, ground, water, far));
+  const ang = (x: number, y: number) => Math.atan2(y - cy, x - cx);
+  const apart = (a: number, b: number) => Math.abs(((a - b + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+  const out: V2[] = [];
+  const onLand = (g: V2) => landWay(cx, cy, g[0], g[1], ground, water) > 0;
+  const taken = () => [...have, ...out].filter(onLand).map((g) => ang(g[0], g[1]));
+  // toward the roads in: the ring's land point nearest each road's direction (within 50°)
+  for (const a of spec.approaches ?? []) {
+    const aa = Math.atan2(a[1], a[0]);
+    let best = -1;
+    let bestOff = 0.87;
+    for (let k = 0; k < n; k++) {
+      const off = apart(ang(ring[k].x, ring[k].y), aa);
+      if (way[k] > 0 && off < bestOff) {
+        best = k;
+        bestOff = off;
+      }
+    }
+    if (best >= 0 && taken().every((t) => apart(t, ang(ring[best].x, ring[best].y)) > 0.6)) out.push([ring[best].x, ring[best].y]);
+  }
+  // then facing the most land, a quarter turn from the others where it can be (else a sixth)
+  const want = landGatesFor(spec.radius);
+  const order = Array.from({ length: n }, (_, k) => k)
+    .filter((k) => way[k] > 0)
+    .sort((a, b) => way[b] - way[a] || a - b);
+  for (const gap of [Math.PI / 2, Math.PI / 3])
+    for (const k of order) {
+      if (taken().length >= want) return out;
+      const a = ang(ring[k].x, ring[k].y);
+      if (taken().every((t) => apart(t, a) > gap)) out.push([ring[k].x, ring[k].y]);
+    }
+  return out;
+}
+
 /** Roads out of the town (and their bridges), a town wall if asked: the plan's linear features. */
 export function routes(spec: CitySpec, ground: GroundFn, water: GroundFn | undefined, wallLoop: boolean): LinearFeature[] {
   const out: LinearFeature[] = [];
@@ -161,6 +236,10 @@ export function routes(spec: CitySpec, ground: GroundFn, water: GroundFn | undef
       const rr = R * (1.06 + (fbm(Math.cos(a) * 1.5, Math.sin(a) * 1.5, spec.seed + 17) - 0.5) * 0.08);
       ring.push({ x: cx + Math.cos(a) * rr, y: cy + Math.sin(a) * rr });
     }
+    // (round 128l, the user: "I mean towns should always have gates") land gates where the atlas's roads leave
+    // (spec.approaches) and at least landGatesFor(R) facing the land: a town whose only gaps were in its river or the sea
+    // had no way out by land (a port started in with roads: 0 — the fortress's builders could reach nothing outside)
+    for (const g of landGates(spec, ring, ground, water, gates)) gates.push(g);
     const gate = (p: { x: number; y: number }) => gates.some((q) => Math.hypot(q[0] - p.x, q[1] - p.y) < 7);
     // (no wall in a river: a point is left out if it, or the wall either side of it, has any water under it — sampled every
     // metre, even shallow — so the runs end in towers either side of the water: a water gate, not a wall across it)
