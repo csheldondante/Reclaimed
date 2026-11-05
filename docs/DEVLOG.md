@@ -17980,3 +17980,22 @@ the lab.
   drawn (BACKLOG TL-13). Visual checks stay in the game.
 - Tooling: two worktrees hashed to the same port (townlab and phonefix, 6390) and a lab run went to the other's lab
   server; `RECLAIMED_PORT` gives a worktree its own (BACKLOG TL-14).
+
+## 2026-11-05 — round 128n (`phonefix`): the outside gate on the user's town, for the game's length (PF-4)
+
+- Why the gate missed it: the lab's fortressoutside ran on the small `walled` recipe until its three sites stood (90-121
+  sim s) and stopped. On 062fe16 the timed raid waves came at 228 sim s, then every 180 s, and everyone sheltered.
+  In the game the builders' 50 m walk took longer than 228 s, so nothing outside got built ("the building still
+  didn't work"). The lab's run ended before the first wave.
+- Now (scripts/lab/fortressoutside.mjs): the `town` recipe (the user's start town, townlab), 900 sim s whatever
+  happens. It plans three blocks outside the walls, then another every 150 s round the town (one the plan lets go of on
+  Build is replaced by the next spot), and FAILS if no builder reaches any waiting site for more than 180 sim s. A site
+  counts as reached when a builder stands within 6 m of its cell's middle (sampled every 5 sim s) or its block stands.
+  Whatever keeps the builders in fails it: a wave, a shut gate, a lost way, no build jobs.
+- With RAID.timed true (062fe16's waves) it fails at 487 s. On head it fails too, at 487 s, with two findings handed on:
+  PF-5, a house planned outside and kept on Build is let go by the plan later (owner -1), silently; PF-6, a farm
+  planned at 450 s waits with nobody holding a build job (phases toWork 5, eat 4, home 3).
+- The cache question (PF-2): no stale town. In a kept profile, d2ba927 played and then head loaded: "dropped 2 saved
+  regions made by another land generator", and the town has its land gate. A second session does restore the first
+  one's fortress blocks as stone (block cells 107.0 / 106.5 m against 103.3 / 102.9 m fresh). That goes to the onetown
+  agent (claimed intervals that name their grid).

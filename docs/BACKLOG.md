@@ -17,7 +17,10 @@ user) · `deferred` (agreed for later).
 | id | item | size | status |
 |---|---|---|---|
 | PF-1 | (the user: "Can you just add a debug flag to clear cache at startup for now and use that unless we are testing persistence?") `?fresh=1` deletes the world's stores at boot (region store, map files, warm cache, progress); the benches' stores kept | S | done (phonefix: fresh flag commit) |
-| PF-2 | Whatever is stored that depends on the town planner or the generator carries a version that changes with them; a test that fails when it doesn't | S | wip |
+| PF-2 | Whatever is stored that depends on the town planner or the generator carries a version that changes with them | S | handed over (the cache was not the cause: GEN_VERSION drops old regions; the saved-claims mismatch — a later session's land held the earlier fortress's blocks as stone, measured 107.0 vs 103.3 m at a former block — goes to the onetown agent: owned intervals) |
+| PF-4 | The lab gate fortressoutside on the `town` recipe for the game's length (900 sim s, a block planned outside every 150 s; fails if no builder reaches any waiting site for 180 sim s). It fails on 062fe16's timed waves and on head | S | done (phonefix: gate commit) |
+| PF-5 | (found by PF-4, head) a house planned outside and kept on Build (plan owner ≥ 0) is let go by the plan later (owner -1 by t 487 s), silently | M | open |
+| PF-6 | (found by PF-4, head) a farm planned outside at t 450 waits with no builder: nobody holds a build job (phases toWork 5, eat 4, home 3; no toSite or toPile) | M | open |
 | PF-3 | Find and fix what made the fortress unplayable on the phone (bisect d2ba927..062fe16 at 412x915 q=low); a phone bench to run | M | wip |
 
 ## Monolith split (2026-11-04, `fortress`) — the user: "If we can split up those monolith files into well names encapsulated utilities and logical APIs that would be ideal too for saving context."
