@@ -11,6 +11,7 @@ called only by the class file and the folder. From outside, use the class.
 - `scenes/level.ts` + `scenes/level/` — LevelScene: `attach.ts` wires a level once (attach-tools, input-wiring, test-api, stream-setup); `frame.ts` is a frame of play; the tools, runs, fortress, valley, atlas controls, camera moves and labs beside them.
 - `scenes/streamer.ts` + `scenes/streamer/` — Streamer: `slide.ts` (follow the camera, the slide), `freeze.ts`, `generate.ts`, `write.ts`, `store.ts`, `jobs.ts`, `warp.ts`, `regions.ts`; `defs.ts` its flags, records and public types.
 - `game/integrity.ts` + `game/integrity/` — Integrity: `tick.ts` (update and the analysis pass), `rigid.ts`, `metal.ts`, `resting.ts`, `columns.ts`, `loose.ts`, `lattice.ts`, `window.ts`; `defs.ts`.
+- `render/renderer.ts` + `render/renderer/` — Renderer: `encode.ts` (a frame's draw), `mesh-draws.ts` (the field mesh's pipelines, made by the constructor), `gbuffer-shadow.ts`, `terrain-cache.ts`, `grid.ts`, `features.ts`; `defs.ts`.
 
 ## src/
 
@@ -432,7 +433,7 @@ Drawing: the camera, the renderer (render-prep, the draw passes, shadows), the f
 - `coverage.ts` (189) — Round 113 (`tilesfirst`; API: `CoverView`, `Coverage`, `coverage`.
 - `fieldmesh.ts` (905) — The field mesh (G13 h; API: `READBACK`, `REGION_BYTES`, `MESH_POOL`, `MeshSource` +1.
 - `meshinst.ts` (100) — The instanced mesh renderer (round 99, `?meshinst=1`; API: `MI_CAP`, `MI_STRIDE`, `MI_ARGS_WORD`, `MeshInstances`.
-- `renderer.ts` (2134) — Renderer: render-preparation compute pass (world → box instances) followed by one render pass (opaque … API: `PickHit`, `RenderOptions`, `SKIP`, `Renderer`.
+- `renderer.ts` (947) — Renderer: render-preparation compute pass (world → box instances) followed by one render pass (opaque … API: `Renderer`, `SKIP`, `PickHit`, `RenderOptions`.
 - `rockmesh.ts` (398) — The rigid rock's own mesh (round 95, `?rockbody=1`; API: `BUILD_FRAMES`, `RockDraw`, `RockMesh`.
 - `shore.ts` (88) — The shore field (round 83, shore.wgsl): the nearest shore point to every column, by jump flooding over the … API: `ShoreField`.
 - `tilecache.ts` (1357) — The world-anchored tile cache (round 103, ?tiles=1; API: `LandMaker`, `MOVING`, `Part`, `Size` +5.
@@ -443,6 +444,18 @@ Drawing: the camera, the renderer (render-prep, the draw passes, shadows), the f
 - `treemesh.ts` (113) — Tree meshes for the instanced mesh renderer (round 99, `?meshinst=1`; API: `MeshKind`, `treeKinds`.
 - `turn.ts` (88) — (round 90, the user on the phone: "add a button or bar to rotate the camera") The player's turn of the … API: `TURN_STEP`, `Turn`.
 - `watersurf.ts` (65) — (watersurf, FC2) The window's water drawn as one surface, not a prism a wet column. API: `WaterSurface`.
+
+## src/render/renderer/
+
+The Renderer's internals, split out of render/renderer.ts: free functions over the renderer (`rd`). The constructor still builds most pipelines; `mesh-draws.ts` builds the field mesh's.
+
+- `defs.ts` (74) — The renderer's sizes, formats and URL flags (CAM_BYTES, SHADOW_SIZE, TILES, SKIP ...), its public types … API: `CAM_BYTES`, `SHADOW_SIZE`, `SHADOW_FORMAT`, `VERTS_PER_PRISM` +19.
+- `encode.ts` (371) — A frame's draw: render-prep (instances grown as needed), the terrain cache or the G-buffer, shadows, the … API: `encode`, `encodeCeiling`, `syncInst`, `syncMeshPool`.
+- `features.ts` (93) — Optional draws turned on after construction: the outside band, the rock mesh, structures. API: `enableBand`, `enableRockMesh`, `enableStructures`, `structGroups`.
+- `gbuffer-shadow.ts` (233) — The deferred mesh's G-buffer pass and the sun's shadow map (its light camera, what's due: all or the … API: `encodeGBuffer`, `writeLight`, `encodeShadow`.
+- `grid.ts` (84) — The grid of mesh chunks drawn: culling chunks to the view and the sun, drawing the visible, and what moved … API: `windowMoved`, `windowDrawn`, `gridCull`, `drawGrid` +1.
+- `mesh-draws.ts` (279) — The field mesh's draws, made once by the Renderer's constructor when the mesh is on: its draw and depth … API: `buildMeshDraws`.
+- `terrain-cache.ts` (177) — The terrain cache: the field mesh drawn once to a cached G-buffer and reused while the camera holds still … API: `terrainCacheMode`, `tcPrepare`, `tcPipesMake`, `encodeTerrainCache`.
 
 ## src/run/
 
