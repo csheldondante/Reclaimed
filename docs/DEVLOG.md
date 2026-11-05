@@ -17651,6 +17651,112 @@ Why: main, on the stuck carts: fix the root cause, drop the patches (the repo ru
   of the farm's door. It never left the stores. The farmers' own ride to the farms fails there as well (riding.farm
   false). The farms' lanes aren't ridden from the stores, and I haven't found why yet.
 
+## 2026-11-05 — round 128l (`m4fix`): riders stay on edges longer than 8 m (M4-14)
+
+Why: a cart sent to the farms' pile in the lab never left the stores (BACKLOG M4-14).
+
+- Cause: the ride's "lost" test. shaders/roadride.wgsl got a rider off the network when it was over LOST (8 m) from the
+  node it heads for. The lanes' road to the lab's farms has an 8.2 m edge (open ground, 28 → 27 on the stores' way out).
+  A cart that reached node 28 turned onto that edge, was 8.2 m from its next node, and was "lost" at once. It got off,
+  joined again at the node behind it and turned back, rocking at (99, 108) by the stores for the whole run. Found on the
+  CPU (Fortress, laneGraph and hopsCpu on the lab's plan: the graph is one component, every cost finite, the farm's
+  pile node in it; only the edge lengths stood out). The quarry's road has no edge over 6 m, which is why its cart went.
+- Fix: lost is now past the longest edge at that node by LOST (3 m: `longestEdge(v) + LOST`). The last leg keeps its
+  14 m (LAST_LOST 8 + NEAR_GOAL 6). No timer.
+- Test: test/gpu/roadride-long.test.ts — a rider turned onto a 12 m edge is still on it ticks later. It fails before
+  the fix (mode 0, off), passes after; test/gpu/roadride.test.ts still passes.
+- Lab (scripts/lab/fortresscarts.mjs, 300 sim s): 7 cart loads, 53 goods carted, against 1 load and 8 goods before.
+  The farm cart went to the farms' pile and back again and again: the pile fell 12.2 → 9.8 → 7.4 between trips, and
+  the cart was out at (108, 66-73), the farms' node at (108, 56). Carts' walking samples on a road: 1.00. The scenario
+  now counts round trips per pile type and takes its shot only when asked (`shot`): with the shot on, two runs hung on
+  the lab page after it.
+- The farmers' own ride to the farms stays off by design: the farm cells' middles are over RIDE_NEAR (6 m) from a node,
+  so they walk their field.
+
+## 2026-11-04 — round 128m (`quarry`): deep quarries — the miners grow the pit tier by tier (V128-11)
+
+**Why.** The user (128e/128f): "How deep can the pit grow? ... 50M-300M deep pits with ramps"; "make the quary area at
+the top and let the units just naturally grow it. Depth is capped by how many tiers of ramp down the side can be built
+with the tiles"; 2026-11-04: "Units working, really digging the map". Milestone 3's pit was a bowl 6 m deep at most
+(ECON.pitMax) dug at random round each cell's middle.
+**The rule** (fortress/pit.ts, pure): rings in from the footprint's edge; tier k (4 m a tier, a level) is ring k and
+in; ramp k runs down two cells (ECON.pitRampCells) of ring k-1 and ends where ramp k+1 starts — one road spiralling
+down; the depth is the most tiers whose ramps fit (a search over the spirals; the start nearest the stores among the
+deepest). Measured on the fortress's grid (cells ~5.5 m): a disc of r 16 m holds 3 tiers (12 m), r 30 5 (20 m), r 45
+8 (32 m), r 60 11 (44 m), r 90 17 (68 m), the whole 240 m box 21 (84 m); 1-22 ms a footprint. 50 m wants a pit about
+130 m across; 300 m doesn't fit the fortress's box (BACKLOG QY-3: the tier's height and ramp length are the knobs).
+The pit is laid as **negative levels** in runs per cell (build/runs.ts takes them now): FortressPlan.pit, kept apart
+from the blocks' `levels` so nothing reading the blocks meets them; Fortress.dug the tiers dug.
+**Digging** (fortress/quarry.ts): a tier is cut 1 m at a time over every column of it (its shelves and its ramp) so the
+ramp from the shelf above to the floor going down is walkable the whole time (a cell dug whole left the miners in a
+4 m hole with no ramp yet: the unit test's walker, reach.ts STEP, checks the rim-to-floor walk every few rounds). Found
+on the way, in the lab: (1) the surface buffer's z is the solid's top — the lab's 2 m of soil read as undug while it
+was taken, so the miners measured the pit 2 m low and the ramp's top was a 2 m step nobody could climb (all eight
+stuck on the floor with their loads); the quarry reads the layers' top (world API terrain.heightAt, loose ground
+included) and starts ramp 1 at the ground at its top. (2) Takes in flight passed the world API's 64 and threw from a
+miner's step: 40 at most now. (3) A miner arriving at a goal that had dropped out of the field's six seeds never
+gathered: the seeds are the cells with ground left, nearest the ramp's foot first, so they stay put. (4) The lab's
+reset left the mirror and Fortress.dug from the last run (a pit "done" at once): reset waits for a mirror read, a cell
+no pit holds keeps no dug tiers, and a quarry is measured on two reads made after it was ready. Pace (8 miners, a dig
+every 0.5 s of 6 columns, 1 m each): a 30-cell pit (2 tiers) in ~150 sim s, 42 cells (3 tiers) in ~250 (lab, 16x).
+The walls of a tier done are woken (Sleep.wake, Integrity.markDirty: the stability check); the miners haul up the
+ramps (the agents' field) and the quarry's road comes to the ramp's top (lanesOf entries); the quarry's props stand on
+the rim.
+**The world's floor** (the user: "lower the floor and add a thick interval of stone below the whole world"; main's
+final design: the window already slides in z). WORLD_FLOOR -300 is a rule in layout.ts splitColumn, not data: a
+column's bottom that starts at z 0 or under goes on down to it; nothing of it is stored outside the window (an
+explicit interval a column would have been ~262k more objects for a 512² window and 16 bytes a column in every saved
+region); only a column dug under z 0 and then out of the window keeps a metre. Nothing stored changes, so no save
+version moves. The streamer slides down past z 0 when the ground under the camera now is under 24 and lower than the
+land's own (a pit — the sea floor near z 0 still slides nothing), never under the floor. Fortress.slidZ keeps the
+fortress's window-z heights (the ground as first read, the Town's floors) through a slide; the quarry keeps fortress
+z. Checked (grep of oz and z clamps): three places held the window at z 0 or over — slide.ts's `S.oz > 0`, warp.ts's
+`oz < 0` throw and Streamer.slideZ's "the window is at the bottom of the world" (found by scripts/fortressslidez.mjs);
+all go down to WORLD_FLOOR now. The kernels' clamps are on stored (window) z, which is fine.
+**Seeing in.** Judged in the lab at zoom 8 and 14 with and without a cut (api/cutaway.ts Dither round the floor's
+middle, the pit's box): the pit's sides step in at ~34 degrees, the view comes down at 30, so the near walls hide a
+strip a quarter of the depth wide and the floor and its miners read without help; the cut showed the solid under the
+near rim as a flat grey section that read as a second floor. Off by default (`?pitcut=1`). The pit still reads as a
+dark hollow more than as benches (QY-8).
+**Checks.** src/fortress/pit.test.ts (rings, tiers grow with the footprint, too narrow none, the cap, the ramps one
+road, depthAt, negative runs round-trip), src/fortress/quarry.test.ts (tiers in order to the plan's depth, floor flat,
+shelves at their tier, rim untouched, a walker gets down all the way, nothing dug till built, a slide in z), src/world/
+floor.test.ts (the floor rule through slides down and back up). The lab: `plateau` recipe (ground 44 m up the window),
+scripts/lab/quarry.mjs (the pit reaches its tiers, miners walk in; r 15: 2 tiers in 150 sim s), scripts/lab/
+quarrygif.mjs + scripts/lab-gif.mjs (shots to a GIF). No perf bench (the GPU is shared); BACKLOG QY-5 lists what to
+bench on the phone.
+**The slide in z, in the game** (scripts/fortressslidez.mjs, new): the start town as the fortress, a house built, the
+window slid down a tier and back — the house keeps its world height (floor 101.5 at oz 0, 133.5 at oz -32), the column
+under it holds stone from the window's floor (0..131.4 at oz -32: world -32..99.4), no page error. It found the third
+z-0 clamp (Streamer.slideZ's throw), and that the trees and fields round the town aren't drawn while the window is down
+(BACKLOG QY-9: the slide in z hasn't run in the atlas since round 100).
+**Gates** (after merging origin/fortress 1adfb15): typecheck; unit 682 (+2 expected fails, as before); the lab's
+quarry.mjs (r 15: 2 tiers, miners in the pit, deepest at 36 = the floor); hallcheck 0 of 344 lost; the tilegate
+goldens (`&zoomfloor=0`, `--no-pan`, baselines from a worktree of 1adfb15): every view unchanged but desktop z2.2 (1.2%)
+and z1.3 (7.9%) — tiles arriving at the screen's bottom edge, the same views out of detail on 1adfb15 itself; the GPU
+suite timed out file by file (60 s hooks) under three other worktrees' lab runs on the GPU, on 1adfb15 too (water,
+external), so it says nothing here — to run alone.
+
+## 2026-11-05 — fortress merges m4 (5e2a718) and quarry (23e2b88)
+
+**Why.** Milestone 4 (soldiers, recipes, carts, settlers, follow, the GPU reach) and the deep quarries were finished on
+their own branches; fortress takes both. The miners' code met in fortress/life.ts: m4 capped the miners' terrain takes
+in flight at 16 (`DIGS_IN_FLIGHT` in its `digAt`, after the world API's 64-take ceiling threw with the carts keeping
+the miners at the pit); quarry replaced `digAt` and `ECON.pitMax` / `digR` with the pit's tiers (fortress/quarry.ts,
+its own cap `IN_FLIGHT` 40). The merge keeps quarry's dig and its cap of 40, which leaves 24 of the 64 to the
+builders and everything else (m4's intent). A cap of 16 was tried: in the lab (quarry.mjs, r 15) the pit was a cell
+short of its second tier at 160 sim s, against done and on to a third with 40; at 240 s both pass. defs.ts keeps quarry's dig numbers and m4's carts and soldiers;
+frame.ts runs m4's follow and then quarry's pitView (a cut, off by default); the lab IO keeps m4's tap and follow and
+quarry's restoreLand that resolves once read. quarry had turned many LF source files to CRLF; the merge keeps each
+file's line ends as fortress had them (the docs CRLF).
+Then m4fix (e4b66ba, M4-14) on top. **Gates** (after all three): typecheck; unit 78 files, 693 pass (one flaky
+failure on a run, gone on the rerun); lab quarry.mjs (r 15, 240 s), fortresscarts, fortressfollow, fortressrecipes,
+fortresslanes ok; fortressoutside reached every site; hallcheck 0 lost of 344; tilegate (`&zoomfloor=0`, `--no-pan`,
+baselines of 64ed5b0) every parked desktop and phone view unchanged; the w384 views (the sim running) 1.9-3.3% at the
+smoke columns' edges; z1.3's far-land check fails on 64ed5b0 the same. The lab server, started by a run, can open two
+pages ("__labShot already exists") and its page's requestAnimationFrame stalls (terrain takes never answer, shots
+hang): `lab.mjs serve --recipe <r>` first, then run.
+
 
 ## 2026-11-05 — round 128l (`m4`): the attack wave, part A — the rider, the raiders, the gates, the loot, the fire
 

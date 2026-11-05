@@ -1,6 +1,6 @@
 // Jumps: the window moved far at once (warp: everything re-made where it lands) and up or down (slideZNow, the
 // window's height). API: warp (Streamer.warp), slideZNow.
-import { CHUNK, SLOT_WORDS, fitColumn, joinColumn, packColumn, readSlot, splitColumn, waterInWindow, type Interval } from '../../world/layout';
+import { CHUNK, SLOT_WORDS, WORLD_FLOOR, fitColumn, joinColumn, packColumn, readSlot, splitColumn, waterInWindow, type Interval } from '../../world/layout';
 import { freezePlan, frozeInto } from './freeze';
 import { flushFills } from './store';
 import { bring, evict, prepare } from './jobs';
@@ -11,7 +11,8 @@ import type { Streamer } from '../streamer';
 /** Streamer.warp (the class keeps the method, documented there) */
 export async function warp(S: Streamer, ox: number, oy: number, oz: number, fresh = false): Promise<void> {
   if (ox % S.R || oy % S.R) throw new Error(`a warp's origin must be whole regions of ${S.R}`);
-  if (oz % TIER || oz < 0) throw new Error(`a warp's oz must be whole tiers of ${TIER}`);
+  // (round 128m: under z 0 too, down to the world's floor — a window slid into a deep pit)
+  if (oz % TIER || oz < WORLD_FLOOR) throw new Error(`a warp's oz must be whole tiers of ${TIER}, at the world's floor or over`);
   while (S.busy || !S.store) await new Promise((r) => setTimeout(r, 16));
   S.busyWhy = 'warp';
   S.busy = true;

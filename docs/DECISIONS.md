@@ -3319,3 +3319,21 @@ world should show what needs clearing and how.
 - More tree variety and height variety.
 - Tank tap: deeper, more hollow. Tanks closed so oil only shows when they break.
 - Clicking water should splash (with sound).
+
+## 2026-11-04 — round 128m (session 5, `quarry`) — deep quarries (V128-11)
+
+- The user (128e/128f on places): "How deep can the pit grow? Can we use the same tile system extended in the negative
+  direction ... 50M-300M deep pits with ramps"; "I would even suggest that you make the quary area at the top and let
+  the units just naturally grow it. Depth is capped by how many tiers of ramp down the side can be built with the
+  tiles (or elevators if you have the tech)." 2026-11-04: "Units working, really digging the map".
+- On the world's floor: "Can we just lower the floor and add a thick interval of stone below the whole world? It's
+  essentially free right?"; "Why is it that way vs just floating relative to a ground level const? I feel like a nice
+  thing about intervals is you can just easily adjust thicknesses of material with no structural change"; "Or do the
+  3d tiles and use 2 or three if a feature is more than 512m right? I'm fine with that anyway. Think it through and do
+  what makes sense."
+- → The pit is the footprint's rings, a tier (a level, 4 m) a ring, a ramp of two cells a tier spiralling down; the
+  depth is the tiers whose ramps fit (fortress/pit.ts). World z isn't shifted: the bottom interval of every column
+  reaches WORLD_FLOOR (-300) by rule (layout.ts splitColumn), the window already slides in z (round 69) and now goes
+  under z 0 into a pit. More than one window's height at once: the sparse cz chunks later (BACKLOG QY-6). Elevators
+  and pumps: BACKLOG QY-1, QY-2. (DEVLOG round 128m.)
+

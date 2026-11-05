@@ -38,7 +38,7 @@ import { RegionPool, type PoolSlot } from './region-pool';
 import { RegionCopier } from './region-copy';
 import { RegionStore } from '../world/region-store';
 import { GEN_VERSION, columnsHash, regionLayout, type RegionLayout } from '../world/region-record';
-import { CHUNK, K_HEADROOM, PHYS_COL_WORDS, SLOT_WORDS, joinColumn, readSlot, type Interval } from '../world/layout';
+import { CHUNK, K_HEADROOM, PHYS_COL_WORDS, SLOT_WORDS, WORLD_FLOOR, joinColumn, readSlot, type Interval } from '../world/layout';
 import { PROJ_K } from '../grids/structures';
 import { type RegionLand } from '../world/streamgen';
 import type { WorldCore } from './world-core';
@@ -180,6 +180,12 @@ export class Streamer {
   /** per window column: the ground's own top (window z; round 75: a slide in z goes by it, not by what
    *  stands on it — a giant's point under the camera isn't where the land is) */
   readonly ground: Float32Array;
+  /**
+   * (round 128m, quarry) the ground's top now under the camera (window z): a slide in z down follows the lower of it and
+   * `ground` — a deep pit looked into (dug since the land came in) slides the window down to it, never under the
+   * world's floor (layout.ts WORLD_FLOOR). Null: `ground` alone.
+   */
+  groundNow: ((x: number, y: number) => number) | null = null;
   /**
    * (hybrid) what the hybrid renderer asks of each window column (scenes/hybrid.ts): `relief` 1 where something
    * stands on the ground or is cut into it (a form: the top off the ground's own by more than RELIEF_FORM);
@@ -733,7 +739,8 @@ export class Streamer {
 
   async slideZ(dz: number): Promise<void> {
     if (Math.abs(dz) !== TIER) throw new Error(`a slide in z is one tier (${TIER})`);
-    if (this.oz + dz < 0) throw new Error('the window is at the bottom of the world');
+    // (round 128m: down to the world's floor, past z 0 — layout.ts WORLD_FLOOR)
+    if (this.oz + dz < WORLD_FLOOR) throw new Error('the window is at the bottom of the world');
     this.busyWhy = 'slideZ';
     this.busy = true;
     const t0 = performance.now();
