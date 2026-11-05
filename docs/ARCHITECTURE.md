@@ -921,7 +921,7 @@ is `n` × `n` texels over it (2048: a texel ~8 cells).
 - Facet fields (round 79, STAMP.field 3): a crystal cluster's ground broken
   into Voronoi cells, each a tilted plane, higher toward the middle, cracks
   between (x, y, R, H, seed, cell size).
-- Oddities (round 78, `Atlas.makeOddities`, `AtlasParams.oddities`):
+- Oddities (round 78, `Atlas.makeOddities`, atlas/atlas/build.ts, `AtlasParams.oddities`):
   clusters on land regions' middles stamped into the ground with the
   craters (the same list, atlas.ts STAMP: kind and material words) —
   faceted crystal mountains (a pyramid of 5–8 planes to its point, quartz)
@@ -3643,6 +3643,10 @@ module is docs/MODULES.md.
   page, waiting), the page heartbeat and what writes it, and the Bench class (fields, constructor, the page methods as
   delegates); pages.ts, pace.ts, ab.ts, sweeps.ts, regions.ts hold the class's work; defs, timestamps, pan-report,
   state, page, device and report the free functions it had at the top (main.ts's imports re-exported by bench.ts).
+- `atlas/atlas.ts` + `atlas/atlas/` — Atlas: the class keeps its fields, constructor, `build` and the small public
+  reads (climateAt, regionAt, geysersIn, zRange, macroAt, spawn, addBasin) with columns, columnsGpu, changes, stampsFor,
+  regionLand, regionInto, rawGround and window as delegates; build.ts (run: the GPU passes), regions.ts, columns.ts,
+  region-land.ts, window.ts; params.ts (AtlasParams …), tile-pacer.ts (TilePacer) and defs.ts, re-exported by atlas.ts.
 
 
 ## The behaviour lab (round 128l, `tooling`; docs/TOOLING.md)
