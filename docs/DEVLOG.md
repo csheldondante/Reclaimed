@@ -18009,3 +18009,28 @@ screen ("It started fresh, so nothing it built is kept").
   before the slide and saw no builder arrive). The same slide is what C is about.
 - Tests: test/unit/placebench.test.ts (the points on a made-up town with a river and a hill; no hill on flat land; the
   summary's lines).
+
+## 2026-11-05 — round 128m (`townlab`): the placement bench diagnoses the phone's refusals
+
+The user's run of the placement bench on the Pixel 9a (build 0708e69): 270 placements, 0 kept, 243 refused — every one
+"A cliff or a building is in the way", even inside the walls by the stores — 27 outside the box; the answer 750 ms after
+a tap (958 max), one frame of 616-733 ms after each tap, the rest at 16.7 ms. The desktop on the same link keeps 207.
+
+- Not the phone's flags: `?q=low` expands the phone set on the desktop too (phone-flags.ts isPhoneTier), and a run with
+  the phone's URL exactly kept 24 of 31 houses.
+- Not the same land: the phone's stores at (207, 156), the desktop's at (159, 176); its "across the water" points 31
+  and 48 m out, the desktop's 27 and 28. 48 isn't a region, so it isn't a window shift: the town (or its plan, its
+  spots) comes out differently on the Mali. The lab's fixture is the desktop's town, not the user's (BACKLOG TL-15).
+- So the bench now saves the phone's own town and reads what decides a refusal, once, before the first placement
+  (perf/placebench/diagnose.ts; never in the game's play): the town's id and name, the window's origin, the box's place
+  in it; the reach's surfaces at the stores' column (FortressReachGpu.surfacesAt: 32 bytes); and the same ask answered
+  by the CPU reference (reach.ts CpuReach) over the window's columns and water read back — GPU and CPU side by side.
+  The summary ends with three lines of it; "Download the town (for the lab)" saves the phone's land as a fixture
+  (data/lab/town.rclt's format). Each row now has the reach's GPU rounds; the arrival check its wall time.
+- On the desktop (the user's link at 412x915): "Town Muru (s84); window at 14400, 4416 … The stores at 159.5, 175.8:
+  ground 98.25 m. Walkable levels there, GPU: 100.32 m (31 m over it); CPU: the same. Reached: GPU 24 of 31, CPU 24.
+  They agree on 31." The answers take 1 GPU round (3 at most) here.
+- Hypothesis for the phone (TL-16): the reach seeds the stores from the top walkable surface of their column; anything
+  standing over the heap with 1.5 m under it would put the stores on its roof. The phone's run will say.
+- Perf (TL-17): the 700 ms frame after a tap matches the reach's own GPU time on the Mali — a refused block costs three
+  solves of 12 hook-and-jump passes of atomics over 67k columns x 4 surfaces.

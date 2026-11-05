@@ -38,6 +38,8 @@ export interface PlaceRow {
   line: string | null;
   tapMs: number;
   answerMs: number | null;
+  /** the reach's submits for its answer (each waits for the GPU's queue to drain to it: reachgpu.ts) */
+  rounds: number | null;
   frames: Stat | null;
   over33: number;
 }
@@ -65,6 +67,11 @@ export interface PlaceBenchResult {
   rows: PlaceRow[];
   arrive: ArriveRow[];
   arriveLimitS: number;
+  /** the wall seconds the arrival check's sim seconds took (slow frames: the world's ticks are capped a frame, so the
+   *  walkers cover less ground a sim second than at 60 fps) */
+  arriveWallS: number | null;
+  /** (the game's run) what diagnose.ts read before the first placement */
+  diagnosis?: unknown;
 }
 
 /** frames waited for a judgement before it counts as none (the GPU's answer comes in a few) */
@@ -72,7 +79,7 @@ const MAX_WAIT = 600;
 /** frames measured before a placement (the frame times round it) */
 const BEFORE = 3;
 
-export async function runPlaceBench(io: PlaceBenchIO, o: { types?: StructureType[]; arriveS?: number; arrive?: boolean } = {}): Promise<PlaceBenchResult> {
+export async function runPlaceBench(io: PlaceBenchIO, o: { types?: StructureType[]; arriveS?: number; arrive?: boolean; diagnose?: (points: PlacePoint[]) => Promise<unknown> } = {}): Promise<PlaceBenchResult> {
   const f = io.fort;
   const types = o.types ?? [...STRUCTURE_TYPES];
   const arriveS = o.arriveS ?? 300;
@@ -92,6 +99,8 @@ export async function runPlaceBench(io: PlaceBenchIO, o: { types?: StructureType
     wet: (x, y) => f.wetAt(x, y) === true,
     ground: io.ground,
   });
+  // (before anything is placed: the land and the reach as they opened)
+  const diagnosis = o.diagnose ? await o.diagnose(points) : undefined;
   const clear = async () => {
     for (let pass = 0; pass < 4 && f.plan.structures().length; pass++)
       for (const s of f.plan.structures())
@@ -112,7 +121,7 @@ export async function runPlaceBench(io: PlaceBenchIO, o: { types?: StructureType
         last = t;
       }
       const cell = f.cellAt(pt.at[0], pt.at[1]);
-      const row: PlaceRow = { point: pt.name, group: pt.group, type, at: [+pt.at[0].toFixed(1), +pt.at[1].toFixed(1)], outcome: 'unplaced', line: null, tapMs: 0, answerMs: null, frames: null, over33: 0 };
+      const row: PlaceRow = { point: pt.name, group: pt.group, type, at: [+pt.at[0].toFixed(1), +pt.at[1].toFixed(1)], outcome: 'unplaced', line: null, tapMs: 0, answerMs: null, rounds: null, frames: null, over33: 0 };
       f.refusal = null;
       f.note = null;
       const t0 = performance.now();
@@ -129,6 +138,7 @@ export async function runPlaceBench(io: PlaceBenchIO, o: { types?: StructureType
         if (f.isPending(cell)) row.outcome = 'noanswer';
         else {
           row.answerMs = Math.round(performance.now() - t0);
+          row.rounds = f.reachStats.rounds;
           await f.settled();
           row.outcome = f.plan.has(cell, 0) ? 'kept' : 'refused';
           row.line = row.outcome === 'kept' ? f.note : f.refusal;
@@ -148,6 +158,7 @@ export async function runPlaceBench(io: PlaceBenchIO, o: { types?: StructureType
   // the arrival check: houses at the points a house was kept on (the far and hard ones first, ARRIVE_SITES of them),
   // planned together, Build at 16x: when a builder stands at each, and when its first block stands
   const arrive: ArriveRow[] = [];
+  let arriveWallS: number | null = null;
   if (o.arrive !== false) {
     const kept = rows.filter((r) => r.type === 'house' && r.outcome === 'kept');
     const rank = (r: PlaceRow) => ARRIVE_ORDER.indexOf(r.group) * 1000 - Math.hypot(r.at[0] - stores[0], r.at[1] - stores[1]);
@@ -165,6 +176,7 @@ export async function runPlaceBench(io: PlaceBenchIO, o: { types?: StructureType
         arrive.push({ point: p, arrivedS: null, builtS: null, nearestM: null });
       }
     const t0 = io.simTime();
+    const w0 = performance.now();
     io.build();
     while (io.simTime() - t0 < arriveS && built.size < sites.size) {
       await io.advance(5, 16);
@@ -179,8 +191,9 @@ export async function runPlaceBench(io: PlaceBenchIO, o: { types?: StructureType
         if (!built.has(p) && f.town.has(s.cell, 0)) built.set(p, t);
       }
     }
+    arriveWallS = +((performance.now() - w0) / 1000).toFixed(1);
     for (const [p] of sites) arrive.push({ point: p, arrivedS: got.get(p) ?? null, builtS: built.get(p) ?? null, nearestM: near.has(p) ? +near.get(p)!.toFixed(1) : null });
     io.log?.(`arrival: ${io.walkers().length} builders seen at the end`);
   }
-  return { points, stores, rows, arrive, arriveLimitS: arriveS };
+  return { points, stores, rows, arrive, arriveLimitS: arriveS, arriveWallS, diagnosis };
 }
