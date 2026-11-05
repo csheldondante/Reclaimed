@@ -12,6 +12,8 @@ called only by the class file and the folder. From outside, use the class.
 - `scenes/streamer.ts` + `scenes/streamer/` — Streamer: `slide.ts` (follow the camera, the slide), `freeze.ts`, `generate.ts`, `write.ts`, `store.ts`, `jobs.ts`, `warp.ts`, `regions.ts`; `defs.ts` its flags, records and public types.
 - `game/integrity.ts` + `game/integrity/` — Integrity: `tick.ts` (update and the analysis pass), `rigid.ts`, `metal.ts`, `resting.ts`, `columns.ts`, `loose.ts`, `lattice.ts`, `window.ts`; `defs.ts`.
 - `render/renderer.ts` + `render/renderer/` — Renderer: `encode.ts` (a frame's draw), `mesh-draws.ts` (the field mesh's pipelines, made by the constructor), `gbuffer-shadow.ts`, `terrain-cache.ts`, `grid.ts`, `features.ts`; `defs.ts`.
+- `perf/bench.ts` + `perf/bench/` — The bench (?bench=1): bench.ts keeps the flow of a run, the heartbeat and the state of the Bench class; `pages.ts`, `pace.ts`, `ab.ts`, `sweeps.ts`, `regions.ts` its work; `defs`, `timestamps`, `pan-report`, `state`, `page`, `device`, `report` the free functions.
+- `atlas/atlas.ts` + `atlas/atlas/` — Atlas: the class keeps its state, build and small reads; `build.ts` (run: the GPU passes), `regions.ts`, `columns.ts`, `region-land.ts`, `window.ts`; `params.ts`, `tile-pacer.ts`, `defs.ts` re-exported by atlas.ts.
 
 ## src/
 
@@ -94,7 +96,7 @@ Interface contracts between tracks (world state, structures, settlement, flora, 
 
 The atlas: the whole generated world map (coarse sim, GPU finish, far land, geysers), from which the streamed window's land comes.
 
-- `atlas.ts` (1874) — The atlas (round 67, branch `atlas`): a finite world's coarse map, made on the GPU when the world is … API: `AtlasParams`, `DEFAULT_ATLAS`, `ATLAS_KEYS`, `atlasParamsFrom` +14.
+- `atlas.ts` (457) — The atlas (round 67, branch `atlas`): a finite world's coarse map, made on the GPU when the world is … API: `Atlas`, `WINDOW_MAKE`, `FINISH_TILE`, `GEYSER_STENCIL` +14.
 - `bake.ts` (340) — The land past the window baked into a texture (round 94, bake.wgsl; API: `SurfaceStamp`, `MAX_BAKE`, `BAKE_UNI_BYTES`, `SurfaceBake`.
 - `bake.wgsl` (219) — ---- atlas/bake.wgsl ------------------------------------------------------- (round 94, the user: "I don't …
 - `build.wgsl` (313) — ---- atlas/build.wgsl ----------------------------------------------------- The macro passes (round 67), n …
@@ -121,6 +123,17 @@ The atlas: the whole generated world map (coarse sim, GPU finish, far land, geys
 - `stamps.ts` (136) — ---- atlas/stamps.ts -------------------------------------------------------- (round 102, `gpugen`) What's … API: `OP`, `StampOps`, `applyStamps`.
 - `view.wgsl` (131) — ---- atlas/view.wgsl ------------------------------------------------------ The atlas viewer (round 67): …
 - `ways.ts` (531) — ---- atlas/ways.ts -------------------------------------------------------- The roads and their crossings … API: `WAY`, `WAY_NAMES`, `WayPoint`, `Lift` +13.
+
+## src/atlas/atlas/
+
+- `build.ts` (363) — Building the atlas (Atlas.build): the GPU passes from the macro height to rivers, lakes, settlements and … API: `run`, `makeCraters`, `makeOddities`, `makeGiants`.
+- `columns.ts` (195) — Columns of the atlas's land for a rectangle: on the CPU (columns) or kept on the GPU (columnsGpu), the … API: `columns`, `columnsGpu`, `giantsFor`, `changes`.
+- `defs.ts` (223) — The atlas's buffer sizes, tile pacing flags and stamp kinds, its records (Geyser, AtlasStats, … API: `Extra`, `PARAM_BYTES`, `COL_WORDS`, `COLG_BYTES` +37.
+- `params.ts` (106) — The atlas's parameters: AtlasParams, their defaults and keys, read from the URL (?a.<key>=). API: `AtlasParams`, `DEFAULT_ATLAS`, `ATLAS_KEYS`, `atlasParamsFrom`.
+- `region-land.ts` (141) — A region's land for the streamer: its stamps (craters, vents, ways), its land as intervals (regionLand) or … API: `stampsFor`, `ventsIn`, `waysOf`, `regionLand` +4.
+- `regions.ts` (230) — The atlas's regions: the pattern pass and the regions found on the CPU (continents, islands, waters, … API: `patterns`, `regionsCpu`.
+- `tile-pacer.ts` (191) — TilePacer: how many streamed tiles of land a frame may make (round 98, adaptive since round 102). API: `TilePacer`.
+- `window.ts` (86) — The first window made from the atlas: its map data, height offset, what's outside and the ground. API: `window`.
 
 ## src/audio/
 
@@ -350,7 +363,7 @@ WebGPU plumbing: device, pipelines and bind-group layouts, CPU timing stats.
 
 ## src/perf/
 
-- `bench.ts` (3148) — Round 101 (bench): the calibration benchmark (`?bench=1`). API: `BENCH_VERSION`, `Stat`, `stat`, `judgeTimestamps` +17.
+- `bench.ts` (615) — Round 101 (bench): the calibration benchmark (`?bench=1`). API: `sleep`, `frame`, `benchGpuUp`, `benchGpu` +23.
 - `boot-marks.ts` (29) — (round 112, testspeed) The page's boot as a timeline: each stage's time since navigation start (ms), on … API: `BootMarks`, `bootMark`.
 - `framepace.ts` (409) — Round 114 (framepace): the frame pacing probe. API: `clusters`, `PaceSources`, `FramePace`, `startFramePace`.
 - `gpumem.ts` (131) — Round 100 (hitchrec): the GPU memory the page holds, buffer and texture bytes alive — every createBuffer / … API: `GpuMemTrack`.
@@ -362,6 +375,23 @@ WebGPU plumbing: device, pipelines and bind-group layouts, CPU timing stats.
 - `report-io.ts` (93) — Round 101 (bench): getting a report (JSON) off the phone, shared by the hitch recorder's HUD and the … API: `deviceTag`, `stamp`, `downloadJson`, `copyText` +2.
 - `start.ts` (54) — Round 100 (hitchrec): `?hitch=1` boots the hitch recorder (hitch.ts), its HUD (hitch-hud.ts) and the GPU … API: `HitchBoot`, `startHitch`.
 - `townbench.ts` (356) — The town pan phone bench (round 128g, cityrender; API: `townBench`.
+
+## src/perf/bench/
+
+The parts of the bench, split out of perf/bench.ts: the methods of the Bench class as functions over it (`bn`) and its top-level helpers by concern.
+
+- `ab.ts` (282) — A/B toggles (a system off, the frame's difference) and what the view shows: its state, the systems that … API: `view`, `toggles`, `abPhase`, `ab` +4.
+- `defs.ts` (57) — The bench's constants and small helpers: the version and build, the A/B system lists, the probe speeds, … API: `BENCH_VERSION`, `STATE`, `BUILD`, `LAST` +13.
+- `device.ts` (191) — What the device is and can do: a fixed GPU workload, upload and readback rates, the device's facts. API: `fixedWorkload`, `ioRates`, `deviceFacts`.
+- `pace.ts` (298) — Measuring frames: the pace probe, waiting for the scene to settle, capturing a stretch of frames and … API: `paceProbe`, `paceSettle`, `settle`, `capture` +2.
+- `page.ts` (161) — The bench on the page: its mode from the URL, the screen kept awake (the wake lock, re-asked when let go), … API: `benchMode`, `WakeSentinel`, `wakeLock`, `wakeWanted` +7.
+- `pages.ts` (451) — The bench's pages, each a load of the level: main, pans, hero, a pan page per zoom (its ramps), the window … API: `mainPage`, `pansPage`, `heroPage`, `panPage` +2.
+- `pan-report.ts` (153) — The pan bench's plan and report: the window for a zoom, the zooms and speeds tried, tile steps, the … API: `panWindowFor`, `panPlan`, `tileStepOf`, `paceHeadline` +3.
+- `regions.ts` (217) — Region generation and the store timed: fresh spots, generation stage by stage (CPU and GPU), the store's … API: `freshAt`, `regionStages`, `regionStagesGpu`, `makeRegion` +1.
+- `report.ts` (203) — The bench's report: every page's results put together, and its summary lines. API: `makeReport`, `summary`.
+- `state.ts` (170) — The bench's state between page loads: BenchState and its pages, kept in localStorage and IndexedDB (the … API: `PageSpec`, `BenchState`, `IDB`, `idbP` +9.
+- `sweeps.ts` (329) — The bench's sweeps: the fastest pan, each system's GPU cost, tiles, agents, render scales, a warp and a … API: `maxPan`, `systemGpu`, `storm`, `tileSweep` +5.
+- `timestamps.ts` (147) — GPU timestamps judged (reliable or not, per mode) and the pan bench's thresholds (PAN_*: speeds, budgets, … API: `judgeTimestamps`, `timestampModes`, `PAN_ZOOMS`, `PAN_MAX_WINDOW` +8.
 
 ## src/physics/
 
