@@ -18,6 +18,7 @@ import { FortressLife } from '../../fortress/life';
 import { ECON, START_STORES } from '../../fortress/defs';
 import { fortressPieces } from '../../fortress/pieces';
 import { FortressClaims } from '../../fortress/claims';
+import { FortressFollow, personCard } from '../../fortress/follow';
 import { StaticClaims } from '../../sim/static-claims';
 import type { StructurePieces } from '../../api/contracts/structures';
 import { SKIP_SPEED, SKIP_GRACE } from './flags';
@@ -120,6 +121,8 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
   // (round 128i, FT-67) the road stamp's offset moved in the slide's own frame, as the towns' grid rows are
   S.onSlide.push(() => scene.fortressLife?.roads());
   S.onWarp.push(() => scene.fortressLife?.roads());
+  // (round 128l, m4; V128-10) a tap on a person picks them (fortressAt): their card, and Follow
+  const follow = (scene.fortressFollow = new FortressFollow());
   // (round 128d) Build: the plan goes to the builders and time runs (at ?speed=); Plan: time stops again
   // (round 128e, FT-50) the speed picked while building (1x, 4x, 16x), and Skip to done
   let runSpeed = Math.max(1, Number(scene.host.params.get('speed') ?? 1));
@@ -185,6 +188,15 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
       scene.speed = SKIP_SPEED;
     },
     now: () => ({ speed: scene.fortressSkip ? SKIP_SPEED : runSpeed, skipping: scene.fortressSkip }),
+    // (round 128l, m4; V128-10) the person a tap picked
+    person: () => {
+      const id = follow.selected;
+      const facts = id !== null ? scene.fortressLife?.personFacts(id) : null;
+      if (id !== null && !facts) follow.select(null);
+      return facts ? personCard(facts) : null;
+    },
+    following: () => follow.following,
+    follow: (on) => follow.follow(on),
   });
   scene.fortressBar.townName = rec.name;
   // the power coming in: the fortress's built blocks (a ledger number: nothing spends it yet)
@@ -229,11 +241,56 @@ export function fortressAt(scene: LevelScene, sx: number, sy: number): void {
   const { core } = scene;
   const { camera } = core;
   const fort = scene.fortress!;
+  // (round 128l, m4; V128-10) a tap on a person (or a cart) picks them; a tap elsewhere while one is picked lets go. While
+  // time runs or with Inspect on: planning's taps stay the plan's
+  const follow = scene.fortressFollow;
+  if (follow && (fort.mode === 'build' || fort.tool.inspect || follow.selected !== null)) {
+    const id = personAt(scene, sx, sy);
+    if (id !== null || follow.selected !== null) {
+      follow.select(id);
+      scene.fortressBar?.render();
+      return;
+    }
+  }
   // (the plan's own blocks are picked along the tap's ray, by face — fortress/pick.ts; the GPU pick gives the ground)
   const ray = camera.ray(sx, sy);
   core.renderer.pick((sx / camera.viewportW) * scene.renderW, (sy / camera.viewportH) * scene.renderH).then((hit) => {
     fort.press(ray, hit ? hit.cell : -1);
   }, ignoreTeardown);
+}
+
+/** (round 128l, m4) the fortress's person (or cart) drawn nearest a screen point, within PICK_PX (null: none) */
+const PICK_PX = 26;
+export function personAt(scene: LevelScene, sx: number, sy: number): number | null {
+  const life = scene.fortressLife;
+  if (!life) return null;
+  const cam = scene.core.camera;
+  let best: number | null = null;
+  let bd = PICK_PX;
+  for (const id of life.everyone()) {
+    const u = scene.units?.get(id);
+    if (!u?.alive) continue;
+    // (the figure's middle, a little over its feet)
+    const [px, py] = cam.project(u.at[0], u.at[1], u.at[2] + 0.7);
+    const d = Math.hypot(px - sx, py - sy);
+    if (d < bd) {
+      bd = d;
+      best = id;
+    }
+  }
+  return best;
+}
+
+/** (round 128l, m4; V128-10) Follow, each frame: the camera on the person picked (the window slides with the camera) */
+export function followFrame(scene: LevelScene): void {
+  const f = scene.fortressFollow;
+  if (!f?.following || f.selected === null) return;
+  const u = scene.units?.get(f.selected);
+  if (!u?.alive) return void f.select(null);
+  const t = scene.core.camera.target;
+  t[0] = u.at[0];
+  t[1] = u.at[1];
+  t[2] = u.at[2];
 }
 
 /**
@@ -284,6 +341,8 @@ export function startLab(scene: LevelScene): void {
       scene.fortressSkip = false;
     },
     speed: (n?: number) => (n === undefined ? scene.speed : (scene.speed = n)),
+    tap: (sx, sy) => fortressAt(scene, sx, sy),
+    follow: () => scene.fortressFollow,
     frame: (now, dt) => levelFrame(scene, now, dt, true),
     restoreLand: () => {
       scene.integrity?.forget(0, 0, w, h);

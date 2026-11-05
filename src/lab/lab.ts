@@ -19,6 +19,7 @@ import { STRUCTURE_TYPES } from '../api/contracts/fortress';
 import type { WorldCore } from '../scenes/world-core';
 import type { Fortress } from '../fortress/fortress';
 import type { FortressLife } from '../fortress/life';
+import type { FortressFollow } from '../fortress/follow';
 import type { FortressPiecesHost, FortressWindow } from '../fortress/host';
 import type { AgentUnits } from '../units/agent-units';
 import { START_STORES } from '../fortress/defs';
@@ -46,6 +47,10 @@ export interface LabSceneIO {
   frame(now: number, dt: number): void;
   /** the land put back as the level opened (WorldCore.restoreChunks over the window) */
   restoreLand(): void;
+  /** (round 128l, m4) a tap on the map at screen (x, y), as a finger's (the level's fortressAt) */
+  tap(sx: number, sy: number): void;
+  /** (m4) the person a tap picked and the follow (fortress/follow.ts) */
+  follow(): FortressFollow | undefined;
 }
 
 /** a whole plan at once (lab.plan; a recipe's `town`) */
@@ -449,6 +454,9 @@ export class Lab {
       fortress: () => this.fort(),
       life: () => this.io.life() ?? null,
       units: this.io.units,
+      /** (m4) a tap at screen (x, y), and the follow it drives */
+      tap: (sx: number, sy: number) => this.io.tap(sx, sy),
+      follow: () => this.io.follow() ?? null,
       /** (m4) a world point on the screen (CSS pixels) */
       project: (x: number, y: number, z: number) => this.io.core.camera.project(x, y, z),
       viewport: () => [this.io.core.camera.viewportW, this.io.core.camera.viewportH],

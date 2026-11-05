@@ -66,6 +66,7 @@ import { SettlementsView } from '../settle/view';
 import { ShipsView } from '../settle/shipsview';
 import { Fortress } from '../fortress/fortress';
 import { FortressBar } from '../fortress/ui';
+import type { FortressFollow } from '../fortress/follow';
 import { FortressLife } from '../fortress/life';
 import { FortressClaims } from '../fortress/claims';
 import { StaticClaims } from '../sim/static-claims';
@@ -256,6 +257,8 @@ export class LevelScene implements Scene {
   statics?: StaticClaims;
   /** (round 128f) read the window's columns again for the fortress's reach check (fortress/reach.ts) */
   fortressReadCols?: () => void;
+  /** (round 128l, m4; V128-10) the person a tap picked, and whether the camera follows them (fortress/follow.ts) */
+  fortressFollow?: FortressFollow;
   fortressColsAt = 0;
   /** the world as modules (docs/WORLD_API.md), made on first use of reclaimed.world */
   worldApi?: Sim;

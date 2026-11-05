@@ -3628,6 +3628,15 @@ The building rule (the user's): select what (a structure type), then plan it wit
   home to rest (`rest`) till the next day. `FortressLife.personFacts(id)` (follow.ts PersonFacts: job, workplace,
   doing, carrying, today, hungry) and `everyone()`: what the follow card (round 128l C) reads; `today` is logged each
   step (DAY_WORD).
+- **Round 128l, m4 (Follow a person, V128-10 minimal).** `fortress/follow.ts` (pure, tested and linted): `PersonFacts`,
+  `nameOf(id)` and `thoughtOf(facts)` (made up from the number, the economy's day and the state: nothing simulated),
+  `doingLine`, `personCard` (a title and plain lines: number, doing, carrying, "Today: …", a thought), `FortressFollow`
+  {selected, following, select, follow}. scenes/level/fortress.ts: `personAt(scene, sx, sy)` (the fortress's people,
+  soldiers and carts projected, the nearest within 26 px) — `fortressAt` picks one while building or with Inspect on
+  (planning's taps stay the plan's), or lets go when one is picked and the tap lands elsewhere; `followFrame` (level/frame.ts, each frame while following) puts the camera's target
+  on the person (the streamed window slides with the camera). FortressBar hooks `person`, `following`, `follow`: the card
+  first in the panel whatever the mode, a Follow / Stop following row. Lab: `lab.tap(sx, sy)` (the level's fortressAt),
+  `lab.follow()`, `lab.project`, `lab.viewport`.
 
 ## Source layout: the split classes (2026-11-04)
 

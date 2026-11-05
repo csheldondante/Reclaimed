@@ -17515,3 +17515,23 @@ and see it go about it's day" (DECISIONS round 128l, m4); V128-12's carts.
 - GIFs: a cart riding out to the quarry's pile and back, a newcomer walking in (scripts/lab/gifroad.mjs, next commit's
   Follow drives the camera).
 - Phone: the carts are three more units and three more riding groups; nothing per frame on the CPU beyond their steps.
+
+
+## 2026-11-04 — round 128l (`m4`): follow a person through their day (V128-10, minimal)
+
+Why: the user, "so that we could follow a unit and see it go about it's day" (DECISIONS round 128l, m4).
+
+- A tap on a person or a cart (the nearest drawn within 26 px of the finger) picks it: the panel shows a card. It has
+  a title ("Lene, a farmer"; "Cart number 28"), its number, what it's doing, what it carries, its day so far ("Today:
+  home, work, haul, eat, home") and a thought. The name comes from the number; the thought comes from the number, the
+  day and what it's doing. Nothing is simulated behind the thought. Follow keeps the camera on it. The window slides
+  with the camera, so a person can be followed across the map. A tap elsewhere lets go.
+- Checked on the lab (scripts/lab/fortressfollow.mjs, flat: houses, a warehouse, a quarry and farms; a worker tapped at
+  its screen point as a finger would, Follow pressed, 66 sim s at 4x): **on screen 44 of 44 samples**. The card read,
+  in turn: "Going to the farm", "Working at the farm", "Taking goods to the stores. Carrying 1 grain", back to the farm,
+  "Today: … haul, home, eat, home, work". A tap on empty ground let go. Every card line passes the writing lint for
+  every state (follow.test.ts).
+- GIFs, all at play zoom with the camera following: a farmer's day, a cart's trip, a newcomer walking in
+  (scripts/lab/gifroad.mjs, scripts/lab/fortressfollow.mjs `shots`).
+- Judgement calls: a person picked isn't highlighted in the world, and a recruit turned soldier is a new unit, so the
+  follow lets go (M4-13). fortress/life.ts is now 1448 lines and wants splitting (M4-12).
