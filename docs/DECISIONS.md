@@ -3,6 +3,12 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-11-05 — round 128n (session 5) — development paused; the design of record
+
+- The user paused all development to get the code back into shape: "Pause development and let's talk through fixing it and getting the code into good shape". First a design of record: "make an artifact looking at the vision for the product and then detailing system by system your understanding of how it should work and what we have discussed … a complete account of what we are supposed to build that can be used as a reference and so implementation can identify and note discrepancies we can fix." Draft: https://claude.ai/artifact/B6JhsBFZrWGQtfn78TkJ7T
+- Physics, verbatim: "We discussed rewriting this properly as a data oriented engine with rigidbody simulation via an integration buffer, course collision pass, fine collision pass, budgeted and intelligently prioritized voxel deformation and fracture sim and constraint solver on the GPU with a collision buffer for optional async CPU readback". This is the design of record (PH1); today's four movers are interim.
+- Pages, verbatim (comment on the design of record): "Rings make sense for a 2d window sliding around the player. … we may want to use the simulation for things off screen as part of generation flows and … the terrain model supports 3D tiles (stacked) with the expectation that there is usually nothing above or below … Can depth 0 be the assumed default and then things are relative to that? We can assume an open interval in a window extends indefinitely (air above, stone below typically) and then when we slide to a cell that has data we can use that to determine where to terminate the interval? … we can easily add z layers if we hit our 16 layer limit. A true page system seems like a better fit here … can be done once and reused throughout the product right?" Design of record: one sparse 3D page system (cx, cy, cz), band 0 implicit, open-ended intervals closed by resident neighbour bands, extra bands only where data crosses, one table in its own binding, a residency planner deciding the shape; the ring is one planner shape; replaces the z-sliding window and the keep rect.
+
 ## 2026-11-05 — round 128m (session 5, `fortress`) — after the overnight build: routes next
 
 - The user, verbatim, on the morning summary:
