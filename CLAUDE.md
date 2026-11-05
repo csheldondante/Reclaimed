@@ -15,6 +15,9 @@ stock-take.
 
 ## Working rules
 
+**How work gets built (every agent, every task):** @docs/AGENT_RULES.md — design note before code, the riskiest part
+first (perf toggle-diff, a play-zoom shot, edge cases as tests), no patches, gates in the real town.
+
 - **Nothing gets lost.** `docs/BACKLOG.md` is the running list of every open
   suggestion and deferred item. Read it first; add new feedback to it before
   working; mark items done (with the commit) in the same commit as the change.
