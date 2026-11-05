@@ -260,6 +260,10 @@ export class LevelScene implements Scene {
   /** (round 128l, m4; V128-10) the person a tap picked, and whether the camera follows them (fortress/follow.ts) */
   fortressFollow?: FortressFollow;
   fortressColsAt = 0;
+  /** (round 128m, quarry) the near walls of a pit looked into dithered out round its floor (fortress.ts pitView) */
+  fortressPitCut?: import('../api/cutaway').Dither;
+  /** (round 128m) the pit's cut on (?pitcut=1; off by default — scripts toggle it to compare) */
+  pitCut?: boolean;
   /** the world as modules (docs/WORLD_API.md), made on first use of reclaimed.world */
   worldApi?: Sim;
   /** round 83, V21: ?cutaway (api/puck.ts, api/cutaway.ts) */

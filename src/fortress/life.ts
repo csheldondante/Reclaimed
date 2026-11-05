@@ -4,9 +4,9 @@
 // camp gives its type's jobs; the builders' while there's something to build), in priority order (defs.ts JOB_ORDER):
 //  - builders walk to the warehouse, take a load out of the stores (what the next block still lacks), carry it to that
 //    block and work it in; a block stands when its cost is in (Town.add). Blocks go up in BuildCrew's order;
-//  - miners walk to the quarry's built cells and dig: the ground itself is taken (terrain take, a real pit that deepens,
-//    down to ECON.pitMax under the ground it had); after a load's work they carry stone, a share of it ore, to the
-//    warehouse;
+//  - miners walk to the quarry's built cells and dig: the ground itself is taken (terrain take, a real pit that deepens;
+//    round 128m: tier by tier down the plan's pit, its ramps spiralling down the sides — quarry.ts QuarryDig); after a
+//    load's work they carry stone, a share of it ore, up the ramps to the warehouse;
 //  - woodcutters walk to a tree in their lumber camp's reach (it grows with the camp's size), fell it (the plants'
 //    fell: the tree goes) and carry its logs to the warehouse;
 //  - grain grows on the farms' built cells (their type's rate); farmers reap it and carry it to the warehouse;
@@ -54,6 +54,7 @@ import { WAY_ROAD } from './ways';
 import { cellAt } from '../world/lattice';
 import type { Doing, PersonFacts } from './follow';
 import { BuildBook, type Load } from './work';
+import { QuarryDig } from './quarry';
 
 /** goods a builder carries a trip */
 export const LOAD = 3;
@@ -94,8 +95,6 @@ const DAY_WORD: Record<Doing, string | null> = {
   'to-work': 'work', work: 'work', haul: 'haul', eat: 'eat', fetch: 'work', drill: 'drill', muster: 'muster', march: 'march', wall: 'the wall',
   'cart-park': 'the stores', 'cart-out': 'the road', 'cart-load': 'loading', 'cart-back': 'the road',
 };
-/** (m4) the miners' terrain takes in flight at most (api/terrain.ts holds 64 for everyone) */
-const DIGS_IN_FLIGHT = 16;
 /** (m4) a pile's road node at most this far from the structure's door (m) */
 const PILE_ROAD = 14;
 /** (m4) sim seconds a soldier may take to a wall-walk point before it gives up and musters again */
@@ -125,6 +124,12 @@ export interface FortressLifeIO {
   ground(x: number, y: number): number;
   /** the sim's speed: the units' steps come in wall time (0 while planning) */
   speed(): number;
+  /** (round 128m) wake the ground round window world (x, y) within r: a pit's tier dug, its walls' stability checked */
+  settle?(x: number, y: number, r: number): void;
+  /** (round 128m) the surface read `top` answers from (a new object each read) */
+  groundRead?(): unknown;
+  /** (round 128m) the ground's top now at window world (x, y), loose ground on it too (null: not read yet); none: `ground` */
+  top?(x: number, y: number): number | null;
 }
 
 type Phase = 'rest' | 'eat' | 'idle' | 'home' | 'wait' | 'toPile' | 'toSite' | 'working' | 'toWork' | 'gather' | 'lifting' | 'carry' | 'fetch' | 'muster' | 'drill' | 'march' | 'patrol' | 'arrive' | 'park' | 'out' | 'load' | 'back';
@@ -147,11 +152,8 @@ interface Work {
   walked?: number;
   /** (m4) the economy day it last ate */
   ate?: number;
-}
-
-/** how deep a quarry's pit may go at d from its middle (see digAt) */
-export function pitDepth(d: number): number {
-  return Math.max(0, Math.min(ECON.pitMax, ECON.digR + 1.5 - d));
+  /** (round 128m) a miner gone on to another part of the pit mid-load: its load's work carries on there */
+  moved?: boolean;
 }
 
 /** what a worker carries, drawn */
@@ -178,8 +180,6 @@ export class FortressLife implements Routine {
   private todayN = 0;
   /** (m4) per cart group whether it rides now (reseed) */
   private cartRiding: boolean[] = [];
-  /** (m4) miners' terrain takes in flight */
-  private digging = 0;
   /** (m4) carts sent onto the road by a goal order (stepCart), each back to its round once there */
   /** (m4) per cart group the pile its ride was last made for (reseed): a ride not made for it — no road reaches it */
   private cartRideFor: (number | null)[] = [];
@@ -210,8 +210,8 @@ export class FortressLife implements Routine {
   /** per structure: what its workers brought in, its ripe grain (farms) */
   private made = new Map<number, Goods>();
   private ripe = new Map<number, number>();
-  /** per box point (rounded) the ground a miner first found there: the pit's depth is measured from it */
-  private firstGround = new Map<string, number>();
+  /** (round 128m, V128-11) the quarries' pits, dug down tier by tier */
+  readonly quarry: QuarryDig;
   private onErased = (e: Erased) => this.refund(e);
 
   constructor(
@@ -219,6 +219,7 @@ export class FortressLife implements Routine {
     people: number,
   ) {
     const fort = io.fort;
+    this.quarry = new QuarryDig({ fort, ground: io.top ?? io.ground, dig: io.dig, settle: io.settle, groundRead: io.groundRead });
     this.book = new BuildBook((b) => DEFS[fort.plan.typeAt(b.cell) ?? 'house'].cost);
     const { units } = io;
     units.routine = this;
@@ -330,6 +331,8 @@ export class FortressLife implements Routine {
     if (this.t - this.jobsAt >= JOBS_S) {
       this.jobsAt = this.t;
       this.jobs();
+      this.quarry.update();
+      this.stats.dug = this.quarry.stats.taken;
       // (round 128f: the user, "agents seem to not be able to path through the city or farms to buildings at the
       // peripheral") every block still to build kept in the fields' scope: past the box round the units and the seeds
       // every field reads no way, so a block not yet among the sites read cut off, was never a site, never seeded, never
@@ -1045,6 +1048,11 @@ export class FortressLife implements Routine {
     }
   }
 
+  /** (round 128m) where the miners go: the pit's cells with ground still to take while one is dug, else the quarries' */
+  private quarrySpots(): V2[] {
+    return this.quarry.digging() ? this.quarry.spots(SEEDS) : this.cellsOf('quarry');
+  }
+
   private homes(): V2[] {
     const f = this.io.fort;
     const out: V2[] = [];
@@ -1061,7 +1069,7 @@ export class FortressLife implements Routine {
     const h = this.heap();
     const stone = this.sitesFor('stone').flatMap((b) => this.standsFor(b));
     const wood = this.sitesFor('log').flatMap((b) => this.standsFor(b));
-    const quarry = this.cellsOf('quarry').slice(0, SEEDS);
+    const quarry = this.quarrySpots().slice(0, SEEDS);
     const farm = this.cellsOf('farm').slice(0, SEEDS);
     const fell = this.trees.slice(0, SEEDS);
     const homes = this.homes();
@@ -1320,14 +1328,15 @@ export class FortressLife implements Routine {
           w.phase = 'gather';
           break;
         }
-        const spots = kind === 'quarry' ? this.cellsOf('quarry') : kind === 'farm' ? this.cellsOf('farm') : this.trees;
+        const spots = kind === 'quarry' ? this.quarrySpots() : kind === 'farm' ? this.cellsOf('farm') : this.trees;
         if (!spots.length) return void Object.assign(w, { phase: 'wait', t: 3 });
         go(kind === 'quarry' ? R.toQuarry : kind === 'farm' ? R.toFarm : R.toFell);
         const spot = spots.find(([x, y]) => Math.hypot(x - at[0], y - at[1]) < AT_SPOT);
         if (!spot) break;
         w.where = spot;
         w.phase = 'gather';
-        w.t = kind === 'farm' ? ECON.reapSec : workSeconds(DEFS[kind]);
+        w.t = kind === 'farm' ? ECON.reapSec : w.moved && w.t > 0 ? w.t : workSeconds(DEFS[kind]);
+        w.moved = false;
         w.dig = ECON.digSec * Math.random();
         break;
       }
@@ -1351,7 +1360,12 @@ export class FortressLife implements Routine {
         w.t -= dt;
         if (kind === 'quarry' && (w.dig = (w.dig ?? 0) - dt) <= 0) {
           w.dig = ECON.digSec;
-          this.digAt(w.where ?? at);
+          // (round 128m: nothing left to dig in reach — this cell's part of the tier is down — on to another)
+          if (!this.quarry.dig(at) && this.quarry.digging()) {
+            w.phase = 'toWork';
+            w.moved = true;
+            break;
+          }
         }
         if (w.t > 0) break;
         if (kind === 'quarry') this.carry(u, w, quarryLoad(ECON.haul));
@@ -1392,44 +1406,6 @@ export class FortressLife implements Routine {
         }
         break;
       }
-    }
-  }
-
-  /**
-   * A miner's dig: the ground about the spot taken (a real pit). The pit is a bowl its miners can walk out of: at d from
-   * its middle it goes no deeper than pitDepth(d) under the ground it had (a metre down a metre in: the agents' step),
-   * and never past ECON.pitMax.
-   */
-  private digAt(spot: V2): void {
-    const f = this.io.fort;
-    for (let k = 0; k < 4; k++) {
-      const a = Math.random() * Math.PI * 2;
-      const rr = Math.sqrt(Math.random()) * ECON.digR;
-      const x = spot[0] + Math.cos(a) * rr;
-      const y = spot[1] + Math.sin(a) * rr;
-      // (from the ground as the miners first found it — the same reading as now, so a pit is measured against itself)
-      if (f.cellAt(x, y) < 0) continue;
-      const [bx, by] = f.toBox(x, y);
-      const k = `${Math.round(bx)},${Math.round(by)}`;
-      const now = this.io.ground(x, y);
-      const first = this.firstGround.get(k) ?? now;
-      this.firstGround.set(k, first);
-      if (now <= first - pitDepth(rr)) continue;
-      // (round 128l, m4: the world's terrain holds 64 takes and puts in flight at most, shared with everything else —
-      // with the carts the miners stay at the pit and dig faster than the takes come back)
-      if (this.digging >= DIGS_IN_FLIGHT) return;
-      this.digging++;
-      void this.io.dig([x, y], ECON.dig).then(
-        (n) => {
-          this.digging--;
-          if (n > 0) this.stats.dug += n;
-        },
-        (e) => {
-          this.digging--;
-          throw e;
-        },
-      );
-      return;
     }
   }
 

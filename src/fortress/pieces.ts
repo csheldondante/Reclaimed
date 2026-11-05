@@ -751,7 +751,10 @@ export function cityPlanOf(
     }
     // the type's things set down: on a yard in it, by a building at its first cell's open side
     const kinds = def.look.props ?? [];
-    const cells = [...s.cells.keys()];
+    // (round 128m, quarry: on the pit's rim — its ring-0 cells off the ramp — not in the pit, where they'd float as it deepens)
+    const pit = s.type === 'quarry' ? plan.pitOf(s.id) : null;
+    const rim = pit && pit.tiers ? [...pit.ring].filter(([c, d]) => d === 0 && !plan.pit.any(c)).map(([c]) => c) : [];
+    const cells = rim.length ? rim : [...s.cells.keys()];
     kinds.forEach((kind, i) => {
       const c = cells[(i * 7) % cells.length];
       let [x, y] = centre(c);

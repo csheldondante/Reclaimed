@@ -23,7 +23,7 @@ import { StreamPlanner } from '../planner';
 import { driveOn, flyKeys, panOn } from './camera-moves';
 import { stepGeysers } from './atlas-controls';
 import { birdArrivals, confineToReach, hearing, refreshReach, showComplete } from './valley';
-import { followFrame, skipFrame } from './fortress';
+import { followFrame, pitView, skipFrame } from './fortress';
 import { brush, drawRing } from './sandbox-tools';
 import { aimBeam, stepMeteors } from './impacts';
 import { CUTAWAY, PLANNER_OFF, COARSE_PARTS, CAM_CLAMP, PLAN_OFF } from './flags';
@@ -134,6 +134,7 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
       if (scene.fortressSkip) skipFrame(scene, dt * scene.speed);
       // (round 128l, m4) Follow: the camera on the person picked
       followFrame(scene);
+      pitView(scene, dt);
       // (round 128f) the reach asked again every few seconds while building: what's built and dug since (round 128l: the
       // GPU's components, fortress/reachgpu.ts — the cut-off check reads each answer)
       if (scene.fortress?.mode === 'build' && (scene.fortressColsAt += dt) > 3) {

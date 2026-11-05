@@ -141,8 +141,8 @@ The atlas: the whole generated world map (coarse sim, GPU finish, far land, geys
 
 ## src/build/
 
-- `runs.ts` (174) — (round 128d) Occupancy as runs per cell: the levels a cell holds, as sorted half-open runs [lo, hi), each … API: `Run`, `CellRuns`.
-- `town.ts` (415) — The town (round 65, docs/DECISIONS.md: "a townscraper inspired grid and building system"; API: `LEVEL_H`, `TownIO`, `Block`, `Town`.
+- `runs.ts` (190) — (round 128d) Occupancy as runs per cell: the levels a cell holds, as sorted half-open runs [lo, hi), each … API: `Run`, `CellRuns`.
+- `town.ts` (427) — The town (round 65, docs/DECISIONS.md: "a townscraper inspired grid and building system"; API: `LEVEL_H`, `TownIO`, `Block`, `Town`.
 - `towngrid.ts` (301) — The town's irregular grid (round 65; API: `TownGridOpts`, `CellGrid`, `TownGrid`.
 
 ## src/cardlab/
@@ -185,17 +185,19 @@ The atlas: the whole generated world map (coarse sim, GPU finish, far land, geys
 Fortress mode: the fortress, its economy, pieces, claims, life (workers) and its UI bar; started on a level by scenes/level/fortress.ts.
 
 - `claims.ts` (108) — The fortress's built blocks in the world's columns (round 128d; API: `ClaimsIO`, `FortressClaims`.
-- `defs.ts` (141) — The eight first buildings (round 128c, the user's list) and their numbers: a block's cost and what it gives. API: `POWER_RISE`, `DEFS`, `START_STORES`, `ECON` +1.
+- `defs.ts` (150) — The eight first buildings (round 128c, the user's list) and their numbers: a block's cost and what it gives. API: `POWER_RISE`, `DEFS`, `START_STORES`, `ECON` +1.
 - `economy.ts` (228) — The fortress's economy (fortress slice 1, milestone 3: "the economy feeds the building"). API: `JobKind`, `JobSlot`, `STORED`, `builtBlocks` +17.
 - `follow.ts` (189) — Follow a person (round 128l, m4; API: `Doing`, `PersonFacts`, `nameOf`, `thoughtOf` +3.
-- `fortress.ts` (1165) — The fortress (fortress slice 1, milestone 1): the plan (plan.ts) kept as Town blocks (build/town.ts: a … API: `Erased`, `FortressStatus`, `FortressIO`, `Tool` +2.
+- `fortress.ts` (1215) — The fortress (fortress slice 1, milestone 1): the plan (plan.ts) kept as Town blocks (build/town.ts: a … API: `Erased`, `FortressStatus`, `FortressIO`, `Tool` +2.
 - `host.ts` (43) — (round 128l, tooling) What the fortress's start (scenes/level.ts startFortress) needs of the world it's … API: `FortressTownRec`, `FortressTownSource`, `FortressWindow`, `FortressPiecesHost`.
 - `inspect.ts` (156) — Inspect (round 128d; the user: "Maybe an inspect to highlight a continuous section of structure and see … API: `InspectFacts`, `InspectLive`, `inspectFacts`, `inspectCard`.
-- `lanes.ts` (426) — The fortress's roads (round 128k; API: `LaneGrid`, `LaneKind`, `LaneSeg`, `LaneOpts` +12.
-- `life.ts` (1448) — The fortress's people (fortress slice 1; API: `LOAD`, `R4`, `FortressLifeIO`, `pitDepth` +1.
+- `lanes.ts` (437) — The fortress's roads (round 128k; API: `LaneGrid`, `LaneKind`, `LaneSeg`, `LaneOpts` +12.
+- `life.ts` (1485) — The fortress's people (fortress slice 1; API: `LOAD`, `R4`, `FortressLifeIO`, `FortressLife`.
 - `pick.ts` (59) — Which block face a tap lands on (round 128d, the user: "Fix the clicking on the side to build next to it. API: `PickCells`, `FaceHit`, `pickFace`, `placeFor`.
-- `pieces.ts` (853) — The fortress drawn (fortress slice 1, milestone 1): its plan made into the towns' pieces — the structures … API: `LOOK_GHOST`, `PIECE_PICKED`, `PIECE_WARN`, `PieceInputs` +6.
-- `plan.ts` (294) — The fortress's plan (fortress slice 1, milestone 1): what the player painted, cell by cell, each cell … API: `typeIndex`, `wallTileOf`, `towered`, `FortressPlan`.
+- `pieces.ts` (856) — The fortress drawn (fortress slice 1, milestone 1): its plan made into the towns' pieces — the structures … API: `LOOK_GHOST`, `PIECE_PICKED`, `PIECE_WARN`, `PieceInputs` +6.
+- `pit.ts` (209) — A quarry's pit as tiers and ramps down its footprint (round 128m, `quarry`, BACKLOG V128-11): the player … API: `PIT_SHELF`, `PIT_RAMP`, `PitTopo`, `PitGeo` +9.
+- `plan.ts` (337) — The fortress's plan (fortress slice 1, milestone 1): what the player painted, cell by cell, each cell … API: `typeIndex`, `wallTileOf`, `towered`, `FortressPlan`.
+- `quarry.ts` (305) — The miners grow a quarry's pit down, tier by tier (round 128m, `quarry`, BACKLOG V128-11; API: `QuarryIO`, `QuarryDig`.
 - `reach.ts` (222) — The fortress's reach: what a check asks and answers (the GPU's — reachgpu.ts, shaders/fortreach.wgsl — in … API: `AGENT_H`, `STEP`, `DROP`, `DEEP` +10.
 - `reachgpu.ts` (238) — The fortress's reach on the GPU (round 128l, m4; API: `FortressReachGpu`.
 - `recipes.ts` (154) — The fortress's recipes (round 128l, m4: fortress slice 1, milestone 4 — "the blacksmith makes weapons from … API: `Recipe`, `RECIPES`, `recipeTakes`, `TrainRoom` +2.
@@ -308,8 +310,8 @@ WebGPU plumbing: device, pipelines and bind-group layouts, CPU timing stats.
 
 ## src/lab/
 
-- `lab.ts` (470) — (round 128l, tooling) The behaviour lab: ?level=lab&lab=<recipe> — the game with less world, for scripted … API: `LabSceneIO`, `LabPlan`, `LabSnapshot`, `LAB_SIMS` +2.
-- `recipes.ts` (164) — (round 128l, tooling) The behaviour lab's land (?level=lab&lab=<recipe>): a few small deterministic … API: `LabTownSpec`, `LabRecipe`, `LAB_DIMS`, `LAB_MID` +3.
+- `lab.ts` (477) — (round 128l, tooling) The behaviour lab: ?level=lab&lab=<recipe> — the game with less world, for scripted … API: `LabSceneIO`, `LabPlan`, `LabSnapshot`, `LAB_SIMS` +2.
+- `recipes.ts` (173) — (round 128l, tooling) The behaviour lab's land (?level=lab&lab=<recipe>): a few small deterministic … API: `LabTownSpec`, `LabRecipe`, `LAB_DIMS`, `LAB_MID` +3.
 - `town.ts` (44) — (round 128l, tooling) The behaviour lab's town: what the fortress starts from (fortress/host.ts … API: `LabTown`, `stillWindow`.
 - `view.ts` (44) — (round 128l, tooling) The lab's pieces host: draws the fortress's pieces (fortress/host.ts … API: `LabPiecesView`.
 
@@ -537,14 +539,14 @@ Scenes and the live world: WorldCore (one live world), the level and the menu, t
 
 - `atlas-view.ts` (360) — The atlas viewer (round 67): `?atlas=view` (and `?a.<param>=` for the atlas's parameters). API: `AtlasView`.
 - `hybrid.ts` (361) — The hybrid renderer's choice (?hybrid=1, the atlas level): which of the window's mesh chunks are voxels — … API: `HybridStats`, `HybridChunks`.
-- `level.ts` (668) — The playable valley: world + diegetic powers + HUD + level goal. API: `LevelOptions`, `worldSaveOf`, `LevelScene`.
+- `level.ts` (672) — The playable valley: world + diegetic powers + HUD + level goal. API: `LevelOptions`, `worldSaveOf`, `LevelScene`.
 - `menu.ts` (354) — Main menu (design doc §4): a small live diorama — a skull in barren soil — whose state reflects persistent … API: `MenuScene`.
 - `planner.ts` (123) — Round 113 (`tilesfirst`, the streaming design's step 4 — https://claude.ai/artifact/UnqDENhSKGH1abe7pxWiNh; API: `PlanSource`, `Plan`, `StreamPlanner`.
 - `pool-victim.ts` (38) — (merge122) The region pool's eviction choice, out of the Streamer so it is tested on its own … API: `VictimQuery`, `poolVictim`.
 - `range.ts` (63) — (round 90, the user on the phone: "can we increase the range of tiles that load" … "have a setting for how … API: `RANGES`, `PHONE_RANGE`, `DESKTOP_RANGE`, `atlasRange` +3.
 - `region-copy.ts` (181) — Round 104 (`slidehitch`): rectangles of u32 words moved between buffers by a compute kernel, one dispatch … API: `Rect`, `RegionCopier`.
 - `region-pool.ts` (67) — The GPU region pool (round 100, `regionstore`; API: `PoolSlot`, `RegionPool`.
-- `streamer.ts` (763) — The streamed world (round 66, BACKLOG Q28): the live world is a window of W × H columns onto land without … API: `settleLoose`, `Streamer`, `REGION`, `STREAM_OLD` +14.
+- `streamer.ts` (770) — The streamed world (round 66, BACKLOG Q28): the live world is a window of W × H columns onto land without … API: `settleLoose`, `Streamer`, `REGION`, `STREAM_OLD` +14.
 - `world-core.ts` (635) — Everything a live world needs, independent of what the scene does with it: GPU state, simulation, … API: `Quality`, `Host`, `Scene`, `WorldCore`.
 
 ## src/scenes/level/
@@ -556,14 +558,14 @@ LevelScene's internals, split out of scenes/level.ts: free functions over the sc
 - `attach.ts` (93) — LevelScene.attach: wires a made level to the page once — the HUD and powers, the sandbox's tools, the … API: `attach`.
 - `camera-moves.ts` (173) — Scripted and keyed camera motion: the drive and pan benches (?drive, ?pan), the free flyer's keys, and the … API: `driveOn`, `panOn`, `flyKeys`, `turnControls` +2.
 - `flags.ts` (36) — The level's URL flags and constants (read once at load): test and comparison switches (?cutaway, ?planner, … API: `NON_METAL`, `CUTAWAY`, `PLANNER_OFF`, `COARSE_PARTS` +10.
-- `fortress.ts` (355) — Fortress mode on the level: making the fortress, its life, claims and bar for a town, Skip to done, taps … API: `startFortress`, `skipFrame`, `fortressAt`, `personAt` +3.
-- `frame.ts` (580) — The level's frame: camera input, the planner and the window's slide, the world's systems, the sim's ticks, … API: `levelFrame`, `planFrame`, `readSettling`, `lifeFrame` +2.
+- `fortress.ts` (434) — Fortress mode on the level: making the fortress, its life, claims and bar for a town, Skip to done, taps … API: `startFortress`, `pitView`, `skipFrame`, `fortressAt` +4.
+- `frame.ts` (581) — The level's frame: camera input, the planner and the window's slide, the world's systems, the sim's ticks, … API: `levelFrame`, `planFrame`, `readSettling`, `lifeFrame` +2.
 - `impacts.ts` (298) — The sandbox's world-changing tools: meteors and their impacts, volcano vents, dropped bodies, the heat … API: `meteorAtPick`, `stepMeteors`, `impact`, `bowlVolume` +7.
 - `input-wiring.ts` (209) — The level's pointer and key input: Controls' taps, drags, pinches and wheel routed to the powers, the … API: `wireInput`.
 - `labs.ts` (206) — The test beds on the level: the tuning panel, bug report and stations bar (level.lab, ?tunepanel=1), the … API: `mountLab`, `mountNoiseLab`, `labStationKit`, `traitStationDriver` +1.
 - `runs.ts` (253) — Starting the game layers a URL asks for on the level: the play sandbox (?play), a situation or planned run … API: `startPlay`, `playRaise`, `startSituationRun`, `useRiverWorld` +3.
 - `sandbox-tools.ts` (230) — The sandbox editor's brush tools: layer edits and pours, the break tool, the brush ring, undo, and the … API: `editTool`, `pickSmash`, `smashAt`, `drawRing` +4.
-- `stream-setup.ts` (369) — The level's world over time, set up once at attach: sleep for a fixed map's held rivers, and for a … API: `attachStream`.
+- `stream-setup.ts` (371) — The level's world over time, set up once at attach: sleep for a fixed map's held rivers, and for a … API: `attachStream`.
 - `test-api.ts` (223) — window.reclaimed: the test and console API over the live level (scripts/*.mjs drive the game through it). API: `testApi`, `exposeTestApi`.
 - `town-tools.ts` (149) — The sandbox's town tool: picking blocks of the editor's town, the plan outline, placing rectangles, and … API: `editorTown`, `townPick`, `townAtPick`, `sendBuilders` +3.
 - `valley.ts` (264) — The story valley's rules and feel: the green's reach, the opening and the intro, the goal's completion, … API: `refreshReach`, `confineToReach`, `openValley`, `runIntro` +3.
@@ -577,9 +579,9 @@ The Streamer's internals, split out of scenes/streamer.ts: free functions over t
 - `generate.ts` (334) — New land: a region generated (on the GPU or the CPU), cut to the window's depth, brought up to date with … API: `generate`, `generateGpu`, `genHash`, `compareGen` +5.
 - `jobs.ts` (147) — The regions' jobs and the pool: a slot for each region made ahead or thawed, evicting what's not needed, … API: `slotFor`, `evict`, `slotHeld`, `ready` +4.
 - `regions.ts` (122) — Region geometry in the window's ring: a region's slots, its columns' and textures' rectangles, which … API: `regionSlots`, `regionIdx`, `regionOutside`, `regionOf` +8.
-- `slide.ts` (303) — The slide: following the camera (update, track), waiting for the regions coming in, and the slide itself — … API: `update`, `slideWhenReady`, `track`, `doneAfter` +1.
+- `slide.ts` (307) — The slide: following the camera (update, track), waiting for the regions coming in, and the slide itself — … API: `update`, `slideWhenReady`, `track`, `doneAfter` +1.
 - `store.ts` (315) — Keeping regions: what's saved to the region store (hashed against the generator's, so unchanged land isn't … API: `saveItem`, `fillAt`, `flushFills`, `check` +8.
-- `warp.ts` (168) — Jumps: the window moved far at once (warp: everything re-made where it lands) and up or down (slideZNow, … API: `warp`, `slideZNow`.
+- `warp.ts` (169) — Jumps: the window moved far at once (warp: everything re-made where it lands) and up or down (slideZNow, … API: `warp`, `slideZNow`.
 - `write.ts` (245) — Writing a region into the window: its columns into the chunk pages, its fields and textures, its relief; API: `write`, `writeNow`, `blankBuf`, `zeros` +4.
 
 ## src/settle/
@@ -856,7 +858,7 @@ CPU world data: map generation, the column layout (chunks, intervals), materials
 - `kit.ts` (544) — The level kit (docs/LEVELS.md): a level is a short script against this builder instead of hundreds of … API: `P`, `Sdf`, `disc`, `ring` +12.
 - `landforms.ts` (685) — The wilds (round 64, docs/DECISIONS.md): natural land, generated from a room plan (places.ts; API: `Landform`, `LandformsOpts`, `generateLandforms`.
 - `lattice.ts` (56) — The hex lattice of the nature grid (docs/GRIDS.md), mirrored from common.wgsl: pointy-top hexes, centre to … API: `ROW_H`, `NDIR`, `DIRS_BYTES`, `DIRV` +5.
-- `layout.ts` (308) — Canonical world representation (design doc §12) — the data contract every system reads/writes. API: `CHUNK`, `MAX_K`, `MIN_K`, `K_HEADROOM` +25.
+- `layout.ts` (336) — Canonical world representation (design doc §12) — the data contract every system reads/writes. API: `CHUNK`, `MAX_K`, `MIN_K`, `K_HEADROOM` +26.
 - `loose.ts` (47) — Loose ground lives in the layers (round 22, branch strata): the soft ground a map lays (soil, sand, ash, … API: `looseIntoGrid`.
 - `mapfile.ts` (177) — Saved maps (BACKLOG F6/E8): a sandbox world captured from the GPU, written as one gzip-compressed binary — … API: `unpackColumns`, `encodeMap`, `decodeMap`, `savedMaps`.
 - `mapgen.ts` (712) — Procedural first-prototype map (design doc §26): sloped valley, a dammed reservoir (future leverage), a … API: `MapData`, `generateMap`, `buildRuin`, `buildTank` +1.

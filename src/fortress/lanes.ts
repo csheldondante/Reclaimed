@@ -131,6 +131,8 @@ export function lanesOf(
   opts: Partial<LaneOpts> = {},
   blocked: (c: number) => boolean = () => false,
   roots: readonly V2[] = [],
+  /** (round 128m, quarry) where a yard's road comes in: a cell's side (a quarry's pit: its ramp's top) — none: its first cell's corners */
+  entries: (structure: number) => { cell: number; side: number } | null = () => null,
 ): Lanes {
   const o: LaneOpts = { ...LANE_DEFAULTS, ...opts };
   const n = g.count;
@@ -271,6 +273,15 @@ export function lanesOf(
   const withDoor = new Set(ways.doors.map((d) => d.structure));
   for (const st of plan.structures()) {
     if (withDoor.has(st.id) || DEFS[st.type].form !== 'yard') continue;
+    // (round 128m: a quarry's pit at its ramp's top — the miners haul up the ramps onto the roads there)
+    const en = entries(st.id);
+    if (en) {
+      const ends = [Q(en.cell * 4 + en.side), Q(en.cell * 4 + ((en.side + 1) & 3))].filter((v) => !wallVert[v]);
+      if (ends.length) {
+        doorEnds.push({ d: { structure: st.id }, ends });
+        continue;
+      }
+    }
     const c = [...st.cells.keys()].sort((a, b) => a - b)[0];
     if (c !== undefined) doorEnds.push({ d: { structure: st.id }, ends: corners(c) });
   }

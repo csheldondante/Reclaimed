@@ -107,12 +107,21 @@ export const ECON = {
   reachPerBlock: 6,
   /** a farmer's seconds reaping a load */
   reapSec: 4,
-  /** a miner's dig: every this many seconds, this much ground (cells cubed), within this of the spot */
-  digSec: 4,
-  dig: 0.35,
-  digR: 2.2,
-  /** the deepest a quarry's pit is dug below the ground it had (world units) */
-  pitMax: 6,
+  /**
+   * a miner's dig (round 128m, quarry: was 0.35 cells cubed every 4 s, the pit a bowl 6 m deep at most): every this
+   * many seconds, this deep (m) off the tops of this many of the pit's columns in the cell they work
+   */
+  digSec: 0.5,
+  dig: 1,
+  digCols: 6,
+  /**
+   * (round 128m, V128-11: replaces pitMax) a quarry's pit goes down a tier (a level, LEVEL_H) a ring of its footprint,
+   * each tier reached by a ramp along this many cells of the ring above it: the depth is the tiers whose ramps fit
+   * (fortress/pit.ts)
+   */
+  pitRampCells: 2,
+  /** (round 128m) the miners cut a tier down this many metres at a time, every column of it, so its ramp stays walkable */
+  pitStep: 1,
   /** (round 128l, m4) the carts: the town's at the start, and one more a warehouse block built, up to cartsMax */
   carts: 2,
   cartsMax: 3,

@@ -27,6 +27,7 @@ columns. Recipes (src/lab/recipes.ts):
 | `flat` | a dry plain; a wood to the north-east |
 | `hill` | the plain with a broad hill east of the heap (about 1 in 5 on its flanks: stepped lanes) |
 | `valley` | two slopes down to a river east of the town, a lake at its foot |
+| `plateau` | (round 128m) a dry plain 44 m up the window (the others lie at 10): room under it for a quarry's pit (scripts/lab/quarry.mjs, quarrygif.mjs; scripts/lab-gif.mjs joins a scenario's shots into a GIF) |
 | `walled` | the flat plain with a small walled town already standing round the heap, its gate east (the atlas's starting town, small) |
 
 A recipe is a few lines: the ground's height as a function, water, springs and woods, the heap (the stores until a

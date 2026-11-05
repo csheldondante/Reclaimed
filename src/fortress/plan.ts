@@ -3,7 +3,8 @@
 // joined by one cell become one). Pure: no GPU, no DOM — the view (fortress.ts) makes Town blocks of it.
 import { STRUCTURE_TYPES, type FortressPlanApi, type Goods, type PerBlock, type PlanGrid, type PlanTotals, type Structure, type StructureDef, type StructureType, type WallTile } from '../api/contracts/fortress';
 import { CellRuns } from '../build/runs';
-import { DEFS, POWER_RISE } from './defs';
+import { DEFS, ECON, POWER_RISE } from './defs';
+import { layPit, pitOf, type Pit } from './pit';
 
 /** a type's index in a run (build/runs.ts Run.type) */
 export const typeIndex = (t: StructureType): number => STRUCTURE_TYPES.indexOf(t);
@@ -54,6 +55,15 @@ export class FortressPlan implements FortressPlanApi {
    * end meets, -1 none — earthworks, solid at once (solid.ts rampSpans), drawn as the wall stairs' steps
    */
   readonly ramp: Int8Array;
+  /**
+   * (round 128m, quarry; V128-11) per cell the quarries' pits as negative levels (pit.ts: -1 the first tier down; a
+   * ramp cell one level more, its run's type PIT_RAMP), owned by the quarry's id — laid again whenever a quarry's
+   * footprint changes. Apart from `levels` so nothing that reads the blocks meets them.
+   */
+  readonly pit: CellRuns;
+  /** (round 128m) where a pit's ramp should start: lower first (Fortress: the ring-0 cells nearest the stores) */
+  pitPrefer: ((cell: number) => number) | null = null;
+  private pits = new Map<number, Pit>();
   private byId = new Map<number, Structure>();
   private nextId = 1;
   /** the cells whose look may have changed since the last `takeChanged` (painted, erased, their neighbours) */
@@ -66,8 +76,34 @@ export class FortressPlan implements FortressPlanApi {
     this.tower = new Uint8Array(grid.count);
     this.passage = new Uint8Array(grid.count);
     this.ramp = new Int8Array(grid.count).fill(-1);
+    this.pit = new CellRuns(grid.count);
   }
 
+  /** (round 128m) a quarry's pit as laid (null: not a quarry, or none yet) */
+  pitOf(id: number): Pit | null {
+    return this.pits.get(id) ?? null;
+  }
+
+  /**
+   * (round 128m) Lay a quarry's pit again from its footprint (pit.ts: the tiers whose ramps fit); the cells whose pit
+   * changed are marked changed. A structure gone (or not a quarry): its pit is taken out.
+   */
+  layPitOf(id: number): void {
+    const was = this.pits.get(id);
+    const cells = new Set<number>();
+    if (was) for (const c of was.ring.keys()) cells.add(c);
+    for (const c of cells) this.pit.clearCell(c);
+    this.pits.delete(id);
+    const s = this.byId.get(id);
+    if (s && s.type === 'quarry') {
+      const prefer = this.pitPrefer ?? undefined;
+      const p = pitOf(this.grid, s.cells.keys(), { rampCells: ECON.pitRampCells, prefer });
+      this.pits.set(id, p);
+      layPit(this.pit, p, id);
+      for (const c of p.ring.keys()) cells.add(c);
+    }
+    for (const c of cells) this.changed.add(c);
+  }
   typeAt(cell: number): StructureType | null {
     const id = cell >= 0 ? this.owner[cell] : -1;
     return id >= 0 ? this.byId.get(id)!.type : null;
@@ -145,6 +181,11 @@ export class FortressPlan implements FortressPlanApi {
     this.levels.set(cell, level, this.owner[cell], typeIndex(type));
     this.byId.get(this.owner[cell])!.cells.set(cell, this.levels.runsOf(cell));
     this.touch(cell);
+    // (round 128m: a quarry's footprint changed — its pit laid again; one folded into it has gone)
+    if (type === 'quarry') {
+      for (const id of [...this.pits.keys()]) if (!this.byId.has(id)) this.layPitOf(id);
+      this.layPitOf(this.owner[cell]);
+    }
     return true;
   }
 
@@ -152,6 +193,7 @@ export class FortressPlan implements FortressPlanApi {
     if (!this.has(cell, level)) return false;
     const s = this.byId.get(this.owner[cell])!;
     this.levels.clear(cell, level);
+    const quarry = s.type === 'quarry';
     if (this.levels.any(cell)) s.cells.set(cell, this.levels.runsOf(cell));
     else {
       s.cells.delete(cell);
@@ -167,6 +209,7 @@ export class FortressPlan implements FortressPlanApi {
       if (n >= 0 && this.gate[n] && this.wallTile(n, 0) !== 'straight') this.gate[n] = 0;
     }
     this.touch(cell);
+    if (quarry) this.layPitOf(s.id);
     return true;
   }
 

@@ -22,6 +22,8 @@ import { FortressFollow, personCard } from '../../fortress/follow';
 import { StaticClaims } from '../../sim/static-claims';
 import type { StructurePieces } from '../../api/contracts/structures';
 import { SKIP_SPEED, SKIP_GRACE } from './flags';
+import { Dither } from '../../api/cutaway';
+import { LEVEL_H } from '../../build/town';
 import type { LevelScene } from '../level';
 
 /**
@@ -109,6 +111,8 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
   });
   scene.fortressReadCols = () => fort.requestReach(true);
   S.onSlide.push(() => fort.slid());
+  // (round 128m, quarry) a slide in z (a deep pit looked into): the heights the fortress keeps in window z follow
+  S.onSlide.push((_dx, _dy, dz) => fort.slidZ(dz));
   S.onWarp.push(() => fort.slid());
   S.onSlide.push(() => fort.requestReach(true));
   S.onWarp.push(() => fort.requestReach(true));
@@ -151,7 +155,16 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
           fell: (at) => scene.worldApi!.plants!.fell(at[0], at[1]).then((t) => t?.logs ?? 0),
           dig: (at, n) => scene.worldApi!.terrain!.take(at[0], at[1], n).then((g) => g.amount),
           ground: (x, y) => scene.heightAt(x, y),
+          // (round 128m, quarry: the layers' top, loose ground on it too — the surface buffer's z is the solid's: a pit
+          // measured by it read a soil-covered column as not dug while its soil was taken)
+          top: (x, y) => (scene.worldApi!.fresh ? scene.worldApi!.terrain!.heightAt(x, y) : null),
           speed: () => scene.speed,
+          groundRead: () => scene.worldApi!.readAt,
+          // (round 128m, quarry) a pit's tier dug: its ground woken (slumping) and its walls judged (the stability check)
+          settle: (x, y, r) => {
+            core.sleep?.wake(x, y, r, 8, performance.now() / 1000);
+            scene.integrity?.markDirty(x, y, r);
+          },
         },
         ECON.startPeople,
       );
@@ -214,6 +227,70 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
   // time stops while planning (the speed-0 path: the sim, the units, the settlements and the day all wait)
   // (?fpause=0: time runs while planning — to compare)
   if (scene.host.params.get('fpause') !== '0') scene.speed = 0;
+}
+
+/**
+ * (round 128m, quarry; V128-11) Seeing into a pit, each frame — opt-in (?pitcut=1): from the isometric view the near
+ * walls hide a strip of the floor (the view comes down at 30 degrees; the pit's sides step in a tier, 4 m, a cell,
+ * ~5.5 m: ~34 degrees, a little steeper), and the shots read better without the cut. While the camera looks at a pit (its target over the footprint), its floor is kept seen
+ * (api/cutaway.ts Dither, the cutaway's own mechanism): what stands in front of the floor's middle toward the eye, in
+ * the pit's box, is dithered out round it, the hole as wide as the pit, opening and closing as an iris — only while
+ * the floor is hidden. Nothing else is cut (the box: the pit's footprint, from its floor to over its rim).
+ */
+export function pitView(scene: LevelScene, dt: number): void {
+  const fort = scene.fortress;
+  const life = scene.fortressLife;
+  const cam = scene.core.camera;
+  // (off unless ?pitcut=1 or scene.pitCut: judged in shots, round 128m — the pit's sides step in at ~34 degrees, the view
+  // comes down at 30, so the near walls hide only a strip of the floor (a quarter of the depth wide) and the floor reads
+  // without the cut; the cut showed the solid under the near rim as a flat grey section that read as a second floor)
+  scene.pitCut ??= scene.host.params.get('pitcut') === '1';
+  if (!fort || !life || cam.fly || !scene.pitCut) {
+    if (scene.fortressPitCut && !cam.fly) {
+      scene.fortressPitCut.forget('pit');
+      scene.fortressPitCut.unsurface('pit');
+      scene.fortressPitCut.update(dt);
+    }
+    return;
+  }
+  const [tx, ty] = cam.target;
+  let best: { x: number; y: number; z: number; r: number; lo: [number, number, number]; hi: [number, number, number] } | null = null;
+  for (const s of fort.plan.structures()) {
+    if (s.type !== 'quarry') continue;
+    const st = life.quarry.stateOf(s.id);
+    const pit = fort.plan.pitOf(s.id);
+    if (!st || !pit) continue;
+    // (how deep it's dug: the tiers done and the cut into the next; a tier or less shows its floor anyway)
+    const down = Math.min(pit.tiers, st.tier - 1) * LEVEL_H + (st.tier <= pit.tiers ? st.cut : 0);
+    if (down < LEVEL_H * 1.5) continue;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const c of pit.ring.keys())
+      for (let k = 0; k < 4; k++) {
+        const [x, y] = fort.toWindow(...fort.grid.corner(c, k));
+        x0 = Math.min(x0, x);
+        y0 = Math.min(y0, y);
+        x1 = Math.max(x1, x);
+        y1 = Math.max(y1, y);
+      }
+    const cx = (x0 + x1) / 2;
+    const cy = (y0 + y1) / 2;
+    const r = Math.hypot(x1 - x0, y1 - y0) / 2;
+    if (Math.hypot(tx - cx, ty - cy) > r) continue;
+    const rim = st.ref - fort.zShift;
+    const floor = rim - down;
+    // (the box's top just under the rim: its walls are cut, never the ground round it — the box is square, the pit
+    // round, and the rim's ground in the box's corners showed its cut faces; render.wgsl pads a box by 0.5)
+    best = { x: cx, y: cy, z: floor, r: r * 0.9, lo: [x0 - 1, y0 - 1, floor - 1], hi: [x1 + 1, y1 + 1, rim - 0.8] };
+  }
+  const d = (scene.fortressPitCut ??= new Dither((scene.worldApi ??= attachSim(scene.core)).terrain!, cam));
+  if (best) {
+    d.see('pit', best.x, best.y, best.z, best.r);
+    d.surface('pit', best.lo, best.hi);
+  } else {
+    d.forget('pit');
+    d.unsurface('pit');
+  }
+  d.update(dt);
 }
 
 /**
@@ -350,6 +427,7 @@ export function startLab(scene: LevelScene): void {
       const [x1, y1] = cellPos(w, h);
       core.renderer.fieldMesh.urgent(0, 0, x1, y1);
       void core.readBuffer('surface', true).then((f) => (scene.surfaceCache = new Uint32Array(f.buffer)), ignoreTeardown);
+      return scene.worldApi?.refresh();
     },
   });
 }
