@@ -17423,6 +17423,45 @@ fortressoutside ok; the tilegate goldens (`&zoomfloor=0`, baselines of 64217ba):
 desktop, phone and run view but desktop z1.3 (4.5%: tiles arriving at the screen's edges, unfloored, as before) and
 w384 (2-3%, its baselines written by an earlier gate run, not a clean base).
 
+## 2026-11-04 — the monolith split, 4: render/renderer.ts into render/renderer/ (no behaviour change)
+
+**Why.** As the others: renderer.ts was 2133 lines (117 KB). Now the Renderer class (953 lines: fields, the
+constructor, the public API) and 7 modules of 73 to 370 lines in render/renderer/: encode (a frame's draw and the
+ceiling view's, instance growth), mesh-draws (the field mesh's pipelines), gbuffer-shadow, terrain-cache, grid,
+features (band, rock mesh, structures) and defs.
+**How.** Methods moved as before (`this` -> `rd`); public ones that moved (encode, encodeCeiling, windowMoved,
+windowDrawn, enableBand, enableRockMesh, enableStructures) stay as delegates. The constructor was 600 lines: its
+`if (this.fieldMesh.on) { … }` block (250 lines) moved verbatim to `buildMeshDraws(rd, ctx)`, the constructor's locals
+it reads (layouts, the draw module, depthStencil, groupFor, miVertex …) passed in `ctx` — the same values, made once,
+in the same order. The rest of the constructor shares its locals across every pass and stays (BACKLOG MS-4).
+**Gates** (against bd626f4): typecheck; GPU 26 files pass; unit 658 of 661 with the machine loaded (other agents'
+browsers: three timing-bound tests, writing, reach and partition, over their time limits) and those three pass alone,
+here and on 64217ba; hallcheck 0 lost at town 1 and at s26, each run alone (the two in one run now time out opening
+the second page in this worktree's Chrome, on bd626f4 too); the lab's example and fortressoutside ok; the tilegate
+goldens (`&zoomfloor=0`, baselines of 64217ba): 0-0.14% of pixels changed at every desktop, phone and run-desktop view
+but desktop z1.3 (2.6%, tiles arriving at the edges as before); its run-phone page timed out opening, as on 64217ba.
+
+## 2026-11-04 — the monolith split, 5: perf/bench.ts into perf/bench/ (no behaviour change)
+
+**Why.** bench.ts was 3147 lines (165 KB): a Bench class of 1590 lines and 1360 lines of free functions. Now bench.ts
+(617 lines) keeps the run's flow and the class's fields and constructor, and perf/bench/ holds 12 modules of 54 to 450
+lines: the class's work (pages: main, pans, hero, pan, win; pace: frames captured and summarised; ab: toggles and the
+view; sweeps; regions: generation and the store timed) and the top-level functions by concern (defs, timestamps,
+pan-report, state, page, device, report).
+**How.** The class's methods moved as before (`this` -> `bn`; the page methods bench.ts calls stay as delegates); the
+top-level functions moved in whole line ranges (exported where they weren't, re-exported where main.ts imports them).
+What stays in bench.ts is what assigns module state other modules read — the heartbeat (`beat`, `beatWhat`, `frame`),
+`pageDevice`, `leaving` and `go`: an ES import can't be assigned, and moving them would mean an object or setters, a
+logic change.
+**Gates** (against f678055): typecheck; unit 660 of 661 (the partition timing test over its limit under load; it
+passes alone); GPU 24 files pass, jb6 and rockmesh-room time out in their device hook — on 64217ba too, now (the
+machine shared with other agents' browsers); hallcheck 0 lost at town 1 and s26; the lab's example and
+fortressoutside ok; tilegate goldens 0-0.3% of pixels (desktop z1.3 1.2%, w384 2-3% against its written baseline).
+The bench itself: `scripts/benchrun.mjs --smoke` on a dev server, before (64217ba) and after: the same report
+sections; one after-run hit `physBodyStatsRead used in submit while mapped` in win256's one-pass physics (the bench's
+systemGpu submitting while the physics' readback is mapped), the second after-run none — a race in the bench's
+timing, not the move (BACKLOG MS-9).
+
 ## 2026-11-04 — round 128m (`quarry`): deep quarries — the miners grow the pit tier by tier (V128-11)
 
 **Why.** The user (128e/128f): "How deep can the pit grow? ... 50M-300M deep pits with ramps"; "make the quary area at

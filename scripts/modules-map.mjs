@@ -15,6 +15,7 @@ const SPLIT = [
   ['scenes/streamer.ts', 'scenes/streamer', 'Streamer: `slide.ts` (follow the camera, the slide), `freeze.ts`, `generate.ts`, `write.ts`, `store.ts`, `jobs.ts`, `warp.ts`, `regions.ts`; `defs.ts` its flags, records and public types.'],
   ['game/integrity.ts', 'game/integrity', 'Integrity: `tick.ts` (update and the analysis pass), `rigid.ts`, `metal.ts`, `resting.ts`, `columns.ts`, `loose.ts`, `lattice.ts`, `window.ts`; `defs.ts`.'],
   ['render/renderer.ts', 'render/renderer', 'Renderer: `encode.ts` (a frame\'s draw), `mesh-draws.ts` (the field mesh\'s pipelines, made by the constructor), `gbuffer-shadow.ts`, `terrain-cache.ts`, `grid.ts`, `features.ts`; `defs.ts`.'],
+  ['perf/bench.ts', 'perf/bench', 'The bench (?bench=1): bench.ts keeps the flow of a run, the heartbeat and the state of the Bench class; `pages.ts`, `pace.ts`, `ab.ts`, `sweeps.ts`, `regions.ts` its work; `defs`, `timestamps`, `pan-report`, `state`, `page`, `device`, `report` the free functions.'],
 ];
 
 /** a line or two for a folder, ahead of its files */
@@ -29,6 +30,7 @@ const NOTES = {
   'game/integrity': 'Integrity\'s internals, split out of game/integrity.ts: free functions over the Integrity instance (`ig`). Only integrity.ts and these modules call them.',
   gpu: 'WebGPU plumbing: device, pipelines and bind-group layouts, CPU timing stats.',
   physics: 'The physics voxels (one GPU solver), wake, shapes and meshes.',
+  'perf/bench': 'The parts of the bench, split out of perf/bench.ts: the methods of the Bench class as functions over it (`bn`) and its top-level helpers by concern.',
   render: 'Drawing: the camera, the renderer (render-prep, the draw passes, shadows), the field mesh, tiles, the turn and the pick.',
   'render/renderer': 'The Renderer\'s internals, split out of render/renderer.ts: free functions over the renderer (`rd`). The constructor still builds most pipelines; `mesh-draws.ts` builds the field mesh\'s.',
   scenes: 'Scenes and the live world: WorldCore (one live world), the level and the menu, the streamer (the sliding window), the planner, the region pool and copier.',

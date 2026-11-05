@@ -618,7 +618,7 @@ layer, blended with the one below when thin), so the look still comes from
 the intervals; plants, stains and wetness are blended over the three
 nearest cells; rock gets facets and rubble, trash and ruins chips (the
 detail layer).
-The mesh's look is shaded deferred (perfopt; renderer.ts `encodeGBuffer`,
+The mesh's look is shaded deferred (perfopt; render/renderer/gbuffer-shadow.ts `encodeGBuffer`,
 meshdraw.wgsl `gPack`, `fsMeshResolve`; `?defer=0` the forward draw): a
 `gbuffer` pass draws the mesh (window and band) into two uint targets —
 the point (xyz bits) and its octahedral normal with the source bit (1 the
@@ -3633,6 +3633,16 @@ module is docs/MODULES.md.
   grabAt, pull, bakeResting ...); tick.ts (update and the analysis pass), rigid.ts, metal.ts, resting.ts, columns.ts,
   loose.ts, lattice.ts, window.ts; defs.ts its flags, budgets and helpers (Grab and GROUND_DUST re-exported). In this
   doc `Integrity.x` names `x(ig, …)` in the folder when x is not on the class.
+- `render/renderer.ts` + `render/renderer/` — Renderer: the class keeps its fields, the constructor (most pipelines,
+  built with shared locals) and the public API (encode, encodeCeiling, pick, resize, add/remove sources, setTile*,
+  windowMoved, windowDrawn, enable*); encode.ts (a frame's draw), mesh-draws.ts (the field mesh's pipelines: the
+  constructor's `if (this.fieldMesh.on)` block, its shared locals passed in), gbuffer-shadow.ts, terrain-cache.ts,
+  grid.ts, features.ts; defs.ts (PickHit, RenderOptions, SKIP re-exported). In this doc `Renderer.x` names `x(rd, …)`
+  in the folder when x is not on the class.
+- `perf/bench.ts` + `perf/bench/` — the bench (`?bench=1`): bench.ts keeps the run's flow (start, finish, the level
+  page, waiting), the page heartbeat and what writes it, and the Bench class (fields, constructor, the page methods as
+  delegates); pages.ts, pace.ts, ab.ts, sweeps.ts, regions.ts hold the class's work; defs, timestamps, pan-report,
+  state, page, device and report the free functions it had at the top (main.ts's imports re-exported by bench.ts).
 
 
 ## The behaviour lab (round 128l, `tooling`; docs/TOOLING.md)

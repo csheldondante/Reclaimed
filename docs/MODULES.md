@@ -11,6 +11,8 @@ called only by the class file and the folder. From outside, use the class.
 - `scenes/level.ts` + `scenes/level/` — LevelScene: `attach.ts` wires a level once (attach-tools, input-wiring, test-api, stream-setup); `frame.ts` is a frame of play; the tools, runs, fortress, valley, atlas controls, camera moves and labs beside them.
 - `scenes/streamer.ts` + `scenes/streamer/` — Streamer: `slide.ts` (follow the camera, the slide), `freeze.ts`, `generate.ts`, `write.ts`, `store.ts`, `jobs.ts`, `warp.ts`, `regions.ts`; `defs.ts` its flags, records and public types.
 - `game/integrity.ts` + `game/integrity/` — Integrity: `tick.ts` (update and the analysis pass), `rigid.ts`, `metal.ts`, `resting.ts`, `columns.ts`, `loose.ts`, `lattice.ts`, `window.ts`; `defs.ts`.
+- `render/renderer.ts` + `render/renderer/` — Renderer: `encode.ts` (a frame's draw), `mesh-draws.ts` (the field mesh's pipelines, made by the constructor), `gbuffer-shadow.ts`, `terrain-cache.ts`, `grid.ts`, `features.ts`; `defs.ts`.
+- `perf/bench.ts` + `perf/bench/` — The bench (?bench=1): bench.ts keeps the flow of a run, the heartbeat and the state of the Bench class; `pages.ts`, `pace.ts`, `ab.ts`, `sweeps.ts`, `regions.ts` its work; `defs`, `timestamps`, `pan-report`, `state`, `page`, `device`, `report` the free functions.
 
 ## src/
 
@@ -182,7 +184,7 @@ Fortress mode: the fortress, its economy, pieces, claims, life (workers) and its
 - `pieces.ts` (856) — The fortress drawn (fortress slice 1, milestone 1): its plan made into the towns' pieces — the structures … API: `LOOK_GHOST`, `PIECE_PICKED`, `PIECE_WARN`, `PieceInputs` +6.
 - `pit.ts` (209) — A quarry's pit as tiers and ramps down its footprint (round 128m, `quarry`, BACKLOG V128-11): the player … API: `PIT_SHELF`, `PIT_RAMP`, `PitTopo`, `PitGeo` +9.
 - `plan.ts` (337) — The fortress's plan (fortress slice 1, milestone 1): what the player painted, cell by cell, each cell … API: `typeIndex`, `wallTileOf`, `towered`, `FortressPlan`.
-- `quarry.ts` (297) — The miners grow a quarry's pit down, tier by tier (round 128m, `quarry`, BACKLOG V128-11; API: `QuarryIO`, `QuarryDig`.
+- `quarry.ts` (304) — The miners grow a quarry's pit down, tier by tier (round 128m, `quarry`, BACKLOG V128-11; API: `QuarryIO`, `QuarryDig`.
 - `reach.ts` (193) — Whether the stores can reach a place, on the CPU, by the rules the agents' fields use (round 128f; API: `AGENT_H`, `STEP`, `DROP`, `DEEP` +5.
 - `shapes.ts` (163) — (round 128d) Painted shapes make landmarks, Townscaper's way: the player paints blocks, and some shapes … API: `COURT_MAX`, `TOWER_LEVELS`, `ShapeGrid`, `Dome` +3.
 - `solid.ts` (254) — What of the fortress is solid to the world (round 128d; API: `WALL_HALF`, `WALL_LINTEL`, `SolidInputs`, `RAMPS_ID` +4.
@@ -348,7 +350,7 @@ WebGPU plumbing: device, pipelines and bind-group layouts, CPU timing stats.
 
 ## src/perf/
 
-- `bench.ts` (3148) — Round 101 (bench): the calibration benchmark (`?bench=1`). API: `BENCH_VERSION`, `Stat`, `stat`, `judgeTimestamps` +17.
+- `bench.ts` (615) — Round 101 (bench): the calibration benchmark (`?bench=1`). API: `sleep`, `frame`, `benchGpuUp`, `benchGpu` +23.
 - `boot-marks.ts` (29) — (round 112, testspeed) The page's boot as a timeline: each stage's time since navigation start (ms), on … API: `BootMarks`, `bootMark`.
 - `framepace.ts` (409) — Round 114 (framepace): the frame pacing probe. API: `clusters`, `PaceSources`, `FramePace`, `startFramePace`.
 - `gpumem.ts` (131) — Round 100 (hitchrec): the GPU memory the page holds, buffer and texture bytes alive — every createBuffer / … API: `GpuMemTrack`.
@@ -360,6 +362,23 @@ WebGPU plumbing: device, pipelines and bind-group layouts, CPU timing stats.
 - `report-io.ts` (93) — Round 101 (bench): getting a report (JSON) off the phone, shared by the hitch recorder's HUD and the … API: `deviceTag`, `stamp`, `downloadJson`, `copyText` +2.
 - `start.ts` (54) — Round 100 (hitchrec): `?hitch=1` boots the hitch recorder (hitch.ts), its HUD (hitch-hud.ts) and the GPU … API: `HitchBoot`, `startHitch`.
 - `townbench.ts` (356) — The town pan phone bench (round 128g, cityrender; API: `townBench`.
+
+## src/perf/bench/
+
+The parts of the bench, split out of perf/bench.ts: the methods of the Bench class as functions over it (`bn`) and its top-level helpers by concern.
+
+- `ab.ts` (282) — A/B toggles (a system off, the frame's difference) and what the view shows: its state, the systems that … API: `view`, `toggles`, `abPhase`, `ab` +4.
+- `defs.ts` (57) — The bench's constants and small helpers: the version and build, the A/B system lists, the probe speeds, … API: `BENCH_VERSION`, `STATE`, `BUILD`, `LAST` +13.
+- `device.ts` (191) — What the device is and can do: a fixed GPU workload, upload and readback rates, the device's facts. API: `fixedWorkload`, `ioRates`, `deviceFacts`.
+- `pace.ts` (298) — Measuring frames: the pace probe, waiting for the scene to settle, capturing a stretch of frames and … API: `paceProbe`, `paceSettle`, `settle`, `capture` +2.
+- `page.ts` (161) — The bench on the page: its mode from the URL, the screen kept awake (the wake lock, re-asked when let go), … API: `benchMode`, `WakeSentinel`, `wakeLock`, `wakeWanted` +7.
+- `pages.ts` (451) — The bench's pages, each a load of the level: main, pans, hero, a pan page per zoom (its ramps), the window … API: `mainPage`, `pansPage`, `heroPage`, `panPage` +2.
+- `pan-report.ts` (153) — The pan bench's plan and report: the window for a zoom, the zooms and speeds tried, tile steps, the … API: `panWindowFor`, `panPlan`, `tileStepOf`, `paceHeadline` +3.
+- `regions.ts` (217) — Region generation and the store timed: fresh spots, generation stage by stage (CPU and GPU), the store's … API: `freshAt`, `regionStages`, `regionStagesGpu`, `makeRegion` +1.
+- `report.ts` (203) — The bench's report: every page's results put together, and its summary lines. API: `makeReport`, `summary`.
+- `state.ts` (170) — The bench's state between page loads: BenchState and its pages, kept in localStorage and IndexedDB (the … API: `PageSpec`, `BenchState`, `IDB`, `idbP` +9.
+- `sweeps.ts` (329) — The bench's sweeps: the fastest pan, each system's GPU cost, tiles, agents, render scales, a warp and a … API: `maxPan`, `systemGpu`, `storm`, `tileSweep` +5.
+- `timestamps.ts` (147) — GPU timestamps judged (reliable or not, per mode) and the pan bench's thresholds (PAN_*: speeds, budgets, … API: `judgeTimestamps`, `timestampModes`, `PAN_ZOOMS`, `PAN_MAX_WINDOW` +8.
 
 ## src/physics/
 
@@ -431,7 +450,7 @@ Drawing: the camera, the renderer (render-prep, the draw passes, shadows), the f
 - `coverage.ts` (189) — Round 113 (`tilesfirst`; API: `CoverView`, `Coverage`, `coverage`.
 - `fieldmesh.ts` (905) — The field mesh (G13 h; API: `READBACK`, `REGION_BYTES`, `MESH_POOL`, `MeshSource` +1.
 - `meshinst.ts` (100) — The instanced mesh renderer (round 99, `?meshinst=1`; API: `MI_CAP`, `MI_STRIDE`, `MI_ARGS_WORD`, `MeshInstances`.
-- `renderer.ts` (2134) — Renderer: render-preparation compute pass (world → box instances) followed by one render pass (opaque … API: `PickHit`, `RenderOptions`, `SKIP`, `Renderer`.
+- `renderer.ts` (947) — Renderer: render-preparation compute pass (world → box instances) followed by one render pass (opaque … API: `Renderer`, `SKIP`, `PickHit`, `RenderOptions`.
 - `rockmesh.ts` (398) — The rigid rock's own mesh (round 95, `?rockbody=1`; API: `BUILD_FRAMES`, `RockDraw`, `RockMesh`.
 - `shore.ts` (88) — The shore field (round 83, shore.wgsl): the nearest shore point to every column, by jump flooding over the … API: `ShoreField`.
 - `tilecache.ts` (1357) — The world-anchored tile cache (round 103, ?tiles=1; API: `LandMaker`, `MOVING`, `Part`, `Size` +5.
@@ -442,6 +461,18 @@ Drawing: the camera, the renderer (render-prep, the draw passes, shadows), the f
 - `treemesh.ts` (113) — Tree meshes for the instanced mesh renderer (round 99, `?meshinst=1`; API: `MeshKind`, `treeKinds`.
 - `turn.ts` (88) — (round 90, the user on the phone: "add a button or bar to rotate the camera") The player's turn of the … API: `TURN_STEP`, `Turn`.
 - `watersurf.ts` (65) — (watersurf, FC2) The window's water drawn as one surface, not a prism a wet column. API: `WaterSurface`.
+
+## src/render/renderer/
+
+The Renderer's internals, split out of render/renderer.ts: free functions over the renderer (`rd`). The constructor still builds most pipelines; `mesh-draws.ts` builds the field mesh's.
+
+- `defs.ts` (74) — The renderer's sizes, formats and URL flags (CAM_BYTES, SHADOW_SIZE, TILES, SKIP ...), its public types … API: `CAM_BYTES`, `SHADOW_SIZE`, `SHADOW_FORMAT`, `VERTS_PER_PRISM` +19.
+- `encode.ts` (371) — A frame's draw: render-prep (instances grown as needed), the terrain cache or the G-buffer, shadows, the … API: `encode`, `encodeCeiling`, `syncInst`, `syncMeshPool`.
+- `features.ts` (93) — Optional draws turned on after construction: the outside band, the rock mesh, structures. API: `enableBand`, `enableRockMesh`, `enableStructures`, `structGroups`.
+- `gbuffer-shadow.ts` (233) — The deferred mesh's G-buffer pass and the sun's shadow map (its light camera, what's due: all or the … API: `encodeGBuffer`, `writeLight`, `encodeShadow`.
+- `grid.ts` (84) — The grid of mesh chunks drawn: culling chunks to the view and the sun, drawing the visible, and what moved … API: `windowMoved`, `windowDrawn`, `gridCull`, `drawGrid` +1.
+- `mesh-draws.ts` (279) — The field mesh's draws, made once by the Renderer's constructor when the mesh is on: its draw and depth … API: `buildMeshDraws`.
+- `terrain-cache.ts` (177) — The terrain cache: the field mesh drawn once to a cached G-buffer and reused while the camera holds still … API: `terrainCacheMode`, `tcPrepare`, `tcPipesMake`, `encodeTerrainCache`.
 
 ## src/run/
 
@@ -512,7 +543,7 @@ LevelScene's internals, split out of scenes/level.ts: free functions over the sc
 - `attach.ts` (93) — LevelScene.attach: wires a made level to the page once — the HUD and powers, the sandbox's tools, the … API: `attach`.
 - `camera-moves.ts` (173) — Scripted and keyed camera motion: the drive and pan benches (?drive, ?pan), the free flyer's keys, and the … API: `driveOn`, `panOn`, `flyKeys`, `turnControls` +2.
 - `flags.ts` (36) — The level's URL flags and constants (read once at load): test and comparison switches (?cutaway, ?planner, … API: `NON_METAL`, `CUTAWAY`, `PLANNER_OFF`, `COARSE_PARTS` +10.
-- `fortress.ts` (419) — Fortress mode on the level: making the fortress, its life, claims and bar for a town, Skip to done, taps … API: `startFortress`, `pitView`, `skipFrame`, `fortressAt` +2.
+- `fortress.ts` (421) — Fortress mode on the level: making the fortress, its life, claims and bar for a town, Skip to done, taps … API: `startFortress`, `pitView`, `skipFrame`, `fortressAt` +2.
 - `frame.ts` (579) — The level's frame: camera input, the planner and the window's slide, the world's systems, the sim's ticks, … API: `levelFrame`, `planFrame`, `readSettling`, `lifeFrame` +2.
 - `impacts.ts` (298) — The sandbox's world-changing tools: meteors and their impacts, volcano vents, dropped bodies, the heat … API: `meteorAtPick`, `stepMeteors`, `impact`, `bowlVolume` +7.
 - `input-wiring.ts` (209) — The level's pointer and key input: Controls' taps, drags, pinches and wheel routed to the powers, the … API: `wireInput`.
@@ -535,7 +566,7 @@ The Streamer's internals, split out of scenes/streamer.ts: free functions over t
 - `regions.ts` (122) — Region geometry in the window's ring: a region's slots, its columns' and textures' rectangles, which … API: `regionSlots`, `regionIdx`, `regionOutside`, `regionOf` +8.
 - `slide.ts` (307) — The slide: following the camera (update, track), waiting for the regions coming in, and the slide itself — … API: `update`, `slideWhenReady`, `track`, `doneAfter` +1.
 - `store.ts` (315) — Keeping regions: what's saved to the region store (hashed against the generator's, so unchanged land isn't … API: `saveItem`, `fillAt`, `flushFills`, `check` +8.
-- `warp.ts` (168) — Jumps: the window moved far at once (warp: everything re-made where it lands) and up or down (slideZNow, … API: `warp`, `slideZNow`.
+- `warp.ts` (169) — Jumps: the window moved far at once (warp: everything re-made where it lands) and up or down (slideZNow, … API: `warp`, `slideZNow`.
 - `write.ts` (245) — Writing a region into the window: its columns into the chunk pages, its fields and textures, its relief; API: `write`, `writeNow`, `blankBuf`, `zeros` +4.
 
 ## src/settle/
