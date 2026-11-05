@@ -10,6 +10,7 @@ called only by the class file and the folder. From outside, use the class.
 
 - `scenes/level.ts` + `scenes/level/` — LevelScene: `attach.ts` wires a level once (attach-tools, input-wiring, test-api, stream-setup); `frame.ts` is a frame of play; the tools, runs, fortress, valley, atlas controls, camera moves and labs beside them.
 - `scenes/streamer.ts` + `scenes/streamer/` — Streamer: `slide.ts` (follow the camera, the slide), `freeze.ts`, `generate.ts`, `write.ts`, `store.ts`, `jobs.ts`, `warp.ts`, `regions.ts`; `defs.ts` its flags, records and public types.
+- `game/integrity.ts` + `game/integrity/` — Integrity: `tick.ts` (update and the analysis pass), `rigid.ts`, `metal.ts`, `resting.ts`, `columns.ts`, `loose.ts`, `lattice.ts`, `window.ts`; `defs.ts`.
 
 ## src/
 
@@ -201,7 +202,7 @@ Game rules over the world: powers, Nature, progress, levels, and Integrity (stru
 - `colquery.ts` (78) — (round 120, JB6: "no CPU readback on the hot path") Small questions asked of the GPU's columns in place … API: `ColumnQuery`.
 - `director.ts` (123) — Camera director (DECISIONS round 9): limits on pan/zoom, smooth camera shots, and a step-by-step script … API: `CameraLimits`, `Director`.
 - `fracture.ts` (1347) — Structural integrity for structures (round 13/14, BACKLOG F7). API: `Voxel`, `Fracture`, `RunPiece`, `WorldVox` +8.
-- `integrity.ts` (2723) — Structural integrity and falling pieces (round 14, BACKLOG F7; API: `Grab`, `GROUND_DUST`, `Integrity`.
+- `integrity.ts` (770) — Structural integrity and falling pieces (round 14, BACKLOG F7; API: `Integrity`, `GROUND_DUST`, `Grab`.
 - `judge.ts` (476) — The collapse judges (round 120, the user: "Can we treat this as an experiment and test each approach side … API: `JudgeColumns`, `JudgeInput`, `JudgeStats`, `RockJudge` +5.
 - `levels.ts` (240) — Level registry (BACKLOG C6): every place the player can reclaim, plus the sandbox. API: `LevelModel`, `LevelDef`, `LEVELS`, `MENU_LEVELS` +2.
 - `nature.ts` (107) — Gameplay resource (design doc §7). API: `COSTS`, `HARM`, `Nature`, `reclamation` +1.
@@ -212,6 +213,20 @@ Game rules over the world: powers, Nature, progress, levels, and Integrity (stru
 - `rockbodies.ts` (1304) — Rock that breaks free as a rigid body (round 95, `?rockbody=1`, an experiment). API: `V3`, `RB`, `rockbodyFor`, `SUB_DT` +14.
 - `rockdraw.ts` (14) — How a moving rock is drawn (round 120): one pose source from its break to its rest (Integrity.rockDraws). API: `rockDrawFor`.
 - `trial.ts` (300) — Gate trials (docs/LEVELS.md, "The tools"): the page side of the gate validator (scripts/gates.mjs). API: `GateResult`, `Trial`.
+
+## src/game/integrity/
+
+Integrity's internals, split out of game/integrity.ts: free functions over the Integrity instance (`ig`). Only integrity.ts and these modules call them.
+
+- `columns.ts` (196) — Integrity's writes to the world's columns: a falling body's landing and touch, column writes on the CPU … API: `touch`, `land`, `touchCols`, `writeColumn` +2.
+- `defs.ts` (112) — Integrity's flags, budgets and impact tuning (METAL, PASS, READ_NEAR, IMP ...), the Grab type, and the … API: `METAL`, `WOOD`, `METAL_MAX`, `Grab` +14.
+- `lattice.ts` (148) — Lattice bodies on the physics voxels: dropped models, the lattice rock, and the blows and wakes they take. API: `dropModels`, `spawnLattice`, `latticeBlows`, `wakeLattice`.
+- `loose.ts` (154) — Debris and impacts: the bodies' projection on the ground, the body budget, impacts that break bodies, … API: `resetProjection`, `project`, `keepBudget`, `impact` +3.
+- `metal.ts` (220) — Metal (and what bends) on the node solver: taking a fracture's metal, waking a ruin's metal into … API: `takeMetal`, `wakeMetal`, `wakeMetalNow`, `metalBlows` +1.
+- `resting.ts` (313) — Resting pieces as External instances: kept with their region, carried by a slide, woken when cut or … API: `carried`, `regionThings`, `restingMass`, `bakeDust` +5.
+- `rigid.ts` (424) — Rigid rock bodies: spawning a fallen piece as a body, stepping and drawing them, settling one back into … API: `rockGround`, `spawnRigid`, `stepRigid`, `rockDraws` +8.
+- `tick.ts` (414) — Integrity's tick and its analysis pass: what's dirty is read (the columns near, or all), judged into … API: `update`, `wantChunks`, `judgeCols`, `pass` +3.
+- `window.ts` (150) — Integrity across the streamed window's moves: settling after a slide, shifting what it keeps in window … API: `settle`, `slid`, `forget`.
 
 ## src/game/traits/
 

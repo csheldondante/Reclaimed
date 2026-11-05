@@ -17406,3 +17406,19 @@ One circular import is runtime-safe: generate.ts calls streamer.ts's `settleLoos
 lab's example and fortressoutside ok; the tilegate goldens (`&zoomfloor=0`, baselines from a worktree of 64217ba):
 desktop, phone and run-desktop 0-0.12% of pixels changed at every zoom but desktop z1.3 (6.8%: tiles still arriving
 along the screen's edges, 30% of it out of detail with the floor off, as on 64217ba).
+
+## 2026-11-04 — the monolith split, 3: game/integrity.ts into game/integrity/ (no behaviour change)
+
+**Why.** As the level's and the streamer's: integrity.ts was 2722 lines (142 KB). Now the Integrity class (768 lines:
+fields, constructor, the public API) keeps the state, and its internals are 9 modules of 111 to 422 lines in
+game/integrity/: tick (update, the analysis pass and what it applies), rigid (rock bodies: spawn, step, draw, settle,
+rest, meshes), metal (the node solver's metal), resting (External instances kept, carried, woken, let go), columns
+(landings and column writes, CPU and GPU), loose (projection, the body budget, impacts, loose voxels and chips),
+lattice (dropped models, lattice bodies), window (settle, slid, forget) and defs.
+**How.** The same mechanical move (`this` -> `ig`). Public methods that moved (update, settle, slid, forget,
+wakeMetalNear, dropModels, regionThings) stay on the class as one-line delegates; no script or test calls the
+private ones. The `world` and `metalSolver` getters stay on the class.
+**Gates** (against c5dad2a): typecheck; unit 661; GPU 26 files pass; hallcheck 0 of 344 lost; the lab's example and
+fortressoutside ok; the tilegate goldens (`&zoomfloor=0`, baselines of 64217ba): 0-0.3% of pixels changed at every
+desktop, phone and run view but desktop z1.3 (4.5%: tiles arriving at the screen's edges, unfloored, as before) and
+w384 (2-3%, its baselines written by an earlier gate run, not a clean base).

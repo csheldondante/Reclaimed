@@ -251,7 +251,7 @@ once after an edit); nothing about aux.
 z or a warp) is released to ground: the streamer freezes columns as they are and no owner exists over there; after
 it (Integrity.slid) the registry and the owners' transforms move with the land.
 
-**First owner: the resting rock** (`OWNER_ROCK`, game/integrity.ts `restRigid`). A rigid rock body (rockbodies.ts)
+**First owner: the resting rock** (`OWNER_ROCK`, game/integrity/rigid.ts `restRigid`). A rigid rock body (rockbodies.ts)
 that comes to rest keeps its mesh (render/rockmesh.ts, its slot drawn at the body's last transform, and now in the
 sun's shadow pass too: it has no cubes casting one) and claims its cells: per column from its lowest to its highest
 cell, down to the ground under it where that's within REST_FILL (3) cells (what it stands on: the judge weighs by
@@ -1629,7 +1629,7 @@ writeBuffer) and become `game/bodies.ts` falling bodies (round 21: they
 only fall straight down — no rotation, sliding or bounce; collision points
 just inside the exposed voxel corners find the deepest overlap below them
 (solid run top, loose ground, a sleeping body's top); landing hard shatters
-them, `game/integrity.ts` impact()). Bodies draw as rotated cubes
+them, `game/integrity/loose.ts` impact()). Bodies draw as rotated cubes
 (`render.wgsl` vsBody/fsBody, buffer bound at 3). Any system or game can
 draw voxels this way: `Renderer.addVoxels(inst, indirect)` takes a
 GPU-written instance buffer and drawIndirect args (36 vertices, one
@@ -3594,6 +3594,11 @@ module is docs/MODULES.md.
   camera, the slide), freeze.ts, generate.ts, write.ts, store.ts, jobs.ts, warp.ts, regions.ts; defs.ts its flags,
   records and public types (re-exported by streamer.ts). In this doc `Streamer.x` names `x(S, …)` in the folder when x
   is not on the class (docs/MODULES.md says which module).
+- `game/integrity.ts` + `game/integrity/` — Integrity: the class keeps its fields, constructor and public API (markDirty,
+  cutAt, scan, judgeAll, bodyTopAt, update, settle, slid, forget, dropBody, wakeMetalNear, dropModels, regionThings,
+  grabAt, pull, bakeResting ...); tick.ts (update and the analysis pass), rigid.ts, metal.ts, resting.ts, columns.ts,
+  loose.ts, lattice.ts, window.ts; defs.ts its flags, budgets and helpers (Grab and GROUND_DUST re-exported). In this
+  doc `Integrity.x` names `x(ig, …)` in the folder when x is not on the class.
 
 
 ## The behaviour lab (round 128l, `tooling`; docs/TOOLING.md)
