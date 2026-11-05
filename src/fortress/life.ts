@@ -956,11 +956,39 @@ export class FortressLife implements Routine {
       U.remove(id);
       const i = this.ids.indexOf(id);
       if (i >= 0) this.ids.splice(i, 1);
-      const sid = U.spawn('guard', at, this.io.faction, { settlement: this.io.settlement, role: 'guard', name: v.name, health: ECON.soldierHealth, job: { kind: 'work', at, what: 'soldier' } });
-      U.recs.get(sid)!.work = { phase: 'muster', t: 0, job: null } satisfies Work;
-      this.soldiers.push(sid);
+      this.standSoldier(at, v.name);
       this.stats.trained++;
     }
+  }
+
+  /** a soldier (a guard) stood up at `at`: it musters at the barracks first */
+  private standSoldier(at: V2, name?: string): UnitId {
+    const U = this.io.units;
+    const sid = U.spawn('guard', at, this.io.faction, { settlement: this.io.settlement, role: 'guard', name, health: ECON.soldierHealth, damage: ECON.soldierDamage, job: { kind: 'work', at, what: 'soldier' } });
+    U.recs.get(sid)!.work = { phase: 'muster', t: 0, job: null } satisfies Work;
+    this.soldiers.push(sid);
+    return sid;
+  }
+
+  /** (m4, scripted checks: the lab's raids) `n` soldiers stood up round the stores, as if trained */
+  standSoldiers(n: number): UnitId[] {
+    const h = this.heap();
+    return Array.from({ length: n }, (_, i) => this.standSoldier([h[0] + Math.cos(i * 2.1) * 3, h[1] + Math.sin(i * 2.1) * 3]));
+  }
+
+  /** (m4: the attack wave) a soldier the raid posted is let off its patrol (the raid orders it now) */
+  unpatrol(id: UnitId): void {
+    this.patrol.delete(id);
+  }
+
+  /** (m4: the attack wave) a soldier back to its own round after the raid: it musters at the barracks */
+  backToRoutine(id: UnitId): void {
+    const U = this.io.units;
+    const v = U.get(id);
+    if (!v?.alive) return;
+    U.order(id, { kind: 'work', at: [v.at[0], v.at[1]], what: 'soldier' });
+    const r = U.recs.get(id);
+    if (r) r.work = { phase: 'muster', t: 0, job: null } satisfies Work;
   }
 
   /**
@@ -1015,7 +1043,7 @@ export class FortressLife implements Routine {
   }
 
   /** the ground the fortress first read at window world (x, y) (its box column: before anything was built there) */
-  private keptGround(p: V2): number {
+  keptGround(p: V2): number {
     const f = this.io.fort;
     const [bx, by] = f.toBox(p[0], p[1]);
     const [k, r] = cellAt(bx, by);

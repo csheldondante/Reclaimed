@@ -17687,3 +17687,34 @@ fortress/raiders.ts (the runtime).
   blow, flames and smoke at 4 and 2 a second per burning house), the fire sim on a fallen house's timber, and a
   static-claims pass on every gate shut, gate open and block broken.
 
+
+## 2026-11-05 — round 128l (`m4`): the attack wave, part B — the posts, the archers, the gate held, the summary card
+
+Why: the design session's "automatic posts. Soldiers (archers once trained) man the walls and the gate on their own.
+Archers shoot from the wall-walk; swordsmen meet raiders at the gate. You defend by what you built." And main on part A's
+GIFs: the raiders couldn't be seen at play zoom, and two lines counted zero ("0 raiders are running off.", "0 raiders
+died. 1 got away.").
+
+- fortress/defence.ts FortressDefence (owned by the raid): when the rider's word comes (or the wave, if it comes first),
+  every soldier leaves its round. A third of them (at least one of two) guard the inside of the wall cell the raiders
+  will go for (raidGoal with the gates shut), as the units' 'guard' job: they close on raiders on their side of the wall.
+  The rest walk up onto the wall-walk beside that cell and stand there. The posts are looked at again every second
+  (new soldiers, a new target). With no wall, everyone guards the stores. After the wave, back to their rounds.
+- Arrows: an archer up on the wall shoots the nearest raider within 26 m every 1.6 s. The arrow flies at 28 m/s on the CPU
+  and hits if the raider is still within 1.2 m of where it was aimed (raiders bashing a gate stand still; walking ones
+  are mostly missed: 3 hits of 27 shots before they reached the gate in one run). A hit takes 2 of a raider's 8. Drawn:
+  a wood chip thrown on the same lob (the particles), dust on a hit. Archers never close in (AgentUnits.mayFight).
+- Soldiers hit for 2 now (ECON.soldierDamage; a villager's blow is 1).
+- Measured in the lab's walled town (scripts/lab/fortressraid.mjs): 4 raiders against 6 soldiers (2 at the gate, 4 on
+  the wall): held, the gate at 16 of 24, all 4 raiders shot down, nobody lost. Against 3 soldiers: held at 23 blows of
+  24. Against 2: the gate broke. Wave 4 (10 raiders) against 3 soldiers: the gate broke, the 3 soldiers and 3 villagers
+  died, 3 raiders died, 7 got away with 10 ore, 4 grain and 2 weapons, and both houses burned.
+- The summary is a card on the bar after the wave: its title, what was taken, broken and burned, who fell by name
+  ("2 of your people died." "They were Ann and Bo."), and a Close button. No line counts zero ("None of the raiders
+  died.", "None got away."). What was battered and still stands is mended at the wave's end; what broke is rebuilt by
+  the builders as before.
+- Raiders' look (main: "At play zoom I can't see the raiders"): the agents' raider kind is now a voxel figure bigger than a
+  villager, with a red tunic, a dark hood and a torch held up whose flame glows (lava). This changes every AgentUnits
+  hostile raider (the play sandbox's, the run's foes, the camps').
+- For the phone bench (BACKLOG AW-7): the arrows are CPU only (a handful in flight); each shot is one 2-chip burst.
+

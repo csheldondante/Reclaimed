@@ -47,10 +47,11 @@ export default async function (lab, args) {
     if (what === 'burn' && s.burning === 0 && i === 0) break;
     // (gate: the camera on the raiders while they're at the wall, held there after)
     if (what === 'gate' && (s.stage === 'breach' || i === 0)) {
-      const ps = s.raiders.map((r) => r.at).filter(Boolean);
+      // (with archers up on the wall: them in the frame too)
+      const ps = [...s.raiders.map((r) => r.at), ...s.defence.posted.filter((p) => p.role === 'archer' && p.up).map((p) => p.at)].filter(Boolean);
       if (ps.length) at = [ps.reduce((a, p) => a + p[0], 0) / ps.length, ps.reduce((a, p) => a + p[1], 0) / ps.length];
     }
-    seen.push(`${s.stage}:${s.raiders.map((r) => r.phase[0]).join('')}:${s.stats.blows}`);
+    seen.push(`${s.stage}:${s.raiders.filter((r) => r.at).map((r) => r.phase[0]).join('')}:${s.stats.blows}:${s.defence.shots}/${s.defence.hits}`);
     lab.look(at[0] + (args.dx ?? 0), at[1] + (args.dy ?? 0), zoom);
     await lab.shot(`${what}_${String(i).padStart(3, '0')}`);
     await lab.run(step, 4);

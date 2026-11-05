@@ -66,12 +66,15 @@ The user: "Let's invest in some tooling to speed up the development processes."
 | id | item | size | status |
 |---|---|---|---|
 | AW-1 | The wave and the raiders: the rider's warning, the clock and growth, "Call raiders now"; raiders from the window's edge to the stores (the gate or the weakest wall between bashed till it breaks), loot, houses torched, out with the loot; villagers shelter at home | L | done (round 128l m4 attack wave A commit) |
-| AW-2 | The defence and the aftermath: soldiers take posts when warned, archers shoot from the wall-walk, swordsmen hold the gate, deaths on both sides, the wave ends dead or fled, a summary card, broken blocks back in the plan | L | open |
+| AW-2 | The defence and the aftermath: soldiers take posts when warned, archers shoot from the wall-walk, swordsmen hold the gate, deaths on both sides, the wave ends dead or fled, a summary card, broken blocks back in the plan | L | done (round 128l m4 attack wave B commit) |
 | AW-3 | The lab never claimed the fortress (no streamer, no External registry): units walked through its walls. Claimed now as in the atlas | S | done (round 128l m4 attack wave A commit) |
 | AW-4 | With the lab's fortress solid, scripts/lab/fortresscarts.mjs fails: a cart sent out sits by the stores (98,108) for 160 samples, boxed in by the solid houses round the heap (it drove through them before); fortressoutside reaches the house outside the wall in 181 sim s (was ~35), once not in 600. The atlas has had solid blocks all along. For whoever has M4-14 | M | open |
 | AW-5 | Raiders walk on goal fields, not the road graph: rides stopped at a road's end 12 m from the stores in the flat recipe (and the villagers' rides home the same), M4-14's family. Once rides are sound, raiders could ride in | S | open |
-| AW-6 | Raiders' look: the agents' raider kind (brick and basalt), small at play zoom; a torch in hand, loot on the back, for the art push | S | open |
+| AW-6 | Raiders' look: the agents' raider kind (brick and basalt), small at play zoom; a torch in hand, loot on the back, for the art push | S | done in part (round 128l m4 attack wave B commit: a bigger voxel figure, red tunic, dark hood, a lit torch; the art push may redo it) |
 | AW-7 | Phone bench for the wave (the user runs it): up to 16 raiders, their goal fields, fx bursts per blow and per burning house, the fire sim on fallen houses, a claims pass per gate shut/open and block broken | S | open |
+| AW-8 | Archers and swordsmen are one kind of soldier split by post (a third at the gate). Archers "once trained": a bow recipe at the barracks, and a soldier's kit showing which | M | open |
+| AW-9 | A swordsman's guard job chases raiders up to 28 m from its post, out through a broken gate (two of three soldiers died outside in wave 4) | S | open |
+| AW-10 | Arrows miss raiders on the move (they aim where the raider is, not where it will be). Leading the mark, and arrows that can hit whoever is in the way, are for tuning | S | open |
 
 ## Round 128c (2026-11-03, session 5, `fortress`) — fortress mode slice 1 (docs/design/FORTRESS_SLICE1.md)
 

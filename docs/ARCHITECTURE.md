@@ -3721,10 +3721,17 @@ at the first Build, updated after it each frame in sim seconds).
 - **Loot**: at the stores each raider takes `RAID.loot` goods, dearest first (`LOOT_ORDER`); a raider who falls drops
   his back into the stores; those who get out take it away. The wave runs once `RAID.breakShare` of it is down, or when
   the houses are done.
+- **The defence** (`fortress/defence.ts` FortressDefence, part B): when the word comes (or the wave) every soldier is
+  posted. `swordsOf(n)` of them (a third, at least one of two) guard the inside of the wall cell the raiders will go
+  for (`FortressRaid.postsNow`: raidGoal with the gates shut), the units' 'guard' job; the rest walk onto the wall-walk
+  beside it and stand. An archer up there shoots the nearest raider in `ARROW.range` every `ARROW.every`: a CPU arrow
+  (`arrowFlight`, `arrowHits`: it hits if the mark is still near where it was aimed), a chip drawn on the same lob.
+  Posted soldiers are the raid's routine (FortressLife routes them); after the wave `backToRoutine`.
 - **The villagers** shelter at home while raiders are about (FortressLife.shelter: no work, no newcomers); those caught
   outside are the raiders' to kill.
 - **The bar** (`FortressBarHooks.raidLines`): the rider's word, the raid as it goes (`raidNowLine`), then the summary
-  (`raidOverLines`: what was taken, broken and burned, who fell). Words in fortress/words.ts, linted by raid.test.ts.
+  (`raidOverLines`: what was taken, broken and burned, who fell by name) as a card with Close (`raidSummary`,
+  `closeRaid`). Words in fortress/words.ts, linted by raid.test.ts.
 
 ## The behaviour lab (round 128l, `tooling`; docs/TOOLING.md)
 

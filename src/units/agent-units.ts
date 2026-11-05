@@ -53,6 +53,22 @@ function cartModel(): [number, number, number, number][] {
   for (let z = 3; z <= 5; z++) v.push([4, 0, z, MAT.Flower]);
   return v;
 }
+/**
+ * (round 128l, m4: the attack wave; main: "at play zoom I can't see the raiders") A raider's look: bigger than a
+ * villager, a red tunic, a dark hood and a lit torch held up (its flame glows: lava), so a wave reads at the phone's
+ * play zoom. Voxels of 0.25 cells round its feet, x forward.
+ */
+function raiderModel(): [number, number, number, number][] {
+  const v: [number, number, number, number][] = [];
+  for (const y of [-1, 1]) for (let z = 0; z <= 2; z++) v.push([0, y, z, MAT.Basalt]);
+  for (let x = -1; x <= 0; x++) for (let y = -1; y <= 1; y++) for (let z = 3; z <= 5; z++) v.push([x, y, z, MAT.Tile]);
+  for (const [x, y] of [[-1, 0], [0, 0], [-1, -1], [0, -1]]) for (const z of [6, 7]) v.push([x, y, z, MAT.Obsidian]);
+  // the torch arm: up on the right, a stick, the flame
+  for (const z of [4, 5]) v.push([1, 2, z, MAT.Tile]);
+  for (const z of [6, 7, 8]) v.push([1, 2, z, MAT.Log]);
+  for (const z of [9, 10]) v.push([1, 2, z, MAT.Lava]);
+  return v;
+}
 const TARGETS = 8;
 const REACH = 1.5;
 const STRIKE = 1.0;
@@ -125,7 +141,7 @@ export class AgentUnits implements Units {
   constructor(readonly agents: Agents) {
     agents.defineKind(K.guard, { name: 'guard', height: 1.45, mass: 1.2, hp: 10, speed: 2.7, colours: { torso: MAT.Steel, head: MAT.Steel } });
     agents.defineKind(K.character, { name: 'character', height: 1.4, mass: 1, hp: 10, speed: 2.5, colours: { torso: MAT.Brick, legs: MAT.Wood } });
-    agents.defineKind(K.raider, { name: 'raider', height: 1.45, mass: 1, hp: 10, speed: 3.1, reach: 1.35, damage: 1, swingPeriod: 1.1, notice: 160, colours: { torso: MAT.Brick, legs: MAT.Basalt, head: MAT.Basalt } });
+    agents.defineKind(K.raider, { name: 'raider', height: 1.6, mass: 1, hp: 10, speed: 3.1, reach: 1.35, damage: 1, swingPeriod: 1.1, notice: 160, colours: { torso: MAT.Tile, legs: MAT.Basalt, head: MAT.Obsidian }, model: { voxels: raiderModel(), voxel: 0.25 } });
     agents.defineKind(K.shambler, { name: 'shambler', height: 1.4, mass: 1, hp: 10, speed: 1.5, reach: 1.1, damage: 1, swingPeriod: 1.6, notice: 50, colours: { torso: MAT.Bone, legs: MAT.Ash, head: MAT.Bone } });
     // (round 88: people a third of a storey tall, in a yellow tunic — at the phone's half resolution a 1-cell figure
     // in canvas was lost against plaster and grass)

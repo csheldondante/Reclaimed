@@ -59,6 +59,9 @@ export interface FortressBarHooks {
   /** (round 128l, m4) the attack wave: what the bar says of it (the rider's word, the raid, its summary), and "Call raiders now" */
   raidLines?(): string[];
   callRaid?(): void;
+  /** (m4, part B) whether the raid's lines are the summary card after a wave, and its Close */
+  raidSummary?(): boolean;
+  closeRaid?(): void;
 }
 
 /** (round 128e, FT-50) the speeds a tap picks while building */
@@ -86,6 +89,8 @@ export class FortressBar {
   /** (m4) Follow, under a person's card */
   private followRow: HTMLDivElement;
   private followBtn: HTMLButtonElement;
+  /** (m4) Close, under the raid's summary card */
+  private raidRow: HTMLDivElement;
   private hooks: FortressBarHooks;
 
   private now: () => { speed: number; skipping: boolean } = () => ({ speed: 1, skipping: false });
@@ -217,6 +222,17 @@ export class FortressBar {
     };
     this.followRow.appendChild(this.followBtn);
     this.root.appendChild(this.followRow);
+    // (round 128l, m4) the raid's summary card: Close puts it away
+    this.raidRow = document.createElement('div');
+    this.raidRow.className = 'fort-row';
+    const close = document.createElement('button');
+    close.textContent = 'Close';
+    close.onclick = () => {
+      hooks.closeRaid?.();
+      this.render();
+    };
+    this.raidRow.appendChild(close);
+    this.root.appendChild(this.raidRow);
     this.root.appendChild(goRow);
     this.now = () => hooks.now();
     this.planOnly = [grid, row];
@@ -259,8 +275,14 @@ export class FortressBar {
     }
     if (f.mode === 'build') {
       const p = f.progress();
-      // (round 128l, m4) the attack wave first: the rider's word, the raid, what it did
-      for (const l of this.hooks.raidLines?.() ?? []) out.push({ text: l, short: true });
+      // (round 128l, m4) the attack wave first: the rider's word, the raid as it goes; after it, its summary as a card
+      const raid = this.hooks.raidLines?.() ?? [];
+      if (this.hooks.raidSummary?.() && raid.length) {
+        out.push({ text: raid[0], title: true });
+        for (const l of raid.slice(1)) out.push({ text: l });
+        return out;
+      }
+      for (const l of raid) out.push({ text: l, short: true });
       out.push({ text: buildingLine(p.built, p.total) });
       // (round 128e, FT-49) the builders, by what they're doing: they're small among a town's roofs
       if (f.crew && p.built < p.total) out.push({ text: crewLine(f.crew) });
@@ -331,6 +353,10 @@ export class FortressBar {
     // (m4) Follow under a person's card; the types and the time row make way for it
     const who = this.hooks.person?.() ?? null;
     this.followRow.style.display = who ? '' : 'none';
+    // (m4) the raid's summary card: Close under it, the time row out of its way
+    const card = !who && !planning && !t.inspect && !!this.hooks.raidSummary?.();
+    this.raidRow.style.display = card ? '' : 'none';
+    if (card) this.timeRow.style.display = 'none';
     this.followBtn.textContent = this.hooks.following?.() ? 'Stop following' : 'Follow';
     this.followBtn.classList.toggle('on', !!this.hooks.following?.());
     if (who) {

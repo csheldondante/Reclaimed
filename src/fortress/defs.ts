@@ -125,6 +125,8 @@ export const ECON = {
   pileMax: 16,
   /** (round 128l, m4) a soldier's health (a villager's is 3) */
   soldierHealth: 5,
+  /** (m4: the attack wave) what a soldier's blow takes off (a villager's: 1; a raider's: RAID.raiderDamage) */
+  soldierDamage: 2,
   /** (m4) sim seconds a soldier drills at the barracks when it musters */
   drillSec: 8,
   /** (m4) wall-walk points a soldier walks before it musters again */

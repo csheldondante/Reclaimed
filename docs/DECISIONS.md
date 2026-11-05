@@ -616,6 +616,13 @@ each was implemented.
   gates shut when a raider is 30 m from one or nobody is outside; people at home are safe, people caught outside are
   not; a house burns 8 s, then falls and its timber burns in the fire sim; a fallen raider's loot goes back to the
   stores; the wave runs when 60% of it is down. All numbers in fortress/raid.ts RAID, untuned.
+- Main, on part A's GIFs: never a line that counts zero; the raiders readable at 412x915 play zoom ("a dark red, a
+  bigger size or a torch glow"); frame the gate fight so the archers' shots and the raiders show; raiders stay off the
+  road rides (the road-trip redesign comes after: units sliding along the road, lanes with queueing and passing).
+- Judgement calls (agent, part B): archers and swordsmen are one soldier split by post, a third at the gate; soldiers
+  post when the rider's word comes and stay till the wave is over; archers aim where a raider is (a still one is hit,
+  a running one mostly not); what's battered but standing is mended when the wave ends; the summary names the fallen
+  while there are four or fewer of a kind.
 
 ## 2026-11-04 — round 128l (session 5, `m4`) — milestone 4 and the life on the roads; fortress blocks as fast as any
 

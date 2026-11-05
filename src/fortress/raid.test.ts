@@ -192,15 +192,26 @@ describe('what the bar says of a raid (docs/WRITING.md)', () => {
     const lines = [
       raidWarnLine('east', 4),
       raidArrivedLine('north', 6),
-      ...['breach', 'stores', 'houses', 'out'].flatMap((st) => [raidNowLine(st, 1, null), raidNowLine(st, 5, 'gate')]),
-      ...raidOverLines({ taken: { grain: 12, stone: 4 }, broken: { gate: 1, wall: 2 }, housesBurned: 2, fallen: ['Ann', null, 'Bo'], soldiersFallen: 1, raidersFallen: 5, raidersOut: 1 }),
-      ...raidOverLines({ taken: {}, broken: {}, housesBurned: 0, fallen: [], soldiersFallen: 0, raidersFallen: 1, raidersOut: 0 }),
+      ...['breach', 'stores', 'houses', 'out'].flatMap((st) => [raidNowLine(st, 1, null), raidNowLine(st, 5, 'gate'), raidNowLine(st, 0, null)]),
+      ...raidOverLines({ taken: { grain: 12, stone: 4 }, broken: { gate: 1, wall: 2 }, housesBurned: 2, fallen: [{ name: 'Ann', soldier: false }, { name: 'Ola', soldier: true }, { name: 'Bo', soldier: false }], raidersFallen: 5, raidersOut: 1 }),
+      ...raidOverLines({ taken: {}, broken: {}, housesBurned: 0, fallen: [], raidersFallen: 1, raidersOut: 0 }),
+      ...raidOverLines({ taken: {}, broken: {}, housesBurned: 0, fallen: ['A', 'B', 'C', 'D', 'E', 'F'].map((name) => ({ name, soldier: false })), raidersFallen: 0, raidersOut: 3 }),
     ];
     expect(lines).toContain('A rider brings word. Raiders from the east, tomorrow at dusk. He counted 4 of them.');
     expect(lines.some((l) => /^The raiders got away with .*12 grain/.test(l) && l.includes('4 stone'))).toBe(true);
     expect(lines).toContain('They broke the gate and 2 wall blocks.');
     expect(lines).toContain('2 houses burned down.');
-    expect(lines).toContain('1 raider died. 0 got away.');
+    expect(lines).toContain('The soldier Ola died.');
+    expect(lines).toContain('2 of your people died.');
+    expect(lines).toContain('They were Ann and Bo.');
+    expect(lines).toContain('One raider died.');
+    expect(lines).toContain('None got away.');
+    expect(lines).toContain('None of the raiders died.');
+    expect(lines).toContain('6 of your people died.');
+    expect(lines.filter((l) => l.startsWith('They were'))).toHaveLength(1);
+    expect(lines).toContain('3 got away.');
+    // (never a line that counts nothing: "0 raiders …")
+    for (const l of lines) expect(l, l).not.toMatch(/0 /);
     for (const l of lines) expect(lint(l), l).toEqual([]);
   });
 });

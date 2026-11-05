@@ -218,6 +218,8 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
     // (round 128l, m4) the attack wave: its lines on the bar, and the test button
     raidLines: () => scene.fortressRaid?.lines ?? [],
     callRaid: () => scene.fortressRaid?.callNow(),
+    raidSummary: () => scene.fortressRaid?.summary ?? false,
+    closeRaid: () => scene.fortressRaid?.closeSummary(),
   });
   scene.fortressBar.townName = rec.name;
   // the power coming in: the fortress's built blocks (a ledger number: nothing spends it yet)

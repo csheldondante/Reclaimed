@@ -25,6 +25,8 @@ import { blockHp, layoutOf, lootOf, RAID, RaidClock, raidGoal, raidSides, sideOf
 import type { Fortress } from './fortress';
 import type { FortressLife } from './life';
 import { ECON } from './defs';
+import { nameOf } from './follow';
+import { FortressDefence, type Posts } from './defence';
 import { raidArrivedLine, raidNowLine, raidOverLines, raidWarnLine } from './words';
 
 /** the raiders' faction (no settlement's) */
@@ -76,9 +78,8 @@ export interface RaidReport {
   /** blocks broken by type ('gate', 'wall', 'house' …) */
   broken: Record<string, number>;
   housesBurned: number;
-  /** the fortress's fallen: names (or null), and how many were soldiers */
-  fallen: (string | null)[];
-  soldiersFallen: number;
+  /** the fortress's fallen: their names, and whether each was a soldier */
+  fallen: { name: string; soldier: boolean }[];
   raidersFallen: number;
   raidersOut: number;
 }
@@ -114,11 +115,16 @@ export class FortressRaid {
   private side: Side = 'east';
   private warnPending: { size: number } | null = null;
   private now: RaidReport | null = null;
-  readonly stats = { warned: 0, waves: 0, blows: 0, breaches: 0, looted: 0, torched: 0, burned: 0, escaped: 0 };
+  readonly stats = { warned: 0, waves: 0, blows: 0, breaches: 0, looted: 0, torched: 0, burned: 0, escaped: 0, byArchers: 0, bySoldiers: 0 };
   private onChange = () => (this.dirty = true);
   private onDied = (u: UnitView, by: UnitId | string | null) => {
     const k = typeof by === 'number' ? this.io.units.get(by) : null;
     this.log.push(`${Math.round(this.t)}s ${u.role} ${this.sideAt([u.at[0], u.at[1]])} z${u.at[2].toFixed(1)} by ${k ? `${k.role} ${this.sideAt([k.at[0], k.at[1]])} z${k.at[2].toFixed(1)}` : String(by)}`);
+    if (this.raiders.has(u.id) && typeof by === 'number') {
+      const p = this.defence.posted.get(by);
+      if (p?.role === 'archer') this.stats.byArchers++;
+      else if (p) this.stats.bySoldiers++;
+    }
     this.died(u);
   };
   /** (scripted checks) the deaths while raiders were about: who, where, by whom */
@@ -130,7 +136,12 @@ export class FortressRaid {
     io.units.died.push(this.onDied);
     io.units.mayFight = (u, foe) => this.mayFight(u, foe);
     io.life.raid = this;
+    this.defence = new FortressDefence({ units: io.units, life: io.life, burst: io.burst, raiders: () => [...this.raiders.keys()] });
   }
+  /** (part B) the soldiers on their posts, the archers' arrows */
+  readonly defence: FortressDefence;
+  /** the word has come (or the wave): the soldiers are on their posts till it's over */
+  private alarmed = false;
 
   dispose(): void {
     const U = this.io.units;
@@ -144,12 +155,22 @@ export class FortressRaid {
     if (j >= 0) U.died.splice(j, 1);
     if (U.mayFight) U.mayFight = null;
     if (this.io.life.raid === this) this.io.life.raid = null;
+    this.defence.release();
     this.io.fort.setGatesShut(false);
   }
 
   /** whether raiders are about */
   get active(): boolean {
     return this.stage !== 'none';
+  }
+
+  /** the bar shows the last wave's summary as a card (until it's closed) */
+  summary = false;
+  /** the summary card closed */
+  closeSummary(): void {
+    if (!this.summary) return;
+    this.summary = false;
+    this.lines = [];
   }
 
   /** "Call raiders now" (the bar's test button): the next wave at once */
@@ -161,11 +182,12 @@ export class FortressRaid {
   // ---- the routine (AgentUnits steps the raiders and the rider through FortressLife) -------------------------
 
   takes(u: UnitRec): boolean {
-    return u.v.job.kind === 'work' && this.raiders.has(u.v.id);
+    return (u.v.job.kind === 'work' && this.raiders.has(u.v.id)) || this.defence.takes(u);
   }
 
   /** a raider standing (bashing, or waiting with its loot), each think: its pose (the walking is AgentUnits' 'go') */
   step(u: UnitRec, _dt: number): void {
+    if (this.defence.takes(u)) return this.defence.step(u);
     const U = this.io.units;
     const r = this.raiders.get(u.v.id);
     if (r?.phase === 'bash') {
@@ -190,6 +212,11 @@ export class FortressRaid {
     }
     this.stepRider();
     this.burn(dt);
+    if (this.alarmed) {
+      // (soldiers trained since, and the wall cell they'll go for as it changes: the posts again)
+      if (this.t - this.manAt >= LOOK_S) this.alarm();
+      this.defence.update(dt);
+    }
     if (!this.active) return;
     if (this.dirty || this.t - this.lookAt >= LOOK_S) this.look();
     this.shutGates();
@@ -202,6 +229,7 @@ export class FortressRaid {
   private say(): void {
     if (!this.active || (this.stage === 'breach' && !this.io.fort.gatesShut) || (this.stage === 'stores' && !this.lastBroke && !this.io.fort.gatesShut)) return;
     const alive = [...this.raiders.values()].filter((r) => this.io.units.get(r.id)?.alive).length;
+    if (!alive) return;
     this.lines = [raidNowLine(this.stage, alive, this.lastBroke)];
   }
   /** what they broke last ('gate', 'wall'), for the line */
@@ -240,11 +268,61 @@ export class FortressRaid {
     }
   }
 
-  /** the rider's word on the bar */
+  /** the rider's word on the bar; the soldiers to their posts */
   private told(): void {
     if (!this.warnPending) return;
+    this.summary = false;
     this.lines = [raidWarnLine(this.side, this.warnPending.size)];
     this.warnPending = null;
+    this.alarm();
+  }
+
+  private manAt = -1e9;
+  /** the soldiers to their posts (the word has come, or the wave) */
+  private alarm(): void {
+    this.alarmed = true;
+    this.manAt = this.t;
+    this.defence.man(this.postsNow());
+  }
+
+  /**
+   * Where the soldiers stand: the wall cell the raiders will go for with the gates shut (raidGoal from where they come
+   * in) — swordsmen on its inside, archers on the wall beside it (the one nearest where they come in). No wall between
+   * the stores and the outside: everyone at the stores.
+   */
+  postsNow(): Posts {
+    const f = this.io.fort;
+    const heap = this.io.life.heap();
+    const L0 = layoutOf(f, heap, (c) => this.hpOf(c));
+    const L: RaidLayout = { ...L0, solid: (c) => L0.solid(c) || (!!f.plan.gate[c] && f.town.has(c, 0)) };
+    const sides = raidSides(L);
+    const from = this.entry ?? this.io.life.edgeEntry() ?? heap;
+    const g = this.stage === 'breach' && this.goal?.kind === 'breach' ? this.goal : raidGoal(L, from, sides);
+    if (!g || g.kind !== 'breach') return { archers: null, swords: heap };
+    const b = g.cell;
+    const [bx, by] = f.centre(b);
+    let swords: V2 = heap;
+    let beside = -1;
+    let bd = Infinity;
+    for (let e = 0; e < 4; e++) {
+      const n = f.grid.nbr[b * 4 + e];
+      if (n < 0) continue;
+      if (sides.inside[n]) {
+        const [nx, ny] = f.centre(n);
+        const d = Math.hypot(nx - bx, ny - by) || 1;
+        swords = [bx + ((nx - bx) / d) * 3, by + ((ny - by) / d) * 3];
+      }
+      if (L.wall(n) && !f.plan.gate[n]) {
+        const [nx, ny] = f.centre(n);
+        const d = Math.hypot(nx - from[0], ny - from[1]);
+        if (d < bd) {
+          bd = d;
+          beside = n;
+        }
+      }
+    }
+    const up = beside >= 0 ? beside : f.plan.gate[b] ? -1 : b;
+    return { archers: up >= 0 ? f.centre(up) : null, swords };
   }
 
 
@@ -263,7 +341,7 @@ export class FortressRaid {
     this.stats.waves++;
     this.torched.clear();
     this.lastBroke = null;
-    this.now = { wave: e.wave, size: e.size, taken: {}, broken: {}, housesBurned: 0, fallen: [], soldiersFallen: 0, raidersFallen: 0, raidersOut: 0 };
+    this.now = { wave: e.wave, size: e.size, taken: {}, broken: {}, housesBurned: 0, fallen: [], raidersFallen: 0, raidersOut: 0 };
     this.report = null;
     const U = this.io.units;
     for (let i = 0; i < e.size; i++) {
@@ -280,8 +358,10 @@ export class FortressRaid {
     }
     this.stage = 'breach';
     this.dirty = true;
+    this.summary = false;
     this.lines = [raidArrivedLine(this.side, e.size)];
     L.shelter = true;
+    this.alarm();
   }
 
   /** the layout read again: the two sides of the wall, the goal, the wave's ride */
@@ -435,6 +515,8 @@ export class FortressRaid {
    * wall (both outside, or both in once it's broken) and on the same ground (not one up on the wall-walk).
    */
   mayFight(u: UnitView, foe: UnitView): boolean {
+    // (an archer on its post shoots: it never closes in)
+    if (this.defence.holds(u.id)) return false;
     if (!this.active || (u.role !== 'raider' && foe.role !== 'raider')) return true;
     // (a cart is a wagon: it neither fights nor is fought)
     if (u.role === 'cart' || foe.role === 'cart') return false;
@@ -614,9 +696,14 @@ export class FortressRaid {
     this.io.life.shelter = false;
     this.io.life.inside.clear();
     this.io.life.unsafe = [];
+    this.defence.release();
+    this.alarmed = false;
+    // (what was battered and still stands is mended with the rest)
+    this.hp.clear();
     if (this.now) {
       this.report = this.now;
       this.lines = raidOverLines(this.now);
+      this.summary = true;
     }
     this.now = null;
   }
@@ -632,14 +719,12 @@ export class FortressRaid {
       return;
     }
     const L = this.io.life;
-    if (u.role === 'guard' && u.settlement === L.settlementId) {
-      this.now.soldiersFallen++;
-      this.now.fallen.push(u.name ?? null);
-    } else if (u.settlement === L.settlementId && u.role === 'villager') this.now.fallen.push(u.name ?? null);
+    if (u.settlement !== L.settlementId || (u.role !== 'guard' && u.role !== 'villager')) return;
+    this.now.fallen.push({ name: u.name ?? nameOf(u.id), soldier: u.role === 'guard' });
   }
 
   /** (scripted checks) the wave now */
-  state(): { stage: Stage; raiders: { id: UnitId; phase: Phase; at: [number, number, number] | null; hp: number; to: V2 | null }[]; gatesShut: boolean; goal: unknown; hp: [number, number][]; lines: string[]; report: RaidReport | null; stats: FortressRaid['stats']; next: number; t: number; burning: number; log: string[] } {
+  state(): { stage: Stage; raiders: { id: UnitId; phase: Phase; at: [number, number, number] | null; hp: number; to: V2 | null }[]; gatesShut: boolean; goal: unknown; hp: [number, number][]; lines: string[]; report: RaidReport | null; stats: FortressRaid['stats']; next: number; t: number; burning: number; log: string[]; defence: unknown } {
     return {
       stage: this.stage,
       raiders: [...this.raiders.values()].map((r) => {
@@ -655,6 +740,7 @@ export class FortressRaid {
       next: this.clock.next,
       t: this.t,
       burning: this.burning.length,
+      defence: { ...this.defence.stats, posted: [...this.defence.posted].map(([id, p]) => ({ id, role: p.role, up: p.up, at: this.io.units.get(id)?.at ?? null })) },
       log: this.log.slice(-20),
     };
   }
