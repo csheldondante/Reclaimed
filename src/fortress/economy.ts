@@ -7,7 +7,7 @@
 // farmers carry it in. People eat grain; with none, nobody new comes (nothing else: hunger kills no one in slice 1).
 import type { Good, Goods, Structure, StructureDef, StructureType } from '../api/contracts/fortress';
 import { DEFS, ECON, JOB_ORDER } from './defs';
-import type { FortressPlan } from './plan';
+import type { TownPlan } from '../build/plan';
 
 export type JobKind = (typeof JOB_ORDER)[number];
 
@@ -27,7 +27,7 @@ export const STORED: readonly Good[] = ['log', 'stone', 'ore', 'grain', 'weapons
 type Built = (cell: number, level: number) => boolean;
 
 /** a structure's built blocks */
-export function builtBlocks(plan: FortressPlan, s: Structure, built: Built): number {
+export function builtBlocks(plan: TownPlan, s: Structure, built: Built): number {
   let n = 0;
   for (const c of s.cells.keys()) for (const L of plan.levels.each(c)) if (built(c, L)) n++;
   return n;
@@ -38,7 +38,7 @@ export function builtBlocks(plan: FortressPlan, s: Structure, built: Built): num
  * quarry or lumber camp gives its type's `jobs`; the builders' slots while there's something to build.
  */
 export function jobSlots(
-  plan: FortressPlan,
+  plan: TownPlan,
   built: Built,
   building: boolean,
   defs: Record<StructureType, StructureDef> = DEFS,
@@ -153,14 +153,14 @@ export function eaten(people: number, dt: number, econ = ECON): number {
 }
 
 /** Beds: the town's own houses' and the house blocks built (not the barracks': those are the soldiers'). */
-export function bedsOf(plan: FortressPlan, built: Built, defs: Record<StructureType, StructureDef> = DEFS, econ = ECON): number {
+export function bedsOf(plan: TownPlan, built: Built, defs: Record<StructureType, StructureDef> = DEFS, econ = ECON): number {
   let n = econ.startBeds;
   for (const s of plan.structures()) if (s.type === 'house') n += (defs.house.perBlock.beds ?? 0) * builtBlocks(plan, s, built);
   return n;
 }
 
 /** The stores' room: the town's own and every built warehouse block's. */
-export function roomOf(plan: FortressPlan, built: Built, defs: Record<StructureType, StructureDef> = DEFS, econ = ECON): number {
+export function roomOf(plan: TownPlan, built: Built, defs: Record<StructureType, StructureDef> = DEFS, econ = ECON): number {
   let n = econ.townRoom;
   for (const s of plan.structures()) n += (defs[s.type].perBlock.storage ?? 0) * builtBlocks(plan, s, built);
   return n;

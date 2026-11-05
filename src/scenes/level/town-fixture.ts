@@ -3,6 +3,7 @@
 import { GEN_VERSION } from '../../world/region-record';
 import { ROW_H } from '../../world/lattice';
 import { encodeTownFixture } from '../../lab/townfixture';
+import { siteToJson } from '../../build/site';
 import type { LevelScene } from '../level';
 
 export async function captureTownFixture(scene: LevelScene): Promise<string> {
@@ -28,6 +29,9 @@ export async function captureTownFixture(scene: LevelScene): Promise<string> {
       seaZ: core.globals.seaZ ?? -1e9,
       riverWet: core.globals.riverWet ?? 1,
       zMaxWindow: zMax,
+      // (onetown: the town's site — its one plan — and the window's oz: the site's heights are world z)
+      oz: S.oz,
+      site: siteToJson(st.siteOf(id).toData()),
     },
     w,
     h,

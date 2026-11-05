@@ -6,7 +6,7 @@ import { lint } from '../../test/support/writing';
 import { TownGrid } from '../build/towngrid';
 import { DEFS, ECON, POWER_RISE } from './defs';
 import { inspectCard, inspectFacts } from './inspect';
-import { FortressPlan } from './plan';
+import { TownPlan } from '../build/plan';
 
 const grid = new TownGrid(80, 92, { seed: 7 });
 const nbr = (c: number, e: number) => grid.nbr[c * 4 + e];
@@ -22,7 +22,7 @@ const STORES = { log: 120, stone: 80, grain: 150, soldiers: 3, power: 42 };
 
 /** a structure of `type` on inner and its neighbour 0, two levels on inner; `built` the blocks standing */
 function make(type: keyof typeof DEFS, built: (c: number, l: number) => boolean) {
-  const plan = new FortressPlan(grid);
+  const plan = new TownPlan(grid);
   plan.paint(inner, 0, type);
   if (DEFS[type].form !== 'yard') plan.paint(inner, 1, type);
   plan.paint(nbr(inner, 0), 0, type);

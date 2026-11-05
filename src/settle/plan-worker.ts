@@ -77,7 +77,9 @@ self.onmessage = (e: MessageEvent<FarPlanInit | FarPlanJob | ExactPlanJob>) => {
       const t1 = performance.now();
       const stamp = rasterPlan(j.id, rasterColumns(plan, j.seed.civ.look.roof, j.seed.civ.look.foundation), box, j.ground, j.top);
       const t2 = performance.now();
-      const out: ExactPlanDone = { id: j.id, plan, stamp, ms: [+(t1 - t0).toFixed(1), +(t2 - t1).toFixed(1)] };
+      // (onetown: the town as data — a structured clone keeps no class; settlements.ts makes it again: TownSite.fromData)
+      const posted = { ...plan, site: plan.site.toData() as unknown as SettlementPlan['site'] };
+      const out: ExactPlanDone = { id: j.id, plan: posted, stamp, ms: [+(t1 - t0).toFixed(1), +(t2 - t1).toFixed(1)] };
       (self as unknown as Worker).postMessage(out, [stamp.px.buffer, stamp.px4.buffer]);
     } catch (err) {
       const out = { id: j.id, plan: null, error: `${(err as Error)?.message ?? err}` };

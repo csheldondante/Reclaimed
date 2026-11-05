@@ -20,7 +20,7 @@ import type { NavGraph, NavLinkKind, NavNode, NavSurface, V2, V3 } from '../api/
 import type { StructureDef, StructureType } from '../api/contracts/fortress';
 import { LEVEL_H } from '../build/town';
 import { DEFS } from './defs';
-import type { FortressPlan } from './plan';
+import type { TownPlan } from '../build/plan';
 import { WALL_HALF } from './solid';
 
 export interface WaysGrid {
@@ -72,8 +72,8 @@ export interface Ways {
   /** gate cells: their way runs through the wall */
   gates: number[];
   /**
-   * (round 128i, FT-65) block cells with a passage (FortressPlan.passage) the roads run through, as through a gate;
-   * a ramp's cell (FortressPlan.ramp) is a road's like any free cell, entered and left only along its axis
+   * (round 128i, FT-65) block cells with a passage (TownPlan.passage) the roads run through, as through a gate;
+   * a ramp's cell (TownPlan.ramp) is a road's like any free cell, entered and left only along its axis
    */
   passages: number[];
   /** structures whose door (or stair) no road reaches */
@@ -142,7 +142,7 @@ function sideTo(g: WaysGrid, n: number, c: number): number {
 }
 
 /** The ways baked from the plan (courtyards: cells shut in by structures — shapes.ts). */
-export function waysOf(plan: FortressPlan, g: WaysGrid, courtyards: readonly number[] = [], defs: Record<StructureType, StructureDef> = DEFS): Ways {
+export function waysOf(plan: TownPlan, g: WaysGrid, courtyards: readonly number[] = [], defs: Record<StructureType, StructureDef> = DEFS): Ways {
   const n = g.count;
   const way = new Uint8Array(n);
   const nb = (c: number, e: number) => g.nbr[c * 4 + (((e % 4) + 4) % 4)];
@@ -216,45 +216,56 @@ export function waysOf(plan: FortressPlan, g: WaysGrid, courtyards: readonly num
   const cutOff = new Set<number>();
   const dist = new Float64Array(n);
   const prev = new Int32Array(n);
-  /** the net grown to each end in turn, the nearest first (the ends no way reaches: their structures cut off) */
+  /**
+   * the net grown to each end in turn, the nearest first (the ends no way reaches: their structures cut off). (onetown:
+   * incrementally — the distance to the net kept, and after each join only what the new road brings nearer relaxed: a
+   * town's hundred doors cost a few passes over the grid, not one a door)
+   */
   const grow = (ends: { cell: number; structure: number }[]) => {
     if (!ends.length) return;
     if (!net.some((x) => x === 1)) net[ends[0].cell] = 1;
     const joined = new Uint8Array(ends.length);
     for (let i = 0; i < ends.length; i++) if (net[ends[i].cell]) joined[i] = 1;
-    for (;;) {
-      // multi-source from the net (Dijkstra)
-      dist.fill(Infinity);
-      prev.fill(-1);
-      const heap = new MinHeap();
-      for (let c = 0; c < n; c++)
-        if (net[c]) {
-          dist[c] = 0;
-          heap.push(c, 0);
-        }
-      const done = new Uint8Array(n);
+    dist.fill(Infinity);
+    prev.fill(-1);
+    const heap = new MinHeap();
+    const relax = () => {
       for (let u = heap.pop(); u >= 0; u = heap.pop()) {
-        if (done[u]) continue;
-        done[u] = 1;
+        const du = dist[u];
         const [ux, uy] = g.centre(u);
         for (let e = 0; e < 4; e++) {
           const m = nb(u, e);
-          if (!passable(m) || done[m] || !step(u, e, m)) continue;
+          if (!passable(m) || !step(u, e, m)) continue;
           const [mx, my] = g.centre(m);
-          // (along road already laid it's cheap: the ways merge rather than run side by side)
-          const w = Math.hypot(mx - ux, my - uy) * (net[m] ? 0.3 : 1);
-          if (dist[u] + w < dist[m]) {
-            dist[m] = dist[u] + w;
+          const w = Math.hypot(mx - ux, my - uy);
+          if (du + w < dist[m] - 1e-9) {
+            dist[m] = du + w;
             prev[m] = u;
             heap.push(m, dist[m]);
           }
         }
       }
+    };
+    const seed = (c: number) => {
+      if (dist[c] === 0) return;
+      dist[c] = 0;
+      prev[c] = -1;
+      heap.push(c, 0);
+    };
+    for (let c = 0; c < n; c++) if (net[c]) seed(c);
+    relax();
+    for (;;) {
       let next = -1;
       for (let i = 0; i < ends.length; i++) if (!joined[i] && isFinite(dist[ends[i].cell]) && (next < 0 || dist[ends[i].cell] < dist[ends[next].cell])) next = i;
       if (next < 0) break;
       joined[next] = 1;
-      for (let c = ends[next].cell; c >= 0 && !net[c]; c = prev[c]) net[c] = 1;
+      const path: number[] = [];
+      for (let c = ends[next].cell; c >= 0 && !net[c]; c = prev[c]) path.push(c);
+      for (const c of path) {
+        net[c] = 1;
+        seed(c);
+      }
+      relax();
       // (ends already on the net: joined)
       for (let i = 0; i < ends.length; i++) if (!joined[i] && net[ends[i].cell]) joined[i] = 1;
     }
@@ -400,7 +411,7 @@ export interface NavHeights {
  * The nav graph of the ways (structures' NavGraph): a node a road or square cell, a building's ground floor (its door
  * links it to the road), a gate's passage, the wall-walk a node a wall cell, and stairs from a foot up to the walk.
  */
-export function waysNav(ways: Ways, plan: FortressPlan, g: WaysGrid, z: NavHeights): NavGraph {
+export function waysNav(ways: Ways, plan: TownPlan, g: WaysGrid, z: NavHeights): NavGraph {
   const nodes: NavNode[] = [];
   const links: { a: number; b: number; kind: NavLinkKind; cost: number }[] = [];
   const node = (at: V3, surface: NavSurface, building: number) => {

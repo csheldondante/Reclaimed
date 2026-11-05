@@ -135,6 +135,11 @@ export interface Span {
 export interface BuildingRec {
   id: number;
   kind: BuildingKind;
+  /** (onetown) its own style, where it isn't the plan's (a town's plan has every type's: the walls in stone, a
+   *  blacksmith's bastion over a hearth town) */
+  style?: StructureStyleId;
+  /** (onetown) the plan's structure it is drawn for (build/plan.ts; a structure is one building a floor) */
+  structure?: number;
   quads: number[];
   /** its floor (world z) and storeys */
   base: number;

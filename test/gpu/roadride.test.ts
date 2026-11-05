@@ -6,7 +6,7 @@ import { describe, expect, test } from 'vitest';
 import { RoadRide } from '../../src/agents/ride';
 import { edgeCost, hopsCpu, MAX_NODES, nearestNode, nodeCount } from '../../src/agents/roadgraph';
 import { packRoadShapes, roadBitsCpu } from '../../src/agents/roads';
-import { Fortress } from '../../src/fortress/fortress';
+import { fortressOn } from '../../src/fortress/testing';
 import { laneGraph, roadShapesOf } from '../../src/fortress/lanes';
 import { testGpu } from './dawn';
 
@@ -15,7 +15,7 @@ const H = 184;
 const UNITS = 64;
 
 function town() {
-  const f = new Fortress({ origin: [0, 0], w: W, h: H }, { windowOrigin: () => [0, 0], dims: { w: W, h: H, zMax: 999 }, ground: () => 5, stores: () => ({}), changed: () => {}, townGates: () => [[14, ((H / 2) * Math.sqrt(3)) / 2]] });
+  const f = fortressOn({ origin: [0, 0], w: W, h: H }, { windowOrigin: () => [0, 0], dims: { w: W, h: H, zMax: 999 }, ground: () => 5, stores: () => ({}), townHeap: () => [14, ((H / 2) * Math.sqrt(3)) / 2] });
   f.ready = true;
   const [cx, cy] = [W / 2, ((H / 2) * Math.sqrt(3)) / 2];
   const ring = f.ringCells(cx, cy, 22);

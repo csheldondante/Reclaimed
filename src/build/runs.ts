@@ -4,7 +4,7 @@
 // cell holds any levels; gaps are runs apart. Touching runs of one owner and type are one; taking a level out of the
 // middle of a run splits it. Pure: no GPU, no DOM.
 // (round 128m, quarry) Levels may be negative: a quarry's pit is its levels under the ground (level -1 the first 4 m
-// down, fortress/pit.ts), kept in a CellRuns of its own (FortressPlan.pit, Fortress.dug) so nothing that reads the
+// down, fortress/pit.ts), kept in a CellRuns of its own (TownPlan.pit, Fortress.dug) so nothing that reads the
 // blocks' runs meets them. top() and bottom() say -1 for an empty cell: with negative levels, ask any() first, or use
 // highest() / lowest() (null: none).
 
@@ -178,6 +178,35 @@ export class CellRuns {
         rs.splice(i, 1);
       }
     }
+  }
+
+  /**
+   * (onetown) The runs as numbers, cell by cell: its run count, then each run's lo, hi, owner, type. What a worker posts
+   * (a structured clone keeps no class) and what a test compares (byte for byte).
+   */
+  encode(): Int32Array {
+    const out: number[] = [];
+    for (let c = 0; c < this.count; c++) {
+      const rs = this.runs[c];
+      out.push(rs ? rs.length : 0);
+      if (rs) for (const r of rs) out.push(r.lo, r.hi, r.owner, r.type);
+    }
+    return Int32Array.from(out);
+  }
+
+  /** (onetown) Runs from `encode`'s numbers. */
+  static decode(count: number, data: ArrayLike<number>): CellRuns {
+    const out = new CellRuns(count);
+    let i = 0;
+    for (let c = 0; c < count; c++) {
+      const n = data[i++];
+      if (!n) continue;
+      const rs: Run[] = [];
+      for (let k = 0; k < n; k++, i += 4) rs.push({ lo: data[i], hi: data[i + 1], owner: data[i + 2], type: data[i + 3] });
+      out.runs[c] = rs;
+    }
+    if (i !== data.length) throw new Error(`CellRuns.decode: ${data.length} numbers for ${count} cells, ${i} read`);
+    return out;
   }
 
   /** The levels in `a` not in `b` at c (bottom up). */

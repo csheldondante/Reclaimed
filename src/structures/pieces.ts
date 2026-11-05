@@ -111,6 +111,9 @@ export function piecesOf(plan: CityPlan): StructurePieces {
   const lib = library();
   const style = styleOf(plan.spec.style);
   const styleIx = STYLE_IDS.indexOf(style.id);
+  // (onetown) a building of a style of its own (a town's plan has every type's)
+  const styleB = (b: number) => (b >= 0 && plan.buildings[b].style ? styleOf(plan.buildings[b].style!) : style);
+  const styleIxB = (b: number) => (b >= 0 && plan.buildings[b].style ? STYLE_IDS.indexOf(plan.buildings[b].style!) : styleIx);
   const t = plan.tiles;
   const adj = adjacency(t);
   const nq = t.use.length;
@@ -121,7 +124,7 @@ export function piecesOf(plan: CityPlan): StructurePieces {
     const w = b >= 0 ? plan.buildings[b].wear : undefined;
     return w === 'burned' ? LOOK_BURNED : w === 'flooded' ? LOOK_FLOODED : 0;
   };
-  const look = (b: number) => styleIx * 65536 + (b >= 0 ? plan.buildings[b].look : Math.floor(hashf(seed, 77) * 65536)) + wearOf(b);
+  const look = (b: number) => styleIxB(b) * 65536 + (b >= 0 ? plan.buildings[b].look : Math.floor(hashf(seed, 77) * 65536)) + wearOf(b);
   // (the town's walls newer than the town: fresh stone — a history mark, spec.marks)
   const wallLook = look(-1) + ((plan.spec.marks ?? []).some((m) => m.kind === 'newwalls') ? LOOK_FRESH : 0);
   const footOf = (q: number, d: number): [number, number, number, number] => [0, 1, 2, 3].map((k) => gz[t.quads[q * 4 + k]] - d) as [number, number, number, number];
@@ -138,13 +141,14 @@ export function piecesOf(plan: CityPlan): StructurePieces {
     const p = quadCorners(t, f.quad);
     const a = p[f.side];
     const c = p[(f.side + 1) % 4];
-    out.add(lib.id(wallModule(b.kind, f.level, f.kind, style)), sideFrame(p, f.side, WALL_T), f.z0, f.z1, look(b.id), hashf(f.quad, f.side, f.level));
+    const st = styleB(b.id);
+    out.add(lib.id(wallModule(b.kind, f.level, f.kind, st)), sideFrame(p, f.side, WALL_T), f.z0, f.z1, look(b.id), hashf(f.quad, f.side, f.level));
     // a post at the wall's start where the side before also has a wall here (a convex corner)
     const prev = (f.side + 3) % 4;
     if (wallsAt.has(`${f.quad},${prev},${f.level}`)) {
       const e1 = unit(a, c);
       const e2 = unit(a, p[prev]);
-      if (style.corners === 'post' || b.kind !== 'house') out.add(lib.id('post:1'), cornerFrame(a, e1, e2, 0.3), f.z0, f.z1, look(b.id), 0);
+      if (st.corners === 'post' || b.kind !== 'house') out.add(lib.id('post:1'), cornerFrame(a, e1, e2, 0.3), f.z0, f.z1, look(b.id), 0);
       else out.add(lib.id('quoins'), cornerFrame(a, e1, e2, 0.42), f.z0, f.z1, look(b.id), 0);
     }
   }
@@ -153,6 +157,7 @@ export function piecesOf(plan: CityPlan): StructurePieces {
   for (const b of plan.buildings) {
     if (plan.quadBuilding[b.quads[0]] !== b.id) continue;
     out.owner = b.id;
+    const style = styleB(b.id);
     const rise = plan.roofRise[b.id];
     for (const q of b.quads) {
       const p = quadCorners(t, q);

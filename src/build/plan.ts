@@ -1,9 +1,19 @@
-// The fortress's plan (fortress slice 1, milestone 1): what the player painted, cell by cell, each cell owned by a
-// structure. Select what (a type), then paint it: a cell painted next to a structure of the same type joins it (two
-// joined by one cell become one). Pure: no GPU, no DOM — the view (fortress.ts) makes Town blocks of it.
-import { STRUCTURE_TYPES, type FortressPlanApi, type Goods, type PerBlock, type PlanGrid, type PlanTotals, type Structure, type StructureDef, type StructureType, type WallTile } from '../api/contracts/fortress';
+// A town's plan (round 128m, onetown; was the fortress's, fortress slice 1, milestone 1): every structure of the town,
+// cell by cell, each cell owned by a structure of a type (build/types.ts) with its levels as runs. One plan a town: the
+// town generator fills it from the seed and the player edits the same plan (the user: "Generation needs to use the same
+// system as the built town" — "It can do things to add plazas and roads but it should not be a different system").
+//  - The player selects what (a type), then paints it: a cell painted next to a structure of the same type joins it
+//    (two joined by one cell become one).
+//  - The generator places each of its buildings as a structure of its own (`place`): two houses
+//    side by side stay two houses.
+//  - Its layout passes (streets, plazas, yards, the quay; roads out, piers, fences; props and moored ships) write the
+//    plan's layout layer: `use` per cell and `layout`.
+// Pure: no GPU, no DOM — the Town (town.ts) keeps what stands of it, the view (view.ts) draws it.
+import type { Berth, LinearFeature, Prop, StructureStyleId, TileUse } from '../api/contracts/structures';
+import { STRUCTURE_TYPES, type TownPlanApi, type Goods, type PerBlock, type PlanGrid, type PlanTotals, type Structure, type StructureDef, type StructureType, type WallTile } from '../api/contracts/fortress';
 import { CellRuns } from '../build/runs';
-import { DEFS, ECON, POWER_RISE } from './defs';
+import { DEFS, POWER_RISE } from './types';
+import { ECON } from '../fortress/defs';
 import { layPit, pitOf, type Pit } from './pit';
 
 /** a type's index in a run (build/runs.ts Run.type) */
@@ -33,7 +43,53 @@ function addPer(into: PerBlock, p: PerBlock, k: number): void {
   if (p.makes) addGoods((into.makes ??= {}), p.makes, k);
 }
 
-export class FortressPlan implements FortressPlanApi {
+/** (onetown) what a structure is given when the generator places it (Structure's look, floor, district, wear) */
+export type StructureAttrs = Partial<Pick<Structure, 'look' | 'floor' | 'district' | 'wear'>>;
+
+/**
+ * (onetown) The plan's layout layer: what the generator's layout passes lay down besides the structures — the town's
+ * linear features (roads out and their bridges, piers, rails, fences and hedges), its props (log piles, stalls, wagons)
+ * and the ships moored in its harbour. Derived from the seed, never edited by the player (nothing of it is saved).
+ */
+export interface TownLayout {
+  linear: LinearFeature[];
+  props: Prop[];
+  berths: Berth[];
+  /** the purpose's work site (a mine's mouth, a sawmill's bank): null none found */
+  works: { at: [number, number]; dir: [number, number] } | null;
+}
+
+/**
+ * (onetown) A plan as numbers and plain data (`TownPlan.toData`): what a worker posts back (a structured clone keeps no
+ * class) and what a test compares byte for byte. Runs as CellRuns.encode's.
+ */
+export interface PlanData {
+  style: StructureStyleId;
+  nextId: number;
+  structures: Omit<Structure, 'cells'>[];
+  owner: Int32Array;
+  levels: Int32Array;
+  gate: Uint8Array;
+  tower: Uint8Array;
+  passage: Uint8Array;
+  ramp: Int8Array;
+  pit: Int32Array;
+  pits: [number, Pit][];
+  use: TileUse[];
+  block: Int32Array;
+  layout: TownLayout;
+}
+
+export class TownPlan implements TownPlanApi {
+  /**
+   * (onetown) per cell its tile's use from the layout (a street, the plaza, a yard, the quay, outside the town; 'lot'
+   * where the generator may build): what a cell no structure holds is drawn as
+   */
+  readonly use: TileUse[];
+  /** (onetown) per cell its block (a plot: the generator's buildings never cross one; -1 none) */
+  readonly block: Int32Array;
+  /** (onetown) the layout's features */
+  readonly layout: TownLayout = { linear: [], props: [], berths: [], works: null };
   /** per cell its structure's id (-1 none) */
   readonly owner: Int32Array;
   /**
@@ -69,14 +125,66 @@ export class FortressPlan implements FortressPlanApi {
   /** the cells whose look may have changed since the last `takeChanged` (painted, erased, their neighbours) */
   private changed = new Set<number>();
 
-  constructor(readonly grid: PlanGrid, readonly defs: Record<StructureType, StructureDef> = DEFS) {
-    this.owner = new Int32Array(grid.count).fill(-1);
-    this.levels = new CellRuns(grid.count);
-    this.gate = new Uint8Array(grid.count);
-    this.tower = new Uint8Array(grid.count);
-    this.passage = new Uint8Array(grid.count);
-    this.ramp = new Int8Array(grid.count).fill(-1);
-    this.pit = new CellRuns(grid.count);
+  /**
+   * `style`: the town's own look (its civ's: the types whose look is 'town' are drawn in it); `use`: the cells' layout
+   * uses (default: all 'outside')
+   */
+  constructor(readonly grid: PlanGrid, readonly defs: Record<StructureType, StructureDef> = DEFS, readonly style: StructureStyleId = 'hearth', data?: PlanData) {
+    const n = grid.count;
+    if (data) {
+      // (onetown) a plan made again from its data (toData): a worker's, a test's
+      if (data.owner.length !== n) throw new Error(`plan: data for ${data.owner.length} cells, the grid has ${n}`);
+      this.use = data.use.slice();
+      this.block = Int32Array.from(data.block);
+      this.owner = Int32Array.from(data.owner);
+      this.levels = CellRuns.decode(n, data.levels);
+      this.gate = Uint8Array.from(data.gate);
+      this.tower = Uint8Array.from(data.tower);
+      this.passage = Uint8Array.from(data.passage);
+      this.ramp = Int8Array.from(data.ramp);
+      this.pit = CellRuns.decode(n, data.pit);
+      this.pits = new Map(data.pits);
+      this.nextId = data.nextId;
+      this.layout = data.layout;
+      for (const st of data.structures) this.byId.set(st.id, { ...st, cells: new Map() });
+      for (let c = 0; c < n; c++) {
+        const o = this.owner[c];
+        if (o < 0) continue;
+        const st = this.byId.get(o);
+        if (!st) throw new Error(`plan: cell ${c}'s owner ${o} isn't in the data`);
+        st.cells.set(c, this.levels.runsOf(c));
+      }
+      return;
+    }
+    this.use = new Array<TileUse>(n).fill('outside');
+    this.block = new Int32Array(n).fill(-1);
+    this.owner = new Int32Array(n).fill(-1);
+    this.levels = new CellRuns(n);
+    this.gate = new Uint8Array(n);
+    this.tower = new Uint8Array(n);
+    this.passage = new Uint8Array(n);
+    this.ramp = new Int8Array(n).fill(-1);
+    this.pit = new CellRuns(n);
+  }
+
+  /** (onetown) The plan as data (TownPlan's constructor makes it again from this). */
+  toData(): PlanData {
+    return {
+      style: this.style,
+      nextId: this.nextId,
+      structures: [...this.byId.values()].sort((a, b) => a.id - b.id).map(({ cells: _cells, ...rest }) => rest),
+      owner: this.owner.slice(),
+      levels: this.levels.encode(),
+      gate: this.gate.slice(),
+      tower: this.tower.slice(),
+      passage: this.passage.slice(),
+      ramp: this.ramp.slice(),
+      pit: this.pit.encode(),
+      pits: [...this.pits].sort((a, b) => a[0] - b[0]),
+      use: this.use.slice(),
+      block: this.block.slice(),
+      layout: this.layout,
+    };
   }
 
   /** (round 128m) a quarry's pit as laid (null: not a quarry, or none yet) */
@@ -142,38 +250,66 @@ export class FortressPlan implements FortressPlanApi {
     return false;
   }
 
-  paint(cell: number, level: number, type: StructureType): boolean {
+  /**
+   * (onetown) The generator's way to place one building: a structure of its own of these blocks (cell, level), joined
+   * to no other of its type beside it (two houses side by side stay two). Painted bottom up, each as the player's paint
+   * (held, not over another structure); the blocks that can't be are left out. Null if none could be.
+   */
+  place(type: StructureType, blocks: readonly (readonly [number, number])[], attrs: StructureAttrs = {}): Structure | null {
+    const s: Structure = { id: this.nextId++, type, cells: new Map(), ...attrs };
+    this.byId.set(s.id, s);
+    let n = 0;
+    for (const [c, l] of [...blocks].sort((a, b) => a[1] - b[1])) if (this.paint(c, l, type, s.id)) n++;
+    if (n) return s;
+    this.byId.delete(s.id);
+    return null;
+  }
+
+  /**
+   * Paint level L of a cell with a type. Without `into` (the player's way) a cell painted next to a structure of the
+   * same type joins it (two joined by one cell become one); with `into`, it goes into that structure, joined to
+   * no other (`place`). False if it can't be (another structure there, too high, not held).
+   */
+  paint(cell: number, level: number, type: StructureType, into?: number): boolean {
     if (cell < 0 || cell >= this.grid.count || !(level >= 0)) return false;
     const def = this.defs[type];
     if (level >= def.maxLevels || this.has(cell, level) || !this.held(cell, level)) return false;
     const here = this.typeAt(cell);
     if (here && here !== type) return false;
+    if (into !== undefined) {
+      const t = this.byId.get(into);
+      if (!t || t.type !== type) throw new Error(`plan: no ${type} structure ${into} to paint into`);
+      if (here && this.owner[cell] !== into) return false;
+    }
     // (a block painted on a ramp's cell takes its place)
     if (this.ramp[cell] >= 0) this.ramp[cell] = -1;
     if (!here) {
-      // join the same type's structures beside it (the lowest id keeps; the others fold into it)
-      const ids = new Set<number>();
-      for (let e = 0; e < 4; e++) {
-        const n = this.grid.nbr[cell * 4 + e];
-        if (n >= 0 && this.typeAt(n) === type) ids.add(this.owner[n]);
-      }
-      const sorted = [...ids].sort((a, b) => a - b);
       let s: Structure;
-      if (!sorted.length) {
-        s = { id: this.nextId++, type, cells: new Map() };
-        this.byId.set(s.id, s);
-      } else {
-        s = this.byId.get(sorted[0])!;
-        for (const other of sorted.slice(1)) {
-          const o = this.byId.get(other)!;
-          for (const c of o.cells.keys()) {
-            this.levels.reown(c, other, s.id);
-            s.cells.set(c, this.levels.runsOf(c));
-            this.owner[c] = s.id;
-            // (its owner changed: the view's Town follows)
-            this.changed.add(c);
+      if (into !== undefined) s = this.byId.get(into)!;
+      else {
+        // join the same type's structures beside it (the lowest id keeps; the others fold into it)
+        const ids = new Set<number>();
+        for (let e = 0; e < 4; e++) {
+          const n = this.grid.nbr[cell * 4 + e];
+          if (n >= 0 && this.typeAt(n) === type) ids.add(this.owner[n]);
+        }
+        const sorted = [...ids].sort((a, b) => a - b);
+        if (!sorted.length) {
+          s = { id: this.nextId++, type, cells: new Map() };
+          this.byId.set(s.id, s);
+        } else {
+          s = this.byId.get(sorted[0])!;
+          for (const other of sorted.slice(1)) {
+            const o = this.byId.get(other)!;
+            for (const c of o.cells.keys()) {
+              this.levels.reown(c, other, s.id);
+              s.cells.set(c, this.levels.runsOf(c));
+              this.owner[c] = s.id;
+              // (its owner changed: the view's Town follows)
+              this.changed.add(c);
+            }
+            this.byId.delete(other);
           }
-          this.byId.delete(other);
         }
       }
       this.owner[cell] = s.id;
@@ -299,14 +435,20 @@ export class FortressPlan implements FortressPlanApi {
     return p;
   }
 
-  totals(stores: Goods): PlanTotals {
+  /**
+   * The plan's totals against the stores: what its blocks cost and what they give. (onetown) `built`: which blocks stand
+   * already — they cost nothing more (a town's generated buildings stand from the start); what's given counts them all.
+   */
+  totals(stores: Goods, built?: (cell: number, level: number) => boolean): PlanTotals {
     const cost: Goods = {};
     const gives: PerBlock = {};
     let blocks = 0;
     for (const s of this.byId.values()) {
       const b = this.blocks(s);
-      blocks += b;
-      addGoods(cost, this.defs[s.type].cost, b);
+      let todo = b;
+      if (built) for (const c of s.cells.keys()) for (const L of this.levels.each(c)) if (built(c, L)) todo--;
+      blocks += todo;
+      addGoods(cost, this.defs[s.type].cost, todo);
       addPer(gives, this.defs[s.type].perBlock, b);
       const p = this.power(s);
       if (p) gives.power = (gives.power ?? 0) + p;

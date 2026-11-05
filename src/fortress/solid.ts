@@ -9,18 +9,18 @@
 //    a wall's lowest level up off the ground (a bridge) from that level's floor. The rest of a wall cell is open ground;
 //  - a yard (farms, the quarry): nothing.
 //  - (round 128h, V128-13) a block's passage: its ground floor open under a lintel, as a gate's (the columns from the
-//    lintel's underside up); a ramp (FortressPlan.ramp): its cell's columns up to the slope from the drop's top down to
+//    lintel's underside up); a ramp (TownPlan.ramp): its cell's columns up to the slope from the drop's top down to
 //    the cell's far side — earthworks, solid as soon as planned (RAMPS_ID), so builders can climb it to what they build.
 // Only what's built: a planned block is no obstacle. Per structure, in the box's frame (box columns and rows; z the
 // Town's — the window's).
 import type { ColumnSpan, V2 } from '../api/contracts/structures';
 import type { StructureDef, StructureType } from '../api/contracts/fortress';
 import { LEVEL_H, type Town } from '../build/town';
-import type { TownGrid } from '../build/towngrid';
+import type { QuadGrid } from '../build/quadgrid';
 import { raster } from '../structures/columns';
 import { cellAt, cellPos } from '../world/lattice';
 import { DEFS } from './defs';
-import type { FortressPlan } from './plan';
+import type { TownPlan } from '../build/plan';
 import { axisLength, onAxis, type Ways } from './ways';
 
 /** a thin wall's half width (pieces.ts WALL_HALF) and a gate's lintel (pieces.ts WALL_LINTEL) */
@@ -39,9 +39,9 @@ const FOOT = 0.6;
 const UNDER_TOP = 1;
 
 export interface SolidInputs {
-  plan: FortressPlan;
+  plan: TownPlan;
   town: Town;
-  grid: TownGrid;
+  grid: QuadGrid;
   /**
    * the ground's top at a box column: a block's foot goes down to it (a cell's floor is its highest column's ground —
    * Town.base — so on a slope the lower columns' solid would stop short of the ground, a gap a unit walks under)
@@ -119,7 +119,8 @@ export function solidSpans(inp: SolidInputs): Map<number, ColumnSpan[]> {
   const out = new Map<number, ColumnSpan[]>();
   for (const s of plan.structures()) {
     const def = defs[s.type];
-    if (def.form === 'yard') continue;
+    // (a yard: nothing; onetown — a bridge claims itself: townlab's bridge work)
+    if (def.form === 'yard' || def.form === 'bridge') continue;
     const spans: ColumnSpan[] = [];
     for (const c of s.cells.keys()) {
       const runs = builtRuns(town, c);

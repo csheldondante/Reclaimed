@@ -31,7 +31,7 @@ import { recordsFrom, type SettlementSeed } from './records';
 import { planSettlement, type Iv, type SettlementPlan } from './plan';
 import { MAT } from '../world/materials';
 import { SettlementLife, type LiveSite, type LiveSpot, type RaidOutcome } from './life';
-import { BUILT_V, FIELD_CELL, rasterColumns, type SiteSpec } from './plan';
+import { BUILT_V, FIELD_CELL, levelsOfStructure, rasterColumns, type SiteSpec } from './plan';
 import { derive } from '../api/contracts/compose';
 import { catalogue } from './catalogue';
 import type { AgentUnits } from '../units/agent-units';
@@ -41,7 +41,9 @@ import type { SurfaceStamp } from '../atlas/bake';
 import { rasterPlan, stampMatch } from './raster';
 import type { ExactPlanDone, ExactPlanJob, FarPlanDone, FarPlanInit, FarPlanJob } from './plan-worker';
 import { Fleet, shipRoutes } from './ships';
-import { townThingAt, type TownThing } from './thing';
+import { placeBuilding } from '../structures/place';
+import { typeIndex } from '../build/plan';
+import { TownSite, type SiteData } from '../build/site';
 
 const T = 64;
 /** a game day (s): the stores' rates are a day's */
@@ -416,16 +418,11 @@ export class Settlements {
     return this.life.startRaid();
   }
 
-  /**
-   * (round 128e, FT-48) What a planned settlement has at window (x, y): one of its buildings, or its wall
-   * (settle/thing.ts). null: nothing of it there, or not planned.
-   */
-  thingAt(id: string, at: V2): TownThing | null {
+  /** (onetown) a planned settlement's town: its one plan, what stands, its grid (the fortress edits the pinned one's) */
+  siteOf(id: string): TownSite {
     const p = this.done.get(id);
-    const s = this.seeds.find((x) => x.rec.id === id);
-    if (!p || !s) return null;
-    const [bx, by] = this.toWindow([s.box.x0, s.box.y0 * ROW_H]);
-    return townThingAt(p.city, p.standing, p.lotUse, [at[0] - bx, at[1] - by]);
+    if (!p) throw new Error(`settlements: ${id} isn't planned (no town to edit)`);
+    return p.site;
   }
 
   /** world (atlas units) → window, and back */
@@ -540,8 +537,9 @@ export class Settlements {
     if (done.error) throw new Error(`settlements: ${s.rec.id}'s plan failed in the worker: ${done.error}`);
     const t1 = performance.now();
     const plan = done.plan;
-    // (made live again: its classes' methods, its record the settlement's own)
+    // (made live again: its classes' methods, its record the settlement's own; onetown: its town from the site's data)
     Object.setPrototypeOf(plan.field, GrowthField.prototype);
+    plan.site = TownSite.fromData(plan.site as unknown as SiteData);
     timed('plan.revive', () => {
       Object.assign(s.rec, plan.rec);
       plan.rec = s.rec;
@@ -651,10 +649,14 @@ export class Settlements {
     return p.sites.map((spec) => ({ spec, door: w(spec.door) }));
   }
 
-  /** a site's storeys up (life.ts): the plan's standing storeys, the view told */
+  /** a site's levels up (life.ts): its structure's blocks under them built (the plan's Town), the view told */
   private raise(p: SettlementPlan, s: SettlementSeed, site: SiteSpec, storeys: number): void {
-    p.standing[site.building] = storeys;
-    for (const f of this.onRaised) f(s.rec.id, site.building);
+    const st = p.site.plan.structure(site.structure);
+    if (!st) throw new Error(`settlements: ${s.rec.id}'s site ${site.id} has no structure ${site.structure}`);
+    for (const c of st.cells.keys())
+      for (const L of p.site.plan.levels.each(c))
+        if (L < storeys && !p.site.town.has(c, L) && !p.site.town.add(c, L, st.id, typeIndex(st.type))) throw new Error(`settlements: ${s.rec.id}'s site block ${c}:${L} couldn't stand`);
+    for (const f of this.onRaised) f(s.rec.id, site.structure);
   }
 
   /**
@@ -677,7 +679,11 @@ export class Settlements {
     if (next.v < BUILT_V * 0.6) return;
     p.free.shift();
     const id = `${rec.id}:site${p.sites.length}`;
-    p.sites.push({ id, building: next.building, storeys: p.city.buildings[next.building].storeys, door: next.door });
+    // (onetown: the house goes into the town's plan as the generator places its own — planned, the builders' work)
+    const sid = placeBuilding(p.site, next.building, 0);
+    if (sid < 0) return;
+    p.sites.push({ id, structure: sid, storeys: levelsOfStructure(p.site, sid), door: next.door });
+    for (const f of this.onRaised) f(rec.id, sid);
     rec.needs.push({ kind: 'build', at: [next.door[0] + s.box.x0, next.door[1] + s.box.y0 * ROW_H], ref: id, priority: 2 });
   }
 
@@ -692,7 +698,7 @@ export class Settlements {
     this.things.set(room, { id: room, kind: 'room', parts: [], condition: 1, owner, place: { in: 'thing', thing: site.id, slot: 'room' }, history: [] });
     this.things.set(hearth, { id: hearth, kind: 'hearth', parts: [], condition: 1, owner, place: { in: 'thing', thing: site.id, slot: 'fitting' }, history: [] });
     const use = derive(catalogue(this.things), site.id).tags.filter((t) => t === 'housing');
-    rec.buildings.push({ id: site.id, thing: site.id, grid: rec.grids[0].id, cells: this.done.get(rec.id)?.city.buildings[site.building].quads.slice() ?? [], storeys: site.storeys, use });
+    rec.buildings.push({ id: site.id, thing: site.id, grid: rec.grids[0].id, cells: [...(this.done.get(rec.id)?.site.plan.structure(site.structure)?.cells.keys() ?? [])], storeys: site.storeys, use });
     rec.needs = rec.needs.filter((j) => j.ref !== site.id);
     site.finished = true;
     for (const f of this.events.built) f(rec, { buildings: rec.buildings.length, ms: 0, house: site.id });

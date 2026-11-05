@@ -6,9 +6,9 @@ import type { StructureType } from '../api/contracts/fortress';
 import { Town } from '../build/town';
 import { TownGrid } from '../build/towngrid';
 import { library } from '../structures/modules';
-import { fortressPieces } from './pieces';
+import { townPieces } from '../build/view';
 import { noWays } from './ways';
-import { FortressPlan } from './plan';
+import { TownPlan } from '../build/plan';
 import { COURT_MAX, shapesOf } from './shapes';
 
 const grid = new TownGrid(80, 92, { seed: 7 });
@@ -25,8 +25,8 @@ const inner = (() => {
 const GROUND = 5;
 
 function setup() {
-  const town = new Town(80, 92, { ground: () => GROUND, stamp: () => {}, zMax: Infinity }, { grid });
-  const plan = new FortressPlan(grid);
+  const town = new Town(80, 92, { ground: () => GROUND, stamp: null, zMax: Infinity }, { grid });
+  const plan = new TownPlan(grid);
   const paint = (c: number, l: number, t: StructureType) => {
     expect(plan.paint(c, l, t)).toBe(true);
     town.plan(c, l, true);
@@ -34,7 +34,7 @@ function setup() {
   const shapes = () => shapesOf(plan, grid, (c) => town.base[c]);
   const names = () => {
     // (the shapes' own rules: no ways — roads and stairs are ways.test.ts's)
-    const p = fortressPieces({ plan, town, grid, ground: () => GROUND, zOff: 0, ways: noWays(grid.count) });
+    const p = townPieces({ plan, town, grid, seed: 7, order: [], placed: new Map() }, { ground: () => GROUND, ways: noWays(grid.count) });
     const lib = library();
     const n = new Map<string, number>();
     for (let i = 0; i < p.count; i++) n.set(lib.modules[p.module[i]].name, (n.get(lib.modules[p.module[i]].name) ?? 0) + 1);

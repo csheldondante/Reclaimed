@@ -1,6 +1,7 @@
 // (round 128h, FT-57) Fortress.ringCells: a closed ring, each cell sharing a side with the next, so a ring of walls
 // painted on it shuts its middle in — on the cells and in the columns the agents walk (it left a 12-column gap on a
 // radius-18 ring round (80, 80): the circle's last cell and its first met at a corner).
+import { fortressOn } from './testing';
 import { describe, expect, it } from 'vitest';
 import { Fortress } from './fortress';
 import { CpuReach, type ReachColumns } from './reach';
@@ -11,7 +12,7 @@ const GROUND = 5;
 
 function fortress() {
   const cols: ReachColumns = { w: W, h: H, runs: () => [[0, GROUND]], water: () => 0 };
-  const f = new Fortress({ origin: [0, 0], w: W, h: H }, {
+  const f = fortressOn({ origin: [0, 0], w: W, h: H }, {
     windowOrigin: () => [0, 0],
     dims: { w: W, h: H, zMax: 999 },
     ground: () => GROUND,

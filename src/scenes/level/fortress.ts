@@ -1,8 +1,9 @@
-// Fortress mode on the level: making the fortress, its life, claims and bar for a town, Skip to done, taps routed
-// to it, and the static claims (sim/static-claims.ts). API: startFortress(scene, st, view, id), skipFrame,
-// fortressAt, staticsFor. The fortress itself lives in src/fortress/.
+// Fortress mode on the level: the player editing a town (its one plan: build/site.ts) — the fortress, its life and bar,
+// its edit state drawn and claimed with the town (the view host's hook), Skip to done, taps routed to it, and the static
+// claims (sim/static-claims.ts). API: startFortress(scene, st, view, id), skipFrame, fortressAt, staticsFor. The
+// fortress itself lives in src/fortress/.
 import { ignoreTeardown, whenPipelinesReady } from '../../gpu/pipeline';
-import type { FortressPiecesHost, FortressTownSource, FortressWindow } from '../../fortress/host';
+import type { FortressTownSource, FortressWindow, TownViewHost } from '../../fortress/host';
 import { installLab } from '../../lab/lab';
 import { AgentUnits } from '../../units/agent-units';
 import { CHUNK } from '../../world/layout';
@@ -17,11 +18,8 @@ import { SKIP_DONE, skipCutOffLine, skipShortLine } from '../../fortress/words';
 import { FortressLife } from '../../fortress/life';
 import { FortressRaid } from '../../fortress/raiders';
 import { ECON, START_STORES } from '../../fortress/defs';
-import { fortressPieces } from '../../fortress/pieces';
-import { FortressClaims } from '../../fortress/claims';
 import { FortressFollow, personCard } from '../../fortress/follow';
 import { StaticClaims } from '../../sim/static-claims';
-import type { StructurePieces } from '../../api/contracts/structures';
 import { SKIP_SPEED, SKIP_GRACE } from './flags';
 import { Dither } from '../../api/cutaway';
 import { LEVEL_H } from '../../build/town';
@@ -29,11 +27,12 @@ import type { LevelScene } from '../level';
 
 /**
  * (fortress slice 1, milestone 1) The town at the start becomes the player's fortress: pinned (live, no houses of its
- * own), its stores started if empty, a Town on its own world-anchored box round it, the planning bar, time stopped.
+ * own), its stores started if empty, (onetown) its one plan edited — the town's site, on its own grid and box —, the
+ * planning bar, time stopped.
  */
 // (round 128l, tooling: the town, the window and the pieces' host as contracts — fortress/host.ts — so the behaviour lab,
 // src/lab/, starts the same fortress on its own small world)
-export function startFortress(scene: LevelScene, st: FortressTownSource, view: FortressPiecesHost, id: string | undefined, win: FortressWindow | undefined = scene.stream): void {
+export function startFortress(scene: LevelScene, st: FortressTownSource, view: TownViewHost, id: string | undefined, win: FortressWindow | undefined = scene.stream): void {
   if (!id) throw new Error('?fortress=1 needs ?town= (the town that becomes the fortress)');
   const S = win;
   if (!S) throw new Error('?fortress=1 needs the atlas level (or the lab: ?level=lab)');
@@ -49,11 +48,10 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
   for (const v of Object.values(rec.stores)) v.rate = 0;
   const { core } = scene;
   const dims = core.dims;
-  const W = 240;
-  const H = 2 * Math.round(240 / ROW_H / 2);
-  // (the box round the town, its row origin even: the lattice's odd rows shift the same in the box and the window)
-  const ox = Math.round(rec.at[0] - W / 2);
-  const oy = 2 * Math.round((rec.at[1] / ROW_H - H / 2) / 2);
+  // (onetown) the town's site: its plan (the generator's buildings and the player's alike), what stands, its grid and box
+  const site = st.siteOf(rec.id);
+  const W = site.box.w;
+  const H = site.box.h;
   // the stores until a warehouse stands: the town's stone heap (its plan's 'pile' spots)
   const townHeap = (): [number, number] => {
     const piles = st.spotsOf(rec.id)?.filter((s) => s.kind === 'pile') ?? [];
@@ -64,37 +62,26 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
   // (round 128l, m4: the check at placement — the GPU's connected components over the box, fortress/reachgpu.ts; it
   // replaced the CPU flood over the window's columns read back, ~140-210 ms a tap and a whole read every 3 s: TL-6, FT-61)
   const reach = new FortressReachGpu(scene.host.gpu.device, core.world, W, H, () => fort.offset());
-  const fort: Fortress = new Fortress({ origin: [ox, oy], w: W, h: H }, {
+  const fort: Fortress = new Fortress(site, {
     reach,
     townHeap,
-    // (round 128k) the town's gates: its wall's gate posts — where the fortress's roads start
-    townGates: () => (st.spotsOf(rec.id) ?? []).filter((s) => s.kind === 'post' && s.ref === `${rec.id}:wall`).map((s): [number, number] => [s.w[0], s.w[1]]),
     windowOrigin: () => [S.origin[0], S.origin[1]],
+    oz: () => S.oz,
     dims: { w: dims.w, h: dims.h, zMax: dims.zMax },
-    ground: (x, y) => scene.heightAt(x, y),
     stores: () => Object.fromEntries(Object.entries(rec.stores).map(([k, v]) => [k, v.stock])),
-    // (round 128g: the view asks for the fortress's pieces every frame — uploaded again only when they're new)
-    changed: () => {},
+    // (onetown: the town drawn again — and claimed again when what stands changed — by the view host)
+    changed: (solid) => (solid ? view.changed(rec.id) : view.redraw(rec.id)),
     // (round 128d, FT-26: the fortress's cells clear their trees — the plants module's clearing)
     clearPlants: (x, y, r) => (scene.worldApi ??= attachSim(scene.core)).plants!.clear(x, y, r),
-    // (round 128e, FT-48: Inspect on the town that was there)
-    townAt: (x, y, z) => {
-      const t = st.thingAt(rec.id, [x, y]);
-      // (the plan's z is the world's: the window's is less its oz)
-      return t && z <= t.top - S.oz ? t : null;
-    },
   });
   scene.fortress = fort;
   fort.status.people = ECON.startPeople;
-  // drawn with the towns' pieces (fortress/pieces.ts), in the box's frame, moved into the window's by its offset
-  let pieces: StructurePieces | null = null;
-  fort.onChange.push(() => (pieces = null));
-  view.extra = () => {
-    if (!fort.plan.structures().length) return null;
-    pieces ??= fortressPieces({ plan: fort.plan, town: fort.town, grid: fort.grid, ground: (x, y) => scene.heightAt(...fort.toWindow(x, y)), zOff: S.oz, ghost: fort.ghost(), started: fort.started(), picked: fort.inspected, ways: fort.ways(), lanes: fort.lanes(), shut: fort.gatesShut });
-    const [dx, dy] = fort.offset();
-    return { p: pieces, dx, dy: dy * ROW_H };
-  };
+  // (onetown) the fortress's edit state drawn and claimed with its town (the view host's: one slab, one static grid)
+  view.setHook(rec.id, {
+    view: () => ({ ghost: fort.ghost(), started: fort.started(), picked: fort.inspected, ways: fort.ways(), lanes: fort.lanes(), shut: fort.gatesShut }),
+    solid: () => ({ ways: fort.ways(), shut: fort.gatesShut }),
+    lost: (structure) => fort.lose(structure),
+  });
   // the ground under every column known before the first plan (a far chunk's surface words aren't made till it wakes):
   // made now over the whole window and read back (round 128l: once the level's pipelines are ready — in its batch, at its end)
   whenPipelinesReady(() => {
@@ -111,18 +98,9 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
     if (m === 'plan') fort.requestReach(true);
   });
   scene.fortressReadCols = () => fort.requestReach(true);
-  S.onSlide.push(() => fort.slid());
-  // (round 128m, quarry) a slide in z (a deep pit looked into): the heights the fortress keeps in window z follow
-  S.onSlide.push((_dx, _dy, dz) => fort.slidZ(dz));
-  S.onWarp.push(() => fort.slid());
+  // (onetown: the town's heights are world z and its pieces in its box's frame — a slide moves the grid's row only)
   S.onSlide.push(() => fort.requestReach(true));
   S.onWarp.push(() => fort.requestReach(true));
-  // (round 128d) what's built is solid to the world (fortress/claims.ts): claimed in the columns, as the towns' are
-  // (round 128j: a static grid, written with the land — sim/static-claims.ts)
-  scene.fortressClaims = new FortressClaims(fort, {
-    external: () => scene.integrity?.external ?? null,
-    statics: () => staticsFor(scene, S),
-  });
   // (round 128i, FT-67) the road stamp's offset moved in the slide's own frame, as the towns' grid rows are
   S.onSlide.push(() => scene.fortressLife?.roads());
   S.onWarp.push(() => scene.fortressLife?.roads());
@@ -234,7 +212,6 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
     raidSummary: () => scene.fortressRaid?.summary ?? false,
     closeRaid: () => scene.fortressRaid?.closeSummary(),
   });
-  scene.fortressBar.townName = rec.name;
   // the power coming in: the fortress's built blocks (a ledger number: nothing spends it yet)
   fort.onChange.push(() => {
     const p = (rec.stores.power ??= { stock: 0, rate: 0 });
@@ -437,6 +414,8 @@ export function startLab(scene: LevelScene): void {
     params: host.params,
     fixture: scene.opts.made?.fixture,
     startFortress: (town, view, win) => startFortress(scene, town, view, town.rec.id, win),
+    external: () => scene.integrity?.external ?? null,
+    statics: (win) => staticsFor(scene, win),
     fortress: () => scene.fortress,
     life: () => scene.fortressLife,
     raid: () => scene.fortressRaid,

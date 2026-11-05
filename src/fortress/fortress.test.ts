@@ -7,9 +7,9 @@ import { Town } from '../build/town';
 import { TownGrid } from '../build/towngrid';
 import { library } from '../structures/modules';
 import { DEFS } from './defs';
-import { cityPlanOf, fortressPieces } from './pieces';
+import { townView, townPieces } from '../build/view';
 import { noWays } from './ways';
-import { FortressPlan, wallTileOf } from './plan';
+import { TownPlan, wallTileOf } from '../build/plan';
 import { goodsText, refusedLine, wouldCutLine, planLines, structureLines, typeLines, variantLine } from './words';
 
 const grid = new TownGrid(80, 92, { seed: 7 });
@@ -26,7 +26,7 @@ const inner = (() => {
 
 describe('the plan: cost and capacity', () => {
   it('a structure costs and gives blocks × its type\'s per-block numbers', () => {
-    const p = new FortressPlan(grid);
+    const p = new TownPlan(grid);
     expect(p.paint(inner, 0, 'house')).toBe(true);
     expect(p.paint(inner, 1, 'house')).toBe(true);
     expect(p.paint(nbr(inner, 0), 0, 'house')).toBe(true);
@@ -40,7 +40,7 @@ describe('the plan: cost and capacity', () => {
   });
 
   it('a yard lies flat; a type stacks no higher than its limit; another type can\'t share a cell', () => {
-    const p = new FortressPlan(grid);
+    const p = new TownPlan(grid);
     expect(p.paint(inner, 0, 'farm')).toBe(true);
     expect(p.paint(inner, 1, 'farm')).toBe(false);
     expect(p.paint(inner, 1, 'house')).toBe(false);
@@ -49,7 +49,7 @@ describe('the plan: cost and capacity', () => {
     expect(DEFS.house.maxLevels).toBe(Infinity);
     for (let l = 0; l < 30; l++) expect(p.paint(c, l, 'house')).toBe(true);
     const capped = { ...DEFS, house: { ...DEFS.house, maxLevels: 3 } };
-    const q = new FortressPlan(grid, capped);
+    const q = new TownPlan(grid, capped);
     for (let l = 0; l < 3; l++) expect(q.paint(c, l, 'house')).toBe(true);
     expect(q.paint(c, 3, 'house')).toBe(false);
   });
@@ -57,7 +57,7 @@ describe('the plan: cost and capacity', () => {
 
 describe('the plan: painting next to the same type adds to it', () => {
   it('joins a neighbour of the same type, starts a new one beside another type, merges two it bridges', () => {
-    const p = new FortressPlan(grid);
+    const p = new TownPlan(grid);
     const a = inner;
     const b = nbr(a, 0);
     const c = nbr(b, 0);
@@ -69,7 +69,7 @@ describe('the plan: painting next to the same type adds to it', () => {
     p.paint(w, 0, 'warehouse');
     expect(p.owner[w]).not.toBe(p.owner[a]);
     // two houses apart, then the cell between them: one house
-    const p2 = new FortressPlan(grid);
+    const p2 = new TownPlan(grid);
     p2.paint(a, 0, 'house');
     p2.paint(c, 0, 'house');
     expect(p2.owner[a]).not.toBe(p2.owner[c]);
@@ -98,7 +98,7 @@ describe('the wall tiles fit together', () => {
   });
 
   it('a run of wall cells joins: straight in the middle, ends, a corner where it turns, a gate only in a straight run', () => {
-    const p = new FortressPlan(grid);
+    const p = new TownPlan(grid);
     const m = inner;
     const a = nbr(m, 0);
     const b = nbr(m, 2);
@@ -138,13 +138,13 @@ describe('the pieces: each type reads distinctly, walls fit together', () => {
   };
   const make = () => {
     const town = new Town(80, 92, { ground: () => 5, stamp: () => { throw new Error('no stamps'); }, zMax: 200 }, { grid });
-    const plan = new FortressPlan(grid);
-    const paint = (c: number, l: number, t: Parameters<FortressPlan['paint']>[2]) => {
+    const plan = new TownPlan(grid);
+    const paint = (c: number, l: number, t: Parameters<TownPlan['paint']>[2]) => {
       expect(plan.paint(c, l, t)).toBe(true);
       town.plan(c, l, true);
     };
     // (bare: the shapes' own rules, no ways — roads and stairs are ways.test.ts's)
-    const pieces = (bare = false) => fortressPieces({ plan, town, grid, ground: () => 5, zOff: 0, ways: bare ? noWays(grid.count) : undefined });
+    const pieces = (bare = false) => townPieces({ plan, town, grid, seed: 7, order: [], placed: new Map() }, { ground: () => 5, ways: bare ? noWays(grid.count) : undefined });
     return { town, plan, paint, pieces };
   };
 
@@ -213,15 +213,15 @@ describe('the pieces: each type reads distinctly, walls fit together', () => {
     const b = nbr(inner, 0);
     f.paint(inner, 0, 'house');
     f.paint(b, 0, 'house');
-    const one = cityPlanOf({ plan: f.plan, town: f.town, grid, ground: () => 5, zOff: 0 }, 'hearth');
-    expect(one.plan.buildings.length).toBe(1);
+    const one = townView({ plan: f.plan, town: f.town, grid, seed: 7, order: [], placed: new Map() }, { ground: () => 5 });
+    expect(one.city.buildings.length).toBe(1);
     const was = DEFS.house.joins;
     DEFS.house.joins = false;
     try {
-      const apart = cityPlanOf({ plan: f.plan, town: f.town, grid, ground: () => 5, zOff: 0 }, 'hearth');
-      expect(apart.plan.buildings.length).toBe(2);
-      // (each its own walls on the side they share)
-      expect(apart.plan.facades.length).toBeGreaterThan(one.plan.facades.length);
+      const apart = townView({ plan: f.plan, town: f.town, grid, seed: 7, order: [], placed: new Map() }, { ground: () => 5 });
+      // (two buildings, each its own roof; onetown: the side they share is inside the row — no wall shows there, as the
+      // towns' row houses)
+      expect(apart.city.buildings.length).toBe(2);
     } finally {
       DEFS.house.joins = was;
     }
@@ -230,7 +230,7 @@ describe('the pieces: each type reads distinctly, walls fit together', () => {
 
 describe('the planning panel reads plainly (docs/WRITING.md)', () => {
   it('every line passes the lint', () => {
-    const p = new FortressPlan(grid);
+    const p = new TownPlan(grid);
     p.paint(inner, 0, 'house');
     p.paint(inner, 1, 'house');
     const lines: string[] = [];

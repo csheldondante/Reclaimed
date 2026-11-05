@@ -1,7 +1,8 @@
 // The structures system at its contract, on tiny cities (vitest, Node; no GPU). `npx vitest run src/structures`.
 import { describe, expect, it } from 'vitest';
 import type { CitySpec, GroundFn } from '../api/contracts/structures';
-import { planCity, isolate, grown } from './plan';
+import { planCity, planTown } from './place';
+import { isolate, grown } from '../build/view';
 import { piecesOf, PIECE_FLOATS, ROOF_LIFT } from './pieces';
 import { columnsOf } from './columns';
 import { buriable, assetPieces, AFFINE } from './assets';
@@ -115,19 +116,18 @@ describe('plans', () => {
     expect(b.buildings.map((x) => x.storeys)).toEqual(a.buildings.map((x) => x.storeys));
   });
 
-  it('nav: from every building’s top storey to the street, and onto the rampart at a gate', () => {
+  it('nav (onetown: the ways’): from every building’s door to the street, and onto the rampart by stairs', () => {
     const p = planCity(spec('radial'), flat);
     const g = p.nav;
-    const street = g.nodes.find((n) => n.surface === 'plaza')!;
+    const street = g.nodes.find((n) => n.surface === 'plaza' || n.surface === 'street')!;
     expect(street).toBeTruthy();
     let reached = 0;
     let tried = 0;
-    for (const b of p.buildings.slice(0, 12)) {
-      const top = g.nodes.filter((n) => n.building === b.id).sort((x, y) => y.at[2] - x.at[2])[0];
-      if (!top) continue;
+    for (const n of g.nodes.filter((x) => x.surface === 'floor').slice(0, 24)) {
       tried++;
-      if (navPath(g, top.id, street.id).length) reached++;
+      if (navPath(g, n.id, street.id).length) reached++;
     }
+    expect(tried).toBeGreaterThan(10);
     expect(reached).toBe(tried);
     const rampart = g.nodes.find((n) => n.surface === 'rampart')!;
     const path = navPath(g, street.id, rampart.id);
@@ -252,7 +252,7 @@ describe('linear features', () => {
     expect(bridge[2]).toBe(false);
     for (let i = 0; i < z.length; i++) expect(z[i]).toBeGreaterThanOrEqual(g[i]);
   });
-  it('roads out of a town in a gorge cross it on arched bridges; their far ends reach the plaza', () => {
+  it('roads out of a town in a gorge cross it on arched bridges (the layout’s)', () => {
     const p = planCity(spec('irregular', { roads: 3 }), gorge);
     const bridges = p.linear.filter((f) => f.kind === 'bridge');
     expect(bridges.length).toBeGreaterThanOrEqual(2);
@@ -260,17 +260,14 @@ describe('linear features', () => {
     const pc = piecesOf(p);
     const names = new Set(Array.from(pc.module, (m) => lib.modules[m].name));
     expect(names.has('deck') && names.has('archspan') && names.has('road')).toBe(true);
-    const g = p.nav;
-    const plaza = g.nodes.find((n) => n.surface === 'plaza')!;
-    const far = g.nodes.filter((n) => n.surface === 'street' && n.building < 0).sort((a, b) => Math.hypot(b.at[0] - 500, b.at[1] - 500) - Math.hypot(a.at[0] - 500, a.at[1] - 500))[0];
-    expect(navPath(g, far.id, plaza.id).length).toBeGreaterThan(5);
   });
-  it('a walled town: wall runs with towers, the rampart walk reached by stairs', () => {
-    const p = planCity(spec('contour-voronoi', { roads: 2, walls: true }), hill);
-    expect(p.linear.some((f) => f.kind === 'wall')).toBe(true);
+  it('a walled town (onetown: its wall the plan’s wall cells): wall runs with towers, the rampart walk reached by stairs', () => {
+    const t = planTown(spec('contour-voronoi', { roads: 2, walls: true }), hill);
+    const p = t.city;
+    expect(t.site.plan.structures().some((s) => s.type === 'wall')).toBe(true);
     const lib = library();
-    const pc = piecesOf(p);
-    expect(Array.from(pc.module).some((m) => lib.modules[m].name === 'wallwalk')).toBe(true);
+    const names = new Set(Array.from(t.extra.module, (m) => lib.modules[m].name));
+    expect(names.has('rampart') && names.has('tower') && names.has('merlons')).toBe(true);
     const g = p.nav;
     const plaza = g.nodes.find((n) => n.surface === 'plaza' || n.surface === 'street')!;
     const walk = g.nodes.find((n) => n.surface === 'rampart')!;
@@ -287,14 +284,12 @@ describe('mega tiles', () => {
     const b = p.buildings[p.quadBuilding[dome.quads[0]]];
     expect(b.mega).toBe('dome');
     expect(dome.quads.every((q) => p.quadBuilding[q] === b.id)).toBe(true);
-    const r = planCity(spec('radial'), flat);
-    expect(r.megas.some((m) => m.kind === 'keep')).toBe(true);
-    const g = r.nav;
-    const plaza = g.nodes.find((n) => n.surface === 'plaza')!;
-    const top = g.nodes.filter((n) => n.surface === 'roof').sort((a, c) => c.at[2] - a.at[2])[0];
-    const path = navPath(g, plaza.id, top.id);
-    expect(path.length).toBeGreaterThan(1);
-    expect(g.links.some((l) => l.kind === 'lift')).toBe(true);
+    // (onetown: a radial city's keep is the fortress type on its plaza — the player's keep's look, its door on the ways)
+    const r = planTown(spec('radial'), flat);
+    const keep = r.site.plan.structures().find((s) => s.type === 'fortress')!;
+    expect(keep).toBeTruthy();
+    const g = r.city.nav;
+    expect(g.nodes.some((n) => n.surface === 'floor' && n.building === keep.id)).toBe(true);
   });
 });
 
@@ -374,7 +369,9 @@ describe('density drives what is built (round 119)', () => {
     const pc = piecesOf(p);
     const names = new Set(Array.from(pc.module, (m) => lib.modules[m].name));
     expect(names.has('crop')).toBe(true);
-    expect(names.has('fence') || names.has('hedge')).toBe(true);
+    // (onetown: the plots are farms, orchards and pastures of the plan, fenced or hedged round as the player's farms)
+    const extra = new Set(Array.from(planTown(spec('irregular', { radius: 40, farmland: 110 }), hill).extra.module, (m) => lib.modules[m].name));
+    expect(extra.has('fence') || extra.has('hedge')).toBe(true);
     expect([...names].some((n) => n.startsWith('barn:'))).toBe(true);
     expect([...names].some((n) => n.includes(':thatch'))).toBe(true);
   });

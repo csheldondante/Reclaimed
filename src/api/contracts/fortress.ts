@@ -12,9 +12,24 @@
  * and height give power — "building your fortress should add to your magic power so that players are incentivised to
  * build ever bigger and elaborate fortresses").
  */
-export type StructureType = 'fortress' | 'house' | 'farm' | 'lumber' | 'quarry' | 'warehouse' | 'wall' | 'blacksmith' | 'barracks';
+export type StructureType =
+  | 'fortress' | 'house' | 'farm' | 'lumber' | 'quarry' | 'warehouse' | 'wall' | 'blacksmith' | 'barracks'
+  // (round 128m, onetown: one building system — the user, "Generation needs to use the same system as the built town")
+  // what the town generator places too, through the same plan: its huts, farmsteads, purposes' buildings, landmarks
+  | 'hut' | 'farmhouse' | 'barn' | 'granary' | 'stable' | 'hall' | 'temple' | 'tower' | 'orchard' | 'pasture' | 'fountain'
+  | 'lighthouse' | 'headframe' | 'windmill'
+  // (onetown) the bridge: a type in the one table for townlab's bridges (roads over water); nothing paints it yet
+  | 'bridge';
 
-export const STRUCTURE_TYPES: readonly StructureType[] = ['fortress', 'house', 'farm', 'lumber', 'quarry', 'warehouse', 'wall', 'blacksmith', 'barracks'];
+/** Every type, in the order a run's type index counts them (build/runs.ts Run.type): appended to, never reordered. */
+export const STRUCTURE_TYPES: readonly StructureType[] = [
+  'fortress', 'house', 'farm', 'lumber', 'quarry', 'warehouse', 'wall', 'blacksmith', 'barracks',
+  'hut', 'farmhouse', 'barn', 'granary', 'stable', 'hall', 'temple', 'tower', 'orchard', 'pasture', 'fountain',
+  'lighthouse', 'headframe', 'windmill', 'bridge',
+];
+
+/** (onetown) The types the Build panel offers the player (the rest the generator places; the player may erase or add to them). */
+export const PAINTABLE_TYPES: readonly StructureType[] = ['fortress', 'house', 'farm', 'lumber', 'quarry', 'warehouse', 'wall', 'blacksmith', 'barracks'];
 
 /** A good in the stores (settlement stores' keys: 'log' is wood). */
 /** (milestone 3) ore: a share of what the quarry brings in (the user's answer 4; deposits later) */
@@ -29,9 +44,11 @@ export type Goods = Partial<Record<Good, number>>;
  *  - yard: on the ground, no block (fields, the quarry's floor); one level;
  *  - keep: the fortress's solid stone blocks, crenellated on top, a tower at each outer corner; walls run into it.
  * (Blocks are the Town's (build/town.ts): a cell and a level each, its floor lined up with its neighbours'; a cell's
- * levels are runs, any height, gaps allowed where a block is held — FortressPlan.held.)
+ * levels are runs, any height, gaps allowed where a block is held — TownPlan.held.)
  */
-export type StructureForm = 'block' | 'wall' | 'yard' | 'keep';
+export type StructureForm = 'block' | 'wall' | 'yard' | 'keep'
+  /** (onetown) a way over water or a gap (townlab's bridges): its own rules, drawn and claimed by the bridge's builder */
+  | 'bridge';
 
 /** What one block of a type gives (a structure gives blocks × these). */
 export interface PerBlock {
@@ -62,10 +79,18 @@ export interface PerBlock {
  *  - chimney: a chimney on each top block.
  */
 export interface StructureLook {
-  style: 'hearth' | 'bastion' | 'terrace';
+  /** (onetown) 'town': the town's own style (its civ's: TownPlan.style), the generator's houses and the player's alike */
+  style: 'hearth' | 'bastion' | 'terrace' | 'town';
   kind?: 'house' | 'hut' | 'farmhouse' | 'barn' | 'warehouse' | 'sawmill' | 'granary' | 'stable';
   props?: ('logpile' | 'crates' | 'crane' | 'spoil' | 'banner' | 'haystack' | 'cart' | 'wagon')[];
   chimney?: boolean;
+  /**
+   * (onetown) drawn whole as a landmark (structures/pieces.ts megas) over its cells, no façades: a tower (one cell),
+   * a domed temple (four round a corner), a fountain, a lighthouse, a headframe, a windmill
+   */
+  mega?: 'tower' | 'dome' | 'fountain' | 'lighthouse' | 'headframe' | 'windmill';
+  /** (onetown) a yard's tiles: crops, an orchard's rows, a pasture, a paved plaza (default: the farm's crops, else a yard) */
+  use?: 'field' | 'orchard' | 'pasture' | 'plaza' | 'yard';
 }
 
 export interface StructureDef {
@@ -93,6 +118,18 @@ export interface StructureDef {
 export interface Structure {
   id: number;
   type: StructureType;
+  /**
+   * (onetown) its look's random bits (structures' BuildingRec.look: palette picks; bit 15 + bits 12-14 a district's roof
+   * colour): the generator's choice; absent, drawn from the id
+   */
+  look?: number;
+  /** (onetown) its ground floor (the plan's z): the generator sets it (a house's floor on its lot's high side, or dug
+   *  into a hill); absent, each cell's floor is the Town's rule (Town.groundFloor) */
+  floor?: number;
+  /** (onetown) its quarter of the town (0 the middle; the generator's) */
+  district?: number;
+  /** (onetown) what history left on it: gutted by a fire, abandoned to a flood (the generator's marks) */
+  wear?: 'burned' | 'flooded';
   /**
    * cell → its levels as runs [lo, hi), bottom up (round 128d: no level cap; a gap is two runs — build/runs.ts, the
    * plan's own runs, read only)
@@ -129,7 +166,7 @@ export interface PlanTotals {
  * The fortress's plan: what the player painted. Pure (no GPU, no DOM): the view (src/fortress/fortress.ts) turns it
  * into Town blocks, the UI reads its numbers.
  */
-export interface FortressPlanApi {
+export interface TownPlanApi {
   /** paint level L of a cell with a type; false if it can't be (another type there, too high, a yard stacked) */
   paint(cell: number, level: number, type: StructureType): boolean;
   /** take level L of a cell away; false if nothing's there */
@@ -146,7 +183,7 @@ export interface FortressPlanApi {
   blocks(s: Structure): number;
   cost(s: Structure): Goods;
   gives(s: Structure): PerBlock;
-  totals(stores: Goods): PlanTotals;
+  totals(stores: Goods, built?: (cell: number, level: number) => boolean): PlanTotals;
   /** power a day these blocks give (all of the structure's, or those `only` lets through: the built ones) */
   power(s: Structure, only?: (cell: number, level: number) => boolean): number;
   wallTile(cell: number, level: number): WallTile | null;

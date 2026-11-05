@@ -69,7 +69,6 @@ import { FortressBar } from '../fortress/ui';
 import type { FortressFollow } from '../fortress/follow';
 import { FortressLife } from '../fortress/life';
 import type { FortressRaid } from '../fortress/raiders';
-import { FortressClaims } from '../fortress/claims';
 import { StaticClaims } from '../sim/static-claims';
 import type { GridStyle } from '../api/contracts/settlement';
 import type { CitySpec } from '../api/contracts/structures';
@@ -257,7 +256,6 @@ export class LevelScene implements Scene {
   fortressSkipBlocked = 0;
   fortressRunSpeed = 1;
   /** (round 128d) its built blocks claimed in the columns: the agents, the water and the ground go round them */
-  fortressClaims?: FortressClaims;
   /** (round 128j) the static grids' claims (the towns', the fortress's), written with the land (sim/static-claims.ts) */
   statics?: StaticClaims;
   /** (round 128f) read the window's columns again for the fortress's reach check (fortress/reach.ts) */
@@ -654,7 +652,6 @@ export class LevelScene implements Scene {
     this.fortressBar?.dispose();
     this.fortressRaid?.dispose();
     this.fortressLife?.dispose();
-    this.fortressClaims?.dispose();
     this.statics?.dispose();
     this.bugReport?.dispose();
     this.stationsBar?.dispose();

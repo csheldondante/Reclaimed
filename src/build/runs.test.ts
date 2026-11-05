@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { CellRuns } from './runs';
 import { LEVEL_H, Town } from './town';
 import { TownGrid } from './towngrid';
-import { FortressPlan } from '../fortress/plan';
+import { TownPlan } from './plan';
 
 const spans = (r: CellRuns, c: number) => r.runsOf(c).map((x) => [x.lo, x.hi, x.owner, x.type]);
 
@@ -71,7 +71,7 @@ describe('runs per cell', () => {
 
 const grid = new TownGrid(80, 92, { seed: 7 });
 const GROUND = 5;
-const newTown = () => new Town(80, 92, { ground: () => GROUND, stamp: () => {}, zMax: Infinity }, { grid });
+const newTown = () => new Town(80, 92, { ground: () => GROUND, stamp: null, zMax: Infinity }, { grid });
 // a cell with four neighbours, well inside
 let inner = -1;
 for (let c = 0; c < grid.count && inner < 0; c++) {
@@ -96,7 +96,7 @@ describe('the Town on runs', () => {
   });
 
   it('a stamped town still stops under its window ceiling', () => {
-    const t = new Town(80, 92, { ground: () => GROUND, stamp: () => {}, zMax: 64 }, { grid });
+    const t = new Town(80, 92, { ground: () => GROUND, stamp: null, zMax: 64 }, { grid });
     let L = 0;
     while (t.add(inner, L)) L++;
     // (its roof must clear zMax - 2: 64 - 2 - 4.1 over a floor at ~5.5)
@@ -145,7 +145,7 @@ describe('the Town on runs', () => {
 
 describe('the fortress plan on runs', () => {
   it('a keep 20 levels high; a house too (the old caps were the 8 levels\')', () => {
-    const p = new FortressPlan(grid);
+    const p = new TownPlan(grid);
     for (let L = 0; L < 20; L++) expect(p.paint(inner, L, 'fortress')).toBe(true);
     const s = p.structureAt(inner)!;
     expect(p.blocks(s)).toBe(20);
@@ -157,7 +157,7 @@ describe('the fortress plan on runs', () => {
   });
 
   it('a block over an empty level is held by the block under it or one beside it at its level, else refused', () => {
-    const p = new FortressPlan(grid);
+    const p = new TownPlan(grid);
     const a = inner;
     const b = nbr(a, 0);
     // nothing under b's level 2 and nothing beside it: refused

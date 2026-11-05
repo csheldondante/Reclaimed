@@ -11,7 +11,7 @@
 // Pure: the plan and the grid in, the shapes out; pieces.ts draws them.
 import type { StructureDef, StructureType } from '../api/contracts/fortress';
 import { DEFS } from './defs';
-import type { FortressPlan } from './plan';
+import type { TownPlan } from '../build/plan';
 
 /** the most cells a courtyard has (a bigger enclosed space is a bailey, not a courtyard) */
 export const COURT_MAX = 8;
@@ -50,7 +50,7 @@ export interface Shapes {
  * The plan's shapes. `base`: a cell's ground floor (the Town's): a building is a structure's cells on one floor
  * (pieces.ts groups them so), and a dome's four cells must be one building.
  */
-export function shapesOf(plan: FortressPlan, grid: ShapeGrid, base: (c: number) => number, defs: Record<StructureType, StructureDef> = DEFS): Shapes {
+export function shapesOf(plan: TownPlan, grid: ShapeGrid, base: (c: number) => number, defs: Record<StructureType, StructureDef> = DEFS): Shapes {
   const form = (c: number) => {
     const t = plan.typeAt(c);
     return t ? defs[t].form : null;

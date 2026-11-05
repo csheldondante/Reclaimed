@@ -6,7 +6,8 @@
 // coast, a river, a mountain); day or night (the lights' pools); the wind for the banners; the town's history worn in.)
 import type { CityMark, CityPurpose, CitySpec, CityPlan, GroundFn, StructurePieces } from '../../api/contracts/structures';
 import type { GridStyle } from '../../api/contracts/settlement';
-import { planCity, isolate, grown } from '../plan';
+import { planTown } from '../place';
+import { isolate, grown } from '../../build/view';
 import { piecesOf, PIECE_FLOATS } from '../pieces';
 import { fbm } from '../rng';
 import { quadCorners, quadCentre } from '../tiles/builder';
@@ -97,7 +98,21 @@ async function boot(): Promise<void> {
   const phone = Math.min(screen.width, screen.height) < 600;
   const r = new ViewerRenderer(device, ctx, format, num('msaa', 4));
   let plan: CityPlan | null = null;
+  /** (onetown) what the plan's view draws besides piecesOf (thin walls, the keep, fences round the plots) */
+  let extra: StructurePieces | null = null;
   let all: StructurePieces | null = null;
+  const withExtra = (p: StructurePieces): StructurePieces => {
+    if (!extra || !extra.count) return p;
+    const n = p.count + extra.count;
+    const out: StructurePieces = { module: new Uint16Array(n), data: new Float32Array(n * PIECE_FLOATS), building: new Int32Array(n), count: n };
+    out.module.set(p.module, 0);
+    out.module.set(extra.module, p.count);
+    out.data.set(p.data, 0);
+    out.data.set(extra.data, p.count * PIECE_FLOATS);
+    out.building.set(p.building, 0);
+    out.building.set(extra.building, p.count);
+    return out;
+  };
   let focusAt: [number, number, number] = [0, 0, 10];
   let reach = 60;
   let dist = 100;
@@ -119,8 +134,10 @@ async function boot(): Promise<void> {
       spec.walls = true;
     }
     const water = WATERY.has(state.ground) ? waterOf(ground) : undefined;
-    plan = planCity(spec, ground, water);
-    all = piecesOf(grown(plan, state.grow));
+    const town = planTown(spec, ground, water);
+    plan = town.city;
+    extra = town.extra;
+    all = withExtra(piecesOf(grown(plan, state.grow)));
     const ms = performance.now() - t0;
     showView();
     // the ground under it all
@@ -278,7 +295,7 @@ async function boot(): Promise<void> {
     } else if (k === 'grow') {
       // (the town as built so far: the same plan, a share of its build order)
       if (plan) {
-        all = piecesOf(grown(plan, state.grow));
+        all = withExtra(piecesOf(grown(plan, state.grow)));
         showView();
       }
     } else if (k === 'overlay') {

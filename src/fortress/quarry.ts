@@ -17,7 +17,7 @@ import type { V2 } from '../api/contracts/units';
 import { LEVEL_H } from '../build/town';
 import { ECON } from './defs';
 import type { Fortress } from './fortress';
-import { depthAt, type Pit } from './pit';
+import { depthAt, type Pit } from '../build/pit';
 
 export interface QuarryIO {
   fort: Fortress;

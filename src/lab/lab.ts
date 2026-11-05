@@ -21,14 +21,17 @@ import type { WorldCore } from '../scenes/world-core';
 import type { Fortress } from '../fortress/fortress';
 import type { FortressLife } from '../fortress/life';
 import type { FortressFollow } from '../fortress/follow';
-import type { FortressPiecesHost, FortressWindow } from '../fortress/host';
+import type { FortressWindow, TownViewHost } from '../fortress/host';
 import type { AgentUnits } from '../units/agent-units';
 import { START_STORES } from '../fortress/defs';
 import { roadInside, ROAD_SHAPE_FLOATS } from '../agents/roads';
 import { Renderer } from '../render/renderer';
 import { labRecipe, type LabRecipe, type LabTownSpec } from './recipes';
 import { LabTown, stillWindow } from './town';
-import { LabPiecesView } from './view';
+import { LabTownView } from './view';
+import type { ExternalRegistry } from '../sim/external';
+import type { StaticClaims } from '../sim/static-claims';
+import { siteFromJson } from '../build/site';
 import type { FortressRaid } from '../fortress/raiders';
 import type { TownFixtureHeader } from './townfixture';
 import { ROW_H } from '../world/lattice';
@@ -39,8 +42,11 @@ export interface LabSceneIO {
   units: AgentUnits;
   device: GPUDevice;
   params: URLSearchParams;
-  /** the scene's startFortress on the lab's town, pieces host and window */
-  startFortress(town: LabTown, view: FortressPiecesHost, win: FortressWindow): void;
+  /** the scene's startFortress on the lab's town, its view host and window */
+  startFortress(town: LabTown, view: TownViewHost, win: FortressWindow): void;
+  /** (onetown) the External registry and the static grids' claims (the town's claims: build/claims.ts) */
+  external(): ExternalRegistry | null;
+  statics(win: FortressWindow): StaticClaims | null;
   fortress(): Fortress | undefined;
   life(): FortressLife | undefined;
   /** (round 128l, m4) the attack wave (fortress/raiders.ts), from the first Build */
@@ -119,8 +125,8 @@ export const LAB_SIMS: Record<string, readonly string[] | null> = {
 export class Lab {
   readonly recipe: LabRecipe;
   readonly town: LabTown;
-  readonly view: LabPiecesView;
-  readonly window = stillWindow();
+  readonly view: LabTownView;
+  readonly window: FortressWindow;
   /** the lab steps the scene (lab.run): the display's frames wait */
   driving = false;
   /** the fortress is ready and the recipe's town stands */
@@ -135,12 +141,15 @@ export class Lab {
     this.recipe = labRecipe(io.params.get('lab'));
     const fx = io.fixture;
     if (this.recipe.fixture && !fx) throw new Error(`lab recipe ${this.recipe.name}: its fixture wasn't loaded`);
-    this.town = fx ? LabTown.of(fx.town) : new LabTown(this.recipe.heap, this.recipe.homes);
+    // (onetown: a fixture's town is the start town's site as the game had it; a recipe's an empty plan round the heap)
+    if (fx && !fx.site) throw new Error(`lab recipe ${this.recipe.name}: its fixture has no town site (captured before onetown: capture it again — scripts/labtown.mjs capture)`);
+    this.town = fx ? LabTown.of(fx.town, siteFromJson(fx.site)) : LabTown.plain(this.recipe.heap, this.recipe.homes, (x, y) => this.recipe.ground(x, y));
+    this.window = fx ? stillWindow(fx.origin, fx.oz! + fx.zBase) : stillWindow();
     // (a fixture's sea, at its level as the game had it: past the window's edge the world is sea, so it doesn't drain)
     if (fx) {
       io.core.globals.seaZ = fx.seaZ;
     }
-    this.view = new LabPiecesView(io.device, io.core.renderer);
+    this.view = new LabTownView({ device: io.device, renderer: io.core.renderer, external: () => io.external(), statics: () => io.statics(this.window) }, this.town.site, this.window);
     io.startFortress(this.town, this.view, this.window);
     // (what reset puts back: the land as it opened)
     io.core.keepPristine();
@@ -159,7 +168,7 @@ export class Lab {
 
   /** each frame of the scene: the fortress's pieces */
   frame(): void {
-    this.view.update(0);
+    this.view.update();
   }
 
   private fort(): Fortress {

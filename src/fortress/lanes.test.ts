@@ -1,6 +1,7 @@
 // (round 128k) The fortress's roads (lanes.ts): on the grid's cell borders, grown from the town's gate to every door;
 // no road round an empty plot; a wall crossed only through a gate's tile; thoroughfare tiles paved whole; the ride graph
 // from the same pieces; none under water; drawn as paving by the buildings, earth in the open, steps on steep climbs.
+import { fortressOn } from './testing';
 import { describe, expect, it } from 'vitest';
 import { library } from '../structures/modules';
 import { Fortress } from './fortress';
@@ -10,7 +11,7 @@ import { cellAt } from '../world/lattice';
 import { roadBitsCpu } from '../agents/roads';
 import { nearestNode, nodeCount, reached } from '../agents/roadgraph';
 import { cellPos } from '../world/lattice';
-import { fortressPieces } from './pieces';
+import { townPieces } from '../build/view';
 import { WAY_SQUARE } from './ways';
 import { CpuReach, type ReachColumns } from './reach';
 
@@ -20,13 +21,13 @@ const H = 184;
 const GATE: [number, number] = [14, ((H / 2) * Math.sqrt(3)) / 2];
 
 function fortress(ground: (x: number, y: number) => number = () => 5, columns?: ReachColumns) {
-  const f = new Fortress({ origin: [0, 0], w: W, h: H }, {
+  const f = fortressOn({ origin: [0, 0], w: W, h: H }, {
     windowOrigin: () => [0, 0],
     dims: { w: W, h: H, zMax: 999 },
     ground,
     stores: () => ({}),
-    changed: () => {},
-    townGates: () => [GATE],
+    // (the roads start at the town's gates — the plan's — else its stores: the gate stands in for both here)
+    townHeap: () => GATE,
     reach: columns ? new CpuReach(columns, W, H, () => [0, 0]) : undefined,
   });
   f.ready = true;
@@ -60,7 +61,7 @@ describe('roads off the buildings (round 128l, aw4; BACKLOG AW-4)', () => {
     // (the lab's flat plan by its stores: two houses side by side, a third, a quarry and farms far out — the road east
     // ran down the houses' border, half in their claimed columns, and the carts stood against them)
     const heap: [number, number] = [98, 110.85];
-    const f = new Fortress({ origin: [-22, -10], w: 240, h: 278 }, { windowOrigin: () => [0, 0], dims: { w: 256, h: 256, zMax: 64 }, ground: () => 10, stores: () => ({}), changed: () => {}, townHeap: () => heap });
+    const f = fortressOn({ origin: [-22, -10], w: 240, h: 278 }, { windowOrigin: () => [0, 0], dims: { w: 256, h: 256, zMax: 64 }, ground: () => 10, stores: () => ({}), changed: () => {}, townHeap: () => heap });
     f.ready = true;
     const [hx, hy] = heap;
     const cells: ['house' | 'quarry' | 'farm', number, number][] = [
@@ -200,7 +201,7 @@ describe('roads on the cell borders, to things', () => {
     walled(f);
     const lib = library();
     const count = (name: string, lanes: boolean) => {
-      const p = fortressPieces({ plan: f.plan, town: f.town, grid: f.grid, ground: (x, y) => 0.4 * y, zOff: 0, ways: f.ways(), lanes: lanes ? f.lanes() : undefined });
+      const p = townPieces(f.site, { ground: (_x: number, y: number) => 0.4 * y, ways: f.ways(), lanes: lanes ? f.lanes() : undefined });
       let n = 0;
       for (let i = 0; i < p.count; i++) if (lib.modules[p.module[i]].name === name) n++;
       return n;

@@ -13,7 +13,7 @@
 //    caller prefers — the one nearest the stores). A footprint too narrow for one ramp has no pit.
 // In runs (build/runs.ts, negative levels): a cell of ring d holds levels -1 .. -min(d, tiers) (PIT_SHELF), and a
 // ramp k cell the level -k as well (PIT_RAMP: dug as a slope). Pure: no GPU, no DOM (pit.test.ts).
-import { CellRuns } from '../build/runs';
+import { CellRuns } from './runs';
 
 /** a pit level's kind in its run (Run.type) */
 export const PIT_SHELF = 0;

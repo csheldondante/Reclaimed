@@ -174,14 +174,14 @@ export function exposeTestApi(scene: LevelScene, api: ReturnType<typeof testApi>
     // events (built, died, raided); units: the Units contract (api/contracts/units.ts) on the agents
     settlements: scene.settlements,
     units: scene.units,
-    // (fortress slice 1) the fortress: plan (FortressPlan), town, paint/erase/setGate, cellAt/centre/ringCells, tool
+    // (fortress slice 1) the fortress: plan (TownPlan), town, paint/erase/setGate, cellAt/centre/ringCells, tool
     fortress: scene.fortress,
     // (round 128m, townlab) the window round the start town as the lab's fixture (base64; scripts/labtown.mjs capture)
     townFixture: () => captureTownFixture(scene),
     // (milestone 2) its builders once Build was pressed: stats (trips, built, starved), ids, book
     fortressLife: () => scene.fortressLife,
     // (round 128d) its built blocks' claims in the columns: claimed() per structure, stats
-    fortressClaims: () => scene.fortressClaims,
+    fortressClaims: () => (scene.fortress ? (scene.settlementsView ?? scene.lab?.view)?.claimsOf(scene.fortress.site.id) ?? null : null),
     // (round 128j) the static grids' claims written with the land: stats, audit(slots, packed) (scripts/staticclaims.mjs)
     statics: () => scene.statics,
     townDebug: scene.townDebug,

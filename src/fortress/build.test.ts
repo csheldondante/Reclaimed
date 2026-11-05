@@ -10,8 +10,8 @@ import { TownGrid } from '../build/towngrid';
 import { library } from '../structures/modules';
 import { DEFS, POWER_RISE } from './defs';
 import { pickFace, placeFor } from './pick';
-import { fortressPieces, LOOK_GHOST } from './pieces';
-import { FortressPlan } from './plan';
+import { townPieces, LOOK_GHOST } from '../build/view';
+import { TownPlan } from '../build/plan';
 import { BuildBook } from './work';
 import { buildingLine, crewLine, skipCutOffLine, SKIP_DONE, skipShortLine, SKIPPING_LINE, storesLine, typeCard } from './words';
 
@@ -26,7 +26,7 @@ const inner = (() => {
   throw new Error('no inner cell');
 })();
 const GROUND = 5;
-const newTown = () => new Town(80, 92, { ground: () => GROUND, stamp: () => {}, zMax: Infinity }, { grid });
+const newTown = () => new Town(80, 92, { ground: () => GROUND, stamp: null, zMax: Infinity }, { grid });
 
 describe('a tap picks a face (the user: "clicking on the side to build next to it")', () => {
   const town = newTown();
@@ -136,7 +136,7 @@ describe('the builders', () => {
 
 describe('the fortress gives power (the user: "building your fortress should add to your magic power")', () => {
   it('grows with its blocks and with its height', () => {
-    const p = new FortressPlan(grid);
+    const p = new TownPlan(grid);
     p.paint(inner, 0, 'fortress');
     const s = p.structureAt(inner)!;
     const one = p.power(s);
@@ -159,8 +159,8 @@ describe('the fortress gives power (the user: "building your fortress should add
 
   it('its keep is solid stone with towers at its corners; a wall runs into it', () => {
     const town = newTown();
-    const plan = new FortressPlan(grid);
-    const paint = (c: number, l: number, t: Parameters<FortressPlan['paint']>[2]) => {
+    const plan = new TownPlan(grid);
+    const paint = (c: number, l: number, t: Parameters<TownPlan['paint']>[2]) => {
       expect(plan.paint(c, l, t)).toBe(true);
       town.plan(c, l, true);
     };
@@ -171,7 +171,7 @@ describe('the fortress gives power (the user: "building your fortress should add
     paint(nbr(w, 0), 0, 'wall');
     // (the wall's cell by the keep joins it: a run, not an end)
     expect(plan.wallJoins(w, 0).filter(Boolean).length).toBe(2);
-    const p = fortressPieces({ plan, town, grid, ground: () => GROUND, zOff: 0 });
+    const p = townPieces({ plan, town, grid, seed: 7, order: [], placed: new Map() }, { ground: () => GROUND });
     const lib = library();
     const n = new Map<string, number>();
     for (let i = 0; i < p.count; i++) n.set(lib.modules[p.module[i]].name, (n.get(lib.modules[p.module[i]].name) ?? 0) + 1);
@@ -185,12 +185,12 @@ describe('farms read; blocks still to build drawn see-through while building', (
   const lib = library();
   it('a farm is ripe crop (not a green that reads as grass) inside a fence', () => {
     const town = newTown();
-    const plan = new FortressPlan(grid);
+    const plan = new TownPlan(grid);
     for (const c of [inner, nbr(inner, 0)]) {
       plan.paint(c, 0, 'farm');
       town.plan(c, 0, true);
     }
-    const p = fortressPieces({ plan, town, grid, ground: () => GROUND, zOff: 0 });
+    const p = townPieces({ plan, town, grid, seed: 7, order: [], placed: new Map() }, { ground: () => GROUND });
     let crops = 0;
     let fences = 0;
     for (let i = 0; i < p.count; i++) {
@@ -206,7 +206,7 @@ describe('farms read; blocks still to build drawn see-through while building', (
 
   it('planning: drawn whole; building: a plot outline until work starts, scaffolding once it has, then the block (FT-51)', () => {
     const town = newTown();
-    const plan = new FortressPlan(grid);
+    const plan = new TownPlan(grid);
     for (const l of [0, 1]) {
       plan.paint(inner, l, 'house');
       town.plan(inner, l, true);
@@ -214,7 +214,7 @@ describe('farms read; blocks still to build drawn see-through while building', (
     const lib = library();
     const fence = lib.id('fence');
     const look = (ghost?: (c: number, l: number) => boolean, started?: (c: number, l: number) => boolean) => {
-      const p = fortressPieces({ plan, town, grid, ground: () => GROUND, zOff: 0, ghost, started });
+      const p = townPieces({ plan, town, grid, seed: 7, order: [], placed: new Map() }, { ground: () => GROUND, ghost, started });
       let fences = 0;
       let low = 0;
       let ghosts = 0;

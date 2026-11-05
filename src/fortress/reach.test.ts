@@ -2,11 +2,12 @@
 // reach.ts CpuReach, with the same answers; a tap commits at once, the answer judges it after). The user: "My expectation is that we should always be
 // able to reach blocks where we can place and say why we can't reach a block not yet placed. Blocks that lie adjacent to
 // other blocks or planned blocks should always be reachable."
+import { fortressOn } from './testing';
 import { describe, expect, it } from 'vitest';
 import { cellPos } from '../world/lattice';
 import { Fortress } from './fortress';
 import { CpuReach, surfacesOf, type ReachColumns } from './reach';
-import { PIECE_WARN, rampPieces, warnPieces } from './pieces';
+import { PIECE_WARN, rampPieces, warnPieces } from '../build/view';
 import { RAMPS_ID, solidSpans } from './solid';
 import { PIECE_FLOATS } from '../structures/pieces';
 
@@ -25,7 +26,7 @@ function columns(wet: (x: number, y: number) => boolean = () => false, rock: (x:
 }
 
 function fortress(cols: ReachColumns, heap: [number, number] = [20, 20], ground: (x: number, y: number) => number = () => GROUND) {
-  const f = new Fortress({ origin: [0, 0], w: W, h: H }, {
+  const f = fortressOn({ origin: [0, 0], w: W, h: H }, {
     windowOrigin: () => [0, 0],
     dims: { w: W, h: H, zMax: 999 },
     ground,
@@ -258,8 +259,7 @@ describe('the check at placement', () => {
     expect(ramps.length).toBe(1);
     expect(await reached(f, low)).toBe(true);
     // drawn as steps; its solid (what the GPU's columns are claimed with: claims.ts) its own key, there while only planned
-    const inp = { plan: f.plan, town: f.town, grid: f.grid, ground: (x: number, y: number) => (x > 100 ? GROUND - 2 : GROUND), zOff: 0 };
-    expect(rampPieces(inp).count).toBeGreaterThan(3);
+    expect(rampPieces(f.site, { ground: (x: number, y: number) => (x > 100 ? GROUND - 2 : GROUND) }).count).toBeGreaterThan(3);
     const sp = solidSpans({ plan: f.plan, town: f.town, grid: f.grid, ground: (col) => f.groundAt(col) }).get(RAMPS_ID)!;
     expect(sp.length).toBeGreaterThan(5);
     for (const q of sp) expect(q.z1).toBeLessThanOrEqual(GROUND + 1e-6);
@@ -283,7 +283,7 @@ describe('the red outline (pieces.ts warnPieces)', () => {
     const f = fortress(columns());
     const c = f.cellAt(80, 80);
     f.plan.paint(c, 0, 'house');
-    const warn = warnPieces({ plan: f.plan, town: f.town, grid: f.grid, ground: () => GROUND, zOff: 0 }, [c]);
+    const warn = warnPieces(f.site, { ground: () => GROUND }, [c]);
     expect(warn.count).toBe(4);
     for (let i = 0; i < warn.count; i++) expect((warn.data[i * PIECE_FLOATS + 15] | 0) & PIECE_WARN).toBe(PIECE_WARN);
   });

@@ -17,7 +17,7 @@
 // Pure, from the plan alone (tested without a GPU: lanes.test.ts). The ride graph (laneGraph) is built from the same
 // pieces. Deferred (BACKLOG FT-73): lanes between built cells at a frequency, the grid nudged along the contours.
 import type { V2 } from '../api/contracts/structures';
-import type { FortressPlan } from './plan';
+import type { TownPlan } from '../build/plan';
 import { DEFS } from './defs';
 import { WAY_SQUARE, type Ways, type WaysGrid } from './ways';
 import type { RoadShape } from '../agents/roads';
@@ -125,8 +125,53 @@ class Heap {
  * The roads of the plan's ground (box frame). `ground`: the ground's top at a point; `blocked`: a cell the town that was
  * there stands on, or water (no way); `roots`: where the roads start (box frame: the town's gates).
  */
+/** a grid's own (plan-free) parts of the border graph: its vertices merged where they meet, the cells round each, each border once */
+interface GridGeom {
+  canon: Int32Array;
+  round: number[][];
+  borders: [number, number, number, number][];
+}
+
+const geoms = new WeakMap<LaneGrid, GridGeom>();
+
+function gridGeom(g: LaneGrid): GridGeom {
+  const had = geoms.get(g);
+  if (had) return had;
+  const n = g.count;
+  const nv = g.verts.length / 2;
+  const inBox = (c: number) => c >= 0 && g.columns[c].length > 0;
+  const canon = new Int32Array(nv);
+  const byPos = new Map<number, number>();
+  for (let v = 0; v < nv; v++) {
+    // (a centimetre's grid: the box is under 10 km)
+    const k = Math.round(g.verts[v * 2] * 100) * 1e6 + Math.round(g.verts[v * 2 + 1] * 100);
+    const was = byPos.get(k);
+    canon[v] = was ?? v;
+    if (was === undefined) byPos.set(k, v);
+  }
+  const Q = (i: number) => canon[g.quads[i]];
+  const round = Array.from({ length: nv }, () => [] as number[]);
+  for (let c = 0; c < n; c++) if (inBox(c)) for (let k = 0; k < 4; k++) round[Q(c * 4 + k)].push(c);
+  const borders: [number, number, number, number][] = [];
+  const seen = new Set<number>();
+  for (let c = 0; c < n; c++) {
+    if (!inBox(c)) continue;
+    for (let e = 0; e < 4; e++) {
+      const va = Q(c * 4 + e);
+      const vb = Q(c * 4 + ((e + 1) & 3));
+      const key = Math.min(va, vb) * nv + Math.max(va, vb);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      borders.push([va, vb, c, g.nbr[c * 4 + e]]);
+    }
+  }
+  const out = { canon, round, borders };
+  geoms.set(g, out);
+  return out;
+}
+
 export function lanesOf(
-  plan: FortressPlan,
+  plan: TownPlan,
   g: LaneGrid,
   ways: Ways,
   ground: (x: number, y: number) => number,
@@ -149,16 +194,10 @@ export function lanesOf(
   const owned = (c: number) => c >= 0 && plan.owner[c] >= 0;
   const gateSet = new Set<number>([...ways.gates, ...(ways.passages ?? [])]);
 
-  // the grid's vertices merged where they meet: each lot has its own (round 128k: unmerged, a lot's borders never met
-  // its neighbours' — the roads stopped at every lot's edge)
-  const canon = new Int32Array(nv);
-  const byPos = new Map<string, number>();
-  for (let v = 0; v < nv; v++) {
-    const k = `${Math.round(g.verts[v * 2] * 100)},${Math.round(g.verts[v * 2 + 1] * 100)}`;
-    const had = byPos.get(k);
-    canon[v] = had ?? v;
-    if (had === undefined) byPos.set(k, v);
-  }
+  // the grid's vertices merged where they meet, the cells round each, the borders: the grid's own (made once a grid:
+  // gridGeom — onetown, a town's thousands of cells)
+  const geo = gridGeom(g);
+  const canon = geo.canon;
   const Q = (i: number) => canon[g.quads[i]];
   // ---- the border graph: nodes are the grid's vertices, then the tiles' middles and their sides' middles
   const adj: Link[][] = Array.from({ length: nv }, () => []);
@@ -169,8 +208,7 @@ export function lanesOf(
   // once the fortress is claimed (solid.ts: a block is its cell's columns), so a cart steering along it from node to node
   // drove into the wall and stood there (the lab's stores, boxed in by the houses beside its road). Every piece meeting
   // at a vertex uses the same moved vertex: the roads stay joined
-  const round = Array.from({ length: nv }, () => [] as number[]);
-  for (let c = 0; c < n; c++) if (inBox(c)) for (let k = 0; k < 4; k++) round[Q(c * 4 + k)].push(c);
+  const round = geo.round;
   const standing = (c: number) => {
     const t = typeOf(c);
     return t !== null && (DEFS[t].form === 'block' || DEFS[t].form === 'keep');
@@ -200,33 +238,27 @@ export function lanesOf(
     return pos.length - 1;
   };
   const z = (p: V2) => ground(p[0], p[1]);
+  // (each node's ground read once: a vertex has four borders or more — onetown, a town's thousands of cells)
+  const zn: number[] = [];
+  const zOf = (v: number) => (zn[v] ??= z(pos[v]));
   const link = (a: number, b: number, cell: number, kind: LaneKind) => {
     const l = Math.hypot(pos[b][0] - pos[a][0], pos[b][1] - pos[a][1]);
     // (a ground not read yet — NaN — counts flat: a NaN cost would never relax, the roads stopping short there)
-    const dz = Math.abs(z(pos[b]) - z(pos[a]));
+    const dz = Math.abs(zOf(b) - zOf(a));
     const cost = l * (1 + (o.climb * (Number.isFinite(dz) ? dz : 0)) / Math.max(l, 1e-6));
     adj[a].push({ to: b, cost, cell, kind });
     adj[b].push({ to: a, cost, cell, kind });
   };
   // a vertex on the line between two wall cells (a wall and a gate too) is no way: a wall is crossed at a gate's middle
   const wallVert = new Uint8Array(nv);
-  const borders: [number, number, number, number][] = [];
-  const seen = new Set<string>();
+  const borders = geo.borders;
   for (let c = 0; c < n; c++) {
-    if (!inBox(c)) continue;
-    for (let e = 0; e < 4; e++) {
-      const va = Q(c * 4 + e);
-      const vb = Q(c * 4 + ((e + 1) & 3));
-      const m = g.nbr[c * 4 + e];
-      if (wallish(c) && wallish(m)) {
-        wallVert[va] = 1;
-        wallVert[vb] = 1;
+    if (!wallish(c)) continue;
+    for (let e = 0; e < 4; e++)
+      if (wallish(g.nbr[c * 4 + e])) {
+        wallVert[Q(c * 4 + e)] = 1;
+        wallVert[Q(c * 4 + ((e + 1) & 3))] = 1;
       }
-      const key = va < vb ? `${va},${vb}` : `${vb},${va}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      borders.push([va, vb, c, m]);
-    }
   }
   for (const [va, vb, c, m] of borders) {
     if (wallVert[va] || wallVert[vb] || (!free(c) && !free(m))) continue;
@@ -355,31 +387,20 @@ export function lanesOf(
     }
     return x.ends.length > 0;
   });
-  const dist = new Float64Array(N);
-  const prev = new Int32Array(N);
+  // (onetown: incrementally — the distance to the tree kept, and after each join only what the new road brings nearer
+  // relaxed, from the new road's nodes: a town's hundred doors cost a few passes over the border graph, not one a door.
+  // A used border's discount (o.reuse) doesn't change a distance to the tree: both its ends are in it)
+  const dist = new Float64Array(N).fill(Infinity);
+  const prev = new Int32Array(N).fill(-1);
   const prevLink: (Link | null)[] = new Array(N).fill(null);
-  while (pending.length && starts.length) {
-    dist.fill(Infinity);
-    prev.fill(-1);
-    const heap = new Heap();
-    for (let v = 0; v < N; v++)
-      if (inTree[v]) {
-        dist[v] = 0;
-        heap.push(0, v);
-      }
-    const want = new Map<number, number>();
-    pending.forEach((x, i) => x.ends.forEach((v) => want.set(v, i)));
-    let hit = -1;
+  const heap = new Heap();
+  const relax = () => {
     while (heap.size) {
       const [d, v] = heap.pop();
       if (d > dist[v]) continue;
-      if (want.has(v)) {
-        hit = v;
-        break;
-      }
       for (const l of adj[v]) {
-        const nd = d + l.cost * (used.has(ekey(v, l.to)) ? o.reuse : 1);
-        if (nd < dist[l.to]) {
+        const nd = d + l.cost;
+        if (nd < dist[l.to] - 1e-9) {
           dist[l.to] = nd;
           prev[l.to] = v;
           prevLink[l.to] = l;
@@ -387,11 +408,31 @@ export function lanesOf(
         }
       }
     }
+  };
+  const seed = (v: number) => {
+    if (dist[v] === 0) return;
+    dist[v] = 0;
+    prev[v] = -1;
+    prevLink[v] = null;
+    heap.push(0, v);
+  };
+  if (starts.length) {
+    for (let v = 0; v < N; v++) if (inTree[v]) seed(v);
+    relax();
+  }
+  while (pending.length && starts.length) {
+    // the nearest door not yet joined (its nearest end)
+    let hit = -1;
+    for (const x of pending) for (const v of x.ends) if (isFinite(dist[v]) && (hit < 0 || dist[v] < dist[hit])) hit = v;
     if (hit < 0) break;
-    for (let v = hit; !inTree[v]; v = prev[v]) {
-      inTree[v] = 1;
+    const path: number[] = [];
+    for (let v = hit; !inTree[v]; v = prev[v]) path.push(v);
+    for (const v of path) {
       used.set(ekey(prev[v], v), { ...prevLink[v]!, from: prev[v] });
+      inTree[v] = 1;
     }
+    for (const v of path) seed(v);
+    relax();
     // (that door, and any whose ends the new road passed)
     pending = pending.filter((x) => {
       if (x.ends.some((v) => inTree[v])) {

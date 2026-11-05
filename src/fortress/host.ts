@@ -1,12 +1,16 @@
 // (round 128l, tooling) What the fortress's start (scenes/level.ts startFortress) needs of the world it's started in,
-// as two small contracts: the town that becomes the fortress, and the window it stands in. The atlas level gives its
-// Settlements and its Streamer (both meet these structurally); the behaviour lab (src/lab/: ?level=lab) gives a town of
-// its own (lab/town.ts) and a window that never slides. Nothing else of either is read.
+// as small contracts: the town that becomes the fortress, the window it stands in, and where the town is drawn and
+// claimed. The atlas level gives its Settlements, its Streamer and its SettlementsView (all meet these structurally);
+// the behaviour lab (src/lab/: ?level=lab) gives a town of its own (lab/town.ts), a window that never slides and its own
+// town view (lab/view.ts). Nothing else of them is read.
+// (round 128m, onetown) The fortress is the player editing the town's one plan: the source gives the town's site
+// (build/site.ts), and the view host draws and claims it with the fortress's edit state (its hook) — there is no second
+// grid, plan or slab for the fortress.
 import type { V2 } from '../api/contracts/units';
 import type { Settlement } from '../api/contracts/settlement';
 import type { LiveSpot } from '../settle/life';
-import type { TownThing } from '../settle/thing';
-import type { StructurePieces } from '../api/contracts/structures';
+import type { TownSite } from '../build/site';
+import type { TownHook } from '../settle/view';
 
 /** the record of the town that becomes the fortress: what startFortress reads and writes (its stores) */
 export type FortressTownRec = Pick<Settlement, 'id' | 'name' | 'faction' | 'at' | 'stores'>;
@@ -17,8 +21,8 @@ export interface FortressTownSource {
   pin(id: string, ownLife?: boolean): FortressTownRec;
   /** its spots (a 'pile' — the heap the builders take from until a warehouse stands — and its houses' doors), in window coordinates */
   spotsOf(id: string): LiveSpot[] | null;
-  /** what of the town stands at a point (window coordinates): Inspect on it */
-  thingAt(id: string, at: V2): TownThing | null;
+  /** (onetown) its site: its one plan, what stands of it, its grid and box (the fortress edits it) */
+  siteOf(id: string): TownSite;
   /** world → window */
   toWindow(at: V2): V2;
 }
@@ -36,7 +40,12 @@ export interface FortressWindow {
   onRelief: ((x0: number, y0: number, x1: number, y1: number) => void)[];
 }
 
-/** what draws the fortress's pieces (settle/view.ts SettlementsView's `extra`; lab/view.ts) */
-export interface FortressPiecesHost {
-  extra: (() => { p: StructurePieces; dx: number; dy: number } | null) | null;
+/** (onetown) where the fortress's town is drawn and claimed (settle/view.ts SettlementsView; lab/view.ts LabTownView) */
+export interface TownViewHost {
+  /** the fortress's edit state drawn and claimed with the town from now (null: none) */
+  setHook(id: string, hook: TownHook | null): void;
+  /** the town's plan or what stands changed: drawn and claimed again */
+  changed(id: string): void;
+  /** only drawn again (a ghost's look, Inspect's pick) */
+  redraw(id: string): void;
 }

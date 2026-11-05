@@ -6,6 +6,7 @@ import path from 'node:path';
 import { decodeTownFixture, encodeTownFixture, TOWN_FIXTURE_FORMAT } from '../../src/lab/townfixture';
 import { GEN_VERSION } from '../../src/world/region-record';
 import { LabTown } from '../../src/lab/town';
+import { siteFromJson } from '../../src/build/site';
 
 const FILE = path.resolve(import.meta.dirname, '../../data/lab/town.rclt');
 
@@ -51,7 +52,10 @@ describe('the town fixture', () => {
     const { w, h } = header.dims;
     expect(w * h).toBe(map.surface.length);
     // (the town's heap, doors and the wall's gate posts, as the game gave the fortress)
-    const town = LabTown.of(header.town);
+    // (onetown: the town's site — its one plan — as the game had it)
+    expect(header.site, 'data/lab/town.rclt has no town site: capture it again (node scripts/labtown.mjs capture)').toBeTruthy();
+    const town = LabTown.of(header.town, siteFromJson(header.site));
+    expect(town.site.plan.structures().length).toBeGreaterThan(20);
     expect(town.homes.length).toBeGreaterThan(0);
     expect(town.spotsOf(header.town.id)!.some((s) => s.kind === 'post' && s.ref === `${header.town.id}:wall`)).toBe(true);
     // (its land: dry ground at the heap, water — the river and the sea — in the window)

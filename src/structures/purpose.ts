@@ -529,7 +529,10 @@ export function purposeWorks(ctx: PurposeCtx, works: Works | null, megas: MegaFe
  * of the purpose's buildings and some houses and by the gates, banners on the landmarks and round the plaza — and every
  * light's pool.
  */
-export function dressing(ctx: PurposeCtx, facades: Facade[], megas: MegaFeature[], props: Prop[], berths: Berth[]): LightSource[] {
+/** (onetown) what the dressing reads of a town (its view's: build/view.ts) */
+export type DressCtx = Pick<PurposeCtx, 'spec' | 'tiles' | 'adj' | 'ground' | 'buildings'>;
+
+export function dressing(ctx: DressCtx, facades: Facade[], megas: MegaFeature[], props: Prop[], berths: Berth[]): LightSource[] {
   const { spec, tiles: t, adj } = ctx;
   const nq = t.use.length;
   const prop = (kind: PropKind, x: number, y: number, heading: number, size: number, z = ctx.ground(x, y)) => props.push({ kind, at: [x, y, z], heading, size, seed: hashf(x, y, 81) });
