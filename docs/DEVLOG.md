@@ -17980,3 +17980,32 @@ the lab.
   drawn (BACKLOG TL-13). Visual checks stay in the game.
 - Tooling: two worktrees hashed to the same port (townlab and phonefix, 6390) and a lab run went to the other's lab
   server; `RECLAIMED_PORT` gives a worktree its own (BACKLOG TL-14).
+
+## 2026-11-05 — round 128m (`townlab`, B): the placement bench
+
+The user: "How about you build a bench for me to run that places buildings?" On the phone:
+`/fortress/?skipmenu=1&level=atlas&town=1&fortress=1&fresh=1&q=low&bench=place`. It needs `?fresh=1` and says so on
+screen ("It started fresh, so nothing it built is kept").
+
+- What it does (perf/placebench/run.ts, one run for the game and the lab): each of the nine building types at 31 points
+  (perf/placebench/points.ts): inside the walls (half the wall's radius from the gates' middle, four ways), 30, 60 and
+  120 m from the stores eight ways, across the water (the first dry ground past a wet run, from the reach's own wet
+  bits: `Fortress.wetAt`, nothing new read back), and the highest ground outside the wall within 110 m. Each block is
+  placed as a tap places it (`Fortress.paint`), the frames counted until the reach judges it, the panel's line kept,
+  and the plan erased before the next. Then houses at up to 8 points where a house was kept (the far and hard ones
+  first), Build at 16x, and when a builder first stands within 6 m of each and when its first block stands, for 300 sim
+  seconds; the nearest a builder came, when none did.
+- The report: every placement (outcome, line, tap CPU, the answer's delay, frame times round it), the arrivals, the
+  device and wake lock; downloaded at once (townbench's buttons). The summary on screen (summary.ts): the points where
+  every type was kept in one line, then each point where some weren't and the main reason, the timings, the arrivals.
+- Measured, the user's link at 412x915 `?q=low` (desktop iGPU, headless) and the lab's `town` (the same placements):
+  279 placements, 207 kept, 54 refused, 18 outside the box, in both. Refused: inside the walls east (a building) and west
+  (the harbour: deep water), N 30 m (a building), SE 60 and 120 m and NW 120 m (deep water). Kept across the water (27
+  and 28 m out: the channel is crossed further round) and on the hill. A tap's CPU 1.1 ms median (42 ms max, the first);
+  the answer 229 ms median in the game (469 max), 30 ms in the lab (160 max): the game's GPU is busier. Arrivals: the
+  game 3 of 8 sites in 300 sim s, the lab 4 of 8; builders never got near the 120 m sites in either.
+- First found by it: after the first Build the camera moves to frame the stores (FT-49) and the window slides, so the
+  window's frame moves under the box — the bench measures a site's middle again every check (it had kept the one from
+  before the slide and saw no builder arrive). The same slide is what C is about.
+- Tests: test/unit/placebench.test.ts (the points on a made-up town with a river and a hill; no hill on flat land; the
+  summary's lines).

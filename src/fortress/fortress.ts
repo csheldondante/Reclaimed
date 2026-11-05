@@ -387,6 +387,17 @@ export class Fortress {
     return this.groundOfCol(col);
   }
 
+  /**
+   * (round 128m, townlab: the placement bench) whether the last reach answer read water over the lanes' limit at window
+   * world (x, y) — the bits the reach already reads (null: none read yet; false outside the box)
+   */
+  wetAt(x: number, y: number): boolean | null {
+    const wb = this.wetBits;
+    if (!wb) return null;
+    const b = this.boxColOf(...this.toBox(x, y));
+    return b >= 0 && ((wb[b >> 5] >>> (b & 31)) & 1) === 1;
+  }
+
   /** box column → its window column (-1: outside the window) */
   boxToWindowCol(col: number): number {
     const [ox, oy] = this.offset();

@@ -93,6 +93,15 @@ Or a plain `.js` file: the body of `async (lab, args) => { … }` — handy for 
 (do the builders get out of a walled town to sites outside it), `scripts/lab/fortressrefuse.mjs` (unreachable placements refused: a house on the valley's lake, a block in a shut ring, a drag across the lake), `scripts/lab/fortresslanes.mjs` (the lanes of a walled
 site, and the share of walking on them).
 
+## The placement bench (round 128m)
+
+The user's phone: `/?skipmenu=1&level=atlas&town=1&fortress=1&fresh=1&q=low&bench=place` (`&placetypes=house,wall`
+fewer types, `&placearrive=300` the arrival check's sim seconds). Each building type at 31 points round the start town,
+the reach's answer and the panel's line, tap CPU, the answer's delay, frames; then whether builders reach houses at the
+points. A summary on screen and a report downloaded. The same on the desktop:
+`node scripts/placebench.mjs [--types house]` (the user's link at 412x915, the report and a shot of the summary in
+`.testcache/placebench/`) and `node scripts/lab.mjs run scripts/lab/placebench.mjs` (the lab's `town`, ~2 min).
+
 ## Measured (2026-11-04, Intel Arc 140T iGPU, other agents' checks sharing the GPU)
 
 | | before (atlas scripts) | the lab |
