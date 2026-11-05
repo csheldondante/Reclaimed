@@ -24,6 +24,8 @@ each was implemented.
   - Art: its own iteration, starting from the asset review (scratchpad/assets-review; V128-7, ART1).
   - A block the builders can't reach is REFUSED again at placement, not placed in red. Wider rule: the game should never have blocks that agents can't reach.
   - Routes (BACKLOG RT-1..RT-4, RT-5..): every trip on the network is a route of segments that units are interpolated along (kinematic), with walking and rolling animated procedurally by distance. Segment types later carry stairs, elevators, a quarry crane with a crank, scaffold climbing and wall work, manning defences and sparring. Flow fields remain only for open ground and for things that change, like depleting resources.
+- Later the same morning, verbatim: "Make sure other systems can still take units off roads. Fleeing, getting knocked off my wind etc". A route is a mode a unit is in, not a cage: wind, blasts, hits and physics knock riders off, and fleeing, fighting and raids take them off; they rejoin at the nearest node.
+- And: "Also, performance on mobile was abysmal and could not be played and the building still didn't work. I think the town is cached and did not get gates" (Pages from fortress 062fe16). This takes priority: branch `phonefix`.
 
 ## 2026-10-31 — round 120 (session 5) — after playing the run, the towns and the birches; runs redesigned
 
