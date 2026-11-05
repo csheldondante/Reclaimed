@@ -17492,3 +17492,26 @@ fortressoutside ok; the tilegate goldens (`&zoomfloor=0`, baselines of 64217ba):
 desktop, phone and run view but desktop z1.3 (4.5%: tiles arriving at the screen's edges, unfloored, as before) and
 w384 (2-3%, its baselines written by an earlier gate run, not a clean base).
 >>>>>>> origin/fortress
+
+
+## 2026-11-04 — round 128l (`m4`): on the roads — carts, newcomers by road, a person's day
+
+Why: the user, "have units come in on the roads and maybe have carts? ... moving in roads so that we could follow a unit
+and see it go about it's day" (DECISIONS round 128l, m4); V128-12's carts.
+
+- Carts: a haul unit with a bigger load (8 against a walker's 2), slower (1.7 against 2.4), on the roads only (each cart
+  its own riding group: no field). The stores send carts for long hauls: a quarry, lumber camp or farm past 40 m from the
+  stores leaves its loads on its pile; walkers carry short ones (`haulBy`, economy.test.ts). Two carts, one more a
+  warehouse block, up to three. Drawn as a wooden bed on four wheels (a voxel model on the agents' kind 7).
+- Measured (the lab, flat, scripts/lab/fortresscarts.mjs: three houses, a quarry 70 m east and farms 60 m north, 200
+  sim s at 16x, sampled every 2 s): **the carts' walking samples on a road or lane: 79 of 79 (1.00)**; a cart's round
+  trip to the quarry ~76 s (38 s each way at 1.75 m/s, all on the road: scratch probe); the farms' roads didn't reach
+  them (riding farm: false), so their workers walked. Newcomers: 12 arrived, filling the beds; their walking samples on
+  a road 0.66-0.68 (the leg in from the window's edge to the nearest road is open ground).
+- Newcomers come in from the window's edge where the fortress's roads come nearest it, and ride the roads to a house
+  (before: from the box's edge along the farthest road, then the stores' field).
+- A person's day: a meal at the stores at midday (once a day), home to rest at the day's end; their day is logged for
+  the follow card (next commit). Untuned: the economy's day is still 60 sim s (ECON.daySec).
+- GIFs: a cart riding out to the quarry's pile and back, a newcomer walking in (scripts/lab/gifroad.mjs, next commit's
+  Follow drives the camera).
+- Phone: the carts are three more units and three more riding groups; nothing per frame on the CPU beyond their steps.

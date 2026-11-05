@@ -350,6 +350,11 @@ export class Fortress {
     });
   }
 
+  /** (round 128l, m4) the window's size (columns, rows) */
+  windowDims(): { w: number; h: number } {
+    return { w: this.io.dims.w, h: this.io.dims.h };
+  }
+
   /** the ground's top at a box column (window z) */
   groundAt(col: number): number {
     return this.groundOfCol(col);

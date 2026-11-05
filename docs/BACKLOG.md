@@ -45,6 +45,10 @@ The user: "Let's invest in some tooling to speed up the development processes."
 
 | id | item | size | status |
 |---|---|---|---|
+| M4-7 | V128-12 (the carts' part; on `places`' backlog): carts — a haul unit with a bigger load, slower, on the roads only; the stores send carts for long hauls (quarry, lumber camp, farms past ECON.cartDist), walkers for short ones | M | done (round 128l m4 roads commit): 2 carts and one a warehouse block (up to 3), piles on the far structures, cart samples on roads 100% in the lab |
+| M4-8 | Newcomers arrive by road: in from the window's edge where the roads come nearest it, riding the roads to a house | S | done (round 128l m4 roads commit) |
+| M4-9 | A person's day: a meal at the stores at midday, home to rest at the day's end (ECON.daySec 60: untuned) | S | done (round 128l m4 roads commit) |
+| M4-10 | Carts and walkers: a cart takes a load only at half a load on a pile; a pile past ECON.pileMax goes back to walking; a farm no road reaches is walked. The cart is a wooden bed on wheels (voxels): its art for the art push | S | open |
 | M4-1 | The red outline drawn straight from the GPU's labels in the structures' shader (the user's design): now the reach's per-block bits are read back (a word a block still to build, ~40 ms after an edit) and the outline is the pieces' warn rails as before | S | open |
 | M4-2 | The reach's CPU side per check is ~2-7 ms in the lab (solid.ts over the whole plan as if built, and each block's stands): off the tap, but on the main thread; an incremental span list per structure would cut it | S | open |
 | M4-4 | Soldiers read as grey figures beside the yellow workers at play zoom: a kit (a helmet, a spear, a shield) for the art push | S | open |

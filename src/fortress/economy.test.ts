@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { lint } from '../../test/support/writing';
 import { TownGrid } from '../build/towngrid';
 import { DEFS, ECON } from './defs';
-import { bedsOf, eaten, fits, grown, JobBoard, jobSlots, mayArrive, perWorker, putIn, quarryLoad, reachOf, refundOf, roomOf, storedOf, workSeconds, type JobSlot } from './economy';
+import { bedsOf, cartsOf, eaten, haulBy, fits, grown, JobBoard, jobSlots, mayArrive, perWorker, putIn, quarryLoad, reachOf, refundOf, roomOf, storedOf, workSeconds, type JobSlot } from './economy';
 import { FortressPlan } from './plan';
 import { BuildBook } from './work';
 import { BEDS_LINE, FULL_LINE, HUNGRY_LINE, jobsLine, peopleLine, storesLine } from './words';
@@ -85,6 +85,24 @@ describe('the JobBoard', () => {
     p2.paint(b, 0, 'blacksmith');
     expect(jobSlots(p2, all, false).map((x) => [x.kind, x.count])).toEqual([['blacksmith', DEFS.blacksmith.perBlock.jobs!]]);
     expect(jobSlots(p2, all, false, DEFS, ECON, () => 0)).toEqual([]);
+  });
+});
+
+describe('carts and walkers (round 128l, m4)', () => {
+  it('a long haul goes by cart while there are carts, a road and room on the pile; a short one is walked', () => {
+    const far = ECON.cartDist + 10;
+    expect(haulBy(far, { carts: 2, pile: 0, road: true })).toBe('cart');
+    expect(haulBy(ECON.cartDist - 5, { carts: 2, pile: 0, road: true })).toBe('walk');
+    expect(haulBy(far, { carts: 0, pile: 0, road: true })).toBe('walk');
+    expect(haulBy(far, { carts: 2, pile: 0, road: false })).toBe('walk');
+    expect(haulBy(far, { carts: 2, pile: ECON.pileMax, road: true })).toBe('walk');
+  });
+
+  it('the town has its carts, and a warehouse block adds one, up to the most', () => {
+    expect(cartsOf(0)).toBe(ECON.carts);
+    expect(cartsOf(1)).toBe(Math.min(ECON.cartsMax, ECON.carts + 1));
+    expect(cartsOf(50)).toBe(ECON.cartsMax);
+    expect(ECON.cartLoad).toBeGreaterThan(ECON.haul);
   });
 });
 

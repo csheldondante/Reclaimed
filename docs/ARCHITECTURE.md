@@ -3615,6 +3615,19 @@ The building rule (the user's): select what (a structure type), then plan it wit
   agents.wgsl `groupField`/`groupMat` array<vec4<u32>, 6>, roadride.wgsl `group` array<vec4<u32>, 24>, ride.ts GROUPS,
   agents.ts P_GMAT/P_FPLACE); NFIELDS unchanged (13). The bar: `storesLine` + Weapons, `peopleLine` + Soldiers, `jobsLine`
   smiths and recruits; Inspect's In from the recipe ("In: up to 18 wood and 36 ore a day").
+- **Round 128l, m4 (on the roads: carts, newcomers, a person's day).** Carts: AgentUnits kind 7 `cart` (a voxel model: a
+  wooden bed on four wheels; speed 1.7, mass 4), role `cart`, `FortressLife.carts` (not people) — `cartsOf(warehouse
+  blocks)` (ECON.carts 2, +1 a warehouse block, ≤ cartsMax 3), spawned at the stores. A worker of a quarry, lumber camp
+  or farm whose structure's door is past ECON.cartDist (40 m) from the stores (`haulBy(dist, {carts, pile, road})`)
+  leaves its load on the structure's pile (`FortressLife.piles`, ≤ pileMax) and goes back to work; a parked cart
+  (`stepCart`: park → out → load → back) takes the fullest pile no other cart is after, rides to its door (its own group,
+  R4.cart0 + i, ride only: a pile no road reaches is marked and walked from then on), takes up to ECON.cartLoad (8) and
+  rides back on R.toPile (only while it rides), where `deliver` puts it in. Newcomers: `edgeEntry` — the road graph's
+  node nearest the window's edge, the edge straight out from it; they start there in phase `arrive` (R.toHome, riding)
+  and work once at a house. A person's day: from ECON.daySec × 0.45 a meal at the stores (`eat`, once a day), from × 0.9
+  home to rest (`rest`) till the next day. `FortressLife.personFacts(id)` (follow.ts PersonFacts: job, workplace,
+  doing, carrying, today, hungry) and `everyone()`: what the follow card (round 128l C) reads; `today` is logged each
+  step (DAY_WORD).
 
 ## Source layout: the split classes (2026-11-04)
 

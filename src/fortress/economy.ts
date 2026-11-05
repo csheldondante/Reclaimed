@@ -198,6 +198,19 @@ export function mayArrive(people: number, beds: number, grain: number, econ = EC
   return people < beds && grain >= 1 && people < econ.maxPeople;
 }
 
+/**
+ * (round 128l, m4) How a load gets from a structure to the stores: by cart when the way is long (over econ.cartDist, door
+ * to stores as the crow flies) and there are carts, its pile has room, and a road reaches it; else the worker walks it.
+ */
+export function haulBy(dist: number, o: { carts: number; pile: number; road: boolean }, econ = ECON): 'cart' | 'walk' {
+  return dist > econ.cartDist && o.carts > 0 && o.road && o.pile < econ.pileMax ? 'cart' : 'walk';
+}
+
+/** (m4) the carts the fortress has: the town's, and one more a built warehouse block, up to econ.cartsMax */
+export function cartsOf(warehouseBlocks: number, econ = ECON): number {
+  return Math.min(econ.cartsMax, econ.carts + warehouseBlocks);
+}
+
 /** What Erase gives back for a built block: a share of its cost, each good rounded down. */
 export function refundOf(cost: Goods, econ = ECON): Goods {
   const out: Goods = {};

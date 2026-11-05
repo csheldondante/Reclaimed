@@ -113,6 +113,16 @@ export const ECON = {
   digR: 2.2,
   /** the deepest a quarry's pit is dug below the ground it had (world units) */
   pitMax: 6,
+  /** (round 128l, m4) the carts: the town's at the start, and one more a warehouse block built, up to cartsMax */
+  carts: 2,
+  cartsMax: 3,
+  /** (m4) goods a cart carries a trip (a walker: haul) */
+  cartLoad: 8,
+  /** (m4) a haul longer than this (m, a structure's door to the stores, as the crow flies) goes by cart: the workers
+   *  leave their goods at their structure's pile and a cart fetches it; shorter, they carry it themselves */
+  cartDist: 40,
+  /** (m4) the most a structure's pile holds waiting for a cart (more: the workers carry it in) */
+  pileMax: 16,
   /** (round 128l, m4) a soldier's health (a villager's is 3) */
   soldierHealth: 5,
   /** (m4) sim seconds a soldier drills at the barracks when it musters */
