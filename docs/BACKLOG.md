@@ -20,7 +20,7 @@ One commit per file, no behaviour change (gates: typecheck, unit, GPU, hallcheck
 |---|---|---|---|
 | MS-1 | scenes/level.ts (4134 lines) into scenes/level/ (16 modules) | M | done (monolith split: level commit) |
 | MS-2 | scenes/streamer.ts (2816 lines) into scenes/streamer/ | M | done (monolith split: streamer commit) |
-| MS-3 | game/integrity.ts (2722 lines) into game/integrity/ | M | open |
+| MS-3 | game/integrity.ts (2722 lines) into game/integrity/ | M | done (monolith split: integrity commit) |
 | MS-4 | render/renderer.ts (2133 lines) into render/renderer/ | M | open |
 | MS-5 | agents/agents.ts (1654 lines) — mostly public API; the milestone 4 agent edits it next | M | open |
 | MS-6 | perf/bench.ts, atlas/atlas.ts, shaders/render.wgsl, shaders/judge.wgsl | L | open |
