@@ -39,22 +39,37 @@ function square(n: number, r: number, opts: { gate?: boolean; noRing?: boolean; 
 }
 
 describe('the waves\' clock', () => {
-  it('warns RAID.warnLead days before dusk, comes at dusk, and every wave is bigger', () => {
+  it('with the timer off (round 128m, button only), no wave comes on its own over many days', () => {
+    expect(RAID.timed).toBe(false);
     const day = ECON.daySec;
     const c = new RaidClock(day);
-    const dusk = (RAID.firstDay + RAID.dusk) * day;
-    const lead = RAID.warnLead * day;
-    expect(c.update(dusk - lead - 1)).toEqual([]);
-    expect(c.update(dusk - lead)).toEqual([{ kind: 'warn', wave: 0, size: RAID.size0 }]);
-    expect(c.update(dusk - 1)).toEqual([]);
-    expect(c.update(dusk)).toEqual([{ kind: 'arrive', wave: 0, size: RAID.size0 }]);
-    // (the next: everyDays on, a bigger wave, warned again a day before)
-    const next = (RAID.firstDay + RAID.everyDays + RAID.dusk) * day;
-    expect(c.next).toBeCloseTo(next);
-    expect(c.update(next - lead)).toEqual([{ kind: 'warn', wave: 1, size: RAID.size0 + RAID.grow }]);
-    expect(c.update(next)[0]).toEqual({ kind: 'arrive', wave: 1, size: RAID.size0 + RAID.grow });
-    expect(waveSize(0)).toBeLessThan(waveSize(1));
-    expect(waveSize(100)).toBe(RAID.most);
+    for (let t = 0; t <= 30 * day; t += day / 8) expect(c.update(t)).toEqual([]);
+    expect(c.wave).toBe(0);
+    expect(c.call(30 * day)).toEqual({ kind: 'arrive', wave: 0, size: RAID.size0 });
+  });
+
+  it('timed (when switched on): warns RAID.warnLead days before dusk, comes at dusk, and every wave is bigger', () => {
+    const timed = RAID.timed;
+    RAID.timed = true;
+    try {
+      const day = ECON.daySec;
+      const c = new RaidClock(day);
+      const dusk = (RAID.firstDay + RAID.dusk) * day;
+      const lead = RAID.warnLead * day;
+      expect(c.update(dusk - lead - 1)).toEqual([]);
+      expect(c.update(dusk - lead)).toEqual([{ kind: 'warn', wave: 0, size: RAID.size0 }]);
+      expect(c.update(dusk - 1)).toEqual([]);
+      expect(c.update(dusk)).toEqual([{ kind: 'arrive', wave: 0, size: RAID.size0 }]);
+      // (the next: everyDays on, a bigger wave, warned again a day before)
+      const next = (RAID.firstDay + RAID.everyDays + RAID.dusk) * day;
+      expect(c.next).toBeCloseTo(next);
+      expect(c.update(next - lead)).toEqual([{ kind: 'warn', wave: 1, size: RAID.size0 + RAID.grow }]);
+      expect(c.update(next)[0]).toEqual({ kind: 'arrive', wave: 1, size: RAID.size0 + RAID.grow });
+      expect(waveSize(0)).toBeLessThan(waveSize(1));
+      expect(waveSize(100)).toBe(RAID.most);
+    } finally {
+      RAID.timed = timed;
+    }
   });
 
   it('"Call raiders now" brings the next wave at once, and the clock goes on from it', () => {

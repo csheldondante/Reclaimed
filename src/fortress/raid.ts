@@ -14,6 +14,9 @@ type V2 = [number, number];
 
 /** The wave's numbers (all untuned: the user tunes once it's playable; the DEVLOG lists them). */
 export const RAID = {
+  /** waves come on their own by the clock below; off (round 128m, the user: "For now just make raids button based only"):
+   *  a wave comes only from "Call raiders now" */
+  timed: false,
   /** the first wave comes at dusk on this economy day (ECON.daySec a day) */
   firstDay: 3,
   /** a wave every this many days after */
@@ -102,6 +105,7 @@ export class RaidClock {
   /** what happens by time t (each at most once) */
   update(t: number): ClockEvent[] {
     const out: ClockEvent[] = [];
+    if (!RAID.timed) return out;
     if (!this.warned && t >= this.warnAt()) {
       this.warned = true;
       out.push({ kind: 'warn', wave: this.wave, size: this.size() });

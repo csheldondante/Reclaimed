@@ -17943,3 +17943,10 @@ reach." This reverses milestone 4's change, where a block the builders couldn't 
   refused-ring.png, refused-drag.png (the panel lines read as above).
 - scripts/fortressvariant.mjs (full game, by finger): its last check now expects the warehouse refused and the house
   named (not run here).
+
+## 2026-11-05 — round 128m (`fortress`): raids only by the button
+
+The user: "For now just make raids button based only". On Pages (062fe16) a wave came every ~150 sim s at 16x, and with
+everyone sheltering inside the builders never reached the sites outside the walls (found by phonefix). `RAID.timed` (raid.ts)
+is false: the clock gives nothing on its own, and a wave comes only from "Call raiders now". The timed code stays behind
+the switch. raid.test: no wave over 30 days with the timer off; the timed test runs with it switched on.
