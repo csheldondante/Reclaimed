@@ -19,7 +19,8 @@ called only by the class file and the folder. From outside, use the class.
 
 Boot: WebGPU, the quality tier, the phone flags, and which scene runs.
 
-- `main.ts` (274) — Boot: WebGPU, shared services, and switching between the menu diorama and the level.
+- `fresh-start.ts` (39) — (round 128n, phonefix; API: `FRESH_DBS`, `FRESH_KEYS`, `freshStart`.
+- `main.ts` (277) — Boot: WebGPU, shared services, and switching between the menu diorama and the level.
 - `phone-flags-boot.ts` (5) — (perfopt) Imported first by a page's entry (main.ts): the phone's flags into the URL before any module …
 - `phone-flags.ts` (43) — The phone's performance flags (perfopt, round 83; API: `LITE_SET`, `SIM_SET`, `isPhoneTier`, `expandPhoneFlags` +1.
 

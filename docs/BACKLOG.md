@@ -12,6 +12,14 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 128n (2026-11-05, session 5, `phonefix`) — the user on the Pixel 9a (Pages, fortress 062fe16): "performance on mobile was abysmal and could not be played and the building still didn't work. I think the town is cached and did not get gates"
+
+| id | item | size | status |
+|---|---|---|---|
+| PF-1 | (the user: "Can you just add a debug flag to clear cache at startup for now and use that unless we are testing persistence?") `?fresh=1` deletes the world's stores at boot (region store, map files, warm cache, progress); the benches' stores kept | S | done (phonefix: fresh flag commit) |
+| PF-2 | Whatever is stored that depends on the town planner or the generator carries a version that changes with them; a test that fails when it doesn't | S | wip |
+| PF-3 | Find and fix what made the fortress unplayable on the phone (bisect d2ba927..062fe16 at 412x915 q=low); a phone bench to run | M | wip |
+
 ## Monolith split (2026-11-04, `fortress`) — the user: "If we can split up those monolith files into well names encapsulated utilities and logical APIs that would be ideal too for saving context."
 
 One commit per file, no behaviour change (gates: typecheck, unit, GPU, hallcheck, tilegate goldens against the commit before). docs/MODULES.md is the map (scripts/modules-map.mjs).
