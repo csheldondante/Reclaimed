@@ -19,6 +19,7 @@ import { startFramePace } from './perf/framepace';
 import { startHitch } from './perf/start';
 import { pageBenchBoot, pageBenchDevice, pageBenchMode, pageBenchRun, pageBenchStandalone, pageBenchStartupError } from './perf/pagebench';
 import { bootMark } from './perf/boot-marks';
+import { freshStart } from './fresh-start';
 import { benchGpu, benchGpuUp, benchLevel, benchLoadingNote, benchMode, benchSkip, benchStageNote, benchStandalone, benchWatchdog } from './perf/bench';
 
 // A few broad quality tiers (design doc §10), chosen explicitly — no auto-detection heuristics.
@@ -31,6 +32,8 @@ const QUALITY: Record<string, Quality> = {
 async function main() {
   bootMark('module');
   const params = new URLSearchParams(location.search);
+  // (round 128n: ?fresh=1 — the world's saved stores deleted before anything opens them; src/fresh-start.ts)
+  await freshStart(params);
   // (low by default, for phones: round 54; ?q=medium|high on a desktop)
   const qualityName = params.get('q') ?? 'low';
   const quality = QUALITY[qualityName];

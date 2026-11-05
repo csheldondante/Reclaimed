@@ -17871,3 +17871,17 @@ Why: with the lab's fortress claimed (c0df418), scripts/lab/fortresscarts.mjs fa
   (with M4-14's ride fix, cherry-picked from m4fix). fortressoutside passed (all three outside sites built, cutOff 0
   throughout). Its house stood last, at 603 sim s, because the stores were short of stone: the plan costs 171 against
   80 and there is no quarry. The raid wave broke blocks that wanted stone again. It was not a way problem.
+
+## 2026-11-05 — round 128n (`phonefix`): `?fresh=1`, the world's stores cleared at boot (PF-1)
+
+- The user: "Can you just add a debug flag to clear cache at startup for now and use that unless we are testing
+  persistence?" `?fresh=1` (src/fresh-start.ts, awaited first in main.ts, before anything opens storage) deletes the
+  IndexedDB databases of the world — `reclaimed-world` (the region store), `reclaimed` (map files), `reclaimed-warm`
+  (the warm cache) — and the world's progress in localStorage (`reclaimed.progress.v1*`, `reclaimed.uncovered.v1`).
+  Kept: the benches' stores (perf/bench/state.ts, pagebench, flora and physics benches), so a phone's bench reports
+  survive, and the settings (difficulty, tuning, atlas range). A delete blocked by another open tab is a clear error,
+  not a hang.
+- It doesn't replace the stores' versions: a saved world still needs GEN_VERSION and the build hash (PF-2).
+- Checked in a kept Chrome profile (headless, one origin): before, `reclaimed-warm` held 2 snapshots; after a load with
+  `?fresh=1` the three databases are gone and only `reclaimed.difficulty.v1` is left in localStorage. Unit:
+  src/fresh-start.test.ts (the flag off, what's deleted and kept, a blocked delete).
