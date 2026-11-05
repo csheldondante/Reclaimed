@@ -38,7 +38,7 @@ import { RegionPool, type PoolSlot } from './region-pool';
 import { RegionCopier } from './region-copy';
 import { RegionStore } from '../world/region-store';
 import { GEN_VERSION, columnsHash, regionLayout, type RegionLayout } from '../world/region-record';
-import { CHUNK, K_HEADROOM, PHYS_COL_WORDS, SLOT_WORDS, joinColumn, readSlot, type Interval } from '../world/layout';
+import { CHUNK, K_HEADROOM, PHYS_COL_WORDS, SLOT_WORDS, WORLD_FLOOR, joinColumn, readSlot, type Interval } from '../world/layout';
 import { PROJ_K } from '../grids/structures';
 import { type RegionLand } from '../world/streamgen';
 import type { WorldCore } from './world-core';
@@ -739,7 +739,8 @@ export class Streamer {
 
   async slideZ(dz: number): Promise<void> {
     if (Math.abs(dz) !== TIER) throw new Error(`a slide in z is one tier (${TIER})`);
-    if (this.oz + dz < 0) throw new Error('the window is at the bottom of the world');
+    // (round 128m: down to the world's floor, past z 0 — layout.ts WORLD_FLOOR)
+    if (this.oz + dz < WORLD_FLOOR) throw new Error('the window is at the bottom of the world');
     this.busyWhy = 'slideZ';
     this.busy = true;
     const t0 = performance.now();

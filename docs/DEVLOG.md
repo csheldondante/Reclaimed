@@ -17499,8 +17499,9 @@ region); only a column dug under z 0 and then out of the window keeps a metre. N
 version moves. The streamer slides down past z 0 when the ground under the camera now is under 24 and lower than the
 land's own (a pit — the sea floor near z 0 still slides nothing), never under the floor. Fortress.slidZ keeps the
 fortress's window-z heights (the ground as first read, the Town's floors) through a slide; the quarry keeps fortress
-z. Checked (grep of oz and z clamps): two places held the window at z 0 or over — slide.ts's `S.oz > 0` and warp.ts's
-`oz < 0` throw; both go down to WORLD_FLOOR now. The kernels' clamps are on stored (window) z, which is fine.
+z. Checked (grep of oz and z clamps): three places held the window at z 0 or over — slide.ts's `S.oz > 0`, warp.ts's
+`oz < 0` throw and Streamer.slideZ's "the window is at the bottom of the world" (found by scripts/fortressslidez.mjs);
+all go down to WORLD_FLOOR now. The kernels' clamps are on stored (window) z, which is fine.
 **Seeing in.** Judged in the lab at zoom 8 and 14 with and without a cut (api/cutaway.ts Dither round the floor's
 middle, the pit's box): the pit's sides step in at ~34 degrees, the view comes down at 30, so the near walls hide a
 strip a quarter of the depth wide and the floor and its miners read without help; the cut showed the solid under the
@@ -17513,4 +17514,15 @@ floor.test.ts (the floor rule through slides down and back up). The lab: `platea
 scripts/lab/quarry.mjs (the pit reaches its tiers, miners walk in; r 15: 2 tiers in 150 sim s), scripts/lab/
 quarrygif.mjs + scripts/lab-gif.mjs (shots to a GIF). No perf bench (the GPU is shared); BACKLOG QY-5 lists what to
 bench on the phone.
+**The slide in z, in the game** (scripts/fortressslidez.mjs, new): the start town as the fortress, a house built, the
+window slid down a tier and back — the house keeps its world height (floor 101.5 at oz 0, 133.5 at oz -32), the column
+under it holds stone from the window's floor (0..131.4 at oz -32: world -32..99.4), no page error. It found the third
+z-0 clamp (Streamer.slideZ's throw), and that the trees and fields round the town aren't drawn while the window is down
+(BACKLOG QY-9: the slide in z hasn't run in the atlas since round 100).
+**Gates** (after merging origin/fortress 1adfb15): typecheck; unit 682 (+2 expected fails, as before); the lab's
+quarry.mjs (r 15: 2 tiers, miners in the pit, deepest at 36 = the floor); hallcheck 0 of 344 lost; the tilegate
+goldens (`&zoomfloor=0`, `--no-pan`, baselines from a worktree of 1adfb15): every view unchanged but desktop z2.2 (1.2%)
+and z1.3 (7.9%) — tiles arriving at the screen's bottom edge, the same views out of detail on 1adfb15 itself; the GPU
+suite timed out file by file (60 s hooks) under three other worktrees' lab runs on the GPU, on 1adfb15 too (water,
+external), so it says nothing here — to run alone.
 
