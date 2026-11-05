@@ -30,6 +30,13 @@ If one of these shows the design is wrong, stop and tell main. Don't build on a 
 - Every bug fix comes with a test that fails before it and passes after.
 - If the real fix is bigger than the task, say so to main with the evidence. Don't patch around it.
 
+## 3b. Reach is an invariant
+The user: "if they keep getting stuck in walls an obvious fix is to modify things along their path to be passable. Add a
+gate or a bridge. The expectation is that they can get anywhere in or around the city." Every open place in and around the
+city stays in the stores' connected component (the GPU reach). Town generation and every edit keep that true by changing
+the world: a gate, a bridge, a ramp or stairs. A unit that can't get somewhere in the city is a bug in the world, never
+something for the unit to work around.
+
 ## 4. Gates that match the game
 - Behaviour gates run in a setting as real as the bug: the `town` recipe (the user's land, the real fortress claims) or
   the user's link at phone size. A scenario that passes in a world the player never sees proves little.
