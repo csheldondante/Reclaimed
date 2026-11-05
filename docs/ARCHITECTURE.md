@@ -3613,6 +3613,11 @@ module is docs/MODULES.md.
   reads (climateAt, regionAt, geysersIn, zRange, macroAt, spawn, addBasin) with columns, columnsGpu, changes, stampsFor,
   regionLand, regionInto, rawGround and window as delegates; build.ts (run: the GPU passes), regions.ts, columns.ts,
   region-land.ts, window.ts; params.ts (AtlasParams …), tile-pacer.ts (TilePacer) and defs.ts, re-exported by atlas.ts.
+- `shaders/render.ts` + `shaders/render/` and `shaders/judge.ts` + `shaders/judge/` — the two largest WGSL files in
+  parts (render: common, vertex, light, rock, fs-box, water, bodies; judge: defs, build, pieces, sections, release).
+  The TS module joins the parts in the old order (`renderWgsl`, `judgeWgsl`), so the pipelines compile the same one
+  module as before; each part starts with a one-line comment naming it. Comments elsewhere that cite render.wgsl or
+  judge.wgsl mean these parts (docs/MODULES.md lists which holds what).
 
 
 ## The behaviour lab (round 128l, `tooling`; docs/TOOLING.md)

@@ -83,7 +83,9 @@ export default defineConfig({
   // (round 102, bench v3: the build's time on the benchmark's start page — src/perf/bench.ts BUILD)
   // (round 128i, FT-67: the commit built — a bench report says which build ran; a Pixel 9a report came from a stale deploy)
   define: { __BUILD_COMMIT__: JSON.stringify(commitOf()), __BENCH_BUILD__: JSON.stringify(new Date().toISOString().slice(0, 16).replace('T', ' ')), __BUILD_HASH__: JSON.stringify(contentHash()), __GEN_HASH__: JSON.stringify(genHash(import.meta.dirname)) },
-  server: { port: 5173, strictPort: true },
+  // (2026-11-05: the headless checks' Chrome profiles and builds in .testcache, and agents' scratchpads, change all the
+  // time: watched, they kept every dev server at about 2 cores)
+  server: { port: 5173, strictPort: true, watch: { ignored: ['**/.testcache/**', '**/scratchpad/**'] } },
   // (round 117, flora: flora.html — the flora viewer page, src/flora/viewer.ts)
   // (round 112, testspeed: contract.html — the contract tier's page, src/test/contract.ts: a system on a tiny world)
   // (round 117, structures: structures.html — the structures track's viewer, src/structures/viewer/)

@@ -13,7 +13,7 @@ import { planCity } from '../../src/structures/plan';
 import commonWgsl from '../../src/shaders/common.wgsl?raw';
 import materialsWgsl from '../../src/shaders/materials.wgsl?raw';
 import terrainShapeWgsl from '../../src/shaders/terrainshape.wgsl?raw';
-import renderWgsl from '../../src/shaders/render.wgsl?raw';
+import { renderWgsl } from '../../src/shaders/render';
 import structMeshWgsl from '../../src/shaders/structmesh.wgsl?raw';
 import structGameWgsl from '../../src/shaders/structgame.wgsl?raw';
 import viewerWgsl from '../../src/structures/viewer/viewer.wgsl?raw';

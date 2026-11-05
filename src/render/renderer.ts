@@ -12,7 +12,7 @@ import renderprepWgsl from '../shaders/renderprep.wgsl?raw';
 import vegplanWgsl from '../shaders/vegplan.wgsl?raw';
 import terrainShapeWgsl from '../shaders/terrainshape.wgsl?raw';
 import vegprepWgsl from '../shaders/vegprep.wgsl?raw';
-import renderWgsl from '../shaders/render.wgsl?raw';
+import { renderWgsl } from '../shaders/render';
 import rainWgsl from '../shaders/rain.wgsl?raw';
 import particlesDrawWgsl from '../shaders/particles_draw.wgsl?raw';
 import gridsWgsl from '../shaders/grids.wgsl?raw';
