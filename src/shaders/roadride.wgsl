@@ -29,8 +29,13 @@ const JOIN_R: f32 = 4.5;
 /** there: at a node, at its goal (m) */
 const AT_NODE: f32 = 0.9;
 const AT_GOAL: f32 = 0.6;
-/** pushed this far off its way (tumbled, shoved), it starts over from its field */
-const LOST: f32 = 8.0;
+/** pushed this far off its way (tumbled, shoved), it starts over from its field: farther than this from the node it
+ *  heads for than the longest edge into that node (round 128l, m4fix: it was 8 m from the node itself, so a rider that
+ *  turned onto an edge longer than 8 m was "lost" at once — the lanes have 8.2 m edges on open ground — got off, joined
+ *  again at the node behind and turned back: the farms' carts never left the stores, BACKLOG M4-14) */
+const LOST: f32 = 3.0;
+/** on the last leg (off the roads, to its goal): this far past NEAR_GOAL and it starts over */
+const LAST_LOST: f32 = 8.0;
 /** joins standing on an edge's band: this near its line (m; a lane's half width and a pad) */
 const ON_EDGE: f32 = 1.6;
 /** riding but slower than this (m/s) for STUCK_TICKS ticks, it gets off and waits COOL_TICKS before joining again */
@@ -125,6 +130,15 @@ fn rideHops(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) 
 fn nodeXY(v: u32) -> vec2<f32> {
   let g = graph[v];
   return vec2<f32>(bitcast<f32>(g.x), bitcast<f32>(g.y));
+}
+
+/** the longest edge at node v (m): how far a rider on its way to v can be from it */
+fn longestEdge(v: u32) -> f32 {
+  let g = graph[v];
+  let a = nodeXY(v);
+  var m = 0.0;
+  for (var k = g.z; k < g.z + g.w; k++) { m = max(m, length(nodeXY(graphAdj[k].x) - a)); }
+  return m;
 }
 
 fn hopCost(slot: u32, v: u32) -> f32 { return bitcast<f32>(hops[slot * MAX_NODES + v].x); }
@@ -257,7 +271,7 @@ fn ride(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     if (st.x == M_ON) {
       var v = st.y;
-      if (length(nodeXY(v) - p) > LOST) {
+      if (length(nodeXY(v) - p) > longestEdge(v) + LOST) {
         st.x = M_OFF;
       } else {
         // (at a node: on to the next, or off at the destination's)
@@ -282,7 +296,7 @@ fn ride(@builtin(global_invocation_id) id: vec3<u32>) {
     if (st.x == M_LAST) {
       let q = RR.dest[st.z & 0xffu].xy;
       let d = length(q - p);
-      if (d > LOST + NEAR_GOAL) {
+      if (d > LAST_LOST + NEAR_GOAL) {
         st.x = M_OFF;
       } else {
         steer = select(steerTo(p, q), STAND, d < AT_GOAL);

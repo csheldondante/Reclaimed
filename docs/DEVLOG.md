@@ -17652,38 +17652,24 @@ Why: main, on the stuck carts: fix the root cause, drop the patches (the repo ru
   false). The farms' lanes aren't ridden from the stores, and I haven't found why yet.
 
 
-## 2026-11-05 — round 128l (`m4`): the attack wave, part A — the rider, the raiders, the gates, the loot, the fire
+## 2026-11-05 — round 128l (`m4fix`): riders stay on edges longer than 8 m (M4-14)
 
-Why: the user, "Also, do you want to add the attack wave?", and the design session's answers (DECISIONS round 128l
-"the attack wave"): timed and announced; the stores, then the houses; the walls and gates in the way; real destruction
-with the existing effects; repairs through the job board. Combat "benefits from being fun out of the gate because of
-the destruction effects". docs/ARCHITECTURE.md "The attack wave" has the design; fortress/raid.ts (pure) and
-fortress/raiders.ts (the runtime).
+Why: a cart sent to the farms' pile in the lab never left the stores (BACKLOG M4-14).
 
-- What a wave does now, in the lab's walled recipe (scripts/lab/fortressraid.mjs, `raid` sims): 4 raiders walk in from
-  the west edge; the gate shuts when they are 30 m from it; they go round to it and bash it, 24 blows of 1
-  (RAID.gateHp) in ~10 sim s; it breaks to rubble and is a planned block again; they loot 6 ore and 2 weapons at the
-  stores, torch both houses (each burns 8 s, falls, its timber burns to ash in the fire sim) and walk out with the loot.
-  After: 40 sim s of building rebuilt the gate and the houses. The open town (the same town, its wall erased): they
-  loot and burn without a blow; people caught outside on their way home die. The rider: out 1.5 days before the wave,
-  at the stores 61 sim s later with "A rider brings word. Raiders from the west, tomorrow at dusk. He counted 4 of
-  them."
-- Raiders walk on the units' goal fields, not the road graph's rides. With rides they stopped at the end of a road 12 m
-  from the stores and stood there (the flat recipe's town: node 4 to node 1, a connected graph); the villagers' own
-  rides home stood still the same way. That is the family of M4-14 (another worktree's), left alone here; the fields
-  cost less on roads, so they still come in along the road.
-- AgentUnits: `mayFight` (the game's rule over who may take on whom) and a hostile's routine stepped while it has no
-  target (before, a hostile with a 'work' job was never stepped). Raiders first fought every villager within 6 m and
-  died to them, never reaching the stores: now they notice within 3.5 m, people in at home are left alone, carts
-  neither fight nor are fought, and a raider has 8 health and hits for 2.
-- The lab's fortress was never claimed (no streamer: `staticsFor` read `scene.stream`; no External registry: the lab
-  didn't run the rigid rock). Units walked through its walls, so a raid there passed straight through the ring. Now it
-  is claimed as in the atlas. Two older lab checks change with it: fortressoutside passes but slower (the house outside
-  the wall at 181 sim s, was ~35; one run of three didn't reach it in 600), and fortresscarts fails: a cart sent out
-  sits by the stores, boxed in by the solid houses round the heap (BACKLOG AW-4). Both were measured on a fortress
-  units walked through.
-- Not measured: frame cost. For the phone bench later: a wave is RAID.size0 4 raiders growing by 2 a wave to 16 (units
-  on the agents' step and the hunt field), a goal field per place they walk to (up to 3 shared), fx bursts (chips each
-  blow, flames and smoke at 4 and 2 a second per burning house), the fire sim on a fallen house's timber, and a
-  static-claims pass on every gate shut, gate open and block broken.
-
+- Cause: the ride's "lost" test. shaders/roadride.wgsl got a rider off the network when it was over LOST (8 m) from the
+  node it heads for. The lanes' road to the lab's farms has an 8.2 m edge (open ground, 28 → 27 on the stores' way out).
+  A cart that reached node 28 turned onto that edge, was 8.2 m from its next node, and was "lost" at once. It got off,
+  joined again at the node behind it and turned back, rocking at (99, 108) by the stores for the whole run. Found on the
+  CPU (Fortress, laneGraph and hopsCpu on the lab's plan: the graph is one component, every cost finite, the farm's
+  pile node in it; only the edge lengths stood out). The quarry's road has no edge over 6 m, which is why its cart went.
+- Fix: lost is now past the longest edge at that node by LOST (3 m: `longestEdge(v) + LOST`). The last leg keeps its
+  14 m (LAST_LOST 8 + NEAR_GOAL 6). No timer.
+- Test: test/gpu/roadride-long.test.ts — a rider turned onto a 12 m edge is still on it ticks later. It fails before
+  the fix (mode 0, off), passes after; test/gpu/roadride.test.ts still passes.
+- Lab (scripts/lab/fortresscarts.mjs, 300 sim s): 7 cart loads, 53 goods carted, against 1 load and 8 goods before.
+  The farm cart went to the farms' pile and back again and again: the pile fell 12.2 → 9.8 → 7.4 between trips, and
+  the cart was out at (108, 66-73), the farms' node at (108, 56). Carts' walking samples on a road: 1.00. The scenario
+  now counts round trips per pile type and takes its shot only when asked (`shot`): with the shot on, two runs hung on
+  the lab page after it.
+- The farmers' own ride to the farms stays off by design: the farm cells' middles are over RIDE_NEAR (6 m) from a node,
+  so they walk their field.
