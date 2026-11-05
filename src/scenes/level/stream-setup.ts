@@ -1,0 +1,368 @@
+// The level's world over time, set up once at attach: sleep for a fixed map's held rivers, and for a streamed level
+// (level.stream) the Streamer, its slides' hooks (camera, sea, settlements, ships, fortress), the far land and the
+// warm cache. API: attachStream(scene). Talks to the streamer only through its public hooks.
+import { EventKind } from '../../sim/globals';
+import { PK } from '../../sim/particles';
+import { TownDebug } from '../../settle/debug';
+import { AgentUnits } from '../../units/agent-units';
+import { attachSim } from '../../api/world';
+import { Streamer, REGION, boxOf } from '../streamer';
+import { FarLand } from '../../atlas/far';
+import { GPUGEN } from '../../atlas/finish';
+import { settleLand, Sleep } from '../../sim/sleep';
+import { riverMode } from '../../sim/world-gpu';
+import { record, timed } from '../../gpu/cpustat';
+import { CHUNK, sfPack } from '../../world/layout';
+import { ROW_H } from '../../world/lattice';
+import { HybridChunks } from '../hybrid';
+import { SettlementsView } from '../../settle/view';
+import { ShipsView } from '../../settle/shipsview';
+import { atlasControls, worldEventHere } from './atlas-controls';
+import { startFortress, staticsFor } from './fortress';
+import { ARRIVE_PREP } from './flags';
+import { worldSaveOf } from '../level';
+import type { LevelScene } from '../level';
+
+/** sleep and the streamed window, with what follows its slides */
+export function attachStream(scene: LevelScene): void {
+  const { core, host } = scene;
+  const { dims } = core;
+  // (round 110) a fixed map with held rivers (an authored river table, world/rivertable.ts): sleep and wake as the
+  // atlas level's (below) — what's still sleeps, its river held at its table; what's done there wakes and settles
+  // (?settletol), then freezes again
+  if (!scene.level.stream && !scene.flow && riverMode() === 'table' && host.params.get('sleep') !== '0') {
+    scene.sleep = new Sleep(dims.w / CHUNK, dims.h / CHUNK, core.ring);
+    scene.sleep.settleAll(Sleep.SETTLE_S, performance.now() / 1000);
+    core.sleep = scene.sleep;
+  }
+  if (scene.level.stream) {
+    const a = scene.opts.atlas;
+    scene.stream = a
+      ? new Streamer(
+          core,
+          {
+            // (round 80: a tile of its columns a frame — streaming mustn't stall the frame)
+            region: (x0, y0, w, h) => a.atlas.regionLand(x0, y0, w, h, Infinity, true),
+            // (round 102, `gpugen`: made on the GPU straight into the pool — ?gpugen=0 the CPU's way, region above)
+            regionInto: (x0, y0, w, h, t, how) => a.atlas.regionInto(x0, y0, w, h, t, how),
+            zRange: (x0, y0, w, h) => a.atlas.zRange(x0, y0, w, h),
+            wrap: [a.atlas.p.cols, a.atlas.p.rows],
+            height: a.atlas.p.zTop,
+            // (round 71: the coarse world changes while a region is away)
+            snapshot: (x0, y0, w, h) => a.atlas.snapshot(x0, y0, w, h),
+            changes: (s, x0, y0, w, h) => a.atlas.changes(s, x0, y0, w, h),
+            // (round 100: a region from the store — the hooks (settlements' plans, a run's stage) see its land made, the
+            // record's is what's written)
+            // (round 102: the GPU's way — the stamps asked for, the plans made, no land made)
+            restored: async (x0, y0, w, h) => void (GPUGEN ? await a.atlas.stampsFor(x0, y0, w, h, true) : await a.atlas.regionLand(x0, y0, w, h, Infinity, true)),
+          },
+          a.origin,
+          { oz: a.oz, outside: a.outside, ground: a.ground },
+          worldSaveOf(host.params, a.atlas.p, { rivers: riverMode(), settle: settleLand() }),
+        )
+      : new Streamer(core);
+    // (round 102) the tile pacer gives more of the frame's room as the camera moves fast
+    if (a) {
+      const S = scene.stream;
+      a.atlas.pacer.urgency = () => Math.hypot(S.vel[0], S.vel[1]);
+      // (round 108, TC8: a plan landed — a settlement's — the tiles made over its box without it are made again)
+      a.atlas.stampsChanged.push((x0, y0, w, h) => core.renderer.tiles?.forgetMade(x0, y0, w, h, a.atlas.p.cols, a.atlas.p.rows));
+    }
+    // (round 79) the atlas's columns run past the window: what's above and below it drawn too (round 100: only when
+    // the window doesn't hold the world's whole height)
+    if (a && a.atlas.p.zTop > dims.zMax && core.renderer.enableBand(a.atlas.p.zTop)) scene.stream.refreshBand();
+    // (round 79) the sea past the window's edge: the sea in it stays
+    if (a) core.globals.seaZ = a.atlas.p.sea - scene.stream.oz;
+    // (round 80) sleep and wake: what's still sleeps, what the player and the world's events touch wakes
+    if (a && host.params.get('sleep') !== '0') {
+      scene.sleep = new Sleep(dims.w / CHUNK, dims.h / CHUNK, scene.core.ring);
+      scene.sleep.settleAll(Sleep.SETTLE_S, performance.now() / 1000);
+      core.sleep = scene.sleep;
+      const sl = scene.sleep;
+      scene.stream.onSlide.push((dx, dy, dz) => {
+        const t = performance.now() / 1000;
+        // (a slide in z: every column cut again — the surfaces made again everywhere, the water settles)
+        if (dz) sl.settleAll(2, t);
+        else sl.shift(dx, dy, t);
+      });
+    }
+    // (round 79) ?drive=speed: along the road nearest the window's middle (unwrapped from its first point)
+    const dv = Number(host.params.get('drive') ?? 0);
+    if (a && dv > 0) {
+      const mx = scene.stream.origin[0] + dims.w / 2;
+      const my = (scene.stream.origin[1] + dims.h / 2) * ROW_H;
+      let best: Float32Array | null = null;
+      let bd = Infinity;
+      for (const r of a.atlas.settlement.roads)
+        for (let k = 0; k < r.path.length; k += 2) {
+          const dd = Math.hypot(r.path[k] - mx, r.path[k + 1] - my);
+          if (dd < bd) {
+            bd = dd;
+            best = r.path;
+          }
+        }
+      const W = a.atlas.worldW;
+      const H = a.atlas.worldH;
+      const path: [number, number][] = [];
+      if (best)
+        for (let k = 0; k < best.length; k += 2) {
+          const prev = path[path.length - 1];
+          let x = best[k];
+          let y = best[k + 1];
+          if (prev) {
+            x = prev[0] + (((x - prev[0] + W * 1.5) % W) - W / 2);
+            y = prev[1] + (((y - prev[1] + H * 1.5) % H) - H / 2);
+          }
+          path.push([x, y]);
+        }
+      // (from its point nearest the middle: its start may be far off)
+      let s0 = 0;
+      let sNear = 0;
+      let dNear = Infinity;
+      for (let k = 0; k < path.length; k++) {
+        if (k > 0) s0 += Math.hypot(path[k][0] - path[k - 1][0], path[k][1] - path[k - 1][1]);
+        const dd = Math.hypot(((path[k][0] - mx + W * 1.5) % W) - W / 2, ((path[k][1] - my + H * 1.5) % H) - H / 2);
+        if (dd < dNear) {
+          dNear = dd;
+          sNear = s0;
+        }
+      }
+      scene.drive = { speed: dv, path, s: sNear, dir: 1, zoom: core.camera.zoom };
+    }
+    // (round 98) ?pan=speed[,deg] ?panturn=s,deg
+    const pv = (host.params.get('pan') ?? '').split(',').map(Number);
+    if (pv[0] > 0) {
+      let dir: [number, number];
+      if (pv.length > 1 && Number.isFinite(pv[1])) dir = [Math.cos((pv[1] * Math.PI) / 180), Math.sin((pv[1] * Math.PI) / 180)];
+      else {
+        const [ux, uy] = core.camera.screenDeltaToWorld(0, -1);
+        const l = Math.hypot(ux, uy) || 1;
+        dir = [ux / l, uy / l];
+      }
+      const pt = (host.params.get('panturn') ?? '').split(',').map(Number);
+      scene.pan = { speed: pv[0], dir, t: 0, turnAt: pt[0] || 0, turnBy: pt[1] || 0, turned: 0, asked: 0 };
+    }
+    scene.stream.onSlide.push((dx, dy, dz) => {
+      // what the level keeps in window coordinates
+      // (round 106, frameprobe: the surface cache is on the ring — nothing to move)
+      scene.hoverWorld = null;
+      // the climate follows the latitude (the atlas's: snow it lays is snow the sim keeps), and the window's height
+      if (a) core.globals.climate = a.atlas.climateAt(scene.stream!.origin[0] + dims.w / 2, scene.stream!.origin[1] + dims.h / 2, scene.stream!.oz);
+      if (a) core.globals.seaZ = a.atlas.p.sea - scene.stream!.oz;
+      if (dz) {
+        // (a slide in z: every column moved; what's lying loose in window z goes)
+        for (let i = 0; i < scene.surfaceCache.length; i++) scene.surfaceCache[i] = sfPack(core.map.surface[i], 0);
+      }
+      // (round 92) what's waiting to be judged moves with the land (what was falling landed first: onBeforeSlide)
+      const ti = performance.now();
+      scene.integrity?.slid(dx, dy, dz);
+      record('sl.lvl.integrity', performance.now() - ti);
+    });
+    // (round 92) before the window's columns are frozen, read back or moved: what's falling where they're frozen or
+    // cut again lands; nothing falls or is judged while they're read back and written again (a slide in z, a warp)
+    const S0 = scene.stream;
+    scene.stream.onBeforeSlide.push((dx, dy, dz) => timed('sl.before.settle', () => scene.integrity?.settle(dx, dy, dz)));
+    // (round 100) what play does to the land — edits (the world API's, the editor's, agents' digs, a story's door),
+    // lightning, a fire lit, a tap to grow — keeps its regions (saved), unlike the sims' own drift
+    const S1 = scene.stream;
+    core.sim.eventTaps.push((sent) => {
+      for (const e of sent) {
+        if (e.kind === EventKind.Scare || e.kind === EventKind.Ripple) continue;
+        const r = (e.radius ?? 0) + 2;
+        S1.touch(e.x - r, (e.y - r) / ROW_H, e.x + r, (e.y + r) / ROW_H);
+      }
+    });
+    // (round 100) the window isn't saved while something falls in it (it would be saved mid-air)
+    scene.stream.canSave.push(() => !scene.integrity || scene.integrity.quiet);
+    // (round 100, meshinst) the resting rock goes with its region: its mesh and transform in the region's record
+    if (scene.integrity?.external) scene.stream.things.push(scene.integrity.regionThings());
+    if (scene.integrity) scene.integrity.held = () => S0.columnsHeld;
+    // (round 128j: no orphan pass while a slide's land is coming in — its places hold the land that left, claims and all)
+    if (scene.integrity) scene.integrity.landPending = () => S0.unwritten.length > 0;
+    // (round 80) a warp (the map's): the window somewhere else — what the level keeps in window coordinates again
+    scene.stream.onWarp.push((_ox, _oy, nz) => {
+      if (a) core.globals.climate = a.atlas.climateAt(scene.stream!.origin[0] + dims.w / 2, scene.stream!.origin[1] + dims.h / 2, nz);
+      if (a) core.globals.seaZ = a.atlas.p.sea - nz;
+      scene.sleep?.settleAll(Sleep.SETTLE_S + 1, performance.now() / 1000);
+      for (let i = 0; i < scene.surfaceCache.length; i++) scene.surfaceCache[i] = sfPack(core.map.surface[i], 0);
+      scene.hoverWorld = null;
+      scene.integrity?.clear();
+      const i = core.ring.i(Math.floor(dims.w / 2), Math.floor(dims.h / 2));
+      core.camera.target = [dims.w / 2, (dims.h / 2) * ROW_H, core.map.surface[i]];
+      if (core.camera.fly) scene.toggleFly();
+    });
+    // (round 71) an event of the coarse world in sight is made in the window's columns too
+    // the atlas level's buttons (round 72: a phone has no F, WASD, M or V)
+    if (a) atlasControls(scene);
+    // the land beyond the window (round 73): the atlas's ground and the coarse world, out to the sky
+    if (a) {
+      // (round 83: the rings of less detail between the window and the far land — ?lod=0 none, ?lod=low three
+      // coarser ones, fewer vertices)
+      // (round 105, DECISIONS AR3: with the tiles on — the default — no rings, nor their bake (farbake) or the window's
+      // look on them (fardetail): the tiles draw the land past the window, the round 73 far land where none is yet)
+      const tilesOn = !!core.renderer.tiles;
+      const lodQ = new URLSearchParams(location.search).get('lod');
+      // (?lod=keep: the rings with the tiles too — a measurement switch, the frame's cost of the rings: DEVLOG round 105)
+      const lod = (tilesOn && lodQ !== 'keep') || lodQ === '0' ? null : lodQ === 'low' ? { spacings: [4, 8, 16], n: 129 } : { spacings: [2, 4, 8, 16], n: 193 };
+      if (scene.hybridOn && !scene.ceiling) {
+        // (the window's heightfield chunks are the 1-cell ring's, near the camera; ?ringn= its vertices a side)
+        const ringN = Number(host.params.get('ringn') ?? 193);
+        if (!tilesOn) scene.far = new FarLand(host.gpu.device, a.atlas, core.renderer.targets, { spacings: [1, 2, 4, 8, 16], n: ringN });
+        const fm = core.renderer.fieldMesh;
+        if (!fm.on) throw new Error('?hybrid=1 needs the field mesh (not with ?mesh=0)');
+        const [nx, ny, side] = fm.chunkGrid;
+        const S = scene.stream;
+        // (round 86: ?stormreach= world units round the focus within which a heightfield chunk's sim may wake)
+        // (round 100: ?vradius= 0 — a chunk is voxels for what it holds, not for the camera's being near; the land come
+        // in waits sim ticks, not a time, for the grid)
+        const h = new HybridChunks(nx, ny, side, dims.w, dims.h, S, Number(host.params.get('vradius') ?? 0), () => ({ oz: S.oz, zMax: dims.zMax }), Number(host.params.get('stormreach') ?? 110), () => core.sim.tick);
+        scene.hybrid = h;
+        // (round 113, tilesfirst — SF7: the land written is prepared for drawing at once (WorldCore.prepareArrived)
+        // and the grid draws it this frame: no READY_TICKS wait on the sim's ticks, which a slide holds — the step-1
+        // chain's slowest link, 100-230 ms of a written region drawn by nothing. ?arriveprep=0 as before)
+        S.onRelief.push((x0, y0, x1, y1) => {
+          if (ARRIVE_PREP) core.prepareArrived();
+          h.landBox(x0, y0, x1, y1, ARRIVE_PREP ? -Infinity : undefined);
+        });
+        S.onSlide.push((dx, dy, dz) => {
+          if (!dz) h.shift(dx / side, dy / side);
+          else h.zMoved();
+        });
+        S.onWarp.push(() => h.clear());
+      }
+      if (scene.ceiling) {
+        const near = Number(host.params.get('near') ?? 1);
+        // (?ringn=: vertices a side of each ring, 193 the usual; (n − 1) a multiple of 8 — lod.ts checks)
+        const ringN = Number(host.params.get('ringn') ?? 193);
+        if (near !== 1 && near !== 2) throw new Error('?near= must be 1 or 2 (cells between the finest ring’s vertices)');
+        scene.far = new FarLand(host.gpu.device, a.atlas, core.renderer.targets, { spacings: near === 1 ? [1, 2, 4, 8, 16] : [2, 4, 8, 16], n: ringN }, true);
+      }
+      const far = scene.far ?? new FarLand(host.gpu.device, a.atlas, core.renderer.targets, lod);
+      // (round 83: the rings draw past the window's edge — no wall down it)
+      // (round 105: and the tiles — past the window's edge is theirs, or the far land's)
+      if ((far.lod || tilesOn) && !scene.ceiling) core.renderer.openEdges();
+      scene.far = far;
+      const S = scene.stream;
+      core.renderer.extraDraws.push((pass, clear) => {
+        far.org = [S.origin[0], S.origin[1] * ROW_H, S.oz];
+        // (round 103, ?tiles=1: the tiles' anchors are the world's — render/tilecache.ts)
+        core.renderer.setTileOrigin(S.origin[0], S.origin[1], S.oz);
+        // (round 104, TC2: the render-only land past the window, made the streamer's way; once)
+        core.renderer.setTileLand(S.tileLand());
+        far.win = [dims.w + 0.5, dims.h * ROW_H];
+        far.zMax = dims.zMax;
+        const c = core.camera.fly ? core.camera.fly.pos : core.camera.target;
+        far.mid = [c[0], c[1]];
+        // (the puck keeps the target's height on the ground; without it the height isn't the ground's)
+        const [tx, ty, tz] = core.camera.target;
+        far.focus = core.camera.fly ? null : [tx, ty, scene.cutaway ? tz : scene.heightAt(tx, ty)];
+        far.storms = core.weather.storms;
+        // (round 93: the window's light, for the rings to be lit as it is)
+        const G = core.globals;
+        far.light = { sun: G.sun, sunCol: G.sunCol, sky: G.sky, origin: G.origin ?? [0, 0], season: G.season ?? 0, pollution: G.pollution };
+        far.draw(pass, clear);
+      });
+    }
+    // (one after another: each reads the window back and writes it)
+    if (a) a.atlas.coarse.onEvent.push((e) => (scene.worldEvents = scene.worldEvents.then(() => worldEventHere(scene, e))));
+    // (round 69: the atlas's forms of a weak material are judged when they come in, like anything
+    // built — what can't stand falls; the first window's, region by region)
+    const integ = scene.integrity;
+    if (a && integ) {
+      // (round 100, hitchrec, main's call under the user's design — rounds 83 and 92: "only needs to be done when the
+      // structure changes"): land come in isn't judged. What's generated (stamped towns, ways, bridges) stands by
+      // construction; edits seed the judge. Judging each arriving town's box (and twice its size, and again a pass
+      // later) was ~1 GB/s allocated panning at 120/s and a 40 s judge pass in a soak.)
+      // (round 87: what's above the window comes down with a piece that reaches its top)
+      const S = scene.stream;
+      integ.above = { take: (x, y) => S.takeAbove(x, y), put: (x, y, ivs) => S.putAbove(x, y, ivs) };
+      const m = a.map.structural;
+      if (m)
+        for (let y = 0; y < dims.h; y += REGION)
+          for (let x = 0; x < dims.w; x += REGION) {
+            const b = boxOf(m, dims.w, x, y, REGION, REGION);
+            if (b) integ.markBox(...b);
+          }
+    }
+    // (round 88) the settlements: planned and built as their land comes in (Atlas.stampHooks, set before the
+    // first window); lived in near the camera — their people as units on the agents
+    const st = a?.settlements;
+    if (st) {
+      const units = new AgentUnits(scene.agents);
+      // (LW1) the walking dead are undead (AgentUnits' 'shambler' kind): the sanctuary burns them, raise passes them by
+      scene.traits.kindTraits('shambler', ['undead']);
+      scene.units = units;
+      scene.settlements = st;
+      // (round 94) the settlements past the window planned on the atlas's rough ground and baked into the land there
+      const bake = scene.far?.bake;
+      if (bake) {
+        const far = scene.far!;
+        st.farPlans({ rough: (x0, y0, w, h) => bake.roughGround(x0, y0, w, h), camera: () => [far.mid[0] + far.org[0], far.mid[1] + far.org[1]], radius: Number(host.params.get('fbr') ?? 2600) });
+        st.onStamps.push((list) => bake.setStamps(list));
+      }
+      core.onShift.push((dx, dy, dz) => units.shift(dx, dy, dz));
+      const S = scene.stream;
+      S.onWarp.push(() => {
+        st.life?.dispose();
+        st.life = null;
+      });
+      // (the window's moves: a house being built has its grid made again in the new window)
+      let epoch = 0;
+      S.onSlide.push(() => epoch++);
+      S.onWarp.push(() => epoch++);
+      const terrainApi = () => {
+        const t = (scene.worldApi ??= attachSim(core)).terrain;
+        if (!t) throw new Error('settlements: the world API has no terrain');
+        return t;
+      };
+      const plants = () => {
+        const p = (scene.worldApi ??= attachSim(core)).plants;
+        if (!p) throw new Error('settlements: the world API has no plants');
+        return p;
+      };
+      st.play({
+        units,
+        origin: () => [S.origin[0], S.origin[1]],
+        dims: { w: dims.w, h: dims.h },
+        focus: () => [core.camera.target[0], core.camera.target[1]],
+        trees: (at, r) => plants().treesNear(at[0], at[1], r).map((t) => [t.x, t.y] as [number, number]),
+        fell: (at) => plants().fell(at[0], at[1]).then((t) => t?.logs ?? 0),
+        take: (at, n) => terrainApi().take(at[0], at[1], n),
+        put: (at, m, n) => terrainApi().put(at[0], at[1], m, n),
+        epoch: () => epoch,
+        ready: (at) => (scene.worldApi ??= attachSim(core)).fresh && terrainApi().heightAt(at[0], at[1]) !== null,
+        budget: Number(host.params.get('townfolk') ?? ((host.quality.agentSweeps ?? 8) <= 2 ? 28 : 48)),
+      });
+      // (round 128i, FT-67) ?townview=0: the towns not drawn nor claimed (no settlements view) — the town bench's split of
+      // a slide's cost between the towns and the terrain streaming (src/perf/townbench.ts)
+      if (host.params.get('townview') === '0') {
+        if (host.params.get('fortress') === '1') throw new Error('?fortress=1 needs the settlements view: not with ?townview=0');
+      } else {
+        // (round 119) the settlements drawn as structures and their buildings' columns claimed (settle/view.ts); its
+        // slide hooks after Integrity's (the registry has moved when it claims again)
+        const view = new SettlementsView(
+          {
+            device: host.gpu.device,
+            renderer: core.renderer,
+            external: () => scene.integrity?.external ?? null,
+            statics: () => staticsFor(scene),
+            dims: { w: dims.w, h: dims.h },
+            oz: () => S.oz,
+            viewProj: () => core.camera.viewProj,
+            focusZ: () => core.camera.focus?.[2] ?? core.camera.target[2],
+            dust: (x, y, z, n) => core.sim.particles.burst({ kind: PK.Dust, x, y, z, count: n, speed: 2, spread: 1.2 }),
+          },
+          st,
+        );
+        scene.settlementsView = view;
+        // (round 120) the sailing ships between the ports (settle/ships.ts, shipsview.ts), drawn with the towns' pieces
+        if (host.params.get('ships') !== '0')
+          scene.shipsView = new ShipsView({ sg: view.sg, toWindow: (p) => st.toWindow(p), oz: () => S.oz, focus: () => [core.camera.target[0], core.camera.target[1]], time: () => core.globals.time, sea: a!.atlas.p.sea, style: 'hearth' }, st.fleet);
+        // (round 128j: a slide waits for the plans of the towns over the land it brings — their claims come with it)
+        S.readyFor.push((wx, wy, R) => st.ready(wx, wy, R, R));
+        if (host.params.get('towndebug') === '1') scene.townDebug = new TownDebug(host.ui, st, core.camera, (x, y) => scene.heightAt(x, y));
+        if (host.params.get('fortress') === '1') startFortress(scene, st, view, a!.startTown);
+      }
+    }
+  }
+}

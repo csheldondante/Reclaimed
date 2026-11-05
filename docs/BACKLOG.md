@@ -12,6 +12,21 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Monolith split (2026-11-04, `fortress`) — the user: "If we can split up those monolith files into well names encapsulated utilities and logical APIs that would be ideal too for saving context."
+
+One commit per file, no behaviour change (gates: typecheck, unit, GPU, hallcheck, tilegate goldens against the commit before). docs/MODULES.md is the map (scripts/modules-map.mjs).
+
+| id | item | size | status |
+|---|---|---|---|
+| MS-1 | scenes/level.ts (4134 lines) into scenes/level/ (16 modules) | M | done (monolith split: level commit) |
+| MS-2 | scenes/streamer.ts (2816 lines) into scenes/streamer/ | M | open |
+| MS-3 | game/integrity.ts (2722 lines) into game/integrity/ | M | open |
+| MS-4 | render/renderer.ts (2133 lines) into render/renderer/ | M | open |
+| MS-5 | agents/agents.ts (1654 lines) — mostly public API; the milestone 4 agent edits it next | M | open |
+| MS-6 | perf/bench.ts, atlas/atlas.ts, shaders/render.wgsl, shaders/judge.wgsl | L | open |
+| MS-7 | Seen while moving code (not touched: no edits in a move): doc comments that sit above the wrong member in LevelScene — the runsit `?runplan=` comment above `playRaising` (belongs to `startSituationRun`), the placeModel comment above `waker` (belongs to `placeModel`) | S | open |
+| MS-8 | The split classes' fields lost `private` (their folders' modules read them). A narrower contract (a state interface per class, or the modules taking only what they use) would win the encapsulation back | M | open |
+
 ## Round 128c (2026-11-03, session 5, `fortress`) — fortress mode slice 1 (docs/design/FORTRESS_SLICE1.md)
 
 Branch `fortress`: milestones 1 and 2 built (round 128d: the user's fixes, the Fortress type and power); milestones 3-5 wait for the user's test.

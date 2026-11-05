@@ -1867,7 +1867,7 @@ fire_immune × fire 0, undead × life 2 and × necrotic −0.5 — it mends them
 kind is `undead` (scenes/level.ts).
 
 **Play's lich (merge123, BACKLOG LW1-1 / M123-3).** Its 💀 raise button calls `PlayWorld.raise(x, y, raiseReach)`
-(play/world.ts: optional; play knows nothing of traits or GPU groups). scenes/level.ts puts it together at the boundary
+(play/world.ts: optional; play knows nothing of traits or GPU groups). scenes/level/runs.ts (playRaise) puts it together at the boundary
 (`playRaise`, passed to PlaySession/PlaySandbox as `raise`): `traits.apply({ op: 'raise', group: RAISED_GROUP, at,
 radius })` — the corpses there rise undead, keeping role and gear, in AgentUnits' RAISED_GROUP (standing, `bound`);
 AgentUnits fires `raised(u, group)` for each and drops its hostility (the raiser's now), and the level's handler orders
@@ -2200,7 +2200,7 @@ the user can iterate on controls in one session ("I want the separation of conce
 iterate on player controls"). Boundaries:
 
 - **The engine never imports it.** The level loads `src/play/sandbox/sandbox.ts` with a dynamic `import()` for
-  `?play=` only (scenes/level.ts `startPlay`), and drives it each frame like a hero run (`update(dt)` before the
+  `?play=` only (scenes/level/runs.ts `startPlay`), and drives it each frame like a hero run (`update(dt)` before the
   camera; the window's slides through `shift`; the map's warp through `warped`).
 - **It reaches the world only through contracts**: play/world.ts `makePlayWorld` builds a narrow `PlayWorld` (the
   top a hover rides, the floor, water depth, blows on units, wind wake/gust/blow/blast, fx bursts, craters, the
@@ -2610,7 +2610,7 @@ clears them).
 - Contract with the rings: `Renderer.targets.tileMask` (far.ts binding 49): `[0]` on, `[1]` n (64), then n x n
   words — region (rx, ry) (world regions of 64 cells / 64 rows) at (rx mod n, ry mod n) holds
   `(rx & 0xffff) | (ry << 16)` when a tile draws it this frame, all ones otherwise. far.wgsl `tiled()` discards there.
-- The origin: `Renderer.setTileOrigin(ox, oy, oz)` (the streamer's window cell (0, 0), rows, oz; level.ts each frame)
+- The origin: `Renderer.setTileOrigin(ox, oy, oz)` (the streamer's window cell (0, 0), rows, oz; scenes/level/stream-setup.ts, each frame in an extra draw)
   and `windowMoved` (a slide moves it at once).
 - meshdraw.wgsl `meshSurf` is the look before the light (struct Surf); `meshShade` lights it; tiles.wgsl bakes it.
 - (round 105, tilelatency) The render-only land: Atlas.regionTile (no readback, no stamps: the summary copied on the
@@ -2758,7 +2758,7 @@ clears them).
   mesh's whose fieldmesh record is built and not empty — after prepare, before the world pass). So the swap from tile to
   window is the frame the window's drawing is ready, chunk by chunk. TileCache.wanted asks for tiles of window regions
   where the window doesn't draw for sure; its look-ahead is TileCache.tileLatency (wanted to drawn, p90) at the speed.
-- **The planner** (step 4): scenes/planner.ts `StreamPlanner` (level.ts `planFrame`, each frame before the streamer's
+- **The planner** (step 4): scenes/planner.ts `StreamPlanner` (scenes/level/frame.ts `planFrame`, each frame before the streamer's
   update). Reads (`PlanSource`): the camera's motion, the coverage check, the arriving regions and whether the window
   draws them, the land's and tiles' latencies. Writes (`Plan`): reach per layer (cells along the motion: speed x
   latency + 96), `holes`, `simCap`. Consumers take one field each: Streamer.reach, FieldMesh.lead, TileCache.reach,
@@ -3476,7 +3476,7 @@ The building rule (the user's): select what (a structure type), then plan it wit
   town's CityPlan, `Settlements.thingAt(id, window xy)`; `FortressIO.townAt(x, y, z)`; `Fortress.inspectedTown`;
   card `fortress/townpick.ts`): the tap's ray is marched, box frame, to the first building or wall it goes under the top
   of (the plan's world z less the window's oz). Plan and Build put Inspect away. While building the bar has 1x/4x/16x and
-  Skip to done (`FortressBarHooks.speed/skip/now`; level.ts `skipFrame`: SKIP_SPEED 32 until `Fortress.progress()` is
+  Skip to done (`FortressBarHooks.speed/skip/now`; scenes/level/fortress.ts `skipFrame`: SKIP_SPEED 32 until `Fortress.progress()` is
   whole, or `FortressLife.blocked()` — all left cut off, or nobody carrying and the stores short — for SKIP_GRACE 4 sim
   s; the reason in `Fortress.note`). `Fortress.crew` (FortressLife: builders by phase) for the bar; the first Build frames
   `FortressLife.focus()`. Blocks still to build, while building, aren't drawn (LOOK_GHOST marks them to drop): a plot
@@ -3511,7 +3511,7 @@ The building rule (the user's): select what (a structure type), then plan it wit
 - **Round 128f (reach: the check at placement).** `fortress/reach.ts` (pure, tested): `ReachMap(columns, stores, {box,
   extra, deep})` — the agents' rules on the CPU (AGENT_H, STEP, DROP, DEEP, NAV_K mirrored from agents.wgsl: keep them in
   step), a search each way from the stores; `reached(x, y)` = a walker from the stores gets to the column's top surface
-  and back. `FortressIO.columns()` (`ReachColumns`: the window's solid runs and water, read by level.ts from 'layers' and
+  and back. `FortressIO.columns()` (`ReachColumns`: the window's solid runs and water, read by scenes/level/fortress.ts from 'layers' and
   'water' when planning starts and every 3 s while building) and `FortressIO.townHeap()`. `Fortress.reachMap(extra,
   {deep, fortress})` lays the plan over the columns as if built (solid.ts with a Town whose built levels are the plan's),
   `standsOf`, `reachedIn`, `placeWhy` (paint refuses with `Fortress.refusal`, the panel's line), gates shut likewise.
@@ -3569,7 +3569,23 @@ The building rule (the user's): select what (a structure type), then plan it wit
   (`FortressIO.townGates`: the old town's wall's gate posts, box frame; each rooted on every piece of land within
   45 m) to every door and yard, nearest first, cheapest (climb × 4, reuse × 0.25). `blocked`: the old town where it
   stands 1 m over the ground (`STANDS`: not its fields), water over `LANE_WATER` 0.8 m. The ride graph (`laneGraph`)
-  from the same pieces. **ReachColumns after a slide:** level.ts `readCols` keeps the window origin it read at; `runs` and
+  from the same pieces. **ReachColumns after a slide:** scenes/level/fortress.ts `readCols` keeps the window origin it read at; `runs` and
   `water` take the window as it is now and shift back (outside what was read: no solid, no water); every slide reads
   again. `RoadStamp.set` / `RoadRide.encodeHops` return true only for new shapes / a new network (an offset alone needs
   no relax: the fields slide with the window).
+
+## Source layout: the split classes (2026-11-04)
+
+The largest classes keep their state, lifecycle and public API in the class file; what they do lives in a folder
+beside it as free functions taking the instance as their first parameter (`scene`, `S`, `ig`, `rd`). The folder's
+functions are the class's internals: only the class file and its own folder call them; everything else uses the
+class (and scripts drive it through `window.reclaimed` as before — every method a script calls stays on the class).
+The class's fields are no longer `private` (the folder's modules read and write them); that is the folder's
+contract, not an invitation: outside the folder, use the class's methods. Each module's header says what it owns,
+its API, and what it must not touch. Systems still talk only through the WorldGpu contracts. The map of every
+module is docs/MODULES.md.
+
+- `scenes/level.ts` + `scenes/level/` — LevelScene: `attach.ts` (one-time wiring, composed of attach-tools,
+  input-wiring, test-api, stream-setup), `frame.ts` (the per-frame update), and the tools, runs, fortress, valley,
+  atlas controls, camera moves and labs.
+

@@ -17284,3 +17284,31 @@ contour nudge, lanes between built cells at a frequency, citygen-style streets.
 ## 2026-11-04 — storage phase 1 (WIP): static grids' claims written with the land (round 128j, FT-68)
 
 Why: the user asked "If we compute the town and intersect grids can't it load the terrain with the intervals for town already stored?" A town's grids never move, so its claims are written on the GPU by `claimGrid` (colapply.wgsl, ColumnApply.claimGrids) right after each region's land is written, from spans kept per grid on the GPU (sim/static-claims.ts). Removed: letting go before a slide, re-claiming after it, the whole-or-nothing wait at the window's edge, the 200-columns-a-frame cap, and the claims' writes into the CPU column copy. A slide waits for the town plans of the land it brings in (Settlements.ready). Integrity takes a read's epoch when the read is asked, and runs no orphan pass while a slide's land is still arriving. Checks: typecheck, unit 654, GPU static-claims/colapply/external/roadride 30, hallcheck 0 of 340 lost (before the rebase), scripts/staticclaims.mjs (claims hold across 10 slides, 0 orphans). Committed as WIP so the monolith split can start on a clean tree: the townbench before/after (desktop and phone), townslide/townpan and the ARCHITECTURE rewrite are still to do (storage brief, phase 1).
+
+## 2026-11-04 — the monolith split, 1: scenes/level.ts into scenes/level/ (no behaviour change)
+
+**Why.** The user: "If we can split up those monolith files into well names encapsulated utilities and logical APIs
+that would be ideal too for saving context." level.ts was 4134 lines (218 KB, ~55k tokens): an agent touching one
+concern (a tool, the frame, the fortress hookup) read the whole file. Now LevelScene (scenes/level.ts, 655 lines: its
+fields, constructor, `create`, resize, dispose, and the hooks scripts call) keeps the state and lifecycle, and what it
+does lives in scenes/level/ — 16 modules of 35 to 573 lines, each with a header saying what it owns and its API:
+attach (composed of attach-tools, input-wiring, test-api, stream-setup), frame, camera-moves, atlas-controls, runs,
+valley, fortress, town-tools, sandbox-tools, impacts, labs, flags. A change to the fortress hookup reads
+level/fortress.ts (305 lines) instead of 4134.
+**How (mechanical).** A scratch tool moved each private method out as `export function name(scene: LevelScene, ...)`:
+`this` became `scene` in code only (not comments or strings), every `this.name(...)` became `name(this, ...)`, imports
+were filtered per file. Methods scripts call through `window.reclaimed.scene` stay on the class (frame, stationKit,
+editTool delegate to their modules; wake, toggleFly, cpuReset, cpuWorst, heightAt unchanged). attach() (940 lines)
+was cut at its sections, which share only the scene's readonly core/host/audio, in the same order. Three renames of
+private methods where a name clashed (frame → levelFrame, startRun → startHeroRun beside ui/experiment's startRun,
+get town → editorTown, heard → hearing beside a local `heard`). One statement split in two: `cut = scene.cutaway ??=
+{…}` (in a free function TS typed the literal by `cut`, not by the field, and refused its extra members; as two
+statements it is the same assignment). LevelScene's fields lost `private` (the modules read them): BACKLOG MS-8.
+**Gates** (against the commit before, d2ba927): typecheck; unit 654 (the partition timing test, over its 1.5 s
+under load once, passes alone); GPU suite as before (jb6.test.ts times out in its hook before and after);
+hallcheck 0 of 340 buildings lost over 2 towns; the tilegate goldens with `--extra "&zoomfloor=0"` (the zoom floor
+follows the tile rate measured in the run, so without it the far views stand at another zoom each run: 30-40% of
+pixels "changed" at z2.2 and z1.3 in a run with no code change) against baselines taken in a worktree of d2ba927:
+desktop, phone and run-desktop at every zoom changed 0-0.8% of pixels (the same noise as run to run), desktop z1.3
+1.9% (tiles still arriving at the bottom corners of the screen, unfloored). The tilegate coverage failures at z2.2/z1.3
+with the floor off and its run-phone navigation timeout happen on d2ba927 too.

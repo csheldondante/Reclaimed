@@ -94,6 +94,11 @@ stock-take.
 
 ## Layout
 
+**`docs/MODULES.md` maps every file in src/ (one line each, with its API): read it instead of opening
+files to find where something lives.** The big classes are split into folders of free functions over the
+instance (`scenes/level/`): the class file keeps the
+state and the public API.
+
 - `src/main.ts` — boot WebGPU, quality tier, switch scenes
 - `src/scenes/` — `world-core.ts` (one live world), `level.ts`, `menu.ts`
 - `src/world/` — map generation (`mapgen.ts` valley, `menumap.ts` diorama),
