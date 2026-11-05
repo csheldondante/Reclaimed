@@ -4,7 +4,9 @@
 import { describe, expect, it } from 'vitest';
 import { library } from '../structures/modules';
 import { Fortress } from './fortress';
-import { LANE_DRAWN, laneGraph, type LaneSeg } from './lanes';
+import { LANE_DRAWN, laneGraph, OFF_BUILDING, type LaneSeg } from './lanes';
+import { solidSpans } from './solid';
+import { cellAt } from '../world/lattice';
 import { roadBitsCpu } from '../agents/roads';
 import { nearestNode, nodeCount, reached } from '../agents/roadgraph';
 import { cellPos } from '../world/lattice';
@@ -53,6 +55,42 @@ function walled(f: Fortress, r = 22) {
 
 const roadSegs = (segs: LaneSeg[]) => segs.filter((s) => s.kind !== 'plaza' && !s.noRide);
 
+describe('roads off the buildings (round 128l, aw4; BACKLOG AW-4)', () => {
+  it("no road runs through a built block's solid columns: houses beside the road from the stores", () => {
+    // (the lab's flat plan by its stores: two houses side by side, a third, a quarry and farms far out — the road east
+    // ran down the houses' border, half in their claimed columns, and the carts stood against them)
+    const heap: [number, number] = [98, 110.85];
+    const f = new Fortress({ origin: [-22, -10], w: 240, h: 278 }, { windowOrigin: () => [0, 0], dims: { w: 256, h: 256, zMax: 64 }, ground: () => 10, stores: () => ({}), changed: () => {}, townHeap: () => heap });
+    f.ready = true;
+    const [hx, hy] = heap;
+    const cells: ['house' | 'quarry' | 'farm', number, number][] = [
+      ['house', hx + 10, hy + 12], ['house', hx + 16, hy + 12], ['house', hx - 8, hy + 14],
+      ...[[70, 4], [70, 10], [76, 4], [76, 10]].map(([dx, dy]): ['quarry', number, number] => ['quarry', hx + dx, hy + dy]),
+      ...[[6, -60], [12, -60], [6, -66], [12, -66]].map(([dx, dy]): ['farm', number, number] => ['farm', hx + dx, hy + dy]),
+    ];
+    for (const [t, x, y] of cells) f.paint(f.cellAt(x, y), 0, t);
+    for (const s of f.plan.structures()) for (const c of s.cells.keys()) f.markBuilt(c, 0);
+    const solid = new Set<number>();
+    for (const spans of solidSpans({ plan: f.plan, town: f.town, grid: f.grid, ground: () => 10, ways: f.ways() }).values()) for (const q of spans) solid.add(q.y * f.box.w + q.x);
+    const inSolid = (x: number, y: number) => {
+      const [k, r] = cellAt(x, y);
+      return solid.has(r * f.box.w + k);
+    };
+    const L = f.lanes();
+    expect(L.unjoined).toEqual([]);
+    const hits: string[] = [];
+    for (const s of L.segs)
+      for (let t = 0; t <= 1 + 1e-9; t += 0.05)
+        if (inSolid(s.a[0] + (s.b[0] - s.a[0]) * t, s.a[1] + (s.b[1] - s.a[1]) * t)) {
+          hits.push(`${s.kind} in cell ${s.cell} at t ${t.toFixed(2)}`);
+          break;
+        }
+    expect(hits).toEqual([]);
+    // (and the ride graph stays one network from the stores to every structure)
+    expect(nodeCount(laneGraph(L))).toBeGreaterThan(10);
+  });
+});
+
 describe('roads on the cell borders, to things', () => {
   it("the roads join the town's gate to every door, along the cell borders", () => {
     const f = fortress();
@@ -64,10 +102,11 @@ describe('roads on the cell borders, to things', () => {
     expect(L.unjoined).toEqual([]);
     // (every structure: those with doors, and the yards — the farm — at a corner)
     expect(L.joined.length).toBe(f.plan.structures().filter((s) => s.type !== 'wall').length);
-    // (every road piece a border: its ends two corners of its cell)
+    // (every road piece a border: its ends two corners of its cell — round 128l, aw4: or moved off a building, by no more
+    // than OFF_BUILDING)
     const g = f.grid;
     const corners = (c: number) => [0, 1, 2, 3].map((k) => g.corner(c, k));
-    const isCorner = (c: number, p: readonly number[]) => corners(c).some((q) => Math.hypot(q[0] - p[0], q[1] - p[1]) < 1e-6);
+    const isCorner = (c: number, p: readonly number[]) => corners(c).some((q) => Math.hypot(q[0] - p[0], q[1] - p[1]) < OFF_BUILDING + 1e-6);
     for (const s of roadSegs(L.segs)) expect(isCorner(s.cell, s.a) && isCorner(s.cell, s.b), `a ${s.kind} off the borders`).toBe(true);
     // (one network: the ride graph reaches every door from the gate's tile)
     const graph = laneGraph(L);
@@ -77,7 +116,8 @@ describe('roads on the cell borders, to things', () => {
     for (const d of w.doors) {
       const e = [0, 1, 2, 3].find((k) => g.nbr[d.out * 4 + k] === d.cell)!;
       const near = Math.min(nearestNode(graph, ...g.corner(d.out, e)).d, nearestNode(graph, ...g.corner(d.out, e + 1)).d, nearestNode(graph, ...g.centre(d.out)).d);
-      expect(near, `the door of the ${f.plan.structure(d.structure)!.type}`).toBeLessThan(1e-3);
+      // (a door's corners are by its building: their road node moved off it, by OFF_BUILDING at most — aw4)
+      expect(near, `the door of the ${f.plan.structure(d.structure)!.type}`).toBeLessThan(OFF_BUILDING + 1e-3);
     }
   });
 

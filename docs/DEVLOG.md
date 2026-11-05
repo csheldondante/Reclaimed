@@ -17718,3 +17718,50 @@ died. 1 got away.").
   hostile raider (the play sandbox's, the run's foes, the camps').
 - For the phone bench (BACKLOG AW-7): the arrows are CPU only (a handful in flight); each shot is one 2-chip burst.
 
+
+
+## 2026-11-05 — round 128l (`m4fix`): riders stay on edges longer than 8 m (M4-14)
+
+Why: a cart sent to the farms' pile in the lab never left the stores (BACKLOG M4-14).
+
+- Cause: the ride's "lost" test. shaders/roadride.wgsl got a rider off the network when it was over LOST (8 m) from the
+  node it heads for. The lanes' road to the lab's farms has an 8.2 m edge (open ground, 28 → 27 on the stores' way out).
+  A cart that reached node 28 turned onto that edge, was 8.2 m from its next node, and was "lost" at once. It got off,
+  joined again at the node behind it and turned back, rocking at (99, 108) by the stores for the whole run. Found on the
+  CPU (Fortress, laneGraph and hopsCpu on the lab's plan: the graph is one component, every cost finite, the farm's
+  pile node in it; only the edge lengths stood out). The quarry's road has no edge over 6 m, which is why its cart went.
+- Fix: lost is now past the longest edge at that node by LOST (3 m: `longestEdge(v) + LOST`). The last leg keeps its
+  14 m (LAST_LOST 8 + NEAR_GOAL 6). No timer.
+- Test: test/gpu/roadride-long.test.ts — a rider turned onto a 12 m edge is still on it ticks later. It fails before
+  the fix (mode 0, off), passes after; test/gpu/roadride.test.ts still passes.
+- Lab (scripts/lab/fortresscarts.mjs, 300 sim s): 7 cart loads, 53 goods carted, against 1 load and 8 goods before.
+  The farm cart went to the farms' pile and back again and again: the pile fell 12.2 → 9.8 → 7.4 between trips, and
+  the cart was out at (108, 66-73), the farms' node at (108, 56). Carts' walking samples on a road: 1.00. The scenario
+  now counts round trips per pile type and takes its shot only when asked (`shot`): with the shot on, two runs hung on
+  the lab page after it.
+- The farmers' own ride to the farms stays off by design: the farm cells' middles are over RIDE_NEAR (6 m) from a node,
+  so they walk their field.
+
+
+## 2026-11-05 — round 128l (`aw4`): roads off the buildings — the carts with the fortress claimed (AW-4)
+
+Why: with the lab's fortress claimed (c0df418), scripts/lab/fortresscarts.mjs failed. A cart sent out stood by the stores,
+"boxed in by the houses round them".
+
+- Cause, found on the CPU: Fortress, lanes and solidSpans on the lab's plan, every road piece sampled against the built
+  blocks' claimed columns. Two pieces of the road east to the quarry, in free cells 310 and 307, ran 5-7 of their 11
+  samples through the houses' solid columns. A road on a cell border by a building lies on the line between the two
+  cells, so half its band is in the building's columns, which are solid once claimed (solid.ts: a block is its cell's
+  columns). A cart riding node to node along it drove into the wall. The same lanes and claims make the atlas's fortress
+  roads: any road beside a fortress block there had half its band in solid columns since the fortress was first
+  claimed (round 128d). It isn't the lab's alone.
+- Fix (lanes.ts): a road vertex with a building (a block or the keep) at a corner is moved OFF_BUILDING (1.6 m) toward
+  the middle of the free cells round it (at most 45% of the way). Every piece meeting there uses the same moved vertex,
+  so the roads stay joined; the ride graph and the drawn paving follow. Carts already spawn on the road node nearest the
+  stores and load at a road node by the structure (6981cf9), so both are now on drivable ground.
+- Test: lanes.test.ts "no road runs through a built block's solid columns" (that plan): fails before the fix (road in
+  cell 310), passes after. The borders and doors tests now allow a vertex moved by up to OFF_BUILDING.
+- Lab, with the claim on: fortresscarts, 300 sim s — 7 cart loads, farm 4 and quarry 3 round trips, carts on roads 1.00
+  (with M4-14's ride fix, cherry-picked from m4fix). fortressoutside passed (all three outside sites built, cutOff 0
+  throughout). Its house stood last, at 603 sim s, because the stores were short of stone: the plan costs 171 against
+  80 and there is no quarry. The raid wave broke blocks that wanted stone again. It was not a way problem.
