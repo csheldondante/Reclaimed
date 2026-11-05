@@ -17461,3 +17461,15 @@ The bench itself: `scripts/benchrun.mjs --smoke` on a dev server, before (64217b
 sections; one after-run hit `physBodyStatsRead used in submit while mapped` in win256's one-pass physics (the bench's
 systemGpu submitting while the physics' readback is mapped), the second after-run none — a race in the bench's
 timing, not the move (BACKLOG MS-9).
+
+## 2026-11-04 — the monolith split, 6: atlas/atlas.ts into atlas/atlas/ (no behaviour change)
+
+**Why.** atlas.ts was 1873 lines (95 KB). Now the Atlas class (455 lines: fields, constructor, build, the small public
+reads and delegates) and 8 modules of 85 to 362 lines in atlas/atlas/: build (run: the atlas's GPU passes; craters,
+oddities, giants), regions (patterns, regionsCpu), columns, region-land (stamps, regionLand, regionInto, rawGround,
+the tile gate), window, params (AtlasParams and the URL), tile-pacer (TilePacer, moved whole) and defs.
+**How.** As the others (`this` -> `atl`; `a.run()` in `build` -> `run(a)`); everything other files import from
+atlas.ts is re-exported there.
+**Gates** (against 1adfb15): typecheck; unit 661; GPU 25 files pass (rockmesh-room times out in its device hook, on
+64217ba too, with the machine shared); hallcheck 0 lost at town 1 and s26; the lab's example and fortressoutside ok;
+the tilegate goldens (`&zoomfloor=0`, baselines of 64217ba) 0-0.64% of pixels changed at every view.

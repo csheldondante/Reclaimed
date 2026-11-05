@@ -16,6 +16,7 @@ const SPLIT = [
   ['game/integrity.ts', 'game/integrity', 'Integrity: `tick.ts` (update and the analysis pass), `rigid.ts`, `metal.ts`, `resting.ts`, `columns.ts`, `loose.ts`, `lattice.ts`, `window.ts`; `defs.ts`.'],
   ['render/renderer.ts', 'render/renderer', 'Renderer: `encode.ts` (a frame\'s draw), `mesh-draws.ts` (the field mesh\'s pipelines, made by the constructor), `gbuffer-shadow.ts`, `terrain-cache.ts`, `grid.ts`, `features.ts`; `defs.ts`.'],
   ['perf/bench.ts', 'perf/bench', 'The bench (?bench=1): bench.ts keeps the flow of a run, the heartbeat and the state of the Bench class; `pages.ts`, `pace.ts`, `ab.ts`, `sweeps.ts`, `regions.ts` its work; `defs`, `timestamps`, `pan-report`, `state`, `page`, `device`, `report` the free functions.'],
+  ['atlas/atlas.ts', 'atlas/atlas', 'Atlas: the class keeps its state, build and small reads; `build.ts` (run: the GPU passes), `regions.ts`, `columns.ts`, `region-land.ts`, `window.ts`; `params.ts`, `tile-pacer.ts`, `defs.ts` re-exported by atlas.ts.'],
 ];
 
 /** a line or two for a folder, ahead of its files */

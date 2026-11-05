@@ -13,6 +13,7 @@ called only by the class file and the folder. From outside, use the class.
 - `game/integrity.ts` + `game/integrity/` — Integrity: `tick.ts` (update and the analysis pass), `rigid.ts`, `metal.ts`, `resting.ts`, `columns.ts`, `loose.ts`, `lattice.ts`, `window.ts`; `defs.ts`.
 - `render/renderer.ts` + `render/renderer/` — Renderer: `encode.ts` (a frame's draw), `mesh-draws.ts` (the field mesh's pipelines, made by the constructor), `gbuffer-shadow.ts`, `terrain-cache.ts`, `grid.ts`, `features.ts`; `defs.ts`.
 - `perf/bench.ts` + `perf/bench/` — The bench (?bench=1): bench.ts keeps the flow of a run, the heartbeat and the state of the Bench class; `pages.ts`, `pace.ts`, `ab.ts`, `sweeps.ts`, `regions.ts` its work; `defs`, `timestamps`, `pan-report`, `state`, `page`, `device`, `report` the free functions.
+- `atlas/atlas.ts` + `atlas/atlas/` — Atlas: the class keeps its state, build and small reads; `build.ts` (run: the GPU passes), `regions.ts`, `columns.ts`, `region-land.ts`, `window.ts`; `params.ts`, `tile-pacer.ts`, `defs.ts` re-exported by atlas.ts.
 
 ## src/
 
@@ -95,7 +96,7 @@ Interface contracts between tracks (world state, structures, settlement, flora, 
 
 The atlas: the whole generated world map (coarse sim, GPU finish, far land, geysers), from which the streamed window's land comes.
 
-- `atlas.ts` (1874) — The atlas (round 67, branch `atlas`): a finite world's coarse map, made on the GPU when the world is … API: `AtlasParams`, `DEFAULT_ATLAS`, `ATLAS_KEYS`, `atlasParamsFrom` +14.
+- `atlas.ts` (457) — The atlas (round 67, branch `atlas`): a finite world's coarse map, made on the GPU when the world is … API: `Atlas`, `WINDOW_MAKE`, `FINISH_TILE`, `GEYSER_STENCIL` +14.
 - `bake.ts` (340) — The land past the window baked into a texture (round 94, bake.wgsl; API: `SurfaceStamp`, `MAX_BAKE`, `BAKE_UNI_BYTES`, `SurfaceBake`.
 - `bake.wgsl` (219) — ---- atlas/bake.wgsl ------------------------------------------------------- (round 94, the user: "I don't …
 - `build.wgsl` (313) — ---- atlas/build.wgsl ----------------------------------------------------- The macro passes (round 67), n …
@@ -122,6 +123,17 @@ The atlas: the whole generated world map (coarse sim, GPU finish, far land, geys
 - `stamps.ts` (136) — ---- atlas/stamps.ts -------------------------------------------------------- (round 102, `gpugen`) What's … API: `OP`, `StampOps`, `applyStamps`.
 - `view.wgsl` (131) — ---- atlas/view.wgsl ------------------------------------------------------ The atlas viewer (round 67): …
 - `ways.ts` (531) — ---- atlas/ways.ts -------------------------------------------------------- The roads and their crossings … API: `WAY`, `WAY_NAMES`, `WayPoint`, `Lift` +13.
+
+## src/atlas/atlas/
+
+- `build.ts` (363) — Building the atlas (Atlas.build): the GPU passes from the macro height to rivers, lakes, settlements and … API: `run`, `makeCraters`, `makeOddities`, `makeGiants`.
+- `columns.ts` (195) — Columns of the atlas's land for a rectangle: on the CPU (columns) or kept on the GPU (columnsGpu), the … API: `columns`, `columnsGpu`, `giantsFor`, `changes`.
+- `defs.ts` (223) — The atlas's buffer sizes, tile pacing flags and stamp kinds, its records (Geyser, AtlasStats, … API: `Extra`, `PARAM_BYTES`, `COL_WORDS`, `COLG_BYTES` +37.
+- `params.ts` (106) — The atlas's parameters: AtlasParams, their defaults and keys, read from the URL (?a.<key>=). API: `AtlasParams`, `DEFAULT_ATLAS`, `ATLAS_KEYS`, `atlasParamsFrom`.
+- `region-land.ts` (141) — A region's land for the streamer: its stamps (craters, vents, ways), its land as intervals (regionLand) or … API: `stampsFor`, `ventsIn`, `waysOf`, `regionLand` +4.
+- `regions.ts` (230) — The atlas's regions: the pattern pass and the regions found on the CPU (continents, islands, waters, … API: `patterns`, `regionsCpu`.
+- `tile-pacer.ts` (191) — TilePacer: how many streamed tiles of land a frame may make (round 98, adaptive since round 102). API: `TilePacer`.
+- `window.ts` (86) — The first window made from the atlas: its map data, height offset, what's outside and the ground. API: `window`.
 
 ## src/audio/
 
