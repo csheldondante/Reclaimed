@@ -575,15 +575,6 @@ each was implemented.
 
 > "I want the player fortress to be something that can grow huge and impressive with spires and bridges and fountains and crystals and floating stones etc. we can adorn it with claimed prizes from opportunities." (round 128d, also on the fortress branch)
 
-## 2026-11-04 — round 128l (session 5) — overnight: quarries, soldiers and the first attack wave
-
-- The user, verbatim: "Do you think you can carry this out for me overnight and finish quarries and soldiers? Also, do you want to add the attack wave?"
-- Attack wave design (the user chose each recommended option):
-  - Trigger: timed and announced. A rider warns a day ahead ("Raiders from the east, tomorrow at dusk"). The wave walks in along a road from the window's edge. Waves grow every few days. A button calls one early for testing.
-  - Goals: the stores, then the houses. Raiders head for the warehouse to loot and torch houses on the way. Walls and gates are in the way, so they bash the gate or the weakest wall. Losses: goods, buildings, people caught outside.
-  - Defence: automatic posts. Soldiers (archers once trained) man the walls and the gate on their own. Archers shoot from the wall-walk; swordsmen meet raiders at the gate. You defend by what you built.
-  - Damage: real destruction with the existing effects. Bashed gates and walls break to rubble, torched houses burn (the fire sim), and repairs cost builders and goods.
-
 ## 2026-11-04 — round 128j (session 5) — paged simulation, sparse 3D chunks, claims written at load
 
 - The user, verbatim, after the town-flicker fix (fortress b397186): "Why is the slide necessary? If we compute the town and intersect grids can't it load the terrain with the intervals for town already stored?"
@@ -595,6 +586,15 @@ each was implemented.
   - Paging: "Pages + awake list": every per-column field is stored in chunk pages through the same table as the layers; a slide is a table change; sims dispatch only awake pages (a quiet world costs nothing, the window can grow). The cost, an indirection on neighbour reads at page edges, is accepted.
   - 3D chunks: "More interval storage": columns stay interval lists; a cz chunk is extra layer pages for a height band, added only where a column runs out of K; sims stay column-based (water in a cave sits on its own interval's surface). Not 3D cells.
   - Claims: "Static grids at load, moving live": towns and the fortress written by the kernel that writes arriving land; a fortress edit rewrites its cells on the GPU; only moving grids (bodies, floating islands, giants) claim every frame.
+
+## 2026-11-04 — round 128l (session 5) — overnight: quarries, soldiers and the first attack wave
+
+- The user, verbatim: "Do you think you can carry this out for me overnight and finish quarries and soldiers? Also, do you want to add the attack wave?"
+- Attack wave design (the user chose each recommended option):
+  - Trigger: timed and announced. A rider warns a day ahead ("Raiders from the east, tomorrow at dusk"). The wave walks in along a road from the window's edge. Waves grow every few days. A button calls one early for testing.
+  - Goals: the stores, then the houses. Raiders head for the warehouse to loot and torch houses on the way. Walls and gates are in the way, so they bash the gate or the weakest wall. Losses: goods, buildings, people caught outside.
+  - Defence: automatic posts. Soldiers (archers once trained) man the walls and the gate on their own. Archers shoot from the wall-walk; swordsmen meet raiders at the gate. You defend by what you built.
+  - Damage: real destruction with the existing effects. Bashed gates and walls break to rubble, torched houses burn (the fire sim), and repairs cost builders and goods.
 
 ## 2026-10-30 — round 119 (session 5) — after trying the six tracks
 
