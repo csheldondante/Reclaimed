@@ -9,7 +9,7 @@ import { Nature } from '../game/nature';
 import { Powers } from '../game/powers';
 import { Director } from '../game/director';
 import { Reach } from '../game/reach';
-import { levelById, type LevelDef } from '../game/levels';
+import { levelById, type LevelDef, type LoadedLand } from '../game/levels';
 import { DIFFICULTY_LEVEL, loadDifficulty, type Difficulty } from '../game/progress';
 import { Editor } from '../ui/editor';
 import { Controls } from '../input/controls';
@@ -88,6 +88,8 @@ export interface LevelOptions {
   free?: boolean;
   /** sandbox: restart with a loaded map, or a fresh one (undefined) */
   onLoadMap?: (map: MapData | undefined) => void;
+  /** (create's: land the level loaded — LevelDef.load, the lab's town fixture) */
+  made?: LoadedLand;
   /** (create's, for an atlas level: the atlas, the window it made, and where that window is) */
   atlas?: { atlas: Atlas; map: MapData; origin: [number, number]; oz: number; outside: Interval[][]; ground: Float32Array; settlements?: Settlements; startTown?: string };
 }
@@ -332,7 +334,7 @@ export class LevelScene implements Scene {
   ) {
     const dims = { w: 256, h: 256, zMax: level.zMax ?? 64 };
     if (!level.generate) throw new Error(`level "${level.id}" is not built yet`);
-    this.core = new WorldCore(host, opts.map ?? opts.atlas?.map ?? level.generate(dims), host.quality.particles, level.sandbox ? SANDBOX_K : undefined, true, level.meshRoom);
+    this.core = new WorldCore(host, opts.map ?? opts.atlas?.map ?? opts.made?.map ?? level.generate(dims), host.quality.particles, level.sandbox ? SANDBOX_K : undefined, true, level.meshRoom);
     // (?flow=1, docs/ARCHITECTURE.md "The flow model") liquids as runs in the columns, and what's near steady sleeps: before the warmup
     // (round 110: an opt-in for the flow model's own lab only — every other level runs the game's water)
     if (host.params.get('flow') === '1') {
@@ -507,6 +509,11 @@ export class LevelScene implements Scene {
       // (round 102: the tile pacer's GPU budget by the timestamps, when they're read)
       atlas.pacer.profiler = host.profiler;
       opts = { ...opts, atlas: { atlas, map, origin, oz, outside, ground, settlements, startTown } };
+    }
+    // (round 128m, townlab) land the level loads instead of making (the lab's `town` fixture)
+    if (!opts.map && level.load) {
+      const made = await level.load(host.params);
+      if (made) opts = { ...opts, made };
     }
     (globalThis as { __benchStage?: string }).__benchStage = 'making the level';
     // (round 112, testspeed: the pipelines its making asks for, compiled together off the GPU's main thread)

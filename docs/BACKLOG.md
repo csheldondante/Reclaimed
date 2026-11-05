@@ -57,6 +57,20 @@ interval of stone below the whole world? It's essentially free right?"
 | QY-7 | The fortress's own heights after a slide in z (Fortress.slidZ, Town.shiftZ): scripts/fortressslidez.mjs slides the atlas window down a tier (under world z 0) and back with a house built — it keeps its world height, stone under z 0 from the window's floor, no page error. It found Streamer.slideZ's own "bottom of the world" throw at z 0 (fixed) | S | done (round 128m quarry commit) |
 | QY-9 | A slide in z in the atlas (not used since round 100: the atlas window held the world's whole height): in scripts/fortressslidez.mjs's shots the trees and the fields round the start town are gone while the window is down a tier and back when it slides up, and the sea reads shallower — the plants' and fields' draws keep window z through the slide. A pit deep enough to slide the window (its floor under window z 24: ~70 m+ under the atlas's usual ground) shows it | M | open |
 
+## Round 128m (2026-11-05, `townlab`) — the user's town in the lab, a placement bench, why builders can't reach, bridges
+
+The user: "How about you build a bench for me to run that places buildings? Similarly how about you copy the land data around the town for your own fast load tests so you see the same issues I do. It still says they can't make it from the stores to the build site. Are they on the wrong side of the river? Do rivers have bridges?" and "Can we make roads turn into bridges across water?" Then (via main): "if they keep getting stuck in walls an obvious fix is to modify things along their path to be passable. Add a gate or a bridge. The expectation is that they can get anywhere in or around the city."
+
+| id | item | size | status |
+|---|---|---|---|
+| TL-8 | The lab recipe `town`: the window round the user's start town (the user's link, `?q=low`) captured from the game into `data/lab/town.rclt` (892 KB: columns with the town's buildings, water, held rivers, woods, sea level, the heap, doors and gate posts); the lab loads it (LevelDef.load) and boots in ~11 s; a test fails when GEN_VERSION moves on (`node scripts/labtown.mjs capture` makes it again) | M | done (townlab commit A) |
+| TL-9 | The placement bench `?bench=place`: each building type at points round the town (inside the walls; 8 directions at 30, 60, 120 m; across the river; on a hill), the reach answer and its reason, the tap's CPU, the answer's delay, frame times, builders arriving; downloadable report, screen awake; also in the lab's `town` recipe | M | open (townlab B) |
+| TL-10 | Why the builders can't reach (the user's refusals): find the cause on the user's link and in the lab town, fix it | M | open (townlab C) |
+| TL-11 | Roads become bridges across water: a deck at the road's level on piers, claimed solid; the reach and the agents walk it; the builders build it; the refusal's variants gain a bridge | L | open (townlab D) |
+| TL-12 | Reach as an invariant (the user's rule): every open place in and around the city is in the stores' component; a component cut off gets a passage (a gate, a bridge, a ramp or stairs) put in the plan for the builders; refusal only where no passage fixes it. Covers RT-8 | L | open (townlab C/D) |
+| TL-13 | The lab town has no settlement pieces drawn: the old town's buildings are in its columns (claimed, solid to the reach and the walkers) but invisible in the lab's shots; judge visuals in the game | S | open |
+| TL-14 | `scripts/lib/runner.mjs basePort()` hashes worktree paths into 180 ports: Reclaimed-townlab and Reclaimed-phonefix both got 6390, and a lab run went to the other worktree's lab server. `RECLAIMED_PORT` overrides it; a collision check (or a registry of ports) would be the real fix | S | stopgap (townlab commit A): RECLAIMED_PORT |
+
 ## Round 128l (2026-11-04, session 5, `tooling`) — the behaviour lab: faster iterations (docs/TOOLING.md)
 
 The user: "Let's invest in some tooling to speed up the development processes."

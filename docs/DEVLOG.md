@@ -17950,3 +17950,33 @@ The user: "For now just make raids button based only". On Pages (062fe16) a wave
 everyone sheltering inside the builders never reached the sites outside the walls (found by phonefix). `RAID.timed` (raid.ts)
 is false: the clock gives nothing on its own, and a wave comes only from "Call raiders now". The timed code stays behind
 the switch. raid.test: no wave over 30 days with the timer off; the timed test runs with it switched on.
+
+## 2026-11-05 — round 128m (`townlab`, A): the user's start town as a lab recipe
+
+The user: "copy the land data around the town for your own fast load tests so you see the same issues I do". The lab's
+recipes were made-up land; the user's town is a walled port in a river's fork with a sea, its buildings stamped into the
+columns, and the box round it running off the window's bottom edge (rows 56-334 of a 320-row window). None of that was in
+the lab.
+
+- `?level=lab&lab=town` loads `data/lab/town.rclt`: the window the game made round the start town on the user's link
+  (`?skipmenu=1&level=atlas&town=1&fortress=1&fresh=1&q=low`, origin 14400,4416, 320 x 320), captured once by
+  `node scripts/labtown.mjs capture` through a test hook (`reclaimed.townFixture()`, scenes/level/town-fixture.ts). It
+  holds the columns (the town's buildings in them; z shifted down by the lowest top less 12: zBase 84, zMax 96), water,
+  the held rivers' riverFlow (the recipe keeps `rivers: 'table'` as the atlas does), woods, the sea's level, the town's
+  record (id, name, place: the fortress's box lands at the same offset, 32,56) and its spots (heap, doors, the wall's
+  gate posts). 892 KB gzip. lab/townfixture.ts encodes and decodes it, pure (Node and browser).
+- Why a fixture of fields and not the streamer's region records: a record is a GPU pool slot's bytes (chunk pages,
+  textures) tied to the pool's layout signature; the lab has no streamer or pool. The fields are what MapData already
+  is, and WorldCore loads them like any level's.
+- `LevelDef.load` (new): land a level loads instead of making, awaited in `LevelScene.create`; `LevelOptions.made`
+  carries it and the fixture's header to the lab (LabSceneIO.fixture). `LabTown.of(town)` takes the captured record and
+  spots.
+- Stale check: the header names GEN_VERSION; townfixture.test.ts fails when the land generator changed (capture again).
+- Measured: the lab boots on the town in 11.3 s on a reload (pipelines 3.6 s, attach 4.4 s), reset 0.5 s; the atlas
+  level to the same point took 42.9 s in the capture run. The reach over 24 points round the stores (30, 60, 120 m in 8
+  directions, `why` asked) gives the same bits in the lab as in the game, bit for bit. scripts/lab/fortressoutside.mjs
+  on `town` (west, 55 m): all three sites built in 90 sim s, cutOff 0 (17.6 s wall).
+- Not in it: the old town's pieces (the lab draws only the fortress's): its buildings are solid in the columns but not
+  drawn (BACKLOG TL-13). Visual checks stay in the game.
+- Tooling: two worktrees hashed to the same port (townlab and phonefix, 6390) and a lab run went to the other's lab
+  server; `RECLAIMED_PORT` gives a worktree its own (BACKLOG TL-14).

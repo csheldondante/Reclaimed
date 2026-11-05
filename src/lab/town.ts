@@ -14,8 +14,22 @@ export class LabTown implements FortressTownSource {
   constructor(
     readonly heap: V2,
     readonly homes: V2[],
+    /** (round 128m, townlab) a captured town's (lab/townfixture.ts): its id, name and place (the fortress's box is laid
+     *  round it, as in the game) and its other spots (the wall's gate posts: where the fortress's roads start) */
+    from?: { id: string; name: string; at: V2; spots: LiveSpot[] },
   ) {
-    this.rec = { id: 'lab', name: 'The Lab', faction: null, at: [heap[0], heap[1]], stores: {} };
+    this.rec = { id: from?.id ?? 'lab', name: from?.name ?? 'The Lab', faction: null, at: from ? [from.at[0], from.at[1]] : [heap[0], heap[1]], stores: {} };
+    this.more = from?.spots.filter((s) => s.kind !== 'pile' && s.kind !== 'home') ?? [];
+  }
+
+  private readonly more: LiveSpot[];
+
+  /** a captured town's (its heap, doors and gate posts as the game had them) */
+  static of(t: { id: string; name: string; at: V2; spots: LiveSpot[] }): LabTown {
+    const piles = t.spots.filter((s) => s.kind === 'pile');
+    const p = piles.find((s) => s.what !== 'log') ?? piles[0];
+    if (!p) throw new Error(`lab town ${t.id}: no heap (a 'pile' spot)`);
+    return new LabTown([p.w[0], p.w[1]], t.spots.filter((s) => s.kind === 'home').map((s) => [s.w[0], s.w[1]]), t);
   }
 
   pin(id: string): FortressTownRec {
@@ -25,7 +39,7 @@ export class LabTown implements FortressTownSource {
 
   spotsOf(id: string): LiveSpot[] | null {
     if (id !== this.rec.id) return null;
-    return [{ kind: 'pile', what: 'stone', at: [...this.heap], w: [...this.heap] }, ...this.homes.map((h): LiveSpot => ({ kind: 'home', at: [...h], w: [...h] }))];
+    return [{ kind: 'pile', what: 'stone', at: [...this.heap], w: [...this.heap] }, ...this.homes.map((h): LiveSpot => ({ kind: 'home', at: [...h], w: [...h] })), ...this.more];
   }
 
   thingAt(_id: string, _at: V2): TownThing | null {

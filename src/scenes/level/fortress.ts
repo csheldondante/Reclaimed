@@ -435,6 +435,7 @@ export function startLab(scene: LevelScene): void {
     units: scene.units,
     device: host.gpu.device,
     params: host.params,
+    fixture: scene.opts.made?.fixture,
     startFortress: (town, view, win) => startFortress(scene, town, view, town.rec.id, win),
     fortress: () => scene.fortress,
     life: () => scene.fortressLife,
