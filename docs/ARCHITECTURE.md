@@ -3779,6 +3779,13 @@ at the first Build, updated after it each frame in sim seconds).
   (`raidOverLines`: what was taken, broken and burned, who fell by name) as a card with Close (`raidSummary`,
   `closeRaid`). Words in fortress/words.ts, linted by raid.test.ts.
 
+## The placement bench (round 128m, `townlab`; docs/TOOLING.md)
+
+`?bench=place` (perf/placebench.ts) on the game and `lab.placeBench()` in the lab run one function,
+`runPlaceBench(io)` (perf/placebench/run.ts), over a small IO: the fortress, frames, the ground, Build, sim time
+forward, the builders' positions. It reads only what the game already has on the CPU (the reach's answers and wet
+bits); its points (points.ts) and summary (summary.ts) are pure.
+
 ## The behaviour lab (round 128l, `tooling`; docs/TOOLING.md)
 
 `?level=lab&lab=<recipe>` (LevelDef `behaviourLab`, `warmupTicks: 120`): the game with less world for scripted
