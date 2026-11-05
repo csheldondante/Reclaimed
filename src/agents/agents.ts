@@ -7,7 +7,7 @@
 // game's hits, and reads units and events back.
 
 import { Translator } from '../sim/translate';
-import { makeBindGroup, makeCompute, ignoreTeardown, type BindSpec, type ComputeKernel } from '../gpu/pipeline';
+import { makeBindGroup, makeCompute, ignoreTeardown, whenPipelinesReady, type BindSpec, type ComputeKernel } from '../gpu/pipeline';
 import type { Profiler } from '../gpu/profiler';
 import agentsWgsl from '../shaders/agents.wgsl?raw';
 import commonWgsl from '../shaders/common.wgsl?raw';
@@ -584,17 +584,20 @@ export class Agents implements SimSystem {
     // the surfaces now, not at the first tick: a game reading them before
     // the world has ticked (a level installs agents after its warmup) finds them
     this.writeParams([]);
-    const enc = device.createCommandEncoder({ label: 'agents-prime' });
-    const pass = enc.beginComputePass({ label: 'agents-prime' });
-    const [gx, gy] = world.groups;
-    pass.setBindGroup(0, this.peelGroup);
-    pass.setPipeline(this.k.surfaces.pipeline);
-    pass.dispatchWorkgroups(gx, gy);
-    pass.setBindGroup(0, this.fieldGroup);
-    pass.setPipeline(this.k.links.pipeline);
-    pass.dispatchWorkgroups(gx, gy);
-    pass.end();
-    device.queue.submit([enc.finish()]);
+    // (round 128l: in a level's pipeline batch, once its pipelines are ready — gpu/pipeline.ts whenPipelinesReady)
+    whenPipelinesReady(() => {
+      const enc = device.createCommandEncoder({ label: 'agents-prime' });
+      const pass = enc.beginComputePass({ label: 'agents-prime' });
+      const [gx, gy] = world.groups;
+      pass.setBindGroup(0, this.peelGroup);
+      pass.setPipeline(this.k.surfaces.pipeline);
+      pass.dispatchWorkgroups(gx, gy);
+      pass.setBindGroup(0, this.fieldGroup);
+      pass.setPipeline(this.k.links.pipeline);
+      pass.dispatchWorkgroups(gx, gy);
+      pass.end();
+      device.queue.submit([enc.finish()]);
+    });
   }
 
   /** (LW1) Add a stage between the units' step and their draw (the trait system). */

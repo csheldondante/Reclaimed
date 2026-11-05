@@ -3589,3 +3589,33 @@ module is docs/MODULES.md.
   input-wiring, test-api, stream-setup), `frame.ts` (the per-frame update), and the tools, runs, fortress, valley,
   atlas controls, camera moves and labs.
 
+
+## The behaviour lab (round 128l, `tooling`; docs/TOOLING.md)
+
+`?level=lab&lab=<recipe>` (LevelDef `behaviourLab`, `warmupTicks: 120`): the game with less world for scripted
+behaviour checks. One fixed 256² window (the plain levels' size) of a recipe's land made on the CPU
+(`lab/recipes.ts`: flat, hill, valley, walled — the ground as a function, water, springs, woods, the heap and the
+houses' doors, what of the fortress stands at the start). No atlas, no streamer, no settlements.
+
+- **The fortress's start takes contracts, not the atlas** (`fortress/host.ts`): `startFortress(town, view, id, win)`
+  reads a `FortressTownSource` (pin, spotsOf, thingAt, toWindow — the atlas's Settlements meets it; the lab's
+  `LabTown`, lab/town.ts: a record, a heap, homes), a `FortressWindow` (origin, oz, the unwritten regions, the slide
+  hooks — the Streamer meets it; the lab's still window never slides) and a `FortressPiecesHost` (`extra` — the
+  SettlementsView; the lab's `LabPiecesView`, lab/view.ts, the structures draw with the fortress's grid alone).
+  Everything after — Fortress, FortressLife on AgentUnits, FortressClaims, the bar, taps — is the game's own code.
+- **The scene's hooks** (since the monolith split: `startLab` in scenes/level/fortress.ts, called from level/attach.ts; `lab` on window.reclaimed in level/test-api.ts; `lab.frame`, `driven` and `simFilter` in level/frame.ts; the attach batch in level.ts `create`): `startLab()` after attach's systems (AgentUnits on the
+  agents, `installLab`); `this.lab?.frame()` beside the settlements' view update; `frame(now, dt, driven)` returns at
+  once while `lab.driving` (lab.run steps the scene itself, each frame once the GPU has done the last, with
+  `Renderer.skip` 'render' on all but every Nth); `core.advance(…, this.lab?.simFilter)` (lab.sims: which systems
+  tick); `reclaimed.lab` = the Lab's api.
+- **Reset** (`lab.reset`): the plan erased top down, FortressLife disposed (its units removed), the window's chunks
+  put back from `WorldCore.keepPristine` (taken when the lab opens), the stores refilled, the recipe's town re-planned.
+- **The pipeline batch covers attach** (LevelScene.create, every level): attach's ~60 pipelines (agents, physics, the
+  structures draw …) compile together with the level's instead of one at a time at their first use; work a
+  constructor encodes at once waits for the batch's end (`gpu/pipeline.ts whenPipelinesReady`: the agents' prime,
+  the fortress's first surface read). Boot mark `attach-pipelines`.
+- **The runner** (`scripts/lab.mjs`): a long-lived process with one Chrome (its own profile slot), one lab page and its
+  own static server (`serveBuild(b, {own: true})`: answers `own:<hash>`, so no check reuses it), a control port
+  (basePort + 8: /run, /status, /stop). A scenario module's default export is evaluated in the page; `__labShot`
+  (an exposed function) saves screenshots. Reload only on a new build hash or recipe; `lab.reset()` otherwise.
+

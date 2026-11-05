@@ -1,14 +1,18 @@
 // Fortress mode on the level: making the fortress, its life, claims and bar for a town, Skip to done, taps routed
 // to it, and the static claims (sim/static-claims.ts). API: startFortress(scene, st, view, id), skipFrame,
 // fortressAt, staticsFor. The fortress itself lives in src/fortress/.
-import { ignoreTeardown } from '../../gpu/pipeline';
-import { Settlements } from '../../settle/settlements';
+import { ignoreTeardown, whenPipelinesReady } from '../../gpu/pipeline';
+import type { FortressPiecesHost, FortressTownSource, FortressWindow } from '../../fortress/host';
+import { installLab } from '../../lab/lab';
+import { AgentUnits } from '../../units/agent-units';
+import { CHUNK } from '../../world/layout';
+import { cellPos } from '../../world/lattice';
+import { levelFrame } from './frame';
 import { attachSim } from '../../api/world';
 import { readColumn } from '../../world/layout';
 import { MATERIALS, MatState } from '../../world/materials';
 import type { ReachColumns } from '../../fortress/reach';
 import { ROW_H } from '../../world/lattice';
-import { SettlementsView } from '../../settle/view';
 import { Fortress } from '../../fortress/fortress';
 import { FortressBar } from '../../fortress/ui';
 import { SKIP_DONE, skipCutOffLine, skipShortLine } from '../../fortress/words';
@@ -25,10 +29,12 @@ import type { LevelScene } from '../level';
  * (fortress slice 1, milestone 1) The town at the start becomes the player's fortress: pinned (live, no houses of its
  * own), its stores started if empty, a Town on its own world-anchored box round it, the planning bar, time stopped.
  */
-export function startFortress(scene: LevelScene, st: Settlements, view: SettlementsView, id: string | undefined): void {
+// (round 128l, tooling: the town, the window and the pieces' host as contracts — fortress/host.ts — so the behaviour lab,
+// src/lab/, starts the same fortress on its own small world)
+export function startFortress(scene: LevelScene, st: FortressTownSource, view: FortressPiecesHost, id: string | undefined, win: FortressWindow | undefined = scene.stream): void {
   if (!id) throw new Error('?fortress=1 needs ?town= (the town that becomes the fortress)');
-  const S = scene.stream;
-  if (!S) throw new Error('?fortress=1 needs the atlas level');
+  const S = win;
+  if (!S) throw new Error('?fortress=1 needs the atlas level (or the lab: ?level=lab)');
   // (its people are the fortress's builders — FortressLife — not a SettlementLife: never both, they share fields)
   const rec = st.pin(id, true);
   for (const [k, v] of Object.entries(START_STORES)) {
@@ -131,12 +137,14 @@ export function startFortress(scene: LevelScene, st: Settlements, view: Settleme
     return { p: pieces, dx, dy: dy * ROW_H };
   };
   // the ground under every column known before the first plan (a far chunk's surface words aren't made till it wakes):
-  // made now over the whole window and read back
-  core.prepareArrived();
-  void core.readBuffer('surface', true).then((f) => {
-    scene.surfaceCache = new Uint32Array(f.buffer);
-    fort.ready = true;
-  }, ignoreTeardown);
+  // made now over the whole window and read back (round 128l: once the level's pipelines are ready — in its batch, at its end)
+  whenPipelinesReady(() => {
+    core.prepareArrived();
+    void core.readBuffer('surface', true).then((f) => {
+      scene.surfaceCache = new Uint32Array(f.buffer);
+      fort.ready = true;
+    }, ignoreTeardown);
+  });
   void readCols().then(() => fort.onChange.forEach((h) => h()), ignoreTeardown);
   // (round 128f) the columns read again when planning starts (what's been built and dug since), and every few seconds
   // while building (FortressLife's cut-off check reads them)
@@ -301,4 +309,34 @@ export function staticsFor(scene: LevelScene): StaticClaims | null {
   S.onWritten.push((lx, ly, w, h) => st.landWritten(lx, ly, w, h));
   scene.statics = st;
   return st;
+}
+
+/** (round 128l, tooling) the behaviour lab (?level=lab: src/lab/) — its town, its still window, its pieces' draw */
+export function startLab(scene: LevelScene): void {
+  const { core, host } = scene;
+  scene.units = new AgentUnits(scene.agents);
+  const { w, h } = core.dims;
+  scene.lab = installLab({
+    core,
+    units: scene.units,
+    device: host.gpu.device,
+    params: host.params,
+    startFortress: (town, view, win) => startFortress(scene, town, view, town.rec.id, win),
+    fortress: () => scene.fortress,
+    life: () => scene.fortressLife,
+    dropLife: () => {
+      scene.fortressLife?.dispose();
+      scene.fortressLife = undefined;
+      scene.fortressSkip = false;
+    },
+    speed: (n?: number) => (n === undefined ? scene.speed : (scene.speed = n)),
+    frame: (now, dt) => levelFrame(scene, now, dt, true),
+    restoreLand: () => {
+      scene.integrity?.forget(0, 0, w, h);
+      core.restoreChunks(0, 0, w / CHUNK, h / CHUNK);
+      const [x1, y1] = cellPos(w, h);
+      core.renderer.fieldMesh.urgent(0, 0, x1, y1);
+      void core.readBuffer('surface', true).then((f) => (scene.surfaceCache = new Uint32Array(f.buffer)), ignoreTeardown);
+    },
+  });
 }

@@ -127,16 +127,20 @@ const probe = (port) =>
     q.on('timeout', () => (q.destroy(), res(null)));
   });
 
-/** Serves a build on this worktree's port (or the next free); one already serving this same build is reused. */
-export async function serveBuild(b = build()) {
+/**
+ * Serves a build on this worktree's port (or the next free); one already serving this same build is reused.
+ * (round 128l) `own`: a server of the caller's alone — neither reusing another nor reused (its /__testbuild answers
+ * `own:<hash>`): the lab server (scripts/lab.mjs) keeps its own, so stopping it never pulls a page from under a check.
+ */
+export async function serveBuild(b = build(), { own = false } = {}) {
   const p0 = basePort();
   for (let port = p0; port < p0 + 10; port++) {
     const there = await probe(port);
-    if (there === b.hash) return { url: `http://127.0.0.1:${port}`, port, close: async () => {}, reused: true, build: b };
+    if (there === b.hash && !own) return { url: `http://127.0.0.1:${port}`, port, close: async () => {}, reused: true, build: b };
     if (there !== null) continue;
     const srv = http.createServer((req, res) => {
       const u = new URL(req.url ?? '/', 'http://x');
-      if (u.pathname === '/__testbuild') return res.end(b.hash);
+      if (u.pathname === '/__testbuild') return res.end(own ? `own:${b.hash}` : b.hash);
       // (the dev server's report sink: the build has none — a POST is answered, not written)
       if (u.pathname === '/__hitch') return res.end('not kept (test build)');
       // (the warm snapshots: src/sim/snapshot.ts — a page with ?warmsnap=<key> reads one, or saves the one it made)

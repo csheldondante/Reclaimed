@@ -165,6 +165,8 @@ export function testApi(scene: LevelScene) {
 /** window.reclaimed: the base and the rest, once the streamed world is up */
 export function exposeTestApi(scene: LevelScene, api: ReturnType<typeof testApi>): void {
   (window as unknown as { reclaimed: unknown }).reclaimed = Object.assign(api, {
+    // (round 128l, tooling) the behaviour lab's scenario API (src/lab/lab.ts; docs/TOOLING.md)
+    lab: scene.lab?.api,
     // (round 117, flora) the flora contract (api/contracts/flora.ts), for scripted checks: reclaimed.flora().passability…
     flora: () => (scene.worldApi ??= attachSim(scene.core)).flora,
     // (round 88, the atlas level) settlements.near([x, y]) / settlement('s12') / live() / raid() / plan(id), its

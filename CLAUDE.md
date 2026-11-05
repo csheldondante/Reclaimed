@@ -59,6 +59,10 @@ stock-take.
 - **Headless checks run on the shared runner** (`scripts/lib/runner.mjs`, round 112 — see "Running checks fast"):
   `node scripts/shot.mjs --url "/?skipmenu=1&level=atlas" --out a.png`, `node scripts/contract.mjs`,
   `node scripts/run.mjs status|build|serve|daemon|boot|selfcheck`.
+- **Behaviour checks go to the lab first** (docs/TOOLING.md, round 128l): `node scripts/lab.mjs run scripts/lab/<x>.mjs
+  [--recipe flat|hill|valley|walled]` runs a scenario on `?level=lab` (a small fixed world, the real fortress, agents
+  and roads; `reclaimed.lab.place/plan/build/run/snapshot/shot/reset`) in a page kept open: ~9 s a loop, ~25 s after a
+  code edit, against 1-4 min for an atlas script. Unit tests for logic first; the full-game scripts only at the gate.
 - `node scripts/shot.mjs` — headless Chrome on the real GPU (D3D11): screenshot,
   console capture, scripted input, GIF capture. Exits non-zero on page errors or
   the fatal overlay.

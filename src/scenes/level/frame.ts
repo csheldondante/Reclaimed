@@ -29,7 +29,9 @@ import { aimBeam, stepMeteors } from './impacts';
 import { CUTAWAY, PLANNER_OFF, COARSE_PARTS, CAM_CLAMP, PLAN_OFF } from './flags';
 import type { LevelScene } from '../level';
 
-export function levelFrame(scene: LevelScene, now: number, dt: number): void {
+export function levelFrame(scene: LevelScene, now: number, dt: number, driven = false): void {
+  // (round 128l, tooling: lab.run steps the scene itself, as fast as the GPU goes — the display's frames wait)
+  if (scene.lab?.driving && !driven) return;
   const cpu0 = performance.now();
   const { core, audio, powers, hud } = scene;
   const { camera, weather, globals, sim, map, dims } = core;
@@ -120,12 +122,13 @@ export function levelFrame(scene: LevelScene, now: number, dt: number): void {
   scene.settlements?.farUpdate(dt);
   // (round 119) the settlements' pieces: made again when a plan, a storey or the window changed
   scene.settlementsView?.update();
+  scene.lab?.frame();
   scene.statics?.frame();
   scene.shipsView?.update();
   if (scene.inhabitants) lifeFrame(scene, dt * scene.speed);
   if (scene.units && !scene.stream?.busy) {
     scene.units.update(dt * scene.speed);
-    timed('settle', () => scene.settlements!.update(dt * scene.speed));
+    timed('settle', () => scene.settlements?.update(dt * scene.speed));
     if (scene.fortressLife) {
       scene.fortressLife.update(dt * scene.speed);
       if (scene.fortressSkip) skipFrame(scene, dt * scene.speed);
@@ -256,7 +259,8 @@ export function levelFrame(scene: LevelScene, now: number, dt: number): void {
     core.clock.pause(simDt, scene.speed);
     scene.simHeld[held] = (scene.simHeld[held] ?? 0) + 1;
   }
-  const ticks = held ? 0 : core.advance(now, simDt, scene.speed);
+  // (round 128l: the lab may run only some of the sim's systems — lab.sims, src/lab/lab.ts)
+  const ticks = held ? 0 : core.advance(now, simDt, scene.speed, scene.lab?.simFilter);
   record('sim', performance.now() - tSim); // (round 100, hitchrec: timing)
   scene.ticksAvg = scene.ticksAvg * 0.95 + ticks * 0.05;
   // (round 83, V21: ?cutaway=1 — the camera's puck, the slice and the orbit round it; `cutFeet` a script's

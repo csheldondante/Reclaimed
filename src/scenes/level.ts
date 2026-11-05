@@ -77,6 +77,7 @@ import { attach } from './level/attach';
 import { levelFrame } from './level/frame';
 import { labStationKit } from './level/labs';
 import type { StationKit } from '../levels/playground';
+import type { Lab } from '../lab/lab';
 
 export interface LevelOptions {
   /** play this map instead of generating the level's (a loaded sandbox map) */
@@ -524,7 +525,7 @@ export class LevelScene implements Scene {
     if (snapKey || warmK) bootMark(snap ? 'snap-loaded' : 'snap-missing');
     if (snap) await s.core.warmFrom(snap);
     else {
-      await s.core.warmup(opts.map ? 30 : WARMUP_TICKS, (sys) => sys.name !== 'ecology' && !(still && sys.name === 'water'));
+      await s.core.warmup(opts.map ? 30 : level.warmupTicks ?? WARMUP_TICKS, (sys) => sys.name !== 'ecology' && !(still && sys.name === 'water'));
       if (snapKey) void saveSnapshot(snapKey, captureWorld(s.core));
       else if (warmK) void saveWarm(warmK, captureWorld(s.core));
     }
@@ -537,7 +538,12 @@ export class LevelScene implements Scene {
     s.core.globals.debrisBoost = 1;
     // (round 108, the playground) what a station's reset puts back: the world as it opens
     if (level.stations) s.core.keepPristine();
+    // (round 128l, tooling: the pipelines attach asks for — the agents, physics, the structures draw, ~60 at a level's
+    // start — made together too: one at a time, at their first use, they held the first frames for 10-18 s)
+    beginPipelineBatch();
     attach(s);
+    await endPipelineBatch();
+    bootMark('attach-pipelines');
     return s;
   }
 
@@ -613,9 +619,12 @@ export class LevelScene implements Scene {
       }, ignoreTeardown);
   }
 
-  frame(now: number, dt: number): void {
-    levelFrame(this, now, dt);
+  frame(now: number, dt: number, driven = false): void {
+    levelFrame(this, now, dt, driven);
   }
+
+  /** (round 128l, tooling) the behaviour lab (?level=lab: src/lab/) — its town, its still window, its pieces' draw */
+  lab?: Lab;
 
   /** the playground stations' kit (labs.ts; scripts drive it through window.reclaimed.scene) */
   stationKit(): StationKit {

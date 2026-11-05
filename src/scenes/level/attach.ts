@@ -14,6 +14,7 @@ import { attachTools } from './attach-tools';
 import { wireInput } from './input-wiring';
 import { exposeTestApi, testApi } from './test-api';
 import { attachStream } from './stream-setup';
+import { startLab } from './fortress';
 export function attach(scene: LevelScene): void {
   const { core, host } = scene;
   const { camera, weather, map, dims } = core;
@@ -21,6 +22,8 @@ export function attach(scene: LevelScene): void {
   wireInput(scene);
   const api = testApi(scene);
   attachStream(scene);
+  // (round 128l, tooling) the behaviour lab: the fortress on the lab's own town (src/lab/)
+  if (scene.level.behaviourLab) startLab(scene);
   exposeTestApi(scene, api);
   core.places.groundAt = scene.heightAt;
   // ?plan=voronoi|bands|tree (seed: ?planseed=): places from a generated plan (the places test hook)

@@ -78,6 +78,16 @@ export function beginPipelineBatch(): void {
 export async function endPipelineBatch(): Promise<void> {
   batchOpen = false;
   while (pendingPipes.length) await Promise.all(pendingPipes.splice(0));
+  for (const f of afterBatch.splice(0)) f();
+}
+const afterBatch: (() => void)[] = [];
+/**
+ * (round 128l, tooling) `f` once the pipelines asked for so far are ready: now outside a batch, when the batch ends
+ * inside one (before endPipelineBatch resolves) — for work a constructor encodes at once (the agents' first surfaces)
+ */
+export function whenPipelinesReady(f: () => void): void {
+  if (batchOpen) afterBatch.push(f);
+  else f();
 }
 /** A render pipeline handed to `set`: now, or in a batch when it's ready (before endPipelineBatch resolves). */
 export function renderPipe(device: GPUDevice, desc: GPURenderPipelineDescriptor, set: (p: GPURenderPipeline) => void): void {
