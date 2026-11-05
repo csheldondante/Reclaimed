@@ -17651,6 +17651,28 @@ Why: main, on the stuck carts: fix the root cause, drop the patches (the repo ru
   of the farm's door. It never left the stores. The farmers' own ride to the farms fails there as well (riding.farm
   false). The farms' lanes aren't ridden from the stores, and I haven't found why yet.
 
+## 2026-11-05 — round 128l (`m4fix`): riders stay on edges longer than 8 m (M4-14)
+
+Why: a cart sent to the farms' pile in the lab never left the stores (BACKLOG M4-14).
+
+- Cause: the ride's "lost" test. shaders/roadride.wgsl got a rider off the network when it was over LOST (8 m) from the
+  node it heads for. The lanes' road to the lab's farms has an 8.2 m edge (open ground, 28 → 27 on the stores' way out).
+  A cart that reached node 28 turned onto that edge, was 8.2 m from its next node, and was "lost" at once. It got off,
+  joined again at the node behind it and turned back, rocking at (99, 108) by the stores for the whole run. Found on the
+  CPU (Fortress, laneGraph and hopsCpu on the lab's plan: the graph is one component, every cost finite, the farm's
+  pile node in it; only the edge lengths stood out). The quarry's road has no edge over 6 m, which is why its cart went.
+- Fix: lost is now past the longest edge at that node by LOST (3 m: `longestEdge(v) + LOST`). The last leg keeps its
+  14 m (LAST_LOST 8 + NEAR_GOAL 6). No timer.
+- Test: test/gpu/roadride-long.test.ts — a rider turned onto a 12 m edge is still on it ticks later. It fails before
+  the fix (mode 0, off), passes after; test/gpu/roadride.test.ts still passes.
+- Lab (scripts/lab/fortresscarts.mjs, 300 sim s): 7 cart loads, 53 goods carted, against 1 load and 8 goods before.
+  The farm cart went to the farms' pile and back again and again: the pile fell 12.2 → 9.8 → 7.4 between trips, and
+  the cart was out at (108, 66-73), the farms' node at (108, 56). Carts' walking samples on a road: 1.00. The scenario
+  now counts round trips per pile type and takes its shot only when asked (`shot`): with the shot on, two runs hung on
+  the lab page after it.
+- The farmers' own ride to the farms stays off by design: the farm cells' middles are over RIDE_NEAR (6 m) from a node,
+  so they walk their field.
+
 ## 2026-11-04 — round 128m (`quarry`): deep quarries — the miners grow the pit tier by tier (V128-11)
 
 **Why.** The user (128e/128f): "How deep can the pit grow? ... 50M-300M deep pits with ramps"; "make the quary area at
