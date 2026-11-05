@@ -11,7 +11,7 @@ import { makeBindGroup, makeCompute } from '../../src/gpu/pipeline';
 import commonWgsl from '../../src/shaders/common.wgsl?raw';
 import layersWgsl from '../../src/shaders/layers.wgsl?raw';
 import materialsWgsl from '../../src/shaders/materials.wgsl?raw';
-import renderWgsl from '../../src/shaders/render.wgsl?raw';
+import { renderWgsl } from '../../src/shaders/render';
 
 /** a function's source out of a WGSL text (from `fn name(` to the closing brace at the start of a line) */
 function fnSource(src: string, name: string): string {

@@ -7,7 +7,7 @@ import commonWgsl from '../../shaders/common.wgsl?raw';
 import layersWgsl from '../../shaders/layers.wgsl?raw';
 import materialsWgsl from '../../shaders/materials.wgsl?raw';
 import terrainShapeWgsl from '../../shaders/terrainshape.wgsl?raw';
-import renderWgsl from '../../shaders/render.wgsl?raw';
+import { renderWgsl } from '../../shaders/render';
 import meshRegionWgsl from '../../shaders/meshregion.wgsl?raw';
 import meshStateWgsl from '../../shaders/meshstate.wgsl?raw';
 import meshDrawWgsl from '../../shaders/meshdraw.wgsl?raw';

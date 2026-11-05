@@ -4,7 +4,7 @@ import { makeModule, renderPipe } from '../../gpu/pipeline';
 import commonWgsl from '../../shaders/common.wgsl?raw';
 import materialsWgsl from '../../shaders/materials.wgsl?raw';
 import terrainShapeWgsl from '../../shaders/terrainshape.wgsl?raw';
-import renderWgsl from '../../shaders/render.wgsl?raw';
+import { renderWgsl } from '../../shaders/render';
 import structMeshWgsl from '../../shaders/structmesh.wgsl?raw';
 import structGameWgsl from '../../shaders/structgame.wgsl?raw';
 import { StructureGpu } from '../../structures/gpu';

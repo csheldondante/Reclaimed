@@ -11,7 +11,7 @@ import meshRegionWgsl from '../../src/shaders/meshregion.wgsl?raw';
 import vegprepWgsl from '../../src/shaders/vegprep.wgsl?raw';
 import floraPutWgsl from '../../src/shaders/floraput.wgsl?raw';
 import floraFieldWgsl from '../../src/shaders/florafield.wgsl?raw';
-import renderWgsl from '../../src/shaders/render.wgsl?raw';
+import { renderWgsl } from '../../src/shaders/render';
 import meshInstWgsl from '../../src/shaders/meshinst.wgsl?raw';
 import floraLookWgsl from '../../src/shaders/floralook.wgsl?raw';
 import { pagesCode } from '../../src/gpu/pages-mode';

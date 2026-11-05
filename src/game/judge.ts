@@ -18,7 +18,7 @@ import { nbr, NDIR } from '../world/lattice';
 import { WORLD_G } from '../world/scale';
 import { TUNE } from '../tune/params';
 import { makeBindGroup, makeLayout } from '../gpu/pipeline';
-import judgeWgsl from '../shaders/judge.wgsl?raw';
+import { judgeWgsl } from '../shaders/judge';
 
 /** The columns a judge looks at: their packing, and the copy each judge reads (A the CPU's, B the GPU's own). */
 export interface JudgeColumns {

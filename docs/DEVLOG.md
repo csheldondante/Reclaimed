@@ -17474,6 +17474,30 @@ atlas.ts is re-exported there.
 64217ba too, with the machine shared); hallcheck 0 lost at town 1 and s26; the lab's example and fortressoutside ok;
 the tilegate goldens (`&zoomfloor=0`, baselines of 64217ba) 0-0.64% of pixels changed at every view.
 
+## 2026-11-04 — the monolith split, 7: render.wgsl and judge.wgsl in parts (no behaviour change)
+
+**Why.** render.wgsl (2018 lines, 96 KB) and judge.wgsl (1890 lines, 73 KB) were the largest shaders: an agent
+changing water shading read the rock and the bodies too.
+**How.** Each is cut at its own section comments into parts of 170 to 505 lines (shaders/render/: common, vertex,
+light, rock, fs-box, water, bodies; shaders/judge/: defs, build, pieces, sections, release), each part's text an
+exact slice of the old file with one comment line on top naming it. shaders/render.ts and shaders/judge.ts import
+the parts (`?raw`) and join them in the old order — `renderWgsl`, `judgeWgsl` — so the pipelines compile one module
+as before (the parts joined without their header lines are the old files byte for byte, checked when cut). The
+importers (renderer.ts, render/renderer/mesh-draws.ts and features.ts, game/judge.ts, and the GPU tests cities,
+flora-wgsl and undercover) import the joined string instead of the file. The kernels' assembly (common.wgsl and the
+others prepended by the pipelines' makers) is unchanged.
+**Gates** (against 50fbc03): typecheck; the parts joined without their header lines equal the old files byte for
+byte; unit 660 of 661 (partition's timing under load); the GPU tests that compile these shaders (cities, flora-wgsl,
+judge-shapes) pass, undercover times out at 60 s on 64217ba too, and eight other files timed out with the GPU shared
+(none of them uses these shaders); hallcheck 0 lost at town 1 and s26; tilegate goldens 0-0.5% at every view (desktop
+z1.3 1.3%), the full run clean on its second try (the first lost its GPU process in run-desktop: "A valid external
+Instance reference no longer exists"); the lab's fortressoutside ok, its example timed out waiting with the machine
+loaded (a level took 452 s to boot).
+
+**vite.config: the dev server watches less** (from the coordinator): `server.watch.ignored` gets `**/.testcache/**`
+and `**/scratchpad/**`. The headless checks' Chrome profiles and builds in .testcache change all the time; watched,
+they kept each dev server at about 2 cores.
+
 
 ## 2026-11-04 — round 128l (`m4`): fortress blocks as fast as any block — the reach on the GPU (TL-6, FT-61)
 
