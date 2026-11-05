@@ -132,11 +132,11 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
     if (scene.fortressLife) {
       scene.fortressLife.update(dt * scene.speed);
       if (scene.fortressSkip) skipFrame(scene, dt * scene.speed);
-      // (round 128f) the columns read again every few seconds while building: what's built and dug since (the cut-off
-      // check, fortress/reach.ts, runs on each read)
+      // (round 128f) the reach asked again every few seconds while building: what's built and dug since (round 128l: the
+      // GPU's components, fortress/reachgpu.ts — the cut-off check reads each answer)
       if (scene.fortress?.mode === 'build' && (scene.fortressColsAt += dt) > 3) {
         scene.fortressColsAt = 0;
-        scene.fortressReadCols?.();
+        scene.fortress.requestReach();
       }
       // (the stores and progress lines: twice a second)
       if ((scene.fortressBarAt += dt) > 0.5) {

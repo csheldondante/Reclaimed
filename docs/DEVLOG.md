@@ -17388,3 +17388,40 @@ have gates".
   "the starting town's wall has no gate on land", passes after); `DPR=` sets the device scale. scripts/fortressgates.mjs:
   the start town's walls, posts, the reach round the stores by direction, shots (`GATE_DEG=` near a gate). Unit 661/661.
 - Not done: joining a town's gates through it by a paved thoroughfare (FT-73, with the user's roads-on-borders idea).
+
+
+## 2026-11-04 — round 128l (`m4`): fortress blocks as fast as any block — the reach on the GPU (TL-6, FT-61)
+
+Why: the user, "Why do fortress blocks take so long? They seem like they should be as fast as any other block", "Does it
+even need to go to the CPU?", and on the design: "I would probably do connected components of reachable things on the
+GPU myself but only because I find CPU round trips are stupidly expensive on mobile".
+
+- Measured first (the lab, flat, a 22-cell wall ring and 12 houses tapped one by one): **~210 ms a tap** (mean 208.6 ms,
+  max 303 ms), all of it the CPU reach (with the columns hidden from it, 0.1 ms a tap): `Fortress.paint` ran
+  `reachMap()` — a breadth-first search both ways over the 240-wide box — 3-6 times a tap, and the whole 'layers' and
+  'water' buffers were read back when planning started and every 3 s while building (FT-61).
+- Now (fortress/reachgpu.ts, shaders/fortreach.wgsl): a tap commits the block and returns — **0.33 ms mean, 0.8 ms max**
+  over the same ring. The plan's solid as if built goes to the GPU as two packed spans a box column (only the rows that
+  changed are written); the GPU peels the box's columns into the agents' surfaces with those spans merged in, labels
+  them, hooks to the least root round them and pointer-jumps (the atlas's flood fill) until a round changes nothing,
+  then answers a word a block still to build (a stand in the stores' component), the ramp spots and, when asked, the
+  wet columns. The answer comes back **~40 ms after the tap** (one solve of 12 iterations settled every time on the
+  lab's box; 2-7 ms of it CPU: solid.ts over the plan and the queries — BACKLOG M4-2). Asked why (an edit to judge):
+  the same solve with deep water lifted, then with the plan left out — three solves, ~130 ms, for a house planned
+  inside a gateless ring ("It is walled in. Put a gate in the wall first. It is outlined in red.").
+- The variants (V128-13) run on the answers: a block that cut planned blocks off gets its gate (the closing wall cell
+  of a ring, nearest the stores — a beat after the tap, as the brief allowed), passage or ramp, each tried by putting it
+  in the plan and reading the next answer; a gate shut that cuts blocks off opens again with the panel's line. A block
+  placed out of reach is now planned and outlined in red with the reason (it was refused).
+- Rules: the agents' (AGENT_H, STEP, DROP, DEEP, NAV_K), but a component joins two-way steps only — the places a walker
+  gets to and back from, as the CPU's "both ways" was (a loop down a drop and up a ramp elsewhere is lost: M4-3).
+- fortress/reach.ts is now the contract (`ReachEngine`, `ReachAsk`, `ReachReply`, `REACH_BITS`) and `CpuReach`, the same
+  solve on the CPU over columns — the unit tests' stand-in for the GPU (reach.test.ts, ring.test.ts, lanes.test.ts run
+  on it, awaiting `Fortress.settled()`). The lanes' "no roads under water" reads the reach's wet bits.
+- Found on the valley recipe: the river has a ford at the window's north edge (rows 0 and 2 under 0.9 m), so the far
+  bank is reached — correct by the rules.
+- Phone: three small dispatches × 12 iterations over 66k columns × 4 surfaces after an edit and every 3 s while
+  building (one solve); nothing per frame. To watch on the tiler GPU (the user's bench), not measured here (no timing
+  benches in this task).
+- scripts/lab/fortresslanes.mjs: read `L.slope` / `L.contour`, gone with round 128k's lanes; now prints tiles, joined and
+  unjoined.

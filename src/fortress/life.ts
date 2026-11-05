@@ -131,8 +131,8 @@ export class FortressLife implements Routine {
   private t = 0;
   /** (FT-20) the heap's field read back: which sites a builder can walk to from the heap (and where a newcomer may start) */
   private reach: FieldReader;
-  /** (round 128f) the columns the cut-off check last ran on (Fortress.columnsNow), and the cells it found cut off */
-  private reachOn: unknown = null;
+  /** (round 128l) the reach's answer the cut-off check last read (Fortress.reachStats.checks), and the cells it found cut off */
+  private reachSeen = -1;
   private cutCells = new Set<number>();
   private slots: JobSlot[] = [];
   private jobsAt = -1e9;
@@ -440,8 +440,8 @@ export class FortressLife implements Routine {
 
   /**
    * (round 128d, FT-20) The blocks no builder can walk to from the heap. They're left out of the sites (a builder isn't
-   * sent with a load it can't bring) and the bar says so (Fortress.cutOff). (Round 128f: by the CPU check on the
-   * agents' rules — fortress/reach.ts, Fortress.reachMap — not by the heap's GPU field read back: that field fills out
+   * sent with a load it can't bring) and the bar says so (Fortress.cutOff). (Round 128f: by a check on the
+   * agents' rules — round 128l: the GPU's components, fortress/reachgpu.ts — not by the heap's GPU field read back: that field fills out
    * from the heap over seconds and starts over when a seed moves or a chunk comes into its scope, and a block read out
    * of it for 8 sim seconds — a moment under Skip — was cut off for good, the user's "agents seem to not be able to path
    * through the city or farms to buildings at the peripheral".)
@@ -454,17 +454,15 @@ export class FortressLife implements Routine {
     return this.cutCells.has(b.cell);
   }
 
-  /** (round 128f) each time the columns are read again: the blocks still to build the stores don't reach */
+  /** (round 128l, m4) each time the reach answers (Fortress.requestReach: the GPU's components): the blocks still to
+   *  build the stores don't reach */
   private checkReach(): void {
     const f = this.io.fort;
-    const cols = f.columnsNow();
-    if (!cols || cols === this.reachOn) return;
-    this.reachOn = cols;
-    const m = f.reachMap();
-    if (!m) return;
-    this.cutCells = new Set(f.todoCells().filter((c) => !f.reachedIn(m, c)));
+    if (f.reachStats.checks === this.reachSeen) return;
+    this.reachSeen = f.reachStats.checks;
+    this.cutCells = f.cutCells();
     const n = this.unreachable().length;
-    if (n !== this.io.fort.cutOff) this.io.fort.setCutOff(n);
+    if (n !== f.cutOff) f.setCutOff(n);
   }
 
   private sites(): Block[] {

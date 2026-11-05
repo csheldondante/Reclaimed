@@ -9,9 +9,7 @@ import { CHUNK } from '../../world/layout';
 import { cellPos } from '../../world/lattice';
 import { levelFrame } from './frame';
 import { attachSim } from '../../api/world';
-import { readColumn } from '../../world/layout';
-import { MATERIALS, MatState } from '../../world/materials';
-import type { ReachColumns } from '../../fortress/reach';
+import { FortressReachGpu } from '../../fortress/reachgpu';
 import { ROW_H } from '../../world/lattice';
 import { Fortress } from '../../fortress/fortress';
 import { FortressBar } from '../../fortress/ui';
@@ -59,54 +57,11 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
     if (!p) throw new Error(`fortress: the town ${rec.id} has no heap (a 'pile' spot) for its builders`);
     return [p.w[0], p.w[1]];
   };
-  // (round 128f: the check at placement — fortress/reach.ts) the window's columns, read when planning starts and every
-  // few seconds while building: each column's solid runs (solid and granular matter, the town's claims among them —
-  // what the agents' surfaces are peeled from) and its water
-  let reachCols: ReachColumns | null = null;
-  let reading = false;
-  const readCols = async () => {
-    if (reading) return;
-    reading = true;
-    try {
-      // (round 128k: the window as it was when read — a slide since moves every column; the columns are asked for in
-      // the window as it is now, and shifted back to where they were read. Before, a read from before a slide was
-      // looked up where the window had moved: the river's water read under a site, a planned block "cut off" — the
-      // builders never went (the user: "They fail to reach anything I build"))
-      const at: [number, number] = [S.origin[0], S.origin[1]];
-      const [lay, water] = await Promise.all([core.readBuffer('layers'), core.readBuffer('water')]);
-      const slots = new Uint32Array(lay.buffer);
-      const { packed } = core;
-      const ww = dims.w;
-      const hh = dims.h;
-      const shift = (x: number, y: number): [number, number] | null => {
-        const kx = x + S.origin[0] - at[0];
-        const ky = y + S.origin[1] - at[1];
-        return kx >= 0 && ky >= 0 && kx < ww && ky < hh ? [kx, ky] : null;
-      };
-      reachCols = {
-        w: ww,
-        h: dims.h,
-        runs: (x, y) => {
-          const q = shift(x, y);
-          if (!q) return [];
-          return readColumn(packed, slots, q[0], q[1])
-            .filter((iv) => {
-              const s = MATERIALS[iv.mat]?.state;
-              return s === MatState.Solid || s === MatState.Granular;
-            })
-            .map((iv) => [iv.z0, iv.z1] as const);
-        },
-        water: (x, y) => {
-          const q = shift(x, y);
-          return q ? water[q[1] * ww + q[0]] : 0;
-        },
-      };
-    } finally {
-      reading = false;
-    }
-  };
-  const fort = new Fortress({ origin: [ox, oy], w: W, h: H }, {
-    columns: () => reachCols,
+  // (round 128l, m4: the check at placement — the GPU's connected components over the box, fortress/reachgpu.ts; it
+  // replaced the CPU flood over the window's columns read back, ~140-210 ms a tap and a whole read every 3 s: TL-6, FT-61)
+  const reach = new FortressReachGpu(scene.host.gpu.device, core.world, W, H, () => fort.offset());
+  const fort: Fortress = new Fortress({ origin: [ox, oy], w: W, h: H }, {
+    reach,
     townHeap,
     // (round 128k) the town's gates: its wall's gate posts — where the fortress's roads start
     townGates: () => (st.spotsOf(rec.id) ?? []).filter((s) => s.kind === 'post' && s.ref === `${rec.id}:wall`).map((s): [number, number] => [s.w[0], s.w[1]]),
@@ -143,20 +98,19 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
     void core.readBuffer('surface', true).then((f) => {
       scene.surfaceCache = new Uint32Array(f.buffer);
       fort.ready = true;
+      fort.requestReach(true);
     }, ignoreTeardown);
   });
-  void readCols().then(() => fort.onChange.forEach((h) => h()), ignoreTeardown);
-  // (round 128f) the columns read again when planning starts (what's been built and dug since), and every few seconds
-  // while building (FortressLife's cut-off check reads them)
+  // (round 128l) the reach asked when planning starts (what's been built and dug since; the water for the lanes), every
+  // few seconds while building (level/frame.ts) and after a slide (the part come into the window)
   fort.onMode.push((m) => {
-    if (m === 'plan') void readCols().catch(ignoreTeardown);
+    if (m === 'plan') fort.requestReach(true);
   });
-  scene.fortressReadCols = () => void readCols().catch(ignoreTeardown);
+  scene.fortressReadCols = () => fort.requestReach(true);
   S.onSlide.push(() => fort.slid());
   S.onWarp.push(() => fort.slid());
-  // (round 128k) and read again after a slide: the part come into the window was never read
-  S.onSlide.push(() => void readCols().catch(ignoreTeardown));
-  S.onWarp.push(() => void readCols().catch(ignoreTeardown));
+  S.onSlide.push(() => fort.requestReach(true));
+  S.onWarp.push(() => fort.requestReach(true));
   // (round 128d) what's built is solid to the world (fortress/claims.ts): claimed in the columns, as the towns' are
   // (round 128j: a static grid, written with the land — sim/static-claims.ts)
   scene.fortressClaims = new FortressClaims(fort, {

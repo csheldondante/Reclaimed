@@ -183,6 +183,11 @@ export function reachWhyLine(why: ReachWhy): string {
 /** (round 128h, V128-13) what was put in so a block placed keeps the way open: a gate, a passage, a ramp */
 export type VariantKind = 'gate' | 'passage' | 'ramp';
 
+/** (round 128l, m4) a block placed out of the stores' reach: placed at once, outlined in red when the reach comes back */
+export function reachWarnLine(why: ReachWhy): string {
+  return `${reachWhyLine(why)} It is outlined in red.`;
+}
+
 /** (round 128h) the panel's line for the way kept open */
 export function variantLine(kind: VariantKind, type: string): string {
   const what = type === 'lumber' ? 'lumber camp' : type;

@@ -133,7 +133,7 @@ export class Lab {
   /** the fortress ready (the ground read back), then the recipe's town standing */
   private async whenReady(): Promise<void> {
     const f = this.fort();
-    while (!f.ready || !f.columnsNow()) await new Promise((r) => setTimeout(r, 50));
+    while (!f.ready || !f.reachKnown) await new Promise((r) => setTimeout(r, 50));
     if (this.recipe.town) this.plan({ ...this.recipe.town, built: true });
     this.ready = true;
   }

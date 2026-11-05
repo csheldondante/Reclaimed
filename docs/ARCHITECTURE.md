@@ -3573,6 +3573,27 @@ The building rule (the user's): select what (a structure type), then plan it wit
   `water` take the window as it is now and shift back (outside what was read: no solid, no water); every slide reads
   again. `RoadStamp.set` / `RoadRide.encodeHops` return true only for new shapes / a new network (an offset alone needs
   no relax: the fields slide with the window).
+- **Round 128l, m4 (reach on the GPU, TL-6 / FT-61).** The check at placement no longer reads the world back.
+  `fortress/reachgpu.ts FortressReachGpu` (shaders/fortreach.wgsl) implements `ReachEngine` (fortress/reach.ts):
+  `setSpans(spans)` (the plan's solid as if built, two packed spans a box column — `packSpan`, eighths of a metre — from
+  solid.ts with the plan's levels as built; only the rows that changed are written) and `check({stores, queries, wet,
+  why})` → `ReachReply {bits, ramps, wet, rounds}`. A check: `reachPeel` (the box's columns peeled as agents.wgsl does,
+  the spans merged in), `reachInit`, ROUND × (`reachHook`, 2 × `reachJump`: the atlas's label propagation with pointer
+  jumping) with the flag cleared before the last, `reachRamps` (box columns under a drop of STEP..DROP up to the stores'
+  component), `reachQuery` (per query — a block's up to four stands — bit 0: a stand's top surface has the stores'
+  label), `reachWet` (a bit a box column with water over 0.8 m, for the lanes); the flag and the answer words copied to
+  a staging buffer and mapped: settled → done, else another ROUND. Asked `why` (an edit to judge) with a query not
+  reached: the same solve with deep water no bar (`REACH_BITS.dry`), then with the plan's solid left out
+  (`REACH_BITS.unplanned`); neither: a cliff. Joins are two-way steps only (|rise| ≤ STEP, AGENT_H of room, both deep or
+  both dry), so a component is where a walker gets to and back from. `Fortress` asks (`requestReach(wet)`: one check in
+  flight, asks folded) after every plan change (`sync`), when planning starts (with the water), after a slide, every
+  3 s while building (level/frame.ts); `paint`/`setGate` commit at once and leave a `ReachEdit` (the cell, and the cells
+  reached before) that the answer judges (`judgeEdit`): the block itself unreached and below a drop → ramp tries; blocks
+  cut off → a `Trial` of variants (gate, passage, ramps) each put in the plan and judged by the next answer; none →
+  `warnCells` + `warning` (`reachWarnLine` / `cutWarnLine`); a gate shut that cuts blocks off opens again
+  (`wouldCutLine`). A press during a trial takes its variant out. `Fortress.cutCells()` / `reachedNow` / `whyNot` /
+  `settled()` / `onReach`; FortressLife reads `cutCells()` on each answer. `CpuReach` (reach.ts) is the same solve on the
+  CPU over `ReachColumns`, for unit tests only. `FortressIO.columns` and scenes/level/fortress.ts `readCols` are gone.
 
 ## Source layout: the split classes (2026-11-04)
 
