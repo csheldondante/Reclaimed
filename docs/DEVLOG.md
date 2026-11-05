@@ -17608,3 +17608,21 @@ was spawned on the road's node nearest the stores, it went every time.
   (`cartRejoins` 0, `cartGaveUp` 0).
 - scripts/lab/fortresscarts.mjs: 3 of 3 passed (a load in each, carts' walking samples on a road 0.97-0.99, newcomers
   0.66), against 1 of 3 before.
+
+
+## 2026-11-05 — round 128l (`m4`): a cart's pile is at the road's edge, never in the pit; the cart timers gone
+
+Why: main, on the stuck carts: fix the root cause, drop the patches (the repo rule: no fallbacks or heuristics).
+
+- The cause (scripts/lab/fortresscarts.mjs with the carts' state logged): a quarry's "door" is a cell of its own pit. A
+  cart sent there drove into the pit, and its miners dug deeper while it loaded, so it never climbed out (`back` at
+  166-170, 113 for 90 sim s). Now a cart loads at `pilePoint`: the road graph's node nearest the structure's door, within
+  14 m, not on a cell the plan digs. With no such node, no cart serves that structure and its workers walk. Carts also
+  spawn on the road node nearest the stores, so they start on the network they ride.
+- Gone: CART_STUCK, CART_RETRY, CART_REJOIN, the goal-order rejoin and the 3 s wait before a ride counted as failed.
+  A ride made for a pile that fails now marks that pile at once (`cartRideFor`). Kept: the miners' 16 terrain takes in
+  flight, because the world's terrain queue limit is real: it threw at 64.
+- After (one lab run): a cart load in, carts' walking samples on a road 1.00, newcomers 0.68.
+- A second cause, named and not patched (M4-14): the other cart was sent to the farms' pile, a road node 14 m north
+  of the farm's door. It never left the stores. The farmers' own ride to the farms fails there as well (riding.farm
+  false). The farms' lanes aren't ridden from the stores, and I haven't found why yet.

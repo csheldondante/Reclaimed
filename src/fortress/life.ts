@@ -96,10 +96,8 @@ const DAY_WORD: Record<Doing, string | null> = {
 };
 /** (m4) the miners' terrain takes in flight at most (api/terrain.ts holds 64 for everyone) */
 const DIGS_IN_FLIGHT = 16;
-/** (m4) a cart that gets no nearer its pile for this many sim seconds gives it up for CART_RETRY s */
-const CART_STUCK = 30;
-const CART_REJOIN = 6;
-const CART_RETRY = 60;
+/** (m4) a pile's road node at most this far from the structure's door (m) */
+const PILE_ROAD = 14;
 /** (m4) sim seconds a soldier may take to a wall-walk point before it gives up and musters again */
 const PATROL_STUCK = 40;
 
@@ -163,7 +161,7 @@ export class FortressLife implements Routine {
   readonly ids: UnitId[] = [];
   readonly book: BuildBook;
   /** loads brought, blocks built, waits at the heap with nothing to take; (milestone 3) trips in, ground dug, trees felled, newcomers, refunds */
-  readonly stats = { trips: 0, built: 0, starved: 0, hauled: 0, dug: 0, felled: 0, arrived: 0, refunds: 0, forged: 0, trained: 0, mustered: 0, patrols: 0, onWall: 0, carted: 0, cartLoads: 0, piled: 0, cartGaveUp: 0, cartRejoins: 0 };
+  readonly stats = { trips: 0, built: 0, starved: 0, hauled: 0, dug: 0, felled: 0, arrived: 0, refunds: 0, forged: 0, trained: 0, mustered: 0, patrols: 0, onWall: 0, carted: 0, cartLoads: 0, piled: 0 };
   /** (round 128l, milestone 4) the recipes: the smiths' batches, the recruits' */
   readonly recipes = new RecipeRunner();
   /** (m4) the soldiers the barracks trained (guards: not people — no job, no bed of the houses', no grain) */
@@ -183,9 +181,8 @@ export class FortressLife implements Routine {
   /** (m4) miners' terrain takes in flight */
   private digging = 0;
   /** (m4) carts sent onto the road by a goal order (stepCart), each back to its round once there */
-  private cartOnto = new Map<UnitId, { to: V2; since: number; work: Work }>();
-  /** (m4) piles a cart gave up on (it got no nearer), and until when */
-  private cartGaveUp = new Map<number, number>();
+  /** (m4) per cart group the pile its ride was last made for (reseed): a ride not made for it — no road reaches it */
+  private cartRideFor: (number | null)[] = [];
   /** (m4) structures no cart's road reaches (its ride failed): their workers walk their hauls */
   private noCartRoad = new Set<number>();
   private day = 0;
@@ -326,21 +323,6 @@ export class FortressLife implements Routine {
     this.enlist();
     this.walkTheWalls(dt);
     this.keepCarts();
-    // (m4) carts sent onto the road: back to their round once there (or after a while)
-    for (const [id, o] of [...this.cartOnto]) {
-      const v = this.io.units.get(id);
-      if (!v?.alive) {
-        this.cartOnto.delete(id);
-        continue;
-      }
-      if (Math.hypot(o.to[0] - v.at[0], o.to[1] - v.at[1]) < 2 || this.t - o.since > CART_REJOIN * 2) {
-        this.cartOnto.delete(id);
-        this.io.units.order(id, { kind: 'work', at: [v.at[0], v.at[1]], what: 'cart' });
-        const r = this.io.units.recs.get(id);
-        // (its round as it was, its "no nearer since" from now)
-        if (r) r.work = { ...o.work, dig: undefined, walked: undefined };
-      }
-    }
     this.checkReach();
     // (round 128i, FT-58: the road shapes stamped on the GPU — again only when the lanes or the box's offset change)
     this.roads();
@@ -743,8 +725,8 @@ export class FortressLife implements Routine {
   }
 
   /** (m4, scripted checks) the carts' state: piles no road reaches, piles given up and until when, their rides */
-  cartsState(): { noRoad: number[]; gaveUp: [number, number][]; riding: boolean[]; goals: V2[][] } {
-    return { noRoad: [...this.noCartRoad], gaveUp: [...this.cartGaveUp], riding: [...this.cartRiding], goals: this.cartGoals() };
+  cartsState(): { noRoad: number[]; riding: boolean[]; goals: V2[][] } {
+    return { noRoad: [...this.noCartRoad], riding: [...this.cartRiding], goals: this.cartGoals() };
   }
 
   /** (m4) the people, soldiers and carts (the follow's picks) */
@@ -782,12 +764,39 @@ export class FortressLife implements Routine {
     let best: number | null = null;
     let most = ECON.cartLoad / 2 - 1e-6;
     for (const [id, g] of this.piles) {
-      if (taken.has(id) || this.noCartRoad.has(id) || (this.cartGaveUp.get(id) ?? -1) > this.t || !this.io.fort.doorOf(id)) continue;
+      if (taken.has(id) || this.noCartRoad.has(id) || !this.pilePoint(id)) continue;
       const n = Object.values(g).reduce((a, b) => a + (b ?? 0), 0);
       if (n > most) {
         most = n;
         best = id;
       }
+    }
+    return best;
+  }
+
+  /**
+   * (m4) Where a cart loads a structure's pile: the road's node nearest its door (within PILE_ROAD m) that isn't on a
+   * cell the plan digs (a quarry's) — the footprint's road edge. A quarry's door is a cell of its pit, which its miners
+   * dig deeper while a cart stands in it: a cart that drove into the pit never climbed out (the lab, round 128l). Null:
+   * no such node — no cart serves it, its workers walk their hauls.
+   */
+  private pilePoint(id: number): V2 | null {
+    const f = this.io.fort;
+    const door = f.doorOf(id);
+    const g = f.roadGraph();
+    if (!door || !nodeCount(g)) return null;
+    const [dx, dy] = f.toBox(door[0], door[1]);
+    let best: V2 | null = null;
+    let bd = PILE_ROAD;
+    for (let v = 0; v < nodeCount(g); v++) {
+      const x = g.xy[2 * v];
+      const y = g.xy[2 * v + 1];
+      const d = Math.hypot(x - dx, y - dy);
+      if (d > bd) continue;
+      const c = f.grid.cellAtWorld(x, y);
+      if (c >= 0 && f.plan.typeAt(c) === 'quarry') continue;
+      bd = d;
+      best = f.toWindow(x, y);
     }
     return best;
   }
@@ -812,7 +821,7 @@ export class FortressLife implements Routine {
     return Array.from({ length: CART_GROUPS }, (_, i) => {
       const id = this.carts[i];
       const w = id !== undefined ? (this.io.units.recs.get(id)?.work as Work | undefined) : undefined;
-      const d = w && w.from != null && (w.phase === 'out' || w.phase === 'load') ? this.io.fort.doorOf(w.from) : null;
+      const d = w && w.from != null && (w.phase === 'out' || w.phase === 'load') ? this.pilePoint(w.from) : null;
       return d ? [d] : [];
     });
   }
@@ -831,48 +840,20 @@ export class FortressLife implements Routine {
     };
     switch (w.phase) {
       case 'out': {
-        const door = w.from != null ? this.io.fort.doorOf(w.from) : null;
+        const door = w.from != null ? this.pilePoint(w.from) : null;
         if (!door || i < 0) return void Object.assign(w, { phase: 'park', t: 1, from: null });
         const g = R4.cart0 + i;
-        // (its ride made at the next reseed; a pile no road reaches: its workers walk their hauls from now on)
+        // (its ride is made at the next reseed; made for this pile and failed: no road reaches it — its workers walk)
         if (!this.cartRiding[i]) {
-          if ((w.t -= dt) < -3) {
+          if (this.cartRideFor[i] === w.from) {
             this.noCartRoad.add(w.from!);
             Object.assign(w, { phase: 'park', t: 1, from: null });
           }
           return void stand();
         }
-        const d = Math.hypot(door[0] - at[0], door[1] - at[1]);
-        const still = w.walked !== undefined ? this.t - w.walked : 0;
-        if (still > CART_REJOIN && Math.floor(still / CART_REJOIN) !== Math.floor((still - dt) / CART_REJOIN)) {
-          // (onto the road first, on its own: the units' goal order to the nearest node of the network, then the ride)
-          const f = this.io.fort;
-          const gr = f.roadGraph();
-          if (nodeCount(gr)) {
-            const [bx, by] = f.toBox(at[0], at[1]);
-            const n = nearestNode(gr, bx, by).node;
-            const to = f.toWindow(gr.xy[2 * n], gr.xy[2 * n + 1]);
-            this.cartOnto.set(u.v.id, { to, since: this.t, work: { ...w } });
-            U.order(u.v.id, { kind: 'go', to });
-            this.stats.cartRejoins++;
-            return;
-          }
-        }
         U.regroup(u, g);
         u.v.state = 'walk';
-        if (d < AT_SPOT + 1) {
-          Object.assign(w, { phase: 'load', t: 2 });
-          break;
-        }
-        // (no nearer for CART_STUCK s — a pit dug across its way, a crowd: it gives the pile up for a while. Every
-        // CART_REJOIN s without a way it stands a step, so the ride takes it up afresh: seen in the lab, a cart sent out
-        // from where it was parked sometimes sat on the road field's seeds by the stores and never joined the ride)
-        if (w.dig === undefined || d < w.dig - 1) Object.assign(w, { dig: d, walked: this.t });
-        else if (this.t - (w.walked ?? this.t) > CART_STUCK) {
-          this.cartGaveUp.set(w.from!, this.t + CART_RETRY);
-          this.stats.cartGaveUp++;
-          Object.assign(w, { phase: 'park', t: 1, from: null, dig: undefined, walked: undefined });
-        }
+        if (Math.hypot(door[0] - at[0], door[1] - at[1]) < AT_SPOT + 1) Object.assign(w, { phase: 'load', t: 2 });
         break;
       }
       case 'load': {
@@ -906,7 +887,7 @@ export class FortressLife implements Routine {
         w.t = 1;
         const p = this.pileFor(u.v.id);
         if (p === null) break;
-        Object.assign(w, { phase: 'out', t: 0, from: p, dig: undefined, walked: undefined });
+        Object.assign(w, { phase: 'out', t: 0, from: p });
       }
     }
   }
@@ -1125,6 +1106,10 @@ export class FortressLife implements Routine {
       post: rideOnly(R4.toPost, posts),
     };
     this.cartRiding = carts.map((v, i) => rideOnly(R4.cart0 + i, v));
+    this.cartRideFor = carts.map((v, i) => {
+      const w = v.length && this.carts[i] !== undefined ? (this.io.units.recs.get(this.carts[i])?.work as Work | undefined) : undefined;
+      return w?.from ?? null;
+    });
     // (where a newcomer can come in from: the stores' field, or riding, the field onto the roads that lead to them)
     if (was !== this.riding.pile) {
       this.reach.stop();
@@ -1457,7 +1442,7 @@ export class FortressLife implements Routine {
       const h = this.heap();
       const pile = this.piles.get(s.id) ?? {};
       const held = Object.values(pile).reduce((a, b) => a + (b ?? 0), 0);
-      if (door && haulBy(Math.hypot(door[0] - h[0], door[1] - h[1]), { carts: this.carts.length, pile: held, road: this.riding.pile && !this.noCartRoad.has(s.id) }) === 'cart') {
+      if (door && haulBy(Math.hypot(door[0] - h[0], door[1] - h[1]), { carts: this.carts.length, pile: held, road: this.riding.pile && !this.noCartRoad.has(s.id) && this.pilePoint(s.id) !== null }) === 'cart') {
         for (const [g, v] of Object.entries(goods) as [Good, number][]) pile[g] = (pile[g] ?? 0) + v;
         this.piles.set(s.id, pile);
         this.stats.piled++;

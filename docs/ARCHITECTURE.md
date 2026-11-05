@@ -3620,8 +3620,10 @@ The building rule (the user's): select what (a structure type), then plan it wit
   blocks)` (ECON.carts 2, +1 a warehouse block, ≤ cartsMax 3), spawned at the stores. A worker of a quarry, lumber camp
   or farm whose structure's door is past ECON.cartDist (40 m) from the stores (`haulBy(dist, {carts, pile, road})`)
   leaves its load on the structure's pile (`FortressLife.piles`, ≤ pileMax) and goes back to work; a parked cart
-  (`stepCart`: park → out → load → back) takes the fullest pile no other cart is after, rides to its door (its own group,
-  R4.cart0 + i, ride only: a pile no road reaches is marked and walked from then on), takes up to ECON.cartLoad (8) and
+  (`stepCart`: park → out → load → back) takes the fullest pile no other cart is after, rides to its pile point
+  (`pilePoint`: the road node nearest the door within 14 m that isn't on a cell the plan digs — never in a quarry's pit;
+  none: no cart serves it) on its own group, R4.cart0 + i, ride only (a ride made for that pile that fails: the pile is
+  marked and walked from then on). Carts spawn on the road node nearest the stores, takes up to ECON.cartLoad (8) and
   rides back on R.toPile (only while it rides), where `deliver` puts it in. Newcomers: `edgeEntry` — the road graph's
   node nearest the window's edge, the edge straight out from it; they start there in phase `arrive` (R.toHome, riding)
   and work once at a house. A person's day: from ECON.daySec × 0.45 a meal at the stores (`eat`, once a day), from × 0.9
