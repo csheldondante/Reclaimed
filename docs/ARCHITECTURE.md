@@ -3605,6 +3605,10 @@ module is docs/MODULES.md.
   constructor's `if (this.fieldMesh.on)` block, its shared locals passed in), gbuffer-shadow.ts, terrain-cache.ts,
   grid.ts, features.ts; defs.ts (PickHit, RenderOptions, SKIP re-exported). In this doc `Renderer.x` names `x(rd, …)`
   in the folder when x is not on the class.
+- `perf/bench.ts` + `perf/bench/` — the bench (`?bench=1`): bench.ts keeps the run's flow (start, finish, the level
+  page, waiting), the page heartbeat and what writes it, and the Bench class (fields, constructor, the page methods as
+  delegates); pages.ts, pace.ts, ab.ts, sweeps.ts, regions.ts hold the class's work; defs, timestamps, pan-report,
+  state, page, device and report the free functions it had at the top (main.ts's imports re-exported by bench.ts).
 
 
 ## The behaviour lab (round 128l, `tooling`; docs/TOOLING.md)

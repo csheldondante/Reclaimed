@@ -17440,3 +17440,24 @@ here and on 64217ba; hallcheck 0 lost at town 1 and at s26, each run alone (the 
 the second page in this worktree's Chrome, on bd626f4 too); the lab's example and fortressoutside ok; the tilegate
 goldens (`&zoomfloor=0`, baselines of 64217ba): 0-0.14% of pixels changed at every desktop, phone and run-desktop view
 but desktop z1.3 (2.6%, tiles arriving at the edges as before); its run-phone page timed out opening, as on 64217ba.
+
+## 2026-11-04 — the monolith split, 5: perf/bench.ts into perf/bench/ (no behaviour change)
+
+**Why.** bench.ts was 3147 lines (165 KB): a Bench class of 1590 lines and 1360 lines of free functions. Now bench.ts
+(617 lines) keeps the run's flow and the class's fields and constructor, and perf/bench/ holds 12 modules of 54 to 450
+lines: the class's work (pages: main, pans, hero, pan, win; pace: frames captured and summarised; ab: toggles and the
+view; sweeps; regions: generation and the store timed) and the top-level functions by concern (defs, timestamps,
+pan-report, state, page, device, report).
+**How.** The class's methods moved as before (`this` -> `bn`; the page methods bench.ts calls stay as delegates); the
+top-level functions moved in whole line ranges (exported where they weren't, re-exported where main.ts imports them).
+What stays in bench.ts is what assigns module state other modules read — the heartbeat (`beat`, `beatWhat`, `frame`),
+`pageDevice`, `leaving` and `go`: an ES import can't be assigned, and moving them would mean an object or setters, a
+logic change.
+**Gates** (against f678055): typecheck; unit 660 of 661 (the partition timing test over its limit under load; it
+passes alone); GPU 24 files pass, jb6 and rockmesh-room time out in their device hook — on 64217ba too, now (the
+machine shared with other agents' browsers); hallcheck 0 lost at town 1 and s26; the lab's example and
+fortressoutside ok; tilegate goldens 0-0.3% of pixels (desktop z1.3 1.2%, w384 2-3% against its written baseline).
+The bench itself: `scripts/benchrun.mjs --smoke` on a dev server, before (64217ba) and after: the same report
+sections; one after-run hit `physBodyStatsRead used in submit while mapped` in win256's one-pass physics (the bench's
+systemGpu submitting while the physics' readback is mapped), the second after-run none — a race in the bench's
+timing, not the move (BACKLOG MS-9).

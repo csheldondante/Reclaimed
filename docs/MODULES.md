@@ -12,6 +12,7 @@ called only by the class file and the folder. From outside, use the class.
 - `scenes/streamer.ts` + `scenes/streamer/` — Streamer: `slide.ts` (follow the camera, the slide), `freeze.ts`, `generate.ts`, `write.ts`, `store.ts`, `jobs.ts`, `warp.ts`, `regions.ts`; `defs.ts` its flags, records and public types.
 - `game/integrity.ts` + `game/integrity/` — Integrity: `tick.ts` (update and the analysis pass), `rigid.ts`, `metal.ts`, `resting.ts`, `columns.ts`, `loose.ts`, `lattice.ts`, `window.ts`; `defs.ts`.
 - `render/renderer.ts` + `render/renderer/` — Renderer: `encode.ts` (a frame's draw), `mesh-draws.ts` (the field mesh's pipelines, made by the constructor), `gbuffer-shadow.ts`, `terrain-cache.ts`, `grid.ts`, `features.ts`; `defs.ts`.
+- `perf/bench.ts` + `perf/bench/` — The bench (?bench=1): bench.ts keeps the flow of a run, the heartbeat and the state of the Bench class; `pages.ts`, `pace.ts`, `ab.ts`, `sweeps.ts`, `regions.ts` its work; `defs`, `timestamps`, `pan-report`, `state`, `page`, `device`, `report` the free functions.
 
 ## src/
 
@@ -347,7 +348,7 @@ WebGPU plumbing: device, pipelines and bind-group layouts, CPU timing stats.
 
 ## src/perf/
 
-- `bench.ts` (3148) — Round 101 (bench): the calibration benchmark (`?bench=1`). API: `BENCH_VERSION`, `Stat`, `stat`, `judgeTimestamps` +17.
+- `bench.ts` (615) — Round 101 (bench): the calibration benchmark (`?bench=1`). API: `sleep`, `frame`, `benchGpuUp`, `benchGpu` +23.
 - `boot-marks.ts` (29) — (round 112, testspeed) The page's boot as a timeline: each stage's time since navigation start (ms), on … API: `BootMarks`, `bootMark`.
 - `framepace.ts` (409) — Round 114 (framepace): the frame pacing probe. API: `clusters`, `PaceSources`, `FramePace`, `startFramePace`.
 - `gpumem.ts` (131) — Round 100 (hitchrec): the GPU memory the page holds, buffer and texture bytes alive — every createBuffer / … API: `GpuMemTrack`.
@@ -359,6 +360,23 @@ WebGPU plumbing: device, pipelines and bind-group layouts, CPU timing stats.
 - `report-io.ts` (93) — Round 101 (bench): getting a report (JSON) off the phone, shared by the hitch recorder's HUD and the … API: `deviceTag`, `stamp`, `downloadJson`, `copyText` +2.
 - `start.ts` (54) — Round 100 (hitchrec): `?hitch=1` boots the hitch recorder (hitch.ts), its HUD (hitch-hud.ts) and the GPU … API: `HitchBoot`, `startHitch`.
 - `townbench.ts` (356) — The town pan phone bench (round 128g, cityrender; API: `townBench`.
+
+## src/perf/bench/
+
+The parts of the bench, split out of perf/bench.ts: the methods of the Bench class as functions over it (`bn`) and its top-level helpers by concern.
+
+- `ab.ts` (282) — A/B toggles (a system off, the frame's difference) and what the view shows: its state, the systems that … API: `view`, `toggles`, `abPhase`, `ab` +4.
+- `defs.ts` (57) — The bench's constants and small helpers: the version and build, the A/B system lists, the probe speeds, … API: `BENCH_VERSION`, `STATE`, `BUILD`, `LAST` +13.
+- `device.ts` (191) — What the device is and can do: a fixed GPU workload, upload and readback rates, the device's facts. API: `fixedWorkload`, `ioRates`, `deviceFacts`.
+- `pace.ts` (298) — Measuring frames: the pace probe, waiting for the scene to settle, capturing a stretch of frames and … API: `paceProbe`, `paceSettle`, `settle`, `capture` +2.
+- `page.ts` (161) — The bench on the page: its mode from the URL, the screen kept awake (the wake lock, re-asked when let go), … API: `benchMode`, `WakeSentinel`, `wakeLock`, `wakeWanted` +7.
+- `pages.ts` (451) — The bench's pages, each a load of the level: main, pans, hero, a pan page per zoom (its ramps), the window … API: `mainPage`, `pansPage`, `heroPage`, `panPage` +2.
+- `pan-report.ts` (153) — The pan bench's plan and report: the window for a zoom, the zooms and speeds tried, tile steps, the … API: `panWindowFor`, `panPlan`, `tileStepOf`, `paceHeadline` +3.
+- `regions.ts` (217) — Region generation and the store timed: fresh spots, generation stage by stage (CPU and GPU), the store's … API: `freshAt`, `regionStages`, `regionStagesGpu`, `makeRegion` +1.
+- `report.ts` (203) — The bench's report: every page's results put together, and its summary lines. API: `makeReport`, `summary`.
+- `state.ts` (170) — The bench's state between page loads: BenchState and its pages, kept in localStorage and IndexedDB (the … API: `PageSpec`, `BenchState`, `IDB`, `idbP` +9.
+- `sweeps.ts` (329) — The bench's sweeps: the fastest pan, each system's GPU cost, tiles, agents, render scales, a warp and a … API: `maxPan`, `systemGpu`, `storm`, `tileSweep` +5.
+- `timestamps.ts` (147) — GPU timestamps judged (reliable or not, per mode) and the pan bench's thresholds (PAN_*: speeds, budgets, … API: `judgeTimestamps`, `timestampModes`, `PAN_ZOOMS`, `PAN_MAX_WINDOW` +8.
 
 ## src/physics/
 
