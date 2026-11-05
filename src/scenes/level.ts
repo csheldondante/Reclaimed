@@ -10,6 +10,7 @@ import { Powers } from '../game/powers';
 import { Director } from '../game/director';
 import { Reach } from '../game/reach';
 import { levelById, type LevelDef, type LoadedLand } from '../game/levels';
+import { FORTRESS_WINDOW } from '../fortress/host';
 import { DIFFICULTY_LEVEL, loadDifficulty, type Difficulty } from '../game/progress';
 import { Editor } from '../ui/editor';
 import { Controls } from '../input/controls';
@@ -332,7 +333,7 @@ export class LevelScene implements Scene {
     public onExit: () => void,
     public opts: LevelOptions,
   ) {
-    const dims = { w: 256, h: 256, zMax: level.zMax ?? 64 };
+    const dims = { w: level.side ?? 256, h: level.side ?? 256, zMax: level.zMax ?? 64 };
     if (!level.generate) throw new Error(`level "${level.id}" is not built yet`);
     this.core = new WorldCore(host, opts.map ?? opts.atlas?.map ?? opts.made?.map ?? level.generate(dims), host.quality.particles, level.sandbox ? SANDBOX_K : undefined, true, level.meshRoom);
     // (?flow=1, docs/ARCHITECTURE.md "The flow model") liquids as runs in the columns, and what's near steady sleeps: before the warmup
@@ -496,9 +497,12 @@ export class LevelScene implements Scene {
       // (?win=: a wider window, whole regions — round 79, the user: "stream in a few more blocks out to see
       // more of the terrain at a time … nice for debugging even if too slow for mobile")
       // (round 90: or the viewer's range setting, the phone tier's default wider — scenes/range.ts)
-      const W = atlasRange(host.params);
+      // (round 128m, townlab: the fortress's box and its margin must fit in the window — fortress/host.ts FORTRESS_WINDOW;
+      // the desktop's 256 held only 256 of its 278 rows)
+      const fw = host.params.get('fortress') === '1' ? FORTRESS_WINDOW : 0;
+      const W = Math.max(fw, atlasRange(host.params));
       // (round 93, ?winh=: an experiment — rows other than the side)
-      const Hr = atlasRows(host.params, W);
+      const Hr = Math.max(fw, atlasRows(host.params, W));
       const origin: [number, number] = [Math.round((cx - W / 2) / REGION) * REGION, Math.round((cy - Hr / 2) / REGION) * REGION];
       const { map, oz, outside, ground } = await atlas.window({ w: W, h: Hr, zMax }, origin[0], origin[1], ATLAS_COL_K, TIER);
       // (round 80: its column batches timed in the perf overlay)

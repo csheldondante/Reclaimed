@@ -3779,6 +3779,16 @@ at the first Build, updated after it each frame in sim seconds).
   (`raidOverLines`: what was taken, broken and burned, who fell by name) as a card with Close (`raidSummary`,
   `closeRaid`). Words in fortress/words.ts, linted by raid.test.ts.
 
+## The window keeps the town (round 128m, `townlab`)
+
+What lives in the window (the reach's columns, the builders on the agents, the claims) must stay in it.
+`Streamer.keep(rect)` (scenes/streamer/keep.ts; `FortressWindow.keep` on the contract) names world columns no slide may
+leave: `slideWhenReady`/`prefetch` skip such slides, `slide`/`warp` throw, and `keep` throws when the window doesn't hold
+the rect now. The fortress keeps its box plus KEEP_MARGIN (fortress/host.ts FORTRESS_BOX, FORTRESS_WINDOW), placed
+wholly in the window at its start (`boxInWindow`: a loud error when the window is too small; `?fortress=1` opens the
+atlas window at least FORTRESS_WINDOW a side). The z slide isn't affected. The one town grid (`onetown`) supplies its own
+bounds through the same call.
+
 ## The placement bench (round 128m, `townlab`; docs/TOOLING.md)
 
 `?bench=place` (perf/placebench.ts) on the game and `lab.placeBench()` in the lab run one function,

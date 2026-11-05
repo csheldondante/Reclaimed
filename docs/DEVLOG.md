@@ -18034,3 +18034,40 @@ a tap (958 max), one frame of 616-733 ms after each tap, the rest at 16.7 ms. Th
   standing over the heap with 1.5 m under it would put the stores on its roof. The phone's run will say.
 - Perf (TL-17): the 700 ms frame after a tap matches the reach's own GPU time on the Mali — a refused block costs three
   solves of 12 hook-and-jump passes of atomics over 67k columns x 4 surfaces.
+
+## 2026-11-05 — round 128m (`townlab`, C): the window keeps the fortress's box
+
+The user: "It still says they can't make it from the stores to the build site." One cause, found on the user's link
+headless (412x915, q=low): the reach's answers depended on where the camera was. The fortress's box (240 x 278 rows)
+sat at offset 32,56 in a 320-row window, so it already ran 14 rows past the bottom edge at the start. A pan of ~150 m
+(to look at a site) slid the window a region, and part of the box left it. The reach (fortreach.wgsl) sees no ground
+outside the window, so whole sides of the town read "A cliff or a building is in the way". With the camera 150 m north,
+every one of 24 points round the stores was refused (bits 0), because the stores themselves had left the window. Panning
+back put it right.
+
+- Fix (approved by main as option 1): the reach, the builders and the claims all live in the window, so what they need
+  stays in it. `Streamer.keep(rect)` (scenes/streamer/keep.ts, on the FortressWindow contract: one call, the grid's
+  bounds and a margin, nothing fortress-specific) is a rect of world columns every slide must leave in the window.
+  `slideWhenReady` and `prefetch` make no slide that would leave it, `slide` and `warp` throw if asked to, and `keep`
+  throws if the window doesn't hold the rect now. The camera may pan past the box; the far land is drawn by the tiles.
+- At the start, `boxInWindow` puts the box and KEEP_MARGIN (4) round it wholly in the window, as near the town's
+  centre as it fits, on an even row. It throws a loud error when the window is smaller than box + margin. The user's
+  box moves from rows 56-334 to 38-316 of the window.
+- The window holds it: with `?fortress=1` the atlas level opens at least FORTRESS_WINDOW (320) a side (the desktop's
+  default 256 held 256 of the box's 278 rows). The lab's window is 320 too (LevelDef.side; it was 256 and its box ran
+  from row -11 to 267). On 320, the valley recipe's 2 m river no longer drained out of the bottom edge before the lab
+  opened, and fortressrefuse's "east shore kept" failed. The river is now laid as a 0.6 m ford, and the lake stays 2 m.
+- The z slide (deep quarries) is untouched: keep is along x and y only (fortressslidez passed).
+- Measured, scripts/fortresskeep.mjs on the user's link: the reach's 24 answers at the start, then panned 150 m east,
+  west, south and north and back: all 8 the same as the start, the box in the window throughout (the window doesn't
+  slide at all now: 286 of 320 rows and 248 of 320 columns kept leave no aligned slide). Shots panned east and south at
+  zoom 6: the far land past the window drawn by the tiles, no holes. In the south shot a darker diagonal band crosses the
+  grass. I can't tell whether it's a cloud's shadow or a tile edge (listed for the user).
+- The game's answer time (229-326 ms against the lab's 30-52 ms) isn't explained by slides: the bench's placements
+  ran with a still camera. The answer takes 1 GPU round (3 at most) in both, so the extra is the full game's queue in
+  front of each round's mapAsync. Left to phonefix / TL-17.
+- Tests: test/unit/streamkeep.test.ts (the user's box put in the window, even rows, the loud error at 256, the slides
+  allowed); fortresskeep.mjs (above); fortressoutside (the full game: all three sites built), lab fortressoutside on
+  `town` (90 sim s) and `walled` (181 sim s), fortressrefuse, fortresslanes passed; hallcheck 0 lost of 344.
+- Hacks and limits: while the fortress is up the window doesn't slide, so the sim's detail ends at the box's window.
+  The lab's 1.56x more columns run its sim slower (walled: x1.3-1.7 real time, was x2.2-2.8).

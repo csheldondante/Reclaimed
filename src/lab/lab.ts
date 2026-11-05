@@ -120,7 +120,7 @@ export class Lab {
   readonly recipe: LabRecipe;
   readonly town: LabTown;
   readonly view: LabPiecesView;
-  readonly window = stillWindow();
+  readonly window: FortressWindow;
   /** the lab steps the scene (lab.run): the display's frames wait */
   driving = false;
   /** the fortress is ready and the recipe's town stands */
@@ -133,6 +133,7 @@ export class Lab {
 
   constructor(private io: LabSceneIO) {
     this.recipe = labRecipe(io.params.get('lab'));
+    this.window = stillWindow(io.core.dims);
     const fx = io.fixture;
     if (this.recipe.fixture && !fx) throw new Error(`lab recipe ${this.recipe.name}: its fixture wasn't loaded`);
     this.town = fx ? LabTown.of(fx.town) : new LabTown(this.recipe.heap, this.recipe.homes);
