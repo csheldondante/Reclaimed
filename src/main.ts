@@ -20,6 +20,7 @@ import { startHitch } from './perf/start';
 import { pageBenchBoot, pageBenchDevice, pageBenchMode, pageBenchRun, pageBenchStandalone, pageBenchStartupError } from './perf/pagebench';
 import { bootMark } from './perf/boot-marks';
 import { freshStart } from './fresh-start';
+import { startReadStats } from './perf/readstats';
 import { benchGpu, benchGpuUp, benchLevel, benchLoadingNote, benchMode, benchSkip, benchStageNote, benchStandalone, benchWatchdog } from './perf/bench';
 
 // A few broad quality tiers (design doc §10), chosen explicitly — no auto-detection heuristics.
@@ -34,6 +35,8 @@ async function main() {
   const params = new URLSearchParams(location.search);
   // (round 128n: ?fresh=1 — the world's saved stores deleted before anything opens them; src/fresh-start.ts)
   await freshStart(params);
+  // (round 128n: ?readstats=1 — every GPU read counted by label: perf/readstats.ts)
+  startReadStats(params);
   // (low by default, for phones: round 54; ?q=medium|high on a desktop)
   const qualityName = params.get('q') ?? 'low';
   const quality = QUALITY[qualityName];

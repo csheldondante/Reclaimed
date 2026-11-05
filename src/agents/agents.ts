@@ -1200,7 +1200,7 @@ export class Agents implements SimSystem {
   async sync(): Promise<{ units: AgentState[]; events: AgentEvent[]; dropped: number }> {
     const n = this.count;
     const evBytes = (4 + EVENT_CAP * 8) * 4;
-    const tmp = this.device.createBuffer({ size: evBytes + Math.max(n, 1) * UNIT_BYTES, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const tmp = this.device.createBuffer({ label: 'agents sync', size: evBytes + Math.max(n, 1) * UNIT_BYTES, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
     const enc = this.device.createCommandEncoder();
     enc.copyBufferToBuffer(this.events, 0, tmp, 0, evBytes);
     if (n) enc.copyBufferToBuffer(this.units, 0, tmp, evBytes, n * UNIT_BYTES);

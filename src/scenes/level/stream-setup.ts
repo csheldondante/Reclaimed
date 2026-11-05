@@ -5,7 +5,6 @@ import { EventKind } from '../../sim/globals';
 import { PK } from '../../sim/particles';
 import { TownDebug } from '../../settle/debug';
 import { AgentUnits } from '../../units/agent-units';
-import { attachSim } from '../../api/world';
 import { Streamer, REGION, boxOf } from '../streamer';
 import { FarLand } from '../../atlas/far';
 import { GPUGEN } from '../../atlas/finish';
@@ -22,6 +21,7 @@ import { startFortress, staticsFor } from './fortress';
 import { ARRIVE_PREP } from './flags';
 import { worldSaveOf } from '../level';
 import type { LevelScene } from '../level';
+import { worldApiOf, worldQueryOf } from './world-api';
 
 /** sleep and the streamed window, with what follows its slides */
 export function attachStream(scene: LevelScene): void {
@@ -313,12 +313,12 @@ export function attachStream(scene: LevelScene): void {
       S.onSlide.push(() => epoch++);
       S.onWarp.push(() => epoch++);
       const terrainApi = () => {
-        const t = (scene.worldApi ??= attachSim(core)).terrain;
+        const t = worldApiOf(scene).terrain;
         if (!t) throw new Error('settlements: the world API has no terrain');
         return t;
       };
       const plants = () => {
-        const p = (scene.worldApi ??= attachSim(core)).plants;
+        const p = worldApiOf(scene).plants;
         if (!p) throw new Error('settlements: the world API has no plants');
         return p;
       };
@@ -327,12 +327,13 @@ export function attachStream(scene: LevelScene): void {
         origin: () => [S.origin[0], S.origin[1]],
         dims: { w: dims.w, h: dims.h },
         focus: () => [core.camera.target[0], core.camera.target[1]],
-        trees: (at, r) => plants().treesNear(at[0], at[1], r).map((t) => [t.x, t.y] as [number, number]),
+        // (round 128n, phonefix: the trees and the ground asked of the WorldQuery's pages, not the mirror on a timer)
+        trees: (at, r) => (worldQueryOf(scene).treesNear(at[0], at[1], r) ?? []).map((t) => [t.x, t.y] as [number, number]),
         fell: (at) => plants().fell(at[0], at[1]).then((t) => t?.logs ?? 0),
         take: (at, n) => terrainApi().take(at[0], at[1], n),
         put: (at, m, n) => terrainApi().put(at[0], at[1], m, n),
         epoch: () => epoch,
-        ready: (at) => (scene.worldApi ??= attachSim(core)).fresh && terrainApi().heightAt(at[0], at[1]) !== null,
+        ready: (at) => worldQueryOf(scene).heightAt(at[0], at[1]) !== null,
         budget: Number(host.params.get('townfolk') ?? ((host.quality.agentSweeps ?? 8) <= 2 ? 28 : 48)),
       });
       // (round 128i, FT-67) ?townview=0: the towns not drawn nor claimed (no settlements view) — the town bench's split of

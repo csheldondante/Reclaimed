@@ -263,6 +263,11 @@ export class Mirror {
     return this;
   }
 
+  /** (round 128n) whether the timer runs */
+  get running(): boolean {
+    return this.timer !== 0;
+  }
+
   stop(): void {
     if (this.timer) window.clearInterval(this.timer);
     this.timer = 0;

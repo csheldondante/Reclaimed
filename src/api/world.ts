@@ -47,7 +47,7 @@ export interface SimModules {
   refreshMs?: number;
 }
 
-const ALL: SimModules = { terrain: true, water: true, fire: true, wind: true, fx: true, plants: true, agents: true };
+export const SIM_ALL: SimModules = { terrain: true, water: true, fire: true, wind: true, fx: true, plants: true, agents: true };
 
 /**
  * A world, as data (docs/WORLD_API.md "Content"): what the game supplies;
@@ -117,6 +117,8 @@ export interface Sim {
   buildCrew(def: BuildCrewDef): BuildCrew;
   /** Read every module's mirror now (resolves when it's in). */
   refresh(): Promise<void>;
+  /** (round 128n) the mirror on its timer from now on (attachSim with refreshMs 0 never starts it) */
+  keepMirrored(ms?: number): void;
   /** performance.now() of the last mirror read (0: never). */
   readonly readAt: number;
   /** the last read is of the window as it is now (round 80: after a streamed window's slide, false — queries return null — until a new read lands) */
@@ -148,7 +150,7 @@ export function createSim(host: Host, def: WorldDef): Sim {
   if (def.season !== undefined) core.globals.season = def.season;
   if (def.yearLength !== undefined) core.yearLength = def.yearLength;
   if (def.places) core.places.load(def.places.plan, def.places.seed ?? 1);
-  const sim = attachSim(core, def.modules ?? ALL, def.warmup);
+  const sim = attachSim(core, def.modules ?? SIM_ALL, def.warmup);
   def.agents?.kinds?.forEach((k, i) => {
     if (!sim.agents) throw new Error('WorldDef: agent kinds given, but the agents module is off');
     sim.agents.defineKind(i, k);
@@ -159,7 +161,7 @@ export function createSim(host: Host, def: WorldDef): Sim {
 }
 
 /** The modules over a WorldCore a scene already runs (the level); `warm` settles it first (sim.ready). */
-export function attachSim(core: WorldCore, mods: SimModules = ALL, warm?: WarmupOpts): Sim {
+export function attachSim(core: WorldCore, mods: SimModules = SIM_ALL, warm?: WarmupOpts): Sim {
   // (round 80: a streamed window's slides make a read stale — WorldCore.windowEpoch)
   const mirror = new Mirror(core.host.gpu.device, () => core.windowEpoch);
   const terrain = mods.terrain ? new Terrain(core, mirror) : undefined;
@@ -199,6 +201,10 @@ export function attachSim(core: WorldCore, mods: SimModules = ALL, warm?: Warmup
     },
     // (round 100: `whole` — every column read now, not only those round the camera and what's kept fresh)
     refresh: (whole?: boolean) => mirror.refresh(whole),
+    /** (round 128n, phonefix) the mirror refreshed on its timer from now on (attached with refreshMs 0: never until this) — for the tools that read the whole window's ground: the cutaway, the sandbox's, a story run's */
+    keepMirrored: (ms = 250) => {
+      if (!mirror.running) mirror.start(ms);
+    },
     get readAt() {
       return mirror.readAt;
     },

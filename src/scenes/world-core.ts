@@ -389,7 +389,8 @@ export class WorldCore {
   private async readRaw(name: keyof WorldGpu): Promise<Float32Array> {
     const { device } = this.host.gpu;
     const src = this.world[name] as unknown as GPUBuffer;
-    const tmp = device.createBuffer({ size: src.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    // (round 128n: labelled, so a count of the reads by label — ?readstats=1 — names it)
+    const tmp = device.createBuffer({ label: `read ${String(name)}`, size: src.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
     const enc = device.createCommandEncoder();
     enc.copyBufferToBuffer(src, 0, tmp, 0, src.size);
     device.queue.submit([enc.finish()]);
@@ -427,7 +428,7 @@ export class WorldCore {
     const w = tex.width;
     const h = tex.height;
     const rowBytes = Math.ceil((w * 16) / 256) * 256;
-    const tmp = device.createBuffer({ size: rowBytes * h, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const tmp = device.createBuffer({ label: 'read texture', size: rowBytes * h, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
     const enc = device.createCommandEncoder();
     enc.copyTextureToBuffer({ texture: tex }, { buffer: tmp, bytesPerRow: rowBytes }, [w, h]);
     device.queue.submit([enc.finish()]);

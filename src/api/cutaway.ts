@@ -20,7 +20,12 @@
 //     dither.see('rider', fx, fy, fz); dither.update(dt)                 // the character's feet
 
 import type { Camera } from '../render/camera';
-import type { Terrain } from './terrain';
+import type { Layer } from './terrain';
+
+/** (round 128n) what the cutaway reads of the ground: a column's layers (api/terrain.ts Terrain; game/worldquery.ts WorldQuery) */
+export interface LayersSource {
+  layersAt(x: number, y: number): Layer[] | null;
+}
 
 type Solid = { z0: number; z1: number }[] | null;
 
@@ -29,7 +34,7 @@ class Sight {
   private cols = new Map<number, Solid>();
   private gen = -1;
   constructor(
-    private terrain: Terrain,
+    private terrain: LayersSource,
     private camera: Camera,
   ) {}
 
@@ -85,7 +90,7 @@ export class Slice {
   private at: number | null = null;
   private sight: Sight;
   constructor(
-    terrain: Terrain,
+    terrain: LayersSource,
     private camera: Camera,
   ) {
     this.sight = new Sight(terrain, camera);
@@ -145,7 +150,7 @@ export class Orbit {
   private look = 0;
   private sight: Sight;
   constructor(
-    terrain: Terrain,
+    terrain: LayersSource,
     private camera: Camera,
   ) {
     this.sight = new Sight(terrain, camera);
@@ -228,7 +233,7 @@ export class Dither {
   private boxes = new Map<string, [number, number, number, number, number, number]>();
   private sight: Sight;
   constructor(
-    terrain: Terrain,
+    terrain: LayersSource,
     private camera: Camera,
   ) {
     this.sight = new Sight(terrain, camera);

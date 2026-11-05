@@ -3,7 +3,6 @@
 // startHeroRun, startStory, playRaise, useRiverWorld. Each layer is loaded on demand and talks to the world through
 // the Sim API (api/world.ts).
 import { AgentUnits, RAISED_GROUP } from '../../units/agent-units';
-import { attachSim } from '../../api/world';
 import { MemoryWorldState } from '../../api/contracts/world-state';
 import { precacheWarp, warpReady, warpWindow } from '../../api/atlas-world';
 import { Dither, Orbit, Slice } from '../../api/cutaway';
@@ -15,6 +14,7 @@ import { ROW_H } from '../../world/lattice';
 import { terrainSystem } from './atlas-controls';
 import { CUTAWAY } from './flags';
 import type { LevelScene } from '../level';
+import { mirroredApiOf } from './world-api';
 
 /** ?play=<hero>: the play layer's sandbox on the atlas level (src/play/sandbox/sandbox.ts) */
 export async function startPlay(scene: LevelScene, id: string): Promise<void> {
@@ -24,7 +24,7 @@ export async function startPlay(scene: LevelScene, id: string): Promise<void> {
   const hero = id === '1' ? 'hoverbike' : id;
   if (hero !== 'hoverbike' && hero !== 'lich') throw new Error(`?play=${id}: no such hero (hoverbike, lich)`);
   const { PlaySandbox } = await import('../../play/sandbox/sandbox');
-  const api = (scene.worldApi ??= attachSim(scene.core));
+  const api = mirroredApiOf(scene);
   scene.editor?.setVisible(false);
   // (the level's own camera buttons, turn and score bar hidden while the sandbox has the screen: sandbox.css)
   scene.host.ui.classList.add('play-on');
@@ -79,7 +79,7 @@ export async function startSituationRun(scene: LevelScene, hero: string, opps = 
   const { PlaySession } = await import('../../play/session');
   scene.editor?.setVisible(false);
   scene.host.ui.classList.add('play-on');
-  const api = (scene.worldApi ??= attachSim(scene.core));
+  const api = mirroredApiOf(scene);
   const bounds: [number, number] = [dims.w, dims.h * ROW_H];
   const session = await PlaySession.start({ ui: scene.host.ui, api, units, camera: scene.core.camera, renderer: scene.core.renderer, device: scene.host.gpu.device, bounds, respawnAfter: null, raise: playRaise(scene, units) });
   const c = scene.core.camera.target;
@@ -158,7 +158,7 @@ export async function startPlannedRun(scene: LevelScene, hero: string): Promise<
   if (playId === 'hoverbike' || playId === 'lich') {
     const units = scene.units;
     if (!units) throw new Error('?runplan=: the hero plays against the atlas level units (the settlements are off: ?towns=0)');
-    const api = (scene.worldApi ??= attachSim(scene.core));
+    const api = mirroredApiOf(scene);
     const { PlaySession } = await import('../../play/session');
     const { RunPlayer } = await import('../../runplay/player');
     scene.host.ui.classList.add('play-on');
@@ -205,7 +205,7 @@ export async function startHeroRun(scene: LevelScene, id: string): Promise<void>
   if (!a || !scene.stream) throw new Error('?run= plays on the atlas level (?level=atlas)');
   const story = await loadRunStory(id);
   const world = await runWorld(story);
-  const api = (scene.worldApi ??= attachSim(scene.core));
+  const api = mirroredApiOf(scene);
   scene.editor?.setVisible(false);
   const at = scene.host.params.get('at');
   scene.heroRun = await startAtlasRun({
@@ -228,7 +228,7 @@ export async function startHeroRun(scene: LevelScene, id: string): Promise<void>
 /** ?story=<id>: the run, the dialog, the objective list and the story cameras over the world API (story/play.ts) */
 export async function startStory(scene: LevelScene, id: string): Promise<void> {
   if (id !== 'demo') throw new Error(`?story=${id}: no such story (demo)`);
-  const api = (scene.worldApi ??= attachSim(scene.core));
+  const api = mirroredApiOf(scene);
   const t = api.terrain!;
   const camera = scene.core.camera;
   // (the cutaway's dither and slice when ?cutaway=1 runs them, else the story's own)

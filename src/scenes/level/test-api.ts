@@ -4,7 +4,6 @@
 import { gatesOf } from '../../game/levels';
 import { Trial } from '../../game/trial';
 import { EventKind } from '../../sim/globals';
-import { attachSim } from '../../api/world';
 import { type WakeOptions } from '../../physics/wake';
 import { box, table } from '../../physics/shapes';
 import { boxMesh, rockMesh, type SkinMesh } from '../../physics/mesh';
@@ -22,6 +21,7 @@ import { impact } from './impacts';
 import { traitStationDriver } from './labs';
 import type { LevelScene } from '../level';
 import { captureTownFixture } from './town-fixture';
+import { mirroredApiOf } from './world-api';
 
 /** the base of window.reclaimed (made before the streamed world is set up, as attach always did) */
 export function testApi(scene: LevelScene) {
@@ -156,7 +156,7 @@ export function testApi(scene: LevelScene) {
     // the world as modules a game uses (docs/WORLD_API.md): api.terrain.heightAt(x, y), api.wind.gust(…), api.fx.burst('dust', …)
     // (`world` stays the GPU buffers, for tests)
     get api() {
-      return (self.worldApi ??= attachSim(core));
+      return mirroredApiOf(self);
     },
     scene: scene,
   };
@@ -169,7 +169,7 @@ export function exposeTestApi(scene: LevelScene, api: ReturnType<typeof testApi>
     // (round 128l, tooling) the behaviour lab's scenario API (src/lab/lab.ts; docs/TOOLING.md)
     lab: scene.lab?.api,
     // (round 117, flora) the flora contract (api/contracts/flora.ts), for scripted checks: reclaimed.flora().passability…
-    flora: () => (scene.worldApi ??= attachSim(scene.core)).flora,
+    flora: () => mirroredApiOf(scene).flora,
     // (round 88, the atlas level) settlements.near([x, y]) / settlement('s12') / live() / raid() / plan(id), its
     // events (built, died, raided); units: the Units contract (api/contracts/units.ts) on the agents
     settlements: scene.settlements,

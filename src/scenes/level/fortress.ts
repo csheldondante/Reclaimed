@@ -8,7 +8,6 @@ import { AgentUnits } from '../../units/agent-units';
 import { CHUNK } from '../../world/layout';
 import { cellPos } from '../../world/lattice';
 import { levelFrame } from './frame';
-import { attachSim } from '../../api/world';
 import { FortressReachGpu } from '../../fortress/reachgpu';
 import { ROW_H } from '../../world/lattice';
 import { Fortress } from '../../fortress/fortress';
@@ -26,6 +25,7 @@ import { SKIP_SPEED, SKIP_GRACE } from './flags';
 import { Dither } from '../../api/cutaway';
 import { LEVEL_H } from '../../build/town';
 import type { LevelScene } from '../level';
+import { worldApiOf, worldQueryOf } from './world-api';
 
 /**
  * (fortress slice 1, milestone 1) The town at the start becomes the player's fortress: pinned (live, no houses of its
@@ -76,7 +76,7 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
     // (round 128g: the view asks for the fortress's pieces every frame — uploaded again only when they're new)
     changed: () => {},
     // (round 128d, FT-26: the fortress's cells clear their trees — the plants module's clearing)
-    clearPlants: (x, y, r) => (scene.worldApi ??= attachSim(scene.core)).plants!.clear(x, y, r),
+    clearPlants: (x, y, r) => worldApiOf(scene).plants!.clear(x, y, r),
     // (round 128e, FT-48: Inspect on the town that was there)
     townAt: (x, y, z) => {
       const t = st.thingAt(rec.id, [x, y]);
@@ -136,7 +136,8 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
     build: () => {
       // (the world API attached: the agents get the terrain, so a load a builder drops — it falls, it's knocked down —
       // falls to the ground as the settlements' do; without it the agents' toss threw)
-      scene.worldApi ??= attachSim(scene.core);
+      worldApiOf(scene);
+      const wq = worldQueryOf(scene);
       const first = !scene.fortressLife;
       scene.fortressLife ??= new FortressLife(
         {
@@ -152,15 +153,16 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
             s.stock -= n;
           },
           // (milestone 3: settle/life.ts's IO — the plants' trees and fell, the terrain's take: all quiet edits)
-          trees: (at, r) => scene.worldApi!.plants!.treesNear(at[0], at[1], r).map((t) => [t.x, t.y] as [number, number]),
+          // (round 128n, phonefix: the trees and the ground's top asked of the WorldQuery's pages, not the world API's mirror)
+          trees: (at, r) => (wq.treesNear(at[0], at[1], r) ?? []).map((t) => [t.x, t.y] as [number, number]),
           fell: (at) => scene.worldApi!.plants!.fell(at[0], at[1]).then((t) => t?.logs ?? 0),
           dig: (at, n) => scene.worldApi!.terrain!.take(at[0], at[1], n).then((g) => g.amount),
           ground: (x, y) => scene.heightAt(x, y),
           // (round 128m, quarry: the layers' top, loose ground on it too — the surface buffer's z is the solid's: a pit
           // measured by it read a soil-covered column as not dug while its soil was taken)
-          top: (x, y) => (scene.worldApi!.fresh ? scene.worldApi!.terrain!.heightAt(x, y) : null),
+          top: (x, y) => wq.heightAt(x, y),
           speed: () => scene.speed,
-          groundRead: () => scene.worldApi!.readAt,
+          groundRead: () => wq.gen,
           // (round 128m, quarry) a pit's tier dug: its ground woken (slumping) and its walls judged (the stability check)
           settle: (x, y, r) => {
             core.sleep?.wake(x, y, r, 8, performance.now() / 1000);
@@ -305,7 +307,7 @@ export function pitView(scene: LevelScene, dt: number): void {
     // round, and the rim's ground in the box's corners showed its cut faces; render.wgsl pads a box by 0.5)
     best = { x: cx, y: cy, z: floor, r: r * 0.9, lo: [x0 - 1, y0 - 1, floor - 1], hi: [x1 + 1, y1 + 1, rim - 0.8] };
   }
-  const d = (scene.fortressPitCut ??= new Dither((scene.worldApi ??= attachSim(scene.core)).terrain!, cam));
+  const d = (scene.fortressPitCut ??= new Dither(worldQueryOf(scene), cam));
   if (best) {
     d.see('pit', best.x, best.y, best.z, best.r);
     d.surface('pit', best.lo, best.hi);
