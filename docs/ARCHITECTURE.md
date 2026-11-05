@@ -3789,6 +3789,11 @@ houses' doors, what of the fortress stands at the start). No atlas, no streamer,
   take the fortress's window (`staticsFor(scene, win)`), and the lab runs the rigid rock (`rockbodyFor`), whose
   External registry holds the claims. Before, nothing was claimed in the lab and units walked through its walls.
 
+  (round 128m, `townlab`) The `town` recipe is a fixture, not a function: `LevelDef.load` reads `data/lab/town.rclt`
+  (lab/townfixture.ts: the window round the user's start town as the game made it — columns, water, held rivers, sea,
+  the town's record and spots — named by GEN_VERSION) before the level is made; `LabTown.of` gives the fortress the
+  captured town. Captured by `scripts/labtown.mjs capture` through `reclaimed.townFixture()`, never read back in play.
+
 - **The fortress's start takes contracts, not the atlas** (`fortress/host.ts`): `startFortress(town, view, id, win)`
   reads a `FortressTownSource` (pin, spotsOf, thingAt, toWindow — the atlas's Settlements meets it; the lab's
   `LabTown`, lab/town.ts: a record, a heap, homes), a `FortressWindow` (origin, oz, the unwritten regions, the slide

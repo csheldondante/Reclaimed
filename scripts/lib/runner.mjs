@@ -112,6 +112,9 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
 
 /** this worktree's port: the same every run (the browser's caches are by origin), different from other worktrees' */
 export function basePort() {
+  // (round 128m, townlab: two worktrees' hashes met — Reclaimed-townlab's and -phonefix's both 6390, and a lab run went to
+  // the other's lab server. RECLAIMED_PORT gives a worktree a port of its own)
+  if (process.env.RECLAIMED_PORT) return Number(process.env.RECLAIMED_PORT);
   const n = parseInt(crypto.createHash('sha1').update(ROOT.toLowerCase()).digest('hex').slice(0, 6), 16);
   return 6100 + (n % 180) * 10;
 }

@@ -8,6 +8,8 @@ import { MAT } from '../world/materials';
 import { cellAt, cellPos, ROW_H } from '../world/lattice';
 import type { MapData } from '../world/mapgen';
 import type { StructureType } from '../api/contracts/fortress';
+import type { RiverMode } from '../sim/world-gpu';
+import { decodeTownFixture, type TownFixtureHeader } from './townfixture';
 
 type V2 = [number, number];
 
@@ -33,6 +35,11 @@ export interface LabRecipe {
   heap: V2;
   homes: V2[];
   town?: LabTownSpec;
+  /** (round 128m, townlab) its land is a fixture captured from the game (data/lab/<name>.rclt: lab/townfixture.ts) —
+   *  the ground, heap and doors above are then the fixture's */
+  fixture?: string;
+  /** how its rivers are kept (LevelDef.rivers): a fixture's are the atlas's, held at their table */
+  rivers?: RiverMode;
 }
 
 /** the lab's window: one fixed window, the plain levels' size */
@@ -104,6 +111,18 @@ export const LAB_RECIPES: Record<string, LabRecipe> = {
     heap: HEAP,
     homes: HOMES,
   },
+  town: {
+    // (round 128m, townlab; the user: "copy the land data around the town for your own fast load tests so you see the
+    // same issues I do") the window round the user's start town (?skipmenu=1&level=atlas&town=1&fortress=1&fresh=1),
+    // captured from the game: its land, its buildings in the columns, its rivers and sea, its heap, doors and gates
+    name: 'town',
+    blurb: "the user's start town: the atlas's window round it as the game made it (data/lab/town.rclt)",
+    ground: () => BASE,
+    heap: HEAP,
+    homes: HOMES,
+    fixture: 'town',
+    rivers: 'table',
+  },
   walled: {
     name: 'walled',
     blurb: "the flat plain with a small walled town already built round the heap (a gate on its east side): the atlas's starting town, small",
@@ -124,6 +143,22 @@ export const LAB_RECIPES: Record<string, LabRecipe> = {
     },
   },
 };
+
+/** where a fixture's file is served from (the build copies data/lab/*.rclt: lab/fixtures.ts) */
+const FIXTURE_URLS: Record<string, () => Promise<string>> = {
+  town: async () => (await import('../../data/lab/town.rclt?url')).default,
+};
+
+/** (round 128m) a recipe's land when it's a fixture (fetched and decoded), else null: the level generates it */
+export async function loadLabLand(recipe: LabRecipe): Promise<{ map: MapData; fixture: TownFixtureHeader } | null> {
+  if (!recipe.fixture) return null;
+  const url = FIXTURE_URLS[recipe.fixture];
+  if (!url) throw new Error(`lab recipe ${recipe.name}: no fixture file "${recipe.fixture}"`);
+  const res = await fetch(await url());
+  if (!res.ok) throw new Error(`lab recipe ${recipe.name}: its fixture didn't load (${res.status})`);
+  const { header, map } = await decodeTownFixture(new Uint8Array(await res.arrayBuffer()));
+  return { map, fixture: header };
+}
 
 export function labRecipe(name: string | null | undefined): LabRecipe {
   const r = LAB_RECIPES[name ?? 'flat'];

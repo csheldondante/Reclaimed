@@ -30,6 +30,8 @@ import { labRecipe, type LabRecipe, type LabTownSpec } from './recipes';
 import { LabTown, stillWindow } from './town';
 import { LabPiecesView } from './view';
 import type { FortressRaid } from '../fortress/raiders';
+import type { TownFixtureHeader } from './townfixture';
+import { ROW_H } from '../world/lattice';
 
 /** what the lab needs of the scene (scenes/level.ts startLab) */
 export interface LabSceneIO {
@@ -56,6 +58,8 @@ export interface LabSceneIO {
   tap(sx: number, sy: number): void;
   /** (m4) the person a tap picked and the follow (fortress/follow.ts) */
   follow(): FortressFollow | undefined;
+  /** (round 128m, townlab) the recipe's fixture's header, when its land was loaded from one (lab/townfixture.ts) */
+  fixture?: TownFixtureHeader;
 }
 
 /** a whole plan at once (lab.plan; a recipe's `town`) */
@@ -129,13 +133,28 @@ export class Lab {
 
   constructor(private io: LabSceneIO) {
     this.recipe = labRecipe(io.params.get('lab'));
-    this.town = new LabTown(this.recipe.heap, this.recipe.homes);
+    const fx = io.fixture;
+    if (this.recipe.fixture && !fx) throw new Error(`lab recipe ${this.recipe.name}: its fixture wasn't loaded`);
+    this.town = fx ? LabTown.of(fx.town) : new LabTown(this.recipe.heap, this.recipe.homes);
+    // (a fixture's sea, at its level as the game had it: past the window's edge the world is sea, so it doesn't drain)
+    if (fx) {
+      io.core.globals.seaZ = fx.seaZ;
+    }
     this.view = new LabPiecesView(io.device, io.core.renderer);
     io.startFortress(this.town, this.view, this.window);
     // (what reset puts back: the land as it opened)
     io.core.keepPristine();
     this.api = this.makeApi();
     void this.whenReady();
+  }
+
+  /** the ground's top at window world (x, y): the recipe's, or a fixture's columns as loaded */
+  ground(x: number, y: number): number {
+    if (!this.io.fixture) return this.recipe.ground(x, y);
+    const { w, h } = this.io.core.dims;
+    const cx = Math.max(0, Math.min(w - 1, Math.floor(x)));
+    const cy = Math.max(0, Math.min(h - 1, Math.floor(y / ROW_H)));
+    return this.io.core.map.surface[cy * w + cx];
   }
 
   /** each frame of the scene: the fortress's pieces */
@@ -322,7 +341,7 @@ export class Lab {
     const cam = this.io.core.camera;
     cam.target[0] = x;
     cam.target[1] = y;
-    cam.target[2] = this.recipe.ground(x, y);
+    cam.target[2] = this.ground(x, y);
     if (zoom) cam.zoom = zoom;
   }
 
@@ -479,7 +498,9 @@ export class Lab {
       look: (x: number, y: number, zoom?: number) => this.look(x, y, zoom),
       shot: (name: string) => this.shot(name),
       reset: () => this.reset(),
-      ground: (x: number, y: number) => this.recipe.ground(x, y),
+      ground: (x: number, y: number) => this.ground(x, y),
+      /** (townlab) the fixture's header (where it was captured, its town, its generator), or null */
+      fixture: this.io.fixture ?? null,
       /** the game's own objects, for what the API doesn't cover */
       fortress: () => this.fort(),
       life: () => this.io.life() ?? null,

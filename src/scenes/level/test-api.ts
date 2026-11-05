@@ -21,6 +21,7 @@ import { terrainSystem, worldAt } from './atlas-controls';
 import { impact } from './impacts';
 import { traitStationDriver } from './labs';
 import type { LevelScene } from '../level';
+import { captureTownFixture } from './town-fixture';
 
 /** the base of window.reclaimed (made before the streamed world is set up, as attach always did) */
 export function testApi(scene: LevelScene) {
@@ -175,6 +176,8 @@ export function exposeTestApi(scene: LevelScene, api: ReturnType<typeof testApi>
     units: scene.units,
     // (fortress slice 1) the fortress: plan (FortressPlan), town, paint/erase/setGate, cellAt/centre/ringCells, tool
     fortress: scene.fortress,
+    // (round 128m, townlab) the window round the start town as the lab's fixture (base64; scripts/labtown.mjs capture)
+    townFixture: () => captureTownFixture(scene),
     // (milestone 2) its builders once Build was pressed: stats (trips, built, starved), ids, book
     fortressLife: () => scene.fortressLife,
     // (round 128d) its built blocks' claims in the columns: claimed() per structure, stats

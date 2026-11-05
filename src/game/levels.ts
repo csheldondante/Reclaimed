@@ -15,7 +15,8 @@ import { generatePlayground, STATIONS, type Station } from '../levels/playground
 import { generateTraitlab, TRAITLAB_STATIONS } from '../levels/traitlab';
 import { generateNoiselab } from '../levels/noiselab';
 import { generateBestiary } from '../levels/bestiary';
-import { generateLab, labRecipe, LAB_DIMS } from '../lab/recipes';
+import { generateLab, labRecipe, loadLabLand, LAB_DIMS } from '../lab/recipes';
+import type { TownFixtureHeader } from '../lab/townfixture';
 import type { FlowKit } from '../flow/install';
 import type { RiverMode } from '../sim/world-gpu';
 import type { GateSpec } from '../world/kit';
@@ -66,6 +67,15 @@ export interface LevelDef {
   behaviourLab?: boolean;
   /** the warmup's ticks before the level opens (default the game's) */
   warmupTicks?: number;
+  /** (round 128m, townlab) land loaded rather than made, before the level is (the lab's `town` fixture): null — generate */
+  load?: (params: URLSearchParams) => Promise<LoadedLand | null>;
+}
+
+/** (round 128m) land a level loaded (LevelDef.load) and what came with it */
+export interface LoadedLand {
+  map: MapData;
+  /** the lab's town fixture's header (src/lab/townfixture.ts) */
+  fixture?: TownFixtureHeader;
 }
 
 export const LEVELS: LevelDef[] = [
@@ -215,6 +225,12 @@ export const LEVELS: LevelDef[] = [
     zMax: LAB_DIMS.zMax,
     behaviourLab: true,
     warmupTicks: 120,
+    // (round 128m, townlab: the `town` recipe's land is the user's start town, loaded from data/lab/; its rivers held at
+    // the atlas's table as in the game)
+    load: (params) => loadLabLand(labRecipe(params.get('lab'))),
+    get rivers() {
+      return typeof location === 'undefined' ? undefined : labRecipe(new URLSearchParams(location.search).get('lab')).rivers;
+    },
   },
   {
     id: 'sandbox',

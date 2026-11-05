@@ -28,6 +28,7 @@ columns. Recipes (src/lab/recipes.ts):
 | `hill` | the plain with a broad hill east of the heap (about 1 in 5 on its flanks: stepped lanes) |
 | `valley` | two slopes down to a river east of the town, a lake at its foot |
 | `plateau` | (round 128m) a dry plain 44 m up the window (the others lie at 10): room under it for a quarry's pit (scripts/lab/quarry.mjs, quarrygif.mjs; scripts/lab-gif.mjs joins a scenario's shots into a GIF) |
+| `town` | (round 128m) **the user's start town**: the window the game made round it on the user's link (`?town=1&fortress=1&fresh=1&q=low`), loaded from `data/lab/town.rclt`: its land, rivers and sea, its buildings in the columns (solid, not drawn), its heap, doors and gate posts; the fortress's box where the game has it. Capture it again with `node scripts/labtown.mjs capture` when its test says it's stale (GEN_VERSION) |
 | `walled` | the flat plain with a small walled town already standing round the heap, its gate east (the atlas's starting town, small) |
 
 A recipe is a few lines: the ground's height as a function, water, springs and woods, the heap (the stores until a
@@ -52,6 +53,8 @@ warehouse stands) and the houses' doors, and what of the fortress stands at the 
 | `heap`, `recipe`, `dims`, `ground(x, y)`, `fortress()`, `life()`, `units` | where things are; the game's own objects for what the API doesn't cover |
 
 ### The runner (`scripts/lab.mjs`)
+
+(round 128m) A worktree's ports come from a hash of its path, and two can meet: set `RECLAIMED_PORT` (e.g. 7540) to give yours its own.
 
 ```
 node scripts/lab.mjs run scripts/lab/example.mjs [--recipe hill] [--args '{"seconds":40}'] [--out dir] [--reload]
