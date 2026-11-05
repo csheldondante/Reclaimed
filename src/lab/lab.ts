@@ -44,8 +44,9 @@ export interface LabSceneIO {
   speed(n?: number): number;
   /** one frame of the scene, driven by the lab (the display's frames return at once while `driving`) */
   frame(now: number, dt: number): void;
-  /** the land put back as the level opened (WorldCore.restoreChunks over the window) */
-  restoreLand(): void;
+  /** the land put back as the level opened (WorldCore.restoreChunks over the window); (round 128m) resolves once the
+   *  world API's mirror has read it (a quarry measured its pit on the last run's ground) */
+  restoreLand(): void | Promise<void>;
 }
 
 /** a whole plan at once (lab.plan; a recipe's `town`) */
@@ -77,6 +78,8 @@ export interface LabSnapshot {
   note: string | null;
   refusal: string | null;
   stats: Record<string, number> | null;
+  /** (round 128m, quarry) each quarry's pit: the tiers the plan lays, the tier being dug and the cut into it (m) */
+  pits: { id: number; tiers: number; tier: number; cut: number }[];
 }
 
 const DT = 1 / 60;
@@ -363,6 +366,10 @@ export class Lab {
       note: f.note,
       refusal: f.refusal,
       stats: life ? { ...life.stats } : null,
+      pits: f.plan.structures().filter((s) => s.type === 'quarry').map((s) => {
+        const d = life?.quarry.stateOf(s.id);
+        return { id: s.id, tiers: f.plan.pitOf(s.id)?.tiers ?? 0, tier: d?.tier ?? 0, cut: d?.cut ?? 0 };
+      }),
     };
   }
 
@@ -384,7 +391,7 @@ export class Lab {
     for (const k of Object.keys(st)) delete st[k];
     for (const [k, v] of Object.entries(START_STORES)) st[k] = { stock: v.stock, rate: 0 };
     f.note = null;
-    this.io.restoreLand();
+    await this.io.restoreLand();
     this.io.speed(0);
     this.sims('all');
     this.simT = 0;

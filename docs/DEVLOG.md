@@ -17422,3 +17422,56 @@ private ones. The `world` and `metalSolver` getters stay on the class.
 fortressoutside ok; the tilegate goldens (`&zoomfloor=0`, baselines of 64217ba): 0-0.3% of pixels changed at every
 desktop, phone and run view but desktop z1.3 (4.5%: tiles arriving at the screen's edges, unfloored, as before) and
 w384 (2-3%, its baselines written by an earlier gate run, not a clean base).
+
+## 2026-11-04 — round 128m (`quarry`): deep quarries — the miners grow the pit tier by tier (V128-11)
+
+**Why.** The user (128e/128f): "How deep can the pit grow? ... 50M-300M deep pits with ramps"; "make the quary area at
+the top and let the units just naturally grow it. Depth is capped by how many tiers of ramp down the side can be built
+with the tiles"; 2026-11-04: "Units working, really digging the map". Milestone 3's pit was a bowl 6 m deep at most
+(ECON.pitMax) dug at random round each cell's middle.
+**The rule** (fortress/pit.ts, pure): rings in from the footprint's edge; tier k (4 m a tier, a level) is ring k and
+in; ramp k runs down two cells (ECON.pitRampCells) of ring k-1 and ends where ramp k+1 starts — one road spiralling
+down; the depth is the most tiers whose ramps fit (a search over the spirals; the start nearest the stores among the
+deepest). Measured on the fortress's grid (cells ~5.5 m): a disc of r 16 m holds 3 tiers (12 m), r 30 5 (20 m), r 45
+8 (32 m), r 60 11 (44 m), r 90 17 (68 m), the whole 240 m box 21 (84 m); 1-22 ms a footprint. 50 m wants a pit about
+130 m across; 300 m doesn't fit the fortress's box (BACKLOG QY-3: the tier's height and ramp length are the knobs).
+The pit is laid as **negative levels** in runs per cell (build/runs.ts takes them now): FortressPlan.pit, kept apart
+from the blocks' `levels` so nothing reading the blocks meets them; Fortress.dug the tiers dug.
+**Digging** (fortress/quarry.ts): a tier is cut 1 m at a time over every column of it (its shelves and its ramp) so the
+ramp from the shelf above to the floor going down is walkable the whole time (a cell dug whole left the miners in a
+4 m hole with no ramp yet: the unit test's walker, reach.ts STEP, checks the rim-to-floor walk every few rounds). Found
+on the way, in the lab: (1) the surface buffer's z is the solid's top — the lab's 2 m of soil read as undug while it
+was taken, so the miners measured the pit 2 m low and the ramp's top was a 2 m step nobody could climb (all eight
+stuck on the floor with their loads); the quarry reads the layers' top (world API terrain.heightAt, loose ground
+included) and starts ramp 1 at the ground at its top. (2) Takes in flight passed the world API's 64 and threw from a
+miner's step: 40 at most now. (3) A miner arriving at a goal that had dropped out of the field's six seeds never
+gathered: the seeds are the cells with ground left, nearest the ramp's foot first, so they stay put. (4) The lab's
+reset left the mirror and Fortress.dug from the last run (a pit "done" at once): reset waits for a mirror read, a cell
+no pit holds keeps no dug tiers, and a quarry is measured on two reads made after it was ready. Pace (8 miners, a dig
+every 0.5 s of 6 columns, 1 m each): a 30-cell pit (2 tiers) in ~150 sim s, 42 cells (3 tiers) in ~250 (lab, 16x).
+The walls of a tier done are woken (Sleep.wake, Integrity.markDirty: the stability check); the miners haul up the
+ramps (the agents' field) and the quarry's road comes to the ramp's top (lanesOf entries); the quarry's props stand on
+the rim.
+**The world's floor** (the user: "lower the floor and add a thick interval of stone below the whole world"; main's
+final design: the window already slides in z). WORLD_FLOOR -300 is a rule in layout.ts splitColumn, not data: a
+column's bottom that starts at z 0 or under goes on down to it; nothing of it is stored outside the window (an
+explicit interval a column would have been ~262k more objects for a 512² window and 16 bytes a column in every saved
+region); only a column dug under z 0 and then out of the window keeps a metre. Nothing stored changes, so no save
+version moves. The streamer slides down past z 0 when the ground under the camera now is under 24 and lower than the
+land's own (a pit — the sea floor near z 0 still slides nothing), never under the floor. Fortress.slidZ keeps the
+fortress's window-z heights (the ground as first read, the Town's floors) through a slide; the quarry keeps fortress
+z. Checked (grep of oz and z clamps): two places held the window at z 0 or over — slide.ts's `S.oz > 0` and warp.ts's
+`oz < 0` throw; both go down to WORLD_FLOOR now. The kernels' clamps are on stored (window) z, which is fine.
+**Seeing in.** Judged in the lab at zoom 8 and 14 with and without a cut (api/cutaway.ts Dither round the floor's
+middle, the pit's box): the pit's sides step in at ~34 degrees, the view comes down at 30, so the near walls hide a
+strip a quarter of the depth wide and the floor and its miners read without help; the cut showed the solid under the
+near rim as a flat grey section that read as a second floor. Off by default (`?pitcut=1`). The pit still reads as a
+dark hollow more than as benches (QY-8).
+**Checks.** src/fortress/pit.test.ts (rings, tiers grow with the footprint, too narrow none, the cap, the ramps one
+road, depthAt, negative runs round-trip), src/fortress/quarry.test.ts (tiers in order to the plan's depth, floor flat,
+shelves at their tier, rim untouched, a walker gets down all the way, nothing dug till built, a slide in z), src/world/
+floor.test.ts (the floor rule through slides down and back up). The lab: `plateau` recipe (ground 44 m up the window),
+scripts/lab/quarry.mjs (the pit reaches its tiers, miners walk in; r 15: 2 tiers in 150 sim s), scripts/lab/
+quarrygif.mjs + scripts/lab-gif.mjs (shots to a GIF). No perf bench (the GPU is shared); BACKLOG QY-5 lists what to
+bench on the phone.
+

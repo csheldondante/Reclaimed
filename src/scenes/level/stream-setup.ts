@@ -73,6 +73,8 @@ export function attachStream(scene: LevelScene): void {
     if (a && a.atlas.p.zTop > dims.zMax && core.renderer.enableBand(a.atlas.p.zTop)) scene.stream.refreshBand();
     // (round 79) the sea past the window's edge: the sea in it stays
     if (a) core.globals.seaZ = a.atlas.p.sea - scene.stream.oz;
+    // (round 128m, quarry) a slide in z down follows the ground as it is now too: a deep pit looked into
+    if (a) scene.stream.groundNow = (x, y) => scene.heightAt(x, y);
     // (round 80) sleep and wake: what's still sleeps, what the player and the world's events touch wakes
     if (a && host.params.get('sleep') !== '0') {
       scene.sleep = new Sleep(dims.w / CHUNK, dims.h / CHUNK, scene.core.ring);

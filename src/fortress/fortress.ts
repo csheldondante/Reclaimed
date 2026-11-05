@@ -24,6 +24,7 @@ import { cutWarnLine, reachWhyLine, variantLine, wouldCutLine, type ReachWhy, ty
 import { LANE_DEFAULTS, laneGraph, lanesOf, roadShapesOf, type LaneOpts, type Lanes } from './lanes';
 import { nearestNode, reached, subgraph, type RoadGraph } from '../agents/roadgraph';
 import { packRoadShapes } from '../agents/roads';
+import { CellRuns } from '../build/runs';
 
 /** (milestone 3) A block taken out of the plan: its type, and whether it stood (Erase gives back part of its cost). */
 export interface Erased {
@@ -150,6 +151,15 @@ export class Fortress {
   private laneOptsNow: LaneOpts = { ...LANE_DEFAULTS };
   /** the ground's top at a box column */
   private readonly groundOfCol: (col: number) => number;
+  /** (round 128m) the ground as first read, a box column (window z then: groundOfCol less zShift since) */
+  private readonly firstRead: Float32Array;
+  /**
+   * (round 128m, quarry) the window's slides in z since the fortress was made (m, summed): a height in the fortress's
+   * own z is its window z plus this — what must keep through a slide (a pit's reference: quarry.ts) is kept so
+   */
+  zShift = 0;
+  /** (round 128m, quarry; V128-11) the quarries' pits as dug: whole tiers' levels (negative: FortressPlan.pit's) */
+  readonly dug: CellRuns;
 
   constructor(readonly box: FortressBox, private io: FortressIO, seed = 7) {
     if (box.origin[1] & 1) throw new Error('fortress box: its row origin must be even (the lattice\'s odd-row shift)');
@@ -157,7 +167,7 @@ export class Fortress {
     // (round 128d) the ground as it was before the fortress stood on it, kept a column the first time it's read: what's
     // built is claimed in the columns (claims.ts), and the surface read after it is the wall's top, not the ground —
     // a block's foot (solid.ts) and a cell planned beside it (Town.base) would stand on the wall
-    const kept = new Float32Array(box.w * box.h).fill(NaN);
+    const kept = (this.firstRead = new Float32Array(box.w * box.h).fill(NaN));
     this.groundOfCol = (col) => {
       if (!Number.isNaN(kept[col])) return kept[col];
       const [x, y] = this.boxToWindowXY(col);
@@ -172,6 +182,15 @@ export class Fortress {
     }, { grid });
     this.plan = new FortressPlan(grid);
     this.grid = grid;
+    this.dug = new CellRuns(grid.count);
+    // (round 128m) a quarry's ramp starts on its edge nearest the stores (the roads come in there)
+    this.plan.pitPrefer = (c) => {
+      const s = this.storesAt();
+      if (!s) return c;
+      const [sx, sy] = this.toBox(s[0], s[1]);
+      const [x, y] = grid.centre(c);
+      return Math.hypot(x - sx, y - sy);
+    };
     this.status = { people: 0, jobs: {}, workers: new Map(), made: new Map(), ripe: new Map(), full: false, hungry: false };
   }
 
@@ -267,7 +286,7 @@ export class Fortress {
       const gates = this.io.townGates?.() ?? [];
       const heap = this.io.townHeap?.();
       const roots = (gates.length ? gates : heap ? [heap] : []).map(([x, y]) => this.toBox(x, y));
-      this.lanesMemo = lanesOf(this.plan, g, this.ways(), ground, this.laneOptsNow, blocked, roots);
+      this.lanesMemo = lanesOf(this.plan, g, this.ways(), ground, this.laneOptsNow, blocked, roots, (id) => this.pitEntry(id));
     }
     return this.lanesMemo;
   }
@@ -348,6 +367,35 @@ export class Fortress {
     const [bx, by] = cellPos(ox, oy);
     const [zx, zy] = cellPos(0, 0);
     return [x + (bx - zx), y + (by - zy)];
+  }
+
+  /** (round 128m) a box column's middle in window world */
+  colXY(col: number): [number, number] {
+    return this.boxToWindowXY(col);
+  }
+
+  /**
+   * (round 128m, quarry) The window slid dz in z (its oz up dz): every height the fortress keeps in window z moves down
+   * dz — the ground as first read and the Town's floors — and zShift keeps the sum (quarry.ts measures in it).
+   */
+  slidZ(dz: number): void {
+    if (!dz) return;
+    this.zShift += dz;
+    for (let i = 0; i < this.firstRead.length; i++) if (!Number.isNaN(this.firstRead[i])) this.firstRead[i] -= dz;
+    this.town.shiftZ(-dz);
+    this.lanesMemo = null;
+    this.slid();
+    // (the pieces are made again: their z is the window's)
+    for (const h of this.onChange) h();
+  }
+
+  /**
+   * (round 128m, quarry) Where a quarry's pit meets the roads (box frame): the outer side of the cell its ramp starts
+   * on — the cell and the side; null: no pit.
+   */
+  pitEntry(id: number): { cell: number; side: number } | null {
+    const p = this.plan.pitOf(id);
+    return p && p.tiers ? { cell: p.top, side: p.topSide } : null;
   }
 
   private boxToWindowXY(col: number): [number, number] {
@@ -970,6 +1018,8 @@ export class Fortress {
         // (a built block erased from the plan comes down at once: taking down is a later milestone's work)
         if (!want && this.town.has(c, l)) this.town.remove(c, l);
       }
+      // (round 128m: a cell no pit holds any more keeps no dug tiers — its quarry erased; the ground stays as dug)
+      if (!this.plan.pit.any(c)) this.dug.clearCell(c);
       // (structures folded into one: the Town's runs take the plan's owner)
       this.town.plans.ownAll(c, owner, type);
       this.town.built.ownAll(c, owner, type);

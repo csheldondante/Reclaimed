@@ -27,6 +27,26 @@ One commit per file, no behaviour change (gates: typecheck, unit, GPU, hallcheck
 | MS-7 | Seen while moving code (not touched: no edits in a move): doc comments that sit above the wrong member in LevelScene — the runsit `?runplan=` comment above `playRaising` (belongs to `startSituationRun`), the placeModel comment above `waker` (belongs to `placeModel`) | S | open |
 | MS-8 | The split classes' fields lost `private` (their folders' modules read them). A narrower contract (a state interface per class, or the modules taking only what they use) would win the encapsulation back | M | open |
 
+## Round 128m (2026-11-04, session 5, `quarry`) — deep quarries (V128-11)
+
+The user (DECISIONS 128e/128f): "How deep can the pit grow? Can we use the same tile system extended in the negative
+direction ... 50M-300M deep pits with ramps"; "make the quary area at the top and let the units just naturally grow it.
+Depth is capped by how many tiers of ramp down the side can be built with the tiles (or elevators if you have the
+tech)"; 2026-11-04: "Units working, really digging the map"; on the floor: "Can we just lower the floor and add a thick
+interval of stone below the whole world? It's essentially free right?"
+
+| id | item | size | status |
+|---|---|---|---|
+| V128-11 | Deep quarries: the footprint painted at the surface, the miners grow the pit down tier by tier, a ramp a tier down the sides; the depth = the tiers whose ramps fit in the footprint (fortress/pit.ts, replaces ECON.pitMax); the pit as negative levels in the runs per cell (FortressPlan.pit, Fortress.dug); miners dig (fortress/quarry.ts) and haul up the ramps, the roads come to the ramp's top; each tier's walls woken for the stability check; the near walls dithered out when the camera looks into a pit; the world's floor at -300 (a rule in layout.ts splitColumn) and the window sliding down past z 0 into a pit | L | done (round 128m quarry commit) |
+| QY-1 | Elevators (the user: "or elevators if you have the tech"): a shaft in the pit's side instead of the ramps — deeper pits in a smaller footprint | M | open |
+| QY-2 | Pumps: rain fills a pit (allowed now); pumps to drain it | M | open |
+| QY-3 | The depth the rule gives, measured (TownGrid seed 7, cells ~5.5 m, tiers 4 m, ramps 2 cells): a disc r 16 m 3 tiers (12 m), r 30 5 (20 m), r 45 8 (32 m), r 60 11 (44 m), r 90 17 (68 m), the fortress's whole 240 m box 21 (84 m). 50 m wants a pit ~130 m across; 300 m doesn't fit the fortress's box. Knobs: ECON.pitRampCells, the tier's height (a level; two levels a tier would double it — ramps 8 m over 11 m, steep but under the agents' STEP) — the user's call | S | asked |
+| QY-4 | Rough: a quarry's stone is still the economy's (a load's work, ECON.haul) — not the volume dug; the ground taken is gone (not heaped at the stores, no spoil heaps); ore a share, no deposits; the pit's ramps aren't drawn as pieces (the dug ground is the ramp); a miner with nothing in reach walks on (field re-seeds every JobBoard turn the cells change) | S | open |
+| QY-5 | Phone: the miners' takes (40 in flight, each its own exact edit and readback — sim/world-gpu.ts EDIT_TAGS 64 shared with every unit's take and put); the CPU scan of a tier's columns every JobBoard turn (~1,700 columns for a 30 m pit, ~10k for the whole box: a few ms); pitView's line-of-sight (api/cutaway.ts Sight, the layers' mirror) every frame while a pit is looked at — bench before the phone sees big pits | S | open |
+| QY-6 | One view holding more than the window's height (zMax 504 in the atlas): a pit floor at -200 beside a 440 m peak — the peak's top is out of the window while the pit is looked into (the sparse cz chunks, storage phase 3) | M | open |
+| QY-8 | Readability (judged in the lab's shots at zoom 11): the pit reads as a dark hollow — its shelves and ramps don't stand out (the terrain's shading, the stone's dark albedo, the sun's shadow on the far side); the cut-away (`?pitcut=1`, api/cutaway.ts Dither round the floor) showed the solid under the near rim as a grey section and is off by default: the near walls hide only a strip of the floor (sides ~34 degrees, the view 30). Ideas: a lighter stone on the shelves' tops, edge lines along the benches, the ramp drawn as a track piece | S | open |
+| QY-7 | The fortress's own heights after a slide in z (Fortress.slidZ, Town.shiftZ): checked in unit tests, not yet in the atlas game with a real slide (a pit under z 24 of the window) | S | open |
+
 ## Round 128l (2026-11-04, session 5, `tooling`) — the behaviour lab: faster iterations (docs/TOOLING.md)
 
 The user: "Let's invest in some tooling to speed up the development processes."

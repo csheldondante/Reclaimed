@@ -14,7 +14,7 @@
 // Storage is chunked: the map is split into CHUNK×CHUNK column chunks and each
 // chunk has its own slot stride K (as recommended in the handoff: most chunks
 // need few layers, ruins need more). A chunk table maps chunk → (offset, K).
-import { MATERIALS, MatState } from './materials';
+import { MAT, MATERIALS, MatState } from './materials';
 
 export const CHUNK = 16;
 /** Hard upper bound on K: shaders keep a column in a fixed local array this big. */
@@ -94,6 +94,17 @@ export const sfPack = (z: number, mat: number, n = 0) => (Math.min(Math.round(Ma
 export const Z_LIMIT = 511;
 /** u32 words a column of the physics voxels' occupancy (common.wgsl PHYS_COL_WORDS) */
 export const PHYS_COL_WORDS = 16;
+
+/**
+ * (round 128m, `quarry`; the user: "Can we just lower the floor and add a thick interval of stone below the whole world?
+ * It's essentially free right?") The world's floor (world z). A column's bottom interval reaches down to it: a rule,
+ * not data — a bottom that starts at or under z 0 (where the generators start every column) goes on down to here as
+ * stone (its own material if solid). Nothing is shifted (sea level, clouds and every height stay put) and nothing more
+ * is stored: `splitColumn` lays it in when a window holds world z under a column's stored bottom (a deep pit looked
+ * into slides the window down: streamer slide.ts), and keeps none of it outside. 300 m under the lowest ground the
+ * atlas makes (its sea floor near z 0): the user's "50M-300M deep pits".
+ */
+export const WORLD_FLOOR = -300;
 
 /**
  * (round 100) A streamed window's height over a world `zTop` high: all of it and a margin for what's built on its
@@ -234,8 +245,25 @@ export function splitColumn(col: Interval[], oz: number, zMax: number): { inside
   const inside: Interval[] = [];
   const outside: Interval[] = [];
   const hi = oz + zMax;
-  for (const iv of col) {
-    if (iv.z0 < oz) outside.push({ z0: iv.z0, z1: Math.min(iv.z1, oz), mat: iv.mat });
+  // (round 128m) the bottom reaches the world's floor (WORLD_FLOOR): its own material if solid, else stone under it
+  const b = col[0];
+  if (b && b.z0 <= 1e-3 && b.z0 > WORLD_FLOOR) {
+    col = MATERIALS[b.mat]?.state === MatState.Solid ? [{ ...b, z0: WORLD_FLOOR }, ...col.slice(1)] : [{ z0: WORLD_FLOOR, z1: b.z0, mat: MAT.Stone }, ...col];
+  }
+  for (let k = 0; k < col.length; k++) {
+    const iv = col[k];
+    if (iv.z0 < oz) {
+      const z1 = Math.min(iv.z1, oz);
+      if (k > 0 || iv.z0 > WORLD_FLOOR) outside.push({ z0: iv.z0, z1, mat: iv.mat });
+      // (the floor's part under the window: none kept where something at z 0 or lower goes on from it — the window's
+      // bottom, or the next interval — joined again, that's the bottom and the floor's under it once more; else kept
+      // from z 0, or a metre of it under z 0: a column dug under z 0 out of the window)
+      else {
+        const next = col[k + 1];
+        const goesOn = (z1 >= oz - 1e-4 && oz <= 0) || (z1 === iv.z1 && z1 <= 1e-3 && !!next && Math.abs(next.z0 - z1) < 1e-4);
+        if (!goesOn) outside.push({ z0: Math.max(iv.z0, Math.min(0, z1 - 1)), z1, mat: iv.mat });
+      }
+    }
     if (iv.z1 > oz && iv.z0 < hi) inside.push({ z0: Math.max(iv.z0, oz) - oz, z1: Math.min(iv.z1, hi) - oz, mat: iv.mat, aux: iv.aux });
     if (iv.z1 > hi) outside.push({ z0: Math.max(iv.z0, hi), z1: iv.z1, mat: iv.mat });
   }

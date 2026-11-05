@@ -181,6 +181,12 @@ export class Streamer {
    *  stands on it — a giant's point under the camera isn't where the land is) */
   readonly ground: Float32Array;
   /**
+   * (round 128m, quarry) the ground's top now under the camera (window z): a slide in z down follows the lower of it and
+   * `ground` — a deep pit looked into (dug since the land came in) slides the window down to it, never under the
+   * world's floor (layout.ts WORLD_FLOOR). Null: `ground` alone.
+   */
+  groundNow: ((x: number, y: number) => number) | null = null;
+  /**
    * (hybrid) what the hybrid renderer asks of each window column (scenes/hybrid.ts): `relief` 1 where something
    * stands on the ground or is cut into it (a form: the top off the ground's own by more than RELIEF_FORM);
    * `gapTop` the highest roof over a gap between its runs (world z; -Infinity: none — a cave, an overhang, a

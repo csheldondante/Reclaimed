@@ -95,6 +95,15 @@ export const LAB_RECIPES: Record<string, LabRecipe> = {
     heap: HEAP,
     homes: HOMES,
   },
+  plateau: {
+    // (round 128m, quarry: the lab's window holds z 0-64 and never slides — a pit needs ground high in it to go down)
+    name: 'plateau',
+    blurb: 'a dry plain 44 m up the window (the others lie at 10): room under it for a quarry pit about ten tiers deep',
+    ground: () => 44,
+    woods: wood([LAB_MID[0] + 70, LAB_MID[1] - 60], 22),
+    heap: HEAP,
+    homes: HOMES,
+  },
   walled: {
     name: 'walled',
     blurb: "the flat plain with a small walled town already built round the heap (a gate on its east side): the atlas's starting town, small",

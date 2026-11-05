@@ -3573,6 +3573,40 @@ The building rule (the user's): select what (a structure type), then plan it wit
   `water` take the window as it is now and shift back (outside what was read: no solid, no water); every slide reads
   again. `RoadStamp.set` / `RoadRide.encodeHops` return true only for new shapes / a new network (an offset alone needs
   no relax: the fields slide with the window).
+- **Round 128m (deep quarries, `quarry`, V128-11).** The player paints a quarry's footprint at the surface; its miners
+  grow the pit down. `fortress/pit.ts` (pure, tested): `ringsOf` (steps in from the footprint's outside), `pitOf(grid,
+  cells, {rampCells, maxTiers, prefer})` → `Pit` {ring, tiers, ramps, top, topSide}: tier k is ring k and in, k levels
+  (LEVEL_H 4 m) down; ramp k runs down `rampCells` (ECON.pitRampCells, 2) consecutive cells of ring k-1 and ends on a
+  ring-k cell where ramp k+1 starts (one road spiralling down); the depth is the most tiers whose ramps fit (a search
+  over the spirals, budget 20k steps, the start nearest the stores — `FortressPlan.pitPrefer` — among the deepest).
+  ECON.pitMax is gone. `layPit` writes it as **negative levels** in a `CellRuns` (build/runs.ts now takes negative
+  levels; `highest`/`lowest` return null for none): `FortressPlan.pit` (a ring-d cell holds -1..-min(d, tiers), type
+  PIT_SHELF; a ramp k cell also -k, PIT_RAMP), laid again whenever a quarry's footprint changes (paint, erase, fold) —
+  apart from `levels`, so nothing that reads the blocks meets them. `Fortress.dug` (CellRuns) holds the tiers dug;
+  `depthAt(pit, geo, cell, x, y)` a column's depth when whole (a ramp cell: from its high side's middle to its low
+  side's). **Digging** (`fortress/quarry.ts` QuarryDig, owned by FortressLife; every JobBoard turn `update`): once
+  every cell of a footprint is built, the tier being dug is cut down ECON.pitStep (1 m) at a time over all its columns
+  (ring k and in, and ramp k), so the ramp from the shelf above to the floor going down stays walkable; a column's goal
+  is the reference (the lowest top of the footprint as the miners found it — the layers' top, loose ground included:
+  `FortressLifeIO.top`, world API terrain.heightAt; the surface buffer's z is the solid's) less its depth, ramp 1 from
+  the ground at the ramp's top (`top0`). A miner's dig (every ECON.digSec 0.5 s) takes ECON.dig (1 m) off ECON.digCols
+  (6) columns within 7 m still over their goal (world API terrain.take, exact, quiet; 40 in flight at most), the
+  surface read lagging (`groundRead`: a take is remembered over two newer mirror reads). A tier done: its levels into
+  `Fortress.dug`, the pit's ground woken (`FortressLifeIO.settle`: Sleep.wake + Integrity.markDirty — its walls go
+  through the stability check, slumps are dug out again), the next tier. The miners' field (F.quarry) is seeded on
+  the cells with ground left, nearest the ramp's foot first (`QuarryDig.spots`); a miner with nothing in reach goes on
+  to another, its load's work kept (`Work.moved`). Hauling: up the ramps by the agents' field; the lanes'
+  (`lanesOf(..., entries)`) road to a quarry comes to its ramp's top edge (`Fortress.pitEntry`). The quarry's props
+  stand on the rim (ring 0 off the ramp). **The window's z** (`Fortress.zShift`, `slidZ(dz)`: the ground as first
+  read and the Town's floors — `Town.shiftZ` — follow a slide in z; pit heights are kept in fortress z = window z +
+  zShift). **Seeing in** (`scenes/level/fortress.ts pitView`): while the camera's target is over a pit dug 6 m or more,
+  api/cutaway.ts Dither keeps its floor's middle seen — what stands in front of it toward the eye in the pit's box
+  (the footprint, floor to just under the rim) dithers out as an iris, only while the floor is hidden (`?pitcut=0`:
+  off). **The world's floor** (`world/layout.ts WORLD_FLOOR` -300): a rule in `splitColumn`, not data — a column's
+  bottom starting at z 0 or under goes on down to it (its material if solid, else stone); none of it is kept outside
+  the window unless a column was dug under z 0 out of it (a metre kept). The streamer slides the window down past z 0
+  when the ground under the camera now (`Streamer.groundNow`, the level's surface read) is under 24 and lower than the
+  land's own (a pit), never under WORLD_FLOOR (slide.ts); the sea's floor near z 0 slides nothing, as before.
 
 ## Source layout: the split classes (2026-11-04)
 

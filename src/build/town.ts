@@ -79,6 +79,18 @@ export class Town {
     this.builtLo = new Float32Array(w * h);
   }
 
+  /**
+   * (round 128m, quarry) Every height it keeps moved by dz: its ground floors and what it last put in the columns — the
+   * window slid in z under a town that isn't stamped (the fortress: Fortress.slidZ).
+   */
+  shiftZ(dz: number): void {
+    for (let c = 0; c < this.base.length; c++) if (!Number.isNaN(this.base[c])) this.base[c] += dz;
+    for (let i = 0; i < this.builtTop.length; i++) {
+      if (this.builtTop[i]) this.builtTop[i] += dz;
+      this.builtLo[i] += dz;
+    }
+  }
+
   has(c: number, level: number): boolean {
     return this.built.has(c, level);
   }

@@ -3,6 +3,10 @@
 // intervals per grid cell" (DECISIONS round 102), here for the Town's blocks and the fortress's plan. No level cap: a
 // cell holds any levels; gaps are runs apart. Touching runs of one owner and type are one; taking a level out of the
 // middle of a run splits it. Pure: no GPU, no DOM.
+// (round 128m, quarry) Levels may be negative: a quarry's pit is its levels under the ground (level -1 the first 4 m
+// down, fortress/pit.ts), kept in a CellRuns of its own (FortressPlan.pit, Fortress.dug) so nothing that reads the
+// blocks' runs meets them. top() and bottom() say -1 for an empty cell: with negative levels, ask any() first, or use
+// highest() / lowest() (null: none).
 
 export interface Run {
   /** the lowest level in it */
@@ -53,6 +57,18 @@ export class CellRuns {
     return rs.length ? rs[rs.length - 1].hi - 1 : -1;
   }
 
+  /** c's highest level (null: none) — for runs that may hold negative levels */
+  highest(c: number): number | null {
+    const rs = this.runsOf(c);
+    return rs.length ? rs[rs.length - 1].hi - 1 : null;
+  }
+
+  /** c's lowest level (null: none) — for runs that may hold negative levels */
+  lowest(c: number): number | null {
+    const rs = this.runsOf(c);
+    return rs.length ? rs[0].lo : null;
+  }
+
   /** c's lowest level (-1: none). */
   bottom(c: number): number {
     const rs = this.runsOf(c);
@@ -89,9 +105,9 @@ export class CellRuns {
     return fa.length === fb.length && fa.every((v, i) => v === fb[i]);
   }
 
-  /** Put level L in c (owner, type); false if it's already there. */
+  /** Put level L in c (owner, type); false if it's already there. (Round 128m: L may be negative — a pit's.) */
   set(c: number, L: number, owner = 0, type = 0): boolean {
-    if (c < 0 || c >= this.count || L < 0 || !Number.isInteger(L)) return false;
+    if (c < 0 || c >= this.count || !Number.isInteger(L)) return false;
     let rs = this.runs[c];
     if (!rs) rs = this.runs[c] = [];
     let i = 0;
