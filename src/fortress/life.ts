@@ -94,6 +94,11 @@ const DAY_WORD: Record<Doing, string | null> = {
   'to-work': 'work', work: 'work', haul: 'haul', eat: 'eat', fetch: 'work', drill: 'drill', muster: 'muster', march: 'march', wall: 'the wall',
   'cart-park': 'the stores', 'cart-out': 'the road', 'cart-load': 'loading', 'cart-back': 'the road',
 };
+/** (m4) the miners' terrain takes in flight at most (api/terrain.ts holds 64 for everyone) */
+const DIGS_IN_FLIGHT = 16;
+/** (m4) a cart that gets no nearer its pile for this many sim seconds gives it up for CART_RETRY s */
+const CART_STUCK = 20;
+const CART_RETRY = 60;
 /** (m4) sim seconds a soldier may take to a wall-walk point before it gives up and musters again */
 const PATROL_STUCK = 40;
 
@@ -157,7 +162,7 @@ export class FortressLife implements Routine {
   readonly ids: UnitId[] = [];
   readonly book: BuildBook;
   /** loads brought, blocks built, waits at the heap with nothing to take; (milestone 3) trips in, ground dug, trees felled, newcomers, refunds */
-  readonly stats = { trips: 0, built: 0, starved: 0, hauled: 0, dug: 0, felled: 0, arrived: 0, refunds: 0, forged: 0, trained: 0, mustered: 0, patrols: 0, onWall: 0, carted: 0, cartLoads: 0, piled: 0 };
+  readonly stats = { trips: 0, built: 0, starved: 0, hauled: 0, dug: 0, felled: 0, arrived: 0, refunds: 0, forged: 0, trained: 0, mustered: 0, patrols: 0, onWall: 0, carted: 0, cartLoads: 0, piled: 0, cartGaveUp: 0 };
   /** (round 128l, milestone 4) the recipes: the smiths' batches, the recruits' */
   readonly recipes = new RecipeRunner();
   /** (m4) the soldiers the barracks trained (guards: not people — no job, no bed of the houses', no grain) */
@@ -174,6 +179,10 @@ export class FortressLife implements Routine {
   private todayN = 0;
   /** (m4) per cart group whether it rides now (reseed) */
   private cartRiding: boolean[] = [];
+  /** (m4) miners' terrain takes in flight */
+  private digging = 0;
+  /** (m4) piles a cart gave up on (it got no nearer), and until when */
+  private cartGaveUp = new Map<number, number>();
   /** (m4) structures no cart's road reaches (its ride failed): their workers walk their hauls */
   private noCartRoad = new Set<number>();
   private day = 0;
@@ -745,7 +754,7 @@ export class FortressLife implements Routine {
     let best: number | null = null;
     let most = ECON.cartLoad / 2 - 1e-6;
     for (const [id, g] of this.piles) {
-      if (taken.has(id) || this.noCartRoad.has(id) || !this.io.fort.doorOf(id)) continue;
+      if (taken.has(id) || this.noCartRoad.has(id) || (this.cartGaveUp.get(id) ?? -1) > this.t || !this.io.fort.doorOf(id)) continue;
       const n = Object.values(g).reduce((a, b) => a + (b ?? 0), 0);
       if (n > most) {
         most = n;
@@ -807,7 +816,18 @@ export class FortressLife implements Routine {
         }
         U.regroup(u, g);
         u.v.state = 'walk';
-        if (Math.hypot(door[0] - at[0], door[1] - at[1]) < AT_SPOT + 1) Object.assign(w, { phase: 'load', t: 2 });
+        const d = Math.hypot(door[0] - at[0], door[1] - at[1]);
+        if (d < AT_SPOT + 1) {
+          Object.assign(w, { phase: 'load', t: 2 });
+          break;
+        }
+        // (no nearer for CART_STUCK s — a pit dug across its way, a crowd: it gives the pile up for a while)
+        if (w.dig === undefined || d < w.dig - 1) Object.assign(w, { dig: d, walked: this.t });
+        else if (this.t - (w.walked ?? this.t) > CART_STUCK) {
+          this.cartGaveUp.set(w.from!, this.t + CART_RETRY);
+          this.stats.cartGaveUp++;
+          Object.assign(w, { phase: 'park', t: 1, from: null, dig: undefined, walked: undefined });
+        }
         break;
       }
       case 'load': {
@@ -841,7 +861,7 @@ export class FortressLife implements Routine {
         w.t = 1;
         const p = this.pileFor(u.v.id);
         if (p === null) break;
-        Object.assign(w, { phase: 'out', t: 0, from: p });
+        Object.assign(w, { phase: 'out', t: 0, from: p, dig: undefined, walked: undefined });
       }
     }
   }
@@ -1365,9 +1385,20 @@ export class FortressLife implements Routine {
       const first = this.firstGround.get(k) ?? now;
       this.firstGround.set(k, first);
       if (now <= first - pitDepth(rr)) continue;
-      void this.io.dig([x, y], ECON.dig).then((n) => {
-        if (n > 0) this.stats.dug += n;
-      });
+      // (round 128l, m4: the world's terrain holds 64 takes and puts in flight at most, shared with everything else —
+      // with the carts the miners stay at the pit and dig faster than the takes come back)
+      if (this.digging >= DIGS_IN_FLIGHT) return;
+      this.digging++;
+      void this.io.dig([x, y], ECON.dig).then(
+        (n) => {
+          this.digging--;
+          if (n > 0) this.stats.dug += n;
+        },
+        (e) => {
+          this.digging--;
+          throw e;
+        },
+      );
       return;
     }
   }

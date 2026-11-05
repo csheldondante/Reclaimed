@@ -51,7 +51,7 @@ export default async function (lab, args) {
       await lab.shot('cart-back');
       shot = true;
     }
-    if (t % 40 === 0) console.log(JSON.stringify({ t: s.simT, people: s.people, carts: s.carts.map((c) => c.phase).join(','), piles: s.piles, carted: s.stats.carted, arrived: s.stats.arrived, stone: Math.round(s.stores.stone ?? 0), grain: Math.round(s.stores.grain ?? 0) }));
+    if (t % 40 === 0) console.log(JSON.stringify({ t: s.simT, people: s.people, carts: s.carts.map((c) => `${c.phase}@${Math.round(c.at[0])},${Math.round(c.at[1])}`).join(" "), piles: s.piles, carted: s.stats.carted, arrived: s.stats.arrived, stone: Math.round(s.stores.stone ?? 0), grain: Math.round(s.stores.grain ?? 0) }));
   }
   const s = lab.snapshot();
   const out = {

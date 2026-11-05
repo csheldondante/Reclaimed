@@ -17535,3 +17535,15 @@ Why: the user, "so that we could follow a unit and see it go about it's day" (DE
   (scripts/lab/gifroad.mjs, scripts/lab/fortressfollow.mjs `shots`).
 - Judgement calls: a person picked isn't highlighted in the world, and a recruit turned soldier is a new unit, so the
   follow lets go (M4-13). fortress/life.ts is now 1448 lines and wants splitting (M4-12).
+
+
+## 2026-11-04 — round 128l (`m4`): carts give up a pile they get no nearer; the miners' digs capped
+
+Why: the roads commit's gate (scripts/lab/fortresscarts.mjs on the gate tree) failed twice over. A cart sat `out` from
+44 s to the end, 200 sim s, without reaching the quarry's pile. The page threw "world.terrain: 64 takes and puts in flight at
+most": with the carts fetching their loads, the miners stay at the pit and dig without the walk to the stores between.
+
+- The miners' terrain takes in flight are capped at 16 (DIGS_IN_FLIGHT; the world's terrain holds 64 for everything).
+- A cart that gets no nearer its pile for 20 sim s gives that pile up for 60 s and parks (CART_STUCK, CART_RETRY;
+  `stats.cartGaveUp`); its workers keep piling, and another cart may try.
+- After: fortresscarts passes (a load in, carts' walking samples on a road 0.98, newcomers 0.66; no page error).
