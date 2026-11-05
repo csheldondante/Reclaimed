@@ -17406,9 +17406,73 @@ One circular import is runtime-safe: generate.ts calls streamer.ts's `settleLoos
 lab's example and fortressoutside ok; the tilegate goldens (`&zoomfloor=0`, baselines from a worktree of 64217ba):
 desktop, phone and run-desktop 0-0.12% of pixels changed at every zoom but desktop z1.3 (6.8%: tiles still arriving
 along the screen's edges, 30% of it out of detail with the floor off, as on 64217ba).
-<<<<<<< HEAD
 
-- Not done: joining a town's gates through it by a paved thoroughfare (FT-73, with the user's roads-on-borders idea).
+## 2026-11-04 — the monolith split, 3: game/integrity.ts into game/integrity/ (no behaviour change)
+
+**Why.** As the level's and the streamer's: integrity.ts was 2722 lines (142 KB). Now the Integrity class (768 lines:
+fields, constructor, the public API) keeps the state, and its internals are 9 modules of 111 to 422 lines in
+game/integrity/: tick (update, the analysis pass and what it applies), rigid (rock bodies: spawn, step, draw, settle,
+rest, meshes), metal (the node solver's metal), resting (External instances kept, carried, woken, let go), columns
+(landings and column writes, CPU and GPU), loose (projection, the body budget, impacts, loose voxels and chips),
+lattice (dropped models, lattice bodies), window (settle, slid, forget) and defs.
+**How.** The same mechanical move (`this` -> `ig`). Public methods that moved (update, settle, slid, forget,
+wakeMetalNear, dropModels, regionThings) stay on the class as one-line delegates; no script or test calls the
+private ones. The `world` and `metalSolver` getters stay on the class.
+**Gates** (against c5dad2a): typecheck; unit 661; GPU 26 files pass; hallcheck 0 of 344 lost; the lab's example and
+fortressoutside ok; the tilegate goldens (`&zoomfloor=0`, baselines of 64217ba): 0-0.3% of pixels changed at every
+desktop, phone and run view but desktop z1.3 (4.5%: tiles arriving at the screen's edges, unfloored, as before) and
+w384 (2-3%, its baselines written by an earlier gate run, not a clean base).
+
+## 2026-11-04 — the monolith split, 4: render/renderer.ts into render/renderer/ (no behaviour change)
+
+**Why.** As the others: renderer.ts was 2133 lines (117 KB). Now the Renderer class (953 lines: fields, the
+constructor, the public API) and 7 modules of 73 to 370 lines in render/renderer/: encode (a frame's draw and the
+ceiling view's, instance growth), mesh-draws (the field mesh's pipelines), gbuffer-shadow, terrain-cache, grid,
+features (band, rock mesh, structures) and defs.
+**How.** Methods moved as before (`this` -> `rd`); public ones that moved (encode, encodeCeiling, windowMoved,
+windowDrawn, enableBand, enableRockMesh, enableStructures) stay as delegates. The constructor was 600 lines: its
+`if (this.fieldMesh.on) { … }` block (250 lines) moved verbatim to `buildMeshDraws(rd, ctx)`, the constructor's locals
+it reads (layouts, the draw module, depthStencil, groupFor, miVertex …) passed in `ctx` — the same values, made once,
+in the same order. The rest of the constructor shares its locals across every pass and stays (BACKLOG MS-4).
+**Gates** (against bd626f4): typecheck; GPU 26 files pass; unit 658 of 661 with the machine loaded (other agents'
+browsers: three timing-bound tests, writing, reach and partition, over their time limits) and those three pass alone,
+here and on 64217ba; hallcheck 0 lost at town 1 and at s26, each run alone (the two in one run now time out opening
+the second page in this worktree's Chrome, on bd626f4 too); the lab's example and fortressoutside ok; the tilegate
+goldens (`&zoomfloor=0`, baselines of 64217ba): 0-0.14% of pixels changed at every desktop, phone and run-desktop view
+but desktop z1.3 (2.6%, tiles arriving at the edges as before); its run-phone page timed out opening, as on 64217ba.
+
+## 2026-11-04 — the monolith split, 5: perf/bench.ts into perf/bench/ (no behaviour change)
+
+**Why.** bench.ts was 3147 lines (165 KB): a Bench class of 1590 lines and 1360 lines of free functions. Now bench.ts
+(617 lines) keeps the run's flow and the class's fields and constructor, and perf/bench/ holds 12 modules of 54 to 450
+lines: the class's work (pages: main, pans, hero, pan, win; pace: frames captured and summarised; ab: toggles and the
+view; sweeps; regions: generation and the store timed) and the top-level functions by concern (defs, timestamps,
+pan-report, state, page, device, report).
+**How.** The class's methods moved as before (`this` -> `bn`; the page methods bench.ts calls stay as delegates); the
+top-level functions moved in whole line ranges (exported where they weren't, re-exported where main.ts imports them).
+What stays in bench.ts is what assigns module state other modules read — the heartbeat (`beat`, `beatWhat`, `frame`),
+`pageDevice`, `leaving` and `go`: an ES import can't be assigned, and moving them would mean an object or setters, a
+logic change.
+**Gates** (against f678055): typecheck; unit 660 of 661 (the partition timing test over its limit under load; it
+passes alone); GPU 24 files pass, jb6 and rockmesh-room time out in their device hook — on 64217ba too, now (the
+machine shared with other agents' browsers); hallcheck 0 lost at town 1 and s26; the lab's example and
+fortressoutside ok; tilegate goldens 0-0.3% of pixels (desktop z1.3 1.2%, w384 2-3% against its written baseline).
+The bench itself: `scripts/benchrun.mjs --smoke` on a dev server, before (64217ba) and after: the same report
+sections; one after-run hit `physBodyStatsRead used in submit while mapped` in win256's one-pass physics (the bench's
+systemGpu submitting while the physics' readback is mapped), the second after-run none — a race in the bench's
+timing, not the move (BACKLOG MS-9).
+
+## 2026-11-04 — the monolith split, 6: atlas/atlas.ts into atlas/atlas/ (no behaviour change)
+
+**Why.** atlas.ts was 1873 lines (95 KB). Now the Atlas class (455 lines: fields, constructor, build, the small public
+reads and delegates) and 8 modules of 85 to 362 lines in atlas/atlas/: build (run: the atlas's GPU passes; craters,
+oddities, giants), regions (patterns, regionsCpu), columns, region-land (stamps, regionLand, regionInto, rawGround,
+the tile gate), window, params (AtlasParams and the URL), tile-pacer (TilePacer, moved whole) and defs.
+**How.** As the others (`this` -> `atl`; `a.run()` in `build` -> `run(a)`); everything other files import from
+atlas.ts is re-exported there.
+**Gates** (against 1adfb15): typecheck; unit 661; GPU 25 files pass (rockmesh-room times out in its device hook, on
+64217ba too, with the machine shared); hallcheck 0 lost at town 1 and s26; the lab's example and fortressoutside ok;
+the tilegate goldens (`&zoomfloor=0`, baselines of 64217ba) 0-0.64% of pixels changed at every view.
 
 
 ## 2026-11-04 — round 128l (`m4`): fortress blocks as fast as any block — the reach on the GPU (TL-6, FT-61)
@@ -17474,25 +17538,6 @@ go about it's day" (DECISIONS round 128l, m4).
   drilling, then the soldier mustering, marching and walking the wall, at zoom 18. Soldiers read grey beside the yellow
   workers — a kit waits for the art push (M4-4).
 - Phone: nothing per frame beyond the units' own steps; the rides add destination slots (≤ 4 doors a leg).
-=======
-
-## 2026-11-04 — the monolith split, 3: game/integrity.ts into game/integrity/ (no behaviour change)
-
-**Why.** As the level's and the streamer's: integrity.ts was 2722 lines (142 KB). Now the Integrity class (768 lines:
-fields, constructor, the public API) keeps the state, and its internals are 9 modules of 111 to 422 lines in
-game/integrity/: tick (update, the analysis pass and what it applies), rigid (rock bodies: spawn, step, draw, settle,
-rest, meshes), metal (the node solver's metal), resting (External instances kept, carried, woken, let go), columns
-(landings and column writes, CPU and GPU), loose (projection, the body budget, impacts, loose voxels and chips),
-lattice (dropped models, lattice bodies), window (settle, slid, forget) and defs.
-**How.** The same mechanical move (`this` -> `ig`). Public methods that moved (update, settle, slid, forget,
-wakeMetalNear, dropModels, regionThings) stay on the class as one-line delegates; no script or test calls the
-private ones. The `world` and `metalSolver` getters stay on the class.
-**Gates** (against c5dad2a): typecheck; unit 661; GPU 26 files pass; hallcheck 0 of 344 lost; the lab's example and
-fortressoutside ok; the tilegate goldens (`&zoomfloor=0`, baselines of 64217ba): 0-0.3% of pixels changed at every
-desktop, phone and run view but desktop z1.3 (4.5%: tiles arriving at the screen's edges, unfloored, as before) and
-w384 (2-3%, its baselines written by an earlier gate run, not a clean base).
-<<<<<<< HEAD
->>>>>>> origin/fortress
 
 
 ## 2026-11-04 — round 128l (`m4`): on the roads — carts, newcomers by road, a person's day
@@ -17548,27 +17593,6 @@ most": with the carts fetching their loads, the miners stay at the pit and dig w
 - A cart that gets no nearer its pile for 20 sim s gives that pile up for 60 s and parks (CART_STUCK, CART_RETRY;
   `stats.cartGaveUp`); its workers keep piling, and another cart may try.
 - After: fortresscarts passes (a load in, carts' walking samples on a road 0.98, newcomers 0.66; no page error).
-=======
-
-## 2026-11-04 — the monolith split, 4: render/renderer.ts into render/renderer/ (no behaviour change)
-
-**Why.** As the others: renderer.ts was 2133 lines (117 KB). Now the Renderer class (953 lines: fields, the
-constructor, the public API) and 7 modules of 73 to 370 lines in render/renderer/: encode (a frame's draw and the
-ceiling view's, instance growth), mesh-draws (the field mesh's pipelines), gbuffer-shadow, terrain-cache, grid,
-features (band, rock mesh, structures) and defs.
-**How.** Methods moved as before (`this` -> `rd`); public ones that moved (encode, encodeCeiling, windowMoved,
-windowDrawn, enableBand, enableRockMesh, enableStructures) stay as delegates. The constructor was 600 lines: its
-`if (this.fieldMesh.on) { … }` block (250 lines) moved verbatim to `buildMeshDraws(rd, ctx)`, the constructor's locals
-it reads (layouts, the draw module, depthStencil, groupFor, miVertex …) passed in `ctx` — the same values, made once,
-in the same order. The rest of the constructor shares its locals across every pass and stays (BACKLOG MS-4).
-**Gates** (against bd626f4): typecheck; GPU 26 files pass; unit 658 of 661 with the machine loaded (other agents'
-browsers: three timing-bound tests, writing, reach and partition, over their time limits) and those three pass alone,
-here and on 64217ba; hallcheck 0 lost at town 1 and at s26, each run alone (the two in one run now time out opening
-the second page in this worktree's Chrome, on bd626f4 too); the lab's example and fortressoutside ok; the tilegate
-goldens (`&zoomfloor=0`, baselines of 64217ba): 0-0.14% of pixels changed at every desktop, phone and run-desktop view
-but desktop z1.3 (2.6%, tiles arriving at the edges as before); its run-phone page timed out opening, as on 64217ba.
-<<<<<<< HEAD
->>>>>>> origin/fortress
 
 
 ## 2026-11-05 — round 128l (`m4`): carts start on the road
@@ -17584,38 +17608,3 @@ was spawned on the road's node nearest the stores, it went every time.
   (`cartRejoins` 0, `cartGaveUp` 0).
 - scripts/lab/fortresscarts.mjs: 3 of 3 passed (a load in each, carts' walking samples on a road 0.97-0.99, newcomers
   0.66), against 1 of 3 before.
-=======
-
-## 2026-11-04 — the monolith split, 5: perf/bench.ts into perf/bench/ (no behaviour change)
-
-**Why.** bench.ts was 3147 lines (165 KB): a Bench class of 1590 lines and 1360 lines of free functions. Now bench.ts
-(617 lines) keeps the run's flow and the class's fields and constructor, and perf/bench/ holds 12 modules of 54 to 450
-lines: the class's work (pages: main, pans, hero, pan, win; pace: frames captured and summarised; ab: toggles and the
-view; sweeps; regions: generation and the store timed) and the top-level functions by concern (defs, timestamps,
-pan-report, state, page, device, report).
-**How.** The class's methods moved as before (`this` -> `bn`; the page methods bench.ts calls stay as delegates); the
-top-level functions moved in whole line ranges (exported where they weren't, re-exported where main.ts imports them).
-What stays in bench.ts is what assigns module state other modules read — the heartbeat (`beat`, `beatWhat`, `frame`),
-`pageDevice`, `leaving` and `go`: an ES import can't be assigned, and moving them would mean an object or setters, a
-logic change.
-**Gates** (against f678055): typecheck; unit 660 of 661 (the partition timing test over its limit under load; it
-passes alone); GPU 24 files pass, jb6 and rockmesh-room time out in their device hook — on 64217ba too, now (the
-machine shared with other agents' browsers); hallcheck 0 lost at town 1 and s26; the lab's example and
-fortressoutside ok; tilegate goldens 0-0.3% of pixels (desktop z1.3 1.2%, w384 2-3% against its written baseline).
-The bench itself: `scripts/benchrun.mjs --smoke` on a dev server, before (64217ba) and after: the same report
-sections; one after-run hit `physBodyStatsRead used in submit while mapped` in win256's one-pass physics (the bench's
-systemGpu submitting while the physics' readback is mapped), the second after-run none — a race in the bench's
-timing, not the move (BACKLOG MS-9).
-
-## 2026-11-04 — the monolith split, 6: atlas/atlas.ts into atlas/atlas/ (no behaviour change)
-
-**Why.** atlas.ts was 1873 lines (95 KB). Now the Atlas class (455 lines: fields, constructor, build, the small public
-reads and delegates) and 8 modules of 85 to 362 lines in atlas/atlas/: build (run: the atlas's GPU passes; craters,
-oddities, giants), regions (patterns, regionsCpu), columns, region-land (stamps, regionLand, regionInto, rawGround,
-the tile gate), window, params (AtlasParams and the URL), tile-pacer (TilePacer, moved whole) and defs.
-**How.** As the others (`this` -> `atl`; `a.run()` in `build` -> `run(a)`); everything other files import from
-atlas.ts is re-exported there.
-**Gates** (against 1adfb15): typecheck; unit 661; GPU 25 files pass (rockmesh-room times out in its device hook, on
-64217ba too, with the machine shared); hallcheck 0 lost at town 1 and s26; the lab's example and fortressoutside ok;
-the tilegate goldens (`&zoomfloor=0`, baselines of 64217ba) 0-0.64% of pixels changed at every view.
->>>>>>> origin/fortress
