@@ -230,6 +230,24 @@ export class FortressReachGpu implements ReachEngine {
     throw new Error(`reach: the labels didn't settle in ${MAX_ROUNDS * ROUND} iterations`);
   }
 
+  /**
+   * (round 128m, townlab: the placement bench's diagnosis, never the game's) the last solve's surfaces at a box column
+   * (height, room over it; the top first) — 32 bytes read back
+   */
+  async surfacesAt(col: number): Promise<[number, number][]> {
+    const d = this.device;
+    const buf = d.createBuffer({ label: 'reach surf read', size: NAV_K * 8, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const enc = d.createCommandEncoder({ label: 'reach surf read' });
+    enc.copyBufferToBuffer(this.surf, col * NAV_K * 8, buf, 0, NAV_K * 8);
+    d.queue.submit([enc.finish()]);
+    await buf.mapAsync(GPUMapMode.READ);
+    const f = new Float32Array(buf.getMappedRange().slice(0));
+    buf.destroy();
+    const out: [number, number][] = [];
+    for (let k = 0; k < NAV_K; k++) if (f[2 * k] >= 0) out.push([+f[2 * k].toFixed(2), +f[2 * k + 1].toFixed(2)]);
+    return out;
+  }
+
   dispose(): void {
     this.gone = true;
     for (const b of [this.spans, this.surf, this.deep, this.label, this.flag, ...this.params, this.queryBuf, this.answerBuf]) b?.destroy();

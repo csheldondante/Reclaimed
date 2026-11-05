@@ -43,7 +43,7 @@ describe('the placement bench', () => {
   });
 
   it("sums a run up in plain lines: each point's kept count and the main reason, the timings, the arrivals", () => {
-    const row = (point: string, outcome: PlaceRow['outcome'], line: string | null, answerMs: number | null = 40): PlaceRow => ({ point, group: 'ring', type: 'house', at: [0, 0], outcome, line, tapMs: 1, answerMs, frames: null, over33: 0 });
+    const row = (point: string, outcome: PlaceRow['outcome'], line: string | null, answerMs: number | null = 40): PlaceRow => ({ point, group: 'ring', type: 'house', at: [0, 0], outcome, line, tapMs: 1, answerMs, rounds: answerMs === null ? null : 2, frames: null, over33: 0 });
     const r: PlaceBenchResult = {
       points: [
         { name: 'E 30 m', group: 'ring', at: [0, 0] },
@@ -57,13 +57,14 @@ describe('the placement bench', () => {
         { point: 'W 60 m', arrivedS: null, builtS: null, nearestM: 30 },
       ],
       arriveLimitS: 240,
+      arriveWallS: 30,
     };
     const lines = placeSummary(r);
     expect(lines[0]).toBe('4 placements at 3 points: 1 kept, 2 refused, 1 not placed, 0 with no answer.');
     expect(lines).toContain('Every type was kept at: E 30 m.');
     expect(lines).toContain('SE 60 m: 0 of 2 kept. Refused: Deep water is in the way.');
     expect(lines).toContain("E 120 m: 0 of 1 kept. Not placed: outside the fortress's land.");
-    expect(lines).toContain('Builders reached 1 of 2 house sites within 240 sim seconds. 1 had a block standing.');
+    expect(lines).toContain('Builders reached 1 of 2 house sites within 240 sim seconds. 1 had a block standing. That took 30 s.');
     expect(lines).toContain('Not reached: W 60 m (nearest 30 m).');
     expect(reasonOf(reachWhyLine('cliff'))).toBe('A cliff or a building is in the way.');
   });

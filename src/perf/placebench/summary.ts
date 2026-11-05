@@ -47,12 +47,13 @@ export function placeSummary(r: PlaceBenchResult): string[] {
   const answers = r.rows.flatMap((x) => (x.answerMs === null ? [] : [x.answerMs]));
   const over = r.rows.reduce((a, x) => a + x.over33, 0);
   out.push(`A tap took ${pct(taps, 0.5)?.toFixed(1)} ms of CPU (at most ${Math.max(...taps).toFixed(1)} ms).`);
-  if (answers.length) out.push(`The answer came ${pct(answers, 0.5)} ms after the tap (at most ${Math.max(...answers)} ms).`);
+  const rounds = r.rows.flatMap((x) => (x.rounds === null ? [] : [x.rounds]));
+  if (answers.length) out.push(`The answer came ${pct(answers, 0.5)} ms after the tap (at most ${Math.max(...answers)} ms), in ${pct(rounds, 0.5)} GPU rounds (at most ${Math.max(...rounds)}).`);
   out.push(`Frames over 33 ms round the taps: ${over}.`);
   if (r.arrive.length) {
     const got = r.arrive.filter((a) => a.arrivedS !== null);
     const built = r.arrive.filter((a) => a.builtS !== null);
-    out.push(`Builders reached ${got.length} of ${r.arrive.length} house sites within ${r.arriveLimitS} sim seconds. ${built.length} had a block standing.`);
+    out.push(`Builders reached ${got.length} of ${r.arrive.length} house sites within ${r.arriveLimitS} sim seconds. ${built.length} had a block standing.${r.arriveWallS !== null ? ` That took ${Math.round(r.arriveWallS)} s.` : ''}`);
     const missed = r.arrive.filter((a) => a.arrivedS === null).map((a) => (a.nearestM === null ? a.point : `${a.point} (nearest ${Math.round(a.nearestM)} m)`));
     if (missed.length) out.push(`Not reached: ${missed.join(', ')}.`);
   }
