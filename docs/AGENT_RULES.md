@@ -49,5 +49,8 @@ something for the unit to work around.
 - Find code with docs/MODULES.md, and read only the lines you need.
 
 ## 6. Reporting
+- Every report ends with **Hacks and limits**: each threshold, cap, nudge, timer, special case, mutable global, extra
+  readback, or coupling between systems you added or kept, and each limit the design has (sizes, counts, what it can't do).
+  Write "none" only if there are none. Main passes the list to the user.
 - Report what's true: say what failed, what wasn't run, and the judgement calls you made.
 - Main reviews every commit's diff for patches before it merges.
