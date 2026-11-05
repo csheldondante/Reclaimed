@@ -100,7 +100,7 @@ stock-take.
 
 **`docs/MODULES.md` maps every file in src/ (one line each, with its API): read it instead of opening
 files to find where something lives.** The big classes are split into folders of free functions over the
-instance (`scenes/level/`): the class file keeps the
+instance (`scenes/level/`, `scenes/streamer/`): the class file keeps the
 state and the public API.
 
 - `src/main.ts` — boot WebGPU, quality tier, switch scenes

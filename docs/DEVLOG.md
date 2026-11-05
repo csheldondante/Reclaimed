@@ -17388,3 +17388,21 @@ have gates".
   "the starting town's wall has no gate on land", passes after); `DPR=` sets the device scale. scripts/fortressgates.mjs:
   the start town's walls, posts, the reach round the stores by direction, shots (`GATE_DEG=` near a gate). Unit 661/661.
 - Not done: joining a town's gates through it by a paved thoroughfare (FT-73, with the user's roads-on-borders idea).
+
+## 2026-11-04 — the monolith split, 2: scenes/streamer.ts into scenes/streamer/ (no behaviour change)
+
+**Why.** As the level's (the user: split the monoliths "for saving context"): streamer.ts was 2816 lines (145 KB).
+Now the Streamer class (762 lines: its fields, the constructor, the public API) keeps the state, and its internals
+are 9 modules of 121 to 341 lines in scenes/streamer/: slide (update, track, the slide itself), freeze (copy out and in,
+record bodies, the freeze plan), generate (GPU and CPU generation, cutRegion, since, reslice, the generator's hash
+checks), write (a region into the window, editLive), store (saving, hashing, the sweep, load and restore), jobs (pool
+slots, the bring/prepare/pump pipeline), warp (warp, slideZNow), regions (slot and rectangle geometry, which
+regions enter) and defs (flags, sizes, the internal records, the public types re-exported by streamer.ts).
+**How.** The same mechanical move as level.ts (free functions over the instance, `this` -> `S`). Public methods and
+the five private ones scripts and the bench call through `any` (key, copyOut, regionOutside in scripts/chaintime and
+hashtest; toBody, cutRegion in perf/bench.ts) stay on the class as one-line delegates, so nothing outside changes.
+One circular import is runtime-safe: generate.ts calls streamer.ts's `settleLoose` only inside its functions.
+**Gates** (against 64217ba, the commit before): typecheck; unit 661; GPU 26 files pass; hallcheck 0 of 344 lost; the
+lab's example and fortressoutside ok; the tilegate goldens (`&zoomfloor=0`, baselines from a worktree of 64217ba):
+desktop, phone and run-desktop 0-0.12% of pixels changed at every zoom but desktop z1.3 (6.8%: tiles still arriving
+along the screen's edges, 30% of it out of detail with the floor off, as on 64217ba).
