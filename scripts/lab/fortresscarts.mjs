@@ -29,11 +29,21 @@ export default async function (lab, args) {
   const cart = { on: 0, walk: 0 };
   const comer = { on: 0, walk: 0 };
   const phases = {};
-  let shot = false;
+  let shot = !args.shot;
+  // (round trips per pile type: a cart seen bringing a load back from it, then out of `back` — delivered)
+  const trips = {};
+  const backFrom = new Map();
   for (let t = 0; t < seconds; t += every) {
     await lab.run(every, 16);
     const s = lab.snapshot();
     for (const c of s.carts) {
+      const from = lab.units.recs.get(c.id)?.work?.from;
+      if (c.phase === 'back') backFrom.set(c.id, from);
+      else if (backFrom.has(c.id)) {
+        const k = lab.fortress().plan.structure(backFrom.get(c.id))?.type ?? '?';
+        trips[k] = (trips[k] ?? 0) + 1;
+        backFrom.delete(c.id);
+      }
       phases[c.phase] = (phases[c.phase] ?? 0) + 1;
       if (c.state === 'walk') {
         cart.walk++;
@@ -60,6 +70,7 @@ export default async function (lab, args) {
     cartLoads: s.stats.cartLoads,
     carted: Math.round(s.stats.carted),
     piled: s.stats.piled,
+    trips,
     cartOnRoadShare: cart.walk ? +(cart.on / cart.walk).toFixed(2) : null,
     cartWalkSamples: cart.walk,
     cartPhases: phases,
