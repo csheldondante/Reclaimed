@@ -571,6 +571,29 @@ export class Fortress {
     while (this.reachBusy || this.reachWant || this.trial) await new Promise((r) => setTimeout(r, 0));
   }
 
+  /**
+   * (scripted checks, the lab) Whether the stores reach each of these cells now (any cell, planned or not: its stands), by
+   * a check of its own once the pending ones are done. Null: no reach engine.
+   */
+  async probeReach(cells: number[]): Promise<boolean[] | null> {
+    const R = this.io.reach;
+    if (!R) return null;
+    await this.settled();
+    this.reachBusy = true;
+    try {
+      R.setSpans(this.spansNow());
+      const queries = new Int32Array(cells.length * 4).fill(-1);
+      cells.forEach((c, i) => this.standCols(c).forEach((b, k) => (queries[i * 4 + k] = b)));
+      const at = this.storesAt();
+      const sc = at ? this.boxColOf(...this.toBox(at[0], at[1])) : -1;
+      const reply = await R.check({ stores: sc >= 0 ? [sc % this.box.w, Math.floor(sc / this.box.w)] : null, queries, wet: false });
+      return cells.map((_, i) => (reply.bits[i] & 1) === 1);
+    } finally {
+      this.reachBusy = false;
+      if (this.reachWant) this.requestReach();
+    }
+  }
+
   private async pumpReach(): Promise<void> {
     const R = this.io.reach!;
     try {

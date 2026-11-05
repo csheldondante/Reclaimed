@@ -45,7 +45,7 @@ await run({ name: 'fortressfar', kind: 'behaviour', size: '412x915', dpr: 1, ech
   await page.waitForFunction(() => window.__boot?.at['level-ready'] || document.querySelector('.fatal'), { timeout: 300000, polling: 250 });
   await R.fatal(page);
   await page.waitForFunction(() => window.reclaimed?.fortress?.ready || document.querySelector('.fatal'), { timeout: 120000, polling: 250 });
-  await page.waitForFunction(() => !!window.reclaimed.fortress.columnsNow(), { timeout: 60000, polling: 250 });
+  await page.waitForFunction(() => !!window.reclaimed.fortress.reachKnown, { timeout: 60000, polling: 250 });
   await sleep(2000);
   // the plan: a house block on dry ground on every side, just past the town's edge and past its farms
   const plan = await page.evaluate(async () => {

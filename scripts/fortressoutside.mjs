@@ -55,7 +55,7 @@ await run({ name: 'fortressoutside', kind: 'behaviour', size: '412x915', dpr: Nu
   // wall's runs whose ground the fortress's columns read dry (water under 0.3 m) from 5 m inside to 16 m out. Before,
   // the user's town (a port in a river's fork, walled, no roads of its own) had its gaps only in the river and the sea:
   // "the only exit does look like it is into the sea" — wading deeper than 0.9 m, no builder got out
-  const gates = await page.evaluate(() => {
+  const gates = await page.evaluate(async () => {
     const Rc = window.reclaimed;
     const st = Rc.settlements;
     const f = Rc.fortress;
@@ -65,7 +65,8 @@ await run({ name: 'fortressoutside', kind: 'behaviour', size: '412x915', dpr: Nu
     const s0 = st.spotsOf(st.pinnedId)[0];
     const s0l = p.spots.find((s) => s.ref === s0.ref && s.kind === s0.kind);
     const off = [s0.w[0] - s0l.at[0], s0.w[1] - s0l.at[1]];
-    const cols = f.columnsNow();
+    // (round 128l, m4: the fortress reads no columns back any more — the water read here, for the check)
+    const wbuf = await Rc.core.readBuffer('water'); const cols = { w: Rc.core.dims.w, h: Rc.core.dims.h, water: (x, y) => wbuf[y * Rc.core.dims.w + x] };
     const waterAt = (lx, ly) => {
       const c = f.cellAt(lx + off[0], ly + off[1]);
       if (c < 0) return 99;
@@ -119,11 +120,11 @@ await run({ name: 'fortressoutside', kind: 'behaviour', size: '412x915', dpr: Nu
   if (process.env.GATES_ONLY) return;
   if (gates.walled && !gates.gaps.some((g) => g.mid <= GATE_DRY)) throw new Error("the starting town's wall has no gate on land: its only ways out are by water");
   // open ground outside the old town: dry, free of the town's things, three cells in a row with a free ring round them
-  const open = await page.evaluate(([K0, DISTS]) => {
+  const open = await page.evaluate(async ([K0, DISTS]) => {
     const Rc = window.reclaimed;
     const f = Rc.fortress;
     const st = Rc.settlements;
-    const cols = f.columnsNow();
+    const wbuf = await Rc.core.readBuffer('water'); const cols = { w: Rc.core.dims.w, h: Rc.core.dims.h, water: (x, y) => wbuf[y * Rc.core.dims.w + x] };
     const at = f.storesAt();
     const free = (c) => {
       if (c < 0 || f.plan.owner[c] >= 0) return false;
@@ -185,13 +186,15 @@ await run({ name: 'fortressoutside', kind: 'behaviour', size: '412x915', dpr: Nu
   if (OUT) await page.screenshot({ path: `${OUT}/outside-plan.png` });
   // (round 128k) what the fortress's check reads at the sites: dry ground (the river read under a site meant a read from
   // before a slide looked up where the window had moved) and reached from the stores
-  const check = await page.evaluate((sites) => {
-    const f = window.reclaimed.fortress;
-    const cols = f.columnsNow();
-    const m = f.reachMap();
+  const check = await page.evaluate(async (sites) => {
+    const Rc = window.reclaimed;
+    const f = Rc.fortress;
+    const wbuf = await Rc.core.readBuffer('water'); const cols = { w: Rc.core.dims.w, h: Rc.core.dims.h, water: (x, y) => wbuf[y * Rc.core.dims.w + x] };
+    const cs = Object.values(sites);
+    const got = await f.probeReach(cs);
     return Object.fromEntries(Object.entries(sites).map(([k, c]) => [k, {
       water: Math.max(...f.grid.columns[c].map((col) => { const wc = f.boxToWindowCol(col); return cols.water(wc % cols.w, Math.floor(wc / cols.w)); })),
-      reached: m ? f.reachedIn(m, c) : null,
+      reached: got ? got[cs.indexOf(c)] : null,
     }]));
   }, open.sites);
   console.log('check', JSON.stringify(check));
