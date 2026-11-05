@@ -78,11 +78,13 @@ describe('the JobBoard', () => {
     // nothing to build: no builders; nothing built: no jobs
     expect(jobSlots(plan, all, false).some((x) => x.kind === 'build')).toBe(false);
     expect(jobSlots(plan, () => false, false)).toEqual([]);
-    // a house, a warehouse, the blacksmith: no jobs here (the blacksmith works in milestone 4)
+    // a house: no jobs; (round 128l, milestone 4) the blacksmith's smiths, as many as the cap lets (ore and wood in the
+    // stores: FortressLife)
     const p2 = new FortressPlan(grid);
     p2.paint(a, 0, 'house');
     p2.paint(b, 0, 'blacksmith');
-    expect(jobSlots(p2, all, false)).toEqual([]);
+    expect(jobSlots(p2, all, false).map((x) => [x.kind, x.count])).toEqual([['blacksmith', DEFS.blacksmith.perBlock.jobs!]]);
+    expect(jobSlots(p2, all, false, DEFS, ECON, () => 0)).toEqual([]);
   });
 });
 

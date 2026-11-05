@@ -17445,3 +17445,31 @@ GPU myself but only because I find CPU round trips are stupidly expensive on mob
   benches in this task).
 - scripts/lab/fortresslanes.mjs: read `L.slope` / `L.contour`, gone with round 128k's lanes; now prints tiles, joined and
   unjoined.
+
+
+## 2026-11-04 — round 128l (`m4`): milestone 4 — the smith makes weapons, the barracks trains soldiers (FT-4)
+
+Why: FORTRESS_SLICE1 milestone 4 ("a RecipeRunner over data/recipes/fortress.json; a trained soldier = a villager
+removed + a guard unit at the barracks") and the user's "making new units ... so that we could follow a unit and see it
+go about it's day" (DECISIONS round 128l, m4).
+
+- Recipes are data (data/recipes/fortress.json): `forge` at the blacksmith (2 ore + 1 wood → a weapon, 20 s of work) and
+  `drill` at the barracks (a weapon + a person → a soldier, 30 s). recipes.ts RecipeRunner is pure (recipes.test.ts:
+  a batch over its seconds, one a worker, the barracks' beds capping soldiers, a dropped batch given back, the card's
+  In). Untuned: a smith makes 3 weapons a day (ECON.daySec 60), a recruit 2 soldiers.
+- The work is walked, not ticked: a smith goes to the stores, takes the batch out (the stores drop by it), carries it to
+  the smithy's door by road, works there (the work pose) and carries the weapon back; a recruit takes a weapon to the
+  barracks and drills, and the villager becomes a soldier — a `guard` unit (steel) standing where it stood. Soldiers
+  muster at the barracks and drill, march by road to the foot of the wall's stairs, then walk the wall-walk (the units'
+  own `go` orders, which climb the stairs: their goal fields seed on the top surface), and muster again each morning.
+- Fields and groups: main's call — the smithy and barracks legs ride the road graph (V128-14), no new fields (a field is
+  a whole-window 4-level f32 buffer, ~1.5 MB on the phone). The agents' groups went 16 → 24 (a table size: the params'
+  group arrays, the ride params). A leg with no road to its goal waits (M4-5).
+- Measured on the lab (flat; scripts/lab/fortressrecipes.mjs: a walled site with a warehouse, a blacksmith, a barracks
+  and two houses, 30 ore and 80 wood in the stores, 180 sim s at 16x): 15 weapons forged (the ore ran out at ~60 s), 4
+  soldiers trained (the barracks' 4 beds), 59 wall-walk points reached, 23 patrols walked; the legs ride (smith, barracks,
+  post: true). The bar: "Wood 65 · Stone 200 · Ore 0 · Grain 135 · Weapons 9", "People 16 · Beds 16 · Soldiers 4".
+- GIF (scripts/lab/gifsoldier.mjs + scripts/lab/frames2gif.mjs, new: lab shots into a GIF): a recruit fetching a weapon,
+  drilling, then the soldier mustering, marching and walking the wall, at zoom 18. Soldiers read grey beside the yellow
+  workers — a kit waits for the art push (M4-4).
+- Phone: nothing per frame beyond the units' own steps; the rides add destination slots (≤ 4 doors a leg).

@@ -133,21 +133,25 @@ export function cutOffLine(n: number): string {
 /** The stores strip: what's in the stores (milestone 3: ore too). */
 export function storesLine(stores: Goods): string {
   const n = (k: Good) => Math.floor(stores[k] ?? 0);
-  return `Wood ${n('log')} · Stone ${n('stone')} · Ore ${n('ore')} · Grain ${n('grain')}`;
+  // (round 128l, m4: the smiths' weapons too)
+  return `Wood ${n('log')} · Stone ${n('stone')} · Ore ${n('ore')} · Grain ${n('grain')} · Weapons ${n('weapons')}`;
 }
 
 /** (milestone 3) The people strip: people, beds, and the power coming in. */
 export function peopleLine(people: number, beds: number, stores: Goods, powerPerDay: number): string {
-  return `People ${people} · Beds ${beds} · Power ${Math.floor(stores.power ?? 0)}, +${Math.round(powerPerDay)} a day`;
+  // (round 128l, m4: the soldiers the barracks trained)
+  return `People ${people} · Beds ${beds} · Soldiers ${Math.floor(stores.soldiers ?? 0)} · Power ${Math.floor(stores.power ?? 0)}, +${Math.round(powerPerDay)} a day`;
 }
 
 /** (milestone 3) Who does what: "4 builders, 2 farmers and 1 miner. 2 people have no work." */
-export function jobsLine(jobs: Partial<Record<'build' | 'farm' | 'quarry' | 'lumber' | 'idle', number>>): string {
+export function jobsLine(jobs: Partial<Record<'build' | 'farm' | 'quarry' | 'lumber' | 'blacksmith' | 'barracks' | 'idle', number>>): string {
   const names: [keyof typeof jobs, string, string][] = [
     ['build', 'builder', 'builders'],
     ['farm', 'farmer', 'farmers'],
     ['quarry', 'miner', 'miners'],
     ['lumber', 'woodcutter', 'woodcutters'],
+    ['blacksmith', 'smith', 'smiths'],
+    ['barracks', 'recruit', 'recruits'],
   ];
   const parts = names.filter(([k]) => (jobs[k] ?? 0) > 0).map(([k, one, many]) => `${jobs[k]} ${jobs[k] === 1 ? one : many}`);
   const idle = jobs.idle ?? 0;

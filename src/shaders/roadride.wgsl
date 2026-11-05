@@ -51,8 +51,8 @@ struct RideParams {
   n: vec4<u32>,
   /** xy the graph's frame in the window (world: the frame's origin there), zw unused */
   off: vec4<f32>,
-  /** per group (16): x its first destination slot, y how many (0: it doesn't ride) */
-  group: array<vec4<u32>, 16>,
+  /** per group (24: agents.ts MAX_GROUPS): x its first destination slot, y how many (0: it doesn't ride) */
+  group: array<vec4<u32>, 24>,
   /** per destination slot (64): xy its goal (the graph's frame), zw unused */
   dest: array<vec4<f32>, 64>,
   /** per destination slot its node: slot s at [s / 4][s % 4] */
@@ -193,7 +193,7 @@ fn ride(@builtin(global_invocation_id) id: vec3<u32>) {
   let walking = ((info >> 12u) & 7u) <= 1u;
   var e = rideUnits[u * RR_UNIT_V + 4u];
   var st = rideState[u];
-  if (!alive || grp >= 16u || RR.group[grp].y == 0u || RR.n.x == 0u) {
+  if (!alive || grp >= 24u || RR.group[grp].y == 0u || RR.n.x == 0u) {
     if (e.w != 0.0) {
       e.w = 0.0;
       rideUnits[u * RR_UNIT_V + 4u] = e;

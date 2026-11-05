@@ -86,6 +86,11 @@ describe('Inspect: the card', () => {
     expect(farm.title).toBe('Farm: 2 cells');
     expect(farm.lines[0]).toBe('Not built yet.');
     expect(farm.lines).toContain('In: nothing. Out: nothing yet.');
+    // (round 128l, milestone 4) the recipes' In: the smiths' ore and wood, the barracks' weapons and recruits
+    const smith = inspectCard(make('blacksmith', () => true).f);
+    expect(smith.lines).toContain('In: up to 18 wood and 36 ore a day. Out: up to 18 weapons a day.');
+    const bar = inspectCard(make('barracks', () => true).f);
+    expect(bar.lines).toContain('In: up to 6 weapons and 6 people a day. Out: up to 6 soldiers a day.');
     const wall = inspectCard(make('wall', () => true).f);
     expect(wall.lines).toContain(`Archers: 0 of ${3 * DEFS.wall.perBlock.posts!} posts.`);
   });

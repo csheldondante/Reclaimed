@@ -47,6 +47,9 @@ The user: "Let's invest in some tooling to speed up the development processes."
 |---|---|---|---|
 | M4-1 | The red outline drawn straight from the GPU's labels in the structures' shader (the user's design): now the reach's per-block bits are read back (a word a block still to build, ~40 ms after an edit) and the outline is the pieces' warn rails as before | S | open |
 | M4-2 | The reach's CPU side per check is ~2-7 ms in the lab (solid.ts over the whole plan as if built, and each block's stands): off the tap, but on the main thread; an incremental span list per structure would cut it | S | open |
+| M4-4 | Soldiers read as grey figures beside the yellow workers at play zoom: a kit (a helmet, a spear, a shield) for the art push | S | open |
+| M4-5 | A leg that rides only (the smithy, the barracks, the soldiers' march) waits where it is when no road reaches its goals (no field of its own: main's call, a field is ~1.5 MB on the phone); the lanes join every door today | S | open |
+| M4-6 | Soldiers don't eat and don't count as people; the barracks' beds cap them (4 a block). Recruits leave the houses, so newcomers fill their beds | S | open (the user tunes) |
 | M4-3 | A component joins two-way steps only: a loop down a drop and back up a ramp elsewhere counts as no way (the CPU check found it); and any two surfaces within a step join (the agents link one surface a direction) | S | open |
 
 ## Round 128c (2026-11-03, session 5, `fortress`) — fortress mode slice 1 (docs/design/FORTRESS_SLICE1.md)
@@ -58,7 +61,7 @@ Branch `fortress`: milestones 1 and 2 built (round 128d: the user's fixes, the F
 | FT-1 | Milestone 1: `?level=atlas&town=1&fortress=1` — the town pinned as the fortress (its stores topped up to a start), time stopped while planning, a phone bar of the 8 types with an erase and a gate toggle, painted cells owned by a structure (next to the same type joins it), the plan drawn as the towns' pieces, each structure's cost and capacity and the plan against the stores | L | done (this commit) |
 | FT-2 | Milestone 2: workers build the plan from the warehouse (blocks stand, stone down by the cost); built vs planned drawn apart (planned as a ghost or outline) | L | done (round 128d commit): FortressLife, Build/Plan, see-through while building |
 | FT-3 | Milestone 3: quarry, lumber camp, hauling, houses fill (food per person: the user's answer 3) | L | done (round 128e milestone 3 commit): JobBoard, miners dig a real pit, woodcutters fell trees in reach, farms grow grain, hauling to the warehouse with its room enforced, people eat, newcomers to the beds, roads cheaper, Erase refunds half |
-| FT-4 | Milestone 4: jobs and recipes (blacksmith weapons from ore, barracks trains soldiers) | L | deferred |
+| FT-4 | Milestone 4: jobs and recipes (blacksmith weapons from ore, barracks trains soldiers) | L | done (round 128l m4 recipes commit): RecipeRunner over data/recipes/fortress.json; smiths forge weapons from ore and wood; recruits take a weapon to the barracks and drill into soldiers (guards) who muster, march by road and walk the wall-walk; the bar and Inspect show them |
 | FT-5 | Milestone 5: day counter and the army | L | deferred |
 | FT-6 | Joining per type (the user, round 128c: "medieval row homes might not" join): `StructureDef.joins`, true for all 8 now; a row-homes type (or a house option) to come | S | open |
 | FT-7 | Tech-dependent block sets (the user: later): the look is data per type (`StructureDef.look`: style, building kind, props, chimney); a tech level would swap it per structure | M | deferred |

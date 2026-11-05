@@ -3,9 +3,9 @@
 // with one type that touch — FortressPlan's structures); it's drawn highlighted (pieces.ts PIECE_PICKED) and a compact
 // card says what it is, from its StructureDef and the live ledger (the stores):
 //   its type and size (blocks, levels high); how far it's built, if it isn't yet;
-//   what it takes in and puts out a day (from its built blocks, at most: with every job filled; recipes come in
-//   milestone 4, so nothing is taken in); (milestone 3) what its workers have brought to the stores so far, a farm's
-//   ripe grain;
+//   what it takes in and puts out a day (from its built blocks, at most: with every job filled; round 128l, milestone 4:
+//   what its recipe takes for that — recipes.ts); (milestone 3) what its workers have brought to the stores so far, a
+//   farm's ripe grain;
 //   its workers (the JobBoard's, live, of its slots); its stock (a warehouse: what the town's stores hold against their
 //   room — the town's own and every warehouse's — and this one's part; barracks: the soldiers);
 //   its power (the keep: a day from its built blocks, and what's stored).
@@ -15,6 +15,7 @@ import { DEFS } from './defs';
 import { roomOf } from './economy';
 import type { FortressPlan } from './plan';
 import { goodsText } from './words';
+import { recipeTakes } from './recipes';
 
 export interface InspectFacts {
   type: StructureType;
@@ -25,9 +26,11 @@ export interface InspectFacts {
   levels: number;
   /** cells it covers */
   cells: number;
-  /** a day from its built blocks: what it makes once worked, what it takes in */
+  /** a day from its built blocks: what it makes once worked, what it takes in (round 128l: its recipe's), the people it
+   *  trains into soldiers */
   makes: Goods;
   takes: Goods;
+  takesPeople: number;
   /** workers: those the JobBoard gave it now, and its slots (jobs of its built blocks) */
   workers: number;
   slots: number;
@@ -83,6 +86,7 @@ export function inspectFacts(
   const makes: Goods = {};
   for (const [k, v] of Object.entries(per.makes ?? {}) as [keyof Goods, number][]) makes[k] = v * done;
   const power = per.power ? plan.power(s, built) : null;
+  const takes = recipeTakes(s.type, makes);
   return {
     type: s.type,
     blocks,
@@ -90,7 +94,8 @@ export function inspectFacts(
     levels,
     cells: s.cells.size,
     makes,
-    takes: {},
+    takes: takes.goods,
+    takesPeople: takes.people,
     workers: live.workers ?? 0,
     slots: (per.jobs ?? 0) * done,
     brought: live.brought ?? {},
@@ -122,7 +127,10 @@ export function inspectCard(f: InspectFacts, defs: Record<StructureType, Structu
   const out = goodsText(f.makes);
   if (out !== 'nothing' || def.perBlock.makes) {
     // (milestone 3: at most — with every job filled; the farm's grain grows whoever works it)
-    lines.push(`In: ${goodsText(f.takes)}. Out: ${out === 'nothing' ? 'nothing yet' : `up to ${out} a day`}.`);
+    const people = Math.round(f.takesPeople);
+    const inText = people > 0 ? `${goodsText(f.takes) === 'nothing' ? '' : `${goodsText(f.takes)} and `}${people} ${people === 1 ? 'person' : 'people'}` : goodsText(f.takes);
+    const inside = inText === 'nothing' ? 'nothing' : out === 'nothing' ? 'nothing yet' : `up to ${inText} a day`;
+    lines.push(`In: ${inside}. Out: ${out === 'nothing' ? 'nothing yet' : `up to ${out} a day`}.`);
     if (f.type === 'quarry' && out !== 'nothing') lines.push(`Some of the stone is ore.`);
   }
   if (def.perBlock.jobs) lines.push(`Workers: ${f.workers} of ${f.slots}.${f.slots > 0 && f.workers === 0 ? ' Nobody works here yet.' : ''}`);

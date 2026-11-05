@@ -39,9 +39,9 @@ struct AgentParams {
   n: vec4<u32>,
   // x, y, z (world), w the field it seeds
   seeds: array<vec4<f32>, 48>,
-  // per group (16): the field it follows, and the material it's drawn in
-  groupField: array<vec4<u32>, 4>,
-  groupMat: array<vec4<u32>, 4>,
+  // per group (24: agents.ts MAX_GROUPS): the field it follows, and the material it's drawn in
+  groupField: array<vec4<u32>, 6>,
+  groupMat: array<vec4<u32>, 6>,
   // per field: the place it's confined to (0 anywhere; bit 31 a region,
   // else a room): its distances live only on that place's surfaces
   fieldPlace: array<vec4<u32>, 4>,

@@ -3594,6 +3594,27 @@ The building rule (the user's): select what (a structure type), then plan it wit
   (`wouldCutLine`). A press during a trial takes its variant out. `Fortress.cutCells()` / `reachedNow` / `whyNot` /
   `settled()` / `onReach`; FortressLife reads `cutCells()` on each answer. `CpuReach` (reach.ts) is the same solve on the
   CPU over `ReachColumns`, for unit tests only. `FortressIO.columns` and scenes/level/fortress.ts `readCols` are gone.
+  `Fortress.probeReach(cells)`: a check of its own for any cells (scripted checks).
+- **Round 128l, m4 (milestone 4: recipes, smiths, recruits, soldiers — FT-4).** `fortress/recipes.ts` (pure, tested):
+  `Recipe {id, at, kind: craft | train, worker, in, people?, out, seconds}` from `data/recipes/fortress.json` (`forge`:
+  the blacksmith, 2 ore + 1 wood → a weapon in 20 s; `drill`: the barracks, a weapon + a person → a soldier in 30 s);
+  `RecipeRunner` — `canStart(type, stores, TrainRoom)` (the `in` in the stores; train: a bed for one more), `start(worker,
+  type, structure, stores)` → the goods to take, `work(worker, dt)` → the out when done, `giveBack(worker)`,
+  `inProgress`, `made`; `recipeTakes(type, makes)` (Inspect's In). DEFS: blacksmith jobs 2 makes 6 weapons, barracks
+  jobs 1 makes 2 soldiers (a block a day); JOB_ORDER ends `blacksmith`, `barracks`; `jobSlots(…, cap)` lets FortressLife
+  open them only while a batch can start (or one is on its way). FortressLife: a smith or recruit `fetch`es a batch at
+  the stores, carries it (`toWork`) to its structure's door, works it (`gather` → `RecipeRunner.work`); a weapon is
+  carried to the stores (`carry`), a recruit is `enlist`ed at the next update — its unit removed, a `guard` unit (role
+  guard: agents kind 3, steel) spawned there with a `work` job, kept in `FortressLife.soldiers` (not people: no bed in
+  the houses, no grain; `stores.soldiers` follows their count). A soldier's routine (`stepSoldier`): `muster` (to the
+  barracks) → `drill` (ECON.drillSec) → `march` (to the foot of a built wall's stairs, `Ways.stairs`) → the wall-walk:
+  AgentUnits `go` orders to built wall cells' middles (the goal fields seed at the top surface), `walkTheWalls` moving
+  each on to a wall cell 8 m+ along until ECON.patrolPoints, a new economy day or PATROL_STUCK s with no way up, then
+  back to `muster`. The legs to the smithy, the barracks and the stairs ride the road graph only (groups `R4` 16-18,
+  `Agents.ride`, no fields: they wait when no road reaches the goal). **Agents:** MAX_GROUPS 16 → 24 (a table size:
+  agents.wgsl `groupField`/`groupMat` array<vec4<u32>, 6>, roadride.wgsl `group` array<vec4<u32>, 24>, ride.ts GROUPS,
+  agents.ts P_GMAT/P_FPLACE); NFIELDS unchanged (13). The bar: `storesLine` + Weapons, `peopleLine` + Soldiers, `jobsLine`
+  smiths and recruits; Inspect's In from the recipe ("In: up to 18 wood and 36 ore a day").
 
 ## Source layout: the split classes (2026-11-04)
 

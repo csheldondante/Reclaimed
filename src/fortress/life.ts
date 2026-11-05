@@ -10,6 +10,11 @@
 //  - woodcutters walk to a tree in their lumber camp's reach (it grows with the camp's size), fell it (the plants'
 //    fell: the tree goes) and carry its logs to the warehouse;
 //  - grain grows on the farms' built cells (their type's rate); farmers reap it and carry it to the warehouse;
+//  - (round 128l, milestone 4) smiths fetch a batch of the blacksmith's recipe (ore and wood) from the stores, carry it
+//    to the smithy, work it there and carry the weapon back (recipes.ts RecipeRunner over data/recipes/fortress.json);
+//    recruits fetch a weapon, carry it to the barracks and drill: the villager becomes a soldier (a guard unit, steel,
+//    at the barracks). Soldiers muster at the barracks (a drill each morning), march by road to the foot of the wall's
+//    stairs and walk the wall-walk (the units' own goal fields: AgentUnits 'go'), then muster again;
 //  - people with no work go home and wait.
 // Goods come in only that way: nothing by rates. A load that doesn't fit the stores' room isn't started (the bar says
 // the stores are full). People eat grain (ECON.eat a day each). While there's a bed free and grain in the stores, a
@@ -37,8 +42,11 @@ import { ROAD_FIELD } from '../agents/agents';
 import { noGraph, type RoadGraph } from '../agents/roadgraph';
 import { DEFS, ECON } from './defs';
 import { builtBlocks, eaten, fits, grown, JobBoard, jobSlots, mayArrive, putIn, quarryLoad, reachOf, refundOf, workSeconds, type JobKind, type JobSlot } from './economy';
+import { RecipeRunner, type TrainRoom } from './recipes';
+import type { Structure } from '../api/contracts/fortress';
 import type { Erased, Fortress } from './fortress';
 import { WAY_ROAD } from './ways';
+import { cellAt } from '../world/lattice';
 import { BuildBook, type Load } from './work';
 
 /** goods a builder carries a trip */
@@ -60,6 +68,16 @@ const JOBS_S = 1;
 const TREES_S = 10;
 /** the most grain a farm holds ripe: this many days of its growth */
 const RIPE_DAYS = 3;
+
+/**
+ * (round 128l, milestone 4) The fortress's own groups past the settlements' (settle/life.ts R: 8-15; agents MAX_GROUPS
+ * 24): the legs to the smithy and the barracks, the soldiers' march to the wall's stairs. They ride the road graph only
+ * (Agents.ride: no fields of their own — V128-14, "we only need the flow fields where they go off tracks"); a leg whose
+ * goals no road reaches waits where it is.
+ */
+export const R4 = { toSmith: 16, toBarracks: 17, toPost: 18 } as const;
+/** (m4) sim seconds a soldier may take to a wall-walk point before it gives up and musters again */
+const PATROL_STUCK = 40;
 
 export interface FortressLifeIO {
   units: AgentUnits;
@@ -87,7 +105,7 @@ export interface FortressLifeIO {
   speed(): number;
 }
 
-type Phase = 'idle' | 'home' | 'wait' | 'toPile' | 'toSite' | 'working' | 'toWork' | 'gather' | 'lifting' | 'carry';
+type Phase = 'idle' | 'home' | 'wait' | 'toPile' | 'toSite' | 'working' | 'toWork' | 'gather' | 'lifting' | 'carry' | 'fetch' | 'muster' | 'drill' | 'march' | 'patrol';
 interface Work {
   phase: Phase;
   t: number;
@@ -103,6 +121,8 @@ interface Work {
   where?: V2;
   /** seconds to the miner's next dig */
   dig?: number;
+  /** (m4) a soldier's wall-walk points walked */
+  walked?: number;
 }
 
 /** how deep a quarry's pit may go at d from its middle (see digAt) */
@@ -111,13 +131,22 @@ export function pitDepth(d: number): number {
 }
 
 /** what a worker carries, drawn */
-const LOOK: Partial<Record<Good, string>> = { stone: 'stone', ore: 'stone', log: 'log', grain: 'sand' };
+const LOOK: Partial<Record<Good, string>> = { stone: 'stone', ore: 'stone', log: 'log', grain: 'sand', weapons: 'steel' };
 
 export class FortressLife implements Routine {
   readonly ids: UnitId[] = [];
   readonly book: BuildBook;
   /** loads brought, blocks built, waits at the heap with nothing to take; (milestone 3) trips in, ground dug, trees felled, newcomers, refunds */
-  readonly stats = { trips: 0, built: 0, starved: 0, hauled: 0, dug: 0, felled: 0, arrived: 0, refunds: 0 };
+  readonly stats = { trips: 0, built: 0, starved: 0, hauled: 0, dug: 0, felled: 0, arrived: 0, refunds: 0, forged: 0, trained: 0, mustered: 0, patrols: 0, onWall: 0 };
+  /** (round 128l, milestone 4) the recipes: the smiths' batches, the recruits' */
+  readonly recipes = new RecipeRunner();
+  /** (m4) the soldiers the barracks trained (guards: not people — no job, no bed of the houses', no grain) */
+  readonly soldiers: UnitId[] = [];
+  /** (m4) recruits done drilling: made soldiers at the next update (not inside the units' step) */
+  private enlisting: UnitId[] = [];
+  /** (m4) soldiers on the wall-walk (the units' own 'go' orders): the point each heads for */
+  private patrol = new Map<UnitId, { at: V2; walked: number; since: number }>();
+  private day = 0;
   readonly board = new JobBoard();
   /** (scripted checks) where the last trees were felled */
   readonly felledAt: V2[] = [];
@@ -125,7 +154,7 @@ export class FortressLife implements Routine {
   /** (round 128i, V128-14) the road graph the last seeding saw (a new one: the rides are set again) */
   private seededGraph: RoadGraph | null = null;
   /** (round 128i) the legs that ride the roads now (their own fields left unseeded) */
-  riding: { pile: boolean; home: boolean; farm: boolean } = { pile: false, home: false, farm: false };
+  riding: { pile: boolean; home: boolean; farm: boolean; smith: boolean; barracks: boolean; post: boolean } = { pile: false, home: false, farm: false, smith: false, barracks: false, post: false };
   private order: Block[] = [];
   private orderAt = -1;
   private t = 0;
@@ -164,6 +193,8 @@ export class FortressLife implements Routine {
     A.follow(R.toHome, F.home);
     A.follow(R.working, -1);
     A.workPose(R.working, true);
+    // (m4: ride only — reseed)
+    for (const g of Object.values(R4)) A.follow(g, -1);
     this.reach = A.reader(F.pile).start(500);
     const h = this.heap();
     for (let i = 0; i < people; i++) this.spawn([h[0] + Math.cos(i * 2.4) * 4, h[1] + Math.sin(i * 2.4) * 4], 0.5 + i * 0.4);
@@ -187,6 +218,8 @@ export class FortressLife implements Routine {
     // (its load is lost with it — the agents drop it on the ground where it fell — but no longer on its way)
     const w = u.work as Work | undefined;
     if (w?.load && w.block) this.book.giveBack(w.block, w.load, {});
+    // (m4: a batch fetched and not yet made goes back to the stores)
+    this.giveBackBatch(u.v.id);
     this.io.units.carry(u, null);
     u.work = undefined;
   }
@@ -196,11 +229,12 @@ export class FortressLife implements Routine {
     const i = this.io.fort.onErased.indexOf(this.onErased);
     if (i >= 0) this.io.fort.onErased.splice(i, 1);
     for (const id of this.ids) this.io.units.remove(id);
+    for (const id of this.soldiers) this.io.units.remove(id);
     if (this.io.units.routine === this) this.io.units.routine = null;
     for (const f of [F.pile, F.site, F.store, F.quarry, F.fell, F.farm, F.home]) this.io.units.agents.seed(f, []);
     this.io.units.agents.keepInScope('fortress', []);
     this.io.units.agents.setRoads(new Float32Array(0));
-    for (const g of [R.toPile, R.toHome, R.toFarm]) this.io.units.agents.ride(g, null);
+    for (const g of [R.toPile, R.toHome, R.toFarm, ...Object.values(R4)]) this.io.units.agents.ride(g, null);
     this.io.units.agents.setRoadGraph(noGraph());
   }
 
@@ -243,6 +277,10 @@ export class FortressLife implements Routine {
     this.t += dt;
     const alive = this.people();
     if (alive.length !== this.ids.length) this.ids.splice(0, this.ids.length, ...alive);
+    const armed = this.soldiers.filter((id) => this.io.units.get(id)?.alive);
+    if (armed.length !== this.soldiers.length) this.soldiers.splice(0, this.soldiers.length, ...armed);
+    this.enlist();
+    this.walkTheWalls(dt);
     this.checkReach();
     // (round 128i, FT-58: the road shapes stamped on the GPU — again only when the lanes or the box's offset change)
     this.roads();
@@ -291,12 +329,25 @@ export class FortressLife implements Routine {
   private jobs(): void {
     const f = this.io.fort;
     const building = f.mode === 'build' && this.sites().length > 0;
-    this.slots = jobSlots(f.plan, (c, l) => f.town.has(c, l), building);
+    const st = this.io.stores();
+    // (m4) the smiths only while the stores hold a batch of ore and wood, the recruits while there's a weapon and a bed in
+    // the barracks — and those with a batch on its way keep their place
+    const cap = (s: Structure, n: number): number => {
+      if (s.type !== 'blacksmith' && s.type !== 'barracks') return n;
+      const busy = this.board.count(`s${s.id}`) && [...this.ids].filter((id) => this.board.jobOf(id) === `s${s.id}` && this.recipes.batchOf(id)).length;
+      return this.recipes.canStart(s.type, st, this.trainRoom()) ? n : busy || 0;
+    };
+    this.slots = jobSlots(f.plan, (c, l) => f.town.has(c, l), building, undefined, undefined, cap);
     const changed = this.board.assign(this.ids, this.slots);
     for (const id of changed) {
       const u = this.io.units.recs.get(id);
       const w = u?.work as Work | undefined;
       if (!w) continue;
+      // (m4: a batch fetched for the old job goes back)
+      if (this.giveBackBatch(id)) {
+        this.io.units.carry(u!, null);
+        Object.assign(w, { phase: 'idle', t: 0.2 });
+      }
       w.job = this.board.jobOf(id);
       // (one carrying finishes the trip first: the next job after it)
       if (!['toSite', 'working', 'lifting', 'carry'].includes(w.phase)) Object.assign(w, { phase: 'idle', t: 0.2 });
@@ -343,6 +394,9 @@ export class FortressLife implements Routine {
       else crew.waiting++;
     }
     f.crew = crew;
+    // (m4) the soldiers in the ledger (the bar's and Inspect's: stores.soldiers)
+    const had = this.io.stores().soldiers ?? 0;
+    if (had !== this.soldiers.length) this.io.take('soldiers', had - this.soldiers.length);
     f.status = {
       people: this.ids.length,
       jobs,
@@ -487,6 +541,177 @@ export class FortressLife implements Routine {
     return out;
   }
 
+  // ---- (round 128l, milestone 4) the recipes and the soldiers
+
+  /** the barracks' room: soldiers there are and in training, against the barracks' built beds */
+  private trainRoom(): TrainRoom {
+    const f = this.io.fort;
+    let beds = 0;
+    for (const s of f.plan.structures()) if (s.type === 'barracks') beds += (DEFS.barracks.perBlock.beds ?? 0) * builtBlocks(f.plan, s, (c, l) => f.town.has(c, l));
+    return { units: this.soldiers.length + this.enlisting.length + this.recipes.inProgress('train'), beds };
+  }
+
+  /** a person's batch not yet made: its goods back to the stores (true: there was one) */
+  private giveBackBatch(id: UnitId): boolean {
+    const g = this.recipes.giveBack(id);
+    if (!g) return false;
+    const went = putIn({ ...this.io.stores() }, this.io.fort.room(), g);
+    for (const [k, v] of Object.entries(went) as [Good, number][]) this.io.take(k, -v);
+    return true;
+  }
+
+  /** the doors of a type's built structures (window world) */
+  private doorsOf(type: 'blacksmith' | 'barracks'): V2[] {
+    const f = this.io.fort;
+    const out: V2[] = [];
+    for (const s of f.plan.structures().sort((a, b) => a.id - b.id)) {
+      if (s.type !== type) continue;
+      const d = f.doorOf(s.id);
+      if (d) out.push(d);
+    }
+    return out.slice(0, 4);
+  }
+
+  /** the feet of the built walls' stairs (window world): the soldiers' posts */
+  private posts(): V2[] {
+    const f = this.io.fort;
+    return f
+      .ways()
+      .stairs.filter((st) => f.town.has(st.wall, 0))
+      .map((st) => f.centre(st.foot))
+      .slice(0, 4);
+  }
+
+  /** the built wall cells' middles (window world): the wall-walk's points */
+  private wallPoints(): V2[] {
+    const f = this.io.fort;
+    const out: V2[] = [];
+    for (const s of f.plan.structures()) if (s.type === 'wall') for (const c of s.cells.keys()) if (f.town.has(c, 0) && !f.plan.gate[c]) out.push(f.centre(c));
+    return out;
+  }
+
+  /** recruits done drilling: each villager taken away and a soldier (a guard) stood up where it stood */
+  private enlist(): void {
+    if (!this.enlisting.length) return;
+    const U = this.io.units;
+    for (const id of this.enlisting.splice(0)) {
+      const v = U.get(id);
+      if (!v?.alive) continue;
+      const at: V2 = [v.at[0], v.at[1]];
+      U.remove(id);
+      const i = this.ids.indexOf(id);
+      if (i >= 0) this.ids.splice(i, 1);
+      const sid = U.spawn('guard', at, this.io.faction, { settlement: this.io.settlement, role: 'guard', name: v.name, health: ECON.soldierHealth, job: { kind: 'work', at, what: 'soldier' } });
+      U.recs.get(sid)!.work = { phase: 'muster', t: 0, job: null } satisfies Work;
+      this.soldiers.push(sid);
+      this.stats.trained++;
+    }
+  }
+
+  /**
+   * A soldier's round (its own routine, not a job): muster at the barracks and drill; march by road to the foot of the
+   * wall's stairs; walk the wall-walk (walkTheWalls); muster again each morning (a new economy day).
+   */
+  private stepSoldier(u: UnitRec, w: Work, dt: number): void {
+    const U = this.io.units;
+    const at: V2 = [u.v.at[0], u.v.at[1]];
+    const stand = () => {
+      U.regroup(u, G.stand);
+      u.v.state = 'idle';
+    };
+    switch (w.phase) {
+      case 'drill':
+        U.regroup(u, R.working);
+        u.v.state = 'swing';
+        w.t -= dt;
+        if (w.t <= 0) {
+          this.stats.mustered++;
+          w.phase = 'march';
+        }
+        break;
+      case 'march': {
+        const posts = this.posts();
+        const walls = this.wallPoints();
+        if (!posts.length || !walls.length || !this.riding.post) return void Object.assign(w, { phase: 'wait', t: 5 });
+        U.regroup(u, R4.toPost);
+        u.v.state = 'walk';
+        if (!posts.some(([x, y]) => Math.hypot(x - at[0], y - at[1]) < AT_SPOT)) break;
+        // (up the stairs and along the wall-walk: the units' own goal fields — AgentUnits 'go' orders, walkTheWalls)
+        const to = this.nearest(walls, at);
+        this.patrol.set(u.v.id, { at: to, walked: 0, since: this.t });
+        U.order(u.v.id, { kind: 'go', to });
+        break;
+      }
+      case 'wait':
+        stand();
+        w.t -= dt;
+        if (w.t <= 0) w.phase = 'muster';
+        break;
+      default: {
+        // muster: by road to the barracks; there, drill
+        const doors = this.doorsOf('barracks');
+        if (!doors.length || !this.riding.barracks) return void stand();
+        U.regroup(u, R4.toBarracks);
+        u.v.state = 'walk';
+        if (doors.some(([x, y]) => Math.hypot(x - at[0], y - at[1]) < AT_SPOT)) Object.assign(w, { phase: 'drill', t: ECON.drillSec });
+        else w.phase = 'muster';
+      }
+    }
+  }
+
+  /** the ground the fortress first read at window world (x, y) (its box column: before anything was built there) */
+  private keptGround(p: V2): number {
+    const f = this.io.fort;
+    const [bx, by] = f.toBox(p[0], p[1]);
+    const [k, r] = cellAt(bx, by);
+    return f.groundAt(Math.max(0, Math.min(f.box.h - 1, r)) * f.box.w + Math.max(0, Math.min(f.box.w - 1, k)));
+  }
+
+  private nearest(pts: V2[], at: V2): V2 {
+    let best = pts[0];
+    for (const p of pts) if (Math.hypot(p[0] - at[0], p[1] - at[1]) < Math.hypot(best[0] - at[0], best[1] - at[1])) best = p;
+    return best;
+  }
+
+  /**
+   * The soldiers on the wall-walk: at a point, on to the next wall cell along (the nearest not just walked); after
+   * ECON.patrolPoints, or at a new day, back to their routine to muster.
+   */
+  private walkTheWalls(dt: number): void {
+    if (!this.patrol.size && dt <= 0) return;
+    const U = this.io.units;
+    const day = Math.floor(this.t / ECON.daySec);
+    const morning = day !== this.day;
+    this.day = day;
+    const walls = this.wallPoints();
+    for (const [id, p] of [...this.patrol]) {
+      const v = U.get(id);
+      if (!v?.alive) {
+        this.patrol.delete(id);
+        continue;
+      }
+      // (there: by the point and up on the wall — over the ground the fortress first read there)
+      const there = Math.hypot(p.at[0] - v.at[0], p.at[1] - v.at[1]) < AT_SPOT && v.at[2] > this.keptGround(p.at) + 1.5;
+      // (no way up for PATROL_STUCK s: back to the barracks)
+      const stuck = !there && this.t - p.since > PATROL_STUCK;
+      if (morning || stuck || !walls.length || (there && p.walked + 1 >= ECON.patrolPoints)) {
+        this.patrol.delete(id);
+        U.order(id, { kind: 'work', at: [v.at[0], v.at[1]], what: 'soldier' });
+        const r = U.recs.get(id);
+        if (r) r.work = { phase: 'muster', t: 0, job: null } satisfies Work;
+        this.stats.patrols++;
+        continue;
+      }
+      if (!there) continue;
+      // (the next point along: the nearest wall cell 8 or more away from this one — a walk, not a hop)
+      const next = walls.filter((q) => Math.hypot(q[0] - p.at[0], q[1] - p.at[1]) > 8).sort((a, b) => Math.hypot(a[0] - p.at[0], a[1] - p.at[1]) - Math.hypot(b[0] - p.at[0], b[1] - p.at[1]))[0];
+      if (!next) continue;
+      this.patrol.set(id, { at: next, walked: p.walked + 1, since: this.t });
+      this.stats.onWall++;
+      U.order(id, { kind: 'go', to: next });
+    }
+  }
+
   private homes(): V2[] {
     const f = this.io.fort;
     const out: V2[] = [];
@@ -507,8 +732,12 @@ export class FortressLife implements Routine {
     const farm = this.cellsOf('farm').slice(0, SEEDS);
     const fell = this.trees.slice(0, SEEDS);
     const homes = this.homes();
+    // (m4) the smithies' and the barracks' doors, the wall stairs' feet
+    const smiths = this.doorsOf('blacksmith');
+    const barracks = this.doorsOf('barracks');
+    const posts = this.posts();
     const r = (v: V2[]) => v.map((p) => p.map(Math.round));
-    const key = JSON.stringify([h.map(Math.round), r(stone), r(wood), r(quarry), r(farm), r(fell), r(homes)]);
+    const key = JSON.stringify([h.map(Math.round), r(stone), r(wood), r(quarry), r(farm), r(fell), r(homes), r(smiths), r(barracks), r(posts)]);
     const graph = this.io.fort.roadGraph();
     if (key === this.seeded && graph === this.seededGraph) return;
     this.seeded = key;
@@ -527,7 +756,21 @@ export class FortressLife implements Routine {
       return ok;
     };
     const was = this.riding.pile;
-    this.riding = { pile: ride(R.toPile, F.pile, [h]), home: ride(R.toHome, F.home, homes), farm: ride(R.toFarm, F.farm, farm) };
+    // (m4: ride only — no fields of their own; a leg no road reaches waits)
+    const rideOnly = (g: number, v: V2[]): boolean => {
+      const ok = v.length > 0 && A.ride(g, v.map(([x, y]) => f.toBox(x, y)));
+      if (!ok) A.ride(g, null);
+      A.follow(g, ok ? ROAD_FIELD : -1);
+      return ok;
+    };
+    this.riding = {
+      pile: ride(R.toPile, F.pile, [h]),
+      home: ride(R.toHome, F.home, homes),
+      farm: ride(R.toFarm, F.farm, farm),
+      smith: rideOnly(R4.toSmith, smiths),
+      barracks: rideOnly(R4.toBarracks, barracks),
+      post: rideOnly(R4.toPost, posts),
+    };
     // (where a newcomer can come in from: the stores' field, or riding, the field onto the roads that lead to them)
     if (was !== this.riding.pile) {
       this.reach.stop();
@@ -588,15 +831,33 @@ export class FortressLife implements Routine {
       U.regroup(u, G.stand);
       u.v.state = 'idle';
     };
+    if (u.v.role === 'guard') return this.stepSoldier(u, w, dt);
     const slot = this.slot(w.job);
     switch (w.phase) {
+      // ---- (m4) smiths and recruits: a batch out of the stores
+      case 'fetch': {
+        if (!slot || (slot.kind !== 'blacksmith' && slot.kind !== 'barracks')) return void Object.assign(w, { phase: 'idle', t: 0.2 });
+        go(R.toPile);
+        const h = this.heap();
+        if (Math.hypot(h[0] - at[0], h[1] - at[1]) > THERE) break;
+        const goods = this.recipes.start(u.v.id, slot.kind, slot.structure!, this.io.stores(), this.trainRoom());
+        if (!goods) return void Object.assign(w, { phase: 'wait', t: 3 });
+        for (const [g, v] of Object.entries(goods) as [Good, number][]) this.io.take(g, v);
+        U.carry(u, slot.kind === 'barracks' ? 'steel' : 'stone', 0.3);
+        w.phase = 'toWork';
+        break;
+      }
       case 'idle': {
         stand();
         w.t -= dt;
         if (w.t > 0) break;
         if (!slot) w.phase = 'home';
         else if (slot.kind === 'build') w.phase = this.io.fort.mode === 'build' && this.sites().length ? 'toPile' : 'home';
-        else {
+        else if (slot.kind === 'blacksmith' || slot.kind === 'barracks') {
+          // (m4) to the stores for a batch (or, carrying one already, on to the structure)
+          w.from = slot.structure;
+          w.phase = this.recipes.batchOf(u.v.id) ? 'toWork' : 'fetch';
+        } else {
           w.from = slot.structure;
           // (the stores too full for another load: the haul stops, they wait — the bar says so)
           if (!fits(this.io.stores(), this.io.fort.room(), ECON.haul)) Object.assign(w, { phase: 'wait', t: 3 });
@@ -677,6 +938,17 @@ export class FortressLife implements Routine {
       case 'toWork': {
         if (!slot || slot.kind === 'build') return void Object.assign(w, { phase: 'idle', t: 0.2 });
         const kind = slot.kind;
+        if (kind === 'blacksmith' || kind === 'barracks') {
+          // (m4) by road to its own structure's door; no road reaches it: they wait there with the batch
+          const door = this.io.fort.doorOf(slot.structure!);
+          if (!door || !(kind === 'blacksmith' ? this.riding.smith : this.riding.barracks)) return void Object.assign(w, { phase: 'wait', t: 3 });
+          go(kind === 'blacksmith' ? R4.toSmith : R4.toBarracks);
+          if (Math.hypot(door[0] - at[0], door[1] - at[1]) >= AT_SPOT) break;
+          U.carry(u, null);
+          w.where = door;
+          w.phase = 'gather';
+          break;
+        }
         const spots = kind === 'quarry' ? this.cellsOf('quarry') : kind === 'farm' ? this.cellsOf('farm') : this.trees;
         if (!spots.length) return void Object.assign(w, { phase: 'wait', t: 3 });
         go(kind === 'quarry' ? R.toQuarry : kind === 'farm' ? R.toFarm : R.toFell);
@@ -691,8 +963,21 @@ export class FortressLife implements Routine {
       case 'gather': {
         U.regroup(u, R.working);
         u.v.state = 'swing';
-        w.t -= dt;
         const kind = slot?.kind;
+        if (kind === 'blacksmith' || kind === 'barracks') {
+          // (m4) the batch's work: a weapon to carry to the stores, or a soldier
+          const out = this.recipes.work(u.v.id, dt);
+          if (!out) break;
+          if (kind === 'blacksmith') {
+            this.stats.forged += out.weapons ?? 0;
+            this.carry(u, w, out);
+          } else {
+            w.phase = 'lifting';
+            this.enlisting.push(u.v.id);
+          }
+          break;
+        }
+        w.t -= dt;
         if (kind === 'quarry' && (w.dig = (w.dig ?? 0) - dt) <= 0) {
           w.dig = ECON.digSec;
           this.digAt(w.where ?? at);

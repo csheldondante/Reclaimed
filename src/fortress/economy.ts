@@ -37,7 +37,16 @@ export function builtBlocks(plan: FortressPlan, s: Structure, built: Built): num
  * The jobs open now, in priority order (JOB_ORDER, then the structures as they were made): each built block of a farm,
  * quarry or lumber camp gives its type's `jobs`; the builders' slots while there's something to build.
  */
-export function jobSlots(plan: FortressPlan, built: Built, building: boolean, defs: Record<StructureType, StructureDef> = DEFS, econ = ECON): JobSlot[] {
+export function jobSlots(
+  plan: FortressPlan,
+  built: Built,
+  building: boolean,
+  defs: Record<StructureType, StructureDef> = DEFS,
+  econ = ECON,
+  /** (round 128l, m4) the most a structure's slot takes now (its built blocks' jobs: n) — the smiths while there's ore
+   *  and wood, the recruits while there are weapons and beds (FortressLife) */
+  cap: (s: Structure, n: number) => number = (_s, n) => n,
+): JobSlot[] {
   const out: JobSlot[] = [];
   for (const kind of JOB_ORDER) {
     if (kind === 'build') {
@@ -46,7 +55,8 @@ export function jobSlots(plan: FortressPlan, built: Built, building: boolean, de
     }
     for (const s of plan.structures().sort((a, b) => a.id - b.id)) {
       if (s.type !== kind) continue;
-      const n = (defs[s.type].perBlock.jobs ?? 0) * builtBlocks(plan, s, built);
+      const all = (defs[s.type].perBlock.jobs ?? 0) * builtBlocks(plan, s, built);
+      const n = Math.min(all, Math.max(0, cap(s, all)));
       if (n > 0) out.push({ key: `s${s.id}`, kind, structure: s.id, count: n });
     }
   }

@@ -70,6 +70,8 @@ export interface LabSnapshot {
   people: number;
   jobs: Record<string, number>;
   walkers: { id: UnitId; at: [number, number, number]; state: string; phase: string; job: string | null; onRoad: boolean }[];
+  /** (round 128l, m4) the soldiers the barracks trained */
+  soldiers: { id: UnitId; at: [number, number, number]; state: string; phase: string; onRoad: boolean }[];
   /** of the walkers walking now: how many are on a road or lane, and the roads' share of the ground round them */
   roads: { shapes: number; walking: number; onRoad: number; areaShare: number | null; riding: unknown };
   structures: { id: number; type: string; cells: number; built: number; planned: number }[];
@@ -321,6 +323,14 @@ export class Lab {
       const w = units.recs.get(id)?.work as { phase?: string; job?: string | null } | undefined;
       walkers.push({ id, at: [+u.at[0].toFixed(1), +u.at[1].toFixed(1), +u.at[2].toFixed(1)], state: u.state, phase: w?.phase ?? '-', job: w?.job ?? null, onRoad: onRoad(u.at[0], u.at[1]) });
     }
+    // (round 128l, m4) the soldiers: where, doing what (their routine's phase, or 'patrol' on the wall-walk)
+    const soldiers: LabSnapshot['soldiers'] = [];
+    for (const id of life?.soldiers ?? []) {
+      const u = units.get(id);
+      if (!u) continue;
+      const w = units.recs.get(id)?.work as { phase?: string } | undefined;
+      soldiers.push({ id, at: [+u.at[0].toFixed(1), +u.at[1].toFixed(1), +u.at[2].toFixed(1)], state: u.state, phase: u.job.kind === 'go' ? 'patrol' : (w?.phase ?? '-'), onRoad: onRoad(u.at[0], u.at[1]) });
+    }
     const walking = walkers.filter((w) => w.state === 'walk');
     // (the roads' share of the ground round the walkers: the box round them, 4 m out)
     let areaShare: number | null = null;
@@ -357,6 +367,7 @@ export class Lab {
       people: f.status.people,
       jobs: { ...f.status.jobs } as Record<string, number>,
       walkers,
+      soldiers,
       roads: { shapes: n, walking: walking.length, onRoad: walking.filter((w) => w.onRoad).length, areaShare, riding: life?.riding ?? null },
       structures,
       cutOff: f.cutOff,
