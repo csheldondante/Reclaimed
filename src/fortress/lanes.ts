@@ -60,6 +60,8 @@ export const LANE_DRAWN: Record<LaneKind, boolean> = { road: true, plaza: false,
 export const STEEP = 0.3;
 /** big buildings: their door's cell is a thoroughfare tile */
 const BIG = new Set<string>(['fortress', 'warehouse', 'barracks']);
+/** (aw4) how far a road vertex beside a building is moved off it (m): past the band of columns on the border */
+export const OFF_BUILDING = 1.6;
 /** a root farther than this (m) from any free cell is left out */
 const ROOT_REACH = 45;
 
@@ -160,6 +162,36 @@ export function lanesOf(
   const adj: Link[][] = Array.from({ length: nv }, () => []);
   const pos: V2[] = [];
   for (let v = 0; v < nv; v++) pos.push([g.verts[v * 2], g.verts[v * 2 + 1]]);
+  // (round 128l, aw4; BACKLOG AW-4) a vertex beside a building is moved off it, toward the free cells round it: a road
+  // on a border by a building ran down the line between the two cells, half its band in the building's columns — solid
+  // once the fortress is claimed (solid.ts: a block is its cell's columns), so a cart steering along it from node to node
+  // drove into the wall and stood there (the lab's stores, boxed in by the houses beside its road). Every piece meeting
+  // at a vertex uses the same moved vertex: the roads stay joined
+  const round = Array.from({ length: nv }, () => [] as number[]);
+  for (let c = 0; c < n; c++) if (inBox(c)) for (let k = 0; k < 4; k++) round[Q(c * 4 + k)].push(c);
+  const standing = (c: number) => {
+    const t = typeOf(c);
+    return t !== null && (DEFS[t].form === 'block' || DEFS[t].form === 'keep');
+  };
+  for (let v = 0; v < nv; v++) {
+    if (canon[v] !== v) continue;
+    const cs = round[v];
+    if (!cs.some(standing)) continue;
+    const open = cs.filter((c) => free(c));
+    if (!open.length) continue;
+    let mx = 0;
+    let my = 0;
+    for (const c of open) {
+      const [x, y] = g.centre(c);
+      mx += x / open.length;
+      my += y / open.length;
+    }
+    const [x, y] = pos[v];
+    const d = Math.hypot(mx - x, my - y);
+    if (d < 1e-6) continue;
+    const s = Math.min(OFF_BUILDING, d * 0.45) / d;
+    pos[v] = [x + (mx - x) * s, y + (my - y) * s];
+  }
   const node = (p: V2) => {
     pos.push(p);
     adj.push([]);
