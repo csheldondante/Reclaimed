@@ -20493,3 +20493,44 @@ varies ±25 %):
   houses brown.
 
 The user's judgement (the human pass) comes before step 1.
+
+## 2026-11-06 — round 128p (`onetown`, DA-A13): the riders' cost, made explicit (for step 2)
+
+The user asked why riding costs 1.8 ms at 16x when it should be "just updating t by dt*speed". The cause is in today's
+`roadride.wgsl` (`ride`, the `M_OFF` branch, about lines 202–222). Every unit of a riding group that isn't on a trip
+searches **all graph nodes × their edges, every tick**, for an edge to join. The dispatch also covers **all units**, not
+just riders. Per tick that is O(units × edges), whatever the riders are doing.
+
+**The rule for the rewrite** (step 2, DA-A13 point 7), with tests and a cost assertion:
+
+- **A rider's per-tick work is only t += dt·speed** along its cached route's point list, plus reading its segment's z
+  (and its kind's motion: a stair's step).
+  - No search, no field, no graph walk.
+  - Passing a point is an index increment. Arrival is an event (RIDE_ARRIVED).
+- **Joining a route is an event, never a per-tick search.**
+  - A job or goal change (TownLife's `go{leg,to}`) assigns a route once: a cached (from port, to port) list, built
+    lazily on the CPU's network copy.
+  - A unit off the network follows ROAD_FIELD to the route's first node and starts its trip there. The first node is
+    known at assignment, so arriving at it is a field arrival, not a nearest-edge search.
+  - Knocked off (wind, a blast, a hit, fleeing) is a mode change. The unit rejoins at its route's nearest remaining
+    point: an O(route length) look once, at rejoin, never per tick.
+- **The ride dispatch covers riders only.**
+  - An indirect list of riding units is kept by events: a unit is appended when its trip starts and removed when it
+    ends or it's knocked off.
+  - The list is compacted on the GPU when it changes, never per tick. The dispatch size is that list's count
+    (`dispatchWorkgroupsIndirect`).
+- **The cost assertion.**
+  - The riders' kernel is O(riders): constant work per rider per tick, independent of the network's size and the number
+    of units not riding.
+  - No kernel does O(edges) or O(nodes) work per unit per tick.
+- **The tests (failing first).**
+  - **Unit:** the ride step's reference advances t exactly dt·speed and crosses point boundaries by index. A unit with
+    no trip is never in the rider list.
+  - **GPU:** the ride kernel's dispatch size equals the rider count (read from the indirect args). Time with 1k riders
+    on networks of 100 and 10k segments is flat; doubling the walking (non-riding) units changes nothing.
+  - **Phone bench:** riding toggled at 16x (AGENT_RULES: a toggle diff, not timestamps).
+
+**Delete list additions:**
+- the `M_OFF` join search (`bestDest` over all nodes and edges);
+- `RR_NEAR`, `NET_REACH` and `ON_EDGE`, already listed;
+- the all-units ride dispatch.
