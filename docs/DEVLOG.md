@@ -19958,3 +19958,33 @@ its slot opening or closing starts it over (a tested piece).
     can't hold both ends, so this means a later slide.
   - Recommended: (a).
 - The probe is committed as scripts/fastpanprobe.mjs.
+
+## 2026-11-06 — round 128o (`phonefix`, DA-B27): the fast-pan hole re-measured — it's ahead, not the hand-off
+
+- Correction to the entry above:
+  - I said the undrawn region (r229,220) was the trailing edge, handed from the window at a slide. I inferred that from
+    its rank, not measured it.
+  - scripts/fastpanprobe.mjs now logs each undrawn region's distance along the motion. It is **ahead**: along +147
+    cells, 161 from the camera, past the window, queued, place 8–12 in the wanted list. The camera itself was past
+    the window's edge (window y -27): at 160 c/s the window's slides don't keep up.
+  - Option (a), main's pick on my wrong premise, was built: the window bakes on-screen regions behind the motion,
+    never baked, first.
+  - Eight probe runs at 0.11 tiles a frame, before and after (a), found the same thing: every undrawn region is ahead
+    (r229,220, and r230,218 making), none behind. (a) changed nothing, so it's reverted, not committed.
+- What the hole is: the land's throughput at 160 c/s.
+  - About 10 on-screen regions ahead of the window wait for tiles at 6.6 tiles/s.
+  - The wanted list ranks the furthest ahead first. A nearer region, already on screen, waits behind them.
+  - The window itself lags the camera.
+- The far land the pixels show while the geometric check sees none (the pinned runs' 1.07% and 1.53%).
+  - .testcache/farprobe.mjs (bgcheck's snapshot each frame, each far-land sample put back on the ground) found 50
+    stand-in samples in 22 of 92 frames.
+  - All of them are where a tile is drawn (TileCache.drawsAt) at one world spot: window x 45, y -17. That is 17 rows
+    past the window's top edge, in the regions' tiles, as a thin line (one sample column) moving down the screen
+    with the pan.
+  - The check is right that a tile is there. The drawing is wrong: the tile has a crack, or the tile and the window
+    meet with a gap.
+  - Next: a shot of those frames at that spot, then the tile's bake there (its box, overlap and seam).
+- Not done (main's call on the throughput):
+  - the land's order for on-screen regions: nearest-hole first instead of furthest-ahead first (a ranking change);
+  - the window's slides keeping up with a fast pan (the planner's reach);
+  - the crack in the tile at the window's edge.

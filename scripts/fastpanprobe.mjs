@@ -106,12 +106,15 @@ try {
         const y = ry * RG - TL.origin[1] + RG / 2;
         const inWin = x >= 0 && x < S.W && y >= 0 && y < S.H;
         const v = inWin ? wd[Math.min(mny - 1, Math.floor(y / mside)) * mnx + Math.min(mnx - 1, Math.floor(x / mside))] : -1;
-        return `${k} win${inWin ? 1 : 0} wd${v} ord${order.indexOf(k)} ${TL.whyMissing(x, y, c.azimuth)}`;
+        const [mx, my] = TL.motion;
+        const ml = Math.hypot(mx, my) || 1;
+        const along = Math.round(((x - c.target[0]) * mx + (y * ROW - c.target[1]) * my) / ml);
+        return `${k} win${inWin ? 1 : 0} wd${v} ord${order.indexOf(k)} ${TL.whyMissing(x, y, c.azimuth)} along${along} side${Math.round(Math.hypot(x - c.target[0], y * ROW - c.target[1]))}`;
       });
-      log.push([f, sign, Math.round(off), info.join(' | '), gc ? +gc.share.toFixed(4) : null, +c.zoom.toFixed(2), +c.zoomFloor.toFixed(2), order.length]);
+      log.push([f, sign, Math.round(off), `org ${S.origin.join(',')} cam ${c.target.map((v) => Math.round(v)).join(',')} mot ${TL.motion.map((v) => Math.round(v)).join(',')}`, info.join(' | '), gc ? +gc.share.toFixed(4) : null, +c.zoom.toFixed(2), +c.zoomFloor.toFixed(2), order.length]);
     }
     R.scene.pan = null;
-    return { regions: Object.fromEntries([...tl].filter(([, v]) => v.undrawn > 0 || v.states.length > 1)), frames: log.filter((x) => x[3]).slice(0, 40), floor: c.zoomFloor, origin: [...S.origin], W: S.W, total: f };
+    return { regions: Object.fromEntries([...tl].filter(([, v]) => v.undrawn > 0 || v.states.length > 1)), frames: log.filter((x) => x[4]).slice(0, 40), floor: c.zoomFloor, origin: [...S.origin], W: S.W, total: f };
   });
   console.log(JSON.stringify(r, null, 1));
 } finally {
