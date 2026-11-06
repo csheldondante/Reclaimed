@@ -18520,3 +18520,27 @@ The linger existed for the sandbox's pours only (DEVLOG round 83: "a pour lands 
 - Hacks and limits: 256 events a sync at most (more wait a sync); 2048 unread at most (more are lost, counted); every
   unit still read every sync.
 
+## 2026-11-05 — round 128o (`phonefix`, DA-B19 fix): "not read yet" instead of the generated map's height
+
+- Why (main's review; CLAUDE.md: no fallbacks): `heightAt` answered a page not read yet with the map as generated — a
+  tap or a placement on ground just dug or built would have acted on the wrong ground for that frame.
+- Now `scene.heightAt` is `number | null`, null meaning not read yet (its page asked). Each caller says what it does:
+  `Camera.groundAt` with such a lookup returns null; a tap, the fly toggle, the atlas buttons' middle, a model placed,
+  a mesa's level, a hero's tap, the story's first camera target, a flock of birds wait a frame (or until the page is
+  in); a drag doesn't start, a drag's move, a hover and the brush's ring are skipped that frame; the turn's pivot stays
+  the target; a power's glow isn't drawn; the streamer's dug-pit slide check is left out; `Structures.place` returns
+  undefined and `Places.at` undefined (ask again); the inhabitants spawn once the ground round the camera is read.
+- The fortress reads the window's surface pages whole (~400 KB) before it's ready and again after each slide or warp;
+  `scene.groundReady` is false meanwhile and its people, raiders, pieces (the last ones still drawn) and taps wait.
+  Its readers ask `scene.groundRead`, which throws if a page isn't read: an invariant, not a stand-in.
+- `scene.mapHeightAt`, the map as generated, stays for the two that ask every frame (the far land's focus, the
+  flyer's floor); test/unit/mapheight.test.ts fails if anything else uses it.
+- Checked: unit 771, the lab's example, fortressraid, fortressfollow pass (quarry fails as on fortress); the atlas game
+  with the fortress (20 s after Build) and without it (panning, 9 slides): no errors. Not checked: the fortress through
+  a slide in the real game (its kept window didn't slide).
+- Found (not this row): the sandbox atlas panning reads Integrity's whole layers (26 MB) at each slide, 13 in 16 s —
+  DA-B12.
+- Hacks and limits: a fortress column first asked between a slide and its read throws (groundRead) — the fortress keeps
+  each box column's ground once read, so it shouldn't; the town debug overlay isn't drawn for a frame with a page
+  unread.
+

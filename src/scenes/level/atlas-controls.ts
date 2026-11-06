@@ -94,9 +94,11 @@ export function atlasControls(scene: LevelScene): void {
     show();
   });
   window.addEventListener('keydown', (e) => e.key.toLowerCase() === 'f' && setTimeout(show), { signal: scene.abort.signal });
-  const atMiddle = (f: (x: number, y: number) => void) => {
+  const atMiddle = (f: (x: number, y: number) => void): void => {
     const cam = scene.core.camera;
     const g = cam.groundAt(cam.viewportW / 2, cam.viewportH / 2, scene.heightAt);
+    // (round 128o: the ground there not read yet — its page asked: a frame later)
+    if (!g) return void requestAnimationFrame(() => atMiddle(f));
     const [x, y] = cellAt(g[0], g[1]);
     f(x, y);
   };

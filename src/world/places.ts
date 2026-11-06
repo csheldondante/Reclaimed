@@ -255,9 +255,9 @@ export class PlaceMap {
   /**
    * The room at world (x, y): the top room, or with z below `groundAt` there
    * (the top of the column's open air) the enclosed level's room where the
-   * column has one. 0: no place.
+   * column has one. 0: no place; -1 (round 128o): the ground there isn't read yet (groundAt null).
    */
-  roomAt(x: number, y: number, z?: number, groundAt?: (x: number, y: number) => number): number {
+  roomAt(x: number, y: number, z?: number, groundAt?: (x: number, y: number) => number | null): number {
     const [cx, cy] = cellAt(x, y);
     if (cx < 0 || cy < 0 || cx >= this.w || cy >= this.h) return 0;
     const v = this.cols[cy * this.w + cx];
@@ -265,7 +265,9 @@ export class PlaceMap {
     const high = v >>> 16;
     if (!high || z === undefined) return low;
     if (!groundAt) throw new Error('places.at: a column with an enclosed level needs the ground height');
-    return z < groundAt(x, y) - 0.5 ? high : low;
+    const g = groundAt(x, y);
+    if (g === null) return -1;
+    return z < g - 0.5 ? high : low;
   }
 
   /** A room's rooms next to it, or a region's regions next to it (borders summed). */

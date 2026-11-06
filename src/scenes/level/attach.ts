@@ -53,9 +53,8 @@ export function attach(scene: LevelScene): void {
     const r = Math.PI / 180;
     // (the ground's heights arrive with the first surface readback: wait for it)
     const placeIt = () => {
-      // (the ground there read first: its page asked, placed when it's in)
-      if (!scene.worldApi?.terrain?.surfaceAt(wx, wy)) return void setTimeout(placeIt, 200);
-      core.structures.place(m, wx, wy, qYawPitchRoll((yaw || 0) * r, (pitch || 0) * r, (roll || 0) * r), scene.heightAt, sink || 0);
+      // (round 128o: the ground under its footprint read first — its pages asked: placed when they're in)
+      if (core.structures.place(m, wx, wy, qYawPitchRoll((yaw || 0) * r, (pitch || 0) * r, (roll || 0) * r), scene.heightAt, sink || 0) === undefined) requestAnimationFrame(placeIt);
     };
     placeIt();
   }

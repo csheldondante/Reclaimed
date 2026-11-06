@@ -2565,11 +2565,15 @@ cheap pool of light ("Yes absolutely enough"). One concern a file:
   `sources` (simTick, slowSystems, io, counters) are lent by whoever reads it (the bench); it changes nothing.
   `report(mark)` = per frame: interval, rAF lag, CPU, rAF to last submit, submit to done, frames in flight, GPU span,
   the gap between frames' GPU work, sim ticks, which counters moved; the slow frames against the rest.
-- **The level's ground** (round 128o, DA-B19): `scene.heightAt(x, y)` is the world API terrain's `surfaceAt` — the
-  surface word from its 1 KB page, read when asked and again once its chunk ran — and the land as generated
-  (`scene.mapHeightAt`: the CPU's map, kept by the streamer) for a page not read yet. What asks every frame and needs
-  only the lie of the land (the far land's focus, the flyer's floor) asks `mapHeightAt` and never reads the GPU. The
-  fortress reads its box's surface pages once before it's ready (Terrain.load). Writes outside the ticks and the
+- **The level's ground** (round 128o, DA-B19): `scene.heightAt(x, y): number | null` is the world API terrain's
+  `surfaceAt` — the surface word from its 1 KB page, read when asked and again once its chunk ran; null: not read yet
+  (the page is asked for now). No stand-in: a tap, a turn, a placement, a bird flock waits a frame
+  (`Camera.groundAt` returns null with such a lookup; `Structures.place` undefined; `Places.at` undefined); a drag
+  doesn't start, a move or a hover is skipped. The fortress reads the window's surface pages whole before it's ready
+  and after each slide (`scene.groundReady` false meanwhile: its people, raiders, pieces and taps wait) and asks
+  `scene.groundRead`, which throws if a page isn't read (a bug there). `scene.mapHeightAt` is the map as generated, for
+  the two that ask every frame and need only the lie of the land — the far land's focus and the flyer's floor — and
+  nothing else (test/unit/mapheight.test.ts). Writes outside the ticks and the
   column applies (an undo, chunks restored, the streamer's live edit) tell `WorldCore.onColumnsWritten`; the mirror
   reads those pages again. No copy of the whole surface is kept or read back (`surfaceCache` and its 1 Hz read went).
 - **The water's settling hold** (round 84 ?settletol, on by default with ?rivers=table; round 128o, DA-B20: on the

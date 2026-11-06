@@ -76,7 +76,8 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
     townGates: () => (st.spotsOf(rec.id) ?? []).filter((s) => s.kind === 'post' && s.ref === `${rec.id}:wall`).map((s): [number, number] => [s.w[0], s.w[1]]),
     windowOrigin: () => [S.origin[0], S.origin[1]],
     dims: { w: dims.w, h: dims.h, zMax: dims.zMax },
-    ground: (x, y) => scene.heightAt(x, y),
+    // (round 128o: the window's ground is read whole before the fortress is ready — below)
+    ground: (x, y) => scene.groundRead(x, y),
     stores: () => Object.fromEntries(Object.entries(rec.stores).map(([k, v]) => [k, v.stock])),
     // (round 128g: the view asks for the fortress's pieces every frame — uploaded again only when they're new)
     changed: () => {},
@@ -93,10 +94,17 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
   fort.status.people = ECON.startPeople;
   // drawn with the towns' pieces (fortress/pieces.ts), in the box's frame, moved into the window's by its offset
   let pieces: StructurePieces | null = null;
-  fort.onChange.push(() => (pieces = null));
+  // (round 128o: made again once the ground is read — after a slide the last ones are drawn till it is)
+  let stale = false;
+  fort.onChange.push(() => (stale = true));
   view.extra = () => {
-    if (!fort.plan.structures().length) return null;
-    pieces ??= fortressPieces({ plan: fort.plan, town: fort.town, grid: fort.grid, ground: (x, y) => scene.heightAt(...fort.toWindow(x, y)), zOff: S.oz, ghost: fort.ghost(), started: fort.started(), picked: fort.inspected, ways: fort.ways(), lanes: fort.lanes(), shut: fort.gatesShut });
+    if (!fort.ready || !fort.plan.structures().length) return null;
+    if (!scene.groundReady) return pieces ? { p: pieces, dx: fort.offset()[0], dy: fort.offset()[1] * ROW_H } : null;
+    if (stale) {
+      pieces = null;
+      stale = false;
+    }
+    pieces ??= fortressPieces({ plan: fort.plan, town: fort.town, grid: fort.grid, ground: (x, y) => scene.groundRead(...fort.toWindow(x, y)), zOff: S.oz, ghost: fort.ghost(), started: fort.started(), picked: fort.inspected, ways: fort.ways(), lanes: fort.lanes(), shut: fort.gatesShut });
     const [dx, dy] = fort.offset();
     return { p: pieces, dx, dy: dy * ROW_H };
   };
@@ -104,16 +112,24 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
   // made now over the whole window and read back (round 128l: once the level's pipelines are ready — in its batch, at its end)
   whenPipelinesReady(() => {
     core.prepareArrived();
-    // (round 128o, DA-B19: the box's columns read — the world API's pages, a few hundred KB once — not the whole surface)
-    const [x0, y0] = fort.toWindow(0, 0);
-    const [x1, y1] = fort.toWindow(fort.box.w, fort.box.h);
+    // (round 128o, DA-B19: the window's surface pages read once — 1 KB each, ~400 KB at 320² — before the fortress is
+    // ready: its ground, its pieces' and its raiders' are asked anywhere in the window, and its window doesn't slide)
     void worldApiOf(scene)
-      .terrain!.load(Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1))
+      .terrain!.load(0, 0, dims.w, dims.h * ROW_H)
       .then(() => {
         fort.ready = true;
         fort.requestReach(true);
       }, ignoreTeardown);
   });
+  // (round 128o, DA-B19: a slide or a warp leaves the window's ground unread: read whole again, the fortress waiting)
+  const readGround = (): void => {
+    scene.groundReady = false;
+    void worldApiOf(scene)
+      .terrain!.load(0, 0, dims.w, dims.h * ROW_H)
+      .then(() => (scene.groundReady = true), ignoreTeardown);
+  };
+  S.onSlide.unshift(readGround);
+  S.onWarp.unshift(readGround);
   // (round 128l) the reach asked when planning starts (what's been built and dug since; the water for the lanes), every
   // few seconds while building (level/frame.ts) and after a slide (the part come into the window)
   fort.onMode.push((m) => {
@@ -165,7 +181,7 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
           trees: (at, r, n) => scene.worldApi!.plants!.treesNear(at[0], at[1], r, n).then((ts) => ts && ts.map((t) => [t.x, t.y] as [number, number])),
           fell: (at) => scene.worldApi!.plants!.fell(at[0], at[1]).then((t) => t?.logs ?? 0),
           dig: (at, n) => scene.worldApi!.terrain!.take(at[0], at[1], n).then((g) => g.amount),
-          ground: (x, y) => scene.heightAt(x, y),
+          ground: (x, y) => scene.groundRead(x, y),
           // (round 128m, quarry: the layers' top, loose ground on it too — the surface buffer's z is the solid's: a pit
           // measured by it read a soil-covered column as not dug while its soil was taken)
           top: (x, y) => scene.worldApi!.terrain!.heightAt(x, y),
@@ -193,7 +209,7 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
         pour: (x, y, m, r, layers) => scene.worldApi!.terrain!.deposit(x, y, m, { radius: r, layers }),
         put: (x, y, m, n) => void scene.worldApi!.terrain!.put(x, y, m, n).catch(ignoreTeardown),
         burst: (name, x, y, z, o) => scene.worldApi!.fx?.burst(name, x, y, z, o),
-        ground: (x, y) => scene.heightAt(x, y),
+        ground: (x, y) => scene.groundRead(x, y),
         dims: { w: dims.w, h: dims.h * ROW_H },
       });
       fort.setMode('build');
@@ -348,6 +364,8 @@ export function skipFrame(scene: LevelScene, simDt: number): void {
 
 /** Fortress: a tap plans (or erases, or gates) the block it lands on (Townscaper's way: town.pickBlock). */
 export function fortressAt(scene: LevelScene, sx: number, sy: number): void {
+  // (round 128o: the window's ground being read again after a slide: the tap a frame later)
+  if (!scene.groundReady) return void requestAnimationFrame(() => fortressAt(scene, sx, sy));
   const { core } = scene;
   const { camera } = core;
   const fort = scene.fortress!;

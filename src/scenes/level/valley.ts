@@ -259,5 +259,12 @@ export function birdArrivals(scene: LevelScene, dt: number, stats: WorldStats | 
   const t = 10 + Math.random() * (dims.w - 20);
   const x = side === 0 ? 1.5 : side === 1 ? dims.w - 1.5 : t;
   const y = side === 2 ? 1.5 : side === 3 ? dims.h * ROW_H - 1.5 : side < 2 ? t * ROW_H : 0;
-  sim.particles.burst({ kind: PK.Bird, x, y, z: scene.heightAt(x, y) + 11, count: 2 + Math.floor(Math.random() * 4), speed: 5, spread: 1.5 });
+  const count = 2 + Math.floor(Math.random() * 4);
+  // (round 128o: the ground there not read yet: the flock comes once it is — its page asked)
+  const arrive = (): void => {
+    const z = scene.heightAt(x, y);
+    if (z === null) return void requestAnimationFrame(arrive);
+    sim.particles.burst({ kind: PK.Bird, x, y, z: z + 11, count, speed: 5, spread: 1.5 });
+  };
+  arrive();
 }

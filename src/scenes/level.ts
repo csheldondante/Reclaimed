@@ -55,7 +55,7 @@ import type { HeroRun } from '../story/hero-run';
 import { cpuStats } from '../gpu/cpustat';
 import { type Interval, CHUNK, windowZMax } from '../world/layout';
 import { Integrity, type Grab } from '../game/integrity';
-import { cellAt, ROW_H } from '../world/lattice';
+import { cellAt, cellPos, ROW_H } from '../world/lattice';
 import { HybridChunks } from './hybrid';
 import { atlasRange, atlasRows } from './range';
 import { Turn } from '../render/turn';
@@ -236,6 +236,12 @@ export class LevelScene implements Scene {
   traits!: TraitSystem;
   traitStation?: TraitStation;
   lifeSpawned = false;
+  /**
+   * (round 128o, DA-B19) The window's ground is read (the fortress's: read whole when it starts and after each slide —
+   * scenes/level/fortress.ts): false between a slide and its read, when the fortress's people, raiders, pieces and taps
+   * wait (they ask the ground anywhere in the window: scene.groundRead).
+   */
+  groundReady = true;
   /** (round 88, the atlas level) the settlements, and the units (the Units contract on the agents) */
   settlements?: Settlements;
   units?: AgentUnits;
@@ -412,11 +418,23 @@ export class LevelScene implements Scene {
   /** (round 87) when the beam's bore was last judged (performance.now, ms) */
   beamCutAt = 0;
 
+  /**
+   * (round 128o, DA-B19) The ground's base at (x, y), which must have been read: what runs only once its ground is
+   * (the fortress, read whole before it's ready; a structure placed once its footprint is). Not read is a bug there.
+   */
+  groundRead = (x: number, y: number): number => {
+    const z = this.heightAt(x, y);
+    if (z === null) throw new Error(`the ground at (${x.toFixed(1)}, ${y.toFixed(1)}) isn't read yet: its reader must wait for it (scene.heightAt)`);
+    return z;
+  };
+
   /** The free camera on (from where the fixed view looks from, the same way) or off (looking at the ground under the screen's middle). */
   toggleFly(): void {
     const { camera } = this.core;
     if (camera.fly) {
       const g = camera.groundAt(camera.viewportW / 2, camera.viewportH / 2, this.heightAt);
+      // (round 128o: the ground there not read yet — its page asked: the toggle waits a frame)
+      if (!g) return void requestAnimationFrame(() => this.toggleFly());
       // (round 90: the view turned the way the flyer looked, when the view turns — the atlas level's)
       if (this.turn) camera.azimuth = camera.fly.yaw + Math.PI;
       camera.fly = null;
@@ -570,19 +588,23 @@ export class LevelScene implements Scene {
   }
 
   /**
-   * The ground's base at (x, y) as the GPU has it (round 128o, DA-B19): the world API's terrain from the columns' page
-   * (api/terrain.ts surfaceAt: read when asked, again only after its chunk ran) — for a question asked on an event (a
-   * tap, a turn, a placement, the fortress's ground). Its page not read yet (it's asked for now) or off the window:
-   * the land as generated (mapHeightAt). Before, a copy of the whole surface read back every second.
+   * The ground's base at (x, y) as the GPU has it (round 128o, DA-B19): the world API's terrain from the column's page
+   * (api/terrain.ts surfaceAt: read when asked, again only after its chunk ran), (x, y) clamped to the window. Null:
+   * not read yet — its page is asked for now; the caller waits for it (a tap, a turn, a placement retry next frame),
+   * never a stand-in. Before, a copy of the whole surface read back every second.
    */
-  heightAt = (x: number, y: number): number => {
-    return this.worldApi?.terrain?.surfaceAt(x, y)?.z ?? this.mapHeightAt(x, y);
+  heightAt = (x: number, y: number): number | null => {
+    // (the window's columns only: past its edge, its edge's)
+    const { w, h } = this.core.dims;
+    const [cx, cy] = cellAt(x, y);
+    const [px, py] = cellPos(Math.max(0, Math.min(w - 1, cx)), Math.max(0, Math.min(h - 1, cy)));
+    return this.worldApi?.terrain?.surfaceAt(px, py)?.z ?? null;
   };
 
   /**
-   * The land as generated at (x, y) (the CPU's map, kept by the streamer for each region that comes in): for what asks
-   * every frame and needs only the lie of the land — the far land's focus, the flyer's floor, debug overlays — and
-   * never reads the GPU. Clamped to the window.
+   * The map as generated at (x, y) (the CPU's map, kept by the streamer for each region that comes in) — not the
+   * ground as it is: what was dug or built isn't in it. Only for the two that ask every frame and need the lie of the
+   * land: the far land's focus and the flyer's floor (test/unit/mapheight.test.ts holds it to them). Clamped.
    */
   mapHeightAt = (x: number, y: number): number => {
     const { w, h } = this.core.dims;

@@ -32,7 +32,8 @@ export interface PowersDeps {
   /** current surface heights (async readback, may be a frame or two old) */
   readSurface: () => Promise<Uint32Array>;
   /** ground height at a world point (for effects placed on the ground) */
-  heightAt?: (x: number, y: number) => number;
+  /** the ground's height (null: not read yet — scenes/level.ts heightAt) */
+  heightAt?: (x: number, y: number) => number | null;
   /** total birds ever flushed from a perch (GPU counter, async readback) */
   birdsFlushed: () => Promise<number>;
   /** water depth on a column (a cached read-back, ~1 s old); absent: no water anywhere */
@@ -427,7 +428,9 @@ export class Powers {
     this.lastCyclone = -99;
     this.gust = { x: wx, y: wy, lx: wx, ly: wy, vx: 0, vy: 0, t: performance.now(), radius: 7, strength: 4.5, dx: 1, dy: 0, len: 0, ax: wx, ay: wy, sentX: wx, sentY: wy };
     // a soft pale light where the wind is called up (round 11)
-    this.d.particles.burst({ kind: PK.Glow, x: wx, y: wy, z: (this.d.heightAt?.(wx, wy) ?? 0) + 0.8, count: 1, speed: 0, payload: 1, spread: 0 });
+    // (round 128o: the ground there not read yet: no glow this time — its page is asked)
+    const gz = this.d.heightAt?.(wx, wy);
+    if (gz !== null && gz !== undefined) this.d.particles.burst({ kind: PK.Glow, x: wx, y: wy, z: gz + 0.8, count: 1, speed: 0, payload: 1, spread: 0 });
     // the whoosh starts with the drag (round 10)
     this.windLevel = { strength: Math.max(5, this.windLevel.strength), x: wx, y: wy };
     return true;

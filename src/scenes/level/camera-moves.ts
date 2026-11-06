@@ -160,7 +160,9 @@ export function turnControls(scene: LevelScene): void {
 export function turnPivot(scene: LevelScene): void {
   const cam = scene.core.camera;
   if (cam.fly || scene.cutaway) return;
-  cam.target = cam.groundAt(cam.viewportW / 2, cam.viewportH / 2, scene.heightAt);
+  // (round 128o: the ground there not read yet — its page asked — the turn goes round the target as it is)
+  const g = cam.groundAt(cam.viewportW / 2, cam.viewportH / 2, scene.heightAt);
+  if (g) cam.target = g;
 }
 
 /** a step of the view's turn: the cutaway's Orbit takes it when it's on (it owns the azimuth there) */

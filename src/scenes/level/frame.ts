@@ -1,6 +1,7 @@
 // The level's frame: camera input, the planner and the window's slide, the world's systems, the sim's ticks, the
 // story and hero updates, then the draw and the HUD. API: levelFrame(scene, now, dt) (LevelScene.frame), planFrame,
 // lifeFrame, ceilingFrame, perfLines. Reads and sets the scene's fields; no other module's internals.
+import { ignoreTeardown } from '../../gpu/pipeline';
 import { reclamation, worldHealth } from '../../game/nature';
 import { saveProgress } from '../../game/progress';
 import { EventKind } from '../../sim/globals';
@@ -128,7 +129,8 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
   if (scene.units && !scene.stream?.busy) {
     scene.units.update(dt * scene.speed);
     timed('settle', () => scene.settlements?.update(dt * scene.speed));
-    if (scene.fortressLife) {
+    // (round 128o: the fortress waits while the window's ground is read again after a slide — scene.groundReady)
+    if (scene.fortressLife && scene.groundReady) {
       scene.fortressLife.update(dt * scene.speed);
       // (round 128l, m4) the attack wave: its clock, its raiders, the gates
       scene.fortressRaid?.update(dt * scene.speed);
@@ -430,10 +432,22 @@ export function planFrame(scene: LevelScene): void {
 /** (round 117, ?life=) the inhabitants each frame: spawned once the ground's first read is in, the mesh built round the view */
 export function lifeFrame(scene: LevelScene, dt: number): void {
   const life = scene.inhabitants!;
-  const { core, host } = scene;
-  // (round 128o: once the ground under the camera is read — its page asked)
-  if (!scene.lifeSpawned && scene.worldApi?.terrain?.surfaceAt(core.camera.target[0], core.camera.target[1])) {
+  const { core } = scene;
+  // (round 128o: the ground round the camera read first — the stand-in town's paths stand on it — then spawned)
+  if (!scene.lifeSpawned && scene.worldApi?.terrain) {
     scene.lifeSpawned = true;
+    const [cx, cy] = core.camera.target;
+    void scene.worldApi.terrain.load(cx - 64, cy - 64, cx + 64, cy + 64).then(() => spawnLife(scene), ignoreTeardown);
+  }
+  lifeFocus(life, core);
+  life.update(dt);
+}
+
+/** (round 117) the inhabitants spawned round the camera, its ground read (lifeFrame) */
+function spawnLife(scene: LevelScene): void {
+  const life = scene.inhabitants!;
+  const { core, host } = scene;
+  {
     const mode = host.params.get('life');
     const t = core.camera.target;
     life.setAbilityHost(
@@ -444,12 +458,10 @@ export function lifeFrame(scene: LevelScene, dt: number): void {
     );
     if (mode === 'viewer') {
       scene.editor?.setVisible(false);
-      mountViewer(host.ui, life, core, scene.heightAt);
+      mountViewer(host.ui, life, core, scene.groundRead);
     }
-    else if (mode !== 'empty') wilderness(life, [t[0], t[1]], { herd: Number(host.params.get('lifeherd') ?? 12), dragon: mode === 'dragon', town: mode === 'town', ground: scene.heightAt });
+    else if (mode !== 'empty') wilderness(life, [t[0], t[1]], { herd: Number(host.params.get('lifeherd') ?? 12), dragon: mode === 'dragon', town: mode === 'town', ground: scene.groundRead });
   }
-  lifeFocus(life, core);
-  life.update(dt);
 }
 
 /**

@@ -37,7 +37,13 @@ export function editTool(scene: LevelScene, wx: number, wy: number, tap: boolean
   if (ed.tool === 'range' || ed.tool === 'mesa') {
     scene.core.snapshot();
     const api = worldApiOf(scene);
-    scene.raising = api.terrain!.raise(ed.tool, ed.tool === 'range' ? { radius: ed.radius, height: ed.radius * 2.6 } : { radius: ed.radius, level: scene.heightAt(wx, wy) + 10 });
+    // (round 128o: a mesa's level from the ground there — not read yet: the press waits a frame)
+    const here = scene.heightAt(wx, wy);
+    if (ed.tool === 'mesa' && here === null) {
+      requestAnimationFrame(() => editTool(scene, wx, wy, tap));
+      return true;
+    }
+    scene.raising = api.terrain!.raise(ed.tool, ed.tool === 'range' ? { radius: ed.radius, height: ed.radius * 2.6 } : { radius: ed.radius, level: here! + 10 });
     scene.raising.to(wx, wy);
     if (tap) {
       scene.raising.end();
@@ -126,7 +132,10 @@ export function drawRing(scene: LevelScene): void {
     drawPlan(scene, ring.parentElement as unknown as SVGSVGElement);
     ring.parentElement!.style.display = b || scene.planAdd?.getAttribute('d') || scene.planDel?.getAttribute('d') ? '' : 'none';
     if (!b) return ring.setAttribute('points', '');
-    const floor = Number.isNaN(t.base[b.cell]) ? Math.max(...g.columns[b.cell].map((col) => scene.heightAt(...cellPos(col % scene.core.dims.w, Math.floor(col / scene.core.dims.w))))) : t.floorZ(b.cell, b.level);
+    const zs = g.columns[b.cell].map((col) => scene.heightAt(...cellPos(col % scene.core.dims.w, Math.floor(col / scene.core.dims.w))));
+    // (round 128o: the ground there not read yet: no outline this frame)
+    if (Number.isNaN(t.base[b.cell]) && zs.some((z) => z === null)) return ring.setAttribute('points', '');
+    const floor = Number.isNaN(t.base[b.cell]) ? Math.max(...(zs as number[])) : t.floorZ(b.cell, b.level);
     const pts: string[] = [];
     for (const z of [floor + 0.1, floor + LEVEL_H]) {
       for (let k = 0; k <= 4; k++) {
@@ -169,7 +178,10 @@ export function drawRing(scene: LevelScene): void {
     const [fw, fd] = placeRect(scene, at[0], at[1]);
     const c: [number, number][] = [[fw[0], fd[0]], [fw[1], fd[0]], [fw[1], fd[1]], [fw[0], fd[1]], [fw[0], fd[0]]];
     for (const [x, y] of c) {
-      const [sx, sy] = camera.project(x, y, scene.heightAt(Math.min(x, fw[1] - 0.5), Math.min(y, fd[1] - 0.5)) + 0.1);
+      const z = scene.heightAt(Math.min(x, fw[1] - 0.5), Math.min(y, fd[1] - 0.5));
+      // (round 128o: the ground there not read yet: no outline this frame)
+      if (z === null) return ring.setAttribute('points', '');
+      const [sx, sy] = camera.project(x, y, z + 0.1);
       pts.push(`${sx.toFixed(1)},${sy.toFixed(1)}`);
     }
     ring.setAttribute('points', pts.join(' '));
@@ -179,7 +191,10 @@ export function drawRing(scene: LevelScene): void {
     const a = (k / 48) * Math.PI * 2;
     const x = at[0] + Math.cos(a) * ed.radius;
     const y = at[1] + Math.sin(a) * ed.radius;
-    const [sx, sy] = camera.project(x, y, scene.heightAt(x, y) + 0.1);
+    const z = scene.heightAt(x, y);
+    // (round 128o: the ground there not read yet: no ring this frame)
+    if (z === null) return ring.setAttribute('points', '');
+    const [sx, sy] = camera.project(x, y, z + 0.1);
     pts.push(`${sx.toFixed(1)},${sy.toFixed(1)}`);
   }
   ring.setAttribute('points', pts.join(' '));
