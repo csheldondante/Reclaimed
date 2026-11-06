@@ -527,7 +527,7 @@ export class WorldCore {
     enc.clearBuffer(this.world.deposit);
     device.queue.submit([enc.finish()]);
     const zero = new Float32Array(this.dims.w * this.dims.h * 4);
-    for (const t of [this.world.editState, this.world.editStateNext]) {
+    for (const t of [this.world.editStateA, this.world.editStateB]) {
       device.queue.writeTexture({ texture: t }, zero, { bytesPerRow: this.dims.w * 16 }, [this.dims.w, this.dims.h]);
     }
     return true;

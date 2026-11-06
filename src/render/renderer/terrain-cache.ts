@@ -76,7 +76,7 @@ export function tcPrepare(rd: Renderer, W: number, H: number, f: Float32Array): 
       tex,
       cam: camB,
       uni,
-      gGroups: srcs.map((s) => rd.meshGroupOf!(camB, rd.shadowView, s)),
+      gGroups: srcs.map((s) => rd.meshGroupOf!(camB, rd.shadowViews, s)),
       rGroups: srcs.map((s) =>
         dev.createBindGroup({ label: 'tcache-resolve', layout: rd.meshResolveLayout!, entries: [...rd.meshEntries(s, camB), { binding: 40, resource: g0v }, { binding: 41, resource: g1v }] }),
       ),

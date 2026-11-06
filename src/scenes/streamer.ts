@@ -318,8 +318,8 @@ export class Streamer {
       tx('foreign', false),
       tx('proj', false, PROJ_K),
       tx('sparkTex', false),
-      tx('editState', false),
-      tx('editStateNext', false),
+      tx('editStateA', false),
+      tx('editStateB', false),
       tx('windField', false, 1, 2),
       tx('windFieldNext', false, 1, 2),
     ];

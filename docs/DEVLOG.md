@@ -18294,8 +18294,82 @@ simple plain language like in the worked examples."
 - The gate's table (src/gpu/transfers.ts) follows DA-B1 and DA-B5: the mirror's read is `GpuPageReader.read`, wrapped
   by `attachSim`, its level caller `worldApiOf` at rate `edit` (no `violates`); the eighteen timed `Mirror.read` callers
   and the two FieldReader rows are gone; the valley's reads are `ValleyReads.frame`, play `no`. What stays timed in
-  fortress play has a row: the level's surface read 1 Hz (DA-B17, new) and the water's settling read 2 Hz (DA-B18, new).
+  fortress play has a row: the level's surface read 1 Hz (DA-B19, new) and the water's settling read 2 Hz (DA-B20, new).
 - test/unit/townfixture.test.ts fails here as on fortress since 403f757 (the LF renormalisation changed the land
   generator's source hash: `data/lab/town.rclt is stale`); the lab's `town` recipe still loads. Recapturing the fixture
   is fortress's (node scripts/labtown.mjs capture).
 
+
+## 2026-11-05 — the shadow cache without its copy (DA-B7)
+
+Why: with `?shadowcache=N` (the phone tier's set, phone-flags.ts) the static casters were drawn into their own map every
+Nth frame and copied whole into the sun's map every frame, the moving casters drawn over the copy: shadowSize² × 4 B a
+frame (1 MB at the phone's 512², 4 MB at 1024², 16 MB at 2048²). AGENT_RULES §1b: no whole copy without a measured
+reason. The lookups can read both maps instead.
+
+- The static casters keep their map (`Renderer.shadowStill`, made with the renderer: full size with the cache, a stand-in
+  texel without), the moving casters go into the sun's map, cleared each frame. The draws bind both (`ShadowViews`:
+  binding 25 the sun's map, 27 the static map, in the five layouts and two resource maps that held 25); common.wgsl
+  `shadowLit` takes, per filtered tap, the smaller visibility of the two — what one map holding the nearer caster gives
+  at a hard edge. `Camera.eye.w` bit 12 (`SHADOW_STILL_BIT`) turns the second tap on only with the cache: without it
+  nothing more is sampled. Sampled textures a stage stay well under 16 (the tiles' draw layout: 12).
+- Same picture: in the `town` lab at 412x915, play zoom (12) and close (24), one page with `shadowcache=4` in its URL,
+  the cache turned off (one map, every caster) and on (two maps) a frame apart: the pixels that differ are the river's
+  animated surface (32 184 of 376 980 over 8 levels at play zoom; two frames both off differ by 30 425 the same way)
+  and a few specks at the close zoom (1 635); none where shadows fall.
+- Cost (desktop proxy): the copy itself, timed alone on this GPU, 35-99 µs at 512², 42-58 µs at 1024², 0.2-0.28 ms at
+  2048² — gone. The frame with every frame drawn and no sim, town lab, `shadowcache=4`: 9-17 ms both before and after
+  (new 14.6/11.0 median of two runs of six, old 16.0/14.1) — the copy is below the desktop's frame noise. The added
+  four compare taps a lit pixel are the phone bench's to judge, by the frame with the cache on and off.
+- Found on the way, not fixed (reported): in the production build (the lab, scripts/shot.mjs) the phone flags are
+  written into the URL after the modules that read them as they load have run — Rollup puts the renderer and the
+  systems in a chunk main imports, which runs before main's own body (phone-flags-boot). So `Renderer.opts.shadowCache`
+  and `INPLACE` are 0/false in the lab whatever the tier; the vite dev server keeps the order. The checks above pass
+  `shadowcache=4` in the URL themselves.
+- Transfers gate: the `encodeShadow` copy entry removed (src/gpu/transfers.ts).
+- Hacks and limits: the second map costs shadowSize² × 4 B of memory (1 MB on the phone) where the cache is on; a soft
+  edge where a static and a moving caster overlap takes the smaller of two filtered values, not the filter of the
+  nearer depth (both 0/1 at a hard edge; equal in the shots).
+
+## 2026-11-05 — the edit pass in place, its state taking turns, run only while something is in flight (DA-B8)
+
+Why: the edit pass (the brush, a unit's take and put, a fell, a blow) copied its whole state texture back every tick it
+ran (rgba32float, 1.64 MB at 320²), and without `?inplace=1` (every tier but the phone's) the whole layers too (26 MB).
+It ran every tick on every sandbox level, the atlas included (`edit.always`, set for pours), or with `inplace` for 300
+ticks after any edit — so each builder's take or put bought 5 s of copies (~98 MB/s on the phone while builders work).
+The linger existed for the sandbox's pours only (DEVLOG round 83: "a pour lands up to 3.9 s after the press").
+
+- In place on every tier: each thread reads and writes only its own column, in the layers and in layersNext alike
+  (ARCHITECTURE "Who writes the columns": the passes that still copy layersNext back whole would undo a change to the
+  layers alone). The one read of other columns — a blow's struck column and its footprint's tops, for the rim — moved
+  to `blowSum`, a 4-thread pass before it on a tick that carries a blow, writing a 4-texel table (it was also each
+  rim thread's own loop over the footprint; with `inplace=1` that read raced the footprint's writes).
+- The state's two textures take turns (`WorldGpu.editStateA/B`, `editCur`): the pass reads one, writes the other and
+  flips; the sediment and the particle emitters keep a bind group for each and pick by `editCur`. Nothing copied.
+- When it runs (sim/edit-ops.ts `EditBusy`, `edit.always` gone): on a tick with an Edit event, and after it while a
+  press's cells are still landing — a build or dig a cell a tick, a pour after its 0.8 s fall at 4 cells/s, bedrock at
+  3 — plus two ticks so the two textures agree where it stops. Take, put, fell, the liquids, smash, crater and blows
+  leave nothing in flight: a builder's edit runs the pass for its own tick only. Its first version assumed a press's
+  later events stay within its strength; the GPU showed otherwise (any stroke start resets every column's `given`, so
+  a pour's next event after another tool's start took its strength again: 5 cells pending from strengths 2 and 3).
+  The press now ends at any stroke start and is reckoned at its largest strength and slowest rate
+  (test/unit/edit-ops.test.ts, with that case).
+- Same results: a scripted run in the `town` lab (a pour, a build, a pour's second event, a dig, a take, a put, a
+  bedrock rise; the edit pass alone, 600 ticks): the layers, deposit, plants, edit state and edit results hash the same
+  as before at ticks 3, 40, 199 and 600, and the two state textures are equal wherever the pass has stopped. A blow on
+  the flat lab: the rim's deposit filled (23.3 cells over 197 columns), the layers and layersNext equal where touched.
+- Measured, `town` lab, builders working (two houses and a farm planned, 30 sim s at 16x; the encoder's copies counted
+  in the page, old and new code alike): edit-state copies 1 808 → 0 (2.96 GB → 0), whole-layers copies 3 616 → 1 808
+  (94.8 → 47.4 GB: the remaining 26 MB a tick is the structure pass's, DA-B14); the same 26 edits on 8 ticks, the house
+  built; the run's wall time 17.5 → 13.1 s. (The lab runs without `inplace` whatever its tier: see DA-B7's note on the
+  build's flag order — so this is the desktop default's cost. On the phone with `inplace=1` the removed cost is the
+  1.64 MB state copy for 300 ticks after every take or put.)
+- hallcheck (the atlas towns, 30 s with nothing done; the layersNext copy-back's own gate): 0 of 344 buildings lost.
+- Transfers gate: the `EditSystem.encode` copies entry removed.
+- Not done, reported: the structure pass in place everywhere (DA-B14). It reads its neighbours' support while they're
+  rewritten in the same dispatch — with `inplace=1` that's a race (a torn column can be read), not Gauss-Seidel. It
+  needs its own design (a support pre-pass like `blowSum`, or layers ping-pong), not a switch.
+- Hacks and limits: the run length is a CPU upper bound from the events (no readback): a long drag keeps the pass on
+  for its press's whole landing time after the last event. A pour in a chunk that falls asleep mid-flight (woken for
+  8 s, longer than any pour) would hold the state one tick apart between the two textures. Snapshots (sim/snapshot.ts)
+  keep both textures but not `editCur`: fine at rest, where they agree.

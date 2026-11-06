@@ -658,7 +658,6 @@ export class Integrity {
    */
   groundBlow(x: number, y: number, z: number, energy: number, reach = 1.5): void {
     if (!(energy > 0)) return;
-    this.core.sim.edit.always = true;
     // (what it lands on asleep: woken, so the edit pass sees it)
     this.core.sleep?.wake(x, y, reach + 6, 4, performance.now() / 1000);
     // (a smash is a cut: the event tap marks it for the judge — two looks — as any smash; a sink judges nothing much)

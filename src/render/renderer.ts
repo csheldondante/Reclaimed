@@ -45,7 +45,7 @@ import { BGCHECK, BgCheck } from './bgcheck';
 import { encode, encodeCeiling } from './renderer/encode';
 import { drawGrid, windowDrawn, windowMoved } from './renderer/grid';
 import { enableBand, enableRockMesh, enableStructures } from './renderer/features';
-import { CAM_BYTES, SHADOW_SIZE, SHADOW_FORMAT, VEG_INSTANCES, INST_GROW, INST_START, INST_GROW_AT, PICK_FORMAT, PickHit, DEPTH_FORMAT, RenderOptions, DETAIL_BITS, SKIP } from './renderer/defs';
+import { CAM_BYTES, SHADOW_SIZE, SHADOW_FORMAT, VEG_INSTANCES, INST_GROW, INST_START, INST_GROW_AT, PICK_FORMAT, PickHit, DEPTH_FORMAT, RenderOptions, DETAIL_BITS, SKIP, type ShadowViews } from './renderer/defs';
 export { SKIP } from './renderer/defs';
 export type { PickHit, RenderOptions } from './renderer/defs';
 import { buildMeshDraws } from './renderer/mesh-draws';
@@ -78,8 +78,9 @@ export class Renderer {
         if (b === undefined) throw new Error(`?nodetail=${k}: one of ${Object.keys(DETAIL_BITS).join(', ')}`);
         return m | b;
       }, 0),
-    /** the sun's map's static casters (the terrain mesh, the prisms) drawn every Nth frame into a cache, copied in
-     *  and the moving ones (plants, structures, bodies) drawn over it every frame (?shadowcache=N; 0 off) */
+    /** the sun's map's static casters (the terrain mesh, the prisms) drawn every Nth frame into their own map, the
+     *  moving ones (plants, structures, bodies) into the sun's map every frame; the lookups read both (DA-B7: no copy
+     *  between them) (?shadowcache=N; 0 off) */
     shadowCache: Number(new URLSearchParams(location.search).get('shadowcache') ?? 0),
     /** the terrain drawn into a cached layer every Nth frame (a margin past the screen), copied in each frame moved
      *  by the camera, which is snapped to its pixels (?tcache=N; 0 off; not with the cutaway or the free camera) */
@@ -187,16 +188,16 @@ export class Renderer {
   rockPipe?: GPURenderPipeline;
   rockGroup?: GPUBindGroup;
   rockPoolSeen = -1;
-  makeRockDraw?: (rm: RockMesh) => { pipe: GPURenderPipeline; group: (cam?: GPUBuffer, shadow?: GPUTextureView) => GPUBindGroup; shadow: GPURenderPipeline };
+  makeRockDraw?: (rm: RockMesh) => { pipe: GPURenderPipeline; group: (cam?: GPUBuffer, shadow?: ShadowViews) => GPUBindGroup; shadow: GPURenderPipeline };
   /** (round 99) the rock's mesh into the sun's shadow map (the resting rock has no cubes to cast it) */
   rockShadowPipe?: GPURenderPipeline;
   rockShadowGroup?: GPUBindGroup;
-  rockGroupOf?: (cam?: GPUBuffer, shadow?: GPUTextureView) => GPUBindGroup;
+  rockGroupOf?: (cam?: GPUBuffer, shadow?: ShadowViews) => GPUBindGroup;
   /** (solver step 2) the node solver's buffers the rock mesh is skinned to (setRockNodes) */
   rockNodes?: { pose: GPUBuffer; lanes: GPUBuffer };
   /** (round 95) of the body voxels, the first this many are drawn (the rest only cast shadows: the rigid rock's, its mesh drawn) */
   bodyShown = 0;
-  meshResources!: (cam: GPUBuffer, shadow: GPUTextureView, src: { mesh: FieldMesh; chunks: GPUBuffer; layers: GPUBuffer }) => Record<number, GPUBuffer | GPUTextureView | GPUSampler>;
+  meshResources!: (cam: GPUBuffer, shadow: ShadowViews, src: { mesh: FieldMesh; chunks: GPUBuffer; layers: GPUBuffer }) => Record<number, GPUBuffer | GPUTextureView | GPUSampler>;
   /** (perfopt) the deferred pipelines, compiled off the main thread from the start (createRenderPipelineAsync): the
    *  terrain draws forward until they're in — compiled on first use they froze the frame ~1.5 s after a load */
   meshPipesReady?: Promise<void>;
@@ -244,7 +245,7 @@ export class Renderer {
         resolveLayout: this.tileBakeLayout!,
         gridPipe: () => this.gridPipes?.g,
         drawGrid: (pass, which) => void drawGrid(this, pass, which),
-        meshResources: (cam) => this.meshResources(cam, this.shadowView, { mesh: this.fieldMesh, chunks: this.world.chunks, layers: this.world.layers }),
+        meshResources: (cam) => this.meshResources(cam, this.shadowViews, { mesh: this.fieldMesh, chunks: this.world.chunks, layers: this.world.layers }),
         camBytes: CAM_BYTES,
         camData: () => this.camData,
         seedCover: (enc, w, side, lo, hi) => this.coverSeed?.(enc, w, side, lo, hi),
@@ -264,7 +265,7 @@ export class Renderer {
   /** the band outside the window (round 79, enableBand): its draw group */
   band?: OutsideBand;
   bandGroup?: GPUBindGroup;
-  meshGroupOf?: (cam: GPUBuffer, shadow: GPUTextureView, src: { mesh: FieldMesh; chunks: GPUBuffer; layers: GPUBuffer }) => GPUBindGroup;
+  meshGroupOf?: (cam: GPUBuffer, shadow: ShadowViews, src: { mesh: FieldMesh; chunks: GPUBuffer; layers: GPUBuffer }) => GPUBindGroup;
   bodyCount = 0;
   static readonly MAX_BODY_VOXELS = 16384;
   rainGroup: GPUBindGroup;
@@ -277,8 +278,13 @@ export class Renderer {
   /** the sun's view for the shadow pass (the same layout: its viewProj is the light's) */
   lightCamBuf: GPUBuffer;
   lightCamData = new ArrayBuffer(CAM_BYTES);
+  /** the sun's map: every caster, or with ?shadowcache=N only the moving ones (plants, structures, bodies) */
   shadowTex: GPUTexture;
-  shadowView: GPUTextureView;
+  /** (DA-B7) with ?shadowcache=N the static casters' map (the terrain mesh, the prisms), drawn every Nth frame; a
+   *  stand-in texel without it. The lookups take the nearer of the two (common.wgsl shadowLit) */
+  shadowStill: GPUTexture;
+  /** what the draws bind for the shadow lookups (bindings 25 and 27) */
+  shadowViews: ShadowViews;
   shadowSampler: GPUSampler;
   shadowOpaquePipe?: GPURenderPipeline;
   shadowBodyPipe?: GPURenderPipeline;
@@ -291,8 +297,9 @@ export class Renderer {
   prismSources: { indirect: GPUBuffer; group: GPUBindGroup }[] = [];
   /** (?flow=1) more for the water pipeline: liquid runs under rock, falling streams (flow/liquid.ts) */
   blendSources: { indirect: GPUBuffer; group: GPUBindGroup }[] = [];
-  noShadowView?: GPUTextureView;
-  groupFor!: (inst: GPUBuffer | GPUBufferBinding, cam?: GPUBuffer, shadow?: GPUTextureView) => GPUBindGroup;
+  /** the shadow pass's own groups: stand-in texels for both maps (the pass draws into them) */
+  noShadowViews?: ShadowViews;
+  groupFor!: (inst: GPUBuffer | GPUBufferBinding, cam?: GPUBuffer, shadow?: ShadowViews) => GPUBindGroup;
   shadowGroups?: { opaque: GPUBindGroup; tops: GPUBindGroup; plants: GPUBindGroup; struct: GPUBindGroup; bodies: GPUBindGroup; mesh: GPUBindGroup };
   /** ?smooth=0: tops lit flat, a hexagon at a time (the look before G13). */
   flatTops = new URLSearchParams(location.search).get('smooth') === '0';
@@ -325,8 +332,10 @@ export class Renderer {
   meshTurn = 0;
   /** (perfopt, shadowEvery) the light matrix and lookup bias the shadow map holds, when it was drawn, the box, the slides */
   shadowAt = { m: new Float32Array(16), bias: 0, frame: -1e9, rect: '', slides: -1, cached: false };
-  /** (perfopt, shadowCache) the static casters' depth, copied into the sun's map each frame */
-  shadowStatic?: GPUTexture;
+  /** (perfopt, shadowCache; DA-B7) the static casters in their own map (shadowStill), the moving in the sun's map */
+  shadowStillOn(): boolean {
+    return this.fieldMesh.on && Renderer.opts.shadowCache > 1;
+  }
   /** (perfopt, prepEvery) when the instance lists were last made, and the slides then */
   prepAt = { frame: -1e9, slides: -1 };
   frameNo = 0;
@@ -389,10 +398,15 @@ export class Renderer {
     this.fieldMesh = new FieldMesh(device, world, profiler, meshByDefault, meshRoom, undefined, meshSlots);
     // (a texel when there's no shadow pass: the draw shaders still bind one)
     const ss = this.fieldMesh.on ? shadowSize : 1;
-    this.shadowTex = device.createTexture({ label: 'shadow', size: [ss, ss], format: SHADOW_FORMAT, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
-    this.shadowView = this.shadowTex.createView();
+    const shadowUse = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING;
+    this.shadowTex = device.createTexture({ label: 'shadow', size: [ss, ss], format: SHADOW_FORMAT, usage: shadowUse });
+    // (DA-B7: with the cache the static casters keep their own map, looked up beside the moving ones' — nothing copied
+    // between them each frame; without it a texel the lookups never read: Camera.eye.w SHADOW_STILL_BIT)
+    const st = this.shadowStillOn() ? ss : 1;
+    this.shadowStill = device.createTexture({ label: 'shadow-static', size: [st, st], format: SHADOW_FORMAT, usage: shadowUse });
+    this.shadowViews = { live: this.shadowTex.createView(), still: this.shadowStill.createView() };
     this.shadowSampler = device.createSampler({ compare: 'less-equal', magFilter: 'linear', minFilter: 'linear' });
-    profiler.trackMemory('shadow', ss * ss * 4);
+    profiler.trackMemory('shadow', (ss * ss + st * st) * 4);
     // (?skip=cull: every column, as before the view culling)
     // (watersurf: with the field mesh the water is a surface — render/watersurf.ts — and renderprep's blended list holds
     // only the oil and the see-through solids; without it, as before, a prism a wet column)
@@ -531,6 +545,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
         23: 'tex',
         24: 'tex',
         25: 'depth',
+        27: 'depth',
         26: 'csampler',
       },
       VF,
@@ -583,7 +598,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       depthStencil: depthStencil(false),
     }, (p) => (this.waterFlatPipe = p));
 
-    const groupFor = (inst: GPUBuffer | GPUBufferBinding, cam: GPUBuffer = this.camBuf, shadow: GPUTextureView = this.shadowView) =>
+    const groupFor = (inst: GPUBuffer | GPUBufferBinding, cam: GPUBuffer = this.camBuf, shadow: ShadowViews = this.shadowViews) =>
       makeBindGroup(device, 'draw', drawLayout, {
         0: world.globals,
         2: world.materials,
@@ -602,7 +617,8 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
         19: world.strataView,
         23: world.reachView,
         24: this.shore.view,
-        25: shadow,
+        25: shadow.live,
+        27: shadow.still,
         26: this.shadowSampler,
       });
     this.groupFor = groupFor;
@@ -722,7 +738,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
     this.voxelSources.push({
       indirect,
       group: this.groupFor(inst),
-      shadow: this.shadowGroups ? this.groupFor(inst, this.lightCamBuf, this.noShadowView!) : undefined,
+      shadow: this.shadowGroups ? this.groupFor(inst, this.lightCamBuf, this.noShadowViews!) : undefined,
     });
   }
 
@@ -744,7 +760,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
     this.meshSources.push({
       indirect,
       group: this.groupFor(verts),
-      shadow: this.shadowGroups ? this.groupFor(verts, this.lightCamBuf, this.noShadowView!) : undefined,
+      shadow: this.shadowGroups ? this.groupFor(verts, this.lightCamBuf, this.noShadowViews!) : undefined,
     });
   }
 
@@ -761,7 +777,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
   /** Textures are the renderer's own; buffers belong to the world (world.destroy()). */
   destroy(): void {
     this.shadowTex.destroy();
-    this.shadowStatic?.destroy();
+    this.shadowStill.destroy();
     this.depth?.destroy();
     this.pickTex?.destroy();
   }
@@ -897,7 +913,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
     this.rockParticles = p;
     if (this.rockGroupOf) {
       this.rockGroup = this.rockGroupOf();
-      this.rockShadowGroup = this.noShadowView ? this.rockGroupOf(this.lightCamBuf, this.noShadowView) : undefined;
+      this.rockShadowGroup = this.noShadowViews ? this.rockGroupOf(this.lightCamBuf, this.noShadowViews) : undefined;
     }
   }
 
@@ -905,7 +921,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
     this.rockNodes = p;
     if (this.rockGroupOf) {
       this.rockGroup = this.rockGroupOf();
-      this.rockShadowGroup = this.noShadowView ? this.rockGroupOf(this.lightCamBuf, this.noShadowView) : undefined;
+      this.rockShadowGroup = this.noShadowViews ? this.rockGroupOf(this.lightCamBuf, this.noShadowViews) : undefined;
     }
   }
 

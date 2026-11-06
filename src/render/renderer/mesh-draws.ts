@@ -19,11 +19,11 @@ import { TileCache } from '../tilecache';
 import rockMeshWgsl from '../../shaders/rockmesh.wgsl?raw';
 import { tcPipesMake } from '../renderer/terrain-cache';
 import { drawGrid, gridLive } from '../renderer/grid';
-import { CAM_BYTES, SHADOW_FORMAT, PICK_FORMAT, DEPTH_FORMAT, MESH_FRONT, HYBRID, TILES, GRID_N } from '../renderer/defs';
+import { CAM_BYTES, SHADOW_FORMAT, PICK_FORMAT, DEPTH_FORMAT, MESH_FRONT, HYBRID, TILES, GRID_N, type ShadowViews } from '../renderer/defs';
 import { Renderer } from '../renderer';
 
 /** the constructor's `if (this.fieldMesh.on) { … }` block, verbatim (`this` is rd) */
-export function buildMeshDraws(rd: Renderer, ctx: { format: GPUTextureFormat; tufts: string; VF: number; drawLayout: GPUBindGroupLayout; riverFoam: string; drawModule: GPUShaderModule; pl: GPUPipelineLayout; depthStencil: (write: boolean) => GPUDepthStencilState; groupFor: (inst: GPUBuffer | GPUBufferBinding, cam?: GPUBuffer, shadow?: GPUTextureView) => GPUBindGroup; miVertex: (module: GPUShaderModule) => GPUVertexState; miModule: GPUShaderModule | undefined }): void {
+export function buildMeshDraws(rd: Renderer, ctx: { format: GPUTextureFormat; tufts: string; VF: number; drawLayout: GPUBindGroupLayout; riverFoam: string; drawModule: GPUShaderModule; pl: GPUPipelineLayout; depthStencil: (write: boolean) => GPUDepthStencilState; groupFor: (inst: GPUBuffer | GPUBufferBinding, cam?: GPUBuffer, shadow?: ShadowViews) => GPUBindGroup; miVertex: (module: GPUShaderModule) => GPUVertexState; miModule: GPUShaderModule | undefined }): void {
   const { format, VF, riverFoam, drawModule, pl, depthStencil, groupFor, miVertex, miModule } = ctx;
   const { device, world, profiler } = rd;
   // the field mesh: its own layout (the intervals for the look, in place of
@@ -31,7 +31,7 @@ export function buildMeshDraws(rd: Renderer, ctx: { format: GPUTextureFormat; tu
   const meshLayout = makeLayout(
     device,
     'mesh-draw',
-    { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex', 25: 'depth', 26: 'csampler', 30: 'uniform' },
+    { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex', 25: 'depth', 26: 'csampler', 27: 'depth', 30: 'uniform' },
     VF,
     // (a stage has eight storage buffers: the vertices and the mesh's
     // state (its translations) are the vertex stage's, the look's and the
@@ -53,7 +53,7 @@ export function buildMeshDraws(rd: Renderer, ctx: { format: GPUTextureFormat; tu
   }, (p) => (rd.meshPipe = p));
   const meshPl = device.createPipelineLayout({ bindGroupLayouts: [meshLayout] });
   // (perfopt, ?defer=1: the G-buffer's pass and the resolve's layout — the mesh's plus the G-buffer)
-  const resolveSpec = { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex', 25: 'depth', 26: 'csampler', 30: 'uniform', 40: 'utex', 41: 'utex' } as const;
+  const resolveSpec = { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex', 25: 'depth', 26: 'csampler', 27: 'depth', 30: 'uniform', 40: 'utex', 41: 'utex' } as const;
   const resolveStages = { 3: GPUShaderStage.VERTEX, 5: GPUShaderStage.VERTEX, 11: VF, ...Object.fromEntries([1, 4, 6, 7, 8, 9, 13].map((b) => [b, GPUShaderStage.FRAGMENT])) };
   const resolveLayout = makeLayout(device, 'mesh-resolve', resolveSpec, VF, resolveStages);
   rd.meshResolveLayout = resolveLayout;
@@ -151,7 +151,7 @@ export function buildMeshDraws(rd: Renderer, ctx: { format: GPUTextureFormat; tu
   };
   // (round 79: or the band's — its mesh, chunk table and layers)
   rd.meshModule = meshModule;
-  rd.meshEntries = (src, cam = rd.camBuf, shadow = rd.shadowView) =>
+  rd.meshEntries = (src, cam = rd.camBuf, shadow = rd.shadowViews) =>
     Object.entries(rd.meshResources(cam, shadow, src)).map(([b, r]) => ({ binding: Number(b), resource: r instanceof GPUBuffer ? { buffer: r } : r }));
   rd.meshGroupOf = (cam, shadow, src) => makeBindGroup(device, 'mesh-draw', meshLayout, rd.meshResources(cam, shadow, src));
   rd.meshResources = (cam, shadow, src) => ({
@@ -172,7 +172,8 @@ export function buildMeshDraws(rd: Renderer, ctx: { format: GPUTextureFormat; tu
     15: world.windFieldView,
     17: world.driftView,
     23: world.reachView,
-    25: shadow,
+    25: shadow.live,
+    27: shadow.still,
     26: rd.shadowSampler,
   });
   // (round 95) the rigid rock's mesh: the mesh's layout and look, one more uniform (its draws), its own vertex stage
@@ -180,7 +181,7 @@ export function buildMeshDraws(rd: Renderer, ctx: { format: GPUTextureFormat; tu
     const layout = makeLayout(
       device,
       'rock-mesh',
-      { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex', 25: 'depth', 26: 'csampler', 30: 'uniform', 31: 'read', 32: 'read', 33: 'read', 34: 'read', 35: 'read' },
+      { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex', 25: 'depth', 26: 'csampler', 27: 'depth', 30: 'uniform', 31: 'read', 32: 'read', 33: 'read', 34: 'read', 35: 'read' },
       VF,
       { 3: GPUShaderStage.VERTEX, 5: GPUShaderStage.VERTEX, 11: VF, 31: GPUShaderStage.VERTEX, 32: GPUShaderStage.VERTEX, 33: GPUShaderStage.VERTEX, 34: GPUShaderStage.VERTEX, 35: GPUShaderStage.VERTEX, ...Object.fromEntries([1, 4, 6, 7, 8, 9, 13].map((b) => [b, GPUShaderStage.FRAGMENT])) },
     );
@@ -195,7 +196,7 @@ export function buildMeshDraws(rd: Renderer, ctx: { format: GPUTextureFormat; tu
     });
     // (solver step 2: the node solver's nodes, the metal's mesh skinned to them; a stand-in without them)
     const none = device.createBuffer({ label: 'rock no nodes', size: 64, usage: GPUBufferUsage.STORAGE });
-    const group = (cam: GPUBuffer = rd.camBuf, shadow: GPUTextureView = rd.shadowView) => {
+    const group = (cam: GPUBuffer = rd.camBuf, shadow: ShadowViews = rd.shadowViews) => {
       const p = rd.rockNodes;
       const q = rd.rockParticles;
       return makeBindGroup(device, 'rock-mesh', layout, { ...rd.meshResources(cam, shadow, { mesh: rm.mesh, chunks: rm.chunks, layers: rm.layers }), 31: rm.uni, 32: p?.pose ?? none, 33: p?.lanes ?? none, 34: q?.px ?? none, 35: q?.pq ?? none });
@@ -211,7 +212,7 @@ export function buildMeshDraws(rd: Renderer, ctx: { format: GPUTextureFormat; tu
     const drawLayout = makeLayout(
       device,
       'tiles-draw',
-      { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex', 25: 'depth', 26: 'csampler', 30: 'uniform', 40: 'utex', 41: 'utex', 42: 'tex', 43: 'utex', 44: 'read', 45: 'uniform', 46: 'read', 47: 'tex', 48: 'tex', 62: 'tex' },
+      { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex', 25: 'depth', 26: 'csampler', 27: 'depth', 30: 'uniform', 40: 'utex', 41: 'utex', 42: 'tex', 43: 'utex', 44: 'read', 45: 'uniform', 46: 'read', 47: 'tex', 48: 'tex', 62: 'tex' },
       VF,
       { 3: GPUShaderStage.VERTEX, 5: GPUShaderStage.VERTEX, 11: VF, 44: GPUShaderStage.VERTEX, 46: GPUShaderStage.VERTEX, ...Object.fromEntries([1, 4, 6, 7, 8, 9, 13].map((b) => [b, GPUShaderStage.FRAGMENT])) },
     );
@@ -237,11 +238,11 @@ export function buildMeshDraws(rd: Renderer, ctx: { format: GPUTextureFormat; tu
       chunkBox: () => rd.gridOn,
       drawGrid: (pass, which) => void drawGrid(rd, pass, which),
       windowDrawn: () => rd.windowDrawn(),
-      meshGroup: (cam, src) => rd.meshGroupOf!(cam, rd.shadowView, src),
+      meshGroup: (cam, src) => rd.meshGroupOf!(cam, rd.shadowViews, src),
       meshEntries: (src, cam) => rd.meshEntries(src, cam),
     });
   }
-  const meshGroupFor = (cam: GPUBuffer, shadow: GPUTextureView = rd.shadowView) => rd.meshGroupOf!(cam, shadow, { mesh: rd.fieldMesh, chunks: world.chunks, layers: world.layers });
+  const meshGroupFor = (cam: GPUBuffer, shadow: ShadowViews = rd.shadowViews) => rd.meshGroupOf!(cam, shadow, { mesh: rd.fieldMesh, chunks: world.chunks, layers: world.layers });
   rd.meshGroup = meshGroupFor(rd.camBuf);
   // the sun's shadow pass: the same vertex shaders, depth only, through the
   // sun's camera (the prisms and plants draw the sides facing it)
@@ -259,9 +260,10 @@ export function buildMeshDraws(rd: Renderer, ctx: { format: GPUTextureFormat; tu
     primitive: { topology: 'triangle-list', cullMode: 'back', frontFace: MESH_FRONT },
     depthStencil: shadowDepth,
   }, (p) => (rd.shadowMeshCullPipe = p));
-  // (the pass draws into the map, so its groups bind a stand-in texel there)
-  const none = device.createTexture({ label: 'shadow-none', size: [1, 1], format: SHADOW_FORMAT, usage: GPUTextureUsage.TEXTURE_BINDING }).createView();
-  rd.noShadowView = none;
+  // (the pass draws into the maps, so its groups bind a stand-in texel for both)
+  const noneView = device.createTexture({ label: 'shadow-none', size: [1, 1], format: SHADOW_FORMAT, usage: GPUTextureUsage.TEXTURE_BINDING }).createView();
+  const none: ShadowViews = { live: noneView, still: noneView };
+  rd.noShadowViews = none;
   const L = rd.lightCamBuf;
   rd.shadowGroups = {
     opaque: groupFor(rd.instOpaque, L, none),

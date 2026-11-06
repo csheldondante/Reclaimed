@@ -637,8 +637,11 @@ scripts/drawbench.mjs sets them with `@name=value` pieces): `defer`,
 quads are wound out of the solid), `shadowEvery` (the shadow map and the
 light matrix it was drawn with kept for N frames, redrawn after a slide —
 `FieldMesh.slides` — or a new box), `shadowCache` (the static casters —
-mesh, prisms — into `shadowStatic` every N frames with the matrix kept,
-copied into the map each frame and the moving casters drawn over it),
+mesh, prisms — into their own map `Renderer.shadowStill` every N frames with
+the matrix kept, the moving casters into the sun's map every frame; DA-B7: the
+lookups read both, binding 27 beside 25, and take the nearer caster —
+common.wgsl `shadowLit`, `Camera.eye.w` bit 12 — so nothing is copied between
+them),
 `prepEvery` (renderprep's and vegprep's
 instance lists kept N frames), `noDetail` (bits of the look left out,
 carried to the shaders in `Camera.eye.w` from bit 2: meshdraw.wgsl `ND_*`).
@@ -1114,8 +1117,11 @@ its edge:
   and a streamed column's loose intervals over air are dropped onto their
   support (streamer.ts `settleLoose`). `sleepmore=1`: surface and render
   fields skip sleeping chunks too, every chunk drowsy for 0.25 s after any
-  slide. `inplace=1`: edit, structure and layer pulls rewrite the layers in
-  place (no layersNext copied back); the brush runs 5 s after an edit.
+  slide. `inplace=1`: structure and layer pulls rewrite the layers in
+  place (no layersNext copied back). (DA-B8) The edit brush is in place on
+  every tier, writing the layers and layersNext alike, and runs on a tick
+  with an edit and while brush state is in flight (edit-ops.ts
+  `EditBusy`).
 - **Not dispatched over what sleeps** (round 85, sim/cull.ts; on by default,
   `?simcull=0` off). Simulation.step makes, from the same Globals.sleep and
   drowse masks, a list of the chunks live this tick (WorldGpu.tiles,
@@ -1592,10 +1598,15 @@ small model per level around the diorama and returns its position as poi
 
 Sandbox (`world/sandbox.ts` map + `ui/editor.ts` panel): brush tools send
 `EV_EDIT` events (z = op·32 + material, +512 on the first event of a press)
-every frame while held; the edit system (`edit.wgsl`, first each tick, every
-tick in the sandbox) adds/removes water, oil, pollution and plants, and does
-the ground in layers (round 13): per column `editState` (rgba32float
-ping-pong texture, read at binding 18 as `editTex`) holds what this press has
+every frame while held; the edit system (`edit.wgsl`, first each tick, on a tick
+that carries an Edit event and after it while a press's cells are still landing:
+sim/edit-ops.ts `EditBusy`, DA-B8) adds/removes water, oil, pollution and
+plants, and does the ground in layers (round 13), in place (each thread its own
+column, the layers and layersNext alike; a blow's reads of other columns are taken
+first by `blowSum`): per column the brush state (rgba32float, two textures
+`WorldGpu.editStateA/B` taking turns — the pass reads `editStateViews[editCur]`,
+writes the other and flips `editCur`, nothing copied back; readers keep a bind
+group for each and pick by `editCur`; read at binding 18 as `editTex`) holds what this press has
 given (x; reset by the press flag), the fraction of a cell owed (y), cells
 still to pour (z) and op·32+mat ×4 + fall time left (w). A press gives at
 most `layers` cells, soft at the rim; build/dig apply at once, pour lands
@@ -3358,8 +3369,9 @@ no copy of them unless a CPU consumer walks one, and every change it makes to th
 
 ## Who writes the columns (round 128, `merge128`: jb6 on places, INT16)
 
-The columns are WorldGpu.layers, and the column passes (structure, edit, the layer pulls; sim/systems.ts `columnPass`)
-write WorldGpu.layersNext for the chunks that run and copy it back over the layers whole (without `?inplace=1`). So a
+The columns are WorldGpu.layers, and the column passes (structure, the layer pulls; sim/systems.ts `columnPass`)
+write WorldGpu.layersNext for the chunks that run and copy it back over the layers whole (without `?inplace=1`). (DA-B8:
+the edit brush writes in place on every tier, the layers and the layersNext alike, and copies nothing back.) So a
 change made to the layers alone is undone by the next copy-back wherever its chunk didn't run — asleep, or outside the
 hybrid's `only` filter (Sleep.wake refuses those). **Every writer of the columns writes the layers and the layersNext
 alike**, and every change the CPU asks for is the GPU's to make (jb6's rule), through one instance of game/colapply.ts
