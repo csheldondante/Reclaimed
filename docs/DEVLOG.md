@@ -18586,3 +18586,19 @@ Design note before code (AGENT_RULES 1). DESIGN.md section 13.
   The rest of DA-A3 (generation through the reach, the openings chosen on the GPU, VARIANT_TRIES and the 3 s re-ask
   deleted) is not started: reported to main with options.
 - Fixture recaptured (ways.ts is a generator source). Unit tier 94 files green.
+
+## 2026-11-05 — round 128o (`onetown`): no walker inside a building — the riders press against terrace edges
+
+- **Main's item A (units inside claimed solid by the stores): not a bug in the agents.** My evidence was a probe
+  artefact: `lab.snapshot()` rounds positions to 0.1 m and I sampled the agents' surfaces at the rounded point — across a
+  column boundary. At the units' exact positions (`lab.units.get(id).at`) every walker stands on a surface; the
+  lighthouse's columns were claimed from the level's start (no ground surface there before Build or after). New guard,
+  scripts/lab/unitsonground.mjs (town, 60 sim s): every walking unit on a surface at its feet, never under one, both
+  columns read where a unit stands on a boundary. It passes.
+- **What the stalled riders really do:** they stand pressed against a column edge (x = 183.4999 in three runs) where
+  the lane from node 14 to node 11 crosses the farmland's terrace: the side's crossing passes the 0.8 m probes either
+  side, but the columns the rider actually crosses step 1.2-1.4 m (over STEP 1.1). Tried: a column-exact rule (the
+  land read every 0.25 m along centre - crossing - centre). It removes those lanes, and with them the routes to 12
+  doors the reach (column-level, the agents' rule) does reach — the walkable way between those terraces winds through
+  columns a straight cell-to-cell lane can't follow. Not committed: a design choice for main (routes over the walkable
+  columns, or roads that grade the land / ramps as openings).
