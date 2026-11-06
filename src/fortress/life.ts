@@ -1,7 +1,7 @@
 // The fortress's people (fortress slice 1; milestone 2 "workers build the plan", milestone 3 "the economy feeds the
 // building"). Adapted from settle/life.ts's phase machine and its IO (take, fell, the trees in reach): every person is a
 // unit; a pure JobBoard (economy.ts) gives each one a job from the jobs open (a built block of a farm, quarry or lumber
-// camp gives its type's jobs; the builders' while there's something to build), in priority order (defs.ts JOB_ORDER):
+// camp gives its type's jobs; the builders' while there's something to build), in priority order (economy.ts JOB_ORDER):
 //  - builders walk to the warehouse, take a load out of the stores (what the next block still lacks), carry it to that
 //    block and work it in; a block stands when its cost is in (Town.add). Blocks go up in BuildCrew's order;
 //  - miners walk to the quarry's built cells and dig: the ground itself is taken (terrain take, a real pit that deepens;
@@ -100,6 +100,15 @@ const DAY_WORD: Record<Doing, string | null> = {
 const PILE_ROAD = 14;
 /** (m4) sim seconds a soldier may take to a wall-walk point before it gives up and musters again */
 const PATROL_STUCK = 40;
+
+/**
+ * Where the town's first people start (window world): at the stores — a warehouse's door (its way out: open ground the
+ * reach is seeded from) or the town's heap. (DA-A2, round 128o: they were spawned 4 m round it, and a unit lands on the
+ * top surface where it's put — in the user's start town on the warehouse's roof and the lighthouse, with no way down.)
+ */
+export function startSpots(stores: V2, n: number): V2[] {
+  return Array.from({ length: n }, (): V2 => [stores[0], stores[1]]);
+}
 
 export interface FortressLifeIO {
   units: AgentUnits;
@@ -247,7 +256,7 @@ export class FortressLife implements Routine {
     for (let i = 0; i < CART_GROUPS; i++) A.follow(R4.cart0 + i, -1);
     this.reach = A.reader(F.pile).start(500);
     const h = this.heap();
-    for (let i = 0; i < people; i++) this.spawn([h[0] + Math.cos(i * 2.4) * 4, h[1] + Math.sin(i * 2.4) * 4], 0.5 + i * 0.4);
+    startSpots(h, people).forEach((at, i) => this.spawn(at, 0.5 + i * 0.4));
     fort.onErased.push(this.onErased);
     this.arriveAt = ECON.arriveSec;
   }

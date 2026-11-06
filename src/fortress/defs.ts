@@ -81,8 +81,3 @@ export const ECON = {
   refund: 0.5,
 };
 
-/**
- * (milestone 3) Which jobs people take first when there aren't enough for all (the JobBoard's priority): food, then the
- * builders, then stone, then wood; (round 128l, milestone 4) then the smiths, then the recruits.
- */
-export const JOB_ORDER = ['farm', 'build', 'quarry', 'lumber', 'blacksmith', 'barracks'] as const;

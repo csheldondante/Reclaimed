@@ -18128,3 +18128,36 @@ Design note before code (AGENT_RULES 1).
   drawn as plots (yellow, was striped green); a thinner bridge to the east; "Beds 352" and "+14 a day" (the generated
   houses and keep count as the player's now) and "Your plan costs 10 wood and 4 stone" at the start (the generated
   town's two house sites are the plan's). No GPU path changed in this commit (no toggle-diff).
+
+## 2026-11-05 — round 128o (`onetown`, DA-A2): the start town's builders build — two causes fixed, a third found
+
+Reproduced first: the lab's fortressoutside on `town` (fresh load, 3 sites 55 m west of the stores): 702 of 708 blocks
+for 600 sim s, "There are no builders", 0 of 3 sites. Probes (lab scenarios reading the plan, the jobs, the field and
+the walkers) found three causes, one under the other:
+1. **Every person farmed.** One plan, so the generated farmland is farm structures: 368 built blocks, a farm job each.
+   JOB_ORDER put farms before builders, so the 11 people all took farm jobs. Fix: builders first (JOB_ORDER build, farm,
+   ...; ECON.builders 4 while there's building), and JOB_ORDER moved from defs.ts to economy.ts: defs.ts is among the
+   land generator's sources (scripts/lib/gen-sources.mjs), so editing the job order changed GEN_VERSION and made the
+   fixture (and every saved region) stale. The fixture recaptured once (`node scripts/labtown.mjs capture`: the same
+   window, stores at 165.1,185.8). Test: test/unit/townwork.test.ts on the fixture's own plan (0
+   builders before, 4 after). Rejected: fewer jobs per generated farm block (a rule for one source of buildings), a cap
+   on farm jobs (a threshold).
+2. **People started on roofs.** FortressLife spawned its people 4 m round the stores — the generated warehouse's door —
+   and Agents.spawn lands a unit on the top surface: two on the warehouse's roof (z +8 m), one on the lighthouse (+16
+   m), no way down; they took loads and stood there for good. Fix: they start at the stores (`startSpots`: the door's
+   way out, open ground, the reach's seed). Test: townwork.test.ts (start spots on cells with nothing on them; the old
+   ring put them on the warehouse and the lighthouse).
+3. **Open — riders stick in the generated town.** With 1 and 2 fixed the lab builds 1-2 more blocks (703-704/708: the
+   lumber camp outside stood by 60 sim s in two of three runs; the house and the farm never), then: 2-3
+   builders riding to the stores (`toPile`, on the road graph) stood still 30 m short, one of them inside a house cell
+   (its nav top 7 m over it: in the claimed solid); 20+ farmers carrying grain stood 3 m from the stores at the next
+   warehouse's door; grain ran out. The roads are fortress/lanes.ts lanes on the grid's cell BORDERS ("a border is a way
+   if a free cell lies on one side"): in a dense generated town they run flush along claimed buildings and through door
+   nodes into ground floors. That's the routes design (DESIGN.md section 12: tiles declare their paths; kinematic trips)
+   — DA-A7 — and the reach (DA-A3), not a builders bug: reported to main, not patched.
+- The one cut-off cell (1188) is a generated house site walled in by houses on three sides and the wall on the fourth:
+  no side to stand at. keepReach (structures/place.ts) joins open pockets only; DA-A3's one invariant covers it.
+- Gates: typecheck; the unit tier (85 files; partition's "well under a second" timing and two fixture tests timed out
+  once while the lab ran beside them, all green alone); lab fortressoutside on `walled` passes as before (all 3 sites
+  by 301 sim s, was 301); on `town` still fails (cause 3). A found helper bug, not fixed: lab.ground() on a fixture reads column floor(x), not the hex
+  lattice's (cellAt), so it's off by a column on odd rows (5-7 m off by the town's terraces); nothing in the gates reads it.

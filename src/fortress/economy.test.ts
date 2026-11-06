@@ -71,7 +71,7 @@ describe('the JobBoard', () => {
     plan.paint(c, 1, 'lumber');
     // only level 0 stands: the lumber camp's upper block isn't worked yet
     const s = jobSlots(plan, (_c, l) => l === 0, true);
-    expect(s.map((x) => x.kind)).toEqual(['farm', 'build', 'quarry', 'lumber']);
+    expect(s.map((x) => x.kind)).toEqual(['build', 'farm', 'quarry', 'lumber']);
     expect(s.find((x) => x.kind === 'quarry')!.count).toBe(2 * DEFS.quarry.perBlock.jobs!);
     expect(s.find((x) => x.kind === 'lumber')!.count).toBe(DEFS.lumber.perBlock.jobs!);
     expect(s.find((x) => x.kind === 'build')!.count).toBe(ECON.builders);

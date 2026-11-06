@@ -6,9 +6,18 @@
 // warehouse; a woodcutter fells a tree in the lumber camp's reach and carries its logs; grain grows on the farm cells and
 // farmers carry it in. People eat grain; with none, nobody new comes (nothing else: hunger kills no one in slice 1).
 import type { Good, Goods, Structure, StructureDef, StructureType } from '../api/contracts/fortress';
-import { DEFS, ECON, JOB_ORDER } from './defs';
+import { DEFS, ECON } from './defs';
 import type { TownPlan } from '../build/plan';
 
+/**
+ * Which jobs people take first when there aren't enough for all (the JobBoard's priority): the builders (ECON.builders,
+ * while there's building), then food, then stone, then wood; (round 128l, milestone 4) then the smiths, then the
+ * recruits. (DA-A2, round 128o: the builders were after food — with one plan a town's generated farmland is farm
+ * structures, the user's start town 368 farm blocks, a job each, so every person farmed and nothing was built. And moved
+ * here from defs.ts: the job board's order isn't the building types' data — defs.ts is among the land generator's
+ * sources, so a change to it made every saved region and the lab's fixture stale, GEN_VERSION.)
+ */
+export const JOB_ORDER = ['build', 'farm', 'quarry', 'lumber', 'blacksmith', 'barracks'] as const;
 export type JobKind = (typeof JOB_ORDER)[number];
 
 /** A structure's jobs (or the builders'): `count` people at most. */
