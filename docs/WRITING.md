@@ -4,6 +4,11 @@ Everything the player reads follows this guide. That covers card titles, pitches
 the roster, the intro, the map labels and what the GM writes into a situation or a story. The lint test
 (`test/unit/writing.test.ts`) enforces the rules a machine can check. The rest is on you.
 
+Since round 128o (BACKLOG DA-G4) the lint runs over every source of the player's words, not only where a test asks:
+`test/unit/writing-sources.test.ts` makes every file that writes text to the page, the HUD or a canvas say whether it
+is the player's, a words module, or a developer's, and lints the player's literals. A new string that breaks a rule
+fails the suite. Text built from data at run time is still linted as produced, by writing.test.ts and the fortress tests.
+
 The standard is the user's own catalog (docs/design/OPPORTUNITY_CATALOG.md): "Investigate a missing convoy",
 "Request allied reinforcements", "Recover griffin eggs". Short, concrete, clear stakes, clear mechanical signals.
 

@@ -15,6 +15,29 @@ Before writing a system, send main a design note of 15 lines or fewer, and wait 
 - **The alternative you rejected,** and why.
 State lives in one place: derive it, don't copy it. Two copies that can disagree count as a design bug.
 
+## 1b. Data movement and work are costs to justify
+The user: "flag and scrutinize any large data readbacks or copies and try to come up with a way to avoid them and to avoid
+computation when possible." And: "if you get rid of the CPU readback, properly engineer the GPU simulation to be intelligent
+and parallel and follow the design performance will be fine. All the past slowdowns have been implementation issues not
+design."
+- **Flag every large transfer** in the design note and the report: GPU to CPU reads, CPU to GPU uploads, and GPU to GPU
+  copies of whole buffers or textures. Give bytes, rate, and why it can't be avoided.
+- **Prefer, in order:** no transfer (the consumer runs on the GPU where the data is); events or a small query result;
+  dirty regions only; a whole copy only with a measured reason.
+- **Avoid work:** a kernel runs only where something changed or is awake (sleep, dirty flags, indirect dispatch sized by
+  the work), never over the whole window by default. Compute once and reuse (bakes, caches with versions) over
+  recomputing each tick.
+- Never trim a rate, add a cap or skip frames to hide a cost: remove the cause.
+
+## 1c. Representations are costs to justify
+The user: "At one point the agent converted columns to voxels for meshing (for example). So just be mindful of expensive
+representations and why they are needed and if alternatives have been considered."
+- The world's native form is columns of intervals (DESIGN §1). Work on it directly where you can.
+- A new or converted representation (voxels, dense grids, meshes, CPU mirrors, per-cell copies) needs a line in the design
+  note: why the native form can't serve, its size and rebuild cost, how often it is rebuilt, and the alternatives
+  considered. Convert only at a boundary, only the region that needs it, and keep one source of truth.
+- Flag existing expensive conversions you meet in the report, with what could replace them.
+
 ## 2. The riskiest part first
 In the first hour, before the rest of the feature:
 - **Performance:** a toggle diff (frame time with the feature on and off) at 412x915, `?q=low`, in the `town` lab recipe
