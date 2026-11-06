@@ -19923,3 +19923,441 @@ its slot opening or closing starts it over (a tested piece).
   (the stairs of DA-A10 at generation, next): no flake left in 5 runs.
 - Also: BACKLOG DA-A12 (riders on one trip drawn on one spot; the rest of DA-A7), and fortressfollow's note says why it
   picks a lone person.
+
+## 2026-11-06 — round 128o (`onetown`, DA-A13): design note — roads and reach rewritten from DESIGN §12, §13 and §17
+
+Awaiting review. No code yet. This replaces the DA-A10/A11 note above ("graded at generation"). That approach is parked on
+`onetown-wip-grade` (33f7bf18) for reference only. The user: "I think you are fighting the current implementation and
+ignoring the design. If the current implementation is bad redo it don't fight it." Later: "you can change generation if
+you need to … We may add roads as a separate shape that can claim tiles and make tiles merge seamlessly to it", and
+"the tiles are a fun easy interface … Drawing roads or walls with more control over curvature or making larger plots of
+farm (dragging an area) are all fine as long as we can do it fast and efficiently on the GPU and we can make it merge
+nicely with the townscraper style grid".
+
+### Why (the user's terms; every choice below is tagged with what it serves)
+
+- **[ALIVE] Trade and the city must look alive.** People visibly follow roads to where they go, along splines, up stairs
+  (§12 intent: "A huge part of the design is trade looking real and the city seaming alive").
+- **[ANY] You can get anywhere in or around the city.** A unit that can't get somewhere is a bug in the world, fixed by
+  changing the world: a gate, a passage, stairs, a bridge (§13: "The expectation is that they can get anywhere").
+- **[CHEAP] Units on roads cost almost nothing.** A trip is a clock (route, start, speed). Routes are cached like
+  belts. That way hundreds or thousands of units fit on a phone (§12: kinematic trips, cached routes; §24).
+- **[NORT] No CPU round trips.** Data flows down to the GPU. Only a few words come back, and only after an edit
+  (§13 "What's read back"; AGENT_RULES 1b).
+- **[ONE] One system for generated and player-built towns.** Generation uses the player's plan API, plus layout
+  passes (§17 rule: "One building system").
+
+### What is wrong today (why this is a rewrite, not a fix)
+
+There are seven separate answers to "how do you get somewhere", each invented beside the others:
+
+1. `build/ways.ts`: a road tree grown over the *free* cells after the buildings are placed, plus wall stairs from a
+   heuristic. Its NavGraph is unused by units.
+2. `build/lanes.ts`: lanes from cell middles to sides, plus side and border rules.
+3. `agents/roadgraph.ts`, `ride.ts` and `roadride.wgsl`: the lanes regraphed, with next-hop tables capped at 64
+   destinations and 1,024 nodes.
+4. `agents/roads.ts` and `roadstamp.wgsl`: road shapes stamped as bits.
+5. `structures/nav.ts`: a third nav graph, for city plans.
+6. `fortreach.wgsl`: its own surface peel (the agents already bake surfaces), a fix cost field over columns, and an
+   unused ramps kernel.
+7. `structures/place.ts` keepReach, the CPU reach at generation, and `settle/live.ts`'s heap-foot rings.
+
+A fix is a plan flag (passage, gate, ramp), not a piece of road. Roads are leftovers between buildings, so on
+terraces they cross drops, which leads to the >1.1 m hop tolerance. Settlement units don't ride at all. Each patch
+(NET_REACH, RR_NEAR, the heap ring, the ramp rise, grading lanes after the fact) fought that structure. The design
+says roads come *first*, from tile rules, as one network.
+
+### The design
+
+**1. Shapes claim cells in one plan [ONE].** A structure's footprint comes from one of three shape kinds. All three
+claim cells of the town's one grid through the plan API (`TownPlan.place`/`paint`), with one owner per cell (§3, §17):
+
+- **Tiles** (today's painting): a cell and a level each, Townscaper style.
+- **Curves** (drawn roads, walls with curvature): a polyline/spline with a width.
+  - It claims every cell whose centre lies within its half-width, or that the curve crosses for more than half of the
+    cell's span. One pure per-cell rule.
+  - The curve is kept as the shape's own data. Its geometry is the curve, not the cells.
+- **Areas** (dragged farm plots, plazas, yards): a polygon. It claims the cells whose centres lie inside it.
+
+Claims are a per-cell pure function of the shape, so rasterising is O(cells touched). The plan is CPU-owned (edits come
+from taps and the generator), so claims are made where the plan lives. The GPU's parts are:
+
+- drawing the curves as instanced strips;
+- shaping the terrain under them;
+- the walkable surfaces.
+
+The rule is per cell and pure, so it ports to a kernel if plans grow to atlas scale. (Departs from "fast on the GPU"
+only for the claim bookkeeping. Why: the plan is on the CPU, and moving it would add round trips, not remove them.)
+
+**2. Roads are their own structure [ALIVE, ANY, ONE].** This is a new form, `way`, with kinds:
+
+| Kind | Where |
+|---|---|
+| road | in town, paved |
+| track | outside, earth |
+| plaza | open paved area |
+| stair | town |
+| ramp | graded |
+| switchback | outside the wall |
+| bridge | over water |
+
+A way is a structure like any other:
+
+- It is painted as tiles, drawn as a curve or dragged as an area (a plaza).
+- It is built by builders with materials (§12 decided: "Building roads costs materials and shapes the terrain").
+- It is refused, repaired and damaged like the rest (§17's one type table).
+
+This departs from §12's design line "today's road geometry (a tree on the town grid's cell borders)". That line
+described the then-current code. The user's newer direction is roads as a shape that claims cells, and lanes along
+facades are where riders stuck (round 128o). Cells are about 4 m (`spacing: 4`), so a way cell is a street: a 2.6 m road
+plus kerb.
+
+**3. Tiles declare their paths, and placing them joins the paths [ALIVE, ANY] (§12 decided, §17).** Each structure def
+gets `paths(cell context) → PathPiece[]`, in cell-local terms. A piece joins two **ports**. A port is (cell side, level)
+or (cell middle, level), with a kind. The declarations are:
+
+| Def | Pieces |
+|---|---|
+| block | door: an outer side port ↔ its room; an internal stair: middle L ↔ L+1; a passage variant: side ↔ opposite side at ground |
+| wall | wall-walk: along its joined sides at its top; a gate variant: side ↔ side at ground; a wall stair: ground side ↔ top |
+| yard / farm / area | its edge port(s) ↔ its open interior (walked by field, §11) |
+| pit | its tier ramps |
+| way | its middle ↔ every side whose neighbour has a port on that side (a road tile's joins, like a wall tile's) |
+| curve way | its curve's piece clipped to the cell, with ports where the curve leaves the cell |
+
+- Two ports join when they are on the shared side of neighbouring cells at a matching floor.
+- **Merging is the Townscaper rule extended:** a tile picks its door side, facade and wall ends from its neighbours.
+  A neighbouring *way* (of any shape) counts as street, so doors face it and walls end on it. "Make tiles merge
+  seamlessly to it" comes for free.
+- A way curve crossing a wall shape makes a gate there (a crossing rule). This gives §13's land gates from geometry,
+  not from a fix.
+- This replaces `entrances.ts`'s heuristic ("a door facing the town's middle, else a passage, else a field").
+
+**4. The road generator: tensor-field streamlines, roads first, then the grid in the blocks [ALIVE, ONE, NORT].** The
+user: "the city generation software that uses flow fields to find roads actually had the best looking roads … fast and
+pretty in our layouts and players get control to shape and make it pretty". This is the citygen.net style they pointed at
+in round 128k, asking for contour-following roads.
+
+The method:
+
+- **The field.** A direction (tensor) field per cell of a coarse lattice (about 2 m) over the town's area, a sum of
+  basis fields weighted by distance:
+  - the terrain's contours (the gradient's normal), which gives terrace roads;
+  - the water edges;
+  - the centre's radial field;
+  - a grid field per district (its orientation);
+  - **constraints**: atlas roads, player-drawn roads and walls (their tangents), and dragged areas (their edges).
+- **On the GPU.** One thread per lattice cell reads the ground and water it already has (no readback) and sums the
+  bases. Each basis is a few floats, so the field is cheap and parallel.
+- **Streamlines** are traced along the major and then the minor eigenvector at set spacings (major streets, then
+  minor). The rules:
+  - A seed is skipped if a line of its family lies within the spacing (a separation grid, an atomic min per bucket).
+  - A line stops at the edge, at water, or when it meets another line, where it snaps to it.
+  - **Tracing on the GPU:** one thread per seed walks a bounded number of steps (the area's diameter / step: a bound
+    from geometry, not a tuning cap). The separation test goes through the bucket grid. Seeds run in rounds (major,
+    then minor), so lines see each other.
+  - A town of ~200 m at a 2 m step is ~100 steps per line and a few hundred lines. This is a small dispatch; it needs
+    to be measured.
+  - The output is polylines in a GPU buffer, **which become curve-way shapes** (point 1). They are graded (point 5),
+    built as route-network segments (point 7) and claim cells.
+- **Incremental.** A drawn road, a dragged area or an edit changes the bases in its area only.
+  - The field is recomputed in the dirty rectangle.
+  - Only the streamlines through that rectangle are re-traced: they are cut at the rectangle's edge and re-traced
+    inside it, joining the stubs outside.
+  - Built roads and buildings are constraints, never moved.
+- **The grid comes from the roads.** The blocks between the traced roads are the lots. `settle/grids.ts` already cuts lots
+  into yard and building quads (the Townscaper CellGrid), so the town grid is made per block, fitted to the roads. The
+  tiles fill the blocks and merge to the roads (point 3: a way neighbour is a street side).
+  - In play, a road drawn through built cells claims cells on the existing grid; empty blocks it splits are re-cut.
+- **Who reads what.** The traced polylines are the generator's output. The plan and the network are CPU-owned (points 1
+  and 7), so the polylines are read back **once per generation or per drawn edit**: a few KB (a few hundred lines ×
+  ~100 points × 8 B ≈ 100–250 KB at generation; a drawn edit's re-traced stretch, a few KB). This is a transfer to flag
+  (1b): it is the plan's input, not a per-frame read. The alternative, the plan on the GPU, is a bigger change, left
+  open.
+
+**4b. The remaining layout rules [ONE, ANY] (§12 decided, §17).** The generator stays a plan-API client plus layout
+passes:
+
+- **(a) Laid roads first.** The atlas roads (`atlas/ways.ts` already grades curves with road, tunnel, bridge, switchback
+  and lift) enter the field as constraints and the town as curve-way shapes. The traced roads join them (§12: "Large
+  roads can be laid across the map … the grid's own roads adjust").
+- **(b) Ways between adjacent lots of different types** (the user's tile rule). Inside a block, where districts or uses
+  change, minor ways go between the lots. Today's `street`/`plaza` cell uses become way tiles through the API.
+- **(c) Dense homes get passages.**
+  - Every home cell needs a door on a way.
+  - A home with no side on a way gets the passage variant, chained to the nearest home that has one. The chain is the
+    shortest chain over home cells, from a BFS.
+  - There is no density threshold: the rule is "has a way side or not".
+- **(d) The reach pass** (point 6) adds the gates, stairs, ramps, switchbacks and bridges that are still missing, and
+  drops what nothing can fix.
+
+**5. Heights: a way has a designed floor, and its tile shapes the land [ANY, CHEAP].**
+
+- Way cells take floors like the Town's cells (`Town.base`: Townscaper floors).
+- Along a chain of way cells, the floors are graded by `grade.ts gradeProfile` (kept). A road's grade is at most 1 in 3.
+  Where it can't be within a cut, the tile becomes:
+  - stairs (inside the wall);
+  - a switchback (outside, two or more cells across the fall line);
+  - a bridge over water.
+  These are the user's answers in DECISIONS, round 128o.
+- The way tile's built matter is a slab at its floor, with a foundation or a cut to the ground, stamped like a block's.
+  The world then matches the network's z by construction.
+- At generation this is free (DA-A10). In play, builders build it.
+- **Trips read z from the segment, not from the surface.** This deletes the height snap and the >1.1 m hop
+  tolerance. A rider on a stair is on the stair.
+
+**6. Reach = every declared entrance connected to the network [ANY, NORT] (§13).** Reach has two layers, split by who
+knows what. This is a significant choice, for review.
+
+- **(a) Plan reach (CPU, pure, exact, instant).**
+  - The network is the union of the declared paths. It is built from the CPU's own plan, so it costs no round trip.
+  - Its components (union-find, updated per edit) say which entrance ports join the stores' port.
+  - A cut-off entrance gets the **cheapest passage**: a Dijkstra search over the plan's cells, with the costs of the
+    road piece that would be laid:
+
+    | Step | Cost |
+    |---|---|
+    | an existing way | 1 |
+    | a free cell made a road | 2 |
+    | a block's ground floor made a passage | 4 |
+    | a wall cell made a gate | 4 |
+    | a floor change | a ramp, stair or switchback, by its rise and grade |
+    | water | a bridge, by its span |
+
+  - The pieces found become **way structures in the plan**: planned, on the builders' list, shown as ghosts (§13
+    decided: "the game picks the passage"; "Passages cost like anything else"). At generation they are built at once.
+  - What nothing can fix is refused in play, with the reason in plain words: deep water, a cliff, walled in. At
+    generation it is dropped and logged in `TownPlan.dropped` (§13 rule; main's earlier answer).
+  - **This is the same function for generation and play [ONE].**
+- **(b) World check (GPU).** Whether the world still matches the design (erosion, digging, a block, rubble, a fallen
+  tree on a road) is only known on the GPU.
+  - A kernel tests each segment in dirty columns against the agents' surfaces: a surface within STEP of the segment's z,
+    with headroom.
+  - A broken segment raises a `blocked{seg}` event in the existing GPU event stream (§11 rule: "Game logic reacts to the
+    GPU's event stream").
+  - That queues a repair and makes a **detour, paid once** (§12): a short polyline around the obstruction found on the
+    surfaces, written as detour segments. The original comes back when it is cleared.
+- **(c) Off-network places** (a tree, a dig face, a dragged field's interior) are reached by flow field from the
+  network (§11 decided: "Flow fields also lead units back to the roads").
+  - The GPU components pass is kept for them: hook/jump over the agents' surfaces, seeded from the network's columns.
+  - The red outline and ghost are drawn straight from its labels (§13). A placement check reads a few words.
+
+Departs from §13's "computed as connected components on the GPU over the walkable surfaces, with the plan's blocks
+included as if built". Why: the user's reason for the GPU was CPU round trips. With the paths declared by the tiles, a
+planned block's reach is a question about the CPU-owned plan, so answering it on the CPU has no round trip at all. The
+GPU keeps the part only it knows: the world against the design, and open ground. The "as if built" overlay (`planSpans`,
+`siteSpans`, a second peel) goes. **If the reviewer wants plan reach on the GPU anyway, the network components are a
+direct port of the same hook/jump.**
+
+**7. The network on the GPU and cached routes [CHEAP, ALIVE, NORT] (§12 decided).**
+
+- **Network.** Nodes are ports: xyz in the town's frame. Segments: a and b node, kind, width, length, the owning cell.
+  - One pool, with a range per town grid. The grid's transform comes from the grid table (§3), so a slide rewrites one
+    row.
+  - Uploaded as dirty rows per edit.
+- **Routes.** A route is a compact list of (segment id, direction) words, like Factorio's belts. They live in a route
+  pool with a free list.
+  - A route is keyed (from port, to port) and found by Dijkstra/A* on the CPU's copy of the network (the network is the
+    plan's), then uploaded.
+  - **Lazily, only when a group needs it.** Stale routes (a segment of theirs changed) are rebuilt on next need (§12
+    decided). Detours cover blocked stretches meanwhile.
+  - This replaces the 64-destination, 1,024-node hop tables: the limit is the pool's size.
+- **Trips.** A rider's record gets (route id, index, start clock, speed).
+  - The existing ride kernel's interpolation places it along the route's segments, with z from the segments. Stairs
+    and switchbacks get their own motion by kind.
+  - Arrival raises the existing RIDE_ARRIVED event. Off screen, arrival can be resolved from the clock (§12: "trips
+    without ticks", measured first).
+- **Joining and leaving.** A unit off the network follows ROAD_FIELD (seeded from the network's columns, stamped from
+  segments as capsules) to the nearest port, then rides. A route is a mode: knocked off means back to the field (§12).
+- **Lanes, queueing and passing** (§12): a GPU bucket pass per (segment, direction), done after trips. Traffic is for
+  looks (§12 decided), so it comes last.
+- **Settlements ride too [ONE].** A heap is a yard structure with an edge port. This deletes the heap-foot rings.
+
+### Data flow
+
+```
+plan edit (tap / drag / draw / generator)
+ → TownPlan claims (tiles | curves | areas)
+ → paths of the edited cells + neighbours (pure)            → network delta ──upload──▶ GPU network pool
+ → plan reach: union-find + cheapest passage (pure)          → way structures planned (play) / built (generation) / dropped
+ → TownLife order go{leg,to} → Routes.get(from,to) (lazy)    ──upload──▶ route pool → trip rows → ride kernel
+GPU: surfaces change in a segment's columns → world check → blocked{seg} event (existing stream) → repair + detour
+GPU: components over surfaces seeded by the network → labels → outline drawn; a few words per placement ask
+```
+
+### Transfers (AGENT_RULES 1b)
+
+| Transfer | Bytes | Rate |
+|---|---|---|
+| Upload: network delta per edit | ~32 B a segment × ≤ ~10 a cell × ≤ 7 cells ≈ 2 KB | edit |
+| Upload: whole town at load | ~3k cells × ~4 segments × 32 B ≈ 400 KB | once a town (as the stamps' 160 KB) |
+| Upload: a route | 4 B a segment, ~50–150 ≈ 0.2–0.6 KB | when first needed; start burst a few hundred routes ≈ 100 KB |
+| Upload: a trip | 16 B | per order (event rate; replaces today's goal-slot writes) |
+| Readback: traced road polylines | ~100–250 KB per generated town; a few KB per drawn edit | generation / edit (question 5) |
+| Readback: new, per frame | none | `blocked{seg}` rides the existing event stream; placement asks for off-network places are a few words per ask, edit rate |
+| Readbacks deleted | the reach answers (a word a query), the 64 ramp spots, the wet bits per box column, the fix traces | per edit |
+
+### Representations (AGENT_RULES 1c)
+
+**New:**
+
+| Representation | Size | Rebuild | Alternative and why not |
+|---|---|---|---|
+| Path declarations | static per def, tiny | — | — |
+| Network (CPU master + GPU mirror) | ~12k segments ≈ 400 KB | O(edited cells) | Surfaces only: untyped, no stairs, lifts or wall-walks. The GPU only: the plan is on the CPU |
+| Route pool | the sum of cached routes | lazy, per stale route | The hop tables: fixed 512 KB and capped at 64 goals |
+| Trip fields in the ride record | 16 B a rider | — | — |
+| Curve and area shape data in the plan | tiny | — | — |
+
+**Deleted:** Ways, Lanes, RoadGraph and its hop tables, road shapes (quads), structures/nav NavGraph, fortreach's own
+peel + labels + fix field + ramp spots + wet bits, planSpans/siteSpans overlay, heap-foot rings, the TownPlan.ramp flag.
+That is 10 out and 4 in.
+
+### Delete list
+
+- **`build/lanes.ts`: all of it.** LaneSeg/LaneKind, lanesOf, nearSeg, ROAD_PAD, roadShapesOf, LANE_COST, laneGraph,
+  STEEP, LANE_WIDTH/DRAWN. Roads are way structures now.
+- **`build/ways.ts`.** These go:
+  - waysOf (the free-cell tree);
+  - the wall-stair heuristic (STAIR_EVERY, foot choice);
+  - the squares rule, CROSS_COST, wayStep, groundSteps;
+  - waysNav/NavGraph.
+
+  These move: alongAxis/axisLength/onAxis to a geometry helper; SLOPE/stairRise into the stair tile's rule.
+- **`build/entrances.ts`.** entrancesOf, openCell and needsEntrance, replaced by declared ports.
+- **`structures/place.ts`.** keepReach, assertEntered and its nav-graph builder. **`structures/nav.ts` bakeNav** (a third
+  graph).
+- **`build/sitereach.ts`.** joinPlaces, applyReachFixes, siteRampRise, cuttableCell, siteSpans, standsOfCell,
+  singleStands (stands are ports now).
+- **`build/reach.ts`.** CpuReach, FIX_COST, FIX_CAP, packSpan/unpackSpan, RAMP_CAP, REACH_BITS' why-not bits (the plan
+  reach knows why).
+- **`build/reachgpu.ts` and `fortreach.wgsl`.** reachPeel (a duplicate of the agents' surface bake), reachQuery,
+  reachRamps (output unused), reachWet, fixInit/fixRelax/fixTrace/fixPush, MODES' lifted-rule solves, MAX_ROUNDS.
+- **`TownPlan.ramp` + RAMPS_ID solid.** Replaced by ramp/stair way structures. passage/gate become tile variants: same
+  data, now declared paths, not fix flags.
+- **`agents/roadgraph.ts`.** The whole file: graph build, hopsCpu, MAX_NODES 1024.
+- **`agents/ride.ts` / `roadride.wgsl`.** rideHops, destNode, MAX_DESTS 64, RIDE_NEAR 6, ON_EDGE 1.6, NET_REACH, RR_NEAR,
+  M_AT goal snap, the "edge end cheaper to the nearest destination" choice.
+- **`units.wgsl`.** The trip height from surfaceNear (the snap), which is the >1.1 m hop tolerance.
+- **`agents/roads.ts`.** RoadShape quads (keep capsules, stamped from segments).
+- **`settle/live.ts`.** HEAP_FOOT rings and heapFoot.
+- **`grade.ts` gradeLane.** Lane sampling.
+- **`fortress.ts`.** waysMemo/lanesMemo/roadShapesMemo, judgeBatch/fixOne/applyFixes/noteFix (fixes become planned ways),
+  joinTown.
+- **`view.ts`.** Road drawing from ways. Ways are drawn as their own pieces.
+- **Tests on the deleted code.** lanes.test, ways.test, lanesteps.test (its `test.fails` becomes a passing trip-z test),
+  townroutes.test, test/gpu/reachfix.test, the fix parts of fortress/reach.test. Each is replaced by a test of the same
+  failure mode below.
+- **LOST/LAST_LOST.** Checked: no leftovers in src (DA-A7 deleted them; only cardlab's "LOST" string).
+
+### Keep list (and why each fits)
+
+- **TownLife, its events and orders, and the crowds' wiring.** Logic reacts to the GPU event stream (§11 rule).
+  `go{leg,to}` maps to a route without change.
+- **The ride kernel's trip interpolation, the RIDE_TRIP steer mode, the RIDE_ARRIVED latch and `agents.rearm`.** This is
+  §12's kinematic trip exactly. Only its polyline source changes, from hops to route lists.
+- **The hook/jump components kernels** (reachInit/Hook/Jump; atlas ccHook/ccJump). This is §13's algorithm. It is reused
+  over the agents' surfaces for off-network places.
+- **The agents' surface bake (agents.wgsl nav).** This is §11 decided: the one surface representation.
+- **ROAD_FIELD + roadstamp (capsules).** This is §11 decided: fields lead back to the roads.
+- **`solid.ts`.** Built matter as External, walls' lintels (§3). Way slabs join it.
+- **`grade.ts gradeProfile` + ROAD_GRADE.** The tested 1-in-3 math, applied to way-cell chains.
+- **The `atlas/ways.ts` curve grading** (road/tunnel/bridge/switchback/lift). It becomes the curve shape's terrain
+  shaping.
+- **TownPlan, the plan API, Town floors, TownPlan.dropped** (from the WIP branch).
+
+### Failure modes as tests (failing first, Node unless noted)
+
+- **Joins:** every def's paths join on shared sides at matching floors. A door faces a neighbouring way. A curve way
+  through a cell gives ports where it leaves it.
+- **The rule:** adjacent lots of different types get a way between them; the same type gets none. In a 4 × 4 block of
+  homes ringed by ways, the inner homes get passages chained to the ring.
+- **Terraces:** neighbouring way floors 0.5, 2, 5 and 12 m apart give a road, a ramp, stairs, and stairs spread along the
+  chain or a drop with a reason. Outside the wall, a switchback. Every grade ≤ 1 in 3.
+- **Walls:** a closed wall ring gets a gate. Land gates are ≥ 1/2/3 by town size. A curve way crossing a wall makes a
+  gate.
+- **Water:** water between gives a bridge. Deep water no bridge can span is refused with "deep water".
+- **Property:** for the start town and 20 seeds, every entrance port is in the stores' component after generation;
+  dropped structures are listed with their reasons.
+- **Routes:** a route equals Dijkstra on the network. A changed segment stales only the routes through it. 500 distinct
+  destinations work (no 64 cap).
+- **Trips:** along every cached route of the start town, z between consecutive samples never steps more than STEP. This
+  kills the 1.1 m tolerance; it is today's lanesteps `test.fails` turned into a pass.
+- **GPU:** a block placed on a segment raises `blocked{seg}`, a detour is written, and it is removed when cleared. The
+  ride kernel follows a route list and raises an arrival (replaces the agentevents ride tests).
+
+### Riskiest part first, and how to derisk it
+
+0. **The streamline road generator, before anything is replaced.**
+   - A GPU prototype of the field + tracing on the start town's land, in a lab scene: timed (full and incremental after a
+     drawn road), with a play-zoom shot and a map preview for the user.
+   - Its road polylines are fed to the existing grid cutter to show the blocks and the quads.
+   - If it isn't fast or pretty, the rest of the design stands with today's lot generators feeding curve ways.
+1. **Do way tiles fit real generated towns' density and look?** The start town, the settlements and the terraces.
+   - Derisk in Node, with no GPU: generate the start town and a terraced test town through the new layout pass and plan
+     reach.
+   - Print the entrances connected, the dropped structures and the ways added. Render the CPU map preview (the level
+     tools) and send it before any GPU work.
+   - If ways eat too much of dense cores, the passage rule carries more. That is visible here, cheaply.
+2. **Route cost on the CPU** (Dijkstra on ~12k segments, a start burst of hundreds). Measure in Node.
+3. **Ride perf** with route lists against hop tables, on the phone bench (toggle, not timestamps).
+
+### Build order
+
+| Step | Content | Deletions with it (no two systems live past step 2) |
+|---|---|---|
+| 0 | The streamline generator prototype (lab scene, GPU, timed, shot); nothing replaced | — |
+| 1 | Path declarations + way structure (tiles and curves) + layout pass from the streamlines + grid per block + plan reach | entrances, keepReach, place.ts nav |
+| 2 | Network upload + routes + ride on routes, the fortress crowd riding | lanes, ways, roadgraph, hop tables, the trip height snap, fortreach's fix and peel |
+| 3 | Settlements ride; heaps as yards with ports | heap rings |
+| 4 | The GPU world check, `blocked` events, detours, repairs | — |
+| 5 | Lanes, queueing, passing | — |
+| 6 | Atlas roads as curve ways into the grid | — |
+| 7 | Drawn curves (roads, walls) and dragged areas in the editor | — |
+
+Steps 6 and 7 are designed for here and built later: roads as their own shape plus the tile merge come first. Drawn
+curves and dragged areas are field constraints and plan shapes from step 1's data model, so step 7 is UI plus an
+incremental re-trace, not a new system.
+
+### Gates
+
+- **Start town:** fortressallbuilt 708/708. If the new rules change the count, it is reported with every drop's reason.
+  The time is no worse than 271–362 s.
+- **Reach:** every entrance connected.
+- **Settlements:** settlecrowd, 15 loads, deterministic, all places reached (today 17 of 95 out).
+- **The terraced test town** (a new lab scene): every entrance reached, no route step above STEP, stairs inside the walls,
+  switchbacks outside.
+- **Shots and perf:** a tile-coverage plus play-zoom shot, looked at. Frame time with riding toggled.
+
+### Questions for review
+
+1. Plan reach on the CPU (point 6a), departing from §13's "GPU over surfaces with planned blocks as if built".
+2. Ways take whole cells (4 m). Is that OK in dense cores, with passages carrying the rest?
+3. Builders build a structure's way before the structure? (Proposed: the reach orders it.)
+4. Way slabs as built matter (External, like blocks) rather than graded terrain inside towns; graded terrain outside.
+5. The traced road polylines are read back once per generation or drawn edit (~100–250 KB per town, a few KB per edit)
+   to feed the CPU plan. Or does the plan move to the GPU?
+6. Is the town grid made per block from the roads (the streamlines first, then the grid)? This changes `settle/grids.ts`
+   from "lots then streets" to "roads then lots". The fortress's player grid is the same: drawn roads re-cut empty blocks
+   only.
+
+### Hacks and limits
+
+- **The per-cell claim rule for curves.** "More than half its span" is a rasterisation choice, not a tuning knob. It is
+  stated once and tested.
+- **The fix costs** (1/2/4/4, rise and span based) are a preference order, not thresholds. They are the plan's version
+  of today's FIX_COST.
+- **The pools.** The route pool and the network pool have a size. Overflow grows the buffer: an error if the device
+  limit is hit, never a silent cap.
+- **Routes are found on the CPU.** This is a deliberate choice (the network is the CPU plan's), with its cost to be
+  measured (risk 2).
+- **Detours and the GPU world check are step 4.** Until then a blocked road is not noticed: riders go straight through
+  rubble, as today.
+- **Lanes and queueing are step 5.** Until then riders overlap on a road (traffic is for looks, §12).
+- **In-play ground changes under a way** (digging beside it) are caught only by the world check. Before step 4 a road can
+  float.
+- **Streamline parameters.** The road spacings (major and minor) and the basis weights are layout style parameters
+  per civ and district, as the grid styles' spacing is today: design knobs the user shapes, not fixes. The step bound is
+  geometric.
+- **The streamline readback** (question 5) is a new transfer: edit-rate, KB-sized.
+- **Off-screen trips by clock** are not in this rewrite. They wait on the measurement §12 asks for.
