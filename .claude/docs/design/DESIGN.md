@@ -854,6 +854,7 @@ Also: "Looking heavy and moving at a consistent speed matter more than preventin
 - Steady 60 fps on the phone with no pop-in; sims scale with activity; iso tile LOD beyond a small sim area (round 104).
 - "Limit the sleep check to regions the player is acting on and essentially have the simulation scale with only the things we want active" (round 104). Storms and big battles may drop below 30 fps: "that's reasonable for a very action and simulation heavy scene."
 - Readbacks are very costly on mobile; world queries run as GPU passes, with tiny async reads only after edits (2026-11-04).
+- "I'm also pretty confident that if you get rid of the CPU readback, properly engineer the GPU simulation to be intelligent and parallel and follow the design performance will be fine. All the past slowdowns have been implementation issues not design." (2026-11-05)
 - Every perf test is a phone bench the user runs (screen awake, downloadable report); the desktop is only a proxy (round 128).
 - Tiler GPUs make per-system timestamps unreliable: diff the frame time with the system toggled (2026-11-05).
 - "performance on mobile was abysmal and could not be played" (2026-11-05).
