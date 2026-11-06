@@ -155,7 +155,7 @@ The atlas: the whole generated world map (coarse sim, GPU finish, far land, geys
 - `runs.ts` (219) — (round 128d) Occupancy as runs per cell: the levels a cell holds, as sorted half-open runs [lo, hi), each … API: `Run`, `CellRuns`.
 - `shapes.ts` (163) — (round 128d) Painted shapes make landmarks, Townscaper's way: the player paints blocks, and some shapes … API: `COURT_MAX`, `TOWER_LEVELS`, `ShapeGrid`, `Dome` +3.
 - `site.ts` (170) — A town as one thing (round 128m, onetown): its grid, its plan and what stands of it. API: `SiteBox`, `gridIdOf`, `SiteData`, `TownSite` +2.
-- `sitereach.ts` (257) — One reach for every town (round 128o, B; API: `FixKind`, `cuttableCell`, `SiteSolid`, `siteSpans` +7.
+- `sitereach.ts` (259) — One reach for every town (round 128o, B; API: `FixKind`, `cuttableCell`, `SiteSolid`, `siteSpans` +7.
 - `solid.ts` (269) — What of the fortress is solid to the world (round 128d; API: `WALL_HALF`, `WALL_LINTEL`, `SolidInputs`, `RAMPS_ID` +5.
 - `town.ts` (464) — The town (round 65, docs/DECISIONS.md: "a townscraper inspired grid and building system"; API: `LEVEL_H`, `TownIO`, `TownData`, `Block` +1.
 - `towngrid.ts` (186) — The town's irregular grid (round 65; API: `TownGridOpts`, `TownGrid`, `CellGrid`.
@@ -621,14 +621,14 @@ Settlements: towns and cities on the atlas, their plans, the view that draws the
 - `debug.ts` (132) — ?towndebug=1 (round 88): the live settlement's grids and jobs over the view — its districts' cells (the … API: `TownDebug`.
 - `field.ts` (117) — A growth field (round 89): the user — "vegetation and settlements should work similarly actually. API: `GrowthOpts`, `GrowthField`.
 - `grids.ts` (452) — A settlement's districts as overlay grids (round 88, BACKLOG R6; API: `Pt`, `rand`, `Lot`, `radialPolys` +5.
-- `live.ts` (76) — A settlement in play (round 88; API: `LiveSpot`, `LiveSite`, `LifeIO`, `RaidOutcome` +4.
+- `live.ts` (86) — A settlement in play (round 88; API: `LiveSpot`, `LiveSite`, `LifeIO`, `RaidOutcome` +4.
 - `onscreen.ts` (98) — (round 128g, cityrender) Which settlements are drawn as pieces, and which are made ready — by the screen, … API: `SHOW`, `HIDE`, `BUILD`, `DROP` +5.
 - `plan-worker.ts` (113) — (round 94) A settlement planned off the main thread for the land past the window (settlements.ts … API: `FarPlanInit`, `FarPlanJob`, `FarPlanDone`, `ExactPlanJob` +1.
 - `plan.ts` (1043) — A settlement realised (round 88, arrival scale; API: `Iv`, `ColumnPlan`, `Spot`, `SiteSpec` +19.
 - `purpose.ts` (122) — What a settlement is for (round 120, `cities`; API: `PURPOSES`, `PurposeFacts`, `purposeScores`, `purposeOf`.
 - `raster.ts` (134) — A settlement's plan as the land past the window draws it (round 94; API: `rasterPlan`, `stampMatch`.
 - `records.ts` (98) — The settlements' records from the world wiki (round 88): one per atlas site, with the wiki's stable id … API: `OUTLAWS`, `SettlementSeed`, `recordsFrom`.
-- `settlements.ts` (959) — The settlements system (round 88; API: `DAY_S`, `SettlementEvents`, `LiveIO`, `FarIO` +1.
+- `settlements.ts` (974) — The settlements system (round 88; API: `DAY_S`, `SettlementEvents`, `LiveIO`, `FarIO` +1.
 - `ships.ts` (306) — Ships between the ports (round 120, `cities`; API: `SeaChart`, `ShipRoute`, `SEA_DEPTH`, `shipRoutes` +3.
 - `shipsview.ts` (56) — The sailing ships as the player sees them (round 120, `cities`; API: `ShipsIO`, `ShipsView`.
 - `story.ts` (98) — A settlement's story (round 120, `cities`; API: `StoryFacts`, `storyOf`.

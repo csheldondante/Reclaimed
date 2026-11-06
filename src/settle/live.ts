@@ -9,6 +9,8 @@ import type { SiteSpec, Spot } from './plan';
 export interface LiveSpot extends Spot {
   /** window coordinates */
   w: V2;
+  /** (a heap) where a walker stands at its foot (heapFoot's points on open ground: no structure there) */
+  foot?: V2[];
 }
 
 /** a house being built, in the window */
@@ -67,9 +69,17 @@ export function routineOf(role: string): (typeof ROUTINE)[string] {
   return r;
 }
 
-/** a heap's foot: how far out from its spot a walker stands (its mound — the ground put on it — grows round the spot) */
-export const HEAP_FOOT = 2.5;
-/** the points round a heap's spot where a walker stands at its foot (window world): six, the first toward +x */
-export function heapFoot(at: V2): V2[] {
-  return Array.from({ length: 6 }, (_, k): V2 => [at[0] + Math.cos((k * Math.PI) / 3) * HEAP_FOOT, at[1] + Math.sin((k * Math.PI) / 3) * HEAP_FOOT]);
+/** a heap's foot: how far out from its spot a walker stands (its mound — the ground put on it — grows round the spot);
+ *  farther rings when the nearest has no open ground (a heap tight among buildings) */
+export const HEAP_FOOT = [2.5, 3.5, 5, 7] as const;
+/**
+ * Where a walker stands at a heap's foot (window world): the nearest ring round its spot (HEAP_FOOT) with points on
+ * open ground (`open`: no structure there) — those points, twelve round a ring at most. None: no open ground near.
+ */
+export function heapFoot(at: V2, open: (p: V2) => boolean): V2[] {
+  for (const r of HEAP_FOOT) {
+    const ring = Array.from({ length: 12 }, (_, k): V2 => [at[0] + Math.cos((k * Math.PI) / 6) * r, at[1] + Math.sin((k * Math.PI) / 6) * r]).filter(open);
+    if (ring.length) return ring.slice(0, 6);
+  }
+  return [];
 }

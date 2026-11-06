@@ -19888,3 +19888,38 @@ its slot opening or closing starts it over (a tested piece).
     atlas's slots.
   - Pinning doesn't make tiles bake faster: the undrawn regions are a throughput limit at 160 c/s, to find out
     (planner look-ahead, bake order on the pan's path) with runs. Those need the timing lease.
+
+## 2026-11-06 — round 128o (`onetown`, DA-A10 / DA-A11): design note — graded at generation, keepReach deleted
+
+- Main's direction: generation uses the same GPU reach as play by realising the town in the window (the start town is
+  generated where the window is): realise, then the GPU reach, its fix field and the grading, then the plan is final.
+- Proposed order: (1) the realise step: when a town's land is first in the window (Settlements: the exact plan's
+  land stamped; the fortress: ready), one pass over its plan — the lanes graded (build/grade.ts at ROAD_GRADE, cut and
+  fill written into the town's own ground columns, TownSite.groundCols, and the world's terrain there through the
+  world API's quiet edits), then joinPlaces with the fix field (passages, gates, stairs as ramps a cell long), then the
+  plan marked final (saved as generated: no edit of the player's). (2) keepReach and its call in planTown deleted;
+  assertEntered moves to after the realise pass. (3) Steep stretches: in town (inside the plan's box of built cells) a
+  stair on the stretch's free cells when it fits (stairRise); outside, a switchback (a lane's run lengthened in a
+  zig-zag within the grade) — or, where neither fits, the place stays out.
+- Questions before code: (a) a generated building that no fix reaches (on a terrace past any stair or switchback):
+  dropped from the plan at the realise pass (DESIGN section 13: refuse what nothing can fix), or kept and counted? (b)
+  grading writes the town's land: generated towns' ground changes, so GEN_VERSION moves and saved regions are made
+  again (once) — fine? (c) a town far away keeps its plan from before the pass (its passages and stairs appear when it
+  is first realised) — fine, or should the far plan run the CPU reference (350-600 ms a town, measured)?
+
+## 2026-11-06 — round 128o (`onetown`): the settlecrowd stall, root cause — a heap's foot inside a building
+
+- Main asked for the cause of settlecrowd's 1-in-3 stall (builders stuck on their way). A diagnosis run logging the
+  builders, the heaps' feet seeded and the reach's fixes (Settlements.reachStats.made) found builder 25 standing for
+  the whole run at (176.4, 164) — the stone heap's first foot point, which lay inside a building's cell; the reach had
+  "fixed" that place by cutting a passage through the building (174.9, 164.7) and the builders led there stood in it.
+  Which builder the field sent to which foot point varied with the timing, so the stall came and went. A heap's foot
+  (round 128o's fixed six points 2.5 m out) took no account of what stands there.
+- Fix: a heap's foot is the nearest ring round its spot (2.5, 3.5, 5, 7 m: HEAP_FOOT) with points on open ground — no
+  structure's cell there (Settlements.liveSpots: LiveSpot.foot; the crowd seeds them, the reach asks from them).
+  settlecrowd, 5 runs: the same every run now — 15 loads, a house finished, the reach 17 of 95 places out with 1 fix (a
+  stair-ramp), no passage cut through a building to a heap. Fewer loads than before (29) because the stone ran out
+  (stores 10 stone; it was hauled from the heaps' ledger) and three builders stand on terraces the reach can't join
+  (the stairs of DA-A10 at generation, next): no flake left in 5 runs.
+- Also: BACKLOG DA-A12 (riders on one trip drawn on one spot; the rest of DA-A7), and fortressfollow's note says why it
+  picks a lone person.
