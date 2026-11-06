@@ -145,3 +145,12 @@ scenarios should ask for the sim seconds they need, not more.
   (gpu/pipeline.ts `whenPipelinesReady`).
 - **A fortress block's placement runs the reach check over the whole box** (fortress/reach.ts ReachMap): ~140 ms a block,
   4-5 s for a 33-block plan (more on a loaded machine).
+
+### Town roads in the lab (round 128p, DA-A13)
+
+- `lab.edges({spokes, off})` draws the paths on the grid's edges (paved, buildings inset) in place of the lanes, and
+  returns the reach.
+- `lab.edges({hybrid: true, drawn, place, far, radial})` lays the town's roads (build/townroads.ts) first.
+- `node scripts/lab.mjs run scripts/lab/edges.mjs` and `scripts/lab/hybrid.mjs` (recipe `town`) take shots at play zoom.
+- `EDGE_OUT=<dir> npx vitest run --project unit edgetown` writes the map previews.
+

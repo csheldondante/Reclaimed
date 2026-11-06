@@ -20816,3 +20816,85 @@ There are no gates in this town's wall and no roads out (only piers), so the mai
 - The far-structure threshold of 4 cells is a style setting.
 - The paths' visibility in the lab's core is limited by the fixture's stamped old buildings (not a game state).
 
+## 2026-11-06 — round 128p (`onetown`, DA-A13 step 2): the hybrid — curve main roads the grid adapts to, far roads, terraces, paving, the radial relax
+
+**What.**
+- **`build/curveroad.ts`.**
+  - `growRoad`: a least-cost walk over a 2 m raster in 16 directions. A step costs length × (1 + (grade / 1-in-3)² +
+    20 × excess²); steeper than stairs is barred, water costs a bridge's price (12×) and a building cell 8×. The walk is
+    then pulled straight wherever a straight stretch keeps to 1 in 3 on dry, unbuilt land, and rounded (Chaikin ×2).
+  - `adaptToCurve`: vertices within half a road plus half a cell snap onto the road's edge on their side (a move held to
+    0.6 of a side; undone if it would turn a cell over). Cells whose middle lies on the road become its cells (its verge).
+  - `radialRelax`: Townscaper's relax toward squares, each cell's square turned to face the middle, fading to the edge.
+- **`build/townroads.ts` `layoutTownRoads`.** In order:
+  - the radial relax;
+  - spokes grown from the middle out past the town, and roads drawn, each adapting the grid (a structure loses what a
+    road takes; a wall's cell becomes a gate instead where it can);
+  - the edge network with the road cells;
+  - the far rule (a structure with no other within n = 4 cells gets a road grown from the nearest road cell);
+  - terraces levelled;
+  - the network again.
+
+  Generation and play run the same function.
+- **`build/terrace.ts` `fixTerraces`.** A building with no door at grade gets its floor set to its best walkable edge,
+  half a step over that edge's ground. Within a storey that is 'level'; past it, 'dug'. Its claims take the ground
+  inside it.
+- **`edgenet.ts`.** Road cells' edges are the network (water doesn't cut them: a bridge spans). The far rule. The
+  curves.
+- **`edgeview.ts`.**
+  - The paths paved: the inset strips plus square joins, the streets' paving draped on the ground (DECISIONS: "Paving
+    fill").
+  - The curves paved smooth (2 m quads draped), and bridges over water. The road cells under them are verge, not
+    paved.
+- **`QuadGrid.moveVerts`.** The vertices move and the cells' columns are worked out again; it is the shape modifiers'
+  hook.
+- **The fixture.** The towns' claims (External intervals) are stripped at capture (`scenes/level/town-fixture.ts`).
+  They are runtime state; baked in, the old town stood 7 m over the plan's ground and buried what the lab drew.
+  Recaptured.
+- **Lab.**
+  - `lab.edges({hybrid, drawn, place, far, radial, spokes})`.
+  - `scripts/lab/hybrid.mjs`: before and after shots at the core, a lane, a spoke, the drawn road and the far mill and
+    its road.
+  - The lab's "wet" is water over DEEP only: the old seaZ clause made dry low land a bridge.
+
+**Measured on the start town** (`test/unit/edgetown.test.ts`, the lab the same):
+- Before: 62/65 reached, the 3 out all terraces.
+- After the hybrid, with a far lumber mill placed ~80 m out: **65/65 reached**, the mill by its grown road.
+  - The 4 terraces were all levelled within a storey (0.6–2.0 m).
+  - The roads clipped 7 structures and took 1 whole: the spokes start in the old town's middle. Generated roads-first,
+    nothing is clipped.
+  - 171 road cells.
+- Time on the CPU: ~200 ms for the whole layout (radial 35, the three spokes and the drawn road 115 — the 2 m raster
+  walk is most of it — network 15, far road 25, terraces 8). This is a generation and edit cost, not a frame cost.
+
+**Tests.**
+- `test/unit/curveroad.test.ts` (6):
+  - straight on flat land;
+  - a 0.6 slope wound to within 1.25 × 1 in 3 on average;
+  - round a building;
+  - Chaikin keeps its ends;
+  - the snap onto the road's edges, no cell turned over, the bound held;
+  - the radial relax improves the fit by more than 15 %, with no cell turned over.
+- `test/unit/edgenet.test.ts`: terraces levelled (3 m) and dug (9 m), then reached.
+- `test/unit/edgetown.test.ts`: the hybrid on the start town, the mill reached.
+
+**Seen in the lab** (phone viewport, zoom 14 and 22):
+- The core's lanes show as paving between the inset houses.
+- The grown road to the mill and its T onto the spoke read as cobbled roads at zoom 22.
+- The fixture's trees still stand on the spokes; roads don't clear flora yet.
+
+**Not yet:**
+- generation calling `layoutTownRoads` before its buildings (roads first, so nothing is clipped);
+- the fortress's edits calling it (a drawn road, a far placement);
+- roads clearing flora;
+- a curve crossing a wall: a gate only where the wall tile is straight.
+
+**Hacks and limits:**
+- Style settings: the costs (12× water, 8× buildings, 20× excess grade), 4 spokes and their angle, a 4 m main road, the
+  0.6 snap bound, the radial relax's strength (0.35) and passes (12), far n = 4.
+- The level bound is one storey (LEVEL_H), the user's "somewhat". Past it a building is still dug in; it is reported,
+  not refused.
+- Road cells over water count as bridged for reach, and a bridge is drawn; it isn't built or paid for yet.
+- The 2 m raster walk costs ~30 ms a road on the CPU.
+- The lab ground can differ from the plan's ground far from the town (the old sea bed); the paving drapes on the
+  ground as it is.

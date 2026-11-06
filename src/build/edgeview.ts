@@ -5,8 +5,7 @@
 //    meet to where their inset lines cross (a mitre). A corner is moved per structure (cells of one structure share it,
 //    so the building stays whole); other structures' and open cells' corners stay. So the old border lanes' fault (riders
 //    flush against buildings drawn to the full cell, round 128k–n) can't arise: a path always has its clearance.
-//  - Paths: the drawn edges joined into chains (a chain ends where three or more drawn edges meet or one ends), each a
-//    road feature (the structures draw's linear roads) of its kind's width, on the ground.
+//  - Paths: paving — each drawn edge a strip of its kind's width, each join a square (pathPaving), draped on the ground.
 import type { LinearFeature } from '../api/contracts/structures';
 import type { TownPlan } from './plan';
 import type { EdgeNet } from './edgenet';
@@ -94,34 +93,124 @@ export function insetTiles(grid: Grid, plan: TownPlan, net: EdgeNet): { verts: F
   return { verts: Float64Array.from(verts), quads };
 }
 
-/** The drawn paths as road features: chains of drawn edges, each its kind's width, laid on the ground. */
-export function pathFeatures(grid: Grid, net: EdgeNet, ground: (x: number, y: number) => number): LinearFeature[] {
-  const nv = grid.verts.length / 2;
-  const ne = net.kind.length;
-  const at: number[][] = Array.from({ length: nv }, () => []);
-  for (let e = 0; e < ne; e++) if (net.kind[e]) (at[net.ends[e * 2]].push(e), at[net.ends[e * 2 + 1]].push(e));
-  const used = new Uint8Array(ne);
-  const out: LinearFeature[] = [];
+/**
+ * The drawn paths as paving (DECISIONS round 128p: "Paving fill"): each drawn edge a strip its kind's width along it, and
+ * each vertex a drawn edge reaches a square as wide as its widest path (the joins), laid on the ground as it is (the
+ * streets' paving: draped). Townscaper's look: the inset strips between the buildings paved.
+ */
+export function pathPaving(
+  grid: Grid,
+  net: EdgeNet,
+  ground: (x: number, y: number) => number,
+): { frame: [V2, V2, V2, V2]; foot: number }[] {
+  const out: { frame: [V2, V2, V2, V2]; foot: number }[] = [];
   const P = (v: number): V2 => [grid.verts[v * 2], grid.verts[v * 2 + 1]];
-  const other = (e: number, v: number) => (net.ends[e * 2] === v ? net.ends[e * 2 + 1] : net.ends[e * 2]);
-  const chain = (e0: number, v0: number) => {
-    const k = net.kind[e0];
-    const vs = [v0];
-    let e = e0;
-    let v = v0;
-    for (;;) {
-      used[e] = 1;
-      v = other(e, v);
-      vs.push(v);
-      const next = at[v].filter((x) => !used[x] && net.kind[x] === k);
-      if (at[v].length !== 2 || next.length !== 1) break;
-      e = next[0];
-    }
-    const pts = vs.map(P);
-    out.push({ kind: 'road', points: pts.map((q) => [q[0], q[1], ground(q[0], q[1]) + 0.12]), ground: pts.map((q) => ground(q[0], q[1])), width: PATH_WIDTH[k] });
-  };
-  // chains from their ends first (a vertex not of degree 2), then what's left (loops)
-  for (let v = 0; v < nv; v++) if (at[v].length && at[v].length !== 2) for (const e of at[v]) if (!used[e]) chain(e, v);
-  for (let e = 0; e < ne; e++) if (net.kind[e] && !used[e]) chain(e, net.ends[e * 2]);
+  const joinW = new Map<number, { w: number; d: V2 }>();
+  for (let e = 0; e < net.kind.length; e++) {
+    const k = net.kind[e];
+    if (!k) continue;
+    // (a main road's cells are its verge: the curve is the road, drawn over them — curveFeatures)
+    if (net.roads.has(net.cells[e * 2]) || net.roads.has(net.cells[e * 2 + 1])) continue;
+    const a = P(net.ends[e * 2]);
+    const b = P(net.ends[e * 2 + 1]);
+    const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    const d: V2 = [(b[0] - a[0]) / L, (b[1] - a[1]) / L];
+    const h = PATH_WIDTH[k] / 2;
+    const n: V2 = [-d[1] * h, d[0] * h];
+    out.push({
+      frame: [
+        [a[0] - n[0], a[1] - n[1]],
+        [b[0] - n[0], b[1] - n[1]],
+        [b[0] + n[0], b[1] + n[1]],
+        [a[0] + n[0], a[1] + n[1]],
+      ],
+      foot: Math.min(ground(a[0], a[1]), ground(b[0], b[1])),
+    });
+    for (const v of [net.ends[e * 2], net.ends[e * 2 + 1]]) if ((joinW.get(v)?.w ?? 0) < h) joinW.set(v, { w: h, d });
+  }
+  for (const [v, { w, d }] of joinW) {
+    const p = P(v);
+    const u: V2 = [d[0] * w, d[1] * w];
+    const n: V2 = [-d[1] * w, d[0] * w];
+    out.push({
+      frame: [
+        [p[0] - u[0] - n[0], p[1] - u[1] - n[1]],
+        [p[0] + u[0] - n[0], p[1] + u[1] - n[1]],
+        [p[0] + u[0] + n[0], p[1] + u[1] + n[1]],
+        [p[0] - u[0] + n[0], p[1] - u[1] + n[1]],
+      ],
+      foot: ground(p[0], p[1]),
+    });
+  }
   return out;
+}
+
+/** a main road's drawn width (DECISIONS round 128p: a main road the whole cell) */
+export const MAIN_ROAD_WIDTH = 4;
+
+/**
+ * The main roads' curves drawn smooth (the user: "the smoother roads will make this even better"): each curve's dry runs
+ * paved — a quad a 2 m step, its kind's width, overlapping the next a little so the bends close — draped on the ground as
+ * it is (as the paths' paving); its wet runs a bridge (its deck at the higher bank's ground and a little).
+ */
+export function curvePieces(
+  curves: V2[][],
+  ground: (x: number, y: number) => number,
+  wet: (x: number, y: number) => boolean,
+): { paves: { frame: [V2, V2, V2, V2]; foot: number }[]; bridges: LinearFeature[] } {
+  const paves: { frame: [V2, V2, V2, V2]; foot: number }[] = [];
+  const bridges: LinearFeature[] = [];
+  const h = MAIN_ROAD_WIDTH / 2;
+  for (const c of curves) {
+    const pts: V2[] = [c[0]];
+    for (let k = 1; k < c.length; k++) {
+      const a = c[k - 1];
+      const b = c[k];
+      const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      const n = Math.max(1, Math.ceil(L / 2));
+      for (let i = 1; i <= n; i++) pts.push([a[0] + ((b[0] - a[0]) * i) / n, a[1] + ((b[1] - a[1]) * i) / n]);
+    }
+    let bridge: V2[] = [];
+    const flush = () => {
+      if (bridge.length >= 2) {
+        const g = bridge.map((q) => ground(q[0], q[1]));
+        const deck = Math.max(g[0], g[g.length - 1]) + 0.6;
+        bridges.push({
+          kind: 'bridge',
+          points: bridge.filter((_, i) => i % 2 === 0 || i === bridge.length - 1).map((q) => [q[0], q[1], deck]),
+          ground: g.filter((_, i) => i % 2 === 0 || i === bridge.length - 1),
+          width: MAIN_ROAD_WIDTH,
+        });
+      }
+      bridge = [];
+    };
+    for (let k = 1; k < pts.length; k++) {
+      const a = pts[k - 1];
+      const b = pts[k];
+      const mid: V2 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      if (wet(mid[0], mid[1])) {
+        if (!bridge.length) bridge.push(a);
+        bridge.push(b);
+        continue;
+      }
+      flush();
+      const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+      const d: V2 = [(b[0] - a[0]) / L, (b[1] - a[1]) / L];
+      const e = 0.3;
+      const p0: V2 = [a[0] - d[0] * e, a[1] - d[1] * e];
+      const p1: V2 = [b[0] + d[0] * e, b[1] + d[1] * e];
+      const n: V2 = [-d[1] * h, d[0] * h];
+      paves.push({
+        frame: [
+          [p0[0] - n[0], p0[1] - n[1]],
+          [p1[0] - n[0], p1[1] - n[1]],
+          [p1[0] + n[0], p1[1] + n[1]],
+          [p0[0] + n[0], p0[1] + n[1]],
+        ],
+        foot: Math.min(ground(a[0], a[1]), ground(b[0], b[1])),
+      });
+    }
+    flush();
+  }
+  return { paves, bridges };
 }

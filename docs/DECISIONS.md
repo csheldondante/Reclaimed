@@ -3550,4 +3550,9 @@ world should show what needs clearing and how.
   smoothed into a curve, graded at 1 in 3 with switchbacks or bridges as needed. Its bends come only from terrain or
   obstacles. It is a main-road shape modifier like the others, so the tiles it crosses adapt. The far lumber mill is
   step 2's test case.
-
+- On step 1 (the user): "Paving fill sounds good. I think the smoother roads will make this even better but it already
+  looks better than before. We should definitely fix terraces. We also can allow building to lower or level terrain
+  somewhat (I'm ok with that if needed and think it makes sense sometimes)."
+  → Paths are paved (the inset strips). Main roads are smooth curves. Terraces are fixed by levelling a building to its
+  best edge within a storey, or dug in past that, reported. Main's calls: a fixture with no claims baked into its
+  terrain, and the radial grid in step 2.

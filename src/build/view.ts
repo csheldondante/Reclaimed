@@ -35,7 +35,7 @@ import { shapesOf, type Shapes } from './shapes';
 import { rampShape, STAIR_HALF, WALL_HALF, WALL_LINTEL } from './solid';
 import { alongAxis, axisLength, groundSteps, WAY_SQUARE, waysOf, type Ways } from './ways';
 import type { EdgeNet } from './edgenet';
-import { insetTiles, pathFeatures } from './edgeview';
+import { curvePieces, insetTiles, pathPaving } from './edgeview';
 import { LANE_DRAWN, LANE_WIDTH, type Lanes } from './lanes';
 
 /**
@@ -85,8 +85,9 @@ export interface ViewInputs {
   /** (round 128l, m4: the attack wave) the gates are shut: a gate's passage drawn closed */
   shut?: boolean;
   /** (round 128p, DA-A13 step 1) the paths on the grid's edges (build/edgenet.ts): the buildings inset from them, the
-   *  drawn ones laid as roads (build/edgeview.ts) */
+   *  drawn ones paved, the main roads' curves drawn (build/edgeview.ts); `wet` where a curve is a bridge */
   edges?: EdgeNet;
+  wet?: (x: number, y: number) => boolean;
 }
 
 /** a stair's step along its axis (metres) */
@@ -888,7 +889,13 @@ export function townView(site: ViewSite, inp: ViewInputs): { city: CityPlan; ext
   }
   // ---- the layout's features (copies: the view is moved, the plan isn't) and the dressing's lamps, torches, banners
   const linear: LinearFeature[] = plan.layout.linear.map((f) => ({ ...f, points: f.points.map((p) => [p[0], p[1], p[2] + zOff]), ground: f.ground.map((g) => g + zOff) }));
-  if (inp.edges) linear.push(...pathFeatures(grid, inp.edges, groundAt));
+  // (round 128p, DA-A13 step 2: the edge paths paved — the streets' paving, draped on the ground)
+  if (inp.edges) {
+    for (const pv of pathPaving(grid, inp.edges, groundAt)) extra.add(lib.id('pave'), pv.frame, pv.foot - 0.25, 0.37, STYLE_IDS.indexOf(plan.style) * 65536, REL | DRAPE);
+    const cp = curvePieces(inp.edges.curves, groundAt, inp.wet ?? (() => false));
+    for (const pv of cp.paves) extra.add(lib.id('pave'), pv.frame, pv.foot - 0.25, 0.37, STYLE_IDS.indexOf(plan.style) * 65536, REL | DRAPE);
+    linear.push(...cp.bridges);
+  }
   const berths = plan.layout.berths.map((b) => ({ ...b, at: [b.at[0], b.at[1], b.at[2] + zOff] as [number, number, number] }));
   const order: number[] = [];
   const byStructure = new Map<number, number[]>();

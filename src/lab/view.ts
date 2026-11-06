@@ -37,6 +37,7 @@ export class LabTownView implements TownViewHost {
   private claimed = false;
   /** (round 128p, DA-A13 step 1) the paths on the grid's edges, drawn with the buildings inset (lab.edges) */
   edges: EdgeNet | null = null;
+  wet: ((x: number, y: number) => boolean) | null = null;
 
   constructor(
     io: LabViewIO,
@@ -99,7 +100,7 @@ export class LabTownView implements TownViewHost {
     if (!this.p) {
       const hook = this.hook?.view() ?? {};
       // (round 128p, DA-A13 step 1: the edge paths drawn instead of the lanes — lab.edges)
-      const edges = this.edges ? { edges: this.edges, lanes: undefined } : {};
+      const edges = this.edges ? { edges: this.edges, wet: this.wet ?? undefined, lanes: undefined } : {};
       this.p = townPieces(site, { ground: (x, y) => site.groundAt(x, y), ghost: (c, l) => !site.town.has(c, l), ...hook, ...edges });
       if (!this.grid) this.grid = this.sg.newGrid();
       if (this.p.count) this.sg.put(KEY, this.p, this.grid);

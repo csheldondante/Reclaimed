@@ -36,6 +36,8 @@ import type { FortressRaid } from '../fortress/raiders';
 import type { TownFixtureHeader } from './townfixture';
 import { cellAt, ROW_H } from '../world/lattice';
 import { edgeNetOf } from '../build/edgenet';
+import { layoutTownRoads, type TownRoads } from '../build/townroads';
+import { typeIndex } from '../build/plan';
 import { DEEP } from '../agents/rules';
 
 /** what the lab needs of the scene (scenes/level.ts startLab) */
@@ -193,7 +195,19 @@ export class Lab {
 
   // ---- (round 128p, DA-A13 step 1) the paths on the grid's edges
 
-  edges(o: { spokes?: number; spokeAngle?: number; off?: boolean } = {}): unknown {
+  edges(
+    o: {
+      spokes?: number;
+      spokeAngle?: number;
+      off?: boolean;
+      /** (step 2) the hybrid: the radial relax, curve spokes, roads drawn (window points), structures placed first */
+      hybrid?: boolean;
+      radial?: number;
+      drawn?: V2[][];
+      place?: { type: StructureType; at: V2 }[];
+      far?: number;
+    } = {},
+  ): unknown {
     const site = this.town.site;
     if (o.off) {
       this.view.edges = null;
@@ -204,15 +218,38 @@ export class Lab {
     const [ox, oy] = this.window.origin;
     const W = this.io.core.dims.w;
     const map = this.io.core.map;
-    const seaZ = this.io.fixture?.seaZ ?? -1e9;
     const wet = (x: number, y: number) => {
       const [k, r] = cellAt(x, y);
       const col = (r + box.y0 - oy) * W + (k + box.x0 - ox);
-      return col >= 0 && col < map.water.length && (map.water[col] > DEEP || map.surface[col] < seaZ);
+      return col >= 0 && col < map.water.length && map.water[col] > DEEP;
     };
     const toBox = (q: readonly number[]): V2 => [q[0] - (box.x0 - ox), q[1] - (box.y0 - oy) * ROW_H];
     const centre = toBox(this.town.rec.at);
-    const net = edgeNetOf(
+    let hybrid: TownRoads | null = null;
+    for (const p of o.place ?? []) {
+      const c = site.grid.cellAtWorld(...toBox(p.at));
+      if (c < 0 || site.plan.structureAt(c)) throw new Error(`lab.edges: no free cell at ${p.at}`);
+      const s = site.plan.place(p.type, [[c, 0]]);
+      if (!s) throw new Error(`lab.edges: ${p.type} refused at ${p.at}`);
+      site.town.add(c, 0, s.id, typeIndex(p.type));
+    }
+    if (o.hybrid) {
+      let R = 0;
+      for (const st of site.plan.structures())
+        for (const c of st.cells.keys()) R = Math.max(R, Math.hypot(site.grid.centre(c)[0] - centre[0], site.grid.centre(c)[1] - centre[1]));
+      hybrid = layoutTownRoads(site, {
+        ground: (x, y) => site.groundAt(x, y),
+        wet,
+        centre,
+        stores: toBox(this.town.heap),
+        radial: o.radial === 0 ? undefined : { radius: o.radial ?? R + 20, iters: 12 },
+        spokes: o.spokes ?? 4,
+        spokeAngle: o.spokeAngle ?? 0.4,
+        drawn: (o.drawn ?? []).map((d) => d.map(toBox)),
+        far: o.far ?? 4,
+      });
+    }
+    const net = hybrid ? hybrid.net : edgeNetOf(
       { plan: site.plan, grid: site.grid, floor: (c) => site.town.base[c] },
       {
         ground: (x, y) => site.groundAt(x, y),
@@ -225,7 +262,9 @@ export class Lab {
       },
     );
     this.view.edges = net;
-    this.view.redraw(site.id);
+    this.view.wet = wet;
+    if (hybrid) this.view.changed(site.id);
+    else this.view.redraw(site.id);
     const win = (q: V2): V2 => [q[0] + (box.x0 - ox), q[1] + (box.y0 - oy) * ROW_H];
     const why: Record<string, number> = {};
     for (const x of net.reach.out) why[x.why] = (why[x.why] ?? 0) + 1;
@@ -241,7 +280,16 @@ export class Lab {
       mids.push({ at: win(m), d: Math.hypot(m[0] - st[0], m[1] - st[1]), kind: net.kind[e] });
     }
     mids.sort((a, b) => a.d - b.d);
-    return { ...net.reach, ms: +net.reach.ms.toFixed(1), out: net.reach.out.map((x) => `${x.type}:${x.why}`), outByWhy: why, centre: win(centre), pathsAt: mids.filter((_, i) => i % 15 === 0).slice(0, 8) };
+    const hy = hybrid && {
+      curves: hybrid.curves.map((c) => ({ kind: c.kind, from: win(c.pts[0]), to: win(c.pts[c.pts.length - 1]), n: c.pts.length, wet: c.pts.filter((q) => wet(q[0], q[1])).length })),
+      clipped: hybrid.clipped.length,
+      removed: hybrid.removed.length,
+      gates: hybrid.gates,
+      terraces: hybrid.terraces,
+      roadCells: net.roads.size,
+      ms: hybrid.ms,
+    };
+    return { ...net.reach, hybrid: hy, ms: +net.reach.ms.toFixed(1), out: net.reach.out.map((x) => `${x.type}:${x.why}`), outByWhy: why, centre: win(centre), pathsAt: mids.filter((_, i) => i % 15 === 0).slice(0, 8) };
   }
 
   // ---- placing
@@ -616,7 +664,7 @@ export class Lab {
       placeBench: (o?: { types?: StructureType[]; arriveS?: number; arrive?: boolean }) => this.placeBench(o),
       /** (round 128p, DA-A13 step 1) the paths on the grid's edges and their reach (build/edgenet.ts), drawn with the
        *  buildings inset in place of the lanes; `off` back to the lanes. Returns the reach report */
-      edges: (o?: { spokes?: number; spokeAngle?: number; off?: boolean }) => this.edges(o),
+      edges: (o?: Parameters<Lab['edges']>[0]) => this.edges(o),
     };
   }
 }

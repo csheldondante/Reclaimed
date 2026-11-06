@@ -55,6 +55,11 @@ export interface EdgeNetIO {
    *  `spokeAngle`): the radial centre's spokes on the grid's edges (step 2 makes them curves the tiles adapt to) */
   spokes?: number;
   spokeAngle?: number;
+  /** (step 2) the main roads' cells (build/curveroad.ts adaptToCurve): walkable ground, their edges main streets, paved */
+  roads?: readonly number[];
+  /** (DECISIONS round 128p: a structure with no other within this many cells grows a road from the nearest major one,
+   *  not a lane) the far rule's n; absent: every structure gets a lane */
+  far?: number;
 }
 
 export type Why = 'wall' | 'water' | 'cliff' | 'terrace' | 'apart';
@@ -74,6 +79,11 @@ export interface EdgeNet {
   /** per structure its doors at grade (edges) and the one its lane leaves by */
   doors: Map<number, number[]>;
   door: Map<number, number>;
+  /** the main roads' cells (under the road: its verge) and the structures the far rule leaves to a grown road */
+  roads: Set<number>;
+  /** the main roads' curves (box-local), drawn smooth over their cells (townroads.ts sets them) */
+  curves: [number, number][][];
+  far: number[];
   /** the stores' and the middle's vertices */
   storesV: number;
   centreV: number;
@@ -87,7 +97,13 @@ export interface ReachReport {
   out: { id: number; type: StructureType; why: Why }[];
   /** structures with no door at grade at all (a terrace: stairs at its door, at generation) */
   noDoorAtGrade: number;
-  edges: { all: number; cut: { wall: number; water: number; cliff: number }; steep: number; main: number; lane: number };
+  edges: {
+    all: number;
+    cut: { wall: number; water: number; cliff: number };
+    steep: number;
+    main: number;
+    lane: number;
+  };
   ms: number;
 }
 
@@ -160,13 +176,22 @@ export function edgeNetOf(site: EdgeNetSite, io: EdgeNetIO): EdgeNet {
     const c0 = C[e * 2];
     const c1 = C[e * 2 + 1];
     if (isWall(c0) && isWall(c1)) cut[e] |= CUT_WALL;
-    if (io.wet((vx(a) + vx(b)) / 2, (vy(a) + vy(b)) / 2) || io.wet(vx(a), vy(a)) || io.wet(vx(b), vy(b))) cut[e] |= CUT_WATER;
+    if (io.wet((vx(a) + vx(b)) / 2, (vy(a) + vy(b)) / 2) || io.wet(vx(a), vy(a)) || io.wet(vx(b), vy(b)))
+      cut[e] |= CUT_WATER;
     const rise = Math.abs(vg[b] - vg[a]) / Math.max(len[e], 1e-6);
     if (rise > SLOPE) cut[e] |= CUT_CLIFF;
     else if (rise > ROAD_GRADE) steep[e] = 1;
     const s0 = sid(c0);
     if (s0 && s0 === sid(c1) && solid(c0)) inner[e] = 1;
   }
+  const roads = new Set(io.roads ?? []);
+  for (const c of roads)
+    for (let s = 0; s < 4; s++) {
+      const e = edgeOf[c * 4 + s];
+      // (a road over water is a bridge: it spans)
+      cut[e] &= ~CUT_WATER;
+      if (!cut[e]) kind[e] = PATH_MAIN;
+    }
   // the structures' doors at grade: a perimeter edge whose ground lies within a step of its cell's floor (a yard: any)
   const doors = new Map<number, number[]>();
   for (const st of plan.structures()) {
@@ -264,6 +289,7 @@ export function edgeNetOf(site: EdgeNetSite, io: EdgeNetIO): EdgeNet {
   };
   const onNet = new Uint8Array(nv);
   onNet[centreV] = 1;
+  for (let e = 0; e < ne; e++) if (kind[e]) onNet[E[e * 2]] = onNet[E[e * 2 + 1]] = 1;
   const lay = (path: number[] | null, k: number) => {
     for (const e of path ?? []) {
       kind[e] = Math.max(kind[e], k);
@@ -314,31 +340,71 @@ export function edgeNetOf(site: EdgeNetSite, io: EdgeNetIO): EdgeNet {
       if (best >= 0) targets.push(best);
     }
   }
-  for (const t of targets) lay(walk([t], (v) => onNet[v] === 1), PATH_MAIN);
+  for (const t of targets)
+    lay(
+      walk([t], (v) => onNet[v] === 1),
+      PATH_MAIN,
+    );
+  // the far rule: a structure with no other within n cells (and not on a road yet) gets a grown road, not a lane
+  const far: number[] = [];
+  if (io.far !== undefined) {
+    const owner = new Int32Array(grid.count);
+    for (let c = 0; c < grid.count; c++) owner[c] = sid(c);
+    for (const st of plan.structures()) {
+      if (plan.defs[st.type].form === 'wall') continue;
+      const start = [...st.cells.keys()];
+      if (start.some((c) => [0, 1, 2, 3].some((s) => roads.has(grid.nbr[c * 4 + s])))) continue;
+      const seen = new Map<number, number>(start.map((c) => [c, 0]));
+      const q = [...start];
+      let alone = true;
+      while (q.length && alone) {
+        const c = q.shift()!;
+        const d = seen.get(c)!;
+        if (d >= io.far) continue;
+        for (let s = 0; s < 4; s++) {
+          const n = grid.nbr[c * 4 + s];
+          if (n < 0 || seen.has(n)) continue;
+          seen.set(n, d + 1);
+          if (owner[n] && owner[n] !== st.id && plan.defs[plan.structure(owner[n])!.type].form !== 'wall') {
+            alone = false;
+            break;
+          }
+          q.push(n);
+        }
+      }
+      if (alone) far.push(st.id);
+    }
+  }
+  const farSet = new Set(far);
   // lanes: each structure's nearest door to the network, nearest first
   const door = new Map<number, number>();
-  const order = [...doors.entries()].filter(([, ds]) => ds.length).map(([id, ds]) => {
-    const st = plan.structure(id)!;
-    const [x, y] = grid.centre(st.cells.keys().next().value as number);
-    return { id, ds, d: Math.hypot(x - io.centre[0], y - io.centre[1]) };
-  });
+  const order = [...doors.entries()]
+    .filter(([, ds]) => ds.length)
+    .map(([id, ds]) => {
+      const st = plan.structure(id)!;
+      const [x, y] = grid.centre(st.cells.keys().next().value as number);
+      return { id, ds, d: Math.hypot(x - io.centre[0], y - io.centre[1]) };
+    });
   order.sort((a, b) => a.d - b.d);
   for (const { id, ds } of order) {
+    if (farSet.has(id)) continue;
     const starts = new Set<number>();
     for (const e of ds) if (!cut[e]) (starts.add(E[e * 2]), starts.add(E[e * 2 + 1]));
     if (!starts.size) continue;
     const path = walk([...starts], (v) => onNet[v] === 1);
     if (!path) continue;
     // its door: the door edge at the walk's start
-    const startV = path.length ? (() => {
-      const e = path[path.length - 1];
-      // (the walk's first vertex: the end of its last-listed edge not shared with the edge before it)
-      const prevE = path.length > 1 ? path[path.length - 2] : -1;
-      const a = E[e * 2];
-      const b = E[e * 2 + 1];
-      if (prevE < 0) return starts.has(a) ? a : b;
-      return a === E[prevE * 2] || a === E[prevE * 2 + 1] ? b : a;
-    })() : [...starts].find((v) => onNet[v])!;
+    const startV = path.length
+      ? (() => {
+          const e = path[path.length - 1];
+          // (the walk's first vertex: the end of its last-listed edge not shared with the edge before it)
+          const prevE = path.length > 1 ? path[path.length - 2] : -1;
+          const a = E[e * 2];
+          const b = E[e * 2 + 1];
+          if (prevE < 0) return starts.has(a) ? a : b;
+          return a === E[prevE * 2] || a === E[prevE * 2 + 1] ? b : a;
+        })()
+      : [...starts].find((v) => onNet[v])!;
     const d = ds.find((e) => !cut[e] && (E[e * 2] === startV || E[e * 2 + 1] === startV)) ?? ds[0];
     door.set(id, d);
     kind[d] = Math.max(kind[d], PATH_LANE);
@@ -352,9 +418,32 @@ export function edgeNetOf(site: EdgeNetSite, io: EdgeNetIO): EdgeNet {
     if (cut[e] & CUT_WATER) counts.water++;
     if (cut[e] & CUT_CLIFF) counts.cliff++;
   }
-  reach.edges = { all: ne, cut: counts, steep: steep.reduce((s, x) => s + x, 0), main: kind.reduce((s, k) => s + (k === PATH_MAIN ? 1 : 0), 0), lane: kind.reduce((s, k) => s + (k === PATH_LANE ? 1 : 0), 0) };
+  reach.edges = {
+    all: ne,
+    cut: counts,
+    steep: steep.reduce((s, x) => s + x, 0),
+    main: kind.reduce((s, k) => s + (k === PATH_MAIN ? 1 : 0), 0),
+    lane: kind.reduce((s, k) => s + (k === PATH_LANE ? 1 : 0), 0),
+  };
   reach.ms = performance.now() - t0;
-  return { ends: E, cells: C, edgeOf, length: len, cut, steep, inner, kind, doors, door, storesV, centreV, reach };
+  return {
+    ends: E,
+    cells: C,
+    edgeOf,
+    length: len,
+    cut,
+    steep,
+    inner,
+    kind,
+    doors,
+    door,
+    roads,
+    curves: [],
+    far,
+    storesV,
+    centreV,
+    reach,
+  };
 }
 
 /**
@@ -363,7 +452,20 @@ export function edgeNetOf(site: EdgeNetSite, io: EdgeNetIO): EdgeNet {
  * in the stores' component. Without lifts, what isn't reached is asked again with each lifted in turn: the first that
  * reaches it is why.
  */
-function reachOf(site: EdgeNetSite, n: { E: Int32Array; C: Int32Array; cut: Uint8Array; inner: Uint8Array; doors: Map<number, number[]>; storesV: number; nv: number; edgeOf: Int32Array }, lift: number): ReachReport {
+function reachOf(
+  site: EdgeNetSite,
+  n: {
+    E: Int32Array;
+    C: Int32Array;
+    cut: Uint8Array;
+    inner: Uint8Array;
+    doors: Map<number, number[]>;
+    storesV: number;
+    nv: number;
+    edgeOf: Int32Array;
+  },
+  lift: number,
+): ReachReport {
   const { plan } = site;
   const solve = (lift: number) => {
     const u = new Union(n.nv);
@@ -372,7 +474,8 @@ function reachOf(site: EdgeNetSite, n: { E: Int32Array; C: Int32Array; cut: Uint
       if (!(lift & 8)) return n.doors.get(id) ?? [];
       const st = plan.structure(id)!;
       const out: number[] = [];
-      for (const c of st.cells.keys()) for (let s = 0; s < 4; s++) if (!n.inner[n.edgeOf[c * 4 + s]]) out.push(n.edgeOf[c * 4 + s]);
+      for (const c of st.cells.keys())
+        for (let s = 0; s < 4; s++) if (!n.inner[n.edgeOf[c * 4 + s]]) out.push(n.edgeOf[c * 4 + s]);
       return out;
     };
     for (const [id] of n.doors) {
@@ -412,7 +515,13 @@ function reachOf(site: EdgeNetSite, n: { E: Int32Array; C: Int32Array; cut: Uint
     reached: base.size,
     out,
     noDoorAtGrade: ids.filter((id) => !(n.doors.get(id) ?? []).length).length,
-    edges: { all: 0, cut: { wall: 0, water: 0, cliff: 0 }, steep: 0, main: 0, lane: 0 },
+    edges: {
+      all: 0,
+      cut: { wall: 0, water: 0, cliff: 0 },
+      steep: 0,
+      main: 0,
+      lane: 0,
+    },
     ms: 0,
   };
 }

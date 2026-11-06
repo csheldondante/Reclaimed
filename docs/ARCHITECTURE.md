@@ -4098,3 +4098,20 @@ buffers into one or splitting the kernel.
 
 **Other counts:** structure-piece grids `GRID_CAP` 256 (structures/gpu.ts); voxel structure grids `MAX_STRUCTS` 8 and
 projected spans `PROJ_K` 3 a column (grids/structures.ts); the page table 4096 window chunks (`MAX_PAGES`, sim/pages.ts).
+
+## Town roads: paths on the grid's edges, curve main roads (round 128p, DA-A13; DECISIONS round 128p)
+
+- **`build/edgenet.ts`.** The edge network over a site's grid and plan.
+  - Every cell side is a path unless cut (a gateless wall across it, deep water, steeper than stairs).
+  - A structure is one node with doors at grade on any side.
+  - Drawn paths: main streets (spokes, gates, roads out; then road cells) and lanes from each door to the network.
+  - The far rule.
+  - Reach as a union-find with the reason for each structure left out.
+- **`build/curveroad.ts`.** Roads grown over the land, the grid adapted to a curve, the radial relax.
+- **`build/townroads.ts` `layoutTownRoads`.** The order for generation and edits: radial, main curves, network, far
+  roads, terraces (`build/terrace.ts`), network.
+- **`build/edgeview.ts`.** Insets (mitred per vertex and structure), path paving, curve paving and bridges. `townView`
+  takes `edges` and `wet`.
+- **`QuadGrid.moveVerts`.** A shape modifier moves vertices; the cells' columns are recomputed.
+- **`Structure.sub`.** Plots and row angles over a structure's cells (shape modifiers, later).
+- **Lab:** `lab.edges`, `scripts/lab/edges.mjs`, `scripts/lab/hybrid.mjs`. All CPU, with no GPU transfer.

@@ -35,8 +35,8 @@ export class QuadGrid implements CellGrid {
   /** per cell its four corners (vertex ids, counter-clockwise) */
   readonly quads: Int32Array;
   readonly nbr: Int32Array;
-  readonly cellOf: Int32Array;
-  readonly columns: number[][];
+  cellOf!: Int32Array;
+  columns!: number[][];
   readonly count: number;
 
   /** `verts`: x, y interleaved (box-local); `quads`: 4 vertex ids a cell, counter-clockwise */
@@ -60,7 +60,22 @@ export class QuadGrid implements CellGrid {
         }
       }
     this.tJunctions();
-    // the hex columns in each cell (centres inside the quad)
+    this.recolumn();
+  }
+
+  /**
+   * (round 128p, DA-A13: shape modifiers) The vertices moved — a road's edge snapped, the radial relax — the cells the
+   * same: the columns each holds worked out again.
+   */
+  moveVerts(next: ArrayLike<number>): void {
+    if (next.length !== this.verts.length) throw new Error(`QuadGrid.moveVerts: ${next.length / 2} vertices for ${this.verts.length / 2}`);
+    this.verts.set(next);
+    this.recolumn();
+  }
+
+  /** the hex columns in each cell (centres inside the quad) */
+  private recolumn(): void {
+    const { w, h } = this;
     this.cellOf = new Int32Array(w * h).fill(-1);
     this.columns = Array.from({ length: this.count }, () => []);
     const px = (v: number) => this.verts[v * 2];

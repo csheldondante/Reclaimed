@@ -7,6 +7,7 @@ import { TownPlan } from '../../src/build/plan';
 import { DEFS } from '../../src/fortress/defs';
 import { edgeNetOf, PATH_LANE, type EdgeNetIO } from '../../src/build/edgenet';
 import { insetTiles } from '../../src/build/edgeview';
+import { fixTerraces } from '../../src/build/terrace';
 
 /** an n × n grid of S m squares from (0, 0) (cell i + j n) */
 function squares(n: number, S = 4): QuadGrid {
@@ -14,7 +15,8 @@ function squares(n: number, S = 4): QuadGrid {
   for (let j = 0; j <= n; j++) for (let i = 0; i <= n; i++) verts.push(i * S, j * S);
   const quads: number[] = [];
   const v = (i: number, j: number) => j * (n + 1) + i;
-  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) quads.push(v(i, j), v(i + 1, j), v(i + 1, j + 1), v(i, j + 1));
+  for (let j = 0; j < n; j++)
+    for (let i = 0; i < n; i++) quads.push(v(i, j), v(i + 1, j), v(i + 1, j + 1), v(i, j + 1));
   return new QuadGrid(Math.ceil(n * S) + 2, Math.ceil((n * S) / 0.866) + 2, verts, quads);
 }
 
@@ -24,7 +26,13 @@ const cell = (i: number, j: number) => i + j * N;
 function net(plan: TownPlan, grid: QuadGrid, o: Partial<EdgeNetIO> & { floor?: (c: number) => number } = {}) {
   return edgeNetOf(
     { plan, grid, floor: o.floor ?? (() => 0) },
-    { ground: o.ground ?? (() => 0), wet: o.wet ?? (() => false), centre: [2, 2], stores: [1, 1], ...o },
+    {
+      ground: o.ground ?? (() => 0),
+      wet: o.wet ?? (() => false),
+      centre: [2, 2],
+      stores: [1, 1],
+      ...o,
+    },
   );
 }
 
@@ -70,7 +78,12 @@ describe('reach by construction', () => {
     const plan = new TownPlan(grid, DEFS);
     plan.place('house', [[cell(7, 7), 0]]);
     expect(net(plan, grid, { wet: (x) => x > 18 && x < 22 }).reach.out.map((o) => o.why)).toEqual(['water']);
-    expect(net(plan, grid, { ground: (x) => (x > 20 ? 40 : 0), floor: () => 40 }).reach.out.map((o) => o.why)).toEqual(['cliff']);
+    expect(
+      net(plan, grid, {
+        ground: (x) => (x > 20 ? 40 : 0),
+        floor: () => 40,
+      }).reach.out.map((o) => o.why),
+    ).toEqual(['cliff']);
     const t = net(plan, grid, { floor: (c) => (c === cell(7, 7) ? 5 : 0) });
     expect(t.reach.out.map((o) => o.why)).toEqual(['terrace']);
     expect(t.reach.noDoorAtGrade).toBe(1);
@@ -83,6 +96,28 @@ describe('reach by construction', () => {
     const n = net(plan, grid);
     expect(n.door.has(h.id)).toBe(true);
     expect(n.kind[n.door.get(h.id)!]).toBeGreaterThanOrEqual(PATH_LANE);
+  });
+});
+
+describe('terraces', () => {
+  it('a house whose floor stands 3 m over every edge is levelled to its best edge, then reached; 9 m: dug, reached', () => {
+    for (const [up, how] of [
+      [3, 'level'],
+      [9, 'dug'],
+    ] as const) {
+      const grid = squares(N);
+      const plan = new TownPlan(grid, DEFS);
+      const h = plan.place('house', [[cell(6, 6), 0]])!;
+      const base = new Float32Array(grid.count).fill(NaN);
+      base[cell(6, 6)] = up;
+      const site = { plan, grid, town: { base } };
+      const before = net(plan, grid, { floor: (c) => base[c] });
+      expect(before.reach.out.map((o) => o.why)).toEqual(['terrace']);
+      const fixed = fixTerraces(site, before, () => 0);
+      expect(fixed).toEqual([{ id: h.id, how, dz: expect.closeTo(0.55 - up, 5) }]);
+      expect(net(plan, grid, { floor: (c) => base[c] }).reach.out).toEqual([]);
+      expect(plan.structure(h.id)!.floor).toBeCloseTo(0.55, 5);
+    }
   });
 });
 

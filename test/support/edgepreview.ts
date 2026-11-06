@@ -9,7 +9,14 @@ import { ROW_H } from '../../src/world/lattice';
 
 type V2 = [number, number];
 
-export function edgePreview(site: TownSite, net: EdgeNet, wet: (x: number, y: number) => boolean, crop: [number, number, number, number], scale = 3): { w: number; h: number; data: Uint8Array } {
+export function edgePreview(
+  site: TownSite,
+  net: EdgeNet,
+  wet: (x: number, y: number) => boolean,
+  crop: [number, number, number, number],
+  scale = 3,
+  curves: V2[][] = [],
+): { w: number; h: number; data: Uint8Array } {
   const [x0, y0, x1, y1] = crop;
   const w = Math.ceil((x1 - x0) * scale);
   const h = Math.ceil((y1 - y0) * scale);
@@ -26,15 +33,22 @@ export function edgePreview(site: TownSite, net: EdgeNet, wet: (x: number, y: nu
       const x = x0 + (px + 0.5) / scale;
       const y = y0 + (py + 0.5) / scale;
       const z = site.groundAt(x, y);
-      const sh = Math.max(0.4, Math.min(1.2, 0.85 + (site.groundAt(x, y + 1) - z - (site.groundAt(x + 1, y) - z)) * 0.3));
+      const sh = Math.max(
+        0.4,
+        Math.min(1.2, 0.85 + (site.groundAt(x, y + 1) - z - (site.groundAt(x + 1, y) - z)) * 0.3),
+      );
       put(px, py, wet(x, y) ? [70, 110, 170] : [168 * sh, 172 * sh, 140 * sh]);
     }
   const { plan, grid } = site;
   const out = new Set(net.reach.out.map((o) => o.id));
   const t = insetTiles(grid, plan, net);
   const fillQuad = (q: V2[], c: number[]) => {
-    let lx = Infinity, ly = Infinity, hx = -Infinity, hy = -Infinity;
-    for (const p of q) ((lx = Math.min(lx, p[0])), (ly = Math.min(ly, p[1])), (hx = Math.max(hx, p[0])), (hy = Math.max(hy, p[1])));
+    let lx = Infinity,
+      ly = Infinity,
+      hx = -Infinity,
+      hy = -Infinity;
+    for (const p of q)
+      ((lx = Math.min(lx, p[0])), (ly = Math.min(ly, p[1])), (hx = Math.max(hx, p[0])), (hy = Math.max(hy, p[1])));
     const [a0, b0] = toPx(lx, ly);
     const [a1, b1] = toPx(hx, hy);
     for (let py = b0; py <= b1; py++)
@@ -50,6 +64,12 @@ export function edgePreview(site: TownSite, net: EdgeNet, wet: (x: number, y: nu
         if (inside) put(px, py, c);
       }
   };
+  for (const c of net.roads) {
+    const q = [0, 1, 2, 3].map(
+      (k) => [grid.verts[grid.quads[c * 4 + k] * 2], grid.verts[grid.quads[c * 4 + k] * 2 + 1]] as V2,
+    );
+    fillQuad(q, [190, 180, 160]);
+  }
   for (let c = 0; c < grid.count; c++) {
     const st = plan.structureAt(c);
     if (!st) continue;
@@ -58,7 +78,15 @@ export function edgePreview(site: TownSite, net: EdgeNet, wet: (x: number, y: nu
       const v = t.quads[c * 4 + k];
       return [t.verts[v * 2], t.verts[v * 2 + 1]] as V2;
     });
-    const col = out.has(st.id) ? [220, 40, 40] : form === 'block' || form === 'keep' ? [125, 82, 60] : form === 'wall' ? (plan.gate[c] ? [200, 190, 120] : [110, 110, 110]) : [120, 160, 80];
+    const col = out.has(st.id)
+      ? [220, 40, 40]
+      : form === 'block' || form === 'keep'
+        ? [125, 82, 60]
+        : form === 'wall'
+          ? plan.gate[c]
+            ? [200, 190, 120]
+            : [110, 110, 110]
+          : [120, 160, 80];
     fillQuad(q, col);
   }
   const line = (a: V2, b: V2, c: number[], th: number) => {
@@ -76,12 +104,20 @@ export function edgePreview(site: TownSite, net: EdgeNet, wet: (x: number, y: nu
     if (net.cut[e] & CUT_WALL) line(a, b, [20, 20, 20], 1);
     else if (net.cut[e] & CUT_CLIFF) line(a, b, [220, 40, 200], 0);
     else if (net.cut[e] & CUT_WATER) continue;
-    else if (net.kind[e]) line(a, b, net.steep[e] ? [140, 50, 180] : net.kind[e] === PATH_MAIN ? [210, 40, 30] : [240, 150, 40], net.kind[e] === PATH_MAIN ? 2 : 1);
+    else if (net.kind[e])
+      line(
+        a,
+        b,
+        net.steep[e] ? [140, 50, 180] : net.kind[e] === PATH_MAIN ? [210, 40, 30] : [240, 150, 40],
+        net.kind[e] === PATH_MAIN ? 2 : 1,
+      );
     else if (!net.inner[e]) line(a, b, [150, 150, 130], 0);
   }
+  for (const cv of curves) for (let k = 1; k < cv.length; k++) line(cv[k - 1], cv[k], [20, 20, 160], 0);
   for (const v of [net.storesV, net.centreV]) {
     const [px, py] = toPx(...P(v));
-    for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) put(px + dx, py + dy, v === net.storesV ? [30, 30, 220] : [250, 250, 250]);
+    for (let dy = -4; dy <= 4; dy++)
+      for (let dx = -4; dx <= 4; dx++) put(px + dx, py + dy, v === net.storesV ? [30, 30, 220] : [250, 250, 250]);
   }
   void ROW_H;
   return { w, h, data };
