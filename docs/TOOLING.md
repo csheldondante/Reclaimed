@@ -29,7 +29,6 @@ columns. Recipes (src/lab/recipes.ts):
 | `valley` | two slopes down to a river east of the town, a lake at its foot |
 | `plateau` | (round 128m) a dry plain 44 m up the window (the others lie at 10): room under it for a quarry's pit (scripts/lab/quarry.mjs, quarrygif.mjs; scripts/lab-gif.mjs joins a scenario's shots into a GIF) |
 | `town` | (round 128m) **the user's start town**: the window the game made round it on the user's link (`?town=1&fortress=1&fresh=1&q=low`), loaded from `data/lab/town.rclt`: its land, rivers and sea, its buildings in the columns (solid, not drawn), its heap, doors and gate posts; the fortress's box where the game has it. Capture it again with `node scripts/labtown.mjs capture` when its test says it's stale (GEN_VERSION) |
-| `townland` | (round 128p, DA-A13) the `town` fixture's land with its town left out: the road generator's lab — `lab.roadgen({draw?, timed?, style?})` (a run, then edits that draw a road), `scripts/lab/roadgen.mjs` (shots at play zoom, before and after an edit), the link `?level=lab&lab=townland&roadgen=1` runs it on load |
 | `walled` | the flat plain with a small walled town already standing round the heap, its gate east (the atlas's starting town, small) |
 
 A recipe is a few lines: the ground's height as a function, water, springs and woods, the heap (the stores until a

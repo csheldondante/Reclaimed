@@ -20638,3 +20638,98 @@ overlap, which is fine because traffic is for looks.
 - **The test "one step of Δt = N steps of Δt/N"** is the contract that makes once-a-frame exact.
 - **Coupling to the speed agent's work:** step 2 provides the stage function. The speed agent's stage list owns when it
   runs.
+
+## 2026-11-06 — round 128p (`onetown`, DA-A13): design note — the irregular grid, reach by construction (the streamlines parked)
+
+The user, on step 0: "I don't think this implementation looks good. I think just the irregular grid looks better. A
+radial center or centers could help. I am somewhat confused why the irregular grid had reach issues. My assumption is
+that everything connected to the cells is reachable by construction of the tiles". The streamline generator is parked on
+`onetown-roadgen` (src/roadgen, its tests and the townland lab recipe). It is removed from `onetown`, and git keeps it.
+
+**Why the grid had reach issues.** The grid itself was never the problem. The reach didn't ask about the tiles. It asked
+the terrain columns whether a walker could physically step from cell to cell, and four things the generator never
+fixed made it say no:
+1. **Terraces.** A cell's floor sits on the highest ground under it. Neighbouring cells on a hillside differed by more
+   than a walker's step (1.1 m), up to ~11 m in the start town, and nothing put stairs or grading between them. This
+   was most of the settlements' 15–17 of 95 places out, and most of the 18 start-town structures the realise pass
+   dropped.
+2. **Structures with no open side.** A door had to open onto free ground (`entrances.ts`), and neighbouring houses were
+   solid to walkers. So a house with houses on three sides and the wall on the fourth (cell 1188) had no way in.
+3. **Water.** Cells across a river had no bridge.
+4. **Wall rings.** A ring closed without a gate (the player's taps, or the generator's ring round a pocket).
+
+Two other failures looked like reach but weren't: riders stuck on lanes squeezed along facades (routing), and a heap's
+foot placed inside a building (settlecrowd).
+
+**The design: paths on the grid's edges.** The user: "The between tile roads then allows every other place to be
+reachable since you can always walk along an edge to any point".
+
+- **The layout is Townscaper's irregular grid (TownGrid), shaped by one or more radial centres.**
+  - The mesh is built from a hexagon of triangles round the main centre, which is Townscaper's own construction, so its
+    rings already circle the centre.
+  - The relaxation adds a pull of each quad's edges toward the radial and tangential directions of the nearest centre,
+    fading with distance.
+  - Each cell belongs to its nearest centre (by cell-graph distance), which gives districts.
+  - Centres come from the town's plaza, keep or market, and optionally a gate square or a second market.
+- **Paths run along the grid's edges, between tiles.** Every edge of the grid is a walkable path segment by default.
+  - Each path is drawn by kind: a lane or a road, wider where the generator lays a main street.
+  - The generator picks the main streets: spokes from each centre to the gates and the edge, rings at set distances,
+    and the boundaries between districts. The rest are lanes.
+  - Plazas are open cells, with their edges paved.
+- **Clearance by construction.** A structure's footprint is inset from its cell's edges by the half-width of the path on
+  each edge (by kind), and the tile models are drawn to that inset. So every edge path has room beside the buildings.
+  This is what the old border lanes lacked (round 128k–n): they ran on cell borders flush against buildings drawn to
+  the full cell, and riders brushed or entered ground floors.
+- **A structure is one node.**
+  - Its interior edges (between its own cells) are not paths.
+  - It has a door on each perimeter edge; every perimeter edge touches the structure's node.
+  - Passing through it is a route through that node.
+- **Why reach is guaranteed.**
+  - The grid is a connected planar mesh, so its edge graph is connected.
+  - Every cell touches its own edges, so every structure's door is on the network, and so is every open cell.
+  - Only four things can cut an edge, and each is fixed where it happens, at generation and on every edit, by the same
+    function:
+    1. **A wall on it:** the wall gets a gate, at least the land gates by size (1/2/3).
+    2. **Water under it:** a bridge, at its cost. Otherwise that edge isn't a path.
+    3. **A drop along it steeper than a walker can take:** graded at 1 in 3 along the street (`grade.ts`), or stairs in
+       town and a switchback outside. A structure's ground floor is set within a step of its door edge.
+    4. **A structure spanning several cells:** its interior edges stop being paths, but the structure is a node joining
+       all its perimeter edges, so nothing on either side is cut.
+- **The check is a union-find over the edge graph's vertices** (plus structure nodes), on the CPU: about 3k cells and
+  6k edges, under a millisecond, no readback.
+  - An edge joins its two vertices unless it is cut (a gateless wall, unbridged water, a drop with no stairs).
+  - Every structure (via any door edge) and every open cell must lie in the stores' component.
+  - With the four cases handled it never fails, so the check is an assertion that confirms the construction. Only a
+    wall, water or a drop can cut, so an edit re-checks only after one of those; a removal recomputes, still under a
+    millisecond.
+- **The routes** are the edge graph's paths, cached and shared: a queue per route, advanced by `advance(route, Δt)` once
+  a frame, as the note above says.
+- **The cases that remain, honestly:**
+  - **The world changing after the plan** (a quarry pit, erosion, a landslide, a flood) can cut an edge the union-find
+    can't see. The GPU world check does: path segments against the surfaces, raising a `blocked` event that leads to a
+    repair or stairs as a planned piece.
+  - **A site no stair, bridge or gate can serve** (a pinnacle, an island in deep water) is refused, or dropped at
+    generation, with the reason.
+  - **Open ground off the grid** (trees, dig faces) is reached by flow field. The GPU components pass stays for those.
+  - **A unit knocked off inside a footprint** is placed at its nearest door.
+  - **The inset costs building area:** about a path's half-width on each side of a cell, roughly 1–1.3 m of a 4 m
+    cell. The models must be drawn to it, which is art work for the structure tiles.
+
+**Kept from DA-A13:**
+- one plan;
+- roads as their own shape claiming cells;
+- structures as one node;
+- shared cached routes as queues with `advance(route, Δt)`, called once a frame;
+- reach as a cheap CPU union-find (now over the grid's edges);
+- generation and play on the same path;
+- the delete list (lanes, ways, entrances, keepReach, the fix field, the hop tables, the per-tick join search).
+
+**Dropped:** the streamline generator, the regular base lattice, and the lattice's GPU claims and offsets. Also roads as
+claimed cells (paths are edges now), and tiles declaring internal paths. The per-cell
+GPU column lookup is not needed: QuadGrid's `cellOf` is made once per plan (15–17 ms on the start town) and only
+changes with the grid.
+
+**Hacks and limits:**
+- The radial pull's weight and fall-off, and the ring spacing, are style knobs.
+- STEP (1.1 m) is the walker's rule from agents.wgsl.
+- The world check that covers in-play terrain changes is a later step: until it lands, a dug drop goes unnoticed.

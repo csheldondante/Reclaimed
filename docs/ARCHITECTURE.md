@@ -4098,39 +4098,3 @@ buffers into one or splitting the kernel.
 
 **Other counts:** structure-piece grids `GRID_CAP` 256 (structures/gpu.ts); voxel structure grids `MAX_STRUCTS` 8 and
 projected spans `PROJ_K` 3 a column (grids/structures.ts); the page table 4096 window chunks (`MAX_PAGES`, sim/pages.ts).
-
-## The road generator (round 128p, DA-A13 step 0; DESIGN.md section 12, DECISIONS round 128p)
-
-Roads come first, as evenly spaced streamlines of a direction (tensor) field over the town's land. This is the
-prototype; generation and play use it from step 1.
-- **The modules:**
-  - `src/roadgen/roadgen.ts`: the types and the field's rules.
-  - `cpu.ts`: the reference, for the unit tests.
-  - `gpu.ts` and `shaders/roadgen.wgsl`: the run and the edits.
-  - `lattice.ts`: the base lattice.
-  - `site.ts`: a site in, a site out.
-  - `preview.ts`: the map preview.
-- **The field.** A 2 m lattice of (a, b), the sum of four bases: the contours (m = slope / ROAD_GRADE), the grid (turned
-  to the land's mean contour), the radial field round the centre, and constraints. A constraint (a drawn or laid road)
-  takes the field over near it.
-- **The roads.** A family at a time (majors along the major eigenvector, then minors across), in rounds:
-  - **trace:** a thread a seed;
-  - **commit:** one thread, in seed order, against the round's earlier lines (the round grid);
-  - **seeds:** a spacing to either side along the new lines, the least key a bucket, compacted in bucket order.
-
-  A family keeps half its spacing apart. A line ends on another only if that one lies straight ahead (a T-junction).
-  The rounds are bounded by geometry (the diagonal / spacing + 2). An edit drops the lines through its rectangle,
-  recomputes the field there, and traces again from their seeds and the constraint's, against the lines kept.
-- **The base lattice.** 4 m square cells in the town's frame, turned by the grid angle about the centre.
-  - Each cell is claimed: 0 open, 1 major road, 2 minor road, 3 off the town, 4 water.
-  - Vertex offsets (at most 0.45 of a cell) are the Townscaper jitter, overridden onto a road's edge on the open side.
-  - A column's cell is the floor of its lattice coordinates, then the 3 × 3 (`rgColumns`; `latticeCellAt`).
-  - Blocks are the connected open cells.
-- **Data flow.** One upload of the inputs (the ground and wet per node, the constraints). Two submits, majors then
-  minors plus the lattice, and one async readback of the roads, claims and offsets (~312 KB on the start town;
-  gpu/transfers.ts). The CPU builds the QuadGrid and the plan from them.
-- **Limits.** The buffers are sized by geometry from the domain and the spacings (`RoadGenGpu.caps`), and an overflow is
-  a loud error (`st.err`).
-  - Constraint segments: 1,024 (`segCap`).
-  - Each edit leaves its dropped lines' points in the pool, at twice the area's bound, so many edits need a fresh run.
-    Compaction comes with step 1.
