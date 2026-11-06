@@ -30,6 +30,9 @@ const COST = 1.2;
 const STOREY_COST = COST * 5;
 /** seconds between the field's steps in play */
 const GROW_S = 8;
+/** (round 128o, DA-B6) the woods looked at again once a sim minute, besides after each fell: they grow back by
+ *  succession, which tells the CPU nothing (BACKLOG DA-B21: as a GPU event) */
+const WOODS_S = 60;
 
 export interface LiveSpot extends Spot {
   /** window coordinates */
@@ -48,8 +51,9 @@ export interface LifeIO {
   spots(): LiveSpot[];
   /** its houses to build, in window coordinates now */
   sites(): LiveSite[];
-  /** trees within reach (window coordinates), for the woodcutters */
-  trees(at: V2, r: number): V2[];
+  /** the `n` nearest trees within reach (window coordinates), for the woodcutters, asked of the GPU; null: the window
+   *  moved while they were asked */
+  trees(at: V2, r: number, n: number): Promise<V2[] | null>;
   fell(at: V2): Promise<number>;
   /** the ground, exactly (world API terrain.take / put) */
   take(at: V2, amount: number): Promise<{ material: string; amount: number }>;
@@ -118,7 +122,9 @@ export class SettlementLife implements Routine {
   /** ground moved (cells³): out of the quarry, onto the heaps, into houses */
   moved = { quarried: 0, felled: 0, heaped: 0, built: 0 };
   private trees: V2[] = [];
-  private treeAt = -1e9;
+  /** (round 128o, DA-B6) what the trees were last asked for (the first spot, the minute), and whether an ask is out */
+  private treesFor = '';
+  private treesAsked = false;
   private grewAt = 0;
   private seeded = '';
   private site: { live: LiveSite } | null = null;
@@ -216,10 +222,18 @@ export class SettlementLife implements Routine {
   /** each frame (after the units' update) */
   update(dt: number): void {
     this.t += dt;
-    if (this.t - this.treeAt > 15) {
-      this.treeAt = this.t;
-      const c = this.io.spots()[0]?.w;
-      if (c) this.trees = this.io.trees(c, Math.max(40, this.rec.radius * 0.9)).slice(0, 30);
+    // (round 128o, DA-B6: the trees asked of the GPU when the settlement's first spot moves, a tree is felled, or a
+    // minute passes — the woods grow back; null, the window moved meanwhile: asked again)
+    const c = this.io.spots()[0]?.w;
+    const key = c ? JSON.stringify([c.map(Math.round), Math.floor(this.t / WOODS_S)]) : '';
+    if (c && key !== this.treesFor && !this.treesAsked) {
+      this.treesFor = key;
+      this.treesAsked = true;
+      void this.io.trees(c, Math.max(40, this.rec.radius * 0.9), 30).then((got) => {
+        this.treesAsked = false;
+        if (got === null) this.treesFor = '';
+        else this.trees = got;
+      });
     }
     // (the settlement grows as a field: every GROW_S while it's fed — new lots become houses to build)
     if (this.t - this.grewAt > GROW_S) {
@@ -436,7 +450,7 @@ export class SettlementLife implements Routine {
       } else if (role === 'woodcutter') {
         const logs = await this.io.fell(at);
         this.trees = this.trees.filter((t) => Math.hypot(t[0] - at[0], t[1] - at[1]) > 0.8);
-        this.treeAt = Math.min(this.treeAt, this.t - 12);
+        this.treesFor = '';
         if (logs > 0) {
           this.moved.felled += Math.min(logs, 0.8);
           this.carry(u, w, { material: 'log', amount: Math.min(logs, 0.8), real: true }, 'toPile');

@@ -1,263 +1,351 @@
-// A CPU mirror of some world buffers and textures (docs/WORLD_API.md): one
-// staging buffer, one copy of everything registered, one map, refreshed on
-// a timer. The world modules answer their queries from it, so a game never
-// reads a GPU buffer or decodes a packed format itself.
+// A CPU mirror of some world buffers and textures (docs/WORLD_API.md): the world modules answer their queries from
+// it, so a game never reads a GPU buffer or decodes a packed format itself.
+//
+// (round 128o, DA-B1 — the user: "performance on mobile was abysmal and could not be played"; DESIGN.md §24: no timed
+// GPU→CPU readback in play, small async reads only after edits or events) It is read by pages, on demand. A query names
+// the column it reads; the 16 × 16 page holding it is
+//   - unread: the query gets nothing (null: "not read yet", never "nothing there"), and the page is wanted;
+//   - current: read since its chunk last changed;
+//   - stale: read, but its chunk has changed since: the query gets the page as last read, and the page is wanted.
+// The pages wanted are read together a frame later: one submit, one map, the bytes of those pages (a few KB). A chunk
+// changes while the sim runs it, awake or drowsy (sim/sleep.ts is the one place that knows; told each tick: `tick`),
+// and when a column apply writes the columns (claims, stamps: `touchAll`). A slide or a warp (the window's epoch) makes
+// every page unread. Before (round 128n), the level's mirror read everything on a 250 ms timer once anything used the
+// world API: 35 MB mapped every 250 ms, 139 MB/s, from the fortress's first Build or first painted cell.
+//
+// `refresh()` reads every page now (a tool or a test that wants the whole window as it is); `start(ms)` does that on a
+// timer, only for a world made by createSim (api/world.ts).
+//
+// API: Mirror, MirrorIO, PageReader, PageAsk, SourceKind, GpuPageReader, RingPages.
 
 import { ignoreTeardown } from '../gpu/pipeline';
-import { urlFlags } from '../flags';
 
-/**
- * (perfopt, round 83 audit: ?mirror=near) A paged buffer (the layers: 16 MB in the atlas's window, read whole every
- * 250 ms while a game's API is on) is read whole only every NEAR_FULL reads, and after a slide; between, only its
- * pages within NEAR_R of the focus (the camera's target) are read and written into the copy. Elsewhere a query sees
- * the world as it was up to NEAR_FULL reads ago.
- */
-/**
- * (round 100, hitchrec — main's call: near by default, `?mirror=full` the old whole reads) The whole read was 34 MB
- * copied and mapped every 250 ms in the atlas (the layers 25 of it), the hitch recorder's top long-frame cause: the
- * latency-sensitive readbacks (the judge's, the mesh's) waited 200–320 ms behind it. Round the camera's target (and
- * any focus a caller keeps fresh: Paged.focus) the layers are as fresh as before; elsewhere up to NEAR_FULL reads old
- * (2 s) — `refresh(true)` reads everything now for a caller that needs far columns as they are.
- */
-const MIRROR_NEAR = typeof location !== 'undefined' && urlFlags().get('mirror') !== 'full';
-const NEAR_R = 48;
-const NEAR_FULL = 8;
+/** columns a page side (sim/pages.ts COLS_PAGE, world/layout.ts CHUNK) */
+const P = 16;
+const PAGE_COLS = P * P;
+/** bytes a texel of an rgba32float texture */
+const TEXEL = 16;
 
-/** a paged buffer's layout (render/layout PackedWorld's): per chunk its first slot and slots a column, cells a side */
-export interface Paged {
-  chunksX: number;
-  chunksY: number;
-  chunkTable: Uint32Array;
-  /** bytes a slot */
-  slotBytes: number;
-  /** columns a chunk side */
-  chunk: number;
-  /** world units a row (hex rows: √3/2) */
-  rowH: number;
-  /** (round 100: the points kept fresh — the camera's target, and what callers keep: Terrain.keepFresh) */
-  focus: () => [number, number][];
+/** (Terrain.keepFresh) how far round a kept point its pages are read before anything asks (cells): a hero's next steps */
+const KEEP_R = 48;
+
+/** the window's page table (sim/pages.ts Pages): where each window chunk's data lies */
+export interface RingPages {
+  readonly nx: number;
+  readonly ny: number;
+  slot(cx: number, cy: number): number;
+  texPage(s: number): [number, number];
 }
+
+/**
+ * How a source lies:
+ *   cols   a per-column buffer, page-major (sim/pages.ts): a page is `stride` bytes a column, at its slot
+ *   slots  the layers: a chunk's columns' slots, `slotBytes` each, K a column (the chunk table: [first slot, K])
+ *   tex    an rgba32float texture, a texel a column: a page is the 16 × 16 texels at its slot's place (texPage)
+ *   whole  a texture of its own layout (the wind's, a texel per 2 × 2 columns): read whole whenever it's asked; it
+ *          changes everywhere every tick (the wind runs in sleeping chunks too)
+ */
+export type SourceKind =
+  | { kind: 'cols'; stride: number }
+  | { kind: 'slots'; slotBytes: number; chunkTable: Uint32Array; chunksX: number }
+  | { kind: 'tex' }
+  | { kind: 'whole' };
 
 interface Source {
   name: string;
-  buffer?: GPUBuffer;
-  texture?: GPUTexture;
-  offset: number;
-  bytes: number;
-  /** a texture's padded row (copyTextureToBuffer wants 256-byte rows) */
-  rowBytes: number;
-  /** (mirror=near) read by pages near the focus between whole reads */
-  paged?: Paged;
+  layout: SourceKind;
+  gpu: () => GPUBuffer | GPUTexture;
+  /** the CPU copy, laid out as the GPU's (a texture's: rows of its width, unpadded) */
+  data: ArrayBuffer;
+  f32: Float32Array;
+  u32: Uint32Array;
+  /** per window chunk (cy * nx + cx; one entry for `whole`): the clock it was read at, and the window's epoch then (-1: unread) */
+  readStamp: Float64Array;
+  readEpoch: Float64Array;
+}
+
+/** a page to read: its source and window chunk (0, 0 for a `whole` source) */
+export interface PageAsk {
+  name: string;
+  layout: SourceKind;
+  gpu: () => GPUBuffer | GPUTexture;
+  cx: number;
+  cy: number;
+}
+
+/**
+ * Reads pages back: the bytes of each, in the order asked, laid out as a page of the source is (cols and slots: the
+ * page's bytes; tex: 16 rows of 16 texels; whole: the texture's rows padded to 256 bytes). Null: the device went.
+ */
+export interface PageReader {
+  read(asks: PageAsk[], ring: RingPages): Promise<ArrayBuffer[] | null>;
+  destroy?(): void;
+}
+
+export interface MirrorIO {
+  reader: PageReader;
+  ring: RingPages;
+  /** the window's columns */
+  dims: { w: number; h: number };
+  /** slides and warps (WorldCore.windowEpoch): pages read before another epoch are unread */
+  epoch?: () => number;
+  /** how a read is set going once pages are wanted (default: the next animation frame) */
+  schedule?: (fn: () => void) => void;
+}
+
+/** a source's CPU copy's bytes */
+function sourceBytes(layout: SourceKind, gpu: GPUBuffer | GPUTexture, dims: { w: number; h: number }): number {
+  if (layout.kind === 'cols' || layout.kind === 'slots') return (gpu as GPUBuffer).size;
+  if (layout.kind === 'tex') return dims.w * dims.h * TEXEL;
+  const t = gpu as GPUTexture;
+  return t.width * t.height * TEXEL;
 }
 
 export class Mirror {
-  private sources: Source[] = [];
-  private size = 0;
-  private data = new Map<string, ArrayBuffer>();
-  /** typed views of the last read, made once a read (queries run hundreds of times a frame) */
-  private f32s = new Map<string, Float32Array>();
-  private u32s = new Map<string, Uint32Array>();
+  private sources = new Map<string, Source>();
+  /** per slot: the clock at the last tick its chunk ran (awake or drowsy), or the last column apply */
+  private live: Float64Array;
+  /** bumped every tick and every column apply; a page read is stamped with it */
+  private clock = 1;
+  private wanted = new Map<string, PageAsk>();
+  private scheduled = false;
+  private inFlight: Promise<void> | null = null;
+  /** points whose pages are read before anything asks (Terrain.keepFresh) */
+  private kept: (() => readonly number[] | null)[] = [];
   /** bumped every read: a module's own caches of derived values key on it */
   gen = 0;
-  private timer = 0;
-  private inFlight: Promise<void> | null = null;
   /** performance.now() of the last completed read (0: never) */
   readAt = 0;
-  /** ms between reads while started */
-  every = 250;
+  /** reads made, pages and bytes read back, reads dropped by a slide (scripts and tests read them) */
+  readonly stats = { reads: 0, pages: 0, bytes: 0, dropped: 0 };
+  private timer = 0;
 
-  /**
-   * The window's epoch (round 80: a streamed window, WorldCore.windowEpoch): a read that straddles a slide
-   * is dropped and made again; while the last read is an older window's, the queries return nothing.
-   */
-  private dataEpoch = -1;
+  constructor(private io: MirrorIO) {
+    this.live = new Float64Array(io.ring.nx * io.ring.ny);
+  }
 
-  constructor(
-    private device: GPUDevice,
-    private epoch?: () => number,
-  ) {}
+  private get epoch(): number {
+    return this.io.epoch?.() ?? 0;
+  }
 
-  /** the last read is the window's as it is now */
+  /** the window's epoch at the last read placed (-1: none) */
+  private lastEpoch = -1;
+
+  /** a read has been placed since the window last slid or warped (scripts wait on it) */
   fresh(): boolean {
-    return !this.epoch || this.epoch() === this.dataEpoch;
+    return this.lastEpoch === this.epoch;
   }
 
-  private staleNow(): boolean {
-    if (this.fresh()) return false;
-    // (a read for the window as it is now, at once)
-    if (!this.inFlight) void this.refresh();
-    return true;
+  /** Mirror a per-column buffer, page-major (sim/pages.ts COLUMN_BUFS: `stride` bytes a column). */
+  addColumns(name: string, gpu: () => GPUBuffer, stride: number): void {
+    this.add(name, { kind: 'cols', stride }, gpu);
   }
 
-  /** Mirror a buffer (all of it) under `name`; `paged` (a layers buffer): with ?mirror=near, read by pages near a focus between whole reads. */
-  addBuffer(name: string, buffer: GPUBuffer, paged?: Paged): void {
-    if (this.sources.some((s) => s.name === name)) return;
-    this.sources.push({ name, buffer, offset: this.size, bytes: buffer.size, rowBytes: 0, paged: MIRROR_NEAR ? paged : undefined });
-    this.size += Math.ceil(buffer.size / 256) * 256;
+  /** Mirror the layers (render/layout PackedWorld: its chunk table, `slotBytes` a slot). */
+  addSlots(name: string, gpu: () => GPUBuffer, slotBytes: number, chunkTable: Uint32Array, chunksX: number): void {
+    this.add(name, { kind: 'slots', slotBytes, chunkTable, chunksX }, gpu);
   }
 
-  /** Mirror an rgba32float texture under `name` (rows unpadded in the copy: 4 floats a texel). */
-  addTexture(name: string, texture: GPUTexture): void {
-    if (this.sources.some((s) => s.name === name)) return;
-    const rowBytes = Math.ceil((texture.width * 16) / 256) * 256;
-    this.sources.push({ name, texture, offset: this.size, bytes: rowBytes * texture.height, rowBytes });
-    this.size += rowBytes * texture.height;
+  /** Mirror an rgba32float texture, a texel a column on the window's pages (levels, drift). */
+  addTexture(name: string, gpu: () => GPUTexture): void {
+    this.add(name, { kind: 'tex' }, gpu);
   }
 
-  /** The last read of `name` (undefined before the first refresh). */
-  get(name: string): ArrayBuffer | undefined {
-    if (this.staleNow()) return undefined;
-    return this.data.get(name);
+  /** Mirror an rgba32float texture of its own layout, read whole when asked (the wind field). */
+  addWhole(name: string, gpu: () => GPUTexture): void {
+    this.add(name, { kind: 'whole' }, gpu);
   }
 
-  /** The last read of `name` as f32s (one view a read). */
-  f32(name: string): Float32Array | undefined {
-    if (this.staleNow()) return undefined;
-    let v = this.f32s.get(name);
-    if (!v) {
-      const b = this.data.get(name);
-      if (!b) return undefined;
-      v = new Float32Array(b);
-      this.f32s.set(name, v);
-    }
-    return v;
+  private add(name: string, layout: SourceKind, gpu: () => GPUBuffer | GPUTexture): void {
+    if (this.sources.has(name)) return;
+    const n = layout.kind === 'whole' ? 1 : this.io.ring.nx * this.io.ring.ny;
+    const s = { name, layout, gpu, readStamp: new Float64Array(n), readEpoch: new Float64Array(n) } as Source;
+    this.alloc(s);
+    this.sources.set(name, s);
   }
 
-  /** The last read of `name` as u32s (one view a read). */
-  u32(name: string): Uint32Array | undefined {
-    if (this.staleNow()) return undefined;
-    let v = this.u32s.get(name);
-    if (!v) {
-      const b = this.data.get(name);
-      if (!b) return undefined;
-      v = new Uint32Array(b);
-      this.u32s.set(name, v);
-    }
-    return v;
+  /** the CPU copy made (again: the GPU's buffer grew — a repack): every page unread */
+  private alloc(s: Source): void {
+    s.data = new ArrayBuffer(sourceBytes(s.layout, s.gpu(), this.io.dims));
+    s.f32 = new Float32Array(s.data);
+    s.u32 = new Uint32Array(s.data);
+    s.readEpoch.fill(-1);
   }
-
-  /** the next read is whole (round 100: refresh(true)) */
-  private wantWhole = false;
 
   /**
-   * Read everything back; resolves with data read after the call (a read in flight finishes first). `whole`
-   * (round 100): every page of the paged sources too — for a caller that needs far columns as they are now.
+   * A sim tick ran: every chunk it ran (not asleep, or drowsy: Globals.sleep / Globals.drowse, a bit a slot, set:
+   * asleep / just fallen asleep) may have changed. No mask: every chunk ran.
    */
-  async refresh(whole = false): Promise<void> {
-    if (whole) this.wantWhole = true;
-    while (this.inFlight) await this.inFlight;
-    if (!this.size) return;
-    this.inFlight = this.read();
-    await this.inFlight;
-    this.inFlight = null;
+  tick(asleep?: Uint32Array, drowse?: Uint32Array, settling?: Uint32Array): void {
+    const c = ++this.clock;
+    for (let s = 0; s < this.live.length; s++) {
+      const sleeping = asleep !== undefined && (asleep[s >> 5] & (1 << (s & 31))) !== 0;
+      const drowsy = drowse !== undefined && (drowse[s >> 5] & (1 << (s & 31))) !== 0;
+      // (round 128o: maybe still settling its water — the GPU decides whether it ran: counted as run)
+      const held = settling !== undefined && (settling[s >> 5] & (1 << (s & 31))) !== 0;
+      if (!sleeping || drowsy || held) this.live[s] = c;
+    }
   }
 
-  /** (mirror=near) reads since the last whole one, and the staging buffer kept between reads */
-  private reads = 0;
-  private staging?: GPUBuffer;
-  /** bytes copied back so far (scripts read it) */
-  readBytes = 0;
+  /** The columns were written outside a tick (game/colapply.ts: claims, stamps): every page may have changed. */
+  touchAll(): void {
+    this.live.fill(++this.clock);
+  }
 
-  /** a paged source's pages near its focus this read: [byte offset, bytes]; null: the whole of it */
-  private pagesNear(s: Source, whole: boolean): [number, number][] | null {
-    const p = s.paged;
-    if (!p || whole || !this.data.has(s.name)) return null;
-    const fs = p.focus();
-    if (!fs.length) return null;
-    const out: [number, number][] = [];
-    const seen = new Set<number>();
-    for (const f of fs) {
-      const cx0 = Math.max(0, Math.floor((f[0] - NEAR_R) / p.chunk));
-      const cx1 = Math.min(p.chunksX - 1, Math.floor((f[0] + NEAR_R) / p.chunk));
-      const cy0 = Math.max(0, Math.floor((f[1] - NEAR_R) / p.rowH / p.chunk));
-      const cy1 = Math.min(p.chunksY - 1, Math.floor((f[1] + NEAR_R) / p.rowH / p.chunk));
-      for (let cy = cy0; cy <= cy1; cy++)
-        for (let cx = cx0; cx <= cx1; cx++) {
-          const ci = cy * p.chunksX + cx;
-          if (seen.has(ci)) continue;
-          seen.add(ci);
-          out.push([p.chunkTable[ci * 2] * p.slotBytes, p.chunk * p.chunk * p.chunkTable[ci * 2 + 1] * p.slotBytes]);
-        }
+  /**
+   * The CPU copy of `name` as f32s if window column (cx, cy)'s page has been read in this window (stale or not), else
+   * undefined. Asks for the page when it's unread or stale. (A `whole` source ignores the column.)
+   */
+  f32(name: string, cx: number, cy: number): Float32Array | undefined {
+    return this.at(name, cx, cy)?.f32;
+  }
+
+  /** The same, as u32s. */
+  u32(name: string, cx: number, cy: number): Uint32Array | undefined {
+    return this.at(name, cx, cy)?.u32;
+  }
+
+  private at(name: string, cx: number, cy: number): Source | undefined {
+    const s = this.sources.get(name);
+    if (!s) throw new Error(`mirror: no source "${name}"`);
+    if (s.layout.kind === 'whole') return this.check(s, 0, 0, 0) ? s : undefined;
+    const { w, h } = this.io.dims;
+    if (cx < 0 || cy < 0 || cx >= w || cy >= h) return undefined;
+    const px = cx >> 4;
+    const py = cy >> 4;
+    return this.check(s, px, py, py * this.io.ring.nx + px) ? s : undefined;
+  }
+
+  /** page (px, py) of s (chunk index k): read in this window? Wanted when unread or stale. */
+  private check(s: Source, px: number, py: number, k: number): boolean {
+    const known = s.readEpoch[k] === this.epoch;
+    const current = known && s.layout.kind !== 'whole' && this.live[this.io.ring.slot(px, py)] <= s.readStamp[k];
+    if (!current) this.want(s, px, py);
+    return known;
+  }
+
+  private want(s: Source, cx: number, cy: number): void {
+    const key = `${s.name}:${cx},${cy}`;
+    if (this.wanted.has(key)) return;
+    this.wanted.set(key, { name: s.name, layout: s.layout, gpu: s.gpu, cx, cy });
+    this.kick();
+  }
+
+  private kick(): void {
+    if (this.scheduled || this.inFlight) return;
+    this.scheduled = true;
+    (this.io.schedule ?? ((fn) => requestAnimationFrame(fn)))(() => {
+      this.scheduled = false;
+      if (!this.inFlight && this.wanted.size) void this.launch();
+    });
+  }
+
+  /** a read of the pages wanted now; once it's done, the next is set going for those wanted meanwhile */
+  private launch(): Promise<void> {
+    const p = this.read().finally(() => {
+      this.inFlight = null;
+      if (this.wanted.size) this.kick();
+    });
+    this.inFlight = p;
+    return p;
+  }
+
+  /**
+   * Keep the pages round `at()` (world units; rows `rowH` apart) read before anything asks: a hero's next steps known
+   * as it walks. Not kept current: a query asks for that. Returns its removal.
+   */
+  keepKnown(at: () => readonly number[] | null, rowH: number): () => void {
+    const f = () => {
+      const p = at();
+      return p ? [p[0], p[1] / rowH] : null;
+    };
+    this.kept.push(f);
+    this.wantKept();
+    return () => {
+      const i = this.kept.indexOf(f);
+      if (i >= 0) this.kept.splice(i, 1);
+    };
+  }
+
+  /** the kept points' unread pages wanted */
+  private wantKept(): void {
+    const { w, h } = this.io.dims;
+    for (const f of this.kept) {
+      const p = f();
+      if (!p) continue;
+      const x0 = Math.max(0, Math.floor((p[0] - KEEP_R) / P));
+      const x1 = Math.min((w >> 4) - 1, Math.floor((p[0] + KEEP_R) / P));
+      const y0 = Math.max(0, Math.floor((p[1] - KEEP_R) / P));
+      const y1 = Math.min((h >> 4) - 1, Math.floor((p[1] + KEEP_R) / P));
+      for (const s of this.sources.values()) {
+        if (s.layout.kind === 'whole') continue;
+        for (let py = y0; py <= y1; py++) for (let px = x0; px <= x1; px++) if (s.readEpoch[py * this.io.ring.nx + px] !== this.epoch) this.want(s, px, py);
+      }
     }
-    return out;
+  }
+
+  /** Read every page of every source now; resolves once it's in (a read in flight finishes first). */
+  async refresh(): Promise<void> {
+    while (this.inFlight) await this.inFlight;
+    const { w, h } = this.io.dims;
+    for (const s of this.sources.values()) {
+      if (s.layout.kind === 'whole') this.want(s, 0, 0);
+      else for (let py = 0; py < h >> 4; py++) for (let px = 0; px < w >> 4; px++) this.want(s, px, py);
+    }
+    if (!this.wanted.size) return;
+    await this.launch();
   }
 
   private async read(): Promise<void> {
-    const e0 = this.epoch?.() ?? 0;
-    // (the staging buffer kept: a 20 MB buffer made and destroyed every 250 ms otherwise)
-    if (!this.staging || this.staging.size < this.size) {
-      this.staging?.destroy();
-      this.staging = this.device.createBuffer({ label: 'mirror', size: this.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    this.wantKept();
+    // (a repack grew a buffer: its copy made again, its pages unread — and asked again below if they were wanted)
+    for (const s of this.sources.values()) if (sourceBytes(s.layout, s.gpu(), this.io.dims) !== s.data.byteLength) this.alloc(s);
+    const asks = [...this.wanted.values()];
+    this.wanted.clear();
+    const e0 = this.epoch;
+    const stamp = this.clock;
+    const datas = await this.io.reader.read(asks, this.io.ring);
+    if (!datas) return;
+    this.stats.reads++;
+    // (the window slid while this was read: what came back is of the window that was; asked again when needed)
+    if (this.epoch !== e0) {
+      this.stats.dropped++;
+      return;
     }
-    const tmp = this.staging;
-    // (mirror=near: whole every NEAR_FULL reads and after a slide; else the paged sources' near pages)
-    const whole = this.reads++ % NEAR_FULL === 0 || !this.fresh() || this.wantWhole;
-    if (whole) this.wantWhole = false;
-    const near = new Map<Source, [number, number][]>();
-    const enc = this.device.createCommandEncoder({ label: 'mirror' });
-    for (const s of this.sources) {
-      const pages = s.buffer ? this.pagesNear(s, whole) : null;
-      if (pages) {
-        near.set(s, pages);
-        for (const [at, n] of pages) enc.copyBufferToBuffer(s.buffer!, at, tmp, s.offset + at, n);
-        this.readBytes += pages.reduce((a, [, n]) => a + n, 0);
-        continue;
-      }
-      this.readBytes += s.bytes;
-      if (s.buffer) enc.copyBufferToBuffer(s.buffer, 0, tmp, s.offset, s.bytes);
-      else if (s.texture) enc.copyTextureToBuffer({ texture: s.texture }, { buffer: tmp, offset: s.offset, bytesPerRow: s.rowBytes }, [s.texture.width, s.texture.height]);
-    }
-    this.device.queue.submit([enc.finish()]);
-    let straddled = false;
-    await tmp.mapAsync(GPUMapMode.READ).then(() => {
-      // (the window slid while this was read: its data is part one window's, part another's)
-      if (this.epoch && this.epoch() !== e0) {
-        straddled = true;
-        tmp.unmap();
-        return;
-      }
-      const all = tmp.getMappedRange();
-      for (const s of this.sources) {
-        const pages = near.get(s);
-        if (pages) {
-          // (into the copy as it is: its views stay good)
-          const dst = new Uint8Array(this.data.get(s.name)!);
-          for (const [at, n] of pages) dst.set(new Uint8Array(all, s.offset + at, n), at);
-          continue;
-        }
-        if (s.buffer) {
-          this.data.set(s.name, all.slice(s.offset, s.offset + s.bytes));
-          continue;
-        }
-        const t = s.texture!;
-        const w4 = t.width * 4;
-        const out = new Float32Array(w4 * t.height);
-        const raw = new Float32Array(all, s.offset, s.bytes / 4);
-        const rowF = s.rowBytes / 4;
-        for (let y = 0; y < t.height; y++) out.set(raw.subarray(y * rowF, y * rowF + w4), y * w4);
-        this.data.set(s.name, out.buffer);
-      }
-      tmp.unmap();
-      // (a paged read keeps its views: they're of the same copy)
-      for (const s of this.sources) {
-        if (near.has(s)) continue;
-        this.f32s.delete(s.name);
-        this.u32s.delete(s.name);
-      }
-      this.gen++;
-      this.readAt = performance.now();
-      this.dataEpoch = e0;
-    }, ignoreTeardown);
-    // (once more, for the window as it is now)
-    if (straddled) await this.read();
+    asks.forEach((a, i) => this.place(this.sources.get(a.name)!, a, datas[i], stamp, e0));
+    this.lastEpoch = e0;
+    this.gen++;
+    this.readAt = performance.now();
   }
 
-  /** Refresh every `ms` (default `every`) until stop(). */
-  start(ms = this.every): this {
+  /** a page's bytes into the CPU copy, where the GPU holds them */
+  private place(s: Source, a: PageAsk, d: ArrayBuffer, stamp: number, epoch: number): void {
+    const dst = new Uint8Array(s.data);
+    const src = new Uint8Array(d);
+    const L = s.layout;
+    if (L.kind === 'cols') dst.set(src, this.io.ring.slot(a.cx, a.cy) * PAGE_COLS * L.stride);
+    else if (L.kind === 'slots') dst.set(src, L.chunkTable[(a.cy * L.chunksX + a.cx) * 2] * L.slotBytes);
+    else if (L.kind === 'tex') {
+      const [tx, ty] = this.io.ring.texPage(this.io.ring.slot(a.cx, a.cy));
+      const W = this.io.dims.w;
+      for (let r = 0; r < P; r++) dst.set(src.subarray(r * P * TEXEL, (r + 1) * P * TEXEL), ((ty + r) * W + tx) * TEXEL);
+    } else {
+      const t = s.gpu() as GPUTexture;
+      const row = t.width * TEXEL;
+      const padded = Math.ceil(row / 256) * 256;
+      for (let r = 0; r < t.height; r++) dst.set(src.subarray(r * padded, r * padded + row), r * row);
+    }
+    const k = L.kind === 'whole' ? 0 : a.cy * this.io.ring.nx + a.cx;
+    s.readStamp[k] = stamp;
+    s.readEpoch[k] = epoch;
+    this.stats.pages++;
+    this.stats.bytes += d.byteLength;
+  }
+
+  /** (createSim's worlds: no level frame of their own) every page read again every `ms` until stop() */
+  start(ms: number): this {
     this.stop();
-    this.every = ms;
     void this.refresh();
-    // (a timed read skips while another is in flight)
     this.timer = window.setInterval(() => {
       if (!this.inFlight) void this.refresh();
     }, ms);
@@ -269,9 +357,69 @@ export class Mirror {
     this.timer = 0;
   }
 
-  /** the staging buffer let go (the world's gone) */
+  /** the reader's staging let go (the world's gone) */
   destroy(): void {
     this.stop();
+    this.io.reader.destroy?.();
+  }
+}
+
+/** The pages read back from the GPU: one encoder, one staging buffer kept between reads, one map of the bytes asked. */
+export class GpuPageReader implements PageReader {
+  private staging?: GPUBuffer;
+
+  constructor(private device: GPUDevice) {}
+
+  async read(asks: PageAsk[], ring: RingPages): Promise<ArrayBuffer[] | null> {
+    const sizes = asks.map((a) => this.bytes(a));
+    const offs: number[] = [];
+    let used = 0;
+    for (const n of sizes) {
+      offs.push(used);
+      used += Math.ceil(n / 256) * 256;
+    }
+    if (!this.staging || this.staging.size < used) {
+      this.staging?.destroy();
+      this.staging = this.device.createBuffer({ label: 'mirror pages', size: Math.max(used, 64 * 1024), usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    }
+    const st = this.staging;
+    const enc = this.device.createCommandEncoder({ label: 'mirror pages' });
+    asks.forEach((a, i) => {
+      const L = a.layout;
+      if (L.kind === 'cols') enc.copyBufferToBuffer(a.gpu() as GPUBuffer, ring.slot(a.cx, a.cy) * PAGE_COLS * L.stride, st, offs[i], sizes[i]);
+      else if (L.kind === 'slots') enc.copyBufferToBuffer(a.gpu() as GPUBuffer, L.chunkTable[(a.cy * L.chunksX + a.cx) * 2] * L.slotBytes, st, offs[i], sizes[i]);
+      else if (L.kind === 'tex') {
+        const [tx, ty] = ring.texPage(ring.slot(a.cx, a.cy));
+        enc.copyTextureToBuffer({ texture: a.gpu() as GPUTexture, origin: [tx, ty] }, { buffer: st, offset: offs[i], bytesPerRow: P * TEXEL }, [P, P]);
+      } else {
+        const t = a.gpu() as GPUTexture;
+        enc.copyTextureToBuffer({ texture: t }, { buffer: st, offset: offs[i], bytesPerRow: Math.ceil((t.width * TEXEL) / 256) * 256 }, [t.width, t.height]);
+      }
+    });
+    this.device.queue.submit([enc.finish()]);
+    try {
+      await st.mapAsync(GPUMapMode.READ, 0, used);
+    } catch (e) {
+      // (the device or the buffer went: the scene is being torn down)
+      ignoreTeardown(e);
+      return null;
+    }
+    const all = st.getMappedRange(0, used);
+    const out = asks.map((_, i) => all.slice(offs[i], offs[i] + sizes[i]));
+    st.unmap();
+    return out;
+  }
+
+  private bytes(a: PageAsk): number {
+    const L = a.layout;
+    if (L.kind === 'cols') return PAGE_COLS * L.stride;
+    if (L.kind === 'slots') return PAGE_COLS * L.chunkTable[(a.cy * L.chunksX + a.cx) * 2 + 1] * L.slotBytes;
+    if (L.kind === 'tex') return PAGE_COLS * TEXEL;
+    const t = a.gpu() as GPUTexture;
+    return Math.ceil((t.width * TEXEL) / 256) * 256 * t.height;
+  }
+
+  destroy(): void {
     this.staging?.destroy();
     this.staging = undefined;
   }

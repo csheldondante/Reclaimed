@@ -97,7 +97,7 @@ export class PlaySession {
     for (let k = 0; ; k++) {
       await t.refresh();
       const c = d.camera.target;
-      if (d.api.fresh && t.heightAt(c[0], c[1]) !== null) break;
+      if (t.heightAt(c[0], c[1]) !== null) break;
       if (k > 80) throw new Error('play: the ground under the camera never read back');
       await new Promise((res) => setTimeout(res, 250));
     }

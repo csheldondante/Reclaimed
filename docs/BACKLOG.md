@@ -32,12 +32,12 @@ The user: "Please work on making the code match the design which is a lot cleane
 | DA-A6 | One crowd for townspeople: merge settle/life and fortress/life (§11) | L | next |
 | DA-A7 | Routes as kinematic trips with a cached route buffer; delete LOST/LAST_LOST steering; tiles declare paths (§12) | L | next |
 | DA-A8 | Every good physical; loot takes real goods (§18) | M | next |
-| DA-B1 | Kill play readbacks: Build never starts the mirror; FieldReader gone; GPU-side queries; unknown != empty; resumes `phonefix` (§24) | M | next |
+| DA-B1 | Kill play readbacks: Build never starts the mirror; FieldReader gone; GPU-side queries; unknown != empty; resumes `phonefix` (§24) | M | done (`phonefix`, round 128o: the world API's mirror read by pages when asked, stale only where the sim ran; no timer in the level; FieldReader gone (the reach's bits); unread is null, a test; the trees stay a veg-page read, their GPU query is DA-B6; phone bench to run) |
 | DA-B2 | Unit sync becomes GPU events plus watched units through a persistent staging ring (§11, §24) | M | next |
 | DA-B3 | Incremental town edits: rebuild only changed structures; no rebuild on unchanged reach answers; < 4 ms an edit on desktop (§5, §24) | M | next |
 | DA-B4 | Reach solve converges on the GPU; one small read per edit (§13) | M | next |
-| DA-B5 | Fortress-mode sandbox frame reads off; 30 fps cap while building or paused (§24) | S | next |
-| DA-B6 | GPU tree query for woodcutters (no veg readback); GPU wind reduction for storms (no wind-texture readback) (§24) | M | next |
+| DA-B5 | Fortress-mode sandbox frame reads off; 30 fps cap while building or paused (§24) | S | done (`phonefix`, round 128o: wind 4 Hz, counters 2 Hz, veg + water 1 Hz off in fortress play (`ValleyReads`); 30 fps while planning or paused. Left: the level's surface read 1 Hz and the water settling read 2 Hz, options in DEVLOG) |
+| DA-B6 | GPU tree query for woodcutters (no veg readback); GPU wind reduction for storms (no wind-texture readback) (§24) | M | wip (trees done on `phonefix`, round 128o: api/treequery.ts, 272 B an ask; the storms' wind is the sandbox's only now — DA-B5) |
 | DA-B7 | Shadow cache: sample the static and dynamic shadow maps in the lighting pass instead of copying 1 MB a frame on the phone tier (`gbuffer-shadow.ts:179`; audit transfers.md) | S | done (`copies`: Renderer.shadowStill beside the sun's map, common.wgsl shadowLit reads both; the shadowSize² × 4 B copy a frame gone, shots equal) |
 | DA-B8 | Edit pass: swap bindings instead of copying editState (and layers when not in place) each tick; quiet builder take/put doesn't restart the 300-tick EDIT_LINGER (`sim/systems.ts:588-596`, up to ~98 MB/s GPU copy while builders work) | M | done (`copies`: in place on every tier with blowSum first, editStateA/B take turns, runs only while a press is in flight — sim/edit-ops.ts EditBusy; town lab with builders: 1.64 MB + 26 MB a tick gone) |
 | DA-B9 | A version word per chunk bumped on the GPU by every interval writer; mesh hash, agents' re-peel, reach, shore and save work only on changed chunks via indirect dispatch; removes the idle floor (sway, prep passes, lava-prep with no lava) | L | open |
@@ -49,6 +49,9 @@ The user: "Please work on making the code match the design which is a lot cleane
 | DA-B15 | The coarse world swaps its two cell buffers instead of copying the whole 8 MB grid back every 4th frame, and steps only where something moves (FP3 spread the cost, didn't remove it; found by DA-G1) | S | open |
 | DA-B16 | The wind field is updated and copied back only round what stirs it: while any physics body exists the whole field (~410 KB) is copied every update (`WindFieldSystem.wholeWhile`; found by DA-G1) | S | open |
 | DA-B17 | The phone flags apply too late in the production build (the lab, scripts/shot.mjs, any deploy): Rollup runs the chunk holding the renderer and the systems before main's body, so `Renderer.opts` (shadowcache, prepevery, shadowevery …) and `INPLACE` are read before phone-flags-boot writes the URL — the lab's "phone tier" runs without them. The dev server keeps the order (found in DA-B7) | S | done (`phoneflags`: src/flags.ts resolves them, 141 reads moved to `urlFlags()`; test/unit/flags.test.ts, scripts/flagcheck.mjs) |
+| DA-B19 | The level's surface read (1 Hz, 400 KB at 320²: `scene.heightAt` for the camera's ground, the fortress's ground and pieces, raiders, places) goes: the GPU makes a chunk's surface only once it wakes, so not simply the mirror's pages; options in DEVLOG round 128o DA-B5 (found by DA-B5) | M | design proposed (DEVLOG round 128o DA-B19: option b — the camera by the renderer's pick, the fortress by a GPU column-top query of its box, the sandbox by the mirror; for the user) |
+| DA-B20 | The water's settling read (2 Hz, 8 KB: sleep's holdUnsettled keeps unsettled water awake) goes: the hold decided on the GPU (an indirect wake list) (found by DA-B5) | S | done (`phonefix`, round 128o: sim/settlehold.ts; candidates listed by the CPU, held by the GPU — no indirect dispatch needed) |
+| DA-B21 | Trees grown back as a GPU event (a column's succession crossing the tree threshold marks its chunk; the woodcutters ask then), so their once-a-sim-minute look goes (found by DA-B6) | S | open |
 | DA-L1 | One run clock for economy, day/night, raids and cards (§21) | M | open |
 | DA-L2 | Mana ledger that can be spent (§14) | S | open |
 | DA-L3 | Holdings adapter: fortress soldiers and stores as holdings cards lock and spend (§20, §21) | M | open |
@@ -82,8 +85,11 @@ The user: "Please work on making the code match the design which is a lot cleane
 | id | item | size | status |
 |---|---|---|---|
 | PF-1 | (the user: "Can you just add a debug flag to clear cache at startup for now and use that unless we are testing persistence?") `?fresh=1` deletes the world's stores at boot (region store, map files, warm cache, progress); the benches' stores kept | S | done (phonefix: fresh flag commit) |
-| PF-2 | Whatever is stored that depends on the town planner or the generator carries a version that changes with them; a test that fails when it doesn't | S | wip |
-| PF-3 | Find and fix what made the fortress unplayable on the phone (bisect d2ba927..062fe16 at 412x915 q=low); a phone bench to run | M | wip |
+| PF-2 | Whatever is stored that depends on the town planner or the generator carries a version that changes with them | S | handed over (the cache was not the cause: GEN_VERSION drops old regions; the saved-claims mismatch — a later session's land held the earlier fortress's blocks as stone, measured 107.0 vs 103.3 m at a former block — goes to the onetown agent: owned intervals) |
+| PF-4 | The lab gate fortressoutside on the `town` recipe for the game's length (900 sim s, a block planned outside every 150 s; fails if no builder reaches any waiting site for 180 sim s). It fails on 062fe16's timed waves and on head | S | done (phonefix: gate commit) |
+| PF-5 | (found by PF-4, head) a house planned outside and kept on Build (plan owner ≥ 0) is let go by the plan later (owner -1 by t 487 s), silently | M | open |
+| PF-6 | (found by PF-4, head) a farm planned outside at t 450 waits with no builder: nobody holds a build job (phases toWork 5, eat 4, home 3; no toSite or toPile) | M | open |
+| PF-3 | Find and fix what made the fortress unplayable on the phone (bisect d2ba927..062fe16 at 412x915 q=low); a phone bench to run | M | wip (DA-B1, DA-B5 on `phonefix`: 161 MB/s of reads after Build down to ~8 MB/s on the desktop proxy; the phone bench is the user's) |
 
 ## Monolith split (2026-11-04, `fortress`) — the user: "If we can split up those monolith files into well names encapsulated utilities and logical APIs that would be ideal too for saving context."
 

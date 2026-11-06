@@ -126,8 +126,12 @@ export class AwakeTiles {
     return this.stagger;
   }
 
-  /** This tick's lists from the sleep mask (bits set: asleep; absent: all awake) and the drowsy mask; `origin` the window's (cells: the stagger's world chunks) */
-  update(tick: number, sleep?: Uint32Array, drowse?: Uint32Array, origin: [number, number] = [0, 0]): void {
+  /**
+   * This tick's lists from the sleep mask (bits set: asleep; absent: all awake) and the drowsy mask; `origin` the
+   * window's (cells: the stagger's world chunks); `cand` (round 128o) the chunks maybe still settling their water,
+   * listed as live: the GPU's mask lets them run or not (sim/settlehold.ts)
+   */
+  update(tick: number, sleep?: Uint32Array, drowse?: Uint32Array, origin: [number, number] = [0, 0], cand?: Uint32Array): void {
     if (this.live.length !== this.chunks) {
       this.live = new Uint8Array(this.chunks);
       this.near = new Uint8Array(this.chunks);
@@ -141,7 +145,7 @@ export class AwakeTiles {
       const w = sl >> 5;
       const b = 1 << (sl & 31);
       const asleep = !!sleep && sl < sleep.length * 32 && (sleep[w] & b) !== 0;
-      live[c] = !asleep || (!!drowse && (drowse[w] & b) !== 0) ? 1 : 0;
+      live[c] = !asleep || (!!drowse && (drowse[w] & b) !== 0) || (!!cand && (cand[w] & b) !== 0) ? 1 : 0;
     }
     let dilated = false;
     for (const [n, l] of this.lists) {

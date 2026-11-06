@@ -13,8 +13,10 @@ const H = 140;
 /** the land rises east: the ramp's top is over the pit's lowest ground */
 const SLOPE = 0.08;
 
-function world() {
+function world(groundRead?: () => unknown) {
   const z = new Float32Array(W * H);
+  /** (round 128o) columns whose ground isn't read yet: ground() answers null there */
+  const unread = new Set<number>();
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) z[y * W + x] = 60 + x * SLOPE;
   const col = (x: number, y: number) => {
     const [k, r] = cellAt(x, y);
@@ -28,7 +30,7 @@ function world() {
   let woken = 0;
   const dig = new QuarryDig({
     fort,
-    ground: (x, y) => z[col(x, y)],
+    ground: (x, y) => (unread.has(col(x, y)) ? null : z[col(x, y)]),
     dig: (at, n) => {
       const i = col(at[0], at[1]);
       const got = Math.max(0, Math.min(n, z[i] - 2));
@@ -36,8 +38,9 @@ function world() {
       return Promise.resolve(got);
     },
     settle: () => woken++,
+    groundRead,
   });
-  return { z, col, fort, dig, woken: () => woken };
+  return { z, col, fort, dig, unread, woken: () => woken };
 }
 
 /** a quarry's footprint: the cells within r of (x, y), painted and built */
@@ -133,6 +136,32 @@ describe('the miners grow the pit', () => {
     // (every tier's levels dug, the ground woken a tier at a time)
     for (const [c] of pit.ring) for (const L of w.fort.plan.pit.each(c)) expect(w.fort.dug.has(c, L)).toBe(true);
     expect(w.woken()).toBe(pit.tiers);
+  });
+
+  it('ground not read yet is not dug: the tier waits for it (round 128o, pages read when asked)', async () => {
+    const w = world();
+    const id = quarry(w, 60, 60, 16);
+    w.dig.update();
+    expect(w.dig.stateOf(id)!.tier).toBe(1);
+    // (every column of the pit unread: before, read as -Infinity, the whole tier counted as dug and the pit went on)
+    for (const c of w.fort.plan.pitOf(id)!.ring.keys()) for (const col of w.fort.grid.columns[c]) w.unread.add(col);
+    for (let k = 0; k < 40; k++) w.dig.update();
+    expect(w.dig.stateOf(id)!).toMatchObject({ tier: 1, cut: 0 });
+    expect(w.dig.dig(w.fort.centre([...w.fort.plan.pitOf(id)!.ring.keys()][0]))).toBe(false);
+    // (read again: the miners go on from where it was)
+    w.unread.clear();
+    await digOn(w, 30);
+    expect(w.dig.stats.taken).toBeGreaterThan(0);
+  });
+
+  it('digging begins while no new read comes (round 128o: the ground read when asked, current until its chunk runs)', async () => {
+    // (the mirror read once and nothing since: before, the quarry waited for two new reads after it was ready — with
+    // reads made only when asked, nothing asked, and it waited for ever)
+    const w = world(() => 1);
+    const id = quarry(w, 60, 60, 16);
+    await digOn(w, 40);
+    expect(w.dig.stats.takes).toBeGreaterThan(0);
+    expect(w.dig.stateOf(id)!.tier).toBeGreaterThanOrEqual(1);
   });
 
   it('nothing is dug until every cell of the footprint is built', () => {

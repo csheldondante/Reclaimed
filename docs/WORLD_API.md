@@ -22,12 +22,17 @@ raw buffers, every command for its effect).
 - Positions are in world coordinates, and formats are decoded on the engine's
   side (the surface's 8.8 bits, the drift texture, lava's vec4).
 - One mirror serves all of a sim's modules: one staging buffer, one copy of
-  everything they registered, one map.
-- It refreshes every 250 ms by default (`refreshMs`; 0 for only on request).
-  A read takes 22 ms median on the 256 × 256 sandbox, for about 7 MB.
-- `sim.readAt` says when it was read. `await sim.refresh()` resolves with
-  data read after the call.
-- Until the first read, queries return null.
+  everything they registered, one map a read.
+- (Round 128o) It is read by 16 × 16 pages, when a query asks: a page not read
+  yet answers null ("not read yet", never "nothing there") and is read a frame
+  later with every other page asked meanwhile; a page whose chunk the sim has
+  run since (or a column apply wrote) answers as last read and is read again.
+  Nothing is read on a timer in the level; a world made by `createSim` still
+  refreshes every 250 ms (`refreshMs`).
+- `sim.readAt` says when it was last read; `sim.reads` counts the reads,
+  pages and bytes. `await sim.refresh()` reads every page now.
+- Queries that span pages (smooth samples) answer null
+  until every page they touch is read.
 - Typed views of each read are made once and shared by every query, so a
   few hundred queries a frame cost nothing to speak of: a smooth height
   sample takes about 2 µs.
@@ -59,7 +64,8 @@ await sim.warmup({ ticks, debris, skip })        // settle the world: ticks of s
 
 // plants (round 63)
 sim.plants.vegAt(x, y)              // the succession field: ~1.2 grass, 2.6 shrubs, 3.6+ woods
-sim.plants.treeAt(x, y) / treesNear(x, y, radius)   // { cx, cy, x, y, species, trunk, crown, logs }, nearest first
+sim.plants.treeAt(x, y)                              // { cx, cy, x, y, species, trunk, crown, logs }
+await sim.plants.treesNear(x, y, radius, n = 32)     // (round 128o) the n nearest, found on the GPU (api/treequery.ts); null: the window slid meanwhile
 await sim.plants.fell(x, y)         // that column cut back to grass: → the tree as it stood (its logs), or null
 sim.plants.grow(x, y, { radius, strength })   // the plants rise (60: a wood at once)
 // work crews (round 63; docs/AGENTS.md "Crews"): dig or fell, carry to a pile

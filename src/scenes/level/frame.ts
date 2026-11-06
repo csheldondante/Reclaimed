@@ -1,14 +1,12 @@
 // The level's frame: camera input, the planner and the window's slide, the world's systems, the sim's ticks, the
 // story and hero updates, then the draw and the HUD. API: levelFrame(scene, now, dt) (LevelScene.frame), planFrame,
-// readSettling, lifeFrame, ceilingFrame, perfLines. Reads and sets the scene's fields; no other module's internals.
+// lifeFrame, ceilingFrame, perfLines. Reads and sets the scene's fields; no other module's internals.
 import { reclamation, worldHealth } from '../../game/nature';
 import { saveProgress } from '../../game/progress';
 import { EventKind } from '../../sim/globals';
 import { CUTS, OP, editOpOf } from '../../sim/edit-ops';
-import { ignoreTeardown } from '../../gpu/pipeline';
 import { abilityHost, lifeFocus, wilderness } from '../../inhabitants/install';
 import { mountViewer } from '../../inhabitants/viewer';
-import { attachSim } from '../../api/world';
 import { REGION } from '../streamer';
 import { settleTol } from '../../sim/sleep';
 import { CatchmentWet } from '../../weather/catchwet';
@@ -28,6 +26,7 @@ import { brush, drawRing } from './sandbox-tools';
 import { aimBeam, stepMeteors } from './impacts';
 import { CUTAWAY, PLANNER_OFF, COARSE_PARTS, CAM_CLAMP, PLAN_OFF } from './flags';
 import type { LevelScene } from '../level';
+import { worldApiOf } from './world-api';
 
 export function levelFrame(scene: LevelScene, now: number, dt: number, driven = false): void {
   // (round 128l, tooling: lab.run steps the scene itself, as fast as the GPU goes — the display's frames wait)
@@ -173,29 +172,9 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
   core.pollution += (health.pollution - core.pollution) * Math.min(1, dt * 0.5);
   scene.life += (health.life - scene.life) * Math.min(1, dt * 0.5);
   scene.nature.update(simDt, stats);
-  // oil smoke the wind has torn apart pays Nature back (GPU counter, ~2 Hz)
-  // storms feel the painted wind (CPU copy of the field, ~4 Hz)
-  scene.fieldRefresh -= dt;
-  if (scene.fieldRefresh <= 0) {
-    scene.fieldRefresh = 0.25;
-    void core.readWindField().then((f) => (core.weather.windField = f), ignoreTeardown);
-  }
-  scene.smokeRefresh -= dt;
-  if (scene.smokeRefresh <= 0) {
-    scene.smokeRefresh = 0.5;
-    void core.readBuffer('particleCounters').then((f) => {
-      const u = new Uint32Array(f.buffer);
-      const n = u[2];
-      if (scene.smokeSeen >= 0 && n > scene.smokeSeen) scene.nature.smokeDispersed(n - scene.smokeSeen);
-      scene.smokeSeen = n;
-      // grime blown into water washes away: plinks and a little Nature
-      if (scene.washedSeen >= 0 && u[3] > scene.washedSeen) {
-        scene.nature.grimeWashed(u[3] - scene.washedSeen);
-        scene.audio.wash(u[3] - scene.washedSeen);
-      }
-      scene.washedSeen = u[3];
-    }, ignoreTeardown);
-  }
+  // (round 128o, DA-B5) the sandbox valley's reads — the painted wind for its storms, smoke and grime for its Nature,
+  // veg and water for its ambience — none in fortress play (level/valley-reads.ts)
+  scene.valleyReads?.frame(dt);
 
   scene.lensK += ((scene.lensOn ? 1 : 0) - scene.lensK) * Math.min(1, dt * 8);
   const lc = scene.hoverWorld ?? [camera.target[0], camera.target[1]];
@@ -250,11 +229,13 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
     globals.riverWet = scene.riverWet.update(dt * scene.speed, globals.season ?? 0, []);
   } else globals.riverWet = scene.riverWet.update(dt * scene.speed, globals.season ?? 0, weather.storms);
   // (round 80) what's awake this frame: round the player (the camera's target), the events, the storms
-  if (scene.sleep && settleTol() > 0) readSettling(scene);
   if (scene.sleep) {
     globals.sleep = scene.sleep.update(performance.now() / 1000, [camera.target[0], camera.target[1], 40], globals.events, weather.storms, core.sim.tick);
     globals.drowse = scene.sleep.drowse;
     globals.settle = scene.sleep.settling.map((s) => s.rect);
+    // (round 128o, DA-B20: the chunks maybe still settling their water, the GPU holding them while it changes — no read)
+    globals.settleTol = settleTol();
+    globals.settleCand = globals.settleTol > 0 ? scene.sleep.settleCand : undefined;
   }
   // (?skip=sim, round 80: the frame without the sim — on a phone, how much of it the sim is)
   const tSim = performance.now(); // (round 100, hitchrec: timing)
@@ -293,7 +274,7 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
   // (round 91: the compass follows the view, flying too — the flyer's look)
   scene.compass?.update(camera.fly ? camera.fly.yaw + Math.PI : camera.azimuth);
   if (CUTAWAY && !camera.fly) {
-    const t = (scene.worldApi ??= attachSim(core)).terrain!;
+    const t = worldApiOf(scene).terrain!;
     const c = (scene.cutaway ??= { puck: new Puck(t, camera), slice: new Slice(t, camera), orbit: new Orbit(t, camera), dither: new Dither(t, camera) });
     c.puck.update(dt);
     const p = c.puck.pos;
@@ -362,12 +343,6 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
     audio.groan(near * holding);
   }
   const light = core.light;
-  scene.audioRefresh -= dt;
-  if (scene.audioRefresh <= 0) {
-    scene.audioRefresh = 1;
-    void core.readBuffer('veg', true).then((f) => (scene.vegCache = f));
-    void core.readBuffer('water', true).then((f) => (scene.waterCache = f));
-  }
   const drag = powers.dragWind();
   audio.dragWind(drag ? Math.min(1, drag.strength / 15) : 0, drag ? camera.project(drag.x, drag.y, 0)[0] / camera.viewportW : 0.5);
   // one roar: the loudest cyclone (nearest and strongest) sets it
@@ -457,35 +432,6 @@ export function planFrame(scene: LevelScene): void {
   core.simCap = PLAN_OFF.has('sim') ? null : P.simCap;
 }
 
-/** (round 84) the water's most change per chunk since the last read (world-gpu waterChange), cleared; woken chunks
- *  still settling are kept awake (Sleep.holdUnsettled) — twice a second */
-export function readSettling(scene: LevelScene): void {
-  const now = performance.now() / 1000;
-  if (scene.settleReading || now - scene.settleReadAt < 0.5) return;
-  scene.settleReadAt = now;
-  scene.settleReading = true;
-  const dev = scene.host.gpu.device;
-  const src = scene.core.world.waterChange;
-  const tmp = dev.createBuffer({ size: src.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
-  const enc = dev.createCommandEncoder();
-  enc.copyBufferToBuffer(src, 0, tmp, 0, src.size);
-  enc.clearBuffer(src);
-  dev.queue.submit([enc.finish()]);
-  tmp.mapAsync(GPUMapMode.READ).then(
-    () => {
-      const ch = new Float32Array(tmp.getMappedRange().slice(0));
-      tmp.destroy();
-      scene.settleReading = false;
-      scene.sleep?.holdUnsettled(ch, performance.now() / 1000);
-    },
-    (e) => {
-      tmp.destroy();
-      scene.settleReading = false;
-      ignoreTeardown(e);
-    },
-  );
-}
-
 /** (round 117, ?life=) the inhabitants each frame: spawned once the ground's first read is in, the mesh built round the view */
 export function lifeFrame(scene: LevelScene, dt: number): void {
   const life = scene.inhabitants!;
@@ -497,7 +443,7 @@ export function lifeFrame(scene: LevelScene, dt: number): void {
     life.setAbilityHost(
       abilityHost(core, {
         lavaBeam: (b) => scene.lava && (scene.lava.beam = b),
-        blast: (x, y, r, st, tm) => (scene.worldApi ??= attachSim(core)).wind?.blast(x, y, r, st, tm),
+        blast: (x, y, r, st, tm) => worldApiOf(scene).wind?.blast(x, y, r, st, tm),
       }),
     );
     if (mode === 'viewer') {

@@ -5,6 +5,8 @@ import type { WorldCore } from '../scenes/world-core';
 import { EventKind } from '../sim/globals';
 import { columnAt } from './common';
 import type { Mirror } from './mirror';
+import { COLUMN_BUFS } from '../sim/pages';
+import { cellAt } from '../world/lattice';
 
 export interface LavaAt {
   /** cells of molten rock */
@@ -21,8 +23,8 @@ export class Fire {
     private core: WorldCore,
     private mirror: Mirror,
   ) {
-    mirror.addBuffer('fire', core.world.fire);
-    mirror.addBuffer('lava', core.world.lava);
+    mirror.addColumns('fire', () => core.world.fire, COLUMN_BUFS.fire[0]);
+    mirror.addColumns('lava', () => core.world.lava, COLUMN_BUFS.lava[0]);
   }
 
   get readAt(): number {
@@ -39,7 +41,8 @@ export class Fire {
 
   /** How hard (x, y) is burning, 0..1 (0: not alight). */
   fireAt(x: number, y: number): number | null {
-    const f = this.mirror.f32('fire');
+    const [cx, cy] = cellAt(x, y);
+    const f = this.mirror.f32('fire', cx, cy);
     const i = this.col(x, y);
     if (!f || i < 0) return null;
     return f[i];
@@ -47,7 +50,8 @@ export class Fire {
 
   /** Lava at (x, y), or null where there's none (or before the first read). */
   lavaAt(x: number, y: number): LavaAt | null {
-    const l = this.mirror.f32('lava');
+    const [cx, cy] = cellAt(x, y);
+    const l = this.mirror.f32('lava', cx, cy);
     const i = this.col(x, y);
     if (!l || i < 0) return null;
     if (l[i * 4] <= 0.001) return null;
@@ -60,8 +64,9 @@ export class Fire {
    * 600 × its intensity.
    */
   heatAt(x: number, y: number): number | null {
-    const l = this.mirror.f32('lava');
-    const f = this.mirror.f32('fire');
+    const [cx, cy] = cellAt(x, y);
+    const l = this.mirror.f32('lava', cx, cy);
+    const f = this.mirror.f32('fire', cx, cy);
     const i = this.col(x, y);
     if (!l || !f || i < 0) return null;
     return Math.max(l[i * 4 + 2], l[i * 4] > 0.001 ? l[i * 4 + 1] : 0, f[i] * 600);

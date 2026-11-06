@@ -174,7 +174,7 @@ export class Wind implements SimSystem {
     private core: WorldCore,
     private mirror: Mirror,
   ) {
-    mirror.addTexture('wind', core.world.windField);
+    mirror.addWhole('wind', () => core.world.windField);
     // (before the wind field: this tick's entries reach it)
     const sys = core.sim.systems;
     sys.splice(sys.indexOf(core.sim.wind), 0, this);
@@ -256,7 +256,7 @@ export class Wind implements SimSystem {
    * in it). Null before the first read.
    */
   fieldAt(x: number, y: number): [number, number] | null {
-    const f = this.mirror.f32('wind');
+    const f = this.mirror.f32('wind', 0, 0);
     if (!f) return null;
     const tex = this.core.world.windField;
     const tx = Math.min(tex.width - 1, Math.max(0, Math.floor(x / 2)));

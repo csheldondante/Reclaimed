@@ -750,8 +750,23 @@ world definition (map, places, climate, season) and installs the modules it
 asks for; `attachSim(core)` puts them over a WorldCore a scene runs (the
 level: `reclaimed.api`). One `Mirror` per sim: every module registers the
 buffers and textures it reads (terrain: surface, layers, drift, levels;
-water: water, flux; fire: fire, lava; wind: windField), read back together
-on a timer (250 ms), decoded by the module. Commands go through the world's
+water: water, flux; fire: fire, lava; wind: windField), decoded by the module.
+(Round 128o, DA-B1; DESIGN.md §24) The mirror is read **by pages, when asked**
+(api/mirror.ts), never on a timer: a query names its column; the 16 × 16 page
+holding it is unread (the query answers null: "not read yet", never "nothing
+there"; the page is wanted), current, or stale (answered as last read, and
+wanted). The pages wanted are read together a frame later (one submit, one map,
+the staging buffer kept). A page goes stale when the sim runs its chunk (awake
+or drowsy: `Mirror.tick` from the sim's per-tick tap with Globals.sleep and
+drowse — sim/sleep.ts is the one place that knows) or a column apply writes
+the columns (`ColumnApply.onApply` → `touchAll`); a slide makes every page
+unread. The wind field (its own half-resolution layout) is read whole whenever
+asked. `refresh()` reads every page now (tools, tests, restoreLand); only a
+world made by `createSim` refreshes on a timer (`refreshMs`, 250). The level
+attaches it in one place (scenes/level/world-api.ts `worldApiOf`): the
+fortress's Build, its first painted cell (`clearPlants`), the settlements and
+the cutaway use the same API, and none of them starts a timed read (before,
+the first use started 35 MB mapped every 250 ms). Commands go through the world's
 own queues: Globals.events (edits, ignite; the excess waits a tick), the
 particle burst queue (now kept past 64 a tick, not dropped), and
 `windBlows` (wind.ts, a SimSystem just before the windfield: blows, strokes
@@ -2556,11 +2571,36 @@ cheap pool of light ("Yes absolutely enough"). One concern a file:
   `sources` (simTick, slowSystems, io, counters) are lent by whoever reads it (the bench); it changes nothing.
   `report(mark)` = per frame: interval, rAF lag, CPU, rAF to last submit, submit to done, frames in flight, GPU span,
   the gap between frames' GPU work, sim ticks, which counters moved; the slow frames against the rest.
+- **The water's settling hold** (round 84 ?settletol, on by default with ?rivers=table; round 128o, DA-B20: on the
+  GPU, sim/settlehold.ts): a chunk an event woke stays awake past its time while its water still changes by more than
+  the tolerance, up to 60 s from its waking. The CPU (sim/sleep.ts) says which chunks may be held (`settleCand`: woken
+  within 60 s, asleep by its time) and lists them on the culled passes (AwakeTiles.update `cand`); at each tick's start
+  a 64-thread pass reads water_depth.wgsl's waterChange, holds a candidate while it changed (and 0.75 s of sim time
+  after), lets it sleep drowsy for 0.25 s, writes the masks over Globals.sleep / drowse for the tick's passes (512 B
+  copy) and clears waterChange. Nothing read back (it was 8 KB twice a second). The CPU's own mask says asleep for a
+  held chunk: the mirror counts candidates as run (api/mirror.ts tick), the flows' skip counts them as awake; the
+  frame's render upload puts the CPU's mask back for drawing.
+- **The nearest trees** (round 128o, DA-B6; api/treequery.ts, shaders/treequery.wgsl): `plants.treesNear(x, y, r, n)`
+  is a GPU pass, not a CPU layout over a read-back succession field. Over each ask's box of columns, vegplan.wgsl's
+  `vegPlan` says where the trees stand; three passes: a histogram of the trees' distances (128 bins over the radius),
+  a cut (the bin by which n are counted), a gather (those nearer, then the cut bin's up to n). Back: 16 B and n × 8 B
+  an ask (column, species, trunk, crown), the asks of one task in one submit and one map, buffers kept. A test on Dawn
+  holds it to planTree's nearest (test/gpu/treequery.test.ts). The woodcutters (FortressLife, SettlementLife, crews)
+  ask when their camp or spot changes, after a fell, and once a sim minute (the woods grow back: DA-B21).
+- **The frame cap** (round 128o, DA-B5; DESIGN.md §24 "Cap at 30 fps while building or paused"): a Scene may say
+  `maxFps()`; main.ts skips display frames until `frameDue` (scenes/frame-cap.ts: the cap's interval less half a
+  display frame), so 60 Hz runs every other frame, 120 Hz every fourth, 100 Hz every third (33 fps). The level caps
+  at 30 while the fortress is planned (`fortress.mode === 'plan'`) or the game is paused (`speed === 0`). The lab's
+  driven frames (lab.run) aren't capped.
+- **The sandbox valley's reads** (round 128o, DA-B5; scenes/level/valley-reads.ts `ValleyReads`): the wind field 4 Hz
+  (weather.windField: storms feel the painted wind), the particle counters 2 Hz (Nature's smoke and grime, audio.wash),
+  veg and water 1 Hz (the ambience: valley.ts `hearing`; the inhabitants' `waterAt`). One object on the level
+  (`scene.valleyReads`), made for the sandbox and dropped by `startFortress`: none of these run in fortress play.
 - **The judge's inputs** (integrity.ts): edits, cuts, watches, lightning, cyclones and the first window's structures
   seed it; land that comes in with a slide does not (round 100). A pass judges structure boxes for at most 8 ms.
-- **The world API's mirror** (api/mirror.ts, round 100): paged sources (the layers) are read by pages round
-  `Paged.focus()` — the camera's target and `Terrain.keepFresh` points — between whole reads (every 8th, after a
-  slide, `refresh(true)`); `?mirror=full` reads everything every time.
+- **The world API's mirror** (api/mirror.ts, round 100; round 128o: by pages when asked, "The world API" above):
+  `Terrain.keepFresh` points (a hero's) have their unread pages within 48 cells read before anything asks; their
+  queries keep them current. (`?mirror=full`, the camera-target focus and the whole read every 8th are gone.)
 
 ## Benchmark (round 101, branch `bench`)
 
@@ -3512,7 +3552,7 @@ The building rule (the user's): select what (a structure type), then plan it wit
   (every JOBS_S); phases idle/home/wait, builders toPile/toSite/working (BuildBook as before), workers
   toWork/gather/lifting/carry. Fields (0-6, all FortressLife's): F.pile the stores (the first built warehouse's door
   — `Fortress.doorOf` — else the town's heap), F.site/F.store sites lacking stone/wood, F.quarry the built quarry cells'
-  middles, F.fell the trees in the lumber camps' reach (`plants.treesNear`, every 10 s), F.farm the built farm cells,
+  middles, F.fell the trees in the lumber camps' reach (`plants.treesNear`, asked of the GPU when the camps change, after a fell and once a sim day: round 128o), F.farm the built farm cells,
   F.home house doors and the town's homes; groups R.* (settle/life.ts). Miners dig the ground (`terrain.take`, a quiet
   edit: sim/sleep.ts touch — the chunk isn't woken) every ECON.digSec within ECON.digR of the cell's middle, as a bowl
   no deeper than `pitDepth(d)` (1 m down a metre in, ECON.pitMax at most) under the ground they first found there; woodcutters fell

@@ -44,7 +44,7 @@ export function attachTools(scene: LevelScene): void {
     birdsFlushed: async () => new Uint32Array((await core.readBuffer('particleCounters')).buffer)[1],
     waterAt: (x, y) => {
       const [cx, cy] = cellAt(x, y);
-      return cx < 0 || cy < 0 || cx >= dims.w || cy >= dims.h ? 0 : (scene.waterCache?.[core.ring.i(cx, cy)] ?? 0);
+      return cx < 0 || cy < 0 || cx >= dims.w || cy >= dims.h ? 0 : (scene.valleyReads?.water?.[core.ring.i(cx, cy)] ?? 0);
     },
   });
   // tapped metal rings by its size: count the metal voxels connected to the

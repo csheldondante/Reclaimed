@@ -18189,6 +18189,117 @@ simple plain language like in the worked examples."
   tests that produce it (writing.test.ts and the fortress tests keep their lint calls). JSON situations under data/
   are linted by writing.test.ts for seed 1 only.
 
+## 2026-11-05 — round 128n (`phonefix`): the outside gate on the user's town, for the game's length (PF-4)
+
+- Why the gate missed it: the lab's fortressoutside ran on the small `walled` recipe until its three sites stood (90-121
+  sim s) and stopped. On 062fe16 the timed raid waves came at 228 sim s, then every 180 s, and everyone sheltered.
+  In the game the builders' 50 m walk took longer than 228 s, so nothing outside got built ("the building still
+  didn't work"). The lab's run ended before the first wave.
+- Now (scripts/lab/fortressoutside.mjs): the `town` recipe (the user's start town, townlab), 900 sim s whatever
+  happens. It plans three blocks outside the walls, then another every 150 s round the town (one the plan lets go of on
+  Build is replaced by the next spot), and FAILS if no builder reaches any waiting site for more than 180 sim s. A site
+  counts as reached when a builder stands within 6 m of its cell's middle (sampled every 5 sim s) or its block stands.
+  Whatever keeps the builders in fails it: a wave, a shut gate, a lost way, no build jobs.
+- With RAID.timed true (062fe16's waves) it fails at 487 s. On head it fails too, at 487 s, with two findings handed on:
+  PF-5, a house planned outside and kept on Build is let go by the plan later (owner -1), silently; PF-6, a farm
+  planned at 450 s waits with nobody holding a build job (phases toWork 5, eat 4, home 3).
+- The cache question (PF-2): no stale town. In a kept profile, d2ba927 played and then head loaded: "dropped 2 saved
+  regions made by another land generator", and the town has its land gate. A second session does restore the first
+  one's fortress blocks as stone (block cells 107.0 / 106.5 m against 103.3 / 102.9 m fresh). That goes to the onetown
+  agent (claimed intervals that name their grid).
+
+## 2026-11-05 — round 128o (`phonefix`, DA-B1): the world API's mirror read by pages when asked, never on a timer
+
+- Why: the user, "performance on mobile was abysmal and could not be played"; DESIGN.md §24, no timed GPU→CPU read in
+  play, small async reads only after edits. The level's world API started its mirror on a 250 ms timer the first time
+  anything used it: the fortress's Build (to give the agents a terrain for dropped loads), its first painted cell
+  (`clearPlants`), the cutaway. Each read mapped the whole window's buffers: 35 MB, 139 MB/s, for a few heights and
+  the trees round a lumber camp. And FortressLife read the heap's whole field back (8.2 MB every 500 ms) to pick where
+  a newcomer walks in.
+- phonefix's WIP (c812fb5) answered those questions from a second reader beside the mirror (`WorldQuery`: pages read
+  back on demand). Judged against the design it was a second copy of the ground with its own decoding (heightAt,
+  layersAt, treesNear written again), and it let the mirror's timer run for every other caller. So the mirror itself
+  now reads by pages (api/mirror.ts), and WorldQuery is gone: one copy, one decoder, every caller.
+  - A query names its column; the 16 × 16 page holding it is unread (null: "not read yet", never "nothing there";
+    wanted), current, or stale (answered as last read; wanted). Pages wanted are read together a frame later: one
+    submit, one map, the staging buffer kept.
+  - A page goes stale only where the sim ran: `Mirror.tick` on the sim's per-tick tap with Globals.sleep/drowse
+    (sim/sleep.ts is the one place that knows what runs), and on a column apply (claims, stamps). A slide makes
+    every page unread. The wind field (half-resolution layout) is read whole when asked.
+  - No timer in the level (`worldApiOf`, scenes/level/world-api.ts, the one place it's attached; `mirroredApiOf` and
+    `keepMirrored` gone). `createSim` worlds keep a 250 ms whole refresh (no level frame of their own).
+  - Unread is never "none": `plants.treesNear` returns null until every page in reach is read (it was [] before the
+    first read, and phonefix's `?? []` kept that); the fortress's and the settlements' woodcutters look again next
+    turn; the crews wait; a dropped load flies on until the ground under it is read (it was thrown away: goods lost).
+    `blendedTop` answers null when a neighbour is unread (it renormalised over it as if off the map).
+  - The quarry: a column not read yet counted as dug (`?? -Infinity`): a tier could finish over unread ground. Now it
+    is NaN and a tier waits until all its columns are read (test). Its wait for two timed reads after it was ready
+    went with the timer: with reads made only when asked, nothing asked, and it waited for ever (test). A take is
+    remembered until it's answered and two reads came after (it was two reads after it was sent).
+- FieldReader: the newcomers' entry spots go to the fortress's reach (a bit a spot, `probeReach`), phonefix's change.
+- Measured (desktop proxy: lab `town`, 412×915 dpr 1, q=low, fortressperf.mjs, 10 s of display frames at 4x after
+  Build, every mapAsync counted by label):
+  - fortress 59ba924: 161 MB/s — mirror 139 MB/s (4/s × 35 MB), the field reader 16 MB/s (2/s × 8.2 MB), agents' sync
+    3.3 MB/s, the valley's reads 2.7 MB/s;
+  - phonefix c812fb5 (WIP): 5.8 MB/s;
+  - now: 8.5 MB/s, of which the mirror's pages 1 KB/s (one read of 6 pages at Build); the rest is the agents' sync
+    (2-6 MB/s between runs: DA-B2) and the valley's timed reads (2.8 MB/s: DA-B5, next commit). While the miners dig
+    (`work: true`, a quarry and a lumber camp standing): ~5 page reads a sim second, 40-65 KB a sim second, only
+    where they dig. Frame time on the desktop: 100 fps (the display's), CPU p50 ~1 ms, before and after: the desktop
+    doesn't show the phone's cost; the phone bench is the user's.
+- Found, not this row's: while the quarry digs, Integrity's column copy reads 61-67 MB/s (2.8 reads/s of the window's
+  layers; game/colcopy.ts `kept`, re-read before each judge pass the dig's settle asks for) — DA-B12 has its start and
+  slide reads, not this rate. The lumber camp felled nothing in 120 sim s in the lab on head and before (trees found:
+  12-16 in reach) — not looked into.
+- Hacks and limits: the 16 × 16 page is the unit (a query on a page edge reads two); a hero's kept points read their
+  unread pages within 48 cells ahead; the wind field is read whole when asked (nobody asks in fortress play); drift on
+  sleeping chunks fades without the page going stale (groundAt's drift may lag on chunks that sleep); a column apply
+  makes every page stale (applies are per build event); `world.town()`'s ground still reads an unread column as 0
+  (the sandbox's editor town, not the fortress).
+
+## 2026-11-05 — round 128o (`phonefix`, DA-B5): the sandbox's frame reads off in fortress play; 30 fps while planning or paused
+
+- Why: DESIGN.md §24 ("no per-frame or timed GPU→CPU readback in play"; decided 2026-11-05, "Cap at 30 fps while
+  building or paused" — the user: "It makes sense for a mobile game"). The level's frame read the window back on
+  timers for the sandbox valley's own systems, in fortress play too.
+- The reads are one object now, `ValleyReads` (scenes/level/valley-reads.ts), made for the sandbox and dropped by
+  `startFortress` — a mode, not ifs in the frame: the wind field 4 Hz (~400 KB a read at q=low), the particle counters
+  2 Hz (16 B), veg and water 1 Hz (400 KB each). Each read made and destroyed a buffer of its own (WorldCore.readBuffer).
+- What fortress play loses as inputs (for the user to check by ear and eye):
+  - audio: the ambient bed's birdsong and insects (living land round the view), running water and frogs (valley.ts
+    `hearing`: lifeNear, flow, frogs go to 0; the rain bed stays — it's from the storms, not a read); the wash's plinks
+    (grime blown into water); the inhabitants' `waterAt` answers 0 (?life= only);
+  - storms: they no longer feel the wind the player painted (weather.windField keeps its last read from before the
+    fortress, if any); the map's own wind and the storms' own movement are unchanged. DA-B6 gives them a GPU reduction;
+  - Nature: smoke dispersed and grime washed no longer pay it (the fortress has no Nature).
+- Left, with options (not this row: each is a design call):
+  - the level's surface, 1 Hz (400 KB at 320²): `scene.heightAt` (the camera's ground, the fortress's ground and its
+    pieces, the raiders, places, structures) answers from it, synchronously, with the generated map before the first
+    read. The GPU makes a chunk's surface words only when it wakes, so the mirror's pages can't simply replace it.
+    Options: (a) `scene.heightAt` from the mirror's surface pages, the generated map answering for chunks that never
+    ran (one copy: a page seeded from the map until its chunk runs); (b) the camera's ground as a one-texel GPU query
+    and the fortress keeping its first read plus its own edits; (c) keep it until the pages work (DA-P*);
+  - the water's settling, 2 Hz (8 KB: the change per chunk, sim/sleep.ts holdUnsettled keeps unsettled water awake):
+    the world's sleep, not the sandbox's; to go when the hold is decided on the GPU (an indirect wake list).
+- Measured (desktop proxy as for DA-B1, fortressperf.mjs `work: true`): after Build 3.5 MB/s of reads (agents' sync
+  3.1, surface 0.4, the rest < 0.02), from 8.5; plan mode 2.6 MB/s (agents' sync 2.1, surface 0.4). The cap: the
+  scene's frames counted round `scene.frame` in the lab on a 100 Hz display — planning 33 fps, playing 99, paused 32
+  (every third display frame: 100 Hz has no 30). The phone bench is the user's.
+- Hacks and limits: the cap runs a frame once the cap's interval less half a display frame has passed (nearest display
+  frame); "building" read as the fortress's Plan mode (placing, time stopped), not Build (the builders at work) — the
+  user to confirm.
+
+## 2026-11-05 — round 128o (`phonefix`): fortress 022cedd merged (the transfer gate, DA-G1)
+
+- The gate's table (src/gpu/transfers.ts) follows DA-B1 and DA-B5: the mirror's read is `GpuPageReader.read`, wrapped
+  by `attachSim`, its level caller `worldApiOf` at rate `edit` (no `violates`); the eighteen timed `Mirror.read` callers
+  and the two FieldReader rows are gone; the valley's reads are `ValleyReads.frame`, play `no`. What stays timed in
+  fortress play has a row: the level's surface read 1 Hz (DA-B19, new) and the water's settling read 2 Hz (DA-B20, new).
+- test/unit/townfixture.test.ts fails here as on fortress since 403f757 (the LF renormalisation changed the land
+  generator's source hash: `data/lab/town.rclt is stale`); the lab's `town` recipe still loads. Recapturing the fixture
+  is fortress's (node scripts/labtown.mjs capture).
+
+
 ## 2026-11-05 — the shadow cache without its copy (DA-B7)
 
 Why: with `?shadowcache=N` (the phone tier's set, phone-flags.ts) the static casters were drawn into their own map every
@@ -18262,6 +18373,89 @@ The linger existed for the sandbox's pours only (DEVLOG round 83: "a pour lands 
   for its press's whole landing time after the last event. A pour in a chunk that falls asleep mid-flight (woken for
   8 s, longer than any pour) would hold the state one tick apart between the two textures. Snapshots (sim/snapshot.ts)
   keep both textures but not `editCur`: fine at rest, where they agree.
+
+## 2026-11-05 — round 128o (`phonefix`, DA-B6): the woodcutters' trees found on the GPU; why the lumber camp felled nothing
+
+- Why: DESIGN.md §24, world queries are GPU passes. `plants.treesNear` read the succession field back (since DA-B1 by
+  pages; before, the whole window on a 250 ms timer) and laid the trees out again on the CPU (planTree, a port of
+  vegplan.wgsl), for a list of 12 or 30 trees.
+- Now (api/treequery.ts, shaders/treequery.wgsl): the GPU lays the trees out itself (vegPlan over each ask's box) and
+  answers the n nearest: a histogram of distances (128 bins over the radius), a cut, a gather. Back: 272 B an ask (16 B
+  and 32 trees × 8 B), the asks of one task in one read. Exact to the bin's width (r / 128): every tree nearer than the
+  cut bin is in, and of the cut bin's as many as fit — a Dawn test against planTree's nearest, five asks (dense woods,
+  few trees, none: an empty list, not null) in one read. `treesNear` is async now (Promise<Tree[] | null>; null: the
+  window slid meanwhile); FortressLife, SettlementLife and the crews ask and use the answer when it comes.
+- When they ask: FortressLife on its JobBoard turn when the lumber camps or their built blocks change, after a fell, and
+  once a sim day (the woods grow back by succession, which tells the CPU nothing: DA-B21); SettlementLife when its first
+  spot moves, after a fell, and once a sim minute (it was every 15 s, nudged after a fell). The fortress looked every
+  10 sim s before. The transfer table lists the read as timed (DA-B21) and the asks' upload as small.
+- Measured (lab `town`, a lumber camp standing, 180 sim s at 4x): 6 reads, 1.6 KB in all; the mirror read nothing.
+  The camp felled 3 trees (2 woodcutters; a tree takes a woodcutter `workSeconds(lumber)`, ~75 sim s, plus the walks).
+- Why it felled nothing in fortressperf `work: true`: not the trees (12-16 found in reach). With a quarry painted (radius
+  12 m, dozens of blocks) the JobBoard gave all 8 people to the quarry: jobs go in JOB_ORDER (farm, build, quarry,
+  lumber, …) and a quarry has slots for 2 workers a block, so a big quarry takes everyone before the lumber camp's turn
+  (snapshot jobs `{"quarry": 8}`). That is DESIGN.md §18 as written ("Idle people take jobs on the job board in priority
+  order"), so no code fix and no failing test: a question for the user (a share per kind, the player's priorities, or
+  slots that don't scale with a quarry's size).
+- Hacks and limits: 32 trees an ask at most; the nearest to r / 128; the once-a-sim-minute/day look for regrown trees
+  (DA-B21); a felled tree may still be in an answer asked before its edit ran (the woodcutter finds no logs there and
+  goes idle, and the list is asked again after the fell); the CPU port (planTree) stays for `treeAt` and `fell`'s answer.
+
+## 2026-11-05 — round 128o (`phonefix`, DA-B20): the water's settling hold decided on the GPU
+
+- Why: DESIGN.md §24, no timed read back in play. With rivers on the atlas's table (the game's default) the level read
+  the water's change per chunk back twice a second (world-gpu waterChange, 8 KB) for sim/sleep.ts to keep a woken
+  chunk awake while its water still settled (`holdUnsettled`, round 84).
+- Now (sim/settlehold.ts, shaders/settlehold.wgsl): the CPU says which chunks may be held — `Sleep.settleCand`, a bit
+  a slot: asleep by its time, woken by an event within SETTLE_MAX_S (60 s) — and lists them on the culled passes as
+  live (AwakeTiles.update). At each tick's start one 64-thread pass reads waterChange: a candidate whose water changed
+  by more than the tolerance in the last tick (and HOLD_S, 0.75 s of sim time, after) is held — its asleep bit
+  cleared — then drowsy for 0.25 s; the masks are copied over Globals.sleep and drowse (512 B, GPU to GPU) before the
+  tick's passes read them, and waterChange is cleared. `readSettling`, `holdUnsettled` and the scene's read state are
+  gone. The DA-B20 row asked for an indirect wake list; not needed: the CPU already knows which chunks can be held (it
+  woke them), so the lists stay the CPU's and the GPU decides inside them. A candidate the GPU lets sleep runs its
+  passes' asleep branch (carried through), as an unlisted chunk would have been left.
+- What else had to know: the mirror (api/mirror.ts) counts a candidate as run (its pages go stale: the GPU may have run
+  it); the flows' skip (flow/install.ts) waits for no candidates as well as no awake chunks; the render's own upload
+  of the Globals puts the CPU's mask back for drawing (a held chunk draws as asleep: its flux animated, as before when
+  the hold lagged the read).
+- Tests: test/gpu/settlehold.test.ts — the candidates (an event-woken chunk past its time is one for 60 s, then
+  drowsy once; land come in and no tolerance: none), and the kernel on Dawn (a candidate held while its water changes,
+  let go after the hold's ticks and drowsy once; a non-candidate sleeps; a candidate dropped sleeps). GPU tier 145/145.
+- Measured: the atlas game, fortress, after Build, lightning near the town: 32 candidates once the CPU's 8 s were up,
+  8 of them held (their water still changing) for 9 s and on; the settling read is gone from ?readstats (it was 16 KB/s).
+- Hacks and limits: the hold is in sim ticks (0.75 s / 0.25 s at TICK_DT) where it was wall seconds; candidates are
+  dispatched for up to 60 s after a wake even when the GPU lets them sleep (their passes run the asleep branch — the
+  cost of not reading back); a candidate misses the AWAY lists' slow turns while it is one; scripts/culltest.mjs not
+  run (it needs a dev server; it sets settletol=0, so it doesn't reach the hold).
+
+## 2026-11-05 — round 128o (`phonefix`, DA-B19): the level's surface read — design note, no code (for the user)
+
+- What it is: frame.ts reads the whole window's surface buffer back every second (400 KB at 320², 0.4 MB/s, a new
+  buffer a read) into `scene.surfaceCache`, seeded from the generated map (`map.surface`) at the start and after each
+  slide. `scene.heightAt` answers from it, synchronously, for: the camera's turn pivot and the fly toggle
+  (`camera.groundAt`, a ray marched over many columns, on a turn or a toggle), the free camera's floor (every frame,
+  only while flying), the fortress's ground (`io.ground`: kept per column as first read; the pieces' and the raiders'
+  heights), places and structures placed by the editor, and the sandbox tools' material checks (`sfMat`).
+- Why not simply the mirror's pages (option a): the surface buffer is derived, made for a chunk only when it wakes or
+  is prepared (the fortress calls `core.prepareArrived()` before its one read); a page of it read for a chunk that
+  never ran can be wrong, and seeding those from the generated map keeps a second copy that drifts from the GPU's after
+  any edit. Two copies that can disagree is the design bug AGENT_RULES §1 names.
+- Why not keep it (option c): it reads 0.4 MB a second for questions asked on a turn, a toggle or once per column.
+- Recommended (option b, each consumer to the source that is true for it, answered on the GPU, when asked):
+  1. The camera's pivot and fly toggle: the renderer's pick at the screen's middle (Renderer.pick, already a small async
+     read of what is drawn), when the turn or toggle happens. The pivot lands a frame later.
+  2. The free camera's floor while flying: the world API mirror's `terrain.heightAt` (levels pages, read when asked
+     and current while that land sleeps). This is the sandbox's flyer only, not fortress play.
+  3. The fortress's ground: one GPU query of its box's column tops from the layers (the columns themselves, always
+     made, unlike the derived surface; a colquery-style pass, 4 B a column: ~160 KB once at a 200² box, where it reads
+     the whole surface once today), kept by the fortress as now ("the ground as first read"), its own claims and digs
+     changing it. The pieces and the raiders read the fortress's.
+  4. The editor's places and structures, and the sandbox tools' materials: the mirror (`terrain.heightAt`,
+     `materialAt`), the sandbox only.
+  5. Then `surfaceCache`, its seeding on slides and the 1 Hz read go.
+- Cost and risk: the camera's pivot becomes async (a frame); the fortress's start query is new GPU code (a test on
+  Dawn against the CPU's column tops); nothing else changes for the player. In fortress play no timed read remains.
 
 ## 2026-11-05 — the phone's flags reach the built page (DA-B17)
 
@@ -18360,3 +18554,14 @@ slides, restoreChunks, replaceWindow, the edit brush's mirror). Two copies that 
   DA-B7), 735740a and here: not this change; listed for whoever owns the streamer.
 - ARCHITECTURE "Who writes the columns": one buffer now; the table's "both buffers" column gone.
 - Hacks and limits: colapply's params keep the old `twin` word as `spare` rather than repacking the struct.
+
+## 2026-11-06 — fortress (phonefix: DA-B1/B5/B6/B20) merged into `phoneflags`
+
+- Conflicts: api/mirror.ts took phonefix's page mirror whole (on demand, no timer, unread ≠ empty; its `?mirror=near`
+  flag, the one read this branch had moved to flags.ts, is gone with it); stream-setup.ts keeps both imports; BACKLOG
+  keeps DA-B17 done beside phonefix's DA-B19..B21; MODULES regenerated.
+- The mirror learns a chunk changed from sleep's awake and drowsy chunks each tick and from ColumnApply (`touchAll`):
+  the in-place column passes (edit, structure) run only there, and removing layersNext changed no write to the layers.
+- No new `location.search` reads came in. The lab's town fixture recaptured (both sides moved the generator hash):
+  columns identical. typecheck (both halves), unit 773 passed, GPU 145 passed, flagcheck, hallcheck 0 of 344 lost,
+  the transfer gate: all pass.

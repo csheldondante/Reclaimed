@@ -1,6 +1,7 @@
 // Fixed-timestep orchestration of the simulation systems (design doc §24).
 // Systems run in the documented order; each has its own period.
 
+import { SettleHold } from './settlehold';
 import type { Profiler } from '../gpu/profiler';
 import { MAX_EVENTS, writeGlobals, GLOBALS_HEAD_BYTES, globalsBytes, type GlobalsState } from './globals';
 import type { SimSystem } from './system';
@@ -137,6 +138,8 @@ export class Simulation {
    * the frame with it and without it) systems by name not stepped while named here
    */
   readonly paused = new Set<string>();
+  /** (round 128o, DA-B20) the water's settling hold on the GPU, made when a tick first asks for it */
+  private settleHold?: SettleHold;
 
   step(globals: GlobalsState, filter?: (s: SimSystem) => boolean): void {
     globals.tick = this.tick;
@@ -157,9 +160,12 @@ export class Simulation {
     }
     // (perfopt: land just come in — drowsy — settles its water: WaterSystem.settling)
     this.water.settling = globals.settle ?? [];
-    // (round 85, simcull — sim/cull.ts: the chunks live this tick, from the same masks the kernels read)
-    this.world.tiles?.update(this.tick, globals.sleep, globals.drowse, globals.origin);
+    // (round 85, simcull — sim/cull.ts: the chunks live this tick, from the same masks the kernels read; round 128o: and
+    // those still maybe settling their water, which the GPU lets run or not)
+    this.world.tiles?.update(this.tick, globals.sleep, globals.drowse, globals.origin, globals.settleCand);
     const enc = this.device.createCommandEncoder({ label: `tick ${this.tick}` });
+    // (round 128o, DA-B20) the settling hold, before the passes read the masks
+    if (globals.settleCand && globals.sleep) (this.settleHold ??= new SettleHold(this.device, this.world)).encode(enc, globals.settleCand, globals.settleTol ?? 0);
     for (const sys of this.systems) {
       if (this.tick % sys.period !== 0) continue;
       if (filter && !filter(sys)) continue;

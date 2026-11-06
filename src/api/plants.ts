@@ -7,7 +7,9 @@ import type { WorldCore } from '../scenes/world-core';
 import { EventKind } from '../sim/globals';
 import { cellAt, cellPos } from '../world/lattice';
 import type { Mirror } from './mirror';
+import { COLUMN_BUFS } from '../sim/pages';
 import type { Terrain } from './terrain';
+import { MAX_N, TreeQuery } from './treequery';
 
 import { OP, STROKE_START } from '../sim/edit-ops';
 
@@ -114,23 +116,30 @@ export class Plants {
     private mirror: Mirror,
     private terrain: Terrain,
   ) {
-    mirror.addBuffer('veg', core.world.veg);
+    mirror.addColumns('veg', () => core.world.veg, COLUMN_BUFS.veg[0]);
+    this.query = new TreeQuery({
+      device: core.host.gpu.device,
+      globals: () => core.world.globals,
+      materials: () => core.world.materials,
+      veg: () => core.world.veg,
+      dims: () => core.dims,
+      epoch: () => core.windowEpoch,
+    });
   }
 
-  /** The succession field at (x, y): 0 bare … ~1.2 grass, 2.6 shrubs, 3.6+ woods (null before the first read). */
+  /** the nearest trees, asked of the GPU (treesNear) */
+  private query: TreeQuery;
+
+  /** The succession field at (x, y): 0 bare … ~1.2 grass, 2.6 shrubs, 3.6+ woods (null: its page not read yet, or off the window). */
   vegAt(x: number, y: number): number | null {
-    const v = this.mirror.f32('veg');
     const [cx, cy] = cellAt(x, y);
-    const { w, h } = this.core.dims;
-    if (!v || cx < 0 || cy < 0 || cx >= w || cy >= h) return null;
-    return v[this.core.ring.idx(cx, cy)];
+    return this.vegCol(cx, cy);
   }
 
   /** (round 117, flora) the succession field at window column (cx, cy), null before the first read or off the window */
   vegCol(cx: number, cy: number): number | null {
-    const v = this.mirror.f32('veg');
-    const { w, h } = this.core.dims;
-    if (!v || cx < 0 || cy < 0 || cx >= w || cy >= h) return null;
+    const v = this.mirror.f32('veg', cx, cy);
+    if (!v) return null;
     return v[this.core.ring.idx(cx, cy)];
   }
 
@@ -147,23 +156,13 @@ export class Plants {
     return this.planAt(cx, cy, v);
   }
 
-  /** The trees within `radius` of (x, y), nearest first (as of the mirror's last read). */
-  treesNear(x: number, y: number, radius: number): Tree[] {
-    const v = this.mirror.f32('veg');
-    if (!v) return [];
-    const { w, h } = this.core.dims;
-    const [c0x, c0y] = cellAt(x, y);
-    const r = Math.ceil(radius * 1.2) + 1;
-    const out: (Tree & { d: number })[] = [];
-    for (let cy = Math.max(0, c0y - r); cy <= Math.min(h - 1, c0y + r); cy++) {
-      for (let cx = Math.max(0, c0x - r); cx <= Math.min(w - 1, c0x + r); cx++) {
-        const t = this.planAt(cx, cy, v[this.core.ring.idx(cx, cy)]);
-        if (!t) continue;
-        const d = Math.hypot(t.x - x, t.y - y);
-        if (d <= radius) out.push({ ...t, d });
-      }
-    }
-    return out.sort((a, b) => a.d - b.d).map(({ d: _d, ...t }) => t);
+  /**
+   * The trees within `radius` of window world (x, y), nearest first, at most `n` (≤ 32): found by the GPU where the
+   * trees are (api/treequery.ts, round 128o DA-B6 — a few hundred bytes back, not the succession field). Null: the
+   * window slid while it was asked (ask again).
+   */
+  treesNear(x: number, y: number, radius: number, n = MAX_N): Promise<Tree[] | null> {
+    return this.query.nearest(x, y, radius, n).then((ts) => ts && ts.map((t) => ({ ...t, logs: logsOf(t.trunk, t.crown) })));
   }
 
   /**

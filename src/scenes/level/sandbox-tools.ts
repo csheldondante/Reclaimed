@@ -4,13 +4,13 @@ import { EventKind } from '../../sim/globals';
 import { EDIT_OP, LAYER_TOOLS } from '../../ui/editor';
 import { ignoreTeardown } from '../../gpu/pipeline';
 import { PK } from '../../sim/particles';
-import { attachSim } from '../../api/world';
 import { LEVEL_H } from '../../build/town';
 import { sfMat } from '../../world/layout';
 import { cellPos } from '../../world/lattice';
 import { drawPlan, editorTown, placeRect } from './town-tools';
 import { placeModel } from './impacts';
 import type { LevelScene } from '../level';
+import { worldApiOf } from './world-api';
 
 /** LevelScene.editTool (the class keeps the method, documented there) */
 export function editTool(scene: LevelScene, wx: number, wy: number, tap: boolean): boolean {
@@ -37,7 +37,7 @@ export function editTool(scene: LevelScene, wx: number, wy: number, tap: boolean
   // landforms: a stroke the world API raises as it goes (round 64)
   if (ed.tool === 'range' || ed.tool === 'mesa') {
     scene.core.snapshot();
-    const api = (scene.worldApi ??= attachSim(scene.core));
+    const api = worldApiOf(scene);
     scene.raising = api.terrain!.raise(ed.tool, ed.tool === 'range' ? { radius: ed.radius, height: ed.radius * 2.6 } : { radius: ed.radius, level: scene.heightAt(wx, wy) + 10 });
     scene.raising.to(wx, wy);
     if (tap) {

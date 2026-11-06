@@ -128,7 +128,7 @@ export async function startAtlasRun(d: AtlasRunDeps): Promise<HeroRun> {
     for (let k = 0; ; k++) {
       await t.refresh();
       const h = t.heightAt(spawn[0], spawn[1]);
-      if (api.fresh && h !== null && h0 !== null && Math.abs(h - h0) < 3) break;
+      if (h !== null && h0 !== null && Math.abs(h - h0) < 3) break;
       if (k > 40) throw new Error(`run "${story.id}": the ground never read back after the stage was stamped`);
       await new Promise((res) => setTimeout(res, 250));
     }
