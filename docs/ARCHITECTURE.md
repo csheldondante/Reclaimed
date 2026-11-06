@@ -13,11 +13,11 @@ own one and dispose it on exit (WorldGpu.destroy frees every buffer made via
 `buf()`; in-flight readbacks reject with AbortError, swallowed by
 `ignoreTeardown`).
 
-**URL flags** (DA-B17, src/flags.ts): the page's flags are resolved once — the URL's own plus the phone's set on the
-low tier (`LITE_SET`, `SIM_SET`; no `q` or `q=low`, `?phone=0` off, `?lite=1` the render's half on any tier) — and
-every module reads them through `urlFlags()`, never `location.search` (test/unit/flags.test.ts). flags.ts imports
-nothing and is a dependency of each reader, so it runs before them in any bundle order; it also writes the resolved
-set into the address bar, which nothing reads. scripts/flagcheck.mjs checks a built page per tier. A worker's
+**URL flags** (DA-B17, src/flags.ts): every module reads the page's flags through `urlFlags()`, never `location.search`
+(test/unit/flags.test.ts): the URL's own plus the phone's set on the low tier (`LITE_SET`, `SIM_SET`; no `q` or `q=low`,
+`?phone=0` off, `?lite=1` the render's half on any tier), resolved by each read from the query it sees (memoised), so
+no read depends on another module having rewritten the address first. flags.ts also writes the resolved set into the
+address bar, which nothing reads. scripts/flagcheck.mjs checks a built page per tier. A worker's
 `location` has no query: workers read the defaults.
 
 ## Frame

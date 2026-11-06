@@ -4,7 +4,8 @@
 // it last ran. A change to the layers alone was undone by the next tick's copy-back: a town's building claimed as
 // External in a chunk that couldn't wake (the hybrid's filter) lost its claim within a tick, was found cut by the
 // integrity check and fell to rubble. ColumnApply (WorldCore.stampColumns) writes both buffers; this checks it with
-// every system stepping and every chunk asleep — and that a write to the layers alone is still undone (the cause).
+// every system stepping and every chunk asleep. (DA-B14: the passes write in place now and copy nothing back, so a write
+// to the layers alone stays too — the last test.)
 import { afterAll, beforeAll, expect, test } from 'vitest';
 import { columnSlots, packColumn, readColumn, SLOT_WORDS, type Interval } from '../../src/world/layout';
 import { MAT } from '../../src/world/materials';
@@ -71,7 +72,8 @@ test('cells taken and a model seated in a sleeping chunk stay so', async () => {
   expect(plain(readColumn(w.core.packed, after, sx, sy)).at(-1), 'the model seated').toEqual({ z0: base, z1: base + 3, mat: MAT.Steel });
 });
 
-test('(the cause) a column written to the layers alone in a sleeping chunk is undone by the next copy-back', async () => {
+// (DA-B14: the column passes write in place and copy nothing back — the cause is gone: a write to the layers alone stays)
+test('(the cause, gone) a column written to the layers alone in a sleeping chunk stays', async () => {
   const [x, y] = [12, 26];
   const before = readColumn(w.core.packed, await columns(), x, y);
   const want: Interval[] = [...before, { z0: before.at(-1)!.z1, z1: before.at(-1)!.z1 + 4, mat: MAT.External, aux: MAT.Rubble }];
@@ -79,5 +81,5 @@ test('(the cause) a column written to the layers alone in a sleeping chunk is un
   w.core.host.gpu.device.queue.writeBuffer(w.core.world.layers, base * SLOT_WORDS * 4, packColumn(want, k));
   await w.step(10);
   expect(g.takeErrors()).toEqual([]);
-  expect(plain(readColumn(w.core.packed, await columns(), x, y))).toEqual(plain(before));
+  expect(plain(readColumn(w.core.packed, await columns(), x, y))).toEqual(plain(want));
 });

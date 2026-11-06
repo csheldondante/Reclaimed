@@ -18330,3 +18330,16 @@ depended on whether that neighbour's thread had written yet. The layer pulls cop
 - layersNext is now written (by every column writer, "alike") and read by nothing: removed in the next commit.
 - Hacks and limits: the nibble holds support 0-15 (what the aux byte holds) for up to 16 intervals a column (MAX_K);
   `structLatSup` is indexed by column, written only for awake columns and read only for them in the same tick.
+
+## 2026-11-05 — the flags resolved when read, not once at load (DA-B17 follow-up)
+
+Why: the GPU tests (`npx vitest run --project gpu`, not run before the DA-B17 commit — my miss) caught it:
+test/gpu/integrity.test.ts sets `location` to `?solver=hybrid` in its `beforeAll`, after the modules are imported, and
+the hybrid solver's heavy blow on stone stopped crumbling it. flags.ts resolved the flags once, as it loaded, so a read
+made later (solverVariant's default, at call time) saw the old empty query. Now `urlFlags()` resolves the query it
+sees each time (memoised on the query string), which is what every read did before DA-B17 plus the phone's set — so
+the set still applies in any bundle order, and nothing is fixed at load that wasn't before.
+
+- Also: test/gpu/cpu-write-asleep.test.ts's "(the cause)" test asserted that a write to the layers alone is undone by
+  the next copy-back; DA-B14 removed the copy-back, so it now asserts the write stays.
+- GPU suite: 140 passed, 5 skipped (was 2 failed: these two).

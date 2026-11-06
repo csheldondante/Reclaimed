@@ -1,7 +1,7 @@
-// The page's URL flags, resolved once (DA-B17): the URL's own, plus the phone's performance set on the low tier. Every
-// module reads its flags here (`urlFlags()`), never `location.search`: this module is a dependency of each reader,
-// so ES modules evaluate it — and the phone set is in — before any reader runs, whatever order a bundle puts the
-// readers' chunks in. (Until DA-B17 the set was written into the URL by main.ts's first import, phone-flags-boot.
+// The page's URL flags, resolved (DA-B17): the URL's own, plus the phone's performance set on the low tier. Every
+// module reads its flags here (`urlFlags()`), never `location.search`: each read resolves the set itself (from the
+// query it sees, memoised), so no read depends on another module having rewritten the address first, whatever order a
+// bundle puts the readers' chunks in. (Until DA-B17 the set was written into the URL by main.ts's first import, phone-flags-boot.
 // The vite dev server ran that first; the production build — GitHub Pages, the lab, the scripts — ran the chunk
 // holding the renderer and the systems before main's own code, so the module-level reads saw the URL without the
 // set: the phone ran without the shadow cache, prepEvery, in-place columns, settle=0 and sleepmore since
@@ -48,14 +48,24 @@ export function resolveFlags(search: string): URLSearchParams {
   return q;
 }
 
-const PAGE = typeof location === 'undefined' ? '' : location.search;
-const RESOLVED = resolveFlags(PAGE);
-// (the address bar shows what the page runs with: a link copied from it opens the same — the reads above don't
-// depend on it)
-if (typeof history !== 'undefined' && typeof document !== 'undefined' && RESOLVED.toString() !== new URLSearchParams(PAGE).toString())
-  history.replaceState(null, '', `${location.pathname}?${RESOLVED.toString()}${location.hash}`);
+/** the last resolution, by the query it was made from (the query only changes when a test sets `location`, or a
+ *  viewer rewrites its own address) */
+let last: { search: string; q: URLSearchParams } | null = null;
+const resolved = (): URLSearchParams => {
+  const search = typeof location === 'undefined' ? '' : location.search;
+  if (last?.search !== search) last = { search, q: resolveFlags(search) };
+  return last.q;
+};
 
-/** The page's flags, resolved (a fresh copy each call: a caller may change it to build a link). */
+// (the address bar shows what the page runs with: a link copied from it opens the same — nothing depends on it, the
+// reads resolve the set themselves)
+if (typeof history !== 'undefined' && typeof document !== 'undefined') {
+  const q = resolved();
+  if (q.toString() !== new URLSearchParams(location.search).toString()) history.replaceState(null, '', `${location.pathname}?${q.toString()}${location.hash}`);
+}
+
+/** The page's flags, resolved: the URL's own and its tier's set (a fresh copy each call: a caller may change it to
+ *  build a link). Read when called — a module that reads it as it loads gets the set whatever the bundle's order. */
 export function urlFlags(): URLSearchParams {
-  return new URLSearchParams(RESOLVED);
+  return new URLSearchParams(resolved());
 }
