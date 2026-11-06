@@ -2,8 +2,10 @@
 
 Browser prototype (TypeScript + WebGPU): an isometric voxel sandbox where the
 player nudges natural processes (storms, lightning, gusts, fire, floods) to
-clean a ruined industrial valley so life can return. Design authority:
-`.claude/docs/design/Reclaimed_Overview.md`.
+clean a ruined industrial valley so life can return (the original thesis; the game is now a
+legacy fortress game on one persistent world). Design authority:
+`.claude/docs/design/DESIGN.md` (agreed with the user 2026-11-05; every design note
+names its section). `.claude/docs/design/Reclaimed_Overview.md` is the original handoff.
 
 ## Start here
 
@@ -137,6 +139,9 @@ state and the public API.
   or early return; `patch`, `target` and `set` are reserved words; module-scope `let` is invalid.
 
 ## Gotchas for agents editing here
+
+- Line endings are LF everywhere, pinned by `.gitattributes`. Never convert files to CRLF; merge
+  branches made before 2026-11-05 with `-X renormalize`.
 
 - Windows + Git Bash: heredocs and `node -e` scripts containing backticks or
   `${…}` get mangled by the shell. Use the Edit/Write tools for TS/WGSL/Markdown

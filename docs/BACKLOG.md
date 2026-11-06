@@ -12,6 +12,57 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 128o (2026-11-05, session 5, `fortress`) — making the code match DESIGN.md (the work plan from four audits)
+
+The user: "Please work on making the code match the design which is a lot cleaner and intentionally encapsulates and avoids duplicate designs or logic. Let's write this well so it actually works and doesn't have the bugs that slow down development." Plan: https://claude.ai/artifact/JPNnQEzZPggrTzzv6kiKxA; audits in the session scratchpad. Order: gates, then towns working (A) and towns fast (B) in parallel, then the loop (L), the engine (E), pages and the rest (P).
+
+| id | item | size | status |
+|---|---|---|---|
+| DA-G1 | Readback allow-list test: every `mapAsync` site named in one list with reason and rate; a new one fails | S | next |
+| DA-G2 | Import-boundary test: modules cross boundaries only through shared contracts (DESIGN.md) | S | next |
+| DA-G3 | Material limits documented; test that the TS and WGSL material tables agree | S | next |
+| DA-G4 | Writing lint over every player-facing string, not opt-in per test | S | next |
+| DA-G5 | Merge townlab rect C (bed4bb7) | S | done (35cf133) |
+| DA-A1 | One plan: land onetown (one TownPlan, one type table, one grid per town, claims by grid id, second box deleted) (§17) | M | next |
+| DA-A2 | Builders build: a failing test reproducing the fixture (702/708, one cut off) on a phone-captured fixture, then the root fix; absorbs `builders`/PF-5 (§17, §18) | M | next |
+| DA-A3 | Reach as an invariant judged once in one GPU solve; cheapest passage chosen on the GPU; pending blocks stay on the builders' list; delete the 3 s re-ask and VARIANT_TRIES (§13) | L | next |
+| DA-A4 | Bridges as a building type reach can pick; minimum land gates on player wall rings (§12, §13) | M | next |
+| DA-A5 | External intervals name their grid (word 3) with normals; orphan claims are errors; save only plan edits, never baked claims (§3, §17, §23) | M | next |
+| DA-A6 | One crowd for townspeople: merge settle/life and fortress/life (§11) | L | next |
+| DA-A7 | Routes as kinematic trips with a cached route buffer; delete LOST/LAST_LOST steering; tiles declare paths (§12) | L | next |
+| DA-A8 | Every good physical; loot takes real goods (§18) | M | next |
+| DA-B1 | Kill play readbacks: Build never starts the mirror; FieldReader gone; GPU-side queries; unknown != empty; resumes `phonefix` (§24) | M | next |
+| DA-B2 | Unit sync becomes GPU events plus watched units through a persistent staging ring (§11, §24) | M | next |
+| DA-B3 | Incremental town edits: rebuild only changed structures; no rebuild on unchanged reach answers; < 4 ms an edit on desktop (§5, §24) | M | next |
+| DA-B4 | Reach solve converges on the GPU; one small read per edit (§13) | M | next |
+| DA-B5 | Fortress-mode sandbox frame reads off; 30 fps cap while building or paused (§24) | S | next |
+| DA-B6 | GPU tree query for woodcutters (no veg readback); GPU wind reduction for storms (no wind-texture readback) (§24) | M | next |
+| DA-L1 | One run clock for economy, day/night, raids and cards (§21) | M | open |
+| DA-L2 | Mana ledger that can be spent (§14) | S | open |
+| DA-L3 | Holdings adapter: fortress soldiers and stores as holdings cards lock and spend (§20, §21) | M | open |
+| DA-L4 | The raid as the first opportunity card; button deals it; the rider a named presenter; the parallel raid loop deleted (§19, §21) | M | open |
+| DA-L5 | One persistent world: no pruning or fresh world per run; saves hold play changes only (§23) | M | open |
+| DA-L6 | Run end and carry-over (§21) | M | open |
+| DA-L7 | Atlas button and card icons, UX playground first (§22) | M | open |
+| DA-L8 | Spell wheel paid in mana, playground first (§14, §22) | M | open |
+| DA-E1 | Widen the material table past 40 (ids are 8-bit; the user wants this, later); phone bench of the uniform cost first | M | open |
+| DA-E2 | Deposit inbox keeps each material and counts overflow | M | open |
+| DA-E3 | GPU destruction trigger: ground connected components plus support x distance per cell (§9) | L | open |
+| DA-E4 | Raid and spell damage through the trigger; delete HP walls, breakBlock, the 8 s house timer, structure.wgsl rubble rule (§9, §19) | M | open |
+| DA-E5 | One solver for freed pieces; collision buffer with async reads; retire the other movers (§10) | L | open |
+| DA-E6 | Units knocked down by the engine; arrows as GPU projectiles (§10, §11, §19) | M | open |
+| DA-E7 | Felled trees as bodies, logs when grabbed (§15) | M | open |
+| DA-E8 | Budgeted voxel deformation and fracture; town buildings on the physics lattice like spawned buildings (§10) | L | open |
+| DA-P1 | Page table in its own binding, world-cell coordinates (§2) | L | open |
+| DA-P2 | Residency planner and wake API, city-centred; replaces the keep rect (§2, §5) | M | open |
+| DA-P3 | Pages stack in z on overflow; delete merge and rubble-on-overflow (§1, §2) | L | open |
+| DA-P4 | Resume mid-run (§23) | M | open |
+| DA-P5 | Flow model the only liquid; rain-level bake; sea per basin (§7) | L | open |
+| DA-P6 | Loose material in the flow model (§8) | L | open |
+| DA-P7 | Flora: no per-tick sim; kind and density per column (§15) | M | open |
+| DA-P8 | Delete retired render paths; draw decisions without readbacks (§5) | M | open |
+| DA-X1 | Cleanup: remove worktrees of merged or dead branches; Pages only for fortress, places, main (destructive: list for the user first) | S | asked |
+
 ## Round 128n (2026-11-05, session 5, `phonefix`) — the user on the Pixel 9a (Pages, fortress 062fe16): "performance on mobile was abysmal and could not be played and the building still didn't work. I think the town is cached and did not get gates"
 
 | id | item | size | status |
@@ -67,12 +118,15 @@ The user: "How about you build a bench for me to run that places buildings? Simi
 | id | item | size | status |
 |---|---|---|---|
 | TL-8 | The lab recipe `town`: the window round the user's start town (the user's link, `?q=low`) captured from the game into `data/lab/town.rclt` (892 KB: columns with the town's buildings, water, held rivers, woods, sea level, the heap, doors and gate posts); the lab loads it (LevelDef.load) and boots in ~11 s; a test fails when GEN_VERSION moves on (`node scripts/labtown.mjs capture` makes it again) | M | done (townlab commit A) |
-| TL-9 | The placement bench `?bench=place`: each building type at points round the town (inside the walls; 8 directions at 30, 60, 120 m; across the river; on a hill), the reach answer and its reason, the tap's CPU, the answer's delay, frame times, builders arriving; downloadable report, screen awake; also in the lab's `town` recipe | M | open (townlab B) |
-| TL-10 | Why the builders can't reach (the user's refusals): find the cause on the user's link and in the lab town, fix it | M | open (townlab C) |
+| TL-9 | The placement bench `?bench=place`: each building type at points round the town (inside the walls; 8 directions at 30, 60, 120 m; across the river; on a hill), the reach answer and its reason, the tap's CPU, the answer's delay, frame times, builders arriving; downloadable report, screen awake; also in the lab's `town` recipe | M | done (townlab commit B): `?bench=place` on the phone, `scripts/placebench.mjs` at the phone's size, `scripts/lab/placebench.mjs` on the lab's `town` |
+| TL-10 | Why the builders can't reach (the user's refusals): find the cause on the user's link and in the lab town, fix it | M | one cause fixed (townlab commit C): a pan slid the window off part of the fortress's box, and the reach saw no ground there: the window now keeps the box (Streamer.keep), placed wholly in it at the start. The phone's own refusals are TL-16 |
 | TL-11 | Roads become bridges across water: a deck at the road's level on piers, claimed solid; the reach and the agents walk it; the builders build it; the refusal's variants gain a bridge | L | open (townlab D) |
 | TL-12 | Reach as an invariant (the user's rule): every open place in and around the city is in the stores' component; a component cut off gets a passage (a gate, a bridge, a ramp or stairs) put in the plan for the builders; refusal only where no passage fixes it. Covers RT-8 | L | open (townlab C/D) |
 | TL-13 | The lab town has no settlement pieces drawn: the old town's buildings are in its columns (claimed, solid to the reach and the walkers) but invisible in the lab's shots; judge visuals in the game | S | open |
 | TL-14 | `scripts/lib/runner.mjs basePort()` hashes worktree paths into 180 ports: Reclaimed-townlab and Reclaimed-phonefix both got 6390, and a lab run went to the other worktree's lab server. `RECLAIMED_PORT` overrides it; a collision check (or a registry of ports) would be the real fix | S | stopgap (townlab commit A): RECLAIMED_PORT |
+| TL-15 | The same seed must give the same world on every device (saves, shared seeds, the town fixture). The user's Pixel 9a placement bench (build 0708e69) had the start town's stores at (207, 156) and its "across the water" points at 31 and 48 m; the desktop (Intel Arc iGPU, the same link and build) has them at (159, 176) and 27/28 m — not a window shift (48 isn't a region). The atlas, the town's plan or its spots come out differently on the Mali GPU. Suspect stage: not known yet — the phone's town fixture (the bench's "Download the town") against the desktop's names it | M | open |
+| TL-16 | On the Pixel 9a every placement round the start town was refused, "A cliff or a building is in the way" (0 kept of 270), where the desktop keeps 207 of 279. Not reproduced on the desktop with the phone's flags (q=low expands them anyway). The bench now reads what decides it: the town and the window, the reach's surfaces at the stores' column (the GPU's) and the same ask answered by the CPU reference over the columns read back — and saves the phone's own town for the lab. Hypothesis: the reach seeds the stores from the top walkable surface of their column; a roof or a wall-walk over the heap would put the stores on it | M | open: waiting on the phone's run |
+| TL-17 | (perf) The reach on the Mali: each tap is followed by one frame of 616-733 ms and the answer comes 750 ms after it (958 max); the desktop's answer 30 ms in the lab, 229-326 ms in the full game. A refused block costs three solves (`why`: deep water lifted, the plan lifted), each 12 hook-and-jump passes of atomics over 67k columns x 4 surfaces. Measure the solve alone on the phone (toggle-diff), then: fewer passes (a pass per round until the flag clears), the why-solves only for the queries not reached, a smaller box round the asked cells | M | open |
 
 ## Round 128l (2026-11-04, session 5, `tooling`) — the behaviour lab: faster iterations (docs/TOOLING.md)
 

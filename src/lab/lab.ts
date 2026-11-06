@@ -120,7 +120,7 @@ export class Lab {
   readonly recipe: LabRecipe;
   readonly town: LabTown;
   readonly view: LabPiecesView;
-  readonly window = stillWindow();
+  readonly window: FortressWindow;
   /** the lab steps the scene (lab.run): the display's frames wait */
   driving = false;
   /** the fortress is ready and the recipe's town stands */
@@ -133,6 +133,7 @@ export class Lab {
 
   constructor(private io: LabSceneIO) {
     this.recipe = labRecipe(io.params.get('lab'));
+    this.window = stillWindow(io.core.dims);
     const fx = io.fixture;
     if (this.recipe.fixture && !fx) throw new Error(`lab recipe ${this.recipe.name}: its fixture wasn't loaded`);
     this.town = fx ? LabTown.of(fx.town) : new LabTown(this.recipe.heap, this.recipe.homes);
@@ -474,6 +475,27 @@ export class Lab {
     this.ready = true;
   }
 
+  private async placeBench(o?: { types?: StructureType[]; arriveS?: number; arrive?: boolean }) {
+    const [{ runPlaceBench }, { placeSummary }, { placeReport }] = await Promise.all([import('../perf/placebench/run'), import('../perf/placebench/summary'), import('../perf/placebench')]);
+    const result = await runPlaceBench(
+      {
+        fort: this.fort(),
+        frame: () => new Promise<number>((r) => requestAnimationFrame(r)),
+        ground: (x, y) => this.ground(x, y),
+        build: () => this.build(),
+        advance: async (seconds, speed) => void (await this.run(seconds, speed, { keep: false })),
+        simTime: () => this.simT,
+        walkers: () => (this.io.life()?.people() ?? []).flatMap((id) => {
+          const u = this.io.units.get(id);
+          return u ? [[u.at[0], u.at[1]] as [number, number]] : [];
+        }),
+        log: (l) => console.log(`[placebench] ${l}`),
+      },
+      o,
+    );
+    return { summary: placeSummary(result), report: placeReport(result, { lab: this.recipe.name, fixture: this.io.fixture?.link ?? null }) };
+  }
+
   private makeApi() {
     const lab = this;
     return {
@@ -513,6 +535,13 @@ export class Lab {
       /** (m4) a world point on the screen (CSS pixels) */
       project: (x: number, y: number, z: number) => this.io.core.camera.project(x, y, z),
       viewport: () => [this.io.core.camera.viewportW, this.io.core.camera.viewportH],
+      /** sim seconds since the lab opened or was reset */
+      get simT() {
+        return lab.simT;
+      },
+      /** (round 128m, townlab) the placement bench (perf/placebench/run.ts) on this land, the lab driving the sim for its
+       *  arrival check: the result, its summary lines and the report the phone's run downloads */
+      placeBench: (o?: { types?: StructureType[]; arriveS?: number; arrive?: boolean }) => this.placeBench(o),
     };
   }
 }

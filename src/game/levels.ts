@@ -44,6 +44,9 @@ export interface LevelDef {
   hidden?: boolean;
   /** (round 92) the camera's zoom it opens at (default: from the screen's size) — the rock lab's pieces close */
   zoom?: number;
+  /** (round 128m, townlab) its side (columns and rows; default 256) — the lab's 320: the fortress's box and its margin
+   *  must fit (fortress/host.ts FORTRESS_WINDOW) */
+  side?: number;
   /** its height limit (cells; default 64): the wilds' ranges want more (round 64) */
   zMax?: number;
   /** the world is a window onto land without an edge (round 66: scenes/streamer.ts) */
@@ -223,6 +226,7 @@ export const LEVELS: LevelDef[] = [
     sandbox: true,
     hidden: true,
     zMax: LAB_DIMS.zMax,
+    side: LAB_DIMS.w,
     behaviourLab: true,
     warmupTicks: 120,
     // (round 128m, townlab: the `town` recipe's land is the user's start town, loaded from data/lab/; its rivers held at

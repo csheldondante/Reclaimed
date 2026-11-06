@@ -192,6 +192,8 @@ async function main() {
   if (params.get('physbench') === '1') void import('./perf/physbench').then((m) => m.physBench(params));
   // (round 128g: ?townbench=1 — the town pan phone bench, on the atlas at ?town=: src/perf/townbench.ts)
   if (params.get('townbench') === '1') void import('./perf/townbench').then((m) => m.townBench(params));
+  // (round 128m, townlab: ?bench=place — the placement phone bench, on the fortress at ?town=: src/perf/placebench.ts)
+  if (params.get('bench') === 'place') void import('./perf/placebench').then((m) => m.placeBench(params));
   if (pageBench === 'run') void pageBenchRun();
   if (bench === 'level')
     void benchLevel({

@@ -1,0 +1,18 @@
+# Line endings (round 128o): every text file is stored and checked out with LF, on every OS,
+# so endings never drift between agents, editors and machines. Do not convert files to CRLF.
+* text=auto eol=lf
+
+# Binary: never touched
+*.png binary
+*.gif binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.ico binary
+*.glb binary
+*.bin binary
+*.rclt binary
+*.rclr binary
+*.wasm binary
+*.woff binary
+*.woff2 binary

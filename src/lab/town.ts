@@ -52,6 +52,19 @@ export class LabTown implements FortressTownSource {
 }
 
 /** a window that never slides (the lab's): its land all written from the start */
-export function stillWindow(): FortressWindow {
-  return { origin: [0, 0], oz: 0, unwritten: [], R: 64, onSlide: [], onBeforeSlide: [], onWarp: [], onRelief: [] };
+export function stillWindow(dims: { w: number; h: number }): FortressWindow {
+  return {
+    origin: [0, 0],
+    oz: 0,
+    unwritten: [],
+    R: 64,
+    onSlide: [],
+    onBeforeSlide: [],
+    onWarp: [],
+    onRelief: [],
+    // (it never slides: what's asked to be kept must be in it)
+    keep: (k) => {
+      if (k && (k.x0 < 0 || k.y0 < 0 || k.x1 > dims.w || k.y1 > dims.h)) throw new Error(`the lab's window (${dims.w} x ${dims.h}) doesn't hold the rect it's asked to keep (${k.x0},${k.y0} - ${k.x1},${k.y1})`);
+    },
+  };
 }

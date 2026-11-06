@@ -2,7 +2,8 @@
 // to it, and the static claims (sim/static-claims.ts). API: startFortress(scene, st, view, id), skipFrame,
 // fortressAt, staticsFor. The fortress itself lives in src/fortress/.
 import { ignoreTeardown, whenPipelinesReady } from '../../gpu/pipeline';
-import type { FortressPiecesHost, FortressTownSource, FortressWindow } from '../../fortress/host';
+import { FORTRESS_BOX, KEEP_MARGIN, type FortressPiecesHost, type FortressTownSource, type FortressWindow } from '../../fortress/host';
+import { boxInWindow } from '../streamer/keep';
 import { installLab } from '../../lab/lab';
 import { AgentUnits } from '../../units/agent-units';
 import { CHUNK } from '../../world/layout';
@@ -49,11 +50,13 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
   for (const v of Object.values(rec.stores)) v.rate = 0;
   const { core } = scene;
   const dims = core.dims;
-  const W = 240;
-  const H = 2 * Math.round(240 / ROW_H / 2);
+  const { w: W, h: H } = FORTRESS_BOX;
   // (the box round the town, its row origin even: the lattice's odd rows shift the same in the box and the window)
-  const ox = Math.round(rec.at[0] - W / 2);
-  const oy = 2 * Math.round((rec.at[1] / ROW_H - H / 2) / 2);
+  // (round 128m, townlab: and wholly in the window, with KEEP_MARGIN round it — the user's town's box ran 14 rows past
+  // the window's bottom edge — and kept there: the window never slides off it, scenes/streamer/keep.ts. The reach, the
+  // builders and the claims all live in the window; where the window doesn't reach they saw no ground)
+  const [ox, oy] = boxInWindow([Math.round(rec.at[0] - W / 2), 2 * Math.round((rec.at[1] / ROW_H - H / 2) / 2)], FORTRESS_BOX, KEEP_MARGIN, S.origin, dims.w, dims.h);
+  S.keep({ x0: ox - KEEP_MARGIN, y0: oy - KEEP_MARGIN, x1: ox + W + KEEP_MARGIN, y1: oy + H + KEEP_MARGIN });
   // the stores until a warehouse stands: the town's stone heap (its plan's 'pile' spots)
   const townHeap = (): [number, number] => {
     const piles = st.spotsOf(rec.id)?.filter((s) => s.kind === 'pile') ?? [];

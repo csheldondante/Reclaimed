@@ -86,6 +86,9 @@ export function update(S: Streamer): Promise<void> | null {
 
 /** (round 98) the slide once its land is ready (asked for now if it wasn't); before round 98, at once */
 export function slideWhenReady(S: Streamer, dx: number, dy: number): Promise<void> | null {
+  // (round 128m, townlab: a slide that would leave the kept rect — the fortress's box — isn't made; the camera pans on
+  // over the far land)
+  if (!S.slideKeeps(dx, dy)) return null;
   if (STREAM_OLD) return S.slide(dx, dy);
   S.prefetch(dx, dy);
   const R = S.R;
