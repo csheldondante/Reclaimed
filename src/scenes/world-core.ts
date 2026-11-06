@@ -241,6 +241,10 @@ export class WorldCore {
   }
 
   /** Advance light, weather and the fixed-step simulation. Returns ticks run. */
+  /** (round 128p) the world's ticks run by advance so far (not a bake's: tiers.pump's ticks run its region at its
+   *  gain) — the sim time that passed, TICK_DT each; the lab's `run` counts by it */
+  ticksRun = 0;
+
   advance(now: number, simDt: number, speed: number, filter?: (s: SimSystem) => boolean): number {
     const g = this.globals;
     this.weather.time = g.time;
@@ -284,6 +288,7 @@ export class WorldCore {
       this.sim.tickOfFrame = FFWD ? ticks : 0;
       this.sim.step(g, filter);
       ticks++;
+      this.ticksRun++;
     }
     this.sim.frameTicks = 1;
     this.sim.tickOfFrame = 0;

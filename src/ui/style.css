@@ -102,8 +102,12 @@ canvas#world {
   white-space: pre;
   pointer-events: none;
   max-height: calc(100vh - 32px);
+  max-width: calc(100vw - 32px);
   overflow: hidden;
 }
+.perf > button { font: inherit; padding: 2px 8px; margin-bottom: 2px; background: #234; color: #fff; border: 1px solid #6a8; border-radius: 3px; }
+.perf.folded > pre { display: none; }
+.perf > pre { margin: 0; font: inherit; white-space: pre; }
 
 .intro {
   position: absolute;
@@ -117,6 +121,11 @@ canvas#world {
 .intro h1 { font-weight: 300; letter-spacing: 0.4em; font-size: clamp(28px, 6vw, 56px); margin: 0 0 12px; text-align: center; }
 .intro p { color: var(--ink-dim); margin: 0; text-align: center; font-size: 14px; letter-spacing: 0.05em; }
 #ui > .intro.gone { opacity: 0; pointer-events: none; }
+/* (round 128p) debug overlays never take the map's input — only their own controls do. `#ui > *` (auto) outranks a
+   bare class, so the perf overlay took every tap and drag over it: the user on the phone bench link, the screen blocked
+   by a semi-transparent panel (scripts/lib/overlaycheck.mjs checks it) */
+#ui > [data-overlay='debug'] { pointer-events: none; }
+[data-overlay='debug'] [data-overlay-control] { pointer-events: auto; }
 
 .fatal {
   position: fixed;

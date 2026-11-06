@@ -13,11 +13,13 @@
 // (level-ready, the store open) and then `--wait` ms; any other page `--wait` ms after load. `--dev`: Vite's dev
 // server instead (a page script that imports /src/... needs it).
 //
-// Fails loudly (non-zero exit) on page errors, console errors or the fatal overlay.
+// Fails loudly (non-zero exit) on page errors, console errors or the fatal overlay, and (round 128p) when a debug overlay
+// (?perf=1, ?hitch=1) takes taps meant for the map (scripts/lib/overlaycheck.mjs).
 import gifenc from 'gifenc';
 import { PNG } from 'pngjs';
 import fs from 'node:fs';
 import { run, sleep } from './lib/runner.mjs';
+import { overlayBlocks } from './lib/overlaycheck.mjs';
 const { GIFEncoder, quantize, applyPalette } = gifenc;
 
 await run({ name: 'shot', kind: 'behaviour', size: '960x540', dpr: 1, echo: true }, async (R) => {
@@ -39,6 +41,9 @@ await run({ name: 'shot', kind: 'behaviour', size: '960x540', dpr: 1, echo: true
   }
   await sleep(Number(args.wait ?? 2000));
   await R.fatal(page);
+  // (round 128p: no debug overlay takes the map's input — scripts/lib/overlaycheck.mjs)
+  const blocked = await overlayBlocks(page);
+  R.check('no debug overlay blocks the map', blocked.length === 0, blocked.slice(0, 8));
   if (args.eval) {
     const r = await page.evaluate(args.eval);
     if (r !== undefined) console.log(`[eval] ${JSON.stringify(r)}`);
@@ -93,4 +98,7 @@ await run({ name: 'shot', kind: 'behaviour', size: '960x540', dpr: 1, echo: true
     console.log(`saved ${args.out2}`);
   }
   await R.fatal(page);
+  // (round 128p: and after the taps and drags — an overlay opened by one still lets the map's input through)
+  const after = await overlayBlocks(page);
+  R.check('no debug overlay blocks the map (at the end)', after.length === 0, after.slice(0, 8));
 });
