@@ -24,7 +24,10 @@ import type { Atlas } from '../atlas/atlas';
 import type { StampOps } from '../atlas/stamps';
 import { GPUGEN } from '../atlas/finish';
 import { GrowthField } from './field';
-import { ROW_H } from '../world/lattice';
+import { cellAt, ROW_H } from '../world/lattice';
+import type { ReachEngine } from '../build/reach';
+import { joinPlaces, singleStands } from '../build/sitereach';
+import { heapFoot } from './live';
 import { atlasFacts } from '../gm/atlas-facts';
 import { buildWiki, type WorldWiki } from '../gm/wiki';
 import { recordsFrom, type SettlementSeed } from './records';
@@ -80,6 +83,12 @@ export interface LiveIO {
   ready(at: V2): boolean;
   /** how many of its people may be out at once (the tier's budget) */
   budget: number;
+  /**
+   * (round 128o, B: one reach) a reach engine over a box of the window (`origin`: its first window column, as the window
+   * moves), the GPU's (fortress/reachgpu.ts); and the window's z offset (window z = world z − oz). None: no reach (tests)
+   */
+  reach?(w: number, h: number, origin: () => [number, number]): ReachEngine & { dispose(): void };
+  oz?(): number;
 }
 
 /** (round 94) what the bake gives the far plans: the atlas's rough ground over a box (null: not ready yet), where the
@@ -651,6 +660,66 @@ export class Settlements {
     return p.sites.map((spec) => ({ spec, door: w(spec.door) }));
   }
 
+  /** the towns whose places the reach has joined since their land came into the window (their epoch then) */
+  private reached = new Map<string, number>();
+  /** (scripted checks) per town: its places asked, still out, the fixes made */
+  readonly reachStats = new Map<string, { places: number; out: number; fixes: number; asks: number }>();
+
+  /**
+   * (round 128o, B; DESIGN section 13: generation keeps reach an invariant by changing the world) A live town's places —
+   * its homes, stores, heaps, fields, mines, the house going up — asked of the one reach from its stores (its stone heap):
+   * a place out of reach gets the cheapest fix the GPU finds (a passage, a gate, a ramp) made in its plan as generated,
+   * one way at a time while each answer reaches more; the view drawn and claimed again. What can't be fixed stays out
+   * (counted: reachStats).
+   */
+  private async reachLive(p: SettlementPlan, s: SettlementSeed): Promise<void> {
+    const io = this.io;
+    if (!io?.reach || !io.oz) return;
+    const id = s.rec.id;
+    if (this.reached.get(id) === io.epoch()) return;
+    this.reached.set(id, io.epoch());
+    const site = p.site;
+    const { w, h } = site.box;
+    const origin = (): [number, number] => {
+      const [x, y] = this.toWindow([site.box.x0, site.box.y0 * ROW_H]);
+      return [Math.round(x), Math.round(y / ROW_H)];
+    };
+    const engine = io.reach(w, h, origin);
+    try {
+      const oz = io.oz();
+      const [ox, oy] = origin();
+      const colOf = (at: V2): number => {
+        const [k, r] = cellAt(at[0], at[1]);
+        const x = k - ox;
+        const y = r - oy;
+        return x < 0 || y < 0 || x >= w || y >= h ? -1 : y * w + x;
+      };
+      const spots = this.liveSpots(p, s).filter((q) => q.kind !== 'post' && q.kind !== 'camp');
+      const heap = spots.find((q) => q.kind === 'pile' && q.what !== 'log') ?? spots.find((q) => q.kind === 'pile');
+      // (a heap is a mound of the ground put on it: its foot is where a walker stands — the stores, and a heap's place)
+      const sc = heap ? colOf(heapFoot(heap.w)[0]) : -1;
+      if (sc < 0) return;
+      const at = spots.flatMap((q) => (q.kind === 'pile' ? heapFoot(q.w).slice(0, 1) : [q.w]));
+      const places = [...at, ...this.liveSites(p, s).map((q) => q.door)].map(colOf).filter((c) => c >= 0);
+      const res = await joinPlaces({
+        engine,
+        solid: () => ({ plan: site.plan, town: site.town, grid: site.grid, box: site.box, ground: (c) => site.ground(c), oz }),
+        origin,
+        places: () => singleStands(places, places.map((c) => site.ground(c) - oz)),
+        stores: sc,
+        storesZ: site.ground(sc) - oz,
+        changed: () => {
+          site.plan.takeChanged();
+          for (const f of this.onRaised) f(id, -1);
+        },
+        live: () => this.io === io && this.reached.get(id) === io.epoch(),
+      });
+      this.reachStats.set(id, { places: places.length, ...res });
+    } finally {
+      engine.dispose();
+    }
+  }
+
   /** a site's levels up (life.ts): its structure's blocks under them built (the plan's Town), the view told */
   private raise(p: SettlementPlan, s: SettlementSeed, site: SiteSpec, storeys: number): void {
     const st = p.site.plan.structure(site.structure);
@@ -684,11 +753,16 @@ export class Settlements {
     // (onetown: the house goes into the town's plan as the generator places its own — planned, the builders' work)
     const sid = placeBuilding(p.site, next.building, 0);
     if (sid < 0) return;
-    // (round 128o: the town kept walkable and every structure entered, as at its planning — structures/place.ts)
+    // (round 128o: the town kept walkable and every structure entered, as at its planning — structures/place.ts; B: in
+    // play the one reach asks its places again over the land itself)
     keepReach(p.site);
     assertEntered(p.site);
     p.sites.push({ id, structure: sid, storeys: levelsOfStructure(p.site, sid), door: next.door });
     for (const f of this.onRaised) f(rec.id, sid);
+    if (this.life?.rec.id === rec.id) {
+      this.reached.delete(rec.id);
+      void this.reachLive(p, s);
+    }
     rec.needs.push({ kind: 'build', at: [next.door[0] + s.box.x0, next.door[1] + s.box.y0 * ROW_H], ref: id, priority: 2 });
   }
 
@@ -854,6 +928,8 @@ export class Settlements {
     if (best && !this.life && !(this.pinnedOwnLife && best.rec.id === this.pinned)) {
       const s = best;
       const p = this.done.get(s.rec.id)!;
+      // (round 128o, B: its places joined to its stores by the one reach, once its land is in the window)
+      void this.reachLive(p, s);
       this.life = new SettlementCrowd(s.rec, p.camp, {
         units: io.units,
         spots: () => this.liveSpots(p, s),

@@ -176,6 +176,7 @@ export class FortressCrowd implements Routine {
   private treesAsked = false;
   private treesFor = '';
   private quarryKey = '';
+  private tiersSeen = 0;
   /** a newcomer asked for (the routine's order) and where it comes in from (the reach's answer: undefined while asked) */
   private calling = false;
   private entryAnswer: V2 | null | undefined = undefined;
@@ -358,6 +359,12 @@ export class FortressCrowd implements Routine {
       this.jobsAt = this.t;
       this.quarry.update();
       this.stats.dug = this.quarry.stats.taken;
+      // (round 128o, B: the land under the town changed — a pit's tier dug: the reach asked again; nothing else built
+      // changes it, the plan is reached as if built)
+      if (this.quarry.stats.tiers !== this.tiersSeen) {
+        this.tiersSeen = this.quarry.stats.tiers;
+        this.io.fort.requestReach();
+      }
       const qk = JSON.stringify(this.quarrySpots());
       if (qk !== this.quarryKey) {
         this.quarryKey = qk;

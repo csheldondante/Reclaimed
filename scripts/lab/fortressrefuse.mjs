@@ -5,7 +5,7 @@
 //     time measured (the fortress's part, without the change handlers: the reach is the GPU's, a few frames later);
 //  2. a ring of wall round nothing: it gets a gate (cells a builder stands at only from inside); shutting the gate is
 //     refused (it opens again); a closed ring (the gate shut behind the check's back) and a house tapped inside it:
-//     refused, walled in;
+//     (round 128o, B: the game picks the passage, DECISIONS 2026-11-05) it gets a gate in the ring and stays;
 //  3. a drag of wall across the lake: only the cells in the deep water refused (both shores kept), the panel says how many.
 // Every block planned at the end is reached. Shots at play zoom (412x915): refused-water.png, refused-ring.png,
 // refused-drag.png.
@@ -73,8 +73,8 @@ export default async function (lab) {
   }
   const inside = lab.place('house', cx, cy);
   await f.settled();
-  out.ring.inside = { planned: f.plan.has(inside, 0), refusal: f.refusal };
-  check('a house inside the closed ring is refused, walled in', !f.plan.has(inside, 0) && /walled in/.test(f.refusal ?? ''), out.ring.inside);
+  out.ring.inside = { planned: f.plan.has(inside, 0), refusal: f.refusal, variant: f.variant };
+  check('a house inside the closed ring gets a gate in it and stays', f.plan.has(inside, 0) && !f.refusal && /gate/.test(f.variant ?? ''), out.ring.inside);
   lab.look(cx, cy, 7);
   out.ring.panel = panel();
   await lab.shot('refused-ring');

@@ -9,7 +9,7 @@ import { AgentUnits } from '../../units/agent-units';
 import { CHUNK } from '../../world/layout';
 import { cellPos } from '../../world/lattice';
 import { levelFrame } from './frame';
-import { FortressReachGpu } from '../../fortress/reachgpu';
+import { FortressReachGpu } from '../../build/reachgpu';
 import { ROW_H } from '../../world/lattice';
 import { Fortress } from '../../fortress/fortress';
 import { FortressBar } from '../../fortress/ui';
@@ -99,6 +99,8 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: T
       .then(() => {
         fort.ready = true;
         fort.requestReach(true);
+        // (round 128o, B: the town as generated joined to its stores by the one reach — keepReach is gone)
+        void fort.joinTown().then((r) => r && (scene.fortressJoined = r), ignoreTeardown);
       }, ignoreTeardown);
   });
   // (round 128o, DA-B19: a slide or a warp leaves the window's ground unread: read whole again, the fortress waiting)

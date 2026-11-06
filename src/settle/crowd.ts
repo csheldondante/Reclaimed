@@ -18,7 +18,7 @@ import type { UnitId, V2 } from '../api/contracts/units';
 import type { FactionId } from '../api/contracts/world';
 import { F, G, R, type Routine, type UnitRec } from '../units/agent-units';
 import { TownLife, type Leg, type LifeEvent, type Order } from '../town/life';
-import { routineOf, type LifeIO, type LiveSpot, type RaidOutcome } from './live';
+import { heapFoot, routineOf, type LifeIO, type LiveSpot, type RaidOutcome } from './live';
 import { LOAD, LUMBER, SettleWork } from './work';
 
 /** seconds between the field's steps in play */
@@ -407,9 +407,9 @@ export class SettlementCrowd implements Routine {
     const fell = this.trees.slice(0, 10);
     const homes = spots.filter((s) => s.kind === 'home').slice(0, 8).map((s) => s.w);
     const stores = spots.filter((s) => s.kind === 'store').slice(0, 3).map((s) => s.w);
-    // (the heaps themselves, the nearest each one's goal: their middle — SettlementLife's — lay between them, on whatever
-    // stood there, and the hauls and the builders never got within reach of it)
-    const piles = this.work.heaps().map((p) => p.w);
+    // (round 128o, B: each heap's foot round it — the reach found the heaps' mounds islands: a mound's top, the ground put
+    // on it, is past a walker's step from the ground round it, so a field seeded on top led nobody there)
+    const piles = this.work.heaps().flatMap((p) => heapFoot(p.w));
     const site = this.work.site()?.door ?? null;
     const r = (v: V2[]) => v.map((p) => [Math.round(p[0]), Math.round(p[1])]);
     const key = JSON.stringify([r(farm), r(quarry), r(fell), r(homes), r(stores), r(piles), site && r([site])]);

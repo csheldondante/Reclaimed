@@ -12,7 +12,7 @@ import { STRUCTURE_TYPES, type FortressBox, type Goods, type StructureType } fro
 import type { Town, Block } from '../build/town';
 import type { QuadGrid } from '../build/quadgrid';
 import type { TownSite } from '../build/site';
-import { cellAt, cellPos, nbr } from '../world/lattice';
+import { cellAt, cellPos } from '../world/lattice';
 import { DEFS } from './defs';
 import { typeIndex, type TownPlan } from '../build/plan';
 import { pickFace, placeFor } from './pick';
@@ -21,11 +21,10 @@ import { groundSteps, waysOf, waysNav, type Ways } from '../build/ways';
 import type { NavGraph } from '../api/contracts/structures';
 import { LEVEL_H } from '../build/town';
 import { bedsOf, roomOf } from './economy';
-import { packSpan, REACH_BITS, type ReachAsk, type ReachEngine, type ReachReply } from './reach';
-import { solidSpans } from '../build/solid';
+import { REACH_BITS, type ReachAsk, type ReachEngine, type ReachFix, type ReachReply } from '../build/reach';
+import { applyReachFixes, joinPlaces, singleStands, siteSpans, standsOfCell } from '../build/sitereach';
 import { refusedLine, variantLine, wouldCutLine, type ReachWhy, type VariantKind } from './words';
 import { laneGraph, lanesOf, roadShapesOf, type Lanes } from '../build/lanes';
-import { openCell } from '../build/entrances';
 import { nearestNode, reached, subgraph, type RoadGraph } from '../agents/roadgraph';
 import { packRoadShapes } from '../agents/roads';
 import { CellRuns } from '../build/runs';
@@ -56,8 +55,6 @@ export interface FortressStatus {
   hungry: boolean;
 }
 
-/** (round 128h) the most gates (or ramps) tried for a placement that cut blocks off: the nearest first */
-const VARIANT_TRIES = 10;
 // (round 128i) water deeper than LANE_WATER (0.8 m: fortreach.wgsl R_LANE_WATER, the reach's wet columns) over a cell's
 // middle or a corner: no roads on it. (round 128k: was 0.3 — a river cut the roads off from the sites the builders
 // reached by wading; now the agents' own limit, a ford is a way: agents.wgsl DEEP_OFF)
@@ -67,31 +64,7 @@ interface GateEdit {
   cell: number;
   before: Set<number>;
 }
-/** (round 128l) a variant tried on the plan: put in, taken out; `type` the structure it's for (the panel's line) */
-interface Try {
-  kind: VariantKind;
-  at: number;
-  type: StructureType;
-  on(): boolean;
-  off(): void;
-}
-/**
- * (round 128l; RT-6) the variants for a batch of placed blocks, tried in turn (each judged by an answer), until one
- * reaches every planned block the batch cut off (`cut`) or, when it cut none, one of its own blocks out of reach that a
- * variant may mend (`mend`: below a drop, walled in by the plan). None does: the batch is judged on `base`, the answer
- * for the plan without them.
- */
-interface Trial {
-  tries: Try[];
-  i: number;
-  cut: number[];
-  mend: number[];
-  /** the batch's blocks (level-0 cells, pending) */
-  batch: number[];
-  base: Map<number, number>;
-}
 
-const dist = (a: readonly number[], b: readonly number[]) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 
 export interface FortressIO {
   /** the window's origin (world cells: x, row) — the streamer's */
@@ -168,13 +141,16 @@ export class Fortress {
   /** (round 128l, m4) the reach: the last answer per cell still to build (reach.ts ReachReply bits), its ramp spots,
    *  the box's wet columns (a bit each: the lanes keep off them), the asks folded while a check is in flight */
   private reachBits = new Map<number, number>();
-  private reachRamps: { col: number; dir: number }[] = [];
   private wetBits: Uint32Array | null = null;
   private reachBusy = false;
   private reachWant = false;
   private reachWet = false;
   private edit: GateEdit | null = null;
-  private trial: Trial | null = null;
+  /**
+   * (round 128o, B) a batch whose fixes went into the plan (passages, gates, ramps: the answer's cheapest way): the next
+   * answer judges it for good — reached, it stays; still out, it's refused (never fixed again)
+   */
+  private fixed: { batch: number[]; cut: number[]; left: number } | null = null;
   /**
    * (RT-6, round 128m: "we should not have blocks that agents can't reach") blocks placed (their level-0 cells, in the
    * order placed) that the reach hasn't judged yet: drawn as the plan's ghost (plots) and no site for the builders
@@ -585,7 +561,7 @@ export class Fortress {
 
   /** resolves when no check is in flight or wanted and no variant is being tried (tests, the lab) */
   async settled(): Promise<void> {
-    while (this.reachBusy || this.reachWant || this.trial) await new Promise((r) => setTimeout(r, 0));
+    while (this.reachBusy || this.reachWant) await new Promise((r) => setTimeout(r, 0));
   }
 
   /**
@@ -607,6 +583,42 @@ export class Fortress {
     }
   }
 
+  /**
+   * (round 128o, B: generation through the one reach) The town's own places — each structure's way out of its entrance —
+   * joined to its stores: what the generated town left out of reach gets its cheapest fix in the plan (a passage, a
+   * gate, a ramp: the town as generated, built). Once its land is in the window (startFortress). Null: no reach engine.
+   */
+  async joinTown(): Promise<{ out: number; fixes: number; asks: number } | null> {
+    const R = this.io.reach;
+    const at = this.storesAt();
+    if (!R || !at) return null;
+    await this.settled();
+    this.reachBusy = true;
+    try {
+      const oz = this.io.oz();
+      const sc = this.boxColOf(...this.toBox(at[0], at[1]));
+      if (sc < 0) return null;
+      const places = this.ways()
+        .entrances.map((e) => this.boxColOf(...this.grid.centre(e.out)))
+        .filter((b) => b >= 0);
+      return await joinPlaces({
+        engine: R,
+        solid: () => ({ plan: this.plan, town: this.town, grid: this.grid, box: this.box, ground: this.groundOfCol, ways: this.ways(), oz }),
+        origin: () => this.offset(),
+        places: () => singleStands(places, places.map((b) => this.groundOfCol(b) - oz)),
+        stores: sc,
+        storesZ: this.groundOfCol(sc) - oz,
+        changed: () => {
+          this.waysMemo = null;
+          this.sync();
+        },
+      });
+    } finally {
+      this.reachBusy = false;
+      if (this.reachWant) this.requestReach();
+    }
+  }
+
   private async pumpReach(): Promise<void> {
     const R = this.io.reach!;
     try {
@@ -618,13 +630,12 @@ export class Fortress {
         this.reachWet = false;
         const edit = this.edit;
         this.edit = null;
-        const trial = this.trial;
-        // (the pending blocks this answer judges: none while a variant is on trial — the plan has the variant in it)
-        const batch = trial ? null : this.pending.size ? { cells: [...this.pending], before: this.pendingBefore ?? new Set<number>() } : null;
+        // (the pending blocks this answer judges)
+        const batch = this.pending.size ? { cells: [...this.pending], before: this.pendingBefore ?? new Set<number>() } : null;
         const t0 = performance.now();
         R.setSpans(this.spansNow());
         const cells = this.todoCells();
-        const ask = this.reachAsk(cells, wet, !!edit || !!batch);
+        const ask = { ...this.reachAsk(cells, wet, !!edit || !!batch), fix: !!batch };
         this.reachStats.cpuMs = performance.now() - t0;
         let reply: ReachReply;
         try {
@@ -633,7 +644,7 @@ export class Fortress {
           if (e instanceof DOMException && e.name === 'AbortError') return;
           throw e;
         }
-        this.answer(cells, reply, edit, trial, batch);
+        this.answer(cells, reply, edit, batch);
       }
     } finally {
       this.reachBusy = false;
@@ -654,15 +665,19 @@ export class Fortress {
     const oz = this.io.oz();
     const queries = new Int32Array(cells.length * 4).fill(-1);
     const floors = new Float32Array(cells.length * 4);
-    cells.forEach((c, i) =>
-      (c >= 0 ? this.standCols(c) : []).forEach((b, k) => {
+    // (round 128o, B: a cell with no side open is asked by the sides a passage would open — not reached till one is)
+    const open = new Uint8Array(cells.length);
+    cells.forEach((c, i) => {
+      if (c < 0) return;
+      if (!this.standsOf(c).length) open[i] = 1;
+      this.standCols(c).forEach((b, k) => {
         queries[i * 4 + k] = b;
         floors[i * 4 + k] = this.groundOfCol(b) - oz;
-      }),
-    );
+      });
+    });
     const at = this.storesAt();
     const sc = at ? this.boxColOf(...this.toBox(at[0], at[1])) : -1;
-    return { stores: sc >= 0 ? [sc % this.box.w, Math.floor(sc / this.box.w)] : null, storesZ: sc >= 0 ? this.groundOfCol(sc) - oz : 0, queries, floors, wet, why };
+    return { stores: sc >= 0 ? [sc % this.box.w, Math.floor(sc / this.box.w)] : null, storesZ: sc >= 0 ? this.groundOfCol(sc) - oz : 0, queries, floors, wet, why, open };
   }
 
   /**
@@ -676,7 +691,10 @@ export class Fortress {
 
   /** a cell's stands' box columns (up to four) */
   private standCols(cell: number): number[] {
-    return this.standsOf(cell)
+    // (round 128o, B: a cell with no side open — blocks all round it — is asked by the sides a passage would open: the
+    // fix field cuts through to them, and the passage made, they're its stands)
+    const stands = this.standsOf(cell);
+    return (stands.length ? stands : this.standsOf(cell, -1, true))
       .map(([x, y]) => this.boxColOf(...this.toBox(x, y)))
       .filter((b) => b >= 0)
       .slice(0, 4);
@@ -687,32 +705,12 @@ export class Fortress {
    * the ramps): two spans a box column, packed for the reach (more than two in a column: the last two merged).
    */
   private spansNow(): Uint32Array {
-    const plan = this.plan;
-    const town: Town = Object.create(this.town);
-    Object.defineProperty(town, 'built', { value: { each: (c: number) => plan.levels.each(c) } });
-    const { w, h } = this.box;
-    const out = new Uint32Array(w * h * 2);
-    // (the town's z is the world's; the reach's columns are the window's)
-    const oz = this.io.oz();
-    for (const spans of solidSpans({ plan, town, grid: this.grid, ground: this.groundOfCol, ways: this.ways() }).values())
-      for (const q of spans) {
-        if (q.x < 0 || q.y < 0 || q.x >= w || q.y >= h) continue;
-        const i = 2 * (q.y * w + q.x);
-        const p = packSpan(q.z0 - oz, q.z1 - oz);
-        if (!out[i]) out[i] = p;
-        else if (!out[i + 1]) out[i + 1] = p;
-        else {
-          const o = out[i + 1];
-          out[i + 1] = (Math.min(o & 0xffff, p & 0xffff) | (Math.max(o >>> 16, p >>> 16) << 16)) >>> 0;
-        }
-      }
-    return out;
+    return siteSpans({ plan: this.plan, town: this.town, grid: this.grid, box: this.box, ground: this.groundOfCol, ways: this.ways(), oz: this.io.oz() });
   }
 
-  /** an answer come back: the cells' bits; the variant on trial, the gate shut or the pending blocks it judges */
-  private answer(cells: number[], reply: ReachReply, edit: GateEdit | null, trial: Trial | null, batch: { cells: number[]; before: Set<number> } | null): void {
+  /** an answer come back: the cells' bits; the gate shut or the pending blocks it judges (with the fixes it found) */
+  private answer(cells: number[], reply: ReachReply, edit: GateEdit | null, batch: { cells: number[]; before: Set<number> } | null): void {
     this.reachBits = new Map(cells.map((c, i) => [c, reply.bits[i]]));
-    this.reachRamps = reply.ramps;
     this.reachStats.rounds = reply.rounds;
     this.reachStats.checks++;
     this.reachKnown = true;
@@ -721,11 +719,8 @@ export class Fortress {
       this.wetBits = reply.wet;
       if (!was || was.some((v, i) => v !== reply.wet![i])) this.waysMemo = null;
     }
-    if (trial && trial === this.trial) this.judgeTrial();
-    else if (!this.trial) {
-      if (edit) this.judgeGate(edit);
-      if (batch) this.judgeBatch(batch.cells, batch.before);
-    }
+    if (edit) this.judgeGate(edit);
+    if (batch) this.judgeBatch(cells, reply, batch.cells, batch.before);
     for (const h of this.onReach) h();
     for (const h of this.onChange) h();
   }
@@ -750,26 +745,59 @@ export class Fortress {
   }
 
   /**
-   * (RT-6; V128-13) The pending blocks an answer judges: all reached and nothing cut off — they stay. Else the variants
-   * that keep the way open are tried (a gate in a wall the batch closed, a passage through a block of it, a ramp up a
-   * drop to a block below it or to what it cut off); then what's still out of reach is refused (judged).
+   * (RT-6; round 128o, B) The pending blocks an answer judges: all reached and nothing cut off — they stay. Else the
+   * answer's fixes (the cheapest way the GPU found from each place out of reach to the stores: passages, gates, ramps)
+   * go into the plan, and the next answer judges the batch for good. A batch already fixed is judged for good now.
    */
-  private judgeBatch(cells: number[], before: Set<number>): void {
-    const batch = cells.filter((c) => this.pending.has(c));
-    if (!batch.length) return;
+  private judgeBatch(cells: number[], reply: ReachReply, batchCells: number[], before: Set<number>): void {
+    const fixed = this.fixed;
+    this.fixed = null;
+    // (a batch fixed: the places still out of reach — fewer than before each fix, or it's judged as it is)
+    if (fixed) {
+      batchCells = batchCells.filter((c) => !fixed.batch.includes(c));
+      const batch = fixed.batch.filter((c) => this.pending.has(c));
+      const cut = fixed.cut.filter((c) => this.reachBits.has(c) && !this.reachedNow(c));
+      const out = batch.filter((c) => !this.reachedNow(c));
+      if ((cut.length || out.length) && cut.length + out.length < fixed.left && this.fixOne(cells, reply, [...out, ...cut])) this.fixed = { batch, cut: fixed.cut, left: cut.length + out.length };
+      else this.judged(batch, cut);
+    }
+    const batch = batchCells.filter((c) => this.pending.has(c));
+    if (!batch.length) return this.fixed ? void this.sync() : undefined;
     const cut = [...before].filter((c) => !this.pending.has(c) && this.reachBits.has(c) && !this.reachedNow(c));
     const out = batch.filter((c) => !this.reachedNow(c));
     if (!cut.length && !out.length) return this.judged(batch, []);
-    // (a block of the batch below a drop: a ramp up it. Walled in by the plan — a ring of wall the batch closed, with
-    // cells a builder can only stand inside of: a gate in it, or a passage)
-    const why = new Map(out.map((c) => [c, this.whyNot(c)]));
-    const cliff = out.filter((c) => why.get(c) === 'cliff');
-    const walled = out.filter((c) => why.get(c) === 'walled');
-    const tries = this.rampTries(cliff);
-    if (cut.length || walled.length) tries.push(...this.wayTries(batch), ...this.rampTries(cut));
-    if (!tries.length) return this.judged(batch, cut);
-    this.trial = { tries, i: 0, cut, mend: [...cliff, ...walled], batch, base: new Map(this.reachBits) };
-    this.nextTry();
+    if (this.fixed || !this.fixOne(cells, reply, [...out, ...cut])) return this.judged(batch, cut);
+    this.fixed = { batch, cut, left: cut.length + out.length };
+    this.sync();
+  }
+
+  /**
+   * The fixes on the way from one place out of reach (the first the answer has fixes for) into the plan: one way opened
+   * at a time — a pocket's gate reaches every place in it, the next answer says which are still out. Whether any went in.
+   */
+  private fixOne(cells: number[], reply: ReachReply, places: number[]): boolean {
+    const want = new Set(places);
+    for (let q = 0; q < cells.length; q++) {
+      if (!want.has(cells[q])) continue;
+      const mine = reply.fixes.filter((f) => f.query === q);
+      if (mine.length && this.applyFixes(mine)) {
+        this.waysMemo = null;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** the fixes into the plan (each once); the first's line on the panel. How many went in. */
+  private applyFixes(fixes: ReachFix[]): number {
+    return applyReachFixes(this.plan, this.grid, this.box, this.offset(), fixes, (kind, type, cell) => this.noteFix(kind, type, cell));
+  }
+
+  /** the panel's line for the first fix of a press, and its cell */
+  private noteFix(kind: VariantKind, type: StructureType, at: number): void {
+    if (this.variant) return;
+    this.variant = variantLine(kind, type);
+    this.variantAt = at;
   }
 
   /**
@@ -810,111 +838,6 @@ export class Fortress {
     this.sync();
   }
 
-  /** the gates in the walls the batch closed (their straight cells nearest the stores first), passages through its blocks */
-  private wayTries(batch: number[]): Try[] {
-    const out: Try[] = [];
-    const at = this.storesAt();
-    const walls = new Set<number>();
-    for (const cell of batch) {
-      const type = this.plan.typeAt(cell);
-      if (!type) continue;
-      const form = DEFS[type].form;
-      if (form === 'wall') {
-        const s = this.plan.structureAt(cell);
-        if (!s || !at || walls.has(s.id)) continue;
-        walls.add(s.id);
-        const cs = [...s.cells.keys()]
-          .filter((c) => !this.plan.gate[c] && this.plan.levels.bottom(c) === 0 && this.plan.wallTile(c, 0) === 'straight')
-          .sort((a, b) => dist(this.centre(a), at) - dist(this.centre(b), at))
-          .slice(0, VARIANT_TRIES);
-        for (const c of cs) out.push({ kind: 'gate', at: c, type, on: () => this.plan.setGate(c, true), off: () => void this.plan.setGate(c, false) });
-      } else if (form === 'block') out.push({ kind: 'passage', at: cell, type, on: () => this.plan.setPassage(cell, true), off: () => void this.plan.setPassage(cell, false) });
-    }
-    return out;
-  }
-
-  /**
-   * (round 128h, V128-13) Ramps up the drops in the way: the free cells under a drop of STEP to DROP up to the stores'
-   * ground (the last answer's ramp spots), nearest the cells first.
-   */
-  private rampTries(cells: number[]): Try[] {
-    if (!cells.length) return [];
-    const g = this.grid;
-    const { w } = this.box;
-    const [ox, oy] = this.offset();
-    const targets = cells.map((c) => this.centre(c));
-    const seen = new Set<number>();
-    const tries: { cell: number; side: number; d: number }[] = [];
-    for (const { col, dir } of this.reachRamps) {
-      const x = (col % w) + ox;
-      const y = Math.floor(col / w) + oy;
-      const [qx, qy] = nbr(x, y, dir);
-      const c = g.cellOf[col];
-      const qb = (qy - oy) * w + (qx - ox);
-      const n = qx - ox >= 0 && qx - ox < w && qy - oy >= 0 && qy - oy < this.box.h ? g.cellOf[qb] : -1;
-      // (on a free cell: not a planned one — the batch's own are planned)
-      if (c < 0 || n < 0 || c === n || this.plan.owner[c] >= 0 || this.plan.ramp[c] >= 0) continue;
-      const side = [0, 1, 2, 3].find((e) => g.nbr[c * 4 + e] === n);
-      if (side === undefined || seen.has(c * 4 + side)) continue;
-      seen.add(c * 4 + side);
-      const [wx, wy] = cellPos(x, y);
-      tries.push({ cell: c, side, d: Math.min(...targets.map((t) => dist([wx, wy], t))) });
-    }
-    tries.sort((a, b) => a.d - b.d);
-    return tries.slice(0, VARIANT_TRIES).map((t) => ({ kind: 'ramp' as const, at: t.cell, type: 'house' as const /* (a ramp's line names no structure) */, on: () => this.plan.setRamp(t.cell, t.side), off: () => void this.plan.setRamp(t.cell, -1) }));
-  }
-
-  /** the variant on trial put in the plan and checked (none left: the batch judged as the plan is without them) */
-  private nextTry(): void {
-    const t = this.trial!;
-    while (t.i < t.tries.length && !t.tries[t.i].on()) t.i++;
-    if (t.i >= t.tries.length) {
-      this.trial = null;
-      // (every variant taken out again: the plan is as the batch's own answer judged it)
-      this.reachBits = t.base;
-      this.waysMemo = null;
-      this.sync();
-      this.judged(t.batch, t.cut);
-      return;
-    }
-    this.waysMemo = null;
-    this.sync();
-  }
-
-  private judgeTrial(): void {
-    const t = this.trial!;
-    const tr = t.tries[t.i];
-    // (kept: everything the batch cut off reached again, and — when it cut nothing — one of its own blocks out of reach
-    // reached; the rest of those are refused)
-    if (t.cut.every((c) => this.reachedNow(c)) && (t.cut.length > 0 || t.mend.some((c) => this.reachedNow(c)))) {
-      this.trial = null;
-      this.kept(tr.kind, tr.type, tr.at);
-      // (the way kept open: the batch's blocks still out of reach — not below a drop — are refused)
-      this.judged(t.batch, []);
-      return;
-    }
-    tr.off();
-    this.waysMemo = null;
-    t.i++;
-    this.nextTry();
-  }
-
-  /** a press while a variant is on trial: the trial's variant taken out, the trial dropped (its batch still pending) */
-  private abortTrial(): void {
-    const t = this.trial;
-    if (!t) return;
-    this.trial = null;
-    if (t.i < t.tries.length) t.tries[t.i].off();
-    this.waysMemo = null;
-    this.sync();
-  }
-
-  private kept(kind: VariantKind, type: StructureType, at: number): void {
-    this.variant = variantLine(kind, type);
-    this.variantAt = at;
-    this.sync();
-  }
-
   erase(cell: number, level: number): boolean {
     // (RT-6: erasing takes solid away and frees the sides builders stand at — it cuts nothing off; a pending block
     // erased is forgotten)
@@ -944,25 +867,10 @@ export class Fortress {
    * (round 128f) Where a builder stands to work on a cell (window world): a little out from the middle of each side that
    * no planned or built block's ground level covers (a yard's is open ground) (FortressCrowd's stands, the same). `also`: a cell about to be planned.
    */
-  standsOf(cell: number, also = -1): [number, number][] {
-    const g = this.grid;
-    const [cx, cy] = g.centre(cell);
-    const out: [number, number][] = [];
-    for (let e = 0; e < 4; e++) {
-      const n = g.nbr[cell * 4 + e];
-      if (n < 0 || n === also) continue;
-      // (a yard beside it — a farm, the quarry — is open ground a builder stands on; round 128o: and a block's passage,
-      // under its arch — build/entrances.ts openCell, the rule a structure is entered by)
-      const t = this.plan.typeAt(n);
-      if ((this.plan.has(n, 0) || this.town.has(n, 0)) && !(t && DEFS[t].form === 'yard') && !openCell(this.plan, n)) continue;
-      const [ax, ay] = g.corner(cell, e);
-      const [bx, by] = g.corner(cell, e + 1);
-      const mx = (ax + bx) / 2;
-      const my = (ay + by) / 2;
-      const d = Math.hypot(mx - cx, my - cy) || 1;
-      out.push(this.toWindow(mx + ((mx - cx) / d) * 1.4, my + ((my - cy) / d) * 1.4));
-    }
-    return out;
+  standsOf(cell: number, also = -1, cut = false): [number, number][] {
+    // (sitereach.ts standsOfCell: a yard beside it, a block's passage under its arch are open ground; `cut`: a side whose
+    // neighbour the reach's fix may cut)
+    return standsOfCell(this.plan, this.grid, (n) => this.town.has(n, 0), cell, also, cut).map(([x, y]) => this.toWindow(x, y));
   }
 
   /** (round 128f) the cells with blocks still to build (their ground: a builder works from beside it) */
@@ -1194,7 +1102,6 @@ export class Fortress {
 
   private apply(f: () => boolean, cell: number): boolean {
     if (!this.ready) return false;
-    this.abortTrial();
     if (!f()) return false;
     this.refusal = null;
     this.variant = null;

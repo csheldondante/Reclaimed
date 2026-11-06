@@ -3642,6 +3642,15 @@ The building rule (the user's): select what (a structure type), then plan it wit
   `peopleLine`) and Inspect (`InspectLive`). **Roads (FT-46):** `Agents.setRoads(window columns)` → agents.wgsl `roads`
   (binding 40, a bit per window column, window order): a step between road columns costs ROAD_COST 0.5, one end on a
   road 0.75; FortressLife sets `Fortress.roadCols()` (road and square cells) every JOBS_S (and after a slide).
+- **Round 128o, B (one reach, the passage chosen on the GPU).** The reach lives in the town engine: `build/reach.ts`
+  (the ask and answer: `ReachAsk` with `fix` and `open`, `ReachReply.fixes`, `FIX_COST`, `FIX_CAP`; `packSpan`'s bit 31
+  a cuttable ground floor; `CpuReach` the reference), `build/reachgpu.ts` (`FortressReachGpu`, now any town's box:
+  the modes, then `solveFix` — the fix field relaxed on the GPU, a 16 B flag a round, then the walk back's fixes read),
+  `build/sitereach.ts` (`cuttableCell`, `siteSpans`, `applyReachFixes`, `standsOfCell`, `joinPlaces`: a town's places
+  joined one way at a time). The fortress judges a batch on one answer and its fixes (no variants tried); a must-open
+  place (no side open) is asked by the sides a passage would open; a stand counts only at its floor's surface (within
+  DROP). Asked again on a plan edit, a slide, the land read again, a pit's tier dug — no timer. `Fortress.joinTown` and
+  `Settlements.reachLive` (LiveIO `reach`, `oz`) join a town's places in play; the generator keeps keepReach (cells).
 - **Round 128f (reach: the check at placement).** `fortress/reach.ts` (pure, tested): `ReachMap(columns, stores, {box,
   extra, deep})` — the agents' rules on the CPU (AGENT_H, STEP, DROP, DEEP, NAV_K mirrored from agents.wgsl: keep them in
   step), a search each way from the stores; `reached(x, y)` = a walker from the stores gets to the column's top surface

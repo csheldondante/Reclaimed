@@ -6,7 +6,7 @@ import { fortressOn } from './testing';
 import { describe, expect, it } from 'vitest';
 import { cellPos } from '../world/lattice';
 import { Fortress } from './fortress';
-import { CpuReach, surfacesOf, type ReachColumns } from './reach';
+import { CpuReach, surfacesOf, type ReachColumns } from '../build/reach';
 import { PIECE_WARN, rampPieces, warnPieces } from '../build/view';
 import { RAMPS_ID, solidSpans } from '../build/solid';
 import { PIECE_FLOATS } from '../structures/pieces';
@@ -136,7 +136,7 @@ describe('the check at placement', () => {
     expect(f.refusal).toBe("1 of those 2 blocks was not planned. Builders can't reach it from the stores. Deep water is in the way.");
   });
 
-  it('a ring of wall round nothing gets a gate (cells a builder can only stand inside of); inside a shut ring a block is refused: walled in', async () => {
+  it('a ring of wall round nothing gets a gate (cells a builder can only stand inside of); inside a shut ring a block gets one too', async () => {
     const f = fortress(columns(), [20, 20]);
     const ring = f.ringCells(90, 80, 12);
     expect(f.paintMany(ring, 0, 'wall')).toBe(ring.length);
@@ -146,15 +146,18 @@ describe('the check at placement', () => {
     expect(gates.length).toBe(1);
     expect(f.variant).toBe('A gate goes in the wall, so builders can get in.');
     expect(f.refusal).toBe(null);
-    // (the gate shut behind the check's back, and asked again: a closed ring, the wall cells inside it cut off already)
+    // (the gate shut behind the check's back, and asked again: a closed ring. Round 128o, B — the game picks the passage
+    // (DECISIONS 2026-11-05): a house tapped inside gets a gate in the ring, the cheapest way in)
     f.plan.gate[gates[0]] = 0;
     f.requestReach();
     await f.settled();
     const inside = f.cellAt(90, 80);
     expect(f.paint(inside, 0, 'house')).toBe(true);
     await f.settled();
-    expect(f.plan.has(inside, 0)).toBe(false);
-    expect(f.refusal).toBe("Builders can't reach that spot from the stores. It is walled in. Put a gate in the wall first.");
+    expect(f.plan.has(inside, 0)).toBe(true);
+    expect(ring.filter((c) => f.plan.gate[c]).length).toBe(1);
+    expect(f.refusal).toBe(null);
+    expect(await reached(f, inside)).toBe(true);
   });
 
   // (round 128o: a builder stands under a passage's arch — the reach reads the surface at a stand's floor, not the roof
@@ -204,9 +207,9 @@ describe('the check at placement', () => {
     expect(f.refusal).toBe(null);
     expect(ring.every((c) => f.plan.has(c, 0))).toBe(true);
     expect(await reached(f, house)).toBe(true);
-    // (the nearest the stores of the straight wall cells)
+    // (round 128o, B: on the cheapest way from the house to the stores — within a cell of the straight wall cell nearest them)
     const d = (c: number) => Math.hypot(f.centre(c)[0] - 20, f.centre(c)[1] - 20);
-    for (const c of ring) if (f.plan.wallTile(c, 0) === 'straight') expect(d(gates[0])).toBeLessThanOrEqual(d(c) + 1e-9);
+    for (const c of ring) if (f.plan.wallTile(c, 0) === 'straight') expect(d(gates[0])).toBeLessThanOrEqual(d(c) + 5);
     // the gate shut: it opens again, and the panel says why
     expect(f.setGate(gates[0], false)).toBe(true);
     await f.settled();

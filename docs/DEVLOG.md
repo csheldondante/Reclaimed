@@ -19496,3 +19496,69 @@ its slot opening or closing starts it over (a tested piece).
   town's own road network graded once when its plan is made (generation), and only the player's new roads built? The
   steepest grade a road may have (a look: 1 in 3?). Where a grade needs more than a few metres of cut or fill: stairs (a
   path kind, as the wall's stairs) or a switchback?
+
+## 2026-11-06 — round 128o (`onetown`, B = the rest of DA-A3): design note — one reach, judged once, the passage chosen on the GPU
+
+- One solve answers an edit (or a generated town) whole: the components as now, then — for the places not reached — a
+  cost field from the stores over the land with the plan's cuttable solid left out (a block's ground floor: a passage;
+  a wall cell: a gate) and drops a ramp would join (STEP to DROP), entering a cuttable column or taking a drop costing
+  more than a step; the stores' component starts at 0. Per place not reached, the GPU walks the field back to the
+  stores and writes the fixes on its way (the cut columns, the ramps' column and side): a few words a place. A place
+  the field never reaches (deep water, a cliff past DROP, walled by what can't be cut) is refused with today's why.
+- The fortress: the fixes go into the plan with the batch (passages, gates, ramps — built like any block, the cut-off
+  block waiting until they are: the plan is reached as if built), judged by that one answer and confirmed by the next
+  (still cut off: refused, never tried again). The variants tried one solve at a time go (VARIANT_TRIES, the trials).
+- Asked again only when the world under the town changes: a pit's tier dug, the window slid, a plan edit, the land
+  read again — not every 3 s while building.
+- Generation through the same reach (build/sitereach.ts: any TownSite with a reach engine, the fortress's or a
+  settlement's in play): a settlement's places (doors, heaps, the house going up, farms, mines, homes) asked once when
+  its land is in the window, the fixes made in its plan as generated (built); keepReach (cells only, the land ignored)
+  goes. That's meant to fix the settlements' builders and haulers stalling short of the heaps and the door.
+- Order (riskiest first): the fix solve on the CPU reference and the GPU, equal on scripted boxes (GPU test); the
+  fortress's judgement on it (reach, ring, refuse); the 3 s re-ask out; the settlements on it, keepReach deleted.
+
+## 2026-11-06 — round 128o (`onetown`, B part 1): the passage chosen on the GPU, judged once; the 3 s re-ask gone; the one reach in play for every town
+
+- The fix field (shaders/fortreach.wgsl fixInit, fixRelax, fixTrace; build/reachgpu.ts solveFix; its CPU reference in
+  build/reach.ts, Dijkstra to the same costs): over the fix peel (the plan's cuttable solid left out — a block's ground
+  floor, a wall's straight cell on the ground: packSpan's bit 31), the cost from the stores (a step 1, entering a cut
+  column 4 more, a drop a ramp would join 20 more: FIX_COST), then from each place not reached the walk back writing
+  the cut columns and the ramps (FIX_CAP 512 triples). A Dawn test: the GPU's fixes equal the CPU reference's on a
+  pocket in a ring of plan solid (cut through, 1 to 4 columns), a terrace 2 m up (one ramp), a cliff 6 m up (none).
+- The reach moved into the town engine (build/reach.ts, reachgpu.ts, sitereach.ts: cuttableCell, siteSpans,
+  applyReachFixes, standsOfCell, joinPlaces) — the fortress and the settlements ask it alike.
+- The fortress: a batch out of reach takes the answer's fixes (one way at a time, the next answer judging again while
+  each reaches more; a batch still out is refused, never tried again). VARIANT_TRIES, the trials (Try, Trial,
+  wayTries, rampTries, nextTry, judgeTrial, abortTrial) are deleted. A cell with no side open is asked by the sides a
+  passage would open, marked must-open (a neighbour's roof a walker gets onto isn't its way in: `open`, bit 31 of the
+  stand's word on the GPU); a stand counts only on the surface at its floor (within DROP: never the roof over it).
+  Behaviour changed (DECISIONS 2026-11-05, "the game picks the passage"): a block tapped inside a closed ring gets a
+  gate in it (it was refused, walled in) — reach.test's and ring.test's expectations follow; a gate goes on the
+  cheapest way from the place to the stores (within a cell of the straight wall cell nearest the stores, not always
+  it); a ramp's drop inside a cell takes the cell's side facing up it.
+- The 3 s re-ask while building is deleted (frame.ts; transfers.ts's row with it): the plan is reached as if built, so
+  only the land under the town changing asks again — a pit's tier dug (FortressCrowd), a slide, a plan edit, the land
+  read again.
+- One reach in play: Fortress.joinTown (once its land is in: the town as generated, each structure's way out, fixes made
+  in its plan) and Settlements.reachLive (a live settlement's places — homes, stores, heaps, fields, mines, the house
+  going up — from its stone heap; asked again when a house site is placed).
+- The settlements' stall, found by the reach: its first answer had 86 of 95 places out of the heap's reach, then (with
+  stands counted at their floor) all 95 — the heap itself an island. A heap is a mound of the ground hauled onto it
+  (terrain.put): its top is past a walker's step from the ground round it, and the field (and the reach's stores) was
+  seeded on its top, so nobody's field led there: the builders' fetch, the hauls home stood still. Now a heap's foot
+  (settle/live.ts heapFoot: six points 2.5 m round its spot, HEAP_FOOT) is where the field is seeded and the reach asks
+  from. scripts/settlecrowd.mjs, 90 sim s at 8x on the start town: loads moved 0 -> 27, a house's storey up and the
+  house finished (0 -> 1: the first since round 88's in this check), ground heaped 0 -> 1.6, the reach 15 of 95 places
+  out with 3 fixes made. Still out: places past a cliff (the town's plots stand on terraces up to ~11 m apart): the
+  stairs of DA-A10.
+- keepReach stays at generation, for now. Tried: generation through the one reach's CPU reference over the town's own
+  ground (no land on the GPU then). It took 350-600 ms a town (keepReach: a few ms), and on the hill test towns houses
+  walled in by neighbours on terraces stayed without a way in (the cliffs again), so assertEntered failed. The cell rule
+  (every structure entered, every open pocket joined to the rim) stays the generator's; the one reach joins the land in
+  play. A question for main (below in the report).
+- Tests: reach.test (the closed ring's house gets a gate; the gate within a cell of the nearest), ring.test (the farms
+  inside a closed ring kept, one gate), townroutes (a lane may run up a ramp: RAMPS_ID is a way), fortressrefuse's ring
+  check (a gate, kept). Gates: typecheck; unit 101 files; GPU reachfix and agentevents. Lab on this code (onetown,
+  port 5343): fortressallbuilt ok (708/708 at 331 s), fortressharvest, fortressrecipes, fortressraid, unitsonground,
+  fortresslanes, fortresscarts, fortressfollow, fortressoutside walled ok; fortressrefuse fails only its tap's CPU
+  (8.5 ms, DA-G9: before this too); settlecrowd ok (above). The fixture recaptured after the merge of fortress.

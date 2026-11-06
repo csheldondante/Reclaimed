@@ -7,7 +7,7 @@ import path from 'node:path';
 import { decodeTownFixture } from '../../src/lab/townfixture';
 import { siteFromJson, TownSite } from '../../src/build/site';
 import { Fortress } from '../../src/fortress/fortress';
-import { CpuReach, type ReachColumns } from '../../src/fortress/reach';
+import { CpuReach, type ReachColumns } from '../../src/build/reach';
 import { MAT } from '../../src/world/materials';
 
 const FILE = path.resolve(import.meta.dirname, '../../data/lab/town.rclt');

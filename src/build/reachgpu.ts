@@ -16,7 +16,7 @@ import commonWgsl from '../shaders/common.wgsl?raw';
 import layersWgsl from '../shaders/layers.wgsl?raw';
 import materialsWgsl from '../shaders/materials.wgsl?raw';
 import reachWgsl from '../shaders/fortreach.wgsl?raw';
-import { RAMP_CAP, REACH_BITS, type ReachAsk, type ReachEngine, type ReachReply } from './reach';
+import { FIX_CAP, RAMP_CAP, REACH_BITS, type ReachAsk, type ReachEngine, type ReachFix, type ReachReply } from './reach';
 
 /** fortreach.wgsl's */
 const NAV_K = 4;
@@ -29,9 +29,14 @@ const MODES: { lift: number; bit: number }[] = [
   { lift: 0, bit: 0 },
   { lift: 1, bit: Math.log2(REACH_BITS.dry) },
   { lift: 2, bit: Math.log2(REACH_BITS.unplanned) },
+  // (round 128o, B) the fix peel: the plan's cuttable solid left out
+  { lift: 4, bit: 0 },
 ];
+const FIX_MODE = 3;
+/** (B) fix field sweeps a submit (the flag cleared before the last: clear, converged) */
+const FIX_ROUND = 48;
 
-type K = 'peel' | 'init' | 'hook' | 'jump' | 'query' | 'ramps' | 'wet';
+type K = 'peel' | 'init' | 'hook' | 'jump' | 'query' | 'ramps' | 'wet' | 'fixInit' | 'fixRelax' | 'fixTrace';
 
 export class FortressReachGpu implements ReachEngine {
   private k: Record<K, ComputeKernel>;
@@ -40,6 +45,11 @@ export class FortressReachGpu implements ReachEngine {
   private deep: GPUBuffer;
   private label: GPUBuffer;
   private flag: GPUBuffer;
+  /** (B) per box column whether its plan solid may be cut; per surface the fix field; the fixes found */
+  private cutCol: GPUBuffer;
+  private fixDist: GPUBuffer;
+  private fixBuf: GPUBuffer;
+  private fixStage: GPUBuffer;
   /** a params buffer a solve's mode */
   private params: GPUBuffer[];
   private queryBuf: GPUBuffer | null = null;
@@ -69,18 +79,25 @@ export class FortressReachGpu implements ReachEngine {
     this.deep = device.createBuffer({ label: 'reach deep', size: n * 4, usage: S });
     this.label = device.createBuffer({ label: 'reach label', size: n * NAV_K * 4, usage: S });
     this.flag = device.createBuffer({ label: 'reach flag', size: 16, usage: S });
+    this.cutCol = device.createBuffer({ label: 'reach cut', size: n * 4, usage: S });
+    this.fixDist = device.createBuffer({ label: 'reach fix field', size: n * NAV_K * 4, usage: S });
+    this.fixBuf = device.createBuffer({ label: 'reach fixes', size: (1 + 3 * FIX_CAP) * 4, usage: S });
+    this.fixStage = device.createBuffer({ label: 'reach fixes read', size: (1 + 3 * FIX_CAP) * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
     this.params = MODES.map(() => device.createBuffer({ label: 'reach params', size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }));
     this.written = new Uint32Array(n * 2);
     const parts = [commonWgsl, layersWgsl, materialsWgsl, reachWgsl];
     const mk = (e: string, sp: BindSpec) => makeCompute(device, `reach-${e}`, parts, { 0: 'uniform', 12: 'uniform', ...sp }, e);
     this.k = {
-      peel: mk('reachPeel', { 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'rw', 7: 'rw' }),
+      peel: mk('reachPeel', { 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'rw', 7: 'rw', 13: 'rw' }),
       init: mk('reachInit', { 8: 'rw' }),
       hook: mk('reachHook', { 6: 'rw', 7: 'rw', 8: 'rw', 9: 'rw' }),
       jump: mk('reachJump', { 8: 'rw', 9: 'rw' }),
       query: mk('reachQuery', { 6: 'rw', 8: 'rw', 10: 'read', 11: 'rw' }),
       ramps: mk('reachRamps', { 6: 'rw', 7: 'rw', 8: 'rw', 11: 'rw' }),
       wet: mk('reachWet', { 4: 'read', 11: 'rw' }),
+      fixInit: mk('fixInit', { 6: 'rw', 14: 'rw' }),
+      fixRelax: mk('fixRelax', { 6: 'rw', 7: 'rw', 9: 'rw', 13: 'rw', 14: 'rw' }),
+      fixTrace: mk('fixTrace', { 6: 'rw', 7: 'rw', 10: 'read', 11: 'rw', 13: 'rw', 14: 'rw', 15: 'rw' }),
     };
     this.ready = new Promise((r) => whenPipelinesReady(r));
   }
@@ -125,13 +142,16 @@ export class FortressReachGpu implements ReachEngine {
     this.groups = this.params.map((pb) => {
       const g = (k: ComputeKernel, r: Record<number, GPUBuffer>) => makeBindGroup(d, 'reach', k.layout, { 0: W.globals, 12: pb, ...r });
       return {
-        peel: g(this.k.peel, { 1: W.chunks, 2: W.materials, 3: W.layers, 4: W.water, 5: this.spans, 6: this.surf, 7: this.deep }),
+        peel: g(this.k.peel, { 1: W.chunks, 2: W.materials, 3: W.layers, 4: W.water, 5: this.spans, 6: this.surf, 7: this.deep, 13: this.cutCol }),
         init: g(this.k.init, { 8: this.label }),
         hook: g(this.k.hook, { 6: this.surf, 7: this.deep, 8: this.label, 9: this.flag }),
         jump: g(this.k.jump, { 8: this.label, 9: this.flag }),
         query: g(this.k.query, { 6: this.surf, 8: this.label, 10: this.queryBuf!, 11: this.answerBuf! }),
         ramps: g(this.k.ramps, { 6: this.surf, 7: this.deep, 8: this.label, 11: this.answerBuf! }),
         wet: g(this.k.wet, { 4: W.water, 11: this.answerBuf! }),
+        fixInit: g(this.k.fixInit, { 6: this.surf, 14: this.fixDist }),
+        fixRelax: g(this.k.fixRelax, { 6: this.surf, 7: this.deep, 9: this.flag, 13: this.cutCol, 14: this.fixDist }),
+        fixTrace: g(this.k.fixTrace, { 6: this.surf, 7: this.deep, 10: this.queryBuf!, 11: this.answerBuf!, 13: this.cutCol, 14: this.fixDist, 15: this.fixBuf }),
       };
     });
   }
@@ -156,7 +176,8 @@ export class FortressReachGpu implements ReachEngine {
       const q = new Uint32Array(nq * 8);
       const qf = new Float32Array(q.buffer);
       for (let i = 0; i < nq * 4; i++) {
-        q[2 * i] = ask.queries[i] >= 0 ? ask.queries[i] + 1 : 0;
+        // (bit 31: the query's stands are ones a fix would open — never reached as they are)
+        q[2 * i] = ask.queries[i] >= 0 ? (ask.queries[i] + 1) | (ask.open?.[i >> 2] ? 0x80000000 : 0) : 0;
         qf[2 * i + 1] = ask.floors[i];
       }
       d.queue.writeBuffer(this.queryBuf!, 0, q);
@@ -165,13 +186,21 @@ export class FortressReachGpu implements ReachEngine {
     const wetWords = Math.ceil((this.w * this.h) / 32);
     let rounds = 0;
     let all: Uint32Array = new Uint32Array(0);
-    for (let mode = 0; mode < MODES.length; mode++) {
+    for (let mode = 0; mode < FIX_MODE; mode++) {
       // (why: only asked for an edit, and only while some query isn't reached)
       if (mode > 0 && (!ask.why || !all.subarray(4 + 1 + 2 * RAMP_CAP, 4 + words).some((b) => !(b & 1)))) break;
       const r = await this.solve(mode, nq, words, mode === 0 && ask.wet ? wetWords : 0);
       rounds += r.rounds;
       all = r.all;
       this.stats.solves++;
+    }
+    // (B: the fixes for the queries not reached — the fix field and its walk back, the answer words OR-ed with fixable)
+    let fixes: ReachFix[] = [];
+    if (ask.fix && nq && all.subarray(4 + 1 + 2 * RAMP_CAP, 4 + words).some((b) => !(b & 1))) {
+      const r = await this.solveFix(nq, words);
+      rounds += r.rounds;
+      all = r.all;
+      fixes = r.fixes;
     }
     const a = all.subarray(4);
     const nr = Math.min(a[0], RAMP_CAP);
@@ -180,7 +209,66 @@ export class FortressReachGpu implements ReachEngine {
     this.stats.checks++;
     this.stats.rounds = rounds;
     this.stats.lastMs = performance.now() - t0;
-    return { bits: a.slice(1 + 2 * RAMP_CAP, words), ramps, wet: ask.wet ? this.lastWet : null, rounds };
+    return { bits: a.slice(1 + 2 * RAMP_CAP, words), ramps, wet: ask.wet ? this.lastWet : null, rounds, fixes };
+  }
+
+  /**
+   * (B) The fix field: the fix peel, the field from the stores relaxed to the end (FIX_ROUND sweeps a submit, the flag
+   * read), then the walk back from each query not reached. The answer words (fixable OR-ed in) and the fixes read back.
+   */
+  private async solveFix(nq: number, words: number): Promise<{ rounds: number; all: Uint32Array; fixes: ReachFix[] }> {
+    const d = this.device;
+    const G = this.groups[FIX_MODE];
+    const wg: [number, number] = [Math.ceil(this.w / 8), Math.ceil(this.h / 8)];
+    for (let round = 1; round <= MAX_ROUNDS * 4; round++) {
+      const enc = d.createCommandEncoder({ label: 'reach fix' });
+      const pass = (k: ComputeKernel, gr: GPUBindGroup, n: [number, number] | number) => {
+        const cp = enc.beginComputePass({ label: 'reach fix' });
+        cp.setPipeline(k.pipeline);
+        cp.setBindGroup(0, gr);
+        if (typeof n === 'number') cp.dispatchWorkgroups(n);
+        else cp.dispatchWorkgroups(n[0], n[1]);
+        cp.end();
+      };
+      if (round === 1) {
+        pass(this.k.peel, G.peel, wg);
+        pass(this.k.fixInit, G.fixInit, wg);
+      }
+      for (let i = 0; i < FIX_ROUND; i++) {
+        if (i === FIX_ROUND - 1) enc.clearBuffer(this.flag);
+        pass(this.k.fixRelax, G.fixRelax, wg);
+      }
+      enc.copyBufferToBuffer(this.flag, 0, this.stage!, 0, 16);
+      d.queue.submit([enc.finish()]);
+      await this.stage!.mapAsync(GPUMapMode.READ, 0, 16);
+      if (this.gone) throw new DOMException('reach: disposed', 'AbortError');
+      const moved = new Uint32Array(this.stage!.getMappedRange(0, 16).slice(0))[0];
+      this.stage!.unmap();
+      if (moved) continue;
+      const enc2 = d.createCommandEncoder({ label: 'reach fix trace' });
+      enc2.clearBuffer(this.fixBuf);
+      const cp = enc2.beginComputePass({ label: 'reach fix trace' });
+      cp.setPipeline(this.k.fixTrace.pipeline);
+      cp.setBindGroup(0, G.fixTrace);
+      cp.dispatchWorkgroups(Math.ceil(nq / 64));
+      cp.end();
+      enc2.copyBufferToBuffer(this.answerBuf!, 0, this.stage!, 16, words * 4);
+      enc2.copyBufferToBuffer(this.fixBuf, 0, this.fixStage, 0, (1 + 3 * FIX_CAP) * 4);
+      d.queue.submit([enc2.finish()]);
+      await Promise.all([this.stage!.mapAsync(GPUMapMode.READ, 0, 16 + words * 4), this.fixStage.mapAsync(GPUMapMode.READ)]);
+      if (this.gone) throw new DOMException('reach: disposed', 'AbortError');
+      const all = new Uint32Array(this.stage!.getMappedRange(0, 16 + words * 4).slice(0));
+      this.stage!.unmap();
+      const fw = new Uint32Array(this.fixStage.getMappedRange().slice(0));
+      this.fixStage.unmap();
+      const fixes: ReachFix[] = [];
+      for (let i = 0; i < Math.min(fw[0], FIX_CAP); i++) {
+        const word = fw[3 + 3 * i];
+        fixes.push({ query: fw[1 + 3 * i], col: fw[2 + 3 * i], kind: (word & 0xff) === 1 ? 'ramp' : 'cut', dir: word >>> 8 });
+      }
+      return { rounds: round, all, fixes };
+    }
+    throw new Error(`reach: the fix field didn't settle in ${MAX_ROUNDS * 4 * FIX_ROUND} sweeps`);
   }
 
   /** the wet bits of the first solve (later solves don't ask for them: the answer buffer keeps them) */
@@ -256,6 +344,6 @@ export class FortressReachGpu implements ReachEngine {
 
   dispose(): void {
     this.gone = true;
-    for (const b of [this.spans, this.surf, this.deep, this.label, this.flag, ...this.params, this.queryBuf, this.answerBuf]) b?.destroy();
+    for (const b of [this.spans, this.surf, this.deep, this.label, this.flag, this.cutCol, this.fixDist, this.fixBuf, this.fixStage, ...this.params, this.queryBuf, this.answerBuf]) b?.destroy();
   }
 }

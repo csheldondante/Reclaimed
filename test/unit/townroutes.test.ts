@@ -9,7 +9,7 @@ import { decodeTownFixture } from '../../src/lab/townfixture';
 import { siteFromJson, TownSite } from '../../src/build/site';
 import { needsEntrance } from '../../src/build/entrances';
 import { Fortress } from '../../src/fortress/fortress';
-import { solidSpans } from '../../src/build/solid';
+import { RAMPS_ID, solidSpans } from '../../src/build/solid';
 import { laneGraph } from '../../src/build/lanes';
 import { nearestNode, reached } from '../../src/agents/roadgraph';
 import { cellAt } from '../../src/world/lattice';
@@ -45,12 +45,15 @@ describe("the user's start town's routes", { timeout: 30_000 }, () => {
     const { w, h } = f.box;
     // (a column claimed solid at a walker's height over its ground: a building's, as the claims put it in the world)
     const solid = new Map<number, number>();
-    for (const [sid, spans] of solidSpans({ plan: f.plan, town: f.town, grid: f.grid, ground: (c) => site.ground(c), ways: f.ways() }))
+    for (const [sid, spans] of solidSpans({ plan: f.plan, town: f.town, grid: f.grid, ground: (c) => site.ground(c), ways: f.ways() })) {
+      // (a ramp is a way — round 128o, B: the reach's fix — a lane may run up it)
+      if (sid === RAMPS_ID) continue;
       for (const q of spans) {
         const col = q.y * w + q.x;
         const g = site.ground(col);
         if (q.z0 <= g + 1 && q.z1 > g + 0.5) solid.set(col, sid);
       }
+    }
     const through = new Set([...f.ways().gates, ...f.ways().passages]);
     const hits: string[] = [];
     for (const s of f.lanes().segs) {

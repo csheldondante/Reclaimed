@@ -21,8 +21,26 @@ const LANE_WATER = 0.8;
 /** fortreach.wgsl RAMP_CAP: the ramp spots an answer holds */
 export const RAMP_CAP = 64;
 
-/** a query's answer bits: reached; reached with deep water no bar; reached with the plan's solid left out; no stand */
-export const REACH_BITS = { reached: 1, dry: 2, unplanned: 8, none: 16 } as const;
+/** a query's answer bits: reached; reached with deep water no bar; reached with the plan's solid left out; no stand;
+ *  (B) fixable — the fix field reached it: its fixes are in the answer */
+export const REACH_BITS = { reached: 1, dry: 2, unplanned: 8, none: 16, fixable: 32 } as const;
+
+/**
+ * (round 128o, B: the passage chosen on the GPU) The fix field's costs: a step 1; entering a column whose plan solid can
+ * be cut (a block's ground floor: a passage; a wall cell: a gate) CUT more; taking a drop a ramp would join (a rise of
+ * STEP to DROP, either way) RAMP more. So a place is joined by the fewest cuts and ramps, then the shortest way.
+ */
+export const FIX_COST = { step: 1, cut: 4, ramp: 20 } as const;
+/** fortreach.wgsl FIX_CAP: the fixes an answer holds (all places together) */
+export const FIX_CAP = 512;
+/** one fix on the way to a place not reached: a column to cut (its plan solid), or a ramp up from a column in a direction */
+export interface ReachFix {
+  query: number;
+  col: number;
+  kind: 'cut' | 'ramp';
+  /** (a ramp) the direction from `col` up the drop */
+  dir: number;
+}
 
 /** what a check asks (box-local columns: x + y * box w) */
 export interface ReachAsk {
@@ -38,6 +56,11 @@ export interface ReachAsk {
   wet: boolean;
   /** why the queries not reached aren't (the solve again with each rule lifted: an edit to judge) */
   why?: boolean;
+  /** (B) the fixes for the queries not reached: the fix field and its walk back (an edit or a generated town to judge) */
+  fix?: boolean;
+  /** (B) per query: 1 — its stands are ones a fix would open (a structure with no side open): not reached until opened
+   *  (a neighbour's roof a walker gets onto isn't its way in) */
+  open?: Uint8Array;
 }
 
 export interface ReachReply {
@@ -49,6 +72,8 @@ export interface ReachReply {
   wet: Uint32Array | null;
   /** submits it took */
   rounds: number;
+  /** (B, asked for) the fixes on the way from each query not reached to the stores (FIX_CAP at most) */
+  fixes: ReachFix[];
 }
 
 /** what answers the fortress's reach: the GPU's (reachgpu.ts) in the game, the CPU reference (CpuReach) in tests */
@@ -58,11 +83,16 @@ export interface ReachEngine {
   check(ask: ReachAsk): Promise<ReachReply>;
 }
 
-/** a span packed as fortreach.wgsl reads it (eighths of a metre; z clamped at 0) */
-export function packSpan(z0: number, z1: number): number {
+/** a span packed as fortreach.wgsl reads it (eighths of a metre; z clamped at 0); `cut`: the plan may cut it (a block's
+ *  ground floor, a wall cell a gate could go in) — bit 31, its top then at most 4095 m */
+export function packSpan(z0: number, z1: number, cut = false): number {
   const a = Math.max(0, Math.min(0xffff, Math.floor(z0 * 8)));
-  const b = Math.max(0, Math.min(0xffff, Math.ceil(z1 * 8)));
-  return (a | (b << 16)) >>> 0;
+  const b = Math.max(0, Math.min(0x7fff, Math.ceil(z1 * 8)));
+  return (a | (b << 16) | (cut ? 0x80000000 : 0)) >>> 0;
+}
+/** a packed span's floor and top (window z) and whether it may be cut */
+export function unpackSpan(word: number): { z0: number; z1: number; cut: boolean } {
+  return { z0: (word & 0xffff) / 8, z1: ((word >>> 16) & 0x7fff) / 8, cut: (word & 0x80000000) !== 0 };
 }
 
 export interface ReachColumns {
@@ -142,6 +172,8 @@ export class CpuReach implements ReachEngine {
     const nq = ask.queries.length / 4;
     const bits = new Uint32Array(nq);
     let ramps: { col: number; dir: number }[] = [];
+    const fixes: ReachFix[] = [];
+    const cut = new Uint8Array(n);
     // (a solve with `lift` rules lifted: 1 deep water no bar, 2 the plan's solid left out — fortreach.wgsl RP.mode)
     const solve = (lift: number, bit: number) => {
       const surfs: Surf[][] = new Array(n);
@@ -156,13 +188,18 @@ export class CpuReach implements ReachEngine {
         if (!(lift & 2))
           for (const word of [this.spans[2 * b], this.spans[2 * b + 1]]) {
             if (!word) continue;
-            const z0 = (word & 0xffff) / 8;
-            const z1 = (word >>> 16) / 8;
+            const { z0, z1, cut: c } = unpackSpan(word);
+            // (the fix field: the cuttable solid left out, its column marked)
+            if (c && lift & 4) {
+              cut[b] = 1;
+              continue;
+            }
             if (z1 > z0) runs.push([z0, z1]);
           }
         surfs[b] = surfacesOf(runs);
         deep[b] = surfs[b].length && this.cols.water(x, y) > DEEP ? 1 : 0;
       }
+      if (lift & 4) return fixField(surfs, deep);
       const parent = new Int32Array(n * NAV_K).map((_, i) => i);
       const find = (i: number): number => {
         while (parent[i] !== i) i = parent[i] = parent[parent[i]];
@@ -194,7 +231,9 @@ export class CpuReach implements ReachEngine {
           const b = ask.queries[q * 4 + t];
           if (b < 0) continue;
           any = true;
-          if (surfs[b].length && sr >= 0 && find(b * NAV_K + nearestSurf(surfs[b], ask.floors[q * 4 + t])) === sr) bits[q] |= bit;
+          // (round 128o, B: a stand is its floor's surface — a roof over it, DROP or more up, isn't where a builder stands)
+          const k = surfs[b].length ? nearestSurf(surfs[b], ask.floors[q * 4 + t]) : -1;
+          if (k >= 0 && sr >= 0 && !ask.open?.[q] && Math.abs(surfs[b][k].z - ask.floors[q * 4 + t]) <= DROP && find(b * NAV_K + k) === sr) bits[q] |= bit;
         }
         if (!any) bits[q] |= REACH_BITS.none;
       }
@@ -211,11 +250,130 @@ export class CpuReach implements ReachEngine {
         }
       }
     };
+    /**
+     * (B) The fix field over the fix peel (the cuttable solid left out): the cost from the stores' surface (FIX_COST),
+     * relaxed to the end; then from each query not reached, its stand's surface walked back to the stores, the cut
+     * columns entered and the ramps taken on the way written down (fortreach.wgsl fixRelax, fixTrace).
+     */
+    const fixField = (surfs: Surf[][], deep: Uint8Array) => {
+      const FAR = 0xffffffff;
+      const dist = new Float64Array(n * NAV_K).fill(FAR);
+      const sb = ask.stores ? ask.stores[1] * w + ask.stores[0] : -1;
+      if (sb < 0 || !surfs[sb]?.length) return;
+      dist[sb * NAV_K + nearestSurf(surfs[sb], ask.storesZ)] = 0;
+      const isDeep = (b: number, k: number) => k === 0 && deep[b] === 1;
+      /** the cost of the move t -> s (t in column tb, slot j; s in column b, slot k), or -1: no move */
+      const move = (tb: number, j: number, b: number, k: number): number => {
+        const a = surfs[tb][j];
+        const c = surfs[b][k];
+        const rise = Math.abs(c.z - a.z);
+        if (Math.min(a.z + a.head, c.z + c.head) - Math.max(a.z, c.z) < AGENT_H) return -1;
+        if (isDeep(tb, j) !== isDeep(b, k)) return -1;
+        if (rise > DROP) return -1;
+        return FIX_COST.step + (cut[b] ? FIX_COST.cut : 0) + (rise > STEP ? FIX_COST.ramp : 0);
+      };
+      // (the shortest costs — the GPU relaxes Bellman-Ford sweeps to the same: Dijkstra here, a binary heap)
+      const heap: number[] = [];
+      const push = (v: number) => {
+        heap.push(v);
+        for (let i = heap.length - 1; i > 0; ) {
+          const p = (i - 1) >> 1;
+          if (dist[heap[p]] <= dist[heap[i]]) break;
+          [heap[p], heap[i]] = [heap[i], heap[p]];
+          i = p;
+        }
+      };
+      const pop = (): number => {
+        const top = heap[0];
+        const last = heap.pop()!;
+        if (heap.length) {
+          heap[0] = last;
+          for (let i = 0; ; ) {
+            const l = 2 * i + 1;
+            const r = l + 1;
+            let m = i;
+            if (l < heap.length && dist[heap[l]] < dist[heap[m]]) m = l;
+            if (r < heap.length && dist[heap[r]] < dist[heap[m]]) m = r;
+            if (m === i) break;
+            [heap[m], heap[i]] = [heap[i], heap[m]];
+            i = m;
+          }
+        }
+        return top;
+      };
+      const done = new Uint8Array(n * NAV_K);
+      push(sb * NAV_K + nearestSurf(surfs[sb], ask.storesZ));
+      while (heap.length) {
+        const t = pop();
+        if (done[t]) continue;
+        done[t] = 1;
+        const tb = Math.floor(t / NAV_K);
+        const j = t % NAV_K;
+        const [x, y] = xy(tb);
+        for (let d = 0; d < 6; d++) {
+          const b = boxOf(...nbr(x, y, d));
+          if (b < 0) continue;
+          for (let k = 0; k < surfs[b].length; k++) {
+            const s = b * NAV_K + k;
+            if (done[s]) continue;
+            const c = move(tb, j, b, k);
+            if (c >= 0 && dist[t] + c < dist[s]) {
+              dist[s] = dist[t] + c;
+              push(s);
+            }
+          }
+        }
+      }
+      for (let q = 0; q < nq; q++) {
+        if (bits[q] & REACH_BITS.reached) continue;
+        // (its stand nearest the stores by the field)
+        let s = -1;
+        for (let t = 0; t < 4; t++) {
+          const b = ask.queries[q * 4 + t];
+          if (b < 0 || !surfs[b].length) continue;
+          const c = b * NAV_K + nearestSurf(surfs[b], ask.floors[q * 4 + t]);
+          if (dist[c] !== FAR && (s < 0 || dist[c] < dist[s])) s = c;
+        }
+        if (s < 0) continue;
+        bits[q] |= REACH_BITS.fixable;
+        for (let guard = 0; dist[s] > 0 && guard < 4096; guard++) {
+          const b = Math.floor(s / NAV_K);
+          const k = s % NAV_K;
+          const [x, y] = xy(b);
+          let prev = -1;
+          let ramp = false;
+          for (let d = 0; d < 6 && prev < 0; d++) {
+            const qb = boxOf(...nbr(x, y, d));
+            if (qb < 0) continue;
+            for (let j = 0; j < surfs[qb].length; j++) {
+              const t = qb * NAV_K + j;
+              const c = move(qb, j, b, k);
+              if (dist[t] === FAR || c < 0 || dist[t] + c !== dist[s]) continue;
+              prev = t;
+              ramp = Math.abs(surfs[b][k].z - surfs[qb][j].z) > STEP;
+              if (ramp && fixes.length < FIX_CAP) {
+                // (the ramp from the lower column up the drop)
+                const lower = surfs[b][k].z < surfs[qb][j].z ? b : qb;
+                const upper = lower === b ? qb : b;
+                const [lx, ly] = xy(lower);
+                const dir = [0, 1, 2, 3, 4, 5].find((e) => boxOf(...nbr(lx, ly, e)) === upper)!;
+                fixes.push({ query: q, col: lower, kind: 'ramp', dir });
+              }
+              break;
+            }
+          }
+          if (cut[b] && fixes.length < FIX_CAP) fixes.push({ query: q, col: b, kind: 'cut', dir: 0 });
+          if (prev < 0) throw new Error('reach: the fix field has no way back (a bug)');
+          s = prev;
+        }
+      }
+    };
     solve(0, REACH_BITS.reached);
     if (ask.why && bits.some((b) => !(b & 1))) {
       solve(1, REACH_BITS.dry);
       if (bits.some((b) => !(b & 1) && !(b & REACH_BITS.dry))) solve(2, REACH_BITS.unplanned);
     }
+    if (ask.fix && bits.some((b) => !(b & 1))) solve(4, 0);
     let wet: Uint32Array | null = null;
     if (ask.wet) {
       wet = new Uint32Array(Math.ceil(n / 32));
@@ -224,6 +382,6 @@ export class CpuReach implements ReachEngine {
         if (x >= 0 && y >= 0 && x < this.cols.w && y < this.cols.h && this.cols.water(x, y) > LANE_WATER) wet[b >> 5] |= 1 << (b & 31);
       }
     }
-    return { bits, ramps, wet, rounds: 1 };
+    return { bits, ramps, wet, rounds: 1, fixes };
   }
 }

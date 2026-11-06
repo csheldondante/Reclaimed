@@ -1,6 +1,7 @@
 // The level's world over time, set up once at attach: sleep for a fixed map's held rivers, and for a streamed level
 // (level.stream) the Streamer, its slides' hooks (camera, sea, settlements, ships, fortress), the far land and the
 // warm cache. API: attachStream(scene). Talks to the streamer only through its public hooks.
+import { FortressReachGpu } from '../../build/reachgpu';
 import { EventKind } from '../../sim/globals';
 import { PK } from '../../sim/particles';
 import { TownDebug } from '../../settle/debug';
@@ -332,6 +333,9 @@ export function attachStream(scene: LevelScene): void {
         epoch: () => epoch,
         ready: (at) => terrainApi().heightAt(at[0], at[1]) !== null,
         budget: Number(host.params.get('townfolk') ?? ((host.quality.agentSweeps ?? 8) <= 2 ? 28 : 48)),
+        // (round 128o, B: one reach — a live town's places joined to its stores on the GPU, its fixes made in its plan)
+        reach: (w, h, origin) => new FortressReachGpu(host.gpu.device, core.world, w, h, origin),
+        oz: () => S.oz,
       });
       // (round 128i, FT-67) ?townview=0: the towns not drawn nor claimed (no settlements view) — the town bench's split of
       // a slide's cost between the towns and the terrain streaming (src/perf/townbench.ts)

@@ -4,7 +4,7 @@
 import { fortressOn } from './testing';
 import { describe, expect, it } from 'vitest';
 import { lint } from '../../test/support/writing';
-import { CpuReach, type ReachColumns } from './reach';
+import { CpuReach, type ReachColumns } from '../build/reach';
 import { ECON } from './defs';
 import { blockHp, lootOf, RAID, RaidClock, raidGoal, raidSides, sideOf, waveBreaks, waveSize, type RaidLayout } from './raid';
 import { raidArrivedLine, raidNowLine, raidOverLines, raidWarnLine } from './words';
