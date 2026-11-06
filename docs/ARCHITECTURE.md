@@ -3779,6 +3779,23 @@ at the first Build, updated after it each frame in sim seconds).
   (`raidOverLines`: what was taken, broken and burned, who fell by name) as a card with Close (`raidSummary`,
   `closeRaid`). Words in fortress/words.ts, linted by raid.test.ts.
 
+## The window keeps the town (round 128m, `townlab`)
+
+What lives in the window (the reach's columns, the builders on the agents, the claims) must stay in it.
+`Streamer.keep(rect)` (scenes/streamer/keep.ts; `FortressWindow.keep` on the contract) names world columns no slide may
+leave: `slideWhenReady`/`prefetch` skip such slides, `slide`/`warp` throw, and `keep` throws when the window doesn't hold
+the rect now. (`onetown`) The fortress keeps its town's site box (build/site.ts: the town's one grid, whole regions,
+settle/records.ts) — there is no fortress box of its own. With `?fortress=1` the atlas level opens its window at least the
+box's size and round it (`windowHolding`: a loud error when the box can't fit); the lab's still window throws when it
+doesn't hold the box. The z slide isn't affected.
+
+## The placement bench (round 128m, `townlab`; docs/TOOLING.md)
+
+`?bench=place` (perf/placebench.ts) on the game and `lab.placeBench()` in the lab run one function,
+`runPlaceBench(io)` (perf/placebench/run.ts), over a small IO: the fortress, frames, the ground, Build, sim time
+forward, the builders' positions. It reads only what the game already has on the CPU (the reach's answers and wet
+bits); its points (points.ts) and summary (summary.ts) are pure.
+
 ## The behaviour lab (round 128l, `tooling`; docs/TOOLING.md)
 
 `?level=lab&lab=<recipe>` (LevelDef `behaviourLab`, `warmupTicks: 120`): the game with less world for scripted

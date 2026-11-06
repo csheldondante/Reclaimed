@@ -52,6 +52,10 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: T
   const site = st.siteOf(rec.id);
   const W = site.box.w;
   const H = site.box.h;
+  // (round 128m townlab C, re-based on the site's box: the window keeps the town's box — no slide leaves it, and it must
+  // hold it now (keep throws otherwise: the level opens its window round the box, scenes/level.ts). The reach, the
+  // builders and the claims all live in the window; where the window doesn't reach they saw no ground)
+  S.keep({ x0: site.box.x0, y0: site.box.y0, x1: site.box.x0 + W, y1: site.box.y0 + H });
   // the stores until a warehouse stands: the town's stone heap (its plan's 'pile' spots)
   const townHeap = (): [number, number] => {
     const piles = st.spotsOf(rec.id)?.filter((s) => s.kind === 'pile') ?? [];

@@ -42,8 +42,10 @@ export interface LabRecipe {
   rivers?: RiverMode;
 }
 
-/** the lab's window: one fixed window, the plain levels' size */
-export const LAB_DIMS: WorldDims = { w: 256, h: 256, zMax: 64 };
+/** the lab's window: one fixed window */
+// (round 128m, townlab: 320, was 256 — the fortress's box, 240 x 278 rows, and its margin must lie in the window: on 256
+// its rows ran from -11 to 267, a strip of it off the land)
+export const LAB_DIMS: WorldDims = { w: 320, h: 320, zMax: 64 };
 /** the window's middle (world units) */
 export const LAB_MID: V2 = [LAB_DIMS.w / 2, (LAB_DIMS.h / 2) * ROW_H];
 const BASE = 10;
@@ -83,7 +85,7 @@ export const LAB_RECIPES: Record<string, LabRecipe> = {
   },
   valley: {
     name: 'valley',
-    blurb: 'two slopes down to a river running north to south east of the town; a lake at its foot',
+    blurb: 'two slopes down to a river (a ford) running north to south east of the town; a deep lake at its foot',
     ground: (x, y) => {
       const d = Math.abs(x - (LAB_MID[0] + 45));
       const bank = BASE + Math.min(14, d * 0.18);
@@ -95,7 +97,9 @@ export const LAB_RECIPES: Record<string, LabRecipe> = {
     water: (x, y) => {
       const d = Math.abs(x - (LAB_MID[0] + 45));
       const lake = Math.hypot(x - (LAB_MID[0] + 45), y - (LAB_MID[1] + 85)) < 18;
-      return d < 3 || lake ? 2 : 0;
+      // (round 128m: the river a ford, 0.6 m — on the 256 window its 2 m ran out of the bottom edge and was fordable by
+      // the time the lab opened; on the 320 window it stayed 2.4 m deep, and fortressrefuse's east shore was cut off)
+      return lake ? 2 : d < 3 ? 0.6 : 0;
     },
     springs: (x, y) => (Math.abs(x - (LAB_MID[0] + 45)) < 2 && y < 6 ? 0.01 : 0),
     woods: wood([LAB_MID[0] - 75, LAB_MID[1] + 60], 20),

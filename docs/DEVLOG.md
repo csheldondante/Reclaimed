@@ -17980,3 +17980,106 @@ the lab.
   drawn (BACKLOG TL-13). Visual checks stay in the game.
 - Tooling: two worktrees hashed to the same port (townlab and phonefix, 6390) and a lab run went to the other's lab
   server; `RECLAIMED_PORT` gives a worktree its own (BACKLOG TL-14).
+
+## 2026-11-05 — round 128m (`townlab`, B): the placement bench
+
+The user: "How about you build a bench for me to run that places buildings?" On the phone:
+`/fortress/?skipmenu=1&level=atlas&town=1&fortress=1&fresh=1&q=low&bench=place`. It needs `?fresh=1` and says so on
+screen ("It started fresh, so nothing it built is kept").
+
+- What it does (perf/placebench/run.ts, one run for the game and the lab): each of the nine building types at 31 points
+  (perf/placebench/points.ts): inside the walls (half the wall's radius from the gates' middle, four ways), 30, 60 and
+  120 m from the stores eight ways, across the water (the first dry ground past a wet run, from the reach's own wet
+  bits: `Fortress.wetAt`, nothing new read back), and the highest ground outside the wall within 110 m. Each block is
+  placed as a tap places it (`Fortress.paint`), the frames counted until the reach judges it, the panel's line kept,
+  and the plan erased before the next. Then houses at up to 8 points where a house was kept (the far and hard ones
+  first), Build at 16x, and when a builder first stands within 6 m of each and when its first block stands, for 300 sim
+  seconds; the nearest a builder came, when none did.
+- The report: every placement (outcome, line, tap CPU, the answer's delay, frame times round it), the arrivals, the
+  device and wake lock; downloaded at once (townbench's buttons). The summary on screen (summary.ts): the points where
+  every type was kept in one line, then each point where some weren't and the main reason, the timings, the arrivals.
+- Measured, the user's link at 412x915 `?q=low` (desktop iGPU, headless) and the lab's `town` (the same placements):
+  279 placements, 207 kept, 54 refused, 18 outside the box, in both. Refused: inside the walls east (a building) and west
+  (the harbour: deep water), N 30 m (a building), SE 60 and 120 m and NW 120 m (deep water). Kept across the water (27
+  and 28 m out: the channel is crossed further round) and on the hill. A tap's CPU 1.1 ms median (42 ms max, the first);
+  the answer 229 ms median in the game (469 max), 30 ms in the lab (160 max): the game's GPU is busier. Arrivals: the
+  game 3 of 8 sites in 300 sim s, the lab 4 of 8; builders never got near the 120 m sites in either.
+- First found by it: after the first Build the camera moves to frame the stores (FT-49) and the window slides, so the
+  window's frame moves under the box — the bench measures a site's middle again every check (it had kept the one from
+  before the slide and saw no builder arrive). The same slide is what C is about.
+- Tests: test/unit/placebench.test.ts (the points on a made-up town with a river and a hill; no hill on flat land; the
+  summary's lines).
+
+## 2026-11-05 — round 128m (`townlab`): the placement bench diagnoses the phone's refusals
+
+The user's run of the placement bench on the Pixel 9a (build 0708e69): 270 placements, 0 kept, 243 refused — every one
+"A cliff or a building is in the way", even inside the walls by the stores — 27 outside the box; the answer 750 ms after
+a tap (958 max), one frame of 616-733 ms after each tap, the rest at 16.7 ms. The desktop on the same link keeps 207.
+
+- Not the phone's flags: `?q=low` expands the phone set on the desktop too (phone-flags.ts isPhoneTier), and a run with
+  the phone's URL exactly kept 24 of 31 houses.
+- Not the same land: the phone's stores at (207, 156), the desktop's at (159, 176); its "across the water" points 31
+  and 48 m out, the desktop's 27 and 28. 48 isn't a region, so it isn't a window shift: the town (or its plan, its
+  spots) comes out differently on the Mali. The lab's fixture is the desktop's town, not the user's (BACKLOG TL-15).
+- So the bench now saves the phone's own town and reads what decides a refusal, once, before the first placement
+  (perf/placebench/diagnose.ts; never in the game's play): the town's id and name, the window's origin, the box's place
+  in it; the reach's surfaces at the stores' column (FortressReachGpu.surfacesAt: 32 bytes); and the same ask answered
+  by the CPU reference (reach.ts CpuReach) over the window's columns and water read back — GPU and CPU side by side.
+  The summary ends with three lines of it; "Download the town (for the lab)" saves the phone's land as a fixture
+  (data/lab/town.rclt's format). Each row now has the reach's GPU rounds; the arrival check its wall time.
+- On the desktop (the user's link at 412x915): "Town Muru (s84); window at 14400, 4416 … The stores at 159.5, 175.8:
+  ground 98.25 m. Walkable levels there, GPU: 100.32 m (31 m over it); CPU: the same. Reached: GPU 24 of 31, CPU 24.
+  They agree on 31." The answers take 1 GPU round (3 at most) here.
+- Hypothesis for the phone (TL-16): the reach seeds the stores from the top walkable surface of their column; anything
+  standing over the heap with 1.5 m under it would put the stores on its roof. The phone's run will say.
+- Perf (TL-17): the 700 ms frame after a tap matches the reach's own GPU time on the Mali — a refused block costs three
+  solves of 12 hook-and-jump passes of atomics over 67k columns x 4 surfaces.
+
+## 2026-11-05 — round 128m (`townlab`, C): the window keeps the fortress's box
+
+The user: "It still says they can't make it from the stores to the build site." One cause, found on the user's link
+headless (412x915, q=low): the reach's answers depended on where the camera was. The fortress's box (240 x 278 rows)
+sat at offset 32,56 in a 320-row window, so it already ran 14 rows past the bottom edge at the start. A pan of ~150 m
+(to look at a site) slid the window a region, and part of the box left it. The reach (fortreach.wgsl) sees no ground
+outside the window, so whole sides of the town read "A cliff or a building is in the way". With the camera 150 m north,
+every one of 24 points round the stores was refused (bits 0), because the stores themselves had left the window. Panning
+back put it right.
+
+- Fix (approved by main as option 1): the reach, the builders and the claims all live in the window, so what they need
+  stays in it. `Streamer.keep(rect)` (scenes/streamer/keep.ts, on the FortressWindow contract: one call, the grid's
+  bounds and a margin, nothing fortress-specific) is a rect of world columns every slide must leave in the window.
+  `slideWhenReady` and `prefetch` make no slide that would leave it, `slide` and `warp` throw if asked to, and `keep`
+  throws if the window doesn't hold the rect now. The camera may pan past the box; the far land is drawn by the tiles.
+- At the start, `boxInWindow` puts the box and KEEP_MARGIN (4) round it wholly in the window, as near the town's
+  centre as it fits, on an even row. It throws a loud error when the window is smaller than box + margin. The user's
+  box moves from rows 56-334 to 38-316 of the window.
+- The window holds it: with `?fortress=1` the atlas level opens at least FORTRESS_WINDOW (320) a side (the desktop's
+  default 256 held 256 of the box's 278 rows). The lab's window is 320 too (LevelDef.side; it was 256 and its box ran
+  from row -11 to 267). On 320, the valley recipe's 2 m river no longer drained out of the bottom edge before the lab
+  opened, and fortressrefuse's "east shore kept" failed. The river is now laid as a 0.6 m ford, and the lake stays 2 m.
+- The z slide (deep quarries) is untouched: keep is along x and y only (fortressslidez passed).
+- Measured, scripts/fortresskeep.mjs on the user's link: the reach's 24 answers at the start, then panned 150 m east,
+  west, south and north and back: all 8 the same as the start, the box in the window throughout (the window doesn't
+  slide at all now: 286 of 320 rows and 248 of 320 columns kept leave no aligned slide). Shots panned east and south at
+  zoom 6: the far land past the window drawn by the tiles, no holes. In the south shot a darker diagonal band crosses the
+  grass. I can't tell whether it's a cloud's shadow or a tile edge (listed for the user).
+- The game's answer time (229-326 ms against the lab's 30-52 ms) isn't explained by slides: the bench's placements
+  ran with a still camera. The answer takes 1 GPU round (3 at most) in both, so the extra is the full game's queue in
+  front of each round's mapAsync. Left to phonefix / TL-17.
+- Tests: test/unit/streamkeep.test.ts (the user's box put in the window, even rows, the loud error at 256, the slides
+  allowed); fortresskeep.mjs (above); fortressoutside (the full game: all three sites built), lab fortressoutside on
+  `town` (90 sim s) and `walled` (181 sim s), fortressrefuse, fortresslanes passed; hallcheck 0 lost of 344.
+- Hacks and limits: while the fortress is up the window doesn't slide, so the sim's detail ends at the box's window.
+  The lab's 1.56x more columns run its sim slower (walled: x1.3-1.7 real time, was x2.2-2.8).
+
+## 2026-11-05 — round 128o (`onetown`, DA-A1 step 0): fortress merged; the window keeps the town's site box
+
+- Merged `fortress` 11f0796 (the design of record, rect C 35cf133, the placement bench) into `onetown`.
+- Rect C re-based on the town: onetown deleted the fortress's own 240 m box (the fortress edits the town's site), so the
+  keep rect is the site box itself (the user's start town: 256 x 256 at 14400,4480). FORTRESS_BOX, FORTRESS_WINDOW,
+  KEEP_MARGIN and `boxInWindow` are gone: a site box is fixed in the world (whole regions), so it isn't placed in the
+  window; the window is placed round it (`windowHolding`, scenes/streamer/keep.ts) and opened at least its size.
+- No margin past the box: the site box already holds BOX_PAD (57 m) round the built radius, and the reach, claims and
+  plan stop at the box. Judgement call, listed for main.
+- Line endings: onetown's WIP had turned ~35 LF source files CRLF; put back to LF (no content change).
+- Tests: typecheck, the full vitest suite (111 files, 881 passed); streamkeep.test.ts rewritten for `windowHolding`.

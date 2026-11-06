@@ -11,6 +11,7 @@ import type { Settlement } from '../api/contracts/settlement';
 import type { LiveSpot } from '../settle/life';
 import type { TownSite } from '../build/site';
 import type { TownHook } from '../settle/view';
+import type { KeepRect } from '../scenes/streamer/keep';
 
 /** the record of the town that becomes the fortress: what startFortress reads and writes (its stores) */
 export type FortressTownRec = Pick<Settlement, 'id' | 'name' | 'faction' | 'at' | 'stores'>;
@@ -38,6 +39,9 @@ export interface FortressWindow {
   onBeforeSlide: ((dx: number, dy: number, dz: number) => void)[];
   onWarp: ((ox: number, oy: number, oz: number) => void)[];
   onRelief: ((x0: number, y0: number, x1: number, y1: number) => void)[];
+  /** (round 128m, townlab) keep these world columns in the window from now on: no slide leaves them out (the Streamer:
+   *  scenes/streamer/keep.ts; the lab's still window never slides). Throws when the window doesn't hold them now. */
+  keep(k: KeepRect | null): void;
 }
 
 /** (onetown) where the fortress's town is drawn and claimed (settle/view.ts SettlementsView; lab/view.ts LabTownView) */

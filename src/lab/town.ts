@@ -10,6 +10,7 @@ import type { FortressTownRec, FortressTownSource, FortressWindow } from '../for
 import type { LiveSpot } from '../settle/life';
 import { TownSite, type SiteData } from '../build/site';
 import { ROW_H } from '../world/lattice';
+import { keepHeld } from '../scenes/streamer/keep';
 
 /** a recipe's town's box (columns): the fortress's of rounds 128d-128l, round the heap */
 const BOX_W = 240;
@@ -72,8 +73,21 @@ export class LabTown implements FortressTownSource {
 
 /**
  * a window that never slides (the lab's): its land all written from the start. A recipe's is the world (origin 0, oz 0);
- * a fixture's the captured window's (its origin, and its z less the fixture's base: the site's heights are world z)
+ * a fixture's the captured window's (its origin, and its z less the fixture's base: the site's heights are world z).
+ * What it's asked to keep (the town's site box) must already be in it (round 128m townlab C: it never slides).
  */
-export function stillWindow(origin: [number, number] = [0, 0], oz = 0): FortressWindow {
-  return { origin, oz, unwritten: [], R: 64, onSlide: [], onBeforeSlide: [], onWarp: [], onRelief: [] };
+export function stillWindow(dims: { w: number; h: number }, origin: [number, number] = [0, 0], oz = 0): FortressWindow {
+  return {
+    origin,
+    oz,
+    unwritten: [],
+    R: 64,
+    onSlide: [],
+    onBeforeSlide: [],
+    onWarp: [],
+    onRelief: [],
+    keep: (k) => {
+      if (k && !keepHeld(origin, dims.w, dims.h, k)) throw new Error(`the lab's window (${dims.w} x ${dims.h} at ${origin}) doesn't hold the rect it's asked to keep (${k.x0},${k.y0} - ${k.x1},${k.y1})`);
+    },
+  };
 }
