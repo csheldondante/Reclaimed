@@ -18075,3 +18075,116 @@ back put it right.
 ## 2026-11-05 — line endings normalised to LF, pinned by .gitattributes (round 128o)
 
 Agents and editors drifted files between CRLF, LF and mixed (261 CRLF, 911 LF, 12 mixed in the index). Merges then showed whole-file diffs (phonefix: ~4.7k raw lines for +796/−92 real), hid real changes and conflicted. `.gitattributes` now says `* text=auto eol=lf`: every text file is stored and checked out as LF on every OS, and git converts on commit, so a CRLF editor can no longer leak into the repo. Binaries are marked `binary`. The renormalising commit changes only line endings (`git diff --ignore-cr-at-eol` is empty apart from .gitattributes). Branches made before it merge with `-X renormalize`.
+
+## 2026-11-05 — the transfer gate: every readback, and every large copy and upload, in one table (round 128o, DA-G1)
+
+Why: the audits found the phone unplayable after Build with timed readbacks nobody had counted (the world API's
+mirror at 139 MB/s, the field reader at 16 MB/s, unit sync every frame, the sandbox frame's reads). The user: "It also
+makes terrible choices for CPU readback", and mid-task: "flag and scrutinize any large data readbacks or copies and try
+to come up with a way to avoid them and to avoid computation when possible" (AGENT_RULES §1b). DESIGN.md §24 says
+nothing reads back per frame and CPU reads are small, after edits. A rule nothing checks drifts, so every transfer that
+matters is now in one table and a new one is a test failure.
+
+- `src/gpu/transfers.ts` (one table) lists each GPU→CPU read by file and enclosing function, with what moves, why,
+  its rate (frame, timed, edit, demand) and whether it runs in fortress play (yes, flag, debug, no). Read wrappers
+  (`WorldCore.readBuffer`/`readTexture`/`readWindField`, the mirror's `attachSim`, `Agents.sync`, `Agents.reader`,
+  `requestReach`, Integrity's column copy, `regionLand`) carry the pattern of their calls, and each caller is its own
+  `via` entry, since the caller sets the rate.
+- Copies (`copyBufferToBuffer`, `copyTexture*`, `copyBufferToTexture`) and uploads (`writeBuffer`, `writeTexture`) are
+  in the same table unless the call shows its size as a constant of at most 64 KB (`SMALL_BYTES`: a literal, a file
+  constant, a typed array built with a known length), or the copy is the staging copy of a read in the same function.
+  Each says `small` or `large`. Why 64 KB: the uniform-binding limit, and a size where a per-frame transfer starts to
+  show on a phone's shared memory bus. Sizes the source doesn't show are estimates from reading the code, marked so.
+- `test/unit/transfers.test.ts` scans src/ with `test/support/source-scan.ts`, a small lexer (TypeScript 7 ships no JS
+  compiler API): comments and strings never count, an anonymous callback's transfer belongs to the named function
+  around it, and keys are file + function, not lines, so moving code doesn't churn the table. It fails on an unlisted
+  transfer, on a listed one that's gone or whose count changed, and on a read every frame or on a timer in play, or a
+  large copy or upload every frame or on a timer in play, that lacks `violates` and a BACKLOG row.
+- Seeded from seven read-only tracing passes over every site: 283 entries. Reads: 157 calls in 124 entries (52
+  functions with `mapAsync`, 8 wrappers), 41 marked `violates`, 27 of them in default fortress play. Copies: 47 calls in
+  32 entries, 24 large, 6 marked. Uploads: 203 calls in 127 entries, 46 large, 1 marked.
+- The worst, in default fortress play: the edit brush and the structure pass each copy the whole layers buffer
+  (16-25 MB) back every tick on desktop (`?inplace=1` is only set on the phone tier; DA-B8, new row DA-B14); unit sync every
+  frame (DA-B2); physics body stats every tick (DA-E5); every CPU body's voxels re-uploaded every frame (up to 512 KB,
+  DA-E5); the coarse world's 8 MB grid copied back every 4th frame (new DA-B15); the whole wind field copied while any
+  body exists (new DA-B16); the mirror's 250 ms timer, started by whichever of 16 callers comes first, Build among them
+  (DA-B1); the FieldReader's ~5 MB every 500 ms (DA-B1); the sandbox frame's surface, veg, water, particle and wind
+  reads (DA-B5, DA-B6); reach re-asked every 3 s (DA-A3); the mesh pool and instance counts (DA-P8). New row DA-B13
+  holds the timed reads no other row covered (the 400 ms region-save sweep, creatures' group sums, the menu's dust).
+- Rows renumbered after merging `fortress`, whose own transfers audit added DA-B7..B12 meanwhile: the whole-shadow copy
+  maps to DA-B7, the edit pass's copies to DA-B8, Integrity's whole-layers copy after each slide to DA-B12.
+- Also marked, though event-driven: whole-buffer reads after edits (Integrity's 16 MB copy after each slide, the
+  physics wake's layers per touch, the vertical slide), against §24's "small".
+- Hacks and limits: the gate is lexical. It can't size a transfer whose size isn't a constant in the call, so those are
+  all listed and their sizes are estimates; a transfer listed `small` that grows past 64 KB at run time won't fail it.
+  Read wrappers with generic names (`.sample(`, `.refresh(`, `.pick(`) aren't gated by their calls; their entries
+  describe the callers. Rates and "in play" come from reading the code, not from running it. `perf/gpumem.ts` patches
+  `GPUBuffer.prototype.mapAsync` to measure reads; it is not a read and isn't listed.
+
+## 2026-11-05 — the import-boundary gate (round 128o, DA-G2)
+
+Why: the audit found two building systems, two people sims, and opportunities beside a parallel raid loop. The user:
+"the fact that it implemented 2 agent systems, opportunities but then a parallel system for raids is a huge huge red
+flag." Nothing checked which module may lean on which, so the fortress could grow its own raid loop without touching
+the opportunity contract. A boundary nothing checks drifts.
+
+- `test/unit/boundaries.test.ts` holds one table of seven rules drawn from DESIGN.md: the run layer never imports the
+  fortress (§21); the fortress never imports the run layer, UI, scenes or game (§18); contracts import only contracts
+  (§1); engine systems and the world API never import scenes, game, the town, the run layer, UI or pages (§1); the run
+  layer never imports UI or scenes (§22); kernels (`shaders/`) are imported only below the run layer, UI and scenes.
+  Imports come from test/support/source-scan.ts (static, dynamic, re-exports; type-only imports count).
+- Started minimal and true: each rule holds today except the 22 breaches listed in `KNOWN`, each with its row. 19 are
+  one root cause: the engine's live world (`WorldCore`, the Streamer, `Integrity`, `colapply`) lives in scenes/ and
+  game/, so the engine's install files, physics' wake, the atlas, static claims and the api import upward (new row
+  DA-P9). The fortress imports the streamer's `KeepRect` (DA-P2). `opps/level-opps.ts` is scene wiring and
+  `runplan/viewer.ts` a page living in the run layer's folders (new row DA-L9).
+- docs/MODULES.md and scripts/modules-map.mjs list files, not imports; the gate reuses the same walk of src/ (shared
+  in source-scan) rather than the generated doc, so it can't go stale against it.
+- Hacks and limits: the rules are by folder. A breach inside a folder (game/ mixes engine pieces like integrity with
+  game rules like powers) isn't seen; `hero` and a few small folders aren't ruled. Viewer and bench files beside engine
+  modules are named as pages explicitly.
+
+## 2026-11-05 — the material limits written down, and the tables held together (round 128o, DA-G3)
+
+Why: DESIGN.md §24 asks that limits be "documented with what they cost us", and the user wants the material table
+widened past 40 later ("I would love to expand the material table by the way. But that can come later", DA-E1). The
+table is copied into three WGSL uniforms, about 20 kernels' constants and two id lists mirrored by hand; widening it
+safely needs a test that they agree, and the numbers in one place.
+
+- docs/ARCHITECTURE.md "Limits": 40 of 40 ids (no headroom), 8-bit ids in every packed word, which tables grow
+  together, the aux byte's three meanings, K = 16, Z_LIMIT 511, 8 storage buffers a stage, and the smaller counts, each
+  with what raising it costs.
+- test/unit/materials-tables.test.ts: ids dense and named as in `MAT`; `MATS` length and stride; `PM` and `SM` at 4
+  vec4 a material; every `MAT_*` constant in every kernel is the material it names (three are roles, listed); the
+  mirrored lists, evaluated for every id by running the small WGSL functions as JS; `MAX_MATERIALS` fits the masks.
+- It found one real disagreement: `looseFrom` (game/colapply.ts) crumbled a log to rubble where `rubbleOf` on the GPU
+  makes ash, since round 63 added logs to the GPU side only. Fixed: a log is wood, it burns down to ash on both. The
+  shader's six vote slots are unchanged (ash was already one of them).
+- Hacks and limits: the WGSL-as-JS evaluation only handles the two small mirrored helpers (ifs, returns, comparisons,
+  constants); a bigger mirror needs a real test on the GPU tier. The table was not widened (DA-E1).
+
+## 2026-11-05 — the writing lint over every source of the player's words (round 128o, DA-G4)
+
+Why: the lint (docs/WRITING.md, round 125) ran only where a test called it: writing.test.ts for the run's cards and
+seven fortress tests for their lines. The fortress bar's own labels, the HUD, the menu, the run panels and the level
+hints were never read, and a new UI module was linted only if its author remembered. The user (round 125): "Use
+simple plain language like in the worked examples."
+
+- test/unit/writing-sources.test.ts: every file that writes text to the page, the HUD or a canvas must be placed in
+  `SOURCES` as the player's, a words module, or a developer's (with why). 35 player files, 2 words modules, 26
+  developer files today. The player's literals are linted wherever they are: what a sink is given, what the file's
+  label helpers are given (named per file: `toggle`, `h`, `btn`, `tool`, `mv`), the `text:` lines of fortress/ui.ts,
+  and every literal of a words module.
+- test/support/player-text.ts reads them with the source scanner: code is left out by where a literal sits (a
+  comparison, a key, a class name, a selector, an event, a style), HTML is read for its text and its tooltips, and a
+  stylesheet or CSS declaration list is skipped. A test checks it finds the fortress bar's labels and no CSS.
+- Fixed where the fix was plain: the fortress banner "Planning (paused)" is now "Planning. Time is stopped."; two
+  menu tooltips lost a "(round 108)" and "(round 111)" left over from development.
+- 52 strings still fail and are listed in `KNOWN` under new row DA-G6: key hints in parentheses ("forward (W)",
+  "Swing (Space)"), the valley level's dashes and semicolons, the run-end and run-plan panels, the menu and HUD
+  tooltips. Rewriting them changes text the user has seen, and some (the free camera's controls, the old valley) may
+  not be player-facing any more: a question for the user, not a guess.
+- Hacks and limits: the reader is lexical. A label passed through a helper not named in `SOURCES` is missed; a
+  developer file wrongly placed as `dev` is not linted. Text built at run time from data is still linted only by the
+  tests that produce it (writing.test.ts and the fortress tests keep their lint calls). JSON situations under data/
+  are linted by writing.test.ts for seed 1 only.
