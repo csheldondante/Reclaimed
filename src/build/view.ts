@@ -34,6 +34,8 @@ import { towered } from './plan';
 import { shapesOf, type Shapes } from './shapes';
 import { rampShape, STAIR_HALF, WALL_HALF, WALL_LINTEL } from './solid';
 import { alongAxis, axisLength, groundSteps, WAY_SQUARE, waysOf, type Ways } from './ways';
+import type { EdgeNet } from './edgenet';
+import { insetTiles, pathFeatures } from './edgeview';
 import { LANE_DRAWN, LANE_WIDTH, type Lanes } from './lanes';
 
 /**
@@ -82,6 +84,9 @@ export interface ViewInputs {
   warn?: readonly number[];
   /** (round 128l, m4: the attack wave) the gates are shut: a gate's passage drawn closed */
   shut?: boolean;
+  /** (round 128p, DA-A13 step 1) the paths on the grid's edges (build/edgenet.ts): the buildings inset from them, the
+   *  drawn ones laid as roads (build/edgeview.ts) */
+  edges?: EdgeNet;
 }
 
 /** a stair's step along its axis (metres) */
@@ -482,11 +487,16 @@ export function townView(site: ViewSite, inp: ViewInputs): { city: CityPlan; ext
     use: plan.use.slice(),
     block: Int32Array.from(plan.block),
   };
+  if (inp.edges) {
+    const t = insetTiles(grid, plan, inp.edges);
+    tiles.verts = t.verts;
+    tiles.quads = t.quads;
+  }
   const adj = grid.nbr;
-  // the ground under every corner (the plan's z + zOff)
-  const nv = grid.verts.length / 2;
+  // the ground under every corner (the plan's z + zOff; the grid's vertices first, then an inset's copies)
+  const nv = tiles.verts.length / 2;
   const ground = new Float64Array(nv);
-  for (let v = 0; v < nv; v++) ground[v] = inp.ground(grid.verts[v * 2], grid.verts[v * 2 + 1]) + zOff;
+  for (let v = 0; v < nv; v++) ground[v] = inp.ground(tiles.verts[v * 2], tiles.verts[v * 2 + 1]) + zOff;
   const quadBuilding = new Int32Array(nq).fill(-1);
   const quadTop = new Float64Array(nq).fill(NaN);
   const buildings: BuildingRec[] = [];
@@ -878,6 +888,7 @@ export function townView(site: ViewSite, inp: ViewInputs): { city: CityPlan; ext
   }
   // ---- the layout's features (copies: the view is moved, the plan isn't) and the dressing's lamps, torches, banners
   const linear: LinearFeature[] = plan.layout.linear.map((f) => ({ ...f, points: f.points.map((p) => [p[0], p[1], p[2] + zOff]), ground: f.ground.map((g) => g + zOff) }));
+  if (inp.edges) linear.push(...pathFeatures(grid, inp.edges, groundAt));
   const berths = plan.layout.berths.map((b) => ({ ...b, at: [b.at[0], b.at[1], b.at[2] + zOff] as [number, number, number] }));
   const order: number[] = [];
   const byStructure = new Map<number, number[]>();

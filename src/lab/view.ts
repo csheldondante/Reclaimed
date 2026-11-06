@@ -16,6 +16,7 @@ import type { TownSite } from '../build/site';
 import { ROW_H } from '../world/lattice';
 import type { FortressWindow } from '../fortress/host';
 
+import type { EdgeNet } from '../build/edgenet';
 const KEY = 'town';
 
 export interface LabViewIO {
@@ -34,6 +35,8 @@ export class LabTownView implements TownViewHost {
   private hook: TownHook | null = null;
   /** its claims made once (the registry comes with the level's first frames): changes claim again after */
   private claimed = false;
+  /** (round 128p, DA-A13 step 1) the paths on the grid's edges, drawn with the buildings inset (lab.edges) */
+  edges: EdgeNet | null = null;
 
   constructor(
     io: LabViewIO,
@@ -95,7 +98,9 @@ export class LabTownView implements TownViewHost {
     if (!this.claimed) this.claimed = this.claims.update();
     if (!this.p) {
       const hook = this.hook?.view() ?? {};
-      this.p = townPieces(site, { ground: (x, y) => site.groundAt(x, y), ghost: (c, l) => !site.town.has(c, l), ...hook });
+      // (round 128p, DA-A13 step 1: the edge paths drawn instead of the lanes — lab.edges)
+      const edges = this.edges ? { edges: this.edges, lanes: undefined } : {};
+      this.p = townPieces(site, { ground: (x, y) => site.groundAt(x, y), ghost: (c, l) => !site.town.has(c, l), ...hook, ...edges });
       if (!this.grid) this.grid = this.sg.newGrid();
       if (this.p.count) this.sg.put(KEY, this.p, this.grid);
       else this.sg.drop(KEY);

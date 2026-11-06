@@ -134,6 +134,12 @@ export interface Structure {
   /** (onetown) what history left on it: gutted by a fire, abandoned to a flood (the generator's marks) */
   wear?: 'burned' | 'flooded';
   /**
+   * (round 128p, DA-A13: shape modifiers — DECISIONS round 128p) its own sub-layout over its painted cells: plots (cell
+   * groups, e.g. a farm's coarser Voronoi over its region) and each plot's row angle (radians, the crop rows'). Painting
+   * stays cell by cell; this only changes how the region is drawn and subdivided. Absent: drawn cell by cell
+   */
+  sub?: { plots: number[][]; rows?: number[] };
+  /**
    * cell → its levels as runs [lo, hi), bottom up (round 128d: no level cap; a gap is two runs — build/runs.ts, the
    * plan's own runs, read only)
    */

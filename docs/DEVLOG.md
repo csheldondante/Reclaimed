@@ -20750,3 +20750,69 @@ changes with the grid.
   - Step 1's data model gives a structure an optional `sub` layout (plots as cell groups, a row angle a plot); nothing
     makes one yet.
 
+## 2026-11-06 — round 128p (`onetown`, DA-A13 step 1): paths on the grid's edges, insets, reach as a union-find, on the start town
+
+**What.**
+- **`src/build/edgenet.ts`:** the edge network over any site's grid and plan.
+  - Every edge (a cell side) is a path unless cut: a wall across it (two wall cells, neither a gate), water at its
+    middle or either end, or a rise along it steeper than stairs (SLOPE 0.75). Past 1 in 3 an edge is stairs: walkable,
+    flagged `steep`.
+  - A block's own edges are inside it.
+  - A structure is one node, with doors at grade on any perimeter edge (its floor within STEP of the edge's ground;
+    a yard anywhere).
+  - Drawn paths: main streets are the shortest edge walks from the middle to the gates' far sides, the roads out, and
+    spokes (5, evenly round) past the town's last structure. Lanes run from each structure's nearest door to the
+    network, nearest first, so they merge.
+  - Reach is a union-find over the edges' vertices plus the structures' doors. What isn't reached says why: the solve
+    again with one cut lifted at a time (wall, water, cliff, then any edge a door: terrace).
+- **`src/build/edgeview.ts`:**
+  - Insets: a building's corners mitred inward from its structure's path edges, lane 1 m and main 1.6 m (DECISIONS),
+    per (vertex, structure), so a building stays whole.
+  - The drawn paths as road features by kind (lane 2 m, main 3.2 m).
+- **Wiring:**
+  - `townView` takes `edges`, which insets the tiles and adds the path features.
+  - `lab.edges({spokes, off})` draws it in the lab in place of the lanes. `scripts/lab/edges.mjs` takes before and after
+    shots at the drawn paths.
+- **The structure contract gets `sub`** (plots, row angles: the shape modifiers' sub-layout). Nothing makes one yet.
+
+**Measured on the start town** (`test/unit/edgetown.test.ts`; `EDGE_OUT=<dir>` writes the map preview):
+- 65 structures, 62 reached. The 3 out are all terraces: 2 houses and a hut whose floors are more than a step from
+  the ground at every edge.
+- The other three cuts left nothing out: wall 22 edges, water 850, cliff 57.
+- 321 steep edges (stairs), 106 main-street edges, 95 lane edges.
+- 25–32 ms for the whole network on the CPU, the Dijkstra walks included. The union-find itself is a few ms.
+
+**So:** the four causes as predicted; on this town only the terraces bite (generation's stoop stairs or regrade, next).
+There are no gates in this town's wall and no roads out (only piers), so the main streets are the spokes.
+
+**Tests:**
+- **`test/unit/edgenet.test.ts`, 6:**
+  - a house shut in on all sides by houses is reached through them;
+  - a multi-cell building's own edges aren't paths;
+  - a gateless ring cuts as 'wall', and its gate joins;
+  - water cuts, a cliff cuts, and a floor far above every edge is 'terrace';
+  - every structure gets a lane door;
+  - the inset puts both door-edge corners exactly 1 m in.
+- The fixture is recaptured: view.ts sits in the land hash's sources.
+
+**Seen in the lab** (`scripts/lab/edges.mjs`, phone viewport, zoom 12–24):
+- The insets show: the core's houses stand apart where lanes run.
+- The drawn paths don't read yet. In the walled core the fixture's columns carry the old town's buildings: the terrain
+  surface there is about 7 m over the plan's ground, so paths laid on the ground are buried. Elsewhere, at the iso
+  angle, the tall houses hide the lanes.
+- The map preview shows the network plainly.
+
+**Next (step 2) is the hybrid:**
+- main roads as curves the tiles adapt to (a generated spoke and a drawn road);
+- the far-structure rule: within 4 cells, grid lanes; farther, a curve grown from the nearest major road (terrain-aware
+  least-cost path, smoothed, graded) — the far lumber mill is the test;
+- the terrace fix at generation (stoops, or floors set to the door edge);
+- the radial grid, which needs the generator changed and the fixture recaptured.
+
+**Hacks and limits:**
+- The spoke count (5) and angle, the insets (1 / 1.6 m) and the path widths are style settings.
+- STEP and SLOPE are the walker's and the stair's rules.
+- A main street on the grid's edges bends with the grid; step 2 replaces spokes with curves.
+- The far-structure threshold of 4 cells is a style setting.
+- The paths' visibility in the lab's core is limited by the fixture's stamped old buildings (not a game state).
+

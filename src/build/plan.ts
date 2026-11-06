@@ -43,7 +43,7 @@ function addPer(into: PerBlock, p: PerBlock, k: number): void {
 }
 
 /** (onetown) what a structure is given when the generator places it (Structure's look, floor, district, wear) */
-export type StructureAttrs = Partial<Pick<Structure, 'look' | 'floor' | 'district' | 'wear'>>;
+export type StructureAttrs = Partial<Pick<Structure, 'look' | 'floor' | 'district' | 'wear' | 'sub'>>;
 
 /**
  * (onetown) The plan's layout layer: what the generator's layout passes lay down besides the structures — the town's

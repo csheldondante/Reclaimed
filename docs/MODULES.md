@@ -72,7 +72,7 @@ Interface contracts between tracks (world state, structures, settlement, flora, 
 - `facts-store.ts` (320) — ---- api/contracts/facts-store.ts … API: `MemoryFacts`, `migrateFacts`.
 - `facts.ts` (309) — ---- api/contracts/facts.ts … API: `EntityKind`, `ENTITY_KINDS`, `EntityId`, `FactLocation` +25.
 - `flora.ts` (148) — The flora contract (round 117, track `flora`; API: `FloraSpeciesId`, `FloraForm`, `FloraHost`, `FloraBarrier` +10.
-- `fortress.ts` (206) — Fortress mode's contract (round 128c, docs/design/FORTRESS_MODE.md, FORTRESS_SLICE1.md). API: `StructureType`, `STRUCTURE_TYPES`, `PAINTABLE_TYPES`, `Good` +12.
+- `fortress.ts` (212) — Fortress mode's contract (round 128c, docs/design/FORTRESS_MODE.md, FORTRESS_SLICE1.md). API: `StructureType`, `STRUCTURE_TYPES`, `PAINTABLE_TYPES`, `Good` +12.
 - `hero.ts` (142) — Heroes — who the player is in a run (round 88, docs/SYSTEMS.md system 8; API: `HeroIntent`, `HeroAbility`, `HeroCamera`, `ChaseFraming` +4.
 - `index.ts` (26) — The engine's contracts between systems (round 83, docs/SYSTEMS.md): types every session codes against.
 - `inhabitants.ts` (225) — Inhabitants — creatures and people with bodies, procedural animation and wilderness behaviour (round 117, … API: `BodyPlan`, `BODY_PLANS`, `Proportions`, `Palette` +14.
@@ -144,6 +144,8 @@ The atlas: the whole generated world map (coarse sim, GPU finish, far land, geys
 ## src/build/
 
 - `claims.ts` (119) — A town's built blocks in the world's columns (round 128m, onetown; API: `TownClaimsIO`, `TownClaims`.
+- `edgenet.ts` (419) — The town's paths on its grid's edges (round 128p, DA-A13 step 1; API: `PATH_LANE`, `PATH_MAIN`, `CUT_WALL`, `CUT_WATER` +9.
+- `edgeview.ts` (128) — How the edge paths show (round 128p, DA-A13 step 1; API: `insetTiles`, `pathFeatures`.
 - `entrances.ts` (140) — How each structure of a town is entered (round 128o, DA-A7's core; API: `EntranceGrid`, `EntranceKind`, `Entrance`, `openCell` +2.
 - `grade.ts` (93) — A road's grade over the land (DA-A10, round 128o; API: `ROAD_GRADE`, `GradeOpts`, `LaneGrade`, `gradeLane` +1.
 - `lanes.ts` (136) — A town's roads (round 128k; API: `LaneKind`, `LaneSeg`, `LANE_WIDTH`, `LANE_DRAWN` +9.
@@ -160,7 +162,7 @@ The atlas: the whole generated world map (coarse sim, GPU finish, far land, geys
 - `town.ts` (464) — The town (round 65, docs/DECISIONS.md: "a townscraper inspired grid and building system"; API: `LEVEL_H`, `TownIO`, `TownData`, `Block` +1.
 - `towngrid.ts` (186) — The town's irregular grid (round 65; API: `TownGridOpts`, `TownGrid`, `CellGrid`.
 - `types.ts` (152) — The building types: one table for every town (round 128m, onetown; API: `POWER_RISE`, `DEFS`.
-- `view.ts` (1183) — A town drawn (round 128m, onetown; API: `ViewSite`, `LOOK_GHOST`, `PIECE_PICKED`, `PIECE_WARN` +12.
+- `view.ts` (1194) — A town drawn (round 128m, onetown; API: `ViewSite`, `LOOK_GHOST`, `PIECE_PICKED`, `PIECE_WARN` +12.
 - `ways.ts` (574) — The fortress's ways (round 128d; API: `WaysGrid`, `WAY_NONE`, `WAY_ROAD`, `WAY_SQUARE` +18.
 
 ## src/cardlab/
@@ -323,11 +325,11 @@ WebGPU plumbing: device, pipelines and bind-group layouts, CPU timing stats.
 
 ## src/lab/
 
-- `lab.ts` (569) — (round 128l, tooling) The behaviour lab: ?level=lab&lab=<recipe> — the game with less world, for scripted … API: `LabSceneIO`, `LabPlan`, `LabSnapshot`, `LAB_SIMS` +2.
+- `lab.ts` (627) — (round 128l, tooling) The behaviour lab: ?level=lab&lab=<recipe> — the game with less world, for scripted … API: `LabSceneIO`, `LabPlan`, `LabSnapshot`, `LAB_SIMS` +2.
 - `recipes.ts` (212) — (round 128l, tooling) The behaviour lab's land (?level=lab&lab=<recipe>): a few small deterministic … API: `LabTownSpec`, `LabRecipe`, `LAB_DIMS`, `LAB_MID` +4.
 - `town.ts` (94) — (round 128l, tooling) The behaviour lab's town: what the fortress starts from (fortress/host.ts … API: `LabTown`, `stillWindow`.
 - `townfixture.ts` (180) — (round 128m, townlab) The user's start town as a lab fixture (?level=lab&lab=town; API: `TOWN_FIXTURE_FORMAT`, `TownFixtureHeader`, `TownFixture`, `TownCapture` +2.
-- `view.ts` (112) — (round 128l, tooling) The lab's town view: draws its town (round 128m, onetown: the town's one plan — … API: `LabViewIO`, `LabTownView`.
+- `view.ts` (117) — (round 128l, tooling) The lab's town view: draws its town (round 128m, onetown: the town's one plan — … API: `LabViewIO`, `LabTownView`.
 
 ## src/levels/
 

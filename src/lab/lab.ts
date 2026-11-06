@@ -34,7 +34,9 @@ import type { StaticClaims } from '../sim/static-claims';
 import { siteFromJson } from '../build/site';
 import type { FortressRaid } from '../fortress/raiders';
 import type { TownFixtureHeader } from './townfixture';
-import { ROW_H } from '../world/lattice';
+import { cellAt, ROW_H } from '../world/lattice';
+import { edgeNetOf } from '../build/edgenet';
+import { DEEP } from '../agents/rules';
 
 /** what the lab needs of the scene (scenes/level.ts startLab) */
 export interface LabSceneIO {
@@ -187,6 +189,59 @@ export class Lab {
     while (!f.ready || !f.reachKnown) await new Promise((r) => setTimeout(r, 50));
     if (this.recipe.town) this.plan({ ...this.recipe.town, built: true });
     this.ready = true;
+  }
+
+  // ---- (round 128p, DA-A13 step 1) the paths on the grid's edges
+
+  edges(o: { spokes?: number; spokeAngle?: number; off?: boolean } = {}): unknown {
+    const site = this.town.site;
+    if (o.off) {
+      this.view.edges = null;
+      this.view.redraw(site.id);
+      return null;
+    }
+    const { box } = site;
+    const [ox, oy] = this.window.origin;
+    const W = this.io.core.dims.w;
+    const map = this.io.core.map;
+    const seaZ = this.io.fixture?.seaZ ?? -1e9;
+    const wet = (x: number, y: number) => {
+      const [k, r] = cellAt(x, y);
+      const col = (r + box.y0 - oy) * W + (k + box.x0 - ox);
+      return col >= 0 && col < map.water.length && (map.water[col] > DEEP || map.surface[col] < seaZ);
+    };
+    const toBox = (q: readonly number[]): V2 => [q[0] - (box.x0 - ox), q[1] - (box.y0 - oy) * ROW_H];
+    const centre = toBox(this.town.rec.at);
+    const net = edgeNetOf(
+      { plan: site.plan, grid: site.grid, floor: (c) => site.town.base[c] },
+      {
+        ground: (x, y) => site.groundAt(x, y),
+        wet,
+        centre,
+        stores: toBox(this.town.heap),
+        spokes: o.spokes ?? 5,
+        spokeAngle: o.spokeAngle ?? 0.4,
+        roadsOut: site.plan.layout.linear.filter((f) => f.kind === 'road').map((f) => f.points.map((q) => [q[0], q[1]] as V2)),
+      },
+    );
+    this.view.edges = net;
+    this.view.redraw(site.id);
+    const win = (q: V2): V2 => [q[0] + (box.x0 - ox), q[1] + (box.y0 - oy) * ROW_H];
+    const why: Record<string, number> = {};
+    for (const x of net.reach.out) why[x.why] = (why[x.why] ?? 0) + 1;
+    // (where to look: drawn edges' middles, nearest the stores first)
+    const g = site.grid;
+    const mids: { at: V2; d: number; kind: number }[] = [];
+    for (let e = 0; e < net.kind.length; e++) {
+      if (!net.kind[e]) continue;
+      const a = net.ends[e * 2];
+      const b = net.ends[e * 2 + 1];
+      const m: V2 = [(g.verts[a * 2] + g.verts[b * 2]) / 2, (g.verts[a * 2 + 1] + g.verts[b * 2 + 1]) / 2];
+      const st = toBox(this.town.heap);
+      mids.push({ at: win(m), d: Math.hypot(m[0] - st[0], m[1] - st[1]), kind: net.kind[e] });
+    }
+    mids.sort((a, b) => a.d - b.d);
+    return { ...net.reach, ms: +net.reach.ms.toFixed(1), out: net.reach.out.map((x) => `${x.type}:${x.why}`), outByWhy: why, centre: win(centre), pathsAt: mids.filter((_, i) => i % 15 === 0).slice(0, 8) };
   }
 
   // ---- placing
@@ -559,6 +614,9 @@ export class Lab {
       /** (round 128m, townlab) the placement bench (perf/placebench/run.ts) on this land, the lab driving the sim for its
        *  arrival check: the result, its summary lines and the report the phone's run downloads */
       placeBench: (o?: { types?: StructureType[]; arriveS?: number; arrive?: boolean }) => this.placeBench(o),
+      /** (round 128p, DA-A13 step 1) the paths on the grid's edges and their reach (build/edgenet.ts), drawn with the
+       *  buildings inset in place of the lanes; `off` back to the lanes. Returns the reach report */
+      edges: (o?: { spokes?: number; spokeAngle?: number; off?: boolean }) => this.edges(o),
     };
   }
 }

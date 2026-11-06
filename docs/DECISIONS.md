@@ -3539,4 +3539,15 @@ world should show what needs clearing and how.
   → Order: step 1 (the grid with radial centre(s), edge side streets, insets, structures as one node, the union-find
   reach, on the start town; shots and a map preview), then step 2 (curve roads crossing the grid with the tiles adapting:
   a generated spoke and a drawn road), then the routes as queues. The farm plots come later unless they fall out.
+- Then (the user): "for tiles placed near to other tiles (within n=4 maybe?) using the edges between cells makes sense
+  for roads. When the tile is placed far from the other tiles then I think it makes more sense to grow an organic road
+  to them from the nearest major road. That way a lumber mill that sits outside the city has a road that paths too it
+  from a main thoroughfair and without weird turns that are not justified by things placed there but the small lanes
+  within the city follow the organic structure of the buildings placed there."
+  → **Near structures** (within n cells of other built or planned structures; n a style setting, starting at 4) join by
+  grid-edge lanes, the default rules.
+  → **A structure farther out** gets a curve road grown from the nearest major road: a terrain-aware least-cost path,
+  smoothed into a curve, graded at 1 in 3 with switchbacks or bridges as needed. Its bends come only from terrain or
+  obstacles. It is a main-road shape modifier like the others, so the tiles it crosses adapt. The far lumber mill is
+  step 2's test case.
 
