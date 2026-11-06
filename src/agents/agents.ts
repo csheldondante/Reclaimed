@@ -87,6 +87,8 @@ export const NAV_K = 4;
 /** unit slots (units.wgsl MAX_SLOTS: an id is generation × MAX_UNITS + slot) */
 export const MAX_UNITS = 8192;
 export const NFIELDS = 13;
+/** (round 128o, DA-A6) units.wgsl RIDE_ARRIVED: an arrival event's `other` at or over it is a ride's (minus it: the group) */
+const RIDE_ARRIVED = 256;
 /**
  * (round 128i, V128-14) The shared field onto the roads (the last): seeded on the riding network's columns while a
  * group rides the roads (Agents.ride; agents/ride.ts) — the riding groups follow it until they're on the network.
@@ -232,7 +234,12 @@ export type AgentEvent =
    * (round 128o, DA-B2a) it came within its field's arrival radius (`arrivals`): once, until it leaves the field's
    * leaving radius or follows another field. `dist` the field's distance at its feet then.
    */
-  | { type: 'arrived'; id: number; field: number; dist: number; x: number; y: number; z: number }
+  | { type: 'arrived'; id: number; field: number; dist: number; x: number; y: number; z: number; ride?: undefined }
+  /**
+   * (round 128o, DA-A6) it stands at its group's ride's goal (`ride`: the group; the ride's steer STAND): once, until it
+   * leaves it (rides on, walks a field, another group's ride)
+   */
+  | { type: 'arrived'; id: number; ride: number; x: number; y: number; z: number; field?: undefined; dist?: undefined }
   /** (LW1, corpse mode) a corpse gone to dust: its slot is free */
   | { type: 'decayed'; id: number; x: number; y: number; z: number }
   | { type: 'alight'; id: number; by: number | 'fire'; x: number; y: number; z: number }
@@ -955,6 +962,16 @@ export class Agents implements SimSystem {
    * heavy kinds shrug off, use a `hit` with `push` and `lift`.
    */
   /**
+   * (round 128o, DA-A6) Its arrival latch let go (units.wgsl word f.x): it's told again when it's within its field's
+   * radius — or at its ride's goal — even if it was told there already and hasn't left (its leg's goals changed under it:
+   * the routine asks where it is now).
+   */
+  rearm(id: number): void {
+    const slot = id % MAX_UNITS;
+    this.device.queue.writeBuffer(this.units, (slot * UNIT_V + 5) * 16, new Uint32Array([0]));
+  }
+
+  /**
    * Move unit `id` to group `g` (from the next tick): it follows that
    * group's field and is drawn in its colour (round 63: a worker off to its
    * job, then to the pile). Up to 64 a tick; the rest wait.
@@ -1320,7 +1337,10 @@ export class Agents implements SimSystem {
         } else if (kind === 7) {
           events.push({ type: 'raised', id, by: eu[o + 2], group: Math.round(ef[o + 3]), ...p });
           this.corpses.delete(id % MAX_UNITS);
-        } else if (kind === 8) events.push({ type: 'arrived', id, field: eu[o + 2], dist: ef[o + 3], ...p });
+        } else if (kind === 8) {
+          const f = eu[o + 2];
+          events.push(f >= RIDE_ARRIVED ? { type: 'arrived', id, ride: f - RIDE_ARRIVED, ...p } : { type: 'arrived', id, field: f, dist: ef[o + 3], ...p });
+        }
       }
       if (n) {
         const uf = new Float32Array(b, evBytes, n * UF);

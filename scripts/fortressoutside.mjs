@@ -219,7 +219,7 @@ await run({ name: 'fortressoutside', kind: 'behaviour', size: '412x915', dpr: Nu
   await tapButton(process.env.SPEEDBTN ?? '16x');
   // (why a builder takes its load back: each unload that isn't a delivery, with the block's state then)
   await page.evaluate(() => {
-    const L = window.reclaimed.fortressLife();
+    const L = window.reclaimed.fortressCrowd();
     const orig = L.unload.bind(L);
     window.__unloads = [];
     L.unload = (u, w, ok) => {
@@ -238,7 +238,7 @@ await run({ name: 'fortressoutside', kind: 'behaviour', size: '412x915', dpr: Nu
     last = await page.evaluate((sites) => {
       const Rc = window.reclaimed;
       const f = Rc.fortress;
-      const life = Rc.fortressLife();
+      const life = Rc.fortressCrowd();
       const built = Object.fromEntries(Object.entries(sites).map(([k, c]) => [k, f.town.has(c, 0)]));
       const at = f.storesAt();
       const people = life ? life.people().map((id) => Rc.units.get(id)).filter(Boolean) : [];

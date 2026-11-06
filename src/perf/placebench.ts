@@ -28,7 +28,7 @@ interface Rec {
   townFixture(): Promise<string>;
   fortress?: Fortress;
   scene: { speed: number; heightAt(x: number, y: number): number; units?: { get(id: number): { at: [number, number, number] } | undefined } };
-  fortressLife?: () => { people(): Iterable<number> } | undefined;
+  fortressCrowd?: () => { people(): Iterable<number> } | undefined;
 }
 
 /** the bar's button with this text (the player's own buttons) */
@@ -62,7 +62,7 @@ export function gameIO(R: Rec, log?: (l: string) => void): PlaceBenchIO {
       }
     },
     simTime: () => simT,
-    walkers: () => [...(R.fortressLife?.()?.people() ?? [])].flatMap((id) => {
+    walkers: () => [...(R.fortressCrowd?.()?.people() ?? [])].flatMap((id) => {
       const u = R.scene.units?.get(id);
       return u ? [[u.at[0], u.at[1]] as [number, number]] : [];
     }),

@@ -80,7 +80,7 @@ describe('the JobBoard', () => {
     expect(jobSlots(plan, all, false).some((x) => x.kind === 'build')).toBe(false);
     expect(jobSlots(plan, () => false, false)).toEqual([]);
     // a house: no jobs; (round 128l, milestone 4) the blacksmith's smiths, as many as the cap lets (ore and wood in the
-    // stores: FortressLife)
+    // stores: FortressCrowd)
     const p2 = new TownPlan(grid);
     p2.paint(a, 0, 'house');
     p2.paint(b, 0, 'blacksmith');

@@ -95,7 +95,7 @@ await run({ name: 'fortressfar', kind: 'behaviour', size: '412x915', dpr: 1, ech
     state = await page.evaluate(async (blocks) => {
       const Rc = window.reclaimed;
       const f = Rc.fortress;
-      const life = Rc.fortressLife();
+      const life = Rc.fortressCrowd();
       const rd = life.reach;
       const left = blocks.filter((b) => !f.town.has(b.cell, 0));
       return {
@@ -122,7 +122,7 @@ await run({ name: 'fortressfar', kind: 'behaviour', size: '412x915', dpr: 1, ech
     const who = await page.evaluate(async () => {
       const Rc = window.reclaimed;
       const f = Rc.fortress;
-      const life = Rc.fortressLife();
+      const life = Rc.fortressCrowd();
       const A = Rc.units.agents;
       const rs = A.reader(6);
       const rw = A.reader(4);

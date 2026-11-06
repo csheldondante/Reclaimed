@@ -86,7 +86,7 @@ await run({ name: 'fortressmenu', kind: 'behaviour', size: '412x915', dpr: 1, ec
   const people = () =>
     page.evaluate(() => {
       const Rc = window.reclaimed;
-      const life = Rc.fortressLife();
+      const life = Rc.fortressCrowd();
       if (!life) return { life: false };
       const us = life.ids.map((id) => Rc.units.get(id)).filter(Boolean);
       return {
@@ -111,7 +111,7 @@ await run({ name: 'fortressmenu', kind: 'behaviour', size: '412x915', dpr: 1, ec
   // a close look at the first of them
   await page.evaluate(() => {
     const Rc = window.reclaimed;
-    const u = Rc.units.get(Rc.fortressLife().ids[0]);
+    const u = Rc.units.get(Rc.fortressCrowd().ids[0]);
     if (!u) return;
     Rc.camera.target[0] = u.at[0];
     Rc.camera.target[1] = u.at[1] + 4;
@@ -178,7 +178,7 @@ await run({ name: 'fortressmenu', kind: 'behaviour', size: '412x915', dpr: 1, ec
   // a builder out in the open, close up: is it drawn?
   const out = await page.evaluate(async () => {
     const Rc = window.reclaimed;
-    const life = Rc.fortressLife();
+    const life = Rc.fortressCrowd();
     for (let k = 0; k < 60; k++) {
       const h = Rc.settlements.spotsOf(Rc.settlements.pinnedId).find((s) => s.kind === 'pile').w;
       const u = life.ids.map((id) => Rc.units.get(id)).find((u) => u && Math.hypot(u.at[0] - h[0], u.at[1] - h[1]) > 14);
@@ -195,7 +195,7 @@ await run({ name: 'fortressmenu', kind: 'behaviour', size: '412x915', dpr: 1, ec
   await sleep(600);
   console.log('out in the open', JSON.stringify(out), JSON.stringify(await page.evaluate(() => {
     const Rc = window.reclaimed;
-    return Rc.fortressLife().ids.map((id) => Rc.units.get(id)).map((u) => Rc.camera.project(u.at[0], u.at[1], u.at[2]).map(Math.round).join(','));
+    return Rc.fortressCrowd().ids.map((id) => Rc.units.get(id)).map((u) => Rc.camera.project(u.at[0], u.at[1], u.at[2]).map(Math.round).join(','));
   })));
   if (OUT) await page.screenshot({ path: `${OUT}/menu-builder-open.png` });
   R.check("Inspect shows the old town's buildings", townCards.some((c) => c.length > 1 && /before your fortress/.test(c.join(' '))), JSON.stringify(townCards));

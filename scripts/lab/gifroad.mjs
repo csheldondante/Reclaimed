@@ -31,12 +31,12 @@ export default async function (lab, args) {
     life.piles.set(f.plan.structureAt(f.cellAt(hx + 70, hy + 4)).id, { stone: 6, ore: 2 });
     for (let i = 0; i < 20 && id === null; i++) {
       await lab.run(0.5, 4);
-      id = life.carts.find((c) => units.recs.get(c)?.work?.phase === 'out') ?? null;
+      id = life.carts.find((c) => life.life.phaseOf(c) === 'out') ?? null;
     }
   } else {
     for (let i = 0; i < 80 && id === null; i++) {
       await lab.run(0.5, 8);
-      id = life.people().find((p) => units.recs.get(p)?.work?.phase === 'arrive') ?? null;
+      id = life.people().find((p) => life.life.phaseOf(p) === 'arriving') ?? null;
     }
   }
   if (id === null) throw new Error(`no ${who} to follow`);
@@ -48,9 +48,8 @@ export default async function (lab, args) {
   const seen = [];
   for (let i = 0; i < frames; i++) {
     await lab.run(step, 4);
-    const w = units.recs.get(id)?.work;
     const u = units.get(id);
-    seen.push(w?.phase ?? '-');
+    seen.push(life.life.phaseOf(id) ?? '-');
     await lab.shot(`${who}_${String(i).padStart(3, '0')}`);
     if (!u?.alive) break;
   }

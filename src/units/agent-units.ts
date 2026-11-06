@@ -32,6 +32,15 @@ const GOALS = 3;
 export const F = { farm: 0, fell: 1, quarry: 2, home: 3, store: 4, pile: 5, site: 6, targets: 7, foes: 8, goal0: 9 } as const;
 /** groups: striking (standing, at work), standing, goals 2-4, closing on foes, hunting, loafing; 8-15 the rounds */
 export const G = { strike: 0, stand: 1, goal0: 2, foes: 5, hunt: 6, wander: 7 } as const;
+/** a town's people's legs (agents groups 8..15; resting at home is the units' standing group) — round 88's rounds, the
+ *  one crowd's (town/life.ts legs) since round 128o */
+export const R = { toFarm: 8, toFell: 9, toQuarry: 10, working: 11, toStore: 12, toPile: 13, toSite: 14, toHome: 15 } as const;
+/**
+ * (round 128l, m4) The fortress's own groups past R (agents MAX_GROUPS 24): the legs to the smithy and the barracks, the
+ * soldiers' march to the wall's stairs, the carts' rides (each to its own pile: cart0 .. cart0 + 2). They ride the road
+ * graph only (Agents.ride: no fields of their own); a leg whose goals no road reaches waits where it is.
+ */
+export const R4 = { toSmith: 16, toBarracks: 17, toPost: 18, cart0: 19 } as const;
 /** (merge123, LW1-1) the group a raise effect stands the fallen up in (contracts/traits.ts raise `group`): standing,
  *  bound to their raiser until the game orders them (the play hero's: follow it) */
 export const RAISED_GROUP = G.stand;
@@ -84,6 +93,13 @@ export interface Routine {
   step(u: UnitRec, dt: number): void;
   /** it stopped working (another order, death, removal) */
   drop(u: UnitRec): void;
+  /**
+   * (round 128o, DA-A6) it arrived (the agents' `arrived` event): at the end of the field it follows (`field`), or at its
+   * group's ride's goal (`ride`: the group); where it stands then
+   */
+  arrived?(u: UnitRec, e: { field?: number; ride?: number; at: V3 }): void;
+  /** (DA-A6) events the agents' ring dropped (it overflowed): a unit may never hear of its arrival */
+  lost?(count: number): void;
 }
 
 export interface UnitRec {
@@ -316,12 +332,13 @@ export class AgentUnits implements Units {
   update(dt: number): void {
     if (this.syncing) return;
     const t0 = performance.now();
-    this.syncing = this.agents.sync().then(({ units, events }) => {
+    this.syncing = this.agents.sync().then(({ units, events, dropped }) => {
       const sdt = this.lastSync ? Math.min(0.5, (performance.now() - this.lastSync) / 1000) : dt;
       this.lastSync = performance.now();
       this.stats.syncMs = +(performance.now() - t0).toFixed(1);
       this.stats.syncs++;
       timed('units', () => {
+        if (dropped && this.routine?.lost) this.routine.lost(dropped);
         this.absorb(units, events);
         this.think(sdt);
       });
@@ -336,6 +353,42 @@ export class AgentUnits implements Units {
     if (u.group === g) return;
     u.group = g;
     this.agents.regroup(u.gpu, g);
+  }
+
+  /**
+   * (round 128o, DA-A6) A unit's role changes where it stands (a recruit drilled: a soldier) — its kind on the GPU with
+   * it: put there again as the new kind, at full health.
+   */
+  restyle(id: UnitId, role: string, o: { health?: number; damage?: number } = {}): void {
+    const u = this.recs.get(id);
+    if (!u || !u.v.alive) return;
+    u.v.role = role;
+    if (o.health !== undefined) u.v.health = u.v.maxHealth = o.health;
+    if (o.damage !== undefined) u.damage = o.damage;
+    const g = u.group;
+    this.byGpu.delete(u.gpu);
+    this.agents.remove([u.gpu]);
+    u.gpu = this.place(u, [u.v.at[0], u.v.at[1]], false);
+    u.group = -1;
+    this.regroup(u, g < 0 ? G.stand : g);
+  }
+
+  /**
+   * (DA-A6) A working unit's goal (its routine's: a soldier's wall point): one of the shared goal fields seeded at `at`,
+   * its group returned for the routine to put it in; null `at` lets it go. Null back: every goal field is held.
+   */
+  goalGroup(u: UnitRec, at: V2 | null): number | null {
+    if (!at) {
+      this.releaseGoal(u);
+      return null;
+    }
+    const i = this.holdGoal(u, at);
+    return i === null ? null : G.goal0 + i;
+  }
+
+  /** (DA-A6) its arrival latch let go: it's told when it's at its leg's end, even where it was told it last (Agents.rearm) */
+  rearm(u: UnitRec): void {
+    this.agents.rearm(u.gpu);
   }
 
   /** a unit's carried load (shown over its head), or none */
@@ -546,6 +599,13 @@ export class AgentUnits implements Units {
         this.byGpu.set(e.id, u.v.id);
         for (const f of this.raised) f(this.view(u), e.group);
       } else if (e.type === 'decayed') this.fallen.delete(e.id);
+      else if (e.type === 'arrived') {
+        // (round 128o, DA-A6) a working unit's arrival: its routine's
+        const id = this.byGpu.get(e.id);
+        const u = id !== undefined ? this.recs.get(id) : undefined;
+        if (!u || !u.v.alive || u.v.job.kind !== 'work' || !this.routine?.arrived) continue;
+        this.routine.arrived(u, { field: e.field, ride: e.ride, at: [e.x, e.y, e.z] });
+      }
     }
     // (the dead are kept for `query({ dead: true })` a while, then forgotten)
     if (this.recs.size > 600) for (const [id, u] of this.recs) if (!u.v.alive) this.recs.delete(id);

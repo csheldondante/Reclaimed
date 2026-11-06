@@ -7,7 +7,7 @@ import type { Settlements } from './settlements';
 import { ROW_H } from '../world/lattice';
 
 const SPOT: Record<string, string> = { home: '#4cf', store: '#fd0', farm: '#7f4', fell: '#3a3', mine: '#f6f', repair: '#f90', make: '#fff', trade: '#0fc', post: '#f33', camp: '#f00' };
-const PHASE: Record<string, string> = { home: '#4cf', toWork: '#7f4', working: '#ff4', toStore: '#fd0', toHome: '#8af', flee: '#f8f' };
+const PHASE: Record<string, string> = { home: '#4cf', rest: '#4cf', toWork: '#7f4', gather: '#ff4', digging: '#ff4', felling: '#ff4', working: '#ff4', carry: '#fd0', toStores: '#fd0', toSite: '#fd0', shelter: '#f8f', inside: '#f8f' };
 
 export class TownDebug {
   private svg: SVGSVGElement;
@@ -103,7 +103,7 @@ export class TownDebug {
     for (const id of units) {
       const u = this.st.units?.recs.get(id);
       if (!u || !u.v.alive) continue;
-      const ph = u.v.hostile ? (u.target !== null ? 'hunt' : 'camp') : u.v.role === 'guard' ? (u.target !== null ? 'fight' : 'guard') : (u.work?.phase ?? '?');
+      const ph = u.v.hostile ? (u.target !== null ? 'hunt' : 'camp') : u.v.role === 'guard' ? (u.target !== null ? 'fight' : 'guard') : (life!.life.phaseOf(id) ?? '?');
       phases[ph] = (phases[ph] ?? 0) + 1;
       const [sx, sy] = this.camera.project(u.v.at[0], u.v.at[1], u.v.at[2] + 2.2);
       out.push(`<circle cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="2.5" fill="${u.v.hostile ? '#f22' : u.v.role === 'guard' ? '#ccc' : (PHASE[ph] ?? '#999')}"/>`);

@@ -102,7 +102,7 @@ await run({ name: 'fortresswake', kind: 'behaviour', size: '412x915', dpr: 1, ec
     await page.evaluate(() => window.__wakes.awake.push(window.reclaimed.core.sleep.awake));
   }
   const res = await page.evaluate(async () => {
-    const L = window.reclaimed.fortressLife();
+    const L = window.reclaimed.fortressCrowd();
     return { veg: await window.__vegAt(), wakes: window.__wakes, stats: L?.stats, progress: window.reclaimed.fortress.progress(), touched: window.reclaimed.core.sleep.touched - window.__wakes.touched0 };
   });
   console.log('progress', JSON.stringify(res.progress), 'stats', JSON.stringify(res.stats));

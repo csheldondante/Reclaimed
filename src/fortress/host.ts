@@ -8,7 +8,7 @@
 // grid, plan or slab for the fortress.
 import type { V2 } from '../api/contracts/units';
 import type { Settlement } from '../api/contracts/settlement';
-import type { LiveSpot } from '../settle/life';
+import type { LiveSpot } from '../settle/live';
 import type { TownSite } from '../build/site';
 import type { TownHook } from '../settle/view';
 import type { KeepRect } from '../scenes/streamer/keep';

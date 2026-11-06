@@ -2,7 +2,7 @@
 // The rules are raid.ts's (the clock, the goal, the loot); this moves them through the game's own systems:
 //  - a rider brings word a day ahead: a unit that walks the road in to the stores and out again; the bar shows the line
 //    once it's there;
-//  - at dusk the raiders walk in from the window's edge where the roads come nearest it (FortressLife.edgeWay) to the
+//  - at dusk the raiders walk in from the window's edge where the roads come nearest it (FortressCrowd.edgeWay) to the
 //    wave's goal: the stores, through the gate. They walk on the units' goal fields (AgentUnits 'go': one field a place,
 //    shared; the roads cost less on every field, so they come in along the road). They are the units' hostiles: they
 //    fight who comes near on their side of the wall (AgentUnits.mayFight: not over a wall, not up on the wall-walk, not
@@ -14,16 +14,16 @@
 //  - at the stores each raider takes its loot; then they torch the houses (each house burns RAID.burnSec, then falls:
 //    its timber left burning in the fire sim), then they ride out with what they carry. The wave runs early once
 //    RAID.breakShare of it is down; a fallen raider's loot goes back to the stores;
-//  - the villagers shelter at home while raiders are about (FortressLife.shelter).
+//  - the villagers shelter at home while raiders are about (FortressCrowd.shelter).
 // Its numbers are raid.ts RAID; what it says, words.ts.
 import type { Good, Goods } from '../api/contracts/fortress';
 import type { UnitId, UnitView, V2 } from '../api/contracts/units';
-import { R } from '../settle/life';
+import { R } from '../units/agent-units';
 import { G, type AgentUnits, type UnitRec } from '../units/agent-units';
 import type { FxName } from '../api/fx';
 import { blockHp, layoutOf, lootOf, RAID, RaidClock, raidGoal, raidSides, sideOf, waveBreaks, type RaidLayout, type RaidSides, type Side } from './raid';
 import type { Fortress } from './fortress';
-import type { FortressLife } from './life';
+import type { FortressCrowd } from './crowd';
 import { ECON } from './defs';
 import { nameOf } from './follow';
 import { FortressDefence, type Posts } from './defence';
@@ -41,7 +41,7 @@ const LOOK_S = 1;
 export interface RaidIO {
   units: AgentUnits;
   fort: Fortress;
-  life: FortressLife;
+  life: FortressCrowd;
   /** the stores now, and goods taken out (negative: put back) */
   stores(): Goods;
   take(good: Good, amount: number): void;
@@ -179,7 +179,7 @@ export class FortressRaid {
     this.arrive(this.clock.call(this.t));
   }
 
-  // ---- the routine (AgentUnits steps the raiders and the rider through FortressLife) -------------------------
+  // ---- the routine (AgentUnits steps the raiders and the rider through FortressCrowd) -------------------------
 
   takes(u: UnitRec): boolean {
     return (u.v.job.kind === 'work' && this.raiders.has(u.v.id)) || this.defence.takes(u);

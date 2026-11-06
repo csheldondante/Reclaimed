@@ -37,7 +37,7 @@ export default async function (lab, args) {
     await lab.run(every, 16);
     const s = lab.snapshot();
     for (const c of s.carts) {
-      const from = lab.units.recs.get(c.id)?.work?.from;
+      const from = c.pile;
       if (c.phase === 'back') backFrom.set(c.id, from);
       else if (backFrom.has(c.id)) {
         const k = lab.fortress().plan.structure(backFrom.get(c.id))?.type ?? '?';
@@ -51,7 +51,7 @@ export default async function (lab, args) {
       }
     }
     for (const w of s.walkers)
-      if (w.phase === 'arrive' && w.state === 'walk') {
+      if (w.phase === 'arriving' && w.state === 'walk') {
         comer.walk++;
         if (w.onRoad) comer.on++;
       }

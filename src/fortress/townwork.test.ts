@@ -14,7 +14,7 @@ function world(pileAt: (s: number) => V2 | null = () => null) {
   const stores: Goods = { log: 40, stone: 40, grain: 0 };
   const f = fortressOn({ origin: [0, 0], w: W, h: H }, { windowOrigin: () => [0, 0], dims: { w: W, h: H, zMax: 99 }, ground: () => 5, stores: () => stores, townHeap: () => [20, 20] });
   f.ready = true;
-  const work = new FortressWork({ fort: f, stores: () => stores, take: (g, n) => void (stores[g] = (stores[g] ?? 0) - n), trees: () => [], stores_at: () => [20, 20], pileAt });
+  const work = new FortressWork({ fort: f, stores: () => stores, take: (g, n) => void (stores[g] = (stores[g] ?? 0) - n), spots: () => [], stores_at: () => [20, 20], pileAt });
   return { f, stores, work, life: new TownLife(work) };
 }
 

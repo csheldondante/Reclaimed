@@ -16,7 +16,8 @@ type P = readonly [number, number];
 export const MAX_DESTS = 64;
 /** (agents.ts MAX_GROUPS) */
 const GROUPS = 24;
-/** a goal rides only if a node is this near it (m): the last leg is straight, off the roads */
+/** a goal rides only if a node is this near it (m): the last leg is straight, off the roads (and a first leg onto them from
+ *  as near: roadride.wgsl RR_NEAR) */
 export const RIDE_NEAR = 6;
 /** (agents.ts MAX_KINDS) */
 const KINDS = 8;

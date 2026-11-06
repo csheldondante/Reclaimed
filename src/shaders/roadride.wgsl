@@ -187,14 +187,29 @@ fn ride(@builtin(global_invocation_id) id: vec3<u32>) {
   if (!walking) {
     mode = M_OFF;
   } else {
-    if (mode == M_OFF && rrOnNet(a.xy)) {
-      // (on an edge's band: a trip from where it stands, toward the end cheaper to its nearest goal)
+    // (round 128o, DA-A6: off a trip and already at one of its goals — sent there from where it stands: it's there,
+    // stands, and units.wgsl tells its arrival; without this it stood there off the network, never told)
+    if (mode == M_OFF) {
+      for (var gs = g.x; gs < g.x + g.y; gs++) {
+        if (length(RR.dest[gs].xy - p) <= ON_EDGE) {
+          mode = M_AT;
+          slot = gs;
+          break;
+        }
+      }
+    }
+    let onNet = rrOnNet(a.xy);
+    if (mode == M_OFF) {
+      // (on an edge's band: a trip from where it stands, toward the end cheaper to its nearest goal; round 128o, DA-A6:
+      // off it but within RR_NEAR of an edge, a trip too — its first leg straight to the edge's end, as its last leg is
+      // straight from the network to its goal. Farther out, the field onto the roads leads it to them)
+      let reach = select(RR_NEAR, NET_REACH, onNet);
       var bc = RR_FAR;
       for (var v = 0u; v < RR.n.x; v++) {
         let gv = graph[v];
         for (var k = gv.z; k < gv.z + gv.w; k++) {
           let w2 = graphAdj[k].x;
-          if (rrSegDist(p, nodeXY(v), nodeXY(w2)) > ON_EDGE) { continue; }
+          if (rrSegDist(p, nodeXY(v), nodeXY(w2)) > reach) { continue; }
           let b = bestDest(g, w2);
           let c = length(nodeXY(w2) - p) + bitcast<f32>(b.y);
           if (c < bc) {
@@ -207,10 +222,12 @@ fn ride(@builtin(global_invocation_id) id: vec3<u32>) {
       }
       if (bc < RR_FAR) {
         mode = M_TRIP;
-        // (onto the edge's line where it stands)
-        let s0 = nodeXY(st.y);
-        let d = nodeXY(st.z) - s0;
-        q = s0 + d * clamp(dot(p - s0, d) / max(dot(d, d), 1e-12), 0.0, 1.0);
+        // (on the band: onto the edge's line where it stands; off it, straight from where it stands to the edge's end)
+        if (onNet) {
+          let s0 = nodeXY(st.y);
+          let d = nodeXY(st.z) - s0;
+          q = s0 + d * clamp(dot(p - s0, d) / max(dot(d, d), 1e-12), 0.0, 1.0);
+        }
       }
     }
     let speed = kindSpeedOf((info >> 9u) & 7u);
@@ -274,6 +291,15 @@ fn ride(@builtin(global_invocation_id) id: vec3<u32>) {
 // tables and whenever the graph's frame moves in the window (a slide).
 /** a network edge's band (m): a lane's half width and the stamp's pad (lanes.ts LANE_WIDTH, ROAD_PAD) */
 const NET_HALF: f32 = 1.2;
+/**
+ * (round 128o, DA-A6) how far from an edge a unit on the network's plane may stand: the band, and a column's corner
+ * from its middle (1 / sqrt 3) — the stamp marks a column whose middle is in the band, and a unit anywhere in it is on
+ * the network. (A trip started only within ON_EDGE: a unit at a stamped column's far side stood there for good — the
+ * field onto the roads had brought it there, no trip took it on.)
+ */
+const NET_REACH: f32 = NET_HALF + 0.578;
+/** (round 128o, DA-A6) a straight leg off or onto the network at most this long (m): ride.ts RIDE_NEAR */
+const RR_NEAR: f32 = 6.0;
 
 @compute @workgroup_size(64)
 fn rideNetClear(@builtin(global_invocation_id) id: vec3<u32>) {

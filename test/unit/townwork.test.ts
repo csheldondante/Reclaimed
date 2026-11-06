@@ -9,7 +9,7 @@ import { siteFromJson, TownSite } from '../../src/build/site';
 import { Fortress } from '../../src/fortress/fortress';
 import { ECON } from '../../src/fortress/defs';
 import { jobSlots } from '../../src/fortress/economy';
-import { startSpots } from '../../src/fortress/life';
+import { startSpots } from '../../src/fortress/crowd';
 
 const FILE = path.resolve(import.meta.dirname, '../../data/lab/town.rclt');
 
