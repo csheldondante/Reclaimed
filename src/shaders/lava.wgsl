@@ -240,7 +240,7 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
   // the beam: the ground where it hits, and what lava lies there
   var melt = 0.0;
   var meltLvl = 0.0;
-  // (spill.w: the way out, + 8 × the bore's heat here)
+  // (spill.w: the way out, + 8 Ã— the bore's heat here)
   var way = f32(u32(sp.w) & 7u);
   var boreHeat = 0.0;
   if (beamOn) {

@@ -19555,3 +19555,12 @@ town's answers behind TownWork, nothing polled, no give-up timers.
   - The phone-z8 fast-pan coverage got worse in tilegate (above): open, to check before merging.
   - The 129 ms phone max is not explained.
   - No toggle diff yet: timing runs are paused.
+
+## 2026-11-06 — round 128o (`phonefix`): lava.wgsl to UTF-8, and a gate for every source file
+
+- Why: lava.wgsl was UTF-8 except for one latin-1 byte (a × at line ~280). A tool had to open the file as latin-1,
+  and a failed write in DA-B28's work truncated it to zero bytes before any commit (restored from HEAD). Main: such a
+  truncation must never be able to reach a commit.
+- The byte is now a UTF-8 ×, and the file is LF. test/unit/source-encoding.test.ts fails on any .ts or .wgsl under
+  src/ that isn't UTF-8 or has a CR.
+
