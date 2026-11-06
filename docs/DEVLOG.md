@@ -20034,3 +20034,26 @@ its slot opening or closing starts it over (a tested piece).
     - the tile holes of (1), which are real gaps in a drawn layer.
   - Recommended: don't build window-follow-at-speed. Retarget DA-B27's fast-pan gate when DA-P2 lands, and fix (1)
     now.
+
+## 2026-11-06 — round 128o (`phonefix`, DA-B27 (1)): the specks are at the window and tile join, not inside a tile
+
+- Main's plan was to bake one region alone and read its G-buffer. Before that, a cheaper look: scripts/farprobe.mjs
+  with `--extra "&tiledebug=1"` (tiles drawn tinted), the pan held at a far-land frame and shot.
+  - The tinted tiles fill the top of the screen.
+  - The window's land is untinted below them.
+  - The dark specks (single cells and short bars) sit along the boundary between the two: the window's edge, where
+    its land meets the render-only tiles past it.
+  - Inside the tinted tiles, no specks.
+- So the earlier read, a tile with empty texels, is wrong too. The likely cause: two surfaces made apart meet with a
+  step. The window's land is simulated (sediment moved it); the tile's is generated for the tile alone, with no
+  simulation. Where the window's edge column is lower than the tile's land beside it, the gap shows what's under
+  both: the stand-in.
+  - The probe's samples were placed on the camera's ground plane and land 17 rows off, so its "where a tile is drawn"
+    label is unreliable for high ground.
+  - The geometric check boxes regions by the CPU's macro heights, and may attribute those pixels to the tile's
+    region, so it calls them drawn.
+- Next (not done): read the window's edge columns' tops and the tile land's tops for the same columns, and measure
+  the step at the specks. Two fixes then compare:
+  - the window's edge drawn down to the tile's height, a skirt (the field mesh's open edge, fieldmesh.wgsl colDist);
+  - the tile taking the window's land where the two overlap.
+  Either one, with farprobe as the test (no far land along the join).

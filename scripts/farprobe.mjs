@@ -22,7 +22,7 @@ try {
   await p.setViewport({ width: 412, height: 915, deviceScaleFactor: 2.6, hasTouch: true, isMobile: true });
   await p.setUserAgent('Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Mobile Safari/537.36');
   p.on('pageerror', (e) => console.log('pageerror', e.message));
-  await p.goto(`${url}/?bgcheck=1&skipmenu=1&level=atlas&tutorial=0&worldsave=0&world=tilegate&at=15024,14337&tod=0.42&day=100000&season=0.3&hitch=1&hitchhud=0&q=low&tilerate=${rate}`, { waitUntil: 'load' });
+  await p.goto(`${url}/?bgcheck=1&skipmenu=1&level=atlas&tutorial=0&worldsave=0&world=tilegate&at=15024,14337&tod=0.42&day=100000&season=0.3&hitch=1&hitchhud=0&q=low&tilerate=${rate}${opt('extra', '')}`, { waitUntil: 'load' });
   await p.waitForFunction(() => window.__boot?.at['level-ready'] && window.reclaimed?.stream && window.reclaimed?.scene, { timeout: 240000, polling: 250 });
   await sleep(35000);
   const r = await p.evaluate(async () => {
