@@ -159,6 +159,8 @@ export interface JoinPlaces {
   places(): Places;
   stores: number;
   storesZ: number;
+  /** each fix made (its kind, the structure type it's in, its cell) */
+  noted?(kind: FixKind, type: StructureType, cell: number): void;
   /** a fix made: the plan changed (the caller takes its changes: drawn and claimed again) */
   changed?(): void;
   /** still wanted (the town still live, the window not moved): else it stops */
@@ -219,7 +221,7 @@ function joinStep(j: JoinPlaces, reply: ReachReply, res: { out: number; fixes: n
   if (first !== undefined) pick.add(first);
   if (!pick.size) return false;
   const solid = j.solid();
-  const made = applyReachFixes(solid.plan, solid.grid, solid.box, j.origin(), reply.fixes.filter((f) => pick.has(f.query)));
+  const made = applyReachFixes(solid.plan, solid.grid, solid.box, j.origin(), reply.fixes.filter((f) => pick.has(f.query)), j.noted);
   if (!made) return false;
   res.fixes += made;
   j.changed?.();

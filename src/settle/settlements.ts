@@ -649,7 +649,16 @@ export class Settlements {
   private liveSpots(p: SettlementPlan, s: SettlementSeed): LiveSpot[] {
     const ox = s.box.x0;
     const oy = s.box.y0 * ROW_H;
-    return p.spots.map((sp) => ({ ...sp, w: this.toWindow([sp.at[0] + ox, sp.at[1] + oy]) }));
+    // (round 128o, B: a heap's foot on open ground — a point of it in a building's cell led its walkers into the building)
+    const open = (w: V2): boolean => {
+      const [x, y] = this.toWorld(w);
+      const c = p.site.grid.cellAtWorld(x - ox, y - oy);
+      return c < 0 || p.site.plan.owner[c] < 0;
+    };
+    return p.spots.map((sp) => {
+      const w = this.toWindow([sp.at[0] + ox, sp.at[1] + oy]);
+      return sp.kind === 'pile' ? { ...sp, w, foot: heapFoot(w, open) } : { ...sp, w };
+    });
   }
 
   /** its houses to build, in window coordinates (the specs themselves: progress is kept on them) */
@@ -663,7 +672,7 @@ export class Settlements {
   /** the towns whose places the reach has joined since their land came into the window (their epoch then) */
   private reached = new Map<string, number>();
   /** (scripted checks) per town: its places asked, still out, the fixes made */
-  readonly reachStats = new Map<string, { places: number; out: number; fixes: number; asks: number }>();
+  readonly reachStats = new Map<string, { places: number; out: number; fixes: number; asks: number; made: [string, number, number][] }>();
 
   /**
    * (round 128o, B; DESIGN section 13: generation keeps reach an invariant by changing the world) A live town's places —
@@ -697,10 +706,11 @@ export class Settlements {
       const spots = this.liveSpots(p, s).filter((q) => q.kind !== 'post' && q.kind !== 'camp');
       const heap = spots.find((q) => q.kind === 'pile' && q.what !== 'log') ?? spots.find((q) => q.kind === 'pile');
       // (a heap is a mound of the ground put on it: its foot is where a walker stands — the stores, and a heap's place)
-      const sc = heap ? colOf(heapFoot(heap.w)[0]) : -1;
+      const sc = heap?.foot?.length ? colOf(heap.foot[0]) : -1;
       if (sc < 0) return;
-      const at = spots.flatMap((q) => (q.kind === 'pile' ? heapFoot(q.w).slice(0, 1) : [q.w]));
+      const at = spots.flatMap((q) => (q.kind === 'pile' ? (q.foot ?? []).slice(0, 1) : [q.w]));
       const places = [...at, ...this.liveSites(p, s).map((q) => q.door)].map(colOf).filter((c) => c >= 0);
+      const made: [string, number, number][] = [];
       const res = await joinPlaces({
         engine,
         solid: () => ({ plan: site.plan, town: site.town, grid: site.grid, box: site.box, ground: (c) => site.ground(c), oz }),
@@ -713,8 +723,13 @@ export class Settlements {
           for (const f of this.onRaised) f(id, -1);
         },
         live: () => this.io === io && this.reached.get(id) === io.epoch(),
+        noted: (kind, _t, cell) => {
+          const [x, y] = site.grid.centre(cell);
+          const [wx, wy] = this.toWindow([x + site.box.x0, y + site.box.y0 * ROW_H]);
+          made.push([kind, +wx.toFixed(1), +wy.toFixed(1)]);
+        },
       });
-      this.reachStats.set(id, { places: places.length, ...res });
+      this.reachStats.set(id, { places: places.length, ...res, made });
     } finally {
       engine.dispose();
     }

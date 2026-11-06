@@ -85,11 +85,11 @@ export class SettleWork implements TownWork {
   }
 
   /** the heaps (piles), and their middle: where the builders fetch and the hauls go */
-  heaps(): { what: string; w: V2 }[] {
+  heaps(): { what: string; w: V2; foot: V2[] }[] {
     return this.io
       .spots()
       .filter((s) => s.kind === 'pile')
-      .map((s) => ({ what: s.what ?? 'stone', w: s.w }));
+      .map((s) => ({ what: s.what ?? 'stone', w: s.w, foot: s.foot ?? [] }));
   }
 
   /** the farmers' round: the farms, and the purposes' work (the piers, the stalls, the mill, the stables) */

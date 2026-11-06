@@ -30,7 +30,8 @@ export default async function (lab, args) {
   const units = lab.units;
   // a worker with a job (a miner or a farmer), looked at and tapped
   // (round 128o: one standing apart — riders on the same trip are placed at the same spots along it, drawn one over the
-  // other (no queueing on the roads yet: DESIGN section 12), and a tap there picks either)
+  // other, and a tap there picks either: a known bug, BACKLOG DA-A12 — lanes, queueing and passing on the roads, the
+  // rest of DA-A7. This scenario checks Follow, not that)
   const apart = (p) => {
     const a = units.get(p).at;
     return life.everyone().every((q) => q === p || Math.hypot(units.get(q).at[0] - a[0], units.get(q).at[1] - a[1]) > 1.5);
