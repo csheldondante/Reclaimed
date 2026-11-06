@@ -1542,22 +1542,29 @@ export class Agents implements SimSystem {
   }
 
   /** the units' step and their draws (every tick there are any) */
-  private encodeUnits(pass: GPUComputePassEncoder): void {
+  /** (round 128o, DA-B22: `stage`, under ?agentprof=1, ends the pass and starts the next one timed under a name — the
+   *  units' step, the traits, the ride, the draw apart — and returns it; the pass the units ended in comes back) */
+  private encodeUnits(pass: GPUComputePassEncoder, stage: (name: string) => GPUComputePassEncoder = () => pass): GPUComputePassEncoder {
+    pass = stage('agents-step');
     pass.setBindGroup(0, this.unitGroup);
     pass.setPipeline(this.k.unitStep.pipeline);
     pass.dispatchWorkgroups(Math.ceil(this.count / 64));
     // (LW1: the trait system — its core and the game's rules — between the step and the draw)
+    pass = stage('agents-traits');
     for (const s of this.stages) s.encode(pass);
     // (round 128i, V128-14: the riding groups steered along the roads — their steer read by the next tick's step)
+    pass = stage('agents-ride');
     this.roadRide.encode(pass, this.count);
     // the draw's instance count restarts each tick (written before this tick's submit)
     this.device.queue.writeBuffer(this.indirect, 0, new Uint32Array([36, 0, 0, 0]));
+    pass = stage('agents-draw');
     pass.setBindGroup(0, this.drawGroup);
     pass.setPipeline(this.k.unitDraw.pipeline);
     pass.dispatchWorkgroups(Math.ceil(Math.max(this.count, 1) / 64));
     pass.setPipeline(this.k.itemDraw.pipeline);
     pass.dispatchWorkgroups(MAX_FLY / 64);
     this.prof.dispatches += 3;
+    return pass;
   }
 
   /**
@@ -1681,7 +1688,7 @@ export class Agents implements SimSystem {
         pass.dispatchWorkgroups(n);
         this.prof.dispatches++;
       }
-      this.encodeUnits(pass);
+      pass = this.encodeUnits(pass, PROF ? (name) => (stage(name), pass) : undefined);
       if (read && this.count > 0) {
         pass.setBindGroup(0, sk.boxG);
         pass.setPipeline(sk.box.pipeline);

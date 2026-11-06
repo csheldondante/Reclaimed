@@ -20189,3 +20189,70 @@ its slot opening or closing starts it over (a tested piece).
 - For main to decide: the next target is the agents' tick per tick (what in it costs, the relax sweeps, the units'
   step, the trait stages, with ?agentprof=1's stages on the phone bench), or a fast-forward that doesn't run the
   agents' full tick 16 times a frame (DA-B22's "trips by clock"), before the sync work (1)–(4).
+
+## 2026-11-06 — round 128o (`phonefix`, DA-B22): the agents' tick by stage at 1x and 16x; fast-forward design note
+
+- Fixes on the way:
+  - **The profiler's timestamps grow with the frame** (gpu/profiler.ts). A fixed 128 (64 passes) left a 16x frame's
+    later passes untimed, the draw among them, with nothing said. Now a frame that asks for more doubles the set for
+    the next frame, up to the device's limit (4096), and what a frame couldn't time is counted (`untimed`; 0 in every
+    phase below). Test: test/gpu/profiler.test.ts.
+  - **fortressperf.mjs's speed**: lab.run's `keep` puts back the speed it found, so the "speed" phases ran at
+    whatever the lab was left at. The scenario now sets `scene.speed` itself, as speedcost.mjs does.
+  - **lab.mjs `--flags`**: the lab page's own URL flags (here `&agentprof=1`); a page loaded with others is loaded
+    again.
+  - **?agentprof=1 splits the units' part**: agents-step, -traits, -ride and -draw, besides -in, -peel, -relax and
+    -units (the occupancy's clear).
+- Measured: speedcost.mjs with `--flags "&agentprof=1"`, the lab's `town`, Build pressed, desktop Intel Xe-LPG, ms a
+  frame summed per pass (now every pass timed):
+
+  | pass | 1x all | 16x all (9.8 ticks/frame) | 16x fortress preset |
+  | --- | --- | --- | --- |
+  | **GPU frame p50 / p95** | 6.2 / 7.8 | **18.7 / 39.3** | 8.0 / 18.2 |
+  | agents-relax (the fields' sweeps) | 0.05 | **2.32** | 0.95 |
+  | agents-ride (riders steered on the roads) | 0.28 | **1.81** | 1.08 |
+  | draw (the world) | 2.98 | 1.58 | 1.57 |
+  | particles (update, emit, petals, fire) | 0.13 | **2.37** | — |
+  | agents-step (the units' integration) | 0.05 | 0.90 | 0.50 |
+  | sway (plants' springs, render only) | 0.03 | 0.81 | — |
+  | agents-draw (the units' instances) | 0.04 | 0.75 | 0.40 |
+  | agents-traits | 0.03 | 0.67 | 0.34 |
+  | water (flux, depth) | 0.05 | 0.89 | 0.50 |
+  | tile lists (the peel's GPU lists) | 0.02 | 0.39 | 0.20 |
+  | agents-units (occupancy clear) | 0.02 | 0.34 | 0.19 |
+  | agents-peel | 0.01 | 0.25 | 0.12 |
+
+- At 16x the agents' tick is about 7.4 ms a frame here: relax 2.3, ride 1.8, step 0.9, draw 0.75, traits 0.67,
+  occupancy 0.34, peel and lists 0.6. Particles and sway, render-side work run per tick, add another 3.2.
+- Fast-forward design (DESIGN §12, "trips without ticks", decided by this measurement). Each stage, per sim tick or
+  once a frame with the elapsed time:
+
+  | stage | per tick? | once a frame, why |
+  | --- | --- | --- |
+  | agents-draw (units' and items' instances) | no | what's drawn is the frame's last state; per tick it builds 9–16 instance lists and draws one |
+  | sway, particles' look (petals, emit, update) | no | render-only animation; per frame with elapsed time. Sparks that light fires stay events |
+  | agents-relax (the fields) | no | the fields steer, they don't integrate; a frame's sweeps (as at 1x) on the frame's land. At 16x the units read a field up to a frame old: their way, not their physics |
+  | agents-ride (steering on the roads) | no | its steer is read by the next step already (a tick late); once a frame, read by the frame's substeps. Trips are interpolated by clock (DESIGN §12) |
+  | peel, tile lists | no | they follow the versions; once a frame sees every change since |
+  | agents-step (integration, collisions, occupancy) | substeps | see below |
+  | agents-traits (damage, burning, effects) | with the step | rates take the substep's dt; one-tick events (a swing landing) need the step's cadence |
+
+- The units' step, in substeps:
+  - A unit must not cross more than half a cell in a step (the occupancy and the column-floor rides are per cell, so
+    a step past a cell skips its checks).
+  - The fastest unit, a rider on a road, is about 6 cells/s, so the step's dt is at most 1/12 s.
+  - At 16x, a 60 Hz frame's elapsed sim time is 16/60 = 0.27 s: **4 substeps** (ceil(0.27 × 6 / 0.5)) instead of 16
+    ticks. At 1x and 2x, one.
+  - Substeps = ceil(elapsed × v_max / 0.5 cell), v_max from the kinds' table. A speed bound, not a tuning knob.
+  - The traits run with each substep.
+- Cost at 16x if so: step + traits + occupancy ×4 (about 0.8 ms here), plus relax, ride, peel, draw, sway and
+  particles once (about 0.7). About 1.5 ms against 10.6, so 7 times less. The world's other systems (water, wind,
+  stats) still tick 16 times.
+- Risks:
+  - Combat outcomes (windup, swing timing) at substep resolution.
+  - Riders at a frame-old steer.
+  - The CPU's crowd routine per tick (TownLife's trips by clock) is unchanged here.
+  - Fights with fortressraid against today's outcomes is the gate, as for (3).
+- Phone bench: the same per-stage numbers from the Pixel 9a, the deployed branch with `&agentprof=1&perf=1`. The
+  perf overlay lists the passes; it has no download yet.
+- For main before any code.
