@@ -28,6 +28,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { overlayBlocks } from './lib/overlaycheck.mjs';
 import { pathToFileURL } from 'node:url';
 import { ROOT, basePort, browser, build, lease, serveBuild, stages } from './lib/runner.mjs';
 
@@ -135,6 +136,9 @@ async function serve() {
         broken = true;
         throw new Error(`the lab didn't open: ${fatal.slice(0, 1500)}`);
       }
+      // (round 128p: a page opened with --flags "&perf=1…" — no debug overlay takes the map's input)
+      const blocked = await overlayBlocks(page);
+      if (blocked.length) throw new Error(`a debug overlay blocks the map's input: ${blocked.slice(0, 8).join('; ')}`);
       const boot = await page.evaluate(() => window.__boot);
       timings.reload = secs(now() - t1);
       timings.boot = stages(boot);

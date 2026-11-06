@@ -20355,3 +20355,34 @@ What:
   unchanged at 362 s.
 - Left: the CPU's crowd still steps by `dt × speed` a frame (scenes/level/frame.ts), not by the ticks run. A frame
   whose ticks the clock cuts gives the routine more time than the world. Not fixed here.
+
+## 2026-11-06 — round 128p (`phonefix`): debug overlays let the map's input through
+
+Why: the user on the phone bench link (`/fortress/?…&perf=1&agentprof=1&speed=16&hitch=1`): "The screen is blocked by
+a semi transparent panel that prevents me from panning or planning."
+
+Reproduced at 412×915, dpr 2.6, by asking the page what a tap reaches over a grid of points. The top 560 CSS px went
+to the overlays:
+- **The perf overlay** (`.perf`) is meant to pass input through (`pointer-events: none`), but `#ui > * {
+  pointer-events: auto }` outranks a bare class, so it took every tap and drag. With the agentprof stages split it is
+  as wide as the phone and about 880 px tall.
+- **The hitch HUD** set `pointer-events: auto` on its whole panel (timeline, worst-ten text) and stopped every
+  pointer event on it.
+
+Fix, at the cause:
+- Debug overlays are marked `data-overlay="debug"`. CSS sets `#ui > [data-overlay='debug'] { pointer-events: none }`.
+  Only their own controls (`data-overlay-control`) take taps: the perf overlay's new fold button and the hitch HUD's
+  bar (title and buttons).
+- Both start folded on a screen narrower than 600 px and unfold with a tap. The perf overlay no longer updates its
+  text while folded.
+
+Check:
+- scripts/lib/overlaycheck.mjs asks the page what a tap reaches over a 40 px grid. It fails on any debug overlay
+  other than its controls.
+- scripts/shot.mjs runs it after the wait and again after the taps and drags. scripts/lab.mjs runs it once the lab
+  opens (a page opened with `--flags "&perf=1…"`).
+- Verified on the bench URL at 412×915:
+  - the check passes folded and unfolded;
+  - a drag over the panel's area pans the camera (target 152, 168 → 194, 110);
+  - a tap at (200, 400) with the perf overlay unfolded reaches the canvas.
+- With the CSS rule removed, the check fails at the perf overlay's points.

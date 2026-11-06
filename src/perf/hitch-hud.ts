@@ -19,10 +19,14 @@ export class HitchHud {
     private extra: () => Record<string, unknown>,
   ) {
     const el = document.createElement('div');
+    // (round 128p: a debug overlay — the map's input passes through it; only its bar (the title folds it, the buttons)
+    // takes taps; folded at first on a narrow screen, where it covered the map — style.css [data-overlay='debug'])
+    el.dataset.overlay = 'debug';
     el.style.cssText =
-      'position:fixed;left:4px;top:max(4px,env(safe-area-inset-top));z-index:50;max-width:min(96vw,420px);background:#000c;color:#dfe;font:10px/1.3 ui-monospace,monospace;padding:4px 6px;border-radius:4px;pointer-events:auto;white-space:pre';
+      'position:fixed;left:4px;top:max(4px,env(safe-area-inset-top));z-index:50;max-width:min(96vw,420px);background:#000c;color:#dfe;font:10px/1.3 ui-monospace,monospace;padding:4px 6px;border-radius:4px;pointer-events:none;white-space:pre';
     const bar = document.createElement('div');
-    bar.style.cssText = 'display:flex;gap:6px;align-items:center;margin-bottom:2px';
+    bar.dataset.overlayControl = '';
+    bar.style.cssText = 'display:flex;gap:6px;align-items:center;margin-bottom:2px;flex-wrap:wrap;pointer-events:auto';
     const title = document.createElement('b');
     title.textContent = 'hitches';
     title.style.cursor = 'pointer';
@@ -58,8 +62,9 @@ export class HitchHud {
     this.text.style.cssText = 'margin:2px 0 0;white-space:pre-wrap;word-break:break-all';
     el.appendChild(this.text);
     for (const ev of ['pointerdown', 'pointerup', 'touchstart', 'touchend', 'wheel', 'mousedown', 'click'])
-      el.addEventListener(ev, (e) => e.stopPropagation());
+      bar.addEventListener(ev, (e) => e.stopPropagation());
     root.appendChild(el);
+    if (innerWidth < 600) title.click();
   }
 
   update(now: number): void {
