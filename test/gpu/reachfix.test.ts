@@ -38,9 +38,11 @@ test('the fix field and its walk back: the GPU as the CPU reference', async () =
   const places = [col(15, 23), col(45, 30), col(60, 30)];
   const ask: ReachAsk = { stores: [8, 40], storesZ: 5, queries: new Int32Array(places.flatMap((c) => [c, -1, -1, -1])), floors: new Float32Array(places.flatMap((c) => [groundAt(c % W), 0, 0, 0])), wet: false, why: true, fix: true };
   const cpu = new CpuReach(cols, W, W, () => [0, 0]);
-  cpu.setSpans(spans);
+  // (a free column's stair rises 4.5 m at most: sitereach.ts siteRampRise's, a cell 6 m across; none on the ring)
+  const rise = new Float32Array(W * W).map((_, i) => (spans[2 * i] ? 0 : 4.5));
+  cpu.setSpans(spans, rise);
   const gpu = new FortressReachGpu(g.device, world.core.world, W, W, () => [0, 0]);
-  gpu.setSpans(spans);
+  gpu.setSpans(spans, rise);
   const a = await cpu.check(ask);
   const b = await gpu.check(ask);
   const key = (f: ReachFix) => `${f.query}:${f.kind}:${f.col}:${f.dir}`;

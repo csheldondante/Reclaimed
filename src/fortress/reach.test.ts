@@ -8,7 +8,11 @@ import { cellPos } from '../world/lattice';
 import { Fortress } from './fortress';
 import { CpuReach, surfacesOf, type ReachColumns } from '../build/reach';
 import { PIECE_WARN, rampPieces, warnPieces } from '../build/view';
-import { RAMPS_ID, solidSpans } from '../build/solid';
+import { RAMPS_ID, rampRun, solidSpans } from '../build/solid';
+import { siteRampRise } from '../build/sitereach';
+import { SLOPE } from '../build/ways';
+import { STEP } from '../agents/rules';
+import { nbr } from '../world/lattice';
 import { PIECE_FLOATS } from '../structures/pieces';
 
 const W = 160;
@@ -264,6 +268,21 @@ describe('the check at placement', () => {
     expect(f.plan.has(low, 0)).toBe(true);
     expect(f.plan.ramps().length).toBe(1);
     expect(await reached(f, low)).toBe(true);
+    // (its steps: no column a step past the walkers' STEP from the next along it)
+    const sp = solidSpans({ plan: f.plan, town: f.town, grid: f.grid, ground: (col) => f.groundAt(col) }).get(RAMPS_ID)!;
+    const top = new Map(sp.map((q) => [`${q.x},${q.y}`, q.z1]));
+    for (const q of sp)
+      for (let d = 0; d < 6; d++) {
+        const [nx, ny] = nbr(q.x, q.y, d);
+        const z = top.get(`${nx},${ny}`);
+        if (z !== undefined) expect(Math.abs(z - q.z1)).toBeLessThanOrEqual(STEP);
+      }
+    // (the rise a free cell's stair takes: SLOPE over its shortest run; a planned cell none)
+    const rise = siteRampRise(f);
+    const free = f.cellAt(60, 60);
+    const col = f.grid.columns[free][0];
+    expect(rise[col]).toBeCloseTo(Math.min(...[0, 1, 2, 3].map((e) => SLOPE * rampRun(f.grid, free, e))), 5);
+    expect(rise[f.grid.columns[low][0]]).toBe(0);
     // (a cliff past a ramp's rise: refused)
     const cliff: ReachColumns = { w: W, h: H, runs: (x) => (x > 100 ? [[0, GROUND - 7]] : [[0, GROUND]]), water: () => 0 };
     const g = fortress(cliff, [20, 20], (x) => (x > 100 ? GROUND - 7 : GROUND));

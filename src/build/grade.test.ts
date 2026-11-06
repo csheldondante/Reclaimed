@@ -1,6 +1,7 @@
 // (DA-A10) A road's grade: the slope kept, cut and fill balanced, the too-steep stretches declared.
 import { describe, expect, it } from 'vitest';
 import { gradeLane, gradeProfile } from './grade';
+import { stairRise } from './ways';
 
 const steps = (v: readonly number[]) => v.slice(1).map((x, i) => Math.abs(x - v[i]));
 
@@ -26,6 +27,13 @@ describe("a road's grade", () => {
     expect(lane.fill).toBeGreaterThan(0);
   });
 
+  it('a steep stretch a stair cannot climb in its run says so: it needs a switchback or more stair', () => {
+    // (a 4 m wall of rock inside a metre, on a 2 m lane: no grade within 1 m of cut, no stair in 2 m)
+    const lane = gradeLane([0, 0], [2, 0], (x) => (x < 1 ? 0 : 4), { maxGrade: 1 / 3, maxCut: 1, steep: 'stairs' });
+    expect(lane.steep.length).toBe(1);
+    expect(lane.steep[0].fits).toBe(false);
+  });
+
   it('declares a cliff past the deepest cut steep (stairs or a switchback, as asked), its ground kept', () => {
     const ground = (x: number) => (x < 10 ? 0 : 12);
     for (const steep of ['stairs', 'switchback'] as const) {
@@ -33,6 +41,9 @@ describe("a road's grade", () => {
       expect(lane.steep.length).toBe(1);
       expect(lane.steep[0].kind).toBe(steep);
       expect(lane.steep[0].rise).toBeCloseTo(12, 0);
+      // (a stair fits it when no steeper than a stair's pitch over the stretch's run: ways.ts stairRise)
+      const q = lane.steep[0];
+      expect(q.fits).toBe(12 <= stairRise(Math.hypot(lane.at[q.to][0] - lane.at[q.from][0], lane.at[q.to][1] - lane.at[q.from][1])));
       for (let i = lane.steep[0].from + 1; i < lane.steep[0].to; i++) expect(lane.road[i]).toBe(lane.ground[i]);
     }
   });

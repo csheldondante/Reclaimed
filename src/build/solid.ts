@@ -84,6 +84,18 @@ export function rampShape(grid: { centre(c: number): [number, number]; corner(c:
   return { axis: [hi, lo], top, foot };
 }
 
+/** (round 128o, DA-A10) a ramp's run on cell c up to side `side`: from the far side's middle to that side's (rampShape's axis) */
+export function rampRun(grid: { corner(c: number, k: number): [number, number] }, c: number, side: number): number {
+  const mid = (e: number): V2 => {
+    const a = grid.corner(c, e);
+    const b = grid.corner(c, e + 1);
+    return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  };
+  const hi = mid(side);
+  const lo = mid((side + 2) % 4);
+  return Math.hypot(hi[0] - lo[0], hi[1] - lo[1]);
+}
+
 /** a stair's half width (its flight: two columns across) */
 export const STAIR_HALF = 1.1;
 
