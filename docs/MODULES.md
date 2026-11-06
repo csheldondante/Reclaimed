@@ -212,9 +212,9 @@ Fortress mode: the fortress, its economy, pieces, claims, life (workers) and its
 - `raiders.ts` (748) — The attack wave on the fortress (round 128l, m4: fortress M5-lite; API: `RAID_FACTION`, `RaidIO`, `RaidReport`, `FortressRaid`.
 - `reach.ts` (230) — The fortress's reach: what a check asks and answers (the GPU's — reachgpu.ts, shaders/fortreach.wgsl — in … API: `RAMP_CAP`, `REACH_BITS`, `ReachAsk`, `ReachReply` +11.
 - `reachgpu.ts` (262) — The fortress's reach on the GPU (round 128l, m4; API: `FortressReachGpu`.
-- `recipes.ts` (154) — The fortress's recipes (round 128l, m4: fortress slice 1, milestone 4 — "the blacksmith makes weapons from … API: `Recipe`, `RECIPES`, `recipeTakes`, `TrainRoom` +2.
+- `recipes.ts` (161) — The fortress's recipes (round 128l, m4: fortress slice 1, milestone 4 — "the blacksmith makes weapons from … API: `Recipe`, `RECIPES`, `recipeTakes`, `TrainRoom` +2.
 - `testing.ts` (12) — (round 128m, onetown) Tests' fortress: the player editing a town with nothing on it yet (build/site.ts … API: `fortressOn`.
-- `townwork.ts` (195) — A town's work as TownLife asks for it (DA-A6, round 128o; API: `LOAD`, `SITES`, `RIPE_LOAD`, `FortressWorkIO` +1.
+- `townwork.ts` (335) — A town's work as TownLife asks for it (DA-A6, round 128o; API: `LOAD`, `SITES`, `RIPE_LOAD`, `FortressWorkIO` +1.
 - `ui.ts` (377) — The fortress's bar. Planning (time stopped): select what — one of the nine types — then tap to plan it; API: `FortressBarHooks`, `SPEEDS`, `FortressBar`.
 - `words.ts` (268) — What the fortress's planning panel says (docs/WRITING.md: plain words, one idea a sentence, numbers of … API: `goodsText`, `givesLines`, `typeCard`, `typeLines` +26.
 - `work.ts` (97) — What the fortress's builders owe and have brought (fortress slice 1, milestone 2). API: `BuildBook`.
@@ -838,7 +838,7 @@ Stories: dialog play, hero runs, the atlas run.
 ## src/town/
 
 - `jobs.ts` (90) — A town's jobs (round 128o, DA-A6: moved here from fortress/economy.ts and fortress/work.ts — every town's … API: `JOB_ORDER`, `JobKind`, `JobSlot`, `Load` +1.
-- `life.ts` (354) — One crowd for a town's people, on events (DA-A6, round 128o; API: `Leg`, `LifeEvent`, `Order`, `TownWork` +6.
+- `life.ts` (611) — One crowd for a town's people, on events (DA-A6, round 128o; API: `Leg`, `To`, `LifeEvent`, `Order` +8.
 
 ## src/traits/
 

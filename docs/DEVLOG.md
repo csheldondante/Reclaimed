@@ -19160,3 +19160,35 @@ Design note (AGENT_RULES 1). DESIGN.md section 11 ("One crowd"; "no per-frame CP
   their importers updated; no re-exports). The fortress's adapter stays fortress/townwork.ts.
 - The import-boundary gate: `town` sits above the engine, and a rule `town-pure` — the town's routine never imports
   scenes, ui, the fortress, the settlements, the run layer, the lab, kernels or the renderer.
+
+## 2026-11-06 — round 128o (`onetown`, DA-A6 part 3): smiths, recruits, soldiers, carts, newcomers on events
+
+Design note (before code): every remaining piece of FortressLife's routine as an event-driven phase of TownLife, the
+town's answers behind TownWork, nothing polled, no give-up timers.
+- Smiths and recruits: to the stores; `startBatch` takes the recipe's goods (null: wait there until `stores`, or a
+  soldier's death frees a barracks bed); carry them to the structure's leg (`smithy` / `barracks`); work the batch's
+  seconds; `finishBatch` gives a smith's goods to carry home, or 'soldier' — the order `{become: 'soldier'}` and the
+  unit moves from the people to the soldiers (the wiring restyles it).
+- Soldiers: muster (`barracks`) -> drill (drillSec) -> march (`post`, the wall's stairs) -> `wall` points one after
+  another (a leg with a target: the point), patrolPoints of them -> muster; every morning, wherever they are, muster.
+  No wall: guard at the post until the morning. FortressLife's 40 s "stuck" give-up is gone: the wall points come from
+  the plan; that a soldier can reach them is the wiring's reach (B), not a timer here.
+- Carts: a gatherer's haul goes on its structure's pile when the town says so (`pile`: haulBy — long way, a cart, room,
+  a road) and the worker goes straight back to work; a pile reaching a ride's worth emits `pile`; parked carts take
+  `pileFor` (claimed), ride out (`pile` leg with the structure as target), `loadPile`, back to the stores, deliver.
+  A cart lost on its way out `unclaim`s.
+- Newcomers: the town's `room` event (beds changed via the plan, grain delivered) or a person gone -> `mayArrive` ->
+  the order `{newcomer: true}`; the wiring stands one up and calls `arrive(unit)`; it walks home, then takes work. One
+  at a time: the next may come when it's in (FortressLife's 6 s arriveSec cadence is gone).
+- Legs with targets: `Order.go` carries `to` (a structure or a point), arrivals report it, and the "sent where it
+  already is" settling compares leg and target (an arrival at another point than its own isn't its).
+- The job board's turn keeps those holding something (a load, a batch, goods) in their jobs first (people sorted, the
+  board keeps earlier holders): a shrinking smiths' slot drops the one waiting, not the one carrying ore (FortressLife
+  could drop either). FortressWork caps the smiths' and recruits' slots as FortressLife did (RecipeRunner.canStart, else
+  the batches on their way: `inProgressAt`).
+- Tests: 9 new scripted-event tests in town/life.test.ts (smith's cycle and waiting without polling, batch given back,
+  slot kept by the holder, recruit -> soldier round, no bed until a soldier's death, morning muster, pile + cart, cart
+  lost unclaims, newcomers one at a time and only with room) and 5 in fortress/townwork.test.ts on a real Fortress
+  (forge from the stores, the smiths only while there's ore, a recruit's drill, a pile and its event and a cart's load,
+  the wall-walk's points, the room event). Unit tier 98 files / 823 tests green; typecheck green. No GPU, lab or
+  browser run (main's instruction: tilegate running).

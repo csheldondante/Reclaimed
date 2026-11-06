@@ -1,59 +1,82 @@
 // One crowd for a town's people, on events (DA-A6, round 128o; DESIGN.md section 11: "One crowd"; "no per-frame CPU copy
 // of all units"). The routine that is to replace fortress/life.ts's FortressLife and settle/life.ts's SettlementLife:
 // every town's people work its plan's job board (economy.ts jobSlots: a generated town's farms, quarries and lumber camps
-// give jobs as the player's do; the builders' slot while there's building), and a person's phase moves only on what
+// give jobs as the player's do; the builders' slot while there's building), and a unit's phase moves only on what
 // happens to it — never on a position read back.
 //  - In: events (`LifeEvent`) — a leg's arrival (the agents' `arrived` on its field, DA-B2a, or the ride's at a trip's
 //    goal), a world operation's answer (dug, felled), a death; the town's own (goods into the stores, the sites changed,
-//    a structure's work ready: TownWork's adapter emits them); a lost event (the agents' ring overflowed) is thrown.
-//  - Out: orders (`Order`) — the leg a unit follows (its group: a field or a ride), what it carries, a world operation
-//    to ask for. The wiring (AgentUnits, the world API) carries them out and turns what comes back into events.
-//  - Time: a phase that takes time (working a load in, gathering, eating) counts sim seconds in `tick`; nothing waits on
-//    a timer to give up.
-// Nothing is polled: a person waiting (at the stores with nothing to bring, at its work with nothing ready) waits for the
-// event that changes that. Pure: no GPU, no DOM, no units — tested with scripted event streams (life.test.ts). Every
-// town runs it (round 128o: src/town/, its own folder; the fortress's adapter is fortress/townwork.ts).
-// This slice: builders, farmers, miners, woodcutters, the people without work. Carts, smiths, recruits, soldiers and the
-// newcomers' walk in are the next ones (DEVLOG round 128o, DA-A6's note).
+//    a structure's work ready, goods on a pile for a cart, room for a newcomer: TownWork's adapter emits them); a lost
+//    event (the agents' ring overflowed) is thrown.
+//  - Out: orders (`Order`) — the leg a unit follows (its group: a field or a ride; a leg with a target — a cart's pile,
+//    a soldier's wall point — names it), what it carries, a world operation to ask for, a newcomer to stand up, a person
+//    turned soldier. The wiring (AgentUnits, the world API) carries them out and turns what comes back into events.
+//  - Time: a phase that takes time (working a load in, gathering, a batch, a drill, eating) counts sim seconds in `tick`;
+//    nothing waits on a timer to give up.
+// Nothing is polled: a unit waiting (at the stores with nothing to bring or no batch to start, at its work with nothing
+// ready, a cart with no pile) waits for the event that changes that. Pure: no GPU, no DOM, no units — tested with scripted
+// event streams (life.test.ts). Every town runs it (src/town/; the fortress's adapter is fortress/townwork.ts).
+// The crowd: people (the job board's — builders, farmers, miners, woodcutters, smiths, recruits; a newcomer walks in to a
+// house first), soldiers (a recruit drilled: muster at the barracks, drill, march to the wall's stairs, walk the wall,
+// muster again each morning) and carts (a long haul is left on its structure's pile; a cart rides out for it).
 import { JobBoard, type JobKind, type JobSlot, type Load } from './jobs';
 import type { Good, Goods } from '../api/contracts/fortress';
 import type { V2 } from '../api/contracts/units';
 import type { Block } from '../build/town';
 
-/** the legs a person walks or rides: each the wiring's field or ride group */
-export type Leg = 'stores' | 'site' | 'farm' | 'quarry' | 'fell' | 'home';
+/** the legs a unit walks or rides: each the wiring's field or ride group ('pile', 'wall': with a target) */
+export type Leg = 'stores' | 'site' | 'farm' | 'quarry' | 'fell' | 'home' | 'smithy' | 'barracks' | 'post' | 'wall' | 'pile';
+/** a leg's target, for the legs that have one: a cart's pile (its structure), a soldier's wall point */
+export type To = number | V2;
 
 export type LifeEvent =
-  /** a unit got to the end of its leg (where it stands: from the event, never read) */
-  | { type: 'arrived'; unit: number; leg: Leg; at: V2 }
+  /** a unit got to the end of its leg (where it stands: from the event, never read; `to`: the leg's target) */
+  | { type: 'arrived'; unit: number; leg: Leg; at: V2; to?: To }
   /** a dig answered: how much ground came */
   | { type: 'dug'; unit: number; amount: number }
   /** a felling answered: its logs (0: no tree there any more) */
   | { type: 'felled'; unit: number; logs: number }
   | { type: 'death'; unit: number }
-  /** (the town's) goods came into the stores: a builder waiting there may have a load now */
+  /** (the town's) goods came into the stores: a builder, smith or recruit waiting there may have something now */
   | { type: 'stores' }
   /** (the town's) the plan's sites changed (planned, erased, cut off or reached again) */
   | { type: 'sites' }
   /** (the town's) a structure has work ready: ripe grain, a tree in reach, a free spot */
   | { type: 'spot'; structure: number }
-  /** events the agents' ring dropped (it overflowed): a person may never hear of its arrival */
+  /** (the town's) goods were left on a pile: a parked cart may ride out */
+  | { type: 'pile' }
+  /** (the town's) beds or grain changed: a newcomer may come */
+  | { type: 'room' }
+  /** events the agents' ring dropped (it overflowed): a unit may never hear of its arrival */
   | { type: 'lost'; count: number };
 
 export type Order =
-  /** follow this leg (null: stand where it is) */
-  | { unit: number; go: Leg | null }
+  /** follow this leg (to its target, for the legs that have one); null: stand where it is */
+  | { unit: number; go: Leg | null; to?: To }
   /** carry this (a look: 'stone', 'log', 'grain', 'ore'), or nothing */
   | { unit: number; carry: string | null }
   | { unit: number; dig: V2 }
-  | { unit: number; fell: V2 };
+  | { unit: number; fell: V2 }
+  /** this person is a soldier now (the wiring restyles the unit: a guard's look, health, blow) */
+  | { unit: number; become: 'soldier' }
+  /** a newcomer to stand up where the town's people come in; the wiring calls `arrive(unit)` once it stands */
+  | { newcomer: true };
+
+/** who's in the crowd, as the town's answers need it */
+export interface Crowd {
+  people: number;
+  soldiers: number;
+  carts: number;
+}
 
 /** What the routine asks of the town (the plan, its stores, its sites, its work spots): pure answers. */
 export interface TownWork {
   /** the town's day (sim seconds): a person's day — work, a meal at midday, home to rest at its end */
   readonly daySec: number;
+  /** seconds a soldier drills at the barracks when it musters; wall points it walks before it musters again */
+  readonly drillSec: number;
+  readonly patrolPoints: number;
   /** the jobs open now, in priority order */
-  slots(): JobSlot[];
+  slots(crowd: Crowd): JobSlot[];
   /** a builder at the stores: the next block that lacks something the stores have, and the load taken out for it
    *  (taken now); null: nothing to bring */
   nextLoad(): { block: Block; load: Load } | null;
@@ -72,6 +95,25 @@ export interface TownWork {
   reap(structure: number, spot: V2): { goods: Goods; seconds: number };
   /** what a load of dug ground is (stone, a share of it ore) */
   dugGoods(amount: number): Goods;
+  /** a smith or recruit at the stores: its batch's goods, taken out now, and the seconds of its work; null: the stores
+   *  lack them, or (a recruit) there's no bed in the barracks for another soldier */
+  startBatch(unit: number, kind: JobKind, structure: number, crowd: Crowd): { goods: Goods; seconds: number } | null;
+  /** a batch worked: a smith's goods to carry home, or 'soldier' (the recruit is one now) */
+  finishBatch(unit: number): Goods | 'soldier';
+  /** a batch dropped before it was worked (the job changed, the worker died): its goods back into the stores */
+  dropBatch(unit: number): void;
+  /** a worker's haul home from its structure: true — left on the structure's pile for a cart (taken now); false — walked */
+  pile(structure: number, goods: Goods, crowd: Crowd): boolean;
+  /** a cart without a load: the pile it rides out for (claimed for it), or null: none worth a ride */
+  pileFor(cart: number): number | null;
+  /** a cart at its pile: the goods it loads, up to a cart's load; its claim ends */
+  loadPile(cart: number, structure: number): Goods;
+  /** a cart gone before it got to its pile: its claim ends (the goods stay for another) */
+  unclaim(cart: number): void;
+  /** a soldier's next wall point along from `from` (null from: its first — the nearest `at`); null: no wall */
+  wallPoint(at: V2, from: V2 | null): V2 | null;
+  /** whether one more person may come (a bed for it, grain to eat) */
+  mayArrive(crowd: Crowd): boolean;
 }
 
 /** seconds working a load in */
@@ -100,16 +142,39 @@ type Phase =
   | { p: 'carry'; goods: Goods }
   | { p: 'toEat' }
   | { p: 'eating'; t: number }
-  | { p: 'rest' };
+  | { p: 'rest' }
+  // ---- smiths and recruits: a batch out of the stores, carried to the structure, worked there
+  | { p: 'toFetch' }
+  /** at the stores with no batch to start: until the stores change (or a soldier's bed frees) */
+  | { p: 'waitBatch' }
+  | { p: 'toBatch'; seconds: number }
+  | { p: 'batching'; t: number }
+  // ---- a newcomer: to a house first
+  | { p: 'arriving' }
+  // ---- soldiers
+  | { p: 'muster' }
+  | { p: 'drill'; t: number }
+  | { p: 'march' }
+  /** at the wall's stairs with no wall to walk: until the morning's muster */
+  | { p: 'guard' }
+  | { p: 'patrol'; at: V2; walked: number }
+  // ---- carts
+  /** parked with no pile to ride for: until a pile has goods */
+  | { p: 'park' }
+  | { p: 'out'; pile: number }
+  | { p: 'back'; goods: Goods; pile: number };
 
-interface Person {
+type Role = 'person' | 'soldier' | 'cart';
+
+interface Unit {
   unit: number;
+  role: Role;
   phase: Phase;
-  /** the leg it last arrived at the end of, and where — until it's sent on another (a unit standing at its field's end
-   *  isn't told it's there again: agents' arrivals latch) */
-  there: { leg: Leg; at: V2 } | null;
+  /** the leg it last arrived at the end of (and its target), and where — until it's sent on another (a unit standing at
+   *  its field's end isn't told it's there again: agents' arrivals latch) */
+  there: { leg: Leg; to?: To; at: V2 } | null;
   /** the leg it was sent on since the orders last went out (undefined: none; null: told to stand) */
-  sent?: Leg | null;
+  sent?: { leg: Leg; to?: To } | null;
   /** the day it last ate */
   ate: number;
 }
@@ -120,30 +185,87 @@ function lookOf(goods: Goods): string | null {
   return main ? main[0] : null;
 }
 
+function sameTo(a: To | undefined, b: To | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  if (typeof a === 'number' || typeof b === 'number') return a === b;
+  return a[0] === b[0] && a[1] === b[1];
+}
+
+/** phases holding something of the town's (a load, a batch, goods): their job is kept first at the board's turn */
+const HOLDING: ReadonlySet<Phase['p']> = new Set(['toSite', 'working', 'toBatch', 'batching', 'carry', 'gather', 'digging', 'felling']);
+
 export class TownLife {
-  private people = new Map<number, Person>();
+  private crowd = new Map<number, Unit>();
   private board = new JobBoard();
   private orders: Order[] = [];
   /** sim seconds since it began */
   private t = 0;
-
+  /** a newcomer asked for and not yet standing (one walks in at a time) */
+  private calling = false;
 
   constructor(private work: TownWork) {}
 
   /** a person of the town (a unit already standing in the world) */
   add(unit: number): void {
-    if (this.people.has(unit)) throw new Error(`town life: unit ${unit} is one of its people already`);
-    this.people.set(unit, { unit, phase: { p: 'idle' }, there: null, ate: -1 });
+    this.join(unit, 'person', { p: 'idle' });
   }
 
-  /** the town's people (their units) */
+  /** a newcomer the wiring stood up (an `{newcomer}` order answered): to a house first, then the job board's */
+  arrive(unit: number): void {
+    if (!this.calling) throw new Error(`town life: unit ${unit} came in as a newcomer no one asked for`);
+    this.calling = false;
+    this.set(this.join(unit, 'person', { p: 'arriving' }), { p: 'arriving' }, 'home');
+  }
+
+  /** a soldier of the town (a unit standing in the world): it musters at the barracks */
+  addSoldier(unit: number): void {
+    this.muster(this.join(unit, 'soldier', { p: 'muster' }));
+  }
+
+  /** a cart of the town (a unit on the road by the stores): it rides for a pile when there's one */
+  addCart(unit: number): void {
+    const u = this.join(unit, 'cart', { p: 'out', pile: -1 });
+    // (claimed nothing yet: a pile, or parked where it stands)
+    this.toPile(u);
+  }
+
+  private join(unit: number, role: Role, phase: Phase): Unit {
+    if (this.crowd.has(unit)) throw new Error(`town life: unit ${unit} is in the crowd already`);
+    const u: Unit = { unit, role, phase, there: null, ate: -1 };
+    this.crowd.set(unit, u);
+    return u;
+  }
+
+  /** the town's people (their units: not its soldiers, not its carts) */
   units(): number[] {
-    return [...this.people.keys()];
+    return this.of('person').map((u) => u.unit);
   }
 
-  /** a person's phase now (tests, the follow card) */
+  soldiers(): number[] {
+    return this.of('soldier').map((u) => u.unit);
+  }
+
+  carts(): number[] {
+    return this.of('cart').map((u) => u.unit);
+  }
+
+  private of(role: Role): Unit[] {
+    return [...this.crowd.values()].filter((u) => u.role === role);
+  }
+
+  private count(): Crowd {
+    const c: Crowd = { people: 0, soldiers: 0, carts: 0 };
+    for (const u of this.crowd.values()) {
+      if (u.role === 'person') c.people++;
+      else if (u.role === 'soldier') c.soldiers++;
+      else c.carts++;
+    }
+    return c;
+  }
+
+  /** a unit's phase now (tests, the follow card) */
   phaseOf(unit: number): Phase['p'] | null {
-    return this.people.get(unit)?.phase.p ?? null;
+    return this.crowd.get(unit)?.phase.p ?? null;
   }
 
   /** a person's job now (its slot's key), or none */
@@ -151,71 +273,118 @@ export class TownLife {
     return this.board.jobOf(unit);
   }
 
-  /** What happened: each event moves its person on. */
+  /** What happened: each event moves its unit on. */
   on(e: LifeEvent): void {
-    if (e.type === 'lost') throw new Error(`town life: ${e.count} agent events lost (the ring overflowed) — a person may wait for an arrival it never hears of`);
+    if (e.type === 'lost') throw new Error(`town life: ${e.count} agent events lost (the ring overflowed) — a unit may wait for an arrival it never hears of`);
     if (e.type === 'stores' || e.type === 'sites') {
-      for (const person of this.people.values()) if (person.phase.p === 'waitLoad') this.arrived(person, 'stores', person.there?.at ?? [0, 0], true);
-      return this.settleOwed();
-    }
-    if (e.type === 'spot') {
-      for (const person of this.people.values()) {
-        const ph = person.phase;
-        if (ph.p === 'waitSpot' && this.slot(person.unit)?.structure === e.structure) this.arrived(person, this.legOf(person), ph.at, true);
+      for (const u of this.crowd.values()) {
+        if (u.phase.p === 'waitLoad' || (u.phase.p === 'waitBatch' && e.type === 'stores')) this.arrived(u, 'stores', u.there?.at ?? [0, 0], true);
       }
       return this.settleOwed();
     }
-    const person = this.people.get(e.unit);
-    if (!person) return;
-    if (e.type === 'death') {
-      this.people.delete(e.unit);
-      return;
-    }
-    const ph = person.phase;
-    if (e.type === 'arrived') {
-      person.there = { leg: e.leg, at: e.at };
-      this.arrived(person, e.leg, e.at);
+    if (e.type === 'spot') {
+      for (const u of this.crowd.values()) {
+        const ph = u.phase;
+        if (ph.p === 'waitSpot' && this.slot(u.unit)?.structure === e.structure) this.arrived(u, this.legOf(u), ph.at, true);
+      }
       return this.settleOwed();
     }
-    if (e.type === 'dug' && ph.p === 'digging') return this.carryHome(person, this.work.dugGoods(e.amount));
+    if (e.type === 'pile') {
+      for (const u of this.crowd.values()) if (u.phase.p === 'park') this.toPile(u);
+      return this.settleOwed();
+    }
+    if (e.type === 'room') return this.callNewcomer();
+    const u = this.crowd.get(e.unit);
+    if (!u) return;
+    if (e.type === 'death') return this.died(u);
+    const ph = u.phase;
+    if (e.type === 'arrived') {
+      u.there = { leg: e.leg, to: e.to, at: e.at };
+      this.arrived(u, e.leg, e.at, false, e.to);
+      return this.settleOwed();
+    }
+    if (e.type === 'dug' && ph.p === 'digging') return this.carryHome(u, this.work.dugGoods(e.amount));
     if (e.type === 'felled' && ph.p === 'felling') {
-      if (e.logs > 0) return this.carryHome(person, { log: e.logs });
+      if (e.logs > 0) return this.carryHome(u, { log: e.logs });
       // (the tree was gone: to the next)
-      return this.toWork(person);
+      return this.toWork(u);
     }
   }
 
+  /** a unit gone: what it held goes back (a load, a batch, a pile's claim); a soldier's bed frees, a person's room */
+  private died(u: Unit): void {
+    const ph = u.phase;
+    this.crowd.delete(u.unit);
+    if (ph.p === 'toSite' || ph.p === 'working') this.work.giveBack(ph.block, ph.load);
+    if (ph.p === 'toBatch' || ph.p === 'batching') this.work.dropBatch(u.unit);
+    // (a cart gone on its way out: its claim ends — the goods stay on the pile for another)
+    if (ph.p === 'out') this.work.unclaim(u.unit);
+    if (u.role === 'soldier') {
+      // (a bed in the barracks free: a recruit waiting for one may start)
+      for (const w of this.crowd.values()) if (w.phase.p === 'waitBatch') this.arrived(w, 'stores', w.there?.at ?? [0, 0], true);
+      this.settleOwed();
+    }
+    if (u.role === 'person') this.callNewcomer();
+  }
+
+  /** a newcomer, when the town has room for one and none is on its way in */
+  private callNewcomer(): void {
+    if (this.calling || [...this.crowd.values()].some((u) => u.phase.p === 'arriving')) return;
+    if (!this.work.mayArrive(this.count())) return;
+    this.calling = true;
+    this.order({ newcomer: true });
+  }
+
   /**
-   * Sim seconds on: the job board's turn (people whose job changed start over), the phases that take time count down.
+   * Sim seconds on: the job board's turn (people whose job changed start over), the phases that take time count down,
+   * the soldiers' morning muster.
    * The orders for the wiring since the last call.
    */
   tick(dt: number): Order[] {
+    const dayWas = this.day();
     this.t += dt;
-    const slots = this.work.slots();
-    const changed = this.board.assign(this.units(), slots);
-    for (const u of changed) this.start(this.people.get(u)!);
-    for (const person of this.people.values()) {
-      const ph = person.phase;
-      if (ph.p === 'idle') this.start(person);
+    const slots = this.work.slots(this.count());
+    // (those holding something keep their job first: a batch, a load, goods in hand aren't dropped for one who has none)
+    const holding = (u: Unit) => (HOLDING.has(u.phase.p) ? 0 : 1);
+    const people = this.of('person')
+      .filter((u) => u.phase.p !== 'arriving')
+      .sort((a, b) => holding(a) - holding(b))
+      .map((u) => u.unit);
+    const changed = this.board.assign(people, slots);
+    for (const id of changed) this.start(this.crowd.get(id)!);
+    const morning = this.day() !== dayWas;
+    for (const u of this.crowd.values()) {
+      const ph = u.phase;
+      if (u.role === 'soldier') {
+        if (ph.p === 'drill') {
+          ph.t -= dt;
+          if (ph.t <= 0) this.set(u, { p: 'march' }, 'post');
+        } else if (morning && ph.p !== 'muster') this.muster(u);
+        continue;
+      }
+      if (ph.p === 'idle') this.start(u);
       else if (ph.p === 'rest') {
-        if (this.dayFrac() < REST_FROM) this.start(person);
+        if (this.dayFrac() < REST_FROM) this.start(u);
       } else if (ph.p === 'eating') {
         ph.t -= dt;
         if (ph.t <= 0) {
-          person.ate = this.day();
-          this.start(person);
+          u.ate = this.day();
+          this.start(u);
         }
       } else if (ph.p === 'working') {
         ph.t -= dt;
         if (ph.t <= 0) {
           this.work.workIn(ph.block, ph.load);
-          this.order({ unit: person.unit, carry: null });
-          person.phase = { p: 'idle' };
-          this.start(person);
+          this.order({ unit: u.unit, carry: null });
+          u.phase = { p: 'idle' };
+          this.start(u);
         }
       } else if (ph.p === 'gather') {
         ph.t -= dt;
-        if (ph.t <= 0) this.carryHome(person, ph.goods);
+        if (ph.t <= 0) this.carryHome(u, ph.goods);
+      } else if (ph.p === 'batching') {
+        ph.t -= dt;
+        if (ph.t <= 0) this.batchDone(u);
       }
     }
     this.settleOwed();
@@ -223,24 +392,24 @@ export class TownLife {
   }
 
   /**
-   * Each person's last leg since the orders went out is what the agents will follow: one sent on the leg it's already at
-   * the end of is there (the agents tell an arrival once — their latch holds while it follows the same field), so it's
-   * told now; one sent on another isn't there any more.
+   * Each unit's last leg since the orders went out is what the agents will follow: one sent on the leg (and target) it's
+   * already at the end of is there (the agents tell an arrival once — their latch holds while it follows the same
+   * field), so it's told now; one sent on another isn't there any more.
    */
   private settleOwed(): void {
     for (let round = 0; ; round++) {
-      const owed: Person[] = [];
-      for (const person of this.people.values()) {
-        const go = person.sent;
+      const owed: Unit[] = [];
+      for (const u of this.crowd.values()) {
+        const go = u.sent;
         if (go === undefined) continue;
-        person.sent = undefined;
+        u.sent = undefined;
         if (go === null) continue;
-        if (person.there?.leg === go) owed.push(person);
-        else person.there = null;
+        if (u.there?.leg === go.leg && sameTo(u.there.to, go.to)) owed.push(u);
+        else u.there = null;
       }
       if (!owed.length) return;
-      if (round > 8) throw new Error('town life: a person sent where it already is, over and over');
-      for (const person of owed) this.arrived(person, person.there!.leg, person.there!.at);
+      if (round > 8) throw new Error('town life: a unit sent where it already is, over and over');
+      for (const u of owed) this.arrived(u, u.there!.leg, u.there!.at, false, u.there!.to);
     }
   }
 
@@ -248,21 +417,21 @@ export class TownLife {
     this.orders.push(o);
   }
 
-  private set(person: Person, phase: Phase, go: Leg | null): void {
-    person.phase = phase;
-    person.sent = go;
-    this.order({ unit: person.unit, go });
+  private set(u: Unit, phase: Phase, go: Leg | null, to?: To): void {
+    u.phase = phase;
+    u.sent = go === null ? null : { leg: go, to };
+    this.order(to === undefined ? { unit: u.unit, go } : { unit: u.unit, go, to });
   }
 
   /** the leg a worker's job takes it to */
-  private legOf(person: Person): Leg {
-    const s = this.slot(person.unit);
-    return s?.kind === 'farm' ? 'farm' : s?.kind === 'quarry' ? 'quarry' : 'fell';
+  private legOf(u: Unit): Leg {
+    const k = this.slot(u.unit)?.kind;
+    return k === 'farm' ? 'farm' : k === 'quarry' ? 'quarry' : k === 'blacksmith' ? 'smithy' : k === 'barracks' ? 'barracks' : 'fell';
   }
 
   private slot(unit: number): JobSlot | null {
     const key = this.board.jobOf(unit);
-    return key ? (this.work.slots().find((s) => s.key === key) ?? null) : null;
+    return key ? (this.work.slots(this.count()).find((s) => s.key === key) ?? null) : null;
   }
 
   private day(): number {
@@ -274,80 +443,168 @@ export class TownLife {
   }
 
   /** a person starting over: home to rest at the day's end, a meal at midday, else its job's first leg, or home */
-  private start(person: Person): void {
-    // (a load in hand goes back where it came from: the job changed under it)
-    const ph = person.phase;
+  private start(u: Unit): void {
+    // (what's in hand goes back where it came from: the job changed under it)
+    const ph = u.phase;
     if (ph.p === 'toSite' || ph.p === 'working') this.work.giveBack(ph.block, ph.load);
+    if (ph.p === 'toBatch' || ph.p === 'batching') {
+      this.work.dropBatch(u.unit);
+      this.order({ unit: u.unit, carry: null });
+    }
     if (ph.p === 'carry') this.work.deliver(ph.goods, null);
-    if (this.dayFrac() >= REST_FROM) return this.set(person, { p: 'rest' }, 'home');
-    if (this.dayFrac() >= EAT_FROM && person.ate !== this.day()) return this.set(person, { p: 'toEat' }, 'stores');
-    const s = this.slot(person.unit);
-    if (!s) return this.set(person, { p: 'home' }, 'home');
-    if (s.kind === 'build') return this.set(person, { p: 'toStores' }, 'stores');
-    this.toWork(person);
+    if (this.dayFrac() >= REST_FROM) return this.set(u, { p: 'rest' }, 'home');
+    if (this.dayFrac() >= EAT_FROM && u.ate !== this.day()) return this.set(u, { p: 'toEat' }, 'stores');
+    const s = this.slot(u.unit);
+    if (!s) return this.set(u, { p: 'home' }, 'home');
+    if (s.kind === 'build') return this.set(u, { p: 'toStores' }, 'stores');
+    if (s.kind === 'blacksmith' || s.kind === 'barracks') return this.set(u, { p: 'toFetch' }, 'stores');
+    this.toWork(u);
   }
 
-  private toWork(person: Person): void {
-    const s = this.slot(person.unit);
-    if (!s || s.structure === null) return this.start(person);
-    this.set(person, { p: 'toWork' }, this.legOf(person));
+  private toWork(u: Unit): void {
+    const s = this.slot(u.unit);
+    if (!s || s.structure === null) return this.start(u);
+    this.set(u, { p: 'toWork' }, this.legOf(u));
   }
 
-  private carryHome(person: Person, goods: Goods): void {
-    this.order({ unit: person.unit, carry: lookOf(goods) });
-    this.set(person, { p: 'carry', goods }, 'stores');
+  /** goods home: left on the structure's pile for a cart when the town says so (a long haul), else carried to the stores */
+  private carryHome(u: Unit, goods: Goods): void {
+    const s = this.slot(u.unit);
+    if (s?.structure != null && this.work.pile(s.structure, goods, this.count())) {
+      this.order({ unit: u.unit, carry: null });
+      return this.toWork(u);
+    }
+    this.order({ unit: u.unit, carry: lookOf(goods) });
+    this.set(u, { p: 'carry', goods }, 'stores');
   }
 
-  private arrived(person: Person, leg: Leg, at: V2, again = false): void {
-    const ph = person.phase;
-    const unit = person.unit;
+  /** a batch worked at its structure: a smith carries its goods home; a recruit is a soldier now */
+  private batchDone(u: Unit): void {
+    const out = this.work.finishBatch(u.unit);
+    if (out !== 'soldier') return this.carryHome(u, out);
+    this.order({ unit: u.unit, become: 'soldier' });
+    u.role = 'soldier';
+    this.muster(u);
+    // (one person fewer: room for a newcomer)
+    this.callNewcomer();
+  }
+
+  private muster(u: Unit): void {
+    this.set(u, { p: 'muster' }, 'barracks');
+  }
+
+  /** a cart without a load: out to the pile the town gives it, or parked until one has goods */
+  private toPile(u: Unit): void {
+    const pile = this.work.pileFor(u.unit);
+    if (pile !== null) return this.set(u, { p: 'out', pile }, 'pile', pile);
+    if (u.phase.p !== 'park') this.set(u, { p: 'park' }, null);
+  }
+
+  private arrived(u: Unit, leg: Leg, at: V2, again = false, to?: To): void {
+    const ph = u.phase;
+    const unit = u.unit;
+    // ---- carts
+    if (u.role === 'cart') {
+      if (ph.p === 'out' && leg === 'pile' && to === ph.pile) {
+        const goods = this.work.loadPile(unit, ph.pile);
+        const look = lookOf(goods);
+        if (!look) return this.toPile(u);
+        this.order({ unit, carry: look });
+        return this.set(u, { p: 'back', goods, pile: ph.pile }, 'stores');
+      }
+      if (ph.p === 'back' && leg === 'stores') {
+        this.work.deliver(ph.goods, ph.pile);
+        this.order({ unit, carry: null });
+        return this.toPile(u);
+      }
+      return;
+    }
+    // ---- soldiers
+    if (u.role === 'soldier') {
+      if (ph.p === 'muster' && leg === 'barracks') return this.set(u, { p: 'drill', t: this.work.drillSec }, null);
+      if (ph.p === 'march' && leg === 'post') {
+        const p = this.work.wallPoint(at, null);
+        // (no wall to walk: it stands guard at the stairs until the morning's muster)
+        if (!p) return this.set(u, { p: 'guard' }, null);
+        return this.set(u, { p: 'patrol', at: p, walked: 0 }, 'wall', p);
+      }
+      if (ph.p === 'patrol' && leg === 'wall' && sameTo(to, ph.at)) {
+        const walked = ph.walked + 1;
+        const next = walked < this.work.patrolPoints ? this.work.wallPoint(at, ph.at) : null;
+        if (!next) return this.muster(u);
+        return this.set(u, { p: 'patrol', at: next, walked }, 'wall', next);
+      }
+      return;
+    }
+    // ---- people
     if ((ph.p === 'toStores' || (again && ph.p === 'waitLoad')) && leg === 'stores') {
       const job = this.work.nextLoad();
       // (nothing to bring: it waits by the stores until they or the sites change)
       if (!job) {
-        if (ph.p !== 'waitLoad') this.set(person, { p: 'waitLoad' }, null);
+        if (ph.p !== 'waitLoad') this.set(u, { p: 'waitLoad' }, null);
         return;
       }
       this.order({ unit, carry: job.load.good });
-      return this.set(person, { p: 'toSite', block: job.block, load: job.load }, 'site');
+      return this.set(u, { p: 'toSite', block: job.block, load: job.load }, 'site');
     }
     if (ph.p === 'toSite' && leg === 'site') {
       const b = this.work.siteAt(at, ph.load, ph.block);
       if (!b) {
         this.work.giveBack(ph.block, ph.load);
         this.order({ unit, carry: null });
-        return this.set(person, { p: 'toStores' }, 'stores');
+        return this.set(u, { p: 'toStores' }, 'stores');
       }
-      return this.set(person, { p: 'working', block: b, load: ph.load, t: WORK_S }, null);
+      return this.set(u, { p: 'working', block: b, load: ph.load, t: WORK_S }, null);
+    }
+    if ((ph.p === 'toFetch' || (again && ph.p === 'waitBatch')) && leg === 'stores') {
+      const s = this.slot(unit);
+      if (!s || s.structure === null || (s.kind !== 'blacksmith' && s.kind !== 'barracks')) return this.start(u);
+      const batch = this.work.startBatch(unit, s.kind, s.structure, this.count());
+      // (nothing to start: it waits by the stores until they change, or a soldier's bed frees)
+      if (!batch) {
+        if (ph.p !== 'waitBatch') this.set(u, { p: 'waitBatch' }, null);
+        return;
+      }
+      this.order({ unit, carry: lookOf(batch.goods) });
+      return this.set(u, { p: 'toBatch', seconds: batch.seconds }, this.legOf(u));
+    }
+    if (ph.p === 'toBatch' && (leg === 'smithy' || leg === 'barracks')) {
+      this.order({ unit, carry: null });
+      return this.set(u, { p: 'batching', t: ph.seconds }, null);
     }
     if (ph.p === 'toWork' || (again && ph.p === 'waitSpot')) {
       const s = this.slot(unit);
-      if (!s || s.structure === null) return this.start(person);
+      if (!s || s.structure === null) return this.start(u);
       const spot = this.work.workSpot(s.kind, s.structure, at);
       if (!spot) {
-        if (ph.p !== 'waitSpot') this.set(person, { p: 'waitSpot', at }, null);
+        if (ph.p !== 'waitSpot') this.set(u, { p: 'waitSpot', at }, null);
         return;
       }
       if (s.kind === 'farm') {
         const r = this.work.reap(s.structure, spot);
-        return this.set(person, { p: 'gather', goods: r.goods, t: r.seconds }, null);
+        return this.set(u, { p: 'gather', goods: r.goods, t: r.seconds }, null);
       }
       if (s.kind === 'quarry') {
         this.order({ unit, dig: spot });
-        return this.set(person, { p: 'digging' }, null);
+        return this.set(u, { p: 'digging' }, null);
       }
       this.order({ unit, fell: spot });
-      return this.set(person, { p: 'felling' }, null);
+      return this.set(u, { p: 'felling' }, null);
     }
     if (ph.p === 'carry' && leg === 'stores') {
       this.work.deliver(ph.goods, this.slot(unit)?.structure ?? null);
       this.order({ unit, carry: null });
       // (on with the tick: after the board's turn, as what the board says then)
-      person.phase = { p: 'idle' };
+      u.phase = { p: 'idle' };
       return;
     }
-    if (ph.p === 'home' && leg === 'home') return this.set(person, { p: 'home' }, null);
-    if (ph.p === 'rest' && leg === 'home') return this.set(person, { p: 'rest' }, null);
-    if (ph.p === 'toEat' && leg === 'stores') return this.set(person, { p: 'eating', t: EAT_S }, null);
+    if (ph.p === 'arriving' && leg === 'home') {
+      // (in: the job board's from the next tick; the next newcomer may come)
+      u.phase = { p: 'idle' };
+      return this.callNewcomer();
+    }
+    if (ph.p === 'home' && leg === 'home') return this.set(u, { p: 'home' }, null);
+    if (ph.p === 'rest' && leg === 'home') return this.set(u, { p: 'rest' }, null);
+    if (ph.p === 'toEat' && leg === 'stores') return this.set(u, { p: 'eating', t: EAT_S }, null);
   }
 }

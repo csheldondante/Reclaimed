@@ -107,6 +107,13 @@ export class RecipeRunner {
     return n;
   }
 
+  /** batches being made now for one structure */
+  inProgressAt(structure: number): number {
+    let n = 0;
+    for (const b of this.batches.values()) if (b.structure === structure) n++;
+    return n;
+  }
+
   /**
    * dt sim seconds of the worker's work at its structure: the batch's out when it's done (the batch is over: craft — the
    * goods to carry to the stores; train — the units to stand up), else null.

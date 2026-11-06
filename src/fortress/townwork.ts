@@ -9,9 +9,10 @@ import type { V2 } from '../api/contracts/units';
 import { buildOrder } from '../agents/buildcrew';
 import type { Block } from '../build/town';
 import { DEFS, ECON } from './defs';
-import { builtBlocks, fits, grown, jobSlots, putIn, quarryLoad, workSeconds } from './economy';
+import { bedsOf, builtBlocks, fits, grown, haulBy, jobSlots, mayArrive, putIn, quarryLoad, workSeconds } from './economy';
 import type { Fortress } from './fortress';
-import type { LifeEvent, TownWork } from '../town/life';
+import type { Crowd, LifeEvent, TownWork } from '../town/life';
+import { RecipeRunner, type TrainRoom } from './recipes';
 import { BuildBook } from './work';
 
 /** goods a builder carries a trip */
@@ -22,8 +23,12 @@ export const SITES = 6;
 const RIPE_DAYS = 3;
 /** a farm's ripe grain worth a reap (a load's share: less isn't worth the walk home) */
 export const RIPE_LOAD = 0.5;
-/** the job kinds this slice's people do (the smiths' and recruits' come with their slice) */
-const KINDS: ReadonlySet<JobKind> = new Set(['build', 'farm', 'quarry', 'lumber']);
+/** a pile worth a cart's ride: half its load (FortressLife's) */
+const PILE_WORTH = ECON.cartLoad / 2;
+/** a soldier's next wall point at least this far along from the last (m): a walk, not a hop (FortressLife's) */
+const WALL_STEP = 8;
+/** the structures whose hauls a cart may take */
+const HAULED: ReadonlySet<string> = new Set(['quarry', 'lumber', 'farm']);
 
 export interface FortressWorkIO {
   fort: Fortress;
@@ -34,10 +39,20 @@ export interface FortressWorkIO {
   trees(structure: number): V2[];
   /** where the builders fetch from (window world): the stores */
   stores_at(): V2;
+  /** where a cart loads a structure's pile (window world: the road's node by its door); null: no road reaches it — its
+   *  workers walk their hauls */
+  pileAt(structure: number): V2 | null;
 }
 
 export class FortressWork implements TownWork {
   readonly daySec = ECON.daySec;
+  readonly drillSec = ECON.drillSec;
+  readonly patrolPoints = ECON.patrolPoints;
+  /** the smiths' and recruits' batches */
+  readonly recipes = new RecipeRunner();
+  /** per structure the goods on its pile, waiting for a cart; per cart the pile it rides for */
+  readonly piles = new Map<number, Goods>();
+  private claims = new Map<number, number>();
   readonly book: BuildBook;
   /** per farm its ripe grain */
   readonly ripe = new Map<number, number>();
@@ -50,7 +65,11 @@ export class FortressWork implements TownWork {
   constructor(private io: FortressWorkIO) {
     this.book = new BuildBook((b) => DEFS[io.fort.plan.typeAt(b.cell) ?? 'house'].cost);
     // (the plan edited, a block built, the reach answered: the sites may have changed)
-    io.fort.onChange.push(() => this.emit({ type: 'sites' }));
+    // (beds too: a newcomer may come)
+    io.fort.onChange.push(() => {
+      this.emit({ type: 'sites' });
+      this.emit({ type: 'room' });
+    });
   }
 
   private emit(e: LifeEvent): void {
@@ -78,9 +97,124 @@ export class FortressWork implements TownWork {
       .slice(0, SITES);
   }
 
-  slots(): JobSlot[] {
+  /**
+   * The jobs open: the plan's (economy.ts jobSlots) — the smiths only while the stores hold a batch of ore and wood, the
+   * recruits while there's a weapon and a bed in the barracks; those with a batch on its way keep their place.
+   */
+  slots(crowd: Crowd): JobSlot[] {
     const f = this.io.fort;
-    return jobSlots(f.plan, this.built, this.sites().length > 0).filter((s) => KINDS.has(s.kind));
+    const st = this.io.stores();
+    const room = this.trainRoom(crowd);
+    const cap = (s: { id: number; type: string }, n: number): number => {
+      if (s.type !== 'blacksmith' && s.type !== 'barracks') return n;
+      return this.recipes.canStart(s.type, st, room) ? n : this.recipes.inProgressAt(s.id);
+    };
+    return jobSlots(f.plan, this.built, this.sites().length > 0, undefined, undefined, cap);
+  }
+
+  /** the barracks' room: soldiers there are and in training, against the barracks' built beds */
+  private trainRoom(crowd: Crowd): TrainRoom {
+    const f = this.io.fort;
+    let beds = 0;
+    for (const s of f.plan.structures()) if (s.type === 'barracks') beds += (DEFS.barracks.perBlock.beds ?? 0) * builtBlocks(f.plan, s, this.built);
+    return { units: crowd.soldiers + this.recipes.inProgress('train'), beds };
+  }
+
+  startBatch(unit: number, kind: JobKind, structure: number, crowd: Crowd): { goods: Goods; seconds: number } | null {
+    if (kind !== 'blacksmith' && kind !== 'barracks') throw new Error(`town work: no batch at a ${kind}`);
+    const goods = this.recipes.start(unit, kind, structure, this.io.stores(), this.trainRoom(crowd));
+    if (!goods) return null;
+    for (const [g, v] of Object.entries(goods) as [Good, number][]) this.io.take(g, v);
+    return { goods, seconds: this.recipes.batchOf(unit)!.recipe.seconds };
+  }
+
+  finishBatch(unit: number): Goods | 'soldier' {
+    const b = this.recipes.batchOf(unit);
+    if (!b) throw new Error(`town work: unit ${unit} finished a batch it never started`);
+    const out = this.recipes.work(unit, b.recipe.seconds - b.done)!;
+    return b.recipe.kind === 'train' ? 'soldier' : out;
+  }
+
+  dropBatch(unit: number): void {
+    const g = this.recipes.giveBack(unit);
+    if (!g) return;
+    for (const [k, v] of Object.entries(g) as [Good, number][]) this.io.take(k, -v);
+    this.emit({ type: 'stores' });
+  }
+
+  /** a long haul (door to stores over ECON.cartDist, a cart to take it, room on the pile, a road to it) left on the pile */
+  pile(structure: number, goods: Goods, crowd: Crowd): boolean {
+    const f = this.io.fort;
+    const s = f.plan.structure(structure);
+    const door = f.doorOf(structure);
+    if (!s || !HAULED.has(s.type) || !door) return false;
+    const h = this.io.stores_at();
+    const pile = this.piles.get(structure) ?? {};
+    const by = haulBy(Math.hypot(door[0] - h[0], door[1] - h[1]), { carts: crowd.carts, pile: total(pile), road: this.io.pileAt(structure) !== null });
+    if (by !== 'cart') return false;
+    const was = total(pile);
+    for (const [g, v] of Object.entries(goods) as [Good, number][]) pile[g] = (pile[g] ?? 0) + v;
+    this.piles.set(structure, pile);
+    if (was < PILE_WORTH && total(pile) >= PILE_WORTH) this.emit({ type: 'pile' });
+    return true;
+  }
+
+  /** the fullest pile no other cart rides for, with a ride's worth on it */
+  pileFor(cart: number): number | null {
+    const taken = new Set(this.claims.values());
+    let best: number | null = null;
+    let most = PILE_WORTH - 1e-6;
+    for (const [id, g] of this.piles) {
+      if (taken.has(id) || this.io.pileAt(id) === null) continue;
+      const n = total(g);
+      if (n > most) {
+        most = n;
+        best = id;
+      }
+    }
+    if (best !== null) this.claims.set(cart, best);
+    return best;
+  }
+
+  loadPile(cart: number, structure: number): Goods {
+    this.claims.delete(cart);
+    const g = this.piles.get(structure) ?? {};
+    const out: Goods = {};
+    let room = ECON.cartLoad;
+    for (const [k, v] of Object.entries(g) as [Good, number][]) {
+      const n = Math.min(room, v ?? 0);
+      if (n <= 0) continue;
+      out[k] = n;
+      g[k] = (v ?? 0) - n;
+      room -= n;
+    }
+    // (what's left still worth a ride: another cart may come)
+    if (total(g) >= PILE_WORTH) this.emit({ type: 'pile' });
+    return out;
+  }
+
+  unclaim(cart: number): void {
+    const id = this.claims.get(cart);
+    this.claims.delete(cart);
+    if (id !== undefined && total(this.piles.get(id) ?? {}) >= PILE_WORTH) this.emit({ type: 'pile' });
+  }
+
+  /** the built wall cells (not its gates), window world: the wall-walk's points */
+  wallPoints(): V2[] {
+    const f = this.io.fort;
+    const out: V2[] = [];
+    for (const s of f.plan.structures()) if (s.type === 'wall') for (const c of s.cells.keys()) if (f.town.has(c, 0) && !f.plan.gate[c]) out.push(f.centre(c));
+    return out;
+  }
+
+  wallPoint(at: V2, from: V2 | null): V2 | null {
+    const walls = this.wallPoints();
+    if (!from) return nearest(walls, at);
+    return nearest(walls.filter((q) => Math.hypot(q[0] - from[0], q[1] - from[1]) > WALL_STEP), from);
+  }
+
+  mayArrive(crowd: Crowd): boolean {
+    return mayArrive(crowd.people, bedsOf(this.io.fort.plan, this.built), this.io.stores().grain ?? 0);
   }
 
   nextLoad(): { block: Block; load: Load } | null {
@@ -131,6 +265,8 @@ export class FortressWork implements TownWork {
     const went = putIn({ ...this.io.stores() }, this.io.fort.room(), goods);
     for (const [g, v] of Object.entries(went) as [Good, number][]) this.io.take(g, -v);
     if (Object.values(went).some((v) => (v ?? 0) > 0)) this.emit({ type: 'stores' });
+    // (grain in: a newcomer may come)
+    if ((went.grain ?? 0) > 0) this.emit({ type: 'room' });
     if (from === null) return;
     const m = this.made.get(from) ?? {};
     for (const [g, v] of Object.entries(went) as [Good, number][]) m[g] = (m[g] ?? 0) + v;
@@ -178,6 +314,10 @@ export class FortressWork implements TownWork {
   fits(n: number): boolean {
     return fits(this.io.stores(), this.io.fort.room(), n);
   }
+}
+
+function total(g: Goods): number {
+  return Object.values(g).reduce((a, b) => a + (b ?? 0), 0);
 }
 
 function nearest(pts: readonly V2[], at: V2): V2 | null {

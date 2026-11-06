@@ -14,8 +14,13 @@ function town(slots: JobSlot[], daySec = 1e9) {
   const log: string[] = [];
   const stores: Goods = { stone: 10, log: 10 };
   const sites: Block[] = [{ cell: 7, level: 0 }];
+  /** the scripted town's other parts: beds, the barracks' beds, the piles (and which a cart claimed), the wall */
+  const more = { beds: 0, barracksBeds: 0, cartHaul: false, piles: new Map<number, Goods>(), claims: new Map<number, number>(), wall: [] as V2[] };
+  const batches = new Map<number, string>();
   const work: TownWork = {
     daySec,
+    drillSec: 3,
+    patrolPoints: 2,
     slots: () => slots,
     nextLoad: () => {
       const block = sites[0];
@@ -37,8 +42,56 @@ function town(slots: JobSlot[], daySec = 1e9) {
     workSpot: (_k, _s, at) => [at[0] + 1, at[1]],
     reap: () => ({ goods: { grain: 2 }, seconds: 4 }),
     dugGoods: (n) => ({ stone: n * 0.8, ore: n * 0.2 }),
+    startBatch: (unit, kind, _s, crowd) => {
+      const need: Goods = kind === 'blacksmith' ? { ore: 2, log: 1 } : { weapons: 1 };
+      if (kind === 'barracks' && crowd.soldiers >= more.barracksBeds) return null;
+      if (Object.entries(need).some(([g, v]) => (stores[g as keyof Goods] ?? 0) < (v ?? 0))) return null;
+      for (const [g, v] of Object.entries(need)) stores[g as keyof Goods] = (stores[g as keyof Goods] ?? 0) - (v ?? 0);
+      log.push(`batch ${unit} ${kind}`);
+      batches.set(unit, kind);
+      return { goods: need, seconds: 5 };
+    },
+    finishBatch: (unit) => {
+      const kind = batches.get(unit);
+      batches.delete(unit);
+      log.push(`finish ${unit}`);
+      return kind === 'barracks' ? 'soldier' : { weapons: 1 };
+    },
+    dropBatch: (unit) => {
+      batches.delete(unit);
+      log.push(`drop ${unit}`);
+    },
+    pile: (structure, goods) => {
+      if (!more.cartHaul) return false;
+      const p = more.piles.get(structure) ?? {};
+      for (const [g, v] of Object.entries(goods)) p[g as keyof Goods] = (p[g as keyof Goods] ?? 0) + (v ?? 0);
+      more.piles.set(structure, p);
+      log.push(`pile ${structure}`);
+      return true;
+    },
+    pileFor: (cart) => {
+      const taken = new Set(more.claims.values());
+      for (const [s, g] of more.piles) {
+        if (taken.has(s) || !Object.values(g).some((v) => (v ?? 0) > 0)) continue;
+        more.claims.set(cart, s);
+        return s;
+      }
+      return null;
+    },
+    loadPile: (cart, structure) => {
+      more.claims.delete(cart);
+      const g = more.piles.get(structure) ?? {};
+      more.piles.set(structure, {});
+      return g;
+    },
+    unclaim: (cart) => void more.claims.delete(cart),
+    wallPoint: (at, from) => {
+      const rest = more.wall.filter((p) => !from || p[0] !== from[0] || p[1] !== from[1]);
+      return rest.sort((a, b) => Math.hypot(a[0] - at[0], a[1] - at[1]) - Math.hypot(b[0] - at[0], b[1] - at[1]))[0] ?? null;
+    },
+    mayArrive: (crowd) => crowd.people < more.beds && (stores.grain ?? 0) >= 1,
   };
-  return { work, log, stores, sites };
+  return { work, log, stores, sites, more };
 }
 
 const goes = (orders: Order[], unit: number) => orders.filter((o): o is { unit: number; go: never } => 'go' in o && o.unit === unit).map((o) => o.go);
@@ -242,5 +295,193 @@ describe('one crowd, on events', () => {
     life.add(9);
     life.on({ type: 'death', unit: 9 });
     expect(life.units()).toEqual([]);
+  });
+
+  it("a smith's cycle: a batch out of the stores, to the smithy, worked, the weapon home — waiting for ore without polling", () => {
+    const t = town([{ key: 's3', kind: 'blacksmith', structure: 3, count: 1 }]);
+    const life = new TownLife(t.work);
+    life.add(1);
+    expect(goes(life.tick(0.1), 1)).toEqual(['stores']);
+    life.on(arrived(1, 'stores'));
+    // (no ore: it waits by the stores; ticks don't wake it, the stores' event does)
+    expect(life.phaseOf(1)).toBe('waitBatch');
+    life.tick(10);
+    expect(life.phaseOf(1)).toBe('waitBatch');
+    t.stores.ore = 2;
+    life.on({ type: 'stores' });
+    let o = life.tick(0.1);
+    expect(o).toContainEqual({ unit: 1, carry: 'ore' });
+    expect(goes(o, 1)).toEqual(['smithy']);
+    life.on(arrived(1, 'smithy'));
+    expect(life.phaseOf(1)).toBe('batching');
+    o = life.tick(5.01);
+    expect(o).toContainEqual({ unit: 1, carry: 'weapons' });
+    expect(goes(o, 1).at(-1)).toBe('stores');
+    life.on(arrived(1, 'stores'));
+    expect(t.log).toEqual(['batch 1 blacksmith', 'finish 1', 'deliver {"weapons":1}']);
+  });
+
+  it('a job changed under a smith with a batch gives the batch back', () => {
+    const slots: JobSlot[] = [{ key: 's3', kind: 'blacksmith', structure: 3, count: 1 }];
+    const t = town(slots);
+    t.stores.ore = 2;
+    const life = new TownLife(t.work);
+    life.add(1);
+    life.tick(0.1);
+    life.on(arrived(1, 'stores'));
+    expect(life.phaseOf(1)).toBe('toBatch');
+    slots.length = 0;
+    const o = life.tick(0.1);
+    expect(t.log).toEqual(['batch 1 blacksmith', 'drop 1']);
+    expect(o).toContainEqual({ unit: 1, carry: null });
+    expect(goes(o, 1).at(-1)).toBe('home');
+  });
+
+  it('the job stays with the one holding a batch when the slot shrinks', () => {
+    const slots: JobSlot[] = [{ key: 's3', kind: 'blacksmith', structure: 3, count: 2 }];
+    const t = town(slots);
+    t.stores.ore = 2;
+    const life = new TownLife(t.work);
+    life.add(1);
+    life.add(2);
+    life.tick(0.1);
+    // (2 gets the one batch; 1 waits for ore)
+    life.on(arrived(2, 'stores'));
+    life.on(arrived(1, 'stores'));
+    expect(life.phaseOf(2)).toBe('toBatch');
+    expect(life.phaseOf(1)).toBe('waitBatch');
+    slots[0] = { ...slots[0], count: 1 };
+    life.tick(0.1);
+    expect(life.jobOf(2)).toBe('s3');
+    expect(life.jobOf(1)).toBeNull();
+    expect(t.log).toEqual(['batch 2 blacksmith']);
+  });
+
+  it("a recruit drills into a soldier: the soldier's round — muster, drill, march, the wall, muster again", () => {
+    const t = town([{ key: 's4', kind: 'barracks', structure: 4, count: 1 }]);
+    t.stores.weapons = 1;
+    t.more.barracksBeds = 1;
+    t.more.wall = [[10, 0], [20, 0], [30, 0]];
+    const life = new TownLife(t.work);
+    life.add(1);
+    life.tick(0.1);
+    life.on(arrived(1, 'stores'));
+    expect(goes(life.tick(0.1), 1)).toEqual(['barracks']);
+    life.on(arrived(1, 'barracks'));
+    // (done: a soldier now, at the barracks — it drills there straight away)
+    let o = life.tick(5.01);
+    expect(o).toContainEqual({ unit: 1, become: 'soldier' });
+    expect(life.units()).toEqual([]);
+    expect(life.soldiers()).toEqual([1]);
+    expect(life.phaseOf(1)).toBe('drill');
+    o = life.tick(3.01);
+    expect(goes(o, 1)).toEqual(['post']);
+    life.on(arrived(1, 'post', [9, 0]));
+    o = life.tick(0.1);
+    expect(o).toContainEqual({ unit: 1, go: 'wall', to: [10, 0] });
+    // (an arrival at another point than its own isn't its)
+    life.on({ type: 'arrived', unit: 1, leg: 'wall', at: [30, 0], to: [30, 0] });
+    expect(life.phaseOf(1)).toBe('patrol');
+    life.on({ type: 'arrived', unit: 1, leg: 'wall', at: [10, 0], to: [10, 0] });
+    o = life.tick(0.1);
+    expect(o).toContainEqual({ unit: 1, go: 'wall', to: [20, 0] });
+    life.on({ type: 'arrived', unit: 1, leg: 'wall', at: [20, 0], to: [20, 0] });
+    // (its points walked: back to muster)
+    expect(goes(life.tick(0.1), 1)).toEqual(['barracks']);
+  });
+
+  it("no bed in the barracks: the recruit waits until a soldier's death frees one", () => {
+    const t = town([{ key: 's4', kind: 'barracks', structure: 4, count: 1 }]);
+    t.stores.weapons = 1;
+    t.more.barracksBeds = 1;
+    const life = new TownLife(t.work);
+    life.addSoldier(50);
+    life.add(1);
+    life.tick(0.1);
+    life.on(arrived(1, 'stores'));
+    expect(life.phaseOf(1)).toBe('waitBatch');
+    life.on({ type: 'death', unit: 50 });
+    expect(life.phaseOf(1)).toBe('toBatch');
+  });
+
+  it('soldiers muster again each morning, wherever they are', () => {
+    const t = town([], 100);
+    t.more.wall = [[10, 0], [20, 0]];
+    const life = new TownLife(t.work);
+    life.addSoldier(5);
+    life.tick(0.1);
+    life.on(arrived(5, 'barracks'));
+    life.tick(3.01);
+    life.on(arrived(5, 'post'));
+    expect(life.phaseOf(5)).toBe('patrol');
+    life.tick(50);
+    expect(life.phaseOf(5)).toBe('patrol');
+    expect(goes(life.tick(50), 5)).toEqual(['barracks']);
+  });
+
+  it('a long haul is left on the pile; a parked cart rides out for it on the pile event, and back to the stores', () => {
+    const t = town([{ key: 's2', kind: 'quarry', structure: 2, count: 1 }]);
+    t.more.cartHaul = true;
+    const life = new TownLife(t.work);
+    life.addCart(70);
+    expect(goes(life.tick(0.1), 70)).toEqual([null]);
+    expect(life.phaseOf(70)).toBe('park');
+    life.add(1);
+    life.tick(0.1);
+    life.on(arrived(1, 'quarry'));
+    life.on({ type: 'dug', unit: 1, amount: 2 });
+    // (left on the pile: the miner goes back to its face, carrying nothing)
+    let o = life.tick(0.1);
+    expect(o).toContainEqual({ unit: 1, carry: null });
+    expect(goes(o, 1)).toContain('quarry');
+    expect(life.phaseOf(70)).toBe('park');
+    life.on({ type: 'pile' });
+    o = life.tick(0.1);
+    expect(o).toContainEqual({ unit: 70, go: 'pile', to: 2 });
+    life.on({ type: 'arrived', unit: 70, leg: 'pile', at: [0, 0], to: 2 });
+    o = life.tick(0.1);
+    expect(o).toContainEqual({ unit: 70, carry: 'stone' });
+    expect(goes(o, 70)).toEqual(['stores']);
+    life.on(arrived(70, 'stores'));
+    expect(life.phaseOf(70)).toBe('park');
+    expect(t.log).toEqual(['pile 2', 'deliver {"stone":1.6,"ore":0.4}']);
+  });
+
+  it('a cart gone on its way out lets go of its pile', () => {
+    const t = town([]);
+    t.more.piles.set(2, { log: 4 });
+    const life = new TownLife(t.work);
+    life.addCart(70);
+    expect(life.phaseOf(70)).toBe('out');
+    expect(t.more.claims.get(70)).toBe(2);
+    life.on({ type: 'death', unit: 70 });
+    expect(t.more.claims.size).toBe(0);
+    expect(t.more.piles.get(2)).toEqual({ log: 4 });
+  });
+
+  it('a newcomer comes when there is room (one at a time), walks to a house, then takes work', () => {
+    const t = town([{ key: 'build', kind: 'build', structure: null, count: 4 }]);
+    t.more.beds = 3;
+    t.stores.grain = 5;
+    const life = new TownLife(t.work);
+    life.add(1);
+    life.on({ type: 'room' });
+    life.on({ type: 'room' });
+    let o = life.tick(0.1);
+    expect(o.filter((x) => 'newcomer' in x)).toHaveLength(1);
+    life.arrive(2);
+    o = life.tick(0.1);
+    expect(goes(o, 2)).toEqual(['home']);
+    expect(life.jobOf(2)).toBeNull();
+    // (in at the house: work from the next tick; the next newcomer may come)
+    life.on(arrived(2, 'home'));
+    o = life.tick(0.1);
+    expect(o.filter((x) => 'newcomer' in x)).toHaveLength(1);
+    expect(goes(o, 2)).toEqual(['stores']);
+    life.arrive(3);
+    life.on(arrived(3, 'home'));
+    // (three people, three beds: no more)
+    expect(life.tick(0.1).filter((x) => 'newcomer' in x)).toHaveLength(0);
+    expect(() => life.arrive(4)).toThrow(/no one asked for/);
   });
 });
