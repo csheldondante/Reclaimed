@@ -19701,3 +19701,51 @@ its slot opening or closing starts it over (a tested piece).
   - Blocks still reach up to 3 columns past a mesh chunk's margin.
   - 16 of a chunk's 20 words are shape words: 80 B a chunk.
 
+
+## 2026-11-06 — round 128o (`phonefix`, DA-B28): the batched timing run (main's lease)
+
+- Setup:
+  - Base: this branch at 84c3786d (fortress 49510508 merged in).
+  - "Hash": the same tree with DA-B28's two commits reverted, not committed.
+  - "New": DA-B28 as committed.
+  - Same machine (Intel Xe-LPG), my own ports (runner 5345, dev server 127.0.0.1:5419).
+- Smoke (atlas, through the real streamer and the page write): passed.
+- tilegate fast pans at phone zoom 8 (160 c/s), three runs each, % of the screen undrawn:
+
+  | build | run 1 | run 2 | run 3 |
+  | --- | --- | --- | --- |
+  | hash | 4.61 | 5.19 | 5.03 |
+  | new | 1.57 | 4.36 | 4.20 |
+
+  - The new build is at or below the hash build on the same code.
+  - Both are far above 06052231's 0.14–0.16%. That gap came in with the fortress merges between the two bases, not
+    with DA-B28: the hash build fails just as much.
+  - Pans at 20 c/s are ok in every run.
+- meshderisk.mjs (mesh chunks rebuilt per frame, mean fieldmesh GPU ms):
+
+  | phase | hash | new |
+  | --- | --- | --- |
+  | fortress: at rest | 0, 0.21 ms | 0, 0.34 ms |
+  | fortress: building | 0.001, 0.12 ms | 0.001, 0.22 ms |
+  | fortress: rain | 0.127, 0.31 ms | 0.126, 0.38 ms |
+  | no fortress: at rest | 0, 0.20 ms | 0, 0.13 ms |
+  | no fortress: rain, run 1 | 0.287 | 0.466 |
+  | no fortress: rain, run 2 | 0.477 | 0.363 |
+  | no fortress: rain, run 3 | 0.222 | 0.491 |
+  | no fortress: rain, mean of 3 | 0.33 | 0.44 |
+  | no fortress: pan with slides, per frame, 3 runs | 0.166 / 0.178 / 0.158 | 0.111 / 0.121 / 0.191 |
+  | no fortress: rain, ms (3 runs) | 0.60 / 0.60 / 0.34 | 0.55 / 0.55 / 0.61 |
+
+  - After a slide (pan): the new build's rebuilds peak 2–4 frames after it, the hash's 1–3. The counts are similar.
+  - Desktop GPU ms: the change pass costs about as much as the hash did here (both ~0.1–0.3 ms a frame on this iGPU).
+    The desktop doesn't show the phone's 6.3 ms.
+- Verdict against main's bar:
+  - Fast pans: at or below the hash build on the same code, not back to 06052231's (that gap isn't DA-B28's).
+  - Rain without the fortress: the new build's mean is a third above the hash's (0.44 against 0.33). The runs
+    overlap, with a wide spread from where the storm lands. Not shown to be at or below.
+- Not merge-ready.
+- Next:
+  - Find what the versions rebuild in rain that the hash doesn't. Candidates: shape keys that flip back and forth
+    across a sixteenth (the hash's "changed back before rebuilt" skipped those, the versions rebuild them); and the
+    block reach (3 columns).
+  - A rain session counting the blocks bumped per writer would tell.
