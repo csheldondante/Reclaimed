@@ -154,11 +154,6 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
   const simDt = dt * scene.speed;
   if (scene.hoverWorld) powers.hover(scene.hoverWorld[0], scene.hoverWorld[1], dt);
   powers.update(dt);
-  scene.surfaceRefresh -= dt;
-  if (scene.surfaceRefresh <= 0) {
-    scene.surfaceRefresh = 1;
-    void core.readBuffer('surface', true).then((f) => (scene.surfaceCache = new Uint32Array(f.buffer)));
-  }
 
   const stats = sim.stats.latest;
   if (stats && scene.initialContam === 0) scene.initialContam = stats.soilContam;
@@ -436,7 +431,8 @@ export function planFrame(scene: LevelScene): void {
 export function lifeFrame(scene: LevelScene, dt: number): void {
   const life = scene.inhabitants!;
   const { core, host } = scene;
-  if (!scene.lifeSpawned && scene.surfaceCache?.length) {
+  // (round 128o: once the ground under the camera is read — its page asked)
+  if (!scene.lifeSpawned && scene.worldApi?.terrain?.surfaceAt(core.camera.target[0], core.camera.target[1])) {
     scene.lifeSpawned = true;
     const mode = host.params.get('life');
     const t = core.camera.target;

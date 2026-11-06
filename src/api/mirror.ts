@@ -286,11 +286,25 @@ export class Mirror {
 
   /** Read every page of every source now; resolves once it's in (a read in flight finishes first). */
   async refresh(): Promise<void> {
+    const { w, h } = this.io.dims;
+    await this.refreshBox(0, 0, w - 1, h - 1);
+  }
+
+  /**
+   * (round 128o, DA-B19) Read now the pages of `names` (all sources if none) holding window columns (x0, y0)..(x1, y1)
+   * — a place about to be asked about (the fortress's box); resolves once they're in.
+   */
+  async refreshBox(x0: number, y0: number, x1: number, y1: number, names?: string[]): Promise<void> {
     while (this.inFlight) await this.inFlight;
     const { w, h } = this.io.dims;
+    const px0 = Math.max(0, Math.floor(x0) >> 4);
+    const py0 = Math.max(0, Math.floor(y0) >> 4);
+    const px1 = Math.min((w >> 4) - 1, Math.floor(x1) >> 4);
+    const py1 = Math.min((h >> 4) - 1, Math.floor(y1) >> 4);
     for (const s of this.sources.values()) {
+      if (names && !names.includes(s.name)) continue;
       if (s.layout.kind === 'whole') this.want(s, 0, 0);
-      else for (let py = 0; py < h >> 4; py++) for (let px = 0; px < w >> 4; px++) this.want(s, px, py);
+      else for (let py = py0; py <= py1; py++) for (let px = px0; px <= px1; px++) this.want(s, px, py);
     }
     if (!this.wanted.size) return;
     await this.launch();

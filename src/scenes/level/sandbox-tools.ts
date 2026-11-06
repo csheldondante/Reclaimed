@@ -5,7 +5,6 @@ import { EDIT_OP, LAYER_TOOLS } from '../../ui/editor';
 import { ignoreTeardown } from '../../gpu/pipeline';
 import { PK } from '../../sim/particles';
 import { LEVEL_H } from '../../build/town';
-import { sfMat } from '../../world/layout';
 import { cellPos } from '../../world/lattice';
 import { drawPlan, editorTown, placeRect } from './town-tools';
 import { placeModel } from './impacts';
@@ -207,14 +206,15 @@ export function undo(scene: LevelScene): void {
   if (!scene.core.undo()) scene.hud.say('Nothing to undo.', 2);
 }
 
-/** How many columns within r of (x, y) have this top material (surface cache, ~1 s old). */
+/** How many columns within r of (x, y) have this top material (round 128o: the world API's terrain, its pages asked; a column not read yet doesn't count). */
 export function countSurface(scene: LevelScene, x: number, y: number, r: number, mat: number): number {
   const { dims } = scene.core;
+  const t = scene.worldApi?.terrain;
   let n = 0;
   for (let yy = Math.floor(y - r); yy <= y + r; yy++)
     for (let xx = Math.floor(x - r); xx <= x + r; xx++) {
       if (xx < 0 || yy < 0 || xx >= dims.w || yy >= dims.h || Math.hypot(xx - x, yy - y) > r) continue;
-      if (sfMat(scene.surfaceCache[scene.core.ring.i(xx, yy)]) === mat) n++;
+      if (t?.surfaceAt(...cellPos(xx, yy))?.mat === mat) n++;
     }
   return n;
 }
@@ -223,7 +223,7 @@ export function countSurface(scene: LevelScene, x: number, y: number, r: number,
 export function hostileAt(scene: LevelScene, [x, y]: [number, number]): boolean {
   const { dims, map } = scene.core;
   const i = Math.floor(y) * dims.w + Math.floor(x);
-  // (round 106: the cache on the ring — the window index mapped onto it, as it read in window order past the edges)
-  const top = sfMat(scene.surfaceCache[i >= 0 && i < dims.w * dims.h ? scene.core.ring.of(i) : -1]);
+  // (round 128o: the world API's terrain, its page asked; not read yet: no top material)
+  const top = scene.worldApi?.terrain?.surfaceAt(...cellPos(Math.floor(x), Math.floor(y)))?.mat;
   return top === 12 || top === 18 || map.contam[i * 2] > 0.2;
 }

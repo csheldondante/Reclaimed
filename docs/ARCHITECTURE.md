@@ -2563,6 +2563,13 @@ cheap pool of light ("Yes absolutely enough"). One concern a file:
   `sources` (simTick, slowSystems, io, counters) are lent by whoever reads it (the bench); it changes nothing.
   `report(mark)` = per frame: interval, rAF lag, CPU, rAF to last submit, submit to done, frames in flight, GPU span,
   the gap between frames' GPU work, sim ticks, which counters moved; the slow frames against the rest.
+- **The level's ground** (round 128o, DA-B19): `scene.heightAt(x, y)` is the world API terrain's `surfaceAt` — the
+  surface word from its 1 KB page, read when asked and again once its chunk ran — and the land as generated
+  (`scene.mapHeightAt`: the CPU's map, kept by the streamer) for a page not read yet. What asks every frame and needs
+  only the lie of the land (the far land's focus, the flyer's floor) asks `mapHeightAt` and never reads the GPU. The
+  fortress reads its box's surface pages once before it's ready (Terrain.load). Writes outside the ticks and the
+  column applies (an undo, chunks restored, the streamer's live edit) tell `WorldCore.onColumnsWritten`; the mirror
+  reads those pages again. No copy of the whole surface is kept or read back (`surfaceCache` and its 1 Hz read went).
 - **The water's settling hold** (round 84 ?settletol, on by default with ?rivers=table; round 128o, DA-B20: on the
   GPU, sim/settlehold.ts): a chunk an event woke stays awake past its time while its water still changes by more than
   the tolerance, up to 60 s from its waking. The CPU (sim/sleep.ts) says which chunks may be held (`settleCand`: woken

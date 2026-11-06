@@ -104,11 +104,15 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
   // made now over the whole window and read back (round 128l: once the level's pipelines are ready — in its batch, at its end)
   whenPipelinesReady(() => {
     core.prepareArrived();
-    void core.readBuffer('surface', true).then((f) => {
-      scene.surfaceCache = new Uint32Array(f.buffer);
-      fort.ready = true;
-      fort.requestReach(true);
-    }, ignoreTeardown);
+    // (round 128o, DA-B19: the box's columns read — the world API's pages, a few hundred KB once — not the whole surface)
+    const [x0, y0] = fort.toWindow(0, 0);
+    const [x1, y1] = fort.toWindow(fort.box.w, fort.box.h);
+    void worldApiOf(scene)
+      .terrain!.load(Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1))
+      .then(() => {
+        fort.ready = true;
+        fort.requestReach(true);
+      }, ignoreTeardown);
   });
   // (round 128l) the reach asked when planning starts (what's been built and dug since; the water for the lanes), every
   // few seconds while building (level/frame.ts) and after a slide (the part come into the window)
@@ -462,7 +466,6 @@ export function startLab(scene: LevelScene): void {
       core.restoreChunks(0, 0, w / CHUNK, h / CHUNK);
       const [x1, y1] = cellPos(w, h);
       core.renderer.fieldMesh.urgent(0, 0, x1, y1);
-      void core.readBuffer('surface', true).then((f) => (scene.surfaceCache = new Uint32Array(f.buffer)), ignoreTeardown);
       return scene.worldApi?.refresh();
     },
   });

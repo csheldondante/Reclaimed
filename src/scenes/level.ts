@@ -53,7 +53,7 @@ import { Puck } from '../api/puck';
 import { StoryPlay } from '../story/play';
 import type { HeroRun } from '../story/hero-run';
 import { cpuStats } from '../gpu/cpustat';
-import { type Interval, CHUNK, sfZ, sfPack, windowZMax } from '../world/layout';
+import { type Interval, CHUNK, windowZMax } from '../world/layout';
 import { Integrity, type Grab } from '../game/integrity';
 import { cellAt, ROW_H } from '../world/lattice';
 import { HybridChunks } from './hybrid';
@@ -145,8 +145,6 @@ export class LevelScene implements Scene {
   /** Town tool: the block under the cursor (pickTown) */
   townHover?: Block;
   townPicking = false;
-  surfaceCache: Uint32Array;
-  surfaceRefresh = 0;
   renderW = 1;
   renderH = 1;
   initialContam = 0;
@@ -371,8 +369,6 @@ export class LevelScene implements Scene {
     }
     // (round 106, frameprobe: on the window's ring, as map.surface — column (x, y) at core.ring.i(x, y); a slide moves
     // nothing. So are the veg and water caches: read back in the ring's order, not rotated)
-    this.surfaceCache = new Uint32Array(dims.w * dims.h);
-    for (let i = 0; i < this.surfaceCache.length; i++) this.surfaceCache[i] = sfPack(this.core.map.surface[i], 0);
     this.valleyReads = new ValleyReads({
       core: this.core,
       smokeDispersed: (n) => this.nature.smokeDispersed(n),
@@ -573,12 +569,27 @@ export class LevelScene implements Scene {
     return s;
   }
 
+  /**
+   * The ground's base at (x, y) as the GPU has it (round 128o, DA-B19): the world API's terrain from the columns' page
+   * (api/terrain.ts surfaceAt: read when asked, again only after its chunk ran) — for a question asked on an event (a
+   * tap, a turn, a placement, the fortress's ground). Its page not read yet (it's asked for now) or off the window:
+   * the land as generated (mapHeightAt). Before, a copy of the whole surface read back every second.
+   */
   heightAt = (x: number, y: number): number => {
+    return this.worldApi?.terrain?.surfaceAt(x, y)?.z ?? this.mapHeightAt(x, y);
+  };
+
+  /**
+   * The land as generated at (x, y) (the CPU's map, kept by the streamer for each region that comes in): for what asks
+   * every frame and needs only the lie of the land — the far land's focus, the flyer's floor, debug overlays — and
+   * never reads the GPU. Clamped to the window.
+   */
+  mapHeightAt = (x: number, y: number): number => {
     const { w, h } = this.core.dims;
     const [cx, cy] = cellAt(x, y);
     const ix = Math.max(0, Math.min(w - 1, cx));
     const iy = Math.max(0, Math.min(h - 1, cy));
-    return sfZ(this.surfaceCache[this.core.ring.i(ix, iy)]);
+    return this.core.map.surface[this.core.ring.i(ix, iy)];
   };
 
   /**

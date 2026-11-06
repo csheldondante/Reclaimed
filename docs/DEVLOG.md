@@ -18457,3 +18457,29 @@ The linger existed for the sandbox's pours only (DEVLOG round 83: "a pour lands 
 - Cost and risk: the camera's pivot becomes async (a frame); the fortress's start query is new GPU code (a test on
   Dawn against the CPU's column tops); nothing else changes for the player. In fortress play no timed read remains.
 
+## 2026-11-05 — round 128o (`phonefix`, DA-B19): the level's surface read gone; each ground question to its source
+
+- Why: DESIGN.md §24 (no timed read in play); option (b) of the design note above, approved. The level read the whole
+  surface back every second (400 KB at 320²) into `scene.surfaceCache` for `scene.heightAt`.
+- The note under-counted the askers: besides the camera, the fortress, places and the sandbox tools, `heightAt` serves
+  the taps and drags (input-wiring: the ground under the finger), the streamer's slide, impacts, birds, debug overlays,
+  the far land's focus every frame and the flyer's floor every frame. So, by how they ask:
+  - on an event (a tap, a turn, a placement, the fortress's ground, a slide): the world API's terrain `surfaceAt` —
+    the surface word from the mirror's 1 KB page, read when asked, current until its chunk runs (DA-B1);
+  - every frame, the lie of the land enough (the far land's focus, the flyer's floor): `scene.mapHeightAt`, the land as
+    generated (the CPU's map, kept by the streamer), never the GPU — reading a page each frame where the land runs
+    would have been a per-frame read;
+  - a page not read yet: `heightAt` answers the land as generated for that frame (the page asked for now).
+- The note's worry about the surface buffer was wrong: land that comes in stays drowsy until its derived words are made
+  (sim/sleep.ts), and a sleeping chunk's don't change, so its pages hold. A first try from the layers' pages (64 KB a
+  page at K = 16) read 18 MB in 20 s after Build — the surface's are 1 KB.
+- The fortress reads its box's surface pages once before it's ready (`Terrain.load`, ~300 KB on the user's town), not
+  the whole surface. `WorldCore.onColumnsWritten` (an undo, chunks restored, the streamer's live edit) makes the
+  mirror read its pages again (before, the 1 Hz read caught those up).
+- Measured (the atlas game, fortress, 412x915 q=low, 20 s at 4x after Build): the mirror 282 KB in 20 s (14 KB/s), and
+  the box's 298 KB once at the start; the surface read (400 KB/s) is gone. The lab's example, fortressraid and
+  fortressfollow pass; the shot after Build looked at.
+- Hacks and limits: a page's first frame answers the land as generated (an edit there not yet seen); the far land's
+  focus and the flyer's floor ignore what's been dug or built (they're the lie of the land); GPU writers on sleeping
+  chunks outside the ticks other than those told (DA-B9's chunk versions would cover all) aren't seen by the mirror.
+

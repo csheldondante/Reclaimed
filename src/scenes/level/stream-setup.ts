@@ -11,7 +11,7 @@ import { GPUGEN } from '../../atlas/finish';
 import { settleLand, Sleep } from '../../sim/sleep';
 import { riverMode } from '../../sim/world-gpu';
 import { record, timed } from '../../gpu/cpustat';
-import { CHUNK, sfPack } from '../../world/layout';
+import { CHUNK } from '../../world/layout';
 import { ROW_H } from '../../world/lattice';
 import { HybridChunks } from '../hybrid';
 import { SettlementsView } from '../../settle/view';
@@ -151,10 +151,6 @@ export function attachStream(scene: LevelScene): void {
       // the climate follows the latitude (the atlas's: snow it lays is snow the sim keeps), and the window's height
       if (a) core.globals.climate = a.atlas.climateAt(scene.stream!.origin[0] + dims.w / 2, scene.stream!.origin[1] + dims.h / 2, scene.stream!.oz);
       if (a) core.globals.seaZ = a.atlas.p.sea - scene.stream!.oz;
-      if (dz) {
-        // (a slide in z: every column moved; what's lying loose in window z goes)
-        for (let i = 0; i < scene.surfaceCache.length; i++) scene.surfaceCache[i] = sfPack(core.map.surface[i], 0);
-      }
       // (round 92) what's waiting to be judged moves with the land (what was falling landed first: onBeforeSlide)
       const ti = performance.now();
       scene.integrity?.slid(dx, dy, dz);
@@ -186,7 +182,6 @@ export function attachStream(scene: LevelScene): void {
       if (a) core.globals.climate = a.atlas.climateAt(scene.stream!.origin[0] + dims.w / 2, scene.stream!.origin[1] + dims.h / 2, nz);
       if (a) core.globals.seaZ = a.atlas.p.sea - nz;
       scene.sleep?.settleAll(Sleep.SETTLE_S + 1, performance.now() / 1000);
-      for (let i = 0; i < scene.surfaceCache.length; i++) scene.surfaceCache[i] = sfPack(core.map.surface[i], 0);
       scene.hoverWorld = null;
       scene.integrity?.clear();
       const i = core.ring.i(Math.floor(dims.w / 2), Math.floor(dims.h / 2));
@@ -257,7 +252,8 @@ export function attachStream(scene: LevelScene): void {
         far.mid = [c[0], c[1]];
         // (the puck keeps the target's height on the ground; without it the height isn't the ground's)
         const [tx, ty, tz] = core.camera.target;
-        far.focus = core.camera.fly ? null : [tx, ty, scene.cutaway ? tz : scene.heightAt(tx, ty)];
+        // (round 128o: the land as generated — every frame, the lie of the land is enough)
+        far.focus = core.camera.fly ? null : [tx, ty, scene.cutaway ? tz : scene.mapHeightAt(tx, ty)];
         far.storms = core.weather.storms;
         // (round 93: the window's light, for the rings to be lit as it is)
         const G = core.globals;

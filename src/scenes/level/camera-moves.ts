@@ -75,7 +75,8 @@ export function flyKeys(scene: LevelScene, dt: number): void {
   // (inside the window, over the ground under it)
   fly.pos[0] = Math.max(1, Math.min(dims.w - 1, fly.pos[0]));
   fly.pos[1] = Math.max(1, Math.min(dims.h * ROW_H - 1, fly.pos[1]));
-  fly.pos[2] = Math.max(scene.heightAt(fly.pos[0], fly.pos[1]) + 1.5, Math.min(dims.zMax + 200, fly.pos[2]));
+  // (round 128o: every frame — the land as generated)
+  fly.pos[2] = Math.max(scene.mapHeightAt(fly.pos[0], fly.pos[1]) + 1.5, Math.min(dims.zMax + 200, fly.pos[2]));
   // the window streams round where the camera is
   camera.target[0] = fly.pos[0];
   camera.target[1] = fly.pos[1];
