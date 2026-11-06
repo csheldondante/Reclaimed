@@ -20107,3 +20107,49 @@ its slot opening or closing starts it over (a tested piece).
   scripts/fastpanprobe.mjs.
 - Next when it's picked up: TileCache's draw of a GPU-baked tile in the frame its bake is encoded (allocTile then
   encodeBake). Whether the draw can read the slot before the bake's resolve, or with the previous occupant's TP.
+
+## 2026-11-06 — round 128o (`phonefix`, DA-B22): 16x slow on the phone — design note, measurement first
+
+- The ask (main): the units' sync reads every unit, about 920 KB/s, because combat, picking, the follow card and the
+  lab read positions. Make the per-frame sync read only the watched units (DA-B2b's `sync({ watch })`), turn the
+  other position readers into GPU queries or events, then toggle-diff at 16x what else scales with sim speed.
+- First, what scales with speed:
+  - AgentUnits.update runs `agents.sync()` once a **frame** (scenes/level/frame.ts, not per tick) and skips while one
+    is in flight. Its bytes a second follow the frame rate, not the sim's speed: the same at 1x and 16x.
+  - So the sync is a cost at every speed, not what makes 16x slow. What multiplies at 16x is ticks per frame: every
+    sim system, the agents' tick, units.wgsl, the trait stages. Then anything per tick on the CPU: the crowd's
+    routine (TownLife), edits, the reach requests.
+  - The measurement comes before the redesign: toggle each of those off at 16x and diff the frame. It needs the
+    lease.
+- The position readers now (fortress play first):
+  - **AgentUnits.think**, every sync, on the CPU, O(hostiles × live units):
+    - hostiles noticing what's in sight and hunting it (sight, leash);
+    - the hunt's targets field (the nearest TARGETS);
+    - guards picking a hostile in sight.
+    - This is combat targeting, and it is CPU-side: it reads every unit's `at`. The GPU only has the targets field
+      it's given.
+  - **Picking** (scenes/level/fortress.ts personAt): projects every crowd member's `at` to the screen and takes the
+    nearest within 26 px.
+  - **The follow card / camera** (fortress/follow.ts): one unit's `at`, already a watched unit's need.
+  - **Raiders** (fortress/raiders.ts): `alive` (events have it), and one `at` for a stat line.
+  - **The lab** (lab.ts snapshot): walkers' `at` for its scenarios. A test's read, on demand.
+  - **Not fortress**: heroes (play/heroes: `units.near`), runsit and story (`units.query`, `get().at`). Hero play's
+    own CPU queries. Out of scope here, but they keep needing positions.
+- Proposed:
+  - (1) The sync reads `watch` only: the followed and selected units, and each hero's party (≤ 32). Every other
+    unit's `alive`, health and death come from the events it already reads (hurt, death).
+  - (2) Picking as a GPU pass: the tap's pixel, each unit's projected figure (units' draw positions on the GPU),
+    nearest within 26 px, the id read back. One small async read a tap. Or the units' draw writes their id into the
+    pick target, and the existing `renderer.pick` returns it.
+  - (3) Combat targeting on the GPU: a pass per tick over the hostiles and guards that finds the nearest enemy in
+    sight through the occupancy grid (units.wgsl occ, per column), writes the unit's target, and emits a `noticed`
+    event when it takes one. The game's rule (mayFight) as faction and hostility tables uploaded once. The targets
+    field is seeded on the GPU from those choices. This is the riskiest part: it changes who fights whom.
+  - (4) `Units.get(id).at` for unwatched units becomes "not read": null, with the API saying so. `query` and `near`
+    become async GPU queries (the box read already exists for the scope). Their hero-play callers change with them,
+    a contract change across play/, runsit/ and story/.
+- Order:
+  - the 16x toggle diff (the lease);
+  - then (1)+(4) behind the contract change, (2), (3), each with a test;
+  - main reviews before (3) and (4), which change the Units contract and combat.
+- Asks: the lease for the 16x measurement; go or no-go on (3) and (4) as scoped.
