@@ -681,6 +681,21 @@ fn mapWind(p: vec2<f32>) -> vec2<f32> {
   return w + turb * 0.8;
 }
 
+/** (round 128p) The lean (cells at canopy height) a wind asks of the plants: sway.wgsl's aim, the draws' breeze. */
+fn leanFor(w: vec2<f32>) -> vec2<f32> {
+  let ws = length(w);
+  return w / max(ws, 1e-3) * clamp(ws / 6.0, 0.0, 2.6) * 0.3;
+}
+
+/**
+ * (round 128p) The plants' lean at p for the draws: the map's own breeze (mapWind: analytic, no state — every plant
+ * leans and flutters in it whether the sway runs or not) plus the sway spring's gust response (`b`, the column's bend:
+ * sway.wgsl springs only to the wind past the breeze, and sleeps where there's none — swaylist.wgsl).
+ */
+fn plantLean(b: vec4<f32>, p: vec2<f32>) -> vec2<f32> {
+  return leanFor(mapWind(p)) + b.xy;
+}
+
 /** Wind felt at a point: the wind field + storm swirl + the cursor/tap breeze. */
 // Drifts (drift.wgsl): loose dust depth per column (.x), dust lost to the
 // wind this pass (.y). A texture so it doesn't use a storage slot; bound at 17
