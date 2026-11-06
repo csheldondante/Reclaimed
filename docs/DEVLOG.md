@@ -20625,3 +20625,16 @@ overlap, which is fine because traffic is for looks.
 - **ROAD_FIELD and the capsule stamp** (§11 decided: fields lead back to the roads). Now it is seeded only from the
   routes' first nodes and the network.
 - **The interpolation code**, which moves from per unit to per entry.
+
+**Correction (main, same round): fast-forward is measured, so the clock advance is in step 2.**
+- DA-B22 (`phonefix`) measured it: the agents' tick is the cost at 16x. The speed agent is building once-per-frame
+  stages and sub-moves.
+- So off-screen and fast-forward advance is part of step 2, not waiting on a measurement.
+- **The route queue's advance is one function of elapsed time:** `advance(route, Δt)`, which does t += Δt·speed capped
+  by the gaps, then raises the arrivals past the end in order.
+- **The speed agent's per-frame stage calls it once a frame** with the frame's sim time, whether 1x or 16x. No per-tick
+  loop, and no sub-steps for riders.
+- An off-screen route is the same call with the time since it was last advanced.
+- **The test "one step of Δt = N steps of Δt/N"** is the contract that makes once-a-frame exact.
+- **Coupling to the speed agent's work:** step 2 provides the stage function. The speed agent's stage list owns when it
+  runs.
