@@ -176,12 +176,14 @@ export class Mirror {
    * A sim tick ran: every chunk it ran (not asleep, or drowsy: Globals.sleep / Globals.drowse, a bit a slot, set:
    * asleep / just fallen asleep) may have changed. No mask: every chunk ran.
    */
-  tick(asleep?: Uint32Array, drowse?: Uint32Array): void {
+  tick(asleep?: Uint32Array, drowse?: Uint32Array, settling?: Uint32Array): void {
     const c = ++this.clock;
     for (let s = 0; s < this.live.length; s++) {
       const sleeping = asleep !== undefined && (asleep[s >> 5] & (1 << (s & 31))) !== 0;
       const drowsy = drowse !== undefined && (drowse[s >> 5] & (1 << (s & 31))) !== 0;
-      if (!sleeping || drowsy) this.live[s] = c;
+      // (round 128o: maybe still settling its water — the GPU decides whether it ran: counted as run)
+      const held = settling !== undefined && (settling[s >> 5] & (1 << (s & 31))) !== 0;
+      if (!sleeping || drowsy || held) this.live[s] = c;
     }
   }
 

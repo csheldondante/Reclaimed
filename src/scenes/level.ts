@@ -165,8 +165,6 @@ export class LevelScene implements Scene {
   wetField?: RiverWetField;
   catchAt = '';
   /** (round 84, ?settletol) when the water's change per chunk was last read, and whether a read is in flight */
-  settleReadAt = 0;
-  settleReading = false;
 
   completed = false;
   saveTimer = 0;

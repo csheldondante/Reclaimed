@@ -1,11 +1,10 @@
 // The level's frame: camera input, the planner and the window's slide, the world's systems, the sim's ticks, the
 // story and hero updates, then the draw and the HUD. API: levelFrame(scene, now, dt) (LevelScene.frame), planFrame,
-// readSettling, lifeFrame, ceilingFrame, perfLines. Reads and sets the scene's fields; no other module's internals.
+// lifeFrame, ceilingFrame, perfLines. Reads and sets the scene's fields; no other module's internals.
 import { reclamation, worldHealth } from '../../game/nature';
 import { saveProgress } from '../../game/progress';
 import { EventKind } from '../../sim/globals';
 import { CUTS, OP, editOpOf } from '../../sim/edit-ops';
-import { ignoreTeardown } from '../../gpu/pipeline';
 import { abilityHost, lifeFocus, wilderness } from '../../inhabitants/install';
 import { mountViewer } from '../../inhabitants/viewer';
 import { REGION } from '../streamer';
@@ -230,11 +229,13 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
     globals.riverWet = scene.riverWet.update(dt * scene.speed, globals.season ?? 0, []);
   } else globals.riverWet = scene.riverWet.update(dt * scene.speed, globals.season ?? 0, weather.storms);
   // (round 80) what's awake this frame: round the player (the camera's target), the events, the storms
-  if (scene.sleep && settleTol() > 0) readSettling(scene);
   if (scene.sleep) {
     globals.sleep = scene.sleep.update(performance.now() / 1000, [camera.target[0], camera.target[1], 40], globals.events, weather.storms, core.sim.tick);
     globals.drowse = scene.sleep.drowse;
     globals.settle = scene.sleep.settling.map((s) => s.rect);
+    // (round 128o, DA-B20: the chunks maybe still settling their water, the GPU holding them while it changes — no read)
+    globals.settleTol = settleTol();
+    globals.settleCand = globals.settleTol > 0 ? scene.sleep.settleCand : undefined;
   }
   // (?skip=sim, round 80: the frame without the sim — on a phone, how much of it the sim is)
   const tSim = performance.now(); // (round 100, hitchrec: timing)
@@ -429,35 +430,6 @@ export function planFrame(scene: LevelScene): void {
   TL.reach = PLAN_OFF.has('tile') ? null : P.reach.tile;
   core.renderer.fieldMesh.lead = PLAN_OFF.has('mesh') ? [0, 0] : [P.dir[0] * P.reach.window, P.dir[1] * P.reach.window * ROW_H];
   core.simCap = PLAN_OFF.has('sim') ? null : P.simCap;
-}
-
-/** (round 84) the water's most change per chunk since the last read (world-gpu waterChange), cleared; woken chunks
- *  still settling are kept awake (Sleep.holdUnsettled) — twice a second */
-export function readSettling(scene: LevelScene): void {
-  const now = performance.now() / 1000;
-  if (scene.settleReading || now - scene.settleReadAt < 0.5) return;
-  scene.settleReadAt = now;
-  scene.settleReading = true;
-  const dev = scene.host.gpu.device;
-  const src = scene.core.world.waterChange;
-  const tmp = dev.createBuffer({ size: src.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
-  const enc = dev.createCommandEncoder();
-  enc.copyBufferToBuffer(src, 0, tmp, 0, src.size);
-  enc.clearBuffer(src);
-  dev.queue.submit([enc.finish()]);
-  tmp.mapAsync(GPUMapMode.READ).then(
-    () => {
-      const ch = new Float32Array(tmp.getMappedRange().slice(0));
-      tmp.destroy();
-      scene.settleReading = false;
-      scene.sleep?.holdUnsettled(ch, performance.now() / 1000);
-    },
-    (e) => {
-      tmp.destroy();
-      scene.settleReading = false;
-      ignoreTeardown(e);
-    },
-  );
 }
 
 /** (round 117, ?life=) the inhabitants each frame: spawned once the ground's first read is in, the mesh built round the view */

@@ -108,9 +108,10 @@ export class WorldGpu {
   readonly waterSource: GPUBuffer;
   /**
    * (round 84 — the user: "we can have a tolerance and decide when we are close enough to steady state to freeze")
-   * Per chunk (2 048 at most, sim/sleep.ts), the most an awake column's water changed in a step since the CPU last
-   * read it, as an f32's bits (atomicMax: positive floats order as their bits). water_depth.wgsl writes it; the level
-   * reads and clears it (Sleep.holdUnsettled keeps a woken chunk awake until it's under the tolerance).
+   * Per chunk (2 048 at most, sim/sleep.ts), the most an awake column's water changed in a step since the last tick,
+   * as an f32's bits (atomicMax: positive floats order as their bits). water_depth.wgsl writes it; the settling hold
+   * reads and clears it at the next tick's start, on the GPU (round 128o, sim/settlehold.ts: a woken chunk is kept
+   * awake until it's under the tolerance).
    */
   readonly waterChange: GPUBuffer;
 

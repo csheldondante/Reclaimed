@@ -2563,6 +2563,15 @@ cheap pool of light ("Yes absolutely enough"). One concern a file:
   `sources` (simTick, slowSystems, io, counters) are lent by whoever reads it (the bench); it changes nothing.
   `report(mark)` = per frame: interval, rAF lag, CPU, rAF to last submit, submit to done, frames in flight, GPU span,
   the gap between frames' GPU work, sim ticks, which counters moved; the slow frames against the rest.
+- **The water's settling hold** (round 84 ?settletol, on by default with ?rivers=table; round 128o, DA-B20: on the
+  GPU, sim/settlehold.ts): a chunk an event woke stays awake past its time while its water still changes by more than
+  the tolerance, up to 60 s from its waking. The CPU (sim/sleep.ts) says which chunks may be held (`settleCand`: woken
+  within 60 s, asleep by its time) and lists them on the culled passes (AwakeTiles.update `cand`); at each tick's start
+  a 64-thread pass reads water_depth.wgsl's waterChange, holds a candidate while it changed (and 0.75 s of sim time
+  after), lets it sleep drowsy for 0.25 s, writes the masks over Globals.sleep / drowse for the tick's passes (512 B
+  copy) and clears waterChange. Nothing read back (it was 8 KB twice a second). The CPU's own mask says asleep for a
+  held chunk: the mirror counts candidates as run (api/mirror.ts tick), the flows' skip counts them as awake; the
+  frame's render upload puts the CPU's mask back for drawing.
 - **The nearest trees** (round 128o, DA-B6; api/treequery.ts, shaders/treequery.wgsl): `plants.treesNear(x, y, r, n)`
   is a GPU pass, not a CPU layout over a read-back succession field. Over each ask's box of columns, vegplan.wgsl's
   `vegPlan` says where the trees stand; three passes: a histogram of the trees' distances (128 bins over the radius),

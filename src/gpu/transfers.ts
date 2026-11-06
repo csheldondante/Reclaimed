@@ -167,7 +167,9 @@ export const TRANSFERS: TransferSite[] = [
 
   // ---- sim systems ----
   { file: 'sim/systems.ts', fn: 'StatsSystem.encode', what: 'world stats, 64 B', why: 'the HUD\'s world stats', rate: 'timed', every: '20 sim ticks', play: 'yes', violates: T24, backlog: 'DA-B5' },
-  { file: 'scenes/level/frame.ts', fn: 'readSettling', what: 'waterChange, 8 KB', why: 'whether water has settled (sleep)', rate: 'timed', every: '500 ms', play: 'yes', violates: T24, backlog: 'DA-B20' },
+  // (round 128o, DA-B20: the settling read went — sim/settlehold.ts holds a chunk on the GPU while its water changes)
+  { kind: 'upload', file: 'sim/settlehold.ts', fn: 'SettleHold.encode', size: 'small', what: 'the chunks maybe still settling, a bit a slot: 256 B (and 16 B of params)', why: 'which chunks the GPU may hold awake (sim/sleep.ts settleCand)', rate: 'frame', every: 'a tick', play: 'yes' },
+  { kind: 'copy', file: 'sim/settlehold.ts', fn: 'SettleHold.encode', size: 'small', what: 'the held sleep and drowse masks, 512 B, into the Globals', why: "the tick's passes read the held masks (common.wgsl asleep / drowsy)", rate: 'frame', every: 'a tick', play: 'yes' },
   { file: 'flow/steady.ts', fn: 'Steady.afterSubmit', what: 'flow activity per chunk, chunks×16 B', why: 'which flow chunks are steady', rate: 'timed', every: '30 sim ticks', play: 'flag', flag: '?flow=1', violates: T24, backlog: 'DA-P5' },
   { file: 'flow/liquid.ts', fn: 'LiquidSystem.probe', n: 2, what: 'the runs buffer + indirect args', why: 'debug scripts', rate: 'demand', play: 'no' },
   { file: 'flow/liquid.ts', fn: 'LiquidSystem.probeStreams', n: 2, what: 'the stream instances + indirect args', why: 'debug scripts', rate: 'demand', play: 'no' },

@@ -18401,3 +18401,31 @@ The linger existed for the sandbox's pours only (DEVLOG round 83: "a pour lands 
   (DA-B21); a felled tree may still be in an answer asked before its edit ran (the woodcutter finds no logs there and
   goes idle, and the list is asked again after the fell); the CPU port (planTree) stays for `treeAt` and `fell`'s answer.
 
+## 2026-11-05 — round 128o (`phonefix`, DA-B20): the water's settling hold decided on the GPU
+
+- Why: DESIGN.md §24, no timed read back in play. With rivers on the atlas's table (the game's default) the level read
+  the water's change per chunk back twice a second (world-gpu waterChange, 8 KB) for sim/sleep.ts to keep a woken
+  chunk awake while its water still settled (`holdUnsettled`, round 84).
+- Now (sim/settlehold.ts, shaders/settlehold.wgsl): the CPU says which chunks may be held — `Sleep.settleCand`, a bit
+  a slot: asleep by its time, woken by an event within SETTLE_MAX_S (60 s) — and lists them on the culled passes as
+  live (AwakeTiles.update). At each tick's start one 64-thread pass reads waterChange: a candidate whose water changed
+  by more than the tolerance in the last tick (and HOLD_S, 0.75 s of sim time, after) is held — its asleep bit
+  cleared — then drowsy for 0.25 s; the masks are copied over Globals.sleep and drowse (512 B, GPU to GPU) before the
+  tick's passes read them, and waterChange is cleared. `readSettling`, `holdUnsettled` and the scene's read state are
+  gone. The DA-B20 row asked for an indirect wake list; not needed: the CPU already knows which chunks can be held (it
+  woke them), so the lists stay the CPU's and the GPU decides inside them. A candidate the GPU lets sleep runs its
+  passes' asleep branch (carried through), as an unlisted chunk would have been left.
+- What else had to know: the mirror (api/mirror.ts) counts a candidate as run (its pages go stale: the GPU may have run
+  it); the flows' skip (flow/install.ts) waits for no candidates as well as no awake chunks; the render's own upload
+  of the Globals puts the CPU's mask back for drawing (a held chunk draws as asleep: its flux animated, as before when
+  the hold lagged the read).
+- Tests: test/gpu/settlehold.test.ts — the candidates (an event-woken chunk past its time is one for 60 s, then
+  drowsy once; land come in and no tolerance: none), and the kernel on Dawn (a candidate held while its water changes,
+  let go after the hold's ticks and drowsy once; a non-candidate sleeps; a candidate dropped sleeps). GPU tier 145/145.
+- Measured: the atlas game, fortress, after Build, lightning near the town: 32 candidates once the CPU's 8 s were up,
+  8 of them held (their water still changing) for 9 s and on; the settling read is gone from ?readstats (it was 16 KB/s).
+- Hacks and limits: the hold is in sim ticks (0.75 s / 0.25 s at TICK_DT) where it was wall seconds; candidates are
+  dispatched for up to 60 s after a wake even when the GPU lets them sleep (their passes run the asleep branch — the
+  cost of not reading back); a candidate misses the AWAY lists' slow turns while it is one; scripts/culltest.mjs not
+  run (it needs a dev server; it sets settletol=0, so it doesn't reach the hold).
+
