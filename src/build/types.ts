@@ -34,7 +34,7 @@ export const DEFS: Record<StructureType, StructureDef> = {
   farm: {
     type: 'farm', label: 'Farms', one: 'farm', many: 'farms', form: 'yard', joins: true, maxLevels: 1,
     cost: { log: 1 }, perBlock: { jobs: 1, makes: { grain: 2 } },
-    look: { style: 'town', props: ['haystack'], use: 'field' },
+    look: { style: 'town', props: ['haystack'], use: 'field' }, crossed: true,
   },
   lumber: {
     type: 'lumber', label: 'Lumber camp', one: 'lumber camp', many: 'lumber camps', form: 'block', joins: true, maxLevels: NO_CAP,
@@ -114,12 +114,12 @@ export const DEFS: Record<StructureType, StructureDef> = {
   orchard: {
     type: 'orchard', label: 'Orchards', one: 'orchard', many: 'orchards', form: 'yard', joins: true, maxLevels: 1,
     cost: { log: 1 }, perBlock: { jobs: 1, makes: { grain: 1 } },
-    look: { style: 'town', use: 'orchard' },
+    look: { style: 'town', use: 'orchard' }, crossed: true,
   },
   pasture: {
     type: 'pasture', label: 'Pastures', one: 'pasture', many: 'pastures', form: 'yard', joins: true, maxLevels: 1,
     cost: { log: 1 }, perBlock: {},
-    look: { style: 'town', use: 'pasture' },
+    look: { style: 'town', use: 'pasture' }, crossed: true,
   },
   fountain: {
     type: 'fountain', label: 'Fountain', one: 'fountain', many: 'fountains', form: 'yard', joins: true, maxLevels: 1,

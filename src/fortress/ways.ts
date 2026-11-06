@@ -1,9 +1,9 @@
 // The fortress's ways (round 128d; the user: "buildings are supposed to bake their own paths so we probably want roads
 // and squares between structures and the stairs up onto the walls"). Baked from the plan by rules, as its shapes are
 // (shapes.ts), on the plan's cells — pure, so it's tested without a GPU (ways.test.ts):
-//  - doors: each block structure (and the keep) one, on a ground-floor side that opens on a free cell, the side
-//    facing the fortress's middle (the keep's; for the keep, its gates or the rest);
-//  - roads: a tree over the free cells joining every door and both sides of every gate (gates open the wall's way),
+//  - entrances (round 128o: build/entrances.ts, every structure's — a block's door, a wall's gates, a yard's edge, a
+//    pit's ramp top; `doors` the blocks' and the keep's);
+//  - roads: a tree over the free cells joining every entrance and both sides of every gate (gates open the wall's way),
 //    grown from the keep's door to the nearest unjoined end each time, cheaper along road already laid so the ways merge;
 //  - stairs: each wall run one (another every STAIR_EVERY cells), up from free cells beside a straight stretch of it:
 //    a straight flight across as many cells as its height needs (no steeper than SLOPE), from a foot cell to the wall's
@@ -22,6 +22,7 @@ import { LEVEL_H } from '../build/town';
 import { DEFS } from './defs';
 import type { TownPlan } from '../build/plan';
 import { WALL_HALF } from './solid';
+import { entrancesOf, needsEntrance, type Entrance } from '../build/entrances';
 
 export interface WaysGrid {
   readonly count: number;
@@ -39,17 +40,13 @@ export const WAY_STAIR = 3;
 export const SLOPE = 0.75;
 /** another stair every this many wall cells of a run */
 export const STAIR_EVERY = 16;
+/** (round 128o) a metre across a field costs this many of a street: the roads go round the fields where a street does */
+export const CROSS_COST = 3;
 /** the longest flight (cells) */
 const STAIR_MAX = 6;
 
-export interface Door {
-  structure: number;
-  /** the structure's cell and the side the door is in */
-  cell: number;
-  side: number;
-  /** the free cell it opens on */
-  out: number;
-}
+/** a block's or the keep's entrance (build/entrances.ts) */
+export type Door = Entrance;
 
 export interface Stair {
   /** the wall structure, the wall cell it climbs onto, the side it leaves the wall by */
@@ -68,6 +65,8 @@ export interface Ways {
   /** per cell its way (WAY_*) */
   way: Uint8Array;
   doors: Door[];
+  /** (round 128o) every structure's entrances (build/entrances.ts): the doors, the walls' gates, the yards' edges, the pits' tops */
+  entrances: Entrance[];
   stairs: Stair[];
   /** gate cells: their way runs through the wall */
   gates: number[];
@@ -76,13 +75,13 @@ export interface Ways {
    * a ramp's cell (TownPlan.ramp) is a road's like any free cell, entered and left only along its axis
    */
   passages: number[];
-  /** structures whose door (or stair) no road reaches */
+  /** structures whose entrance (or stair) no road reaches, or that have none */
   cutOff: number[];
 }
 
 /** no ways at all (tests of the shapes' own rules) */
 export function noWays(count: number): Ways {
-  return { way: new Uint8Array(count), doors: [], stairs: [], gates: [], passages: [], cutOff: [] };
+  return { way: new Uint8Array(count), doors: [], entrances: [], stairs: [], gates: [], passages: [], cutOff: [] };
 }
 
 /** a binary min-heap of cells by cost (stale entries skipped by the caller) */
@@ -141,12 +140,25 @@ function sideTo(g: WaysGrid, n: number, c: number): number {
   return -1;
 }
 
-/** The ways baked from the plan (courtyards: cells shut in by structures — shapes.ts). */
-export function waysOf(plan: TownPlan, g: WaysGrid, courtyards: readonly number[] = [], defs: Record<StructureType, StructureDef> = DEFS): Ways {
+/** (a ramp's cell entered and left only along its axis: its high end's side and the side opposite) whether a way steps
+ *  from cell u by its side e to m */
+export function wayStep(plan: TownPlan, g: WaysGrid, u: number, e: number, m: number): boolean {
+  const along = (c: number, side: number) => {
+    const r = plan.ramp ? plan.ramp[c] : -1;
+    return r < 0 || side === r || side === (r + 2) % 4;
+  };
+  return along(u, e) && along(m, sideTo(g, m, u));
+}
+
+/**
+ * The ways baked from the plan (courtyards: cells shut in by structures — shapes.ts; `blocked`: free cells no road crosses —
+ * deep water, the reach's wet columns).
+ */
+export function waysOf(plan: TownPlan, g: WaysGrid, courtyards: readonly number[] = [], defs: Record<StructureType, StructureDef> = DEFS, blocked: (c: number) => boolean = () => false): Ways {
   const n = g.count;
   const way = new Uint8Array(n);
   const nb = (c: number, e: number) => g.nbr[c * 4 + (((e % 4) + 4) % 4)];
-  const free = (c: number) => c >= 0 && plan.owner[c] < 0;
+  const free = (c: number) => c >= 0 && plan.owner[c] < 0 && !blocked(c);
   const court = new Set(courtyards);
   const structures = plan.structures();
   const formOf = (c: number) => {
@@ -164,41 +176,19 @@ export function waysOf(plan: TownPlan, g: WaysGrid, courtyards: readonly number[
     }
     return [x, y];
   };
-  const keepCells = structures.filter((s) => defs[s.type].form === 'keep').flatMap((s) => [...s.cells.keys()]);
   const allCells = structures.flatMap((s) => [...s.cells.keys()]);
   const gates = allCells.filter((c) => formOf(c) === 'wall' && plan.gate[c] && plan.has(c, 0));
-  // the fortress's middle: its keep's, else everything's
+  // the town's middle: its keep's, else everything's (the stairs' feet face it)
+  const keepCells = structures.filter((s) => defs[s.type].form === 'keep').flatMap((s) => [...s.cells.keys()]);
   const middle = mean(keepCells) ?? mean(allCells) ?? [0, 0];
   const d2 = (c: number, p: V2) => {
     const [x, y] = g.centre(c);
     return (x - p[0]) ** 2 + (y - p[1]) ** 2;
   };
 
-  // ---- doors
-  const doors: Door[] = [];
-  const gateMid = mean(gates);
-  for (const s of structures) {
-    const form = defs[s.type].form;
-    if (form !== 'block' && form !== 'keep') continue;
-    // (the keep faces its gates, else the rest of the fortress; the others face the keep)
-    const toward: V2 = form === 'keep' ? (gateMid ?? mean(allCells.filter((c) => plan.owner[c] !== s.id)) ?? middle) : middle;
-    let best: Door | null = null;
-    let bd = Infinity;
-    for (const c of s.cells.keys()) {
-      if (!plan.has(c, 0)) continue;
-      for (let e = 0; e < 4; e++) {
-        const o = nb(c, e);
-        if (!free(o)) continue;
-        // (a courtyard last: a door should open on the way out)
-        const d = d2(o, toward) + (court.has(o) ? 1e6 : 0);
-        if (d < bd) {
-          bd = d;
-          best = { structure: s.id, cell: c, side: e, out: o };
-        }
-      }
-    }
-    if (best) doors.push(best);
-  }
+  // ---- entrances (build/entrances.ts: the one rule)
+  const entrances = entrancesOf(plan, g, courtyards, blocked, defs);
+  const doors: Door[] = entrances.filter((e) => e.kind === 'door');
 
   // ---- roads: a tree joining the ends, grown from the keep's door (else the first end) to the nearest unjoined end
   const isGate = new Uint8Array(n);
@@ -207,11 +197,14 @@ export function waysOf(plan: TownPlan, g: WaysGrid, courtyards: readonly number[
   // (round 128i, FT-65: a block's passage is a way through it, as a gate is the wall's)
   const isPassage = new Uint8Array(n);
   for (const c of allCells) if (plan.passage?.[c] && formOf(c) === 'block' && plan.has(c, 0)) isPassage[c] = 1;
-  const passable = (c: number) => c >= 0 && ((free(c) && !taken[c]) || isGate[c] === 1 || isPassage[c] === 1);
-  // (a ramp's cell entered and left only along its axis: its high end's side and the side opposite)
+  // (round 128o: a field — a yard walked across, StructureDef.crossed — is crossed too, at CROSS_COST a metre)
+  const crossed = (c: number) => {
+    const t = c >= 0 ? plan.typeAt(c) : null;
+    return !!t && !!defs[t].crossed && !blocked(c);
+  };
+  const passable = (c: number) => c >= 0 && ((free(c) && !taken[c]) || isGate[c] === 1 || isPassage[c] === 1 || crossed(c));
   const rampOf = (c: number) => (plan.ramp ? plan.ramp[c] : -1);
-  const alongRamp = (c: number, e: number) => rampOf(c) < 0 || e === rampOf(c) || e === (rampOf(c) + 2) % 4;
-  const step = (u: number, e: number, m: number) => alongRamp(u, e) && alongRamp(m, sideTo(g, m, u));
+  const step = (u: number, e: number, m: number) => wayStep(plan, g, u, e, m);
   const net = new Uint8Array(n);
   const cutOff = new Set<number>();
   const dist = new Float64Array(n);
@@ -237,7 +230,7 @@ export function waysOf(plan: TownPlan, g: WaysGrid, courtyards: readonly number[
           const m = nb(u, e);
           if (!passable(m) || !step(u, e, m)) continue;
           const [mx, my] = g.centre(m);
-          const w = Math.hypot(mx - ux, my - uy);
+          const w = Math.hypot(mx - ux, my - uy) * (crossed(m) ? CROSS_COST : 1);
           if (du + w < dist[m] - 1e-9) {
             dist[m] = du + w;
             prev[m] = u;
@@ -274,13 +267,16 @@ export function waysOf(plan: TownPlan, g: WaysGrid, courtyards: readonly number[
   const ends: { cell: number; structure: number }[] = [];
   const keepDoor = doors.find((d) => defs[plan.structure(d.structure)!.type].form === 'keep');
   if (keepDoor) ends.push({ cell: keepDoor.out, structure: keepDoor.structure });
-  for (const d of doors) if (d !== keepDoor) ends.push({ cell: d.out, structure: d.structure });
+  for (const e of entrances) if (e !== keepDoor && e.kind !== 'gate') ends.push({ cell: e.out, structure: e.structure });
   for (const c of gates)
     for (let e = 0; e < 4; e++) {
       const m = nb(c, e);
       if (free(m)) ends.push({ cell: m, structure: plan.owner[c] });
     }
   grow(ends);
+  // (a structure that needs an entrance and has none: no way in)
+  const entered = new Set(entrances.map((e) => e.structure));
+  for (const s of structures) if (needsEntrance(s.type, defs) && !entered.has(s.id)) cutOff.add(s.id);
   const doorsAt = new Int32Array(n);
   for (const d of doors) doorsAt[d.out]++;
 
@@ -395,7 +391,7 @@ export function waysOf(plan: TownPlan, g: WaysGrid, courtyards: readonly number[
     if (doorsAt[c] >= 2 || (doorsAt[c] >= 1 && ways >= 4)) way[c] = WAY_SQUARE;
   }
   for (const c of court) if (free(c)) way[c] = WAY_SQUARE;
-  return { way, doors, stairs, gates, passages, cutOff: [...cutOff] };
+  return { way, doors, entrances, stairs, gates, passages, cutOff: [...cutOff] };
 }
 
 export interface NavHeights {

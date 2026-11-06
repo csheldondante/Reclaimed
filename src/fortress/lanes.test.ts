@@ -1,11 +1,12 @@
-// (round 128k) The fortress's roads (lanes.ts): on the grid's cell borders, grown from the town's gate to every door;
-// no road round an empty plot; a wall crossed only through a gate's tile; thoroughfare tiles paved whole; the ride graph
-// from the same pieces; none under water; drawn as paving by the buildings, earth in the open, steps on steep climbs.
+// (round 128k; round 128o: down the ways' cells, not the borders) A town's roads (lanes.ts): the ways' road tree joining
+// every entrance; never along a building's face; a wall crossed only through a gate's tile; thoroughfare tiles paved
+// whole; the ride graph from the same pieces; none under water; drawn as paving by the buildings, earth in the open,
+// steps on steep climbs.
 import { fortressOn } from './testing';
 import { describe, expect, it } from 'vitest';
 import { library } from '../structures/modules';
 import { Fortress } from './fortress';
-import { LANE_DRAWN, laneGraph, OFF_BUILDING, type LaneSeg } from './lanes';
+import { LANE_DRAWN, laneGraph, type LaneSeg } from './lanes';
 import { solidSpans } from './solid';
 import { cellAt } from '../world/lattice';
 import { roadBitsCpu } from '../agents/roads';
@@ -54,7 +55,7 @@ function walled(f: Fortress, r = 22) {
   return { ring, gate, keep, house, store, farm, lumber };
 }
 
-const roadSegs = (segs: LaneSeg[]) => segs.filter((s) => s.kind !== 'plaza' && !s.noRide);
+const roadSegs = (segs: LaneSeg[]) => segs.filter((s) => s.kind !== 'plaza');
 
 describe('roads off the buildings (round 128l, aw4; BACKLOG AW-4)', () => {
   it("no road runs through a built block's solid columns: houses beside the road from the stores", () => {
@@ -92,82 +93,74 @@ describe('roads off the buildings (round 128l, aw4; BACKLOG AW-4)', () => {
   });
 });
 
-describe('roads on the cell borders, to things', () => {
-  it("the roads join the town's gate to every door, along the cell borders", () => {
+describe('roads down the ways, to things', () => {
+  it("the roads join every structure's entrance, down the middles of the ways' cells", () => {
     const f = fortress();
     walled(f);
     const L = f.lanes();
     const w = f.ways();
-    // (the keep, the house, the warehouse, the lumber camp: a yard — the farm — has none)
+    // (the keep, the house, the warehouse, the lumber camp: doors; the farm: its edge; the wall: its gate)
     expect(w.doors.length).toBeGreaterThanOrEqual(4);
     expect(L.unjoined).toEqual([]);
-    // (every structure: those with doors, and the yards — the farm — at a corner)
-    expect(L.joined.length).toBe(f.plan.structures().filter((s) => s.type !== 'wall').length);
-    // (every road piece a border: its ends two corners of its cell — round 128l, aw4: or moved off a building, by no more
-    // than OFF_BUILDING)
+    expect(L.joined.length).toBe(f.plan.structures().length);
+    // (every piece from its cell's middle to the middle of one of its sides, or back)
     const g = f.grid;
-    const corners = (c: number) => [0, 1, 2, 3].map((k) => g.corner(c, k));
-    const isCorner = (c: number, p: readonly number[]) => corners(c).some((q) => Math.hypot(q[0] - p[0], q[1] - p[1]) < OFF_BUILDING + 1e-6);
-    for (const s of roadSegs(L.segs)) expect(isCorner(s.cell, s.a) && isCorner(s.cell, s.b), `a ${s.kind} off the borders`).toBe(true);
-    // (one network: the ride graph reaches every door from the gate's tile)
+    const near = (p: readonly number[], q: readonly number[]) => Math.hypot(p[0] - q[0], p[1] - q[1]) < 1e-6;
+    const mids = (c: number) => [0, 1, 2, 3].map((e) => {
+      const a = g.corner(c, e);
+      const b = g.corner(c, e + 1);
+      return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    });
+    for (const s of L.segs) {
+      const ends = [s.a, s.b];
+      expect(ends.some((p) => near(p, g.centre(s.cell))) && ends.some((p) => mids(s.cell).some((m) => near(p, m))), `a ${s.kind} off its cell's middle`).toBe(true);
+    }
+    // (one network: the ride graph reaches every entrance's way-out cell from the gate's)
     const graph = laneGraph(L);
-    const from = nearestNode(graph, ...g.centre(f.cellAt(GATE[0] + 4, GATE[1])));
+    const from = nearestNode(graph, ...g.centre(w.entrances[0].out));
     const net = reached(graph, from.node);
-    expect(net.size).toBe(nodeCount(graph));
-    for (const d of w.doors) {
-      const e = [0, 1, 2, 3].find((k) => g.nbr[d.out * 4 + k] === d.cell)!;
-      const near = Math.min(nearestNode(graph, ...g.corner(d.out, e)).d, nearestNode(graph, ...g.corner(d.out, e + 1)).d, nearestNode(graph, ...g.centre(d.out)).d);
-      // (a door's corners are by its building: their road node moved off it, by OFF_BUILDING at most — aw4)
-      expect(near, `the door of the ${f.plan.structure(d.structure)!.type}`).toBeLessThan(OFF_BUILDING + 1e-3);
+    for (const e of w.entrances) {
+      const n = nearestNode(graph, ...g.centre(e.out));
+      expect(n.d, `the ${e.kind} of the ${f.plan.structure(e.structure)!.type}`).toBeLessThan(1e-3);
+      expect(net.has(n.node)).toBe(true);
     }
   });
 
-  it('no road round an empty plot: a free cell off the roads has at most two road borders', () => {
+  it('roads go to things: few of the free cells are roads', () => {
     const f = fortress();
     walled(f);
     const L = f.lanes();
     const g = f.grid;
-    const tiles = new Set(L.tiles);
-    const key = (p: readonly number[]) => `${p[0].toFixed(3)},${p[1].toFixed(3)}`;
-    const roadEdges = new Set(roadSegs(L.segs).map((s) => [key(s.a), key(s.b)].sort().join('|')));
-    let rings = 0;
     let plots = 0;
-    for (let c = 0; c < g.count; c++) {
-      if (f.plan.owner[c] >= 0 || tiles.has(c) || !g.columns[c].length) continue;
-      plots++;
-      const n = [0, 1, 2, 3].filter((e) => roadEdges.has([key(g.corner(c, e)), key(g.corner(c, e + 1))].sort().join('|'))).length;
-      if (n >= 3) rings++;
-    }
+    for (let c = 0; c < g.count; c++) if (f.plan.owner[c] < 0 && g.columns[c].length) plots++;
+    const roads = new Set(L.segs.map((s) => s.cell));
     expect(plots).toBeGreaterThan(100);
-    // (a trunk turning round a cell's corner takes two of its sides; three or four is a ring round it)
-    expect(rings).toBeLessThanOrEqual(2);
-    // (and the roads are few: the borders of a few dozen cells, not the town's every plot)
-    expect(roadEdges.size).toBeLessThan(plots / 2);
+    expect(roads.size).toBeLessThan(plots / 4);
   });
 
   it('a wall is crossed only through a gate: the keep is cut off without the gate tile', () => {
     const f = fortress();
-    const { gate, keep } = walled(f);
+    const { gate, keep, lumber } = walled(f);
     const L = f.lanes();
     expect(L.tiles).toContain(gate);
     const g = f.grid;
     const [gx, gy] = g.centre(gate);
     const at = (p: readonly number[]) => Math.hypot(p[0] - gx, p[1] - gy) < 1e-6;
     const graph = laneGraph({ ...L, segs: L.segs.filter((s) => !at(s.a) && !at(s.b)) });
-    const out = nearestNode(graph, ...g.centre(f.cellAt(GATE[0] + 4, GATE[1])));
+    // (outside: the lumber camp's door, out past the wall)
+    const out = nearestNode(graph, ...g.centre(f.ways().doors.find((d) => d.cell === lumber)!.out));
     const door = f.ways().doors.find((d) => d.cell === keep)!;
     const inner = nearestNode(graph, ...g.centre(door.out));
     expect(inner.d).toBeLessThan(1e-3);
     expect(reached(graph, out.node).has(inner.node)).toBe(false);
   });
 
-  it("a building outside the walls gets a road from the town's gate; the big ones' door cells are tiles", () => {
+  it("a building outside the walls gets a road through the town's gate; the gate a tile", () => {
     const f = fortress();
-    const { lumber, store, keep } = walled(f);
+    const { lumber, gate } = walled(f);
     const L = f.lanes();
     expect(L.joined).toContain(f.plan.owner[lumber]);
-    const w = f.ways();
-    for (const big of [store, keep]) expect(L.tiles).toContain(w.doors.find((d) => d.cell === big)!.out);
+    expect(L.tiles).toContain(gate);
     // (the road bits: every column of a thoroughfare tile, and some along a road)
     const bits = roadBitsCpu(f.roadShapes(), 0, 0, W, H);
     const bit = (k: number) => (bits[k >> 5] >>> (k & 31)) & 1;

@@ -41,7 +41,7 @@ import type { SurfaceStamp } from '../atlas/bake';
 import { rasterPlan, stampMatch } from './raster';
 import type { ExactPlanDone, ExactPlanJob, FarPlanDone, FarPlanInit, FarPlanJob } from './plan-worker';
 import { Fleet, shipRoutes } from './ships';
-import { placeBuilding } from '../structures/place';
+import { assertEntered, keepReach, placeBuilding } from '../structures/place';
 import { typeIndex } from '../build/plan';
 import { TownSite, type SiteData } from '../build/site';
 
@@ -682,6 +682,9 @@ export class Settlements {
     // (onetown: the house goes into the town's plan as the generator places its own — planned, the builders' work)
     const sid = placeBuilding(p.site, next.building, 0);
     if (sid < 0) return;
+    // (round 128o: the town kept walkable and every structure entered, as at its planning — structures/place.ts)
+    keepReach(p.site);
+    assertEntered(p.site);
     p.sites.push({ id, structure: sid, storeys: levelsOfStructure(p.site, sid), door: next.door });
     for (const f of this.onRaised) f(rec.id, sid);
     rec.needs.push({ kind: 'build', at: [next.door[0] + s.box.x0, next.door[1] + s.box.y0 * ROW_H], ref: id, priority: 2 });

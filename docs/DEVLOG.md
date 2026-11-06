@@ -18199,3 +18199,28 @@ Design note before code (AGENT_RULES 1). DESIGN.md section 12.
 - **Tests first:** on the fixture — no lane sample inside a claimed column except in a gate or passage cell; every
   structure's entrance joined to the stores on the route graph; every non-wall structure has an entrance. Lab gate:
   fortressoutside on `town` builds all its blocks.
+
+## 2026-11-05 — round 128o (`onetown`, DA-A7's core): routes from declared entrances; the start town's builders build everything they can reach
+
+- Tests first, on the start town fixture (test/unit/townroutes.test.ts), all failing before: 8 generated houses had no
+  entrance; 19 lane pieces ran inside claimed columns (the border lanes flush with buildings, AW-4's OFF_BUILDING nudge
+  not enough); 48 entrances weren't on the route graph from the stores; cell 1188's site had no stand.
+- build/entrances.ts: the one entrance rule (doors, gates, yard edges, pit tops); ways.ts joins every entrance (its door
+  rule moved there); lanes.ts rebuilt from the ways' cells (cell middle to shared side middle). Deleted from lanes.ts:
+  the border graph and its per-grid geometry cache, OFF_BUILDING, ROOT_REACH, the roots at the town's heap, BIG, the
+  yards' first-cell corners, `noRide`, LaneOpts (climb/reuse) and `Fortress.setLaneOpts`. doorOf's fallback to a cell's
+  middle is gone. FortressLife.standsFor (a second stand rule, ignoring planned blocks) now calls Fortress.standsOf.
+- Fields are open ground (`StructureDef.crossed` on farms, orchards, pastures): roads cross them at CROSS_COST 3 a
+  metre; without it three farms and a pasture had entrances on cells shut in by other fields.
+- Generation: keepReach also cuts a passage to each structure with no entrance; `assertEntered` throws at plan time
+  (placeDraft, and a settlement's growth after placeBuilding). The fixture recaptured (generator sources changed).
+- Measured: route graph 287 nodes (was 118; MAX_NODES 1024), 288 lane pieces; unit tier 86 files green; lab
+  fortressoutside on `walled` passes; on `town` all three sites outside the walls stood by 181 sim s (failed before)
+  and 706 of 708 blocks — the two left are cell 1188's house: its passage is in the plan but the GPU reach (and the CPU
+  reference) don't reach keepReach's passages, cut without the terrain's heights: DA-A3.
+- Found, not fixed (DA-A7's rest): farmers riding grain home stand at a route node in the fields for 500+ sim s while
+  the CPU hop table gives a 115 m route (gentle ground, no water); grain runs out. It happened on the border lanes too.
+- Look: roads now run down the middles of free cells instead of the borders (a change from round 128k's look), and a
+  strip drawn east over the water in the start shot (a lane crossing the river) is gone. Shot:
+  scratchpad a1/routes-town.png, looked at.
+- Transfers: none new; the road shapes and graph go to the GPU on change as before.

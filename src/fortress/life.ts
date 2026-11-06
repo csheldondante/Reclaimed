@@ -1192,26 +1192,11 @@ export class FortressLife implements Routine {
   }
 
   /**
-   * Where builders stand to work on a block: just outside its cell's sides with nothing built beside at the ground
-   * (as BuildCrew's). Never inside: a block that stands is drawn as pieces whose columns are claimed solid, and a
-   * builder inside it when it went up was buried (they died at the site in the first headless run).
+   * Where builders stand to work on a block: just outside its cell's sides (Fortress.standsOf — the reach asks the same
+   * stands: one rule, round 128o). Never inside: a block that stands is claimed solid.
    */
   private standsFor(b: Block): V2[] {
-    const f = this.io.fort;
-    const g = f.town.grid;
-    const [cx, cy] = g.centre(b.cell);
-    const out: V2[] = [];
-    for (let e = 0; e < 4; e++) {
-      const n = g.nbr[b.cell * 4 + e];
-      if (n < 0 || f.town.has(n, 0)) continue;
-      const [ax, ay] = g.corner(b.cell, e);
-      const [bx, by] = g.corner(b.cell, e + 1);
-      const mx = (ax + bx) / 2;
-      const my = (ay + by) / 2;
-      const d = Math.hypot(mx - cx, my - cy) || 1;
-      out.push(f.toWindow(mx + ((mx - cx) / d) * 1.4, my + ((my - cy) / d) * 1.4));
-    }
-    return out;
+    return this.io.fort.standsOf(b.cell);
   }
 
   /** the first block (of the sites) that still lacks something the stores have */

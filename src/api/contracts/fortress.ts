@@ -112,6 +112,9 @@ export interface StructureDef {
   cost: Goods;
   perBlock: PerBlock;
   look: StructureLook;
+  /** (round 128o) a yard walked across (fields, orchards, pastures): the roads may cross it as tracks, a walker enters
+   *  a structure from it, and it never shuts a way in. Not a quarry (a pit) nor a fountain */
+  crossed?: boolean;
 }
 
 /** A structure: the cells of one type that touch, each with its levels. */

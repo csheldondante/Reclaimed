@@ -16,6 +16,7 @@ import { waysNav, waysOf } from '../fortress/ways';
 import type { NavGraph } from '../api/contracts/structures';
 import { cellPos, ROW_H } from '../world/lattice';
 import { draftCity, shiftPlan, type CityDraft } from './plan';
+import { entrancesOf, needsEntrance } from '../build/entrances';
 import { resample } from './linear';
 import { hashf } from './rng';
 import { LOOK_FRESH, PIECE_FLOATS } from './pieces';
@@ -245,6 +246,7 @@ export function placeDraft(draft: CityDraft, site: TownSite, opts: PlaceOpts = {
   site.order = draft.order.map((b) => structureOf[b]).filter((s) => s >= 0);
   // ---- (AGENT_RULES 3b) every open place in the town joined to the land round it, by passages through ground floors
   stats.passages = keepReach(site);
+  assertEntered(site);
   plan.takeChanged();
   stats.ms = +(performance.now() - t0).toFixed(2);
   return { structureOf, stats };
@@ -263,10 +265,10 @@ export function keepReach(site: TownSite): number {
   const { plan, grid } = site;
   const n = grid.count;
   const nb = (c: number, e: number) => grid.nbr[c * 4 + e];
-  // (open: no structure, a gate, a passage, or a yard — fields, orchards, pastures are walked across)
+  // (open: no structure, a gate, a passage, or a field — a yard walked across, StructureDef.crossed)
   const open = (c: number) => {
     const t = plan.typeAt(c);
-    return !t || plan.defs[t].form === 'yard' || !!plan.gate[c] || !!plan.passage[c];
+    return !t || !!plan.defs[t].crossed || !!plan.gate[c] || !!plan.passage[c];
   };
   /** a cell a passage may cut: a block's ground floor (not a landmark drawn whole) */
   const cuttable = (c: number) => {
@@ -340,7 +342,53 @@ export function keepReach(site: TownSite): number {
       }
     flood(pocket);
   }
+  // (round 128o) every structure entered (build/entrances.ts): one with none — a house with houses all round it, cell
+  // 1188 of the user's start town — gets a passage through the fewest blocks between it and the joined land
+  for (const s of plan.structures()) {
+    if (!needsEntrance(s.type, plan.defs) || entrancesOf(plan, grid, [], () => false, plan.defs).some((e) => e.structure === s.id)) continue;
+    const cost = new Float64Array(n).fill(Infinity);
+    const prev = new Int32Array(n).fill(-1);
+    const own = (c: number) => plan.owner[c] === s.id;
+    const dq: number[] = [];
+    for (const c of s.cells.keys()) (cost[c] = 0), dq.push(c);
+    let end = -1;
+    for (let head = 0; head < dq.length && end < 0; head++) {
+      const u = dq[head];
+      for (let e = 0; e < 4; e++) {
+        const m = nb(u, e);
+        if (m < 0 || own(m)) continue;
+        const step = joined[m] === 1 ? 0 : cuttable(m) ? 1 : Infinity;
+        if (cost[u] + step >= cost[m]) continue;
+        cost[m] = cost[u] + step;
+        prev[m] = u;
+        if (joined[m] === 1) {
+          end = m;
+          break;
+        }
+        dq.push(m);
+      }
+    }
+    if (end < 0) continue;
+    const cut: number[] = [];
+    for (let c = prev[end]; c >= 0 && !own(c); c = prev[c]) cut.push(c);
+    for (const c of cut) {
+      plan.setPassage(c, true);
+      made++;
+    }
+    flood(cut);
+  }
   return made;
+}
+
+/**
+ * (round 128o) Generation's check: every structure that needs an entrance has one (build/entrances.ts) — a structure
+ * with no way in is the generator's bug, a loud error here, never a building the builders can't reach.
+ */
+export function assertEntered(site: TownSite): void {
+  const { plan, grid } = site;
+  const has = new Set(entrancesOf(plan, grid, [], () => false, plan.defs).map((e) => e.structure));
+  const without = plan.structures().filter((s) => needsEntrance(s.type, plan.defs) && !has.has(s.id));
+  if (without.length) throw new Error(`town ${site.id}: no way into ${without.map((s) => `the ${s.type} ${s.id} (cells ${[...s.cells.keys()].join(', ')})`).join('; ')}`);
 }
 
 /** the cells between a and b (not a, b) on a shortest way over the grid's edges, through cells `free` allows (≤ 4 steps) */

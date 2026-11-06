@@ -23,7 +23,8 @@ import { bedsOf, roomOf, type JobKind } from './economy';
 import { packSpan, REACH_BITS, type ReachEngine, type ReachReply } from './reach';
 import { solidSpans } from './solid';
 import { refusedLine, variantLine, wouldCutLine, type ReachWhy, type VariantKind } from './words';
-import { LANE_DEFAULTS, laneGraph, lanesOf, roadShapesOf, type LaneOpts, type Lanes } from './lanes';
+import { laneGraph, lanesOf, roadShapesOf, type Lanes } from './lanes';
+import { openCell } from '../build/entrances';
 import { nearestNode, reached, subgraph, type RoadGraph } from '../agents/roadgraph';
 import { packRoadShapes } from '../agents/roads';
 import { CellRuns } from '../build/runs';
@@ -162,7 +163,7 @@ export class Fortress {
   variant: string | null = null;
   variantAt = -1;
   /** (round 128f) the lanes and the roads a lane wide (lanes.ts), made again after the plan changes */
-  private lanesMemo: Lanes | null = null;
+  private lanesMemo: { of: Ways; lanes: Lanes } | null = null;
   /** (round 128l, m4) the reach: the last answer per cell still to build (reach.ts ReachReply bits), its ramp spots,
    *  the box's wet columns (a bit each: the lanes keep off them), the asks folded while a check is in flight */
   private reachBits = new Map<number, number>();
@@ -188,8 +189,6 @@ export class Fortress {
   readonly onReach: (() => void)[] = [];
   private roadShapesMemo: { of: Lanes; shapes: Float32Array } | null = null;
   private roadGraphMemo: { of: Lanes; graph: RoadGraph } | null = null;
-  /** (round 128f) the lanes' spacing per district (the town's, the fields'): the road frequency */
-  private laneOptsNow: LaneOpts = { ...LANE_DEFAULTS };
   /** the ground's top at a box column (world z: the land as it was before the town — the site's) */
   private readonly groundOfCol: (col: number) => number;
   /** (round 128m, quarry; V128-11) the quarries' pits as dug: whole tiers' levels (negative: TownPlan.pit's) */
@@ -248,12 +247,8 @@ export class Fortress {
     if (this.roadGraphMemo?.of !== L) {
       const all = laneGraph(L);
       const g = this.grid;
-      const doors = this.ways().doors.map((d) => {
-        const e = [0, 1, 2, 3].find((k) => g.nbr[d.out * 4 + k] === d.cell) ?? 0;
-        const [ax, ay] = g.corner(d.out, e);
-        const [bx, by] = g.corner(d.out, e + 1);
-        return nearestNode(all, (ax + bx) / 2, (ay + by) / 2).node;
-      });
+      // (round 128o: every entrance's way-out cell is a lane node: its middle)
+      const doors = this.ways().entrances.map((d) => nearestNode(all, ...g.centre(d.out)).node);
       let from = -1;
       let most = 0;
       for (const v of doors) {
@@ -270,55 +265,32 @@ export class Fortress {
     return this.roadGraphMemo.graph;
   }
 
-  /** (round 128f) the lanes' spacing per district: the town's and the fields' (m) */
-  get laneOpts(): LaneOpts {
-    return this.laneOptsNow;
-  }
-  setLaneOpts(o: Partial<LaneOpts>): void {
-    this.laneOptsNow = { ...this.laneOptsNow, ...o };
-    this.lanesMemo = null;
-    for (const h of this.onChange) h();
-  }
-
   /**
-   * (round 128f; the user: "if we want roads smaller than one cell ...") The lanes of a second grid over the tiles, and
-   * the main roads a lane wide (lanes.ts). From the plan and the ground as it was; not on the town that was there, nor
-   * (round 128i) under water: a cell with water over LANE_WATER at its middle or a corner (the columns as last read).
+   * The roads (lanes.ts, round 128o: down the ways' cells, from every entrance — never along a building's face). The same
+   * object until the ways change.
    */
   lanes(): Lanes {
-    if (!this.lanesMemo) {
+    const ways = this.ways();
+    if (this.lanesMemo?.of !== ways) {
       const { w, h } = this.box;
       const ground = (x: number, y: number) => {
         const [k, r] = cellAt(x, y);
         return this.groundOfCol(Math.max(0, Math.min(h - 1, r)) * w + Math.max(0, Math.min(w - 1, k)));
       };
-      const g = this.grid;
-      // (round 128l: the box's wet columns, the reach's answer — fortreach.wgsl reachWet; none yet: dry)
-      const wb = this.wetBits;
-      const wet = (x: number, y: number) => {
-        if (!wb) return false;
-        const b = this.boxColOf(x, y);
-        return b >= 0 && ((wb[b >> 5] >>> (b & 31)) & 1) === 1;
-      };
-      const blocked = (c: number) => [g.centre(c), ...[0, 1, 2, 3].map((k) => g.corner(c, k))].some(([x, y]) => wet(x, y));
-      // (round 128k) the roads start at the town's gates, else its stores. (onetown: the town's gates are the plan's own —
-      // its walls are in the plan, the gates thoroughfares the roads pass through — so they start at its stores)
-      const heap = this.io.townHeap?.();
-      const roots = heap ? [this.toBox(heap[0], heap[1])] : [];
-      this.lanesMemo = lanesOf(this.plan, g, this.ways(), ground, this.laneOptsNow, blocked, roots, (id) => this.pitEntry(id));
+      this.lanesMemo = { of: ways, lanes: lanesOf(this.plan, this.grid, ways, ground) };
     }
-    return this.lanesMemo;
+    return this.lanesMemo.lanes;
   }
 
   /**
-   * (milestone 3) Where a built structure's door opens (window world): the middle of the free cell its door gives on
-   * (ways.ts), else its first cell's middle. Null: none of its blocks stands.
+   * (milestone 3; round 128o) Where a built structure is entered (window world): the middle of the cell its entrance
+   * opens from (build/entrances.ts). Null: none of its blocks stands, or it has no entrance (cut off: the ways say so).
    */
   doorOf(id: number): [number, number] | null {
     const s = this.plan.structure(id);
     if (!s || ![...s.cells.keys()].some((c) => this.town.built.any(c))) return null;
-    const d = this.ways().doors.find((x) => x.structure === id);
-    return this.centre(d ? d.out : [...s.cells.keys()][0]);
+    const d = this.ways().entrances.find((x) => x.structure === id);
+    return d ? this.centre(d.out) : null;
   }
 
   /**
@@ -328,7 +300,17 @@ export class Fortress {
   ways(): Ways {
     if (!this.waysMemo) {
       const courts = shapesOf(this.plan, this.grid, (c) => this.town.base[c]).courtyards.flatMap((ct) => ct.cells);
-      this.waysMemo = waysOf(this.plan, this.grid, courts);
+      // (round 128i, 128o: no road under water — a cell with water over LANE_WATER at its middle or a corner: the box's
+      // wet columns, the reach's answer, fortreach.wgsl reachWet; none yet: dry)
+      const g = this.grid;
+      const wb = this.wetBits;
+      const wet = (x: number, y: number) => {
+        if (!wb) return false;
+        const b = this.boxColOf(x, y);
+        return b >= 0 && ((wb[b >> 5] >>> (b & 31)) & 1) === 1;
+      };
+      const blocked = (c: number) => !!wb && [g.centre(c), ...[0, 1, 2, 3].map((k) => g.corner(c, k))].some(([x, y]) => wet(x, y));
+      this.waysMemo = waysOf(this.plan, g, courts, undefined, blocked);
     }
     return this.waysMemo;
   }
@@ -709,7 +691,7 @@ export class Fortress {
     if (reply.wet) {
       const was = this.wetBits;
       this.wetBits = reply.wet;
-      if (!was || was.some((v, i) => v !== reply.wet![i])) this.lanesMemo = null;
+      if (!was || was.some((v, i) => v !== reply.wet![i])) this.waysMemo = null;
     }
     if (trial && trial === this.trial) this.judgeTrial();
     else if (!this.trial) {
@@ -941,9 +923,10 @@ export class Fortress {
     for (let e = 0; e < 4; e++) {
       const n = g.nbr[cell * 4 + e];
       if (n < 0 || n === also) continue;
-      // (a yard beside it — a farm, the quarry — is open ground a builder stands on)
+      // (a yard beside it — a farm, the quarry — is open ground a builder stands on; round 128o: and a block's passage,
+      // under its arch — build/entrances.ts openCell, the rule a structure is entered by)
       const t = this.plan.typeAt(n);
-      if ((this.plan.has(n, 0) || this.town.has(n, 0)) && !(t && DEFS[t].form === 'yard')) continue;
+      if ((this.plan.has(n, 0) || this.town.has(n, 0)) && !(t && DEFS[t].form === 'yard') && !openCell(this.plan, n)) continue;
       const [ax, ay] = g.corner(cell, e);
       const [bx, by] = g.corner(cell, e + 1);
       const mx = (ax + bx) / 2;

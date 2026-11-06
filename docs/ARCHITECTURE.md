@@ -3560,6 +3560,7 @@ The building rule (the user's): select what (a structure type), then plan it wit
   cheapest to its nearest goal (or, nearer that goal as the crow flies, makes straight for it); on, node to node by the
   table; at the goal's node, straight to the goal, where it stands; no way made for 90 ticks, off for 120. Nothing read
   back. FortressLife rides the stores, the houses and the farms (`riding`), seeds their own fields only when they don't.
+- **(Superseded in round 128o: roads come from the ways' cells, not the borders — "Towns: one plan", Routes.)**
 - **Round 128k (roads on the cell borders; the columns read before a slide).** `fortress/lanes.ts lanesOf(plan,
   grid, ways, ground, opts, blocked, roots)` → `Lanes` {segs: 'road' (by a building, paving) | 'track' (in the open,
   earth) | 'plaza' (across a thoroughfare tile) | 'ramp', tiles, joined, unjoined}: a graph of the town grid's vertices
@@ -3799,6 +3800,20 @@ it, so claims, reach, jobs, lanes, damage and repair are the same for all.
 - **Jobs** (fortress/economy.ts `jobSlots`, JOB_ORDER): the builders first while there's building, then the farms,
   the quarry, the lumber camps, the smiths, the recruits. A town's generated farmland is farm structures, so it gives
   farm jobs like the player's farms.
+- **Entrances and routes (round 128o, DA-A7's core).** build/entrances.ts `entrancesOf(plan, grid, courtyards,
+  blocked)` is the one rule every structure is entered by: a block's or the keep's door (a ground-floor side opening on
+  free ground, else on another block's passage or a field), a wall's gates, a yard's edge, a quarry's pit top. Fields
+  (`StructureDef.crossed`: farms, orchards, pastures) are open ground: walked across, crossed by roads at
+  `CROSS_COST` (3) a metre. fortress/ways.ts joins every entrance with its road tree (over free cells, gates, passages
+  and fields; not over `blocked` wet cells — the reach's wet bits) and counts a structure with no entrance cut off.
+  fortress/lanes.ts `lanesOf(plan, grid, ways, ground)`: a lane from each way cell's middle to the middle of the side it
+  shares with the next way cell — inside the free cells, into a claimed cell only through a gate or a passage; the ride
+  graph (`laneGraph`) from the same pieces. `Fortress.doorOf` is an entrance's way-out cell's middle (no fallback: null
+  when it has none); `Fortress.standsOf` (the reach's and the builders' one stand rule) counts a passage as open.
+  Generation: `keepReach` also cuts a passage to every structure with no entrance, and `assertEntered` throws if one
+  is left (placeDraft and a settlement's growth). Tests: test/unit/townroutes.test.ts on the start town.
+- **The window's keep** is the site box itself, with no margin past it: the box already holds BOX_PAD (57 m) round the
+  built radius, and the reach, the claims and the plan stop at the box.
 - **Open** (BACKLOG): the generator still drafts buildings in its own model before placing them (3 m storeys mapped to
   levels: `levelsFor`); keepReach (structures/place.ts) is generation's own reach repair beside the fortress's GPU reach
   (DA-A3 makes them one); two people sims (DA-A6); saves of the plan's edits only and grid-named claims (DA-A5).

@@ -71,7 +71,7 @@ Interface contracts between tracks (world state, structures, settlement, flora, 
 - `facts-store.ts` (320) — ---- api/contracts/facts-store.ts … API: `MemoryFacts`, `migrateFacts`.
 - `facts.ts` (309) — ---- api/contracts/facts.ts … API: `EntityKind`, `ENTITY_KINDS`, `EntityId`, `FactLocation` +25.
 - `flora.ts` (148) — The flora contract (round 117, track `flora`; API: `FloraSpeciesId`, `FloraForm`, `FloraHost`, `FloraBarrier` +10.
-- `fortress.ts` (203) — Fortress mode's contract (round 128c, docs/design/FORTRESS_MODE.md, FORTRESS_SLICE1.md). API: `StructureType`, `STRUCTURE_TYPES`, `PAINTABLE_TYPES`, `Good` +12.
+- `fortress.ts` (206) — Fortress mode's contract (round 128c, docs/design/FORTRESS_MODE.md, FORTRESS_SLICE1.md). API: `StructureType`, `STRUCTURE_TYPES`, `PAINTABLE_TYPES`, `Good` +12.
 - `hero.ts` (142) — Heroes — who the player is in a run (round 88, docs/SYSTEMS.md system 8; API: `HeroIntent`, `HeroAbility`, `HeroCamera`, `ChaseFraming` +4.
 - `index.ts` (26) — The engine's contracts between systems (round 83, docs/SYSTEMS.md): types every session codes against.
 - `inhabitants.ts` (225) — Inhabitants — creatures and people with bodies, procedural animation and wilderness behaviour (round 117, … API: `BodyPlan`, `BODY_PLANS`, `Proportions`, `Palette` +14.
@@ -143,6 +143,7 @@ The atlas: the whole generated world map (coarse sim, GPU finish, far land, geys
 ## src/build/
 
 - `claims.ts` (119) — A town's built blocks in the world's columns (round 128m, onetown; API: `TownClaimsIO`, `TownClaims`.
+- `entrances.ts` (140) — How each structure of a town is entered (round 128o, DA-A7's core; API: `EntranceGrid`, `EntranceKind`, `Entrance`, `openCell` +2.
 - `pit.ts` (209) — A quarry's pit as tiers and ramps down its footprint (round 128m, `quarry`, BACKLOG V128-11): the player … API: `PIT_SHELF`, `PIT_RAMP`, `PitTopo`, `PitGeo` +9.
 - `plan.ts` (479) — A town's plan (round 128m, onetown; API: `typeIndex`, `wallTileOf`, `towered`, `StructureAttrs` +3.
 - `quadgrid.ts` (200) — (round 128m, onetown) A town's cells from any quad mesh: the grid one plan is painted on (build/plan.ts). API: `CellGrid`, `QuadGrid`.
@@ -196,11 +197,11 @@ Fortress mode: the fortress, its economy, pieces, claims, life (workers) and its
 - `defs.ts` (84) — The eight first buildings (round 128c, the user's list) and their numbers: a block's cost and what it gives. API: `START_STORES`, `ECON`, `DEFS`, `POWER_RISE`.
 - `economy.ts` (237) — The fortress's economy (fortress slice 1, milestone 3: "the economy feeds the building"). API: `JOB_ORDER`, `JobKind`, `JobSlot`, `STORED` +18.
 - `follow.ts` (189) — Follow a person (round 128l, m4; API: `Doing`, `PersonFacts`, `nameOf`, `thoughtOf` +3.
-- `fortress.ts` (1252) — The fortress (fortress slice 1, milestone 1): the player editing a town's plan. API: `Erased`, `FortressStatus`, `FortressIO`, `Tool` +2.
+- `fortress.ts` (1235) — The fortress (fortress slice 1, milestone 1): the player editing a town's plan. API: `Erased`, `FortressStatus`, `FortressIO`, `Tool` +2.
 - `host.ts` (56) — (round 128l, tooling) What the fortress's start (scenes/level.ts startFortress) needs of the world it's … API: `FortressTownRec`, `FortressTownSource`, `FortressWindow`, `TownViewHost`.
 - `inspect.ts` (156) — Inspect (round 128d; the user: "Maybe an inspect to highlight a continuous section of structure and see … API: `InspectFacts`, `InspectLive`, `inspectFacts`, `inspectCard`.
-- `lanes.ts` (510) — The fortress's roads (round 128k; API: `LaneGrid`, `LaneKind`, `LaneSeg`, `LaneOpts` +13.
-- `life.ts` (1558) — The fortress's people (fortress slice 1; API: `LOAD`, `R4`, `startSpots`, `FortressLifeIO` +1.
+- `lanes.ts` (136) — A town's roads (round 128k; API: `LaneKind`, `LaneSeg`, `LANE_WIDTH`, `LANE_DRAWN` +9.
+- `life.ts` (1543) — The fortress's people (fortress slice 1; API: `LOAD`, `R4`, `startSpots`, `FortressLifeIO` +1.
 - `pick.ts` (59) — Which block face a tap lands on (round 128d, the user: "Fix the clicking on the side to build next to it. API: `PickCells`, `FaceHit`, `pickFace`, `placeFor`.
 - `quarry.ts` (305) — The miners grow a quarry's pit down, tier by tier (round 128m, `quarry`, BACKLOG V128-11; API: `QuarryIO`, `QuarryDig`.
 - `raid.ts` (289) — The attack wave's rules (round 128l, m4: fortress M5-lite, docs/DECISIONS.md round 128l "the attack wave"). API: `RAID`, `LOOT_ORDER`, `waveSize`, `Side` +13.
@@ -212,7 +213,7 @@ Fortress mode: the fortress, its economy, pieces, claims, life (workers) and its
 - `solid.ts` (257) — What of the fortress is solid to the world (round 128d; API: `WALL_HALF`, `WALL_LINTEL`, `SolidInputs`, `RAMPS_ID` +4.
 - `testing.ts` (12) — (round 128m, onetown) Tests' fortress: the player editing a town with nothing on it yet (build/site.ts … API: `fortressOn`.
 - `ui.ts` (377) — The fortress's bar. Planning (time stopped): select what — one of the nine types — then tap to plan it; API: `FortressBarHooks`, `SPEEDS`, `FortressBar`.
-- `ways.ts` (517) — The fortress's ways (round 128d; API: `WaysGrid`, `WAY_NONE`, `WAY_ROAD`, `WAY_SQUARE` +13.
+- `ways.ts` (513) — The fortress's ways (round 128d; API: `WaysGrid`, `WAY_NONE`, `WAY_ROAD`, `WAY_SQUARE` +15.
 - `words.ts` (268) — What the fortress's planning panel says (docs/WRITING.md: plain words, one idea a sentence, numbers of … API: `goodsText`, `givesLines`, `typeCard`, `typeLines` +26.
 - `work.ts` (99) — What the fortress's builders owe and have brought (fortress slice 1, milestone 2). API: `Load`, `BuildBook`.
 
@@ -617,7 +618,7 @@ Settlements: towns and cities on the atlas, their plans, the view that draws the
 - `purpose.ts` (122) — What a settlement is for (round 120, `cities`; API: `PURPOSES`, `PurposeFacts`, `purposeScores`, `purposeOf`.
 - `raster.ts` (134) — A settlement's plan as the land past the window draws it (round 94; API: `rasterPlan`, `stampMatch`.
 - `records.ts` (98) — The settlements' records from the world wiki (round 88): one per atlas site, with the wiki's stable id … API: `OUTLAWS`, `SettlementSeed`, `recordsFrom`.
-- `settlements.ts` (878) — The settlements system (round 88; API: `DAY_S`, `SettlementEvents`, `LiveIO`, `FarIO` +1.
+- `settlements.ts` (881) — The settlements system (round 88; API: `DAY_S`, `SettlementEvents`, `LiveIO`, `FarIO` +1.
 - `ships.ts` (306) — Ships between the ports (round 120, `cities`; API: `SeaChart`, `ShipRoute`, `SEA_DEPTH`, `shipRoutes` +3.
 - `shipsview.ts` (56) — The sailing ships as the player sees them (round 120, `cities`; API: `ShipsIO`, `ShipsView`.
 - `story.ts` (98) — A settlement's story (round 120, `cities`; API: `StoryFacts`, `storyOf`.
@@ -780,7 +781,7 @@ Stories: dialog play, hero runs, the atlas run.
 - `modules.ts` (861) — The module library: every drawn piece of a building, made in code in a unit frame (u, v, w) and warped … API: `enum`, `PARTS`, `Module`, `Kit` +8.
 - `nav.ts` (285) — Baked navigation (the user, round 117: "bake paths into the tiles we generate so agents can interact with … API: `bakeNav`, `navPath`.
 - `pieces.ts` (472) — Plan → pieces: every module the city shows, each warped into its frame (contracts/structures.ts … API: `PIECE_FLOATS`, `REL`, `DRAPE`, `WIND` +10.
-- `place.ts` (495) — The generator's second half (round 128m, onetown): the draft placed into the town's one plan through the … API: `LOOK_HEDGE`, `WALL_LEVELS`, `levelsFor`, `typeOfBuilding` +11.
+- `place.ts` (543) — The generator's second half (round 128m, onetown): the draft placed into the town's one plan through the … API: `LOOK_HEDGE`, `WALL_LEVELS`, `levelsFor`, `typeOfBuilding` +12.
 - `plan.ts` (519) — The town generator: a CitySpec and the ground → what the town is and where (a draft: tiles, buildings, … API: `STOREY_H`, `WALL_H`, `HOUSE_D`, `defaultDensity` +4.
 - `purpose.ts` (623) — A city's purpose in its plan (round 120, `cities`; API: `PurposeCtx`, `Works`, `SHIP_DRAFT`, `PIER_DECK` +6.
 - `rng.ts` (62) — Deterministic randomness for the generators: same seed, same city, on every machine (no Math.random). API: `rng`, `hash32`, `hashf`, `vnoise` +1.
