@@ -6,6 +6,7 @@ each was implemented.
 ## 2026-11-06 — round 128p (session 5) — roads and reach rewritten from the design
 
 - On reach and roads: "Yes I think you are fighting the current implementation and ignoring the design. If the current implementation is bad redo it don't fight it. Git history preserves it if we need to go back." → roads and reach are rewritten from DESIGN §12/§13 as one route network (tiles declare paths, reach builds road pieces, cached routes), deleting the lanes/ways/keepReach/fix-field layering instead of patching it. A design note comes first.
+- Then: "Yeah and you can change generation if you need to. Feel free to think laterally too. We may add roads as a separate shape that can claim tiles and make tiles merge seamlessly to it when we ass plazas and inter city roads. Do what makes sense. Just note why and use the design as guidance. And make sure you know why we are doing what we are."
 - Earlier the same day: "Perf looks good."
 
 ## 2026-11-05 — round 128o (session 5) — the work plan approved: make the code match the design
