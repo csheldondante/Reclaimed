@@ -20,8 +20,8 @@
 // sandbox's bedrock brush); pulled down, what's over it sinks with it.
 // A column without that material grows a new run of it under its loose
 // ground (if it has a free slot).
-@group(0) @binding(3) var<storage, read> layersIn: array<vec4<u32>>;
-@group(0) @binding(4) var<storage, read_write> layersOut: array<vec4<u32>>;
+// (DA-B14) in place: each thread reads and rewrites only its own column
+@group(0) @binding(4) var<storage, read_write> layersE: array<vec4<u32>>;
 // per stroke slot and column (slot * columns + i): the height this stroke has given it
 @group(0) @binding(5) var<storage, read_write> pullGiven: array<f32>;
 // ground shaken (sediment.wgsl reposeAt): the tick, how hard. Where a pull
@@ -69,7 +69,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   var arr: array<vec4<u32>, MAX_K>;
   var n = 0u;
   for (var k = 0u; k < cs.y; k++) {
-    let v = layersIn[cs.x + k];
+    let v = layersE[cs.x + k];
     if (ivEmpty(v)) { break; }
     arr[k] = v;
     n = k + 1u;
@@ -150,5 +150,5 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       arr[n] = IV_NONE;
     }
   }
-  for (var k = 0u; k < cs.y; k++) { layersOut[cs.x + k] = select(IV_NONE, arr[k], k < n); }
+  for (var k = 0u; k < cs.y; k++) { layersE[cs.x + k] = select(IV_NONE, arr[k], k < n); }
 }

@@ -1109,11 +1109,12 @@ its edge:
   and a streamed column's loose intervals over air are dropped onto their
   support (streamer.ts `settleLoose`). `sleepmore=1`: surface and render
   fields skip sleeping chunks too, every chunk drowsy for 0.25 s after any
-  slide. `inplace=1`: structure and layer pulls rewrite the layers in
-  place (no layersNext copied back). (DA-B8) The edit brush is in place on
-  every tier, writing the layers and layersNext alike, and runs on a tick
-  with an edit and while brush state is in flight (edit-ops.ts
-  `EditBusy`).
+  slide. (DA-B8, DA-B14; was `inplace=1`, the phone's) The column passes —
+  the edit brush, the structures, the layer pulls — rewrite the layers in
+  place on every tier, each thread its own column; what they read of other
+  columns a pass before them reads first (the brush's `blowSum`, the
+  structures' `lateralSupport`). The brush runs on a tick with an edit and
+  while brush state is in flight (edit-ops.ts `EditBusy`).
 - **Not dispatched over what sleeps** (round 85, sim/cull.ts; on by default,
   `?simcull=0` off). Simulation.step makes, from the same Globals.sleep and
   drowse masks, a list of the chunks live this tick (WorldGpu.tiles,
@@ -3352,11 +3353,10 @@ no copy of them unless a CPU consumer walks one, and every change it makes to th
 
 ## Who writes the columns (round 128, `merge128`: jb6 on places, INT16)
 
-The columns are WorldGpu.layers, and the column passes (structure, the layer pulls; sim/systems.ts `columnPass`)
-write WorldGpu.layersNext for the chunks that run and copy it back over the layers whole (without `?inplace=1`). (DA-B8:
-the edit brush writes in place on every tier, the layers and the layersNext alike, and copies nothing back.) So a
-change made to the layers alone is undone by the next copy-back wherever its chunk didn't run — asleep, or outside the
-hybrid's `only` filter (Sleep.wake refuses those). **Every writer of the columns writes the layers and the layersNext
+The columns are WorldGpu.layers. (DA-B14) The column passes (the edit brush, the structures, the layer pulls) write
+them in place on every tier and copy nothing back; until DA-B14 they wrote WorldGpu.layersNext for the chunks that ran
+and copied it back over the layers whole, so a change made to the layers alone was undone wherever its chunk didn't run
+— which is why the writers below write layersNext too. Nothing reads layersNext any more. **Every writer of the columns writes the layers and the layersNext
 alike**, and every change the CPU asks for is the GPU's to make (jb6's rule), through one instance of game/colapply.ts
 `ColumnApply` on the WorldCore (`core.columnApply`; `core.columnsGpu()` gives it both buffers, GpuColumns.next —
 ColumnApply throws without it):

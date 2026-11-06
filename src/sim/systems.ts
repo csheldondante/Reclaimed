@@ -85,16 +85,12 @@ const WIND_BANDS = (() => {
 })();
 
 /**
- * (perfopt, ?inplace=1) The passes that rewrite whole columns — the structures, the layer pulls — write the layers
- * in place instead of into layersNext copied back whole (16 MB a tick each in the atlas's window: on a phone the
- * bandwidth of the copies alone was a share of the frame). Each thread rewrites only its own column (the structures
- * read their neighbours' support: one tick's Gauss-Seidel instead of Jacobi). (DA-B8: the editor's brush is in place
- * on every tier, and runs only while an edit is in flight.)
+ * (DA-B14) The passes that rewrite whole columns — the editor's brush, the structures, the layer pulls — write the
+ * layers in place on every tier: each thread rewrites only its own column, and what one reads of other columns is read
+ * by a pass before it (the brush's blowSum, the structures' lateralSupport). Nothing is copied back. (Round 83's
+ * `?inplace=1` made this a phone flag, with the structures racing their neighbours' writes; the default copied 16-26 MB
+ * of layersNext back a tick per pass.)
  */
-export const INPLACE = typeof location !== 'undefined' && urlFlags().get('inplace') === '1';
-/** a column pass's code and its two layer bindings, in place or not */
-const columnPass = (code: string, world: WorldGpu) =>
-  INPLACE ? { code: code.replaceAll('layersIn[', 'layersOut['), in: world.layersNext, out: world.layers } : { code, in: world.layers, out: world.layersNext };
 
 const BASE: BindSpec = { 0: 'uniform', 1: 'read', 2: 'uniform' };
 const WITH_ALL = [commonWgsl, layersWgsl, materialsWgsl];
@@ -122,6 +118,8 @@ function kernel(
   /** (round 85, simcull — sim/cull.ts) a pass that skips sleeping chunks: dispatched over the live ones only,
    *  the list for this flow's sleeping rate (LIVE: none) */
   cull?: number,
+  /** the entry point */
+  entry = 'main',
 ) {
   let parts = useLayers ? [...WITH_ALL, src] : [commonWgsl, materialsWgsl, src];
   const base: BindSpec = useLayers ? BASE : { 0: 'uniform', 2: 'uniform' };
@@ -129,12 +127,12 @@ function kernel(
   const bound: Record<number, GPUBuffer | GPUTextureView> = { 0: world.globals, 2: world.materials, ...buffers };
   const culled = cull !== undefined && world.tiles !== null;
   if (culled) {
-    const c = cullKernel(world.tiles!, parts.join('\n'), all, 'main', cull);
+    const c = cullKernel(world.tiles!, parts.join('\n'), all, entry, cull);
     parts = [c.code];
     all = c.spec;
     bound[TILES] = c.buf;
   }
-  const k = makeCompute(device, label, parts, all);
+  const k = makeCompute(device, label, parts, all, entry);
   if (useLayers) bound[1] = world.chunks;
   const group = makeBindGroup(device, label, k.layout, bound);
   return { k, group, cull: culled ? cull : undefined, bound };
@@ -187,21 +185,27 @@ export class StructureSystem implements SimSystem {
   readonly name = 'structure';
   readonly period = 1;
   private s;
+  /** (DA-B14) the neighbours' support as the tick began, before the pass rewrites the columns in place */
+  private lat;
   constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
+    // (two words a column: a nibble for each of its up to 16 intervals — the column's own, written by its own thread)
+    const latSup = world.buf('structLatSup', world.w * world.h * 8, GPUBufferUsage.STORAGE);
+    const code = structureWgsl + flowWgsl;
+    this.lat = kernel(device, world, 'structure-lateral', code, { 3: 'rw', 4: 'rw' }, { 3: latSup, 4: world.layers }, true, LIVE, 'lateralSupport');
     this.s = kernel(
       device,
       world,
       'structure',
-      columnPass(structureWgsl, world).code + flowWgsl,
-      { 3: 'read', 4: 'rw', 5: 'rw', 6: 'read', 7: 'read', 8: 'read', 9: 'read' },
-      { 3: columnPass('', world).in, 4: columnPass('', world).out, 5: world.stats, 6: world.surface, 7: world.water, 8: world.flux, 9: world.fire },
+      code,
+      { 3: 'rw', 4: 'rw', 5: 'rw', 6: 'read', 7: 'read', 8: 'read', 9: 'read' },
+      { 3: latSup, 4: world.layers, 5: world.stats, 6: world.surface, 7: world.water, 8: world.flux, 9: world.fire },
       true,
       LIVE,
     );
   }
   encode(enc: GPUCommandEncoder): void {
+    run(enc, this.prof, 'structure-lateral', this.lat, this.world);
     run(enc, this.prof, this.name, this.s, this.world);
-    if (!INPLACE) enc.copyBufferToBuffer(this.world.layersNext, 0, this.world.layers, 0, this.world.layers.size);
   }
 }
 
@@ -870,9 +874,9 @@ export class LayerPullSystem implements SimSystem {
       device,
       world,
       'layerpull',
-      columnPass(layerPullWgsl, world).code,
-      { 3: 'read', 4: 'rw', 5: 'rw', 6: 'uniform', 7: 'stex' },
-      { 3: columnPass('', world).in, 4: columnPass('', world).out, 5: this.given, 6: this.params, 7: world.shakeView },
+      layerPullWgsl,
+      { 4: 'rw', 5: 'rw', 6: 'uniform', 7: 'stex' },
+      { 4: world.layers, 5: this.given, 6: this.params, 7: world.shakeView },
       true,
     );
   }
@@ -893,7 +897,6 @@ export class LayerPullSystem implements SimSystem {
     // (written before this tick's submit: one batch a tick)
     this.device.queue.writeBuffer(this.params, 0, buf);
     dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
-    if (!INPLACE) enc.copyBufferToBuffer(this.world.layersNext, 0, this.world.layers, 0, this.world.layers.size);
   }
 }
 

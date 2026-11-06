@@ -17,7 +17,7 @@
  *  them; the atlas level only) — the user: "Hybrid is awesome and definitely should be merged!" */
 export const LITE_SET: Readonly<Record<string, string>> = { tufts: '0', shadowcache: '4', prepevery: '2', bandh: '2', shadowsize: '512', hybrid: '1' };
 /** the simulation's half (the low tier) */
-export const SIM_SET: Readonly<Record<string, string>> = { settle: '0', inplace: '1', sleepmore: '1' };
+export const SIM_SET: Readonly<Record<string, string>> = { settle: '0', sleepmore: '1' };
 
 /** Is this URL's tier the phone's? (low: no `q` or `q=low`, and not ?phone=0) */
 export function isPhoneTier(q: URLSearchParams): boolean {

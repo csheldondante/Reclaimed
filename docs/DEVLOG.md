@@ -18302,3 +18302,31 @@ real phone on GitHub Pages too. It was.
   (the flora and structures viewers) reads its params once, as before. Workers see no query (as before). The rule is
   "read through flags.ts", not "no reads at load": a module may still compute a constant from `urlFlags()` as it loads,
   which is safe because flags.ts is its dependency.
+
+## 2026-11-05 — the structure pass in place on every tier, its neighbours read first (DA-B14)
+
+Why: the structure pass wrote layersNext and copied the whole layers buffer back every tick (26 MB at 320², 16 MB in
+the atlas's window) on every tier but the phone's; with `inplace=1` (the phone's, really applied only since DA-B17) it
+wrote in place while reading its neighbours' support in the same dispatch — a race: what a column read of a neighbour
+depended on whether that neighbour's thread had written yet. The layer pulls copied back the same way (sandbox only).
+
+- `lateralSupport` (structure.wgsl), a pass before it over the same awake chunks: for each floating structural
+  interval of a column (not resting on the one below) the best support its neighbours offer as the tick began, a
+  nibble an interval in the column's own two words (`structLatSup`, 8 B a column: 0.8 MB at 320²). Then `main`
+  rewrites each column in place reading only its own column and its nibbles. Neighbours are read as they were before
+  anything changed — the old copy-back path's Jacobi step, exactly — and nothing reads a column another thread writes.
+  The layer pulls read only their own column: in place as they are. `INPLACE`, `columnPass` and the phone set's
+  `inplace=1` are gone (flags.ts `SIM_SET`).
+- Same results: in the `town` lab (q=low; the structure pass alone, collapse on, a lightning strike every 20 ticks over
+  six points by the town, 240 ticks: 115 intervals collapsed), the layers hash the same at ticks 30, 120 and 239 as the
+  old copy-back path (`inplace=0`). The old racy path (`inplace=1`) also matched here: the race didn't show in this
+  scenario, which is no proof it can't.
+- Cost (desktop proxy, the whole window woken, the structure pass alone, a tick a frame, nothing drawn; ms a tick):
+  old copy-back q=low 7.3-8.0, q=high 10-21 (2 520 whole-layers copies in the run); old racy in place 5.1-5.7; new
+  5.5-6.1 (q=low) and 5.7-5.9 (q=high), no copies. The pre-pass costs about what the race saved; the copy-back is gone.
+- Transfers gate: the `StructureSystem.encode` and `LayerPullSystem.encode` copies removed. scripts/flagcheck.mjs: no
+  whole-layers copy on any tier now. hallcheck: 0 of 344 lost. The lab's town fixture recaptured (the generator hash
+  takes in sim/systems.ts): its 102 400 columns identical.
+- layersNext is now written (by every column writer, "alike") and read by nothing: removed in the next commit.
+- Hacks and limits: the nibble holds support 0-15 (what the aux byte holds) for up to 16 intervals a column (MAX_K);
+  `structLatSup` is indexed by column, written only for awake columns and read only for them in the same tick.
