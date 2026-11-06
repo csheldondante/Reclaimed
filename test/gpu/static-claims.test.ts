@@ -83,9 +83,7 @@ async function rig(seed: number, unwritten: [number, number][]): Promise<Rig> {
   const w = stampWorld(seed);
   const g = gpuCols(dev, w);
   dev.queue.writeBuffer(g.slots, 0, w.packed.slots);
-  const next = dev.createBuffer({ label: 'test slots next', size: w.packed.slots.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
-  dev.queue.writeBuffer(next, 0, w.packed.slots);
-  const cols: GpuColumns = { slots: g.slots, next, chunks: g.chunks, packed: w.packed };
+  const cols: GpuColumns = { slots: g.slots, chunks: g.chunks, packed: w.packed };
   const ap = new ColumnApply(dev);
   // (the registry's columns: the GPU's release, as Integrity gives it; nothing read)
   const ext = new ExternalRegistry({
@@ -116,8 +114,6 @@ async function rig(seed: number, unwritten: [number, number][]): Promise<Rig> {
 async function gpuSlots(r: Rig): Promise<Uint32Array> {
   const gpu = await testGpu();
   const slots = new Uint32Array(await gpu.read(r.cols.slots, r.w.packed.slots.byteLength));
-  const twin = new Uint32Array(await gpu.read(r.cols.next!, r.w.packed.slots.byteLength));
-  expect(twin, 'the layersNext written alike').toEqual(slots);
   expect(gpu.takeErrors()).toEqual([]);
   return slots;
 }

@@ -19,12 +19,9 @@
 // Liquids/fields add or remove amounts per tick while held. Loose material
 // goes through `deposit` (folded into the layers by sediment.wgsl). Runs first each tick in the sandbox, so every system sees
 // the edit.
-// (DA-B8) In place, on every tier: each thread rewrites only its own column, in the layers and in their mirror
-// (layersNext: "every writer of the columns writes the layers and the layersNext alike", docs/ARCHITECTURE.md — the
-// column passes that still copy layersNext back whole would otherwise undo it). What a blow reads of other columns
-// (the struck column's top, the footprint's tops for the rim) blowSum reads first, before anything is written.
+// (DA-B8) In place, on every tier: each thread rewrites only its own column. What a blow reads of other columns (the
+// struck column's top, the footprint's tops for the rim) blowSum reads first, before anything is written.
 @group(0) @binding(4) var<storage, read_write> layersE: array<vec4<u32>>;
-@group(0) @binding(3) var<storage, read_write> layersMirror: array<vec4<u32>>;
 // (DA-B8) what each blow event found as the tick began (blowSum, one texel an event: blowOut writes, the pass reads
 // blowIn): x what its footprint gives the rim (the sum of the cuts), y the struck column's top material, z its top,
 // w 0 if the struck column is out of the map or empty, else 1 + how many columns the rim shares x among
@@ -417,11 +414,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   if (pending <= 0.0 && owed < 1.0 && op != OP_POUR && op != OP_BEDROCK) { timer = 0.0; }
   textureStore(editOut, texCol(vec2<i32>(p)), vec4<f32>(given, owed, pending, f32(opmat) * 4.0 + min(timer, 3.9)));
-  for (var k = 0u; k < cs.y; k++) {
-    let v = select(IV_NONE, arr[k], k < n);
-    layersE[cs.x + k] = v;
-    layersMirror[cs.x + k] = v;
-  }
+  for (var k = 0u; k < cs.y; k++) { layersE[cs.x + k] = select(IV_NONE, arr[k], k < n); }
 }
 
 /** a blow event's reach (the footprint's radius) */

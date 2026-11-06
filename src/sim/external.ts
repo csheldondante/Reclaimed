@@ -133,7 +133,7 @@ export interface ColumnAccess {
   release?(spans: (ExternalCol & { fallback: number; toAir: boolean })[]): void;
   /**
    * (round 128, INT16) Make these spans External in the columns themselves (claimColumn's rule; the GPU's, colapply.wgsl
-   * `claim`, into the layers and layersNext alike). Absent: the registry writes each column (a CPU world).
+   * `claim`). Absent: the registry writes each column (a CPU world).
    */
   claim?(spans: (ExternalCol & { aux: number })[]): void;
   /**

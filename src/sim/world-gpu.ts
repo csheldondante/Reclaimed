@@ -96,7 +96,6 @@ export class WorldGpu {
 
   // canonical layered world (material physics owns writes)
   readonly layers: GPUBuffer;
-  readonly layersNext: GPUBuffer;
   /** per column: top z | top mat << 8 | slot count << 16 (surface system) */
   readonly surface: GPUBuffer;
 
@@ -371,9 +370,7 @@ export class WorldGpu {
     device.queue.writeBuffer(this.chunks, 0, packed.chunkTable);
 
     this.layers = this.buf('layers', packed.slots.byteLength, S);
-    this.layersNext = this.buf('layersNext', packed.slots.byteLength, S);
-    // (round 128, INT16: the layersNext alike — a chunk asleep before its first pass would get it copied back)
-    for (const b of [this.layers, this.layersNext]) device.queue.writeBuffer(b, 0, packed.slots);
+    device.queue.writeBuffer(this.layers, 0, packed.slots);
     this.surface = this.buf('surface', N * 4, S);
 
     this.water = this.buf('water', N * 4, S);

@@ -145,7 +145,7 @@ export async function slideZNow(S: Streamer, dz: number): Promise<void> {
         lava.fill(0, i * 4, i * 4 + 4);
       } else if (lava[i * 4] > 0) lava[i * 4 + 3] -= dz;
     }
-  for (const b of [wg.layers, wg.layersNext]) dev.queue.writeBuffer(b, 0, out);
+  dev.queue.writeBuffer(wg.layers, 0, out);
   // (ringwin: read in window order, written back in the ring's)
   const waterR = core.ring.toStore(water);
   const lavaR = core.ring.toStore(lava, 4);

@@ -17,7 +17,7 @@
 // (DA-B14) In place, on every tier, in two passes: `lateralSupport` first reads, for every floating interval, the best
 // support its neighbours offered as the tick began, into `latSup` (a nibble an interval, its column's own two words);
 // then `main` rewrites each column in place reading only its own column and its nibbles. So a neighbour is read as it
-// was before anything changed (one tick's Jacobi, as when the pass wrote layersNext and copied it back), and nothing
+// was before anything changed (one tick's Jacobi, as when the pass wrote a second buffer and copied it back), and nothing
 // reads a column another thread is rewriting.
 @group(0) @binding(4) var<storage, read_write> layers: array<vec4<u32>>;
 @group(0) @binding(3) var<storage, read_write> latSup: array<vec2<u32>>;

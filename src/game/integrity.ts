@@ -187,7 +187,6 @@ export class Integrity {
         device: core.host.gpu.device,
         packed: core.packed,
         layers: () => core.world.layers,
-        layersNext: () => core.world.layersNext,
         epoch: () => core.windowEpoch,
         readWhole: () => core.readBuffer('layers'),
         // (round 80: a column written under a sleeping chunk wakes it — its surface, its water, its slumping)
@@ -254,7 +253,7 @@ export class Integrity {
           read: (x, y) => this.cols.read(x, y),
           write: (x, y, col) => writeColumn(this, x, y, col),
           release: (spans) => edit(this, [{ cuts: [], release: spans }]),
-          // (round 128, INT16: a claim is the GPU's stamp too — into the layers and layersNext alike)
+          // (round 128, INT16: a claim is the GPU's stamp too)
           claim: (spans) => edit(this, [{ cuts: [], claim: spans }]),
           // (round 128g: a claim where free, nothing read — the settlements' and the fortress's)
           claimFree: (spans) => edit(this, [{ cuts: [], claimFree: spans }]),

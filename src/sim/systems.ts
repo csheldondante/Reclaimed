@@ -89,7 +89,7 @@ const WIND_BANDS = (() => {
  * layers in place on every tier: each thread rewrites only its own column, and what one reads of other columns is read
  * by a pass before it (the brush's blowSum, the structures' lateralSupport). Nothing is copied back. (Round 83's
  * `?inplace=1` made this a phone flag, with the structures racing their neighbours' writes; the default copied 16-26 MB
- * of layersNext back a tick per pass.)
+ * of a second buffer back a tick per pass, since removed.)
  */
 
 const BASE: BindSpec = { 0: 'uniform', 1: 'read', 2: 'uniform' };
@@ -582,12 +582,12 @@ export class EditSystem implements SimSystem {
   /** (DA-B8) what each blow event found as the tick began, before the pass rewrites the columns in place */
   private blow: { k: ComputeKernel; group: GPUBindGroup };
   constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
-    // (DA-B8) in place on every tier — each thread rewrites only its own column, in the layers and their mirror
-    // (layersNext); what a blow reads of other columns blowSum reads first. Nothing is copied back.
+    // (DA-B8) in place on every tier — each thread rewrites only its own column; what a blow reads of other columns
+    // blowSum reads first. Nothing is copied back.
     const sums = device.createTexture({ label: 'editBlowSums', size: [MAX_EVENTS, 1], format: 'rgba32float', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING });
     const views = world.editStateViews;
-    const bound = (k: 0 | 1) => ({ 3: world.layersNext, 4: world.layers, 5: world.water, 6: world.oil, 7: world.contam, 8: world.veg, 9: world.deposit, 16: views[1 - k], 17: world.driftView, 18: views[k], 26: world.editResultView, 29: sums.createView() });
-    this.s = kernel(device, world, 'edit', editWgsl, { 3: 'rw', 4: 'rw', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw', 9: 'rw', 16: 'stex', 17: 'tex', 18: 'tex', 26: 'stex', 29: 'tex' }, bound(0), true, LIVE);
+    const bound = (k: 0 | 1) => ({ 4: world.layers, 5: world.water, 6: world.oil, 7: world.contam, 8: world.veg, 9: world.deposit, 16: views[1 - k], 17: world.driftView, 18: views[k], 26: world.editResultView, 29: sums.createView() });
+    this.s = kernel(device, world, 'edit', editWgsl, { 4: 'rw', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw', 9: 'rw', 16: 'stex', 17: 'tex', 18: 'tex', 26: 'stex', 29: 'tex' }, bound(0), true, LIVE);
     this.groups = [this.s.group, regroup(device, 'edit', this.s, bound(1))];
     const bk = makeCompute(device, 'edit-blow', [...WITH_ALL, editWgsl], { ...BASE, 4: 'rw', 27: 'stex' }, 'blowSum');
     this.blow = { k: bk, group: makeBindGroup(device, 'edit-blow', bk.layout, { 0: world.globals, 1: world.chunks, 2: world.materials, 4: world.layers, 27: sums.createView() }) };

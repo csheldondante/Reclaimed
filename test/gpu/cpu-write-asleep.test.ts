@@ -1,7 +1,7 @@
 // (round 128, INT16; ported from the hallfall branch's diagnosis) A change stamped into the columns stays there in a
-// sleeping chunk. The column passes (structure, edit, the layer pulls) read the layers, write layersNext — the awake
-// chunks' only — and copy layersNext back over the layers whole; a sleeping chunk's layersNext holds what it had when
-// it last ran. A change to the layers alone was undone by the next tick's copy-back: a town's building claimed as
+// sleeping chunk. Until DA-B14 the column passes (structure, edit, the layer pulls) read the layers, wrote layersNext —
+// the awake chunks' only — and copied layersNext back over the layers whole; a sleeping chunk's layersNext held what it
+// had when it last ran. A change to the layers alone was undone by the next tick's copy-back: a town's building claimed as
 // External in a chunk that couldn't wake (the hybrid's filter) lost its claim within a tick, was found cut by the
 // integrity check and fell to rubble. ColumnApply (WorldCore.stampColumns) writes both buffers; this checks it with
 // every system stepping and every chunk asleep. (DA-B14: the passes write in place now and copy nothing back, so a write
@@ -21,7 +21,7 @@ let w: TinyWorld;
 beforeAll(async () => {
   g = await testGpu();
   w = await tinyWorld(g, tinyMap(W, H, 32), 'all');
-  // (awake first: every pass has written layersNext once; then every chunk asleep, none drowsy)
+  // (awake first, every pass run; then every chunk asleep, none drowsy)
   await w.step(30);
   w.core.globals.sleep = new Uint32Array(64).fill(0xffffffff);
   w.core.globals.drowse = new Uint32Array(64);

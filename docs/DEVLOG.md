@@ -18343,3 +18343,20 @@ the set still applies in any bundle order, and nothing is fixed at load that was
 - Also: test/gpu/cpu-write-asleep.test.ts's "(the cause)" test asserted that a write to the layers alone is undone by
   the next copy-back; DA-B14 removed the copy-back, so it now asserts the write stays.
 - GPU suite: 140 passed, 5 skipped (was 2 failed: these two).
+
+## 2026-11-05 — layersNext removed (DA-B12's half, world audit WP-2)
+
+Why: after DA-B14 no pass reads WorldGpu.layersNext — the column passes write the layers in place and nothing copies
+it back — but every column writer still wrote it "alike" (ColumnApply's twin, ColumnCopy, the streamer's pages in and
+slides, restoreChunks, replaceWindow, the edit brush's mirror). Two copies that can disagree, one read by nobody
+(AGENT_RULES §1: state lives in one place).
+
+- Gone: the buffer (the layers' size: 26 MB at 320², 16 MB in the atlas's window, of GPU memory), every second write
+  (a streamed region's pages written once, not uploaded then copied; a restore copied once; ColumnApply's `twin`
+  word is `spare`), `GpuColumns.next`, `CopyHost.layersNext`, ColumnApply's stand-in buffer, the brush's mirror.
+- Same results: the edit scenario (DA-B8) and the structure collapse run (DA-B14) hash as before at every checkpoint;
+  hallcheck 0 of 344 lost; unit 762 passed; GPU suite 140 passed (colapply and static-claims no longer compare a twin).
+  scripts/streamtest.mjs: 7 of 8 — "panning: the window follows on its own" fails the same way on 022cedd (before
+  DA-B7), 735740a and here: not this change; listed for whoever owns the streamer.
+- ARCHITECTURE "Who writes the columns": one buffer now; the table's "both buffers" column gone.
+- Hacks and limits: colapply's params keep the old `twin` word as `spare` rather than repacking the struct.

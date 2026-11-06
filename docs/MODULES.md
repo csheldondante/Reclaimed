@@ -19,7 +19,7 @@ called only by the class file and the folder. From outside, use the class.
 
 Boot: WebGPU, the quality tier, the phone flags, and which scene runs.
 
-- `flags.ts` (62) — The page's URL flags, resolved once (DA-B17): the URL's own, plus the phone's performance set on the low tier. API: `LITE_SET`, `SIM_SET`, `isPhoneTier`, `expandPhoneFlags` +2.
+- `flags.ts` (72) — The page's URL flags, resolved (DA-B17): the URL's own, plus the phone's performance set on the low tier. API: `LITE_SET`, `SIM_SET`, `isPhoneTier`, `expandPhoneFlags` +2.
 - `fresh-start.ts` (39) — (round 128n, phonefix; API: `FRESH_DBS`, `FRESH_KEYS`, `freshStart`.
 - `main.ts` (279) — Boot: WebGPU, shared services, and switching between the menu diorama and the level.
 
@@ -218,13 +218,13 @@ Game rules over the world: powers, Nature, progress, levels, and Integrity (stru
 
 - `blows.ts` (30) — What a blow does to the ground (round 120, the user: "dropping the tanker in a stone does not trigger … API: `groundBlowRadius`, `sinkDepth`, `splitDisplaced`, `softnessOf`.
 - `bodies.ts` (422) — Falling pieces (round 14, BACKLOG F7; API: `Body`, `rotate`, `Bodies`.
-- `colapply.ts` (487) — (round 120, JB6: "no CPU readback on the hot path") Changes to the GPU's columns made in place … API: `looseFrom`, `fitColumn`, `cutColumn`, `spillPlan` +5.
+- `colapply.ts` (469) — (round 120, JB6: "no CPU readback on the hot path") Changes to the GPU's columns made in place … API: `looseFrom`, `fitColumn`, `cutColumn`, `spillPlan` +5.
 - `colbodies.ts` (310) — Falling pieces in the columns' own format (round 86). API: `ColPiece`, `FallingBody`, `Landing`, `subtract` +1.
-- `colcopy.ts` (247) — (round 120, JB6: "no CPU readback on the hot path") The CPU's copy of the GPU's columns (WorldGpu.layers), … API: `CopyMode`, `CopyHost`, `ColumnCopy`.
+- `colcopy.ts` (244) — (round 120, JB6: "no CPU readback on the hot path") The CPU's copy of the GPU's columns (WorldGpu.layers), … API: `CopyMode`, `CopyHost`, `ColumnCopy`.
 - `colquery.ts` (78) — (round 120, JB6: "no CPU readback on the hot path") Small questions asked of the GPU's columns in place … API: `ColumnQuery`.
 - `director.ts` (123) — Camera director (DECISIONS round 9): limits on pan/zoom, smooth camera shots, and a step-by-step script … API: `CameraLimits`, `Director`.
 - `fracture.ts` (1348) — Structural integrity for structures (round 13/14, BACKLOG F7). API: `Voxel`, `Fracture`, `RunPiece`, `WorldVox` +8.
-- `integrity.ts` (769) — Structural integrity and falling pieces (round 14, BACKLOG F7; API: `Integrity`, `GROUND_DUST`, `Grab`.
+- `integrity.ts` (768) — Structural integrity and falling pieces (round 14, BACKLOG F7; API: `Integrity`, `GROUND_DUST`, `Grab`.
 - `judge.ts` (477) — The collapse judges (round 120, the user: "Can we treat this as an experiment and test each approach side … API: `JudgeColumns`, `JudgeInput`, `JudgeStats`, `RockJudge` +5.
 - `levels.ts` (261) — Level registry (BACKLOG C6): every place the player can reclaim, plus the sandbox. API: `LevelModel`, `LevelDef`, `LoadedLand`, `LEVELS` +3.
 - `nature.ts` (107) — Gameplay resource (design doc §7). API: `COSTS`, `HARM`, `Nature`, `reclamation` +1.
@@ -280,7 +280,7 @@ WebGPU plumbing: device, pipelines and bind-group layouts, CPU timing stats.
 - `pages-mode.ts` (98) — Round 107 (`pages`, docs/PAGES.md P2.0-P2.3): how a kernel finds a window chunk's page (common.wgsl colPlace). API: `PageAddr`, `PAGE_ADDR`, `PAGE_TAB_BINDING`, `PAGE_STORAGE_KERNELS` +8.
 - `pipeline.ts` (186) — Explicit bind-group-layout helpers. API: `BindKind`, `BindSpec`, `makeLayout`, `makeBindGroup` +9.
 - `profiler.ts` (178) — Lightweight instrumentation (design doc §9 "benchmark before escalating"). API: `Profiler`.
-- `transfers.ts` (390) — (round 128o, DA-G1) Every GPU data transfer that matters, in one table: each GPU→CPU read, and each … API: `SMALL_BYTES`, `TransferKind`, `TransferRate`, `TransferPlay` +2.
+- `transfers.ts` (388) — (round 128o, DA-G1) Every GPU data transfer that matters, in one table: each GPU→CPU read, and each … API: `SMALL_BYTES`, `TransferKind`, `TransferRate`, `TransferPlay` +2.
 
 ## src/grids/
 
@@ -416,7 +416,7 @@ The physics voxels (one GPU solver), wake, shapes and meshes.
 - `mesh.ts` (303) — Meshes over physics bodies (round 49, F15; API: `SkinMesh`, `SkinLattice`, `latticeFor`, `bindSkin` +3.
 - `physics.ts` (906) — Physics voxels (docs/PHYSICS.md): bodies whose every voxel is a particle, one GPU solver for every … API: `PV_CAP`, `FRAG_CAP`, `MAX_BODIES`, `SKIN_TRIS` +7.
 - `shapes.ts` (66) — Simple test shapes for the physics playground (docs/PHYSICS.md), in the models' own format … API: `box`, `table`, `girder`, `LINEUP` +2.
-- `wake.ts` (201) — Waking the map into physics bodies (round 49: moved out of the level so a game can do it too; API: `STRUCTURAL`, `WakeOptions`, `Waker`.
+- `wake.ts` (200) — Waking the map into physics bodies (round 49: moved out of the level so a game can do it too; API: `STRUCTURAL`, `WakeOptions`, `Waker`.
 
 ## src/play/
 
@@ -560,7 +560,7 @@ Scenes and the live world: WorldCore (one live world), the level and the menu, t
 - `region-copy.ts` (181) — Round 104 (`slidehitch`): rectangles of u32 words moved between buffers by a compute kernel, one dispatch … API: `Rect`, `RegionCopier`.
 - `region-pool.ts` (67) — The GPU region pool (round 100, `regionstore`; API: `PoolSlot`, `RegionPool`.
 - `streamer.ts` (792) — The streamed world (round 66, BACKLOG Q28): the live world is a window of W × H columns onto land without … API: `settleLoose`, `Streamer`, `REGION`, `STREAM_OLD` +14.
-- `world-core.ts` (635) — Everything a live world needs, independent of what the scene does with it: GPU state, simulation, … API: `Quality`, `Host`, `Scene`, `WorldCore`.
+- `world-core.ts` (633) — Everything a live world needs, independent of what the scene does with it: GPU state, simulation, … API: `Quality`, `Host`, `Scene`, `WorldCore`.
 
 ## src/scenes/level/
 
@@ -597,7 +597,7 @@ The Streamer's internals, split out of scenes/streamer.ts: free functions over t
 - `slide.ts` (310) — The slide: following the camera (update, track), waiting for the regions coming in, and the slide itself — … API: `update`, `slideWhenReady`, `track`, `doneAfter` +1.
 - `store.ts` (315) — Keeping regions: what's saved to the region store (hashed against the generator's, so unchanged land isn't … API: `saveItem`, `fillAt`, `flushFills`, `check` +8.
 - `warp.ts` (169) — Jumps: the window moved far at once (warp: everything re-made where it lands) and up or down (slideZNow, … API: `warp`, `slideZNow`.
-- `write.ts` (245) — Writing a region into the window: its columns into the chunk pages, its fields and textures, its relief; API: `write`, `writeNow`, `blankBuf`, `zeros` +4.
+- `write.ts` (241) — Writing a region into the window: its columns into the chunk pages, its fields and textures, its relief; API: `write`, `writeNow`, `blankBuf`, `zeros` +4.
 
 ## src/settle/
 
@@ -628,14 +628,14 @@ WGSL. `common.wgsl` (+ layers, materials) is prepended to every kernel; flow/slo
 - `agents.wgsl` (464) — ---- agents (round 52, docs/AGENTS.md) ----------------------------------------- The layer units walk on, …
 - `bodymesh.wgsl` (79) — Bodies' own meshes, skinned (round 120;
 - `climate.wgsl` (135) — ---- climate: snow, ice, fallen leaves (round 50;
-- `colapply.wgsl` (601) — ---- colapply.wgsl …
+- `colapply.wgsl` (597) — ---- colapply.wgsl …
 - `colquery.wgsl` (59) — ---- colquery.wgsl …
 - `common.wgsl` (828) — ---- common.wgsl ------------------------------------------------------- Shared by every shader.
 - `contamination.wgsl` (75) — ---- contamination system ---------------------------------------------- Two scalar fields per column: x = …
 - `cover.wgsl` (166) — ---- the weather's cover past the window (round 108, TC20;
 - `coverfield.wgsl` (16) — ---- the weather's cover past the window: the field's shape (round 108, TC20;
 - `ecology.wgsl` (93) — ---- ecology / succession ------------------------------------------------- veg = continuous succession …
-- `edit.wgsl` (482) — ---- editor brush (sandbox;
+- `edit.wgsl` (475) — ---- editor brush (sandbox;
 - `fieldmesh.wgsl` (887) — ---- field mesh (G13 h) ----------------------------------------------------------- The terrain drawn as …
 - `fire.wgsl` (122) — ---- fire ------------------------------------------------------------------- fire[i] = burning intensity …
 - `florafield.wgsl` (63) — ---- plants placed by the world's other fields (round 117, flora) …
@@ -683,7 +683,7 @@ WGSL. `common.wgsl` (+ layers, materials) is prepended to every kernel; flow/slo
 - `structmesh.wgsl` (298) — ---- structures: warped module instances (src/structures/gpu.ts;
 - `structprep.wgsl` (65) — ---- structure grids → draw instances (docs/GRIDS.md) -------------------------- One thread per voxel of …
 - `structtick.wgsl` (123) — ---- structure grids: their own tick (docs/GRIDS.md) --------------------------- One thread per voxel of …
-- `structure.wgsl` (248) — ---- structural system ------------------------------------------------------ Simplest systemic structural …
+- `structure.wgsl` (277) — ---- structural system ------------------------------------------------------ Simplest systemic structural …
 - `surface.wgsl` (95) — ---- surface system ---------------------------------------------------- Derives the per-column views …
 - `sway.wgsl` (37) — ---- vegetation sway (render-only state) ------------------------------------ One damped spring per …
 - `tcache.wgsl` (36) — ---- the terrain's cached layer (perfopt, ?tcache=N;
@@ -736,13 +736,13 @@ GPU world buffers (the WorldGpu contracts), the systems' wrappers, the fixed-ste
 - `snapshot.ts` (161) — (round 112, testspeed) A warmed world, saved and put back: every buffer and texture the WorldGpu holds … API: `WorldSnapshot`, `captureWorld`, `restoreWorld`, `encodeSnapshot` +3.
 - `static-claims.ts` (475) — Static grids' claims written with the land (round 128j, M128-8 widened; API: `StaticThing`, `GridPlace`, `StaticClaimsIO`, `StaticGrid` +2.
 - `system.ts` (31) — Simulation system interface (design doc §9, §23, §24). API: `SimSystem`, `dispatch`.
-- `systems.ts` (1083) — First (simplest) implementations of each simulation system. API: `riverHeld`, `INPLACE`, `PrepWorld`, `SurfaceSystem` +26.
+- `systems.ts` (1086) — First (simplest) implementations of each simulation system. API: `riverHeld`, `PrepWorld`, `SurfaceSystem`, `StructureSystem` +25.
 - `tickclock.ts` (130) — Round 114 (framepace, FP4): how many sim ticks a rendered frame runs. API: `TickMode`, `TickClock`, `tickModeFrom`.
 - `tiers.ts` (277) — The sims' tiers (round 108, simtiers; API: `TIER_CHANNEL`, `BAKE_GAIN`, `INTERACT_MIN_S`, `INTERACT_MAX_S` +2.
 - `translate.ts` (87) — Moving what lives in window coordinates when the streamed window slides (round 80; API: `Translator`.
 - `warm-cache.ts` (68) — (round 112, testspeed) The player's warmed world, kept in the browser (IndexedDB): the second visit to the … API: `warmKey`, `loadWarm`, `saveWarm`.
 - `windrect.ts` (100) — Where the painted wind is (round 104, simscale — the user: "Why does wind and climate need to run … API: `LIFE_S`, `reach`, `WindRects`.
-- `world-gpu.ts` (589) — GPU-resident world state: every buffer that forms a contract between systems is allocated (and documented) … API: `STATS_COUNT`, `EDIT_TAGS`, `RiverMode`, `riverMode` +8.
+- `world-gpu.ts` (586) — GPU-resident world state: every buffer that forms a contract between systems is allocated (and documented) … API: `STATS_COUNT`, `EDIT_TAGS`, `RiverMode`, `riverMode` +8.
 
 ## src/solver/
 

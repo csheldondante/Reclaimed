@@ -2,7 +2,7 @@
 // (cutColumn, spillPlan) — the columns word for word, the spilled rubble's deposits — on the judges' shapes and random
 // caves (judge B's verdicts: crumbled runs cut and spilled, then the pieces cut), and on random columns with random
 // cuts (splits past a column's K slots: the rubble rule). (Round 128, INT16: claims, cells taken and a model seated —
-// claimColumn, takeCells, seatColumn — and every change written to the layersNext alike.)
+// claimColumn, takeCells, seatColumn.)
 import { describe, expect, test } from 'vitest';
 import { ColumnApply, cutColumn, fitColumn, spillPlan, type ApplyStage } from '../../src/game/colapply';
 import { claimColumn, claimFreeColumn, orphanColumn, releaseSpan } from '../../src/sim/external';
@@ -90,16 +90,10 @@ async function gpuApply(w: RockWorld, stages: ApplyStage[], claimed?: Map<number
   // (the identity ring: page (cx, cy) at slot cy * nx + cx)
   const nx = w.W / 16;
   const pages = new Uint16Array(nx * (w.H / 16)).map((_, i) => i);
-  // (round 128, INT16: the layersNext, as the world's — every change written to it alike)
-  const next = dev.createBuffer({ label: 'test slots next', size: w.packed.slots.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
-  dev.queue.writeBuffer(next, 0, w.packed.slots);
   const ap = new ColumnApply(dev);
-  ap.run({ slots: cols.slots, next, chunks: cols.chunks, packed: w.packed }, stages, { deposit, pages });
-  if (claimed) ap.orphans({ slots: cols.slots, next, chunks: cols.chunks, packed: w.packed }, claimed);
+  ap.run({ slots: cols.slots, chunks: cols.chunks, packed: w.packed }, stages, { deposit, pages });
+  if (claimed) ap.orphans({ slots: cols.slots, chunks: cols.chunks, packed: w.packed }, claimed);
   const slots = new Uint32Array(await gpu.read(cols.slots, w.packed.slots.byteLength));
-  const twin = new Uint32Array(await gpu.read(next, w.packed.slots.byteLength));
-  expect(twin, 'the layersNext written alike').toEqual(slots);
-  next.destroy();
   const D = new Float32Array(await gpu.read(deposit, N * 16));
   const dep = new Map<number, { amount: number; mat: number }>();
   for (let y = 0; y < w.H; y++)
@@ -447,7 +441,7 @@ describe('the CPU copy (game/colcopy.ts)', () => {
     const cols = gpuCols(gpu.device, w);
     gpu.device.queue.writeBuffer(cols.slots, 0, w.packed.slots);
     let epoch = 0;
-    const copy = new ColumnCopy({ device: gpu.device, packed: w.packed, layers: () => cols.slots, layersNext: () => cols.slots, epoch: () => epoch, readWhole: async () => new Float32Array(await gpu.read(cols.slots, w.packed.slots.byteLength)) }, 'sparse');
+    const copy = new ColumnCopy({ device: gpu.device, packed: w.packed, layers: () => cols.slots, epoch: () => epoch, readWhole: async () => new Float32Array(await gpu.read(cols.slots, w.packed.slots.byteLength)) }, 'sparse');
     expect(() => copy.read(3, 3)).toThrow(/isn't held/);
     const fetching = copy.fetch([copy.chunkOf(3, 3)]);
     // (written while the fetch is in flight: the copy keeps this, not what the read brought)

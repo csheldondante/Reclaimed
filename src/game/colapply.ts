@@ -15,11 +15,9 @@
 //   takeCells     world/layout.ts (the voxel lattice's wake: whole cells of some materials taken out)
 //   seatColumn    world/models.ts (a model placed in the columns: the sandbox editor)
 //
-// (round 128, INT16) Every change is written to the layers and the layersNext alike (GpuColumns.next): the column
-// passes write layersNext for the chunks that run and copy it back over the layers whole, so a change to the layers
-// alone was undone by the next copy-back wherever its chunk didn't run — a town's building claimed in a chunk the
-// hybrid's filter kept asleep lost its claim within a tick and fell to rubble. The claims, the wake's take and the
-// editor's placing are stamps here too (WorldCore.stampColumns): the CPU says what changes, the GPU changes its columns.
+// (round 128, INT16) The claims, the wake's take and the editor's placing are stamps here too (WorldCore.stampColumns):
+// the CPU says what changes, the GPU changes its columns. (Until DA-B14 every change was written to a second buffer,
+// layersNext, alike: the column passes copied it back over the layers whole. They write in place now; it's gone.)
 import colapplyWgsl from '../shaders/colapply.wgsl?raw';
 import { makeBindGroup, makeLayout } from '../gpu/pipeline';
 import { subtract } from './colbodies';
@@ -100,12 +98,6 @@ export interface GpuColumns {
   slots: GPUBuffer;
   chunks: GPUBuffer;
   packed: PackedWorld;
-  /**
-   * (round 128, INT16) the column passes' second buffer (WorldGpu.layersNext), written alike by every change
-   * ColumnApply makes (null: none — a test's bare columns, no pass copies over them). Required by ColumnApply; the
-   * readers (colquery) leave it out.
-   */
-  next?: GPUBuffer | null;
 }
 
 /** Where loose ground lands: the per-column deposit buffer and the window's page table (sim/pages.ts). */
@@ -162,7 +154,7 @@ const PARAM_BYTES = 176;
 const PARAM_STRIDE = 256;
 const KERNELS = ['applyCuts', 'spillTarget', 'spillDeposit', 'depositAdd', 'release', 'orphans', 'claim', 'claimGrid', 'take', 'seat'] as const;
 type Kernel = (typeof KERNELS)[number];
-const BINDS = { 0: 'uniform', 1: 'read', 2: 'rw', 3: 'read', 4: 'rw', 5: 'rw', 6: 'rw' } as const;
+const BINDS = { 0: 'uniform', 1: 'read', 2: 'rw', 3: 'read', 4: 'rw', 5: 'rw' } as const;
 type ParamKey = 'nOps' | 'nSpill' | 'nGone' | 'hashCap' | 'opOff' | 'cutOff' | 'spillOff' | 'goneOff' | 'nDep' | 'depOff' | 'nKeys' | 'keyOff' | 'refOff' | 'spanOff' | 'maskLo' | 'maskHi' | 'seatBase' | 'seatAux' | 'free';
 
 interface Dispatch {
@@ -192,8 +184,6 @@ export class ColumnApply {
   private hash: GPUBuffer | null = null;
   /** a deposit buffer for runs that lay nothing */
   private noDeposit: GPUBuffer;
-  /** the layersNext binding when the columns have none (P.twin 0: never touched) */
-  private noNext: GPUBuffer;
   /** bytes uploaded by the last run (its whole cost on the bus: nothing comes back) */
   lastBytes = 0;
   /** (round 128j) claimGrids' params, a stride a pass */
@@ -205,7 +195,6 @@ export class ColumnApply {
     const pl = device.createPipelineLayout({ label: 'colapply', bindGroupLayouts: [this.layout] });
     this.pipes = Object.fromEntries(KERNELS.map((k) => [k, device.createComputePipeline({ label: `colapply ${k}`, layout: pl, compute: { module, entryPoint: k } })])) as Record<Kernel, GPUComputePipeline>;
     this.noDeposit = device.createBuffer({ label: 'colapply no deposit', size: 16, usage: GPUBufferUsage.STORAGE });
-    this.noNext = device.createBuffer({ label: 'colapply no layersNext', size: 16, usage: GPUBufferUsage.STORAGE });
   }
 
   /** The stages applied in order, in one submit. A stage that spills or lays loose ground needs `target`. */
@@ -230,7 +219,6 @@ export class ColumnApply {
    */
   claimGrids(cols: GpuColumns, jobs: GridClaimJob[], rects: [number, number, number, number][]): void {
     const { packed } = cols;
-    if (cols.next === undefined) throw new Error('ColumnApply.claimGrids: the columns need their layersNext (GpuColumns.next; null: none)');
     const W = packed.dims.w;
     const H = packed.dims.h;
     const passes: { job: GridClaimJob; params: ArrayBuffer }[] = [];
@@ -243,7 +231,6 @@ export class ColumnApply {
         const pf = new Float32Array(b);
         pu.set([W, H, packed.chunksX, CHUNK, job.nCols, 0, 0, 1, 0, job.nCols * 4]);
         pf[15] = packed.dims.zMax;
-        pu[30] = cols.next ? 1 : 0;
         pu[31] = FREE_LO;
         pu[32] = FREE_HI;
         pu[35] = 1;
@@ -271,7 +258,6 @@ export class ColumnApply {
         3: p.job.buf,
         4: hash,
         5: this.noDeposit,
-        6: cols.next ?? this.noNext,
       });
       const pass = enc.beginComputePass({ label: 'colapply claimGrid' });
       pass.setPipeline(this.pipes.claimGrid);
@@ -284,8 +270,6 @@ export class ColumnApply {
 
   private encode(cols: GpuColumns, stages: ApplyStage[], claimed: Map<number, { z0: number; z1: number }[]> | null, target?: SpillTarget): GPUCommandEncoder | null {
     const { packed } = cols;
-    if (cols.next === undefined) throw new Error('ColumnApply: the columns need their layersNext (GpuColumns.next; null: none) — a change to the layers alone is undone by the next column pass');
-    const twin = cols.next ? 1 : 0;
     const W = packed.dims.w;
     const H = packed.dims.h;
     const words: number[] = [];
@@ -311,7 +295,7 @@ export class ColumnApply {
       pu.set([W, H, packed.chunksX, CHUNK, v.nOps ?? 0, v.nSpill ?? 0, v.nGone ?? 0, v.hashCap ?? 1, v.opOff ?? 0, v.cutOff ?? 0, v.spillOff ?? 0, v.goneOff ?? 0, pageOff, looseOff, W / CHUNK]);
       pf[15] = packed.dims.zMax;
       pu.set([...LOOSE, 0, 0], 16);
-      pu.set([v.nDep ?? 0, v.depOff ?? 0, v.nKeys ?? 0, v.keyOff ?? 0, v.refOff ?? 0, v.spanOff ?? 0, twin, v.maskLo ?? 0, v.maskHi ?? 0], 24);
+      pu.set([v.nDep ?? 0, v.depOff ?? 0, v.nKeys ?? 0, v.keyOff ?? 0, v.refOff ?? 0, v.spanOff ?? 0, 0, v.maskLo ?? 0, v.maskHi ?? 0], 24);
       pf[33] = v.seatBase ?? 0;
       pu[34] = v.seatAux ?? 0;
       pu[35] = v.free ?? 0;
@@ -454,7 +438,6 @@ export class ColumnApply {
         3: this.inp!,
         4: hash,
         5: target?.deposit ?? this.noDeposit,
-        6: cols.next ?? this.noNext,
       });
       // (a pass each: every dispatch sees the last one's writes)
       const pass = enc.beginComputePass({ label: `colapply ${d.kernel}` });
@@ -472,7 +455,6 @@ export class ColumnApply {
     this.hash?.destroy();
     this.gridParams?.destroy();
     this.noDeposit.destroy();
-    this.noNext.destroy();
   }
 }
 
