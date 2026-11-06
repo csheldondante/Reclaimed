@@ -18087,3 +18087,24 @@ Agents and editors drifted files between CRLF, LF and mixed (261 CRLF, 911 LF, 1
   plan stop at the box. Judgement call, listed for main.
 - Line endings: onetown's WIP had turned ~35 LF source files CRLF; put back to LF (no content change).
 - Tests: typecheck, the full vitest suite (111 files, 881 passed); streamkeep.test.ts rewritten for `windowHolding`.
+
+## 2026-11-05 — round 128o (`onetown`, DA-A1/DA-A2): design note — one plan finished; why the builders don't build
+
+Design note before code (AGENT_RULES 1).
+- **State:** one `TownSite` per town (build/site.ts): its `TownPlan` (cells, structures, levels, gates, pits), its
+  `Town` (what stands), its grid and box, its `gridId`. Generator, player, view, claims, reach, jobs and lanes read it;
+  nothing copies it. The generator's draft (structures/plan.ts) is a transient layout input, placed through
+  `TownPlan.place`/`setGate` and dropped. DA-A1 leaves this shape and deletes what's left of the second system: the dead
+  owner ids OWNER_STRUCT/OWNER_FORT, the scripts' `thingAt` ray probe (the plan's `owner` is the one answer), the
+  placement bench's `townGates` cast (the plan's gate cells), and the lab's reset that erased a fixture's plan while its
+  `Town` kept 702 built blocks (two sources that disagreed).
+- **Readbacks:** none added. **Phone cost:** none added (no frame path changes).
+- **DA-A2, measured on the `town` fixture (lab, fresh load):** 368 built farm blocks (the generated farmland, now farm
+  structures in the one plan) give 368 farm jobs; JOB_ORDER puts farms before builders, so all 11 people farm and
+  nobody builds ("There are no builders"). Fix: builders first while there's building (ECON.builders, 4); a unit test on
+  the fixture's own plan fails first. Rejected: fewer jobs per generated farm block (a per-source special case), a cap.
+- **The one cut-off cell (1188):** a generated house site with no stand at all — houses on three sides, the wall on the
+  fourth. keepReach (structures/place.ts) only joins open pockets; it never gives a planned block a side to stand at. The
+  right fix is DA-A3 (one reach invariant for generation and edits; keepReach deleted), not a second rule in keepReach:
+  reported, not patched.
+- **Edge cases as tests:** the fixture's jobs (builders get people), the lab reset refusing a fixture.
