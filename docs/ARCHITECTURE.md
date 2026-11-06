@@ -866,7 +866,12 @@ is `n` × `n` texels over it (2048: a texel ~8 cells).
   sediment it carries, lava (its heat) — simulated on the GPU (cFlux: what
   leaves each cell for its four neighbours; cDepth: what came, rain, the
   sea, erosion and deposition, lava cooling to basalt, vents; one buffer
-  everything reads, the step's result copied back) a step every 4th frame
+  everything reads, the step's result put back) a step every 4th frame. (DA-B15)
+  A step goes over the live 8 × 8 tiles only (cList: marked by the last step —
+  a cell changed or something flowed out — or by an event, beside one that
+  was, or under a vent; every tile the first step and when rain, evaporation
+  or erosion change), indirect dispatches; cCopy puts the live tiles' cells
+  back. At rest nothing steps
   in the level, 4 a frame in the viewer. Events (cEvent): a meteor (bowl,
   rim, ejecta of rubble), ash downwind of an eruption, a cone; `erupt` adds
   a vent. compose.wgsl `coarseAt` (bilinear) adds it to `ground` and the

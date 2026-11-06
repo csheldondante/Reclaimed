@@ -14,6 +14,11 @@
 //           drops it where it slows); lava cools and sets to basalt; vents
 //   cEvent  an event over the grid: a meteor (a crater, its rim, an ejecta
 //           blanket), an eruption's ash fall (downwind), a cone rising
+// (DA-B15) A step runs only where something moves: the grid in 8 × 8 tiles; a tile is live for a step when it or a
+// neighbour was marked by the last step (a cell of it changed, or something flowed out of one), by an event, or a vent
+// lies on it. cList makes the live list (an indirect dispatch's count); cFlux, cDepth and cCopy (the step's result
+// into the cells everyone reads, the live tiles' only) go over it. A tile left out holds cells at rest whose flows were
+// all nothing: stepping them would give them back unchanged.
 
 struct CCell {
   /** x rock added (+) or taken away (−), y loose ground on top, z water, w sediment the water carries */
@@ -42,7 +47,8 @@ struct CP {
   ea: f32,
   wx: f32,
   wy: f32,
-  _p0: f32,
+  /** (DA-B15) 1: every tile live this step (the first, or the rain, evaporation or erosion changed) */
+  allLive: f32,
   _p1: f32,
   _p2: f32,
   /** vents: x, y (world), lava a step, radius */
@@ -57,6 +63,24 @@ struct CP {
 @group(0) @binding(4) var<storage, read_write> fW: array<vec4<f32>>;
 @group(0) @binding(5) var<storage, read_write> fL: array<vec4<f32>>;
 @group(0) @binding(6) var<storage, read_write> fT: array<vec4<f32>>;
+// (DA-B15) the live tiles: the list (cList writes listOut; the step reads list), the marks for the next step (actOut:
+// cDepth), the marks the next list reads (actIn: the last step's, rolled over, and events'), the dispatch's args
+@group(0) @binding(7) var<storage, read> list: array<u32>;
+@group(0) @binding(8) var<storage, read_write> actOut: array<atomic<u32>>;
+@group(0) @binding(9) var<storage, read_write> actIn: array<atomic<u32>>;
+@group(0) @binding(10) var<storage, read_write> args: array<atomic<u32>>;
+@group(0) @binding(11) var<storage, read_write> listOut: array<u32>;
+
+const TILE: u32 = 8u;
+/** tiles a side */
+fn tilesN() -> u32 { return CQ.cn / TILE; }
+fn tileOf(p: vec2<i32>) -> u32 { return (u32(p.y) / TILE) * tilesN() + u32(p.x) / TILE; }
+/** the cell a thread of a live tile's workgroup steps */
+fn liveCell(wg: vec3<u32>, lid: vec3<u32>) -> vec2<i32> {
+  let t = list[wg.x];
+  let n = tilesN();
+  return vec2<i32>(i32((t % n) * TILE + lid.x), i32((t / n) * TILE + lid.y));
+}
 
 const MAT_RUBBLE_C: u32 = 4u;
 const MAT_ASH_C: u32 = 17u;
@@ -84,9 +108,8 @@ fn solidH(i: u32) -> f32 { return base[i].x + cin[i].s.x + cin[i].s.y; }
 fn cellMid(p: vec2<i32>) -> vec2<f32> { return (vec2<f32>(p) + 0.5) * vec2<f32>(CQ.worldW, CQ.worldH) / f32(CQ.cn); }
 
 @compute @workgroup_size(8, 8)
-fn cFlux(@builtin(global_invocation_id) id: vec3<u32>) {
-  if (id.x >= CQ.cn || id.y >= CQ.cn) { return; }
-  let p = vec2<i32>(id.xy);
+fn cFlux(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {
+  let p = liveCell(wg, lid);
   let i = cidx(p);
   let c = cin[i];
   let g = solidH(i);
@@ -116,9 +139,8 @@ fn cFlux(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 
 @compute @workgroup_size(8, 8)
-fn cDepth(@builtin(global_invocation_id) id: vec3<u32>) {
-  if (id.x >= CQ.cn || id.y >= CQ.cn) { return; }
-  let p = vec2<i32>(id.xy);
+fn cDepth(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {
+  let p = liveCell(wg, lid);
   let i = cidx(p);
   var c = cin[i];
   let ow = fW[i];
@@ -218,6 +240,47 @@ fn cDepth(@builtin(global_invocation_id) id: vec3<u32>) {
   c.l = vec4<f32>(max(lava, 0.0), T, c.l.z, c.l.w);
   if (c.s.y < 0.01) { c.l.z = 0.0; }
   cout[i] = c;
+  // (DA-B15: changed, or something left it — its tile and those round it step again)
+  let was = cin[i];
+  let changed = any(bitcast<vec4<u32>>(c.s) != bitcast<vec4<u32>>(was.s)) || any(bitcast<vec4<u32>>(c.l) != bitcast<vec4<u32>>(was.l));
+  if (changed || outW > 0.0 || outL > 0.0 || outT > 0.0) { atomicOr(&actOut[tileOf(p)], 1u); }
+}
+
+/** (DA-B15) the live tiles' list: marked last step or by an event, beside one that was, or under a vent */
+@compute @workgroup_size(64)
+fn cList(@builtin(global_invocation_id) id: vec3<u32>) {
+  let n = tilesN();
+  let t = id.x;
+  if (t >= n * n) { return; }
+  let tx = i32(t % n);
+  let ty = i32(t / n);
+  var live = CQ.allLive > 0.5;
+  for (var dy = -1; dy <= 1 && !live; dy++) {
+    for (var dx = -1; dx <= 1; dx++) {
+      let q = vec2<i32>(((tx + dx) % i32(n) + i32(n)) % i32(n), ((ty + dy) % i32(n) + i32(n)) % i32(n));
+      if (atomicLoad(&actIn[u32(q.y) * n + u32(q.x)]) != 0u) { live = true; break; }
+    }
+  }
+  // (a vent pours into the cells within its radius: their tiles, wherever they are)
+  let W = vec2<f32>(CQ.worldW, CQ.worldH);
+  let tw = W / f32(n);
+  let mid = (vec2<f32>(f32(tx), f32(ty)) + 0.5) * tw;
+  for (var v = 0u; v < CQ.nVents && !live; v++) {
+    let vv = CQ.vents[v];
+    var d = abs(mid - vv.xy);
+    d = min(d, W - d);
+    if (all(d <= tw * 0.5 + vec2<f32>(vv.w + CQ.cs))) { live = true; }
+  }
+  if (!live) { return; }
+  let k = atomicAdd(&args[0], 1u);
+  listOut[k] = t;
+}
+
+/** (DA-B15) the step's result into the cells everyone reads: the live tiles' cells (cin: the step's, cout: the cells) */
+@compute @workgroup_size(8, 8)
+fn cCopy(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {
+  let i = cidx(liveCell(wg, lid));
+  cout[i] = cin[i];
 }
 
 /** an event (CQ.kind: 1 meteor, 2 ash fall, 3 a cone), in place (cin and cout the same buffer here: binding 3) */
@@ -227,6 +290,7 @@ fn cEvent(@builtin(global_invocation_id) id: vec3<u32>) {
   let p = vec2<i32>(id.xy);
   let i = cidx(p);
   var c = cout[i];
+  let was = c;
   let W = vec2<f32>(CQ.worldW, CQ.worldH);
   var d = cellMid(p) - vec2<f32>(CQ.ex, CQ.ey);
   d -= round(d / W) * W;
@@ -267,4 +331,6 @@ fn cEvent(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
   cout[i] = c;
+  // (DA-B15: what it changed steps next)
+  if (any(bitcast<vec4<u32>>(c.s) != bitcast<vec4<u32>>(was.s)) || any(bitcast<vec4<u32>>(c.l) != bitcast<vec4<u32>>(was.l))) { atomicOr(&actIn[tileOf(p)], 1u); }
 }

@@ -18565,3 +18565,28 @@ slides, restoreChunks, replaceWindow, the edit brush's mirror). Two copies that 
 - No new `location.search` reads came in. The lab's town fixture recaptured (both sides moved the generator hash):
   columns identical. typecheck (both halves), unit 773 passed, GPU 145 passed, flagcheck, hallcheck 0 of 344 lost,
   the transfer gate: all pass.
+
+## 2026-11-06 — the coarse world steps only where something moves (DA-B15)
+
+Why: the coarse world (512² cells, 32 B each) stepped every cell and copied the whole 8 MB grid back every 4th frame
+in the level, whatever moved — and at rest, in play, nothing does (no rain by default; water, lava and loose ground
+only after an event or a vent). AGENT_RULES §1b: a kernel runs where something changed; no whole copy.
+
+- The grid in 8 × 8 tiles. cDepth marks a tile when a cell of it changed (bit for bit) or something flowed out of it;
+  cEvent marks what an event changed. Next step, cList lists the tiles marked, beside a marked one, or under a vent
+  (every tile on the first step and when rain, evaporation or erosion change) into an indirect dispatch; cFlux,
+  cDepth and the new cCopy (the live tiles' new cells into `cells`) go over the list. The marks roll over with a
+  16 KB copy. A tile left out holds cells at rest whose flows were all nothing (else it was marked): stepping it would
+  give it back bit for bit, so the result is the same world.
+- Not swapped: `cells` is bound by the atlas's fixed bind groups (the LOD rings, the bake, the far land, the viewer)
+  and per call by the column and sample passes; swapping would make each keep a group per parity. The live tiles' copy
+  costs what moves.
+- Same world: test/gpu/coarse-live.test.ts on Dawn steps a 64² world with the live tiles and with every tile through
+  a meteor, an eruption (cone, ash, a vent's lava cooling to basalt, the step spread over parts as the level does),
+  rain and erosion on and off: the cells equal bit for bit at every check; at rest 0 tiles live (every tile: 64).
+- Cost (desktop proxy, Dawn on this GPU, 512², a step and its wait, 20 steps): every tile 3.2–4.9 ms; live tiles at
+  rest 0.6–0.75 ms (the list pass and the submits), with a crater slumping 1.2–1.7 ms.
+- Transfers gate: the 8 MB copy entry is now the marks' 16 KB roll-over (small).
+- The lab's town fixture recaptured (coarse.ts is in the generator hash): columns identical.
+- Hacks and limits: a tile is 8 × 8 cells; a vent's tiles are found by a box round its radius plus a cell; the "every
+  tile" mode (`new Coarse(..., cull = false)`) is kept as the tests' reference.
