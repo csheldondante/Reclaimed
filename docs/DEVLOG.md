@@ -20339,3 +20339,19 @@ under the timing lease, so it is a proxy; the phone bench is the measure.
   - draw 1.02 → under 0.08 ms
   - traits 0.91 → under 0.08 ms
 - At 1x nothing changed: 3.9 vs 4.1 ms GPU p50.
+
+## 2026-11-06 — round 128p (`phonefix`): the lab's `run` counts the world's ticks, not wall time
+
+Why: main ("a measurement gap is a bug"). `lab.run(seconds, speed)` added `dt × speed` a frame and reported that as
+sim seconds, but the tick clock decides a frame's ticks. In the DA-B22 rider-speed check, 1x frames ran about 50 ticks
+in 60, and riders read 2.0 cells/s against their real 2.4.
+
+What:
+- `WorldCore.ticksRun` counts the world's ticks run by `advance`. Bake ticks are left out: `tiers.pump` runs them in
+  its own region at its own gain.
+- `lab.run` runs until `seconds` of those ticks (× TICK_DT) have passed and returns them as `simSeconds`.
+- A run in which the world ticks no tick for 600 frames throws instead of spinning.
+- Checked: `run(10, 1)` ran 600 frames for 10.0 s and `run(10, 16)` ran 38 frames for 10.13 s. fortressallbuilt is
+  unchanged at 362 s.
+- Left: the CPU's crowd still steps by `dt × speed` a frame (scenes/level/frame.ts), not by the ticks run. A frame
+  whose ticks the clock cuts gives the routine more time than the world. Not fixed here.
