@@ -150,7 +150,7 @@ The atlas: the whole generated world map (coarse sim, GPU finish, far land, geys
 - `pit.ts` (215) — A quarry's pit as tiers and ramps down its footprint (round 128m, `quarry`, BACKLOG V128-11): the player … API: `PIT_RAMP_CELLS`, `PIT_SHELF`, `PIT_RAMP`, `PitTopo` +10.
 - `plan.ts` (478) — A town's plan (round 128m, onetown; API: `typeIndex`, `wallTileOf`, `towered`, `StructureAttrs` +3.
 - `quadgrid.ts` (200) — (round 128m, onetown) A town's cells from any quad mesh: the grid one plan is painted on (build/plan.ts). API: `CellGrid`, `QuadGrid`.
-- `reach.ts` (388) — The fortress's reach: what a check asks and answers (the GPU's — reachgpu.ts, shaders/fortreach.wgsl — in … API: `RAMP_CAP`, `REACH_BITS`, `FIX_COST`, `FIX_CAP` +15.
+- `reach.ts` (394) — The fortress's reach: what a check asks and answers (the GPU's — reachgpu.ts, shaders/fortreach.wgsl — in … API: `RAMP_CAP`, `REACH_BITS`, `FIX_COST`, `RAMP_RISE` +16.
 - `reachgpu.ts` (350) — The fortress's reach on the GPU (round 128l, m4; API: `FortressReachGpu`.
 - `runs.ts` (219) — (round 128d) Occupancy as runs per cell: the levels a cell holds, as sorted half-open runs [lo, hi), each … API: `Run`, `CellRuns`.
 - `shapes.ts` (163) — (round 128d) Painted shapes make landmarks, Townscaper's way: the player paints blocks, and some shapes … API: `COURT_MAX`, `TOWER_LEVELS`, `ShapeGrid`, `Dome` +3.
@@ -657,7 +657,7 @@ WGSL. `common.wgsl` (+ layers, materials) is prepended to every kernel; flow/slo
 - `floralook.wgsl` (73) — ---- the flora library's look and wind (round 117;
 - `floraput.wgsl` (55) — ---- placing a flora library plant (round 117;
 - `flow.wgsl` (21) — ---- flow.wgsl ----------------------------------------------------------------- Net water flow through a …
-- `fortreach.wgsl` (411) — ---- the fortress's reach on the GPU (round 128l, m4;
+- `fortreach.wgsl` (413) — ---- the fortress's reach on the GPU (round 128l, m4;
 - `grids.wgsl` (40) — ---- structure grids (docs/GRIDS.md) ----------------------------------------- Rigid voxel grids over the …
 - `inhabitants.wgsl` (934) — Inhabitants (round 117, docs/INHABITANTS.md;
 - `judge.ts` (11) — Judge B, the method of sections on the GPU, in parts (2026-11-04, the monolith split; API: `judgeWgsl`.

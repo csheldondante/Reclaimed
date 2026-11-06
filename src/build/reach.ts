@@ -31,6 +31,12 @@ export const REACH_BITS = { reached: 1, dry: 2, unplanned: 8, none: 16, fixable:
  * STEP to DROP, either way) RAMP more. So a place is joined by the fewest cuts and ramps, then the shortest way.
  */
 export const FIX_COST = { step: 1, cut: 4, ramp: 20 } as const;
+/**
+ * (round 128o, DA-A10: "stairs in town") the highest drop a ramp joins: a ramp climbs a cell's length (about 5 m) in
+ * steps a walker takes (STEP 1.1 a column) — drawn as the wall stairs' steps (solid.ts rampSpans). Past DROP a walker
+ * can't climb back up; a ramp makes it a stair. Higher than this: no fix (a switchback, a longer stair: later).
+ */
+export const RAMP_RISE = 5;
 /** fortreach.wgsl FIX_CAP: the fixes an answer holds (all places together) */
 export const FIX_CAP = 512;
 /** one fix on the way to a place not reached: a column to cut (its plan solid), or a ramp up from a column in a direction */
@@ -269,7 +275,7 @@ export class CpuReach implements ReachEngine {
         const rise = Math.abs(c.z - a.z);
         if (Math.min(a.z + a.head, c.z + c.head) - Math.max(a.z, c.z) < AGENT_H) return -1;
         if (isDeep(tb, j) !== isDeep(b, k)) return -1;
-        if (rise > DROP) return -1;
+        if (rise > RAMP_RISE) return -1;
         return FIX_COST.step + (cut[b] ? FIX_COST.cut : 0) + (rise > STEP ? FIX_COST.ramp : 0);
       };
       // (the shortest costs — the GPU relaxes Bellman-Ford sweeps to the same: Dijkstra here, a binary heap)

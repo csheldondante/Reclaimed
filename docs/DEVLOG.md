@@ -19562,3 +19562,19 @@ its slot opening or closing starts it over (a tested piece).
   port 5343): fortressallbuilt ok (708/708 at 331 s), fortressharvest, fortressrecipes, fortressraid, unitsonground,
   fortresslanes, fortresscarts, fortressfollow, fortressoutside walled ok; fortressrefuse fails only its tap's CPU
   (8.5 ms, DA-G9: before this too); settlecrowd ok (above). The fixture recaptured after the merge of fortress.
+
+## 2026-11-06 — round 128o (`onetown`, DA-A10 step 1): stairs in town — a ramp joins drops up to 5 m
+
+- The user's answers (DECISIONS round 128o): free at generation, 1 in 3, "stairs in town, switchbacks outside". A ramp
+  (plan.ramp, solid.ts rampSpans: a cell's run, drawn as the wall stairs' steps) climbs a cell's length in steps a
+  walker takes, so it joins a drop up to about 5 m, not only DROP's 2.6 (what a walker climbs back up alone). The fix
+  field takes a drop up to RAMP_RISE (5 m: build/reach.ts, fortreach.wgsl FIX_RAMP_RISE) as a ramp; higher stays out
+  (a switchback or a longer stair: later).
+- Tests: reach.test (a house below a 4 m drop gets a ramp and is reached; below 7 m it's refused), reachfix (GPU = CPU:
+  a 4 m terrace one ramp, 7 m none). settlecrowd on the start town: the reach's places out 15 -> 11 of 95 (11 fixes
+  made), loads 29, house storeys 2, a house finished; lab fortressallbuilt, unitsonground, fortressrecipes ok; unit
+  tier green. 15 people still on their way to work at the end (fields past the
+  cliffs, the woods far: the switchbacks and the grading at generation, next — DA-A11 with them).
+- keepReach (DA-A11): main's answer — generation uses the same GPU reach as play by realising the town in the window
+  (the start town is generated where the window is); keepReach is the duplicate to delete with DA-A10's "graded at
+  generation".

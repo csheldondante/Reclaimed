@@ -255,6 +255,24 @@ describe('the check at placement', () => {
     expect(await reached(f, inside)).toBe(false);
   });
 
+  it('(DA-A10: stairs in town) a spot below a 4 m drop — past DROP, a walker never climbs it — gets a ramp, a stair a cell long', async () => {
+    const ledge: ReachColumns = { w: W, h: H, runs: (x) => (x > 100 ? [[0, GROUND - 4]] : [[0, GROUND]]), water: () => 0 };
+    const f = fortress(ledge, [20, 20], (x) => (x > 100 ? GROUND - 4 : GROUND));
+    const low = f.cellAt(125, 40);
+    expect(f.paint(low, 0, 'house')).toBe(true);
+    await f.settled();
+    expect(f.plan.has(low, 0)).toBe(true);
+    expect(f.plan.ramps().length).toBe(1);
+    expect(await reached(f, low)).toBe(true);
+    // (a cliff past a ramp's rise: refused)
+    const cliff: ReachColumns = { w: W, h: H, runs: (x) => (x > 100 ? [[0, GROUND - 7]] : [[0, GROUND]]), water: () => 0 };
+    const g = fortress(cliff, [20, 20], (x) => (x > 100 ? GROUND - 7 : GROUND));
+    const deep = g.cellAt(125, 40);
+    g.paint(deep, 0, 'house');
+    await g.settled();
+    expect(g.plan.has(deep, 0)).toBe(false);
+  });
+
   it('a spot below a drop builders walk down but not up gets a ramp', async () => {
     const ledge: ReachColumns = { w: W, h: H, runs: (x) => (x > 100 ? [[0, GROUND - 2]] : [[0, GROUND]]), water: () => 0 };
     // (the ground the fortress reads is the columns': a ramp's heights are taken from it)

@@ -62,6 +62,8 @@ const FIX_CUT: u32 = 4u;
 const FIX_RAMP: u32 = 20u;
 const FIX_CAP: u32 = 512u;
 const FIX_FAR: u32 = 0xffffffffu;
+/** (DA-A10) reach.ts RAMP_RISE: the highest drop a ramp (a stair across a cell) joins */
+const FIX_RAMP_RISE: f32 = 5.0;
 const NODE_NONE: u32 = 0xffffffffu;
 
 fn boxW() -> u32 { return u32(RP.box.z); }
@@ -308,7 +310,7 @@ fn fixMove(tb: u32, t: u32, b: u32, s: u32) -> u32 {
   if (min(a.x + a.y, c.x + c.y) - max(a.x, c.x) < R_AGENT_H) { return FIX_FAR; }
   let dt = t % RNAV_K == 0u && deepTop[tb] == 1u;
   let ds = s % RNAV_K == 0u && deepTop[b] == 1u;
-  if (dt != ds || rise > R_DROP) { return FIX_FAR; }
+  if (dt != ds || rise > FIX_RAMP_RISE) { return FIX_FAR; }
   return FIX_STEP + select(0u, FIX_CUT, cutCol[b] == 1u) + select(0u, FIX_RAMP, rise > R_STEP);
 }
 

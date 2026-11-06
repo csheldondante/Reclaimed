@@ -17,8 +17,8 @@ beforeAll(async () => {
 afterAll(() => g?.destroy());
 
 const W = 64;
-/** the ground: 5 m, a terrace 2 m up (x 40..50), a cliff 6 m up (x >= 56) */
-const groundAt = (x: number) => (x >= 56 ? 11 : x >= 40 && x < 50 ? 7 : 5);
+/** the ground: 5 m, a terrace 4 m up (x 40..50: past DROP, a stair joins it), a cliff 7 m up (x >= 56) */
+const groundAt = (x: number) => (x >= 56 ? 12 : x >= 40 && x < 50 ? 9 : 5);
 /** a ring of cuttable plan solid (a house's ground floor) round (16, 20), 3 to 5 m out, 8 m tall */
 const RING: [number, number] = [16, 20];
 const ringAt = (x: number, y: number) => {
