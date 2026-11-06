@@ -18646,3 +18646,40 @@ Design note before code (AGENT_RULES 1). DESIGN.md section 12.
   sites waiting). Not settled: in the lab at 16x the CPU's copy of the units lags the GPU by a median 10-14 m
   (AgentUnits.update's async sync; measured at six points over 120 sim s), so the fortress's routine decides arrivals
   late; DA-B2 (events and watched units) is that work.
+
+## 2026-11-06 — round 128o (`onetown`, DA-A6): design note — one crowd, on events (no code until fortress has DA-B2a/b)
+
+Design note (AGENT_RULES 1). DESIGN.md section 11 ("One crowd"; "no per-frame CPU copy of all units").
+- **One routine** (`TownLife`, replacing fortress/life.ts FortressLife and settle/life.ts SettlementLife): every town's
+  people work the plan's job board (fortress/economy.ts jobSlots over the TownSite's plan — a generated town's farms,
+  stores and smiths give jobs as the player's do; the builders' slot when there's building). A person is a unit plus a
+  small phase record; phases move on events only. Raiders and soldiers stay their own routines but read the same way.
+- **Events in** (agents' ring, phonefix DA-B2a/B2 — 16 B head, ≤256 a sync): `arrived` (field, where) for field legs;
+  `arrived` from the ride for a trip at its goal (new: roadride.wgsl emits it at M_AT — trips follow no field); hurt,
+  death, noticed; the world API's take/put/fell answers (already promises). **Read:** watched units only (≤32, B2b) —
+  the follow card and a selected unit. No unit's position is read to decide anything.
+- **Each position read today → its replacement** (onetown's counts; phonefix's DEVLOG inventory agrees):
+  - fortress/life.ts (26): at a home, the heap, a door, a spot, a post (AT_SPOT/THERE) → `arrived` on that leg's field
+    or trip; a block's stands (REACH) → `arrived` on F.site (the seed is the stand); the wall-walk "there" (height over
+    the kept ground) → `arrived` on a walk seeded at the post with its z; the nearest wall cell for a patrol → the
+    patrol is a route along the wall-walk's declared path (a trip, no read); a cart at a door or the heap → the ride's
+    arrival; who's nearest a newcomer's spot → newcomers enter at the entry node (no read);
+  - fortress/raiders.ts (15): which side of the walls, a gate shut round it, the nearest goal, the wave's centre → GPU
+    queries asked on the wave's events (the reach's labels already say which side), answered as short lists;
+  - fortress/defence.ts (7): a soldier on its post → `arrived`; the nearest raider in bow range, an arrow's aim → the
+    GPU's notice (units.wgsl already picks targets) as a `noticed` event; arrows as GPU projectiles (DA-E6);
+  - units/agent-units.ts think (28): hunting, sight, leash, reach and strikes → the GPU's own (its CPU copy deleted);
+    goal arrivals → `arrived`; guards back at posts → `arrived`; the follow card → a watched unit;
+  - settle/life.ts (8): the inhabitants' arrivals → `arrived` (and it is deleted, folded into TownLife).
+- **Failure modes:** a lost event (ring overflow) leaves a person waiting: counted and thrown (an invariant, not a
+  timer); a field with no seeds sends no arrival — the routine never gives such a leg; two towns on screen share the
+  groups (24) — groups become per job kind, not per town.
+- **Transfers:** the event ring (~9 KB a sync at most) and ≤32 watched units (96 B each); the per-sync read of every
+  unit goes. **Phone cost:** a compare per unit per tick on the GPU (B2a); the CPU's per-sync think over every unit goes.
+- **Rejected:** keeping two routines with a shared base (two sources of the same rules); polling at a lower rate (a
+  throttle, not a design).
+- **Tests first:** the routine as pure logic driven by a scripted event stream (Node): a builder's cycle, a farmer's,
+  a cart's, a soldier to its post, a lost-event throw. Lab gates: fortressharvest, every block built on `town`, the
+  rolling fortressoutside, fortressraid, fortressfollow, fortresscarts.
+- **Note for the merge:** phonefix's UNIT_V 5 -> 6 meets onetown's trips (roadride.wgsl reads RR_UNIT_V): the trips'
+  record writes take the new stride.
