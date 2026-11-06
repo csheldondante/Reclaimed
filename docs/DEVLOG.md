@@ -20447,3 +20447,26 @@ Limits:
 - WAKE (1 cell/s past the breeze) and the settling speed (0.01) are the wake and sleep levels. They are thresholds,
   chosen so the breeze's own patches don't wake the window (with a lean-difference rule, 300 to 400 of the 400 chunks
   stayed awake).
+
+## 2026-11-06 — round 128p (`phonefix`): the breeze's lean in the draw, the spring for gusts only
+
+Why: main, on da418ee7. With the sway asleep under the map's breeze, trees no longer leaned or fluttered in it. The
+breeze is a known analytic function (common.wgsl mapWind: the prevailing wind in its gust patches, the dust storms,
+the eddies), so the draws can work out its lean themselves, with no sim and no state.
+
+What:
+- `plantLean(bend, p)` (common.wgsl) is the breeze's lean, `leanFor(mapWind(p))`, plus the column's bend.
+- The draws use it in vertex.wgsl, meshinst.wgsl and structgame.wgsl. Their flutter scales with it, as before.
+- The sway spring (sway.wgsl) springs only to the wind past the breeze, windAt less the field's map wind (ba − rg),
+  the same wind swaylist.wgsl wakes on. In a calm or a steady breeze the bend goes to 0 and the chunk sleeps.
+- `leanFor` is the one lean formula, shared by the spring's aim and the breeze.
+
+Checked:
+- test/gpu/sway.test.ts passes: no chunk listed under the breeze, the corner gust's chunks listed and leaning, none
+  once settled.
+- Before (32e1820a) and after, the atlas town at play zoom × 2.2 with time running in the natural breeze (1.4
+  cells/s):
+  - over the town: the two frames 0.6 s apart differ by 11.70 and 11.75 a pixel (before, after), and the frames
+    differ from each other by 2.5 a pixel;
+  - over the river's green bank: 18.50 against 18.25.
+- So the motion in the view is the same. The breeze's lean at 1.4 cells/s is 0.07 cells, as small as it was.

@@ -38,7 +38,7 @@ fn swayOffset(b: Box, h: f32) -> vec3<f32> {
   let c = vec2<f32>(b.x + b.sx * 0.5, b.y + b.sy * 0.5);
   // the lean is a per-column spring (sway.wgsl): plants bend with the wind,
   // hold it, and spring back slowly when it drops
-  let lean = bend[colIdxI(clampCell(b.cell))].xy;
+  let lean = plantLean(bend[colIdxI(clampCell(b.cell))], c);
   let amp = length(lean) / 0.3;
   let dir = lean / max(length(lean), 1e-4);
   let seed = fract(sin(dot(c, vec2<f32>(12.9898, 78.233))) * 43758.5453);

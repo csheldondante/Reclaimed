@@ -11,7 +11,7 @@ fn hostNight() -> f32 { return smoothstep(0.3, 0.8, G.sky.w); }
 fn hostWind(xy: vec2<f32>) -> vec2<f32> {
   let c = cellAt(xy);
   if (!inMap(c)) { return vec2<f32>(G.windX, G.windY) / 6.0; }
-  return bend[colIdxI(clampCell(c))].xy / 0.3;
+  return plantLean(bend[colIdxI(clampCell(c))], xy) / 0.3;
 }
 fn hostTime() -> f32 { return G.time; }
 // (a draped piece on the window's ground now: its column's top and the loose ground on it (render.wgsl's bed), a little

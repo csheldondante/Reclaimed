@@ -50,7 +50,7 @@ fn vsInst(@location(0) a: vec4<f32>, @builtin(vertex_index) vi: u32, @builtin(in
   var wp = vec3<f32>(dot(r0.xyz, l) + r0.w, dot(r1.xyz, l) + r1.w, dot(r2.xyz, l) + r2.w);
   // the wind: the column's lean (sway.wgsl's spring) and a slow flutter, the crown shifting with the trunk's top
   let cell = clampCell(cellAt(vec2<f32>(r0.w, r1.w)));
-  let lean = bend[colIdxI(cell)].xy;
+  let lean = plantLean(bend[colIdxI(cell)], vec2<f32>(r0.w, r1.w));
   let amp = length(lean) / 0.3;
   let dir = lean / max(length(lean), 1e-4);
   let seed = fract(sin(dot(vec2<f32>(r0.w, r1.w), vec2<f32>(12.9898, 78.233))) * 43758.5453);

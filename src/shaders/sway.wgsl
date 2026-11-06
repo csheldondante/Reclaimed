@@ -24,10 +24,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
   let i = colIdx(id.x, id.y);
   let c = vec3<f32>(cellPos(vec2<i32>(id.xy)), f32(sfZ(surface[i])) + 2.5);
-  let w = windAt(c);
-  let ws = length(w);
+  // (round 128p: the spring carries only the wind past the map's own breeze — the field's map wind, ba − rg; the
+  // breeze's lean the draws work out themselves, common.wgsl plantLean)
+  let f = windSample(c.xy);
+  let w = windAt(c) - (f.zw - f.xy);
   // strong player wind bends plants hard (cap raised in round 7)
-  let aim = w / max(ws, 1e-3) * clamp(ws / 6.0, 0.0, 2.6) * 0.3;
+  let aim = leanFor(w);
   let b = bend[i];
   let pos = b.xy;
   let vel = b.zw;
