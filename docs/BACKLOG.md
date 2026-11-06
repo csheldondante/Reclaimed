@@ -20,7 +20,7 @@ The user: "Please work on making the code match the design which is a lot cleane
 |---|---|---|---|
 | DA-G1 | Readback allow-list test: every `mapAsync` site named in one list with reason and rate; a new one fails. Widened mid-task (AGENT_RULES §1b): large GPU→GPU copies and CPU→GPU uploads in the same table | S | done (`gates`: src/gpu/transfers.ts, test/unit/transfers.test.ts; 283 entries: 157 reads, 47 copies, 203 uploads; 48 marked `violates`) |
 | DA-G2 | Import-boundary test: modules cross boundaries only through shared contracts (DESIGN.md) | S | done (`gates`: test/unit/boundaries.test.ts, docs/ARCHITECTURE.md "Module boundaries"; 7 rules, 22 known breaches under DA-P9, DA-P2, DA-L9) |
-| DA-G3 | Material limits documented; test that the TS and WGSL material tables agree | S | next |
+| DA-G3 | Material limits documented; test that the TS and WGSL material tables agree | S | done (`gates`: docs/ARCHITECTURE.md "Limits", test/unit/materials-tables.test.ts; found and fixed `looseFrom` crumbling logs to rubble where the GPU makes ash) |
 | DA-G4 | Writing lint over every player-facing string, not opt-in per test | S | next |
 | DA-G5 | Merge townlab rect C (bed4bb7) | S | done (35cf133) |
 | DA-A1 | One plan: land onetown (one TownPlan, one type table, one grid per town, claims by grid id, second box deleted) (§17) | M | next |

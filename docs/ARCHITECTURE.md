@@ -3854,3 +3854,54 @@ Known breaches today (each listed in the test with its row): the engine's live w
 static claims and eight api modules import it (DA-P9); the fortress takes the streamer's `KeepRect` (DA-P2);
 `opps/level-opps.ts` (scene wiring) imports the tune panel and `runplan/viewer.ts` (a page) imports WorldCore (DA-L9).
 Folders not named above (`hero`, whose path finder `units` uses, among them) aren't ruled yet.
+
+## Limits (round 128o, DA-G3; DESIGN.md §24 "Limits … are documented with what they cost us")
+
+The hard sizes the world is built on, what holds them, and what raising each costs. test/unit/materials-tables.test.ts
+holds the material tables to each other.
+
+**Material table: 40 of 40 ids used, no headroom.**
+- `MAX_MATERIALS = 40` (world/materials.ts); `MATERIALS` has 40 entries (ids 0-39, Air to External); `packMaterialTable`
+  throws past it. A 41st material needs the table widened (BACKLOG DA-E1, which the user wants, later).
+- Tables that must grow together: `MATERIALS`/`MAT` and `MAX_MATERIALS` (world/materials.ts); materials.wgsl
+  `MATS: array<Material, 40>` (a uniform, 5 vec4 = 80 B a material, `MATERIAL_STRIDE_FLOATS` 20, 3.2 KB); phys.wgsl
+  `PM` and solver.wgsl `SM` (`array<vec4<f32>, 160>`, 4 vec4 a material, from physics.ts `packPhysMats` and
+  solver/materials.ts `packSolverMats`).
+- Lists of ids mirrored between TS and WGSL, which must change together: what the field mesh draws (meshregion.wgsl
+  `fieldMat` = world/materials.ts `fieldMeshed`), what a broken solid becomes (materials.wgsl `rubbleOf` =
+  game/colapply.ts `looseFrom`), and the `MAT_*` constants about 20 kernels name. The test checks all three (it found
+  `looseFrom` crumbling a log to rubble where the GPU makes ash; fixed in the same commit).
+- Ids that never live in the layers (render- or field-only): Oil 13, Grass 14, Flower 15, Lava 24; Leaves 9 and Wood 10
+  are the old vegetation-as-columns ids. 4-6 ids could move to a separate render id space if the table is tight.
+- Cost of widening: the uniform grows 80 B a material (128 materials: 10 KB, under the 64 KB uniform limit). Round 107
+  measured a large dynamically indexed Globals uniform costing every kernel 45-60 % on D3D11; `MATS` is its own binding
+  and was never measured, so DA-E1 starts with a phone-bench toggle diff of a wider table.
+
+**Material id width: 8 bits (256 ids) in every packed word that holds one.** Interval word 2 (`mat | aux << 8`, bits
+16-31 unused, word 3 spare and zeroed by every `ivPack`); the surface word (z 17 bits as 9.8 fixed point, mat 8 at bit
+17, slot count 5 at 25, buried and gap flags); a pick's info word (mat 8, z 9, flags 15); structure voxels
+(grids.wgsl `voxMat`); render instances (renderprep.wgsl, mat | flags << 8); physics voxels (phys.wgsl `matOf`); the
+edit and brush params (material in the low byte, shake in 8-15). The test checks `MAX_MATERIALS` fits the interval,
+surface, pick and CPU `writeSlot` masks. Past 256 ids, interval word 2's free 16 bits are the room; the surface word has
+none.
+
+**The aux byte (interval word 2, bits 8-15) means three things.** A solid's damage (bits 0-3) and support level (bits
+4-7, structure.wgsl); an External interval's fallback material (sim/external.ts: what it becomes if its owner lets
+go); a projected interval's structure + 1 (common.wgsl). Most passes carry aux through, not all (sim/external.ts
+says so), so External ownership is checked by CPU reads (`verify`). DA-A5 moves the owning grid's id to word 3.
+
+**K = 16 slots a column** (`MAX_K`, world/layout.ts): kernels keep a column in a fixed local array this big. Generation
+fills to 14 (`K_HEADROOM` 2). Past K, generation merges intervals silently (`fitColumn`) and a GPU stamp turns a
+building's top intervals to rubble (colapply.wgsl), both losses of shape (DA-P3 stacks pages in z instead). Raising K
+grows every kernel's local array and the layers buffer (16 B a slot a column).
+
+**Height: `Z_LIMIT` 511** (world/layout.ts): the surface word's 17-bit 9.8 z, the pick's 9-bit z, `PHYS_COL_WORDS` 16
+(512 bits a physics column).
+
+**8 storage buffers a shader stage** (the WebGPU default, `REQUIRED_STORAGE_BUFFERS_PER_STAGE`, gpu/device.ts): the
+phone floor offers no more. About 33 kernels sit at it (docs/PAGES.md §1), which is why draw shaders read the packed
+`renderFields` buffer and page tables were kept in Globals for a while. A new input to a full kernel means packing two
+buffers into one or splitting the kernel.
+
+**Other counts:** structure-piece grids `GRID_CAP` 256 (structures/gpu.ts); voxel structure grids `MAX_STRUCTS` 8 and
+projected spans `PROJ_K` 3 a column (grids/structures.ts); the page table 4096 window chunks (`MAX_PAGES`, sim/pages.ts).

@@ -18141,3 +18141,22 @@ the opportunity contract. A boundary nothing checks drifts.
 - Hacks and limits: the rules are by folder. A breach inside a folder (game/ mixes engine pieces like integrity with
   game rules like powers) isn't seen; `hero` and a few small folders aren't ruled. Viewer and bench files beside engine
   modules are named as pages explicitly.
+
+## 2026-11-05 — the material limits written down, and the tables held together (round 128o, DA-G3)
+
+Why: DESIGN.md §24 asks that limits be "documented with what they cost us", and the user wants the material table
+widened past 40 later ("I would love to expand the material table by the way. But that can come later", DA-E1). The
+table is copied into three WGSL uniforms, about 20 kernels' constants and two id lists mirrored by hand; widening it
+safely needs a test that they agree, and the numbers in one place.
+
+- docs/ARCHITECTURE.md "Limits": 40 of 40 ids (no headroom), 8-bit ids in every packed word, which tables grow
+  together, the aux byte's three meanings, K = 16, Z_LIMIT 511, 8 storage buffers a stage, and the smaller counts, each
+  with what raising it costs.
+- test/unit/materials-tables.test.ts: ids dense and named as in `MAT`; `MATS` length and stride; `PM` and `SM` at 4
+  vec4 a material; every `MAT_*` constant in every kernel is the material it names (three are roles, listed); the
+  mirrored lists, evaluated for every id by running the small WGSL functions as JS; `MAX_MATERIALS` fits the masks.
+- It found one real disagreement: `looseFrom` (game/colapply.ts) crumbled a log to rubble where `rubbleOf` on the GPU
+  makes ash, since round 63 added logs to the GPU side only. Fixed: a log is wood, it burns down to ash on both. The
+  shader's six vote slots are unchanged (ash was already one of them).
+- Hacks and limits: the WGSL-as-JS evaluation only handles the two small mirrored helpers (ifs, returns, comparisons,
+  constants); a bigger mirror needs a real test on the GPU tier. The table was not widened (DA-E1).

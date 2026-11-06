@@ -28,9 +28,12 @@ import { CHUNK, type Interval, type PackedWorld } from '../world/layout';
 import { MAT } from '../world/materials';
 import { freeMat } from '../sim/external';
 
-/** What a crumbled cell of material m becomes as loose ground. */
+/**
+ * What a crumbled cell of material m becomes as loose ground. Mirrors materials.wgsl rubbleOf (test/unit/
+ * materials-tables.test.ts holds them the same; round 128o, DA-G3: a log crumbled to rubble here and to ash there).
+ */
 export function looseFrom(m: number): number {
-  if (m === MAT.Wood || m === MAT.Canvas || m === MAT.Leaves) return MAT.Ash;
+  if (m === MAT.Wood || m === MAT.Canvas || m === MAT.Leaves || m === MAT.Log) return MAT.Ash;
   if (m === MAT.Bone) return MAT.Drift;
   if (m === MAT.Trash) return MAT.Litter;
   if (m === MAT.Ice) return MAT.Snow;

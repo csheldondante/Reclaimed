@@ -123,6 +123,14 @@ rule's reason; a known breach that's gone fails too, so the list shrinks as rows
 design first (DESIGN.md, with the user), then the rule. Never add to `KNOWN` to get a commit through: fix the import, or
 raise it to main.
 
+### The material tables (test/unit/materials-tables.test.ts, DA-G3)
+
+The TS table and every WGSL copy agree: ids dense and named as in `MAT`; the `MATS` uniform's length and stride; the
+physics and solver tables at 4 vec4 a material; every kernel's `MAT_*` constant (a constant naming a role, like the
+units' legs, is in `ROLES`); the mirrored lists (`fieldMat`/`fieldMeshed`, `rubbleOf`/`looseFrom`, evaluated for every
+id by running the small WGSL function as JS); and `MAX_MATERIALS` fits every 8-bit id mask. Widening the table
+(DA-E1) is the edit this test makes safe. docs/ARCHITECTURE.md "Limits" lists the rest.
+
 ## When to use the browser
 
 Use it only for what Node can't show: the page's boot (the build, the menu, the streamer, IndexedDB), drawing and
