@@ -20733,3 +20733,20 @@ changes with the grid.
 - The radial pull's weight and fall-off, and the ring spacing, are style knobs.
 - STEP (1.1 m) is the walker's rule from agents.wgsl.
 - The world check that covers in-play terrain changes is a later step: until it lands, a dug drop goes unnoticed.
+
+**The user's answers (DECISIONS round 128p) fold in:**
+- **Side streets** are the grid's edges, drawn where a door uses them, with insets by kind: lane 1 m, main 1.6 m.
+- **Main roads are curves cutting across the grid** (step 2): generated spokes, rings and inter-city roads, and roads the
+  player draws.
+  - The cells a road crosses adapt: their vertices within reach snap so a cell edge lies on the road's edge. A cell cut
+    deeper is split, or becomes plaza or verge if what's left can't hold a footprint.
+  - The road is a route-network segment. It joins every grid edge it crosses (at the crossing vertex), so the union-find
+    still holds by construction.
+- **Shape modifiers in general:**
+  - A curved wall cuts the grid as a road does. Its gates are where paths cross it.
+  - A multi-cell feature carries its own sub-layout over its painted cells. A farm's plots are a coarser Voronoi over
+    the region, with crop rows snapped per plot.
+  - Painting stays cell by cell.
+  - Step 1's data model gives a structure an optional `sub` layout (plots as cell groups, a row angle a plot); nothing
+    makes one yet.
+

@@ -3513,4 +3513,30 @@ world should show what needs clearing and how.
   (doors on any side reach any other), with no paths inside a structure. The network's pieces inside a tile reduce to
   "port ↔ the structure's node". Internal stairs and floor-by-floor paths are out of the network (wall-walks stay as a
   wall's own way).
+- On step 0's streamlines (the user): "I don't think this implementation looks good. I think just the irregular grid
+  looks better. A radial center or centers could help. I am somewhat confused why the irregular grid had reach issues.
+  My assumption is that everything connected to the cells is reachable by construction of the tiles"; "The between tile
+  roads then allows every other place to be reachable since you can always walk along an edge to any point".
+  → Parked on `onetown-roadgen`. The layout is the irregular grid with radial centre(s), and the paths run on its edges.
+- Asked (DEVLOG round 128p, the edge-path note). Answered:
+  - inset by path kind: lanes about 1 m, main streets more;
+  - drawn paths are the main streets, plus lanes only where a door uses them;
+  - "I think the radial center sounds fine. I really suspect that what we ultimately want is a hybrid with roads that
+    can intersect our irregular grid and the procedural tiles adapt to those intersections. With the default rules we
+    discussed above handling all the side streets."
+  → **Side streets** are the grid's edges, by the default rules. **Main roads** are curves (generated spokes, rings and
+  inter-city roads, and player-drawn) that cut across the grid. The tiles they cross adapt: cells are split, or their
+  vertices snapped so a cell edge lies on the road's edge. A clipped cell keeps a valid footprint or becomes plaza or
+  verge. A main road is a route-network segment and joins every grid edge it crosses, so reach still holds.
+- Then: "Yeah that sounds perfect", and: "We may want to treat walls or other shape modifiers of our irregular grid too.
+  For example, a farm might span many grid cells and we can snap the rows of crop to larger voronoi plots. That way we
+  have a lot of control over shape and size of painted features but the intuitive voxel like nature of townscraper".
+  → **Curves and areas are shape modifiers of the grid in general:** main roads, walls (a curved wall cuts and aligns
+  the grid as a road does), and multi-cell features such as farms. A farm's painted cells are grouped into larger plots
+  (a coarser Voronoi over the painted region), and the crop rows snap to each plot's shape and orientation. Painting
+  stays cell by cell (the Townscaper feel); a modifier only changes how the painted region is drawn and subdivided.
+  A structure carries its own sub-layout (plots, rows) over its cells.
+  → Order: step 1 (the grid with radial centre(s), edge side streets, insets, structures as one node, the union-find
+  reach, on the start town; shots and a map preview), then step 2 (curve roads crossing the grid with the tiles adapting:
+  a generated spoke and a drawn road), then the routes as queues. The farm plots come later unless they fall out.
 
