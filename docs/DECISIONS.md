@@ -3464,3 +3464,36 @@ world should show what needs clearing and how.
   use.
 - → build/grade.ts gradeLane takes the grade (1/3) and what a steep stretch becomes; generation grades the town's
   lanes into its land; the player's new roads are road works on the builders' list.
+
+## 2026-11-06 — round 128p (`onetown`) — roads and reach rewritten from the design (DA-A13)
+
+- The user (via main), on the DA-A10 grading work: "I think you are fighting the current implementation and ignoring
+  the design. If the current implementation is bad redo it don't fight it. Git history preserves it if we need to go
+  back." Then: "you can change generation if you need to … We may add roads as a separate shape that can claim tiles
+  and make tiles merge seamlessly to it"; "the tiles are a fun easy interface for making cool cities. They aren't
+  necessarily the only fun easy interface. Drawing roads or walls with more control over curvature or making larger
+  plots if farm (dragging an area) are all fine as long as we can do it fast and efficiently on the GPU and we can make
+  it merge nicely with the townscraper style grid"; "the city generation software that uses flow fields to find roads
+  actually had the best looking roads … we are going for fast and pretty in our layouts and players get control to
+  shape and make it pretty" (citygen.net, round 128k: tensor-field streamlines).
+- Asked: the DA-A13 design note (DEVLOG round 128o, its six questions). Answered:
+  1. **Drawn by kind.** Ways claim whole 4 m cells for planning and reach; the drawn road is narrower by kind (lane
+     ~2 m, road 2.6 m, main road the full cell), the rest of the cell paving, verges or steps.
+  2. **Roads first.** Traced roads lay out the town; then each block is cut into Townscaper tiles that merge to the
+     roads (settle/grids.ts flips from "lots then streets" to "roads then lots").
+  3. **Plan reach on the CPU** (the note's 6a): the network is the union of the tiles' declared paths, built from the
+     CPU-owned plan, so its components and the cheapest passage are answered there with no round trip; the GPU keeps
+     the world-against-design check (blocked segments, detours) and off-network places.
+  4. **Builders build a structure's way first.**
+  5. **Way slabs as built matter in town, graded terrain outside.**
+  6. **The traced road polylines are read back once per generation or drawn edit** (~100–250 KB a town, a few KB an
+     edit) to feed the CPU plan.
+- → **Departures from DESIGN.md, flagged** (DESIGN §12/§13 updated to match, so the design stays the authority):
+  §12's "today's road geometry (a tree on the town grid's cell borders)" is replaced by ways as their own structure
+  (tiles, curves, areas claiming cells) laid out by a streamline road generator; §13's "connected components on the
+  GPU over the walkable surfaces with the plan's blocks as if built" is replaced, for planned structures, by reach over
+  the declared network on the CPU (the reason the user gave for the GPU — CPU round trips — doesn't apply to data the
+  CPU owns); the GPU components stay for open ground and the world check.
+- Order: step 0 a GPU prototype of the road field and tracing on the start town's land (lab scene, timed full and
+  incremental, play-zoom shot, map preview, blocks cut into quads), replacing nothing; reported before step 1.
+

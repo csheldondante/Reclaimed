@@ -466,7 +466,7 @@ Also: "Looking heavy and moving at a consistent speed matter more than preventin
 - On geometry: "They look fine for now don't ever smooth them yet".
 
 **Design** (from round 128m, for review).
-- **A route network of segments.** Today's road geometry (a tree on the town grid's cell borders, from the gates to every door), piecewise linear, plus door segments into buildings. Each segment has a kind, so stairs, ladders, elevators, cranes and scaffolds can be added later as kinds with their own motion and animation.
+- **A route network of segments.** The union of the paths the plan's structures declare (section 17): ways (roads, tracks, plazas, stairs, ramps, switchbacks, bridges) as structures of their own, plus every tile's doors, passages, internal stairs, wall-walks and gates. Piecewise linear. (Round 128p replaced the round 128m line here, which described the code then: a tree on the town grid's cell borders.) Each segment has a kind, so stairs, ladders, elevators, cranes and scaffolds can be added later as kinds with their own motion and animation.
 - **Kinematic trips.** A unit on a route is a trip record: its route, start time and speed. Its position is interpolated along the segments, with no steering, shoving or "lost" logic. Height is looked up only to draw it. Walking and rolling are animated by distance travelled.
 - **Lanes, queueing and passing.** Every tick the GPU buckets riders by (segment, direction, position) with a count, prefix sum and scatter.
   - Each rider follows the one ahead, with its speed capped by the gap.
@@ -498,6 +498,12 @@ Also: "Looking heavy and moving at a consistent speed matter more than preventin
 - **Traffic is for looks for now.** Roads have enough capacity, and congestion isn't a mechanic. Later, congestion could be fun and make the world feel alive (widening roads, a second gate).
 - **Tiles declare all their paths,** including internal and vertical ones: stairs between floors, wall-walks, ramps into a quarry, elevators in a tower, so "you can get anywhere". Stairs, cranes and elevators are segment kinds that the tiles provide.
 - **Stale routes are rebuilt lazily, and only those.** When roads change, only the cached routes that a change made stale are regenerated, the next time a group needs them. Detours cover blocked stretches meanwhile.
+- **Round 128p (the DA-A13 rewrite; DECISIONS round 128p).**
+  - **Ways are their own structure.** A structure's shape comes from tiles, a drawn curve (roads, walls with curvature) or a dragged area (farm plots, plazas); all claim cells of the one plan, and the Townscaper tiles merge to them (a way neighbour is a street side: doors face it, walls end on it).
+  - **Drawn by kind.** Ways claim whole 4 m cells for planning and reach; the drawn road is narrower by kind (a lane ~2 m, a road 2.6 m, a main road the whole cell), the rest of the cell paving, verges or steps.
+  - **Roads first, a streamline road generator.** A direction (tensor) field over the town's land from basis fields (contours, water edges, the centre, district grids, and constraints: atlas roads, drawn roads and walls, dragged areas), computed on the GPU; major then minor roads traced as streamlines at set spacings; incremental (an edit re-traces only the lines through its area). The blocks between the roads are cut into Townscaper tiles. The user: "fast and pretty in our layouts and players get control to shape and make it pretty".
+  - **Way slabs are built matter in town, graded terrain outside.** A trip's height is its segment's, not the surface under it.
+  - The traced polylines are read back once per generation or drawn edit to feed the CPU plan.
 
 ## 13. Reach (agreed)
 
@@ -509,8 +515,8 @@ Also: "Looking heavy and moving at a consistent speed matter more than preventin
 
 **Design** (from rounds 128f–128m, for review).
 - **Reach is an invariant, not a check.** Every open place in and around the city is reachable from the stores. Generation and every edit keep that true by changing the world: a gate in a closing wall, a passage through a ground floor, a ramp or stairs down a drop, a bridge over water. A unit that can't get somewhere is a bug in the world.
-- **Computed as connected components on the GPU** over the walkable surfaces (label propagation with pointer jumping), with the plan's blocks included as if built. Joins are two-way steps only, so "reachable" means a walker can get there and back with a load.
-- **After every edit,** the cut-off components are found, and the cheapest passage is added to the plan for the builders to build.
+- **Planned structures: reach over the declared network, on the CPU** (round 128p). The network is built from the CPU-owned plan, so whether every declared entrance joins the stores, and the cheapest passage when not, are answered there with no round trip. **Open ground and the world: connected components on the GPU** over the walkable surfaces (label propagation with pointer jumping), seeded from the network; a GPU check of each road segment against the surfaces finds what the world broke (a block, rubble, a dig) and raises an event. (Round 128p replaced "components on the GPU with the plan's blocks included as if built": the user's reason for the GPU, CPU round trips, doesn't apply to data the CPU owns.) Joins are two-way steps only, so "reachable" means a walker can get there and back with a load.
+- **After every edit,** the cut-off entrances are found, and the cheapest passage is added to the plan as a way structure (a road, a passage, a gate, stairs, a ramp, a switchback, a bridge) for the builders to build, before the structure it serves. Generation uses the same function, built at once (free), and drops what nothing can fix.
 - **Refuse what nothing can fix.** A placement that no gate, passage, ramp or bridge can make reachable is refused at placement, with the reason in plain words: deep water, a cliff, walled in.
 - **Tiles provide the paths** (section 12), so a building's own stairs, wall-walks and doors are part of the walkable surfaces.
 - **Walled towns always have land gates:** at least 1 for a village, 2 for a town, 3 for a city. Island towns are exempt.
