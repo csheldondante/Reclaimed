@@ -42,9 +42,10 @@ fn changed(@builtin(global_invocation_id) id: vec3<u32>) {
   let c = entryChunk(e);
   let ci = c.y * G.chunksX + c.x;
   let cs = G.chunkSize;
-  // (chunkver.wgsl's place: keyed by where the chunk's columns lie)
-  let v = chunks[ci].x / (cs * cs);
-  let at = G.chunksX * (G.mapH / cs) + 2u * v;
+  // (chunkver.wgsl's place: keyed by where the chunk's columns lie, ten vec2s a chunk)
+  let t = chunks[ci];
+  let v = t.x / (cs * cs * t.y);
+  let at = G.chunksX * (G.mapH / cs) + 10u * v;
   let a = chunks[at];
   let b = chunks[at + 1u];
   let ver = max(max(select(0u, a.x, (TP.words & 1u) != 0u), select(0u, a.y, (TP.words & 2u) != 0u)), select(0u, b.x, (TP.words & 4u) != 0u));

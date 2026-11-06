@@ -3,7 +3,7 @@
 // state themselves, so replacing one system's implementation cannot silently
 // change what another system sees.
 
-import { VERSION_WORDS, versionIndex, versionWords, waterVersionIndex } from './chunkver';
+import { SHAPE_WORDS, VERSION_WORDS, VW_SHAPE, versionIndex, versionWords, waterVersionIndex } from './chunkver';
 import type { Profiler } from '../gpu/profiler';
 import { CHUNK, PHYS_COL_WORDS, type PackedWorld } from '../world/layout';
 import type { MapData } from '../world/mapgen';
@@ -94,23 +94,29 @@ export class WorldGpu {
   /**
    * (round 128o, DA-B9) The CPU wrote these window chunks (`'all'`: every chunk): their versions moved to `stamp` (the
    * next tick: as a write at the end of the last tick, tick + 1, would have — sim/chunkver.ts; a reader in the next
-   * tick sees it once, not again in the tick after). `what`: 'both' every word (a CPU write puts back
-   * a chunk's whole state, or may), 'water' the class word only: what the surfaces read beside the columns (the
-   * places uploaded, DA-B26).
+   * tick sees it once, not again in the tick after). `what`: 'all' every word (a CPU write puts back a chunk's whole
+   * state, or may); 'class' the class word only, what the surfaces read beside the columns (the places uploaded,
+   * DA-B26); 'shape' the shape words only, what the field mesh reads (the structures over the chunk placed or moved,
+   * DA-B28); 'fields' the class and depth words (a region's water written whole, its columns compared on the GPU:
+   * sim/pagewrite.ts).
    */
-  bumpChunks(chunks: Iterable<number> | 'all', stamp: number, what: 'both' | 'water' = 'both'): void {
+  bumpChunks(chunks: Iterable<number> | 'all', stamp: number, what: 'all' | 'class' | 'shape' | 'fields' = 'all'): void {
     const p = this.packedRef;
     const base = p.chunkTable.byteLength;
-    if (chunks === 'all' && what === 'both') {
+    if (chunks === 'all' && what === 'all') {
       this.device.queue.writeBuffer(this.chunks, base, new Uint32Array(versionWords(p)).fill(stamp));
       return;
     }
     const list = chunks === 'all' ? Array.from({ length: p.chunksX * p.chunksY }, (_, i) => i) : chunks;
-    const both = new Uint32Array(VERSION_WORDS).fill(stamp);
+    const words = new Uint32Array(VERSION_WORDS).fill(stamp);
     const one = new Uint32Array([stamp]);
+    const two = new Uint32Array([stamp, stamp]);
+    const shape = new Uint32Array(SHAPE_WORDS).fill(stamp);
     for (const ci of list) {
-      if (what === 'both') this.device.queue.writeBuffer(this.chunks, base + versionIndex(p, ci) * 4, both);
-      else this.device.queue.writeBuffer(this.chunks, base + waterVersionIndex(p, ci) * 4, one);
+      if (what === 'all') this.device.queue.writeBuffer(this.chunks, base + versionIndex(p, ci) * 4, words);
+      else if (what === 'class') this.device.queue.writeBuffer(this.chunks, base + waterVersionIndex(p, ci) * 4, one);
+      else if (what === 'fields') this.device.queue.writeBuffer(this.chunks, base + waterVersionIndex(p, ci) * 4, two);
+      else this.device.queue.writeBuffer(this.chunks, base + (versionIndex(p, ci) + VW_SHAPE) * 4, shape);
     }
   }
   /** (round 85, simcull — sim/cull.ts) the chunks live this tick, by a flow's sleeping rate (Simulation.step

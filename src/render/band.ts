@@ -11,6 +11,7 @@
 // colDist), and the band's runs cut at the window's edges reach SEAM cells across, so each mesh's field
 // is the same either side of the seam and the two meet.
 
+import { VersionedTable } from '../sim/chunkver';
 import type { Profiler } from '../gpu/profiler';
 import type { WorldGpu } from '../sim/world-gpu';
 import { CHUNK, SLOT_WORDS, fitColumn, packColumn, type Interval } from '../world/layout';
@@ -24,6 +25,8 @@ const SEAM = 6;
 export class OutsideBand {
   readonly mesh: FieldMesh;
   readonly chunks: GPUBuffer;
+  /** (round 128o, DA-B28) the chunk table with its versions */
+  private versions: VersionedTable;
   readonly layers: GPUBuffer;
   private table: Uint32Array;
   /** columns packed at the last update, and how many were merged to fit */
@@ -44,8 +47,9 @@ export class OutsideBand {
     this.table = new Uint32Array(cx * cy * 2);
     for (let c = 0; c < cx * cy; c++) this.table.set([c * CHUNK * CHUNK * BAND_K, BAND_K], c * 2);
     const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
-    this.chunks = world.buf('band chunks', this.table.byteLength, S);
-    device.queue.writeBuffer(this.chunks, 0, this.table);
+    // (round 128o, DA-B28: with its versions after it — what's packed moves them, the field mesh rebuilds by them)
+    this.versions = new VersionedTable(device, (l, n) => world.buf(l, n, S), 'band chunks', this.table, w * h * BAND_K * SLOT_WORDS, BAND_K);
+    this.chunks = this.versions.buffer;
     this.layers = world.buf('band layers', w * h * BAND_K * SLOT_WORDS * 4, S);
     // (no structures out there: an empty frame table)
     const frames = world.buf('band frames', world.strFrames.size, S);
@@ -101,11 +105,11 @@ export class OutsideBand {
           fresh.push(c);
         }
       }
-    this.device.queue.writeBuffer(this.chunks, 0, this.table);
+    this.versions.writeTable();
     // (the fresh pages empty until what's outside them is known: packFresh, once the regions are in)
     const empty = new Uint32Array(CHUNK * CHUNK * BAND_K * SLOT_WORDS);
     for (const c of fresh) this.device.queue.writeBuffer(this.layers, this.table[c * 2] * SLOT_WORDS * 4, empty);
-    this.mesh.packed();
+    this.versions.bump(fresh);
     this.fresh.push(...fresh);
   }
 
@@ -161,7 +165,7 @@ export class OutsideBand {
           this.stats.runs += col.length;
         }
       this.device.queue.writeBuffer(this.layers, this.table[c * 2] * SLOT_WORDS * 4, page);
-      this.mesh.packed();
     }
+    this.versions.bump(chunks);
   }
 }

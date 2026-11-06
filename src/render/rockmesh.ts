@@ -15,6 +15,7 @@
 // the device holds; the copy full — the window's whole area taken by pieces and their margins — the caller lets the
 // resting rock go back to ground first (Integrity.allocRock), and past that it throws.)
 
+import { VersionedTable } from '../sim/chunkver';
 import type { Profiler } from '../gpu/profiler';
 import type { WorldGpu } from '../sim/world-gpu';
 import { CHUNK, SLOT_WORDS, fitColumn, packColumn, type Interval } from '../world/layout';
@@ -77,7 +78,9 @@ type Source = { name: string; chunks: GPUBuffer; layers: GPUBuffer; frames: GPUB
 
 export class RockMesh {
   readonly mesh: FieldMesh;
-  readonly chunks: GPUBuffer;
+  /** the chunk table with its versions after it (round 128o, DA-B28: sim/chunkver.ts VersionedTable; grows with the blocks) */
+  chunks: GPUBuffer;
+  private versions: VersionedTable;
   /** the copy's storage (grows: growBlocks) */
   layers: GPUBuffer;
   /** the draws (rockmesh.wgsl RKD; grows with them) */
@@ -118,8 +121,8 @@ export class RockMesh {
     for (let c = 0; c < cx * cy; c++) this.table.set([0, K], c * 2);
     for (let b = BLOCKS; b >= 1; b--) this.free.push(b);
     const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
-    this.chunks = world.buf('rock chunks', this.table.byteLength, S);
-    device.queue.writeBuffer(this.chunks, 0, this.table);
+    this.versions = new VersionedTable(device, (l, n) => world.buf(l, n, S | GPUBufferUsage.COPY_SRC), 'rock chunks', this.table, (BLOCKS + 1) * CHUNK * CHUNK * K * SLOT_WORDS, K);
+    this.chunks = this.versions.buffer;
     this.layers = world.buf('rock layers', (BLOCKS + 1) * CHUNK * CHUNK * K * SLOT_WORDS * 4, S | GPUBufferUsage.COPY_SRC);
     const frames = world.buf('rock frames', world.strFrames.size, S);
     const vox = world.buf('rock vox', 16, S);
@@ -161,6 +164,13 @@ export class RockMesh {
     this.retired.push({ buf: this.layers, frames: 3 });
     this.layers = layers;
     this.src.layers = layers;
+    // (round 128o, DA-B28: the versions' room with it)
+    const oldTable = this.versions.grow((want + 1) * bytes / 4);
+    if (oldTable !== this.versions.buffer) {
+      this.retired.push({ buf: oldTable, frames: 3 });
+      this.chunks = this.versions.buffer;
+      this.src.chunks = this.chunks;
+    }
     this.mesh.sourceChanged();
     this.stats.grown++;
     this.onBuffers?.();
@@ -226,9 +236,12 @@ export class RockMesh {
     for (let my = Math.floor(ry / MCHUNK); my <= Math.floor((ry + b * G - 1) / MCHUNK); my++)
       for (let mx = Math.floor(rx / MCHUNK); mx <= Math.floor((rx + a * G - 1) / MCHUNK); mx++) meshChunks.push(my * this.nxMesh + mx);
     this.growBlocks(chunks.filter((c) => !this.chunkRef.get(c)).length);
+    // (round 128o, DA-B28: the chunks pointed at a block now: their versions moved with the written ones)
+    const allotted: number[] = [];
     for (const c of chunks) {
       const r = this.chunkRef.get(c) ?? 0;
       if (!r) {
+        allotted.push(c);
         this.table[c * 2] = this.free.pop()! * CHUNK * CHUNK * K;
         this.pages.set(c, new Uint32Array(CHUNK * CHUNK * K * SLOT_WORDS));
       }
@@ -264,8 +277,8 @@ export class RockMesh {
       colList.push([e.x, e.y]);
     }
     for (const c of written) this.device.queue.writeBuffer(this.layers, this.table[c * 2] * SLOT_WORDS * 4, this.pages.get(c)!);
-    this.device.queue.writeBuffer(this.chunks, 0, this.table);
-    this.mesh.packed();
+    this.versions.writeTable();
+    this.versions.bump(new Set([...written, ...allotted]));
     const id = this.nextId++;
     this.slots.set(id, { region: [rx, ry, a * G, b * G], chunks, meshChunks, cols: colList, shift, at: this.frame });
     this.stats.slots = this.slots.size;
@@ -292,6 +305,8 @@ export class RockMesh {
     const ccx = this.world.w / CHUNK;
     const empty = new Uint32Array(K * SLOT_WORDS);
     const touched = new Set<number>();
+    // (round 128o, DA-B28: the chunks written or pointed at the empty block: their versions moved)
+    const moved: number[] = [];
     for (const [x, y] of s.cols) {
       const c = Math.floor(y / CHUNK) * ccx + Math.floor(x / CHUNK);
       this.pages.get(c)?.set(empty, ((y % CHUNK) * CHUNK + (x % CHUNK)) * K * SLOT_WORDS);
@@ -301,13 +316,17 @@ export class RockMesh {
       const r = (this.chunkRef.get(c) ?? 1) - 1;
       if (r > 0) {
         this.chunkRef.set(c, r);
-        if (touched.has(c)) this.device.queue.writeBuffer(this.layers, this.table[c * 2] * SLOT_WORDS * 4, this.pages.get(c)!);
+        if (touched.has(c)) {
+          this.device.queue.writeBuffer(this.layers, this.table[c * 2] * SLOT_WORDS * 4, this.pages.get(c)!);
+          moved.push(c);
+        }
         continue;
       }
       this.chunkRef.delete(c);
       this.pages.delete(c);
       this.free.push(this.table[c * 2] / (CHUNK * CHUNK * K));
       this.table[c * 2] = 0;
+      moved.push(c);
     }
     for (const m of s.meshChunks) {
       this.meshRef[m]--;
@@ -315,8 +334,8 @@ export class RockMesh {
     }
     const [rx, ry, rw, rh] = s.region;
     for (let q = ry / G; q < (ry + rh) / G; q++) for (let p = rx / G; p < (rx + rw) / G; p++) this.occ[q * this.gx + p] = 0;
-    this.device.queue.writeBuffer(this.chunks, 0, this.table);
-    this.mesh.packed();
+    this.versions.writeTable();
+    this.versions.bump(moved);
     this.stats.slots = this.slots.size;
   }
 

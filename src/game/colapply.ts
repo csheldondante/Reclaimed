@@ -19,6 +19,7 @@
 // the CPU says what changes, the GPU changes its columns. (Until DA-B14 every change was written to a second buffer,
 // layersNext, alike: the column passes copied it back over the layers whole. They write in place now; it's gone.)
 import colapplyWgsl from '../shaders/colapply.wgsl?raw';
+import shapekeyWgsl from '../shaders/shapekey.wgsl?raw';
 import { makeBindGroup, makeLayout } from '../gpu/pipeline';
 import { subtract } from './colbodies';
 import type { Voxel } from './fracture';
@@ -198,7 +199,8 @@ export class ColumnApply {
 
   constructor(private device: GPUDevice) {
     this.layout = makeLayout(device, 'colapply', BINDS, GPUShaderStage.COMPUTE);
-    const module = device.createShaderModule({ label: 'colapply.wgsl', code: colapplyWgsl });
+    // (round 128o, DA-B28: the mesh's slot key, shared with chunkver.wgsl's bumpColumn)
+    const module = device.createShaderModule({ label: 'colapply.wgsl', code: [shapekeyWgsl, colapplyWgsl].join('\n') });
     const pl = device.createPipelineLayout({ label: 'colapply', bindGroupLayouts: [this.layout] });
     this.pipes = Object.fromEntries(KERNELS.map((k) => [k, device.createComputePipeline({ label: `colapply ${k}`, layout: pl, compute: { module, entryPoint: k } })])) as Record<Kernel, GPUComputePipeline>;
     this.noDeposit = device.createBuffer({ label: 'colapply no deposit', size: 16, usage: GPUBufferUsage.STORAGE });

@@ -145,11 +145,12 @@ export class WorldCore {
     // (simscale: what comes in is projected at the next tick — grids/systems.ts ProjectSystem)
     this.onShift.push(() => (this.world.projectAll = true));
     this.renderer = new Renderer(device, host.gpu.format, this.world, host.profiler, fieldMesh, host.quality.shadowSize, meshRoom, host.quality.meshSlots, Math.min(typeof devicePixelRatio === 'number' ? devicePixelRatio : 1, host.quality.maxDpr) * host.quality.renderScale);
-    this.structures = new Structures(device, this.world);
+    // (round 128o, DA-B28: a structure placed or moved — the chunks under where it was and is, their shape versions)
+    this.structures = new Structures(device, this.world, (rects) => this.world.bumpChunks(this.chunksUnder(rects), this.sim.tick, 'shape'));
     this.weather = new Weather(map.surface, this.dims.w, this.dims.h, (x, y) => this.world.ring.i(x, y));
     // (round 108, TC20: a render-only tile's land seeds the weather's cover)
     this.renderer.coverSeed = (enc, src, side, lo, hi) => this.sim.cover.seed(enc, src, side, lo, hi);
-    this.places = new Places(device, this.world, this.sim.placeOps, this.weather, () => this.world.bumpChunks('all', this.sim.tick, 'water'));
+    this.places = new Places(device, this.world, this.sim.placeOps, this.weather, () => this.world.bumpChunks('all', this.sim.tick, 'class'));
     this.globals = {
       mapW: this.dims.w,
       mapH: this.dims.h,
@@ -515,10 +516,26 @@ export class WorldCore {
    */
   readonly onColumnsWritten: ((chunks: readonly number[] | 'all') => void)[] = [];
 
+  /** (round 128o, DA-B28) the window chunks under world rects (x0, y0, x1, y1), each once */
+  private chunksUnder(rects: [number, number, number, number][]): number[] {
+    const p = this.packed;
+    const out = new Set<number>();
+    for (const [x0, y0, x1, y1] of rects) {
+      const i0 = Math.max(0, Math.floor(x0 / CHUNK));
+      const i1 = Math.min(p.chunksX - 1, Math.floor(x1 / CHUNK));
+      const j0 = Math.max(0, Math.floor(y0 / ROW_H / CHUNK));
+      const j1 = Math.min(p.chunksY - 1, Math.floor(y1 / ROW_H / CHUNK));
+      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) out.add(j * p.chunksX + i);
+    }
+    return [...out];
+  }
+
   /** the CPU wrote these window chunks' columns (or all): their versions moved, the columns' and the water's (a CPU
    *  write puts back a chunk's state: sim/chunkver.ts), onColumnsWritten told */
-  columnsWritten(chunks: readonly number[] | 'all'): void {
-    this.world.bumpChunks(chunks, this.sim.tick);
+  columnsWritten(chunks: readonly number[] | 'all', what: 'all' | 'fields' = 'all'): void {
+    // (round 128o, DA-B28 'fields': the water's class and depth only — the columns went in through the page write,
+    // which moves their versions where they differ: streamer/write.ts)
+    this.world.bumpChunks(chunks, this.sim.tick, what === 'all' ? 'all' : 'fields');
     for (const f of this.onColumnsWritten) f(chunks);
   }
 

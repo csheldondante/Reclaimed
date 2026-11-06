@@ -1,8 +1,8 @@
 // The field mesh (G13 h; fieldmesh.wgsl, meshdraw.wgsl): the whole map's
 // terrain drawn as one surface meshed from a field evaluated from the
 // intervals and the structures' voxels, in place of prisms and sheets. In
-// chunks of the world; the GPU finds the chunks that changed and rebuilds a
-// few a frame. On in every level and the world API (round 61; ?mesh=0: prisms); ?meshh= the sample spacing (1; 0.5 is
+// chunks of the world; the GPU finds the chunks that changed (round 128o, DA-B28: from the chunks' shape versions,
+// sim/chunkver.ts) and rebuilds a few a frame. On in every level and the world API (round 61; ?mesh=0: prisms); ?meshh= the sample spacing (1; 0.5 is
 // finer and four times the cost). This side writes the layout (a uniform),
 // dispatches, and culls to the view: the chunks drawn, and the chunks
 // rebuilt (near the view; the rest when they come into it).
@@ -42,6 +42,8 @@ const CHUNK0 = 16;
 const CSTRIDE = 14;
 /** meshstate.wgsl FRESH: a record's hash when nothing is built */
 const FRESH_HASH = 0x9e3779b9;
+/** (round 128o, DA-B28) fieldmesh.wgsl STALE: word 5 forced, the chunk rebuilt and drawn meanwhile */
+const STALE = 0xfffffffe;
 /**
  * (round 86) rebuild slots a frame kept for the chunks the CPU marks urgent (`urgent`: an edit's, a falling piece's),
  * over the tier's own — low's one, on alternate frames with the band, made a crater's chunks show over ten frames
@@ -110,11 +112,15 @@ export class FieldMesh {
   private scratch!: GPUBuffer;
   private kernels: ComputeKernel[] = [];
   private groups: GPUBindGroup[] = [];
-  private hash!: ComputeKernel;
-  private hashGroup!: GPUBindGroup;
-  /** the first hash pass: chunks with nothing built (round 73) */
-  private hashF!: ComputeKernel;
-  private hashFGroup!: GPUBindGroup;
+  /** (round 128o, DA-B28) the change pass: each near chunk's shape key against what it was built from */
+  private changed!: ComputeKernel;
+  private changedGroup!: GPUBindGroup;
+  /** the first change pass: chunks with nothing built (round 73) */
+  private changedF!: ComputeKernel;
+  private changedFGroup!: GPUBindGroup;
+  /** (DA-B28) the rebuilt chunks' tops and bottoms, a workgroup a slot */
+  private bounds!: ComputeKernel;
+  private boundsGroup!: GPUBindGroup;
   private frameNo = 0;
   /** chunks along x, y; samples along z; a chunk's cells per side (N); rebuild slots */
   private nx = 0;
@@ -286,9 +292,10 @@ export class FieldMesh {
         9: this.state,
         30: this.region,
       });
-    this.hash = makeCompute(device, 'fieldmesh-hash', parts, spec, 'hashChunks');
+    this.changed = makeCompute(device, 'fieldmesh-changed', parts, spec, 'changedChunks');
     this.argsK = makeCompute(device, 'fieldmesh-args', parts, spec, 'rebuildArgs');
-    this.hashF = makeCompute(device, 'fieldmesh-hash-fresh', parts, spec, 'hashFresh');
+    this.changedF = makeCompute(device, 'fieldmesh-changed-fresh', parts, spec, 'changedFresh');
+    this.bounds = makeCompute(device, 'fieldmesh-bounds', parts, spec, 'chunkBounds');
     // (round 93, the pool: the count and alloc passes between — the alloc ones a single workgroup, dispatched direct)
     const steps = this.pool
       ? (['columnTops', 'sampleField', 'countVerts', 'allocVerts', 'makeVerts', 'countQuads', 'allocQuads', 'makeQuads'] as const)
@@ -305,9 +312,10 @@ export class FieldMesh {
   /** (round 93) the compute groups — made again when the pool grows (its buffer is new) */
   private makeGroup!: (k: ComputeKernel) => GPUBindGroup;
   private makeGroups(): void {
-    this.hashGroup = this.makeGroup(this.hash);
+    this.changedGroup = this.makeGroup(this.changed);
     this.argsGroup = this.makeGroup(this.argsK);
-    this.hashFGroup = this.makeGroup(this.hashF);
+    this.changedFGroup = this.makeGroup(this.changedF);
+    this.boundsGroup = this.makeGroup(this.bounds);
     this.groups = this.kernels.map((k) => this.makeGroup(k));
   }
   private steps: { name: string; direct: boolean; tops: boolean }[] = [];
@@ -383,13 +391,6 @@ export class FieldMesh {
   private argsAt = 0;
   private argsK!: ComputeKernel;
   private argsGroup!: GPUBindGroup;
-  /** frames since a band was last packed (its full change pass runs for a while after) */
-  private framesSincePack = 0;
-
-  /** the band's layers were written: look at every chunk for a while (round 80) */
-  packed(): void {
-    this.framesSincePack = 0;
-  }
   /** its passes' and buffers' names begin so ('band ': the profiler tells the two apart) */
   private pre = '';
 
@@ -429,8 +430,8 @@ export class FieldMesh {
     for (let cy = 0; cy < this.ny; cy++)
       for (let cx = 0; cx < this.nx; cx++) {
         if (!all && !touch(old, cx, cy) && !touch(f, cx, cy)) continue;
-        // (word 5, the hash it was built from: anything not this one rebuilds it; not FRESH, so it stays drawn)
-        this.device.queue.writeBuffer(this.state, (CHUNK0 + (cy * this.nx + cx) * CSTRIDE + 5) * 4, new Uint32Array([1]));
+        // (word 5, the key it was built from: STALE rebuilds it; not FRESH, so it stays drawn)
+        this.device.queue.writeBuffer(this.state, (CHUNK0 + (cy * this.nx + cx) * CSTRIDE + 5) * 4, new Uint32Array([STALE]));
       }
   }
 
@@ -449,6 +450,22 @@ export class FieldMesh {
     const n = this.nx * this.ny;
     if (want && want.length !== n) throw new Error(`FieldMesh.setWanted: ${want.length} chunks, not ${n}`);
     const old = this.wanted;
+    // (round 128o, DA-B28: a chunk turning meshed or not changes how its neighbours close their caves toward it —
+    // fieldmesh.wgsl colUnmeshed: the wanted ones round it rebuilt, drawn meanwhile)
+    const stale = new Set<number>();
+    for (let c = 0; c < n; c++) {
+      const was = old ? old[c] : 1;
+      const now = want ? want[c] : 1;
+      if (was === now) continue;
+      const cx = c % this.nx;
+      const cy = (c - cx) / this.nx;
+      for (let b = Math.max(0, cy - 1); b <= Math.min(this.ny - 1, cy + 1); b++)
+        for (let a = Math.max(0, cx - 1); a <= Math.min(this.nx - 1, cx + 1); a++) {
+          const m = b * this.nx + a;
+          if (m !== c && (want ? want[m] : 1) && (old ? old[m] : 1)) stale.add(m);
+        }
+    }
+    for (const m of stale) this.device.queue.writeBuffer(this.state, (CHUNK0 + m * CSTRIDE + 5) * 4, new Uint32Array([STALE]));
     for (let c = 0; c < n; c++) {
       const was = old ? old[c] : 1;
       const now = want ? want[c] : 1;
@@ -628,15 +645,15 @@ export class FieldMesh {
       if (this.wanted) for (let c = 0; c < chunks; c++) if (!this.wanted[c]) nearW[c] |= UNMESHED_BIT;
     }
     this.device.queue.writeBuffer(this.state, (CHUNK0 + chunks * CSTRIDE) * 4, nearW);
-    // (round 80: a band only changes when it's packed — every chunk looked at for a few seconds after; else
-    // only the fresh ones, those come into view)
-    const passes = this.src && this.framesSincePack > 180 ? ([[this.hashF, this.hashFGroup]] as const) : ([[this.hashF, this.hashFGroup], [this.hash, this.hashGroup]] as const);
-    this.framesSincePack++;
-    for (const [k, g] of passes) {
-      const pass = enc.beginComputePass({ label: `${this.pre}fieldmesh-hash`, timestampWrites: this.profiler.timestamps(`${this.pre}fieldmesh-hash`) });
-      pass.setPipeline(k.pipeline);
-      pass.setBindGroup(0, g);
-      pass.dispatchWorkgroups(chunks);
+    // (round 128o, DA-B28: the near chunks' shape keys against what they were built from — no column read; the band's
+    // and the rock mesh's sources keep versions too)
+    {
+      const pass = enc.beginComputePass({ label: `${this.pre}fieldmesh-changed`, timestampWrites: this.profiler.timestamps(`${this.pre}fieldmesh-changed`) });
+      for (const [k, g] of [[this.changedF, this.changedFGroup], [this.changed, this.changedGroup]] as const) {
+        pass.setPipeline(k.pipeline);
+        pass.setBindGroup(0, g);
+        pass.dispatchWorkgroups(Math.ceil(chunks / 64));
+      }
       pass.end();
     }
     // (round 81: the rebuild sized to the chunks found changed — none, most frames)
@@ -647,6 +664,15 @@ export class FieldMesh {
       pass.dispatchWorkgroups(1);
       pass.end();
       enc.copyBufferToBuffer(this.state, this.argsAt, this.args, 0, 12);
+    }
+    // (round 128o, DA-B28: the rebuilt chunks' tops and bottoms, which the rebuild's samples read — a workgroup a slot,
+    // those not taken return at once)
+    {
+      const pass = enc.beginComputePass({ label: `${this.pre}fieldmesh-bounds`, timestampWrites: this.profiler.timestamps(`${this.pre}fieldmesh-bounds`) });
+      pass.setPipeline(this.bounds.pipeline);
+      pass.setBindGroup(0, this.boundsGroup);
+      pass.dispatchWorkgroups(this.slots);
+      pass.end();
     }
     this.kernels.forEach((k, i) => {
       const st = this.steps[i];
@@ -662,7 +688,7 @@ export class FieldMesh {
       pass.end();
       this.profiler.dispatches++;
     });
-    this.profiler.dispatches += 2;
+    this.profiler.dispatches += 4;
     // (round 93: the free stack's header, now and then — the pool grows when it runs short)
     if (this.pool && READBACK && !this.freeBusy && this.freeEvery++ % POOL_READ_EVERY === 0) {
       enc.copyBufferToBuffer(this.state, this.freeAt * 4, this.freeBuf!, 0, FREE_HEAD * 4);

@@ -221,12 +221,13 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
     let dz = rise * DT_L;
     let b = layers[cs.x];
     layers[cs.x] = ivPack(ivZ0(b), ivZ1(b) + dz, ivMat(b), ivAux(b));
+    // (round 128o, DA-B9: the column changed - its chunk's versions, chunkver.wgsl bumpColumn)
+    bumpColumn(id.xy, b, layers[cs.x]);
     for (var s = 1u; s < n; s++) {
       let u = layers[cs.x + s];
       layers[cs.x + s] = ivPack(ivZ0(u) + dz, ivZ1(u) + dz, ivMat(u), ivAux(u));
+      bumpColumn(id.xy, u, layers[cs.x + s]);
     }
-    // (round 128o, DA-B9: the column changed - its chunk's version, chunkver.wgsl)
-    bumpChunk(id.xy);
     top += dz;
     // the ground cracks and smokes as it heaves
     if (chance(i, 0x59u) < 0.0012 * rise) {
@@ -239,7 +240,7 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
   // the beam: the ground where it hits, and what lava lies there
   var melt = 0.0;
   var meltLvl = 0.0;
-  // (spill.w: the way out, + 8 × the bore's heat here)
+  // (spill.w: the way out, + 8 Ã— the bore's heat here)
   var way = f32(u32(sp.w) & 7u);
   var boreHeat = 0.0;
   if (beamOn) {
@@ -289,8 +290,11 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
         if (nn <= cs.y) {
           melt = rock;
           boreHeat = 0.0;
-          for (var s = 0u; s < cs.y; s++) { layers[cs.x + s] = select(IV_NONE, arr[min(s, MAX_K - 1u)], s < nn); }
-          bumpChunk(id.xy);
+          for (var s = 0u; s < cs.y; s++) {
+            let nv = select(IV_NONE, arr[min(s, MAX_K - 1u)], s < nn);
+            bumpColumn(id.xy, layers[cs.x + s], nv);
+            layers[cs.x + s] = nv;
+          }
           n = nn;
           top = select(0.0, ivZ1(arr[max(nn, 1u) - 1u]), nn > 0u);
           // the bore's floor: the highest ground under bz
@@ -350,6 +354,10 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
           let v = layers[cs.x + uf];
           let u = layers[cs.x + uf + 1u];
           let z1 = min(ivZ1(v) + carry, ivZ0(u));
+          // (the slots it moves, as they were: compared after - chunkver.wgsl bumpColumn)
+          var before: array<vec4<u32>, MAX_K>;
+          for (var s = uf; s < n; s++) { before[s] = layers[cs.x + s]; }
+          let n0 = n;
           if (z1 >= ivZ0(u) - 1e-3) {
             // (the gap filled: the two become one)
             layers[cs.x + uf] = ivPack(ivZ0(v), ivZ1(u), ivMat(v), ivAux(v));
@@ -359,7 +367,7 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
           } else {
             layers[cs.x + uf] = ivPack(ivZ0(v), z1, ivMat(v), ivAux(v));
           }
-          bumpChunk(id.xy);
+          for (var s = uf; s < n0; s++) { bumpColumn(id.xy, before[s], layers[cs.x + s]); }
         }
       }
     }
@@ -372,13 +380,10 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
     if (dz > 0.0) {
       gh -= dz * LATENT;
       let z1 = ivZ1(v) - dz;
-      if (z1 <= ivZ0(v) + 1e-3) {
-        layers[cs.x + n - 1u] = IV_NONE;
-        n -= 1u;
-      } else {
-        layers[cs.x + n - 1u] = ivPack(ivZ0(v), z1, ivMat(v), ivAux(v));
-      }
-      bumpChunk(id.xy);
+      let nv = select(ivPack(ivZ0(v), z1, ivMat(v), ivAux(v)), IV_NONE, z1 <= ivZ0(v) + 1e-3);
+      layers[cs.x + n - 1u] = nv;
+      bumpColumn(id.xy, v, nv);
+      if (z1 <= ivZ0(v) + 1e-3) { n -= 1u; }
       top -= dz;
       d += dz;
       heat += dz * LAVA_HOT;

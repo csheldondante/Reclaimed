@@ -246,12 +246,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     prevSup = s;
   }
   for (var i = n; i < cs.y; i++) { layers[cs.x + i] = IV_NONE; }
-  for (var i = 0u; i < cs.y; i++) {
-    if (any(layers[cs.x + i] != before[i])) {
-      bumpChunk(id.xy);
-      break;
-    }
-  }
+  for (var i = 0u; i < cs.y; i++) { bumpColumn(id.xy, before[i], layers[cs.x + i]); }
 }
 
 /** interval i's nibble of a column's two words */

@@ -19601,3 +19601,256 @@ its slot opening or closing starts it over (a tested piece).
   fortressfollow failed twice: its tap picked a second person drawn on the first — riders on the same trip are placed
   at the same spots along it (no queueing on the roads yet, DESIGN section 12); the scenario now picks a person
   standing apart (ok).
+
+## 2026-11-06 — round 128o (`phonefix`, DA-B28): the field mesh rebuilt from the chunks' versions, design note for main's review
+
+- Why: on the user's Pixel 9a, `fieldmesh-hash` is the largest GPU pass after the draw (6.3 ms mean, 129 ms max a
+  frame) and `fieldmesh-sample` is 3.6 ms.
+- Today (render/fieldmesh.ts encode, fieldmesh.wgsl hashChunk):
+  - Every encode (the window's mesh on alternate frames with the band's), `hashFresh` then `hashChunks` dispatch a
+    workgroup per mesh chunk (32 × 32 rows; about 100 at 320²).
+  - Each near chunk walks the intervals of its ~1,300 columns plus a two-cell margin, unless every sim chunk under it
+    sleeps. The hash's key is each interval's ends to 1/16 and its material, the world position (so a slide moves no
+    hash), the unmeshed neighbours (hybrid), and the frames (a, q) of the structures over the chunk.
+  - The same walk records the chunk's top (word 8) and its lowest boundary over the bedrock (word 12), which the
+    rebuild reads.
+  - A changed chunk takes a rebuild slot (fresh ones first, the urgent slots, the ordinary turns, owed when none is
+    free). The rebuild is already indirect over the slots taken.
+- Proposal:
+  1. **A shape word**, the 4th version word (unused today): the columns as the mesh sees them, plus the structures
+     over them.
+     - Moved by the column writers when an interval's key changes (`shapeKey`: ends at 1/16, material, the hash's own
+       quantization). This is done in the compare-before-write loop they already have (one `bumpColumn(q, old, new)`
+       for the columns and shape words; colapply in its store).
+     - Moved by every CPU columnsWritten (all words already).
+     - Moved by `Structures.writeFrame` over the sim chunks under its old and new bounds (CPU, 4 B a chunk, edit
+       rate).
+     - Not the columns word: it moves on any bit, and sediment creeping by hundredths would rebuild a chunk every
+       frame it creeps, where the hash waits until a sixteenth adds up. Same key, same rebuilds: the visuals stay
+       identical.
+  2. **hashChunk becomes changedChunk.** A thread per mesh chunk takes key = max(shape version over the sim chunks
+     under its rect and margin) + 1, never 0. It compares the key with the built and owed words (5, 6) and keeps the
+     slot logic as it is. There is no column walk: 9–16 version reads a chunk. The sleep test ("still") goes; the
+     versions cover it.
+  3. **The top and bottom move into the rebuild.** They are computed by a new pass over the rebuilt chunks only
+     (indirect, a workgroup a slot: hashChunk's walk, for the ones chosen) before `sampleField`.
+  4. **The band's and the rock mesh's sources carry versions too.** Their chunk tables get the same layout, and their
+     CPU page writes (band.ts pack and fresh, rockmesh.ts written and touched) bump them with their own counter. The
+     band's 180 frames of full hashing after a pack, and `packed()`, go. One change detection for all three meshes.
+  5. **Rebuilds the CPU forces stay** (setCaves, setWanted: word 5 written). The hybrid's unmeshed-neighbour term
+     becomes the CPU marking the 3 × 3 round a chunk whose `wanted` changed.
+  6. **No CPU list and no ChangedTiles.** The change pass is one direct dispatch over ~100 mesh chunks of trivial
+     work; the rebuild stays indirect.
+- Risks and edges:
+  - A change undone before its rebuild: the hash then rebuilt nothing, the versions rebuild once (same picture).
+  - Slides: versions are keyed by storage like the land, and fresh chunks are FRESH as now.
+  - Margin sim chunks past the window are clamped.
+  - FRESH (0x9e3779b9) as a key needs tick 0x9e3779b8 (~1.4 years at 60 Hz).
+  - Structure voxels changed in place (damage) were never in the hash either: unchanged.
+  - Hidden writers are held by DA-B9's source scans (a shape test per writer is added to them).
+- Tests and gates:
+  - Dawn:
+    - the shape word moves on a 1/16 step and not on a sub-1/16 creep;
+    - a structure placed or moved moves the shape word under its old and new bounds;
+    - on a tiny world's FieldMesh, a dig rebuilds its mesh chunks only, and nothing changed means zero rebuilds;
+    - before the hash is deleted, a run counting the chunks the hash picks against those the versions pick on a
+      scripted session (equal, or the versions' extra explained).
+  - Visual gate: pan test, play-zoom shots before and after, tilegate's parked views compared before and after on
+    this machine (DA-G7: the goldens are stale).
+  - Toggle diff on the desktop; for the phone bench, `fieldmesh-hash` gone and `fieldmesh-*` rebuild ms at rest and
+    while building.
+- The idle floor that follows: renderprep, vegprep, floraField and the water surface's list.
+  - They remake append-only instance lists from the whole window each prep frame. They read fields with no version
+    (veg, fire, contam, moisture, oil) besides the columns and the water.
+  - Two options:
+    - (a) per-chunk ranges in the lists (like the mesh's page pool), remade where a chunk is awake (the sleep mask)
+      or its versions moved;
+    - (b) versions for every field renderprep reads.
+  - (a) fits the simulation's own sleep rule and is BACKLOG P4/FC3's plan. It is its own contract change (the
+    renderer's lists), so a second note after DA-B28.
+
+## 2026-11-06 — round 128o (`phonefix`, DA-B28): the field mesh rebuilt from the chunks' shape versions
+
+- Why: on the user's Pixel 9a, `fieldmesh-hash` is the largest GPU pass after the draw (6.3 ms mean, 129 ms max a
+  frame). Main's answers to the design note: a shape word whose quantization lives in one shared function every
+  writer calls; the band and the rock mesh versioned too (one change detection); derisk first; gates compared before
+  and after on this machine.
+- Derisk (before the hash went): a debug session on the atlas, `.testcache/meshderisk.mjs`, not committed.
+  - Each frame, for every near mesh chunk, it compared the hash's "will be" word (word 6) with a CPU-computed shape
+    key (the newest shape version under the chunk's columns and margin, from the `chunks` buffer read back).
+  - The session had the fortress at rest, Build pressed, a storm's rain, and (without the fortress, whose window
+    stays put) a 30 cells/s pan: 156 slides.
+
+  | phase | frames | near-chunk frames | hash only | versions only | both |
+  | --- | --- | --- | --- | --- | --- |
+  | at rest | 995 | 14,925 | 0 | 0 | 0 |
+  | building | 1,271–1,812 | 16,517–23,550 | 0–2 | 0–2 | 0–2 |
+  | rain | 479–577 | 6,227–8,655 | 0 | 257–364 | 173–289 |
+  | pan (slides) | 1,592 | 2,616 | 12 | 22 | 24 |
+
+  - "Hash only" means a change the versions would miss. All 12 in the pan were urgent chunks; 11 had a hybrid
+    neighbour turn meshed or not (the hash mixed in the neighbours' UNMESHED bits), and those are now forced by
+    `setWanted`. One (chunk 53, right after a slide) had no unmeshed change. Its likely cause is a structure frame
+    translated with the slide, which the hash saw as a change and the versions rightly don't (the record moved with the
+    land); not proven. The 2 in one building run didn't reproduce in the other two.
+  - "Versions only" are extra rebuilds. In rain, the sim chunks under a mesh chunk reach up to 15 columns past its
+    hashed margin.
+  - The post-slide frames: on the desktop the hash's top frames during the pan were 2–9 frames after a slide, at
+    0.23 ms (mean 0.06–0.17 ms a phase, max 0.72 ms). Scaled by the phone's mean (6.3 ms against ~0.1 ms here), that
+    is ~15–45 ms, not 129 ms. The phone's 129 ms max is not explained by the post-slide hash alone on this evidence; the
+    phone bench should say which frame it was.
+- Change:
+  - shapekey.wgsl `shapeKey` (a slot's ends to 1/16, its material, the empty slot) is the one quantization.
+    chunkver.wgsl `bumpColumn(q, old, new)` is called by every column writer for each slot it changes. It moves the
+    columns word, and the shape word (the 4th, unused till now) when the key changed. climate, edit, landbrush,
+    layerpull, sediment, townstamp, structure, lava (rise, bore, fill, melt; the slots it shifts compared after) and
+    liquid (basalt) all call it; colapply's store uses shapeMoved.
+  - `bumpChunk` is gone.
+  - Structures.writeFrame tells WorldCore the old and new bounds, which bumps the shape word of the sim chunks under
+    them.
+  - fieldmesh.wgsl: `changedFresh` / `changedChunks` (a thread a mesh chunk) compare chunkKey (the newest shape
+    version under its columns and margin, + 1) with the built key. The column walk, the sleep test and the hash are
+    gone. `chunkBounds` (a workgroup a rebuild slot) works out the rebuilt chunks' top and bottom, which the walk did
+    for every near chunk. STALE (word 5) is the CPU's forced rebuild (setCaves; setWanted now marks the wanted
+    neighbours of a chunk turning meshed or not).
+  - The band and the rock mesh keep a `VersionedTable` (sim/chunkver.ts): their CPU page writes, slides' fresh chunks
+    and re-pointed chunks bump their own stamp. The band's 180 frames of full hashing after a pack, and
+    `FieldMesh.packed()`, are gone.
+- Tests:
+  - test/gpu/chunkver.test.ts: every column writer's test also checks the shape word. shapeKey is checked directly
+    (14 → 14.01 the same; 14.07, a new material, an emptied slot: moved). A structure placed moves the shape word
+    under it and not the columns'.
+  - test/gpu/fieldmesh-versions.test.ts: built once; nothing changed, nothing rebuilt; a dig rebuilds only mesh
+    chunks over its sim chunk; STALE rebuilds once.
+  - test/unit/chunkver.test.ts: every column writer calls bumpColumn (or bumpOf with shapeMoved); shapeKey is defined
+    once; the band and the rock mesh bump what they write.
+- Gates: tilegate before (06052231) and after (this change) on this machine (Intel Xe-LPG). The goldens were written from
+  the before run (`--update` into .testcache) and the after run was compared to them.
+  - Parked views at the same zoom are within 1% (desktop z14, z8, z5, z3.5, z2.2; phone z14, z8, z5; run-desktop;
+    run-phone; w384-phone). Coverage is ok in both runs.
+  - Four views were flagged: desktop-z1.3 (33%) and phone z3.5, z2.2, z1.3 (20%). The camera's zoom floor differed
+    between the two runs (desktop 2.11 against 1.88, phone 3.65 against 3.8), so those images are at different scales.
+    They are not a mesh difference, and not judged here.
+  - Pan at 20 c/s: ok in both runs.
+  - Fast pans at 160 c/s fail in both runs (DA-B27, pre-existing). The desktop figures are the same before and after:
+    z14 33.4% / 32.9%, z8 17.7% / 17.3%, z5 7.7% / 7.7%. **phone-z8 is worse after**: 0.16% and 0.14% before, against
+    21.6%, 2.9% and 2.3% after, in the same cells (r226-228, 215-216). This is a possible regression and not resolved.
+    The likely cause is a slide's region write bumping every word of its sim chunks, so more mesh chunks (the wider
+    reach) queue for the phone tier's one ordinary slot, where the hash rebuilt only those whose content changed.
+  - Not run: the toggle diff and a pan-specific rebuild count. Main paused timing runs for the towns agent's gates,
+    so they wait for one batched run.
+- Phone bench should check: `fieldmesh-hash` gone and `fieldmesh-changed` (+ `-bounds`) in its place; the frame's
+  p95/max at rest, building, in rain and while panning (slides); `fieldmesh-sample` and the other rebuild passes'
+  ms in rain, where the versions rebuild somewhat more than the hash did; and which frame the 129 ms max was.
+- Hacks and limits:
+  - A mesh chunk is rebuilt when any sim chunk under its columns' reach changed shape, which can be up to 15 columns
+    past what it reads: extra rebuilds (rain: about twice the hash's count).
+  - The quantization (1/16) is now in the writers' compare, shared by one function; the hash's other inputs became
+    explicit: the structures (CPU bump), the hybrid's neighbours (CPU STALE).
+  - The rock mesh's versions are keyed by block, and an emptied chunk points at block 0, which is bumped.
+  - The window's versions are four words per 256 slots: 51 KB at 320², K 8.
+  - The phone-z8 fast-pan coverage got worse in tilegate (above): open, to check before merging.
+  - The 129 ms phone max is not explained.
+  - No toggle diff yet: timing runs are paused.
+
+## 2026-11-06 — round 128o (`phonefix`): lava.wgsl to UTF-8, and a gate for every source file
+
+- Why: lava.wgsl was UTF-8 except for one latin-1 byte (a × at line ~280). A tool had to open the file as latin-1,
+  and a failed write in DA-B28's work truncated it to zero bytes before any commit (restored from HEAD). Main: such a
+  truncation must never be able to reach a commit.
+- The byte is now a UTF-8 ×, and the file is LF. test/unit/source-encoding.test.ts fails on any .ts or .wgsl under
+  src/ that isn't UTF-8 or has a CR.
+
+## 2026-11-06 — round 128o (`phonefix`, DA-B28 follow-up): the causes of phone-z8's fast-pan gaps, at the source
+
+- Why: main's review of 962279fb. tilegate's phone-z8 fast pans went from ~0.15% undrawn to as much as 21.6%. Two
+  causes, both to be fixed where they arise and not by changing the rebuild queue's order:
+  - (a) a region's write bumped every version of its chunks whatever it brought;
+  - (b) a mesh chunk's key took in whole 16-column chunks, up to 15 columns past what it reads, which roughly doubled
+    the rebuilds in rain.
+- (a) The page write (sim/pagewrite.ts, shaders/pagewrite.wgsl).
+  - A region's pages go into the layers on the GPU, slot by slot, compared, with `bumpColumn` only where the land
+    differs from what the storage held. This covers the pool's thaw (streamer/freeze.ts copyIn) and the CPU's pages,
+    staged in one upload.
+  - The region's fields (the water) are still written whole, so `columnsWritten(chunks, 'fields')` moves only the
+    class and depth words.
+  - A slide moves land with its storage (the table rotates), and land written again as it was moves no version.
+- (b) The shape words are per 4 × 4 columns, 16 a chunk.
+  - Each chunk now has twenty version words, indexed densely by page (first slot / the page's slots), not by first
+    slot / 256: the window's versions take 32 KB at 320², where four words a 256 slots took 51 KB.
+  - `bumpColumn` and colapply's `bumpOf` move the changed column's block.
+  - `chunkKey` takes the newest version among the blocks under the mesh chunk's columns and margin: at most 3
+    columns past what it reads.
+  - Structures bump all 16 blocks of the chunks under their bounds.
+- Tests:
+  - Dawn: the page write leaves every version as it was for the same page; one slot raised moves the chunk's columns
+    word and that one block's shape word. The field mesh: a dig (radius 2) changes 9 blocks at most, and the mesh
+    chunks rebuilt are exactly those whose columns take in a changed block.
+  - Unit 830, GPU tier 181.
+  - Not yet run in the real streamer: the page write is exercised only by the Dawn test until the batched browser run
+    (smoke and tilegate). Timing runs are main's call.
+- `scripts/meshderisk.mjs` is now a tool (TOOLING.md): per phase the mesh chunks rebuilt a frame and the fieldmesh
+  passes' GPU ms, and after slides by frame. The derisk's hash-against-versions comparison, recorded above, isn't in it:
+  the hash is gone.
+- Waiting on the batched timing run (main's go):
+  - tilegate's fast pans at phone z8, several runs, before and after;
+  - meshderisk.mjs on the hash's build (06052231) and this one: rebuilds after slides and in rain, and the GPU ms (the
+    toggle diff);
+  - smoke.
+- Hacks and limits:
+  - The window's region writes now cost a compute pass over their pages (16 pages × 256 columns × K slots a region)
+    in place of buffer copies, and the CPU path stages its pages in one upload.
+  - Structures bump whole chunks' blocks (rare, CPU).
+  - The band's packs still bump every word of what they pack. Their land is new to that storage, except `update()`
+    after the window's z moved, which repacks everything (a real change of what the band holds).
+  - Blocks still reach up to 3 columns past a mesh chunk's margin.
+  - 16 of a chunk's 20 words are shape words: 80 B a chunk.
+
+
+## 2026-11-06 — round 128o (`phonefix`, DA-B28): the batched timing run (main's lease)
+
+- Setup:
+  - Base: this branch at 84c3786d (fortress 49510508 merged in).
+  - "Hash": the same tree with DA-B28's two commits reverted, not committed.
+  - "New": DA-B28 as committed.
+  - Same machine (Intel Xe-LPG), my own ports (runner 5345, dev server 127.0.0.1:5419).
+- Smoke (atlas, through the real streamer and the page write): passed.
+- tilegate fast pans at phone zoom 8 (160 c/s), three runs each, % of the screen undrawn:
+
+  | build | run 1 | run 2 | run 3 |
+  | --- | --- | --- | --- |
+  | hash | 4.61 | 5.19 | 5.03 |
+  | new | 1.57 | 4.36 | 4.20 |
+
+  - The new build is at or below the hash build on the same code.
+  - Both are far above 06052231's 0.14–0.16%. That gap came in with the fortress merges between the two bases, not
+    with DA-B28: the hash build fails just as much.
+  - Pans at 20 c/s are ok in every run.
+- meshderisk.mjs (mesh chunks rebuilt per frame, mean fieldmesh GPU ms):
+
+  | phase | hash | new |
+  | --- | --- | --- |
+  | fortress: at rest | 0, 0.21 ms | 0, 0.34 ms |
+  | fortress: building | 0.001, 0.12 ms | 0.001, 0.22 ms |
+  | fortress: rain | 0.127, 0.31 ms | 0.126, 0.38 ms |
+  | no fortress: at rest | 0, 0.20 ms | 0, 0.13 ms |
+  | no fortress: rain, run 1 | 0.287 | 0.466 |
+  | no fortress: rain, run 2 | 0.477 | 0.363 |
+  | no fortress: rain, run 3 | 0.222 | 0.491 |
+  | no fortress: rain, mean of 3 | 0.33 | 0.44 |
+  | no fortress: pan with slides, per frame, 3 runs | 0.166 / 0.178 / 0.158 | 0.111 / 0.121 / 0.191 |
+  | no fortress: rain, ms (3 runs) | 0.60 / 0.60 / 0.34 | 0.55 / 0.55 / 0.61 |
+
+  - After a slide (pan): the new build's rebuilds peak 2–4 frames after it, the hash's 1–3. The counts are similar.
+  - Desktop GPU ms: the change pass costs about as much as the hash did here (both ~0.1–0.3 ms a frame on this iGPU).
+    The desktop doesn't show the phone's 6.3 ms.
+- Verdict against main's bar:
+  - Fast pans: at or below the hash build on the same code, not back to 06052231's (that gap isn't DA-B28's).
+  - Rain without the fortress: the new build's mean is a third above the hash's (0.44 against 0.33). The runs
+    overlap, with a wide spread from where the storm lands. Not shown to be at or below.
+- Not merge-ready.
+- Next:
+  - Find what the versions rebuild in rain that the hash doesn't. Candidates: shape keys that flip back and forth
+    across a sixteenth (the hash's "changed back before rebuilt" skipped those, the versions rebuild them); and the
+    block reach (3 columns).
+  - A rain session counting the blocks bumped per writer would tell.

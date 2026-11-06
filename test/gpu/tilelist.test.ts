@@ -75,7 +75,7 @@ describe('ChangedTiles: what changed, and round it', () => {
       // (the depth's follower saw the written chunk too, and nothing since)
       expect(await listed(w, cd.changed)).toEqual([]);
       // (its class only — the places — at the corner: the corner and its three; not the depth's follower)
-      w.core.world.bumpChunks([0], w.core.sim.tick, 'water');
+      w.core.world.bumpChunks([0], w.core.sim.tick, 'class');
       await build();
       expect(await listed(w, ct.changed)).toEqual([0]);
       expect(await listed(w, ct.around)).toEqual([0, 1, cx, cx + 1]);

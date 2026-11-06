@@ -93,6 +93,13 @@ Or a plain `.js` file: the body of `async (lab, args) => { … }` — handy for 
 (do the builders get out of a walled town to sites outside it), `scripts/lab/fortressrefuse.mjs` (unreachable placements refused: a house on the valley's lake, a block in a shut ring, a drag across the lake), `scripts/lab/fortresslanes.mjs` (the lanes of a walled
 site, and the share of walking on them).
 
+## The field mesh's rebuilds (round 128o, DA-B28)
+
+`node scripts/meshderisk.mjs --url http://127.0.0.1:PORT [--nofort] [--pan 30]` on a dev server of your own port: the
+atlas at rest, building (with the fortress), in a storm's rain, panning (slides), after; per phase the mesh chunks
+rebuilt a frame and the fieldmesh passes' GPU ms, and for the pan by frames since a slide. Run on two builds for a
+rebuild count and a toggle diff. It loads the GPU: only when the timing runs are yours.
+
 ## The placement bench (round 128m)
 
 The user's phone: `/?skipmenu=1&level=atlas&town=1&fortress=1&fresh=1&q=low&bench=place` (`&placetypes=house,wall`
