@@ -18533,3 +18533,26 @@ Design note before code (AGENT_RULES 1). DESIGN.md section 12.
   DEFS comes from build/types. ECON.pitRampCells (a pit's shape, read by the plan) moved to build/pit.ts
   PIT_RAMP_CELLS. No KNOWN exception added.
 - The fixture recaptured (the merge changed the land generator's sources: GEN_VERSION). Unit tier 93 files green.
+
+## 2026-11-05 — round 128o (`onetown`, DA-A3): design note — reach as an invariant, judged once
+
+Design note before code (AGENT_RULES 1). DESIGN.md section 13.
+- **Found first:** a stand is "reached" by its column's TOP surface (fortreach.wgsl reachQuery, CpuReach). Under a
+  passage's arch the top surface is the roof, so a builder's stand in a passage never counts, though the ground under
+  the arch joins the town (CPU probe on the fixture: 1187/2366's ground surfaces have 3.3-3.7 m of room). Fix: a query
+  carries its block's floor z and is reached by the surface nearest it (within a step).
+- **One rule, two engines:** the surfaces and joins of fortreach.wgsl, and CpuReach as its reference (an agreement
+  test). Play judges on the GPU over the window's columns; generation (a CPU worker with the site's ground, no GPU)
+  judges with CpuReach over the site's own ground and the plan as built. keepReach (plan cells, no terrain) is deleted.
+- **The repair, one solve:** openings are passages (a block's ground floor), gates (a wall's straight cell) and ramps
+  (a drop up to the stores' ground). A cost field from the stores' component over the surfaces with the plan's openings
+  lifted (each cell opened costs 1) picks, for every cut-off entrance or stand, the cheapest openings on its path; they
+  go into the plan in the same edit. GPU: iterate the field to rest, then one thread per cut-off target walks back
+  through it marking cells; read back a bit a box cell (~4 KB) and a word a query. CPU: the same as a Dijkstra.
+  Bridges (water a deck would cross): designed as one more opening kind, not built here (DA-A4) — stop and report.
+- **Judged once:** an edit's blocks are judged against the plan as built in one solve; refused only when no opening
+  mends them, with the reason. Deleted: VARIANT_TRIES and the serial trials, the 3 s re-ask (asked again on plan
+  changes, slides and digs only); pending blocks stay on the builders' list (they're judged before a frame passes).
+- **Transfers:** none new per frame; per edit the answer words and the opened-cells bits (a few KB).
+- **Tests first:** a passage stand reached (CPU and GPU agree); a ring of wall closing on a block gets a gate; a block
+  below a cliff gets a ramp; generation on the fixture leaves every entrance and stand reached; lab `town` 708/708.
