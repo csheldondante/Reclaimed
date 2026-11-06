@@ -18071,3 +18071,7 @@ back put it right.
   `town` (90 sim s) and `walled` (181 sim s), fortressrefuse, fortresslanes passed; hallcheck 0 lost of 344.
 - Hacks and limits: while the fortress is up the window doesn't slide, so the sim's detail ends at the box's window.
   The lab's 1.56x more columns run its sim slower (walled: x1.3-1.7 real time, was x2.2-2.8).
+
+## 2026-11-05 — line endings normalised to LF, pinned by .gitattributes (round 128o)
+
+Agents and editors drifted files between CRLF, LF and mixed (261 CRLF, 911 LF, 12 mixed in the index). Merges then showed whole-file diffs (phonefix: ~4.7k raw lines for +796/−92 real), hid real changes and conflicted. `.gitattributes` now says `* text=auto eol=lf`: every text file is stored and checked out as LF on every OS, and git converts on commit, so a CRLF editor can no longer leak into the repo. Binaries are marked `binary`. The renormalising commit changes only line endings (`git diff --ignore-cr-at-eol` is empty apart from .gitattributes). Branches made before it merge with `-X renormalize`.
