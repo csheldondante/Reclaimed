@@ -1311,7 +1311,8 @@ further out ahead of the camera so we never wait for them". Three tiers under th
   lightning, chips, a fire lit, a tap to grow: `Simulation.eventTaps`), what falls and lands or comes to rest
   (`Integrity.onTouched`), the coarse world's events in sight (`editLive`). Not the sims' own drift (sediment,
   water, plants: a still region read twice differs in ~40 columns by ≤ 0.03 cells). Every region frozen, and each
-  of the window's in turn (one every `SWEEP_MS` = 400 ms; the whole window when the page is hidden), is copied into
+  of the window's touched since its last read (DA-B13: `RegionInfo.dirty`, the next in turn, one every `SWEEP_MS` =
+  400 ms at most; every changed one when the page is hidden), is copied into
   staging and read back off the frame; a changed one's columns are hashed in world z (`columnsHash`: the same land
   cut at another oz hashes the same) and it's written whole when the hash differs from what was saved. A region
   never changed is not saved: evicted, it's made again by the source when it's wanted. Nothing waits for a readback

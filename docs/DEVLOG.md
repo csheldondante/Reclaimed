@@ -18614,3 +18614,32 @@ where things land (their puffs) is known only on the GPU. AGENT_RULES §1b: work
 - Hacks and limits: one stamp for all shoves (their box together, grown from the first): landings far apart in time
   and place make one large box until the last is LIFE_S old — conservative, never too small. `lastBox` (the perf
   overlay, tests) still shows only the CPU's box.
+
+## 2026-11-06 — the standing timed reads: the region sweep reads on the edit, the menu's dust on the GPU (DA-B13)
+
+Why: DESIGN §24, no timed readback in play; the transfer gate listed three standing timed reads under DA-B13.
+
+- The region-save sweep (scenes/streamer/store.ts `sweep`): every 400 ms it took the next of the window's regions in
+  turn and, if play had ever changed it, read the whole region back (L.bytes: ~1.8 MB at K 16) to hash and maybe save
+  it. `changed` never cleared, so a region touched once was read back every round after (16 regions: every 6.4 s),
+  forever, to find it hadn't changed. Now `RegionInfo.dirty` is set by `Streamer.touch` and cleared when the region is
+  read: the sweep takes the next dirty region in turn, at most one every 400 ms, and reads nothing when none is. A
+  freeze, the page hidden (`sweep(all)`) and a new world still read every changed region, so what the sims did there
+  since its last touch is kept then. scripts/worldsavetest.mjs: 7 of 8 as on the fortress tip (its "warped 10 regions
+  away and back" check fails the same there: `how.thawed` 0, all four loaded — not this change).
+- The menu's dust watch (scenes/menu.ts): the whole drift texture read back every second while a model was buried,
+  to average the dust over each model's box. Now sim/boxsum.ts `BoxMeans` takes the means on the GPU (a workgroup a
+  box, its texels where they lie on the ring) and reads back a float a box, and the menu looks only while painted
+  wind lasts (`WindFieldSystem.lastBox`: the dust moves only under it) and once after. test/gpu/boxsum.test.ts: the
+  means equal the texture read back and averaged.
+- Not done: the creatures' group sums (inhabitants/system.ts, 8 KB every 10 ticks, behind `?life=`): the CPU uses the
+  groups' centres and counts for its hunting orders and the creature presence map; removing the read means moving that
+  targeting to the GPU — a design of its own. DA-B13 stays open for it.
+- The menu at 412x915 headless, a drag across it: the same picture as before (it draws no diorama headless, before or
+  after). hallcheck 0 of 344 lost; flagcheck passes.
+- Transfers gate: the sweep's read is an edit-rate read now; the menu's texture read gone, BoxMeans' read and upload
+  listed (small).
+- Hacks and limits: the sweep still paces itself (one region per 400 ms) so a burst of touches over many regions is
+  spread out; between a region's touches the sims' own drift there is saved only at a freeze, a hide or its next
+  touch. The menu's look is tied to the painted wind's CPU box: dust moved by anything else (none today) wouldn't be
+  looked at.

@@ -430,6 +430,7 @@ export class Streamer {
         if (!info) this.winInfo.set(key, (info = {}));
         if (!info.changed) this.stats.touched++;
         info.changed = true;
+        info.dirty = true;
       }
   }
 

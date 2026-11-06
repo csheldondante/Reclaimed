@@ -212,6 +212,12 @@ export interface RegionInfo {
    * it's read back different from what's saved; a region never touched is made again when it's wanted
    */
   changed?: boolean;
+  /**
+   * (DA-B13) touched since the sweep last read it back: the sweep reads only these (a region touched once was read back
+   * every sweep round after, whole, to find it hadn't changed). A freeze and a sweep of everything (the page hidden)
+   * still read every changed region: what the sims did there since its last touch is kept then.
+   */
+  dirty?: boolean;
   /** its columns' hash as last saved, and as last read back (a freeze's, a sweep's) */
   saved?: number;
   last?: number;
