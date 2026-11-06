@@ -18161,3 +18161,17 @@ the walkers) found three causes, one under the other:
   once while the lab ran beside them, all green alone); lab fortressoutside on `walled` passes as before (all 3 sites
   by 301 sim s, was 301); on `town` still fails (cause 3). A found helper bug, not fixed: lab.ground() on a fixture reads column floor(x), not the hex
   lattice's (cellAt), so it's off by a column on odd rows (5-7 m off by the town's terraces); nothing in the gates reads it.
+
+## 2026-11-05 — round 128o (`onetown`): the gates after DA-A1/A2 — tilegate against `fortress`, the start town's shot
+
+- Tilegate (this desktop's Intel Arc iGPU, both screens, 52 fps under the cap so the frame checks were skipped), run on
+  `fortress` (11f0796) and on `onetown` the same hour: both FAIL. The same on both: stale goldens at z2.2/z1.3 (33-49%
+  of the image) and w384 (2.3-3.1%), fast-pan (160 c/s) coverage at the window's edge. Only on `onetown`: desktop z5
+  (2.8%) and z3.5 (1.5%) changed, the changed pixels on a town — the generated towns drawn through the one plan (walls
+  on tile edges, 4 m levels, the plots; the changes the user accepted in round 128m); desktop fast pan at z14 (55-56% of
+  a few frames, 15-21 of 149) and more at z8/z5 (31%/14% vs 18%/7%). The fast-pan rows are the window's edge columns,
+  not the towns; the onetown runs waited 68 s for the GPU (shared), fortress's 26 s — not settled here, listed for main.
+  The first onetown run lost the GPU device in the run mode (another check's); the second finished.
+- The start town at play zoom (412x915, dpr 2.6, the user's link), looked at after these commits: as onetown before
+  them (the town, its keep and towers, walls on tile edges, the plots, the lighthouse), the bar's lines as before.
+- docs/MODULES.md regenerated.
