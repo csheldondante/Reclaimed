@@ -7,7 +7,13 @@ import type { CitySpec, GroundFn } from '../api/contracts/structures';
 import { DEFS } from './types';
 import { TownSite, gridIdOf, siteFromJson, siteToJson } from './site';
 import { QuadGrid } from './quadgrid';
-import { planTown, keepReach } from '../structures/place';
+import { assertEntered, planTown } from '../structures/place';
+import { CpuReach } from './reach';
+import { realiseTown } from './sitereach';
+import { LANE_WIDTH, lanesOf } from './lanes';
+import { gradeLanes } from './grade';
+import { waysOf } from './ways';
+import { cellAt } from '../world/lattice';
 import { fbm } from '../structures/rng';
 
 const hill: GroundFn = (x, y) => 10 + 30 * fbm(x * 0.006 + 3.1, y * 0.006 + 1.7, 11, 4) + 0.06 * x;
@@ -111,28 +117,65 @@ describe('the one grid', () => {
   });
 });
 
-describe('the reach (AGENT_RULES 3b): every open place of a generated town joined to the land round it', () => {
+describe('the realise pass (round 128o, DA-A11: the one reach): every structure of a generated town joined to the land round it, or dropped', () => {
   for (const system of SYSTEMS)
-    it(`${system}: no pocket shut in by buildings (a passage cut where one was)`, () => {
+    it(`${system}: realised from the land at the box's corner — fixes made, what nothing reaches dropped and logged, then every structure entered`, async () => {
       const { site } = planTown(spec(system), hill);
-      // (keepReach again finds nothing more to cut)
-      expect(keepReach(site)).toBe(0);
-      const { plan, grid } = site;
-      const open = (c: number) => {
-        const t = plan.typeAt(c);
-        return !t || plan.defs[t].form === 'yard' || !!plan.gate[c] || !!plan.passage[c];
+      const { w, h } = site.box;
+      // (the CPU reference of the GPU's reach, over the town's own ground)
+      const engine = new CpuReach({ w, h, runs: (x, y) => [[0, site.ground(y * w + x)]], water: () => 0 }, w, h, () => [0, 0]);
+      const before = site.plan.structures().length;
+      const groundAt = (x: number, y: number) => {
+        const [k, r] = cellAt(x, y);
+        return site.ground(Math.max(0, Math.min(h - 1, r)) * w + Math.max(0, Math.min(w - 1, k)));
       };
-      const seen = new Uint8Array(grid.count);
-      const q: number[] = [];
-      for (let c = 0; c < grid.count; c++) if (open(c) && [0, 1, 2, 3].some((e) => grid.nbr[c * 4 + e] < 0)) (seen[c] = 1), q.push(c);
-      while (q.length) {
-        const c = q.pop()!;
-        for (let e = 0; e < 4; e++) {
-          const n = grid.nbr[c * 4 + e];
-          if (n >= 0 && !seen[n] && open(n)) (seen[n] = 1), q.push(n);
-        }
-      }
-      const shut = [...Array(grid.count).keys()].filter((c) => open(c) && !seen[c]);
-      expect(shut).toEqual([]);
+      const res = await realiseTown({
+        engine,
+        solid: () => ({ plan: site.plan, town: site.town, grid: site.grid, box: site.box, ground: (c) => site.ground(c), oz: 0 }),
+        origin: () => [0, 0],
+        colAt: ([x, y]) => {
+          const [k, r] = cellAt(x, y);
+          return k < 0 || r < 0 || k >= w || r >= h ? -1 : r * w + k;
+        },
+        floorAt: (c) => site.ground(c),
+        stores: 0,
+        storesZ: site.ground(0),
+        changed: () => void site.plan.takeChanged(),
+        // (DA-A10: its lanes graded into its own ground first)
+        grade: {
+          lanes: () => lanesOf(site.plan, site.grid, waysOf(site.plan, site.grid), groundAt).segs.map((q) => ({ a: q.a, b: q.b, half: LANE_WIDTH[q.kind] / 2, ramp: q.kind === 'ramp' })),
+          apply: async (dz) => {
+            for (const [c, d] of dz) site.groundCols[c] += d;
+          },
+        },
+      });
+      // (graded: the lanes at their grade now — graded again, nothing more to cut or fill)
+      const lanes = lanesOf(site.plan, site.grid, waysOf(site.plan, site.grid), groundAt).segs.map((q) => ({ a: q.a, b: q.b, half: LANE_WIDTH[q.kind] / 2, ramp: q.kind === 'ramp' }));
+      const again0 = gradeLanes(lanes, (c) => site.ground(c), site.box, ([x, y]) => {
+        const [k, r] = cellAt(x, y);
+        return k < 0 || r < 0 || k >= w || r >= h ? -1 : r * w + k;
+      });
+      expect(Math.max(0, ...[...again0.dz.values()].map(Math.abs))).toBeLessThan(0.5);
+      expect(res.graded).toBeGreaterThanOrEqual(0);
+      // (dropped: logged in the plan, gone from it; the rest entered)
+      expect(site.plan.dropped.length).toBe(res.dropped);
+      expect(site.plan.structures().length).toBe(before - res.dropped);
+      for (const d of site.plan.dropped) expect(d.cells.every((c) => site.plan.owner[c] < 0)).toBe(true);
+      expect(() => assertEntered(site)).not.toThrow();
+      // (asked again: nothing more to fix or drop)
+      const again = await realiseTown({
+        engine,
+        solid: () => ({ plan: site.plan, town: site.town, grid: site.grid, box: site.box, ground: (c) => site.ground(c), oz: 0 }),
+        origin: () => [0, 0],
+        colAt: ([x, y]) => {
+          const [k, r] = cellAt(x, y);
+          return k < 0 || r < 0 || k >= w || r >= h ? -1 : r * w + k;
+        },
+        floorAt: (c) => site.ground(c),
+        stores: 0,
+        storesZ: site.ground(0),
+      });
+      expect({ fixes: again.fixes, dropped: again.dropped }).toEqual({ fixes: 0, dropped: 0 });
+      expect(res.places.cols.length).toBeGreaterThan(5);
     });
 });

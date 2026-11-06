@@ -26,7 +26,7 @@ import { GPUGEN } from '../atlas/finish';
 import { GrowthField } from './field';
 import { cellAt, ROW_H } from '../world/lattice';
 import type { ReachEngine } from '../build/reach';
-import { joinPlaces, singleStands } from '../build/sitereach';
+import { realiseTown, singleStands } from '../build/sitereach';
 import { heapFoot } from './live';
 import { atlasFacts } from '../gm/atlas-facts';
 import { buildWiki, type WorldWiki } from '../gm/wiki';
@@ -45,7 +45,7 @@ import type { SurfaceStamp } from '../atlas/bake';
 import { rasterPlan, stampMatch } from './raster';
 import type { ExactPlanDone, ExactPlanJob, FarPlanDone, FarPlanInit, FarPlanJob } from './plan-worker';
 import { Fleet, shipRoutes } from './ships';
-import { assertEntered, keepReach, placeBuilding } from '../structures/place';
+import { assertEntered, placeBuilding } from '../structures/place';
 import { typeIndex } from '../build/plan';
 import { TownSite, type SiteData } from '../build/site';
 
@@ -672,7 +672,7 @@ export class Settlements {
   /** the towns whose places the reach has joined since their land came into the window (their epoch then) */
   private reached = new Map<string, number>();
   /** (scripted checks) per town: its places asked, still out, the fixes made */
-  readonly reachStats = new Map<string, { places: number; out: number; fixes: number; asks: number; made: [string, number, number][] }>();
+  readonly reachStats = new Map<string, { places: number; out: number; fixes: number; asks: number; dropped: number; graded: number; steep: number; made: [string, number, number][] }>();
 
   /**
    * (round 128o, B; DESIGN section 13: generation keeps reach an invariant by changing the world) A live town's places —
@@ -711,11 +711,18 @@ export class Settlements {
       const at = spots.flatMap((q) => (q.kind === 'pile' ? (q.foot ?? []).slice(0, 1) : [q.w]));
       const places = [...at, ...this.liveSites(p, s).map((q) => q.door)].map(colOf).filter((c) => c >= 0);
       const made: [string, number, number][] = [];
-      const res = await joinPlaces({
+      // (round 128o, DA-A11: the town as generated realised — every structure's way in and these places joined, what
+      // nothing reaches dropped and logged; keepReach is gone)
+      const res = await realiseTown({
         engine,
         solid: () => ({ plan: site.plan, town: site.town, grid: site.grid, box: site.box, ground: (c) => site.ground(c), oz }),
         origin,
-        places: () => singleStands(places, places.map((c) => site.ground(c) - oz)),
+        colAt: ([x, y]) => {
+          const [k, r] = cellAt(x, y);
+          return k < 0 || r < 0 || k >= w || r >= h ? -1 : r * w + k;
+        },
+        floorAt: (c) => site.ground(c) - oz,
+        extra: singleStands(places, places.map((c) => site.ground(c) - oz)),
         stores: sc,
         storesZ: site.ground(sc) - oz,
         changed: () => {
@@ -729,7 +736,8 @@ export class Settlements {
           made.push([kind, +wx.toFixed(1), +wy.toFixed(1)]);
         },
       });
-      this.reachStats.set(id, { places: places.length, ...res, made });
+      assertEntered(site);
+      this.reachStats.set(id, { places: res.places.cols.length, out: res.out, fixes: res.fixes, asks: res.asks, dropped: res.dropped, graded: res.graded, steep: res.steep, made });
     } finally {
       engine.dispose();
     }
@@ -768,10 +776,7 @@ export class Settlements {
     // (onetown: the house goes into the town's plan as the generator places its own — planned, the builders' work)
     const sid = placeBuilding(p.site, next.building, 0);
     if (sid < 0) return;
-    // (round 128o: the town kept walkable and every structure entered, as at its planning — structures/place.ts; B: in
-    // play the one reach asks its places again over the land itself)
-    keepReach(p.site);
-    assertEntered(p.site);
+    // (round 128o, DA-A11: the house joined to the town by the one reach — its places asked again, entered after)
     p.sites.push({ id, structure: sid, storeys: levelsOfStructure(p.site, sid), door: next.door });
     for (const f of this.onRaised) f(rec.id, sid);
     if (this.life?.rec.id === rec.id) {

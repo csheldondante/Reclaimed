@@ -266,7 +266,7 @@ export class LevelScene implements Scene {
   /** (round 128l, m4; V128-10) the person a tap picked, and whether the camera follows them (fortress/follow.ts) */
   fortressFollow?: FortressFollow;
   /** (round 128o, B) the town's places joined by the one reach when its land came in: still out, fixes made, asks */
-  fortressJoined?: { out: number; fixes: number; asks: number };
+  fortressJoined?: { out: number; fixes: number; asks: number; dropped: number; graded: number; steep: number };
   /** (round 128m, quarry) the near walls of a pit looked into dithered out round its floor (fortress.ts pitView) */
   fortressPitCut?: import('../api/cutaway').Dither;
   /** (round 128m) the pit's cut on (?pitcut=1; off by default — scripts toggle it to compare) */

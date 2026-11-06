@@ -67,7 +67,7 @@ export interface PlaceOpts {
 /** What placing made: per draft building its structure (-1 none), and what couldn't be placed (counted, not hidden). */
 export interface Placed {
   structureOf: Int32Array;
-  stats: { structures: number; blocks: number; gatesOpen: number; unplaced: number; passages: number; ms: number };
+  stats: { structures: number; blocks: number; gatesOpen: number; unplaced: number; ms: number };
 }
 
 /**
@@ -83,7 +83,7 @@ export function placeDraft(draft: CityDraft, site: TownSite, opts: PlaceOpts = {
   const typeOf = opts.typeOf ?? typeOfBuilding;
   const standing = opts.standing ?? ((b: BuildingRec) => b.storeys);
   const structureOf = new Int32Array(draft.buildings.length).fill(-1);
-  const stats = { structures: 0, blocks: 0, gatesOpen: 0, unplaced: 0, passages: 0, ms: 0 };
+  const stats = { structures: 0, blocks: 0, gatesOpen: 0, unplaced: 0, ms: 0 };
   /** a structure's blocks built (each level below `upTo` of its cell) and the rest planned, on the Town */
   const stand = (id: number, type: StructureType, upTo: (c: number) => number, floor?: number) => {
     const s = plan.structure(id)!;
@@ -244,140 +244,12 @@ export function placeDraft(draft: CityDraft, site: TownSite, opts: PlaceOpts = {
   // ---- what the world placed (merge124) and the order the town grew in
   for (const p of draft.placed) if (structureOf[p.building] >= 0) site.placed.set(p.id, structureOf[p.building]);
   site.order = draft.order.map((b) => structureOf[b]).filter((s) => s >= 0);
-  // ---- (AGENT_RULES 3b) every open place in the town joined to the land round it, by passages through ground floors
-  stats.passages = keepReach(site);
-  assertEntered(site);
+  // ---- (round 128o, DA-A11) no pass here: the town is joined to the land round it by the one reach — the GPU's, when
+  // its land is first in the window (sitereach.ts realiseTown: passages, gates, stairs, the cheapest; what nothing
+  // reaches dropped) — and every structure entered after that (assertEntered). keepReach (the cells alone) is gone
   plan.takeChanged();
   stats.ms = +(performance.now() - t0).toFixed(2);
   return { structureOf, stats };
-}
-
-/**
- * (AGENT_RULES 3b; the user: "if they keep getting stuck in walls an obvious fix is to modify things along their path to
- * be passable ... The expectation is that they can get anywhere in or around the city") Every open cell of the town —
- * a yard shut in by houses, the door a house opens on — joined to the open land round it (yards — fields, orchards,
- * pastures — are walked across): a pocket is joined by a
- * passage (an arch through the ground floor: TownPlan.setPassage) through the fewest buildings between it and the land
- * already joined, nearest first. A wall is crossed only at its gates; the keep and the landmarks are never cut through.
- * The world changed, not a walker's rule. How many passages were made.
- */
-export function keepReach(site: TownSite): number {
-  const { plan, grid } = site;
-  const n = grid.count;
-  const nb = (c: number, e: number) => grid.nbr[c * 4 + e];
-  // (open: no structure, a gate, a passage, or a field — a yard walked across, StructureDef.crossed)
-  const open = (c: number) => {
-    const t = plan.typeAt(c);
-    return !t || !!plan.defs[t].crossed || !!plan.gate[c] || !!plan.passage[c];
-  };
-  /** a cell a passage may cut: a block's ground floor (not a landmark drawn whole) */
-  const cuttable = (c: number) => {
-    const t = plan.typeAt(c);
-    return !!t && plan.defs[t].form === 'block' && !plan.defs[t].look.mega && plan.has(c, 0) && !plan.passage[c];
-  };
-  // the joined land: the open cells reached from the grid's rim
-  const joined = new Uint8Array(n);
-  const flood = (seeds: number[]) => {
-    const q = seeds.filter((c) => !joined[c]);
-    for (const c of q) joined[c] = 1;
-    while (q.length) {
-      const u = q.pop()!;
-      for (let e = 0; e < 4; e++) {
-        const m = nb(u, e);
-        if (m >= 0 && !joined[m] && open(m)) {
-          joined[m] = 1;
-          q.push(m);
-        }
-      }
-    }
-  };
-  const rim: number[] = [];
-  for (let c = 0; c < n; c++) if (open(c) && [0, 1, 2, 3].some((e) => nb(c, e) < 0)) rim.push(c);
-  flood(rim);
-  let made = 0;
-  for (let c0 = 0; c0 < n; c0++) {
-    if (joined[c0] || !open(c0)) continue;
-    // a pocket: the fewest buildings to cut through to the joined land (0-1 search: open cells free, a block cell one)
-    const cost = new Float64Array(n).fill(Infinity);
-    const prev = new Int32Array(n).fill(-1);
-    const dq: number[] = [];
-    // (the whole pocket the start)
-    const pocket: number[] = [c0];
-    const inPocket = new Uint8Array(n);
-    inPocket[c0] = 1;
-    for (let i = 0; i < pocket.length; i++)
-      for (let e = 0; e < 4; e++) {
-        const m = nb(pocket[i], e);
-        if (m >= 0 && !inPocket[m] && open(m) && !joined[m]) (inPocket[m] = 1), pocket.push(m);
-      }
-    for (const c of pocket) (cost[c] = 0), dq.push(c);
-    let end = -1;
-    for (let head = 0; head < dq.length && end < 0; head++) {
-      const u = dq[head];
-      for (let e = 0; e < 4; e++) {
-        const m = nb(u, e);
-        if (m < 0) continue;
-        const step = open(m) ? 0 : cuttable(m) ? 1 : Infinity;
-        if (cost[u] + step >= cost[m]) continue;
-        cost[m] = cost[u] + step;
-        prev[m] = u;
-        if (joined[m]) {
-          end = m;
-          break;
-        }
-        // (a breadth-first queue kept in cost order: free steps first)
-        if (step === 0) dq.splice(head + 1, 0, m);
-        else dq.push(m);
-      }
-    }
-    if (end < 0) {
-      // (no way through anything but walls and landmarks: left — the rest of the pocket marked so it's asked once)
-      for (const c of pocket) joined[c] = 2;
-      continue;
-    }
-    for (let c = prev[end]; c >= 0 && !inPocket[c]; c = prev[c])
-      if (!open(c)) {
-        plan.setPassage(c, true);
-        made++;
-      }
-    flood(pocket);
-  }
-  // (round 128o) every structure entered (build/entrances.ts): one with none — a house with houses all round it, cell
-  // 1188 of the user's start town — gets a passage through the fewest blocks between it and the joined land
-  for (const s of plan.structures()) {
-    if (!needsEntrance(s.type, plan.defs) || entrancesOf(plan, grid, [], () => false, plan.defs).some((e) => e.structure === s.id)) continue;
-    const cost = new Float64Array(n).fill(Infinity);
-    const prev = new Int32Array(n).fill(-1);
-    const own = (c: number) => plan.owner[c] === s.id;
-    const dq: number[] = [];
-    for (const c of s.cells.keys()) (cost[c] = 0), dq.push(c);
-    let end = -1;
-    for (let head = 0; head < dq.length && end < 0; head++) {
-      const u = dq[head];
-      for (let e = 0; e < 4; e++) {
-        const m = nb(u, e);
-        if (m < 0 || own(m)) continue;
-        const step = joined[m] === 1 ? 0 : cuttable(m) ? 1 : Infinity;
-        if (cost[u] + step >= cost[m]) continue;
-        cost[m] = cost[u] + step;
-        prev[m] = u;
-        if (joined[m] === 1) {
-          end = m;
-          break;
-        }
-        dq.push(m);
-      }
-    }
-    if (end < 0) continue;
-    const cut: number[] = [];
-    for (let c = prev[end]; c >= 0 && !own(c); c = prev[c]) cut.push(c);
-    for (const c of cut) {
-      plan.setPassage(c, true);
-      made++;
-    }
-    flood(cut);
-  }
-  return made;
 }
 
 /**

@@ -90,3 +90,68 @@ export function gradeProfile(g: readonly number[], d: number): number[] {
   for (let i = n - 2; i >= 0; i--) hi[i] = Math.max(hi[i], hi[i + 1] - d);
   return g.map((_, i) => (lo[i] + hi[i]) / 2);
 }
+
+/** (DECISIONS round 128o, DA-A10) the deepest cut or highest fill a generated road makes (m); past it a stretch is steep */
+export const ROAD_CUT = 2;
+
+/** a lane to grade: its ends (box world) and its half width (m) */
+export interface GradeLane {
+  a: readonly [number, number];
+  b: readonly [number, number];
+  half: number;
+  /** ramps are their own treads: not graded */
+  ramp?: boolean;
+}
+
+/**
+ * (round 128o, DA-A10: graded at generation) A town's lanes graded into its ground: each lane's profile (gradeLane at
+ * ROAD_GRADE, cuts and fills to ROAD_CUT) laid on the box columns within its half width — a column under two lanes takes
+ * their mean. The columns' changes (dz: + fill, - cut), the steep stretches left at their ground.
+ */
+export function gradeLanes(
+  lanes: readonly GradeLane[],
+  ground: (col: number) => number,
+  box: { w: number; h: number },
+  colAt: (p: [number, number]) => number,
+  o: Partial<GradeOpts> = {},
+): { dz: Map<number, number>; steep: number; cut: number; fill: number } {
+  const opts: GradeOpts = { maxGrade: ROAD_GRADE, maxCut: ROAD_CUT, steep: 'stairs', ...o };
+  const sum = new Map<number, { dz: number; n: number }>();
+  let steep = 0;
+  const groundAt = (x: number, y: number) => {
+    const c = colAt([x, y]);
+    return c >= 0 ? ground(c) : NaN;
+  };
+  for (const l of lanes) {
+    if (l.ramp) continue;
+    const g = gradeLane(l.a, l.b, groundAt, opts);
+    if (g.ground.some((v) => Number.isNaN(v))) continue;
+    steep += g.steep.length;
+    const L = Math.hypot(l.b[0] - l.a[0], l.b[1] - l.a[1]) || 1;
+    const nx = -(l.b[1] - l.a[1]) / L;
+    const ny = (l.b[0] - l.a[0]) / L;
+    g.at.forEach(([x, y], i) => {
+      const dz = g.road[i] - g.ground[i];
+      if (Math.abs(dz) < 1e-3) return;
+      // (across the lane, a column every half metre either side)
+      for (let k = -l.half; k <= l.half + 1e-6; k += 0.5) {
+        const c = colAt([x + nx * k, y + ny * k]);
+        if (c < 0 || c >= box.w * box.h) continue;
+        const s = sum.get(c) ?? { dz: 0, n: 0 };
+        s.dz += dz;
+        s.n++;
+        sum.set(c, s);
+      }
+    });
+  }
+  const dz = new Map<number, number>();
+  let cut = 0;
+  let fill = 0;
+  for (const [c, s] of sum) {
+    const v = s.dz / s.n;
+    dz.set(c, v);
+    if (v < 0) cut -= v;
+    else fill += v;
+  }
+  return { dz, steep, cut, fill };
+}

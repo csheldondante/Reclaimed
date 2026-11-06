@@ -77,6 +77,17 @@ export interface PlanData {
   use: TileUse[];
   block: Int32Array;
   layout: TownLayout;
+  /** (round 128o, DA-A11) the structures generation dropped: nothing could reach them (older data: none) */
+  dropped?: Dropped[];
+}
+
+/** (round 128o, DA-A11) a structure the realise pass dropped from a generated town, and why: no gate, passage or stair
+ *  reaches it (sitereach.ts realiseTown — "refuse what nothing can fix", DESIGN section 13) */
+export interface Dropped {
+  id: number;
+  type: StructureType;
+  cells: number[];
+  why: string;
 }
 
 export class TownPlan implements TownPlanApi {
@@ -89,6 +100,8 @@ export class TownPlan implements TownPlanApi {
   readonly block: Int32Array;
   /** (onetown) the layout's features */
   readonly layout: TownLayout = { linear: [], props: [], berths: [], works: null };
+  /** (round 128o, DA-A11) the structures dropped from the town as generated, and why (drop) */
+  readonly dropped: Dropped[] = [];
   /** per cell its structure's id (-1 none) */
   readonly owner: Int32Array;
   /**
@@ -145,6 +158,7 @@ export class TownPlan implements TownPlanApi {
       this.pits = new Map(data.pits);
       this.nextId = data.nextId;
       this.layout = data.layout;
+      this.dropped.push(...(data.dropped ?? []).map((d) => ({ ...d, cells: [...d.cells] })));
       for (const st of data.structures) this.byId.set(st.id, { ...st, cells: new Map() });
       for (let c = 0; c < n; c++) {
         const o = this.owner[c];
@@ -183,7 +197,21 @@ export class TownPlan implements TownPlanApi {
       use: this.use.slice(),
       block: this.block.slice(),
       layout: this.layout,
+      dropped: this.dropped.map((d) => ({ ...d, cells: [...d.cells] })),
     };
+  }
+
+  /**
+   * (round 128o, DA-A11) A generated structure taken out of the plan — every level of its cells — and logged with why
+   * (nothing can reach it). False: no such structure.
+   */
+  drop(id: number, why: string): boolean {
+    const st = this.byId.get(id);
+    if (!st) return false;
+    const cells = [...st.cells.keys()];
+    for (const c of cells) for (const l of [...this.levels.each(c)].sort((a, b) => b - a)) this.erase(c, l);
+    this.dropped.push({ id, type: st.type, cells, why });
+    return true;
   }
 
   /** (round 128m) a quarry's pit as laid (null: not a quarry, or none yet) */

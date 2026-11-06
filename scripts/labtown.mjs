@@ -19,6 +19,10 @@ await run({ name: 'labtown', kind: 'behaviour', size: '412x915', dpr: 1 }, async
   await page.waitForFunction(() => window.__boot?.at['level-ready'] || document.querySelector('.fatal'), { timeout: 300000, polling: 250 });
   await R.fatal(page);
   await page.waitForFunction(() => (window.reclaimed?.fortress?.ready && window.reclaimed.fortress.reachKnown) || document.querySelector('.fatal'), { timeout: 120000, polling: 250 });
+  // (round 128o, DA-A11: the town as generated realised — graded, joined by the reach, what nothing reaches dropped: the
+  // plan the fixture keeps is final)
+  await page.waitForFunction(() => window.reclaimed?.fortressJoined?.() || document.querySelector('.fatal'), { timeout: 240000, polling: 250 });
+  await R.fatal(page);
   // (the town's land settled under it: the same wait the probes give it)
   await sleep(2000);
   const b64 = await page.evaluate(() => window.reclaimed.townFixture());

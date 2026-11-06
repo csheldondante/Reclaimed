@@ -22,7 +22,8 @@ import type { NavGraph } from '../api/contracts/structures';
 import { LEVEL_H } from '../build/town';
 import { bedsOf, roomOf } from './economy';
 import { REACH_BITS, type ReachAsk, type ReachEngine, type ReachFix, type ReachReply } from '../build/reach';
-import { applyReachFixes, joinPlaces, singleStands, siteRampRise, siteSpans, standsOfCell } from '../build/sitereach';
+import { applyReachFixes, realiseTown, siteRampRise, siteSpans, standsOfCell } from '../build/sitereach';
+import { assertEntered } from '../structures/place';
 import { refusedLine, variantLine, wouldCutLine, type ReachWhy, type VariantKind } from './words';
 import { laneGraph, lanesOf, roadShapesOf, type Lanes } from '../build/lanes';
 import { nearestNode, reached, subgraph, type RoadGraph } from '../agents/roadgraph';
@@ -588,7 +589,7 @@ export class Fortress {
    * joined to its stores: what the generated town left out of reach gets its cheapest fix in the plan (a passage, a
    * gate, a ramp: the town as generated, built). Once its land is in the window (startFortress). Null: no reach engine.
    */
-  async joinTown(): Promise<{ out: number; fixes: number; asks: number } | null> {
+  async joinTown(): Promise<{ out: number; fixes: number; asks: number; dropped: number; graded: number; steep: number } | null> {
     const R = this.io.reach;
     const at = this.storesAt();
     if (!R || !at) return null;
@@ -598,14 +599,14 @@ export class Fortress {
       const oz = this.io.oz();
       const sc = this.boxColOf(...this.toBox(at[0], at[1]));
       if (sc < 0) return null;
-      const places = this.ways()
-        .entrances.map((e) => this.boxColOf(...this.grid.centre(e.out)))
-        .filter((b) => b >= 0);
-      return await joinPlaces({
+      // (round 128o, DA-A11: the town as generated realised — every structure's way in joined to the stores, what nothing
+      // reaches dropped from the plan and logged; keepReach is gone)
+      const res = await realiseTown({
         engine: R,
         solid: () => ({ plan: this.plan, town: this.town, grid: this.grid, box: this.box, ground: this.groundOfCol, ways: this.ways(), oz }),
         origin: () => this.offset(),
-        places: () => singleStands(places, places.map((b) => this.groundOfCol(b) - oz)),
+        colAt: ([x, y]) => this.boxColOf(x, y),
+        floorAt: (b) => this.groundOfCol(b) - oz,
         stores: sc,
         storesZ: this.groundOfCol(sc) - oz,
         changed: () => {
@@ -613,11 +614,14 @@ export class Fortress {
           this.sync();
         },
       });
+      assertEntered(this.site);
+      return { out: res.out, fixes: res.fixes, asks: res.asks, dropped: res.dropped, graded: res.graded, steep: res.steep };
     } finally {
       this.reachBusy = false;
       if (this.reachWant) this.requestReach();
     }
   }
+
 
   private async pumpReach(): Promise<void> {
     const R = this.io.reach!;

@@ -7,11 +7,12 @@ import type { QuadGrid } from './quadgrid';
 import type { TownPlan } from './plan';
 import type { Ways } from './ways';
 import { rampRun, solidSpans } from './solid';
+import { gradeLanes, type GradeLane } from './grade';
 import { stairRise } from './ways';
 import { cellPos, nbr } from '../world/lattice';
 import { packSpan, REACH_BITS, unpackSpan, type ReachAsk, type ReachEngine, type ReachFix, type ReachReply } from './reach';
 import type { StructureType } from '../api/contracts/fortress';
-import { openCell } from './entrances';
+import { entrancesOf, needsEntrance, openCell } from './entrances';
 
 /** what a fix made: a gate in a wall, a passage through a block's ground floor, a ramp up a drop (fortress/words.ts) */
 export type FixKind = 'gate' | 'passage' | 'ramp';
@@ -173,11 +174,21 @@ export interface JoinPlaces {
  * made in its plan, one way at a time while each answer reaches more (a pocket's one gate reaches every place in it).
  * What can't be fixed stays out. The places still out, the fixes made, the asks.
  */
-export async function joinPlaces(j: JoinPlaces): Promise<{ out: number; fixes: number; asks: number }> {
-  const res = { out: 0, fixes: 0, asks: 0 };
-  const state = { left: Infinity };
+export interface Joined {
+  out: number;
+  fixes: number;
+  asks: number;
+  /** the last answer's places still out (their indexes in `places`, as last asked) */
+  outAt: number[];
+  places: Places;
+}
+
+export async function joinPlaces(j: JoinPlaces): Promise<Joined> {
+  const res: Joined = { out: 0, fixes: 0, asks: 0, outAt: [], places: { cols: [], floors: [] } };
+  const state = { tried: new Set<string>() };
   for (;;) {
-    const ask = joinAsk(j);
+    res.places = j.places();
+    const ask = joinAsk(j, res.places);
     const reply = await j.engine.check(ask);
     if (j.live && !j.live()) return res;
     if (!joinStep(j, reply, res, state)) return res;
@@ -188,13 +199,14 @@ export interface Places {
   cols: [number, number, number, number][];
   floors: [number, number, number, number][];
   open?: number[];
+  /** per place the structure it's the way into (-1: another place — a heap, a door spot) */
+  ids?: number[];
 }
 
-function joinAsk(j: JoinPlaces): ReachAsk {
+function joinAsk(j: JoinPlaces, p: Places): ReachAsk {
   const solid = j.solid();
   const { w } = solid.box;
   j.engine.setSpans(siteSpans(solid), siteRampRise(solid));
-  const p = j.places();
   return {
     stores: [j.stores % w, Math.floor(j.stores / w)],
     storesZ: j.storesZ,
@@ -207,19 +219,23 @@ function joinAsk(j: JoinPlaces): ReachAsk {
 }
 
 /** an answer taken: done (false), or one way more opened (true: ask again) */
-function joinStep(j: JoinPlaces, reply: ReachReply, res: { out: number; fixes: number; asks: number }, state: { left: number }): boolean {
+function joinStep(j: JoinPlaces, reply: ReachReply, res: Joined, state: { tried: Set<string> }): boolean {
   res.asks++;
   const out = [...reply.bits].map((b, q) => ((b & REACH_BITS.reached) === 0 ? q : -1)).filter((q) => q >= 0);
   res.out = out.length;
-  if (!out.length || out.length >= state.left) return false;
-  state.left = out.length;
+  res.outAt = out;
+  if (!out.length) return false;
   // (one way at a time — a pocket's one gate reaches every place in it — but every place that must be opened at once:
-  // each its own passage)
-  const open = j.places().open;
-  const pick = new Set(out.filter((i) => open?.[i]));
-  const first = out.find((i) => !open?.[i] && reply.fixes.some((f) => f.query === i));
+  // each its own passage. A place's fixes are made once: still out after them, the next place's — each place tried
+  // once, so it ends)
+  const key = (i: number) => `${res.places.cols[i].join(',')}`;
+  const open = res.places.open;
+  const fixable = (i: number) => !state.tried.has(key(i)) && reply.fixes.some((f) => f.query === i);
+  const pick = new Set(out.filter((i) => open?.[i] && fixable(i)));
+  const first = out.find((i) => !open?.[i] && fixable(i));
   if (first !== undefined) pick.add(first);
   if (!pick.size) return false;
+  for (const i of pick) state.tried.add(key(i));
   const solid = j.solid();
   const made = applyReachFixes(solid.plan, solid.grid, solid.box, j.origin(), reply.fixes.filter((f) => pick.has(f.query)), j.noted);
   if (!made) return false;
@@ -256,3 +272,96 @@ export function standsOfCell(plan: TownPlan, grid: QuadGrid, built: (c: number) 
 export function singleStands(cols: readonly number[], floors: readonly number[]): Places {
   return { cols: cols.map((c) => [c, -1, -1, -1]), floors: floors.map((z) => [z, 0, 0, 0]) };
 }
+
+export interface RealiseTown extends Omit<JoinPlaces, 'places'> {
+  /** box column of a window point (the stands' columns), and the floor there (window z) */
+  colAt(boxWorld: [number, number]): number;
+  floorAt(col: number): number;
+  /** the town's other places (a settlement's heaps, its fields, the house going up), as stands */
+  extra?: Places;
+  /**
+   * (DA-A10: graded at generation) its lanes (box world) and how a grade is laid: the town's ground columns and the
+   * world's land changed by `dz` (+ fill, - cut), resolved once the world has them — before the reach is asked
+   */
+  grade?: { lanes(): GradeLane[]; apply(dz: Map<number, number>): Promise<void> };
+}
+
+/**
+ * (round 128o, DA-A10/DA-A11: generation through the one reach) A town as generated, the first time its land is in the
+ * window: every structure's way in (its entrances' cells; none — no side open — the sides a passage would open, which
+ * a fix must open) and the town's other places joined to its stores by the GPU's reach and its fixes; a structure
+ * nothing reaches is dropped from the plan (TownPlan.drop: "refuse what nothing can fix") and logged why. Then the
+ * plan is the town's for good: every structure entered (assertEntered, after this).
+ */
+export async function realiseTown(r: RealiseTown): Promise<Joined & { dropped: number; graded: number; steep: number }> {
+  // (the lanes graded into the land first: the reach then judges the town on the ground it will have)
+  let graded = 0;
+  let steep = 0;
+  if (r.grade) {
+    const s = r.solid();
+    const g = gradeLanes(r.grade.lanes(), s.ground, s.box, r.colAt);
+    graded = g.dz.size;
+    steep = g.steep;
+    if (g.dz.size) await r.grade.apply(g.dz);
+  }
+  let unstood: number[] = [];
+  const places = (): Places => {
+    unstood = [];
+    const { plan, grid } = r.solid();
+    const out: Places = { cols: [], floors: [], open: [], ids: [] };
+    const ways = new Map<number, number[]>();
+    for (const e of entrancesOf(plan, grid, [], () => false, plan.defs)) ways.set(e.structure, [...(ways.get(e.structure) ?? []), e.out]);
+    for (const s of plan.structures()) {
+      if (!needsEntrance(s.type, plan.defs)) continue;
+      const doors = (ways.get(s.id) ?? []).map((c) => r.colAt(grid.centre(c))).filter((b) => b >= 0).slice(0, 4);
+      const stands = doors.length
+        ? doors
+        : [...s.cells.keys()]
+            .flatMap((c) => standsOfCell(plan, grid, () => false, c, -1, true))
+            .map((p) => r.colAt(p))
+            .filter((b) => b >= 0)
+            .slice(0, 4);
+      if (!stands.length) {
+        // (no side to stand at, none a passage would open — walled by what can't be cut, or past the box)
+        unstood.push(s.id);
+        continue;
+      }
+      const q: [number, number, number, number] = [-1, -1, -1, -1];
+      const f: [number, number, number, number] = [0, 0, 0, 0];
+      stands.forEach((b, i) => ((q[i] = b), (f[i] = r.floorAt(b))));
+      out.cols.push(q);
+      out.floors.push(f);
+      out.open!.push(doors.length ? 0 : 1);
+      out.ids!.push(s.id);
+    }
+    if (r.extra) {
+      out.cols.push(...r.extra.cols);
+      out.floors.push(...r.extra.floors);
+      out.open!.push(...r.extra.cols.map(() => 0));
+      out.ids!.push(...r.extra.cols.map(() => -1));
+    }
+    return out;
+  };
+  // (what nothing reaches: dropped, logged — and the rest asked again, a drop opening ground others may now be joined
+  // over; until a round drops nothing)
+  const { plan } = r.solid();
+  let dropped = 0;
+  let fixes = 0;
+  let asks = 0;
+  for (;;) {
+    const res = await joinPlaces({ ...r, places });
+    fixes += res.fixes;
+    asks += res.asks;
+    if (r.live && !r.live()) return { ...res, fixes, asks, dropped, graded, steep };
+    let now = 0;
+    for (const id of unstood) if (plan.drop(id, 'no side to stand at, and none a passage would open: walled in by what cannot be cut')) now++;
+    for (const q of res.outAt) {
+      const id = res.places.ids?.[q] ?? -1;
+      if (id >= 0 && plan.drop(id, 'no gate, passage or stair joins it to the stores: a cliff, deep water or walls past any fix')) now++;
+    }
+    dropped += now;
+    if (now) r.changed?.();
+    else return { ...res, fixes, asks, dropped, graded, steep };
+  }
+}
+
