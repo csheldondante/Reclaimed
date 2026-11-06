@@ -140,6 +140,9 @@ state and the public API.
 
 ## Gotchas for agents editing here
 
+- Line endings are LF everywhere, pinned by `.gitattributes`. Never convert files to CRLF; merge
+  branches made before 2026-11-05 with `-X renormalize`.
+
 - Windows + Git Bash: heredocs and `node -e` scripts containing backticks or
   `${…}` get mangled by the shell. Use the Edit/Write tools for TS/WGSL/Markdown
   with template literals or code spans.
