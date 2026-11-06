@@ -20415,3 +20415,35 @@ Left:
   plants' particles on; fortress play has no story rules.
 - Plants' wind response (sway) sleeping where the wind is low and waking for gusts: next (DECISIONS round 128p, the
   user's correction).
+
+## 2026-11-06 — round 128p (`phonefix`): plant sway sleeps under the breeze and wakes for gusts
+
+Why: the user, "when wind is low let them sleep and wake them up for gusts like other systems like dust" (DECISIONS
+round 128p, the correction). The sway spring ran over every column of the window every frame, whatever the wind.
+
+What:
+- `SwaySystem` dispatches over a tile list made on the GPU (swaylist.wgsl, GpuTileList, indirect, no readback). A
+  chunk is listed when either:
+  - the wind past the map's own breeze (windAt less the field's map wind, ba − rg: painted gusts, blows, a landing's
+    shove, storms, the cursor's breeze) is more than WAKE (1 cell/s) at its middle or a corner; or
+  - one of its springs is still swinging (`restless`, written by sway.wgsl while the lean moves faster than
+    0.01 cells/s).
+- The other chunks keep the lean they have.
+- The scope, every chunk of the window, is packed again each frame, so a slide's pages are the list's.
+- Without the tile lists (`?simcull=0`) the whole window runs every frame, as before.
+- No jitter: the sway is once a frame since fast-forward (0.04 ms on desktop), so a woken region is simulated.
+
+Measured:
+- test/gpu/sway.test.ts:
+  - under a steady breeze, no chunk is listed;
+  - a gust in one corner lists some chunks, not all, and the plants there lean;
+  - once the gust is gone and the springs stop swinging, none is listed.
+- The lab's town after Build at 16x, read every 5 sim s for 30 s: 0 of 400 chunks listed.
+
+Limits:
+- Under the map's own breeze the plants no longer lean into it. With no lean, the draws' flutter (scaled by the
+  lean) is still too.
+- Trees and leaves answering real weather is BACKLOG DA-B31.
+- WAKE (1 cell/s past the breeze) and the settling speed (0.01) are the wake and sleep levels. They are thresholds,
+  chosen so the breeze's own patches don't wake the window (with a lean-difference rule, 300 to 400 of the 400 chunks
+  stayed awake).

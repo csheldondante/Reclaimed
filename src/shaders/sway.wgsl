@@ -1,4 +1,6 @@
 // ---- vegetation sway (render-only state) ------------------------------------
+// (round 128p) Run where a gust wakes the plants, or a spring is still swinging (swaylist.wgsl: the chunks listed on
+// the GPU); under the map's own breeze the plants keep the lean they have — the sway sleeps where the wind is low.
 // One damped spring per column: bend.xy = how far the plants here lean
 // (cells at canopy height), bend.zw = its velocity. Wind pushes the lean
 // toward a target quickly, and the plants hold it while the wind holds; when
@@ -8,6 +10,10 @@
 // evaluating the wind per vertex, so sway has memory.
 @group(0) @binding(3) var<storage, read> surface: array<u32>;
 @group(0) @binding(4) var<storage, read_write> bend: array<vec4<f32>>;
+// (round 128p) per window chunk: 1 while a spring of its hasn't settled — it stays on the sway's list (swaylist.wgsl)
+@group(0) @binding(5) var<storage, read_write> restless: array<u32>;
+/** a spring this slow (cells/s of lean) has stopped swinging */
+const SETTLED_SPEED: f32 = 0.01;
 
 const DT_S: f32 = 1.0 / 60.0;
 /** (perfopt, simhz) the world time a tick stands for */
@@ -32,5 +38,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let damp = select(1.1, 4.2, pushing);
   let acc = (aim - pos) * k - vel * damp;
   let v2 = vel + acc * dtS();
-  bend[i] = vec4<f32>(pos + v2 * dtS(), v2);
+  let p2 = pos + v2 * dtS();
+  bend[i] = vec4<f32>(p2, v2);
+  if (length(v2) > SETTLED_SPEED) { restless[(id.y / G.chunkSize) * G.chunksX + id.x / G.chunkSize] = 1u; }
 }
