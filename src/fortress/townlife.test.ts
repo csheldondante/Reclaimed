@@ -11,11 +11,12 @@ import { TownLife, WORK_S, type LifeEvent, type Order, type TownWork } from './t
 import type { Load } from './work';
 
 /** a scripted town: its slots, stores and sites as plain data; every call the routine makes logged */
-function town(slots: JobSlot[]) {
+function town(slots: JobSlot[], daySec = 1e9) {
   const log: string[] = [];
   const stores: Goods = { stone: 10, log: 10 };
   const sites: Block[] = [{ cell: 7, level: 0 }];
   const work: TownWork = {
+    daySec,
     slots: () => slots,
     nextLoad: () => {
       const block = sites[0];
@@ -167,6 +168,33 @@ describe('one crowd, on events', () => {
     const o = life.tick(0.1);
     expect(life.phaseOf(2)).toBe('toSite');
     expect(goes(o, 2)).toContain('site');
+  });
+
+  it("a person's day: a meal at the stores at midday, home to rest at its end, back to work the next", () => {
+    const t = town([{ key: 's3', kind: 'farm', structure: 3, count: 1 }], 100);
+    const life = new TownLife(t.work);
+    life.add(2);
+    life.tick(1);
+    // (the morning: work)
+    expect(life.phaseOf(2)).toBe('toWork');
+    life.on(arrived(2, 'farm'));
+    life.tick(46);
+    // (reaped by midday: home to the stores with its load first, then the meal)
+    life.on(arrived(2, 'stores'));
+    expect(goes(life.tick(0.1), 2)).toContain('stores');
+    // (a meal where it stands: the stores, already there)
+    expect(life.phaseOf(2)).toBe('eating');
+    life.tick(2.1);
+    expect(life.phaseOf(2)).toBe('toWork');
+    // (the day's end: home to rest, and out again the next morning)
+    life.tick(45);
+    life.on(arrived(2, 'farm'));
+    life.tick(5);
+    life.on(arrived(2, 'stores'));
+    life.tick(0.1);
+    expect(life.phaseOf(2)).toBe('rest');
+    life.tick(10);
+    expect(life.phaseOf(2)).toBe('toWork');
   });
 
   it('a lost event throws: a person may wait for an arrival it never hears of', () => {

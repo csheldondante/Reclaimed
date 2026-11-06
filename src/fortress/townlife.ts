@@ -42,6 +42,8 @@ export type Order =
 
 /** What the routine asks of the town (the plan, its stores, its sites, its work spots): pure answers. */
 export interface TownWork {
+  /** the town's day (sim seconds): a person's day — work, a meal at midday, home to rest at its end */
+  readonly daySec: number;
   /** the jobs open now, in priority order */
   slots(): JobSlot[];
   /** a builder at the stores: the next block that lacks something the stores have, and the load taken out for it
@@ -68,6 +70,10 @@ export interface TownWork {
 export const WORK_S = 1.5;
 /** ground dug a load */
 export const DIG = 2;
+/** a person's day (a share of it): a meal at the stores from EAT_FROM (EAT_S s), home to rest from REST_FROM */
+export const EAT_FROM = 0.45;
+export const EAT_S = 2;
+export const REST_FROM = 0.9;
 
 type Phase =
   | { p: 'idle' }
@@ -83,7 +89,10 @@ type Phase =
   | { p: 'gather'; goods: Goods; t: number }
   | { p: 'digging' }
   | { p: 'felling' }
-  | { p: 'carry'; goods: Goods };
+  | { p: 'carry'; goods: Goods }
+  | { p: 'toEat' }
+  | { p: 'eating'; t: number }
+  | { p: 'rest' };
 
 interface Person {
   unit: number;
@@ -93,6 +102,8 @@ interface Person {
   there: { leg: Leg; at: V2 } | null;
   /** the leg it was sent on since the orders last went out (undefined: none; null: told to stand) */
   sent?: Leg | null;
+  /** the day it last ate */
+  ate: number;
 }
 
 /** the look a load of goods is carried as: its largest good */
@@ -105,6 +116,8 @@ export class TownLife {
   private people = new Map<number, Person>();
   private board = new JobBoard();
   private orders: Order[] = [];
+  /** sim seconds since it began */
+  private t = 0;
 
 
   constructor(private work: TownWork) {}
@@ -112,7 +125,7 @@ export class TownLife {
   /** a person of the town (a unit already standing in the world) */
   add(unit: number): void {
     if (this.people.has(unit)) throw new Error(`town life: unit ${unit} is one of its people already`);
-    this.people.set(unit, { unit, phase: { p: 'idle' }, there: null });
+    this.people.set(unit, { unit, phase: { p: 'idle' }, there: null, ate: -1 });
   }
 
   /** the town's people (their units) */
@@ -158,13 +171,22 @@ export class TownLife {
    * The orders for the wiring since the last call.
    */
   tick(dt: number): Order[] {
+    this.t += dt;
     const slots = this.work.slots();
     const changed = this.board.assign(this.units(), slots);
     for (const u of changed) this.start(this.people.get(u)!);
     for (const person of this.people.values()) {
       const ph = person.phase;
       if (ph.p === 'idle') this.start(person);
-      else if (ph.p === 'waitLoad') this.arrived(person, 'stores', person.there?.at ?? [0, 0], true);
+      else if (ph.p === 'rest') {
+        if (this.dayFrac() < REST_FROM) this.start(person);
+      } else if (ph.p === 'eating') {
+        ph.t -= dt;
+        if (ph.t <= 0) {
+          person.ate = this.day();
+          this.start(person);
+        }
+      } else if (ph.p === 'waitLoad') this.arrived(person, 'stores', person.there?.at ?? [0, 0], true);
       else if (ph.p === 'waitSpot') this.arrived(person, this.legOf(person), ph.at, true);
       else if (ph.p === 'working') {
         ph.t -= dt;
@@ -226,12 +248,22 @@ export class TownLife {
     return key ? (this.work.slots().find((s) => s.key === key) ?? null) : null;
   }
 
-  /** a person starting over: its job's first leg, or home */
+  private day(): number {
+    return Math.floor(this.t / this.work.daySec);
+  }
+
+  private dayFrac(): number {
+    return (this.t / this.work.daySec) % 1;
+  }
+
+  /** a person starting over: home to rest at the day's end, a meal at midday, else its job's first leg, or home */
   private start(person: Person): void {
     // (a load in hand goes back where it came from: the job changed under it)
     const ph = person.phase;
     if (ph.p === 'toSite' || ph.p === 'working') this.work.giveBack(ph.block, ph.load);
     if (ph.p === 'carry') this.work.deliver(ph.goods, null);
+    if (this.dayFrac() >= REST_FROM) return this.set(person, { p: 'rest' }, 'home');
+    if (this.dayFrac() >= EAT_FROM && person.ate !== this.day()) return this.set(person, { p: 'toEat' }, 'stores');
     const s = this.slot(person.unit);
     if (!s) return this.set(person, { p: 'home' }, 'home');
     if (s.kind === 'build') return this.set(person, { p: 'toStores' }, 'stores');
@@ -298,5 +330,7 @@ export class TownLife {
       return;
     }
     if (ph.p === 'home' && leg === 'home') return this.set(person, { p: 'home' }, null);
+    if (ph.p === 'rest' && leg === 'home') return this.set(person, { p: 'rest' }, null);
+    if (ph.p === 'toEat' && leg === 'stores') return this.set(person, { p: 'eating', t: EAT_S }, null);
   }
 }

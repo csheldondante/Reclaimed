@@ -34,6 +34,7 @@ export interface FortressWorkIO {
 }
 
 export class FortressWork implements TownWork {
+  readonly daySec = ECON.daySec;
   readonly book: BuildBook;
   /** per farm its ripe grain */
   readonly ripe = new Map<number, number>();

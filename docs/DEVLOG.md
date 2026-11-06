@@ -19144,3 +19144,5 @@ Design note (AGENT_RULES 1). DESIGN.md section 11 ("One crowd"; "no per-frame CP
   load, a farmer's, a miner's and a woodcutter's on the world's answers, home, a job changed mid-leg gives the load
   back, a leg to where it is counts as there, a lost event throws, a death) and townwork.test.ts (2: a house put up
   load by load on a fortress from scripted arrivals; a farm's ripe grain brought in). Unit tier 98 files green.
+- (part 1b) The day in TownLife: a meal at the stores from EAT_FROM (EAT_S s, once a day), home to rest from REST_FROM
+  until the next day (the same shares as FortressLife's); test: a farmer's day, meal and rest and back to work.
