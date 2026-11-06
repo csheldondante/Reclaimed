@@ -2,13 +2,12 @@
 // event streams here, no units, no positions read. A builder's cycle, a farmer's, a miner's and a woodcutter's; people
 // without work go home; a job change mid-leg gives the load back; a leg sent to where it already is counts as there;
 // a lost event throws.
+import { type JobSlot, type Load } from './jobs';
 import { describe, expect, it } from 'vitest';
 import type { Goods } from '../api/contracts/fortress';
 import type { V2 } from '../api/contracts/units';
 import type { Block } from '../build/town';
-import type { JobSlot } from './economy';
-import { TownLife, WORK_S, type LifeEvent, type Order, type TownWork } from './townlife';
-import type { Load } from './work';
+import { TownLife, WORK_S, type LifeEvent, type Order, type TownWork } from './life';
 
 /** a scripted town: its slots, stores and sites as plain data; every call the routine makes logged */
 function town(slots: JobSlot[], daySec = 1e9) {
@@ -75,6 +74,10 @@ describe('one crowd, on events', () => {
     life.tick(1);
     expect(life.phaseOf(1)).toBe('waitLoad');
     t.stores.stone = 5;
+    // (nothing polled: ticks alone don't wake it — the stores' event does)
+    life.tick(1);
+    expect(life.phaseOf(1)).toBe('waitLoad');
+    life.on({ type: 'stores' });
     const o = life.tick(1);
     expect(life.phaseOf(1)).toBe('toSite');
     expect(goes(o, 1)).toEqual(['site']);
@@ -168,6 +171,38 @@ describe('one crowd, on events', () => {
     const o = life.tick(0.1);
     expect(life.phaseOf(2)).toBe('toSite');
     expect(goes(o, 2)).toContain('site');
+  });
+
+  it("a farmer with nothing ripe waits at its farm until the farm says it has (a 'spot' event)", () => {
+    const t = town([{ key: 's3', kind: 'farm', structure: 3, count: 1 }]);
+    let ripe = false;
+    t.work.workSpot = (_k, _s, at) => (ripe ? [at[0] + 1, at[1]] : null);
+    const life = new TownLife(t.work);
+    life.add(2);
+    life.tick(0.1);
+    life.on(arrived(2, 'farm', [4, 4]));
+    expect(life.phaseOf(2)).toBe('waitSpot');
+    life.tick(30);
+    expect(life.phaseOf(2)).toBe('waitSpot');
+    ripe = true;
+    // (another structure's: not its)
+    life.on({ type: 'spot', structure: 9 });
+    expect(life.phaseOf(2)).toBe('waitSpot');
+    life.on({ type: 'spot', structure: 3 });
+    expect(life.phaseOf(2)).toBe('gather');
+  });
+
+  it('a builder waiting for a load wakes when the sites change (a block planned)', () => {
+    const t = town([{ key: 'build', kind: 'build', structure: null, count: 1 }]);
+    const life = new TownLife(t.work);
+    const block = t.sites.splice(0, 1)[0];
+    life.add(1);
+    life.tick(0.1);
+    life.on(arrived(1, 'stores'));
+    expect(life.phaseOf(1)).toBe('waitLoad');
+    t.sites.push(block);
+    life.on({ type: 'sites' });
+    expect(life.phaseOf(1)).toBe('toSite');
   });
 
   it("a person's day: a meal at the stores at midday, home to rest at its end, back to work the next", () => {

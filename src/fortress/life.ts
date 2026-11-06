@@ -33,6 +33,7 @@
 //
 // It runs the pinned settlement's units in place of a SettlementLife (Settlements.pin(id, true)): the two share those
 // fields and groups (FORTRESS_SLICE1 correction 1), so they never run together.
+import { JobBoard, type JobKind, type JobSlot, type Load } from '../town/jobs';
 import type { Good, Goods } from '../api/contracts/fortress';
 import type { FactionId } from '../api/contracts/world';
 import type { UnitId, V2 } from '../api/contracts/units';
@@ -43,7 +44,7 @@ import { F, G, type AgentUnits, type Routine, type UnitRec } from '../units/agen
 import { ROAD_FIELD } from '../agents/agents';
 import { noGraph, type RoadGraph } from '../agents/roadgraph';
 import { DEFS, ECON } from './defs';
-import { builtBlocks, cartsOf, eaten, fits, grown, haulBy, JobBoard, jobSlots, mayArrive, putIn, quarryLoad, reachOf, refundOf, workSeconds, type JobKind, type JobSlot } from './economy';
+import { builtBlocks, cartsOf, eaten, fits, grown, haulBy, jobSlots, mayArrive, putIn, quarryLoad, reachOf, refundOf, workSeconds } from './economy';
 import { nearestNode, nodeCount } from '../agents/roadgraph';
 import { ROW_H } from '../world/lattice';
 import { RecipeRunner, type TrainRoom } from './recipes';
@@ -53,7 +54,7 @@ import { WAY_ROAD } from '../build/ways';
 import { cellAt } from '../world/lattice';
 import type { Doing, PersonFacts } from './follow';
 import type { FortressRaid } from './raiders';
-import { BuildBook, type Load } from './work';
+import { BuildBook } from './work';
 import { QuarryDig } from './quarry';
 
 /** goods a builder carries a trip */

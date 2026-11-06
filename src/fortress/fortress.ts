@@ -7,6 +7,7 @@
 //
 // Planning happens with time stopped: the blocks are the Town's plan (Town.plans), drawn with the town (build/view.ts)
 // — what they'll look like. The builders build them (Town.add: what stands).
+import { type JobKind } from '../town/jobs';
 import { STRUCTURE_TYPES, type FortressBox, type Goods, type StructureType } from '../api/contracts/fortress';
 import type { Town, Block } from '../build/town';
 import type { QuadGrid } from '../build/quadgrid';
@@ -19,7 +20,7 @@ import { shapesOf } from '../build/shapes';
 import { groundSteps, waysOf, waysNav, type Ways } from '../build/ways';
 import type { NavGraph } from '../api/contracts/structures';
 import { LEVEL_H } from '../build/town';
-import { bedsOf, roomOf, type JobKind } from './economy';
+import { bedsOf, roomOf } from './economy';
 import { packSpan, REACH_BITS, type ReachAsk, type ReachEngine, type ReachReply } from './reach';
 import { solidSpans } from '../build/solid';
 import { refusedLine, variantLine, wouldCutLine, type ReachWhy, type VariantKind } from './words';

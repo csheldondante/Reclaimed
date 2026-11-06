@@ -4,19 +4,21 @@
 // give jobs as the player's do; the builders' slot while there's building), and a person's phase moves only on what
 // happens to it — never on a position read back.
 //  - In: events (`LifeEvent`) — a leg's arrival (the agents' `arrived` on its field, DA-B2a, or the ride's at a trip's
-//    goal), a world operation's answer (dug, felled), a death; a lost event (the agents' ring overflowed) is a bug, thrown.
+//    goal), a world operation's answer (dug, felled), a death; the town's own (goods into the stores, the sites changed,
+//    a structure's work ready: TownWork's adapter emits them); a lost event (the agents' ring overflowed) is thrown.
 //  - Out: orders (`Order`) — the leg a unit follows (its group: a field or a ride), what it carries, a world operation
 //    to ask for. The wiring (AgentUnits, the world API) carries them out and turns what comes back into events.
 //  - Time: a phase that takes time (working a load in, gathering, eating) counts sim seconds in `tick`; nothing waits on
 //    a timer to give up.
-// Pure: no GPU, no DOM, no units — tested with scripted event streams (townlife.test.ts).
+// Nothing is polled: a person waiting (at the stores with nothing to bring, at its work with nothing ready) waits for the
+// event that changes that. Pure: no GPU, no DOM, no units — tested with scripted event streams (life.test.ts). Every
+// town runs it (round 128o: src/town/, its own folder; the fortress's adapter is fortress/townwork.ts).
 // This slice: builders, farmers, miners, woodcutters, the people without work. Carts, smiths, recruits, soldiers and the
 // newcomers' walk in are the next ones (DEVLOG round 128o, DA-A6's note).
+import { JobBoard, type JobKind, type JobSlot, type Load } from './jobs';
 import type { Good, Goods } from '../api/contracts/fortress';
 import type { V2 } from '../api/contracts/units';
 import type { Block } from '../build/town';
-import { JobBoard, type JobKind, type JobSlot } from './economy';
-import type { Load } from './work';
 
 /** the legs a person walks or rides: each the wiring's field or ride group */
 export type Leg = 'stores' | 'site' | 'farm' | 'quarry' | 'fell' | 'home';
@@ -29,6 +31,12 @@ export type LifeEvent =
   /** a felling answered: its logs (0: no tree there any more) */
   | { type: 'felled'; unit: number; logs: number }
   | { type: 'death'; unit: number }
+  /** (the town's) goods came into the stores: a builder waiting there may have a load now */
+  | { type: 'stores' }
+  /** (the town's) the plan's sites changed (planned, erased, cut off or reached again) */
+  | { type: 'sites' }
+  /** (the town's) a structure has work ready: ripe grain, a tree in reach, a free spot */
+  | { type: 'spot'; structure: number }
   /** events the agents' ring dropped (it overflowed): a person may never hear of its arrival */
   | { type: 'lost'; count: number };
 
@@ -79,12 +87,12 @@ type Phase =
   | { p: 'idle' }
   | { p: 'home' }
   | { p: 'toStores' }
-  /** at the stores with nothing to bring: asks again each tick (the stores' and the sites' state, not a position) */
+  /** at the stores with nothing to bring: until the stores or the sites change */
   | { p: 'waitLoad' }
   | { p: 'toSite'; block: Block; load: Load }
   | { p: 'working'; block: Block; load: Load; t: number }
   | { p: 'toWork' }
-  /** at its work with no spot free: asks again each tick */
+  /** at its work with nothing ready: until its structure has */
   | { p: 'waitSpot'; at: V2 }
   | { p: 'gather'; goods: Goods; t: number }
   | { p: 'digging' }
@@ -146,6 +154,17 @@ export class TownLife {
   /** What happened: each event moves its person on. */
   on(e: LifeEvent): void {
     if (e.type === 'lost') throw new Error(`town life: ${e.count} agent events lost (the ring overflowed) — a person may wait for an arrival it never hears of`);
+    if (e.type === 'stores' || e.type === 'sites') {
+      for (const person of this.people.values()) if (person.phase.p === 'waitLoad') this.arrived(person, 'stores', person.there?.at ?? [0, 0], true);
+      return this.settleOwed();
+    }
+    if (e.type === 'spot') {
+      for (const person of this.people.values()) {
+        const ph = person.phase;
+        if (ph.p === 'waitSpot' && this.slot(person.unit)?.structure === e.structure) this.arrived(person, this.legOf(person), ph.at, true);
+      }
+      return this.settleOwed();
+    }
     const person = this.people.get(e.unit);
     if (!person) return;
     if (e.type === 'death') {
@@ -186,9 +205,7 @@ export class TownLife {
           person.ate = this.day();
           this.start(person);
         }
-      } else if (ph.p === 'waitLoad') this.arrived(person, 'stores', person.there?.at ?? [0, 0], true);
-      else if (ph.p === 'waitSpot') this.arrived(person, this.legOf(person), ph.at, true);
-      else if (ph.p === 'working') {
+      } else if (ph.p === 'working') {
         ph.t -= dt;
         if (ph.t <= 0) {
           this.work.workIn(ph.block, ph.load);
@@ -286,7 +303,7 @@ export class TownLife {
     const unit = person.unit;
     if ((ph.p === 'toStores' || (again && ph.p === 'waitLoad')) && leg === 'stores') {
       const job = this.work.nextLoad();
-      // (nothing to bring: it waits by the stores, asking each tick)
+      // (nothing to bring: it waits by the stores until they or the sites change)
       if (!job) {
         if (ph.p !== 'waitLoad') this.set(person, { p: 'waitLoad' }, null);
         return;

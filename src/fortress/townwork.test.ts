@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import type { Goods } from '../api/contracts/fortress';
 import type { V2 } from '../api/contracts/units';
 import { fortressOn } from './testing';
-import { TownLife, WORK_S } from './townlife';
+import { TownLife, WORK_S } from '../town/life';
 import { FortressWork } from './townwork';
 
 const W = 120;
@@ -44,14 +44,23 @@ describe('TownLife on a fortress', () => {
     const cell = f.cellAt(60, 30);
     f.paint(cell, 0, 'farm');
     f.markBuilt(cell, 0);
-    work.grow(200);
     life.add(2);
     life.tick(0.1);
     expect(life.jobOf(2)).not.toBeNull();
+    // (nothing ripe yet: it waits at the farm)
     life.on({ type: 'arrived', unit: 2, leg: 'farm', at: f.centre(cell) });
+    expect(life.phaseOf(2)).toBe('waitSpot');
+    // (the grain grows: the farm says so, once)
+    work.drain();
+    work.grow(200);
+    const evs = work.drain();
+    expect(evs).toEqual([{ type: 'spot', structure: f.plan.owner[cell] }]);
+    for (const e of evs) life.on(e);
     expect(life.phaseOf(2)).toBe('gather');
     life.tick(1e4);
     life.on({ type: 'arrived', unit: 2, leg: 'stores', at: [20, 20] });
     expect(stores.grain).toBeGreaterThan(0);
+    // (goods in: the stores say so)
+    expect(work.drain()).toContainEqual({ type: 'stores' });
   });
 });

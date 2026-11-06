@@ -200,12 +200,12 @@ Fortress mode: the fortress, its economy, pieces, claims, life (workers) and its
 
 - `defence.ts` (202) — The fortress's defence against a wave (round 128l, m4: the attack wave, part B; API: `ARROW`, `swordsOf`, `arrowFlight`, `arrowHits` +3.
 - `defs.ts` (78) — The eight first buildings (round 128c, the user's list) and their numbers: a block's cost and what it gives. API: `START_STORES`, `ECON`, `DEFS`, `POWER_RISE`.
-- `economy.ts` (237) — The fortress's economy (fortress slice 1, milestone 3: "the economy feeds the building"). API: `JOB_ORDER`, `JobKind`, `JobSlot`, `STORED` +18.
+- `economy.ts` (162) — The fortress's economy (fortress slice 1, milestone 3: "the economy feeds the building"). API: `STORED`, `builtBlocks`, `jobSlots`, `perWorker` +14.
 - `follow.ts` (189) — Follow a person (round 128l, m4; API: `Doing`, `PersonFacts`, `nameOf`, `thoughtOf` +3.
-- `fortress.ts` (1262) — The fortress (fortress slice 1, milestone 1): the player editing a town's plan. API: `Erased`, `FortressStatus`, `FortressIO`, `Tool` +2.
+- `fortress.ts` (1263) — The fortress (fortress slice 1, milestone 1): the player editing a town's plan. API: `Erased`, `FortressStatus`, `FortressIO`, `Tool` +2.
 - `host.ts` (56) — (round 128l, tooling) What the fortress's start (scenes/level.ts startFortress) needs of the world it's … API: `FortressTownRec`, `FortressTownSource`, `FortressWindow`, `TownViewHost`.
 - `inspect.ts` (156) — Inspect (round 128d; the user: "Maybe an inspect to highlight a continuous section of structure and see … API: `InspectFacts`, `InspectLive`, `inspectFacts`, `inspectCard`.
-- `life.ts` (1586) — The fortress's people (fortress slice 1; API: `LOAD`, `R4`, `startSpots`, `FortressLifeIO` +1.
+- `life.ts` (1587) — The fortress's people (fortress slice 1; API: `LOAD`, `R4`, `startSpots`, `FortressLifeIO` +1.
 - `pick.ts` (59) — Which block face a tap lands on (round 128d, the user: "Fix the clicking on the side to build next to it. API: `PickCells`, `FaceHit`, `pickFace`, `placeFor`.
 - `quarry.ts` (318) — The miners grow a quarry's pit down, tier by tier (round 128m, `quarry`, BACKLOG V128-11; API: `QuarryIO`, `QuarryDig`.
 - `raid.ts` (289) — The attack wave's rules (round 128l, m4: fortress M5-lite, docs/DECISIONS.md round 128l "the attack wave"). API: `RAID`, `LOOT_ORDER`, `waveSize`, `Side` +13.
@@ -214,11 +214,10 @@ Fortress mode: the fortress, its economy, pieces, claims, life (workers) and its
 - `reachgpu.ts` (262) — The fortress's reach on the GPU (round 128l, m4; API: `FortressReachGpu`.
 - `recipes.ts` (154) — The fortress's recipes (round 128l, m4: fortress slice 1, milestone 4 — "the blacksmith makes weapons from … API: `Recipe`, `RECIPES`, `recipeTakes`, `TrainRoom` +2.
 - `testing.ts` (12) — (round 128m, onetown) Tests' fortress: the player editing a town with nothing on it yet (build/site.ts … API: `fortressOn`.
-- `townlife.ts` (303) — One crowd for a town's people, on events (DA-A6, round 128o; API: `Leg`, `LifeEvent`, `Order`, `TownWork` +3.
-- `townwork.ts` (167) — A town's work as TownLife asks for it (DA-A6, round 128o; API: `LOAD`, `SITES`, `FortressWorkIO`, `FortressWork`.
+- `townwork.ts` (195) — A town's work as TownLife asks for it (DA-A6, round 128o; API: `LOAD`, `SITES`, `RIPE_LOAD`, `FortressWorkIO` +1.
 - `ui.ts` (377) — The fortress's bar. Planning (time stopped): select what — one of the nine types — then tap to plan it; API: `FortressBarHooks`, `SPEEDS`, `FortressBar`.
 - `words.ts` (268) — What the fortress's planning panel says (docs/WRITING.md: plain words, one idea a sentence, numbers of … API: `goodsText`, `givesLines`, `typeCard`, `typeLines` +26.
-- `work.ts` (99) — What the fortress's builders owe and have brought (fortress slice 1, milestone 2). API: `Load`, `BuildBook`.
+- `work.ts` (97) — What the fortress's builders owe and have brought (fortress slice 1, milestone 2). API: `BuildBook`.
 
 ## src/game/
 
@@ -835,6 +834,11 @@ Stories: dialog play, hero runs, the atlas run.
 - `contract.ts` (348) — Round 112 (testspeed): the contract tier — a system (or a few) on a tiny world, its contract inputs set … API: `ContractResult`, `ContractOpts`.
 - `crop.ts` (47) — (round 112, testspeed) A map's rectangle as a map of its own: a contract test's tiny world cut from a level's. API: `cropMap`.
 - `probe.wgsl` (11) — (round 112, testspeed) The runner's self-check kernel (scripts/run.mjs selfcheck): it writes a constant of …
+
+## src/town/
+
+- `jobs.ts` (90) — A town's jobs (round 128o, DA-A6: moved here from fortress/economy.ts and fortress/work.ts — every town's … API: `JOB_ORDER`, `JobKind`, `JobSlot`, `Load` +1.
+- `life.ts` (354) — One crowd for a town's people, on events (DA-A6, round 128o; API: `Leg`, `LifeEvent`, `Order`, `TownWork` +6.
 
 ## src/traits/
 

@@ -3,15 +3,16 @@
 // the town's one plan (a Fortress on its TownSite). Ported from fortress/life.ts's FortressLife, which it replaces when
 // TownLife is wired in (the next commit: until then the game runs FortressLife). No unit is read: where a person is
 // comes with its arrival.
+import { type JobKind, type JobSlot, type Load } from '../town/jobs';
 import type { Good, Goods } from '../api/contracts/fortress';
 import type { V2 } from '../api/contracts/units';
 import { buildOrder } from '../agents/buildcrew';
 import type { Block } from '../build/town';
 import { DEFS, ECON } from './defs';
-import { builtBlocks, fits, grown, jobSlots, putIn, quarryLoad, workSeconds, type JobKind, type JobSlot } from './economy';
+import { builtBlocks, fits, grown, jobSlots, putIn, quarryLoad, workSeconds } from './economy';
 import type { Fortress } from './fortress';
-import type { TownWork } from './townlife';
-import { BuildBook, type Load } from './work';
+import type { LifeEvent, TownWork } from '../town/life';
+import { BuildBook } from './work';
 
 /** goods a builder carries a trip */
 export const LOAD = 3;
@@ -19,6 +20,8 @@ export const LOAD = 3;
 export const SITES = 6;
 /** the most grain a farm holds ripe: this many days of its growth */
 const RIPE_DAYS = 3;
+/** a farm's ripe grain worth a reap (a load's share: less isn't worth the walk home) */
+export const RIPE_LOAD = 0.5;
 /** the job kinds this slice's people do (the smiths' and recruits' come with their slice) */
 const KINDS: ReadonlySet<JobKind> = new Set(['build', 'farm', 'quarry', 'lumber']);
 
@@ -41,8 +44,25 @@ export class FortressWork implements TownWork {
   /** per structure what its workers brought in */
   readonly made = new Map<number, Goods>();
 
+  /** the town's events since the last drain (TownLife.on takes them): goods in, the sites changed, work ready */
+  private events: LifeEvent[] = [];
+
   constructor(private io: FortressWorkIO) {
     this.book = new BuildBook((b) => DEFS[io.fort.plan.typeAt(b.cell) ?? 'house'].cost);
+    // (the plan edited, a block built, the reach answered: the sites may have changed)
+    io.fort.onChange.push(() => this.emit({ type: 'sites' }));
+  }
+
+  private emit(e: LifeEvent): void {
+    const last = this.events[this.events.length - 1];
+    // (one of a kind in a row is enough)
+    if (last && last.type === e.type && (e.type !== 'spot' || (last.type === 'spot' && last.structure === e.structure))) return;
+    this.events.push(e);
+  }
+
+  /** the town's events since the last call */
+  drain(): LifeEvent[] {
+    return this.events.splice(0);
   }
 
   private built = (c: number, l: number) => this.io.fort.town.has(c, l);
@@ -104,11 +124,13 @@ export class FortressWork implements TownWork {
   giveBack(block: Block, load: Load): void {
     this.book.giveBack(block, load, { ...this.io.stores() });
     this.io.take(load.good, -load.amount);
+    this.emit({ type: 'stores' });
   }
 
   deliver(goods: Goods, from: number | null): void {
     const went = putIn({ ...this.io.stores() }, this.io.fort.room(), goods);
     for (const [g, v] of Object.entries(went) as [Good, number][]) this.io.take(g, -v);
+    if (Object.values(went).some((v) => (v ?? 0) > 0)) this.emit({ type: 'stores' });
     if (from === null) return;
     const m = this.made.get(from) ?? {};
     for (const [g, v] of Object.entries(went) as [Good, number][]) m[g] = (m[g] ?? 0) + v;
@@ -120,6 +142,8 @@ export class FortressWork implements TownWork {
     const s = f.plan.structure(structure);
     if (!s) return null;
     if (kind === 'lumber') return nearest(this.io.trees(structure), at);
+    // (a farm with nothing ripe enough: no spot — its 'spot' event comes when there is: grow)
+    if (kind === 'farm' && (this.ripe.get(structure) ?? 0) < RIPE_LOAD) return null;
     // (a farm's, a quarry's built cell nearest where it arrived)
     const cells = [...s.cells.keys()].filter((c) => f.town.has(c, 0)).map((c) => f.centre(c));
     return nearest(cells, at);
@@ -143,7 +167,10 @@ export class FortressWork implements TownWork {
       if (s.type !== 'farm') continue;
       const n = builtBlocks(f.plan, s, this.built);
       const max = (DEFS.farm.perBlock.makes?.grain ?? 0) * n * RIPE_DAYS;
-      this.ripe.set(s.id, Math.min(max, (this.ripe.get(s.id) ?? 0) + grown(n, dt)));
+      const was = this.ripe.get(s.id) ?? 0;
+      const now = Math.min(max, was + grown(n, dt));
+      this.ripe.set(s.id, now);
+      if (was < RIPE_LOAD && now >= RIPE_LOAD) this.emit({ type: 'spot', structure: s.id });
     }
   }
 

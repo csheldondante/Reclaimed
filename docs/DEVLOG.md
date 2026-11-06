@@ -19146,3 +19146,17 @@ Design note (AGENT_RULES 1). DESIGN.md section 11 ("One crowd"; "no per-frame CP
   load by load on a fortress from scripted arrivals; a farm's ripe grain brought in). Unit tier 98 files green.
 - (part 1b) The day in TownLife: a meal at the stores from EAT_FROM (EAT_S s, once a day), home to rest from REST_FROM
   until the next day (the same shares as FortressLife's); test: a farmer's day, meal and rest and back to work.
+
+## 2026-11-06 — round 128o (`onetown`, DA-A6 part 2): nothing polled; the routine in its own folder (src/town/)
+
+- Main's review: the per-tick re-ask of a person waiting at the stores or at its work was polling. Now the town's own
+  events wake them: `stores` (goods came in), `sites` (the plan's sites changed), `spot` (a structure has work ready).
+  The fortress's adapter emits them (FortressWork.drain): a delivery or a load given back -> `stores`; the plan's
+  onChange -> `sites`; a farm's ripe grain crossing RIPE_LOAD (0.5) -> `spot`. A farm with less ripe than that has no
+  spot (the farmer waits for its event). Tests: ticks alone don't wake a waiter; the stores', the sites' and the farm's
+  events do (another structure's doesn't).
+- TownLife serves every town, so it lives in src/town/ (life.ts, with its tests), with the jobs every town shares
+  (town/jobs.ts: JOB_ORDER, JobKind, JobSlot, JobBoard, Load — moved from fortress/economy.ts and fortress/work.ts,
+  their importers updated; no re-exports). The fortress's adapter stays fortress/townwork.ts.
+- The import-boundary gate: `town` sits above the engine, and a rule `town-pure` — the town's routine never imports
+  scenes, ui, the fortress, the settlements, the run layer, the lab, kernels or the renderer.

@@ -1,5 +1,6 @@
 // (DA-A2, round 128o) The user's start town (data/lab/town.rclt) going to work: its one plan as the game made it, the
 // fortress on it (no GPU). The lab's fortressoutside on `town` built 0 of 3 sites in 600 sim s; two causes found here.
+import { JobBoard } from '../../src/town/jobs';
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -7,7 +8,7 @@ import { decodeTownFixture } from '../../src/lab/townfixture';
 import { siteFromJson, TownSite } from '../../src/build/site';
 import { Fortress } from '../../src/fortress/fortress';
 import { ECON } from '../../src/fortress/defs';
-import { JobBoard, jobSlots } from '../../src/fortress/economy';
+import { jobSlots } from '../../src/fortress/economy';
 import { startSpots } from '../../src/fortress/life';
 
 const FILE = path.resolve(import.meta.dirname, '../../data/lab/town.rclt');

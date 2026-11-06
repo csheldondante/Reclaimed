@@ -1,11 +1,12 @@
 // Fortress slice 1, milestone 3 (Node, no GPU): the JobBoard (priority, keeping jobs, people short), the yields (a
 // worker's load and its time, the quarry's ore, grain grown and eaten), the beds, the warehouses' room, newcomers, Erase's
 // refund, a lumber camp's reach, and the new lines' writing.
+import { JobBoard, type JobSlot } from '../town/jobs';
 import { describe, expect, it } from 'vitest';
 import { lint } from '../../test/support/writing';
 import { TownGrid } from '../build/towngrid';
 import { DEFS, ECON } from './defs';
-import { bedsOf, cartsOf, eaten, haulBy, fits, grown, JobBoard, jobSlots, mayArrive, perWorker, putIn, quarryLoad, reachOf, refundOf, roomOf, storedOf, workSeconds, type JobSlot } from './economy';
+import { bedsOf, cartsOf, eaten, haulBy, fits, grown, jobSlots, mayArrive, perWorker, putIn, quarryLoad, reachOf, refundOf, roomOf, storedOf, workSeconds } from './economy';
 import { TownPlan } from '../build/plan';
 import { BuildBook } from './work';
 import { BEDS_LINE, FULL_LINE, HUNGRY_LINE, jobsLine, peopleLine, storesLine } from './words';
