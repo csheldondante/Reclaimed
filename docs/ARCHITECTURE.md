@@ -1130,6 +1130,18 @@ its edge:
   columns a pass before them reads first (the brush's `blowSum`, the
   structures' `lateralSupport`). The brush runs on a tick with an edit and
   while brush state is in flight (edit-ops.ts `EditBusy`).
+- **The chunks' versions** (round 128o, DA-B9; sim/chunkver.ts, shaders/chunkver.wgsl): `WorldGpu.chunks` is the
+  chunk table, then a u32 per chunk: the tick + 1 that last changed its columns (0: never). Keyed by where the chunk's
+  columns lie (its first slot / 256: a slide rotates the table over the same storage, so it moves none). Every GPU
+  writer of the columns calls `bumpChunk(column)` for a column it changed (climate, edit, landbrush, lava, layerpull,
+  liquid, sediment, structure, townstamp), and `gpu/pipeline.ts makeCompute` gives a kernel that calls it the chunk
+  table read_write (binding 1, no new binding) and chunkver.wgsl; colapply bumps in its `store` (P.stamp, its own
+  table binding read_write). The whole-column writers write a slot only if it changed (structure compares the column
+  it found), so a pass over an awake chunk that changes nothing bumps nothing. Every CPU write of the columns (a
+  region come in, the live edit, a warp, an undo, restoreChunks, replaceWindow, ColumnCopy.write) calls
+  `WorldCore.columnsWritten(chunks | 'all')`, which bumps them (`WorldGpu.bumpChunks`, the next tick + 1) and tells
+  the mirror (`Mirror.touchChunks`). Held by test/unit/chunkver.test.ts (the sources) and test/gpu/chunkver.test.ts
+  (each writer, on Dawn). Readers: none yet; DA-B22 (the indirect culled dispatch) is the first.
 - **Not dispatched over what sleeps** (round 85, sim/cull.ts; on by default,
   `?simcull=0` off). Simulation.step makes, from the same Globals.sleep and
   drowse masks, a list of the chunks live this tick (WorldGpu.tiles,

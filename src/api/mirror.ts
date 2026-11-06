@@ -192,6 +192,13 @@ export class Mirror {
     this.live.fill(++this.clock);
   }
 
+  /** (round 128o) These window chunks' columns were written by the CPU (WorldCore.columnsWritten): their pages stale. */
+  touchChunks(chunks: readonly number[]): void {
+    const c = ++this.clock;
+    const nx = this.io.ring.nx;
+    for (const ci of chunks) this.live[this.io.ring.slot(ci % nx, Math.floor(ci / nx))] = c;
+  }
+
   /**
    * The CPU copy of `name` as f32s if window column (cx, cy)'s page has been read in this window (stale or not), else
    * undefined. Asks for the page when it's unread or stale. (A `whole` source ignores the column.)

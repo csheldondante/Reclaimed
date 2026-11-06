@@ -414,7 +414,16 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   if (pending <= 0.0 && owed < 1.0 && op != OP_POUR && op != OP_BEDROCK) { timer = 0.0; }
   textureStore(editOut, texCol(vec2<i32>(p)), vec4<f32>(given, owed, pending, f32(opmat) * 4.0 + min(timer, 3.9)));
-  for (var k = 0u; k < cs.y; k++) { layersE[cs.x + k] = select(IV_NONE, arr[k], k < n); }
+  // (round 128o, DA-B9: a slot written only if it changed; the chunk's version bumped if any did — chunkver.wgsl)
+  var moved = false;
+  for (var k = 0u; k < cs.y; k++) {
+    let nv = select(IV_NONE, arr[k], k < n);
+    if (any(layersE[cs.x + k] != nv)) {
+      layersE[cs.x + k] = nv;
+      moved = true;
+    }
+  }
+  if (moved) { bumpChunk(id.xy); }
 }
 
 /** a blow event's reach (the footprint's radius) */

@@ -114,5 +114,14 @@ fn stampCols(@builtin(global_invocation_id) id: vec3<u32>) {
     for (var k = bk; k + 1u < n; k++) { o[k] = o[k + 1u]; }
     n -= 1u;
   }
-  for (var k = 0u; k < cs.y; k++) { layers[cs.x + k] = select(IV_NONE, o[k], k < n); }
+  // (round 128o, DA-B9: a slot written only if it changed; the chunk's version bumped if any did — chunkver.wgsl)
+  var moved = false;
+  for (var k = 0u; k < cs.y; k++) {
+    let nv = select(IV_NONE, o[k], k < n);
+    if (any(layers[cs.x + k] != nv)) {
+      layers[cs.x + k] = nv;
+      moved = true;
+    }
+  }
+  if (moved) { bumpChunk(vec2<u32>(x, y)); }
 }

@@ -110,6 +110,10 @@ export function writeNow(S: Streamer, f: Frozen, lx: number, ly: number, key: st
   const tcl = performance.now();
   for (const cb of S.onWritten) cb(lx, ly, R, R);
   record('write.claims', performance.now() - tcl);
+  // (round 128o, DA-B9: the region's chunks' versions moved — sim/chunkver.ts)
+  const written: number[] = [];
+  for (let j = 0; j < rc; j++) for (let i = 0; i < rc; i++) written.push((ly / CHUNK + j) * cx + lx / CHUNK + i);
+  core.columnsWritten(written);
   const tc = performance.now();
   const surf = core.map.surface;
   // (round 106: the CPU's per-column arrays where the region lies — round 107: its pages' rows at their slots)
@@ -230,6 +234,8 @@ export async function editLive(S: Streamer, x0: number, y0: number, x1: number, 
   if (n) {
     S.touch(x0, y0, x1, y1);
     dev.queue.writeBuffer(wg.layers, 0, slots);
+    // (round 128o, DA-B9: every chunk's version moved — the whole layers written)
+    core.columnsWritten('all');
     // (ringwin: read in window order, written back in the ring's)
     const vegR = core.ring.toStore(veg);
     for (const b of [wg.veg, wg.vegNext]) dev.queue.writeBuffer(b, 0, vegR);

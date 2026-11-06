@@ -166,8 +166,6 @@ export async function worldEventHere(scene: LevelScene, e: import('../../atlas/c
     return { ...d, cap: e.kind === EV.cone ? MAT.Basalt : 0 };
   });
   scene.editLiveMs = performance.now() - t0;
-  // (round 128o: the columns written from here — the world API's copy reads them again)
-  scene.core.columnsWritten();
   // (round 86: every column written again — what was falling is looked at again where it stopped)
   scene.integrity?.clear(true);
   if (n) scene.integrity?.cutCols(changed);

@@ -91,8 +91,8 @@ async function gpuApply(w: RockWorld, stages: ApplyStage[], claimed?: Map<number
   const nx = w.W / 16;
   const pages = new Uint16Array(nx * (w.H / 16)).map((_, i) => i);
   const ap = new ColumnApply(dev);
-  ap.run({ slots: cols.slots, chunks: cols.chunks, packed: w.packed }, stages, { deposit, pages });
-  if (claimed) ap.orphans({ slots: cols.slots, chunks: cols.chunks, packed: w.packed }, claimed);
+  ap.run({ slots: cols.slots, chunks: cols.chunks, packed: w.packed, stamp: 1 }, stages, { deposit, pages });
+  if (claimed) ap.orphans({ slots: cols.slots, chunks: cols.chunks, packed: w.packed, stamp: 1 }, claimed);
   const slots = new Uint32Array(await gpu.read(cols.slots, w.packed.slots.byteLength));
   const D = new Float32Array(await gpu.read(deposit, N * 16));
   const dep = new Map<number, { amount: number; mat: number }>();
@@ -418,7 +418,7 @@ describe('the GPU asked of its columns (game/colquery.ts)', () => {
       const cols = gpuCols(gpu.device, w);
       gpu.device.queue.writeBuffer(cols.slots, 0, w.packed.slots);
       const q = new ColumnQuery(gpu.device);
-      const got = await q.count({ slots: cols.slots, chunks: cols.chunks, packed: w.packed }, boxes, isStructural);
+      const got = await q.count({ slots: cols.slots, chunks: cols.chunks, packed: w.packed, stamp: 0 }, boxes, isStructural);
       const want = boxes.map(([x0, y0, x1, y1]) => {
         let n = 0;
         for (let y = Math.max(0, y0); y <= Math.min(w.H - 1, y1); y++) for (let x = Math.max(0, x0); x <= Math.min(w.W - 1, x1); x++) if (w.read(x, y).some((iv) => isStructural(iv.mat))) n++;

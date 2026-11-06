@@ -96,8 +96,11 @@ export function spillPlan(cells: Voxel[], topAt: (x: number, y: number) => numbe
 /** The columns as the GPU has them: its slots and chunk table, laid out as `packed` says (its chunk table mirrored). */
 export interface GpuColumns {
   slots: GPUBuffer;
+  /** the chunk table, the chunks' versions after it (sim/chunkver.ts) */
   chunks: GPUBuffer;
   packed: PackedWorld;
+  /** (round 128o, DA-B9) the version a column changed now gets: the sim's next tick + 1 */
+  stamp: number;
 }
 
 /** Where loose ground lands: the per-column deposit buffer and the window's page table (sim/pages.ts). */
@@ -154,7 +157,8 @@ const PARAM_BYTES = 176;
 const PARAM_STRIDE = 256;
 const KERNELS = ['applyCuts', 'spillTarget', 'spillDeposit', 'depositAdd', 'release', 'orphans', 'claim', 'claimGrid', 'take', 'seat'] as const;
 type Kernel = (typeof KERNELS)[number];
-const BINDS = { 0: 'uniform', 1: 'read', 2: 'rw', 3: 'read', 4: 'rw', 5: 'rw' } as const;
+// (round 128o, DA-B9: the chunk table writable — the chunks' versions after it, sim/chunkver.ts)
+const BINDS = { 0: 'uniform', 1: 'rw', 2: 'rw', 3: 'read', 4: 'rw', 5: 'rw' } as const;
 type ParamKey = 'nOps' | 'nSpill' | 'nGone' | 'hashCap' | 'opOff' | 'cutOff' | 'spillOff' | 'goneOff' | 'nDep' | 'depOff' | 'nKeys' | 'keyOff' | 'refOff' | 'spanOff' | 'maskLo' | 'maskHi' | 'seatBase' | 'seatAux' | 'free';
 
 interface Dispatch {
@@ -239,6 +243,7 @@ export class ColumnApply {
         pu[31] = FREE_LO;
         pu[32] = FREE_HI;
         pu[35] = 1;
+        pu[30] = cols.stamp;
         pi[36] = job.gx;
         pi[37] = job.gy;
         pf[38] = job.gz;
@@ -301,7 +306,7 @@ export class ColumnApply {
       pu.set([W, H, packed.chunksX, CHUNK, v.nOps ?? 0, v.nSpill ?? 0, v.nGone ?? 0, v.hashCap ?? 1, v.opOff ?? 0, v.cutOff ?? 0, v.spillOff ?? 0, v.goneOff ?? 0, pageOff, looseOff, W / CHUNK]);
       pf[15] = packed.dims.zMax;
       pu.set([...LOOSE, 0, 0], 16);
-      pu.set([v.nDep ?? 0, v.depOff ?? 0, v.nKeys ?? 0, v.keyOff ?? 0, v.refOff ?? 0, v.spanOff ?? 0, 0, v.maskLo ?? 0, v.maskHi ?? 0], 24);
+      pu.set([v.nDep ?? 0, v.depOff ?? 0, v.nKeys ?? 0, v.keyOff ?? 0, v.refOff ?? 0, v.spanOff ?? 0, cols.stamp, v.maskLo ?? 0, v.maskHi ?? 0], 24);
       pf[33] = v.seatBase ?? 0;
       pu[34] = v.seatAux ?? 0;
       pu[35] = v.free ?? 0;

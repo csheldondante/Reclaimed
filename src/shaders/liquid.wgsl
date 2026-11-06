@@ -680,6 +680,8 @@ fn setBasalt(x: u32, y: u32, z: f32, dz: f32, ch: u32) {
     var z1 = ivZ1(v) + dz;
     if (r < n) { z1 = min(z1, ivZ0(layers[cs.x + r])); }
     layers[cs.x + r - 1u] = ivPack(ivZ0(v), z1, MAT_BASALT_Q, ivAux(v));
+    // (round 128o, DA-B9: the column changed - its chunk's version, chunkver.wgsl)
+    bumpChunk(vec2<u32>(x, y));
     return;
   }
   if (n >= cs.y) { atomicAdd(&act[ch * 4u + 3u], u32(dz * 1e6)); return; }
@@ -687,6 +689,7 @@ fn setBasalt(x: u32, y: u32, z: f32, dz: f32, ch: u32) {
   var z1 = z + dz;
   if (r < n) { z1 = min(z1, ivZ0(layers[cs.x + r + 1u])); }
   layers[cs.x + r] = ivPack(z, z1, MAT_BASALT_Q, 0u);
+  bumpChunk(vec2<u32>(x, y));
 }
 
 /** Lava: each run cools (thin fastest), boils the water over it, and below its setting point turns to basalt. */

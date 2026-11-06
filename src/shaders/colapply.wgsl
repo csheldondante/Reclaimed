@@ -41,7 +41,7 @@ struct Params {
   looseMat: array<vec4<u32>, 2>,
   /** depositAdd: entries (x, y, amount, mat); orphans: claimed column keys (sorted), their (first, count), spans */
   nDep: u32, depOff: u32, nKeys: u32, keyOff: u32,
-  refOff: u32, spanOff: u32, spare: u32, maskLo: u32,
+  refOff: u32, spanOff: u32, stamp: u32, maskLo: u32,
   /** take: the materials taken (bits 32..63); seat: the base and the new runs' aux */
   maskHi: u32, seatBase: f32, seatAux: u32,
   /** (round 128g) claim: only where free — the masked materials (maskLo, maskHi: air, liquids; any id past 63) */
@@ -53,7 +53,9 @@ struct Params {
 }
 
 @group(0) @binding(0) var<uniform> P: Params;
-@group(0) @binding(1) var<storage, read> chunks: array<vec2<u32>>;
+// (round 128o, DA-B9: writable — the chunks' versions after the table, sim/chunkver.ts: a column store() changes bumps
+// its chunk's to P.stamp)
+@group(0) @binding(1) var<storage, read_write> chunks: array<vec2<u32>>;
 @group(0) @binding(2) var<storage, read_write> slots: array<vec4<u32>>;
 @group(0) @binding(3) var<storage, read> inp: array<u32>;
 /** 8 words an entry: key + 1 (0: empty), cells, six votes */
@@ -70,10 +72,18 @@ const EPS: f32 = 1e-4;
 /** sim/external.ts's tolerance */
 const EPS_X: f32 = 1e-3;
 
-fn colBase(x: u32, y: u32) -> vec2<u32> {
+/** column (x, y): its first slot and K, and (round 128o) the column itself (z, w: its chunk's version to bump) */
+fn colBase(x: u32, y: u32) -> vec4<u32> {
   let cs = P.chunkSize;
   let ch = chunks[(y / cs) * P.chunksX + (x / cs)];
-  return vec2<u32>(ch.x + ((y % cs) * cs + (x % cs)) * ch.y, ch.y);
+  return vec4<u32>(ch.x + ((y % cs) * cs + (x % cs)) * ch.y, ch.y, x, y);
+}
+
+/** (round 128o, DA-B9) column (b.z, b.w)'s chunk changed: its version to this apply's stamp (chunkver.wgsl's layout) */
+fn bumpOf(b: vec4<u32>) {
+  let cs = P.chunkSize;
+  let v = chunks[(b.w / cs) * P.chunksX + b.z / cs].x / (cs * cs);
+  chunks[P.chunksX * (P.mapH / cs) + v / 2u][v % 2u] = P.stamp;
 }
 
 fn z0Of(v: vec4<u32>) -> f32 { return bitcast<f32>(v.x); }
@@ -96,7 +106,7 @@ fn topOf(x: u32, y: u32) -> f32 {
 }
 
 /** column (x, y) into `a`: its count */
-fn load(b: vec2<u32>, a: ptr<function, array<vec4<u32>, MAX_IV>>) -> u32 {
+fn load(b: vec4<u32>, a: ptr<function, array<vec4<u32>, MAX_IV>>) -> u32 {
   var n = 0u;
   for (var s = 0u; s < b.y; s++) {
     let v = slots[b.x + s];
@@ -108,7 +118,7 @@ fn load(b: vec2<u32>, a: ptr<function, array<vec4<u32>, MAX_IV>>) -> u32 {
 }
 
 /** `a` (n intervals) written back to its K slots: over K, the bottom K − 1 kept and the rest's height as rubble on top */
-fn store(b: vec2<u32>, a: ptr<function, array<vec4<u32>, MAX_IV>>, n0: u32) {
+fn store(b: vec4<u32>, a: ptr<function, array<vec4<u32>, MAX_IV>>, n0: u32) {
   var n = n0;
   let k = b.y;
   if (n > k) {
@@ -119,11 +129,16 @@ fn store(b: vec2<u32>, a: ptr<function, array<vec4<u32>, MAX_IV>>, n0: u32) {
     (*a)[k - 1u] = iv(top, min(top + rest, P.zMax - 1.0), MAT_RUBBLE, 0u);
     n = k;
   }
+  var moved = false;
   for (var s = 0u; s < k; s++) {
     var v = vec4<u32>(0u);
     if (s < n) { v = vec4<u32>((*a)[s].xyz, 0u); }
-    slots[b.x + s] = v;
+    if (any(slots[b.x + s] != v)) {
+      slots[b.x + s] = v;
+      moved = true;
+    }
   }
+  if (moved) { bumpOf(b); }
 }
 
 /** `a` (n intervals) sorted by z0, stable (insertion) */
@@ -423,7 +438,7 @@ fn claimGrid(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 
 /** column `b` with spans s0 .. s0 + ns (at P.cutOff: z0, z1, aux, 0; z plus dz) claimed, in turn (claimColumn's rule) */
-fn claimAt(b: vec2<u32>, s0: u32, ns: u32, dz: f32) {
+fn claimAt(b: vec4<u32>, s0: u32, ns: u32, dz: f32) {
   var a: array<vec4<u32>, MAX_IV>;
   var n = load(b, &a);
   // (each span in turn — sim/external.ts claimColumn: cut out, then External with its fallback as aux; round 128g, with

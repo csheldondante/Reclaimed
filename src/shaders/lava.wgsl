@@ -225,6 +225,8 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
       let u = layers[cs.x + s];
       layers[cs.x + s] = ivPack(ivZ0(u) + dz, ivZ1(u) + dz, ivMat(u), ivAux(u));
     }
+    // (round 128o, DA-B9: the column changed - its chunk's version, chunkver.wgsl)
+    bumpChunk(id.xy);
     top += dz;
     // the ground cracks and smokes as it heaves
     if (chance(i, 0x59u) < 0.0012 * rise) {
@@ -288,6 +290,7 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
           melt = rock;
           boreHeat = 0.0;
           for (var s = 0u; s < cs.y; s++) { layers[cs.x + s] = select(IV_NONE, arr[min(s, MAX_K - 1u)], s < nn); }
+          bumpChunk(id.xy);
           n = nn;
           top = select(0.0, ivZ1(arr[max(nn, 1u) - 1u]), nn > 0u);
           // the bore's floor: the highest ground under bz
@@ -356,6 +359,7 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
           } else {
             layers[cs.x + uf] = ivPack(ivZ0(v), z1, ivMat(v), ivAux(v));
           }
+          bumpChunk(id.xy);
         }
       }
     }
@@ -374,6 +378,7 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
       } else {
         layers[cs.x + n - 1u] = ivPack(ivZ0(v), z1, ivMat(v), ivAux(v));
       }
+      bumpChunk(id.xy);
       top -= dz;
       d += dz;
       heat += dz * LAVA_HOT;

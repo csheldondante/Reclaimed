@@ -110,6 +110,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let cs = colSlots(id.x, id.y);
   var n = 0u;
   var colTop = 0.0;
+  // (round 128o, DA-B9: the column as the pass found it — its chunk's version bumped at the end if it changed)
+  var before: array<vec4<u32>, MAX_K>;
+  for (var i = 0u; i < cs.y; i++) { before[i] = layers[cs.x + i]; }
   for (var i = 0u; i < cs.y; i++) {
     let v = layers[cs.x + i];
     if (ivEmpty(v)) { break; }
@@ -243,6 +246,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     prevSup = s;
   }
   for (var i = n; i < cs.y; i++) { layers[cs.x + i] = IV_NONE; }
+  for (var i = 0u; i < cs.y; i++) {
+    if (any(layers[cs.x + i] != before[i])) {
+      bumpChunk(id.xy);
+      break;
+    }
+  }
 }
 
 /** interval i's nibble of a column's two words */

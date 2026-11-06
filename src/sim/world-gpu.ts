@@ -3,6 +3,7 @@
 // state themselves, so replacing one system's implementation cannot silently
 // change what another system sees.
 
+import { versionIndex, versionWords } from './chunkver';
 import type { Profiler } from '../gpu/profiler';
 import { CHUNK, PHYS_COL_WORDS, type PackedWorld } from '../world/layout';
 import type { MapData } from '../world/mapgen';
@@ -84,6 +85,22 @@ export class WorldGpu {
   readonly globals: GPUBuffer;
   readonly materials: GPUBuffer;
   readonly chunks: GPUBuffer;
+  private packedRef!: PackedWorld;
+
+  /**
+   * (round 128o, DA-B9) The CPU wrote these window chunks' columns (`'all'`: every chunk): their versions moved to
+   * `stamp` (the next tick + 1: as a GPU write in it would have — sim/chunkver.ts).
+   */
+  bumpChunks(chunks: Iterable<number> | 'all', stamp: number): void {
+    const p = this.packedRef;
+    const base = p.chunkTable.byteLength;
+    if (chunks === 'all') {
+      this.device.queue.writeBuffer(this.chunks, base, new Uint32Array(versionWords(p)).fill(stamp));
+      return;
+    }
+    const one = new Uint32Array([stamp]);
+    for (const ci of chunks) this.device.queue.writeBuffer(this.chunks, base + versionIndex(p, ci) * 4, one);
+  }
   /** (round 85, simcull — sim/cull.ts) the chunks live this tick, by a flow's sleeping rate (Simulation.step
    *  makes them from the sleep mask), and the ping-pong fields' copy back over them; null without the flag */
   readonly tiles: AwakeTiles | null;
@@ -367,8 +384,10 @@ export class WorldGpu {
     const mats = packMaterialTable();
     this.materials = this.buf('materials', mats.byteLength, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     device.queue.writeBuffer(this.materials, 0, mats);
-    this.chunks = this.buf('chunks', packed.chunkTable.byteLength, S);
+    // (round 128o, DA-B9: the chunk table, then the chunks' versions — sim/chunkver.ts — all 0: never changed)
+    this.chunks = this.buf('chunks', packed.chunkTable.byteLength + versionWords(packed) * 4, S);
     device.queue.writeBuffer(this.chunks, 0, packed.chunkTable);
+    this.packedRef = packed;
 
     this.layers = this.buf('layers', packed.slots.byteLength, S);
     device.queue.writeBuffer(this.layers, 0, packed.slots);

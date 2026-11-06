@@ -10,7 +10,7 @@
 // place tool); the GPU structure rule only collapses damage here (its
 // span-support rule would turn overhangs to rubble before this sees them).
 
-import { type Interval } from '../world/layout';
+import { CHUNK, type Interval } from '../world/layout';
 import { floatingRuns, WorldVox, type Fracture } from './fracture';
 import { JUDGE_ID, JUDGES, type RockJudge } from './judge';
 import { Bodies, type Body } from './bodies';
@@ -191,7 +191,7 @@ export class Integrity {
         readWhole: () => core.readBuffer('layers'),
         // (round 80: a column written under a sleeping chunk wakes it — its surface, its water, its slumping)
         woke: (x, y) => core.sleep?.wake(x + 0.5, (y + 0.5) * ROW_H, 16, 8, performance.now() / 1000),
-        written: () => core.columnsWritten(),
+        written: (x, y) => core.columnsWritten([Math.floor(y / CHUNK) * core.packed.chunksX + Math.floor(x / CHUNK)]),
       },
       'kept',
     );

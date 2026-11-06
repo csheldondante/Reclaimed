@@ -83,7 +83,7 @@ async function rig(seed: number, unwritten: [number, number][]): Promise<Rig> {
   const w = stampWorld(seed);
   const g = gpuCols(dev, w);
   dev.queue.writeBuffer(g.slots, 0, w.packed.slots);
-  const cols: GpuColumns = { slots: g.slots, chunks: g.chunks, packed: w.packed };
+  const cols: GpuColumns = { slots: g.slots, chunks: g.chunks, packed: w.packed, stamp: 1 };
   const ap = new ColumnApply(dev);
   // (the registry's columns: the GPU's release, as Integrity gives it; nothing read)
   const ext = new ExternalRegistry({

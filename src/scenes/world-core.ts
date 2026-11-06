@@ -360,7 +360,7 @@ export class WorldCore {
 
   /** The columns as ColumnApply changes them: the layers. */
   columnsGpu(): GpuColumns {
-    return { slots: this.world.layers, chunks: this.world.chunks, packed: this.packed };
+    return { slots: this.world.layers, chunks: this.world.chunks, packed: this.packed, stamp: this.sim.tick + 1 };
   }
 
   /**
@@ -508,14 +508,17 @@ export class WorldCore {
   }
 
   /**
-   * (round 128o, DA-B19) Told when the columns are written outside the sim's ticks and outside a column apply: an undo,
-   * chunks restored, the streamer's live edit, a window replaced, a column Integrity writes (ColumnCopy.write) — whatever keeps a copy of them (api/mirror.ts) reads them again.
+   * (round 128o, DA-B19, DA-B9) Told when the CPU writes the columns (outside the sim's ticks and the column applies): an
+   * undo, chunks restored, a region come in or the streamer's live edit, a warp, a window replaced, a column Integrity
+   * writes (ColumnCopy.write) — the window chunks written (or 'all'). Whatever keeps a copy of them (api/mirror.ts)
+   * reads them again.
    */
-  readonly onColumnsWritten: (() => void)[] = [];
+  readonly onColumnsWritten: ((chunks: readonly number[] | 'all') => void)[] = [];
 
-  /** the columns were written outside a tick (onColumnsWritten told) */
-  columnsWritten(): void {
-    for (const f of this.onColumnsWritten) f();
+  /** the CPU wrote these window chunks' columns (or all): their versions moved (sim/chunkver.ts), onColumnsWritten told */
+  columnsWritten(chunks: readonly number[] | 'all'): void {
+    this.world.bumpChunks(chunks, this.sim.tick + 1);
+    for (const f of this.onColumnsWritten) f(chunks);
   }
 
   /** Forget the snapshots (the streamed window slid: they're of another place). */
@@ -533,7 +536,7 @@ export class WorldCore {
     const src = this.undoSources();
     const enc = device.createCommandEncoder({ label: 'undo' });
     src.forEach((b, k) => enc.copyBufferToBuffer(slot.bufs[k], 0, b, 0, b.size));
-    this.columnsWritten();
+    this.columnsWritten('all');
     // (the loose ground lives in the layers; its view is derived each tick)
     // pours in flight would land on the restored ground: drop them
     enc.clearBuffer(this.world.deposit);
@@ -594,7 +597,9 @@ export class WorldCore {
         enc.clearBuffer(this.world.deposit, first * COLUMN_BUFS.deposit[0], COLS * COLUMN_BUFS.deposit[0]);
       }
     device.queue.submit([enc.finish()]);
-    this.columnsWritten();
+    const written: number[] = [];
+    for (let cy = cy0; cy < cy1; cy++) for (let cx = cx0; cx < cx1; cx++) written.push(cy * p.chunksX + cx);
+    this.columnsWritten(written);
   }
 
   /**
@@ -617,7 +622,7 @@ export class WorldCore {
     const ring = w.ring.toStore(water);
     for (const n of ['water', 'waterNext', 'waterPrev'] as const) device.queue.writeBuffer(w[n], 0, ring);
     this.map.surface.set(w.ring.toStore(surface));
-    this.columnsWritten();
+    this.columnsWritten('all');
   }
 
   /** Debug: mean of a per-column field over a square region. */

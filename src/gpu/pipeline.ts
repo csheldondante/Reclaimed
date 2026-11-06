@@ -1,6 +1,7 @@
 // Explicit bind-group-layout helpers. We use explicit layouts (not 'auto') so a
 // shader can include shared WGSL snippets that declare bindings it does not use.
 
+import { writerCode } from '../sim/chunkver';
 import { PAGE_ADDR, PAGE_CHECK, PAGE_MISS_BINDING, PAGE_MISS_MAX, PAGE_STORAGE_KERNELS, PAGE_TAB_BINDING, pageMiss, pageTab, pagesCode, usesPages } from './pages-mode';
 
 /** 'tex' = sampled float texture (textureLoad), 'utex' = uint texture (textureLoad), 'stex' = write-only rgba32float storage texture
@@ -135,6 +136,14 @@ export function makeCompute(
       check = pageMiss.labels.push(label) - 1;
       spec = { ...spec, [PAGE_MISS_BINDING]: 'rw' };
     } else pageMiss.unchecked.add(label);
+  }
+  // (round 128o, DA-B9: a kernel that writes the columns — it calls bumpChunk — gets the chunk table writable and the
+  // chunks' versions: sim/chunkver.ts)
+  const writer = writerCode(parts.join('\n'));
+  if (writer !== null) {
+    parts = [writer];
+    // (an entry that doesn't bind the chunk table doesn't use it: its layout stays as asked)
+    if (1 in spec) spec = { ...spec, 1: 'rw' };
   }
   const layout = makeLayout(device, label, spec, GPUShaderStage.COMPUTE);
   if (check !== undefined) pageMiss.layouts.add(layout);

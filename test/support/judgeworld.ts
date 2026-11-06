@@ -7,6 +7,7 @@ import type { Fracture } from '../../src/game/fracture';
 import type { RockJudge } from '../../src/game/judge';
 import { subtract } from '../../src/game/colbodies';
 import type { RockWorld } from './rockworld';
+import { versionWords } from '../../src/sim/chunkver';
 
 export interface GpuCols {
   device: GPUDevice;
@@ -17,7 +18,8 @@ export interface GpuCols {
 /** the GPU's copy of a RockWorld's columns (made once; its slots written before each judging) */
 export function gpuCols(device: GPUDevice, w: RockWorld): GpuCols {
   const slots = device.createBuffer({ label: 'test slots', size: w.packed.slots.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
-  const chunks = device.createBuffer({ label: 'test chunks', size: w.packed.chunkTable.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  // (round 128o: the chunks' versions after the table, as WorldGpu.chunks — sim/chunkver.ts)
+  const chunks = device.createBuffer({ label: 'test chunks', size: w.packed.chunkTable.byteLength + versionWords(w.packed) * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
   device.queue.writeBuffer(chunks, 0, w.packed.chunkTable);
   return { device, slots, chunks };
 }

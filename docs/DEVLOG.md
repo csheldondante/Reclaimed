@@ -18722,3 +18722,93 @@ slides, restoreChunks, replaceWindow, the edit brush's mirror). Two copies that 
 - Recommended: (a). The versions are the root (DA-B9's other readers — mesh hash, reach, shore, save sweep — need
   them too); the indirect list is the second contract and deserves its own row and review.
 
+## 2026-11-06 — round 128o (`phonefix`, DA-B9 step a): the chunks' versions, and every writer's bump
+
+- Why: DA-B9 (option a, main's call). A reader that works only where the columns changed needs to know where they
+  did, on the GPU. This step adds the versions and makes every writer bump them. The first reader is DA-B22.
+- The word: after the chunk table in `WorldGpu.chunks`, a u32 per chunk holds the tick + 1 that last changed its
+  columns. It is keyed by where the chunk's columns lie (first slot / 256), not by the chunk's place in the window.
+  A slide rotates the table over the same storage, so the versions stay with their land. Every writer in a tick
+  writes the same value, so these are plain stores: no atomics and no second binding.
+- The GPU writers (10 kernels):
+  - A kernel that calls `bumpChunk` gets the chunk table read_write, and chunkver.wgsl, from `makeCompute`. It uses
+    the binding it already had, so it stays within 8 storage buffers. An entry point of the same module that doesn't
+    bind the table keeps its layout (lava's prep).
+  - climate, edit, landbrush, layerpull, sediment and townstamp now write a slot only if it changed. Before this, they
+    rewrote every slot of the column on every pass. Each bumps if any slot changed.
+  - structure keeps the column it found and bumps if the column differs at the end.
+  - lava and liquid bump where they change a column.
+  - colapply bumps in its `store`. It has its own table binding; P.stamp comes from `GpuColumns.stamp`.
+- The CPU writers (7): a region come in (streamer/write.ts writeNow), the live edit, a warp, an undo, restoreChunks,
+  replaceWindow and ColumnCopy.write. Each goes through `WorldCore.columnsWritten(chunks | 'all')`. That bumps the
+  chunks (`WorldGpu.bumpChunks`, the next tick + 1) and tells the mirror only those chunks (`Mirror.touchChunks`).
+  Before this, the mirror marked every page.
+- Tests:
+  - test/gpu/chunkver.test.ts runs each writer alone on a tiny world and checks that its chunk's version moves and a
+    far chunk's doesn't. The writers' cases: a claim stamped; a dig; lightning on waste; a sand heap slumping; snow
+    melting; a range raised; stone pulled; a town block; a volcano's cone; flowing lava set to basalt; the CPU's
+    columnsWritten and an undo.
+  - test/unit/chunkver.test.ts checks that every WGSL file with the columns writable calls bumpChunk or bumpOf (10
+    found), and that every TS file writing the layers from the CPU calls columnsWritten.
+- Checked:
+  - typecheck (both projects) and the unit tests (777);
+  - the GPU tier (the colapply and static-claims tests now pass a stamp; the judges' test columns are sized for the
+    versions);
+  - hallcheck, the lab's example and raid, and the atlas game with the fortress: no errors.
+- Not measured: the GPU cost of comparing before writing. Each compare reads a slot the passes already read, and it
+  saves the writes of unchanged slots. To be measured on the phone bench with the next frame-path change.
+- Hacks and limits:
+  - A version is a tick. Readers compare against the tick they last looked at, so two writes in one tick count as one
+    change.
+  - A repack of the chunk table would have to bump every chunk. Nothing repacks it at run time today.
+  - The version region is slots / 256 words (2 KB at 320², K 8).
+
+## 2026-11-06 — round 128o (`phonefix`, DA-B22): the indirect culled dispatch, a design note for main's review
+
+- What: a culled pass's chunk list is made on the GPU and dispatched indirect. A pass can then run over "the chunks
+  whose versions moved" without the CPU knowing which. The first user is the agents' re-peel. Today the re-peel runs
+  round robin over an eighth of the scope each tick, whatever changed (src/agents/agents.ts PEEL_EVERY).
+- Today's contract (sim/cull.ts):
+  - The CPU builds each list: `AwakeTiles.update` from the sleep masks, or `setList` for a custom one.
+  - It writes the list into a uniform (`array<vec4<u32>, vec4s>`).
+  - `dispatchTiles` dispatches `count × 4` workgroups. The count is known when the pass is encoded, and an empty list
+    encodes no pass.
+  - The kernels read the list from the uniform (`cullSource`).
+- Proposed, beside the CPU lists (which stay unchanged):
+  - `GpuTileList` (sim/cull.ts): a storage list (entries packed as today) plus an indirect args buffer, both made by a
+    kernel. Before the pass, the list is copied into the pass's uniform list (`copyBufferToBuffer`, ≤ 16 KB) and the
+    args into the indirect buffer. The pass then runs with `dispatchWorkgroupsIndirect`. The kernels stay as compiled:
+    `cullSource` reads the uniform as now.
+  - `listChanged` (new, shaders/cull.wgsl): one thread per chunk of a given CPU list (the scope).
+    - It compares the chunk's version (chunkver.wgsl) against the version the pass last did it at (a per-chunk u32
+      the pass owns).
+    - If the version is newer, it appends the chunk (atomic) and sets "done" to now.
+    - A `dilate` variant appends the 3 × 3 block round each chunk instead, with a per-chunk flag against duplicates.
+      The link list uses it.
+  - `dispatchTilesIndirect(enc, kernel, group, list)`: the copy and the indirect dispatch. A pass with nothing changed
+    dispatches 0 workgroups, with no skip on the CPU.
+- The re-peel:
+  - peel runs over `listChanged(scope)`, and link over its dilation.
+  - The round robin goes.
+  - A chunk that comes into the scope (`enter`) is peeled as now, from the CPU's list.
+  - The navStale full peel stays.
+- Costs and risks:
+  - A kernel and two small copies each tick per GPU list.
+  - An empty indirect dispatch is still a pass on a tiler. Bench it.
+  - Each GPU list has its own uniform buffer, not shared with the CPU's lists.
+  - Edge case: on the first tick after the scope moves, the chunks newly in scope have versions older than their
+    "done". They come through `enter`.
+- Tests, on Dawn:
+  - A dig in one chunk puts only that chunk and its neighbours in the re-peel list.
+  - With nothing changed, the pass dispatches 0 workgroups.
+  - After a change, the fields the agents follow match those of a full re-peel (the same distances).
+- Questions for main:
+  1. Should the GPU lists sit beside the CPU ones in sim/cull.ts (as proposed), or in a separate module the agents
+     own?
+  2. The round robin has a second job: it catches changes that bump no version. The peel reads the water depth
+     (agents.wgsl: the wet and deep flags of the top surface, with hysteresis), and water changes don't bump versions.
+     Without the round robin, a change in water depth on a surface would not re-peel until something else did.
+     Options:
+     - (a) The water writers bump a second version (a "wet" word per chunk).
+     - (b) The peel keeps a slow round robin for the water only.
+     - (c) The peel stops reading the water, and wet and deep come from another pass.
