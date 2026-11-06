@@ -264,11 +264,17 @@ export class WorldGpu {
   /** ground shaken (layerpull.wgsl writes, sediment reads): x the tick it was shaken, y how hard (0..1): loose ground there slips at a lower angle for a while */
   readonly shake: GPUTexture;
   readonly shakeView: GPUTextureView;
-  /** sandbox brush state per column (edit.wgsl reads `editState`, writes `editStateNext`; particles read it) */
-  readonly editState: GPUTexture;
-  readonly editStateNext: GPUTexture;
-  readonly editStateView: GPUTextureView;
-  readonly editStateNextView: GPUTextureView;
+  /**
+   * The brush state per column (edit.wgsl; the particles' grains and the sediment's pours read it), two textures taking
+   * turns (DA-B8): the edit pass reads `editStateViews[editCur]`, writes the other and flips `editCur` — nothing copied
+   * back. Readers bind both and pick the group by `editCur` at encode. Where the pass doesn't write (a sleeping chunk)
+   * the two hold the same: the pass runs until the state it left is steady and once more (sim/edit-ops.ts EditBusy).
+   */
+  readonly editStateA: GPUTexture;
+  readonly editStateB: GPUTexture;
+  readonly editStateViews: readonly [GPUTextureView, GPUTextureView];
+  /** which of the two holds the brush state now (EditSystem flips it; only it writes it) */
+  editCur: 0 | 1 = 0;
   /**
    * what each exact take or put did (edit.wgsl OP_TAKE / OP_PUT; round 63),
    * one texel a tag: x the amount, y the material, z the tick, w 1
@@ -488,11 +494,10 @@ export class WorldGpu {
     this.riverWetView = this.riverWet.createView();
     if (map.riverFlow) device.queue.writeTexture({ texture: this.riverFlow }, r.texToStore(map.riverFlow, 4), { bytesPerRow: this.w * 16 }, dsize);
     this.shakeView = this.shake.createView();
-    this.editState = device.createTexture({ label: 'editState', size: dsize, format: 'rgba32float', usage: tusage });
-    this.editStateNext = device.createTexture({ label: 'editStateNext', size: dsize, format: 'rgba32float', usage: tusage });
-    this.textures.push(this.editState, this.editStateNext);
-    this.editStateView = this.editState.createView();
-    this.editStateNextView = this.editStateNext.createView();
+    this.editStateA = device.createTexture({ label: 'editStateA', size: dsize, format: 'rgba32float', usage: tusage });
+    this.editStateB = device.createTexture({ label: 'editStateB', size: dsize, format: 'rgba32float', usage: tusage });
+    this.textures.push(this.editStateA, this.editStateB);
+    this.editStateViews = [this.editStateA.createView(), this.editStateB.createView()];
     this.editResult = device.createTexture({ label: 'editResult', size: [EDIT_TAGS, 1], format: 'rgba32float', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_SRC });
     this.editResultView = this.editResult.createView();
     this.stats = this.buf('stats', STATS_COUNT * 4, S);

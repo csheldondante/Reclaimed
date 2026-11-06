@@ -37,7 +37,6 @@ import type { Good, Goods } from '../api/contracts/fortress';
 import type { FactionId } from '../api/contracts/world';
 import type { UnitId, V2 } from '../api/contracts/units';
 import { buildOrder } from '../agents/buildcrew';
-import type { FieldReader } from '../agents/fieldreader';
 import type { Block } from '../build/town';
 import { R } from '../settle/life';
 import { F, G, type AgentUnits, type Routine, type UnitRec } from '../units/agent-units';
@@ -50,7 +49,7 @@ import { ROW_H } from '../world/lattice';
 import { RecipeRunner, type TrainRoom } from './recipes';
 import type { Structure } from '../api/contracts/fortress';
 import type { Erased, Fortress } from './fortress';
-import { WAY_ROAD } from './ways';
+import { WAY_ROAD } from '../build/ways';
 import { cellAt } from '../world/lattice';
 import type { Doing, PersonFacts } from './follow';
 import type { FortressRaid } from './raiders';
@@ -124,8 +123,8 @@ export interface FortressLifeIO {
   stores(): Goods;
   /** goods taken out of the stores (negative: put in) */
   take(good: Good, amount: number): void;
-  /** trees within r of a point (window coordinates) */
-  trees(at: V2, r: number): V2[];
+  /** trees within r of a point (window coordinates); null: the ground there isn't read yet (asked: looked at again next turn) */
+  trees(at: V2, r: number): V2[] | null;
   /** a tree felled: its logs (0: none there) */
   fell(at: V2): Promise<number>;
   /** ground dug out at a point (the world API's terrain take: quiet, sim/sleep.ts touch): how much came */
@@ -216,7 +215,9 @@ export class FortressLife implements Routine {
   private orderAt = -1;
   private t = 0;
   /** (FT-20) the heap's field read back: which sites a builder can walk to from the heap (and where a newcomer may start) */
-  private reach: FieldReader;
+  /** (round 128n, phonefix) where a newcomer comes in without a road: the reach's answer (undefined: none asked or taken) */
+  private entryAnswer: V2 | null | undefined = undefined;
+  private entryAsking = false;
   /** (round 128l) the reach's answer the cut-off check last read (Fortress.reachStats.checks), and the cells it found cut off */
   private reachSeen = -1;
   private cutCells = new Set<number>();
@@ -254,7 +255,6 @@ export class FortressLife implements Routine {
     // (m4: ride only — reseed)
     for (const g of [R4.toSmith, R4.toBarracks, R4.toPost]) A.follow(g, -1);
     for (let i = 0; i < CART_GROUPS; i++) A.follow(R4.cart0 + i, -1);
-    this.reach = A.reader(F.pile).start(500);
     const h = this.heap();
     startSpots(h, people).forEach((at, i) => this.spawn(at, 0.5 + i * 0.4));
     fort.onErased.push(this.onErased);
@@ -292,7 +292,6 @@ export class FortressLife implements Routine {
   }
 
   dispose(): void {
-    this.reach.stop();
     const i = this.io.fort.onErased.indexOf(this.onErased);
     if (i >= 0) this.io.fort.onErased.splice(i, 1);
     for (const id of this.ids) this.io.units.remove(id);
@@ -388,14 +387,17 @@ export class FortressLife implements Routine {
     if (ate > 0) this.io.take('grain', ate);
     // (m4: nobody walks in while raiders are about)
     if (!this.shelter && this.t >= this.arriveAt && mayArrive(this.ids.length, f.beds(), this.io.stores().grain ?? 0)) {
+      // (undefined: the reach is still being asked where, round 128n — they come once it answers)
       const at = this.entry();
-      if (at) {
-        const id = this.spawn(at, 0);
-        // (m4: by road to a house first)
-        (this.io.units.recs.get(id)!.work as Work).phase = 'arrive';
-        this.stats.arrived++;
+      if (at !== undefined) {
+        if (at) {
+          const id = this.spawn(at, 0);
+          // (m4: by road to a house first)
+          (this.io.units.recs.get(id)!.work as Work).phase = 'arrive';
+          this.stats.arrived++;
+        }
+        this.arriveAt = this.t + ECON.arriveSec;
       }
-      this.arriveAt = this.t + ECON.arriveSec;
     }
   }
 
@@ -442,7 +444,13 @@ export class FortressLife implements Routine {
       if (!n) continue;
       const cs = [...s.cells.keys()].map((c) => f.centre(c));
       const mid: V2 = [cs.reduce((a, p) => a + p[0], 0) / cs.length, cs.reduce((a, p) => a + p[1], 0) / cs.length];
-      const near = this.io.trees(mid, reachOf(n)).sort((a, b) => Math.hypot(a[0] - mid[0], a[1] - mid[1]) - Math.hypot(b[0] - mid[0], b[1] - mid[1]));
+      const got = this.io.trees(mid, reachOf(n));
+      // (not read yet — not "no trees": the list kept as it was, looked at again next turn; round 128o)
+      if (!got) {
+        this.treesAt = -1e9;
+        return;
+      }
+      const near = got.sort((a, b) => Math.hypot(a[0] - mid[0], a[1] - mid[1]) - Math.hypot(b[0] - mid[0], b[1] - mid[1]));
       out.push(...near.slice(0, 12));
     }
     this.trees = out;
@@ -483,13 +491,32 @@ export class FortressLife implements Routine {
   }
 
   /**
-   * Where a newcomer starts: in from the edge of the box, as far out as the heap's field reaches (ground a walker can
-   * cross to the stores), along the road that reaches farthest out if there are roads, else the first way in.
+   * Where a newcomer starts: in from the edge of the box, as far out as the stores reach (ground a walker can cross to
+   * the stores), along the road that reaches farthest out if there are roads, else the first way in. Undefined while
+   * the reach is asked (round 128n, phonefix: the fortress's own reach on the GPU, a bit a spot read back — it was the
+   * heap's field read whole, 8.2 MB every 500 ms, for this one question).
    */
-  private entry(): V2 | null {
+  private entry(): V2 | null | undefined {
     // (round 128l, m4) where the roads come nearest the window's edge: in from the edge there, toward that road
     const gate = this.edgeEntry();
     if (gate) return gate;
+    if (this.entryAnswer !== undefined) {
+      const a = this.entryAnswer;
+      this.entryAnswer = undefined;
+      return a;
+    }
+    if (!this.entryAsking) {
+      this.entryAsking = true;
+      void this.askEntry().then((a) => {
+        this.entryAnswer = a;
+        this.entryAsking = false;
+      });
+    }
+    return undefined;
+  }
+
+  /** the spots a newcomer might start at, farthest out first along each way out, and the first the stores reach */
+  private async askEntry(): Promise<V2 | null> {
     const f = this.io.fort;
     const h = this.heap();
     const angles: number[] = [];
@@ -511,15 +538,19 @@ export class FortressLife implements Routine {
     }
     for (let k = 0; k < 12; k++) angles.push((k / 12) * Math.PI * 2);
     const half = Math.min(f.box.w, f.box.h * 0.866) / 2;
+    const spots: { at: V2; cell: number }[] = [];
     for (const a of angles)
       for (let r = half; r >= 16; r -= 4) {
         const x = h[0] + Math.cos(a) * r;
         const y = h[1] + Math.sin(a) * r;
-        if (f.cellAt(x, y) < 0) continue;
-        const q = this.reach.sample(x, y);
-        if (q && Number.isFinite(q.dist)) return [x, y];
+        const cell = f.cellAt(x, y);
+        if (cell >= 0) spots.push({ at: [x, y], cell });
       }
-    return null;
+    const cells = [...new Set(spots.map((s) => s.cell))];
+    const reached = await f.probeReach(cells);
+    if (!reached) return null;
+    const ok = new Set(cells.filter((_, i) => reached[i]));
+    return spots.find((s) => ok.has(s.cell))?.at ?? null;
   }
 
   /**
@@ -1159,7 +1190,6 @@ export class FortressLife implements Routine {
       seed(field, ok ? [] : v);
       return ok;
     };
-    const was = this.riding.pile;
     // (m4: ride only — no fields of their own; a leg no road reaches waits)
     const rideOnly = (g: number, v: V2[]): boolean => {
       const ok = v.length > 0 && A.ride(g, v.map(([x, y]) => f.toBox(x, y)));
@@ -1180,11 +1210,6 @@ export class FortressLife implements Routine {
       const w = v.length && this.carts[i] !== undefined ? (this.io.units.recs.get(this.carts[i])?.work as Work | undefined) : undefined;
       return w?.from ?? null;
     });
-    // (where a newcomer can come in from: the stores' field, or riding, the field onto the roads that lead to them)
-    if (was !== this.riding.pile) {
-      this.reach.stop();
-      this.reach = A.reader(this.riding.pile ? ROAD_FIELD : F.pile).start(500);
-    }
     seed(F.site, stone.slice(0, 8));
     seed(F.store, wood.slice(0, 8));
     seed(F.quarry, quarry);

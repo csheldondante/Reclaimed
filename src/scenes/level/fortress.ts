@@ -9,7 +9,6 @@ import { AgentUnits } from '../../units/agent-units';
 import { CHUNK } from '../../world/layout';
 import { cellPos } from '../../world/lattice';
 import { levelFrame } from './frame';
-import { attachSim } from '../../api/world';
 import { FortressReachGpu } from '../../fortress/reachgpu';
 import { ROW_H } from '../../world/lattice';
 import { Fortress } from '../../fortress/fortress';
@@ -24,6 +23,7 @@ import { SKIP_SPEED, SKIP_GRACE } from './flags';
 import { Dither } from '../../api/cutaway';
 import { LEVEL_H } from '../../build/town';
 import type { LevelScene } from '../level';
+import { worldApiOf } from './world-api';
 
 /**
  * (fortress slice 1, milestone 1) The town at the start becomes the player's fortress: pinned (live, no houses of its
@@ -36,6 +36,8 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: T
   if (!id) throw new Error('?fortress=1 needs ?town= (the town that becomes the fortress)');
   const S = win;
   if (!S) throw new Error('?fortress=1 needs the atlas level (or the lab: ?level=lab)');
+  // (round 128o, DA-B5: fortress play — the sandbox valley's reads for its Nature, storms and ambience stop)
+  scene.valleyReads = null;
   // (its people are the fortress's builders — FortressLife — not a SettlementLife: never both, they share fields)
   const rec = st.pin(id, true);
   for (const [k, v] of Object.entries(START_STORES)) {
@@ -76,7 +78,7 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: T
     // (onetown: the town drawn again — and claimed again when what stands changed — by the view host)
     changed: (solid) => (solid ? view.changed(rec.id) : view.redraw(rec.id)),
     // (round 128d, FT-26: the fortress's cells clear their trees — the plants module's clearing)
-    clearPlants: (x, y, r) => (scene.worldApi ??= attachSim(scene.core)).plants!.clear(x, y, r),
+    clearPlants: (x, y, r) => worldApiOf(scene).plants!.clear(x, y, r),
   });
   scene.fortress = fort;
   fort.status.people = ECON.startPeople;
@@ -118,7 +120,7 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: T
     build: () => {
       // (the world API attached: the agents get the terrain, so a load a builder drops — it falls, it's knocked down —
       // falls to the ground as the settlements' do; without it the agents' toss threw)
-      scene.worldApi ??= attachSim(scene.core);
+      worldApiOf(scene);
       const first = !scene.fortressLife;
       scene.fortressLife ??= new FortressLife(
         {
@@ -134,13 +136,14 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: T
             s.stock -= n;
           },
           // (milestone 3: settle/life.ts's IO — the plants' trees and fell, the terrain's take: all quiet edits)
-          trees: (at, r) => scene.worldApi!.plants!.treesNear(at[0], at[1], r).map((t) => [t.x, t.y] as [number, number]),
+          // (round 128o: null until the pages in reach are read — api/mirror.ts reads them when asked)
+          trees: (at, r) => scene.worldApi!.plants!.treesNear(at[0], at[1], r)?.map((t) => [t.x, t.y] as [number, number]) ?? null,
           fell: (at) => scene.worldApi!.plants!.fell(at[0], at[1]).then((t) => t?.logs ?? 0),
           dig: (at, n) => scene.worldApi!.terrain!.take(at[0], at[1], n).then((g) => g.amount),
           ground: (x, y) => scene.heightAt(x, y),
           // (round 128m, quarry: the layers' top, loose ground on it too — the surface buffer's z is the solid's: a pit
           // measured by it read a soil-covered column as not dug while its soil was taken)
-          top: (x, y) => (scene.worldApi!.fresh ? scene.worldApi!.terrain!.heightAt(x, y) : null),
+          top: (x, y) => scene.worldApi!.terrain!.heightAt(x, y),
           speed: () => scene.speed,
           groundRead: () => scene.worldApi!.readAt,
           // (round 128m, quarry) a pit's tier dug: its ground woken (slumping) and its walls judged (the stability check)
@@ -286,7 +289,7 @@ export function pitView(scene: LevelScene, dt: number): void {
     // round, and the rim's ground in the box's corners showed its cut faces; render.wgsl pads a box by 0.5)
     best = { x: cx, y: cy, z: floor, r: r * 0.9, lo: [x0 - 1, y0 - 1, floor - 1], hi: [x1 + 1, y1 + 1, rim - 0.8] };
   }
-  const d = (scene.fortressPitCut ??= new Dither((scene.worldApi ??= attachSim(scene.core)).terrain!, cam));
+  const d = (scene.fortressPitCut ??= new Dither(worldApiOf(scene).terrain!, cam));
   if (best) {
     d.see('pit', best.x, best.y, best.z, best.r);
     d.surface('pit', best.lo, best.hi);

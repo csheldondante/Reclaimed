@@ -10,8 +10,8 @@
 //    later.)
 // Pure: the plan and the grid in, the shapes out; pieces.ts draws them.
 import type { StructureDef, StructureType } from '../api/contracts/fortress';
-import { DEFS } from './defs';
-import type { TownPlan } from '../build/plan';
+import { DEFS } from './types';
+import type { TownPlan } from './plan';
 
 /** the most cells a courtyard has (a bigger enclosed space is a bailey, not a courtyard) */
 export const COURT_MAX = 8;

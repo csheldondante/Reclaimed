@@ -7,6 +7,14 @@ export const CAM_BYTES = CAMERA_BYTES + 64 + 16 + CAMERA_CUT_BYTES;
 /** the sun's shadow map, texels a side (the whole map: ~0.15 cells a texel on 256²) */
 export const SHADOW_SIZE = 2048;
 export const SHADOW_FORMAT: GPUTextureFormat = 'depth32float';
+/** (DA-B7) the sun's two maps as the draws bind them: `live` (binding 25) every caster, or with ?shadowcache=N the
+ *  moving ones; `still` (binding 27) the static casters with the cache (common.wgsl shadowLit takes the nearer) */
+export interface ShadowViews {
+  live: GPUTextureView;
+  still: GPUTextureView;
+}
+/** (DA-B7) Camera.eye.w: the lookups read the static casters' map too (above the look flags and DETAIL_BITS << 2) */
+export const SHADOW_STILL_BIT = 1 << 12;
 
 // a hex prism: the top in four triangles + three sides (render.wgsl)
 export const VERTS_PER_PRISM = 30;

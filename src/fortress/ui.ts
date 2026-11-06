@@ -3,7 +3,7 @@
 // holds, how high: typeCard, from its data), the structure just painted, the plan against the stores; a big Build button.
 // Building (time runs): the bar shrinks to the progress and a Plan button, so the building can be watched. The stores
 // and the power coming in show at the top in both. Planning is unmistakable (round 128d, the user: "I don't mind that
-// as long as we are clearly in planning mode"): a "Planning (paused)" banner and an amber frame round the screen.
+// as long as we are clearly in planning mode"): a "Planning. Time is stopped." banner (round 128o: was "Planning (paused)", which the writing lint flags) and an amber frame round the screen.
 // (round 128d, the user: "I think pause prevents both panning and building in build mode": the frame covers the whole
 // screen, and ui/style.css's `#ui > * { pointer-events: auto }` outranked its own `pointer-events: none` — every press
 // landed on the frame, not the map, paused or not. The frame and the banners take no presses, at #ui's specificity.)

@@ -7,7 +7,7 @@ import { RoadRide } from '../../src/agents/ride';
 import { edgeCost, hopsCpu, MAX_NODES, nearestNode, nodeCount } from '../../src/agents/roadgraph';
 import { packRoadShapes, roadBitsCpu } from '../../src/agents/roads';
 import { fortressOn } from '../../src/fortress/testing';
-import { laneGraph, roadShapesOf } from '../../src/fortress/lanes';
+import { laneGraph, roadShapesOf } from '../../src/build/lanes';
 import { testGpu } from './dawn';
 
 const W = 160;

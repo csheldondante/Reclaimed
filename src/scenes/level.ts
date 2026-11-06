@@ -6,6 +6,8 @@
 import { TerrainSystem } from '../terrain/terrain';
 import type { Ambience } from '../audio/ambience';
 import { Nature } from '../game/nature';
+import { ValleyReads } from './level/valley-reads';
+import { CAP_FPS } from './frame-cap';
 import { Powers } from '../game/powers';
 import { Director } from '../game/director';
 import { Reach } from '../game/reach';
@@ -205,18 +207,15 @@ export class LevelScene implements Scene {
    * (scripts/speedsweep.mjs measures how far it got against how far it was asked to go). The phone's way to try a speed.
    */
   pan?: { speed: number; dir: [number, number]; t: number; turnAt: number; turnBy: number; turned: number; asked: number };
-  /** slow readbacks of veg and water for positional audio (refreshed ~1 Hz) */
-  vegCache?: Float32Array;
-  waterCache?: Float32Array;
-  audioRefresh = 0;
+  /**
+   * (round 128o, DA-B5) the sandbox valley's timed reads: the wind for its storms, the counters for its Nature, veg and
+   * water for its ambience (level/valley-reads.ts). Null in fortress play: startFortress drops it.
+   */
+  valleyReads: ValleyReads | null;
   nextFlock = 12;
   director!: Director;
   /** the first-play intro is running (camera directed, weather held back) */
   intro = false;
-  smokeSeen = -1;
-  fieldRefresh = 0;
-  washedSeen = -1;
-  smokeRefresh = 0;
 
   /** story rules (round 30): green spreads only by seeds; the player works within its reach */
   story = false;
@@ -374,6 +373,14 @@ export class LevelScene implements Scene {
     // nothing. So are the veg and water caches: read back in the ring's order, not rotated)
     this.surfaceCache = new Uint32Array(dims.w * dims.h);
     for (let i = 0; i < this.surfaceCache.length; i++) this.surfaceCache[i] = sfPack(this.core.map.surface[i], 0);
+    this.valleyReads = new ValleyReads({
+      core: this.core,
+      smokeDispersed: (n) => this.nature.smokeDispersed(n),
+      grimeWashed: (n) => {
+        this.nature.grimeWashed(n);
+        this.audio.wash(n);
+      },
+    });
   }
 
   worldEvents: Promise<void> = Promise.resolve();
@@ -637,6 +644,11 @@ export class LevelScene implements Scene {
       .then(({ full }) => {
         if (full) this.hud.say('No room for more bodies.', 2);
       }, ignoreTeardown);
+  }
+
+  /** (round 128o, DA-B5; DESIGN.md §24) 30 fps while the player plans the fortress or the game is paused */
+  maxFps(): number | null {
+    return this.speed === 0 || this.fortress?.mode === 'plan' ? CAP_FPS : null;
   }
 
   frame(now: number, dt: number, driven = false): void {

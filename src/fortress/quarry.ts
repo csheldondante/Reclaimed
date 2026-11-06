@@ -35,8 +35,9 @@ export interface QuarryIO {
 const TOL = 0.3;
 /** how far from where a miner stands it digs (m) */
 const DIG_REACH = 7;
-/** a take is remembered over the surface reads until this many new reads came after it (the read lags: in the game
- *  it's made once a wall second — 16 sim seconds at 16x — and comes back a frame or two later) */
+/** a take is remembered until it's answered and this many surface reads came after (round 128o: the ground's pages
+ *  are read when asked, a frame or two apart while the pit's chunks run — the one read under way when the take was
+ *  answered may have been made before the take's tick) */
 const PENDING_READS = 2;
 /** takes in a row that brought nothing before a column is left */
 const STUCK = 3;
@@ -60,14 +61,12 @@ export class QuarryDig {
   private pits = new Map<number, PitState>();
   /** the miners' spots as the last update found them */
   private spotsNow: { at: V2; left: number }[] = [];
-  /** per box column key: the top after this module's last take, and the surface read it was sent under */
+  /** per box column key: the top after this module's last take, and the surface reads seen when it was answered (Infinity: in flight) */
   private pending = new Map<string, { z: number; read: number }>();
   /** surface reads seen (io.groundRead) */
   private reads = 0;
   private lastRead: unknown = null;
   private stuck = new Map<string, number>();
-  /** per quarry: the surface reads seen when it was first ready to dig */
-  private seen = new Map<number, number>();
   /** takes sent and not answered yet */
   private inFlight = 0;
   readonly stats = { taken: 0, takes: 0, tiers: 0 };
@@ -108,19 +107,17 @@ export class QuarryDig {
       const pit = f.plan.pitOf(s.id);
       if (!pit || !pit.tiers || ![...s.cells.keys()].every((c) => f.town.has(c, 0))) continue;
       live.add(s.id);
-      // (measured on two reads of the ground made after it was found ready: a read from before — the lab's last run, a
-      // slide — had another pit's ground)
-      const seen = this.seen.get(s.id) ?? this.seen.set(s.id, this.reads).get(s.id)!;
-      if (this.io.groundRead && this.reads - seen < 2) continue;
+      // (round 128o: the ground as the mirror has it — api/mirror.ts reads a page again once its chunk has run, and a
+      // slide leaves every page unread (null: begun again next turn); the wait for two timed reads after it was found
+      // ready went with the timer — nothing would ask for them)
       let st = this.pits.get(s.id);
       if (!st || st.pit !== pit) st = this.begin(s.id, pit, st);
       // (the ground not read yet: begun again next turn)
       if (!Number.isFinite(st.ref) || !Number.isFinite(st.top0)) continue;
       this.pits.set(s.id, st);
-      if (st.tier <= pit.tiers && !this.workIn(st).length) this.advance(s.id, st);
+      if (st.tier <= pit.tiers && this.allRead(st) && !this.workIn(st).length) this.advance(s.id, st);
     }
     for (const id of [...this.pits.keys()]) if (!live.has(id)) this.pits.delete(id);
-    for (const id of [...this.seen.keys()]) if (!live.has(id)) this.seen.delete(id);
     const out: { at: V2; left: number }[] = [];
     for (const st of this.pits.values()) {
       if (st.tier > st.pit.tiers) continue;
@@ -172,11 +169,14 @@ export class QuarryDig {
     for (const c of cands.slice(0, Math.max(0, Math.min(ECON.digCols, IN_FLIGHT - this.inFlight)))) {
       const amt = Math.min(ECON.dig, c.over);
       const top = this.topAt(c.key, c.x, c.y);
-      this.pending.set(c.key, { z: top - amt, read: this.reads });
+      const p = { z: top - amt, read: Infinity };
+      this.pending.set(c.key, p);
       this.stats.takes++;
       this.inFlight++;
       void this.io.dig([c.x, c.y], amt).then((got) => {
         this.inFlight--;
+        this.seeRead();
+        p.read = this.reads;
         this.stats.taken += got;
         if (got > 1e-3) this.stuck.delete(c.key);
         else {
@@ -250,7 +250,19 @@ export class QuarryDig {
     return this.tierCells(st.pit, st.tier);
   }
 
-  /** the cells with ground still over the cut, and how much (m, summed over their columns) */
+  /** (round 128o) every column of the tier has its ground read: an unread one isn't dug (it's asked for) */
+  private allRead(st: PitState): boolean {
+    const f = this.io.fort;
+    let all = true;
+    for (const c of this.cellsOf(st))
+      for (const col of f.grid.columns[c]) {
+        const [x, y] = f.colXY(col);
+        if (this.io.ground(x, y) === null) all = false;
+      }
+    return all;
+  }
+
+  /** the cells with ground still over the cut, and how much (m, summed over their columns; a column not read yet counts none) */
   private workIn(st: PitState): { cell: number; left: number }[] {
     const f = this.io.fort;
     const out: { cell: number; left: number }[] = [];
@@ -292,7 +304,8 @@ export class QuarryDig {
   }
 
   private topAt(key: string, x: number, y: number): number {
-    const read = this.io.ground(x, y) ?? -Infinity;
+    // (not read yet: NaN — neither over its goal nor dug; round 128o)
+    const read = this.io.ground(x, y) ?? NaN;
     const p = this.pending.get(key);
     if (!p) return read;
     if (this.reads - p.read >= PENDING_READS) {

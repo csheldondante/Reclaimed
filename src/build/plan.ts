@@ -13,8 +13,7 @@ import type { Berth, LinearFeature, Prop, StructureStyleId, TileUse } from '../a
 import { STRUCTURE_TYPES, type TownPlanApi, type Goods, type PerBlock, type PlanGrid, type PlanTotals, type Structure, type StructureDef, type StructureType, type WallTile } from '../api/contracts/fortress';
 import { CellRuns } from '../build/runs';
 import { DEFS, POWER_RISE } from './types';
-import { ECON } from '../fortress/defs';
-import { layPit, pitOf, type Pit } from './pit';
+import { layPit, pitOf, PIT_RAMP_CELLS, type Pit } from './pit';
 
 /** a type's index in a run (build/runs.ts Run.type) */
 export const typeIndex = (t: StructureType): number => STRUCTURE_TYPES.indexOf(t);
@@ -205,7 +204,7 @@ export class TownPlan implements TownPlanApi {
     const s = this.byId.get(id);
     if (s && s.type === 'quarry') {
       const prefer = this.pitPrefer ?? undefined;
-      const p = pitOf(this.grid, s.cells.keys(), { rampCells: ECON.pitRampCells, prefer });
+      const p = pitOf(this.grid, s.cells.keys(), { rampCells: PIT_RAMP_CELLS, prefer });
       this.pits.set(id, p);
       layPit(this.pit, p, id);
       for (const c of p.ring.keys()) cells.add(c);

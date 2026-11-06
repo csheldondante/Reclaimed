@@ -9,6 +9,7 @@ import { DIRV, cellAt } from '../world/lattice';
 import { sfZ } from '../world/layout';
 import { columnAt } from './common';
 import type { Mirror } from './mirror';
+import { COLUMN_BUFS } from '../sim/pages';
 import { blendedTop } from './smooth';
 import type { SampleOpts } from './terrain';
 
@@ -26,11 +27,11 @@ export class Water {
     private core: WorldCore,
     private mirror: Mirror,
   ) {
-    const w = core.world;
-    mirror.addBuffer('water', w.water);
-    mirror.addBuffer('flux', w.flux);
-    mirror.addBuffer('surface', w.surface);
-    mirror.addTexture('drift', w.drift);
+    const w = () => core.world;
+    mirror.addColumns('water', () => w().water, COLUMN_BUFS.water[0]);
+    mirror.addColumns('flux', () => w().flux, COLUMN_BUFS.flux[0]);
+    mirror.addColumns('surface', () => w().surface, COLUMN_BUFS.surface[0]);
+    mirror.addTexture('drift', () => w().drift);
   }
 
   get readAt(): number {
@@ -47,7 +48,8 @@ export class Water {
 
   /** Water depth (cells) on the ground at (x, y). */
   depthAt(x: number, y: number): number | null {
-    const w = this.mirror.f32('water');
+    const [cx, cy] = cellAt(x, y);
+    const w = this.mirror.f32('water', cx, cy);
     const i = this.col(x, y);
     if (!w || i < 0) return null;
     return w[i];
@@ -59,22 +61,24 @@ export class Water {
    * water sheet is drawn, so a rider on it doesn't step.
    */
   levelAt(x: number, y: number, opts?: SampleOpts): number | null {
-    const w = this.mirror.f32('water');
-    const s = this.mirror.u32('surface');
-    const d = this.mirror.f32('drift');
-    const i = this.col(x, y);
-    if (!w || !s || !d || i < 0) return null;
-    const { w: mw, h: mh } = this.core.dims;
     const ring = this.core.ring;
     // (round 112: the buffers — water, surface — at the column's index, the drift texture at its texel; the smooth
-    // read had taken cy * w + cx for all three, the window's order, which neither is since round 107)
-    const at = (cx: number, cy: number) => {
+    // read had taken cy * w + cx for all three, the window's order, which neither is since round 107. Round 128o: each
+    // column's pages read, else null)
+    // (null: off the window; undefined: its pages not read yet)
+    const { w: mw, h: mh } = this.core.dims;
+    const at = (cx: number, cy: number): number | null | undefined => {
+      if (cx < 0 || cy < 0 || cx >= mw || cy >= mh) return null;
+      const w = this.mirror.f32('water', cx, cy);
+      const s = this.mirror.u32('surface', cx, cy);
+      const d = this.mirror.f32('drift', cx, cy);
+      if (!w || !s || !d) return undefined;
       const j = ring.i(cx, cy);
       return sfZ(s[j]) + d[ring.t(cx, cy) * 4] + w[j];
     };
-    if (opts?.smooth) return blendedTop(x, y, (cx, cy) => (cx < 0 || cy < 0 || cx >= mw || cy >= mh ? null : at(cx, cy)), false);
+    if (opts?.smooth) return this.col(x, y) < 0 ? null : blendedTop(x, y, at, false);
     const [cx, cy] = cellAt(x, y);
-    return at(cx, cy);
+    return at(cx, cy) ?? null;
   }
 
   /**
@@ -82,8 +86,9 @@ export class Water {
    * column's outflow through its six pipes over its depth); [0, 0] where dry.
    */
   flowAt(x: number, y: number): [number, number] | null {
-    const w = this.mirror.f32('water');
-    const q = this.mirror.f32('flux');
+    const [cx, cy] = cellAt(x, y);
+    const w = this.mirror.f32('water', cx, cy);
+    const q = this.mirror.f32('flux', cx, cy);
     const i = this.col(x, y);
     if (!w || !q || i < 0) return null;
     const depth = w[i];

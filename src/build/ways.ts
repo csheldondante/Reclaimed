@@ -18,11 +18,11 @@
 // wall-walk. The graph is the same ways as data (tests, Inspect, the archers' posts later).
 import type { NavGraph, NavLinkKind, NavNode, NavSurface, V2, V3 } from '../api/contracts/structures';
 import type { StructureDef, StructureType } from '../api/contracts/fortress';
-import { LEVEL_H } from '../build/town';
-import { DEFS } from './defs';
-import type { TownPlan } from '../build/plan';
+import { LEVEL_H } from './town';
+import { DEFS } from './types';
+import type { TownPlan } from './plan';
 import { WALL_HALF } from './solid';
-import { entrancesOf, needsEntrance, type Entrance } from '../build/entrances';
+import { entrancesOf, needsEntrance, type Entrance } from './entrances';
 
 export interface WaysGrid {
   readonly count: number;

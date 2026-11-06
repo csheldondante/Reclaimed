@@ -78,9 +78,21 @@ fn toEye(p: vec3<f32>) -> vec3<f32> {
   return CAM.eye.xyz;
 }
 
-// the sun's shadow map (with the field mesh: renderer.ts shadow pass)
+// the sun's shadow map (with the field mesh: renderer.ts shadow pass): every caster, or with ?shadowcache=N the
+// moving ones (plants, structures, bodies)
 @group(0) @binding(25) var shadowMap: texture_depth_2d;
 @group(0) @binding(26) var shadowSamp: sampler_comparison;
+// (DA-B7, ?shadowcache=N) the static casters' map (the terrain mesh, the prisms), drawn every Nth frame with the same
+// light matrix; read only when Camera.eye.w has SHADOW_STILL_BIT (renderer/defs.ts), else a stand-in texel
+@group(0) @binding(27) var shadowStill: texture_depth_2d;
+const SHADOW_STILL_BIT: u32 = 4096u;
+
+/** one filtered tap: lit by both maps (the nearer caster of the two decides, as one map holding both would) */
+fn shadowTap(uv: vec2<f32>, z: f32, still: bool) -> f32 {
+  let a = textureSampleCompareLevel(shadowMap, shadowSamp, uv, z);
+  if (!still) { return a; }
+  return min(a, textureSampleCompareLevel(shadowStill, shadowSamp, uv, z));
+}
 
 /**
  * Direct-light visibility 0..1 from the shadow map: the point (nudged off its
@@ -93,11 +105,12 @@ fn shadowLit(wpos: vec3<f32>, nrm: vec3<f32>) -> f32 {
   if (any(uv <= vec2<f32>(0.0)) || any(uv >= vec2<f32>(1.0))) { return 1.0; }
   let t = 0.75 / vec2<f32>(textureDimensions(shadowMap));
   let z = lp.z - CAM.viewport.w;
+  let still = (u32(CAM.eye.w) & SHADOW_STILL_BIT) != 0u;
   var s = 0.0;
-  s += textureSampleCompareLevel(shadowMap, shadowSamp, uv + vec2<f32>(-t.x, -t.y), z);
-  s += textureSampleCompareLevel(shadowMap, shadowSamp, uv + vec2<f32>(t.x, -t.y), z);
-  s += textureSampleCompareLevel(shadowMap, shadowSamp, uv + vec2<f32>(-t.x, t.y), z);
-  s += textureSampleCompareLevel(shadowMap, shadowSamp, uv + vec2<f32>(t.x, t.y), z);
+  s += shadowTap(uv + vec2<f32>(-t.x, -t.y), z, still);
+  s += shadowTap(uv + vec2<f32>(t.x, -t.y), z, still);
+  s += shadowTap(uv + vec2<f32>(-t.x, t.y), z, still);
+  s += shadowTap(uv + vec2<f32>(t.x, t.y), z, still);
   return s * 0.25;
 }
 

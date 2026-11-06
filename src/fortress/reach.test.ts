@@ -8,7 +8,7 @@ import { cellPos } from '../world/lattice';
 import { Fortress } from './fortress';
 import { CpuReach, surfacesOf, type ReachColumns } from './reach';
 import { PIECE_WARN, rampPieces, warnPieces } from '../build/view';
-import { RAMPS_ID, solidSpans } from './solid';
+import { RAMPS_ID, solidSpans } from '../build/solid';
 import { PIECE_FLOATS } from '../structures/pieces';
 
 const W = 160;

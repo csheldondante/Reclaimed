@@ -13,8 +13,8 @@ import type { ColumnSpan } from '../api/contracts/structures';
 import type { ExternalCol, ExternalInstance, ExternalRegistry } from '../sim/external';
 import type { GridPlace, StaticClaims, StaticGrid } from '../sim/static-claims';
 import { MAT } from '../world/materials';
-import { solidSpans } from '../fortress/solid';
-import type { Ways } from '../fortress/ways';
+import { solidSpans } from './solid';
+import type { Ways } from './ways';
 import { linearColumns } from '../structures/columns';
 import type { TownSite } from './site';
 

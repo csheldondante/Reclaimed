@@ -1,14 +1,14 @@
 // The sandbox's town tool: picking blocks of the editor's town, the plan outline, placing rectangles, and sending
 // the build crew. API: editorTown(scene), townPick, townAtPick, sendBuilders, pickTown, drawPlan, placeRect.
 import { ignoreTeardown } from '../../gpu/pipeline';
-import { attachSim } from '../../api/world';
 import { LEVEL_H, type Block, type Town } from '../../build/town';
 import { modelById } from '../../world/models';
 import type { LevelScene } from '../level';
+import { worldApiOf } from './world-api';
 
 /** The town (round 65): made on first use, its grid seeded by the map. */
 export function editorTown(scene: LevelScene): Town {
-  return (scene.worldApi ??= attachSim(scene.core)).town({ seed: 7 });
+  return worldApiOf(scene).town({ seed: 7 });
 }
 
 /** Town tool: the block a press there would add (or, shift held, take away). */
@@ -41,7 +41,7 @@ export function townAtPick(scene: LevelScene, sx: number, sy: number): void {
  * with ▲ Build, brick). Groups 10-12 and fields 0-1 (a crew at a time).
  */
 export function sendBuilders(scene: LevelScene): void {
-  const api = (scene.worldApi ??= attachSim(scene.core));
+  const api = worldApiOf(scene);
   const A = api.agents;
   const T = api.terrain;
   if (!A || !T) return;

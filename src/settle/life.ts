@@ -48,8 +48,8 @@ export interface LifeIO {
   spots(): LiveSpot[];
   /** its houses to build, in window coordinates now */
   sites(): LiveSite[];
-  /** trees within reach (window coordinates), for the woodcutters */
-  trees(at: V2, r: number): V2[];
+  /** trees within reach (window coordinates), for the woodcutters; null: the ground there isn't read yet */
+  trees(at: V2, r: number): V2[] | null;
   fell(at: V2): Promise<number>;
   /** the ground, exactly (world API terrain.take / put) */
   take(at: V2, amount: number): Promise<{ material: string; amount: number }>;
@@ -219,7 +219,10 @@ export class SettlementLife implements Routine {
     if (this.t - this.treeAt > 15) {
       this.treeAt = this.t;
       const c = this.io.spots()[0]?.w;
-      if (c) this.trees = this.io.trees(c, Math.max(40, this.rec.radius * 0.9)).slice(0, 30);
+      const got = c ? this.io.trees(c, Math.max(40, this.rec.radius * 0.9)) : undefined;
+      // (null: not read yet — asked, and looked at again next frame; round 128o)
+      if (got === null) this.treeAt = -1e9;
+      else if (got) this.trees = got.slice(0, 30);
     }
     // (the settlement grows as a field: every GROW_S while it's fed — new lots become houses to build)
     if (this.t - this.grewAt > GROW_S) {

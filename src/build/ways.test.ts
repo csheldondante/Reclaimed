@@ -2,14 +2,14 @@
 // probably want roads and squares between structures and the stairs up onto the walls"): every door joins one road
 // net, gates carry it through the wall, each wall run has a stair, the nav graph reaches the wall-walk — and the solid
 // the GPU field walks (solid.ts claims) climbs the stair onto the wall's top, which it can't without one.
-import { fortressOn } from './testing';
+import { fortressOn } from '../fortress/testing';
 import { describe, expect, it } from 'vitest';
-import { LEVEL_H } from '../build/town';
+import { LEVEL_H } from './town';
 import { navPath } from '../structures/nav';
 import { library } from '../structures/modules';
 import { nbr as hexNbr } from '../world/lattice';
-import { Fortress } from './fortress';
-import { townPieces } from '../build/view';
+import { Fortress } from '../fortress/fortress';
+import { townPieces } from './view';
 import { solidSpans } from './solid';
 import { noWays, SLOPE, WAY_ROAD, WAY_SQUARE, WAY_STAIR, axisLength, type Ways } from './ways';
 import { WALL_HALF } from './solid';

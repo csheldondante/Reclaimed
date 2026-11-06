@@ -80,28 +80,31 @@ export function triAt(x: number, y: number): Tri {
 
 /**
  * The blended surface at (x, y): `top(cx, cy)` each column's top (null off
- * the map: it drops out, the rest renormalised), looked up at the point the
+ * the map: it drops out, the rest renormalised; undefined not read yet: the
+ * answer is null — round 128o, api/mirror.ts), looked up at the point the
  * field mesh warps (x, y) to — the warp depends on height, so it's found in
  * two steps from the unwarped blend.
  */
-export function blendedTop(x: number, y: number, top: (cx: number, cy: number) => number | null, warp = true): number | null {
+export function blendedTop(x: number, y: number, top: (cx: number, cy: number) => number | null | undefined, warp = true): number | null {
+  let unread = false;
   const at = (px: number, py: number): number | null => {
     const t = triAt(px, py);
     let s = 0;
     let ws = 0;
     for (let k = 0; k < 3; k++) {
       const v = top(t.cx[k], t.cy[k]);
-      if (v === null) continue;
+      if (v === undefined) unread = true;
+      if (v === null || v === undefined) continue;
       s += t.w[k] * v;
       ws += t.w[k];
     }
     return ws > 1e-6 ? s / ws : null;
   };
   let z = at(x, y);
-  if (!warp || z === null) return z;
+  if (!warp || z === null) return unread ? null : z;
   for (let i = 0; i < 2; i++) {
     const [wx, wy] = terrainWarp(x, y, z!);
     z = at(wx, wy) ?? z;
   }
-  return z;
+  return unread ? null : z;
 }

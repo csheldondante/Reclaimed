@@ -26,7 +26,7 @@
 import type { StructurePieces } from '../api/contracts/structures';
 import { townPieces, type ViewInputs } from '../build/view';
 import { TownClaims } from '../build/claims';
-import type { Ways } from '../fortress/ways';
+import type { Ways } from '../build/ways';
 import type { ExternalRegistry } from '../sim/external';
 import type { StaticClaims } from '../sim/static-claims';
 import { ROW_H } from '../world/lattice';

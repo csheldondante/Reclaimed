@@ -3,12 +3,12 @@
 // the keep a turret, an enclosed empty cell a courtyard. Node, no GPU.
 import { describe, expect, it } from 'vitest';
 import type { StructureType } from '../api/contracts/fortress';
-import { Town } from '../build/town';
-import { TownGrid } from '../build/towngrid';
+import { Town } from './town';
+import { TownGrid } from './towngrid';
 import { library } from '../structures/modules';
-import { townPieces } from '../build/view';
+import { townPieces } from './view';
 import { noWays } from './ways';
-import { TownPlan } from '../build/plan';
+import { TownPlan } from './plan';
 import { COURT_MAX, shapesOf } from './shapes';
 
 const grid = new TownGrid(80, 92, { seed: 7 });

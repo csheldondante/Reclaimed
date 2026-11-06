@@ -81,7 +81,7 @@ async function run(qs) {
           }
         };
         const names = ['surface', 'water', 'waterNext', 'waterPrev', 'waterSource', 'oil', 'oilStored', 'lava', 'contam', 'moisture', 'veg', 'fire', 'renderFields', 'bend', 'wilt', 'petals', 'contamDelta', 'deposit', 'places', 'flux', 'oilFlux', 'lavaFlux', 'physCols', 'layers'];
-        const texs = ['drift', 'air', 'strata', 'levels', 'shake', 'lavaSpring', 'riverFlow', 'bodyProj', 'foreign', 'proj', 'sparkTex', 'editState', 'windField'];
+        const texs = ['drift', 'air', 'strata', 'levels', 'shake', 'lavaSpring', 'riverFlow', 'bodyProj', 'foreign', 'proj', 'sparkTex', 'editStateA', 'windField'];
         const hash = (u) => {
           let h = 2166136261;
           for (let i = 0; i < u.length; i++) h = Math.imul(h ^ u[i], 16777619);

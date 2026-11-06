@@ -66,7 +66,7 @@ export interface LiveIO {
   dims: { w: number; h: number };
   /** where the camera looks (window) */
   focus(): V2;
-  trees(at: V2, r: number): V2[];
+  trees(at: V2, r: number): V2[] | null;
   /** fell the tree there: the logs it makes (0: none stood there) */
   fell(at: V2): Promise<number>;
   /** the ground, exactly (the world API's terrain.take / put) */

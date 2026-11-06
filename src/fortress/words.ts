@@ -91,7 +91,7 @@ export function planLines(t: PlanTotals, stores: Goods): string[] {
 }
 
 /** (round 128d) the banners: planning (time stopped, planned blocks drawn whole) and building */
-export const PAUSED_LINE = 'Planning (paused)';
+export const PAUSED_LINE = 'Planning. Time is stopped.';
 
 /** Building: how far the plan is (counts of blocks). */
 export function buildingLine(built: number, total: number): string {

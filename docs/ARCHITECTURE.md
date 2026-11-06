@@ -637,8 +637,11 @@ scripts/drawbench.mjs sets them with `@name=value` pieces): `defer`,
 quads are wound out of the solid), `shadowEvery` (the shadow map and the
 light matrix it was drawn with kept for N frames, redrawn after a slide —
 `FieldMesh.slides` — or a new box), `shadowCache` (the static casters —
-mesh, prisms — into `shadowStatic` every N frames with the matrix kept,
-copied into the map each frame and the moving casters drawn over it),
+mesh, prisms — into their own map `Renderer.shadowStill` every N frames with
+the matrix kept, the moving casters into the sun's map every frame; DA-B7: the
+lookups read both, binding 27 beside 25, and take the nearer caster —
+common.wgsl `shadowLit`, `Camera.eye.w` bit 12 — so nothing is copied between
+them),
 `prepEvery` (renderprep's and vegprep's
 instance lists kept N frames), `noDetail` (bits of the look left out,
 carried to the shaders in `Camera.eye.w` from bit 2: meshdraw.wgsl `ND_*`).
@@ -740,8 +743,23 @@ world definition (map, places, climate, season) and installs the modules it
 asks for; `attachSim(core)` puts them over a WorldCore a scene runs (the
 level: `reclaimed.api`). One `Mirror` per sim: every module registers the
 buffers and textures it reads (terrain: surface, layers, drift, levels;
-water: water, flux; fire: fire, lava; wind: windField), read back together
-on a timer (250 ms), decoded by the module. Commands go through the world's
+water: water, flux; fire: fire, lava; wind: windField), decoded by the module.
+(Round 128o, DA-B1; DESIGN.md §24) The mirror is read **by pages, when asked**
+(api/mirror.ts), never on a timer: a query names its column; the 16 × 16 page
+holding it is unread (the query answers null: "not read yet", never "nothing
+there"; the page is wanted), current, or stale (answered as last read, and
+wanted). The pages wanted are read together a frame later (one submit, one map,
+the staging buffer kept). A page goes stale when the sim runs its chunk (awake
+or drowsy: `Mirror.tick` from the sim's per-tick tap with Globals.sleep and
+drowse — sim/sleep.ts is the one place that knows) or a column apply writes
+the columns (`ColumnApply.onApply` → `touchAll`); a slide makes every page
+unread. The wind field (its own half-resolution layout) is read whole whenever
+asked. `refresh()` reads every page now (tools, tests, restoreLand); only a
+world made by `createSim` refreshes on a timer (`refreshMs`, 250). The level
+attaches it in one place (scenes/level/world-api.ts `worldApiOf`): the
+fortress's Build, its first painted cell (`clearPlants`), the settlements and
+the cutaway use the same API, and none of them starts a timed read (before,
+the first use started 35 MB mapped every 250 ms). Commands go through the world's
 own queues: Globals.events (edits, ignite; the excess waits a tick), the
 particle burst queue (now kept past 64 a tick, not dropped), and
 `windBlows` (wind.ts, a SimSystem just before the windfield: blows, strokes
@@ -1099,8 +1117,11 @@ its edge:
   and a streamed column's loose intervals over air are dropped onto their
   support (streamer.ts `settleLoose`). `sleepmore=1`: surface and render
   fields skip sleeping chunks too, every chunk drowsy for 0.25 s after any
-  slide. `inplace=1`: edit, structure and layer pulls rewrite the layers in
-  place (no layersNext copied back); the brush runs 5 s after an edit.
+  slide. `inplace=1`: structure and layer pulls rewrite the layers in
+  place (no layersNext copied back). (DA-B8) The edit brush is in place on
+  every tier, writing the layers and layersNext alike, and runs on a tick
+  with an edit and while brush state is in flight (edit-ops.ts
+  `EditBusy`).
 - **Not dispatched over what sleeps** (round 85, sim/cull.ts; on by default,
   `?simcull=0` off). Simulation.step makes, from the same Globals.sleep and
   drowse masks, a list of the chunks live this tick (WorldGpu.tiles,
@@ -1577,10 +1598,15 @@ small model per level around the diorama and returns its position as poi
 
 Sandbox (`world/sandbox.ts` map + `ui/editor.ts` panel): brush tools send
 `EV_EDIT` events (z = op·32 + material, +512 on the first event of a press)
-every frame while held; the edit system (`edit.wgsl`, first each tick, every
-tick in the sandbox) adds/removes water, oil, pollution and plants, and does
-the ground in layers (round 13): per column `editState` (rgba32float
-ping-pong texture, read at binding 18 as `editTex`) holds what this press has
+every frame while held; the edit system (`edit.wgsl`, first each tick, on a tick
+that carries an Edit event and after it while a press's cells are still landing:
+sim/edit-ops.ts `EditBusy`, DA-B8) adds/removes water, oil, pollution and
+plants, and does the ground in layers (round 13), in place (each thread its own
+column, the layers and layersNext alike; a blow's reads of other columns are taken
+first by `blowSum`): per column the brush state (rgba32float, two textures
+`WorldGpu.editStateA/B` taking turns — the pass reads `editStateViews[editCur]`,
+writes the other and flips `editCur`, nothing copied back; readers keep a bind
+group for each and pick by `editCur`; read at binding 18 as `editTex`) holds what this press has
 given (x; reset by the press flag), the fraction of a cell owed (y), cells
 still to pour (z) and op·32+mat ×4 + fall time left (w). A press gives at
 most `layers` cells, soft at the rim; build/dig apply at once, pour lands
@@ -2537,11 +2563,20 @@ cheap pool of light ("Yes absolutely enough"). One concern a file:
   `sources` (simTick, slowSystems, io, counters) are lent by whoever reads it (the bench); it changes nothing.
   `report(mark)` = per frame: interval, rAF lag, CPU, rAF to last submit, submit to done, frames in flight, GPU span,
   the gap between frames' GPU work, sim ticks, which counters moved; the slow frames against the rest.
+- **The frame cap** (round 128o, DA-B5; DESIGN.md §24 "Cap at 30 fps while building or paused"): a Scene may say
+  `maxFps()`; main.ts skips display frames until `frameDue` (scenes/frame-cap.ts: the cap's interval less half a
+  display frame), so 60 Hz runs every other frame, 120 Hz every fourth, 100 Hz every third (33 fps). The level caps
+  at 30 while the fortress is planned (`fortress.mode === 'plan'`) or the game is paused (`speed === 0`). The lab's
+  driven frames (lab.run) aren't capped.
+- **The sandbox valley's reads** (round 128o, DA-B5; scenes/level/valley-reads.ts `ValleyReads`): the wind field 4 Hz
+  (weather.windField: storms feel the painted wind), the particle counters 2 Hz (Nature's smoke and grime, audio.wash),
+  veg and water 1 Hz (the ambience: valley.ts `hearing`; the inhabitants' `waterAt`). One object on the level
+  (`scene.valleyReads`), made for the sandbox and dropped by `startFortress`: none of these run in fortress play.
 - **The judge's inputs** (integrity.ts): edits, cuts, watches, lightning, cyclones and the first window's structures
   seed it; land that comes in with a slide does not (round 100). A pass judges structure boxes for at most 8 ms.
-- **The world API's mirror** (api/mirror.ts, round 100): paged sources (the layers) are read by pages round
-  `Paged.focus()` — the camera's target and `Terrain.keepFresh` points — between whole reads (every 8th, after a
-  slide, `refresh(true)`); `?mirror=full` reads everything every time.
+- **The world API's mirror** (api/mirror.ts, round 100; round 128o: by pages when asked, "The world API" above):
+  `Terrain.keepFresh` points (a hero's) have their unread pages within 48 cells read before anything asks; their
+  queries keep them current. (`?mirror=full`, the camera-target focus and the whole read every 8th are gone.)
 
 ## Benchmark (round 101, branch `bench`)
 
@@ -3334,8 +3369,9 @@ no copy of them unless a CPU consumer walks one, and every change it makes to th
 
 ## Who writes the columns (round 128, `merge128`: jb6 on places, INT16)
 
-The columns are WorldGpu.layers, and the column passes (structure, edit, the layer pulls; sim/systems.ts `columnPass`)
-write WorldGpu.layersNext for the chunks that run and copy it back over the layers whole (without `?inplace=1`). So a
+The columns are WorldGpu.layers, and the column passes (structure, the layer pulls; sim/systems.ts `columnPass`)
+write WorldGpu.layersNext for the chunks that run and copy it back over the layers whole (without `?inplace=1`). (DA-B8:
+the edit brush writes in place on every tier, the layers and the layersNext alike, and copies nothing back.) So a
 change made to the layers alone is undone by the next copy-back wherever its chunk didn't run — asleep, or outside the
 hybrid's `only` filter (Sleep.wake refuses those). **Every writer of the columns writes the layers and the layersNext
 alike**, and every change the CPU asks for is the GPU's to make (jb6's rule), through one instance of game/colapply.ts
@@ -3872,3 +3908,75 @@ houses' doors, what of the fortress stands at the start). No atlas, no streamer,
   (basePort + 8: /run, /status, /stop). A scenario module's default export is evaluated in the page; `__labShot`
   (an exposed function) saves screenshots. Reload only on a new build hash or recipe; `lab.reset()` otherwise.
 
+
+## Module boundaries (round 128o, DA-G2; test/unit/boundaries.test.ts)
+
+Which folders under src/ may import which, as DESIGN.md draws it. The table (`RULES` in the test) is the authority;
+this is its summary. Type-only imports count: a type is still a dependency on the module's shape.
+
+| rule | who | may not import | why (DESIGN.md) |
+|---|---|---|---|
+| run-not-town | the run layer: opps, living, gm, runplan, runsit, runplay, dialog | fortress | §21: one opportunity contract; a raid is a card the town executes through an adapter the scene wires |
+| town-not-run | fortress | the run layer, ui, scenes, story, play, game, levels, lab, perf | §18: the economy is pure logic over the world's channels |
+| contracts-alone | api/contracts | anything but api/contracts | §1: systems talk through contracts, which depend on nothing |
+| engine-not-game | the engine: sim, gpu, world, shaders, agents, physics, solver, flow, atlas, terrain, grids, render, weather, traits, inhabitants, flora, structures, build, tune, audio, input, units (not their viewers and benches) | scenes, game, levels, fortress, settle, the run layer, story, play, run, ui, lab, perf, the pages, main | §1: games sit on the engine, never the other way |
+| api-not-game | api (not api/contracts) | the same | the world API is the engine's face to games |
+| run-not-ui | the run layer | ui, scenes | §22: UI reads game state through contracts; the run layer stays Node-testable |
+| no-kernels-above | the run layer, ui, scenes, story, play | shaders | §1: kernels belong to the systems that own their buffers |
+
+Known breaches today (each listed in the test with its row): the engine's live world — `WorldCore`, the Streamer's
+`LandChange`, `Integrity` and `colapply` — lives in scenes/ and game/, so six engine `install.ts`/wake files, the atlas,
+static claims and eight api modules import it (DA-P9); the fortress takes the streamer's `KeepRect` (DA-P2);
+`opps/level-opps.ts` (scene wiring) imports the tune panel and `runplan/viewer.ts` (a page) imports WorldCore (DA-L9).
+Folders not named above (`hero`, whose path finder `units` uses, among them) aren't ruled yet.
+
+## Limits (round 128o, DA-G3; DESIGN.md §24 "Limits … are documented with what they cost us")
+
+The hard sizes the world is built on, what holds them, and what raising each costs. test/unit/materials-tables.test.ts
+holds the material tables to each other.
+
+**Material table: 40 of 40 ids used, no headroom.**
+- `MAX_MATERIALS = 40` (world/materials.ts); `MATERIALS` has 40 entries (ids 0-39, Air to External); `packMaterialTable`
+  throws past it. A 41st material needs the table widened (BACKLOG DA-E1, which the user wants, later).
+- Tables that must grow together: `MATERIALS`/`MAT` and `MAX_MATERIALS` (world/materials.ts); materials.wgsl
+  `MATS: array<Material, 40>` (a uniform, 5 vec4 = 80 B a material, `MATERIAL_STRIDE_FLOATS` 20, 3.2 KB); phys.wgsl
+  `PM` and solver.wgsl `SM` (`array<vec4<f32>, 160>`, 4 vec4 a material, from physics.ts `packPhysMats` and
+  solver/materials.ts `packSolverMats`).
+- Lists of ids mirrored between TS and WGSL, which must change together: what the field mesh draws (meshregion.wgsl
+  `fieldMat` = world/materials.ts `fieldMeshed`), what a broken solid becomes (materials.wgsl `rubbleOf` =
+  game/colapply.ts `looseFrom`), and the `MAT_*` constants about 20 kernels name. The test checks all three (it found
+  `looseFrom` crumbling a log to rubble where the GPU makes ash; fixed in the same commit).
+- Ids that never live in the layers (render- or field-only): Oil 13, Grass 14, Flower 15, Lava 24; Leaves 9 and Wood 10
+  are the old vegetation-as-columns ids. 4-6 ids could move to a separate render id space if the table is tight.
+- Cost of widening: the uniform grows 80 B a material (128 materials: 10 KB, under the 64 KB uniform limit). Round 107
+  measured a large dynamically indexed Globals uniform costing every kernel 45-60 % on D3D11; `MATS` is its own binding
+  and was never measured, so DA-E1 starts with a phone-bench toggle diff of a wider table.
+
+**Material id width: 8 bits (256 ids) in every packed word that holds one.** Interval word 2 (`mat | aux << 8`, bits
+16-31 unused, word 3 spare and zeroed by every `ivPack`); the surface word (z 17 bits as 9.8 fixed point, mat 8 at bit
+17, slot count 5 at 25, buried and gap flags); a pick's info word (mat 8, z 9, flags 15); structure voxels
+(grids.wgsl `voxMat`); render instances (renderprep.wgsl, mat | flags << 8); physics voxels (phys.wgsl `matOf`); the
+edit and brush params (material in the low byte, shake in 8-15). The test checks `MAX_MATERIALS` fits the interval,
+surface, pick and CPU `writeSlot` masks. Past 256 ids, interval word 2's free 16 bits are the room; the surface word has
+none.
+
+**The aux byte (interval word 2, bits 8-15) means three things.** A solid's damage (bits 0-3) and support level (bits
+4-7, structure.wgsl); an External interval's fallback material (sim/external.ts: what it becomes if its owner lets
+go); a projected interval's structure + 1 (common.wgsl). Most passes carry aux through, not all (sim/external.ts
+says so), so External ownership is checked by CPU reads (`verify`). DA-A5 moves the owning grid's id to word 3.
+
+**K = 16 slots a column** (`MAX_K`, world/layout.ts): kernels keep a column in a fixed local array this big. Generation
+fills to 14 (`K_HEADROOM` 2). Past K, generation merges intervals silently (`fitColumn`) and a GPU stamp turns a
+building's top intervals to rubble (colapply.wgsl), both losses of shape (DA-P3 stacks pages in z instead). Raising K
+grows every kernel's local array and the layers buffer (16 B a slot a column).
+
+**Height: `Z_LIMIT` 511** (world/layout.ts): the surface word's 17-bit 9.8 z, the pick's 9-bit z, `PHYS_COL_WORDS` 16
+(512 bits a physics column).
+
+**8 storage buffers a shader stage** (the WebGPU default, `REQUIRED_STORAGE_BUFFERS_PER_STAGE`, gpu/device.ts): the
+phone floor offers no more. About 33 kernels sit at it (docs/PAGES.md §1), which is why draw shaders read the packed
+`renderFields` buffer and page tables were kept in Globals for a while. A new input to a full kernel means packing two
+buffers into one or splitting the kernel.
+
+**Other counts:** structure-piece grids `GRID_CAP` 256 (structures/gpu.ts); voxel structure grids `MAX_STRUCTS` 8 and
+projected spans `PROJ_K` 3 a column (grids/structures.ts); the page table 4096 window chunks (`MAX_PAGES`, sim/pages.ts).

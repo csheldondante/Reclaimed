@@ -31,10 +31,10 @@ import { solve, type WfcProblem } from '../structures/wfc';
 import { dressing } from '../structures/purpose';
 import { DEFS } from './types';
 import { towered } from './plan';
-import { shapesOf, type Shapes } from '../fortress/shapes';
-import { rampShape, STAIR_HALF, WALL_HALF, WALL_LINTEL } from '../fortress/solid';
-import { alongAxis, axisLength, WAY_SQUARE, waysOf, type Ways } from '../fortress/ways';
-import { LANE_DRAWN, LANE_WIDTH, type Lanes } from '../fortress/lanes';
+import { shapesOf, type Shapes } from './shapes';
+import { rampShape, STAIR_HALF, WALL_HALF, WALL_LINTEL } from './solid';
+import { alongAxis, axisLength, WAY_SQUARE, waysOf, type Ways } from './ways';
+import { LANE_DRAWN, LANE_WIDTH, type Lanes } from './lanes';
 
 /**
  * (round 128d) look bit 23: a block planned, not built yet. (round 128e, FT-51) While building its pieces aren't drawn:

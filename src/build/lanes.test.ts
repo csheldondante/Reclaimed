@@ -2,19 +2,19 @@
 // every entrance; never along a building's face; a wall crossed only through a gate's tile; thoroughfare tiles paved
 // whole; the ride graph from the same pieces; none under water; drawn as paving by the buildings, earth in the open,
 // steps on steep climbs.
-import { fortressOn } from './testing';
+import { fortressOn } from '../fortress/testing';
 import { describe, expect, it } from 'vitest';
 import { library } from '../structures/modules';
-import { Fortress } from './fortress';
+import { Fortress } from '../fortress/fortress';
 import { LANE_DRAWN, laneGraph, type LaneSeg } from './lanes';
 import { solidSpans } from './solid';
 import { cellAt } from '../world/lattice';
 import { roadBitsCpu } from '../agents/roads';
 import { nearestNode, nodeCount, reached } from '../agents/roadgraph';
 import { cellPos } from '../world/lattice';
-import { townPieces } from '../build/view';
+import { townPieces } from './view';
 import { WAY_SQUARE } from './ways';
-import { CpuReach, type ReachColumns } from './reach';
+import { CpuReach, type ReachColumns } from '../fortress/reach';
 
 const W = 160;
 const H = 184;

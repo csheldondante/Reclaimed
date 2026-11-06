@@ -28,7 +28,6 @@ beforeAll(async () => {
   const v0 = await w.core.readBuffer('veg' as never);
   vegBefore = w.sum(v0, 14, 14, 18, 18) / 16;
   // sand poured over the block's middle
-  w.core.sim.edit.always = true;
   const [cx, cy] = cellPos(16, 16);
   for (let k = 0; k < 6; k++) w.core.globals.events.push({ kind: EventKind.Edit, x: cx, y: cy, z: OP.POUR * 32 + MAT.Sand + 512, radius: 3, strength: 1 });
   await w.step(900);

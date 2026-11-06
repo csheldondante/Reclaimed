@@ -8,7 +8,7 @@ import { TownGrid } from '../build/towngrid';
 import { library } from '../structures/modules';
 import { DEFS } from './defs';
 import { townView, townPieces } from '../build/view';
-import { noWays } from './ways';
+import { noWays } from '../build/ways';
 import { TownPlan, wallTileOf } from '../build/plan';
 import { goodsText, refusedLine, wouldCutLine, planLines, structureLines, typeLines, variantLine } from './words';
 

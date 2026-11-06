@@ -96,10 +96,16 @@ export class Crew {
         const a = k * 2.39996;
         const x = j.x + Math.cos(a) * r;
         const y = j.y + Math.sin(a) * r;
-        if ((this.terrain.heightAt(x, y) ?? -1) > this.floor + 0.05) sites.push({ x, y });
+        const z = this.terrain.heightAt(x, y);
+        // (round 128o: not read yet is not dug — asked for; the sites made again next time)
+        if (z === null && this.terrain.inWindow(x, y)) return;
+        if ((z ?? -1) > this.floor + 0.05) sites.push({ x, y });
       }
     } else {
-      for (const t of this.plants!.treesNear(j.x, j.y, j.radius)) {
+      const trees = this.plants!.treesNear(j.x, j.y, j.radius);
+      // (round 128o: not read yet is not "no trees")
+      if (!trees) return;
+      for (const t of trees) {
         if (sites.length >= 12) break;
         sites.push({ x: t.x, y: t.y });
       }
@@ -116,7 +122,7 @@ export class Crew {
   private claim(w: Worker, u: AgentState): void {
     const j = this.def.job;
     if (j.kind !== 'fell' || w.tree) return;
-    const t = this.plants!.treesNear(u.x, u.y, j.radius * 2).find((t) => Math.hypot(t.x - j.x, t.y - j.y) <= j.radius && !this.claimed.has(`${t.cx},${t.cy}`));
+    const t = this.plants!.treesNear(u.x, u.y, j.radius * 2)?.find((t) => Math.hypot(t.x - j.x, t.y - j.y) <= j.radius && !this.claimed.has(`${t.cx},${t.cy}`));
     if (!t) return;
     w.tree = t;
     this.claimed.add(`${t.cx},${t.cy}`);

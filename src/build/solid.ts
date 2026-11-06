@@ -15,12 +15,12 @@
 // Town's — the window's).
 import type { ColumnSpan, V2 } from '../api/contracts/structures';
 import type { StructureDef, StructureType } from '../api/contracts/fortress';
-import { LEVEL_H, type Town } from '../build/town';
-import type { QuadGrid } from '../build/quadgrid';
+import { LEVEL_H, type Town } from './town';
+import type { QuadGrid } from './quadgrid';
 import { raster } from '../structures/columns';
 import { cellAt, cellPos } from '../world/lattice';
-import { DEFS } from './defs';
-import type { TownPlan } from '../build/plan';
+import { DEFS } from './types';
+import type { TownPlan } from './plan';
 import { axisLength, onAxis, type Ways } from './ways';
 
 /** a thin wall's half width (pieces.ts WALL_HALF) and a gate's lintel (pieces.ts WALL_LINTEL) */

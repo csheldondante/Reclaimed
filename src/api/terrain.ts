@@ -5,10 +5,11 @@ import type { WorldCore } from '../scenes/world-core';
 import { EventKind } from '../sim/globals';
 import { ROW_H, cellAt, cellPos } from '../world/lattice';
 import { EDIT_TAGS } from '../sim/world-gpu';
-import { CHUNK, columnSlots, readColumn, sfZ, SLOT_WORDS } from '../world/layout';
+import { columnSlots, readColumn, sfZ, SLOT_WORDS } from '../world/layout';
 import { fieldMeshed } from '../world/materials';
 import { columnAt, materialId, materialName, materialState, texelAt, type MaterialName } from './common';
 import { PULL_SLOTS } from '../sim/systems';
+import { COLUMN_BUFS } from '../sim/pages';
 import type { Mirror } from './mirror';
 import { blendedTop } from './smooth';
 
@@ -148,9 +149,8 @@ export class RaiseStroke {
 const fieldMat = fieldMeshed;
 
 /**
- * Queries answer from the mirror (refreshed every `mirror.every` ms, 250 by
- * default; `readAt` says when): until the first read they return null.
- * The nature grid's layers; tilted structure grids count in `heightAt` and
+ * Queries answer from the mirror (api/mirror.ts: read by pages when asked, as of the last read of each; `readAt` says
+ * when): null until the page under them is read ("not read yet", never "nothing there"). The nature grid's layers; tilted structure grids count in `heightAt` and
  * `floorAt` (their projected floors), not in `materialAt` / `layersAt`.
  */
 export class Terrain {
@@ -164,37 +164,24 @@ export class Terrain {
     private core: WorldCore,
     private mirror: Mirror,
   ) {
-    const w = core.world;
-    mirror.addBuffer('surface', w.surface);
-    // (perfopt, round 100 the default: by pages round the camera's target, and what's kept fresh, between whole reads — api/mirror.ts)
+    const w = () => core.world;
     const p = core.packed;
-    const focus = () => {
-      const out: [number, number][] = [[core.camera.target[0], core.camera.target[1]]];
-      for (const f of this.fresh) {
-        const at = f();
-        if (at) out.push([at[0], at[1]]);
-      }
-      return out;
-    };
-    mirror.addBuffer('layers', w.layers, { chunksX: p.chunksX, chunksY: p.chunksY, chunkTable: p.chunkTable, slotBytes: SLOT_WORDS * 4, chunk: CHUNK, rowH: ROW_H, focus });
-    mirror.addTexture('drift', w.drift);
-    mirror.addTexture('levels', w.levels);
+    mirror.addColumns('surface', () => w().surface, COLUMN_BUFS.surface[0]);
+    mirror.addSlots('layers', () => w().layers, SLOT_WORDS * 4, p.chunkTable, p.chunksX);
+    mirror.addTexture('drift', () => w().drift);
+    mirror.addTexture('levels', () => w().levels);
   }
 
   get readAt(): number {
     return this.mirror.readAt;
   }
 
-  /** (round 100) points whose columns (within 48 cells) every read keeps as they are — a hero's, a vehicle's */
-  private fresh: (() => readonly number[] | null)[] = [];
-
-  /** Keep the columns round `at()` fresh in every read (the camera's target always is); returns its removal. */
+  /**
+   * Keep the pages round `at()` read before anything asks (a hero's, a vehicle's next steps: its queries answer as it
+   * walks onto a page); its queries keep them current. Returns its removal.
+   */
   keepFresh(at: () => readonly number[] | null): () => void {
-    this.fresh.push(at);
-    return () => {
-      const i = this.fresh.indexOf(at);
-      if (i >= 0) this.fresh.splice(i, 1);
-    };
+    return this.mirror.keepKnown(at, ROW_H);
   }
 
   refresh(): Promise<void> {
@@ -214,12 +201,12 @@ export class Terrain {
     return cx >= 0 && cy >= 0 && cx < this.core.dims.w && cy < this.core.dims.h;
   }
 
-  /** column (cx, cy)'s field-mesh ground: the top of its highest interval the mesh draws (0: none) */
-  private fieldTop(cx: number, cy: number): number | null {
+  /** column (cx, cy)'s field-mesh ground: the top of its highest interval the mesh draws (0: none; null off the window; undefined: not read yet) */
+  private fieldTop(cx: number, cy: number): number | null | undefined {
     if (!this.inMap(cx, cy)) return null;
-    const u = this.mirror.u32('layers');
-    const f = this.mirror.f32('layers');
-    if (!u || !f) return null;
+    const u = this.mirror.u32('layers', cx, cy);
+    const f = this.mirror.f32('layers', cx, cy);
+    if (!u || !f) return undefined;
     if (this.topsGen !== this.mirror.gen) {
       if (this.fieldTops.length !== this.core.dims.w * this.core.dims.h) this.fieldTops = new Float32Array(this.core.dims.w * this.core.dims.h);
       this.fieldTops.fill(NaN);
@@ -253,7 +240,8 @@ export class Terrain {
 
   /** The height of the open sky's floor at (x, y): the ground, loose ground on it, or a structure's top. */
   heightAt(x: number, y: number, opts?: SampleOpts): number | null {
-    const lv = this.mirror.f32('levels');
+    const [cx, cy] = cellAt(x, y);
+    const lv = this.mirror.f32('levels', cx, cy);
     // (round 112: a texture, read at its texel — it had been read at the buffer's index, another column's: the hero
     // walked a few cells and stopped at walls that weren't there, the user's "it walks me a few steps them stops")
     const ti = this.tex(x, y);
@@ -264,8 +252,9 @@ export class Terrain {
 
   /** The nature grid's own ground at (x, y) (its top and the loose ground on it), ignoring structures. */
   groundAt(x: number, y: number, opts?: SampleOpts): number | null {
-    const s = this.mirror.u32('surface');
-    const d = this.mirror.f32('drift');
+    const [cx, cy] = cellAt(x, y);
+    const s = this.mirror.u32('surface', cx, cy);
+    const d = this.mirror.f32('drift', cx, cy);
     const i = this.col(x, y);
     const ti = this.tex(x, y);
     if (!s || !d || i < 0) return null;
@@ -281,9 +270,10 @@ export class Terrain {
    * round 62).
    */
   floorAt(x: number, y: number, z: number): number | null {
-    const f = this.mirror.f32('levels');
-    const lf = this.mirror.f32('layers');
-    const lu = this.mirror.u32('layers');
+    const [cx, cy] = cellAt(x, y);
+    const f = this.mirror.f32('levels', cx, cy);
+    const lf = this.mirror.f32('layers', cx, cy);
+    const lu = this.mirror.u32('layers', cx, cy);
     const ti = this.tex(x, y);
     if (!f || !lf || !lu || ti < 0) return null;
     let best: number | null = null;
@@ -293,7 +283,6 @@ export class Terrain {
       if (v <= z + 0.5 && (best === null || v > best)) best = v;
     }
     // (an interval's top with air over it: the next one starts higher, or none)
-    const [cx, cy] = cellAt(x, y);
     const { base, k } = columnSlots(this.core.packed, cx, cy);
     for (let s = 0; s < k; s++) {
       const o = (base + s) * SLOT_WORDS;
@@ -306,11 +295,24 @@ export class Terrain {
     return best;
   }
 
+  /** (x, y) lies in the window: its queries answer once read (off it, they never do). */
+  inWindow(x: number, y: number): boolean {
+    return this.col(x, y) >= 0;
+  }
+
+  /** (round 128o) heightAt's and floorAt's pages at (x, y) have been read (they're asked for when not). */
+  isRead(x: number, y: number): boolean {
+    const [cx, cy] = cellAt(x, y);
+    const lv = this.mirror.f32('levels', cx, cy);
+    const ly = this.mirror.u32('layers', cx, cy);
+    return lv !== undefined && ly !== undefined;
+  }
+
   /** The column's layers at (x, y), bottom up. */
   layersAt(x: number, y: number): Layer[] | null {
-    const l = this.mirror.u32('layers');
-    if (!l || this.col(x, y) < 0) return null;
     const [cx, cy] = cellAt(x, y);
+    const l = this.mirror.u32('layers', cx, cy);
+    if (!l || this.col(x, y) < 0) return null;
     return readColumn(this.core.packed, l, cx, cy).map((iv) => ({ z0: iv.z0, z1: iv.z1, material: materialName(iv.mat), state: materialState(iv.mat) }));
   }
 
@@ -417,8 +419,6 @@ export class Terrain {
   deposit(x: number, y: number, material: MaterialName, opts: { radius?: number; layers?: number } = {}): void {
     const m = materialId(material);
     if (materialState(m) !== 'loose') throw new Error(`world.terrain.deposit: "${material}" isn't a loose material (build() lays solids)`);
-    // (pours land over the next ticks: the brush state has to run every tick)
-    this.core.sim.edit.always = true;
     this.edit(OP_POUR, m, x, y, opts.radius ?? 3, opts.layers ?? 1);
   }
 

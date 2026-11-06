@@ -19,8 +19,17 @@
 // Liquids/fields add or remove amounts per tick while held. Loose material
 // goes through `deposit` (folded into the layers by sediment.wgsl). Runs first each tick in the sandbox, so every system sees
 // the edit.
-@group(0) @binding(3) var<storage, read> layersIn: array<vec4<u32>>;
-@group(0) @binding(4) var<storage, read_write> layersOut: array<vec4<u32>>;
+// (DA-B8) In place, on every tier: each thread rewrites only its own column, in the layers and in their mirror
+// (layersNext: "every writer of the columns writes the layers and the layersNext alike", docs/ARCHITECTURE.md — the
+// column passes that still copy layersNext back whole would otherwise undo it). What a blow reads of other columns
+// (the struck column's top, the footprint's tops for the rim) blowSum reads first, before anything is written.
+@group(0) @binding(4) var<storage, read_write> layersE: array<vec4<u32>>;
+@group(0) @binding(3) var<storage, read_write> layersMirror: array<vec4<u32>>;
+// (DA-B8) what each blow event found as the tick began (blowSum, one texel an event: blowOut writes, the pass reads
+// blowIn): x what its footprint gives the rim (the sum of the cuts), y the struck column's top material, z its top,
+// w 0 if the struck column is out of the map or empty, else 1 + how many columns the rim shares x among
+@group(0) @binding(27) var blowOut: texture_storage_2d<rgba32float, write>;
+@group(0) @binding(29) var blowIn: texture_2d<f32>;
 @group(0) @binding(5) var<storage, read_write> water: array<f32>;
 @group(0) @binding(6) var<storage, read_write> oilE: array<f32>;
 @group(0) @binding(7) var<storage, read_write> contamE: array<vec2<f32>>;
@@ -98,7 +107,7 @@ fn topIv(c: vec2<i32>) -> vec4<u32> {
   let cs = colSlots(u32(c.x), u32(c.y));
   var t = IV_NONE;
   for (var k = 0u; k < cs.y; k++) {
-    let v = layersIn[cs.x + k];
+    let v = layersE[cs.x + k];
     if (ivEmpty(v)) { break; }
     t = v;
   }
@@ -153,11 +162,9 @@ fn smashCol(arr: ptr<function, array<vec4<u32>, MAX_K>>, n: u32, k: u32, lo: f32
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
-  // (a sleeping chunk, round 80: what it holds carried through — the next buffer is copied back over this one)
+  // (a sleeping chunk, round 80: what it holds stays as it is — the pass writes the layers in place)
   if (asleep(id.xy)) {
     if (!drowsy(id.xy)) { return; }
-    let cs = colSlots(id.x, id.y);
-    for (var k = 0u; k < cs.y; k++) { layersOut[cs.x + k] = layersIn[cs.x + k]; }
     // (round 128d, sim/sleep.ts touch) a quiet edit — a unit's take or put, a fortress's cells cleared — leaves its
     // chunk asleep, only drowsy: applied here all the same (an edit that isn't quiet woke its chunks on the CPU, so the
     // edits reaching a sleeping column are the quiet ones)
@@ -173,7 +180,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   var arr: array<vec4<u32>, MAX_K>;
   var n = 0u;
   for (var k = 0u; k < cs.y; k++) {
-    let v = layersIn[cs.x + k];
+    let v = layersE[cs.x + k];
     if (ivEmpty(v)) { break; }
     arr[k] = v;
     n = k + 1u;
@@ -291,11 +298,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (op == OP_SMASH && (code >> 10u) == BLOW_TAG) {
       let reach = max(ev.z - BLOW_BRUSH, 0.5);
       let dp = length(cellPos(p) - ev.xy);
-      let cc = cellAt(ev.xy);
-      if (!inMap(cc)) { continue; }
-      let ct = topIv(cc);
-      if (ivEmpty(ct)) { continue; }
-      let cm = ivMat(ct);
+      let found = textureLoad(blowIn, vec2<i32>(i32(e), 0), 0);
+      if (found.w < 0.5) { continue; }
+      let cm = u32(found.y);
       let soft = softOf(cm);
       if (soft > 0.0) {
         let depth = sinkDepthOf(ev.w, soft, reach);
@@ -310,21 +315,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             }
           }
         } else if (dp <= reach + BLOW_RIM) {
-          // the rim: what the whole footprint gave (each column as the tick began), over the ring's columns
-          let R = i32(ceil(reach)) + 1;
-          var removed = 0.0;
-          var ring = 0.0;
-          for (var j = cc.y - 2 * (R + 3); j <= cc.y + 2 * (R + 3); j++) {
-            for (var ii = cc.x - R - 3; ii <= cc.x + R + 3; ii++) {
-              let q = vec2<i32>(ii, j);
-              if (!inMap(q)) { continue; }
-              let dq = length(cellPos(q) - ev.xy);
-              if (dq > reach && dq <= reach + BLOW_RIM) { ring += 1.0; }
-              if (dq <= reach && abs(j - cc.y) <= 2 * R && abs(ii - cc.x) <= R) { removed += sinkCut(topIv(q), dq, reach, depth); }
-            }
-          }
+          // the rim: what the whole footprint gave (each column as the tick began: blowSum), over the ring's columns
+          let ring = found.w - 1.0;
           if (ring > 0.0) {
-            deposit[i].y += removed * (1.0 - G.tune.impactSpray) / ring;
+            deposit[i].y += found.x * (1.0 - G.tune.impactSpray) / ring;
             deposit[i].z = f32(cm);
           }
         }
@@ -336,7 +330,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       let ds = dp / r;
       if (ds >= 1.0) { continue; }
       let hz = r * sqrt(1.0 - ds * ds);
-      let zc = ivZ1(ct) - 0.3;
+      let zc = found.z - 0.3;
       n = smashCol(&arr, n, cs.y, floor(max(zc - hz, 0.0) + 0.5), floor(max(zc + hz, 0.0) + 0.5));
       continue;
     }
@@ -423,5 +417,65 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   if (pending <= 0.0 && owed < 1.0 && op != OP_POUR && op != OP_BEDROCK) { timer = 0.0; }
   textureStore(editOut, texCol(vec2<i32>(p)), vec4<f32>(given, owed, pending, f32(opmat) * 4.0 + min(timer, 3.9)));
-  for (var k = 0u; k < cs.y; k++) { layersOut[cs.x + k] = select(IV_NONE, arr[k], k < n); }
+  for (var k = 0u; k < cs.y; k++) {
+    let v = select(IV_NONE, arr[k], k < n);
+    layersE[cs.x + k] = v;
+    layersMirror[cs.x + k] = v;
+  }
+}
+
+/** a blow event's reach (the footprint's radius) */
+fn blowReach(e: u32) -> f32 { return max(G.events[e].z - BLOW_BRUSH, 0.5); }
+
+/** how many columns of blow e's rim share what its footprint gives */
+fn blowRing(e: u32) -> f32 {
+  let ev = G.events[e];
+  let reach = blowReach(e);
+  let cc = cellAt(ev.xy);
+  let R = i32(ceil(reach)) + 1;
+  var ring = 0.0;
+  for (var j = cc.y - 2 * (R + 3); j <= cc.y + 2 * (R + 3); j++) {
+    for (var ii = cc.x - R - 3; ii <= cc.x + R + 3; ii++) {
+      let q = vec2<i32>(ii, j);
+      if (!inMap(q)) { continue; }
+      let dq = length(cellPos(q) - ev.xy);
+      if (dq > reach && dq <= reach + BLOW_RIM) { ring += 1.0; }
+    }
+  }
+  return ring;
+}
+
+/**
+ * (DA-B8) Before the pass (on a tick that carries a blow): what each blow finds as the tick began — the struck
+ * column's top and what its footprint's tops give the rim — so the pass can rewrite the columns in place.
+ */
+@compute @workgroup_size(4)
+fn blowSum(@builtin(global_invocation_id) id: vec3<u32>) {
+  let e = id.x;
+  if (e >= numEvents() || evKind(e) != EV_EDIT) { return; }
+  let code = evZ(e);
+  if ((code & 511u) / 32u != OP_SMASH || (code >> 10u) != BLOW_TAG) { return; }
+  let ev = G.events[e];
+  let at = vec2<i32>(i32(e), 0);
+  let cc = cellAt(ev.xy);
+  if (!inMap(cc)) { textureStore(blowOut, at, vec4<f32>(0.0)); return; }
+  let ct = topIv(cc);
+  if (ivEmpty(ct)) { textureStore(blowOut, at, vec4<f32>(0.0)); return; }
+  let cm = ivMat(ct);
+  let reach = blowReach(e);
+  let soft = softOf(cm);
+  var removed = 0.0;
+  if (soft > 0.0) {
+    let depth = sinkDepthOf(ev.w, soft, reach);
+    let R = i32(ceil(reach)) + 1;
+    for (var j = cc.y - 2 * R; j <= cc.y + 2 * R; j++) {
+      for (var ii = cc.x - R; ii <= cc.x + R; ii++) {
+        let q = vec2<i32>(ii, j);
+        if (!inMap(q)) { continue; }
+        let dq = length(cellPos(q) - ev.xy);
+        if (dq <= reach) { removed += sinkCut(topIv(q), dq, reach, depth); }
+      }
+    }
+  }
+  textureStore(blowOut, at, vec4<f32>(removed, f32(cm), ivZ1(ct), 1.0 + blowRing(e)));
 }

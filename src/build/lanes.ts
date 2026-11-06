@@ -12,7 +12,7 @@
 // Water: the ways' `blocked` (the reach's wet columns) keeps the roads off it. Pure, from the plan and the ways (tested
 // without a GPU: lanes.test.ts). The ride graph (laneGraph) is built from the same pieces.
 import type { V2 } from '../api/contracts/structures';
-import type { TownPlan } from '../build/plan';
+import type { TownPlan } from './plan';
 import { WAY_ROAD, WAY_SQUARE, wayStep, type Ways, type WaysGrid } from './ways';
 import type { RoadShape } from '../agents/roads';
 import { graphOf, type RoadGraph } from '../agents/roadgraph';

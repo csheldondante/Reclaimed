@@ -9,8 +9,8 @@ import { decodeTownFixture } from '../../src/lab/townfixture';
 import { siteFromJson, TownSite } from '../../src/build/site';
 import { entrancesOf, needsEntrance } from '../../src/build/entrances';
 import { Fortress } from '../../src/fortress/fortress';
-import { solidSpans } from '../../src/fortress/solid';
-import { laneGraph } from '../../src/fortress/lanes';
+import { solidSpans } from '../../src/build/solid';
+import { laneGraph } from '../../src/build/lanes';
 import { nearestNode, reached } from '../../src/agents/roadgraph';
 import { cellAt } from '../../src/world/lattice';
 

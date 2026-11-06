@@ -2,10 +2,10 @@
 // path around structures?"): only what's built; a block's whole cell; a wall's thin band, not its cell; a gate's
 // passage open under its lintel; on a slope a block's foot goes down to each column's own ground.
 import { describe, expect, it } from 'vitest';
-import { LEVEL_H, Town } from '../build/town';
-import { TownGrid } from '../build/towngrid';
+import { LEVEL_H, Town } from './town';
+import { TownGrid } from './towngrid';
 import { cellPos } from '../world/lattice';
-import { TownPlan, typeIndex } from '../build/plan';
+import { TownPlan, typeIndex } from './plan';
 import { solidSpans, WALL_HALF, WALL_LINTEL } from './solid';
 
 const grid = new TownGrid(80, 92, { seed: 7 });

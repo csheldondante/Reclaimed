@@ -28,9 +28,12 @@ import { CHUNK, type Interval, type PackedWorld } from '../world/layout';
 import { MAT } from '../world/materials';
 import { freeMat } from '../sim/external';
 
-/** What a crumbled cell of material m becomes as loose ground. */
+/**
+ * What a crumbled cell of material m becomes as loose ground. Mirrors materials.wgsl rubbleOf (test/unit/
+ * materials-tables.test.ts holds them the same; round 128o, DA-G3: a log crumbled to rubble here and to ash there).
+ */
 export function looseFrom(m: number): number {
-  if (m === MAT.Wood || m === MAT.Canvas || m === MAT.Leaves) return MAT.Ash;
+  if (m === MAT.Wood || m === MAT.Canvas || m === MAT.Leaves || m === MAT.Log) return MAT.Ash;
   if (m === MAT.Bone) return MAT.Drift;
   if (m === MAT.Trash) return MAT.Litter;
   if (m === MAT.Ice) return MAT.Snow;
@@ -196,6 +199,9 @@ export class ColumnApply {
   /** (round 128j) claimGrids' params, a stride a pass */
   private gridParams: GPUBuffer | null = null;
 
+  /** (round 128n, phonefix) told after each apply: the columns changed (api/mirror.ts: its pages are stale) */
+  readonly onApply: (() => void)[] = [];
+
   constructor(private device: GPUDevice) {
     this.layout = makeLayout(device, 'colapply', BINDS, GPUShaderStage.COMPUTE);
     const module = device.createShaderModule({ label: 'colapply.wgsl', code: colapplyWgsl });
@@ -209,6 +215,7 @@ export class ColumnApply {
   run(cols: GpuColumns, stages: ApplyStage[], target?: SpillTarget): void {
     const enc = this.encode(cols, stages, null, target);
     if (enc) this.device.queue.submit([enc.finish()]);
+    for (const f of this.onApply) f();
   }
 
   /**
@@ -218,6 +225,7 @@ export class ColumnApply {
   orphans(cols: GpuColumns, claimed: Map<number, { z0: number; z1: number }[]>): void {
     const enc = this.encode(cols, [], claimed);
     if (enc) this.device.queue.submit([enc.finish()]);
+    for (const f of this.onApply) f();
   }
 
   /**
@@ -277,6 +285,7 @@ export class ColumnApply {
       pass.end();
     });
     dev.queue.submit([enc.finish()]);
+    for (const f of this.onApply) f();
   }
 
   private encode(cols: GpuColumns, stages: ApplyStage[], claimed: Map<number, { z0: number; z1: number }[]> | null, target?: SpillTarget): GPUCommandEncoder | null {

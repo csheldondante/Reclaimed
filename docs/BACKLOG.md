@@ -18,11 +18,12 @@ The user: "Please work on making the code match the design which is a lot cleane
 
 | id | item | size | status |
 |---|---|---|---|
-| DA-G1 | Readback allow-list test: every `mapAsync` site named in one list with reason and rate; a new one fails | S | next |
-| DA-G2 | Import-boundary test: modules cross boundaries only through shared contracts (DESIGN.md) | S | next |
-| DA-G3 | Material limits documented; test that the TS and WGSL material tables agree | S | next |
-| DA-G4 | Writing lint over every player-facing string, not opt-in per test | S | next |
+| DA-G1 | Readback allow-list test: every `mapAsync` site named in one list with reason and rate; a new one fails. Widened mid-task (AGENT_RULES §1b): large GPU→GPU copies and CPU→GPU uploads in the same table | S | done (`gates`: src/gpu/transfers.ts, test/unit/transfers.test.ts; 283 entries: 157 reads, 47 copies, 203 uploads; 48 marked `violates`) |
+| DA-G2 | Import-boundary test: modules cross boundaries only through shared contracts (DESIGN.md) | S | done (`gates`: test/unit/boundaries.test.ts, docs/ARCHITECTURE.md "Module boundaries"; 7 rules, 22 known breaches under DA-P9, DA-P2, DA-L9) |
+| DA-G3 | Material limits documented; test that the TS and WGSL material tables agree | S | done (`gates`: docs/ARCHITECTURE.md "Limits", test/unit/materials-tables.test.ts; found and fixed `looseFrom` crumbling logs to rubble where the GPU makes ash) |
+| DA-G4 | Writing lint over every player-facing string, not opt-in per test | S | done (`gates`: test/unit/writing-sources.test.ts over 35 player files and 2 words modules, 26 developer files placed; 3 strings fixed, 52 listed under DA-G6) |
 | DA-G5 | Merge townlab rect C (bed4bb7) | S | done (35cf133) |
+| DA-G6 | Rewrite the 52 player strings the writing lint flags today (listed in test/unit/writing-sources.test.ts KNOWN): key hints in parentheses ("forward (W)", "Swing (Space)"), the valley level's dashes and semicolons, the run-end and run-plan panels, the menu and HUD tooltips. Some are the old valley and dev-ish camera controls: decide with the user which stay player-facing (found by DA-G4) | S | open |
 | DA-A1 | One plan: land onetown (one TownPlan, one type table, one grid per town, claims by grid id, second box deleted) (§17) | M | done (`onetown`, round 128o: fortress merged, keep rect on the site box, leftovers deleted; ARCHITECTURE "Towns: one plan"). Still open inside it: the generator drafts in its own model before placing (3 m storeys → levels), keepReach (→ DA-A3) |
 | DA-A2 | Builders build: a failing test reproducing the fixture (702/708, one cut off) on a phone-captured fixture, then the root fix; absorbs `builders`/PF-5 (§17, §18) | M | wip (`onetown`): builders first, people start at the stores (b5e9783); routes from entrances (DA-A7 core). The lab's `town`: all three sites outside the walls and every buildable block built (706/708 by 181 sim s). Left: the house site at cell 1188 — its passage is in the plan, but the GPU reach doesn't reach the passages keepReach cut (they ignore the terrain): DA-A3 |
 | DA-A3 | Reach as an invariant judged once in one GPU solve; cheapest passage chosen on the GPU; pending blocks stay on the builders' list; delete the 3 s re-ask and VARIANT_TRIES (§13) | L | next |
@@ -32,12 +33,25 @@ The user: "Please work on making the code match the design which is a lot cleane
 | DA-A7 | Routes as kinematic trips with a cached route buffer; delete LOST/LAST_LOST steering; tiles declare paths (§12) | L | core done (`onetown`, round 128o): entrances declared (build/entrances.ts), roads from the ways' cells, never along a building, doorOf without a fallback, one stand rule. Left: kinematic trips, lanes/queueing, the cached route buffer, tiles declaring stairs/wall-walks as segment kinds. Found: in the lab's `town` the farmers riding home with grain stand still at a route node (node 14, 0.5 m off it) for 500+ sim s though the CPU hop table gives a 115 m route (next node 11, gentle ground): the GPU ride's stall, not the graph — grain runs out. Pre-existing (it happened on the border lanes too) |
 | DA-A8 | Every good physical; loot takes real goods (§18) | M | next |
 | DA-A9 | GEN_VERSION hashes only the land generator's sources: today defs.ts (economy and type numbers, via build/view and ways) is among them, so a cost or job-order edit stales every saved region and the lab fixture (round 128o: JOB_ORDER moved out for this) | S | next |
-| DA-B1 | Kill play readbacks: Build never starts the mirror; FieldReader gone; GPU-side queries; unknown != empty; resumes `phonefix` (§24) | M | next |
+| DA-B1 | Kill play readbacks: Build never starts the mirror; FieldReader gone; GPU-side queries; unknown != empty; resumes `phonefix` (§24) | M | done (`phonefix`, round 128o: the world API's mirror read by pages when asked, stale only where the sim ran; no timer in the level; FieldReader gone (the reach's bits); unread is null, a test; the trees stay a veg-page read, their GPU query is DA-B6; phone bench to run) |
 | DA-B2 | Unit sync becomes GPU events plus watched units through a persistent staging ring (§11, §24) | M | next |
 | DA-B3 | Incremental town edits: rebuild only changed structures; no rebuild on unchanged reach answers; < 4 ms an edit on desktop (§5, §24) | M | next |
 | DA-B4 | Reach solve converges on the GPU; one small read per edit (§13) | M | next |
-| DA-B5 | Fortress-mode sandbox frame reads off; 30 fps cap while building or paused (§24) | S | next |
+| DA-B5 | Fortress-mode sandbox frame reads off; 30 fps cap while building or paused (§24) | S | done (`phonefix`, round 128o: wind 4 Hz, counters 2 Hz, veg + water 1 Hz off in fortress play (`ValleyReads`); 30 fps while planning or paused. Left: the level's surface read 1 Hz and the water settling read 2 Hz, options in DEVLOG) |
 | DA-B6 | GPU tree query for woodcutters (no veg readback); GPU wind reduction for storms (no wind-texture readback) (§24) | M | next |
+| DA-B7 | Shadow cache: sample the static and dynamic shadow maps in the lighting pass instead of copying 1 MB a frame on the phone tier (`gbuffer-shadow.ts:179`; audit transfers.md) | S | done (`copies`: Renderer.shadowStill beside the sun's map, common.wgsl shadowLit reads both; the shadowSize² × 4 B copy a frame gone, shots equal) |
+| DA-B8 | Edit pass: swap bindings instead of copying editState (and layers when not in place) each tick; quiet builder take/put doesn't restart the 300-tick EDIT_LINGER (`sim/systems.ts:588-596`, up to ~98 MB/s GPU copy while builders work) | M | done (`copies`: in place on every tier with blowSum first, editStateA/B take turns, runs only while a press is in flight — sim/edit-ops.ts EditBusy; town lab with builders: 1.64 MB + 26 MB a tick gone) |
+| DA-B9 | A version word per chunk bumped on the GPU by every interval writer; mesh hash, agents' re-peel, reach, shore and save work only on changed chunks via indirect dispatch; removes the idle floor (sway, prep passes, lava-prep with no lava) | L | open |
+| DA-B10 | Fortress `onChange` fires only when a reach answer or edit changes the plan (`fortress/fortress.ts:779-780` repacks and re-uploads the whole fortress every answer); then per-structure ranges (DA-B3) | S | open |
+| DA-B11 | One surfaces bake from columns (DESIGN §11): the agents' nav peel and the reach's own peel become one | M | open |
+| DA-B12 | Judge A's 26 MB CPU column copy at start and every slide goes with the GPU trigger (DA-E3); `layersNext` dead under in-place (world audit WP-2) removed | M | open |
+| DA-B13 | The standing timed reads no other row covers (found by DA-G1, src/gpu/transfers.ts): the region-save sweep polls changed regions every 400 ms (read on the edit instead, §23); creatures' group sums every 10 ticks (`?life=`); the menu's dust watch every 1 s (§24) | S | open |
+| DA-B14 | Column passes write the layers in place on every tier: the structure pass (and the edit brush, DA-B8) copy the whole layers buffer (16-25 MB) back every tick unless `?inplace=1`, which only the phone tier sets; one solver, measured (found by DA-G1, src/gpu/transfers.ts; §24, AGENT_RULES §1b). The edit brush is done (DA-B8). The structure pass reads its neighbours' support while they are rewritten: in place that is a race (a torn column), so it needs a support pre-pass or layers ping-pong, not the switch | M | open |
+| DA-B15 | The coarse world swaps its two cell buffers instead of copying the whole 8 MB grid back every 4th frame, and steps only where something moves (FP3 spread the cost, didn't remove it; found by DA-G1) | S | open |
+| DA-B16 | The wind field is updated and copied back only round what stirs it: while any physics body exists the whole field (~410 KB) is copied every update (`WindFieldSystem.wholeWhile`; found by DA-G1) | S | open |
+| DA-B17 | The phone flags apply too late in the production build (the lab, scripts/shot.mjs, any deploy): Rollup runs the chunk holding the renderer and the systems before main's body, so `Renderer.opts` (shadowcache, prepevery, shadowevery …) and `INPLACE` are read before phone-flags-boot writes the URL — the lab's "phone tier" runs without them. The dev server keeps the order (found in DA-B7) | S | open |
+| DA-B19 | The level's surface read (1 Hz, 400 KB at 320²: `scene.heightAt` for the camera's ground, the fortress's ground and pieces, raiders, places) goes: the GPU makes a chunk's surface only once it wakes, so not simply the mirror's pages; options in DEVLOG round 128o DA-B5 (found by DA-B5) | M | open |
+| DA-B20 | The water's settling read (2 Hz, 8 KB: sleep's holdUnsettled keeps unsettled water awake) goes: the hold decided on the GPU (an indirect wake list) (found by DA-B5) | S | open |
 | DA-L1 | One run clock for economy, day/night, raids and cards (§21) | M | open |
 | DA-L2 | Mana ledger that can be spent (§14) | S | open |
 | DA-L3 | Holdings adapter: fortress soldiers and stores as holdings cards lock and spend (§20, §21) | M | open |
@@ -46,6 +60,7 @@ The user: "Please work on making the code match the design which is a lot cleane
 | DA-L6 | Run end and carry-over (§21) | M | open |
 | DA-L7 | Atlas button and card icons, UX playground first (§22) | M | open |
 | DA-L8 | Spell wheel paid in mana, playground first (§14, §22) | M | open |
+| DA-L9 | `opps/level-opps.ts` (the run's scene wiring, imports the tune panel) and `runplan/viewer.ts` (a page, imports WorldCore) live in the run layer's folders: move them to scenes/ and the pages so opps and runplan stay pure (found by DA-G2) | S | open |
 | DA-E1 | Widen the material table past 40 (ids are 8-bit; the user wants this, later); phone bench of the uniform cost first | M | open |
 | DA-E2 | Deposit inbox keeps each material and counts overflow | M | open |
 | DA-E3 | GPU destruction trigger: ground connected components plus support x distance per cell (§9) | L | open |
@@ -62,6 +77,7 @@ The user: "Please work on making the code match the design which is a lot cleane
 | DA-P6 | Loose material in the flow model (§8) | L | open |
 | DA-P7 | Flora: no per-tick sim; kind and density per column (§15) | M | open |
 | DA-P8 | Delete retired render paths; draw decisions without readbacks (§5) | M | open |
+| DA-P9 | The engine's live world lives above the engine: `WorldCore` and the Streamer in scenes/, `Integrity` and `colapply` in game/. Six engine install files, physics' wake, the atlas, static claims and eight api modules import them. Move them to an engine folder (or give the engine an interface) so engine and api never import scenes or game (found by DA-G2; 19 of its known breaches) | M | open |
 | DA-X1 | Cleanup: remove worktrees of merged or dead branches; Pages only for fortress, places, main (destructive: list for the user first) | S | asked |
 
 ## Round 128n (2026-11-05, session 5, `phonefix`) — the user on the Pixel 9a (Pages, fortress 062fe16): "performance on mobile was abysmal and could not be played and the building still didn't work. I think the town is cached and did not get gates"
@@ -69,8 +85,11 @@ The user: "Please work on making the code match the design which is a lot cleane
 | id | item | size | status |
 |---|---|---|---|
 | PF-1 | (the user: "Can you just add a debug flag to clear cache at startup for now and use that unless we are testing persistence?") `?fresh=1` deletes the world's stores at boot (region store, map files, warm cache, progress); the benches' stores kept | S | done (phonefix: fresh flag commit) |
-| PF-2 | Whatever is stored that depends on the town planner or the generator carries a version that changes with them; a test that fails when it doesn't | S | wip |
-| PF-3 | Find and fix what made the fortress unplayable on the phone (bisect d2ba927..062fe16 at 412x915 q=low); a phone bench to run | M | wip |
+| PF-2 | Whatever is stored that depends on the town planner or the generator carries a version that changes with them | S | handed over (the cache was not the cause: GEN_VERSION drops old regions; the saved-claims mismatch — a later session's land held the earlier fortress's blocks as stone, measured 107.0 vs 103.3 m at a former block — goes to the onetown agent: owned intervals) |
+| PF-4 | The lab gate fortressoutside on the `town` recipe for the game's length (900 sim s, a block planned outside every 150 s; fails if no builder reaches any waiting site for 180 sim s). It fails on 062fe16's timed waves and on head | S | done (phonefix: gate commit) |
+| PF-5 | (found by PF-4, head) a house planned outside and kept on Build (plan owner ≥ 0) is let go by the plan later (owner -1 by t 487 s), silently | M | open |
+| PF-6 | (found by PF-4, head) a farm planned outside at t 450 waits with no builder: nobody holds a build job (phases toWork 5, eat 4, home 3; no toSite or toPile) | M | open |
+| PF-3 | Find and fix what made the fortress unplayable on the phone (bisect d2ba927..062fe16 at 412x915 q=low); a phone bench to run | M | wip (DA-B1, DA-B5 on `phonefix`: 161 MB/s of reads after Build down to ~8 MB/s on the desktop proxy; the phone bench is the user's) |
 
 ## Monolith split (2026-11-04, `fortress`) — the user: "If we can split up those monolith files into well names encapsulated utilities and logical APIs that would be ideal too for saving context."
 
