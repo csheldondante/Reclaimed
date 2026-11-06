@@ -20643,3 +20643,22 @@ What:
   5.2–6.7): it is latency, not bytes.
 - On this town the units' share is small (12 units). The watched-only sync, (1) with (4), is for the crowds and
   battles of DESIGN §11, where every unit's 96 B a frame adds up.
+
+## 2026-11-06 — round 128p (`phonefix`, DA-B22 (c)(1)): the sync's events counted by the head, not guessed
+
+Why: main found d4a8e038 failing the GPU tier. In test/gpu/traits.test.ts, "raise turns the dead living…" expected
+100 and got 16, and "corpses decay…" expected 20 and got 16. The window was sized from the previous sync, so a burst
+bigger than it (100 raised in one tick) wasn't read in full: the sync guessed instead of reading the GPU's count.
+
+What:
+- Each sync copies the head (the GPU's count) and the first 16 events with the units, as one read.
+- When the head counts more since the last read (up to 256 a sync, as with the fixed window before), a second read
+  fetches exactly those before the sync returns. The ring keeps them until `eventsRead` moves past.
+- No sizing from earlier syncs. Agents.sync is listed twice in the transfer table.
+
+Gates:
+- The GPU tier: 42 files, 191 passed, 5 skipped. It includes traits.test.ts (raise, corpses) and
+  agentevents.test.ts (600 deaths read over syncs, every one once; the overflow counted).
+- The unit tier: 844 passed, 3 expected fail.
+- The start town still reads 1.6 KB a sync (91–95 KB a sim second at 1x, 6.2 at 16x), with a second read only when
+  more than 16 events came.
