@@ -333,12 +333,7 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
   if (v >= 3.6) {
     let pl = vegPlan(id.x, id.y, v, m);
     if (pl.tree) {
-      let pulse = sin(G.time * 0.12 + rand3(id.x, id.y, 5u) * 6.2832) > 0.93;
-      let rate = select(0.0, 0.03, pulse) + max(ws - 4.0, 0.0) * 0.006;
-      if (rare(id.x, id.y, 0x5eedu) < rate) {
-        let top = g + pl.trunk + pl.crown;
-        spawn(vec3<f32>(base.xy + vec2<f32>(r1 - 0.5, r2 - 0.5) * 2.4, top - r1), vec3<f32>(wind * 0.5, 0.6), 40.0, K_SEED, 0.0, h ^ 0x5eu);
-      }
+      // (round 128p: the trees' seed pulses are plantEmit's)
       // autumn (round 51): the broadleaves let their turned leaves go,
       // fluttering down out of the crown — more in a wind (state 1 + species:
       // drawn in its autumn colours)
@@ -352,12 +347,7 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
       }
     }
   }
-  // story rules (round 30): green sheds seeds into the breeze — a light wind
-  // carries them a few cells, so green creeps onto fertile ground by itself;
-  // a strong wind (the player's) carries them farther
-  if (G.rules.x > 0.5 && v >= SHED_V && !wet && rare(id.x, id.y, 0x5eedfu) < SHED_RATE * (1.0 + max(ws - 1.0, 0.0) * 0.6)) {
-    spawn(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.5), vec3<f32>(wind * 0.5, 0.5), SEED_LIFE, K_SEED, 0.0, h ^ 0x5eeu);
-  }
+  // (round 128p: the story rules' seed shed is plantEmit's)
   // grow-tap: a small boost to living ground; a fresh sprout on bare ground;
   // on hostile ground only a wilt (brown flecks) to show it won't take
   // (story rules: no sprouts on bare ground — tapped green lets go a puff of
@@ -367,24 +357,14 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
     let ev = G.events[e];
     let dd = length(base.xy - ev.xy) / ev.z;
     if (dd >= 1.0) { continue; }
-    if (all(cellAt(ev.xy) == vec2<i32>(id.xy))) {
-      spawnFull(base + vec3<f32>(0.0, 0.0, 0.6), vec3<f32>(0.0), 1.4, K_GLOW, 0.0, h ^ 0x6100u, 0u, 0u);
-    }
     let fall = 1.0 - dd;
     let hostile = contam[i].x > 0.2 || wet || m == MAT_TRASH_P || m == MAT_LITTER || moisture[i] < 0.04;
     let cap = MATS[m].eco.x;
     let story = G.rules.x > 0.5;
-    if (story && v >= SHED_V && r2 < 0.5 * fall) {
-      spawn(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.6), vec3<f32>(wind * 0.5 + vec2<f32>(r1 - 0.5, r2 - 0.5), 1.2 + r1), SEED_LIFE, K_SEED, 0.0, h ^ 0x7a9u);
-    }
-    if (story && v <= 0.0) {
-      // nothing to grow from here
-    } else if (!hostile && cap > 0.0) {
+    // (round 128p: the tap's glow, seed puff and sparkles are plantEmit's; the growth is here)
+    if (!(story && v <= 0.0) && !hostile && cap > 0.0) {
       // near the tap grass comes up at once (tufts show from 1.2); around it a boost
       veg[i] = min(max(max(v, 0.3) + 0.35 * fall, select(0.0, 1.5, fall > 0.45)), max(cap, v));
-      if (r1 < 0.35 * fall) { spawnFull(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.3), vec3<f32>(0.0, 0.0, 1.2 + r2), 1.4 + r1, K_SPARK, 0.0, h, 0u, 0u); }
-    } else if (r1 < 0.3 * fall) {
-      spawnFull(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.3), vec3<f32>((r2 - 0.5) * 0.6, (r1 - 0.5) * 0.6, 0.6), 1.6 + r1, K_SPARK, 0.0, h, 0u, 1u);
     }
   }
   // fallen leaves gather on the woodland floor
@@ -407,6 +387,71 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
     spawn(base + vec3<f32>(r1 - 0.5, fract(r1 * 5.3) - 0.5, 0.6 + r1 * 2.0), vec3<f32>(0.0), 6.0 + r1 * 6.0, K_FIREFLY, 0.0, h);
   }
   // (storms have no cloud puffs: rain fades in from a height — DECISIONS round 5)
+}
+
+// ---- (round 128p) the plants' own particles: seeds and the grow tap's glow and sparkles ----
+// Split from emit so a mode that doesn't want them doesn't dispatch them at all (ParticleSystem.plants: fortress play
+// turns them off — the user, round 128p: "I don't think the seeds add much"). Look only, except the story rules' seed
+// shed (green spreads by it): a mode with story rules keeps them. Reads the ground as emit does; writes particles only.
+@compute @workgroup_size(8, 8)
+fn plantEmit(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (id.x >= G.mapW || id.y >= G.mapH) { return; }
+  let p = vec2<i32>(id.xy);
+  let i = colIdxI(p);
+  let s = surface[i];
+  let g = f32(sfZ(s)) + driftAt(p);
+  let m = groundMatAt(p, sfMat(s));
+  let base = vec3<f32>(cellPos(p), g);
+  let wind = windAt(base + vec3<f32>(0.0, 0.0, 1.0));
+  let ws = length(wind);
+  let h = hash3(id.x, id.y, G.tick ^ 0x91a7u);
+  let r1 = f32(h & 0xffffu) / 65536.0;
+  let r2 = f32(h >> 16u) / 65536.0;
+  let v = veg[i];
+  let wet = water[i] > 0.02;
+  // trees let their seeds go in pulses (each tree its own rhythm), and wind shakes more loose
+  if (v >= 3.6) {
+    let pl = vegPlan(id.x, id.y, v, m);
+    if (pl.tree) {
+      let pulse = sin(G.time * 0.12 + rand3(id.x, id.y, 5u) * 6.2832) > 0.93;
+      let rate = select(0.0, 0.03, pulse) + max(ws - 4.0, 0.0) * 0.006;
+      if (rare(id.x, id.y, 0x5eedu) < rate) {
+        let top = g + pl.trunk + pl.crown;
+        spawn(vec3<f32>(base.xy + vec2<f32>(r1 - 0.5, r2 - 0.5) * 2.4, top - r1), vec3<f32>(wind * 0.5, 0.6), 40.0, K_SEED, 0.0, h ^ 0x5eu);
+      }
+    }
+  }
+  // story rules (round 30): green sheds seeds into the breeze — a light wind
+  // carries them a few cells, so green creeps onto fertile ground by itself;
+  // a strong wind (the player's) carries them farther
+  if (G.rules.x > 0.5 && v >= SHED_V && !wet && rare(id.x, id.y, 0x5eedfu) < SHED_RATE * (1.0 + max(ws - 1.0, 0.0) * 0.6)) {
+    spawn(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.5), vec3<f32>(wind * 0.5, 0.5), SEED_LIFE, K_SEED, 0.0, h ^ 0x5eeu);
+  }
+  // the grow tap's look: a glow where it landed; story rules: tapped green lets go a puff of seeds; growth sparkles,
+  // or (hostile ground) brown flecks — emit grows the ground
+  for (var e = 0u; e < numEvents(); e++) {
+    if (evKind(e) != EV_GROW) { continue; }
+    let ev = G.events[e];
+    let dd = length(base.xy - ev.xy) / ev.z;
+    if (dd >= 1.0) { continue; }
+    if (all(cellAt(ev.xy) == vec2<i32>(id.xy))) {
+      spawnFull(base + vec3<f32>(0.0, 0.0, 0.6), vec3<f32>(0.0), 1.4, K_GLOW, 0.0, h ^ 0x6100u, 0u, 0u);
+    }
+    let fall = 1.0 - dd;
+    let hostile = contam[i].x > 0.2 || wet || m == MAT_TRASH_P || m == MAT_LITTER || moisture[i] < 0.04;
+    let cap = MATS[m].eco.x;
+    let story = G.rules.x > 0.5;
+    if (story && v >= SHED_V && r2 < 0.5 * fall) {
+      spawn(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.6), vec3<f32>(wind * 0.5 + vec2<f32>(r1 - 0.5, r2 - 0.5), 1.2 + r1), SEED_LIFE, K_SEED, 0.0, h ^ 0x7a9u);
+    }
+    if (story && v <= 0.0) {
+      // nothing grows from here
+    } else if (!hostile && cap > 0.0) {
+      if (r1 < 0.35 * fall) { spawnFull(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.3), vec3<f32>(0.0, 0.0, 1.2 + r2), 1.4 + r1, K_SPARK, 0.0, h, 0u, 0u); }
+    } else if (r1 < 0.3 * fall) {
+      spawnFull(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.3), vec3<f32>((r2 - 0.5) * 0.6, (r1 - 0.5) * 0.6, 0.6), 1.6 + r1, K_SPARK, 0.0, h, 0u, 1u);
+    }
+  }
 }
 
 // ---- birds: perch in tree crowns, flush when the tree is tapped ----
