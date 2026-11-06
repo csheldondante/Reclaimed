@@ -10,7 +10,8 @@
 // with a rate it's updated that often instead (staggered over the chunks, common.wgsl slowTick), at the 60 Hz step
 // — in slow motion, which is what lets it stay stable while it settles. Awake, every tick.
 
-const params = typeof location === 'undefined' ? new URLSearchParams() : new URLSearchParams(location.search);
+import { urlFlags } from '../flags';
+const params = urlFlags();
 
 /** the tick rate (Hz) */
 export const TICK_HZ = (() => {

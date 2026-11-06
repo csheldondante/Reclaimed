@@ -15,6 +15,7 @@ import { Controls } from '../input/controls';
 import { generateMenuMap, MENU_SCALE } from '../world/menumap';
 import { WorldCore, type Host, type Scene } from './world-core';
 import { cellPos, poiWorld, ROW_H } from '../world/lattice';
+import { urlFlags } from '../flags';
 
 const LINES: [number, string][] = [
   [0.95, 'A tree, where the thinking used to be.'],
@@ -109,7 +110,7 @@ export class MenuScene implements Scene {
     this.el.querySelector('[data-a="fortress"]')!.addEventListener('click', () => {
       if (this.starting) return;
       this.starting = true;
-      const q = new URLSearchParams(location.search);
+      const q = urlFlags();
       for (const [k, v] of Object.entries({ skipmenu: '1', level: 'atlas', town: '1', fortress: '1' })) q.set(k, v);
       location.search = q.toString();
     });
@@ -224,7 +225,7 @@ export class MenuScene implements Scene {
     this.selected = lv;
     const prog = loadLevelProgress(lv.id);
     const btn = this.el.querySelector('[data-a="play"]') as HTMLButtonElement;
-    (this.el.querySelector('[data-a="free"]') as HTMLElement).style.display = lv.story && lv.generate && !this.buried.has(lv.id) && new URLSearchParams(location.search).get('mode') === 'story' ? '' : 'none';
+    (this.el.querySelector('[data-a="free"]') as HTMLElement).style.display = lv.story && lv.generate && !this.buried.has(lv.id) && urlFlags().get('mode') === 'story' ? '' : 'none';
     if (this.buried.has(lv.id)) {
       const prev = levelById(previousLevel(lv.id));
       (this.el.querySelector('.level-name') as HTMLElement).textContent = 'Under the dust';

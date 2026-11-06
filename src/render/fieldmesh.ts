@@ -18,19 +18,20 @@ import meshRegionWgsl from '../shaders/meshregion.wgsl?raw';
 import meshStateWgsl from '../shaders/meshstate.wgsl?raw';
 import fieldMeshWgsl from '../shaders/fieldmesh.wgsl?raw';
 import type { WorldGpu } from '../sim/world-gpu';
+import { urlFlags } from '../flags';
 
 /** round 82: ?readback=0 — the renderer's and the mesh's periodic readbacks off (main.ts: the timestamps too) */
-export const READBACK = new URLSearchParams(location.search).get('readback') !== '0';
+export const READBACK = urlFlags().get('readback') !== '0';
 import type { Camera } from './camera';
 /** perfopt: the rebuild's workgroups wholly under a chunk's bottom or over its top return at once (?idleskip=0 off) */
-const IDLE_SKIP = `const IDLE_SKIP: bool = ${new URLSearchParams(location.search).get('idleskip') !== '0'};`;
+const IDLE_SKIP = `const IDLE_SKIP: bool = ${urlFlags().get('idleskip') !== '0'};`;
 /** perfopt, ?normals=grid: the vertices' normals from the samples, not six more fields a vertex */
-const NORMALS_GRID = `const NORMALS_GRID: bool = ${new URLSearchParams(location.search).get('normals') === 'grid'};`;
+const NORMALS_GRID = `const NORMALS_GRID: bool = ${urlFlags().get('normals') === 'grid'};`;
 
 /** bytes of the layout uniform (meshregion.wgsl MeshRegion) */
 export const REGION_BYTES = 128;
 /** (perfopt, ?cavemesh=near) the window's mesh leaves out the caves and the insides of hills, but near the cut */
-const CAVE_MESH = new URLSearchParams(location.search).get('cavemesh') === 'near';
+const CAVE_MESH = urlFlags().get('cavemesh') === 'near';
 /** cells round the cut's focus where the caves are meshed */
 const CAVE_NEAR = 48;
 /** a chunk's side, world units */
@@ -62,7 +63,7 @@ const TOP_PAD = 4;
  * it couldn't give pages (starved) or the free pages fall under a fifth; past one binding's room (128 MB at most)
  * it's an UnsupportedError, thrown at the next frame.
  */
-export const MESH_POOL = new URLSearchParams(location.search).get('meshpool') !== '0';
+export const MESH_POOL = urlFlags().get('meshpool') !== '0';
 const PAGE_BYTES = 16384;
 const VPP = 512;
 const QPP = 2048;
@@ -166,7 +167,7 @@ export class FieldMesh {
     /** chunks rebuilt a frame (the window's: quality `meshSlots`, round 81) */
     slots?: number,
   ) {
-    const q = new URLSearchParams(location.search);
+    const q = urlFlags();
     const arg = q.get('mesh');
     this.on = arg === null ? byDefault : arg !== '0';
     this.region = src ? device.createBuffer({ label: `${src.name} region`, size: REGION_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }) : world.meshRegion;

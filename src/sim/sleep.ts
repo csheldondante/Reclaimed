@@ -17,6 +17,7 @@ import { ROW_H } from '../world/lattice';
 import type { WorldEvent } from './globals';
 import type { Pages } from './pages';
 import { riverMode } from './world-gpu';
+import { urlFlags } from '../flags';
 
 /** chunks the mask holds (common.wgsl: 64 words) */
 const MAX_CHUNKS = 2048;
@@ -39,10 +40,10 @@ const SETTLE_TICKS = 64;
 /** (perfopt, ?sleepmore=1) the surface and render-field passes skip sleeping chunks too (but drowsy ones): every
  *  chunk was drowsy for DROWSE_S after any slide, its derived textures moved — (round 106, frameprobe) not since
  *  ringwin: nothing moves on a slide, only the strip come in is drowsy (its drowseTick, shift) */
-export const SLEEP_MORE = typeof location !== 'undefined' && new URLSearchParams(location.search).get('sleepmore') === '1';
+export const SLEEP_MORE = typeof location !== 'undefined' && urlFlags().get('sleepmore') === '1';
 // (round 84: with ?rivers=table, off unless asked for — the atlas's land comes in at its steady state)
 // (round 110: the world's river mode — sim/world-gpu.ts useRivers — so read when asked)
-const SETTLE_ASKED = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('settle');
+const SETTLE_ASKED = typeof location === 'undefined' ? null : urlFlags().get('settle');
 export function settleLand(): boolean {
   return SETTLE_ASKED === null ? riverMode() !== 'table' : SETTLE_ASKED !== '0';
 }
@@ -53,7 +54,7 @@ export function settleLand(): boolean {
  * events: edits, powers, lightning, a fire set, a gust) and the storms raining. ?wakenear=1: as before, the
  * ring round the player awake.
  */
-export const WAKE_NEAR = typeof location !== 'undefined' && new URLSearchParams(location.search).get('wakenear') === '1';
+export const WAKE_NEAR = typeof location !== 'undefined' && urlFlags().get('wakenear') === '1';
 
 /**
  * (round 84 — the user: "we can have a tolerance and decide when we are close enough to steady state to freeze and
@@ -63,7 +64,7 @@ export const WAKE_NEAR = typeof location !== 'undefined' && new URLSearchParams(
  * a river's columns back to the atlas's table. 0: off (a woken chunk sleeps at its time). On by default with
  * ?rivers=table.
  */
-const SETTLE_TOL_ASKED = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('settletol');
+const SETTLE_TOL_ASKED = typeof location === 'undefined' ? null : urlFlags().get('settletol');
 export function settleTol(): number {
   return SETTLE_TOL_ASKED !== null ? Number(SETTLE_TOL_ASKED) : riverMode() === 'table' ? 0.01 : 0;
 }

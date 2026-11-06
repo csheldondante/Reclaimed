@@ -21,9 +21,10 @@ import type { Profiler } from '../gpu/profiler';
 import commonWgsl from '../shaders/common.wgsl?raw';
 import type { Pages } from './pages';
 import materialsWgsl from '../shaders/materials.wgsl?raw';
+import { urlFlags } from '../flags';
 
 /** on by default (round 85, measured: the same state asleep, bit for bit — scripts/culltest.mjs); ?simcull=0 off */
-export const SIM_CULL = typeof location !== 'undefined' && new URLSearchParams(location.search).get('simcull') !== '0';
+export const SIM_CULL = typeof location !== 'undefined' && urlFlags().get('simcull') !== '0';
 
 /** workgroups (8 × 8) a chunk (16 × 16) */
 const WG_PER_CHUNK = (CHUNK / 8) * (CHUNK / 8);

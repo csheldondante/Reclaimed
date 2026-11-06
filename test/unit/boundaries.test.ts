@@ -16,7 +16,7 @@ const RUN = ['opps', 'living', 'gm', 'runplan', 'runsit', 'runplay', 'dialog'];
 /** the engine: the world's systems and their public API (§1-§16); `api` is ruled separately below */
 const ENGINE = ['sim', 'gpu', 'world', 'shaders', 'agents', 'physics', 'solver', 'flow', 'atlas', 'terrain', 'grids', 'render', 'weather', 'traits', 'inhabitants', 'flora', 'structures', 'build', 'tune', 'audio', 'input', 'units'];
 /** what sits on the engine: scenes (the wiring), game rules, the town, the run layer, UI, pages, benches, tests */
-const ABOVE = ['scenes', 'game', 'levels', 'fortress', 'settle', ...RUN, 'story', 'play', 'run', 'ui', 'lab', 'perf', 'noiselab', 'cardlab', 'inspector', 'test', 'main.ts', 'phone-flags.ts', 'phone-flags-boot.ts', 'fresh-start.ts'];
+const ABOVE = ['scenes', 'game', 'levels', 'fortress', 'settle', ...RUN, 'story', 'play', 'run', 'ui', 'lab', 'perf', 'noiselab', 'cardlab', 'inspector', 'test', 'main.ts', 'fresh-start.ts'];
 /** pages that live beside an engine module (a viewer or a bench is a page, not the engine) */
 const PAGES = ['terrain/viewer.ts', 'inhabitants/viewer.ts', 'flora/viewer.ts', 'flora/bench.ts', 'structures/viewer/'];
 

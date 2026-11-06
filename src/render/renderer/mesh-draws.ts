@@ -21,6 +21,7 @@ import { tcPipesMake } from '../renderer/terrain-cache';
 import { drawGrid, gridLive } from '../renderer/grid';
 import { CAM_BYTES, SHADOW_FORMAT, PICK_FORMAT, DEPTH_FORMAT, MESH_FRONT, HYBRID, TILES, GRID_N, type ShadowViews } from '../renderer/defs';
 import { Renderer } from '../renderer';
+import { urlFlags } from '../../flags';
 
 /** the constructor's `if (this.fieldMesh.on) { … }` block, verbatim (`this` is rd) */
 export function buildMeshDraws(rd: Renderer, ctx: { format: GPUTextureFormat; tufts: string; VF: number; drawLayout: GPUBindGroupLayout; riverFoam: string; drawModule: GPUShaderModule; pl: GPUPipelineLayout; depthStencil: (write: boolean) => GPUDepthStencilState; groupFor: (inst: GPUBuffer | GPUBufferBinding, cam?: GPUBuffer, shadow?: ShadowViews) => GPUBindGroup; miVertex: (module: GPUShaderModule) => GPUVertexState; miModule: GPUShaderModule | undefined }): void {
@@ -40,9 +41,9 @@ export function buildMeshDraws(rd: Renderer, ctx: { format: GPUTextureFormat; tu
   );
   // (round 82, ?look=: the terrain's pixel shader cut down, to measure it on a phone — full (default), lookup
   // (the interval's material and the lighting only), flat (grey by the normal: the geometry alone))
-  const look = { full: 0, lookup: 1, flat: 2 }[new URLSearchParams(location.search).get('look') ?? 'full'];
+  const look = { full: 0, lookup: 1, flat: 2 }[urlFlags().get('look') ?? 'full'];
   if (look === undefined) throw new Error('?look= must be full, lookup or flat');
-  const meshModule = makeModule(device, 'mesh-draw', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, meshStateWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`, meshSourceWgsl, meshDrawWgsl]);
+  const meshModule = makeModule(device, 'mesh-draw', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, meshStateWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${urlFlags().get('tufts') !== '0'};`, meshSourceWgsl, meshDrawWgsl]);
   renderPipe(device, {
     label: 'mesh',
     layout: device.createPipelineLayout({ bindGroupLayouts: [meshLayout] }),
@@ -185,7 +186,7 @@ export function buildMeshDraws(rd: Renderer, ctx: { format: GPUTextureFormat; tu
       VF,
       { 3: GPUShaderStage.VERTEX, 5: GPUShaderStage.VERTEX, 11: VF, 31: GPUShaderStage.VERTEX, 32: GPUShaderStage.VERTEX, 33: GPUShaderStage.VERTEX, 34: GPUShaderStage.VERTEX, 35: GPUShaderStage.VERTEX, ...Object.fromEntries([1, 4, 6, 7, 8, 9, 13].map((b) => [b, GPUShaderStage.FRAGMENT])) },
     );
-    const module = makeModule(device, 'rock-mesh', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, meshStateWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`, meshSourceWgsl, meshDrawWgsl, rockMeshWgsl]);
+    const module = makeModule(device, 'rock-mesh', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, meshStateWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${urlFlags().get('tufts') !== '0'};`, meshSourceWgsl, meshDrawWgsl, rockMeshWgsl]);
     const pipe = device.createRenderPipeline({
       label: 'rock-mesh',
       layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
@@ -208,7 +209,7 @@ export function buildMeshDraws(rd: Renderer, ctx: { format: GPUTextureFormat; tu
   };
   // (round 103, ?tiles=1: the tile cache — the mesh's module with tiles.wgsl, the resolve's layout and its own)
   if (TILES) {
-    const tileModule = makeModule(device, 'tiles', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, meshStateWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`, meshSourceWgsl, meshDrawWgsl, coverFieldWgsl, riverHeld(), tilesWgsl]);
+    const tileModule = makeModule(device, 'tiles', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, meshStateWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${urlFlags().get('tufts') !== '0'};`, meshSourceWgsl, meshDrawWgsl, coverFieldWgsl, riverHeld(), tilesWgsl]);
     const drawLayout = makeLayout(
       device,
       'tiles-draw',

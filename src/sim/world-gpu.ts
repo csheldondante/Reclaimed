@@ -15,6 +15,7 @@ import { FRAME_BYTES, MAX_STRUCTS, POOL_VOXELS, PROJ_K } from '../grids/structur
 import { COVER_N } from '../weather/cover';
 import { MAX_PLACES } from '../world/places';
 import { AwakeTiles, SIM_CULL, TileCopy } from './cull';
+import { urlFlags } from '../flags';
 
 export const STATS_COUNT = 16;
 /** exact takes and puts in flight at once (edit.wgsl: the tag in the event's code bits 10-15) */
@@ -31,7 +32,7 @@ const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY
 export type RiverMode = 'sim' | 'hold' | 'table';
 /** the page's ?rivers= (perfopt's ?riverhold=1 is rivers=hold), if given: it overrides every level's own */
 const RIVERS_ASKED: RiverMode | null = (() => {
-  const q = typeof location === 'undefined' ? new URLSearchParams() : new URLSearchParams(location.search);
+  const q = urlFlags();
   const v = q.get('rivers') ?? (q.get('riverhold') === '1' ? 'hold' : null);
   if (v !== null && v !== 'sim' && v !== 'hold' && v !== 'table') throw new Error(`?rivers=${v}: sim, hold or table`);
   return v;
@@ -41,7 +42,7 @@ const RIVERS_ASKED: RiverMode | null = (() => {
 // table's — set by useRivers before its world is made. It was the URL's ?level=atlas: the atlas opened from the title
 // screen ran its rivers unheld, and no other level could hold one.)
 // (until a level sets it — api/atlas-world.ts's games don't: the URL's level=atlas as before)
-let rivers: RiverMode = RIVERS_ASKED ?? (typeof location !== 'undefined' && new URLSearchParams(location.search).get('level') === 'atlas' ? 'table' : 'sim');
+let rivers: RiverMode = RIVERS_ASKED ?? (typeof location !== 'undefined' && urlFlags().get('level') === 'atlas' ? 'table' : 'sim');
 /** how this world's rivers are kept (above). Read when a world's kernels are made: one mode a world. */
 export function riverMode(): RiverMode {
   return rivers;
@@ -56,7 +57,7 @@ export const RIVER_SPEED_EXP = 0.4;
 /** (?rivers=table) ?riverpull=x: a woken river's column is pulled toward the table by x a step (0: the pipes alone;
  *  0.02 by default — the pipes alone empty a reach above a fall down it, and the river upstream past the window
  *  feeds what's woken only by its level's slope, a trickle) */
-const RIVER_PULL_ASKED = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('riverpull');
+const RIVER_PULL_ASKED = typeof location === 'undefined' ? null : urlFlags().get('riverpull');
 export function riverPull(): number {
   return RIVER_PULL_ASKED === null ? (rivers === 'table' ? 0.02 : 0) : Number(RIVER_PULL_ASKED);
 }
@@ -65,7 +66,7 @@ export const RIVER_WET_CELLS = 8;
 /** ?riverwet=x: the rivers' wetness held at x, everywhere (the climate's and each watershed's storms' otherwise:
  *  riverheld.wgsl riverWetAt) */
 export const RIVER_WET = (() => {
-  const v = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('riverwet');
+  const v = typeof location === 'undefined' ? null : urlFlags().get('riverwet');
   return v === null ? -1 : Number(v);
 })();
 
@@ -339,7 +340,7 @@ export class WorldGpu {
     // (round 107, P2.2: a shuffled page table needs the table looked up — the ring computed is the identity's)
     if (!this.ring.identity && PAGE_ADDR !== 'table') throw new Error(`?pageperm= needs ?pages=table (not ${PAGE_ADDR}): the ring's wrap computed only gives the identity's slots`);
     {
-      const b = (typeof location === 'undefined' ? '' : (new URLSearchParams(location.search).get('ringbias') ?? '')).split(',').map(Number);
+      const b = (typeof location === 'undefined' ? '' : (urlFlags().get('ringbias') ?? '')).split(',').map(Number);
       if (b.length === 2 && b.every((v) => Number.isInteger(v))) {
         this.ring.set(b[0], b[1]);
       }

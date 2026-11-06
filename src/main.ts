@@ -1,9 +1,8 @@
 // Boot: WebGPU, shared services, and switching between the menu diorama and
 // the level. Each scene owns its world and is disposed when left.
 
-// (perfopt: the phone's flags into the URL first — the modules below read it as they load; src/phone-flags.ts)
-import './phone-flags-boot';
-
+// (DA-B17: the URL's flags and the phone's set are resolved by src/flags.ts, which every module that reads a flag
+// imports — so it runs before them, in any bundle order)
 import { Ambience } from './audio/ambience';
 import { initGpu, showFatal, UnsupportedError } from './gpu/device';
 import { Profiler } from './gpu/profiler';
@@ -21,6 +20,7 @@ import { pageBenchBoot, pageBenchDevice, pageBenchMode, pageBenchRun, pageBenchS
 import { bootMark } from './perf/boot-marks';
 import { freshStart } from './fresh-start';
 import { benchGpu, benchGpuUp, benchLevel, benchLoadingNote, benchMode, benchSkip, benchStageNote, benchStandalone, benchWatchdog } from './perf/bench';
+import { urlFlags } from './flags';
 
 // A few broad quality tiers (design doc §10), chosen explicitly — no auto-detection heuristics.
 const QUALITY: Record<string, Quality> = {
@@ -31,7 +31,7 @@ const QUALITY: Record<string, Quality> = {
 
 async function main() {
   bootMark('module');
-  const params = new URLSearchParams(location.search);
+  const params = urlFlags();
   // (round 128n: ?fresh=1 — the world's saved stores deleted before anything opens them; src/fresh-start.ts)
   await freshStart(params);
   // (low by default, for phones: round 54; ?q=medium|high on a desktop)

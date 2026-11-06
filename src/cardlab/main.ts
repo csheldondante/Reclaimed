@@ -17,6 +17,7 @@ import { reportLines } from '../opps/dealer';
 import { DeckRun, POLICIES, relicLine, simulate, tournament, worldLine, type CardDef, type LabDeck, type Policy, type SimReport } from '../opps/deck';
 import { generateKingdom, type Kingdom, type LabLibrary } from '../opps/kingdom';
 import { OPP_TUNING } from '../opps/tune';
+import { urlFlags } from '../flags';
 
 const STORE = 'reclaimed.cardlab.deck';
 const TUNE_STORE = 'reclaimed.cardlab.tune';
@@ -42,9 +43,9 @@ try {
 }
 
 let lib = load();
-let seed = Number(new URLSearchParams(location.search).get('seed') ?? 1);
+let seed = Number(urlFlags().get('seed') ?? 1);
 /** (round 124, RN3-1) the kingdom: the world's stacks for this run, drawn from its seed */
-let kseed = Number(new URLSearchParams(location.search).get('kingdom') ?? 1);
+let kseed = Number(urlFlags().get('kingdom') ?? 1);
 let kingdom: Kingdom;
 let deck: LabDeck;
 const makeKingdom = () => {

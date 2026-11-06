@@ -18262,3 +18262,43 @@ The linger existed for the sandbox's pours only (DEVLOG round 83: "a pour lands 
   for its press's whole landing time after the last event. A pour in a chunk that falls asleep mid-flight (woken for
   8 s, longer than any pour) would hold the state one tick apart between the two textures. Snapshots (sim/snapshot.ts)
   keep both textures but not `editCur`: fine at rest, where they agree.
+
+## 2026-11-05 — the phone's flags reach the built page (DA-B17)
+
+Why: found in DA-B7 — the lab's "phone tier" ran without the shadow cache. The coordinator: this is likely the user's
+real phone on GitHub Pages too. It was.
+
+- What happened: since e5ba962 (2026-10-26, round 83, 20 minutes after the user's stable checkpoint `stable-r83-perf`)
+  the phone's set was written into the URL by `phone-flags-boot`, main.ts's first import, and ~140 module-level reads
+  took `location.search` as their modules loaded. The vite dev server evaluates main's imports in order, so dev pages
+  were right. The production build (`npm run build`: GitHub Pages, the lab, scripts/shot.mjs) puts the renderer, the
+  systems and the rest into chunks main imports, which run before main's own code — so every read at module load saw
+  the URL without the set. (Before e5ba962 an inline script in index.html wrote it first.)
+- What the phone ran on Pages (the low tier, measured on a built page, the `town` lab, 412x915): `tufts=0`,
+  `shadowsize=512`, `bandh=2` and the level's `hybrid` applied (read later, in constructors and main); **not applied**:
+  `shadowcache` (0: every caster redrawn into the sun's map every frame), `prepevery` (1: the instance lists every
+  frame), `inplace` (the structure pass — and before DA-B8 the edit brush — copied the whole layers back every tick:
+  60 copies of 26 MB in 60 ticks), `settle` (land arriving woke to settle), `sleepmore` (surface and render fields over
+  sleeping chunks too), and the renderer's own `HYBRID` constant (harmless: its pipelines are made with the tile cache
+  anyway). The same build on the dev server: all applied. So phone measurements taken on Pages since 2026-10-26 were
+  of the desktop simulation path with part of the phone's render set.
+- The tier itself is detected: it is explicit, not guessed — no `q` or `q=low` is the phone's tier (main.ts, flags.ts
+  `isPhoneTier`), so the Pixel 9a's links (with or without `q=low`) were on the low tier; only the module-level flags
+  were lost.
+- Fix: src/flags.ts resolves the flags once — the URL's own plus the tier's set — and every reader takes them from
+  `urlFlags()` (141 reads in 55 files moved; phone-flags.ts and phone-flags-boot.ts folded in and gone). flags.ts
+  imports nothing and every reader imports it, so ES module order runs it first in any bundle; no read depends on the
+  address bar any more (it is still rewritten, for links copied from it).
+- Gates: test/unit/flags.test.ts fails on any `location.search` read outside flags.ts (141 on the old code) and checks
+  the tiers' sets; scripts/flagcheck.mjs on the build — no `q` and `q=low`: shadow cache 4, prepEvery 2, 512² maps,
+  0 whole-layers copies in 60 ticks; `q=high`: no cache, 60 copies. On the old source it fails both low-tier cases
+  (cache 0, prepEvery 1, static map 1², 60 copies), passes on the new.
+- Every check on the build with `q=low` (the lab, hallcheck, the benches) now runs the phone's set, as its name said.
+  The `town` lab with builders working (DA-B8's scenario, 30 sim s at 16x): wall 13.1 → 3.1 s, whole-layers copies
+  1 808 → 0, the same 26 edits and the house built. hallcheck: 0 of 344 lost. The lab's town fixture recaptured
+  (data/lab/town.rclt): its generator hash moved with the import lines in the generator's files; its 102 400 columns
+  are identical to the old capture.
+- Hacks and limits: the flags are fixed at load (as every module-level read was); a page that changes its own URL
+  (the flora and structures viewers) reads its params once, as before. Workers see no query (as before). The rule is
+  "read through flags.ts", not "no reads at load": a module may still compute a constant from `urlFlags()` as it loads,
+  which is safe because flags.ts is its dependency.

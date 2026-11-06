@@ -16,6 +16,7 @@ import { MATERIALS, MatState } from '../world/materials';
 import type { RegionWays } from './ways';
 import type { StampOps } from './stamps';
 import finishW from './finish.wgsl?raw';
+import { urlFlags } from '../flags';
 
 const PARAM_BYTES = 176;
 
@@ -24,7 +25,7 @@ const PARAM_BYTES = 176;
  * the stamps, the cut and the pack on the CPU, uploaded into the pool; settlements planned on the main thread) — to
  * compare. The GPU's way by default.
  */
-export const GPUGEN = typeof location === 'undefined' || new URLSearchParams(location.search).get('gpugen') !== '0';
+export const GPUGEN = typeof location === 'undefined' || urlFlags().get('gpugen') !== '0';
 /** what's outside the window that comes back at most a region (entries), and marks */
 const OUT_CAP = 2048;
 const MARK_CAP = 8192;

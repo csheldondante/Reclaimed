@@ -4,6 +4,7 @@
 // reads a GPU buffer or decodes a packed format itself.
 
 import { ignoreTeardown } from '../gpu/pipeline';
+import { urlFlags } from '../flags';
 
 /**
  * (perfopt, round 83 audit: ?mirror=near) A paged buffer (the layers: 16 MB in the atlas's window, read whole every
@@ -18,7 +19,7 @@ import { ignoreTeardown } from '../gpu/pipeline';
  * any focus a caller keeps fresh: Paged.focus) the layers are as fresh as before; elsewhere up to NEAR_FULL reads old
  * (2 s) — `refresh(true)` reads everything now for a caller that needs far columns as they are.
  */
-const MIRROR_NEAR = typeof location !== 'undefined' && new URLSearchParams(location.search).get('mirror') !== 'full';
+const MIRROR_NEAR = typeof location !== 'undefined' && urlFlags().get('mirror') !== 'full';
 const NEAR_R = 48;
 const NEAR_FULL = 8;
 

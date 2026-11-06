@@ -29,12 +29,13 @@
 
 import { MAT, MATERIALS } from '../world/materials';
 import type { Interval } from '../world/layout';
+import { urlFlags } from '../flags';
 
 /**
  * (round 99) the experiment's switch: `?meshinst=1` (default off until measured) — now the trees' only (round 110: the
  * resting rock's registry is on wherever the rigid rock is, game/integrity.ts)
  */
-export const MESHINST = typeof location !== 'undefined' && new URLSearchParams(location.search).get('meshinst') === '1';
+export const MESHINST = typeof location !== 'undefined' && urlFlags().get('meshinst') === '1';
 
 /** Who owns an instance (a small id; ExternalRegistry.owner). */
 export type OwnerId = number;

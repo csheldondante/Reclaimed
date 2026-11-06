@@ -22,7 +22,8 @@
 // atlas (no growth). TileCache.stats and the tile gate's rows report what it holds (cal*). The floor's search itself is
 // pure (`floorSearch`), unit-tested with the estimator (src/render/tilecalib.test.ts).
 
-const Q = new URLSearchParams(typeof location !== 'undefined' ? location.search : '');
+import { urlFlags } from '../flags';
+const Q = urlFlags();
 const PHONE_UA = typeof navigator !== 'undefined' && /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
 /** the rates the overrides and the priors are said in were frames at this rate */
 const REF_HZ = 60;

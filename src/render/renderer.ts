@@ -46,6 +46,7 @@ import { encode, encodeCeiling } from './renderer/encode';
 import { drawGrid, windowDrawn, windowMoved } from './renderer/grid';
 import { enableBand, enableRockMesh, enableStructures } from './renderer/features';
 import { CAM_BYTES, SHADOW_SIZE, SHADOW_FORMAT, VEG_INSTANCES, INST_GROW, INST_START, INST_GROW_AT, PICK_FORMAT, PickHit, DEPTH_FORMAT, RenderOptions, DETAIL_BITS, SKIP, type ShadowViews } from './renderer/defs';
+import { urlFlags } from '../flags';
 export { SKIP } from './renderer/defs';
 export type { PickHit, RenderOptions } from './renderer/defs';
 import { buildMeshDraws } from './renderer/mesh-draws';
@@ -59,18 +60,18 @@ export class Renderer {
   /** (perfopt) run-time switches for A/B (scripts/drawbench.mjs flips them): prepass — the terrain mesh's depth
    *  first, then its look tested equal, so each pixel's look is shaded once (?prepass=1) */
   static readonly opts = {
-    prepass: new URLSearchParams(location.search).get('prepass') === '1',
+    prepass: urlFlags().get('prepass') === '1',
     /** the mesh drawn to a G-buffer and its look shaded once a pixel in a full-screen pass (meshdraw.wgsl; on by
      *  default, ?defer=0 the forward draw) */
-    defer: new URLSearchParams(location.search).get('defer') !== '0',
+    defer: urlFlags().get('defer') !== '0',
     /** the sun's shadow map drawn every Nth frame (?shadowevery=N; 1 every frame): kept with the light matrix it was
      *  drawn with, so it stays right as the camera moves; drawn again at once after a slide or when the box it covers moves */
     /** the G-buffer pass culls the mesh's faces turned from the eye, the shadow pass those turned from the sun
      *  (?cull=1; fieldmesh.wgsl winds them out of the solid); the G-buffer not while the cutaway is on: it shows the inside */
-    cull: new URLSearchParams(location.search).get('cull') === '1',
+    cull: urlFlags().get('cull') === '1',
     /** the terrain look's pieces left out (?nodetail=strata,water,plants,stains,struct,shadow,warp,fields,specks;
      *  meshdraw.wgsl ND_*): Camera.eye.w bits 2 up, read at run time — to find what the look's cost is */
-    noDetail: (new URLSearchParams(location.search).get('nodetail') ?? '')
+    noDetail: (urlFlags().get('nodetail') ?? '')
       .split(',')
       .filter(Boolean)
       .reduce((m, k) => {
@@ -81,16 +82,16 @@ export class Renderer {
     /** the sun's map's static casters (the terrain mesh, the prisms) drawn every Nth frame into their own map, the
      *  moving ones (plants, structures, bodies) into the sun's map every frame; the lookups read both (DA-B7: no copy
      *  between them) (?shadowcache=N; 0 off) */
-    shadowCache: Number(new URLSearchParams(location.search).get('shadowcache') ?? 0),
+    shadowCache: Number(urlFlags().get('shadowcache') ?? 0),
     /** the terrain drawn into a cached layer every Nth frame (a margin past the screen), copied in each frame moved
      *  by the camera, which is snapped to its pixels (?tcache=N; 0 off; not with the cutaway or the free camera) */
-    tcache: Number(new URLSearchParams(location.search).get('tcache') ?? 0),
+    tcache: Number(urlFlags().get('tcache') ?? 0),
     /** the band's G-buffer draw culls the faces turned from the eye (?bandcull=1) */
-    bandcull: new URLSearchParams(location.search).get('bandcull') === '1',
-    shadowEvery: Number(new URLSearchParams(location.search).get('shadowevery') ?? 1),
+    bandcull: urlFlags().get('bandcull') === '1',
+    shadowEvery: Number(urlFlags().get('shadowevery') ?? 1),
     /** the prisms' and plants' instance lists made every Nth frame (?prepevery=N): a frame's lag on what changed;
      *  made again at once after a slide */
-    prepEvery: Number(new URLSearchParams(location.search).get('prepevery') ?? 1),
+    prepEvery: Number(urlFlags().get('prepevery') ?? 1),
   };
   prep: ComputeKernel;
   prepGroup: GPUBindGroup;
@@ -180,7 +181,7 @@ export class Renderer {
    * (round 117, STR10) the zoom (screen pixels a cell) under which the city's pieces draw their far look: the camera is
    * orthographic, so one zoom says how small every piece is; `?structlod=` to tune (0: always full, 99: always far)
    */
-  structLodZoom = Number(new URLSearchParams(location.search).get('structlod') ?? 7);
+  structLodZoom = Number(urlFlags().get('structlod') ?? 7);
   /** the draw pipelines' layout (render.wgsl's), for draws enabled after construction */
   drawPl!: GPUPipelineLayout;
   /** (round 95, ?rockbody=1) the rigid rock's own mesh (enableRockMesh), its pipeline and group */
@@ -302,7 +303,7 @@ export class Renderer {
   groupFor!: (inst: GPUBuffer | GPUBufferBinding, cam?: GPUBuffer, shadow?: ShadowViews) => GPUBindGroup;
   shadowGroups?: { opaque: GPUBindGroup; tops: GPUBindGroup; plants: GPUBindGroup; struct: GPUBindGroup; bodies: GPUBindGroup; mesh: GPUBindGroup };
   /** ?smooth=0: tops lit flat, a hexagon at a time (the look before G13). */
-  flatTops = new URLSearchParams(location.search).get('smooth') === '0';
+  flatTops = urlFlags().get('smooth') === '0';
   depth?: GPUTexture;
   pickTex?: GPUTexture;
   /** (round 112, ?bgcheck=1 only: the share of the screen showing the background or the far land — bgcheck.ts) */
@@ -454,7 +455,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
     this.clampBGroup = makeBindGroup(device, 'renderprep-clamp', this.clampB.layout, this.prepEntries());
 
     // (perfopt, ?tufts=0: the grass tufts left out — most of the plant boxes, each under a pixel at low)
-    const tufts = `const TUFTS: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`;
+    const tufts = `const TUFTS: bool = ${urlFlags().get('tufts') !== '0'};`;
     // (round 99, ?meshinst=1) the trees as instanced meshes: their instances written by vegprep (binding 10)
     // (round 117, flora: on unless ?flora=0) the flora library's generated species are the plants' meshes
     // (src/flora/library.ts): its kinds in the same renderer, its constants (each species' kinds, colours) for the kernels

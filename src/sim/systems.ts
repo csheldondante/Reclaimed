@@ -39,6 +39,7 @@ import { dispatch, type SimSystem } from './system';
 import { TILES_BINDING as TILES } from './cull';
 import riverHeldWgsl from '../shaders/riverheld.wgsl?raw';
 import { riverMode, riverPull, RIVER_DEPTH_EXP, RIVER_SPEED_EXP, RIVER_WET_CELLS, STATS_COUNT, type WorldGpu } from './world-gpu';
+import { urlFlags } from '../flags';
 
 /** (round 84) riverheld.wgsl with its constants: the atlas's rivers held at their steady state (world-gpu riverFlow) */
 /**
@@ -48,7 +49,7 @@ import { riverMode, riverPull, RIVER_DEPTH_EXP, RIVER_SPEED_EXP, RIVER_WET_CELLS
  * ?riverslow=1: every tick everywhere, as before.
  */
 const RIVER_SLOW_N = (() => {
-  const v = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('riverslow');
+  const v = typeof location === 'undefined' ? null : urlFlags().get('riverslow');
   const n = v === null ? 15 : Number(v);
   if (!(n >= 1 && Number.isInteger(n))) throw new Error(`?riverslow=${v}: ticks between a far river's updates, 1 or more`);
   return n;
@@ -75,9 +76,9 @@ import { BLOW_TAG, EditBusy, OP, editOpOf } from './edit-ops';
  * wind updated only where something painted it lately (sim/windrect.ts), the map's own wind under it refreshed a band
  * an update — all of it every WIND_BANDS updates (?windbands=N).
  */
-const WIND_BOX = typeof location === 'undefined' || new URLSearchParams(location.search).get('windbox') !== '0';
+const WIND_BOX = typeof location === 'undefined' || urlFlags().get('windbox') !== '0';
 const WIND_BANDS = (() => {
-  const v = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('windbands');
+  const v = typeof location === 'undefined' ? null : urlFlags().get('windbands');
   const n = v === null ? 16 : Number(v);
   if (!(n >= 1 && Number.isInteger(n))) throw new Error(`?windbands=${v}: a whole number of bands, 1 or more`);
   return n;
@@ -90,7 +91,7 @@ const WIND_BANDS = (() => {
  * read their neighbours' support: one tick's Gauss-Seidel instead of Jacobi). (DA-B8: the editor's brush is in place
  * on every tier, and runs only while an edit is in flight.)
  */
-export const INPLACE = typeof location !== 'undefined' && new URLSearchParams(location.search).get('inplace') === '1';
+export const INPLACE = typeof location !== 'undefined' && urlFlags().get('inplace') === '1';
 /** a column pass's code and its two layer bindings, in place or not */
 const columnPass = (code: string, world: WorldGpu) =>
   INPLACE ? { code: code.replaceAll('layersIn[', 'layersOut['), in: world.layersNext, out: world.layers } : { code, in: world.layers, out: world.layersNext };
@@ -213,7 +214,7 @@ export class StructureSystem implements SimSystem {
  * becomes the flow the river keeps, and then it's frozen so. ?settleiters=N (0 off).
  */
 const SETTLE_ITERS = (() => {
-  const q = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('settleiters');
+  const q = typeof location === 'undefined' ? null : urlFlags().get('settleiters');
   return q !== null ? Math.max(0, Number(q) | 0) : 0;
 })();
 

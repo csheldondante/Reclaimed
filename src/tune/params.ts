@@ -6,6 +6,7 @@
 import commonWgsl from '../shaders/common.wgsl?raw';
 import { WORLD_G } from '../world/scale';
 import { Registry, type GroupSpec } from './registry';
+import { urlFlags } from '../flags';
 
 const SPEC = {
   world: {
@@ -278,7 +279,7 @@ TUNING.checkWgsl(commonWgsl);
 
 // The page's address: ?tune=<string> (a preset's copyable string), and the older names (?rbgrav=, ?crush=, ?bear=sand:0.1)
 if (typeof location !== 'undefined') {
-  const q = new URLSearchParams(location.search);
+  const q = urlFlags();
   const t = q.get('tune');
   if (t) {
     const unknown = TUNING.apply(TUNING.decode(t), true);

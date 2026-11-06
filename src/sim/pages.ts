@@ -15,6 +15,7 @@
 //   p.toStore(data, per, planes)        // window order to a buffer's (for an upload of a whole per-column array)
 //   p.texToWindow / p.texToStore        // the same for a texture's image (texels `per` floats; half: a texel a 2 x 2)
 
+import { urlFlags } from '../flags';
 /** the per-column buffers (WorldGpu): bytes a column and planes — what a readback of one is put in window order by */
 export const COLUMN_BUFS: Record<string, [stride: number, planes: number]> = {
   surface: [4, 1],
@@ -58,7 +59,7 @@ export const MAX_PAGES = 4096;
 
 /** (P2.2) ?pageperm=<seed>: the places' slots shuffled (the identity test); absent: identity */
 export const PAGE_PERM: number | null = (() => {
-  const v = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('pageperm');
+  const v = typeof location === 'undefined' ? null : urlFlags().get('pageperm');
   if (v === null) return null;
   const n = Number(v);
   if (!Number.isInteger(n)) throw new Error(`?pageperm=${v}: a whole number (the shuffle's seed)`);

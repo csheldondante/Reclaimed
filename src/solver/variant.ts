@@ -15,6 +15,7 @@
 // The judge (what lets go) is picked apart: `?judge=runs|sections` (game/judge.ts JUDGES — the column judge and
 // the method of sections on the GPU, from branch `judge`).
 
+import { urlFlags } from '../flags';
 export type SolverVariant = 'old' | 'nodes' | 'lattice' | 'hybrid';
 export const VARIANTS: readonly SolverVariant[] = ['old', 'nodes', 'lattice', 'hybrid'];
 
@@ -41,7 +42,7 @@ export const ROUTING: Record<SolverVariant, Routing> = {
 export const DEFAULT_SOLVER: SolverVariant = 'lattice';
 
 /** the page's variant: `?solver=` (default lattice) */
-export function solverVariant(params: URLSearchParams = typeof location === 'undefined' ? new URLSearchParams() : new URLSearchParams(location.search)): SolverVariant {
+export function solverVariant(params: URLSearchParams = urlFlags()): SolverVariant {
   const v = params.get('solver') ?? DEFAULT_SOLVER;
   if (!(VARIANTS as readonly string[]).includes(v)) throw new Error(`?solver=${v}: one of ${VARIANTS.join(', ')}`);
   return v as SolverVariant;

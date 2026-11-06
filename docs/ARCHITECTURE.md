@@ -13,6 +13,13 @@ own one and dispose it on exit (WorldGpu.destroy frees every buffer made via
 `buf()`; in-flight readbacks reject with AbortError, swallowed by
 `ignoreTeardown`).
 
+**URL flags** (DA-B17, src/flags.ts): the page's flags are resolved once — the URL's own plus the phone's set on the
+low tier (`LITE_SET`, `SIM_SET`; no `q` or `q=low`, `?phone=0` off, `?lite=1` the render's half on any tier) — and
+every module reads them through `urlFlags()`, never `location.search` (test/unit/flags.test.ts). flags.ts imports
+nothing and is a dependency of each reader, so it runs before them in any bundle order; it also writes the resolved
+set into the address bar, which nothing reads. scripts/flagcheck.mjs checks a built page per tier. A worker's
+`location` has no query: workers read the defaults.
+
 ## Frame
 
 ```
@@ -1095,7 +1102,7 @@ its edge:
   CPU, so those are the quiet ones); the other passes carry it through;
   the mesh and the surface look at it again. Only collapse, powers and
   spells, weather and the player's edits wake the ground's systems.
-  (perfopt, round 83; the low tier's defaults from index.html, `?phone=0`
+  (perfopt, round 83; the low tier's defaults from src/flags.ts, `?phone=0`
   off) `settle=0`: land that comes in doesn't wake to settle — drowsy at
   once; a river come in takes the pipes' steady flux for its levels while
   drowsy (water_flux.wgsl FLUX_SEED), the flux is frozen with its region,
