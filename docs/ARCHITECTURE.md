@@ -610,9 +610,10 @@ its solid, blended over the three nearest centres) and the structures'
 voxels (box distance in their rotated frames, joined by a smooth minimum:
 the fillets). The map is cut into 32-cell chunks of the world, each with
 room for its own vertices and indices and one indexed indirect draw (culled
-to the view on the CPU). Every frame `hashChunks` hashes each chunk's
-columns (heights to 1/16) and the frames over it; changed chunks are
-rebuilt, 8 a frame at most (3 at spacing 0.5), by sampleField, makeVerts
+to the view on the CPU). Every frame `changedChunks` (round 128o, DA-B28) compares each near chunk's key, the newest
+shape version (the chunks' versions: heights to 1/16, materials, the structures over it) under its columns, with the
+one it was built from; changed chunks (and those the CPU marks STALE) are rebuilt, their top and bottom worked out by
+`chunkBounds` first, 8 a frame at most (3 at spacing 0.5), by sampleField, makeVerts
 and makeQuads into a per-slot scratch grid. Samples lie on one lattice over
 the map and each chunk computes the cells one sample past its low edges, so
 the seams close. Built materials (`fieldMat`: solids but rock and trash)
@@ -1144,9 +1145,10 @@ its edge:
   | columns | a slot of its columns changed | the agents' peel (their surfaces) |
   | class | its water crossed a walker's band (WADE_OFF, WADE, DEEP_OFF, DEEP: waterclass.wgsl), or the places were uploaded | the agents' peel (the wet and deep flags, rooms and regions) |
   | depth | its water's depth changed at all | the agents' surfaceWater (nav .w: units wade, drown and put out fire by it) |
-  | (unused) | | |
-  - GPU writers call `bumpChunk(column)` where they changed the columns (climate, edit, landbrush, lava, layerpull,
-    liquid, sediment, structure, townstamp) and `bumpWater(column, before, after)` where they changed the water
+  | shape | a slot's shapekey.wgsl key changed (ends to 1/16, material), or a structure over it was placed or moved (round 128o, DA-B28) | the field mesh (fieldmesh.wgsl changedChunk), also over the band's and the rock mesh's own tables (sim/chunkver.ts VersionedTable) |
+  - GPU writers call `bumpColumn(column, old, new)` for each slot they change (climate, edit, landbrush, lava,
+    layerpull, liquid, sediment, structure, townstamp; colapply's store with shapeMoved): the columns word, and the
+    shape word when the key changed (shapekey.wgsl, the one quantization). They also call `bumpWater(column, before, after)` where they changed the water
     (water_depth with its held rivers, climate, edit, lava, liquid, placeop). bumpWater moves the depth word if the
     depth moved and the class word only if it crossed a band. A band crossing is the only way the peel's hysteresis
     classes (agents.wgsl navCost) can change, so the class word is exact for them: evaporation and a held river

@@ -129,16 +129,15 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (!changed) { return; }
   // a spent top goes
   if (ivZ1(arr[n - 1u]) - ivZ0(arr[n - 1u]) <= 1e-4) { n -= 1u; arr[n] = IV_NONE; }
-  // (round 128o, DA-B9: a slot written only if it changed; the chunk's version bumped if any did — chunkver.wgsl)
-  var moved = false;
+  // (round 128o, DA-B9: a slot written only if it changed, and the chunk's versions moved for it — chunkver.wgsl bumpColumn)
   for (var k = 0u; k < cs.y; k++) {
     let nv = select(IV_NONE, arr[k], k < n);
-    if (any(layers[cs.x + k] != nv)) {
+    let old = layers[cs.x + k];
+    if (any(old != nv)) {
       layers[cs.x + k] = nv;
-      moved = true;
+      bumpColumn(id.xy, old, nv);
     }
   }
-  if (moved) { bumpChunk(id.xy); }
   // (DA-B26: the water's version too, where it moved)
   bumpWater(id.xy, water[i], wd);
   water[i] = wd;

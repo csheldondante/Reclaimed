@@ -79,11 +79,13 @@ fn colBase(x: u32, y: u32) -> vec4<u32> {
   return vec4<u32>(ch.x + ((y % cs) * cs + (x % cs)) * ch.y, ch.y, x, y);
 }
 
-/** (round 128o, DA-B9) column (b.z, b.w)'s chunk changed: its version to this apply's stamp (chunkver.wgsl's layout) */
-fn bumpOf(b: vec4<u32>) {
+/** (round 128o, DA-B9) column (b.z, b.w)'s chunk changed: its columns' version to this apply's stamp, and (DA-B28,
+ *  `shaped`: a slot's shapekey.wgsl key changed) its shape's (chunkver.wgsl's layout and bumpColumn's rule) */
+fn bumpOf(b: vec4<u32>, shaped: bool) {
   let cs = P.chunkSize;
-  let v = chunks[(b.w / cs) * P.chunksX + b.z / cs].x / (cs * cs);
-  chunks[P.chunksX * (P.mapH / cs) + 2u * v].x = P.stamp;
+  let at = P.chunksX * (P.mapH / cs) + 2u * (chunks[(b.w / cs) * P.chunksX + b.z / cs].x / (cs * cs));
+  chunks[at].x = P.stamp;
+  if (shaped) { chunks[at + 1u].y = P.stamp; }
 }
 
 fn z0Of(v: vec4<u32>) -> f32 { return bitcast<f32>(v.x); }
@@ -130,15 +132,18 @@ fn store(b: vec4<u32>, a: ptr<function, array<vec4<u32>, MAX_IV>>, n0: u32) {
     n = k;
   }
   var moved = false;
+  var shaped = false;
   for (var s = 0u; s < k; s++) {
     var v = vec4<u32>(0u);
     if (s < n) { v = vec4<u32>((*a)[s].xyz, 0u); }
-    if (any(slots[b.x + s] != v)) {
+    let old = slots[b.x + s];
+    if (any(old != v)) {
       slots[b.x + s] = v;
       moved = true;
+      shaped = shaped || shapeMoved(old, v);
     }
   }
-  if (moved) { bumpOf(b); }
+  if (moved) { bumpOf(b, shaped); }
 }
 
 /** `a` (n intervals) sorted by z0, stable (insertion) */

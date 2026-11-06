@@ -66,6 +66,9 @@ export class Structures {
   constructor(
     private device: GPUDevice,
     private world: WorldGpu,
+    /** (round 128o, DA-B28) a frame written: the world rects (x0, y0, x1, y1) it covered and covers — what the field
+     *  mesh reads there changed (WorldCore: their chunks' shape versions) */
+    private written: (rects: [number, number, number, number][]) => void = () => {},
   ) {}
 
   /**
@@ -141,7 +144,9 @@ export class Structures {
     const b: [number, number, number, number] = [Math.min(...c.map((p) => p[0])) - 1, Math.min(...c.map((p) => p[1])) - 1, Math.max(...c.map((p) => p[0])) + 1, Math.max(...c.map((p) => p[1])) + 1];
     fv.set(b, 12);
     // (round 104, simscale: the projection runs over the chunks under the structures — grids/systems.ts)
+    const was = this.world.strBounds.get(s.slot);
     this.world.strBounds.set(s.slot, b);
     this.device.queue.writeBuffer(this.world.strFrames, s.slot * FRAME_BYTES, f);
+    this.written(was ? [was, b] : [b]);
   }
 }

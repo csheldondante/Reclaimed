@@ -22,8 +22,8 @@
 //
 // The map is meshed in square chunks of the world (meshregion.wgsl), each
 // with room for its own vertices and indices and drawn by its own indexed
-// indirect draw. Every frame hashChunks hashes each chunk's columns (and the
-// structure frames over it); a chunk whose hash changed is rebuilt, a few per
+// indirect draw. Every frame changedChunks compares each near chunk's key (round 128o: its shape versions, the
+// columns at 1/16 and the structures over them) with the one it was built from; a changed one is rebuilt, a few per
 // frame (MR.k.y slots), by three passes over its samples: sampleField (the
 // field at every sample), makeVerts (a vertex per sample cell the surface
 // crosses, at the mean of its edge crossings, with the field's gradient for
@@ -45,8 +45,8 @@
 @group(0) @binding(8) var<storage, read_write> indices: array<u32>;
 // [0] chunks found changed this frame, [1..15] the first MR.k.y of them; then
 // per chunk (from CHUNK0, CSTRIDE each): [0..4] its drawIndexedIndirect args
-// (index count, 1, first index, base vertex, 0), [5] the hash it was built
-// from, [6] the hash it will be, [7] vertices so far, [8] its top (f32 bits),
+// (index count, 1, first index, base vertex, 0), [5] the key it was built
+// from, [6] the key it will be (round 128o: shape versions + 1; STALE forced, FRESH none), [7] vertices so far, [8] its top (f32 bits),
 // [9] 1 when it ran out of room, [13] (round 93, the pool) RELEASE, STARVED, [12] (round 81) its lowest boundary over the bedrock's top (f32 bits: the
 // top of the solid joined to the bedrock, the least of its columns' — the samples under it, less 3, are
 // solid without the field); after the chunks, one word each: 1 when it's
@@ -202,12 +202,15 @@ fn capI(r: u32) -> u32 {
 }
 
 // ---- change detection -------------------------------------------------------
+// (round 128o, DA-B28) From the chunks' versions (chunkver.wgsl, after the source's chunk table in binding 1): a mesh
+// chunk's key is the newest shape version (shapekey.wgsl: its slots' ends to 1/16, their materials, the structures
+// over them) among the sim chunks under its columns and their two-cell margin, + 1 (never 0). It's rebuilt when that
+// key isn't the one it was built from (word 5): no column is read to find out. (Before: hashChunks walked every near
+// chunk's columns each frame, 6.3 ms a frame on the Pixel 9a.) The CPU forces a rebuild by writing STALE to word 5
+// (setCaves, setWanted's neighbours), FRESH when a chunk has nothing built.
 
-var<workgroup> wgHash: atomic<u32>;
-var<workgroup> wgTop: atomic<u32>;
-var<workgroup> wgBot: atomic<u32>;
-
-fn mixHash(h: u32, v: u32) -> u32 { return (h ^ v) * 16777619u; }
+/** word 5 written by the CPU: rebuild it, keep drawing what's built (not a key: keys are versions + 1) */
+const STALE: u32 = 0xfffffffeu;
 
 /** A chunk's world rectangle. */
 fn chunkRect(c: u32) -> vec4<f32> {
@@ -218,116 +221,59 @@ fn chunkRect(c: u32) -> vec4<f32> {
   return vec4<f32>(cx * s.x, cy * s.y, (cx + 1.0) * s.x, (cy + 1.0) * s.y);
 }
 
-/** a chunk with nothing built (new, or come in fresh with a slide): its built hash */
-// (FRESH: meshstate.wgsl)
-
-// (round 73) two passes a frame: the chunks with nothing built claim the rebuild slots first — a
-// strip that slid in fresh mustn't wait behind chunks whose leaf litter moved a sixteenth
-@compute @workgroup_size(64)
-fn hashFresh(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) li: u32) { hashChunk(wid.x, li, true); }
-@compute @workgroup_size(64)
-fn hashChunks(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) li: u32) { hashChunk(wid.x, li, false); }
-
-fn hashChunk(c: u32, li: u32, freshOnly: bool) {
-  if (li == 0u) {
-    atomicStore(&wgHash, 0u);
-    atomicStore(&wgTop, 0u);
-    atomicStore(&wgBot, bitcast<u32>(1e9));
-  }
-  workgroupBarrier();
-  // the columns whose fields reach its samples (two cells of margin)
+/** the columns whose fields reach chunk c's samples (two cells of margin): i0, j0, i1, j1 */
+fn chunkCols(c: u32) -> vec4<i32> {
   let rc = chunkRect(c);
   let j0 = max(i32(floor((rc.y - 2.0) / ROW_H)) - 1, 0);
   let j1 = min(i32(ceil((rc.w + 2.0) / ROW_H)) + 1, i32(G.mapH) - 1);
   let i0 = max(i32(floor(rc.x - 2.0)) - 1, 0);
   let i1 = min(i32(ceil(rc.z + 2.0)) + 1, i32(G.mapW) - 1);
-  let w = u32(max(i1 - i0 + 1, 0));
-  // (out of view: not looked at; its hash stays old, so it's rebuilt once it's in view)
-  let b0 = cbase(c);
-  let built = atomicLoad(&state[b0 + 5u]);
+  return vec4<i32>(i0, j0, i1, j1);
+}
+
+/** chunk c's key: the newest shape version under its columns, + 1 */
+fn chunkKey(c: u32) -> u32 {
+  let r = chunkCols(c);
+  let cs = G.chunkSize;
+  let base = G.chunksX * (G.mapH / cs);
+  var m = 0u;
+  for (var y = u32(r.y) / cs; y <= u32(r.w) / cs; y++) {
+    for (var x = u32(r.x) / cs; x <= u32(r.z) / cs; x++) {
+      let v = chunks[y * G.chunksX + x].x / (cs * cs);
+      m = max(m, chunks[base + 2u * v + 1u].y);
+    }
+  }
+  return m + 1u;
+}
+
+// (FRESH: meshstate.wgsl)
+
+// (round 73) two passes a frame: the chunks with nothing built claim the rebuild slots first; a
+// strip that slid in fresh mustn't wait behind chunks whose leaf litter moved a sixteenth
+@compute @workgroup_size(64)
+fn changedFresh(@builtin(global_invocation_id) id: vec3<u32>) { changedChunk(id.x, true); }
+@compute @workgroup_size(64)
+fn changedChunks(@builtin(global_invocation_id) id: vec3<u32>) { changedChunk(id.x, false); }
+
+fn changedChunk(c: u32, freshOnly: bool) {
+  if (c >= MR.n.x * MR.n.y) { return; }
+  let b = cbase(c);
+  let built = atomicLoad(&state[b + 5u]);
   // (this frame's first pass took it already; the second only takes the rest)
-  let taken = atomicLoad(&state[b0 + 11u]) == atomicLoad(&state[15]);
-  // (round 80: the window's mesh — MR.zb.w 1 — leaves a chunk whose columns all sleep: they can't have changed;
-  // the phone's frame had this pass near its top. Fresh ones are built anyway; one just fallen asleep is looked at.)
-  // (and only a chunk that was near the view already — one just come near is looked at once: it may have
-  // changed out of sight before it fell asleep)
+  let taken = atomicLoad(&state[b + 11u]) == atomicLoad(&state[15]);
+  // (out of view: not looked at; its key stays old, so it's rebuilt once it's in view)
   let nearW = atomicLoad(&state[CHUNK0 + MR.n.x * MR.n.y * CSTRIDE + c]);
-  // (round 86: marked urgent by the CPU — URGENT_BIT in its near word: always looked at, any slot)
+  // (round 86: marked urgent by the CPU, URGENT_BIT in its near word: any slot)
   let urgent = (nearW & URGENT_BIT) != 0u;
   let nearV = nearW & ~UNMESHED_BIT;
-  var still = false;
-  // (round 82: nor one owed a rebuild — found changed when every slot was taken: word 6 its new hash, not yet
-  // built. Before, it fell asleep owed, past its drowsy quarter second, and stayed stale until it left the view.)
-  let owed = atomicLoad(&state[b0 + 6u]) != built;
-  if (MR.zb.w > 0.5 && nearV == 1u && built != FRESH && built != 0u && !owed) {
-    still = true;
-    // (round 82: every sim chunk under the columns it hashes — its margin too: 9 points in its rect missed the
-    // neighbours left and above, and a change there left it stale)
-    let cs = G.chunkSize;
-    for (var y = u32(j0) / cs; y <= u32(j1) / cs; y++) {
-      for (var x = u32(i0) / cs; x <= u32(i1) / cs; x++) {
-        let q = vec2<u32>(x * cs, y * cs);
-        if (!asleep(q) || drowsy(q)) { still = false; }
-      }
-    }
-  }
-  let vis = nearV != 0u && !taken && !still && (!freshOnly || built == FRESH || built == 0u);
-  let n = select(0u, w * u32(max(j1 - j0 + 1, 0)), vis);
-  var sum = 0u;
-  var top = 0.0;
-  for (var t = li; t < n; t += 64u) {
-    let q = vec2<i32>(i0 + i32(t % w), j0 + i32(t / w));
-    let cs = colSlots(u32(q.x), u32(q.y));
-    // (where it is in the world, not the window: what a slide moved still hashes the same)
-    var h = 2166136261u ^ (bitcast<u32>(q.x + i32(G.org.z)) * 73856093u) ^ (bitcast<u32>(q.y + i32(G.org.w)) * 19349663u);
-    // (the top of the solid joined to the bedrock, as colDist sees it: field materials, touching runs one —
-    // perfopt: in the same walk as the hash, the column's intervals read once)
-    var hb = MR.zb.y;
-    var hbOpen = true;
-    for (var i = 0u; i < cs.y; i++) {
-      let v = layers[cs.x + i];
-      if (ivEmpty(v)) { break; }
-      // (heights to a sixteenth of a cell: sediment creeping by less than
-      // that doesn't rebuild the chunk; the mesh catches up when it adds up)
-      h = mixHash(mixHash(mixHash(h, u32(ivZ0(v) * 16.0 + 0.5)), u32(ivZ1(v) * 16.0 + 0.5)), v.z & 0xffu);
-      top = max(top, ivZ1(v));
-      if (hbOpen && fieldMat(ivMat(v))) {
-        if (ivZ0(v) - hb > 1e-3) { hbOpen = false; } else { hb = max(hb, ivZ1(v)); }
-      }
-    }
-    atomicMin(&wgBot, bitcast<u32>(max(hb - MR.zb.y, 0.0)));
-    sum += h;
-  }
-  atomicAdd(&wgHash, sum);
-  atomicMax(&wgTop, bitcast<u32>(top));
-  workgroupBarrier();
-  if (li != 0u || !vis) { return; }
-  var h = atomicLoad(&wgHash);
-  // (round 117: and which chunks round it the mesh doesn't draw — its faces toward them close the caves: a neighbour
-  // turning grid or voxels rebuilds it)
-  for (var k = 0; k < 9; k++) {
-    let ncx = i32(c % MR.n.x) + (k % 3) - 1;
-    let ncy = i32(c / MR.n.x) + (k / 3) - 1;
-    if (ncx < 0 || ncy < 0 || ncx >= i32(MR.n.x) || ncy >= i32(MR.n.y)) { continue; }
-    let nw = atomicLoad(&state[CHUNK0 + MR.n.x * MR.n.y * CSTRIDE + u32(ncy) * MR.n.x + u32(ncx)]);
-    if ((nw & UNMESHED_BIT) != 0u) { h = mixHash(h, u32(k) + 101u); }
-  }
-  // and the structures over it (placed, moved) — and none skipped under them (a buried one's faces are the field's)
-  var bot = atomicLoad(&wgBot);
-  for (var s = 0u; s < MAX_STRUCTS; s++) {
-    let f = frames[s];
-    if (f.d.x == 0u || f.b.z < rc.x - 2.0 || f.b.x > rc.z + 2.0 || f.b.w < rc.y - 2.0 || f.b.y > rc.w + 2.0) { continue; }
-    bot = 0u;
-    h = mixHash(h, s + 1u);
-    for (var k = 0u; k < 4u; k++) { h = mixHash(mixHash(h, bitcast<u32>(f.a[k])), bitcast<u32>(f.q[k])); }
-  }
-  let b = cbase(c);
-  if (h == atomicLoad(&state[b + 5u])) {
+  if (nearV == 0u || taken || (freshOnly && built != FRESH && built != 0u)) { return; }
+  let h = chunkKey(c);
+  if (h == built) {
     // (changed back before it was rebuilt: owed nothing)
     atomicStore(&state[b + 6u], h);
     return;
   }
-  // (round 86: the slots past MR.pr.x are the urgent chunks'; the rest take turns at the first MR.pr.x — counted in
+  // (round 86: the slots past MR.pr.x are the urgent chunks'; the rest take turns at the first MR.pr.x, counted in
   // the args' spare word, argsBase() + 3, zeroed by the CPU each frame)
   if (!urgent && atomicAdd(&state[argsBase() + 3u], 1u) >= MR.pr.x) {
     atomicStore(&state[b + 6u], h);
@@ -335,7 +281,7 @@ fn hashChunk(c: u32, li: u32, freshOnly: bool) {
   }
   let at = atomicAdd(&state[0], 1u);
   if (at >= MR.k.y) {
-    // (no slot: owed — looked at again, asleep or not, until it has one)
+    // (no slot: owed, looked at again until it has one)
     atomicStore(&state[b + 6u], h);
     return;
   }
@@ -345,8 +291,6 @@ fn hashChunk(c: u32, li: u32, freshOnly: bool) {
   // (its range is made again where it is now: no translation)
   let ob = offBase() + rangeOf(c) * 4u;
   for (var k = 0u; k < 3u; k++) { atomicStore(&state[ob + k], 0u); }
-  atomicStore(&state[b + 8u], atomicLoad(&wgTop));
-  atomicStore(&state[b + 12u], bot);
   // (round 93, the page pool: what it needs is counted again; not starved till it is)
   if (meshPool()) {
     let rb = rtBase(rangeOf(c));
@@ -357,6 +301,61 @@ fn hashChunk(c: u32, li: u32, freshOnly: bool) {
   atomicStore(&state[b], 0u);
   atomicStore(&state[b + 7u], 0u);
   atomicStore(&state[b + 9u], 0u);
+}
+
+var<workgroup> wgTop: atomic<u32>;
+var<workgroup> wgBot: atomic<u32>;
+
+/**
+ * (round 128o, DA-B28) A rebuilt chunk's top (word 8) and its lowest boundary over the bedrock (word 12), from its
+ * columns: a workgroup a rebuild slot, only the slots taken this frame (what hashChunk worked out for every near chunk
+ * every frame, now for the rebuilt ones). The top of the solid joined to the bedrock is as colDist sees it: field
+ * materials, touching runs one; none skipped under a structure (a buried one's faces are the field's).
+ */
+@compute @workgroup_size(64)
+fn chunkBounds(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+  if (li == 0u) {
+    atomicStore(&wgTop, 0u);
+    atomicStore(&wgBot, bitcast<u32>(1e9));
+  }
+  workgroupBarrier();
+  let slot = wid.x;
+  let on = slot < min(atomicLoad(&state[0]), MR.k.y);
+  var c = 0u;
+  if (on) { c = atomicLoad(&state[1u + slot]); }
+  let r = chunkCols(c);
+  let w = u32(max(r.z - r.x + 1, 0));
+  let n = select(0u, w * u32(max(r.w - r.y + 1, 0)), on);
+  var top = 0.0;
+  for (var t = li; t < n; t += 64u) {
+    let q = vec2<i32>(r.x + i32(t % w), r.y + i32(t / w));
+    let cs = colSlots(u32(q.x), u32(q.y));
+    var hb = MR.zb.y;
+    var hbOpen = true;
+    for (var i = 0u; i < cs.y; i++) {
+      let v = layers[cs.x + i];
+      if (ivEmpty(v)) { break; }
+      top = max(top, ivZ1(v));
+      if (hbOpen && fieldMat(ivMat(v))) {
+        if (ivZ0(v) - hb > 1e-3) { hbOpen = false; } else { hb = max(hb, ivZ1(v)); }
+      }
+    }
+    atomicMin(&wgBot, bitcast<u32>(max(hb - MR.zb.y, 0.0)));
+  }
+  atomicMax(&wgTop, bitcast<u32>(top));
+  workgroupBarrier();
+  if (li != 0u || !on) { return; }
+  var bot = atomicLoad(&wgBot);
+  let rc = chunkRect(c);
+  for (var s = 0u; s < MAX_STRUCTS; s++) {
+    let f = frames[s];
+    if (f.d.x == 0u || f.b.z < rc.x - 2.0 || f.b.x > rc.z + 2.0 || f.b.w < rc.y - 2.0 || f.b.y > rc.w + 2.0) { continue; }
+    bot = 0u;
+    break;
+  }
+  let b = cbase(c);
+  atomicStore(&state[b + 8u], atomicLoad(&wgTop));
+  atomicStore(&state[b + 12u], bot);
 }
 
 // ---- a chunk's samples --------------------------------------------------------
@@ -668,7 +667,7 @@ fn quadsAt(j: Job) -> Quads {
 fn makeQuads(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) li: u32, @builtin(workgroup_id) wid: vec3<u32>) {
   let j = job(id, li);
   let l = j.l;
-  // (the chunk is built from the hash it was found with — before the idle return: the first sample's workgroup may be idle)
+  // (the chunk is built from the key it was found with — before the idle return: the first sample's workgroup may be idle)
   // (round 93: unless it found no pages — then it's owed, and made again when the pool has room)
   if (j.ok && all(l == vec3<u32>(1u)) && (atomicLoad(&state[cbase(j.c) + 13u]) & STARVED) == 0u) { atomicStore(&state[cbase(j.c) + 5u], atomicLoad(&state[cbase(j.c) + 6u])); }
   if (idleBlock(wid)) { return; }
@@ -833,7 +832,7 @@ fn allocQuads(@builtin(local_invocation_index) li: u32) {
 
 // ---- a slide (round 73: the streamed window moved, fieldmesh.ts shift) ----------
 // What's built moves with the land instead of being built again: chunk c takes
-// the record of the chunk the land came from (SH.d chunks along), so its hash
+// the record of the chunk the land came from (SH.d chunks along), so its key
 // (the world's) still matches and its range (word 10) still holds its mesh;
 // every range's translation gains the slide; the chunks the land came into
 // fresh take the ranges the leaving ones held (the chunks go round), empty

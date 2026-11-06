@@ -682,16 +682,19 @@ fn setBasalt(x: u32, y: u32, z: f32, dz: f32, ch: u32) {
     var z1 = ivZ1(v) + dz;
     if (r < n) { z1 = min(z1, ivZ0(layers[cs.x + r])); }
     layers[cs.x + r - 1u] = ivPack(ivZ0(v), z1, MAT_BASALT_Q, ivAux(v));
-    // (round 128o, DA-B9: the column changed - its chunk's version, chunkver.wgsl)
-    bumpChunk(vec2<u32>(x, y));
+    // (round 128o, DA-B9: the column changed - its chunk's versions, chunkver.wgsl bumpColumn)
+    bumpColumn(vec2<u32>(x, y), v, layers[cs.x + r - 1u]);
     return;
   }
   if (n >= cs.y) { atomicAdd(&act[ch * 4u + 3u], u32(dz * 1e6)); return; }
+  // (the slots it moves, as they were: compared after - chunkver.wgsl bumpColumn)
+  var before: array<vec4<u32>, MAX_K>;
+  for (var s = r; s <= n; s++) { before[s] = layers[cs.x + s]; }
   for (var s = n; s > r; s--) { layers[cs.x + s] = layers[cs.x + s - 1u]; }
   var z1 = z + dz;
   if (r < n) { z1 = min(z1, ivZ0(layers[cs.x + r + 1u])); }
   layers[cs.x + r] = ivPack(z, z1, MAT_BASALT_Q, 0u);
-  bumpChunk(vec2<u32>(x, y));
+  for (var s = r; s <= n; s++) { bumpColumn(vec2<u32>(x, y), before[s], layers[cs.x + s]); }
 }
 
 /** Lava: each run cools (thin fastest), boils the water over it, and below its setting point turns to basalt. */

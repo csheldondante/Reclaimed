@@ -11,7 +11,8 @@ import { tinyMap } from '../support/tinymap';
 import { MAT } from '../../src/world/materials';
 import { CHUNK, type Interval } from '../../src/world/layout';
 import { cellPos } from '../../src/world/lattice';
-import { depthVersionIndex, versionIndex, waterVersionIndex } from '../../src/sim/chunkver';
+import shapekeyWgsl from '../../src/shaders/shapekey.wgsl?raw';
+import { depthVersionIndex, shapeVersionIndex, versionIndex, waterVersionIndex } from '../../src/sim/chunkver';
 import { attachSim } from '../../src/api/world';
 import { EventKind } from '../../src/sim/globals';
 import { LavaSystem } from '../../src/sim/lava';
@@ -31,11 +32,11 @@ const H = 64;
 
 /** the versions now, by window chunk: its columns', or (DA-B26) its class's (the water's class, the places) or its
  *  water depth's */
-async function versions(w: TinyWorld, word: 'columns' | 'class' | 'depth' = 'columns'): Promise<(ci: number) => number> {
+async function versions(w: TinyWorld, word: 'columns' | 'class' | 'depth' | 'shape' = 'columns'): Promise<(ci: number) => number> {
   const raw = new Uint32Array((await w.core.readBuffer('chunks')).buffer);
   const p = w.core.packed;
   const base = p.chunkTable.length;
-  const at = word === 'class' ? waterVersionIndex : word === 'depth' ? depthVersionIndex : versionIndex;
+  const at = word === 'class' ? waterVersionIndex : word === 'depth' ? depthVersionIndex : word === 'shape' ? shapeVersionIndex : versionIndex;
   return (ci) => raw[base + at(p, ci)];
 }
 /** window chunk of column (x, y) */
@@ -45,7 +46,7 @@ const chunkAt = (w: TinyWorld, wx: number, wy: number) => chunkOf(w, Math.floor(
 
 /** a writer's check: `act` changes the columns round (x, y) (window columns); after `ticks` of `systems`, that chunk's
  *  version is past where it was and the far corner's (0, 3 chunks over) isn't */
-async function bumps(map: ReturnType<typeof tinyMap>, systems: string[], x: number, y: number, act: (w: TinyWorld) => void | Promise<void>, ticks = 4, warm = 6): Promise<{ before: number; after: number; far: [number, number]; tick: number }> {
+async function bumps(map: ReturnType<typeof tinyMap>, systems: string[], x: number, y: number, act: (w: TinyWorld) => void | Promise<void>, ticks = 4, warm = 6): Promise<{ before: number; after: number; far: [number, number]; tick: number; shape: [number, number] }> {
   const w = await tinyWorld(g, map, systems);
   try {
     await w.step(warm);
@@ -54,11 +55,13 @@ async function bumps(map: ReturnType<typeof tinyMap>, systems: string[], x: numb
     const far = chunkOf(w, W - 2, H - 2);
     const before = v0(ci);
     const farBefore = v0(far);
+    const s0 = (await versions(w, 'shape'))(ci);
     await act(w);
     await w.step(ticks);
     const v1 = await versions(w);
+    const s1 = (await versions(w, 'shape'))(ci);
     expect(g.takeErrors()).toEqual([]);
-    return { before, after: v1(ci), far: [farBefore, v1(far)], tick: w.core.sim.tick };
+    return { before, after: v1(ci), far: [farBefore, v1(far)], tick: w.core.sim.tick, shape: [s0, s1] };
   } finally {
     w.destroy();
   }
@@ -70,6 +73,8 @@ describe('every writer of the columns moves its chunks\' versions', () => {
   it('a column apply (claims, stamps: colapply.wgsl)', async () => {
     const r = await bumps(tinyMap(W, H, 32, stone), [], 10, 10, (w) => w.core.stampColumns([{ cuts: [], claim: [{ x: 10, y: 10, z0: 10, z1: 14, aux: MAT.Rubble }] }]), 1);
     expect(r.after).toBeGreaterThan(r.before);
+    // (DA-B28: a change the mesh sees — its shape version too)
+    expect(r.shape[1]).toBeGreaterThan(r.shape[0]);
     expect(r.far[1]).toBe(r.far[0]);
   });
 
@@ -79,6 +84,8 @@ describe('every writer of the columns moves its chunks\' versions', () => {
       t.dig(...cellPos(12, 12), { radius: 2, layers: 2 });
     });
     expect(r.after).toBeGreaterThan(r.before);
+    // (DA-B28: a change the mesh sees — its shape version too)
+    expect(r.shape[1]).toBeGreaterThan(r.shape[0]);
     expect(r.far[1]).toBe(r.far[0]);
   });
 
@@ -89,6 +96,8 @@ describe('every writer of the columns moves its chunks\' versions', () => {
       w.core.globals.events.push({ kind: EventKind.Lightning, x, y, radius: 6, strength: 40 });
     }, 2);
     expect(r.after).toBeGreaterThan(r.before);
+    // (DA-B28: a change the mesh sees — its shape version too)
+    expect(r.shape[1]).toBeGreaterThan(r.shape[0]);
     expect(r.far[1]).toBe(r.far[0]);
   });
 
@@ -96,6 +105,8 @@ describe('every writer of the columns moves its chunks\' versions', () => {
     const map = tinyMap(W, H, 40, (x, y) => (x === 20 && y === 20 ? [{ z0: 0, z1: 10, mat: MAT.Stone }, { z0: 10, z1: 30, mat: MAT.Sand }] : stone()));
     const r = await bumps(map, ['surface', 'sediment'], 20, 20, () => {}, 40, 0);
     expect(r.after).toBeGreaterThan(r.before);
+    // (DA-B28: a change the mesh sees — its shape version too)
+    expect(r.shape[1]).toBeGreaterThan(r.shape[0]);
     expect(r.far[1]).toBe(r.far[0]);
   });
 
@@ -105,6 +116,8 @@ describe('every writer of the columns moves its chunks\' versions', () => {
       w.core.globals.climate = { temp: 30, lapse: 0 };
     }, 200, 0);
     expect(r.after).toBeGreaterThan(r.before);
+    // (DA-B28: a change the mesh sees — its shape version too)
+    expect(r.shape[1]).toBeGreaterThan(r.shape[0]);
     expect(r.far[1]).toBe(r.far[0]);
   });
 
@@ -116,6 +129,8 @@ describe('every writer of the columns moves its chunks\' versions', () => {
       s.end();
     }, 60);
     expect(r.after).toBeGreaterThan(r.before);
+    // (DA-B28: a change the mesh sees — its shape version too)
+    expect(r.shape[1]).toBeGreaterThan(r.shape[0]);
     expect(r.far[1]).toBe(r.far[0]);
   });
 
@@ -126,6 +141,8 @@ describe('every writer of the columns moves its chunks\' versions', () => {
       s.end();
     }, 30);
     expect(r.after).toBeGreaterThan(r.before);
+    // (DA-B28: a change the mesh sees — its shape version too)
+    expect(r.shape[1]).toBeGreaterThan(r.shape[0]);
     expect(r.far[1]).toBe(r.far[0]);
   });
 
@@ -137,6 +154,8 @@ describe('every writer of the columns moves its chunks\' versions', () => {
       town.add(cell, 0);
     }, 6);
     expect(r.after).toBeGreaterThan(r.before);
+    // (DA-B28: a change the mesh sees — its shape version too)
+    expect(r.shape[1]).toBeGreaterThan(r.shape[0]);
   });
 
   it("the lava pass (a volcano's cone rises: lava.wgsl)", async () => {
@@ -153,10 +172,12 @@ describe('every writer of the columns moves its chunks\' versions', () => {
       const v0 = await versions(w);
       const ci = chunkOf(w, 40, 20);
       const far = chunkOf(w, W - 2, H - 2);
+      const s0 = (await versions(w, 'shape'))(ci);
       lava.addVent(...cellPos(40, 20), 30, 9, 1.6, 10, 2);
       await step(60);
       const v1 = await versions(w);
       expect(v1(ci)).toBeGreaterThan(v0(ci));
+      expect((await versions(w, 'shape'))(ci)).toBeGreaterThan(s0);
       expect(v1(far)).toBe(v0(far));
       expect(g.takeErrors()).toEqual([]);
     } finally {
@@ -179,6 +200,7 @@ describe('every writer of the columns moves its chunks\' versions', () => {
       const ci = chunkOf(w, 20, 44);
       const far = chunkOf(w, W - 2, 2);
       const [x, y] = cellPos(20, 44);
+      const s0 = (await versions(w, 'shape'))(ci);
       kit.lava.addSpring(x, y, 11, 2);
       await step(60);
       kit.lava.springs.length = 0;
@@ -189,6 +211,13 @@ describe('every writer of the columns moves its chunks\' versions', () => {
       }
       expect(moved).toBe(true);
       expect((await versions(w))(far)).toBe(v0(far));
+      // (DA-B28: the basalt grown a sixteenth: its shape version)
+      let shaped = false;
+      for (let k = 0; k < 20 && !shaped; k++) {
+        shaped = (await versions(w, 'shape'))(ci) > s0;
+        if (!shaped) await step(60);
+      }
+      expect(shaped).toBe(true);
       expect(g.takeErrors()).toEqual([]);
     } finally {
       w.destroy();
@@ -341,6 +370,75 @@ describe("(DA-B26) every writer of the water moves its chunks' water versions", 
       const v1 = await versions(w, 'depth');
       expect(v1(ci)).toBeGreaterThan(v0(ci));
       expect(v1(far)).toBe(v0(far));
+      expect(g.takeErrors()).toEqual([]);
+    } finally {
+      w.destroy();
+    }
+  });
+});
+
+describe("(DA-B28) the shape version: what the field mesh sees", () => {
+  it("shapekey.wgsl: a sixteenth or a material moves the key; less doesn't", async () => {
+    const pairs: [number, number, number, number, number, number][] = [
+      // (z0, z1, mat) before, after; expected moved
+      [10, 14, 39, 10, 14.01, 39],
+      [10, 14, 39, 10, 14.07, 39],
+      [10, 14, 39, 10, 14, 40],
+      [10, 14, 39, 10.02, 14.02, 39],
+      [10, 14, 39, 0, 0, 0],
+    ];
+    const want = [0, 1, 1, 0, 1];
+    const n = pairs.length;
+    const inp = new Uint32Array(n * 8);
+    const f = new Float32Array(inp.buffer);
+    pairs.forEach((q, i) => {
+      f[i * 8] = q[0];
+      f[i * 8 + 1] = q[1];
+      inp[i * 8 + 2] = q[2];
+      f[i * 8 + 4] = q[3];
+      f[i * 8 + 5] = q[4];
+      inp[i * 8 + 6] = q[5];
+    });
+    const dev = g.device;
+    const src = dev.createBuffer({ size: inp.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    dev.queue.writeBuffer(src, 0, inp);
+    const out = dev.createBuffer({ size: n * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+    const code = [
+      shapekeyWgsl,
+      '@group(0) @binding(0) var<storage, read> io: array<vec4<u32>>;',
+      '@group(0) @binding(1) var<storage, read_write> res: array<u32>;',
+      `@compute @workgroup_size(1) fn main(@builtin(global_invocation_id) id: vec3<u32>) { if (id.x < ${n}u) { res[id.x] = select(0u, 1u, shapeMoved(io[id.x * 2u], io[id.x * 2u + 1u])); } }`,
+    ].join('\n');
+    const pipe = dev.createComputePipeline({ layout: 'auto', compute: { module: dev.createShaderModule({ code }), entryPoint: 'main' } });
+    const bg = dev.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: src } }, { binding: 1, resource: { buffer: out } }] });
+    const enc = dev.createCommandEncoder();
+    const pass = enc.beginComputePass();
+    pass.setPipeline(pipe);
+    pass.setBindGroup(0, bg);
+    pass.dispatchWorkgroups(n);
+    pass.end();
+    dev.queue.submit([enc.finish()]);
+    expect([...new Uint32Array(await g.read(out, n * 4))]).toEqual(want);
+    expect(g.takeErrors()).toEqual([]);
+  });
+
+  it("a structure placed moves it under the structure, not its columns' version", async () => {
+    const w = await tinyWorld(g, tinyMap(W, H, 32, stone), []);
+    try {
+      await w.step(2);
+      const ci = chunkAt(w, 40, 40 * 0.8660254);
+      const far = chunkOf(w, 2, 2);
+      const c0 = await versions(w);
+      const s0 = await versions(w, 'shape');
+      const model = { id: 't', size: [2, 2, 2] as [number, number, number], vox: new Uint8Array(8).fill(MAT.Stone) };
+      const s = w.core.structures.add(model as never, [40, 40 * 0.8660254, 10], [0, 0, 0, 1]);
+      if (!s) throw new Error('no structure');
+      const s1 = await versions(w, 'shape');
+      const c1 = await versions(w);
+      expect(s1(ci)).toBe(w.core.sim.tick);
+      expect(s1(ci)).toBeGreaterThan(s0(ci));
+      expect(c1(ci)).toBe(c0(ci));
+      expect(s1(far)).toBe(s0(far));
       expect(g.takeErrors()).toEqual([]);
     } finally {
       w.destroy();
