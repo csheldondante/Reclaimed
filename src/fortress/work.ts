@@ -6,12 +6,10 @@ import type { Good, Goods } from '../api/contracts/fortress';
 import type { Block } from '../build/town';
 
 // (round 128d: no level cap — a key per block that doesn't pack the level into a few bits)
+import type { Load } from '../town/jobs';
+
 const key = (b: Block) => `${b.cell}:${b.level}`;
 
-export interface Load {
-  good: Good;
-  amount: number;
-}
 
 export class BuildBook {
   /** per block in the works: what's been worked in */

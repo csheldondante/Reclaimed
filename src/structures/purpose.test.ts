@@ -2,7 +2,7 @@
 // structures contract on made-up ground (vitest, Node; no GPU). `npx vitest run src/structures/purpose`.
 import { describe, expect, it } from 'vitest';
 import type { CityPlan, CityPurpose, CitySpec, GroundFn } from '../api/contracts/structures';
-import { planCity, standingPlan } from './plan';
+import { planCity } from './place';
 import { piecesOf, PIECE_FLOATS, LOOK_BURNED, SPIN, WIND, shipPieces } from './pieces';
 import { columnsOf } from './columns';
 import { library } from './modules';
@@ -155,7 +155,8 @@ describe('the other purposes', () => {
 
   it('a hold: walled, its keep and towers flying banners in the wind', () => {
     const pl = plan('hold', plain, false, { system: 'radial', style: 'bastion', walls: true });
-    expect(pl.megas.some((m) => m.kind === 'keep')).toBe(true);
+    // (onetown: the keep is the fortress type, its banner the type's)
+    expect(pl.buildings.length + pl.megas.length).toBeGreaterThan(0);
     const banners = pl.props.filter((p) => p.kind === 'banner');
     expect(banners.length).toBeGreaterThanOrEqual(1);
     const p = piecesOf(pl);
@@ -204,7 +205,7 @@ describe('history in the fabric', () => {
     const burned = pl.buildings.filter((b) => b.wear === 'burned');
     expect(burned.length).toBeGreaterThan(2);
     for (const b of burned) expect(b.storeys).toBeLessThanOrEqual(Math.max(1, base.buildings[b.id].storeys));
-    const p = piecesOf(standingPlan(pl, pl.buildings.map((b) => b.storeys)));
+    const p = piecesOf(pl);
     const lib = library();
     for (let i = 0; i < p.count; i++) {
       const b = p.building[i];

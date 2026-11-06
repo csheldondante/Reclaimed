@@ -1,4 +1,8 @@
-// The planner: a CitySpec and the ground → a CityPlan (tiles, buildings, occupancy spans, façades, landmarks, nav).
+// The town generator: a CitySpec and the ground → what the town is and where (a draft: tiles, buildings, landmarks,
+// the purpose's works), then placed into the town's one plan (build/plan.ts) through the plan's API, as the player
+// builds (round 128m, onetown; the user: "Generation needs to use the same system as the built town" — "It can do
+// things to add plazas and roads but it should not be a different system"). The draft is the generator's working state,
+// never kept: what the town is afterwards is its plan, and what's drawn is the plan's view (build/view.ts).
 // Pure and deterministic (same spec + ground → same plan) so it can run anywhere — a worker, Node's tests, the viewer —
 // and be stored as just its spec (towns grow as stored progress, round 110: the plan is re-made, the progress kept).
 //
@@ -6,16 +10,14 @@
 // tiles, ~100 KB), made once when its land arrives, and its hard parts are sequential (WFC's propagation, growing
 // buildings tile by tile). What is large or per-frame — drawing its pieces, stamping its columns — is on the GPU.
 // Measured: data/perf/structures-*.json (plan ms per city size).
-import type { BuildingKind, BuildingRec, CityPlan, CitySpec, DensityFn, Facade, FacadeKind, GroundFn, MegaFeature, Span, TileMesh, TileUse, V2, V3 } from '../api/contracts/structures';
+import type { Berth, BuildingKind, BuildingRec, CityPlan, CitySpec, DensityFn, GroundFn, LinearFeature, MegaFeature, Prop, TileMesh, V2 } from '../api/contracts/structures';
 import { tileSystem } from './tiles/systems';
-import { farmland, mergeTiles } from './tiles/farmland';
+import { farmPlots } from './tiles/farmland';
 import { adjacency, quadArea, quadCentre, quadCorners } from './tiles/builder';
 import { fbm, hashf, rng } from './rng';
-import { solve, type WfcProblem } from './wfc';
-import { bakeNav } from './nav';
 import { styleOf } from './styles';
 import { routes, resample } from './linear';
-import { dressing, purposeBuildings, purposeWorks, type PurposeCtx } from './purpose';
+import { purposeBuildings, purposeWorks, type PurposeCtx } from './purpose';
 
 export const STOREY_H = 3;
 /** a rampart's height over the ground (m) */
@@ -44,38 +46,76 @@ export function defaultDensity(spec: CitySpec): DensityFn {
   };
 }
 
-export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn, densityIn?: DensityFn): CityPlan {
+/**
+ * What the generator decided, before it's placed (placeDraft): the tiles (the town's one grid, out to its extent), the
+ * buildings and their tiles' storeys, the landmarks, the purpose's works, the layout's features. Its working state —
+ * nothing reads it after placing but settle/plan.ts, which chooses what each building is for (its type) first.
+ */
+export interface CityDraft {
+  spec: CitySpec;
+  tiles: TileMesh;
+  /** per vertex the ground under it */
+  gz: Float64Array;
+  adj: Int32Array;
+  buildings: BuildingRec[];
+  quadBuilding: Int32Array;
+  /** per tile its storeys (its building's, a tile now and then a storey up or down) */
+  quadStoreys: Int32Array;
+  megas: MegaFeature[];
+  linear: LinearFeature[];
+  works: { at: V2; dir: V2 } | null;
+  berths: Berth[];
+  props: Prop[];
+  placed: { id: string; building: number }[];
+  /** the build order (building ids, the old core first) */
+  order: number[];
+  /** the farmland's first block (a tile's block at or past it is a farm plot's); the plots hedged round */
+  farmBlock0: number;
+  hedged: Set<number>;
+  stats: Record<string, number>;
+}
+
+/**
+ * The generator's decisions (round 128m, onetown: the planner's first half): the tiles — out to the extent (the land
+ * the town is built on, its farmland, and where the player builds round it; at least the radius and the farmland's
+ * edge) —, which are streets, plazas, lots, the wall; the buildings and their storeys; the landmarks and the works.
+ */
+export function draftCity(spec: CitySpec, ground: GroundFn, water?: GroundFn, densityIn?: DensityFn, extent?: number, clip?: [number, number, number, number]): CityDraft {
   const t0 = performance.now();
   const dens = densityIn ?? defaultDensity(spec);
-  const core = tileSystem({ spec, ground });
+  const E = Math.max(extent ?? 0, spec.radius, spec.farmland ?? 0);
+  // (onetown) the tiles in the town's box only (`clip`: x0, y0, x1, y1): every cell of its grid has its columns
+  const tiles = clip ? clipTiles(tileSystem({ spec, ground, extent: E }), clip) : tileSystem({ spec, ground, extent: E });
   // roads out first: the farmland's farmsteads gather along them
   const linear = routes(spec, ground, water, spec.walls === true && spec.system !== 'radial');
   let farmBlock0 = Infinity;
-  let tiles = core;
+  const hedged = new Set<number>();
   if ((spec.farmland ?? 0) > spec.radius) {
     let b0 = 0;
-    for (let q = 0; q < core.use.length; q++) b0 = Math.max(b0, core.block[q] + 1);
+    for (let q = 0; q < tiles.use.length; q++) b0 = Math.max(b0, tiles.block[q] + 1);
     farmBlock0 = b0 + 1;
     const roadPts: V2[] = [];
     for (const f of linear) if (f.kind === 'road') for (const s of resample(f, 8)) roadPts.push([s.p[0], s.p[1]]);
-    const farm = farmland({ spec, ground, density: dens, rIn: spec.radius, rOut: spec.farmland!, roads: roadPts, block0: farmBlock0 });
-    tiles = mergeTiles(core, farm.mesh);
-    // the plots' fences and hedges: linear features round them (posts every ~3 m on the ground; under water, none)
-    for (const f of farm.fences) {
-      const pts: V3[] = [];
-      for (let k = 0; k < f.pts.length; k++) {
-        const a = f.pts[k];
-        const b = f.pts[(k + 1) % f.pts.length];
-        const n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 3));
-        for (let j = 0; j < n; j++) {
-          const x = a[0] + ((b[0] - a[0]) * j) / n;
-          const y = a[1] + ((b[1] - a[1]) * j) / n;
-          pts.push([x, y, ground(x, y)]);
-        }
+    // (onetown) the plots over the one grid: the outside tiles whose middles lie in a plot are its cells (a farmstead's
+    // are lots for its farmhouse and barn); the plots' edges follow the tiles (the user accepted it)
+    const plots = farmPlots({ spec, ground, density: dens, rIn: spec.radius, rOut: spec.farmland!, roads: roadPts, block0: farmBlock0 });
+    for (const pl of plots) {
+      if (pl.hedge) hedged.add(pl.block);
+      let lx = Infinity;
+      let ly = Infinity;
+      let hx = -Infinity;
+      let hy = -Infinity;
+      for (const [x, y] of pl.poly) (lx = Math.min(lx, x)), (ly = Math.min(ly, y)), (hx = Math.max(hx, x)), (hy = Math.max(hy, y));
+      for (let q = 0; q < tiles.use.length; q++) {
+        if (tiles.use[q] !== 'outside') continue;
+        const [x, y] = quadCentre(tiles, q);
+        if (x < lx || x > hx || y < ly || y > hy || !inPoly(pl.poly, x, y)) continue;
+        // (in a river or the sea, or kept out — a quarry, its spoil —: left to the ground)
+        if (water && water(x, y) > 0.3) continue;
+        if ((spec.keepOut ?? []).some((k) => Math.hypot(x - k.at[0], y - k.at[1]) < k.r)) continue;
+        tiles.use[q] = pl.use === 'farmstead' ? 'lot' : pl.use;
+        tiles.block[q] = pl.block;
       }
-      if (water && pts.some((p) => water(p[0], p[1]) > 0.3)) continue;
-      if ((spec.keepOut ?? []).some((k) => pts.some((p) => Math.hypot(p[0] - k.at[0], p[1] - k.at[1]) < k.r))) continue;
-      linear.push({ kind: f.hedge ? 'hedge' : 'fence', points: pts, ground: pts.map((p) => p[2]), width: f.hedge ? 0.7 : 0.18, closed: true });
     }
   }
   const isFarm = (q: number) => tiles.block[q] >= farmBlock0;
@@ -392,193 +432,53 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn, den
   // ---- (round 120) the purpose's works: piers, ships, a lighthouse, a headframe and rails, a windmill, the props
   const { berths, props } = purposeWorks(pctx, works, megas, linear);
 
-  // ---- spans (the occupancy truth): foundations, storeys, ramparts
-  const spans: Span[] = [];
-  const roofRise: number[] = [];
-  for (const b of buildings) {
-    let edge = 0;
-    let ne = 0;
-    for (const q of b.quads) {
-      const p = quadCorners(tiles, q);
-      for (let k = 0; k < 4; k++) {
-        edge += Math.hypot(p[(k + 1) % 4][0] - p[k][0], p[(k + 1) % 4][1] - p[k][1]);
-        ne++;
-      }
-    }
-    // (thatch steep, a barn's broad roof a little less)
-    roofRise.push((edge / ne) * (b.kind === 'house' ? style.pitch : b.kind === 'hut' ? 1.35 : b.kind === 'barn' ? 1.0 : 1.1));
-    for (const q of b.quads) {
-      const [lo] = quadG(q);
-      if (b.base > lo) spans.push({ quad: q, z0: lo - 0.5, z1: b.base, kind: 'foundation', building: b.id });
-      spans.push({ quad: q, z0: b.base, z1: quadTop[q], kind: b.mega === 'tower' ? 'tower' : 'room', building: b.id });
-    }
-  }
-  for (let q = 0; q < nq; q++)
-    if (tiles.use[q] === 'wall' || tiles.use[q] === 'gate') {
-      const [lo, hi] = quadG(q);
-      spans.push({ quad: q, z0: lo - 0.5, z1: hi + WALL_H, kind: 'rampart', building: -1 });
-      quadTop[q] = hi + WALL_H;
-    }
-
-  // ---- façades: which wall each storey of each side shows (WFC per building)
-  const facades = facadesOf(tiles, adj, buildings, quadBuilding, quadStoreys, spec.seed, gz);
-  // ---- (round 120) the dressing: street lamps, torches, banners; every light's pool
-  const lights = dressing(pctx, facades, megas, props, berths);
+  void quadTop;
   const t2 = performance.now();
-  const plan: CityPlan = {
+  return {
     spec,
     tiles,
-    ground: gz,
-    spans,
+    gz,
+    adj,
     buildings,
-    facades,
     quadBuilding,
-    quadTop,
-    roofRise,
-    order: buildOrder(buildings, tiles, spec),
+    quadStoreys,
     megas,
-    ...(placed.length ? { placed } : {}),
     linear,
     works,
     berths,
     props,
-    lights,
-    nav: { nodes: [], links: [] },
-    stats: {},
+    placed,
+    order: buildOrder(buildings, tiles, spec),
+    farmBlock0,
+    hedged,
+    stats: { tiles: nq, buildings: buildings.length, props: props.length, berths: berths.length, piers: linear.filter((f) => f.kind === 'pier').length, tilesMs: +(t1 - t0).toFixed(2), planMs: +(t2 - t1).toFixed(2) },
   };
-  plan.nav = bakeNav(plan, adj);
-  const t3 = performance.now();
-  plan.stats = {
-    tiles: nq,
-    buildings: buildings.length,
-    facades: facades.length,
-    navNodes: plan.nav.nodes.length,
-    navLinks: plan.nav.links.length,
-    props: props.length,
-    lights: lights.length,
-    berths: berths.length,
-    piers: linear.filter((f) => f.kind === 'pier').length,
-    tilesMs: +(t1 - t0).toFixed(2),
-    planMs: +(t2 - t1).toFixed(2),
-    navMs: +(t3 - t2).toFixed(2),
-  };
-  return plan;
 }
 
-// ------------------------------------------------------------------ façades
-
-const KINDS: FacadeKind[] = ['blank', 'window', 'window2', 'door', 'shop', 'balcony'];
-const BLANK = 0;
-const WINDOW = 1;
-const WINDOW2 = 2;
-const DOOR = 3;
-const SHOP = 4;
-const BALCONY = 5;
-const bits = (...t: number[]) => t.reduce((m, k) => m | (1 << k), 0);
-
-/** what may stand above each kind (blank always may: the rules can always be met) */
-const ABOVE = new Uint32Array([
-  bits(BLANK, WINDOW), // blank
-  bits(BLANK, WINDOW, BALCONY), // window
-  bits(BLANK, WINDOW2), // window2
-  bits(BLANK, WINDOW, WINDOW2, BALCONY), // door
-  bits(BLANK, WINDOW, WINDOW2, BALCONY), // shop
-  bits(BLANK, WINDOW, BALCONY), // balcony
-]);
-/** side by side round a corner or along a wall: no two doors, no two balconies */
-const BESIDE = new Uint32Array(KINDS.map((_, a) => bits(...KINDS.map((__, b) => b).filter((b) => !((a === DOOR && b === DOOR) || (a === BALCONY && b === BALCONY))))));
-
-function facadesOf(tiles: TileMesh, adj: Int32Array, buildings: BuildingRec[], quadBuilding: Int32Array, quadStoreys: Int32Array, seed: number, gz: Float64Array): Facade[] {
-  const out: Facade[] = [];
-  for (const b of buildings) {
-    if (b.mega || quadBuilding[b.quads[0]] !== b.id) continue;
-    const nodes: Facade[] = [];
-    const len: number[] = [];
-    const street: boolean[] = [];
-    const yard: boolean[] = [];
-    /** in the earth: the ground at the wall stands over most of the storey (blank, no door: a house dug into a hill) */
-    const buried: boolean[] = [];
-    for (const q of b.quads) {
-      const p = quadCorners(tiles, q);
-      for (let s = 0; s < 4; s++) {
-        const n = adj[q * 4 + s];
-        const L = Math.hypot(p[(s + 1) % 4][0] - p[s][0], p[(s + 1) % 4][1] - p[s][1]);
-        for (let l = 0; l < quadStoreys[q]; l++) {
-          const z0 = b.base + l * b.storeyH;
-          const z1 = z0 + b.storeyH;
-          // hidden where a neighbour's storeys cover this one (its own building's, or one leaning on it)
-          if (n >= 0 && quadBuilding[n] >= 0) {
-            const nb = buildings[quadBuilding[n]];
-            const top = nb.base + quadStoreys[n] * nb.storeyH;
-            if (nb.base <= z0 + 0.01 && top >= z1 - 0.01) continue;
-          }
-          nodes.push({ quad: q, side: s, level: l, z0, z1, kind: 'blank', building: b.id });
-          len.push(L);
-          street.push(n >= 0 && (tiles.use[n] === 'street' || tiles.use[n] === 'plaza'));
-          yard.push(n >= 0 && tiles.use[n] === 'yard');
-          const g = (gz[tiles.quads[q * 4 + s]] + gz[tiles.quads[q * 4 + ((s + 1) % 4)]]) / 2;
-          buried.push(g > z0 + b.storeyH * 0.6);
-        }
-      }
+/** a tile mesh less the tiles with a corner outside x0..x1, y0..y1 (the rest renumbered in order) */
+function clipTiles(t: TileMesh, [x0, y0, x1, y1]: [number, number, number, number]): TileMesh {
+  const keep: number[] = [];
+  for (let q = 0; q < t.use.length; q++) {
+    let inside = true;
+    for (let k = 0; k < 4 && inside; k++) {
+      const v = t.quads[q * 4 + k];
+      const x = t.verts[v * 2];
+      const y = t.verts[v * 2 + 1];
+      inside = x >= x0 && y >= y0 && x <= x1 && y <= y1;
     }
-    if (!nodes.length) continue;
-    const T = KINDS.length;
-    const domain = new Uint32Array(nodes.length);
-    const weight = new Float64Array(nodes.length * T);
-    // the front door: the longest street-facing ground wall (else the longest ground wall)
-    let front = -1;
-    nodes.forEach((f, i) => {
-      if (f.level !== 0 || buried[i]) return;
-      // (long enough for a door first, then facing the street, then the longest)
-      const sc = (k: number) => (len[k] >= 1.8 ? 1000 : 0) + (street[k] ? 100 : yard[k] ? 50 : 0) + len[k];
-      const score = sc(i);
-      const was = front < 0 ? -1 : sc(front);
-      if (score > was) front = i;
-    });
-    nodes.forEach((f, i) => {
-      const L = len[i];
-      let d = f.level === 0 ? bits(BLANK, WINDOW, WINDOW2, DOOR, SHOP) : bits(BLANK, WINDOW, WINDOW2, BALCONY);
-      // (a hut's, a farmhouse's, a barn's: no shops, no balconies, one window a wall)
-      if (b.kind !== 'house') d &= ~bits(SHOP, BALCONY, WINDOW2);
-      if (L < 1.8 || buried[i]) d = bits(BLANK);
-      else if (L < 3.2) d &= ~bits(WINDOW2, SHOP);
-      if (i === front) d = bits(DOOR);
-      domain[i] = d;
-      const w = weight.subarray(i * T, i * T + T);
-      // (blank walls read as warehouses and backs: rare up the house, a little commoner low down and on narrow walls)
-      w[BLANK] = f.level === 0 ? 0.3 : L < 2.6 ? 0.25 : 0.08;
-      w[WINDOW] = L < 3.2 ? 2 : 0.8;
-      w[WINDOW2] = 2.2;
-      w[DOOR] = street[i] ? 0.35 : 0.05;
-      w[SHOP] = street[i] ? 0.9 : 0;
-      w[BALCONY] = street[i] ? 0.7 : 0.35;
-    });
-    if (front >= 0) weight[front * T + DOOR] = 1;
-    const edges: [number, number, number][] = [];
-    const key = (q: number, s: number, l: number) => `${q},${s},${l}`;
-    const at = new Map(nodes.map((f, i) => [key(f.quad, f.side, f.level), i]));
-    nodes.forEach((f, i) => {
-      const up = at.get(key(f.quad, f.side, f.level + 1));
-      if (up !== undefined) edges.push([i, up, 0]);
-    });
-    // beside: walls of one storey sharing a corner vertex
-    const byVert = new Map<string, number[]>();
-    nodes.forEach((f, i) => {
-      for (const k of [f.side, (f.side + 1) % 4]) {
-        const v = tiles.quads[f.quad * 4 + k];
-        const kk = `${v},${f.level}`;
-        (byVert.get(kk) ?? byVert.set(kk, []).get(kk)!).push(i);
-      }
-    });
-    for (const list of byVert.values()) for (let a = 0; a < list.length; a++) for (let c = a + 1; c < list.length; c++) edges.push([list[a], list[c], 1]);
-    const prob: WfcProblem = { tiles: T, domain, weight, edges, allow: [ABOVE, BESIDE] };
-    const sol = solve(prob, seed * 977 + b.id);
-    nodes.forEach((f, i) => {
-      f.kind = KINDS[sol[i]];
-      out.push(f);
-    });
+    if (inside) keep.push(q);
   }
-  return out;
+  const quads = new Uint32Array(keep.length * 4);
+  keep.forEach((q, i) => quads.set(t.quads.subarray(q * 4, q * 4 + 4), i * 4));
+  return { verts: t.verts, quads, use: keep.map((q) => t.use[q]), block: Int32Array.from(keep, (q) => t.block[q]) };
+}
+
+/** is (x, y) inside a polygon (any winding) */
+function inPoly(p: V2[], x: number, y: number): boolean {
+  let c = false;
+  for (let i = 0, j = p.length - 1; i < p.length; j = i++)
+    if (p[i][1] > y !== p[j][1] > y && x < ((p[j][0] - p[i][0]) * (y - p[i][1])) / (p[j][1] - p[i][1]) + p[i][0]) c = !c;
+  return c;
 }
 
 /** the tiles' corners as points, for the viewer's outlines */
@@ -596,82 +496,6 @@ function buildOrder(buildings: BuildingRec[], tiles: TileMesh, spec: CitySpec): 
   return buildings.map((b) => b.id).sort((a, b) => score[a] - score[b]);
 }
 
-/**
- * One building of a plan on its own (the viewer's building view): the others taken away, its façades and roofs worked
- * out again as if it stood alone — the walls its neighbours hid are shown, its roofs no longer lean on theirs.
- */
-export function isolate(plan: CityPlan, id: number): CityPlan {
-  const b = plan.buildings[id];
-  const keep = new Map<number, number>([[id, Math.round((Math.max(...b.quads.map((q) => plan.quadTop[q])) - b.base) / b.storeyH)]]);
-  return { ...subset(plan, keep), megas: [] };
-}
-
-/**
- * The town as built so far (round 110: "towns should visibly grow but slowly … we store progress"; BACKLOG ST18/STR16):
- * the plan's buildings in its build order (`plan.order`, the old core first), the first `progress` share of them
- * standing, the next one a site — its lower storeys up, no roof yet. Stored progress is just this number.
- */
-export function grown(plan: CityPlan, progress: number): CityPlan {
-  if (progress >= 1) return plan;
-  const n = plan.order.length;
-  const done = Math.floor(Math.max(0, progress) * n);
-  const keep = new Map<number, number>();
-  for (let i = 0; i < done; i++) keep.set(plan.order[i], Infinity);
-  const site = plan.order[done];
-  if (site !== undefined) {
-    const b = plan.buildings[site];
-    const frac = Math.max(0, progress) * n - done;
-    const st = Math.floor(frac * b.storeys);
-    if (st > 0 && !b.mega) keep.set(site, -st);
-  }
-  return subset(plan, keep);
-}
-
-/**
- * A plan with only these buildings (id → storeys to keep: Infinity all, a negative −k: k storeys and no roof — a site);
- * the façades worked out again for what stands (walls a missing neighbour hid are shown).
- */
-/**
- * The town as it stands: per building its storeys up (0: not yet; fewer than its own: a site, no roof yet) — stored
- * progress building by building (a settlement in play raises its sites storey by storey).
- */
-export function standingPlan(plan: CityPlan, storeys: ArrayLike<number>): CityPlan {
-  const keep = new Map<number, number>();
-  for (const b of plan.buildings) {
-    const n = storeys[b.id];
-    if (n <= 0) continue;
-    keep.set(b.id, n >= b.storeys ? Infinity : -n);
-  }
-  return subset(plan, keep);
-}
-
-function subset(plan: CityPlan, keep: Map<number, number>): CityPlan {
-  const nq = plan.tiles.use.length;
-  const quadBuilding = new Int32Array(nq).fill(-1);
-  const quadTop = new Float64Array(nq).fill(NaN);
-  const quadStoreys = new Int32Array(nq);
-  const sites = new Set<number>();
-  for (const [id, k] of keep) {
-    const b = plan.buildings[id];
-    if (k < 0) sites.add(id);
-    for (const q of b.quads) {
-      const full = Math.round((plan.quadTop[q] - b.base) / b.storeyH);
-      const st = k < 0 ? Math.min(full, -k) : full;
-      quadBuilding[q] = id;
-      quadStoreys[q] = st;
-      quadTop[q] = b.base + st * b.storeyH;
-    }
-  }
-  // (ramparts stay: they're the town's from the start)
-  for (let q = 0; q < nq; q++) if (plan.tiles.use[q] === 'wall' || plan.tiles.use[q] === 'gate') quadTop[q] = plan.quadTop[q];
-  const adj = adjacency(plan.tiles);
-  const facades = facadesOf(plan.tiles, adj, plan.buildings, quadBuilding, quadStoreys, plan.spec.seed, plan.ground);
-  const tiles = { ...plan.tiles, use: plan.tiles.use.map((u, q): TileUse => (u === 'lot' && quadBuilding[q] < 0 ? 'yard' : u)) };
-  // (the free-standing ones — a keep, a lighthouse, a headframe, a windmill — stand from the start, as the ramparts do)
-  const megas = plan.megas.filter((m) => m.kind === 'fountain' || m.quads.length === 0 || m.quads.some((q) => quadBuilding[q] >= 0));
-  return { ...plan, tiles, quadBuilding, quadTop, facades, megas, sites, spans: plan.spans.filter((s) => s.building < 0 || keep.has(s.building)) };
-}
-
 /** Move a plan's frame by (dx, dy) world units, in place (a host whose world slides under it: the window's). */
 export function shiftPlan(plan: CityPlan, dx: number, dy: number): void {
   const v = plan.tiles.verts;
@@ -686,4 +510,9 @@ export function shiftPlan(plan: CityPlan, dx: number, dy: number): void {
   }
   for (const m of plan.megas) for (const p of m.frame) (p[0] -= dx), (p[1] -= dy);
   for (const f of plan.linear) for (const p of f.points) (p[0] -= dx), (p[1] -= dy);
+  // (onetown: the layout's things too — a plan's view is made in its box's frame)
+  for (const p of plan.props) (p.at[0] -= dx), (p.at[1] -= dy);
+  for (const b of plan.berths) (b.at[0] -= dx), (b.at[1] -= dy);
+  for (const l of plan.lights) (l.at[0] -= dx), (l.at[1] -= dy);
+  if (plan.works) plan.works = { at: [plan.works.at[0] - dx, plan.works.at[1] - dy], dir: plan.works.dir };
 }

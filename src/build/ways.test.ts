@@ -2,13 +2,14 @@
 // probably want roads and squares between structures and the stairs up onto the walls"): every door joins one road
 // net, gates carry it through the wall, each wall run has a stair, the nav graph reaches the wall-walk — and the solid
 // the GPU field walks (solid.ts claims) climbs the stair onto the wall's top, which it can't without one.
+import { fortressOn } from '../fortress/testing';
 import { describe, expect, it } from 'vitest';
-import { LEVEL_H } from '../build/town';
+import { LEVEL_H } from './town';
 import { navPath } from '../structures/nav';
 import { library } from '../structures/modules';
 import { nbr as hexNbr } from '../world/lattice';
-import { Fortress } from './fortress';
-import { fortressPieces } from './pieces';
+import { Fortress } from '../fortress/fortress';
+import { townPieces } from './view';
 import { solidSpans } from './solid';
 import { noWays, SLOPE, WAY_ROAD, WAY_SQUARE, WAY_STAIR, axisLength, type Ways } from './ways';
 import { WALL_HALF } from './solid';
@@ -18,7 +19,7 @@ const H = 184;
 const GROUND = 5;
 
 function fortress() {
-  const f = new Fortress({ origin: [0, 0], w: W, h: H }, {
+  const f = fortressOn({ origin: [0, 0], w: W, h: H }, {
     windowOrigin: () => [0, 0],
     dims: { w: W, h: H, zMax: 999 },
     ground: () => GROUND,
@@ -184,8 +185,8 @@ describe('the fortress bakes its ways', () => {
     const f = fortress();
     walled(f);
     const w = f.ways();
-    const p = fortressPieces({ plan: f.plan, town: f.town, grid: f.grid, ground: () => GROUND, zOff: 0, ways: w });
-    const bare = fortressPieces({ plan: f.plan, town: f.town, grid: f.grid, ground: () => GROUND, zOff: 0, ways: noWays(f.grid.count) });
+    const p = townPieces(f.site, { ground: () => GROUND, ways: w });
+    const bare = townPieces(f.site, { ground: () => GROUND, ways: noWays(f.grid.count) });
     const lib = library();
     const count = (q: typeof p, name: string) => {
       let n = 0;

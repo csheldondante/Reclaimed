@@ -18800,6 +18800,399 @@ Why: DESIGN §24, no timed readback in play; the transfer gate listed three stan
   spread out; between a region's touches the sims' own drift there is saved only at a freeze, a hide or its next
   touch. The menu's look is tied to the painted wind's CPU box: dust moved by anything else (none today) wouldn't be
   looked at.
+
+## 2026-11-05 — round 128o (`onetown`, DA-A1 step 0): fortress merged; the window keeps the town's site box
+
+- Merged `fortress` 11f0796 (the design of record, rect C 35cf133, the placement bench) into `onetown`.
+- Rect C re-based on the town: onetown deleted the fortress's own 240 m box (the fortress edits the town's site), so the
+  keep rect is the site box itself (the user's start town: 256 x 256 at 14400,4480). FORTRESS_BOX, FORTRESS_WINDOW,
+  KEEP_MARGIN and `boxInWindow` are gone: a site box is fixed in the world (whole regions), so it isn't placed in the
+  window; the window is placed round it (`windowHolding`, scenes/streamer/keep.ts) and opened at least its size.
+- No margin past the box: the site box already holds BOX_PAD (57 m) round the built radius, and the reach, claims and
+  plan stop at the box. Judgement call, listed for main.
+- Line endings: onetown's WIP had turned ~35 LF source files CRLF; put back to LF (no content change).
+- Tests: typecheck, the full vitest suite (111 files, 881 passed); streamkeep.test.ts rewritten for `windowHolding`.
+
+## 2026-11-05 — round 128o (`onetown`, DA-A1/DA-A2): design note — one plan finished; why the builders don't build
+
+Design note before code (AGENT_RULES 1).
+- **State:** one `TownSite` per town (build/site.ts): its `TownPlan` (cells, structures, levels, gates, pits), its
+  `Town` (what stands), its grid and box, its `gridId`. Generator, player, view, claims, reach, jobs and lanes read it;
+  nothing copies it. The generator's draft (structures/plan.ts) is a transient layout input, placed through
+  `TownPlan.place`/`setGate` and dropped. DA-A1 leaves this shape and deletes what's left of the second system: the dead
+  owner ids OWNER_STRUCT/OWNER_FORT, the scripts' `thingAt` ray probe (the plan's `owner` is the one answer), the
+  placement bench's `townGates` cast (the plan's gate cells), and the lab's reset that erased a fixture's plan while its
+  `Town` kept 702 built blocks (two sources that disagreed).
+- **Readbacks:** none added. **Phone cost:** none added (no frame path changes).
+- **DA-A2, measured on the `town` fixture (lab, fresh load):** 368 built farm blocks (the generated farmland, now farm
+  structures in the one plan) give 368 farm jobs; JOB_ORDER puts farms before builders, so all 11 people farm and
+  nobody builds ("There are no builders"). Fix: builders first while there's building (ECON.builders, 4); a unit test on
+  the fixture's own plan fails first. Rejected: fewer jobs per generated farm block (a per-source special case), a cap.
+- **The one cut-off cell (1188):** a generated house site with no stand at all — houses on three sides, the wall on the
+  fourth. keepReach (structures/place.ts) only joins open pockets; it never gives a planned block a side to stand at. The
+  right fix is DA-A3 (one reach invariant for generation and edits; keepReach deleted), not a second rule in keepReach:
+  reported, not patched.
+- **Edge cases as tests:** the fixture's jobs (builders get people), the lab reset refusing a fixture.
+
+## 2026-11-05 — round 128o (`onetown`, DA-A1): one plan — the second system's leftovers deleted
+
+- Deleted: the settlements' and the fortress's owner ids (OWNER_STRUCT 2, OWNER_FORT 3: nothing claimed under them
+  since onetown — a town's claims are owned by its `gridId`; the tests that borrowed OWNER_STRUCT use a grid id); the
+  scripts' `thingAt` ray probe into the old town (fortressoutside, fortressvariant, fortressplot: the plan's `owner` is
+  the one answer); the placement bench's `townGates` cast into the fortress's io (gone with onetown: the gates are the
+  plan's gate cells now).
+- The lab's reset on a fixture (`town`) erased the town's plan and left its `Town` standing — 702 built blocks with no
+  plan (found when a second scenario saw no town). A fixture's town is its captured site, held by the fortress, its view
+  and its claims; it isn't put back in place: `lab.resettable` is false and scripts/lab.mjs loads the page again
+  (+~15 s a run), and `reset()` throws there.
+- scripts/lab.mjs: the server's warm page now opens in the run queue. A run sent while it opened opened the page a
+  second time, and the run failed ("__labShot already exists") on every first run.
+- ARCHITECTURE: "Towns: one plan" (what DA-A1 leaves and what's open in it).
+- Shots (412x915, dpr 2.6, the user's link `?town=1&fortress=1&fresh=1&q=low`), looked at: before (`fortress`, two
+  systems) and after (`onetown`): the same town, keep, towers and lighthouse; the walls on tile edges; the farmland
+  drawn as plots (yellow, was striped green); a thinner bridge to the east; "Beds 352" and "+14 a day" (the generated
+  houses and keep count as the player's now) and "Your plan costs 10 wood and 4 stone" at the start (the generated
+  town's two house sites are the plan's). No GPU path changed in this commit (no toggle-diff).
+
+## 2026-11-05 — round 128o (`onetown`, DA-A2): the start town's builders build — two causes fixed, a third found
+
+Reproduced first: the lab's fortressoutside on `town` (fresh load, 3 sites 55 m west of the stores): 702 of 708 blocks
+for 600 sim s, "There are no builders", 0 of 3 sites. Probes (lab scenarios reading the plan, the jobs, the field and
+the walkers) found three causes, one under the other:
+1. **Every person farmed.** One plan, so the generated farmland is farm structures: 368 built blocks, a farm job each.
+   JOB_ORDER put farms before builders, so the 11 people all took farm jobs. Fix: builders first (JOB_ORDER build, farm,
+   ...; ECON.builders 4 while there's building), and JOB_ORDER moved from defs.ts to economy.ts: defs.ts is among the
+   land generator's sources (scripts/lib/gen-sources.mjs), so editing the job order changed GEN_VERSION and made the
+   fixture (and every saved region) stale. The fixture recaptured once (`node scripts/labtown.mjs capture`: the same
+   window, stores at 165.1,185.8). Test: test/unit/townwork.test.ts on the fixture's own plan (0
+   builders before, 4 after). Rejected: fewer jobs per generated farm block (a rule for one source of buildings), a cap
+   on farm jobs (a threshold).
+2. **People started on roofs.** FortressLife spawned its people 4 m round the stores — the generated warehouse's door —
+   and Agents.spawn lands a unit on the top surface: two on the warehouse's roof (z +8 m), one on the lighthouse (+16
+   m), no way down; they took loads and stood there for good. Fix: they start at the stores (`startSpots`: the door's
+   way out, open ground, the reach's seed). Test: townwork.test.ts (start spots on cells with nothing on them; the old
+   ring put them on the warehouse and the lighthouse).
+3. **Open — riders stick in the generated town.** With 1 and 2 fixed the lab builds 1-2 more blocks (703-704/708: the
+   lumber camp outside stood by 60 sim s in two of three runs; the house and the farm never), then: 2-3
+   builders riding to the stores (`toPile`, on the road graph) stood still 30 m short, one of them inside a house cell
+   (its nav top 7 m over it: in the claimed solid); 20+ farmers carrying grain stood 3 m from the stores at the next
+   warehouse's door; grain ran out. The roads are fortress/lanes.ts lanes on the grid's cell BORDERS ("a border is a way
+   if a free cell lies on one side"): in a dense generated town they run flush along claimed buildings and through door
+   nodes into ground floors. That's the routes design (DESIGN.md section 12: tiles declare their paths; kinematic trips)
+   — DA-A7 — and the reach (DA-A3), not a builders bug: reported to main, not patched.
+- The one cut-off cell (1188) is a generated house site walled in by houses on three sides and the wall on the fourth:
+  no side to stand at. keepReach (structures/place.ts) joins open pockets only; DA-A3's one invariant covers it.
+- Gates: typecheck; the unit tier (85 files; partition's "well under a second" timing and two fixture tests timed out
+  once while the lab ran beside them, all green alone); lab fortressoutside on `walled` passes as before (all 3 sites
+  by 301 sim s, was 301); on `town` still fails (cause 3). A found helper bug, not fixed: lab.ground() on a fixture reads column floor(x), not the hex
+  lattice's (cellAt), so it's off by a column on odd rows (5-7 m off by the town's terraces); nothing in the gates reads it.
+
+## 2026-11-05 — round 128o (`onetown`): the gates after DA-A1/A2 — tilegate against `fortress`, the start town's shot
+
+- Tilegate (this desktop's Intel Arc iGPU, both screens, 52 fps under the cap so the frame checks were skipped), run on
+  `fortress` (11f0796) and on `onetown` the same hour: both FAIL. The same on both: stale goldens at z2.2/z1.3 (33-49%
+  of the image) and w384 (2.3-3.1%), fast-pan (160 c/s) coverage at the window's edge. Only on `onetown`: desktop z5
+  (2.8%) and z3.5 (1.5%) changed, the changed pixels on a town — the generated towns drawn through the one plan (walls
+  on tile edges, 4 m levels, the plots; the changes the user accepted in round 128m); desktop fast pan at z14 (55-56% of
+  a few frames, 15-21 of 149) and more at z8/z5 (31%/14% vs 18%/7%). The fast-pan rows are the window's edge columns,
+  not the towns; the onetown runs waited 68 s for the GPU (shared), fortress's 26 s — not settled here, listed for main.
+  The first onetown run lost the GPU device in the run mode (another check's); the second finished.
+- The start town at play zoom (412x915, dpr 2.6, the user's link), looked at after these commits: as onetown before
+  them (the town, its keep and towers, walls on tile edges, the plots, the lighthouse), the bar's lines as before.
+- docs/MODULES.md regenerated.
+
+## 2026-11-05 — round 128o (`onetown`, DA-A7 core): design note — routes from declared entrances, not cell borders
+
+Design note before code (AGENT_RULES 1). DESIGN.md section 12.
+- **Entrances, one rule** (new build/entrances.ts, pure, from the plan): every structure declares how it's entered — a
+  block or the keep a door (a ground-floor side opening on free ground or on a passage), a wall its gates, a yard
+  (farm, orchard, pasture, fountain) its field edge, a quarry its pit's ramp top. ways.ts's door rule moves there.
+  Fortress.doorOf reads it: no fallback to a cell's middle; a structure with no entrance is cut off.
+- **Generation** guarantees one: keepReach gives an entrance-less structure (cell 1188's house site) a passage through
+  its neighbours (the same search it runs for shut pockets), and placeDraft throws if any non-wall structure is left
+  without one. Walls are exempt (a barrier, built from its sides; its gates are its entrances when it has them).
+- **The route graph from the ways**: lanes.ts no longer builds a graph over every cell border. A lane runs from a way
+  cell's middle to the middle of the side it shares with the next way cell (ways.ts's road tree: free cells, gates,
+  passages, joined to every entrance), so it lies inside free cells and enters claimed cells only through a gate or a
+  passage. Water (the reach's wet bits) blocks a way cell, as it blocked a border. Deleted: the border graph, OFF_BUILDING,
+  ROOT_REACH, the roots at the town's heap, BIG, the first-cell-corners entry for yards. Roads drawn down cell middles
+  (a visible change from the borders of round 128k).
+- **Reach (DA-A3):** the entrances are what the reach must keep in the stores' component; A3's GPU solve asks them.
+  Here a CPU test checks it on the fixture's route graph.
+- **Transfers / representations (1b, 1c):** none new. Lanes stay CPU, rebuilt per plan change (cheaper: no grid-wide
+  border graph); the road shapes and road graph go to the GPU as before (Agents.setRoads, Agents.ride), on change only.
+- **Tests first:** on the fixture — no lane sample inside a claimed column except in a gate or passage cell; every
+  structure's entrance joined to the stores on the route graph; every non-wall structure has an entrance. Lab gate:
+  fortressoutside on `town` builds all its blocks.
+
+## 2026-11-05 — round 128o (`onetown`, DA-A7's core): routes from declared entrances; the start town's builders build everything they can reach
+
+- Tests first, on the start town fixture (test/unit/townroutes.test.ts), all failing before: 8 generated houses had no
+  entrance; 19 lane pieces ran inside claimed columns (the border lanes flush with buildings, AW-4's OFF_BUILDING nudge
+  not enough); 48 entrances weren't on the route graph from the stores; cell 1188's site had no stand.
+- build/entrances.ts: the one entrance rule (doors, gates, yard edges, pit tops); ways.ts joins every entrance (its door
+  rule moved there); lanes.ts rebuilt from the ways' cells (cell middle to shared side middle). Deleted from lanes.ts:
+  the border graph and its per-grid geometry cache, OFF_BUILDING, ROOT_REACH, the roots at the town's heap, BIG, the
+  yards' first-cell corners, `noRide`, LaneOpts (climb/reuse) and `Fortress.setLaneOpts`. doorOf's fallback to a cell's
+  middle is gone. FortressLife.standsFor (a second stand rule, ignoring planned blocks) now calls Fortress.standsOf.
+- Fields are open ground (`StructureDef.crossed` on farms, orchards, pastures): roads cross them at CROSS_COST 3 a
+  metre; without it three farms and a pasture had entrances on cells shut in by other fields.
+- Generation: keepReach also cuts a passage to each structure with no entrance; `assertEntered` throws at plan time
+  (placeDraft, and a settlement's growth after placeBuilding). The fixture recaptured (generator sources changed).
+- Measured: route graph 287 nodes (was 118; MAX_NODES 1024), 288 lane pieces; unit tier 86 files green; lab
+  fortressoutside on `walled` passes; on `town` all three sites outside the walls stood by 181 sim s (failed before)
+  and 706 of 708 blocks — the two left are cell 1188's house: its passage is in the plan but the GPU reach (and the CPU
+  reference) don't reach keepReach's passages, cut without the terrain's heights: DA-A3.
+- Found, not fixed (DA-A7's rest): farmers riding grain home stand at a route node in the fields for 500+ sim s while
+  the CPU hop table gives a 115 m route (gentle ground, no water); grain runs out. It happened on the border lanes too.
+- Look: roads now run down the middles of free cells instead of the borders (a change from round 128k's look), and a
+  strip drawn east over the water in the start shot (a lane crossing the river) is gone. Shot:
+  scratchpad a1/routes-town.png, looked at.
+- Transfers: none new; the road shapes and graph go to the GPU on change as before.
+
+## 2026-11-05 — round 128o (`onetown`): fortress e29bf67 merged; the town's rules moved into build/
+
+- Merged `fortress` e29bf67 (the gates DA-G1..G4, DA-B7/B8, phonefix's B1/B5). Conflicts: the level's fortress start
+  (worldApiOf kept, `townAt` stays deleted: onetown's one plan), the quarry test's harness (both fields), docs.
+- The import-boundary gate (DA-G2) flagged 9 breaches from onetown: build/ and structures/ (the engine's town plan)
+  imported fortress/solid, ways, lanes, shapes and defs (the game layer). These are the town plan's own rules — what a
+  plan claims, its ways, its roads, its shapes — so they moved to build/ (no code change; their tests with them), and
+  DEFS comes from build/types. ECON.pitRampCells (a pit's shape, read by the plan) moved to build/pit.ts
+  PIT_RAMP_CELLS. No KNOWN exception added.
+- The fixture recaptured (the merge changed the land generator's sources: GEN_VERSION). Unit tier 93 files green.
+
+## 2026-11-05 — round 128o (`onetown`, DA-A3): design note — reach as an invariant, judged once
+
+Design note before code (AGENT_RULES 1). DESIGN.md section 13.
+- **Found first:** a stand is "reached" by its column's TOP surface (fortreach.wgsl reachQuery, CpuReach). Under a
+  passage's arch the top surface is the roof, so a builder's stand in a passage never counts, though the ground under
+  the arch joins the town (CPU probe on the fixture: 1187/2366's ground surfaces have 3.3-3.7 m of room). Fix: a query
+  carries its block's floor z and is reached by the surface nearest it (within a step).
+- **One rule, two engines:** the surfaces and joins of fortreach.wgsl, and CpuReach as its reference (an agreement
+  test). Play judges on the GPU over the window's columns; generation (a CPU worker with the site's ground, no GPU)
+  judges with CpuReach over the site's own ground and the plan as built. keepReach (plan cells, no terrain) is deleted.
+- **The repair, one solve:** openings are passages (a block's ground floor), gates (a wall's straight cell) and ramps
+  (a drop up to the stores' ground). A cost field from the stores' component over the surfaces with the plan's openings
+  lifted (each cell opened costs 1) picks, for every cut-off entrance or stand, the cheapest openings on its path; they
+  go into the plan in the same edit. GPU: iterate the field to rest, then one thread per cut-off target walks back
+  through it marking cells; read back a bit a box cell (~4 KB) and a word a query. CPU: the same as a Dijkstra.
+  Bridges (water a deck would cross): designed as one more opening kind, not built here (DA-A4) — stop and report.
+- **Judged once:** an edit's blocks are judged against the plan as built in one solve; refused only when no opening
+  mends them, with the reason. Deleted: VARIANT_TRIES and the serial trials, the 3 s re-ask (asked again on plan
+  changes, slides and digs only); pending blocks stay on the builders' list (they're judged before a frame passes).
+- **Transfers:** none new per frame; per edit the answer words and the opened-cells bits (a few KB).
+- **Tests first:** a passage stand reached (CPU and GPU agree); a ring of wall closing on a block gets a gate; a block
+  below a cliff gets a ramp; generation on the fixture leaves every entrance and stand reached; lab `town` 708/708.
+
+## 2026-11-05 — round 128o (`onetown`, DA-A3 part 1): the reach reads a stand's floor; roads only where a walker steps
+
+- **The bridge east of the lighthouse (main's question):** not removed. It shows in the start shot of this build when
+  the shot waits 16 s (a1/dump-Reclaimed-onetown.png) and in the pre-routes build with every lane hidden
+  (a1/old-nolanes.png); routes-town.png was taken at 8 s, before it streamed in. It isn't in the town's plan (its
+  layout holds three piers, the same in both builds; no bridge structure). My earlier note ("a lane drawn over the
+  river") was wrong. The pre-routes lanes did draw four `noRide` roads from free cells to the heap, the longest 23 m.
+- **The stand query:** the reach (fortreach.wgsl reachQuery/storesNode, CpuReach) read a stand's column's TOP
+  surface; under a passage's arch that's the roof. A query now carries each stand's floor (the land's ground there,
+  window z) and is reached by its column's surface nearest it; the stores likewise. `Fortress.reachAsk` is the one
+  place the question is built (the placement bench's diagnosis and fortresskeep.mjs call it). On the fixture both new
+  tests (every block still to build, every way in, reached: test/unit/townreach.test.ts) fail with the top surface and
+  pass with the floor. The builders' site fields are seeded on the stand's floor the same way (`Fortress.standFloor`).
+- **Roads only where a walker steps:** the generated farmland is terraced (cell 4170 at 17.4 m, its neighbour 104 at
+  18.8 m) and a lane ran over the edge, a 1.3 m step riders can't take. ways.ts takes `walk` (`groundSteps`: the land
+  either side of a cell's side within the walkers' STEP, at the side's middle or along it) and records each side's
+  `crossing`; lanes run through those crossings. `WaysOpts` replaces waysOf's positional arguments. agents/rules.ts
+  holds the walkers' numbers (AGENT_H, STEP, DROP, DEEP, NAV_K) once; fortress/reach.ts re-exports them.
+- reach.test.ts: a block that shuts a house in now gets a passage through it (a builder stands under the arch), where
+  it was refused.
+- **Gate not met (lab `town`, all blocks): 703/708.** Two things in the agents stop it, neither the reach:
+  1. the four builders spawned at the stores (the warehouse's door out, cell 4235) end up 1.4 m inside the
+     lighthouse's claimed columns (cell 3447: their z 16.5 under its 32 m top) and stand there with no field (a probe of
+     the site field: null there, 25 at the door);
+  2. carriers stall at a route node in the fields (scripts/lab/fortressharvest.mjs pins it: 4 carriers still for
+     120+ sim s at (183.5, 185)).
+  The rest of DA-A3 (generation through the reach, the openings chosen on the GPU, VARIANT_TRIES and the 3 s re-ask
+  deleted) is not started: reported to main with options.
+- Fixture recaptured (ways.ts is a generator source). Unit tier 94 files green.
+
+## 2026-11-05 — round 128o (`onetown`): no walker inside a building — the riders press against terrace edges
+
+- **Main's item A (units inside claimed solid by the stores): not a bug in the agents.** My evidence was a probe
+  artefact: `lab.snapshot()` rounds positions to 0.1 m and I sampled the agents' surfaces at the rounded point — across a
+  column boundary. At the units' exact positions (`lab.units.get(id).at`) every walker stands on a surface; the
+  lighthouse's columns were claimed from the level's start (no ground surface there before Build or after). New guard,
+  scripts/lab/unitsonground.mjs (town, 60 sim s): every walking unit on a surface at its feet, never under one, both
+  columns read where a unit stands on a boundary. It passes.
+- **What the stalled riders really do:** they stand pressed against a column edge (x = 183.4999 in three runs) where
+  the lane from node 14 to node 11 crosses the farmland's terrace: the side's crossing passes the 0.8 m probes either
+  side, but the columns the rider actually crosses step 1.2-1.4 m (over STEP 1.1). Tried: a column-exact rule (the
+  land read every 0.25 m along centre - crossing - centre). It removes those lanes, and with them the routes to 12
+  doors the reach (column-level, the agents' rule) does reach — the walkable way between those terraces winds through
+  columns a straight cell-to-cell lane can't follow. Not committed: a design choice for main (routes over the walkable
+  columns, or roads that grade the land / ramps as openings).
+
+## 2026-11-05 — round 128o (`onetown`, DA-A7 C): design note — kinematic trips on the routes
+
+Design note before code (AGENT_RULES 1). DESIGN.md section 12.
+- **State (GPU only):** per unit slot the ride state (roadride.wgsl `rideState`): mode (off / on a trip / at its goal),
+  the destination slot, the edge it's on (from node, to node). The unit's own record holds where it is; the ride
+  kernel writes its x, y and velocity each tick along the edge at the unit kind's speed (`G.dt`), and the steer word
+  says "on a trip" so units.wgsl doesn't move it — only its height rides the surface under it (the one nearest its last
+  height: a step on the route is taken, never a stall). No steering, no crowd shove, no link check for a rider.
+- **Joining:** a unit off the network follows the road field (agents.wgsl ROAD_FIELD) as before; standing on an edge's
+  band it's put on that edge where it stands and rides toward the end cheaper to its nearest goal. **Leaving:** at the
+  goal's node the last leg to the goal point is the same interpolation; at the goal it stands. Knocked down, thrown,
+  swinging (not walking) — off the trip, back to its field, and it rejoins.
+- **Routes:** the next-hop tables (rideHops, Bellman-Ford on the GPU, MAX_DESTS 64, MAX_NODES 1024) stay the cached
+  routes for now; a compact route buffer replacing them is a follow-up (flagged). Lanes, queueing and passing: later.
+- **Deleted:** JOIN_R, AT_NODE, AT_GOAL, LOST, LAST_LOST, STUCK_SPEED/TICKS, COOL_TICKS, NEAR_GOAL and the ride's
+  steering; the ride's own copy of the lattice (it takes common.wgsl's).
+- **Transfers:** none (1b): kind speeds go into the ride's params with the rest, per change; nothing read back.
+- **Edge cases as tests:** the GPU test: a rider moves along its edges at its speed and stands at its goal, through a
+  node where the ground steps more than a walker's STEP (it is placed, not walked); knocked off it rejoins. Gate:
+  scripts/lab/fortressharvest.mjs passes and grain comes home.
+
+## 2026-11-06 — round 128o (`onetown`, DA-A7 C): riders on trips — placed along the routes, not steered
+
+- roadride.wgsl `ride`: a rider standing on an edge's band starts a trip there (projected onto the edge, toward the end
+  cheaper to its nearest goal) and is then placed each tick along its edges at its kind's speed (`G.dt`; the kinds'
+  speeds in the ride's params: `RoadRide.setKindSpeed`, from `Agents.defineKind`), node to node by the next-hop
+  tables, then the last stretch to its goal, where it stands. Its steer word says RIDE_TRIP (-2) and units.wgsl moves
+  it no further — only its height rides the surface nearest its last (a step on the route is taken). Knocked down,
+  thrown, swinging: off, back on its field, and it starts again. The ride now includes common.wgsl (Globals' dt, the
+  lattice's cellAt: its own copy of the lattice deleted) and binds the Globals.
+- Deleted: JOIN_R, AT_NODE, AT_GOAL, LOST, LAST_LOST, STUCK_SPEED, STUCK_TICKS, COOL_TICKS, NEAR_GOAL, the ride's
+  steering (steerTo, longestEdge, rrNearNet). Kept: ON_EDGE (an edge's band: a lane's half width and a pad), the next-hop
+  tables (MAX_DESTS 64, MAX_NODES 1024) as the cached routes, RIDE_NEAR (a goal must be within 6 m of a node).
+- Tests: test/gpu/roadride.test.ts — a rider moves a tick's way along its first edge, is still on its trip a tick
+  before the route's length at its speed, and stands at its goal (within 1 mm) a tick or two after; roadride-long — a
+  rider on a 4 + 12 + 12 m road arrives at its end at its speed (was the LOST rule's test). The GPU tier green.
+- Gates (lab `town`): scripts/lab/fortressharvest.mjs passes (36 loads home by 243 sim s, no carrier still for 120 s;
+  failed before); every block built: 708/708 by 301 sim s (was 703); grain held ~115-160. lab unitsonground passes;
+  `walled` fortressoutside passes. The rolling gate merged from phonefix (scripts/lab/fortressoutside.mjs: 900 sim s, a
+  block outside every 150 s, fails if none is reached for 180 s) passed one run of two; the other failed at 238 s (three
+  sites waiting). Not settled: in the lab at 16x the CPU's copy of the units lags the GPU by a median 10-14 m
+  (AgentUnits.update's async sync; measured at six points over 120 sim s), so the fortress's routine decides arrivals
+  late; DA-B2 (events and watched units) is that work.
+
+## 2026-11-06 — round 128o (`onetown`, DA-A6): design note — one crowd, on events (no code until fortress has DA-B2a/b)
+
+Design note (AGENT_RULES 1). DESIGN.md section 11 ("One crowd"; "no per-frame CPU copy of all units").
+- **One routine** (`TownLife`, replacing fortress/life.ts FortressLife and settle/life.ts SettlementLife): every town's
+  people work the plan's job board (fortress/economy.ts jobSlots over the TownSite's plan — a generated town's farms,
+  stores and smiths give jobs as the player's do; the builders' slot when there's building). A person is a unit plus a
+  small phase record; phases move on events only. Raiders and soldiers stay their own routines but read the same way.
+- **Events in** (agents' ring, phonefix DA-B2a/B2 — 16 B head, ≤256 a sync): `arrived` (field, where) for field legs;
+  `arrived` from the ride for a trip at its goal (new: roadride.wgsl emits it at M_AT — trips follow no field); hurt,
+  death, noticed; the world API's take/put/fell answers (already promises). **Read:** watched units only (≤32, B2b) —
+  the follow card and a selected unit. No unit's position is read to decide anything.
+- **Each position read today → its replacement** (onetown's counts; phonefix's DEVLOG inventory agrees):
+  - fortress/life.ts (26): at a home, the heap, a door, a spot, a post (AT_SPOT/THERE) → `arrived` on that leg's field
+    or trip; a block's stands (REACH) → `arrived` on F.site (the seed is the stand); the wall-walk "there" (height over
+    the kept ground) → `arrived` on a walk seeded at the post with its z; the nearest wall cell for a patrol → the
+    patrol is a route along the wall-walk's declared path (a trip, no read); a cart at a door or the heap → the ride's
+    arrival; who's nearest a newcomer's spot → newcomers enter at the entry node (no read);
+  - fortress/raiders.ts (15): which side of the walls, a gate shut round it, the nearest goal, the wave's centre → GPU
+    queries asked on the wave's events (the reach's labels already say which side), answered as short lists;
+  - fortress/defence.ts (7): a soldier on its post → `arrived`; the nearest raider in bow range, an arrow's aim → the
+    GPU's notice (units.wgsl already picks targets) as a `noticed` event; arrows as GPU projectiles (DA-E6);
+  - units/agent-units.ts think (28): hunting, sight, leash, reach and strikes → the GPU's own (its CPU copy deleted);
+    goal arrivals → `arrived`; guards back at posts → `arrived`; the follow card → a watched unit;
+  - settle/life.ts (8): the inhabitants' arrivals → `arrived` (and it is deleted, folded into TownLife).
+- **Failure modes:** a lost event (ring overflow) leaves a person waiting: counted and thrown (an invariant, not a
+  timer); a field with no seeds sends no arrival — the routine never gives such a leg; two towns on screen share the
+  groups (24) — groups become per job kind, not per town.
+- **Transfers:** the event ring (~9 KB a sync at most) and ≤32 watched units (96 B each); the per-sync read of every
+  unit goes. **Phone cost:** a compare per unit per tick on the GPU (B2a); the CPU's per-sync think over every unit goes.
+- **Rejected:** keeping two routines with a shared base (two sources of the same rules); polling at a lower rate (a
+  throttle, not a design).
+- **Tests first:** the routine as pure logic driven by a scripted event stream (Node): a builder's cycle, a farmer's,
+  a cart's, a soldier to its post, a lost-event throw. Lab gates: fortressharvest, every block built on `town`, the
+  rolling fortressoutside, fortressraid, fortressfollow, fortresscarts.
+- **Note for the merge:** phonefix's UNIT_V 5 -> 6 meets onetown's trips (roadride.wgsl reads RR_UNIT_V): the trips'
+  record writes take the new stride.
+
+## 2026-11-06 — round 128o (`onetown`): fortress 6974b32b merged (DA-B2a/b, UNIT_V 6, flags.ts)
+
+- Conflicts: roadride.wgsl (the trips with RR_UNIT_V 6: the ride writes the first, second and fifth vec4s, the sixth is
+  the arrival latch), the GPU ride tests (UNIT_V strides), scenes/level/fortress.ts (onetown's site and view hook kept:
+  the fortress's own pieces and its window-ground input stay deleted — the town's ground is its site's), docs. The
+  fixture recaptured (GEN_VERSION moved).
+- New lab gate scripts/lab/fortressallbuilt.mjs: every block of the start town built within 600 sim s.
+- Gates: typecheck (both halves); unit and GPU tiers 126 files, 944 passed (the transfer, boundary and flags gates among
+  them); hallcheck 0 lost of 289; lab on `town`: fortressharvest ok (41 loads by 243 sim s), fortressallbuilt ok
+  (708/708 at ~600 sim s: slower than the 301 of the last run, 705 for 240 s), unitsonground ok; fortressoutside
+  (rolling) on `walled` ok (7 reached), on `town` 1 of 2 (the failure: lumber1 waited 183 s at 852 s); a third run lost
+  the GPU device (another check's).
+
+## 2026-11-06 — round 128o (`onetown`, DA-A6 part 1): TownLife — the people's routine on events, as pure logic
+
+- fortress/townlife.ts `TownLife`: a person's phase moves only on events (`arrived` on a leg, `dug`, `felled`,
+  `death`; `lost` throws) and puts out orders (the leg a unit follows, what it carries, a dig or a felling). Its time
+  is sim seconds in `tick` (working a load in, a reap). A leg sent to where a person already is counts as there (the
+  agents tell an arrival once — their latch holds while a unit follows the same field), settled once per flush on the
+  last leg each person was sent on. A person at the stores with nothing to bring, or at its work with no spot free,
+  asks again each tick (the stores' and the sites' state, never a position). This slice: builders, farmers, miners,
+  woodcutters, people without work. Carts, smiths, recruits, soldiers, eating and the newcomers' walk in are next.
+- fortress/townwork.ts `FortressWork`: TownLife's `TownWork` over the town's one plan — the job board, the builders'
+  sites (build order, the reach's cut-off cells), BuildBook loads, the farms' ripe grain, work spots by where a person
+  arrived. Ported from FortressLife; it isn't wired into the game yet (FortressLife still runs it): the wiring — the
+  agents' `arrived` (DA-B2a) and the ride's arrival into `LifeEvent`s, the orders into groups and carries — and
+  deleting fortress/life.ts and settle/life.ts are the next commit, once the GPU and the lab may run again.
+- Found: BuildBook.fetch and giveBack change the stores object they're handed; FortressLife always handed a copy. The
+  adapter does too (a test caught the double take).
+- Tests (Node only, as main asked while the GPU runs tilegate): townlife.test.ts (9: a builder's cycle, waiting for a
+  load, a farmer's, a miner's and a woodcutter's on the world's answers, home, a job changed mid-leg gives the load
+  back, a leg to where it is counts as there, a lost event throws, a death) and townwork.test.ts (2: a house put up
+  load by load on a fortress from scripted arrivals; a farm's ripe grain brought in). Unit tier 98 files green.
+- (part 1b) The day in TownLife: a meal at the stores from EAT_FROM (EAT_S s, once a day), home to rest from REST_FROM
+  until the next day (the same shares as FortressLife's); test: a farmer's day, meal and rest and back to work.
+
+## 2026-11-06 — round 128o (`onetown`, DA-A6 part 2): nothing polled; the routine in its own folder (src/town/)
+
+- Main's review: the per-tick re-ask of a person waiting at the stores or at its work was polling. Now the town's own
+  events wake them: `stores` (goods came in), `sites` (the plan's sites changed), `spot` (a structure has work ready).
+  The fortress's adapter emits them (FortressWork.drain): a delivery or a load given back -> `stores`; the plan's
+  onChange -> `sites`; a farm's ripe grain crossing RIPE_LOAD (0.5) -> `spot`. A farm with less ripe than that has no
+  spot (the farmer waits for its event). Tests: ticks alone don't wake a waiter; the stores', the sites' and the farm's
+  events do (another structure's doesn't).
+- TownLife serves every town, so it lives in src/town/ (life.ts, with its tests), with the jobs every town shares
+  (town/jobs.ts: JOB_ORDER, JobKind, JobSlot, JobBoard, Load — moved from fortress/economy.ts and fortress/work.ts,
+  their importers updated; no re-exports). The fortress's adapter stays fortress/townwork.ts.
+- The import-boundary gate: `town` sits above the engine, and a rule `town-pure` — the town's routine never imports
+  scenes, ui, the fortress, the settlements, the run layer, the lab, kernels or the renderer.
+
+## 2026-11-06 — round 128o (`onetown`, DA-A6 part 3): smiths, recruits, soldiers, carts, newcomers on events
+
+Design note (before code): every remaining piece of FortressLife's routine as an event-driven phase of TownLife, the
+town's answers behind TownWork, nothing polled, no give-up timers.
+- Smiths and recruits: to the stores; `startBatch` takes the recipe's goods (null: wait there until `stores`, or a
+  soldier's death frees a barracks bed); carry them to the structure's leg (`smithy` / `barracks`); work the batch's
+  seconds; `finishBatch` gives a smith's goods to carry home, or 'soldier' — the order `{become: 'soldier'}` and the
+  unit moves from the people to the soldiers (the wiring restyles it).
+- Soldiers: muster (`barracks`) -> drill (drillSec) -> march (`post`, the wall's stairs) -> `wall` points one after
+  another (a leg with a target: the point), patrolPoints of them -> muster; every morning, wherever they are, muster.
+  No wall: guard at the post until the morning. FortressLife's 40 s "stuck" give-up is gone: the wall points come from
+  the plan; that a soldier can reach them is the wiring's reach (B), not a timer here.
+- Carts: a gatherer's haul goes on its structure's pile when the town says so (`pile`: haulBy — long way, a cart, room,
+  a road) and the worker goes straight back to work; a pile reaching a ride's worth emits `pile`; parked carts take
+  `pileFor` (claimed), ride out (`pile` leg with the structure as target), `loadPile`, back to the stores, deliver.
+  A cart lost on its way out `unclaim`s.
+- Newcomers: the town's `room` event (beds changed via the plan, grain delivered) or a person gone -> `mayArrive` ->
+  the order `{newcomer: true}`; the wiring stands one up and calls `arrive(unit)`; it walks home, then takes work. One
+  at a time: the next may come when it's in (FortressLife's 6 s arriveSec cadence is gone).
+- Legs with targets: `Order.go` carries `to` (a structure or a point), arrivals report it, and the "sent where it
+  already is" settling compares leg and target (an arrival at another point than its own isn't its).
+- The job board's turn keeps those holding something (a load, a batch, goods) in their jobs first (people sorted, the
+  board keeps earlier holders): a shrinking smiths' slot drops the one waiting, not the one carrying ore (FortressLife
+  could drop either). FortressWork caps the smiths' and recruits' slots as FortressLife did (RecipeRunner.canStart, else
+  the batches on their way: `inProgressAt`).
+- Tests: 9 new scripted-event tests in town/life.test.ts (smith's cycle and waiting without polling, batch given back,
+  slot kept by the holder, recruit -> soldier round, no bed until a soldier's death, morning muster, pile + cart, cart
+  lost unclaims, newcomers one at a time and only with room) and 5 in fortress/townwork.test.ts on a real Fortress
+  (forge from the stores, the smiths only while there's ore, a recruit's drill, a pile and its event and a cart's load,
+  the wall-walk's points, the room event). Unit tier 98 files / 823 tests green; typecheck green. No GPU, lab or
+  browser run (main's instruction: tilegate running).
+
 ## 2026-11-06 — round 128o (`phonefix`, DA-B9 step a): the chunks' versions, and every writer's bump
 
 - Why: DA-B9 (option a, main's call). A reader that works only where the columns changed needs to know where they

@@ -129,7 +129,6 @@ await run({ name: 'fortressoutside', kind: 'behaviour', size: '412x915', dpr: Nu
     const free = (c) => {
       if (c < 0 || f.plan.owner[c] >= 0) return false;
       const [x, y] = f.centre(c);
-      if (st.thingAt(st.pinnedId, [x, y])) return false;
       return !cols || f.grid.columns[c].every((col) => {
         const wc = f.boxToWindowCol(col);
         return wc >= 0 && cols.water(wc % cols.w, Math.floor(wc / cols.w)) < 0.05;

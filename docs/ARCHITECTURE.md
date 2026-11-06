@@ -3578,8 +3578,8 @@ The building rule (the user's): select what (a structure type), then plan it wit
   by its building's nearest cell.
 - **Milestone 3 (round 128e): the economy feeds the building.** `fortress/economy.ts` (pure, tested): `JobBoard`
   (people → slots in priority order, keeping a job while its slot still wants them), `jobSlots` (a built block of a
-  farm, quarry or lumber camp gives its type's `jobs`; ECON.builders while there's building; order JOB_ORDER farm,
-  build, quarry, lumber), `perWorker`/`workSeconds` (a worker's share of `makes` a day; the work a load of ECON.haul
+  farm, quarry or lumber camp gives its type's `jobs`; ECON.builders while there's building; order JOB_ORDER build,
+  farm, quarry, lumber — builders first since round 128o, DA-A2), `perWorker`/`workSeconds` (a worker's share of `makes` a day; the work a load of ECON.haul
   takes), `quarryLoad` (ECON.oreShare of it ore — Good 'ore' added), `grown`/`eaten` (a farm block's grain a day; a
   person eats ECON.eat), `bedsOf` (ECON.startBeds + house blocks' beds), `roomOf` (ECON.townRoom + warehouse blocks'
   storage), `storedOf`/`fits`/`putIn` (goods that take room: log, stone, ore, grain, weapons), `mayArrive`, `refundOf`
@@ -3653,6 +3653,7 @@ The building rule (the user's): select what (a structure type), then plan it wit
   cheapest to its nearest goal (or, nearer that goal as the crow flies, makes straight for it); on, node to node by the
   table; at the goal's node, straight to the goal, where it stands; no way made for 90 ticks, off for 120. Nothing read
   back. FortressLife rides the stores, the houses and the farms (`riding`), seeds their own fields only when they don't.
+- **(Superseded in round 128o: roads come from the ways' cells, not the borders — "Towns: one plan", Routes.)**
 - **Round 128k (roads on the cell borders; the columns read before a slide).** `fortress/lanes.ts lanesOf(plan,
   grid, ways, ground, opts, blocked, roots)` → `Lanes` {segs: 'road' (by a building, paving) | 'track' (in the open,
   earth) | 'plaza' (across a thoroughfare tile) | 'ramp', tiles, joined, unjoined}: a graph of the town grid's vertices
@@ -3872,15 +3873,53 @@ at the first Build, updated after it each frame in sim seconds).
   (`raidOverLines`: what was taken, broken and burned, who fell by name) as a card with Close (`raidSummary`,
   `closeRaid`). Words in fortress/words.ts, linted by raid.test.ts.
 
+## Towns: one plan (round 128m-128o, `onetown`; DESIGN.md section 17)
+
+Every town, generated or the player's, is one `TownSite` (build/site.ts): its grid (`QuadGrid`, Townscaper's or the
+generator's tiles over the town's box, whole regions: settle/records.ts), its `TownPlan` (build/plan.ts: cells,
+structures, levels of 4 m, gates, passages, ramps, pits; the layout layer: roads out, piers, props), its `Town` (what
+stands) and its `gridId` (FNV-1a of the settlement's id, 256 and up). One building-type table, `DEFS`
+(build/types.ts): the player's types and the generator's (huts, farmsteads, landmarks, orchards, pastures) are rows of
+it, so claims, reach, jobs, lanes, damage and repair are the same for all.
+- **Generation** (settle/plan.ts, structures/place.ts `placeDraft`): the generator's draft (structures/plan.ts, its
+  layout) is placed through the plan's own API (`place`, `setGate`, `setPassage`) and dropped; the generator's only
+  extra writes are layout (uses, roads out, piers, props).
+- **The player** (fortress/fortress.ts) edits the same site: the Build bar paints into the town's plan; there is no box,
+  grid, plan or slab of the fortress's own (its 240 m box, `townAt`, `townGates`, the OWNER_FORT/OWNER_STRUCT owners are
+  gone). The fortress's edit state (ghosts, ways, lanes, Inspect's pick) is drawn and claimed with the town through
+  the view host's hook (`TownViewHost.setHook`).
+- **Drawing and claims**: build/view.ts `townPieces` draws the plan; build/claims.ts claims what stands as External
+  intervals owned by the site's `gridId` (a static grid: sim/static-claims.ts).
+- **Jobs** (fortress/economy.ts `jobSlots`, JOB_ORDER): the builders first while there's building, then the farms,
+  the quarry, the lumber camps, the smiths, the recruits. A town's generated farmland is farm structures, so it gives
+  farm jobs like the player's farms.
+- **Entrances and routes (round 128o, DA-A7's core).** build/entrances.ts `entrancesOf(plan, grid, courtyards,
+  blocked)` is the one rule every structure is entered by: a block's or the keep's door (a ground-floor side opening on
+  free ground, else on another block's passage or a field), a wall's gates, a yard's edge, a quarry's pit top. Fields
+  (`StructureDef.crossed`: farms, orchards, pastures) are open ground: walked across, crossed by roads at
+  `CROSS_COST` (3) a metre. fortress/ways.ts joins every entrance with its road tree (over free cells, gates, passages
+  and fields; not over `blocked` wet cells — the reach's wet bits) and counts a structure with no entrance cut off.
+  fortress/lanes.ts `lanesOf(plan, grid, ways, ground)`: a lane from each way cell's middle to the middle of the side it
+  shares with the next way cell — inside the free cells, into a claimed cell only through a gate or a passage; the ride
+  graph (`laneGraph`) from the same pieces. `Fortress.doorOf` is an entrance's way-out cell's middle (no fallback: null
+  when it has none); `Fortress.standsOf` (the reach's and the builders' one stand rule) counts a passage as open.
+  Generation: `keepReach` also cuts a passage to every structure with no entrance, and `assertEntered` throws if one
+  is left (placeDraft and a settlement's growth). Tests: test/unit/townroutes.test.ts on the start town.
+- **The window's keep** is the site box itself, with no margin past it: the box already holds BOX_PAD (57 m) round the
+  built radius, and the reach, the claims and the plan stop at the box.
+- **Open** (BACKLOG): the generator still drafts buildings in its own model before placing them (3 m storeys mapped to
+  levels: `levelsFor`); keepReach (structures/place.ts) is generation's own reach repair beside the fortress's GPU reach
+  (DA-A3 makes them one); two people sims (DA-A6); saves of the plan's edits only and grid-named claims (DA-A5).
+
 ## The window keeps the town (round 128m, `townlab`)
 
 What lives in the window (the reach's columns, the builders on the agents, the claims) must stay in it.
 `Streamer.keep(rect)` (scenes/streamer/keep.ts; `FortressWindow.keep` on the contract) names world columns no slide may
 leave: `slideWhenReady`/`prefetch` skip such slides, `slide`/`warp` throw, and `keep` throws when the window doesn't hold
-the rect now. The fortress keeps its box plus KEEP_MARGIN (fortress/host.ts FORTRESS_BOX, FORTRESS_WINDOW), placed
-wholly in the window at its start (`boxInWindow`: a loud error when the window is too small; `?fortress=1` opens the
-atlas window at least FORTRESS_WINDOW a side). The z slide isn't affected. The one town grid (`onetown`) supplies its own
-bounds through the same call.
+the rect now. (`onetown`) The fortress keeps its town's site box (build/site.ts: the town's one grid, whole regions,
+settle/records.ts) — there is no fortress box of its own. With `?fortress=1` the atlas level opens its window at least the
+box's size and round it (`windowHolding`: a loud error when the box can't fit); the lab's still window throws when it
+doesn't hold the box. The z slide isn't affected.
 
 ## The placement bench (round 128m, `townlab`; docs/TOOLING.md)
 

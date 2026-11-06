@@ -1,6 +1,6 @@
 // Inspect (round 128d; the user: "Maybe an inspect to highlight a continuous section of structure and see its output
 // input workers and stockpiles if applicable"): a tap on a block picks the structure it belongs to (the cells painted
-// with one type that touch — FortressPlan's structures); it's drawn highlighted (pieces.ts PIECE_PICKED) and a compact
+// with one type that touch — TownPlan's structures); it's drawn highlighted (pieces.ts PIECE_PICKED) and a compact
 // card says what it is, from its StructureDef and the live ledger (the stores):
 //   its type and size (blocks, levels high); how far it's built, if it isn't yet;
 //   what it takes in and puts out a day (from its built blocks, at most: with every job filled; round 128l, milestone 4:
@@ -13,7 +13,7 @@
 import type { Goods, PerBlock, Structure, StructureDef, StructureType } from '../api/contracts/fortress';
 import { DEFS } from './defs';
 import { roomOf } from './economy';
-import type { FortressPlan } from './plan';
+import type { TownPlan } from '../build/plan';
 import { goodsText } from './words';
 import { recipeTakes } from './recipes';
 
@@ -65,7 +65,7 @@ export interface InspectLive {
 
 /** The facts on a structure (built: whether a block stands; stores: the ledger now; live: the economy's numbers). */
 export function inspectFacts(
-  plan: FortressPlan,
+  plan: TownPlan,
   s: Structure,
   built: (cell: number, level: number) => boolean,
   stores: Goods,

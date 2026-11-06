@@ -2,12 +2,13 @@
 // reach.ts CpuReach, with the same answers; a tap commits at once, the answer judges it after). The user: "My expectation is that we should always be
 // able to reach blocks where we can place and say why we can't reach a block not yet placed. Blocks that lie adjacent to
 // other blocks or planned blocks should always be reachable."
+import { fortressOn } from './testing';
 import { describe, expect, it } from 'vitest';
 import { cellPos } from '../world/lattice';
 import { Fortress } from './fortress';
 import { CpuReach, surfacesOf, type ReachColumns } from './reach';
-import { PIECE_WARN, rampPieces, warnPieces } from './pieces';
-import { RAMPS_ID, solidSpans } from './solid';
+import { PIECE_WARN, rampPieces, warnPieces } from '../build/view';
+import { RAMPS_ID, solidSpans } from '../build/solid';
 import { PIECE_FLOATS } from '../structures/pieces';
 
 const W = 160;
@@ -25,7 +26,7 @@ function columns(wet: (x: number, y: number) => boolean = () => false, rock: (x:
 }
 
 function fortress(cols: ReachColumns, heap: [number, number] = [20, 20], ground: (x: number, y: number) => number = () => GROUND) {
-  const f = new Fortress({ origin: [0, 0], w: W, h: H }, {
+  const f = fortressOn({ origin: [0, 0], w: W, h: H }, {
     windowOrigin: () => [0, 0],
     dims: { w: W, h: H, zMax: 999 },
     ground,
@@ -156,7 +157,9 @@ describe('the check at placement', () => {
     expect(f.refusal).toBe("Builders can't reach that spot from the stores. It is walled in. Put a gate in the wall first.");
   });
 
-  it('a block that shuts a planned block in, with no variant to keep the way, is refused and the panel names it', async () => {
+  // (round 128o: a builder stands under a passage's arch — the reach reads the surface at a stand's floor, not the roof
+  // over the arch — so a passage through the block that shuts the house in keeps it reached)
+  it('a block that shuts a planned block in gets a passage, and a builder stands under its arch', async () => {
     const f = fortress(columns(), [20, 20]);
     const house = f.cellAt(80, 80);
     expect(f.paint(house, 0, 'house')).toBe(true);
@@ -164,13 +167,16 @@ describe('the check at placement', () => {
     // three sides walled: the fourth still open to the stores
     for (const c of round.slice(0, 3)) expect(f.paint(c, 0, 'wall')).toBe(true);
     await f.settled();
-    // (a builder works a block from beside it: a passage through the warehouse leaves the house no side to stand at)
+    // (a builder works a block from beside it: under the warehouse's passage)
     expect(f.paint(round[3], 0, 'warehouse')).toBe(true);
     await f.settled();
-    expect(f.plan.has(round[3], 0)).toBe(false);
-    expect(f.plan.passage[round[3]]).toBe(0);
-    expect(f.refusal).toBe('That would shut the house off from the stores. Leave a way through.');
+    expect(f.plan.has(round[3], 0)).toBe(true);
+    expect(f.plan.passage[round[3]]).toBe(1);
+    expect(f.refusal).toBe(null);
     expect(await reached(f, house)).toBe(true);
+    // (and without the passage — the warehouse taken out again — the farm next)
+    f.erase(round[3], 0);
+    await f.settled();
     // a farm (open ground) beside it doesn't shut it in
     expect(f.paint(round[3], 0, 'farm')).toBe(true);
     await f.settled();
@@ -258,8 +264,7 @@ describe('the check at placement', () => {
     expect(ramps.length).toBe(1);
     expect(await reached(f, low)).toBe(true);
     // drawn as steps; its solid (what the GPU's columns are claimed with: claims.ts) its own key, there while only planned
-    const inp = { plan: f.plan, town: f.town, grid: f.grid, ground: (x: number, y: number) => (x > 100 ? GROUND - 2 : GROUND), zOff: 0 };
-    expect(rampPieces(inp).count).toBeGreaterThan(3);
+    expect(rampPieces(f.site, { ground: (x: number, y: number) => (x > 100 ? GROUND - 2 : GROUND) }).count).toBeGreaterThan(3);
     const sp = solidSpans({ plan: f.plan, town: f.town, grid: f.grid, ground: (col) => f.groundAt(col) }).get(RAMPS_ID)!;
     expect(sp.length).toBeGreaterThan(5);
     for (const q of sp) expect(q.z1).toBeLessThanOrEqual(GROUND + 1e-6);
@@ -283,7 +288,7 @@ describe('the red outline (pieces.ts warnPieces)', () => {
     const f = fortress(columns());
     const c = f.cellAt(80, 80);
     f.plan.paint(c, 0, 'house');
-    const warn = warnPieces({ plan: f.plan, town: f.town, grid: f.grid, ground: () => GROUND, zOff: 0 }, [c]);
+    const warn = warnPieces(f.site, { ground: () => GROUND }, [c]);
     expect(warn.count).toBe(4);
     for (let i = 0; i < warn.count; i++) expect((warn.data[i * PIECE_FLOATS + 15] | 0) & PIECE_WARN).toBe(PIECE_WARN);
   });

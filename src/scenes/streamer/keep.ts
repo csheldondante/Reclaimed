@@ -1,4 +1,4 @@
-// (round 128m, townlab) What the window keeps (Streamer.keep; the fortress's box, docs/ARCHITECTURE.md "The window
+// (round 128m, townlab; onetown: the town's site box) What the window keeps (Streamer.keep; the town's box, docs/ARCHITECTURE.md "The window
 // keeps the town"): a rectangle of world columns that every slide leaves inside the window. Found on the user's link: the
 // fortress's box ran 14 rows past the window's bottom edge at the start, and a pan of ~150 m slid the window off part
 // of it — the reach (fortreach.wgsl) sees no ground outside the window, so whole sides of the town read "A cliff or a
@@ -24,21 +24,11 @@ export function keepAllows(origin: readonly [number, number], W: number, H: numb
 }
 
 /**
- * The fortress's box in a window: where its first column and row go so the box and `margin` round it lie in the window
- * (the window's origin, size), as near `want` as they can; its row even (the lattice's odd rows shift the same in the
- * box and the window). Throws when the box and its margin are bigger than the window: a loud error at setup, never a
- * box half out of it.
+ * (onetown) Where a W x H window opens so it holds the rect: as near `want` (its origin) as it can. The rect is a town's
+ * site box (whole regions: settle/records.ts), so with a region-aligned `want` the origin stays whole regions. Throws when
+ * the rect is bigger than the window: the window is opened at least the box's size (scenes/level.ts), never half over it.
  */
-export function boxInWindow(want: readonly [number, number], box: { w: number; h: number }, margin: number, origin: readonly [number, number], W: number, H: number): [number, number] {
-  if (box.w + 2 * margin > W || box.h + 2 * margin > H)
-    throw new Error(`the fortress's land (${box.w} x ${box.h} and ${margin} round it) doesn't fit in the window (${W} x ${H}): the window must be at least ${Math.ceil((Math.max(box.w, box.h) + 2 * margin) / 64) * 64} a side (?win=)`);
-  const lo = (o: number) => o + margin;
-  const x = Math.max(lo(origin[0]), Math.min(origin[0] + W - margin - box.w, want[0]));
-  const yLo = lo(origin[1]);
-  const yHi = origin[1] + H - margin - box.h;
-  let y = Math.max(yLo, Math.min(yHi, want[1]));
-  // (even: down, else up, within the range)
-  if (y % 2) y = y - 1 >= yLo ? y - 1 : y + 1;
-  if (y > yHi) throw new Error(`the fortress's land can't lie on an even row in the window (rows ${yLo}..${yHi})`);
-  return [x, y];
+export function windowHolding(k: KeepRect, W: number, H: number, want: readonly [number, number]): [number, number] {
+  if (k.x1 - k.x0 > W || k.y1 - k.y0 > H) throw new Error(`the town's box (${k.x1 - k.x0} x ${k.y1 - k.y0}) doesn't fit in the window (${W} x ${H})`);
+  return [Math.max(k.x1 - W, Math.min(k.x0, want[0])), Math.max(k.y1 - H, Math.min(k.y0, want[1]))];
 }

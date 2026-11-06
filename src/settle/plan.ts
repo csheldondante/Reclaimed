@@ -1,6 +1,7 @@
 // A settlement realised (round 88, arrival scale; round 119: on the structures contract): from its record, its people's
 // profile and the ground in its box — its town and farmland planned by the structures system (contracts/structures.ts:
-// tiles, buildings by the density of its growth field, façades, walls, landmarks), each building's record (Building +
+// tiles, buildings by the density of its growth field, façades, walls, landmarks) and (round 128m, onetown) placed into
+// its one plan (build/site.ts: the plan the player edits, as the generator builds through it), each building's record (Building +
 // Instance), the plaza's well and stalls, the fields' jobs, an adapted ruin where it was founded over one, the quarry, a
 // raiders' camp near some — and what the ground works put in the columns (the buildings are pieces: drawn, and claimed
 // as External columns in play by view.ts, not stamped into the land). Deterministic from the seed and the ground:
@@ -15,9 +16,13 @@ import { derive } from '../api/contracts/compose';
 import { MAT } from '../world/materials';
 import { ROW_H, cellAt, cellPos } from '../world/lattice';
 import { rand, type Pt } from './grids';
-import type { BuildingRec, CityMark, CityPlan, CitySpec, DensityFn, StructureStyleId, V2 } from '../api/contracts/structures';
-import { planCity } from '../structures/plan';
+import type { BuildingRec, CityMark, CityPlan, CitySpec, DensityFn, StructureStyleId, TileMesh, V2 } from '../api/contracts/structures';
+import type { StructureType } from '../api/contracts/fortress';
+import { draftCity } from '../structures/plan';
+import { buildingOf, placeDraft, siteOfDraft, type PlannedBuilding } from '../structures/place';
 import { columnsOf } from '../structures/columns';
+import { townCity } from '../build/view';
+import type { TownSite } from '../build/site';
 import { fbm } from '../structures/rng';
 import { catalogue, type CivEntry } from './catalogue';
 import { GrowthField } from './field';
@@ -44,12 +49,12 @@ export interface Spot {
   what?: string;
 }
 
-/** A house still to build (life.ts builds it block by block from the piles): its lot, its storeys. */
-/** A house still to build (life.ts has it built storey by storey from the piles): a building of the town's plan. */
+/** A house still to build (life.ts has it built level by level from the piles): a structure of the town's plan. */
 export interface SiteSpec {
   id: string;
-  /** its building in the plan (contracts/structures.ts BuildingRec id) */
-  building: number;
+  /** its structure in the plan (build/plan.ts), planned: its blocks the builders' work */
+  structure: number;
+  /** its levels (the plan's: LEVEL_H each) */
   storeys: number;
   door: Pt;
   /** (in play) storeys up, what's been brought toward the next, finished */
@@ -105,10 +110,13 @@ export interface SettlementPlan {
   /** box column → what the ground works put there (stalls, piles, the quarry, the camp; not the buildings) */
   columns: Map<number, ColumnPlan>;
   spots: Spot[];
-  /** the town and its farmland: the structures plan in the box's frame (local x, y) */
+  /**
+   * (onetown) the town: its one plan, what stands of it, its grid — in the box's frame (local x, y; z world). What's
+   * drawn, claimed and lived in is read from it (build/view.ts townCity: the plan's view, made again when it changes).
+   */
+  site: TownSite;
+  /** the plan's view as it was planned (local x, y): the doors, the plots and the plaza the record was made from */
   city: CityPlan;
-  /** per building of the plan: storeys standing (0: not built yet — a site or room to grow) */
-  standing: Int32Array;
   /** the box's width in columns (its frame's) */
   boxW: number;
   /** per building (`b<id>`) or field (`f<n>`) what it was given (debug) */
@@ -120,9 +128,9 @@ export interface SettlementPlan {
   quarry: QuarrySpec | null;
   /** the settlement as a growth field over its box (field.ts): FIELD_CELL world units a cell, local */
   field: GrowthField;
-  /** buildings it may grow onto, in its build order: their middles, doors, the field there when planned (grow() makes
-   *  them sites) */
-  free: { building: number; centre: Pt; door: Pt; v: number }[];
+  /** buildings it may grow onto, in its build order: what each is (its type and blocks), its middle and door, the field
+   *  there when planned (grow() places it into the plan, a site) */
+  free: { building: PlannedBuilding; centre: Pt; door: Pt; v: number }[];
   ms: number;
 }
 /** world units a growth-field cell */
@@ -395,7 +403,10 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
     ...(inp.placed?.length ? { placed: inp.placed.map((p) => ({ id: p.id, use: [...p.use] })) } : {}),
     ...inp.override,
   };
-  const city = planCity(spec, groundAt, water, density);
+  // (onetown) the generator's draft over the whole box (the town, its farmland, the land round it the player builds on:
+  // every tile in the box, so every cell has its columns)
+  const [bx1] = cellPos(W - 1.5, 0);
+  const draft = draftCity(spec, groundAt, water, density, Math.hypot(W, H * ROW_H) / 2, [1, 1, bx1, (H - 1.5) * ROW_H]);
   rec.grids = [
     { id: `${rec.id}:g0`, style: spec.system, seed: spec.seed, at: [rec.at[0], rec.at[1]], radius: R, spacing: spec.tile ?? 4, purpose: 'core', civ: civ.profile.id },
     { id: `${rec.id}:fields`, style: 'contour-voronoi', seed: spec.seed + 1, at: [rec.at[0], rec.at[1]], radius: farmR, spacing: 26, purpose: 'fields', civ: civ.profile.id },
@@ -403,9 +414,9 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
 
   // ---- what each building is: the hall, the granary, the workshop, the temple, an adapted ruin; houses and huts; the
   // farmsteads' farmhouses and barns (barns are granaries) — the record's Buildings and Instances, their doors as spots
-  const townB = city.buildings.filter((b) => b.kind === 'house' || b.kind === 'hut');
+  const townB = draft.buildings.filter((b) => b.kind === 'house' || b.kind === 'hut');
   const dist = (b: BuildingRec) => {
-    const [x, y] = buildingCentre(city, b);
+    const [x, y] = buildingCentre(draft, b);
     return Math.hypot(x - cx, y - cy);
   };
   const byMiddle = townB.filter((b) => !b.mega).sort((a, b) => dist(a) - dist(b));
@@ -417,37 +428,55 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
   take('hall', byMiddle.find((b) => b.quads.length >= 2));
   take('granary');
   if ((civ.profile.knowledge.smithing ?? 'uses') !== 'uses') take('workshop');
-  const dome = city.buildings.find((b) => b.mega === 'dome');
+  const dome = draft.buildings.find((b) => b.mega === 'dome');
   if (civ.profile.builds.architecture.includes('temple') || dome) take('temple', dome);
-  const tower = city.buildings.find((b) => b.mega === 'tower');
+  const tower = draft.buildings.find((b) => b.mega === 'tower');
   if (inp.ruin && tower) take('ruin', tower);
   // (round 120: the purposes' buildings are what the plan made them)
   const PURPOSE_USE: Partial<Record<BuildingRec['kind'], Use>> = { barn: 'granary', granary: 'granary', warehouse: 'warehouse', sawmill: 'sawmill', stable: 'stable' };
-  for (const b of city.buildings) if (!useOf.has(b.id)) useOf.set(b.id, PURPOSE_USE[b.kind] ?? 'house');
+  for (const b of draft.buildings) if (!useOf.has(b.id)) useOf.set(b.id, PURPOSE_USE[b.kind] ?? 'house');
 
   // the frontier: the town's last buildings in its build order aren't up yet — the next two are sites (the builders'
   // work in play), the rest wait for it to grow (the farmsteads stand: the country is older than the town's edge)
-  const standing = new Int32Array(city.buildings.length);
-  for (const b of city.buildings) standing[b.id] = b.storeys;
-  const frontier = city.order.filter((id) => {
-    const b = city.buildings[id];
+  const frontier = draft.order.filter((id) => {
+    const b = draft.buildings[id];
     return (b.kind === 'house' || b.kind === 'hut') && !b.mega && useOf.get(id) === 'house';
   });
   const nUp = Math.round(frontier.length * FRONTIER_UP);
   const siteIds = frontier.slice(nUp, nUp + 2);
   const freeIds = frontier.slice(nUp + 2);
-  for (const id of [...siteIds, ...freeIds]) standing[id] = 0;
-  const doorAt = (b: BuildingRec): Pt => doorOf(city, b) ?? buildingCentre(city, b);
+  /** (onetown) what stands of each building when it's placed: a site's nothing (planned), room to grow not placed */
+  const stand = new Map<number, number | null>();
+  for (const id of siteIds) stand.set(id, 0);
+  for (const id of freeIds) stand.set(id, null);
+
+  // ---- (onetown) placed into the town's one plan through its API, each building the type its use makes it
+  const site = siteOfDraft(rec.id, draft, { x0: box.x0, y0: box.y0, w: W, h: H }, inp.ground);
+  const typeFor = (b: BuildingRec): StructureType => typeOfUse(useOf.get(b.id)!, b);
+  const placed = placeDraft(draft, site, { typeOf: typeFor, standing: (b) => (stand.has(b.id) ? stand.get(b.id)! : b.storeys) });
+  const city = townCity(site, { ground: groundAt });
+  // (the view of the town as the generator was asked for it: its spec)
+  city.spec = spec;
+  /** a draft building's first building in the plan's view (null: not placed) */
+  const viewOf = (b: BuildingRec): BuildingRec | null => {
+    const sid = placed.structureOf[b.id];
+    return sid < 0 ? null : (city.buildings.find((x) => x.structure === sid) ?? null);
+  };
+  const doorAt = (b: BuildingRec): Pt => {
+    const v = viewOf(b);
+    return (v && doorOf(city, v)) ?? buildingCentre(draft, b);
+  };
 
   const buildings: Building[] = [];
   const homeOf: string[] = [];
-  for (const b of city.buildings) {
-    if (!standing[b.id]) continue;
+  for (const b of draft.buildings) {
+    if (stand.has(b.id) || placed.structureOf[b.id] < 0) continue;
     const use = useOf.get(b.id)!;
     const id = `${rec.id}:b${b.id}`;
     const kind = use === 'ruin' ? 'megastructure' : use === 'temple' ? 'hall' : use;
-    const [lx, ly] = buildingCentre(city, b);
-    const place = { in: 'world' as const, region: rec.region, at: [lx + ox, ly + oy, b.base] as [number, number, number] };
+    const [lx, ly] = buildingCentre(draft, b);
+    const base = viewOf(b)?.base ?? b.base;
+    const place = { in: 'world' as const, region: rec.region, at: [lx + ox, ly + oy, base] as [number, number, number] };
     const owner = { settlement: rec.id, faction: rec.faction ?? undefined };
     if (use === 'ruin') {
       // an older people's tower, its lower floors lived in (adapted, not rebuilt)
@@ -477,7 +506,7 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
     }
     const caps = derive(catalogue(things), id);
     const WORKERS: Partial<Record<Use, string[]>> = { workshop: ['smith'], granary: ['hauler'], warehouse: ['docker'], sawmill: ['sawyer'], stable: ['stablehand'] };
-    const rb: Building = { id, thing: id, grid: rec.grids[b.kind === 'farmhouse' || b.kind === 'barn' ? 1 : 0].id, cells: b.quads.slice(), storeys: b.storeys, use: caps.tags.filter((x) => USE_TAGS.has(x)), workers: WORKERS[use] };
+    const rb: Building = { id, thing: id, grid: rec.grids[b.kind === 'farmhouse' || b.kind === 'barn' ? 1 : 0].id, cells: b.quads.slice(), storeys: viewOf(b)?.storeys ?? b.storeys, use: caps.tags.filter((x) => USE_TAGS.has(x)), workers: WORKERS[use] };
     if (use === 'temple') rb.use.push('temple');
     buildings.push(rb);
     lotUse.set(`b${b.id}`, use);
@@ -496,14 +525,17 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
   }
 
   // the sites: their doors are where the builders bring what they carry
-  const sites: SiteSpec[] = siteIds.map((bid, n) => {
-    const b = city.buildings[bid];
-    const door = doorAt(b);
-    const id = `${rec.id}:site${n}`;
-    lotUse.set(`b${bid}`, 'site');
-    spots.push({ at: door, kind: 'site', ref: id });
-    return { id, building: bid, storeys: b.storeys, door };
-  });
+  const sites: SiteSpec[] = siteIds
+    .filter((bid) => placed.structureOf[bid] >= 0)
+    .map((bid, n) => {
+      const b = draft.buildings[bid];
+      const door = doorAt(b);
+      const id = `${rec.id}:site${n}`;
+      const sid = placed.structureOf[bid];
+      lotUse.set(`b${bid}`, 'site');
+      spots.push({ at: door, kind: 'site', ref: id });
+      return { id, structure: sid, storeys: levelsOfStructure(site, sid), door };
+    });
 
   // ---- the plaza: the fountain (the town's well) and stalls --------------------------------------------------------
   const fountain = city.megas.find((m) => m.kind === 'fountain');
@@ -563,13 +595,20 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
   }
   spots.push({ at: plaza, kind: 'post', ref: well });
 
-  // ---- the wall's gates: posts where the wall runs end (structures' walls: linear.ts / the radial rampart) ---------
-  const wallRuns = city.linear.filter((f) => f.kind === 'wall');
-  if (wallRuns.length || city.tiles.use.includes('gate')) {
+  // ---- the wall's gates: posts at its gates and where its runs end (onetown: the plan's wall cells) ---------------
+  const walls = site.plan.structures().filter((x) => x.type === 'wall');
+  if (walls.length) {
     const wid = thing({ id: `${rec.id}:wall`, kind: 'wall', material: civ.lookMat.foundation, owner: { settlement: rec.id, faction: rec.faction ?? undefined }, place: { in: 'world', region: rec.region, at: [cx + ox, cy + oy, groundAt(cx, cy)] } });
     buildings.push({ id: wid, thing: wid, grid: rec.grids[0].id, cells: [], storeys: 1, use: ['defence'] });
-    for (const f of wallRuns) if (!f.closed) for (const p of [f.points[0], f.points[f.points.length - 1]]) spots.push({ at: [p[0] + (cx - p[0]) * 0.08, p[1] + (cy - p[1]) * 0.08], kind: 'post', ref: wid });
-    for (let q = 0; q < city.tiles.use.length; q++) if (city.tiles.use[q] === 'gate') spots.push({ at: quadCentreOf(city, q), kind: 'post', ref: wid });
+    const g = site.grid;
+    for (const w of walls)
+      for (const c of w.cells.keys()) {
+        const runs = [0, 1, 2, 3].filter((e) => site.plan.typeAt(g.nbr[c * 4 + e]) === 'wall').length;
+        if (!site.plan.gate[c] && runs !== 1) continue;
+        // (a gate's middle; a run's end a little in from its last cell, toward the middle)
+        const [x, y] = g.centre(c);
+        spots.push({ at: site.plan.gate[c] ? [x, y] : [x + (cx - x) * 0.08, y + (cy - y) * 0.08], kind: 'post', ref: wid });
+      }
   }
 
   // ---- fields: the farmland's crop plots (a field thing each, a farm job at its middle), nearest the town first -------
@@ -781,7 +820,7 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
 
   // ---- the record: buildings, people, stores, needs -------------------------------------------------------
   // (merge124) what the world placed: the building each became carries its name and uses (a card's burrows, a watchtower)
-  for (const p of city.placed ?? []) {
+  for (const p of draft.placed) {
     const id = `${rec.id}:b${p.building}`;
     const want = inp.placed?.find((x) => x.id === p.id);
     const b = buildings.find((x) => x.id === id);
@@ -829,17 +868,51 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
   void homeOf;
   for (const st of sites) rec.needs.push({ kind: 'build', at: [st.door[0] + ox, st.door[1] + oy], ref: st.id, priority: 2 });
   const free = freeIds.map((bid) => {
-    const b = city.buildings[bid];
-    const c = buildingCentre(city, b);
-    return { building: bid, centre: c, door: doorAt(b), v: vAt(c) };
+    const b = draft.buildings[bid];
+    const c = buildingCentre(draft, b);
+    return { building: buildingOf(draft, b, typeFor(b)), centre: c, door: doorAt(b), v: vAt(c) };
   });
-  return { rec, camp: campRec, things, columns, spots, city, standing, boxW: W, lotUse, centre, campAt, sites, quarry, field, free, ms: +(performance.now() - t0).toFixed(1) };
+  return { rec, camp: campRec, things, columns, spots, site, city, boxW: W, lotUse, centre, campAt, sites, quarry, field, free, ms: +(performance.now() - t0).toFixed(1) };
 }
 
 // ---- helpers: the town's buildings and tiles in the box's frame ------------------------------------------------------
 
+/**
+ * (onetown) The type a building is placed as, by what it's for: the hall, the granary, the smithy, the temple (the domed
+ * one; another is a hall), the old tower, the purposes' buildings; houses, huts and the farmsteads by their kind.
+ */
+export function typeOfUse(use: Use, b: BuildingRec): StructureType {
+  switch (use) {
+    case 'hall':
+      return 'hall';
+    case 'granary':
+      return b.kind === 'barn' ? 'barn' : 'granary';
+    case 'workshop':
+      return 'blacksmith';
+    case 'temple':
+      return b.mega === 'dome' ? 'temple' : 'hall';
+    case 'ruin':
+      return 'tower';
+    case 'warehouse':
+      return 'warehouse';
+    case 'sawmill':
+      return 'lumber';
+    case 'stable':
+      return 'stable';
+    case 'house':
+      return b.mega === 'dome' ? 'temple' : b.mega === 'tower' ? 'tower' : b.kind === 'hut' ? 'hut' : b.kind === 'farmhouse' ? 'farmhouse' : b.kind === 'barn' ? 'barn' : 'house';
+  }
+}
+
+/** (onetown) a structure's levels (its tallest cell's) */
+export function levelsOfStructure(site: TownSite, id: number): number {
+  let n = 0;
+  for (const c of site.plan.structure(id)?.cells.keys() ?? []) n = Math.max(n, site.plan.top(c) + 1);
+  return n;
+}
+
 /** a tile's middle */
-export function quadCentreOf(city: CityPlan, q: number): Pt {
+export function quadCentreOf(city: { tiles: TileMesh }, q: number): Pt {
   const t = city.tiles;
   let x = 0;
   let y = 0;
@@ -852,7 +925,7 @@ export function quadCentreOf(city: CityPlan, q: number): Pt {
 }
 
 /** a building's middle (its tiles' middles averaged) */
-export function buildingCentre(city: CityPlan, b: BuildingRec): Pt {
+export function buildingCentre(city: { tiles: TileMesh }, b: BuildingRec): Pt {
   let x = 0;
   let y = 0;
   for (const q of b.quads) {
@@ -896,8 +969,11 @@ export function styleFor(civ: CivEntry): StructureStyleId {
 export function rasterColumns(plan: SettlementPlan, roof: number, wall: number): Map<number, ColumnPlan> {
   const out = new Map(plan.columns);
   const W = plan.boxW;
-  for (const c of columnsOf(plan.city)) {
-    if (c.building >= 0 && !plan.standing[c.building]) continue;
+  // (onetown: the plan's view as it stands — a building with nothing built yet has no top)
+  const city = townCity(plan.site, { ground: (x, y) => plan.site.groundAt(x, y) });
+  for (const c of columnsOf(city)) {
+    const sid = c.building >= 0 ? city.buildings[c.building].structure : undefined;
+    if (sid !== undefined && ![...(plan.site.plan.structure(sid)?.cells.keys() ?? [])].some((q) => plan.site.town.built.any(q))) continue;
     const k = c.y * W + c.x;
     if (c.x < 0 || c.y < 0 || c.x >= W) continue;
     // (a column the plan only bared — no plants — takes the building's top; a ground work's stays)

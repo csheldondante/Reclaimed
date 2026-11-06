@@ -1,7 +1,7 @@
 // The structures system (contracts/structures.ts Structures): plan, pieces, columns, buriable assets. Other tracks use
 // only this and the contract.
 import type { Structures } from '../api/contracts/structures';
-import { planCity } from './plan';
+import { planCity } from './place';
 import { piecesOf } from './pieces';
 import { columnsOf } from './columns';
 import { buriable, assetPieces } from './assets';

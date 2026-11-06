@@ -7,9 +7,9 @@ import { planSettlement, rasterColumns, type PlanInput } from './plan';
 import { civById } from './catalogue';
 import { MAT } from '../world/materials';
 import { cellPos, ROW_H } from '../world/lattice';
-import { standingPlan } from '../structures/plan';
-import { piecesOf } from '../structures/pieces';
 import { library } from '../structures/modules';
+import { townPieces } from '../build/view';
+import { typeIndex } from '../build/plan';
 
 const W = 256;
 const H = 288;
@@ -31,15 +31,25 @@ describe('settlements on the structures contract', () => {
     const p = planSettlement(input('town'));
     const city = p.city;
     expect(city.buildings.length).toBeGreaterThan(20);
-    // every standing building a record (its cells the plan's tiles); sites and free ones not yet
+    // (onetown) every building that stands a record, its cells a structure's cells in the town's one plan; the sites are
+    // structures planned with nothing built yet; the room to grow isn't in the plan yet
     const houses = p.rec.buildings.filter((b) => b.id.includes(':b'));
-    expect(houses.length).toBe(city.buildings.filter((b) => p.standing[b.id] > 0).length);
+    expect(houses.length).toBeGreaterThan(20);
+    const plan = p.site.plan;
     for (const b of houses) {
-      const id = Number(b.id.split(':b')[1]);
-      expect(b.cells).toEqual(city.buildings[id].quads);
+      const owners = new Set(b.cells.map((c) => plan.owner[c]));
+      expect(owners.size).toBe(1);
+      const sid = [...owners][0];
+      expect(sid).toBeGreaterThan(0);
+      expect(b.cells.every((c) => p.site.town.built.any(c))).toBe(true);
     }
     expect(p.sites.length).toBe(2);
-    for (const s of p.sites) expect(p.standing[s.building]).toBe(0);
+    for (const s of p.sites) {
+      const st = plan.structure(s.structure)!;
+      expect(st.type).toMatch(/house|hut/);
+      expect([...st.cells.keys()].some((c) => p.site.town.built.any(c))).toBe(false);
+      expect([...st.cells.keys()].every((c) => p.site.town.plans.any(c))).toBe(true);
+    }
     expect(p.free.length).toBeGreaterThan(0);
     expect(p.spots.filter((s) => s.kind === 'home').length).toBeGreaterThan(10);
     expect(p.spots.some((s) => s.kind === 'post')).toBe(true);
@@ -72,22 +82,31 @@ describe('settlements on the structures contract', () => {
     expect(city.some((b) => b.kind === 'farmhouse') || hamlet.some((b) => b.kind === 'farmhouse')).toBe(true);
   });
 
-  it('a site raised storey by storey: its walls rise, its roof only when it’s done', () => {
+  it('a site raised level by level: its walls rise, its roof only when it’s done (onetown: its blocks built in the plan)', () => {
     const p = planSettlement(input('town'));
     const s = p.sites[0];
-    const b = p.city.buildings[s.building];
+    const site = p.site;
+    const st = site.plan.structure(s.structure)!;
     const lib = library();
-    const roofs = (st: Int32Array) => {
-      const pc = piecesOf(standingPlan(p.city, st));
+    const cells = new Set(st.cells.keys());
+    const roofs = () => {
+      const pc = townPieces(site, { ground: (x, y) => site.groundAt(x, y), ghost: (c, l) => !site.town.has(c, l) });
       let n = 0;
-      for (let i = 0; i < pc.count; i++) if (pc.building[i] === b.id && lib.modules[pc.module[i]].name.startsWith('roof:')) n++;
+      for (let i = 0; i < pc.count; i++) {
+        const o = i * 16;
+        const c = site.grid.cellAtWorld((pc.data[o] + pc.data[o + 2] + pc.data[o + 4] + pc.data[o + 6]) / 4, (pc.data[o + 1] + pc.data[o + 3] + pc.data[o + 5] + pc.data[o + 7]) / 4);
+        if (cells.has(c) && lib.modules[pc.module[i]].name.startsWith('roof:')) n++;
+      }
       return n;
     };
-    const st = p.standing.slice();
-    st[b.id] = Math.max(1, b.storeys - 1);
-    if (b.storeys > 1) expect(roofs(st)).toBe(0);
-    st[b.id] = b.storeys;
-    expect(roofs(st)).toBeGreaterThan(0);
+    const raise = (n: number) => {
+      for (const c of cells) for (const L of site.plan.levels.each(c)) if (L < n && !site.town.has(c, L)) site.town.add(c, L, st.id, typeIndex(st.type));
+    };
+    expect(roofs()).toBe(0);
+    raise(Math.max(1, s.storeys - 1));
+    if (s.storeys > 1) expect(roofs()).toBe(0);
+    raise(s.storeys);
+    expect(roofs()).toBeGreaterThan(0);
   });
 
   it('(merge124) a structure the world placed (a card\'s outcome) is raised as a landmark tower through the structures contract, with its uses', () => {
@@ -96,8 +115,9 @@ describe('settlements on the structures contract', () => {
     expect(p.city.placed).toHaveLength(1);
     const b = p.city.buildings[p.city.placed![0].building];
     expect(b.mega).toBe('tower');
-    expect(p.city.megas.filter((m) => m.kind === 'tower').length).toBe(plain.city.megas.filter((m) => m.kind === 'tower').length + 1);
-    const rec = p.rec.buildings.find((x) => x.id === `${p.rec.id}:b${b.id}`)!;
+    const towers = (c: typeof p.city) => c.buildings.filter((x) => x.mega === 'tower').length;
+    expect(towers(p.city)).toBe(towers(plain.city) + 1);
+    const rec = p.rec.buildings.find((x) => x.use.includes('burrows'))!;
     expect(rec.use).toEqual(expect.arrayContaining(['burrows', 'housing']));
   });
 
@@ -105,6 +125,7 @@ describe('settlements on the structures contract', () => {
     const a = planSettlement(input('village'));
     const c = planSettlement(input('village'));
     expect(c.rec.buildings.map((b) => b.id)).toEqual(a.rec.buildings.map((b) => b.id));
-    expect(Array.from(c.standing)).toEqual(Array.from(a.standing));
+    // (onetown: the town's one plan and what stands of it, the same byte for byte)
+    expect(c.site.toData()).toEqual(a.site.toData());
   });
 });

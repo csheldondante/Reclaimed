@@ -2,10 +2,10 @@
 // path around structures?"): only what's built; a block's whole cell; a wall's thin band, not its cell; a gate's
 // passage open under its lintel; on a slope a block's foot goes down to each column's own ground.
 import { describe, expect, it } from 'vitest';
-import { LEVEL_H, Town } from '../build/town';
-import { TownGrid } from '../build/towngrid';
+import { LEVEL_H, Town } from './town';
+import { TownGrid } from './towngrid';
 import { cellPos } from '../world/lattice';
-import { FortressPlan, typeIndex } from './plan';
+import { TownPlan, typeIndex } from './plan';
 import { solidSpans, WALL_HALF, WALL_LINTEL } from './solid';
 
 const grid = new TownGrid(80, 92, { seed: 7 });
@@ -21,8 +21,8 @@ const inner = (() => {
 const GROUND = 5;
 
 function setup(ground: (col: number) => number = () => GROUND) {
-  const plan = new FortressPlan(grid);
-  const town = new Town(80, 92, { ground, stamp: () => {}, zMax: Infinity }, { grid });
+  const plan = new TownPlan(grid);
+  const town = new Town(80, 92, { ground, stamp: null, zMax: Infinity }, { grid });
   const build = (c: number, L: number) => {
     const s = plan.structureAt(c)!;
     expect(town.plan(c, L, true, s.id, typeIndex(s.type))).toBe(true);

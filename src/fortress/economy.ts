@@ -6,20 +6,11 @@
 // warehouse; a woodcutter fells a tree in the lumber camp's reach and carries its logs; grain grows on the farm cells and
 // farmers carry it in. People eat grain; with none, nobody new comes (nothing else: hunger kills no one in slice 1).
 import type { Good, Goods, Structure, StructureDef, StructureType } from '../api/contracts/fortress';
-import { DEFS, ECON, JOB_ORDER } from './defs';
-import type { FortressPlan } from './plan';
+import { DEFS, ECON } from './defs';
+import { JOB_ORDER, type JobSlot } from '../town/jobs';
+import type { TownPlan } from '../build/plan';
 
-export type JobKind = (typeof JOB_ORDER)[number];
 
-/** A structure's jobs (or the builders'): `count` people at most. */
-export interface JobSlot {
-  /** 'build', or the structure's id as `s<id>` */
-  key: string;
-  kind: JobKind;
-  /** the structure (null: the builders) */
-  structure: number | null;
-  count: number;
-}
 
 /** goods that take room in the stores (soldiers and power don't) */
 export const STORED: readonly Good[] = ['log', 'stone', 'ore', 'grain', 'weapons'];
@@ -27,7 +18,7 @@ export const STORED: readonly Good[] = ['log', 'stone', 'ore', 'grain', 'weapons
 type Built = (cell: number, level: number) => boolean;
 
 /** a structure's built blocks */
-export function builtBlocks(plan: FortressPlan, s: Structure, built: Built): number {
+export function builtBlocks(plan: TownPlan, s: Structure, built: Built): number {
   let n = 0;
   for (const c of s.cells.keys()) for (const L of plan.levels.each(c)) if (built(c, L)) n++;
   return n;
@@ -38,7 +29,7 @@ export function builtBlocks(plan: FortressPlan, s: Structure, built: Built): num
  * quarry or lumber camp gives its type's `jobs`; the builders' slots while there's something to build.
  */
 export function jobSlots(
-  plan: FortressPlan,
+  plan: TownPlan,
   built: Built,
   building: boolean,
   defs: Record<StructureType, StructureDef> = DEFS,
@@ -63,63 +54,6 @@ export function jobSlots(
   return out;
 }
 
-/**
- * Who works where. Jobs go in priority order to the people there are: the first slots are filled, the last go empty
- * when people are short. A person keeps their job while its slot still wants them (nobody is moved for nothing); the
- * rest are given out in priority order. Pure (people are ids; no units).
- */
-export class JobBoard {
-  private job = new Map<number, string>();
-
-  /** The people's jobs for these slots (priority order). Returns the people whose job changed. */
-  assign(people: readonly number[], slots: readonly JobSlot[]): number[] {
-    const before = this.job;
-    // (how many each slot gets: in priority order, while people last)
-    let left = people.length;
-    const want = new Map<string, number>();
-    for (const s of slots) {
-      const n = Math.max(0, Math.min(s.count, left));
-      want.set(s.key, (want.get(s.key) ?? 0) + n);
-      left -= n;
-    }
-    const next = new Map<number, string>();
-    const have = new Map<string, number>();
-    for (const p of people) {
-      const k = before.get(p);
-      if (k === undefined) continue;
-      const h = have.get(k) ?? 0;
-      if (h < (want.get(k) ?? 0)) {
-        next.set(p, k);
-        have.set(k, h + 1);
-      }
-    }
-    const free = people.filter((p) => !next.has(p));
-    let i = 0;
-    for (const s of slots) {
-      let h = have.get(s.key) ?? 0;
-      const w = want.get(s.key) ?? 0;
-      while (h < w && i < free.length) {
-        next.set(free[i++], s.key);
-        h++;
-      }
-      have.set(s.key, h);
-    }
-    this.job = next;
-    return people.filter((p) => before.get(p) !== next.get(p));
-  }
-
-  /** a person's job (null: no work) */
-  jobOf(p: number): string | null {
-    return this.job.get(p) ?? null;
-  }
-
-  /** how many work in a slot */
-  count(key: string): number {
-    let n = 0;
-    for (const k of this.job.values()) if (k === key) n++;
-    return n;
-  }
-}
 
 /** What one worker of a type makes a day: its `makes` a block over its `jobs` a block. */
 export function perWorker(def: StructureDef): Goods {
@@ -153,14 +87,14 @@ export function eaten(people: number, dt: number, econ = ECON): number {
 }
 
 /** Beds: the town's own houses' and the house blocks built (not the barracks': those are the soldiers'). */
-export function bedsOf(plan: FortressPlan, built: Built, defs: Record<StructureType, StructureDef> = DEFS, econ = ECON): number {
+export function bedsOf(plan: TownPlan, built: Built, defs: Record<StructureType, StructureDef> = DEFS, econ = ECON): number {
   let n = econ.startBeds;
   for (const s of plan.structures()) if (s.type === 'house') n += (defs.house.perBlock.beds ?? 0) * builtBlocks(plan, s, built);
   return n;
 }
 
 /** The stores' room: the town's own and every built warehouse block's. */
-export function roomOf(plan: FortressPlan, built: Built, defs: Record<StructureType, StructureDef> = DEFS, econ = ECON): number {
+export function roomOf(plan: TownPlan, built: Built, defs: Record<StructureType, StructureDef> = DEFS, econ = ECON): number {
   let n = econ.townRoom;
   for (const s of plan.structures()) n += (defs[s.type].perBlock.storage ?? 0) * builtBlocks(plan, s, built);
   return n;

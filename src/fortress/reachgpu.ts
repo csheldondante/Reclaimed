@@ -116,7 +116,7 @@ export class FortressReachGpu implements ReachEngine {
     this.answerBuf?.destroy();
     this.stage?.destroy();
     const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
-    this.queryBuf = this.device.createBuffer({ label: 'reach queries', size: this.cap * 16, usage: S });
+    this.queryBuf = this.device.createBuffer({ label: 'reach queries', size: this.cap * 32, usage: S });
     const words = 1 + 2 * RAMP_CAP + this.cap + wetWords;
     this.answerBuf = this.device.createBuffer({ label: 'reach answer', size: words * 4, usage: S });
     this.stage = this.device.createBuffer({ label: 'reach read', size: words * 4 + 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
@@ -146,13 +146,19 @@ export class FortressReachGpu implements ReachEngine {
     const d = this.device;
     const [ox, oy] = this.origin();
     const st = ask.stores ?? [-1, -1];
+    const sz = new Uint32Array(new Float32Array([ask.storesZ]).buffer)[0];
     MODES.forEach((m, i) => {
-      const p = new Int32Array([ox, oy, this.w, this.h, st[0], st[1], nq, ask.wet ? 1 : 0, m.lift, m.bit, 0, 0]);
+      const p = new Int32Array([ox, oy, this.w, this.h, st[0], st[1], nq, ask.wet ? 1 : 0, m.lift, m.bit, sz | 0, 0]);
       d.queue.writeBuffer(this.params[i], 0, p);
     });
     if (nq) {
-      const q = new Uint32Array(nq * 4);
-      for (let i = 0; i < q.length; i++) q[i] = ask.queries[i] >= 0 ? ask.queries[i] + 1 : 0;
+      // (a stand: its box column + 1, then its floor's f32 bits — fortreach.wgsl `query`)
+      const q = new Uint32Array(nq * 8);
+      const qf = new Float32Array(q.buffer);
+      for (let i = 0; i < nq * 4; i++) {
+        q[2 * i] = ask.queries[i] >= 0 ? ask.queries[i] + 1 : 0;
+        qf[2 * i + 1] = ask.floors[i];
+      }
       d.queue.writeBuffer(this.queryBuf!, 0, q);
     }
     const words = 1 + 2 * RAMP_CAP + nq;

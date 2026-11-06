@@ -1,27 +1,31 @@
-// The fortress (fortress slice 1, milestone 1): the plan (plan.ts) kept as Town blocks (build/town.ts: a cell and a
-// level each, floors lined up with the neighbours') on the fortress's own world-anchored box. The Town's columns are
-// box-local; TownIO maps them to the window through the box's origin and the window's, so a slide only changes that
-// offset.
+// The fortress (fortress slice 1, milestone 1): the player editing a town's plan. (Round 128m, onetown; the user: "Why
+// is the fortress not just another building type?", "Consolidate them".) The town is its site (build/site.ts): its one
+// plan (build/plan.ts) — what the generator placed and what the player paints, the same structures and types — kept as
+// Town blocks (build/town.ts: a cell and a level each, floors lined up with the neighbours'), on the town's grid in its
+// box. The box's columns are box-local and its heights world z; the fortress talks to the window through the box's
+// origin and the window's (x, y) and the window's oz (z), so a slide only changes those offsets.
 //
-// Milestone 1 plans with time stopped: the blocks are the Town's plan (Town.plans), drawn as the towns' pieces
-// (pieces.ts) — what they'll look like. Milestone 2's workers build them (Town.add: what stands).
+// Planning happens with time stopped: the blocks are the Town's plan (Town.plans), drawn with the town (build/view.ts)
+// — what they'll look like. The builders build them (Town.add: what stands).
+import { type JobKind } from '../town/jobs';
 import { STRUCTURE_TYPES, type FortressBox, type Goods, type StructureType } from '../api/contracts/fortress';
-import { Town, type Block } from '../build/town';
-import { TownGrid } from '../build/towngrid';
+import type { Town, Block } from '../build/town';
+import type { QuadGrid } from '../build/quadgrid';
+import type { TownSite } from '../build/site';
 import { cellAt, cellPos, nbr } from '../world/lattice';
 import { DEFS } from './defs';
-import { FortressPlan, typeIndex } from './plan';
+import { typeIndex, type TownPlan } from '../build/plan';
 import { pickFace, placeFor } from './pick';
-import { shapesOf } from './shapes';
-import { waysOf, waysNav, type Ways } from './ways';
+import { shapesOf } from '../build/shapes';
+import { groundSteps, waysOf, waysNav, type Ways } from '../build/ways';
 import type { NavGraph } from '../api/contracts/structures';
-import type { TownThing } from '../settle/thing';
 import { LEVEL_H } from '../build/town';
-import { bedsOf, roomOf, type JobKind } from './economy';
-import { packSpan, REACH_BITS, type ReachEngine, type ReachReply } from './reach';
-import { solidSpans } from './solid';
+import { bedsOf, roomOf } from './economy';
+import { packSpan, REACH_BITS, type ReachAsk, type ReachEngine, type ReachReply } from './reach';
+import { solidSpans } from '../build/solid';
 import { refusedLine, variantLine, wouldCutLine, type ReachWhy, type VariantKind } from './words';
-import { LANE_DEFAULTS, laneGraph, lanesOf, roadShapesOf, type LaneOpts, type Lanes } from './lanes';
+import { laneGraph, lanesOf, roadShapesOf, type Lanes } from '../build/lanes';
+import { openCell } from '../build/entrances';
 import { nearestNode, reached, subgraph, type RoadGraph } from '../agents/roadgraph';
 import { packRoadShapes } from '../agents/roads';
 import { CellRuns } from '../build/runs';
@@ -54,9 +58,6 @@ export interface FortressStatus {
 
 /** (round 128h) the most gates (or ramps) tried for a placement that cut blocks off: the nearest first */
 const VARIANT_TRIES = 10;
-/** (round 128k) the town that was there blocks the roads where it stands this high over the ground (m): its houses
- *  and walls — not its fields, which ringed it and cut the roads off from its gates */
-const STANDS = 1;
 // (round 128i) water deeper than LANE_WATER (0.8 m: fortreach.wgsl R_LANE_WATER, the reach's wet columns) over a cell's
 // middle or a corner: no roads on it. (round 128k: was 0.3 — a river cut the roads off from the sites the builders
 // reached by wading; now the agents' own limit, a ford is a way: agents.wgsl DEEP_OFF)
@@ -92,27 +93,24 @@ interface Trial {
 
 const dist = (a: readonly number[], b: readonly number[]) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 
-/** (round 128e) the old town's tallest thing above its ground (m): a ray is asked about it only lower than this */
-const TOWN_H = 45;
-
 export interface FortressIO {
   /** the window's origin (world cells: x, row) — the streamer's */
   windowOrigin(): [number, number];
+  /** (onetown) the window's oz: window z = world z − oz (the town's heights are world z) */
+  oz(): number;
   dims: { w: number; h: number; zMax: number };
-  /** the ground's top at window world (x, y) */
-  ground(x: number, y: number): number;
   /** the fortress's stores (the pinned settlement's) */
   stores(): Goods;
-  /** after a change (window world bounds of what changed): the view draws it again */
-  changed(x0: number, y0: number, x1: number, y1: number): void;
+  /**
+   * after a change: the town drawn again — and (`solid`) claimed again: what stands, the gates, the ways' stairs
+   * changed (onetown: the town's view and claims, settle/view.ts)
+   */
+  changed(solid: boolean): void;
   /**
    * (round 128d, FT-26) clear the plants within r of window world (x, y): a planned or built cell's trees go (the world
    * API's plants.clear; done at the sim's next tick)
    */
   clearPlants?(x: number, y: number, r: number): void;
-  /** (round 128e, FT-48) what the town that was there before the fortress has at window world (x, y), if it stands up to
-   *  window z (null: nothing, or lower) */
-  townAt?(x: number, y: number, z: number): TownThing | null;
   /**
    * (round 128l, m4) what answers the reach: the GPU's connected components over the box (reachgpu.ts; tests: the CPU
    * reference, reach.ts CpuReach). None: nothing is judged
@@ -120,8 +118,6 @@ export interface FortressIO {
   reach?: ReachEngine;
   /** (round 128f) the town's stores (window world): where the builders fetch from until a warehouse stands */
   townHeap?(): [number, number];
-  /** (round 128k) the town's gates (window world): where its roads start (none: its stores) */
-  townGates?(): [number, number][];
 }
 
 /** (round 128d) inspect: a tap picks the structure under it (inspect.ts) instead of planning */
@@ -132,16 +128,16 @@ export type FortressMode = 'plan' | 'build';
 
 export class Fortress {
   readonly town: Town;
-  readonly grid: TownGrid;
-  readonly plan: FortressPlan;
+  readonly grid: QuadGrid;
+  readonly plan: TownPlan;
+  /** the town's box in the world (its column (0, 0) at origin: x, row) */
+  readonly box: FortressBox;
   tool: Tool = { type: 'house', erase: false, gate: false };
   mode: FortressMode = 'plan';
   /** the structure last painted (the panel's) */
   selected: number | null = null;
   /** (round 128d) the structure Inspect picked: drawn highlighted, its card in the panel (null: none) */
   inspected: number | null = null;
-  /** (round 128e, FT-48) or the thing of the old town Inspect picked (its card in the panel) */
-  inspectedTown: TownThing | null = null;
   readonly onChange: (() => void)[] = [];
   /** (round 128e, FT-50) a line for the bar: why Skip stopped, or that it finished (null: none) */
   note: string | null = null;
@@ -168,7 +164,7 @@ export class Fortress {
   variant: string | null = null;
   variantAt = -1;
   /** (round 128f) the lanes and the roads a lane wide (lanes.ts), made again after the plan changes */
-  private lanesMemo: Lanes | null = null;
+  private lanesMemo: { of: Ways; lanes: Lanes } | null = null;
   /** (round 128l, m4) the reach: the last answer per cell still to build (reach.ts ReachReply bits), its ramp spots,
    *  the box's wet columns (a bit each: the lanes keep off them), the asks folded while a check is in flight */
   private reachBits = new Map<number, number>();
@@ -194,40 +190,18 @@ export class Fortress {
   readonly onReach: (() => void)[] = [];
   private roadShapesMemo: { of: Lanes; shapes: Float32Array } | null = null;
   private roadGraphMemo: { of: Lanes; graph: RoadGraph } | null = null;
-  /** (round 128f) the lanes' spacing per district (the town's, the fields'): the road frequency */
-  private laneOptsNow: LaneOpts = { ...LANE_DEFAULTS };
-  /** the ground's top at a box column */
+  /** the ground's top at a box column (world z: the land as it was before the town — the site's) */
   private readonly groundOfCol: (col: number) => number;
-  /** (round 128m) the ground as first read, a box column (window z then: groundOfCol less zShift since) */
-  private readonly firstRead: Float32Array;
-  /**
-   * (round 128m, quarry) the window's slides in z since the fortress was made (m, summed): a height in the fortress's
-   * own z is its window z plus this — what must keep through a slide (a pit's reference: quarry.ts) is kept so
-   */
-  zShift = 0;
-  /** (round 128m, quarry; V128-11) the quarries' pits as dug: whole tiers' levels (negative: FortressPlan.pit's) */
+  /** (round 128m, quarry; V128-11) the quarries' pits as dug: whole tiers' levels (negative: TownPlan.pit's) */
   readonly dug: CellRuns;
 
-  constructor(readonly box: FortressBox, private io: FortressIO, seed = 7) {
-    if (box.origin[1] & 1) throw new Error('fortress box: its row origin must be even (the lattice\'s odd-row shift)');
-    const grid = new TownGrid(box.w, box.h, { seed });
-    // (round 128d) the ground as it was before the fortress stood on it, kept a column the first time it's read: what's
-    // built is claimed in the columns (claims.ts), and the surface read after it is the wall's top, not the ground —
-    // a block's foot (solid.ts) and a cell planned beside it (Town.base) would stand on the wall
-    const kept = (this.firstRead = new Float32Array(box.w * box.h).fill(NaN));
-    this.groundOfCol = (col) => {
-      if (!Number.isNaN(kept[col])) return kept[col];
-      const [x, y] = this.boxToWindowXY(col);
-      return (kept[col] = io.ground(x, y));
-    };
-    this.town = new Town(box.w, box.h, {
-      ground: this.groundOfCol,
-      // (the fortress is drawn as pieces, not column matter — pieces.ts: nothing is stamped; so the window's z ceiling
-      // doesn't bound it either; and the Town keeps runs a cell, no level cap: round 128d)
-      stamp: () => {},
-      zMax: Infinity,
-    }, { grid });
-    this.plan = new FortressPlan(grid);
+  /** (onetown) the player editing a town: its site (its plan, what stands, its grid, its box) */
+  constructor(readonly site: TownSite, private io: FortressIO) {
+    const grid = site.grid;
+    this.box = { origin: [site.box.x0, site.box.y0], w: site.box.w, h: site.box.h };
+    this.groundOfCol = (col) => site.ground(col);
+    this.town = site.town;
+    this.plan = site.plan;
     this.grid = grid;
     this.dug = new CellRuns(grid.count);
     // (round 128m) a quarry's ramp starts on its edge nearest the stores (the roads come in there)
@@ -274,12 +248,8 @@ export class Fortress {
     if (this.roadGraphMemo?.of !== L) {
       const all = laneGraph(L);
       const g = this.grid;
-      const doors = this.ways().doors.map((d) => {
-        const e = [0, 1, 2, 3].find((k) => g.nbr[d.out * 4 + k] === d.cell) ?? 0;
-        const [ax, ay] = g.corner(d.out, e);
-        const [bx, by] = g.corner(d.out, e + 1);
-        return nearestNode(all, (ax + bx) / 2, (ay + by) / 2).node;
-      });
+      // (round 128o: every entrance's way-out cell is a lane node: its middle)
+      const doors = this.ways().entrances.map((d) => nearestNode(all, ...g.centre(d.out)).node);
       let from = -1;
       let most = 0;
       for (const v of doors) {
@@ -296,57 +266,32 @@ export class Fortress {
     return this.roadGraphMemo.graph;
   }
 
-  /** (round 128f) the lanes' spacing per district: the town's and the fields' (m) */
-  get laneOpts(): LaneOpts {
-    return this.laneOptsNow;
-  }
-  setLaneOpts(o: Partial<LaneOpts>): void {
-    this.laneOptsNow = { ...this.laneOptsNow, ...o };
-    this.lanesMemo = null;
-    for (const h of this.onChange) h();
-  }
-
   /**
-   * (round 128f; the user: "if we want roads smaller than one cell ...") The lanes of a second grid over the tiles, and
-   * the main roads a lane wide (lanes.ts). From the plan and the ground as it was; not on the town that was there, nor
-   * (round 128i) under water: a cell with water over LANE_WATER at its middle or a corner (the columns as last read).
+   * The roads (lanes.ts, round 128o: down the ways' cells, from every entrance — never along a building's face). The same
+   * object until the ways change.
    */
   lanes(): Lanes {
-    if (!this.lanesMemo) {
+    const ways = this.ways();
+    if (this.lanesMemo?.of !== ways) {
       const { w, h } = this.box;
       const ground = (x: number, y: number) => {
         const [k, r] = cellAt(x, y);
         return this.groundOfCol(Math.max(0, Math.min(h - 1, r)) * w + Math.max(0, Math.min(w - 1, k)));
       };
-      const g = this.grid;
-      const town = this.io.townAt;
-      // (round 128l: the box's wet columns, the reach's answer — fortreach.wgsl reachWet; none yet: dry)
-      const wb = this.wetBits;
-      const wet = (x: number, y: number) => {
-        if (!wb) return false;
-        const b = this.boxColOf(x, y);
-        return b >= 0 && ((wb[b >> 5] >>> (b & 31)) & 1) === 1;
-      };
-      const blocked = (c: number) =>
-        [g.centre(c), ...[0, 1, 2, 3].map((k) => g.corner(c, k))].some(([x, y]) => wet(x, y) || (!!town && !!town(...this.toWindow(x, y), ground(x, y) + STANDS)));
-      // (round 128k) the roads start at the town's gates, else its stores
-      const gates = this.io.townGates?.() ?? [];
-      const heap = this.io.townHeap?.();
-      const roots = (gates.length ? gates : heap ? [heap] : []).map(([x, y]) => this.toBox(x, y));
-      this.lanesMemo = lanesOf(this.plan, g, this.ways(), ground, this.laneOptsNow, blocked, roots, (id) => this.pitEntry(id));
+      this.lanesMemo = { of: ways, lanes: lanesOf(this.plan, this.grid, ways, ground) };
     }
-    return this.lanesMemo;
+    return this.lanesMemo.lanes;
   }
 
   /**
-   * (milestone 3) Where a built structure's door opens (window world): the middle of the free cell its door gives on
-   * (ways.ts), else its first cell's middle. Null: none of its blocks stands.
+   * (milestone 3; round 128o) Where a built structure is entered (window world): the middle of the cell its entrance
+   * opens from (build/entrances.ts). Null: none of its blocks stands, or it has no entrance (cut off: the ways say so).
    */
   doorOf(id: number): [number, number] | null {
     const s = this.plan.structure(id);
     if (!s || ![...s.cells.keys()].some((c) => this.town.built.any(c))) return null;
-    const d = this.ways().doors.find((x) => x.structure === id);
-    return this.centre(d ? d.out : [...s.cells.keys()][0]);
+    const d = this.ways().entrances.find((x) => x.structure === id);
+    return d ? this.centre(d.out) : null;
   }
 
   /**
@@ -356,7 +301,23 @@ export class Fortress {
   ways(): Ways {
     if (!this.waysMemo) {
       const courts = shapesOf(this.plan, this.grid, (c) => this.town.base[c]).courtyards.flatMap((ct) => ct.cells);
-      this.waysMemo = waysOf(this.plan, this.grid, courts);
+      // (round 128i, 128o: no road under water — a cell with water over LANE_WATER at its middle or a corner: the box's
+      // wet columns, the reach's answer, fortreach.wgsl reachWet; none yet: dry)
+      const g = this.grid;
+      const wb = this.wetBits;
+      const wet = (x: number, y: number) => {
+        if (!wb) return false;
+        const b = this.boxColOf(x, y);
+        return b >= 0 && ((wb[b >> 5] >>> (b & 31)) & 1) === 1;
+      };
+      const blocked = (c: number) => !!wb && [g.centre(c), ...[0, 1, 2, 3].map((k) => g.corner(c, k))].some(([x, y]) => wet(x, y));
+      // (round 128o: and never across a terrace's edge a walker can't step — the land as the town has it)
+      const { w, h } = this.box;
+      const ground = (x: number, y: number) => {
+        const [k, r] = cellAt(x, y);
+        return this.groundOfCol(Math.max(0, Math.min(h - 1, r)) * w + Math.max(0, Math.min(w - 1, k)));
+      };
+      this.waysMemo = waysOf(this.plan, g, { courtyards: courts, blocked, walk: groundSteps(g, ground) });
     }
     return this.waysMemo;
   }
@@ -384,7 +345,15 @@ export class Fortress {
 
   /** the ground's top at a box column (window z) */
   groundAt(col: number): number {
-    return this.groundOfCol(col);
+    return this.groundOfCol(col) - this.io.oz();
+  }
+
+  /**
+   * (round 128m, quarry) a height in the town's own z is its window z plus this (onetown: the town's z is the world's —
+   * this is the window's oz): what must keep through a slide (a pit's reference: quarry.ts) is kept so
+   */
+  get zShift(): number {
+    return this.io.oz();
   }
 
   /**
@@ -438,21 +407,6 @@ export class Fortress {
   }
 
   /**
-   * (round 128m, quarry) The window slid dz in z (its oz up dz): every height the fortress keeps in window z moves down
-   * dz — the ground as first read and the Town's floors — and zShift keeps the sum (quarry.ts measures in it).
-   */
-  slidZ(dz: number): void {
-    if (!dz) return;
-    this.zShift += dz;
-    for (let i = 0; i < this.firstRead.length; i++) if (!Number.isNaN(this.firstRead[i])) this.firstRead[i] -= dz;
-    this.town.shiftZ(-dz);
-    this.lanesMemo = null;
-    this.slid();
-    // (the pieces are made again: their z is the window's)
-    for (const h of this.onChange) h();
-  }
-
-  /**
    * (round 128m, quarry) Where a quarry's pit meets the roads (box frame): the outer side of the cell its ramp starts
    * on — the cell and the side; null: no pit.
    */
@@ -480,8 +434,10 @@ export class Fortress {
   pick(ray: { o: readonly number[]; d: readonly number[] }, groundCol: number): Block | null {
     const erase = this.tool.erase || this.tool.gate || !!this.tool.tower || !!this.tool.inspect;
     const [bx, by] = this.toBox(ray.o[0], ray.o[1]);
+    // (the ray in the town's frame: box x, y; world z)
+    const bz = ray.o[2] + this.io.oz();
     const t = this.town;
-    const hit = pickFace(t.grid, (c, L) => t.occupied(c, L), (c) => t.built.any(c) || t.plans.any(c), (c) => t.base[c], [bx, by, ray.o[2]], ray.d, 1200);
+    const hit = pickFace(t.grid, (c, L) => t.occupied(c, L), (c) => t.built.any(c) || t.plans.any(c), (c) => t.base[c], [bx, by, bz], ray.d, 1200);
     const yard = !erase && DEFS[this.tool.type].form === 'yard';
     if (hit) {
       if (erase) return { cell: hit.cell, level: hit.level };
@@ -494,7 +450,7 @@ export class Fortress {
     // (round 128d) the ground the ray meets, in the plan's own frame — the same ray the blocks were picked along. The GPU
     // pick's column landed a column or two off it at 412x915 (12 px at zoom 6), so a tap beside a block could land in
     // the block's own cell and do nothing; the GPU pick stays the fallback (the ray meets no ground in the box)
-    const c0 = this.groundCellAlong([bx, by, ray.o[2]], ray.d, 1200);
+    const c0 = this.groundCellAlong([bx, by, bz], ray.d, 1200);
     if (c0 >= 0) return { cell: c0, level: 0 };
     if (groundCol < 0) return null;
     const bc = this.windowToBoxCol(groundCol);
@@ -505,7 +461,7 @@ export class Fortress {
   /** (inspect) the ground's cell the ray meets, level 0 (null: none in the box) */
   private groundPick(ray: { o: readonly number[]; d: readonly number[] }, groundCol: number): Block | null {
     const [bx, by] = this.toBox(ray.o[0], ray.o[1]);
-    const c0 = this.groundCellAlong([bx, by, ray.o[2]], ray.d, 1200);
+    const c0 = this.groundCellAlong([bx, by, ray.o[2] + this.io.oz()], ray.d, 1200);
     if (c0 >= 0) return { cell: c0, level: 0 };
     const bc = groundCol >= 0 ? this.windowToBoxCol(groundCol) : -1;
     const c = bc >= 0 ? this.town.grid.cellOf[bc] : -1;
@@ -514,33 +470,11 @@ export class Fortress {
 
   /** (round 128d) Inspect a structure (null: close the card): it's drawn highlighted. */
   inspect(id: number | null): void {
-    if (id !== null) this.inspectedTown = null;
     if (id !== null && !this.plan.structure(id)) id = null;
     if (id === this.inspected) return;
-    const cells = [this.inspected, id].flatMap((s) => (s === null ? [] : [...(this.plan.structure(s)?.cells.keys() ?? [])]));
     this.inspected = id;
-    this.changedOver(cells);
+    this.io.changed(false);
     for (const h of this.onChange) h();
-  }
-
-  /**
-   * (round 128e, FT-48) The old town's thing the ray (box frame) first meets: a building or wall it goes under the top of,
-   * before it goes under the ground (null: none). Asked only within TOWN_H of the ground (the town's tallest is lower).
-   */
-  private townAlong(o: readonly number[], d: readonly number[], tMax: number, step = 0.4): TownThing | null {
-    for (let t = 0; t <= tMax; t += step) {
-      const x = o[0] + d[0] * t;
-      const y = o[1] + d[1] * t;
-      const z = o[2] + d[2] * t;
-      const [k, r] = cellAt(x, y);
-      if (k < 0 || r < 0 || k >= this.box.w || r >= this.box.h) continue;
-      const g = this.groundOfCol(r * this.box.w + k);
-      if (z > g + TOWN_H) continue;
-      const th = this.io.townAt!(...this.toWindow(x, y), z);
-      if (th) return th;
-      if (z <= g) return null;
-    }
-    return null;
   }
 
   /** The cell where the ray (box frame) first goes under the ground (-1: it doesn't, in the box). */
@@ -561,19 +495,12 @@ export class Fortress {
   press(ray: { o: readonly number[]; d: readonly number[] }, groundCol: number): boolean {
     if (this.tool.inspect) {
       // (a block's face along the ray; else the ground's cell — a yard lies on it; a tap on nothing closes the card)
+      // (onetown: the town's own buildings are the plan's structures — Inspect reads them as the player's)
       const b = this.pick(ray, groundCol) ?? this.groundPick(ray, groundCol);
       const id = b && this.plan.owner[b.cell] >= 0 ? this.plan.owner[b.cell] : null;
-      // (round 128e, FT-48: no structure of the plan there — the old town's building or wall where the tap's ray first
-      // meets the surface: its roofs and walls are in the columns, so the surface read is their top)
-      let town: TownThing | null = null;
-      if (id === null && this.io.townAt) {
-        const [bx, by] = this.toBox(ray.o[0], ray.o[1]);
-        town = this.townAlong([bx, by, ray.o[2]], ray.d, 1200);
-      }
-      this.inspectedTown = town;
       this.inspect(id);
       if (id === null) for (const h of this.onChange) h();
-      return id !== null || town !== null;
+      return id !== null;
     }
     const b = this.pick(ray, groundCol);
     if (!b) return false;
@@ -672,11 +599,7 @@ export class Fortress {
     this.reachBusy = true;
     try {
       R.setSpans(this.spansNow());
-      const queries = new Int32Array(cells.length * 4).fill(-1);
-      cells.forEach((c, i) => this.standCols(c).forEach((b, k) => (queries[i * 4 + k] = b)));
-      const at = this.storesAt();
-      const sc = at ? this.boxColOf(...this.toBox(at[0], at[1])) : -1;
-      const reply = await R.check({ stores: sc >= 0 ? [sc % this.box.w, Math.floor(sc / this.box.w)] : null, queries, wet: false });
+      const reply = await R.check(this.reachAsk(cells, false, false));
       return cells.map((_, i) => (reply.bits[i] & 1) === 1);
     } finally {
       this.reachBusy = false;
@@ -701,14 +624,11 @@ export class Fortress {
         const t0 = performance.now();
         R.setSpans(this.spansNow());
         const cells = this.todoCells();
-        const queries = new Int32Array(cells.length * 4).fill(-1);
-        cells.forEach((c, i) => this.standCols(c).forEach((b, k) => (queries[i * 4 + k] = b)));
-        const at = this.storesAt();
-        const sc = at ? this.boxColOf(...this.toBox(at[0], at[1])) : -1;
+        const ask = this.reachAsk(cells, wet, !!edit || !!batch);
         this.reachStats.cpuMs = performance.now() - t0;
         let reply: ReachReply;
         try {
-          reply = await R.check({ stores: sc >= 0 ? [sc % this.box.w, Math.floor(sc / this.box.w)] : null, queries, wet, why: !!edit || !!batch });
+          reply = await R.check(ask);
         } catch (e) {
           if (e instanceof DOMException && e.name === 'AbortError') return;
           throw e;
@@ -724,6 +644,34 @@ export class Fortress {
   private boxColOf(x: number, y: number): number {
     const [k, r] = cellAt(x, y);
     return k < 0 || r < 0 || k >= this.box.w || r >= this.box.h ? -1 : r * this.box.w + k;
+  }
+
+  /**
+   * (round 128o) The reach's question for these cells: each one's stands (up to four box columns) with their floors —
+   * the land's ground there as the town has it, window z — and the stores' column and floor.
+   */
+  reachAsk(cells: readonly number[], wet: boolean, why: boolean): ReachAsk {
+    const oz = this.io.oz();
+    const queries = new Int32Array(cells.length * 4).fill(-1);
+    const floors = new Float32Array(cells.length * 4);
+    cells.forEach((c, i) =>
+      (c >= 0 ? this.standCols(c) : []).forEach((b, k) => {
+        queries[i * 4 + k] = b;
+        floors[i * 4 + k] = this.groundOfCol(b) - oz;
+      }),
+    );
+    const at = this.storesAt();
+    const sc = at ? this.boxColOf(...this.toBox(at[0], at[1])) : -1;
+    return { stores: sc >= 0 ? [sc % this.box.w, Math.floor(sc / this.box.w)] : null, storesZ: sc >= 0 ? this.groundOfCol(sc) - oz : 0, queries, floors, wet, why };
+  }
+
+  /**
+   * (round 128o) A stand's floor (window z): the land's ground at window world (x, y) as the town has it — what a
+   * builder stands on there, under a passage's arch too (the reach's query and the builders' field seed alike)
+   */
+  standFloor(x: number, y: number): number {
+    const b = this.boxColOf(...this.toBox(x, y));
+    return b >= 0 ? this.groundOfCol(b) - this.io.oz() : 1e4;
   }
 
   /** a cell's stands' box columns (up to four) */
@@ -744,11 +692,13 @@ export class Fortress {
     Object.defineProperty(town, 'built', { value: { each: (c: number) => plan.levels.each(c) } });
     const { w, h } = this.box;
     const out = new Uint32Array(w * h * 2);
+    // (the town's z is the world's; the reach's columns are the window's)
+    const oz = this.io.oz();
     for (const spans of solidSpans({ plan, town, grid: this.grid, ground: this.groundOfCol, ways: this.ways() }).values())
       for (const q of spans) {
         if (q.x < 0 || q.y < 0 || q.x >= w || q.y >= h) continue;
         const i = 2 * (q.y * w + q.x);
-        const p = packSpan(q.z0, q.z1);
+        const p = packSpan(q.z0 - oz, q.z1 - oz);
         if (!out[i]) out[i] = p;
         else if (!out[i + 1]) out[i + 1] = p;
         else {
@@ -769,7 +719,7 @@ export class Fortress {
     if (reply.wet) {
       const was = this.wetBits;
       this.wetBits = reply.wet;
-      if (!was || was.some((v, i) => v !== reply.wet![i])) this.lanesMemo = null;
+      if (!was || was.some((v, i) => v !== reply.wet![i])) this.waysMemo = null;
     }
     if (trial && trial === this.trial) this.judgeTrial();
     else if (!this.trial) {
@@ -1001,9 +951,10 @@ export class Fortress {
     for (let e = 0; e < 4; e++) {
       const n = g.nbr[cell * 4 + e];
       if (n < 0 || n === also) continue;
-      // (a yard beside it — a farm, the quarry — is open ground a builder stands on)
+      // (a yard beside it — a farm, the quarry — is open ground a builder stands on; round 128o: and a block's passage,
+      // under its arch — build/entrances.ts openCell, the rule a structure is entered by)
       const t = this.plan.typeAt(n);
-      if ((this.plan.has(n, 0) || this.town.has(n, 0)) && !(t && DEFS[t].form === 'yard')) continue;
+      if ((this.plan.has(n, 0) || this.town.has(n, 0)) && !(t && DEFS[t].form === 'yard') && !openCell(this.plan, n)) continue;
       const [ax, ay] = g.corner(cell, e);
       const [bx, by] = g.corner(cell, e + 1);
       const mx = (ax + bx) / 2;
@@ -1122,19 +1073,12 @@ export class Fortress {
     return out;
   }
 
-  /** The window slid: the box sits elsewhere in it (the view moves its pieces). */
-  slid(): void {
-    const cells: number[] = [];
-    for (let c = 0; c < this.grid.count; c++) if (this.plan.levels.any(c)) cells.push(c);
-    this.changedOver(cells);
-  }
-
   /** (round 128d) Planning or building: what the view draws (see-through blocks still to build only while building). */
   setMode(m: FortressMode): void {
     if (this.mode === m) return;
     this.mode = m;
     for (const h of this.onMode) h(m);
-    this.changedOver([...this.plan.structures().flatMap((s) => [...s.cells.keys()])]);
+    this.io.changed(false);
     for (const h of this.onChange) h();
   }
 
@@ -1158,7 +1102,7 @@ export class Fortress {
     const k = `${cell}:${level}`;
     if (this.begun.has(k) || this.town.has(cell, level)) return;
     this.begun.add(k);
-    this.changedOver([cell]);
+    this.io.changed(false);
     for (const h of this.onChange) h();
   }
 
@@ -1169,7 +1113,7 @@ export class Fortress {
     this.begun.delete(`${cell}:${level}`);
     // (what grew back on it since it was planned goes as it stands)
     this.clearPlants([cell]);
-    this.changedOver([cell]);
+    this.io.changed(true);
     for (const h of this.onChange) h();
   }
 
@@ -1188,10 +1132,19 @@ export class Fortress {
       this.begun.delete(`${cell}:${l}`);
     }
     if (!down.length) return down;
-    this.changedOver([cell]);
+    this.io.changed(true);
     for (const h of this.onBroken) h(cell, down);
     for (const h of this.onChange) h();
     return down;
+  }
+
+  /**
+   * (onetown) A structure's claim was cut (dug out, smashed, hanging free — build/claims.ts): it comes down, its blocks
+   * planned again, as a raid's breach — the builders mend it.
+   */
+  lose(id: number): void {
+    const s = this.plan.structure(id);
+    if (s) for (const c of s.cells.keys()) this.breakBlock(c, 0);
   }
 
   /** (m4) told when blocks are broken (the cell, the levels) */
@@ -1205,8 +1158,7 @@ export class Fortress {
   setGatesShut(on: boolean): void {
     if (this.gatesShut === on) return;
     this.gatesShut = on;
-    const gates = [...this.plan.structures()].flatMap((s) => [...s.cells.keys()].filter((c) => this.plan.gate[c]));
-    this.changedOver(gates);
+    this.io.changed(true);
     for (const h of this.onChange) h();
   }
 
@@ -1229,7 +1181,7 @@ export class Fortress {
     return { built, total };
   }
 
-  /** (round 128d) Power a day from the fortress's built blocks (bigger and higher give more: FortressPlan.power). */
+  /** (round 128d) Power a day from the fortress's built blocks (bigger and higher give more: TownPlan.power). */
   powerPerDay(): number {
     let p = 0;
     for (const s of this.plan.structures()) p += this.plan.power(s, (c, l) => this.town.has(c, l));
@@ -1286,7 +1238,8 @@ export class Fortress {
     }
     // (FT-26) the trees go from the cells painted and the cells round them (a courtyard among them)
     this.clearPlants(changed);
-    this.changedOver(changed);
+    // (what stands may have come down; the ways' stairs moved: claimed again)
+    if (changed.length) this.io.changed(true);
     for (const e of erased) for (const h of this.onErased) h(e);
     // (round 128l) the reach asked again: answered a few frames later
     if (changed.length) this.requestReach();
@@ -1305,25 +1258,5 @@ export class Fortress {
       }
       this.io.clearPlants(...this.toWindow(x, y), r + 0.5);
     }
-  }
-
-  /** tell the IO what changed: the window world bounds of these cells and their neighbours */
-  private changedOver(cells: number[]): void {
-    if (!cells.length) return;
-    const g = this.town.grid;
-    let x0 = Infinity;
-    let y0 = Infinity;
-    let x1 = -Infinity;
-    let y1 = -Infinity;
-    for (const c of cells)
-      for (let k = 0; k < 4; k++) {
-        const [x, y] = this.toWindow(...g.corner(c, k));
-        x0 = Math.min(x0, x);
-        y0 = Math.min(y0, y);
-        x1 = Math.max(x1, x);
-        y1 = Math.max(y1, y);
-      }
-    // (the neighbours restamped with them: a cell across)
-    this.io.changed(x0 - 8, y0 - 8, x1 + 8, y1 + 8);
   }
 }

@@ -1,70 +1,7 @@
 // The eight first buildings (round 128c, the user's list) and their numbers: a block's cost and what it gives. Size
 // sets cost and capacity (blocks × these). Untuned: the user tunes once it's playable (FORTRESS_SLICE1 answer 2).
-import type { StructureDef, StructureType } from '../api/contracts/fortress';
 
-/**
- * (round 128d) A block type stacks as high as the player likes (the user: "I want the player fortress to be something
- * that can grow huge and impressive"): the Town keeps runs per cell, no cap. The caps the block types had (houses 4,
- * warehouses and barracks 3, lumber camps and blacksmiths 2) were picked under the old 8-level cap, not by design. Yards
- * (farms, the quarry) lie flat: 1, by design.
- */
-const NO_CAP = Infinity;
-
-/** How much more power a level up gives: a block at level L gives power x (1 + POWER_RISE x L) (round 128d). Untuned. */
-export const POWER_RISE = 0.5;
-
-export const DEFS: Record<StructureType, StructureDef> = {
-  // (round 128d) the player's keep: solid stone, crenellated, a tower at each outer corner; its blocks give power, the
-  // higher the more. No height cap.
-  fortress: {
-    type: 'fortress', label: 'Fortress', one: 'fortress', many: 'fortresses', form: 'keep', joins: true, maxLevels: NO_CAP,
-    cost: { stone: 8, log: 1 }, perBlock: { power: 1 },
-    look: { style: 'bastion', props: ['banner'] },
-  },
-  house: {
-    type: 'house', label: 'Houses', one: 'house', many: 'houses', form: 'block', joins: true, maxLevels: NO_CAP,
-    cost: { log: 4, stone: 2 }, perBlock: { beds: 4 },
-    look: { style: 'hearth', kind: 'house' },
-  },
-  farm: {
-    type: 'farm', label: 'Farms', one: 'farm', many: 'farms', form: 'yard', joins: true, maxLevels: 1,
-    cost: { log: 1 }, perBlock: { jobs: 1, makes: { grain: 2 } },
-    look: { style: 'hearth', props: ['haystack'] },
-  },
-  lumber: {
-    type: 'lumber', label: 'Lumber camp', one: 'lumber camp', many: 'lumber camps', form: 'block', joins: true, maxLevels: NO_CAP,
-    cost: { log: 3, stone: 1 }, perBlock: { jobs: 2, makes: { log: 3 } },
-    look: { style: 'hearth', kind: 'sawmill', props: ['logpile'] },
-  },
-  quarry: {
-    type: 'quarry', label: 'Quarry', one: 'quarry', many: 'quarries', form: 'yard', joins: true, maxLevels: 1,
-    cost: { log: 2 }, perBlock: { jobs: 2, makes: { stone: 3 } },
-    look: { style: 'bastion', props: ['spoil', 'crane'] },
-  },
-  warehouse: {
-    type: 'warehouse', label: 'Warehouse', one: 'warehouse', many: 'warehouses', form: 'block', joins: true, maxLevels: NO_CAP,
-    cost: { log: 4, stone: 4 }, perBlock: { storage: 50 },
-    look: { style: 'hearth', kind: 'warehouse', props: ['crates'] },
-  },
-  wall: {
-    type: 'wall', label: 'Walls', one: 'wall', many: 'walls', form: 'wall', joins: true, maxLevels: NO_CAP,
-    cost: { stone: 6 }, perBlock: { posts: 2 },
-    look: { style: 'bastion' },
-  },
-  blacksmith: {
-    type: 'blacksmith', label: 'Blacksmith', one: 'blacksmith', many: 'blacksmiths', form: 'block', joins: true, maxLevels: NO_CAP,
-    // (round 128l, m4: its smiths run the recipe — data/recipes/fortress.json 'forge', a weapon every 20 s of work: 3 a
-    // day a smith, 2 smiths a block)
-    cost: { log: 3, stone: 5 }, perBlock: { jobs: 2, makes: { weapons: 6 } },
-    look: { style: 'bastion', kind: 'house', chimney: true, props: ['cart'] },
-  },
-  barracks: {
-    type: 'barracks', label: 'Barracks', one: 'barracks', many: 'barracks', form: 'block', joins: true, maxLevels: NO_CAP,
-    // (round 128l, m4: a recruit a block trains — 'drill', 30 s: 2 soldiers a day — while its beds have room)
-    cost: { log: 4, stone: 6 }, perBlock: { beds: 4, jobs: 1, makes: { soldiers: 2 } },
-    look: { style: 'bastion', kind: 'warehouse', props: ['banner'] },
-  },
-};
+export { DEFS, POWER_RISE } from '../build/types';
 
 /**
  * What a fortress starts with when its town's stores are empty (a town start mostly means stores and income: the
@@ -114,12 +51,6 @@ export const ECON = {
   digSec: 0.5,
   dig: 1,
   digCols: 6,
-  /**
-   * (round 128m, V128-11: replaces pitMax) a quarry's pit goes down a tier (a level, LEVEL_H) a ring of its footprint,
-   * each tier reached by a ramp along this many cells of the ring above it: the depth is the tiers whose ramps fit
-   * (fortress/pit.ts)
-   */
-  pitRampCells: 2,
   /** (round 128m) the miners cut a tier down this many metres at a time, every column of it, so its ramp stays walkable */
   pitStep: 1,
   /** (round 128l, m4) the carts: the town's at the start, and one more a warehouse block built, up to cartsMax */
@@ -144,8 +75,3 @@ export const ECON = {
   refund: 0.5,
 };
 
-/**
- * (milestone 3) Which jobs people take first when there aren't enough for all (the JobBoard's priority): food, then the
- * builders, then stone, then wood; (round 128l, milestone 4) then the smiths, then the recruits.
- */
-export const JOB_ORDER = ['farm', 'build', 'quarry', 'lumber', 'blacksmith', 'barracks'] as const;

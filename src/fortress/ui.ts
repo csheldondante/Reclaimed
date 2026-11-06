@@ -7,11 +7,10 @@
 // (round 128d, the user: "I think pause prevents both panning and building in build mode": the frame covers the whole
 // screen, and ui/style.css's `#ui > * { pointer-events: auto }` outranked its own `pointer-events: none` — every press
 // landed on the frame, not the map, paused or not. The frame and the banners take no presses, at #ui's specificity.)
-import { STRUCTURE_TYPES, type StructureType } from '../api/contracts/fortress';
+import { PAINTABLE_TYPES, type StructureType } from '../api/contracts/fortress';
 import { DEFS } from './defs';
 import type { Fortress } from './fortress';
 import { inspectCard, inspectFacts } from './inspect';
-import { townCard } from './townpick';
 import { ECON } from './defs';
 import { BEDS_LINE, buildingLine, crewLine, cutOffLine, FULL_LINE, HUNGRY_LINE, jobsLine, PAUSED_LINE, peopleLine, planLines, SKIP_DONE, SKIPPING_LINE, storesLine, structureLines, typeCard } from './words';
 
@@ -95,9 +94,6 @@ export class FortressBar {
 
   private now: () => { speed: number; skipping: boolean } = () => ({ speed: 1, skipping: false });
 
-  /** (round 128e, FT-48) the old town's name, for its cards */
-  townName = 'the town';
-
   constructor(parent: HTMLElement, private fort: Fortress, hooks: FortressBarHooks) {
     this.hooks = hooks;
     const style = document.createElement('style');
@@ -120,7 +116,7 @@ export class FortressBar {
     this.root.appendChild(this.info);
     const grid = document.createElement('div');
     grid.className = 'fort-grid';
-    for (const t of STRUCTURE_TYPES) {
+    for (const t of PAINTABLE_TYPES) {
       const b = document.createElement('button');
       b.textContent = DEFS[t].label;
       b.onclick = () => {
@@ -157,7 +153,6 @@ export class FortressBar {
       // tools hidden after Plan — the bar showed the Inspect card instead. Plan and Build put Inspect away)
       if (fort.tool.inspect) {
         fort.tool = { type: fort.tool.type, erase: false, gate: false, tower: false };
-        fort.inspectedTown = null;
         fort.inspect(null);
       }
       if (fort.mode === 'plan') hooks.build();
@@ -171,10 +166,7 @@ export class FortressBar {
     this.inspectBtn.onclick = () => {
       const on = !fort.tool.inspect;
       fort.tool = { type: fort.tool.type, erase: false, gate: false, tower: false, inspect: on };
-      if (!on) {
-        fort.inspectedTown = null;
-        fort.inspect(null);
-      }
+      if (!on) fort.inspect(null);
       this.render();
     };
     goRow.append(this.inspectBtn, this.goBtn);
@@ -258,11 +250,7 @@ export class FortressBar {
     if (f.tool.inspect) {
       // (round 128d) Inspect: the picked structure's card (inspect.ts), from its data and the ledger now
       const s = f.inspected !== null ? f.plan.structure(f.inspected) : null;
-      if (!s && f.inspectedTown) {
-        const card = townCard(f.inspectedTown, this.townName);
-        out.push({ text: card.title, title: true });
-        for (const l of card.lines) out.push({ text: l });
-      } else if (!s) out.push({ text: 'Tap a block or a building to see what it is.' });
+      if (!s) out.push({ text: 'Tap a block or a building to see what it is.' });
       else {
         // (milestone 3) the live numbers: its workers, what they brought, a farm's ripe grain (Fortress.status)
         const st = f.status;
@@ -312,7 +300,8 @@ export class FortressBar {
     const s = f.selected !== null ? f.plan.structure(f.selected) : null;
     const showing = t.gate || t.tower ? 'wall' : t.erase ? s?.type : t.type;
     if (s && s.type === showing) out.push({ text: structureLines(DEFS[s.type], f.plan.blocks(s), f.plan.cost(s), f.plan.gives(s)).join(' ') });
-    const tot = f.plan.totals(stores);
+    // (onetown: what stands already — the town's own buildings — costs nothing more)
+    const tot = f.plan.totals(stores, (c, l) => f.town.has(c, l));
     const pl = planLines(tot, stores);
     out.push({ text: pl.slice(0, -1).join(' ') || pl[0] });
     if (pl.length > 1) out.push({ text: pl[pl.length - 1], short: Object.keys(tot.short).length > 0 });

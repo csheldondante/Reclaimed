@@ -7,6 +7,9 @@
 //                    streets the bands between plots, each plot cut into quads.
 //   radial           Bulwark: rings and spokes about a keep, sectors doubling outward; a ring road, the spokes, a wall.
 //   orthogonal       a lattice turned to the land, a street every few tiles.
+// (round 128m, onetown) Each tiles on past the town's radius out to `extent` (TileOpts): the one grid a town is planned
+// and built on covers the land round it too — its farmland, and where the player builds outside the walls. Past the
+// radius every tile is 'outside' (the farmland's plots and the player's paint give it a use).
 import type { CitySpec, GroundFn, TileMesh, V2 } from '../../api/contracts/structures';
 import { TileBuilder, quadCentre } from './builder';
 import { rng, fbm } from '../rng';
@@ -14,6 +17,24 @@ import { rng, fbm } from '../rng';
 export interface TileOpts {
   spec: CitySpec;
   ground: GroundFn;
+  /** (onetown) how far the tiles reach from the middle (m; default the spec's radius): past the radius, 'outside' */
+  extent?: number;
+}
+
+/** (onetown) the reach of the tiles */
+const extentOf = (o: TileOpts) => Math.max(o.extent ?? o.spec.radius, o.spec.radius);
+
+/** (onetown) every tile whose middle lies past the town's radius made 'outside' (its block -1) */
+function outsideRim(t: TileMesh, spec: CitySpec): TileMesh {
+  const [cx, cy] = spec.at;
+  for (let q = 0; q < t.use.length; q++) {
+    const [x, y] = quadCentre(t, q);
+    if (Math.hypot(x - cx, y - cy) > spec.radius) {
+      t.use[q] = 'outside';
+      t.block[q] = -1;
+    }
+  }
+  return t;
 }
 
 export function tileSystem(o: TileOpts): TileMesh {
@@ -33,11 +54,13 @@ const tileOf = (s: CitySpec) => s.tile ?? 4;
 
 // ------------------------------------------------------------------ irregular (Townscaper)
 
-function irregular({ spec }: TileOpts): TileMesh {
+function irregular(o: TileOpts): TileMesh {
+  const { spec } = o;
   const r = rng(spec.seed * 7 + 1);
   const L = tileOf(spec) * 2;
   const [cx, cy] = spec.at;
-  const R = spec.radius;
+  // (onetown: the lattice out to the extent; the lanes and the plaza by the radius)
+  const R = extentOf(o);
   const B = new TileBuilder();
   // the triangle lattice over the disc: rows L·√3/2 apart, odd rows shifted half
   const H = (L * Math.sqrt(3)) / 2;
@@ -100,7 +123,7 @@ function irregular({ spec }: TileOpts): TileMesh {
   }
   B.pinBoundary();
   B.relax(30);
-  const t = B.build();
+  const t = outsideRim(B.build(), spec);
   lanes(t, spec, r);
   return t;
 }
@@ -228,15 +251,31 @@ export function contourSeeds(spec: CitySpec, ground: GroundFn, plot: number): V2
   return kept;
 }
 
-function contourVoronoi({ spec, ground }: TileOpts): TileMesh {
+function contourVoronoi(o: TileOpts): TileMesh {
+  const { spec, ground } = o;
   const tile = tileOf(spec);
   const plot = tile * 4.2;
   const street = tile * 0.5;
   const [cx, cy] = spec.at;
   const R = spec.radius;
+  const E = extentOf(o);
   const seeds = contourSeeds(spec, ground, plot);
+  // (onetown) the ring past the town out to the extent: plots of their own, cut into tiles, no streets (outside)
+  const town = seeds.length;
+  if (E > R) {
+    const r2 = rng(spec.seed * 13 + 9);
+    const h = plot * 0.92;
+    for (let y = cy - E; y <= cy + E; y += h * 0.87)
+      for (let x = cx - E + ((Math.round((y - cy) / (h * 0.87)) & 1) * h) / 2; x <= cx + E; x += h) {
+        const px = x + (r2() - 0.5) * h * 0.5;
+        const py = y + (r2() - 0.5) * h * 0.5;
+        const d = Math.hypot(px - cx, py - cy);
+        if (d <= R + plot * 0.2 || d > E) continue;
+        seeds.push([px, py]);
+      }
+  }
   const rim: V2[] = [];
-  for (let k = 0; k < 40; k++) rim.push([cx + Math.cos((k / 40) * Math.PI * 2) * R, cy + Math.sin((k / 40) * Math.PI * 2) * R]);
+  for (let k = 0; k < 40; k++) rim.push([cx + Math.cos((k / 40) * Math.PI * 2) * E, cy + Math.sin((k / 40) * Math.PI * 2) * E]);
   const B = new TileBuilder();
   const plazaSeed = seeds.reduce((best, s, i) => (Math.hypot(s[0] - cx, s[1] - cy) < Math.hypot(seeds[best][0] - cx, seeds[best][1] - cy) ? i : best), 0);
   seeds.forEach((s, i) => {
@@ -251,8 +290,13 @@ function contourVoronoi({ spec, ground }: TileOpts): TileMesh {
     }
     p = clean(ccw(p), 0.3);
     if (p.length < 3) return;
+    // (onetown) a plot of the ring past the town: its tiles, outside
+    if (i >= town) {
+      B.poly(p.map((v) => B.vert(v[0], v[1])), 'outside', -1, true);
+      return;
+    }
     // (no street along the town's rim: an edge whose ends both lie on the rim circle is the town's edge)
-    const onRim = (v: V2) => Math.abs(Math.hypot(v[0] - cx, v[1] - cy) - R) < 0.05 * R;
+    const onRim = (v: V2) => Math.abs(Math.hypot(v[0] - cx, v[1] - cy) - E) < 0.05 * E;
     const rimEdge = (k: number) => onRim(p[k]) && onRim(p[(k + 1) % p.length]);
     const q = clean(inset(p, (k) => (rimEdge(k) ? 0 : street)), 0.3);
     const isPlaza = i === plazaSeed;
@@ -317,12 +361,13 @@ function contourVoronoi({ spec, ground }: TileOpts): TileMesh {
     }
   });
   B.subdivide();
-  return B.build();
+  return outsideRim(B.build(), spec);
 }
 
 // ------------------------------------------------------------------ radial (Bulwark)
 
-function radial({ spec }: TileOpts): TileMesh {
+function radial(o: TileOpts): TileMesh {
+  const { spec } = o;
   const r = rng(spec.seed * 17 + 5);
   const tile = tileOf(spec);
   const spokes = spec.spokes ?? 6;
@@ -334,6 +379,10 @@ function radial({ spec }: TileOpts): TileMesh {
   const rings: number[] = [r0];
   while (rings[rings.length - 1] < R) rings.push(rings[rings.length - 1] + tile * (0.95 + 0.15 * r()));
   const turn = r() * Math.PI * 2;
+  // (onetown) rings on past the town out to the extent, a tile apart: outside
+  const kTown = rings.length - 1;
+  const E = extentOf(o);
+  while (rings[rings.length - 1] < E) rings.push(rings[rings.length - 1] + tile);
   const nOf = (k: number) => {
     const mid = (rings[k] + rings[k + 1]) / 2;
     let n = spokes;
@@ -343,8 +392,8 @@ function radial({ spec }: TileOpts): TileMesh {
   const ns = rings.slice(0, -1).map((_, k) => nOf(k));
   for (let k = 1; k < ns.length; k++) ns[k] = Math.max(ns[k], ns[k - 1]);
   const K = ns.length;
-  const wallRing = walls ? K - 1 : -1;
-  const ringRoads = new Set<number>([K >= 6 ? Math.round(K * 0.45) : -1, walls ? K - 2 : -1]);
+  const wallRing = walls ? kTown - 1 : -1;
+  const ringRoads = new Set<number>([kTown >= 6 ? Math.round(kTown * 0.45) : -1, walls ? kTown - 2 : -1]);
   const at = (rad: number, a: number) => B.vert(cx + Math.cos(a) * rad, cy + Math.sin(a) * rad);
   // the keep's ground: the innermost disc, a polygon on the first ring's divisions
   const inner: number[] = [];
@@ -358,12 +407,12 @@ function radial({ spec }: TileOpts): TileMesh {
       const a0 = turn + (j / n) * Math.PI * 2;
       const a1 = turn + ((j + 1) / n) * Math.PI * 2;
       const spoke = n >= spokes * 2 && j % (n / spokes) === 0;
-      const use = k === wallRing ? (spoke ? 'gate' : 'wall') : ringRoads.has(k) || spoke ? 'street' : 'lot';
+      const use = k >= kTown ? 'outside' : k === wallRing ? (spoke ? 'gate' : 'wall') : ringRoads.has(k) || spoke ? 'street' : 'lot';
       // block: the band between ring roads, the sector between spokes
       let band = 0;
       for (const rr of ringRoads) if (rr >= 0 && k > rr) band++;
       const sector = Math.floor((j * spokes) / n);
-      const block = 1 + band * 64 + sector;
+      const block = k >= kTown ? -1 : 1 + band * 64 + sector;
       // (the inner edge at this ring's divisions, the outer at the next's: m quads a sector where the next ring doubles)
       for (let s = 0; s < m; s++) {
         const b0 = a0 + ((a1 - a0) * s) / m;
@@ -377,7 +426,8 @@ function radial({ spec }: TileOpts): TileMesh {
 
 // ------------------------------------------------------------------ orthogonal
 
-function orthogonal({ spec }: TileOpts): TileMesh {
+function orthogonal(o: TileOpts): TileMesh {
+  const { spec } = o;
   const r = rng(spec.seed * 19 + 7);
   const tile = tileOf(spec);
   const [cx, cy] = spec.at;
@@ -386,7 +436,8 @@ function orthogonal({ spec }: TileOpts): TileMesh {
   const ca = Math.cos(ang);
   const sa = Math.sin(ang);
   const B = new TileBuilder();
-  const n = Math.ceil(R / tile) + 1;
+  const E = extentOf(o);
+  const n = Math.ceil(E / tile) + 1;
   const every = 4 + Math.floor(r() * 2);
   const P = (i: number, j: number) => {
     const x = i * tile;
@@ -397,7 +448,12 @@ function orthogonal({ spec }: TileOpts): TileMesh {
     for (let i = -n; i < n; i++) {
       const mx = (i + 0.5) * tile;
       const my = (j + 0.5) * tile;
-      if (Math.hypot(mx, my) > R) continue;
+      if (Math.hypot(mx, my) > E) continue;
+      // (onetown) past the town: outside
+      if (Math.hypot(mx, my) > R) {
+        B.quad(P(i, j), P(i + 1, j), P(i + 1, j + 1), P(i, j + 1), 'outside', -1);
+        continue;
+      }
       const si = ((i % every) + every) % every === 0;
       const sj = ((j % every) + every) % every === 0;
       const plaza = Math.abs(mx) < tile * 1.6 && Math.abs(my) < tile * 1.6;

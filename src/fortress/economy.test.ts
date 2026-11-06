@@ -1,12 +1,13 @@
 // Fortress slice 1, milestone 3 (Node, no GPU): the JobBoard (priority, keeping jobs, people short), the yields (a
 // worker's load and its time, the quarry's ore, grain grown and eaten), the beds, the warehouses' room, newcomers, Erase's
 // refund, a lumber camp's reach, and the new lines' writing.
+import { JobBoard, type JobSlot } from '../town/jobs';
 import { describe, expect, it } from 'vitest';
 import { lint } from '../../test/support/writing';
 import { TownGrid } from '../build/towngrid';
 import { DEFS, ECON } from './defs';
-import { bedsOf, cartsOf, eaten, haulBy, fits, grown, JobBoard, jobSlots, mayArrive, perWorker, putIn, quarryLoad, reachOf, refundOf, roomOf, storedOf, workSeconds, type JobSlot } from './economy';
-import { FortressPlan } from './plan';
+import { bedsOf, cartsOf, eaten, haulBy, fits, grown, jobSlots, mayArrive, perWorker, putIn, quarryLoad, reachOf, refundOf, roomOf, storedOf, workSeconds } from './economy';
+import { TownPlan } from '../build/plan';
 import { BuildBook } from './work';
 import { BEDS_LINE, FULL_LINE, HUNGRY_LINE, jobsLine, peopleLine, storesLine } from './words';
 
@@ -62,7 +63,7 @@ describe('the JobBoard', () => {
   });
 
   it('builds the slots from the plan: jobs per built block, builders while there is building, in JOB_ORDER', () => {
-    const plan = new FortressPlan(grid);
+    const plan = new TownPlan(grid);
     const [a, b, c] = spread;
     plan.paint(a, 0, 'quarry');
     plan.paint(nbr(a, 0), 0, 'quarry');
@@ -71,7 +72,7 @@ describe('the JobBoard', () => {
     plan.paint(c, 1, 'lumber');
     // only level 0 stands: the lumber camp's upper block isn't worked yet
     const s = jobSlots(plan, (_c, l) => l === 0, true);
-    expect(s.map((x) => x.kind)).toEqual(['farm', 'build', 'quarry', 'lumber']);
+    expect(s.map((x) => x.kind)).toEqual(['build', 'farm', 'quarry', 'lumber']);
     expect(s.find((x) => x.kind === 'quarry')!.count).toBe(2 * DEFS.quarry.perBlock.jobs!);
     expect(s.find((x) => x.kind === 'lumber')!.count).toBe(DEFS.lumber.perBlock.jobs!);
     expect(s.find((x) => x.kind === 'build')!.count).toBe(ECON.builders);
@@ -80,7 +81,7 @@ describe('the JobBoard', () => {
     expect(jobSlots(plan, () => false, false)).toEqual([]);
     // a house: no jobs; (round 128l, milestone 4) the blacksmith's smiths, as many as the cap lets (ore and wood in the
     // stores: FortressLife)
-    const p2 = new FortressPlan(grid);
+    const p2 = new TownPlan(grid);
     p2.paint(a, 0, 'house');
     p2.paint(b, 0, 'blacksmith');
     expect(jobSlots(p2, all, false).map((x) => [x.kind, x.count])).toEqual([['blacksmith', DEFS.blacksmith.perBlock.jobs!]]);
@@ -136,7 +137,7 @@ describe('the yields', () => {
 
 describe('people: beds, food, newcomers', () => {
   it('beds come from the town and the house blocks built (not the barracks)', () => {
-    const plan = new FortressPlan(grid);
+    const plan = new TownPlan(grid);
     const [a, b] = spread;
     plan.paint(a, 0, 'house');
     plan.paint(a, 1, 'house');
@@ -157,7 +158,7 @@ describe('people: beds, food, newcomers', () => {
 
 describe("the warehouses' room", () => {
   it('is the town\'s own and every built warehouse block\'s', () => {
-    const plan = new FortressPlan(grid);
+    const plan = new TownPlan(grid);
     const [a] = spread;
     plan.paint(a, 0, 'warehouse');
     plan.paint(a, 1, 'warehouse');

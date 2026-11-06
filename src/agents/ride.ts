@@ -1,9 +1,11 @@
-// The agents ride the roads on the GPU (round 128i, V128-14; shaders/roadride.wgsl says how). An owner hands its road
-// graph (roadgraph.ts, in its own grid's frame) once a change and the frame's place in the window each frame; a group
-// rides to goals in that frame (`setGoals`): each goal gets off at its nearest node. The next-hop tables are made again
-// on the GPU when the graph or the goals change; each tick the ride stage steers the riding groups' units (after their
-// step, the agents' stage list). Nothing read back: the CPU keeps its own copy of the graph to pick the goals' nodes.
+// The agents ride the roads on the GPU (round 128i, V128-14; round 128o, DA-A7: kinematic trips — shaders/roadride.wgsl
+// says how). An owner hands its road graph (roadgraph.ts, in its own grid's frame) once a change and the frame's place in
+// the window each frame; a group rides to goals in that frame (`setGoals`): each goal gets off at its nearest node. The
+// next-hop tables are made again on the GPU when the graph or the goals change; each tick the ride stage places the
+// riding groups' units along their trips at their kinds' speeds (after their step, the agents' stage list). Nothing
+// read back: the CPU keeps its own copy of the graph to pick the goals' nodes.
 import { makeBindGroup, makeCompute, type ComputeKernel } from '../gpu/pipeline';
+import commonWgsl from '../shaders/common.wgsl?raw';
 import roadrideWgsl from '../shaders/roadride.wgsl?raw';
 import { ROW_H } from '../world/lattice';
 import { MAX_NODES, nearestNode, nodeCount, noGraph, type RoadGraph } from './roadgraph';
@@ -16,8 +18,10 @@ export const MAX_DESTS = 64;
 const GROUPS = 24;
 /** a goal rides only if a node is this near it (m): the last leg is straight, off the roads */
 export const RIDE_NEAR = 6;
-/** RideParams: n, off (2 vec4), group (GROUPS), dest (64), destNode (16) */
-const RP_BYTES = (2 + GROUPS + MAX_DESTS + MAX_DESTS / 4) * 16;
+/** (agents.ts MAX_KINDS) */
+const KINDS = 8;
+/** RideParams: n, off (2 vec4), group (GROUPS), dest (64), destNode (16), kindSpeed (2) */
+const RP_BYTES = (2 + GROUPS + MAX_DESTS + MAX_DESTS / 4 + KINDS / 4) * 16;
 
 export class RoadRide {
   private hopsK: ComputeKernel;
@@ -41,20 +45,25 @@ export class RoadRide {
   private goals: (P[] | null)[] = Array.from({ length: GROUPS }, () => null);
   private dirty = false;
   private armed = false;
+  /** (round 128o) each kind's walking speed (m/s): a trip's pace */
+  private kindSpeed = new Float32Array(KINDS);
 
   constructor(
     private device: GPUDevice,
+    /** the Globals (common.wgsl: the tick's dt) */
+    private globals: GPUBuffer,
     private units: GPUBuffer,
     private roads: GPUBuffer,
     private w: number,
     maxUnits: number,
   ) {
     const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
-    this.hopsK = makeCompute(device, 'agents-rideHops', [roadrideWgsl], { 46: 'read', 47: 'read', 48: 'rw', 49: 'uniform' }, 'rideHops');
-    this.rideK = makeCompute(device, 'agents-ride', [roadrideWgsl], { 44: 'rw', 45: 'rw', 46: 'read', 47: 'read', 48: 'rw', 49: 'uniform', 50: 'read' }, 'ride');
-    const netSpec = { 46: 'read', 47: 'read', 48: 'rw', 49: 'uniform', 51: 'rw' } as const;
-    this.netClearK = makeCompute(device, 'agents-rideNetClear', [roadrideWgsl], netSpec, 'rideNetClear');
-    this.netStampK = makeCompute(device, 'agents-rideNetStamp', [roadrideWgsl], netSpec, 'rideNetStamp');
+    const parts = [commonWgsl, roadrideWgsl];
+    this.hopsK = makeCompute(device, 'agents-rideHops', parts, { 0: 'uniform', 46: 'read', 47: 'read', 48: 'rw', 49: 'uniform' }, 'rideHops');
+    this.rideK = makeCompute(device, 'agents-ride', parts, { 0: 'uniform', 44: 'rw', 45: 'rw', 46: 'read', 47: 'read', 48: 'rw', 49: 'uniform', 50: 'read' }, 'ride');
+    const netSpec = { 0: 'uniform', 46: 'read', 47: 'read', 48: 'rw', 49: 'uniform', 51: 'rw' } as const;
+    this.netClearK = makeCompute(device, 'agents-rideNetClear', parts, netSpec, 'rideNetClear');
+    this.netStampK = makeCompute(device, 'agents-rideNetStamp', parts, netSpec, 'rideNetStamp');
     this.nodesBuf = device.createBuffer({ label: 'agents road nodes', size: MAX_NODES * 16, usage: S });
     this.hopsBuf = device.createBuffer({ label: 'agents road hops', size: MAX_DESTS * MAX_NODES * 8, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
     this.state = device.createBuffer({ label: 'agents ride state', size: maxUnits * 16, usage: S | GPUBufferUsage.COPY_SRC });
@@ -66,9 +75,10 @@ export class RoadRide {
     this.adjBuf?.destroy();
     this.adjCap = n;
     this.adjBuf = this.device.createBuffer({ label: 'agents road edges', size: n * 8, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-    this.hopsG = makeBindGroup(this.device, 'agents-rideHops', this.hopsK.layout, { 46: this.nodesBuf, 47: this.adjBuf, 48: this.hopsBuf, 49: this.params });
-    this.rideG = makeBindGroup(this.device, 'agents-ride', this.rideK.layout, { 44: this.units, 45: this.state, 46: this.nodesBuf, 47: this.adjBuf, 48: this.hopsBuf, 49: this.params, 50: this.roads });
-    this.netG = makeBindGroup(this.device, 'agents-rideNet', this.netClearK.layout, { 46: this.nodesBuf, 47: this.adjBuf, 48: this.hopsBuf, 49: this.params, 51: this.roads });
+    const G = this.globals;
+    this.hopsG = makeBindGroup(this.device, 'agents-rideHops', this.hopsK.layout, { 0: G, 46: this.nodesBuf, 47: this.adjBuf, 48: this.hopsBuf, 49: this.params });
+    this.rideG = makeBindGroup(this.device, 'agents-ride', this.rideK.layout, { 0: G, 44: this.units, 45: this.state, 46: this.nodesBuf, 47: this.adjBuf, 48: this.hopsBuf, 49: this.params, 50: this.roads });
+    this.netG = makeBindGroup(this.device, 'agents-rideNet', this.netClearK.layout, { 0: G, 46: this.nodesBuf, 47: this.adjBuf, 48: this.hopsBuf, 49: this.params, 51: this.roads });
     return this.adjBuf;
   }
 
@@ -98,6 +108,12 @@ export class RoadRide {
     if (edges > this.adjCap) this.growAdj(Math.max(edges, this.adjCap * 2));
     if (edges) this.device.queue.writeBuffer(this.adjBuf, 0, g.adj);
     this.dirty = true;
+  }
+
+  /** (round 128o) kind `k`'s walking speed (m/s, agents.ts KindSpec.speed): its riders' pace */
+  setKindSpeed(k: number, speed: number): void {
+    if (k < 0 || k >= KINDS) throw new Error(`ride: kind ${k} out of 0..${KINDS - 1}`);
+    this.kindSpeed[k] = speed;
   }
 
   get nodes(): number {
@@ -154,6 +170,8 @@ export class RoadRide {
     const G0 = 8;
     const D0 = G0 + GROUPS * 4;
     const N0 = D0 + MAX_DESTS * 4;
+    const K0 = N0 + MAX_DESTS;
+    f.set(this.kindSpeed, K0);
     this.goals.forEach((q, g) => {
       if (!q || !this.nodes) return;
       u[G0 + g * 4] = slots;

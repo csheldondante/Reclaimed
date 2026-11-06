@@ -1,10 +1,10 @@
 // (round 128m, quarry; V128-11) The miners grow a pit down tier by tier (quarry.ts) on a fortress over a fake ground:
 // the tiers are dug in order, each to its depth, the floor flat, and a walker (the agents' step, reach.ts STEP) gets
 // from the rim to the floor down the ramps the whole time.
+import { fortressOn } from './testing';
 import { describe, expect, it } from 'vitest';
 import { LEVEL_H } from '../build/town';
 import { cellAt, cellPos, nbr } from '../world/lattice';
-import { Fortress } from './fortress';
 import { QuarryDig } from './quarry';
 import { STEP } from './reach';
 
@@ -22,9 +22,11 @@ function world(groundRead?: () => unknown) {
     const [k, r] = cellAt(x, y);
     return Math.max(0, Math.min(H - 1, r)) * W + Math.max(0, Math.min(W - 1, k));
   };
-  const fort = new Fortress(
+  // (the window's oz: the town's heights are world z — a slide in z moves the window, not the town)
+  const win = { oz: 0 };
+  const fort = fortressOn(
     { origin: [0, 0], w: W, h: H },
-    { windowOrigin: () => [0, 0], dims: { w: W, h: H, zMax: 400 }, ground: (x, y) => z[col(x, y)], stores: () => ({}), changed: () => {} },
+    { windowOrigin: () => [0, 0], oz: () => win.oz, dims: { w: W, h: H, zMax: 400 }, ground: (x, y) => z[col(x, y)], stores: () => ({}) },
   );
   fort.ready = true;
   let woken = 0;
@@ -40,7 +42,7 @@ function world(groundRead?: () => unknown) {
     settle: () => woken++,
     groundRead,
   });
-  return { z, col, fort, dig, unread, woken: () => woken };
+  return { z, col, fort, dig, win, unread, woken: () => woken };
 }
 
 /** a quarry's footprint: the cells within r of (x, y), painted and built */
@@ -183,7 +185,7 @@ describe('the miners grow the pit', () => {
     const before = w.dig.stateOf(id)!;
     // (the window up 32: every window z 32 lower, the fortress told)
     for (let i = 0; i < w.z.length; i++) w.z[i] -= 32;
-    w.fort.slidZ(32);
+    w.win.oz += 32;
     w.dig.update();
     const after = w.dig.stateOf(id)!;
     expect(after.tier).toBe(before.tier);

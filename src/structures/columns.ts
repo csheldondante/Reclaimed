@@ -3,7 +3,7 @@
 // water runs round them and off their tops, sand piles on them, the rock judge counts them, the terrain's draws skip
 // them because the pieces draw the building. Why solid and one a column: the sims need "is it solid here", not rooms;
 // one span a column is what the External registry holds an instance to. Converted only here, at the boundary.
-import type { CityPlan, ColumnSpan, V2 } from '../api/contracts/structures';
+import type { CityPlan, ColumnSpan, LinearFeature, V2 } from '../api/contracts/structures';
 import { cellAt, cellPos, ROW_H } from '../world/lattice';
 import { quadCorners } from './tiles/builder';
 import { resample, segFrame } from './linear';
@@ -40,7 +40,22 @@ export function columnsOf(plan: CityPlan): ColumnSpan[] {
   // (the keep: its own frame on the plaza, no tiles of its own — one instance with the ramparts)
   // (round 120: a lighthouse's tower and a windmill's body likewise; a headframe is an open frame — nothing to claim)
   for (const m of plan.megas) if (m.kind === 'keep' || m.kind === 'lighthouse' || m.kind === 'windmill') raster(m.kind === 'keep' ? m.frame : shrinkFrame(m.frame, 0.7), m.z0 - 0.6, m.z1 - 1, -1, seen, out);
-  plan.linear.forEach((f, k) => {
+  linearInto(plan.linear, seen, out);
+  return out;
+}
+
+/**
+ * (onetown) The linear features' solid (a wall from its foot to its walk, a bridge's or a pier's deck), ids −2 and
+ * below, one a feature: a town's layout claims these besides its structures (settle/view.ts).
+ */
+export function linearColumns(linear: readonly LinearFeature[]): ColumnSpan[] {
+  const out: ColumnSpan[] = [];
+  linearInto(linear, new Set<string>(), out);
+  return out;
+}
+
+function linearInto(linear: readonly LinearFeature[], seen: Set<string>, out: ColumnSpan[]): void {
+  linear.forEach((f, k) => {
     // (round 120: a pier's deck as a bridge's, the water free under it)
     if (f.kind !== 'wall' && f.kind !== 'bridge' && f.kind !== 'pier') return;
     const S = resample(f, 2);
@@ -52,7 +67,6 @@ export function columnsOf(plan: CityPlan): ColumnSpan[] {
       raster(segFrame(a, b, f.width), z0, top, -2 - k, seen, out);
     }
   });
-  return out;
 }
 
 function shrinkFrame(f: V2[], k: number): V2[] {

@@ -1,7 +1,7 @@
 // The fortress's people (fortress slice 1; milestone 2 "workers build the plan", milestone 3 "the economy feeds the
 // building"). Adapted from settle/life.ts's phase machine and its IO (take, fell, the trees in reach): every person is a
 // unit; a pure JobBoard (economy.ts) gives each one a job from the jobs open (a built block of a farm, quarry or lumber
-// camp gives its type's jobs; the builders' while there's something to build), in priority order (defs.ts JOB_ORDER):
+// camp gives its type's jobs; the builders' while there's something to build), in priority order (economy.ts JOB_ORDER):
 //  - builders walk to the warehouse, take a load out of the stores (what the next block still lacks), carry it to that
 //    block and work it in; a block stands when its cost is in (Town.add). Blocks go up in BuildCrew's order;
 //  - miners walk to the quarry's built cells and dig: the ground itself is taken (terrain take, a real pit that deepens;
@@ -33,6 +33,7 @@
 //
 // It runs the pinned settlement's units in place of a SettlementLife (Settlements.pin(id, true)): the two share those
 // fields and groups (FORTRESS_SLICE1 correction 1), so they never run together.
+import { JobBoard, type JobKind, type JobSlot, type Load } from '../town/jobs';
 import type { Good, Goods } from '../api/contracts/fortress';
 import type { FactionId } from '../api/contracts/world';
 import type { UnitId, V2 } from '../api/contracts/units';
@@ -43,17 +44,17 @@ import { F, G, type AgentUnits, type Routine, type UnitRec } from '../units/agen
 import { ROAD_FIELD } from '../agents/agents';
 import { noGraph, type RoadGraph } from '../agents/roadgraph';
 import { DEFS, ECON } from './defs';
-import { builtBlocks, cartsOf, eaten, fits, grown, haulBy, JobBoard, jobSlots, mayArrive, putIn, quarryLoad, reachOf, refundOf, workSeconds, type JobKind, type JobSlot } from './economy';
+import { builtBlocks, cartsOf, eaten, fits, grown, haulBy, jobSlots, mayArrive, putIn, quarryLoad, reachOf, refundOf, workSeconds } from './economy';
 import { nearestNode, nodeCount } from '../agents/roadgraph';
 import { ROW_H } from '../world/lattice';
 import { RecipeRunner, type TrainRoom } from './recipes';
 import type { Structure } from '../api/contracts/fortress';
 import type { Erased, Fortress } from './fortress';
-import { WAY_ROAD } from './ways';
+import { WAY_ROAD } from '../build/ways';
 import { cellAt } from '../world/lattice';
 import type { Doing, PersonFacts } from './follow';
 import type { FortressRaid } from './raiders';
-import { BuildBook, type Load } from './work';
+import { BuildBook } from './work';
 import { QuarryDig } from './quarry';
 
 /** goods a builder carries a trip */
@@ -98,6 +99,15 @@ const DAY_WORD: Record<Doing, string | null> = {
 const PILE_ROAD = 14;
 /** (m4) sim seconds a soldier may take to a wall-walk point before it gives up and musters again */
 const PATROL_STUCK = 40;
+
+/**
+ * Where the town's first people start (window world): at the stores — a warehouse's door (its way out: open ground the
+ * reach is seeded from) or the town's heap. (DA-A2, round 128o: they were spawned 4 m round it, and a unit lands on the
+ * top surface where it's put — in the user's start town on the warehouse's roof and the lighthouse, with no way down.)
+ */
+export function startSpots(stores: V2, n: number): V2[] {
+  return Array.from({ length: n }, (): V2 => [stores[0], stores[1]]);
+}
 
 export interface FortressLifeIO {
   units: AgentUnits;
@@ -250,7 +260,7 @@ export class FortressLife implements Routine {
     for (const g of [R4.toSmith, R4.toBarracks, R4.toPost]) A.follow(g, -1);
     for (let i = 0; i < CART_GROUPS; i++) A.follow(R4.cart0 + i, -1);
     const h = this.heap();
-    for (let i = 0; i < people; i++) this.spawn([h[0] + Math.cos(i * 2.4) * 4, h[1] + Math.sin(i * 2.4) * 4], 0.5 + i * 0.4);
+    startSpots(h, people).forEach((at, i) => this.spawn(at, 0.5 + i * 0.4));
     fort.onErased.push(this.onErased);
     this.arriveAt = ECON.arriveSec;
   }
@@ -1215,33 +1225,20 @@ export class FortressLife implements Routine {
       const w = v.length && this.carts[i] !== undefined ? (this.io.units.recs.get(this.carts[i])?.work as Work | undefined) : undefined;
       return w?.from ?? null;
     });
-    seed(F.site, stone.slice(0, 8));
-    seed(F.store, wood.slice(0, 8));
+    // (round 128o: a stand seeded on its floor's surface — under a passage's arch the top one is the roof)
+    const atFloor = (v: V2[]) => v.map(([x, y]) => ({ x, y, z: f.standFloor(x, y) }));
+    A.seed(F.site, atFloor(stone.slice(0, 8)));
+    A.seed(F.store, atFloor(wood.slice(0, 8)));
     seed(F.quarry, quarry);
     seed(F.fell, fell);
   }
 
   /**
-   * Where builders stand to work on a block: just outside its cell's sides with nothing built beside at the ground
-   * (as BuildCrew's). Never inside: a block that stands is drawn as pieces whose columns are claimed solid, and a
-   * builder inside it when it went up was buried (they died at the site in the first headless run).
+   * Where builders stand to work on a block: just outside its cell's sides (Fortress.standsOf — the reach asks the same
+   * stands: one rule, round 128o). Never inside: a block that stands is claimed solid.
    */
   private standsFor(b: Block): V2[] {
-    const f = this.io.fort;
-    const g = f.town.grid;
-    const [cx, cy] = g.centre(b.cell);
-    const out: V2[] = [];
-    for (let e = 0; e < 4; e++) {
-      const n = g.nbr[b.cell * 4 + e];
-      if (n < 0 || f.town.has(n, 0)) continue;
-      const [ax, ay] = g.corner(b.cell, e);
-      const [bx, by] = g.corner(b.cell, e + 1);
-      const mx = (ax + bx) / 2;
-      const my = (ay + by) / 2;
-      const d = Math.hypot(mx - cx, my - cy) || 1;
-      out.push(f.toWindow(mx + ((mx - cx) / d) * 1.4, my + ((my - cy) / d) * 1.4));
-    }
-    return out;
+    return this.io.fort.standsOf(b.cell);
   }
 
   /** the first block (of the sites) that still lacks something the stores have */

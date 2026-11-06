@@ -15,7 +15,8 @@ import { cellAt } from '../world/lattice';
 import type { LiveSpot } from '../settle/life';
 
 const MAGIC = 0x544c4352; // 'RCLT'
-export const TOWN_FIXTURE_FORMAT = 1;
+/** (2, round 128m onetown: the town's site — its one plan — and the window's oz in the header) */
+export const TOWN_FIXTURE_FORMAT = 2;
 
 export interface TownFixtureHeader {
   format: number;
@@ -34,6 +35,10 @@ export interface TownFixtureHeader {
   riverWet: number;
   /** the town that becomes the fortress: its record's place (window world units) and its spots (window coordinates) */
   town: { id: string; name: string; at: [number, number]; spots: LiveSpot[] };
+  /** (onetown) the window's oz when captured (the site's heights are world z: lab z = world z − oz − zBase) */
+  oz?: number;
+  /** (onetown) the town's site as the game had it (build/site.ts siteToJson) */
+  site?: unknown;
 }
 
 export interface TownFixture {

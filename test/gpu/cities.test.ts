@@ -9,7 +9,7 @@ import { Settlements } from '../../src/settle/settlements';
 import { along } from '../../src/settle/ships';
 import { StructureGpu } from '../../src/structures/gpu';
 import { piecesOf } from '../../src/structures/pieces';
-import { planCity } from '../../src/structures/plan';
+import { planCity } from '../../src/structures/place';
 import commonWgsl from '../../src/shaders/common.wgsl?raw';
 import materialsWgsl from '../../src/shaders/materials.wgsl?raw';
 import terrainShapeWgsl from '../../src/shaders/terrainshape.wgsl?raw';

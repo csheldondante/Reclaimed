@@ -41,10 +41,8 @@ export const MESHINST = typeof location !== 'undefined' && urlFlags().get('meshi
 export type OwnerId = number;
 /** the resting rock (game/integrity.ts: a rigid body come to rest stays its mesh) */
 export const OWNER_ROCK: OwnerId = 1;
-/** (round 117/119) the settlements' buildings (src/settle/view.ts: one instance a building, a wall run, a bridge) */
-export const OWNER_STRUCT: OwnerId = 2;
-/** (round 128d) the player's fortress's built blocks (src/fortress/claims.ts: one instance a structure) */
-export const OWNER_FORT: OwnerId = 3;
+// (round 128m, onetown) a town's claims are owned by its grid's id (build/site.ts gridIdOf: 256 and up), one owner
+// for the generated buildings and the player's alike — the settlements' and the fortress's owner ids are gone
 
 export interface ExternalCol {
   x: number;

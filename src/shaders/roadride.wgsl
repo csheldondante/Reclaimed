@@ -1,21 +1,20 @@
-// ---- the agents ride the roads (round 128i, V128-14) --------------------------------------------------------------
-// The user: "Can agents transfer from flow field onto paths on the GPU? That seems cheaper and also reliable for moving
-// goods around. We only need the flow fields where they go off tracks or where the destinations switch".
-// An owner's roads as a graph in its own grid's frame (agents/roadgraph.ts: nodes, both-ways adjacency with costs),
-// uploaded once a change; the frame's place in the window is RR.off (a slide moves it, nothing remade).
-//  * rideHops (when the graph or the destinations change): one workgroup a destination slot; Bellman-Ford over the
-//    nodes in workgroup memory, two copies swapped each round; the table per slot and node: the cost to the slot's
-//    destination node and the next node on the way. Mirrored on the CPU by roadgraph.ts hopsCpu.
+// ---- the agents ride the roads (round 128i, V128-14; round 128o, DA-A7: kinematic trips) ----------------------------
+// The user: "if agents are on paths can't we essentially just interpolate their position from end to end at their travel
+// speed?" (DESIGN.md section 12). An owner's roads as a graph in its own grid's frame (agents/roadgraph.ts: nodes,
+// both-ways adjacency with costs), uploaded once a change; the frame's place in the window is RR.off (a slide moves it).
+//  * rideHops (when the graph or the destinations change): one workgroup a destination slot; Bellman-Ford over the nodes
+//    in workgroup memory; the table per slot and node: the cost to the slot's destination node and the next node on the
+//    way (the cached routes, for now). Mirrored on the CPU by roadgraph.ts hopsCpu.
 //  * ride (every tick, after the units' step: an agents stage): one thread a unit. A unit of a group that rides
-//      - off the network, follows its field as ever (the shared field onto the roads: agents.wgsl, seeded on the
-//        network's columns — rideNetStamp, below); standing on one, it joins at the node within JOIN_R that is cheapest to its
-//        nearest destination (or, nearer its goal as the crow flies than by the roads, makes straight for it);
-//      - on the network, heads for its node; there, on to the next one the table names for whichever of its group's
-//        destinations is cheapest from it; at a destination node it gets off;
-//      - off at the end, makes straight for its goal (the last leg: a door, the stores' heap) and stands there.
-//    Its heading goes to the step through the unit's fifth word's w (units.wgsl reads it: 0 its field, < 0 stand,
-//    else the heading + STEER_BIAS); a unit not riding gets 0.
-// Self-contained (no common.wgsl): the units' record layout and the window's cells are mirrored here.
+//      - off the network, follows its field (the shared field onto the roads: agents.wgsl ROAD_FIELD, seeded on the
+//        network's columns — rideNetStamp, below); standing on an edge's band it starts a trip there, toward the end of
+//        the edge cheaper to its nearest destination;
+//      - on a trip, is placed: along its edge at its kind's speed (G.dt), node to node as the table names them, then
+//        from the destination's node to its goal; at its goal it stands. Its x, y and velocity are written here; its
+//        steer word says RIDE_TRIP, so units.wgsl moves it no further (only its height rides the surface under it). No
+//        steering, no shoving, no getting lost or stuck;
+//      - knocked down, thrown, swinging (not walking): off the trip, back on its field, and it starts again.
+// Includes common.wgsl (the Globals: dt; the lattice's cellAt).
 
 const RR_ROW_H: f32 = 0.8660254;
 const RR_FAR: f32 = 1e9;
@@ -24,32 +23,18 @@ const MAX_NODES: u32 = 1024u;
 const HOP_THREADS: u32 = 64u;
 /** a unit's record: UNIT_V vec4s (units.wgsl, agents.ts UNIT_V) */
 const RR_UNIT_V: u32 = 6u;
-/** joins at a node this near (m) */
-const JOIN_R: f32 = 4.5;
-/** there: at a node, at its goal (m) */
-const AT_NODE: f32 = 0.9;
-const AT_GOAL: f32 = 0.6;
-/** pushed this far off its way (tumbled, shoved), it starts over from its field: farther than this from the node it
- *  heads for than the longest edge into that node (round 128l, m4fix: it was 8 m from the node itself, so a rider that
- *  turned onto an edge longer than 8 m was "lost" at once — the lanes have 8.2 m edges on open ground — got off, joined
- *  again at the node behind and turned back: the farms' carts never left the stores, BACKLOG M4-14) */
-const LOST: f32 = 3.0;
-/** on the last leg (off the roads, to its goal): this far past NEAR_GOAL and it starts over */
-const LAST_LOST: f32 = 8.0;
-/** joins standing on an edge's band: this near its line (m; a lane's half width and a pad) */
+/** a unit stands on an edge's band this near its line (m): a lane's half width and a pad */
 const ON_EDGE: f32 = 1.6;
-/** riding but slower than this (m/s) for STUCK_TICKS ticks, it gets off and waits COOL_TICKS before joining again */
-const STUCK_SPEED: f32 = 0.25;
-const STUCK_TICKS: u32 = 90u;
-const COOL_TICKS: u32 = 120u;
-/** a goal this near as the crow flies (m) it makes straight for, off the roads */
-const NEAR_GOAL: f32 = 6.0;
-/** units.wgsl steer: a heading rides as heading + STEER_BIAS (> 0); STAND < 0 */
+/** units.wgsl steer: STAND < 0 stands; RIDE_TRIP: placed by the ride (a heading + STEER_BIAS > 0: none since the trips) */
 const STEER_BIAS: f32 = 10.0;
 const STAND: f32 = -1.0;
+const RIDE_TRIP: f32 = -2.0;
 const M_OFF: u32 = 0u;
-const M_ON: u32 = 1u;
+/** on a trip along edge y -> z */
+const M_TRIP: u32 = 1u;
+/** on the last stretch from its destination's node to the goal */
 const M_LAST: u32 = 2u;
+const M_AT: u32 = 3u;
 
 struct RideParams {
   /** x nodes, y destination slots, z units (the slots' high-water mark), w the window's columns across */
@@ -62,11 +47,13 @@ struct RideParams {
   dest: array<vec4<f32>, 64>,
   /** per destination slot its node: slot s at [s / 4][s % 4] */
   destNode: array<vec4<u32>, 16>,
+  /** (round 128o) per kind of unit its walking speed (m/s): kind k at [k / 4][k % 4] — agents.ts KindSpec.speed */
+  kindSpeed: array<vec4<f32>, 2>,
 };
 
 @group(0) @binding(44) var<storage, read_write> rideUnits: array<vec4<f32>>;
-/** per unit slot: x mode, y the node it heads for (off the network: ticks before it may join again), z its destination
- *  slot (bits 0-7) and the ticks it has made no way (8-31), w its group + 1 when that was set */
+/** per unit slot: x its mode (bits 0-7) and destination slot (8-15), y the node its edge starts at, z the node it heads
+ *  for, w its group + 1 when that was set */
 @group(0) @binding(45) var<storage, read_write> rideState: array<vec4<u32>>;
 /** the graph: per node (MAX_NODES) x, y (f32 bits), first edge, edges; then per edge the node and its cost (f32 bits) */
 @group(0) @binding(46) var<storage, read> graph: array<vec4<u32>>;
@@ -132,27 +119,11 @@ fn nodeXY(v: u32) -> vec2<f32> {
   return vec2<f32>(bitcast<f32>(g.x), bitcast<f32>(g.y));
 }
 
-/** the longest edge at node v (m): how far a rider on its way to v can be from it */
-fn longestEdge(v: u32) -> f32 {
-  let g = graph[v];
-  let a = nodeXY(v);
-  var m = 0.0;
-  for (var k = g.z; k < g.z + g.w; k++) { m = max(m, length(nodeXY(graphAdj[k].x) - a)); }
-  return m;
-}
-
 fn hopCost(slot: u32, v: u32) -> f32 { return bitcast<f32>(hops[slot * MAX_NODES + v].x); }
 
-/** the window column under world point w (common.wgsl cellAt, mirrored), as its window index; none: 0xffffffff */
+/** the window column under world point w (its window index; none: 0xffffffff) */
 fn rrColumn(w: vec2<f32>) -> u32 {
-  let r0 = (w.y - 0.5 * RR_ROW_H) / RR_ROW_H;
-  let a = vec2<f32>(w.x - 0.5 - 0.5 * r0, r0);
-  let c = vec3<f32>(a.x, a.y, -a.x - a.y);
-  var r = round(c);
-  let d = abs(r - c);
-  if (d.x > d.y && d.x > d.z) { r.x = -r.y - r.z; } else if (d.y > d.z) { r.y = -r.x - r.z; }
-  let ax = vec2<i32>(i32(r.x), i32(r.y));
-  let cell = vec2<i32>(ax.x + (ax.y - (ax.y & 1)) / 2, ax.y);
+  let cell = cellAt(w);
   let H = i32((arrayLength(&rideRoads) / 2u) * 32u / max(RR.n.w, 1u));
   if (cell.x < 0 || cell.y < 0 || cell.x >= i32(RR.n.w) || cell.y >= H) { return 0xffffffffu; }
   return u32(cell.y) * RR.n.w + u32(cell.x);
@@ -163,17 +134,6 @@ fn rrOnNet(w: vec2<f32>) -> bool {
   let i = rrColumn(w);
   if (i == 0xffffffffu) { return false; }
   return ((rideRoads[arrayLength(&rideRoads) / 2u + (i >> 5u)] >> (i & 31u)) & 1u) != 0u;
-}
-
-/** on the network or a column from it: the road field stops a walker within a step of its seeds (a step along a road
- *  costs half: agents.wgsl ROAD_COST) */
-fn rrNearNet(w: vec2<f32>) -> bool {
-  if (rrOnNet(w)) { return true; }
-  for (var d = 0u; d < 6u; d++) {
-    let t = f32(d) * 1.0471976;
-    if (rrOnNet(w + vec2<f32>(cos(t), sin(t)) * 1.1)) { return true; }
-  }
-  return false;
 }
 
 /** the cheapest of group g's destinations from node v: its slot (x) and the cost (y as f32 bits) */
@@ -190,10 +150,9 @@ fn bestDest(g: vec4<u32>, v: u32) -> vec2<u32> {
   return vec2<u32>(bs, bitcast<u32>(bc));
 }
 
-fn steerTo(p: vec2<f32>, q: vec2<f32>) -> f32 {
-  let d = q - p;
-  return atan2(d.y, d.x) + STEER_BIAS;
-}
+fn destNodeOf(s: u32) -> u32 { return RR.destNode[s / 4u][s % 4u]; }
+
+fn kindSpeedOf(k: u32) -> f32 { return RR.kindSpeed[k / 4u][k % 4u]; }
 
 @compute @workgroup_size(64)
 fn ride(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -216,104 +175,92 @@ fn ride(@builtin(global_invocation_id) id: vec3<u32>) {
     return;
   }
   let g = RR.group[grp];
-  if (st.w != grp + 1u) { st = vec4<u32>(M_OFF, 0u, g.x, grp + 1u); }
+  if (st.w != grp + 1u) { st = vec4<u32>(M_OFF, 0u, 0u, grp + 1u); }
+  var mode = st.x & 0xffu;
+  var slot = (st.x >> 8u) & 0xffu;
+  // (a slot not its group's — the goals changed under it: it starts over)
+  if (mode != M_OFF && (slot < g.x || slot >= g.x + g.y)) { mode = M_OFF; }
   let p = a.xy - RR.off.xy;
   var steer = 0.0;
+  var q = p;
+  var dir = vec2<f32>(0.0);
   if (!walking) {
-    st.x = M_OFF;
+    mode = M_OFF;
   } else {
-    // (its nearest goal as the crow flies)
-    var gs = g.x;
-    var gd = RR_FAR;
-    for (var s = g.x; s < g.x + g.y; s++) {
-      let d = length(RR.dest[s].xy - p);
-      if (d < gd) {
-        gd = d;
-        gs = s;
-      }
-    }
-    if (st.x == M_OFF) {
-      if (gd < NEAR_GOAL) {
-        st.x = M_LAST;
-        st.z = gs;
-        st.y = 0u;
-      } else if (st.y > 0u) {
-        // (got off stuck: a while on its field before joining again)
-        st.y -= 1u;
-      } else if (rrNearNet(a.xy)) {
-        // (it joins on the edge whose band it stands on — the lane under its feet, never a node across a wall — at the
-        // end of it cheapest to its nearest destination)
-        var bv = 0xffffffffu;
-        var bc = RR_FAR;
-        var bs = g.x;
-        for (var v = 0u; v < RR.n.x; v++) {
-          let xv = nodeXY(v);
-          if (length(xv - p) > JOIN_R + 4.0) { continue; }
-          let gv = graph[v];
-          for (var k = gv.z; k < gv.z + gv.w; k++) {
-            let w2 = graphAdj[k].x;
-            if (rrSegDist(p, xv, nodeXY(w2)) > ON_EDGE) { continue; }
-            let b = bestDest(g, v);
-            let c = length(xv - p) + bitcast<f32>(b.y);
-            if (c < bc) {
-              bc = c;
-              bv = v;
-              bs = b.x;
-            }
+    if (mode == M_OFF && rrOnNet(a.xy)) {
+      // (on an edge's band: a trip from where it stands, toward the end cheaper to its nearest goal)
+      var bc = RR_FAR;
+      for (var v = 0u; v < RR.n.x; v++) {
+        let gv = graph[v];
+        for (var k = gv.z; k < gv.z + gv.w; k++) {
+          let w2 = graphAdj[k].x;
+          if (rrSegDist(p, nodeXY(v), nodeXY(w2)) > ON_EDGE) { continue; }
+          let b = bestDest(g, w2);
+          let c = length(nodeXY(w2) - p) + bitcast<f32>(b.y);
+          if (c < bc) {
+            bc = c;
+            st.y = v;
+            st.z = w2;
+            slot = b.x;
           }
         }
-        if (bv != 0xffffffffu) {
-          st.x = M_ON;
-          st.y = bv;
-          st.z = bs;
-        }
+      }
+      if (bc < RR_FAR) {
+        mode = M_TRIP;
+        // (onto the edge's line where it stands)
+        let s0 = nodeXY(st.y);
+        let d = nodeXY(st.z) - s0;
+        q = s0 + d * clamp(dot(p - s0, d) / max(dot(d, d), 1e-12), 0.0, 1.0);
       }
     }
-    if (st.x == M_ON) {
-      var v = st.y;
-      if (length(nodeXY(v) - p) > longestEdge(v) + LOST) {
-        st.x = M_OFF;
-      } else {
-        // (at a node: on to the next, or off at the destination's)
-        for (var k = 0u; k < 4u && length(nodeXY(v) - p) < AT_NODE; k++) {
-          let b = bestDest(g, v);
-          let h = hops[b.x * MAX_NODES + v];
-          st.z = (st.z & ~0xffu) | b.x;
-          if (bitcast<f32>(h.x) >= RR_FAR) {
-            st.x = M_OFF;
-            break;
-          }
-          if (h.y == v) {
-            st.x = M_LAST;
-            break;
-          }
-          v = h.y;
-        }
-        st.y = v;
-        if (st.x == M_ON) { steer = steerTo(p, nodeXY(v)); }
+    let speed = kindSpeedOf((info >> 9u) & 7u);
+    var left = speed * G.dt;
+    // (on its way: along edges, node to node, as far as its speed takes it this tick)
+    for (var hop = 0u; hop < 8u && left > 0.0 && (mode == M_TRIP || mode == M_LAST); hop++) {
+      let to = select(nodeXY(st.z), RR.dest[slot].xy, mode == M_LAST);
+      let d = to - q;
+      let L = length(d);
+      if (L > left) {
+        dir = d / L;
+        q += dir * left;
+        left = 0.0;
+        break;
       }
+      if (L > 1e-6) { dir = d / L; }
+      q = to;
+      left -= L;
+      if (mode == M_LAST) {
+        mode = M_AT;
+        break;
+      }
+      // (at node st.z: on to the next its cheapest goal's table names, or the last stretch to the goal)
+      let b = bestDest(g, st.z);
+      slot = b.x;
+      if (bitcast<f32>(b.y) >= RR_FAR) {
+        mode = M_OFF;
+        break;
+      }
+      if (st.z == destNodeOf(slot)) {
+        mode = M_LAST;
+        continue;
+      }
+      st.y = st.z;
+      st.z = hops[slot * MAX_NODES + st.z].y;
     }
-    if (st.x == M_LAST) {
-      let q = RR.dest[st.z & 0xffu].xy;
-      let d = length(q - p);
-      if (d > LAST_LOST + NEAR_GOAL) {
-        st.x = M_OFF;
-      } else {
-        steer = select(steerTo(p, q), STAND, d < AT_GOAL);
-      }
+    if (mode == M_TRIP || mode == M_LAST || (mode == M_AT && any(q != p))) {
+      // (placed: where its trip has it this tick, heading its way — units.wgsl rides its height)
+      rideUnits[u * RR_UNIT_V] = vec4<f32>(q + RR.off.xy, a.z, a.w);
+      let r1 = rideUnits[u * RR_UNIT_V + 1u];
+      rideUnits[u * RR_UNIT_V + 1u] = vec4<f32>(dir * select(speed, 0.0, mode == M_AT), 0.0, r1.w);
+    }
+    if (mode == M_TRIP || mode == M_LAST) {
+      steer = RIDE_TRIP;
+    } else if (mode == M_AT) {
+      // (at its goal: stands, until its routine gives it another; moved off it — its field, and it starts again)
+      if (length(RR.dest[slot].xy - q) > ON_EDGE) { mode = M_OFF; } else { steer = STAND; }
     }
   }
-  // (riding but making no way — shoved against something, a lane over ground it can't walk: off, and a while before it
-  // joins again)
-  if (st.x != M_OFF && steer > 0.0) {
-    let speed = length(rideUnits[u * RR_UNIT_V + 1u].xy);
-    let stuck = select(0u, (st.z >> 8u) + 1u, speed < STUCK_SPEED);
-    st.z = (st.z & 0xffu) | (min(stuck, 0xffffffu) << 8u);
-    if (stuck > STUCK_TICKS) {
-      st = vec4<u32>(M_OFF, COOL_TICKS, 0u, st.w);
-      steer = 0.0;
-    }
-  }
+  st.x = mode | (slot << 8u);
   rideState[u] = st;
   if (e.w != steer) {
     e.w = steer;

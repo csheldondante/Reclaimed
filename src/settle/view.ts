@@ -18,16 +18,21 @@
 //    that writes arriving land, region by region: a building partly in the window is claimed there and the rest comes
 //    with its land; nothing is let go when it leaves nor claimed again after a slide. A change (a storey raised, a
 //    building lost) is the grid's things set again: what changed let go and claimed anew on the GPU.
-import type { ColumnSpan, StructurePieces } from '../api/contracts/structures';
-import type { ExternalInstance, ExternalRegistry } from '../sim/external';
-import { OWNER_STRUCT } from '../sim/external';
-import type { StaticClaims, StaticGrid } from '../sim/static-claims';
-import { MAT } from '../world/materials';
+//  - (round 128m, onetown) One town, one plan (build/site.ts): what's drawn is the plan's view (build/view.ts
+//    townPieces) and what's claimed its built blocks' solid (fortress/solid.ts solidSpans: a block its cell, a wall its
+//    band, a gate open under its lintel, a wall's stairs, the ramps) and the layout's decks (bridges, piers) — the same
+//    for every town. The player's town adds its edit state to both through its hook (setHook: the fortress's mode, its
+//    ways and lanes, Inspect's pick, a refusal's warning, the gates shut); there is no second slab for it.
+import type { StructurePieces } from '../api/contracts/structures';
+import { townPieces, type ViewInputs } from '../build/view';
+import { TownClaims } from '../build/claims';
+import type { Ways } from '../build/ways';
+import type { ExternalRegistry } from '../sim/external';
+import type { StaticClaims } from '../sim/static-claims';
 import { ROW_H } from '../world/lattice';
+import { typeIndex } from '../build/plan';
 import { gridApply, gridRow, StructureGpu, type GridTransform } from '../structures/gpu';
-import { piecesOf, PIECE_FLOATS, REL } from '../structures/pieces';
-import { columnsOf } from '../structures/columns';
-import { standingPlan } from '../structures/plan';
+import { PIECE_FLOATS, REL } from '../structures/pieces';
 import { library } from '../structures/modules';
 import { BUILD, planScreen, screenGap, type Box3 } from './onscreen';
 import type { Settlements } from './settlements';
@@ -60,8 +65,18 @@ const BUILD_BUDGET = 1;
 const PLAN_EVERY = 15;
 /** an unplanned settlement's z range for that look: round the ground the screen's centre shows (no plan: no ground) */
 const PLAN_Z = 60;
-/** the fortress's slab */
-const FORT = 'fortress';
+/**
+ * (onetown) What a town's player-side state adds to its view and its claims (the fortress's: fortress/fortress.ts). The
+ * view asks each time it makes the town's pieces or claims (after `changed`).
+ */
+export interface TownHook {
+  /** the view's extra inputs: ghosts and scaffolding by the mode, Inspect's pick, a warning, the lanes */
+  view(): Partial<ViewInputs>;
+  /** the claims': the ways (a wall's stairs are solid), the gates shut */
+  solid(): { ways?: Ways; shut?: boolean };
+  /** a structure's claim was cut (dug out, smashed): what's left of it is the hook's to say (the fortress: it breaks) */
+  lost?(structure: number): void;
+}
 
 interface Shown {
   seed: SettlementSeed;
@@ -75,17 +90,14 @@ interface Shown {
   drawn: boolean;
   /** its box's ground (world z): lowest, highest */
   zr: [number, number];
-  /** per building: its columns in the box's frame, its claim */
-  cols: Map<number, ColumnSpan[]>;
-  claims: Map<number, ExternalInstance>;
-  /** (round 128j) its static grid (its buildings claimed with the land); null: no claims */
-  statics: StaticGrid | null;
+  /** (onetown) its built blocks claimed in the columns (build/claims.ts: the one rule for every town) */
+  claims: TownClaims;
 }
 
 export class SettlementsView {
   readonly sg: StructureGpu;
   private shown = new Map<string, Shown>();
-  private fort: { p: StructurePieces | null; grid: number; gridKey: string } = { p: null, grid: 0, gridKey: '' };
+  private hooks = new Map<string, TownHook>();
   private onlyV = '';
   private frames = 0;
   /** (round 128i, FT-67) updateMs by part, the last update's: gridMs the grid rows, screenMs the screen's entries and
@@ -98,8 +110,6 @@ export class SettlementsView {
     st.onPlanned.push((id) => this.add(id));
     st.onRaised.push((id, b) => this.raised(id, b));
     for (const { seed } of st.plannedAll()) this.add(seed.rec.id);
-    const ext = io.external();
-    if (ext) ext.owner(OWNER_STRUCT, { name: 'settlements', onLost: (inst) => this.lost(inst) });
   }
 
   /** (debugging) draw only the pieces whose module name starts with this */
@@ -109,13 +119,39 @@ export class SettlementsView {
   set only(v: string) {
     this.onlyV = v;
     for (const s of this.shown.values()) s.pieces = null;
-    this.fort.p = null;
+  }
+
+  /** (onetown) a town's player-side state (the fortress's): its view and claims take it in from now */
+  setHook(id: string, hook: TownHook | null): void {
+    if (hook) this.hooks.set(id, hook);
+    else this.hooks.delete(id);
+    this.changed(id);
+  }
+
+  /** (onetown) a town's plan or what stands of it changed: its pieces made again, its claims set again */
+  changed(id: string): void {
+    const s = this.shown.get(id);
+    if (!s) return;
+    s.pieces = null;
+    s.claims.update();
+    this.count();
+  }
+
+  /** (onetown) a town's claims (tests, probes: the level's fortressClaims) */
+  claimsOf(id: string): TownClaims | null {
+    return this.shown.get(id)?.claims ?? null;
+  }
+
+  /** (onetown) only its pieces made again (a ghost's look, Inspect's pick: nothing solid changed) */
+  redraw(id: string): void {
+    const s = this.shown.get(id);
+    if (s) s.pieces = null;
   }
 
   private add(id: string): void {
     const sp = this.st.plannedAll().find((x) => x.seed.rec.id === id);
     if (!sp || this.shown.has(id)) return;
-    const g = sp.plan.city.ground;
+    const g = sp.plan.site.groundCols;
     let z0 = Infinity;
     let z1 = -Infinity;
     for (const z of g) {
@@ -123,38 +159,29 @@ export class SettlementsView {
       z1 = Math.max(z1, z);
     }
     if (!g.length) throw new Error(`settlements view: ${id}'s plan has no ground`);
-    const s: Shown = { seed: sp.seed, plan: sp.plan, pieces: null, grid: 0, gridKey: '', drawn: false, zr: [z0, z1 + TOWN_TOP], cols: new Map(), claims: new Map(), statics: null };
-    this.columnsOf(s);
+    const s: Shown = {
+      seed: sp.seed,
+      plan: sp.plan,
+      pieces: null,
+      grid: 0,
+      gridKey: '',
+      drawn: false,
+      zr: [z0, z1 + TOWN_TOP],
+      claims: new TownClaims(sp.plan.site, {
+        external: this.io.external,
+        statics: this.io.statics,
+        place: () => {
+          const [dx, dy] = this.offset(s);
+          return { dx, dy, dz: -this.io.oz() };
+        },
+        solid: () => this.hooks.get(id)?.solid() ?? {},
+        lost: (structure, cols) => this.lost(s, structure, cols),
+      }),
+    };
     this.shown.set(id, s);
     this.stats.settlements = this.shown.size;
-    this.claim(s);
-  }
-
-  /** a building's columns as the plan has it standing (box frame) */
-  private columnsOf(s: Shown): void {
-    s.cols.clear();
-    for (const c of columnsOf(standingPlan(s.plan.city, s.plan.standing))) {
-      const l = s.cols.get(c.building);
-      if (l) l.push(c);
-      else s.cols.set(c.building, [c]);
-    }
-  }
-
-  /**
-   * (round 128j) The settlement's buildings as its static grid's things (its box's frame; world z): claimed where free
-   * with the land as it's written, and now over the window's written land where they changed.
-   */
-  private claim(s: Shown): void {
-    const st = this.io.statics();
-    if (!st) return;
-    s.statics ??= st.grid(`town ${s.seed.rec.id}`, OWNER_STRUCT, () => {
-      const [dx, dy] = this.offset(s);
-      return { dx, dy, dz: -this.io.oz() };
-    });
-    s.claims = st.set(
-      s.statics,
-      [...s.cols].map(([b, cs]) => ({ key: b, cols: cs.map((c) => ({ x: c.x, y: c.y, z0: c.z0, z1: c.z1 })), fallback: MAT.Rubble })),
-    );
+    s.claims.update();
+    this.count();
   }
 
   /** the box's offset in the window (columns, rows) */
@@ -182,39 +209,37 @@ export class SettlementsView {
     let n = 0;
     let c = 0;
     for (const s of this.shown.values()) {
-      n += s.claims.size;
-      for (const i of s.claims.values()) c += i.cols.length;
+      n += s.claims.stats.structures;
+      c += s.claims.stats.columns;
     }
     this.stats.claimed = n;
     this.stats.columns = c;
   }
 
   /** a site raised a storey (life.ts → settlements.ts raise): its pieces and its claim made again */
-  private raised(id: string, b: number): void {
-    const s = this.shown.get(id);
-    if (!s) return;
-    s.pieces = null;
+  private raised(id: string, _structure: number): void {
     // (round 128j: its grid's things set again — the building raised let go where it stood, to air, and claimed anew)
-    void b;
-    this.columnsOf(s);
-    this.claim(s);
+    this.changed(id);
   }
 
-  /** a building's cells were cut or it hangs free: it's let go to rubble where it stood, its pieces gone behind dust */
-  private lost(inst: ExternalInstance): void {
-    for (const s of this.shown.values())
-      for (const [b, i] of s.claims) {
-        if (i.id !== inst.id) continue;
-        s.claims.delete(b);
-        this.io.external()?.release(inst.id);
-        if (b >= 0) s.plan.standing[b] = 0;
-        s.cols.delete(b);
-        s.pieces = null;
-        this.stats.lost++;
-        const { w, h } = this.io.dims;
-        if (this.io.dust) for (const c of inst.cols.filter((q, k) => k % 3 === 0 && q.x >= 0 && q.y >= 0 && q.x < w && q.y < h)) this.io.dust(c.x + 0.5, (c.y + 0.5) * ROW_H, (c.z0 + c.z1) / 2, 6);
-        return;
-      }
+  /**
+   * A structure's cells were cut or it hangs free: it's let go to rubble where it stood (TownClaims), its pieces gone
+   * behind dust. (onetown) What's left is the town's hook's to say (the player's town: the fortress breaks it, the
+   * builders mend it); else it comes down — its blocks planned again, as a raid's breach; a layout deck is gone.
+   */
+  private lost(s: Shown, structure: number, cols: readonly { x: number; y: number; z0: number; z1: number }[]): void {
+    const hook = this.hooks.get(s.seed.rec.id);
+    if (hook?.lost) hook.lost(structure);
+    else {
+      const site = s.plan.site;
+      const st = structure > 0 ? site.plan.structure(structure) : null;
+      if (st) for (const c of st.cells.keys()) for (const L of [...site.town.built.each(c)]) (site.town.remove(c, L), site.town.plan(c, L, true, st.id, typeIndex(st.type)));
+    }
+    s.pieces = null;
+    this.stats.lost++;
+    this.count();
+    const { w, h } = this.io.dims;
+    if (this.io.dust) for (const c of cols.filter((q, k) => k % 3 === 0 && q.x >= 0 && q.y >= 0 && q.x < w && q.y < h)) this.io.dust(c.x + 0.5, (c.y + 0.5) * ROW_H, (c.z0 + c.z1) / 2, 6);
   }
 
   /**
@@ -243,12 +268,6 @@ export class SettlementsView {
     return out;
   }
 
-  /**
-   * (fortress slice 1) Other pieces drawn with the towns' (one structures draw): in their own frame (x, y world units
-   * from (dx, dy) in the window; z world). The same object back while they haven't changed (only then are they uploaded
-   * again); null: none.
-   */
-  extra: (() => { p: StructurePieces; dx: number; dy: number } | null) | null = null;
 
   /**
    * (debugging, scripts) What's drawn now in the window's frame: every shown slab's pieces through its grid. Made on
@@ -257,8 +276,6 @@ export class SettlementsView {
   get last(): { module: Uint16Array; data: Float32Array } | null {
     const parts: { p: StructurePieces; t: GridTransform }[] = [];
     for (const s of this.shown.values()) if (s.drawn && s.pieces) parts.push({ p: s.pieces, t: this.frame(s) });
-    const ex = this.extra?.();
-    if (ex && ex.p.count) parts.push({ p: ex.p, t: { pos: [ex.dx, ex.dy, -this.io.oz()] } });
     let n = 0;
     for (const x of parts) n += x.p.count;
     const module = new Uint16Array(n);
@@ -274,8 +291,14 @@ export class SettlementsView {
     return { module, data };
   }
 
+  /**
+   * (onetown) The town drawn: its plan's view as it stands — what isn't built yet a plot or scaffolding — and what its
+   * hook adds (the fortress planning: the plan whole)
+   */
   private make(s: Shown): StructurePieces {
-    return this.filter(piecesOf(standingPlan(s.plan.city, s.plan.standing)));
+    const site = s.plan.site;
+    const hook = this.hooks.get(s.seed.rec.id)?.view() ?? {};
+    return this.filter(townPieces(site, { ground: (x, y) => site.groundAt(x, y), ghost: (c, l) => !site.town.has(c, l), ...hook }));
   }
 
   private filter(p: StructurePieces): StructurePieces {
@@ -346,24 +369,6 @@ export class SettlementsView {
       s.drawn = plan.show.has(id);
       this.sg.show(id, s.drawn);
       if (s.drawn) drawn++;
-    }
-    // (the fortress: its own grid; its pieces uploaded only when they're new)
-    const ex = this.extra?.();
-    if (ex && ex.p.count) {
-      if (!this.fort.grid) this.fort.grid = this.sg.newGrid();
-      if (ex.p !== this.fort.p) {
-        this.fort.p = ex.p;
-        this.sg.put(FORT, this.filter(ex.p), this.fort.grid);
-      }
-      const t: GridTransform = { pos: [ex.dx, ex.dy, -oz] };
-      const key = t.pos.join(',');
-      if (key !== this.fort.gridKey) {
-        this.fort.gridKey = key;
-        this.sg.setGrid(this.fort.grid, t);
-      }
-    } else if (this.fort.p) {
-      this.sg.drop(FORT);
-      this.fort.p = null;
     }
     this.stats.gridMs = +(performance.now() - tg).toFixed(2);
     // (round 128j: nothing to claim here — the claims are written with the land; claimMs the static claims' last write)

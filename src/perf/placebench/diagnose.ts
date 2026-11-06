@@ -43,7 +43,7 @@ export interface Diagnosis {
 
 export async function diagnose(io: DiagnoseIO, points: PlacePoint[]): Promise<Diagnosis> {
   const f = io.fort;
-  const fi = f as unknown as { io: { reach?: ReachEngine }; spansNow(): Uint32Array; standCols(c: number): number[]; boxColOf(x: number, y: number): number };
+  const fi = f as unknown as { io: { reach?: ReachEngine }; spansNow(): Uint32Array; boxColOf(x: number, y: number): number };
   const gpu = fi.io.reach as FortressReachGpu | undefined;
   if (!gpu) throw new Error('diagnose: no reach engine');
   await f.settled();
@@ -51,9 +51,7 @@ export async function diagnose(io: DiagnoseIO, points: PlacePoint[]): Promise<Di
   const sc = fi.boxColOf(...f.toBox(stores[0], stores[1]));
   const { w: bw, h: bh } = f.box;
   const cells = points.map((p) => f.cellAt(p.at[0], p.at[1]));
-  const queries = new Int32Array(cells.length * 4).fill(-1);
-  cells.forEach((c, i) => c >= 0 && fi.standCols(c).forEach((b, k) => (queries[i * 4 + k] = b)));
-  const ask: ReachAsk = { stores: sc >= 0 ? [sc % bw, Math.floor(sc / bw)] : null, queries, wet: false, why: true };
+  const ask: ReachAsk = f.reachAsk(cells, false, true);
   const spans = fi.spansNow();
   gpu.setSpans(spans);
   const g0 = performance.now();

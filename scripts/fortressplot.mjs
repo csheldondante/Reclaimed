@@ -30,7 +30,7 @@ await run({ name: 'fortressplot', kind: 'behaviour', size: '412x915', dpr: 1, ec
         const x = tx + Math.cos((a / 16) * Math.PI * 2) * r;
         const y = ty + Math.sin((a / 16) * Math.PI * 2) * r;
         let ok = Number.isFinite(z(x, y));
-        for (let dx = -14; dx <= 14 && ok; dx += 2) for (let dy = -14; dy <= 14 && ok; dy += 2) ok = Math.abs(z(x + dx, y + dy) - z(x, y)) < 1.5 && (Rc.api.water.depthAt(x + dx, y + dy) ?? 0) < 0.05 && !st.thingAt(st.pinnedId, [x + dx, y + dy]);
+        for (let dx = -14; dx <= 14 && ok; dx += 2) for (let dy = -14; dy <= 14 && ok; dy += 2) ok = Math.abs(z(x + dx, y + dy) - z(x, y)) < 1.5 && (Rc.api.water.depthAt(x + dx, y + dy) ?? 0) < 0.05 && f.plan.owner[f.cellAt(x + dx, y + dy)] < 0;
         if (ok) site = [x, y];
       }
     if (!site) throw new Error('no open site');

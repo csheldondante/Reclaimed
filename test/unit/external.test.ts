@@ -3,7 +3,11 @@
 // or to air; verify tells an owner whose cells were dug; orphans become their fallback; loose tells the owner; an
 // owner that doesn't decide is released for it; a slide moves the instances with the land.
 import { describe, expect, test } from 'vitest';
-import { cutOut, ExternalRegistry, OWNER_ROCK, OWNER_STRUCT, type ExternalInstance } from '../../src/sim/external';
+import { cutOut, ExternalRegistry, OWNER_ROCK, type ExternalInstance } from '../../src/sim/external';
+import { gridIdOf } from '../../src/build/site';
+
+/** (onetown) a town's claims are owned by its grid's id */
+const OWNER_TOWN = gridIdOf('test');
 import type { Interval } from '../../src/world/layout';
 import { MAT } from '../../src/world/materials';
 
@@ -130,13 +134,13 @@ describe('claimFree (round 128g: a claim that reads nothing — the settlements 
     const spans: unknown[] = [];
     // (the GPU's stamp: given, the registry hands it the spans and reads nothing)
     const gpu = { read: () => { throw new Error('claimFree read a column'); }, write: cols.write, claimFree: (s: unknown[]) => void spans.push(...s) };
-    const a = new ExternalRegistry(gpu).claimFree(OWNER_STRUCT, [{ x: 1, y: 1, z0: 8, z1: 14 }], MAT.Rubble)!;
+    const a = new ExternalRegistry(gpu).claimFree(OWNER_TOWN, [{ x: 1, y: 1, z0: 8, z1: 14 }], MAT.Rubble)!;
     expect(a.free).toBe(true);
     expect(a.cols).toEqual([{ x: 1, y: 1, z0: 8, z1: 14 }]);
     expect(spans).toEqual([{ x: 1, y: 1, z0: 8, z1: 14, aux: MAT.Rubble }]);
     // (a CPU world: the same rule by reading and writing)
     const ext = new ExternalRegistry(cols);
-    ext.claimFree(OWNER_STRUCT, [{ x: 1, y: 1, z0: 8, z1: 14 }], MAT.Rubble);
+    ext.claimFree(OWNER_TOWN, [{ x: 1, y: 1, z0: 8, z1: 14 }], MAT.Rubble);
     expect(strip(cols.read(1, 1))).toEqual([{ z0: 0, z1: 10, mat: MAT.Stone }, { z0: 10, z1: 14, mat: MAT.External }]);
   });
 
@@ -144,8 +148,8 @@ describe('claimFree (round 128g: a claim that reads nothing — the settlements 
     const cols = columns();
     const ext = new ExternalRegistry(cols);
     const lost: ExternalInstance[] = [];
-    ext.owner(OWNER_STRUCT, { name: 't', onLost: (i) => (lost.push(i), ext.release(i.id)) });
-    ext.claimFree(OWNER_STRUCT, [{ x: 1, y: 1, z0: 8, z1: 14 }]);
+    ext.owner(OWNER_TOWN, { name: 't', onLost: (i) => (lost.push(i), ext.release(i.id)) });
+    ext.claimFree(OWNER_TOWN, [{ x: 1, y: 1, z0: 8, z1: 14 }]);
     ext.verify();
     expect(lost).toEqual([]);
     // (the ground it's buried in dug out)
@@ -158,9 +162,9 @@ describe('claimFree (round 128g: a claim that reads nothing — the settlements 
     const cols = columns();
     const ext = new ExternalRegistry(cols);
     const lost: ExternalInstance[] = [];
-    ext.owner(OWNER_STRUCT, { name: 't', onLost: (i) => (lost.push(i), ext.release(i.id)) });
+    ext.owner(OWNER_TOWN, { name: 't', onLost: (i) => (lost.push(i), ext.release(i.id)) });
     const asOf = ext.epoch;
-    ext.claimFree(OWNER_STRUCT, [{ x: 1, y: 1, z0: 10, z1: 12 }]);
+    ext.claimFree(OWNER_TOWN, [{ x: 1, y: 1, z0: 10, z1: 12 }]);
     // (what the earlier read saw: the column without it)
     cols.write(1, 1, [{ z0: 0, z1: 10, mat: MAT.Stone }]);
     ext.verify(undefined, undefined, asOf);

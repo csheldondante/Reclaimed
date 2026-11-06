@@ -1,9 +1,9 @@
 // The fortress's ways (round 128d; the user: "buildings are supposed to bake their own paths so we probably want roads
 // and squares between structures and the stairs up onto the walls"). Baked from the plan by rules, as its shapes are
 // (shapes.ts), on the plan's cells — pure, so it's tested without a GPU (ways.test.ts):
-//  - doors: each block structure (and the keep) one, on a ground-floor side that opens on a free cell, the side
-//    facing the fortress's middle (the keep's; for the keep, its gates or the rest);
-//  - roads: a tree over the free cells joining every door and both sides of every gate (gates open the wall's way),
+//  - entrances (round 128o: build/entrances.ts, every structure's — a block's door, a wall's gates, a yard's edge, a
+//    pit's ramp top; `doors` the blocks' and the keep's);
+//  - roads: a tree over the free cells joining every entrance and both sides of every gate (gates open the wall's way),
 //    grown from the keep's door to the nearest unjoined end each time, cheaper along road already laid so the ways merge;
 //  - stairs: each wall run one (another every STAIR_EVERY cells), up from free cells beside a straight stretch of it:
 //    a straight flight across as many cells as its height needs (no steeper than SLOPE), from a foot cell to the wall's
@@ -18,10 +18,12 @@
 // wall-walk. The graph is the same ways as data (tests, Inspect, the archers' posts later).
 import type { NavGraph, NavLinkKind, NavNode, NavSurface, V2, V3 } from '../api/contracts/structures';
 import type { StructureDef, StructureType } from '../api/contracts/fortress';
-import { LEVEL_H } from '../build/town';
-import { DEFS } from './defs';
-import type { FortressPlan } from './plan';
+import { LEVEL_H } from './town';
+import { DEFS } from './types';
+import type { TownPlan } from './plan';
 import { WALL_HALF } from './solid';
+import { STEP } from '../agents/rules';
+import { entrancesOf, needsEntrance, type Entrance } from './entrances';
 
 export interface WaysGrid {
   readonly count: number;
@@ -39,17 +41,15 @@ export const WAY_STAIR = 3;
 export const SLOPE = 0.75;
 /** another stair every this many wall cells of a run */
 export const STAIR_EVERY = 16;
+/** (round 128o) a metre across a field costs this many of a street: the roads go round the fields where a street does */
+export const CROSS_COST = 3;
+/** how far either side of a cell's side the land is read for a step (m: a column or so in) */
+const SIDE_PROBE = 0.8;
 /** the longest flight (cells) */
 const STAIR_MAX = 6;
 
-export interface Door {
-  structure: number;
-  /** the structure's cell and the side the door is in */
-  cell: number;
-  side: number;
-  /** the free cell it opens on */
-  out: number;
-}
+/** a block's or the keep's entrance (build/entrances.ts) */
+export type Door = Entrance;
 
 export interface Stair {
   /** the wall structure, the wall cell it climbs onto, the side it leaves the wall by */
@@ -68,21 +68,26 @@ export interface Ways {
   /** per cell its way (WAY_*) */
   way: Uint8Array;
   doors: Door[];
+  /** (round 128o) every structure's entrances (build/entrances.ts): the doors, the walls' gates, the yards' edges, the pits' tops */
+  entrances: Entrance[];
   stairs: Stair[];
   /** gate cells: their way runs through the wall */
   gates: number[];
   /**
-   * (round 128i, FT-65) block cells with a passage (FortressPlan.passage) the roads run through, as through a gate;
-   * a ramp's cell (FortressPlan.ramp) is a road's like any free cell, entered and left only along its axis
+   * (round 128i, FT-65) block cells with a passage (TownPlan.passage) the roads run through, as through a gate;
+   * a ramp's cell (TownPlan.ramp) is a road's like any free cell, entered and left only along its axis
    */
   passages: number[];
-  /** structures whose door (or stair) no road reaches */
+  /** (round 128o) where a way steps from cell u by its side e to m (null: it doesn't): along a ramp's axis, at a point
+   *  of the side a walker steps on the land (the routes cross there: lanes.ts) */
+  crossing(u: number, e: number, m: number): V2 | null;
+  /** structures whose entrance (or stair) no road reaches, or that have none */
   cutOff: number[];
 }
 
 /** no ways at all (tests of the shapes' own rules) */
 export function noWays(count: number): Ways {
-  return { way: new Uint8Array(count), doors: [], stairs: [], gates: [], passages: [], cutOff: [] };
+  return { way: new Uint8Array(count), doors: [], entrances: [], stairs: [], gates: [], passages: [], crossing: () => null, cutOff: [] };
 }
 
 /** a binary min-heap of cells by cost (stale entries skipped by the caller) */
@@ -141,12 +146,65 @@ function sideTo(g: WaysGrid, n: number, c: number): number {
   return -1;
 }
 
-/** The ways baked from the plan (courtyards: cells shut in by structures — shapes.ts). */
-export function waysOf(plan: FortressPlan, g: WaysGrid, courtyards: readonly number[] = [], defs: Record<StructureType, StructureDef> = DEFS): Ways {
+/** (a ramp's cell entered and left only along its axis: its high end's side and the side opposite) whether a way steps
+ *  from cell u by its side e to m */
+export function wayStep(plan: TownPlan, g: WaysGrid, u: number, e: number, m: number): boolean {
+  const along = (c: number, side: number) => {
+    const r = plan.ramp ? plan.ramp[c] : -1;
+    return r < 0 || side === r || side === (r + 2) % 4;
+  };
+  return along(u, e) && along(m, sideTo(g, m, u));
+}
+
+export interface WaysOpts {
+  /** cells shut in by structures (shapes.ts) */
+  courtyards?: readonly number[];
+  defs?: Record<StructureType, StructureDef>;
+  /** free cells no road crosses: deep water (the reach's wet columns) */
+  blocked?: (c: number) => boolean;
+  /** (round 128o) where a walker steps from cell u across its side e to m on the land (groundSteps): a point on the
+   *  side, null none — a road never crosses a terrace's edge where a walker can't step */
+  walk?: (u: number, e: number, m: number) => V2 | null;
+}
+
+/**
+ * (round 128o) Where a walker steps across a cell's side on the land: the first point along the side (its middle first,
+ * then out toward its ends) where the ground a little either side is within the walkers' STEP (agents/rules.ts) — the
+ * reach's join rule on the town's cells. null: a terrace's edge all along. `ground`: the land's top at a point.
+ */
+export function groundSteps(g: WaysGrid, ground: (x: number, y: number) => number): (u: number, e: number, m: number) => V2 | null {
+  return (u, e, m) => {
+    const a = g.corner(u, e);
+    const b = g.corner(u, e + 1);
+    const [ux, uy] = g.centre(u);
+    const [vx, vy] = g.centre(m);
+    for (const t of SIDE_ALONG) {
+      const px = a[0] + (b[0] - a[0]) * t;
+      const py = a[1] + (b[1] - a[1]) * t;
+      const toward = (cx: number, cy: number) => {
+        const d = Math.hypot(cx - px, cy - py) || 1;
+        const k = Math.min(1, SIDE_PROBE / d);
+        return ground(px + (cx - px) * k, py + (cy - py) * k);
+      };
+      if (Math.abs(toward(ux, uy) - toward(vx, vy)) <= STEP) return [px, py];
+    }
+    return null;
+  };
+}
+
+/** where along a side a step is looked for: its middle, then out toward its ends */
+const SIDE_ALONG = [0.5, 0.35, 0.65, 0.2, 0.8];
+
+/** The ways baked from the plan. */
+export function waysOf(plan: TownPlan, g: WaysGrid, o: WaysOpts = {}): Ways {
+  const courtyards = o.courtyards ?? [];
+  const defs = o.defs ?? DEFS;
+  const blocked = o.blocked ?? (() => false);
+  const walk = o.walk ?? ((u: number, e: number) => sideMid(g, u, e));
   const n = g.count;
   const way = new Uint8Array(n);
   const nb = (c: number, e: number) => g.nbr[c * 4 + (((e % 4) + 4) % 4)];
-  const free = (c: number) => c >= 0 && plan.owner[c] < 0;
+  const free = (c: number) => c >= 0 && plan.owner[c] < 0 && !blocked(c);
   const court = new Set(courtyards);
   const structures = plan.structures();
   const formOf = (c: number) => {
@@ -164,41 +222,19 @@ export function waysOf(plan: FortressPlan, g: WaysGrid, courtyards: readonly num
     }
     return [x, y];
   };
-  const keepCells = structures.filter((s) => defs[s.type].form === 'keep').flatMap((s) => [...s.cells.keys()]);
   const allCells = structures.flatMap((s) => [...s.cells.keys()]);
   const gates = allCells.filter((c) => formOf(c) === 'wall' && plan.gate[c] && plan.has(c, 0));
-  // the fortress's middle: its keep's, else everything's
+  // the town's middle: its keep's, else everything's (the stairs' feet face it)
+  const keepCells = structures.filter((s) => defs[s.type].form === 'keep').flatMap((s) => [...s.cells.keys()]);
   const middle = mean(keepCells) ?? mean(allCells) ?? [0, 0];
   const d2 = (c: number, p: V2) => {
     const [x, y] = g.centre(c);
     return (x - p[0]) ** 2 + (y - p[1]) ** 2;
   };
 
-  // ---- doors
-  const doors: Door[] = [];
-  const gateMid = mean(gates);
-  for (const s of structures) {
-    const form = defs[s.type].form;
-    if (form !== 'block' && form !== 'keep') continue;
-    // (the keep faces its gates, else the rest of the fortress; the others face the keep)
-    const toward: V2 = form === 'keep' ? (gateMid ?? mean(allCells.filter((c) => plan.owner[c] !== s.id)) ?? middle) : middle;
-    let best: Door | null = null;
-    let bd = Infinity;
-    for (const c of s.cells.keys()) {
-      if (!plan.has(c, 0)) continue;
-      for (let e = 0; e < 4; e++) {
-        const o = nb(c, e);
-        if (!free(o)) continue;
-        // (a courtyard last: a door should open on the way out)
-        const d = d2(o, toward) + (court.has(o) ? 1e6 : 0);
-        if (d < bd) {
-          bd = d;
-          best = { structure: s.id, cell: c, side: e, out: o };
-        }
-      }
-    }
-    if (best) doors.push(best);
-  }
+  // ---- entrances (build/entrances.ts: the one rule)
+  const entrances = entrancesOf(plan, g, courtyards, blocked, defs);
+  const doors: Door[] = entrances.filter((e) => e.kind === 'door');
 
   // ---- roads: a tree joining the ends, grown from the keep's door (else the first end) to the nearest unjoined end
   const isGate = new Uint8Array(n);
@@ -207,54 +243,76 @@ export function waysOf(plan: FortressPlan, g: WaysGrid, courtyards: readonly num
   // (round 128i, FT-65: a block's passage is a way through it, as a gate is the wall's)
   const isPassage = new Uint8Array(n);
   for (const c of allCells) if (plan.passage?.[c] && formOf(c) === 'block' && plan.has(c, 0)) isPassage[c] = 1;
-  const passable = (c: number) => c >= 0 && ((free(c) && !taken[c]) || isGate[c] === 1 || isPassage[c] === 1);
-  // (a ramp's cell entered and left only along its axis: its high end's side and the side opposite)
+  // (round 128o: a field — a yard walked across, StructureDef.crossed — is crossed too, at CROSS_COST a metre)
+  const crossed = (c: number) => {
+    const t = c >= 0 ? plan.typeAt(c) : null;
+    return !!t && !!defs[t].crossed && !blocked(c);
+  };
+  const passable = (c: number) => c >= 0 && ((free(c) && !taken[c]) || isGate[c] === 1 || isPassage[c] === 1 || crossed(c));
   const rampOf = (c: number) => (plan.ramp ? plan.ramp[c] : -1);
-  const alongRamp = (c: number, e: number) => rampOf(c) < 0 || e === rampOf(c) || e === (rampOf(c) + 2) % 4;
-  const step = (u: number, e: number, m: number) => alongRamp(u, e) && alongRamp(m, sideTo(g, m, u));
+  // (each side's crossing found once: the road tree asks it many times)
+  const crossed4: (V2 | null | undefined)[] = new Array(n * 4);
+  const crossing = (u: number, e: number, m: number): V2 | null => {
+    const i = u * 4 + (((e % 4) + 4) % 4);
+    let c = crossed4[i];
+    if (c === undefined) c = crossed4[i] = wayStep(plan, g, u, e, m) ? walk(u, e, m) : null;
+    return c;
+  };
+  const step = (u: number, e: number, m: number) => crossing(u, e, m) !== null;
   const net = new Uint8Array(n);
   const cutOff = new Set<number>();
   const dist = new Float64Array(n);
   const prev = new Int32Array(n);
-  /** the net grown to each end in turn, the nearest first (the ends no way reaches: their structures cut off) */
+  /**
+   * the net grown to each end in turn, the nearest first (the ends no way reaches: their structures cut off). (onetown:
+   * incrementally — the distance to the net kept, and after each join only what the new road brings nearer relaxed: a
+   * town's hundred doors cost a few passes over the grid, not one a door)
+   */
   const grow = (ends: { cell: number; structure: number }[]) => {
     if (!ends.length) return;
     if (!net.some((x) => x === 1)) net[ends[0].cell] = 1;
     const joined = new Uint8Array(ends.length);
     for (let i = 0; i < ends.length; i++) if (net[ends[i].cell]) joined[i] = 1;
-    for (;;) {
-      // multi-source from the net (Dijkstra)
-      dist.fill(Infinity);
-      prev.fill(-1);
-      const heap = new MinHeap();
-      for (let c = 0; c < n; c++)
-        if (net[c]) {
-          dist[c] = 0;
-          heap.push(c, 0);
-        }
-      const done = new Uint8Array(n);
+    dist.fill(Infinity);
+    prev.fill(-1);
+    const heap = new MinHeap();
+    const relax = () => {
       for (let u = heap.pop(); u >= 0; u = heap.pop()) {
-        if (done[u]) continue;
-        done[u] = 1;
+        const du = dist[u];
         const [ux, uy] = g.centre(u);
         for (let e = 0; e < 4; e++) {
           const m = nb(u, e);
-          if (!passable(m) || done[m] || !step(u, e, m)) continue;
+          if (!passable(m) || !step(u, e, m)) continue;
           const [mx, my] = g.centre(m);
-          // (along road already laid it's cheap: the ways merge rather than run side by side)
-          const w = Math.hypot(mx - ux, my - uy) * (net[m] ? 0.3 : 1);
-          if (dist[u] + w < dist[m]) {
-            dist[m] = dist[u] + w;
+          const w = Math.hypot(mx - ux, my - uy) * (crossed(m) ? CROSS_COST : 1);
+          if (du + w < dist[m] - 1e-9) {
+            dist[m] = du + w;
             prev[m] = u;
             heap.push(m, dist[m]);
           }
         }
       }
+    };
+    const seed = (c: number) => {
+      if (dist[c] === 0) return;
+      dist[c] = 0;
+      prev[c] = -1;
+      heap.push(c, 0);
+    };
+    for (let c = 0; c < n; c++) if (net[c]) seed(c);
+    relax();
+    for (;;) {
       let next = -1;
       for (let i = 0; i < ends.length; i++) if (!joined[i] && isFinite(dist[ends[i].cell]) && (next < 0 || dist[ends[i].cell] < dist[ends[next].cell])) next = i;
       if (next < 0) break;
       joined[next] = 1;
-      for (let c = ends[next].cell; c >= 0 && !net[c]; c = prev[c]) net[c] = 1;
+      const path: number[] = [];
+      for (let c = ends[next].cell; c >= 0 && !net[c]; c = prev[c]) path.push(c);
+      for (const c of path) {
+        net[c] = 1;
+        seed(c);
+      }
+      relax();
       // (ends already on the net: joined)
       for (let i = 0; i < ends.length; i++) if (!joined[i] && net[ends[i].cell]) joined[i] = 1;
     }
@@ -263,13 +321,16 @@ export function waysOf(plan: FortressPlan, g: WaysGrid, courtyards: readonly num
   const ends: { cell: number; structure: number }[] = [];
   const keepDoor = doors.find((d) => defs[plan.structure(d.structure)!.type].form === 'keep');
   if (keepDoor) ends.push({ cell: keepDoor.out, structure: keepDoor.structure });
-  for (const d of doors) if (d !== keepDoor) ends.push({ cell: d.out, structure: d.structure });
+  for (const e of entrances) if (e !== keepDoor && e.kind !== 'gate') ends.push({ cell: e.out, structure: e.structure });
   for (const c of gates)
     for (let e = 0; e < 4; e++) {
       const m = nb(c, e);
       if (free(m)) ends.push({ cell: m, structure: plan.owner[c] });
     }
   grow(ends);
+  // (a structure that needs an entrance and has none: no way in)
+  const entered = new Set(entrances.map((e) => e.structure));
+  for (const s of structures) if (needsEntrance(s.type, defs) && !entered.has(s.id)) cutOff.add(s.id);
   const doorsAt = new Int32Array(n);
   for (const d of doors) doorsAt[d.out]++;
 
@@ -384,7 +445,7 @@ export function waysOf(plan: FortressPlan, g: WaysGrid, courtyards: readonly num
     if (doorsAt[c] >= 2 || (doorsAt[c] >= 1 && ways >= 4)) way[c] = WAY_SQUARE;
   }
   for (const c of court) if (free(c)) way[c] = WAY_SQUARE;
-  return { way, doors, stairs, gates, passages, cutOff: [...cutOff] };
+  return { way, doors, entrances, stairs, gates, passages, crossing, cutOff: [...cutOff] };
 }
 
 export interface NavHeights {
@@ -400,7 +461,7 @@ export interface NavHeights {
  * The nav graph of the ways (structures' NavGraph): a node a road or square cell, a building's ground floor (its door
  * links it to the road), a gate's passage, the wall-walk a node a wall cell, and stairs from a foot up to the walk.
  */
-export function waysNav(ways: Ways, plan: FortressPlan, g: WaysGrid, z: NavHeights): NavGraph {
+export function waysNav(ways: Ways, plan: TownPlan, g: WaysGrid, z: NavHeights): NavGraph {
   const nodes: NavNode[] = [];
   const links: { a: number; b: number; kind: NavLinkKind; cost: number }[] = [];
   const node = (at: V3, surface: NavSurface, building: number) => {

@@ -45,8 +45,8 @@ export interface LevelDef {
   hidden?: boolean;
   /** (round 92) the camera's zoom it opens at (default: from the screen's size) — the rock lab's pieces close */
   zoom?: number;
-  /** (round 128m, townlab) its side (columns and rows; default 256) — the lab's 320: the fortress's box and its margin
-   *  must fit (fortress/host.ts FORTRESS_WINDOW) */
+  /** (round 128m, townlab) its side (columns and rows; default 256) — the lab's 320: the town's site box
+   *  must fit (its keep: scenes/streamer/keep.ts) */
   side?: number;
   /** its height limit (cells; default 64): the wilds' ranges want more (round 64) */
   zMax?: number;

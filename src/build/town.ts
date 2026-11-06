@@ -19,7 +19,8 @@
 // kept apart: no level cap (it was a bit a level in a byte, 8). What limits a stamped town's height is the window's z
 // ceiling (TownIO.zMax: add and plan refuse a block whose roof would reach it); the fortress isn't stamped (zMax
 // Infinity). A level may be empty under a block (a gap): it stands on pillars at its corners, arched between.
-import { TownGrid, type CellGrid, type TownGridOpts } from './towngrid';
+import { TownGrid, type TownGridOpts } from './towngrid';
+import type { CellGrid } from './quadgrid';
 import { MAT } from '../world/materials';
 import { cellAt, cellPos } from '../world/lattice';
 import type { ColumnStamp } from '../sim/systems';
@@ -39,8 +40,20 @@ const ARCH = 1.4;
 export interface TownIO {
   /** the top of the ground (open sky's floor) at a column */
   ground(col: number): number;
-  stamp(stamps: ColumnStamp[]): void;
+  /**
+   * the columns its blocks make, written as matter (townstamp.wgsl); null: (onetown) a town drawn as pieces, not
+   * stamped (every town now: settle/view.ts) — nothing worked out a column (round 128m: placing a generated town spent
+   * ~200 ms working out designs no one stamped)
+   */
+  stamp: ((stamps: ColumnStamp[]) => void) | null;
   zMax: number;
+}
+
+/** (onetown) a Town as data: what stands, what's planned (CellRuns.encode's), each cell's floor */
+export interface TownData {
+  built: Int32Array;
+  plans: Int32Array;
+  base: Float32Array;
 }
 
 export interface Block {
@@ -95,6 +108,26 @@ export class Town {
     return this.built.has(c, level);
   }
 
+  /** (onetown) What stands and what's planned, and the floors, as data (TownSite.toData: a worker's post, a test's compare). */
+  toData(): TownData {
+    return { built: this.built.encode(), plans: this.plans.encode(), base: this.base.slice() };
+  }
+
+  /** (onetown) Set from toData's (a Town just made on the same grid). */
+  setData(d: TownData): void {
+    const n = this.grid.count;
+    if (d.base.length !== n) throw new Error(`town: data for ${d.base.length} cells, the grid has ${n}`);
+    const built = CellRuns.decode(n, d.built);
+    const plans = CellRuns.decode(n, d.plans);
+    for (let c = 0; c < n; c++) {
+      this.built.clearCell(c);
+      this.plans.clearCell(c);
+      for (const r of built.runsOf(c)) for (let L = r.lo; L < r.hi; L++) this.built.set(c, L, r.owner, r.type);
+      for (const r of plans.runsOf(c)) for (let L = r.lo; L < r.hi; L++) this.plans.set(c, L, r.owner, r.type);
+    }
+    this.base.set(d.base);
+  }
+
   /** Whether a block is planned at level L of c. */
   planned(c: number, level: number): boolean {
     return this.plans.has(c, level);
@@ -109,10 +142,10 @@ export class Town {
    * Plan a block (on) or its taking down (off), leaving what stands as it is; false if it can't be. `owner`, `type`:
    * the caller's (its run's: build/runs.ts).
    */
-  plan(c: number, level: number, on: boolean, owner = 0, type = 0): boolean {
+  plan(c: number, level: number, on: boolean, owner = 0, type = 0, floor?: number): boolean {
     if (c < 0 || c >= this.grid.count || !(level >= 0) || this.planned(c, level) === on) return false;
     if (on) {
-      const b = Number.isNaN(this.base[c]) ? this.groundFloor(c) : this.base[c];
+      const b = Number.isNaN(this.base[c]) ? (floor ?? this.groundFloor(c)) : this.base[c];
       if (!this.fits(b, level)) return false;
       this.base[c] = b;
       this.plans.set(c, level, owner, type);
@@ -165,10 +198,13 @@ export class Town {
     return this.base[c] + level * LEVEL_H;
   }
 
-  /** Add a block; false if it can't go there (off the grid, taken, too high for the window). */
-  add(c: number, level: number, owner = 0, type = 0): boolean {
+  /**
+   * Add a block; false if it can't go there (off the grid, taken, too high for the window). `floor`: (onetown) a new
+   * cell's ground floor as its structure has it (Structure.floor: the generator's), not the Town's rule
+   */
+  add(c: number, level: number, owner = 0, type = 0, floor?: number): boolean {
     if (c < 0 || c >= this.grid.count || !(level >= 0) || this.has(c, level)) return false;
-    const b = Number.isNaN(this.base[c]) ? this.groundFloor(c) : this.base[c];
+    const b = Number.isNaN(this.base[c]) ? (floor ?? this.groundFloor(c)) : this.base[c];
     if (!this.fits(b, level)) return false;
     this.base[c] = b;
     this.built.set(c, level, owner, type);
@@ -231,6 +267,7 @@ export class Town {
   }
 
   private restampCells(cells: Set<number>): void {
+    if (!this.io.stamp) return;
     const all = new Set<number>();
     for (const c of cells) {
       all.add(c);

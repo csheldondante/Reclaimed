@@ -13,9 +13,15 @@
 //    caller prefers — the one nearest the stores). A footprint too narrow for one ramp has no pit.
 // In runs (build/runs.ts, negative levels): a cell of ring d holds levels -1 .. -min(d, tiers) (PIT_SHELF), and a
 // ramp k cell the level -k as well (PIT_RAMP: dug as a slope). Pure: no GPU, no DOM (pit.test.ts).
-import { CellRuns } from '../build/runs';
+import { CellRuns } from './runs';
 
 /** a pit level's kind in its run (Run.type) */
+/**
+ * (round 128m, V128-11: replaces pitMax) a quarry's pit goes down a tier (a level, LEVEL_H) a ring of its footprint,
+ * each tier reached by a ramp along this many cells of the ring above it: the depth is the tiers whose ramps fit.
+ * (Round 128o: here, not in the economy's ECON — the plan's rule, and build/ sits under the fortress)
+ */
+export const PIT_RAMP_CELLS = 2;
 export const PIT_SHELF = 0;
 export const PIT_RAMP = 1;
 

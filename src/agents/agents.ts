@@ -502,7 +502,7 @@ export class Agents implements SimSystem {
     this.kindModelsBuf = world.buf('agentKindModels', MAX_KINDS * 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     this.params = world.buf('agentParams', PARAMS_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     this.carryBuf = world.buf('agentCarry', MAX_UNITS * 16, S);
-    this.roadRide = new RoadRide(device, this.units, this.roads, world.w, MAX_UNITS);
+    this.roadRide = new RoadRide(device, world.globals, this.units, this.roads, world.w, MAX_UNITS);
     this.flyBuf = world.buf('agentFly', MAX_FLY * 32, S);
     device.queue.writeBuffer(this.indirect, 0, new Uint32Array([36, 0, 0, 0]));
     // (nothing reached yet: every field starts unreachable)
@@ -671,6 +671,8 @@ export class Agents implements SimSystem {
   defineKind(i: number, spec: KindSpec): void {
     if (i < 0 || i >= MAX_KINDS) throw new Error(`agents: kind ${i} out of 0..${MAX_KINDS - 1}`);
     this.kinds[i] = spec;
+    // (round 128o: a rider's pace on its trip — roadride.wgsl)
+    this.roadRide.setKindSpeed(i, spec.speed);
     if (spec.model) {
       const vs = spec.model.voxels;
       if (this.modelVoxels + vs.length > MAX_MODEL_VOXELS) throw new Error(`agents: kind models over ${MAX_MODEL_VOXELS} voxels`);
