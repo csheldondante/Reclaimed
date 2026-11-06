@@ -131,6 +131,15 @@ units' legs, is in `ROLES`); the mirrored lists (`fieldMat`/`fieldMeshed`, `rubb
 id by running the small WGSL function as JS); and `MAX_MATERIALS` fits every 8-bit id mask. Widening the table
 (DA-E1) is the edit this test makes safe. docs/ARCHITECTURE.md "Limits" lists the rest.
 
+### The writing lint over every source (test/unit/writing-sources.test.ts, DA-G4)
+
+Every file under src/ that writes text to the page (`textContent`, `innerHTML`, `title`, …), the HUD (`say`, `hint`) or
+a canvas (`fillText`) is in `SOURCES`: the player's (with its label helpers, e.g. fortress/ui.ts `toggle(label)`, and
+the object keys that carry lines), a words module (fortress/words.ts, opps/words.ts: linted whole) or a developer's
+(with why). A new such file fails until placed. test/support/player-text.ts reads the literals a sink or helper is given,
+leaving out code by where it sits and skipping CSS. What fails today is in `KNOWN` with BACKLOG DA-G6; a fixed one must
+be dropped. Fix a new failure by rewriting the string (docs/WRITING.md), not by adding it to `KNOWN`.
+
 ## When to use the browser
 
 Use it only for what Node can't show: the page's boot (the build, the menu, the streamer, IndexedDB), drawing and

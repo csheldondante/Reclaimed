@@ -18160,3 +18160,29 @@ safely needs a test that they agree, and the numbers in one place.
   shader's six vote slots are unchanged (ash was already one of them).
 - Hacks and limits: the WGSL-as-JS evaluation only handles the two small mirrored helpers (ifs, returns, comparisons,
   constants); a bigger mirror needs a real test on the GPU tier. The table was not widened (DA-E1).
+
+## 2026-11-05 — the writing lint over every source of the player's words (round 128o, DA-G4)
+
+Why: the lint (docs/WRITING.md, round 125) ran only where a test called it: writing.test.ts for the run's cards and
+seven fortress tests for their lines. The fortress bar's own labels, the HUD, the menu, the run panels and the level
+hints were never read, and a new UI module was linted only if its author remembered. The user (round 125): "Use
+simple plain language like in the worked examples."
+
+- test/unit/writing-sources.test.ts: every file that writes text to the page, the HUD or a canvas must be placed in
+  `SOURCES` as the player's, a words module, or a developer's (with why). 35 player files, 2 words modules, 26
+  developer files today. The player's literals are linted wherever they are: what a sink is given, what the file's
+  label helpers are given (named per file: `toggle`, `h`, `btn`, `tool`, `mv`), the `text:` lines of fortress/ui.ts,
+  and every literal of a words module.
+- test/support/player-text.ts reads them with the source scanner: code is left out by where a literal sits (a
+  comparison, a key, a class name, a selector, an event, a style), HTML is read for its text and its tooltips, and a
+  stylesheet or CSS declaration list is skipped. A test checks it finds the fortress bar's labels and no CSS.
+- Fixed where the fix was plain: the fortress banner "Planning (paused)" is now "Planning. Time is stopped."; two
+  menu tooltips lost a "(round 108)" and "(round 111)" left over from development.
+- 52 strings still fail and are listed in `KNOWN` under new row DA-G6: key hints in parentheses ("forward (W)",
+  "Swing (Space)"), the valley level's dashes and semicolons, the run-end and run-plan panels, the menu and HUD
+  tooltips. Rewriting them changes text the user has seen, and some (the free camera's controls, the old valley) may
+  not be player-facing any more: a question for the user, not a guess.
+- Hacks and limits: the reader is lexical. A label passed through a helper not named in `SOURCES` is missed; a
+  developer file wrongly placed as `dev` is not linted. Text built at run time from data is still linted only by the
+  tests that produce it (writing.test.ts and the fortress tests keep their lint calls). JSON situations under data/
+  are linted by writing.test.ts for seed 1 only.
