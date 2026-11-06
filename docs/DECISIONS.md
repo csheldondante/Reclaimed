@@ -3496,4 +3496,21 @@ world should show what needs clearing and how.
   CPU owns); the GPU components stay for open ground and the world check.
 - Order: step 0 a GPU prototype of the road field and tracing on the start town's land (lab scene, timed full and
   incremental, play-zoom shot, map preview, blocks cut into quads), replacing nothing; reported before step 1.
+- Then (the user, via main): "My recollection is that traditionally the roads define voronoi plots that get turned
+  into structures extruded with roughly that footprint. To hybridize I think we can still use the irregular grid and
+  have filled tiles shift slightly to conform to cell boundaries along the road or a different adjacent tile type. That
+  way the roads look natural and the buildings conform to them and we can paint across multiple plots and make
+  irregular grid style structures and towns. I would treat the entire region of a structure as fully connected for
+  agents going through it or at most let agents have doors to go from any side to any other". And: "CPU readbacks are
+  ok as long as they can be async"; the worry that the player loses control over look "unless adjacent tiles of the
+  same type can still merge", and "it requires a human pass too".
+- → **One irregular grid over the whole town, not re-gridded per block.** It is a regular base lattice (a GPU-resident
+  math lookup) with bounded per-vertex offsets. The offsets give the Townscaper irregularity and snap vertices to road
+  edges and to boundaries between different tile types. Structures span plots (painting crosses them), and same-type
+  neighbours merge as today. This supersedes answer 2's "each block cut into tiles": blocks are only the open regions
+  between roads.
+- → **A structure's footprint is one place for agents.** It is internally connected: all its perimeter ports are joined
+  (doors on any side reach any other), with no paths inside a structure. The network's pieces inside a tile reduce to
+  "port ↔ the structure's node". Internal stairs and floor-by-floor paths are out of the network (wall-walks stay as a
+  wall's own way).
 

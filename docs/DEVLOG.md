@@ -20408,3 +20408,14 @@ where we are with a simple math expression … my one worry here is that the pla
 - **Incremental.** An edit's rectangle has its field recomputed. The lines through it are removed and re-traced from
   their own seeds plus the new constraint's, against the lines kept.
 - **The CPU reference** (`roadgen/cpu.ts`) runs the same rounds for the unit tests.
+
+**Refinement (the user, DECISIONS round 128p):**
+- **One irregular grid over everything.** The lattice offsets are the Townscaper irregularity (a bounded per-vertex
+  jitter, a style knob), overridden where a vertex lies between a road and an open cell (snapped to the road's edge).
+  Later, between two tile types as well.
+- **A structure is one place for agents.** Every perimeter port of it is joined, with no internal paths. The network
+  pieces inside tiles reduce to port ↔ structure node.
+- **The DA-A13 delete list grows:** the internal-stair and floor path declarations, and `structures/nav.ts`'s storey
+  graph, all go.
+- **The keep list shrinks** to wall-walks as a wall's own way.
+
