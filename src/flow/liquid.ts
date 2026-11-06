@@ -144,9 +144,10 @@ export class LiquidSystem implements SimSystem {
     };
     const entries = ['flux', 'jets', 'depth', kind.name === 'water' ? 'publishWater' : 'publishLava', 'prep'];
     for (const e of entries) {
-      // (the water's publish and the prep don't read the layers' chunk table: one storage slot fewer)
+      // (the prep doesn't read the layers' chunk table: one storage slot fewer. Round 128o, DA-B26: the water's publish
+      // does, for the water's versions — bumpWater; its eighth storage buffer)
       const spec: BindSpec = { ...base, ...specs[e] };
-      if (e === 'publishWater' || e === 'prep') delete spec[1];
+      if (e === 'prep') delete spec[1];
       const k = makeCompute(device, `${this.name}-${e}`, parts, spec, e);
       this.k[e] = k;
       // per substep (its uniforms), per parity: runs/jets in and out

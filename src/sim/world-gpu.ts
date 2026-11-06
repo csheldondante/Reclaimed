@@ -3,7 +3,7 @@
 // state themselves, so replacing one system's implementation cannot silently
 // change what another system sees.
 
-import { versionIndex, versionWords } from './chunkver';
+import { versionIndex, versionWords, waterVersionIndex } from './chunkver';
 import type { Profiler } from '../gpu/profiler';
 import { CHUNK, PHYS_COL_WORDS, type PackedWorld } from '../world/layout';
 import type { MapData } from '../world/mapgen';
@@ -87,19 +87,30 @@ export class WorldGpu {
   readonly chunks: GPUBuffer;
   private packedRef!: PackedWorld;
 
+  /** (DA-B26) chunks of storage the versions are kept for (a reader's per-chunk state is as long: sim/cull.ts ChangedTiles) */
+  get versionChunks(): number {
+    return versionWords(this.packedRef) / 2;
+  }
   /**
-   * (round 128o, DA-B9) The CPU wrote these window chunks' columns (`'all'`: every chunk): their versions moved to
-   * `stamp` (the next tick + 1: as a GPU write in it would have — sim/chunkver.ts).
+   * (round 128o, DA-B9) The CPU wrote these window chunks (`'all'`: every chunk): their versions moved to `stamp` (the
+   * next tick: as a write at the end of the last tick, tick + 1, would have — sim/chunkver.ts; a reader in the next
+   * tick sees it once, not again in the tick after). `what`: 'both' their columns and their water (a
+   * CPU write puts back a chunk's whole state, or may: both move), 'water' their water or places only (DA-B26).
    */
-  bumpChunks(chunks: Iterable<number> | 'all', stamp: number): void {
+  bumpChunks(chunks: Iterable<number> | 'all', stamp: number, what: 'both' | 'water' = 'both'): void {
     const p = this.packedRef;
     const base = p.chunkTable.byteLength;
-    if (chunks === 'all') {
+    if (chunks === 'all' && what === 'both') {
       this.device.queue.writeBuffer(this.chunks, base, new Uint32Array(versionWords(p)).fill(stamp));
       return;
     }
+    const list = chunks === 'all' ? Array.from({ length: p.chunksX * p.chunksY }, (_, i) => i) : chunks;
+    const both = new Uint32Array([stamp, stamp]);
     const one = new Uint32Array([stamp]);
-    for (const ci of chunks) this.device.queue.writeBuffer(this.chunks, base + versionIndex(p, ci) * 4, one);
+    for (const ci of list) {
+      if (what === 'both') this.device.queue.writeBuffer(this.chunks, base + versionIndex(p, ci) * 4, both);
+      else this.device.queue.writeBuffer(this.chunks, base + waterVersionIndex(p, ci) * 4, one);
+    }
   }
   /** (round 85, simcull — sim/cull.ts) the chunks live this tick, by a flow's sleeping rate (Simulation.step
    *  makes them from the sleep mask), and the ping-pong fields' copy back over them; null without the flag */

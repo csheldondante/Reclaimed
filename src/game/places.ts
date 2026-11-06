@@ -30,6 +30,8 @@ export class Places {
     private world: WorldGpu,
     private ops: PlaceOpSystem,
     private weather: Weather,
+    /** (round 128o, DA-B26) the raster or the table uploaded: what reads them per chunk (the agents' surfaces) told */
+    private written: () => void = () => {},
   ) {}
 
   /** Build the places from a plan (replacing any) and upload them. */
@@ -46,6 +48,7 @@ export class Places {
     // (ringwin: in the ring's order)
     this.device.queue.writeBuffer(this.world.places, 0, this.world.ring.toStore(m.cols));
     this.device.queue.writeBuffer(this.world.placeTable, 0, m.table());
+    this.written();
   }
 
   get loaded(): boolean {

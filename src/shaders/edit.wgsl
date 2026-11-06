@@ -174,6 +174,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let p = vec2<i32>(id.xy);
   let i = colIdxI(p);
   let cs = colSlots(id.x, id.y);
+  // (round 128o, DA-B26: the water as it was, so the water's version moves only if an op here changed it)
+  let water0 = water[i];
   var arr: array<vec4<u32>, MAX_K>;
   var n = 0u;
   for (var k = 0u; k < cs.y; k++) {
@@ -424,6 +426,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
   if (moved) { bumpChunk(id.xy); }
+  if (water[i] != water0) { bumpWater(id.xy); }
 }
 
 /** a blow event's reach (the footprint's radius) */

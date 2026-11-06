@@ -149,7 +149,7 @@ export class WorldCore {
     this.weather = new Weather(map.surface, this.dims.w, this.dims.h, (x, y) => this.world.ring.i(x, y));
     // (round 108, TC20: a render-only tile's land seeds the weather's cover)
     this.renderer.coverSeed = (enc, src, side, lo, hi) => this.sim.cover.seed(enc, src, side, lo, hi);
-    this.places = new Places(device, this.world, this.sim.placeOps, this.weather);
+    this.places = new Places(device, this.world, this.sim.placeOps, this.weather, () => this.world.bumpChunks('all', this.sim.tick, 'water'));
     this.globals = {
       mapW: this.dims.w,
       mapH: this.dims.h,
@@ -515,9 +515,10 @@ export class WorldCore {
    */
   readonly onColumnsWritten: ((chunks: readonly number[] | 'all') => void)[] = [];
 
-  /** the CPU wrote these window chunks' columns (or all): their versions moved (sim/chunkver.ts), onColumnsWritten told */
+  /** the CPU wrote these window chunks' columns (or all): their versions moved, the columns' and the water's (a CPU
+   *  write puts back a chunk's state: sim/chunkver.ts), onColumnsWritten told */
   columnsWritten(chunks: readonly number[] | 'all'): void {
-    this.world.bumpChunks(chunks, this.sim.tick + 1);
+    this.world.bumpChunks(chunks, this.sim.tick);
     for (const f of this.onColumnsWritten) f(chunks);
   }
 

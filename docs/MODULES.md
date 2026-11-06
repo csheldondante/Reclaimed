@@ -27,7 +27,7 @@ Boot: WebGPU, the quality tier, the phone flags, and which scene runs.
 
 GPU agents (the crowd every unit and worker runs on): their kernels' wrappers, jobs, build crews. Installed on a WorldCore by `install.ts`.
 
-- `agents.ts` (1738) — Agents (round 52, docs/AGENTS.md): units that walk the world's surfaces by following shared fields, and fight. API: `AgentTickLog`, `NAV_K`, `MAX_UNITS`, `NFIELDS` +17.
+- `agents.ts` (1719) — Agents (round 52, docs/AGENTS.md): units that walk the world's surfaces by following shared fields, and fight. API: `AgentTickLog`, `NAV_K`, `MAX_UNITS`, `NFIELDS` +17.
 - `buildcrew.ts` (343) — A building crew (round 65, docs/DECISIONS.md: "a mode where it takes the delta of the finished thing you … API: `BuildCrewDef`, `buildOrder`, `BuildCrew`.
 - `crew.ts` (286) — A work crew (round 63, docs/AGENTS.md "Crews"): workers that dig or fell and carry what they get to a … API: `CrewJob`, `CrewDef`, `Crew`.
 - `fieldreader.ts` (134) — A CPU copy of one agents field (round 52, docs/AGENTS.md), for walkers the CPU moves itself (a game's … API: `FieldSample`, `FieldReader`.
@@ -191,7 +191,7 @@ The atlas: the whole generated world map (coarse sim, GPU finish, far land, geys
 ## src/flow/
 
 - `install.ts` (47) — The flow model in a world (?flow=1, docs/ARCHITECTURE.md "The flow model"): one call, as installPhysics. API: `FlowKit`, `installFlow`.
-- `liquid.ts` (305) — Liquids as runs in the columns (?flow=1, docs/ARCHITECTURE.md "The flow model"; API: `LiquidKind`, `Tuned`, `WATER`, `LAVA` +3.
+- `liquid.ts` (306) — Liquids as runs in the columns (?flow=1, docs/ARCHITECTURE.md "The flow model"; API: `LiquidKind`, `Tuned`, `WATER`, `LAVA` +3.
 - `steady.ts` (139) — Steady state (?flow=1; API: `STEADY_TOL`, `STEADY_FLOOR`, `STEADY_WIN`, `WAKE_TOL` +2.
 
 ## src/fortress/
@@ -235,7 +235,7 @@ Game rules over the world: powers, Nature, progress, levels, and Integrity (stru
 - `judge.ts` (477) — The collapse judges (round 120, the user: "Can we treat this as an experiment and test each approach side … API: `JudgeColumns`, `JudgeInput`, `JudgeStats`, `RockJudge` +5.
 - `levels.ts` (261) — Level registry (BACKLOG C6): every place the player can reclaim, plus the sandbox. API: `LevelModel`, `LevelDef`, `LoadedLand`, `LEVELS` +3.
 - `nature.ts` (107) — Gameplay resource (design doc §7). API: `COSTS`, `HARM`, `Nature`, `reclamation` +1.
-- `places.ts` (218) — The places API (docs/PLACES.md): `core.places`. API: `Places`, `PlaceRef`.
+- `places.ts` (221) — The places API (docs/PLACES.md): `core.places`. API: `Places`, `PlaceRef`.
 - `powers.ts` (477) — What the player's gestures do in the world (DECISIONS 2026-10-07, round 6). API: `PowersDeps`, `Powers`.
 - `progress.ts` (108) — Persistent progression shown by the menu scene (design doc §4): the best reclamation the player has … API: `loadLevelProgress`, `loadProgress`, `Difficulty`, `DIFFICULTY_LEVEL` +7.
 - `reach.ts` (160) — The player's reach on a story level (DECISIONS round 30): the land around the green, by the green's size. API: `MIN_REACH`, `Reach`.
@@ -287,7 +287,7 @@ WebGPU plumbing: device, pipelines and bind-group layouts, CPU timing stats.
 - `pages-mode.ts` (98) — Round 107 (`pages`, docs/PAGES.md P2.0-P2.3): how a kernel finds a window chunk's page (common.wgsl colPlace). API: `PageAddr`, `PAGE_ADDR`, `PAGE_TAB_BINDING`, `PAGE_STORAGE_KERNELS` +8.
 - `pipeline.ts` (195) — Explicit bind-group-layout helpers. API: `BindKind`, `BindSpec`, `makeLayout`, `makeBindGroup` +9.
 - `profiler.ts` (178) — Lightweight instrumentation (design doc §9 "benchmark before escalating"). API: `Profiler`.
-- `transfers.ts` (376) — (round 128o, DA-G1) Every GPU data transfer that matters, in one table: each GPU→CPU read, and each … API: `SMALL_BYTES`, `TransferKind`, `TransferRate`, `TransferPlay` +2.
+- `transfers.ts` (377) — (round 128o, DA-G1) Every GPU data transfer that matters, in one table: each GPU→CPU read, and each … API: `SMALL_BYTES`, `TransferKind`, `TransferRate`, `TransferPlay` +2.
 
 ## src/grids/
 
@@ -569,7 +569,7 @@ Scenes and the live world: WorldCore (one live world), the level and the menu, t
 - `region-copy.ts` (181) — Round 104 (`slidehitch`): rectangles of u32 words moved between buffers by a compute kernel, one dispatch … API: `Rect`, `RegionCopier`.
 - `region-pool.ts` (67) — The GPU region pool (round 100, `regionstore`; API: `PoolSlot`, `RegionPool`.
 - `streamer.ts` (793) — The streamed world (round 66, BACKLOG Q28): the live world is a window of W × H columns onto land without … API: `settleLoose`, `Streamer`, `REGION`, `STREAM_OLD` +14.
-- `world-core.ts` (655) — Everything a live world needs, independent of what the scene does with it: GPU state, simulation, … API: `Quality`, `Host`, `Scene`, `WorldCore`.
+- `world-core.ts` (656) — Everything a live world needs, independent of what the scene does with it: GPU state, simulation, … API: `Quality`, `Host`, `Scene`, `WorldCore`.
 
 ## src/scenes/level/
 
@@ -637,8 +637,8 @@ WGSL. `common.wgsl` (+ layers, materials) is prepended to every kernel; flow/slo
 
 - `agents.wgsl` (470) — ---- agents (round 52, docs/AGENTS.md) ----------------------------------------- The layer units walk on, …
 - `bodymesh.wgsl` (79) — Bodies' own meshes, skinned (round 120;
-- `chunkver.wgsl` (17) — ---- chunkver.wgsl …
-- `climate.wgsl` (144) — ---- climate: snow, ice, fallen leaves (round 50;
+- `chunkver.wgsl` (24) — ---- chunkver.wgsl …
+- `climate.wgsl` (148) — ---- climate: snow, ice, fallen leaves (round 50;
 - `colapply.wgsl` (612) — ---- colapply.wgsl …
 - `colquery.wgsl` (59) — ---- colquery.wgsl …
 - `common.wgsl` (828) — ---- common.wgsl ------------------------------------------------------- Shared by every shader.
@@ -646,7 +646,7 @@ WGSL. `common.wgsl` (+ layers, materials) is prepended to every kernel; flow/slo
 - `cover.wgsl` (166) — ---- the weather's cover past the window (round 108, TC20;
 - `coverfield.wgsl` (16) — ---- the weather's cover past the window: the field's shape (round 108, TC20;
 - `ecology.wgsl` (93) — ---- ecology / succession ------------------------------------------------- veg = continuous succession …
-- `edit.wgsl` (484) — ---- editor brush (sandbox;
+- `edit.wgsl` (487) — ---- editor brush (sandbox;
 - `fieldmesh.wgsl` (887) — ---- field mesh (G13 h) ----------------------------------------------------------- The terrain drawn as …
 - `fire.wgsl` (122) — ---- fire ------------------------------------------------------------------- fire[i] = burning intensity …
 - `florafield.wgsl` (63) — ---- plants placed by the world's other fields (round 117, flora) …
@@ -659,10 +659,10 @@ WGSL. `common.wgsl` (+ layers, materials) is prepended to every kernel; flow/slo
 - `judge.ts` (11) — Judge B, the method of sections on the GPU, in parts (2026-11-04, the monolith split; API: `judgeWgsl`.
 - `landbrush.wgsl` (234) — ---- landform brushes (round 64, docs/DECISIONS.md: "paint mountain ranges and mesas and have them rise …
 - `lava_flux.wgsl` (53) — ---- lava (molten rock): flux pass (docs/PHYSICS.md "Lava") ------------------- The same virtual pipes as …
-- `lava.wgsl` (504) — ---- lava (molten rock): heat, melting, setting, vents (docs/PHYSICS.md "Lava") -- One material for the …
+- `lava.wgsl` (505) — ---- lava (molten rock): heat, melting, setting, vents (docs/PHYSICS.md "Lava") -- One material for the …
 - `layerpull.wgsl` (164) — ---- layer pulls (round 52, BACKLOG E2;
 - `layers.wgsl` (29) — ---- layers.wgsl ------------------------------------------------------- Chunked column-slot addressing …
-- `liquid.wgsl` (855) — ---- liquid.wgsl: liquids as runs in the columns (?flow=1;
+- `liquid.wgsl` (858) — ---- liquid.wgsl: liquids as runs in the columns (?flow=1;
 - `materials.wgsl` (55) — ---- materials.wgsl ---------------------------------------------------- Mirrors src/world/materials.ts …
 - `meshdraw.wgsl` (563) — ---- field mesh draw (G13 C, a prototype: fieldmesh.wgsl) ---------------------- The mesh's vertices are …
 - `meshinst.wgsl` (122) — ---- instanced meshes (round 99, ?meshinst=1;
@@ -675,7 +675,7 @@ WGSL. `common.wgsl` (+ layers, materials) is prepended to every kernel; flow/slo
 - `particles_draw.wgsl` (256) — ---- particles (drawing) ----------------------------------------------------- One screen-aligned square …
 - `particles.wgsl` (1051) — ---- particles (simulation) ------------------------------------------------ A fixed-capacity ring of GPU …
 - `phys.wgsl` (1051) — ---- physics voxels (docs/PHYSICS.md) ------------------------------------------ Every voxel of a physical …
-- `placeop.wgsl` (48) — ---- ops masked to a place (docs/PLACES.md step 1;
+- `placeop.wgsl` (51) — ---- ops masked to a place (docs/PLACES.md step 1;
 - `project.wgsl` (201) — ---- structure → nature projection (docs/GRIDS.md) ----------------------------- What the nature grid sees …
 - `rain.wgsl` (83) — ---- rain streaks ----------------------------------------------------------- Purely visual.
 - `render.ts` (14) — The renderer's draw shader, in parts (2026-11-04, the monolith split; API: `renderWgsl`.
@@ -709,7 +709,7 @@ WGSL. `common.wgsl` (+ layers, materials) is prepended to every kernel; flow/slo
 - `units.wgsl` (856) — ---- agents: the units (round 52, docs/AGENTS.md) ------------------------------ One thread a unit …
 - `vegplan.wgsl` (64) — ---- vegetation layout (shared) ------------------------------------------- Where trees and shrubs stand …
 - `vegprep.wgsl` (409) — ---- vegetation render preparation ------------------------------------------ Emits instances for plants …
-- `water_depth.wgsl` (91) — ---- water transport: depth pass --------------------------------------- Applies flux, rain, springs and …
+- `water_depth.wgsl` (96) — ---- water transport: depth pass --------------------------------------- Applies flux, rain, springs and …
 - `water_flux.wgsl` (59) — ---- water transport: flux pass --------------------------------------- Column-volume "virtual pipes" model.
 - `watersurf.wgsl` (106) — ---- (watersurf, FC2) the water's top as a surface: the lattice of the wet columns' centres …
 - `wilt.wgsl` (124) — ---- wilt: plant health and tap responses (diegetic clues;
@@ -738,8 +738,8 @@ WGSL. `common.wgsl` (+ layers, materials) is prepended to every kernel; flow/slo
 GPU world buffers (the WorldGpu contracts), the systems' wrappers, the fixed-step scheduler, Globals, particles, sleep, snapshots, static claims.
 
 - `boxsum.ts` (92) — (DA-B13) Box means of a per-column texture's x channel, on the GPU: a few floats read back, not the texture. API: `MAX_BOXES`, `BoxMeans`.
-- `chunkver.ts` (37) — (round 128o, DA-B9) The chunks' versions: per chunk the tick + 1 that last changed its columns, after the … API: `CHUNKS_READ`, `writerCode`, `versionIndex`, `versionWords`.
-- `cull.ts` (324) — Dispatching only where the world is awake (on by default, ?simcull=0 off; API: `SIM_CULL`, `LIVE`, `TILES_BINDING`, `NEAR` +8.
+- `chunkver.ts` (42) — (round 128o, DA-B9) The chunks' versions: per chunk the tick + 1 that last changed its columns, and … API: `CHUNKS_READ`, `writerCode`, `versionIndex`, `waterVersionIndex` +1.
+- `cull.ts` (448) — Dispatching only where the world is awake (on by default, ?simcull=0 off; API: `SIM_CULL`, `LIVE`, `TILES_BINDING`, `NEAR` +10.
 - `edit-ops.ts` (89) — The edit pass's ops (edit.wgsl: keep the two the same) and how an Edit event carries one (round 83: one … API: `OP`, `BLOW_TAG`, `STROKE_START`, `editOpOf` +5.
 - `external.ts` (599) — External intervals (round 99, `?meshinst=1`; API: `MESHINST`, `OwnerId`, `OWNER_ROCK`, `ExternalCol` +12.
 - `flow.ts` (83) — The simulation's rates (perfopt, DECISIONS round 83). API: `TICK_HZ`, `FLOW_SUB`, `Flow`, `flowN` +4.
@@ -753,13 +753,13 @@ GPU world buffers (the WorldGpu contracts), the systems' wrappers, the fixed-ste
 - `snapshot.ts` (161) — (round 112, testspeed) A warmed world, saved and put back: every buffer and texture the WorldGpu holds … API: `WorldSnapshot`, `captureWorld`, `restoreWorld`, `encodeSnapshot` +3.
 - `static-claims.ts` (475) — Static grids' claims written with the land (round 128j, M128-8 widened; API: `StaticThing`, `GridPlace`, `StaticClaimsIO`, `StaticGrid` +2.
 - `system.ts` (31) — Simulation system interface (design doc §9, §23, §24). API: `SimSystem`, `dispatch`.
-- `systems.ts` (1128) — First (simplest) implementations of each simulation system. API: `riverHeld`, `PrepWorld`, `SurfaceSystem`, `StructureSystem` +25.
+- `systems.ts` (1131) — First (simplest) implementations of each simulation system. API: `riverHeld`, `PrepWorld`, `SurfaceSystem`, `StructureSystem` +25.
 - `tickclock.ts` (130) — Round 114 (framepace, FP4): how many sim ticks a rendered frame runs. API: `TickMode`, `TickClock`, `tickModeFrom`.
 - `tiers.ts` (277) — The sims' tiers (round 108, simtiers; API: `TIER_CHANNEL`, `BAKE_GAIN`, `INTERACT_MIN_S`, `INTERACT_MAX_S` +2.
 - `translate.ts` (87) — Moving what lives in window coordinates when the streamed window slides (round 80; API: `Translator`.
 - `warm-cache.ts` (68) — (round 112, testspeed) The player's warmed world, kept in the browser (IndexedDB): the second visit to the … API: `warmKey`, `loadWarm`, `saveWarm`.
 - `windrect.ts` (100) — Where the painted wind is (round 104, simscale — the user: "Why does wind and climate need to run … API: `LIFE_S`, `reach`, `WindRects`.
-- `world-gpu.ts` (607) — GPU-resident world state: every buffer that forms a contract between systems is allocated (and documented) … API: `STATS_COUNT`, `EDIT_TAGS`, `RiverMode`, `riverMode` +8.
+- `world-gpu.ts` (618) — GPU-resident world state: every buffer that forms a contract between systems is allocated (and documented) … API: `STATS_COUNT`, `EDIT_TAGS`, `RiverMode`, `riverMode` +8.
 
 ## src/solver/
 

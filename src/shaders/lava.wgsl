@@ -423,6 +423,7 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
     if (w > 1e-4 && T > 100.0) {
       let boil = min(w, BOIL * DT_L * T / LAVA_HOT);
       water[i] = w - boil;
+      bumpWater(id.xy);
       T = max(T - boil * QUENCH / max(d, 0.1), 0.0);
       if (chance(i, 0x55u) < min(boil * 40.0, 0.3)) {
         spawnL(vec3<f32>(cp, top + d + 0.2), vec3<f32>(0.0, 0.0, 2.0), 7.0, K_SMOKE_L, hash3(i, G.tick, 0x56u), SMOKE_STEAM);

@@ -1135,18 +1135,35 @@ its edge:
   columns a pass before them reads first (the brush's `blowSum`, the
   structures' `lateralSupport`). The brush runs on a tick with an edit and
   while brush state is in flight (edit-ops.ts `EditBusy`).
-- **The chunks' versions** (round 128o, DA-B9; sim/chunkver.ts, shaders/chunkver.wgsl): `WorldGpu.chunks` is the
-  chunk table, then a u32 per chunk: the tick + 1 that last changed its columns (0: never). Keyed by where the chunk's
-  columns lie (its first slot / 256: a slide rotates the table over the same storage, so it moves none). Every GPU
-  writer of the columns calls `bumpChunk(column)` for a column it changed (climate, edit, landbrush, lava, layerpull,
-  liquid, sediment, structure, townstamp), and `gpu/pipeline.ts makeCompute` gives a kernel that calls it the chunk
-  table read_write (binding 1, no new binding) and chunkver.wgsl; colapply bumps in its `store` (P.stamp, its own
-  table binding read_write). The whole-column writers write a slot only if it changed (structure compares the column
-  it found), so a pass over an awake chunk that changes nothing bumps nothing. Every CPU write of the columns (a
-  region come in, the live edit, a warp, an undo, restoreChunks, replaceWindow, ColumnCopy.write) calls
-  `WorldCore.columnsWritten(chunks | 'all')`, which bumps them (`WorldGpu.bumpChunks`, the next tick + 1) and tells
-  the mirror (`Mirror.touchChunks`). Held by test/unit/chunkver.test.ts (the sources) and test/gpu/chunkver.test.ts
-  (each writer, on Dawn). Readers: none yet; DA-B26 (the indirect culled dispatch) is the first.
+- **The chunks' versions** (round 128o, DA-B9 and DA-B26; sim/chunkver.ts, shaders/chunkver.wgsl): `WorldGpu.chunks`
+  is the chunk table, then a vec2<u32> per chunk: x the tick + 1 that last changed its columns, y the tick + 1 that
+  last changed its water or its places (0: never). Keyed by where the chunk's columns lie (its first slot / 256: a
+  slide rotates the table over the same storage, so it moves none).
+  - GPU writers call `bumpChunk(column)` for a column whose columns they changed (climate, edit, landbrush, lava,
+    layerpull, liquid, sediment, structure, townstamp), and `bumpWater(column)` for one whose water they changed
+    (water_depth, climate, edit, lava, liquid, placeop). `gpu/pipeline.ts makeCompute` gives a kernel that calls
+    either the chunk table read_write (binding 1, no new binding) and chunkver.wgsl. Colapply bumps in its `store`
+    (P.stamp, its own table binding read_write).
+  - The whole-column writers write a slot only if it changed (structure compares the column it found), and the water
+    writers bump only where the depth moved, so a pass over an awake chunk that changes nothing bumps nothing.
+  - Every CPU write of the columns or the water (a region come in, the live edit, a warp, an undo, restoreChunks,
+    replaceWindow, ColumnCopy.write) calls `WorldCore.columnsWritten(chunks | 'all')`. That bumps both words
+    (`WorldGpu.bumpChunks`, the next tick + 1) and tells the mirror (`Mirror.touchChunks`). Places uploaded bump every
+    chunk's water word.
+  - Held by test/unit/chunkver.test.ts (the sources) and test/gpu/chunkver.test.ts (each writer, on Dawn).
+  - Readers: sim/cull.ts ChangedTiles (DA-B26), for the agents' re-peel.
+- **Tile lists made on the GPU** (round 128o, DA-B26; sim/cull.ts GpuTileList, ChangedTiles, shaders/tilelist.wgsl):
+  - A reader's ChangedTiles takes a CPU list (its scope, CUSTOM). It makes two lists:
+    - `changed`: the chunks whose versions (either word) are past the tick it last listed them (`seen`, per chunk of
+      storage like the versions; a chunk never listed counts as changed);
+    - `around`: the scope's chunks next to a changed one (3 × 3).
+  - Each list is a u32 an entry, as the CPU's, with indirect args (x: 4 workgroups a chunk). `build` encodes, before
+    the reader's pass: the args reset by a copy, the two kernels, and each list copied whole into its own uniform. The
+    culled kernel binds that uniform at TILES_BINDING (cullSource unchanged) and is dispatched indirect
+    (`GpuTileList.dispatch`). The CPU never knows the count, and nothing changed means 0 workgroups.
+  - `force` lists the whole scope (the agents after sitting idle).
+  - Agents (encodeScoped) peel over `changed` and link over `around`. This replaces round 107's eighth of the scope a
+    tick. ?agentscope=0's whole-window path keeps PEEL_EVERY.
 - **Not dispatched over what sleeps** (round 85, sim/cull.ts; on by default,
   `?simcull=0` off). Simulation.step makes, from the same Globals.sleep and
   drowse masks, a list of the chunks live this tick (WorldGpu.tiles,

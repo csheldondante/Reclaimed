@@ -11,7 +11,7 @@ import { tinyMap } from '../support/tinymap';
 import { MAT } from '../../src/world/materials';
 import { CHUNK, type Interval } from '../../src/world/layout';
 import { cellPos } from '../../src/world/lattice';
-import { versionIndex } from '../../src/sim/chunkver';
+import { versionIndex, waterVersionIndex } from '../../src/sim/chunkver';
 import { attachSim } from '../../src/api/world';
 import { EventKind } from '../../src/sim/globals';
 import { LavaSystem } from '../../src/sim/lava';
@@ -29,12 +29,12 @@ afterAll(() => g?.destroy());
 const W = 64;
 const H = 64;
 
-/** the versions now, by window chunk */
-async function versions(w: TinyWorld): Promise<(ci: number) => number> {
+/** the versions now, by window chunk: its columns' (or, `water`, its water's — DA-B26) */
+async function versions(w: TinyWorld, water = false): Promise<(ci: number) => number> {
   const raw = new Uint32Array((await w.core.readBuffer('chunks')).buffer);
   const p = w.core.packed;
   const base = p.chunkTable.length;
-  return (ci) => raw[base + versionIndex(p, ci)];
+  return (ci) => raw[base + (water ? waterVersionIndex(p, ci) : versionIndex(p, ci))];
 }
 /** window chunk of column (x, y) */
 const chunkOf = (w: TinyWorld, x: number, y: number) => Math.floor(y / CHUNK) * w.core.packed.chunksX + Math.floor(x / CHUNK);
@@ -193,21 +193,138 @@ describe('every writer of the columns moves its chunks\' versions', () => {
     }
   });
 
-  it('the CPU: WorldCore.columnsWritten moves the chunks named, to the next tick + 1', async () => {
+  it('the CPU: WorldCore.columnsWritten moves the chunks named, to the next tick', async () => {
     const w = await tinyWorld(g, tinyMap(W, H, 32, stone), []);
     try {
       await w.step(3);
       const ci = chunkAt(w, ...cellPos(5, 40));
       w.core.columnsWritten([ci]);
       const v = await versions(w);
-      expect(v(ci)).toBe(w.core.sim.tick + 1);
+      expect(v(ci)).toBe(w.core.sim.tick);
       expect(v(chunkOf(w, W - 2, H - 2))).toBe(0);
+      // (DA-B26: a CPU write moves the water's version too — it put back the chunk's state, or may have)
+      const vw = await versions(w, true);
+      expect(vw(ci)).toBe(w.core.sim.tick);
+      expect(vw(chunkOf(w, W - 2, H - 2))).toBe(0);
       // (an undo: every chunk)
       w.core.snapshot();
       await w.step(2);
       expect(w.core.undo()).toBe(true);
       const v2 = await versions(w);
-      for (let c = 0; c < (W / CHUNK) * (H / CHUNK); c++) expect(v2(c)).toBe(w.core.sim.tick + 1);
+      for (let c = 0; c < (W / CHUNK) * (H / CHUNK); c++) expect(v2(c)).toBe(w.core.sim.tick);
+      expect(g.takeErrors()).toEqual([]);
+    } finally {
+      w.destroy();
+    }
+  });
+});
+
+/** a water writer's check (DA-B26): `act` changes the water round window column (x, y); after `ticks` of `systems`,
+ *  that chunk's water version is past where it was, and (`farStill`) the far corner's isn't */
+async function wets(map: ReturnType<typeof tinyMap>, systems: string[], x: number, y: number, act: (w: TinyWorld) => void | Promise<void>, ticks = 4, farStill = true): Promise<void> {
+  const w = await tinyWorld(g, map, systems);
+  try {
+    await w.step(4);
+    const v0 = await versions(w, true);
+    const ci = chunkOf(w, x, y);
+    const far = chunkOf(w, W - 2, H - 2);
+    await act(w);
+    await w.step(ticks);
+    const v1 = await versions(w, true);
+    expect(v1(ci)).toBeGreaterThan(v0(ci));
+    if (farStill) expect(v1(far)).toBe(v0(far));
+    expect(g.takeErrors()).toEqual([]);
+  } finally {
+    w.destroy();
+  }
+}
+
+describe("(DA-B26) every writer of the water moves its chunks' water versions", () => {
+  it('the water pass (water_depth.wgsl): a heap of water spreads', async () => {
+    const map = tinyMap(W, H, 32, stone);
+    for (let y = 18; y < 22; y++) for (let x = 18; x < 22; x++) map.water[y * W + x] = 2;
+    await wets(map, ['surface', 'water'], 20, 20, () => {}, 6);
+  });
+
+  it('the edit pass (edit.wgsl): water poured', async () => {
+    await wets(tinyMap(W, H, 32, stone), ['surface', 'edit'], 12, 12, (w) => {
+      attachSim(w.core, { water: true }).water!.flood(...cellPos(12, 12), { radius: 2, depth: 1 });
+    });
+  });
+
+  it('the climate pass (climate.wgsl): snow melts into water', async () => {
+    const map = tinyMap(W, H, 32, (x, y) => (x > 24 && x < 32 && y > 24 && y < 32 ? [{ z0: 0, z1: 10, mat: MAT.Stone }, { z0: 10, z1: 11, mat: MAT.Snow }] : stone()));
+    await wets(map, ['climate'], 28, 28, (w) => {
+      w.core.globals.climate = { temp: 30, lapse: 0 };
+    }, 200);
+  });
+
+  it("the place ops (placeop.wgsl): a room flooded; the places uploaded move every chunk's", async () => {
+    const w = await tinyWorld(g, tinyMap(W, H, 32, stone), ['placeop']);
+    try {
+      await w.step(2);
+      w.core.places.load({ partition: 'voronoi', spacing: 22, group: [1, 3], shape: 'chain' }, 3);
+      const t0 = w.core.sim.tick;
+      const up = await versions(w, true);
+      for (let c = 0; c < (W / CHUNK) * (H / CHUNK); c++) expect(up(c)).toBe(t0);
+      await w.step(2);
+      const room = w.core.places.at(...cellPos(20, 20));
+      if (!room) throw new Error('no room at (20, 20)');
+      w.core.sim.placeOps.queue.push({ op: 2, place: room.id, amount: 0.5 });
+      await w.step(4);
+      const v1 = await versions(w, true);
+      expect(v1(chunkOf(w, 20, 20))).toBeGreaterThan(t0);
+      expect(g.takeErrors()).toEqual([]);
+    } finally {
+      w.destroy();
+    }
+  });
+
+  it('the lava pass (lava.wgsl): water over a vent boils off', async () => {
+    const map = tinyMap(W, H, 60, stone);
+    for (let y = 16; y < 26; y++) for (let x = 34; x < 46; x++) map.water[y * W + x] = 1;
+    const w = await tinyWorld(g, map, []);
+    try {
+      const lava = new LavaSystem(g.device, w.core.world, w.core.host.profiler);
+      w.core.sim.systems.push(lava);
+      const step = async (n: number) => {
+        for (let i = 0; i < n; i++) w.core.sim.step(w.core.globals, (sy) => sy === lava);
+        await g.device.queue.onSubmittedWorkDone();
+      };
+      await step(4);
+      const v0 = await versions(w, true);
+      const ci = chunkOf(w, 40, 20);
+      const far = chunkOf(w, W - 2, H - 2);
+      lava.addVent(...cellPos(40, 20), 30, 9, 1.6, 0, 0);
+      await step(240);
+      const v1 = await versions(w, true);
+      expect(v1(ci)).toBeGreaterThan(v0(ci));
+      expect(v1(far)).toBe(v0(far));
+      expect(g.takeErrors()).toEqual([]);
+    } finally {
+      w.destroy();
+    }
+  });
+
+  it('the flowing water (?flow=1: liquid.wgsl publishWater): a spring', async () => {
+    const w = await tinyWorld(g, tinyMap(W, H, 60, stone), []);
+    try {
+      const sleep = new Sleep(W / CHUNK, H / CHUNK, w.core.ring);
+      const kit = installFlow(w.core, sleep);
+      const flow = new Set<string>([kit.water.name, 'flow-steady', 'surface']);
+      const step = async (n: number) => {
+        for (let i = 0; i < n; i++) w.core.sim.step(w.core.globals, (sy) => flow.has(sy.name));
+        await g.device.queue.onSubmittedWorkDone();
+      };
+      await step(4);
+      const v0 = await versions(w, true);
+      const ci = chunkOf(w, 20, 44);
+      const far = chunkOf(w, W - 2, 2);
+      kit.water.addSpring(...cellPos(20, 44), 11, 2);
+      await step(30);
+      const v1 = await versions(w, true);
+      expect(v1(ci)).toBeGreaterThan(v0(ci));
+      expect(v1(far)).toBe(v0(far));
       expect(g.takeErrors()).toEqual([]);
     } finally {
       w.destroy();

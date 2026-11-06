@@ -19283,3 +19283,60 @@ town's answers behind TownWork, nothing polled, no give-up timers.
      - (a) The water writers bump a second version (a "wet" word per chunk).
      - (b) The peel keeps a slow round robin for the water only.
      - (c) The peel stops reading the water, and wet and deep come from another pass.
+
+## 2026-11-06 — round 128o (`phonefix`, DA-B26): tile lists made on the GPU, and the agents' re-peel over what changed
+
+- Why: DA-B26, approved by main with (1) the GPU lists beside the CPU lists in sim/cull.ts and (2) option (a): the
+  water writers bump a water version, and no round robin. Since round 107 the agents re-peeled an eighth of their
+  scope each tick, in turn, whether or not anything had changed. A change waited up to 8 ticks, and a still scope
+  cost the same as a changing one. The peel reads the columns, the water (the wet and deep flags; nav.w, the depth
+  units wade and drown by) and the places, so all three must say where they changed.
+- Versions (sim/chunkver.ts, shaders/chunkver.wgsl):
+  - Each chunk now has a vec2. x is the columns' version (DA-B9). y is the water's or the places' version.
+  - `bumpWater(column)` is called where the depth moved: in water_depth (the step, and the held rivers), climate,
+    edit, lava (the boil), liquid (the water's publish and the boil), and placeop.
+  - water_depth and placeop now bind the chunk table, so the depth pass reaches its eighth storage buffer. liquid's
+    publishWater keeps its table binding for the same reason (also eight).
+  - A CPU write (`columnsWritten`) bumps both words. It puts back a chunk's state, or may.
+  - Places uploaded bump every chunk's water word (`Places` is told through a callback; `WorldGpu.bumpChunks(…,
+    'water')`).
+- Lists (sim/cull.ts GpuTileList and ChangedTiles; shaders/tilelist.wgsl):
+  - A reader's ChangedTiles runs over a CPU list (the scope). `changed` holds the chunks whose versions are past the
+    tick it last listed them. `seen` is kept per chunk of storage, keyed like the versions, and a chunk never listed
+    counts as changed. `around` holds the scope's chunks that are next to one of those.
+  - Appending is a single atomicAdd on the indirect args' x, at 4 workgroups a chunk. The args are reset by a 12 B
+    copy from a constant.
+  - Each list is copied whole into its own uniform (1.6 KB at 320²), because the peel kernel already has 8 storage
+    buffers and reads its list as the CPU's (cullSource, unchanged). The kernels are then dispatched indirect.
+  - Nothing changed means 0 workgroups, with no CPU count and no readback.
+- Agents (encodeScoped):
+  - The peel runs over `changed` and the links over `around`.
+  - The round robin and the CPU's peel and link lists are gone.
+  - A chunk that comes into the scope is peeled only if it changed while out of the scope or was never peeled; its
+    surfaces are kept while it is out.
+  - After an idle spell, `force` lists the whole scope.
+  - ?agentprof=1's log reads the peel's count back from the list's args.
+  - ?agentscope=0 (the whole window) keeps PEEL_EVERY.
+- Tests:
+  - test/unit/chunkver.test.ts: the water's writers (WGSL with the water writable must call bumpWater; 6 found) and
+    the CPU's water writes (must call columnsWritten).
+  - test/gpu/chunkver.test.ts: a test per water writer (the water pass, a pour, snow melting, a room flooded and the
+    places uploaded, a vent boiling water, a spring), and the CPU write moving both words.
+  - test/gpu/tilelist.test.ts: a chunk is listed the first time, then nothing, then one written chunk with its 3 × 3,
+    then a water-only bump. Agents: still ground peels nothing; a dig is peeled at once and matches a whole re-peel
+    two ticks on.
+- The stamps (found by the list test): a CPU write is stamped with the next tick (as a write at the end of the last
+  one), not the next tick + 1. With + 1 a reader in the next tick listed it, then listed it again in the tick after.
+- Checked: typecheck (both projects), build, the unit tier (827), the GPU tier (174, including the 19 version and
+  list tests), smoke (atlas: loads, sim runs), and the lab's fortressraid and fortressharvest (hauled 15, stuck 0).
+  The peel's count per tick in play is not measured: my scripts/agentspike.mjs runs reached lab servers on the ports I
+  gave, not a dev server, and timed out. To be measured with agentspike (?agentprof=1) and on the phone bench.
+- Hacks and limits:
+  - Water that moves at all moves its version, including evaporation and the held rivers relaxing. So the re-peel
+    covers every awake water chunk in the scope each tick: exact (nav.w is current; before it was up to 8 ticks
+    stale), but in a flood that can be more than the old eighth of the scope. To be measured on the phone bench.
+  - `seen` is the tick a chunk was listed. A writer earlier in the same tick stamps tick + 1, so the chunk is listed
+    once more on the next tick. That is one redundant peel, never a stale one.
+  - The lists' uniforms are copied whole (the count is the GPU's): 3.2 KB a tick at 320² for the two.
+  - Places uploaded bump every chunk's water word in ~400 4 B writes at 320² (rare: a plan loaded).
+  - The depth pass and the water's publish are now at 8 storage buffers. ?pagecheck=1 leaves them unchecked.

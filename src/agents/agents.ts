@@ -24,7 +24,7 @@ import { AgentScope } from './scope';
 import { RoadStamp } from './roads';
 import { RoadRide } from './ride';
 import type { RoadGraph } from './roadgraph';
-import { CUSTOM, TILES_BINDING, cullKernel } from '../sim/cull';
+import { CUSTOM, ChangedTiles, TILES_BINDING, cullKernel } from '../sim/cull';
 import { ROW_H } from '../world/lattice';
 import { TUNE, worldG } from '../tune/params';
 import { urlFlags } from '../flags';
@@ -37,10 +37,6 @@ const SCOPE_LIST = CUSTOM + 10;
 const ENTER_LIST = CUSTOM + 11;
 /** chunks marked changed by the CPU this tick (a seed placed or moved) */
 const MARK_LIST = CUSTOM + 12;
-/** (round 107, agentspike) the chunks peeled this tick (an eighth of the scope in turn, and those come into it), and
- *  those re-linked (them and the chunks next to them: their links reach into what was peeled) */
-const PEEL_LIST = CUSTOM + 13;
-const LINK_LIST = CUSTOM + 14;
 /** (round 107, agentspike) ?agentprof=1: the agents' tick in one timed pass a stage (agents-in, -peel, -relax, -units),
  *  and a log a tick (window.__agentLog: the scope, what came in, the marks, the peel, each sweep's front) */
 const PROF = typeof location !== 'undefined' && urlFlags().get('agentprof') === '1';
@@ -50,7 +46,7 @@ export interface AgentTickLog {
   scope: number;
   enter: number;
   marks: number;
-  /** chunks peeled (0: none) */
+  /** chunks peeled (0: none; the GPU's list — round 128o, DA-B26 — filled in when read back) */
   peel: number;
   units: number;
   fields: number;
@@ -114,7 +110,8 @@ const EVENT_WINDOW = 256;
 /** voxels drawn in all (units.wgsl MAX_INST), and in all the kinds' models */
 const MAX_INST = 65536;
 const MAX_MODEL_VOXELS = 8192;
-/** sweeps of the fields a tick, and ticks between re-peeling the surfaces */
+/** ticks between re-peeling the surfaces over the whole window (?agentscope=0 only: in the scope, round 128o DA-B26,
+ *  the chunks whose columns or water changed are re-peeled, listed on the GPU — sim/cull.ts ChangedTiles) */
 const PEEL_EVERY = 8;
 /** the params uniform (agents.wgsl AgentParams), in u32s */
 const P_SEEDS = 4;
@@ -368,6 +365,8 @@ export class Agents implements SimSystem {
     clear: ComputeKernel;
     mark: ComputeKernel;
     clearFields: ComputeKernel;
+    /** (round 128o, DA-B26) the scope's chunks whose columns or water changed (peeled) and those round them (linked) */
+    lists: ChangedTiles;
     clearFieldsG: GPUBindGroup;
     occG: GPUBindGroup;
     boxG: GPUBindGroup;
@@ -557,8 +556,10 @@ export class Agents implements SimSystem {
       };
       const occSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 8: 'rw', 10: 'uniform', 16: 'rw' };
       const enterSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 6: 'rw', 8: 'rw', 16: 'rw', 34: 'rw' };
-      const surfaces = ck('surfaces', peelSpec, PEEL_LIST);
-      const links = ck('links', fieldSpec, LINK_LIST);
+      // (round 128o, DA-B26: the peel and the links over the GPU's lists — what changed, and round it; bound below)
+      const lists = new ChangedTiles(device, world, t, SCOPE_LIST, 'agents-peel');
+      const surfaces = ck('surfaces', peelSpec, SCOPE_LIST);
+      const links = ck('links', fieldSpec, SCOPE_LIST);
       const clearFields = ck('clearFields', { 0: 'uniform', 2: 'uniform', 6: 'rw', 10: 'uniform' }, SCOPE_LIST);
       const occ = ck('occClearCols', occSpec, SCOPE_LIST);
       const enter = ck('scopeIn', enterSpec, ENTER_LIST);
@@ -583,12 +584,13 @@ export class Agents implements SimSystem {
         clear,
         mark: mark.k,
         clearFields: clearFields.k,
+        lists,
         clearFieldsG: makeBindGroup(device, 'agents-clearFields', clearFields.k.layout, { ...base, 6: this.dist, 10: this.params, [TILES_BINDING]: clearFields.buf }),
         occG: makeBindGroup(device, 'agents-occ scoped', occ.k.layout, { ...base, 8: this.occ, 10: this.params, 16: this.shove, [TILES_BINDING]: L }),
         boxG: makeBindGroup(device, 'agents-unitBox', box.layout, { ...base, 7: this.units, 10: this.params, 28: this.uboxBuf }),
         resetG: makeBindGroup(device, 'agents-frontReset', reset.layout, { ...base, 33: this.frontArgs }),
-        peelG: par((cur, _n, p) => makeBindGroup(device, `agents-peel scoped ${p}`, surfaces.k.layout, { ...base, 1: world.chunks, 3: world.layers, 4: world.water, 5: this.nav, 11: world.places, 12: world.placeTable, 34: cur, 37: this.navCost, [TILES_BINDING]: surfaces.buf })),
-        linksG: par((cur, next, p) => makeBindGroup(device, `agents-links scoped ${p}`, links.k.layout, { ...base, 5: this.nav, 6: this.dist, 10: this.params, 34: cur, 35: next, 37: this.navCost, 38: this.abBuf, 40: this.roads, [TILES_BINDING]: links.buf })),
+        peelG: par((cur, _n, p) => makeBindGroup(device, `agents-peel scoped ${p}`, surfaces.k.layout, { ...base, 1: world.chunks, 3: world.layers, 4: world.water, 5: this.nav, 11: world.places, 12: world.placeTable, 34: cur, 37: this.navCost, [TILES_BINDING]: lists.changed.uniform })),
+        linksG: par((cur, next, p) => makeBindGroup(device, `agents-links scoped ${p}`, links.k.layout, { ...base, 5: this.nav, 6: this.dist, 10: this.params, 34: cur, 35: next, 37: this.navCost, 38: this.abBuf, 40: this.roads, [TILES_BINDING]: lists.around.uniform })),
         relaxG: par((cur, next, p) => makeBindGroup(device, `agents-relax front ${p}`, relax.layout, { ...base, 5: this.nav, 6: this.dist, 10: this.params, 34: cur, 35: next, 36: this.frontList, 37: this.navCost, 38: this.abBuf, 40: this.roads })),
         enterG: par((cur, _n, p) => makeBindGroup(device, `agents-enter ${p}`, enter.k.layout, { ...base, 6: this.dist, 8: this.occ, 16: this.shove, 34: cur, [TILES_BINDING]: enter.buf })),
         buildG: par((cur, next, p) => makeBindGroup(device, `agents-frontBuild ${p}`, build.layout, { ...base, 10: this.params, 33: this.frontArgs, 34: cur, 35: next, 36: this.frontList, 38: this.abBuf })),
@@ -1552,38 +1554,13 @@ export class Agents implements SimSystem {
     this.lastBox = nb ? [nb[0], nb[1], nb[2], nb[3]] : null;
     if (list.length) t.setList(SCOPE_LIST, list);
     if (enter.length) t.setList(ENTER_LIST, enter);
-    // (round 107, agentspike: the peel spread over PEEL_EVERY ticks, an eighth of the scope's chunks a tick, and the
-    // chunks come into it at once — not the whole scope on the eighth tick, nor on any tick a chunk came in. A whole
-    // scope only after the agents sat idle: nothing peeled meanwhile)
-    const peel: number[] = [];
-    let link: number[] = [];
-    if (list.length) {
-      if (this.navStale) {
-        this.navStale = false;
-        peel.push(...list);
-        link = list;
-      } else {
-        const turn = this.ticks % PEEL_EVERY;
-        const inScope = new Set(list);
-        const take = new Set<number>(enter);
-        for (const c of list) if (c % PEEL_EVERY === turn) take.add(c);
-        peel.push(...take);
-        if (peel.length) {
-          const cx = sc.cx;
-          const around = new Set<number>(peel);
-          for (const c of peel) {
-            const i = c % cx;
-            const j = (c - i) / cx;
-            for (let b = j - 1; b <= j + 1; b++) for (let a = i - 1; a <= i + 1; a++) if (a >= 0 && a < cx && inScope.has(b * cx + a)) around.add(b * cx + a);
-          }
-          link = [...around];
-        }
-      }
-      if (peel.length) {
-        t.setList(PEEL_LIST, peel);
-        t.setList(LINK_LIST, link);
-      }
-    }
+    // (round 128o, DA-B26: the surfaces re-peeled where the columns or the water changed since they were last peeled,
+    // and re-linked round them: lists made on the GPU from the chunks' versions (sim/cull.ts ChangedTiles) — not an
+    // eighth of the scope a tick in turn, round 107, whatever changed. A chunk come into the scope is peeled if it
+    // changed while out of it, or was never peeled; the whole scope after the agents sat idle — nothing peeled meanwhile)
+    const force = this.navStale && list.length > 0;
+    if (force) this.navStale = false;
+    sk.lists.build(enc, this.prof, list.length, force);
     // (confined: every chunk of the scope relaxed again. Round 107: a field left without seeds no longer is — it's set
     // unreachable over the scope (clearFields) with no marks, and its next seeds mark where it refills from)
     const marks = sc.markAll ? list : [...sc.marks].filter((c) => sc.box && list.includes(c));
@@ -1623,17 +1600,15 @@ export class Agents implements SimSystem {
         pass.dispatchWorkgroups(n);
         this.prof.dispatches++;
       }
-      if (peel.length) {
-        if (log) log.peel = peel.length;
-        stage('agents-peel');
-        pass.setBindGroup(0, sk.peelG[p]);
-        pass.setPipeline(sk.surfaces.pipeline);
-        pass.dispatchWorkgroups(t.groups(PEEL_LIST));
-        pass.setBindGroup(0, sk.linksG[p]);
-        pass.setPipeline(sk.links.pipeline);
-        pass.dispatchWorkgroups(t.groups(LINK_LIST));
-        this.prof.dispatches += 2;
-      }
+      // (the GPU's lists: nothing changed, no workgroups)
+      stage('agents-peel');
+      pass.setBindGroup(0, sk.peelG[p]);
+      pass.setPipeline(sk.surfaces.pipeline);
+      sk.lists.changed.dispatch(pass);
+      pass.setBindGroup(0, sk.linksG[p]);
+      pass.setPipeline(sk.links.pipeline);
+      sk.lists.around.dispatch(pass);
+      this.prof.dispatches += 2;
       if (this.fieldsUsed > 0) {
         const chunks = Math.ceil(list.length / 64);
         stage('agents-relax');
@@ -1680,7 +1655,11 @@ export class Agents implements SimSystem {
       }
     }
     pass.end();
-    if (log) this.probeLog(enc, log, this.fieldsUsed > 0 && n ? Math.min(this.sweeps, 8) : 0);
+    if (log) {
+      // (the peel's list's count: its args' workgroups, 4 a chunk)
+      if (n) enc.copyBufferToBuffer(sk.lists.changed.args, 0, this.probe(), 64, 4);
+      this.probeLog(enc, log, this.fieldsUsed > 0 && n ? Math.min(this.sweeps, 8) : 0, n > 0);
+    }
     if (read) {
       enc.copyBufferToBuffer(this.uboxBuf, 0, this.readBuf, 0, 16);
       this.reading = true;
@@ -1693,18 +1672,19 @@ export class Agents implements SimSystem {
   // ---- (round 107, agentspike) ?agentprof=1 ----
   private probeBuf?: GPUBuffer;
   private probeStage: GPUBuffer[] = [];
-  private probePending: { buf: GPUBuffer; log: AgentTickLog; n: number }[] = [];
+  private probePending: { buf: GPUBuffer; log: AgentTickLog; n: number; peeled: boolean }[] = [];
   private probe(): GPUBuffer {
-    return (this.probeBuf ??= this.device.createBuffer({ label: 'agentProbe', size: 64, usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST }));
+    return (this.probeBuf ??= this.device.createBuffer({ label: 'agentProbe', size: 80, usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST }));
   }
-  private probeLog(enc: GPUCommandEncoder, log: AgentTickLog, n: number): void {
+  /** `n` sweeps' fronts to read, `peeled` the peel's count too (word 16) */
+  private probeLog(enc: GPUCommandEncoder, log: AgentTickLog, n: number, peeled: boolean): void {
     const w = window as unknown as { __agentLog?: AgentTickLog[] };
     (w.__agentLog ??= []).push(log);
     if (w.__agentLog.length > 20000) w.__agentLog.splice(0, 10000);
-    if (!n) return;
-    const buf = this.probeStage.pop() ?? this.device.createBuffer({ label: 'agentProbeRead', size: 64, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
-    enc.copyBufferToBuffer(this.probe(), 0, buf, 0, 64);
-    this.probePending.push({ buf, log, n });
+    if (!n && !peeled) return;
+    const buf = this.probeStage.pop() ?? this.device.createBuffer({ label: 'agentProbeRead', size: 80, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    enc.copyBufferToBuffer(this.probe(), 0, buf, 0, 80);
+    this.probePending.push({ buf, log, n, peeled });
   }
 
   /** (simscale) after the tick's submit: the read issued in it mapped */
@@ -1717,6 +1697,7 @@ export class Agents implements SimSystem {
           q.log.front.push(u[i] / 4);
           q.log.asked.push(u[8 + i]);
         }
+        if (q.peeled) q.log.peel = u[16] / 4;
         this.probeStage.push(q.buf);
       }, ignoreTeardown);
     const r = this.readIssued;

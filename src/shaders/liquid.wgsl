@@ -646,6 +646,8 @@ fn publishWater(@builtin(global_invocation_id) id: vec3<u32>) {
   if (sfCount(surface[i]) == 0u) { nd = 0.0; }
   waterPrevL[i] = d;
   open[i] = nd;
+  // (round 128o, DA-B26: the water's version moved where it did — chunkver.wgsl)
+  if (nd != d) { bumpWater(id.xy); }
   var f = dZero();
   if (d > EPS && fluxStamp(i, 0u) == stepNow()) {
     let v = fluxGet(i, 0u);
@@ -712,6 +714,7 @@ fn publishLava(@builtin(global_invocation_id) id: vec3<u32>) {
       if (w > 1e-4 && T > 100.0) {
         let boil = min(w, LAVA_BOIL * DTQ * T / LQ_HOT);
         waterB[i] = w - boil;
+        bumpWater(id.xy);
         T = max(T - boil * LAVA_QUENCH / max(d, 0.1), 0.0);
         if (chanceQ(i, 0x55u) < min(boil * 40.0, 0.3)) {
           spawnQ(vec3<f32>(cellPos(p), v.x + d + 0.2), vec3<f32>(0.0, 0.0, 2.0), 7.0, K_SMOKE_Q, hash3(i, G.tick, 0x56u), 2u);

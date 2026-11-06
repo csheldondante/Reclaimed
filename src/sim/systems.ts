@@ -262,7 +262,8 @@ export class WaterSystem implements SimSystem {
         { 3: 'read', 4: 'read', 5: 'read', 6: 'rw', 7: 'rw', 8: 'read', 9: 'rw', 22: 'tex', 62: 'tex', 31: 'uniform' },
         // (a settling pass's second half: from the next buffer back into the water — the passes ping-pong)
         { 3: settle ? world.waterNext : world.water, 4: world.flux, 5: world.waterSource, 6: settle ? world.water : world.waterNext, 7: world.waterPrev, 8: world.surface, 9: world.waterChange, 22: world.riverFlowView, 62: world.riverWetView, 31: this.rect },
-        false,
+        // (round 128o, DA-B26: the chunk table, for the water's versions — bumpWater; its eighth storage buffer)
+        true,
         settle ? undefined : tiles,
       );
     // (the settling passes read the next buffer as the water everywhere: a culled tick leaves it stale asleep)
@@ -280,7 +281,7 @@ export class WaterSystem implements SimSystem {
         flux: f,
         fg: makeBindGroup(device, 'water-settle-flux-a', f.layout, { 0: world.globals, 2: world.materials, 3: world.surface, 4: world.water, 5: world.flux, 6: world.oil, 17: world.driftView, 21: world.bodyProjView, 22: world.riverFlowView, 62: world.riverWetView, 31: this.rect }),
         depth: d,
-        dg: makeBindGroup(device, 'water-settle-depth-a', d.layout, { 0: world.globals, 2: world.materials, 3: world.water, 4: world.flux, 5: world.waterSource, 6: world.waterNext, 7: world.waterPrev, 8: world.surface, 9: world.waterChange, 22: world.riverFlowView, 62: world.riverWetView, 31: this.rect }),
+        dg: makeBindGroup(device, 'water-settle-depth-a', d.layout, { 0: world.globals, 1: world.chunks, 2: world.materials, 3: world.water, 4: world.flux, 5: world.waterSource, 6: world.waterNext, 7: world.waterPrev, 8: world.surface, 9: world.waterChange, 22: world.riverFlowView, 62: world.riverWetView, 31: this.rect }),
       };
     }
   }
@@ -1112,6 +1113,8 @@ export class PlaceOpSystem implements SimSystem {
       placeOpWgsl,
       { 3: 'read', 4: 'read', 5: 'rw', 6: 'rw', 7: 'uniform' },
       { 3: world.places, 4: world.placeTable, 5: world.water, 6: world.deposit, 7: this.params },
+      // (round 128o, DA-B26: the chunk table, for the water's versions — bumpWater)
+      true,
     );
   }
   encode(enc: GPUCommandEncoder): void {

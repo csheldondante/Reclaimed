@@ -12,6 +12,9 @@
 //
 // The list is built on the CPU, where the mask is made (Sleep.update): no readback, the count known when the
 // passes are encoded, so a pass with nothing live isn't dispatched at all (no indirect dispatch needed).
+// (Round 128o, DA-B26: beside them, lists made on the GPU — GpuTileList, ChangedTiles: the chunks of a CPU list whose
+// columns or water changed since a reader last looked, from the chunks' versions — copied into the same uniform and
+// dispatched indirect; the agents' re-peel is the first.)
 // Contract (WorldGpu.tiles): per flow rate n (0: live only), a uniform of chunk indices (cy · chunksX + cx), 4 a
 // vec4, and its count; four 8 × 8 workgroups a chunk (the kernel's wrapper, cullSource, finds its columns).
 
@@ -21,6 +24,7 @@ import type { Profiler } from '../gpu/profiler';
 import commonWgsl from '../shaders/common.wgsl?raw';
 import type { Pages } from './pages';
 import materialsWgsl from '../shaders/materials.wgsl?raw';
+import tilelistWgsl from '../shaders/tilelist.wgsl?raw';
 import { urlFlags } from '../flags';
 
 /** on by default (round 85, measured: the same state asleep, bit for bit — scripts/culltest.mjs); ?simcull=0 off */
@@ -319,5 +323,125 @@ export class TileTexCopy {
   }
   copy(enc: GPUCommandEncoder, prof: Profiler): void {
     dispatchTiles(enc, prof, 'copyback', this.k, this.group, this.tiles, this.n);
+  }
+}
+
+/**
+ * (round 128o, DA-B26) A tile list made on the GPU: the list (a u32 an entry, as the CPU's) and its indirect args,
+ * written by a kernel; `publish` copies the list into the uniform a culled kernel reads (cullSource, at TILES_BINDING:
+ * bind `uniform`), `dispatch` dispatches that kernel over it indirect. The CPU never knows its count: a list with
+ * nothing in it dispatches 0 workgroups.
+ */
+export class GpuTileList {
+  /** the builder's output (storage) */
+  readonly list: GPUBuffer;
+  /** x, y, z workgroups (x: 4 a chunk listed) */
+  readonly args: GPUBuffer;
+  /** what the culled kernel binds at TILES_BINDING */
+  readonly uniform: GPUBuffer;
+  private bytes: number;
+  constructor(device: GPUDevice, label: string, tiles: AwakeTiles) {
+    this.bytes = tiles.vec4s * 16;
+    this.list = device.createBuffer({ label: `${label} list`, size: this.bytes, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+    this.args = device.createBuffer({ label: `${label} args`, size: 12, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
+    this.uniform = device.createBuffer({ label: `${label} tiles`, size: this.bytes, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  }
+  /** empty: its args back to (0, 1, 1) — from `empty`, a constant (0, 1, 1) */
+  reset(enc: GPUCommandEncoder, empty: GPUBuffer): void {
+    enc.copyBufferToBuffer(empty, 0, this.args, 0, 12);
+  }
+  /** the list into the culled kernel's uniform (the whole list: its count is the GPU's) */
+  publish(enc: GPUCommandEncoder): void {
+    enc.copyBufferToBuffer(this.list, 0, this.uniform, 0, this.bytes);
+  }
+  /** the culled kernel (pipeline and group set) over the list */
+  dispatch(pass: GPUComputePassEncoder): void {
+    pass.dispatchWorkgroupsIndirect(this.args, 0);
+  }
+  destroy(): void {
+    for (const b of [this.list, this.args, this.uniform]) b.destroy();
+  }
+}
+
+/**
+ * (round 128o, DA-B26) A reader's lists of what changed, made on the GPU from the chunks' versions (sim/chunkver.ts,
+ * shaders/tilelist.wgsl): over a CPU list (`scope`, sim/cull.ts CUSTOM), `changed` the chunks whose columns or water
+ * moved since this reader last listed them (and those it never has), `around` the scope's chunks next to one of those.
+ * A reader per instance (its own `seen`, keyed as the versions are, so a slide moves none). `build` encodes the lists'
+ * making before the reader's pass; the reader dispatches its culled kernels over them (GpuTileList.dispatch).
+ */
+export class ChangedTiles {
+  readonly changed: GpuTileList;
+  readonly around: GpuTileList;
+  private k: { changed: ComputeKernel; around: ComputeKernel };
+  private group: GPUBindGroup;
+  private params: GPUBuffer;
+  private empty: GPUBuffer;
+  private seen: GPUBuffer;
+  private listedAt: GPUBuffer;
+  constructor(
+    private device: GPUDevice,
+    world: { globals: GPUBuffer; materials: GPUBuffer; chunks: GPUBuffer; versionChunks: number },
+    tiles: AwakeTiles,
+    scope: number,
+    label: string,
+  ) {
+    this.changed = new GpuTileList(device, `${label} changed`, tiles);
+    this.around = new GpuTileList(device, `${label} around`, tiles);
+    const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
+    // (every chunk unseen: listed the first time)
+    this.seen = device.createBuffer({ label: `${label} seen`, size: Math.max(1, world.versionChunks) * 4, usage: S, mappedAtCreation: true });
+    new Uint32Array(this.seen.getMappedRange()).fill(0xffffffff);
+    this.seen.unmap();
+    this.listedAt = device.createBuffer({ label: `${label} listedAt`, size: tiles.chunks * 4, usage: S });
+    this.params = device.createBuffer({ label: `${label} params`, size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.empty = device.createBuffer({ label: `${label} empty args`, size: 12, usage: GPUBufferUsage.COPY_SRC, mappedAtCreation: true });
+    new Uint32Array(this.empty.getMappedRange()).set([0, 1, 1]);
+    this.empty.unmap();
+    const parts = [commonWgsl, materialsWgsl, `const VEC4S: u32 = ${tiles.vec4s}u;`, tilelistWgsl];
+    const spec: BindSpec = { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'rw', 4: 'rw', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw', 9: 'uniform', [TILES_BINDING]: 'uniform' };
+    this.k = { changed: makeCompute(device, `${label} changed`, parts, spec, 'changed'), around: makeCompute(device, `${label} around`, parts, spec, 'around') };
+    this.group = makeBindGroup(device, `${label} lists`, this.k.changed.layout, {
+      0: world.globals,
+      1: world.chunks,
+      2: world.materials,
+      3: this.seen,
+      4: this.listedAt,
+      5: this.changed.list,
+      6: this.changed.args,
+      7: this.around.list,
+      8: this.around.args,
+      9: this.params,
+      [TILES_BINDING]: tiles.list(scope),
+    });
+  }
+
+  /**
+   * The lists for this tick over the scope's `count` chunks (its CPU list as set this tick); `force`: every one listed
+   * (the reader's state is gone). Encoded before the reader's pass: the args reset, the two kernels, the lists copied
+   * into the culled kernels' uniforms.
+   */
+  build(enc: GPUCommandEncoder, prof: Profiler, count: number, force: boolean): void {
+    this.device.queue.writeBuffer(this.params, 0, new Uint32Array([count, force ? 1 : 0, 0, 0]));
+    this.changed.reset(enc, this.empty);
+    this.around.reset(enc, this.empty);
+    if (count) {
+      const pass = enc.beginComputePass({ label: 'tile lists', timestampWrites: prof.timestamps('tile lists') });
+      pass.setBindGroup(0, this.group);
+      pass.setPipeline(this.k.changed.pipeline);
+      pass.dispatchWorkgroups(Math.ceil(count / 64));
+      pass.setPipeline(this.k.around.pipeline);
+      pass.dispatchWorkgroups(Math.ceil(count / 64));
+      pass.end();
+      prof.dispatches += 2;
+      this.changed.publish(enc);
+      this.around.publish(enc);
+    }
+  }
+
+  destroy(): void {
+    this.changed.destroy();
+    this.around.destroy();
+    for (const b of [this.params, this.empty, this.seen, this.listedAt]) b.destroy();
   }
 }
