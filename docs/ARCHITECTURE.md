@@ -2563,6 +2563,13 @@ cheap pool of light ("Yes absolutely enough"). One concern a file:
   `sources` (simTick, slowSystems, io, counters) are lent by whoever reads it (the bench); it changes nothing.
   `report(mark)` = per frame: interval, rAF lag, CPU, rAF to last submit, submit to done, frames in flight, GPU span,
   the gap between frames' GPU work, sim ticks, which counters moved; the slow frames against the rest.
+- **The nearest trees** (round 128o, DA-B6; api/treequery.ts, shaders/treequery.wgsl): `plants.treesNear(x, y, r, n)`
+  is a GPU pass, not a CPU layout over a read-back succession field. Over each ask's box of columns, vegplan.wgsl's
+  `vegPlan` says where the trees stand; three passes: a histogram of the trees' distances (128 bins over the radius),
+  a cut (the bin by which n are counted), a gather (those nearer, then the cut bin's up to n). Back: 16 B and n × 8 B
+  an ask (column, species, trunk, crown), the asks of one task in one submit and one map, buffers kept. A test on Dawn
+  holds it to planTree's nearest (test/gpu/treequery.test.ts). The woodcutters (FortressLife, SettlementLife, crews)
+  ask when their camp or spot changes, after a fell, and once a sim minute (the woods grow back: DA-B21).
 - **The frame cap** (round 128o, DA-B5; DESIGN.md §24 "Cap at 30 fps while building or paused"): a Scene may say
   `maxFps()`; main.ts skips display frames until `frameDue` (scenes/frame-cap.ts: the cap's interval less half a
   display frame), so 60 Hz runs every other frame, 120 Hz every fourth, 100 Hz every third (33 fps). The level caps
@@ -3531,7 +3538,7 @@ The building rule (the user's): select what (a structure type), then plan it wit
   (every JOBS_S); phases idle/home/wait, builders toPile/toSite/working (BuildBook as before), workers
   toWork/gather/lifting/carry. Fields (0-6, all FortressLife's): F.pile the stores (the first built warehouse's door
   — `Fortress.doorOf` — else the town's heap), F.site/F.store sites lacking stone/wood, F.quarry the built quarry cells'
-  middles, F.fell the trees in the lumber camps' reach (`plants.treesNear`, every 10 s), F.farm the built farm cells,
+  middles, F.fell the trees in the lumber camps' reach (`plants.treesNear`, asked of the GPU when the camps change, after a fell and once a sim day: round 128o), F.farm the built farm cells,
   F.home house doors and the town's homes; groups R.* (settle/life.ts). Miners dig the ground (`terrain.take`, a quiet
   edit: sim/sleep.ts touch — the chunk isn't woken) every ECON.digSec within ECON.digR of the cell's middle, as a bowl
   no deeper than `pitDepth(d)` (1 m down a metre in, ECON.pitMax at most) under the ground they first found there; woodcutters fell

@@ -56,6 +56,9 @@ export class Crew {
   private workers = new Map<number, Worker>();
   private floor: number | null = null;
   private claimed = new Set<string>();
+  /** (round 128o, DA-B6) the fell job's trees as last asked of the GPU, and whether an ask is out */
+  private jobTrees: Tree[] = [];
+  private treesAsked = false;
   private seededAt = 0;
   private last = 0;
 
@@ -86,7 +89,6 @@ export class Crew {
   /** The job's sites now: where the field leads them (dig: ground still above the floor; fell: the trees). */
   private reseed(): void {
     const j = this.def.job;
-    const [fJob] = this.def.fields;
     const sites: { x: number; y: number }[] = [];
     if (j.kind === 'dig') {
       if (this.floor === null) return;
@@ -102,15 +104,30 @@ export class Crew {
         if ((z ?? -1) > this.floor + 0.05) sites.push({ x, y });
       }
     } else {
-      const trees = this.plants!.treesNear(j.x, j.y, j.radius);
-      // (round 128o: not read yet is not "no trees")
-      if (!trees) return;
-      for (const t of trees) {
-        if (sites.length >= 12) break;
-        sites.push({ x: t.x, y: t.y });
-      }
-      for (const w of this.workers.values()) if (w.tree && sites.length < 12) sites.push({ x: w.tree.x, y: w.tree.y });
+      // (round 128o, DA-B6: the job's trees asked of the GPU — a short list back; the sites made when it's in)
+      if (this.treesAsked) return;
+      this.treesAsked = true;
+      void this.plants!.treesNear(j.x, j.y, j.radius).then((trees) => {
+        this.treesAsked = false;
+        // (the window moved while they were asked: asked again next time)
+        if (!trees) return;
+        this.jobTrees = trees;
+        const at: { x: number; y: number }[] = [];
+        for (const t of trees) {
+          if (at.length >= 12) break;
+          at.push({ x: t.x, y: t.y });
+        }
+        for (const w of this.workers.values()) if (w.tree && at.length < 12) at.push({ x: w.tree.x, y: w.tree.y });
+        this.seedSites(at);
+      });
+      return;
     }
+    this.seedSites(sites);
+  }
+
+  /** the job's field seeded at its sites; none: the job is done */
+  private seedSites(sites: { x: number; y: number }[]): void {
+    const [fJob] = this.def.fields;
     if (!sites.length) {
       this.done = true;
       for (const [id, w] of this.workers) if (w.step === 'toJob') this.go(id, w, 'idle', this.def.groups[1]);
@@ -122,7 +139,10 @@ export class Crew {
   private claim(w: Worker, u: AgentState): void {
     const j = this.def.job;
     if (j.kind !== 'fell' || w.tree) return;
-    const t = this.plants!.treesNear(u.x, u.y, j.radius * 2)?.find((t) => Math.hypot(t.x - j.x, t.y - j.y) <= j.radius && !this.claimed.has(`${t.cx},${t.cy}`));
+    // (the job's trees as last asked — reseed — the nearest the unit not claimed)
+    const t = this.jobTrees
+      .filter((t) => !this.claimed.has(`${t.cx},${t.cy}`))
+      .sort((a, b) => Math.hypot(a.x - u.x, a.y - u.y) - Math.hypot(b.x - u.x, b.y - u.y))[0];
     if (!t) return;
     w.tree = t;
     this.claimed.add(`${t.cx},${t.cy}`);

@@ -31,7 +31,7 @@ raw buffers, every command for its effect).
   refreshes every 250 ms (`refreshMs`).
 - `sim.readAt` says when it was last read; `sim.reads` counts the reads,
   pages and bytes. `await sim.refresh()` reads every page now.
-- Queries that span pages (`plants.treesNear`, smooth samples) answer null
+- Queries that span pages (smooth samples) answer null
   until every page they touch is read.
 - Typed views of each read are made once and shared by every query, so a
   few hundred queries a frame cost nothing to speak of: a smooth height
@@ -64,7 +64,8 @@ await sim.warmup({ ticks, debris, skip })        // settle the world: ticks of s
 
 // plants (round 63)
 sim.plants.vegAt(x, y)              // the succession field: ~1.2 grass, 2.6 shrubs, 3.6+ woods
-sim.plants.treeAt(x, y) / treesNear(x, y, radius)   // { cx, cy, x, y, species, trunk, crown, logs }, nearest first
+sim.plants.treeAt(x, y)                              // { cx, cy, x, y, species, trunk, crown, logs }
+await sim.plants.treesNear(x, y, radius, n = 32)     // (round 128o) the n nearest, found on the GPU (api/treequery.ts); null: the window slid meanwhile
 await sim.plants.fell(x, y)         // that column cut back to grass: → the tree as it stood (its logs), or null
 sim.plants.grow(x, y, { radius, strength })   // the plants rise (60: a wood at once)
 // work crews (round 63; docs/AGENTS.md "Crews"): dig or fell, carry to a pile

@@ -157,8 +157,8 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
             s.stock -= n;
           },
           // (milestone 3: settle/life.ts's IO — the plants' trees and fell, the terrain's take: all quiet edits)
-          // (round 128o: null until the pages in reach are read — api/mirror.ts reads them when asked)
-          trees: (at, r) => scene.worldApi!.plants!.treesNear(at[0], at[1], r)?.map((t) => [t.x, t.y] as [number, number]) ?? null,
+          // (round 128o, DA-B6: the nearest trees found on the GPU, a short list back)
+          trees: (at, r, n) => scene.worldApi!.plants!.treesNear(at[0], at[1], r, n).then((ts) => ts && ts.map((t) => [t.x, t.y] as [number, number])),
           fell: (at) => scene.worldApi!.plants!.fell(at[0], at[1]).then((t) => t?.logs ?? 0),
           dig: (at, n) => scene.worldApi!.terrain!.take(at[0], at[1], n).then((g) => g.amount),
           ground: (x, y) => scene.heightAt(x, y),

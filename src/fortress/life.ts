@@ -72,7 +72,6 @@ const SITES = 6;
 const SEEDS = 6;
 /** sim seconds between the JobBoard's turns (and the roads'), the trees' looks */
 const JOBS_S = 1;
-const TREES_S = 10;
 /** the most grain a farm holds ripe: this many days of its growth */
 const RIPE_DAYS = 3;
 
@@ -114,8 +113,9 @@ export interface FortressLifeIO {
   stores(): Goods;
   /** goods taken out of the stores (negative: put in) */
   take(good: Good, amount: number): void;
-  /** trees within r of a point (window coordinates); null: the ground there isn't read yet (asked: looked at again next turn) */
-  trees(at: V2, r: number): V2[] | null;
+  /** the `n` nearest trees within r of a point (window coordinates), nearest first, asked of the GPU (api/plants.ts
+   *  treesNear; round 128o DA-B6); null: the window moved while it was asked (looked at again next turn) */
+  trees(at: V2, r: number, n: number): Promise<V2[] | null>;
   /** a tree felled: its logs (0: none there) */
   fell(at: V2): Promise<number>;
   /** ground dug out at a point (the world API's terrain take: quiet, sim/sleep.ts touch): how much came */
@@ -214,8 +214,11 @@ export class FortressLife implements Routine {
   private cutCells = new Set<number>();
   private slots: JobSlot[] = [];
   private jobsAt = -1e9;
-  private treesAt = -1e9;
   private trees: V2[] = [];
+  /** (round 128o, DA-B6) the trees asked of the GPU and not answered yet; what they were last asked for (the lumber
+   *  camps and their built blocks, and the day: the woods grow back) — asked again when it changes, or a tree is felled */
+  private treesAsked = false;
+  private treesFor = '';
   private arriveAt = 0;
   /** per structure: what its workers brought in, its ripe grain (farms) */
   private made = new Map<number, Goods>();
@@ -354,9 +357,7 @@ export class FortressLife implements Routine {
       // every field reads no way, so a block not yet among the sites read cut off, was never a site, never seeded, never
       // in the scope — cut off for good
       this.io.units.agents.keepInScope('fortress', this.todo().flatMap((b) => this.standsFor(b)));
-    }
-    if (this.t - this.treesAt >= TREES_S) {
-      this.treesAt = this.t;
+      // (the JobBoard's turn: whether the camps' trees need asking again)
       this.lookForTrees();
     }
     this.reseed();
@@ -425,26 +426,39 @@ export class FortressLife implements Routine {
     return key === null ? null : (this.slots.find((s) => s.key === key) ?? null);
   }
 
-  /** the trees in the lumber camps' reach, nearest each camp first */
+  /**
+   * The trees in the lumber camps' reach, nearest each camp first (12 a camp), asked of the GPU — when the camps or their
+   * built blocks change, a tree is felled, or a day passes (the woods grow back by succession): never on a timer of its
+   * own (round 128o, DA-B6).
+   */
   private lookForTrees(): void {
+    if (this.treesAsked) return;
     const f = this.io.fort;
-    const out: V2[] = [];
+    const camps: { mid: V2; r: number }[] = [];
     for (const s of f.plan.structures()) {
       if (s.type !== 'lumber') continue;
       const n = builtBlocks(f.plan, s, (c, l) => f.town.has(c, l));
       if (!n) continue;
       const cs = [...s.cells.keys()].map((c) => f.centre(c));
-      const mid: V2 = [cs.reduce((a, p) => a + p[0], 0) / cs.length, cs.reduce((a, p) => a + p[1], 0) / cs.length];
-      const got = this.io.trees(mid, reachOf(n));
-      // (not read yet — not "no trees": the list kept as it was, looked at again next turn; round 128o)
-      if (!got) {
-        this.treesAt = -1e9;
+      camps.push({ mid: [cs.reduce((a, p) => a + p[0], 0) / cs.length, cs.reduce((a, p) => a + p[1], 0) / cs.length], r: reachOf(n) });
+    }
+    const key = JSON.stringify([Math.floor(this.t / ECON.daySec), camps.map((c) => [c.mid.map(Math.round), c.r])]);
+    if (key === this.treesFor) return;
+    this.treesFor = key;
+    if (!camps.length) {
+      this.trees = [];
+      return;
+    }
+    this.treesAsked = true;
+    void Promise.all(camps.map((c) => this.io.trees(c.mid, c.r, 12))).then((got) => {
+      this.treesAsked = false;
+      // (the window moved while they were asked: asked again next turn)
+      if (got.some((g) => g === null)) {
+        this.treesFor = '';
         return;
       }
-      const near = got.sort((a, b) => Math.hypot(a[0] - mid[0], a[1] - mid[1]) - Math.hypot(b[0] - mid[0], b[1] - mid[1]));
-      out.push(...near.slice(0, 12));
-    }
-    this.trees = out;
+      this.trees = got.flatMap((g) => g!);
+    });
   }
 
   private writeStatus(): void {
@@ -1472,6 +1486,8 @@ export class FortressLife implements Routine {
           const where = w.where ?? at;
           void this.io.fell(where).then((logs) => {
             this.trees = this.trees.filter((t) => Math.hypot(t[0] - where[0], t[1] - where[1]) > 0.8);
+            // (a tree gone: the camps' lists asked again — its edit has run, the answer won't hold it)
+            this.treesFor = '';
             if (w.phase !== 'lifting') return;
             if (logs > 0) {
               this.stats.felled++;

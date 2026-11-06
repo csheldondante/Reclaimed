@@ -327,8 +327,8 @@ export function attachStream(scene: LevelScene): void {
         origin: () => [S.origin[0], S.origin[1]],
         dims: { w: dims.w, h: dims.h },
         focus: () => [core.camera.target[0], core.camera.target[1]],
-        // (round 128o: null until the pages in reach are read — api/mirror.ts reads them when asked)
-        trees: (at, r) => plants().treesNear(at[0], at[1], r)?.map((t) => [t.x, t.y] as [number, number]) ?? null,
+        // (round 128o, DA-B6: the nearest trees found on the GPU, a short list back)
+        trees: (at, r, n) => plants().treesNear(at[0], at[1], r, n).then((ts) => ts && ts.map((t) => [t.x, t.y] as [number, number])),
         fell: (at) => plants().fell(at[0], at[1]).then((t) => t?.logs ?? 0),
         take: (at, n) => terrainApi().take(at[0], at[1], n),
         put: (at, m, n) => terrainApi().put(at[0], at[1], m, n),

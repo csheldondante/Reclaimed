@@ -18373,3 +18373,31 @@ The linger existed for the sandbox's pours only (DEVLOG round 83: "a pour lands 
   for its press's whole landing time after the last event. A pour in a chunk that falls asleep mid-flight (woken for
   8 s, longer than any pour) would hold the state one tick apart between the two textures. Snapshots (sim/snapshot.ts)
   keep both textures but not `editCur`: fine at rest, where they agree.
+
+## 2026-11-05 — round 128o (`phonefix`, DA-B6): the woodcutters' trees found on the GPU; why the lumber camp felled nothing
+
+- Why: DESIGN.md §24, world queries are GPU passes. `plants.treesNear` read the succession field back (since DA-B1 by
+  pages; before, the whole window on a 250 ms timer) and laid the trees out again on the CPU (planTree, a port of
+  vegplan.wgsl), for a list of 12 or 30 trees.
+- Now (api/treequery.ts, shaders/treequery.wgsl): the GPU lays the trees out itself (vegPlan over each ask's box) and
+  answers the n nearest: a histogram of distances (128 bins over the radius), a cut, a gather. Back: 272 B an ask (16 B
+  and 32 trees × 8 B), the asks of one task in one read. Exact to the bin's width (r / 128): every tree nearer than the
+  cut bin is in, and of the cut bin's as many as fit — a Dawn test against planTree's nearest, five asks (dense woods,
+  few trees, none: an empty list, not null) in one read. `treesNear` is async now (Promise<Tree[] | null>; null: the
+  window slid meanwhile); FortressLife, SettlementLife and the crews ask and use the answer when it comes.
+- When they ask: FortressLife on its JobBoard turn when the lumber camps or their built blocks change, after a fell, and
+  once a sim day (the woods grow back by succession, which tells the CPU nothing: DA-B21); SettlementLife when its first
+  spot moves, after a fell, and once a sim minute (it was every 15 s, nudged after a fell). The fortress looked every
+  10 sim s before. The transfer table lists the read as timed (DA-B21) and the asks' upload as small.
+- Measured (lab `town`, a lumber camp standing, 180 sim s at 4x): 6 reads, 1.6 KB in all; the mirror read nothing.
+  The camp felled 3 trees (2 woodcutters; a tree takes a woodcutter `workSeconds(lumber)`, ~75 sim s, plus the walks).
+- Why it felled nothing in fortressperf `work: true`: not the trees (12-16 found in reach). With a quarry painted (radius
+  12 m, dozens of blocks) the JobBoard gave all 8 people to the quarry: jobs go in JOB_ORDER (farm, build, quarry,
+  lumber, …) and a quarry has slots for 2 workers a block, so a big quarry takes everyone before the lumber camp's turn
+  (snapshot jobs `{"quarry": 8}`). That is DESIGN.md §18 as written ("Idle people take jobs on the job board in priority
+  order"), so no code fix and no failing test: a question for the user (a share per kind, the player's priorities, or
+  slots that don't scale with a quarry's size).
+- Hacks and limits: 32 trees an ask at most; the nearest to r / 128; the once-a-sim-minute/day look for regrown trees
+  (DA-B21); a felled tree may still be in an answer asked before its edit ran (the woodcutter finds no logs there and
+  goes idle, and the list is asked again after the fell); the CPU port (planTree) stays for `treeAt` and `fell`'s answer.
+

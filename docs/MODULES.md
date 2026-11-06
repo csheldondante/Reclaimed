@@ -30,7 +30,7 @@ GPU agents (the crowd every unit and worker runs on): their kernels' wrappers, j
 
 - `agents.ts` (1665) — Agents (round 52, docs/AGENTS.md): units that walk the world's surfaces by following shared fields, and fight. API: `AgentTickLog`, `NAV_K`, `MAX_UNITS`, `NFIELDS` +17.
 - `buildcrew.ts` (343) — A building crew (round 65, docs/DECISIONS.md: "a mode where it takes the delta of the finished thing you … API: `BuildCrewDef`, `buildOrder`, `BuildCrew`.
-- `crew.ts` (266) — A work crew (round 63, docs/AGENTS.md "Crews"): workers that dig or fell and carry what they get to a … API: `CrewJob`, `CrewDef`, `Crew`.
+- `crew.ts` (286) — A work crew (round 63, docs/AGENTS.md "Crews"): workers that dig or fell and carry what they get to a … API: `CrewJob`, `CrewDef`, `Crew`.
 - `fieldreader.ts` (134) — A CPU copy of one agents field (round 52, docs/AGENTS.md), for walkers the CPU moves itself (a game's … API: `FieldSample`, `FieldReader`.
 - `install.ts` (17) — Agents in a world (round 52, docs/AGENTS.md): one call, as installPhysics. API: `installAgents`.
 - `ride.ts` (216) — The agents ride the roads on the GPU (round 128i, V128-14; API: `MAX_DESTS`, `RIDE_NEAR`, `RoadRide`.
@@ -50,10 +50,11 @@ The engine's public APIs over a live world (the Sim facade `world.ts`, terrain, 
 - `fx.ts` (76) — world.fx (docs/WORLD_API.md): particle bursts by name. API: `FxName`, `FxOpts`, `Fx`.
 - `map-labels.ts` (28) — ---- api/map-labels.ts -------------------------------------------------------- (round 91, the user: "the … API: `LabelKind`, `MapLabel`, `LabelSource`.
 - `mirror.ts` (425) — A CPU mirror of some world buffers and textures (docs/WORLD_API.md): the world modules answer their … API: `RingPages`, `SourceKind`, `PageAsk`, `PageReader` +3.
-- `plants.ts` (212) — world.plants (docs/WORLD_API.md; API: `TreeSpecies`, `Tree`, `birchWood`, `planTree` +1.
+- `plants.ts` (200) — world.plants (docs/WORLD_API.md; API: `TreeSpecies`, `Tree`, `birchWood`, `planTree` +1.
 - `puck.ts` (158) — ---- api/puck.ts -------------------------------------------------------------- The camera's puck (round … API: `Puck`.
 - `smooth.ts` (111) — Sampling the ground the way the field mesh draws it (fieldmesh.wgsl terrainField, meshregion.wgsl … API: `Tri`, `terrainWarp`, `triAt`, `blendedTop`.
-- `terrain.ts` (482) — world.terrain (docs/WORLD_API.md): the ground, read from a CPU mirror in world coordinates, and the … API: `Layer`, `SampleOpts`, `PullOpts`, `PullStroke` +3.
+- `terrain.ts` (480) — world.terrain (docs/WORLD_API.md): the ground, read from a CPU mirror in world coordinates, and the … API: `Layer`, `SampleOpts`, `PullOpts`, `PullStroke` +3.
+- `treequery.ts` (212) — (round 128o, DA-B6; DESIGN.md §24 "world queries are GPU passes") The nearest trees to a point, answered … API: `MAX_N`, `TreeQueryIO`, `FoundTree`, `TreeQuery`.
 - `water.ts` (120) — world.water (docs/WORLD_API.md): depth and flow from a CPU mirror, flood and drain as commands. API: `Water`.
 - `wind.ts` (346) — world.wind (docs/WORLD_API.md): blows and strokes a game manages as lists, with no cap a game sees; API: `BlowMode`, `BlowSpec`, `StrokeSpec`, `WakeSpec` +2.
 - `world.ts` (224) — The engine's outward API (docs/WORLD_API.md; API: `SimModules`, `SIM_ALL`, `WorldDef`, `WarmupOpts` +3.
@@ -194,7 +195,7 @@ Fortress mode: the fortress, its economy, pieces, claims, life (workers) and its
 - `host.ts` (55) — (round 128l, tooling) What the fortress's start (scenes/level.ts startFortress) needs of the world it's … API: `FortressTownRec`, `FortressTownSource`, `FortressWindow`, `FORTRESS_BOX` +3.
 - `inspect.ts` (156) — Inspect (round 128d; the user: "Maybe an inspect to highlight a continuous section of structure and see … API: `InspectFacts`, `InspectLive`, `inspectFacts`, `inspectCard`.
 - `lanes.ts` (469) — The fortress's roads (round 128k; API: `LaneGrid`, `LaneKind`, `LaneSeg`, `LaneOpts` +13.
-- `life.ts` (1574) — The fortress's people (fortress slice 1; API: `LOAD`, `R4`, `FortressLifeIO`, `FortressLife`.
+- `life.ts` (1590) — The fortress's people (fortress slice 1; API: `LOAD`, `R4`, `FortressLifeIO`, `FortressLife`.
 - `pick.ts` (59) — Which block face a tap lands on (round 128d, the user: "Fix the clicking on the side to build next to it. API: `PickCells`, `FaceHit`, `pickFace`, `placeFor`.
 - `pieces.ts` (860) — The fortress drawn (fortress slice 1, milestone 1): its plan made into the towns' pieces — the structures … API: `LOOK_GHOST`, `PIECE_PICKED`, `PIECE_WARN`, `PieceInputs` +6.
 - `pit.ts` (209) — A quarry's pit as tiers and ramps down its footprint (round 128m, `quarry`, BACKLOG V128-11): the player … API: `PIT_SHELF`, `PIT_RAMP`, `PitTopo`, `PitGeo` +9.
@@ -219,13 +220,13 @@ Game rules over the world: powers, Nature, progress, levels, and Integrity (stru
 
 - `blows.ts` (30) — What a blow does to the ground (round 120, the user: "dropping the tanker in a stone does not trigger … API: `groundBlowRadius`, `sinkDepth`, `splitDisplaced`, `softnessOf`.
 - `bodies.ts` (422) — Falling pieces (round 14, BACKLOG F7; API: `Body`, `rotate`, `Bodies`.
-- `colapply.ts` (490) — (round 120, JB6: "no CPU readback on the hot path") Changes to the GPU's columns made in place … API: `looseFrom`, `fitColumn`, `cutColumn`, `spillPlan` +5.
+- `colapply.ts` (493) — (round 120, JB6: "no CPU readback on the hot path") Changes to the GPU's columns made in place … API: `looseFrom`, `fitColumn`, `cutColumn`, `spillPlan` +5.
 - `colbodies.ts` (310) — Falling pieces in the columns' own format (round 86). API: `ColPiece`, `FallingBody`, `Landing`, `subtract` +1.
 - `colcopy.ts` (247) — (round 120, JB6: "no CPU readback on the hot path") The CPU's copy of the GPU's columns (WorldGpu.layers), … API: `CopyMode`, `CopyHost`, `ColumnCopy`.
 - `colquery.ts` (78) — (round 120, JB6: "no CPU readback on the hot path") Small questions asked of the GPU's columns in place … API: `ColumnQuery`.
 - `director.ts` (123) — Camera director (DECISIONS round 9): limits on pan/zoom, smooth camera shots, and a step-by-step script … API: `CameraLimits`, `Director`.
 - `fracture.ts` (1347) — Structural integrity for structures (round 13/14, BACKLOG F7). API: `Voxel`, `Fracture`, `RunPiece`, `WorldVox` +8.
-- `integrity.ts` (770) — Structural integrity and falling pieces (round 14, BACKLOG F7; API: `Integrity`, `GROUND_DUST`, `Grab`.
+- `integrity.ts` (769) — Structural integrity and falling pieces (round 14, BACKLOG F7; API: `Integrity`, `GROUND_DUST`, `Grab`.
 - `judge.ts` (476) — The collapse judges (round 120, the user: "Can we treat this as an experiment and test each approach side … API: `JudgeColumns`, `JudgeInput`, `JudgeStats`, `RockJudge` +5.
 - `levels.ts` (260) — Level registry (BACKLOG C6): every place the player can reclaim, plus the sandbox. API: `LevelModel`, `LevelDef`, `LoadedLand`, `LEVELS` +3.
 - `nature.ts` (107) — Gameplay resource (design doc §7). API: `COSTS`, `HARM`, `Nature`, `reclamation` +1.
@@ -281,6 +282,7 @@ WebGPU plumbing: device, pipelines and bind-group layouts, CPU timing stats.
 - `pages-mode.ts` (97) — Round 107 (`pages`, docs/PAGES.md P2.0-P2.3): how a kernel finds a window chunk's page (common.wgsl colPlace). API: `PageAddr`, `PAGE_ADDR`, `PAGE_TAB_BINDING`, `PAGE_STORAGE_KERNELS` +8.
 - `pipeline.ts` (186) — Explicit bind-group-layout helpers. API: `BindKind`, `BindSpec`, `makeLayout`, `makeBindGroup` +9.
 - `profiler.ts` (178) — Lightweight instrumentation (design doc §9 "benchmark before escalating"). API: `Profiler`.
+- `transfers.ts` (376) — (round 128o, DA-G1) Every GPU data transfer that matters, in one table: each GPU→CPU read, and each … API: `SMALL_BYTES`, `TransferKind`, `TransferRate`, `TransferPlay` +2.
 
 ## src/grids/
 
@@ -479,7 +481,7 @@ Drawing: the camera, the renderer (render-prep, the draw passes, shadows), the f
 - `coverage.ts` (189) — Round 113 (`tilesfirst`; API: `CoverView`, `Coverage`, `coverage`.
 - `fieldmesh.ts` (905) — The field mesh (G13 h; API: `READBACK`, `REGION_BYTES`, `MESH_POOL`, `MeshSource` +1.
 - `meshinst.ts` (100) — The instanced mesh renderer (round 99, `?meshinst=1`; API: `MI_CAP`, `MI_STRIDE`, `MI_ARGS_WORD`, `MeshInstances`.
-- `renderer.ts` (947) — Renderer: render-preparation compute pass (world → box instances) followed by one render pass (opaque … API: `Renderer`, `SKIP`, `PickHit`, `RenderOptions`.
+- `renderer.ts` (963) — Renderer: render-preparation compute pass (world → box instances) followed by one render pass (opaque … API: `Renderer`, `SKIP`, `PickHit`, `RenderOptions`.
 - `rockmesh.ts` (398) — The rigid rock's own mesh (round 95, `?rockbody=1`; API: `BUILD_FRAMES`, `RockDraw`, `RockMesh`.
 - `shore.ts` (88) — The shore field (round 83, shore.wgsl): the nearest shore point to every column, by jump flooding over the … API: `ShoreField`.
 - `tilecache.ts` (1357) — The world-anchored tile cache (round 103, ?tiles=1; API: `LandMaker`, `MOVING`, `Part`, `Size` +5.
@@ -495,12 +497,12 @@ Drawing: the camera, the renderer (render-prep, the draw passes, shadows), the f
 
 The Renderer's internals, split out of render/renderer.ts: free functions over the renderer (`rd`). The constructor still builds most pipelines; `mesh-draws.ts` builds the field mesh's.
 
-- `defs.ts` (74) — The renderer's sizes, formats and URL flags (CAM_BYTES, SHADOW_SIZE, TILES, SKIP ...), its public types … API: `CAM_BYTES`, `SHADOW_SIZE`, `SHADOW_FORMAT`, `VERTS_PER_PRISM` +19.
+- `defs.ts` (82) — The renderer's sizes, formats and URL flags (CAM_BYTES, SHADOW_SIZE, TILES, SKIP ...), its public types … API: `CAM_BYTES`, `SHADOW_SIZE`, `SHADOW_FORMAT`, `ShadowViews` +21.
 - `encode.ts` (371) — A frame's draw: render-prep (instances grown as needed), the terrain cache or the G-buffer, shadows, the … API: `encode`, `encodeCeiling`, `syncInst`, `syncMeshPool`.
 - `features.ts` (93) — Optional draws turned on after construction: the outside band, the rock mesh, structures. API: `enableBand`, `enableRockMesh`, `enableStructures`, `structGroups`.
-- `gbuffer-shadow.ts` (233) — The deferred mesh's G-buffer pass and the sun's shadow map (its light camera, what's due: all or the … API: `encodeGBuffer`, `writeLight`, `encodeShadow`.
+- `gbuffer-shadow.ts` (228) — The deferred mesh's G-buffer pass and the sun's shadow map (its light camera, what's due: all or the … API: `encodeGBuffer`, `writeLight`, `encodeShadow`.
 - `grid.ts` (84) — The grid of mesh chunks drawn: culling chunks to the view and the sun, drawing the visible, and what moved … API: `windowMoved`, `windowDrawn`, `gridCull`, `drawGrid` +1.
-- `mesh-draws.ts` (279) — The field mesh's draws, made once by the Renderer's constructor when the mesh is on: its draw and depth … API: `buildMeshDraws`.
+- `mesh-draws.ts` (281) — The field mesh's draws, made once by the Renderer's constructor when the mesh is on: its draw and depth … API: `buildMeshDraws`.
 - `terrain-cache.ts` (177) — The terrain cache: the field mesh drawn once to a cached G-buffer and reused while the camera holds still … API: `terrainCacheMode`, `tcPrepare`, `tcPipesMake`, `encodeTerrainCache`.
 
 ## src/run/
@@ -569,7 +571,7 @@ Scenes and the live world: WorldCore (one live world), the level and the menu, t
 LevelScene's internals, split out of scenes/level.ts: free functions over the scene (`scene`). Only level.ts and these modules call them.
 
 - `atlas-controls.ts` (225) — The atlas level's own controls and world: its buttons (map, new world), the terrain system over the atlas, … API: `atlasControls`, `terrainSystem`, `worldAt`, `worldEventHere` +1.
-- `attach-tools.ts` (183) — The level's tools, wired once at attach: the HUD and the powers (their probes of the world), the animals … API: `attachTools`.
+- `attach-tools.ts` (181) — The level's tools, wired once at attach: the HUD and the powers (their probes of the world), the animals … API: `attachTools`.
 - `attach.ts` (93) — LevelScene.attach: wires a made level to the page once — the HUD and powers, the sandbox's tools, the … API: `attach`.
 - `camera-moves.ts` (173) — Scripted and keyed camera motion: the drive and pan benches (?drive, ?pan), the free flyer's keys, and the … API: `driveOn`, `panOn`, `flyKeys`, `turnControls` +2.
 - `flags.ts` (36) — The level's URL flags and constants (read once at load): test and comparison switches (?cutaway, ?planner, … API: `NON_METAL`, `CUTAWAY`, `PLANNER_OFF`, `COARSE_PARTS` +10.
@@ -577,7 +579,7 @@ LevelScene's internals, split out of scenes/level.ts: free functions over the sc
 - `frame.ts` (557) — The level's frame: camera input, the planner and the window's slide, the world's systems, the sim's ticks, … API: `levelFrame`, `planFrame`, `readSettling`, `lifeFrame` +2.
 - `impacts.ts` (298) — The sandbox's world-changing tools: meteors and their impacts, volcano vents, dropped bodies, the heat … API: `meteorAtPick`, `stepMeteors`, `impact`, `bowlVolume` +7.
 - `input-wiring.ts` (209) — The level's pointer and key input: Controls' taps, drags, pinches and wheel routed to the powers, the … API: `wireInput`.
-- `labs.ts` (206) — The test beds on the level: the tuning panel, bug report and stations bar (level.lab, ?tunepanel=1), the … API: `mountLab`, `mountNoiseLab`, `labStationKit`, `traitStationDriver` +1.
+- `labs.ts` (205) — The test beds on the level: the tuning panel, bug report and stations bar (level.lab, ?tunepanel=1), the … API: `mountLab`, `mountNoiseLab`, `labStationKit`, `traitStationDriver` +1.
 - `runs.ts` (253) — Starting the game layers a URL asks for on the level: the play sandbox (?play), a situation or planned run … API: `startPlay`, `playRaise`, `startSituationRun`, `useRiverWorld` +3.
 - `sandbox-tools.ts` (230) — The sandbox editor's brush tools: layer edits and pours, the break tool, the brush ring, undo, and the … API: `editTool`, `pickSmash`, `smashAt`, `drawRing` +4.
 - `stream-setup.ts` (372) — The level's world over time, set up once at attach: sleep for a fixed map's held rivers, and for a … API: `attachStream`.
@@ -611,14 +613,14 @@ Settlements: towns and cities on the atlas, their plans, the view that draws the
 - `debug.ts` (125) — ?towndebug=1 (round 88): the live settlement's grids and jobs over the view — its districts' cells (the … API: `TownDebug`.
 - `field.ts` (117) — A growth field (round 89): the user — "vegetation and settlements should work similarly actually. API: `GrowthOpts`, `GrowthField`.
 - `grids.ts` (452) — A settlement's districts as overlay grids (round 88, BACKLOG R6; API: `Pt`, `rand`, `Lot`, `radialPolys` +5.
-- `life.ts` (496) — A settlement in play (round 88; API: `R`, `LiveSpot`, `LiveSite`, `LifeIO` +4.
+- `life.ts` (507) — A settlement in play (round 88; API: `R`, `LiveSpot`, `LiveSite`, `LifeIO` +4.
 - `onscreen.ts` (98) — (round 128g, cityrender) Which settlements are drawn as pieces, and which are made ready — by the screen, … API: `SHOW`, `HIDE`, `BUILD`, `DROP` +5.
 - `plan-worker.ts` (111) — (round 94) A settlement planned off the main thread for the land past the window (settlements.ts … API: `FarPlanInit`, `FarPlanJob`, `FarPlanDone`, `ExactPlanJob` +1.
 - `plan.ts` (967) — A settlement realised (round 88, arrival scale; API: `Iv`, `ColumnPlan`, `Spot`, `SiteSpec` +17.
 - `purpose.ts` (122) — What a settlement is for (round 120, `cities`; API: `PURPOSES`, `PurposeFacts`, `purposeScores`, `purposeOf`.
 - `raster.ts` (134) — A settlement's plan as the land past the window draws it (round 94; API: `rasterPlan`, `stampMatch`.
 - `records.ts` (98) — The settlements' records from the world wiki (round 88): one per atlas site, with the wiki's stable id … API: `OUTLAWS`, `SettlementSeed`, `recordsFrom`.
-- `settlements.ts` (872) — The settlements system (round 88; API: `DAY_S`, `SettlementEvents`, `LiveIO`, `FarIO` +1.
+- `settlements.ts` (873) — The settlements system (round 88; API: `DAY_S`, `SettlementEvents`, `LiveIO`, `FarIO` +1.
 - `ships.ts` (306) — Ships between the ports (round 120, `cities`; API: `SeaChart`, `ShipRoute`, `SEA_DEPTH`, `shipRoutes` +3.
 - `shipsview.ts` (56) — The sailing ships as the player sees them (round 120, `cities`; API: `ShipsIO`, `ShipsView`.
 - `story.ts` (98) — A settlement's story (round 120, `cities`; API: `StoryFacts`, `storyOf`.
@@ -639,7 +641,7 @@ WGSL. `common.wgsl` (+ layers, materials) is prepended to every kernel; flow/slo
 - `cover.wgsl` (166) — ---- the weather's cover past the window (round 108, TC20;
 - `coverfield.wgsl` (16) — ---- the weather's cover past the window: the field's shape (round 108, TC20;
 - `ecology.wgsl` (93) — ---- ecology / succession ------------------------------------------------- veg = continuous succession …
-- `edit.wgsl` (428) — ---- editor brush (sandbox;
+- `edit.wgsl` (482) — ---- editor brush (sandbox;
 - `fieldmesh.wgsl` (887) — ---- field mesh (G13 h) ----------------------------------------------------------- The terrain drawn as …
 - `fire.wgsl` (122) — ---- fire ------------------------------------------------------------------- fire[i] = burning intensity …
 - `florafield.wgsl` (63) — ---- plants placed by the world's other fields (round 117, flora) …
@@ -696,6 +698,7 @@ WGSL. `common.wgsl` (+ layers, materials) is prepended to every kernel; flow/slo
 - `tilelandgpu.wgsl` (101) — ---- a render-only tile's bake, set up on the GPU (round 105, tilelatency;
 - `tiles.wgsl` (417) — ---- the world-anchored tile cache (round 103, ?tiles=1;
 - `townstamp.wgsl` (119) — ---- the town's columns (round 65, build/town.ts) --------------------------- The town is real matter: its …
+- `treequery.wgsl` (107) — ---- treequery.wgsl …
 - `units.wgsl` (827) — ---- agents: the units (round 52, docs/AGENTS.md) ------------------------------ One thread a unit …
 - `vegplan.wgsl` (64) — ---- vegetation layout (shared) ------------------------------------------- Where trees and shrubs stand …
 - `vegprep.wgsl` (409) — ---- vegetation render preparation ------------------------------------------ Emits instances for plants …
@@ -716,7 +719,7 @@ WGSL. `common.wgsl` (+ layers, materials) is prepended to every kernel; flow/slo
 ## src/shaders/render/
 
 - `bodies.wgsl` (172) — bodies.wgsl: rigid bodies, skinned meshes, drape and strata (part 7 of 7 of the renderWgsl shader, joined …
-- `common.wgsl` (177) — common.wgsl: the camera, the cutaway, dither, shadows, the loose sheet and wither, VOut (part 1 of 7 of …
+- `common.wgsl` (190) — common.wgsl: the camera, the cutaway, dither, shadows, the loose sheet and wither, VOut (part 1 of 7 of …
 - `fs-box.wgsl` (316) — fs-box.wgsl: fsBox: the ground's and the boxes' fragment shading (part 5 of 7 of the renderWgsl shader, …
 - `light.wgsl` (290) — light.wgsl: FOut, colour space, the sun and the cover, lighting, haze, the grid lines, the canopy march …
 - `rock.wgsl` (249) — rock.wgsl: soft material borders, faceted and carved rock (part 4 of 7 of the renderWgsl shader, joined in …
@@ -728,25 +731,25 @@ WGSL. `common.wgsl` (+ layers, materials) is prepended to every kernel; flow/slo
 GPU world buffers (the WorldGpu contracts), the systems' wrappers, the fixed-step scheduler, Globals, particles, sleep, snapshots, static claims.
 
 - `cull.ts` (319) — Dispatching only where the world is awake (on by default, ?simcull=0 off; API: `SIM_CULL`, `LIVE`, `TILES_BINDING`, `NEAR` +8.
-- `edit-ops.ts` (38) — The edit pass's ops (edit.wgsl: keep the two the same) and how an Edit event carries one (round 83: one … API: `OP`, `BLOW_TAG`, `STROKE_START`, `editOpOf` +1.
+- `edit-ops.ts` (89) — The edit pass's ops (edit.wgsl: keep the two the same) and how an Edit event carries one (round 83: one … API: `OP`, `BLOW_TAG`, `STROKE_START`, `editOpOf` +5.
 - `external.ts` (600) — External intervals (round 99, `?meshinst=1`; API: `MESHINST`, `OwnerId`, `OWNER_ROCK`, `OWNER_STRUCT` +14.
 - `flow.ts` (82) — The simulation's rates (perfopt, DECISIONS round 83). API: `TICK_HZ`, `FLOW_SUB`, `Flow`, `flowN` +4.
 - `globals.ts` (278) — CPU mirror of `struct Globals` in src/shaders/common.wgsl. API: `TUNE_WORD`, `GLOBALS_HEAD_BYTES`, `GLOBALS_BYTES`, `globalsBytes` +13.
 - `lava.ts` (194) — Lava (docs/PHYSICS.md "Lava"; API: `MAX_VENTS`, `Vent`, `LavaSystem`.
 - `pages.ts` (390) — Round 105 (`ringwin`): the window on a ring — a world cell keeps its place while the window slides over … API: `COLUMN_BUFS`, `COLS_PAGE`, `PAGE_COLS`, `MAX_PAGES` +3.
-- `particles.ts` (250) — GPU particle system: emission from world state, CPU-requested bursts, and integration in the shared wind … API: `enum`, `Burst`, `ParticleSystem`.
+- `particles.ts` (253) — GPU particle system: emission from world state, CPU-requested bursts, and integration in the shared wind … API: `enum`, `Burst`, `ParticleSystem`.
 - `simulation.ts` (200) — Fixed-timestep orchestration of the simulation systems (design doc §24). API: `TICK_DT`, `Simulation`, `TICK_HZ`.
 - `sleep.ts` (316) — Sleep and wake (round 80, BACKLOG P3; API: `SLEEP_MORE`, `settleLand`, `WAKE_NEAR`, `settleTol` +1.
 - `snapshot.ts` (161) — (round 112, testspeed) A warmed world, saved and put back: every buffer and texture the WorldGpu holds … API: `WorldSnapshot`, `captureWorld`, `restoreWorld`, `encodeSnapshot` +3.
 - `static-claims.ts` (475) — Static grids' claims written with the land (round 128j, M128-8 widened; API: `StaticThing`, `GridPlace`, `StaticClaimsIO`, `StaticGrid` +2.
 - `system.ts` (31) — Simulation system interface (design doc §9, §23, §24). API: `SimSystem`, `dispatch`.
-- `systems.ts` (1062) — First (simplest) implementations of each simulation system. API: `riverHeld`, `INPLACE`, `PrepWorld`, `SurfaceSystem` +26.
+- `systems.ts` (1082) — First (simplest) implementations of each simulation system. API: `riverHeld`, `INPLACE`, `PrepWorld`, `SurfaceSystem` +26.
 - `tickclock.ts` (130) — Round 114 (framepace, FP4): how many sim ticks a rendered frame runs. API: `TickMode`, `TickClock`, `tickModeFrom`.
 - `tiers.ts` (276) — The sims' tiers (round 108, simtiers; API: `TIER_CHANNEL`, `BAKE_GAIN`, `INTERACT_MIN_S`, `INTERACT_MAX_S` +2.
 - `translate.ts` (87) — Moving what lives in window coordinates when the streamed window slides (round 80; API: `Translator`.
 - `warm-cache.ts` (68) — (round 112, testspeed) The player's warmed world, kept in the browser (IndexedDB): the second visit to the … API: `warmKey`, `loadWarm`, `saveWarm`.
 - `windrect.ts` (100) — Where the painted wind is (round 104, simscale — the user: "Why does wind and climate need to run … API: `LIFE_S`, `reach`, `WindRects`.
-- `world-gpu.ts` (583) — GPU-resident world state: every buffer that forms a contract between systems is allocated (and documented) … API: `STATS_COUNT`, `EDIT_TAGS`, `RiverMode`, `riverMode` +8.
+- `world-gpu.ts` (588) — GPU-resident world state: every buffer that forms a contract between systems is allocated (and documented) … API: `STATS_COUNT`, `EDIT_TAGS`, `RiverMode`, `riverMode` +8.
 
 ## src/solver/
 
