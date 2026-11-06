@@ -40,6 +40,9 @@ export interface LabRecipe {
   fixture?: string;
   /** how its rivers are kept (LevelDef.rivers): a fixture's are the atlas's, held at their table */
   rivers?: RiverMode;
+  /** (round 128p, DA-A13) a fixture's land with its town's plan left out: the fortress on an empty site (the road
+   *  generator's lab: lab.roadgen) */
+  bare?: boolean;
 }
 
 /** the lab's window: one fixed window */
@@ -126,6 +129,18 @@ export const LAB_RECIPES: Record<string, LabRecipe> = {
     homes: HOMES,
     fixture: 'town',
     rivers: 'table',
+  },
+  townland: {
+    // (round 128p, DA-A13 step 0) the start town's land without its town: the road generator's lab (lab.roadgen,
+    // scripts/lab/roadgen.mjs) lays roads and a stand-in town on it
+    name: 'townland',
+    blurb: "the user's start town's land with its town left out (data/lab/town.rclt): the road generator's",
+    ground: () => BASE,
+    heap: HEAP,
+    homes: HOMES,
+    fixture: 'town',
+    rivers: 'table',
+    bare: true,
   },
   walled: {
     name: 'walled',

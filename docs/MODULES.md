@@ -289,7 +289,7 @@ WebGPU plumbing: device, pipelines and bind-group layouts, CPU timing stats.
 - `pages-mode.ts` (98) — Round 107 (`pages`, docs/PAGES.md P2.0-P2.3): how a kernel finds a window chunk's page (common.wgsl colPlace). API: `PageAddr`, `PAGE_ADDR`, `PAGE_TAB_BINDING`, `PAGE_STORAGE_KERNELS` +8.
 - `pipeline.ts` (195) — Explicit bind-group-layout helpers. API: `BindKind`, `BindSpec`, `makeLayout`, `makeBindGroup` +9.
 - `profiler.ts` (178) — Lightweight instrumentation (design doc §9 "benchmark before escalating"). API: `Profiler`.
-- `transfers.ts` (387) — (round 128o, DA-G1) Every GPU data transfer that matters, in one table: each GPU→CPU read, and each … API: `SMALL_BYTES`, `TransferKind`, `TransferRate`, `TransferPlay` +2.
+- `transfers.ts` (399) — (round 128o, DA-G1) Every GPU data transfer that matters, in one table: each GPU→CPU read, and each … API: `SMALL_BYTES`, `TransferKind`, `TransferRate`, `TransferPlay` +2.
 
 ## src/grids/
 
@@ -323,8 +323,8 @@ WebGPU plumbing: device, pipelines and bind-group layouts, CPU timing stats.
 
 ## src/lab/
 
-- `lab.ts` (569) — (round 128l, tooling) The behaviour lab: ?level=lab&lab=<recipe> — the game with less world, for scripted … API: `LabSceneIO`, `LabPlan`, `LabSnapshot`, `LAB_SIMS` +2.
-- `recipes.ts` (212) — (round 128l, tooling) The behaviour lab's land (?level=lab&lab=<recipe>): a few small deterministic … API: `LabTownSpec`, `LabRecipe`, `LAB_DIMS`, `LAB_MID` +4.
+- `lab.ts` (651) — (round 128l, tooling) The behaviour lab: ?level=lab&lab=<recipe> — the game with less world, for scripted … API: `LabSceneIO`, `LabPlan`, `LabSnapshot`, `LAB_SIMS` +2.
+- `recipes.ts` (227) — (round 128l, tooling) The behaviour lab's land (?level=lab&lab=<recipe>): a few small deterministic … API: `LabTownSpec`, `LabRecipe`, `LAB_DIMS`, `LAB_MID` +4.
 - `town.ts` (94) — (round 128l, tooling) The behaviour lab's town: what the fortress starts from (fortress/host.ts … API: `LabTown`, `stillWindow`.
 - `townfixture.ts` (180) — (round 128m, townlab) The user's start town as a lab fixture (?level=lab&lab=town; API: `TOWN_FIXTURE_FORMAT`, `TownFixtureHeader`, `TownFixture`, `TownCapture` +2.
 - `view.ts` (112) — (round 128l, tooling) The lab's town view: draws its town (round 128m, onetown: the town's one plan — … API: `LabViewIO`, `LabTownView`.
@@ -512,6 +512,15 @@ The Renderer's internals, split out of render/renderer.ts: free functions over t
 - `mesh-draws.ts` (282) — The field mesh's draws, made once by the Renderer's constructor when the mesh is on: its draw and depth … API: `buildMeshDraws`.
 - `terrain-cache.ts` (177) — The terrain cache: the field mesh drawn once to a cached G-buffer and reused while the camera holds still … API: `terrainCacheMode`, `tcPrepare`, `tcPipesMake`, `encodeTerrainCache`.
 
+## src/roadgen/
+
+- `cpu.ts` (329) — The road generator's CPU reference (round 128p, DA-A13 step 0): the same rounds as the GPU's (gpu.ts, … API: `RoadGenCpu`, `everyAlong`, `resample`.
+- `gpu.ts` (533) — The road generator on the GPU (round 128p, DA-A13 step 0; API: `LATTICE_CELL`, `MAX_OFFSET`, `RoadGenResult`, `RoadGenGpu`.
+- `lattice.ts` (202) — The town's base lattice under the traced roads (round 128p, DA-A13 step 0; API: `latticeN`, `latticePoint`, `latticeCellAt`, `claimsCpu` +8.
+- `preview.ts` (103) — The road generator's map preview (round 128p, DA-A13 step 0: the human pass — the user judges the layout … API: `previewRgba`.
+- `roadgen.ts` (208) — The road generator (round 128p, DA-A13 step 0; API: `V2`, `RoadGenParams`, `ROADGEN_STYLE`, `Polyline` +14.
+- `site.ts` (160) — The road generator on a town's site (round 128p, DA-A13 step 0): what a run is given from a site (its … API: `DRAWN_WIDTH`, `inputOfSite`, `steepOf`, `RoadSiteStats` +1.
+
 ## src/run/
 
 - `hud.ts` (71) — ---- run/hud.ts ---------------------------------------------------------------- What to do now (round … API: `ObjectiveHud`.
@@ -687,6 +696,7 @@ WGSL. `common.wgsl` (+ layers, materials) is prepended to every kernel; flow/slo
 - `renderfields.wgsl` (240) — ---- render fields (render preparation) --------------------------------------- One packed vec4 per column …
 - `renderprep.wgsl` (325) — ---- visibility / render preparation -------------------------------------- Turns world state into box …
 - `riverheld.wgsl` (69) — ---- riverheld.wgsl (round 84, ?rivers=table) --------------------------------- The atlas's rivers at …
+- `roadgen.wgsl` (731) — ---- the road generator on the GPU (round 128p, DA-A13 step 0;
 - `roadride.wgsl` (351) — ---- the agents ride the roads (round 128i, V128-14;
 - `roadstamp.wgsl` (84) — ---- the agents' road bits stamped from shapes (round 128i, FT-58: roads narrower than a cell) …
 - `rockmesh.wgsl` (302) — ---- the rigid rock's mesh (round 95, render/rockmesh.ts;

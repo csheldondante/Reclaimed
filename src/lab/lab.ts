@@ -31,10 +31,16 @@ import { LabTown, stillWindow } from './town';
 import { LabTownView } from './view';
 import type { ExternalRegistry } from '../sim/external';
 import type { StaticClaims } from '../sim/static-claims';
-import { siteFromJson } from '../build/site';
+import { siteFromJson, type SiteData } from '../build/site';
 import type { FortressRaid } from '../fortress/raiders';
 import type { TownFixtureHeader } from './townfixture';
-import { ROW_H } from '../world/lattice';
+import { cellAt, ROW_H } from '../world/lattice';
+import { RoadGenGpu, type RoadGenResult } from '../roadgen/gpu';
+import type { RoadGenInput } from '../roadgen/roadgen';
+import { inputOfSite, siteOfRoads } from '../roadgen/site';
+import { townPieces } from '../build/view';
+import { DEEP } from '../build/reach';
+import { TownSite } from '../build/site';
 
 /** what the lab needs of the scene (scenes/level.ts startLab) */
 export interface LabSceneIO {
@@ -147,7 +153,7 @@ export class Lab {
     if (this.recipe.fixture && !fx) throw new Error(`lab recipe ${this.recipe.name}: its fixture wasn't loaded`);
     // (onetown: a fixture's town is the start town's site as the game had it; a recipe's an empty plan round the heap)
     if (fx && !fx.site) throw new Error(`lab recipe ${this.recipe.name}: its fixture has no town site (captured before onetown: capture it again — scripts/labtown.mjs capture)`);
-    this.town = fx ? LabTown.of(fx.town, siteFromJson(fx.site)) : LabTown.plain(this.recipe.heap, this.recipe.homes, (x, y) => this.recipe.ground(x, y));
+    this.town = fx ? LabTown.of(fx.town, this.recipe.bare ? bareSite(siteFromJson(fx.site)) : siteFromJson(fx.site)) : LabTown.plain(this.recipe.heap, this.recipe.homes, (x, y) => this.recipe.ground(x, y));
     this.window = fx ? stillWindow(io.core.dims, fx.origin, fx.oz! + fx.zBase) : stillWindow(io.core.dims);
     // (a fixture's sea, at its level as the game had it: past the window's edge the world is sea, so it doesn't drain)
     if (fx) {
@@ -187,6 +193,74 @@ export class Lab {
     while (!f.ready || !f.reachKnown) await new Promise((r) => setTimeout(r, 50));
     if (this.recipe.town) this.plan({ ...this.recipe.town, built: true });
     this.ready = true;
+    // (round 128p, DA-A13 step 0: a link that shows the road generator — ?level=lab&lab=townland&roadgen=1)
+    if (this.io.params.get('roadgen') === '1') {
+      const r = (await this.roadgen()) as { centre: V2 };
+      this.look(r.centre[0], r.centre[1], 3);
+      console.log('[roadgen]', JSON.stringify(r));
+    }
+  }
+
+  // ---- (round 128p, DA-A13 step 0) the road generator on this land
+
+  private roads: { gen: RoadGenGpu; inp: RoadGenInput; grid: number; centre: V2; radius: number } | null = null;
+
+  /**
+   * The road generator (src/roadgen/) on the fixture's land: the first call a full run, the next ones edits — a road
+   * drawn through `draw` (window world points) — each drawn as a stand-in town over the fortress's (empty: the
+   * `townland` recipe) site. Returns its timings and counts.
+   */
+  async roadgen(o: { draw?: V2[]; style?: Record<string, number>; timed?: boolean } = {}): Promise<unknown> {
+    const fx = this.io.fixture;
+    if (!fx || !this.recipe.bare) throw new Error('lab.roadgen: the townland recipe (a fixture, its town left out)');
+    const tpl = this.town.site;
+    const { box } = tpl;
+    const [ox, oy] = this.window.origin;
+    const W = this.io.core.dims.w;
+    const map = this.io.core.map;
+    const toBox = (q: V2): V2 => [q[0] - (box.x0 - ox), q[1] - (box.y0 - oy) * ROW_H];
+    if (!this.roads) {
+      const wet = (x: number, y: number) => {
+        const [k, r] = cellAt(x, y);
+        const col = (r + box.y0 - oy) * W + (k + box.x0 - ox);
+        return map.water[col] > DEEP || map.surface[col] < fx.seaZ;
+      };
+      const centre = toBox([fx.town.at[0], fx.town.at[1]]);
+      const radius = Math.min(centre[0], centre[1], box.w - 1 - centre[0], (box.h - 1) * ROW_H - centre[1]) - 2;
+      const inp = inputOfSite(tpl, { centre, radius, wet, style: o.style });
+      const gen = new RoadGenGpu(this.io.device, inp);
+      this.roads = { gen, inp, grid: this.view.sg.newGrid(), centre, radius };
+    }
+    const R = this.roads;
+    R.gen.timed = !!o.timed;
+    let res: RoadGenResult;
+    if (o.draw) {
+      const pts = o.draw.map(toBox);
+      const reach = 3 * R.inp.params.sigmaC;
+      const xs = pts.map((q) => q[0]);
+      const ys = pts.map((q) => q[1]);
+      res = await R.gen.edit([pts], [Math.min(...xs) - reach, Math.min(...ys) - reach, Math.max(...xs) + reach, Math.max(...ys) + reach]);
+    } else res = await R.gen.run();
+    const made = siteOfRoads(tpl, R.inp, res);
+    const t0 = performance.now();
+    const p = townPieces(made.site, { ground: (x, y) => made.site.groundAt(x, y) });
+    const piecesMs = performance.now() - t0;
+    this.view.sg.put('roadgen', p, R.grid);
+    this.view.sg.setGrid(R.grid, { pos: [box.x0 - ox, (box.y0 - oy) * ROW_H, -this.window.oz] });
+    const win = (q: V2): V2 => [q[0] + (box.x0 - ox), q[1] + (box.y0 - oy) * ROW_H];
+    return {
+      gpuMs: +res.gpuMs.toFixed(1),
+      totalMs: +res.totalMs.toFixed(1),
+      readbackKB: Math.round(res.bytes / 1024),
+      phases: res.phases,
+      ...made.stats,
+      cpuMs: +made.stats.cpuMs.toFixed(1),
+      piecesMs: +piecesMs.toFixed(1),
+      pieces: p.count,
+      theta: +R.inp.params.theta.toFixed(3),
+      centre: win(R.centre),
+      radius: +R.radius.toFixed(1),
+    };
   }
 
   // ---- placing
@@ -559,8 +633,16 @@ export class Lab {
       /** (round 128m, townlab) the placement bench (perf/placebench/run.ts) on this land, the lab driving the sim for its
        *  arrival check: the result, its summary lines and the report the phone's run downloads */
       placeBench: (o?: { types?: StructureType[]; arriveS?: number; arrive?: boolean }) => this.placeBench(o),
+      /** (round 128p, DA-A13 step 0) the road generator on the townland recipe's land: a run, then edits (`draw`) */
+      roadgen: (o?: { draw?: V2[]; style?: Record<string, number>; timed?: boolean }) => this.roadgen(o),
     };
   }
+}
+
+/** (round 128p) a site's land and grid with nothing on it (the townland recipe's) */
+function bareSite(d: SiteData): SiteData {
+  const s = TownSite.fromData(d);
+  return new TownSite(s.id, s.seed, s.box, s.grid, s.plan.style, s.groundCols).toData();
 }
 
 export function installLab(io: LabSceneIO): Lab {

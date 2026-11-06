@@ -136,7 +136,8 @@ state and the public API.
 - Rare probabilistic spawns need full 32-bit randoms (`rare()` in particles.wgsl);
   16-bit draws bottom out at 1/65536.
 - WGSL gotchas hit so far: derivatives (`fwidth`) must run before any `discard`
-  or early return; `patch`, `target` and `set` are reserved words; module-scope `let` is invalid.
+  or early return; `patch`, `target`, `set` and `from` are reserved words; module-scope `let` is invalid; a constant
+  `bitcast<f32>(0xffffffffu)` (a NaN) fails to compile.
 
 ## Gotchas for agents editing here
 

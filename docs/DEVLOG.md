@@ -20419,3 +20419,77 @@ where we are with a simple math expression … my one worry here is that the pla
   graph, all go.
 - **The keep list shrinks** to wall-walks as a wall's own way.
 
+## 2026-11-06 — round 128p (`onetown`, DA-A13 step 0): the road generator's prototype, on the start town's land
+
+**What.** Step 0 replaces nothing. It adds `src/roadgen/` and `shaders/roadgen.wgsl`:
+- **The field and the roads:** `roadgen.ts`, with the CPU reference in `cpu.ts`.
+- **The GPU run and edits:** `gpu.ts`.
+- **The base lattice:** `lattice.ts` (claims, bends, blocks).
+- **A run's input from a site, and the site it makes:** `site.ts`. The roads are drawn by kind. A house stands on three
+  in four open cells facing a road, as a stand-in for step 1's tiles.
+- **The map preview:** `preview.ts`.
+- **A lab recipe, `townland`:** the fixture's land with its town left out. `lab.roadgen()`, `scripts/lab/roadgen.mjs`
+  and the link `?level=lab&lab=townland&roadgen=1` drive it.
+
+The design is the entry above. What changed while building it, and why:
+- **A constraint blends the field, it doesn't add to it.** Near a drawn road the field goes over to its tangent:
+  w = exp(−d²/2σ²), and on the road it is only the road. The first version added a magnitude-2 tensor. 1.4 m from a
+  drawn diagonal on a grid, that gave 32° where the road ran at 45° (unit test).
+- **A line ending near another joins it only if that line lies straight ahead within half a spacing** (a T-junction).
+  Otherwise it just ends. The first version snapped to the nearest point, and a line running alongside another made
+  13 m cross-links (the edit test caught one at 80° to the drawn road).
+- **Seeds compete only if a trace would start from them**: in the town, clear of the family's lines. Before, a bucket's
+  winner could be a dead seed while a live one lost.
+- **The lattice vertex goes to the road's edge on the open cells' side.** Before, it went to the side the vertex
+  happened to lie on. A vertex near the centreline flipped sides between f32 and f64: the GPU/CPU test found it.
+- **Water cells are their own claim (4).** No house stands on the river.
+
+**Tests.**
+- **Unit (`test/unit/roadgen.test.ts`, 9 tests):**
+  - flat land follows the grid;
+  - land steeper than 1 in 3 follows the contours, and gentler land the grid;
+  - majors on flat land lie a spacing apart, with minors across them;
+  - a family keeps half a spacing apart;
+  - roads stay off water;
+  - an edit keeps the roads away from it bit for bit, and the roads by a drawn road follow it;
+  - the lattice cell lookup is a math expression;
+  - claims, blocks, and offsets within their bound.
+- **GPU (`test/gpu/roadgen.test.ts`, 5 tests on Dawn):**
+  - the field equals the CPU's (< 1e-4);
+  - flat land gives the same roads;
+  - hilly land gives the same count and length within 20 % and 10 % (f32 against f64 steps);
+  - claims differ on < 0.5 % of cells, and offsets on < 1 % of vertices (only where two roads cross);
+  - the start town's run and edit, timed, with the map previews (`ROADGEN_OUT=<dir>`).
+
+**Measured on the start town's land** (Intel Xe-LPG iGPU, D3D12; the GPU shared with other worktrees' runs, so it
+varies ±25 %):
+- **The run.**
+  - 26–33 ms from submit to the readback done, of which the kernels take ~21 ms: the trace 9.8, the commit 10–14, the
+    rest under 1.
+  - The roads: 11 majors and 35 minors, 3.36 km, 160 m of it steeper than 1 in 3 (stairs later).
+  - The cells: 760 road, 1,049 open, 183 water. 108 blocks, 665 stand-in houses.
+  - The readback: 312 KB, async, once.
+  - The CPU after it: 25 ms, of which 15–17 ms is QuadGrid's columns pass.
+- **An edit** (a 170 m road drawn across the town, its reach ±42 m): 18–24 ms. The kernels take ~16 ms, of which the
+  commit is ~12.
+- **Column → cell (the user's worry about a regular grid).**
+  - On the GPU, `rgColumns` is the floor of the lattice coordinates, then the 3 × 3 point-in-quad. It is below the
+    timestamp resolution (< 0.07 ms) for 65k columns.
+  - It agrees with QuadGrid's CPU pass on all 33,278 held columns. The CPU pass takes 15–17 ms.
+- **What I changed to get here.** The first working run took 91 ms. Then:
+  - a round grid for the commit (only the round's own lines), buckets of half a spacing, and an early-out "any near"
+    test: 36 ms;
+  - the compaction as one workgroup's scan (it was one thread over 1,085 buckets: 8 ms);
+  - the round grid emptied by a parallel pass, and a bounding-box skip in the commit.
+- **What's left.**
+  - The commit is one thread, as the CPU reference's sequential rule needs. Its cost is memory latency over ~3.4k
+    points.
+  - Step 1 makes it a parallel two-phase commit, and in play spreads the rounds over frames (a round is ~0.5 ms here).
+    One edit then never holds a frame.
+
+**Shots.**
+- The lab, at a phone viewport, play zoom: the streets follow the hill's contours, with the houses lined along them.
+- The map preview: majors red along the contours, minors orange across, the river through the town, blocks tinted,
+  houses brown.
+
+The user's judgement (the human pass) comes before step 1.
