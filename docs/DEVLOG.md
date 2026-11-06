@@ -19619,3 +19619,20 @@ its slot opening or closing starts it over (a tested piece).
   grading writes the town's land: generated towns' ground changes, so GEN_VERSION moves and saved regions are made
   again (once) — fine? (c) a town far away keeps its plan from before the pass (its passages and stairs appear when it
   is first realised) — fine, or should the far plan run the CPU reference (350-600 ms a town, measured)?
+
+## 2026-11-06 — round 128o (`onetown`): the settlecrowd stall, root cause — a heap's foot inside a building
+
+- Main asked for the cause of settlecrowd's 1-in-3 stall (builders stuck on their way). A diagnosis run logging the
+  builders, the heaps' feet seeded and the reach's fixes (Settlements.reachStats.made) found builder 25 standing for
+  the whole run at (176.4, 164) — the stone heap's first foot point, which lay inside a building's cell; the reach had
+  "fixed" that place by cutting a passage through the building (174.9, 164.7) and the builders led there stood in it.
+  Which builder the field sent to which foot point varied with the timing, so the stall came and went. A heap's foot
+  (round 128o's fixed six points 2.5 m out) took no account of what stands there.
+- Fix: a heap's foot is the nearest ring round its spot (2.5, 3.5, 5, 7 m: HEAP_FOOT) with points on open ground — no
+  structure's cell there (Settlements.liveSpots: LiveSpot.foot; the crowd seeds them, the reach asks from them).
+  settlecrowd, 5 runs: the same every run now — 15 loads, a house finished, the reach 17 of 95 places out with 1 fix (a
+  stair-ramp), no passage cut through a building to a heap. Fewer loads than before (29) because the stone ran out
+  (stores 10 stone; it was hauled from the heaps' ledger) and three builders stand on terraces the reach can't join
+  (the stairs of DA-A10 at generation, next): no flake left in 5 runs.
+- Also: BACKLOG DA-A12 (riders on one trip drawn on one spot; the rest of DA-A7), and fortressfollow's note says why it
+  picks a lone person.
