@@ -112,15 +112,8 @@ fn chunkOfCol(x: u32, y: u32) -> u32 { return pageIdx(vec2<u32>(x, y) / COLS_PAG
  *  follows it (cells; navCost). Round 104 marked any move at all; the sediment moves surfaces by hundredths every peel,
  *  so the front never emptied (FRAMECOST FC4) */
 const NAV_DZ: f32 = 0.25;
-/** (round 107) the water under which a wet surface counts dry again (it turns wet past WADE): a shore's ripple round
- *  WADE doesn't flip it */
-const WADE_OFF: f32 = 0.45;
-/** (round 128d, FT-20) water this deep is no way for a walker: the shortest unit (a worker, 1.0 tall) drowns in water
- *  over its height (units.wgsl), so a field never leads a walker into it — a ford (shallower) or a bridge, or nothing.
- *  A unit already in it still finds its way out (a deep surface reads its neighbours; a dry one doesn't read a deep). */
-const DEEP: f32 = 0.9;
-/** the water under which a deep surface counts wadeable again (hysteresis, as WADE_OFF) */
-const DEEP_OFF: f32 = 0.8;
+// (round 128o, DA-B26: WADE, WADE_OFF, DEEP, DEEP_OFF — the walkers' water classes — are waterclass.wgsl's, prepended:
+// the water's writers move a chunk's class version when its water crosses one)
 // (round 107, agentspike) per surface (as nav: column i, slot k): the height and the wet the fields reckon its cost by
 // (the links and the relax), apart from the exact floor in nav that the units ride. 0 none, else
 // (round(z * 8) + 1) << 2 | deep << 1 | wet (round 128d: deep, FT-20). It follows the floor with hysteresis (NAV_DZ, WADE / WADE_OFF), so sediment's
@@ -162,7 +155,6 @@ const NAV_K: u32 = 4u;
 const AGENT_H: f32 = 1.5;
 const STEP: f32 = 1.1;
 const DROP: f32 = 2.6;
-const WADE: f32 = 0.6;
 const FAR: f32 = 1e9;
 
 fn ns() -> u32 { return G.mapW * G.mapH * NAV_K; }
@@ -249,6 +241,21 @@ fn surfaces(@builtin(global_invocation_id) id: vec3<u32>) {
     nav[i * NAV_K + k] = none;
     navCost[i * NAV_K + k] = 0u;
   }
+}
+
+/**
+ * (round 128o, DA-B26) The top surface's water (nav .w: the units wade, drown and put out fire by it) brought up to
+ * date where the water's depth moved and nothing else did: the peel runs where the columns or the water's class
+ * changed (agents.ts encodeScoped), this over the chunks whose depth's version moved. A column with no surface keeps
+ * the peel's none.
+ */
+@compute @workgroup_size(8, 8)
+fn surfaceWater(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (id.x >= G.mapW || id.y >= G.mapH) { return; }
+  let i = colIdx(id.x, id.y);
+  let s = nav[i * NAV_K];
+  if (s.y == 0u && s.z == 0u && bitcast<f32>(s.x) == -1.0) { return; }
+  nav[i * NAV_K].w = bitcast<u32>(water[i]);
 }
 
 /** Link each surface to the six neighbours (after surfaces). */

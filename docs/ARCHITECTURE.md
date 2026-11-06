@@ -1135,34 +1135,44 @@ its edge:
   columns a pass before them reads first (the brush's `blowSum`, the
   structures' `lateralSupport`). The brush runs on a tick with an edit and
   while brush state is in flight (edit-ops.ts `EditBusy`).
-- **The chunks' versions** (round 128o, DA-B9 and DA-B26; sim/chunkver.ts, shaders/chunkver.wgsl): `WorldGpu.chunks`
-  is the chunk table, then a vec2<u32> per chunk: x the tick + 1 that last changed its columns, y the tick + 1 that
-  last changed its water or its places (0: never). Keyed by where the chunk's columns lie (its first slot / 256: a
-  slide rotates the table over the same storage, so it moves none).
-  - GPU writers call `bumpChunk(column)` for a column whose columns they changed (climate, edit, landbrush, lava,
-    layerpull, liquid, sediment, structure, townstamp), and `bumpWater(column)` for one whose water they changed
-    (water_depth, climate, edit, lava, liquid, placeop). `gpu/pipeline.ts makeCompute` gives a kernel that calls
-    either the chunk table read_write (binding 1, no new binding) and chunkver.wgsl. Colapply bumps in its `store`
-    (P.stamp, its own table binding read_write).
-  - The whole-column writers write a slot only if it changed (structure compares the column it found), and the water
-    writers bump only where the depth moved, so a pass over an awake chunk that changes nothing bumps nothing.
+- **The chunks' versions** (round 128o, DA-B9 and DA-B26; sim/chunkver.ts, shaders/chunkver.wgsl,
+  shaders/waterclass.wgsl): `WorldGpu.chunks` is the chunk table, then four u32 per chunk, each the tick + 1 that last
+  changed something (0: never). Keyed by where the chunk's columns lie (its first slot / 256: a slide rotates the table
+  over the same storage, so it moves none). The words and who reads them:
+  | word | moves when | read by |
+  | --- | --- | --- |
+  | columns | a slot of its columns changed | the agents' peel (their surfaces) |
+  | class | its water crossed a walker's band (WADE_OFF, WADE, DEEP_OFF, DEEP: waterclass.wgsl), or the places were uploaded | the agents' peel (the wet and deep flags, rooms and regions) |
+  | depth | its water's depth changed at all | the agents' surfaceWater (nav .w: units wade, drown and put out fire by it) |
+  | (unused) | | |
+  - GPU writers call `bumpChunk(column)` where they changed the columns (climate, edit, landbrush, lava, layerpull,
+    liquid, sediment, structure, townstamp) and `bumpWater(column, before, after)` where they changed the water
+    (water_depth with its held rivers, climate, edit, lava, liquid, placeop). bumpWater moves the depth word if the
+    depth moved and the class word only if it crossed a band. A band crossing is the only way the peel's hysteresis
+    classes (agents.wgsl navCost) can change, so the class word is exact for them: evaporation and a held river
+    relaxing move the depth word alone. `gpu/pipeline.ts makeCompute` gives a kernel that calls either the chunk table
+    read_write (binding 1, no new binding), chunkver.wgsl and waterclass.wgsl. Colapply bumps in its `store` (P.stamp,
+    its own table binding read_write).
+  - The whole-column writers write a slot only if it changed (structure compares the column it found), so a pass over
+    an awake chunk that changes nothing bumps nothing.
   - Every CPU write of the columns or the water (a region come in, the live edit, a warp, an undo, restoreChunks,
-    replaceWindow, ColumnCopy.write) calls `WorldCore.columnsWritten(chunks | 'all')`. That bumps both words
-    (`WorldGpu.bumpChunks`, the next tick + 1) and tells the mirror (`Mirror.touchChunks`). Places uploaded bump every
-    chunk's water word.
+    replaceWindow, ColumnCopy.write) calls `WorldCore.columnsWritten(chunks | 'all')`. That bumps every word
+    (`WorldGpu.bumpChunks`, stamped with the next tick) and tells the mirror (`Mirror.touchChunks`). Places uploaded
+    bump every chunk's class word.
   - Held by test/unit/chunkver.test.ts (the sources) and test/gpu/chunkver.test.ts (each writer, on Dawn).
-  - Readers: sim/cull.ts ChangedTiles (DA-B26), for the agents' re-peel.
 - **Tile lists made on the GPU** (round 128o, DA-B26; sim/cull.ts GpuTileList, ChangedTiles, shaders/tilelist.wgsl):
-  - A reader's ChangedTiles takes a CPU list (its scope, CUSTOM). It makes two lists:
-    - `changed`: the chunks whose versions (either word) are past the tick it last listed them (`seen`, per chunk of
-      storage like the versions; a chunk never listed counts as changed);
+  - A reader's ChangedTiles takes a CPU list (its scope, CUSTOM) and the words it follows (CHUNK_COLUMNS, CHUNK_CLASS,
+    CHUNK_DEPTH). It makes two lists:
+    - `changed`: the chunks whose followed words are past the tick it last listed them (`seen`, per chunk of storage
+      like the versions; a chunk never listed counts as changed);
     - `around`: the scope's chunks next to a changed one (3 × 3).
   - Each list is a u32 an entry, as the CPU's, with indirect args (x: 4 workgroups a chunk). `build` encodes, before
     the reader's pass: the args reset by a copy, the two kernels, and each list copied whole into its own uniform. The
     culled kernel binds that uniform at TILES_BINDING (cullSource unchanged) and is dispatched indirect
     (`GpuTileList.dispatch`). The CPU never knows the count, and nothing changed means 0 workgroups.
   - `force` lists the whole scope (the agents after sitting idle).
-  - Agents (encodeScoped) peel over `changed` and link over `around`. This replaces round 107's eighth of the scope a
+  - Agents (encodeScoped) peel over `changed` and link over `around` (columns and class). A second ChangedTiles, on the
+    depth word and without `around`, runs surfaceWater: the top surfaces' water, nav .w, brought up to date. This replaces round 107's eighth of the scope a
     tick. ?agentscope=0's whole-window path keeps PEEL_EVERY.
 - **Not dispatched over what sleeps** (round 85, sim/cull.ts; on by default,
   `?simcull=0` off). Simulation.step makes, from the same Globals.sleep and

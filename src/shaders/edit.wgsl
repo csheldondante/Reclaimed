@@ -426,7 +426,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
   if (moved) { bumpChunk(id.xy); }
-  if (water[i] != water0) { bumpWater(id.xy); }
+  bumpWater(id.xy, water0, water[i]);
 }
 
 /** a blow event's reach (the footprint's radius) */

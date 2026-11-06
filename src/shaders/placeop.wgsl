@@ -40,11 +40,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let dep = deposit[i];
     deposit[i] = vec4<f32>(dep.x, dep.y + d, f32(op.a.z), dep.w);
   } else if (op.a.x == PO_FLOOD) {
+    // (round 128o, DA-B26: the water's versions moved — chunkver.wgsl)
+    bumpWater(id.xy, water[i], water[i] + amt);
     water[i] += amt;
-    // (round 128o, DA-B26: the water's version moved — chunkver.wgsl)
-    if (amt != 0.0) { bumpWater(id.xy); }
   } else if (op.a.x == PO_DRAIN) {
-    if (water[i] != 0.0) { bumpWater(id.xy); }
+    bumpWater(id.xy, water[i], 0.0);
     water[i] = 0.0;
   }
 }

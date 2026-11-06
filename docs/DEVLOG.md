@@ -19340,3 +19340,67 @@ town's answers behind TownWork, nothing polled, no give-up timers.
   - The lists' uniforms are copied whole (the count is the GPU's): 3.2 KB a tick at 320² for the two.
   - Places uploaded bump every chunk's water word in ~400 4 B writes at 320² (rare: a plan loaded).
   - The depth pass and the water's publish are now at 8 storage buffers. ?pagecheck=1 leaves them unchecked.
+
+## 2026-11-06 — round 128o (`phonefix`, DA-B26 follow-up): the water's class at the source, and measured
+
+- Why: main's review. The water's version moved on any change of depth (evaporation, a held river relaxing), so
+  every awake water chunk in the scope was re-peeled every tick. The peel needs only the wet and deep classes of a
+  column's top surface. One raw-depth reader does exist: the top surface's water in nav .w, which the units wade,
+  drown, put out fire and refuse deep steps by.
+- Change:
+  - The versions are four words a chunk: columns, class, depth, and one unused.
+  - waterclass.wgsl holds WADE_OFF, WADE, DEEP_OFF and DEEP. They are moved out of agents.wgsl, shared by the peel
+    and the writers, and mirrored on the CPU by agents/rules.ts DEEP.
+  - `bumpWater(column, before, after)` moves the depth word if the depth moved, and the class word only if the
+    depth crossed one of the four bands. The peel's hysteresis can only flip a class at a crossing, so the class
+    word is exact for it with no reader state in the writer (compare before and after, as the columns' writers do).
+  - The places uploaded move the class word.
+  - Agents: the peel follows columns and class (`CHUNK_COLUMNS | CHUNK_CLASS`). A second ChangedTiles on the depth
+    word (no `around`) runs the new `surfaceWater` kernel, which writes the top surface's nav .w where only the
+    depth moved.
+  - ARCHITECTURE has the table of words and their readers.
+- Tests:
+  - Each water writer's test checks the depth word. Where the water crosses a band (a heap spreading, a pour, a
+    flood) it checks the class word too.
+  - New: shallow water that only spreads and evaporates moves its depth word and not its class word.
+  - New: a depth-only follower isn't listed by a places bump.
+  - New: in the agents, with the water still, every top surface's water equals the water buffer exactly, and the
+    peel list is empty.
+  - Unit 827; GPU tier green.
+- Measured: peels per tick in play (the lab's start town, the fortress sims, speed 16, one record buffer read
+  once at the end; scratch scenario, not committed). The old count is the round robin's ceil(scope / 8) a tick:
+
+  | phase | scope (chunks) | re-peeled a tick (new) | old eighth a tick | surfaces' water refreshed a tick |
+  | --- | --- | --- | --- | --- |
+  | Build pressed, builders working (60 s) | 144 | 0.02 (5 ticks of 3,600) | 18.5 | 0.8 |
+  | the town after, at rest (60 s) | 180 | 0.00 (1 tick) | 22.8 | 0.1 |
+  | a storm's rain over the walkers (30 s) | 182 | 9.6 | 23 | 119 |
+  | a flood poured round six walkers (30 s) | 182 | 8.9 | 23 | 70 |
+  | the 60 s after the flood (spreading, draining) | 182 | 15.4 | 23 | 33 |
+
+  - At rest and while building, the peel goes from 18 to 23 chunks a tick to almost none.
+  - In rain and floods it stays below the old count. There, the edges of the water keep crossing a band as it
+    spreads and drains.
+  - `surfaceWater` is a single 4 B write per column of the listed chunks.
+  - The first version (any depth change) wasn't measured before this fix.
+  - The builders' pieces are structures, not columns: building moves almost no columns.
+- Compare-before-write's GPU cost (desktop proxy, toggle diff): the seven whole-column writers as they were before
+  DA-B9 (unconditional writes, from 6974b32b) against now. Wall ms per sim second, the sim alone as fast as the GPU
+  goes, the town with Build pressed, median of 5 reps, three interleaved pairs:
+
+  | pair | now | before DA-B9 |
+  | --- | --- | --- |
+  | 1 | 47.8 | 47.8 |
+  | 2 | 67.6 | 45.4 |
+  | 3 | 93.0 | 92.7 |
+
+  Pairs 1 and 3 agree within 0.3%. Pair 2 (and the drift from 47 to 93 between rounds) is the GPU shared with other
+  worktrees' runs. No difference is measurable on the desktop; the phone bench is the real check.
+- Hacks and limits:
+  - The class word moves on a crossing of any band even when the reader's hysteresis keeps the class (a ripple
+    across WADE_OFF on a wet surface). That gives superfluous peels, never stale ones. They are most of the 9-15 a tick
+    in rain and floods.
+  - The four bands are now a world contract between the water's writers and the walkers. A reader wanting other
+    classes needs its own word or bands.
+  - The fourth word is unused (two vec2 a chunk keep the indexing simple): 4 B a chunk.
+  - The toggle diff is noisy on a shared desktop GPU.

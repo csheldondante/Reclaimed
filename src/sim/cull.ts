@@ -370,6 +370,12 @@ export class GpuTileList {
  * A reader per instance (its own `seen`, keyed as the versions are, so a slide moves none). `build` encodes the lists'
  * making before the reader's pass; the reader dispatches its culled kernels over them (GpuTileList.dispatch).
  */
+/** (DA-B26) the versions a ChangedTiles follows (chunkver.wgsl): the columns, the class (the water's class, the
+ *  places), the water's depth at all */
+export const CHUNK_COLUMNS = 1;
+export const CHUNK_CLASS = 2;
+export const CHUNK_DEPTH = 4;
+
 export class ChangedTiles {
   readonly changed: GpuTileList;
   readonly around: GpuTileList;
@@ -385,6 +391,10 @@ export class ChangedTiles {
     tiles: AwakeTiles,
     scope: number,
     label: string,
+    /** the versions it follows (tilelist.wgsl TileListParams.words): CHUNK_COLUMNS | CHUNK_CLASS | CHUNK_DEPTH */
+    private words: number,
+    /** whether it lists `around` too */
+    private withAround = true,
   ) {
     this.changed = new GpuTileList(device, `${label} changed`, tiles);
     this.around = new GpuTileList(device, `${label} around`, tiles);
@@ -422,7 +432,7 @@ export class ChangedTiles {
    * into the culled kernels' uniforms.
    */
   build(enc: GPUCommandEncoder, prof: Profiler, count: number, force: boolean): void {
-    this.device.queue.writeBuffer(this.params, 0, new Uint32Array([count, force ? 1 : 0, 0, 0]));
+    this.device.queue.writeBuffer(this.params, 0, new Uint32Array([count, force ? 1 : 0, this.words, 0]));
     this.changed.reset(enc, this.empty);
     this.around.reset(enc, this.empty);
     if (count) {
@@ -430,12 +440,14 @@ export class ChangedTiles {
       pass.setBindGroup(0, this.group);
       pass.setPipeline(this.k.changed.pipeline);
       pass.dispatchWorkgroups(Math.ceil(count / 64));
-      pass.setPipeline(this.k.around.pipeline);
-      pass.dispatchWorkgroups(Math.ceil(count / 64));
+      if (this.withAround) {
+        pass.setPipeline(this.k.around.pipeline);
+        pass.dispatchWorkgroups(Math.ceil(count / 64));
+      }
       pass.end();
-      prof.dispatches += 2;
+      prof.dispatches += this.withAround ? 2 : 1;
       this.changed.publish(enc);
-      this.around.publish(enc);
+      if (this.withAround) this.around.publish(enc);
     }
   }
 

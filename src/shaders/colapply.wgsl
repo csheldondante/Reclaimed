@@ -83,7 +83,7 @@ fn colBase(x: u32, y: u32) -> vec4<u32> {
 fn bumpOf(b: vec4<u32>) {
   let cs = P.chunkSize;
   let v = chunks[(b.w / cs) * P.chunksX + b.z / cs].x / (cs * cs);
-  chunks[P.chunksX * (P.mapH / cs) + v].x = P.stamp;
+  chunks[P.chunksX * (P.mapH / cs) + 2u * v].x = P.stamp;
 }
 
 fn z0Of(v: vec4<u32>) -> f32 { return bitcast<f32>(v.x); }

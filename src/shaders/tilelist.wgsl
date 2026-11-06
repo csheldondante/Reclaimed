@@ -1,7 +1,7 @@
 // ---- tilelist.wgsl ------------------------------------------------------------------------------------------------
 // (round 128o, DA-B26) A pass's tile lists made on the GPU from the chunks' versions (sim/cull.ts ChangedTiles): over a
-// CPU list (the scope: TILES, its entries packed as sim/cull.ts packEntry), `changed` lists the chunks whose columns or
-// water moved since this reader last looked (chunkver.wgsl), `around` the scope's chunks next to one of those (the
+// CPU list (the scope: TILES, its entries packed as sim/cull.ts packEntry), `changed` lists the chunks whose versions
+// (the words TP.words names: chunkver.wgsl) moved since this reader last looked, `around` the scope's chunks next to one of those (the
 // 3 x 3 round each). Each list as the CPU's are (a u32 an entry, four 8 x 8 workgroups a chunk) and its indirect args
 // (x: the workgroups); sim/cull.ts copies the list into the uniform the culled kernel reads (cullSource).
 // Prepended: common.wgsl, materials.wgsl, `const VEC4S: u32` (the list's length in vec4s).
@@ -15,7 +15,8 @@ struct TileListParams {
   count: u32,
   /** 1: every chunk of TILES counts as changed (the reader's state is gone — agents.ts navStale) */
   force: u32,
-  _a: u32,
+  /** the versions this reader follows: 1 the columns, 2 the class (water class, places), 4 the water's depth */
+  words: u32,
   _b: u32,
 }
 
@@ -43,9 +44,12 @@ fn changed(@builtin(global_invocation_id) id: vec3<u32>) {
   let cs = G.chunkSize;
   // (chunkver.wgsl's place: keyed by where the chunk's columns lie)
   let v = chunks[ci].x / (cs * cs);
-  let ver = chunks[G.chunksX * (G.mapH / cs) + v];
+  let at = G.chunksX * (G.mapH / cs) + 2u * v;
+  let a = chunks[at];
+  let b = chunks[at + 1u];
+  let ver = max(max(select(0u, a.x, (TP.words & 1u) != 0u), select(0u, a.y, (TP.words & 2u) != 0u)), select(0u, b.x, (TP.words & 4u) != 0u));
   let s = seen[v];
-  if (TP.force == 0u && s != NEVER && max(ver.x, ver.y) <= s) { return; }
+  if (TP.force == 0u && s != NEVER && ver <= s) { return; }
   // (a write later this tick stamps tick + 1: past what's kept here, so it's listed next tick)
   seen[v] = G.tick;
   listedAt[ci] = G.tick + 1u;

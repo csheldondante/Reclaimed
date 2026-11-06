@@ -27,7 +27,7 @@ Boot: WebGPU, the quality tier, the phone flags, and which scene runs.
 
 GPU agents (the crowd every unit and worker runs on): their kernels' wrappers, jobs, build crews. Installed on a WorldCore by `install.ts`.
 
-- `agents.ts` (1719) — Agents (round 52, docs/AGENTS.md): units that walk the world's surfaces by following shared fields, and fight. API: `AgentTickLog`, `NAV_K`, `MAX_UNITS`, `NFIELDS` +17.
+- `agents.ts` (1734) — Agents (round 52, docs/AGENTS.md): units that walk the world's surfaces by following shared fields, and fight. API: `AgentTickLog`, `NAV_K`, `MAX_UNITS`, `NFIELDS` +17.
 - `buildcrew.ts` (343) — A building crew (round 65, docs/DECISIONS.md: "a mode where it takes the delta of the finished thing you … API: `BuildCrewDef`, `buildOrder`, `BuildCrew`.
 - `crew.ts` (286) — A work crew (round 63, docs/AGENTS.md "Crews"): workers that dig or fell and carry what they get to a … API: `CrewJob`, `CrewDef`, `Crew`.
 - `fieldreader.ts` (134) — A CPU copy of one agents field (round 52, docs/AGENTS.md), for walkers the CPU moves itself (a game's … API: `FieldSample`, `FieldReader`.
@@ -635,10 +635,10 @@ Settlements: towns and cities on the atlas, their plans, the view that draws the
 
 WGSL. `common.wgsl` (+ layers, materials) is prepended to every kernel; flow/slope appended to kernels that declare them.
 
-- `agents.wgsl` (470) — ---- agents (round 52, docs/AGENTS.md) ----------------------------------------- The layer units walk on, …
+- `agents.wgsl` (477) — ---- agents (round 52, docs/AGENTS.md) ----------------------------------------- The layer units walk on, …
 - `bodymesh.wgsl` (79) — Bodies' own meshes, skinned (round 120;
-- `chunkver.wgsl` (24) — ---- chunkver.wgsl …
-- `climate.wgsl` (148) — ---- climate: snow, ice, fallen leaves (round 50;
+- `chunkver.wgsl` (34) — ---- chunkver.wgsl …
+- `climate.wgsl` (146) — ---- climate: snow, ice, fallen leaves (round 50;
 - `colapply.wgsl` (612) — ---- colapply.wgsl …
 - `colquery.wgsl` (59) — ---- colquery.wgsl …
 - `common.wgsl` (828) — ---- common.wgsl ------------------------------------------------------- Shared by every shader.
@@ -702,7 +702,7 @@ WGSL. `common.wgsl` (+ layers, materials) is prepended to every kernel; flow/slo
 - `terrainshape.wgsl` (185) — ---- terrain shape: smooth soft surfaces (round 10, BACKLOG A15;
 - `tiers.wgsl` (20) — ---- the sims' tiers (round 108, simtiers: sim/tiers.ts, api/contracts/simtiers.ts) …
 - `tilelandgpu.wgsl` (101) — ---- a render-only tile's bake, set up on the GPU (round 105, tilelatency;
-- `tilelist.wgsl` (72) — ---- tilelist.wgsl …
+- `tilelist.wgsl` (76) — ---- tilelist.wgsl …
 - `tiles.wgsl` (417) — ---- the world-anchored tile cache (round 103, ?tiles=1;
 - `townstamp.wgsl` (128) — ---- the town's columns (round 65, build/town.ts) --------------------------- The town is real matter: its …
 - `treequery.wgsl` (107) — ---- treequery.wgsl …
@@ -711,6 +711,7 @@ WGSL. `common.wgsl` (+ layers, materials) is prepended to every kernel; flow/slo
 - `vegprep.wgsl` (409) — ---- vegetation render preparation ------------------------------------------ Emits instances for plants …
 - `water_depth.wgsl` (96) — ---- water transport: depth pass --------------------------------------- Applies flux, rain, springs and …
 - `water_flux.wgsl` (59) — ---- water transport: flux pass --------------------------------------- Column-volume "virtual pipes" model.
+- `waterclass.wgsl` (23) — ---- waterclass.wgsl …
 - `watersurf.wgsl` (106) — ---- (watersurf, FC2) the water's top as a surface: the lattice of the wet columns' centres …
 - `wilt.wgsl` (124) — ---- wilt: plant health and tap responses (diegetic clues;
 - `windfield.wgsl` (235) — ---- wind field --------------------------------------------------------------- The one wind field …
@@ -738,8 +739,8 @@ WGSL. `common.wgsl` (+ layers, materials) is prepended to every kernel; flow/slo
 GPU world buffers (the WorldGpu contracts), the systems' wrappers, the fixed-step scheduler, Globals, particles, sleep, snapshots, static claims.
 
 - `boxsum.ts` (92) — (DA-B13) Box means of a per-column texture's x channel, on the GPU: a few floats read back, not the texture. API: `MAX_BOXES`, `BoxMeans`.
-- `chunkver.ts` (42) — (round 128o, DA-B9) The chunks' versions: per chunk the tick + 1 that last changed its columns, and … API: `CHUNKS_READ`, `writerCode`, `versionIndex`, `waterVersionIndex` +1.
-- `cull.ts` (448) — Dispatching only where the world is awake (on by default, ?simcull=0 off; API: `SIM_CULL`, `LIVE`, `TILES_BINDING`, `NEAR` +10.
+- `chunkver.ts` (56) — (round 128o, DA-B9) The chunks' versions: per chunk the tick + 1 that last changed its columns, and … API: `CHUNKS_READ`, `writerCode`, `VERSION_WORDS`, `versionIndex` +3.
+- `cull.ts` (460) — Dispatching only where the world is awake (on by default, ?simcull=0 off; API: `SIM_CULL`, `LIVE`, `TILES_BINDING`, `NEAR` +13.
 - `edit-ops.ts` (89) — The edit pass's ops (edit.wgsl: keep the two the same) and how an Edit event carries one (round 83: one … API: `OP`, `BLOW_TAG`, `STROKE_START`, `editOpOf` +5.
 - `external.ts` (599) — External intervals (round 99, `?meshinst=1`; API: `MESHINST`, `OwnerId`, `OWNER_ROCK`, `ExternalCol` +12.
 - `flow.ts` (83) — The simulation's rates (perfopt, DECISIONS round 83). API: `TICK_HZ`, `FLOW_SUB`, `Flow`, `flowN` +4.
@@ -759,7 +760,7 @@ GPU world buffers (the WorldGpu contracts), the systems' wrappers, the fixed-ste
 - `translate.ts` (87) — Moving what lives in window coordinates when the streamed window slides (round 80; API: `Translator`.
 - `warm-cache.ts` (68) — (round 112, testspeed) The player's warmed world, kept in the browser (IndexedDB): the second visit to the … API: `warmKey`, `loadWarm`, `saveWarm`.
 - `windrect.ts` (100) — Where the painted wind is (round 104, simscale — the user: "Why does wind and climate need to run … API: `LIFE_S`, `reach`, `WindRects`.
-- `world-gpu.ts` (618) — GPU-resident world state: every buffer that forms a contract between systems is allocated (and documented) … API: `STATS_COUNT`, `EDIT_TAGS`, `RiverMode`, `riverMode` +8.
+- `world-gpu.ts` (619) — GPU-resident world state: every buffer that forms a contract between systems is allocated (and documented) … API: `STATS_COUNT`, `EDIT_TAGS`, `RiverMode`, `riverMode` +8.
 
 ## src/solver/
 

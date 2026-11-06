@@ -3,7 +3,7 @@
 // state themselves, so replacing one system's implementation cannot silently
 // change what another system sees.
 
-import { versionIndex, versionWords, waterVersionIndex } from './chunkver';
+import { VERSION_WORDS, versionIndex, versionWords, waterVersionIndex } from './chunkver';
 import type { Profiler } from '../gpu/profiler';
 import { CHUNK, PHYS_COL_WORDS, type PackedWorld } from '../world/layout';
 import type { MapData } from '../world/mapgen';
@@ -89,13 +89,14 @@ export class WorldGpu {
 
   /** (DA-B26) chunks of storage the versions are kept for (a reader's per-chunk state is as long: sim/cull.ts ChangedTiles) */
   get versionChunks(): number {
-    return versionWords(this.packedRef) / 2;
+    return versionWords(this.packedRef) / VERSION_WORDS;
   }
   /**
    * (round 128o, DA-B9) The CPU wrote these window chunks (`'all'`: every chunk): their versions moved to `stamp` (the
    * next tick: as a write at the end of the last tick, tick + 1, would have — sim/chunkver.ts; a reader in the next
-   * tick sees it once, not again in the tick after). `what`: 'both' their columns and their water (a
-   * CPU write puts back a chunk's whole state, or may: both move), 'water' their water or places only (DA-B26).
+   * tick sees it once, not again in the tick after). `what`: 'both' every word (a CPU write puts back
+   * a chunk's whole state, or may), 'water' the class word only: what the surfaces read beside the columns (the
+   * places uploaded, DA-B26).
    */
   bumpChunks(chunks: Iterable<number> | 'all', stamp: number, what: 'both' | 'water' = 'both'): void {
     const p = this.packedRef;
@@ -105,7 +106,7 @@ export class WorldGpu {
       return;
     }
     const list = chunks === 'all' ? Array.from({ length: p.chunksX * p.chunksY }, (_, i) => i) : chunks;
-    const both = new Uint32Array([stamp, stamp]);
+    const both = new Uint32Array(VERSION_WORDS).fill(stamp);
     const one = new Uint32Array([stamp]);
     for (const ci of list) {
       if (what === 'both') this.device.queue.writeBuffer(this.chunks, base + versionIndex(p, ci) * 4, both);

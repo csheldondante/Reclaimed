@@ -140,8 +140,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   if (moved) { bumpChunk(id.xy); }
   // (DA-B26: the water's version too, where it moved)
-  if (wd != water[i]) {
-    water[i] = wd;
-    bumpWater(id.xy);
-  }
+  bumpWater(id.xy, water[i], wd);
+  water[i] = wd;
 }

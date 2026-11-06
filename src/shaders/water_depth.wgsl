@@ -45,8 +45,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (RIVER_SLOW_N > 1u && !nearLive(id.xy)) { relax = 1.0 - pow(1.0 - G.tune.pipesRiverRelax, f32(RIVER_SLOW_N)); }
     let held = mix(water[ia], rh.depth, relax);
     waterOut[ia] = held;
-    // (round 128o, DA-B26: the water's version moved where it did — chunkver.wgsl)
-    if (held != water[ia]) { bumpWater(id.xy); }
+    // (round 128o, DA-B26: the water's versions moved where it did — chunkver.wgsl)
+    bumpWater(id.xy, water[ia], held);
     return;
   }
   // (a sleeping chunk, round 80: what it holds carried through — the next buffer is copied back over this one)
@@ -85,7 +85,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   waterPrev[i] = d;
   waterOut[i] = nd;
   // (round 128o, DA-B26: the water's version moved where it did — chunkver.wgsl)
-  if (nd != d) { bumpWater(id.xy); }
+  bumpWater(id.xy, d, nd);
   let dd = abs(nd - d);
   if (dd > 1e-4) {
     // (round 107, pages P2.3b: by the chunk's slot — sim/sleep.ts holdUnsettled)

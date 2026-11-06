@@ -10,6 +10,7 @@ import { Translator } from '../sim/translate';
 import { makeBindGroup, makeCompute, ignoreTeardown, whenPipelinesReady, type BindSpec, type ComputeKernel } from '../gpu/pipeline';
 import type { Profiler } from '../gpu/profiler';
 import agentsWgsl from '../shaders/agents.wgsl?raw';
+import waterclassWgsl from '../shaders/waterclass.wgsl?raw';
 import commonWgsl from '../shaders/common.wgsl?raw';
 import layersWgsl from '../shaders/layers.wgsl?raw';
 import materialsWgsl from '../shaders/materials.wgsl?raw';
@@ -24,7 +25,7 @@ import { AgentScope } from './scope';
 import { RoadStamp } from './roads';
 import { RoadRide } from './ride';
 import type { RoadGraph } from './roadgraph';
-import { CUSTOM, ChangedTiles, TILES_BINDING, cullKernel } from '../sim/cull';
+import { CHUNK_CLASS, CHUNK_COLUMNS, CHUNK_DEPTH, CUSTOM, ChangedTiles, TILES_BINDING, cullKernel } from '../sim/cull';
 import { ROW_H } from '../world/lattice';
 import { TUNE, worldG } from '../tune/params';
 import { urlFlags } from '../flags';
@@ -365,8 +366,12 @@ export class Agents implements SimSystem {
     clear: ComputeKernel;
     mark: ComputeKernel;
     clearFields: ComputeKernel;
-    /** (round 128o, DA-B26) the scope's chunks whose columns or water changed (peeled) and those round them (linked) */
+    /** (round 128o, DA-B26) the scope's chunks whose columns or water class changed (peeled) and those round them (linked) */
     lists: ChangedTiles;
+    /** (DA-B26) the scope's chunks whose water's depth moved (their top surfaces' water brought up to date) */
+    depths: ChangedTiles;
+    water: ComputeKernel;
+    waterG: GPUBindGroup;
     clearFieldsG: GPUBindGroup;
     occG: GPUBindGroup;
     boxG: GPUBindGroup;
@@ -507,7 +512,7 @@ export class Agents implements SimSystem {
     // (nothing reached yet: every field starts unreachable)
     device.queue.writeBuffer(this.dist, 0, new Float32Array(NFIELDS * cols * NAV_K).fill(1e9));
     device.queue.writeBuffer(this.kindModelsBuf, 0, this.kindModel);
-    const parts = [commonWgsl, layersWgsl, materialsWgsl, agentsWgsl, unitsWgsl];
+    const parts = [commonWgsl, layersWgsl, materialsWgsl, waterclassWgsl, agentsWgsl, unitsWgsl];
     const mk = (e: string, sp: BindSpec) => makeCompute(device, `agents-${e}`, parts, sp, e);
     // four layouts, each within 8 storage buffers: the peel (it reads the
     // layers and the places), the fields, the units' tick, their draw
@@ -557,7 +562,9 @@ export class Agents implements SimSystem {
       const occSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 8: 'rw', 10: 'uniform', 16: 'rw' };
       const enterSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 6: 'rw', 8: 'rw', 16: 'rw', 34: 'rw' };
       // (round 128o, DA-B26: the peel and the links over the GPU's lists — what changed, and round it; bound below)
-      const lists = new ChangedTiles(device, world, t, SCOPE_LIST, 'agents-peel');
+      const lists = new ChangedTiles(device, world, t, SCOPE_LIST, 'agents-peel', CHUNK_COLUMNS | CHUNK_CLASS);
+      const depths = new ChangedTiles(device, world, t, SCOPE_LIST, 'agents-water', CHUNK_DEPTH, false);
+      const water = ck('surfaceWater', { 0: 'uniform', 2: 'uniform', 4: 'read', 5: 'rw' }, SCOPE_LIST);
       const surfaces = ck('surfaces', peelSpec, SCOPE_LIST);
       const links = ck('links', fieldSpec, SCOPE_LIST);
       const clearFields = ck('clearFields', { 0: 'uniform', 2: 'uniform', 6: 'rw', 10: 'uniform' }, SCOPE_LIST);
@@ -585,6 +592,9 @@ export class Agents implements SimSystem {
         mark: mark.k,
         clearFields: clearFields.k,
         lists,
+        depths,
+        water: water.k,
+        waterG: makeBindGroup(device, 'agents-surfaceWater', water.k.layout, { ...base, 4: world.water, 5: this.nav, [TILES_BINDING]: depths.changed.uniform }),
         clearFieldsG: makeBindGroup(device, 'agents-clearFields', clearFields.k.layout, { ...base, 6: this.dist, 10: this.params, [TILES_BINDING]: clearFields.buf }),
         occG: makeBindGroup(device, 'agents-occ scoped', occ.k.layout, { ...base, 8: this.occ, 10: this.params, 16: this.shove, [TILES_BINDING]: L }),
         boxG: makeBindGroup(device, 'agents-unitBox', box.layout, { ...base, 7: this.units, 10: this.params, 28: this.uboxBuf }),
@@ -1561,6 +1571,7 @@ export class Agents implements SimSystem {
     const force = this.navStale && list.length > 0;
     if (force) this.navStale = false;
     sk.lists.build(enc, this.prof, list.length, force);
+    sk.depths.build(enc, this.prof, list.length, false);
     // (confined: every chunk of the scope relaxed again. Round 107: a field left without seeds no longer is — it's set
     // unreachable over the scope (clearFields) with no marks, and its next seeds mark where it refills from)
     const marks = sc.markAll ? list : [...sc.marks].filter((c) => sc.box && list.includes(c));
@@ -1608,7 +1619,11 @@ export class Agents implements SimSystem {
       pass.setBindGroup(0, sk.linksG[p]);
       pass.setPipeline(sk.links.pipeline);
       sk.lists.around.dispatch(pass);
-      this.prof.dispatches += 2;
+      // (where only the water's depth moved: the top surfaces' water — after the peel, which writes it too)
+      pass.setBindGroup(0, sk.waterG);
+      pass.setPipeline(sk.water.pipeline);
+      sk.depths.changed.dispatch(pass);
+      this.prof.dispatches += 3;
       if (this.fieldsUsed > 0) {
         const chunks = Math.ceil(list.length / 64);
         stage('agents-relax');

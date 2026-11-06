@@ -10,7 +10,7 @@ import { testGpu, type TestGpu } from './dawn';
 import { tinyWorld, type TinyWorld } from './world';
 import { tinyMap } from '../support/tinymap';
 import { MAT } from '../../src/world/materials';
-import { CUSTOM, ChangedTiles, type GpuTileList } from '../../src/sim/cull';
+import { CHUNK_CLASS, CHUNK_COLUMNS, CHUNK_DEPTH, CUSTOM, ChangedTiles, type GpuTileList } from '../../src/sim/cull';
 import { installAgents } from '../../src/agents/install';
 
 let g: TestGpu;
@@ -40,12 +40,15 @@ describe('ChangedTiles: what changed, and round it', () => {
       const t = w.core.world.tiles!;
       const all = [...Array(t.chunks).keys()];
       t.setList(LIST, all);
-      const ct = new ChangedTiles(g.device, w.core.world, t, LIST, 'test');
+      const ct = new ChangedTiles(g.device, w.core.world, t, LIST, 'test', CHUNK_COLUMNS | CHUNK_CLASS);
+      // (one that follows the water's depth only)
+      const cd = new ChangedTiles(g.device, w.core.world, t, LIST, 'test depth', CHUNK_DEPTH, false);
       const build = async () => {
         await w.step(1);
         t.setList(LIST, all);
         const enc = g.device.createCommandEncoder();
         ct.build(enc, w.core.host.profiler, all.length, false);
+        cd.build(enc, w.core.host.profiler, all.length, false);
         g.device.queue.submit([enc.finish()]);
         await g.device.queue.onSubmittedWorkDone();
       };
@@ -69,13 +72,17 @@ describe('ChangedTiles: what changed, and round it', () => {
       // (and gone again)
       await build();
       expect(await listed(w, ct.changed)).toEqual([]);
-      // (its water only, at the corner: the corner and its three)
+      // (the depth's follower saw the written chunk too, and nothing since)
+      expect(await listed(w, cd.changed)).toEqual([]);
+      // (its class only — the places — at the corner: the corner and its three; not the depth's follower)
       w.core.world.bumpChunks([0], w.core.sim.tick, 'water');
       await build();
       expect(await listed(w, ct.changed)).toEqual([0]);
       expect(await listed(w, ct.around)).toEqual([0, 1, cx, cx + 1]);
+      expect(await listed(w, cd.changed)).toEqual([]);
       expect(g.takeErrors()).toEqual([]);
       ct.destroy();
+      cd.destroy();
     } finally {
       w.destroy();
     }
@@ -108,6 +115,40 @@ describe("the agents' re-peel over what changed", () => {
       await tick(1);
       const whole = new Uint32Array(await g.read(agents.nav, navBytes));
       expect(peeled).toEqual(whole);
+      expect(g.takeErrors()).toEqual([]);
+    } finally {
+      w.destroy();
+    }
+  });
+
+  it("the top surfaces' water follows the water's depth where nothing else changed", async () => {
+    const map = tinyMap(W, W, 32, stone);
+    for (let y = 24; y < 40; y++) for (let x = 28; x < 44; x++) map.water[y * W + x] = 0.3;
+    const w = await tinyWorld(g, map, ['surface', 'water']);
+    try {
+      const agents = installAgents(w.core);
+      const tick = async (n: number, water: boolean) => {
+        for (let i = 0; i < n; i++) w.core.sim.step(w.core.globals, (s) => s.name === 'surface' || s.name === 'agents' || (water && s.name === 'water'));
+        await g.device.queue.onSubmittedWorkDone();
+      };
+      agents.spawn(10, 36, 27, { spread: 4 });
+      await tick(30, true);
+      // (the water still: what it is now, the surfaces show)
+      await tick(2, false);
+      // (nav in window order: 4 surfaces of 4 words a column; the top's .w its water)
+      const nav = new Float32Array(w.core.world.ring.toWindow(new Uint32Array(await g.read(agents.nav, agents.nav.size)), 16).buffer);
+      const water = await w.read('water');
+      const lists = (agents as unknown as { sk: { lists: ChangedTiles } }).sk.lists;
+      // (shallow water spreading and drying: no band crossed, nothing re-peeled)
+      expect(await listed(w, lists.changed)).toEqual([]);
+      let wet = 0;
+      for (let y = 26; y < 38; y++)
+        for (let x = 30; x < 42; x++) {
+          const c = y * W + x;
+          expect(nav[c * 16 + 3]).toBe(water[c]);
+          if (water[c] > 0) wet++;
+        }
+      expect(wet).toBeGreaterThan(0);
       expect(g.takeErrors()).toEqual([]);
     } finally {
       w.destroy();
