@@ -1160,8 +1160,11 @@ its edge:
   (with sleepmore) and the lava's spill copy (`TileTexCopy`) run over the
   live list; lava-prep only when something's live.
   The wind field (round 104, sim/windrect.ts): painted wind updated only over
-  the box of what painted it lately (strokes, blows, ripples; all of it while
-  physics holds voxels), the map's own wind refreshed a band a tick under it.
+  the box of what painted it lately (strokes, blows, ripples: the CPU's box;
+  DA-B16: things landing — phys.wgsl writes the box of its shoves after the
+  puff texels, windfield.wgsl `windBox` keeps it as a stamp grown by reach and
+  joins the CPU's, an indirect update and `windCopy` over it), the map's own
+  wind refreshed a band a tick under it (DA-B25 open).
   WorldGpu `strBounds` / `projectAll`: the CPU's contract for the projection
   (the structures' bounds; bodyCpu written or a slide: project everything).
   The agents (round 104, agents/scope.ts): surfaces, links, fields and

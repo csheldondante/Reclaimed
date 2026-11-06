@@ -18590,3 +18590,27 @@ only after an event or a vent). AGENT_RULES §1b: a kernel runs where something 
 - The lab's town fixture recaptured (coarse.ts is in the generator hash): columns identical.
 - Hacks and limits: a tile is 8 × 8 cells; a vent's tiles are found by a box round its radius plus a cell; the "every
   tile" mode (`new Coarse(..., cull = false)`) is kept as the tests' reference.
+
+## 2026-11-06 — the wind field updated round where things land, not all of it while any body exists (DA-B16)
+
+Why: physics registered `wholeWhile(() => physics.used > 0)`: while any voxel body existed — a rock come to rest, a
+ruin's piece — the whole wind field (160² texels, ~410 KB at 320²) was updated and copied back every update, because
+where things land (their puffs) is known only on the GPU. AGENT_RULES §1b: work where something changed, no readback.
+
+- phys.wgsl writes, besides each puff texel, the box of this tick's shoves in four words after the texels (atomic
+  min/max). windfield.wgsl `windBox` (one thread, before the update) keeps that box as a stamp — the shoves' box since
+  it was last empty, its first and last tick, carried with the window on a slide — grows it by how far painted wind can
+  have gone since its first shove (windrect.ts `reach`), drops it LIFE_S after its last, joins the CPU's box (strokes,
+  blows, ripples) and writes an indirect dispatch's args and corners. The painted-wind update and the new `windCopy`
+  (its texels into the field, where they lie on the ring) go over that box. Physics no longer asks for the whole field.
+- Same wind: test/gpu/wind-shove.test.ts drops two stone blocks in two tiny worlds, one updating the whole field every
+  update (the old path: `wholeWhile` true), one as now: the painted wind (rg) is equal bit for bit at 12 checks while
+  they land (some of it non-zero), and after the wind dies down (50 s) it is zero in both and the box is empty. (The
+  map's own wind, ba, is a band behind outside the box by round 104's design, as with no body.)
+- Cost: with a body resting and nothing landing, the painted update and its copy cover nothing (it was 410 KB copied
+  and 25 600 texels updated every update); a landing updates its box and reach round it.
+- Found and listed: the map wind's band (1/16 of the field computed and copied every update, everywhere) could go if
+  readers added `mapWind` themselves — DA-B25 (the transfer gate now names it).
+- Hacks and limits: one stamp for all shoves (their box together, grown from the first): landings far apart in time
+  and place make one large box until the last is LIFE_S old — conservative, never too small. `lastBox` (the perf
+  overlay, tests) still shows only the CPU's box.
