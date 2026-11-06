@@ -1823,7 +1823,9 @@ headroom | wet | six 3-bit links, room, region — the peel reads `places` and
 `placeTable` in its own bind group), `agentNavCost` (round 107: per surface, the
 height and wet the links and the relax reckon its cost by, following nav's floor with hysteresis — the
 units ride nav, the fields read this), `agentDist` (NFIELDS = 4 fields × surfaces,
-f32), `agentUnits` (five vec4 a unit: units.wgsl — the fifth, LW1, the trait system's CAPS and LOOK and the max hp), `agentOcc` (units per
+f32), `agentUnits` (six vec4 a unit: units.wgsl — the fifth, LW1, the trait system's CAPS and LOOK and the max hp; the
+sixth, round 128o, the arrival latch: an `arrived` event once a unit comes within its field's radius,
+`agents.arrivals(field, radius, leave)` in AgentParams.arrive), `agentOcc` (units per
 column, two halves by tick parity), `agentEvents` (round 128o, DA-B2: a ring
 of 2048 8-u32 records — swing, hurt, death, alight, … with their number as a tag
 in word 7 — after a head: [0] events made, [2] how far the CPU has read; a sync

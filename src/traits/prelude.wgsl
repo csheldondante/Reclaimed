@@ -2,7 +2,7 @@
 // Appended after common.wgsl. Owns the bindings; a module (the game's rule) adds `fn module_main(u: u32)` and the
 // system wraps it in a 64-wide entry, one thread an agent slot. Storage buffers: units, events, traits (3 of 8).
 //
-// A unit (units.wgsl, agents.ts UNIT_V = 5 vec4):
+// A unit (units.wgsl, agents.ts UNIT_V = 6 vec4; the sixth, round 128o, the arrival latch):
 //   a: x, y, z (feet), info (u32: group 0-7 | alive 8 | kind 9-11 | state 12-14 | alight 15 | generation 16-31)
 //   b: vx, vy, vz, stride phase / stun     c: hp, swing cooldown, fire left, heading
 //   d: hurt flash, state time, time under water, wander heading
@@ -11,7 +11,7 @@
 //   r0: x the trait word (intrinsic bits 0-15, statuses 16-23), y source (the group that laid the last status),
 //       z the occupant (generation + 1; 0 none), w 0
 //   r1, r2: each status's expiry tick (statuses 0-3, 4-7); PERM: for ever
-const UNIT_V: u32 = 5u;
+const UNIT_V: u32 = 6u;
 const TRAIT_V: u32 = 3u;
 const PERM: u32 = 0xffffffffu;
 const STATUS_BIT: u32 = 16u;

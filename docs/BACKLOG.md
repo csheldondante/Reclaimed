@@ -29,11 +29,13 @@ The user: "Please work on making the code match the design which is a lot cleane
 | DA-A3 | Reach as an invariant judged once in one GPU solve; cheapest passage chosen on the GPU; pending blocks stay on the builders' list; delete the 3 s re-ask and VARIANT_TRIES (§13) | L | next |
 | DA-A4 | Bridges as a building type reach can pick; minimum land gates on player wall rings (§12, §13) | M | next |
 | DA-A5 | External intervals name their grid (word 3) with normals; orphan claims are errors; save only plan edits, never baked claims (§3, §17, §23) | M | next |
-| DA-A6 | One crowd for townspeople: merge settle/life and fortress/life (§11) | L | next |
+| DA-A6 | One crowd for townspeople: merge settle/life and fortress/life (§11) — built on events from the start: arrivals (DA-B2a), hurts, deaths, take/put answers as GPU events and watched units (DA-B2b); no polling of positions, every unit not read each sync (DA-B2's note, DEVLOG round 128o) | L | next |
 | DA-A7 | Routes as kinematic trips with a cached route buffer; delete LOST/LAST_LOST steering; tiles declare paths (§12) | L | next |
 | DA-A8 | Every good physical; loot takes real goods (§18) | M | next |
 | DA-B1 | Kill play readbacks: Build never starts the mirror; FieldReader gone; GPU-side queries; unknown != empty; resumes `phonefix` (§24) | M | done (`phonefix`, round 128o: the world API's mirror read by pages when asked, stale only where the sim ran; no timer in the level; FieldReader gone (the reach's bits); unread is null, a test; the trees stay a veg-page read, their GPU query is DA-B6; phone bench to run) |
 | DA-B2 | Unit sync becomes GPU events plus watched units through a persistent staging ring (§11, §24) | M | wip (`phonefix`, round 128o: events a ring read 256 at a time, staging kept — 66 → 9 KB a sync; every unit still read: the rest is DA-A6's, design note in DEVLOG) |
+| DA-B2a | A GPU `arrived` event from the followed field's distance: `agents.arrivals(field, radius, leave)`; once a unit, a latch in its record (units.wgsl) — for the one crowd (DA-A6) to react to, not poll positions | S | done (`phonefix`, round 128o; Dawn test) |
+| DA-B2b | Watched units read by id: `agents.sync({ watch })` copies only those records (the followed, the selected; 32 at most), not every unit | S | done (`phonefix`, round 128o; Dawn test) |
 | DA-B3 | Incremental town edits: rebuild only changed structures; no rebuild on unchanged reach answers; < 4 ms an edit on desktop (§5, §24) | M | next |
 | DA-B4 | Reach solve converges on the GPU; one small read per edit (§13) | M | next |
 | DA-B5 | Fortress-mode sandbox frame reads off; 30 fps cap while building or paused (§24) | S | done (`phonefix`, round 128o: wind 4 Hz, counters 2 Hz, veg + water 1 Hz off in fortress play (`ValleyReads`); 30 fps while planning or paused. Left: the level's surface read 1 Hz and the water settling read 2 Hz, options in DEVLOG) |

@@ -65,7 +65,13 @@ struct AgentParams {
   // units moved to another group this tick (round 63: a worker off to its
   // job, then carrying to the pile): slot | group << 16, four a vec4
   regroups: array<vec4<u32>, 16>,
+  // (round 128o, DA-B2a) per field: its arrival radius and its leaving radius (field f: floats 2f, 2f + 1; 0: off)
+  arrive: array<vec4<f32>, 7>,
 };
+fn arriveR(f: u32) -> vec2<f32> {
+  let i = f * 2u;
+  return vec2<f32>(AP.arrive[i / 4u][i % 4u], AP.arrive[(i + 1u) / 4u][(i + 1u) % 4u]);
+}
 /**
  * A kind of unit: a (height, mass, hp, speed), b (reach, damage, swing
  * period s, notice: 0 a worker that always follows its field; else how far

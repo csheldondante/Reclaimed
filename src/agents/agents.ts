@@ -106,6 +106,8 @@ const MAX_TARGETS = 8;
 const MAX_HOLDS = 8;
 const MAX_LAUNCHES = 32;
 const EVENT_CAP = 2048;
+/** (round 128o, DA-B2b) the most units one sync watches (sync({ watch })) */
+const MAX_WATCH = 32;
 /** (round 128o, DA-B2) the most events one sync reads (the rest wait for the next) */
 const EVENT_WINDOW = 256;
 /** voxels drawn in all (units.wgsl MAX_INST), and in all the kinds' models */
@@ -129,7 +131,9 @@ const P_TARGET_H = P_LAUNCHES + MAX_LAUNCHES * 4;
 /** units moved to another group a tick (agents.wgsl regroups) */
 const MAX_REGROUPS = 64;
 const P_REGROUPS = P_TARGET_H + MAX_TARGETS;
-const PARAMS_BYTES = (P_REGROUPS + MAX_REGROUPS) * 4;
+/** (round 128o, DA-B2a) per field its arrival radius and its leaving radius (units.wgsl arrived): 2 floats a field */
+const P_ARRIVE = P_REGROUPS + MAX_REGROUPS;
+const PARAMS_BYTES = (P_ARRIVE + Math.ceil((NFIELDS * 2) / 4) * 4) * 4;
 /** what the tumbling units fall by (units.wgsl unitsG(), cells/s²): the world's gravity × the tuning's units.gravity
  *  (solver step 1, AR9: it was a 20 of its own; the default scale keeps that at world gravity × 1) */
 export function unitsG(): number {
@@ -138,7 +142,7 @@ export function unitsG(): number {
 /** bytes of a surface (agents.wgsl nav: vec4<u32>), and of a unit (UNIT_V vec4: units.wgsl; the fifth, LW1, the trait
  *  system's caps and look and the max hp) */
 const NAV_BYTES = 16;
-export const UNIT_V = 5;
+export const UNIT_V = 6;
 const UNIT_BYTES = UNIT_V * 16;
 /** floats a unit */
 const UF = UNIT_V * 4;
@@ -225,6 +229,11 @@ export type AgentEvent =
   | { type: 'death'; id: number; by: number | 'fire' | 'water' | 'impact' | 'lava' | 'effect'; x: number; y: number; z: number }
   /** (LW1, corpse mode) a corpse raised by an effect (`by`, its id) into `group`: the same id, alive again */
   | { type: 'raised'; id: number; by: number; group: number; x: number; y: number; z: number }
+  /**
+   * (round 128o, DA-B2a) it came within its field's arrival radius (`arrivals`): once, until it leaves the field's
+   * leaving radius or follows another field. `dist` the field's distance at its feet then.
+   */
+  | { type: 'arrived'; id: number; field: number; dist: number; x: number; y: number; z: number }
   /** (LW1, corpse mode) a corpse gone to dust: its slot is free */
   | { type: 'decayed'; id: number; x: number; y: number; z: number }
   | { type: 'alight'; id: number; by: number | 'fire'; x: number; y: number; z: number }
@@ -411,6 +420,21 @@ export class Agents implements SimSystem {
   private navStale = true;
   /** events that didn't fit the buffer, all told (0 normally) */
   dropped = 0;
+  /** (round 128o, DA-B2a) per field: its arrival radius and its leaving radius (0: no arrivals) */
+  private arrive = new Float32Array(NFIELDS * 2);
+
+  /**
+   * (round 128o, DA-B2a) Tell when a unit following `field` comes within `radius` of its seeds (the field's distance at
+   * its feet): an `arrived` event, once — again only after it has been `leave` or more away, or followed another field.
+   * The GPU decides (units.wgsl); the CPU needn't watch where its units are. radius 0: no arrivals for the field.
+   */
+  arrivals(field: number, radius: number, leave = radius): void {
+    if (field < 0 || field >= NFIELDS) throw new Error(`agents.arrivals: no field ${field} (0..${NFIELDS - 1})`);
+    if (radius > 0 && leave < radius) throw new Error(`agents.arrivals: leave (${leave}) under the radius (${radius})`);
+    this.arrive[field * 2] = radius;
+    this.arrive[field * 2 + 1] = leave;
+  }
+
   /** (round 128o, DA-B2) the events read so far (the ring's: units.wgsl emit), and the syncs' staging kept for reuse */
   private eventsRead = 0;
   private pool: GPUBuffer[] = [];
@@ -1216,8 +1240,17 @@ export class Agents implements SimSystem {
     }
   }
 
-  async sync(): Promise<{ units: AgentState[]; events: AgentEvent[]; dropped: number }> {
-    const n = this.count;
+  /**
+   * The events since the last sync, and the units: every live one (by default), or (round 128o, DA-B2b) with
+   * `{ watch }` only those ids (the followed, the selected — at most MAX_WATCH; one gone or not alive is left out):
+   * their records alone are read, not every unit's. A game built on events (arrived, hurt, death…) watches the few it
+   * shows.
+   */
+  async sync(opts: { watch?: readonly number[] } = {}): Promise<{ units: AgentState[]; events: AgentEvent[]; dropped: number }> {
+    const watch = opts.watch;
+    if (watch && watch.length > MAX_WATCH) throw new Error(`agents.sync: ${watch.length} units watched (${MAX_WATCH} at most)`);
+    const slots = watch ? watch.map((id) => id % MAX_UNITS).filter((s) => s < this.count) : null;
+    const n = slots ? slots.length : this.count;
     // (round 128o, DA-B2: the events a ring — units.wgsl emit — read from where the last sync stopped, at most
     // EVENT_WINDOW of them: 16 B of head and 8 KB of events, not the whole 64 KB block every sync; the rest next sync)
     const C = EVENT_CAP;
@@ -1231,7 +1264,8 @@ export class Agents implements SimSystem {
     enc.copyBufferToBuffer(this.events, 0, tmp, 0, 16);
     enc.copyBufferToBuffer(this.events, 16 + first * 32, tmp, 16, a * 32);
     if (a < EVENT_WINDOW) enc.copyBufferToBuffer(this.events, 16, tmp, 16 + a * 32, (EVENT_WINDOW - a) * 32);
-    if (n) enc.copyBufferToBuffer(this.units, 0, tmp, evBytes, n * UNIT_BYTES);
+    if (slots) slots.forEach((s, i) => enc.copyBufferToBuffer(this.units, s * UNIT_BYTES, tmp, evBytes + i * UNIT_BYTES, UNIT_BYTES));
+    else if (n) enc.copyBufferToBuffer(this.units, 0, tmp, evBytes, n * UNIT_BYTES);
     this.device.queue.submit([enc.finish()]);
     const units: AgentState[] = [];
     const events: AgentEvent[] = [];
@@ -1271,31 +1305,36 @@ export class Agents implements SimSystem {
         } else if (kind === 7) {
           events.push({ type: 'raised', id, by: eu[o + 2], group: Math.round(ef[o + 3]), ...p });
           this.corpses.delete(id % MAX_UNITS);
-        }
+        } else if (kind === 8) events.push({ type: 'arrived', id, field: eu[o + 2], dist: ef[o + 3], ...p });
       }
       if (n) {
         const uf = new Float32Array(b, evBytes, n * UF);
         const uu = new Uint32Array(b, evBytes, n * UF);
-        for (let s = 0; s < n; s++) {
-          const info = uu[s * UF + 3];
+        for (let r = 0; r < n; r++) {
+          // (record r: slot r of all, or the r-th watched)
+          const s = slots ? slots[r] : r;
+          const info = uu[r * UF + 3];
           // (corpse mode: a body that rose — its event lost to a full buffer — or went to dust, seen here)
           if (this.corpses.has(s) && (info === 0 || (info >>> 8) & 1)) {
             this.corpses.delete(s);
             if (info === 0) this.free.push(s);
           }
           if (!((info >>> 8) & 1)) continue;
+          const id = (info >>> 16) * MAX_UNITS + s;
+          // (a watched id whose slot another took since)
+          if (watch && !watch.includes(id)) continue;
           units.push({
-            id: (info >>> 16) * MAX_UNITS + s,
-            x: uf[s * UF],
-            y: uf[s * UF + 1],
-            z: uf[s * UF + 2],
-            heading: uf[s * UF + 11],
-            vx: uf[s * UF + 4],
-            vy: uf[s * UF + 5],
-            vz: uf[s * UF + 6],
+            id,
+            x: uf[r * UF],
+            y: uf[r * UF + 1],
+            z: uf[r * UF + 2],
+            heading: uf[r * UF + 11],
+            vx: uf[r * UF + 4],
+            vy: uf[r * UF + 5],
+            vz: uf[r * UF + 6],
             state: STATES[(info >>> 12) & 7] ?? 'wander',
             alight: ((info >>> 15) & 1) === 1,
-            hp: uf[s * UF + 8],
+            hp: uf[r * UF + 8],
             kind: this.kinds[(info >>> 9) & 7]?.name ?? '?',
             group: info & 0xff,
           });
@@ -1309,7 +1348,8 @@ export class Agents implements SimSystem {
     if (dropped) console.warn(`agents: ${dropped} events didn't fit (${EVENT_CAP} unread at once): sync more often`);
     this.dropped += dropped;
     // (carrying: where each stands, loads shed, items in flight moved on)
-    this.seen.clear();
+    // (watching: only the watched seen anew)
+    if (!slots) this.seen.clear();
     for (const u of units) this.seen.set(u.id % MAX_UNITS, u);
     this.shed(units, events);
     this.fly();
@@ -1413,6 +1453,7 @@ export class Agents implements SimSystem {
     const regroups = this.regroups.splice(0, MAX_REGROUPS);
     u.set([holds.length, launches.length, regroups.length, clear], P_N3);
     u.set(regroups, P_REGROUPS);
+    f.set(this.arrive, P_ARRIVE);
     holds.forEach(([slot, p], i) => f.set([p[0], p[1], p[2], slot], P_HOLDS + i * 4));
     launches.forEach((l, i) => f.set(l, P_LAUNCHES + i * 4));
     this.device.queue.writeBuffer(this.params, 0, b);

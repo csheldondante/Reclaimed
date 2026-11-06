@@ -80,3 +80,60 @@ test('more unread than the ring holds: the overflow counted lost, never read as 
   expect(deaths).toBeLessThanOrEqual(Agents.EVENT_CAP);
   expect(g.takeErrors()).toEqual([]);
 });
+
+// ---- (round 128o, DA-B2a, DA-B2b) the engine's prerequisites for a game built on events ----
+
+test('arrived: each unit told once when it comes within its field\'s radius, not again while it stands there', async () => {
+  const { agents, tick } = await world();
+  const ids = agents.spawn(10, 16, 20, { group: 1, spread: 2 });
+  const goal = { x: 44, y: 30 };
+  agents.seed(0, [goal]);
+  agents.follow(1, 0);
+  agents.arrivals(0, 3, 6);
+  const arrived = new Map<number, AgentEvent & { type: 'arrived' }>();
+  let twice = 0;
+  for (let k = 0; k < 60 && arrived.size < ids.length; k++) {
+    tick(30);
+    for (const e of (await agents.sync()).events) {
+      if (e.type !== 'arrived') continue;
+      if (arrived.has(e.id)) twice++;
+      arrived.set(e.id, e);
+    }
+  }
+  expect([...arrived.keys()].sort()).toEqual([...ids].sort());
+  expect(twice).toBe(0);
+  for (const e of arrived.values()) {
+    expect(e.field).toBe(0);
+    expect(e.dist).toBeLessThanOrEqual(3);
+    expect(Math.hypot(e.x - goal.x, e.y - goal.y)).toBeLessThan(6);
+  }
+  // (standing round the goal: nothing more)
+  tick(120);
+  expect((await agents.sync()).events.filter((e) => e.type === 'arrived')).toEqual([]);
+  // (no arrivals asked for the field: none)
+  agents.arrivals(0, 0);
+  agents.seed(0, [{ x: 16, y: 20 }]);
+  tick(600);
+  expect((await agents.sync()).events.filter((e) => e.type === 'arrived')).toEqual([]);
+  expect(g.takeErrors()).toEqual([]);
+});
+
+test('watched: a sync reads only the units asked for, as a full sync has them', async () => {
+  const { agents, tick } = await world();
+  const ids = agents.spawn(40, MID[0], MID[1], { spread: 8 });
+  tick(10);
+  const all = await agents.sync();
+  const watch = [ids[3], ids[17], ids[30]];
+  const w = await agents.sync({ watch });
+  expect(w.units.map((u) => u.id).sort()).toEqual([...watch].sort());
+  for (const u of w.units) {
+    const f = all.units.find((a) => a.id === u.id)!;
+    expect([u.x, u.y, u.z]).toEqual([f.x, f.y, f.z]);
+  }
+  // (a watched unit that's gone is left out)
+  agents.remove([ids[17]]);
+  tick(2);
+  const w2 = await agents.sync({ watch });
+  expect(w2.units.map((u) => u.id).sort()).toEqual([ids[3], ids[30]].sort());
+  expect(g.takeErrors()).toEqual([]);
+});

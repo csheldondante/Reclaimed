@@ -18544,3 +18544,23 @@ The linger existed for the sandbox's pours only (DEVLOG round 83: "a pour lands 
   each box column's ground once read, so it shouldn't; the town debug overlay isn't drawn for a frame with a page
   unread.
 
+## 2026-11-06 — round 128o (`phonefix`, DA-B2a, DA-B2b): the engine's prerequisites for a crowd built on events
+
+- Why (main: DA-B2's split approved): the one crowd (DA-A6) will be built on events, not on positions polled every
+  sync; the engine side lands first so it can.
+- DA-B2a, `arrived` on the GPU (units.wgsl, agents.ts `arrivals(field, radius, leave)`): a unit following a field whose
+  distance at its feet falls to the field's arrival radius emits `arrived` (field, the distance, where), once. The
+  latch is the unit's sixth vec4 (UNIT_V 5 → 6, mirrored in traits/prelude.wgsl and roadride.wgsl): cleared when it is
+  past the leaving radius or follows another field. The radii are the CPU's, per field (AgentParams.arrive, 0 off) —
+  the shader holds no distance of its own. The field already holds the distance to its nearest seed: a compare a unit
+  a tick. Test on Dawn: ten workers walk to a seed 28 cells off, each told once within 3 of it, nothing more while they
+  stand there, nothing with the field's arrivals off.
+- DA-B2b, watched units (`agents.sync({ watch })`): only those records are copied (a copy each; 32 at most), not every
+  unit's; a watched unit gone or whose slot another took is left out. Test on Dawn: the same positions as a full sync.
+- Not adopted here: FortressLife, SettlementLife and agent-units' think still poll every unit each sync; DA-A6's row now
+  says it's built on these events and watched units.
+- Measured: the atlas game after Build, agents' sync 9 KB a sync (96 B a unit now, was 80). GPU tier 149/149 (the road
+  ride test used a 5-vec4 record of its own: now UNIT_V); the lab's raid, follow and carts pass.
+- Hacks and limits: 32 watched units a sync; the arrival radius is per field (every group on a field shares it); a unit
+  that arrives and is pushed past the leaving radius is told again when it comes back.
+
