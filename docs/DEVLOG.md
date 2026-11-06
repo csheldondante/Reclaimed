@@ -18602,3 +18602,24 @@ Design note before code (AGENT_RULES 1). DESIGN.md section 13.
   doors the reach (column-level, the agents' rule) does reach — the walkable way between those terraces winds through
   columns a straight cell-to-cell lane can't follow. Not committed: a design choice for main (routes over the walkable
   columns, or roads that grade the land / ramps as openings).
+
+## 2026-11-05 — round 128o (`onetown`, DA-A7 C): design note — kinematic trips on the routes
+
+Design note before code (AGENT_RULES 1). DESIGN.md section 12.
+- **State (GPU only):** per unit slot the ride state (roadride.wgsl `rideState`): mode (off / on a trip / at its goal),
+  the destination slot, the edge it's on (from node, to node). The unit's own record holds where it is; the ride
+  kernel writes its x, y and velocity each tick along the edge at the unit kind's speed (`G.dt`), and the steer word
+  says "on a trip" so units.wgsl doesn't move it — only its height rides the surface under it (the one nearest its last
+  height: a step on the route is taken, never a stall). No steering, no crowd shove, no link check for a rider.
+- **Joining:** a unit off the network follows the road field (agents.wgsl ROAD_FIELD) as before; standing on an edge's
+  band it's put on that edge where it stands and rides toward the end cheaper to its nearest goal. **Leaving:** at the
+  goal's node the last leg to the goal point is the same interpolation; at the goal it stands. Knocked down, thrown,
+  swinging (not walking) — off the trip, back to its field, and it rejoins.
+- **Routes:** the next-hop tables (rideHops, Bellman-Ford on the GPU, MAX_DESTS 64, MAX_NODES 1024) stay the cached
+  routes for now; a compact route buffer replacing them is a follow-up (flagged). Lanes, queueing and passing: later.
+- **Deleted:** JOIN_R, AT_NODE, AT_GOAL, LOST, LAST_LOST, STUCK_SPEED/TICKS, COOL_TICKS, NEAR_GOAL and the ride's
+  steering; the ride's own copy of the lattice (it takes common.wgsl's).
+- **Transfers:** none (1b): kind speeds go into the ride's params with the rest, per change; nothing read back.
+- **Edge cases as tests:** the GPU test: a rider moves along its edges at its speed and stands at its goal, through a
+  node where the ground steps more than a walker's STEP (it is placed, not walked); knocked off it rejoins. Gate:
+  scripts/lab/fortressharvest.mjs passes and grain comes home.
