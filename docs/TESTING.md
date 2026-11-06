@@ -154,6 +154,21 @@ looks, frame time on a real compositor, input, the phone. Start with the smoke s
 the integration scripts the change needs. The shared-browser rules hold for those (runner lease; ask main where the
 agent rules say so). If a check can be written against a contract buffer or a pure module, write it in tier 1 or 2.
 
+## The tile gate's fill rate (scripts/tilegate.mjs, round 128o, DA-B27)
+
+The page measures the tiles' fill rate as it runs (render/tilecalib.ts), and that rate sets the zoom floor and how far
+the atlas grows. It follows the machine's load during the run: on one build, phone z8's fast pan went from ok to 9%
+undrawn between two runs. So the gate pins it:
+- `node scripts/tilegate.mjs --update` runs unpinned, measures each screen's rate, and records it in
+  `data/baselines/tilegate/<adapter>/tilerate.json` (tiles a second), beside that adapter's goldens.
+- Every other run pins each screen's page at the recorded rate (`&tilerate=`). The JSON's `pins` says what each
+  screen ran at.
+- `--tilerate N` pins N (tiles a frame at 60 Hz) instead.
+- No rate recorded for an adapter: the run is unpinned, and a note says so.
+
+The last adapter seen is kept in `.testcache/tilegate-adapter`, so the first page loads pinned. A page loaded under
+another adapter's rate is loaded again.
+
 ## What isn't covered yet
 
 - Integrity's glue (game/integrity.ts: takeExternal, wakeResting, restRigid, the judge's passes) lives in a

@@ -81,10 +81,29 @@ const update = has('update');
 const golden = !has('no-golden');
 const doPan = !has('no-pan');
 const extra = opt('extra', '');
-// (round 128o, DA-B27) --tilerate N: the tiles' fill rate pinned (tiles a frame at 60 Hz, render/tilecalib.ts ?tilerate=):
-// the zoom floor and the atlas's growth then don't follow what this run happened to measure. Unpinned, each failing
-// view's line says the rate it measured, the floor and the atlas's slots, so two runs can be told apart.
-const tileRate = opt('tilerate', '');
+// (round 128o, DA-B27) The tiles' fill rate pinned (render/tilecalib.ts ?tilerate=, tiles a frame at 60 Hz): the zoom
+// floor and the atlas's growth follow the page's measured rate, which follows this machine's load in that run, so a
+// gate that measured it judged a different floor each run (phone z8's fast pan: ok to 9% undrawn on one build). The
+// rate is recorded per adapter and screen beside the goldens (<baselines>/<adapter>/tilerate.json, tiles a second),
+// written by --update (which runs unpinned to measure it), and pinned on every other run; --tilerate N pins N instead.
+// The adapter is known once a page is up: the last one seen is kept in .testcache/tilegate-adapter, and a page loaded
+// under another adapter's rate is loaded again under its own. No rate recorded: the view runs unpinned, noted.
+const tileRateOpt = opt('tilerate', '');
+const ADAPTER_FILE = path.join('.testcache', 'tilegate-adapter');
+const lastAdapter = fs.existsSync(ADAPTER_FILE) ? fs.readFileSync(ADAPTER_FILE, 'utf8').trim() : '';
+const rateFile = (adapter) => path.join(baseRoot, adapter, 'tilerate.json');
+const ratesOf = (adapter) => (adapter && fs.existsSync(rateFile(adapter)) ? JSON.parse(fs.readFileSync(rateFile(adapter), 'utf8')) : {});
+/** the rate a screen's page is pinned at (tiles a frame at 60 Hz), or '' */
+const pinFor = (adapter, sk) => {
+  if (tileRateOpt) return tileRateOpt;
+  if (update) return '';
+  const r = ratesOf(adapter)[sk];
+  return r ? (r / 60).toFixed(4) : '';
+};
+/** what --update measured, by screen (tiles a second) */
+const measuredRates = {};
+/** the rate each screen's page ran pinned at (null: unpinned) */
+const pins = {};
 const waitMs = Number(opt('wait', 35000));
 const CRIT = { fps: 58, max: 33.4, p99: 20 };
 const SCREENS = {
@@ -360,18 +379,33 @@ for (const sk0 of screens) {
     p.on('console', (m) => {
       if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) fails.push(`${sk}: console error ${m.text().slice(0, 200)}`);
     });
-    // (a fixed spot, world, time of day and season; nothing saved or loaded)
-    const u = `${url}/?bgcheck=1&skipmenu=1&level=atlas&tutorial=0&worldsave=0&world=tilegate${mode === 'run' ? '&run=bell' : '&at=15024,14337'}${mode === 'w384' ? '&win=384' : ''}&tod=0.42&day=100000&season=0.3&hitch=1&hitchhud=0${sc.q}${tileRate ? `&tilerate=${tileRate}` : ''}${extra}`;
-    await p.goto(u, { waitUntil: 'load' });
-    // (the level made — its boot marks, src/perf/boot-marks.ts — then --wait ms as before)
-    await p.waitForFunction(() => (window.__boot?.at['level-ready'] && window.reclaimed?.stream && window.reclaimed?.scene) || document.querySelector('.fatal'), { timeout: 240000, polling: 250 });
-    await sleep(waitMs);
-    // (the adapter: its baselines)
+    // (a fixed spot, world, time of day and season; nothing saved or loaded; the fill rate pinned as recorded)
+    const urlFor = (pin) => `${url}/?bgcheck=1&skipmenu=1&level=atlas&tutorial=0&worldsave=0&world=tilegate${mode === 'run' ? '&run=bell' : '&at=15024,14337'}${mode === 'w384' ? '&win=384' : ''}&tod=0.42&day=100000&season=0.3&hitch=1&hitchhud=0${sc.q}${pin ? `&tilerate=${pin}` : ''}${extra}`;
+    const load = async (pin) => {
+      await p.goto(urlFor(pin), { waitUntil: 'load' });
+      // (the level made — its boot marks, src/perf/boot-marks.ts — then --wait ms as before)
+      await p.waitForFunction(() => (window.__boot?.at['level-ready'] && window.reclaimed?.stream && window.reclaimed?.scene) || document.querySelector('.fatal'), { timeout: 240000, polling: 250 });
+      await sleep(waitMs);
+    };
+    let pin = pinFor(lastAdapter, sk);
+    await load(pin);
+    // (the adapter: its baselines, its recorded rate)
     const adapter = await p.evaluate(async () => {
       const a = await navigator.gpu.requestAdapter();
       const i = a?.info ?? {};
       return `${i.vendor || 'unknown'}-${i.architecture || 'unknown'}`.replace(/[^a-z0-9-]/gi, '_').toLowerCase();
     });
+    if (adapter !== lastAdapter) {
+      fs.mkdirSync(path.dirname(ADAPTER_FILE), { recursive: true });
+      fs.writeFileSync(ADAPTER_FILE, adapter);
+      const own = pinFor(adapter, sk);
+      if (own !== pin) {
+        pin = own;
+        await load(pin);
+      }
+    }
+    if (!pin && !update) notes.push(`${sk}: the tiles' fill rate unpinned (none recorded for ${adapter}: run --update) — its floor follows this run's load`);
+    pins[sk] = pin || null;
     baseDir = path.join(baseRoot, adapter);
     fs.mkdirSync(baseDir, { recursive: true });
     // (the page's frame rate under the cap, a second of it: under 55 the frame criteria can't be judged here)
@@ -489,11 +523,19 @@ for (const sk0 of screens) {
         rows.push({ view: tag, mode: `fast ${fastV}`, ...m, ok: !f.length });
         console.log(`${tag} fast ${fastV}: ${f.length ? 'FAIL ' + f.join('; ') : 'ok'} — ${JSON.stringify(m)}`);
       }
+    // (--update: the rate this run measured, recorded for the next runs to pin)
+    if (update) measuredRates[sk] = await p.evaluate(() => window.reclaimed.renderer?.tiles?.cal?.stats.rate ?? null);
     await p.close();
   }
 }
+if (update && baseDir) {
+  const rec = { ...ratesOf(path.basename(baseDir)) };
+  for (const [k, v] of Object.entries(measuredRates)) if (v) rec[k] = +v.toFixed(2);
+  fs.writeFileSync(path.join(baseDir, 'tilerate.json'), JSON.stringify(rec, null, 1) + '\n');
+  console.log(`tiles' fill rates recorded (tiles/s): ${JSON.stringify(rec)}`);
+}
 const secs = Math.round((Date.now() - t00) / 1000);
-fs.writeFileSync(path.join(outDir, 'tilegate.json'), JSON.stringify({ url, secs, hz, loadFrames, chromeArgs, baselines: baseDir, fails, notes, rows }, null, 1));
+fs.writeFileSync(path.join(outDir, 'tilegate.json'), JSON.stringify({ url, secs, hz, loadFrames, chromeArgs, baselines: baseDir, pins, fails, notes, rows }, null, 1));
 console.log(`\n${fails.length ? `GATE FAILED (${fails.length})` : 'GATE PASSED'} in ${secs} s — ${path.join(outDir, 'tilegate.json')}`);
 for (const f of fails) console.log(`  ${f}`);
 for (const n of notes) console.log(`  note: ${n}`);
