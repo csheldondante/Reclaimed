@@ -18075,3 +18075,46 @@ back put it right.
 ## 2026-11-05 — line endings normalised to LF, pinned by .gitattributes (round 128o)
 
 Agents and editors drifted files between CRLF, LF and mixed (261 CRLF, 911 LF, 12 mixed in the index). Merges then showed whole-file diffs (phonefix: ~4.7k raw lines for +796/−92 real), hid real changes and conflicted. `.gitattributes` now says `* text=auto eol=lf`: every text file is stored and checked out as LF on every OS, and git converts on commit, so a CRLF editor can no longer leak into the repo. Binaries are marked `binary`. The renormalising commit changes only line endings (`git diff --ignore-cr-at-eol` is empty apart from .gitattributes). Branches made before it merge with `-X renormalize`.
+
+## 2026-11-05 — the transfer gate: every readback, and every large copy and upload, in one table (round 128o, DA-G1)
+
+Why: the audits found the phone unplayable after Build with timed readbacks nobody had counted (the world API's
+mirror at 139 MB/s, the field reader at 16 MB/s, unit sync every frame, the sandbox frame's reads). The user: "It also
+makes terrible choices for CPU readback", and mid-task: "flag and scrutinize any large data readbacks or copies and try
+to come up with a way to avoid them and to avoid computation when possible" (AGENT_RULES §1b). DESIGN.md §24 says
+nothing reads back per frame and CPU reads are small, after edits. A rule nothing checks drifts, so every transfer that
+matters is now in one table and a new one is a test failure.
+
+- `src/gpu/transfers.ts` (one table) lists each GPU→CPU read by file and enclosing function, with what moves, why,
+  its rate (frame, timed, edit, demand) and whether it runs in fortress play (yes, flag, debug, no). Read wrappers
+  (`WorldCore.readBuffer`/`readTexture`/`readWindField`, the mirror's `attachSim`, `Agents.sync`, `Agents.reader`,
+  `requestReach`, Integrity's column copy, `regionLand`) carry the pattern of their calls, and each caller is its own
+  `via` entry, since the caller sets the rate.
+- Copies (`copyBufferToBuffer`, `copyTexture*`, `copyBufferToTexture`) and uploads (`writeBuffer`, `writeTexture`) are
+  in the same table unless the call shows its size as a constant of at most 64 KB (`SMALL_BYTES`: a literal, a file
+  constant, a typed array built with a known length), or the copy is the staging copy of a read in the same function.
+  Each says `small` or `large`. Why 64 KB: the uniform-binding limit, and a size where a per-frame transfer starts to
+  show on a phone's shared memory bus. Sizes the source doesn't show are estimates from reading the code, marked so.
+- `test/unit/transfers.test.ts` scans src/ with `test/support/source-scan.ts`, a small lexer (TypeScript 7 ships no JS
+  compiler API): comments and strings never count, an anonymous callback's transfer belongs to the named function
+  around it, and keys are file + function, not lines, so moving code doesn't churn the table. It fails on an unlisted
+  transfer, on a listed one that's gone or whose count changed, and on a read every frame or on a timer in play, or a
+  large copy or upload every frame or on a timer in play, that lacks `violates` and a BACKLOG row.
+- Seeded from seven read-only tracing passes over every site: 283 entries. Reads: 157 calls in 124 entries (52
+  functions with `mapAsync`, 8 wrappers), 41 marked `violates`, 27 of them in default fortress play. Copies: 47 calls in
+  32 entries, 24 large, 6 marked. Uploads: 203 calls in 127 entries, 46 large, 1 marked.
+- The worst, in default fortress play: the edit brush and the structure pass each copy the whole layers buffer
+  (16-25 MB) back every tick on desktop (`?inplace=1` is only set on the phone tier; new row DA-B8); unit sync every
+  frame (DA-B2); physics body stats every tick (DA-E5); every CPU body's voxels re-uploaded every frame (up to 512 KB,
+  DA-E5); the coarse world's 8 MB grid copied back every 4th frame (new DA-B9); the whole wind field copied while any
+  body exists (new DA-B10); the mirror's 250 ms timer, started by whichever of 16 callers comes first, Build among them
+  (DA-B1); the FieldReader's ~5 MB every 500 ms (DA-B1); the sandbox frame's surface, veg, water, particle and wind
+  reads (DA-B5, DA-B6); reach re-asked every 3 s (DA-A3); the mesh pool and instance counts (DA-P8). New row DA-B7
+  holds the timed reads no other row covered (the 400 ms region-save sweep, creatures' group sums, the menu's dust).
+- Also marked, though event-driven: whole-buffer reads after edits (Integrity's 16 MB copy after each slide, the
+  physics wake's layers per touch, the vertical slide), against §24's "small".
+- Hacks and limits: the gate is lexical. It can't size a transfer whose size isn't a constant in the call, so those are
+  all listed and their sizes are estimates; a transfer listed `small` that grows past 64 KB at run time won't fail it.
+  Read wrappers with generic names (`.sample(`, `.refresh(`, `.pick(`) aren't gated by their calls; their entries
+  describe the callers. Rates and "in play" come from reading the code, not from running it. `perf/gpumem.ts` patches
+  `GPUBuffer.prototype.mapAsync` to measure reads; it is not a read and isn't listed.

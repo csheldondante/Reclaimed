@@ -18,7 +18,7 @@ The user: "Please work on making the code match the design which is a lot cleane
 
 | id | item | size | status |
 |---|---|---|---|
-| DA-G1 | Readback allow-list test: every `mapAsync` site named in one list with reason and rate; a new one fails | S | next |
+| DA-G1 | Readback allow-list test: every `mapAsync` site named in one list with reason and rate; a new one fails. Widened mid-task (AGENT_RULES §1b): large GPU→GPU copies and CPU→GPU uploads in the same table | S | done (`gates`: src/gpu/transfers.ts, test/unit/transfers.test.ts; 283 entries: 157 reads, 47 copies, 203 uploads; 48 marked `violates`) |
 | DA-G2 | Import-boundary test: modules cross boundaries only through shared contracts (DESIGN.md) | S | next |
 | DA-G3 | Material limits documented; test that the TS and WGSL material tables agree | S | next |
 | DA-G4 | Writing lint over every player-facing string, not opt-in per test | S | next |
@@ -37,6 +37,10 @@ The user: "Please work on making the code match the design which is a lot cleane
 | DA-B4 | Reach solve converges on the GPU; one small read per edit (§13) | M | next |
 | DA-B5 | Fortress-mode sandbox frame reads off; 30 fps cap while building or paused (§24) | S | next |
 | DA-B6 | GPU tree query for woodcutters (no veg readback); GPU wind reduction for storms (no wind-texture readback) (§24) | M | next |
+| DA-B7 | The standing timed reads no other row covers (found by DA-G1, src/gpu/transfers.ts): the region-save sweep polls changed regions every 400 ms (read on the edit instead, §23); creatures' group sums every 10 ticks (`?life=`); the menu's dust watch every 1 s (§24) | S | open |
+| DA-B8 | Column passes write the layers in place on every tier: the edit brush (run every tick on sandbox levels, the atlas included) and the structure pass copy the whole layers buffer (16-25 MB) back every tick unless `?inplace=1`, which only the phone tier sets; one solver, measured (found by DA-G1, src/gpu/transfers.ts; §24, AGENT_RULES §1b) | M | open |
+| DA-B9 | The coarse world swaps its two cell buffers instead of copying the whole 8 MB grid back every 4th frame, and steps only where something moves (FP3 spread the cost, didn't remove it; found by DA-G1) | S | open |
+| DA-B10 | The wind field is updated and copied back only round what stirs it: while any physics body exists the whole field (~410 KB) is copied every update (`WindFieldSystem.wholeWhile`; found by DA-G1) | S | open |
 | DA-L1 | One run clock for economy, day/night, raids and cards (§21) | M | open |
 | DA-L2 | Mana ledger that can be spent (§14) | S | open |
 | DA-L3 | Holdings adapter: fortress soldiers and stores as holdings cards lock and spend (§20, §21) | M | open |

@@ -85,6 +85,36 @@ Dawn backends on this machine: D3D12 (the default) works. D3D11 (`DAWN_FLAGS=bac
 tiny world's pipelines took over 4 minutes. Vulkan has no `vulkan-1.dll` here. Dawn options go through
 `DAWN_FLAGS="a b"`, read by test/gpu/setup.ts.
 
+## The architecture gates (round 128o, BACKLOG DA-G1..G4)
+
+Unit tests that keep the code from drifting from DESIGN.md unnoticed. They read the source, not the running game, through
+`test/support/source-scan.ts`: a lexer (TypeScript 7 has no JS compiler API) that blanks comments and string literals,
+names the function an offset sits in, sizes a transfer when the call shows it, and lists a file's imports and
+literals. Each gate has one checked-in table, and a known breach is an entry with a BACKLOG id, never a silent pass.
+
+### The transfer gate (test/unit/transfers.test.ts, DA-G1)
+
+Every GPU→CPU read, and every GPU→GPU copy or CPU→GPU upload the call doesn't show to be at most 64 KB
+(`SMALL_BYTES`), is an entry in `src/gpu/transfers.ts`: kind (`read`, `copy`, `upload`), file, enclosing function, how
+many calls, what moves and its bytes, why, its rate (`frame`, `timed`, `edit`, `demand`, or `via` for a read wrapper),
+whether it runs in fortress play (`yes`, `flag`, `debug`, `no`) and, for a copy or upload, `small` or `large`. The gate
+finds every `.mapAsync(`, every call of a listed read wrapper (an entry with `wrapper: /pattern/`, e.g.
+`WorldCore.readBuffer`, `attachSim` which starts the mirror's timer, `Agents.sync`), and every copy and upload. It fails
+when a transfer isn't listed, when a listed one is gone or its count changed, and when a read every frame or on a timer
+in play, or a large copy or upload every frame or on a timer in play, lacks `violates` and a `backlog` row. To add one:
+
+1. Ask whether the consumer can run where the data is (DESIGN.md §24, docs/AGENT_RULES.md §1b). Send main the design
+   note first.
+2. Run `npx vitest run --project unit transfers`. The failure names the site as `kind file#Class.method` and its line.
+3. Add the entry with that kind, `file` and `fn`. A new helper others call to read gets `wrapper: /its call pattern/`
+   and `rate: 'via'`, and each caller gets an entry with `via: 'file#fn'` of the wrapper. A frame or timed read in play,
+   or a large frame or timed copy or upload in play, also needs `violates` and a `backlog` id; there's no way to list
+   one as fine. A small upload can leave the table by showing its size in the call (`new Uint32Array([…])`, a constant).
+
+What it can't see: sizes the call doesn't show (those are listed, with estimated bytes; a `small` one that grows past
+64 KB at run time won't fail it), read wrappers with generic names (`.sample(`, `.refresh(`), and data flow (a rate set
+by a timer two calls away is listed by what the code does today, from reading it).
+
 ## When to use the browser
 
 Use it only for what Node can't show: the page's boot (the build, the menu, the streamer, IndexedDB), drawing and
