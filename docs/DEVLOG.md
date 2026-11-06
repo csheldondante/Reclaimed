@@ -18429,3 +18429,31 @@ The linger existed for the sandbox's pours only (DEVLOG round 83: "a pour lands 
   cost of not reading back); a candidate misses the AWAY lists' slow turns while it is one; scripts/culltest.mjs not
   run (it needs a dev server; it sets settletol=0, so it doesn't reach the hold).
 
+## 2026-11-05 — round 128o (`phonefix`, DA-B19): the level's surface read — design note, no code (for the user)
+
+- What it is: frame.ts reads the whole window's surface buffer back every second (400 KB at 320², 0.4 MB/s, a new
+  buffer a read) into `scene.surfaceCache`, seeded from the generated map (`map.surface`) at the start and after each
+  slide. `scene.heightAt` answers from it, synchronously, for: the camera's turn pivot and the fly toggle
+  (`camera.groundAt`, a ray marched over many columns, on a turn or a toggle), the free camera's floor (every frame,
+  only while flying), the fortress's ground (`io.ground`: kept per column as first read; the pieces' and the raiders'
+  heights), places and structures placed by the editor, and the sandbox tools' material checks (`sfMat`).
+- Why not simply the mirror's pages (option a): the surface buffer is derived, made for a chunk only when it wakes or
+  is prepared (the fortress calls `core.prepareArrived()` before its one read); a page of it read for a chunk that
+  never ran can be wrong, and seeding those from the generated map keeps a second copy that drifts from the GPU's after
+  any edit. Two copies that can disagree is the design bug AGENT_RULES §1 names.
+- Why not keep it (option c): it reads 0.4 MB a second for questions asked on a turn, a toggle or once per column.
+- Recommended (option b, each consumer to the source that is true for it, answered on the GPU, when asked):
+  1. The camera's pivot and fly toggle: the renderer's pick at the screen's middle (Renderer.pick, already a small async
+     read of what is drawn), when the turn or toggle happens. The pivot lands a frame later.
+  2. The free camera's floor while flying: the world API mirror's `terrain.heightAt` (levels pages, read when asked
+     and current while that land sleeps). This is the sandbox's flyer only, not fortress play.
+  3. The fortress's ground: one GPU query of its box's column tops from the layers (the columns themselves, always
+     made, unlike the derived surface; a colquery-style pass, 4 B a column: ~160 KB once at a 200² box, where it reads
+     the whole surface once today), kept by the fortress as now ("the ground as first read"), its own claims and digs
+     changing it. The pieces and the raiders read the fortress's.
+  4. The editor's places and structures, and the sandbox tools' materials: the mirror (`terrain.heightAt`,
+     `materialAt`), the sandbox only.
+  5. Then `surfaceCache`, its seeding on slides and the 1 Hz read go.
+- Cost and risk: the camera's pivot becomes async (a frame); the fortress's start query is new GPU code (a test on
+  Dawn against the CPU's column tops); nothing else changes for the player. In fortress play no timed read remains.
+
