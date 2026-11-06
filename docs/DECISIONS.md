@@ -3,6 +3,13 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-11-05 — round 128o (session 5) — the work plan approved: make the code match the design
+
+- The user approved the plan (https://claude.ai/artifact/JPNnQEzZPggrTzzv6kiKxA; BACKLOG DA-*): "Yes that sounds like a good first step and plan. It is good we did this audit because the current implementation diverges significantly from what we discussed and it breaks many engineering rules like duplicating systems. It also makes terrible choices for CPU readback."
+- Physics, verbatim: "Physics we know is a gap and we know buildings from towns don't yet use the physics lattice code. That was planned but never done only the spawned building use that code and the physics labs which are very fun." → DA-E8 includes town buildings on the lattice.
+- "Please work on making the code match the design which is a lot cleaner and intentionally encapsulates and avoids duplicate designs or logic. Let's write this well so it actually works and doesn't have the bugs that slow down development."
+- "I would love to expand the material table by the way. But that can come later. The town and combat sounds like it is a total waste and the fact that it implemented 2 agent systems, opportunities but then a parallel system for raids is a huge huge red flag." → DA-E1 (later); DA-L4 deletes the parallel raid loop; DA-A6 one crowd; DA-G2 import boundaries so a parallel system can't be built unnoticed.
+
 ## 2026-11-05 — round 128o (session 5) — the concise design, system by system
 
 - The user: "Can you systematicaly work through each system with me and record my notes and draft a more concise design doc (the existing one can be compared section by section to it by other agents)". The result is `.claude/docs/design/DESIGN.md`, 25 sections, all agreed; it is now the design authority ("Stick with the convention I believe initially it was .Claude folder but I'm not certain"). Artifact: https://claude.ai/artifact/CwbhsNZHupbLPXu5ZK89Up
