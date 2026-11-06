@@ -23,6 +23,8 @@ import type { FactionId } from '../api/contracts/world';
 import type { Agents, AgentEvent, AgentState, Target } from '../agents/agents';
 import { MAT } from '../world/materials';
 import { timed } from '../gpu/cpustat';
+import { ACTOR, NO_FACTION, type CombatSpec } from '../agents/notice';
+import { cellPos } from '../world/lattice';
 
 /** GPU hit points per contract health point */
 const HPK = 3;
@@ -82,6 +84,10 @@ const TARGETS = 8;
 const REACH = 1.5;
 const STRIKE = 1.0;
 const LEASH = 28;
+/** (round 128p) the rules' height limit: two farther apart in height don't fight (one up on the wall-walk) */
+const HEIGHT_LIMIT = 1.6;
+/** the agents' unit slots (agents.ts MAX_UNITS): a GPU id's slot */
+const MAX_SLOT = 8192;
 /** how near a goal counts as there */
 const THERE = 1.6;
 
@@ -110,6 +116,8 @@ export interface UnitRec {
   group: number;
   /** what it's after (a unit or an actor), and since when it noticed */
   target: UnitId | string | null;
+  /** (round 128p) how near the nearest hostile hunting it is (Infinity: none; the GPU's — agents/notice.ts) */
+  hunted?: number;
   cool: number;
   /** the goal key it holds */
   goal: string | null;
@@ -150,7 +158,30 @@ export class AgentUnits implements Units {
    * can reach whom: the fortress's raiders don't hunt people behind a shut wall or up on the wall-walk, and its archers
    * hold their places and shoot instead of closing in. Asked of hostiles noticing and of defenders choosing.
    */
-  mayFight: ((u: UnitView, foe: UnitView) => boolean) | null = null;
+  /**
+   * (round 128p, DA-B22 (c)(3): the rule as data, not a callback — the GPU chooses who fights whom, agents/notice.ts)
+   * The game's rules over who may take on whom: on — the posted (an archer on the wall) take no one on; where a raider
+   * is involved neither side may be one in at home or a cart, nor stand more than HEIGHT_LIMIT above the other, nor on
+   * the other side of the wall (`sideAt`: a column's side, the same number on the same side) unless it's `open`.
+   * Null: off — any hostile and any peaceful one of another faction.
+   */
+  fightRules(r: { open: boolean; sideAt: (x: number, y: number) => number } | null): void {
+    this.rules = r;
+    this.agents.notice.setRules({ on: r !== null, open: r?.open ?? false, heightLimit: HEIGHT_LIMIT, leash: LEASH });
+    this.uploadSides();
+  }
+  /** (round 128p) who neither fights nor is fought while the rules are on (in at home), and who holds its post */
+  fightFlags(noFight: Iterable<UnitId>, posted: Iterable<UnitId>): void {
+    this.noFight = new Set(noFight);
+    this.posted = new Set(posted);
+  }
+  private rules: { open: boolean; sideAt: (x: number, y: number) => number } | null = null;
+  private noFight = new Set<UnitId>();
+  private posted = new Set<UnitId>();
+  private sideMap: Uint32Array | null = null;
+  private factionNo = new Map<FactionId, number>();
+  /** each unit's combat word as last written (by GPU id): written again only when it changes */
+  private combatKey = new Map<number, string>();
   /** live units at the last sync, and how long that sync took to come back (ms) */
   stats = { units: 0, hunting: 0, syncMs: 0, syncs: 0 };
 
@@ -312,6 +343,82 @@ export class AgentUnits implements Units {
     if (!this.actors.includes(actor)) this.actors.push(actor);
   }
 
+  /** (round 128p) the side map the rules hold, on the GPU: every window column's side (uploaded when it changes) */
+  private uploadSides(): void {
+    const r = this.rules;
+    if (!r) {
+      this.sideMap = null;
+      this.agents.notice.setSides(null);
+      return;
+    }
+    const { w, h } = this.agents.dims;
+    const map = new Uint32Array(w * h);
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        const [px, py] = cellPos(x, y);
+        map[y * w + x] = r.sideAt(px, py);
+      }
+    const old = this.sideMap;
+    if (old && old.length === map.length && old.every((v, i) => v === map[i])) return;
+    this.sideMap = map;
+    this.agents.notice.setSides(map);
+  }
+
+  /** (round 128p) a unit's part in the fighting, as the GPU's rules read it (agents/notice.ts) */
+  private combatOf(u: UnitRec): CombatSpec {
+    let faction = NO_FACTION;
+    if (u.v.faction !== null) {
+      let n = this.factionNo.get(u.v.faction);
+      if (n === undefined) {
+        n = this.factionNo.size;
+        if (n >= NO_FACTION) throw new Error(`units: more than ${NO_FACTION} factions`);
+        this.factionNo.set(u.v.faction, n);
+      }
+      faction = n;
+    }
+    const j = u.v.job;
+    const looks = u.v.hostile || u.v.role === 'guard';
+    return {
+      faction,
+      hostile: u.v.hostile,
+      guard: u.v.role === 'guard',
+      noFight: this.noFight.has(u.v.id) || u.v.role === 'cart',
+      posted: this.posted.has(u.v.id),
+      raider: u.v.role === 'raider',
+      bound: u.bound !== undefined || !u.v.alive,
+      sight: looks ? u.sight : 0,
+      home: !u.v.hostile && j.kind === 'guard' ? j.at : null,
+    };
+  }
+
+  /** (round 128p) its combat word written if it changed */
+  private syncCombat(u: UnitRec): void {
+    const c = this.combatOf(u);
+    const key = JSON.stringify(c);
+    if (this.combatKey.get(u.gpu) === key) return;
+    this.combatKey.set(u.gpu, key);
+    this.agents.notice.set(u.gpu % MAX_SLOT, c);
+  }
+
+  /** (round 128p) a target code (agents/notice.ts) as the game's target */
+  private targetOf(code: number): UnitId | string | null {
+    if (!code) return null;
+    if (code & ACTOR) return this.actorsSent[code & ~ACTOR]?.id ?? null;
+    return this.byGpu.get(code - 1) ?? null;
+  }
+
+  /** (round 128p) the game's target as a code, or null when it isn't one the GPU knows */
+  private codeOf(t: UnitId | string): number | null {
+    if (typeof t === 'string') {
+      const i = this.actorsSent.findIndex((a) => a.id === t);
+      return i >= 0 ? (ACTOR | i) >>> 0 : null;
+    }
+    const u = this.recs.get(t);
+    return u && u.v.alive ? u.gpu + 1 : null;
+  }
+  /** the actors as handed to the GPU this frame (a target code's index) */
+  private actorsSent: Actor[] = [];
+
   shift(dx: number, dy: number, _dz: number): void {
     // (the agents move their own units on the GPU; what's kept here in window coordinates moves with them)
     const m = (p: V2): V2 => [p[0] - dx, p[1] - dy];
@@ -327,6 +434,9 @@ export class AgentUnits implements Units {
     }
     for (const g of this.goals) if (g) g.at = m(g.at);
     this.reseedGoals();
+    // (round 128p: the side map is the window's columns: made again where the window now lies)
+    this.uploadSides();
+    this.combatKey.clear();
   }
 
   update(dt: number): void {
@@ -545,6 +655,9 @@ export class AgentUnits implements Units {
       u.v.heading = s.heading;
       u.v.health = s.hp / HPK;
       u.seenState = s.state;
+      // (round 128p: whom it's after — the GPU's choice, agents/notice.ts)
+      u.target = this.targetOf(s.target);
+      u.hunted = s.hunted;
       if (s.state === 'swing') u.v.state = 'swing';
       else if (s.state === 'tumble') u.v.state = 'hurt';
       else if (s.state === 'chase') u.v.state = 'chase';
@@ -568,8 +681,12 @@ export class AgentUnits implements Units {
         if (!u) continue;
         const by = typeof e.hit === 'number' ? (this.hitBy.get(e.hit) ?? null) : null;
         for (const f of this.hurt) f(this.view(u), e.damage / HPK, by);
-        // (struck by someone: a guard or a worker on guard turns on it)
-        if (by !== null && !u.v.hostile && u.target === null && typeof by === 'number' && this.recs.get(by)?.v.hostile) u.target = by;
+        // (struck by someone: a guard or a worker on guard turns on it — given it on the GPU, round 128p)
+        if (by !== null && !u.v.hostile && u.target === null && typeof by === 'number' && this.recs.get(by)?.v.hostile) {
+          u.target = by;
+          const code = this.codeOf(by);
+          if (code !== null) this.agents.notice.aim(u.gpu % MAX_SLOT, code);
+        }
       } else if (e.type === 'death') {
         const id = this.byGpu.get(e.id);
         const u = id !== undefined ? this.recs.get(id) : undefined;
@@ -598,6 +715,12 @@ export class AgentUnits implements Units {
         u.v.hostile = false;
         this.byGpu.set(e.id, u.v.id);
         for (const f of this.raised) f(this.view(u), e.group);
+      } else if (e.type === 'noticed') {
+        // (round 128p: a hostile took a new target, on the GPU)
+        const id = this.byGpu.get(e.id);
+        const u = id !== undefined ? this.recs.get(id) : undefined;
+        const t = this.targetOf(e.target);
+        if (u && t !== null) for (const f of this.noticed) f(this.view(u), t);
       } else if (e.type === 'decayed') this.fallen.delete(e.id);
       else if (e.type === 'arrived') {
         // (round 128o, DA-A6) a working unit's arrival: its routine's
@@ -612,54 +735,26 @@ export class AgentUnits implements Units {
     if (this.fallen.size > 600) for (const [g, id] of this.fallen) if (!this.recs.has(id)) this.fallen.delete(g);
   }
 
-  /** (m4) the game's rule over who may take on whom (mayFight) */
-  private fights(u: UnitRec, foe: UnitRec): boolean {
-    return !this.mayFight || this.mayFight(u.v, foe.v);
-  }
-
-  /** who's hunting whom; who's striking; the jobs' groups */
+  /**
+   * who's hunting whom; who's striking; the jobs' groups. (Round 128p, DA-B22 (c)(3): who takes on whom is the GPU's —
+   * agents/notice.ts, each unit's target in its state, the rules as data — not a search here over every unit.)
+   */
   private think(dt: number): void {
     // (LW1: the raised are their raiser's — not hunted for here, nor given jobs)
     const live = [...this.recs.values()].filter((u) => u.v.alive && u.bound === undefined);
+    for (const u of this.recs.values()) if (u.v.alive) this.syncCombat(u);
+    // (the actors this frame: whom hostiles may hunt beside the units)
+    this.actorsSent = this.actors.slice(0, 8);
+    this.agents.notice.setActors(this.actorsSent.map((a) => ({ at: a.alive() ? a.position() : null, faction: a.faction !== null ? (this.factionNo.get(a.faction) ?? NO_FACTION) : NO_FACTION })));
     const hostiles = live.filter((u) => u.v.hostile);
-    const enemiesOf = (u: UnitRec) => (x: UnitRec) => x.v.alive && x.v.hostile !== u.v.hostile && (x.v.faction !== u.v.faction || x.v.hostile);
     const d2 = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1]);
-    // hostiles: notice what's in sight; hunt it; give up out of sight
+    // hostiles: hunt what the GPU gave them; else their work, wandering
     let hunting = 0;
     for (const h of hostiles) {
       if (h.v.job.kind === 'attack') {
         if (!this.posOf(h.v.job.target)) h.v.job = { kind: 'idle' };
       }
-      if (h.target !== null) {
-        const p = this.posOf(h.target);
-        const t = typeof h.target === 'number' ? this.recs.get(h.target) : undefined;
-        if (!p || d2(p, h.v.at) > Math.max(h.sight * 2, LEASH) || (t && !this.fights(h, t))) h.target = null;
-      }
-      if (h.target === null) {
-        let best: UnitId | string | null = null;
-        let bd = h.sight;
-        for (const a of this.actors) {
-          const p = a.alive() ? a.position() : null;
-          if (!p || (a.faction !== null && a.faction === h.v.faction)) continue;
-          const d = d2(p, h.v.at);
-          if (d < bd) {
-            bd = d;
-            best = a.id;
-          }
-        }
-        for (const x of live) {
-          if (!enemiesOf(h)(x) || !this.fights(h, x)) continue;
-          const d = d2(x.v.at, h.v.at);
-          if (d < bd) {
-            bd = d;
-            best = x.v.id;
-          }
-        }
-        if (best !== null) {
-          h.target = best;
-          for (const f of this.noticed) f(this.view(h), best);
-        }
-      }
+      if (h.target !== null && !this.posOf(h.target)) h.target = null;
       if (h.target !== null) {
         this.releaseGoal(h);
         this.regroup(h, G.hunt);
@@ -669,15 +764,16 @@ export class AgentUnits implements Units {
       else if (h.group === G.stand || h.group === G.wander || (h.group >= G.goal0 && h.group < G.goal0 + GOALS)) this.assign(h);
     }
     this.stats.hunting = hunting;
-    // the hunted: the nearest targets of the hunters
+    // the hunted: the nearest TARGETS to their hunters — the hunters' targets and whoever they may fight within their
+    // sight, as the GPU marked them (u.hunted, agents/notice.ts); an actor hunted, by its hunter's distance
     const hunters = hostiles.filter((h) => h.target !== null);
     const cand = new Map<UnitId | string, number>();
+    for (const u of live) if (u.hunted !== undefined && u.hunted < Infinity && hunters.length) cand.set(u.v.id, u.hunted);
     for (const h of hunters) {
       const t = h.target!;
+      if (typeof t !== 'string') continue;
       const p = this.posOf(t);
       if (p) cand.set(t, Math.min(cand.get(t) ?? Infinity, d2(p, h.v.at)));
-      // (and whoever else of theirs is about: the hunt goes for the nearest)
-      for (const x of live) if (enemiesOf(h)(x) && this.fights(h, x) && d2(x.v.at, h.v.at) < h.sight) cand.set(x.v.id, Math.min(cand.get(x.v.id) ?? Infinity, d2(x.v.at, h.v.at)));
     }
     const chosen = [...cand.entries()].sort((a, b) => a[1] - b[1]).slice(0, TARGETS).map((e) => e[0]);
     this.targetsPrev = this.targetsNow;
@@ -689,33 +785,33 @@ export class AgentUnits implements Units {
     }
     this.agents.setTargets(targets, hunters.length ? F.targets : -1);
     if (!hunters.length) this.agents.seed(F.targets, []);
-    // defenders: guards with a hostile in sight, units ordered to attack, anyone struck: close in and strike
+    // defenders: guards with a hostile in sight, units ordered to attack, anyone struck — their targets the GPU's: close
+    // in and strike
     const foes: V2[] = [];
     for (const u of live) {
       if (u.v.hostile) continue;
       const j = u.v.job;
-      if (j.kind === 'attack') u.target = j.target;
-      if (u.target !== null && typeof u.target === 'number') {
-        const t = this.recs.get(u.target);
-        if (t && !this.fights(u, t)) u.target = null;
-      }
-      if (u.target === null && u.v.role === 'guard') {
-        let bd = u.sight;
-        for (const h of hostiles) {
-          if (!this.fights(u, h)) continue;
-          const d = d2(h.v.at, u.v.at);
-          if (d < bd) {
-            bd = d;
-            u.target = h.v.id;
-          }
+      // (an order to attack: given on the GPU until it holds, and kept there while the rules allow)
+      if (j.kind === 'attack') {
+        if (!this.posOf(j.target)) {
+          u.v.job = { kind: 'idle' };
+          u.target = null;
+          this.assign(u);
+          continue;
+        }
+        if (u.target !== j.target) {
+          const code = this.codeOf(j.target);
+          if (code !== null) this.agents.notice.aim(u.gpu % MAX_SLOT, code);
         }
       }
-      if (u.target === null) continue;
+      if (u.target === null) {
+        // (let go — out of its leash, out of reach of the rules — back to its job)
+        if (u.group === G.foes || u.group === G.strike) this.assign(u);
+        continue;
+      }
       const p = this.posOf(u.target);
-      const home = j.kind === 'guard' ? j.at : null;
-      if (!p || (home && Math.hypot(p[0] - home[0], p[1] - home[1]) > LEASH)) {
+      if (!p) {
         u.target = null;
-        if (j.kind === 'attack') u.v.job = { kind: 'idle' };
         this.assign(u);
         continue;
       }

@@ -20504,3 +20504,102 @@ frame p50 is the readout there: all 19.6 (first phase, warming), fast-forward of
 A finding to check against the bench: the wind field runs every tick. At 16x that is 16 a frame — the painted box,
 its copy, and a band of the map's own wind each (16 bands: the whole field a frame). The map wind's band needn't
 follow the ticks; the bench's "no wind field" phase will say what it costs on the phone.
+
+## 2026-11-06 — round 128p (`phonefix`, DA-B22 (c)): the sync steps — design note before code
+
+Why: DESIGN §11's rule, "no per-frame CPU copy of all units". AgentUnits.update reads every unit once a frame
+(`agents.sync()`), because the CPU's unit logic reads every unit's `at`:
+- **AgentUnits.think**, every sync, O(fighters × live). Hostiles notice the nearest enemy in sight and drop it past
+  their leash. Guards pick a hostile in sight. The hunt's targets field takes the 8 nearest candidates, and their
+  positions go into AgentParams.targets. A defender closes in and strikes on a CPU timer (`agents.hit`); a hostile's
+  GPU swing comes back as an event, which the CPU turns into `hit(target)`. `mayFight` is the game's rule: a posted
+  archer, someone in a house or a cart don't fight; neither do two units 1.6 or more apart in height, or on different
+  sides of the wall while it stands.
+- **AgentUnits.goalOf and assign** for jobs that aren't the routine's work: `go`, `guard` (radius), `patrol` and
+  `flee` read the unit's own `at`; `follow` and `attack` read the target's.
+- **Picking**: personAt projects every crowd member's `at`.
+- **The fortress's defence** (archers aim at a raider's `at`), the **raiders' stepping** (their own `at` against
+  goals), the crowd (a soldier's `at` as its post), the **follow card**. These are few units: watched ones.
+- **Hero play, runsit and story**: `units.query` and `units.near` (parked: async contract, call sites keep working).
+
+Proposed, in order (riskiest first):
+- **(3) Combat targeting on the GPU** — a pass once a frame, after the step (`agents-notice`):
+  - The rules as data, uploaded when they change:
+    - per unit, a combat word: faction (8 bits), hostile, role bits (guard, no-fight: posted, inside, cart), home and
+      leash for a guard;
+    - a faction-hostility table;
+    - a per-column side map (out / in / other) with a `sides open` flag;
+    - the height limit.
+  - mayFight becomes those, so it isn't a callback any more.
+  - Each hunter (hostile or guard) keeps its target (word f.y) while the target lives, fights and is within leash;
+    otherwise the nearest eligible enemy within sight. Brute force over the live units first: hundreds of hunters ×
+    a thousand units is about 1e5 checks a frame. A spatial index only if the measurement says so.
+  - A new target emits `noticed` (id, target), which drives the game's `noticed` hooks. A unit struck with no
+    target turns on its attacker, on the GPU.
+  - The targets field's seeds are the targeted units, compacted on the GPU (≤ 8 as today: the nearest to their
+    hunters).
+  - **Strikes stay as they are in this step**: the hostile swing event names its target unit (not an index into
+    the CPU's list), and the CPU's defender strikes read the positions of watched units (fighters and their targets
+    are watched while they fight, ≤ MAX_WATCH; raised if needed).
+  - Fully GPU strikes (damage applied by the swing to the target's record, hurt and death with `by`) come after,
+    gated the same way.
+  - **Gate**: fortressraid walled and open with soldiers (the hunt), 3 runs each, outcomes within today's spread;
+    a scripted GPU test of the rules (sides, posted, height, factions).
+- **(2) GPU pick**: a compute pass over the units projects each figure's middle with the camera's matrix and takes
+  the nearest within PICK_PX by atomicMin, among units the game marks pickable (a bit in the combat word: the
+  crowd's). One 4-byte async read a tap. `personAt` becomes async.
+- **(4) The Units contract**: `get(id).at` is the last read only for watched units. `watch(id)` / `unwatch(id)`
+  replaces reading everyone; the `at` of an unwatched unit is `null` ("not read", never a stale value). `query` and
+  `near` become async GPU queries: the one-pass box query that already exists for the scope, generalised to a
+  centre and radius with an id list back. The hero, runsit and story call sites move to await them.
+- **(1) The watched-only sync**: once nothing above reads every unit, `sync({ watch })` with the followed, the
+  selected, the fighters and their targets, and the routine's few. Jobs that read their own `at` (go, guard radius,
+  patrol, flee) move to arrival events (DA-A6 already has them: `arrivals(field, radius)`).
+- Measure at the end: the sync's KB a frame and its ms, before and after, at 1x and 16x.
+
+Asks (main): go or no-go on (3) as scoped (strikes stay CPU-side this step), and on (4)'s contract (`at: null` when
+not watched, `query` and `near` async).
+
+## 2026-11-06 — round 128p (`phonefix`, DA-B22 (c)(3)): combat targeting on the GPU
+
+Why: the design note above, and main's go: who fights whom is found on the GPU through the units' buckets in rings,
+not by brute force. The CPU's search over every unit (AgentUnits.think, O(fighters × live), and mayFight as a
+callback) goes, so later steps can stop reading every unit.
+
+What:
+- `UnitNotice` (agents/notice.ts, shaders/notice.wgsl) is an agents stage once a frame, after the units' last step.
+  Its passes:
+  - `bucketClear` and `bucketFill`: each live unit pushed onto a list for its 16 × 16 columns.
+  - `huntClear`.
+  - `notice`: each fighter keeps its target (unit word f.y, a target code: id + 1, or ACTOR | i for the game's
+    actors) while the target lives, the rules allow it, and it is within the leash. Otherwise it takes the nearest
+    enemy it may fight within its sight, searching the buckets in rings and stopping once a ring lies past the best
+    found.
+  - `huntWrite`: a hostile hunter scans its whole sight and marks the hunt's candidates (`hunted`, word f.z: the
+    nearest hunting hostile's distance, its target's too), which AgentUnits ranks into the hunt's 8 targets as
+    before.
+  - A new target is a `noticed` event (EV 9).
+- The rules are data: a combat word a unit (faction, hostile, guard, no-fight, posted, raider, out of the fighting,
+  sight, a guard's post), a side map per window column, the rules' flags (on, open), the height limit and the leash.
+  - `AgentUnits.fightRules({ open, sideAt } | null)` and `fightFlags(noFight, posted)` replace `mayFight`.
+  - The fortress raid hands them its sides after each look, and who is in at home and who holds a post every
+    update.
+  - A spawned slot is out of the fighting until the game gives it a part (`notice.out`), so units no one has a part
+    for are not fought.
+- Kept on the CPU: strikes. A hostile's swing event becomes a hit, and a defender closes in and strikes on its timer,
+  reading its target's position. The game's own targets (an order to attack, a unit struck turning on its striker)
+  go to the GPU (`notice.aim`).
+
+Gates:
+- test/gpu/notice.test.ts:
+  - the ring search finds what a brute force over all 400 units finds, for every hunter (over 100 hunters), and
+    marks the same candidates;
+  - the rules: sides and open, in at home, height, posted, a guard's leash from its post, no faction.
+- fortressraid walled, 16x × 3: blows 24, breaches 1, looted 2, torched 2, burned 2, escaped 2–4 (today the same).
+- fortressraid open with 4 soldiers, 16x (the hunt), 21 runs:
+  - looted 1–3, raiders fallen 1–2, burned 2, in 20;
+  - 1 run had the soldiers meet the raiders outside, with raiders struck by raiders in the crowd (CPU hits land on
+    whoever stands at the target: unchanged), and nothing looted.
+  - Today's code in a clean worktree, 9 runs: looted 1–3, raiders fallen 0–3, no run without loot.
+- Left: the sync still reads every unit (step (1)); combat words are compared and written from AgentUnits.think each
+  sync (a key a unit, O(units) on the CPU); strikes on the GPU later, under the same gate.

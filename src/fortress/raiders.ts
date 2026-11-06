@@ -5,7 +5,7 @@
 //  - at dusk the raiders walk in from the window's edge where the roads come nearest it (FortressCrowd.edgeWay) to the
 //    wave's goal: the stores, through the gate. They walk on the units' goal fields (AgentUnits 'go': one field a place,
 //    shared; the roads cost less on every field, so they come in along the road). They are the units' hostiles: they
-//    fight who comes near on their side of the wall (AgentUnits.mayFight: not over a wall, not up on the wall-walk, not
+//    fight who comes near on their side of the wall (AgentUnits.fightRules, round 128p: on the GPU — not over a wall, not up on the wall-walk, not
 //    people in at home);
 //  - the gates shut when a raider comes near one, or when nobody is left outside (Fortress.setGatesShut: solid, drawn
 //    shut). Walls and shut gates are in the way: the raiders bash the weakest that stands between them and the stores
@@ -37,6 +37,8 @@ const THERE = 4.5;
 const GONE = 6;
 /** sim seconds between the layout's looks (the sides of the wall, the goal) */
 const LOOK_S = 1;
+/** (round 128p) a side's number in the GPU's side map (AgentUnits.fightRules) */
+const SIDE_NO = { other: 0, out: 1, in: 2 } as const;
 
 export interface RaidIO {
   units: AgentUnits;
@@ -134,7 +136,8 @@ export class FortressRaid {
     this.clock = new RaidClock(ECON.daySec);
     io.fort.onChange.push(this.onChange);
     io.units.died.push(this.onDied);
-    io.units.mayFight = (u, foe) => this.mayFight(u, foe);
+    // (round 128p: the rules as data for the GPU's targeting — AgentUnits.fightRules; the sides as they're looked at)
+    this.rules();
     io.life.raid = this;
     this.defence = new FortressDefence({ units: io.units, life: io.life, burst: io.burst, raiders: () => [...this.raiders.keys()] });
   }
@@ -153,7 +156,8 @@ export class FortressRaid {
     if (i >= 0) this.io.fort.onChange.splice(i, 1);
     const j = U.died.indexOf(this.onDied);
     if (j >= 0) U.died.splice(j, 1);
-    if (U.mayFight) U.mayFight = null;
+    U.fightRules(null);
+    U.fightFlags([], []);
     if (this.io.life.raid === this) this.io.life.raid = null;
     this.defence.release();
     this.io.fort.setGatesShut(false);
@@ -212,6 +216,8 @@ export class FortressRaid {
     }
     this.stepRider();
     this.burn(dt);
+    // (round 128p: who's in at home and who holds a post, for the GPU's rules)
+    this.io.units.fightFlags(this.io.life.inside, this.defence.archers());
     if (this.alarmed) {
       // (soldiers trained since, and the wall cell they'll go for as it changes: the posts again)
       if (this.t - this.manAt >= LOOK_S) this.alarm();
@@ -365,11 +371,20 @@ export class FortressRaid {
   }
 
   /** the layout read again: the two sides of the wall, the goal, the wave's ride */
+  /**
+   * (round 128p, DA-B22 (c)(3)) mayFight as data for the GPU (AgentUnits.fightRules): the side of each column (out,
+   * in, other — SIDE_NO), open once the stores are open to the outside
+   */
+  private rules(): void {
+    this.io.units.fightRules({ open: this.sides?.open === true, sideAt: (x, y) => SIDE_NO[this.sideAt([x, y])] });
+  }
+
   private look(): void {
     this.lookAt = this.t;
     this.dirty = false;
     this.layout = layoutOf(this.io.fort, this.io.life.heap(), (c) => this.hpOf(c));
     this.sides = raidSides(this.layout);
+    this.rules();
     if (this.stage === 'breach' || this.stage === 'stores') {
       const g = raidGoal(this.layout, this.middle(), this.sides);
       this.goal = g;
@@ -508,25 +523,6 @@ export class FortressRaid {
     if (this.sides.outside[c]) return 'out';
     if (this.sides.inside[c]) return 'in';
     return 'other';
-  }
-
-  /**
-   * (AgentUnits.mayFight) who may take on whom while raiders are about: a raider and its foe on the same side of the
-   * wall (both outside, or both in once it's broken) and on the same ground (not one up on the wall-walk).
-   */
-  mayFight(u: UnitView, foe: UnitView): boolean {
-    // (an archer on its post shoots: it never closes in)
-    if (this.defence.holds(u.id)) return false;
-    if (!this.active || (u.role !== 'raider' && foe.role !== 'raider')) return true;
-    // (a cart is a wagon: it neither fights nor is fought)
-    if (u.role === 'cart' || foe.role === 'cart') return false;
-    // (in at home: the house keeps them — the raiders burn houses instead)
-    const inside = this.io.life.inside;
-    if (inside.has(u.id) || inside.has(foe.id)) return false;
-    if (Math.abs(u.at[2] - foe.at[2]) > 1.6) return false;
-    const a = this.sideAt([u.at[0], u.at[1]]);
-    const b = this.sideAt([foe.at[0], foe.at[1]]);
-    return a === b || this.sides?.open === true;
   }
 
   private stepRaider(r: Raider, dt: number): void {

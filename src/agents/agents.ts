@@ -18,6 +18,7 @@ import unitsWgsl from '../shaders/units.wgsl?raw';
 import type { SimSystem } from '../sim/system';
 import { TICK_DT } from '../sim/flow';
 import { stepPlan } from './stepplan';
+import { UnitNotice } from './notice';
 import type { WorldGpu } from '../sim/world-gpu';
 import { MAT } from '../world/materials';
 import { materialId, materialName, materialState, type MaterialName } from '../api/common';
@@ -234,6 +235,8 @@ export type AgentEvent =
   /** a swing begins: the blow lands on `target` in `lands` seconds, if it's still in reach (a parry's window) */
   | { type: 'windup'; id: number; target: number; lands: number; x: number; y: number; z: number }
   | { type: 'swing'; id: number; target: number; damage: number; x: number; y: number; z: number }
+  /** (round 128p, DA-B22 (c)(3)) a hunter took a new target (a target code: agents/notice.ts — unit id + 1, ACTOR | i) */
+  | { type: 'noticed'; id: number; target: number; x: number; y: number; z: number }
   | { type: 'hurt'; id: number; hit: number | 'impact'; damage: number; x: number; y: number; z: number }
   | { type: 'death'; id: number; by: number | 'fire' | 'water' | 'impact' | 'lava' | 'effect'; x: number; y: number; z: number }
   /** (LW1, corpse mode) a corpse raised by an effect (`by`, its id) into `group`: the same id, alive again */
@@ -301,6 +304,10 @@ export interface AgentState {
   hp: number;
   kind: string;
   group: number;
+  /** (round 128p, DA-B22 (c)(3)) its target code (agents/notice.ts: 0 none, a unit's id + 1, ACTOR | an actor's index) */
+  target: number;
+  /** (round 128p) how near the nearest hostile hunting it is (Infinity: none) — the hunt's candidates */
+  hunted: number;
 }
 
 const DEFAULT_KINDS: KindSpec[] = [
@@ -498,6 +505,12 @@ export class Agents implements SimSystem {
     this.pool.pop()?.destroy();
     return this.device.createBuffer({ label: 'agents sync', size: Math.ceil(size / 4096) * 4096, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
   }
+  /**
+   * (round 128p, DA-B22 (c)(3)) Who fights whom, on the GPU, once a frame after the units' last step: each unit's
+   * combat word (`notice.set`), the game's rules (`setRules`, `setSides`), its actors (`setActors`), the targets it
+   * gives (`aim`). A unit's target comes back in its state (`target`), a new one as a `noticed` event.
+   */
+  readonly notice: UnitNotice;
   /** (LW1) stages between the units' step and their draw (agents.addStage) */
   private stages: AgentStage[] = [];
   /**
@@ -553,6 +566,8 @@ export class Agents implements SimSystem {
     this.params = world.buf('agentParams', PARAMS_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     this.carryBuf = world.buf('agentCarry', MAX_UNITS * 16, S);
     this.roadRide = new RoadRide(device, world.globals, this.units, this.roads, world.w, MAX_UNITS);
+    // (round 128p, DA-B22 (c)(3): combat targeting on the GPU — agents/notice.ts)
+    this.notice = new UnitNotice(device, world, this.units, this.events, MAX_UNITS, EVENT_CAP);
     this.flyBuf = world.buf('agentFly', MAX_FLY * 32, S);
     device.queue.writeBuffer(this.indirect, 0, new Uint32Array([36, 0, 0, 0]));
     // (nothing reached yet: every field starts unreachable)
@@ -725,6 +740,11 @@ export class Agents implements SimSystem {
     return this.count;
   }
 
+  /** (round 128p) the window's columns across and down (the side map's: units/agent-units.ts) */
+  get dims(): { w: number; h: number } {
+    return { w: this.world.w, h: this.world.h };
+  }
+
   /** Define (or redefine) kind `i` (0..7). Defaults: 0 worker, 1 raider, 2 ogre. */
   defineKind(i: number, spec: KindSpec): void {
     if (i < 0 || i >= MAX_KINDS) throw new Error(`agents: kind ${i} out of 0..${MAX_KINDS - 1}`);
@@ -796,6 +816,8 @@ export class Agents implements SimSystem {
       // (e: caps and look 0 — the trait modules derive them; its max hp, what healing tops it up to)
       d[18] = d[8];
       this.device.queue.writeBuffer(this.units, slot * UNIT_BYTES, d);
+      // (round 128p: out of the fighting until the game gives it a part — notice.ts)
+      this.notice.out(slot);
       ids.push(gen * MAX_UNITS + slot);
     }
     return ids;
@@ -1376,6 +1398,8 @@ export class Agents implements SimSystem {
         } else if (kind === 7) {
           events.push({ type: 'raised', id, by: eu[o + 2], group: Math.round(ef[o + 3]), ...p });
           this.corpses.delete(id % MAX_UNITS);
+        } else if (kind === 9) {
+          events.push({ type: 'noticed', id, target: eu[o + 2], ...p });
         } else if (kind === 8) {
           const f = eu[o + 2];
           events.push(f >= RIDE_ARRIVED ? { type: 'arrived', id, ride: f - RIDE_ARRIVED, ...p } : { type: 'arrived', id, field: f, dist: ef[o + 3], ...p });
@@ -1411,6 +1435,8 @@ export class Agents implements SimSystem {
             hp: uf[r * UF + 8],
             kind: this.kinds[(info >>> 9) & 7]?.name ?? '?',
             group: info & 0xff,
+            target: uu[r * UF + 21],
+            hunted: uf[r * UF + 22],
           });
         }
       }
@@ -1605,6 +1631,9 @@ export class Agents implements SimSystem {
     // (round 128o, DA-B22: the ride and the draw once a frame — a frame's trips advance by its elapsed time
     // (RoadRide.elapsed); what's drawn is the frame's last state)
     if (!this.frameWork) return pass;
+    // (round 128p, DA-B22 (c)(3): who fights whom, on the frame's last state)
+    pass = stage('agents-notice');
+    this.notice.encode(pass, this.count);
     // (round 128i, V128-14: the riding groups steered along the roads — their steer read by the next tick's step)
     pass = stage('agents-ride');
     this.roadRide.encode(pass, this.count);
