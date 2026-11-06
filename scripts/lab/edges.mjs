@@ -8,15 +8,15 @@ export default async function (lab, args) {
   while (!lab.ready) await new Promise((r) => setTimeout(r, 100));
   const z = args.zoom ?? 12;
   await lab.run(0.5, 1);
-  const report = lab.edges({ spokes: args.spokes ?? 5 });
+  const report = await lab.edges({ spokes: args.spokes ?? 5 });
   const spots = report.pathsAt.slice(0, args.n ?? 4).map((p) => p.at);
-  lab.edges({ off: true });
+  await lab.edges({ off: true });
   await lab.run(0.5, 1);
   for (const [i, [x, y]] of spots.entries()) {
     lab.look(x, y, z);
     await lab.shot(`edges-before-${i}`);
   }
-  lab.edges({ spokes: args.spokes ?? 5 });
+  await lab.edges({ spokes: args.spokes ?? 5 });
   await lab.run(0.5, 1);
   for (const [i, [x, y]] of spots.entries()) {
     lab.look(x, y, z);

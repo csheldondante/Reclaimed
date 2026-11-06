@@ -3556,3 +3556,12 @@ world should show what needs clearing and how.
   → Paths are paved (the inset strips). Main roads are smooth curves. Terraces are fixed by levelling a building to its
   best edge within a storey, or dug in past that, reported. Main's calls: a fixture with no claims baked into its
   terrain, and the radial grid in step 2.
+- On step 2 (the user): "I think it's fine for now and we can worry more about the visual tweaks like color once we do a
+  pass on meshes and animation. Feel free to lighten it. I think spokes extending feels natural for roads that connect
+  to other places. The main road passes through the town. A bigger issue (still minor because I most care that building
+  works and is fast for now) is that the road does seem to go under water. I would expect roads to avoid water or make
+  bridges. I think this is a great start though and seems like an improvement on the original towns/cities."
+  → The paving is lightened a little; no more visual tuning for now. Spokes keep extending: they are roads to other
+  places, and the main road passes through the town. A road over any water is a real bridge: a deck in the plan's
+  layout, claimed as matter and drawn. Next: generation roads-first, edits through the same function, roads clearing
+  plants; then merge-ready (all lab gates); then the route queues. Priority: building works and is fast.

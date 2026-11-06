@@ -20898,3 +20898,88 @@ There are no gates in this town's wall and no roads out (only piers), so the mai
 - The 2 m raster walk costs ~30 ms a road on the CPU.
 - The lab ground can differ from the plan's ground far from the town (the old sea bed); the paving drapes on the
   ground as it is.
+
+## 2026-11-06 — round 128p (`onetown`, DA-A13): roads over water are bridges, generation lays roads first, edits through the same function, roads clear plants
+
+The user, on step 2: "the road does seem to go under water. I would expect roads to avoid water or make bridges";
+"I most care that building works and is fast for now" (DECISIONS round 128p).
+
+**Why the road went under water, and the fix:**
+- **What went wrong:** a curve's stretch counted as water only past DEEP, the walkers' rule (0.9 m). Shallower river
+  and lake was paved and draped on its bed. The lab also judged water by the fixture's capture, while its live rivers
+  and sea had settled since.
+- **The rule now:** a road under *any* water is a bridge. `TownRoadsIO.water` (any) is apart from `wet` (the walkers'
+  deep).
+  - Growing a road prices any water as a bridge.
+  - Its wet stretches are bridges: `curvePieces`, the deck at the higher bank's ground plus 0.6 m.
+- **Bridges are real decks.** finishRoads writes them into the plan's layout as linear 'bridge' features (`of:
+  'mainroad'`), so build/claims.ts claims them as matter and the structures draw draws them.
+- **The lab** reads the live water once per `lab.edges` call (registered in gpu/transfers.ts as demand, not play).
+- **Seen in the lab:** an arched stone bridge where a spoke crosses the river.
+
+**Paving lightened a little:** the three styles' Part.Pave colours, 18 % toward white. The streets' paving shares
+them.
+
+**Generation lays roads first** (`structures/place.ts placeDraft`, `opts.roads`; `settle/plan.ts` passes it for every
+settlement):
+1. The radial relax, then the main roads (4 spokes, angle from the seed) before the buildings.
+2. A building keeps none of the cells a road takes. One the world placed (a card's outcome) stands whole, and the road
+   gives way. A wall cell on a road becomes a gate, or gives way.
+3. After everything: the paths, far roads and terraces (finishRoads).
+4. Into `plan.layout.roads`: the curves, the verge, each cell side's drawn path, the town's middle and stores, the cells
+   with water on them (any; deep). It crosses the worker's post.
+
+The view draws any plan with `layout.roads` (`pathsViewOf`): insets, paving, curves, and no lanes. The records keep
+only a building's cells off the verge.
+
+**Edits through the same function:** `Fortress.sync` calls `relayRoads(site)` (finishRoads from the layout) after
+every change.
+- A structure placed gets its lane.
+- A far one gets a road grown from the nearest major road.
+- Terraces are levelled.
+- An edit's road never takes a structure's cells (`clip: false`); it goes past them.
+
+**Roads clear plants:**
+- At generation: `roadColumns(site)` (half a main road plus 0.5 m round each curve, half a path's width round each
+  drawn edge) are bare ground.
+- On an edit: a new road's verge cells go to Fortress.clearPlants with the painted cells.
+
+**Measured:**
+- The start town as generated (the fixture, recaptured): 3 spokes (the fourth found no dry land out of the box), 94
+  verge cells, 702 drawn cell sides, 55 of 55 structures reached.
+- `relayRoads` takes ~21 ms on the start town (desktop).
+- Painting a far lumber camp in the lab took 106 ms for the whole paint, with its 36-point road grown.
+- The roads-first town has fewer buildings: those the spokes took whole (it went from 65 to 55 structures besides the
+  wall). The generator doesn't place them elsewhere yet.
+
+**Tests:**
+- `edgetown`: no road stretch over water without a bridge in the layout.
+- `settle/plan.test`: a building's record cells are off the verge.
+
+**Gates (merge-ready).**
+- typecheck; build; unit 105 files; gpu 37 files.
+- Lab, all passing:
+
+  | Gate | Result |
+  |---|---|
+  | fortressallbuilt | **636/636 at 241 s** (the town is smaller: 708 before) |
+  | fortressharvest | passes |
+  | fortressrecipes | passes |
+  | fortresscarts | passes |
+  | fortressraid | passes |
+  | unitsonground | passes |
+  | fortressfollow | passes |
+  | settlecrowd | loads moved, a house raised, the raid sheltered |
+
+- settlecrowd's old GPU reach reports 29 of 78 places out (17 of 95 before): the old reach on the new layouts. The units
+  still walk the old lanes and ways until the routes land (DA-A13's delete list).
+
+**Hacks and limits:**
+- **Two systems for now.** The units, the fortress's refusals and its GPU reach are the old ones (lanes, ways,
+  keepReach). The roads, paths and the union-find reach are drawn and reported. Swapping them is the routes step.
+- **Fewer buildings.** Roads-first takes whole buildings the spokes cross; the generator doesn't re-place them.
+- **Edit cost.** `relayRoads` runs on every edit (~21 ms desktop; a phone's several times that). Incremental relay or
+  deferring it to idle is the next speed item if the phone shows it.
+- **Water after generation.** An edit judges water by the cells generation saw; the land changing later is the GPU
+  world check's (not built).
+- **Spokes need dry land in the box** to end on; a spoke with none is dropped.

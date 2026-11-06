@@ -88,6 +88,7 @@ export const TRANSFERS: TransferSite[] = [
   // ==== GPU→CPU reads ====
   // ---- the world's own buffers (WorldCore): the wrappers, then every caller ----
   { file: 'scenes/world-core.ts', fn: 'WorldCore.readRaw', wrapper: /\.readBuffer\(/, what: 'a whole WorldGpu buffer (surface, veg, water N×4 B; layers ~16 MB at window 256)', why: 'the generic buffer read behind WorldCore.readBuffer', rate: 'via', play: 'yes' },
+  { file: 'lab/lab.ts', fn: 'Lab.edges', via: 'scenes/world-core.ts#WorldCore.readRaw', what: 'the water, N×4 B (320² window: 400 KB)', why: "the lab's roads: where water lies now (a road over it a bridge)", rate: 'demand', play: 'no' },
   { file: 'scenes/world-core.ts', fn: 'WorldCore.readTextureRaw', wrapper: /\.(readTexture|readWindField)\(/, what: 'a whole rgba32f texture (windField W/2×H/2×16 B, drift N×16 B)', why: 'the generic texture read behind readTexture and readWindField', rate: 'via', play: 'yes' },
   { file: 'scenes/world-core.ts', fn: 'WorldCore.readWindField', via: 'scenes/world-core.ts#WorldCore.readTextureRaw', what: 'the wind field texture', why: 'plumbing: readWindField is readTexture(windField)', rate: 'via', play: 'yes' },
   { file: 'scenes/level/valley-reads.ts', fn: 'ValleyReads.frame', n: 3, via: 'scenes/world-core.ts#WorldCore.readRaw', what: 'particleCounters 16 B (500 ms), veg and water (1 s), N×4 B each', why: "the sandbox valley: Nature's smoke and grime, the ambience (round 128o, DA-B5: dropped by startFortress)", rate: 'timed', every: '1 s / 500 ms', play: 'no' },

@@ -34,7 +34,7 @@ import { towered } from './plan';
 import { shapesOf, type Shapes } from './shapes';
 import { rampShape, STAIR_HALF, WALL_HALF, WALL_LINTEL } from './solid';
 import { alongAxis, axisLength, groundSteps, WAY_SQUARE, waysOf, type Ways } from './ways';
-import type { EdgeNet } from './edgenet';
+import { pathsViewOf, type EdgeNet, type PathsView } from './edgenet';
 import { curvePieces, insetTiles, pathPaving } from './edgeview';
 import { LANE_DRAWN, LANE_WIDTH, type Lanes } from './lanes';
 
@@ -112,7 +112,8 @@ export function townPieces(site: ViewSite, inp: ViewInputs): StructurePieces {
   }
   const parts = [p, ex];
   if (inp.ghost) parts.push(plotsOf(site, inp));
-  if (inp.lanes) parts.push(lanePieces(site, inp, inp.lanes));
+  // (round 128p: a town with its roads laid draws its paths, not the lanes)
+  if (inp.lanes && !inp.edges && !site.plan.layout.roads) parts.push(lanePieces(site, inp, inp.lanes));
   parts.push(rampPieces(site, inp));
   if (inp.warn?.length) parts.push(warnPieces(site, inp, inp.warn));
   return concat(parts);
@@ -488,8 +489,10 @@ export function townView(site: ViewSite, inp: ViewInputs): { city: CityPlan; ext
     use: plan.use.slice(),
     block: Int32Array.from(plan.block),
   };
-  if (inp.edges) {
-    const t = insetTiles(grid, plan, inp.edges);
+  // (round 128p, DA-A13) the paths: the lab's network, else the roads the plan's layout carries (generation's, an edit's)
+  const paths: PathsView | undefined = inp.edges ?? (plan.layout.roads ? pathsViewOf(grid, plan.layout.roads) : undefined);
+  if (paths) {
+    const t = insetTiles(grid, plan, paths);
     tiles.verts = t.verts;
     tiles.quads = t.quads;
   }
@@ -890,11 +893,14 @@ export function townView(site: ViewSite, inp: ViewInputs): { city: CityPlan; ext
   // ---- the layout's features (copies: the view is moved, the plan isn't) and the dressing's lamps, torches, banners
   const linear: LinearFeature[] = plan.layout.linear.map((f) => ({ ...f, points: f.points.map((p) => [p[0], p[1], p[2] + zOff]), ground: f.ground.map((g) => g + zOff) }));
   // (round 128p, DA-A13 step 2: the edge paths paved — the streets' paving, draped on the ground)
-  if (inp.edges) {
-    for (const pv of pathPaving(grid, inp.edges, groundAt)) extra.add(lib.id('pave'), pv.frame, pv.foot - 0.25, 0.37, STYLE_IDS.indexOf(plan.style) * 65536, REL | DRAPE);
-    const cp = curvePieces(inp.edges.curves, groundAt, inp.wet ?? (() => false));
+  if (paths) {
+    for (const pv of pathPaving(grid, paths, groundAt)) extra.add(lib.id('pave'), pv.frame, pv.foot - 0.25, 0.37, STYLE_IDS.indexOf(plan.style) * 65536, REL | DRAPE);
+    // (the bridges are the plan's layout's: townroads.ts lays them, so they're claimed as decks and drawn with the rest)
+    // (over water a curve is its bridge — the layout's deck — not paving: where no `wet` is given, near a bridge's line)
+    const bridges = plan.layout.linear.filter((f) => f.of === 'mainroad');
+    const onBridge = (x: number, y: number) => bridges.some((f) => f.points.some((q, i) => i > 0 && segDist(x, y, f.points[i - 1], q) < 2.2));
+    const cp = curvePieces(paths.curves, groundAt, inp.wet ?? onBridge);
     for (const pv of cp.paves) extra.add(lib.id('pave'), pv.frame, pv.foot - 0.25, 0.37, STYLE_IDS.indexOf(plan.style) * 65536, REL | DRAPE);
-    linear.push(...cp.bridges);
   }
   const berths = plan.layout.berths.map((b) => ({ ...b, at: [b.at[0], b.at[1], b.at[2] + zOff] as [number, number, number] }));
   const order: number[] = [];
@@ -1197,4 +1203,13 @@ function subset(plan: CityPlan, keep: Map<number, number>): CityPlan {
   const tiles = { ...plan.tiles, use: plan.tiles.use.map((u, q): TileUse => (u === 'lot' && quadBuilding[q] < 0 ? 'yard' : u)) };
   const megas = plan.megas.filter((m) => m.kind === 'fountain' || m.quads.length === 0 || m.quads.some((q) => quadBuilding[q] >= 0));
   return { ...plan, tiles, quadBuilding, quadTop, facades, megas, sites, spans: plan.spans.filter((s) => s.building < 0 || keep.has(s.building)) };
+}
+
+/** the distance from (x, y) to segment ab (their x, y) */
+function segDist(x: number, y: number, a: readonly number[], b: readonly number[]): number {
+  const ex = b[0] - a[0];
+  const ey = b[1] - a[1];
+  const L2 = ex * ex + ey * ey;
+  const t = L2 > 0 ? Math.max(0, Math.min(1, ((x - a[0]) * ex + (y - a[1]) * ey) / L2)) : 0;
+  return Math.hypot(x - a[0] - ex * t, y - a[1] - ey * t);
 }

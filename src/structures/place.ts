@@ -17,6 +17,7 @@ import type { NavGraph } from '../api/contracts/structures';
 import { cellPos, ROW_H } from '../world/lattice';
 import { draftCity, shiftPlan, type CityDraft } from './plan';
 import { entrancesOf, needsEntrance } from '../build/entrances';
+import { finishRoads, mainRoads, type RoadsState, type TownRoadsIO } from '../build/townroads';
 import { resample } from './linear';
 import { hashf } from './rng';
 import { LOOK_FRESH, PIECE_FLOATS } from './pieces';
@@ -62,12 +63,27 @@ export interface PlaceOpts {
    * 0 (all planned), or null — not placed at all (the town's room to grow: placed when it grows)
    */
   standing?: (b: BuildingRec) => number | null;
+  /**
+   * (round 128p, DA-A13) the town's roads (build/townroads.ts), laid roads first: the radial relax and the main roads
+   * before the buildings (a building keeps none of the cells a road takes), the paths, far roads and terraces after.
+   * Absent: none (the lanes' towns, as before)
+   */
+  roads?: Omit<TownRoadsIO, 'reach'>;
 }
 
 /** What placing made: per draft building its structure (-1 none), and what couldn't be placed (counted, not hidden). */
 export interface Placed {
   structureOf: Int32Array;
-  stats: { structures: number; blocks: number; gatesOpen: number; unplaced: number; passages: number; ms: number };
+  stats: {
+    structures: number;
+    blocks: number;
+    gatesOpen: number;
+    unplaced: number;
+    passages: number;
+    ms: number;
+    /** (round 128p) the roads laid (opts.roads) */
+    roads?: { curves: number; verge: number; terraces: number; reached: number; of: number; ms: Record<string, number> };
+  };
 }
 
 /**
@@ -83,7 +99,7 @@ export function placeDraft(draft: CityDraft, site: TownSite, opts: PlaceOpts = {
   const typeOf = opts.typeOf ?? typeOfBuilding;
   const standing = opts.standing ?? ((b: BuildingRec) => b.storeys);
   const structureOf = new Int32Array(draft.buildings.length).fill(-1);
-  const stats = { structures: 0, blocks: 0, gatesOpen: 0, unplaced: 0, passages: 0, ms: 0 };
+  const stats: Placed['stats'] = { structures: 0, blocks: 0, gatesOpen: 0, unplaced: 0, passages: 0, ms: 0 };
   /** a structure's blocks built (each level below `upTo` of its cell) and the rest planned, on the Town */
   const stand = (id: number, type: StructureType, upTo: (c: number) => number, floor?: number) => {
     const s = plan.structure(id)!;
@@ -106,6 +122,20 @@ export function placeDraft(draft: CityDraft, site: TownSite, opts: PlaceOpts = {
   plan.layout.berths = draft.berths.slice();
   plan.layout.works = draft.works ? { at: [draft.works.at[0], draft.works.at[1]], dir: [draft.works.dir[0], draft.works.dir[1]] } : null;
 
+  // ---- (round 128p, DA-A13) roads first: the radial relax and the main roads out past the town's buildings
+  let roads: RoadsState | null = null;
+  if (opts.roads) {
+    let reach = 0;
+    for (const b of draft.buildings)
+      for (const q of b.quads) {
+        const [x, y] = grid.centre(q);
+        reach = Math.max(reach, Math.hypot(x - opts.roads.centre[0], y - opts.roads.centre[1]));
+      }
+    roads = mainRoads(site, { ...opts.roads, reach });
+  }
+  const verge = roads?.verge ?? new Set<number>();
+  const worldPlaced = new Set(draft.placed.map((p) => p.building));
+
   // ---- the buildings: each a structure of its own, its tiles' storeys as levels
   for (const b of draft.buildings) {
     if (draft.quadBuilding[b.quads[0]] !== b.id) continue;
@@ -114,7 +144,11 @@ export function placeDraft(draft: CityDraft, site: TownSite, opts: PlaceOpts = {
       stats.unplaced++;
       continue;
     }
-    const s = placeBuilding(site, buildingOf(draft, b, typeOf(b)), up >= b.storeys ? Infinity : up > 0 ? levelsFor(up, b.storeyH) : 0);
+    const pb = buildingOf(draft, b, typeOf(b));
+    // (a building the world placed — a card's outcome — stands whole: the road gives way, its cells off the verge)
+    if (worldPlaced.has(b.id)) for (const [c] of pb.blocks) verge.delete(c);
+    else if (verge.size) pb.blocks = pb.blocks.filter(([c]) => !verge.has(c));
+    const s = pb.blocks.length ? placeBuilding(site, pb, up >= b.storeys ? Infinity : up > 0 ? levelsFor(up, b.storeyH) : 0) : -1;
     if (s < 0) {
       stats.unplaced++;
       continue;
@@ -155,6 +189,8 @@ export function placeDraft(draft: CityDraft, site: TownSite, opts: PlaceOpts = {
     if (s) {
       stats.structures++;
       // (a gate stands on a straight run: one the grid turns at is left open — the way through kept, no wall there)
+      // (round 128p: where a main road crosses the wall, a gate — else the wall gives way to the road)
+      for (const c of wallCells) if (verge.has(c) && plan.owner[c] === s.id && !gateCells.includes(c)) gateCells.push(c);
       for (const g of gateCells) {
         if (plan.owner[g] !== s.id) continue;
         if (!plan.setGate(g, true)) {
@@ -179,7 +215,7 @@ export function placeDraft(draft: CityDraft, site: TownSite, opts: PlaceOpts = {
     const type: StructureType = p.use === 'field' ? 'farm' : p.use === 'orchard' ? 'orchard' : 'pasture';
     const block = Math.floor(key / 4);
     const look = Math.floor(hashf(block, spec.seed, 43) * 4096) | (draft.hedged.has(block) ? LOOK_HEDGE : 0);
-    const s = plan.place(type, p.cells.filter((c) => plan.owner[c] < 0).map((c) => [c, 0] as [number, number]), { look });
+    const s = plan.place(type, p.cells.filter((c) => plan.owner[c] < 0 && !verge.has(c)).map((c) => [c, 0] as [number, number]), { look });
     if (!s) continue;
     stats.structures++;
     stand(s.id, type, () => Infinity);
@@ -189,12 +225,12 @@ export function placeDraft(draft: CityDraft, site: TownSite, opts: PlaceOpts = {
   // mine's headframe, a farming town's windmill — each a structure on the cells under it
   const near = (x: number, y: number): number => {
     let c = grid.cellAtWorld(x, y);
-    if (c >= 0 && plan.owner[c] < 0) return c;
+    if (c >= 0 && plan.owner[c] < 0 && !verge.has(c)) return c;
     // (the nearest free cell: a landmark stood beside a building's tile)
     let best = -1;
     let bd = Infinity;
     for (let k = 0; k < grid.count; k++) {
-      if (plan.owner[k] >= 0) continue;
+      if (plan.owner[k] >= 0 || verge.has(k)) continue;
       const [cx, cy] = grid.centre(k);
       const d = Math.hypot(cx - x, cy - y);
       if (d < bd) (bd = d), (best = k);
@@ -247,6 +283,11 @@ export function placeDraft(draft: CityDraft, site: TownSite, opts: PlaceOpts = {
   // ---- (AGENT_RULES 3b) every open place in the town joined to the land round it, by passages through ground floors
   stats.passages = keepReach(site);
   assertEntered(site);
+  // ---- (round 128p, DA-A13) the paths on the grid's edges, the far structures' roads, the terraces: the plan's layout
+  if (roads && opts.roads) {
+    const r = finishRoads(site, { ...opts.roads }, roads);
+    stats.roads = { curves: r.curves.length, verge: r.net.roads.size, terraces: r.terraces.length, reached: r.net.reach.reached, of: r.net.reach.structures, ms: r.ms };
+  }
   plan.takeChanged();
   stats.ms = +(performance.now() - t0).toFixed(2);
   return { structureOf, stats };
@@ -518,7 +559,9 @@ export function planTown(spec: CitySpec, ground: GroundFn, water?: GroundFn, den
       extra.data[i * PIECE_FLOATS + k * 2 + 1] += dy;
     }
   city.spec = { ...spec };
-  city.stats = { ...draft.stats, ...placed.stats };
+  const { roads: _roads, ...counts } = placed.stats;
+  void _roads;
+  city.stats = { ...draft.stats, ...counts };
   return { site, city, extra, draft, placed, dx, dy };
 }
 

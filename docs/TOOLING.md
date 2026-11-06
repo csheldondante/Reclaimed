@@ -153,4 +153,5 @@ scenarios should ask for the sim seconds they need, not more.
 - `lab.edges({hybrid: true, drawn, place, far, radial})` lays the town's roads (build/townroads.ts) first.
 - `node scripts/lab.mjs run scripts/lab/edges.mjs` and `scripts/lab/hybrid.mjs` (recipe `town`) take shots at play zoom.
 - `EDGE_OUT=<dir> npx vitest run --project unit edgetown` writes the map previews.
-
+- `node scripts/lab.mjs run scripts/lab/townroads.mjs`: the start town's generated roads, and a far lumber camp painted
+  (the edit's grown road).

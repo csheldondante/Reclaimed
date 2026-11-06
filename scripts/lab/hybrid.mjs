@@ -18,7 +18,7 @@ export default async function (lab, args) {
   ];
   lab.look(hx, hy, z);
   await lab.shot('hybrid-before-core');
-  const report = lab.edges({ hybrid: true, drawn: [drawn], place: [{ type: 'lumber', at: mill }], spokes: args.spokes ?? 4 });
+  const report = await lab.edges({ hybrid: true, drawn: [drawn], place: [{ type: 'lumber', at: mill }], spokes: args.spokes ?? 4 });
   await lab.run(0.5, 1);
   const lane = report.pathsAt.find((p) => p.kind === 1)?.at ?? [hx, hy];
   const spoke = report.hybrid.curves.find((c) => c.kind === 'spoke');

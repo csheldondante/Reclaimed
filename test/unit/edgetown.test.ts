@@ -78,6 +78,11 @@ it("the start town's roads laid (the hybrid): radial relax, curve spokes, a draw
     const col = (r + box.y0 - oy) * W + (k + box.x0 - ox);
     return col >= 0 && col < map.water.length && map.water[col] > DEEP;
   };
+  const water = (x: number, y: number) => {
+    const [k, r] = cellAt(x, y);
+    const col = (r + box.y0 - oy) * W + (k + box.x0 - ox);
+    return col >= 0 && col < map.water.length && map.water[col] > 0;
+  };
   const toBox = (q: readonly number[]): [number, number] => [q[0] - (box.x0 - ox), q[1] - (box.y0 - oy) * ROW_H];
   const centre = toBox(header.town.at);
   const pile =
@@ -106,6 +111,7 @@ it("the start town's roads laid (the hybrid): radial relax, curve spokes, a draw
   const res = layoutTownRoads(site, {
     ground: (x, y) => site.groundAt(x, y),
     wet,
+    water,
     centre,
     stores: toBox(pile.w),
     radial: { radius: R + 20, iters: 12 },
@@ -133,6 +139,15 @@ it("the start town's roads laid (the hybrid): radial relax, curve spokes, a draw
   console.log(JSON.stringify(report));
   expect(report.millReached).toBe(true);
   expect(res.curves.some((c) => c.kind === 'far')).toBe(true);
+  // no road under water: every stretch over water is a bridge in the plan's layout
+  const bridges = site.plan.layout.linear.filter((f) => f.of === 'mainroad');
+  for (const c of res.curves)
+    for (let k = 1; k < c.pts.length; k++) {
+      const m: [number, number] = [(c.pts[k - 1][0] + c.pts[k][0]) / 2, (c.pts[k - 1][1] + c.pts[k][1]) / 2];
+      if (!water(m[0], m[1])) continue;
+      const on = bridges.some((b) => b.points.some((q) => Math.hypot(q[0] - m[0], q[1] - m[1]) < 4.5));
+      expect(on).toBe(true);
+    }
   const out = process.env.EDGE_OUT;
   if (out) {
     fs.mkdirSync(out, { recursive: true });

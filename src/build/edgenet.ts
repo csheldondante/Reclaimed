@@ -124,15 +124,10 @@ class Union {
   }
 }
 
-export function edgeNetOf(site: EdgeNetSite, io: EdgeNetIO): EdgeNet {
-  const t0 = performance.now();
-  const { plan, grid } = site;
+/** The grid's edges: each cell side once (a neighbour's same side shares it) — its ends, the cells either side (-1 the
+ *  rim), and per cell side its edge. */
+export function edgesOf(grid: { count: number; verts: ArrayLike<number>; quads: ArrayLike<number> }): { ends: Int32Array; cells: Int32Array; edgeOf: Int32Array } {
   const nv = grid.verts.length / 2;
-  const vx = (v: number) => grid.verts[v * 2];
-  const vy = (v: number) => grid.verts[v * 2 + 1];
-  const vg = new Float64Array(nv);
-  for (let v = 0; v < nv; v++) vg[v] = io.ground(vx(v), vy(v));
-  // the edges: each cell side once (a neighbour's same side shares it)
   const edgeOf = new Int32Array(grid.count * 4).fill(-1);
   const ends: number[] = [];
   const cells: number[] = [];
@@ -151,9 +146,30 @@ export function edgeNetOf(site: EdgeNetSite, io: EdgeNetIO): EdgeNet {
       } else cells[e * 2 + 1] = c;
       edgeOf[c * 4 + s] = e;
     }
-  const ne = ends.length / 2;
-  const E = Int32Array.from(ends);
-  const C = Int32Array.from(cells);
+  return { ends: Int32Array.from(ends), cells: Int32Array.from(cells), edgeOf };
+}
+
+/** What the view draws of the paths (build/edgeview.ts): the edges, each one's drawn kind, the verge, the curves. */
+export type PathsView = Pick<EdgeNet, 'ends' | 'cells' | 'edgeOf' | 'kind' | 'roads' | 'curves'>;
+
+/** The paths a plan's layout carries (`layout.roads`: generation's, an edit's), as the view draws them. */
+export function pathsViewOf(grid: { count: number; verts: ArrayLike<number>; quads: ArrayLike<number> }, roads: { verge: number[]; sides: number[]; curves: { pts: [number, number][] }[] }): PathsView {
+  const { ends, cells, edgeOf } = edgesOf(grid);
+  const kind = new Uint8Array(ends.length / 2);
+  for (let i = 0; i < edgeOf.length && i < roads.sides.length; i++) kind[edgeOf[i]] = Math.max(kind[edgeOf[i]], roads.sides[i]);
+  return { ends, cells, edgeOf, kind, roads: new Set(roads.verge), curves: roads.curves.map((c) => c.pts) };
+}
+
+export function edgeNetOf(site: EdgeNetSite, io: EdgeNetIO): EdgeNet {
+  const t0 = performance.now();
+  const { plan, grid } = site;
+  const nv = grid.verts.length / 2;
+  const vx = (v: number) => grid.verts[v * 2];
+  const vy = (v: number) => grid.verts[v * 2 + 1];
+  const vg = new Float64Array(nv);
+  for (let v = 0; v < nv; v++) vg[v] = io.ground(vx(v), vy(v));
+  const { ends: E, cells: C, edgeOf } = edgesOf(grid);
+  const ne = E.length / 2;
   const len = new Float32Array(ne);
   const cut = new Uint8Array(ne);
   const steep = new Uint8Array(ne);

@@ -211,6 +211,8 @@ export interface LinearFeature {
   width: number;
   /** a loop (a town wall) */
   closed?: boolean;
+  /** (round 128p, DA-A13) laid by the town's roads (build/townroads.ts): a main road's bridge, made again with them */
+  of?: 'mainroad';
 }
 
 /** What a building shows on one storey of one side (chosen by WFC so bays line up and doors face the street). */

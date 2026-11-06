@@ -20,6 +20,9 @@ import type { BuildingRec, CityMark, CityPlan, CitySpec, DensityFn, StructureSty
 import type { StructureType } from '../api/contracts/fortress';
 import { draftCity } from '../structures/plan';
 import { buildingOf, placeDraft, siteOfDraft, type PlannedBuilding } from '../structures/place';
+import { roadColumns } from '../build/townroads';
+import { hashf } from '../structures/rng';
+import { DEEP } from '../agents/rules';
 import { columnsOf } from '../structures/columns';
 import { townCity } from '../build/view';
 import type { TownSite } from '../build/site';
@@ -453,8 +456,25 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
   // ---- (onetown) placed into the town's one plan through its API, each building the type its use makes it
   const site = siteOfDraft(rec.id, draft, { x0: box.x0, y0: box.y0, w: W, h: H }, inp.ground);
   const typeFor = (b: BuildingRec): StructureType => typeOfUse(useOf.get(b.id)!, b);
-  const placed = placeDraft(draft, site, { typeOf: typeFor, standing: (b) => (stand.has(b.id) ? stand.get(b.id)! : b.storeys) });
+  // (round 128p, DA-A13: the town's roads laid with it, roads first — build/townroads.ts; a road under any water a bridge)
+  const placed = placeDraft(draft, site, {
+    typeOf: typeFor,
+    standing: (b) => (stand.has(b.id) ? stand.get(b.id)! : b.storeys),
+    roads: {
+      ground: groundAt,
+      wet: (x, y) => water(x, y) > DEEP,
+      water: (x, y) => water(x, y) > 0,
+      centre: [cx, cy],
+      stores: [cx, cy],
+      radial: { radius: R + 20, iters: 12 },
+      spokes: 4,
+      spokeAngle: hashf(inp.seed, 91) * Math.PI * 2,
+      far: 4,
+    },
+  });
   const city = townCity(site, { ground: groundAt });
+  // (round 128p: the cells the main roads took — a building's record keeps the rest)
+  const roadVerge = new Set(site.plan.layout.roads?.verge ?? []);
   // (the view of the town as the generator was asked for it: its spec)
   city.spec = spec;
   /** a draft building's first building in the plan's view (null: not placed) */
@@ -506,7 +526,7 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
     }
     const caps = derive(catalogue(things), id);
     const WORKERS: Partial<Record<Use, string[]>> = { workshop: ['smith'], granary: ['hauler'], warehouse: ['docker'], sawmill: ['sawyer'], stable: ['stablehand'] };
-    const rb: Building = { id, thing: id, grid: rec.grids[b.kind === 'farmhouse' || b.kind === 'barn' ? 1 : 0].id, cells: b.quads.slice(), storeys: viewOf(b)?.storeys ?? b.storeys, use: caps.tags.filter((x) => USE_TAGS.has(x)), workers: WORKERS[use] };
+    const rb: Building = { id, thing: id, grid: rec.grids[b.kind === 'farmhouse' || b.kind === 'barn' ? 1 : 0].id, cells: b.quads.filter((q) => !roadVerge.has(q)), storeys: viewOf(b)?.storeys ?? b.storeys, use: caps.tags.filter((x) => USE_TAGS.has(x)), workers: WORKERS[use] };
     if (use === 'temple') rb.use.push('temple');
     buildings.push(rb);
     lotUse.set(`b${b.id}`, use);
@@ -631,6 +651,9 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
     lotUse.set(`f${nf}`, 'field');
     spots.push({ at: p.at, kind: 'farm', ref: id });
   });
+
+  // ---- (round 128p) bare ground on the roads: the main roads' curves and the drawn paths (the user: roads clear plants)
+  for (const col of roadColumns(site)) if (!columns.has(col)) columns.set(col, { lo: inp.ground[col], ivs: [], bare: true });
 
   // ---- bare ground: no plants on the crop strips, the streets, the plaza and under the buildings (the old stamps had
   // them bare too: a field's crop is its own, not the meadow's tufts through it)

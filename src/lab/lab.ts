@@ -195,7 +195,7 @@ export class Lab {
 
   // ---- (round 128p, DA-A13 step 1) the paths on the grid's edges
 
-  edges(
+  async edges(
     o: {
       spokes?: number;
       spokeAngle?: number;
@@ -207,7 +207,7 @@ export class Lab {
       place?: { type: StructureType; at: V2 }[];
       far?: number;
     } = {},
-  ): unknown {
+  ): Promise<unknown> {
     const site = this.town.site;
     if (o.off) {
       this.view.edges = null;
@@ -217,11 +217,19 @@ export class Lab {
     const { box } = site;
     const [ox, oy] = this.window.origin;
     const W = this.io.core.dims.w;
-    const map = this.io.core.map;
+    // (the water as it is now: the lab's rivers and sea settle after the fixture's capture — one read, an edit's)
+    const live = await this.io.core.readBuffer('water');
+    const map = { water: live };
     const wet = (x: number, y: number) => {
       const [k, r] = cellAt(x, y);
       const col = (r + box.y0 - oy) * W + (k + box.x0 - ox);
       return col >= 0 && col < map.water.length && map.water[col] > DEEP;
+    };
+    // (any water: a road under it is a bridge)
+    const water = (x: number, y: number) => {
+      const [k, r] = cellAt(x, y);
+      const col = (r + box.y0 - oy) * W + (k + box.x0 - ox);
+      return col >= 0 && col < map.water.length && map.water[col] > 0;
     };
     const toBox = (q: readonly number[]): V2 => [q[0] - (box.x0 - ox), q[1] - (box.y0 - oy) * ROW_H];
     const centre = toBox(this.town.rec.at);
@@ -240,6 +248,7 @@ export class Lab {
       hybrid = layoutTownRoads(site, {
         ground: (x, y) => site.groundAt(x, y),
         wet,
+        water,
         centre,
         stores: toBox(this.town.heap),
         radial: o.radial === 0 ? undefined : { radius: o.radial ?? R + 20, iters: 12 },
@@ -262,7 +271,7 @@ export class Lab {
       },
     );
     this.view.edges = net;
-    this.view.wet = wet;
+    this.view.wet = water;
     if (hybrid) this.view.changed(site.id);
     else this.view.redraw(site.id);
     const win = (q: V2): V2 => [q[0] + (box.x0 - ox), q[1] + (box.y0 - oy) * ROW_H];
@@ -281,12 +290,13 @@ export class Lab {
     }
     mids.sort((a, b) => a.d - b.d);
     const hy = hybrid && {
-      curves: hybrid.curves.map((c) => ({ kind: c.kind, from: win(c.pts[0]), to: win(c.pts[c.pts.length - 1]), n: c.pts.length, wet: c.pts.filter((q) => wet(q[0], q[1])).length })),
+      curves: hybrid.curves.map((c) => ({ kind: c.kind, from: win(c.pts[0]), to: win(c.pts[c.pts.length - 1]), n: c.pts.length, water: c.pts.filter((q) => water(q[0], q[1])).length })),
       clipped: hybrid.clipped.length,
       removed: hybrid.removed.length,
       gates: hybrid.gates,
       terraces: hybrid.terraces,
       roadCells: net.roads.size,
+      bridges: site.plan.layout.linear.filter((f) => f.of === 'mainroad').map((f) => win([f.points[Math.floor(f.points.length / 2)][0], f.points[Math.floor(f.points.length / 2)][1]])),
       ms: hybrid.ms,
     };
     return { ...net.reach, hybrid: hy, ms: +net.reach.ms.toFixed(1), out: net.reach.out.map((x) => `${x.type}:${x.why}`), outByWhy: why, centre: win(centre), pathsAt: mids.filter((_, i) => i % 15 === 0).slice(0, 8) };

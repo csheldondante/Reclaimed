@@ -36,7 +36,10 @@ describe('settlements on the structures contract', () => {
     const houses = p.rec.buildings.filter((b) => b.id.includes(':b'));
     expect(houses.length).toBeGreaterThan(20);
     const plan = p.site.plan;
+    // (round 128p: a main road takes the cells it crosses — its verge — roads first: a building is what's left)
+    const verge = new Set(plan.layout.roads?.verge ?? []);
     for (const b of houses) {
+      for (const c of b.cells) expect(verge.has(c)).toBe(false);
       const owners = new Set(b.cells.map((c) => plan.owner[c]));
       expect(owners.size).toBe(1);
       const sid = [...owners][0];

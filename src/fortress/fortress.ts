@@ -15,6 +15,7 @@ import type { TownSite } from '../build/site';
 import { cellAt, cellPos } from '../world/lattice';
 import { DEFS } from './defs';
 import { typeIndex, type TownPlan } from '../build/plan';
+import { relayRoads } from '../build/townroads';
 import { pickFace, placeFor } from './pick';
 import { shapesOf } from '../build/shapes';
 import { groundSteps, waysOf, waysNav, type Ways } from '../build/ways';
@@ -1143,8 +1144,16 @@ export class Fortress {
       this.town.plans.ownAll(c, owner, type);
       this.town.built.ownAll(c, owner, type);
     }
-    // (FT-26) the trees go from the cells painted and the cells round them (a courtyard among them)
-    this.clearPlants(changed);
+    // (round 128p, DA-A13: a town with its roads laid lays them again — the paths to what was placed, a far structure's
+    // road, the terraces — through the generator's own function)
+    let verge: number[] = [];
+    if (changed.length && this.plan.layout.roads) {
+      const before = new Set(this.plan.layout.roads.verge);
+      relayRoads(this.site);
+      verge = (this.plan.layout.roads?.verge ?? []).filter((c) => !before.has(c));
+    }
+    // (FT-26) the trees go from the cells painted and the cells round them (a courtyard among them); a new road's too
+    this.clearPlants([...changed, ...verge]);
     // (what stands may have come down; the ways' stairs moved: claimed again)
     if (changed.length) this.io.changed(true);
     for (const e of erased) for (const h of this.onErased) h(e);

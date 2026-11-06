@@ -8,7 +8,7 @@
 //  - Paths: paving — each drawn edge a strip of its kind's width, each join a square (pathPaving), draped on the ground.
 import type { LinearFeature } from '../api/contracts/structures';
 import type { TownPlan } from './plan';
-import type { EdgeNet } from './edgenet';
+import type { PathsView } from './edgenet';
 import { INSET, PATH_WIDTH } from './edgenet';
 
 type V2 = [number, number];
@@ -44,7 +44,7 @@ function mitre(v: V2, ns: { n: V2; d: number }[]): V2 {
  * The tiles' corners with the buildings inset: the grid's vertices first (unchanged), then a moved copy per (vertex,
  * structure) that an inset moves; `quads` the cells' corners (a building's cells pointing at their structure's copies).
  */
-export function insetTiles(grid: Grid, plan: TownPlan, net: EdgeNet): { verts: Float64Array; quads: Uint32Array } {
+export function insetTiles(grid: Grid, plan: TownPlan, net: PathsView): { verts: Float64Array; quads: Uint32Array } {
   const verts: number[] = Array.from(grid.verts);
   const quads = Uint32Array.from(grid.quads);
   const P = (v: number): V2 => [grid.verts[v * 2], grid.verts[v * 2 + 1]];
@@ -100,7 +100,7 @@ export function insetTiles(grid: Grid, plan: TownPlan, net: EdgeNet): { verts: F
  */
 export function pathPaving(
   grid: Grid,
-  net: EdgeNet,
+  net: PathsView,
   ground: (x: number, y: number) => number,
 ): { frame: [V2, V2, V2, V2]; foot: number }[] {
   const out: { frame: [V2, V2, V2, V2]; foot: number }[] = [];

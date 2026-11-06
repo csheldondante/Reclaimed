@@ -56,6 +56,25 @@ export interface TownLayout {
   berths: Berth[];
   /** the purpose's work site (a mine's mouth, a sawmill's bank): null none found */
   works: { at: [number, number]; dir: [number, number] } | null;
+  /** (round 128p, DA-A13) the town's roads (build/townroads.ts): what the view draws */
+  roads?: TownRoadsLayout;
+}
+
+/**
+ * (round 128p, DA-A13) A town's roads as plain data (build/townroads.ts finishRoads writes it): the main roads' curves
+ * (box-local), the cells under them (their verge), and per cell side (c × 4 + side) the path drawn on it (0 none,
+ * build/edgenet.ts PATH_LANE, PATH_MAIN).
+ */
+export interface TownRoadsLayout {
+  curves: { kind: 'spoke' | 'drawn' | 'far'; pts: [number, number][] }[];
+  verge: number[];
+  sides: number[];
+  /** the town's middle and stores (box-local), and the cells with water on them (any; deep) as generation saw it: an
+   *  edit's roads judge by these (the land changing later is the GPU world check's, DA-A13 later) */
+  centre: [number, number];
+  stores: [number, number];
+  water: number[];
+  deep: number[];
 }
 
 /**
