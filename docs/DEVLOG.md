@@ -19988,3 +19988,49 @@ its slot opening or closing starts it over (a tested piece).
   - the land's order for on-screen regions: nearest-hole first instead of furthest-ahead first (a ranking change);
   - the window's slides keeping up with a fast pan (the planner's reach);
   - the crack in the tile at the window's edge.
+
+## 2026-11-06 — round 128o (`phonefix`, DA-B27): the specks, the queue order, and the window at speed
+
+- (1) The far land through a drawn tile (the geometric check's blind spot).
+  - scripts/farprobe.mjs (committed) holds the pan at the first frame where bgcheck sees the far land's stand-in and
+    saves a shot.
+  - The shot (.testcache/crack-0.png, zoomed in docs/shots/da-b27-tile-specks.png, not tracked) shows dark specks and
+    short bars, one to three cells, inside the fine land of a tile next to coarse tile land. It is not a line along the
+    window's edge.
+  - They are holes in a baked tile: texels with nothing, so the stand-in under the tile shows through. The geometric
+    check rightly sees a tile there. The drawing is wrong.
+  - They are old: in every tilegate run today, before DA-B28 too (06052231: far land in 136 of the fast pan's frames),
+    on 0.1–4% of a frame's samples.
+  - Not fixed. The bake (tilelandgpu.ts, tile land meshed in a scratch slot with its border) leaves texels empty. Next
+    is a bake-level probe: one region baked alone, its G-buffer read back, its empty texels mapped to their columns,
+    and whether those columns' mesh quads are missing (the scratch's edge chunks, or land over the window's z cut).
+- (2) The queue order for on-screen regions: nearest the camera first (TileCache.wanted: k = distance for what's on
+  screen, the camera's way first ahead of it).
+  - Built and measured with fastpanprobe at 0.11 tiles a frame, three runs each:
+
+    | order | undrawn frames | summed share |
+    | --- | --- | --- |
+    | before | 48, 47, 46 | 0.0069, 0.2223, 0.0065 |
+    | after | 46, 48, 47 | 0.0064, 0.0068, 0.1261 |
+
+  - No change: the holes in these runs are slivers (0.0002 of the screen) of one region ahead at the screen's edge.
+    Reverted, not committed.
+  - The probe doesn't reproduce the gate's 2–9% (at floors 3.8–4.1 it finds none). The gate's run order (parked
+    views, then the slow pan, then the fast one) leaves a different state. Its holes need the gate's own sequence to
+    study.
+- (3) The window keeping up at 160 c/s: a design note, not built.
+  - DESIGN §5 (decided 2026-11-05): play centres on the city with a large resident area, and play mostly doesn't
+    stream. §2's residency planner (BACKLOG DA-P2) replaces the sliding keep rect.
+  - Once that exists, a pan inside the resident area draws the full land from resident pages: no slide, no tile, no
+    hole at any speed. 160 c/s matters only in two cases:
+    - (i) a pan out past the resident area's edge, where tiles stand in;
+    - (ii) the gate's synthetic pan across the atlas, which is today's window-follows-camera case.
+  - In (i), §5's layers already say what's drawn: the stand-in at once, then the tile when made, then the full land.
+    A stand-in showing for the tiles' latency is the design, not a gap. "No draw gaps" means no pixel drawn by
+    nothing, which the bg check (background 0 in every run) holds.
+  - So the window keeping up at speed buys little after DA-P2. The two things worth doing are:
+    - a gate that pans inside the resident area at 160 c/s and demands full land, plus one past its edge that
+      demands no background and judges the stand-in's time against the tiles' measured latency, not 0%;
+    - the tile holes of (1), which are real gaps in a drawn layer.
+  - Recommended: don't build window-follow-at-speed. Retarget DA-B27's fast-pan gate when DA-P2 lands, and fix (1)
+    now.

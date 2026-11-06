@@ -114,7 +114,7 @@ try {
       log.push([f, sign, Math.round(off), `org ${S.origin.join(',')} cam ${c.target.map((v) => Math.round(v)).join(',')} mot ${TL.motion.map((v) => Math.round(v)).join(',')}`, info.join(' | '), gc ? +gc.share.toFixed(4) : null, +c.zoom.toFixed(2), +c.zoomFloor.toFixed(2), order.length]);
     }
     R.scene.pan = null;
-    return { regions: Object.fromEntries([...tl].filter(([, v]) => v.undrawn > 0 || v.states.length > 1)), frames: log.filter((x) => x[4]).slice(0, 40), floor: c.zoomFloor, origin: [...S.origin], W: S.W, total: f };
+    return { regions: Object.fromEntries([...tl].filter(([, v]) => v.undrawn > 0 || v.states.length > 1)), undrawnFrames: log.filter((x) => x[4]).length, undrawnShare: +log.reduce((a, x) => a + (x[5] ?? 0), 0).toFixed(4), worstShare: Math.max(...log.map((x) => x[5] ?? 0)), frames: log.filter((x) => x[4]).slice(0, 40), floor: c.zoomFloor, origin: [...S.origin], W: S.W, total: f };
   });
   console.log(JSON.stringify(r, null, 1));
 } finally {
