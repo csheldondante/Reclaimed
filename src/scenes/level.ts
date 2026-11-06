@@ -272,8 +272,6 @@ export class LevelScene implements Scene {
   pitCut?: boolean;
   /** the world as modules (docs/WORLD_API.md), made on first use of reclaimed.world */
   worldApi?: Sim;
-  /** (round 128n, phonefix) the game's questions of the world's GPU data, read back by page on demand (game/worldquery.ts) */
-  worldQuery?: import('../game/worldquery').WorldQuery;
   /** round 83, V21: ?cutaway (api/puck.ts, api/cutaway.ts) */
   cutaway?: { puck: Puck; slice: Slice; orbit: Orbit; dither: Dither };
   /** a stand-in character's feet kept seen (Dither) for ?cutaway (scripts/cutshot.mjs); none when unset */

@@ -27,7 +27,7 @@ import { brush, drawRing } from './sandbox-tools';
 import { aimBeam, stepMeteors } from './impacts';
 import { CUTAWAY, PLANNER_OFF, COARSE_PARTS, CAM_CLAMP, PLAN_OFF } from './flags';
 import type { LevelScene } from '../level';
-import { mirroredApiOf, worldApiOf } from './world-api';
+import { worldApiOf } from './world-api';
 
 export function levelFrame(scene: LevelScene, now: number, dt: number, driven = false): void {
   // (round 128l, tooling: lab.run steps the scene itself, as fast as the GPU goes — the display's frames wait)
@@ -267,8 +267,6 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
   // (round 128l: the lab may run only some of the sim's systems — lab.sims, src/lab/lab.ts)
   const ticks = held ? 0 : core.advance(now, simDt, scene.speed, scene.lab?.simFilter);
   record('sim', performance.now() - tSim); // (round 100, hitchrec: timing)
-  // (round 128n, phonefix) the world's pages asked this frame read back together, after the tick's edits
-  scene.worldQuery?.frame();
   scene.ticksAvg = scene.ticksAvg * 0.95 + ticks * 0.05;
   // (round 83, V21: ?cutaway=1 — the camera's puck, the slice and the orbit round it; `cutFeet` a script's
   // stand-in character, kept seen)
@@ -295,7 +293,7 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
   // (round 91: the compass follows the view, flying too — the flyer's look)
   scene.compass?.update(camera.fly ? camera.fly.yaw + Math.PI : camera.azimuth);
   if (CUTAWAY && !camera.fly) {
-    const t = mirroredApiOf(scene).terrain!;
+    const t = worldApiOf(scene).terrain!;
     const c = (scene.cutaway ??= { puck: new Puck(t, camera), slice: new Slice(t, camera), orbit: new Orbit(t, camera), dither: new Dither(t, camera) });
     c.puck.update(dt);
     const p = c.puck.pos;

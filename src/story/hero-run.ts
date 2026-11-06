@@ -129,7 +129,7 @@ export class HeroRun {
     // (the ground read back first: a read of the window as it is now, the spawn's drawn height in it)
     for (let k = 0; ; k++) {
       await t.refresh();
-      if (d.api.fresh && t.heightAt(d.spawn[0], d.spawn[1], { smooth: true }) !== null) break;
+      if (t.heightAt(d.spawn[0], d.spawn[1], { smooth: true }) !== null) break;
       if (k > 40) throw new Error(`hero run: the ground at the spawn (${d.spawn}) never read back`);
       await new Promise((res) => setTimeout(res, 250));
     }
@@ -328,7 +328,7 @@ export class HeroRun {
       if (t) play.hud.hint(t.objective, `→ ${t.name}${t.place ? ` in ${t.place}` : ''}${t.needs ? ` (needs the ${t.needs})` : ''} · ${describe(p, t.at)}`);
     }
     // (round 94) a warp put the hero down elsewhere: once the ground there is read
-    if (this.placeAt && this.d.api.fresh && this.d.api.terrain!.heightAt(this.placeAt[0], this.placeAt[1], { smooth: true }) !== null) {
+    if (this.placeAt && this.d.api.terrain!.heightAt(this.placeAt[0], this.placeAt[1], { smooth: true }) !== null) {
       this.hero.place(this.placeAt);
       this.placeAt = null;
     }

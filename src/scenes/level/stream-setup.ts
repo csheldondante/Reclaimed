@@ -21,7 +21,7 @@ import { startFortress, staticsFor } from './fortress';
 import { ARRIVE_PREP } from './flags';
 import { worldSaveOf } from '../level';
 import type { LevelScene } from '../level';
-import { worldApiOf, worldQueryOf } from './world-api';
+import { worldApiOf } from './world-api';
 
 /** sleep and the streamed window, with what follows its slides */
 export function attachStream(scene: LevelScene): void {
@@ -327,13 +327,13 @@ export function attachStream(scene: LevelScene): void {
         origin: () => [S.origin[0], S.origin[1]],
         dims: { w: dims.w, h: dims.h },
         focus: () => [core.camera.target[0], core.camera.target[1]],
-        // (round 128n, phonefix: the trees and the ground asked of the WorldQuery's pages, not the mirror on a timer)
-        trees: (at, r) => (worldQueryOf(scene).treesNear(at[0], at[1], r) ?? []).map((t) => [t.x, t.y] as [number, number]),
+        // (round 128o: null until the pages in reach are read — api/mirror.ts reads them when asked)
+        trees: (at, r) => plants().treesNear(at[0], at[1], r)?.map((t) => [t.x, t.y] as [number, number]) ?? null,
         fell: (at) => plants().fell(at[0], at[1]).then((t) => t?.logs ?? 0),
         take: (at, n) => terrainApi().take(at[0], at[1], n),
         put: (at, m, n) => terrainApi().put(at[0], at[1], m, n),
         epoch: () => epoch,
-        ready: (at) => worldQueryOf(scene).heightAt(at[0], at[1]) !== null,
+        ready: (at) => terrainApi().heightAt(at[0], at[1]) !== null,
         budget: Number(host.params.get('townfolk') ?? ((host.quality.agentSweeps ?? 8) <= 2 ? 28 : 48)),
       });
       // (round 128i, FT-67) ?townview=0: the towns not drawn nor claimed (no settlements view) — the town bench's split of

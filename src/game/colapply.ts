@@ -196,7 +196,7 @@ export class ColumnApply {
   /** (round 128j) claimGrids' params, a stride a pass */
   private gridParams: GPUBuffer | null = null;
 
-  /** (round 128n, phonefix) told after each apply (the columns changed: game/worldquery.ts reads its pages again) */
+  /** (round 128n, phonefix) told after each apply: the columns changed (api/mirror.ts: its pages are stale) */
   readonly onApply: (() => void)[] = [];
 
   constructor(private device: GPUDevice) {

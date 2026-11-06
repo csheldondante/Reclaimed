@@ -31,7 +31,7 @@ The user: "Please work on making the code match the design which is a lot cleane
 | DA-A6 | One crowd for townspeople: merge settle/life and fortress/life (§11) | L | next |
 | DA-A7 | Routes as kinematic trips with a cached route buffer; delete LOST/LAST_LOST steering; tiles declare paths (§12) | L | next |
 | DA-A8 | Every good physical; loot takes real goods (§18) | M | next |
-| DA-B1 | Kill play readbacks: Build never starts the mirror; FieldReader gone; GPU-side queries; unknown != empty; resumes `phonefix` (§24) | M | next |
+| DA-B1 | Kill play readbacks: Build never starts the mirror; FieldReader gone; GPU-side queries; unknown != empty; resumes `phonefix` (§24) | M | done (`phonefix`, round 128o: the world API's mirror read by pages when asked, stale only where the sim ran; no timer in the level; FieldReader gone (the reach's bits); unread is null, a test; the trees stay a veg-page read, their GPU query is DA-B6; phone bench to run) |
 | DA-B2 | Unit sync becomes GPU events plus watched units through a persistent staging ring (§11, §24) | M | next |
 | DA-B3 | Incremental town edits: rebuild only changed structures; no rebuild on unchanged reach answers; < 4 ms an edit on desktop (§5, §24) | M | next |
 | DA-B4 | Reach solve converges on the GPU; one small read per edit (§13) | M | next |
@@ -72,7 +72,7 @@ The user: "Please work on making the code match the design which is a lot cleane
 | PF-4 | The lab gate fortressoutside on the `town` recipe for the game's length (900 sim s, a block planned outside every 150 s; fails if no builder reaches any waiting site for 180 sim s). It fails on 062fe16's timed waves and on head | S | done (phonefix: gate commit) |
 | PF-5 | (found by PF-4, head) a house planned outside and kept on Build (plan owner ≥ 0) is let go by the plan later (owner -1 by t 487 s), silently | M | open |
 | PF-6 | (found by PF-4, head) a farm planned outside at t 450 waits with no builder: nobody holds a build job (phases toWork 5, eat 4, home 3; no toSite or toPile) | M | open |
-| PF-3 | Find and fix what made the fortress unplayable on the phone (bisect d2ba927..062fe16 at 412x915 q=low); a phone bench to run | M | wip |
+| PF-3 | Find and fix what made the fortress unplayable on the phone (bisect d2ba927..062fe16 at 412x915 q=low); a phone bench to run | M | wip (DA-B1, DA-B5 on `phonefix`: 161 MB/s of reads after Build down to ~8 MB/s on the desktop proxy; the phone bench is the user's) |
 
 ## Monolith split (2026-11-04, `fortress`) — the user: "If we can split up those monolith files into well names encapsulated utilities and logical APIs that would be ideal too for saving context."
 

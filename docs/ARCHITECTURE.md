@@ -740,8 +740,23 @@ world definition (map, places, climate, season) and installs the modules it
 asks for; `attachSim(core)` puts them over a WorldCore a scene runs (the
 level: `reclaimed.api`). One `Mirror` per sim: every module registers the
 buffers and textures it reads (terrain: surface, layers, drift, levels;
-water: water, flux; fire: fire, lava; wind: windField), read back together
-on a timer (250 ms), decoded by the module. Commands go through the world's
+water: water, flux; fire: fire, lava; wind: windField), decoded by the module.
+(Round 128o, DA-B1; DESIGN.md §24) The mirror is read **by pages, when asked**
+(api/mirror.ts), never on a timer: a query names its column; the 16 × 16 page
+holding it is unread (the query answers null: "not read yet", never "nothing
+there"; the page is wanted), current, or stale (answered as last read, and
+wanted). The pages wanted are read together a frame later (one submit, one map,
+the staging buffer kept). A page goes stale when the sim runs its chunk (awake
+or drowsy: `Mirror.tick` from the sim's per-tick tap with Globals.sleep and
+drowse — sim/sleep.ts is the one place that knows) or a column apply writes
+the columns (`ColumnApply.onApply` → `touchAll`); a slide makes every page
+unread. The wind field (its own half-resolution layout) is read whole whenever
+asked. `refresh()` reads every page now (tools, tests, restoreLand); only a
+world made by `createSim` refreshes on a timer (`refreshMs`, 250). The level
+attaches it in one place (scenes/level/world-api.ts `worldApiOf`): the
+fortress's Build, its first painted cell (`clearPlants`), the settlements and
+the cutaway use the same API, and none of them starts a timed read (before,
+the first use started 35 MB mapped every 250 ms). Commands go through the world's
 own queues: Globals.events (edits, ignite; the excess waits a tick), the
 particle burst queue (now kept past 64 a tick, not dropped), and
 `windBlows` (wind.ts, a SimSystem just before the windfield: blows, strokes
@@ -2539,9 +2554,9 @@ cheap pool of light ("Yes absolutely enough"). One concern a file:
   the gap between frames' GPU work, sim ticks, which counters moved; the slow frames against the rest.
 - **The judge's inputs** (integrity.ts): edits, cuts, watches, lightning, cyclones and the first window's structures
   seed it; land that comes in with a slide does not (round 100). A pass judges structure boxes for at most 8 ms.
-- **The world API's mirror** (api/mirror.ts, round 100): paged sources (the layers) are read by pages round
-  `Paged.focus()` — the camera's target and `Terrain.keepFresh` points — between whole reads (every 8th, after a
-  slide, `refresh(true)`); `?mirror=full` reads everything every time.
+- **The world API's mirror** (api/mirror.ts, round 100; round 128o: by pages when asked, "The world API" above):
+  `Terrain.keepFresh` points (a hero's) have their unread pages within 48 cells read before anything asks; their
+  queries keep them current. (`?mirror=full`, the camera-target focus and the whole read every 8th are gone.)
 
 ## Benchmark (round 101, branch `bench`)
 

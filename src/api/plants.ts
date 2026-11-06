@@ -7,6 +7,7 @@ import type { WorldCore } from '../scenes/world-core';
 import { EventKind } from '../sim/globals';
 import { cellAt, cellPos } from '../world/lattice';
 import type { Mirror } from './mirror';
+import { COLUMN_BUFS } from '../sim/pages';
 import type { Terrain } from './terrain';
 
 import { OP, STROKE_START } from '../sim/edit-ops';
@@ -114,23 +115,19 @@ export class Plants {
     private mirror: Mirror,
     private terrain: Terrain,
   ) {
-    mirror.addBuffer('veg', core.world.veg);
+    mirror.addColumns('veg', () => core.world.veg, COLUMN_BUFS.veg[0]);
   }
 
-  /** The succession field at (x, y): 0 bare … ~1.2 grass, 2.6 shrubs, 3.6+ woods (null before the first read). */
+  /** The succession field at (x, y): 0 bare … ~1.2 grass, 2.6 shrubs, 3.6+ woods (null: its page not read yet, or off the window). */
   vegAt(x: number, y: number): number | null {
-    const v = this.mirror.f32('veg');
     const [cx, cy] = cellAt(x, y);
-    const { w, h } = this.core.dims;
-    if (!v || cx < 0 || cy < 0 || cx >= w || cy >= h) return null;
-    return v[this.core.ring.idx(cx, cy)];
+    return this.vegCol(cx, cy);
   }
 
   /** (round 117, flora) the succession field at window column (cx, cy), null before the first read or off the window */
   vegCol(cx: number, cy: number): number | null {
-    const v = this.mirror.f32('veg');
-    const { w, h } = this.core.dims;
-    if (!v || cx < 0 || cy < 0 || cx >= w || cy >= h) return null;
+    const v = this.mirror.f32('veg', cx, cy);
+    if (!v) return null;
     return v[this.core.ring.idx(cx, cy)];
   }
 
@@ -147,16 +144,30 @@ export class Plants {
     return this.planAt(cx, cy, v);
   }
 
-  /** The trees within `radius` of (x, y), nearest first (as of the mirror's last read). */
-  treesNear(x: number, y: number, radius: number): Tree[] {
-    const v = this.mirror.f32('veg');
-    if (!v) return [];
+  /**
+   * The trees within `radius` of (x, y), nearest first, as of the mirror's last read of the pages round it; null until
+   * every page in reach has been read (round 128o: not read yet is not "no trees" — they're asked for now).
+   */
+  treesNear(x: number, y: number, radius: number): Tree[] | null {
     const { w, h } = this.core.dims;
     const [c0x, c0y] = cellAt(x, y);
     const r = Math.ceil(radius * 1.2) + 1;
+    const x0 = Math.max(0, c0x - r);
+    const x1 = Math.min(w - 1, c0x + r);
+    const y0 = Math.max(0, c0y - r);
+    const y1 = Math.min(h - 1, c0y + r);
+    // (every page in reach asked first: all wanted together, one read)
+    let v: Float32Array | undefined;
+    let unread = false;
+    for (let py = y0 >> 4; py <= y1 >> 4; py++)
+      for (let px = x0 >> 4; px <= x1 >> 4; px++) {
+        v = this.mirror.f32('veg', px << 4, py << 4);
+        if (!v) unread = true;
+      }
+    if (unread || !v) return null;
     const out: (Tree & { d: number })[] = [];
-    for (let cy = Math.max(0, c0y - r); cy <= Math.min(h - 1, c0y + r); cy++) {
-      for (let cx = Math.max(0, c0x - r); cx <= Math.min(w - 1, c0x + r); cx++) {
+    for (let cy = y0; cy <= y1; cy++) {
+      for (let cx = x0; cx <= x1; cx++) {
         const t = this.planAt(cx, cy, v[this.core.ring.idx(cx, cy)]);
         if (!t) continue;
         const d = Math.hypot(t.x - x, t.y - y);

@@ -26,7 +26,7 @@ import { SKIP_SPEED, SKIP_GRACE } from './flags';
 import { Dither } from '../../api/cutaway';
 import { LEVEL_H } from '../../build/town';
 import type { LevelScene } from '../level';
-import { worldApiOf, worldQueryOf } from './world-api';
+import { worldApiOf } from './world-api';
 
 /**
  * (fortress slice 1, milestone 1) The town at the start becomes the player's fortress: pinned (live, no houses of its
@@ -140,7 +140,6 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
       // (the world API attached: the agents get the terrain, so a load a builder drops — it falls, it's knocked down —
       // falls to the ground as the settlements' do; without it the agents' toss threw)
       worldApiOf(scene);
-      const wq = worldQueryOf(scene);
       const first = !scene.fortressLife;
       scene.fortressLife ??= new FortressLife(
         {
@@ -156,16 +155,16 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
             s.stock -= n;
           },
           // (milestone 3: settle/life.ts's IO — the plants' trees and fell, the terrain's take: all quiet edits)
-          // (round 128n, phonefix: the trees and the ground's top asked of the WorldQuery's pages, not the world API's mirror)
-          trees: (at, r) => (wq.treesNear(at[0], at[1], r) ?? []).map((t) => [t.x, t.y] as [number, number]),
+          // (round 128o: null until the pages in reach are read — api/mirror.ts reads them when asked)
+          trees: (at, r) => scene.worldApi!.plants!.treesNear(at[0], at[1], r)?.map((t) => [t.x, t.y] as [number, number]) ?? null,
           fell: (at) => scene.worldApi!.plants!.fell(at[0], at[1]).then((t) => t?.logs ?? 0),
           dig: (at, n) => scene.worldApi!.terrain!.take(at[0], at[1], n).then((g) => g.amount),
           ground: (x, y) => scene.heightAt(x, y),
           // (round 128m, quarry: the layers' top, loose ground on it too — the surface buffer's z is the solid's: a pit
           // measured by it read a soil-covered column as not dug while its soil was taken)
-          top: (x, y) => wq.heightAt(x, y),
+          top: (x, y) => scene.worldApi!.terrain!.heightAt(x, y),
           speed: () => scene.speed,
-          groundRead: () => wq.gen,
+          groundRead: () => scene.worldApi!.readAt,
           // (round 128m, quarry) a pit's tier dug: its ground woken (slumping) and its walls judged (the stability check)
           settle: (x, y, r) => {
             core.sleep?.wake(x, y, r, 8, performance.now() / 1000);
@@ -310,7 +309,7 @@ export function pitView(scene: LevelScene, dt: number): void {
     // round, and the rim's ground in the box's corners showed its cut faces; render.wgsl pads a box by 0.5)
     best = { x: cx, y: cy, z: floor, r: r * 0.9, lo: [x0 - 1, y0 - 1, floor - 1], hi: [x1 + 1, y1 + 1, rim - 0.8] };
   }
-  const d = (scene.fortressPitCut ??= new Dither(worldQueryOf(scene), cam));
+  const d = (scene.fortressPitCut ??= new Dither(worldApiOf(scene).terrain!, cam));
   if (best) {
     d.see('pit', best.x, best.y, best.z, best.r);
     d.surface('pit', best.lo, best.hi);

@@ -1138,10 +1138,15 @@ export class Agents implements SimSystem {
       f.spin += 7 * dt;
       const [x, y, z] = f.pos;
       const t = this.needTerrain('toss');
-      const ground = t.floorAt(x, y, z) ?? t.heightAt(x, y);
       // (off the map: gone)
-      if (ground === null) continue;
-      if (z > ground) {
+      if (!t.inWindow(x, y)) continue;
+      // (round 128o: the ground there not read yet — api/mirror.ts reads its page now — it flies on: its load isn't lost)
+      if (!t.isRead(x, y)) {
+        keep.push(f);
+        continue;
+      }
+      const ground = t.floorAt(x, y, z) ?? t.heightAt(x, y);
+      if (ground === null || z > ground) {
         keep.push(f);
         continue;
       }

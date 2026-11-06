@@ -18094,3 +18094,52 @@ Agents and editors drifted files between CRLF, LF and mixed (261 CRLF, 911 LF, 1
   regions made by another land generator", and the town has its land gate. A second session does restore the first
   one's fortress blocks as stone (block cells 107.0 / 106.5 m against 103.3 / 102.9 m fresh). That goes to the onetown
   agent (claimed intervals that name their grid).
+
+## 2026-11-05 — round 128o (`phonefix`, DA-B1): the world API's mirror read by pages when asked, never on a timer
+
+- Why: the user, "performance on mobile was abysmal and could not be played"; DESIGN.md §24, no timed GPU→CPU read in
+  play, small async reads only after edits. The level's world API started its mirror on a 250 ms timer the first time
+  anything used it: the fortress's Build (to give the agents a terrain for dropped loads), its first painted cell
+  (`clearPlants`), the cutaway. Each read mapped the whole window's buffers: 35 MB, 139 MB/s, for a few heights and
+  the trees round a lumber camp. And FortressLife read the heap's whole field back (8.2 MB every 500 ms) to pick where
+  a newcomer walks in.
+- phonefix's WIP (c812fb5) answered those questions from a second reader beside the mirror (`WorldQuery`: pages read
+  back on demand). Judged against the design it was a second copy of the ground with its own decoding (heightAt,
+  layersAt, treesNear written again), and it let the mirror's timer run for every other caller. So the mirror itself
+  now reads by pages (api/mirror.ts), and WorldQuery is gone: one copy, one decoder, every caller.
+  - A query names its column; the 16 × 16 page holding it is unread (null: "not read yet", never "nothing there";
+    wanted), current, or stale (answered as last read; wanted). Pages wanted are read together a frame later: one
+    submit, one map, the staging buffer kept.
+  - A page goes stale only where the sim ran: `Mirror.tick` on the sim's per-tick tap with Globals.sleep/drowse
+    (sim/sleep.ts is the one place that knows what runs), and on a column apply (claims, stamps). A slide makes
+    every page unread. The wind field (half-resolution layout) is read whole when asked.
+  - No timer in the level (`worldApiOf`, scenes/level/world-api.ts, the one place it's attached; `mirroredApiOf` and
+    `keepMirrored` gone). `createSim` worlds keep a 250 ms whole refresh (no level frame of their own).
+  - Unread is never "none": `plants.treesNear` returns null until every page in reach is read (it was [] before the
+    first read, and phonefix's `?? []` kept that); the fortress's and the settlements' woodcutters look again next
+    turn; the crews wait; a dropped load flies on until the ground under it is read (it was thrown away: goods lost).
+    `blendedTop` answers null when a neighbour is unread (it renormalised over it as if off the map).
+  - The quarry: a column not read yet counted as dug (`?? -Infinity`): a tier could finish over unread ground. Now it
+    is NaN and a tier waits until all its columns are read (test). Its wait for two timed reads after it was ready
+    went with the timer: with reads made only when asked, nothing asked, and it waited for ever (test). A take is
+    remembered until it's answered and two reads came after (it was two reads after it was sent).
+- FieldReader: the newcomers' entry spots go to the fortress's reach (a bit a spot, `probeReach`), phonefix's change.
+- Measured (desktop proxy: lab `town`, 412×915 dpr 1, q=low, fortressperf.mjs, 10 s of display frames at 4x after
+  Build, every mapAsync counted by label):
+  - fortress 59ba924: 161 MB/s — mirror 139 MB/s (4/s × 35 MB), the field reader 16 MB/s (2/s × 8.2 MB), agents' sync
+    3.3 MB/s, the valley's reads 2.7 MB/s;
+  - phonefix c812fb5 (WIP): 5.8 MB/s;
+  - now: 8.5 MB/s, of which the mirror's pages 1 KB/s (one read of 6 pages at Build); the rest is the agents' sync
+    (2-6 MB/s between runs: DA-B2) and the valley's timed reads (2.8 MB/s: DA-B5, next commit). While the miners dig
+    (`work: true`, a quarry and a lumber camp standing): ~5 page reads a sim second, 40-65 KB a sim second, only
+    where they dig. Frame time on the desktop: 100 fps (the display's), CPU p50 ~1 ms, before and after: the desktop
+    doesn't show the phone's cost; the phone bench is the user's.
+- Found, not this row's: while the quarry digs, Integrity's column copy reads 61-67 MB/s (2.8 reads/s of the window's
+  layers; game/colcopy.ts `kept`, re-read before each judge pass the dig's settle asks for) — DA-B12 has its start and
+  slide reads, not this rate. The lumber camp felled nothing in 120 sim s in the lab on head and before (trees found:
+  12-16 in reach) — not looked into.
+- Hacks and limits: the 16 × 16 page is the unit (a query on a page edge reads two); a hero's kept points read their
+  unread pages within 48 cells ahead; the wind field is read whole when asked (nobody asks in fortress play); drift on
+  sleeping chunks fades without the page going stale (groundAt's drift may lag on chunks that sleep); a column apply
+  makes every page stale (applies are per build event); `world.town()`'s ground still reads an unread column as 0
+  (the sandbox's editor town, not the fortress).

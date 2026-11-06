@@ -22,7 +22,7 @@
 import type { Camera } from '../render/camera';
 import type { Layer } from './terrain';
 
-/** (round 128n) what the cutaway reads of the ground: a column's layers (api/terrain.ts Terrain; game/worldquery.ts WorldQuery) */
+/** (round 128n) what the cutaway reads of the ground: a column's layers, null until read (api/terrain.ts Terrain) */
 export interface LayersSource {
   layersAt(x: number, y: number): Layer[] | null;
 }

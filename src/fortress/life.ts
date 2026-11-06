@@ -114,8 +114,8 @@ export interface FortressLifeIO {
   stores(): Goods;
   /** goods taken out of the stores (negative: put in) */
   take(good: Good, amount: number): void;
-  /** trees within r of a point (window coordinates) */
-  trees(at: V2, r: number): V2[];
+  /** trees within r of a point (window coordinates); null: the ground there isn't read yet (asked: looked at again next turn) */
+  trees(at: V2, r: number): V2[] | null;
   /** a tree felled: its logs (0: none there) */
   fell(at: V2): Promise<number>;
   /** ground dug out at a point (the world API's terrain take: quiet, sim/sleep.ts touch): how much came */
@@ -435,7 +435,13 @@ export class FortressLife implements Routine {
       if (!n) continue;
       const cs = [...s.cells.keys()].map((c) => f.centre(c));
       const mid: V2 = [cs.reduce((a, p) => a + p[0], 0) / cs.length, cs.reduce((a, p) => a + p[1], 0) / cs.length];
-      const near = this.io.trees(mid, reachOf(n)).sort((a, b) => Math.hypot(a[0] - mid[0], a[1] - mid[1]) - Math.hypot(b[0] - mid[0], b[1] - mid[1]));
+      const got = this.io.trees(mid, reachOf(n));
+      // (not read yet — not "no trees": the list kept as it was, looked at again next turn; round 128o)
+      if (!got) {
+        this.treesAt = -1e9;
+        return;
+      }
+      const near = got.sort((a, b) => Math.hypot(a[0] - mid[0], a[1] - mid[1]) - Math.hypot(b[0] - mid[0], b[1] - mid[1]));
       out.push(...near.slice(0, 12));
     }
     this.trees = out;
