@@ -18175,3 +18175,27 @@ the walkers) found three causes, one under the other:
 - The start town at play zoom (412x915, dpr 2.6, the user's link), looked at after these commits: as onetown before
   them (the town, its keep and towers, walls on tile edges, the plots, the lighthouse), the bar's lines as before.
 - docs/MODULES.md regenerated.
+
+## 2026-11-05 — round 128o (`onetown`, DA-A7 core): design note — routes from declared entrances, not cell borders
+
+Design note before code (AGENT_RULES 1). DESIGN.md section 12.
+- **Entrances, one rule** (new build/entrances.ts, pure, from the plan): every structure declares how it's entered — a
+  block or the keep a door (a ground-floor side opening on free ground or on a passage), a wall its gates, a yard
+  (farm, orchard, pasture, fountain) its field edge, a quarry its pit's ramp top. ways.ts's door rule moves there.
+  Fortress.doorOf reads it: no fallback to a cell's middle; a structure with no entrance is cut off.
+- **Generation** guarantees one: keepReach gives an entrance-less structure (cell 1188's house site) a passage through
+  its neighbours (the same search it runs for shut pockets), and placeDraft throws if any non-wall structure is left
+  without one. Walls are exempt (a barrier, built from its sides; its gates are its entrances when it has them).
+- **The route graph from the ways**: lanes.ts no longer builds a graph over every cell border. A lane runs from a way
+  cell's middle to the middle of the side it shares with the next way cell (ways.ts's road tree: free cells, gates,
+  passages, joined to every entrance), so it lies inside free cells and enters claimed cells only through a gate or a
+  passage. Water (the reach's wet bits) blocks a way cell, as it blocked a border. Deleted: the border graph, OFF_BUILDING,
+  ROOT_REACH, the roots at the town's heap, BIG, the first-cell-corners entry for yards. Roads drawn down cell middles
+  (a visible change from the borders of round 128k).
+- **Reach (DA-A3):** the entrances are what the reach must keep in the stores' component; A3's GPU solve asks them.
+  Here a CPU test checks it on the fixture's route graph.
+- **Transfers / representations (1b, 1c):** none new. Lanes stay CPU, rebuilt per plan change (cheaper: no grid-wide
+  border graph); the road shapes and road graph go to the GPU as before (Agents.setRoads, Agents.ride), on change only.
+- **Tests first:** on the fixture — no lane sample inside a claimed column except in a gate or passage cell; every
+  structure's entrance joined to the stores on the route graph; every non-wall structure has an entrance. Lab gate:
+  fortressoutside on `town` builds all its blocks.
