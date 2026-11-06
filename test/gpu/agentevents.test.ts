@@ -7,8 +7,8 @@ import { tinyMap } from '../support/tinymap';
 import { testGpu, type TestGpu } from './dawn';
 import { tinyWorld } from './world';
 import { installAgents } from '../../src/agents/install';
-import { Agents, ROAD_FIELD, type AgentEvent } from '../../src/agents/agents';
-import { graphOf } from '../../src/agents/roadgraph';
+import { Agents, type AgentEvent } from '../../src/agents/agents';
+import { RouteNet } from '../../src/agents/routes';
 import { packRoadShapes } from '../../src/agents/roads';
 import { installTraits } from '../../src/traits/install';
 import { registerSlice } from '../../src/game/traits/modules';
@@ -21,6 +21,17 @@ afterAll(() => g?.destroy());
 
 const W = 64;
 const MID: [number, number] = [32, 27];
+
+/** (round 128p) a route net: a road along y from x0 to x1, a node every 4 m, on the ground (z 10) */
+function line(x0: number, x1: number, y: number): RouteNet {
+  const xyz: number[] = [];
+  const edges: [number, number, number][] = [];
+  for (let x = x0, i = 0; x <= x1; x += 4, i++) {
+    xyz.push(x, y, 10);
+    if (i) edges.push([i - 1, i, 4]);
+  }
+  return new RouteNet(xyz, edges);
+}
 
 async function world() {
   const map = tinyMap(W, W, 32, () => [{ z0: 0, z1: 10, mat: MAT.Stone }]);
@@ -122,16 +133,15 @@ test('arrived: each unit told once when it comes within its field\'s radius, not
 
 test("arrived on a ride: each rider told once, standing at its group's goal; not for a group it was moved to that tick", async () => {
   const { agents, tick } = await world();
-  // (a road along y = 27 from x 8 to 56: two pieces meeting at x 32)
+  // (a road along y = 27 from x 8 to 56)
   const a: [number, number] = [8, 27];
-  const m: [number, number] = [32, 27];
   const b: [number, number] = [56, 27];
   agents.setRoads(packRoadShapes([{ a, b, half: 1.2 }]), 0, 0);
-  agents.setRoadGraph(graphOf([{ a, b: m, cell: 0, cost: 1 }, { a: m, b, cell: 1, cost: 1 }]), 0, 0);
+  agents.setRouteNet(line(a[0], b[0], 27), 0, 0, 0);
   const G = 9;
   const ids = agents.spawn(4, 14, 27, { group: G, spread: 0.5 });
   expect(agents.ride(G, [[52, 27]])).toBe(true);
-  agents.follow(G, ROAD_FIELD);
+  agents.follow(G, -1);
   const got: (AgentEvent & { type: 'arrived' })[] = [];
   for (let k = 0; k < 80 && new Set(got.map((e) => e.id)).size < ids.length; k++) {
     tick(30);
@@ -151,7 +161,7 @@ test("arrived on a ride: each rider told once, standing at its group's goal; not
   // (moved to another riding group whose goal is elsewhere: no arrival for it until they stand at its goal)
   const H = 10;
   expect(agents.ride(H, [[12, 27]])).toBe(true);
-  agents.follow(H, ROAD_FIELD);
+  agents.follow(H, -1);
   for (const id of ids) agents.regroup(id, H);
   tick(2);
   expect((await agents.sync()).events.filter((e) => e.type === 'arrived')).toEqual([]);
@@ -170,12 +180,12 @@ test('arrived on a ride from where it stands: sent to a goal it is already at (o
   const a: [number, number] = [8, 27];
   const b: [number, number] = [56, 27];
   agents.setRoads(packRoadShapes([{ a, b, half: 1.2 }]), 0, 0);
-  agents.setRoadGraph(graphOf([{ a, b, cell: 0, cost: 1 }]), 0, 0);
+  agents.setRouteNet(line(a[0], b[0], 27), 0, 0, 0);
   const G = 9;
-  // (2.4 m off the road, at the goal: the field onto the roads would take it away first)
+  // (2.4 m off the road, at the goal: its route's last point)
   const ids = agents.spawn(1, 12.3, 29.4, { group: G, spread: 0 });
   expect(agents.ride(G, [[12, 29]])).toBe(true);
-  agents.follow(G, ROAD_FIELD);
+  agents.follow(G, -1);
   const got: AgentEvent[] = [];
   for (let k = 0; k < 6 && !got.length; k++) {
     tick(10);
@@ -183,6 +193,30 @@ test('arrived on a ride from where it stands: sent to a goal it is already at (o
   }
   expect(got.map((e) => e.type === 'arrived' && e.ride)).toEqual([G]);
   expect(got[0].type === 'arrived' && got[0].id).toBe(ids[0]);
+  expect(g.takeErrors()).toEqual([]);
+});
+
+test('a rider taken out of its queue: the one behind it goes on to the goal (round 128p)', async () => {
+  const { agents, tick } = await world();
+  agents.setRouteNet(line(8, 56, 27), 0, 0, 0);
+  const G = 9;
+  // (both join at the node at x 12: one route, one queue — the second keeps a gap behind the first)
+  const [lead] = agents.spawn(1, 12.5, 27, { group: G, spread: 0 });
+  const [back] = agents.spawn(1, 11.5, 27, { group: G, spread: 0 });
+  expect(agents.ride(G, [[52, 27]])).toBe(true);
+  agents.follow(G, -1);
+  tick(30);
+  // (parted by the queue's gap, though they joined together)
+  const s0 = await agents.sync();
+  const x = (id: number) => s0.units.find((u) => u.id === id)!.x;
+  expect(x(lead) - x(back)).toBeGreaterThan(1);
+  agents.remove([lead]);
+  const got: AgentEvent[] = [];
+  for (let k = 0; k < 80 && !got.length; k++) {
+    tick(30);
+    got.push(...(await agents.sync()).events.filter((e) => e.type === 'arrived'));
+  }
+  expect(got.map((e) => e.id)).toEqual([back]);
   expect(g.takeErrors()).toEqual([]);
 });
 

@@ -11,13 +11,11 @@ import { typeIndex, type StructureAttrs } from '../build/plan';
 import { TownSite, type SiteBox } from '../build/site';
 import { LEVEL_H } from '../build/town';
 import { townView } from '../build/view';
-import { shapesOf } from '../build/shapes';
-import { groundSteps, waysNav, waysOf } from '../build/ways';
-import type { NavGraph } from '../api/contracts/structures';
 import { cellPos, ROW_H } from '../world/lattice';
 import { draftCity, shiftPlan, type CityDraft } from './plan';
-import { entrancesOf, needsEntrance } from '../build/entrances';
-import { finishRoads, mainRoads, type RoadsState, type TownRoadsIO } from '../build/townroads';
+import { DEEP } from '../agents/rules';
+import { finishRoads, mainRoads, type RoadsState, type TownRoads, type TownRoadsIO } from '../build/townroads';
+import { navOfRoutes, townRouteNet } from '../agents/routes';
 import { resample } from './linear';
 import { hashf } from './rng';
 import { LOOK_FRESH, PIECE_FLOATS } from './pieces';
@@ -74,6 +72,8 @@ export interface PlaceOpts {
 /** What placing made: per draft building its structure (-1 none), and what couldn't be placed (counted, not hidden). */
 export interface Placed {
   structureOf: Int32Array;
+  /** (round 128p) the roads as laid (null: placed without them) — the town's routes and nav are made from them */
+  roads?: TownRoads | null;
   stats: {
     structures: number;
     blocks: number;
@@ -81,6 +81,8 @@ export interface Placed {
     unplaced: number;
     passages: number;
     ms: number;
+    /** (round 128p) buildings a road took whole, placed again on free lots */
+    replaced?: number;
     /** (round 128p) the roads laid (opts.roads) */
     roads?: { curves: number; verge: number; terraces: number; reached: number; of: number; ms: Record<string, number> };
   };
@@ -135,6 +137,7 @@ export function placeDraft(draft: CityDraft, site: TownSite, opts: PlaceOpts = {
   }
   const verge = roads?.verge ?? new Set<number>();
   const worldPlaced = new Set(draft.placed.map((p) => p.building));
+  const taken: { b: BuildingRec; pb: PlannedBuilding; builtTo: number }[] = [];
 
   // ---- the buildings: each a structure of its own, its tiles' storeys as levels
   for (const b of draft.buildings) {
@@ -145,16 +148,45 @@ export function placeDraft(draft: CityDraft, site: TownSite, opts: PlaceOpts = {
       continue;
     }
     const pb = buildingOf(draft, b, typeOf(b));
-    // (a building the world placed — a card's outcome — stands whole: the road gives way, its cells off the verge)
+    // (a building the world placed — a card's outcome — stands whole: the road gives way, its cells off the verge; a
+    // landmark drawn by its shape — a dome over four cells round a corner — isn't cut down: a road over any of it takes
+    // it whole, placed again below in its shape)
     if (worldPlaced.has(b.id)) for (const [c] of pb.blocks) verge.delete(c);
+    else if (b.mega && pb.blocks.some(([c]) => verge.has(c))) pb.blocks = [];
     else if (verge.size) pb.blocks = pb.blocks.filter(([c]) => !verge.has(c));
-    const s = pb.blocks.length ? placeBuilding(site, pb, up >= b.storeys ? Infinity : up > 0 ? levelsFor(up, b.storeyH) : 0) : -1;
+    const builtTo = up >= b.storeys ? Infinity : up > 0 ? levelsFor(up, b.storeyH) : 0;
+    const s = pb.blocks.length ? placeBuilding(site, pb, builtTo) : -1;
+    if (s < 0) {
+      // (round 128p: a building a road took whole is placed again after the rest, on free lots near where it was)
+      if (verge.size && !pb.blocks.length) taken.push({ b, pb: buildingOf(draft, b, typeOf(b)), builtTo });
+      else stats.unplaced++;
+      continue;
+    }
+    structureOf[b.id] = s;
+    stats.structures++;
+    stats.blocks += site.plan.blocks(site.plan.structure(s)!);
+  }
+
+  // ---- (round 128p) the buildings the roads took, placed again: on the free lots (the town's own cells no road, no
+  // building holds) nearest where each stood, as many cells as it had, joined edge to edge; its levels as its tallest
+  for (const { b, pb, builtTo } of taken) {
+    const free = (c: number) => !verge.has(c) && plan.owner[c] < 0 && (tiles.use[c] === 'lot' || tiles.use[c] === 'yard');
+    const was = pb.blocks.map(([c]) => c);
+    const cells = b.mega === 'dome' ? freeRound(site, was, free) : freeCluster(site, was, free);
+    if (!cells) {
+      stats.unplaced++;
+      continue;
+    }
+    const levels = Math.max(...pb.blocks.map(([, L]) => L)) + 1;
+    const moved: PlannedBuilding = { type: pb.type, blocks: cells.flatMap((c) => Array.from({ length: levels }, (_, L) => [c, L] as [number, number])), attrs: { ...pb.attrs, floor: undefined } };
+    const s = placeBuilding(site, moved, builtTo);
     if (s < 0) {
       stats.unplaced++;
       continue;
     }
     structureOf[b.id] = s;
     stats.structures++;
+    stats.replaced = (stats.replaced ?? 0) + 1;
     stats.blocks += site.plan.blocks(site.plan.structure(s)!);
   }
 
@@ -280,156 +312,29 @@ export function placeDraft(draft: CityDraft, site: TownSite, opts: PlaceOpts = {
   // ---- what the world placed (merge124) and the order the town grew in
   for (const p of draft.placed) if (structureOf[p.building] >= 0) site.placed.set(p.id, structureOf[p.building]);
   site.order = draft.order.map((b) => structureOf[b]).filter((s) => s >= 0);
-  // ---- (AGENT_RULES 3b) every open place in the town joined to the land round it, by passages through ground floors
-  stats.passages = keepReach(site);
-  assertEntered(site);
+  // ---- (AGENT_RULES 3b; round 128p) every place reached: the roads' paths and the structures as nodes (below)
   // ---- (round 128p, DA-A13) the paths on the grid's edges, the far structures' roads, the terraces: the plan's layout
+  let laid: TownRoads | null = null;
   if (roads && opts.roads) {
     const r = finishRoads(site, { ...opts.roads }, roads);
+    laid = r;
     stats.roads = { curves: r.curves.length, verge: r.net.roads.size, terraces: r.terraces.length, reached: r.net.reach.reached, of: r.net.reach.structures, ms: r.ms };
   }
+  // ---- (round 128p) a flood's mark worn by where each building stands now (a road may have moved it or cut it down, a
+  // terrace levelled it): under the waterline, abandoned
+  const floods = (spec.marks ?? []).filter((m) => m.kind === 'flooded' && m.level !== undefined);
+  if (floods.length)
+    for (const b of draft.buildings) {
+      const st = structureOf[b.id] >= 0 ? plan.structure(structureOf[b.id]) : null;
+      if (!st) continue;
+      const base = town.base[[...st.cells.keys()][0]];
+      if (floods.some((m) => base < m.level!)) st.wear = 'flooded';
+      else if (st.wear === 'flooded') delete st.wear;
+    }
+
   plan.takeChanged();
   stats.ms = +(performance.now() - t0).toFixed(2);
-  return { structureOf, stats };
-}
-
-/**
- * (AGENT_RULES 3b; the user: "if they keep getting stuck in walls an obvious fix is to modify things along their path to
- * be passable ... The expectation is that they can get anywhere in or around the city") Every open cell of the town —
- * a yard shut in by houses, the door a house opens on — joined to the open land round it (yards — fields, orchards,
- * pastures — are walked across): a pocket is joined by a
- * passage (an arch through the ground floor: TownPlan.setPassage) through the fewest buildings between it and the land
- * already joined, nearest first. A wall is crossed only at its gates; the keep and the landmarks are never cut through.
- * The world changed, not a walker's rule. How many passages were made.
- */
-export function keepReach(site: TownSite): number {
-  const { plan, grid } = site;
-  const n = grid.count;
-  const nb = (c: number, e: number) => grid.nbr[c * 4 + e];
-  // (open: no structure, a gate, a passage, or a field — a yard walked across, StructureDef.crossed)
-  const open = (c: number) => {
-    const t = plan.typeAt(c);
-    return !t || !!plan.defs[t].crossed || !!plan.gate[c] || !!plan.passage[c];
-  };
-  /** a cell a passage may cut: a block's ground floor (not a landmark drawn whole) */
-  const cuttable = (c: number) => {
-    const t = plan.typeAt(c);
-    return !!t && plan.defs[t].form === 'block' && !plan.defs[t].look.mega && plan.has(c, 0) && !plan.passage[c];
-  };
-  // the joined land: the open cells reached from the grid's rim
-  const joined = new Uint8Array(n);
-  const flood = (seeds: number[]) => {
-    const q = seeds.filter((c) => !joined[c]);
-    for (const c of q) joined[c] = 1;
-    while (q.length) {
-      const u = q.pop()!;
-      for (let e = 0; e < 4; e++) {
-        const m = nb(u, e);
-        if (m >= 0 && !joined[m] && open(m)) {
-          joined[m] = 1;
-          q.push(m);
-        }
-      }
-    }
-  };
-  const rim: number[] = [];
-  for (let c = 0; c < n; c++) if (open(c) && [0, 1, 2, 3].some((e) => nb(c, e) < 0)) rim.push(c);
-  flood(rim);
-  let made = 0;
-  for (let c0 = 0; c0 < n; c0++) {
-    if (joined[c0] || !open(c0)) continue;
-    // a pocket: the fewest buildings to cut through to the joined land (0-1 search: open cells free, a block cell one)
-    const cost = new Float64Array(n).fill(Infinity);
-    const prev = new Int32Array(n).fill(-1);
-    const dq: number[] = [];
-    // (the whole pocket the start)
-    const pocket: number[] = [c0];
-    const inPocket = new Uint8Array(n);
-    inPocket[c0] = 1;
-    for (let i = 0; i < pocket.length; i++)
-      for (let e = 0; e < 4; e++) {
-        const m = nb(pocket[i], e);
-        if (m >= 0 && !inPocket[m] && open(m) && !joined[m]) (inPocket[m] = 1), pocket.push(m);
-      }
-    for (const c of pocket) (cost[c] = 0), dq.push(c);
-    let end = -1;
-    for (let head = 0; head < dq.length && end < 0; head++) {
-      const u = dq[head];
-      for (let e = 0; e < 4; e++) {
-        const m = nb(u, e);
-        if (m < 0) continue;
-        const step = open(m) ? 0 : cuttable(m) ? 1 : Infinity;
-        if (cost[u] + step >= cost[m]) continue;
-        cost[m] = cost[u] + step;
-        prev[m] = u;
-        if (joined[m]) {
-          end = m;
-          break;
-        }
-        // (a breadth-first queue kept in cost order: free steps first)
-        if (step === 0) dq.splice(head + 1, 0, m);
-        else dq.push(m);
-      }
-    }
-    if (end < 0) {
-      // (no way through anything but walls and landmarks: left — the rest of the pocket marked so it's asked once)
-      for (const c of pocket) joined[c] = 2;
-      continue;
-    }
-    for (let c = prev[end]; c >= 0 && !inPocket[c]; c = prev[c])
-      if (!open(c)) {
-        plan.setPassage(c, true);
-        made++;
-      }
-    flood(pocket);
-  }
-  // (round 128o) every structure entered (build/entrances.ts): one with none — a house with houses all round it, cell
-  // 1188 of the user's start town — gets a passage through the fewest blocks between it and the joined land
-  for (const s of plan.structures()) {
-    if (!needsEntrance(s.type, plan.defs) || entrancesOf(plan, grid, [], () => false, plan.defs).some((e) => e.structure === s.id)) continue;
-    const cost = new Float64Array(n).fill(Infinity);
-    const prev = new Int32Array(n).fill(-1);
-    const own = (c: number) => plan.owner[c] === s.id;
-    const dq: number[] = [];
-    for (const c of s.cells.keys()) (cost[c] = 0), dq.push(c);
-    let end = -1;
-    for (let head = 0; head < dq.length && end < 0; head++) {
-      const u = dq[head];
-      for (let e = 0; e < 4; e++) {
-        const m = nb(u, e);
-        if (m < 0 || own(m)) continue;
-        const step = joined[m] === 1 ? 0 : cuttable(m) ? 1 : Infinity;
-        if (cost[u] + step >= cost[m]) continue;
-        cost[m] = cost[u] + step;
-        prev[m] = u;
-        if (joined[m] === 1) {
-          end = m;
-          break;
-        }
-        dq.push(m);
-      }
-    }
-    if (end < 0) continue;
-    const cut: number[] = [];
-    for (let c = prev[end]; c >= 0 && !own(c); c = prev[c]) cut.push(c);
-    for (const c of cut) {
-      plan.setPassage(c, true);
-      made++;
-    }
-    flood(cut);
-  }
-  return made;
-}
-
-/**
- * (round 128o) Generation's check: every structure that needs an entrance has one (build/entrances.ts) — a structure
- * with no way in is the generator's bug, a loud error here, never a building the builders can't reach.
- */
-export function assertEntered(site: TownSite): void {
-  const { plan, grid } = site;
-  const has = new Set(entrancesOf(plan, grid, [], () => false, plan.defs).map((e) => e.structure));
-  const without = plan.structures().filter((s) => needsEntrance(s.type, plan.defs) && !has.has(s.id));
-  if (without.length) throw new Error(`town ${site.id}: no way into ${without.map((s) => `the ${s.type} ${s.id} (cells ${[...s.cells.keys()].join(', ')})`).join('; ')}`);
+  return { structureOf, stats, roads: laid };
 }
 
 /** the cells between a and b (not a, b) on a shortest way over the grid's edges, through cells `free` allows (≤ 4 steps) */
@@ -548,10 +453,14 @@ export function planTown(spec: CitySpec, ground: GroundFn, water?: GroundFn, den
   const cols = new Float32Array(w * h);
   for (let col = 0; col < cols.length; col++) cols[col] = g(...cellPos(col % w, Math.floor(col / w)));
   const site = siteOfDraft(`city:${spec.seed}`, draft, box, cols);
-  const placed = placeDraft(draft, site);
-  const { city, extra } = townView(site, { ground: g });
-  // (the town's nav: its ways' — roads and squares, doors, gates, stairs onto the wall-walk: fortress/ways.ts)
-  city.nav = townNav(site);
+  // (round 128p: its roads laid with it, roads first — the one way every town gets them: build/townroads.ts)
+  const wd = (x: number, y: number) => wl?.(x, y) ?? 0;
+  const placed = placeDraft(draft, site, {
+    roads: { ground: g, wet: (x, y) => wd(x, y) > DEEP, water: (x, y) => wd(x, y) > 0, centre: local.at, stores: local.at, radial: { radius: R + 20, iters: 12 }, spokes: 4, spokeAngle: hashf(spec.seed, 91) * Math.PI * 2, far: 4 },
+  });
+  const { city, extra, ways } = townView(site, { ground: g });
+  // (the town's nav: a view of the routes' network — agents/routes.ts navOfRoutes — and its wall-walks and stairs)
+  city.nav = placed.roads ? navOfRoutes(site, townRouteNet(site, placed.roads.net), ways) : { nodes: [], links: [] };
   shiftPlan(city, -dx, -dy);
   for (let i = 0; i < extra.count; i++)
     for (let k = 0; k < 4; k++) {
@@ -565,21 +474,75 @@ export function planTown(spec: CitySpec, ground: GroundFn, water?: GroundFn, den
   return { site, city, extra, draft, placed, dx, dy };
 }
 
-/** A town's nav graph (box frame; world z): its ways' (fortress/ways.ts waysNav) — the one path rule of every town. */
-export function townNav(site: TownSite): NavGraph {
-  const { plan, town, grid } = site;
-  const courts = shapesOf(plan, grid, (c) => town.base[c]).courtyards.flatMap((ct) => ct.cells);
-  const ways = waysOf(plan, grid, { courtyards: courts, walk: groundSteps(grid, (x, y) => site.groundAt(x, y)) });
-  const groundOf = (c: number) => {
-    const cols = grid.columns[c];
-    let z = 0;
-    for (const col of cols) z += site.ground(col) / cols.length;
-    return cols.length ? z : town.base[c];
-  };
-  return waysNav(ways, plan, grid, { ground: groundOf, top: (c) => town.floorZ(c, Math.max(0, plan.top(c))) + LEVEL_H, floor: (c) => town.floorZ(c, 0) });
-}
 
 /** A city planned on its own, as the plan's view (planTown's city). */
 export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn, densityIn?: DensityFn): CityPlan {
   return planTown(spec, ground, water, densityIn).city;
+}
+
+/** the free cells by their distance from the middle of `was`, nearest first */
+function freeByDistance(site: TownSite, was: number[], free: (c: number) => boolean): { order: number[]; dist: (c: number) => number } {
+  const { grid } = site;
+  const cells = [...new Set(was)];
+  let mx = 0;
+  let my = 0;
+  for (const c of cells) {
+    const [x, y] = grid.centre(c);
+    mx += x / cells.length;
+    my += y / cells.length;
+  }
+  const dist = (c: number) => Math.hypot(grid.centre(c)[0] - mx, grid.centre(c)[1] - my);
+  const order: number[] = [];
+  for (let c = 0; c < grid.count; c++) if (free(c)) order.push(c);
+  order.sort((a, b) => dist(a) - dist(b));
+  return { order, dist };
+}
+
+/**
+ * (round 128p) A connected set of free cells as many as `was`, nearest where `was` stood: from each free cell (nearest its
+ * middle first), grown edge to edge nearest first; the first that grows that big. Null: no free cluster that big.
+ */
+function freeCluster(site: TownSite, was: number[], free: (c: number) => boolean): number[] | null {
+  const { grid } = site;
+  const n = new Set(was).size;
+  const { order, dist } = freeByDistance(site, was, free);
+  for (const s0 of order) {
+    const got = new Set([s0]);
+    while (got.size < n) {
+      let best = -1;
+      let bd = Infinity;
+      for (const c of got)
+        for (let e = 0; e < 4; e++) {
+          const m = grid.nbr[c * 4 + e];
+          if (m < 0 || got.has(m) || !free(m)) continue;
+          const d = dist(m);
+          if (d < bd) ((bd = d), (best = m));
+        }
+      if (best < 0) break;
+      got.add(best);
+    }
+    if (got.size === n) return [...got];
+  }
+  return null;
+}
+
+/**
+ * (round 128p) Four free cells round one corner (a dome's shape: view.ts draws it over the four meeting at a vertex),
+ * the nearest where `was` stood. Null: no corner has four free cells round it.
+ */
+function freeRound(site: TownSite, was: number[], free: (c: number) => boolean): number[] | null {
+  const { grid } = site;
+  const round = new Map<number, number[]>();
+  for (let c = 0; c < grid.count; c++)
+    for (let k = 0; k < 4; k++) {
+      const v = grid.quads[c * 4 + k];
+      (round.get(v) ?? round.set(v, []).get(v)!).push(c);
+    }
+  const { order } = freeByDistance(site, was, free);
+  for (const c of order)
+    for (let k = 0; k < 4; k++) {
+      const four = round.get(grid.quads[c * 4 + k])!;
+      if (four.length === 4 && four.every(free)) return four;
+    }
+  return null;
 }

@@ -9,7 +9,6 @@ import { AgentUnits } from '../../units/agent-units';
 import { CHUNK } from '../../world/layout';
 import { cellPos } from '../../world/lattice';
 import { levelFrame } from './frame';
-import { FortressReachGpu } from '../../build/reachgpu';
 import { ROW_H } from '../../world/lattice';
 import { Fortress } from '../../fortress/fortress';
 import { FortressBar } from '../../fortress/ui';
@@ -65,12 +64,9 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: T
     if (!p) throw new Error(`fortress: the town ${rec.id} has no heap (a 'pile' spot) for its builders`);
     return [p.w[0], p.w[1]];
   };
-  // (round 128l, m4: the check at placement — the GPU's connected components over the box, fortress/reachgpu.ts; it
-  // replaced the CPU flood over the window's columns read back, ~140-210 ms a tap and a whole read every 3 s: TL-6, FT-61)
-  const reach = new FortressReachGpu(scene.host.gpu.device, core.world, W, H, () => fort.offset());
   const fort: Fortress = new Fortress(site, {
-    reach,
     townHeap,
+    water: st.waterAt ? (x, y) => st.waterAt!(x, y) : undefined,
     windowOrigin: () => [S.origin[0], S.origin[1]],
     oz: () => S.oz,
     dims: { w: dims.w, h: dims.h, zMax: dims.zMax },
@@ -84,7 +80,7 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: T
   fort.status.people = ECON.startPeople;
   // (onetown) the fortress's edit state drawn and claimed with its town (the view host's: one slab, one static grid)
   view.setHook(rec.id, {
-    view: () => ({ ghost: fort.ghost(), started: fort.started(), picked: fort.inspected, ways: fort.ways(), lanes: fort.lanes(), shut: fort.gatesShut }),
+    view: () => ({ ghost: fort.ghost(), started: fort.started(), picked: fort.inspected, ways: fort.ways(), shut: fort.gatesShut }),
     solid: () => ({ ways: fort.ways(), shut: fort.gatesShut }),
     lost: (structure) => fort.lose(structure),
   });
@@ -98,7 +94,7 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: T
       .terrain!.load(0, 0, dims.w, dims.h * ROW_H)
       .then(() => {
         fort.ready = true;
-        fort.requestReach(true);
+        fort.requestReach();
         // (round 128o, B: the town as generated joined to its stores by the one reach — keepReach is gone)
         void fort.joinTown().then((r) => r && (scene.fortressJoined = r), ignoreTeardown);
       }, ignoreTeardown);
@@ -115,12 +111,12 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: T
   // (round 128l) the reach asked when planning starts (what's been built and dug since; the water for the lanes), every
   // few seconds while building (level/frame.ts) and after a slide (the part come into the window)
   fort.onMode.push((m) => {
-    if (m === 'plan') fort.requestReach(true);
+    if (m === 'plan') fort.requestReach();
   });
-  scene.fortressReadCols = () => fort.requestReach(true);
+  scene.fortressReadCols = () => fort.requestReach();
   // (onetown: the town's heights are world z and its pieces in its box's frame — a slide moves the grid's row only)
-  S.onSlide.push(() => fort.requestReach(true));
-  S.onWarp.push(() => fort.requestReach(true));
+  S.onSlide.push(() => fort.requestReach());
+  S.onWarp.push(() => fort.requestReach());
   // (round 128i, FT-67) the road stamp's offset moved in the slide's own frame, as the towns' grid rows are
   S.onSlide.push(() => scene.fortressCrowd?.roads());
   S.onWarp.push(() => scene.fortressCrowd?.roads());

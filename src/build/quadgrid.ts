@@ -36,6 +36,8 @@ export class QuadGrid implements CellGrid {
   readonly quads: Int32Array;
   readonly nbr: Int32Array;
   cellOf!: Int32Array;
+  /** (round 128p) bumped when the vertices move (what's worked out from them is stale: edgenet.ts EdgeStatics) */
+  version = 0;
   columns!: number[][];
   readonly count: number;
 
@@ -70,6 +72,7 @@ export class QuadGrid implements CellGrid {
   moveVerts(next: ArrayLike<number>): void {
     if (next.length !== this.verts.length) throw new Error(`QuadGrid.moveVerts: ${next.length / 2} vertices for ${this.verts.length / 2}`);
     this.verts.set(next);
+    this.version++;
     this.recolumn();
   }
 

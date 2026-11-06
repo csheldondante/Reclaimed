@@ -18,7 +18,7 @@ import type { TownSite } from './site';
 import type { TownRoadsLayout } from './plan';
 import { cellPos, ROW_H } from '../world/lattice';
 import { adaptToCurve, chaikin, growRoad, radialRelax, type LandIO } from './curveroad';
-import { edgeNetOf, PATH_WIDTH, type EdgeNet } from './edgenet';
+import { edgeNetOf, edgeStatics, PATH_WIDTH, type EdgeNet, type EdgeNetPrev, type EdgeStatics } from './edgenet';
 import { fixTerraces, type TerraceFix } from './terrace';
 import { curvePieces, MAIN_ROAD_WIDTH } from './edgeview';
 
@@ -44,13 +44,19 @@ export interface TownRoadsIO {
   far?: number;
   /** the town's reach (m from its middle): where the spokes start past; absent, its last structure's */
   reach?: number;
+  /** an edit's relay (relayRoads): the layout's water and bridges kept */
+  relay?: boolean;
+  /** (round 128p) the cells an edit changed: the net laid again only where they touch, from the last one laid (when the
+   *  layout is still the one it made) */
+  changed?: readonly number[];
 }
 
 export type CurveKind = 'spoke' | 'drawn' | 'far';
 
 /** what the phases carry: the curves laid, the verge, what the roads took */
 export interface RoadsState {
-  curves: { kind: CurveKind; pts: V2[] }[];
+  /** (a far curve: the structure it was grown to — never grown twice) */
+  curves: { kind: CurveKind; pts: V2[]; to?: number }[];
   verge: Set<number>;
   clipped: Set<number>;
   removed: number[];
@@ -71,6 +77,11 @@ export interface TownRoads {
   terraces: TerraceFix[];
   ms: Record<string, number>;
 }
+
+/** each site's land part of the network, kept while its grid stands (edgenet.ts EdgeStatics) */
+const STATICS = new WeakMap<TownSite, EdgeStatics>();
+/** each site's net as last laid and the layout it wrote: an edit's relay starts from it while that layout stands */
+const LAST = new WeakMap<TownSite, { roads: TownRoadsLayout; net: EdgeNet }>();
 
 /** the growing raster's step (m): a road's walk over the land (4: a cell's size; 2 m doubled the cost for nothing seen) */
 const GROW_STEP = 4;
@@ -98,13 +109,12 @@ function adapt(site: TownSite, st: RoadsState, pts: V2[], width: number): void {
   grid.moveVerts(a.verts);
   for (const c of a.road) {
     const s = plan.structureAt(c);
-    if (s && (st.keepWhole.has(s.id) || !st.clip)) continue;
+    // (a road through a wall: a gate there — generation's and an edit's alike: the fix the wall needs)
     if (s && plan.defs[s.type].form === 'wall') {
-      if (plan.gate[c] || plan.setGate(c, true)) {
-        st.gates++;
-        continue;
-      }
+      if (plan.gate[c] || plan.setGate(c, true)) st.gates++;
+      continue;
     }
+    if (s && (st.keepWhole.has(s.id) || !st.clip)) continue;
     if (s) {
       st.clipped.add(s.id);
       for (const L of [...plan.levels.each(c)]) (plan.erase(c, L), town.remove(c, L));
@@ -170,19 +180,27 @@ export function finishRoads(site: TownSite, io: TownRoadsIO, st: RoadsState): To
   const { plan, grid, town } = site;
   const width = io.width ?? 4;
   const land = landOf(site, io);
-  const netOf = () =>
-    edgeNetOf(
-      { plan, grid, floor: (c) => town.base[c] },
-      { ground: io.ground, wet: io.wet, centre: io.centre, stores: io.stores, roads: [...st.verge], far: io.far ?? 4 },
-    );
-  let net = netOf();
+  const netOf = (prev?: EdgeNetPrev) => {
+    const nio = { ground: io.ground, wet: io.wet, centre: io.centre, stores: io.stores, roads: [...st.verge], far: io.far ?? 4 };
+    // (the land's part kept while the grid stands: an edit pays for the structures' part only)
+    let s0 = STATICS.get(site);
+    if (!s0 || s0.version !== grid.version) STATICS.set(site, (s0 = edgeStatics(grid, nio)));
+    return edgeNetOf({ plan, grid, floor: (c) => town.base[c] }, nio, s0, prev);
+  };
+  // (an edit's: from the net last laid, where the edit touched — while the layout is the one that net wrote)
+  const last = LAST.get(site);
+  let net = netOf(io.changed && last && last.roads === plan.layout.roads ? { net: last.net, changed: io.changed } : undefined);
   lap('net');
-  // the far structures' roads: from the nearest major road (the verge's middles; the middle if none)
-  if (net.far.length) {
+  // the far structures' roads — and any structure the paths leave out of reach (water, a cliff, a wall: a road grown to
+  // it bridges, winds up, or gates its way in) — from the nearest major road (the verge's middles; the middle if none)
+  const out = net.reach.out.filter((o) => plan.defs[o.type].form !== 'wall').map((o) => o.id);
+  const grown = new Set(st.curves.map((c) => c.to).filter((x): x is number => x !== undefined));
+  const toGrow = [...new Set([...net.far, ...out])].filter((id) => !grown.has(id));
+  if (toGrow.length) {
     const from: V2[] = [];
     for (const c of st.verge) from.push(grid.centre(c));
     if (!from.length) from.push(io.centre);
-    for (const id of net.far) {
+    for (const id of toGrow) {
       const s = plan.structure(id);
       if (!s) continue;
       st.keepWhole.add(id);
@@ -199,38 +217,60 @@ export function finishRoads(site: TownSite, io: TownRoadsIO, st: RoadsState): To
         }
       const pts = growRoad(land, from, to, GROW_STEP);
       if (!pts) continue;
-      st.curves.push({ kind: 'far', pts });
+      st.curves.push({ kind: 'far', pts, to: id });
       adapt(site, st, pts, width);
     }
     net = netOf();
     lap('far');
   }
   const terraces = fixTerraces({ plan, grid, town }, net, io.ground);
-  if (terraces.length) net = netOf();
+  // (the floors moved: their structures' cells changed)
+  if (terraces.length) net = netOf({ net, changed: terraces.flatMap((t) => [...(plan.structure(t.id)?.cells.keys() ?? [])]) });
   lap('terraces');
   net.curves = st.curves.map((c) => c.pts);
   // into the plan's layout: what the view draws; the bridges over water as decks (claimed as matter: build/claims.ts)
   const sides: number[] = new Array(grid.count * 4).fill(0);
   for (let i = 0; i < sides.length; i++) sides[i] = net.kind[net.edgeOf[i]];
-  const water: number[] = [];
-  const deep: number[] = [];
-  for (let c = 0; c < grid.count; c++) {
-    const [x, y] = grid.centre(c);
-    if (land.wet(x, y)) water.push(c);
-    if (io.wet(x, y)) deep.push(c);
+  // (an edit's relay keeps generation's water and, its curves the same, its bridges)
+  const was = plan.layout.roads;
+  const relay = !!io.relay && !!was;
+  let water: number[] = was && relay ? was.water : [];
+  let deep: number[] = was && relay ? was.deep : [];
+  if (!relay) {
+    water = [];
+    deep = [];
+    for (let c = 0; c < grid.count; c++) {
+      const [x, y] = grid.centre(c);
+      if (land.wet(x, y)) water.push(c);
+      if (io.wet(x, y)) deep.push(c);
+    }
+  }
+  const sameCurves = relay && was!.curves.length === st.curves.length;
+  const doors: number[] = [];
+  for (const [id, e] of net.door) {
+    for (const c of [net.cells[e * 2], net.cells[e * 2 + 1]]) {
+      if (c < 0 || plan.structureAt(c)?.id !== id) continue;
+      const side = [0, 1, 2, 3].find((k) => net.edgeOf[c * 4 + k] === e);
+      if (side !== undefined) doors.push(id, c, side);
+      break;
+    }
   }
   plan.layout.roads = {
-    curves: st.curves.map((c) => ({ kind: c.kind, pts: c.pts.map((p) => [p[0], p[1]] as V2) })),
+    curves: st.curves.map((c) => ({ kind: c.kind, pts: c.pts.map((p) => [p[0], p[1]] as V2), ...(c.to !== undefined ? { to: c.to } : {}) })),
     verge: [...st.verge],
     sides,
     centre: [io.centre[0], io.centre[1]],
     stores: [io.stores[0], io.stores[1]],
     water,
     deep,
+    doors,
   };
-  plan.layout.linear = plan.layout.linear.filter((f) => f.of !== 'mainroad');
-  for (const c of net.curves) for (const b of curvePieces([c], io.ground, land.wet).bridges) plan.layout.linear.push({ ...b, of: 'mainroad' });
+  if (!sameCurves) {
+    plan.layout.linear = plan.layout.linear.filter((f) => f.of !== 'mainroad');
+    for (const c of net.curves) for (const b of curvePieces([c], io.ground, land.wet).bridges) plan.layout.linear.push({ ...b, of: 'mainroad' });
+  }
   lap('layout');
+  LAST.set(site, { roads: plan.layout.roads, net });
   return { net, curves: st.curves, clipped: [...st.clipped], removed: st.removed, gates: st.gates, terraces, ms: st.ms };
 }
 
@@ -238,7 +278,7 @@ export function finishRoads(site: TownSite, io: TownRoadsIO, st: RoadsState): To
 export function roadsOfLayout(layout: { roads?: TownRoadsLayout }): RoadsState {
   const r = layout.roads;
   return {
-    curves: (r?.curves ?? []).map((c) => ({ kind: c.kind, pts: c.pts.map((p) => [p[0], p[1]] as V2) })),
+    curves: (r?.curves ?? []).map((c) => ({ kind: c.kind, pts: c.pts.map((p) => [p[0], p[1]] as V2), ...(c.to !== undefined ? { to: c.to } : {}) })),
     verge: new Set(r?.verge ?? []),
     clipped: new Set(),
     removed: [],
@@ -253,13 +293,13 @@ export function roadsOfLayout(layout: { roads?: TownRoadsLayout }): RoadsState {
  * An edit's roads (a placement, an erase): the paths, far roads and terraces again from what the plan's layout carries,
  * the water as generation saw it (per cell). Null: the town has no roads laid (a lanes' town).
  */
-export function relayRoads(site: TownSite): TownRoads | null {
+export function relayRoads(site: TownSite, changed?: readonly number[]): TownRoads | null {
   const r = site.plan.layout.roads;
   if (!r) return null;
   const water = new Set(r.water);
   const deep = new Set(r.deep);
   const at = (set: Set<number>) => (x: number, y: number) => set.has(site.grid.cellAtWorld(x, y));
-  const io: TownRoadsIO = { ground: (x, y) => site.groundAt(x, y), wet: at(deep), water: at(water), centre: r.centre, stores: r.stores, spokes: 0, far: 4 };
+  const io: TownRoadsIO = { ground: (x, y) => site.groundAt(x, y), wet: at(deep), water: at(water), centre: r.centre, stores: r.stores, spokes: 0, far: 4, relay: true, changed };
   return finishRoads(site, io, roadsOfLayout(site.plan.layout));
 }
 

@@ -22,6 +22,7 @@ import { cellAt, cellPos } from '../world/lattice';
 import { DEFS } from './types';
 import type { TownPlan } from './plan';
 import { axisLength, onAxis, type Ways } from './ways';
+import { INSET } from './edgenet';
 
 /** a thin wall's half width (pieces.ts WALL_HALF) and a gate's lintel (pieces.ts WALL_LINTEL) */
 export const WALL_HALF = 1.1;
@@ -129,6 +130,28 @@ export function solidSpans(inp: SolidInputs): Map<number, ColumnSpan[]> {
   const defs = inp.defs ?? DEFS;
   const { plan, town, grid } = inp;
   const out = new Map<number, ColumnSpan[]>();
+  // (round 128p, DA-A13: a block stands back from each path drawn on its edges — the view's insetTiles, by the path's
+  // kind (edgenet INSET) — so the ground between two blocks a lane runs between is open: its columns aren't claimed)
+  const sides = plan.layout.roads?.sides;
+  const setBack = (c: number, x: number, y: number, id: number): boolean => {
+    if (!sides) return false;
+    for (let k = 0; k < 4; k++) {
+      const kind = sides[c * 4 + k];
+      if (!kind) continue;
+      const n = grid.nbr[c * 4 + k];
+      if (n >= 0 && plan.structureAt(n)?.id === id) continue;
+      const a = grid.corner(c, k);
+      const b = grid.corner(c, k + 1);
+      const ex = b[0] - a[0];
+      const ey = b[1] - a[1];
+      const L = Math.hypot(ex, ey) || 1;
+      // (the distance in from that side: the cell's middle is on the inside)
+      const [cx, cy] = grid.centre(c);
+      const sgn = Math.sign((cx - a[0]) * -ey + (cy - a[1]) * ex) || 1;
+      if ((sgn * ((x - a[0]) * -ey + (y - a[1]) * ex)) / L < (INSET[kind] ?? 0)) return true;
+    }
+    return false;
+  };
   for (const s of plan.structures()) {
     const def = defs[s.type];
     // (a yard: nothing; onetown — a bridge claims itself: townlab's bridge work)
@@ -145,6 +168,8 @@ export function solidSpans(inp: SolidInputs): Map<number, ColumnSpan[]> {
           let z1 = town.floorZ(c, hi) + LEVEL_H - UNDER_TOP;
           if (through && lo === 0) z1 = Math.max(z1, town.floorZ(c, 0) + LEVEL_H);
           for (const col of grid.columns[c]) {
+            const [px, py] = cellPos(col % grid.w, Math.floor(col / grid.w));
+            if (setBack(c, px, py, s.id)) continue;
             const z0 = through && lo === 0 ? town.floorZ(c, 0) + LEVEL_H - WALL_LINTEL : lo === 0 ? Math.min(town.base[c], inp.ground(col)) - FOOT : town.floorZ(c, lo);
             spans.push({ x: col % grid.w, y: Math.floor(col / grid.w), z0, z1, building: s.id });
           }

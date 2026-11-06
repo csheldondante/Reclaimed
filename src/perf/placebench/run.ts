@@ -32,14 +32,12 @@ export interface PlaceRow {
   type: StructureType;
   at: V2;
   /** kept: reached (maybe with a variant); refused: taken out again with a reason; unplaced: the plan wouldn't take
-   *  it (a cell taken, off the box); noanswer: no judgement within MAX_WAIT frames */
+   *  it (a cell taken, off the box); noanswer: none (round 128p: the judgement comes with the tap) */
   outcome: 'kept' | 'refused' | 'unplaced' | 'noanswer';
   /** the panel's line: why it was refused, or what was put in to keep it (a gate, a passage, a ramp) */
   line: string | null;
   tapMs: number;
   answerMs: number | null;
-  /** the reach's submits for its answer (each waits for the GPU's queue to drain to it: reachgpu.ts) */
-  rounds: number | null;
   frames: Stat | null;
   over33: number;
 }
@@ -74,8 +72,6 @@ export interface PlaceBenchResult {
   diagnosis?: unknown;
 }
 
-/** frames waited for a judgement before it counts as none (the GPU's answer comes in a few) */
-const MAX_WAIT = 600;
 /** frames measured before a placement (the frame times round it) */
 const BEFORE = 3;
 
@@ -88,9 +84,7 @@ export async function runPlaceBench(io: PlaceBenchIO, o: { types?: StructureType
   if (!stores) throw new Error('place bench: the fortress has no stores');
   if (f.mode !== 'plan') throw new Error('place bench: start while planning');
   if (f.plan.structures().length) throw new Error('place bench: start on an empty plan (?fresh=1)');
-  // (the reach's own wet bits: asked for once, as planning starts)
-  f.requestReach(true);
-  await f.settled();
+  f.requestReach();
   // (onetown: the town's gates are its plan's gate cells)
   const gates = f.plan.gate.reduce<V2[]>((out, g, c) => (g ? [...out, f.centre(c)] : out), []);
   const points = placePoints({
@@ -122,7 +116,7 @@ export async function runPlaceBench(io: PlaceBenchIO, o: { types?: StructureType
         last = t;
       }
       const cell = f.cellAt(pt.at[0], pt.at[1]);
-      const row: PlaceRow = { point: pt.name, group: pt.group, type, at: [+pt.at[0].toFixed(1), +pt.at[1].toFixed(1)], outcome: 'unplaced', line: null, tapMs: 0, answerMs: null, rounds: null, frames: null, over33: 0 };
+      const row: PlaceRow = { point: pt.name, group: pt.group, type, at: [+pt.at[0].toFixed(1), +pt.at[1].toFixed(1)], outcome: 'unplaced', line: null, tapMs: 0, answerMs: null, frames: null, over33: 0 };
       f.refusal = null;
       f.note = null;
       const t0 = performance.now();
@@ -130,20 +124,10 @@ export async function runPlaceBench(io: PlaceBenchIO, o: { types?: StructureType
       row.tapMs = +(performance.now() - t0).toFixed(2);
       if (!ok) row.line = cell < 0 ? "outside the fortress's land" : f.refusal;
       else {
-        let n = 0;
-        while (f.isPending(cell) && n++ < MAX_WAIT) {
-          const t = await io.frame();
-          dt.push(t - last);
-          last = t;
-        }
-        if (f.isPending(cell)) row.outcome = 'noanswer';
-        else {
-          row.answerMs = Math.round(performance.now() - t0);
-          row.rounds = f.reachStats.rounds;
-          await f.settled();
-          row.outcome = f.plan.has(cell, 0) ? 'kept' : 'refused';
-          row.line = row.outcome === 'kept' ? f.note : f.refusal;
-        }
+        // (round 128p: judged as it went in — the roads' union-find)
+        row.answerMs = Math.round(performance.now() - t0);
+        row.outcome = f.plan.has(cell, 0) ? 'kept' : 'refused';
+        row.line = row.outcome === 'kept' ? f.note : f.refusal;
         for (let i = 0; i < BEFORE; i++) {
           const t = await io.frame();
           dt.push(t - last);

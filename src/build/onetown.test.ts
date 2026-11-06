@@ -7,7 +7,8 @@ import type { CitySpec, GroundFn } from '../api/contracts/structures';
 import { DEFS } from './types';
 import { TownSite, gridIdOf, siteFromJson, siteToJson } from './site';
 import { QuadGrid } from './quadgrid';
-import { planTown, keepReach } from '../structures/place';
+import { planTown } from '../structures/place';
+import { relayRoads } from './townroads';
 import { fbm } from '../structures/rng';
 
 const hill: GroundFn = (x, y) => 10 + 30 * fbm(x * 0.006 + 3.1, y * 0.006 + 1.7, 11, 4) + 0.06 * x;
@@ -113,26 +114,19 @@ describe('the one grid', () => {
 
 describe('the reach (AGENT_RULES 3b): every open place of a generated town joined to the land round it', () => {
   for (const system of SYSTEMS)
-    it(`${system}: no pocket shut in by buildings (a passage cut where one was)`, () => {
+    it(`${system}: every structure and every open place joined to the stores (a structure one place, open on every side)`, () => {
       const { site } = planTown(spec(system), hill);
-      // (keepReach again finds nothing more to cut)
-      expect(keepReach(site)).toBe(0);
+      // (round 128p, DA-A13: the roads' reach — the paths on the grid's edges, each structure a node through its doors;
+      // a pocket of open ground between houses is reached through them, the user's "a structure is one node")
+      const r = relayRoads(site)!;
+      expect(r.net.reach.out).toEqual([]);
       const { plan, grid } = site;
-      const open = (c: number) => {
-        const t = plan.typeAt(c);
-        return !t || plan.defs[t].form === 'yard' || !!plan.gate[c] || !!plan.passage[c];
-      };
-      const seen = new Uint8Array(grid.count);
-      const q: number[] = [];
-      for (let c = 0; c < grid.count; c++) if (open(c) && [0, 1, 2, 3].some((e) => grid.nbr[c * 4 + e] < 0)) (seen[c] = 1), q.push(c);
-      while (q.length) {
-        const c = q.pop()!;
-        for (let e = 0; e < 4; e++) {
-          const n = grid.nbr[c * 4 + e];
-          if (n >= 0 && !seen[n] && open(n)) (seen[n] = 1), q.push(n);
-        }
+      const { comp, storesRoot } = r.net.reach;
+      const shut: number[] = [];
+      for (let c = 0; c < grid.count; c++) {
+        if (plan.typeAt(c)) continue;
+        if (![0, 1, 2, 3].some((k) => comp[grid.quads[c * 4 + k]] === storesRoot)) shut.push(c);
       }
-      const shut = [...Array(grid.count).keys()].filter((c) => open(c) && !seen[c]);
       expect(shut).toEqual([]);
     });
 });

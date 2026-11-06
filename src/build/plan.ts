@@ -66,7 +66,7 @@ export interface TownLayout {
  * build/edgenet.ts PATH_LANE, PATH_MAIN).
  */
 export interface TownRoadsLayout {
-  curves: { kind: 'spoke' | 'drawn' | 'far'; pts: [number, number][] }[];
+  curves: { kind: 'spoke' | 'drawn' | 'far'; pts: [number, number][]; to?: number }[];
   verge: number[];
   sides: number[];
   /** the town's middle and stores (box-local), and the cells with water on them (any; deep) as generation saw it: an
@@ -75,6 +75,8 @@ export interface TownRoadsLayout {
   stores: [number, number];
   water: number[];
   deep: number[];
+  /** each structure's door (its lane leaves by): structure id, cell, side — three numbers a door (the view's front door) */
+  doors: number[];
 }
 
 /**

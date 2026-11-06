@@ -328,8 +328,8 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
   var dd = units[u * UNIT_V + 3u];
   let caps = bitcast<u32>(units[u * UNIT_V + 4u].x);
   var latch = bitcast<u32>(units[u * UNIT_V + 5u].x);
-  // (round 128i, V128-14) the road ride's steer (roadride.wgsl, written after the last tick's step): 0 its field, < 0
-  // stand, else a heading + STEER_BIAS
+  // (round 128i; 128p) the route ride's steer (routes.wgsl, written after the last tick's step): 0 its field, STAND (−1)
+  // stand, RIDE_TRIP (−2) placed on its route
   let steer = units[u * UNIT_V + 4u].w;
   let noBurn = (caps & CAP_NO_BURN) != 0u;
   let rooted = (caps & CAP_ROOTED) != 0u;
@@ -572,12 +572,9 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
       atomicAdd(&shove[o + 2u], i32(mass * SHOVE_FIX));
     }
   } else if (kind.b.w <= 0.0 && steer < RIDE_TRIP + 0.5) {
-    // (round 128o, DA-A7: on a trip — placed by the ride, roadride.wgsl, after the last step: its x, y and velocity are
-    // the trip's; its height rides the surface under it nearest its last, so a step on the route is taken, not a wall)
-    let kk = surfaceNear(i, pos.z);
-    let fz = select(pos.z, navZ(i * NAV_K + min(kk, NAV_K - 1u)), kk < NAV_K);
-    // (round 128o, DA-A6: up a step at once — never under its floor —, down one eased)
-    np = vec3<f32>(pos.xy, select(pos.z + (fz - pos.z) * min(dt * 10.0, 1.0), fz, fz > pos.z));
+    // (round 128p, DA-A13: on its route — placed by routes.wgsl after the last step: x, y, its height the route's (the
+    // path's ground, a bridge's deck, a stair's step) and its velocity; nothing here moves it, nothing snaps its height)
+    np = pos;
     if (length(vel.xy) > 0.05) { heading = atan2(vel.y, vel.x); }
   } else {
     // walking: what it wants to do
@@ -690,6 +687,9 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
       }
       if (!ok) { p2 = pos.xy; v2 *= 0.3; }
     }
+    // (round 128p: no surface under it yet — just placed, the ground not peeled there — it doesn't walk: a crowd's push
+    // or its jitter would carry it into a building's columns, where it stands on nothing for good)
+    if (k >= NAV_K) { p2 = pos.xy; v2 = vec2<f32>(0.0); }
     // ride the surface: step up and drop down smoothly
     let ni = colIdxI(clampCell(cellAt(p2)));
     let k2 = surfaceAt(ni, pos.z + 0.5);

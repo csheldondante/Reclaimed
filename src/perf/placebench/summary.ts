@@ -47,8 +47,7 @@ export function placeSummary(r: PlaceBenchResult): string[] {
   const answers = r.rows.flatMap((x) => (x.answerMs === null ? [] : [x.answerMs]));
   const over = r.rows.reduce((a, x) => a + x.over33, 0);
   out.push(`A tap took ${pct(taps, 0.5)?.toFixed(1)} ms of CPU (at most ${Math.max(...taps).toFixed(1)} ms).`);
-  const rounds = r.rows.flatMap((x) => (x.rounds === null ? [] : [x.rounds]));
-  if (answers.length) out.push(`The answer came ${pct(answers, 0.5)} ms after the tap (at most ${Math.max(...answers)} ms), in ${pct(rounds, 0.5)} GPU rounds (at most ${Math.max(...rounds)}).`);
+  if (answers.length) out.push(`The answer came ${pct(answers, 0.5)} ms after the tap (at most ${Math.max(...answers)} ms), on the CPU with the tap (round 128p).`);
   out.push(`Frames over 33 ms round the taps: ${over}.`);
   if (r.arrive.length) {
     const got = r.arrive.filter((a) => a.arrivedS !== null);

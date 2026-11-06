@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { LEVEL_H } from '../build/town';
 import { cellAt, cellPos, nbr } from '../world/lattice';
 import { QuarryDig } from './quarry';
-import { STEP } from '../build/reach';
+import { STEP } from '../agents/rules';
 
 const W = 120;
 const H = 140;

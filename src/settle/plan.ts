@@ -9,6 +9,7 @@
 //
 // Everything here is in the box's local coordinates (x cells, y world units; the box's first row even, so
 // local rows have the world's parity). settlements.ts turns them into world and window coordinates.
+import { DOOR_STEP } from '../build/edgenet';
 import type { Building, Job, Settlement } from '../api/contracts/settlement';
 import type { Instance, ThingEvent } from '../api/contracts/recipe';
 import type { FactionId } from '../api/contracts/world';
@@ -526,7 +527,7 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
     }
     const caps = derive(catalogue(things), id);
     const WORKERS: Partial<Record<Use, string[]>> = { workshop: ['smith'], granary: ['hauler'], warehouse: ['docker'], sawmill: ['sawyer'], stable: ['stablehand'] };
-    const rb: Building = { id, thing: id, grid: rec.grids[b.kind === 'farmhouse' || b.kind === 'barn' ? 1 : 0].id, cells: b.quads.filter((q) => !roadVerge.has(q)), storeys: viewOf(b)?.storeys ?? b.storeys, use: caps.tags.filter((x) => USE_TAGS.has(x)), workers: WORKERS[use] };
+    const rb: Building = { id, thing: id, grid: rec.grids[b.kind === 'farmhouse' || b.kind === 'barn' ? 1 : 0].id, cells: [...(site.plan.structure(placed.structureOf[b.id])?.cells.keys() ?? b.quads.filter((q) => !roadVerge.has(q)))], storeys: viewOf(b)?.storeys ?? b.storeys, use: caps.tags.filter((x) => USE_TAGS.has(x)), workers: WORKERS[use] };
     if (use === 'temple') rb.use.push('temple');
     buildings.push(rb);
     lotUse.set(`b${b.id}`, use);
@@ -972,7 +973,7 @@ export function doorOf(city: CityPlan, b: BuildingRec): Pt | null {
   const cy = t.verts[c * 2 + 1];
   const L = Math.hypot(cx - ax, cy - ay) || 1;
   // (outside: the right of the side — the tiles run counter-clockwise)
-  return [(ax + cx) / 2 + ((cy - ay) / L) * 0.9, (ay + cy) / 2 - ((cx - ax) / L) * 0.9];
+  return [(ax + cx) / 2 + ((cy - ay) / L) * DOOR_STEP, (ay + cy) / 2 - ((cx - ax) / L) * DOOR_STEP];
 }
 
 /** a civ's look among the structures styles: the hill holds' stone, the guilds' and the free folk's timber and tile, the

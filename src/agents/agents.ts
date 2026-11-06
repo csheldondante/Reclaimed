@@ -23,8 +23,8 @@ import type { Terrain } from '../api/terrain';
 import { FieldReader } from './fieldreader';
 import { AgentScope } from './scope';
 import { RoadStamp } from './roads';
-import { RoadRide } from './ride';
-import type { RoadGraph } from './roadgraph';
+import { RouteRide } from './routeride';
+import type { RouteNet } from './routes';
 import { CHUNK_CLASS, CHUNK_COLUMNS, CHUNK_DEPTH, CUSTOM, ChangedTiles, TILES_BINDING, cullKernel } from '../sim/cull';
 import { ROW_H } from '../world/lattice';
 import { TUNE, worldG } from '../tune/params';
@@ -89,11 +89,6 @@ export const MAX_UNITS = 8192;
 export const NFIELDS = 13;
 /** (round 128o, DA-A6) units.wgsl RIDE_ARRIVED: an arrival event's `other` at or over it is a ride's (minus it: the group) */
 const RIDE_ARRIVED = 256;
-/**
- * (round 128i, V128-14) The shared field onto the roads (the last): seeded on the riding network's columns while a
- * group rides the roads (Agents.ride; agents/ride.ts) — the riding groups follow it until they're on the network.
- */
-export const ROAD_FIELD = NFIELDS - 1;
 /** (round 128l, m4: 16 → 24, a table size — the fortress's smiths, recruits, soldiers and carts: their legs ride the
  *  road graph, no fields of their own; fortress/life.ts R4) */
 export const MAX_GROUPS = 24;
@@ -321,7 +316,9 @@ export class Agents implements SimSystem {
   /** (round 128i, FT-58) the road bits stamped on the GPU from an owner's shapes (agents/roads.ts) */
   private roadStamp: RoadStamp;
   /** (round 128i, V128-14) the riding groups on an owner's road graph (agents/ride.ts) */
-  private roadRide: RoadRide;
+  private routeRide: RouteRide;
+  /** per slot the kind it was spawned as (a rider's pace) */
+  private slotKind = new Uint8Array(MAX_UNITS);
   readonly dist: GPUBuffer;
   readonly units: GPUBuffer;
   readonly inst: GPUBuffer;
@@ -475,6 +472,7 @@ export class Agents implements SimSystem {
     const z = new Float32Array(UF);
     for (const slot of this.corpses) {
       this.device.queue.writeBuffer(this.units, slot * UNIT_BYTES, z);
+      this.routeRide.drop(slot);
       this.free.push(slot);
     }
     this.corpses.clear();
@@ -500,7 +498,7 @@ export class Agents implements SimSystem {
     this.nav = world.buf('agentNav', cols * NAV_K * NAV_BYTES, S);
     this.navCost = world.buf('agentNavCost', cols * NAV_K * 4, S);
     // (round 128i: two planes — the road shapes' bits, then the riding network's: agents/ride.ts)
-    this.roads = world.buf('agentRoads', Math.ceil(cols / 32) * 8, S);
+    this.roads = world.buf('agentRoads', Math.ceil(cols / 32) * 4, S);
     this.roadStamp = new RoadStamp(device, this.roads, world.w, world.h);
     this.dist = world.buf('agentDist', NFIELDS * cols * NAV_K * 4, S);
     this.units = world.buf('agentUnits', MAX_UNITS * UNIT_BYTES, S);
@@ -513,7 +511,7 @@ export class Agents implements SimSystem {
     this.kindModelsBuf = world.buf('agentKindModels', MAX_KINDS * 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     this.params = world.buf('agentParams', PARAMS_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     this.carryBuf = world.buf('agentCarry', MAX_UNITS * 16, S);
-    this.roadRide = new RoadRide(device, world.globals, this.units, this.roads, world.w, MAX_UNITS);
+    this.routeRide = new RouteRide(device, world.globals, this.units, MAX_UNITS);
     this.flyBuf = world.buf('agentFly', MAX_FLY * 32, S);
     device.queue.writeBuffer(this.indirect, 0, new Uint32Array([36, 0, 0, 0]));
     // (nothing reached yet: every field starts unreachable)
@@ -691,7 +689,7 @@ export class Agents implements SimSystem {
     if (i < 0 || i >= MAX_KINDS) throw new Error(`agents: kind ${i} out of 0..${MAX_KINDS - 1}`);
     this.kinds[i] = spec;
     // (round 128o: a rider's pace on its trip — roadride.wgsl)
-    this.roadRide.setKindSpeed(i, spec.speed);
+    this.routeRide.setKindSpeed(i, spec.speed);
     if (spec.model) {
       const vs = spec.model.voxels;
       if (this.modelVoxels + vs.length > MAX_MODEL_VOXELS) throw new Error(`agents: kind models over ${MAX_MODEL_VOXELS} voxels`);
@@ -757,6 +755,8 @@ export class Agents implements SimSystem {
       // (e: caps and look 0 — the trait modules derive them; its max hp, what healing tops it up to)
       d[18] = d[8];
       this.device.queue.writeBuffer(this.units, slot * UNIT_BYTES, d);
+      this.slotKind[slot] = kind;
+      this.routeRide.regroup(slot, g, kind, [d[0], d[1]]);
       ids.push(gen * MAX_UNITS + slot);
     }
     return ids;
@@ -803,6 +803,7 @@ export class Agents implements SimSystem {
       this.device.queue.writeBuffer(this.units, slot * UNIT_BYTES, z);
       this.free.push(slot);
       this.holds.delete(slot);
+      this.routeRide.drop(slot);
       // (its load falls where it was last seen: ground isn't lost with it)
       const it = this.carried.get(slot);
       if (it) {
@@ -840,36 +841,37 @@ export class Agents implements SimSystem {
   }
 
   /**
-   * (round 128i, V128-14; the user: "Can agents transfer from flow field onto paths on the GPU?") The road graph the
-   * groups that ride go by (agents/roadgraph.ts, in its owner's frame — the road shapes' — at window offset (ox, oy),
-   * as setRoads): the same object again is no change, call it every frame. Its next-hop tables are made on the GPU.
+   * (round 128p, DA-A13) The town's route net (agents/routes.ts RouteNet: its paths, its main roads, its structures'
+   * doors — the same object again is no change: call it every frame) and where its frame sits: window offset (ox, oy)
+   * and the window's oz. A new net: the riders on again from where they were last seen.
    */
-  setRoadGraph(g: RoadGraph, ox = 0, oy = 0): void {
-    this.roadRide.setGraph(g, ox, oy);
+  setRouteNet(net: RouteNet | null, ox = 0, oy = 0, oz = 0): void {
+    this.routeRide.setNet(net, ox, oy, oz, (slot) => {
+      const u = this.seen.get(slot);
+      return u ? [u.x, u.y] : null;
+    });
   }
 
   /**
-   * (round 128i, V128-14) Group `g` rides the roads to these goals (the road graph's frame), or stops riding (null):
-   * it follows the shared field onto the roads (ROAD_FIELD), then the road graph to the node nearest the goal that's
-   * cheapest from where it joined, then straight to that goal, where it stands. False (and it doesn't ride: follow its
-   * own field) when there are no roads, or a goal is more than RIDE_NEAR from any node. The caller sets what it follows.
+   * (round 128p, DA-A13: routes as queues) Group `g` rides to these goals (the net's frame), or stops riding (null): a
+   * unit put in the group joins the route from where it is to the group's nearest goal — shared with every unit of the
+   * group joining there — and rides it (routes.wgsl), standing at the goal. False (and it doesn't ride: the caller sets
+   * what it follows) when there's no net, or a goal is more than RIDE_NEAR from it.
    */
   ride(g: number, goals: readonly (readonly [number, number])[] | null): boolean {
-    const ok = this.roadRide.setGoals(g, goals);
-    // (the goals kept in the fields' scope: the road field reaches them)
-    const pts = this.roadRide.goalPoints().map((p) => this.roadRide.toWindow(p));
+    const ok = this.routeRide.setGoals(g, goals, (slot) => {
+      const u = this.seen.get(slot);
+      return u ? [u.x, u.y] : null;
+    });
+    // (the goals kept in the fields' scope)
+    const pts = this.routeRide.goalPoints().map((p) => this.routeRide.toWindow(p));
     this.keepInScope('ride', pts);
     return ok;
   }
 
-  /** (round 128i) the groups riding the roads now (a bit each), and the road graph's nodes */
-  get rideInfo(): { riding: number; nodes: number } {
-    return { riding: this.roadRide.riding, nodes: this.roadRide.nodes };
-  }
-
-  /** (round 128i) the next-hop tables on the GPU (tests) */
-  get rideHops(): GPUBuffer {
-    return this.roadRide.hopsBuffer;
+  /** (round 128i; 128p) the groups riding now (a bit each), the net's nodes, the riders and the routes they share */
+  get rideInfo(): { riding: number; nodes: number; riders: number; routes: number } {
+    return { riding: this.routeRide.riding, nodes: this.routeRide.nodes, riders: this.routeRide.riders, routes: this.routeRide.routeCount };
   }
 
   /** Field `f`'s seeds (its distance is 0 there): a goal, a stockpile, a threat. */
@@ -981,6 +983,9 @@ export class Agents implements SimSystem {
     if (slot < 0) return;
     if (g < 0 || g >= MAX_GROUPS) throw new Error(`agents.regroup: group ${g} out of 0..${MAX_GROUPS - 1}`);
     this.regroups.push(slot | (g << 16));
+    // (round 128p: on its group's route from where it was last seen, or off any)
+    const u = this.seen.get(slot);
+    this.routeRide.regroup(slot, g, this.slotKind[slot], u ? [u.x, u.y] : null);
   }
 
   launch(id: number, vel: readonly [number, number, number], opts: LaunchOpts = {}): void {
@@ -1329,6 +1334,8 @@ export class Agents implements SimSystem {
           if (this.keepCorpses) this.corpses.add(id % MAX_UNITS);
           else this.free.push(id % MAX_UNITS);
           this.holds.delete(id % MAX_UNITS);
+          // (off its route: the one behind it goes on)
+          this.routeRide.drop(id % MAX_UNITS);
         } else if (kind === 4) events.push({ type: 'alight', id, by: by(eu[o + 2]) as number | 'fire', ...p });
         else if (kind === 5) events.push({ type: 'windup', id, target: eu[o + 2], lands: ef[o + 3], ...p });
         else if (kind === 6) {
@@ -1431,11 +1438,6 @@ export class Agents implements SimSystem {
     u.set(this.fieldPlace, P_FPLACE);
     let seeded = 0;
     for (const s of this.seeds) seeded |= 1 << s.field;
-    // (round 128i, V128-14: the road field is seeded on the road columns while a group rides)
-    if (this.roadRide.riding) {
-      seeded |= 1 << ROAD_FIELD;
-      this.fieldsUsed = NFIELDS;
-    }
     u.set([hits.length, this.targets.length, EVENT_CAP, seeded], P_N2);
     // (round 88: a field left without seeds is set unreachable once, then skipped — not rewritten every sweep)
     // (round 107: the scope drew in at the last tick — a chunk let go — so what ran through what it let go of is gone
@@ -1448,10 +1450,6 @@ export class Agents implements SimSystem {
     // (round 107: and the fields whose seeds went or moved far start over — clearFields — and refill from their seeds)
     const clear = (this.wasSeeded & ~seeded) | this.restart;
     this.restart = 0;
-    // (round 128i: the road field's seeds are the network's columns, not points the scope marks — a road field set
-    // unreachable, or starting over, refills from them: round 128k, the network's nodes' chunks marked, not the whole
-    // scope relaxed again each time the scope drew in)
-    if (clear & seeded & (1 << ROAD_FIELD) && this.scope) for (const [x, y] of this.roadRide.nodePoints()) this.scope.mark(x, y / ROW_H);
     this.wasSeeded = seeded;
     this.clearNow = clear;
     this.kinds.forEach((k, i) => {
@@ -1498,7 +1496,6 @@ export class Agents implements SimSystem {
     // (round 128i: the road bits made again if their shapes or offset changed)
     this.roadStamp.encode(enc);
     // (round 128i, V128-14: the riding groups' next-hop tables made again if the graph or their goals changed)
-    if (this.roadRide.encodeHops(enc, this.count) && this.scope) this.scope.markAll = true;
     // (the tick number rides in the params: the occupancy halves swap on it)
     this.writeParams(this.hits.splice(0, MAX_HITS));
     const [gx, gy] = this.world.groups;
@@ -1548,8 +1545,8 @@ export class Agents implements SimSystem {
     pass.dispatchWorkgroups(Math.ceil(this.count / 64));
     // (LW1: the trait system — its core and the game's rules — between the step and the draw)
     for (const s of this.stages) s.encode(pass);
-    // (round 128i, V128-14: the riding groups steered along the roads — their steer read by the next tick's step)
-    this.roadRide.encode(pass, this.count);
+    // (round 128p, DA-A13: the riders advanced along their routes — their steer read by the next tick's step)
+    this.routeRide.encode(pass);
     // the draw's instance count restarts each tick (written before this tick's submit)
     this.device.queue.writeBuffer(this.indirect, 0, new Uint32Array([36, 0, 0, 0]));
     pass.setBindGroup(0, this.drawGroup);

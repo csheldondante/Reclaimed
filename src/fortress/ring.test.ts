@@ -4,21 +4,18 @@
 import { fortressOn } from './testing';
 import { describe, expect, it } from 'vitest';
 import { Fortress } from './fortress';
-import { CpuReach, type ReachColumns } from '../build/reach';
 
 const W = 160;
 const H = 184;
 const GROUND = 5;
 
 function fortress() {
-  const cols: ReachColumns = { w: W, h: H, runs: () => [[0, GROUND]], water: () => 0 };
   const f = fortressOn({ origin: [0, 0], w: W, h: H }, {
     windowOrigin: () => [0, 0],
     dims: { w: W, h: H, zMax: 999 },
     ground: () => GROUND,
     stores: () => ({}),
     changed: () => {},
-    reach: new CpuReach(cols, W, H, () => [0, 0]),
     townHeap: () => [10, 10],
   });
   f.ready = true;

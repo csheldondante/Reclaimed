@@ -3651,7 +3651,7 @@ The building rule (the user's): select what (a structure type), then plan it wit
   `peopleLine`) and Inspect (`InspectLive`). **Roads (FT-46):** `Agents.setRoads(window columns)` → agents.wgsl `roads`
   (binding 40, a bit per window column, window order): a step between road columns costs ROAD_COST 0.5, one end on a
   road 0.75; FortressLife sets `Fortress.roadCols()` (road and square cells) every JOBS_S (and after a slide).
-- **Round 128o, B (one reach, the passage chosen on the GPU).** The reach lives in the town engine: `build/reach.ts`
+- **Round 128o, B (one reach, the passage chosen on the GPU).** **(Superseded round 128p, DA-A13: deleted — see "Town roads" below. Kept for the history.)** The reach lives in the town engine: `build/reach.ts`
   (the ask and answer: `ReachAsk` with `fix` and `open`, `ReachReply.fixes`, `FIX_COST`, `FIX_CAP`; `packSpan`'s bit 31
   a cuttable ground floor; `CpuReach` the reference), `build/reachgpu.ts` (`FortressReachGpu`, now any town's box:
   the modes, then `solveFix` — the fix field relaxed on the GPU, a 16 B flag a round, then the walk back's fixes read),
@@ -3682,7 +3682,7 @@ The building rule (the user's): select what (a structure type), then plan it wit
   FortressClaims stamps it at once), both read by `Fortress.reachMap` and by `FortressClaims` alike; the ramp's shape
   (`rampShape`) is shared with its pieces (`rampPieces`: the wall stairs' treads). `Fortress.variant`/`variantAt`: the
   panel's line for the way kept open. `ringCells` (FT-57) joins consecutive cells side to side along the circle.
-- **Round 128f-i (lanes: roads narrower than a cell, FT-58).** `fortress/lanes.ts` `lanesOf(plan, grid, ways, ground,
+- **Round 128f-i (lanes: roads narrower than a cell, FT-58).** **(Superseded round 128p, DA-A13: deleted — see "Town roads" below. Kept for the history.)** `fortress/lanes.ts` `lanesOf(plan, grid, ways, ground,
   opts, blocked)` → `Lanes` (segments per cell, each its kind: road, plaza, ramp, lane, cross, ring, track): a second
   grid over the tiles as two families of level lines of corner fields — A along the contours (the ground smoothed, over
   the district's mean slope; a lattice turned to the land on the flat), B across them (stepped past `STEEP`) — marched
@@ -3695,7 +3695,7 @@ The building rule (the user's): select what (a structure type), then plan it wit
   bits stamped on the GPU from the same shapes (`roadShapesOf` → agents/roads.ts `RoadStamp`, shaders/roadstamp.wgsl:
   a slide moves only the offset). Pure and memoised on the plan (made again when the plan changes or the columns are
   first read); the corner fields are the GPU's work later (a jump flood, a blur) — today on the CPU.
-- **Round 128i (the people ride the roads, V128-14, FT-70).** The road graph: `agents/roadgraph.ts` (pure) —
+- **Round 128i (the people ride the roads, V128-14, FT-70).** **(Superseded round 128p, DA-A13: deleted — see "Town roads" below. Kept for the history.)** The road graph: `agents/roadgraph.ts` (pure) —
   `graphOf(segments)` (ends merged within 2 cm; within a cell pieces that cross, or one ending on another, split and
   joined), `hopsCpu` (the GPU's reference), `subgraph`; `lanes.ts laneGraph` (a stepped climb costs more, the main roads
   less; `noRide` roads over the town that was there or water left out; spurs, family -2, join a road cell's middle to
@@ -3726,7 +3726,7 @@ The building rule (the user's): select what (a structure type), then plan it wit
   `water` take the window as it is now and shift back (outside what was read: no solid, no water); every slide reads
   again. `RoadStamp.set` / `RoadRide.encodeHops` return true only for new shapes / a new network (an offset alone needs
   no relax: the fields slide with the window).
-- **Round 128l, m4 (reach on the GPU, TL-6 / FT-61).** The check at placement no longer reads the world back.
+- **Round 128l, m4 (reach on the GPU, TL-6 / FT-61).** **(Superseded round 128p, DA-A13: deleted — see "Town roads" below. Kept for the history.)** The check at placement no longer reads the world back.
   `fortress/reachgpu.ts FortressReachGpu` (shaders/fortreach.wgsl) implements `ReachEngine` (fortress/reach.ts):
   `setSpans(spans)` (the plan's solid as if built, two packed spans a box column — `packSpan`, eighths of a metre — from
   solid.ts with the plan's levels as built; only the rows that changed are written) and `check({stores, queries, wet,
@@ -4115,3 +4115,50 @@ projected spans `PROJ_K` 3 a column (grids/structures.ts); the page table 4096 w
 - **`QuadGrid.moveVerts`.** A shape modifier moves vertices; the cells' columns are recomputed.
 - **`Structure.sub`.** Plots and row angles over a structure's cells (shape modifiers, later).
 - **Lab:** `lab.edges`, `scripts/lab/edges.mjs`, `scripts/lab/hybrid.mjs`. All CPU, with no GPU transfer.
+
+### One system (round 128p, DA-A13: the swap)
+
+The edge network is the only roads, reach and routes system. Deleted: `build/lanes.ts`, `agents/roadgraph.ts`,
+`agents/ride.ts` + `shaders/roadride.wgsl` (the hop tables), `build/entrances.ts`, `build/reach.ts`,
+`build/reachgpu.ts` + `shaders/fortreach.wgsl` (the GPU reach and its fix field), `build/sitereach.ts`, generation's
+`keepReach`/`assertEntered`, `ROAD_FIELD` (agents.wgsl `onNet`, the road bits' second plane), the place bench's
+`diagnose`.
+
+- **Generation** (`structures/place.ts placeDraft` with `opts.roads`): main roads first (`mainRoads`), the buildings
+  on the cells the roads left (a building cut down to its other cells; a world-placed one stands whole; a landmark drawn
+  by its shape — a dome — is never cut: a road over it takes it whole), then the buildings the roads took placed again
+  on the free lots nearest where they stood (`freeCluster`; a dome round a free corner, `freeRound`), then `finishRoads`.
+  A flood's mark is worn by where each building stands after that. `Placed.roads` carries the laid roads.
+- **The reach** (`Fortress`): every edit relays the roads through the generator's function (`relayRoads(site,
+  changed)`) and judges from its union-find: a structure out of reach is fixed by a gate if a wall shut it in
+  (`gatesFor`, nearest first, the first straight wall cell that takes one), else refused with a plain line (deep water,
+  a cliff, walled off). A gate shut that would cut structures off opens again. `Settlements.reachLive` the same.
+- **Incremental relay** (`edgeNetOf(site, io, statics, prev?: EdgeNetPrev)`; `EdgeNet.carry: EdgeNetCarry`): an edit's
+  relay starts from the net last laid while the layout it wrote stands (`townroads.ts` `LAST`, keyed by the site): only
+  the changed cells' edges are cut again, the touched structures' doors and far rule recomputed, the lanes the edit broke
+  or orphaned dropped (to a fixpoint on each lane's join vertex) and laid again; the rest kept. The whole town again
+  when the edit touches a wall or gate, a main street, the verge, or moves the stores or middle vertex. `reach.relaid`
+  says which. The union-find and a few linear passes still run over the town (about 1 ms desktop on the start town).
+- **Routes** (`agents/routes.ts`, pure): `RouteNet` (the grid's vertices; the walkable edges a unit can walk on the
+  ground — a drawn path, or an edge with open ground both sides, never along a building's undrawn side; main-road curve
+  points chained and joined to the vertices within 2.6 m, a bridge's points at its deck and joined only at its ends;
+  each structure a node at its door's middle, `building[]`), `routeNetOf` / `townRouteNet` / `deckOf`, `Router`
+  (per group a multi-source Dijkstra tree to its goals, never through a structure's node; a route per (group, first
+  node), shared, `groupOf[]`; a unit no farther from a goal than that goal's node is on its last leg: a one-point route).
+  `navOfRoutes(site, net, ways)` is the structures' `NavGraph` as a view of the same net plus wall-walks and stairs.
+- **Riders** (`agents/routeride.ts RouteRide`, `shaders/routes.wgsl routeAdvance`, bindings 52-57): routes uploaded
+  once into a points pool and a routes pool (grown by copy); an entry per rider (t, speed, route, slot; start, lead) and
+  its state (the one ahead, flags). Per tick `t += dt × speed`, kept `QUEUE_GAP` behind the one ahead while that one is
+  on its way (the queue's order is the order they joined in), placed by (route, t), steer TRIP or STAND; knocked off,
+  it rejoins at the nearest t. Membership (`member`, last place) is kept per slot: a group that starts riding or gets
+  new goals takes its units on; a unit that dies or is removed is dropped from its queue. `Agents.setRouteNet`,
+  `ride(g, goals)`, `rideInfo`.
+- **Claims follow the insets** (`build/solid.ts solidSpans`): a block's columns within its side's inset of a drawn path
+  (`layout.roads.sides`, `INSET`) aren't claimed, so the lane between two blocks is ground the units walk.
+  `DOOR_STEP` (edgenet.ts: the lane's inset less a column's reach) is where a door's step lands (`Fortress.doorOf`,
+  settle `doorOf`).
+- **The grid adapting to a curve** keeps every cell at least as square as `FLATTEST` (a corner's sine 0.5, 150°) or the
+  tile system's own flattest corner, whichever is flatter; a snap that leaves one flatter is put back.
+- **Stores and doors.** The stores' vertex is the nearest one on open ground (an edge not inside a structure). A door
+  prefers an edge onto open ground; only a structure shut in on every side has its door onto a neighbour's lane.
+  `Fortress.storesAt` prefers a warehouse whose door opens on open ground.

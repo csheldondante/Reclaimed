@@ -157,6 +157,8 @@ export class Lab {
     if (fx) {
       io.core.globals.seaZ = fx.seaZ;
     }
+    // (round 128p: a plain town's roads are laid with the recipe's water — the fortress has no GPU reach now)
+    if (!fx) this.town.waterAt = (x, y) => this.recipe.water?.(x, y) ?? 0;
     this.view = new LabTownView({ device: io.device, renderer: io.core.renderer, external: () => io.external(), statics: () => io.statics(this.window) }, this.town.site, this.window);
     io.startFortress(this.town, this.view, this.window);
     // (what reset puts back: the land as it opened)
@@ -363,7 +365,7 @@ export class Lab {
     }
     if (p.built) this.standAll();
     const structures = f.plan.structures();
-    return { cells: structures.reduce((n, s) => n + s.cells.size, 0), types: [...new Set(structures.map((s) => s.type))], cutOff: f.ways().cutOff.length, skipped };
+    return { cells: structures.reduce((n, s) => n + s.cells.size, 0), types: [...new Set(structures.map((s) => s.type))], cutOff: f.roads?.net.reach.out.length ?? 0, skipped };
   }
 
   /** every planned block standing (bottom up: a block on one not yet standing waits a pass) */

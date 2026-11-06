@@ -26,6 +26,8 @@ export interface FortressTownSource {
   siteOf(id: string): TownSite;
   /** world → window */
   toWindow(at: V2): V2;
+  /** (round 128p) the water's depth at window world (x, y): a town whose roads weren't laid with it (a lab recipe's) */
+  waterAt?(x: number, y: number): number;
 }
 
 /** the window the fortress stands in (scenes/streamer.ts Streamer; the lab's still window) */

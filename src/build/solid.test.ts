@@ -51,6 +51,39 @@ describe('the fortress solid', () => {
     for (const s of [...spans().values()][0]) expect(s.z1).toBeCloseTo(floor(inner) + 2 * LEVEL_H - 1, 5);
   });
 
+  it('a block stands back from a path drawn on its side by the path\'s inset: those columns are open ground (round 128p)', () => {
+    // (a house and a warehouse side by side, a lane drawn between them — a house shut in by its neighbours is reached along it: the
+    // view draws them inset from it, and the units must find that ground there)
+    const { plan, build, spans } = setup();
+    const b = nbr(inner, 1);
+    plan.paint(inner, 0, 'house');
+    plan.paint(b, 0, 'warehouse');
+    expect(plan.structureAt(inner)!.id).not.toBe(plan.structureAt(b)!.id);
+    build(inner, 0);
+    build(b, 0);
+    const side = [0, 1, 2, 3].find((k) => nbr(inner, k) === b)!;
+    const back = [0, 1, 2, 3].find((k) => nbr(b, k) === inner)!;
+    const sides = new Array(grid.count * 4).fill(0);
+    sides[inner * 4 + side] = 1;
+    sides[b * 4 + back] = 1;
+    plan.layout.roads = { curves: [], verge: [], sides, centre: [0, 0], stores: [0, 0], water: [], deep: [], doors: [] };
+    const claimed = new Set([...spans().values()].flat().map((s) => s.y * grid.w + s.x));
+    // (the side's line: a column within the lane's inset (1 m) of it is open; the rest of the cells claimed)
+    const [ax, ay] = grid.corner(inner, side);
+    const [bx, by] = grid.corner(inner, side + 1);
+    const off = (col: number) => {
+      const [x, y] = cellPos(col % grid.w, Math.floor(col / grid.w));
+      return Math.abs((x - ax) * (by - ay) - (y - ay) * (bx - ax)) / Math.hypot(bx - ax, by - ay);
+    };
+    let open = 0;
+    for (const c of [inner, b])
+      for (const col of grid.columns[c]) {
+        expect(claimed.has(col), `column ${col} ${off(col).toFixed(2)} m from the lane`).toBe(off(col) >= 1);
+        if (!claimed.has(col)) open++;
+      }
+    expect(open).toBeGreaterThan(2);
+  });
+
   it('a wall is its thin band, not its cell; a gate is open under its lintel', () => {
     const { plan, build, spans, floor } = setup();
     const a = nbr(inner, 0);

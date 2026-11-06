@@ -20983,3 +20983,102 @@ every change.
 - **Water after generation.** An edit judges water by the cells generation saw; the land changing later is the GPU
   world check's (not built).
 - **Spokes need dry land in the box** to end on; a spoke with none is dropped.
+
+## 2026-11-06 — round 128p (`onetown`, DA-A13): one system — routes as queues, the reach and refusals from the edge network, the old roads deleted
+
+Main: "I won't merge while two systems disagree … as one deliverable before merge: (1) route queues (advance(route, Δt)
+once a frame, routes cached and shared, riders as queue entries); (2) swap units, placement refusals and reach to the
+edge network + union-find (refusals only for what nothing can fix, in plain words); (3) delete the old lanes, ways,
+keepReach, roadride hop tables and the old GPU reach/fix path; (4) the generator re-places buildings the roads took (so
+the town isn't smaller). … Watch relayRoads' cost … make it incremental (only the area an edit touches)."
+
+**(1) Routes as queues.** `agents/routes.ts` (pure): `RouteNet` over the town's edge network, `Router` (a tree per
+group to its goals; a route per group and first node, shared; one copy of its points on the GPU). `agents/routeride.ts`
++ `shaders/routes.wgsl`: a rider is an entry in its route's queue; each tick `t += dt × speed`, kept `QUEUE_GAP` (1.1 m)
+behind the one ahead while that one is on its way; placed by (route, t). Nothing searched per tick: a unit joins a route
+when its group changes (an event, on the CPU). Fixed on the way, each with a failing test first:
+- a group that started riding after its units were put in it never took them on (`setGoals` now does, from where each
+  was last seen) — agentevents "arrived on a ride";
+- riders that joined together sat on one spot: the gap held only when the one ahead was strictly ahead — the queue's
+  order is the join order now — agentevents "a rider taken out of its queue";
+- a rider that died or was removed kept its entry, and the one behind waited on it for good (`drop`) — the same test;
+- riders queued behind those already standing at the goal, so only the first arrived (one at the goal is off the queue);
+- a unit already at its goal was sent back to the net and out again (on a goal's last leg — no farther from it than the
+  goal's node — its route is that one point) — agentevents "arrived on a ride from where it stands";
+- a route's group came from a side variable at upload (`pendingGroup`); the Router records it per route.
+
+**(2) The swap.** The fortress judges an edit from `relayRoads` (the generator's own function, edgenet's union-find):
+out of reach and walled in → a gate (nearest straight wall cell that takes one); else refused in plain words ("Deep
+water is in the way", a cliff, "shut the house off"). `Settlements.reachLive` the same. The units ride the route net
+(`Fortress.routeNet`, `crowd.ts`). The structures' `NavGraph` is a view of the same net (`navOfRoutes`: the routes'
+nodes and walks, each structure's door, plus the wall-walks and their stairs) — one network, not two.
+
+**(3) Deleted.** build/lanes.ts, agents/roadgraph.ts, agents/ride.ts, shaders/roadride.wgsl, build/entrances.ts,
+build/reach.ts, build/reachgpu.ts, shaders/fortreach.wgsl, build/sitereach.ts, keepReach/assertEntered, `ROAD_FIELD`
+(agents.wgsl `onNet`; the road bits' second plane: `agentRoads` half the size), the place bench's diagnose, the lanes
+scripts; their transfers (src/gpu/transfers.ts: 21 entries out, 4 RouteRide uploads in) and the gen-sources boundary.
+ways.ts keeps the doors (from the roads' layout), the stairs onto the walls, the squares, gates and passages.
+
+**(4) Buildings the roads took.** Placed again after the rest on the free lots nearest where each stood (`freeCluster`;
+a dome round a free corner, `freeRound` — a landmark drawn by its shape is taken whole, never cut down). A flood's mark is
+worn by where each building stands after the roads and terraces. The start town: **670 blocks** (708 before roads-first,
+636 last round); the 38 fewer than before are the cells the roads crossed in buildings they cut down (DA-A15).
+
+**Incremental relay.** `edgeNetOf(..., prev)` with `EdgeNet.carry`: an edit recomputes only the changed cells' edges,
+the touched structures' doors and far rule, and the lanes the edit broke or orphaned (dropped to a fixpoint on each
+lane's join vertex, then laid again); the whole town when it touches a wall or gate, a main street or the verge, or moves
+the stores' vertex. Measured on the start town (4271 cells, 65 structures, desktop, 24 placements and erases):
+**1.3 ms an edit** against 7.0 ms laid from scratch (2.7 ms whole with the land cached); 20 of 24 edits relaid
+incrementally. Left global: the union-find (0.5 ms) and a few linear passes (DA-A16). Test: relayedit.test — after each
+edit the same structures reached as the whole town laid again, every lane's door in the stores' component.
+
+**What the gates found (each fixed at its root, a failing test first):**
+- *Routes through buildings* (unitsonground: walkers inside claimed columns). The route net joined a structure's node to
+  every door vertex and walked undrawn edges along building sides. Now: a drawn path, or open ground both sides; a
+  structure's node only at its lane's door and never passed through — routes.test.
+- *Claims didn't follow the insets* (settlecrowd: 16 people stuck on roofs, nothing moved in 90 s). The view stands a
+  block back from each drawn path (1 m a lane), but `solidSpans` claimed the whole cell, so the lane between a shut-in
+  house and its neighbour wasn't ground, and a door's step (1.2 m, settle 0.9 m) landed on the next roof. Now the
+  claims leave the inset open, and a door steps `DOOR_STEP` (the inset less a column's reach) — solid.test.
+- *A stand on a lane* (allbuilt: cell 1188, a house with houses on three sides and the wall on the fourth, never
+  built). A side with a lane drawn on it gives a stand on the lane — stands.test.
+- *Degenerate cells* (structures.test roofs: a wall 6 cm through its roof). `adaptToCurve` snapped a corner onto the line
+  between its neighbours. Snaps that leave a cell flatter than `FLATTEST` (150°) or the tile system's own flattest are
+  put back — curveroad.test.
+- *The stores inside a building* (radial towns: every structure "apart"). A dome placed round the corner nearest the
+  stores made the stores' vertex interior. The stores' and the middle's vertices are on open ground — edgenet.test.
+- *A door into the next house* (townwork: people spawned on a roof). A door prefers an edge onto open ground; the
+  fortress's stores prefer a warehouse whose door does — edgenet.test, townwork.test.
+- *A walker with no surface under it walked* (unitsonground, 3 of 3 runs: one of the 11 start people, stacked on the
+  stores point, carried by the crowd's push into the warehouse's columns before the ground there was peeled, then
+  standing on nothing for good). units.wgsl: a walker whose column has no surface under it yet doesn't walk. No unit
+  test reproduces the peel's timing; the gate is the failing-first check (2 of 2 after).
+- *A stale ways memo* (townwork pile test): the ways read the roads' layout doors; a relay clears the memo.
+- *Pocket test* (onetown.test): the old cell-flood test was the deleted keepReach's rule; now every open cell's corner is
+  in the stores' component.
+
+**Gates.** typecheck; build; unit 842 passed (+2 expected fail); gpu 182 passed (5 skipped). Lab (fixture recaptured):
+
+| Gate | Result |
+|---|---|
+| fortressallbuilt | **670/670** (the three planned blocks on the nearest free cells to their points: the town changed under them) |
+| fortressharvest | passes (the old ride's stall it pinned is gone with the hop tables) |
+| fortressrecipes | passes |
+| fortresscarts | passes |
+| fortressraid | passes |
+| unitsonground | passes |
+| fortressfollow | passes |
+| settlecrowd | 30 trips, a house raised, 65 places 0 out; the raid: 22 sheltered, 2 inside |
+
+**Hacks and limits:**
+- **Cut-down buildings.** A building a road crosses keeps only the cells left (start town 670 blocks; 708 before
+  roads-first) — DA-A15.
+- **Relay not wholly local.** The union-find and a few linear passes still cover the whole town (about 1 ms desktop);
+  an edit touching a wall, gate, main street or the verge relays everything — DA-A16. Phone numbers not measured — DA-A14.
+- **Constants:** `FLATTEST` 0.5 (150°, the corner the walls and roofs mitre), `DOOR_STEP` (lane inset less a column's
+  reach), `QUEUE_GAP` 1.1 m, `RIDE_NEAR` 6 m, curve points joined to vertices within 2.6 m, bridges' decks matched
+  within 1.5 m, `freeCluster`/`freeRound` search the whole box nearest first (no cap).
+- **Queues are per route**: riders of one route keep apart; riders on different routes along a street can overlap
+  (DA-A12).
+- **The allbuilt gate** now plants its three blocks on the free cell nearest each point (searched 12 m out).
+- **The units.wgsl hold** (no surface: no walking) has no unit test; the lab gate is its check.

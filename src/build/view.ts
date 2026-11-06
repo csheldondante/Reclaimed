@@ -33,10 +33,9 @@ import { DEFS } from './types';
 import { towered } from './plan';
 import { shapesOf, type Shapes } from './shapes';
 import { rampShape, STAIR_HALF, WALL_HALF, WALL_LINTEL } from './solid';
-import { alongAxis, axisLength, groundSteps, WAY_SQUARE, waysOf, type Ways } from './ways';
+import { alongAxis, axisLength, WAY_SQUARE, waysOf, type Ways } from './ways';
 import { pathsViewOf, type EdgeNet, type PathsView } from './edgenet';
 import { curvePieces, insetTiles, pathPaving } from './edgeview';
-import { LANE_DRAWN, LANE_WIDTH, type Lanes } from './lanes';
 
 /**
  * (round 128d) look bit 23: a block planned, not built yet. (round 128e, FT-51) While building its pieces aren't drawn:
@@ -78,8 +77,6 @@ export interface ViewInputs {
   picked?: number | null;
   /** (round 128d) the plan's ways (ways.ts): squares paved, doors where they open, stairs onto the walls */
   ways?: Ways;
-  /** (round 128f) the lanes and the main roads a lane wide (lanes.ts) */
-  lanes?: Lanes;
   /** (round 128h, V128-13) cells a placement cut off from the stores: outlined in red */
   warn?: readonly number[];
   /** (round 128l, m4: the attack wave) the gates are shut: a gate's passage drawn closed */
@@ -112,8 +109,6 @@ export function townPieces(site: ViewSite, inp: ViewInputs): StructurePieces {
   }
   const parts = [p, ex];
   if (inp.ghost) parts.push(plotsOf(site, inp));
-  // (round 128p: a town with its roads laid draws its paths, not the lanes)
-  if (inp.lanes && !inp.edges && !site.plan.layout.roads) parts.push(lanePieces(site, inp, inp.lanes));
   parts.push(rampPieces(site, inp));
   if (inp.warn?.length) parts.push(warnPieces(site, inp, inp.warn));
   return concat(parts);
@@ -271,60 +266,6 @@ export function plotsOf(site: ViewSite, inp: ViewInputs): StructurePieces {
   return extra.done();
 }
 
-/** a lane's step (m) where a climbing lane is steep */
-const LANE_STEP = 0.7;
-
-/**
- * (round 128f) The lanes and the main roads (lanes.ts) as paving a lane wide, draped on the ground: each piece a band
- * along its segment, a little past its ends so the bends close; a steep climbing lane gets a step's edge across it every
- * LANE_STEP. A road's way over a square isn't drawn (the square is paved whole).
- */
-export function lanePieces(site: ViewSite, inp: ViewInputs, lanes: Lanes): StructurePieces {
-  const lib = library();
-  const pave = lib.id('pave');
-  // (round 128i) the tracks out in the fields trodden earth, not paving: brown on the grass reads at play zoom
-  const earth = lib.id('earth');
-  const kerb = lib.id('kerb');
-  const extra = new Extra();
-  const zOff = inp.zOff ?? 0;
-  const z = (p: V2) => inp.ground(p[0], p[1]) + zOff;
-  // (round 128k) the thoroughfare tiles paved whole: gates, the cells either side, the big buildings' door cells
-  for (const c of lanes.tiles) {
-    if (inp.ways?.way[c] === WAY_SQUARE) continue;
-    const q = [0, 1, 2, 3].map((k) => site.grid.corner(c, k)) as [V2, V2, V2, V2];
-    const look = Math.floor(hashf(c, 61) * 4096);
-    extra.add(pave, q, q.map((p) => z(p) - 0.25) as [number, number, number, number], 0.38, look, REL | DRAPE | DRAPE_ANY);
-  }
-  for (const s of lanes.segs) {
-    const w = LANE_WIDTH[s.kind];
-    if (!LANE_DRAWN[s.kind] || w <= 0) continue;
-    const dx = s.b[0] - s.a[0];
-    const dy = s.b[1] - s.a[1];
-    const l = Math.hypot(dx, dy) || 1;
-    const ext = w * 0.35;
-    const a: V2 = [s.a[0] - (dx / l) * ext, s.a[1] - (dy / l) * ext];
-    const b: V2 = [s.b[0] + (dx / l) * ext, s.b[1] + (dy / l) * ext];
-    const fr = band(a, b, w / 2);
-    const look = Math.floor(hashf(s.kind === 'track' ? 7 : 3, 61) * 4096);
-    // (a road a hair over a lane where they cross: no fighting surfaces)
-    const top = s.kind === 'road' ? 0.4 : s.kind === 'track' ? 0.3 : 0.36;
-    extra.add(s.kind === 'track' ? earth : pave, fr, fr.map((p) => z(p) - 0.25) as [number, number, number, number], top, look, REL | DRAPE | DRAPE_ANY);
-    if (s.steps) {
-      const n = Math.floor(l / LANE_STEP);
-      for (let i = 1; i < n; i++) {
-        const t = i / n;
-        const m: V2 = [s.a[0] + dx * t, s.a[1] + dy * t];
-        const nx = (-dy / l) * (w / 2);
-        const ny = (dx / l) * (w / 2);
-        const p: V2 = [m[0] - nx, m[1] - ny];
-        const q: V2 = [m[0] + nx, m[1] + ny];
-        const f2 = band(p, q, 0.12);
-        extra.add(kerb, f2, f2.map((r) => z(r) - 0.2) as [number, number, number, number], 0.5, look, REL | DRAPE | DRAPE_ANY);
-      }
-    }
-  }
-  return extra.done();
-}
 
 /** The towers on wall tiles that don't simply carry a run on, and the chimneys: pieces the CityPlan has no rule for. */
 class Extra {
@@ -474,7 +415,7 @@ function square(x: number, y: number, h: number): [V2, V2, V2, V2] {
 }
 
 /** The town as a CityPlan, and the pieces it has no rule for. */
-export function townView(site: ViewSite, inp: ViewInputs): { city: CityPlan; extra: StructurePieces } {
+export function townView(site: ViewSite, inp: ViewInputs): { city: CityPlan; extra: StructurePieces; ways: Ways } {
   const { plan, town, grid } = site;
   const defs = inp.defs ?? DEFS;
   const zOff = inp.zOff ?? 0;
@@ -482,7 +423,7 @@ export function townView(site: ViewSite, inp: ViewInputs): { city: CityPlan; ext
   const nq = grid.count;
   // (round 128d) the painted shapes' landmarks: towers, domes, turrets, courtyards (shapes.ts)
   const shapes: Shapes = shapesOf(plan, grid, (c) => town.base[c], defs);
-  const ways = inp.ways ?? waysOf(plan, grid, { courtyards: shapes.courtyards.flatMap((ct) => ct.cells), defs, walk: groundSteps(grid, inp.ground) });
+  const ways = inp.ways ?? waysOf(plan, grid, { courtyards: shapes.courtyards.flatMap((ct) => ct.cells), defs });
   const tiles: TileMesh = {
     verts: Float64Array.from(grid.verts),
     quads: Uint32Array.from(grid.quads),
@@ -964,7 +905,7 @@ export function townView(site: ViewSite, inp: ViewInputs): { city: CityPlan; ext
     }
   }
   if (site.placed.size) city.placed = [...site.placed].map(([id, s]) => ({ id, building: byStructure.get(s)?.[0] ?? -1 })).filter((p) => p.building >= 0);
-  return { city, extra: extra.done() };
+  return { city, extra: extra.done(), ways };
 }
 
 /** the vertex the cells all share (-1 none) */

@@ -11,7 +11,7 @@ planned) and then plays in real time. Typecheck (~8 s) and the unit tests were n
 1. **Unit tests for logic** (`npx vitest run src/fortress`, docs/TESTING.md): a rule, a plan, a field's numbers. Seconds.
 2. **A lab scenario for behaviour** (`node scripts/lab.mjs run scripts/lab/<x>.mjs`): workers walking, building,
    hauling, roads ridden — the real systems on a small world, in a page kept open. 9-60 s.
-3. **The full-game scripts only at the gate** (`scripts/fortressoutside.mjs`, `fortresslanes.mjs`, the town bench …):
+3. **The full-game scripts only at the gate** (`scripts/fortressoutside.mjs`, the town bench …):
    the atlas's land and its own town, by finger at the phone's size. Once, before handing a branch over.
 4. **The full suite at commit**: `npm run typecheck`, `npx vitest run`, and the gate's scripts.
 
@@ -90,8 +90,8 @@ export default async function (lab, args) {
 
 Or a plain `.js` file: the body of `async (lab, args) => { … }` — handy for a one-off probe. Throw to fail the run
 (the runner exits non-zero). Examples: `scripts/lab/example.mjs` (the template), `scripts/lab/fortressoutside.mjs`
-(do the builders get out of a walled town to sites outside it), `scripts/lab/fortressrefuse.mjs` (unreachable placements refused: a house on the valley's lake, a block in a shut ring, a drag across the lake), `scripts/lab/fortresslanes.mjs` (the lanes of a walled
-site, and the share of walking on them).
+(do the builders get out of a walled town to sites outside it), `scripts/lab/fortressrefuse.mjs` (unreachable placements refused: a house on the valley's lake, a block in a shut ring, a drag across the lake), `scripts/lab/townroads.mjs` and `hybrid.mjs` (round 128p: the
+roads on the grid's edges and the main roads; the lanes scripts went with the lanes).
 
 ## The field mesh's rebuilds (round 128o, DA-B28)
 

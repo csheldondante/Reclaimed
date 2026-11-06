@@ -91,11 +91,11 @@ await run({ name: 'fortressroads', kind: 'behaviour', size: '412x915', dpr: 1, e
       doors: w.doors.length,
       structures: f.plan.structures().length,
       stairs: w.stairs.map((s) => ({ wall: s.wall, cells: s.cells.length, line: line.includes(s.wall) })),
-      roads: [...w.way].filter((x) => x === 1).length,
       squares: [...w.way].filter((x) => x === 2).length,
       site: [cx - tx, cy - ty],
-      cutOff: w.cutOff.map((id) => f.plan.structure(id).type),
-      doorsAt: w.doors.map((d) => [f.plan.structure(d.structure).type, d.out, w.way[d.out]]),
+      // (round 128p: the roads' reach — townroads.ts — every structure on it)
+      cutOff: [...f.cutCells()].map((c) => f.plan.typeAt(c)),
+      doorsAt: w.doors.map((d) => [f.plan.structure(d.structure).type, d.cell, d.side]),
     };
   }, FIELD);
   console.log('ways', JSON.stringify(info));
@@ -227,7 +227,7 @@ await run({ name: 'fortressroads', kind: 'behaviour', size: '412x915', dpr: 1, e
         const [x, y] = f.centre(c);
         return Rc.camera.project(x, y, f.town.floorZ(c, 0) || f.town.base[c] || f.groundAt(f.grid.columns[c][0])).map(Math.round);
       };
-      return { stairs: w.stairs.map((s) => [P(s.wall), P(s.foot)]), gate: P(window.__fr.gate), doors: w.doors.map((d) => P(d.out)) };
+      return { stairs: w.stairs.map((s) => [P(s.wall), P(s.foot)]), gate: P(window.__fr.gate), doors: w.doors.map((d) => P(d.cell)) };
     });
     console.log('marks', name, JSON.stringify(marks));
   };

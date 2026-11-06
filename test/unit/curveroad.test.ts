@@ -1,6 +1,6 @@
 // Main roads as curves the grid adapts to; the radial relax (round 128p, DA-A13 step 2: build/curveroad.ts).
 import { describe, expect, it } from 'vitest';
-import { adaptToCurve, chaikin, growRoad, MAX_SNAP, radialRelax } from '../../src/build/curveroad';
+import { adaptToCurve, chaikin, FLATTEST, growRoad, MAX_SNAP, radialRelax } from '../../src/build/curveroad';
 import { ROAD_GRADE } from '../../src/build/grade';
 
 type V2 = [number, number];
@@ -86,7 +86,37 @@ describe('adaptToCurve', () => {
     for (let i = 0; i < verts.length; i++)
       expect(Math.abs(verts[i] - m.verts[i])).toBeLessThanOrEqual(MAX_SNAP * 4 + 1e-5);
   });
+
+  it('leaves no cell flatter at a corner than FLATTEST (a corner snapped onto the line between its neighbours: a triangle the roofs miss)', () => {
+    // (round 128p: a house on the irregular hill town had a cell whose corner the snap put on its neighbours' line — the
+    // roof's eave 6 cm under the wall's top; structures.test "no wall pokes up through a roof")
+    const m = squares(20);
+    for (const curve of [
+      [[0, 3], [80, 77]],
+      [[0, 30], [40, 34], [80, 50]],
+      [[10, 0], [14, 80]],
+    ] as V2[][]) {
+      const { verts } = adaptToCurve(m, curve, 4);
+      for (let c = 0; c < m.count; c++) expect(sharp(verts, m.quads, c), `cell ${c} on ${JSON.stringify(curve)}`).toBeGreaterThanOrEqual(FLATTEST - 1e-6);
+      // (and it still adapts: some vertices moved)
+      expect(verts.some((x, i) => Math.abs(x - m.verts[i]) > 0.1)).toBe(true);
+    }
+  });
 });
+
+/** a cell's flattest corner: the least sine of its inner angles */
+function sharp(v: ArrayLike<number>, q: ArrayLike<number>, c: number): number {
+  let s = Infinity;
+  for (let k = 0; k < 4; k++) {
+    const a = q[c * 4 + ((k + 3) & 3)];
+    const b = q[c * 4 + k];
+    const d = q[c * 4 + ((k + 1) & 3)];
+    const u = [v[b * 2] - v[a * 2], v[b * 2 + 1] - v[a * 2 + 1]];
+    const w = [v[d * 2] - v[b * 2], v[d * 2 + 1] - v[b * 2 + 1]];
+    s = Math.min(s, (u[0] * w[1] - u[1] * w[0]) / (Math.hypot(u[0], u[1]) * Math.hypot(w[0], w[1])));
+  }
+  return s;
+}
 
 describe('radialRelax', () => {
   it('turns cells toward facing the middle (on a jittered grid) and turns none over', () => {

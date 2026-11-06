@@ -129,16 +129,8 @@ fn costDeep(s: u32) -> bool { return (navCost[s] & 2u) != 0u; }
 // worker goes round by the road when it's no more than a little longer. Set by the game (Agents.setRoads); all 0 none.
 @group(0) @binding(40) var<storage, read> roads: array<u32>;
 const ROAD_COST: f32 = 0.5;
-/** (round 128i) the riding network's plane of the road bits (roadride.wgsl rideNetStamp): a column on an edge that leads
- *  to a riding group's goal — the road field's seeds */
-fn onNet(p: vec2<i32>) -> bool {
-  let w = winIdx(p);
-  return ((roads[arrayLength(&roads) / 2u + (w >> 5u)] >> (w & 31u)) & 1u) != 0u;
-}
-/** fields (agents.ts NFIELDS); (round 128i, V128-14) the last, ROAD_FIELD, is the shared field onto the roads: every
- *  surface of a network column (onNet) a seed (agents.ts ROAD_FIELD; set while a group rides the roads — shaders/roadride.wgsl) */
+/** fields (agents.ts NFIELDS) */
 const NFIELDS: u32 = 13u;
-const ROAD_FIELD: u32 = 12u;
 fn onRoad(p: vec2<i32>) -> f32 {
   let w = winIdx(p);
   return f32((roads[w >> 5u] >> (w & 31u)) & 1u);
@@ -363,7 +355,6 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
         let c = cellAt(sd.xy);
         if (all(c == p) && surfaceNear(i, sd.z) == k) { d = 0.0; }
       }
-      if (f == ROAD_FIELD && onNet(p)) { d = 0.0; }
       if (d > 0.0) {
         for (var dd = 0u; dd < NDIR; dd++) {
           let l = navLink(s, dd);

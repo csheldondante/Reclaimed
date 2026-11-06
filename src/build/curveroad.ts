@@ -224,6 +224,30 @@ function area(v: ArrayLike<number>, q: ArrayLike<number>, c: number): number {
 }
 
 /**
+ * The flattest corner a snap may leave a cell (the sine of its inner angle: 150 degrees). A house's walls meet at its
+ * corners mitred and its roof hips over them (structures/pieces.ts); a corner flatter than this reads as a side with a
+ * kink, a triangle, where the roof's eave misses the wall's top (structures.test "no wall pokes up through a roof").
+ */
+export const FLATTEST = 0.5;
+
+/** a cell's flattest corner: the least sine of its four inner angles (negative: turned over or not convex there) */
+function sharpness(v: ArrayLike<number>, q: ArrayLike<number>, c: number): number {
+  let m = Infinity;
+  for (let k = 0; k < 4; k++) {
+    const a = q[c * 4 + ((k + 3) & 3)];
+    const b = q[c * 4 + k];
+    const d = q[c * 4 + ((k + 1) & 3)];
+    const ux = v[b * 2] - v[a * 2];
+    const uy = v[b * 2 + 1] - v[a * 2 + 1];
+    const wx = v[d * 2] - v[b * 2];
+    const wy = v[d * 2 + 1] - v[b * 2 + 1];
+    const l = Math.hypot(ux, uy) * Math.hypot(wx, wy);
+    m = Math.min(m, l > 0 ? (ux * wy - uy * wx) / l : -1);
+  }
+  return m;
+}
+
+/**
  * The grid adapted to a road of `width` along `curve`: the vertices snapped onto its edges, the cells on it. Returns the
  * moved vertices (for QuadGrid.moveVerts) and the road's cells.
  */
@@ -251,14 +275,27 @@ export function adaptToCurve(mesh: Mesh, curve: V2[], width: number): { verts: F
     v[i * 2] += n[0] * m;
     v[i * 2 + 1] += n[1] * m;
   }
-  // a cell turned over by the snaps: its vertices put back
-  for (let c = 0; c < mesh.count; c++)
-    if (area(v, mesh.quads, c) <= 0 && area(was, mesh.quads, c) > 0)
+  // a cell the snaps left flatter at a corner than FLATTEST, or than the flattest corner the tile system made if that's
+  // flatter still (turned over, or a corner pushed onto the line between its neighbours: a triangle the walls and roofs
+  // can't mitre) — its vertices put back, again until none is (each pass puts some back: it ends)
+  let floor = FLATTEST;
+  for (let c = 0; c < mesh.count; c++) {
+    const q = sharpness(was, mesh.quads, c);
+    if (q > 0) floor = Math.min(floor, q);
+  }
+  for (let again = true; again; ) {
+    again = false;
+    for (let c = 0; c < mesh.count; c++) {
+      if (sharpness(v, mesh.quads, c) >= Math.min(floor, sharpness(was, mesh.quads, c))) continue;
       for (let k = 0; k < 4; k++) {
         const i = mesh.quads[c * 4 + k];
+        if (v[i * 2] === was[i * 2] && v[i * 2 + 1] === was[i * 2 + 1]) continue;
         v[i * 2] = was[i * 2];
         v[i * 2 + 1] = was[i * 2 + 1];
+        again = true;
       }
+    }
+  }
   const road: number[] = [];
   for (let c = 0; c < mesh.count; c++) {
     let x = 0;

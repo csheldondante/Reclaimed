@@ -1,7 +1,7 @@
-// (DA-A7 pinned, round 128o) The harvest comes home on the user's start town: a farmer riding grain to the stores along
-// the routes keeps moving. Fails today — riders stand at a route node in the terraced fields (node 14, in cell 4170,
-// 0.5 m off it) for good while the CPU hop table gives a 115 m route on: the GPU ride's stall (shaders/roadride.wgsl),
-// to go with the riders' steering when trips become kinematic (DA-A7). Not a gate yet: it pins the bug.
+// (DA-A7 pinned, round 128o; round 128p a gate) The harvest comes home on the user's start town: a farmer riding grain
+// to the stores along the routes keeps moving. It pinned the old ride's stall (riders standing at a route node in the
+// terraced fields for good); the riders now advance along cached routes as queues (agents/routeride.ts,
+// shaders/routes.wgsl), placed by the route, so the gate is that no carrier stands still.
 //   node scripts/lab.mjs run scripts/lab/fortressharvest.mjs [--args '{"seconds":240,"still":120}']
 export const recipe = 'town';
 

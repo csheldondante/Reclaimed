@@ -4,7 +4,6 @@
 import { fortressOn } from './testing';
 import { describe, expect, it } from 'vitest';
 import { lint } from '../../test/support/writing';
-import { CpuReach, type ReachColumns } from '../build/reach';
 import { ECON } from './defs';
 import { blockHp, lootOf, RAID, RaidClock, raidGoal, raidSides, sideOf, waveBreaks, waveSize, type RaidLayout } from './raid';
 import { raidArrivedLine, raidNowLine, raidOverLines, raidWarnLine } from './words';
@@ -154,14 +153,12 @@ describe('repairs: a broken block is a planned block again', () => {
   it('breakBlock takes down the block and what stands on it; the plan keeps them, so the builders build them again', () => {
     const W = 160;
     const H = 184;
-    const cols: ReachColumns = { w: W, h: H, runs: () => [[0, 5]], water: () => 0 };
     const f = fortressOn({ origin: [0, 0], w: W, h: H }, {
       windowOrigin: () => [0, 0],
       dims: { w: W, h: H, zMax: 999 },
       ground: () => 5,
       stores: () => ({}),
       changed: () => {},
-      reach: new CpuReach(cols, W, H, () => [0, 0]),
       townHeap: () => [10, 10],
     });
     f.ready = true;
@@ -189,8 +186,7 @@ describe('repairs: a broken block is a planned block again', () => {
   it('the gates shut and open', () => {
     const W = 160;
     const H = 184;
-    const cols: ReachColumns = { w: W, h: H, runs: () => [[0, 5]], water: () => 0 };
-    const f = fortressOn({ origin: [0, 0], w: W, h: H }, { windowOrigin: () => [0, 0], dims: { w: W, h: H, zMax: 999 }, ground: () => 5, stores: () => ({}), changed: () => {}, reach: new CpuReach(cols, W, H, () => [0, 0]), townHeap: () => [10, 10] });
+    const f = fortressOn({ origin: [0, 0], w: W, h: H }, { windowOrigin: () => [0, 0], dims: { w: W, h: H, zMax: 999 }, ground: () => 5, stores: () => ({}), changed: () => {}, townHeap: () => [10, 10] });
     let n = 0;
     f.onChange.push(() => n++);
     f.setGatesShut(true);

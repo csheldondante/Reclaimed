@@ -10,7 +10,6 @@
 import { deviceFacts, keepAwake, letSleep, Panel, reportButtons, wakeLog } from './bench';
 import { runPlaceBench, type PlaceBenchIO, type PlaceBenchResult } from './placebench/run';
 import { placeSummary } from './placebench/summary';
-import { diagnose, diagnosisLines, type Diagnosis } from './placebench/diagnose';
 import type { PackedWorld } from '../world/layout';
 import type { Fortress } from '../fortress/fortress';
 import type { StructureType } from '../api/contracts/fortress';
@@ -72,7 +71,7 @@ export function gameIO(R: Rec, log?: (l: string) => void): PlaceBenchIO {
 
 /** the report (JSON) of a run */
 export function placeReport(result: PlaceBenchResult, extra: Record<string, unknown>): Record<string, unknown> {
-  return { kind: 'reclaimed-placebench', version: 2, build: BUILD, ...extra, summary: [...placeSummary(result), ...(result.diagnosis ? diagnosisLines(result.diagnosis as Diagnosis) : [])], result };
+  return { kind: 'reclaimed-placebench', version: 2, build: BUILD, ...extra, summary: [...placeSummary(result)], result };
 }
 
 export async function placeBench(params: URLSearchParams): Promise<void> {
@@ -97,32 +96,18 @@ export async function placeBench(params: URLSearchParams): Promise<void> {
   const device = await deviceFacts(R.core.host);
   const arriveS = Number(params.get('placearrive') ?? 300);
   let n = 0;
-  // (round 128m: the phone's town wasn't the desktop's — its land saved for the lab, and the reach diagnosed on it)
+  // (round 128m: the phone's town wasn't the desktop's — its land saved for the lab; round 128p: the reach is the town's
+  // roads' union-find on the CPU now, nothing on the GPU to diagnose)
   let town: string | null = null;
-  let diag: Diagnosis | null = null;
   const result = await runPlaceBench(
     gameIO(R, (l) => panel.say(`Placement bench: ${++n} placed. ${l}`)),
     {
       arriveS,
       types: params.get('placetypes') ? (params.get('placetypes')!.split(',') as StructureType[]) : undefined,
-      diagnose: async (points) => {
-        panel.say('Placement bench: saving the town for the lab and checking the reach…');
+      diagnose: async () => {
+        panel.say('Placement bench: saving the town for the lab…');
         town = await R.townFixture();
-        const st = R.settlements;
-        const id = st?.pinnedId ?? null;
-        diag = await diagnose(
-          {
-            fort: f,
-            readBuffer: (name) => R.core.readBuffer(name),
-            packed: R.core.packed,
-            dims: R.core.dims,
-            windowOrigin: [R.stream.origin[0], R.stream.origin[1]],
-            town: { id, name: id ? (st?.settlement(id)?.name ?? null) : null },
-            heightAt: (x, y) => R.scene.heightAt(x, y),
-          },
-          points,
-        );
-        return diag;
+        return null;
       },
     },
   );

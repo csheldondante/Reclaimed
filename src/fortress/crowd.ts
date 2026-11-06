@@ -20,13 +20,11 @@ import type { UnitId, V2 } from '../api/contracts/units';
 import { buildOrder } from '../agents/buildcrew';
 import type { Block } from '../build/town';
 import { F, G, R, R4, type AgentUnits, type Routine, type UnitRec } from '../units/agent-units';
-import { ROAD_FIELD } from '../agents/agents';
-import { nearestNode, nodeCount, noGraph, type RoadGraph } from '../agents/roadgraph';
+import type { RouteNet } from '../agents/routes';
 import { DEFS, ECON } from './defs';
 import { builtBlocks, cartsOf, eaten, fits, reachOf, workSeconds } from './economy';
 import { ROW_H, cellAt } from '../world/lattice';
 import type { Fortress } from './fortress';
-import { WAY_ROAD } from '../build/ways';
 import type { Doing, PersonFacts } from './follow';
 import type { FortressRaid } from './raiders';
 import { QuarryDig } from './quarry';
@@ -167,7 +165,7 @@ export class FortressCrowd implements Routine {
   private t = 0;
   private jobsAt = -1e9;
   private seeded = '';
-  private seededGraph: RoadGraph | null = null;
+  private seededGraph: RouteNet | null = null;
   private reachSeen = -1;
   private cut = new Set<number>();
   private order: Block[] = [];
@@ -340,7 +338,7 @@ export class FortressCrowd implements Routine {
    */
   roads(): void {
     this.io.units.agents.setRoads(this.io.fort.roadShapes(), ...this.io.fort.offset());
-    this.io.units.agents.setRoadGraph(this.io.fort.roadGraph(), ...this.io.fort.offset());
+    this.io.units.agents.setRouteNet(this.io.fort.routeNet(), ...this.io.fort.offset(), this.io.fort.zShift);
   }
 
   /** each frame (sim seconds): what happened in, the routine's turn, its orders out; the fields, the bar */
@@ -568,22 +566,16 @@ export class FortressCrowd implements Routine {
     const f = this.io.fort;
     const h = this.heap();
     const angles: number[] = [];
-    const way = f.ways().way;
-    let far = -1;
+    // (round 128p: the main road that runs farthest out — a spoke's end: the way a newcomer comes in)
+    let far: V2 | null = null;
     let fd = 0;
-    for (let c = 0; c < way.length; c++) {
-      if (way[c] !== WAY_ROAD) continue;
-      const [x, y] = f.centre(c);
-      const d = Math.hypot(x - h[0], y - h[1]);
-      if (d > fd) {
-        fd = d;
-        far = c;
+    for (const c of f.roads?.net.curves ?? [])
+      for (const q of c) {
+        const [x, y] = f.toWindow(q[0], q[1]);
+        const d = Math.hypot(x - h[0], y - h[1]);
+        if (d > fd) ((fd = d), (far = [x, y]));
       }
-    }
-    if (far >= 0) {
-      const [x, y] = f.centre(far);
-      angles.push(Math.atan2(y - h[1], x - h[0]));
-    }
+    if (far) angles.push(Math.atan2(far[1] - h[1], far[0] - h[0]));
     for (let k = 0; k < 12; k++) angles.push((k / 12) * Math.PI * 2);
     const half = Math.min(f.box.w, f.box.h * 0.866) / 2;
     const spots: { at: V2; cell: number }[] = [];
@@ -609,16 +601,16 @@ export class FortressCrowd implements Routine {
   /** (m4) the road graph's node nearest the window's edge (window world), and the point on the edge straight out from it */
   edgeWay(): { edge: V2; node: V2 } | null {
     const f = this.io.fort;
-    const g = f.roadGraph();
-    const n = nodeCount(g);
-    if (!n) return null;
+    const g = f.routeNet();
+    const n = g?.nodes ?? 0;
+    if (!g || !n) return null;
     const W = f.windowDims().w;
     const Hh = f.windowDims().h * ROW_H;
     const IN = 3;
     let best: { edge: V2; node: V2 } | null = null;
     let bd = Infinity;
     for (let i = 0; i < n; i++) {
-      const [x, y] = f.toWindow(g.xy[2 * i], g.xy[2 * i + 1]);
+      const [x, y] = f.toWindow(g.xyz[3 * i], g.xyz[3 * i + 1]);
       const sides: [number, V2][] = [
         [x, [IN, y]],
         [W - x, [W - IN, y]],
@@ -649,10 +641,10 @@ export class FortressCrowd implements Routine {
       if (this.cartSlots[i] !== null) continue;
       const h = this.heap();
       // (on the road nearest the stores: a cart starts on the network it rides)
-      const g = f.roadGraph();
+      const g = f.routeNet();
       const [bx, by] = f.toBox(h[0], h[1]);
-      const n = nodeCount(g) ? nearestNode(g, bx, by).node : -1;
-      const base: V2 = n >= 0 ? f.toWindow(g.xy[2 * n], g.xy[2 * n + 1]) : h;
+      const n = g ? g.nearest(bx, by).node : -1;
+      const base: V2 = g && n >= 0 ? f.toWindow(g.xyz[3 * n], g.xyz[3 * n + 1]) : h;
       const at: V2 = [base[0] + Math.cos(i * 2.1) * 1.5, base[1] + Math.sin(i * 2.1) * 1.5];
       const id = U.spawn('cart', at, this.io.faction, { settlement: this.io.settlement, role: 'cart', health: 6, job: { kind: 'work', at, what: 'cart' } });
       this.cartSlots[i] = id;
@@ -669,14 +661,14 @@ export class FortressCrowd implements Routine {
   private pilePoint(id: number): V2 | null {
     const f = this.io.fort;
     const door = f.doorOf(id);
-    const g = f.roadGraph();
-    if (!door || !nodeCount(g)) return null;
+    const g = f.routeNet();
+    if (!door || !g || !g.nodes) return null;
     const [dx, dy] = f.toBox(door[0], door[1]);
     let best: V2 | null = null;
     let bd = PILE_ROAD;
-    for (let v = 0; v < nodeCount(g); v++) {
-      const x = g.xy[2 * v];
-      const y = g.xy[2 * v + 1];
+    for (let v = 0; v < g.nodes; v++) {
+      const x = g.xyz[3 * v];
+      const y = g.xyz[3 * v + 1];
       const d = Math.hypot(x - dx, y - dy);
       if (d > bd) continue;
       const c = f.grid.cellAtWorld(x, y);
@@ -774,7 +766,7 @@ export class FortressCrowd implements Routine {
     const r = (v: V2[]) => v.map((p) => p.map(Math.round));
     const carts = this.cartGoals();
     const key = JSON.stringify([h.map(Math.round), r(stone), r(wood), r(quarry), r(farm), r(fell), r(homes), r(smiths), r(barracks), r(posts), carts.map(r)]);
-    const graph = f.roadGraph();
+    const graph = f.routeNet();
     if (key === this.seeded && graph === this.seededGraph) return;
     this.seeded = key;
     this.seededGraph = graph;
@@ -784,7 +776,8 @@ export class FortressCrowd implements Routine {
     // graph when every goal of theirs is by it; their own fields go unseeded. The legs to changing places keep fields.
     const ride = (g: number, field: number, v: V2[]): boolean => {
       const ok = A.ride(g, v.map(([x, y]) => f.toBox(x, y)));
-      A.follow(g, ok ? ROAD_FIELD : field);
+      // (riding: placed by its route — routes.wgsl — standing when it has none yet)
+      A.follow(g, ok ? -1 : field);
       seed(field, ok ? [] : v);
       return ok;
     };
@@ -792,7 +785,7 @@ export class FortressCrowd implements Routine {
     const rideOnly = (g: number, v: V2[]): boolean => {
       const ok = v.length > 0 && A.ride(g, v.map(([x, y]) => f.toBox(x, y)));
       if (!ok) A.ride(g, null);
-      A.follow(g, ok ? ROAD_FIELD : -1);
+      A.follow(g, -1);
       return ok;
     };
     this.riding = {
@@ -1053,6 +1046,6 @@ export class FortressCrowd implements Routine {
     A.keepInScope('fortress', []);
     A.setRoads(new Float32Array(0));
     for (const g of [R.toPile, R.toHome, R.toFarm, R4.toSmith, R4.toBarracks, R4.toPost, ...Array.from({ length: CART_GROUPS }, (_, i) => R4.cart0 + i)]) A.ride(g, null);
-    A.setRoadGraph(noGraph());
+    A.setRouteNet(null);
   }
 }

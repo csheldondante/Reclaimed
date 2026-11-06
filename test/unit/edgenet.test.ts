@@ -46,6 +46,23 @@ describe('reach by construction', () => {
     expect(n.reach.reached).toBe(9);
   });
 
+  it('the stores given at the middle of a building of four cells (a corner inside it) are on the ground beside it', () => {
+    // (round 128p: a radial town's dome placed again round the corner nearest its stores — every structure was "apart":
+    // the stores' vertex joined nothing)
+    const grid = squares(N);
+    const plan = new TownPlan(grid, DEFS);
+    plan.place('house', [
+      [cell(3, 3), 0],
+      [cell(4, 3), 0],
+      [cell(3, 4), 0],
+      [cell(4, 4), 0],
+    ]);
+    plan.place('house', [[cell(7, 7), 0]]);
+    const n = net(plan, grid, { stores: [16, 16] });
+    expect(n.reach.out).toEqual([]);
+    expect(n.reach.reached).toBe(2);
+  });
+
   it('a building of several cells: its own edges are inside it, not paths', () => {
     const grid = squares(N);
     const plan = new TownPlan(grid, DEFS);
@@ -96,6 +113,18 @@ describe('reach by construction', () => {
     const n = net(plan, grid);
     expect(n.door.has(h.id)).toBe(true);
     expect(n.kind[n.door.get(h.id)!]).toBeGreaterThanOrEqual(PATH_LANE);
+  });
+
+  it('a door opens onto open ground where the structure has any, not into the house next door', () => {
+    // (round 128p: the start town's warehouse's door led into a house — its people spawned on that house's roof)
+    const grid = squares(N);
+    const plan = new TownPlan(grid, DEFS);
+    // (the stores at the corner: the nearest way out of the warehouse is through its neighbours)
+    for (const [i, j] of [[1, 2], [2, 1], [3, 2]] as const) plan.place('house', [[cell(i, j), 0]]);
+    const w = plan.place('warehouse', [[cell(2, 2), 0]])!;
+    const n = net(plan, grid, { stores: [0, 0], centre: [0, 0] });
+    const d = n.door.get(w.id)!;
+    for (const c of [n.cells[d * 2], n.cells[d * 2 + 1]]) if (c >= 0 && c !== cell(2, 2)) expect(plan.structureAt(c)).toBeFalsy();
   });
 });
 

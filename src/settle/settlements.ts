@@ -24,9 +24,8 @@ import type { Atlas } from '../atlas/atlas';
 import type { StampOps } from '../atlas/stamps';
 import { GPUGEN } from '../atlas/finish';
 import { GrowthField } from './field';
-import { cellAt, ROW_H } from '../world/lattice';
-import type { ReachEngine } from '../build/reach';
-import { joinPlaces, singleStands } from '../build/sitereach';
+import { ROW_H } from '../world/lattice';
+import { relayRoads } from '../build/townroads';
 import { heapFoot } from './live';
 import { atlasFacts } from '../gm/atlas-facts';
 import { buildWiki, type WorldWiki } from '../gm/wiki';
@@ -45,7 +44,7 @@ import type { SurfaceStamp } from '../atlas/bake';
 import { rasterPlan, stampMatch } from './raster';
 import type { ExactPlanDone, ExactPlanJob, FarPlanDone, FarPlanInit, FarPlanJob } from './plan-worker';
 import { Fleet, shipRoutes } from './ships';
-import { assertEntered, keepReach, placeBuilding } from '../structures/place';
+import { placeBuilding } from '../structures/place';
 import { typeIndex } from '../build/plan';
 import { TownSite, type SiteData } from '../build/site';
 
@@ -83,11 +82,7 @@ export interface LiveIO {
   ready(at: V2): boolean;
   /** how many of its people may be out at once (the tier's budget) */
   budget: number;
-  /**
-   * (round 128o, B: one reach) a reach engine over a box of the window (`origin`: its first window column, as the window
-   * moves), the GPU's (fortress/reachgpu.ts); and the window's z offset (window z = world z − oz). None: no reach (tests)
-   */
-  reach?(w: number, h: number, origin: () => [number, number]): ReachEngine & { dispose(): void };
+
   oz?(): number;
 }
 
@@ -682,57 +677,17 @@ export class Settlements {
    * (counted: reachStats).
    */
   private async reachLive(p: SettlementPlan, s: SettlementSeed): Promise<void> {
+    // (round 128p, DA-A13: the reach is the town's roads' — laid with it at generation, again as it grows: build/
+    // townroads.ts relayRoads, a union-find over the paths on its grid's edges, the terraces levelled; no GPU)
     const io = this.io;
-    if (!io?.reach || !io.oz) return;
+    if (!io) return;
     const id = s.rec.id;
     if (this.reached.get(id) === io.epoch()) return;
     this.reached.set(id, io.epoch());
-    const site = p.site;
-    const { w, h } = site.box;
-    const origin = (): [number, number] => {
-      const [x, y] = this.toWindow([site.box.x0, site.box.y0 * ROW_H]);
-      return [Math.round(x), Math.round(y / ROW_H)];
-    };
-    const engine = io.reach(w, h, origin);
-    try {
-      const oz = io.oz();
-      const [ox, oy] = origin();
-      const colOf = (at: V2): number => {
-        const [k, r] = cellAt(at[0], at[1]);
-        const x = k - ox;
-        const y = r - oy;
-        return x < 0 || y < 0 || x >= w || y >= h ? -1 : y * w + x;
-      };
-      const spots = this.liveSpots(p, s).filter((q) => q.kind !== 'post' && q.kind !== 'camp');
-      const heap = spots.find((q) => q.kind === 'pile' && q.what !== 'log') ?? spots.find((q) => q.kind === 'pile');
-      // (a heap is a mound of the ground put on it: its foot is where a walker stands — the stores, and a heap's place)
-      const sc = heap?.foot?.length ? colOf(heap.foot[0]) : -1;
-      if (sc < 0) return;
-      const at = spots.flatMap((q) => (q.kind === 'pile' ? (q.foot ?? []).slice(0, 1) : [q.w]));
-      const places = [...at, ...this.liveSites(p, s).map((q) => q.door)].map(colOf).filter((c) => c >= 0);
-      const made: [string, number, number][] = [];
-      const res = await joinPlaces({
-        engine,
-        solid: () => ({ plan: site.plan, town: site.town, grid: site.grid, box: site.box, ground: (c) => site.ground(c), oz }),
-        origin,
-        places: () => singleStands(places, places.map((c) => site.ground(c) - oz)),
-        stores: sc,
-        storesZ: site.ground(sc) - oz,
-        changed: () => {
-          site.plan.takeChanged();
-          for (const f of this.onRaised) f(id, -1);
-        },
-        live: () => this.io === io && this.reached.get(id) === io.epoch(),
-        noted: (kind, _t, cell) => {
-          const [x, y] = site.grid.centre(cell);
-          const [wx, wy] = this.toWindow([x + site.box.x0, y + site.box.y0 * ROW_H]);
-          made.push([kind, +wx.toFixed(1), +wy.toFixed(1)]);
-        },
-      });
-      this.reachStats.set(id, { places: places.length, ...res, made });
-    } finally {
-      engine.dispose();
-    }
+    const r = relayRoads(p.site);
+    if (!r) return;
+    if (r.terraces.length) for (const f of this.onRaised) f(id, -1);
+    this.reachStats.set(id, { places: r.net.reach.structures, out: r.net.reach.out.length, fixes: r.terraces.length, asks: 1, made: r.terraces.map((t) => ['level', t.id, +t.dz.toFixed(1)] as [string, number, number]) });
   }
 
   /** a site's levels up (life.ts): its structure's blocks under them built (the plan's Town), the view told */
@@ -768,10 +723,7 @@ export class Settlements {
     // (onetown: the house goes into the town's plan as the generator places its own — planned, the builders' work)
     const sid = placeBuilding(p.site, next.building, 0);
     if (sid < 0) return;
-    // (round 128o: the town kept walkable and every structure entered, as at its planning — structures/place.ts; B: in
-    // play the one reach asks its places again over the land itself)
-    keepReach(p.site);
-    assertEntered(p.site);
+    // (round 128p: the town's roads laid again — its new house's lane, a far one's road, the terraces: reachLive below)
     p.sites.push({ id, structure: sid, storeys: levelsOfStructure(p.site, sid), door: next.door });
     for (const f of this.onRaised) f(rec.id, sid);
     if (this.life?.rec.id === rec.id) {

@@ -11,7 +11,7 @@ import { nbr as hexNbr } from '../world/lattice';
 import { Fortress } from '../fortress/fortress';
 import { townPieces } from './view';
 import { solidSpans } from './solid';
-import { noWays, SLOPE, WAY_ROAD, WAY_SQUARE, WAY_STAIR, axisLength, type Ways } from './ways';
+import { noWays, SLOPE, WAY_SQUARE, WAY_STAIR, axisLength, type Ways } from './ways';
 import { WALL_HALF } from './solid';
 
 const W = 160;
@@ -50,45 +50,22 @@ function walled(f: Fortress, r = 22) {
   return { ring, gate, keep, house, store };
 }
 
-/** the net's cells (roads, squares, gates) reached from a cell along it */
-function along(f: Fortress, w: Ways, from: number): Set<number> {
-  const on = (c: number) => c >= 0 && (w.way[c] === WAY_ROAD || w.way[c] === WAY_SQUARE || w.gates.includes(c));
-  const seen = new Set([from]);
-  const q = [from];
-  while (q.length) {
-    const c = q.pop()!;
-    for (let e = 0; e < 4; e++) {
-      const n = f.grid.nbr[c * 4 + e];
-      if (on(n) && !seen.has(n)) {
-        seen.add(n);
-        q.push(n);
-      }
-    }
-  }
-  return seen;
-}
-
 describe('the fortress bakes its ways', () => {
-  it('every door opens on one road net, through the gate to outside', () => {
+  it('every structure has a door on the roads (layout.roads.doors), all of them reached through the gate', () => {
+    // (round 128p, DA-A13: the roads are the paths on the grid's edges — townroads.ts; the doors are where they leave)
     const f = fortress();
     const { keep, house, store, gate } = walled(f);
     const w = f.ways();
-    const doorOf = (c: number) => w.doors.find((d) => d.structure === f.plan.owner[c]);
     for (const c of [keep, house, store]) {
-      const d = doorOf(c);
+      const d = w.doors.find((x) => x.structure === f.plan.owner[c]);
       expect(d, `a door on ${f.plan.typeAt(c)}`).toBeTruthy();
-      expect([WAY_ROAD, WAY_SQUARE]).toContain(w.way[d!.out]);
+      expect(f.plan.owner[d!.cell]).toBe(f.plan.owner[c]);
+      expect(d!.side).toBeGreaterThanOrEqual(0);
+      expect(d!.side).toBeLessThan(4);
+      expect(f.reachedNow(c)).toBe(true);
     }
-    expect(w.cutOff).toEqual([]);
-    const net = along(f, w, doorOf(keep)!.out);
-    for (const c of [house, store]) expect(net.has(doorOf(c)!.out)).toBe(true);
-    // the gate is on the way, and so is ground on both its sides
-    expect(net.has(gate)).toBe(true);
-    const outs = [0, 1, 2, 3].map((e) => f.grid.nbr[gate * 4 + e]).filter((n) => n >= 0 && f.plan.owner[n] < 0);
-    expect(outs.length).toBe(2);
-    for (const o of outs) expect(net.has(o)).toBe(true);
-    // a road never runs over a structure
-    for (let c = 0; c < f.grid.count; c++) if (w.way[c] !== 0 && !w.gates.includes(c)) expect(f.plan.owner[c]).toBe(-1);
+    expect(f.cutCells().size).toBe(0);
+    expect(w.gates).toContain(gate);
   });
 
   it('a wall run has a stair: free cells straight out from a straight stretch, on the inside, no steeper than SLOPE', () => {
@@ -103,8 +80,8 @@ describe('the fortress bakes its ways', () => {
         expect(f.plan.owner[c]).toBe(-1);
         expect(w.way[c]).toBe(WAY_STAIR);
       }
-      // its foot on the road
-      expect([WAY_ROAD, WAY_SQUARE]).toContain(w.way[s.foot]);
+      // its foot on open ground
+      expect(f.plan.owner[s.foot]).toBe(-1);
       // long enough for the wall's height at SLOPE
       expect(axisLength(s.axis) - WALL_HALF).toBeGreaterThanOrEqual((f.plan.top(s.wall) + 1) * LEVEL_H / SLOPE - 1e-6);
       // inside: its foot nearer the keep than the wall is
@@ -181,7 +158,7 @@ describe('the fortress bakes its ways', () => {
     }
   });
 
-  it('squares are paved whole (roads a lane wide: lanes.test), the stair drawn as steps', () => {
+  it('squares are paved whole, the stair drawn as steps', () => {
     const f = fortress();
     walled(f);
     const w = f.ways();
@@ -197,7 +174,6 @@ describe('the fortress bakes its ways', () => {
     let squares = 0;
     for (let c = 0; c < f.grid.count; c++) if (w.way[c] === WAY_SQUARE) squares++;
     expect(count(p, 'pave') - count(bare, 'pave')).toBeLessThanOrEqual(squares);
-    expect([...w.way].filter((x) => x === WAY_ROAD).length).toBeGreaterThan(squares);
     expect(count(p, 'rampart')).toBeGreaterThan(count(bare, 'rampart') + 6 * w.stairs.length);
   });
 });

@@ -69,6 +69,9 @@ export class LabTown implements FortressTownSource {
   toWindow(at: V2): V2 {
     return [at[0], at[1]];
   }
+
+  /** (round 128p) the water's depth at window world (x, y): the recipe's (lab.ts sets it) — a plain town's roads are laid with it */
+  waterAt?: (x: number, y: number) => number;
 }
 
 /**
