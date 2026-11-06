@@ -540,4 +540,23 @@ describe('one crowd, on events', () => {
     life.on({ type: 'room' });
     expect(life.tick(0.1).filter((x) => 'newcomer' in x)).toHaveLength(1);
   });
+
+  it("a person with a trade of its own keeps it (the job board doesn't move it); its slot opening sends it out", () => {
+    const slots: JobSlot[] = [{ key: 'farmer', kind: 'farm', structure: 1, count: 1 }];
+    const t = town(slots);
+    const life = new TownLife(t.work);
+    life.add(1, 'builder');
+    life.add(2, 'farmer');
+    life.add(3);
+    life.tick(0.1);
+    // (no builders' slot yet: the builder stays home; the farmer farms; the one without a trade gets nothing — the
+    // farmer's one place is the farmer's)
+    expect(life.jobOf(1)).toBe('builder');
+    expect(life.phaseOf(1)).toBe('home');
+    expect(life.phaseOf(2)).toBe('toWork');
+    expect(life.jobOf(3)).toBeNull();
+    slots.unshift({ key: 'builder', kind: 'build', structure: null, count: 1 });
+    expect(goes(life.tick(0.1), 1)).toEqual(['stores']);
+    expect(life.jobOf(2)).toBe('farmer');
+  });
 });

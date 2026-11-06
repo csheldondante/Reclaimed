@@ -615,21 +615,23 @@ The Streamer's internals, split out of scenes/streamer.ts: free functions over t
 Settlements: towns and cities on the atlas, their plans, the view that draws them, ships.
 
 - `catalogue.ts` (91) — The recipe content (data/recipes/, round 88) read into the contracts' shapes (recipe.ts), and the civ … API: `CivLook`, `CivEntry`, `MATERIALS`, `voxelOf` +9.
+- `crowd.ts` (446) — A settlement in play (round 88; API: `SettlementCrowd`.
 - `debug.ts` (132) — ?towndebug=1 (round 88): the live settlement's grids and jobs over the view — its districts' cells (the … API: `TownDebug`.
 - `field.ts` (117) — A growth field (round 89): the user — "vegetation and settlements should work similarly actually. API: `GrowthOpts`, `GrowthField`.
 - `grids.ts` (452) — A settlement's districts as overlay grids (round 88, BACKLOG R6; API: `Pt`, `rand`, `Lot`, `radialPolys` +5.
-- `life.ts` (507) — A settlement in play (round 88; API: `R`, `LiveSpot`, `LiveSite`, `LifeIO` +4.
+- `live.ts` (69) — A settlement in play (round 88; API: `LiveSpot`, `LiveSite`, `LifeIO`, `RaidOutcome` +2.
 - `onscreen.ts` (98) — (round 128g, cityrender) Which settlements are drawn as pieces, and which are made ready — by the screen, … API: `SHOW`, `HIDE`, `BUILD`, `DROP` +5.
 - `plan-worker.ts` (113) — (round 94) A settlement planned off the main thread for the land past the window (settlements.ts … API: `FarPlanInit`, `FarPlanJob`, `FarPlanDone`, `ExactPlanJob` +1.
 - `plan.ts` (1043) — A settlement realised (round 88, arrival scale; API: `Iv`, `ColumnPlan`, `Spot`, `SiteSpec` +19.
 - `purpose.ts` (122) — What a settlement is for (round 120, `cities`; API: `PURPOSES`, `PurposeFacts`, `purposeScores`, `purposeOf`.
 - `raster.ts` (134) — A settlement's plan as the land past the window draws it (round 94; API: `rasterPlan`, `stampMatch`.
 - `records.ts` (98) — The settlements' records from the world wiki (round 88): one per atlas site, with the wiki's stable id … API: `OUTLAWS`, `SettlementSeed`, `recordsFrom`.
-- `settlements.ts` (882) — The settlements system (round 88; API: `DAY_S`, `SettlementEvents`, `LiveIO`, `FarIO` +1.
+- `settlements.ts` (883) — The settlements system (round 88; API: `DAY_S`, `SettlementEvents`, `LiveIO`, `FarIO` +1.
 - `ships.ts` (306) — Ships between the ports (round 120, `cities`; API: `SeaChart`, `ShipRoute`, `SEA_DEPTH`, `shipRoutes` +3.
 - `shipsview.ts` (56) — The sailing ships as the player sees them (round 120, `cities`; API: `ShipsIO`, `ShipsView`.
 - `story.ts` (98) — A settlement's story (round 120, `cities`; API: `StoryFacts`, `storyOf`.
 - `view.ts` (405) — The settlements as the player sees and touches them (round 119: "have them actually use the new … API: `ViewIO`, `TownHook`, `SettlementsView`.
+- `work.ts` (263) — A generated settlement's work as the one crowd asks for it (DA-A6, round 128o; API: `FARM`, `QUARRY`, `LUMBER`, `LOAD` +2.
 
 ## src/shaders/
 
@@ -838,7 +840,7 @@ Stories: dialog play, hero runs, the atlas run.
 ## src/town/
 
 - `jobs.ts` (90) — A town's jobs (round 128o, DA-A6: moved here from fortress/economy.ts and fortress/work.ts — every town's … API: `JOB_ORDER`, `JobKind`, `JobSlot`, `Load` +1.
-- `life.ts` (714) — One crowd for a town's people, on events (DA-A6, round 128o; API: `Leg`, `To`, `LifeEvent`, `Order` +8.
+- `life.ts` (734) — One crowd for a town's people, on events (DA-A6, round 128o; API: `Leg`, `To`, `LifeEvent`, `Order` +8.
 
 ## src/traits/
 

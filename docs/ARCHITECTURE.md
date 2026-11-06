@@ -2332,11 +2332,13 @@ the records, rights, life and rates still hold.)
   striking (0, standing, the work pose), standing (1), three shared goal fields for go / patrol / follow / flee /
   back-to-post (agents fields 9–11, groups 2–4, keyed by where), the defenders' field on the foes (field 8, group
   5), the hunt (targets, field 7, group 6), hostiles loafing (7); fields 0–6 and groups 8–15 are the settlements'
-  rounds (life.ts). Hostile units notice what's within their sight and join the hunt; the GPU swings, its
+  rounds (the one crowd's legs: settle/crowd.ts, fortress/crowd.ts). Hostile units notice what's within their sight and join the hunt; the GPU swings, its
   swing events become damage (an actor's `hurt`, a unit's `agents.hit`). Guards and units ordered to attack close
   in on the foes' field and strike on the CPU. Window coordinates.
 - **Life (play).** The planned settlement nearest the camera inside the window (40 cells in from its edge) is live
-  (src/settle/life.ts, a `Routine` the units hand 'work' jobs to): its people within the tier's budget (28 on the
+  (round 128o, DA-A6: src/settle/crowd.ts SettlementCrowd, the units' `Routine` for its 'work' jobs, wiring the one
+  crowd — town/life.ts TownLife over settle/work.ts SettleWork, each person keeping its record's trade — to the agents;
+  settle/life.ts SettlementLife is gone): its people within the tier's budget (28 on the
   phone tier, 48 otherwise; `?townfolk=`) — guards at their posts; each role on its own round, a field a leg
   (farm 0, fell 1, quarry 2, home 3, store 4, the heaps 5, the house going up 6): miners take the quarry's floor
   exactly (terrain.take) and put it on the stone heap (terrain.put), woodcutters fell real trees (plants.fell) and

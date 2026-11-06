@@ -1,8 +1,9 @@
 // One crowd for a town's people, on events (DA-A6, round 128o; DESIGN.md section 11: "One crowd"; "no per-frame CPU copy
-// of all units"). The routine that is to replace fortress/life.ts's FortressLife and settle/life.ts's SettlementLife:
-// every town's people work its plan's job board (economy.ts jobSlots: a generated town's farms, quarries and lumber camps
-// give jobs as the player's do; the builders' slot while there's building), and a unit's phase moves only on what
-// happens to it — never on a position read back.
+// of all units"). Every town's people's routine — the fortress's (fortress/crowd.ts over fortress/townwork.ts) and a
+// generated settlement's in play (settle/crowd.ts over settle/work.ts); it replaced FortressLife and SettlementLife.
+// People work the town's job board (the plan's slots: farms, quarries, lumber camps, smithies, barracks, the builders'
+// while there's building), or a trade of their own (a settlement's people keep their record's), and a unit's phase
+// moves only on what happens to it — never on a position read back.
 //  - In: events (`LifeEvent`) — a leg's arrival (the agents' `arrived` on its field, DA-B2a, or the ride's at a trip's
 //    goal), a world operation's answer (dug, felled), a death; the town's own (goods into the stores, the sites changed,
 //    a structure's work ready, goods on a pile for a cart, room for a newcomer: TownWork's adapter emits them); a lost
@@ -14,7 +15,7 @@
 //    nothing waits on a timer to give up.
 // Nothing is polled: a unit waiting (at the stores with nothing to bring or no batch to start, at its work with nothing
 // ready, a cart with no pile) waits for the event that changes that. Pure: no GPU, no DOM, no units — tested with scripted
-// event streams (life.test.ts). Every town runs it (src/town/; the fortress's adapter is fortress/townwork.ts).
+// event streams (life.test.ts).
 // The crowd: people (the job board's — builders, farmers, miners, woodcutters, smiths, recruits; a newcomer walks in to a
 // house first), soldiers (a recruit drilled: muster at the barracks, drill, march to the wall's stairs, walk the wall,
 // muster again each morning) and carts (a long haul is left on its structure's pile; a cart rides out for it).
@@ -185,6 +186,9 @@ interface Unit {
   ate: number;
   /** taken out of its round by the game (a soldier the defence posts): its orders and arrivals aren't the routine's */
   away?: boolean;
+  /** a job of its own (a slot's key), not the job board's; and whether its slot was open at the last tick */
+  trade?: string;
+  open?: boolean;
 }
 
 /** the look a load of goods is carried as: its largest good */
@@ -217,16 +221,21 @@ export class TownLife {
 
   constructor(private work: TownWork) {}
 
-  /** a person of the town (a unit already standing in the world) */
-  add(unit: number): void {
-    this.join(unit, 'person', { p: 'idle' });
+  /**
+   * A person of the town (a unit already standing in the world). `trade`: a job of its own (a slot's key: a generated
+   * town's people are its record's trades) — the job board doesn't move it; none: the board gives it work.
+   */
+  add(unit: number, trade?: string): void {
+    this.join(unit, 'person', { p: 'idle' }).trade = trade;
   }
 
-  /** a newcomer the wiring stood up (an `{newcomer}` order answered): to a house first, then the job board's */
-  arrive(unit: number): void {
+  /** a newcomer the wiring stood up (an `{newcomer}` order answered): to a house first, then its work (`trade`: as add) */
+  arrive(unit: number, trade?: string): void {
     if (!this.calling) throw new Error(`town life: unit ${unit} came in as a newcomer no one asked for`);
     this.calling = false;
-    this.set(this.join(unit, 'person', { p: 'arriving' }), { p: 'arriving' }, 'home');
+    const u = this.join(unit, 'person', { p: 'arriving' });
+    u.trade = trade;
+    this.set(u, { p: 'arriving' }, 'home');
   }
 
   /** a soldier of the town (a unit standing in the world): it musters at the barracks */
@@ -338,7 +347,8 @@ export class TownLife {
 
   /** a person's job now (its slot's key), or none */
   jobOf(unit: number): string | null {
-    return this.board.jobOf(unit);
+    const t = this.crowd.get(unit)?.trade;
+    return t !== undefined ? t : this.board.jobOf(unit);
   }
 
   /** What happened: each event moves its unit on. */
@@ -441,10 +451,20 @@ export class TownLife {
     // (those holding something keep their job first: a batch, a load, goods in hand aren't dropped for one who has none)
     const holding = (u: Unit) => (HOLDING.has(u.phase.p) ? 0 : 1);
     const people = this.of('person')
-      .filter((u) => u.phase.p !== 'arriving' && !u.away)
+      .filter((u) => u.phase.p !== 'arriving' && !u.away && u.trade === undefined)
       .sort((a, b) => holding(a) - holding(b))
       .map((u) => u.unit);
-    const changed = this.board.assign(people, slots);
+    // (the board's slots: what the people with trades of their own don't fill)
+    const own = new Map<string, number>();
+    for (const u of this.crowd.values()) if (u.role === 'person' && u.trade !== undefined) own.set(u.trade, (own.get(u.trade) ?? 0) + 1);
+    const changed = this.board.assign(people, own.size ? slots.map((q) => ({ ...q, count: Math.max(0, q.count - (own.get(q.key) ?? 0)) })) : slots);
+    // (a trade's slot opened or closed — the builders' while a house is to build: start over, as a job change)
+    for (const u of this.crowd.values()) {
+      if (u.trade === undefined || u.phase.p === 'arriving' || u.away) continue;
+      const open = slots.some((q) => q.key === u.trade);
+      if (u.open !== undefined && open !== u.open) changed.push(u.unit);
+      u.open = open;
+    }
     // (sheltering: the new jobs wait until they come out)
     if (!this.sheltering) for (const id of changed) this.start(this.crowd.get(id)!);
     const morning = this.day() !== dayWas;
@@ -528,7 +548,7 @@ export class TownLife {
   }
 
   private slot(unit: number): JobSlot | null {
-    const key = this.board.jobOf(unit);
+    const key = this.jobOf(unit);
     if (!key) return null;
     this.slotsNow ??= this.work.slots(this.count());
     return this.slotsNow.find((s) => s.key === key) ?? null;

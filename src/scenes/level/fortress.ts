@@ -38,7 +38,7 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: T
   if (!S) throw new Error('?fortress=1 needs the atlas level (or the lab: ?level=lab)');
   // (round 128o, DA-B5: fortress play — the sandbox valley's reads for its Nature, storms and ambience stop)
   scene.valleyReads = null;
-  // (its people are the fortress's builders — FortressCrowd — not a SettlementLife: never both, they share fields)
+  // (its people are the fortress's builders — FortressCrowd — not a SettlementCrowd: never both, they share fields)
   const rec = st.pin(id, true);
   for (const [k, v] of Object.entries(START_STORES)) {
     const have = (rec.stores[k] ??= { stock: 0, rate: 0 });
@@ -147,7 +147,7 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: T
             const s = (rec.stores[good] ??= { stock: 0, rate: 0 });
             s.stock -= n;
           },
-          // (milestone 3: settle/life.ts's IO — the plants' trees and fell, the terrain's take: all quiet edits)
+          // (milestone 3: the settlements. IO (settle/live.ts) — the plants' trees and fell, the terrain's take: all quiet edits)
           // (round 128o, DA-B6: the nearest trees found on the GPU, a short list back)
           trees: (at, r, n) => scene.worldApi!.plants!.treesNear(at[0], at[1], r, n).then((ts) => ts && ts.map((t) => [t.x, t.y] as [number, number])),
           fell: (at) => scene.worldApi!.plants!.fell(at[0], at[1]).then((t) => t?.logs ?? 0),
