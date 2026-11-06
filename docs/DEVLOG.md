@@ -18686,3 +18686,39 @@ slides, restoreChunks, replaceWindow, the edit brush's mirror). Two copies that 
 - Checked: typecheck (both), unit 775 (the town fixture passes: the land generator's hash didn't move), GPU tier
   149/149, the transfer gate, flagcheck, hallcheck (0 of 344 lost).
 
+## 2026-11-06 — round 128o (`phonefix`, DA-B9): per-chunk versions — design note, stopped before code (for main)
+
+- What it is: a version word per chunk, bumped on the GPU by every writer of the columns, so the readers work only on
+  chunks that changed. First consumers asked for: the mirror's staleness and the agents' re-peel.
+- Where the word lives (fits the chunk table): `world.chunks` doubles — the table's [first slot, K] per chunk as now,
+  then a second region of one u32 per chunk, the tick that last wrote it (G.tick: every writer of a tick writes the
+  same value, so a plain store races harmlessly; no atomics, so no second binding). The writers bind the chunk table
+  read_write instead of read (layers.wgsl's declaration chosen per kernel, as PAGE_ADDR is): no new binding, every
+  writer already has the table. The CPU writers (the streamer's regions and live edit, warp, undo, restoreChunks,
+  replaceWindow, ColumnCopy.write) write the next tick into the words of the chunks they wrote.
+- The writers (each needs its bump and a test that a write moves its chunks' versions — a missed one is silent
+  staleness): GPU — climate, colapply (claims, stamps), edit (and its blow), landbrush, lava, layerpull, liquid,
+  phys (the voxel bake), sediment, structure and structure-lateral, townstamp: 12 kernels; CPU — the 7 above.
+- Where it stops being "the chunk table only":
+  1. The agents' re-peel today takes an eighth of the scope a tick, round robin, whatever changed. To peel only changed
+     chunks, the list must be made on the GPU (versions against the version each chunk was peeled at), and the peel
+     and link passes dispatched indirect over it. Today every culled pass gets its list from the CPU and its count
+     known when encoded (sim/cull.ts `AwakeTiles.setList`, `dispatchTiles`, a uniform list): a GPU-made list needs an
+     indirect variant of that contract (a storage list copied into the uniform, `dispatchWorkgroupsIndirect`), and the
+     link list's dilation (a chunk and its neighbours) on the GPU. That is a change to sim/cull.ts's dispatch contract,
+     used by every culled system.
+  2. The mirror lives on the CPU: to know a page is stale from versions it must read them (8 KB) — every frame it's
+     asked, or in a first read before the pages (a second round trip: a frame more latency), or the GPU filters the
+     asked pages by version but the copy's size is fixed when encoded (the bytes read stay the asked pages'). And the
+     versions are the layers' only: the mirror's veg, water, fire and wind change without a layers write, so they keep
+     the sleep mask's staleness anyway. Today's rule (stale where the sim ran, or any write outside the ticks) is a
+     superset that costs re-reads where a chunk ran without its columns changing (water moving).
+- Options:
+  (a) Build it in two steps: first the versions and every writer's bump with its test (contained: the chunk table,
+      layers.wgsl's declaration, the 12 kernels, the CPU writers) — then the indirect culled dispatch in sim/cull.ts
+      as its own row, the re-peel its first user. The mirror stays on the sleep rule (it isn't helped much: see 2).
+  (b) The same, the mirror taking the versions by the two-phase read for the layers' sources only.
+  (c) Don't, for now: the agents' re-peel costs an eighth of the scope a tick; the mirror's rule is cheap.
+- Recommended: (a). The versions are the root (DA-B9's other readers — mesh hash, reach, shore, save sweep — need
+  them too); the indirect list is the second contract and deserves its own row and review.
+
