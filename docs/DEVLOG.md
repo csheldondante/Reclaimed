@@ -19888,3 +19888,38 @@ its slot opening or closing starts it over (a tested piece).
     atlas's slots.
   - Pinning doesn't make tiles bake faster: the undrawn regions are a throughput limit at 160 c/s, to find out
     (planner look-ahead, bake order on the pan's path) with runs. Those need the timing lease.
+
+## 2026-11-06 — round 128o (`phonefix`, DA-B27 part 2): the phone-z8 fast pan, measured with the rate pinned
+
+- The rate recorded: `tilegate --update --no-golden` (phone screens) wrote
+  data/baselines/tilegate/intel-xe-lpg/tilerate.json: phone 9.24, run-phone 13.3, w384-phone 9.77 tiles/s.
+- Pinned at phone's 9.24 tiles/s, three runs: floor 3.38 every run, geometric undrawn 0.00% every run.
+  - Two of the three still failed the agreement check: far land on 1.07% and 1.53% of a frame that the geometric
+    check calls drawn. The pixels see a hole the geometric check doesn't.
+- The rate itself decides the outcome. scripts/fastpanprobe.mjs (the gate's setting, frame by frame):
+  - Pinned at 0.11 tiles a frame (6.6/s, floor 4.44): 69 undrawn frames, identical in two runs.
+  - Pinned at 0.154 (9.24/s): none.
+  - The rate reaches nothing but the zoom floor (the camera's clamp; the atlas grows only when room-bound). A higher
+    floor clamps the boot's zoom, so the window and tiles start the pan from another state.
+- What's undrawn (0.11): one region past the window, r229,220.
+  - Its land left the window at a slide while still on screen, behind the pan.
+  - It sits in the tiles' wanted list for 50+ frames, always at or near the end (place 4–12 of a 5–13 list).
+  - It drops out of the list every 5–6 frames, never gets a scratch slot, and is never baked while on screen.
+  - The list ranks regions on screen by how far ahead along the motion they are (TileCache.wanted:
+    k = -along × 100 + distance). The land fills the ones ahead first at ~9 tiles/s, so a trailing region handed over
+    by the window is last every frame.
+  - The window's own bakes of its regions (the cheap ones, no land to make: TileCache.encode) wait whenever the
+    land bakes that frame (round 105), and while the mesh's built mirror is behind a slide.
+- Cause: at 160 c/s the screen's trailing edge is handed from the window to tiles at each slide (on the phone the
+  screen at z8 is taller than the window, 297 cells against 277 world units). Nothing has baked those regions before
+  they leave the window, and once out they rank last.
+- Options, not done (main's call):
+  - (a) Bake the window's regions that the next slide will drop and that are still on screen before the slide,
+    from the window (cheap: no land), ahead of the land's bakes ahead. This removes the handoff hole at its source.
+  - (b) Rank an on-screen undrawn region by how long it stays visible against the tiles' latency: a trailing one that
+    leaves before a tile could land is skipped, one that stays is ranked by that time. A ranking change, not a
+    threshold, but it doesn't remove the hole.
+  - (c) The slide keeps the window's trailing strip drawn (its mesh) until its tiles are drawn. The window's memory
+    can't hold both ends, so this means a later slide.
+  - Recommended: (a).
+- The probe is committed as scripts/fastpanprobe.mjs.
