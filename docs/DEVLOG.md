@@ -20153,3 +20153,39 @@ its slot opening or closing starts it over (a tested piece).
   - then (1)+(4) behind the contract change, (2), (3), each with a test;
   - main reviews before (3) and (4), which change the Units contract and combat.
 - Asks: the lease for the 16x measurement; go or no-go on (3) and (4) as scoped.
+
+## 2026-11-06 — round 128o (`phonefix`, DA-B22): the 16x toggle diff — the agents' tick dominates, not the sync
+
+- scripts/lab/speedcost.mjs (committed): the lab's `town`, Build pressed, the game's own frames at a speed with parts
+  of the tick toggled off, 6 s a phase.
+  - Per phase: frame interval, the rAF callbacks' CPU, and the GPU passes by name summed per frame.
+  - The profiler's query set fills at ~9 ticks a frame, so at 16x the late passes (the draw) go untimed. The sums are
+    what got timed, not the frame.
+  - Fix found on the way: lab.run's `keep` restores the speed it found, so a scenario must set `scene.speed` itself.
+    fortressperf's "speed" phases ran at the speed the lab was left at.
+- Desktop (Intel Xe-LPG, 100 Hz, nothing near its limit):
+
+  | phase | ticks/frame | CPU p50/p95 (ms) | top GPU passes (ms/frame) |
+  | --- | --- | --- | --- |
+  | 1x all | 0.6 | 0.7 / 1.3 | draw 2.4, shadow 0.8, agents 0.41 |
+  | 16x all | 9.1 | 1.4 / 4.1 | **agents 1.19**, particles 0.37, sway 0.15, water 0.18 |
+  | 16x fortress preset | 9.5 | 1.5 / 2.4 | **agents 2.93**, water 0.44, tile lists 0.17 |
+  | 16x without agents and traits | 9.4 | 1.1 / 1.8 | particles 0.46, sway 0.18, water 0.21 |
+  | 16x without water | 9.2 | 1.5 / 3.4 | agents 1.43 |
+  | 16x without the structure judge | 9.1 | 1.4 / 4.1 | agents 1.19 |
+  | 16x all, AgentUnits.update off | 9.5 | 1.6 / 3.7 | agents 0.85 |
+  | 16x, no sims at all | 9.5 | 0.8 / 1.4 | draw 2.6 (as 1x) |
+
+- Reading it:
+  - At 16x the agents' tick is the sim's GPU cost, 0.13–0.31 ms a tick here, 9–16 ticks a frame. It is about 3–6
+    times every other system together.
+  - The CPU doubles (0.7 → 1.4 ms p50, p95 4.1). Turning AgentUnits.update off (the sync, think) doesn't move it
+    (1.6), so the units' sync isn't the 16x cost. That fits it running once a frame.
+  - The rest of the CPU rise is per tick (the frame's tick loop, the crowd's routine and the traits' CPU side). Not
+    split further here.
+- Phone estimate: the Pixel 9a runs GPU work tens of times slower than this iGPU (fieldmesh-hash: 6.3 ms there, ~0.1
+  here). An agents' tick of 0.2 ms here is several ms there, 16 times a frame at 16x. That alone breaks 60 fps. That
+  is the 16x report.
+- For main to decide: the next target is the agents' tick per tick (what in it costs, the relax sweeps, the units'
+  step, the trait stages, with ?agentprof=1's stages on the phone bench), or a fast-forward that doesn't run the
+  agents' full tick 16 times a frame (DA-B22's "trips by clock"), before the sync work (1)–(4).
