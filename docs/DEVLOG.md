@@ -20087,3 +20087,23 @@ its slot opening or closing starts it over (a tested piece).
 - Next (main's original step 1): bake the region of (55, -5) alone, read its atlas texels (colour and depth) back, and
   map the empty ones to columns. A gap in the bake shows there; a tile drawn early shows only during the pan. That
   readback becomes the test.
+
+## 2026-11-06 — round 128o (`phonefix`, DA-B27 (1)): the speck parked
+
+- Main time-boxed this to the one-region bake readback, then park; towns come first.
+- One thing settled without the readback: the speck is **transient**. The pan was held at the first far-land frame and
+  bgcheck's snapshot taken a frame or two later. In three of four holds that snapshot had no far land; in the fourth,
+  one sample somewhere else.
+  - A gap baked into a tile would stay while the camera holds (nothing re-bakes it for REBAKE, 600 frames).
+  - So the hole is a tile drawn while its pixels aren't there yet: its slot before the bake writes it, or a slot's
+    previous contents with the new tile's place.
+- Ruled out by measurement:
+  - the window/tile join (5–6 rows off it);
+  - simulated land diverging from generated (98.5% of edge columns identical);
+  - land over the window's z cut (flat at 121, zMax 504);
+  - a persistent bake gap (it goes when the pan stops).
+- Not done: the readback of a tile's slot as it is first drawn. The tools are committed: scripts/farprobe.mjs (casts
+  far-land samples to columns, holds and shoots), scripts/stepprobe.mjs (window land against generated), and
+  scripts/fastpanprobe.mjs.
+- Next when it's picked up: TileCache's draw of a GPU-baked tile in the frame its bake is encoded (allocTile then
+  encodeBake). Whether the draw can read the slot before the bake's resolve, or with the previous occupant's TP.
