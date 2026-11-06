@@ -637,8 +637,11 @@ scripts/drawbench.mjs sets them with `@name=value` pieces): `defer`,
 quads are wound out of the solid), `shadowEvery` (the shadow map and the
 light matrix it was drawn with kept for N frames, redrawn after a slide —
 `FieldMesh.slides` — or a new box), `shadowCache` (the static casters —
-mesh, prisms — into `shadowStatic` every N frames with the matrix kept,
-copied into the map each frame and the moving casters drawn over it),
+mesh, prisms — into their own map `Renderer.shadowStill` every N frames with
+the matrix kept, the moving casters into the sun's map every frame; DA-B7: the
+lookups read both, binding 27 beside 25, and take the nearer caster —
+common.wgsl `shadowLit`, `Camera.eye.w` bit 12 — so nothing is copied between
+them),
 `prepEvery` (renderprep's and vegprep's
 instance lists kept N frames), `noDetail` (bits of the look left out,
 carried to the shaders in `Camera.eye.w` from bit 2: meshdraw.wgsl `ND_*`).

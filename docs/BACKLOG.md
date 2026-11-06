@@ -38,7 +38,7 @@ The user: "Please work on making the code match the design which is a lot cleane
 | DA-B4 | Reach solve converges on the GPU; one small read per edit (§13) | M | next |
 | DA-B5 | Fortress-mode sandbox frame reads off; 30 fps cap while building or paused (§24) | S | next |
 | DA-B6 | GPU tree query for woodcutters (no veg readback); GPU wind reduction for storms (no wind-texture readback) (§24) | M | next |
-| DA-B7 | Shadow cache: sample the static and dynamic shadow maps in the lighting pass instead of copying 1 MB a frame on the phone tier (`gbuffer-shadow.ts:179`; audit transfers.md) | S | open |
+| DA-B7 | Shadow cache: sample the static and dynamic shadow maps in the lighting pass instead of copying 1 MB a frame on the phone tier (`gbuffer-shadow.ts:179`; audit transfers.md) | S | done (`copies`: Renderer.shadowStill beside the sun's map, common.wgsl shadowLit reads both; the shadowSize² × 4 B copy a frame gone, shots equal) |
 | DA-B8 | Edit pass: swap bindings instead of copying editState (and layers when not in place) each tick; quiet builder take/put doesn't restart the 300-tick EDIT_LINGER (`sim/systems.ts:588-596`, up to ~98 MB/s GPU copy while builders work) | M | open |
 | DA-B9 | A version word per chunk bumped on the GPU by every interval writer; mesh hash, agents' re-peel, reach, shore and save work only on changed chunks via indirect dispatch; removes the idle floor (sway, prep passes, lava-prep with no lava) | L | open |
 | DA-B10 | Fortress `onChange` fires only when a reach answer or edit changes the plan (`fortress/fortress.ts:779-780` repacks and re-uploads the whole fortress every answer); then per-structure ranges (DA-B3) | S | open |
@@ -48,6 +48,7 @@ The user: "Please work on making the code match the design which is a lot cleane
 | DA-B14 | Column passes write the layers in place on every tier: the structure pass (and the edit brush, DA-B8) copy the whole layers buffer (16-25 MB) back every tick unless `?inplace=1`, which only the phone tier sets; one solver, measured (found by DA-G1, src/gpu/transfers.ts; §24, AGENT_RULES §1b) | M | open |
 | DA-B15 | The coarse world swaps its two cell buffers instead of copying the whole 8 MB grid back every 4th frame, and steps only where something moves (FP3 spread the cost, didn't remove it; found by DA-G1) | S | open |
 | DA-B16 | The wind field is updated and copied back only round what stirs it: while any physics body exists the whole field (~410 KB) is copied every update (`WindFieldSystem.wholeWhile`; found by DA-G1) | S | open |
+| DA-B17 | The phone flags apply too late in the production build (the lab, scripts/shot.mjs, any deploy): Rollup runs the chunk holding the renderer and the systems before main's body, so `Renderer.opts` (shadowcache, prepevery, shadowevery …) and `INPLACE` are read before phone-flags-boot writes the URL — the lab's "phone tier" runs without them. The dev server keeps the order (found in DA-B7) | S | open |
 | DA-L1 | One run clock for economy, day/night, raids and cards (§21) | M | open |
 | DA-L2 | Mana ledger that can be spent (§14) | S | open |
 | DA-L3 | Holdings adapter: fortress soldiers and stores as holdings cards lock and spend (§20, §21) | M | open |

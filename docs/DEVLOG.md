@@ -18188,3 +18188,34 @@ simple plain language like in the worked examples."
   developer file wrongly placed as `dev` is not linted. Text built at run time from data is still linted only by the
   tests that produce it (writing.test.ts and the fortress tests keep their lint calls). JSON situations under data/
   are linted by writing.test.ts for seed 1 only.
+
+## 2026-11-05 — the shadow cache without its copy (DA-B7)
+
+Why: with `?shadowcache=N` (the phone tier's set, phone-flags.ts) the static casters were drawn into their own map every
+Nth frame and copied whole into the sun's map every frame, the moving casters drawn over the copy: shadowSize² × 4 B a
+frame (1 MB at the phone's 512², 4 MB at 1024², 16 MB at 2048²). AGENT_RULES §1b: no whole copy without a measured
+reason. The lookups can read both maps instead.
+
+- The static casters keep their map (`Renderer.shadowStill`, made with the renderer: full size with the cache, a stand-in
+  texel without), the moving casters go into the sun's map, cleared each frame. The draws bind both (`ShadowViews`:
+  binding 25 the sun's map, 27 the static map, in the five layouts and two resource maps that held 25); common.wgsl
+  `shadowLit` takes, per filtered tap, the smaller visibility of the two — what one map holding the nearer caster gives
+  at a hard edge. `Camera.eye.w` bit 12 (`SHADOW_STILL_BIT`) turns the second tap on only with the cache: without it
+  nothing more is sampled. Sampled textures a stage stay well under 16 (the tiles' draw layout: 12).
+- Same picture: in the `town` lab at 412x915, play zoom (12) and close (24), one page with `shadowcache=4` in its URL,
+  the cache turned off (one map, every caster) and on (two maps) a frame apart: the pixels that differ are the river's
+  animated surface (32 184 of 376 980 over 8 levels at play zoom; two frames both off differ by 30 425 the same way)
+  and a few specks at the close zoom (1 635); none where shadows fall.
+- Cost (desktop proxy): the copy itself, timed alone on this GPU, 35-99 µs at 512², 42-58 µs at 1024², 0.2-0.28 ms at
+  2048² — gone. The frame with every frame drawn and no sim, town lab, `shadowcache=4`: 9-17 ms both before and after
+  (new 14.6/11.0 median of two runs of six, old 16.0/14.1) — the copy is below the desktop's frame noise. The added
+  four compare taps a lit pixel are the phone bench's to judge, by the frame with the cache on and off.
+- Found on the way, not fixed (reported): in the production build (the lab, scripts/shot.mjs) the phone flags are
+  written into the URL after the modules that read them as they load have run — Rollup puts the renderer and the
+  systems in a chunk main imports, which runs before main's own body (phone-flags-boot). So `Renderer.opts.shadowCache`
+  and `INPLACE` are 0/false in the lab whatever the tier; the vite dev server keeps the order. The checks above pass
+  `shadowcache=4` in the URL themselves.
+- Transfers gate: the `encodeShadow` copy entry removed (src/gpu/transfers.ts).
+- Hacks and limits: the second map costs shadowSize² × 4 B of memory (1 MB on the phone) where the cache is on; a soft
+  edge where a static and a moving caster overlap takes the smaller of two filtered values, not the filter of the
+  nearer depth (both 0/1 at a hard edge; equal in the shots).

@@ -4,7 +4,7 @@ import { FieldMesh } from '../fieldmesh';
 import { CAMERA_BYTES, CAMERA_CUT_BYTES, CAMERA_CUT_OFFSET, type Camera } from '../camera';
 import { drawGrid, gridCull, gridLive } from './grid';
 import { structGroups } from './features';
-import { SHADOW_FORMAT, SKIP, cutOn } from './defs';
+import { SKIP, cutOn } from './defs';
 import { Renderer } from '../renderer';
 
 /**
@@ -78,7 +78,7 @@ export function encodeGBuffer(rd: Renderer, enc: GPUCommandEncoder, cam: Camera)
  * view's, to look shadows up, and the sun's own, to draw them.
  */
 /** (returns whether the shadow map is drawn this frame — perfopt's shadowEvery — and with shadowCache whether
- *  its static casters are: 'all', 'moving' (the cache copied in, the moving casters over it) or false) */
+ *  its static casters are: 'all', 'moving' (the static map kept, the moving casters' map drawn again) or false) */
 export function writeLight(rd: Renderer, sun: [number, number, number]): 'all' | 'moving' | false {
   const f = [-sun[0], -sun[1], -sun[2]];
   const fl = Math.hypot(f[0], f[1], f[2]) || 1;
@@ -145,13 +145,9 @@ export function writeLight(rd: Renderer, sun: [number, number, number]): 'all' |
 /** The sun's shadow map: every built mesh chunk, the prisms, plants, structures and bodies, depth only. */
 export function encodeShadow(rd: Renderer, enc: GPUCommandEncoder, due: 'all' | 'moving'): void {
   const g = rd.shadowGroups!;
-  // (perfopt, ?shadowcache=N: the static casters into their own map every Nth frame, copied in every frame)
-  const cache = Renderer.opts.shadowCache > 1;
-  if (cache && (!rd.shadowStatic || rd.shadowStatic.width !== rd.shadowTex.width)) {
-    rd.shadowStatic?.destroy();
-    rd.shadowStatic = rd.device.createTexture({ label: 'shadow-static', size: [rd.shadowTex.width, rd.shadowTex.height], format: SHADOW_FORMAT, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
-    due = 'all';
-  }
+  // (perfopt, ?shadowcache=N: the static casters into their own map every Nth frame; DA-B7: the lookups read it
+  // beside the moving casters' map (common.wgsl shadowLit, the nearer of the two) — nothing copied between them)
+  const cache = rd.shadowStillOn();
   const statics = (pass: GPURenderPassEncoder) => {
     pass.setPipeline(Renderer.opts.cull ? rd.shadowMeshCullPipe! : rd.shadowMeshPipe!);
     pass.setBindGroup(0, g.mesh);
@@ -170,17 +166,16 @@ export function encodeShadow(rd: Renderer, enc: GPUCommandEncoder, due: 'all' | 
     const sp = enc.beginRenderPass({
       label: 'shadow-static',
       colorAttachments: [],
-      depthStencilAttachment: { view: rd.shadowStatic!.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' },
+      depthStencilAttachment: { view: rd.shadowViews.still, depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' },
       timestampWrites: rd.profiler.timestamps('shadow-static'),
     });
     statics(sp);
     sp.end();
   }
-  if (cache) enc.copyTextureToTexture({ texture: rd.shadowStatic! }, { texture: rd.shadowTex }, [rd.shadowTex.width, rd.shadowTex.height]);
   const pass = enc.beginRenderPass({
     label: 'shadow',
     colorAttachments: [],
-    depthStencilAttachment: { view: rd.shadowView, depthClearValue: 1, depthLoadOp: cache ? 'load' : 'clear', depthStoreOp: 'store' },
+    depthStencilAttachment: { view: rd.shadowViews.live, depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' },
     timestampWrites: rd.profiler.timestamps('shadow'),
   });
   if (!cache) statics(pass);

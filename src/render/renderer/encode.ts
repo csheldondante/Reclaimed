@@ -11,7 +11,7 @@ import { encodeTerrainCache, terrainCacheMode } from './terrain-cache';
 import { encodeGBuffer, encodeShadow, writeLight } from './gbuffer-shadow';
 import { drawGrid, gridCull, gridLive } from './grid';
 import { structGroups } from './features';
-import { VERTS_PER_PRISM, VERTS_PER_BOX, VERTS_PER_TOP, INST_GROW, RenderOptions, SKIP, cutOn } from './defs';
+import { VERTS_PER_PRISM, VERTS_PER_BOX, VERTS_PER_TOP, INST_GROW, RenderOptions, SKIP, SHADOW_STILL_BIT, cutOn } from './defs';
 import { Renderer } from '../renderer';
 
 /** Renderer.encode (the class keeps the method, documented there) */
@@ -20,8 +20,8 @@ export function encode(rd: Renderer, enc: GPUCommandEncoder, target: GPUTextureV
   syncMeshPool(rd);
   syncInst(rd);
   cam.write(rd.camData);
-  // look flags (render.wgsl Camera.eye.w)
-  new Float32Array(rd.camData)[19] = (rd.flatTops ? 1 : 0) | (rd.fieldMesh.on ? 2 : 0) | (Renderer.opts.noDetail << 2);
+  // look flags (render.wgsl Camera.eye.w; DA-B7: the static casters' shadow map looked up too)
+  new Float32Array(rd.camData)[19] = (rd.flatTops ? 1 : 0) | (rd.fieldMesh.on ? 2 : 0) | (Renderer.opts.noDetail << 2) | (rd.shadowStillOn() ? SHADOW_STILL_BIT : 0);
   rd.fieldMesh.cull(cam);
   for (const f of rd.frameCompute) f(enc);
   // (round 86: the grid's chunks in view, and near it for the terrain cache)
@@ -332,11 +332,11 @@ export function syncInst(rd: Renderer): void {
   rd.topsGroup = rd.groupFor({ buffer: rd.instOpaque, offset: rd.topsBase * 16 });
   rd.plantGroup = rd.groupFor(rd.instPlant);
   rd.blendGroup = rd.groupFor(rd.instBlend);
-  if (rd.shadowGroups && rd.noShadowView) {
+  if (rd.shadowGroups && rd.noShadowViews) {
     const L = rd.lightCamBuf;
-    rd.shadowGroups.opaque = rd.groupFor(rd.instOpaque, L, rd.noShadowView);
-    rd.shadowGroups.tops = rd.groupFor({ buffer: rd.instOpaque, offset: rd.topsBase * 16 }, L, rd.noShadowView);
-    rd.shadowGroups.plants = rd.groupFor(rd.instPlant, L, rd.noShadowView);
+    rd.shadowGroups.opaque = rd.groupFor(rd.instOpaque, L, rd.noShadowViews);
+    rd.shadowGroups.tops = rd.groupFor({ buffer: rd.instOpaque, offset: rd.topsBase * 16 }, L, rd.noShadowViews);
+    rd.shadowGroups.plants = rd.groupFor(rd.instPlant, L, rd.noShadowViews);
   }
   // (the instance lists, kept from an earlier frame with ?prepevery, are made again now)
   rd.prepAt.frame = -1e9;
@@ -351,16 +351,16 @@ export function syncMeshPool(rd: Renderer): void {
     if (rv !== rd.rockPoolSeen) {
       rd.rockPoolSeen = rv;
       rd.rockGroup = rd.rockGroupOf();
-      rd.rockShadowGroup = rd.noShadowView ? rd.rockGroupOf(rd.lightCamBuf, rd.noShadowView) : undefined;
+      rd.rockShadowGroup = rd.noShadowViews ? rd.rockGroupOf(rd.lightCamBuf, rd.noShadowViews) : undefined;
     }
   }
   const v = rd.fieldMesh.maintain() + (rd.band?.mesh.maintain() ?? 0);
   if (v === rd.meshPoolSeen || !rd.meshGroupOf) return;
   rd.meshPoolSeen = v;
   const win = { mesh: rd.fieldMesh, chunks: rd.world.chunks, layers: rd.world.layers };
-  rd.meshGroup = rd.meshGroupOf(rd.camBuf, rd.shadowView, win);
-  if (rd.band) rd.bandGroup = rd.meshGroupOf(rd.camBuf, rd.shadowView, { mesh: rd.band.mesh, chunks: rd.band.chunks, layers: rd.band.layers });
-  if (rd.shadowGroups) rd.shadowGroups.mesh = rd.meshGroupOf(rd.lightCamBuf, rd.noShadowView!, win);
+  rd.meshGroup = rd.meshGroupOf(rd.camBuf, rd.shadowViews, win);
+  if (rd.band) rd.bandGroup = rd.meshGroupOf(rd.camBuf, rd.shadowViews, { mesh: rd.band.mesh, chunks: rd.band.chunks, layers: rd.band.layers });
+  if (rd.shadowGroups) rd.shadowGroups.mesh = rd.meshGroupOf(rd.lightCamBuf, rd.noShadowViews!, win);
   if (rd.meshDef) rd.meshDef.groups = [];
   rd.tiles?.invalidate();
   if (rd.tc) {

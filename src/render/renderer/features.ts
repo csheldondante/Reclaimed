@@ -20,7 +20,7 @@ export function enableBand(rd: Renderer, zSpan: number): OutsideBand | undefined
   rd.band = new OutsideBand(rd.device, rd.world, rd.profiler, zSpan, Math.min(3, rd.meshSlots ?? 3));
   if (rd.edgesOpen) rd.band.mesh.openEdges();
   if (rd.meshWant) rd.band.mesh.setWanted(rd.meshWant);
-  rd.bandGroup = rd.meshGroupOf(rd.camBuf, rd.shadowView, { mesh: rd.band.mesh, chunks: rd.band.chunks, layers: rd.band.layers });
+  rd.bandGroup = rd.meshGroupOf(rd.camBuf, rd.shadowViews, { mesh: rd.band.mesh, chunks: rd.band.chunks, layers: rd.band.layers });
   rd.tiles?.invalidate();
   return rd.band;
 }
@@ -35,12 +35,12 @@ export function enableRockMesh(rd: Renderer): RockMesh | undefined {
   rd.rockGroupOf = group;
   rd.rockGroup = group();
   rd.rockShadowPipe = shadow;
-  rd.rockShadowGroup = rd.noShadowView ? group(rd.lightCamBuf, rd.noShadowView) : undefined;
+  rd.rockShadowGroup = rd.noShadowViews ? group(rd.lightCamBuf, rd.noShadowViews) : undefined;
   rd.rockPoolSeen = rm.mesh.poolVersion;
   // (round 120: its copy and its draws grow on demand — the groups made again on the new buffers)
   rm.onBuffers = () => {
     rd.rockGroup = group();
-    rd.rockShadowGroup = rd.noShadowView ? group(rd.lightCamBuf, rd.noShadowView) : undefined;
+    rd.rockShadowGroup = rd.noShadowViews ? group(rd.lightCamBuf, rd.noShadowViews) : undefined;
   };
   return rm;
 }
@@ -72,7 +72,7 @@ export function enableStructures(rd: Renderer, sg: StructureGpu): void {
     primitive: { topology: 'triangle-list', cullMode: 'none' },
     depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: false, depthCompare: 'less-equal' },
   }, (p) => (st.glow = p));
-  if (rd.noShadowView)
+  if (rd.noShadowViews)
     renderPipe(device, {
       label: 'shadow-structures',
       layout: rd.drawPl,
@@ -87,6 +87,6 @@ export function structGroups(rd: Renderer): void {
   const st = rd.structs!;
   if (st.version === st.sg.version) return;
   st.group = rd.groupFor(st.sg.data);
-  if (rd.noShadowView) st.shadowGroup = rd.groupFor(st.sg.data, rd.lightCamBuf, rd.noShadowView);
+  if (rd.noShadowViews) st.shadowGroup = rd.groupFor(st.sg.data, rd.lightCamBuf, rd.noShadowViews);
   st.version = st.sg.version;
 }
