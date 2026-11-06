@@ -2,7 +2,7 @@
 // barracks trains soldiers"). Pure: no GPU, no units, so it's tested (recipes.test.ts). The recipes are data
 // (data/recipes/fortress.json): a structure type turns goods into goods (craft: the blacksmith's ore and wood into a
 // weapon) or a person and goods into a unit (train: the barracks' recruit and a weapon into a soldier), a batch at a
-// time. FortressLife (life.ts) walks it: a worker takes a batch's `in` out of the stores (`take`), carries it to the
+// time. TownLife (town/life.ts, over townwork.ts) walks it: a worker takes a batch's `in` out of the stores (`take`), carries it to the
 // structure, works `seconds` there (`work`), and carries the `out` back to the stores — or, trained, stands up as the
 // unit (the person is that unit now: a villager removed, a guard at the barracks).
 import type { Good, Goods, StructureType } from '../api/contracts/fortress';

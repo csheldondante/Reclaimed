@@ -39,7 +39,7 @@ export interface Erased {
 }
 
 /**
- * (milestone 3) The economy as FortressLife last left it, for the bar and Inspect: people, their jobs, what each
+ * (milestone 3) The economy as FortressCrowd last left it, for the bar and Inspect: people, their jobs, what each
  * structure's workers brought in, the grain ripe on each farm, and why the haul or the newcomers stopped.
  */
 export interface FortressStatus {
@@ -141,13 +141,13 @@ export class Fortress {
   readonly onChange: (() => void)[] = [];
   /** (round 128e, FT-50) a line for the bar: why Skip stopped, or that it finished (null: none) */
   note: string | null = null;
-  /** (round 128e, FT-49) what the builders are doing now (FortressLife writes it; null before the first Build) */
+  /** (round 128e, FT-49) what the builders are doing now (FortressCrowd writes it; null before the first Build) */
   crew: { builders: number; toStores: number; carrying: number; working: number; waiting: number } | null = null;
-  /** (milestone 3) blocks taken out of the plan (FortressLife gives back what they cost) */
+  /** (milestone 3) blocks taken out of the plan (FortressCrowd gives back what they cost) */
   readonly onErased: ((e: Erased) => void)[] = [];
-  /** (milestone 3) the economy now (FortressLife writes it; before the first Build, the town as it starts) */
+  /** (milestone 3) the economy now (FortressCrowd writes it; before the first Build, the town as it starts) */
   status: FortressStatus;
-  /** (round 128d, FT-20) blocks to build that no builder can walk to from the heap (FortressLife: deep water, a cliff) */
+  /** (round 128d, FT-20) blocks to build that no builder can walk to from the heap (FortressCrowd: deep water, a cliff) */
   cutOff = 0;
   /** the ground under the box is known (the level's surface read over every column): planning may start */
   ready = false;
@@ -186,7 +186,7 @@ export class Fortress {
   /** an answer has come back (the lab waits for it) */
   reachKnown = false;
   readonly reachStats = { checks: 0, rounds: 0, cpuMs: 0 };
-  /** (round 128l) told after each answer (FortressLife: the cut-off blocks) */
+  /** (round 128l) told after each answer (FortressCrowd: the cut-off blocks) */
   readonly onReach: (() => void)[] = [];
   private roadShapesMemo: { of: Lanes; shapes: Float32Array } | null = null;
   private roadGraphMemo: { of: Lanes; graph: RoadGraph } | null = null;
@@ -562,7 +562,7 @@ export class Fortress {
 
   /**
    * (round 128l) the cells still to build the last answer didn't reach, and (RT-6) the blocks not judged yet:
-   * FortressLife leaves them out of the sites
+   * FortressCrowd leaves them out of the sites
    */
   cutCells(): Set<number> {
     const out = new Set<number>(this.pending);
@@ -942,7 +942,7 @@ export class Fortress {
 
   /**
    * (round 128f) Where a builder stands to work on a cell (window world): a little out from the middle of each side that
-   * no planned or built block's ground level covers (a yard's is open ground) (FortressLife's stands, the same). `also`: a cell about to be planned.
+   * no planned or built block's ground level covers (a yard's is open ground) (FortressCrowd's stands, the same). `also`: a cell about to be planned.
    */
   standsOf(cell: number, also = -1): [number, number][] {
     const g = this.grid;
@@ -1106,7 +1106,7 @@ export class Fortress {
     for (const h of this.onChange) h();
   }
 
-  /** A block's cost is in: it stands (milestone 2's builders, life.ts). */
+  /** A block's cost is in: it stands (milestone 2's builders, townwork.ts). */
   markBuilt(cell: number, level: number): void {
     const s = this.plan.structureAt(cell);
     if (!s || !this.town.add(cell, level, s.id, typeIndex(s.type))) throw new Error(`fortress: block ${cell}:${level} couldn't stand`);
@@ -1162,7 +1162,7 @@ export class Fortress {
     for (const h of this.onChange) h();
   }
 
-  /** (FT-20) How many blocks the builders can't reach now (FortressLife): the bar says so. */
+  /** (FT-20) How many blocks the builders can't reach now (FortressCrowd): the bar says so. */
   setCutOff(n: number): void {
     this.cutOff = n;
     for (const h of this.onChange) h();
@@ -1220,7 +1220,7 @@ export class Fortress {
       const levels = new Set([...this.plan.levels.each(c), ...this.town.plans.each(c), ...this.town.built.each(c)]);
       for (const l of levels) {
         const want = this.plan.has(c, l);
-        // (milestone 3: a block leaving the plan, built or not: what it cost goes back, in part — FortressLife)
+        // (milestone 3: a block leaving the plan, built or not: what it cost goes back, in part — FortressCrowd)
         if (!want && (this.town.has(c, l) || this.town.planned(c, l))) {
           const run = this.town.built.at(c, l) ?? this.town.plans.at(c, l);
           if (run) erased.push({ cell: c, level: l, type: STRUCTURE_TYPES[run.type], built: this.town.has(c, l) });

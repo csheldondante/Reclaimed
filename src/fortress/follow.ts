@@ -2,7 +2,7 @@
 // day"). A tap on a person (or a cart) picks it: a card with its number, a name made from it, its job, what it carries,
 // where it's going, its day so far (home, work, haul, eat, home) and a thought made up from its number and what it's
 // doing — nothing simulated behind the thought. Follow keeps the camera on it (the window slides with the camera) until
-// a tap lands elsewhere. Pure but for `PersonFacts` (FortressLife fills them), so the card is tested and linted
+// a tap lands elsewhere. Pure but for `PersonFacts` (FortressCrowd fills them), so the card is tested and linted
 // (follow.test.ts, docs/WRITING.md).
 import type { Goods } from '../api/contracts/fortress';
 import { goodsText } from './words';

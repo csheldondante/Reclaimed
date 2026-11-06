@@ -109,6 +109,8 @@ const EV_WINDUP: u32 = 5u;
 // (round 128o, DA-B2a) it came within its field's arrival radius (AgentParams.arrive): other the field, amount the
 // field's distance at its feet; once until it's past the leaving radius or on another field (unit word f.x)
 const EV_ARRIVED: u32 = 8u;
+// (round 128o, DA-A6) an arrival at a ride's goal: its `other` is RIDE_ARRIVED + the unit's group (agents.ts)
+const RIDE_ARRIVED: u32 = 256u;
 const BY_FIRE: u32 = 0xffffffffu;
 const BY_WATER: u32 = 0xfffffffeu;
 const BY_IMPACT: u32 = 0xfffffffdu;
@@ -574,7 +576,8 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
     // the trip's; its height rides the surface under it nearest its last, so a step on the route is taken, not a wall)
     let kk = surfaceNear(i, pos.z);
     let fz = select(pos.z, navZ(i * NAV_K + min(kk, NAV_K - 1u)), kk < NAV_K);
-    np = vec3<f32>(pos.xy, pos.z + (fz - pos.z) * min(dt * 10.0, 1.0));
+    // (round 128o, DA-A6: up a step at once — never under its floor —, down one eased)
+    np = vec3<f32>(pos.xy, select(pos.z + (fz - pos.z) * min(dt * 10.0, 1.0), fz, fz > pos.z));
     if (length(vel.xy) > 0.05) { heading = atan2(vel.y, vel.x); }
   } else {
     // walking: what it wants to do
@@ -583,8 +586,17 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
     if (k < NAV_K) {
       let s = i * NAV_K + k;
       let here = select(FAR, dist[fld * N + s], fld < AP.n.z);
-      // (round 128o, DA-B2a) arrived: within its field's radius, told once (the latch, word f.x)
-      if (fld < NFIELDS) {
+      // (round 128o, DA-A6) a rider standing at its ride's goal (the ride's steer STAND, set for this group: not one it
+      // was moved to this tick): arrived on its group's ride, told once — `other` RIDE_ARRIVED + its group
+      let atRide = kind.b.w <= 0.0 && steer < 0.0 && steer > RIDE_TRIP + 0.5 && grp == (info & 0xffu);
+      if (atRide) {
+        let key = RIDE_ARRIVED + grp + 1u;
+        if (latch != key) {
+          latch = key;
+          emit(EV_ARRIVED, uid, RIDE_ARRIVED + grp, 0.0, pos);
+        }
+      } else if (fld < NFIELDS) {
+        // (round 128o, DA-B2a) arrived: within its field's radius, told once (the latch, word f.x)
         let ar = arriveR(fld);
         if (latch != 0u && latch != fld + 1u) { latch = 0u; }
         if (ar.x > 0.0 && latch == 0u && here <= ar.x) {

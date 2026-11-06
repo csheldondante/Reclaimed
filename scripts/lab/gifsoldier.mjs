@@ -24,7 +24,7 @@ export default async function (lab, args) {
   let id = null;
   for (let i = 0; i < 40 && id === null; i++) {
     await lab.run(0.5, 4);
-    id = life.people().find((p) => life.board.jobOf(p)?.startsWith('s') && units.recs.get(p)?.work?.phase === 'fetch') ?? null;
+    id = life.people().find((p) => life.board.jobOf(p)?.startsWith('s') && life.life.phaseOf(p) === 'toFetch') ?? null;
   }
   if (id === null) throw new Error('no recruit');
   let last = null;
@@ -40,8 +40,7 @@ export default async function (lab, args) {
       }
     }
     if (u) last = [u.at[0], u.at[1]];
-    const w = units.recs.get(id)?.work;
-    seen.push(`${u?.role ?? '?'}:${u?.job?.kind === 'go' ? 'patrol' : (w?.phase ?? '-')}`);
+    seen.push(`${u?.role ?? '?'}:${life.life.phaseOf(id) ?? '-'}`);
     lab.look(last[0], last[1] + 1, args.zoom ?? 18);
     await lab.shot(`soldier_${String(i).padStart(3, '0')}`);
     await lab.run(step, 4);

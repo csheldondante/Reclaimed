@@ -1,7 +1,7 @@
 // (round 128l, tooling) The behaviour lab: ?level=lab&lab=<recipe> — the game with less world, for scripted behaviour
 // checks (docs/TOOLING.md). A fixed 256² window of a recipe's land (lab/recipes.ts: no atlas, no generation, a short
 // warmup), the real fortress on it (scenes/level.ts startFortress on the lab's town and still window: fortress/host.ts),
-// its builders the real FortressLife on the real agents, its pieces drawn by the structures draw (lab/view.ts). What
+// its builders the real FortressCrowd on the real agents, its pieces drawn by the structures draw (lab/view.ts). What
 // a scenario drives, in the page as `reclaimed.lab`:
 //   place(kind, x, y, {level, built})   one block (a structure type, or 'gate' on a wall cell), window world units
 //   plan({at, walls, blocks, built})    a whole plan at once (built: standing at once, or planned for the builders)
@@ -19,7 +19,7 @@ import type { StructureType } from '../api/contracts/fortress';
 import { STRUCTURE_TYPES } from '../api/contracts/fortress';
 import type { WorldCore } from '../scenes/world-core';
 import type { Fortress } from '../fortress/fortress';
-import type { FortressLife } from '../fortress/life';
+import type { FortressCrowd } from '../fortress/crowd';
 import type { FortressFollow } from '../fortress/follow';
 import type { FortressWindow, TownViewHost } from '../fortress/host';
 import type { AgentUnits } from '../units/agent-units';
@@ -48,10 +48,10 @@ export interface LabSceneIO {
   external(): ExternalRegistry | null;
   statics(win: FortressWindow): StaticClaims | null;
   fortress(): Fortress | undefined;
-  life(): FortressLife | undefined;
+  life(): FortressCrowd | undefined;
   /** (round 128l, m4) the attack wave (fortress/raiders.ts), from the first Build */
   raid(): FortressRaid | undefined;
-  /** the builders let go (FortressLife.dispose), so the next Build starts afresh */
+  /** the builders let go (FortressCrowd.dispose), so the next Build starts afresh */
   dropLife(): void;
   /** the sim's speed (0: time stopped), read or set */
   speed(n?: number): number;
@@ -93,7 +93,7 @@ export interface LabSnapshot {
   /** (round 128l, m4) the soldiers the barracks trained */
   soldiers: { id: UnitId; at: [number, number, number]; state: string; phase: string; onRoad: boolean }[];
   /** (m4) the carts, and the goods waiting on each structure's pile for one */
-  carts: { id: UnitId; at: [number, number, number]; state: string; phase: string; onRoad: boolean }[];
+  carts: { id: UnitId; at: [number, number, number]; state: string; phase: string; pile: number | null; onRoad: boolean }[];
   piles: Record<string, number>;
   /** of the walkers walking now: how many are on a road or lane, and the roads' share of the ground round them */
   roads: { shapes: number; walking: number; onRoad: number; areaShare: number | null; riding: unknown };
@@ -385,23 +385,20 @@ export class Lab {
     for (const id of life?.people() ?? []) {
       const u = units.get(id);
       if (!u) continue;
-      const w = units.recs.get(id)?.work as { phase?: string; job?: string | null } | undefined;
-      walkers.push({ id, at: [+u.at[0].toFixed(1), +u.at[1].toFixed(1), +u.at[2].toFixed(1)], state: u.state, phase: w?.phase ?? '-', job: w?.job ?? null, onRoad: onRoad(u.at[0], u.at[1]) });
+      walkers.push({ id, at: [+u.at[0].toFixed(1), +u.at[1].toFixed(1), +u.at[2].toFixed(1)], state: u.state, phase: life?.life.phaseOf(id) ?? '-', job: life?.life.jobOf(id) ?? null, onRoad: onRoad(u.at[0], u.at[1]) });
     }
     // (round 128l, m4) the soldiers: where, doing what (their routine's phase, or 'patrol' on the wall-walk)
     const soldiers: LabSnapshot['soldiers'] = [];
     for (const id of life?.soldiers ?? []) {
       const u = units.get(id);
       if (!u) continue;
-      const w = units.recs.get(id)?.work as { phase?: string } | undefined;
-      soldiers.push({ id, at: [+u.at[0].toFixed(1), +u.at[1].toFixed(1), +u.at[2].toFixed(1)], state: u.state, phase: u.job.kind === 'go' ? 'patrol' : (w?.phase ?? '-'), onRoad: onRoad(u.at[0], u.at[1]) });
+      soldiers.push({ id, at: [+u.at[0].toFixed(1), +u.at[1].toFixed(1), +u.at[2].toFixed(1)], state: u.state, phase: life?.life.phaseOf(id) ?? '-', onRoad: onRoad(u.at[0], u.at[1]) });
     }
     const carts: LabSnapshot['carts'] = [];
     for (const id of life?.carts ?? []) {
       const u = units.get(id);
       if (!u) continue;
-      const w = units.recs.get(id)?.work as { phase?: string } | undefined;
-      carts.push({ id, at: [+u.at[0].toFixed(1), +u.at[1].toFixed(1), +u.at[2].toFixed(1)], state: u.state, phase: w?.phase ?? '-', onRoad: onRoad(u.at[0], u.at[1]) });
+      carts.push({ id, at: [+u.at[0].toFixed(1), +u.at[1].toFixed(1), +u.at[2].toFixed(1)], state: u.state, phase: life?.life.phaseOf(id) ?? '-', pile: life?.pileOf(id) ?? null, onRoad: onRoad(u.at[0], u.at[1]) });
     }
     const piles = Object.fromEntries([...(life?.piles ?? new Map())].map(([k, g]) => [k, Object.values(g as Record<string, number>).reduce((a, b) => a + b, 0)]));
     const walking = walkers.filter((w) => w.state === 'walk');

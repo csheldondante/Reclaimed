@@ -1,5 +1,5 @@
 // The fortress's economy (fortress slice 1, milestone 3: "the economy feeds the building"). Pure: no GPU, no units, so
-// the numbers are tested (economy.test.ts). FortressLife (life.ts) runs it: who works where (the JobBoard), what a worker
+// the numbers are tested (economy.test.ts). FortressCrowd (crowd.ts, over town/life.ts) runs it: who works where (the JobBoard), what a worker
 // brings a trip, how fast grain grows and is eaten, the beds and the warehouses' room, what Erase gives back.
 //
 // Goods come in only by being carried: a miner digs the quarry's pit and carries stone (a share of it ore) to the
@@ -35,7 +35,7 @@ export function jobSlots(
   defs: Record<StructureType, StructureDef> = DEFS,
   econ = ECON,
   /** (round 128l, m4) the most a structure's slot takes now (its built blocks' jobs: n) — the smiths while there's ore
-   *  and wood, the recruits while there are weapons and beds (FortressLife) */
+   *  and wood, the recruits while there are weapons and beds (FortressCrowd) */
   cap: (s: Structure, n: number) => number = (_s, n) => n,
 ): JobSlot[] {
   const out: JobSlot[] = [];

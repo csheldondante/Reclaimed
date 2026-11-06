@@ -54,7 +54,7 @@ await run({ name: 'fortressplot', kind: 'behaviour', size: '412x915', dpr: 1, ec
   // (no builders: nothing begun; a moment of time for the cells' trees to be cleared — FT-32 — then time held)
   await page.evaluate(() => {
     const Rc = window.reclaimed;
-    const life = Rc.fortressLife();
+    const life = Rc.fortressCrowd();
     for (const id of life.ids) Rc.units.remove(id);
     life.ids.length = 0;
   });
@@ -67,7 +67,7 @@ await run({ name: 'fortressplot', kind: 'behaviour', size: '412x915', dpr: 1, ec
     Rc.camera.target[0] = x;
     Rc.camera.target[1] = y + 5;
     Rc.camera.zoom = 13;
-    const life = Rc.fortressLife();
+    const life = Rc.fortressCrowd();
     for (const id of life.ids) Rc.units.remove(id);
     life.ids.length = 0;
   });

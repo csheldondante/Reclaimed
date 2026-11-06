@@ -14,7 +14,7 @@ import { ROW_H } from '../../world/lattice';
 import { Fortress } from '../../fortress/fortress';
 import { FortressBar } from '../../fortress/ui';
 import { SKIP_DONE, skipCutOffLine, skipShortLine } from '../../fortress/words';
-import { FortressLife } from '../../fortress/life';
+import { FortressCrowd } from '../../fortress/crowd';
 import { FortressRaid } from '../../fortress/raiders';
 import { ECON, START_STORES } from '../../fortress/defs';
 import { FortressFollow, personCard } from '../../fortress/follow';
@@ -38,7 +38,7 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: T
   if (!S) throw new Error('?fortress=1 needs the atlas level (or the lab: ?level=lab)');
   // (round 128o, DA-B5: fortress play — the sandbox valley's reads for its Nature, storms and ambience stop)
   scene.valleyReads = null;
-  // (its people are the fortress's builders — FortressLife — not a SettlementLife: never both, they share fields)
+  // (its people are the fortress's builders — FortressCrowd — not a SettlementLife: never both, they share fields)
   const rec = st.pin(id, true);
   for (const [k, v] of Object.entries(START_STORES)) {
     const have = (rec.stores[k] ??= { stock: 0, rate: 0 });
@@ -120,8 +120,8 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: T
   S.onSlide.push(() => fort.requestReach(true));
   S.onWarp.push(() => fort.requestReach(true));
   // (round 128i, FT-67) the road stamp's offset moved in the slide's own frame, as the towns' grid rows are
-  S.onSlide.push(() => scene.fortressLife?.roads());
-  S.onWarp.push(() => scene.fortressLife?.roads());
+  S.onSlide.push(() => scene.fortressCrowd?.roads());
+  S.onWarp.push(() => scene.fortressCrowd?.roads());
   // (round 128l, m4; V128-10) a tap on a person picks them (fortressAt): their card, and Follow
   const follow = (scene.fortressFollow = new FortressFollow());
   // (round 128d) Build: the plan goes to the builders and time runs (at ?speed=); Plan: time stops again
@@ -133,8 +133,8 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: T
       // (the world API attached: the agents get the terrain, so a load a builder drops — it falls, it's knocked down —
       // falls to the ground as the settlements' do; without it the agents' toss threw)
       worldApiOf(scene);
-      const first = !scene.fortressLife;
-      scene.fortressLife ??= new FortressLife(
+      const first = !scene.fortressCrowd;
+      scene.fortressCrowd ??= new FortressCrowd(
         {
           units: scene.units!,
           fort,
@@ -156,7 +156,6 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: T
           // (round 128m, quarry: the layers' top, loose ground on it too — the surface buffer's z is the solid's: a pit
           // measured by it read a soil-covered column as not dug while its soil was taken)
           top: (x, y) => scene.worldApi!.terrain!.heightAt(x, y),
-          speed: () => scene.speed,
           groundRead: () => scene.worldApi!.readAt,
           // (round 128m, quarry) a pit's tier dug: its ground woken (slumping) and its walls judged (the stability check)
           settle: (x, y, r) => {
@@ -170,7 +169,7 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: T
       scene.fortressRaid ??= new FortressRaid({
         units: scene.units!,
         fort,
-        life: scene.fortressLife,
+        life: scene.fortressCrowd,
         stores: () => Object.fromEntries(Object.entries(rec.stores).map(([k, v]) => [k, v.stock])),
         take: (good, n) => {
           const s = (rec.stores[good] ??= { stock: 0, rate: 0 });
@@ -190,7 +189,7 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: T
       // the first block, close enough to see them
       // (the first Build only: later the player looks where they like)
       if (first) {
-        const look = scene.fortressLife.focus();
+        const look = scene.fortressCrowd.focus();
         core.camera.target[0] = look.at[0];
         core.camera.target[1] = look.at[1] + 6;
         core.camera.zoom = Math.max(4, Math.min(9, 260 / Math.max(20, look.span)));
@@ -219,7 +218,7 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: T
     // (round 128l, m4; V128-10) the person a tap picked
     person: () => {
       const id = follow.selected;
-      const facts = id !== null ? scene.fortressLife?.personFacts(id) : null;
+      const facts = id !== null ? scene.fortressCrowd?.personFacts(id) : null;
       if (id !== null && !facts) follow.select(null);
       return facts ? personCard(facts) : null;
     },
@@ -258,7 +257,7 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: T
  */
 export function pitView(scene: LevelScene, dt: number): void {
   const fort = scene.fortress;
-  const life = scene.fortressLife;
+  const life = scene.fortressCrowd;
   const cam = scene.core.camera;
   // (off unless ?pitcut=1 or scene.pitCut: judged in shots, round 128m — the pit's sides step in at ~34 degrees, the view
   // comes down at 30, so the near walls hide only a strip of the floor (a quarter of the depth wide) and the floor reads
@@ -326,7 +325,7 @@ export function skipFrame(scene: LevelScene, simDt: number): void {
   };
   const p = fort.progress();
   if (p.built >= p.total) return stop(SKIP_DONE);
-  const why = scene.fortressLife!.blocked();
+  const why = scene.fortressCrowd!.blocked();
   scene.fortressSkipBlocked = why ? scene.fortressSkipBlocked + simDt : 0;
   if (!why || scene.fortressSkipBlocked < SKIP_GRACE) return;
   stop('short' in why ? skipShortLine(why.short) : skipCutOffLine(why.cutOff));
@@ -360,7 +359,7 @@ export function fortressAt(scene: LevelScene, sx: number, sy: number): void {
 /** (round 128l, m4) the fortress's person (or cart) drawn nearest a screen point, within PICK_PX (null: none) */
 const PICK_PX = 26;
 export function personAt(scene: LevelScene, sx: number, sy: number): number | null {
-  const life = scene.fortressLife;
+  const life = scene.fortressCrowd;
   if (!life) return null;
   const cam = scene.core.camera;
   let best: number | null = null;
@@ -438,13 +437,13 @@ export function startLab(scene: LevelScene): void {
     external: () => scene.integrity?.external ?? null,
     statics: (win) => staticsFor(scene, win),
     fortress: () => scene.fortress,
-    life: () => scene.fortressLife,
+    life: () => scene.fortressCrowd,
     raid: () => scene.fortressRaid,
     dropLife: () => {
       scene.fortressRaid?.dispose();
       scene.fortressRaid = undefined;
-      scene.fortressLife?.dispose();
-      scene.fortressLife = undefined;
+      scene.fortressCrowd?.dispose();
+      scene.fortressCrowd = undefined;
       scene.fortressSkip = false;
     },
     speed: (n?: number) => (n === undefined ? scene.speed : (scene.speed = n)),

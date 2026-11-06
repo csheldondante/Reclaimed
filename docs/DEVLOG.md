@@ -19192,3 +19192,44 @@ town's answers behind TownWork, nothing polled, no give-up timers.
   (forge from the stores, the smiths only while there's ore, a recruit's drill, a pile and its event and a cart's load,
   the wall-walk's points, the room event). Unit tier 98 files / 823 tests green; typecheck green. No GPU, lab or
   browser run (main's instruction: tilegate running).
+
+## 2026-11-06 — round 128o (`onetown`, DA-A6 part 4): the fortress's people on TownLife; FortressLife deleted
+
+Design note: the wiring is fortress/crowd.ts FortressCrowd — the units' Routine for the fortress's units. Events in:
+the agents' `arrived` (AgentUnits hands a working unit's to its routine; it's the unit's own if it's on the field its
+leg's group follows, or its group's ride), deaths (Routine.drop on a dead unit), the trees felled (the world's answer),
+the town's own (FortressWork.drain), raiders about (shelter), lost events (Routine.lost: TownLife throws). Orders out:
+a leg -> a group (field, or ride when every goal of the leg is by the roads), standing -> the standing or the working
+group by the phase, carry -> the load drawn, dig/fell -> a timed task answered as an event, newcomer -> stood up where
+the town's people come in (the reach's answer), become -> AgentUnits.restyle (a guard where it stood, the same id).
+- The engine's part (riskiest first, a Dawn test each): an arrival on a ride — units.wgsl emits `arrived` with
+  `other` RIDE_ARRIVED + the group when a unit stands at its ride's goal (steer STAND, set for its group: not one it was
+  moved to that tick); agents.ts decodes `{ type: 'arrived', ride }`. A rider sent to a goal it already stands at, off
+  the roads, stands there and is told (roadride.wgsl: off a trip within ON_EDGE of a goal -> M_AT): it stood there off
+  the network, never told (failing test first). `agents.rearm(id)` lets a unit's latch go (a miner whose spot gave out
+  is told again wherever it stands: TownLife's `again`).
+- Two ride dead zones found by the lab (the recipes site: smiths stood 2 m from their door's node, never moving, the
+  rideState read back: mode OFF, steer 0): a trip started only within ON_EDGE (1.6 m) of an edge while the network's
+  plane marks a column whose middle is within NET_HALF (1.2) — a unit on such a column's far side was on the network
+  for the field onto the roads (its distance 0: it stood) but too far for a trip. Now NET_REACH = NET_HALF + a column's
+  corner (0.578); and off the network but within RR_NEAR (= ride.ts RIDE_NEAR, 6 m) of an edge a trip starts too, its
+  first leg straight to the edge's end — as the last leg is straight from the network to the goal. Recipes, 180 sim s:
+  forged 8-10 / trained 0-2 (3 of 4 runs failed) -> forged 17-18 / trained 4 (4 of 4); FortressLife: 15 / 1-4.
+- A trip's height (units.wgsl): up a step at once, down one eased (it rode up to 0.3 m under its floor: unitsonground).
+- TownLife additions: `away`/`back` (the defence posts a soldier; after the wave it musters), the `shelter` event
+  (home and in, a load or a batch given back, no newcomers), `turnedAway` (no spot to come in from: the next `room`
+  asks again), `dug` 0 / `felled` 0 -> to the next spot with `again`, `holding`, `jobSlot`, `cartPile`, `inside`. The
+  job board's slots are asked once a tick; FortressWork's sites memoised until the fortress changes (onChange) — the
+  first wiring asked the build order per person per call: frame CPU at 16x 1.7 -> 1.0 ms p50.
+- FortressWork: the work spots from the crowd (a camp's trees, the pit's spots), a reap's ECON.reapSec, Erase's
+  refunds, the stats the lab reads (trips, built, starved, hauled, piled, carted), spotReady (the trees found, the
+  pit's spots changed). R, R4 moved to units/agent-units.ts (settle/life.ts R, fortress/life.ts R4).
+- Measured (lab, desktop, `fortressperf` town 16x with work): frame CPU p50/p95 build 1.0-1.1/1.5-1.6 ms, work
+  0.8-0.9/1.2-1.3 ms; FortressLife 1.0/1.5 and 1.1/2.0. The units' sync still reads every unit (919 KB/s here): the
+  routine reads no positions now; the CPU combat (AgentUnits.think), the pick and the follow card still do (DA-B2b's
+  watched sync is the next step for DA-B22).
+- Gates: typecheck; unit + GPU 131 files, 983 passed; lab: fortressallbuilt ok (708/708 at 271-362 s, 3 runs; was
+  ~301-600), fortressharvest ok, fortressrecipes ok (onWall 17, forged 18, trained 4), fortresscarts ok, fortressraid
+  ok, unitsonground ok, fortressfollow ok, fortresslanes ok, quarry (r 15) ok, fortressoutside walled ok, town 1 of 2
+  (as before: house2/farm3 not reached for 183 s — B's). fortressrider and fortressrefuse fail on FortressLife too
+  (rider: no word in 90 s; refuse: the tap's CPU 8 ms over 1) — not this change's.

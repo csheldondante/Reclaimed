@@ -100,7 +100,7 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
   // (round 128i, FT-67; the user on the Pixel 9a: "flickering of the town (position jumping)") The slide runs here,
   // right after the camera moved and before anything this frame reads or writes window coordinates: its synchronous
   // part moves the camera, the window's origin and what the game keeps in window coordinates (onShift, onSlide), so
-  // the towns' grid rows (SettlementsView.update), the fortress's road stamp (FortressLife.update) and the rest are
+  // the towns' grid rows (SettlementsView.update), the fortress's road stamp (FortressCrowd.update) and the rest are
   // written for the window as it is now and land before this frame's draw. Run after them (as it was), the slide
   // moved the camera after the rows were written: the town drew a region off for one frame (131.6 px at zoom 2.6,
   // scripts/townslide.mjs) and jumped back the next.
@@ -130,8 +130,8 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
     scene.units.update(dt * scene.speed);
     timed('settle', () => scene.settlements?.update(dt * scene.speed));
     // (round 128o: the fortress waits while the window's ground is read again after a slide — scene.groundReady)
-    if (scene.fortressLife && scene.groundReady) {
-      scene.fortressLife.update(dt * scene.speed);
+    if (scene.fortressCrowd && scene.groundReady) {
+      scene.fortressCrowd.update(dt * scene.speed);
       // (round 128l, m4) the attack wave: its clock, its raiders, the gates
       scene.fortressRaid?.update(dt * scene.speed);
       if (scene.fortressSkip) skipFrame(scene, dt * scene.speed);

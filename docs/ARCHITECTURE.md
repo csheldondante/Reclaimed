@@ -1842,7 +1842,9 @@ height and wet the links and the relax reckon its cost by, following nav's floor
 units ride nav, the fields read this), `agentDist` (NFIELDS = 4 fields × surfaces,
 f32), `agentUnits` (six vec4 a unit: units.wgsl — the fifth, LW1, the trait system's CAPS and LOOK and the max hp; the
 sixth, round 128o, the arrival latch: an `arrived` event once a unit comes within its field's radius,
-`agents.arrivals(field, radius, leave)` in AgentParams.arrive), `agentOcc` (units per
+`agents.arrivals(field, radius, leave)` in AgentParams.arrive; DA-A6: or once it stands at its group's ride's goal —
+the ride's steer STAND, `other` RIDE_ARRIVED 256 + the group, `{ type: 'arrived', ride }`; a rider off a trip within
+ON_EDGE of a goal stands there; `agents.rearm(id)` lets the latch go, so it's told again where it stands), `agentOcc` (units per
 column, two halves by tick parity), `agentEvents` (round 128o, DA-B2: a ring
 of 2048 8-u32 records — swing, hurt, death, alight, … with their number as a tag
 in word 7 — after a head: [0] events made, [2] how far the CPU has read; a sync
@@ -3507,14 +3509,24 @@ The building rule (the user's): select what (a structure type), then plan it wit
   foundation). **Modes** (`Fortress.mode`): `plan` (speed 0; the plan drawn whole; a "Planning
   (paused)" banner and an amber frame) and `build` (speed back to `?speed=`; blocks not built drawn see-through:
   `PieceInputs.ghost` → look bit 23 `LOOK_GHOST`, structgame.wgsl discards every other pixel and paints it pale).
-  **Builders** (`fortress/life.ts` FortressLife, a units Routine): spawned at the town's stone heap ('pile' spot,
-  `Settlements.spotsOf`) on the first Build; heap → load out of the stores (`fortress/work.ts` BuildBook: what a block
-  lacks, loads on their way counted) → the block → worked in; a block stands (`Fortress.markBuilt` → `Town.add`) when its
-  type's cost is in. Order: `buildOrder(town, heap)` (agents/buildcrew.ts, now a pure function BuildCrew uses too).
-  Fields: F.pile (the heap), F.site (blocks lacking stone), F.store (blocks lacking wood: a field a good, or a stone
-  carrier is led to a wood-only site and stuck); groups R.toPile, R.toSite, R.toStore, R.working. Builders stand just
+  **The people** (round 128o, DA-A6: the one crowd). `town/life.ts` TownLife is every town's people's routine, pure and
+  on events: each unit's phase moves only on what happens to it (`LifeEvent`: a leg's arrival — the agents' `arrived`,
+  on a field or a ride —, a world operation's answer, a death; the town's own: stores, sites, spot, pile, room,
+  shelter; a lost event throws) and its orders out (`Order`: the leg a unit follows, with a target for a cart's pile or
+  a soldier's wall point; what it carries; a dig or a felling; a newcomer; a recruit turned soldier). Nothing polled, no
+  positions read, no give-up timers. People work the job board (`town/jobs.ts` JobBoard over the plan's `jobSlots`):
+  builders, farmers, miners, woodcutters, smiths and recruits (batches, `fortress/recipes.ts`); soldiers muster, drill,
+  march to the wall's stairs, walk the wall; carts take long hauls from the piles; newcomers walk in to a house. What it
+  asks of the town is `TownWork`: the fortress's is `fortress/townwork.ts` FortressWork (BuildBook — what a block lacks,
+  loads on their way counted —, the build order `buildOrder(town, stores)` lowest first without the reach's cut-off
+  cells, the farms' ripe grain, the trees and the pit's spots, the piles and the carts' claims, the wall points, beds and
+  grain for newcomers, Erase's refunds). `fortress/crowd.ts` FortressCrowd is the wiring and the units' Routine: a leg is
+  a group (R.toPile, R.toSite/R.toStore by the load's good, R.toQuarry, R.toFell, R.toFarm, R.toHome; R4 ride-only legs
+  to the smithy, the barracks, the stairs, a cart's pile; a wall point one of the units' goal fields) following its field
+  or riding the roads; an arrival is the unit's own leg's (its group's field or ride) or it's ignored; digs and fellings
+  are timed there (QuarryDig) and answered as events. R, R4 and F, G live in units/agent-units.ts. Builders stand just
   outside the cell (a block that stands claims its columns: one inside is buried). `Settlements.pin(id, true)`: no
-  SettlementLife for the pinned town — FortressLife uses the same fields and groups. NFIELDS and MAX_GROUPS unchanged.
+  SettlementLife for the pinned town — FortressCrowd uses the same fields and groups. NFIELDS and MAX_GROUPS unchanged.
   The fortress's crops and fences are draped with `DRAPE_ANY` (structures flag 32, structmesh.wgsl: follow the host's
   ground however far off the plan's): the fortress's ground is the surface read, without the loose ground the GPU
   draws on it.
@@ -3854,8 +3866,10 @@ at the first Build, updated after it each frame in sim seconds).
   for (`FortressRaid.postsNow`: raidGoal with the gates shut), the units' 'guard' job; the rest walk onto the wall-walk
   beside it and stand. An archer up there shoots the nearest raider in `ARROW.range` every `ARROW.every`: a CPU arrow
   (`arrowFlight`, `arrowHits`: it hits if the mark is still near where it was aimed), a chip drawn on the same lob.
-  Posted soldiers are the raid's routine (FortressLife routes them); after the wave `backToRoutine`.
-- **The villagers** shelter at home while raiders are about (FortressLife.shelter: no work, no newcomers); those caught
+  Posted soldiers are the raid's routine (FortressCrowd routes them; TownLife holds them `away`); after the wave
+  `backToRoutine` (TownLife `back`: they muster).
+- **The villagers** shelter at home while raiders are about (FortressCrowd.shelter → TownLife's `shelter` event: home
+  and in, no work, no newcomers); those caught
   outside are the raiders' to kill.
 - **The bar** (`FortressBarHooks.raidLines`): the rider's word, the raid as it goes (`raidNowLine`), then the summary
   (`raidOverLines`: what was taken, broken and burned, who fell by name) as a card with Close (`raidSummary`,

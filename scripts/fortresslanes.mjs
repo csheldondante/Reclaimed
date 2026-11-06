@@ -322,7 +322,7 @@ await run({ name: 'fortresslanes', kind: 'behaviour', size: '412x915', dpr: 1, e
       const r = await page.evaluate(() => {
         const Rc = window.reclaimed;
         const f = Rc.fortress;
-        const life = Rc.fortressLife();
+        const life = Rc.fortressCrowd();
         if (!life) return null;
         const S = f.roadShapes();
         const n = S.length / 12;
@@ -417,7 +417,7 @@ await run({ name: 'fortresslanes', kind: 'behaviour', size: '412x915', dpr: 1, e
       // (closer still, on the walkers: the camera on the middle of those walking)
       await page.evaluate(() => {
         const Rc = window.reclaimed;
-        const life = Rc.fortressLife();
+        const life = Rc.fortressCrowd();
         const pts = life.people().map((id) => Rc.units.get(id)).filter((u) => u && u.state === 'walk').map((u) => u.at);
         if (!pts.length) return;
         pts.sort((a, b) => a[0] - b[0]);
