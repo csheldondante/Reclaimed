@@ -18118,3 +18118,26 @@ matters is now in one table and a new one is a test failure.
   Read wrappers with generic names (`.sample(`, `.refresh(`, `.pick(`) aren't gated by their calls; their entries
   describe the callers. Rates and "in play" come from reading the code, not from running it. `perf/gpumem.ts` patches
   `GPUBuffer.prototype.mapAsync` to measure reads; it is not a read and isn't listed.
+
+## 2026-11-05 — the import-boundary gate (round 128o, DA-G2)
+
+Why: the audit found two building systems, two people sims, and opportunities beside a parallel raid loop. The user:
+"the fact that it implemented 2 agent systems, opportunities but then a parallel system for raids is a huge huge red
+flag." Nothing checked which module may lean on which, so the fortress could grow its own raid loop without touching
+the opportunity contract. A boundary nothing checks drifts.
+
+- `test/unit/boundaries.test.ts` holds one table of seven rules drawn from DESIGN.md: the run layer never imports the
+  fortress (§21); the fortress never imports the run layer, UI, scenes or game (§18); contracts import only contracts
+  (§1); engine systems and the world API never import scenes, game, the town, the run layer, UI or pages (§1); the run
+  layer never imports UI or scenes (§22); kernels (`shaders/`) are imported only below the run layer, UI and scenes.
+  Imports come from test/support/source-scan.ts (static, dynamic, re-exports; type-only imports count).
+- Started minimal and true: each rule holds today except the 22 breaches listed in `KNOWN`, each with its row. 19 are
+  one root cause: the engine's live world (`WorldCore`, the Streamer, `Integrity`, `colapply`) lives in scenes/ and
+  game/, so the engine's install files, physics' wake, the atlas, static claims and the api import upward (new row
+  DA-P9). The fortress imports the streamer's `KeepRect` (DA-P2). `opps/level-opps.ts` is scene wiring and
+  `runplan/viewer.ts` a page living in the run layer's folders (new row DA-L9).
+- docs/MODULES.md and scripts/modules-map.mjs list files, not imports; the gate reuses the same walk of src/ (shared
+  in source-scan) rather than the generated doc, so it can't go stale against it.
+- Hacks and limits: the rules are by folder. A breach inside a folder (game/ mixes engine pieces like integrity with
+  game rules like powers) isn't seen; `hero` and a few small folders aren't ruled. Viewer and bench files beside engine
+  modules are named as pages explicitly.

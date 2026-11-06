@@ -3833,3 +3833,24 @@ houses' doors, what of the fortress stands at the start). No atlas, no streamer,
   (basePort + 8: /run, /status, /stop). A scenario module's default export is evaluated in the page; `__labShot`
   (an exposed function) saves screenshots. Reload only on a new build hash or recipe; `lab.reset()` otherwise.
 
+
+## Module boundaries (round 128o, DA-G2; test/unit/boundaries.test.ts)
+
+Which folders under src/ may import which, as DESIGN.md draws it. The table (`RULES` in the test) is the authority;
+this is its summary. Type-only imports count: a type is still a dependency on the module's shape.
+
+| rule | who | may not import | why (DESIGN.md) |
+|---|---|---|---|
+| run-not-town | the run layer: opps, living, gm, runplan, runsit, runplay, dialog | fortress | §21: one opportunity contract; a raid is a card the town executes through an adapter the scene wires |
+| town-not-run | fortress | the run layer, ui, scenes, story, play, game, levels, lab, perf | §18: the economy is pure logic over the world's channels |
+| contracts-alone | api/contracts | anything but api/contracts | §1: systems talk through contracts, which depend on nothing |
+| engine-not-game | the engine: sim, gpu, world, shaders, agents, physics, solver, flow, atlas, terrain, grids, render, weather, traits, inhabitants, flora, structures, build, tune, audio, input, units (not their viewers and benches) | scenes, game, levels, fortress, settle, the run layer, story, play, run, ui, lab, perf, the pages, main | §1: games sit on the engine, never the other way |
+| api-not-game | api (not api/contracts) | the same | the world API is the engine's face to games |
+| run-not-ui | the run layer | ui, scenes | §22: UI reads game state through contracts; the run layer stays Node-testable |
+| no-kernels-above | the run layer, ui, scenes, story, play | shaders | §1: kernels belong to the systems that own their buffers |
+
+Known breaches today (each listed in the test with its row): the engine's live world — `WorldCore`, the Streamer's
+`LandChange`, `Integrity` and `colapply` — lives in scenes/ and game/, so six engine `install.ts`/wake files, the atlas,
+static claims and eight api modules import it (DA-P9); the fortress takes the streamer's `KeepRect` (DA-P2);
+`opps/level-opps.ts` (scene wiring) imports the tune panel and `runplan/viewer.ts` (a page) imports WorldCore (DA-L9).
+Folders not named above (`hero`, whose path finder `units` uses, among them) aren't ruled yet.

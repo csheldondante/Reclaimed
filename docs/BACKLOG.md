@@ -19,7 +19,7 @@ The user: "Please work on making the code match the design which is a lot cleane
 | id | item | size | status |
 |---|---|---|---|
 | DA-G1 | Readback allow-list test: every `mapAsync` site named in one list with reason and rate; a new one fails. Widened mid-task (AGENT_RULES §1b): large GPU→GPU copies and CPU→GPU uploads in the same table | S | done (`gates`: src/gpu/transfers.ts, test/unit/transfers.test.ts; 283 entries: 157 reads, 47 copies, 203 uploads; 48 marked `violates`) |
-| DA-G2 | Import-boundary test: modules cross boundaries only through shared contracts (DESIGN.md) | S | next |
+| DA-G2 | Import-boundary test: modules cross boundaries only through shared contracts (DESIGN.md) | S | done (`gates`: test/unit/boundaries.test.ts, docs/ARCHITECTURE.md "Module boundaries"; 7 rules, 22 known breaches under DA-P9, DA-P2, DA-L9) |
 | DA-G3 | Material limits documented; test that the TS and WGSL material tables agree | S | next |
 | DA-G4 | Writing lint over every player-facing string, not opt-in per test | S | next |
 | DA-G5 | Merge townlab rect C (bed4bb7) | S | done (35cf133) |
@@ -49,6 +49,7 @@ The user: "Please work on making the code match the design which is a lot cleane
 | DA-L6 | Run end and carry-over (§21) | M | open |
 | DA-L7 | Atlas button and card icons, UX playground first (§22) | M | open |
 | DA-L8 | Spell wheel paid in mana, playground first (§14, §22) | M | open |
+| DA-L9 | `opps/level-opps.ts` (the run's scene wiring, imports the tune panel) and `runplan/viewer.ts` (a page, imports WorldCore) live in the run layer's folders: move them to scenes/ and the pages so opps and runplan stay pure (found by DA-G2) | S | open |
 | DA-E1 | Widen the material table past 40 (ids are 8-bit; the user wants this, later); phone bench of the uniform cost first | M | open |
 | DA-E2 | Deposit inbox keeps each material and counts overflow | M | open |
 | DA-E3 | GPU destruction trigger: ground connected components plus support x distance per cell (§9) | L | open |
@@ -65,6 +66,7 @@ The user: "Please work on making the code match the design which is a lot cleane
 | DA-P6 | Loose material in the flow model (§8) | L | open |
 | DA-P7 | Flora: no per-tick sim; kind and density per column (§15) | M | open |
 | DA-P8 | Delete retired render paths; draw decisions without readbacks (§5) | M | open |
+| DA-P9 | The engine's live world lives above the engine: `WorldCore` and the Streamer in scenes/, `Integrity` and `colapply` in game/. Six engine install files, physics' wake, the atlas, static claims and eight api modules import them. Move them to an engine folder (or give the engine an interface) so engine and api never import scenes or game (found by DA-G2; 19 of its known breaches) | M | open |
 | DA-X1 | Cleanup: remove worktrees of merged or dead branches; Pages only for fortress, places, main (destructive: list for the user first) | S | asked |
 
 ## Round 128n (2026-11-05, session 5, `phonefix`) — the user on the Pixel 9a (Pages, fortress 062fe16): "performance on mobile was abysmal and could not be played and the building still didn't work. I think the town is cached and did not get gates"

@@ -115,6 +115,14 @@ What it can't see: sizes the call doesn't show (those are listed, with estimated
 64 KB at run time won't fail it), read wrappers with generic names (`.sample(`, `.refresh(`), and data flow (a rate set
 by a timer two calls away is listed by what the code does today, from reading it).
 
+### The import-boundary gate (test/unit/boundaries.test.ts, DA-G2)
+
+`RULES` names folders under src/ that may not import other folders (docs/ARCHITECTURE.md "Module boundaries" has the
+table and the why). Every import breaking a rule today is in `KNOWN` with its BACKLOG row. A new breach fails with the
+rule's reason; a known breach that's gone fails too, so the list shrinks as rows land. To change a boundary, change the
+design first (DESIGN.md, with the user), then the rule. Never add to `KNOWN` to get a commit through: fix the import, or
+raise it to main.
+
 ## When to use the browser
 
 Use it only for what Node can't show: the page's boot (the build, the menu, the streamer, IndexedDB), drawing and
