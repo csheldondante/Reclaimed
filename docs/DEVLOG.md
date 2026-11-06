@@ -19815,3 +19815,37 @@ its slot opening or closing starts it over (a tested piece).
     across a sixteenth (the hash's "changed back before rebuilt" skipped those, the versions rebuild them); and the
     block reach (3 columns).
   - A rain session counting the blocks bumped per writer would tell.
+
+## 2026-11-06 — round 128o (`phonefix`): DA-B29 measured (no cause in the versions), DA-B27 narrowed
+
+- DA-B29: what the versions rebuild in rain that the hash didn't. Measured on Dawn with a 128² world of sandy hills
+  under a storm, 400 ticks of water, sediment, climate and moisture (a diagnostic, kept in .testcache, not committed).
+  Every column's shape keys were read back each tick:
+  - 119,635 key changes, all but 40 in sand (sediment).
+  - Flips: none back to the key of two ticks before; 1,454 (1.2%) back to one seen within 30 ticks.
+  - The blocks the writers bumped each tick are exactly the blocks with a key change at the tick's end (65,985 and
+    65,985). No writer bumps a block whose key ends the tick unchanged, so there are no flips inside a tick.
+  - An idealized mesh (each 32-unit mesh chunk rebuilt as soon as found): 3,698 rebuilds for the hash's rule (its
+    exact columns against what it was built from), 3,764 for the versions' (+1.8%). 66 of those were triggered only by
+    the 4 x 4 blocks' reach past the columns read.
+  - So the versions rebuild 1.8% more than the hash for the same changes, all from the blocks' reach (2 x 2 blocks
+    would cut it, for 4 times the words). Neither flips nor the reach explains the batch's rain figure (0.44 against
+    0.33 a frame). That figure's three runs a side overlapped (hash 0.22–0.48, new 0.36–0.49); it isn't shown to be a
+    difference.
+  - Left open: more runs in play would tell. No code change made for it.
+- DA-B27 (phone-z8 fast pans):
+  - The zoom floor that varies run to run (3 to 4.44) comes from the tiles' fill rate measured in that run
+    (render/tilecalib.ts: 6.5 to 11 tiles/s on this machine). The gate recorded it in its JSON (cal), not in its
+    verdict.
+  - Across the 17 phone-z8 fast-pan runs today, the undrawn share follows the measured rate:
+    - ok or under 0.2% at rates 9.2, 10.6, 11 and once 8.1;
+    - 1.6% to 21.6% at rates 6.5 to 8.9.
+    - The atlas's slots (128 or 256) don't separate them.
+  - The undrawn cells are regions r226–228, 215–217: the same world regions on the pan's path, their render-only tiles
+    not made in time at 160 c/s when the machine's fill rate that run was lower. So the gate's outcome depends on this
+    machine's load during the run.
+  - tilegate now takes --tilerate N (pins render/tilecalib.ts's rate, so the floor and the atlas's growth don't follow
+    the run's measurement). An undrawn failure's line now says the floor, the measured rate and its source, and the
+    atlas's slots.
+  - Pinning doesn't make tiles bake faster: the undrawn regions are a throughput limit at 160 c/s, to find out
+    (planner look-ahead, bake order on the pan's path) with runs. Those need the timing lease.

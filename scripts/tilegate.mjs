@@ -16,7 +16,7 @@
 //   node scripts/tilegate.mjs [--url http://localhost:5233] [--screens desktop,phone] [--zooms 14,8,5,3.5,2.2,1.3]
 //     [--loadframes 180] [--hz 60] [--chromeargs "--disable-gpu-vsync --disable-frame-rate-limit"] [--parked 2] [--pan 20] [--fastpan 160] [--fastspan 400] [--fastzooms 14,8,5] [--agreemax 0.01] [--panning 3] [--panmiss 0.02] [--tol 40] [--area 0.01]
 //     [--out C:/Projects/shots88/tilegate] [--baselines data/baselines/tilegate] [--update] [--no-golden] [--no-pan]
-//     [--extra "&x=1"] [--wait 35000] [--shrink 8]
+//     [--extra "&x=1"] [--wait 35000] [--shrink 8] [--tilerate 0.13]
 // --update writes the baselines (a view's: --update --screens desktop --zooms 5); they're kept by adapter
 // (<baselines>/<vendor>-<architecture>/), written the first time one runs.
 // (round 112, tilefix2) The page's frames are held to --hz (60) by the script — Chrome without vsync, the page's rAF
@@ -81,6 +81,10 @@ const update = has('update');
 const golden = !has('no-golden');
 const doPan = !has('no-pan');
 const extra = opt('extra', '');
+// (round 128o, DA-B27) --tilerate N: the tiles' fill rate pinned (tiles a frame at 60 Hz, render/tilecalib.ts ?tilerate=):
+// the zoom floor and the atlas's growth then don't follow what this run happened to measure. Unpinned, each failing
+// view's line says the rate it measured, the floor and the atlas's slots, so two runs can be told apart.
+const tileRate = opt('tilerate', '');
 const waitMs = Number(opt('wait', 35000));
 const CRIT = { fps: 58, max: 33.4, p99: 20 };
 const SCREENS = {
@@ -230,7 +234,7 @@ function judge(tag, m, missMax) {
   // (round 112, bgcheck: the background colour on more than --bgmax of a frame's samples; frame rate or not)
   if (m.bg && m.bg.max > bgMax) f.push(`background ${(m.bg.max * 100).toFixed(2)}% of the screen (worst frame; ${m.bg.framesAny} of ${m.bg.frames} frames with any)`);
   // (round 113, tilesfirst: the geometric check — undrawn land in sight — over --geomax of the screen in a frame)
-  if (m.geo && m.geo.max > geoMax) f.push(`undrawn ${(m.geo.max * 100).toFixed(2)}% of the screen (geometric; ${m.geo.framesAny} of ${m.geo.frames} frames; ${m.geo.worst.join(' ')})`);
+  if (m.geo && m.geo.max > geoMax) f.push(`undrawn ${(m.geo.max * 100).toFixed(2)}% of the screen (geometric; ${m.geo.framesAny} of ${m.geo.frames} frames; ${m.geo.worst.join(' ')}; floor ${m.zoomFloor}, tile rate ${m.cal?.rate ?? '-'}/s ${m.cal?.source ?? ''}, slots ${m.tiles?.slots ?? '-'})`);
   // (round 114, covercheck: the two checks agree — the far land the pixels show (the stand-in, the flat far land) in a
   // frame is land drawn by neither the window nor a tile, which the geometric check must see too: a worst frame's far
   // share over the geometric's worst by more than --agreemax is a blind spot of the check, not a tolerance)
@@ -244,7 +248,7 @@ function judge(tag, m, missMax) {
   // (round 112, bgcheck: the background colour on more than --bgmax of a frame's samples; frame rate or not)
   if (m.bg && m.bg.max > bgMax) f.push(`background ${(m.bg.max * 100).toFixed(2)}% of the screen (worst frame; ${m.bg.framesAny} of ${m.bg.frames} frames with any)`);
   // (round 113, tilesfirst: the geometric check — undrawn land in sight — over --geomax of the screen in a frame)
-  if (m.geo && m.geo.max > geoMax) f.push(`undrawn ${(m.geo.max * 100).toFixed(2)}% of the screen (geometric; ${m.geo.framesAny} of ${m.geo.frames} frames; ${m.geo.worst.join(' ')})`);
+  if (m.geo && m.geo.max > geoMax) f.push(`undrawn ${(m.geo.max * 100).toFixed(2)}% of the screen (geometric; ${m.geo.framesAny} of ${m.geo.frames} frames; ${m.geo.worst.join(' ')}; floor ${m.zoomFloor}, tile rate ${m.cal?.rate ?? '-'}/s ${m.cal?.source ?? ''}, slots ${m.tiles?.slots ?? '-'})`);
   // (round 114, covercheck: the two checks agree — the far land the pixels show (the stand-in, the flat far land) in a
   // frame is land drawn by neither the window nor a tile, which the geometric check must see too: a worst frame's far
   // share over the geometric's worst by more than --agreemax is a blind spot of the check, not a tolerance)
@@ -357,7 +361,7 @@ for (const sk0 of screens) {
       if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) fails.push(`${sk}: console error ${m.text().slice(0, 200)}`);
     });
     // (a fixed spot, world, time of day and season; nothing saved or loaded)
-    const u = `${url}/?bgcheck=1&skipmenu=1&level=atlas&tutorial=0&worldsave=0&world=tilegate${mode === 'run' ? '&run=bell' : '&at=15024,14337'}${mode === 'w384' ? '&win=384' : ''}&tod=0.42&day=100000&season=0.3&hitch=1&hitchhud=0${sc.q}${extra}`;
+    const u = `${url}/?bgcheck=1&skipmenu=1&level=atlas&tutorial=0&worldsave=0&world=tilegate${mode === 'run' ? '&run=bell' : '&at=15024,14337'}${mode === 'w384' ? '&win=384' : ''}&tod=0.42&day=100000&season=0.3&hitch=1&hitchhud=0${sc.q}${tileRate ? `&tilerate=${tileRate}` : ''}${extra}`;
     await p.goto(u, { waitUntil: 'load' });
     // (the level made — its boot marks, src/perf/boot-marks.ts — then --wait ms as before)
     await p.waitForFunction(() => (window.__boot?.at['level-ready'] && window.reclaimed?.stream && window.reclaimed?.scene) || document.querySelector('.fatal'), { timeout: 240000, polling: 250 });
