@@ -20361,3 +20361,50 @@ incremental re-trace, not a new system.
   geometric.
 - **The streamline readback** (question 5) is a new transfer: edit-rate, KB-sized.
 - **Off-screen trips by clock** are not in this rewrite. They wait on the measurement §12 asks for.
+
+## 2026-11-06 — round 128p (`onetown`, DA-A13): approved; the step-0 design (the road generator's prototype)
+
+The user approved DA-A13 (DECISIONS round 128p) and added: "CPU readbacks are ok as long as they can be async … my one
+concern is converting into terrain columns might be slower without a GPU resident regular grid. It is harder to find
+where we are with a simple math expression … my one worry here is that the player will have less control over look
+(unless adjacent tiles of the same type can still merge). So it requires a human pass too." So, before code:
+
+1. **A regular base lattice stays** [CHEAP]. Each town has a square lattice of 4 m cells in its own frame (turned to
+   its grid field's angle, §3). Which cell a column is in is `floor` of its frame coordinates, then a local correction
+   among the 3 × 3 neighbours. Lattice vertices get **bounded offsets** (at most 0.45 of a cell) so cell edges bend
+   onto the road edges and the jitter reads Townscaper-like. It is still the same lattice, so lookup is O(1). This is
+   what replaces the irregular LotGrid for roads-first towns.
+   - The traced roads live in continuous space (curve shapes). They **claim lattice cells**: a cell whose centre lies
+     within the road's claim half-width (2 m: the whole 4 m cell). The drawn road inside is narrower by kind
+     (DECISIONS round 128p).
+   - **Blocks are the connected unions of unclaimed cells** (lot cutting comes in step 1). Rasterising and the
+     components run on the GPU. Step 0 measures their cost.
+2. **Same-type neighbours still merge** (Town's rule, unchanged). Painting tiles, drawn roads and dragged areas work
+   together. The generator proposes, and the player reshapes: a drawn road is a field constraint plus a fixed line.
+3. **Readbacks are async.** The polyline and claim readback is one mapAsync after the generation's submit. Nothing
+   waits on it in a frame.
+4. **A human pass.** Step 0's output goes to the user as play-zoom shots, a map preview and a link, before step 1.
+
+**The step-0 algorithm** (`src/roadgen/`; `shaders/roadgen.wgsl`):
+
+- **Field.** One thread per lattice node (2 m) sums the basis tensors (a, b) = m (cos 2φ, sin 2φ):
+  - contours: φ along the contour, m = slope / ROAD_GRADE. Contours dominate exactly where the land is steeper than a
+    road may climb;
+  - the grid: φ = θ, m = 1;
+  - radial round the centre: tangential, m = exp(−d²/2σ²);
+  - constraints (drawn and atlas roads): the tangent of the nearest segment, m = 2 exp(−d²/2σ²).
+- **Tracing.** Evenly spaced streamlines (Jobard and Lefer), in rounds. Each seed is a thread. It traces both ways
+  (RK2, 1 m steps) along the family's eigenvector, and stops at:
+  - the town's edge;
+  - water;
+  - a degenerate field;
+  - within d/2 of a committed line of its family (it snaps onto it: a T-junction);
+  - closing on its own start (a ring).
+
+  Then one thread commits the round's lines in seed order (later lines truncate on earlier ones: deterministic), and
+  seeds come from each new line every d at ±d across. Rounds are bounded by geometry (the diagonal / d + 2).
+  Majors come first, then minors seeded along the majors. Steep steps (grade over 1 in 3) are flagged: stairs in
+  town, later.
+- **Incremental.** An edit's rectangle has its field recomputed. The lines through it are removed and re-traced from
+  their own seeds plus the new constraint's, against the lines kept.
+- **The CPU reference** (`roadgen/cpu.ts`) runs the same rounds for the unit tests.
