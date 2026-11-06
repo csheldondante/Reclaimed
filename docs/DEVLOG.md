@@ -18143,3 +18143,35 @@ Agents and editors drifted files between CRLF, LF and mixed (261 CRLF, 911 LF, 1
   sleeping chunks fades without the page going stale (groundAt's drift may lag on chunks that sleep); a column apply
   makes every page stale (applies are per build event); `world.town()`'s ground still reads an unread column as 0
   (the sandbox's editor town, not the fortress).
+
+## 2026-11-05 — round 128o (`phonefix`, DA-B5): the sandbox's frame reads off in fortress play; 30 fps while planning or paused
+
+- Why: DESIGN.md §24 ("no per-frame or timed GPU→CPU readback in play"; decided 2026-11-05, "Cap at 30 fps while
+  building or paused" — the user: "It makes sense for a mobile game"). The level's frame read the window back on
+  timers for the sandbox valley's own systems, in fortress play too.
+- The reads are one object now, `ValleyReads` (scenes/level/valley-reads.ts), made for the sandbox and dropped by
+  `startFortress` — a mode, not ifs in the frame: the wind field 4 Hz (~400 KB a read at q=low), the particle counters
+  2 Hz (16 B), veg and water 1 Hz (400 KB each). Each read made and destroyed a buffer of its own (WorldCore.readBuffer).
+- What fortress play loses as inputs (for the user to check by ear and eye):
+  - audio: the ambient bed's birdsong and insects (living land round the view), running water and frogs (valley.ts
+    `hearing`: lifeNear, flow, frogs go to 0; the rain bed stays — it's from the storms, not a read); the wash's plinks
+    (grime blown into water); the inhabitants' `waterAt` answers 0 (?life= only);
+  - storms: they no longer feel the wind the player painted (weather.windField keeps its last read from before the
+    fortress, if any); the map's own wind and the storms' own movement are unchanged. DA-B6 gives them a GPU reduction;
+  - Nature: smoke dispersed and grime washed no longer pay it (the fortress has no Nature).
+- Left, with options (not this row: each is a design call):
+  - the level's surface, 1 Hz (400 KB at 320²): `scene.heightAt` (the camera's ground, the fortress's ground and its
+    pieces, the raiders, places, structures) answers from it, synchronously, with the generated map before the first
+    read. The GPU makes a chunk's surface words only when it wakes, so the mirror's pages can't simply replace it.
+    Options: (a) `scene.heightAt` from the mirror's surface pages, the generated map answering for chunks that never
+    ran (one copy: a page seeded from the map until its chunk runs); (b) the camera's ground as a one-texel GPU query
+    and the fortress keeping its first read plus its own edits; (c) keep it until the pages work (DA-P*);
+  - the water's settling, 2 Hz (8 KB: the change per chunk, sim/sleep.ts holdUnsettled keeps unsettled water awake):
+    the world's sleep, not the sandbox's; to go when the hold is decided on the GPU (an indirect wake list).
+- Measured (desktop proxy as for DA-B1, fortressperf.mjs `work: true`): after Build 3.5 MB/s of reads (agents' sync
+  3.1, surface 0.4, the rest < 0.02), from 8.5; plan mode 2.6 MB/s (agents' sync 2.1, surface 0.4). The cap: the
+  scene's frames counted round `scene.frame` in the lab on a 100 Hz display — planning 33 fps, playing 99, paused 32
+  (every third display frame: 100 Hz has no 30). The phone bench is the user's.
+- Hacks and limits: the cap runs a frame once the cap's interval less half a display frame has passed (nearest display
+  frame); "building" read as the fortress's Plan mode (placing, time stopped), not Build (the builders at work) — the
+  user to confirm.

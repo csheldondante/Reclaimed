@@ -38,6 +38,8 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: F
   if (!id) throw new Error('?fortress=1 needs ?town= (the town that becomes the fortress)');
   const S = win;
   if (!S) throw new Error('?fortress=1 needs the atlas level (or the lab: ?level=lab)');
+  // (round 128o, DA-B5: fortress play — the sandbox valley's reads for its Nature, storms and ambience stop)
+  scene.valleyReads = null;
   // (its people are the fortress's builders — FortressLife — not a SettlementLife: never both, they share fields)
   const rec = st.pin(id, true);
   for (const [k, v] of Object.entries(START_STORES)) {

@@ -58,6 +58,8 @@ export interface Host {
 export interface Scene {
   /** @param dt real seconds since last frame (clamped) */
   frame(now: number, dt: number): void;
+  /** (round 128o, DA-B5) the most frames a second it wants now (scenes/frame-cap.ts); none: every display frame */
+  maxFps?(): number | null;
   resize(renderW: number, renderH: number, cssW: number, cssH: number): void;
   dispose(): void;
 }

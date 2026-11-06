@@ -21,6 +21,7 @@ import { pageBenchBoot, pageBenchDevice, pageBenchMode, pageBenchRun, pageBenchS
 import { bootMark } from './perf/boot-marks';
 import { freshStart } from './fresh-start';
 import { startReadStats } from './perf/readstats';
+import { frameDue } from './scenes/frame-cap';
 import { benchGpu, benchGpuUp, benchLevel, benchLoadingNote, benchMode, benchSkip, benchStageNote, benchStandalone, benchWatchdog } from './perf/bench';
 
 // A few broad quality tiers (design doc §10), chosen explicitly — no auto-detection heuristics.
@@ -213,6 +214,8 @@ async function main() {
   const pace = params.get('pace') !== '0';
   let inFlight = 0;
   let last = performance.now();
+  /** the display's last frame (round 128o: a capped scene's pacing, scenes/frame-cap.ts) */
+  let lastRaf = last;
   let firstFrame = '';
   // (round 114, framepace) the loop stops only loudly. The phone's v8 bench rendered nothing from mid-step on with no
   // error said: either a frame threw (the loop isn't re-armed) or the GPU never finished two frames (every rAF held).
@@ -229,6 +232,14 @@ async function main() {
     showFatal(msg);
   };
   const frame = (now: number) => {
+    // (round 128o, DA-B5: a scene capped — the fortress planned, the game paused — skips display frames to its rate)
+    const cap = scene?.maxFps?.() ?? null;
+    const interval = now - lastRaf;
+    lastRaf = now;
+    if (cap && !frameDue(now - last, interval, cap)) {
+      requestAnimationFrame(frame);
+      return;
+    }
     if (pace && inFlight >= (pacer?.maxInFlight ?? 2)) {
       hitch?.rec?.heldFrame();
       pacer?.held();

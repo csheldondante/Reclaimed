@@ -210,8 +210,8 @@ export function hearing(scene: LevelScene): { rain: number; rainPan: number; flo
   let n = 0;
   // water with green around it (frogs; round 20)
   let frogs = 0;
-  const veg = scene.vegCache;
-  const wat = scene.waterCache;
+  const veg = scene.valleyReads?.veg;
+  const wat = scene.valleyReads?.water;
   for (let j = -4; j <= 4; j++)
     for (let i = -4; i <= 4; i++) {
       const x = Math.floor(cx + (i / 4) * R);

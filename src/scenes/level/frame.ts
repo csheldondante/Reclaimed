@@ -173,29 +173,9 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
   core.pollution += (health.pollution - core.pollution) * Math.min(1, dt * 0.5);
   scene.life += (health.life - scene.life) * Math.min(1, dt * 0.5);
   scene.nature.update(simDt, stats);
-  // oil smoke the wind has torn apart pays Nature back (GPU counter, ~2 Hz)
-  // storms feel the painted wind (CPU copy of the field, ~4 Hz)
-  scene.fieldRefresh -= dt;
-  if (scene.fieldRefresh <= 0) {
-    scene.fieldRefresh = 0.25;
-    void core.readWindField().then((f) => (core.weather.windField = f), ignoreTeardown);
-  }
-  scene.smokeRefresh -= dt;
-  if (scene.smokeRefresh <= 0) {
-    scene.smokeRefresh = 0.5;
-    void core.readBuffer('particleCounters').then((f) => {
-      const u = new Uint32Array(f.buffer);
-      const n = u[2];
-      if (scene.smokeSeen >= 0 && n > scene.smokeSeen) scene.nature.smokeDispersed(n - scene.smokeSeen);
-      scene.smokeSeen = n;
-      // grime blown into water washes away: plinks and a little Nature
-      if (scene.washedSeen >= 0 && u[3] > scene.washedSeen) {
-        scene.nature.grimeWashed(u[3] - scene.washedSeen);
-        scene.audio.wash(u[3] - scene.washedSeen);
-      }
-      scene.washedSeen = u[3];
-    }, ignoreTeardown);
-  }
+  // (round 128o, DA-B5) the sandbox valley's reads — the painted wind for its storms, smoke and grime for its Nature,
+  // veg and water for its ambience — none in fortress play (level/valley-reads.ts)
+  scene.valleyReads?.frame(dt);
 
   scene.lensK += ((scene.lensOn ? 1 : 0) - scene.lensK) * Math.min(1, dt * 8);
   const lc = scene.hoverWorld ?? [camera.target[0], camera.target[1]];
@@ -362,12 +342,6 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
     audio.groan(near * holding);
   }
   const light = core.light;
-  scene.audioRefresh -= dt;
-  if (scene.audioRefresh <= 0) {
-    scene.audioRefresh = 1;
-    void core.readBuffer('veg', true).then((f) => (scene.vegCache = f));
-    void core.readBuffer('water', true).then((f) => (scene.waterCache = f));
-  }
   const drag = powers.dragWind();
   audio.dragWind(drag ? Math.min(1, drag.strength / 15) : 0, drag ? camera.project(drag.x, drag.y, 0)[0] / camera.viewportW : 0.5);
   // one roar: the loudest cyclone (nearest and strongest) sets it

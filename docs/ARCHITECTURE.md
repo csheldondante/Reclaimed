@@ -2552,6 +2552,15 @@ cheap pool of light ("Yes absolutely enough"). One concern a file:
   `sources` (simTick, slowSystems, io, counters) are lent by whoever reads it (the bench); it changes nothing.
   `report(mark)` = per frame: interval, rAF lag, CPU, rAF to last submit, submit to done, frames in flight, GPU span,
   the gap between frames' GPU work, sim ticks, which counters moved; the slow frames against the rest.
+- **The frame cap** (round 128o, DA-B5; DESIGN.md §24 "Cap at 30 fps while building or paused"): a Scene may say
+  `maxFps()`; main.ts skips display frames until `frameDue` (scenes/frame-cap.ts: the cap's interval less half a
+  display frame), so 60 Hz runs every other frame, 120 Hz every fourth, 100 Hz every third (33 fps). The level caps
+  at 30 while the fortress is planned (`fortress.mode === 'plan'`) or the game is paused (`speed === 0`). The lab's
+  driven frames (lab.run) aren't capped.
+- **The sandbox valley's reads** (round 128o, DA-B5; scenes/level/valley-reads.ts `ValleyReads`): the wind field 4 Hz
+  (weather.windField: storms feel the painted wind), the particle counters 2 Hz (Nature's smoke and grime, audio.wash),
+  veg and water 1 Hz (the ambience: valley.ts `hearing`; the inhabitants' `waterAt`). One object on the level
+  (`scene.valleyReads`), made for the sandbox and dropped by `startFortress`: none of these run in fortress play.
 - **The judge's inputs** (integrity.ts): edits, cuts, watches, lightning, cyclones and the first window's structures
   seed it; land that comes in with a slide does not (round 100). A pass judges structure boxes for at most 8 ms.
 - **The world API's mirror** (api/mirror.ts, round 100; round 128o: by pages when asked, "The world API" above):

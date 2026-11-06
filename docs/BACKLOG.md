@@ -35,7 +35,7 @@ The user: "Please work on making the code match the design which is a lot cleane
 | DA-B2 | Unit sync becomes GPU events plus watched units through a persistent staging ring (§11, §24) | M | next |
 | DA-B3 | Incremental town edits: rebuild only changed structures; no rebuild on unchanged reach answers; < 4 ms an edit on desktop (§5, §24) | M | next |
 | DA-B4 | Reach solve converges on the GPU; one small read per edit (§13) | M | next |
-| DA-B5 | Fortress-mode sandbox frame reads off; 30 fps cap while building or paused (§24) | S | next |
+| DA-B5 | Fortress-mode sandbox frame reads off; 30 fps cap while building or paused (§24) | S | done (`phonefix`, round 128o: wind 4 Hz, counters 2 Hz, veg + water 1 Hz off in fortress play (`ValleyReads`); 30 fps while planning or paused. Left: the level's surface read 1 Hz and the water settling read 2 Hz, options in DEVLOG) |
 | DA-B6 | GPU tree query for woodcutters (no veg readback); GPU wind reduction for storms (no wind-texture readback) (§24) | M | next |
 | DA-L1 | One run clock for economy, day/night, raids and cards (§21) | M | open |
 | DA-L2 | Mana ledger that can be spent (§14) | S | open |
