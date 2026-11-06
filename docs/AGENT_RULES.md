@@ -29,6 +29,15 @@ design."
   recomputing each tick.
 - Never trim a rate, add a cap or skip frames to hide a cost: remove the cause.
 
+## 1c. Representations are costs to justify
+The user: "At one point the agent converted columns to voxels for meshing (for example). So just be mindful of expensive
+representations and why they are needed and if alternatives have been considered."
+- The world's native form is columns of intervals (DESIGN §1). Work on it directly where you can.
+- A new or converted representation (voxels, dense grids, meshes, CPU mirrors, per-cell copies) needs a line in the design
+  note: why the native form can't serve, its size and rebuild cost, how often it is rebuilt, and the alternatives
+  considered. Convert only at a boundary, only the region that needs it, and keep one source of truth.
+- Flag existing expensive conversions you meet in the report, with what could replace them.
+
 ## 2. The riskiest part first
 In the first hour, before the rest of the feature:
 - **Performance:** a toggle diff (frame time with the feature on and off) at 412x915, `?q=low`, in the `town` lab recipe

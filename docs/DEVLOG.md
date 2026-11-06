@@ -18104,13 +18104,15 @@ matters is now in one table and a new one is a test failure.
   functions with `mapAsync`, 8 wrappers), 41 marked `violates`, 27 of them in default fortress play. Copies: 47 calls in
   32 entries, 24 large, 6 marked. Uploads: 203 calls in 127 entries, 46 large, 1 marked.
 - The worst, in default fortress play: the edit brush and the structure pass each copy the whole layers buffer
-  (16-25 MB) back every tick on desktop (`?inplace=1` is only set on the phone tier; new row DA-B8); unit sync every
+  (16-25 MB) back every tick on desktop (`?inplace=1` is only set on the phone tier; DA-B8, new row DA-B14); unit sync every
   frame (DA-B2); physics body stats every tick (DA-E5); every CPU body's voxels re-uploaded every frame (up to 512 KB,
-  DA-E5); the coarse world's 8 MB grid copied back every 4th frame (new DA-B9); the whole wind field copied while any
-  body exists (new DA-B10); the mirror's 250 ms timer, started by whichever of 16 callers comes first, Build among them
+  DA-E5); the coarse world's 8 MB grid copied back every 4th frame (new DA-B15); the whole wind field copied while any
+  body exists (new DA-B16); the mirror's 250 ms timer, started by whichever of 16 callers comes first, Build among them
   (DA-B1); the FieldReader's ~5 MB every 500 ms (DA-B1); the sandbox frame's surface, veg, water, particle and wind
-  reads (DA-B5, DA-B6); reach re-asked every 3 s (DA-A3); the mesh pool and instance counts (DA-P8). New row DA-B7
+  reads (DA-B5, DA-B6); reach re-asked every 3 s (DA-A3); the mesh pool and instance counts (DA-P8). New row DA-B13
   holds the timed reads no other row covered (the 400 ms region-save sweep, creatures' group sums, the menu's dust).
+- Rows renumbered after merging `fortress`, whose own transfers audit added DA-B7..B12 meanwhile: the whole-shadow copy
+  maps to DA-B7, the edit pass's copies to DA-B8, Integrity's whole-layers copy after each slide to DA-B12.
 - Also marked, though event-driven: whole-buffer reads after edits (Integrity's 16 MB copy after each slide, the
   physics wake's layers per touch, the vertical slide), against §24's "small".
 - Hacks and limits: the gate is lexical. It can't size a transfer whose size isn't a constant in the call, so those are
