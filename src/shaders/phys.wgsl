@@ -137,7 +137,8 @@ fn sleeping(i: u32) -> bool {
 @group(0) @binding(29) var<storage, read_write> fragHead: array<atomic<u32>>;
 // how fast a voxel in lava takes its heat (share a second)
 const LAVA_HEAT: f32 = 1.5;
-// air shoved by voxels landing (finalize; windfield.wgsl): per wind texel (2 cells), ×1000
+// air shoved by voxels landing (finalize; windfield.wgsl): per wind texel (2 cells), ×1000; then (DA-B16) the box of
+// the texels shoved, four words
 @group(0) @binding(27) var<storage, read_write> puff: array<atomic<u32>>;
 
 /** Mark cell z of the column under w as holding a voxel. */
@@ -582,6 +583,13 @@ fn finalize(@builtin(global_invocation_id) id: vec3<u32>) {
       let ww = (G.mapW + 1u) / 2u;
       if (all(wt >= vec2<i32>(0)) && u32(wt.x) < ww && u32(wt.y) < (G.mapH + 1u) / 2u) {
         atomicAdd(&puff[u32(wt.y) * ww + u32(wt.x)], u32(min(hit - PUFF_V, 25.0) * 100.0 * face));
+        // (DA-B16) and the box of this tick's shoves, in the four words after the texels (min as 65535 − x, max + 1:
+        // all 0, none) — the wind field updates round it, not the whole field
+        let tail = ww * ((G.mapH + 1u) / 2u);
+        atomicMax(&puff[tail], 65535u - u32(wt.x));
+        atomicMax(&puff[tail + 1u], 65535u - u32(wt.y));
+        atomicMax(&puff[tail + 2u], u32(wt.x) + 1u);
+        atomicMax(&puff[tail + 3u], u32(wt.y) + 1u);
       }
       let seed = hash3(i, PU.c.z, 0x2c1bu);
       if (f32(seed >> 24u) < min((hit - PUFF_V) * 6.0, 120.0) * face) {

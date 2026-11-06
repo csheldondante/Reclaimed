@@ -67,7 +67,7 @@ const RIVER_WET_CELLS: f32 = ${RIVER_WET_CELLS};
 import { settleLand, SLEEP_MORE } from './sleep';
 import { FLOW_SUB, WIND_K, fieldPass, fieldPeriod, flowConst, flowN } from './flow';
 import { LIVE, NEAR, SIM_CULL, cullKernel, dispatchTiles } from './cull';
-import { WindRects } from './windrect';
+import { LIFE_S, WindRects } from './windrect';
 import { EventKind, MAX_EVENTS, type GlobalsState, type WorldEvent } from './globals';
 import { BLOW_TAG, EditBusy, OP, editOpOf } from './edit-ops';
 
@@ -487,6 +487,17 @@ export class WindFieldSystem implements SimSystem {
   private k: ComputeKernel;
   /** (round 104, simscale) a uniform and its bind group per dispatch of a tick: the painted box, the band, strips */
   private slots: { buf: GPUBuffer; group: GPUBindGroup }[] = [];
+  /** (DA-B16) the painted box made on the GPU (the CPU's and things landing's: windfield.wgsl windBox), its args and
+   *  corners (wbox), the shove's stamp, its input; the box's run and its copy into the field */
+  private boxK: ComputeKernel;
+  private copyK: ComputeKernel;
+  private boxGroup: GPUBindGroup;
+  private copyGroup: GPUBindGroup;
+  private wbox: GPUBuffer;
+  private boxIn: GPUBuffer;
+  private boxRun: { buf: GPUBuffer; group: GPUBindGroup };
+  /** the window's slide since the last update (texels): the GPU's stamp goes with the land */
+  private slid: [number, number] = [0, 0];
   /** where the painted wind is (sim/windrect.ts); null: ?windbox=0, the whole field every update as before */
   readonly rects: WindRects | null;
   /** (simscale) while any says so, the whole field is painted (physics: things landing shove the air anywhere) */
@@ -503,15 +514,28 @@ export class WindFieldSystem implements SimSystem {
     this.tw = world.windField.width;
     this.th = world.windField.height;
     this.k = makeCompute(device, 'windfield', [commonWgsl, materialsWgsl, `const WIND_K: f32 = ${WIND_K}.0;
-` + windFieldWgsl], { 0: 'uniform', 2: 'uniform', 15: 'tex', 16: 'stex', 30: 'read', 31: 'read', 32: 'uniform' });
+` + windFieldWgsl], { 0: 'uniform', 2: 'uniform', 15: 'tex', 16: 'stex', 30: 'read', 31: 'read', 32: 'uniform', 33: 'read' });
     this.rects = WIND_BOX ? new WindRects(this.tw, this.th, FLOW_SUB) : null;
+    const parts = [commonWgsl, materialsWgsl, `const WIND_K: f32 = ${WIND_K}.0;
+` + windFieldWgsl];
+    const w = world;
+    this.wbox = device.createBuffer({ label: 'windfield box', size: 32, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_SRC });
+    const stamp = device.createBuffer({ label: 'windfield shove stamp', size: 32, usage: GPUBufferUsage.STORAGE });
+    this.boxIn = device.createBuffer({ label: 'windfield box in', size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.boxK = makeCompute(device, 'windfield-box', parts, { 0: 'uniform', 15: 'tex', 30: 'read', 34: 'rw', 35: 'rw', 36: 'uniform' }, 'windBox');
+    this.boxGroup = makeBindGroup(device, 'windfield-box', this.boxK.layout, { 0: w.globals, 15: w.windFieldView, 30: w.physPuff, 34: stamp, 35: this.wbox, 36: this.boxIn });
+    this.copyK = makeCompute(device, 'windfield-copy', parts, { 0: 'uniform', 33: 'read', 37: 'tex', 38: 'stex' }, 'windCopy');
+    this.copyGroup = makeBindGroup(device, 'windfield-copy', this.copyK.layout, { 0: w.globals, 33: this.wbox, 37: w.windFieldNextView, 38: w.windFieldView });
+    const rb = device.createBuffer({ label: 'windfield box run', size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(rb, 0, new Uint32Array([0, 0, 0, 1]));
+    this.boxRun = { buf: rb, group: makeBindGroup(device, 'windfield box run', this.k.layout, { 0: w.globals, 2: w.materials, 15: w.windFieldView, 16: w.windFieldNextView, 30: w.physPuff, 31: w.windBlows, 32: rb, 33: this.wbox }) };
   }
   private slot(i: number): { buf: GPUBuffer; group: GPUBindGroup } {
     let s = this.slots[i];
     if (!s) {
       const buf = this.device.createBuffer({ label: `windfield rect ${i}`, size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
       const w = this.world;
-      s = { buf, group: makeBindGroup(this.device, `windfield ${i}`, this.k.layout, { 0: w.globals, 2: w.materials, 15: w.windFieldView, 16: w.windFieldNextView, 30: w.physPuff, 31: w.windBlows, 32: buf }) };
+      s = { buf, group: makeBindGroup(this.device, `windfield ${i}`, this.k.layout, { 0: w.globals, 2: w.materials, 15: w.windFieldView, 16: w.windFieldNextView, 30: w.physPuff, 31: w.windBlows, 32: buf, 33: this.wbox }) };
       this.slots[i] = s;
     }
     return s;
@@ -534,6 +558,8 @@ export class WindFieldSystem implements SimSystem {
     const tx = Math.round(dx / 2);
     const ty = Math.round(dy / 2);
     this.rects?.shift(tx, ty);
+    this.slid[0] += tx;
+    this.slid[1] += ty;
     if (tx > 0) this.fresh.push([this.tw - tx, 0, this.tw, this.th]);
     if (tx < 0) this.fresh.push([0, 0, -tx, this.th]);
     if (ty > 0) this.fresh.push([0, this.th - ty, this.tw, this.th]);
@@ -554,9 +580,25 @@ export class WindFieldSystem implements SimSystem {
       return;
     }
     let i = 0;
-    // the painted wind, where it is
+    // the painted wind, where it is: the CPU's box (strokes, blows, ripples) and, on the GPU, round where things landed
+    // lately (DA-B16: it was the whole field while any physics body existed)
     const box = (this.lastBox = this.rects.box(tick));
-    if (box) this.run(enc, i++, box, 0);
+    const bi = new ArrayBuffer(32);
+    new Int32Array(bi, 0, 4).set(box ?? [0, 0, 0, 0]);
+    new Float32Array(bi, 16, 4).set([tick * FLOW_SUB, LIFE_S * 60, this.slid[0], this.slid[1]]);
+    this.slid = [0, 0];
+    this.device.queue.writeBuffer(this.boxIn, 0, bi);
+    dispatch(enc, this.prof, 'windfield-box', this.boxK, this.boxGroup, [1, 1]);
+    const pass = enc.beginComputePass({ label: this.name, timestampWrites: this.prof.timestamps(this.name) });
+    pass.setPipeline(this.k.pipeline);
+    pass.setBindGroup(0, this.boxRun.group);
+    pass.dispatchWorkgroupsIndirect(this.wbox, 0);
+    pass.end();
+    const cp = enc.beginComputePass({ label: 'windfield-copy', timestampWrites: this.prof.timestamps('windfield-copy') });
+    cp.setPipeline(this.copyK.pipeline);
+    cp.setBindGroup(0, this.copyGroup);
+    cp.dispatchWorkgroupsIndirect(this.wbox, 0);
+    cp.end();
     // the map's own wind under it everywhere else: a band an update (all of it every WIND_BANDS updates), and the
     // land just come in at once
     const rows = Math.ceil(this.th / WIND_BANDS);

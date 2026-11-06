@@ -15,6 +15,8 @@ import coarseW from './coarse.wgsl?raw';
 const CELL_FLOATS = 8;
 const UNI_BYTES = 208;
 const MAX_VENTS = 8;
+/** (DA-B15) cells a tile side: the step runs over live tiles only (coarse.wgsl TILE) */
+const TILE = 8;
 export const EV = { meteor: 1, ash: 2, cone: 3 } as const;
 
 export interface CoarseEvent {
@@ -57,9 +59,21 @@ export class Coarse {
   private kFlux?: ComputeKernel;
   private kDepth?: ComputeKernel;
   private kEvent?: ComputeKernel;
+  private kList?: ComputeKernel;
+  private kCopy?: ComputeKernel;
   private gFlux?: GPUBindGroup;
   private gDepth?: GPUBindGroup;
   private gEvent?: GPUBindGroup;
+  private gList?: GPUBindGroup;
+  private gCopy?: GPUBindGroup;
+  /** (DA-B15) the live tiles: marks the next list reads (an event's, the last step's rolled over), the step's own
+   *  marks, the list and its dispatch args (x: live tiles; y, z: 1) */
+  private actIn: GPUBuffer;
+  private actOut: GPUBuffer;
+  private list: GPUBuffer;
+  private args: GPUBuffer;
+  /** the rain, evaporation and erosion the live tiles were judged under: a change makes every tile live a step */
+  private judged = '';
   readonly vents: { x: number; y: number; rate: number; r: number; steps: number }[] = [];
   /** rain and evaporation a step (cells of water), and how hard running water wears the ground (0: not at all) */
   rain = 0;
@@ -77,8 +91,10 @@ export class Coarse {
     readonly cn: number,
     readonly worldW: number,
     readonly worldH: number,
+    /** (DA-B15) step only the live tiles; false: every tile every step (the reference the tests hold it to) */
+    readonly cull = true,
   ) {
-    if (cn & (cn - 1)) throw new Error('the coarse grid must be a power of two');
+    if (cn & (cn - 1) || cn < TILE) throw new Error(`the coarse grid must be a power of two, ${TILE} or more`);
     const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
     const N = cn * cn;
     const mk = (label: string, bytes: number) => device.createBuffer({ label: `coarse ${label}`, size: bytes, usage: S });
@@ -89,6 +105,12 @@ export class Coarse {
     this.fL = mk('flux lava', N * 16);
     this.fT = mk('flux loose', N * 16);
     this.uni = device.createBuffer({ label: 'coarse params', size: UNI_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    const T = (cn / TILE) ** 2;
+    this.actIn = mk('live in', T * 4);
+    this.actOut = mk('live out', T * 4);
+    this.list = mk('live list', T * 4);
+    this.args = device.createBuffer({ label: 'coarse live args', size: 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
+    device.queue.writeBuffer(this.args, 0, new Uint32Array([0, 1, 1, 0]));
   }
 
   /** world units a cell, across and down */
@@ -121,14 +143,18 @@ export class Coarse {
     this.device.queue.writeBuffer(this.base, 0, base);
     const dev = this.device;
     const m = makeModule(dev, 'coarse', [coarseW]);
-    [this.kFlux, this.kDepth, this.kEvent] = await Promise.all([
-      makeComputeAsync(dev, 'coarse flux', m, { 0: 'uniform', 1: 'read', 2: 'read', 4: 'rw', 5: 'rw', 6: 'rw' }, 'cFlux'),
-      makeComputeAsync(dev, 'coarse depth', m, { 0: 'uniform', 1: 'read', 2: 'read', 3: 'rw', 4: 'rw', 5: 'rw', 6: 'rw' }, 'cDepth'),
-      makeComputeAsync(dev, 'coarse event', m, { 0: 'uniform', 3: 'rw' }, 'cEvent'),
+    [this.kFlux, this.kDepth, this.kEvent, this.kList, this.kCopy] = await Promise.all([
+      makeComputeAsync(dev, 'coarse flux', m, { 0: 'uniform', 1: 'read', 2: 'read', 4: 'rw', 5: 'rw', 6: 'rw', 7: 'read' }, 'cFlux'),
+      makeComputeAsync(dev, 'coarse depth', m, { 0: 'uniform', 1: 'read', 2: 'read', 3: 'rw', 4: 'rw', 5: 'rw', 6: 'rw', 7: 'read', 8: 'rw' }, 'cDepth'),
+      makeComputeAsync(dev, 'coarse event', m, { 0: 'uniform', 3: 'rw', 9: 'rw' }, 'cEvent'),
+      makeComputeAsync(dev, 'coarse list', m, { 0: 'uniform', 9: 'rw', 10: 'rw', 11: 'rw' }, 'cList'),
+      makeComputeAsync(dev, 'coarse copy', m, { 0: 'uniform', 2: 'read', 3: 'rw', 7: 'read' }, 'cCopy'),
     ]);
-    this.gFlux = makeBindGroup(dev, 'coarse flux', this.kFlux.layout, { 0: this.uni, 1: this.base, 2: this.cells, 4: this.fW, 5: this.fL, 6: this.fT });
-    this.gDepth = makeBindGroup(dev, 'coarse depth', this.kDepth.layout, { 0: this.uni, 1: this.base, 2: this.cells, 3: this.next, 4: this.fW, 5: this.fL, 6: this.fT });
-    this.gEvent = makeBindGroup(dev, 'coarse event', this.kEvent.layout, { 0: this.uni, 3: this.cells });
+    this.gFlux = makeBindGroup(dev, 'coarse flux', this.kFlux.layout, { 0: this.uni, 1: this.base, 2: this.cells, 4: this.fW, 5: this.fL, 6: this.fT, 7: this.list });
+    this.gDepth = makeBindGroup(dev, 'coarse depth', this.kDepth.layout, { 0: this.uni, 1: this.base, 2: this.cells, 3: this.next, 4: this.fW, 5: this.fL, 6: this.fT, 7: this.list, 8: this.actOut });
+    this.gEvent = makeBindGroup(dev, 'coarse event', this.kEvent.layout, { 0: this.uni, 3: this.cells, 9: this.actIn });
+    this.gList = makeBindGroup(dev, 'coarse list', this.kList.layout, { 0: this.uni, 9: this.actIn, 10: this.args, 11: this.list });
+    this.gCopy = makeBindGroup(dev, 'coarse copy', this.kCopy.layout, { 0: this.uni, 2: this.next, 3: this.cells, 7: this.list });
   }
 
   private writeUni(e?: CoarseEvent): void {
@@ -152,6 +178,10 @@ export class Coarse {
     f[14] = e?.a ?? 0;
     f[15] = e?.wind?.[0] ?? 1;
     f[16] = e?.wind?.[1] ?? 0;
+    // (DA-B15: every tile live for the first step, without culling, and when what every cell feels changed)
+    const judged = `${this.rain},${this.evap},${this.erode}`;
+    f[17] = !this.cull || judged !== this.judged ? 1 : 0;
+    if (!e) this.judged = judged;
     this.vents.forEach((v, i) => f.set([v.x, v.y, v.rate, v.r], 20 + i * 4));
     this.device.queue.writeBuffer(this.uni, 0, ab);
   }
@@ -205,20 +235,34 @@ export class Coarse {
     const t = this.timer();
     if (k === 0) {
       this.writeUni();
+      // (DA-B15: the live tiles listed, the step's flows over them)
+      enc.clearBuffer(this.args, 0, 4);
+      const lp = enc.beginComputePass({ timestampWrites: t?.timestamps('coarse-list') });
+      lp.setPipeline(this.kList!.pipeline);
+      lp.setBindGroup(0, this.gList!);
+      lp.dispatchWorkgroups(Math.ceil((g * g) / 64));
+      lp.end();
       const cp = enc.beginComputePass({ timestampWrites: t?.timestamps('coarse-flux') });
       cp.setPipeline(this.kFlux!.pipeline);
       cp.setBindGroup(0, this.gFlux!);
-      cp.dispatchWorkgroups(g, g);
+      cp.dispatchWorkgroupsIndirect(this.args, 0);
       cp.end();
     } else if (k === 1) {
       const cp = enc.beginComputePass({ timestampWrites: t?.timestamps('coarse-depth') });
       cp.setPipeline(this.kDepth!.pipeline);
       cp.setBindGroup(0, this.gDepth!);
-      cp.dispatchWorkgroups(g, g);
+      cp.dispatchWorkgroupsIndirect(this.args, 0);
       cp.end();
     } else {
-      // (the cells everything reads stay one buffer: what was made is copied back)
-      enc.copyBufferToBuffer(this.next, 0, this.cells, 0, this.cells.size);
+      // (the cells everything reads stay one buffer: the live tiles' new cells put in it — DA-B15: not the whole grid)
+      const cp = enc.beginComputePass({ timestampWrites: t?.timestamps('coarse-copy') });
+      cp.setPipeline(this.kCopy!.pipeline);
+      cp.setBindGroup(0, this.gCopy!);
+      cp.dispatchWorkgroupsIndirect(this.args, 0);
+      cp.end();
+      // (this step's marks are what the next list reads; 4 bytes a tile)
+      enc.copyBufferToBuffer(this.actOut, 0, this.actIn, 0, this.actIn.size);
+      enc.clearBuffer(this.actOut);
     }
   }
 
@@ -361,7 +405,7 @@ export class Coarse {
   }
 
   dispose(): void {
-    for (const b of [this.cells, this.next, this.base, this.fW, this.fL, this.fT, this.uni]) b.destroy();
+    for (const b of [this.cells, this.next, this.base, this.fW, this.fL, this.fT, this.uni, this.actIn, this.actOut, this.list, this.args]) b.destroy();
   }
 }
 

@@ -26,8 +26,8 @@ export function installPhysics(core: WorldCore, opts: { wakeOnTouch?: boolean } 
   const physics = new Physics(host.gpu.device, core.world, host.profiler);
   sim.systems.splice(sim.systems.indexOf(sim.particles), 0, physics);
   renderer.addVoxels(physics.inst, physics.indirect);
-  // (round 104, simscale: its voxels landing shove the air anywhere — the whole wind field updates while it holds any)
-  sim.wind.wholeWhile.push(() => physics.used > 0);
+  // (round 104, simscale; DA-B16: its voxels landing shove the air — the wind field updates round the box of the shoves,
+  // made on the GPU: windfield.wgsl windBox)
   // (and the projection every column: its voxels over them change every tick)
   sim.project.wholeWhile.push(() => physics.used > 0);
   renderer.addMesh(physics.skinOut, physics.skinArgs);

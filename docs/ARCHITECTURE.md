@@ -866,7 +866,12 @@ is `n` × `n` texels over it (2048: a texel ~8 cells).
   sediment it carries, lava (its heat) — simulated on the GPU (cFlux: what
   leaves each cell for its four neighbours; cDepth: what came, rain, the
   sea, erosion and deposition, lava cooling to basalt, vents; one buffer
-  everything reads, the step's result copied back) a step every 4th frame
+  everything reads, the step's result put back) a step every 4th frame. (DA-B15)
+  A step goes over the live 8 × 8 tiles only (cList: marked by the last step —
+  a cell changed or something flowed out — or by an event, beside one that
+  was, or under a vent; every tile the first step and when rain, evaporation
+  or erosion change), indirect dispatches; cCopy puts the live tiles' cells
+  back. At rest nothing steps
   in the level, 4 a frame in the viewer. Events (cEvent): a meteor (bowl,
   rim, ejecta of rubble), ash downwind of an eruption, a cone; `erupt` adds
   a vent. compose.wgsl `coarseAt` (bilinear) adds it to `ground` and the
@@ -1155,8 +1160,11 @@ its edge:
   (with sleepmore) and the lava's spill copy (`TileTexCopy`) run over the
   live list; lava-prep only when something's live.
   The wind field (round 104, sim/windrect.ts): painted wind updated only over
-  the box of what painted it lately (strokes, blows, ripples; all of it while
-  physics holds voxels), the map's own wind refreshed a band a tick under it.
+  the box of what painted it lately (strokes, blows, ripples: the CPU's box;
+  DA-B16: things landing — phys.wgsl writes the box of its shoves after the
+  puff texels, windfield.wgsl `windBox` keeps it as a stamp grown by reach and
+  joins the CPU's, an indirect update and `windCopy` over it), the map's own
+  wind refreshed a band a tick under it (DA-B25 open).
   WorldGpu `strBounds` / `projectAll`: the CPU's contract for the projection
   (the structures' bounds; bodyCpu written or a slide: project everything).
   The agents (round 104, agents/scope.ts): surfaces, links, fields and
@@ -1303,7 +1311,8 @@ further out ahead of the camera so we never wait for them". Three tiers under th
   lightning, chips, a fire lit, a tap to grow: `Simulation.eventTaps`), what falls and lands or comes to rest
   (`Integrity.onTouched`), the coarse world's events in sight (`editLive`). Not the sims' own drift (sediment,
   water, plants: a still region read twice differs in ~40 columns by ≤ 0.03 cells). Every region frozen, and each
-  of the window's in turn (one every `SWEEP_MS` = 400 ms; the whole window when the page is hidden), is copied into
+  of the window's touched since its last read (DA-B13: `RegionInfo.dirty`, the next in turn, one every `SWEEP_MS` =
+  400 ms at most; every changed one when the page is hidden), is copied into
   staging and read back off the frame; a changed one's columns are hashed in world z (`columnsHash`: the same land
   cut at another oz hashes the same) and it's written whole when the hash differs from what was saved. A region
   never changed is not saved: evicted, it's made again by the source when it's wanted. Nothing waits for a readback

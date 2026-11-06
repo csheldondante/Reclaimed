@@ -184,11 +184,24 @@ export function sweep(S: Streamer, all = false): boolean {
   const { W, H, R } = S;
   const spots: [number, number][] = [];
   for (let ly = 0; ly < H; ly += R) for (let lx = 0; lx < W; lx += R) spots.push([lx, ly]);
-  const pick = all ? spots : [spots[S.sweepAt++ % spots.length]];
-  // (round 104: and only what play changed, or ?rsverify — the rest is made again when it's wanted: its readback
-  // was for nothing)
-  const go = pick.filter(([lx, ly]) => !S.unwritten.some(([x, y]) => x === lx && y === ly) && (S.verify || S.winInfo.get(S.key((S.origin[0] + lx) / R, (S.origin[1] + ly) / R))?.changed));
-  // (nothing changed: a whole sweep has nothing to save — done)
+  // (round 104: only what play changed, or ?rsverify — the rest is made again when it's wanted: its readback was for
+  // nothing. DA-B13: between, only what play touched since its last read — the next such in the round, one a sweep:
+  // read after the edit, not polled — a region touched once was read back, whole, every round after)
+  const info = ([lx, ly]: [number, number]) => S.winInfo.get(S.key((S.origin[0] + lx) / R, (S.origin[1] + ly) / R));
+  const wanted = (p: [number, number]) => !S.unwritten.some(([x, y]) => x === p[0] && y === p[1]) && (S.verify || (all ? !!info(p)?.changed : !!info(p)?.dirty));
+  let go: [number, number][];
+  if (all) go = spots.filter(wanted);
+  else {
+    go = [];
+    for (let k = 0; k < spots.length; k++) {
+      const p = spots[(S.sweepAt + k) % spots.length];
+      if (!wanted(p)) continue;
+      S.sweepAt += k + 1;
+      go = [p];
+      break;
+    }
+  }
+  // (nothing touched: nothing to read)
   if (!go.length) return all;
   const dev = S.core.host.gpu.device;
   const L = S.layout;
@@ -196,6 +209,10 @@ export function sweep(S: Streamer, all = false): boolean {
   const enc = dev.createCommandEncoder({ label: 'region save' });
   go.forEach(([lx, ly], k) => S.copyOut(enc, lx, ly, stage, k * L.bytes, false));
   dev.queue.submit([enc.finish()]);
+  for (const p of go) {
+    const i = info(p);
+    if (i) i.dirty = false;
+  }
   const items = go.map(([lx, ly]) => {
     // (a region staying in the window: its CPU parts read now, with its readback)
     const it = saveItem(S, lx, ly, S.key((S.origin[0] + lx) / R, (S.origin[1] + ly) / R), true);
