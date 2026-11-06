@@ -20256,3 +20256,86 @@ its slot opening or closing starts it over (a tested piece).
 - Phone bench: the same per-stage numbers from the Pixel 9a, the deployed branch with `&agentprof=1&perf=1`. The
   perf overlay lists the passes; it has no download yet.
 - For main before any code.
+
+## 2026-11-06 — round 128o (`phonefix`, DA-B22 (b)): fast-forward — the units step in strides, the rest once a frame
+
+Why: at 16x the agents' tick was about 7.4 ms a frame on desktop, all of it per tick: relax, ride, step, draw,
+traits, 9–16 times a frame (the stage diff above). The approved design note (DESIGN §12) runs what doesn't integrate
+once a frame, and the units' step in strides. Main's gates: fight outcomes as today's, build and harvest within today's
+sim times at 16x, and the step bound measured.
+
+What:
+- `Simulation.frameTicks` and `tickOfFrame`, set by `WorldCore.advance` round its loop. `?ffwd=0` makes every tick a
+  frame of its own, which is today's behaviour: the comparison for the gates and the phone bench.
+- `SimSystem.perFrame`: render-only work runs on the frame's last tick. Sway is the first. The particle visuals are
+  DA-B30: their kernels mix gameplay kinds with look-only ones.
+- The agents:
+  - The units step every `stride` ticks and on the frame's last (`stepPlan`, agents/stepplan.ts, unit-tested). The
+    stride is the ticks the fastest kind's walk takes to cross half a cell: 9 at 60 Hz, so 2 steps at 16x.
+  - The step's dt is the ticks since the last step (AgentParams.step).
+  - A tick that doesn't step does nothing; the hits, holds, launches and regroups it would have taken wait for the
+    next step.
+  - The fields' relax, the peel and its lists, the scope, the ride and the draw run on the frame's last tick.
+  - The traits step with the units at the step's dt; statuses and corpses still last in ticks.
+  - The ride covers the frame's elapsed time (RideParams.off.z): trips advance by elapsed time, so the change carries
+    over to DA-A13's trips by clock.
+- **Sub-moves (option A, main's choice).** The first step-bound run failed. A step of 9 ticks moved a raider 0.63 of a
+  cell at 4.2 cells/s against its kind's 3.1, and workers, guards and carts also moved 10–30% over their kinds' speeds:
+  crowd and wind pushes, blows' knock-back, running alight. Kind speed does not bound a unit's motion. So the step now
+  moves a unit in sub-moves:
+  - each at most half a cell across (SUB_MOVE): walking, each sub-move into a column linked to the last;
+  - when tumbling, gravity, walls and landings run a sub-move at a time, and each sub-move falls less than
+    floorUnder's reach (SUB_FALL 0.25 < 0.3).
+  - The forces and the mind still run once a step.
+  - The stride stays a cost choice: most steps take one sub-move.
+- **The fields' sweeps.** On the first gate run the walled raid at 16x ran late: the gates shut at t≈94–151 s against
+  50–84, and the houses torched near the end never burned (burned 0 against 2). A sweep carries a field's front one
+  step on, so with a tick's sweeps once a frame the fields reached 16 times slower in sim time. Now the frame's last
+  tick runs a tick's sweeps for every tick of the frame (`frameSweeps`). A converged front is empty and its relax
+  dispatches no workgroups, so the cost stays low.
+- The hitch report (`?hitch=1`, its download button) gains a `passes` table: each GPU pass's ms a frame, its frames
+  and its most. With `&agentprof=1` the agents' stages are listed apart, so the phone bench downloads the per-stage
+  numbers.
+- Tumbling units move to the physics engine later (DA-E6); until then, sub-moves are the right bound.
+
+Gates (lab, desktop Intel Xe, `--flags "&ffwd=0"` against fast-forward):
+
+| gate | `?ffwd=0` (today) | fast-forward |
+| --- | --- | --- |
+| step bound, stepbound.mjs: 600 one-stride steps of a walled raid with 4 soldiers | — | most a step moved: worker 0.36, guard 0.41, cart 0.25, raider 0.47 cells; steps needing 2 sub-moves: 0 to 0.05% (raiders) |
+| throws at a wall, throwwall.mjs: 15 throws, 8–60 cells/s, 3 angles, 16x and 32x | inside the land: 0 | inside the land: 0. Ends within 0.33 of a tick at a time for every throw that stops short of the wall's crest; the straight-on 40 and 60 cells/s throws end 1.5–3.8 short (they bounce and climb its slope) |
+| fortressraid walled, 16x (×3 / ×2 after the sweeps fix) | blows 24, breaches 1, looted 2, torched 2, burned 2, escaped 2–4 | blows 24, breaches 1, looted 2, torched 2, burned 2, escaped 3–4 |
+| fortressraid open + 4 soldiers, 16x (the hunt: soldiers after raiders) ×3 | looted 1–3, raiders fallen 0–3, burned 0–2 | looted 1–3, raiders fallen 1–3, burned 0–2 |
+| fortressallbuilt, 16x | 362, 301 s, once 6 blocks unbuilt at 603 s (earlier: 271, 301, 362, 362; 300 s at 4x, 360 s at 1x) | 362, 362, 362 s (after the steer fix below; 60 s before it) |
+| fortressharvest, 16x | passes (243 s, no carrier stuck) | passes |
+| rider speed on trips, ridespeed.mjs, 60 sim s from allbuilt's start, the sim's own ticks | 1x 2.398, 16x 2.358 cells/s | 1x 2.398, 16x 2.360 cells/s (kind 2.4: at 16x a frame's chord cuts the route's bends; the fastest frame is 2.40 in all four) |
+| thin wall, test/gpu/thinwall.test.ts: a wall one column thick, 15 throws at 10–90 cells/s | none into it or through it | none into it or through it, frames of 16 ticks. With the sub-moves off (SUB_MOVE, SUB_FALL 1000) the 60 and 90 cells/s throws go through, 1–11 columns past it |
+
+- **fortressallbuilt finished in 60 s, not today's ~300 — a false arrival, now fixed.** Main asked for this to be
+  measured, not guessed.
+  - Rider speed was right in both modes (table above), so the ride doesn't over-advance.
+  - A trace of the builders (job and phase every sim second) showed the cause. At fast-forward, from 2 s on, the
+    four builders were `working` at the stores (165, 185) and blocks got built from there. Today they rode about 15 s
+    to the site (178, 174) first.
+  - The cause: a unit's road steer is its group's ride's. The builders stood at their stores goal (steer STAND) when
+    the routine regrouped them to the site's group. units.wgsl's arrival check, `steer` STAND with
+    `grp == info's group`, only guarded the regroup tick itself. The next step read the old group's STAND for the
+    new group and told an arrival at the site. Per tick, the ride ran right after the step and rewrote the steer
+    first. Once a frame, a whole stride's step came between.
+  - Fix: a regrouped unit lets its steer go, in the step and in its record (units.wgsl, after the regroups). With it,
+    allbuilt takes 362 s, as today, and the trace shows the builders riding to the site.
+  - The "ride loses time per tick" guess in the first version of this entry was wrong.
+  - Side finding: at 1x the lab's `run` sums wall time (dt × speed). The tick clock ran about 50 ticks a 60 frames
+    there, so rider speed measured over the lab's sim seconds read 2.0. ridespeed.mjs counts the sim's own ticks.
+
+Cost, from speedcost.mjs on the town at 16x with `&agentprof=1`. This was a behaviour lab run on a shared GPU, not
+under the timing lease, so it is a proxy; the phone bench is the measure.
+- GPU frame p50 / p95: 33.3 / 44.3 ms → 6.9 / 11.5 ms.
+- Frame rate: 90 → 120 fps (a 120 Hz display). Sim speed: 13.9x → 16.0x, so it keeps up now.
+- The agents' stages a frame:
+  - relax 2.72 → 0.47 ms
+  - ride 2.08 → 0.10 ms
+  - step 1.65 → 0.08 ms
+  - draw 1.02 → under 0.08 ms
+  - traits 0.91 → under 0.08 ms
+- At 1x nothing changed: 3.9 vs 4.1 ms GPU p50.

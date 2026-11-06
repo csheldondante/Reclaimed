@@ -16,6 +16,8 @@ import layersWgsl from '../shaders/layers.wgsl?raw';
 import materialsWgsl from '../shaders/materials.wgsl?raw';
 import unitsWgsl from '../shaders/units.wgsl?raw';
 import type { SimSystem } from '../sim/system';
+import { TICK_DT } from '../sim/flow';
+import { stepPlan } from './stepplan';
 import type { WorldGpu } from '../sim/world-gpu';
 import { MAT } from '../world/materials';
 import { materialId, materialName, materialState, type MaterialName } from '../api/common';
@@ -134,7 +136,13 @@ const MAX_REGROUPS = 64;
 const P_REGROUPS = P_TARGET_H + MAX_TARGETS;
 /** (round 128o, DA-B2a) per field its arrival radius and its leaving radius (units.wgsl arrived): 2 floats a field */
 const P_ARRIVE = P_REGROUPS + MAX_REGROUPS;
-const PARAMS_BYTES = (P_ARRIVE + Math.ceil((NFIELDS * 2) / 4) * 4) * 4;
+/** (round 128o, DA-B22) the step's dt (agents.wgsl AgentParams.step) */
+const P_STEP = P_ARRIVE + Math.ceil((NFIELDS * 2) / 4) * 4;
+const PARAMS_BYTES = (P_STEP + 4) * 4;
+/** the most a unit may move in a step (cells): the occupancy, the floor it rides and its links are per cell, so a
+ *  step past half a cell could skip a column's checks — the units' step's stride is bound by it (stepPlan) */
+const STEP_CELLS = 0.5;
+
 /** what the tumbling units fall by (units.wgsl unitsG(), cells/s²): the world's gravity × the tuning's units.gravity
  *  (solver step 1, AR9: it was a 20 of its own; the default scale keeps that at world gravity × 1) */
 export function unitsG(): number {
@@ -417,6 +425,37 @@ export class Agents implements SimSystem {
   /** per group: drawn at work (round 88: bent to a tool, a tool in hand) */
   private groupPose = new Uint32Array(MAX_GROUPS);
   private kinds: (KindSpec | undefined)[] = [];
+  /**
+   * (round 128o, DA-B22) Where the tick lies in its frame: the simulation's (installAgents: Simulation.frameTicks,
+   * tickOfFrame); a tick on its own is a frame of one. At fast-forward the units' step runs in strides (stepPlan) and
+   * what needn't run each tick — the fields' relaxation, the surfaces' peel, the ride, the draw — once a frame.
+   */
+  frame: () => { n: number; i: number } = () => ({ n: 1, i: 0 });
+  /** (DA-B22) this tick's step: whether it runs and its dt (s); read by the traits, which step with the units */
+  stepNow = { step: true, dt: TICK_DT };
+  /** (DA-B22) this tick is its frame's last: the once-a-frame stages run */
+  private frameWork = true;
+  /** the ticks a step may span: half a cell at the fastest kind's speed (STEP_CELLS) */
+  strideMost(): number {
+    let v = 0;
+    for (const k of this.kinds) if (k) v = Math.max(v, k.speed);
+    return v > 0 ? Math.max(1, Math.floor(STEP_CELLS / (v * TICK_DT))) : 1;
+  }
+  /**
+   * (DA-B22) The fields' sweeps on the frame's last tick: a tick's sweeps for every tick of the frame. A sweep carries a
+   * field's front a step on, so its reach in sim time is the sweeps a tick's — fewer at fast-forward and the raiders
+   * waited for their way in (the walled raid's gates shut a minute late at 16x, DEVLOG round 128o). A converged field's
+   * front is empty: its relax dispatches no workgroups (dispatched indirect), its build and clear stay.
+   */
+  private frameSweeps(): number {
+    return this.sweeps * this.frame().n;
+  }
+  /** (DA-B22) this tick's plan, the same for every caller in the tick (the traits ask before the agents encode) */
+  planTick(): { step: boolean; dt: number; last: boolean } {
+    const { n, i } = this.frame();
+    const p = stepPlan(n, i, this.strideMost());
+    return { step: p.step, dt: p.ticks * TICK_DT, last: i >= n - 1 };
+  }
   private kindModel = new Uint32Array(MAX_KINDS * 4);
   private modelVoxels = 0;
   private hits: (HitSpec & { id: number })[] = [];
@@ -1402,7 +1441,7 @@ export class Agents implements SimSystem {
   }
 
   /** A raw readback of one of its buffers (tests). */
-  async readRaw(which: 'nav' | 'dist'): Promise<ArrayBuffer> {
+  async readRaw(which: 'nav' | 'dist' | 'units'): Promise<ArrayBuffer> {
     const src = this[which];
     const tmp = this.device.createBuffer({ size: src.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
     const enc = this.device.createCommandEncoder();
@@ -1440,19 +1479,21 @@ export class Agents implements SimSystem {
     // (round 88: a field left without seeds is set unreachable once, then skipped — not rewritten every sweep)
     // (round 107: the scope drew in at the last tick — a chunk let go — so what ran through what it let go of is gone
     // from every field: they all start over from their seeds, as a field whose seed went does)
-    if (this.shrunk && this.scope) {
+    if (this.frameWork && this.shrunk && this.scope) {
       this.shrunk = false;
       this.restart |= seeded;
       for (const s of this.seeds) this.scope.mark(s.x, s.y / ROW_H);
     }
     // (round 107: and the fields whose seeds went or moved far start over — clearFields — and refill from their seeds)
-    const clear = (this.wasSeeded & ~seeded) | this.restart;
-    this.restart = 0;
+    // (round 128o, DA-B22: the fields start over where they're relaxed — on the frame's last tick; a step before it
+    // leaves what changed in the seeds for it)
+    const clear = this.frameWork ? (this.wasSeeded & ~seeded) | this.restart : 0;
+    if (this.frameWork) this.restart = 0;
     // (round 128i: the road field's seeds are the network's columns, not points the scope marks — a road field set
     // unreachable, or starting over, refills from them: round 128k, the network's nodes' chunks marked, not the whole
     // scope relaxed again each time the scope drew in)
     if (clear & seeded & (1 << ROAD_FIELD) && this.scope) for (const [x, y] of this.roadRide.nodePoints()) this.scope.mark(x, y / ROW_H);
-    this.wasSeeded = seeded;
+    if (this.frameWork) this.wasSeeded = seeded;
     this.clearNow = clear;
     this.kinds.forEach((k, i) => {
       if (!k) return;
@@ -1488,6 +1529,7 @@ export class Agents implements SimSystem {
     const regroups = this.regroups.splice(0, MAX_REGROUPS);
     u.set([holds.length, launches.length, regroups.length, clear], P_N3);
     u.set(regroups, P_REGROUPS);
+    f[P_STEP] = this.stepNow.dt;
     f.set(this.arrive, P_ARRIVE);
     holds.forEach(([slot, p], i) => f.set([p[0], p[1], p[2], slot], P_HOLDS + i * 4));
     launches.forEach((l, i) => f.set(l, P_LAUNCHES + i * 4));
@@ -1495,6 +1537,13 @@ export class Agents implements SimSystem {
   }
 
   encode(enc: GPUCommandEncoder): void {
+    // (round 128o, DA-B22: fast-forward — a tick the units don't step is left alone, what it would have consumed (the
+    // hits, holds, launches, regroups) waiting for the next step; the step's dt the ticks it spans)
+    const plan = this.planTick();
+    this.stepNow = { step: plan.step, dt: plan.dt };
+    if (!plan.step) return;
+    this.frameWork = plan.last;
+    this.roadRide.elapsed = this.frame().n * TICK_DT;
     // (round 128i: the road bits made again if their shapes or offset changed)
     this.roadStamp.encode(enc);
     // (round 128i, V128-14: the riding groups' next-hop tables made again if the graph or their goals changed)
@@ -1515,7 +1564,7 @@ export class Agents implements SimSystem {
       return;
     }
     const pass = enc.beginComputePass({ label: 'agents', timestampWrites: this.prof.timestamps('agents') });
-    if (this.ticks % PEEL_EVERY === 0 || this.navStale) {
+    if (this.frameWork && (this.ticks % PEEL_EVERY === 0 || this.navStale)) {
       this.navStale = false;
       pass.setBindGroup(0, this.peelGroup);
       pass.setPipeline(this.k.surfaces.pipeline);
@@ -1525,11 +1574,12 @@ export class Agents implements SimSystem {
       pass.dispatchWorkgroups(gx, gy);
       this.prof.dispatches += 2;
     }
-    if (this.fieldsUsed > 0) {
+    if (this.frameWork && this.fieldsUsed > 0) {
       pass.setBindGroup(0, this.fieldGroup);
       pass.setPipeline(this.k.relax.pipeline);
-      for (let i = 0; i < this.sweeps; i++) pass.dispatchWorkgroups(gx, gy);
-      this.prof.dispatches += this.sweeps;
+      const sweeps = this.frameSweeps();
+      for (let i = 0; i < sweeps; i++) pass.dispatchWorkgroups(gx, gy);
+      this.prof.dispatches += sweeps;
     }
     if (this.count > 0 || this.flights.length > 0) {
       pass.setBindGroup(0, this.unitGroup);
@@ -1552,6 +1602,9 @@ export class Agents implements SimSystem {
     // (LW1: the trait system — its core and the game's rules — between the step and the draw)
     pass = stage('agents-traits');
     for (const s of this.stages) s.encode(pass);
+    // (round 128o, DA-B22: the ride and the draw once a frame — a frame's trips advance by its elapsed time
+    // (RoadRide.elapsed); what's drawn is the frame's last state)
+    if (!this.frameWork) return pass;
     // (round 128i, V128-14: the riding groups steered along the roads — their steer read by the next tick's step)
     pass = stage('agents-ride');
     this.roadRide.encode(pass, this.count);
@@ -1575,6 +1628,23 @@ export class Agents implements SimSystem {
    */
   private encodeScoped(enc: GPUCommandEncoder, sc: AgentScope, sk: NonNullable<Agents['sk']>): void {
     const t = this.world.tiles!;
+    // (round 128o, DA-B22: a step before its frame's last — the units step over the fields and surfaces as they stand;
+    // the scope, the peel and the relaxation, and what they consume (marks, chunks come in, fields started over), wait
+    // for the frame's last tick)
+    if (!this.frameWork) {
+      let pass = enc.beginComputePass({ label: 'agents', timestampWrites: this.prof.timestamps(PROF ? 'agents-step' : 'agents') });
+      if (this.count > 0 || this.flights.length > 0) {
+        if (this.lastScopeChunks > 0) {
+          pass.setBindGroup(0, sk.occG);
+          pass.setPipeline(sk.occ.pipeline);
+          pass.dispatchWorkgroups(t.groups(SCOPE_LIST));
+          this.prof.dispatches++;
+        }
+        pass = this.encodeUnits(pass, PROF ? (name) => (pass.end(), (pass = enc.beginComputePass({ label: name, timestampWrites: this.prof.timestamps(name) }))) : undefined);
+      }
+      pass.end();
+      return;
+    }
     const pts: [number, number][] = [];
     for (const s of this.seeds) pts.push([s.x, s.y / ROW_H]);
     for (const g of this.targets) pts.push([g.x, g.y / ROW_H]);
@@ -1654,7 +1724,8 @@ export class Agents implements SimSystem {
       if (this.fieldsUsed > 0) {
         const chunks = Math.ceil(list.length / 64);
         stage('agents-relax');
-        for (let i = 0; i < this.sweeps; i++) {
+        const sweeps = this.frameSweeps();
+        for (let i = 0; i < sweeps; i++) {
           pass.setBindGroup(0, sk.resetG);
           pass.setPipeline(sk.reset.pipeline);
           pass.dispatchWorkgroups(1);

@@ -133,6 +133,13 @@ fn unitsG() -> f32 { return worldG() * G.tune.unitsGravity; }
 // tumbling: what's left of a landing's speed, a slam's; the ground's grip
 const BOUNCE: f32 = 0.35;
 const SLAM_BOUNCE: f32 = 0.35;
+// (round 128o, DA-B22) the most a unit moves in one sub-move (cells): the walk's links and the tumble's walls are
+// checked a column at a time, so a move is taken in as many sub-moves as keep each within half a cell — the step's dt
+// spans several ticks at fast-forward (agents.ts stepPlan). The forces and the mind run once a step.
+const SUB_MOVE: f32 = 0.5;
+fn subMoves(d: f32) -> u32 { return max(1u, u32(ceil(d / SUB_MOVE))); }
+// (and the most a tumbling unit falls in one: under floorUnder's reach above the body, 0.3, so a landing is found)
+const SUB_FALL: f32 = 0.25;
 const ROLL_GRIP: f32 = 3.0;
 const LAND_SKID: f32 = 0.6;
 // a landing (falling speed) or slam (into a wall) harder than this hurts, per cell/s past it
@@ -330,7 +337,7 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
   var latch = bitcast<u32>(units[u * UNIT_V + 5u].x);
   // (round 128i, V128-14) the road ride's steer (roadride.wgsl, written after the last tick's step): 0 its field, < 0
   // stand, else a heading + STEER_BIAS
-  let steer = units[u * UNIT_V + 4u].w;
+  var steer = units[u * UNIT_V + 4u].w;
   let noBurn = (caps & CAP_NO_BURN) != 0u;
   let rooted = (caps & CAP_ROOTED) != 0u;
   var info = unitInfo(a);
@@ -342,6 +349,15 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
     let rg = AP.regroups[e / 4u][e % 4u];
     if ((rg & 0xffffu) == u) { grp = rg >> 16u; }
   }
+  // (round 128o, DA-B22: a steer is its group's ride's — a unit moved to another group lets it go, here and in its
+  // record, so no step before the ride's next run reads the old group's: a STAND there told an arrival at the old
+  // goal for the new group, once the ride ran once a frame — fortressallbuilt's builders "working" at the stores)
+  if (grp != (info & 0xffu) && steer != 0.0) {
+    steer = 0.0;
+    var e4 = units[u * UNIT_V + 4u];
+    e4.w = 0.0;
+    units[u * UNIT_V + 4u] = e4;
+  }
   let kind = AP.kinds[(info >> 9u) & 7u];
   var state = (info >> 12u) & 7u;
   var alight = ((info >> 15u) & 1u) != 0u;
@@ -349,7 +365,8 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
   let mass = max(kind.a.y, 0.1);
   let fld = AP.groupField[grp / 4u][grp % 4u];
   let N = ns();
-  let dt = G.dt;
+  // (round 128o, DA-B22: the step's own dt — a tick's, or at fast-forward the ticks since the last step: agents.ts)
+  let dt = AP.step.x;
   let cols = G.mapW * G.mapH;
   let rd = ((AP.n.w + 1u) % 2u) * cols;
   let wr = (AP.n.w % 2u) * cols;
@@ -515,48 +532,63 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
     // (where the game holds it: nothing else moves it)
   } else if (state == ST_TUMBLE) {
     // flying, falling, bouncing: free of the links
-    vel.z -= unitsG() * dt;
-    np = pos + vel * dt;
-    var ni = colIdxI(clampCell(cellAt(np.xy)));
-    var fz = floorUnder(ni, np.z);
-    if (fz <= -FAR) {
-      // a wall: back off it, the way it came, slammed
-      let sp = length(vel.xy);
-      if (sp > HURT_SPEED) {
-        let dmg = (sp - HURT_SPEED) * HURT_PER;
-        hp -= dmg;
-        flash = 0.15;
-        emit(EV_HURT, uid, BY_IMPACT, dmg, pos);
+    // (round 128o, DA-B22: in sub-moves of at most half a cell across — a wall a column thick is met, not jumped — and
+    // less than the floor's reach (floorUnder: 0.3) down; gravity, the walls and the ground a sub-move at a time, as a
+    // tick at a time before the step's dt spanned several)
+    let g = unitsG();
+    let m = max(subMoves(length(vel.xy) * dt), u32(ceil((abs(vel.z) + g * dt) * dt / SUB_FALL)));
+    let sdt = dt / f32(m);
+    var ni = i;
+    // (lying still on the ground through the whole step: its time down counts toward getting up)
+    var still = true;
+    for (var s = 0u; s < m; s++) {
+      let was = np;
+      let fi = ni;
+      vel.z -= g * sdt;
+      np = was + vel * sdt;
+      ni = colIdxI(clampCell(cellAt(np.xy)));
+      var fz = floorUnder(ni, np.z);
+      if (fz <= -FAR) {
+        // a wall: back off it, the way it came, slammed
+        let sp = length(vel.xy);
+        if (sp > HURT_SPEED) {
+          let dmg = (sp - HURT_SPEED) * HURT_PER;
+          hp -= dmg;
+          flash = 0.15;
+          emit(EV_HURT, uid, BY_IMPACT, dmg, was);
+        }
+        vel = vec3<f32>(-vel.xy * SLAM_BOUNCE, vel.z);
+        np = vec3<f32>(was.xy, np.z);
+        ni = fi;
+        fz = floorUnder(fi, np.z);
       }
-      vel = vec3<f32>(-vel.xy * SLAM_BOUNCE, vel.z);
-      np = vec3<f32>(pos.xy, np.z);
-      ni = i;
-      fz = floorUnder(i, np.z);
+      if (fz > -FAR && np.z <= fz + 0.05) {
+        // the ground: a landing, bounced, gripped
+        let impact = -vel.z;
+        if (impact > HURT_SPEED) {
+          let dmg = (impact - HURT_SPEED) * HURT_PER;
+          hp -= dmg;
+          flash = 0.15;
+          emit(EV_HURT, uid, BY_IMPACT, dmg, was);
+        }
+        np.z = fz;
+        vel.z = select(0.0, impact * BOUNCE, impact > 2.0);
+        // (a landing takes some of its speed along the ground too, as a skid)
+        vel = vec3<f32>(vel.xy * max(1.0 - ROLL_GRIP * sdt, 0.0) * select(1.0, LAND_SKID, impact > 2.0), vel.z);
+        if (length(vel) > 0.6) { still = false; }
+      } else {
+        still = false;
+      }
     }
-    if (fz > -FAR && np.z <= fz + 0.05) {
-      // the ground: a landing, bounced, gripped
-      let impact = -vel.z;
-      if (impact > HURT_SPEED) {
-        let dmg = (impact - HURT_SPEED) * HURT_PER;
-        hp -= dmg;
-        flash = 0.15;
-        emit(EV_HURT, uid, BY_IMPACT, dmg, pos);
-      }
-      np.z = fz;
-      vel.z = select(0.0, impact * BOUNCE, impact > 2.0);
-      // (a landing takes some of its speed along the ground too, as a skid)
-      vel = vec3<f32>(vel.xy * max(1.0 - ROLL_GRIP * dt, 0.0) * select(1.0, LAND_SKID, impact > 2.0), vel.z);
-      if (length(vel) > 0.6) { stT = 0.0; }
-      // settled long enough: up again
-      if (stT > GETUP + stun) {
-        state = select(ST_WANDER, ST_CHASE, kind.b.w <= 0.0);
-        stT = 0.0;
-        vel = vec3<f32>(0.0);
-        wanderH = heading;
-        stun = 0.0;
-      }
-    } else {
+    if (!still) {
       stT = 0.0;
+    } else if (stT > GETUP + stun) {
+      // settled long enough: up again
+      state = select(ST_WANDER, ST_CHASE, kind.b.w <= 0.0);
+      stT = 0.0;
+      vel = vec3<f32>(0.0);
+      wanderH = heading;
+      stun = 0.0;
     }
     if (hp <= 0.0 && !dead) { dead = true; killedBy = BY_IMPACT; }
     if (state == ST_TUMBLE) {
@@ -675,20 +707,42 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
     if (rooted) { speed = 0.0; want = vec2<f32>(0.0); push = vec2<f32>(0.0); }
     let goalV = select(want, normalize(want), length(want) > 1.0) * speed;
     var v2 = vel.xy + (goalV - vel.xy) * min(dt * 6.0, 1.0) + push;
-    var p2 = pos.xy + v2 * dt;
     // never step where there's no link, nor off the place its field is
-    // confined to: slide along instead
-    let nc = clampCell(cellAt(p2));
+    // confined to: it stops there instead. (Round 128o, DA-B22: in sub-moves of at most half a cell, each into the
+    // column next to the last by a link — the step's dt may span several ticks)
     let fp = select(0u, AP.fieldPlace[min(fld, NFIELDS - 1u) / 4u][min(fld, NFIELDS - 1u) % 4u], fld < AP.n.z);
-    if (k < NAV_K && any(nc != c)) {
-      var ok = false;
-      for (var d = 0u; d < NDIR; d++) {
-        let l = navLink(i * NAV_K + k, d);
-        if (!all(nbr(c, d) == nc) || l == 0u) { continue; }
-        let t = colIdxI(nc) * NAV_K + l - 1u;
-        ok = fp == 0u || onPlace(t, fp);
+    let mv = v2 * dt;
+    let m = subMoves(length(mv));
+    var p2 = pos.xy;
+    var cc = c;
+    var ci = i;
+    var ck = k;
+    for (var s = 0u; s < m; s++) {
+      let q = p2 + mv / f32(m);
+      let nc = clampCell(cellAt(q));
+      if (any(nc != cc)) {
+        if (ck < NAV_K) {
+          var ok = false;
+          var nk = NAV_K;
+          for (var d = 0u; d < NDIR; d++) {
+            let l = navLink(ci * NAV_K + ck, d);
+            if (!all(nbr(cc, d) == nc) || l == 0u) { continue; }
+            let t = colIdxI(nc) * NAV_K + l - 1u;
+            ok = fp == 0u || onPlace(t, fp);
+            nk = l - 1u;
+          }
+          if (!ok) {
+            v2 *= 0.3;
+            break;
+          }
+          ck = nk;
+        } else {
+          ck = surfaceAt(colIdxI(nc), pos.z + 0.5);
+        }
+        cc = nc;
+        ci = colIdxI(nc);
       }
-      if (!ok) { p2 = pos.xy; v2 *= 0.3; }
+      p2 = q;
     }
     // ride the surface: step up and drop down smoothly
     let ni = colIdxI(clampCell(cellAt(p2)));

@@ -368,7 +368,20 @@ export class HitchRecorder {
     this.count(h, +1);
   }
 
+  /** (round 128o, DA-B22) each GPU pass's ms over the frames read back: sum, frames it ran in, most — the report's
+   *  per-stage table (with ?agentprof=1 the agents' stages apart), so the phone's bench downloads what the overlay shows */
+  private passes = new Map<string, { sum: number; n: number; max: number }>();
+  private gpuFrames = 0;
+
   private gpuFrame(f: number, ms: number, top: string): void {
+    this.gpuFrames++;
+    for (const [name, pm] of this.prof.lastPasses) {
+      const a = this.passes.get(name) ?? { sum: 0, n: 0, max: 0 };
+      a.sum += pm;
+      a.n++;
+      a.max = Math.max(a.max, pm);
+      this.passes.set(name, a);
+    }
     this.gpuSeen.set(f, [ms, top]);
     if (this.gpuSeen.size > 16) this.gpuSeen.delete(this.gpuSeen.keys().next().value!);
     if (!this.pendingGpu.length) return;
@@ -482,6 +495,10 @@ export class HitchRecorder {
       })),
       worst: this.worst(10).map(strip),
       hitches: this.hitches.map(strip),
+      // (DA-B22) ms a frame by pass, over every frame read back (a pass not run in a frame counts 0 there), heaviest first
+      passes: [...this.passes]
+        .map(([name, a]) => ({ name, msPerFrame: +(a.sum / Math.max(this.gpuFrames, 1)).toFixed(3), frames: a.n, max: +a.max.toFixed(2) }))
+        .sort((a, b) => b.msPerFrame - a.msPerFrame),
       timeline: { worstMsPerSecond: Array.from(this.secWorst.subarray(0, secs), (v) => Math.round(v)), framesPerSecond: Array.from(this.secFrames.subarray(0, secs)) },
       ...extra,
     };

@@ -10,6 +10,12 @@ import { Camera } from '../render/camera';
 import { Renderer } from '../render/renderer';
 import type { GlobalsState } from '../sim/globals';
 import { Simulation, TICK_DT } from '../sim/simulation';
+import { urlFlags } from '../flags';
+
+/** (round 128o, DA-B22) ?ffwd=0: every tick a frame of its own — the units step every tick, the render-only work and
+ *  the agents' fields, ride and draw run every tick (as before fast-forward): the comparison the gates and the phone
+ *  bench toggle against (DESIGN §12) */
+const FFWD = urlFlags().get('ffwd') !== '0';
 import type { SimSystem } from '../sim/system';
 import { WorldGpu } from '../sim/world-gpu';
 import { Tiers } from '../sim/tiers';
@@ -272,10 +278,15 @@ export class WorldCore {
     // (SM2: the player's strokes of wind count as interactions — gusts[0] is the cursor's breeze, not a stroke)
     for (const st of g.gusts.slice(1)) if (st.strength > 0) this.tiers.interact(st.x, st.y, st.radius);
     this.tiers.apply();
+    // (round 128o, DA-B22: where each tick lies in the frame — fast-forward's per-frame work runs on the last)
+    this.sim.frameTicks = FFWD ? n : 1;
     while (ticks < n) {
+      this.sim.tickOfFrame = FFWD ? ticks : 0;
       this.sim.step(g, filter);
       ticks++;
     }
+    this.sim.frameTicks = 1;
+    this.sim.tickOfFrame = 0;
     // (round 108, simtiers: a bake's ticks — the baked processes run in its region at its gain, the rest alongside)
     ticks += this.tiers.pump(() => this.sim.step(g, filter));
     return ticks;

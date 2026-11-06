@@ -21,6 +21,7 @@ import materialsWgsl from '../shaders/materials.wgsl?raw';
 import preludeWgsl from './prelude.wgsl?raw';
 import coreWgsl from './core.wgsl?raw';
 import { Agents, MAX_KINDS, MAX_UNITS } from '../agents/agents';
+import { TICK_DT } from '../sim/flow';
 import type { SimSystem } from '../sim/system';
 import { DAMAGE_TYPES, statusIndex, traitMask, traitNames, type EffectId, type EffectSpec, type IntrinsicName, type TraitModule, type TraitName, type TraitsApi } from '../api/contracts/traits';
 import { TraitRegistry, TABLE_WORDS, type Registered } from './registry';
@@ -234,8 +235,12 @@ export class TraitSystem implements TraitsApi, SimSystem {
   encode(_enc: GPUCommandEncoder, _tick: number): void {
     this.slots = 0;
     if (!this.on) return;
+    // (round 128o, DA-B22: the traits step with the units — at fast-forward in their strides, over the ticks a step
+    // spans; a tick they don't step leaves the assignments and the effects' lives for the next)
+    const plan = this.agents.planTick();
+    if (!plan.step) return;
     const n = this.agents.size;
-    this.writeParams(n);
+    this.writeParams(n, plan.dt);
     this.slots = n;
   }
 
@@ -295,16 +300,19 @@ export class TraitSystem implements TraitsApi, SimSystem {
     return { name: m.name, wgsl: m.wgsl, kernel, table, group };
   }
 
-  private writeParams(n: number): void {
+  /** `dt` the step's (s) */
+  private writeParams(n: number, dt: number): void {
     const p = this.paramData;
     const f = new Float32Array(p.buffer);
     p.fill(0);
-    const dt = this.globals.dt > 0 ? this.globals.dt : 1 / 60;
+    // (statuses and corpses last in ticks: G.tick's)
+    const tickDt = this.globals.dt > 0 ? this.globals.dt : TICK_DT;
     const assigns = this.assigns.splice(0, MAX_ASSIGNS);
     // (a tick's effects: the lasting ones, and the bursts once)
     const now = this.live.slice(0, MAX_EFFECTS);
-    p.set([n, now.length, Agents.EVENT_CAP, Math.max(1, Math.round(this.corpseSeconds / dt))], P_N);
+    p.set([n, now.length, Agents.EVENT_CAP, Math.max(1, Math.round(this.corpseSeconds / tickDt))], P_N);
     p.set([assigns.length, 0, 0, 0], P_M);
+    f[P_M + 1] = dt;
     p.set(this.kindSeed, P_SEED);
     assigns.forEach(([slot, gen, mask], i) => p.set([slot, gen, mask, 0], P_ASSIGN + i * 4));
     now.forEach((l, i) => {
