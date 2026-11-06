@@ -159,7 +159,6 @@ export function labStationKit(scene: LevelScene): StationKit {
     rain: (x, y) => void core.weather.spawn(x, y),
     later: (secs, f) => void setTimeout(f, secs * 1000),
     pour: (x, y, r, layers, mat) => {
-      core.sim.edit.always = true;
       core.globals.events.push({ kind: EventKind.Edit, x, y, z: OP.POUR * 32 + mat + 512, radius: r, strength: layers });
       scene.sleep?.wake(x, y, r + 8, Sleep.EVENT_S, now());
     },

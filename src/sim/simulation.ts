@@ -2,7 +2,7 @@
 // Systems run in the documented order; each has its own period.
 
 import type { Profiler } from '../gpu/profiler';
-import { EventKind, MAX_EVENTS, writeGlobals, GLOBALS_HEAD_BYTES, globalsBytes, type GlobalsState } from './globals';
+import { MAX_EVENTS, writeGlobals, GLOBALS_HEAD_BYTES, globalsBytes, type GlobalsState } from './globals';
 import type { SimSystem } from './system';
 import {
   ContaminationSystem,
@@ -146,7 +146,7 @@ export class Simulation {
     // carries MAX_EVENTS; the rest wait for the next tick rather than being lost
     const sent = globals.events.slice(0, MAX_EVENTS);
     for (const tap of this.eventTaps) tap(sent);
-    this.edit.pending = sent.some((e) => e.kind === EventKind.Edit);
+    this.edit.take(sent, this.tick, globals.dt);
     // (round 104, simscale: where the wind is painted this tick — the wind field updates only round it, sim/windrect.ts)
     this.wind.collect(globals, sent, this.tick);
     globals.events = globals.events.slice(MAX_EVENTS);

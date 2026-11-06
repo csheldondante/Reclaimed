@@ -97,7 +97,8 @@ export class ParticleSystem implements SimSystem {
   private petalK: ComputeKernel;
   private groupPetal: GPUBindGroup;
   private groupFire: GPUBindGroup;
-  private group: GPUBindGroup;
+  /** the emitters' group for each of the brush state's two textures (DA-B8: WorldGpu.editCur picks) */
+  private groups: [GPUBindGroup, GPUBindGroup];
   private groupBurst: GPUBindGroup;
   private groupUpdate: GPUBindGroup;
   private reqBuf: GPUBuffer;
@@ -169,13 +170,13 @@ export class ParticleSystem implements SimSystem {
       11: this.reqBuf,
       15: world.windFieldView,
       17: world.driftView,
-      18: world.editStateView,
+      18: world.editStateViews[0],
       19: world.airView,
       21: world.bodyProjView,
       22: world.sparkView,
       50: world.tierView,
     };
-    this.group = makeBindGroup(device, 'particles', this.emitK.layout, bufs);
+    this.groups = [makeBindGroup(device, 'particles', this.emitK.layout, bufs), makeBindGroup(device, 'particles', this.emitK.layout, { ...bufs, 18: world.editStateViews[1] })];
     this.groupBurst = makeBindGroup(device, 'particles', this.burstK.layout, bufs);
     this.groupUpdate = makeBindGroup(device, 'particles', this.updateK.layout, bufs);
     const fireBufs = {
@@ -190,7 +191,7 @@ export class ParticleSystem implements SimSystem {
     };
     this.groupFire = makeBindGroup(device, 'particles-fire', this.fireK.layout, fireBufs);
     if (this.split) {
-      this.splitOf('emit', 'emit', spec, bufs);
+      this.splitOf('emit', 'emit', spec, bufs, { 18: world.editStateViews[1] });
       this.splitOf('fire', 'fireEmit', fireSpec, fireBufs);
       this.splitOf('petals', 'petalEmit', petalSpec, petalBufs);
     }
@@ -202,8 +203,9 @@ export class ParticleSystem implements SimSystem {
    * same dust, leaves, petals and flames on average, at 1/EMIT_SLOW the cost. Null: ?emitslow=1, the whole window
    * every tick.
    */
-  private split: Record<'emit' | 'fire' | 'petals', { k: ComputeKernel; g: GPUBindGroup; n: number }[]> | null = null;
-  private splitOf(name: 'emit' | 'fire' | 'petals', entry: string, spec: Record<number, BindKind>, bufs: Record<number, GPUBuffer | GPUTextureView>): void {
+  private split: Record<'emit' | 'fire' | 'petals', { k: ComputeKernel; g: [GPUBindGroup, GPUBindGroup]; n: number }[]> | null = null;
+  /** (`other`: what the second group binds differently — the emitters' other brush state texture; none: one group) */
+  private splitOf(name: 'emit' | 'fire' | 'petals', entry: string, spec: Record<number, BindKind>, bufs: Record<number, GPUBuffer | GPUTextureView>, other?: Record<number, GPUTextureView>): void {
     const t = this.world.tiles!;
     const src = [commonWgsl, materialsWgsl, tiersWgsl, vegplanWgsl, particlesWgsl].join('\n');
     for (const [n, code] of [
@@ -212,7 +214,8 @@ export class ParticleSystem implements SimSystem {
     ] as const) {
       const c = cullKernel(t, code, spec, entry, n);
       const k = makeCompute(this.device, `particles-${name}`, [c.code], c.spec, entry);
-      this.split![name].push({ k, n, g: makeBindGroup(this.device, `particles-${name} ${n}`, k.layout, { ...bufs, [TILES_BINDING]: c.buf }) });
+      const g = makeBindGroup(this.device, `particles-${name} ${n}`, k.layout, { ...bufs, [TILES_BINDING]: c.buf });
+      this.split![name].push({ k, n, g: [g, other ? makeBindGroup(this.device, `particles-${name} ${n}`, k.layout, { ...bufs, ...other, [TILES_BINDING]: c.buf }) : g] });
     }
   }
 
@@ -223,9 +226,9 @@ export class ParticleSystem implements SimSystem {
 
   encode(enc: GPUCommandEncoder): void {
     if (this.split) {
-      for (const [name, list] of Object.entries(this.split)) for (const x of list) dispatchTiles(enc, this.prof, `particles-${name}`, x.k, x.g, this.world.tiles!, x.n);
+      for (const [name, list] of Object.entries(this.split)) for (const x of list) dispatchTiles(enc, this.prof, `particles-${name}`, x.k, x.g[this.world.editCur], this.world.tiles!, x.n);
     } else {
-      dispatch(enc, this.prof, 'particles-emit', this.emitK, this.group, this.world.groups);
+      dispatch(enc, this.prof, 'particles-emit', this.emitK, this.groups[this.world.editCur], this.world.groups);
       dispatch(enc, this.prof, 'particles-fire', this.fireK, this.groupFire, this.world.groups);
       dispatch(enc, this.prof, 'particles-petals', this.petalK, this.groupPetal, this.world.groups);
     }

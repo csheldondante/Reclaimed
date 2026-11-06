@@ -133,8 +133,6 @@ export function attachTools(scene: LevelScene): void {
     beamSvg.appendChild(scene.beamDot);
     host.ui.appendChild(beamSvg);
     host.ui.appendChild(svg);
-    // pours keep landing after the press: the edit pass runs every tick
-    core.sim.edit.always = true;
     // the physics playground (F7, G5): what breaks free falls as rigid
     // pieces; the structure system only collapses damage
     const integ = new Integrity(core, rockbodyFor(scene.level.id));

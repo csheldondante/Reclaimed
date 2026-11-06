@@ -67,7 +67,8 @@ import { settleLand, SLEEP_MORE } from './sleep';
 import { FLOW_SUB, WIND_K, fieldPass, fieldPeriod, flowConst, flowN } from './flow';
 import { LIVE, NEAR, SIM_CULL, cullKernel, dispatchTiles } from './cull';
 import { WindRects } from './windrect';
-import { EventKind, type GlobalsState, type WorldEvent } from './globals';
+import { EventKind, MAX_EVENTS, type GlobalsState, type WorldEvent } from './globals';
+import { BLOW_TAG, EditBusy, OP, editOpOf } from './edit-ops';
 
 /**
  * (round 104, simscale) ?windbox=0: the wind field over its whole texture every update, as before. On: the painted
@@ -83,18 +84,16 @@ const WIND_BANDS = (() => {
 })();
 
 /**
- * (perfopt, ?inplace=1) The passes that rewrite whole columns — the editor's brush, the structures, the layer
- * pulls — write the layers in place instead of into layersNext copied back whole (16 MB a tick each in the atlas's
- * window: on a phone the bandwidth of the copies alone was a share of the frame). Each thread rewrites only its
- * own column (the structures read their neighbours' support: one tick's Gauss-Seidel instead of Jacobi). With
- * it the brush runs only while an edit is in flight (a pour lands for up to ~4 s after the press).
+ * (perfopt, ?inplace=1) The passes that rewrite whole columns — the structures, the layer pulls — write the layers
+ * in place instead of into layersNext copied back whole (16 MB a tick each in the atlas's window: on a phone the
+ * bandwidth of the copies alone was a share of the frame). Each thread rewrites only its own column (the structures
+ * read their neighbours' support: one tick's Gauss-Seidel instead of Jacobi). (DA-B8: the editor's brush is in place
+ * on every tier, and runs only while an edit is in flight.)
  */
 export const INPLACE = typeof location !== 'undefined' && new URLSearchParams(location.search).get('inplace') === '1';
 /** a column pass's code and its two layer bindings, in place or not */
 const columnPass = (code: string, world: WorldGpu) =>
   INPLACE ? { code: code.replaceAll('layersIn[', 'layersOut['), in: world.layersNext, out: world.layers } : { code, in: world.layers, out: world.layersNext };
-/** (perfopt, inplace) ticks the brush runs after an edit (the longest pour's fall, 3.9 s, and some) */
-const EDIT_LINGER = 300;
 
 const BASE: BindSpec = { 0: 'uniform', 1: 'read', 2: 'uniform' };
 const WITH_ALL = [commonWgsl, layersWgsl, materialsWgsl];
@@ -137,7 +136,12 @@ function kernel(
   const k = makeCompute(device, label, parts, all);
   if (useLayers) bound[1] = world.chunks;
   const group = makeBindGroup(device, label, k.layout, bound);
-  return { k, group, cull: culled ? cull : undefined };
+  return { k, group, cull: culled ? cull : undefined, bound };
+}
+
+/** another bind group for a kernel() system's pass: the same layout, some of its resources swapped (`over`) */
+function regroup(device: GPUDevice, label: string, s: { k: ComputeKernel; bound: Record<number, GPUBuffer | GPUTextureView> }, over: Record<number, GPUBuffer | GPUTextureView>): GPUBindGroup {
+  return makeBindGroup(device, label, s.k.layout, { ...s.bound, ...over });
 }
 
 /** a kernel() pass, over the live chunks when it's culled (sim/cull.ts), else the whole window */
@@ -567,33 +571,46 @@ export class EditSystem implements SimSystem {
   readonly name = 'edit';
   // every tick: brush strokes are one-tick events
   readonly period = 1;
+  /** the pass, a bind group for each way round of the edit state's two textures (read [k], write the other) */
   private s;
+  private groups: [GPUBindGroup, GPUBindGroup];
+  /** (DA-B8) what each blow event found as the tick began, before the pass rewrites the columns in place */
+  private blow: { k: ComputeKernel; group: GPUBindGroup };
   constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
-    this.s = kernel(
-      device,
-      world,
-      'edit',
-      columnPass(editWgsl, world).code,
-      { 3: 'read', 4: 'rw', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw', 9: 'rw', 16: 'stex', 17: 'tex', 18: 'tex', 26: 'stex' },
-      { 3: columnPass('', world).in, 4: columnPass('', world).out, 5: world.water, 6: world.oil, 7: world.contam, 8: world.veg, 9: world.deposit, 16: world.editStateNextView, 17: world.driftView, 18: world.editStateView, 26: world.editResultView },
-      true,
-      LIVE,
-    );
+    // (DA-B8) in place on every tier — each thread rewrites only its own column, in the layers and their mirror
+    // (layersNext); what a blow reads of other columns blowSum reads first. Nothing is copied back.
+    const sums = device.createTexture({ label: 'editBlowSums', size: [MAX_EVENTS, 1], format: 'rgba32float', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING });
+    const views = world.editStateViews;
+    const bound = (k: 0 | 1) => ({ 3: world.layersNext, 4: world.layers, 5: world.water, 6: world.oil, 7: world.contam, 8: world.veg, 9: world.deposit, 16: views[1 - k], 17: world.driftView, 18: views[k], 26: world.editResultView, 29: sums.createView() });
+    this.s = kernel(device, world, 'edit', editWgsl, { 3: 'rw', 4: 'rw', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw', 9: 'rw', 16: 'stex', 17: 'tex', 18: 'tex', 26: 'stex', 29: 'tex' }, bound(0), true, LIVE);
+    this.groups = [this.s.group, regroup(device, 'edit', this.s, bound(1))];
+    const bk = makeCompute(device, 'edit-blow', [...WITH_ALL, editWgsl], { ...BASE, 4: 'rw', 27: 'stex' }, 'blowSum');
+    this.blow = { k: bk, group: makeBindGroup(device, 'edit-blow', bk.layout, { 0: world.globals, 1: world.chunks, 2: world.materials, 4: world.layers, 27: sums.createView() }) };
   }
   /** The tick carries an edit. */
-  pending = false;
-  /** Run every tick (the sandbox: pours keep landing after the press). */
-  always = false;
-  /** (perfopt, inplace) ticks since the last edit: with `always`, the brush runs EDIT_LINGER ticks after one */
-  private idle = 1e9;
+  private pending = false;
+  /** the tick carries a blow (blowSum runs first) */
+  private blows = false;
+  /** (DA-B8) until when brush state is in flight (sim/edit-ops.ts EditBusy) */
+  private busy = new EditBusy();
+  private tick = 0;
+  /** This tick's events (Simulation.step, before encode): whether the pass runs, and how long after. */
+  take(events: readonly WorldEvent[], tick: number, dt: number): void {
+    const edits = events.filter((e) => e.kind === EventKind.Edit);
+    this.tick = tick;
+    this.pending = edits.length > 0;
+    this.blows = edits.some((e) => editOpOf(e.z ?? 0) === OP.SMASH && (e.z ?? 0) >> 10 === BLOW_TAG >> 10);
+    this.busy.take(edits, tick, dt);
+  }
   encode(enc: GPUCommandEncoder): void {
-    this.idle = this.pending ? 0 : this.idle + 1;
-    if (!this.pending && !(this.always && (!INPLACE || this.idle < EDIT_LINGER))) return;
+    if (!this.pending && this.tick > this.busy.until) return;
+    if (this.blows) dispatch(enc, this.prof, 'edit-blow', this.blow.k, this.blow.group, [1, 1]);
     this.pending = false;
-    run(enc, this.prof, this.name, this.s, this.world);
-    if (!INPLACE) enc.copyBufferToBuffer(this.world.layersNext, 0, this.world.layers, 0, this.world.layers.size);
-    const size = [this.world.w, this.world.h];
-    enc.copyTextureToTexture({ texture: this.world.editStateNext }, { texture: this.world.editState }, size);
+    this.blows = false;
+    const w = this.world;
+    run(enc, this.prof, this.name, { ...this.s, group: this.groups[w.editCur] }, w);
+    // (the state written this tick is the current one: nothing copied back)
+    w.editCur = w.editCur === 0 ? 1 : 0;
   }
 }
 
@@ -624,14 +641,17 @@ export class SedimentSystem implements SimSystem {
       'sediment',
       tiersWgsl + flowConst('sediment') + sedimentWgsl + flowWgsl,
       { 3: 'rw', 5: 'rw', 7: 'read', 8: 'rw', 10: 'rw', 15: 'tex', 16: 'stex', 17: 'tex', 18: 'tex', 19: 'tex', 21: 'tex', 28: 'tex', 29: 'tex', 30: 'tex', 50: 'tex' },
-      { 3: world.layers, 5: world.deposit, 7: world.veg, 8: world.contamDelta, 10: world.sedOut, 16: world.airView, 18: world.editStateView, ...tex },
+      { 3: world.layers, 5: world.deposit, 7: world.veg, 8: world.contamDelta, 10: world.sedOut, 16: world.airView, 18: world.editStateViews[0], ...tex },
       true,
       flowN('sediment'),
     );
+    // (DA-B8: the brush state's two textures take turns — a group for each, picked by WorldGpu.editCur)
+    this.groups = [this.s.group, regroup(device, 'sediment', this.s, { 18: world.editStateViews[1] })];
   }
+  private groups: [GPUBindGroup, GPUBindGroup];
   encode(enc: GPUCommandEncoder): void {
     run(enc, this.prof, 'sediment-out', this.out, this.world);
-    run(enc, this.prof, this.name, this.s, this.world);
+    run(enc, this.prof, this.name, { ...this.s, group: this.groups[this.world.editCur] }, this.world);
   }
 }
 

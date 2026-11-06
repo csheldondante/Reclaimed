@@ -18219,3 +18219,46 @@ reason. The lookups can read both maps instead.
 - Hacks and limits: the second map costs shadowSize² × 4 B of memory (1 MB on the phone) where the cache is on; a soft
   edge where a static and a moving caster overlap takes the smaller of two filtered values, not the filter of the
   nearer depth (both 0/1 at a hard edge; equal in the shots).
+
+## 2026-11-05 — the edit pass in place, its state taking turns, run only while something is in flight (DA-B8)
+
+Why: the edit pass (the brush, a unit's take and put, a fell, a blow) copied its whole state texture back every tick it
+ran (rgba32float, 1.64 MB at 320²), and without `?inplace=1` (every tier but the phone's) the whole layers too (26 MB).
+It ran every tick on every sandbox level, the atlas included (`edit.always`, set for pours), or with `inplace` for 300
+ticks after any edit — so each builder's take or put bought 5 s of copies (~98 MB/s on the phone while builders work).
+The linger existed for the sandbox's pours only (DEVLOG round 83: "a pour lands up to 3.9 s after the press").
+
+- In place on every tier: each thread reads and writes only its own column, in the layers and in layersNext alike
+  (ARCHITECTURE "Who writes the columns": the passes that still copy layersNext back whole would undo a change to the
+  layers alone). The one read of other columns — a blow's struck column and its footprint's tops, for the rim — moved
+  to `blowSum`, a 4-thread pass before it on a tick that carries a blow, writing a 4-texel table (it was also each
+  rim thread's own loop over the footprint; with `inplace=1` that read raced the footprint's writes).
+- The state's two textures take turns (`WorldGpu.editStateA/B`, `editCur`): the pass reads one, writes the other and
+  flips; the sediment and the particle emitters keep a bind group for each and pick by `editCur`. Nothing copied.
+- When it runs (sim/edit-ops.ts `EditBusy`, `edit.always` gone): on a tick with an Edit event, and after it while a
+  press's cells are still landing — a build or dig a cell a tick, a pour after its 0.8 s fall at 4 cells/s, bedrock at
+  3 — plus two ticks so the two textures agree where it stops. Take, put, fell, the liquids, smash, crater and blows
+  leave nothing in flight: a builder's edit runs the pass for its own tick only. Its first version assumed a press's
+  later events stay within its strength; the GPU showed otherwise (any stroke start resets every column's `given`, so
+  a pour's next event after another tool's start took its strength again: 5 cells pending from strengths 2 and 3).
+  The press now ends at any stroke start and is reckoned at its largest strength and slowest rate
+  (test/unit/edit-ops.test.ts, with that case).
+- Same results: a scripted run in the `town` lab (a pour, a build, a pour's second event, a dig, a take, a put, a
+  bedrock rise; the edit pass alone, 600 ticks): the layers, deposit, plants, edit state and edit results hash the same
+  as before at ticks 3, 40, 199 and 600, and the two state textures are equal wherever the pass has stopped. A blow on
+  the flat lab: the rim's deposit filled (23.3 cells over 197 columns), the layers and layersNext equal where touched.
+- Measured, `town` lab, builders working (two houses and a farm planned, 30 sim s at 16x; the encoder's copies counted
+  in the page, old and new code alike): edit-state copies 1 808 → 0 (2.96 GB → 0), whole-layers copies 3 616 → 1 808
+  (94.8 → 47.4 GB: the remaining 26 MB a tick is the structure pass's, DA-B14); the same 26 edits on 8 ticks, the house
+  built; the run's wall time 17.5 → 13.1 s. (The lab runs without `inplace` whatever its tier: see DA-B7's note on the
+  build's flag order — so this is the desktop default's cost. On the phone with `inplace=1` the removed cost is the
+  1.64 MB state copy for 300 ticks after every take or put.)
+- hallcheck (the atlas towns, 30 s with nothing done; the layersNext copy-back's own gate): 0 of 344 buildings lost.
+- Transfers gate: the `EditSystem.encode` copies entry removed.
+- Not done, reported: the structure pass in place everywhere (DA-B14). It reads its neighbours' support while they're
+  rewritten in the same dispatch — with `inplace=1` that's a race (a torn column can be read), not Gauss-Seidel. It
+  needs its own design (a support pre-pass like `blowSum`, or layers ping-pong), not a switch.
+- Hacks and limits: the run length is a CPU upper bound from the events (no readback): a long drag keeps the pass on
+  for its press's whole landing time after the last event. A pour in a chunk that falls asleep mid-flight (woken for
+  8 s, longer than any pour) would hold the state one tick apart between the two textures. Snapshots (sim/snapshot.ts)
+  keep both textures but not `editCur`: fine at rest, where they agree.

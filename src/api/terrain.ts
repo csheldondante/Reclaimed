@@ -417,8 +417,6 @@ export class Terrain {
   deposit(x: number, y: number, material: MaterialName, opts: { radius?: number; layers?: number } = {}): void {
     const m = materialId(material);
     if (materialState(m) !== 'loose') throw new Error(`world.terrain.deposit: "${material}" isn't a loose material (build() lays solids)`);
-    // (pours land over the next ticks: the brush state has to run every tick)
-    this.core.sim.edit.always = true;
     this.edit(OP_POUR, m, x, y, opts.radius ?? 3, opts.layers ?? 1);
   }
 
