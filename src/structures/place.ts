@@ -12,7 +12,7 @@ import { TownSite, type SiteBox } from '../build/site';
 import { LEVEL_H } from '../build/town';
 import { townView } from '../build/view';
 import { shapesOf } from '../build/shapes';
-import { waysNav, waysOf } from '../build/ways';
+import { groundSteps, waysNav, waysOf } from '../build/ways';
 import type { NavGraph } from '../api/contracts/structures';
 import { cellPos, ROW_H } from '../world/lattice';
 import { draftCity, shiftPlan, type CityDraft } from './plan';
@@ -526,7 +526,7 @@ export function planTown(spec: CitySpec, ground: GroundFn, water?: GroundFn, den
 export function townNav(site: TownSite): NavGraph {
   const { plan, town, grid } = site;
   const courts = shapesOf(plan, grid, (c) => town.base[c]).courtyards.flatMap((ct) => ct.cells);
-  const ways = waysOf(plan, grid, courts);
+  const ways = waysOf(plan, grid, { courtyards: courts, walk: groundSteps(grid, (x, y) => site.groundAt(x, y)) });
   const groundOf = (c: number) => {
     const cols = grid.columns[c];
     let z = 0;

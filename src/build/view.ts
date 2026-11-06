@@ -33,7 +33,7 @@ import { DEFS } from './types';
 import { towered } from './plan';
 import { shapesOf, type Shapes } from './shapes';
 import { rampShape, STAIR_HALF, WALL_HALF, WALL_LINTEL } from './solid';
-import { alongAxis, axisLength, WAY_SQUARE, waysOf, type Ways } from './ways';
+import { alongAxis, axisLength, groundSteps, WAY_SQUARE, waysOf, type Ways } from './ways';
 import { LANE_DRAWN, LANE_WIDTH, type Lanes } from './lanes';
 
 /**
@@ -475,7 +475,7 @@ export function townView(site: ViewSite, inp: ViewInputs): { city: CityPlan; ext
   const nq = grid.count;
   // (round 128d) the painted shapes' landmarks: towers, domes, turrets, courtyards (shapes.ts)
   const shapes: Shapes = shapesOf(plan, grid, (c) => town.base[c], defs);
-  const ways = inp.ways ?? waysOf(plan, grid, shapes.courtyards.flatMap((ct) => ct.cells), defs);
+  const ways = inp.ways ?? waysOf(plan, grid, { courtyards: shapes.courtyards.flatMap((ct) => ct.cells), defs, walk: groundSteps(grid, inp.ground) });
   const tiles: TileMesh = {
     verts: Float64Array.from(grid.verts),
     quads: Uint32Array.from(grid.quads),

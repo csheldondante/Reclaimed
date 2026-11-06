@@ -22,6 +22,7 @@ import { LEVEL_H } from './town';
 import { DEFS } from './types';
 import type { TownPlan } from './plan';
 import { WALL_HALF } from './solid';
+import { STEP } from '../agents/rules';
 import { entrancesOf, needsEntrance, type Entrance } from './entrances';
 
 export interface WaysGrid {
@@ -42,6 +43,8 @@ export const SLOPE = 0.75;
 export const STAIR_EVERY = 16;
 /** (round 128o) a metre across a field costs this many of a street: the roads go round the fields where a street does */
 export const CROSS_COST = 3;
+/** how far either side of a cell's side the land is read for a step (m: a column or so in) */
+const SIDE_PROBE = 0.8;
 /** the longest flight (cells) */
 const STAIR_MAX = 6;
 
@@ -75,13 +78,16 @@ export interface Ways {
    * a ramp's cell (TownPlan.ramp) is a road's like any free cell, entered and left only along its axis
    */
   passages: number[];
+  /** (round 128o) where a way steps from cell u by its side e to m (null: it doesn't): along a ramp's axis, at a point
+   *  of the side a walker steps on the land (the routes cross there: lanes.ts) */
+  crossing(u: number, e: number, m: number): V2 | null;
   /** structures whose entrance (or stair) no road reaches, or that have none */
   cutOff: number[];
 }
 
 /** no ways at all (tests of the shapes' own rules) */
 export function noWays(count: number): Ways {
-  return { way: new Uint8Array(count), doors: [], entrances: [], stairs: [], gates: [], passages: [], cutOff: [] };
+  return { way: new Uint8Array(count), doors: [], entrances: [], stairs: [], gates: [], passages: [], crossing: () => null, cutOff: [] };
 }
 
 /** a binary min-heap of cells by cost (stale entries skipped by the caller) */
@@ -150,11 +156,51 @@ export function wayStep(plan: TownPlan, g: WaysGrid, u: number, e: number, m: nu
   return along(u, e) && along(m, sideTo(g, m, u));
 }
 
+export interface WaysOpts {
+  /** cells shut in by structures (shapes.ts) */
+  courtyards?: readonly number[];
+  defs?: Record<StructureType, StructureDef>;
+  /** free cells no road crosses: deep water (the reach's wet columns) */
+  blocked?: (c: number) => boolean;
+  /** (round 128o) where a walker steps from cell u across its side e to m on the land (groundSteps): a point on the
+   *  side, null none — a road never crosses a terrace's edge where a walker can't step */
+  walk?: (u: number, e: number, m: number) => V2 | null;
+}
+
 /**
- * The ways baked from the plan (courtyards: cells shut in by structures — shapes.ts; `blocked`: free cells no road crosses —
- * deep water, the reach's wet columns).
+ * (round 128o) Where a walker steps across a cell's side on the land: the first point along the side (its middle first,
+ * then out toward its ends) where the ground a little either side is within the walkers' STEP (agents/rules.ts) — the
+ * reach's join rule on the town's cells. null: a terrace's edge all along. `ground`: the land's top at a point.
  */
-export function waysOf(plan: TownPlan, g: WaysGrid, courtyards: readonly number[] = [], defs: Record<StructureType, StructureDef> = DEFS, blocked: (c: number) => boolean = () => false): Ways {
+export function groundSteps(g: WaysGrid, ground: (x: number, y: number) => number): (u: number, e: number, m: number) => V2 | null {
+  return (u, e, m) => {
+    const a = g.corner(u, e);
+    const b = g.corner(u, e + 1);
+    const [ux, uy] = g.centre(u);
+    const [vx, vy] = g.centre(m);
+    for (const t of SIDE_ALONG) {
+      const px = a[0] + (b[0] - a[0]) * t;
+      const py = a[1] + (b[1] - a[1]) * t;
+      const toward = (cx: number, cy: number) => {
+        const d = Math.hypot(cx - px, cy - py) || 1;
+        const k = Math.min(1, SIDE_PROBE / d);
+        return ground(px + (cx - px) * k, py + (cy - py) * k);
+      };
+      if (Math.abs(toward(ux, uy) - toward(vx, vy)) <= STEP) return [px, py];
+    }
+    return null;
+  };
+}
+
+/** where along a side a step is looked for: its middle, then out toward its ends */
+const SIDE_ALONG = [0.5, 0.35, 0.65, 0.2, 0.8];
+
+/** The ways baked from the plan. */
+export function waysOf(plan: TownPlan, g: WaysGrid, o: WaysOpts = {}): Ways {
+  const courtyards = o.courtyards ?? [];
+  const defs = o.defs ?? DEFS;
+  const blocked = o.blocked ?? (() => false);
+  const walk = o.walk ?? ((u: number, e: number) => sideMid(g, u, e));
   const n = g.count;
   const way = new Uint8Array(n);
   const nb = (c: number, e: number) => g.nbr[c * 4 + (((e % 4) + 4) % 4)];
@@ -204,7 +250,15 @@ export function waysOf(plan: TownPlan, g: WaysGrid, courtyards: readonly number[
   };
   const passable = (c: number) => c >= 0 && ((free(c) && !taken[c]) || isGate[c] === 1 || isPassage[c] === 1 || crossed(c));
   const rampOf = (c: number) => (plan.ramp ? plan.ramp[c] : -1);
-  const step = (u: number, e: number, m: number) => wayStep(plan, g, u, e, m);
+  // (each side's crossing found once: the road tree asks it many times)
+  const crossed4: (V2 | null | undefined)[] = new Array(n * 4);
+  const crossing = (u: number, e: number, m: number): V2 | null => {
+    const i = u * 4 + (((e % 4) + 4) % 4);
+    let c = crossed4[i];
+    if (c === undefined) c = crossed4[i] = wayStep(plan, g, u, e, m) ? walk(u, e, m) : null;
+    return c;
+  };
+  const step = (u: number, e: number, m: number) => crossing(u, e, m) !== null;
   const net = new Uint8Array(n);
   const cutOff = new Set<number>();
   const dist = new Float64Array(n);
@@ -391,7 +445,7 @@ export function waysOf(plan: TownPlan, g: WaysGrid, courtyards: readonly number[
     if (doorsAt[c] >= 2 || (doorsAt[c] >= 1 && ways >= 4)) way[c] = WAY_SQUARE;
   }
   for (const c of court) if (free(c)) way[c] = WAY_SQUARE;
-  return { way, doors, entrances, stairs, gates, passages, cutOff: [...cutOff] };
+  return { way, doors, entrances, stairs, gates, passages, crossing, cutOff: [...cutOff] };
 }
 
 export interface NavHeights {

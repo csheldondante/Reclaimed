@@ -1210,8 +1210,10 @@ export class FortressLife implements Routine {
       const w = v.length && this.carts[i] !== undefined ? (this.io.units.recs.get(this.carts[i])?.work as Work | undefined) : undefined;
       return w?.from ?? null;
     });
-    seed(F.site, stone.slice(0, 8));
-    seed(F.store, wood.slice(0, 8));
+    // (round 128o: a stand seeded on its floor's surface — under a passage's arch the top one is the roof)
+    const atFloor = (v: V2[]) => v.map(([x, y]) => ({ x, y, z: f.standFloor(x, y) }));
+    A.seed(F.site, atFloor(stone.slice(0, 8)));
+    A.seed(F.store, atFloor(wood.slice(0, 8)));
     seed(F.quarry, quarry);
     seed(F.fell, fell);
   }

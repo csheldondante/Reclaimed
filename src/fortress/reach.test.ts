@@ -157,7 +157,9 @@ describe('the check at placement', () => {
     expect(f.refusal).toBe("Builders can't reach that spot from the stores. It is walled in. Put a gate in the wall first.");
   });
 
-  it('a block that shuts a planned block in, with no variant to keep the way, is refused and the panel names it', async () => {
+  // (round 128o: a builder stands under a passage's arch — the reach reads the surface at a stand's floor, not the roof
+  // over the arch — so a passage through the block that shuts the house in keeps it reached)
+  it('a block that shuts a planned block in gets a passage, and a builder stands under its arch', async () => {
     const f = fortress(columns(), [20, 20]);
     const house = f.cellAt(80, 80);
     expect(f.paint(house, 0, 'house')).toBe(true);
@@ -165,13 +167,16 @@ describe('the check at placement', () => {
     // three sides walled: the fourth still open to the stores
     for (const c of round.slice(0, 3)) expect(f.paint(c, 0, 'wall')).toBe(true);
     await f.settled();
-    // (a builder works a block from beside it: a passage through the warehouse leaves the house no side to stand at)
+    // (a builder works a block from beside it: under the warehouse's passage)
     expect(f.paint(round[3], 0, 'warehouse')).toBe(true);
     await f.settled();
-    expect(f.plan.has(round[3], 0)).toBe(false);
-    expect(f.plan.passage[round[3]]).toBe(0);
-    expect(f.refusal).toBe('That would shut the house off from the stores. Leave a way through.');
+    expect(f.plan.has(round[3], 0)).toBe(true);
+    expect(f.plan.passage[round[3]]).toBe(1);
+    expect(f.refusal).toBe(null);
     expect(await reached(f, house)).toBe(true);
+    // (and without the passage — the warehouse taken out again — the farm next)
+    f.erase(round[3], 0);
+    await f.settled();
     // a farm (open ground) beside it doesn't shut it in
     expect(f.paint(round[3], 0, 'farm')).toBe(true);
     await f.settled();

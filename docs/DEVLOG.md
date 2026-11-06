@@ -18556,3 +18556,33 @@ Design note before code (AGENT_RULES 1). DESIGN.md section 13.
 - **Transfers:** none new per frame; per edit the answer words and the opened-cells bits (a few KB).
 - **Tests first:** a passage stand reached (CPU and GPU agree); a ring of wall closing on a block gets a gate; a block
   below a cliff gets a ramp; generation on the fixture leaves every entrance and stand reached; lab `town` 708/708.
+
+## 2026-11-05 — round 128o (`onetown`, DA-A3 part 1): the reach reads a stand's floor; roads only where a walker steps
+
+- **The bridge east of the lighthouse (main's question):** not removed. It shows in the start shot of this build when
+  the shot waits 16 s (a1/dump-Reclaimed-onetown.png) and in the pre-routes build with every lane hidden
+  (a1/old-nolanes.png); routes-town.png was taken at 8 s, before it streamed in. It isn't in the town's plan (its
+  layout holds three piers, the same in both builds; no bridge structure). My earlier note ("a lane drawn over the
+  river") was wrong. The pre-routes lanes did draw four `noRide` roads from free cells to the heap, the longest 23 m.
+- **The stand query:** the reach (fortreach.wgsl reachQuery/storesNode, CpuReach) read a stand's column's TOP
+  surface; under a passage's arch that's the roof. A query now carries each stand's floor (the land's ground there,
+  window z) and is reached by its column's surface nearest it; the stores likewise. `Fortress.reachAsk` is the one
+  place the question is built (the placement bench's diagnosis and fortresskeep.mjs call it). On the fixture both new
+  tests (every block still to build, every way in, reached: test/unit/townreach.test.ts) fail with the top surface and
+  pass with the floor. The builders' site fields are seeded on the stand's floor the same way (`Fortress.standFloor`).
+- **Roads only where a walker steps:** the generated farmland is terraced (cell 4170 at 17.4 m, its neighbour 104 at
+  18.8 m) and a lane ran over the edge, a 1.3 m step riders can't take. ways.ts takes `walk` (`groundSteps`: the land
+  either side of a cell's side within the walkers' STEP, at the side's middle or along it) and records each side's
+  `crossing`; lanes run through those crossings. `WaysOpts` replaces waysOf's positional arguments. agents/rules.ts
+  holds the walkers' numbers (AGENT_H, STEP, DROP, DEEP, NAV_K) once; fortress/reach.ts re-exports them.
+- reach.test.ts: a block that shuts a house in now gets a passage through it (a builder stands under the arch), where
+  it was refused.
+- **Gate not met (lab `town`, all blocks): 703/708.** Two things in the agents stop it, neither the reach:
+  1. the four builders spawned at the stores (the warehouse's door out, cell 4235) end up 1.4 m inside the
+     lighthouse's claimed columns (cell 3447: their z 16.5 under its 32 m top) and stand there with no field (a probe of
+     the site field: null there, 25 at the door);
+  2. carriers stall at a route node in the fields (scripts/lab/fortressharvest.mjs pins it: 4 carriers still for
+     120+ sim s at (183.5, 185)).
+  The rest of DA-A3 (generation through the reach, the openings chosen on the GPU, VARIANT_TRIES and the 3 s re-ask
+  deleted) is not started: reported to main with options.
+- Fixture recaptured (ways.ts is a generator source). Unit tier 94 files green.

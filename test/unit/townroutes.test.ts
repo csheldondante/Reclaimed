@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { decodeTownFixture } from '../../src/lab/townfixture';
 import { siteFromJson, TownSite } from '../../src/build/site';
-import { entrancesOf, needsEntrance } from '../../src/build/entrances';
+import { needsEntrance } from '../../src/build/entrances';
 import { Fortress } from '../../src/fortress/fortress';
 import { solidSpans } from '../../src/build/solid';
 import { laneGraph } from '../../src/build/lanes';
@@ -34,7 +34,7 @@ async function startTown() {
 describe("the user's start town's routes", () => {
   it('gives every structure but its wall an entrance', async () => {
     const { f } = await startTown();
-    const has = new Set(entrancesOf(f.plan, f.grid).map((e) => e.structure));
+    const has = new Set(f.ways().entrances.map((e) => e.structure));
     const without = f.plan.structures().filter((s) => needsEntrance(s.type) && !has.has(s.id)).map((s) => `${s.type} ${s.id}`);
     expect(without).toEqual([]);
   });
@@ -86,7 +86,7 @@ describe("the user's start town's routes", () => {
     expect(s0.d).toBeLessThan(0.01);
     const net = reached(graph, s0.node);
     const off: string[] = [];
-    for (const e of entrancesOf(f.plan, f.grid)) {
+    for (const e of f.ways().entrances) {
       const n = nearestNode(graph, ...f.grid.centre(e.out));
       if (n.d > 0.01 || !net.has(n.node)) off.push(`${f.plan.structure(e.structure)!.type} ${e.structure} (${e.kind}, ${n.d.toFixed(1)} m off)`);
     }

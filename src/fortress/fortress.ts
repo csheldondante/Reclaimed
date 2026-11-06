@@ -16,11 +16,11 @@ import { DEFS } from './defs';
 import { typeIndex, type TownPlan } from '../build/plan';
 import { pickFace, placeFor } from './pick';
 import { shapesOf } from '../build/shapes';
-import { waysOf, waysNav, type Ways } from '../build/ways';
+import { groundSteps, waysOf, waysNav, type Ways } from '../build/ways';
 import type { NavGraph } from '../api/contracts/structures';
 import { LEVEL_H } from '../build/town';
 import { bedsOf, roomOf, type JobKind } from './economy';
-import { packSpan, REACH_BITS, type ReachEngine, type ReachReply } from './reach';
+import { packSpan, REACH_BITS, type ReachAsk, type ReachEngine, type ReachReply } from './reach';
 import { solidSpans } from '../build/solid';
 import { refusedLine, variantLine, wouldCutLine, type ReachWhy, type VariantKind } from './words';
 import { laneGraph, lanesOf, roadShapesOf, type Lanes } from '../build/lanes';
@@ -310,7 +310,13 @@ export class Fortress {
         return b >= 0 && ((wb[b >> 5] >>> (b & 31)) & 1) === 1;
       };
       const blocked = (c: number) => !!wb && [g.centre(c), ...[0, 1, 2, 3].map((k) => g.corner(c, k))].some(([x, y]) => wet(x, y));
-      this.waysMemo = waysOf(this.plan, g, courts, undefined, blocked);
+      // (round 128o: and never across a terrace's edge a walker can't step — the land as the town has it)
+      const { w, h } = this.box;
+      const ground = (x: number, y: number) => {
+        const [k, r] = cellAt(x, y);
+        return this.groundOfCol(Math.max(0, Math.min(h - 1, r)) * w + Math.max(0, Math.min(w - 1, k)));
+      };
+      this.waysMemo = waysOf(this.plan, g, { courtyards: courts, blocked, walk: groundSteps(g, ground) });
     }
     return this.waysMemo;
   }
@@ -592,11 +598,7 @@ export class Fortress {
     this.reachBusy = true;
     try {
       R.setSpans(this.spansNow());
-      const queries = new Int32Array(cells.length * 4).fill(-1);
-      cells.forEach((c, i) => this.standCols(c).forEach((b, k) => (queries[i * 4 + k] = b)));
-      const at = this.storesAt();
-      const sc = at ? this.boxColOf(...this.toBox(at[0], at[1])) : -1;
-      const reply = await R.check({ stores: sc >= 0 ? [sc % this.box.w, Math.floor(sc / this.box.w)] : null, queries, wet: false });
+      const reply = await R.check(this.reachAsk(cells, false, false));
       return cells.map((_, i) => (reply.bits[i] & 1) === 1);
     } finally {
       this.reachBusy = false;
@@ -621,14 +623,11 @@ export class Fortress {
         const t0 = performance.now();
         R.setSpans(this.spansNow());
         const cells = this.todoCells();
-        const queries = new Int32Array(cells.length * 4).fill(-1);
-        cells.forEach((c, i) => this.standCols(c).forEach((b, k) => (queries[i * 4 + k] = b)));
-        const at = this.storesAt();
-        const sc = at ? this.boxColOf(...this.toBox(at[0], at[1])) : -1;
+        const ask = this.reachAsk(cells, wet, !!edit || !!batch);
         this.reachStats.cpuMs = performance.now() - t0;
         let reply: ReachReply;
         try {
-          reply = await R.check({ stores: sc >= 0 ? [sc % this.box.w, Math.floor(sc / this.box.w)] : null, queries, wet, why: !!edit || !!batch });
+          reply = await R.check(ask);
         } catch (e) {
           if (e instanceof DOMException && e.name === 'AbortError') return;
           throw e;
@@ -644,6 +643,34 @@ export class Fortress {
   private boxColOf(x: number, y: number): number {
     const [k, r] = cellAt(x, y);
     return k < 0 || r < 0 || k >= this.box.w || r >= this.box.h ? -1 : r * this.box.w + k;
+  }
+
+  /**
+   * (round 128o) The reach's question for these cells: each one's stands (up to four box columns) with their floors —
+   * the land's ground there as the town has it, window z — and the stores' column and floor.
+   */
+  reachAsk(cells: readonly number[], wet: boolean, why: boolean): ReachAsk {
+    const oz = this.io.oz();
+    const queries = new Int32Array(cells.length * 4).fill(-1);
+    const floors = new Float32Array(cells.length * 4);
+    cells.forEach((c, i) =>
+      (c >= 0 ? this.standCols(c) : []).forEach((b, k) => {
+        queries[i * 4 + k] = b;
+        floors[i * 4 + k] = this.groundOfCol(b) - oz;
+      }),
+    );
+    const at = this.storesAt();
+    const sc = at ? this.boxColOf(...this.toBox(at[0], at[1])) : -1;
+    return { stores: sc >= 0 ? [sc % this.box.w, Math.floor(sc / this.box.w)] : null, storesZ: sc >= 0 ? this.groundOfCol(sc) - oz : 0, queries, floors, wet, why };
+  }
+
+  /**
+   * (round 128o) A stand's floor (window z): the land's ground at window world (x, y) as the town has it — what a
+   * builder stands on there, under a passage's arch too (the reach's query and the builders' field seed alike)
+   */
+  standFloor(x: number, y: number): number {
+    const b = this.boxColOf(...this.toBox(x, y));
+    return b >= 0 ? this.groundOfCol(b) - this.io.oz() : 1e4;
   }
 
   /** a cell's stands' box columns (up to four) */

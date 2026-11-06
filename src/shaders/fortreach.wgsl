@@ -10,8 +10,8 @@
 //    within STEP, AGENT_H of room over the step, both deep or both not: the agents never lead a walker into deep water,
 //    so dry to deep is one way, no join). Labels hooked to the least root round them and pointer-jumped (the atlas's
 //    GPU flood fill, atlas/build.wgsl ccHook / ccJump) until nothing changes: a few rounds after an edit;
-//  - answers: per query (a planned block's stands: up to four columns) whether one stand's top surface has the stores'
-//    label, OR-ed into its word at bit RP.mode.y; the columns under a drop up to the stores' component (a rise of STEP
+//  - answers: per query (a planned block's stands: up to four columns, each with its floor) whether one stand's surface
+//    nearest its floor has the stores' label (round 128o: was the top surface — the roof over a passage's arch), OR-ed into its word at bit RP.mode.y; the columns under a drop up to the stores' component (a rise of STEP
 //    to DROP: where a ramp would join them); the wet columns (for the lanes).
 // Why a place isn't reached is the same solve with a rule lifted (RP.mode.x: 1 deep water no bar, 2 the plan's solid
 // left out): reached then, that rule is why. The rules are the agents' (agents.wgsl: keep the constants in step). A drop
@@ -22,7 +22,8 @@ struct ReachParams {
   box: vec4<i32>,
   /** the stores' column in the box (x, y; -1 none), the queries, 1 when the wet columns are asked for */
   stores: vec4<i32>,
-  /** x the rules lifted (1 deep water, 2 the plan's solid), y the bit the queries' answers go to */
+  /** x the rules lifted (1 deep water, 2 the plan's solid), y the bit the queries' answers go to, z the stores' floor
+   *  (window z, f32 bits) */
   mode: vec4<u32>,
 };
 @group(0) @binding(3) var<storage, read> layers: array<vec4<u32>>;
@@ -35,7 +36,7 @@ struct ReachParams {
 @group(0) @binding(7) var<storage, read_write> deepTop: array<u32>;
 @group(0) @binding(8) var<storage, read_write> label: array<atomic<u32>>;
 @group(0) @binding(9) var<storage, read_write> flag: array<atomic<u32>, 4>;
-/** per query four box columns + 1 (0: none) */
+/** per query four stands: box column + 1 (0: none), then its floor (window z, f32 bits) */
 @group(0) @binding(10) var<storage, read> query: array<u32>;
 /** [0] ramp spots found, [1 ..] RAMP_CAP pairs (box column, direction), then a word a query, then the wet bits */
 @group(0) @binding(11) var<storage, read_write> answer: array<atomic<u32>>;
@@ -195,17 +196,29 @@ fn reachJump(@builtin(global_invocation_id) id: vec3<u32>) {
   }
 }
 
-/** the stores' surface: the top one walkers use in its column (NODE_NONE: none) */
-fn storesNode() -> u32 {
-  if (RP.stores.x < 0) { return NODE_NONE; }
-  let b = u32(RP.stores.y) * boxW() + u32(RP.stores.x);
+/** box column b's surface nearest a floor z (NODE_NONE: none) — reach.ts nearestSurf */
+fn nearSurf(b: u32, z: f32) -> u32 {
+  var best = NODE_NONE;
+  var bd = 1e9;
   for (var k = 0u; k < RNAV_K; k++) {
-    if (live(b * RNAV_K + k)) { return b * RNAV_K + k; }
+    let s = b * RNAV_K + k;
+    if (!live(s)) { continue; }
+    let d = abs(surf[s].x - z);
+    if (d < bd) {
+      bd = d;
+      best = s;
+    }
   }
-  return NODE_NONE;
+  return best;
 }
 
-/** per query: a stand's top surface in the stores' component → bit RP.mode.y; no stand in the box → bit 4 */
+/** the stores' surface: its column's nearest the stores' floor (NODE_NONE: none) */
+fn storesNode() -> u32 {
+  if (RP.stores.x < 0) { return NODE_NONE; }
+  return nearSurf(u32(RP.stores.y) * boxW() + u32(RP.stores.x), bitcast<f32>(RP.mode.z));
+}
+
+/** per query: a stand's surface nearest its floor in the stores' component → bit RP.mode.y; no stand in the box → bit 4 */
 @compute @workgroup_size(64)
 fn reachQuery(@builtin(global_invocation_id) id: vec3<u32>) {
   let qi = id.x;
@@ -215,11 +228,11 @@ fn reachQuery(@builtin(global_invocation_id) id: vec3<u32>) {
   var bits = 0u;
   var any = false;
   for (var t = 0u; t < 4u; t++) {
-    let c = query[qi * 4u + t];
+    let c = query[qi * 8u + 2u * t];
     if (c == 0u) { continue; }
     any = true;
-    let s = (c - 1u) * RNAV_K;
-    if (live(s) && sr != NODE_NONE && root(s) == sr) { bits |= 1u << RP.mode.y; }
+    let s = nearSurf(c - 1u, bitcast<f32>(query[qi * 8u + 2u * t + 1u]));
+    if (s != NODE_NONE && sr != NODE_NONE && root(s) == sr) { bits |= 1u << RP.mode.y; }
   }
   if (!any) { bits |= 16u; }
   atomicOr(&answer[queryAt() + qi], bits);

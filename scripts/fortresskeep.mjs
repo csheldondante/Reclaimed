@@ -35,10 +35,7 @@ await run({ name: 'fortresskeep', kind: 'behaviour', size: '412x915', dpr: 1 }, 
       await f.settled();
       const Re = f.io.reach;
       Re.setSpans(f.spansNow());
-      const queries = new Int32Array(cells.length * 4).fill(-1);
-      cells.forEach((c, i) => c >= 0 && f.standCols(c).forEach((b, k) => (queries[i * 4 + k] = b)));
-      const sc = f.boxColOf(...f.toBox(at[0], at[1]));
-      const reply = await Re.check({ stores: [sc % f.box.w, Math.floor(sc / f.box.w)], queries, wet: false, why: true });
+      const reply = await Re.check(f.reachAsk(cells, false, true));
       const box = f.box;
       const inWin = box.origin[0] - S.origin[0] >= 0 && box.origin[1] - S.origin[1] >= 0 && box.origin[0] + box.w <= S.origin[0] + S.W && box.origin[1] + box.h <= S.origin[1] + S.H;
       return { origin: [...S.origin], boxInWindow: inWin, bits: [...reply.bits].join(',') };

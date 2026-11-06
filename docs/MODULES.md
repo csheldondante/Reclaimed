@@ -36,6 +36,7 @@ GPU agents (the crowd every unit and worker runs on): their kernels' wrappers, j
 - `ride.ts` (216) — The agents ride the roads on the GPU (round 128i, V128-14; API: `MAX_DESTS`, `RIDE_NEAR`, `RoadRide`.
 - `roadgraph.ts` (239) — The agents' road graph (round 128i, V128-14; API: `RoadSeg`, `RoadGraph`, `noGraph`, `nodeCount` +8.
 - `roads.ts` (162) — The agents' road bits from shapes (round 128i, FT-58; API: `RoadShape`, `ROAD_SHAPE_FLOATS`, `packRoadShapes`, `roadInside` +2.
+- `rules.ts` (14) — The walkers' rules as numbers (agents.wgsl's constants, mirrored: keep them in step) — what the agents … API: `AGENT_H`, `STEP`, `DROP`, `DEEP` +1.
 - `scope.ts` (155) — Where the agents' fields are kept, and where they're relaxed (round 104, simscale — the user: "For the … API: `SCOPE_MARGIN`, `Box`, `AgentScope`.
 
 ## src/api/
@@ -156,7 +157,7 @@ The atlas: the whole generated world map (coarse sim, GPU finish, far land, geys
 - `towngrid.ts` (186) — The town's irregular grid (round 65; API: `TownGridOpts`, `TownGrid`, `CellGrid`.
 - `types.ts` (152) — The building types: one table for every town (round 128m, onetown; API: `POWER_RISE`, `DEFS`.
 - `view.ts` (1183) — A town drawn (round 128m, onetown; API: `ViewSite`, `LOOK_GHOST`, `PIECE_PICKED`, `PIECE_WARN` +12.
-- `ways.ts` (513) — The fortress's ways (round 128d; API: `WaysGrid`, `WAY_NONE`, `WAY_ROAD`, `WAY_SQUARE` +15.
+- `ways.ts` (567) — The fortress's ways (round 128d; API: `WaysGrid`, `WAY_NONE`, `WAY_ROAD`, `WAY_SQUARE` +17.
 
 ## src/cardlab/
 
@@ -201,16 +202,16 @@ Fortress mode: the fortress, its economy, pieces, claims, life (workers) and its
 - `defs.ts` (78) — The eight first buildings (round 128c, the user's list) and their numbers: a block's cost and what it gives. API: `START_STORES`, `ECON`, `DEFS`, `POWER_RISE`.
 - `economy.ts` (237) — The fortress's economy (fortress slice 1, milestone 3: "the economy feeds the building"). API: `JOB_ORDER`, `JobKind`, `JobSlot`, `STORED` +18.
 - `follow.ts` (189) — Follow a person (round 128l, m4; API: `Doing`, `PersonFacts`, `nameOf`, `thoughtOf` +3.
-- `fortress.ts` (1235) — The fortress (fortress slice 1, milestone 1): the player editing a town's plan. API: `Erased`, `FortressStatus`, `FortressIO`, `Tool` +2.
+- `fortress.ts` (1262) — The fortress (fortress slice 1, milestone 1): the player editing a town's plan. API: `Erased`, `FortressStatus`, `FortressIO`, `Tool` +2.
 - `host.ts` (56) — (round 128l, tooling) What the fortress's start (scenes/level.ts startFortress) needs of the world it's … API: `FortressTownRec`, `FortressTownSource`, `FortressWindow`, `TownViewHost`.
 - `inspect.ts` (156) — Inspect (round 128d; the user: "Maybe an inspect to highlight a continuous section of structure and see … API: `InspectFacts`, `InspectLive`, `inspectFacts`, `inspectCard`.
-- `life.ts` (1568) — The fortress's people (fortress slice 1; API: `LOAD`, `R4`, `startSpots`, `FortressLifeIO` +1.
+- `life.ts` (1570) — The fortress's people (fortress slice 1; API: `LOAD`, `R4`, `startSpots`, `FortressLifeIO` +1.
 - `pick.ts` (59) — Which block face a tap lands on (round 128d, the user: "Fix the clicking on the side to build next to it. API: `PickCells`, `FaceHit`, `pickFace`, `placeFor`.
 - `quarry.ts` (318) — The miners grow a quarry's pit down, tier by tier (round 128m, `quarry`, BACKLOG V128-11; API: `QuarryIO`, `QuarryDig`.
 - `raid.ts` (289) — The attack wave's rules (round 128l, m4: fortress M5-lite, docs/DECISIONS.md round 128l "the attack wave"). API: `RAID`, `LOOT_ORDER`, `waveSize`, `Side` +13.
 - `raiders.ts` (748) — The attack wave on the fortress (round 128l, m4: fortress M5-lite; API: `RAID_FACTION`, `RaidIO`, `RaidReport`, `FortressRaid`.
-- `reach.ts` (222) — The fortress's reach: what a check asks and answers (the GPU's — reachgpu.ts, shaders/fortreach.wgsl — in … API: `AGENT_H`, `STEP`, `DROP`, `DEEP` +10.
-- `reachgpu.ts` (256) — The fortress's reach on the GPU (round 128l, m4; API: `FortressReachGpu`.
+- `reach.ts` (230) — The fortress's reach: what a check asks and answers (the GPU's — reachgpu.ts, shaders/fortreach.wgsl — in … API: `RAMP_CAP`, `REACH_BITS`, `ReachAsk`, `ReachReply` +11.
+- `reachgpu.ts` (262) — The fortress's reach on the GPU (round 128l, m4; API: `FortressReachGpu`.
 - `recipes.ts` (154) — The fortress's recipes (round 128l, m4: fortress slice 1, milestone 4 — "the blacksmith makes weapons from … API: `Recipe`, `RECIPES`, `recipeTakes`, `TrainRoom` +2.
 - `testing.ts` (12) — (round 128m, onetown) Tests' fortress: the player editing a town with nothing on it yet (build/site.ts … API: `fortressOn`.
 - `ui.ts` (377) — The fortress's bar. Planning (time stopped): select what — one of the nine types — then tap to plan it; API: `FortressBarHooks`, `SPEEDS`, `FortressBar`.
@@ -409,7 +410,7 @@ The parts of the bench, split out of perf/bench.ts: the methods of the Bench cla
 
 ## src/perf/placebench/
 
-- `diagnose.ts` (114) — (round 128m, townlab) The placement bench's diagnosis, on the game only: on the Pixel 9a every placement … API: `DiagnoseIO`, `Diagnosis`, `diagnose`, `diagnosisLines`.
+- `diagnose.ts` (112) — (round 128m, townlab) The placement bench's diagnosis, on the game only: on the Pixel 9a every placement … API: `DiagnoseIO`, `Diagnosis`, `diagnose`, `diagnosisLines`.
 - `points.ts` (92) — (round 128m, townlab) The placement bench's points (perf/placebench.ts; API: `V2`, `PlacePoint`, `PointsIn`, `RING_DISTS` +1.
 - `run.ts` (201) — (round 128m, townlab) The placement bench's run (the user: "build a bench for me to run that places … API: `PlaceBenchIO`, `PlaceRow`, `ArriveRow`, `ARRIVE_R` +3.
 - `summary.ts` (62) — (round 128m, townlab) The placement bench's report and its plain summary (docs/WRITING.md: plain words, … API: `reasonOf`, `placeSummary`.
@@ -650,7 +651,7 @@ WGSL. `common.wgsl` (+ layers, materials) is prepended to every kernel; flow/slo
 - `floralook.wgsl` (73) — ---- the flora library's look and wind (round 117;
 - `floraput.wgsl` (55) — ---- placing a flora library plant (round 117;
 - `flow.wgsl` (21) — ---- flow.wgsl ----------------------------------------------------------------- Net water flow through a …
-- `fortreach.wgsl` (261) — ---- the fortress's reach on the GPU (round 128l, m4;
+- `fortreach.wgsl` (274) — ---- the fortress's reach on the GPU (round 128l, m4;
 - `grids.wgsl` (40) — ---- structure grids (docs/GRIDS.md) ----------------------------------------- Rigid voxel grids over the …
 - `inhabitants.wgsl` (934) — Inhabitants (round 117, docs/INHABITANTS.md;
 - `judge.ts` (11) — Judge B, the method of sections on the GPU, in parts (2026-11-04, the monolith split; API: `judgeWgsl`.

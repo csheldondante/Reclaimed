@@ -13,7 +13,7 @@
 // without a GPU: lanes.test.ts). The ride graph (laneGraph) is built from the same pieces.
 import type { V2 } from '../api/contracts/structures';
 import type { TownPlan } from './plan';
-import { WAY_ROAD, WAY_SQUARE, wayStep, type Ways, type WaysGrid } from './ways';
+import { WAY_ROAD, WAY_SQUARE, type Ways, type WaysGrid } from './ways';
 import type { RoadShape } from '../agents/roads';
 import { graphOf, type RoadGraph } from '../agents/roadgraph';
 
@@ -81,11 +81,11 @@ export function lanesOf(plan: TownPlan, g: WaysGrid, ways: Ways, ground: (x: num
     if (!onWay(c)) continue;
     for (let e = 0; e < 4; e++) {
       const m = g.nbr[c * 4 + e];
-      if (m <= c || !onWay(m) || !wayStep(plan, g, c, e, m)) continue;
-      // (a gate's or a passage's neighbours on the ways are those its way through opens on: a wall cell is never one)
-      const p = g.corner(c, e);
-      const q = g.corner(c, e + 1);
-      const mid: V2 = [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2];
+      if (m <= c || !onWay(m)) continue;
+      // (where a walker steps across the side: its middle on even ground, else along it — ways.ts groundSteps; a gate's
+      // or a passage's neighbours on the ways are those its way through opens on: a wall cell is never one)
+      const mid = ways.crossing(c, e, m);
+      if (!mid) continue;
       push(c, g.centre(c), mid);
       push(m, mid, g.centre(m));
     }

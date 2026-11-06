@@ -7,17 +7,14 @@
 //    each with AGENT_H of room over it, the highest NAV_K of them; the top one deep under water over DEEP;
 //  - two surfaces of neighbouring columns join when a walker steps either way between them: a rise within STEP, AGENT_H
 //    of room over the step, both deep or both dry;
-//  - a place is reached when a stand's top surface is in the stores' component. Why not: the solve again with deep
+//  - a place is reached when a stand's surface nearest its floor is in the stores' component (round 128o: was the top
+//    surface — under a passage's arch the top is the roof, so a stand there never counted); Why not: the solve again with deep
 //    water no bar (reached then: deep water), then with the plan's solid left out (reached then: walled in by the plan);
 //    neither, a cliff.
 import { nbr } from '../world/lattice';
 
-/** agents.wgsl's */
-export const AGENT_H = 1.5;
-export const STEP = 1.1;
-export const DROP = 2.6;
-export const DEEP = 0.9;
-export const NAV_K = 4;
+import { AGENT_H, DEEP, DROP, NAV_K, STEP } from '../agents/rules';
+export { AGENT_H, DEEP, DROP, NAV_K, STEP };
 /** fortress.ts LANE_WATER */
 const LANE_WATER = 0.8;
 
@@ -33,6 +30,10 @@ export interface ReachAsk {
   stores: [number, number] | null;
   /** per query up to four box columns (its stands); -1 none */
   queries: Int32Array;
+  /** (round 128o) per stand its floor (window z): it's reached by its column's surface nearest this */
+  floors: Float32Array;
+  /** the stores' floor (window z): the stores stand on their column's surface nearest it */
+  storesZ: number;
   /** the wet columns too (the lanes) */
   wet: boolean;
   /** why the queries not reached aren't (the solve again with each rule lifted: an edit to judge) */
@@ -78,6 +79,13 @@ interface Surf {
   z: number;
   /** the room over it */
   head: number;
+}
+
+/** the surface of a column's (highest first) nearest a floor z (-1: none) — fortreach.wgsl nearSurf */
+export function nearestSurf(surfs: readonly { z: number }[], z: number): number {
+  let best = -1;
+  for (let k = 0; k < surfs.length; k++) if (best < 0 || Math.abs(surfs[k].z - z) < Math.abs(surfs[best].z - z)) best = k;
+  return best;
 }
 
 /** a column's surfaces, highest first (fortreach.wgsl reachPeel) */
@@ -179,14 +187,14 @@ export class CpuReach implements ReachEngine {
         });
       }
       const sb = ask.stores ? ask.stores[1] * w + ask.stores[0] : -1;
-      const sr = sb >= 0 && surfs[sb]?.length ? find(sb * NAV_K) : -1;
+      const sr = sb >= 0 && surfs[sb]?.length ? find(sb * NAV_K + nearestSurf(surfs[sb], ask.storesZ)) : -1;
       for (let q = 0; q < nq; q++) {
         let any = false;
         for (let t = 0; t < 4; t++) {
           const b = ask.queries[q * 4 + t];
           if (b < 0) continue;
           any = true;
-          if (surfs[b].length && sr >= 0 && find(b * NAV_K) === sr) bits[q] |= bit;
+          if (surfs[b].length && sr >= 0 && find(b * NAV_K + nearestSurf(surfs[b], ask.floors[q * 4 + t])) === sr) bits[q] |= bit;
         }
         if (!any) bits[q] |= REACH_BITS.none;
       }
