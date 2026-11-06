@@ -14,7 +14,7 @@ import { nearestNode, nodeCount, reached } from '../agents/roadgraph';
 import { cellPos } from '../world/lattice';
 import { townPieces } from './view';
 import { WAY_SQUARE } from './ways';
-import { CpuReach, type ReachColumns } from '../fortress/reach';
+import { CpuReach, type ReachColumns } from './reach';
 
 const W = 160;
 const H = 184;

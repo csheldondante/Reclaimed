@@ -4,7 +4,7 @@
 import { fortressOn } from './testing';
 import { describe, expect, it } from 'vitest';
 import { Fortress } from './fortress';
-import { CpuReach, type ReachColumns } from './reach';
+import { CpuReach, type ReachColumns } from '../build/reach';
 
 const W = 160;
 const H = 184;
@@ -66,7 +66,7 @@ describe('ringCells (FT-57)', () => {
       // (farms on every cell inside: the reach asks about each one)
       const yards = [...within].filter((c) => !ring.has(c));
       // (RT-6: the ring placed gets a gate — the cells a builder stands at only from inside — shut again behind the
-      // check's back; then every farm inside is refused, walled in)
+      // check's back; round 128o, B: the farms inside then get a gate of their own, the one way in — every farm kept)
       f.paintMany([...ring], 0, 'wall');
       await f.settled();
       for (const c of ring) f.plan.gate[c] = 0;
@@ -75,8 +75,9 @@ describe('ringCells (FT-57)', () => {
       f.paintMany(yards, 0, 'farm');
       await f.settled();
       const inside = yards.filter((c) => f.plan.has(c, 0)).length;
-      expect(inside, `(${cx}, ${cy}) r ${r}`).toBe(0);
-      expect(f.refusal).toMatch(/walled in/);
+      expect(inside, `(${cx}, ${cy}) r ${r}`).toBe(yards.length);
+      expect([...ring].filter((c) => f.plan.gate[c]).length).toBe(1);
+      expect(f.refusal).toBe(null);
     }
   }, 30000);
 });

@@ -18,8 +18,8 @@ import { fileURLToPath } from 'node:url';
 
 export const GEN_ENTRIES = ['src/atlas/atlas.ts', 'src/world/streamgen.ts', 'src/settle/settlements.ts', 'src/story/stage-land.ts'];
 // (round 128o, DA-A6: and the one crowd — a town's people in play, town/ and the settlements' wiring to it — which a
-// settlement in play runs but whose rules make no land)
-export const GEN_BOUNDARY = ['src/gpu/', 'src/sim/', 'src/tune/', 'src/weather/', 'src/grids/', 'src/gm/', 'src/units/', 'src/render/', 'src/ui/', 'src/scenes/', 'src/town/', 'src/settle/crowd.ts', 'src/settle/work.ts'];
+// settlement in play runs but whose rules make no land; B: and the one reach, which joins a town's places in play)
+export const GEN_BOUNDARY = ['src/gpu/', 'src/sim/', 'src/tune/', 'src/weather/', 'src/grids/', 'src/gm/', 'src/units/', 'src/render/', 'src/ui/', 'src/scenes/', 'src/town/', 'src/settle/crowd.ts', 'src/settle/work.ts', 'src/build/reach.ts', 'src/build/reachgpu.ts', 'src/build/sitereach.ts'];
 
 // value imports only: `import type` / `export type` lines are erased by the compiler
 const IMPORT = /^\s*(?:import|export)\s+(?!type\b)[^;]*?from\s+['"]([^'"]+)['"]|^\s*import\s+['"]([^'"]+)['"]/gm;

@@ -3452,3 +3452,15 @@ world should show what needs clearing and how.
   under z 0 into a pit. More than one window's height at once: the sparse cz chunks later (BACKLOG QY-6). Elevators
   and pumps: BACKLOG QY-1, QY-2. (DEVLOG round 128m.)
 
+
+## 2026-11-06 — round 128o (`onetown`) — roads over steps a walker can't take (DA-A10)
+
+- Asked (DEVLOG round 128o, DA-A10's design note): are the start town's own roads graded once at generation, with only
+  the player's new roads costing stone and builder time? The steepest grade a road may have? Stairs or switchbacks
+  where a grade needs more than a few metres of cut or fill?
+- The user (via main): (1) "Free at generation" — the start town's roads are graded once when it's generated; only
+  the player's new roads cost stone and builder time, as road works. (2) Max road grade: 1 in 3. (3) "Stairs in town,
+  switchbacks outside" — dense town cells get stairs as declared paths; open hillsides get switchback roads carts can
+  use.
+- → build/grade.ts gradeLane takes the grade (1/3) and what a steep stretch becomes; generation grades the town's
+  lanes into its land; the player's new roads are road works on the builders' list.

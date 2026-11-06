@@ -35,7 +35,7 @@ await run({ name: 'settlecrowd', kind: 'behaviour', size: '412x915', dpr: 1 }, a
         phases[p] = (phases[p] ?? 0) + 1;
       }
       const stores = Object.fromEntries(Object.entries(life.rec.stores).map(([k, v]) => [k, Math.round(v.stock)]));
-      return { id: life.rec.id, t: Math.round(life.t), people: people.length, guards: life.ids.length - people.length, raiders: life.raiders.length, phases, trips: life.trips, blocks: life.blocks, houses: life.houses, moved: life.moved, stores, raid: life.raid ? Math.round(life.raid.t) : null };
+      return { id: life.rec.id, t: Math.round(life.t), people: people.length, guards: life.ids.length - people.length, raiders: life.raiders.length, phases, trips: life.trips, blocks: life.blocks, houses: life.houses, moved: life.moved, stores, raid: life.raid ? Math.round(life.raid.t) : null, reach: R.settlements.reachStats?.get(life.rec.id) ?? null };
     });
   const first = await sample();
   console.log('start', JSON.stringify(first));

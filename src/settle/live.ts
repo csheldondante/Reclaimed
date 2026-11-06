@@ -66,3 +66,10 @@ export function routineOf(role: string): (typeof ROUTINE)[string] {
   if (!r) throw new Error(`settlements: no round for the trade "${role}" (live.ts ROUTINE)`);
   return r;
 }
+
+/** a heap's foot: how far out from its spot a walker stands (its mound — the ground put on it — grows round the spot) */
+export const HEAP_FOOT = 2.5;
+/** the points round a heap's spot where a walker stands at its foot (window world): six, the first toward +x */
+export function heapFoot(at: V2): V2[] {
+  return Array.from({ length: 6 }, (_, k): V2 => [at[0] + Math.cos((k * Math.PI) / 3) * HEAP_FOOT, at[1] + Math.sin((k * Math.PI) / 3) * HEAP_FOOT]);
+}

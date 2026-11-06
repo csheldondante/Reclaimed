@@ -5,8 +5,8 @@
 // same ask answered by the CPU reference (fortress/reach.ts CpuReach) over the window's columns read back once — the
 // GPU's answers and the CPU's side by side. A bench's reads, never the game's.
 import type { Fortress } from '../../fortress/fortress';
-import { CpuReach, surfacesOf, type ReachAsk, type ReachColumns, type ReachEngine } from '../../fortress/reach';
-import type { FortressReachGpu } from '../../fortress/reachgpu';
+import { CpuReach, surfacesOf, type ReachAsk, type ReachColumns, type ReachEngine } from '../../build/reach';
+import type { FortressReachGpu } from '../../build/reachgpu';
 import { unpackColumns } from '../../world/mapfile';
 import { MATERIALS, MatState } from '../../world/materials';
 import type { PackedWorld } from '../../world/layout';

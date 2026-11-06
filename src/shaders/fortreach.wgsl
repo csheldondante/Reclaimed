@@ -41,6 +41,12 @@ struct ReachParams {
 /** [0] ramp spots found, [1 ..] RAMP_CAP pairs (box column, direction), then a word a query, then the wet bits */
 @group(0) @binding(11) var<storage, read_write> answer: array<atomic<u32>>;
 @group(0) @binding(12) var<uniform> RP: ReachParams;
+/** (round 128o, B) per box column: 1 when the fix peel left its plan solid out (it may be cut: a passage, a gate) */
+@group(0) @binding(13) var<storage, read_write> cutCol: array<u32>;
+/** (B) per surface the fix field's cost from the stores (FIX_FAR: none) */
+@group(0) @binding(14) var<storage, read_write> fixDist: array<atomic<u32>>;
+/** (B) [0] fixes found, then FIX_CAP triples (query, box column, kind (0 cut, 1 ramp) | direction << 8) */
+@group(0) @binding(15) var<storage, read_write> fixes: array<atomic<u32>>;
 
 const RNAV_K: u32 = 4u;
 const R_AGENT_H: f32 = 1.5;
@@ -50,6 +56,12 @@ const R_DEEP: f32 = 0.9;
 /** fortress.ts LANE_WATER: no roads under water this deep */
 const R_LANE_WATER: f32 = 0.8;
 const RAMP_CAP: u32 = 64u;
+/** (B) reach.ts FIX_COST, FIX_CAP */
+const FIX_STEP: u32 = 1u;
+const FIX_CUT: u32 = 4u;
+const FIX_RAMP: u32 = 20u;
+const FIX_CAP: u32 = 512u;
+const FIX_FAR: u32 = 0xffffffffu;
 const NODE_NONE: u32 = 0xffffffffu;
 
 fn boxW() -> u32 { return u32(RP.box.z); }
@@ -81,6 +93,7 @@ fn reachPeel(@builtin(global_invocation_id) id: vec3<u32>) {
   let b = id.y * boxW() + id.x;
   for (var k = 0u; k < RNAV_K; k++) { surf[b * RNAV_K + k] = vec2<f32>(-1.0, 0.0); }
   deepTop[b] = 0u;
+  cutCol[b] = 0u;
   let p = winOf(b);
   if (!inMap(p)) { return; }
   // the runs bottom up: the column's solid ones and the plan's spans, sorted by their floor, touching ones merged
@@ -99,8 +112,13 @@ fn reachPeel(@builtin(global_invocation_id) id: vec3<u32>) {
   for (var e = 0u; e < 2u; e++) {
     let w = select(ps.x, ps.y, e == 1u);
     if (w == 0u || (RP.mode.x & 2u) != 0u) { continue; }
+    // (B: the fix peel leaves the plan's cuttable solid out — bit 31 — and marks the column)
+    if ((RP.mode.x & 4u) != 0u && (w & 0x80000000u) != 0u) {
+      cutCol[b] = 1u;
+      continue;
+    }
     let a = f32(w & 0xffffu) / 8.0;
-    let c = f32(w >> 16u) / 8.0;
+    let c = f32((w >> 16u) & 0x7fffu) / 8.0;
     if (c <= a) { continue; }
     // (insertion by floor: the column's runs are bottom up already)
     var i = n;
@@ -228,11 +246,15 @@ fn reachQuery(@builtin(global_invocation_id) id: vec3<u32>) {
   var bits = 0u;
   var any = false;
   for (var t = 0u; t < 4u; t++) {
-    let c = query[qi * 8u + 2u * t];
-    if (c == 0u) { continue; }
+    let cw = query[qi * 8u + 2u * t];
+    if (cw == 0u) { continue; }
+    let c = cw & 0x7fffffffu;
+    let mustOpen = (cw & 0x80000000u) != 0u;
     any = true;
-    let s = nearSurf(c - 1u, bitcast<f32>(query[qi * 8u + 2u * t + 1u]));
-    if (s != NODE_NONE && sr != NODE_NONE && root(s) == sr) { bits |= 1u << RP.mode.y; }
+    let fz = bitcast<f32>(query[qi * 8u + 2u * t + 1u]);
+    let s = nearSurf(c - 1u, fz);
+    // (round 128o, B: a stand is its floor's surface — a roof over it, DROP or more up, isn't where a builder stands)
+    if (!mustOpen && s != NODE_NONE && sr != NODE_NONE && abs(surf[s].x - fz) <= R_DROP && root(s) == sr) { bits |= 1u << RP.mode.y; }
   }
   if (!any) { bits |= 16u; }
   atomicOr(&answer[queryAt() + qi], bits);
@@ -270,4 +292,119 @@ fn reachWet(@builtin(global_invocation_id) id: vec3<u32>) {
   let p = winOf(b);
   if (!inMap(p)) { return; }
   if (water[colIdx(u32(p.x), u32(p.y))] > R_LANE_WATER) { atomicOr(&answer[wetAt() + (b >> 5u)], 1u << (b & 31u)); }
+}
+
+// ---- (round 128o, B) the fix field: the passage chosen on the GPU ------------------------------------------------------
+// Over the fix peel (the plan's cuttable solid left out), the cost from the stores' surface: a step FIX_STEP, entering a
+// cut column FIX_CUT more, a drop a ramp would join (STEP to DROP, either way) FIX_RAMP more — relaxed (Bellman-Ford) to
+// the end. Then from each query not reached, its stand's surface walked back to the stores: the cut columns entered and
+// the ramps taken written down (reach.ts CpuReach: the same sweep order, the same first predecessor).
+
+/** the cost of the move from surface t (column tb) to surface s (column b), FIX_FAR: no move */
+fn fixMove(tb: u32, t: u32, b: u32, s: u32) -> u32 {
+  let a = surf[t];
+  let c = surf[s];
+  let rise = abs(c.x - a.x);
+  if (min(a.x + a.y, c.x + c.y) - max(a.x, c.x) < R_AGENT_H) { return FIX_FAR; }
+  let dt = t % RNAV_K == 0u && deepTop[tb] == 1u;
+  let ds = s % RNAV_K == 0u && deepTop[b] == 1u;
+  if (dt != ds || rise > R_DROP) { return FIX_FAR; }
+  return FIX_STEP + select(0u, FIX_CUT, cutCol[b] == 1u) + select(0u, FIX_RAMP, rise > R_STEP);
+}
+
+@compute @workgroup_size(8, 8)
+fn fixInit(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (id.x >= boxW() || id.y >= boxH()) { return; }
+  let b = id.y * boxW() + id.x;
+  let sn = storesNode();
+  for (var k = 0u; k < RNAV_K; k++) {
+    let s = b * RNAV_K + k;
+    atomicStore(&fixDist[s], select(FIX_FAR, 0u, s == sn));
+  }
+}
+
+@compute @workgroup_size(8, 8)
+fn fixRelax(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (id.x >= boxW() || id.y >= boxH()) { return; }
+  let b = id.y * boxW() + id.x;
+  let p = winOf(b);
+  for (var k = 0u; k < RNAV_K; k++) {
+    let s = b * RNAV_K + k;
+    if (!live(s)) { continue; }
+    var best = atomicLoad(&fixDist[s]);
+    for (var d = 0u; d < NDIR; d++) {
+      let qb = boxOf(nbr(p, d));
+      if (qb == NODE_NONE) { continue; }
+      for (var j = 0u; j < RNAV_K; j++) {
+        let t = qb * RNAV_K + j;
+        if (!live(t)) { continue; }
+        let dt = atomicLoad(&fixDist[t]);
+        if (dt == FIX_FAR) { continue; }
+        let c = fixMove(qb, t, b, s);
+        if (c == FIX_FAR) { continue; }
+        best = min(best, dt + c);
+      }
+    }
+    let old = atomicMin(&fixDist[s], best);
+    if (best < old) { atomicStore(&flag[0], 1u); }
+  }
+}
+
+fn fixPush(q: u32, b: u32, word: u32) {
+  let i = atomicAdd(&fixes[0], 1u);
+  if (i < FIX_CAP) {
+    atomicStore(&fixes[1u + 3u * i], q);
+    atomicStore(&fixes[2u + 3u * i], b);
+    atomicStore(&fixes[3u + 3u * i], word);
+  }
+}
+
+/** per query not reached: its stand nearest the stores by the field, walked back; the fixes on the way */
+@compute @workgroup_size(64)
+fn fixTrace(@builtin(global_invocation_id) id: vec3<u32>) {
+  let qi = id.x;
+  if (qi >= u32(RP.stores.z)) { return; }
+  if ((atomicLoad(&answer[queryAt() + qi]) & 1u) != 0u) { return; }
+  var s = NODE_NONE;
+  var sd = FIX_FAR;
+  for (var t = 0u; t < 4u; t++) {
+    let c = query[qi * 8u + 2u * t] & 0x7fffffffu;
+    if (c == 0u) { continue; }
+    let n = nearSurf(c - 1u, bitcast<f32>(query[qi * 8u + 2u * t + 1u]));
+    if (n == NODE_NONE) { continue; }
+    let dn = atomicLoad(&fixDist[n]);
+    if (dn != FIX_FAR && (s == NODE_NONE || dn < sd)) {
+      s = n;
+      sd = dn;
+    }
+  }
+  if (s == NODE_NONE) { return; }
+  atomicOr(&answer[queryAt() + qi], 32u);
+  for (var guard = 0u; guard < 4096u && atomicLoad(&fixDist[s]) > 0u; guard++) {
+    let b = s / RNAV_K;
+    let p = winOf(b);
+    let ds = atomicLoad(&fixDist[s]);
+    var prev = NODE_NONE;
+    for (var d = 0u; d < NDIR && prev == NODE_NONE; d++) {
+      let qb = boxOf(nbr(p, d));
+      if (qb == NODE_NONE) { continue; }
+      for (var j = 0u; j < RNAV_K; j++) {
+        let t = qb * RNAV_K + j;
+        if (!live(t)) { continue; }
+        let dt = atomicLoad(&fixDist[t]);
+        let c = fixMove(qb, t, b, s);
+        if (dt == FIX_FAR || c == FIX_FAR || dt + c != ds) { continue; }
+        prev = t;
+        if (abs(surf[s].x - surf[t].x) > R_STEP) {
+          // (the ramp from the lower column up the drop: its direction from the lower to the upper)
+          if (surf[s].x < surf[t].x) { fixPush(qi, b, 1u | (d << 8u)); }
+          else { fixPush(qi, qb, 1u | ((d ^ 1u) << 8u)); }
+        }
+        break;
+      }
+    }
+    if (cutCol[b] == 1u) { fixPush(qi, b, 0u); }
+    if (prev == NODE_NONE) { return; }
+    s = prev;
+  }
 }

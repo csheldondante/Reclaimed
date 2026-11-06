@@ -138,12 +138,6 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
       // (round 128l, m4) Follow: the camera on the person picked
       followFrame(scene);
       pitView(scene, dt);
-      // (round 128f) the reach asked again every few seconds while building: what's built and dug since (round 128l: the
-      // GPU's components, fortress/reachgpu.ts — the cut-off check reads each answer)
-      if (scene.fortress?.mode === 'build' && (scene.fortressColsAt += dt) > 3) {
-        scene.fortressColsAt = 0;
-        scene.fortress.requestReach();
-      }
       // (the stores and progress lines: twice a second)
       if ((scene.fortressBarAt += dt) > 0.5) {
         scene.fortressBarAt = 0;
