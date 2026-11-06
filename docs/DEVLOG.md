@@ -19404,3 +19404,70 @@ town's answers behind TownWork, nothing polled, no give-up timers.
     classes needs its own word or bands.
   - The fourth word is unused (two vec2 a chunk keep the indexing simple): 4 B a chunk.
   - The toggle diff is noisy on a shared desktop GPU.
+
+## 2026-11-06 — round 128o (`phonefix`, DA-B28): the field mesh rebuilt from the chunks' versions, design note for main's review
+
+- Why: on the user's Pixel 9a, `fieldmesh-hash` is the largest GPU pass after the draw (6.3 ms mean, 129 ms max a
+  frame) and `fieldmesh-sample` is 3.6 ms.
+- Today (render/fieldmesh.ts encode, fieldmesh.wgsl hashChunk):
+  - Every encode (the window's mesh on alternate frames with the band's), `hashFresh` then `hashChunks` dispatch a
+    workgroup per mesh chunk (32 × 32 rows; about 100 at 320²).
+  - Each near chunk walks the intervals of its ~1,300 columns plus a two-cell margin, unless every sim chunk under it
+    sleeps. The hash's key is each interval's ends to 1/16 and its material, the world position (so a slide moves no
+    hash), the unmeshed neighbours (hybrid), and the frames (a, q) of the structures over the chunk.
+  - The same walk records the chunk's top (word 8) and its lowest boundary over the bedrock (word 12), which the
+    rebuild reads.
+  - A changed chunk takes a rebuild slot (fresh ones first, the urgent slots, the ordinary turns, owed when none is
+    free). The rebuild is already indirect over the slots taken.
+- Proposal:
+  1. **A shape word**, the 4th version word (unused today): the columns as the mesh sees them, plus the structures
+     over them.
+     - Moved by the column writers when an interval's key changes (`shapeKey`: ends at 1/16, material, the hash's own
+       quantization). This is done in the compare-before-write loop they already have (one `bumpColumn(q, old, new)`
+       for the columns and shape words; colapply in its store).
+     - Moved by every CPU columnsWritten (all words already).
+     - Moved by `Structures.writeFrame` over the sim chunks under its old and new bounds (CPU, 4 B a chunk, edit
+       rate).
+     - Not the columns word: it moves on any bit, and sediment creeping by hundredths would rebuild a chunk every
+       frame it creeps, where the hash waits until a sixteenth adds up. Same key, same rebuilds: the visuals stay
+       identical.
+  2. **hashChunk becomes changedChunk.** A thread per mesh chunk takes key = max(shape version over the sim chunks
+     under its rect and margin) + 1, never 0. It compares the key with the built and owed words (5, 6) and keeps the
+     slot logic as it is. There is no column walk: 9–16 version reads a chunk. The sleep test ("still") goes; the
+     versions cover it.
+  3. **The top and bottom move into the rebuild.** They are computed by a new pass over the rebuilt chunks only
+     (indirect, a workgroup a slot: hashChunk's walk, for the ones chosen) before `sampleField`.
+  4. **The band's and the rock mesh's sources carry versions too.** Their chunk tables get the same layout, and their
+     CPU page writes (band.ts pack and fresh, rockmesh.ts written and touched) bump them with their own counter. The
+     band's 180 frames of full hashing after a pack, and `packed()`, go. One change detection for all three meshes.
+  5. **Rebuilds the CPU forces stay** (setCaves, setWanted: word 5 written). The hybrid's unmeshed-neighbour term
+     becomes the CPU marking the 3 × 3 round a chunk whose `wanted` changed.
+  6. **No CPU list and no ChangedTiles.** The change pass is one direct dispatch over ~100 mesh chunks of trivial
+     work; the rebuild stays indirect.
+- Risks and edges:
+  - A change undone before its rebuild: the hash then rebuilt nothing, the versions rebuild once (same picture).
+  - Slides: versions are keyed by storage like the land, and fresh chunks are FRESH as now.
+  - Margin sim chunks past the window are clamped.
+  - FRESH (0x9e3779b9) as a key needs tick 0x9e3779b8 (~1.4 years at 60 Hz).
+  - Structure voxels changed in place (damage) were never in the hash either: unchanged.
+  - Hidden writers are held by DA-B9's source scans (a shape test per writer is added to them).
+- Tests and gates:
+  - Dawn:
+    - the shape word moves on a 1/16 step and not on a sub-1/16 creep;
+    - a structure placed or moved moves the shape word under its old and new bounds;
+    - on a tiny world's FieldMesh, a dig rebuilds its mesh chunks only, and nothing changed means zero rebuilds;
+    - before the hash is deleted, a run counting the chunks the hash picks against those the versions pick on a
+      scripted session (equal, or the versions' extra explained).
+  - Visual gate: pan test, play-zoom shots before and after, tilegate's parked views compared before and after on
+    this machine (DA-G7: the goldens are stale).
+  - Toggle diff on the desktop; for the phone bench, `fieldmesh-hash` gone and `fieldmesh-*` rebuild ms at rest and
+    while building.
+- The idle floor that follows: renderprep, vegprep, floraField and the water surface's list.
+  - They remake append-only instance lists from the whole window each prep frame. They read fields with no version
+    (veg, fire, contam, moisture, oil) besides the columns and the water.
+  - Two options:
+    - (a) per-chunk ranges in the lists (like the mesh's page pool), remade where a chunk is awake (the sleep mask)
+      or its versions moved;
+    - (b) versions for every field renderprep reads.
+  - (a) fits the simulation's own sleep rule and is BACKLOG P4/FC3's plan. It is its own contract change (the
+    renderer's lists), so a second note after DA-B28.
