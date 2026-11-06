@@ -191,6 +191,7 @@ export class Integrity {
         readWhole: () => core.readBuffer('layers'),
         // (round 80: a column written under a sleeping chunk wakes it — its surface, its water, its slumping)
         woke: (x, y) => core.sleep?.wake(x + 0.5, (y + 0.5) * ROW_H, 16, 8, performance.now() / 1000),
+        written: () => core.columnsWritten(),
       },
       'kept',
     );

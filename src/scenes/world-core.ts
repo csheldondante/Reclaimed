@@ -507,6 +507,17 @@ export class WorldCore {
     this.undoCount = Math.min(this.undoCount + 1, WorldCore.UNDO_DEPTH);
   }
 
+  /**
+   * (round 128o, DA-B19) Told when the columns are written outside the sim's ticks and outside a column apply: an undo,
+   * chunks restored, the streamer's live edit, a window replaced, a column Integrity writes (ColumnCopy.write) — whatever keeps a copy of them (api/mirror.ts) reads them again.
+   */
+  readonly onColumnsWritten: (() => void)[] = [];
+
+  /** the columns were written outside a tick (onColumnsWritten told) */
+  columnsWritten(): void {
+    for (const f of this.onColumnsWritten) f();
+  }
+
   /** Forget the snapshots (the streamed window slid: they're of another place). */
   clearUndo(): void {
     this.undoCount = 0;
@@ -522,6 +533,7 @@ export class WorldCore {
     const src = this.undoSources();
     const enc = device.createCommandEncoder({ label: 'undo' });
     src.forEach((b, k) => enc.copyBufferToBuffer(slot.bufs[k], 0, b, 0, b.size));
+    this.columnsWritten();
     // (the loose ground lives in the layers; its view is derived each tick)
     // pours in flight would land on the restored ground: drop them
     enc.clearBuffer(this.world.deposit);
@@ -582,6 +594,7 @@ export class WorldCore {
         enc.clearBuffer(this.world.deposit, first * COLUMN_BUFS.deposit[0], COLS * COLUMN_BUFS.deposit[0]);
       }
     device.queue.submit([enc.finish()]);
+    this.columnsWritten();
   }
 
   /**
@@ -604,6 +617,7 @@ export class WorldCore {
     const ring = w.ring.toStore(water);
     for (const n of ['water', 'waterNext', 'waterPrev'] as const) device.queue.writeBuffer(w[n], 0, ring);
     this.map.surface.set(w.ring.toStore(surface));
+    this.columnsWritten();
   }
 
   /** Debug: mean of a per-column field over a square region. */

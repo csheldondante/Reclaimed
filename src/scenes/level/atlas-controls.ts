@@ -8,7 +8,6 @@ import { EV, eventAt } from '../../atlas/coarse';
 import { Sleep } from '../../sim/sleep';
 import { AtlasMap } from '../../api/atlas-map';
 import { precacheWarp, warpWindow } from '../../api/atlas-world';
-import { sfPack } from '../../world/layout';
 import { MAT } from '../../world/materials';
 import { cellAt, cellPos, ROW_H } from '../../world/lattice';
 import { wikiLabels } from '../../gm/map-names';
@@ -95,9 +94,11 @@ export function atlasControls(scene: LevelScene): void {
     show();
   });
   window.addEventListener('keydown', (e) => e.key.toLowerCase() === 'f' && setTimeout(show), { signal: scene.abort.signal });
-  const atMiddle = (f: (x: number, y: number) => void) => {
+  const atMiddle = (f: (x: number, y: number) => void): void => {
     const cam = scene.core.camera;
     const g = cam.groundAt(cam.viewportW / 2, cam.viewportH / 2, scene.heightAt);
+    // (round 128o: the ground there not read yet — its page asked: a frame later)
+    if (!g) return void requestAnimationFrame(() => atMiddle(f));
     const [x, y] = cellAt(g[0], g[1]);
     f(x, y);
   };
@@ -165,7 +166,8 @@ export async function worldEventHere(scene: LevelScene, e: import('../../atlas/c
     return { ...d, cap: e.kind === EV.cone ? MAT.Basalt : 0 };
   });
   scene.editLiveMs = performance.now() - t0;
-  for (let i = 0; i < scene.surfaceCache.length; i++) scene.surfaceCache[i] = sfPack(scene.core.map.surface[i], 0);
+  // (round 128o: the columns written from here — the world API's copy reads them again)
+  scene.core.columnsWritten();
   // (round 86: every column written again — what was falling is looked at again where it stopped)
   scene.integrity?.clear(true);
   if (n) scene.integrity?.cutCols(changed);

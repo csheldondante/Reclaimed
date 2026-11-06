@@ -1840,10 +1840,14 @@ headroom | wet | six 3-bit links, room, region — the peel reads `places` and
 `placeTable` in its own bind group), `agentNavCost` (round 107: per surface, the
 height and wet the links and the relax reckon its cost by, following nav's floor with hysteresis — the
 units ride nav, the fields read this), `agentDist` (NFIELDS = 4 fields × surfaces,
-f32), `agentUnits` (five vec4 a unit: units.wgsl — the fifth, LW1, the trait system's CAPS and LOOK and the max hp), `agentOcc` (units per
-column, two halves by tick parity), `agentEvents` (a count and 8-u32
-records: swing, hurt, death, alight; the CPU copies and clears it in
-`sync`), `agentModels` (the kinds' voxels) with `agentKindModels`, and
+f32), `agentUnits` (six vec4 a unit: units.wgsl — the fifth, LW1, the trait system's CAPS and LOOK and the max hp; the
+sixth, round 128o, the arrival latch: an `arrived` event once a unit comes within its field's radius,
+`agents.arrivals(field, radius, leave)` in AgentParams.arrive), `agentOcc` (units per
+column, two halves by tick parity), `agentEvents` (round 128o, DA-B2: a ring
+of 2048 8-u32 records — swing, hurt, death, alight, … with their number as a tag
+in word 7 — after a head: [0] events made, [2] how far the CPU has read; a sync
+copies the head and 256 records from where it stopped, writes [2] back; an event
+with 2048 unread isn't written and the CPU counts it lost), `agentModels` (the kinds' voxels) with `agentKindModels`, and
 `agentInst` (body-format voxels, appended) with its indirect args, and
 `agentShove` (per column, two halves: the momentum and mass tumbling units
 carried through it, and how many burning units). The peel reads `layers`,
@@ -2580,6 +2584,17 @@ cheap pool of light ("Yes absolutely enough"). One concern a file:
   `sources` (simTick, slowSystems, io, counters) are lent by whoever reads it (the bench); it changes nothing.
   `report(mark)` = per frame: interval, rAF lag, CPU, rAF to last submit, submit to done, frames in flight, GPU span,
   the gap between frames' GPU work, sim ticks, which counters moved; the slow frames against the rest.
+- **The level's ground** (round 128o, DA-B19): `scene.heightAt(x, y): number | null` is the world API terrain's
+  `surfaceAt` — the surface word from its 1 KB page, read when asked and again once its chunk ran; null: not read yet
+  (the page is asked for now). No stand-in: a tap, a turn, a placement, a bird flock waits a frame
+  (`Camera.groundAt` returns null with such a lookup; `Structures.place` undefined; `Places.at` undefined); a drag
+  doesn't start, a move or a hover is skipped. The fortress reads the window's surface pages whole before it's ready
+  and after each slide (`scene.groundReady` false meanwhile: its people, raiders, pieces and taps wait) and asks
+  `scene.groundRead`, which throws if a page isn't read (a bug there). `scene.mapHeightAt` is the map as generated, for
+  the two that ask every frame and need only the lie of the land — the far land's focus and the flyer's floor — and
+  nothing else (test/unit/mapheight.test.ts). Writes outside the ticks and the
+  column applies (an undo, chunks restored, the streamer's live edit) tell `WorldCore.onColumnsWritten`; the mirror
+  reads those pages again. No copy of the whole surface is kept or read back (`surfaceCache` and its 1 Hz read went).
 - **The water's settling hold** (round 84 ?settletol, on by default with ?rivers=table; round 128o, DA-B20: on the
   GPU, sim/settlehold.ts): a chunk an event woke stays awake past its time while its water still changes by more than
   the tolerance, up to 60 s from its waking. The CPU (sim/sleep.ts) says which chunks may be held (`settleCand`: woken

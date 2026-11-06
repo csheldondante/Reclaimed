@@ -250,9 +250,17 @@ export async function placeModel(scene: LevelScene, wx: number, wy: number, atZ?
     // (heightAt is the loose run's base: the pick's height says how deep
     // the sand lies over it here, and that depth is taken to hold under the
     // whole footprint — otherwise it rests sunk into the drift)
-    const over = atZ === undefined ? 0 : Math.max(0, atZ - scene.heightAt(wx, wy));
-    const ground = (x: number, y: number) => scene.heightAt(x, y) + over;
-    if (!core.structures.place(m, wx, wy, q, ground, ed.bury)) scene.hud.say('No room for more tilted structures (8 at most).', 3);
+    // (round 128o: the ground not read yet — its pages asked — the press waits a frame)
+    const here = scene.heightAt(wx, wy);
+    if (here === null) return void requestAnimationFrame(() => void placeModel(scene, wx, wy, atZ));
+    const over = atZ === undefined ? 0 : Math.max(0, atZ - here);
+    const ground = (x: number, y: number) => {
+      const h = scene.heightAt(x, y);
+      return h === null ? null : h + over;
+    };
+    const s = core.structures.place(m, wx, wy, q, ground, ed.bury);
+    if (s === undefined) return void requestAnimationFrame(() => void placeModel(scene, wx, wy, atZ));
+    if (!s) scene.hud.say('No room for more tilted structures (8 at most).', 3);
     return;
   }
   const { dims, packed } = core;

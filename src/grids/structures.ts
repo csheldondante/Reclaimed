@@ -71,9 +71,10 @@ export class Structures {
   /**
    * Place a model at world point (x, y), rotated by q, resting on the ground
    * there (its lowest corner `sink` cells into it). heightAt: the ground's
-   * height at a world point. Returns the structure, or null with no room.
+   * height at a world point (null: not read yet). Returns the structure, null with no room, or undefined when the
+   * ground under its footprint isn't read yet (round 128o: ask again a frame later).
    */
-  place(m: VoxelModel, x: number, y: number, q: Q, heightAt: (x: number, y: number) => number, sink = 0): Structure | null {
+  place(m: VoxelModel, x: number, y: number, q: Q, heightAt: (x: number, y: number) => number | null, sink = 0): Structure | null | undefined {
     const [w, d, h] = m.size;
     const corners = this.corners([w, d, h], q);
     const lo = corners.reduce((a, c) => [Math.min(a[0], c[0]), Math.min(a[1], c[1]), Math.min(a[2], c[2])] as V3, [Infinity, Infinity, Infinity] as V3);
@@ -84,7 +85,9 @@ export class Structures {
       for (let j = 0; j <= 8; j++) {
         const gx = x + (lo[0] - (lo[0] + hi[0]) / 2) + ((hi[0] - lo[0]) * j) / 8;
         const gy = y + (lo[1] - (lo[1] + hi[1]) / 2) + ((hi[1] - lo[1]) * k) / 8;
-        ground += heightAt(gx, gy) / 81;
+        const h = heightAt(gx, gy);
+        if (h === null) return undefined;
+        ground += h / 81;
       }
     const pos: V3 = [x - (lo[0] + hi[0]) / 2, y - (lo[1] + hi[1]) / 2, ground - sink - lo[2]];
     return this.add(m, pos, q);

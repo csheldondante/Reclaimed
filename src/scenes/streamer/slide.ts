@@ -64,10 +64,11 @@ export function update(S: Streamer): Promise<void> | null {
       const zMax = S.core.dims.zMax;
       // (round 128m, quarry: or the ground as it is now where it's dug under the land's — a pit's floor — down to the
       // world's floor, past z 0; the sea's floor near z 0 slides nothing, as before)
-      const now = S.groundNow?.(x, yw) ?? g;
+      // (round 128o: the ground as it is now; null — not read yet — leaves the dug-pit check out this time)
+      const now = S.groundNow ? S.groundNow(x, yw) : g;
       if (g > zMax - 40 && S.oz + zMax < h) return S.slideZ(TIER);
       if (g < 24 && S.oz > 0) return S.slideZ(-TIER);
-      if (now < 24 && now < g - 2 && S.oz - TIER >= WORLD_FLOOR) return S.slideZ(-TIER);
+      if (now !== null && now < 24 && now < g - 2 && S.oz - TIER >= WORLD_FLOOR) return S.slideZ(-TIER);
     }
   }
   // (the slide itself where the camera is: sliding early for where it's heading slid twice as often on a

@@ -28,6 +28,8 @@ export interface CopyHost {
   readWhole: () => Promise<Float32Array>;
   /** a column written by the CPU: its chunk's sims woken (Sleep.wake) */
   woke?: (x: number, y: number) => void;
+  /** (round 128o) a column written to the GPU: whatever keeps a copy of the columns reads them again (WorldCore.columnsWritten) */
+  written?: () => void;
 }
 
 export class ColumnCopy {
@@ -98,6 +100,7 @@ export class ColumnCopy {
     }
     if (!gpu) return;
     this.host.device.queue.writeBuffer(this.host.layers(), base * SLOT_WORDS * 4, data);
+    this.host.written?.();
     if (cpu) this.host.woke?.(x, y);
   }
 

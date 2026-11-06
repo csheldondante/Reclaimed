@@ -9,6 +9,11 @@ import { packRoadShapes, roadBitsCpu } from '../../src/agents/roads';
 import { Fortress } from '../../src/fortress/fortress';
 import { laneGraph, roadShapesOf } from '../../src/fortress/lanes';
 import { testGpu } from './dawn';
+import { UNIT_V } from '../../src/agents/agents';
+
+/** a unit's record: floats, bytes (agents.ts UNIT_V) */
+const UF = UNIT_V * 4;
+const UB = UNIT_V * 16;
 
 const W = 160;
 const H = 184;
@@ -38,7 +43,7 @@ describe('the agents ride the roads on the GPU', () => {
     const n = nodeCount(graph);
     expect(n).toBeGreaterThan(20);
     const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST;
-    const units = dev.createBuffer({ size: UNITS * 5 * 16, usage: S });
+    const units = dev.createBuffer({ size: UNITS * UNIT_V * 16, usage: S });
     const words = Math.ceil((W * H) / 32);
     // (two planes: the road shapes' bits, then the network's — made by the ride)
     const roads = dev.createBuffer({ size: words * 8, usage: S });
@@ -138,7 +143,7 @@ describe('the agents ride the roads on the GPU', () => {
     const far = [...Array(n).keys()].filter((v) => cpu.dist[0][v] < 1e9 && cpu.dist[0][v] > 30 && Math.min(...goals.map((p) => Math.hypot(p[0] - graph.xy[v * 2], p[1] - graph.xy[v * 2 + 1]))) > 10)[0];
     expect(far).toBeDefined();
     const rec = (x: number, y: number, grp: number) => {
-      const r = new Float32Array(20);
+      const r = new Float32Array(UF);
       const u = new Uint32Array(r.buffer);
       r.set([x, y, 5], 0);
       // group | alive | kind 0 | state chase (1)
@@ -148,9 +153,9 @@ describe('the agents ride the roads on the GPU', () => {
     const fx = graph.xy[far * 2];
     const fy = graph.xy[far * 2 + 1];
     dev.queue.writeBuffer(units, 0, rec(fx + 0.3, fy, 3));
-    dev.queue.writeBuffer(units, 80, rec(goals[0][0] + 3, goals[0][1], 3));
-    dev.queue.writeBuffer(units, 160, rec(goals[0][0] + 0.2, goals[0][1], 3));
-    dev.queue.writeBuffer(units, 240, rec(fx, fy, 7));
+    dev.queue.writeBuffer(units, UB, rec(goals[0][0] + 3, goals[0][1], 3));
+    dev.queue.writeBuffer(units, 2 * UB, rec(goals[0][0] + 0.2, goals[0][1], 3));
+    dev.queue.writeBuffer(units, 3 * UB, rec(fx, fy, 7));
     const tick = async () => {
       const e = dev.createCommandEncoder();
       ride.encodeHops(e, 4);
@@ -158,10 +163,11 @@ describe('the agents ride the roads on the GPU', () => {
       ride.encode(pass, 4);
       pass.end();
       dev.queue.submit([e.finish()]);
-      return new Float32Array(await g.read(units, 4 * 80));
+      return new Float32Array(await g.read(units, 4 * UB));
     };
     const out = await tick();
-    const steer = (i: number) => out[i * 20 + 19];
+    // (word e.w: the steer — units.wgsl's fifth vec4)
+    const steer = (i: number) => out[i * UF + 19];
     // (0: on the network, heading to a node next on its way — a heading, the node within reach of its way)
     expect(steer(0)).toBeGreaterThan(5);
     const h = steer(0) - 10;

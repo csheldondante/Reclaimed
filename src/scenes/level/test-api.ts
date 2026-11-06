@@ -148,6 +148,7 @@ export function testApi(scene: LevelScene) {
         const m = modelById(id);
         if (!m) throw new Error(`no model "${id}"`);
         const r = Math.PI / 180;
+        // (undefined: the ground under it isn't read yet — its pages asked: place again a frame later)
         return core.structures.place(m, x, y, qYawPitchRoll(yaw * r, pitch * r, roll * r), scene.heightAt, sink);
       },
     },

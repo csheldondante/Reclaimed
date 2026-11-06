@@ -34,25 +34,33 @@ export function wireInput(scene: LevelScene): void {
   ];
   // (round 83, dialog: a talk or a story shot has the screen — a tap cuts a reveal short, the rest waits)
   const held = () => !!scene.storyPlay?.holdsInput;
+  // (round 128o, DA-B19: the ground under the pointer — null while its page isn't read yet: a tap waits a frame, a drag
+  // doesn't start, a move or a hover is skipped; never a stand-in height)
+  const under = (sx: number, sy: number) => camera.groundAt(sx, sy, scene.heightAt);
+  const tap = (sx: number, sy: number): void => {
+    // (round 83: flying, the pointer only turns the view)
+    if (camera.fly) return;
+    if (scene.fortress) return void fortressAt(scene, sx, sy);
+    if (scene.editor?.tool === 'smash') return void smashAt(scene, sx, sy, true);
+    if (scene.editor?.tool === 'place') return void placeAtPick(scene, sx, sy);
+    if (scene.editor?.tool === 'town') return void townAtPick(scene, sx, sy);
+    if (scene.editor?.tool === 'drop') return void dropAtPick(scene, sx, sy);
+    if (scene.editor?.tool === 'beam') return;
+    if (scene.editor?.tool === 'volcano') return void ventAtPick(scene, sx, sy);
+    if (scene.editor?.tool === 'meteor') return void meteorAtPick(scene, sx, sy);
+    const g = under(sx, sy);
+    if (!g) return void requestAnimationFrame(() => tap(sx, sy));
+    const [wx, wy] = g;
+    if (scene.editTool(wx, wy, true)) return;
+    // (story: nothing answers out in the fog beyond the green's reach)
+    if (scene.reach && !scene.reach.contains(wx, wy)) return;
+    const [rx, ry] = toRender(sx, sy);
+    core.renderer.pick(rx, ry).then((hit) => scene.powers.tap(hit, wx, wy, sx, sy));
+  };
   scene.controls = new Controls(host.canvas, {
     tap: (sx, sy) => {
       if (held()) return void scene.storyPlay!.cam.skip();
-      // (round 83: flying, the pointer only turns the view)
-      if (camera.fly) return;
-      if (scene.fortress) return void fortressAt(scene, sx, sy);
-      if (scene.editor?.tool === 'smash') return void smashAt(scene, sx, sy, true);
-      if (scene.editor?.tool === 'place') return void placeAtPick(scene, sx, sy);
-      if (scene.editor?.tool === 'town') return void townAtPick(scene, sx, sy);
-      if (scene.editor?.tool === 'drop') return void dropAtPick(scene, sx, sy);
-      if (scene.editor?.tool === 'beam') return;
-      if (scene.editor?.tool === 'volcano') return void ventAtPick(scene, sx, sy);
-      if (scene.editor?.tool === 'meteor') return void meteorAtPick(scene, sx, sy);
-      const [wx, wy] = camera.groundAt(sx, sy, scene.heightAt);
-      if (scene.editTool(wx, wy, true)) return;
-      // (story: nothing answers out in the fog beyond the green's reach)
-      if (scene.reach && !scene.reach.contains(wx, wy)) return;
-      const [rx, ry] = toRender(sx, sy);
-      core.renderer.pick(rx, ry).then((hit) => scene.powers.tap(hit, wx, wy, sx, sy));
+      tap(sx, sy);
     },
     dragStart: (sx, sy) => {
       if (held()) return false;
@@ -76,7 +84,9 @@ export function wireInput(scene: LevelScene): void {
       if (scene.editor?.tool === 'drag') {
         const ig = scene.integrity;
         if (!ig) return false;
-        const [gx, gy, gz] = camera.groundAt(sx, sy, scene.heightAt);
+        const p = under(sx, sy);
+        if (!p) return false;
+        const [gx, gy, gz] = p;
         const reach = 48 / camera.zoom + 2;
         // (on the ground under the finger or anything stood on it up to a body's height above)
         const g = ig.grabAt(gx, gy, gz + 2, reach + 2);
@@ -99,7 +109,9 @@ export function wireInput(scene: LevelScene): void {
         townAtPick(scene, sx, sy);
         return true;
       }
-      const [wx, wy] = camera.groundAt(sx, sy, scene.heightAt);
+      const g = under(sx, sy);
+      if (!g) return false;
+      const [wx, wy] = g;
       if (scene.editTool(wx, wy, false)) return true;
       if (scene.reach && !scene.reach.contains(wx, wy)) return false;
       return scene.powers.gustStart(wx, wy);
@@ -121,7 +133,9 @@ export function wireInput(scene: LevelScene): void {
         pickSmash(scene, sx, sy);
         return void smashAt(scene, sx, sy, false);
       }
-      const [wx, wy] = camera.groundAt(sx, sy, scene.heightAt);
+      const g = under(sx, sy);
+      if (!g) return;
+      const [wx, wy] = g;
       if (scene.brushAt) scene.brushAt = [wx, wy];
       else scene.powers.gustMove(wx, wy);
     },
@@ -147,8 +161,9 @@ export function wireInput(scene: LevelScene): void {
       else scene.powers.gustEnd();
     },
     hover: (sx, sy) => {
-      const hw = camera.groundAt(sx, sy, scene.heightAt).slice(0, 2) as [number, number];
-      scene.hoverWorld = scene.reach && !scene.reach.contains(hw[0], hw[1]) ? null : hw;
+      const g = under(sx, sy);
+      const hw = g ? ([g[0], g[1]] as [number, number]) : null;
+      scene.hoverWorld = !hw || (scene.reach && !scene.reach.contains(hw[0], hw[1])) ? null : hw;
       if (scene.editor?.tool === 'smash') pickSmash(scene, sx, sy);
       if (scene.editor?.tool === 'town') pickTown(scene, sx, sy);
     },

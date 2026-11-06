@@ -18566,6 +18566,163 @@ slides, restoreChunks, replaceWindow, the edit brush's mirror). Two copies that 
   columns identical. typecheck (both halves), unit 773 passed, GPU 145 passed, flagcheck, hallcheck 0 of 344 lost,
   the transfer gate: all pass.
 
+## 2026-11-05 — round 128o (`phonefix`, DA-B19): the level's surface read gone; each ground question to its source
+
+- Why: DESIGN.md §24 (no timed read in play); option (b) of the design note above, approved. The level read the whole
+  surface back every second (400 KB at 320²) into `scene.surfaceCache` for `scene.heightAt`.
+- The note under-counted the askers: besides the camera, the fortress, places and the sandbox tools, `heightAt` serves
+  the taps and drags (input-wiring: the ground under the finger), the streamer's slide, impacts, birds, debug overlays,
+  the far land's focus every frame and the flyer's floor every frame. So, by how they ask:
+  - on an event (a tap, a turn, a placement, the fortress's ground, a slide): the world API's terrain `surfaceAt` —
+    the surface word from the mirror's 1 KB page, read when asked, current until its chunk runs (DA-B1);
+  - every frame, the lie of the land enough (the far land's focus, the flyer's floor): `scene.mapHeightAt`, the land as
+    generated (the CPU's map, kept by the streamer), never the GPU — reading a page each frame where the land runs
+    would have been a per-frame read;
+  - a page not read yet: `heightAt` answers the land as generated for that frame (the page asked for now).
+- The note's worry about the surface buffer was wrong: land that comes in stays drowsy until its derived words are made
+  (sim/sleep.ts), and a sleeping chunk's don't change, so its pages hold. A first try from the layers' pages (64 KB a
+  page at K = 16) read 18 MB in 20 s after Build — the surface's are 1 KB.
+- The fortress reads its box's surface pages once before it's ready (`Terrain.load`, ~300 KB on the user's town), not
+  the whole surface. `WorldCore.onColumnsWritten` (an undo, chunks restored, the streamer's live edit) makes the
+  mirror read its pages again (before, the 1 Hz read caught those up).
+- Measured (the atlas game, fortress, 412x915 q=low, 20 s at 4x after Build): the mirror 282 KB in 20 s (14 KB/s), and
+  the box's 298 KB once at the start; the surface read (400 KB/s) is gone. The lab's example, fortressraid and
+  fortressfollow pass; the shot after Build looked at.
+- Hacks and limits: a page's first frame answers the land as generated (an edit there not yet seen); the far land's
+  focus and the flyer's floor ignore what's been dug or built (they're the lie of the land); GPU writers on sleeping
+  chunks outside the ticks other than those told (DA-B9's chunk versions would cover all) aren't seen by the mirror.
+
+## 2026-11-05 — round 128o (`phonefix`, DA-B2): the units' sync — the ring and the staging now; the rest needs life.ts rewritten (design note)
+
+- Done now (agents.ts sync, units.wgsl and traits/prelude.wgsl emit): the events are a ring. The GPU counts what it
+  made ([0]) and reads how far the CPU has read ([2], written after each sync); an event goes to slot e % 2048 with its
+  number as a tag, or, with 2048 unread, isn't written (the CPU sees the tag of another and counts it lost — never
+  reads an old event twice). A sync copies the 16 B head and a window of 256 events (8 KB) from where the last stopped,
+  and the units; the rest waits for the next sync. It copied the whole 64 KB block every sync and cleared it. The
+  staging buffers are kept between syncs (one was made and destroyed every sync). Tests on Dawn: 600 deaths in one tick
+  read over three syncs, every one once; more than the ring holds counted lost, not read as old.
+- Measured (the atlas game, fortress, 20 s at 4x after Build): the agents' sync 9 KB a sync, 123 KB/s (it was 66 KB a
+  sync, 1.7-6 MB/s). Every read in fortress play after Build together: ~140 KB/s (161 MB/s at the start of DA-B1).
+- Not done — design note. What stays is every unit read every sync (n × 80 B: 1-2 KB for the town's 8-30 people,
+  growing with raids), because the CPU decides from positions, every sync:
+  - fortress/life.ts, the people's phase machine (~25 reads): arrived at a home, the heap (THERE), a site or its stands
+    (REACH), a door, a post, a spot (AT_SPOT), a wall's walk with its height over the kept ground; the carts at a
+    door or the heap; the soldiers' posts and patrols; who's nearest a newcomer's spot.
+  - fortress/raiders.ts (~10): which side of the walls a raider is (sideAt), whether a gate's shut round it, which
+    goal is nearest, whether a foe is on the same level, the wave's centre.
+  - fortress/defence.ts (~6): a soldier up on the wall near its post, the nearest raider in bow range, an arrow's aim.
+  - units/agent-units.ts (~30): hunting (whom a hostile sees, sight and leash), striking (reach), the goal fields'
+    arrivals, guards back at their posts, the follow card's unit.
+  - What each becomes:
+    - arrivals → a GPU event: a unit following a field whose distance at its feet drops under its arrival radius
+      emits `arrived` (field, where) once; the phase machine moves on that event, not on a polled position. The field
+      already holds the distance to the nearest seed, so it costs a compare per unit per tick;
+    - sight, reach and the hunt → the GPU's own (units.wgsl already notices, closes and swings; the CPU's copy of it in
+      agent-units think goes), with `noticed` as an event;
+    - sides of the walls, gates, the nearest raider → GPU queries asked on an event (the wave's arrival, a gate's turn,
+      a soldier on its post), answered as short lists;
+    - the follow card and a selected unit → watched units: a few ids read every sync (bytes for them only).
+  - Why stop here: each of those turns the phase machine from polling into reacting, which is rewriting fortress/life.ts
+    (and agent-units' think) — the one-crowd merge (DA-A6) rewrites both. Doing it here would be done twice and collide
+    with `onetown`. Proposed: DA-A6 is built on events from the start, with the arrival event and the watched-units read
+    (both engine-side, in agents.ts/units.wgsl) landed first as their own rows.
+- Hacks and limits: 256 events a sync at most (more wait a sync); 2048 unread at most (more are lost, counted); every
+  unit still read every sync.
+
+## 2026-11-05 — round 128o (`phonefix`, DA-B19 fix): "not read yet" instead of the generated map's height
+
+- Why (main's review; CLAUDE.md: no fallbacks): `heightAt` answered a page not read yet with the map as generated — a
+  tap or a placement on ground just dug or built would have acted on the wrong ground for that frame.
+- Now `scene.heightAt` is `number | null`, null meaning not read yet (its page asked). Each caller says what it does:
+  `Camera.groundAt` with such a lookup returns null; a tap, the fly toggle, the atlas buttons' middle, a model placed,
+  a mesa's level, a hero's tap, the story's first camera target, a flock of birds wait a frame (or until the page is
+  in); a drag doesn't start, a drag's move, a hover and the brush's ring are skipped that frame; the turn's pivot stays
+  the target; a power's glow isn't drawn; the streamer's dug-pit slide check is left out; `Structures.place` returns
+  undefined and `Places.at` undefined (ask again); the inhabitants spawn once the ground round the camera is read.
+- The fortress reads the window's surface pages whole (~400 KB) before it's ready and again after each slide or warp;
+  `scene.groundReady` is false meanwhile and its people, raiders, pieces (the last ones still drawn) and taps wait.
+  Its readers ask `scene.groundRead`, which throws if a page isn't read: an invariant, not a stand-in.
+- `scene.mapHeightAt`, the map as generated, stays for the two that ask every frame (the far land's focus, the
+  flyer's floor); test/unit/mapheight.test.ts fails if anything else uses it.
+- Checked: unit 771, the lab's example, fortressraid, fortressfollow pass (quarry fails as on fortress); the atlas game
+  with the fortress (20 s after Build) and without it (panning, 9 slides): no errors. Not checked: the fortress through
+  a slide in the real game (its kept window didn't slide).
+- Found (not this row): the sandbox atlas panning reads Integrity's whole layers (26 MB) at each slide, 13 in 16 s —
+  DA-B12.
+- Hacks and limits: a fortress column first asked between a slide and its read throws (groundRead) — the fortress keeps
+  each box column's ground once read, so it shouldn't; the town debug overlay isn't drawn for a frame with a page
+  unread.
+
+## 2026-11-06 — round 128o (`phonefix`, DA-B2a, DA-B2b): the engine's prerequisites for a crowd built on events
+
+- Why (main: DA-B2's split approved): the one crowd (DA-A6) will be built on events, not on positions polled every
+  sync; the engine side lands first so it can.
+- DA-B2a, `arrived` on the GPU (units.wgsl, agents.ts `arrivals(field, radius, leave)`): a unit following a field whose
+  distance at its feet falls to the field's arrival radius emits `arrived` (field, the distance, where), once. The
+  latch is the unit's sixth vec4 (UNIT_V 5 → 6, mirrored in traits/prelude.wgsl and roadride.wgsl): cleared when it is
+  past the leaving radius or follows another field. The radii are the CPU's, per field (AgentParams.arrive, 0 off) —
+  the shader holds no distance of its own. The field already holds the distance to its nearest seed: a compare a unit
+  a tick. Test on Dawn: ten workers walk to a seed 28 cells off, each told once within 3 of it, nothing more while they
+  stand there, nothing with the field's arrivals off.
+- DA-B2b, watched units (`agents.sync({ watch })`): only those records are copied (a copy each; 32 at most), not every
+  unit's; a watched unit gone or whose slot another took is left out. Test on Dawn: the same positions as a full sync.
+- Not adopted here: FortressLife, SettlementLife and agent-units' think still poll every unit each sync; DA-A6's row now
+  says it's built on these events and watched units.
+- Measured: the atlas game after Build, agents' sync 9 KB a sync (96 B a unit now, was 80). GPU tier 149/149 (the road
+  ride test used a 5-vec4 record of its own: now UNIT_V); the lab's raid, follow and carts pass.
+- Hacks and limits: 32 watched units a sync; the arrival radius is per field (every group on a field shares it); a unit
+  that arrives and is pushed past the leaving radius is told again when it comes back.
+
+## 2026-11-06 — round 128o (`phonefix`): fortress 3d0965d merged (phoneflags); every column writer tells the mirror
+
+- Merged fortress (phoneflags 24fd616: src/flags.ts owns the URL flags, layersNext gone, the column passes in place on
+  every tier; and the Pages commit). Conflicts only in the docs (BACKLOG DA-B17 fortress's, DA-B19 phonefix's; the
+  DEVLOG's two tails kept, fortress's first). No flag reads to move: phonefix's own (readstats, settletol) already
+  went through flags.ts on fortress's side.
+- The mirror's staleness (api/mirror.ts) now hears every column writer outside the ticks and the column applies:
+  `ColumnCopy.write` (Integrity's columns: `CopyHost.written`) and `WorldCore.replaceWindow` call
+  `WorldCore.columnsWritten`, as the undo, restoreChunks and the streamer's live edit did; slides and warps bump the
+  window's epoch. (DA-B9's per-chunk versions would make it exact; this is every page stale on any such write.)
+- Checked: typecheck (both), unit 775 (the town fixture passes: the land generator's hash didn't move), GPU tier
+  149/149, the transfer gate, flagcheck, hallcheck (0 of 344 lost).
+
+## 2026-11-06 — round 128o (`phonefix`, DA-B9): per-chunk versions — design note, stopped before code (for main)
+
+- What it is: a version word per chunk, bumped on the GPU by every writer of the columns, so the readers work only on
+  chunks that changed. First consumers asked for: the mirror's staleness and the agents' re-peel.
+- Where the word lives (fits the chunk table): `world.chunks` doubles — the table's [first slot, K] per chunk as now,
+  then a second region of one u32 per chunk, the tick that last wrote it (G.tick: every writer of a tick writes the
+  same value, so a plain store races harmlessly; no atomics, so no second binding). The writers bind the chunk table
+  read_write instead of read (layers.wgsl's declaration chosen per kernel, as PAGE_ADDR is): no new binding, every
+  writer already has the table. The CPU writers (the streamer's regions and live edit, warp, undo, restoreChunks,
+  replaceWindow, ColumnCopy.write) write the next tick into the words of the chunks they wrote.
+- The writers (each needs its bump and a test that a write moves its chunks' versions — a missed one is silent
+  staleness): GPU — climate, colapply (claims, stamps), edit (and its blow), landbrush, lava, layerpull, liquid,
+  phys (the voxel bake), sediment, structure and structure-lateral, townstamp: 12 kernels; CPU — the 7 above.
+- Where it stops being "the chunk table only":
+  1. The agents' re-peel today takes an eighth of the scope a tick, round robin, whatever changed. To peel only changed
+     chunks, the list must be made on the GPU (versions against the version each chunk was peeled at), and the peel
+     and link passes dispatched indirect over it. Today every culled pass gets its list from the CPU and its count
+     known when encoded (sim/cull.ts `AwakeTiles.setList`, `dispatchTiles`, a uniform list): a GPU-made list needs an
+     indirect variant of that contract (a storage list copied into the uniform, `dispatchWorkgroupsIndirect`), and the
+     link list's dilation (a chunk and its neighbours) on the GPU. That is a change to sim/cull.ts's dispatch contract,
+     used by every culled system.
+  2. The mirror lives on the CPU: to know a page is stale from versions it must read them (8 KB) — every frame it's
+     asked, or in a first read before the pages (a second round trip: a frame more latency), or the GPU filters the
+     asked pages by version but the copy's size is fixed when encoded (the bytes read stay the asked pages'). And the
+     versions are the layers' only: the mirror's veg, water, fire and wind change without a layers write, so they keep
+     the sleep mask's staleness anyway. Today's rule (stale where the sim ran, or any write outside the ticks) is a
+     superset that costs re-reads where a chunk ran without its columns changing (water moving).
+- Options:
+  (a) Build it in two steps: first the versions and every writer's bump with its test (contained: the chunk table,
+      layers.wgsl's declaration, the 12 kernels, the CPU writers) — then the indirect culled dispatch in sim/cull.ts
+      as its own row, the re-peel its first user. The mirror stays on the sleep rule (it isn't helped much: see 2).
+  (b) The same, the mirror taking the versions by the two-phase read for the layers' sources only.
+  (c) Don't, for now: the agents' re-peel costs an eighth of the scope a tick; the mirror's rule is cheap.
+- Recommended: (a). The versions are the root (DA-B9's other readers — mesh hash, reach, shore, save sweep — need
+  them too); the indirect list is the second contract and deserves its own row and review.
+
+
 ## 2026-11-06 — the coarse world steps only where something moves (DA-B15)
 
 Why: the coarse world (512² cells, 32 B each) stepped every cell and copied the whole 8 MB grid back every 4th frame

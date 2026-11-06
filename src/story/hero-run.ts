@@ -57,7 +57,8 @@ export interface HeroRunDeps {
   renderer: Renderer;
   device: GPUDevice;
   /** a screen point (CSS px) on the ground (world x, y, z) */
-  groundAt: (sx: number, sy: number) => [number, number, number];
+  /** the ground under a screen point (null: not read yet — asked; round 128o) */
+  groundAt: (sx: number, sy: number) => [number, number, number] | null;
   /** a line for the player */
   say: (text: string, seconds?: number) => void;
   /** the hero (default: on foot, hero/walker.ts); a hero game's own plugs in here and draws itself */
@@ -416,6 +417,8 @@ export class HeroRun {
     }
     if (best) return this.seek(best.id);
     const g = this.d.groundAt(sx, sy);
+    // (round 128o: the ground there not read yet — its page asked: the tap again a frame later)
+    if (!g) return void requestAnimationFrame(() => this.tap(sx, sy));
     this.walkTo([g[0], g[1]]);
   }
 

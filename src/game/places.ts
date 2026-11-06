@@ -22,7 +22,8 @@ import {
 export class Places {
   private m: PlaceMap | null = null;
   /** the ground height at world (x, y) (the level sets it): `at` with a z needs it where a column has an enclosed level */
-  groundAt?: (x: number, y: number) => number;
+  /** the ground's height (null: not read yet) */
+  groundAt?: (x: number, y: number) => number | null;
 
   constructor(
     private device: GPUDevice,
@@ -72,9 +73,10 @@ export class Places {
       .map((p) => new PlaceRef(this, p.id));
   }
 
-  /** the room at world (x, y) (z: the enclosed level under it, where there is one); null: no place */
-  at(x: number, y: number, z?: number): PlaceRef | null {
+  /** the room at world (x, y) (z: the enclosed level under it, where there is one); null: no place; undefined: the ground there isn't read yet (ask again) */
+  at(x: number, y: number, z?: number): PlaceRef | null | undefined {
     const r = this.map.roomAt(x, y, z, this.groundAt);
+    if (r === -1) return undefined;
     return r ? new PlaceRef(this, r) : null;
   }
 
