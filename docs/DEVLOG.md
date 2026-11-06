@@ -19601,3 +19601,21 @@ its slot opening or closing starts it over (a tested piece).
   fortressfollow failed twice: its tap picked a second person drawn on the first — riders on the same trip are placed
   at the same spots along it (no queueing on the roads yet, DESIGN section 12); the scenario now picks a person
   standing apart (ok).
+
+## 2026-11-06 — round 128o (`onetown`, DA-A10 / DA-A11): design note — graded at generation, keepReach deleted
+
+- Main's direction: generation uses the same GPU reach as play by realising the town in the window (the start town is
+  generated where the window is): realise, then the GPU reach, its fix field and the grading, then the plan is final.
+- Proposed order: (1) the realise step: when a town's land is first in the window (Settlements: the exact plan's
+  land stamped; the fortress: ready), one pass over its plan — the lanes graded (build/grade.ts at ROAD_GRADE, cut and
+  fill written into the town's own ground columns, TownSite.groundCols, and the world's terrain there through the
+  world API's quiet edits), then joinPlaces with the fix field (passages, gates, stairs as ramps a cell long), then the
+  plan marked final (saved as generated: no edit of the player's). (2) keepReach and its call in planTown deleted;
+  assertEntered moves to after the realise pass. (3) Steep stretches: in town (inside the plan's box of built cells) a
+  stair on the stretch's free cells when it fits (stairRise); outside, a switchback (a lane's run lengthened in a
+  zig-zag within the grade) — or, where neither fits, the place stays out.
+- Questions before code: (a) a generated building that no fix reaches (on a terrace past any stair or switchback):
+  dropped from the plan at the realise pass (DESIGN section 13: refuse what nothing can fix), or kept and counted? (b)
+  grading writes the town's land: generated towns' ground changes, so GEN_VERSION moves and saved regions are made
+  again (once) — fine? (c) a town far away keeps its plan from before the pass (its passages and stairs appear when it
+  is first realised) — fine, or should the far plan run the CPU reference (350-600 ms a town, measured)?
