@@ -19123,3 +19123,24 @@ Design note (AGENT_RULES 1). DESIGN.md section 11 ("One crowd"; "no per-frame CP
   (708/708 at ~600 sim s: slower than the 301 of the last run, 705 for 240 s), unitsonground ok; fortressoutside
   (rolling) on `walled` ok (7 reached), on `town` 1 of 2 (the failure: lumber1 waited 183 s at 852 s); a third run lost
   the GPU device (another check's).
+
+## 2026-11-06 — round 128o (`onetown`, DA-A6 part 1): TownLife — the people's routine on events, as pure logic
+
+- fortress/townlife.ts `TownLife`: a person's phase moves only on events (`arrived` on a leg, `dug`, `felled`,
+  `death`; `lost` throws) and puts out orders (the leg a unit follows, what it carries, a dig or a felling). Its time
+  is sim seconds in `tick` (working a load in, a reap). A leg sent to where a person already is counts as there (the
+  agents tell an arrival once — their latch holds while a unit follows the same field), settled once per flush on the
+  last leg each person was sent on. A person at the stores with nothing to bring, or at its work with no spot free,
+  asks again each tick (the stores' and the sites' state, never a position). This slice: builders, farmers, miners,
+  woodcutters, people without work. Carts, smiths, recruits, soldiers, eating and the newcomers' walk in are next.
+- fortress/townwork.ts `FortressWork`: TownLife's `TownWork` over the town's one plan — the job board, the builders'
+  sites (build order, the reach's cut-off cells), BuildBook loads, the farms' ripe grain, work spots by where a person
+  arrived. Ported from FortressLife; it isn't wired into the game yet (FortressLife still runs it): the wiring — the
+  agents' `arrived` (DA-B2a) and the ride's arrival into `LifeEvent`s, the orders into groups and carries — and
+  deleting fortress/life.ts and settle/life.ts are the next commit, once the GPU and the lab may run again.
+- Found: BuildBook.fetch and giveBack change the stores object they're handed; FortressLife always handed a copy. The
+  adapter does too (a test caught the double take).
+- Tests (Node only, as main asked while the GPU runs tilegate): townlife.test.ts (9: a builder's cycle, waiting for a
+  load, a farmer's, a miner's and a woodcutter's on the world's answers, home, a job changed mid-leg gives the load
+  back, a leg to where it is counts as there, a lost event throws, a death) and townwork.test.ts (2: a house put up
+  load by load on a fortress from scripted arrivals; a farm's ripe grain brought in). Unit tier 98 files green.

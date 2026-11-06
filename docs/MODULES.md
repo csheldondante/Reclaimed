@@ -214,6 +214,8 @@ Fortress mode: the fortress, its economy, pieces, claims, life (workers) and its
 - `reachgpu.ts` (262) — The fortress's reach on the GPU (round 128l, m4; API: `FortressReachGpu`.
 - `recipes.ts` (154) — The fortress's recipes (round 128l, m4: fortress slice 1, milestone 4 — "the blacksmith makes weapons from … API: `Recipe`, `RECIPES`, `recipeTakes`, `TrainRoom` +2.
 - `testing.ts` (12) — (round 128m, onetown) Tests' fortress: the player editing a town with nothing on it yet (build/site.ts … API: `fortressOn`.
+- `townlife.ts` (303) — One crowd for a town's people, on events (DA-A6, round 128o; API: `Leg`, `LifeEvent`, `Order`, `TownWork` +3.
+- `townwork.ts` (167) — A town's work as TownLife asks for it (DA-A6, round 128o; API: `LOAD`, `SITES`, `FortressWorkIO`, `FortressWork`.
 - `ui.ts` (377) — The fortress's bar. Planning (time stopped): select what — one of the nine types — then tap to plan it; API: `FortressBarHooks`, `SPEEDS`, `FortressBar`.
 - `words.ts` (268) — What the fortress's planning panel says (docs/WRITING.md: plain words, one idea a sentence, numbers of … API: `goodsText`, `givesLines`, `typeCard`, `typeLines` +26.
 - `work.ts` (99) — What the fortress's builders owe and have brought (fortress slice 1, milestone 2). API: `Load`, `BuildBook`.
