@@ -3,6 +3,7 @@
 import { type Interval } from '../../world/layout';
 import { MATERIALS, MatState } from '../../world/materials';
 import type { RegionLand } from '../../world/streamgen';
+import { urlFlags } from '../../flags';
 
 /** what the viewer and the caller set on top of the parameters */
 export interface Extra {
@@ -33,7 +34,7 @@ export const MAX_INST = 8192;
 export const TILE = 32;
 /** the side of a paced batch's tile: `tile` or a little over, so a batch a little over whole tiles takes no more turns */
 export const paceTile = (n: number, tile: number) => Math.ceil(n / Math.max(1, Math.round(n / tile)));
-export const Q98 = typeof location === 'undefined' ? new URLSearchParams() : new URLSearchParams(location.search);
+export const Q98 = urlFlags();
 /** (round 98, ?streamold=1) one tile a frame over every batch, as before round 98 */
 export const TILE_OLD = Q98.get('streamold') === '1';
 /** (round 98, ?tilesfixed=N — round 105: it was ?tiles=N, which the tile cache's ?tiles=1 then also set, pinning the

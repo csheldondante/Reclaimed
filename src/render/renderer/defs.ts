@@ -1,6 +1,7 @@
 // The renderer's sizes, formats and URL flags (CAM_BYTES, SHADOW_SIZE, TILES, SKIP ...), its public types (PickHit,
 // RenderOptions; re-exported by renderer.ts) and cutOn. Owns no state.
 import { CAMERA_BYTES, CAMERA_CUT_BYTES, type Camera } from '../camera';
+import { urlFlags } from '../../flags';
 
 /** the draw shaders' camera (render.wgsl Camera): the view's, then the sun's shadow matrix */
 export const CAM_BYTES = CAMERA_BYTES + 64 + 16 + CAMERA_CUT_BYTES;
@@ -31,7 +32,7 @@ export const VEG_INSTANCES = 13;
  * 1.25 × what was asked) when a frame asks for more than INST_GROW_AT of the room (renderprep.wgsl putO, putW;
  * vegprep.wgsl putP, clampVeg — the writes past the room are left out and the counts clamped meanwhile).
  */
-export const INST_GROW = new URLSearchParams(location.search).get('instgrow') !== '0';
+export const INST_GROW = urlFlags().get('instgrow') !== '0';
 export const INST_START = 0.1;
 export const INST_GROW_AT = 0.85;
 export const PICK_FORMAT: GPUTextureFormat = 'rg32uint';
@@ -55,14 +56,14 @@ export interface RenderOptions {
 }
 
 /** (perfopt) the winding of the mesh's faces out of the solid on screen (fieldmesh.wgsl makeQuads; ?front=cw to try the other) */
-export const STRUCT_CULL: GPUCullMode = (new URLSearchParams(location.search).get('scull') ?? 'back') as GPUCullMode;
-export const MESH_FRONT: GPUFrontFace = new URLSearchParams(location.search).get('front') === 'cw' ? 'cw' : 'ccw';
-/** (round 86) ?hybrid=1 (phone-flags' LITE_SET on the low tier): the window's heightfield chunks drawn as a grid
+export const STRUCT_CULL: GPUCullMode = (urlFlags().get('scull') ?? 'back') as GPUCullMode;
+export const MESH_FRONT: GPUFrontFace = urlFlags().get('front') === 'cw' ? 'cw' : 'ccw';
+/** (round 86) ?hybrid=1 (flags.ts LITE_SET on the low tier): the window's heightfield chunks drawn as a grid
  *  (meshdraw.wgsl vsGrid) — its pipelines made */
-export const HYBRID = new URLSearchParams(location.search).get('hybrid') === '1';
+export const HYBRID = urlFlags().get('hybrid') === '1';
 /** (round 103) the world-anchored tile cache (render/tilecache.ts) — the land past the window drawn from tiles; round
  *  105 (DECISIONS: the user signed off on the tiles): on by default, ?tiles=0 off */
-export const TILES = new URLSearchParams(location.search).get('tiles') !== '0';
+export const TILES = urlFlags().get('tiles') !== '0';
 /** meshdraw.wgsl GRID_N: a grid chunk's lattice, vertices a side (its 32 columns and one past each edge) */
 export const GRID_N = 34;
 /** (perfopt) the look's pieces ?nodetail= can leave out (meshdraw.wgsl ND_*; shadow: render.wgsl lighting) */
@@ -72,7 +73,7 @@ export const DETAIL_BITS: Record<string, number> = { strata: 1, water: 2, plants
 // leaves that piece out of the frame, to measure what it costs: scripts/perfprofile.mjs)
 /** (perfopt, tcache) the cached terrain layer's margin past the screen, render pixels a side */
 export const TC_MARGIN = 24;
-export const SKIP = new Set((new URLSearchParams(location.search).get('skip') ?? '').split(',').filter(Boolean));
+export const SKIP = new Set((urlFlags().get('skip') ?? '').split(',').filter(Boolean));
 
 
 /** (round 83) is anything cut from the camera's view (a slice, a hole round a point kept seen)? */

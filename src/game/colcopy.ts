@@ -22,14 +22,14 @@ export interface CopyHost {
   device: GPUDevice;
   packed: PackedWorld;
   layers: () => GPUBuffer;
-  /** (round 128, INT16) the column passes' second buffer: a column written goes to both (else a copy-back undoes it) */
-  layersNext: () => GPUBuffer;
   /** the window's epoch (bumped by every slide: what was read before is of another window) */
   epoch: () => number;
   /** the whole layers buffer read back (WorldCore.readBuffer('layers')) */
   readWhole: () => Promise<Float32Array>;
   /** a column written by the CPU: its chunk's sims woken (Sleep.wake) */
   woke?: (x: number, y: number) => void;
+  /** (round 128o) a column written to the GPU: whatever keeps a copy of the columns reads them again (WorldCore.columnsWritten) */
+  written?: () => void;
 }
 
 export class ColumnCopy {
@@ -99,8 +99,8 @@ export class ColumnCopy {
       for (const m of this.inflight) m.set(y * 65536 + x, col);
     }
     if (!gpu) return;
-    // (round 128, INT16: the layersNext alike — the falling pieces' and a bake's whole columns, still made on the CPU)
-    for (const b of [this.host.layers(), this.host.layersNext()]) this.host.device.queue.writeBuffer(b, base * SLOT_WORDS * 4, data);
+    this.host.device.queue.writeBuffer(this.host.layers(), base * SLOT_WORDS * 4, data);
+    this.host.written?.();
     if (cpu) this.host.woke?.(x, y);
   }
 

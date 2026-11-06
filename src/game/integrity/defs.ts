@@ -8,6 +8,7 @@ import { type RockBody } from '../rockbodies';
 import { TUNE } from '../../tune/params';
 import type { PhysBody } from '../../physics/physics';
 import type { SolverBody } from '../../api/contracts/solver';
+import { urlFlags } from '../../flags';
 
 /** (round 96) what bends: metal — and (solver step 2, but for the baseline variant) wood — goes to a deformable body (the node solver's or the voxel lattice's, by the variant), the rest of what falls stays rigid */
 export const METAL: ReadonlySet<number> = new Set<number>([MAT.Steel, MAT.Rust]);
@@ -36,7 +37,7 @@ export const REST_FILL = 3;
  */
 export const FALL_EVERY = (() => {
   if (typeof location === 'undefined') return 1;
-  const q = new URLSearchParams(location.search);
+  const q = urlFlags();
   const n = q.get('fallevery');
   if (n) return Math.max(1, Number(n));
   return (q.get('q') ?? 'low') === 'low' ? 2 : 1;
@@ -49,14 +50,14 @@ export const FALL_EVERY = (() => {
  * every 1 s while bodies exist. After a slide (the window's epoch) the next read is whole again.
  * (round 86: the default — `?intread=all` reads it all, as before)
  */
-export const READ_NEAR = typeof location === 'undefined' || new URLSearchParams(location.search).get('intread') !== 'all';
+export const READ_NEAR = typeof location === 'undefined' || urlFlags().get('intread') !== 'all';
 
 /**
  * (round 120, JB6 — measuring only) `?jb6=0`: the CPU copy kept and read before every pass whatever the judge and the
  * solver, as before JB6, so the phone bench can toggle what JB6 took away. The default keeps it only where a CPU
  * consumer walks it (Integrity.keepsCopy).
  */
-export const JB6_KEEP = typeof location !== 'undefined' && new URLSearchParams(location.search).get('jb6') === '0';
+export const JB6_KEEP = typeof location !== 'undefined' && urlFlags().get('jb6') === '0';
 
 /** (round 120, JB6) a dust cloud's material: the ground's own where it rises (particles.wgsl looks it up) */
 export const GROUND_DUST = -1;

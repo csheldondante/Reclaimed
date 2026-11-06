@@ -4,6 +4,7 @@ import { StructureGpu } from '../gpu';
 import structWgsl from '../../shaders/structmesh.wgsl?raw';
 import viewerWgsl from './viewer.wgsl?raw';
 import { type Mat4, mul, ortho, lookAt } from './mat';
+import { urlFlags } from '../../flags';
 
 const SHADOW = 2048;
 const DEPTH: GPUTextureFormat = 'depth24plus';
@@ -91,7 +92,7 @@ export class ViewerRenderer {
       fragment: { module, entryPoint: 'fsPiece', targets: [{ format }] },
       // (the modules are wound outward, counter-clockwise, and every frame is counter-clockwise: back faces culled —
       // ?cull=0 draws them, to look for a module wound the wrong way)
-      primitive: { topology: 'triangle-list', cullMode: new URLSearchParams(location.search).get('cull') === '0' ? 'none' : 'back' },
+      primitive: { topology: 'triangle-list', cullMode: urlFlags().get('cull') === '0' ? 'none' : 'back' },
       depthStencil: depthState,
       multisample: ms,
     });

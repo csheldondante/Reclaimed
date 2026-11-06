@@ -49,7 +49,7 @@ await run({ name: 'fortresseconomy', kind: 'behaviour', size: '412x915', dpr: 1,
         const g0 = groundAt(x, y);
         let ok = Number.isFinite(g0);
         for (let dx = -18; dx <= 18 && ok; dx += 3) for (let dy = -18; dy <= 18 && ok; dy += 3) ok = Math.abs(groundAt(x + dx, y + dy) - g0) < 1.5 && !wet(x + dx, y + dy);
-        const n = ok ? Rc.api.plants.treesNear(x, y, 60).length : 0;
+        const n = ok ? (await Rc.api.plants.treesNear(x, y, 60)).length : 0;
         if (n > best) {
           best = n;
           site = [x, y];
@@ -66,7 +66,7 @@ await run({ name: 'fortresseconomy', kind: 'behaviour', size: '412x915', dpr: 1,
     };
     // the trees' way (u) and across it (v): the lumber camp toward the nearest trees, the quarry away from them in the
     // open, the houses and the farm either side
-    const trees = Rc.api.plants.treesNear(cx, cy, 70).map((t) => [t.x, t.y]).sort((a, b) => Math.hypot(a[0] - cx, a[1] - cy) - Math.hypot(b[0] - cx, b[1] - cy));
+    const trees = (await Rc.api.plants.treesNear(cx, cy, 70)).map((t) => [t.x, t.y]).sort((a, b) => Math.hypot(a[0] - cx, a[1] - cy) - Math.hypot(b[0] - cx, b[1] - cy));
     if (trees.length < 5) throw new Error(`too few trees near the site: ${trees.length}`);
     const near = trees.slice(0, 10);
     const mx = near.reduce((a, p) => a + p[0], 0) / near.length;
@@ -134,7 +134,7 @@ await run({ name: 'fortresseconomy', kind: 'behaviour', size: '412x915', dpr: 1,
       return {
         depth,
         // (window coordinates move when the window slides: from the cells, now)
-        trees: Rc.api.plants.treesNear(...f.centre(m.lumber[0]), 36).length,
+        trees: (await Rc.api.plants.treesNear(...f.centre(m.lumber[0]), 36)).length,
         felledAt: life ? life.felledAt.map(([x, y]) => [Math.round(x - f.centre(m.lumber[0])[0]), Math.round(y - f.centre(m.lumber[0])[1]), !!Rc.api.plants.treeAt(x, y)]) : [],
         stores: Object.fromEntries(Object.entries(f.stores()).map(([k, v]) => [k, +v.toFixed(1)])),
         people: f.status.people,
@@ -233,13 +233,15 @@ await run({ name: 'fortresseconomy', kind: 'behaviour', size: '412x915', dpr: 1,
   await shot('m3-town', 'store', 4);
   await shot('m3-quarry', 'quarry', 8);
   await shot('m3-quarry-near', 'quarry', 14);
-  console.log('quarry trees', JSON.stringify(await page.evaluate(() => {
+  console.log('quarry trees', JSON.stringify(await page.evaluate(async () => {
     const Rc = window.reclaimed;
     const f = Rc.fortress;
-    return window.__m3.quarry.map((c) => {
-      const [x, y] = f.centre(c);
-      return { trees: Rc.api.plants.treesNear(x, y, 4).map((t) => +Math.hypot(t.x - x, t.y - y).toFixed(1)), ground: Rc.api.terrain.groundAt(x, y) };
-    });
+    return Promise.all(
+      window.__m3.quarry.map(async (c) => {
+        const [x, y] = f.centre(c);
+        return { trees: (await Rc.api.plants.treesNear(x, y, 4)).map((t) => +Math.hypot(t.x - x, t.y - y).toFixed(1)), ground: Rc.api.terrain.groundAt(x, y) };
+      }),
+    );
   })));
   console.log('people', JSON.stringify(await page.evaluate(async () => {
     const Rc = window.reclaimed;

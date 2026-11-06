@@ -1,6 +1,7 @@
 // LevelScene.attach: wires a made level to the page once — the HUD and powers, the sandbox's tools, the controls and
 // keys, the window.reclaimed test API, the streamed world's sleep and slides, and what the URL asks to start.
 // API: attach(scene). Reads and sets the scene's own fields; other systems only through their public APIs.
+import { worldApiOf } from './world-api';
 import { Reach } from '../../game/reach';
 import { showFatal } from '../../gpu/device';
 import { modelById } from '../../world/models';
@@ -19,6 +20,8 @@ export function attach(scene: LevelScene): void {
   const { core, host } = scene;
   const { camera, weather, map, dims } = core;
   attachTools(scene);
+  // (round 128o, DA-B19: the world API now, its agents installed — scene.heightAt reads the ground through it)
+  worldApiOf(scene);
   wireInput(scene);
   const api = testApi(scene);
   attachStream(scene);
@@ -50,8 +53,8 @@ export function attach(scene: LevelScene): void {
     const r = Math.PI / 180;
     // (the ground's heights arrive with the first surface readback: wait for it)
     const placeIt = () => {
-      if (!scene.surfaceCache?.length) return void setTimeout(placeIt, 200);
-      core.structures.place(m, wx, wy, qYawPitchRoll((yaw || 0) * r, (pitch || 0) * r, (roll || 0) * r), scene.heightAt, sink || 0);
+      // (round 128o: the ground under its footprint read first — its pages asked: placed when they're in)
+      if (core.structures.place(m, wx, wy, qYawPitchRoll((yaw || 0) * r, (pitch || 0) * r, (roll || 0) * r), scene.heightAt, sink || 0) === undefined) requestAnimationFrame(placeIt);
     };
     placeIt();
   }

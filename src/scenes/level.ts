@@ -53,9 +53,9 @@ import { Puck } from '../api/puck';
 import { StoryPlay } from '../story/play';
 import type { HeroRun } from '../story/hero-run';
 import { cpuStats } from '../gpu/cpustat';
-import { type Interval, CHUNK, sfZ, sfPack, windowZMax } from '../world/layout';
+import { type Interval, CHUNK, windowZMax } from '../world/layout';
 import { Integrity, type Grab } from '../game/integrity';
-import { cellAt, ROW_H } from '../world/lattice';
+import { cellAt, cellPos, ROW_H } from '../world/lattice';
 import { HybridChunks } from './hybrid';
 import { atlasRange, atlasRows } from './range';
 import { Turn } from '../render/turn';
@@ -82,6 +82,7 @@ import { levelFrame } from './level/frame';
 import { labStationKit } from './level/labs';
 import type { StationKit } from '../levels/playground';
 import type { Lab } from '../lab/lab';
+import { urlFlags } from '../flags';
 
 export interface LevelOptions {
   /** play this map instead of generating the level's (a loaded sandbox map) */
@@ -144,8 +145,6 @@ export class LevelScene implements Scene {
   /** Town tool: the block under the cursor (pickTown) */
   townHover?: Block;
   townPicking = false;
-  surfaceCache: Uint32Array;
-  surfaceRefresh = 0;
   renderW = 1;
   renderH = 1;
   initialContam = 0;
@@ -164,8 +163,6 @@ export class LevelScene implements Scene {
   wetField?: RiverWetField;
   catchAt = '';
   /** (round 84, ?settletol) when the water's change per chunk was last read, and whether a read is in flight */
-  settleReadAt = 0;
-  settleReading = false;
 
   completed = false;
   saveTimer = 0;
@@ -177,15 +174,15 @@ export class LevelScene implements Scene {
   flow?: FlowKit & { lab?: { breach: (spring?: number) => void } };
   /** (round 114, framepace) frames the sim was held, by why (stream-slide, stream-warp, …, skip) */
   readonly simHeld: Record<string, number> = {};
-  noSim = (new URLSearchParams(location.search).get('skip') ?? '').split(',').includes('sim');
+  noSim = (urlFlags().get('skip') ?? '').split(',').includes('sim');
   /** ?ceiling=1 (the perf ceiling, the atlas level): each frame only the camera (the drive) and the heightfield —
    *  far.ts's rings (?near=1: a ring a cell apart first, the default; 2: the usual four) and the far land; no sim,
    *  no streaming, no mesh, no prep, no shadow, no HUD or audio. The window is still built at the start. */
-  ceiling = new URLSearchParams(location.search).get('ceiling') === '1';
+  ceiling = urlFlags().get('ceiling') === '1';
   /** ?hybrid=1 (the atlas level): voxels only where they're needed — the field mesh, the band and the sim's
    *  chunks where the land isn't a heightfield, near the focus, or edited; the LOD rings (a 1-cell ring first)
    *  draw the rest of the window's land (scenes/hybrid.ts). ?vradius= the focus's radius (world units; round 100: 0, none — 40 before). */
-  hybridOn = new URLSearchParams(location.search).get('hybrid') === '1';
+  hybridOn = urlFlags().get('hybrid') === '1';
   /** (round 113, tilesfirst) the streaming planner (scenes/planner.ts): made once the streamed window and its tiles are */
   planner?: StreamPlanner;
 
@@ -239,6 +236,12 @@ export class LevelScene implements Scene {
   traits!: TraitSystem;
   traitStation?: TraitStation;
   lifeSpawned = false;
+  /**
+   * (round 128o, DA-B19) The window's ground is read (the fortress's: read whole when it starts and after each slide —
+   * scenes/level/fortress.ts): false between a slide and its read, when the fortress's people, raiders, pieces and taps
+   * wait (they ask the ground anywhere in the window: scene.groundRead).
+   */
+  groundReady = true;
   /** (round 88, the atlas level) the settlements, and the units (the Units contract on the agents) */
   settlements?: Settlements;
   units?: AgentUnits;
@@ -371,8 +374,6 @@ export class LevelScene implements Scene {
     }
     // (round 106, frameprobe: on the window's ring, as map.surface — column (x, y) at core.ring.i(x, y); a slide moves
     // nothing. So are the veg and water caches: read back in the ring's order, not rotated)
-    this.surfaceCache = new Uint32Array(dims.w * dims.h);
-    for (let i = 0; i < this.surfaceCache.length; i++) this.surfaceCache[i] = sfPack(this.core.map.surface[i], 0);
     this.valleyReads = new ValleyReads({
       core: this.core,
       smokeDispersed: (n) => this.nature.smokeDispersed(n),
@@ -416,11 +417,23 @@ export class LevelScene implements Scene {
   /** (round 87) when the beam's bore was last judged (performance.now, ms) */
   beamCutAt = 0;
 
+  /**
+   * (round 128o, DA-B19) The ground's base at (x, y), which must have been read: what runs only once its ground is
+   * (the fortress, read whole before it's ready; a structure placed once its footprint is). Not read is a bug there.
+   */
+  groundRead = (x: number, y: number): number => {
+    const z = this.heightAt(x, y);
+    if (z === null) throw new Error(`the ground at (${x.toFixed(1)}, ${y.toFixed(1)}) isn't read yet: its reader must wait for it (scene.heightAt)`);
+    return z;
+  };
+
   /** The free camera on (from where the fixed view looks from, the same way) or off (looking at the ground under the screen's middle). */
   toggleFly(): void {
     const { camera } = this.core;
     if (camera.fly) {
       const g = camera.groundAt(camera.viewportW / 2, camera.viewportH / 2, this.heightAt);
+      // (round 128o: the ground there not read yet — its page asked: the toggle waits a frame)
+      if (!g) return void requestAnimationFrame(() => this.toggleFly());
       // (round 90: the view turned the way the flyer looked, when the view turns — the atlas level's)
       if (this.turn) camera.azimuth = camera.fly.yaw + Math.PI;
       camera.fly = null;
@@ -574,12 +587,31 @@ export class LevelScene implements Scene {
     return s;
   }
 
-  heightAt = (x: number, y: number): number => {
+  /**
+   * The ground's base at (x, y) as the GPU has it (round 128o, DA-B19): the world API's terrain from the column's page
+   * (api/terrain.ts surfaceAt: read when asked, again only after its chunk ran), (x, y) clamped to the window. Null:
+   * not read yet — its page is asked for now; the caller waits for it (a tap, a turn, a placement retry next frame),
+   * never a stand-in. Before, a copy of the whole surface read back every second.
+   */
+  heightAt = (x: number, y: number): number | null => {
+    // (the window's columns only: past its edge, its edge's)
+    const { w, h } = this.core.dims;
+    const [cx, cy] = cellAt(x, y);
+    const [px, py] = cellPos(Math.max(0, Math.min(w - 1, cx)), Math.max(0, Math.min(h - 1, cy)));
+    return this.worldApi?.terrain?.surfaceAt(px, py)?.z ?? null;
+  };
+
+  /**
+   * The map as generated at (x, y) (the CPU's map, kept by the streamer for each region that comes in) — not the
+   * ground as it is: what was dug or built isn't in it. Only for the two that ask every frame and need the lie of the
+   * land: the far land's focus and the flyer's floor (test/unit/mapheight.test.ts holds it to them). Clamped.
+   */
+  mapHeightAt = (x: number, y: number): number => {
     const { w, h } = this.core.dims;
     const [cx, cy] = cellAt(x, y);
     const ix = Math.max(0, Math.min(w - 1, cx));
     const iy = Math.max(0, Math.min(h - 1, cy));
-    return sfZ(this.surfaceCache[this.core.ring.i(ix, iy)]);
+    return this.core.map.surface[this.core.ring.i(ix, iy)];
   };
 
   /**

@@ -92,12 +92,24 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: T
   // made now over the whole window and read back (round 128l: once the level's pipelines are ready — in its batch, at its end)
   whenPipelinesReady(() => {
     core.prepareArrived();
-    void core.readBuffer('surface', true).then((f) => {
-      scene.surfaceCache = new Uint32Array(f.buffer);
-      fort.ready = true;
-      fort.requestReach(true);
-    }, ignoreTeardown);
+    // (round 128o, DA-B19: the window's surface pages read once — 1 KB each, ~400 KB at 320² — before the fortress is
+    // ready: its ground, its pieces' and its raiders' are asked anywhere in the window, and its window doesn't slide)
+    void worldApiOf(scene)
+      .terrain!.load(0, 0, dims.w, dims.h * ROW_H)
+      .then(() => {
+        fort.ready = true;
+        fort.requestReach(true);
+      }, ignoreTeardown);
   });
+  // (round 128o, DA-B19: a slide or a warp leaves the window's ground unread: read whole again, the fortress waiting)
+  const readGround = (): void => {
+    scene.groundReady = false;
+    void worldApiOf(scene)
+      .terrain!.load(0, 0, dims.w, dims.h * ROW_H)
+      .then(() => (scene.groundReady = true), ignoreTeardown);
+  };
+  S.onSlide.unshift(readGround);
+  S.onWarp.unshift(readGround);
   // (round 128l) the reach asked when planning starts (what's been built and dug since; the water for the lanes), every
   // few seconds while building (level/frame.ts) and after a slide (the part come into the window)
   fort.onMode.push((m) => {
@@ -136,11 +148,11 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: T
             s.stock -= n;
           },
           // (milestone 3: settle/life.ts's IO — the plants' trees and fell, the terrain's take: all quiet edits)
-          // (round 128o: null until the pages in reach are read — api/mirror.ts reads them when asked)
-          trees: (at, r) => scene.worldApi!.plants!.treesNear(at[0], at[1], r)?.map((t) => [t.x, t.y] as [number, number]) ?? null,
+          // (round 128o, DA-B6: the nearest trees found on the GPU, a short list back)
+          trees: (at, r, n) => scene.worldApi!.plants!.treesNear(at[0], at[1], r, n).then((ts) => ts && ts.map((t) => [t.x, t.y] as [number, number])),
           fell: (at) => scene.worldApi!.plants!.fell(at[0], at[1]).then((t) => t?.logs ?? 0),
           dig: (at, n) => scene.worldApi!.terrain!.take(at[0], at[1], n).then((g) => g.amount),
-          ground: (x, y) => scene.heightAt(x, y),
+          ground: (x, y) => scene.groundRead(x, y),
           // (round 128m, quarry: the layers' top, loose ground on it too — the surface buffer's z is the solid's: a pit
           // measured by it read a soil-covered column as not dug while its soil was taken)
           top: (x, y) => scene.worldApi!.terrain!.heightAt(x, y),
@@ -168,7 +180,7 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: T
         pour: (x, y, m, r, layers) => scene.worldApi!.terrain!.deposit(x, y, m, { radius: r, layers }),
         put: (x, y, m, n) => void scene.worldApi!.terrain!.put(x, y, m, n).catch(ignoreTeardown),
         burst: (name, x, y, z, o) => scene.worldApi!.fx?.burst(name, x, y, z, o),
-        ground: (x, y) => scene.heightAt(x, y),
+        ground: (x, y) => scene.groundRead(x, y),
         dims: { w: dims.w, h: dims.h * ROW_H },
       });
       fort.setMode('build');
@@ -322,6 +334,8 @@ export function skipFrame(scene: LevelScene, simDt: number): void {
 
 /** Fortress: a tap plans (or erases, or gates) the block it lands on (Townscaper's way: town.pickBlock). */
 export function fortressAt(scene: LevelScene, sx: number, sy: number): void {
+  // (round 128o: the window's ground being read again after a slide: the tap a frame later)
+  if (!scene.groundReady) return void requestAnimationFrame(() => fortressAt(scene, sx, sy));
   const { core } = scene;
   const { camera } = core;
   const fort = scene.fortress!;
@@ -442,7 +456,6 @@ export function startLab(scene: LevelScene): void {
       core.restoreChunks(0, 0, w / CHUNK, h / CHUNK);
       const [x1, y1] = cellPos(w, h);
       core.renderer.fieldMesh.urgent(0, 0, x1, y1);
-      void core.readBuffer('surface', true).then((f) => (scene.surfaceCache = new Uint32Array(f.buffer)), ignoreTeardown);
       return scene.worldApi?.refresh();
     },
   });

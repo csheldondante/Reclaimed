@@ -1,11 +1,11 @@
 // The level's frame: camera input, the planner and the window's slide, the world's systems, the sim's ticks, the
 // story and hero updates, then the draw and the HUD. API: levelFrame(scene, now, dt) (LevelScene.frame), planFrame,
-// readSettling, lifeFrame, ceilingFrame, perfLines. Reads and sets the scene's fields; no other module's internals.
+// lifeFrame, ceilingFrame, perfLines. Reads and sets the scene's fields; no other module's internals.
+import { ignoreTeardown } from '../../gpu/pipeline';
 import { reclamation, worldHealth } from '../../game/nature';
 import { saveProgress } from '../../game/progress';
 import { EventKind } from '../../sim/globals';
 import { CUTS, OP, editOpOf } from '../../sim/edit-ops';
-import { ignoreTeardown } from '../../gpu/pipeline';
 import { abilityHost, lifeFocus, wilderness } from '../../inhabitants/install';
 import { mountViewer } from '../../inhabitants/viewer';
 import { REGION } from '../streamer';
@@ -129,7 +129,8 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
   if (scene.units && !scene.stream?.busy) {
     scene.units.update(dt * scene.speed);
     timed('settle', () => scene.settlements?.update(dt * scene.speed));
-    if (scene.fortressLife) {
+    // (round 128o: the fortress waits while the window's ground is read again after a slide — scene.groundReady)
+    if (scene.fortressLife && scene.groundReady) {
       scene.fortressLife.update(dt * scene.speed);
       // (round 128l, m4) the attack wave: its clock, its raiders, the gates
       scene.fortressRaid?.update(dt * scene.speed);
@@ -155,11 +156,6 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
   const simDt = dt * scene.speed;
   if (scene.hoverWorld) powers.hover(scene.hoverWorld[0], scene.hoverWorld[1], dt);
   powers.update(dt);
-  scene.surfaceRefresh -= dt;
-  if (scene.surfaceRefresh <= 0) {
-    scene.surfaceRefresh = 1;
-    void core.readBuffer('surface', true).then((f) => (scene.surfaceCache = new Uint32Array(f.buffer)));
-  }
 
   const stats = sim.stats.latest;
   if (stats && scene.initialContam === 0) scene.initialContam = stats.soilContam;
@@ -230,11 +226,13 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
     globals.riverWet = scene.riverWet.update(dt * scene.speed, globals.season ?? 0, []);
   } else globals.riverWet = scene.riverWet.update(dt * scene.speed, globals.season ?? 0, weather.storms);
   // (round 80) what's awake this frame: round the player (the camera's target), the events, the storms
-  if (scene.sleep && settleTol() > 0) readSettling(scene);
   if (scene.sleep) {
     globals.sleep = scene.sleep.update(performance.now() / 1000, [camera.target[0], camera.target[1], 40], globals.events, weather.storms, core.sim.tick);
     globals.drowse = scene.sleep.drowse;
     globals.settle = scene.sleep.settling.map((s) => s.rect);
+    // (round 128o, DA-B20: the chunks maybe still settling their water, the GPU holding them while it changes — no read)
+    globals.settleTol = settleTol();
+    globals.settleCand = globals.settleTol > 0 ? scene.sleep.settleCand : undefined;
   }
   // (?skip=sim, round 80: the frame without the sim — on a phone, how much of it the sim is)
   const tSim = performance.now(); // (round 100, hitchrec: timing)
@@ -431,41 +429,25 @@ export function planFrame(scene: LevelScene): void {
   core.simCap = PLAN_OFF.has('sim') ? null : P.simCap;
 }
 
-/** (round 84) the water's most change per chunk since the last read (world-gpu waterChange), cleared; woken chunks
- *  still settling are kept awake (Sleep.holdUnsettled) — twice a second */
-export function readSettling(scene: LevelScene): void {
-  const now = performance.now() / 1000;
-  if (scene.settleReading || now - scene.settleReadAt < 0.5) return;
-  scene.settleReadAt = now;
-  scene.settleReading = true;
-  const dev = scene.host.gpu.device;
-  const src = scene.core.world.waterChange;
-  const tmp = dev.createBuffer({ size: src.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
-  const enc = dev.createCommandEncoder();
-  enc.copyBufferToBuffer(src, 0, tmp, 0, src.size);
-  enc.clearBuffer(src);
-  dev.queue.submit([enc.finish()]);
-  tmp.mapAsync(GPUMapMode.READ).then(
-    () => {
-      const ch = new Float32Array(tmp.getMappedRange().slice(0));
-      tmp.destroy();
-      scene.settleReading = false;
-      scene.sleep?.holdUnsettled(ch, performance.now() / 1000);
-    },
-    (e) => {
-      tmp.destroy();
-      scene.settleReading = false;
-      ignoreTeardown(e);
-    },
-  );
-}
-
 /** (round 117, ?life=) the inhabitants each frame: spawned once the ground's first read is in, the mesh built round the view */
 export function lifeFrame(scene: LevelScene, dt: number): void {
   const life = scene.inhabitants!;
-  const { core, host } = scene;
-  if (!scene.lifeSpawned && scene.surfaceCache?.length) {
+  const { core } = scene;
+  // (round 128o: the ground round the camera read first — the stand-in town's paths stand on it — then spawned)
+  if (!scene.lifeSpawned && scene.worldApi?.terrain) {
     scene.lifeSpawned = true;
+    const [cx, cy] = core.camera.target;
+    void scene.worldApi.terrain.load(cx - 64, cy - 64, cx + 64, cy + 64).then(() => spawnLife(scene), ignoreTeardown);
+  }
+  lifeFocus(life, core);
+  life.update(dt);
+}
+
+/** (round 117) the inhabitants spawned round the camera, its ground read (lifeFrame) */
+function spawnLife(scene: LevelScene): void {
+  const life = scene.inhabitants!;
+  const { core, host } = scene;
+  {
     const mode = host.params.get('life');
     const t = core.camera.target;
     life.setAbilityHost(
@@ -476,12 +458,10 @@ export function lifeFrame(scene: LevelScene, dt: number): void {
     );
     if (mode === 'viewer') {
       scene.editor?.setVisible(false);
-      mountViewer(host.ui, life, core, scene.heightAt);
+      mountViewer(host.ui, life, core, scene.groundRead);
     }
-    else if (mode !== 'empty') wilderness(life, [t[0], t[1]], { herd: Number(host.params.get('lifeherd') ?? 12), dragon: mode === 'dragon', town: mode === 'town', ground: scene.heightAt });
+    else if (mode !== 'empty') wilderness(life, [t[0], t[1]], { herd: Number(host.params.get('lifeherd') ?? 12), dragon: mode === 'dragon', town: mode === 'town', ground: scene.groundRead });
   }
-  lifeFocus(life, core);
-  life.update(dt);
 }
 
 /**

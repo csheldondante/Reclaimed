@@ -11,6 +11,11 @@ import { fortressOn } from '../../src/fortress/testing';
 import { laneGraph, roadShapesOf } from '../../src/build/lanes';
 import { testGpu } from './dawn';
 import { globalsWithDt } from './ride-globals';
+import { UNIT_V } from '../../src/agents/agents';
+
+/** a unit's record: floats, bytes (agents.ts UNIT_V) */
+const UF = UNIT_V * 4;
+const UB = UNIT_V * 16;
 
 /** a tick's seconds */
 const DT = 1 / 60;
@@ -45,7 +50,7 @@ describe('the agents ride the roads on the GPU', () => {
     const n = nodeCount(graph);
     expect(n).toBeGreaterThan(20);
     const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST;
-    const units = dev.createBuffer({ size: UNITS * 5 * 16, usage: S });
+    const units = dev.createBuffer({ size: UNITS * UNIT_V * 16, usage: S });
     const words = Math.ceil((W * H) / 32);
     // (two planes: the road shapes' bits, then the network's — made by the ride)
     const roads = dev.createBuffer({ size: words * 8, usage: S });
@@ -146,7 +151,7 @@ describe('the agents ride the roads on the GPU', () => {
     const far = [...Array(n).keys()].filter((v) => cpu.dist[0][v] < 1e9 && cpu.dist[0][v] > 15 && Math.min(...goals.map((p) => Math.hypot(p[0] - graph.xy[v * 2], p[1] - graph.xy[v * 2 + 1]))) > 8)[0];
     expect(far).toBeDefined();
     const rec = (x: number, y: number, grp: number) => {
-      const r = new Float32Array(20);
+      const r = new Float32Array(UF);
       const u = new Uint32Array(r.buffer);
       r.set([x, y, 5], 0);
       // group | alive | kind 0 | state chase (1)
@@ -156,7 +161,7 @@ describe('the agents ride the roads on the GPU', () => {
     const fx = graph.xy[far * 2];
     const fy = graph.xy[far * 2 + 1];
     dev.queue.writeBuffer(units, 0, rec(fx, fy, 3));
-    dev.queue.writeBuffer(units, 80, rec(fx, fy, 7));
+    dev.queue.writeBuffer(units, UB, rec(fx, fy, 7));
     const tick = async (n: number) => {
       const e = dev.createCommandEncoder();
       ride.encodeHops(e, 2);
@@ -166,7 +171,7 @@ describe('the agents ride the roads on the GPU', () => {
         pass.end();
       }
       dev.queue.submit([e.finish()]);
-      return new Float32Array(await g.read(units, 2 * 80));
+      return new Float32Array(await g.read(units, 2 * UB));
     };
     // (its route: the table's, from its node to whichever goal is cheaper — the length it rides, then the last stretch)
     const best = cpu.dist[0][far] <= cpu.dist[1][far] ? 0 : 1;
@@ -178,7 +183,7 @@ describe('the agents ride the roads on the GPU', () => {
     }
     len += Math.hypot(goals[best][0] - graph.xy[dests[best] * 2], goals[best][1] - graph.xy[dests[best] * 2 + 1]);
     let out = await tick(1);
-    const steer = (i: number) => out[i * 20 + 19];
+    const steer = (i: number) => out[i * UF + 19];
     // (0: on a trip — placed, not steered: a tick's way along its first edge)
     expect(steer(0)).toBe(-2);
     expect(Math.hypot(out[0] - fx, out[1] - fy)).toBeCloseTo(SPEED * DT, 3);

@@ -17,6 +17,7 @@ import { ROW_H } from '../world/lattice';
 import type { WorldEvent } from './globals';
 import type { Pages } from './pages';
 import { riverMode } from './world-gpu';
+import { urlFlags } from '../flags';
 
 /** chunks the mask holds (common.wgsl: 64 words) */
 const MAX_CHUNKS = 2048;
@@ -39,10 +40,10 @@ const SETTLE_TICKS = 64;
 /** (perfopt, ?sleepmore=1) the surface and render-field passes skip sleeping chunks too (but drowsy ones): every
  *  chunk was drowsy for DROWSE_S after any slide, its derived textures moved — (round 106, frameprobe) not since
  *  ringwin: nothing moves on a slide, only the strip come in is drowsy (its drowseTick, shift) */
-export const SLEEP_MORE = typeof location !== 'undefined' && new URLSearchParams(location.search).get('sleepmore') === '1';
+export const SLEEP_MORE = typeof location !== 'undefined' && urlFlags().get('sleepmore') === '1';
 // (round 84: with ?rivers=table, off unless asked for — the atlas's land comes in at its steady state)
 // (round 110: the world's river mode — sim/world-gpu.ts useRivers — so read when asked)
-const SETTLE_ASKED = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('settle');
+const SETTLE_ASKED = typeof location === 'undefined' ? null : urlFlags().get('settle');
 export function settleLand(): boolean {
   return SETTLE_ASKED === null ? riverMode() !== 'table' : SETTLE_ASKED !== '0';
 }
@@ -53,7 +54,7 @@ export function settleLand(): boolean {
  * events: edits, powers, lightning, a fire set, a gust) and the storms raining. ?wakenear=1: as before, the
  * ring round the player awake.
  */
-export const WAKE_NEAR = typeof location !== 'undefined' && new URLSearchParams(location.search).get('wakenear') === '1';
+export const WAKE_NEAR = typeof location !== 'undefined' && urlFlags().get('wakenear') === '1';
 
 /**
  * (round 84 — the user: "we can have a tolerance and decide when we are close enough to steady state to freeze and
@@ -63,14 +64,12 @@ export const WAKE_NEAR = typeof location !== 'undefined' && new URLSearchParams(
  * a river's columns back to the atlas's table. 0: off (a woken chunk sleeps at its time). On by default with
  * ?rivers=table.
  */
-const SETTLE_TOL_ASKED = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('settletol');
+const SETTLE_TOL_ASKED = typeof location === 'undefined' ? null : urlFlags().get('settletol');
 export function settleTol(): number {
   return SETTLE_TOL_ASKED !== null ? Number(SETTLE_TOL_ASKED) : riverMode() === 'table' ? 0.01 : 0;
 }
 /** the longest a chunk is kept awake for its water still settling (s) */
 const SETTLE_MAX_S = 60;
-/** how far past now an unsettled chunk is kept (s): longer than the level reads waterChange */
-const SETTLE_HOLD_S = 0.75;
 
 /**
  * (Round 107, pages P2.3b) Every per-chunk state here is keyed by the chunk's slot (its page's: sim/pages.ts), not its
@@ -186,25 +185,15 @@ export class Sleep {
   private wokeAt = new Float32Array(0);
 
   /**
-   * (round 84, ?settletol) The water's most change in a step per slot since the last read (world-gpu waterChange):
-   * a woken chunk whose time is nearly up and whose water still changes by more than the tolerance stays awake.
-   * Returns the chunks kept.
+   * (round 84, ?settletol; round 128o, DA-B20: decided on the GPU) A woken chunk whose water still settles stays awake
+   * past its time, up to SETTLE_MAX_S from its waking. The GPU decides which (sim/settlehold.ts: the water's change is
+   * there); this says which may be: a bit a slot, set for a chunk asleep by its time that an event woke within
+   * SETTLE_MAX_S — the culled passes list it, and the GPU's mask lets it run or not. After SETTLE_MAX_S it is drowsy
+   * for DROWSE_S (the GPU may have held it to the end: its layers carried through once). Empty with no tolerance.
    */
-  holdUnsettled(change: Float32Array, now: number, tol = settleTol()): number {
-    if (!(tol > 0)) return 0;
-    let kept = 0;
-    for (let k = 0; k < this.until.length; k++) {
-      if (this.until[k] <= now || this.until[k] > now + SETTLE_HOLD_S) continue;
-      if (change[k] > tol && now - this.wokeAt[k] < SETTLE_MAX_S) {
-        this.until[k] = now + SETTLE_HOLD_S;
-        kept++;
-      }
-    }
-    this.unsettled = kept;
-    return kept;
-  }
-  /** chunks kept awake at the last holdUnsettled */
-  unsettled = 0;
+  readonly settleCand = new Uint32Array(MAX_CHUNKS / 32);
+  /** chunks the GPU may be holding (settleCand's bits) at the last update */
+  candidates = 0;
 
   /** land come in everywhere (the first window, a slide in z, a warp): woken to settle for `secs` — or, with
    *  ?settle=0, only drowsy (asleep at once, its layers carried through) */
@@ -298,15 +287,25 @@ export class Sleep {
     for (const s of storms) if (s.intensity > 0.2) this.wake(s.x, s.y, s.radius, NEAR_S, now);
     this.mask.fill(0);
     this.drowse.fill(0);
+    this.settleCand.fill(0);
+    const hold = settleTol() > 0;
     let awake = 0;
+    let cands = 0;
     for (let k = 0; k < this.until.length; k++) {
       if (this.until[k] > now) awake++;
       else {
         this.mask[k >> 5] |= 1 << (k & 31);
         if (now - this.until[k] < DROWSE_S || tick < this.drowseTick[k]) this.drowse[k >> 5] |= 1 << (k & 31);
+        // (an event woke it within SETTLE_MAX_S: its water may still settle — the GPU says; just past it, drowsy once)
+        const age = now - this.wokeAt[k];
+        if (hold && this.wokeAt[k] > 0 && age < SETTLE_MAX_S) {
+          this.settleCand[k >> 5] |= 1 << (k & 31);
+          cands++;
+        } else if (hold && this.wokeAt[k] > 0 && age < SETTLE_MAX_S + DROWSE_S) this.drowse[k >> 5] |= 1 << (k & 31);
       }
     }
     this.awake = awake;
+    this.candidates = cands;
     return this.mask;
   }
 

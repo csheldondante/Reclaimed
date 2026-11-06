@@ -6,6 +6,7 @@ import { RoadRide } from '../../src/agents/ride';
 import { graphOf } from '../../src/agents/roadgraph';
 import { testGpu } from './dawn';
 import { globalsWithDt } from './ride-globals';
+import { UNIT_V } from '../../src/agents/agents';
 
 const W = 64;
 const H = 64;
@@ -22,14 +23,14 @@ describe('riding a long edge', () => {
     const xs = [10, 14, 26, 38];
     const graph = graphOf(xs.slice(1).map((x, i) => ({ a: [xs[i], y] as const, b: [x, y] as const, cell: i, cost: 1 })));
     const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST;
-    const units = dev.createBuffer({ size: UNITS * 5 * 16, usage: S });
+    const units = dev.createBuffer({ size: UNITS * UNIT_V * 16, usage: S });
     const roads = dev.createBuffer({ size: Math.ceil((W * H) / 32) * 8, usage: S });
     const ride = new RoadRide(dev, globalsWithDt(dev, DT), units, roads, W, UNITS);
     ride.setKindSpeed(0, SPEED);
     ride.setGraph(graph, 0, 0);
     expect(ride.setGoals(3, [[38, y]])).toBe(true);
     // a rider of group 3 on the road's first node, walking (state chase)
-    const rec = new Float32Array(20);
+    const rec = new Float32Array(UNIT_V * 4);
     const u = new Uint32Array(rec.buffer);
     rec.set([10, y, 5], 0);
     u[3] = 3 | (1 << 8) | (1 << 12);
@@ -43,7 +44,7 @@ describe('riding a long edge', () => {
         pass.end();
       }
       dev.queue.submit([e.finish()]);
-      return new Float32Array(await g.read(units, 80));
+      return new Float32Array(await g.read(units, UNIT_V * 16));
     };
     // (on the road's band from the first tick: its trip starts there)
     const ticks = Math.ceil(28 / (SPEED * DT));

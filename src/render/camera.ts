@@ -258,7 +258,10 @@ export class Camera {
    * point by dz moves it up the screen by dz·cos(elev)·zoom, so we solve for the
    * ground under the cursor by fixed-point iteration on z.
    */
-  groundAt(sx: number, sy: number, heightAt: (x: number, y: number) => number): [number, number, number] {
+  groundAt(sx: number, sy: number, heightAt: (x: number, y: number) => number): [number, number, number];
+  /** (round 128o) a lookup that may not know a height yet (null: not read yet — scenes/level.ts heightAt): null then */
+  groundAt(sx: number, sy: number, heightAt: (x: number, y: number) => number | null): [number, number, number] | null;
+  groundAt(sx: number, sy: number, heightAt: (x: number, y: number) => number | null): [number, number, number] | null {
     if (this.fly) {
       // (flying: along the ray through the pixel until it's under the ground)
       const { f, r, u } = this.basis();
@@ -273,14 +276,18 @@ export class Camera {
         const x = px + (d[0] / dl) * t;
         const y = py + (d[1] / dl) * t;
         const z = pz + (d[2] / dl) * t;
-        if (z <= heightAt(x, y)) {
+        const g = heightAt(x, y);
+        if (g === null) return null;
+        if (z <= g) {
           // (back to halfway between the last two steps)
           const tm = (t + prev) / 2;
-          return [px + (d[0] / dl) * tm, py + (d[1] / dl) * tm, heightAt(px + (d[0] / dl) * tm, py + (d[1] / dl) * tm)];
+          const h = heightAt(px + (d[0] / dl) * tm, py + (d[1] / dl) * tm);
+          return h === null ? null : [px + (d[0] / dl) * tm, py + (d[1] / dl) * tm, h];
         }
         prev = t;
       }
-      return [px + f[0] * 50, py + f[1] * 50, heightAt(px + f[0] * 50, py + f[1] * 50)];
+      const h = heightAt(px + f[0] * 50, py + f[1] * 50);
+      return h === null ? null : [px + f[0] * 50, py + f[1] * 50, h];
     }
     const [tx, ty, tz] = this.target;
     const dx = sx - this.viewportW / 2;
@@ -292,7 +299,9 @@ export class Camera {
       const [wx, wy] = this.screenDeltaToWorld(dx, dy + (z - tz) * Math.cos(ELEVATION) * this.zoom);
       x = tx + wx;
       y = ty + wy;
-      z = heightAt(x, y);
+      const h = heightAt(x, y);
+      if (h === null) return null;
+      z = h;
     }
     return [x, y, z];
   }

@@ -24,6 +24,7 @@ import { heroCaps } from './heroes';
 import { planRun } from './plan';
 import { Journey, type JourneyState, type Precacher } from './travel';
 import { describe } from './viewer-text';
+import { urlFlags } from '../flags';
 
 const ENC_COLOUR: Record<EncounterKind, string> = {
   race: '#f2c14e', chase: '#f08a4b', fight: '#e0483a', horde: '#9a6bd8', spectacle: '#4fd1c5', destruction: '#ff6f91',
@@ -284,7 +285,7 @@ export class RunPlanView implements Scene {
     const go = document.createElement('button');
     go.textContent = 'Make world';
     go.onclick = () => {
-      const q = new URLSearchParams(location.search);
+      const q = urlFlags();
       q.set('seed', inp.value);
       q.set('hero', this.hero);
       location.search = q.toString();

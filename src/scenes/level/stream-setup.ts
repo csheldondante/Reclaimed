@@ -11,7 +11,7 @@ import { GPUGEN } from '../../atlas/finish';
 import { settleLand, Sleep } from '../../sim/sleep';
 import { riverMode } from '../../sim/world-gpu';
 import { record, timed } from '../../gpu/cpustat';
-import { CHUNK, sfPack } from '../../world/layout';
+import { CHUNK } from '../../world/layout';
 import { ROW_H } from '../../world/lattice';
 import { HybridChunks } from '../hybrid';
 import { SettlementsView } from '../../settle/view';
@@ -21,6 +21,7 @@ import { startFortress, staticsFor } from './fortress';
 import { ARRIVE_PREP } from './flags';
 import { worldSaveOf } from '../level';
 import type { LevelScene } from '../level';
+import { urlFlags } from '../../flags';
 import { worldApiOf } from './world-api';
 
 /** sleep and the streamed window, with what follows its slides */
@@ -151,10 +152,6 @@ export function attachStream(scene: LevelScene): void {
       // the climate follows the latitude (the atlas's: snow it lays is snow the sim keeps), and the window's height
       if (a) core.globals.climate = a.atlas.climateAt(scene.stream!.origin[0] + dims.w / 2, scene.stream!.origin[1] + dims.h / 2, scene.stream!.oz);
       if (a) core.globals.seaZ = a.atlas.p.sea - scene.stream!.oz;
-      if (dz) {
-        // (a slide in z: every column moved; what's lying loose in window z goes)
-        for (let i = 0; i < scene.surfaceCache.length; i++) scene.surfaceCache[i] = sfPack(core.map.surface[i], 0);
-      }
       // (round 92) what's waiting to be judged moves with the land (what was falling landed first: onBeforeSlide)
       const ti = performance.now();
       scene.integrity?.slid(dx, dy, dz);
@@ -186,7 +183,6 @@ export function attachStream(scene: LevelScene): void {
       if (a) core.globals.climate = a.atlas.climateAt(scene.stream!.origin[0] + dims.w / 2, scene.stream!.origin[1] + dims.h / 2, nz);
       if (a) core.globals.seaZ = a.atlas.p.sea - nz;
       scene.sleep?.settleAll(Sleep.SETTLE_S + 1, performance.now() / 1000);
-      for (let i = 0; i < scene.surfaceCache.length; i++) scene.surfaceCache[i] = sfPack(core.map.surface[i], 0);
       scene.hoverWorld = null;
       scene.integrity?.clear();
       const i = core.ring.i(Math.floor(dims.w / 2), Math.floor(dims.h / 2));
@@ -203,7 +199,7 @@ export function attachStream(scene: LevelScene): void {
       // (round 105, DECISIONS AR3: with the tiles on — the default — no rings, nor their bake (farbake) or the window's
       // look on them (fardetail): the tiles draw the land past the window, the round 73 far land where none is yet)
       const tilesOn = !!core.renderer.tiles;
-      const lodQ = new URLSearchParams(location.search).get('lod');
+      const lodQ = urlFlags().get('lod');
       // (?lod=keep: the rings with the tiles too — a measurement switch, the frame's cost of the rings: DEVLOG round 105)
       const lod = (tilesOn && lodQ !== 'keep') || lodQ === '0' ? null : lodQ === 'low' ? { spacings: [4, 8, 16], n: 129 } : { spacings: [2, 4, 8, 16], n: 193 };
       if (scene.hybridOn && !scene.ceiling) {
@@ -257,7 +253,8 @@ export function attachStream(scene: LevelScene): void {
         far.mid = [c[0], c[1]];
         // (the puck keeps the target's height on the ground; without it the height isn't the ground's)
         const [tx, ty, tz] = core.camera.target;
-        far.focus = core.camera.fly ? null : [tx, ty, scene.cutaway ? tz : scene.heightAt(tx, ty)];
+        // (round 128o: the land as generated — every frame, the lie of the land is enough)
+        far.focus = core.camera.fly ? null : [tx, ty, scene.cutaway ? tz : scene.mapHeightAt(tx, ty)];
         far.storms = core.weather.storms;
         // (round 93: the window's light, for the rings to be lit as it is)
         const G = core.globals;
@@ -327,8 +324,8 @@ export function attachStream(scene: LevelScene): void {
         origin: () => [S.origin[0], S.origin[1]],
         dims: { w: dims.w, h: dims.h },
         focus: () => [core.camera.target[0], core.camera.target[1]],
-        // (round 128o: null until the pages in reach are read — api/mirror.ts reads them when asked)
-        trees: (at, r) => plants().treesNear(at[0], at[1], r)?.map((t) => [t.x, t.y] as [number, number]) ?? null,
+        // (round 128o, DA-B6: the nearest trees found on the GPU, a short list back)
+        trees: (at, r, n) => plants().treesNear(at[0], at[1], r, n).then((ts) => ts && ts.map((t) => [t.x, t.y] as [number, number])),
         fell: (at) => plants().fell(at[0], at[1]).then((t) => t?.logs ?? 0),
         take: (at, n) => terrainApi().take(at[0], at[1], n),
         put: (at, m, n) => terrainApi().put(at[0], at[1], m, n),

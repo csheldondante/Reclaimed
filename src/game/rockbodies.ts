@@ -19,6 +19,7 @@ import { cellAt, cellPos, nbr, DIRV, ROW_H } from '../world/lattice';
 import { TUNE, worldG } from '../tune/params';
 import type { BodySpec, BodyRead, SolverBody } from '../api/contracts/solver';
 import { restComOf } from '../solver/build';
+import { urlFlags } from '../flags';
 
 export type V3 = [number, number, number];
 type Q = [number, number, number, number];
@@ -34,7 +35,7 @@ export const RB = TUNE.rigid;
  * (round 96, the user: "And then I think push to atlas") on by default in the atlas and the rock lab.
  */
 export function rockbodyFor(levelId?: string): boolean {
-  const p = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('rockbody');
+  const p = typeof location === 'undefined' ? null : urlFlags().get('rockbody');
   if (p === '1') return true;
   if (p === '0') return false;
   // (round 128l, m4: the behaviour lab as the atlas — its registry of what other systems own holds the fortress's claims)

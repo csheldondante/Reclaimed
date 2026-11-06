@@ -73,7 +73,7 @@ try {
     for (let cy = 12; cy < h - 12; cy += 6) {
       for (let cx = 12; cx < w - 12; cx += 6) {
         const [x, y] = cellPos(cx, cy);
-        const n = api.plants.treesNear(x, y, 6).length;
+        const n = (await api.plants.treesNear(x, y, 6)).length;
         if (!best || n > best.n) best = { x, y, n };
       }
     }
@@ -143,7 +143,7 @@ try {
       api.plants.grow(t.x, t.y, { radius: 7, strength: 70 });
       await new Promise((r) => setTimeout(r, 2500));
       await api.refresh();
-      return { ...t, n: api.plants.treesNear(t.x, t.y, 6).length, grown: true };
+      return { ...t, n: (await api.plants.treesNear(t.x, t.y, 6)).length, grown: true };
     }, sites.dig);
     console.log('grew a wood:', JSON.stringify(sites.trees));
   }
@@ -155,7 +155,7 @@ try {
       const api = R.api;
       const A = api.agents;
       const T = api.terrain;
-      const trees0 = api.plants.treesNear(t.x, t.y, 6).length;
+      const trees0 = (await api.plants.treesNear(t.x, t.y, 6)).length;
       // (the pile: the open ground nearest 8 cells off)
       const pile = { x: t.x + 8, y: t.y + 2 };
       const ids = A.spawn(6, t.x + 5, t.y, { kind: 'worker', group: 13, spread: 0.8 });
@@ -176,7 +176,7 @@ try {
       const carried = ids.map((id) => A.carrying(id)?.amount ?? 0).reduce((a, b) => a + b, 0);
       R.camera.target = [t.x + 4, t.y, T.heightAt(t.x, t.y)];
       R.camera.zoom = 12;
-      return { stats: crew.stats, trees0, treesNow: api.plants.treesNear(t.x, t.y, 6).length, carried: +carried.toFixed(3), logsPiled: +(crew.stats.piled.log ?? 0).toFixed(3), pileTop: T.materialAt(pile.x, pile.y) };
+      return { stats: crew.stats, trees0, treesNow: (await api.plants.treesNear(t.x, t.y, 6)).length, carried: +carried.toFixed(3), logsPiled: +(crew.stats.piled.log ?? 0).toFixed(3), pileTop: T.materialAt(pile.x, pile.y) };
     }, seconds, sites.trees);
     await wait(800);
     await page.screenshot({ path: `${out}-fell.png` });

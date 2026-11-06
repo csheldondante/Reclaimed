@@ -75,7 +75,8 @@ export function flyKeys(scene: LevelScene, dt: number): void {
   // (inside the window, over the ground under it)
   fly.pos[0] = Math.max(1, Math.min(dims.w - 1, fly.pos[0]));
   fly.pos[1] = Math.max(1, Math.min(dims.h * ROW_H - 1, fly.pos[1]));
-  fly.pos[2] = Math.max(scene.heightAt(fly.pos[0], fly.pos[1]) + 1.5, Math.min(dims.zMax + 200, fly.pos[2]));
+  // (round 128o: every frame — the land as generated)
+  fly.pos[2] = Math.max(scene.mapHeightAt(fly.pos[0], fly.pos[1]) + 1.5, Math.min(dims.zMax + 200, fly.pos[2]));
   // the window streams round where the camera is
   camera.target[0] = fly.pos[0];
   camera.target[1] = fly.pos[1];
@@ -159,7 +160,9 @@ export function turnControls(scene: LevelScene): void {
 export function turnPivot(scene: LevelScene): void {
   const cam = scene.core.camera;
   if (cam.fly || scene.cutaway) return;
-  cam.target = cam.groundAt(cam.viewportW / 2, cam.viewportH / 2, scene.heightAt);
+  // (round 128o: the ground there not read yet — its page asked — the turn goes round the target as it is)
+  const g = cam.groundAt(cam.viewportW / 2, cam.viewportH / 2, scene.heightAt);
+  if (g) cam.target = g;
 }
 
 /** a step of the view's turn: the cutaway's Orbit takes it when it's on (it owns the azimuth there) */

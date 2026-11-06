@@ -22,7 +22,7 @@ const RR_FAR: f32 = 1e9;
 const MAX_NODES: u32 = 1024u;
 const HOP_THREADS: u32 = 64u;
 /** a unit's record: UNIT_V vec4s (units.wgsl, agents.ts UNIT_V) */
-const RR_UNIT_V: u32 = 5u;
+const RR_UNIT_V: u32 = 6u;
 /** a unit stands on an edge's band this near its line (m): a lane's half width and a pad */
 const ON_EDGE: f32 = 1.6;
 /** units.wgsl steer: STAND < 0 stands; RIDE_TRIP: placed by the ride (a heading + STEER_BIAS > 0: none since the trips) */

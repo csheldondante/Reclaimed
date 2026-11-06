@@ -12,6 +12,7 @@ import { findRivers, LAKE_WORDS, NODE_WORDS } from '../rivers';
 import { patterns, regionsCpu } from './regions';
 import { STAMP, CRATER_WORDS, MAX_CRATERS, CRATER_BLOCK, GIANT_FLOATS, FLOOD_SPARE } from './defs';
 import type { Atlas } from '../atlas';
+import { urlFlags } from '../../flags';
 
 export async function run(atl: Atlas): Promise<void> {
   const dev = atl.device;
@@ -34,7 +35,7 @@ export async function run(atl: Atlas): Promise<void> {
   // every pipeline at once, off the main thread (D3D compiles are the slow part of making the atlas)
   const bm = makeModule(dev, 'atlas build', atl.parts(buildW));
   // (perfopt, ?caves=mouths: only the caves that can open to the air — forms.wgsl LAZY_CAVES)
-  const lazyCaves = new URLSearchParams(location.search).get('caves') === 'mouths';
+  const lazyCaves = urlFlags().get('caves') === 'mouths';
   // (perfopt's ?riverhold=1, round 84: ?rivers=hold — RIVER_HOLD in parts())
   const cm = makeModule(dev, 'atlas columns', atl.parts(columnsW, `const LAZY_CAVES: bool = ${lazyCaves};
 `, formsW));
@@ -215,7 +216,7 @@ export async function run(atl: Atlas): Promise<void> {
   for (const lk of rv.lakes) lakeTab[lk.id * LAKE_WORDS] = lk.level;
   const tabOff = N + CRATER_BLOCK + nodeBytes / 4;
   // (?lakes=0: the lakes found but not realised — the before of an A/B; the rivers' levels are the lakes' still)
-  const realise = new URLSearchParams(location.search).get('lakes') !== '0';
+  const realise = urlFlags().get('lakes') !== '0';
   lakeOff = realise ? [tabOff, tabOff + lakeTab.length] : [0, 0];
   atl.basinTab = { tabOff, idsOff: tabOff + lakeTab.length, used: rv.lakes.length, cap: rv.lakes.length + FLOOD_SPARE, on: realise };
   atl.riverBuf.destroy();

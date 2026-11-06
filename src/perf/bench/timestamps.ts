@@ -1,6 +1,7 @@
 // GPU timestamps judged (reliable or not, per mode) and the pan bench's thresholds (PAN_*: speeds, budgets, the
 // background flags). API: judgeTimestamps, timestampModes.
 import { r3, stat } from './defs';
+import { urlFlags } from '../../flags';
 
 /**
  * (v2) Are this GPU's per-pass timestamps to be trusted? Round 101's Pixel 9a (Mali, Valhall): each pass read
@@ -120,7 +121,7 @@ export async function timestampModes(device: GPUDevice): Promise<Record<string, 
  * never lags behind the camera." From the hero's close zoom (14) to the sandbox's (2.76) and wider.
  */
 /** (round 112, ?benchzooms=5_2.2: only these — a headless run's shorter ramp) */
-export const PAN_ZOOMS = typeof location !== 'undefined' && new URLSearchParams(location.search).get('benchzooms') ? new URLSearchParams(location.search).get('benchzooms')!.split('_').map(Number) : [14, 8, 5, 3.5, 2.76, 2.2];
+export const PAN_ZOOMS = typeof location !== 'undefined' && urlFlags().get('benchzooms') ? urlFlags().get('benchzooms')!.split('_').map(Number) : [14, 8, 5, 3.5, 2.76, 2.2];
 /** the widest window a page asks for (more and a phone's memory goes: the zoom is reported as not run) */
 // (round 104: 640 — window 768 is ~650 MB of GPU memory before the pool and the meshes, ~1.1 KB a column (slidehitch's
 // estimate): past what Chrome gives a Pixel 9a's GPU process; the phone's pan768 never finished loading)
@@ -142,5 +143,5 @@ export const PAN_P99 = 20;
  * ?bgflag=0 any at all): measured, every parked view of the atlas shows the background through 1-pixel pinholes on
  * ~0.01-0.03% of the screen (2-3 of the 8192 samples, every frame), so "any" would flag every step.
  */
-export const PAN_BG_FAILS = typeof location !== 'undefined' && new URLSearchParams(location.search).get('bgfail') === '1';
-export const PAN_BG_FLAG = typeof location !== 'undefined' ? Number(new URLSearchParams(location.search).get('bgflag') ?? 0.001) : 0.001;
+export const PAN_BG_FAILS = typeof location !== 'undefined' && urlFlags().get('bgfail') === '1';
+export const PAN_BG_FLAG = typeof location !== 'undefined' ? Number(urlFlags().get('bgflag') ?? 0.001) : 0.001;

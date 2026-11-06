@@ -38,7 +38,7 @@ jobs:
         run: |
           set -e
           mkdir -p site
-          for b in main places fortress gates onetown phonefix townlab; do
+          for b in main places fortress before128o onetown phonefix townlab; do
             git rev-parse -q --verify "origin/$b" >/dev/null || continue
             git worktree add -f "../wt-$b" "origin/$b"
             (cd "../wt-$b" && npm ci && npm run build)

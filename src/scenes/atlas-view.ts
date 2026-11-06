@@ -13,6 +13,7 @@ import columnsW from '../atlas/columns.wgsl?raw';
 import { makeBindGroup, makeLayout, makeModule } from '../gpu/pipeline';
 import { cellAt } from '../world/lattice';
 import type { Host, Scene } from './world-core';
+import { urlFlags } from '../flags';
 
 const landformLine = (a: Atlas, id: number) => {
   const f = a.landforms[id];
@@ -138,7 +139,7 @@ export class AtlasView implements Scene {
     d.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) => (b.onclick = () => (this.mode = Number(b.dataset.mode))));
     d.querySelectorAll<HTMLInputElement>('[data-k]').forEach((inp) => (inp.oninput = () => (d.querySelector(`[data-v="${inp.dataset.k}"]`)!.textContent = inp.value)));
     (d.querySelector('[data-rebuild]') as HTMLButtonElement).onclick = () => {
-      const q = new URLSearchParams(location.search);
+      const q = urlFlags();
       d.querySelectorAll<HTMLInputElement>('[data-k]').forEach((inp) => {
         const k = inp.dataset.k!;
         if (k === 'faultHi') {
@@ -212,7 +213,7 @@ export class AtlasView implements Scene {
       const m = e as MouseEvent;
       const [x, y] = this.wrap(this.worldAt(m.clientX, m.clientY));
       const [cx, cy] = cellAt(x, y);
-      const q = new URLSearchParams(location.search);
+      const q = urlFlags();
       q.delete('atlas');
       q.delete('view');
       q.delete('mode');

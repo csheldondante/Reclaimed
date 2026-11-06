@@ -10,11 +10,12 @@
 // (async, mapAsync) and zeroed. Without the flag nothing here exists and the world pass is as it was.
 
 import { ignoreTeardown, makeLayout } from '../gpu/pipeline';
+import { urlFlags } from '../flags';
 
 /** far.wgsl fsFar's pick (x 0: no column — Renderer.pick reads it as nothing — y this): the far land's pixels */
 export const FAR_PICK_TAG = 0xfa000000;
 
-export const BGCHECK = typeof location !== 'undefined' && new URLSearchParams(location.search).get('bgcheck') === '1';
+export const BGCHECK = typeof location !== 'undefined' && urlFlags().get('bgcheck') === '1';
 
 /** running totals since the last take(): background (bg) and far land (far) */
 export interface BgTotals {

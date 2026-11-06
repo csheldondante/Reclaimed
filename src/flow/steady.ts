@@ -17,8 +17,9 @@
 import { ignoreTeardown } from '../gpu/pipeline';
 import type { Sleep } from '../sim/sleep';
 import type { WorldGpu } from '../sim/world-gpu';
+import { urlFlags } from '../flags';
 
-const params = typeof location === 'undefined' ? new URLSearchParams() : new URLSearchParams(location.search);
+const params = urlFlags();
 const num = (k: string, d: number) => {
   const v = Number(params.get(k) ?? d);
   if (!(v >= 0)) throw new Error(`?${k}=${params.get(k)}: a number >= 0`);

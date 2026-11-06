@@ -168,8 +168,9 @@ export function attachSim(core: WorldCore, mods: SimModules = SIM_ALL, warm?: Wa
   // (round 80: a streamed window's slides make a read stale — WorldCore.windowEpoch. Round 128o: read by pages when
   // asked; a page is current until the sim runs its chunk or a column apply writes the columns — api/mirror.ts)
   const mirror = new Mirror({ reader: new GpuPageReader(core.host.gpu.device), ring: core.ring, dims: core.dims, epoch: () => core.windowEpoch });
-  core.sim.eventTaps.push(() => mirror.tick(core.globals.sleep, core.globals.drowse));
+  core.sim.eventTaps.push(() => mirror.tick(core.globals.sleep, core.globals.drowse, core.globals.settleCand));
   core.columnApply.onApply.push(() => mirror.touchAll());
+  core.onColumnsWritten.push(() => mirror.touchAll());
   const terrain = mods.terrain ? new Terrain(core, mirror) : undefined;
   if (mods.plants && !terrain) throw new Error('world: the plants module needs terrain');
   const plants = mods.plants && terrain ? new Plants(core, mirror, terrain) : undefined;

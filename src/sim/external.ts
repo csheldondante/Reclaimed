@@ -29,12 +29,13 @@
 
 import { MAT, MATERIALS } from '../world/materials';
 import type { Interval } from '../world/layout';
+import { urlFlags } from '../flags';
 
 /**
  * (round 99) the experiment's switch: `?meshinst=1` (default off until measured) — now the trees' only (round 110: the
  * resting rock's registry is on wherever the rigid rock is, game/integrity.ts)
  */
-export const MESHINST = typeof location !== 'undefined' && new URLSearchParams(location.search).get('meshinst') === '1';
+export const MESHINST = typeof location !== 'undefined' && urlFlags().get('meshinst') === '1';
 
 /** Who owns an instance (a small id; ExternalRegistry.owner). */
 export type OwnerId = number;
@@ -130,7 +131,7 @@ export interface ColumnAccess {
   release?(spans: (ExternalCol & { fallback: number; toAir: boolean })[]): void;
   /**
    * (round 128, INT16) Make these spans External in the columns themselves (claimColumn's rule; the GPU's, colapply.wgsl
-   * `claim`, into the layers and layersNext alike). Absent: the registry writes each column (a CPU world).
+   * `claim`). Absent: the registry writes each column (a CPU world).
    */
   claim?(spans: (ExternalCol & { aux: number })[]): void;
   /**

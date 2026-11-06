@@ -140,6 +140,13 @@ the object keys that carry lines), a words module (fortress/words.ts, opps/words
 leaving out code by where it sits and skipping CSS. What fails today is in `KNOWN` with BACKLOG DA-G6; a fixed one must
 be dropped. Fix a new failure by rewriting the string (docs/WRITING.md), not by adding it to `KNOWN`.
 
+### The URL flags (test/unit/flags.test.ts, scripts/flagcheck.mjs, DA-B17)
+
+Every read of the page's flags goes through src/flags.ts `urlFlags()`: a read of `location.search` anywhere else fails
+(setting it to navigate is fine). The phone's set is resolved there, in the module, so it applies whatever order a
+bundle runs the readers in. `node scripts/flagcheck.mjs` loads the built `town` lab with no `q`, `q=low` and `q=high`
+and checks what each runs with (the shadow cache, prepEvery, the shadow maps, in-place columns).
+
 ## When to use the browser
 
 Use it only for what Node can't show: the page's boot (the build, the menu, the streamer, IndexedDB), drawing and

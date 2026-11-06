@@ -99,7 +99,7 @@ export default async function (lab, args) {
     work.quarry = { ...life.quarry.stats };
     work.felled = life.stats.felled;
     const [hx, hy] = lab.heap;
-    work.trees = window.reclaimed.scene.worldApi.plants.treesNear(hx + (args.lx ?? -30), hy + (args.ly ?? 10), 40)?.length ?? null;
+    work.trees = (await window.reclaimed.scene.worldApi.plants.treesNear(hx + (args.lx ?? -30), hy + (args.ly ?? 10), 40))?.length ?? null;
     work.mirror = { ...window.reclaimed.scene.worldApi.reads };
     console.log(`PERF-WORK ${JSON.stringify({ quarry: work.quarry, felled: work.felled, trees: work.trees, mirror: work.mirror, phases: lab.snapshot().walkers.map((w) => w.phase) })}`);
   }

@@ -14,7 +14,7 @@ export class TownDebug {
   private panel: HTMLDivElement;
   private frame = 0;
 
-  constructor(ui: HTMLElement, private st: Settlements, private camera: Camera, private heightAt: (x: number, y: number) => number) {
+  constructor(ui: HTMLElement, private st: Settlements, private camera: Camera, private heightAt: (x: number, y: number) => number | null) {
     this.svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     this.svg.setAttribute('style', 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:5');
     ui.appendChild(this.svg);
@@ -46,9 +46,16 @@ export class TownDebug {
     const ox = seed.box.x0;
     const oy = seed.box.y0 * ROW_H;
     /** a local point on screen, at the ground there (or at `z`, a window height: a lot's outline flat at its yard's) */
+    // (round 128o: a ground not read yet — its page asked — leaves this frame's overlay undrawn)
+    let unread = false;
+    const ground = (x: number, y: number): number => {
+      const g = this.heightAt(x, y);
+      if (g === null) unread = true;
+      return g ?? 0;
+    };
     const P = (lx: number, ly: number, dz = 0.3, z?: number) => {
       const [x, y] = this.st.toWindow([lx + ox, ly + oy]);
-      const [sx, sy] = this.camera.project(x, y, (z ?? this.heightAt(x, y)) + dz);
+      const [sx, sy] = this.camera.project(x, y, (z ?? ground(x, y)) + dz);
       return `${sx.toFixed(1)},${sy.toFixed(1)}`;
     };
     const out: string[] = [];
@@ -88,7 +95,7 @@ export class TownDebug {
       out.push(`<circle cx="${x}" cy="${y}" r="4" fill="${SPOT[s.kind] ?? '#ccc'}" stroke="#000"/>`);
     }
     for (const j of life!.jobs.fell) {
-      const [sx, sy] = this.camera.project(j[0], j[1], this.heightAt(j[0], j[1]) + 0.3);
+      const [sx, sy] = this.camera.project(j[0], j[1], ground(j[0], j[1]) + 0.3);
       out.push(`<circle cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="3" fill="${SPOT.fell}" stroke="#000"/>`);
     }
     const units = this.st.life ? [...life!.ids, ...life!.raiders] : [];
@@ -101,7 +108,7 @@ export class TownDebug {
       const [sx, sy] = this.camera.project(u.v.at[0], u.v.at[1], u.v.at[2] + 2.2);
       out.push(`<circle cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="2.5" fill="${u.v.hostile ? '#f22' : u.v.role === 'guard' ? '#ccc' : (PHASE[ph] ?? '#999')}"/>`);
     }
-    this.svg.innerHTML = out.join('');
+    this.svg.innerHTML = unread ? '' : out.join('');
     const stores = Object.entries(rec.stores).map(([k, v]) => `${k} ${v.stock.toFixed(0)}${v.rate ? ` (${v.rate > 0 ? '+' : ''}${v.rate.toFixed(1)}/d)` : ''}`).join(', ');
     const us = this.st.units?.stats;
     this.panel.textContent = [

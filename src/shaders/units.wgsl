@@ -42,8 +42,10 @@
 //      (roadride.wgsl: 0 none, -1 stand, -2 on a trip, else heading + STEER_BIAS — read by
 //      the walking step below). The step only reads them: the trait
 //      modules derive them from the traits each tick (src/traits).
+//   f: (round 128o, DA-B2a) x the arrival latch (u32 bits: the field it has arrived on + 1; 0 none: `arrived`
+//      events), y z w unused
 @group(0) @binding(7) var<storage, read_write> units: array<vec4<f32>>;
-const UNIT_V: u32 = 5u;
+const UNIT_V: u32 = 6u;
 // CAPS (src/traits/prelude.wgsl, contracts/traits.ts): never set alight (nor
 // hurt by lava); never drowns; rooted (no walking, pushes, throws: a statue);
 // flees its field (walks up it, not down)
@@ -104,6 +106,9 @@ const EV_DEATH: u32 = 3u;
 const EV_ALIGHT: u32 = 4u;
 // a swing begins: the target, and how long (s) until the blow lands (a parry's window)
 const EV_WINDUP: u32 = 5u;
+// (round 128o, DA-B2a) it came within its field's arrival radius (AgentParams.arrive): other the field, amount the
+// field's distance at its feet; once until it's past the leaving radius or on another field (unit word f.x)
+const EV_ARRIVED: u32 = 8u;
 const BY_FIRE: u32 = 0xffffffffu;
 const BY_WATER: u32 = 0xfffffffeu;
 const BY_IMPACT: u32 = 0xfffffffdu;
@@ -156,9 +161,12 @@ fn unitInfo(a: vec4<f32>) -> u32 { return bitcast<u32>(a.w); }
 fn unitId(u: u32, info: u32) -> u32 { return (info >> 16u) * MAX_SLOTS + u; }
 
 fn emit(kind: u32, id: u32, other: u32, amount: f32, p: vec3<f32>) {
+  // (round 128o, DA-B2: a ring — [0] events made, [2] how far the CPU has read (agents.ts sync); an event the ring
+  // has no room for is not written: its slot keeps another's tag, and the CPU counts it lost)
   let e = atomicAdd(&events[0], 1u);
-  if (e >= AP.n2.z) { return; }
-  let o = 4u + e * 8u;
+  if (e - atomicLoad(&events[2]) >= AP.n2.z) { return; }
+  let o = 4u + (e % AP.n2.z) * 8u;
+  atomicStore(&events[o + 7u], e);
   atomicStore(&events[o], kind);
   atomicStore(&events[o + 1u], id);
   atomicStore(&events[o + 2u], other);
@@ -317,6 +325,7 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
   var cc = units[u * UNIT_V + 2u];
   var dd = units[u * UNIT_V + 3u];
   let caps = bitcast<u32>(units[u * UNIT_V + 4u].x);
+  var latch = bitcast<u32>(units[u * UNIT_V + 5u].x);
   // (round 128i, V128-14) the road ride's steer (roadride.wgsl, written after the last tick's step): 0 its field, < 0
   // stand, else a heading + STEER_BIAS
   let steer = units[u * UNIT_V + 4u].w;
@@ -574,6 +583,17 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
     if (k < NAV_K) {
       let s = i * NAV_K + k;
       let here = select(FAR, dist[fld * N + s], fld < AP.n.z);
+      // (round 128o, DA-B2a) arrived: within its field's radius, told once (the latch, word f.x)
+      if (fld < NFIELDS) {
+        let ar = arriveR(fld);
+        if (latch != 0u && latch != fld + 1u) { latch = 0u; }
+        if (ar.x > 0.0 && latch == 0u && here <= ar.x) {
+          latch = fld + 1u;
+          emit(EV_ARRIVED, uid, fld, here, pos);
+        } else if (latch == fld + 1u && here > ar.y) {
+          latch = 0u;
+        }
+      }
       let worker = kind.b.w <= 0.0;
       // the nearest target, as the crow flies over the ground (whatever its
       // height: one overhead is chased, and waited for underneath)
@@ -688,6 +708,7 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
   units[u * UNIT_V + 1u] = vec4<f32>(vel, select(phase, stun, state == ST_TUMBLE));
   units[u * UNIT_V + 2u] = vec4<f32>(hp, cool, burn, heading);
   units[u * UNIT_V + 3u] = vec4<f32>(flash, stT, under, wanderH);
+  units[u * UNIT_V + 5u].x = bitcast<f32>(latch);
   atomicAdd(&occ[wr + fi], 1u);
 }
 

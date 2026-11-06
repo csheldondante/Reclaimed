@@ -28,6 +28,7 @@ import { BenchState, idbPut, idbGet, whole, pending, load, loadFull, save } from
 import { wakeLog, keepAwake, letSleep, Panel, GpuTimer } from './bench/page';
 import { fixedWorkload, ioRates, deviceFacts } from './bench/device';
 import { makeReport, summary } from './bench/report';
+import { urlFlags } from '../flags';
 export { BENCH_VERSION, stat } from './bench/defs';
 export type { Stat } from './bench/defs';
 export { judgeTimestamps } from './bench/timestamps';
@@ -189,7 +190,7 @@ export async function benchStandalone(mode: 'start' | 'final', host: Host | null
   // grey loading screen so it wasn't possible for me to tell when it was done" — a run in progress shows only that)
   if (cut && !cut.done && cut.step > 0) {
     const page = cut.pages[cut.step];
-    if (new URLSearchParams(location.search).get('benchpage')) {
+    if (urlFlags().get('benchpage')) {
       // (mid-chain on the wrong page — a reload, a restored tab: back to the page the run is on)
       panel.say(`Benchmark running: page ${cut.step} of ${cut.pages.length - 1} (${page?.name}) — don't close`);
       setTimeout(() => goTo(cut), 1500);
@@ -258,7 +259,7 @@ export async function start(host: Host, panel: Panel): Promise<void> {
   const awake = await keepAwake();
   const old = await loadFull();
   const id = `${stamp()}-${Math.floor(Math.random() * 1e6).toString(36)}`;
-  const q = new URLSearchParams(location.search);
+  const q = urlFlags();
   for (const k of OWN) q.delete(k);
   const s: BenchState = { version: BENCH_VERSION, id, startedAt: new Date().toISOString(), step: 0, pages: [], base: q.toString(), worlds: old?.worlds ?? [], results: {}, errors: [] };
   whole.add(s);
@@ -431,7 +432,7 @@ export async function benchLevel(ctx: LevelCtx): Promise<void> {
   panel.el.style.padding = '4px 6px';
   let hidden = false;
   document.addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && (hidden = true));
-  const out: Record<string, unknown> = { page: page.name, url: location.search };
+  const out: Record<string, unknown> = { page: page.name, url: `?${urlFlags()}` };
   const t0 = performance.now();
   try {
     await keepAwake();

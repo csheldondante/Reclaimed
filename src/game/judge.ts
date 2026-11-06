@@ -19,6 +19,7 @@ import { WORLD_G } from '../world/scale';
 import { TUNE } from '../tune/params';
 import { makeBindGroup, makeLayout } from '../gpu/pipeline';
 import { judgeWgsl } from '../shaders/judge';
+import { urlFlags } from '../flags';
 
 /** The columns a judge looks at: their packing, and the copy each judge reads (A the CPU's, B the GPU's own). */
 export interface JudgeColumns {
@@ -86,14 +87,14 @@ export type JudgeId = keyof typeof JUDGES;
 
 /** the page's judge (?judge=runs|sections; runs by default) */
 export const JUDGE_ID: JudgeId = (() => {
-  const v = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('judge');
+  const v = typeof location === 'undefined' ? null : urlFlags().get('judge');
   if (v === null) return 'runs';
   if (!(v in JUDGES)) throw new Error(`?judge=${v}: ${Object.keys(JUDGES).join(' or ')}`);
   return v as JudgeId;
 })();
 
 /** the page's address (judge B's ?jbmode= ?jbcull= for the browser battery) */
-const PAGE_Q = typeof location === 'undefined' ? null : new URLSearchParams(location.search);
+const PAGE_Q = typeof location === 'undefined' ? null : urlFlags();
 
 /** Judge A: fracture.ts analyseRock over the CPU's copy. */
 export class RunsJudge implements RockJudge {

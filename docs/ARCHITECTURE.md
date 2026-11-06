@@ -13,6 +13,13 @@ own one and dispose it on exit (WorldGpu.destroy frees every buffer made via
 `buf()`; in-flight readbacks reject with AbortError, swallowed by
 `ignoreTeardown`).
 
+**URL flags** (DA-B17, src/flags.ts): every module reads the page's flags through `urlFlags()`, never `location.search`
+(test/unit/flags.test.ts): the URL's own plus the phone's set on the low tier (`LITE_SET`, `SIM_SET`; no `q` or `q=low`,
+`?phone=0` off, `?lite=1` the render's half on any tier), resolved by each read from the query it sees (memoised), so
+no read depends on another module having rewritten the address first. flags.ts also writes the resolved set into the
+address bar, which nothing reads. scripts/flagcheck.mjs checks a built page per tier. A worker's
+`location` has no query: workers read the defaults.
+
 ## Frame
 
 ```
@@ -1110,18 +1117,19 @@ its edge:
   CPU, so those are the quiet ones); the other passes carry it through;
   the mesh and the surface look at it again. Only collapse, powers and
   spells, weather and the player's edits wake the ground's systems.
-  (perfopt, round 83; the low tier's defaults from index.html, `?phone=0`
+  (perfopt, round 83; the low tier's defaults from src/flags.ts, `?phone=0`
   off) `settle=0`: land that comes in doesn't wake to settle — drowsy at
   once; a river come in takes the pipes' steady flux for its levels while
   drowsy (water_flux.wgsl FLUX_SEED), the flux is frozen with its region,
   and a streamed column's loose intervals over air are dropped onto their
   support (streamer.ts `settleLoose`). `sleepmore=1`: surface and render
   fields skip sleeping chunks too, every chunk drowsy for 0.25 s after any
-  slide. `inplace=1`: structure and layer pulls rewrite the layers in
-  place (no layersNext copied back). (DA-B8) The edit brush is in place on
-  every tier, writing the layers and layersNext alike, and runs on a tick
-  with an edit and while brush state is in flight (edit-ops.ts
-  `EditBusy`).
+  slide. (DA-B8, DA-B14; was `inplace=1`, the phone's) The column passes —
+  the edit brush, the structures, the layer pulls — rewrite the layers in
+  place on every tier, each thread its own column; what they read of other
+  columns a pass before them reads first (the brush's `blowSum`, the
+  structures' `lateralSupport`). The brush runs on a tick with an edit and
+  while brush state is in flight (edit-ops.ts `EditBusy`).
 - **Not dispatched over what sleeps** (round 85, sim/cull.ts; on by default,
   `?simcull=0` off). Simulation.step makes, from the same Globals.sleep and
   drowse masks, a list of the chunks live this tick (WorldGpu.tiles,
@@ -1277,7 +1285,7 @@ further out ahead of the camera so we never wait for them". Three tiers under th
   it. A GPU pool slot, the staging a region is read back through, and a record's body are these same bytes.
 - **GPU pool** (`scenes/region-pool.ts`; `?pool=` slots, default 32 ≈ 52 MB at the atlas's K 16): a region leaving
   the window is copied GPU to GPU into a slot (`Streamer.freezeInto`; round 106: `freezePlan` / `freezeAt`, region by region as its place is written); it comes back by copies too (`copyIn`: its
-  pages to layers and layersNext, its buffers a row at a time, its textures; what isn't kept from a blank buffer on
+  pages to the layers, its buffers a row at a time, its textures; what isn't kept from a blank buffer on
   the GPU). Land made or loaded ahead is uploaded into a slot (`prepare`, `pump`: a few ms of a frame) before the
   slide that brings it in, so a slide only copies. `Streamer.frozen` is the pool's index in LRU order; the oldest
   not in use is evicted when a slot is wanted. (Round 104, `slidehitch`: a region's buffers move between the window and a
@@ -1602,7 +1610,7 @@ every frame while held; the edit system (`edit.wgsl`, first each tick, on a tick
 that carries an Edit event and after it while a press's cells are still landing:
 sim/edit-ops.ts `EditBusy`, DA-B8) adds/removes water, oil, pollution and
 plants, and does the ground in layers (round 13), in place (each thread its own
-column, the layers and layersNext alike; a blow's reads of other columns are taken
+column; a blow's reads of other columns are taken
 first by `blowSum`): per column the brush state (rgba32float, two textures
 `WorldGpu.editStateA/B` taking turns — the pass reads `editStateViews[editCur]`,
 writes the other and flips `editCur`, nothing copied back; readers keep a bind
@@ -1823,10 +1831,14 @@ headroom | wet | six 3-bit links, room, region — the peel reads `places` and
 `placeTable` in its own bind group), `agentNavCost` (round 107: per surface, the
 height and wet the links and the relax reckon its cost by, following nav's floor with hysteresis — the
 units ride nav, the fields read this), `agentDist` (NFIELDS = 4 fields × surfaces,
-f32), `agentUnits` (five vec4 a unit: units.wgsl — the fifth, LW1, the trait system's CAPS and LOOK and the max hp), `agentOcc` (units per
-column, two halves by tick parity), `agentEvents` (a count and 8-u32
-records: swing, hurt, death, alight; the CPU copies and clears it in
-`sync`), `agentModels` (the kinds' voxels) with `agentKindModels`, and
+f32), `agentUnits` (six vec4 a unit: units.wgsl — the fifth, LW1, the trait system's CAPS and LOOK and the max hp; the
+sixth, round 128o, the arrival latch: an `arrived` event once a unit comes within its field's radius,
+`agents.arrivals(field, radius, leave)` in AgentParams.arrive), `agentOcc` (units per
+column, two halves by tick parity), `agentEvents` (round 128o, DA-B2: a ring
+of 2048 8-u32 records — swing, hurt, death, alight, … with their number as a tag
+in word 7 — after a head: [0] events made, [2] how far the CPU has read; a sync
+copies the head and 256 records from where it stopped, writes [2] back; an event
+with 2048 unread isn't written and the CPU counts it lost), `agentModels` (the kinds' voxels) with `agentKindModels`, and
 `agentInst` (body-format voxels, appended) with its indirect args, and
 `agentShove` (per column, two halves: the momentum and mass tumbling units
 carried through it, and how many burning units). The peel reads `layers`,
@@ -2563,6 +2575,33 @@ cheap pool of light ("Yes absolutely enough"). One concern a file:
   `sources` (simTick, slowSystems, io, counters) are lent by whoever reads it (the bench); it changes nothing.
   `report(mark)` = per frame: interval, rAF lag, CPU, rAF to last submit, submit to done, frames in flight, GPU span,
   the gap between frames' GPU work, sim ticks, which counters moved; the slow frames against the rest.
+- **The level's ground** (round 128o, DA-B19): `scene.heightAt(x, y): number | null` is the world API terrain's
+  `surfaceAt` — the surface word from its 1 KB page, read when asked and again once its chunk ran; null: not read yet
+  (the page is asked for now). No stand-in: a tap, a turn, a placement, a bird flock waits a frame
+  (`Camera.groundAt` returns null with such a lookup; `Structures.place` undefined; `Places.at` undefined); a drag
+  doesn't start, a move or a hover is skipped. The fortress reads the window's surface pages whole before it's ready
+  and after each slide (`scene.groundReady` false meanwhile: its people, raiders, pieces and taps wait) and asks
+  `scene.groundRead`, which throws if a page isn't read (a bug there). `scene.mapHeightAt` is the map as generated, for
+  the two that ask every frame and need only the lie of the land — the far land's focus and the flyer's floor — and
+  nothing else (test/unit/mapheight.test.ts). Writes outside the ticks and the
+  column applies (an undo, chunks restored, the streamer's live edit) tell `WorldCore.onColumnsWritten`; the mirror
+  reads those pages again. No copy of the whole surface is kept or read back (`surfaceCache` and its 1 Hz read went).
+- **The water's settling hold** (round 84 ?settletol, on by default with ?rivers=table; round 128o, DA-B20: on the
+  GPU, sim/settlehold.ts): a chunk an event woke stays awake past its time while its water still changes by more than
+  the tolerance, up to 60 s from its waking. The CPU (sim/sleep.ts) says which chunks may be held (`settleCand`: woken
+  within 60 s, asleep by its time) and lists them on the culled passes (AwakeTiles.update `cand`); at each tick's start
+  a 64-thread pass reads water_depth.wgsl's waterChange, holds a candidate while it changed (and 0.75 s of sim time
+  after), lets it sleep drowsy for 0.25 s, writes the masks over Globals.sleep / drowse for the tick's passes (512 B
+  copy) and clears waterChange. Nothing read back (it was 8 KB twice a second). The CPU's own mask says asleep for a
+  held chunk: the mirror counts candidates as run (api/mirror.ts tick), the flows' skip counts them as awake; the
+  frame's render upload puts the CPU's mask back for drawing.
+- **The nearest trees** (round 128o, DA-B6; api/treequery.ts, shaders/treequery.wgsl): `plants.treesNear(x, y, r, n)`
+  is a GPU pass, not a CPU layout over a read-back succession field. Over each ask's box of columns, vegplan.wgsl's
+  `vegPlan` says where the trees stand; three passes: a histogram of the trees' distances (128 bins over the radius),
+  a cut (the bin by which n are counted), a gather (those nearer, then the cut bin's up to n). Back: 16 B and n × 8 B
+  an ask (column, species, trunk, crown), the asks of one task in one submit and one map, buffers kept. A test on Dawn
+  holds it to planTree's nearest (test/gpu/treequery.test.ts). The woodcutters (FortressLife, SettlementLife, crews)
+  ask when their camp or spot changes, after a fell, and once a sim minute (the woods grow back: DA-B21).
 - **The frame cap** (round 128o, DA-B5; DESIGN.md §24 "Cap at 30 fps while building or paused"): a Scene may say
   `maxFps()`; main.ts skips display frames until `frameDue` (scenes/frame-cap.ts: the cap's interval less half a
   display frame), so 60 Hz runs every other frame, 120 Hz every fourth, 100 Hz every third (33 fps). The level caps
@@ -3369,32 +3408,29 @@ no copy of them unless a CPU consumer walks one, and every change it makes to th
 
 ## Who writes the columns (round 128, `merge128`: jb6 on places, INT16)
 
-The columns are WorldGpu.layers, and the column passes (structure, the layer pulls; sim/systems.ts `columnPass`)
-write WorldGpu.layersNext for the chunks that run and copy it back over the layers whole (without `?inplace=1`). (DA-B8:
-the edit brush writes in place on every tier, the layers and the layersNext alike, and copies nothing back.) So a
-change made to the layers alone is undone by the next copy-back wherever its chunk didn't run — asleep, or outside the
-hybrid's `only` filter (Sleep.wake refuses those). **Every writer of the columns writes the layers and the layersNext
-alike**, and every change the CPU asks for is the GPU's to make (jb6's rule), through one instance of game/colapply.ts
-`ColumnApply` on the WorldCore (`core.columnApply`; `core.columnsGpu()` gives it both buffers, GpuColumns.next —
-ColumnApply throws without it):
+The columns are WorldGpu.layers, the one buffer that holds them. (DA-B14) The column passes (the edit brush, the
+structures, the layer pulls) rewrite them in place on every tier and copy nothing back. Until DA-B14 they wrote a second
+buffer, layersNext, for the chunks that ran and copied it back over the layers whole, so every writer below wrote both
+(a change to the layers alone was undone wherever its chunk didn't run); layersNext is gone. Every change the CPU asks
+for is the GPU's to make (jb6's rule), through one instance of game/colapply.ts `ColumnApply` on the WorldCore
+(`core.columnApply`; `core.columnsGpu()` gives it the layers):
 
 | writer | what | how, after merge128 |
 |---|---|---|
-| Integrity: a verdict's cuts and spills, loose ground, External let go, orphans | colapply `applyCuts`, `spillTarget`/`spillDeposit`, `depositAdd`, `release`, `orphans` | GPU (jb6), both buffers (merge128) |
-| ExternalRegistry.claim (the resting rock: Integrity.restRigid) | colapply `claim` (claimColumn: each span cut out, External with its fallback as aux) via ColumnAccess.claim → Integrity.edit | GPU stamp, both buffers (merge128, INT16). The CPU still decides the free spans from the columns it fetched (the registry needs the spans it holds) |
-| ExternalRegistry.claimFree / claimFreeEach (round 128g: settlements' buildings, settle/view.ts; the fortress's structures, fortress/claims.ts) | colapply `claim` with `P.free` (claimFreeColumn: each span's free parts — air, liquids — made External in order; ground left, the thing buried in it) via ColumnAccess.claimFree → Integrity.edit | GPU stamp, both buffers; **nothing read back**: the instance holds the spans asked for (`free`), verify holds it while every part is External or ground. A town's buildings in one dispatch. Claimed only on land the streamer has written (`Streamer.unwritten`), the frame after a slide |
-| the voxel lattice's wake (physics/wake.ts: a ruin's piece made bodies) | colapply `take` (layout.ts takeCells) via core.stampColumns | GPU stamp, both buffers. It still reads the whole layers back to flood the piece (BACKLOG M128-2) |
-| the sandbox editor's model placed (LevelScene.placeModel) | colapply `seat` (models.ts seatColumn) via core.stampColumns | GPU stamp, both buffers. It still reads the layers back for the resting base and the room check (M128-2) |
-| ColumnCopy.write: a settled rigid body baked (Integrity.settleRigid with nothing to claim), the pieces falling in the columns (colbodies.ts, through the kept copy) | the whole column made on the CPU from the copy | `queue.writeBuffer` to both buffers — still a CPU-made column (M128-1) |
-| WorldCore.restoreChunks (undo, warps) | the pristine copy's pages | GPU copy into both buffers |
-| WorldCore.replaceWindow (the noise lab's new land) | the whole window | upload into both buffers |
-| the streamer (a region's pages in, a slide) | pages | both buffers (round 98) |
-| WorldGpu's construction | the map | upload into both buffers (merge128) |
+| Integrity: a verdict's cuts and spills, loose ground, External let go, orphans | colapply `applyCuts`, `spillTarget`/`spillDeposit`, `depositAdd`, `release`, `orphans` | GPU (jb6) |
+| ExternalRegistry.claim (the resting rock: Integrity.restRigid) | colapply `claim` (claimColumn: each span cut out, External with its fallback as aux) via ColumnAccess.claim → Integrity.edit | GPU stamp (INT16). The CPU still decides the free spans from the columns it fetched (the registry needs the spans it holds) |
+| ExternalRegistry.claimFree / claimFreeEach (round 128g: settlements' buildings, settle/view.ts; the fortress's structures, fortress/claims.ts) | colapply `claim` with `P.free` (claimFreeColumn: each span's free parts — air, liquids — made External in order; ground left, the thing buried in it) via ColumnAccess.claimFree → Integrity.edit | GPU stamp; **nothing read back**: the instance holds the spans asked for (`free`), verify holds it while every part is External or ground. A town's buildings in one dispatch. Claimed only on land the streamer has written (`Streamer.unwritten`), the frame after a slide |
+| the voxel lattice's wake (physics/wake.ts: a ruin's piece made bodies) | colapply `take` (layout.ts takeCells) via core.stampColumns | GPU stamp. It still reads the whole layers back to flood the piece (BACKLOG M128-2) |
+| the sandbox editor's model placed (LevelScene.placeModel) | colapply `seat` (models.ts seatColumn) via core.stampColumns | GPU stamp. It still reads the layers back for the resting base and the room check (M128-2) |
+| ColumnCopy.write: a settled rigid body baked (Integrity.settleRigid with nothing to claim), the pieces falling in the columns (colbodies.ts, through the kept copy) | the whole column made on the CPU from the copy | `queue.writeBuffer` — still a CPU-made column (M128-1) |
+| WorldCore.restoreChunks (undo, warps) | the pristine copy's pages | GPU copy |
+| WorldCore.replaceWindow (the noise lab's new land) | the whole window | upload |
+| the streamer (a region's pages in, a slide) | pages | GPU copies or uploads (round 98) |
+| WorldGpu's construction | the map | upload |
 
 The CPU's statement of each GPU rule (cutColumn, spillPlan, releaseSpan, orphanColumn, claimColumn, takeCells,
-seatColumn) is held equal to the GPU's by test/gpu/colapply.test.ts, which also checks that the layersNext comes out as
-the layers. test/gpu/cpu-write-asleep.test.ts steps a world with every chunk asleep: stamps survive, a write to the
-layers alone is undone (the cause, kept as a test). Every stamp fits a column to its K slots as before (colapply
+seatColumn) is held equal to the GPU's by test/gpu/colapply.test.ts. test/gpu/cpu-write-asleep.test.ts steps a world
+with every chunk asleep: stamps survive, and (since DA-B14) so does a write to the layers alone. Every stamp fits a column to its K slots as before (colapply
 `store`: the bottom K − 1 kept, the rest's height as rubble on top) — the INT8 hollow-claim risk (a building's
 intervals above K − 1 turned to rubble) is unchanged by this, not made worse.
 ## Petitions, the cast and plain words (dialog2; BACKLOG DLG-1..DLG-12; docs/WRITING.md)
@@ -3531,7 +3567,7 @@ The building rule (the user's): select what (a structure type), then plan it wit
   (every JOBS_S); phases idle/home/wait, builders toPile/toSite/working (BuildBook as before), workers
   toWork/gather/lifting/carry. Fields (0-6, all FortressLife's): F.pile the stores (the first built warehouse's door
   — `Fortress.doorOf` — else the town's heap), F.site/F.store sites lacking stone/wood, F.quarry the built quarry cells'
-  middles, F.fell the trees in the lumber camps' reach (`plants.treesNear`, every 10 s), F.farm the built farm cells,
+  middles, F.fell the trees in the lumber camps' reach (`plants.treesNear`, asked of the GPU when the camps change, after a fell and once a sim day: round 128o), F.farm the built farm cells,
   F.home house doors and the town's homes; groups R.* (settle/life.ts). Miners dig the ground (`terrain.take`, a quiet
   edit: sim/sleep.ts touch — the chunk isn't woken) every ECON.digSec within ECON.digR of the cell's middle, as a bowl
   no deeper than `pitDepth(d)` (1 m down a metre in, ECON.pitMax at most) under the ground they first found there; woodcutters fell

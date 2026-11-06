@@ -62,8 +62,8 @@ export interface AtlasRunDeps extends Pick<HeroRunDeps, 'ui' | 'say' | 'makeHero
   device: GPUDevice;
   story: SessionStory;
   world: WorldState;
-  /** the world's top at (x, y) (window coordinates): the camera's ground picks */
-  heightAt: (x: number, y: number) => number;
+  /** the world's top at (x, y) (window coordinates): the camera's ground picks (null: not read yet — asked) */
+  heightAt: (x: number, y: number) => number | null;
   /** where the hero starts: a world cell (default the atlas's spawn) */
   at?: [number, number];
   /** the game's cutaway, when it runs one (default: the run's own) */
@@ -91,7 +91,13 @@ export async function startAtlasRun(d: AtlasRunDeps): Promise<HeroRun> {
   // (the camera to the spawn first, and the window let slide round it until it's still: the places are laid out
   // round the spawn in the window)
   const s0 = toWin(cx + 0.5, (cy + 0.5) * ROW_H);
-  camera.target = [s0[0], s0[1], d.heightAt(s0[0], s0[1])];
+  // (round 128o: the ground there read first — its page asked)
+  let z0 = d.heightAt(s0[0], s0[1]);
+  while (z0 === null) {
+    await new Promise((res) => requestAnimationFrame(res));
+    z0 = d.heightAt(s0[0], s0[1]);
+  }
+  camera.target = [s0[0], s0[1], z0];
   for (let quiet = 0, o = `${S.origin}`; quiet < 15; ) {
     await new Promise((res) => setTimeout(res, 100));
     if (S.busy || `${S.origin}` !== o) {

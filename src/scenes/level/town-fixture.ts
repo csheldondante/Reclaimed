@@ -5,6 +5,7 @@ import { ROW_H } from '../../world/lattice';
 import { encodeTownFixture } from '../../lab/townfixture';
 import { siteToJson } from '../../build/site';
 import type { LevelScene } from '../level';
+import { urlFlags } from '../../flags';
 
 export async function captureTownFixture(scene: LevelScene): Promise<string> {
   const S = scene.stream;
@@ -21,7 +22,7 @@ export async function captureTownFixture(scene: LevelScene): Promise<string> {
   const bytes = await encodeTownFixture({
     header: {
       gen: GEN_VERSION,
-      link: location.search,
+      link: `?${urlFlags()}`,
       capturedAt: new Date().toISOString(),
       origin: [ox, oy],
       // (the record's place in window world units: the fortress's box lands where it does in the game)

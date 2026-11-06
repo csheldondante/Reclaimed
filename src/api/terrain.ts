@@ -5,7 +5,7 @@ import type { WorldCore } from '../scenes/world-core';
 import { EventKind } from '../sim/globals';
 import { ROW_H, cellAt, cellPos } from '../world/lattice';
 import { EDIT_TAGS } from '../sim/world-gpu';
-import { columnSlots, readColumn, sfZ, SLOT_WORDS } from '../world/layout';
+import { columnSlots, readColumn, sfMat, sfZ, SLOT_WORDS } from '../world/layout';
 import { fieldMeshed } from '../world/materials';
 import { columnAt, materialId, materialName, materialState, texelAt, type MaterialName } from './common';
 import { PULL_SLOTS } from '../sim/systems';
@@ -293,6 +293,27 @@ export class Terrain {
       if (next > z1 + 1e-3 && (best === null || z1 > best)) best = z1;
     }
     return best;
+  }
+
+  /**
+   * (round 128o, DA-B19) The ground's base at (x, y) — the column's top under the loose ground on it — and the material
+   * under that loose run: surface.wgsl's surface word, from the world API's page of it (1 KB; read when asked, again
+   * once its chunk ran — a chunk's word is made while it's awake or drowsy, and land that comes in is drowsy until it
+   * is: sim/sleep.ts). Null until the page is read.
+   */
+  surfaceAt(x: number, y: number): { z: number; mat: number } | null {
+    const [cx, cy] = cellAt(x, y);
+    const s = this.mirror.u32('surface', cx, cy);
+    const i = this.col(x, y);
+    if (!s || i < 0) return null;
+    return { z: sfZ(s[i]), mat: sfMat(s[i]) };
+  }
+
+  /** (round 128o) Read the ground's surface words of the window box (x0, y0)..(x1, y1) (world units) now: resolves once they're in (1 KB a page). */
+  load(x0: number, y0: number, x1: number, y1: number): Promise<void> {
+    const [a, b] = cellAt(x0, y0);
+    const [c, d] = cellAt(x1, y1);
+    return this.mirror.refreshBox(Math.min(a, c), Math.min(b, d), Math.max(a, c), Math.max(b, d), ['surface']);
   }
 
   /** (x, y) lies in the window: its queries answer once read (off it, they never do). */

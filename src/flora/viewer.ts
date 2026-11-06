@@ -18,6 +18,7 @@ import { generate } from './generate';
 import { BIOMES, buildScene, sceneWgsl, type Biome, type FloraScene } from './scene';
 import { SPECIES, SPECIES_IDS, type RGB, type SpeciesId } from './species';
 import { rng } from './rng';
+import { urlFlags } from '../flags';
 
 type Mode = 'scene' | 'plant';
 
@@ -32,7 +33,7 @@ interface State {
   density: number;
 }
 
-const params = new URLSearchParams(location.search);
+const params = urlFlags();
 const state: State = {
   mode: (params.get('mode') as Mode) ?? 'scene',
   biome: (params.get('biome') as Biome) ?? 'birchwood',

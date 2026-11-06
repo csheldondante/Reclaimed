@@ -157,8 +157,7 @@ export class Waker {
     const need = parts.reduce((a, p) => a + (p.hi[0] - p.lo[0] + 1) * (p.hi[1] - p.lo[1] + 1) * (p.hi[2] - p.lo[2] + 1), 0);
     if (!phys.hasRoom(need, parts.length)) return { bodies: [], full: parts.length };
     // out of the layers: each touched column keeps the parts of its intervals not taken (round 128, INT16: the GPU's
-    // stamp — colapply.wgsl take, layout.ts takeCells' rule — into the layers and layersNext alike, so a column pass's
-    // copy-back over a chunk that didn't run can't put the piece back)
+    // stamp — colapply.wgsl take, layout.ts takeCells' rule)
     core.stampColumns([{ cuts: [], take: { cells: [...piece.values()].map(({ x, y, z }) => ({ x, y, z })), materials: take } }]);
     const bodies: PhysBody[] = [];
     let full = 0;
