@@ -21,6 +21,7 @@ each was implemented.
 - A design idea: "Another thing we should consider is a \"next turn\" that fast forwards half a day with each click. This would be visually cool and makes sense that you don't have to wait for supplies (they come in daily and structure progress daily and the agents work is the realtime equivalent). It might be more fun from a game design perspective." → BACKLOG DA-L10, with the one run clock (DA-L1).
 - On the phone at 16x: "Looks great on my phone" (hitch report: 30 fps planning, 12-20 fps at 16x after Build). Then: "I see a lot of plant particles and grow effects which I don't think add much and I would be happy to turn off." → off in fortress play.
 - Then: "Well I'm ok with leaves but I don't think the seeds add much. I do want trees and leaves to respond to weather eventually but I think during these frames it's not really necessary to simulate this way and typically at 16x you could just jitter things to take them look like they are moving with wind. So that is to say feel free to turn it off or put it to sleep for now." → seeds off; leaves stay; plant wind response sleeps in fortress play, a cheap visual jitter at speed; weather-driven trees later.
+- Correction: "Oh I meant sleep as in when wind is low let them sleep and wake them up for gusts like other systems like dust." → plant wind response sleeps where wind is low and wakes for gusts, like dust.
 - Earlier the same day: "Perf looks good."
 
 ## 2026-11-05 — round 128o (session 5) — the work plan approved: make the code match the design
