@@ -141,7 +141,7 @@ export class FortressCrowd implements Routine {
   readonly stats = { trips: 0, built: 0, starved: 0, hauled: 0, dug: 0, felled: 0, arrived: 0, refunds: 0, forged: 0, trained: 0, mustered: 0, patrols: 0, onWall: 0, carted: 0, cartLoads: 0, piled: 0 };
   /** (m4: the attack wave) the raid (raiders.ts): its raiders and its rider are stepped through this routine */
   raid: FortressRaid | null = null;
-  /** (m4) the villagers in at home while raiders are about (FortressRaid.mayFight) */
+  /** (m4) the villagers in at home while raiders are about (AgentUnits.fightFlags) */
   readonly inside = new Set<UnitId>();
   /** (m4) the doors of houses set alight (FortressRaid): nobody goes home to them */
   unsafe: V2[] = [];

@@ -41,7 +41,7 @@ export default async function (lab, args) {
   lab.look(u0.at[0], u0.at[1], 16);
   await lab.run(0.05, 1);
   const [sx, sy] = lab.project(u0.at[0], u0.at[1], u0.at[2] + 0.7);
-  lab.tap(sx, sy);
+  await lab.tap(sx, sy);
   const fol = lab.follow();
   if (fol.selected !== id) throw new Error(`the tap at (${sx.toFixed(0)}, ${sy.toFixed(0)}) didn't pick person ${id}: ${fol.selected}`);
   const btn = document.querySelector('.fort-bar button.follow');
@@ -66,7 +66,7 @@ export default async function (lab, args) {
   }
   const today = life.personFacts(id)?.today ?? [];
   // a tap on empty ground: let go
-  lab.tap(4, 200);
+  await lab.tap(4, 200);
   const out = { id, onScreen, samples, today, following: fol.following, released: fol.selected === null, cards: cards.slice(0, 40) };
   if (onScreen < samples) throw new Error(`the person left the screen: ${onScreen} of ${samples} samples on it`);
   if (!out.released) throw new Error('a tap elsewhere did not let go');

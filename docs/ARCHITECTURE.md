@@ -1932,6 +1932,20 @@ makes every tick its own frame, the comparison the gates and the phone bench tog
 - A road steer (unit e.w) is its group's ride's: a regrouped unit's step zeroes it, so no step before the ride's next
   run reads the old group's (a STAND there was an arrival told for the new group).
 
+**Combat targeting** (round 128p, DA-B22 (c)(3); agents/notice.ts, shaders/notice.wgsl): an agents stage, once a frame
+after the last step. Its own buffers: `agentCombat` (a vec4<u32> a slot: flags with the faction, sight, a guard's post),
+`agentSides` (a u32 a window column, window order), `agentBuckets` / `agentBucketNext` (lists of units per 16 × 16
+columns, made each run), `agentHunted`, `agentNotice` (params). It writes unit word f.y (the target code: 0 none, id + 1,
+ACTOR | i) and f.z (the hunt's candidate distance), and `noticed` events into the agents' ring.
+- The game gives it each unit's part (`notice.set`; a spawned slot starts out of the fighting), the rules (`setRules`,
+  `setSides`), its actors each frame (`setActors`, ≤ 8) and targets of its own (`aim`).
+- AgentUnits turns these into the Units contract: `fightRules(r | null)`, `fightFlags(noFight, posted)`, and a unit's
+  target and the hunt's candidates read from its state.
+
+**Picking** (round 128p, DA-B22 (c)(2); agents/pick.ts, shaders/unitpick.wgsl): `Agents.pick(ids, { viewProj, viewport,
+at, radius, lift })` → the id whose figure (feet + lift) projects nearest the tap within the radius, or null; one 4 B read.
+AgentUnits.pickAt maps the game's ids; the fortress's personAt (and so fortressAt, the lab's tap) is async.
+
 ## Traits and effects (Living World slice 1, branch `traits`; BACKLOG LW1; contract src/api/contracts/traits.ts)
 
 The user (DECISIONS round 120): "the systems that process traits for things like combat and other interactions are

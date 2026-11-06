@@ -43,7 +43,8 @@
 //      the walking step below). The step only reads them: the trait
 //      modules derive them from the traits each tick (src/traits).
 //   f: (round 128o, DA-B2a) x the arrival latch (u32 bits: the field it has arrived on + 1; 0 none: `arrived`
-//      events), y z w unused
+//      events), (round 128p, notice.wgsl) y its target (u32 bits: a target code), z how near the nearest hostile
+//      hunting it is (inf: none — the hunt's candidates), w unused
 @group(0) @binding(7) var<storage, read_write> units: array<vec4<f32>>;
 const UNIT_V: u32 = 6u;
 // CAPS (src/traits/prelude.wgsl, contracts/traits.ts): never set alight (nor
