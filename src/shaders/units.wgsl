@@ -337,7 +337,7 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
   var latch = bitcast<u32>(units[u * UNIT_V + 5u].x);
   // (round 128i, V128-14) the road ride's steer (roadride.wgsl, written after the last tick's step): 0 its field, < 0
   // stand, else a heading + STEER_BIAS
-  let steer = units[u * UNIT_V + 4u].w;
+  var steer = units[u * UNIT_V + 4u].w;
   let noBurn = (caps & CAP_NO_BURN) != 0u;
   let rooted = (caps & CAP_ROOTED) != 0u;
   var info = unitInfo(a);
@@ -348,6 +348,15 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
   for (var e = 0u; e < AP.n3.z; e++) {
     let rg = AP.regroups[e / 4u][e % 4u];
     if ((rg & 0xffffu) == u) { grp = rg >> 16u; }
+  }
+  // (round 128o, DA-B22: a steer is its group's ride's — a unit moved to another group lets it go, here and in its
+  // record, so no step before the ride's next run reads the old group's: a STAND there told an arrival at the old
+  // goal for the new group, once the ride ran once a frame — fortressallbuilt's builders "working" at the stores)
+  if (grp != (info & 0xffu) && steer != 0.0) {
+    steer = 0.0;
+    var e4 = units[u * UNIT_V + 4u];
+    e4.w = 0.0;
+    units[u * UNIT_V + 4u] = e4;
   }
   let kind = AP.kinds[(info >> 9u) & 7u];
   var state = (info >> 12u) & 7u;

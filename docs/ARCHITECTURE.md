@@ -1927,7 +1927,10 @@ makes every tick its own frame, the comparison the gates and the phone bench tog
 - The step's moves are bounded whatever the dt: a unit moves in sub-moves of at most half a cell across (SUB_MOVE;
   walking: each into a column linked to the last; tumbling: gravity, walls and landings a sub-move at a time) and,
   tumbling, less than floorUnder's reach (0.3) down (SUB_FALL). The stride is a cost choice (most steps take one
-  sub-move); the bound is the sub-moves'. scripts/lab/stepbound.mjs measures the steps, throwwall.mjs the throws.
+  sub-move); the bound is the sub-moves'. scripts/lab/stepbound.mjs measures the steps, throwwall.mjs the throws,
+  test/gpu/thinwall.test.ts proves a one-column wall holds.
+- A road steer (unit e.w) is its group's ride's: a regrouped unit's step zeroes it, so no step before the ride's next
+  run reads the old group's (a STAND there was an arrival told for the new group).
 
 ## Traits and effects (Living World slice 1, branch `traits`; BACKLOG LW1; contract src/api/contracts/traits.ts)
 

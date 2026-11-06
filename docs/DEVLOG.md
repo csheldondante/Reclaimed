@@ -20306,14 +20306,27 @@ Gates (lab, desktop Intel Xe, `--flags "&ffwd=0"` against fast-forward):
 | throws at a wall, throwwall.mjs: 15 throws, 8–60 cells/s, 3 angles, 16x and 32x | inside the land: 0 | inside the land: 0. Ends within 0.33 of a tick at a time for every throw that stops short of the wall's crest; the straight-on 40 and 60 cells/s throws end 1.5–3.8 short (they bounce and climb its slope) |
 | fortressraid walled, 16x (×3 / ×2 after the sweeps fix) | blows 24, breaches 1, looted 2, torched 2, burned 2, escaped 2–4 | blows 24, breaches 1, looted 2, torched 2, burned 2, escaped 3–4 |
 | fortressraid open + 4 soldiers, 16x (the hunt: soldiers after raiders) ×3 | looted 1–3, raiders fallen 0–3, burned 0–2 | looted 1–3, raiders fallen 1–3, burned 0–2 |
-| fortressallbuilt, 16x | 271, 301, 362, 362 s (once 6 blocks unbuilt at 603 s); 300 s at 4x, 360 s at 1x | 60, 60, 60 s |
+| fortressallbuilt, 16x | 362, 301 s, once 6 blocks unbuilt at 603 s (earlier: 271, 301, 362, 362; 300 s at 4x, 360 s at 1x) | 362, 362, 362 s (after the steer fix below; 60 s before it) |
 | fortressharvest, 16x | passes (243 s, no carrier stuck) | passes |
+| rider speed on trips, ridespeed.mjs, 60 sim s from allbuilt's start, the sim's own ticks | 1x 2.398, 16x 2.358 cells/s | 1x 2.398, 16x 2.360 cells/s (kind 2.4: at 16x a frame's chord cuts the route's bends; the fastest frame is 2.40 in all four) |
+| thin wall, test/gpu/thinwall.test.ts: a wall one column thick, 15 throws at 10–90 cells/s | none into it or through it | none into it or through it, frames of 16 ticks. With the sub-moves off (SUB_MOVE, SUB_FALL 1000) the 60 and 90 cells/s throws go through, 1–11 columns past it |
 
-- **fortressallbuilt is out of today's range, on the fast side.** Bisected: with the units stepping every tick and
-  the rest once a frame it is still 60 s. With the ride run with every step it is today's again (703/708 at 30 s).
-  The ride run per tick loses time somewhere; run once a frame over the elapsed time it doesn't. That points at the
-  ride's stall that fortressharvest pins (DA-A7: riders standing at a route node), which the towns agent's DA-A13
-  rewrite replaces. Not chased further here; flagged to main.
+- **fortressallbuilt finished in 60 s, not today's ~300 — a false arrival, now fixed.** Main asked for this to be
+  measured, not guessed.
+  - Rider speed was right in both modes (table above), so the ride doesn't over-advance.
+  - A trace of the builders (job and phase every sim second) showed the cause. At fast-forward, from 2 s on, the
+    four builders were `working` at the stores (165, 185) and blocks got built from there. Today they rode about 15 s
+    to the site (178, 174) first.
+  - The cause: a unit's road steer is its group's ride's. The builders stood at their stores goal (steer STAND) when
+    the routine regrouped them to the site's group. units.wgsl's arrival check, `steer` STAND with
+    `grp == info's group`, only guarded the regroup tick itself. The next step read the old group's STAND for the
+    new group and told an arrival at the site. Per tick, the ride ran right after the step and rewrote the steer
+    first. Once a frame, a whole stride's step came between.
+  - Fix: a regrouped unit lets its steer go, in the step and in its record (units.wgsl, after the regroups). With it,
+    allbuilt takes 362 s, as today, and the trace shows the builders riding to the site.
+  - The "ride loses time per tick" guess in the first version of this entry was wrong.
+  - Side finding: at 1x the lab's `run` sums wall time (dt × speed). The tick clock ran about 50 ticks a 60 frames
+    there, so rider speed measured over the lab's sim seconds read 2.0. ridespeed.mjs counts the sim's own ticks.
 
 Cost, from speedcost.mjs on the town at 16x with `&agentprof=1`. This was a behaviour lab run on a shared GPU, not
 under the timing lease, so it is a proxy; the phone bench is the measure.
