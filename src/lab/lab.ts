@@ -132,6 +132,10 @@ export class Lab {
   /** the fortress is ready and the recipe's town stands */
   ready = false;
   private simT = 0;
+  /** (onetown) reset() puts the recipe's town back — not a fixture's: its town is the captured site's data */
+  get resettable(): boolean {
+    return !this.recipe.fixture;
+  }
   /** the sim's systems that tick (null: all — lab.sims) */
   simFilter: ((s: { name: string }) => boolean) | undefined = undefined;
   private simsNow = 'all';
@@ -457,6 +461,10 @@ export class Lab {
   /** a new scenario on the same page: the builders gone, the plan erased, the land as it opened, the stores refilled */
   async reset(): Promise<void> {
     if (this.driving) throw new Error('lab.reset: not while running');
+    // (onetown: a fixture's town is the start town's site — its plan and what stands, one record. Erasing its plan left
+    // its 702 built blocks standing with no plan; putting the site back in place would mean every holder of it — the
+    // fortress, its view, its claims — taking a new one. A fixture's page is loaded again instead: scripts/lab.mjs)
+    if (!this.resettable) throw new Error(`lab.reset: the ${this.recipe.name} recipe's town is a fixture's site: load the page again (lab.mjs does)`);
     this.ready = false;
     const f = this.fort();
     this.planMode();
@@ -528,6 +536,10 @@ export class Lab {
       look: (x: number, y: number, zoom?: number) => this.look(x, y, zoom),
       shot: (name: string) => this.shot(name),
       reset: () => this.reset(),
+      /** (onetown) whether reset() can put the recipe's town back (a fixture's can't: its page is loaded again) */
+      get resettable() {
+        return lab.resettable;
+      },
       ground: (x: number, y: number) => this.ground(x, y),
       /** (townlab) the fixture's header (where it was captured, its town, its generator), or null */
       fixture: this.io.fixture ?? null,

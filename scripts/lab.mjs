@@ -115,7 +115,9 @@ async function serve() {
       // (its own server: no check reuses it, so stopping the lab never takes a page's server away)
       srv = await serveBuild(b, { own: true });
     }
-    if (force || broken || !page || loaded.hash !== b.hash || loaded.recipe !== recipe) {
+    // (onetown: a fixture's town is its site's data — the lab can't put it back in place: a used page is loaded again)
+    const resettable = page && !broken ? await page.evaluate(() => window.reclaimed?.lab?.resettable ?? true).catch(() => true) : true;
+    if (force || broken || !page || loaded.hash !== b.hash || loaded.recipe !== recipe || (dirty && !resettable)) {
       if (!page || broken) await openPage();
       const cdp = await page.createCDPSession();
       await cdp.send('Storage.clearDataForOrigin', { origin: new URL(srv.url).origin, storageTypes: 'indexeddb,local_storage,cache_storage,service_workers' });
@@ -235,16 +237,21 @@ async function serve() {
   };
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
-  // (warm: the first recipe's page opened now, so the first run finds it up)
-  const release = await lease('behaviour', 'lab boot');
-  try {
-    const t = await ready(opt('recipe', 'flat'), false);
-    say(`lab up: ${JSON.stringify(t)}`);
-  } catch (e) {
-    say(`lab didn't open: ${e?.message ?? e}`);
-  } finally {
-    release();
-  }
+  // (warm: the first recipe's page opened now, so the first run finds it up. In the queue the runs wait in: a run sent
+  // while it opens waits for it — two opening the page at once both bound __labShot on the second page, and the run failed)
+  const warm = busy.then(async () => {
+    const release = await lease('behaviour', 'lab boot');
+    try {
+      const t = await ready(opt('recipe', 'flat'), false);
+      say(`lab up: ${JSON.stringify(t)}`);
+    } catch (e) {
+      say(`lab didn't open: ${e?.message ?? e}`);
+    } finally {
+      release();
+    }
+  });
+  busy = warm;
+  await warm;
 }
 
 // ---------------------------------------------------------------- the client

@@ -91,7 +91,8 @@ export async function runPlaceBench(io: PlaceBenchIO, o: { types?: StructureType
   // (the reach's own wet bits: asked for once, as planning starts)
   f.requestReach(true);
   await f.settled();
-  const gates = (f as unknown as { io: { townGates?: () => V2[] } }).io.townGates?.() ?? [];
+  // (onetown: the town's gates are its plan's gate cells)
+  const gates = f.plan.gate.reduce<V2[]>((out, g, c) => (g ? [...out, f.centre(c)] : out), []);
   const points = placePoints({
     stores,
     gates,

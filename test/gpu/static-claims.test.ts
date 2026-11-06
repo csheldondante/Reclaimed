@@ -6,7 +6,11 @@
 // read was asked, never orphans.
 import { describe, expect, test } from 'vitest';
 import { ColumnApply, fitColumn, type GpuColumns } from '../../src/game/colapply';
-import { claimFreeColumn, ExternalRegistry, releaseSpan, OWNER_STRUCT, type ExternalCol } from '../../src/sim/external';
+import { claimFreeColumn, ExternalRegistry, releaseSpan, type ExternalCol } from '../../src/sim/external';
+import { gridIdOf } from '../../src/build/site';
+
+/** (onetown) a town's claims are owned by its grid's id */
+const OWNER_TOWN = gridIdOf('test');
 import { StaticClaims, gridColumnSpans, type StaticThing } from '../../src/sim/static-claims';
 import { columnSlots, readColumn, type Interval } from '../../src/world/layout';
 import { MAT } from '../../src/world/materials';
@@ -148,7 +152,7 @@ describe('static grids claimed with the land (round 128j)', () => {
         [16, 16],
       ];
       const r = await rig(s * 97, all.slice());
-      const g = r.sc.grid('town', OWNER_STRUCT, () => r.place);
+      const g = r.sc.grid('town', OWNER_TOWN, () => r.place);
       r.sc.set(g, things(s * 31, 12));
       // (nothing written yet: nothing claimed)
       same(r, await gpuSlots(r), `seed ${s} before any land`);
@@ -172,7 +176,7 @@ describe('static grids claimed with the land (round 128j)', () => {
         [16, 0],
         [16, 16],
       ]);
-      const g = r.sc.grid('fort', OWNER_STRUCT, () => r.place);
+      const g = r.sc.grid('fort', OWNER_TOWN, () => r.place);
       const t = things(s * 7, 10);
       const before = r.sc.set(g, t);
       cpuClaim(r, 0, 0, 16, W, g);
@@ -201,7 +205,7 @@ describe('static grids claimed with the land (round 128j)', () => {
 
   test('the registry sees them: by column, judged where written before the read, never orphans, released through it', async () => {
     const r = await rig(5, [[16, 16]]);
-    const g = r.sc.grid('town', OWNER_STRUCT, () => r.place);
+    const g = r.sc.grid('town', OWNER_TOWN, () => r.place);
     const inst = r.sc.set(g, [{ key: 1, cols: [{ x: 0, y: 2, z0: 30, z1: 33 }, { x: 14, y: 15, z0: 30, z1: 31 }], fallback: MAT.Brick }]).get(1)!;
     const { dx, dy } = r.place;
     expect(r.ext.at(dx, dy + 2).map((i) => i.id)).toEqual([inst.id]);

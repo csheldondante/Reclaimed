@@ -23,7 +23,7 @@ The user: "Please work on making the code match the design which is a lot cleane
 | DA-G3 | Material limits documented; test that the TS and WGSL material tables agree | S | next |
 | DA-G4 | Writing lint over every player-facing string, not opt-in per test | S | next |
 | DA-G5 | Merge townlab rect C (bed4bb7) | S | done (35cf133) |
-| DA-A1 | One plan: land onetown (one TownPlan, one type table, one grid per town, claims by grid id, second box deleted) (§17) | M | next |
+| DA-A1 | One plan: land onetown (one TownPlan, one type table, one grid per town, claims by grid id, second box deleted) (§17) | M | done (`onetown`, round 128o: fortress merged, keep rect on the site box, leftovers deleted; ARCHITECTURE "Towns: one plan"). Still open inside it: the generator drafts in its own model before placing (3 m storeys → levels), keepReach (→ DA-A3) |
 | DA-A2 | Builders build: a failing test reproducing the fixture (702/708, one cut off) on a phone-captured fixture, then the root fix; absorbs `builders`/PF-5 (§17, §18) | M | next |
 | DA-A3 | Reach as an invariant judged once in one GPU solve; cheapest passage chosen on the GPU; pending blocks stay on the builders' list; delete the 3 s re-ask and VARIANT_TRIES (§13) | L | next |
 | DA-A4 | Bridges as a building type reach can pick; minimum land gates on player wall rings (§12, §13) | M | next |

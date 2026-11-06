@@ -67,7 +67,6 @@ await run({ name: 'fortressvariant', kind: 'behaviour', size: '412x915', dpr: 1,
         const ok = cells.every((c) => {
           if (c < 0 || f.plan.owner[c] >= 0) return false;
           const [x, y] = f.centre(c);
-          if (st.thingAt(st.pinnedId, [x, y])) return false;
           // (no water on any of its columns)
           return !cols || f.grid.columns[c].every((col) => {
             const wc = f.boxToWindowCol(col);

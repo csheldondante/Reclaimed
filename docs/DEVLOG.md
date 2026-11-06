@@ -18108,3 +18108,23 @@ Design note before code (AGENT_RULES 1).
   right fix is DA-A3 (one reach invariant for generation and edits; keepReach deleted), not a second rule in keepReach:
   reported, not patched.
 - **Edge cases as tests:** the fixture's jobs (builders get people), the lab reset refusing a fixture.
+
+## 2026-11-05 — round 128o (`onetown`, DA-A1): one plan — the second system's leftovers deleted
+
+- Deleted: the settlements' and the fortress's owner ids (OWNER_STRUCT 2, OWNER_FORT 3: nothing claimed under them
+  since onetown — a town's claims are owned by its `gridId`; the tests that borrowed OWNER_STRUCT use a grid id); the
+  scripts' `thingAt` ray probe into the old town (fortressoutside, fortressvariant, fortressplot: the plan's `owner` is
+  the one answer); the placement bench's `townGates` cast into the fortress's io (gone with onetown: the gates are the
+  plan's gate cells now).
+- The lab's reset on a fixture (`town`) erased the town's plan and left its `Town` standing — 702 built blocks with no
+  plan (found when a second scenario saw no town). A fixture's town is its captured site, held by the fortress, its view
+  and its claims; it isn't put back in place: `lab.resettable` is false and scripts/lab.mjs loads the page again
+  (+~15 s a run), and `reset()` throws there.
+- scripts/lab.mjs: the server's warm page now opens in the run queue. A run sent while it opened opened the page a
+  second time, and the run failed ("__labShot already exists") on every first run.
+- ARCHITECTURE: "Towns: one plan" (what DA-A1 leaves and what's open in it).
+- Shots (412x915, dpr 2.6, the user's link `?town=1&fortress=1&fresh=1&q=low`), looked at: before (`fortress`, two
+  systems) and after (`onetown`): the same town, keep, towers and lighthouse; the walls on tile edges; the farmland
+  drawn as plots (yellow, was striped green); a thinner bridge to the east; "Beds 352" and "+14 a day" (the generated
+  houses and keep count as the player's now) and "Your plan costs 10 wood and 4 stone" at the start (the generated
+  town's two house sites are the plan's). No GPU path changed in this commit (no toggle-diff).

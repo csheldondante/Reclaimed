@@ -17,7 +17,10 @@ import { EventKind } from '../../src/sim/globals';
 import { OP } from '../../src/sim/edit-ops';
 import { cellPos } from '../../src/world/lattice';
 import { readColumn, type Interval } from '../../src/world/layout';
-import { OWNER_STRUCT } from '../../src/sim/external';
+import { gridIdOf } from '../../src/build/site';
+
+/** (onetown) a town's claims are owned by its grid's id */
+const OWNER_TOWN = gridIdOf('test');
 
 const W = 64;
 const FLOOR = 10;
@@ -121,12 +124,12 @@ test('a block dropped on sand sinks in (the edit pass decides): nothing read bac
 test('a thing\'s claimed cells cut: its columns fetched near the cut (and only those), its owner told', async () => {
   const ext = ig.external!;
   let lost = 0;
-  ext.owner(OWNER_STRUCT, { name: 'test', onLost: (inst) => (lost++, ext.release(inst.id)) });
+  ext.owner(OWNER_TOWN, { name: 'test', onLost: (inst) => (lost++, ext.release(inst.id)) });
   // (a claim: its columns fetched first — round 120 JB6's columnsReady)
   const want: { x: number; y: number; z0: number; z1: number }[] = [];
   for (let y = 50; y < 53; y++) for (let x = 30; x < 33; x++) want.push({ x, y, z0: FLOOR, z1: FLOOR + 3 });
   let inst = null as ReturnType<typeof ext.claim>;
-  await ig.columnsReady(want.map((c) => [c.x, c.y] as [number, number]), () => (inst = ext.claim(OWNER_STRUCT, want, MAT.Rubble)));
+  await ig.columnsReady(want.map((c) => [c.x, c.y] as [number, number]), () => (inst = ext.claim(OWNER_TOWN, want, MAT.Rubble)));
   expect(inst).not.toBeNull();
   const fetched = ig.readBytes;
   expect(fetched).toBeGreaterThan(0);

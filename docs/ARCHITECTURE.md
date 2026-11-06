@@ -3485,8 +3485,8 @@ The building rule (the user's): select what (a structure type), then plan it wit
   by its building's nearest cell.
 - **Milestone 3 (round 128e): the economy feeds the building.** `fortress/economy.ts` (pure, tested): `JobBoard`
   (people → slots in priority order, keeping a job while its slot still wants them), `jobSlots` (a built block of a
-  farm, quarry or lumber camp gives its type's `jobs`; ECON.builders while there's building; order JOB_ORDER farm,
-  build, quarry, lumber), `perWorker`/`workSeconds` (a worker's share of `makes` a day; the work a load of ECON.haul
+  farm, quarry or lumber camp gives its type's `jobs`; ECON.builders while there's building; order JOB_ORDER build,
+  farm, quarry, lumber — builders first since round 128o, DA-A2), `perWorker`/`workSeconds` (a worker's share of `makes` a day; the work a load of ECON.haul
   takes), `quarryLoad` (ECON.oreShare of it ore — Good 'ore' added), `grown`/`eaten` (a farm block's grain a day; a
   person eats ECON.eat), `bedsOf` (ECON.startBeds + house blocks' beds), `roomOf` (ECON.townRoom + warehouse blocks'
   storage), `storedOf`/`fits`/`putIn` (goods that take room: log, stone, ore, grain, weapons), `mayArrive`, `refundOf`
@@ -3778,6 +3778,30 @@ at the first Build, updated after it each frame in sim seconds).
 - **The bar** (`FortressBarHooks.raidLines`): the rider's word, the raid as it goes (`raidNowLine`), then the summary
   (`raidOverLines`: what was taken, broken and burned, who fell by name) as a card with Close (`raidSummary`,
   `closeRaid`). Words in fortress/words.ts, linted by raid.test.ts.
+
+## Towns: one plan (round 128m-128o, `onetown`; DESIGN.md section 17)
+
+Every town, generated or the player's, is one `TownSite` (build/site.ts): its grid (`QuadGrid`, Townscaper's or the
+generator's tiles over the town's box, whole regions: settle/records.ts), its `TownPlan` (build/plan.ts: cells,
+structures, levels of 4 m, gates, passages, ramps, pits; the layout layer: roads out, piers, props), its `Town` (what
+stands) and its `gridId` (FNV-1a of the settlement's id, 256 and up). One building-type table, `DEFS`
+(build/types.ts): the player's types and the generator's (huts, farmsteads, landmarks, orchards, pastures) are rows of
+it, so claims, reach, jobs, lanes, damage and repair are the same for all.
+- **Generation** (settle/plan.ts, structures/place.ts `placeDraft`): the generator's draft (structures/plan.ts, its
+  layout) is placed through the plan's own API (`place`, `setGate`, `setPassage`) and dropped; the generator's only
+  extra writes are layout (uses, roads out, piers, props).
+- **The player** (fortress/fortress.ts) edits the same site: the Build bar paints into the town's plan; there is no box,
+  grid, plan or slab of the fortress's own (its 240 m box, `townAt`, `townGates`, the OWNER_FORT/OWNER_STRUCT owners are
+  gone). The fortress's edit state (ghosts, ways, lanes, Inspect's pick) is drawn and claimed with the town through
+  the view host's hook (`TownViewHost.setHook`).
+- **Drawing and claims**: build/view.ts `townPieces` draws the plan; build/claims.ts claims what stands as External
+  intervals owned by the site's `gridId` (a static grid: sim/static-claims.ts).
+- **Jobs** (fortress/economy.ts `jobSlots`, JOB_ORDER): the builders first while there's building, then the farms,
+  the quarry, the lumber camps, the smiths, the recruits. A town's generated farmland is farm structures, so it gives
+  farm jobs like the player's farms.
+- **Open** (BACKLOG): the generator still drafts buildings in its own model before placing them (3 m storeys mapped to
+  levels: `levelsFor`); keepReach (structures/place.ts) is generation's own reach repair beside the fortress's GPU reach
+  (DA-A3 makes them one); two people sims (DA-A6); saves of the plan's edits only and grid-named claims (DA-A5).
 
 ## The window keeps the town (round 128m, `townlab`)
 
