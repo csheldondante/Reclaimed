@@ -39,7 +39,8 @@ const M_AT: u32 = 3u;
 struct RideParams {
   /** x nodes, y destination slots, z units (the slots' high-water mark), w the window's columns across */
   n: vec4<u32>,
-  /** xy the graph's frame in the window (world: the frame's origin there), zw unused */
+  /** xy the graph's frame in the window (world: the frame's origin there), z the time the ride covers (s: the time
+   *  elapsed since it last ran — a frame's at fast-forward, ride.ts), w unused */
   off: vec4<f32>,
   /** per group (24: agents.ts MAX_GROUPS): x its first destination slot, y how many (0: it doesn't ride) */
   group: array<vec4<u32>, 24>,
@@ -231,7 +232,7 @@ fn ride(@builtin(global_invocation_id) id: vec3<u32>) {
       }
     }
     let speed = kindSpeedOf((info >> 9u) & 7u);
-    var left = speed * G.dt;
+    var left = speed * RR.off.z;
     // (on its way: along edges, node to node, as far as its speed takes it this tick)
     for (var hop = 0u; hop < 8u && left > 0.0 && (mode == M_TRIP || mode == M_LAST); hop++) {
       let to = select(nodeXY(st.z), RR.dest[slot].xy, mode == M_LAST);

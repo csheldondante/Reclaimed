@@ -20,6 +20,9 @@ export const TICK_HZ = (() => {
   return v;
 })();
 
+/** a tick (s) — here, not in simulation.ts, so what needs only the tick doesn't load the GPU's modules */
+export const TICK_DT = 1 / TICK_HZ;
+
 /** the flows' substeps a tick (each a 60 Hz step) */
 export const FLOW_SUB = 60 / TICK_HZ;
 

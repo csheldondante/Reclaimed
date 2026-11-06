@@ -27,16 +27,17 @@ Boot: WebGPU, the quality tier, the phone flags, and which scene runs.
 
 GPU agents (the crowd every unit and worker runs on): their kernels' wrappers, jobs, build crews. Installed on a WorldCore by `install.ts`.
 
-- `agents.ts` (1761) — Agents (round 52, docs/AGENTS.md): units that walk the world's surfaces by following shared fields, and fight. API: `AgentTickLog`, `NAV_K`, `MAX_UNITS`, `NFIELDS` +17.
+- `agents.ts` (1832) — Agents (round 52, docs/AGENTS.md): units that walk the world's surfaces by following shared fields, and fight. API: `AgentTickLog`, `NAV_K`, `MAX_UNITS`, `NFIELDS` +17.
 - `buildcrew.ts` (343) — A building crew (round 65, docs/DECISIONS.md: "a mode where it takes the delta of the finished thing you … API: `BuildCrewDef`, `buildOrder`, `BuildCrew`.
 - `crew.ts` (286) — A work crew (round 63, docs/AGENTS.md "Crews"): workers that dig or fell and carry what they get to a … API: `CrewJob`, `CrewDef`, `Crew`.
 - `fieldreader.ts` (134) — A CPU copy of one agents field (round 52, docs/AGENTS.md), for walkers the CPU moves itself (a game's … API: `FieldSample`, `FieldReader`.
-- `install.ts` (17) — Agents in a world (round 52, docs/AGENTS.md): one call, as installPhysics. API: `installAgents`.
-- `ride.ts` (235) — The agents ride the roads on the GPU (round 128i, V128-14; API: `MAX_DESTS`, `RIDE_NEAR`, `RoadRide`.
+- `install.ts` (19) — Agents in a world (round 52, docs/AGENTS.md): one call, as installPhysics. API: `installAgents`.
+- `ride.ts` (242) — The agents ride the roads on the GPU (round 128i, V128-14; API: `MAX_DESTS`, `RIDE_NEAR`, `RoadRide`.
 - `roadgraph.ts` (239) — The agents' road graph (round 128i, V128-14; API: `RoadSeg`, `RoadGraph`, `noGraph`, `nodeCount` +8.
 - `roads.ts` (162) — The agents' road bits from shapes (round 128i, FT-58; API: `RoadShape`, `ROAD_SHAPE_FLOATS`, `packRoadShapes`, `roadInside` +2.
 - `rules.ts` (14) — The walkers' rules as numbers (agents.wgsl's constants, mirrored: keep them in step) — what the agents … API: `AGENT_H`, `STEP`, `DROP`, `DEEP` +1.
 - `scope.ts` (155) — Where the agents' fields are kept, and where they're relaxed (round 104, simscale — the user: "For the … API: `SCOPE_MARGIN`, `Box`, `AgentScope`.
+- `stepplan.ts` (17) — (round 128o, DA-B22) Fast-forward's stride: when the units step in a frame of many ticks (agents.ts, … API: `stepPlan`.
 
 ## src/api/
 
@@ -384,7 +385,7 @@ WebGPU plumbing: device, pipelines and bind-group layouts, CPU timing stats.
 - `framepace.ts` (409) — Round 114 (framepace): the frame pacing probe. API: `clusters`, `PaceSources`, `FramePace`, `startFramePace`.
 - `gpumem.ts` (131) — Round 100 (hitchrec): the GPU memory the page holds, buffer and texture bytes alive — every createBuffer / … API: `GpuMemTrack`.
 - `hitch-hud.ts` (148) — Round 100 (hitchrec): the hitch recorder's HUD — hitches a minute, the worst ten with their causes, the … API: `HitchHud`.
-- `hitch.ts` (521) — Round 100 (hitchrec): the hitch recorder (`?hitch=1`, threshold `?hitchms=20`). API: `Step`, `Hitch`, `HitchOptions`, `HitchRecorder` +3.
+- `hitch.ts` (538) — Round 100 (hitchrec): the hitch recorder (`?hitch=1`, threshold `?hitchms=20`). API: `Step`, `Hitch`, `HitchOptions`, `HitchRecorder` +3.
 - `pagebench.ts` (508) — Round 107 (`pages`, docs/PAGES.md P2.0 M1): what the page-table lookup costs, on the phone. API: `pageBenchMode`, `pageBenchStandalone`, `pageBenchBoot`, `pageBenchDevice` +2.
 - `physbench.ts` (328) — The physics phone bench (round 120; API: `physBench`.
 - `physsummary.ts` (111) — The physics phone bench's rows and its readable summary (round 120; API: `PhysRow`, `Toggle`, `TIMESTAMP_NOTE`, `PairSummary` +2.
@@ -571,7 +572,7 @@ Scenes and the live world: WorldCore (one live world), the level and the menu, t
 - `region-copy.ts` (181) — Round 104 (`slidehitch`): rectangles of u32 words moved between buffers by a compute kernel, one dispatch … API: `Rect`, `RegionCopier`.
 - `region-pool.ts` (67) — The GPU region pool (round 100, `regionstore`; API: `PoolSlot`, `RegionPool`.
 - `streamer.ts` (802) — The streamed world (round 66, BACKLOG Q28): the live world is a window of W × H columns onto land without … API: `settleLoose`, `Streamer`, `REGION`, `STREAM_OLD` +14.
-- `world-core.ts` (673) — Everything a live world needs, independent of what the scene does with it: GPU state, simulation, … API: `Quality`, `Host`, `Scene`, `WorldCore`.
+- `world-core.ts` (684) — Everything a live world needs, independent of what the scene does with it: GPU state, simulation, … API: `Quality`, `Host`, `Scene`, `WorldCore`.
 
 ## src/scenes/level/
 
@@ -639,7 +640,7 @@ Settlements: towns and cities on the atlas, their plans, the view that draws the
 
 WGSL. `common.wgsl` (+ layers, materials) is prepended to every kernel; flow/slope appended to kernels that declare them.
 
-- `agents.wgsl` (477) — ---- agents (round 52, docs/AGENTS.md) ----------------------------------------- The layer units walk on, …
+- `agents.wgsl` (480) — ---- agents (round 52, docs/AGENTS.md) ----------------------------------------- The layer units walk on, …
 - `bodymesh.wgsl` (79) — Bodies' own meshes, skinned (round 120;
 - `chunkver.wgsl` (53) — ---- chunkver.wgsl …
 - `climate.wgsl` (145) — ---- climate: snow, ice, fallen leaves (round 50;
@@ -687,7 +688,7 @@ WGSL. `common.wgsl` (+ layers, materials) is prepended to every kernel; flow/slo
 - `renderfields.wgsl` (240) — ---- render fields (render preparation) --------------------------------------- One packed vec4 per column …
 - `renderprep.wgsl` (325) — ---- visibility / render preparation -------------------------------------- Turns world state into box …
 - `riverheld.wgsl` (69) — ---- riverheld.wgsl (round 84, ?rivers=table) --------------------------------- The atlas's rivers at …
-- `roadride.wgsl` (351) — ---- the agents ride the roads (round 128i, V128-14;
+- `roadride.wgsl` (352) — ---- the agents ride the roads (round 128i, V128-14;
 - `roadstamp.wgsl` (84) — ---- the agents' road bits stamped from shapes (round 128i, FT-58: roads narrower than a cell) …
 - `rockmesh.wgsl` (302) — ---- the rigid rock's mesh (round 95, render/rockmesh.ts;
 - `sediment.wgsl` (992) — ---- sediment: the loose ground in the layers ---------------------------------- (round 11 drifts → round …
@@ -712,7 +713,7 @@ WGSL. `common.wgsl` (+ layers, materials) is prepended to every kernel; flow/slo
 - `tiles.wgsl` (417) — ---- the world-anchored tile cache (round 103, ?tiles=1;
 - `townstamp.wgsl` (127) — ---- the town's columns (round 65, build/town.ts) --------------------------- The town is real matter: its …
 - `treequery.wgsl` (107) — ---- treequery.wgsl …
-- `units.wgsl` (868) — ---- agents: the units (round 52, docs/AGENTS.md) ------------------------------ One thread a unit …
+- `units.wgsl` (913) — ---- agents: the units (round 52, docs/AGENTS.md) ------------------------------ One thread a unit …
 - `vegplan.wgsl` (64) — ---- vegetation layout (shared) ------------------------------------------- Where trees and shrubs stand …
 - `vegprep.wgsl` (409) — ---- vegetation render preparation ------------------------------------------ Emits instances for plants …
 - `water_depth.wgsl` (96) — ---- water transport: depth pass --------------------------------------- Applies flux, rain, springs and …
@@ -749,19 +750,19 @@ GPU world buffers (the WorldGpu contracts), the systems' wrappers, the fixed-ste
 - `cull.ts` (460) — Dispatching only where the world is awake (on by default, ?simcull=0 off; API: `SIM_CULL`, `LIVE`, `TILES_BINDING`, `NEAR` +13.
 - `edit-ops.ts` (89) — The edit pass's ops (edit.wgsl: keep the two the same) and how an Edit event carries one (round 83: one … API: `OP`, `BLOW_TAG`, `STROKE_START`, `editOpOf` +5.
 - `external.ts` (599) — External intervals (round 99, `?meshinst=1`; API: `MESHINST`, `OwnerId`, `OWNER_ROCK`, `ExternalCol` +12.
-- `flow.ts` (83) — The simulation's rates (perfopt, DECISIONS round 83). API: `TICK_HZ`, `FLOW_SUB`, `Flow`, `flowN` +4.
+- `flow.ts` (86) — The simulation's rates (perfopt, DECISIONS round 83). API: `TICK_HZ`, `TICK_DT`, `FLOW_SUB`, `Flow` +5.
 - `globals.ts` (285) — CPU mirror of `struct Globals` in src/shaders/common.wgsl. API: `TUNE_WORD`, `GLOBALS_HEAD_BYTES`, `GLOBALS_BYTES`, `globalsBytes` +13.
 - `lava.ts` (194) — Lava (docs/PHYSICS.md "Lava"; API: `MAX_VENTS`, `Vent`, `LavaSystem`.
 - `pages.ts` (391) — Round 105 (`ringwin`): the window on a ring — a world cell keeps its place while the window slides over … API: `COLUMN_BUFS`, `COLS_PAGE`, `PAGE_COLS`, `MAX_PAGES` +3.
 - `pagewrite.ts` (58) — (round 128o, DA-B28) Chunk pages written into the window's layers on the GPU, compared slot by slot before … API: `PageWrite`.
 - `particles.ts` (254) — GPU particle system: emission from world state, CPU-requested bursts, and integration in the shared wind … API: `enum`, `Burst`, `ParticleSystem`.
 - `settlehold.ts` (66) — (round 128o, DA-B20; DESIGN.md §24 — no timed read back in play) The water's settling hold, on the GPU: a … API: `HOLD_S`, `SettleHold`.
-- `simulation.ts` (206) — Fixed-timestep orchestration of the simulation systems (design doc §24). API: `TICK_DT`, `Simulation`, `TICK_HZ`.
+- `simulation.ts` (217) — Fixed-timestep orchestration of the simulation systems (design doc §24). API: `Simulation`, `TICK_HZ`, `TICK_DT`.
 - `sleep.ts` (315) — Sleep and wake (round 80, BACKLOG P3; API: `SLEEP_MORE`, `settleLand`, `WAKE_NEAR`, `settleTol` +1.
 - `snapshot.ts` (161) — (round 112, testspeed) A warmed world, saved and put back: every buffer and texture the WorldGpu holds … API: `WorldSnapshot`, `captureWorld`, `restoreWorld`, `encodeSnapshot` +3.
 - `static-claims.ts` (475) — Static grids' claims written with the land (round 128j, M128-8 widened; API: `StaticThing`, `GridPlace`, `StaticClaimsIO`, `StaticGrid` +2.
-- `system.ts` (31) — Simulation system interface (design doc §9, §23, §24). API: `SimSystem`, `dispatch`.
-- `systems.ts` (1131) — First (simplest) implementations of each simulation system. API: `riverHeld`, `PrepWorld`, `SurfaceSystem`, `StructureSystem` +25.
+- `system.ts` (37) — Simulation system interface (design doc §9, §23, §24). API: `SimSystem`, `dispatch`.
+- `systems.ts` (1133) — First (simplest) implementations of each simulation system. API: `riverHeld`, `PrepWorld`, `SurfaceSystem`, `StructureSystem` +25.
 - `tickclock.ts` (130) — Round 114 (framepace, FP4): how many sim ticks a rendered frame runs. API: `TickMode`, `TickClock`, `tickModeFrom`.
 - `tiers.ts` (277) — The sims' tiers (round 108, simtiers; API: `TIER_CHANNEL`, `BAKE_GAIN`, `INTERACT_MIN_S`, `INTERACT_MAX_S` +2.
 - `translate.ts` (87) — Moving what lives in window coordinates when the streamed window slides (round 80; API: `Translator`.
@@ -855,9 +856,9 @@ Stories: dialog play, hero runs, the atlas run.
 
 - `core.wgsl` (92) — ---- traits: the core's bookkeeping (LW1), around the game's modules …
 - `install.ts` (21) — The trait system on a world's agents (LW1): one call, as installAgents — its system ticked just before the … API: `installTraits`.
-- `prelude.wgsl` (156) — ---- traits: the prelude every trait kernel shares (LW1;
+- `prelude.wgsl` (157) — ---- traits: the prelude every trait kernel shares (LW1;
 - `registry.ts` (88) — The trait modules' registry (LW1; API: `TABLE_WORDS`, `Registered`, `TraitRegistry`, `packTable`.
-- `system.ts` (361) — The trait system on the GPU agents (LW1; API: `MAX_EFFECTS`, `TraitSystemOpts`, `TraitSystem`.
+- `system.ts` (369) — The trait system on the GPU agents (LW1; API: `MAX_EFFECTS`, `TraitSystemOpts`, `TraitSystem`.
 
 ## src/tune/
 

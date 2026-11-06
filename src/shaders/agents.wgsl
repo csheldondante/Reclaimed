@@ -67,6 +67,9 @@ struct AgentParams {
   regroups: array<vec4<u32>, 16>,
   // (round 128o, DA-B2a) per field: its arrival radius and its leaving radius (field f: floats 2f, 2f + 1; 0: off)
   arrive: array<vec4<f32>, 7>,
+  // (round 128o, DA-B22) x the units' step's dt (s): a tick's, or at fast-forward the ticks since the last step's
+  // (agents.ts stepPlan) — what units.wgsl integrates by in place of G.dt
+  step: vec4<f32>,
 };
 fn arriveR(f: u32) -> vec2<f32> {
   let i = f * 2u;

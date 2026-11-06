@@ -10,6 +10,12 @@ export interface SimSystem {
   readonly name: string;
   /** Run every `period` ticks (1 = every tick). */
   readonly period: number;
+  /**
+   * (round 128o, DA-B22) Render-only: what it keeps is only drawn, so it runs once a frame — on the frame's last tick —
+   * however many ticks the frame runs (fast-forward: DESIGN §12), at one tick's step (its look is the wall's, not the
+   * sim's speed). Simulation.frameTicks / tickOfFrame say where a tick lies in its frame.
+   */
+  readonly perFrame?: boolean;
   encode(enc: GPUCommandEncoder, tick: number): void;
 }
 

@@ -733,6 +733,8 @@ export class ClimateSystem implements SimSystem {
 export class SwaySystem implements SimSystem {
   readonly name = 'sway';
   readonly period = 1;
+  // (round 128o, DA-B22: render-only — once a frame, at a tick's step, whatever the speed)
+  readonly perFrame = true;
   private s;
   constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
     this.s = kernel(device, world, 'sway', swayWgsl, { 3: 'read', 4: 'rw', 15: 'tex' }, { 3: world.surface, 4: world.bend, 15: world.windFieldView });

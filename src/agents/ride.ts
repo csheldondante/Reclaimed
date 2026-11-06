@@ -8,6 +8,7 @@ import { makeBindGroup, makeCompute, type ComputeKernel } from '../gpu/pipeline'
 import commonWgsl from '../shaders/common.wgsl?raw';
 import roadrideWgsl from '../shaders/roadride.wgsl?raw';
 import { ROW_H } from '../world/lattice';
+import { TICK_DT } from '../sim/flow';
 import { MAX_NODES, nearestNode, nodeCount, noGraph, type RoadGraph } from './roadgraph';
 
 type P = readonly [number, number];
@@ -163,6 +164,12 @@ export class RoadRide {
     return [p[0] + this.off[0], p[1] + this.off[1] * ROW_H];
   }
 
+  /**
+   * (round 128o, DA-B22) The time the ride covers (s): trips advance by the time elapsed since the ride last ran — a
+   * frame's ticks at fast-forward, where it runs once a frame (agents.ts) — not by a tick's.
+   */
+  elapsed = TICK_DT;
+
   private writeParams(units: number): number {
     const b = new ArrayBuffer(RP_BYTES);
     const u = new Uint32Array(b);
@@ -185,7 +192,7 @@ export class RoadRide {
       }
     });
     u.set([this.nodes, slots, units, this.w], 0);
-    f.set([this.off[0], this.off[1] * ROW_H, 0, 0], 4);
+    f.set([this.off[0], this.off[1] * ROW_H, this.elapsed, 0], 4);
     this.device.queue.writeBuffer(this.params, 0, b);
     return slots;
   }

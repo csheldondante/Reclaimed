@@ -134,7 +134,7 @@ export const TRANSFERS: TransferSite[] = [
   { file: 'units/agent-units.ts', fn: 'AgentUnits.update', via: 'agents/agents.ts#Agents.sync', what: 'events and units', why: 'combat and the fortress\'s people', rate: 'frame', play: 'yes', violates: F24, backlog: 'DA-B2' },
   { file: 'levels/traitstation.ts', fn: 'TraitStation.keepSynced', via: 'agents/agents.ts#Agents.sync', what: 'events and units', why: 'the trait station level', rate: 'timed', every: '250 ms', play: 'no', violates: T24 + ' (trait station)', backlog: 'DA-B2' },
   { file: 'scenes/level/town-tools.ts', fn: 'tick', via: 'agents/agents.ts#Agents.sync', what: 'events and units', why: 'the editor\'s build crew loop', rate: 'timed', every: 'each tick of the crew loop', play: 'no', violates: T24 + ' (editor town tool)', backlog: 'DA-B2' },
-  { file: 'agents/agents.ts', fn: 'Agents.readRaw', what: 'all of nav or dist', why: 'tests', rate: 'demand', play: 'no' },
+  { file: 'agents/agents.ts', fn: 'Agents.readRaw', what: 'all of nav, dist or the units', why: 'tests (round 128o, DA-B22: the units for the step bound, scripts/lab/stepbound.mjs)', rate: 'demand', play: 'no' },
   { file: 'agents/agents.ts', fn: 'Agents.afterSubmit', n: 2, what: 'the units\' bounding box, 16 B (every 8 agent ticks); the probe, 64 B a tick (?agentprof=1)', why: 'the agents\' scope follows the units', rate: 'timed', every: '8 agent ticks', play: 'yes', violates: T24, backlog: 'DA-B2' },
 
   // ---- town ----
