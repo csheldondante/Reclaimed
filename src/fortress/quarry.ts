@@ -9,7 +9,7 @@
 // every column is down to its goal: its levels go into Fortress.dug, the pit's ground is woken so its walls go
 // through the stability check (they may slump: the miners dig the spill out again), and the next tier starts.
 //
-// The miners dig through the world API's terrain take (exact, one column, a quiet edit: life.ts io.dig); a column the
+// The miners dig through the world API's terrain take (exact, one column, a quiet edit: crowd.ts io.dig); a column the
 // take can't lower (a claim, the window's floor) is left. The tops are the surface as last read (io.ground), less
 // what this module has taken since (the read lags a frame or more). The heights here are the fortress's z (window z
 // plus Fortress.zShift: they keep through a slide of the window in z).

@@ -12,7 +12,7 @@
 import { ColumnGrid, type WorldDims } from '../world/layout';
 import type { MapData } from '../world/mapgen';
 import { cellAt } from '../world/lattice';
-import type { LiveSpot } from '../settle/life';
+import type { LiveSpot } from '../settle/live';
 
 const MAGIC = 0x544c4352; // 'RCLT'
 /** (2, round 128m onetown: the town's site — its one plan — and the window's oz in the header) */

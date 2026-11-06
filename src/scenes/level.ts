@@ -70,7 +70,7 @@ import { ShipsView } from '../settle/shipsview';
 import { Fortress } from '../fortress/fortress';
 import { FortressBar } from '../fortress/ui';
 import type { FortressFollow } from '../fortress/follow';
-import { FortressLife } from '../fortress/life';
+import { FortressCrowd } from '../fortress/crowd';
 import type { FortressRaid } from '../fortress/raiders';
 import { StaticClaims } from '../sim/static-claims';
 import type { GridStyle } from '../api/contracts/settlement';
@@ -250,7 +250,7 @@ export class LevelScene implements Scene {
   fortress?: Fortress;
   fortressBar?: FortressBar;
   /** (fortress slice 1, milestone 2) its builders, from the first Build */
-  fortressLife?: FortressLife;
+  fortressCrowd?: FortressCrowd;
   /** (round 128l, m4) the attack wave on the fortress (fortress/raiders.ts), from the first Build */
   fortressRaid?: FortressRaid;
   fortressBarAt = 0;
@@ -700,7 +700,7 @@ export class LevelScene implements Scene {
     this.tunePanel?.dispose();
     this.fortressBar?.dispose();
     this.fortressRaid?.dispose();
-    this.fortressLife?.dispose();
+    this.fortressCrowd?.dispose();
     this.statics?.dispose();
     this.bugReport?.dispose();
     this.stationsBar?.dispose();

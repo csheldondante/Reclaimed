@@ -2,7 +2,7 @@
 // from the heap drowned 7 of 8 builders — the agents' fields cost a wet step +3, deep water no more, so the way led
 // through it. Here a house is planned across deep water from the heap (the shortest crossing found from the water read
 // back), Build pressed, and the builders watched: none may drown; either they reach the site by a ford or a bridge and
-// build it, or the site is reported as unreachable (FortressLife.unreachable).
+// build it, or the site is reported as unreachable (FortressCrowd.unreachable).
 //   node scripts/fortressford.mjs [--out C:/Projects/shots88/fortress] [--secs 120]
 import { run, sleep } from './lib/runner.mjs';
 
@@ -106,7 +106,7 @@ await run({ name: 'fortressford', kind: 'behaviour', size: '412x915', dpr: 1, ec
   let shot = false;
   for (;;) {
     await sleep(2000);
-    const s = await page.evaluate(() => ({ p: window.reclaimed.fortress.progress(), d: window.__ford.deaths.length, u: window.reclaimed.fortressLife()?.unreachable?.() ?? null, awake: window.reclaimed.core.sleep.awake }));
+    const s = await page.evaluate(() => ({ p: window.reclaimed.fortress.progress(), d: window.__ford.deaths.length, u: window.reclaimed.fortressCrowd()?.unreachable?.() ?? null, awake: window.reclaimed.core.sleep.awake }));
     if (!shot && OUT && Date.now() - t0 > 20000) {
       shot = true;
       await page.screenshot({ path: `${OUT}/path-ford.png` });
@@ -114,7 +114,7 @@ await run({ name: 'fortressford', kind: 'behaviour', size: '412x915', dpr: 1, ec
     if (s.p.built === s.p.total || (s.u && s.u.length) || Date.now() - t0 > secs * 1000) break;
   }
   const res = await page.evaluate(() => {
-    const L = window.reclaimed.fortressLife();
+    const L = window.reclaimed.fortressCrowd();
     return { progress: window.reclaimed.fortress.progress(), deaths: window.__ford.deaths, stats: L?.stats, unreachable: L?.unreachable?.() ?? null, bar: document.querySelector('.fort-bar')?.innerText ?? '' };
   });
   if (OUT) await page.screenshot({ path: `${OUT}/path-ford-end.png` });

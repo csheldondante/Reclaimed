@@ -7,7 +7,7 @@
 // The window never slides: a recipe's window is the world (origin 0, oz 0); a fixture's is the captured window's.
 import type { V2 } from '../api/contracts/units';
 import type { FortressTownRec, FortressTownSource, FortressWindow } from '../fortress/host';
-import type { LiveSpot } from '../settle/life';
+import type { LiveSpot } from '../settle/live';
 import { TownSite, type SiteData } from '../build/site';
 import { ROW_H } from '../world/lattice';
 import { keepHeld } from '../scenes/streamer/keep';

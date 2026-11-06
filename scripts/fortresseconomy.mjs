@@ -130,7 +130,7 @@ await run({ name: 'fortresseconomy', kind: 'behaviour', size: '412x915', dpr: 1,
       const now = m.quarry.map((c) => Rc.api.terrain.groundAt(...f.centre(c)) ?? NaN);
       m.ground0 ??= now;
       const depth = now.map((z, i) => +(m.ground0[i] - z).toFixed(2));
-      const life = Rc.fortressLife();
+      const life = Rc.fortressCrowd();
       return {
         depth,
         // (window coordinates move when the window slides: from the cells, now)
@@ -246,7 +246,7 @@ await run({ name: 'fortresseconomy', kind: 'behaviour', size: '412x915', dpr: 1,
   console.log('people', JSON.stringify(await page.evaluate(async () => {
     const Rc = window.reclaimed;
     const f = Rc.fortress;
-    const life = Rc.fortressLife();
+    const life = Rc.fortressCrowd();
     const q = f.centre(window.__m3.quarry[0]);
     const home = Rc.units.agents.reader(3);
     await home.refresh();

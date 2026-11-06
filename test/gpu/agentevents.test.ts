@@ -7,7 +7,9 @@ import { tinyMap } from '../support/tinymap';
 import { testGpu, type TestGpu } from './dawn';
 import { tinyWorld } from './world';
 import { installAgents } from '../../src/agents/install';
-import { Agents, type AgentEvent } from '../../src/agents/agents';
+import { Agents, ROAD_FIELD, type AgentEvent } from '../../src/agents/agents';
+import { graphOf } from '../../src/agents/roadgraph';
+import { packRoadShapes } from '../../src/agents/roads';
 import { installTraits } from '../../src/traits/install';
 import { registerSlice } from '../../src/game/traits/modules';
 
@@ -115,6 +117,72 @@ test('arrived: each unit told once when it comes within its field\'s radius, not
   agents.seed(0, [{ x: 16, y: 20 }]);
   tick(600);
   expect((await agents.sync()).events.filter((e) => e.type === 'arrived')).toEqual([]);
+  expect(g.takeErrors()).toEqual([]);
+});
+
+test("arrived on a ride: each rider told once, standing at its group's goal; not for a group it was moved to that tick", async () => {
+  const { agents, tick } = await world();
+  // (a road along y = 27 from x 8 to 56: two pieces meeting at x 32)
+  const a: [number, number] = [8, 27];
+  const m: [number, number] = [32, 27];
+  const b: [number, number] = [56, 27];
+  agents.setRoads(packRoadShapes([{ a, b, half: 1.2 }]), 0, 0);
+  agents.setRoadGraph(graphOf([{ a, b: m, cell: 0, cost: 1 }, { a: m, b, cell: 1, cost: 1 }]), 0, 0);
+  const G = 9;
+  const ids = agents.spawn(4, 14, 27, { group: G, spread: 0.5 });
+  expect(agents.ride(G, [[52, 27]])).toBe(true);
+  agents.follow(G, ROAD_FIELD);
+  const got: (AgentEvent & { type: 'arrived' })[] = [];
+  for (let k = 0; k < 80 && new Set(got.map((e) => e.id)).size < ids.length; k++) {
+    tick(30);
+    for (const e of (await agents.sync()).events) if (e.type === 'arrived') got.push(e);
+  }
+  expect(new Set(got.map((e) => e.id))).toEqual(new Set(ids));
+  // (once each, the ride's: its group, by the goal)
+  expect(got.length).toBe(ids.length);
+  for (const e of got) {
+    expect(e.ride).toBe(G);
+    expect(e.field).toBeUndefined();
+    expect(Math.hypot(e.x - 52, e.y - 27)).toBeLessThan(2);
+  }
+  // (standing there: nothing more)
+  tick(120);
+  expect((await agents.sync()).events.filter((e) => e.type === 'arrived')).toEqual([]);
+  // (moved to another riding group whose goal is elsewhere: no arrival for it until they stand at its goal)
+  const H = 10;
+  expect(agents.ride(H, [[12, 27]])).toBe(true);
+  agents.follow(H, ROAD_FIELD);
+  for (const id of ids) agents.regroup(id, H);
+  tick(2);
+  expect((await agents.sync()).events.filter((e) => e.type === 'arrived')).toEqual([]);
+  const back: (AgentEvent & { type: 'arrived' })[] = [];
+  for (let k = 0; k < 80 && back.length < ids.length; k++) {
+    tick(30);
+    for (const e of (await agents.sync()).events) if (e.type === 'arrived') back.push(e);
+  }
+  expect(back.map((e) => e.ride)).toEqual(ids.map(() => H));
+  for (const e of back) expect(Math.hypot(e.x - 12, e.y - 27)).toBeLessThan(2);
+  expect(g.takeErrors()).toEqual([]);
+});
+
+test('arrived on a ride from where it stands: sent to a goal it is already at (off the roads), it is told', async () => {
+  const { agents, tick } = await world();
+  const a: [number, number] = [8, 27];
+  const b: [number, number] = [56, 27];
+  agents.setRoads(packRoadShapes([{ a, b, half: 1.2 }]), 0, 0);
+  agents.setRoadGraph(graphOf([{ a, b, cell: 0, cost: 1 }]), 0, 0);
+  const G = 9;
+  // (2.4 m off the road, at the goal: the field onto the roads would take it away first)
+  const ids = agents.spawn(1, 12.3, 29.4, { group: G, spread: 0 });
+  expect(agents.ride(G, [[12, 29]])).toBe(true);
+  agents.follow(G, ROAD_FIELD);
+  const got: AgentEvent[] = [];
+  for (let k = 0; k < 6 && !got.length; k++) {
+    tick(10);
+    got.push(...(await agents.sync()).events.filter((e) => e.type === 'arrived'));
+  }
+  expect(got.map((e) => e.type === 'arrived' && e.ride)).toEqual([G]);
+  expect(got[0].type === 'arrived' && got[0].id).toBe(ids[0]);
   expect(g.takeErrors()).toEqual([]);
 });
 

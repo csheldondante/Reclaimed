@@ -484,4 +484,79 @@ describe('one crowd, on events', () => {
     expect(life.tick(0.1).filter((x) => 'newcomer' in x)).toHaveLength(0);
     expect(() => life.arrive(4)).toThrow(/no one asked for/);
   });
+
+  it('raiders about: the people go home and in (a load given back), nobody new comes; gone: back to their day', () => {
+    const t = town([{ key: 'build', kind: 'build', structure: null, count: 4 }]);
+    t.more.beds = 5;
+    t.stores.grain = 5;
+    const life = new TownLife(t.work);
+    life.add(1);
+    life.tick(0.1);
+    life.on(arrived(1, 'stores'));
+    expect(life.phaseOf(1)).toBe('toSite');
+    life.on({ type: 'shelter', on: true });
+    let o = life.tick(0.1);
+    expect(t.log).toEqual(['load 7', 'giveBack 7']);
+    expect(o).toContainEqual({ unit: 1, carry: null });
+    expect(goes(o, 1).at(-1)).toBe('home');
+    // (no newcomer while raiders are about)
+    life.on({ type: 'room' });
+    life.on(arrived(1, 'home'));
+    expect(life.inside()).toEqual([1]);
+    o = life.tick(5);
+    expect(o.filter((x) => 'newcomer' in x)).toHaveLength(0);
+    expect(life.phaseOf(1)).toBe('inside');
+    life.on({ type: 'shelter', on: false });
+    expect(goes(life.tick(0.1), 1).at(-1)).toBe('stores');
+  });
+
+  it("a unit taken out of its round is left be until it's given back: a soldier musters again", () => {
+    const t = town([]);
+    const life = new TownLife(t.work);
+    life.addSoldier(5);
+    life.tick(0.1);
+    life.away(5);
+    // (its arrivals aren't the routine's while it's away)
+    life.on(arrived(5, 'barracks'));
+    expect(life.phaseOf(5)).toBe('idle');
+    expect(goes(life.tick(10), 5)).toEqual([]);
+    life.back(5);
+    expect(goes(life.tick(0.1), 5)).toEqual(['barracks']);
+  });
+
+  it('a dig with nothing left where it stood: to the next spot; a newcomer turned away lets the next room event ask again', () => {
+    const t = town([{ key: 's2', kind: 'quarry', structure: 2, count: 1 }]);
+    t.more.beds = 5;
+    t.stores.grain = 5;
+    const life = new TownLife(t.work);
+    life.add(1);
+    life.tick(0.1);
+    life.on(arrived(1, 'quarry'));
+    life.on({ type: 'dug', unit: 1, amount: 0 });
+    expect(life.phaseOf(1)).toBe('toWork');
+    life.on({ type: 'room' });
+    expect(life.tick(0.1).filter((x) => 'newcomer' in x)).toHaveLength(1);
+    life.turnedAway();
+    life.on({ type: 'room' });
+    expect(life.tick(0.1).filter((x) => 'newcomer' in x)).toHaveLength(1);
+  });
+
+  it("a person with a trade of its own keeps it (the job board doesn't move it); its slot opening sends it out", () => {
+    const slots: JobSlot[] = [{ key: 'farmer', kind: 'farm', structure: 1, count: 1 }];
+    const t = town(slots);
+    const life = new TownLife(t.work);
+    life.add(1, 'builder');
+    life.add(2, 'farmer');
+    life.add(3);
+    life.tick(0.1);
+    // (no builders' slot yet: the builder stays home; the farmer farms; the one without a trade gets nothing — the
+    // farmer's one place is the farmer's)
+    expect(life.jobOf(1)).toBe('builder');
+    expect(life.phaseOf(1)).toBe('home');
+    expect(life.phaseOf(2)).toBe('toWork');
+    expect(life.jobOf(3)).toBeNull();
+    slots.unshift({ key: 'builder', kind: 'build', structure: null, count: 1 });
+    expect(goes(life.tick(0.1), 1)).toEqual(['stores']);
+    expect(life.jobOf(2)).toBe('farmer');
+  });
 });

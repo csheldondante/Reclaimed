@@ -19405,6 +19405,98 @@ town's answers behind TownWork, nothing polled, no give-up timers.
   - The fourth word is unused (two vec2 a chunk keep the indexing simple): 4 B a chunk.
   - The toggle diff is noisy on a shared desktop GPU.
 
+## 2026-11-06 — round 128o (`onetown`, DA-A6 part 4): the fortress's people on TownLife; FortressLife deleted
+
+Design note: the wiring is fortress/crowd.ts FortressCrowd — the units' Routine for the fortress's units. Events in:
+the agents' `arrived` (AgentUnits hands a working unit's to its routine; it's the unit's own if it's on the field its
+leg's group follows, or its group's ride), deaths (Routine.drop on a dead unit), the trees felled (the world's answer),
+the town's own (FortressWork.drain), raiders about (shelter), lost events (Routine.lost: TownLife throws). Orders out:
+a leg -> a group (field, or ride when every goal of the leg is by the roads), standing -> the standing or the working
+group by the phase, carry -> the load drawn, dig/fell -> a timed task answered as an event, newcomer -> stood up where
+the town's people come in (the reach's answer), become -> AgentUnits.restyle (a guard where it stood, the same id).
+- The engine's part (riskiest first, a Dawn test each): an arrival on a ride — units.wgsl emits `arrived` with
+  `other` RIDE_ARRIVED + the group when a unit stands at its ride's goal (steer STAND, set for its group: not one it was
+  moved to that tick); agents.ts decodes `{ type: 'arrived', ride }`. A rider sent to a goal it already stands at, off
+  the roads, stands there and is told (roadride.wgsl: off a trip within ON_EDGE of a goal -> M_AT): it stood there off
+  the network, never told (failing test first). `agents.rearm(id)` lets a unit's latch go (a miner whose spot gave out
+  is told again wherever it stands: TownLife's `again`).
+- Two ride dead zones found by the lab (the recipes site: smiths stood 2 m from their door's node, never moving, the
+  rideState read back: mode OFF, steer 0): a trip started only within ON_EDGE (1.6 m) of an edge while the network's
+  plane marks a column whose middle is within NET_HALF (1.2) — a unit on such a column's far side was on the network
+  for the field onto the roads (its distance 0: it stood) but too far for a trip. Now NET_REACH = NET_HALF + a column's
+  corner (0.578); and off the network but within RR_NEAR (= ride.ts RIDE_NEAR, 6 m) of an edge a trip starts too, its
+  first leg straight to the edge's end — as the last leg is straight from the network to the goal. Recipes, 180 sim s:
+  forged 8-10 / trained 0-2 (3 of 4 runs failed) -> forged 17-18 / trained 4 (4 of 4); FortressLife: 15 / 1-4.
+- A trip's height (units.wgsl): up a step at once, down one eased (it rode up to 0.3 m under its floor: unitsonground).
+- TownLife additions: `away`/`back` (the defence posts a soldier; after the wave it musters), the `shelter` event
+  (home and in, a load or a batch given back, no newcomers), `turnedAway` (no spot to come in from: the next `room`
+  asks again), `dug` 0 / `felled` 0 -> to the next spot with `again`, `holding`, `jobSlot`, `cartPile`, `inside`. The
+  job board's slots are asked once a tick; FortressWork's sites memoised until the fortress changes (onChange) — the
+  first wiring asked the build order per person per call: frame CPU at 16x 1.7 -> 1.0 ms p50.
+- FortressWork: the work spots from the crowd (a camp's trees, the pit's spots), a reap's ECON.reapSec, Erase's
+  refunds, the stats the lab reads (trips, built, starved, hauled, piled, carted), spotReady (the trees found, the
+  pit's spots changed). R, R4 moved to units/agent-units.ts (settle/life.ts R, fortress/life.ts R4).
+- Measured (lab, desktop, `fortressperf` town 16x with work): frame CPU p50/p95 build 1.0-1.1/1.5-1.6 ms, work
+  0.8-0.9/1.2-1.3 ms; FortressLife 1.0/1.5 and 1.1/2.0. The units' sync still reads every unit (919 KB/s here): the
+  routine reads no positions now; the CPU combat (AgentUnits.think), the pick and the follow card still do (DA-B2b's
+  watched sync is the next step for DA-B22).
+- Gates: typecheck; unit + GPU 131 files, 983 passed; lab: fortressallbuilt ok (708/708 at 271-362 s, 3 runs; was
+  ~301-600), fortressharvest ok, fortressrecipes ok (onWall 17, forged 18, trained 4), fortresscarts ok, fortressraid
+  ok, unitsonground ok, fortressfollow ok, fortresslanes ok, quarry (r 15) ok, fortressoutside walled ok, town 1 of 2
+  (as before: house2/farm3 not reached for 183 s — B's). fortressrider and fortressrefuse fail on FortressLife too
+  (rider: no word in 90 s; refuse: the tap's CPU 8 ms over 1) — not this change's.
+
+## 2026-11-06 — round 128o (`onetown`, DA-A6 part 5): a generated settlement's people on TownLife; SettlementLife deleted
+
+Design note: a settlement in play keeps its own world (its spots, its heaps of real ground, the house going up storey by
+storey, its camp's raids, its growth field) and hands its people's decisions to the one crowd. settle/work.ts SettleWork
+is its TownWork: one slot a trade (builders while a house is to build and a heap to fetch from; farmers while there
+are fields; miners while a mine may be worked; woodcutters), the heaps as the town's stone and logs (a builder's load
+taken off the ledger and a heap's ground; a haul counted in and its ground put on its heap), the house's storeys,
+the four who move in when one is done (newcomers within the budget). settle/crowd.ts SettlementCrowd wires it as
+FortressCrowd does (legs -> R groups and F fields, arrivals radii as SettlementLife judged "there"; takes and fellings
+timed and answered as events; a raid is TownLife's `shelter`). Its people keep their record's trade: TownLife's
+`trade` — a person with a job of its own the job board doesn't move (the board fills only what the trades leave), and
+its slot opening or closing starts it over (a tested piece).
+- settle/live.ts holds the shapes the settlements hand it (LiveSpot, LiveSite, LifeIO, RaidOutcome) and the trades'
+  rounds (ROUTINE, routineOf), moved from settle/life.ts.
+- The heaps: seeded each (the nearest one a haul's or a builder's goal), not their middle — SettlementLife's middle
+  lay between them on whatever stood there.
+- GEN_VERSION: town/ and the settlements' wiring (settle/crowd.ts, settle/work.ts) are inside the land generator's
+  boundary (scripts/lib/gen-sources.mjs: the simulation, which a region's generation calls into but whose rules make
+  no land) — a change to the routine no longer invalidates saved regions (DA-A9's kind). The `town` fixture recaptured
+  once (the boundary moved the hash).
+- New check scripts/settlecrowd.mjs (the atlas at the start town, no fortress: the settlement in view comes to life;
+  90 sim s at 8x; a raid). Measured against SettlementLife on the same check: grain 144 -> 177-182 in 94 s (SettlementLife
+  144 -> 150), felled 1.6 both, quarried 0 both, house storeys 0 both: its builders and two haulers stand short of the
+  heaps and the house's door in both (B's reach: the settlement's places are not checked against the agents'
+  rules); 13-15 people stay `toWork` in both. In the raid every person goes home and in (shelter/inside), as
+  SettlementLife's did (its `flee`).
+- Gates: typecheck; unit + GPU 131 files, 984 passed (+1 expected fail: DA-A10's, below); scripts/settlecrowd.mjs ok;
+  lab fortressallbuilt ok on the recaptured fixture (the other lab gates ran green on part 4's commit, the fortress's
+  code unchanged since but for TownLife's trades, which a fortress has none of; the rest queued behind main's
+  tilegate on the GPU lease).
+
+## 2026-11-06 — round 128o (`onetown`, DA-A10 measured first): roads over steps a walker can't take
+
+- A failing-first test (test/unit/lanesteps.test.ts, `test.fails`): on the user's start town 16 of its 340 lane metres
+  rise or fall more than a walker's STEP (1.1 m) within a metre, the worst 3.3 m — terraces' edges inside cells (the
+  ways cross a cell's side only where a walker steps: groundSteps). The trips are placed over them (units.wgsl's trip
+  height: up a step at once, down eased).
+- Design note (for the coordinator and the user before code: DESIGN section 12, decided 2026-11-05: "Building roads
+  costs materials and shapes the terrain. Builders build a road like any structure. It conforms to the land where that
+  makes sense, and otherwise changes it: grading, cuts and fills, bridges, ramps, switchbacks and tunnels"):
+  1. A pure grade of each lane (build/grade.ts): its ground profile along it, clamped to a road's steepest grade both
+     ways (a cut where it's high, a fill where it's low, a lane's width across), and the columns' cut and fill.
+  2. The grade is the road's own works in the plan: blocks on the builders' list like any structure's (a fill costs
+     stone; a cut gives it), built by the builders in the build order; built, the world's terrain is edited (the world
+     API's quiet take and put) and the fortress's reach and the agents' nav see the graded land.
+  3. Then the trip's tolerance goes (a trip rides only what a walker can take) and this test passes.
+  Questions: does a road cost the builders' time and stone (as decided), and from the first Build — or is the start
+  town's own road network graded once when its plan is made (generation), and only the player's new roads built? The
+  steepest grade a road may have (a look: 1 in 3?). Where a grade needs more than a few metres of cut or fill: stairs (a
+  path kind, as the wall's stairs) or a switchback?
+
 ## 2026-11-06 — round 128o (`phonefix`, DA-B28): the field mesh rebuilt from the chunks' versions, design note for main's review
 
 - Why: on the user's Pixel 9a, `fieldmesh-hash` is the largest GPU pass after the draw (6.3 ms mean, 129 ms max a

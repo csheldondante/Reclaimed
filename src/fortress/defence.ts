@@ -10,12 +10,12 @@
 //    straight flight of ARROW.speed; it hits if the raider is still within ARROW.hitR of where it was aimed when it lands
 //    (a raider bashing a gate stands still; one running mostly isn't). What's drawn is a chip of wood thrown on the
 //    same lob (the particles), dust where it lands on someone.
-//  - After the wave every soldier goes back to its round (FortressLife.backToRoutine).
+//  - After the wave every soldier goes back to its round (FortressCrowd.backToRoutine).
 import type { UnitId, UnitView, V2 } from '../api/contracts/units';
 import type { FxName } from '../api/fx';
-import { R } from '../settle/life';
+import { R } from '../units/agent-units';
 import { G, type AgentUnits, type UnitRec } from '../units/agent-units';
-import type { FortressLife } from './life';
+import type { FortressCrowd } from './crowd';
 
 type V3 = [number, number, number];
 
@@ -57,7 +57,7 @@ export function arrowHits(aim: V3, at: V3): boolean {
 
 export interface DefenceIO {
   units: AgentUnits;
-  life: FortressLife;
+  life: FortressCrowd;
   burst(name: FxName, x: number, y: number, z: number, opts?: { count?: number; speed?: number; spread?: number; vel?: readonly [number, number, number] }): void;
   /** the raiders alive now */
   raiders(): UnitId[];
@@ -120,7 +120,6 @@ export class FortressDefence {
       const role: Post['role'] = i < swords ? 'sword' : 'archer';
       const had = this.posted.get(id);
       if (had && had.role === role && !moved) return;
-      L.unpatrol(id);
       this.posted.set(id, { role, cool: ARROW.every * Math.random(), up: false });
       if (!had) this.stats.posted++;
       if (role === 'sword') U.order(id, { kind: 'guard', at: posts.swords, radius: 2 });

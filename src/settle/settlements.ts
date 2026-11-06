@@ -30,7 +30,8 @@ import { buildWiki, type WorldWiki } from '../gm/wiki';
 import { recordsFrom, type SettlementSeed } from './records';
 import { planSettlement, type Iv, type SettlementPlan } from './plan';
 import { MAT } from '../world/materials';
-import { SettlementLife, type LiveSite, type LiveSpot, type RaidOutcome } from './life';
+import { SettlementCrowd } from './crowd';
+import type { LiveSite, LiveSpot, RaidOutcome } from './live';
 import { BUILT_V, FIELD_CELL, levelsOfStructure, rasterColumns, type SiteSpec } from './plan';
 import { derive } from '../api/contracts/compose';
 import { catalogue } from './catalogue';
@@ -130,7 +131,7 @@ export class Settlements {
   private exactStamps = new Map<string, SurfaceStamp>();
   private lastStamps: SurfaceStamp[] = [];
   /** the live one */
-  life: SettlementLife | null = null;
+  life: SettlementCrowd | null = null;
   private io: LiveIO | null = null;
   /** the units in play (the Units contract), once playing */
   get units(): AgentUnits | null {
@@ -262,7 +263,7 @@ export class Settlements {
 
   /**
    * (round 128d) the pinned settlement's people are run by its holder (the fortress's FortressLife), not a
-   * SettlementLife: the two use the same agents' fields and groups (FORTRESS_SLICE1 correction 1), so never both
+   * SettlementCrowd: the two use the same agents' fields and groups (FORTRESS_SLICE1 correction 1), so never both
    */
   private pinnedOwnLife = false;
 
@@ -853,7 +854,7 @@ export class Settlements {
     if (best && !this.life && !(this.pinnedOwnLife && best.rec.id === this.pinned)) {
       const s = best;
       const p = this.done.get(s.rec.id)!;
-      this.life = new SettlementLife(s.rec, p.camp, {
+      this.life = new SettlementCrowd(s.rec, p.camp, {
         units: io.units,
         spots: () => this.liveSpots(p, s),
         trees: io.trees,
