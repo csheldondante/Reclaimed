@@ -16,6 +16,7 @@ import { generateMenuMap, MENU_SCALE } from '../world/menumap';
 import { WorldCore, type Host, type Scene } from './world-core';
 import { cellPos, poiWorld, ROW_H } from '../world/lattice';
 import { urlFlags } from '../flags';
+import { BoxMeans } from '../sim/boxsum';
 
 const LINES: [number, string][] = [
   [0.95, 'A tree, where the thinking used to be.'],
@@ -326,29 +327,41 @@ export class MenuScene implements Scene {
     this.dustCheckT -= dt;
     if (!this.buried.size || this.dustChecking || this.dustCheckT > 0) return;
     this.dustCheckT = 1;
-    this.dustChecking = true;
+    // (DA-B13: the dust moves only under painted wind — the player's, a gust's, a click's: looked at while there is
+    // some and once after, each buried model's mean on the GPU, a float a model read back, not the drift texture)
+    const painted = this.core.sim.wind.lastBox !== null;
+    if (!painted && !this.windWas) return;
+    this.windWas = painted;
     const { core } = this;
-    core.readTexture(core.world.drift).then(({ data, w }) => {
+    const ids = [...this.buried].filter((id) => core.map.poi[`levelMin:${id}`] && core.map.poi[`levelMax:${id}`]);
+    const boxes = ids.map((id) => {
+      const a = core.map.poi[`levelMin:${id}`]!;
+      const b = core.map.poi[`levelMax:${id}`]!;
+      return [a[0], a[1], b[0], b[1]] as [number, number, number, number];
+    });
+    this.dustMeans ??= new BoxMeans(core.host.gpu.device, core.world.globals, core.world.driftView);
+    const q = this.dustMeans.query(boxes);
+    if (!q) return;
+    this.dustChecking = true;
+    q.then((means) => {
       this.dustChecking = false;
-      for (const id of [...this.buried]) {
-        const a = core.map.poi[`levelMin:${id}`];
-        const b = core.map.poi[`levelMax:${id}`];
-        if (!a || !b) continue;
-        let sum = 0;
-        let n = 0;
-        for (let y = a[1]; y < b[1]; y++) for (let x = a[0]; x < b[0]; x++, n++) sum += data[(y * w + x) * 4];
-        if (sum / n > 0.35) continue;
+      ids.forEach((id, k) => {
+        if (means[k] > 0.35 || !this.buried.has(id)) return;
         this.buried.delete(id);
         saveUncovered(id);
         this.select(levelById(id));
-      }
+      });
     }, ignoreTeardown);
   }
+  /** (DA-B13) painted wind at the last look: one look after it's gone */
+  private windWas = true;
+  private dustMeans?: BoxMeans;
 
   dispose(): void {
     this.abort.abort();
     this.controls.dispose();
     this.el.remove();
+    this.dustMeans?.destroy();
     this.core.destroy();
   }
 }

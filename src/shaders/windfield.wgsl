@@ -11,7 +11,8 @@
 // pass ≈ a breeze, two a gust, three a gale. The add is scaled by segment
 // length / stroke width so a pass adds the same whatever its speed.
 @group(0) @binding(16) var windOut: texture_storage_2d<rgba32float, write>;
-// air shoved by physics voxels landing, per texel (×1000; physics.ts, last tick)
+// air shoved by physics voxels landing, per texel (×1000; physics.ts, last tick); then (DA-B16) the box of the texels
+// shoved: 65535 − x0, 65535 − y0, x1, y1 (all 0: none)
 @group(0) @binding(30) var<storage, read> puff: array<u32>;
 // blows and strokes (the world API's wind: api/wind.ts): [0].x the count,
 // then per entry (x, y, radius, strength cells/s — a stroke's cap), (dx, dy,
@@ -39,14 +40,19 @@ fn texAt(t: vec2<i32>) -> vec2<f32> {
 // mode — 0 the painted wind's update (where something blew lately, sim/windrect.ts), 1 the map's own wind
 // refreshed under the painted wind as it stands (the rest of the field, a band a tick); w unused
 @group(0) @binding(32) var<uniform> WR: vec4<u32>;
+// (DA-B16) the painted wind's box this update, made on the GPU (windBox): the dispatch's args, then x0, y0, x1, y1 —
+// the run with WR.w = 1 starts there (an indirect dispatch: what things landing shove is known only on the GPU)
+@group(0) @binding(33) var<storage, read> wbox: array<u32>;
 /** painted wind weaker than this (cells/s) is none: what's left of a blow ends, so its texels can stop updating */
 const PAINT_MIN: f32 = 0.05;
 
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let dims = vec2<u32>(textureDimensions(windTex));
-  let id = gid.xy + WR.xy;
+  let at = select(WR.xy, vec2<u32>(wbox[4], wbox[5]), WR.w == 1u);
+  let id = gid.xy + at;
   if (id.x >= dims.x || id.y >= dims.y) { return; }
+  if (WR.w == 1u && (id.x >= wbox[6] || id.y >= wbox[7])) { return; }
   let t = vec2<i32>(id.xy);
   let c = (vec2<f32>(t) + 0.5) * 2.0; // world position of this texel
   var v = texAt(t);
@@ -143,4 +149,86 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (m > MAX_W) { v *= MAX_W / m; }
   if (m < PAINT_MIN) { v = vec2<f32>(0.0); }
   textureStore(windOut, texCol2(vec2<i32>(t)), vec4<f32>(v, mapWind(c) + v));
+}
+
+// ---- (DA-B16) the painted wind's box, made on the GPU ----------------------------------------------------------------
+// The CPU knows where the player and the world painted (strokes, blows, ripples: sim/windrect.ts, its box in WB.cpu);
+// things landing shove the air where the GPU has them (phys.wgsl: this tick's box after the puff texels). windBox keeps
+// that shove's box as a stamp — the box of the shoves since it was empty, the tick of its first and its last — and grows
+// it by how far painted wind can have gone since its first (windrect.ts reach); a stamp dies LIFE ticks after its last
+// shove. The update's box is the CPU's and the stamp's together, as the dispatch's args (wbox) for main and windCopy.
+struct WindBoxIn {
+  /** the CPU's painted box, texels [x0, y0, x1, y1) (x1 <= x0: none) */
+  cpu: vec4<i32>,
+  /** x the tick now (60 Hz), y painted wind's life (60 Hz ticks), z w the window's slide since the last update (texels) */
+  t: vec4<f32>,
+}
+@group(0) @binding(34) var<storage, read_write> stamp: array<vec4<f32>, 2>;
+@group(0) @binding(35) var<storage, read_write> wboxOut: array<u32>;
+@group(0) @binding(36) var<uniform> WB: WindBoxIn;
+
+/** windrect.ts reach: how far (texels) painted wind can have gone `ticks` 60 Hz steps after its stamp */
+fn windReach(ticks: f32) -> f32 {
+  let s = ticks / 60.0;
+  let drift = (0.3 * MAX_W * DECAY_S * (1.0 - exp(-s / DECAY_S))) / 2.0;
+  let spread = 3.0 * sqrt(0.03 * ticks);
+  return 2.0 + drift + spread;
+}
+
+@compute @workgroup_size(1)
+fn windBox() {
+  let dims = vec2<i32>(textureDimensions(windTex));
+  let now = WB.t.x;
+  var b = stamp[0];
+  var tt = stamp[1];
+  // (the window slid: the stamp goes with the land)
+  b -= vec4<f32>(WB.t.z, WB.t.w, WB.t.z, WB.t.w);
+  let alive = tt.z > 0.5 && now - tt.y < WB.t.y;
+  let tail = u32(dims.x * dims.y);
+  if (puff[tail + 2u] > 0u) {
+    let p = vec4<f32>(65535.0 - f32(puff[tail]), 65535.0 - f32(puff[tail + 1u]), f32(puff[tail + 2u]), f32(puff[tail + 3u]));
+    if (alive) {
+      b = vec4<f32>(min(b.xy, p.xy), max(b.zw, p.zw));
+      tt.y = now;
+    } else {
+      b = p;
+      tt = vec4<f32>(now, now, 1.0, 0.0);
+    }
+  } else if (!alive) {
+    tt.z = 0.0;
+  }
+  stamp[0] = b;
+  stamp[1] = tt;
+  var lo = vec2<i32>(dims);
+  var hi = vec2<i32>(0);
+  if (WB.cpu.z > WB.cpu.x && WB.cpu.w > WB.cpu.y) {
+    lo = WB.cpu.xy;
+    hi = WB.cpu.zw;
+  }
+  if (tt.z > 0.5) {
+    let m = ceil(windReach(now - tt.x));
+    lo = min(lo, vec2<i32>(floor(b.xy - m)));
+    hi = max(hi, vec2<i32>(ceil(b.zw + m)));
+  }
+  lo = max(lo, vec2<i32>(0));
+  hi = min(hi, dims);
+  let n = select(vec2<u32>(0u), vec2<u32>((hi - lo + 7) / 8), all(hi > lo));
+  wboxOut[0] = n.x;
+  wboxOut[1] = select(0u, n.y, n.x > 0u);
+  wboxOut[2] = 1u;
+  wboxOut[4] = u32(max(lo.x, 0));
+  wboxOut[5] = u32(max(lo.y, 0));
+  wboxOut[6] = u32(max(hi.x, 0));
+  wboxOut[7] = u32(max(hi.y, 0));
+}
+
+// (DA-B16) the box's new texels into the field everything reads (the next texture's, where they lie on the ring)
+@group(0) @binding(37) var windNextTex: texture_2d<f32>;
+@group(0) @binding(38) var windFieldOut: texture_storage_2d<rgba32float, write>;
+@compute @workgroup_size(8, 8)
+fn windCopy(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let id = gid.xy + vec2<u32>(wbox[4], wbox[5]);
+  if (id.x >= wbox[6] || id.y >= wbox[7]) { return; }
+  let q = texCol2(vec2<i32>(id));
+  textureStore(windFieldOut, q, textureLoad(windNextTex, q, 0));
 }

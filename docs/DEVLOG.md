@@ -18722,10 +18722,88 @@ slides, restoreChunks, replaceWindow, the edit brush's mirror). Two copies that 
 - Recommended: (a). The versions are the root (DA-B9's other readers — mesh hash, reach, shore, save sweep — need
   them too); the indirect list is the second contract and deserves its own row and review.
 
+
+## 2026-11-06 — the coarse world steps only where something moves (DA-B15)
+
+Why: the coarse world (512² cells, 32 B each) stepped every cell and copied the whole 8 MB grid back every 4th frame
+in the level, whatever moved — and at rest, in play, nothing does (no rain by default; water, lava and loose ground
+only after an event or a vent). AGENT_RULES §1b: a kernel runs where something changed; no whole copy.
+
+- The grid in 8 × 8 tiles. cDepth marks a tile when a cell of it changed (bit for bit) or something flowed out of it;
+  cEvent marks what an event changed. Next step, cList lists the tiles marked, beside a marked one, or under a vent
+  (every tile on the first step and when rain, evaporation or erosion change) into an indirect dispatch; cFlux,
+  cDepth and the new cCopy (the live tiles' new cells into `cells`) go over the list. The marks roll over with a
+  16 KB copy. A tile left out holds cells at rest whose flows were all nothing (else it was marked): stepping it would
+  give it back bit for bit, so the result is the same world.
+- Not swapped: `cells` is bound by the atlas's fixed bind groups (the LOD rings, the bake, the far land, the viewer)
+  and per call by the column and sample passes; swapping would make each keep a group per parity. The live tiles' copy
+  costs what moves.
+- Same world: test/gpu/coarse-live.test.ts on Dawn steps a 64² world with the live tiles and with every tile through
+  a meteor, an eruption (cone, ash, a vent's lava cooling to basalt, the step spread over parts as the level does),
+  rain and erosion on and off: the cells equal bit for bit at every check; at rest 0 tiles live (every tile: 64).
+- Cost (desktop proxy, Dawn on this GPU, 512², a step and its wait, 20 steps): every tile 3.2–4.9 ms; live tiles at
+  rest 0.6–0.75 ms (the list pass and the submits), with a crater slumping 1.2–1.7 ms.
+- Transfers gate: the 8 MB copy entry is now the marks' 16 KB roll-over (small).
+- The lab's town fixture recaptured (coarse.ts is in the generator hash): columns identical.
+- Hacks and limits: a tile is 8 × 8 cells; a vent's tiles are found by a box round its radius plus a cell; the "every
+  tile" mode (`new Coarse(..., cull = false)`) is kept as the tests' reference.
+
+## 2026-11-06 — the wind field updated round where things land, not all of it while any body exists (DA-B16)
+
+Why: physics registered `wholeWhile(() => physics.used > 0)`: while any voxel body existed — a rock come to rest, a
+ruin's piece — the whole wind field (160² texels, ~410 KB at 320²) was updated and copied back every update, because
+where things land (their puffs) is known only on the GPU. AGENT_RULES §1b: work where something changed, no readback.
+
+- phys.wgsl writes, besides each puff texel, the box of this tick's shoves in four words after the texels (atomic
+  min/max). windfield.wgsl `windBox` (one thread, before the update) keeps that box as a stamp — the shoves' box since
+  it was last empty, its first and last tick, carried with the window on a slide — grows it by how far painted wind can
+  have gone since its first shove (windrect.ts `reach`), drops it LIFE_S after its last, joins the CPU's box (strokes,
+  blows, ripples) and writes an indirect dispatch's args and corners. The painted-wind update and the new `windCopy`
+  (its texels into the field, where they lie on the ring) go over that box. Physics no longer asks for the whole field.
+- Same wind: test/gpu/wind-shove.test.ts drops two stone blocks in two tiny worlds, one updating the whole field every
+  update (the old path: `wholeWhile` true), one as now: the painted wind (rg) is equal bit for bit at 12 checks while
+  they land (some of it non-zero), and after the wind dies down (50 s) it is zero in both and the box is empty. (The
+  map's own wind, ba, is a band behind outside the box by round 104's design, as with no body.)
+- Cost: with a body resting and nothing landing, the painted update and its copy cover nothing (it was 410 KB copied
+  and 25 600 texels updated every update); a landing updates its box and reach round it.
+- Found and listed: the map wind's band (1/16 of the field computed and copied every update, everywhere) could go if
+  readers added `mapWind` themselves — DA-B25 (the transfer gate now names it).
+- Hacks and limits: one stamp for all shoves (their box together, grown from the first): landings far apart in time
+  and place make one large box until the last is LIFE_S old — conservative, never too small. `lastBox` (the perf
+  overlay, tests) still shows only the CPU's box.
+
+## 2026-11-06 — the standing timed reads: the region sweep reads on the edit, the menu's dust on the GPU (DA-B13)
+
+Why: DESIGN §24, no timed readback in play; the transfer gate listed three standing timed reads under DA-B13.
+
+- The region-save sweep (scenes/streamer/store.ts `sweep`): every 400 ms it took the next of the window's regions in
+  turn and, if play had ever changed it, read the whole region back (L.bytes: ~1.8 MB at K 16) to hash and maybe save
+  it. `changed` never cleared, so a region touched once was read back every round after (16 regions: every 6.4 s),
+  forever, to find it hadn't changed. Now `RegionInfo.dirty` is set by `Streamer.touch` and cleared when the region is
+  read: the sweep takes the next dirty region in turn, at most one every 400 ms, and reads nothing when none is. A
+  freeze, the page hidden (`sweep(all)`) and a new world still read every changed region, so what the sims did there
+  since its last touch is kept then. scripts/worldsavetest.mjs: 7 of 8 as on the fortress tip (its "warped 10 regions
+  away and back" check fails the same there: `how.thawed` 0, all four loaded — not this change).
+- The menu's dust watch (scenes/menu.ts): the whole drift texture read back every second while a model was buried,
+  to average the dust over each model's box. Now sim/boxsum.ts `BoxMeans` takes the means on the GPU (a workgroup a
+  box, its texels where they lie on the ring) and reads back a float a box, and the menu looks only while painted
+  wind lasts (`WindFieldSystem.lastBox`: the dust moves only under it) and once after. test/gpu/boxsum.test.ts: the
+  means equal the texture read back and averaged.
+- Not done: the creatures' group sums (inhabitants/system.ts, 8 KB every 10 ticks, behind `?life=`): the CPU uses the
+  groups' centres and counts for its hunting orders and the creature presence map; removing the read means moving that
+  targeting to the GPU — a design of its own. DA-B13 stays open for it.
+- The menu at 412x915 headless, a drag across it: the same picture as before (it draws no diorama headless, before or
+  after). hallcheck 0 of 344 lost; flagcheck passes.
+- Transfers gate: the sweep's read is an edit-rate read now; the menu's texture read gone, BoxMeans' read and upload
+  listed (small).
+- Hacks and limits: the sweep still paces itself (one region per 400 ms) so a burst of touches over many regions is
+  spread out; between a region's touches the sims' own drift there is saved only at a freeze, a hide or its next
+  touch. The menu's look is tied to the painted wind's CPU box: dust moved by anything else (none today) wouldn't be
+  looked at.
 ## 2026-11-06 — round 128o (`phonefix`, DA-B9 step a): the chunks' versions, and every writer's bump
 
 - Why: DA-B9 (option a, main's call). A reader that works only where the columns changed needs to know where they
-  did, on the GPU. This step adds the versions and makes every writer bump them. The first reader is DA-B22.
+  did, on the GPU. This step adds the versions and makes every writer bump them. The first reader is DA-B26.
 - The word: after the chunk table in `WorldGpu.chunks`, a u32 per chunk holds the tick + 1 that last changed its
   columns. It is keyed by where the chunk's columns lie (first slot / 256), not by the chunk's place in the window.
   A slide rotates the table over the same storage, so the versions stay with their land. Every writer in a tick
@@ -18763,7 +18841,7 @@ slides, restoreChunks, replaceWindow, the edit brush's mirror). Two copies that 
   - A repack of the chunk table would have to bump every chunk. Nothing repacks it at run time today.
   - The version region is slots / 256 words (2 KB at 320², K 8).
 
-## 2026-11-06 — round 128o (`phonefix`, DA-B22): the indirect culled dispatch, a design note for main's review
+## 2026-11-06 — round 128o (`phonefix`, DA-B26): the indirect culled dispatch, a design note for main's review
 
 - What: a culled pass's chunk list is made on the GPU and dispatched indirect. A pass can then run over "the chunks
   whose versions moved" without the CPU knowing which. The first user is the agents' re-peel. Today the re-peel runs
