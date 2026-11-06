@@ -114,6 +114,8 @@ const EVENT_CAP = 2048;
 const MAX_WATCH = 32;
 /** (round 128o, DA-B2) the most events one sync reads (the rest wait for the next) */
 const EVENT_WINDOW = 256;
+/** (round 128p) the fewest events a sync reads (its window grows with what comes: Agents.sync) */
+const EVENT_MIN = 16;
 /** voxels drawn in all (units.wgsl MAX_INST), and in all the kinds' models */
 const MAX_INST = 65536;
 const MAX_MODEL_VOXELS = 8192;
@@ -1352,75 +1354,11 @@ export class Agents implements SimSystem {
    * their records alone are read, not every unit's. A game built on events (arrived, hurt, death…) watches the few it
    * shows.
    */
-  async sync(opts: { watch?: readonly number[] } = {}): Promise<{ units: AgentState[]; events: AgentEvent[]; dropped: number }> {
-    const watch = opts.watch;
-    if (watch && watch.length > MAX_WATCH) throw new Error(`agents.sync: ${watch.length} units watched (${MAX_WATCH} at most)`);
-    const slots = watch ? watch.map((id) => id % MAX_UNITS).filter((s) => s < this.count) : null;
-    const n = slots ? slots.length : this.count;
-    // (round 128o, DA-B2: the events a ring — units.wgsl emit — read from where the last sync stopped, at most
-    // EVENT_WINDOW of them: 16 B of head and 8 KB of events, not the whole 64 KB block every sync; the rest next sync)
-    const C = EVENT_CAP;
-    const from = this.eventsRead;
-    const first = from % C;
-    const a = Math.min(EVENT_WINDOW, C - first);
-    const evBytes = 16 + EVENT_WINDOW * 32;
-    const size = evBytes + Math.max(n, 1) * UNIT_BYTES;
-    const tmp = this.staging(size);
-    const enc = this.device.createCommandEncoder({ label: 'agents sync' });
-    enc.copyBufferToBuffer(this.events, 0, tmp, 0, 16);
-    enc.copyBufferToBuffer(this.events, 16 + first * 32, tmp, 16, a * 32);
-    if (a < EVENT_WINDOW) enc.copyBufferToBuffer(this.events, 16, tmp, 16 + a * 32, (EVENT_WINDOW - a) * 32);
-    if (slots) slots.forEach((s, i) => enc.copyBufferToBuffer(this.units, s * UNIT_BYTES, tmp, evBytes + i * UNIT_BYTES, UNIT_BYTES));
-    else if (n) enc.copyBufferToBuffer(this.units, 0, tmp, evBytes, n * UNIT_BYTES);
-    this.device.queue.submit([enc.finish()]);
-    const units: AgentState[] = [];
-    const events: AgentEvent[] = [];
-    let dropped = 0;
-    await tmp.mapAsync(GPUMapMode.READ, 0, size).then(() => {
-      const b = tmp.getMappedRange(0, size);
-      const eu = new Uint32Array(b, 0, evBytes / 4);
-      const ef = new Float32Array(b, 0, evBytes / 4);
-      const made = eu[0];
-      const m = Math.min((made - from) >>> 0, EVENT_WINDOW);
-      this.eventsRead = (from + m) >>> 0;
-      const BY: Record<number, 'fire' | 'water' | 'impact' | 'lava' | 'effect'> = { 0xffffffff: 'fire', 0xfffffffe: 'water', 0xfffffffd: 'impact', 0xfffffffc: 'lava', 0xfffffffb: 'effect' };
-      const by = (v: number) => BY[v] ?? v;
-      for (let e = 0; e < m; e++) {
-        const o = 4 + e * 8;
-        // (the ring had no room for it: its slot holds another's)
-        if (eu[o + 7] !== ((from + e) >>> 0)) {
-          dropped++;
-          continue;
-        }
-        const p = { x: ef[o + 4], y: ef[o + 5], z: ef[o + 6] };
-        const id = eu[o + 1];
-        const kind = eu[o];
-        if (kind === 1) events.push({ type: 'swing', id, target: eu[o + 2], damage: ef[o + 3], ...p });
-        else if (kind === 2) events.push({ type: 'hurt', id, hit: by(eu[o + 2]) as number | 'impact', damage: ef[o + 3], ...p });
-        else if (kind === 3) {
-          events.push({ type: 'death', id, by: by(eu[o + 2]), ...p });
-          // (corpse mode: the body lies there until it decays or rises)
-          if (this.keepCorpses) this.corpses.add(id % MAX_UNITS);
-          else this.free.push(id % MAX_UNITS);
-          this.holds.delete(id % MAX_UNITS);
-        } else if (kind === 4) events.push({ type: 'alight', id, by: by(eu[o + 2]) as number | 'fire', ...p });
-        else if (kind === 5) events.push({ type: 'windup', id, target: eu[o + 2], lands: ef[o + 3], ...p });
-        else if (kind === 6) {
-          events.push({ type: 'decayed', id, ...p });
-          if (this.corpses.delete(id % MAX_UNITS)) this.free.push(id % MAX_UNITS);
-        } else if (kind === 7) {
-          events.push({ type: 'raised', id, by: eu[o + 2], group: Math.round(ef[o + 3]), ...p });
-          this.corpses.delete(id % MAX_UNITS);
-        } else if (kind === 9) {
-          events.push({ type: 'noticed', id, target: eu[o + 2], ...p });
-        } else if (kind === 8) {
-          const f = eu[o + 2];
-          events.push(f >= RIDE_ARRIVED ? { type: 'arrived', id, ride: f - RIDE_ARRIVED, ...p } : { type: 'arrived', id, field: f, dist: ef[o + 3], ...p });
-        }
-      }
+  /** (sync) the units' records read back: all of them, or the watched (`slots`) */
+  private readUnits(b: ArrayBuffer, at: number, n: number, slots: number[] | null, watch: readonly number[] | undefined, units: AgentState[]): void {
       if (n) {
-        const uf = new Float32Array(b, evBytes, n * UF);
-        const uu = new Uint32Array(b, evBytes, n * UF);
+        const uf = new Float32Array(b, at, n * UF);
+        const uu = new Uint32Array(b, at, n * UF);
         for (let r = 0; r < n; r++) {
           // (record r: slot r of all, or the r-th watched)
           const s = slots ? slots[r] : r;
@@ -1453,9 +1391,106 @@ export class Agents implements SimSystem {
           });
         }
       }
+  }
+
+
+  async sync(opts: { watch?: readonly number[] } = {}): Promise<{ units: AgentState[]; events: AgentEvent[]; dropped: number }> {
+    const watch = opts.watch;
+    if (watch && watch.length > MAX_WATCH) throw new Error(`agents.sync: ${watch.length} units watched (${MAX_WATCH} at most)`);
+    const slots = watch ? watch.map((id) => id % MAX_UNITS).filter((s) => s < this.count) : null;
+    const n = slots ? slots.length : this.count;
+    // (round 128o, DA-B2: the events a ring — units.wgsl emit — read from where the last sync stopped, at most
+    // EVENT_WINDOW of them: 16 B of head and 8 KB of events, not the whole 64 KB block every sync; the rest next sync)
+    const C = EVENT_CAP;
+    const from = this.eventsRead;
+    const first = from % C;
+    // (round 128p, DA-B22 (c)(1): a first window of EVENT_MIN with the head; the head's count says how many more there
+    // are — up to EVENT_WINDOW a sync, as ever — and those are read at once, before the sync returns)
+    const W = EVENT_MIN;
+    const a = Math.min(W, C - first);
+    const evBytes = 16 + W * 32;
+    const size = evBytes + Math.max(n, 1) * UNIT_BYTES;
+    const tmp = this.staging(size);
+    const enc = this.device.createCommandEncoder({ label: 'agents sync' });
+    enc.copyBufferToBuffer(this.events, 0, tmp, 0, 16);
+    enc.copyBufferToBuffer(this.events, 16 + first * 32, tmp, 16, a * 32);
+    if (a < W) enc.copyBufferToBuffer(this.events, 16, tmp, 16 + a * 32, (W - a) * 32);
+    if (slots) slots.forEach((s, i) => enc.copyBufferToBuffer(this.units, s * UNIT_BYTES, tmp, evBytes + i * UNIT_BYTES, UNIT_BYTES));
+    else if (n) enc.copyBufferToBuffer(this.units, 0, tmp, evBytes, n * UNIT_BYTES);
+    this.device.queue.submit([enc.finish()]);
+    const units: AgentState[] = [];
+    const events: AgentEvent[] = [];
+    let dropped = 0;
+    // (the events' records, 8 words each, as many as the head says to read)
+    let rec = new Uint32Array(0);
+    let need = 0;
+    await tmp.mapAsync(GPUMapMode.READ, 0, size).then(() => {
+      const b = tmp.getMappedRange(0, size);
+      const made = new Uint32Array(b, 0, 4)[0];
+      need = Math.min((made - from) >>> 0, EVENT_WINDOW);
+      rec = new Uint32Array(need * 8);
+      rec.set(new Uint32Array(b, 16, Math.min(need, W) * 8));
+      this.readUnits(b, evBytes, n, slots, watch, units);
       tmp.unmap();
     }, ignoreTeardown);
     this.pool.push(tmp);
+    // (more than the first window: the rest the head counted, read now)
+    if (need > W) {
+      const more = need - W;
+      const at = (from + W) % C;
+      const a2 = Math.min(more, C - at);
+      const t2 = this.staging(more * 32);
+      const e2 = this.device.createCommandEncoder({ label: 'agents sync events' });
+      e2.copyBufferToBuffer(this.events, 16 + at * 32, t2, 0, a2 * 32);
+      if (a2 < more) e2.copyBufferToBuffer(this.events, 16, t2, a2 * 32, (more - a2) * 32);
+      this.device.queue.submit([e2.finish()]);
+      await t2.mapAsync(GPUMapMode.READ, 0, more * 32).then(() => {
+        rec.set(new Uint32Array(t2.getMappedRange(0, more * 32)), W * 8);
+        t2.unmap();
+      }, ignoreTeardown);
+      this.pool.push(t2);
+    }
+    this.eventsRead = (from + need) >>> 0;
+    {
+      const eu = rec;
+      const ef = new Float32Array(rec.buffer);
+      const m = need;
+      const BY: Record<number, 'fire' | 'water' | 'impact' | 'lava' | 'effect'> = { 0xffffffff: 'fire', 0xfffffffe: 'water', 0xfffffffd: 'impact', 0xfffffffc: 'lava', 0xfffffffb: 'effect' };
+      const by = (v: number) => BY[v] ?? v;
+      for (let e = 0; e < m; e++) {
+        const o = e * 8;
+        // (the ring had no room for it: its slot holds another's)
+        if (eu[o + 7] !== ((from + e) >>> 0)) {
+          dropped++;
+          continue;
+        }
+        const p = { x: ef[o + 4], y: ef[o + 5], z: ef[o + 6] };
+        const id = eu[o + 1];
+        const kind = eu[o];
+        if (kind === 1) events.push({ type: 'swing', id, target: eu[o + 2], damage: ef[o + 3], ...p });
+        else if (kind === 2) events.push({ type: 'hurt', id, hit: by(eu[o + 2]) as number | 'impact', damage: ef[o + 3], ...p });
+        else if (kind === 3) {
+          events.push({ type: 'death', id, by: by(eu[o + 2]), ...p });
+          // (corpse mode: the body lies there until it decays or rises)
+          if (this.keepCorpses) this.corpses.add(id % MAX_UNITS);
+          else this.free.push(id % MAX_UNITS);
+          this.holds.delete(id % MAX_UNITS);
+        } else if (kind === 4) events.push({ type: 'alight', id, by: by(eu[o + 2]) as number | 'fire', ...p });
+        else if (kind === 5) events.push({ type: 'windup', id, target: eu[o + 2], lands: ef[o + 3], ...p });
+        else if (kind === 6) {
+          events.push({ type: 'decayed', id, ...p });
+          if (this.corpses.delete(id % MAX_UNITS)) this.free.push(id % MAX_UNITS);
+        } else if (kind === 7) {
+          events.push({ type: 'raised', id, by: eu[o + 2], group: Math.round(ef[o + 3]), ...p });
+          this.corpses.delete(id % MAX_UNITS);
+        } else if (kind === 9) {
+          events.push({ type: 'noticed', id, target: eu[o + 2], ...p });
+        } else if (kind === 8) {
+          const f = eu[o + 2];
+          events.push(f >= RIDE_ARRIVED ? { type: 'arrived', id, ride: f - RIDE_ARRIVED, ...p } : { type: 'arrived', id, field: f, dist: ef[o + 3], ...p });
+        }
+      }
+    }
     // (the ring read this far: the GPU writes over what's behind it)
     this.device.queue.writeBuffer(this.events, 8, new Uint32Array([this.eventsRead]));
     if (dropped) console.warn(`agents: ${dropped} events didn't fit (${EVENT_CAP} unread at once): sync more often`);
