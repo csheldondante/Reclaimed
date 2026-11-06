@@ -17,7 +17,7 @@ planned) and then plays in real time. Typecheck (~8 s) and the unit tests were n
 
 ## The behaviour lab
 
-`?level=lab&lab=<recipe>` (src/lab/; docs/ARCHITECTURE.md "The behaviour lab"): a fixed 256² window of a recipe's
+`?level=lab&lab=<recipe>` (src/lab/; docs/ARCHITECTURE.md "The behaviour lab"): a fixed 320² window (256² before round 128m: the fortress's box must lie in it) of a recipe's
 land made on the CPU (no atlas, no generation, a 120-tick warmup), the real fortress on the lab's own town, its builders
 the real FortressLife on the real agents, its pieces drawn by the structures draw, its built blocks claimed in the
 columns. Recipes (src/lab/recipes.ts):
