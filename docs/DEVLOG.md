@@ -20470,3 +20470,37 @@ Checked:
     differ from each other by 2.5 a pixel;
   - over the river's green bank: 18.50 against 18.25.
 - So the motion in the view is the same. The breeze's lean at 1.4 cells/s is 0.07 cells, as small as it was.
+
+## 2026-11-06 — round 128p (`phonefix`, DA-B22): the 16x toggle-diff phone bench
+
+Why: the Pixel 9a's hitch report at 16x after Build (fortress 22b2c0f9): 12–20 fps; minute 1 p50 33, p95 100, p99 150
+ms, max 3.4 s. Per-pass means were 6–9 ms for passes that have nothing to do with each other: windfield 9.2,
+windfield-box 7.3, agents relax 8.2, step 7.5, traits 7.2, draw 6.7, ride 6.6, particles 4–5. On a tiler per-pass
+timestamps can't be trusted (memory: "toggle, don't timestamp"), so the bench measures toggle diffs instead.
+
+What: `?speedbench=1` (src/perf/speedbench.ts) on the fortress link.
+- It lets the level settle 10 s, presses Build, runs at `benchspeed` (16) for 8 s, then runs fixed phases of
+  `benchsecs` (10 s, after 2 s to settle) each:
+  - all;
+  - no agents or traits;
+  - fast-forward off;
+  - no particles;
+  - no wind field (windfield, wind-blows);
+  - no traits;
+  - no sway;
+  - no water;
+  - the plants' particles on;
+  - all again.
+- Each phase records the frame interval (p50, p95, p99, max), frames over 33 and 50 ms, fps, the world's ticks a
+  frame and the speed reached (WorldCore.ticksRun), the GPU frame and the 12 heaviest passes when there are
+  timestamps, and the p50 it saves against the first phase.
+- The report (kind 'reclaimed-speedbench') can be downloaded, copied or shared, and is kept in localStorage.
+- `WorldCore.ffwd` is now a field (from `?ffwd=`), so a phase can turn fast-forward off.
+
+Checked on desktop, 412×915, 4 s phases: it runs through. Frame p50 is held at the display's 10 ms, so the GPU
+frame p50 is the readout there: all 19.6 (first phase, warming), fast-forward off 37.2, no particles 7.6, no water
+8.6, all again 16.6 ms. The phone, GPU-bound, shows it in the frames.
+
+A finding to check against the bench: the wind field runs every tick. At 16x that is 16 a frame — the painted box,
+its copy, and a band of the map's own wind each (16 bands: the whole field a frame). The map wind's band needn't
+follow the ticks; the bench's "no wind field" phase will say what it costs on the phone.
