@@ -87,12 +87,73 @@ try {
       // (the first far frame: the pan held there, for a shot)
       if (any && window.__holdAt === undefined) {
         window.__holdAt = frames;
+        window.__holdSnap = { snap, cam: { t: [...c.target], vw: cam.vw, vh: cam.vh } };
         R.scene.pan = null;
         break;
       }
     }
     R.scene.pan = null;
-    return { frames, farFrames, kinds, ex };
+    if (!window.__holdSnap) return { frames, farFrames, kinds, ex, cast: null };
+    // (round 128o, DA-B27: each far-land sample of the held frame cast against the land's heights — the window's own
+    // (WorldCore's surface mirror), past it the land as generated (what a tile is made from) — to the column it shows)
+    const { snap, cam } = window.__holdSnap;
+    const RG = S.R;
+    const zMax = R.core.dims.zMax;
+    const [ox, oy] = S.origin;
+    const gen = new Map();
+    const need = new Set();
+    for (const [a, b] of [[0, 0], [1, 0], [0, 1], [1, 1], [0.5, 0.5]]) {
+      const [dx, dy] = c.screenDeltaToWorld((a - 0.5) * cam.vw, (b - 0.5) * cam.vh);
+      const col = Math.floor(cam.t[0] + dx);
+      const row = Math.floor((cam.t[1] + dy) / ROW);
+      need.add(`${Math.floor((col + ox) / RG)},${Math.floor((row + oy) / RG)}`);
+    }
+    const rxs = [...need].map((k) => k.split(',').map(Number));
+    const [rx0, rx1] = [Math.min(...rxs.map((v) => v[0])) - 1, Math.max(...rxs.map((v) => v[0])) + 1];
+    const [ry0, ry1] = [Math.min(...rxs.map((v) => v[1])) - 1, Math.max(...rxs.map((v) => v[1])) + 1];
+    for (let ry = ry0; ry <= ry1; ry++)
+      for (let rx = rx0; rx <= rx1; rx++) {
+        const land = await S.source.region(rx * RG, ry * RG, RG, RG, zMax);
+        gen.set(`${rx},${ry}`, S.cutRegion(land, undefined).surface);
+      }
+    const surf = R.core.map.surface;
+    const ring = R.core.world.ring;
+    const winTop = (col, row) => (col >= 0 && col < S.W && row >= 0 && row < S.H ? surf[ring.i(col, row)] : null);
+    const genTop = (col, row) => {
+      const rx = Math.floor((col + ox) / RG);
+      const ry = Math.floor((row + oy) / RG);
+      const g = gen.get(`${rx},${ry}`);
+      return g ? g[(row + oy - ry * RG) * RG + (col + ox - rx * RG)] : null;
+    };
+    const heightAt = (x, y) => {
+      const col = Math.floor(x);
+      const row = Math.floor(y / ROW);
+      return winTop(col, row) ?? genTop(col, row);
+    };
+    const save = c.target.slice();
+    c.target[0] = cam.t[0];
+    c.target[1] = cam.t[1];
+    c.target[2] = cam.t[2];
+    const cast = { samples: 0, byEdge: {}, list: [] };
+    for (let j = 0; j < snap.rows; j++)
+      for (let i = 0; i < snap.cols; i++) {
+        const k = snap.cls[j * snap.cols + i];
+        if (k !== 2 && k !== 3) continue;
+        const g = c.groundAt(((i + 0.5) / snap.cols) * cam.vw, ((j + 0.5) / snap.rows) * cam.vh, heightAt);
+        if (!g) continue;
+        const col = Math.floor(g[0]);
+        const row = Math.floor(g[1] / ROW);
+        const inWin = col >= 0 && col < S.W && row >= 0 && row < S.H;
+        const edge = Math.min(Math.abs(col), Math.abs(row), Math.abs(S.W - 1 - col), Math.abs(S.H - 1 - row));
+        const bucket = `${inWin ? 'in' : 'past'} ${edge <= 1 ? '0-1' : edge <= 4 ? '2-4' : edge <= 16 ? '5-16' : '17+'}`;
+        cast.byEdge[bucket] = (cast.byEdge[bucket] ?? 0) + 1;
+        cast.samples++;
+        if (cast.list.length < 16) cast.list.push({ i, j, col, row, inWin, edge, win: winTop(col, row), gen: genTop(col, row), tile: TL.drawsAt(col, row) });
+      }
+    c.target[0] = save[0];
+    c.target[1] = save[1];
+    c.target[2] = save[2];
+    return { frames, farFrames, kinds, ex, cast };
   });
   console.log(JSON.stringify(r, null, 1));
   await p.screenshot({ path: '.testcache/crack-0.png' });

@@ -20057,3 +20057,33 @@ its slot opening or closing starts it over (a tested piece).
   - the window's edge drawn down to the tile's height, a skirt (the field mesh's open edge, fieldmesh.wgsl colDist);
   - the tile taking the window's land where the two overlap.
   Either one, with farprobe as the test (no far land along the join).
+
+## 2026-11-06 — round 128o (`phonefix`, DA-B27 (1)): measured — no step at the join; a hole in a drawn tile on flat land
+
+- Main asked for a measurement before any claim. Two of them:
+- The window's land against the generated land along the window's edges (scripts/stepprobe.mjs, committed): the
+  tops of the two rows at each edge, after 35 s at the gate's spot.
+  - Top edge: 630 of 640 columns identical; 10 differ (mean 0.57, max 4.2 cells; 8 higher in the window, 2 lower).
+  - Bottom edge: 631 of 640 identical; 9 differ (max 0.48).
+  - The simulated land has barely moved from what a tile is made from: about 1.5% of edge columns, mostly by less
+    than a cell.
+- The far-land samples cast against the land's heights (scripts/farprobe.mjs now casts each sample with
+  Camera.groundAt: the window's surface mirror in the window, the generated land past it). Two runs, held at the
+  first far frame:
+  - one sample each time, at column (55, -5) and (55, -6), 5–6 rows past the window's top edge;
+  - a tile is drawn there (TileCache.drawsAt);
+  - the land is flat and unremarkable: generated tops 121.3–121.7 at it and round it, nothing above the window's z
+    (zMax 504), nothing outside.
+- So it's not the window/tile join (5–6 rows off it), not land diverging (the columns there are the generated land),
+  and not land over the z cut.
+- What's left: a texel of a drawn tile with nothing in it, on flat land. A bake gap (the grid drawn through the
+  columns' tops leaving a crack), or a tile drawn before its bake filled the slot (allocTile then the bake's write,
+  or a slot's earlier contents, during a fast pan).
+  - The previous entry's "along the join" read came from the tinted shot alone. This measurement puts the one held
+    sample past the join.
+- The geometric check: at the measured sample, CPU and check agree a tile is drawn, and the hole is in the tile. So
+  no blind spot of its own is shown here. The coverage check's macro-height boxes stay as they are until a sample
+  shows them wrong.
+- Next (main's original step 1): bake the region of (55, -5) alone, read its atlas texels (colour and depth) back, and
+  map the empty ones to columns. A gap in the bake shows there; a tile drawn early shows only during the pan. That
+  readback becomes the test.
