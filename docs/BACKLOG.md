@@ -59,6 +59,8 @@ The user: "Please work on making the code match the design which is a lot cleane
 | DA-B22 | 16x build speed is slow on the Pixel 9a (the user, onetown 02f65555): measure what scales with sim speed (ticks per frame, the life routine, edits, reach) by toggle diff at 16x; fast-forward should cost little (trips by clock, sleeping systems, DA-A6 events) | M | open |
 | DA-V1 | A visuals pass on the town (the user: "we will want to do a pass for visuals eventually"); farmland plots, roads down cell middles, the art push | L | deferred |
 | DA-B25 | The map's own wind isn't stored: readers add `mapWind(c)` to the painted wind themselves, so the wind field holds only what was painted and the band refresh (1/16 of the field computed and copied every update, everywhere) goes (found by DA-B16; the transfer gate's WindFieldSystem.run) | S | open |
+| DA-B27 | Fast pans (160 cells/s) leave part of the screen undrawn for a few frames on fortress and onetown alike (tilegate 2026-11-06: desktop z14/z8/z5 8-34%, phone z14 or z8 up to 67% in 3-18 frames; varies run to run); find the cause in the tile planner/streamer, not a threshold | M | open |
+| DA-G7 | Tilegate goldens are stale (z2.2/z1.3 differ 28-42% on fortress itself): look at each shot, then refresh the baselines with --update so the gate means something again | S | open |
 | DA-L1 | One run clock for economy, day/night, raids and cards (§21) | M | open |
 | DA-L2 | Mana ledger that can be spent (§14) | S | open |
 | DA-L3 | Holdings adapter: fortress soldiers and stores as holdings cards lock and spend (§20, §21) | M | open |
