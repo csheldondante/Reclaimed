@@ -78,6 +78,7 @@ The user: "Please work on making the code match the design which is a lot cleane
 | DA-L7 | Atlas button and card icons, UX playground first (§22) | M | open |
 | DA-L8 | Spell wheel paid in mana, playground first (§14, §22) | M | open |
 | DA-L9 | `opps/level-opps.ts` (the run's scene wiring, imports the tune panel) and `runplan/viewer.ts` (a page, imports WorldCore) live in the run layer's folders: move them to scenes/ and the pages so opps and runplan stay pure (found by DA-G2) | S | open |
+| DA-L10 | "Next turn": a button that fast-forwards half a day per click (the user: supplies arrive daily, structures progress daily, agents' work is the real-time equivalent; "visually cool", maybe more fun). Needs the one run clock (DA-L1); fast-forward by clock (DA-B22) makes it cheap. Design with the user: what a turn resolves, what the player sees during the skip | M | open |
 | DA-E1 | Widen the material table past 40 (ids are 8-bit; the user wants this, later); phone bench of the uniform cost first | M | open |
 | DA-E2 | Deposit inbox keeps each material and counts overflow | M | open |
 | DA-E3 | GPU destruction trigger: ground connected components plus support x distance per cell (§9) | L | open |
