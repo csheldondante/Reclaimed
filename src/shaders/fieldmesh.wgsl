@@ -204,7 +204,7 @@ fn capI(r: u32) -> u32 {
 // ---- change detection -------------------------------------------------------
 // (round 128o, DA-B28) From the chunks' versions (chunkver.wgsl, after the source's chunk table in binding 1): a mesh
 // chunk's key is the newest shape version (shapekey.wgsl: its slots' ends to 1/16, their materials, the structures
-// over them) among the sim chunks under its columns and their two-cell margin, + 1 (never 0). It's rebuilt when that
+// over them) among the 4 x 4 column blocks under its columns and their two-cell margin, + 1 (never 0). It's rebuilt when that
 // key isn't the one it was built from (word 5): no column is read to find out. (Before: hashChunks walked every near
 // chunk's columns each frame, 6.3 ms a frame on the Pixel 9a.) The CPU forces a rebuild by writing STALE to word 5
 // (setCaves, setWanted's neighbours), FRESH when a chunk has nothing built.
@@ -231,16 +231,20 @@ fn chunkCols(c: u32) -> vec4<i32> {
   return vec4<i32>(i0, j0, i1, j1);
 }
 
-/** chunk c's key: the newest shape version under its columns, + 1 */
+/** chunk c's key: the newest shape version among the 4 x 4 column blocks under its columns (chunkver.wgsl: the
+ *  blocks reach at most 3 columns past what it reads), + 1 */
 fn chunkKey(c: u32) -> u32 {
   let r = chunkCols(c);
   let cs = G.chunkSize;
+  let B = 4u;
   let base = G.chunksX * (G.mapH / cs);
   var m = 0u;
-  for (var y = u32(r.y) / cs; y <= u32(r.w) / cs; y++) {
-    for (var x = u32(r.x) / cs; x <= u32(r.z) / cs; x++) {
-      let v = chunks[y * G.chunksX + x].x / (cs * cs);
-      m = max(m, chunks[base + 2u * v + 1u].y);
+  for (var by = u32(r.y) / B; by <= u32(r.w) / B; by++) {
+    for (var bx = u32(r.x) / B; bx <= u32(r.z) / B; bx++) {
+      let t = chunks[(by * B / cs) * G.chunksX + bx * B / cs];
+      let at = base + 10u * (t.x / (cs * cs * t.y));
+      let k = (by % (cs / B)) * (cs / B) + bx % (cs / B);
+      m = max(m, chunks[at + 2u + k / 2u][k % 2u]);
     }
   }
   return m + 1u;

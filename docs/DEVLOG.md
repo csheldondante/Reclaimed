@@ -19564,3 +19564,48 @@ town's answers behind TownWork, nothing polled, no give-up timers.
 - The byte is now a UTF-8 ×, and the file is LF. test/unit/source-encoding.test.ts fails on any .ts or .wgsl under
   src/ that isn't UTF-8 or has a CR.
 
+## 2026-11-06 — round 128o (`phonefix`, DA-B28 follow-up): the causes of phone-z8's fast-pan gaps, at the source
+
+- Why: main's review of 962279fb. tilegate's phone-z8 fast pans went from ~0.15% undrawn to as much as 21.6%. Two
+  causes, both to be fixed where they arise and not by changing the rebuild queue's order:
+  - (a) a region's write bumped every version of its chunks whatever it brought;
+  - (b) a mesh chunk's key took in whole 16-column chunks, up to 15 columns past what it reads, which roughly doubled
+    the rebuilds in rain.
+- (a) The page write (sim/pagewrite.ts, shaders/pagewrite.wgsl).
+  - A region's pages go into the layers on the GPU, slot by slot, compared, with `bumpColumn` only where the land
+    differs from what the storage held. This covers the pool's thaw (streamer/freeze.ts copyIn) and the CPU's pages,
+    staged in one upload.
+  - The region's fields (the water) are still written whole, so `columnsWritten(chunks, 'fields')` moves only the
+    class and depth words.
+  - A slide moves land with its storage (the table rotates), and land written again as it was moves no version.
+- (b) The shape words are per 4 × 4 columns, 16 a chunk.
+  - Each chunk now has twenty version words, indexed densely by page (first slot / the page's slots), not by first
+    slot / 256: the window's versions take 32 KB at 320², where four words a 256 slots took 51 KB.
+  - `bumpColumn` and colapply's `bumpOf` move the changed column's block.
+  - `chunkKey` takes the newest version among the blocks under the mesh chunk's columns and margin: at most 3
+    columns past what it reads.
+  - Structures bump all 16 blocks of the chunks under their bounds.
+- Tests:
+  - Dawn: the page write leaves every version as it was for the same page; one slot raised moves the chunk's columns
+    word and that one block's shape word. The field mesh: a dig (radius 2) changes 9 blocks at most, and the mesh
+    chunks rebuilt are exactly those whose columns take in a changed block.
+  - Unit 830, GPU tier 181.
+  - Not yet run in the real streamer: the page write is exercised only by the Dawn test until the batched browser run
+    (smoke and tilegate). Timing runs are main's call.
+- `scripts/meshderisk.mjs` is now a tool (TOOLING.md): per phase the mesh chunks rebuilt a frame and the fieldmesh
+  passes' GPU ms, and after slides by frame. The derisk's hash-against-versions comparison, recorded above, isn't in it:
+  the hash is gone.
+- Waiting on the batched timing run (main's go):
+  - tilegate's fast pans at phone z8, several runs, before and after;
+  - meshderisk.mjs on the hash's build (06052231) and this one: rebuilds after slides and in rain, and the GPU ms (the
+    toggle diff);
+  - smoke.
+- Hacks and limits:
+  - The window's region writes now cost a compute pass over their pages (16 pages × 256 columns × K slots a region)
+    in place of buffer copies, and the CPU path stages its pages in one upload.
+  - Structures bump whole chunks' blocks (rare, CPU).
+  - The band's packs still bump every word of what they pack. Their land is new to that storage, except `update()`
+    after the window's z moved, which repacks everything (a real change of what the band holds).
+  - Blocks still reach up to 3 columns past a mesh chunk's margin.
+  - 16 of a chunk's 20 words are shape words: 80 B a chunk.
+

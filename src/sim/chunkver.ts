@@ -12,7 +12,7 @@
 // changedChunk), also over the band's and the rock mesh's own tables, versioned the same way by their CPU writes.
 // Keyed by where a chunk's columns lie (its first slot / 256) so a slide (the table rotating over the same storage)
 // moves none. API: CHUNKS_READ, writerCode, VERSION_WORDS, VW_*, versionIndex, waterVersionIndex, depthVersionIndex,
-// shapeVersionIndex, versionWords, versionChunks.
+// shapeVersionIndices, versionWords, versionChunks, VersionedTable.
 import chunkverWgsl from '../shaders/chunkver.wgsl?raw';
 import waterclassWgsl from '../shaders/waterclass.wgsl?raw';
 import shapekeyWgsl from '../shaders/shapekey.wgsl?raw';
@@ -36,20 +36,25 @@ export function writerCode(code: string): string | null {
   return [code.slice(0, i) + CHUNKS_RW, ...more, chunkverWgsl + code.slice(end)].join('\n');
 }
 
-/** u32 words of versions a chunk has (chunkver.wgsl) */
-export const VERSION_WORDS = 4;
-/** the words, in a chunk's four */
+/** u32 words of versions a chunk has (chunkver.wgsl VER_VEC2 × 2) */
+export const VERSION_WORDS = 20;
+/** the words, in a chunk's twenty: its columns', its class's, its water depth's, one unused, then its shape's, a word
+ *  per SHAPE_BLOCK × SHAPE_BLOCK columns (DA-B28) */
 export const VW_COLUMNS = 0;
 export const VW_CLASS = 1;
 export const VW_DEPTH = 2;
-export const VW_SHAPE = 3;
+export const VW_SHAPE = 4;
+export const SHAPE_BLOCK = 4;
+/** shape words a chunk */
+export const SHAPE_WORDS = (CHUNK / SHAPE_BLOCK) ** 2;
 
 /** a chunk table: per window chunk its first slot and its slots a column */
 type Table = { chunkTable: Uint32Array };
 
-/** window chunk ci's columns' version's index (u32 words after the table): where its columns start / 256, four words each */
+/** window chunk ci's columns' version's index (u32 words after the table): its page's place (its first slot / its
+ *  page's slots: dense), VERSION_WORDS each */
 export function versionIndex(p: Table, ci: number): number {
-  return (p.chunkTable[ci * 2] / (CHUNK * CHUNK)) * VERSION_WORDS;
+  return (p.chunkTable[ci * 2] / (CHUNK * CHUNK * p.chunkTable[ci * 2 + 1])) * VERSION_WORDS;
 }
 
 /** window chunk ci's class version's index (its water's class or its places) */
@@ -62,19 +67,20 @@ export function depthVersionIndex(p: Table, ci: number): number {
   return versionIndex(p, ci) + VW_DEPTH;
 }
 
-/** window chunk ci's shape version's index (DA-B28) */
-export function shapeVersionIndex(p: Table, ci: number): number {
-  return versionIndex(p, ci) + VW_SHAPE;
+/** window chunk ci's shape versions' indices, a block each (DA-B28) */
+export function shapeVersionIndices(p: Table, ci: number): number[] {
+  const at = versionIndex(p, ci) + VW_SHAPE;
+  return Array.from({ length: SHAPE_WORDS }, (_, k) => at + k);
 }
 
-/** chunks of storage a layers buffer of `slotsWords` u32 holds (versions are kept for each) */
-export function versionChunks(slotsWords: number): number {
-  return Math.ceil(slotsWords / SLOT_WORDS / (CHUNK * CHUNK));
+/** chunks of storage a layers buffer of `slotsWords` u32 holds at `k` slots a column (versions are kept for each) */
+export function versionChunks(slotsWords: number, k: number): number {
+  return Math.ceil(slotsWords / SLOT_WORDS / (CHUNK * CHUNK * k));
 }
 
-/** u32 words of versions a world needs (four per 256 slots) */
-export function versionWords(p: { slots: { length: number } }): number {
-  return versionChunks(p.slots.length) * VERSION_WORDS;
+/** u32 words of versions a world needs */
+export function versionWords(p: { slots: { length: number }; chunkTable: Uint32Array }): number {
+  return versionChunks(p.slots.length, p.chunkTable[1]) * VERSION_WORDS;
 }
 
 /**
@@ -93,9 +99,11 @@ export class VersionedTable {
     private label: string,
     private table: Uint32Array,
     slotsWords: number,
+    /** its slots a column */
+    private k: number,
   ) {
     this.bytes = table.byteLength;
-    this.buffer = make(label, this.bytes + versionChunks(slotsWords) * VERSION_WORDS * 4);
+    this.buffer = make(label, this.bytes + versionChunks(slotsWords, k) * VERSION_WORDS * 4);
     this.writeTable();
   }
 
@@ -114,7 +122,7 @@ export class VersionedTable {
    *  makes its bind groups again and lets the old one go) */
   grow(slotsWords: number): GPUBuffer {
     const old = this.buffer;
-    const size = this.bytes + versionChunks(slotsWords) * VERSION_WORDS * 4;
+    const size = this.bytes + versionChunks(slotsWords, this.k) * VERSION_WORDS * 4;
     if (size <= old.size) return old;
     this.buffer = this.make(this.label, size);
     const enc = this.device.createCommandEncoder({ label: `${this.label} grow` });

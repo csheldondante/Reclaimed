@@ -1137,15 +1137,17 @@ its edge:
   structures' `lateralSupport`). The brush runs on a tick with an edit and
   while brush state is in flight (edit-ops.ts `EditBusy`).
 - **The chunks' versions** (round 128o, DA-B9 and DA-B26; sim/chunkver.ts, shaders/chunkver.wgsl,
-  shaders/waterclass.wgsl): `WorldGpu.chunks` is the chunk table, then four u32 per chunk, each the tick + 1 that last
-  changed something (0: never). Keyed by where the chunk's columns lie (its first slot / 256: a slide rotates the table
-  over the same storage, so it moves none). The words and who reads them:
+  shaders/waterclass.wgsl, shaders/shapekey.wgsl): `WorldGpu.chunks` is the chunk table, then twenty u32 per chunk,
+  each the tick + 1 that last changed something (0: never). Keyed by where the chunk's columns lie (its page: first
+  slot / its page's slots, dense; a slide rotates the table over the same storage, so it moves none). The words and who
+  reads them:
   | word | moves when | read by |
   | --- | --- | --- |
   | columns | a slot of its columns changed | the agents' peel (their surfaces) |
   | class | its water crossed a walker's band (WADE_OFF, WADE, DEEP_OFF, DEEP: waterclass.wgsl), or the places were uploaded | the agents' peel (the wet and deep flags, rooms and regions) |
   | depth | its water's depth changed at all | the agents' surfaceWater (nav .w: units wade, drown and put out fire by it) |
-  | shape | a slot's shapekey.wgsl key changed (ends to 1/16, material), or a structure over it was placed or moved (round 128o, DA-B28) | the field mesh (fieldmesh.wgsl changedChunk), also over the band's and the rock mesh's own tables (sim/chunkver.ts VersionedTable) |
+  | (unused) | | |
+  | shape × 16, a word per 4 × 4 columns | a slot's shapekey.wgsl key changed (ends to 1/16, material) in that block, or a structure over the chunk was placed or moved (round 128o, DA-B28) | the field mesh (fieldmesh.wgsl changedChunk: the blocks under a mesh chunk's columns, at most 3 columns past what it reads), also over the band's and the rock mesh's own tables (sim/chunkver.ts VersionedTable) |
   - GPU writers call `bumpColumn(column, old, new)` for each slot they change (climate, edit, landbrush, lava,
     layerpull, liquid, sediment, structure, townstamp; colapply's store with shapeMoved): the columns word, and the
     shape word when the key changed (shapekey.wgsl, the one quantization). They also call `bumpWater(column, before, after)` where they changed the water
@@ -1157,10 +1159,15 @@ its edge:
     its own table binding read_write).
   - The whole-column writers write a slot only if it changed (structure compares the column it found), so a pass over
     an awake chunk that changes nothing bumps nothing.
-  - Every CPU write of the columns or the water (a region come in, the live edit, a warp, an undo, restoreChunks,
-    replaceWindow, ColumnCopy.write) calls `WorldCore.columnsWritten(chunks | 'all')`. That bumps every word
-    (`WorldGpu.bumpChunks`, stamped with the next tick) and tells the mirror (`Mirror.touchChunks`). Places uploaded
-    bump every chunk's class word.
+  - A region come in (streamer/write.ts writeNow: from the pool or the CPU's pages staged) goes into the layers
+    through the page write (sim/pagewrite.ts, shaders/pagewrite.wgsl): slot by slot, compared, `bumpColumn` where the
+    land differs from what the storage held (DA-B28: a slide only moves the land with its storage, and land written
+    again as it was moves nothing). Its fields (the water) are written whole: `columnsWritten(chunks, 'fields')`
+    moves the class and depth words.
+  - Every other CPU write of the columns or the water (the live edit, a warp, an undo, restoreChunks, replaceWindow,
+    ColumnCopy.write) calls `WorldCore.columnsWritten(chunks | 'all')`. That bumps every word (`WorldGpu.bumpChunks`,
+    stamped with the next tick) and tells the mirror (`Mirror.touchChunks`). Places uploaded bump every chunk's class
+    word; a structure placed or moved, the shape words of the chunks under its old and new bounds.
   - Held by test/unit/chunkver.test.ts (the sources) and test/gpu/chunkver.test.ts (each writer, on Dawn).
 - **Tile lists made on the GPU** (round 128o, DA-B26; sim/cull.ts GpuTileList, ChangedTiles, shaders/tilelist.wgsl):
   - A reader's ChangedTiles takes a CPU list (its scope, CUSTOM) and the words it follows (CHUNK_COLUMNS, CHUNK_CLASS,

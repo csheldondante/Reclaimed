@@ -33,6 +33,7 @@
 // AHEAD strips along the camera's motion and uploaded into the pool when ready, so a slide only copies. On load,
 // the window's regions with a record are restored (Streamer.restore).
 
+import { PageWrite } from '../sim/pagewrite';
 import { record, timed } from '../gpu/cpustat';
 import { RegionPool, type PoolSlot } from './region-pool';
 import { RegionCopier } from './region-copy';
@@ -788,5 +789,13 @@ export class Streamer {
   /** (round 98) the kept buffers' upload (writeNow) */
   writeStage?: GPUBuffer;
   writeHost?: Uint8Array;
+  /** (round 128o, DA-B28) a region's pages staged from the CPU for pageWrite */
+  pageStage?: GPUBuffer;
+  /** (round 128o, DA-B28) a region's pages into the layers compared before written: the versions move only where the
+   *  land differs from what the storage holds (sim/pagewrite.ts) */
+  get pageWrite(): PageWrite {
+    return (this.pageWriteK ??= new PageWrite(this.core.host.gpu.device, this.core.world, this.core.host.profiler));
+  }
+  private pageWriteK?: PageWrite;
 
 }

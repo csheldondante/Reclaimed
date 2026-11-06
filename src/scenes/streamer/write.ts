@@ -34,7 +34,6 @@ export function writeNow(S: Streamer, f: Frozen, lx: number, ly: number, key: st
   for (let r = 0; r < R; r++) for (let c = 0; c < R; c++) S.outside[regionIdx(S, sl, c, r)] = f.outside[r * R + c];
   const dev = core.host.gpu.device;
   const wg = core.world;
-  const table = core.packed.chunkTable;
   const cx = W / CHUNK;
   const rc = R / CHUNK;
   const pageWords = S.pageSlots * SLOT_WORDS;
@@ -60,12 +59,15 @@ export function writeNow(S: Streamer, f: Frozen, lx: number, ly: number, key: st
   } else {
     if (slot) S.pool.release(slot);
     const layers = f.layers!;
-    for (let j = 0; j < rc; j++)
-      for (let i = 0; i < rc; i++) {
-        const ci = (ly / CHUNK + j) * cx + lx / CHUNK + i;
-        const page = layers.subarray((j * rc + i) * pageWords, (j * rc + i + 1) * pageWords);
-        dev.queue.writeBuffer(wg.layers, table[ci * 2] * SLOT_WORDS * 4, page);
-      }
+    // (round 128o, DA-B28: the pages staged, then written in compared slot by slot — sim/pagewrite.ts)
+    const stageBytes = rc * rc * pageWords * 4;
+    if (!S.pageStage || S.pageStage.size < stageBytes) {
+      S.pageStage?.destroy();
+      S.pageStage = wg.buf('streamPages', stageBytes, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);
+    }
+    dev.queue.writeBuffer(S.pageStage, 0, layers, 0, rc * rc * pageWords);
+    const jobs: { off: number; ci: number }[] = [];
+    for (let j = 0; j < rc; j++) for (let i = 0; i < rc; i++) jobs.push({ off: (j * rc + i) * pageWords * 4, ci: (ly / CHUNK + j) * cx + lx / CHUNK + i });
     record('write.layers', performance.now() - tl);
     // (round 98) the kept buffers' region in one upload, then a copy a row on the GPU: a row's writeBuffer each
     // (~800 a region) was most of a slide's frame
@@ -78,6 +80,7 @@ export function writeNow(S: Streamer, f: Frozen, lx: number, ly: number, key: st
     }
     const host = S.writeHost!;
     const enc = dev.createCommandEncoder({ label: 'stream write' });
+    S.pageWrite.encode(enc, S.pageStage, jobs);
     let off = 0;
     for (const b of kept) {
       const d = f.bufs?.[b.name];
@@ -110,10 +113,11 @@ export function writeNow(S: Streamer, f: Frozen, lx: number, ly: number, key: st
   const tcl = performance.now();
   for (const cb of S.onWritten) cb(lx, ly, R, R);
   record('write.claims', performance.now() - tcl);
-  // (round 128o, DA-B9: the region's chunks' versions moved — sim/chunkver.ts)
+  // (round 128o, DA-B9: the region's chunks' versions moved — sim/chunkver.ts. DA-B28: its columns' and shape's by
+  // the page write itself, where the land differs; its fields' here, written whole)
   const written: number[] = [];
   for (let j = 0; j < rc; j++) for (let i = 0; i < rc; i++) written.push((ly / CHUNK + j) * cx + lx / CHUNK + i);
-  core.columnsWritten(written);
+  core.columnsWritten(written, 'fields');
   const tc = performance.now();
   const surf = core.map.surface;
   // (round 106: the CPU's per-column arrays where the region lies — round 107: its pages' rows at their slots)

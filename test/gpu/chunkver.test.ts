@@ -12,11 +12,12 @@ import { MAT } from '../../src/world/materials';
 import { CHUNK, type Interval } from '../../src/world/layout';
 import { cellPos } from '../../src/world/lattice';
 import shapekeyWgsl from '../../src/shaders/shapekey.wgsl?raw';
-import { depthVersionIndex, shapeVersionIndex, versionIndex, waterVersionIndex } from '../../src/sim/chunkver';
+import { depthVersionIndex, shapeVersionIndices, versionIndex, waterVersionIndex } from '../../src/sim/chunkver';
 import { attachSim } from '../../src/api/world';
 import { EventKind } from '../../src/sim/globals';
 import { LavaSystem } from '../../src/sim/lava';
 import { Sleep } from '../../src/sim/sleep';
+import { PageWrite } from '../../src/sim/pagewrite';
 import { installFlow } from '../../src/flow/install';
 
 let g: TestGpu;
@@ -36,7 +37,9 @@ async function versions(w: TinyWorld, word: 'columns' | 'class' | 'depth' | 'sha
   const raw = new Uint32Array((await w.core.readBuffer('chunks')).buffer);
   const p = w.core.packed;
   const base = p.chunkTable.length;
-  const at = word === 'class' ? waterVersionIndex : word === 'depth' ? depthVersionIndex : word === 'shape' ? shapeVersionIndex : versionIndex;
+  // (the shape: the newest of the chunk's 4 x 4 blocks)
+  if (word === 'shape') return (ci) => Math.max(...shapeVersionIndices(p, ci).map((k) => raw[base + k]));
+  const at = word === 'class' ? waterVersionIndex : word === 'depth' ? depthVersionIndex : versionIndex;
   return (ci) => raw[base + at(p, ci)];
 }
 /** window chunk of column (x, y) */
@@ -439,6 +442,46 @@ describe("(DA-B28) the shape version: what the field mesh sees", () => {
       expect(s1(ci)).toBeGreaterThan(s0(ci));
       expect(c1(ci)).toBe(c0(ci));
       expect(s1(far)).toBe(s0(far));
+      expect(g.takeErrors()).toEqual([]);
+    } finally {
+      w.destroy();
+    }
+  });
+});
+
+describe('(DA-B28) a region written in through the page write (sim/pagewrite.ts)', () => {
+  it("the same land again moves nothing; one slot changed moves its chunk's columns and that block's shape only", async () => {
+    const w = await tinyWorld(g, tinyMap(W, H, 32, stone), []);
+    try {
+      await w.step(2);
+      const p = w.core.packed;
+      const ci = 1 * p.chunksX + 2;
+      const k = p.chunkTable[ci * 2 + 1];
+      const pageWords = CHUNK * CHUNK * k * 4;
+      const all = new Uint32Array((await w.core.readBuffer('layers')).buffer);
+      const page = all.slice(p.chunkTable[ci * 2] * 4, p.chunkTable[ci * 2] * 4 + pageWords);
+      const stage = g.device.createBuffer({ size: page.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+      const pw = new PageWrite(g.device, w.core.world, w.core.host.profiler);
+      const run = async (data: Uint32Array) => {
+        g.device.queue.writeBuffer(stage, 0, data);
+        const enc = g.device.createCommandEncoder();
+        pw.encode(enc, stage, [{ off: 0, ci }]);
+        g.device.queue.submit([enc.finish()]);
+        await g.device.queue.onSubmittedWorkDone();
+      };
+      const raw = async () => new Uint32Array((await w.core.readBuffer('chunks')).buffer).slice(p.chunkTable.length);
+      const r0 = await raw();
+      await run(page);
+      expect([...(await raw())]).toEqual([...r0]);
+      // (column (5, 6) of the chunk: its top slot's z1 raised a cell — block (1, 1))
+      const mod = page.slice();
+      const at = ((6 * CHUNK + 5) * k + 0) * 4;
+      new Float32Array(mod.buffer)[at + 1] += 1;
+      await run(mod);
+      const r1 = await raw();
+      const base = versionIndex(p, ci);
+      const changed = [...r1.keys()].filter((i) => r1[i] !== r0[i]);
+      expect(changed.sort((a, b) => a - b)).toEqual([base, shapeVersionIndices(p, ci)[1 * 4 + 1]].sort((a, b) => a - b));
       expect(g.takeErrors()).toEqual([]);
     } finally {
       w.destroy();

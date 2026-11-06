@@ -121,7 +121,7 @@ export class RockMesh {
     for (let c = 0; c < cx * cy; c++) this.table.set([0, K], c * 2);
     for (let b = BLOCKS; b >= 1; b--) this.free.push(b);
     const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
-    this.versions = new VersionedTable(device, (l, n) => world.buf(l, n, S | GPUBufferUsage.COPY_SRC), 'rock chunks', this.table, (BLOCKS + 1) * CHUNK * CHUNK * K * SLOT_WORDS);
+    this.versions = new VersionedTable(device, (l, n) => world.buf(l, n, S | GPUBufferUsage.COPY_SRC), 'rock chunks', this.table, (BLOCKS + 1) * CHUNK * CHUNK * K * SLOT_WORDS, K);
     this.chunks = this.versions.buffer;
     this.layers = world.buf('rock layers', (BLOCKS + 1) * CHUNK * CHUNK * K * SLOT_WORDS * 4, S | GPUBufferUsage.COPY_SRC);
     const frames = world.buf('rock frames', world.strFrames.size, S);

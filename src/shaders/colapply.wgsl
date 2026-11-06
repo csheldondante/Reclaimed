@@ -80,12 +80,18 @@ fn colBase(x: u32, y: u32) -> vec4<u32> {
 }
 
 /** (round 128o, DA-B9) column (b.z, b.w)'s chunk changed: its columns' version to this apply's stamp, and (DA-B28,
- *  `shaped`: a slot's shapekey.wgsl key changed) its shape's (chunkver.wgsl's layout and bumpColumn's rule) */
+ *  `shaped`: a slot's shapekey.wgsl key changed) its 4 x 4 block's shape version (chunkver.wgsl's layout and
+ *  bumpColumn's rule) */
 fn bumpOf(b: vec4<u32>, shaped: bool) {
   let cs = P.chunkSize;
-  let at = P.chunksX * (P.mapH / cs) + 2u * (chunks[(b.w / cs) * P.chunksX + b.z / cs].x / (cs * cs));
+  let t = chunks[(b.w / cs) * P.chunksX + b.z / cs];
+  // (ten vec2s a chunk, dense by its page: chunkver.wgsl VER_VEC2; its shape a word per 4 x 4 columns)
+  let at = P.chunksX * (P.mapH / cs) + 10u * (t.x / (cs * cs * t.y));
   chunks[at].x = P.stamp;
-  if (shaped) { chunks[at + 1u].y = P.stamp; }
+  if (shaped) {
+    let k = ((b.w % cs) / 4u) * (cs / 4u) + (b.z % cs) / 4u;
+    chunks[at + 2u + k / 2u][k % 2u] = P.stamp;
+  }
 }
 
 fn z0Of(v: vec4<u32>) -> f32 { return bitcast<f32>(v.x); }

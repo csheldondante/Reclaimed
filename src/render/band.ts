@@ -48,7 +48,7 @@ export class OutsideBand {
     for (let c = 0; c < cx * cy; c++) this.table.set([c * CHUNK * CHUNK * BAND_K, BAND_K], c * 2);
     const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
     // (round 128o, DA-B28: with its versions after it — what's packed moves them, the field mesh rebuilds by them)
-    this.versions = new VersionedTable(device, (l, n) => world.buf(l, n, S), 'band chunks', this.table, w * h * BAND_K * SLOT_WORDS);
+    this.versions = new VersionedTable(device, (l, n) => world.buf(l, n, S), 'band chunks', this.table, w * h * BAND_K * SLOT_WORDS, BAND_K);
     this.chunks = this.versions.buffer;
     this.layers = world.buf('band layers', w * h * BAND_K * SLOT_WORDS * 4, S);
     // (no structures out there: an empty frame table)

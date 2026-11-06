@@ -532,8 +532,10 @@ export class WorldCore {
 
   /** the CPU wrote these window chunks' columns (or all): their versions moved, the columns' and the water's (a CPU
    *  write puts back a chunk's state: sim/chunkver.ts), onColumnsWritten told */
-  columnsWritten(chunks: readonly number[] | 'all'): void {
-    this.world.bumpChunks(chunks, this.sim.tick);
+  columnsWritten(chunks: readonly number[] | 'all', what: 'all' | 'fields' = 'all'): void {
+    // (round 128o, DA-B28 'fields': the water's class and depth only — the columns went in through the page write,
+    // which moves their versions where they differ: streamer/write.ts)
+    this.world.bumpChunks(chunks, this.sim.tick, what === 'all' ? 'all' : 'fields');
     for (const f of this.onColumnsWritten) f(chunks);
   }
 

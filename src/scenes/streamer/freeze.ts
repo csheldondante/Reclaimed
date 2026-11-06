@@ -53,14 +53,12 @@ export function copyIn(S: Streamer, enc: GPUCommandEncoder, src: GPUBuffer, off:
   const { W } = S;
   const sl = regionSlots(S, lx, ly);
   const L = S.layout;
-  const wg = S.core.world;
-  const table = S.core.packed.chunkTable;
   const cx = W / CHUNK;
-  for (let j = 0; j < L.rc; j++)
-    for (let i = 0; i < L.rc; i++) {
-      const ci = (ly / CHUNK + j) * cx + lx / CHUNK + i;
-      enc.copyBufferToBuffer(src, off + (j * L.rc + i) * L.pageBytes, wg.layers, table[ci * 2] * SLOT_WORDS * 4, L.pageBytes);
-    }
+  // (round 128o, DA-B28: the pages compared slot by slot as they go in — the versions move only where the land differs
+  // from what the storage held: sim/pagewrite.ts)
+  const jobs: { off: number; ci: number }[] = [];
+  for (let j = 0; j < L.rc; j++) for (let i = 0; i < L.rc; i++) jobs.push({ off: off + (j * L.rc + i) * L.pageBytes, ci: (ly / CHUNK + j) * cx + lx / CHUNK + i });
+  S.pageWrite.encode(enc, src, jobs);
   for (const lb of L.bufs) {
     const b = S.bufs.find((x) => x.name === lb.name)!;
     regionRects(S, b, sl, true, src, (off + lb.off) / 4, once);
