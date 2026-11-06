@@ -114,6 +114,8 @@ const EVENT_CAP = 2048;
 const MAX_WATCH = 32;
 /** (round 128o, DA-B2) the most events one sync reads (the rest wait for the next) */
 const EVENT_WINDOW = 256;
+/** (round 128p) the fewest events a sync reads (its window grows with what comes: Agents.sync) */
+const EVENT_MIN = 16;
 /** voxels drawn in all (units.wgsl MAX_INST), and in all the kinds' models */
 const MAX_INST = 65536;
 const MAX_MODEL_VOXELS = 8192;
@@ -1352,6 +1354,9 @@ export class Agents implements SimSystem {
    * their records alone are read, not every unit's. A game built on events (arrived, hurt, death…) watches the few it
    * shows.
    */
+  /** (round 128p) the events the next sync reads at most (sync: sized by what came) */
+  private eventWindow = EVENT_MIN;
+
   async sync(opts: { watch?: readonly number[] } = {}): Promise<{ units: AgentState[]; events: AgentEvent[]; dropped: number }> {
     const watch = opts.watch;
     if (watch && watch.length > MAX_WATCH) throw new Error(`agents.sync: ${watch.length} units watched (${MAX_WATCH} at most)`);
@@ -1362,14 +1367,17 @@ export class Agents implements SimSystem {
     const C = EVENT_CAP;
     const from = this.eventsRead;
     const first = from % C;
-    const a = Math.min(EVENT_WINDOW, C - first);
-    const evBytes = 16 + EVENT_WINDOW * 32;
+    // (round 128p, DA-B22 (c)(1): the window sized by what the last syncs found — 16 events when little happens, up
+    // to EVENT_WINDOW in a fight; what doesn't fit waits in the ring for the next)
+    const W = this.eventWindow;
+    const a = Math.min(W, C - first);
+    const evBytes = 16 + W * 32;
     const size = evBytes + Math.max(n, 1) * UNIT_BYTES;
     const tmp = this.staging(size);
     const enc = this.device.createCommandEncoder({ label: 'agents sync' });
     enc.copyBufferToBuffer(this.events, 0, tmp, 0, 16);
     enc.copyBufferToBuffer(this.events, 16 + first * 32, tmp, 16, a * 32);
-    if (a < EVENT_WINDOW) enc.copyBufferToBuffer(this.events, 16, tmp, 16 + a * 32, (EVENT_WINDOW - a) * 32);
+    if (a < W) enc.copyBufferToBuffer(this.events, 16, tmp, 16 + a * 32, (W - a) * 32);
     if (slots) slots.forEach((s, i) => enc.copyBufferToBuffer(this.units, s * UNIT_BYTES, tmp, evBytes + i * UNIT_BYTES, UNIT_BYTES));
     else if (n) enc.copyBufferToBuffer(this.units, 0, tmp, evBytes, n * UNIT_BYTES);
     this.device.queue.submit([enc.finish()]);
@@ -1381,8 +1389,11 @@ export class Agents implements SimSystem {
       const eu = new Uint32Array(b, 0, evBytes / 4);
       const ef = new Float32Array(b, 0, evBytes / 4);
       const made = eu[0];
-      const m = Math.min((made - from) >>> 0, EVENT_WINDOW);
+      const m = Math.min((made - from) >>> 0, W);
       this.eventsRead = (from + m) >>> 0;
+      // (the next window: twice what came, or what's still waiting, in powers of two between EVENT_MIN and EVENT_WINDOW)
+      const want = Math.max(m * 2, (made - this.eventsRead) >>> 0, EVENT_MIN);
+      this.eventWindow = Math.min(EVENT_WINDOW, 2 ** Math.ceil(Math.log2(want)));
       const BY: Record<number, 'fire' | 'water' | 'impact' | 'lava' | 'effect'> = { 0xffffffff: 'fire', 0xfffffffe: 'water', 0xfffffffd: 'impact', 0xfffffffc: 'lava', 0xfffffffb: 'effect' };
       const by = (v: number) => BY[v] ?? v;
       for (let e = 0; e < m; e++) {

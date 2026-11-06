@@ -20623,3 +20623,23 @@ Gates:
 - test/gpu/unitpick.test.ts: 40 taps over 120 units with every other one a candidate, each the same unit (or none)
   that the CPU's projection finds; no candidates, none.
 - fortressfollow.mjs passes: the tap picks the worker, Follow keeps them on screen, and a tap elsewhere lets go.
+
+## 2026-11-06 — round 128p (`phonefix`, DA-B22 (c)(1)): the sync measured; its event window sized by what comes
+
+Why: main asked for the sync's KB and ms at 1x and 16x before and after (c)(1)(4).
+
+Measured (the lab's start town, 12 units, Build pressed, 10 sim s at each speed; syncm.js wraps Agents.sync):
+- Before: 9.1 KB a sync at both speeds, 540 KB a sim second at 1x and 34 at 16x (one sync a frame). The round trip
+  is p50 1.5–1.6 ms, p95 5.6–8.1 ms.
+- Of the 9.1 KB, 8 KB is the event window. Every sync copied 256 events' room whether any came or not; the units'
+  records were 1.1 KB.
+
+What:
+- The window is sized by what the syncs find: twice the events that came, or as many as are still waiting, rounded
+  up to a power of two between 16 and 256.
+- What doesn't fit waits in the ring for the next sync, as before. test/gpu/agentevents.test.ts passes: 600 deaths
+  in one tick read over several syncs, every one once; past the ring's room the overflow is counted.
+- After: 1.6 KB a sync, 91–96 KB a sim second at 1x and 6.2 at 16x. The round trip is unchanged (p50 1.6–2.0 ms, p95
+  5.2–6.7): it is latency, not bytes.
+- On this town the units' share is small (12 units). The watched-only sync, (1) with (4), is for the crowds and
+  battles of DESIGN §11, where every unit's 96 B a frame adds up.
