@@ -6,6 +6,7 @@
 
 import type { AnyRegistry, ParamDef, Preset } from '../tune/registry';
 import { TUNING } from '../tune/params';
+import { urlFlags } from '../flags';
 
 const STORE = 'reclaimed.tune.presets';
 /** a built-in preset's name in the list */
@@ -249,7 +250,7 @@ export class TunePanel {
     const imp = this.btn('import', () => file.click());
     const copy = this.btn('copy', () => {
       const s = this.reg.encode();
-      const link = `${location.origin}${location.pathname}?${new URLSearchParams({ ...Object.fromEntries(new URLSearchParams(location.search)), [opts.urlParam ?? 'tune']: s }).toString()}`;
+      const link = `${location.origin}${location.pathname}?${new URLSearchParams({ ...Object.fromEntries(urlFlags()), [opts.urlParam ?? 'tune']: s }).toString()}`;
       this.strBox.value = s;
       this.strBox.hidden = false;
       this.strBox.select();

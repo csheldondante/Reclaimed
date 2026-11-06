@@ -26,10 +26,9 @@
 //   seat          (round 128) a thread a column: a model's runs seated in it (world/models.ts seatColumn: a dip below
 //                 the base filled with the top's material, the runs over what was there), fitted
 //
-// Every kernel that writes a column writes it to `slots` (WorldGpu.layers) and, with P.twin, to `slotsNext`
-// (WorldGpu.layersNext) alike (round 128, INT16): the column passes (structure, edit, the layer pulls) write layersNext
-// for the chunks that run and copy it back over the layers whole, so a change to the layers alone was undone by the
-// next copy-back wherever its chunk didn't run (asleep, or outside the hybrid's `only` filter).
+// Every kernel that writes a column writes it to `slots` (WorldGpu.layers). (Round 128 to DA-B14 it wrote layersNext
+// alike, with P.twin: the column passes copied layersNext back over the layers whole. They write in place now and
+// layersNext is gone; the params word stays as `spare`.)
 //
 // `inp` (u32) holds every list at the offsets the params give; f32s as their bits.
 
@@ -42,7 +41,7 @@ struct Params {
   looseMat: array<vec4<u32>, 2>,
   /** depositAdd: entries (x, y, amount, mat); orphans: claimed column keys (sorted), their (first, count), spans */
   nDep: u32, depOff: u32, nKeys: u32, keyOff: u32,
-  refOff: u32, spanOff: u32, twin: u32, maskLo: u32,
+  refOff: u32, spanOff: u32, spare: u32, maskLo: u32,
   /** take: the materials taken (bits 32..63); seat: the base and the new runs' aux */
   maskHi: u32, seatBase: f32, seatAux: u32,
   /** (round 128g) claim: only where free — the masked materials (maskLo, maskHi: air, liquids; any id past 63) */
@@ -60,8 +59,6 @@ struct Params {
 /** 8 words an entry: key + 1 (0: empty), cells, six votes */
 @group(0) @binding(4) var<storage, read_write> hash: array<atomic<u32>>;
 @group(0) @binding(5) var<storage, read_write> deposit: array<vec4<f32>>;
-/** WorldGpu.layersNext, laid out as `slots` (written with P.twin) */
-@group(0) @binding(6) var<storage, read_write> slotsNext: array<vec4<u32>>;
 
 const MAX_K: u32 = 16u;
 /** a column's intervals while changed: K (16 at most) plus a split a cut (the host keeps an op's cuts to 32) */
@@ -126,7 +123,6 @@ fn store(b: vec2<u32>, a: ptr<function, array<vec4<u32>, MAX_IV>>, n0: u32) {
     var v = vec4<u32>(0u);
     if (s < n) { v = vec4<u32>((*a)[s].xyz, 0u); }
     slots[b.x + s] = v;
-    if (P.twin != 0u) { slotsNext[b.x + s] = v; }
   }
 }
 

@@ -21,6 +21,7 @@ import type { BakeOpts, BakeReport, LiveHandle, SimTiers, Tier, TierRect, Tiered
 import { TIERED_PROCESSES } from '../api/contracts/simtiers';
 import { CHUNK } from '../world/layout';
 import { ROW_H } from '../world/lattice';
+import { urlFlags } from '../flags';
 
 /** tiers.wgsl TIER_*: the texel's channel */
 export const TIER_CHANNEL: Record<TieredProcess, number> = { rainErosion: 0, windErosion: 1, vegetation: 2 };
@@ -36,7 +37,7 @@ const SHORT: Record<string, TieredProcess> = { rain: 'rainErosion', wind: 'windE
 
 /** ?tiers= — null: the scene's own */
 function fromUrl(): Set<TieredProcess> | null {
-  const v = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('tiers');
+  const v = typeof location === 'undefined' ? null : urlFlags().get('tiers');
   if (v === null) return null;
   if (v === 'live') return new Set(TIERED_PROCESSES);
   if (v === 'baked') return new Set();

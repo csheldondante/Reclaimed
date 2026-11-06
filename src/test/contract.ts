@@ -27,6 +27,7 @@ import { MAT } from '../world/materials';
 import { beginPipelineBatch, endPipelineBatch, makeCompute } from '../gpu/pipeline';
 import commonWgsl from '../shaders/common.wgsl?raw';
 import probeWgsl from './probe.wgsl?raw';
+import { urlFlags } from '../flags';
 
 const QUALITY: Quality = { renderScale: 0.5, maxDpr: 1, rain: 1500, maxTicksPerFrame: 2, particles: 4096, agentSweeps: 2, shadowSize: 1024, meshSlots: 1 };
 
@@ -242,7 +243,7 @@ async function makeHost(): Promise<Host> {
   const canvas = document.getElementById('world') as HTMLCanvasElement;
   const ui = document.getElementById('ui')!;
   const gpu = await initGpu(canvas);
-  return { gpu, profiler: new Profiler(gpu.device, false), quality: { ...QUALITY }, qualityName: 'low', params: new URLSearchParams(location.search), canvas, ui };
+  return { gpu, profiler: new Profiler(gpu.device, false), quality: { ...QUALITY }, qualityName: 'low', params: urlFlags(), canvas, ui };
 }
 
 let hostP: Promise<Host> | null = null;
@@ -332,11 +333,11 @@ declare global {
 window.contract = { list: Object.keys(TESTS), run: runTest };
 
 // ?run=a,b (or all): run them now; the results on window.__contract
-const ask = new URLSearchParams(location.search).get('run');
+const ask = urlFlags().get('run');
 if (ask) {
   (async () => {
     const out: ContractResult[] = [];
-    for (const n of ask === 'all' ? Object.keys(TESTS) : ask.split(',')) out.push(await runTest(n, { systems: new URLSearchParams(location.search).get('systems') === 'all' ? 'all' : undefined }));
+    for (const n of ask === 'all' ? Object.keys(TESTS) : ask.split(',')) out.push(await runTest(n, { systems: urlFlags().get('systems') === 'all' ? 'all' : undefined }));
     window.__contract = out;
   })().catch((e) => {
     window.__contract = { error: String(e?.stack ?? e) };

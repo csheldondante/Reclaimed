@@ -21,6 +21,7 @@ import { startFortress, staticsFor } from './fortress';
 import { ARRIVE_PREP } from './flags';
 import { worldSaveOf } from '../level';
 import type { LevelScene } from '../level';
+import { urlFlags } from '../../flags';
 import { worldApiOf } from './world-api';
 
 /** sleep and the streamed window, with what follows its slides */
@@ -198,7 +199,7 @@ export function attachStream(scene: LevelScene): void {
       // (round 105, DECISIONS AR3: with the tiles on — the default — no rings, nor their bake (farbake) or the window's
       // look on them (fardetail): the tiles draw the land past the window, the round 73 far land where none is yet)
       const tilesOn = !!core.renderer.tiles;
-      const lodQ = new URLSearchParams(location.search).get('lod');
+      const lodQ = urlFlags().get('lod');
       // (?lod=keep: the rings with the tiles too — a measurement switch, the frame's cost of the rings: DEVLOG round 105)
       const lod = (tilesOn && lodQ !== 'keep') || lodQ === '0' ? null : lodQ === 'low' ? { spacings: [4, 8, 16], n: 129 } : { spacings: [2, 4, 8, 16], n: 193 };
       if (scene.hybridOn && !scene.ceiling) {

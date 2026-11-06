@@ -18457,6 +18457,115 @@ The linger existed for the sandbox's pours only (DEVLOG round 83: "a pour lands 
 - Cost and risk: the camera's pivot becomes async (a frame); the fortress's start query is new GPU code (a test on
   Dawn against the CPU's column tops); nothing else changes for the player. In fortress play no timed read remains.
 
+## 2026-11-05 — the phone's flags reach the built page (DA-B17)
+
+Why: found in DA-B7 — the lab's "phone tier" ran without the shadow cache. The coordinator: this is likely the user's
+real phone on GitHub Pages too. It was.
+
+- What happened: since e5ba962 (2026-10-26, round 83, 20 minutes after the user's stable checkpoint `stable-r83-perf`)
+  the phone's set was written into the URL by `phone-flags-boot`, main.ts's first import, and ~140 module-level reads
+  took `location.search` as their modules loaded. The vite dev server evaluates main's imports in order, so dev pages
+  were right. The production build (`npm run build`: GitHub Pages, the lab, scripts/shot.mjs) puts the renderer, the
+  systems and the rest into chunks main imports, which run before main's own code — so every read at module load saw
+  the URL without the set. (Before e5ba962 an inline script in index.html wrote it first.)
+- What the phone ran on Pages (the low tier, measured on a built page, the `town` lab, 412x915): `tufts=0`,
+  `shadowsize=512`, `bandh=2` and the level's `hybrid` applied (read later, in constructors and main); **not applied**:
+  `shadowcache` (0: every caster redrawn into the sun's map every frame), `prepevery` (1: the instance lists every
+  frame), `inplace` (the structure pass — and before DA-B8 the edit brush — copied the whole layers back every tick:
+  60 copies of 26 MB in 60 ticks), `settle` (land arriving woke to settle), `sleepmore` (surface and render fields over
+  sleeping chunks too), and the renderer's own `HYBRID` constant (harmless: its pipelines are made with the tile cache
+  anyway). The same build on the dev server: all applied. So phone measurements taken on Pages since 2026-10-26 were
+  of the desktop simulation path with part of the phone's render set.
+- The tier itself is detected: it is explicit, not guessed — no `q` or `q=low` is the phone's tier (main.ts, flags.ts
+  `isPhoneTier`), so the Pixel 9a's links (with or without `q=low`) were on the low tier; only the module-level flags
+  were lost.
+- Fix: src/flags.ts resolves the flags once — the URL's own plus the tier's set — and every reader takes them from
+  `urlFlags()` (141 reads in 55 files moved; phone-flags.ts and phone-flags-boot.ts folded in and gone). flags.ts
+  imports nothing and every reader imports it, so ES module order runs it first in any bundle; no read depends on the
+  address bar any more (it is still rewritten, for links copied from it).
+- Gates: test/unit/flags.test.ts fails on any `location.search` read outside flags.ts (141 on the old code) and checks
+  the tiers' sets; scripts/flagcheck.mjs on the build — no `q` and `q=low`: shadow cache 4, prepEvery 2, 512² maps,
+  0 whole-layers copies in 60 ticks; `q=high`: no cache, 60 copies. On the old source it fails both low-tier cases
+  (cache 0, prepEvery 1, static map 1², 60 copies), passes on the new.
+- Every check on the build with `q=low` (the lab, hallcheck, the benches) now runs the phone's set, as its name said.
+  The `town` lab with builders working (DA-B8's scenario, 30 sim s at 16x): wall 13.1 → 3.1 s, whole-layers copies
+  1 808 → 0, the same 26 edits and the house built. hallcheck: 0 of 344 lost. The lab's town fixture recaptured
+  (data/lab/town.rclt): its generator hash moved with the import lines in the generator's files; its 102 400 columns
+  are identical to the old capture.
+- Hacks and limits: the flags are fixed at load (as every module-level read was); a page that changes its own URL
+  (the flora and structures viewers) reads its params once, as before. Workers see no query (as before). The rule is
+  "read through flags.ts", not "no reads at load": a module may still compute a constant from `urlFlags()` as it loads,
+  which is safe because flags.ts is its dependency.
+
+## 2026-11-05 — the structure pass in place on every tier, its neighbours read first (DA-B14)
+
+Why: the structure pass wrote layersNext and copied the whole layers buffer back every tick (26 MB at 320², 16 MB in
+the atlas's window) on every tier but the phone's; with `inplace=1` (the phone's, really applied only since DA-B17) it
+wrote in place while reading its neighbours' support in the same dispatch — a race: what a column read of a neighbour
+depended on whether that neighbour's thread had written yet. The layer pulls copied back the same way (sandbox only).
+
+- `lateralSupport` (structure.wgsl), a pass before it over the same awake chunks: for each floating structural
+  interval of a column (not resting on the one below) the best support its neighbours offer as the tick began, a
+  nibble an interval in the column's own two words (`structLatSup`, 8 B a column: 0.8 MB at 320²). Then `main`
+  rewrites each column in place reading only its own column and its nibbles. Neighbours are read as they were before
+  anything changed — the old copy-back path's Jacobi step, exactly — and nothing reads a column another thread writes.
+  The layer pulls read only their own column: in place as they are. `INPLACE`, `columnPass` and the phone set's
+  `inplace=1` are gone (flags.ts `SIM_SET`).
+- Same results: in the `town` lab (q=low; the structure pass alone, collapse on, a lightning strike every 20 ticks over
+  six points by the town, 240 ticks: 115 intervals collapsed), the layers hash the same at ticks 30, 120 and 239 as the
+  old copy-back path (`inplace=0`). The old racy path (`inplace=1`) also matched here: the race didn't show in this
+  scenario, which is no proof it can't.
+- Cost (desktop proxy, the whole window woken, the structure pass alone, a tick a frame, nothing drawn; ms a tick):
+  old copy-back q=low 7.3-8.0, q=high 10-21 (2 520 whole-layers copies in the run); old racy in place 5.1-5.7; new
+  5.5-6.1 (q=low) and 5.7-5.9 (q=high), no copies. The pre-pass costs about what the race saved; the copy-back is gone.
+- Transfers gate: the `StructureSystem.encode` and `LayerPullSystem.encode` copies removed. scripts/flagcheck.mjs: no
+  whole-layers copy on any tier now. hallcheck: 0 of 344 lost. The lab's town fixture recaptured (the generator hash
+  takes in sim/systems.ts): its 102 400 columns identical.
+- layersNext is now written (by every column writer, "alike") and read by nothing: removed in the next commit.
+- Hacks and limits: the nibble holds support 0-15 (what the aux byte holds) for up to 16 intervals a column (MAX_K);
+  `structLatSup` is indexed by column, written only for awake columns and read only for them in the same tick.
+
+## 2026-11-05 — the flags resolved when read, not once at load (DA-B17 follow-up)
+
+Why: the GPU tests (`npx vitest run --project gpu`, not run before the DA-B17 commit — my miss) caught it:
+test/gpu/integrity.test.ts sets `location` to `?solver=hybrid` in its `beforeAll`, after the modules are imported, and
+the hybrid solver's heavy blow on stone stopped crumbling it. flags.ts resolved the flags once, as it loaded, so a read
+made later (solverVariant's default, at call time) saw the old empty query. Now `urlFlags()` resolves the query it
+sees each time (memoised on the query string), which is what every read did before DA-B17 plus the phone's set — so
+the set still applies in any bundle order, and nothing is fixed at load that wasn't before.
+
+- Also: test/gpu/cpu-write-asleep.test.ts's "(the cause)" test asserted that a write to the layers alone is undone by
+  the next copy-back; DA-B14 removed the copy-back, so it now asserts the write stays.
+- GPU suite: 140 passed, 5 skipped (was 2 failed: these two).
+
+## 2026-11-05 — layersNext removed (DA-B12's half, world audit WP-2)
+
+Why: after DA-B14 no pass reads WorldGpu.layersNext — the column passes write the layers in place and nothing copies
+it back — but every column writer still wrote it "alike" (ColumnApply's twin, ColumnCopy, the streamer's pages in and
+slides, restoreChunks, replaceWindow, the edit brush's mirror). Two copies that can disagree, one read by nobody
+(AGENT_RULES §1: state lives in one place).
+
+- Gone: the buffer (the layers' size: 26 MB at 320², 16 MB in the atlas's window, of GPU memory), every second write
+  (a streamed region's pages written once, not uploaded then copied; a restore copied once; ColumnApply's `twin`
+  word is `spare`), `GpuColumns.next`, `CopyHost.layersNext`, ColumnApply's stand-in buffer, the brush's mirror.
+- Same results: the edit scenario (DA-B8) and the structure collapse run (DA-B14) hash as before at every checkpoint;
+  hallcheck 0 of 344 lost; unit 762 passed; GPU suite 140 passed (colapply and static-claims no longer compare a twin).
+  scripts/streamtest.mjs: 7 of 8 — "panning: the window follows on its own" fails the same way on 022cedd (before
+  DA-B7), 735740a and here: not this change; listed for whoever owns the streamer.
+- ARCHITECTURE "Who writes the columns": one buffer now; the table's "both buffers" column gone.
+- Hacks and limits: colapply's params keep the old `twin` word as `spare` rather than repacking the struct.
+
+## 2026-11-06 — fortress (phonefix: DA-B1/B5/B6/B20) merged into `phoneflags`
+
+- Conflicts: api/mirror.ts took phonefix's page mirror whole (on demand, no timer, unread ≠ empty; its `?mirror=near`
+  flag, the one read this branch had moved to flags.ts, is gone with it); stream-setup.ts keeps both imports; BACKLOG
+  keeps DA-B17 done beside phonefix's DA-B19..B21; MODULES regenerated.
+- The mirror learns a chunk changed from sleep's awake and drowsy chunks each tick and from ColumnApply (`touchAll`):
+  the in-place column passes (edit, structure) run only there, and removing layersNext changed no write to the layers.
+- No new `location.search` reads came in. The lab's town fixture recaptured (both sides moved the generator hash):
+  columns identical. typecheck (both halves), unit 773 passed, GPU 145 passed, flagcheck, hallcheck 0 of 344 lost,
+  the transfer gate: all pass.
+
 ## 2026-11-05 — round 128o (`phonefix`, DA-B19): the level's surface read gone; each ground question to its source
 
 - Why: DESIGN.md §24 (no timed read in play); option (b) of the design note above, approved. The level read the whole
@@ -18563,4 +18672,17 @@ The linger existed for the sandbox's pours only (DEVLOG round 83: "a pour lands 
   ride test used a 5-vec4 record of its own: now UNIT_V); the lab's raid, follow and carts pass.
 - Hacks and limits: 32 watched units a sync; the arrival radius is per field (every group on a field shares it); a unit
   that arrives and is pushed past the leaving radius is told again when it comes back.
+
+## 2026-11-06 — round 128o (`phonefix`): fortress 3d0965d merged (phoneflags); every column writer tells the mirror
+
+- Merged fortress (phoneflags 24fd616: src/flags.ts owns the URL flags, layersNext gone, the column passes in place on
+  every tier; and the Pages commit). Conflicts only in the docs (BACKLOG DA-B17 fortress's, DA-B19 phonefix's; the
+  DEVLOG's two tails kept, fortress's first). No flag reads to move: phonefix's own (readstats, settletol) already
+  went through flags.ts on fortress's side.
+- The mirror's staleness (api/mirror.ts) now hears every column writer outside the ticks and the column applies:
+  `ColumnCopy.write` (Integrity's columns: `CopyHost.written`) and `WorldCore.replaceWindow` call
+  `WorldCore.columnsWritten`, as the undo, restoreChunks and the streamer's live edit did; slides and warps bump the
+  window's epoch. (DA-B9's per-chunk versions would make it exact; this is every page stale on any such write.)
+- Checked: typecheck (both), unit 775 (the town fixture passes: the land generator's hash didn't move), GPU tier
+  149/149, the transfer gate, flagcheck, hallcheck (0 of 344 lost).
 

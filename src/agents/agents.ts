@@ -27,10 +27,11 @@ import type { RoadGraph } from './roadgraph';
 import { CUSTOM, TILES_BINDING, cullKernel } from '../sim/cull';
 import { ROW_H } from '../world/lattice';
 import { TUNE, worldG } from '../tune/params';
+import { urlFlags } from '../flags';
 
 /** (round 104, simscale) the fields kept only round what the agents do and relaxed only where something changed
  *  (agents/scope.ts); ?agentscope=0: the whole window every tick, as before */
-const SCOPE = typeof location === 'undefined' || new URLSearchParams(location.search).get('agentscope') !== '0';
+const SCOPE = typeof location === 'undefined' || urlFlags().get('agentscope') !== '0';
 /** the scope's tile lists (sim/cull.ts CUSTOM): its chunks, and those new to it this tick */
 const SCOPE_LIST = CUSTOM + 10;
 const ENTER_LIST = CUSTOM + 11;
@@ -42,7 +43,7 @@ const PEEL_LIST = CUSTOM + 13;
 const LINK_LIST = CUSTOM + 14;
 /** (round 107, agentspike) ?agentprof=1: the agents' tick in one timed pass a stage (agents-in, -peel, -relax, -units),
  *  and a log a tick (window.__agentLog: the scope, what came in, the marks, the peel, each sweep's front) */
-const PROF = typeof location !== 'undefined' && new URLSearchParams(location.search).get('agentprof') === '1';
+const PROF = typeof location !== 'undefined' && urlFlags().get('agentprof') === '1';
 export interface AgentTickLog {
   frame: number;
   tick: number;

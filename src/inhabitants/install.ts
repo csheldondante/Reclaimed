@@ -12,6 +12,7 @@ import type { V2 } from '../api/contracts/units';
 import { InhabitantsGpu, type InhabitantsOpts } from './system';
 import { SPECIES } from './species';
 import { standInPaths } from './paths';
+import { urlFlags } from '../flags';
 
 /** Add the inhabitants to `core`: their system after the particles, their mesh drawn as skins (lit, shadowed). */
 export function installInhabitants(core: WorldCore, opts: InhabitantsOpts = {}): InhabitantsGpu {
@@ -24,8 +25,8 @@ export function installInhabitants(core: WorldCore, opts: InhabitantsOpts = {}):
 }
 
 const FAR_ZOOM = 14;
-const LOD_PARAM = typeof location !== 'undefined' && new URLSearchParams(location.search).get('lifelod') ? Number(new URLSearchParams(location.search).get('lifelod')) : null;
-const SCALE_PARAM = typeof location !== 'undefined' && new URLSearchParams(location.search).get('lifescale') ? Number(new URLSearchParams(location.search).get('lifescale')) : null;
+const LOD_PARAM = typeof location !== 'undefined' && urlFlags().get('lifelod') ? Number(urlFlags().get('lifelod')) : null;
+const SCALE_PARAM = typeof location !== 'undefined' && urlFlags().get('lifescale') ? Number(urlFlags().get('lifescale')) : null;
 
 /** each frame: the mesh built round what the camera sees */
 export function lifeFocus(life: InhabitantsGpu, core: WorldCore): void {

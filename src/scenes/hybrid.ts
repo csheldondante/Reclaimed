@@ -23,6 +23,7 @@
 
 import { ROW_H } from '../world/lattice';
 import { EventKind } from '../sim/globals';
+import { urlFlags } from '../flags';
 
 export interface HybridStats {
   /** chunks in the grid, chunks voxels now: for their land, edited, near the focus (a chunk may be several);
@@ -45,9 +46,9 @@ export interface HybridStats {
  * time — before, a fixed 0.4 s (24 ticks at 60 Hz) with the rings drawing the land just come in meanwhile
  * (streamspeed round 98: most of what was left in low detail at speed). ?readyticks= to try others.
  */
-const READY_TICKS = Number((typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('readyticks')) ?? 3);
+const READY_TICKS = Number((typeof location === 'undefined' ? null : urlFlags().get('readyticks')) ?? 3);
 /** (round 100, ?steep=) cells a column's top may lie off a neighbour's before its chunk needs voxels */
-const STEEP = Number((typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('steep')) ?? 12);
+const STEEP = Number((typeof location === 'undefined' ? null : urlFlags().get('steep')) ?? 12);
 /**
  * (round 100, ?formvox=1 as before) Whether a form standing on the ground or cut into it (Streamer.relief: the top off
  * the ground's own by over 0.75 — a road's cut, a town's plinth, a mesa, a spire) makes its chunk voxels by itself.
@@ -55,7 +56,7 @@ const STEEP = Number((typeof location === 'undefined' ? null : new URLSearchPara
  * speedsweep's pans had 45–65% of the window's chunks voxels with it; without it a town's view 25 → 9, a coast's
  * 23 → 2, a mesa's 74 → 38 (DEVLOG round 100), the shots alike.
  */
-const FORM_VOX = typeof location !== 'undefined' && new URLSearchParams(location.search).get('formvox') === '1';
+const FORM_VOX = typeof location !== 'undefined' && urlFlags().get('formvox') === '1';
 
 export class HybridChunks {
   private land: Uint8Array;

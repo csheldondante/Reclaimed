@@ -83,6 +83,7 @@ import { levelFrame } from './level/frame';
 import { labStationKit } from './level/labs';
 import type { StationKit } from '../levels/playground';
 import type { Lab } from '../lab/lab';
+import { urlFlags } from '../flags';
 
 export interface LevelOptions {
   /** play this map instead of generating the level's (a loaded sandbox map) */
@@ -174,15 +175,15 @@ export class LevelScene implements Scene {
   flow?: FlowKit & { lab?: { breach: (spring?: number) => void } };
   /** (round 114, framepace) frames the sim was held, by why (stream-slide, stream-warp, …, skip) */
   readonly simHeld: Record<string, number> = {};
-  noSim = (new URLSearchParams(location.search).get('skip') ?? '').split(',').includes('sim');
+  noSim = (urlFlags().get('skip') ?? '').split(',').includes('sim');
   /** ?ceiling=1 (the perf ceiling, the atlas level): each frame only the camera (the drive) and the heightfield —
    *  far.ts's rings (?near=1: a ring a cell apart first, the default; 2: the usual four) and the far land; no sim,
    *  no streaming, no mesh, no prep, no shadow, no HUD or audio. The window is still built at the start. */
-  ceiling = new URLSearchParams(location.search).get('ceiling') === '1';
+  ceiling = urlFlags().get('ceiling') === '1';
   /** ?hybrid=1 (the atlas level): voxels only where they're needed — the field mesh, the band and the sim's
    *  chunks where the land isn't a heightfield, near the focus, or edited; the LOD rings (a 1-cell ring first)
    *  draw the rest of the window's land (scenes/hybrid.ts). ?vradius= the focus's radius (world units; round 100: 0, none — 40 before). */
-  hybridOn = new URLSearchParams(location.search).get('hybrid') === '1';
+  hybridOn = urlFlags().get('hybrid') === '1';
   /** (round 113, tilesfirst) the streaming planner (scenes/planner.ts): made once the streamed window and its tiles are */
   planner?: StreamPlanner;
 

@@ -14,8 +14,13 @@
 //    separate debris simulation.
 //  * One-tick events (lightning) add damage near the strike, strongest at the
 //    top of the struck column.
-@group(0) @binding(3) var<storage, read> layersIn: array<vec4<u32>>;
-@group(0) @binding(4) var<storage, read_write> layersOut: array<vec4<u32>>;
+// (DA-B14) In place, on every tier, in two passes: `lateralSupport` first reads, for every floating interval, the best
+// support its neighbours offered as the tick began, into `latSup` (a nibble an interval, its column's own two words);
+// then `main` rewrites each column in place reading only its own column and its nibbles. So a neighbour is read as it
+// was before anything changed (one tick's Jacobi, as when the pass wrote a second buffer and copied it back), and nothing
+// reads a column another thread is rewriting.
+@group(0) @binding(4) var<storage, read_write> layers: array<vec4<u32>>;
+@group(0) @binding(3) var<storage, read_write> latSup: array<vec2<u32>>;
 @group(0) @binding(5) var<storage, read_write> stats: array<atomic<u32>>;
 @group(0) @binding(6) var<storage, read> surface: array<u32>;
 @group(0) @binding(7) var<storage, read> water: array<f32>;
@@ -88,7 +93,7 @@ fn lateral(q: vec2<i32>, z0: f32, z1: f32) -> u32 {
   let cs = colSlots(u32(q.x), u32(q.y));
   var best = 0u;
   for (var i = 0u; i < cs.y; i++) {
-    let v = layersIn[cs.x + i];
+    let v = layers[cs.x + i];
     if (ivEmpty(v)) { break; }
     if (!isSolid(ivMat(v))) { continue; }
     if (ivZ0(v) < z1 && ivZ1(v) > z0) { best = max(best, auxSup(ivAux(v))); }
@@ -99,19 +104,14 @@ fn lateral(q: vec2<i32>, z0: f32, z1: f32) -> u32 {
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
-  // (a sleeping chunk, round 80: what it holds carried through — the next buffer is copied back over this one)
-  if (asleep(id.xy)) {
-    if (!drowsy(id.xy)) { return; }
-    let cs = colSlots(id.x, id.y);
-    for (var k = 0u; k < cs.y; k++) { layersOut[cs.x + k] = layersIn[cs.x + k]; }
-    return;
-  }
+  // (a sleeping chunk, round 80: what it holds stays as it is — the pass writes in place)
+  if (asleep(id.xy)) { return; }
   let p = vec2<i32>(id.xy);
   let cs = colSlots(id.x, id.y);
   var n = 0u;
   var colTop = 0.0;
   for (var i = 0u; i < cs.y; i++) {
-    let v = layersIn[cs.x + i];
+    let v = layers[cs.x + i];
     if (ivEmpty(v)) { break; }
     n = i + 1u;
     colTop = ivZ1(v);
@@ -139,7 +139,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   var prevTop = 0.0;
   var prevSup = GROUND;
   for (var i = 0u; i < n; i++) {
-    let v = layersIn[cs.x + i];
+    let v = layers[cs.x + i];
     let m = ivMat(v);
     let z0 = ivZ0(v);
     let z1 = ivZ1(v);
@@ -154,7 +154,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       // which wind and water can then carry away
       // the cyclone tears compacted waste apart into loose litter it can strip
       if (m == MAT_TRASH_S && i + 1u == n && cycloneAt(cellPos(p)) > 0.4 && rand3(id.x, id.y, G.tick ^ 0x7c1u) < perTick(0.01)) {
-        layersOut[cs.x + i] = ivPack(z0, z1, MAT_LITTER, 0u);
+        layers[cs.x + i] = ivPack(z0, z1, MAT_LITTER, 0u);
         prevTop = z1;
         prevSup = s;
         continue;
@@ -167,10 +167,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         if (flow > 0.02 && rand3(id.x, id.y, G.tick ^ 0x3a5u) < perTick((flow - 0.02) * 0.5)) {
           // (the top interval: split off its top cell as litter, then stop)
           if (z1 - 1.0 <= z0 || i + 1u >= cs.y) {
-            layersOut[cs.x + i] = ivPack(z0, z1, MAT_LITTER, 0u);
+            layers[cs.x + i] = ivPack(z0, z1, MAT_LITTER, 0u);
           } else {
-            layersOut[cs.x + i] = ivPack(z0, z1 - 1.0, m, ivAux(v));
-            layersOut[cs.x + i + 1u] = ivPack(z1 - 1.0, z1, MAT_LITTER, 0u);
+            layers[cs.x + i] = ivPack(z0, z1 - 1.0, m, ivAux(v));
+            layers[cs.x + i + 1u] = ivPack(z1 - 1.0, z1, MAT_LITTER, 0u);
             n += 1u;
           }
           break;
@@ -179,18 +179,18 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       // a lightning strike blasts compacted waste straight to ash (round 10:
       // the storm is how the heap the wind can't move is cleared)
       if (m == MAT_TRASH_S && hit > 8.0) {
-        layersOut[cs.x + i] = ivPack(z0, z1, MAT_ASH_S, 0u);
+        layers[cs.x + i] = ivPack(z0, z1, MAT_ASH_S, 0u);
         prevTop = z1;
         prevSup = s;
         continue;
       }
       if (m == MAT_TRASH_S && i + 1u == n && selfFire > 0.3 && rand3(id.x, id.y, G.tick ^ 0xa5u) < perTick(0.03 * selfFire)) {
-        layersOut[cs.x + i] = select(ivPack(z0, z1, MAT_ASH_S, 0u), ivPack(z0, z1 - 1.0, m, ivAux(v)), z1 - 1.0 > z0);
+        layers[cs.x + i] = select(ivPack(z0, z1, MAT_ASH_S, 0u), ivPack(z0, z1 - 1.0, m, ivAux(v)), z1 - 1.0 > z0);
         prevTop = z1;
         prevSup = s;
         continue;
       }
-      layersOut[cs.x + i] = v;
+      layers[cs.x + i] = v;
       prevTop = z1;
       prevSup = s;
       continue;
@@ -226,22 +226,51 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       dmg = min(15u, dmg + 1u);
     }
     if (!touching) {
-      var lat = 0u;
-      for (var k = 0u; k < NDIR; k++) { lat = max(lat, lateral(nbr(p, k), z0, z1)); }
+      let lat = nibble(latSup[colIdxI(p)], i);
       let loss = spanCost(m) + dmg / 4u;
       s = select(0u, lat - loss, lat > loss);
     }
     let spanRule = G.misc.y < 1.5;
     let fails = collapseOn && ((spanRule && !touching && s == 0u) || dmg >= dmgLimit(m));
     if (fails) {
-      layersOut[cs.x + i] = ivPack(z0, z1, select(MAT_RUBBLE, MAT_ASH_S, wooden(m) && heat > 0.3), 0u);
+      layers[cs.x + i] = ivPack(z0, z1, select(MAT_RUBBLE, MAT_ASH_S, wooden(m) && heat > 0.3), 0u);
       atomicAdd(&stats[STAT_COLLAPSED], 1u);
       s = 0u;
     } else {
-      layersOut[cs.x + i] = ivPack(z0, z1, m, (s << 4u) | dmg);
+      layers[cs.x + i] = ivPack(z0, z1, m, (s << 4u) | dmg);
     }
     prevTop = z1;
     prevSup = s;
   }
-  for (var i = n; i < cs.y; i++) { layersOut[cs.x + i] = IV_NONE; }
+  for (var i = n; i < cs.y; i++) { layers[cs.x + i] = IV_NONE; }
+}
+
+/** interval i's nibble of a column's two words */
+fn nibble(w: vec2<u32>, i: u32) -> u32 { return (w[i / 8u] >> ((i % 8u) * 4u)) & 15u; }
+
+/**
+ * (DA-B14) Before `main`: each awake column's floating structural intervals (not resting on the one below) and the best
+ * support a neighbour offers each, as the tick began — the only thing the pass reads of other columns.
+ */
+@compute @workgroup_size(8, 8)
+fn lateralSupport(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (id.x >= G.mapW || id.y >= G.mapH) { return; }
+  if (asleep(id.xy)) { return; }
+  let p = vec2<i32>(id.xy);
+  let cs = colSlots(id.x, id.y);
+  var w = vec2<u32>(0u);
+  var prevTop = 0.0;
+  for (var i = 0u; i < cs.y; i++) {
+    let v = layers[cs.x + i];
+    if (ivEmpty(v)) { break; }
+    let z0 = ivZ0(v);
+    let z1 = ivZ1(v);
+    if (isStructural(ivMat(v)) && !(abs(z0 - prevTop) < 1e-3)) {
+      var lat = 0u;
+      for (var k = 0u; k < NDIR; k++) { lat = max(lat, lateral(nbr(p, k), z0, z1)); }
+      w[i / 8u] |= lat << ((i % 8u) * 4u);
+    }
+    prevTop = z1;
+  }
+  latSup[colIdxI(p)] = w;
 }

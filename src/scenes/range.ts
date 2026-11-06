@@ -3,8 +3,8 @@
 // whole regions). ?win= wins; else the viewer's own choice (kept in this browser), else the tier's default.
 // The window's buffers are made with the level, so a new range is a reload (the range button does it).
 
-import { isPhoneTier } from '../phone-flags';
 import { REGION } from './streamer';
+import { isPhoneTier, urlFlags } from '../flags';
 
 /** the choices the range button steps through (cells a side) */
 export const RANGES = [256, 320, 384] as const;
@@ -56,7 +56,7 @@ export function chooseRange(w: number): void {
   } catch {
     // (private window, blocked storage: the URL carries it this time)
   }
-  const q = new URLSearchParams(location.search);
+  const q = urlFlags();
   q.set('win', String(w));
   location.search = q.toString();
 }

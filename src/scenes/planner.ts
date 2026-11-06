@@ -16,6 +16,7 @@
 // insides, nor on the planner's.
 
 import type { Coverage } from '../render/coverage';
+import { urlFlags } from '../flags';
 
 /** what the planner reads, each frame */
 export interface PlanSource {
@@ -57,7 +58,7 @@ const MOVING = 6;
 const LAND_S = 1;
 const WINDOW_S = 0.3;
 const TILE_S = 0.5;
-const OFF = typeof location !== 'undefined' && new URLSearchParams(location.search).get('planner') === '0';
+const OFF = typeof location !== 'undefined' && urlFlags().get('planner') === '0';
 
 export class StreamPlanner {
   readonly plan: Plan = { reach: { land: 0, window: 0, tile: 0 }, dir: [0, 0], speed: 0, holes: false, simCap: null };

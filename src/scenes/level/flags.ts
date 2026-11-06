@@ -3,22 +3,23 @@
 import { STRUCTURAL } from '../../physics/wake';
 import { K_HEADROOM } from '../../world/layout';
 import { MAT } from '../../world/materials';
+import { urlFlags } from '../../flags';
 
 /** (round 120) what a ruin wakes as besides its metal, where the metal wakes into the picked solver variant */
 export const NON_METAL: ReadonlySet<number> = new Set([...STRUCTURAL].filter((m) => m !== MAT.Steel && m !== MAT.Rust));
 /** round 83, V21: ?cutaway=1 — the camera on a puck (api/puck.ts), sliced under a roof and orbiting round a cliff */
-export const CUTAWAY = new URLSearchParams(location.search).get('cutaway') === '1';
+export const CUTAWAY = urlFlags().get('cutaway') === '1';
 /** (round 113) ?planner=0: no planner — each layer's own fixed look-ahead, the sim's ticks never cut */
-export const PLANNER_OFF = new URLSearchParams(location.search).get('planner') === '0';
+export const PLANNER_OFF = urlFlags().get('planner') === '0';
 /** (round 114, framepace) ?coarseparts=0: the coarse world's whole step on every 4th frame (as before), not a part a frame */
-export const COARSE_PARTS = new URLSearchParams(location.search).get('coarseparts') !== '0';
+export const COARSE_PARTS = urlFlags().get('coarseparts') !== '0';
 /** (round 113, SF10) ?camclamp=1: the camera held a region in from the streamed window's edge (round 91), as before */
-export const CAM_CLAMP = new URLSearchParams(location.search).get('camclamp') === '1';
-export const PLAN_OFF = new Set((new URLSearchParams(location.search).get('planoff') ?? '').split(',').filter(Boolean));
+export const CAM_CLAMP = urlFlags().get('camclamp') === '1';
+export const PLAN_OFF = new Set((urlFlags().get('planoff') ?? '').split(',').filter(Boolean));
 /** (round 113, tilesfirst, SF7) ?arriveprep=0: land written into the window waits READY_TICKS sim ticks for the grid, as before */
-export const ARRIVE_PREP = new URLSearchParams(location.search).get('arriveprep') !== '0';
+export const ARRIVE_PREP = urlFlags().get('arriveprep') !== '0';
 /** (round 98) ?flyspeed=: the free camera's speed (cells a second; Shift 120) — on a phone, the speed ✈'s ⇧ flies at */
-export const FLY_SPEED = Number(new URLSearchParams(location.search).get('flyspeed') ?? 35);
+export const FLY_SPEED = Number(urlFlags().get('flyspeed') ?? 35);
 
 /** (round 128e, FT-50) how fast Skip to done runs time (the ticks a frame are the quality tier's times this), and how
  *  long (sim s) it lets the plan look blocked before it stops */

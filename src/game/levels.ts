@@ -20,6 +20,7 @@ import type { TownFixtureHeader } from '../lab/townfixture';
 import type { FlowKit } from '../flow/install';
 import type { RiverMode } from '../sim/world-gpu';
 import type { GateSpec } from '../world/kit';
+import { urlFlags } from '../flags';
 
 /** What the title-screen model for a level looks like (menumap.ts builds it). */
 export type LevelModel = 'dam' | 'car' | 'tent' | 'ship' | 'sign';
@@ -222,7 +223,7 @@ export const LEVELS: LevelDef[] = [
     name: 'The Behaviour Lab',
     blurb: 'A small fixed world from a recipe (flat, hill, valley, walled) with the fortress: scripted checks (?lab=<recipe>).',
     model: 'sign',
-    generate: (dims) => generateLab(dims, labRecipe(new URLSearchParams(location.search).get('lab'))),
+    generate: (dims) => generateLab(dims, labRecipe(urlFlags().get('lab'))),
     sandbox: true,
     hidden: true,
     zMax: LAB_DIMS.zMax,
@@ -233,7 +234,7 @@ export const LEVELS: LevelDef[] = [
     // the atlas's table as in the game)
     load: (params) => loadLabLand(labRecipe(params.get('lab'))),
     get rivers() {
-      return typeof location === 'undefined' ? undefined : labRecipe(new URLSearchParams(location.search).get('lab')).rivers;
+      return typeof location === 'undefined' ? undefined : labRecipe(urlFlags().get('lab')).rivers;
     },
   },
   {

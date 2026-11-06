@@ -28,6 +28,7 @@ import type { LandTimes } from './tileland';
 import { coverage, type Coverage } from './coverage';
 import meshStateWgsl from '../shaders/meshstate.wgsl?raw';
 import { TileCalibration, floorSearch } from './tilecalib';
+import { urlFlags } from '../flags';
 
 /** (round 105) what makes the render-only land: tileland.ts (the playable path, ?tilegpu=0) or tilelandgpu.ts */
 export interface LandMaker {
@@ -48,13 +49,13 @@ const R = 64;
 /** the mask's side (regions): tiles within half of it of the camera are drawn */
 const MASK_N = 64;
 /** frames between a window region's bakes, at least (its look changes slowly: plants, stains, water) */
-const REBAKE = Number(new URLSearchParams(location.search).get('tilerebake') ?? 600);
+const REBAKE = Number(urlFlags().get('tilerebake') ?? 600);
 /** bakes a frame */
-const PER_FRAME = Math.max(1, Number(new URLSearchParams(location.search).get('tilesper') ?? 1) | 0);
+const PER_FRAME = Math.max(1, Number(urlFlags().get('tilesper') ?? 1) | 0);
 /** the atlas's budget (MB) — round 112, `tilefix`: by the screen, the phone's 24 MB at 411 x 785 css px scaled by area, up
  *  to 128 MB; ?tilemb= sets it (round 115: TileCalibration.atlasMB owns it) — and a slot's size (texels) */
 const BUDGET_MB = TileCalibration.atlasMB(innerWidth, innerHeight);
-const [SW, SH] = (new URLSearchParams(location.search).get('tilepx') ?? '128x192').split('x').map(Number);
+const [SW, SH] = (urlFlags().get('tilepx') ?? '128x192').split('x').map(Number);
 /** bytes a texel: rgba8 (albedo, film) + rg32uint (normal and flags, depth) — the slots' count is these planes' budget —
  *  and (round 108, TC20) rgba8 (the held river under it — how far under its level at the reference wetness, its depth
  *  at its line — and its own snow, and the weather's cover's there, as baked: tiles.wgsl BakeOut.c) */
@@ -63,11 +64,11 @@ const LIVE_BYTES = 4;
 /** how far past its region a tile draws (cells; the bake takes the chunks round it in) */
 const OVERLAP = 1;
 /** ?tileland=0: no render-only land past the window (TC2) — only what the window baked */
-const NO_LAND = new URLSearchParams(location.search).get('tileland') === '0';
+const NO_LAND = urlFlags().get('tileland') === '0';
 /** (round 105, tileahead) seconds of the camera's motion the land is made ahead of the screen, and the motion
  *  (world units a second) under which the camera's at rest */
-const PREFETCH_S = Number(new URLSearchParams(location.search).get('tileahead') ?? 1);
-const PREFETCH_FIXED = new URLSearchParams(location.search).has('tileahead');
+const PREFETCH_S = Number(urlFlags().get('tileahead') ?? 1);
+const PREFETCH_FIXED = urlFlags().has('tileahead');
 export const MOVING = 2;
 /** (round 106, tilephone) the look-ahead's least reach (world units: a region and a half), and the margin round the
  *  screen asked for next (the screen's size times this) */
@@ -77,7 +78,7 @@ const MARGIN = 1.35;
  *  (texels a unit): 1, the screen's own */
 /** (round 112) the height a render-only tile's land is taken to span (tilelandgpu.ts QUARTER_Z) */
 const REMAKE_Z = 48;
-const PART_FIT = Number(new URLSearchParams(location.search).get('tilefit') ?? 1);
+const PART_FIT = Number(urlFlags().get('tilefit') ?? 1);
 /**
  * (round 112, tilefast, TC21) The part of a slot a tile takes: -1 the whole (SW x SH), 0-3 a quarter (x, y halves),
  * 4 the top half, 5 the bottom (SW x SH/2). Indexed by part + 1: the slot's quarters it covers (bits), its corner and
@@ -112,7 +113,7 @@ function sizeOf(w: number, h: number): Size {
 const FLOOR_ROOM = 0.8;
 /** (round 115) the atlas grows when the rate's floor would take this share of its slots or more (TileCache.grow) */
 const GROW_AT = 1.1;
-export const ZOOM_FLOOR = new URLSearchParams(location.search).get('zoomfloor') !== '0';
+export const ZOOM_FLOOR = urlFlags().get('zoomfloor') !== '0';
 /** (round 113, tilesfirst) tiles.wgsl TileU: r, u, f, win, focus, mesh (6 vec4s), cand (32: the grid's chunks in view, the
  *  voxel mesh's in view — a bit a chunk, 2048 each), drawn (16: tilemask's) */
 const UNI_HEAD = 6 * 16;
@@ -144,7 +145,7 @@ fn mask(@builtin(global_invocation_id) g: vec3<u32>) {
 }
 `;
 /** ?tiledebug=1: the tiles drawn tinted */
-const DEBUG = new URLSearchParams(location.search).get('tiledebug') === '1';
+const DEBUG = urlFlags().get('tiledebug') === '1';
 
 /** the view's frame (TileCache.basis) */
 export interface Basis {

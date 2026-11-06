@@ -12,13 +12,14 @@ import meshStateW from '../shaders/meshstate.wgsl?raw';
 import { LOD_UNI_BYTES, LodRings } from './lod';
 import { BAKE_UNI_BYTES, SurfaceBake } from './bake';
 import { ROW_H } from '../world/lattice';
+import { urlFlags } from '../flags';
 
 const UNI_BYTES = 96 + 10 * 16;
 /** vertices a side, and world units between them */
 const G = 161;
 const SPACING = 32;
 /** (round 113, tilesfirst) ?standin=0: no stand-in under the view (far.wgsl vsStandIn) — the background shows where nothing drew */
-const STAND_IN = typeof location === 'undefined' || new URLSearchParams(location.search).get('standin') !== '0';
+const STAND_IN = typeof location === 'undefined' || urlFlags().get('standin') !== '0';
 
 /** (round 93) the window's light and look (the Globals' — render.wgsl lighting), for the rings to be lit as it is */
 export interface FarLight {
@@ -85,10 +86,10 @@ export class FarLand {
   /** (round 93) the window's light (the level sets it a frame); null: the rings' own look */
   light: FarLight | null = null;
   /** (round 93, ?fd=0: off) the rings drawn with the window's look — its ground colour, plants, ways, trees, light */
-  windowLook = new URLSearchParams(location.search).get('fd') !== '0';
+  windowLook = urlFlags().get('fd') !== '0';
   /** (round 93, ?fdveg=) the plants the window's sim has grown on soil and silt by now — the rings draw at least this
    *  there (its columns start barer; the window greens over in play) */
-  grownVeg = Number(new URLSearchParams(location.search).get('fdveg') ?? 1.6);
+  grownVeg = Number(urlFlags().get('fdveg') ?? 1.6);
 
   constructor(
     private device: GPUDevice,
@@ -178,8 +179,8 @@ export class FarLand {
       ],
     });
     this.lod = lod ? new LodRings(device, atlas, lod.spacings, lod.n) : null;
-    const fb = new URLSearchParams(location.search).get('fb');
-    this.bake = this.lod && !ceiling && this.windowLook && fb !== '0' ? new SurfaceBake(device, atlas, this.lod, Number(new URLSearchParams(location.search).get('fbn') ?? 512)) : null;
+    const fb = urlFlags().get('fb');
+    this.bake = this.lod && !ceiling && this.windowLook && fb !== '0' ? new SurfaceBake(device, atlas, this.lod, Number(urlFlags().get('fbn') ?? 512)) : null;
     if (this.bake) this.bake.grownVeg = this.grownVeg;
     // (no bake: an empty one — its info's count 0 — and a texel of nothing)
     const noBake = this.bake ? null : device.createTexture({ label: 'bake none', size: [1, 1, 1], format: 'rgba8unorm', usage: GPUTextureUsage.TEXTURE_BINDING });

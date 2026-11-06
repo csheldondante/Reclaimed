@@ -297,7 +297,7 @@ export async function placeModel(scene: LevelScene, wx: number, wy: number, atZ?
       }
       seat.push({ x, y, runs: at });
     }
-  // (round 128, INT16: the GPU's stamp — colapply.wgsl seat, seatColumn's rule — into the layers and layersNext alike)
+  // (round 128, INT16: the GPU's stamp — colapply.wgsl seat, seatColumn's rule)
   core.stampColumns([{ cuts: [], seat: { cols: seat, base, aux } }]);
   core.sleep?.wake(x0 + fw / 2, (y0 + fd / 2) * ROW_H, Math.max(fw, fd) + 16, Sleep.EVENT_S, performance.now() / 1000);
   // (the loose ground under it stays in the layers, under the model)

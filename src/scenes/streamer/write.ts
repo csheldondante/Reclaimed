@@ -60,16 +60,12 @@ export function writeNow(S: Streamer, f: Frozen, lx: number, ly: number, key: st
   } else {
     if (slot) S.pool.release(slot);
     const layers = f.layers!;
-    let lenc: GPUCommandEncoder | undefined;
     for (let j = 0; j < rc; j++)
       for (let i = 0; i < rc; i++) {
         const ci = (ly / CHUNK + j) * cx + lx / CHUNK + i;
         const page = layers.subarray((j * rc + i) * pageWords, (j * rc + i + 1) * pageWords);
-        // (both: the passes that write layersNext copy all of it back over the layers; round 98: the second a GPU copy)
         dev.queue.writeBuffer(wg.layers, table[ci * 2] * SLOT_WORDS * 4, page);
-        (lenc ??= dev.createCommandEncoder({ label: 'stream write layers' })).copyBufferToBuffer(wg.layers, table[ci * 2] * SLOT_WORDS * 4, wg.layersNext, table[ci * 2] * SLOT_WORDS * 4, page.byteLength);
       }
-    if (lenc) dev.queue.submit([lenc.finish()]);
     record('write.layers', performance.now() - tl);
     // (round 98) the kept buffers' region in one upload, then a copy a row on the GPU: a row's writeBuffer each
     // (~800 a region) was most of a slide's frame
@@ -233,7 +229,7 @@ export async function editLive(S: Streamer, x0: number, y0: number, x1: number, 
     }
   if (n) {
     S.touch(x0, y0, x1, y1);
-    for (const b of [wg.layers, wg.layersNext]) dev.queue.writeBuffer(b, 0, slots);
+    dev.queue.writeBuffer(wg.layers, 0, slots);
     // (ringwin: read in window order, written back in the ring's)
     const vegR = core.ring.toStore(veg);
     for (const b of [wg.veg, wg.vegNext]) dev.queue.writeBuffer(b, 0, vegR);

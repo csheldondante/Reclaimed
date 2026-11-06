@@ -7,34 +7,35 @@ import { addTop, lowerTop, type Interval } from '../../world/layout';
 import { generateRegion, type RegionLand } from '../../world/streamgen';
 import { type FinishMeta, type FinishTarget } from '../../atlas/finish';
 import { type MakeHow } from '../../atlas/atlas';
+import { urlFlags } from '../../flags';
 
 /** columns a side of a region: what the window slides by (whole chunks, an even number of rows) */
 export const REGION = 64;
 /** ?slideskip=freeze,bufs,texs,mesh (round 80, measuring a slide's GPU burst only: what's left out is wrong) */
-export const SLIDE_SKIP = new Set((typeof location === 'undefined' ? '' : new URLSearchParams(location.search).get('slideskip') ?? '').split(',').filter(Boolean));
+export const SLIDE_SKIP = new Set((typeof location === 'undefined' ? '' : urlFlags().get('slideskip') ?? '').split(',').filter(Boolean));
 /**
  * (round 91, ?lead=s) Seconds ahead the camera's motion is followed: the land where it will be then is asked for
  * ahead of the slides. 0: the camera's own place only, as before round 91.
  */
-export const LEAD = Number((typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('lead')) ?? 1);
+export const LEAD = Number((typeof location === 'undefined' ? null : urlFlags().get('lead')) ?? 1);
 /**
  * (round 98, ?streamold=1: the way before, to compare) A slide waits till the land it brings in is made — asked for
  * then if it wasn't ahead — and then moves the window and writes it all in one go: the window isn't `busy` (the sim
  * stopped, the meshes held) while the land is made, only for the frame it's written in.
  */
-export const STREAM_OLD = typeof location !== 'undefined' && new URLSearchParams(location.search).get('streamold') === '1';
+export const STREAM_OLD = typeof location !== 'undefined' && urlFlags().get('streamold') === '1';
 /**
  * (round 98, ?arrivemesh=0 off) The mesh chunks a slide brought land into are urgent for a few frames (fieldmesh.ts
  * urgent: looked at every frame, the urgent slots over the tier's): those near the view (the hybrid's voxels) are
  * built in a few frames, not one every other frame at the phone tier's one slot.
  */
-export const ARRIVE_URGENT = typeof location === 'undefined' || new URLSearchParams(location.search).get('arrivemesh') !== '0';
+export const ARRIVE_URGENT = typeof location === 'undefined' || urlFlags().get('arrivemesh') !== '0';
 /**
  * (round 98, ?writems=) A slide's regions are written in one frame while they take under this many ms (CPU) — the
  * rest the next frames, the window held `busy` till they're in: a region is ~4 ms on the desktop, a strip five.
  */
-export const WRITE_MS = Number((typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('writems')) ?? 6);
-export const param = (k: string) => (typeof location === 'undefined' ? null : new URLSearchParams(location.search).get(k));
+export const WRITE_MS = Number((typeof location === 'undefined' ? null : urlFlags().get('writems')) ?? 6);
+export const param = (k: string) => (typeof location === 'undefined' ? null : urlFlags().get(k));
 /** (round 100, ?pool=N) regions kept on the GPU out of the window (LRU; ~1.6 MB a region at the atlas's K) */
 export const POOL_CAP = Number(param('pool') ?? 32);
 /** (round 100, ?ahead=N) strips asked for ahead along the camera's motion (round 102: at least; more as it moves faster) */

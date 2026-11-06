@@ -19,6 +19,7 @@ import { CHUNK as CHUNK_V, SLOT_WORDS, columnSlots, readSlot, type PackedWorld }
 import { MATERIALS, MatState } from '../world/materials';
 import { NDIR, cellPos, nbr } from '../world/lattice';
 import { TUNE } from '../tune/params';
+import { urlFlags } from '../flags';
 
 export interface Voxel {
   x: number;
@@ -175,7 +176,7 @@ const CAPACITY = 40;
  * scanned, 12–27 ms a pass on the desktop while riding); any other cell is looked up in its column when asked.
  */
 /** (round 86: the runs by default — the same bodies and crumbs, round 83's audit; ?fracture=dense the whole box unpacked) */
-export const fractureOpts = { runs: typeof location === 'undefined' || new URLSearchParams(location.search).get('fracture') !== 'dense' };
+export const fractureOpts = { runs: typeof location === 'undefined' || urlFlags().get('fracture') !== 'dense' };
 
 export function analyse(world: WorldVox, x0: number, y0: number, x1: number, y1: number): Fracture {
   x0 = Math.max(0, Math.floor(x0));

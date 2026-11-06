@@ -48,7 +48,7 @@ export function copyOut(S: Streamer, enc: GPUCommandEncoder, lx: number, ly: num
   }
 }
 
-/** (round 100) Copy a region's bytes (a pool slot) into the window at (lx, ly): its pages to the layers (and layersNext). */
+/** (round 100) Copy a region's bytes (a pool slot) into the window at (lx, ly): its pages to the layers. */
 export function copyIn(S: Streamer, enc: GPUCommandEncoder, src: GPUBuffer, off: number, lx: number, ly: number, once = false): void {
   const { W } = S;
   const sl = regionSlots(S, lx, ly);
@@ -59,7 +59,7 @@ export function copyIn(S: Streamer, enc: GPUCommandEncoder, src: GPUBuffer, off:
   for (let j = 0; j < L.rc; j++)
     for (let i = 0; i < L.rc; i++) {
       const ci = (ly / CHUNK + j) * cx + lx / CHUNK + i;
-      for (const b of [wg.layers, wg.layersNext]) enc.copyBufferToBuffer(src, off + (j * L.rc + i) * L.pageBytes, b, table[ci * 2] * SLOT_WORDS * 4, L.pageBytes);
+      enc.copyBufferToBuffer(src, off + (j * L.rc + i) * L.pageBytes, wg.layers, table[ci * 2] * SLOT_WORDS * 4, L.pageBytes);
     }
   for (const lb of L.bufs) {
     const b = S.bufs.find((x) => x.name === lb.name)!;

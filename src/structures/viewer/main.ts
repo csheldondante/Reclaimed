@@ -16,8 +16,9 @@ import { library } from '../modules';
 import type { BuriableKind, PlacedAsset } from '../../api/contracts/structures';
 import { ViewerRenderer, type FrameView } from './render';
 import { perspective, lookAt, mul } from './mat';
+import { urlFlags } from '../../flags';
 
-const q = new URLSearchParams(location.search);
+const q = urlFlags();
 const num = (k: string, d: number) => (q.has(k) ? Number(q.get(k)) : d);
 
 const state = {

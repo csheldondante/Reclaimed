@@ -11,11 +11,12 @@ import vegplanWgsl from '../shaders/vegplan.wgsl?raw';
 import { dispatch, type SimSystem } from './system';
 import { AWAY, LIVE, TILES_BINDING, cullKernel, dispatchTiles } from './cull';
 import type { BindKind } from '../gpu/pipeline';
+import { urlFlags } from '../flags';
 
 /** (round 104, simscale) ?emitslow=N: a sleeping chunk's emitters run every N ticks at N times the chances (1: every
  *  tick, the whole window, as before) */
 const EMIT_SLOW = (() => {
-  const v = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('emitslow');
+  const v = typeof location === 'undefined' ? null : urlFlags().get('emitslow');
   const n = v === null ? 8 : Number(v);
   if (!(n >= 1 && Number.isInteger(n))) throw new Error(`?emitslow=${v}: ticks between a sleeping chunk's emissions, 1 or more`);
   return n;

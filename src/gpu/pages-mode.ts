@@ -11,11 +11,12 @@
 // All three give the same columns (scripts/pagetest.mjs). The swap is made on a module's code when it is made
 // (gpu/pipeline.ts makeModule).
 
+import { urlFlags } from '../flags';
 export type PageAddr = 'ring' | 'table' | 'storage';
 
 /** the build's addressing (?pages=) */
 export const PAGE_ADDR: PageAddr = (() => {
-  const v = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('pages');
+  const v = typeof location === 'undefined' ? null : urlFlags().get('pages');
   // (round 107, PG4: the ring computed — on the desktop's D3D11 a table in the Globals, dynamically indexed, made every
   // kernel ~45 % slower per workgroup, each of its Globals reads, not only the lookups (scripts/kernelab.mjs). The
   // table waits for a binding of its own (P2.4); ?pages=table keeps it for the identity tests and ?pageperm=)
@@ -44,7 +45,7 @@ export function usesPages(code: string): boolean {
  * entry a kernel; scripts/pagetest.mjs reads them back (WorldGpu.readPageMiss) and asserts 0. The table's clamp
  * (colPlaceTable) is robustness, not the fix: a caller off the window is a bug.
  */
-export const PAGE_CHECK = typeof location !== 'undefined' && new URLSearchParams(location.search).get('pagecheck') === '1';
+export const PAGE_CHECK = typeof location !== 'undefined' && urlFlags().get('pagecheck') === '1';
 export const PAGE_MISS_BINDING = 60;
 export const PAGE_MISS_MAX = 1024;
 export const pageMiss: { buf: GPUBuffer | null; labels: string[]; unchecked: Set<string>; layouts: WeakSet<GPUBindGroupLayout> } = { buf: null, labels: [], unchecked: new Set(), layouts: new WeakSet() };
