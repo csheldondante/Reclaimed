@@ -20386,3 +20386,32 @@ Check:
   - a drag over the panel's area pans the camera (target 152, 168 → 194, 110);
   - a tap at (200, 400) with the perf overlay unfolded reaches the canvas.
 - With the CSS rule removed, the check fails at the perf overlay's points.
+
+## 2026-11-06 — round 128p (`phonefix`): no plant particles in fortress play
+
+Why: the user, on the phone bench: "I see a lot of plant particles and grow effects which I don't think add much and I
+would be happy to turn off", then "I'm ok with leaves but I don't think the seeds add much." DECISIONS round 128p.
+
+What:
+- The plants' own particles are split out of the emitters into a kernel of their own, `plantEmit`
+  (particles.wgsl): the trees' seed pulses, the story rules' seed shed, and the grow tap's glow, seed puff and
+  sparkles.
+- The grow tap's growth stays in `emit`: it is gameplay, so only its look moved.
+- `ParticleSystem.plants` decides whether `plantEmit` and the petals' kernel (`petalEmit`) dispatch, in both the full
+  and the tile-culled paths. Off, neither runs at all.
+- `WorldCore.plantParticles(on)` is the mode's switch. `startFortress` turns it off, beside ValleyReads.
+- Kept: leaves (on the trees and on the woodland floor), dust, litter, fire, embers, smoke, deer, rabbits and
+  fireflies.
+
+Measured: desktop, the lab's town with Build pressed, 16x, speedcost.mjs, 8 s a phase, two runs.
+- `particles-petals` 0.19–0.22 ms and `particles-plants` 0.19–0.21 ms a frame, about 0.4 ms. Both are gone with the
+  plants off.
+- GPU frame p50: 8.1 / 7.7 ms with the plants off against 8.4 / 8.1 ms with them on; the frame-to-frame noise is
+  about as big as the saving.
+- The phone's share is for its bench to show (by toggle diff).
+
+Left:
+- With story rules on, the seed shed is how green spreads. A mode with story rules (the sandbox valley) keeps the
+  plants' particles on; fortress play has no story rules.
+- Plants' wind response (sway) sleeping where the wind is low and waking for gusts: next (DECISIONS round 128p, the
+  user's correction).

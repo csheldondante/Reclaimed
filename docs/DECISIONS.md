@@ -3485,3 +3485,18 @@ world should show what needs clearing and how.
   use.
 - → build/grade.ts gradeLane takes the grade (1/3) and what a steep stretch becomes; generation grades the town's
   lanes into its land; the player's new roads are road works on the builders' list.
+
+## 2026-11-06 — round 128p (`phonefix`) — plant particles and plant wind response in fortress play
+
+- The user, on the phone bench at 16x: "I see a lot of plant particles and grow effects which I don't think add much
+  and I would be happy to turn off."
+- Then: "Well I'm ok with leaves but I don't think the seeds add much. I do want trees and leaves to respond to weather
+  eventually but I think during these frames it's not really necessary to simulate this way and typically at 16x you
+  could just jitter things to take them look like they are moving with wind. So that is to say feel free to turn it
+  off or put it to sleep for now."
+- Correction: "Oh I meant sleep as in when wind is low let them sleep and wake them up for gusts like other systems
+  like dust."
+- → In fortress play, seeds, pollen fluff, petals and the grow tap's glow and sparkles are off; their kernels don't
+  dispatch (WorldCore.plantParticles). Leaves stay.
+- → Plant sway is not turned off. It sleeps per region while the wind there is low and wakes for gusts.
+- Trees and leaves responding to real weather is wanted later (BACKLOG DA-B31).

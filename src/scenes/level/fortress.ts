@@ -38,6 +38,8 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: T
   if (!S) throw new Error('?fortress=1 needs the atlas level (or the lab: ?level=lab)');
   // (round 128o, DA-B5: fortress play — the sandbox valley's reads for its Nature, storms and ambience stop)
   scene.valleyReads = null;
+  // (round 128p: no seeds, petals or grow sparkles in fortress play; leaves stay — WorldCore.plantParticles)
+  scene.core.plantParticles(false);
   // (its people are the fortress's builders — FortressCrowd — not a SettlementCrowd: never both, they share fields)
   const rec = st.pin(id, true);
   for (const [k, v] of Object.entries(START_STORES)) {

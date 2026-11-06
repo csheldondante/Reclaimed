@@ -241,6 +241,15 @@ export class WorldCore {
   }
 
   /** Advance light, weather and the fixed-step simulation. Returns ticks run. */
+  /**
+   * (round 128p) The plants' particles as a mode picks them: on (default), petals, seeds and the grow tap's glow and
+   * sparkles fly; off (fortress play — the user: "I see a lot of plant particles and grow effects which I don't think
+   * add much"; "I'm ok with leaves but I don't think the seeds add much"), none of their kernels dispatches. Leaves stay.
+   */
+  plantParticles(on: boolean): void {
+    this.sim.particles.plants = on;
+  }
+
   /** (round 128p) the world's ticks run by advance so far (not a bake's: tiers.pump's ticks run its region at its
    *  gain) — the sim time that passed, TICK_DT each; the lab's `run` counts by it */
   ticksRun = 0;

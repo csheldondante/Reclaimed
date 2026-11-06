@@ -57,6 +57,8 @@ export default async function (lab, args) {
     if (only && !only.has(name)) return null;
     lab.sims(sims);
     if (o.noUnits && scene.units) scene.units.update = () => {};
+    // (round 128p: the plants' particles for the phase — fortress play has them off: WorldCore.plantParticles)
+    if (o.plants !== undefined) core.plantParticles(o.plants);
     // (the game's own frames at this speed: lab.run's keep restores the speed it found, so it's set here)
     scene.speed = speed;
     await new Promise((r) => setTimeout(r, 1000));
@@ -71,6 +73,7 @@ export default async function (lab, args) {
     await new Promise((r) => setTimeout(r, seconds * 1000));
     const ticks = core.sim.tick - t0;
     if (scene.units && unitsUpdate) scene.units.update = unitsUpdate;
+    if (o.plants !== undefined) core.plantParticles(false);
     const out = { phase: name, speed, fps: +(S.iv.length / seconds).toFixed(1), iv50: q(S.iv, 0.5), iv95: q(S.iv, 0.95), cpu50: q(S.cpu, 0.5), cpu95: q(S.cpu, 0.95), gpu50: q(S.gpu, 0.5), gpu95: q(S.gpu, 0.95), passSum50: q(S.gpuSum, 0.5), untimed: S.untimed, top: [...passes].map(([k, v]) => [k, +(v / Math.max(1, S.gpuSum.length)).toFixed(2)]).sort((a, b) => b[1] - a[1]).slice(0, args.top ?? 10), ticksPerFrame: +(ticks / Math.max(1, S.iv.length)).toFixed(2), simX: +(ticks / 60 / seconds).toFixed(2) };
     console.log(`SPEED ${JSON.stringify(out)}`);
     return out;
@@ -81,6 +84,7 @@ export default async function (lab, args) {
   const rows = [];
   rows.push(await phase('1x all', 1, 'all'));
   rows.push(await phase('16x all', 16, 'all'));
+  rows.push(await phase('16x all, plants live', 16, 'all', { plants: true }));
   rows.push(await phase('16x no sims', 16, []));
   rows.push(await phase('16x fortress preset', 16, 'fortress'));
   rows.push(await phase('16x no agents/traits', 16, without('agents', 'traits')));
