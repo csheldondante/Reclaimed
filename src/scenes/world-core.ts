@@ -250,6 +250,9 @@ export class WorldCore {
     this.sim.particles.plants = on;
   }
 
+  /** (round 128p) fast-forward on (DA-B22: ?ffwd=0 off; the 16x toggle bench turns it off for a phase, perf/speedbench.ts) */
+  ffwd = FFWD;
+
   /** (round 128p) the world's ticks run by advance so far (not a bake's: tiers.pump's ticks run its region at its
    *  gain) — the sim time that passed, TICK_DT each; the lab's `run` counts by it */
   ticksRun = 0;
@@ -292,9 +295,9 @@ export class WorldCore {
     for (const st of g.gusts.slice(1)) if (st.strength > 0) this.tiers.interact(st.x, st.y, st.radius);
     this.tiers.apply();
     // (round 128o, DA-B22: where each tick lies in the frame — fast-forward's per-frame work runs on the last)
-    this.sim.frameTicks = FFWD ? n : 1;
+    this.sim.frameTicks = this.ffwd ? n : 1;
     while (ticks < n) {
-      this.sim.tickOfFrame = FFWD ? ticks : 0;
+      this.sim.tickOfFrame = this.ffwd ? ticks : 0;
       this.sim.step(g, filter);
       ticks++;
       this.ticksRun++;
