@@ -19,6 +19,7 @@ import type { SimSystem } from '../sim/system';
 import { TICK_DT } from '../sim/flow';
 import { stepPlan } from './stepplan';
 import { UnitNotice } from './notice';
+import { UnitPick, type PickAsk } from './pick';
 import type { WorldGpu } from '../sim/world-gpu';
 import { MAT } from '../world/materials';
 import { materialId, materialName, materialState, type MaterialName } from '../api/common';
@@ -511,6 +512,17 @@ export class Agents implements SimSystem {
    * gives (`aim`). A unit's target comes back in its state (`target`), a new one as a `noticed` event.
    */
   readonly notice: UnitNotice;
+  private picker: UnitPick;
+
+  /**
+   * (round 128p, DA-B22 (c)(2)) Of the units `ids`, the one whose figure is drawn nearest the tap (`ask`), or null —
+   * found on the GPU, one small read back (agents/pick.ts).
+   */
+  async pick(ids: readonly number[], ask: PickAsk): Promise<number | null> {
+    const live = ids.filter((id) => id % MAX_UNITS < this.count);
+    const k = await this.picker.pick(live.map((id) => id % MAX_UNITS), ask);
+    return k === null ? null : live[k];
+  }
   /** (LW1) stages between the units' step and their draw (agents.addStage) */
   private stages: AgentStage[] = [];
   /**
@@ -568,6 +580,7 @@ export class Agents implements SimSystem {
     this.roadRide = new RoadRide(device, world.globals, this.units, this.roads, world.w, MAX_UNITS);
     // (round 128p, DA-B22 (c)(3): combat targeting on the GPU — agents/notice.ts)
     this.notice = new UnitNotice(device, world, this.units, this.events, MAX_UNITS, EVENT_CAP);
+    this.picker = new UnitPick(device, this.units);
     this.flyBuf = world.buf('agentFly', MAX_FLY * 32, S);
     device.queue.writeBuffer(this.indirect, 0, new Uint32Array([36, 0, 0, 0]));
     // (nothing reached yet: every field starts unreachable)

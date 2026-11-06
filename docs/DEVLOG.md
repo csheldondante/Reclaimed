@@ -20603,3 +20603,23 @@ Gates:
   - Today's code in a clean worktree, 9 runs: looted 1–3, raiders fallen 0–3, no run without loot.
 - Left: the sync still reads every unit (step (1)); combat words are compared and written from AgentUnits.think each
   sync (a key a unit, O(units) on the CPU); strikes on the GPU later, under the same gate.
+
+## 2026-11-06 — round 128p (`phonefix`, DA-B22 (c)(2)): a tap's person found on the GPU
+
+Why: picking was one of the CPU's readers of every unit. `personAt` projected every crowd member's last-synced `at` on
+the CPU.
+
+What:
+- `UnitPick` (agents/pick.ts, shaders/unitpick.wgsl): over the candidates' slots, each live one's figure middle is
+  projected with the camera's view-projection, as `Camera.project` does. The nearest to the tap within the radius
+  wins (atomicMin of the distance × 64 and the candidate's index).
+- One 4 B read a tap. Asks are taken in turn.
+- `Agents.pick(ids, ask)` and `AgentUnits.pickAt(among, ask)` expose it. `personAt` is async.
+- `fortressAt` returns a promise, done when its picks are back. The tap's ray and the ground pick's pixel are taken
+  at the tap.
+- The lab's `tap` returns that promise, and fortressfollow.mjs awaits it.
+
+Gates:
+- test/gpu/unitpick.test.ts: 40 taps over 120 units with every other one a candidate, each the same unit (or none)
+  that the CPU's projection finds; no candidates, none.
+- fortressfollow.mjs passes: the tap picks the worker, Follow keeps them on screen, and a tap elsewhere lets go.

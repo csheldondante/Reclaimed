@@ -62,7 +62,7 @@ export interface LabSceneIO {
    *  world API's mirror has read it (a quarry measured its pit on the last run's ground) */
   restoreLand(): void | Promise<void>;
   /** (round 128l, m4) a tap on the map at screen (x, y), as a finger's (the level's fortressAt) */
-  tap(sx: number, sy: number): void;
+  tap(sx: number, sy: number): Promise<void>;
   /** (m4) the person a tap picked and the follow (fortress/follow.ts) */
   follow(): FortressFollow | undefined;
   /** (round 128m, townlab) the recipe's fixture's header, when its land was loaded from one (lab/townfixture.ts) */

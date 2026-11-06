@@ -21,6 +21,7 @@
 import type { Actor, AreaHit, SpawnOpts, UnitId, UnitJob, UnitView, Units, V2, V3 } from '../api/contracts/units';
 import type { FactionId } from '../api/contracts/world';
 import type { Agents, AgentEvent, AgentState, Target } from '../agents/agents';
+import type { PickAsk } from '../agents/pick';
 import { MAT } from '../world/materials';
 import { timed } from '../gpu/cpustat';
 import { ACTOR, NO_FACTION, type CombatSpec } from '../agents/notice';
@@ -341,6 +342,23 @@ export class AgentUnits implements Units {
 
   watch(actor: Actor): void {
     if (!this.actors.includes(actor)) this.actors.push(actor);
+  }
+
+  /**
+   * (round 128p, DA-B22 (c)(2)) Of the units `among`, the one drawn nearest a tap (`ask`: the camera's matrix and
+   * viewport, the tap, the radius in pixels, the figure's middle over its feet), or null — on the GPU (Agents.pick).
+   */
+  async pickAt(among: readonly UnitId[], ask: PickAsk): Promise<UnitId | null> {
+    const gpu: number[] = [];
+    const ids: UnitId[] = [];
+    for (const id of among) {
+      const u = this.recs.get(id);
+      if (!u || !u.v.alive) continue;
+      gpu.push(u.gpu);
+      ids.push(id);
+    }
+    const g = await this.agents.pick(gpu, ask);
+    return g === null ? null : ids[gpu.indexOf(g)];
   }
 
   /** (round 128p) the side map the rules hold, on the GPU: every window column's side (uploaded when it changes) */

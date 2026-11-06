@@ -335,51 +335,54 @@ export function skipFrame(scene: LevelScene, simDt: number): void {
   stop('short' in why ? skipShortLine(why.short) : skipCutOffLine(why.cutOff));
 }
 
-/** Fortress: a tap plans (or erases, or gates) the block it lands on (Townscaper's way: town.pickBlock). */
-export function fortressAt(scene: LevelScene, sx: number, sy: number): void {
+/**
+ * Fortress: a tap plans (or erases, or gates) the block it lands on (Townscaper's way: town.pickBlock), or picks a
+ * person. (Round 128p: done once its picks come back — the person's on the GPU, the ground's — the promise.)
+ */
+export function fortressAt(scene: LevelScene, sx: number, sy: number): Promise<void> {
   // (round 128o: the window's ground being read again after a slide: the tap a frame later)
-  if (!scene.groundReady) return void requestAnimationFrame(() => fortressAt(scene, sx, sy));
+  if (!scene.groundReady) return new Promise((r) => requestAnimationFrame(() => void fortressAt(scene, sx, sy).then(r)));
   const { core } = scene;
   const { camera } = core;
   const fort = scene.fortress!;
   // (round 128l, m4; V128-10) a tap on a person (or a cart) picks them; a tap elsewhere while one is picked lets go. While
   // time runs or with Inspect on: planning's taps stay the plan's
   const follow = scene.fortressFollow;
-  if (follow && (fort.mode === 'build' || fort.tool.inspect || follow.selected !== null)) {
-    const id = personAt(scene, sx, sy);
-    if (id !== null || follow.selected !== null) {
-      follow.select(id);
-      scene.fortressBar?.render();
-      return;
-    }
-  }
-  // (the plan's own blocks are picked along the tap's ray, by face — fortress/pick.ts; the GPU pick gives the ground)
+  // (the plan's own blocks are picked along the tap's ray, by face — fortress/pick.ts; the GPU pick gives the ground.
+  // The ray and the pick's pixel as the tap found them: a person's pick comes back a frame or two later)
   const ray = camera.ray(sx, sy);
-  core.renderer.pick((sx / camera.viewportW) * scene.renderW, (sy / camera.viewportH) * scene.renderH).then((hit) => {
-    fort.press(ray, hit ? hit.cell : -1);
-  }, ignoreTeardown);
+  const rx = (sx / camera.viewportW) * scene.renderW;
+  const ry = (sy / camera.viewportH) * scene.renderH;
+  const plan = () =>
+    core.renderer.pick(rx, ry).then((hit) => {
+      fort.press(ray, hit ? hit.cell : -1);
+    }, ignoreTeardown);
+  if (follow && (fort.mode === 'build' || fort.tool.inspect || follow.selected !== null)) {
+    // (round 128p, DA-B22 (c)(2): the person found on the GPU — one small read a tap)
+    return personAt(scene, sx, sy).then((id) => {
+      if (id !== null || follow.selected !== null) {
+        follow.select(id);
+        scene.fortressBar?.render();
+        return;
+      }
+      return plan();
+    }, ignoreTeardown);
+  }
+  return plan();
 }
 
-/** (round 128l, m4) the fortress's person (or cart) drawn nearest a screen point, within PICK_PX (null: none) */
+/**
+ * (round 128l, m4) the fortress's person (or cart) drawn nearest a screen point, within PICK_PX (null: none). (Round
+ * 128p, DA-B22 (c)(2): found on the GPU among the crowd — AgentUnits.pickAt — not from every one's position on the CPU)
+ */
 const PICK_PX = 26;
-export function personAt(scene: LevelScene, sx: number, sy: number): number | null {
+export function personAt(scene: LevelScene, sx: number, sy: number): Promise<number | null> {
   const life = scene.fortressCrowd;
-  if (!life) return null;
+  const units = scene.units;
+  if (!life || !units) return Promise.resolve(null);
   const cam = scene.core.camera;
-  let best: number | null = null;
-  let bd = PICK_PX;
-  for (const id of life.everyone()) {
-    const u = scene.units?.get(id);
-    if (!u?.alive) continue;
-    // (the figure's middle, a little over its feet)
-    const [px, py] = cam.project(u.at[0], u.at[1], u.at[2] + 0.7);
-    const d = Math.hypot(px - sx, py - sy);
-    if (d < bd) {
-      bd = d;
-      best = id;
-    }
-  }
-  return best;
+  // (the figure's middle, a little over its feet)
+  return units.pickAt(life.everyone(), { viewProj: cam.viewProj, viewport: [cam.viewportW, cam.viewportH], at: [sx, sy], radius: PICK_PX, lift: 0.7 });
 }
 
 /** (round 128l, m4; V128-10) Follow, each frame: the camera on the person picked (the window slides with the camera) */
