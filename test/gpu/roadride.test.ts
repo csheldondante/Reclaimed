@@ -1,7 +1,8 @@
-// (round 128i, V128-14) The agents ride the roads on the GPU (agents/ride.ts, shaders/roadride.wgsl): the next-hop
-// tables made on the GPU equal the CPU's (roadgraph.ts hopsCpu) on a fortress's lanes and roads; a unit standing on a
-// road joins the network and heads for the next node on its way; near its goal it makes straight for it, and at it
-// stands; a unit of a group that doesn't ride is left to its field.
+// (round 128i, V128-14; round 128o, DA-A7: kinematic trips) The agents ride the roads on the GPU (agents/ride.ts,
+// shaders/roadride.wgsl): the next-hop tables made on the GPU equal the CPU's (roadgraph.ts hopsCpu) on a fortress's
+// lanes and roads; a unit standing on a road starts a trip and is placed along the route at its kind's speed, node to
+// node, to its goal, where it stands, arriving when the route's length at that speed says; a unit of a group that doesn't
+// ride is left to its field.
 import { describe, expect, test } from 'vitest';
 import { RoadRide } from '../../src/agents/ride';
 import { edgeCost, hopsCpu, MAX_NODES, nearestNode, nodeCount } from '../../src/agents/roadgraph';
@@ -9,6 +10,12 @@ import { packRoadShapes, roadBitsCpu } from '../../src/agents/roads';
 import { fortressOn } from '../../src/fortress/testing';
 import { laneGraph, roadShapesOf } from '../../src/build/lanes';
 import { testGpu } from './dawn';
+import { globalsWithDt } from './ride-globals';
+
+/** a tick's seconds */
+const DT = 1 / 60;
+/** the riders' kind's speed (m/s) */
+const SPEED = 2.4;
 
 const W = 160;
 const H = 184;
@@ -29,7 +36,7 @@ function town() {
 }
 
 describe('the agents ride the roads on the GPU', () => {
-  test('the hop tables equal the CPU rule; a unit joins, heads on, gets off and stands', async () => {
+  test('the hop tables equal the CPU rule; a rider is placed along its route at its speed and stands at its goal', async () => {
     const g = await testGpu();
     const dev = g.device;
     const f = town();
@@ -43,7 +50,8 @@ describe('the agents ride the roads on the GPU', () => {
     // (two planes: the road shapes' bits, then the network's — made by the ride)
     const roads = dev.createBuffer({ size: words * 8, usage: S });
     dev.queue.writeBuffer(roads, 0, roadBitsCpu(packRoadShapes(roadShapesOf(L, f.ways(), f.grid)), 0, 0, W, H));
-    const ride = new RoadRide(dev, units, roads, W, UNITS);
+    const ride = new RoadRide(dev, globalsWithDt(dev, DT), units, roads, W, UNITS);
+    ride.setKindSpeed(0, SPEED);
     ride.setGraph(graph, 0, 0);
     // the doors: group 3 to the warehouse's and the house's
     const doors = f.ways().doors.map((d) => {
@@ -134,8 +142,8 @@ describe('the agents ride the roads on the GPU', () => {
       if (!near) expect(netAt(x, y)).toBe(0);
     }
 
-    // units: 0 on a road node far from the goals, 1 by a goal, 2 at a goal, 3 in a group that doesn't ride
-    const far = [...Array(n).keys()].filter((v) => cpu.dist[0][v] < 1e9 && cpu.dist[0][v] > 30 && Math.min(...goals.map((p) => Math.hypot(p[0] - graph.xy[v * 2], p[1] - graph.xy[v * 2 + 1]))) > 10)[0];
+    // units: 0 on a road node far from the goals (it rides), 1 in a group that doesn't ride
+    const far = [...Array(n).keys()].filter((v) => cpu.dist[0][v] < 1e9 && cpu.dist[0][v] > 15 && Math.min(...goals.map((p) => Math.hypot(p[0] - graph.xy[v * 2], p[1] - graph.xy[v * 2 + 1]))) > 8)[0];
     expect(far).toBeDefined();
     const rec = (x: number, y: number, grp: number) => {
       const r = new Float32Array(20);
@@ -147,36 +155,42 @@ describe('the agents ride the roads on the GPU', () => {
     };
     const fx = graph.xy[far * 2];
     const fy = graph.xy[far * 2 + 1];
-    dev.queue.writeBuffer(units, 0, rec(fx + 0.3, fy, 3));
-    dev.queue.writeBuffer(units, 80, rec(goals[0][0] + 3, goals[0][1], 3));
-    dev.queue.writeBuffer(units, 160, rec(goals[0][0] + 0.2, goals[0][1], 3));
-    dev.queue.writeBuffer(units, 240, rec(fx, fy, 7));
-    const tick = async () => {
+    dev.queue.writeBuffer(units, 0, rec(fx, fy, 3));
+    dev.queue.writeBuffer(units, 80, rec(fx, fy, 7));
+    const tick = async (n: number) => {
       const e = dev.createCommandEncoder();
-      ride.encodeHops(e, 4);
-      const pass = e.beginComputePass();
-      ride.encode(pass, 4);
-      pass.end();
+      ride.encodeHops(e, 2);
+      for (let k = 0; k < n; k++) {
+        const pass = e.beginComputePass();
+        ride.encode(pass, 2);
+        pass.end();
+      }
       dev.queue.submit([e.finish()]);
-      return new Float32Array(await g.read(units, 4 * 80));
+      return new Float32Array(await g.read(units, 2 * 80));
     };
-    const out = await tick();
+    // (its route: the table's, from its node to whichever goal is cheaper — the length it rides, then the last stretch)
+    const best = cpu.dist[0][far] <= cpu.dist[1][far] ? 0 : 1;
+    let len = 0;
+    for (let v = far; v !== dests[best]; ) {
+      const nx = cpu.next[best][v];
+      len += Math.hypot(graph.xy[nx * 2] - graph.xy[v * 2], graph.xy[nx * 2 + 1] - graph.xy[v * 2 + 1]);
+      v = nx;
+    }
+    len += Math.hypot(goals[best][0] - graph.xy[dests[best] * 2], goals[best][1] - graph.xy[dests[best] * 2 + 1]);
+    let out = await tick(1);
     const steer = (i: number) => out[i * 20 + 19];
-    // (0: on the network, heading to a node next on its way — a heading, the node within reach of its way)
-    expect(steer(0)).toBeGreaterThan(5);
-    const h = steer(0) - 10;
-    const st = new Uint32Array(await g.read((ride as unknown as { state: GPUBuffer }).state, 4 * 16));
-    expect(st[0]).toBe(1);
-    const node = st[1];
-    expect(cpu.dist[st[2] & 0xff][node]).toBeLessThan(cpu.dist[st[2] & 0xff][far] + 1e-3);
-    const toNode = Math.atan2(graph.xy[node * 2 + 1] - fy, graph.xy[node * 2] - (fx + 0.3));
-    expect(Math.abs(Math.atan2(Math.sin(h - toNode), Math.cos(h - toNode)))).toBeLessThan(1e-3);
-    // (1: straight for its goal, off the roads: heading west to it)
-    expect(st[4]).toBe(2);
-    expect(Math.abs(Math.atan2(Math.sin(steer(1) - 10 - Math.PI), Math.cos(steer(1) - 10 - Math.PI)))).toBeLessThan(1e-3);
-    // (2: there — stands; 3: not riding — its field)
-    expect(steer(2)).toBeLessThan(0);
-    expect(steer(3)).toBe(0);
+    // (0: on a trip — placed, not steered: a tick's way along its first edge)
+    expect(steer(0)).toBe(-2);
+    expect(Math.hypot(out[0] - fx, out[1] - fy)).toBeCloseTo(SPEED * DT, 3);
+    // (1: not riding — its field)
+    expect(steer(1)).toBe(0);
+    // (at its goal when the route's length at its speed says, give or take a tick: standing there)
+    const ticks = Math.ceil(len / (SPEED * DT));
+    out = await tick(ticks - 2);
+    expect(steer(0)).toBe(-2);
+    out = await tick(3);
+    expect(steer(0)).toBe(-1);
+    expect(Math.hypot(out[0] - goals[best][0], out[1] - goals[best][1])).toBeLessThan(1e-3);
     expect(g.takeErrors()).toEqual([]);
   });
 });

@@ -18623,3 +18623,26 @@ Design note before code (AGENT_RULES 1). DESIGN.md section 12.
 - **Edge cases as tests:** the GPU test: a rider moves along its edges at its speed and stands at its goal, through a
   node where the ground steps more than a walker's STEP (it is placed, not walked); knocked off it rejoins. Gate:
   scripts/lab/fortressharvest.mjs passes and grain comes home.
+
+## 2026-11-06 — round 128o (`onetown`, DA-A7 C): riders on trips — placed along the routes, not steered
+
+- roadride.wgsl `ride`: a rider standing on an edge's band starts a trip there (projected onto the edge, toward the end
+  cheaper to its nearest goal) and is then placed each tick along its edges at its kind's speed (`G.dt`; the kinds'
+  speeds in the ride's params: `RoadRide.setKindSpeed`, from `Agents.defineKind`), node to node by the next-hop
+  tables, then the last stretch to its goal, where it stands. Its steer word says RIDE_TRIP (-2) and units.wgsl moves
+  it no further — only its height rides the surface nearest its last (a step on the route is taken). Knocked down,
+  thrown, swinging: off, back on its field, and it starts again. The ride now includes common.wgsl (Globals' dt, the
+  lattice's cellAt: its own copy of the lattice deleted) and binds the Globals.
+- Deleted: JOIN_R, AT_NODE, AT_GOAL, LOST, LAST_LOST, STUCK_SPEED, STUCK_TICKS, COOL_TICKS, NEAR_GOAL, the ride's
+  steering (steerTo, longestEdge, rrNearNet). Kept: ON_EDGE (an edge's band: a lane's half width and a pad), the next-hop
+  tables (MAX_DESTS 64, MAX_NODES 1024) as the cached routes, RIDE_NEAR (a goal must be within 6 m of a node).
+- Tests: test/gpu/roadride.test.ts — a rider moves a tick's way along its first edge, is still on its trip a tick
+  before the route's length at its speed, and stands at its goal (within 1 mm) a tick or two after; roadride-long — a
+  rider on a 4 + 12 + 12 m road arrives at its end at its speed (was the LOST rule's test). The GPU tier green.
+- Gates (lab `town`): scripts/lab/fortressharvest.mjs passes (36 loads home by 243 sim s, no carrier still for 120 s;
+  failed before); every block built: 708/708 by 301 sim s (was 703); grain held ~115-160. lab unitsonground passes;
+  `walled` fortressoutside passes. The rolling gate merged from phonefix (scripts/lab/fortressoutside.mjs: 900 sim s, a
+  block outside every 150 s, fails if none is reached for 180 s) passed one run of two; the other failed at 238 s (three
+  sites waiting). Not settled: in the lab at 16x the CPU's copy of the units lags the GPU by a median 10-14 m
+  (AgentUnits.update's async sync; measured at six points over 120 sim s), so the fortress's routine decides arrivals
+  late; DA-B2 (events and watched units) is that work.

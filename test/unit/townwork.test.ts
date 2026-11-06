@@ -25,7 +25,8 @@ async function startTown() {
   return { site, f };
 }
 
-describe("the user's start town goes to work", () => {
+// (the fixture decoded and its town's ways made: a second or two alone, more beside the GPU tier)
+describe("the user's start town goes to work", { timeout: 30_000 }, () => {
   // One plan, so its generated farmland is farm structures — 368 built blocks, a job each. With farms first in
   // JOB_ORDER all its people farmed and nobody built ("There are no builders": 702 of 708 blocks, for good).
   it('gives the builders people, though its farmland has more jobs than it has people', async () => {

@@ -39,7 +39,7 @@
 //   e: (LW1, the trait system's words — 0 without it) CAPS, the verbs the step
 //      honours (u32 bits: CAP_*); LOOK, what the draw shows (u32: LOOK_*); the
 //      max hp it was spawned with; (round 128i) the road ride's steer
-//      (roadride.wgsl: 0 none, < 0 stand, else heading + STEER_BIAS — read by
+//      (roadride.wgsl: 0 none, -1 stand, -2 on a trip, else heading + STEER_BIAS — read by
 //      the walking step below). The step only reads them: the trait
 //      modules derive them from the traits each tick (src/traits).
 @group(0) @binding(7) var<storage, read_write> units: array<vec4<f32>>;
@@ -148,8 +148,9 @@ const SHOVE_FIX: f32 = 100.0;
 // knocked over when what runs into it would move it this fast (cells/s)
 const KNOCK_SPEED: f32 = 2.5;
 const MAX_INST: u32 = 65536u;
-/** (round 128i) roadride.wgsl STEER_BIAS */
+/** (round 128i) roadride.wgsl STEER_BIAS; (round 128o) RIDE_TRIP: on a trip, placed by the ride */
 const STEER_BIAS: f32 = 10.0;
+const RIDE_TRIP: f32 = -2.0;
 
 fn unitInfo(a: vec4<f32>) -> u32 { return bitcast<u32>(a.w); }
 fn unitId(u: u32, info: u32) -> u32 { return (info >> 16u) * MAX_SLOTS + u; }
@@ -559,6 +560,13 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
       atomicAdd(&shove[o + 1u], i32(vel.y * mass * SHOVE_FIX));
       atomicAdd(&shove[o + 2u], i32(mass * SHOVE_FIX));
     }
+  } else if (kind.b.w <= 0.0 && steer < RIDE_TRIP + 0.5) {
+    // (round 128o, DA-A7: on a trip — placed by the ride, roadride.wgsl, after the last step: its x, y and velocity are
+    // the trip's; its height rides the surface under it nearest its last, so a step on the route is taken, not a wall)
+    let kk = surfaceNear(i, pos.z);
+    let fz = select(pos.z, navZ(i * NAV_K + min(kk, NAV_K - 1u)), kk < NAV_K);
+    np = vec3<f32>(pos.xy, pos.z + (fz - pos.z) * min(dt * 10.0, 1.0));
+    if (length(vel.xy) > 0.05) { heading = atan2(vel.y, vel.x); }
   } else {
     // walking: what it wants to do
     var want = vec2<f32>(0.0);

@@ -31,7 +31,8 @@ async function startTown() {
   return { site, f };
 }
 
-describe("the user's start town's routes", () => {
+// (the fixture decoded and its town's ways made: a second or two alone, more beside the GPU tier)
+describe("the user's start town's routes", { timeout: 30_000 }, () => {
   it('gives every structure but its wall an entrance', async () => {
     const { f } = await startTown();
     const has = new Set(f.ways().entrances.map((e) => e.structure));

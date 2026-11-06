@@ -36,7 +36,8 @@ async function startTown() {
   return f;
 }
 
-describe("the user's start town is reached", () => {
+// (the fixture decoded and its town's ways made: a second or two alone, more beside the GPU tier)
+describe("the user's start town is reached", { timeout: 30_000 }, () => {
   // (cell 1188: a house site walled in by houses; its stand is under its neighbour's passage — the reach read the roof
   // over the arch, the top surface, and never counted it)
   it('reaches every block still to build', async () => {
