@@ -1,14 +1,19 @@
 // A road's grade over the land (DA-A10, round 128o; DESIGN section 12: "It conforms to the land where that makes sense,
 // and otherwise changes it: grading, cuts and fills, bridges, ramps, switchbacks and tunnels"). Pure: a lane's ground
 // sampled along it in, the land it's laid on out — the target height a metre along, the cut (down) or fill (up) there,
-// and the stretches too steep to grade within `maxCut` (stairs or a switchback there: `steep`, the user's choice).
-// Waits on the user's answers (BACKLOG DA-A10): the steepest grade, stairs or switchbacks, whether the start town's own
-// roads are graded at generation. Nothing here edits the world: the road's works do, when built.
+// and the stretches too steep to grade within `maxCut` (stairs or a switchback there: `steep` — the user's answers,
+// DECISIONS round 128o: 1 in 3 (ROAD_GRADE), stairs in town, switchbacks outside; whether a stair fits its stretch by
+// a stair's pitch, ways.ts stairRise, as the reach's ramps). Nothing here edits the world: the road's works do.
 //
 // The grade: the highest profile under the ground whose slope is at most `maxGrade` (cut only: min over j of
 // g[j] + maxGrade |i - j|) and the lowest over it (fill only: max over j of g[j] - maxGrade |i - j|) both keep the slope;
 // their mean does too, and balances cut and fill. Where it leaves the ground by more than `maxCut` the land is too steep
 // to grade there: that stretch keeps its ground and is declared `steep`.
+
+import { stairRise } from './ways';
+
+/** (DECISIONS round 128o) the steepest a road rises: 1 in 3 */
+export const ROAD_GRADE = 1 / 3;
 
 export interface GradeOpts {
   /** the steepest a road may rise (metres up a metre along) */
@@ -27,7 +32,7 @@ export interface LaneGrade {
   ground: number[];
   road: number[];
   /** the stretches left at their ground (sample index from, to inclusive), each what it becomes */
-  steep: { from: number; to: number; rise: number; kind: GradeOpts['steep'] }[];
+  steep: { from: number; to: number; rise: number; kind: GradeOpts['steep']; fits: boolean }[];
   /** ground moved: cut (taken, m of height summed over samples) and fill (put) */
   cut: number;
   fill: number;
@@ -58,7 +63,9 @@ export function gradeLane(a: readonly [number, number], b: readonly [number, num
     const from = Math.max(0, i - 1);
     const to = Math.min(n, j + 1);
     for (let k = i; k <= j; k++) road[k] = g[k];
-    steep.push({ from, to, rise: g[to] - g[from], kind: o.steep });
+    // (a stair fits its stretch when no steeper than a stair may be — else it needs more run: a switchback, a longer stair)
+    const rise = g[to] - g[from];
+    steep.push({ from, to, rise, kind: o.steep, fits: Math.abs(rise) <= stairRise((to - from) * (L / n)) });
     i = j;
   }
   let cut = 0;

@@ -22,7 +22,7 @@ import type { NavGraph } from '../api/contracts/structures';
 import { LEVEL_H } from '../build/town';
 import { bedsOf, roomOf } from './economy';
 import { REACH_BITS, type ReachAsk, type ReachEngine, type ReachFix, type ReachReply } from '../build/reach';
-import { applyReachFixes, joinPlaces, singleStands, siteSpans, standsOfCell } from '../build/sitereach';
+import { applyReachFixes, joinPlaces, singleStands, siteRampRise, siteSpans, standsOfCell } from '../build/sitereach';
 import { refusedLine, variantLine, wouldCutLine, type ReachWhy, type VariantKind } from './words';
 import { laneGraph, lanesOf, roadShapesOf, type Lanes } from '../build/lanes';
 import { nearestNode, reached, subgraph, type RoadGraph } from '../agents/roadgraph';
@@ -574,7 +574,7 @@ export class Fortress {
     await this.settled();
     this.reachBusy = true;
     try {
-      R.setSpans(this.spansNow());
+      R.setSpans(this.spansNow(), siteRampRise(this));
       const reply = await R.check(this.reachAsk(cells, false, false));
       return cells.map((_, i) => (reply.bits[i] & 1) === 1);
     } finally {
@@ -633,7 +633,7 @@ export class Fortress {
         // (the pending blocks this answer judges)
         const batch = this.pending.size ? { cells: [...this.pending], before: this.pendingBefore ?? new Set<number>() } : null;
         const t0 = performance.now();
-        R.setSpans(this.spansNow());
+        R.setSpans(this.spansNow(), siteRampRise(this));
         const cells = this.todoCells();
         const ask = { ...this.reachAsk(cells, wet, !!edit || !!batch), fix: !!batch };
         this.reachStats.cpuMs = performance.now() - t0;

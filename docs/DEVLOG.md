@@ -19563,6 +19563,45 @@ its slot opening or closing starts it over (a tested piece).
   fortresslanes, fortresscarts, fortressfollow, fortressoutside walled ok; fortressrefuse fails only its tap's CPU
   (8.5 ms, DA-G9: before this too); settlecrowd ok (above). The fixture recaptured after the merge of fortress.
 
+## 2026-11-06 — round 128o (`onetown`, DA-A10 step 1): stairs in town — a ramp joins drops up to 5 m
+
+- The user's answers (DECISIONS round 128o): free at generation, 1 in 3, "stairs in town, switchbacks outside". A ramp
+  (plan.ramp, solid.ts rampSpans: a cell's run, drawn as the wall stairs' steps) climbs a cell's length in steps a
+  walker takes, so it joins a drop up to about 5 m, not only DROP's 2.6 (what a walker climbs back up alone). The fix
+  field takes a drop up to RAMP_RISE (5 m: build/reach.ts, fortreach.wgsl FIX_RAMP_RISE) as a ramp; higher stays out
+  (a switchback or a longer stair: later).
+- Tests: reach.test (a house below a 4 m drop gets a ramp and is reached; below 7 m it's refused), reachfix (GPU = CPU:
+  a 4 m terrace one ramp, 7 m none). settlecrowd on the start town: the reach's places out 15 -> 11 of 95 (11 fixes
+  made), loads 29, house storeys 2, a house finished; lab fortressallbuilt, unitsonground, fortressrecipes ok; unit
+  tier green. 15 people still on their way to work at the end (fields past the
+  cliffs, the woods far: the switchbacks and the grading at generation, next — DA-A11 with them).
+- keepReach (DA-A11): main's answer — generation uses the same GPU reach as play by realising the town in the window
+  (the start town is generated where the window is); keepReach is the duplicate to delete with DA-A10's "graded at
+  generation".
+
+## 2026-11-06 — round 128o (`onetown`, DA-A10 step 1b): a stair's rise derived from its cell, not assumed
+
+- Main: RAMP_RISE (5 m, "a cell is about 5 m") was a fudge — a short cell would get a stair too steep to walk. Now a
+  stair's highest rise is derived: ways.ts stairRise(run) = SLOPE (0.75: the wall stairs' pitch, each column's step
+  within the walkers' STEP 1.1) x its run; solid.ts rampRun(cell, side) is a ramp's run across its cell (rampShape's
+  axis). sitereach.ts siteRampRise gives every box column the rise a ramp on its cell would take — a free cell's
+  stairRise over its shortest run, 0 where a structure or a ramp stands (no ramp goes there) — and the reach gets it
+  with the spans (ReachEngine.setSpans(spans, rampRise); reachgpu.ts a float a column, written when it changed;
+  fortreach.wgsl fixMove: a drop past STEP joins only within the lower column's rise). RAMP_RISE and FIX_RAMP_RISE are
+  gone. grade.ts's steep stretches say whether a stair fits them by the same rule (`fits`), and ROAD_GRADE is the
+  user's 1 in 3.
+- Tests: reach.test (a 4 m drop's ramp: no column of it a step past STEP from the next; a free cell's rise is SLOPE over
+  its shortest run, a planned cell's 0; 7 m refused), reachfix (GPU = CPU with the rises given), grade.test (a 4 m wall
+  over 2 m of lane: no stair fits). The fixture recaptured (ways.ts and solid.ts are the generator's sources).
+- Measured (settlecrowd, start town, 3 runs): the reach's places out 15 of 95 with 3 fixes (the fudge's 5 m stairs
+  made 11 fixes and left 11 out: the start town's free cells are shorter than 5 m, so most of those stairs would have
+  been too steep to walk); loads 29 and 30, a house finished, in 2 runs; the third stalled (0 loads: the builders
+  stood on their way to the site — a flake, its cause not found yet). Lab on this code: fortressraid, fortresslanes,
+  fortresscarts, fortressallbuilt, unitsonground, fortressrecipes, fortressharvest, fortressoutside walled ok;
+  fortressfollow failed twice: its tap picked a second person drawn on the first — riders on the same trip are placed
+  at the same spots along it (no queueing on the roads yet, DESIGN section 12); the scenario now picks a person
+  standing apart (ok).
+
 ## 2026-11-06 — round 128o (`phonefix`, DA-B28): the field mesh rebuilt from the chunks' versions, design note for main's review
 
 - Why: on the user's Pixel 9a, `fieldmesh-hash` is the largest GPU pass after the draw (6.3 ms mean, 129 ms max a

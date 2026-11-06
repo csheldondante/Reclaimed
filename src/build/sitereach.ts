@@ -6,7 +6,8 @@ import type { Town } from './town';
 import type { QuadGrid } from './quadgrid';
 import type { TownPlan } from './plan';
 import type { Ways } from './ways';
-import { solidSpans } from './solid';
+import { rampRun, solidSpans } from './solid';
+import { stairRise } from './ways';
 import { cellPos, nbr } from '../world/lattice';
 import { packSpan, REACH_BITS, unpackSpan, type ReachAsk, type ReachEngine, type ReachFix, type ReachReply } from './reach';
 import type { StructureType } from '../api/contracts/fortress';
@@ -66,6 +67,29 @@ export function siteSpans(s: SiteSolid): Uint32Array {
         out[i + 1] = packSpan(Math.min(o.z0, n.z0), Math.max(o.z1, n.z1), o.cut && n.cut);
       }
     }
+  return out;
+}
+
+/**
+ * (round 128o, DA-A10) Per box column the highest drop a ramp on it would join: a free cell (no structure, no ramp yet)
+ * takes a stair across it no steeper than SLOPE (ways.ts stairRise) over its shortest run (solid.ts rampRun, each side's
+ * axis) — a short cell, a low stair; a cell with a structure or a ramp, 0 (none goes there).
+ */
+export function siteRampRise(s: Pick<SiteSolid, 'plan' | 'grid' | 'box'>): Float32Array {
+  const { plan, grid } = s;
+  const { w, h } = s.box;
+  const out = new Float32Array(w * h);
+  const byCell = new Map<number, number>();
+  for (let b = 0; b < w * h; b++) {
+    const c = grid.cellOf[b];
+    if (c < 0 || plan.owner[c] >= 0 || plan.ramp[c] >= 0) continue;
+    let r = byCell.get(c);
+    if (r === undefined) {
+      r = Math.min(...[0, 1, 2, 3].map((e) => stairRise(rampRun(grid, c, e))));
+      byCell.set(c, r);
+    }
+    out[b] = r;
+  }
   return out;
 }
 
@@ -167,7 +191,7 @@ export interface Places {
 function joinAsk(j: JoinPlaces): ReachAsk {
   const solid = j.solid();
   const { w } = solid.box;
-  j.engine.setSpans(siteSpans(solid));
+  j.engine.setSpans(siteSpans(solid), siteRampRise(solid));
   const p = j.places();
   return {
     stores: [j.stores % w, Math.floor(j.stores / w)],

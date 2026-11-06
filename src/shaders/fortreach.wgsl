@@ -47,6 +47,8 @@ struct ReachParams {
 @group(0) @binding(14) var<storage, read_write> fixDist: array<atomic<u32>>;
 /** (B) [0] fixes found, then FIX_CAP triples (query, box column, kind (0 cut, 1 ramp) | direction << 8) */
 @group(0) @binding(15) var<storage, read_write> fixes: array<atomic<u32>>;
+/** (round 128o, DA-A10) per box column the highest drop a ramp on it joins (a free cell's stair, from its run; 0 none) */
+@group(0) @binding(16) var<storage, read> rampRise: array<f32>;
 
 const RNAV_K: u32 = 4u;
 const R_AGENT_H: f32 = 1.5;
@@ -62,6 +64,7 @@ const FIX_CUT: u32 = 4u;
 const FIX_RAMP: u32 = 20u;
 const FIX_CAP: u32 = 512u;
 const FIX_FAR: u32 = 0xffffffffu;
+
 const NODE_NONE: u32 = 0xffffffffu;
 
 fn boxW() -> u32 { return u32(RP.box.z); }
@@ -308,7 +311,9 @@ fn fixMove(tb: u32, t: u32, b: u32, s: u32) -> u32 {
   if (min(a.x + a.y, c.x + c.y) - max(a.x, c.x) < R_AGENT_H) { return FIX_FAR; }
   let dt = t % RNAV_K == 0u && deepTop[tb] == 1u;
   let ds = s % RNAV_K == 0u && deepTop[b] == 1u;
-  if (dt != ds || rise > R_DROP) { return FIX_FAR; }
+  if (dt != ds) { return FIX_FAR; }
+  // (past a step: a ramp on the lower column's cell — a stair no steeper than its own run allows)
+  if (rise > R_STEP && rise > rampRise[select(b, tb, a.x < c.x)]) { return FIX_FAR; }
   return FIX_STEP + select(0u, FIX_CUT, cutCol[b] == 1u) + select(0u, FIX_RAMP, rise > R_STEP);
 }
 

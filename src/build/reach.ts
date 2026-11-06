@@ -31,6 +31,7 @@ export const REACH_BITS = { reached: 1, dry: 2, unplanned: 8, none: 16, fixable:
  * STEP to DROP, either way) RAMP more. So a place is joined by the fewest cuts and ramps, then the shortest way.
  */
 export const FIX_COST = { step: 1, cut: 4, ramp: 20 } as const;
+
 /** fortreach.wgsl FIX_CAP: the fixes an answer holds (all places together) */
 export const FIX_CAP = 512;
 /** one fix on the way to a place not reached: a column to cut (its plan solid), or a ramp up from a column in a direction */
@@ -78,8 +79,12 @@ export interface ReachReply {
 
 /** what answers the fortress's reach: the GPU's (reachgpu.ts) in the game, the CPU reference (CpuReach) in tests */
 export interface ReachEngine {
-  /** the plan's solid as if built: two spans a box column (packSpan; 0 none) */
-  setSpans(spans: Uint32Array): void;
+  /**
+   * the plan's solid as if built: two spans a box column (packSpan; 0 none); (round 128o, DA-A10) and per box column the
+   * highest drop a ramp on it would join (sitereach.ts siteRampRise: a free cell's stair, from its own run; 0 none —
+   * no ramp goes there)
+   */
+  setSpans(spans: Uint32Array, rampRise?: Float32Array): void;
   check(ask: ReachAsk): Promise<ReachReply>;
 }
 
@@ -151,10 +156,14 @@ export class CpuReach implements ReachEngine {
     private origin: () => [number, number],
   ) {
     this.spans = new Uint32Array(w * h * 2);
+    this.rampRise = new Float32Array(w * h);
   }
 
-  setSpans(spans: Uint32Array): void {
+  private rampRise: Float32Array;
+
+  setSpans(spans: Uint32Array, rampRise?: Float32Array): void {
     this.spans = spans.slice();
+    this.rampRise = rampRise ? rampRise.slice() : new Float32Array(this.w * this.h);
   }
 
   async check(ask: ReachAsk): Promise<ReachReply> {
@@ -269,7 +278,8 @@ export class CpuReach implements ReachEngine {
         const rise = Math.abs(c.z - a.z);
         if (Math.min(a.z + a.head, c.z + c.head) - Math.max(a.z, c.z) < AGENT_H) return -1;
         if (isDeep(tb, j) !== isDeep(b, k)) return -1;
-        if (rise > DROP) return -1;
+        // (past a step: a ramp on the lower column's cell — a stair no steeper than its own run allows)
+        if (rise > STEP && rise > this.rampRise[a.z < c.z ? tb : b]) return -1;
         return FIX_COST.step + (cut[b] ? FIX_COST.cut : 0) + (rise > STEP ? FIX_COST.ramp : 0);
       };
       // (the shortest costs — the GPU relaxes Bellman-Ford sweeps to the same: Dijkstra here, a binary heap)

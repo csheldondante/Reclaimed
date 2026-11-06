@@ -17,8 +17,8 @@ beforeAll(async () => {
 afterAll(() => g?.destroy());
 
 const W = 64;
-/** the ground: 5 m, a terrace 2 m up (x 40..50), a cliff 6 m up (x >= 56) */
-const groundAt = (x: number) => (x >= 56 ? 11 : x >= 40 && x < 50 ? 7 : 5);
+/** the ground: 5 m, a terrace 4 m up (x 40..50: past DROP, a stair joins it), a cliff 7 m up (x >= 56) */
+const groundAt = (x: number) => (x >= 56 ? 12 : x >= 40 && x < 50 ? 9 : 5);
 /** a ring of cuttable plan solid (a house's ground floor) round (16, 20), 3 to 5 m out, 8 m tall */
 const RING: [number, number] = [16, 20];
 const ringAt = (x: number, y: number) => {
@@ -38,9 +38,11 @@ test('the fix field and its walk back: the GPU as the CPU reference', async () =
   const places = [col(15, 23), col(45, 30), col(60, 30)];
   const ask: ReachAsk = { stores: [8, 40], storesZ: 5, queries: new Int32Array(places.flatMap((c) => [c, -1, -1, -1])), floors: new Float32Array(places.flatMap((c) => [groundAt(c % W), 0, 0, 0])), wet: false, why: true, fix: true };
   const cpu = new CpuReach(cols, W, W, () => [0, 0]);
-  cpu.setSpans(spans);
+  // (a free column's stair rises 4.5 m at most: sitereach.ts siteRampRise's, a cell 6 m across; none on the ring)
+  const rise = new Float32Array(W * W).map((_, i) => (spans[2 * i] ? 0 : 4.5));
+  cpu.setSpans(spans, rise);
   const gpu = new FortressReachGpu(g.device, world.core.world, W, W, () => [0, 0]);
-  gpu.setSpans(spans);
+  gpu.setSpans(spans, rise);
   const a = await cpu.check(ask);
   const b = await gpu.check(ask);
   const key = (f: ReachFix) => `${f.query}:${f.kind}:${f.col}:${f.dir}`;

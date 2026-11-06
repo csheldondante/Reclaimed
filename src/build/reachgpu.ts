@@ -50,6 +50,9 @@ export class FortressReachGpu implements ReachEngine {
   private fixDist: GPUBuffer;
   private fixBuf: GPUBuffer;
   private fixStage: GPUBuffer;
+  /** (DA-A10) per box column the highest drop a ramp on it joins */
+  private rampRiseBuf: GPUBuffer;
+  private riseWritten: Float32Array;
   /** a params buffer a solve's mode */
   private params: GPUBuffer[];
   private queryBuf: GPUBuffer | null = null;
@@ -82,6 +85,8 @@ export class FortressReachGpu implements ReachEngine {
     this.cutCol = device.createBuffer({ label: 'reach cut', size: n * 4, usage: S });
     this.fixDist = device.createBuffer({ label: 'reach fix field', size: n * NAV_K * 4, usage: S });
     this.fixBuf = device.createBuffer({ label: 'reach fixes', size: (1 + 3 * FIX_CAP) * 4, usage: S });
+    this.rampRiseBuf = device.createBuffer({ label: 'reach ramp rise', size: n * 4, usage: S });
+    this.riseWritten = new Float32Array(n);
     this.fixStage = device.createBuffer({ label: 'reach fixes read', size: (1 + 3 * FIX_CAP) * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
     this.params = MODES.map(() => device.createBuffer({ label: 'reach params', size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }));
     this.written = new Uint32Array(n * 2);
@@ -96,8 +101,8 @@ export class FortressReachGpu implements ReachEngine {
       ramps: mk('reachRamps', { 6: 'rw', 7: 'rw', 8: 'rw', 11: 'rw' }),
       wet: mk('reachWet', { 4: 'read', 11: 'rw' }),
       fixInit: mk('fixInit', { 6: 'rw', 14: 'rw' }),
-      fixRelax: mk('fixRelax', { 6: 'rw', 7: 'rw', 9: 'rw', 13: 'rw', 14: 'rw' }),
-      fixTrace: mk('fixTrace', { 6: 'rw', 7: 'rw', 10: 'read', 11: 'rw', 13: 'rw', 14: 'rw', 15: 'rw' }),
+      fixRelax: mk('fixRelax', { 6: 'rw', 7: 'rw', 9: 'rw', 13: 'rw', 14: 'rw', 16: 'read' }),
+      fixTrace: mk('fixTrace', { 6: 'rw', 7: 'rw', 10: 'read', 11: 'rw', 13: 'rw', 14: 'rw', 15: 'rw', 16: 'read' }),
     };
     this.ready = new Promise((r) => whenPipelinesReady(r));
   }
@@ -106,8 +111,15 @@ export class FortressReachGpu implements ReachEngine {
    * The plan's solid as if built (box columns: two spans a column, z0 | z1 << 16 in eighths of a metre; 0 none). Only
    * the rows that changed since the last call are written.
    */
-  setSpans(spans: Uint32Array): void {
+  setSpans(spans: Uint32Array, rampRise?: Float32Array): void {
     if (spans.length !== this.written.length) throw new Error('reach: spans are two words a box column');
+    // (DA-A10: the ramps' rises — written when they changed)
+    const rise = rampRise ?? new Float32Array(this.riseWritten.length);
+    if (rise.length !== this.riseWritten.length) throw new Error('reach: a ramp rise a box column');
+    if (rise.some((v, i) => v !== this.riseWritten[i])) {
+      this.riseWritten.set(rise);
+      this.device.queue.writeBuffer(this.rampRiseBuf, 0, this.riseWritten);
+    }
     const row = this.w * 2;
     let y0 = -1;
     let y1 = -1;
@@ -150,8 +162,8 @@ export class FortressReachGpu implements ReachEngine {
         ramps: g(this.k.ramps, { 6: this.surf, 7: this.deep, 8: this.label, 11: this.answerBuf! }),
         wet: g(this.k.wet, { 4: W.water, 11: this.answerBuf! }),
         fixInit: g(this.k.fixInit, { 6: this.surf, 14: this.fixDist }),
-        fixRelax: g(this.k.fixRelax, { 6: this.surf, 7: this.deep, 9: this.flag, 13: this.cutCol, 14: this.fixDist }),
-        fixTrace: g(this.k.fixTrace, { 6: this.surf, 7: this.deep, 10: this.queryBuf!, 11: this.answerBuf!, 13: this.cutCol, 14: this.fixDist, 15: this.fixBuf }),
+        fixRelax: g(this.k.fixRelax, { 6: this.surf, 7: this.deep, 9: this.flag, 13: this.cutCol, 14: this.fixDist, 16: this.rampRiseBuf }),
+        fixTrace: g(this.k.fixTrace, { 6: this.surf, 7: this.deep, 10: this.queryBuf!, 11: this.answerBuf!, 13: this.cutCol, 14: this.fixDist, 15: this.fixBuf, 16: this.rampRiseBuf }),
       };
     });
   }
@@ -344,6 +356,6 @@ export class FortressReachGpu implements ReachEngine {
 
   dispose(): void {
     this.gone = true;
-    for (const b of [this.spans, this.surf, this.deep, this.label, this.flag, this.cutCol, this.fixDist, this.fixBuf, this.fixStage, ...this.params, this.queryBuf, this.answerBuf]) b?.destroy();
+    for (const b of [this.spans, this.surf, this.deep, this.label, this.flag, this.cutCol, this.fixDist, this.fixBuf, this.fixStage, this.rampRiseBuf, ...this.params, this.queryBuf, this.answerBuf]) b?.destroy();
   }
 }

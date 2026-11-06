@@ -29,7 +29,13 @@ export default async function (lab, args) {
   const life = lab.life();
   const units = lab.units;
   // a worker with a job (a miner or a farmer), looked at and tapped
-  const id = life.people().find((p) => /^s/.test(life.board.jobOf(p) ?? '')) ?? life.people()[0];
+  // (round 128o: one standing apart — riders on the same trip are placed at the same spots along it, drawn one over the
+  // other (no queueing on the roads yet: DESIGN section 12), and a tap there picks either)
+  const apart = (p) => {
+    const a = units.get(p).at;
+    return life.everyone().every((q) => q === p || Math.hypot(units.get(q).at[0] - a[0], units.get(q).at[1] - a[1]) > 1.5);
+  };
+  const id = life.people().find((p) => /^s/.test(life.board.jobOf(p) ?? '') && apart(p)) ?? life.people().find(apart) ?? life.people()[0];
   const u0 = units.get(id);
   lab.look(u0.at[0], u0.at[1], 16);
   await lab.run(0.05, 1);

@@ -39,6 +39,13 @@ export const WAY_SQUARE = 2;
 export const WAY_STAIR = 3;
 /** the steepest a stair rises (metres up a metre along: a hex column a metre apart, the agents' STEP 1.1) */
 export const SLOPE = 0.75;
+/**
+ * (round 128o, DA-A10) The most a stair climbs over a run of `run` metres: no steeper than SLOPE, so each column's step
+ * is within the walkers' STEP. A ramp across a cell (solid.ts rampRun), a road's steep stretch (grade.ts) alike.
+ */
+export function stairRise(run: number): number {
+  return SLOPE * run;
+}
 /** another stair every this many wall cells of a run */
 export const STAIR_EVERY = 16;
 /** (round 128o) a metre across a field costs this many of a street: the roads go round the fields where a street does */

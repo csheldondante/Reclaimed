@@ -145,23 +145,23 @@ The atlas: the whole generated world map (coarse sim, GPU finish, far land, geys
 
 - `claims.ts` (119) — A town's built blocks in the world's columns (round 128m, onetown; API: `TownClaimsIO`, `TownClaims`.
 - `entrances.ts` (140) — How each structure of a town is entered (round 128o, DA-A7's core; API: `EntranceGrid`, `EntranceKind`, `Entrance`, `openCell` +2.
-- `grade.ts` (86) — A road's grade over the land (DA-A10, round 128o; API: `GradeOpts`, `LaneGrade`, `gradeLane`, `gradeProfile`.
+- `grade.ts` (93) — A road's grade over the land (DA-A10, round 128o; API: `ROAD_GRADE`, `GradeOpts`, `LaneGrade`, `gradeLane` +1.
 - `lanes.ts` (136) — A town's roads (round 128k; API: `LaneKind`, `LaneSeg`, `LANE_WIDTH`, `LANE_DRAWN` +9.
 - `pit.ts` (215) — A quarry's pit as tiers and ramps down its footprint (round 128m, `quarry`, BACKLOG V128-11): the player … API: `PIT_RAMP_CELLS`, `PIT_SHELF`, `PIT_RAMP`, `PitTopo` +10.
 - `plan.ts` (478) — A town's plan (round 128m, onetown; API: `typeIndex`, `wallTileOf`, `towered`, `StructureAttrs` +3.
 - `quadgrid.ts` (200) — (round 128m, onetown) A town's cells from any quad mesh: the grid one plan is painted on (build/plan.ts). API: `CellGrid`, `QuadGrid`.
-- `reach.ts` (388) — The fortress's reach: what a check asks and answers (the GPU's — reachgpu.ts, shaders/fortreach.wgsl — in … API: `RAMP_CAP`, `REACH_BITS`, `FIX_COST`, `FIX_CAP` +15.
-- `reachgpu.ts` (350) — The fortress's reach on the GPU (round 128l, m4; API: `FortressReachGpu`.
+- `reach.ts` (398) — The fortress's reach: what a check asks and answers (the GPU's — reachgpu.ts, shaders/fortreach.wgsl — in … API: `RAMP_CAP`, `REACH_BITS`, `FIX_COST`, `FIX_CAP` +15.
+- `reachgpu.ts` (362) — The fortress's reach on the GPU (round 128l, m4; API: `FortressReachGpu`.
 - `runs.ts` (219) — (round 128d) Occupancy as runs per cell: the levels a cell holds, as sorted half-open runs [lo, hi), each … API: `Run`, `CellRuns`.
 - `shapes.ts` (163) — (round 128d) Painted shapes make landmarks, Townscaper's way: the player paints blocks, and some shapes … API: `COURT_MAX`, `TOWER_LEVELS`, `ShapeGrid`, `Dome` +3.
 - `site.ts` (170) — A town as one thing (round 128m, onetown): its grid, its plan and what stands of it. API: `SiteBox`, `gridIdOf`, `SiteData`, `TownSite` +2.
-- `sitereach.ts` (233) — One reach for every town (round 128o, B; API: `FixKind`, `cuttableCell`, `SiteSolid`, `siteSpans` +6.
-- `solid.ts` (257) — What of the fortress is solid to the world (round 128d; API: `WALL_HALF`, `WALL_LINTEL`, `SolidInputs`, `RAMPS_ID` +4.
+- `sitereach.ts` (257) — One reach for every town (round 128o, B; API: `FixKind`, `cuttableCell`, `SiteSolid`, `siteSpans` +7.
+- `solid.ts` (269) — What of the fortress is solid to the world (round 128d; API: `WALL_HALF`, `WALL_LINTEL`, `SolidInputs`, `RAMPS_ID` +5.
 - `town.ts` (464) — The town (round 65, docs/DECISIONS.md: "a townscraper inspired grid and building system"; API: `LEVEL_H`, `TownIO`, `TownData`, `Block` +1.
 - `towngrid.ts` (186) — The town's irregular grid (round 65; API: `TownGridOpts`, `TownGrid`, `CellGrid`.
 - `types.ts` (152) — The building types: one table for every town (round 128m, onetown; API: `POWER_RISE`, `DEFS`.
 - `view.ts` (1183) — A town drawn (round 128m, onetown; API: `ViewSite`, `LOOK_GHOST`, `PIECE_PICKED`, `PIECE_WARN` +12.
-- `ways.ts` (567) — The fortress's ways (round 128d; API: `WaysGrid`, `WAY_NONE`, `WAY_ROAD`, `WAY_SQUARE` +17.
+- `ways.ts` (574) — The fortress's ways (round 128d; API: `WaysGrid`, `WAY_NONE`, `WAY_ROAD`, `WAY_SQUARE` +18.
 
 ## src/cardlab/
 
@@ -657,7 +657,7 @@ WGSL. `common.wgsl` (+ layers, materials) is prepended to every kernel; flow/slo
 - `floralook.wgsl` (73) — ---- the flora library's look and wind (round 117;
 - `floraput.wgsl` (55) — ---- placing a flora library plant (round 117;
 - `flow.wgsl` (21) — ---- flow.wgsl ----------------------------------------------------------------- Net water flow through a …
-- `fortreach.wgsl` (411) — ---- the fortress's reach on the GPU (round 128l, m4;
+- `fortreach.wgsl` (416) — ---- the fortress's reach on the GPU (round 128l, m4;
 - `grids.wgsl` (40) — ---- structure grids (docs/GRIDS.md) ----------------------------------------- Rigid voxel grids over the …
 - `inhabitants.wgsl` (934) — Inhabitants (round 117, docs/INHABITANTS.md;
 - `judge.ts` (11) — Judge B, the method of sections on the GPU, in parts (2026-11-04, the monolith split; API: `judgeWgsl`.
