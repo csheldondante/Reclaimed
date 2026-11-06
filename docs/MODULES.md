@@ -28,7 +28,7 @@ Boot: WebGPU, the quality tier, the phone flags, and which scene runs.
 
 GPU agents (the crowd every unit and worker runs on): their kernels' wrappers, jobs, build crews. Installed on a WorldCore by `install.ts`.
 
-- `agents.ts` (1665) — Agents (round 52, docs/AGENTS.md): units that walk the world's surfaces by following shared fields, and fight. API: `AgentTickLog`, `NAV_K`, `MAX_UNITS`, `NFIELDS` +17.
+- `agents.ts` (1694) — Agents (round 52, docs/AGENTS.md): units that walk the world's surfaces by following shared fields, and fight. API: `AgentTickLog`, `NAV_K`, `MAX_UNITS`, `NFIELDS` +17.
 - `buildcrew.ts` (343) — A building crew (round 65, docs/DECISIONS.md: "a mode where it takes the delta of the finished thing you … API: `BuildCrewDef`, `buildOrder`, `BuildCrew`.
 - `crew.ts` (286) — A work crew (round 63, docs/AGENTS.md "Crews"): workers that dig or fell and carry what they get to a … API: `CrewJob`, `CrewDef`, `Crew`.
 - `fieldreader.ts` (134) — A CPU copy of one agents field (round 52, docs/AGENTS.md), for walkers the CPU moves itself (a game's … API: `FieldSample`, `FieldReader`.
@@ -700,7 +700,7 @@ WGSL. `common.wgsl` (+ layers, materials) is prepended to every kernel; flow/slo
 - `tiles.wgsl` (417) — ---- the world-anchored tile cache (round 103, ?tiles=1;
 - `townstamp.wgsl` (119) — ---- the town's columns (round 65, build/town.ts) --------------------------- The town is real matter: its …
 - `treequery.wgsl` (107) — ---- treequery.wgsl …
-- `units.wgsl` (827) — ---- agents: the units (round 52, docs/AGENTS.md) ------------------------------ One thread a unit …
+- `units.wgsl` (830) — ---- agents: the units (round 52, docs/AGENTS.md) ------------------------------ One thread a unit …
 - `vegplan.wgsl` (64) — ---- vegetation layout (shared) ------------------------------------------- Where trees and shrubs stand …
 - `vegprep.wgsl` (409) — ---- vegetation render preparation ------------------------------------------ Emits instances for plants …
 - `water_depth.wgsl` (91) — ---- water transport: depth pass --------------------------------------- Applies flux, rain, springs and …
@@ -833,7 +833,7 @@ Stories: dialog play, hero runs, the atlas run.
 
 - `core.wgsl` (92) — ---- traits: the core's bookkeeping (LW1), around the game's modules …
 - `install.ts` (21) — The trait system on a world's agents (LW1): one call, as installAgents — its system ticked just before the … API: `installTraits`.
-- `prelude.wgsl` (153) — ---- traits: the prelude every trait kernel shares (LW1;
+- `prelude.wgsl` (156) — ---- traits: the prelude every trait kernel shares (LW1;
 - `registry.ts` (88) — The trait modules' registry (LW1; API: `TABLE_WORDS`, `Registered`, `TraitRegistry`, `packTable`.
 - `system.ts` (361) — The trait system on the GPU agents (LW1; API: `MAX_EFFECTS`, `TraitSystemOpts`, `TraitSystem`.
 

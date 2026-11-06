@@ -130,7 +130,7 @@ export const TRANSFERS: TransferSite[] = [
 
   // ---- agents ----
   { file: 'agents/agents.ts', fn: 'Agents.readField', wrapper: /\.reader\(/, what: 'nav plus one field\'s dist, w×h×80 B (~5 MB at 256²)', why: 'a CPU copy of a field for walkers the CPU moves (FieldReader)', rate: 'via', play: 'yes' },
-  { file: 'agents/agents.ts', fn: 'Agents.sync', wrapper: /\b(agents|A)\.sync\(/, what: 'the events buffer (~64 KB) and every unit (n×80 B)', why: 'units\' positions and fights for CPU game code', rate: 'via', play: 'yes' },
+  { file: 'agents/agents.ts', fn: 'Agents.sync', wrapper: /\b(agents|A)\.sync\(/, what: 'the events since the last sync (a ring: a 16 B head and a window of 256, 8 KB; round 128o — it was the whole 64 KB block) and every unit (n×80 B), into staging kept between syncs', why: 'units\' positions and fights for CPU game code (every unit read: what DA-B2 and the one-crowd merge DA-A6 remove)', rate: 'via', play: 'yes' },
   { file: 'units/agent-units.ts', fn: 'AgentUnits.update', via: 'agents/agents.ts#Agents.sync', what: 'events and units', why: 'combat and the fortress\'s people', rate: 'frame', play: 'yes', violates: F24, backlog: 'DA-B2' },
   { file: 'levels/traitstation.ts', fn: 'TraitStation.keepSynced', via: 'agents/agents.ts#Agents.sync', what: 'events and units', why: 'the trait station level', rate: 'timed', every: '250 ms', play: 'no', violates: T24 + ' (trait station)', backlog: 'DA-B2' },
   { file: 'scenes/level/town-tools.ts', fn: 'tick', via: 'agents/agents.ts#Agents.sync', what: 'events and units', why: 'the editor\'s build crew loop', rate: 'timed', every: 'each tick of the crew loop', play: 'no', violates: T24 + ' (editor town tool)', backlog: 'DA-B2' },

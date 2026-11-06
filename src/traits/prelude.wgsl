@@ -139,9 +139,12 @@ fn effAmount(e: u32) -> f32 {
 }
 
 fn emit(kind: u32, id: u32, other: u32, amount: f32, p: vec3<f32>) {
+  // (round 128o, DA-B2: a ring — [0] events made, [2] how far the CPU has read (agents.ts sync); an event the ring
+  // has no room for is not written: its slot keeps another's tag, and the CPU counts it lost)
   let e = atomicAdd(&events[0], 1u);
-  if (e >= TP.n.z) { return; }
-  let o = 4u + e * 8u;
+  if (e - atomicLoad(&events[2]) >= TP.n.z) { return; }
+  let o = 4u + (e % TP.n.z) * 8u;
+  atomicStore(&events[o + 7u], e);
   atomicStore(&events[o], kind);
   atomicStore(&events[o + 1u], id);
   atomicStore(&events[o + 2u], other);

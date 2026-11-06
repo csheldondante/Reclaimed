@@ -18483,3 +18483,40 @@ The linger existed for the sandbox's pours only (DEVLOG round 83: "a pour lands 
   focus and the flyer's floor ignore what's been dug or built (they're the lie of the land); GPU writers on sleeping
   chunks outside the ticks other than those told (DA-B9's chunk versions would cover all) aren't seen by the mirror.
 
+## 2026-11-05 — round 128o (`phonefix`, DA-B2): the units' sync — the ring and the staging now; the rest needs life.ts rewritten (design note)
+
+- Done now (agents.ts sync, units.wgsl and traits/prelude.wgsl emit): the events are a ring. The GPU counts what it
+  made ([0]) and reads how far the CPU has read ([2], written after each sync); an event goes to slot e % 2048 with its
+  number as a tag, or, with 2048 unread, isn't written (the CPU sees the tag of another and counts it lost — never
+  reads an old event twice). A sync copies the 16 B head and a window of 256 events (8 KB) from where the last stopped,
+  and the units; the rest waits for the next sync. It copied the whole 64 KB block every sync and cleared it. The
+  staging buffers are kept between syncs (one was made and destroyed every sync). Tests on Dawn: 600 deaths in one tick
+  read over three syncs, every one once; more than the ring holds counted lost, not read as old.
+- Measured (the atlas game, fortress, 20 s at 4x after Build): the agents' sync 9 KB a sync, 123 KB/s (it was 66 KB a
+  sync, 1.7-6 MB/s). Every read in fortress play after Build together: ~140 KB/s (161 MB/s at the start of DA-B1).
+- Not done — design note. What stays is every unit read every sync (n × 80 B: 1-2 KB for the town's 8-30 people,
+  growing with raids), because the CPU decides from positions, every sync:
+  - fortress/life.ts, the people's phase machine (~25 reads): arrived at a home, the heap (THERE), a site or its stands
+    (REACH), a door, a post, a spot (AT_SPOT), a wall's walk with its height over the kept ground; the carts at a
+    door or the heap; the soldiers' posts and patrols; who's nearest a newcomer's spot.
+  - fortress/raiders.ts (~10): which side of the walls a raider is (sideAt), whether a gate's shut round it, which
+    goal is nearest, whether a foe is on the same level, the wave's centre.
+  - fortress/defence.ts (~6): a soldier up on the wall near its post, the nearest raider in bow range, an arrow's aim.
+  - units/agent-units.ts (~30): hunting (whom a hostile sees, sight and leash), striking (reach), the goal fields'
+    arrivals, guards back at their posts, the follow card's unit.
+  - What each becomes:
+    - arrivals → a GPU event: a unit following a field whose distance at its feet drops under its arrival radius
+      emits `arrived` (field, where) once; the phase machine moves on that event, not on a polled position. The field
+      already holds the distance to the nearest seed, so it costs a compare per unit per tick;
+    - sight, reach and the hunt → the GPU's own (units.wgsl already notices, closes and swings; the CPU's copy of it in
+      agent-units think goes), with `noticed` as an event;
+    - sides of the walls, gates, the nearest raider → GPU queries asked on an event (the wave's arrival, a gate's turn,
+      a soldier on its post), answered as short lists;
+    - the follow card and a selected unit → watched units: a few ids read every sync (bytes for them only).
+  - Why stop here: each of those turns the phase machine from polling into reacting, which is rewriting fortress/life.ts
+    (and agent-units' think) — the one-crowd merge (DA-A6) rewrites both. Doing it here would be done twice and collide
+    with `onetown`. Proposed: DA-A6 is built on events from the start, with the arrival event and the watched-units read
+    (both engine-side, in agents.ts/units.wgsl) landed first as their own rows.
+- Hacks and limits: 256 events a sync at most (more wait a sync); 2048 unread at most (more are lost, counted); every
+  unit still read every sync.
+

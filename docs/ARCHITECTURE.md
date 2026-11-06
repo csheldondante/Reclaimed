@@ -1824,9 +1824,11 @@ headroom | wet | six 3-bit links, room, region — the peel reads `places` and
 height and wet the links and the relax reckon its cost by, following nav's floor with hysteresis — the
 units ride nav, the fields read this), `agentDist` (NFIELDS = 4 fields × surfaces,
 f32), `agentUnits` (five vec4 a unit: units.wgsl — the fifth, LW1, the trait system's CAPS and LOOK and the max hp), `agentOcc` (units per
-column, two halves by tick parity), `agentEvents` (a count and 8-u32
-records: swing, hurt, death, alight; the CPU copies and clears it in
-`sync`), `agentModels` (the kinds' voxels) with `agentKindModels`, and
+column, two halves by tick parity), `agentEvents` (round 128o, DA-B2: a ring
+of 2048 8-u32 records — swing, hurt, death, alight, … with their number as a tag
+in word 7 — after a head: [0] events made, [2] how far the CPU has read; a sync
+copies the head and 256 records from where it stopped, writes [2] back; an event
+with 2048 unread isn't written and the CPU counts it lost), `agentModels` (the kinds' voxels) with `agentKindModels`, and
 `agentInst` (body-format voxels, appended) with its indirect args, and
 `agentShove` (per column, two halves: the momentum and mass tumbling units
 carried through it, and how many burning units). The peel reads `layers`,

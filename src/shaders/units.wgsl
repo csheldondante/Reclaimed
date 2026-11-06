@@ -155,9 +155,12 @@ fn unitInfo(a: vec4<f32>) -> u32 { return bitcast<u32>(a.w); }
 fn unitId(u: u32, info: u32) -> u32 { return (info >> 16u) * MAX_SLOTS + u; }
 
 fn emit(kind: u32, id: u32, other: u32, amount: f32, p: vec3<f32>) {
+  // (round 128o, DA-B2: a ring — [0] events made, [2] how far the CPU has read (agents.ts sync); an event the ring
+  // has no room for is not written: its slot keeps another's tag, and the CPU counts it lost)
   let e = atomicAdd(&events[0], 1u);
-  if (e >= AP.n2.z) { return; }
-  let o = 4u + e * 8u;
+  if (e - atomicLoad(&events[2]) >= AP.n2.z) { return; }
+  let o = 4u + (e % AP.n2.z) * 8u;
+  atomicStore(&events[o + 7u], e);
   atomicStore(&events[o], kind);
   atomicStore(&events[o + 1u], id);
   atomicStore(&events[o + 2u], other);

@@ -106,6 +106,8 @@ const MAX_TARGETS = 8;
 const MAX_HOLDS = 8;
 const MAX_LAUNCHES = 32;
 const EVENT_CAP = 2048;
+/** (round 128o, DA-B2) the most events one sync reads (the rest wait for the next) */
+const EVENT_WINDOW = 256;
 /** voxels drawn in all (units.wgsl MAX_INST), and in all the kinds' models */
 const MAX_INST = 65536;
 const MAX_MODEL_VOXELS = 8192;
@@ -409,6 +411,18 @@ export class Agents implements SimSystem {
   private navStale = true;
   /** events that didn't fit the buffer, all told (0 normally) */
   dropped = 0;
+  /** (round 128o, DA-B2) the events read so far (the ring's: units.wgsl emit), and the syncs' staging kept for reuse */
+  private eventsRead = 0;
+  private pool: GPUBuffer[] = [];
+
+  /** a staging buffer of at least `size` bytes, kept between syncs (made bigger when the units outgrow it) */
+  private staging(size: number): GPUBuffer {
+    const i = this.pool.findIndex((b) => b.size >= size);
+    if (i >= 0) return this.pool.splice(i, 1)[0];
+    // (too small for the units now: let go)
+    this.pool.pop()?.destroy();
+    return this.device.createBuffer({ label: 'agents sync', size: Math.ceil(size / 4096) * 4096, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  }
   /** (LW1) stages between the units' step and their draw (agents.addStage) */
   private stages: AgentStage[] = [];
   /**
@@ -1204,27 +1218,40 @@ export class Agents implements SimSystem {
 
   async sync(): Promise<{ units: AgentState[]; events: AgentEvent[]; dropped: number }> {
     const n = this.count;
-    const evBytes = (4 + EVENT_CAP * 8) * 4;
-    const tmp = this.device.createBuffer({ label: 'agents sync', size: evBytes + Math.max(n, 1) * UNIT_BYTES, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
-    const enc = this.device.createCommandEncoder();
-    enc.copyBufferToBuffer(this.events, 0, tmp, 0, evBytes);
+    // (round 128o, DA-B2: the events a ring — units.wgsl emit — read from where the last sync stopped, at most
+    // EVENT_WINDOW of them: 16 B of head and 8 KB of events, not the whole 64 KB block every sync; the rest next sync)
+    const C = EVENT_CAP;
+    const from = this.eventsRead;
+    const first = from % C;
+    const a = Math.min(EVENT_WINDOW, C - first);
+    const evBytes = 16 + EVENT_WINDOW * 32;
+    const size = evBytes + Math.max(n, 1) * UNIT_BYTES;
+    const tmp = this.staging(size);
+    const enc = this.device.createCommandEncoder({ label: 'agents sync' });
+    enc.copyBufferToBuffer(this.events, 0, tmp, 0, 16);
+    enc.copyBufferToBuffer(this.events, 16 + first * 32, tmp, 16, a * 32);
+    if (a < EVENT_WINDOW) enc.copyBufferToBuffer(this.events, 16, tmp, 16 + a * 32, (EVENT_WINDOW - a) * 32);
     if (n) enc.copyBufferToBuffer(this.units, 0, tmp, evBytes, n * UNIT_BYTES);
     this.device.queue.submit([enc.finish()]);
-    // (cleared after the copy, before any later tick appends)
-    this.device.queue.writeBuffer(this.events, 0, new Uint32Array([0]));
     const units: AgentState[] = [];
     const events: AgentEvent[] = [];
     let dropped = 0;
-    await tmp.mapAsync(GPUMapMode.READ).then(() => {
-      const b = tmp.getMappedRange();
+    await tmp.mapAsync(GPUMapMode.READ, 0, size).then(() => {
+      const b = tmp.getMappedRange(0, size);
       const eu = new Uint32Array(b, 0, evBytes / 4);
       const ef = new Float32Array(b, 0, evBytes / 4);
-      const m = Math.min(eu[0], EVENT_CAP);
-      dropped = eu[0] - m;
+      const made = eu[0];
+      const m = Math.min((made - from) >>> 0, EVENT_WINDOW);
+      this.eventsRead = (from + m) >>> 0;
       const BY: Record<number, 'fire' | 'water' | 'impact' | 'lava' | 'effect'> = { 0xffffffff: 'fire', 0xfffffffe: 'water', 0xfffffffd: 'impact', 0xfffffffc: 'lava', 0xfffffffb: 'effect' };
       const by = (v: number) => BY[v] ?? v;
       for (let e = 0; e < m; e++) {
         const o = 4 + e * 8;
+        // (the ring had no room for it: its slot holds another's)
+        if (eu[o + 7] !== ((from + e) >>> 0)) {
+          dropped++;
+          continue;
+        }
         const p = { x: ef[o + 4], y: ef[o + 5], z: ef[o + 6] };
         const id = eu[o + 1];
         const kind = eu[o];
@@ -1276,8 +1303,10 @@ export class Agents implements SimSystem {
       }
       tmp.unmap();
     }, ignoreTeardown);
-    tmp.destroy();
-    if (dropped) console.warn(`agents: ${dropped} events didn't fit (${EVENT_CAP} a sync): sync more often`);
+    this.pool.push(tmp);
+    // (the ring read this far: the GPU writes over what's behind it)
+    this.device.queue.writeBuffer(this.events, 8, new Uint32Array([this.eventsRead]));
+    if (dropped) console.warn(`agents: ${dropped} events didn't fit (${EVENT_CAP} unread at once): sync more often`);
     this.dropped += dropped;
     // (carrying: where each stands, loads shed, items in flight moved on)
     this.seen.clear();
