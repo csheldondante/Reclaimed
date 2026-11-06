@@ -20534,3 +20534,94 @@ just riders. Per tick that is O(units × edges), whatever the riders are doing.
 - the `M_OFF` join search (`bestDest` over all nodes and edges);
 - `RR_NEAR`, `NET_REACH` and `ON_EDGE`, already listed;
 - the all-units ride dispatch.
+
+## 2026-11-06 — round 128p (`onetown`, DA-A13): step 2 made route-centric — shared routes as queues (supersedes the riders' entry above)
+
+The user: "The design called for this. I expect units to share routes. They should be cached and parameterized so it is
+just a queue with dt interpolation" (DESIGN §12, decided: cached routes "like conveyor belts", Factorio's belts). The
+entry above still put the state on each unit: a trip per unit, and a rider list over units. This replaces it. The
+**route** is the object, and a unit on it is one entry in its queue. [CHEAP, ALIVE, NORT]
+
+**A route.**
+- **What it is:** a shared, cached object between two destinations (stores→quarry, farm→granary, a gate→the market),
+  keyed by (from port, to port) on the network.
+- **Its shape:**
+  - its point list (segment ids and direction, compact: §12's belts);
+  - the arc length at each point (a prefix sum, so a position is a binary search or a cursor);
+  - its points' z from the segments, and the segment kinds (a stair, a ramp) for the motion.
+- **Built lazily** on the CPU's copy of the network (the plan's) the first time a leg needs it, then uploaded once
+  (§12: "stale routes are rebuilt lazily, and only those"). A segment that changes stales the routes through it. A
+  stale route keeps running on its detour until its next use rebuilds it.
+- **Shared:** every unit going stores→quarry rides the same route. Different groups may use different routes between
+  the same ends (§12: "different agents can follow different roads").
+
+**Its queue.**
+- **The entries:** riders ordered by t, each (unit id, t, speed, lane). That is the only per-unit riding state, about
+  16 B a rider.
+- **Per tick, on the GPU:** each entry does t += dt·speed, capped by the gap to the entry ahead in its lane. That cap is
+  §12's queueing; overtaking into the other lane's free window comes later (traffic is for looks for now).
+- **Arrival:** an entry reaching the route's end raises RIDE_ARRIVED (the existing event stream, so TownLife's arrived
+  is unchanged) and is removed.
+- **Kernel cost:** O(entries), a thread an entry, dispatched over the live entries (an indirect count). Nothing per
+  tick reads the network, a field or any unit that isn't riding.
+
+**Position is derived, not stored.**
+- While riding, a unit's position, heading and z are f(route, t). They are read from the route's arc-length table only
+  where needed: by the draw (a placement pass over the entries, or the unit's draw reading its entry) and by the
+  arrival test.
+- The units' own simulation skips riders entirely: no steering, no surface lookup. This deletes the trip height snap
+  and the >1.1 m tolerance, because z is the segment's.
+
+**Join and leave are events.**
+- **Joining** inserts an entry into the route's queue at the right t, once, when TownLife's `go{leg,to}` assigns the
+  route. A unit off the network first follows ROAD_FIELD to the route's first node, a field arrival, and joins at t = 0.
+  A rejoin after a knock-off joins at the route's nearest t, by one look along the route at that event.
+- **Leaving** removes the entry: knocked off by wind, a blast or a hit, or called off for a fight or a flight (§12: "a
+  route is a mode, not a cage"). The unit gets its physical position from f(route, t) at that moment and goes back to
+  the units' simulation.
+- Insertion and removal batch per tick into one ordered merge per touched route. Queues untouched that tick aren't
+  rebuilt.
+
+**Off screen and fast-forward (trips by clock, §12).** A queue advances by any elapsed time in one step: t += Δt·speed,
+capped by the gaps. Its arrivals are the entries past the end, in order. A route off screen needs no per-tick work at
+all. It is advanced when it is next looked at, or when its earliest arrival time comes due (arrival times are
+computable from (t, speed)), and §12 asked that this be decided by measuring fast-forward first.
+
+**Sharing.** All route data is per route and shared. The per-unit cost is one queue entry. Two routes that share a
+segment share the segment's data (geometry, z, kind) through the network, but their queues are separate. Queueing
+across routes on one shared stretch is the later lanes/passing work (§12): until then two queues on one road may
+overlap, which is fine because traffic is for looks.
+
+**Tests (failing first; step 2):**
+- **Unit (the queue's reference):**
+  - an entry advances exactly dt·speed;
+  - an entry behind a slower one is capped at the gap and never passes it;
+  - insertion at a given t keeps the order;
+  - removal mid-queue closes nothing it shouldn't;
+  - arrival raises once and removes the entry;
+  - one step of Δt equals N steps of Δt/N (no gaps closed differently);
+  - position from (route, t) lies on the route, with z equal to the segment's.
+- **Unit (routes):**
+  - one (from, to) asked twice is one route;
+  - two routes sharing a segment both rebuild when it changes, and a route not through it doesn't.
+- **GPU:**
+  - a route with 1k riders advances in O(riders): the dispatch equals the entry count;
+  - the time is flat across network sizes of 100 and 10k segments;
+  - doubling the walking (non-riding) units changes nothing;
+  - arrivals reach the event stream once each.
+- **Phone bench:** riding toggled at 16x.
+
+**Delete list (step 2).**
+- **In `roadride.wgsl`:**
+  - the per-unit trip record in the steer word (RIDE_TRIP's placement from a per-unit edge);
+  - the `M_OFF` per-tick join search (`bestDest` over all nodes and edges);
+  - `rideHops`, the hop tables (64 destinations, 1,024 nodes) and `destNode`;
+  - `RR_NEAR`, `NET_REACH`, `ON_EDGE`, and the `M_AT` goal snap.
+- **In `ride.ts`:** the all-units ride dispatch, MAX_DESTS, RIDE_NEAR, `setGoals`' nearest-node picking.
+- **Also:** the trip height snap in `units.wgsl`, and the rider list over units from the entry above.
+
+**Keep list.**
+- **RIDE_ARRIVED and the latch** (`agents.rearm`): arrival is still an event TownLife consumes.
+- **ROAD_FIELD and the capsule stamp** (§11 decided: fields lead back to the roads). Now it is seeded only from the
+  routes' first nodes and the network.
+- **The interpolation code**, which moves from per unit to per entry.
