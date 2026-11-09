@@ -64,7 +64,7 @@ export interface RouteGraph {
   len: Float32Array;
   /** per vertex its box column (packCol), then per edge its middle's */
   colOf: Uint32Array;
-  /** per vertex its first edge in the list after (nv + 1 words), then the edges */
+  /** per vertex its first edge in the list after (nv + 1 words), then the edges, then each vertex's x, y (f32 bits) */
   csr: Uint32Array;
   /** per vertex box-local x, y */
   verts: ArrayLike<number>;
@@ -88,13 +88,16 @@ export function routeGraphOf(grid: { count: number; verts: ArrayLike<number>; qu
     len[e] = Math.hypot(V[b * 2] - V[a * 2], V[b * 2 + 1] - V[a * 2 + 1]);
     colOf[nv + e] = packCol(...cellAt((V[a * 2] + V[b * 2]) / 2, (V[a * 2 + 1] + V[b * 2 + 1]) / 2));
   }
-  const csr = new Uint32Array(nv + 1 + ne * 2);
+  const csr = new Uint32Array(nv + 1 + ne * 2 + nv * 2);
   for (let v = 0; v < nv; v++) csr[v + 1] = csr[v] + deg[v];
   const at = csr.slice(0, nv);
   for (let e = 0; e < ne; e++) {
     csr[nv + 1 + at[ends[e * 2]]++] = e;
     csr[nv + 1 + at[ends[e * 2 + 1]]++] = e;
   }
+  // (then each vertex's x, y as f32 bits: a route's points)
+  const xy = new Float32Array(csr.buffer, (nv + 1 + ne * 2) * 4, nv * 2);
+  for (let i = 0; i < nv * 2; i++) xy[i] = V[i];
   return { version: grid.version ?? 0, nv, ne, ends, cells, edgeOf, len, colOf, csr, verts: V, quads: grid.quads };
 }
 

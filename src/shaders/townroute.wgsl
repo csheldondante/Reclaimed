@@ -1,5 +1,5 @@
 // ---- the town's route network on the GPU (DA-A22, docs/design/ROUTES_ON_GPU.md; build/routegpu.ts) -----------------
-// One graph: the town grid's vertices and edges (static per grid), each structure one more node. Every judgement that
+// One graph: the town grid's vertices and edges (static per grid); each structure an end at its doors. Every judgement that
 // reads the land reads it through rgValid / rgTop / rgWater (routeground-live.wgsl: the world's live columns in play;
 // routeground-raw.wgsl: the raw ground the GPU made of a box, at generation) — no CPU copy of the land.
 //  - routeCut (per edge): the ground at its two ends and its middle; deep water at any of the three cuts it (unless the
@@ -10,9 +10,10 @@
 //    main street; each structure's door (of its free doors at grade the nearest the network, onto open ground first)
 //    traced down it — its lane. The paths' kinds a byte an edge.
 //  - reach (routeHook / routeJump): connected components by hook-and-jump over the edges a walker takes — uncut, not a
-//    block's inside, and drawn or with no structure either side (no walk along a building's wall) — and each
-//    structure's node joined to its doors at grade (inside is walkable door to door). Five solves at once (z of the
-//    dispatch): the rules, then with a wall, water, a cliff, every perimeter edge a door lifted, so a refusal says why.
+//    block's inside, and drawn or with no structure either side (no walk along a building's wall). A structure is one
+//    node, a route's end and never a way through (RouteNet's rule): reached when a door at grade has an end in the
+//    stores' component. Five solves at once (z of the dispatch): the rules, then with a wall, water, a cliff, every
+//    perimeter edge a door lifted, so a refusal says why.
 //  - routeStruct (per structure): its answer; with no door at grade, the ground of its walkable side nearest its floor
 //    (a terrace's level). routeGates: the wall cells with a corner in the stores' component and one in an unreached
 //    structure's — where a gate joins them.
@@ -85,7 +86,8 @@ const FAR: u32 = 0x7f800000u;
 const GATE_CAP: u32 = 64u;
 const ANSWER_W: u32 = 4u;
 
-fn nodes() -> u32 { return RP.counts.x + RP.counts.z; }
+/** the graph's nodes: its vertices (a structure is a route's end at its doors, not a node of its own) */
+fn nodes() -> u32 { return RP.counts.x; }
 fn structAt(s: u32) -> u32 { return 2u + GATE_CAP + s * ANSWER_W; }
 
 /** a box column ((k + 32768) | (r + 32768) << 16: routegraph.ts packCol) → the ground's column; (-1, -1) off it */
@@ -213,14 +215,16 @@ fn fieldRelax(@builtin(global_invocation_id) id: vec3<u32>) {
 
 /** the edge from vertex v down the field: of those strictly nearer the sources, the least cost through it; NONE at a
  *  source or with no way down */
-fn downhill(v: u32) -> u32 {
-  let b = fbase();
+fn downhill(v: u32) -> u32 { return downhillIn(fbase(), FP.f.y, v); }
+
+/** downhill in the field at `b` (its nodes' first) with costs `p` */
+fn downhillIn(b: u32, p: u32, v: u32) -> u32 {
   let dv = bitcast<f32>(atomicLoad(&dist[b + v]));
   var best = NONE;
   var bd = 0.0;
   for (var i = csr[v]; i < csr[v + 1u]; i++) {
     let e = csr[RP.counts.x + 1u + i];
-    let c = edgeCost(e, FP.f.y);
+    let c = edgeCost(e, p);
     if (c < 0.0) { continue; }
     let ed = edges[e];
     let w = select(ed.x, ed.y, ed.x == v);
@@ -333,26 +337,13 @@ fn hook(base: u32, u: u32, v: u32) {
   if (old > lo) { atomicStore(&answer[0], 1u); }
 }
 
-/** over the edges, then the door candidates (one thread each) */
+/** over the edges a walker takes (one thread each) */
 @compute @workgroup_size(64)
 fn routeHook(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = id.x;
-  let m = id.z;
-  let base = m * nodes();
-  let lift = LIFTS[m];
-  let ne = RP.counts.y;
-  if (i < ne) {
-    if (walks(i, lift)) { hook(base, edges[i].x, edges[i].y); }
-    return;
-  }
-  let j = i - ne;
-  if (j >= RP.counts.w) { return; }
-  let d = doors[j];
-  if ((cut[d.x].x & (RC_INNER | RC_OFF)) != 0u) { return; }
-  if (!atGrade(j) && (lift & 8u) == 0u) { return; }
-  let s = RP.counts.x + d.y;
-  hook(base, s, edges[d.x].x);
-  hook(base, s, edges[d.x].y);
+  if (i >= RP.counts.y) { return; }
+  let base = id.z * nodes();
+  if (walks(i, LIFTS[id.z])) { hook(base, edges[i].x, edges[i].y); }
 }
 
 @compute @workgroup_size(64)
@@ -368,29 +359,40 @@ fn routeJump(@builtin(global_invocation_id) id: vec3<u32>) {
   }
 }
 
-/** per structure, per solve: bit m when its node is in the stores' component; (the rules' solve) whether a door is at
- *  grade, a terrace's level, its component marked when unreached */
+/** per structure, per solve: bit m when one of its doors at grade (with the terrace lifted: any perimeter edge) has an
+ *  end in the stores' component — a structure is one node, a route's end, never a way through; (the rules' solve)
+ *  whether a door is at grade, a terrace's level, its doors' components marked when unreached */
 @compute @workgroup_size(64)
 fn routeStruct(@builtin(global_invocation_id) id: vec3<u32>) {
   let s = id.x;
   if (s >= RP.counts.z) { return; }
   let base = id.z * nodes();
-  let mine = find(base, RP.counts.x + s);
-  let reached = mine == find(base, u32(RP.place.z));
-  if (reached) { atomicOr(&answer[structAt(s)], 1u << id.z); }
-  if (id.z != 0u) { return; }
-  if (!reached) { atomicStore(&mark[mine], 1u); }
+  let lift = LIFTS[id.z];
+  let sr = find(base, u32(RP.place.z));
   let si = structInfo[s];
+  var reached = false;
   var grade = false;
   var best = 1e30;
   let floor = bitcast<f32>(si.w);
   for (var j = si.x; j < si.x + si.y; j++) {
-    let c = cut[doors[j].x];
+    let d = doors[j];
+    let c = cut[d.x];
     if ((c.x & (RC_INNER | RC_OFF)) != 0u) { continue; }
-    if (atGrade(j)) { grade = true; }
+    let g = atGrade(j);
+    grade = grade || g;
+    if ((g || (lift & 8u) != 0u) && (find(base, edges[d.x].x) == sr || find(base, edges[d.x].y) == sr)) { reached = true; }
     if ((c.x & RC_CUTS) != 0u) { continue; }
-    let g = bitcast<f32>(c.y);
-    if (abs(g - floor) < abs(best - floor)) { best = g; }
+    let z = bitcast<f32>(c.y);
+    if (abs(z - floor) < abs(best - floor)) { best = z; }
+  }
+  if (reached) { atomicOr(&answer[structAt(s)], 1u << id.z); }
+  if (id.z != 0u) { return; }
+  if (!reached) {
+    for (var j = si.x; j < si.x + si.y; j++) {
+      if (!atGrade(j)) { continue; }
+      atomicStore(&mark[find(0u, edges[doors[j].x].x)], 1u);
+      atomicStore(&mark[find(0u, edges[doors[j].x].y)], 1u);
+    }
   }
   atomicStore(&answer[structAt(s) + 3u], select(0u, 1u, grade));
   let terrace = (si.z & 2u) != 0u && !grade && best < 1e29;
@@ -415,4 +417,145 @@ fn routeGates(@builtin(global_invocation_id) id: vec3<u32>) {
   if (!stores || !theirs) { return; }
   let n = atomicAdd(&answer[1], 1u);
   if (n < GATE_CAP) { atomicStore(&answer[2u + n], jobs[at]); }
+}
+
+// ---- the riders' routes (agents/routeride.ts rides them: shaders/routes.wgsl) -----------------------------------------
+// A group's field (2 + its group) over the same edges by the same rule as reach (`walks`, the routes' costs), from its
+// goals' vertices; a route traced down it from a vertex into the shared route-points pool. Asked as events: a group's
+// goals set (its field relaxed to the end), a rider joining at a vertex no route of its group starts from yet (a trace).
+// Nothing read back: the points stay on the GPU for the riders.
+struct RideParams {
+  /** goals, requests, the pool's size (points), spare */
+  n: vec4<u32>,
+};
+/** [0] the pool's points used, [1] traces the pool couldn't hold, [2..4) spare; then RIDE_GOALS goals (field, vertex,
+ *  x, y as f32 bits); then the requests (route, field, vertex — NONE: the goal's point alone — goal) */
+@group(0) @binding(19) var<storage, read_write> ride: array<atomic<u32>>;
+/** per point: x, y (the box's frame), z (world), the length along its route to it (routes.wgsl rtPts) */
+@group(0) @binding(20) var<storage, read_write> rpts: array<vec4<f32>>;
+/** per route: its first point, its points, its group, its length (f32 bits) (routes.wgsl rtRoutes) */
+@group(0) @binding(21) var<storage, read_write> rroutes: array<vec4<u32>>;
+@group(0) @binding(22) var<uniform> RD: RideParams;
+
+/** routegpu.ts RIDE_GOALS */
+const RIDE_GOALS: u32 = 256u;
+/** a route point's height over the ground (routes.ts townRouteNet's) */
+const RIDE_LIFT: f32 = 0.05;
+
+fn goalAt(i: u32) -> u32 { return 4u + i * 4u; }
+fn requestAt(i: u32) -> u32 { return 4u + RIDE_GOALS * 4u + i * 4u; }
+/** vertex v's box-local x, y (routegraph.ts: after the CSR) */
+fn vertXY(v: u32) -> vec2<f32> {
+  let at = RP.counts.x + 1u + 2u * RP.counts.y + 2u * v;
+  return vec2<f32>(bitcast<f32>(csr[at]), bitcast<f32>(csr[at + 1u]));
+}
+/** vertex v's ground (world z) as edge e (one of its edges) read it */
+fn vertZ(v: u32, e: u32) -> f32 { return bitcast<f32>(select(cut[e].w, cut[e].z, edges[e].x == v)) + RIDE_LIFT; }
+
+/** a group's sources: its goals' vertices */
+@compute @workgroup_size(64)
+fn rideSeed(@builtin(global_invocation_id) id: vec3<u32>) {
+  let i = id.x;
+  if (i >= RD.n.x) { return; }
+  let a = goalAt(i);
+  if (atomicLoad(&ride[a]) != FP.f.x) { return; }
+  atomicStore(&dist[fbase() + atomicLoad(&ride[a + 1u])], 0u);
+}
+
+/** the goal of field f at vertex v (its index; NONE: none) */
+fn goalOf(f: u32, v: u32) -> u32 {
+  for (var i = 0u; i < RD.n.x; i++) {
+    let a = goalAt(i);
+    if (atomicLoad(&ride[a]) == f && atomicLoad(&ride[a + 1u]) == v) { return i; }
+  }
+  return NONE;
+}
+
+fn putPoint(at: u32, p: vec3<f32>, len: f32) { rpts[at] = vec4<f32>(p, len); }
+
+/** a request a thread: the walk from its vertex down its field, the goal's point at the end, into the pool */
+@compute @workgroup_size(64)
+fn rideTrace(@builtin(global_invocation_id) id: vec3<u32>) {
+  let i = id.x;
+  if (i >= RD.n.y) { return; }
+  let q = requestAt(i);
+  let route = atomicLoad(&ride[q]);
+  let f = atomicLoad(&ride[q + 1u]);
+  let v0 = atomicLoad(&ride[q + 2u]);
+  let gi = atomicLoad(&ride[q + 3u]);
+  let b = f * nodes();
+  let group = f - 2u;
+  // (the goal's point alone: a rider on its last leg already)
+  if (v0 == NONE) {
+    let a = goalAt(gi);
+    let at = atomicAdd(&ride[0], 1u);
+    if (at >= RD.n.z) {
+      atomicAdd(&ride[1], 1u);
+      rroutes[route] = vec4<u32>(0u, 0u, group, 0u);
+      return;
+    }
+    let gv = atomicLoad(&ride[a + 1u]);
+    let e = csr[RP.counts.x + 1u + csr[gv]];
+    putPoint(at, vec3<f32>(bitcast<f32>(atomicLoad(&ride[a + 2u])), bitcast<f32>(atomicLoad(&ride[a + 3u])), vertZ(gv, e)), 0.0);
+    rroutes[route] = vec4<u32>(at, 1u, group, 0u);
+    return;
+  }
+  // (how many points: the walk counted, then walked again and written)
+  var n = 1u;
+  var v = v0;
+  for (var guard = 0u; guard < RP.counts.x; guard++) {
+    if (atomicLoad(&dist[b + v]) == 0u) { break; }
+    let e = downhillIn(b, 1u, v);
+    if (e == NONE) { break; }
+    n += 1u;
+    v = select(edges[e].x, edges[e].y, edges[e].x == v);
+  }
+  let goal = goalOf(f, v);
+  if (goal != NONE) { n += 1u; }
+  let at = atomicAdd(&ride[0], n);
+  if (at + n > RD.n.z) {
+    atomicAdd(&ride[1], 1u);
+    rroutes[route] = vec4<u32>(0u, 0u, group, 0u);
+    return;
+  }
+  v = v0;
+  var k = 0u;
+  var len = 0.0;
+  var prev = vertXY(v0);
+  var lastZ = 0.0;
+  for (var guard = 0u; guard < RP.counts.x; guard++) {
+    let done = atomicLoad(&dist[b + v]) == 0u;
+    var e = NONE;
+    if (!done) { e = downhillIn(b, 1u, v); }
+    // (its height as the edge it leaves by reads it; the last vertex's as the edge it came by)
+    let xy = vertXY(v);
+    len += distance(prev, xy);
+    prev = xy;
+    if (e != NONE) { lastZ = vertZ(v, e); }
+    else if (k == 0u) { lastZ = vertZ(v, csr[RP.counts.x + 1u + csr[v]]); }
+    putPoint(at + k, vec3<f32>(xy, lastZ), len);
+    k += 1u;
+    if (e == NONE) { break; }
+    let w = select(edges[e].x, edges[e].y, edges[e].x == v);
+    lastZ = vertZ(w, e);
+    v = w;
+  }
+  if (goal != NONE) {
+    let a = goalAt(goal);
+    let gxy = vec2<f32>(bitcast<f32>(atomicLoad(&ride[a + 2u])), bitcast<f32>(atomicLoad(&ride[a + 3u])));
+    len += distance(prev, gxy);
+    putPoint(at + k, vec3<f32>(gxy, lastZ), len);
+    k += 1u;
+  }
+  rroutes[route] = vec4<u32>(at, k, group, bitcast<u32>(len));
+}
+
+/** per vertex a bit: in the stores' component (the rules' solve) — what a rider joins and a goal stands by */
+@group(0) @binding(23) var<storage, read_write> vbits: array<atomic<u32>>;
+
+@compute @workgroup_size(64)
+fn routeVerts(@builtin(global_invocation_id) id: vec3<u32>) {
+  let v = id.x;
+  if (v >= RP.counts.x) { return; }
+  if (find(0u, v) == find(0u, u32(RP.place.z))) { atomicOr(&vbits[v >> 5u], 1u << (v & 31u)); }
 }

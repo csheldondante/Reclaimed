@@ -21953,3 +21953,22 @@ change any structure's answer here). Main streets 269 (CPU 270; 267 the same edg
 one shortest-path tree to the main streets, not laid nearest-first onto each other, so they merge less — to judge in
 shots. Doors 65/65 chosen, 43 the CPU's. Converged in 2 + 2 + 1 submits (32 sweeps a field submit, 16 hook-and-jump
 iterations a reach submit); a solve 13-27 ms wall on Dawn (5 submits' map latency; the GPU work is under 1 ms).
+
+## 2026-11-09 — DA-A22 step 2b: the riders' routes on the GPU; a structure is an end, never a way through
+
+Why: the user — reach and routes must not be able to diverge. The Router searched a CPU RouteNet; the reach was a
+union-find over other edges (DA-A19).
+
+What: one walkability (`walks` in shaders/townroute.wgsl) for reach and routes. A structure is a route's end at its
+doors, never a way through (RouteNet's rule): reached when a door at grade has an end in the stores' component — the
+structure nodes are gone from the components, so nothing passes through a building in either. Per vertex a bit, "in
+the stores' component", comes back with the answer (0.9 KB): what a rider joins, what a goal stands by. A riding group's
+field (2 + its group) is relaxed from its goals' vertices over the same edges (the routes' costs: main 0.5, lane 0.7,
+open 1, stairs ×1.6); `rideTrace` walks a request's vertex down it (twice: counted, then written) into a points pool,
+the goal's point last, and writes the route's header (routes.wgsl's). Requests, goals and the pool's counter live in
+one buffer; nothing is read back for routes.
+
+Measured (test/gpu/townride.test.ts, start town): every structure's door routes to the stores exactly when reached (65
+of 65; 775 points, the longest route 33). The property over edits: 6 random floods of 40 edges' columns, 1,000 random
+vertices each — in the stores' component exactly when a route from it gets to the stores (3,287 out-of-reach vertices
+among them), and no structure routed that isn't reached.
