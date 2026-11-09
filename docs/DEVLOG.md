@@ -20662,3 +20662,13 @@ Gates:
 - The unit tier: 844 passed, 3 expected fail.
 - The start town still reads 1.6 KB a sync (91–95 KB a sim second at 1x, 6.2 at 16x), with a second read only when
   more than 16 events came.
+
+## 2026-11-09 — round 128r, Track A "Next season": design note and derisk (no game code yet)
+
+docs/design/NEXT_SEASON.md: a pure season ledger, an event list, and a playback through owner APIs. Build stages are
+derived from the plan and Town blocks, and decay is stored on Structure. The instant flood is a proposed held-level
+kernel, because none exists. Derisk with scripts/lab/seasonderisk.mjs on the `town` recipe:
+- A flood over the harbour quarter leaves the water passes flat (0.13 to 0.16 ms at 1x). The field mesh rebuild rises
+  from 0.13 to 1.44 ms while the water moves.
+- The added water runs off into the sea, so the flood needs a standing basin or a held level.
+- Scaffolding reads as construction up close, but weakly at play zoom.
