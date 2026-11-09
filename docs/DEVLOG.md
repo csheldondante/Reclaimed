@@ -21821,3 +21821,43 @@ Gates:
 - The unit tier: 844 passed, 3 expected fail.
 - The start town still reads 1.6 KB a sync (91–95 KB a sim second at 1x, 6.2 at 16x), with a second read only when
   more than 16 events came.
+
+## 2026-11-09 — round 128p merge (`trackA-slice0`, DA-A17): route ends by the network; the two failing gates were onetown's
+
+Why: the onetown x fortress merge (d5a0333c) failed two lab gates every run: fortressallbuilt with `&ffwd=0` (the
+house at cell 1666 never built in 603 sim s) and unitsonground (a stores rider inside the warehouse's columns by the
+stores, (164.2, 182.5)). Both were read as merge interactions. Neither is: onetown c0ff931f alone, in a scratch
+worktree, fails unitsonground 1 of 3 runs at the same spot, and its fortressallbuilt passed only because its builders
+never walked (they "worked" at the stores, 670/670 in 15 sim s: the stale STAND steer fortress fixed in units.wgsl,
+"a steer is its group's ride's"). With builders walking, the routes' own faults show.
+
+fortressallbuilt `&ffwd=0` — what stood (lab probe at 241 sim s, RouteRide's state per unit):
+- Riders with no route entry, standing for good (steer 0, a riding group follows no field): builders by the lumber camp
+  planned 55 m west (their nearest route node 4722 sits in a pocket between the planned block and water — in the
+  reach's component, not joined to the stores by any walk the routes take); the four farmers at the stores (their
+  goals' nearest nodes the vertices inside farms, whose edges are all the farm's own: the tree reached nothing — they
+  never farmed in onetown either, grain fell 145 → 60); a newcomer on the road in (nearest node of degree 0).
+- `Router.routeFrom` and `setGoals` took the nearest node of all, connected or not. Whether a builder was regrouped by
+  a pocket was chance: ffwd=0 failed 2 of 4 runs here, ffwd on passed — no stride or `RouteRide.elapsed` involvement.
+
+What (DA-A17): `RouteNet.main` marks the network — the nodes joined to the stores' vertex (`townRouteNet` passes the
+edge net's `storesV`; a structure's node an end, as the trees walk it) — and `nearest()` answers from it only. A new
+test in test/unit/routes.test.ts (a goal in a farm's middle, a unit standing there) fails before (no route) and passes.
+
+After: fortressallbuilt `&ffwd=0` 3 of 3, 670/670 at 211 s each; ffwd on 3 of 3 at 211, 271, 211 s (was 301 s);
+grain holds at about 145 (the farmers farm).
+
+unitsonground — not fixed here (DA-A18): the rider stood where its route walks, past a block's corner. A new pure test
+(test/unit/routeclear.test.ts, `test.fails`) walks every edge of the start town's route net through the claims: 24
+walks of 6,939 on drawn paths, doors and road curves run through a block's columns (43 with open ground, road links
+and a wall). Two causes: the claims (solid.ts) test each cell's own drawn sides while the view (edgeview.ts) moves a
+structure's corner from all its sides — the warehouse's corner the view drew 3 m back stayed solid (vertex 4474, the
+failing spot); and a cell's corner across a path's turn stands on the path. Tried and not kept: claims from
+insetTiles plus a corner that clears every line by the least move (no "twice the inset" hold) and stands back from both
+legs of a turn, a corner per wedge — 0 block walks, but the roof test "no wall pokes up through a roof" fails (b55, a
+tile flatter than FLATTEST) and every building corner on a path turn moves: a look for the user first (BACKLOG DA-A18;
+the reach/route walkability split is DA-A19). After DA-A17 unitsonground fails 2 of 3 runs at another such corner
+(#17's, (177.3, 165.7)): more riders ride.
+
+The fixture: routes.ts is in GEN_VERSION's import graph, so data/lab/town.rclt was captured again (`node
+scripts/labtown.mjs capture`); decoded, only `gen` and `capturedAt` differ.

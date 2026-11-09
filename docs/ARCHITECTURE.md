@@ -4180,6 +4180,9 @@ The edge network is the only roads, reach and routes system. Deleted: `build/lan
   each structure a node at its door's middle, `building[]`), `routeNetOf` / `townRouteNet` / `deckOf`, `Router`
   (per group a multi-source Dijkstra tree to its goals, never through a structure's node; a route per (group, first
   node), shared, `groupOf[]`; a unit no farther from a goal than that goal's node is on its last leg: a one-point route).
+  `RouteNet.main[]` (round 128p merge) marks the network: the nodes joined to its root (`townRouteNet`: the edge net's
+  `storesV`), a structure's node an end. `nearest()` — where a unit joins and a goal stands by — answers from it only,
+  never a vertex no walk reaches (inside a farm) nor a pocket the walks don't join to the town.
   `navOfRoutes(site, net, ways)` is the structures' `NavGraph` as a view of the same net plus wall-walks and stairs.
 - **Riders** (`agents/routeride.ts RouteRide`, `shaders/routes.wgsl routeAdvance`, bindings 52-57): routes uploaded
   once into a points pool and a routes pool (grown by copy); an entry per rider (t, speed, route, slot; start, lead) and

@@ -43,8 +43,15 @@ export class RouteNet {
   /** bumped per net: a route cached from an older one is stale */
   static made = 0;
   readonly id = ++RouteNet.made;
+  /**
+   * (round 128p merge) per node 1 if it's on the network — the part joined to `root` (a town's net: the stores' vertex),
+   * a structure's node an end, never a way through, as the routes walk it — else 0: a vertex no walk reaches (inside a
+   * farm, its edges all its own) or a pocket the walks don't join to the town (open ground between a planned block and
+   * water). What a unit joins and a goal stands by (`nearest`). No root (a net built by hand): every node.
+   */
+  readonly main: Uint8Array;
 
-  constructor(xyz: number[], edges: [number, number, number][], building?: readonly number[]) {
+  constructor(xyz: number[], edges: [number, number, number][], building?: readonly number[], root?: number) {
     this.nodes = xyz.length / 3;
     this.xyz = Float32Array.from(xyz);
     this.building = new Int32Array(this.nodes).fill(-1);
@@ -64,13 +71,29 @@ export class RouteNet {
       this.adj[ib * 2] = a;
       this.adj[ib * 2 + 1] = c;
     }
+    this.main = new Uint8Array(this.nodes);
+    if (root === undefined) this.main.fill(1);
+    else {
+      if (!(root >= 0 && root < this.nodes)) throw new Error(`RouteNet: root ${root} isn't one of its ${this.nodes} nodes`);
+      const q = [root];
+      this.main[root] = 1;
+      while (q.length) {
+        const v = q.pop()!;
+        if (this.building[v] >= 0 && v !== root) continue;
+        for (let k = this.start[v]; k < this.start[v] + this.count[v]; k++) {
+          const w = this.adj[k * 2];
+          if (!this.main[w]) ((this.main[w] = 1), q.push(w));
+        }
+      }
+    }
   }
 
-  /** the node nearest (x, y) and how far */
+  /** the node of the network (`main`) nearest (x, y) and how far */
   nearest(x: number, y: number): { node: number; d: number } {
     let node = -1;
     let d = Infinity;
     for (let v = 0; v < this.nodes; v++) {
+      if (!this.main[v]) continue;
       const dd = (this.xyz[v * 3] - x) ** 2 + (this.xyz[v * 3 + 1] - y) ** 2;
       if (dd < d) ((d = dd), (node = v));
     }
@@ -231,7 +254,7 @@ export function routeNetOf(site: RouteNetSite, net: EdgeNet, ground: (x: number,
       py = y;
     }
   }
-  return new RouteNet(xyz, edges, building);
+  return new RouteNet(xyz, edges, building, net.storesV);
 }
 
 /** where a town's main roads cross water: their bridges' decks (plan.layout.linear, of 'mainroad') — z there, or null */

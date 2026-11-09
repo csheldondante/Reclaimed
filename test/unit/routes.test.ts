@@ -108,6 +108,33 @@ describe('routes', () => {
     expect(pts(R, far.route).length).toBeGreaterThan(1);
   });
 
+  // (round 128p merge, fortressallbuilt &ffwd=0) A route's ends stand by the network, not by the nearest node: the vertex
+  // in the middle of a farm has no walk (its edges are the farm's own), and a pocket of open ground the walks don't join
+  // to the town has no way to the stores. Joined there, a unit had no route (or a goal no tree) and stood for good: the
+  // builders by the lumber camp planned beside the water, the farmers at the stores (their farms' middles as goals), a
+  // newcomer on the road in.
+  it("a goal or a unit by a node off the network (a farm's middle) rides from the network's nearest node", () => {
+    const { rn, net } = town((p) => {
+      p.place('farm', [[cell(4, 4), 0], [cell(5, 4), 0], [cell(4, 5), 0], [cell(5, 5), 0]]);
+    });
+    const R = new Router(rn, () => 0);
+    // (to the farm's middle: a goal within RIDE_NEAR of the network, the last leg straight in)
+    expect(R.setGoals(1, [[20, 20]], 6)).toBe(true);
+    const r = R.routeFrom(1, 2, 2);
+    expect(r).not.toBeNull();
+    expect(pts(R, r!.route).at(-1)).toEqual([20, 20]);
+    // (from the farm's middle out to the stores' corner)
+    expect(R.setGoals(2, [[0, 0]], 6)).toBe(true);
+    const back = R.routeFrom(2, 20.2, 19.9);
+    expect(back).not.toBeNull();
+    expect(pts(R, back!.route).at(-1)).toEqual([0, 0]);
+    // (the farm's middle vertex, at (20, 20): its four edges are the farm's own — no walk; not what's nearest)
+    const mid = rn.nearest(20, 20).node;
+    expect([rn.xyz[mid * 3], rn.xyz[mid * 3 + 1]]).not.toEqual([20, 20]);
+    expect(rn.main[mid]).toBe(1);
+    expect(rn.main[net.storesV]).toBe(1);
+  });
+
   it('a net built by hand (the GPU tests): its nodes and edges as given, no structures', () => {
     const rn = new RouteNet([0, 0, 0, 4, 0, 0], [[0, 1, 4]]);
     expect(rn.nodes).toBe(2);
