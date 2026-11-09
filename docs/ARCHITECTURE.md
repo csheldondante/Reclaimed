@@ -1911,6 +1911,41 @@ The params uniform (binding 10) carries counts, 32 seeds, each group's field
 and colour, each field's place, 8 kinds, 32 hits, 8 targets, 8 holds, 32
 launches.
 
+**Fast-forward** (round 128o, DA-B22; DESIGN §12). `WorldCore.advance` sets `Simulation.frameTicks` (the frame's ticks)
+and `tickOfFrame` round its loop (a tick stepped on its own — a test, a bake's pump — is a frame of one; `?ffwd=0`
+makes every tick its own frame, the comparison the gates and the phone bench toggle against). Read by:
+- `SimSystem.perFrame` (render-only: sway): runs on the frame's last tick only, at one tick's step.
+- The agents (`agents.frame`, set by installAgents): the units step on stride ticks only — `stepPlan(n, i, stride)`
+  (agents/stepplan.ts: every `stride` ticks and the frame's last), stride = `strideMost()` = the ticks the fastest
+  kind's walk takes to cross half a cell; the step's dt (AgentParams.step.x, units.wgsl's `dt`) the ticks since the
+  last step. A tick that doesn't step does nothing: the hits, holds, launches and regroups queued for it wait.
+  The fields' relax, the surfaces' peel and lists, the scope, the ride and the draw run on the frame's last tick
+  only; the fields' start-overs (clear, shrunk) are reckoned there. The ride covers the frame's elapsed time
+  (`RoadRide.elapsed`, RideParams.off.z): trips advance by elapsed time, not by a tick's.
+- The traits (`TraitSystem.encode` asks `agents.planTick()`): run with the units' steps, effects' rates at the step's
+  dt (TraitParams.m.y, f32 bits); statuses and corpses still last in ticks (G.tick).
+- The step's moves are bounded whatever the dt: a unit moves in sub-moves of at most half a cell across (SUB_MOVE;
+  walking: each into a column linked to the last; tumbling: gravity, walls and landings a sub-move at a time) and,
+  tumbling, less than floorUnder's reach (0.3) down (SUB_FALL). The stride is a cost choice (most steps take one
+  sub-move); the bound is the sub-moves'. scripts/lab/stepbound.mjs measures the steps, throwwall.mjs the throws,
+  test/gpu/thinwall.test.ts proves a one-column wall holds.
+- A road steer (unit e.w) is its group's ride's: a regrouped unit's step zeroes it, so no step before the ride's next
+  run reads the old group's (a STAND there was an arrival told for the new group).
+
+**Combat targeting** (round 128p, DA-B22 (c)(3); agents/notice.ts, shaders/notice.wgsl): an agents stage, once a frame
+after the last step. Its own buffers: `agentCombat` (a vec4<u32> a slot: flags with the faction, sight, a guard's post),
+`agentSides` (a u32 a window column, window order), `agentBuckets` / `agentBucketNext` (lists of units per 16 × 16
+columns, made each run), `agentHunted`, `agentNotice` (params). It writes unit word f.y (the target code: 0 none, id + 1,
+ACTOR | i) and f.z (the hunt's candidate distance), and `noticed` events into the agents' ring.
+- The game gives it each unit's part (`notice.set`; a spawned slot starts out of the fighting), the rules (`setRules`,
+  `setSides`), its actors each frame (`setActors`, ≤ 8) and targets of its own (`aim`).
+- AgentUnits turns these into the Units contract: `fightRules(r | null)`, `fightFlags(noFight, posted)`, and a unit's
+  target and the hunt's candidates read from its state.
+
+**Picking** (round 128p, DA-B22 (c)(2); agents/pick.ts, shaders/unitpick.wgsl): `Agents.pick(ids, { viewProj, viewport,
+at, radius, lift })` → the id whose figure (feet + lift) projects nearest the tap within the radius, or null; one 4 B read.
+AgentUnits.pickAt maps the game's ids; the fortress's personAt (and so fortressAt, the lab's tap) is async.
+
 ## Traits and effects (Living World slice 1, branch `traits`; BACKLOG LW1; contract src/api/contracts/traits.ts)
 
 The user (DECISIONS round 120): "the systems that process traits for things like combat and other interactions are

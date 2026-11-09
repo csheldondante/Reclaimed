@@ -18,6 +18,7 @@ import type { UnitId, V2 } from '../api/contracts/units';
 import type { StructureType } from '../api/contracts/fortress';
 import { STRUCTURE_TYPES } from '../api/contracts/fortress';
 import type { WorldCore } from '../scenes/world-core';
+import { TICK_DT } from '../sim/flow';
 import type { Fortress } from '../fortress/fortress';
 import type { FortressCrowd } from '../fortress/crowd';
 import type { FortressFollow } from '../fortress/follow';
@@ -65,7 +66,7 @@ export interface LabSceneIO {
    *  world API's mirror has read it (a quarry measured its pit on the last run's ground) */
   restoreLand(): void | Promise<void>;
   /** (round 128l, m4) a tap on the map at screen (x, y), as a finger's (the level's fortressAt) */
-  tap(sx: number, sy: number): void;
+  tap(sx: number, sy: number): Promise<void>;
   /** (m4) the person a tap picked and the follow (fortress/follow.ts) */
   follow(): FortressFollow | undefined;
   /** (round 128m, townlab) the recipe's fixture's header, when its land was loaded from one (lab/townfixture.ts) */
@@ -415,6 +416,8 @@ export class Lab {
    * `dt` (default 1/60: every tick runs) is the frame's wall time: 0.1 is the game's longest frame — the fortress's
    * people and the units step 0.1 × speed while the world's ticks are capped at the tier's maxTicksPerFrame × speed,
    * as on a loaded phone at 16x: about three times the sim seconds a wall second, and less like a smooth 60 fps.
+   * (Round 128p) `seconds` and the `simSeconds` returned are the world's ticks run (WorldCore.ticksRun × TICK_DT), not
+   * the frames' dt × speed: the tick clock decides a frame's ticks; the CPU's crowd still steps by dt × speed.
    */
   async run(seconds: number, speed = 16, o: { renderEvery?: number; keep?: boolean; dt?: number } = {}): Promise<{ simSeconds: number; frames: number; wallMs: number; xRealtime: number }> {
     if (this.driving) throw new Error('lab.run: already running');
@@ -424,8 +427,12 @@ export class Lab {
     if (!(dt > 0 && dt <= 0.1)) throw new Error('lab.run: dt must be in (0, 0.1] (main.ts caps a frame at 0.1 s)');
     const skipped = Renderer.skip.has('render');
     const t0 = performance.now();
+    // (round 128p: the sim time the world's ticks ran — not the frames' dt × speed: the tick clock may run a frame a
+    // tick fewer or more than that, and at 1x ran ~50 ticks in 60 frames — ridespeed.mjs, DEVLOG round 128o)
+    const tick0 = this.io.core.ticksRun;
     let sim = 0;
     let frames = 0;
+    let idle = 0;
     this.driving = true;
     const before = this.io.speed();
     this.io.speed(speed);
@@ -435,9 +442,12 @@ export class Lab {
           if (frames % every === 0) Renderer.skip.delete('render');
           else Renderer.skip.add('render');
         }
+        const before = this.io.core.ticksRun;
         this.io.frame(performance.now(), dt);
-        sim += dt * speed;
+        sim = (this.io.core.ticksRun - tick0) * TICK_DT;
         frames++;
+        idle = this.io.core.ticksRun === before ? idle + 1 : 0;
+        if (idle > 600) throw new Error('lab.run: the world ran no tick in 600 frames (held: the streamer busy, or the planner)');
         await this.io.device.queue.onSubmittedWorkDone();
         if (document.querySelector('.fatal')) throw new Error('lab.run: the fatal overlay came up');
       }

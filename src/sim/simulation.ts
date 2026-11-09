@@ -33,9 +33,7 @@ import { WeatherCoverSystem } from '../weather/cover';
 import { ProjectSystem, StructTickSystem } from '../grids/systems';
 
 // (perfopt: the tick rate, ?simhz= — sim/flow.ts)
-export { TICK_HZ } from './flow';
-import { TICK_HZ } from './flow';
-export const TICK_DT = 1 / TICK_HZ;
+export { TICK_HZ, TICK_DT } from './flow';
 
 export class Simulation {
   readonly systems: SimSystem[];
@@ -138,6 +136,18 @@ export class Simulation {
    * the frame with it and without it) systems by name not stepped while named here
    */
   readonly paused = new Set<string>();
+  /**
+   * (round 128o, DA-B22) The ticks the frame being stepped runs, and this tick's place among them (WorldCore.advance
+   * sets them round its loop; a tick stepped on its own — a test, a bake's pump — is a frame of one). Fast-forward
+   * reads them: what needn't run every tick runs on the frame's last (SimSystem.perFrame; the agents' fields, ride and
+   * draw), the units' step in strides of the frame's ticks (agents.ts).
+   */
+  frameTicks = 1;
+  tickOfFrame = 0;
+  /** this tick is its frame's last */
+  get lastOfFrame(): boolean {
+    return this.tickOfFrame >= this.frameTicks - 1;
+  }
   /** (round 128o, DA-B20) the water's settling hold on the GPU, made when a tick first asks for it */
   private settleHold?: SettleHold;
 
@@ -170,6 +180,7 @@ export class Simulation {
       if (this.tick % sys.period !== 0) continue;
       if (filter && !filter(sys)) continue;
       if (this.paused.has(sys.name)) continue;
+      if (sys.perFrame && !this.lastOfFrame) continue;
       const t0 = performance.now();
       sys.encode(enc, this.tick);
       const dt = performance.now() - t0;

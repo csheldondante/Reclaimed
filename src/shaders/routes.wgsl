@@ -20,6 +20,9 @@ struct RouteParams {
   n: vec4<u32>,
   /** xy the routes' frame in the window (world units), z the window's oz (window z = world z − oz), w the queue's gap (m) */
   off: vec4<f32>,
+  /** x the sim time the advance covers (s): the time since it last ran — a frame's ticks at fast-forward, where it runs
+   *  once a frame (agents.ts: routeride.ts `elapsed`) — yzw unused */
+  dt: vec4<f32>,
 };
 
 @group(0) @binding(52) var<storage, read_write> rtUnits: array<vec4<f32>>;
@@ -100,9 +103,9 @@ fn routeAdvance(@builtin(global_invocation_id) id: vec3<u32>) {
     st.y = 1u;
     rtState[i] = st;
   }
-  // (on: dt × speed, a gap behind the one ahead while it's on its way — the queue's order is the order they joined in,
+  // (on: the elapsed time × speed, a gap behind the one ahead while it's on its way — the queue's order is the order they joined in,
   // so two that joined together part by the gap; one at the goal stands there, off the queue: each comes to the goal)
-  var t = min(e0.x + G.dt * e0.y, len);
+  var t = min(e0.x + RT.dt.x * e0.y, len);
   if (st.x != RT_NONE) {
     let ta = rtEntries[st.x * 2u].x;
     if (ta < len) { t = min(t, ta - RT.off.w); }

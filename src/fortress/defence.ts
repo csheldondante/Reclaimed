@@ -4,7 +4,7 @@
 //  - Posts (`postsFor`, pure): when the rider's word comes (or the wave, if it comes first) the soldiers leave their
 //    round. A third of them (at least one, when there are two or more) are swordsmen: they guard the inside of the wall
 //    cell the raiders will go for (raid.ts raidGoal with the gates shut) — the units' own 'guard' job, so they close on
-//    raiders on their side of the wall (AgentUnits.mayFight) and go back to their spot. The rest are archers: they walk
+//    raiders on their side of the wall (AgentUnits.fightRules) and go back to their spot. The rest are archers: they walk
 //    up onto the wall-walk beside that cell (a goal field) and stand there. With no wall, everyone guards the stores.
 //  - Arrows: an archer up on the wall shoots the nearest raider in range every ARROW.every s. The arrow is the CPU's: a
 //    straight flight of ARROW.speed; it hits if the raider is still within ARROW.hitR of where it was aimed when it lands
@@ -101,6 +101,11 @@ export class FortressDefence {
       U.regroup(u, G.stand);
       u.v.state = 'idle';
     }
+  }
+
+  /** (round 128p) the archers on their posts: they hold them (AgentUnits.fightFlags) */
+  archers(): UnitId[] {
+    return [...this.posted].filter(([, p]) => p.role === 'archer').map(([id]) => id);
   }
 
   /** an archer never closes in to fight (it shoots); anyone else as the units' rules say */

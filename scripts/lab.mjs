@@ -2,7 +2,9 @@
 // build, so a scenario's edit → result loop doesn't pay a minute of atlas boot each time (docs/TOOLING.md).
 //
 //   node scripts/lab.mjs serve [--recipe flat]     keep Chrome + the lab page up (started by `run` when it isn't)
-//   node scripts/lab.mjs run <scenario> [--recipe r] [--args '{"k":1}'] [--out dir] [--reload]
+//   node scripts/lab.mjs run <scenario> [--recipe r] [--args '{"k":1}'] [--out dir] [--reload] [--flags "&agentprof=1"]
+//                                                  (round 128o: --flags, the page's own URL flags — a page loaded
+//                                                  with other flags is loaded again)
 //                                                  run a scenario on it: prints its console and its JSON result,
 //                                                  saves its shots (default .testcache/lab-shots/)
 //   node scripts/lab.mjs status | stop
@@ -26,6 +28,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { overlayBlocks } from './lib/overlaycheck.mjs';
 import { pathToFileURL } from 'node:url';
 import { ROOT, basePort, browser, build, lease, serveBuild, stages } from './lib/runner.mjs';
 
@@ -75,7 +78,7 @@ async function serve() {
   say(`chrome: ${br.how}`);
   let srv = null;
   let page = null;
-  let loaded = { hash: '', recipe: '' };
+  let loaded = { hash: '', recipe: '', flags: '' };
   let dirty = false;
   let broken = false;
   const out = { dir: path.join(CACHE, 'lab-shots') };
@@ -105,7 +108,7 @@ async function serve() {
   }
 
   /** the lab page on the build now and this recipe: reloaded when either changed; reset otherwise */
-  async function ready(recipe, force) {
+  async function ready(recipe, force, flags = '') {
     const t0 = now();
     const b = build();
     const tBuild = now() - t0;
@@ -117,7 +120,7 @@ async function serve() {
     }
     // (onetown: a fixture's town is its site's data — the lab can't put it back in place: a used page is loaded again)
     const resettable = page && !broken ? await page.evaluate(() => window.reclaimed?.lab?.resettable ?? true).catch(() => true) : true;
-    if (force || broken || !page || loaded.hash !== b.hash || loaded.recipe !== recipe || (dirty && !resettable)) {
+    if (force || broken || !page || loaded.hash !== b.hash || loaded.recipe !== recipe || loaded.flags !== flags || (dirty && !resettable)) {
       if (!page || broken) await openPage();
       const cdp = await page.createCDPSession();
       await cdp.send('Storage.clearDataForOrigin', { origin: new URL(srv.url).origin, storageTypes: 'indexeddb,local_storage,cache_storage,service_workers' });
@@ -125,6 +128,7 @@ async function serve() {
       const t1 = now();
       // (midday, the day held: shots read the same every run)
       const q = new URLSearchParams({ skipmenu: '1', level: 'lab', lab: recipe, tutorial: '0', warmcache: '0', q: 'low', tod: '0.3', day: '100000' });
+      for (const [k, v] of new URLSearchParams(flags)) q.set(k, v);
       await page.goto(`${srv.url}/?${q}`, { waitUntil: 'load' });
       await page.waitForFunction(() => window.reclaimed?.lab?.ready || document.querySelector('.fatal'), { timeout: 300000, polling: 100 });
       const fatal = await page.$eval('.fatal', (e) => e.textContent).catch(() => null);
@@ -132,10 +136,13 @@ async function serve() {
         broken = true;
         throw new Error(`the lab didn't open: ${fatal.slice(0, 1500)}`);
       }
+      // (round 128p: a page opened with --flags "&perf=1…" — no debug overlay takes the map's input)
+      const blocked = await overlayBlocks(page);
+      if (blocked.length) throw new Error(`a debug overlay blocks the map's input: ${blocked.slice(0, 8).join('; ')}`);
       const boot = await page.evaluate(() => window.__boot);
       timings.reload = secs(now() - t1);
       timings.boot = stages(boot);
-      loaded = { hash: b.hash, recipe };
+      loaded = { hash: b.hash, recipe, flags };
       broken = false;
       dirty = false;
     } else if (dirty) {
@@ -166,7 +173,7 @@ async function serve() {
     const gpuWait = secs(now() - tLease);
     sink = { logs: [], errors: [], shots: [] };
     try {
-      const timings = { gpuWait, ...(await ready(recipe, !!req.reload)) };
+      const timings = { gpuWait, ...(await ready(recipe, !!req.reload, req.flags ?? '')) };
       const t1 = now();
       dirty = true;
       let result;
@@ -287,7 +294,7 @@ else if (cmd === 'status') {
   if (!file) throw new Error('lab.mjs run <scenario.mjs|.js> [--recipe r] [--args json] [--out dir] [--reload]');
   const t0 = now();
   await ensureServer();
-  const r = await ask('POST', '/run', { file, cwd: process.cwd(), recipe: opt('recipe'), args: opt('args') ? JSON.parse(opt('args')) : {}, out: opt('out'), reload: flag('reload') });
+  const r = await ask('POST', '/run', { file, cwd: process.cwd(), recipe: opt('recipe'), args: opt('args') ? JSON.parse(opt('args')) : {}, out: opt('out'), reload: flag('reload'), flags: opt('flags') ?? '' });
   if (!r) throw new Error('the lab server went away');
   for (const l of r.logs ?? []) console.log(l);
   for (const e of r.errors ?? []) console.log(`ERROR ${e}`);

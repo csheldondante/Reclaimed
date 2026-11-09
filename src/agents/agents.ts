@@ -16,6 +16,10 @@ import layersWgsl from '../shaders/layers.wgsl?raw';
 import materialsWgsl from '../shaders/materials.wgsl?raw';
 import unitsWgsl from '../shaders/units.wgsl?raw';
 import type { SimSystem } from '../sim/system';
+import { TICK_DT } from '../sim/flow';
+import { stepPlan } from './stepplan';
+import { UnitNotice } from './notice';
+import { UnitPick, type PickAsk } from './pick';
 import type { WorldGpu } from '../sim/world-gpu';
 import { MAT } from '../world/materials';
 import { materialId, materialName, materialState, type MaterialName } from '../api/common';
@@ -105,6 +109,8 @@ const EVENT_CAP = 2048;
 const MAX_WATCH = 32;
 /** (round 128o, DA-B2) the most events one sync reads (the rest wait for the next) */
 const EVENT_WINDOW = 256;
+/** (round 128p) the fewest events a sync reads (its window grows with what comes: Agents.sync) */
+const EVENT_MIN = 16;
 /** voxels drawn in all (units.wgsl MAX_INST), and in all the kinds' models */
 const MAX_INST = 65536;
 const MAX_MODEL_VOXELS = 8192;
@@ -129,7 +135,13 @@ const MAX_REGROUPS = 64;
 const P_REGROUPS = P_TARGET_H + MAX_TARGETS;
 /** (round 128o, DA-B2a) per field its arrival radius and its leaving radius (units.wgsl arrived): 2 floats a field */
 const P_ARRIVE = P_REGROUPS + MAX_REGROUPS;
-const PARAMS_BYTES = (P_ARRIVE + Math.ceil((NFIELDS * 2) / 4) * 4) * 4;
+/** (round 128o, DA-B22) the step's dt (agents.wgsl AgentParams.step) */
+const P_STEP = P_ARRIVE + Math.ceil((NFIELDS * 2) / 4) * 4;
+const PARAMS_BYTES = (P_STEP + 4) * 4;
+/** the most a unit may move in a step (cells): the occupancy, the floor it rides and its links are per cell, so a
+ *  step past half a cell could skip a column's checks — the units' step's stride is bound by it (stepPlan) */
+const STEP_CELLS = 0.5;
+
 /** what the tumbling units fall by (units.wgsl unitsG(), cells/s²): the world's gravity × the tuning's units.gravity
  *  (solver step 1, AR9: it was a 20 of its own; the default scale keeps that at world gravity × 1) */
 export function unitsG(): number {
@@ -221,6 +233,8 @@ export type AgentEvent =
   /** a swing begins: the blow lands on `target` in `lands` seconds, if it's still in reach (a parry's window) */
   | { type: 'windup'; id: number; target: number; lands: number; x: number; y: number; z: number }
   | { type: 'swing'; id: number; target: number; damage: number; x: number; y: number; z: number }
+  /** (round 128p, DA-B22 (c)(3)) a hunter took a new target (a target code: agents/notice.ts — unit id + 1, ACTOR | i) */
+  | { type: 'noticed'; id: number; target: number; x: number; y: number; z: number }
   | { type: 'hurt'; id: number; hit: number | 'impact'; damage: number; x: number; y: number; z: number }
   | { type: 'death'; id: number; by: number | 'fire' | 'water' | 'impact' | 'lava' | 'effect'; x: number; y: number; z: number }
   /** (LW1, corpse mode) a corpse raised by an effect (`by`, its id) into `group`: the same id, alive again */
@@ -288,6 +302,10 @@ export interface AgentState {
   hp: number;
   kind: string;
   group: number;
+  /** (round 128p, DA-B22 (c)(3)) its target code (agents/notice.ts: 0 none, a unit's id + 1, ACTOR | an actor's index) */
+  target: number;
+  /** (round 128p) how near the nearest hostile hunting it is (Infinity: none) — the hunt's candidates */
+  hunted: number;
 }
 
 const DEFAULT_KINDS: KindSpec[] = [
@@ -414,6 +432,37 @@ export class Agents implements SimSystem {
   /** per group: drawn at work (round 88: bent to a tool, a tool in hand) */
   private groupPose = new Uint32Array(MAX_GROUPS);
   private kinds: (KindSpec | undefined)[] = [];
+  /**
+   * (round 128o, DA-B22) Where the tick lies in its frame: the simulation's (installAgents: Simulation.frameTicks,
+   * tickOfFrame); a tick on its own is a frame of one. At fast-forward the units' step runs in strides (stepPlan) and
+   * what needn't run each tick — the fields' relaxation, the surfaces' peel, the ride, the draw — once a frame.
+   */
+  frame: () => { n: number; i: number } = () => ({ n: 1, i: 0 });
+  /** (DA-B22) this tick's step: whether it runs and its dt (s); read by the traits, which step with the units */
+  stepNow = { step: true, dt: TICK_DT };
+  /** (DA-B22) this tick is its frame's last: the once-a-frame stages run */
+  private frameWork = true;
+  /** the ticks a step may span: half a cell at the fastest kind's speed (STEP_CELLS) */
+  strideMost(): number {
+    let v = 0;
+    for (const k of this.kinds) if (k) v = Math.max(v, k.speed);
+    return v > 0 ? Math.max(1, Math.floor(STEP_CELLS / (v * TICK_DT))) : 1;
+  }
+  /**
+   * (DA-B22) The fields' sweeps on the frame's last tick: a tick's sweeps for every tick of the frame. A sweep carries a
+   * field's front a step on, so its reach in sim time is the sweeps a tick's — fewer at fast-forward and the raiders
+   * waited for their way in (the walled raid's gates shut a minute late at 16x, DEVLOG round 128o). A converged field's
+   * front is empty: its relax dispatches no workgroups (dispatched indirect), its build and clear stay.
+   */
+  private frameSweeps(): number {
+    return this.sweeps * this.frame().n;
+  }
+  /** (DA-B22) this tick's plan, the same for every caller in the tick (the traits ask before the agents encode) */
+  planTick(): { step: boolean; dt: number; last: boolean } {
+    const { n, i } = this.frame();
+    const p = stepPlan(n, i, this.strideMost());
+    return { step: p.step, dt: p.ticks * TICK_DT, last: i >= n - 1 };
+  }
   private kindModel = new Uint32Array(MAX_KINDS * 4);
   private modelVoxels = 0;
   private hits: (HitSpec & { id: number })[] = [];
@@ -455,6 +504,23 @@ export class Agents implements SimSystem {
     // (too small for the units now: let go)
     this.pool.pop()?.destroy();
     return this.device.createBuffer({ label: 'agents sync', size: Math.ceil(size / 4096) * 4096, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  }
+  /**
+   * (round 128p, DA-B22 (c)(3)) Who fights whom, on the GPU, once a frame after the units' last step: each unit's
+   * combat word (`notice.set`), the game's rules (`setRules`, `setSides`), its actors (`setActors`), the targets it
+   * gives (`aim`). A unit's target comes back in its state (`target`), a new one as a `noticed` event.
+   */
+  readonly notice: UnitNotice;
+  private picker: UnitPick;
+
+  /**
+   * (round 128p, DA-B22 (c)(2)) Of the units `ids`, the one whose figure is drawn nearest the tap (`ask`), or null —
+   * found on the GPU, one small read back (agents/pick.ts).
+   */
+  async pick(ids: readonly number[], ask: PickAsk): Promise<number | null> {
+    const live = ids.filter((id) => id % MAX_UNITS < this.count);
+    const k = await this.picker.pick(live.map((id) => id % MAX_UNITS), ask);
+    return k === null ? null : live[k];
   }
   /** (LW1) stages between the units' step and their draw (agents.addStage) */
   private stages: AgentStage[] = [];
@@ -512,6 +578,9 @@ export class Agents implements SimSystem {
     this.params = world.buf('agentParams', PARAMS_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     this.carryBuf = world.buf('agentCarry', MAX_UNITS * 16, S);
     this.routeRide = new RouteRide(device, world.globals, this.units, MAX_UNITS);
+    // (round 128p, DA-B22 (c)(3): combat targeting on the GPU — agents/notice.ts)
+    this.notice = new UnitNotice(device, world, this.units, this.events, MAX_UNITS, EVENT_CAP);
+    this.picker = new UnitPick(device, this.units);
     this.flyBuf = world.buf('agentFly', MAX_FLY * 32, S);
     device.queue.writeBuffer(this.indirect, 0, new Uint32Array([36, 0, 0, 0]));
     // (nothing reached yet: every field starts unreachable)
@@ -684,11 +753,16 @@ export class Agents implements SimSystem {
     return this.count;
   }
 
+  /** (round 128p) the window's columns across and down (the side map's: units/agent-units.ts) */
+  get dims(): { w: number; h: number } {
+    return { w: this.world.w, h: this.world.h };
+  }
+
   /** Define (or redefine) kind `i` (0..7). Defaults: 0 worker, 1 raider, 2 ogre. */
   defineKind(i: number, spec: KindSpec): void {
     if (i < 0 || i >= MAX_KINDS) throw new Error(`agents: kind ${i} out of 0..${MAX_KINDS - 1}`);
     this.kinds[i] = spec;
-    // (round 128o: a rider's pace on its trip — roadride.wgsl)
+    // (round 128o: a rider's pace on its trip — routes.wgsl)
     this.routeRide.setKindSpeed(i, spec.speed);
     if (spec.model) {
       const vs = spec.model.voxels;
@@ -757,6 +831,8 @@ export class Agents implements SimSystem {
       this.device.queue.writeBuffer(this.units, slot * UNIT_BYTES, d);
       this.slotKind[slot] = kind;
       this.routeRide.regroup(slot, g, kind, [d[0], d[1]]);
+      // (round 128p: out of the fighting until the game gives it a part — notice.ts)
+      this.notice.out(slot);
       ids.push(gen * MAX_UNITS + slot);
     }
     return ids;
@@ -1283,75 +1359,11 @@ export class Agents implements SimSystem {
    * their records alone are read, not every unit's. A game built on events (arrived, hurt, death…) watches the few it
    * shows.
    */
-  async sync(opts: { watch?: readonly number[] } = {}): Promise<{ units: AgentState[]; events: AgentEvent[]; dropped: number }> {
-    const watch = opts.watch;
-    if (watch && watch.length > MAX_WATCH) throw new Error(`agents.sync: ${watch.length} units watched (${MAX_WATCH} at most)`);
-    const slots = watch ? watch.map((id) => id % MAX_UNITS).filter((s) => s < this.count) : null;
-    const n = slots ? slots.length : this.count;
-    // (round 128o, DA-B2: the events a ring — units.wgsl emit — read from where the last sync stopped, at most
-    // EVENT_WINDOW of them: 16 B of head and 8 KB of events, not the whole 64 KB block every sync; the rest next sync)
-    const C = EVENT_CAP;
-    const from = this.eventsRead;
-    const first = from % C;
-    const a = Math.min(EVENT_WINDOW, C - first);
-    const evBytes = 16 + EVENT_WINDOW * 32;
-    const size = evBytes + Math.max(n, 1) * UNIT_BYTES;
-    const tmp = this.staging(size);
-    const enc = this.device.createCommandEncoder({ label: 'agents sync' });
-    enc.copyBufferToBuffer(this.events, 0, tmp, 0, 16);
-    enc.copyBufferToBuffer(this.events, 16 + first * 32, tmp, 16, a * 32);
-    if (a < EVENT_WINDOW) enc.copyBufferToBuffer(this.events, 16, tmp, 16 + a * 32, (EVENT_WINDOW - a) * 32);
-    if (slots) slots.forEach((s, i) => enc.copyBufferToBuffer(this.units, s * UNIT_BYTES, tmp, evBytes + i * UNIT_BYTES, UNIT_BYTES));
-    else if (n) enc.copyBufferToBuffer(this.units, 0, tmp, evBytes, n * UNIT_BYTES);
-    this.device.queue.submit([enc.finish()]);
-    const units: AgentState[] = [];
-    const events: AgentEvent[] = [];
-    let dropped = 0;
-    await tmp.mapAsync(GPUMapMode.READ, 0, size).then(() => {
-      const b = tmp.getMappedRange(0, size);
-      const eu = new Uint32Array(b, 0, evBytes / 4);
-      const ef = new Float32Array(b, 0, evBytes / 4);
-      const made = eu[0];
-      const m = Math.min((made - from) >>> 0, EVENT_WINDOW);
-      this.eventsRead = (from + m) >>> 0;
-      const BY: Record<number, 'fire' | 'water' | 'impact' | 'lava' | 'effect'> = { 0xffffffff: 'fire', 0xfffffffe: 'water', 0xfffffffd: 'impact', 0xfffffffc: 'lava', 0xfffffffb: 'effect' };
-      const by = (v: number) => BY[v] ?? v;
-      for (let e = 0; e < m; e++) {
-        const o = 4 + e * 8;
-        // (the ring had no room for it: its slot holds another's)
-        if (eu[o + 7] !== ((from + e) >>> 0)) {
-          dropped++;
-          continue;
-        }
-        const p = { x: ef[o + 4], y: ef[o + 5], z: ef[o + 6] };
-        const id = eu[o + 1];
-        const kind = eu[o];
-        if (kind === 1) events.push({ type: 'swing', id, target: eu[o + 2], damage: ef[o + 3], ...p });
-        else if (kind === 2) events.push({ type: 'hurt', id, hit: by(eu[o + 2]) as number | 'impact', damage: ef[o + 3], ...p });
-        else if (kind === 3) {
-          events.push({ type: 'death', id, by: by(eu[o + 2]), ...p });
-          // (corpse mode: the body lies there until it decays or rises)
-          if (this.keepCorpses) this.corpses.add(id % MAX_UNITS);
-          else this.free.push(id % MAX_UNITS);
-          this.holds.delete(id % MAX_UNITS);
-          // (off its route: the one behind it goes on)
-          this.routeRide.drop(id % MAX_UNITS);
-        } else if (kind === 4) events.push({ type: 'alight', id, by: by(eu[o + 2]) as number | 'fire', ...p });
-        else if (kind === 5) events.push({ type: 'windup', id, target: eu[o + 2], lands: ef[o + 3], ...p });
-        else if (kind === 6) {
-          events.push({ type: 'decayed', id, ...p });
-          if (this.corpses.delete(id % MAX_UNITS)) this.free.push(id % MAX_UNITS);
-        } else if (kind === 7) {
-          events.push({ type: 'raised', id, by: eu[o + 2], group: Math.round(ef[o + 3]), ...p });
-          this.corpses.delete(id % MAX_UNITS);
-        } else if (kind === 8) {
-          const f = eu[o + 2];
-          events.push(f >= RIDE_ARRIVED ? { type: 'arrived', id, ride: f - RIDE_ARRIVED, ...p } : { type: 'arrived', id, field: f, dist: ef[o + 3], ...p });
-        }
-      }
+  /** (sync) the units' records read back: all of them, or the watched (`slots`) */
+  private readUnits(b: ArrayBuffer, at: number, n: number, slots: number[] | null, watch: readonly number[] | undefined, units: AgentState[]): void {
       if (n) {
-        const uf = new Float32Array(b, evBytes, n * UF);
-        const uu = new Uint32Array(b, evBytes, n * UF);
+        const uf = new Float32Array(b, at, n * UF);
+        const uu = new Uint32Array(b, at, n * UF);
         for (let r = 0; r < n; r++) {
           // (record r: slot r of all, or the r-th watched)
           const s = slots ? slots[r] : r;
@@ -1379,12 +1391,113 @@ export class Agents implements SimSystem {
             hp: uf[r * UF + 8],
             kind: this.kinds[(info >>> 9) & 7]?.name ?? '?',
             group: info & 0xff,
+            target: uu[r * UF + 21],
+            hunted: uf[r * UF + 22],
           });
         }
       }
+  }
+
+
+  async sync(opts: { watch?: readonly number[] } = {}): Promise<{ units: AgentState[]; events: AgentEvent[]; dropped: number }> {
+    const watch = opts.watch;
+    if (watch && watch.length > MAX_WATCH) throw new Error(`agents.sync: ${watch.length} units watched (${MAX_WATCH} at most)`);
+    const slots = watch ? watch.map((id) => id % MAX_UNITS).filter((s) => s < this.count) : null;
+    const n = slots ? slots.length : this.count;
+    // (round 128o, DA-B2: the events a ring — units.wgsl emit — read from where the last sync stopped, at most
+    // EVENT_WINDOW of them: 16 B of head and 8 KB of events, not the whole 64 KB block every sync; the rest next sync)
+    const C = EVENT_CAP;
+    const from = this.eventsRead;
+    const first = from % C;
+    // (round 128p, DA-B22 (c)(1): a first window of EVENT_MIN with the head; the head's count says how many more there
+    // are — up to EVENT_WINDOW a sync, as ever — and those are read at once, before the sync returns)
+    const W = EVENT_MIN;
+    const a = Math.min(W, C - first);
+    const evBytes = 16 + W * 32;
+    const size = evBytes + Math.max(n, 1) * UNIT_BYTES;
+    const tmp = this.staging(size);
+    const enc = this.device.createCommandEncoder({ label: 'agents sync' });
+    enc.copyBufferToBuffer(this.events, 0, tmp, 0, 16);
+    enc.copyBufferToBuffer(this.events, 16 + first * 32, tmp, 16, a * 32);
+    if (a < W) enc.copyBufferToBuffer(this.events, 16, tmp, 16 + a * 32, (W - a) * 32);
+    if (slots) slots.forEach((s, i) => enc.copyBufferToBuffer(this.units, s * UNIT_BYTES, tmp, evBytes + i * UNIT_BYTES, UNIT_BYTES));
+    else if (n) enc.copyBufferToBuffer(this.units, 0, tmp, evBytes, n * UNIT_BYTES);
+    this.device.queue.submit([enc.finish()]);
+    const units: AgentState[] = [];
+    const events: AgentEvent[] = [];
+    let dropped = 0;
+    // (the events' records, 8 words each, as many as the head says to read)
+    let rec = new Uint32Array(0);
+    let need = 0;
+    await tmp.mapAsync(GPUMapMode.READ, 0, size).then(() => {
+      const b = tmp.getMappedRange(0, size);
+      const made = new Uint32Array(b, 0, 4)[0];
+      need = Math.min((made - from) >>> 0, EVENT_WINDOW);
+      rec = new Uint32Array(need * 8);
+      rec.set(new Uint32Array(b, 16, Math.min(need, W) * 8));
+      this.readUnits(b, evBytes, n, slots, watch, units);
       tmp.unmap();
     }, ignoreTeardown);
     this.pool.push(tmp);
+    // (more than the first window: the rest the head counted, read now)
+    if (need > W) {
+      const more = need - W;
+      const at = (from + W) % C;
+      const a2 = Math.min(more, C - at);
+      const t2 = this.staging(more * 32);
+      const e2 = this.device.createCommandEncoder({ label: 'agents sync events' });
+      e2.copyBufferToBuffer(this.events, 16 + at * 32, t2, 0, a2 * 32);
+      if (a2 < more) e2.copyBufferToBuffer(this.events, 16, t2, a2 * 32, (more - a2) * 32);
+      this.device.queue.submit([e2.finish()]);
+      await t2.mapAsync(GPUMapMode.READ, 0, more * 32).then(() => {
+        rec.set(new Uint32Array(t2.getMappedRange(0, more * 32)), W * 8);
+        t2.unmap();
+      }, ignoreTeardown);
+      this.pool.push(t2);
+    }
+    this.eventsRead = (from + need) >>> 0;
+    {
+      const eu = rec;
+      const ef = new Float32Array(rec.buffer);
+      const m = need;
+      const BY: Record<number, 'fire' | 'water' | 'impact' | 'lava' | 'effect'> = { 0xffffffff: 'fire', 0xfffffffe: 'water', 0xfffffffd: 'impact', 0xfffffffc: 'lava', 0xfffffffb: 'effect' };
+      const by = (v: number) => BY[v] ?? v;
+      for (let e = 0; e < m; e++) {
+        const o = e * 8;
+        // (the ring had no room for it: its slot holds another's)
+        if (eu[o + 7] !== ((from + e) >>> 0)) {
+          dropped++;
+          continue;
+        }
+        const p = { x: ef[o + 4], y: ef[o + 5], z: ef[o + 6] };
+        const id = eu[o + 1];
+        const kind = eu[o];
+        if (kind === 1) events.push({ type: 'swing', id, target: eu[o + 2], damage: ef[o + 3], ...p });
+        else if (kind === 2) events.push({ type: 'hurt', id, hit: by(eu[o + 2]) as number | 'impact', damage: ef[o + 3], ...p });
+        else if (kind === 3) {
+          events.push({ type: 'death', id, by: by(eu[o + 2]), ...p });
+          // (corpse mode: the body lies there until it decays or rises)
+          if (this.keepCorpses) this.corpses.add(id % MAX_UNITS);
+          else this.free.push(id % MAX_UNITS);
+          this.holds.delete(id % MAX_UNITS);
+          // (off its route: the one behind it goes on)
+          this.routeRide.drop(id % MAX_UNITS);
+        } else if (kind === 4) events.push({ type: 'alight', id, by: by(eu[o + 2]) as number | 'fire', ...p });
+        else if (kind === 5) events.push({ type: 'windup', id, target: eu[o + 2], lands: ef[o + 3], ...p });
+        else if (kind === 6) {
+          events.push({ type: 'decayed', id, ...p });
+          if (this.corpses.delete(id % MAX_UNITS)) this.free.push(id % MAX_UNITS);
+        } else if (kind === 7) {
+          events.push({ type: 'raised', id, by: eu[o + 2], group: Math.round(ef[o + 3]), ...p });
+          this.corpses.delete(id % MAX_UNITS);
+        } else if (kind === 9) {
+          events.push({ type: 'noticed', id, target: eu[o + 2], ...p });
+        } else if (kind === 8) {
+          const f = eu[o + 2];
+          events.push(f >= RIDE_ARRIVED ? { type: 'arrived', id, ride: f - RIDE_ARRIVED, ...p } : { type: 'arrived', id, field: f, dist: ef[o + 3], ...p });
+        }
+      }
+    }
     // (the ring read this far: the GPU writes over what's behind it)
     this.device.queue.writeBuffer(this.events, 8, new Uint32Array([this.eventsRead]));
     if (dropped) console.warn(`agents: ${dropped} events didn't fit (${EVENT_CAP} unread at once): sync more often`);
@@ -1409,7 +1522,7 @@ export class Agents implements SimSystem {
   }
 
   /** A raw readback of one of its buffers (tests). */
-  async readRaw(which: 'nav' | 'dist'): Promise<ArrayBuffer> {
+  async readRaw(which: 'nav' | 'dist' | 'units'): Promise<ArrayBuffer> {
     const src = this[which];
     const tmp = this.device.createBuffer({ size: src.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
     const enc = this.device.createCommandEncoder();
@@ -1442,15 +1555,17 @@ export class Agents implements SimSystem {
     // (round 88: a field left without seeds is set unreachable once, then skipped — not rewritten every sweep)
     // (round 107: the scope drew in at the last tick — a chunk let go — so what ran through what it let go of is gone
     // from every field: they all start over from their seeds, as a field whose seed went does)
-    if (this.shrunk && this.scope) {
+    if (this.frameWork && this.shrunk && this.scope) {
       this.shrunk = false;
       this.restart |= seeded;
       for (const s of this.seeds) this.scope.mark(s.x, s.y / ROW_H);
     }
     // (round 107: and the fields whose seeds went or moved far start over — clearFields — and refill from their seeds)
-    const clear = (this.wasSeeded & ~seeded) | this.restart;
-    this.restart = 0;
-    this.wasSeeded = seeded;
+    // (round 128o, DA-B22: the fields start over where they're relaxed — on the frame's last tick; a step before it
+    // leaves what changed in the seeds for it)
+    const clear = this.frameWork ? (this.wasSeeded & ~seeded) | this.restart : 0;
+    if (this.frameWork) this.restart = 0;
+    if (this.frameWork) this.wasSeeded = seeded;
     this.clearNow = clear;
     this.kinds.forEach((k, i) => {
       if (!k) return;
@@ -1486,6 +1601,7 @@ export class Agents implements SimSystem {
     const regroups = this.regroups.splice(0, MAX_REGROUPS);
     u.set([holds.length, launches.length, regroups.length, clear], P_N3);
     u.set(regroups, P_REGROUPS);
+    f[P_STEP] = this.stepNow.dt;
     f.set(this.arrive, P_ARRIVE);
     holds.forEach(([slot, p], i) => f.set([p[0], p[1], p[2], slot], P_HOLDS + i * 4));
     launches.forEach((l, i) => f.set(l, P_LAUNCHES + i * 4));
@@ -1493,6 +1609,13 @@ export class Agents implements SimSystem {
   }
 
   encode(enc: GPUCommandEncoder): void {
+    // (round 128o, DA-B22: fast-forward — a tick the units don't step is left alone, what it would have consumed (the
+    // hits, holds, launches, regroups) waiting for the next step; the step's dt the ticks it spans)
+    const plan = this.planTick();
+    this.stepNow = { step: plan.step, dt: plan.dt };
+    if (!plan.step) return;
+    this.frameWork = plan.last;
+    this.routeRide.elapsed = this.frame().n * TICK_DT;
     // (round 128i: the road bits made again if their shapes or offset changed)
     this.roadStamp.encode(enc);
     // (round 128i, V128-14: the riding groups' next-hop tables made again if the graph or their goals changed)
@@ -1512,7 +1635,7 @@ export class Agents implements SimSystem {
       return;
     }
     const pass = enc.beginComputePass({ label: 'agents', timestampWrites: this.prof.timestamps('agents') });
-    if (this.ticks % PEEL_EVERY === 0 || this.navStale) {
+    if (this.frameWork && (this.ticks % PEEL_EVERY === 0 || this.navStale)) {
       this.navStale = false;
       pass.setBindGroup(0, this.peelGroup);
       pass.setPipeline(this.k.surfaces.pipeline);
@@ -1522,11 +1645,12 @@ export class Agents implements SimSystem {
       pass.dispatchWorkgroups(gx, gy);
       this.prof.dispatches += 2;
     }
-    if (this.fieldsUsed > 0) {
+    if (this.frameWork && this.fieldsUsed > 0) {
       pass.setBindGroup(0, this.fieldGroup);
       pass.setPipeline(this.k.relax.pipeline);
-      for (let i = 0; i < this.sweeps; i++) pass.dispatchWorkgroups(gx, gy);
-      this.prof.dispatches += this.sweeps;
+      const sweeps = this.frameSweeps();
+      for (let i = 0; i < sweeps; i++) pass.dispatchWorkgroups(gx, gy);
+      this.prof.dispatches += sweeps;
     }
     if (this.count > 0 || this.flights.length > 0) {
       pass.setBindGroup(0, this.unitGroup);
@@ -1539,22 +1663,35 @@ export class Agents implements SimSystem {
   }
 
   /** the units' step and their draws (every tick there are any) */
-  private encodeUnits(pass: GPUComputePassEncoder): void {
+  /** (round 128o, DA-B22: `stage`, under ?agentprof=1, ends the pass and starts the next one timed under a name — the
+   *  units' step, the traits, the ride, the draw apart — and returns it; the pass the units ended in comes back) */
+  private encodeUnits(pass: GPUComputePassEncoder, stage: (name: string) => GPUComputePassEncoder = () => pass): GPUComputePassEncoder {
+    pass = stage('agents-step');
     pass.setBindGroup(0, this.unitGroup);
     pass.setPipeline(this.k.unitStep.pipeline);
     pass.dispatchWorkgroups(Math.ceil(this.count / 64));
     // (LW1: the trait system — its core and the game's rules — between the step and the draw)
+    pass = stage('agents-traits');
     for (const s of this.stages) s.encode(pass);
+    // (round 128o, DA-B22: the ride and the draw once a frame — a frame's riders advance by its elapsed sim time
+    // (RouteRide.elapsed: advance(route, dt)); what's drawn is the frame's last state)
+    if (!this.frameWork) return pass;
+    // (round 128p, DA-B22 (c)(3): who fights whom, on the frame's last state)
+    pass = stage('agents-notice');
+    this.notice.encode(pass, this.count);
     // (round 128p, DA-A13: the riders advanced along their routes — their steer read by the next tick's step)
+    pass = stage('agents-ride');
     this.routeRide.encode(pass);
     // the draw's instance count restarts each tick (written before this tick's submit)
     this.device.queue.writeBuffer(this.indirect, 0, new Uint32Array([36, 0, 0, 0]));
+    pass = stage('agents-draw');
     pass.setBindGroup(0, this.drawGroup);
     pass.setPipeline(this.k.unitDraw.pipeline);
     pass.dispatchWorkgroups(Math.ceil(Math.max(this.count, 1) / 64));
     pass.setPipeline(this.k.itemDraw.pipeline);
     pass.dispatchWorkgroups(MAX_FLY / 64);
     this.prof.dispatches += 3;
+    return pass;
   }
 
   /**
@@ -1565,6 +1702,23 @@ export class Agents implements SimSystem {
    */
   private encodeScoped(enc: GPUCommandEncoder, sc: AgentScope, sk: NonNullable<Agents['sk']>): void {
     const t = this.world.tiles!;
+    // (round 128o, DA-B22: a step before its frame's last — the units step over the fields and surfaces as they stand;
+    // the scope, the peel and the relaxation, and what they consume (marks, chunks come in, fields started over), wait
+    // for the frame's last tick)
+    if (!this.frameWork) {
+      let pass = enc.beginComputePass({ label: 'agents', timestampWrites: this.prof.timestamps(PROF ? 'agents-step' : 'agents') });
+      if (this.count > 0 || this.flights.length > 0) {
+        if (this.lastScopeChunks > 0) {
+          pass.setBindGroup(0, sk.occG);
+          pass.setPipeline(sk.occ.pipeline);
+          pass.dispatchWorkgroups(t.groups(SCOPE_LIST));
+          this.prof.dispatches++;
+        }
+        pass = this.encodeUnits(pass, PROF ? (name) => (pass.end(), (pass = enc.beginComputePass({ label: name, timestampWrites: this.prof.timestamps(name) }))) : undefined);
+      }
+      pass.end();
+      return;
+    }
     const pts: [number, number][] = [];
     for (const s of this.seeds) pts.push([s.x, s.y / ROW_H]);
     for (const g of this.targets) pts.push([g.x, g.y / ROW_H]);
@@ -1644,7 +1798,8 @@ export class Agents implements SimSystem {
       if (this.fieldsUsed > 0) {
         const chunks = Math.ceil(list.length / 64);
         stage('agents-relax');
-        for (let i = 0; i < this.sweeps; i++) {
+        const sweeps = this.frameSweeps();
+        for (let i = 0; i < sweeps; i++) {
           pass.setBindGroup(0, sk.resetG);
           pass.setPipeline(sk.reset.pipeline);
           pass.dispatchWorkgroups(1);
@@ -1678,7 +1833,7 @@ export class Agents implements SimSystem {
         pass.dispatchWorkgroups(n);
         this.prof.dispatches++;
       }
-      this.encodeUnits(pass);
+      pass = this.encodeUnits(pass, PROF ? (name) => (stage(name), pass) : undefined);
       if (read && this.count > 0) {
         pass.setBindGroup(0, sk.boxG);
         pass.setPipeline(sk.box.pipeline);

@@ -96,6 +96,13 @@ export class ParticleSystem implements SimSystem {
   private updateK: ComputeKernel;
   private fireK: ComputeKernel;
   private petalK: ComputeKernel;
+  private plantK: ComputeKernel;
+  /**
+   * (round 128p) the plants' own particles — petals, seeds, the grow tap's glow and sparkles — and their kernels
+   * dispatched: off, none of them runs (fortress play: the user, "I don't think the seeds add much"; WorldCore.plantParticles).
+   * Leaves, dust, fire and smoke are emit's and fire's, kept.
+   */
+  plants = true;
   private groupPetal: GPUBindGroup;
   private groupFire: GPUBindGroup;
   /** the emitters' group for each of the brush state's two textures (DA-B8: WorldGpu.editCur picks) */
@@ -135,7 +142,8 @@ export class ParticleSystem implements SimSystem {
     } as const;
     this.emitK = makeCompute(device, 'particles-emit', parts, spec, 'emit');
     // (round 104, simscale: the emitters over the live chunks every tick, the sleeping ones on a slow turn — below)
-    if (world.tiles && EMIT_SLOW > 1) this.split = { emit: [], fire: [], petals: [] };
+    if (world.tiles && EMIT_SLOW > 1) this.split = { emit: [], fire: [], petals: [], plants: [] };
+    this.plantK = makeCompute(device, 'particles-plants', parts, spec, 'plantEmit');
     this.burstK = makeCompute(device, 'particles-burst', parts, spec, 'bursts');
     this.updateK = makeCompute(device, 'particles-update', parts, spec, 'update');
     const fireSpec: Record<number, BindKind> = { 0: 'uniform', 2: 'uniform', 3: 'rw', 4: 'rw', 5: 'read', 12: 'read', 13: 'read', 15: 'tex' };
@@ -195,6 +203,7 @@ export class ParticleSystem implements SimSystem {
       this.splitOf('emit', 'emit', spec, bufs, { 18: world.editStateViews[1] });
       this.splitOf('fire', 'fireEmit', fireSpec, fireBufs);
       this.splitOf('petals', 'petalEmit', petalSpec, petalBufs);
+      this.splitOf('plants', 'plantEmit', spec, bufs, { 18: world.editStateViews[1] });
     }
   }
 
@@ -204,9 +213,9 @@ export class ParticleSystem implements SimSystem {
    * same dust, leaves, petals and flames on average, at 1/EMIT_SLOW the cost. Null: ?emitslow=1, the whole window
    * every tick.
    */
-  private split: Record<'emit' | 'fire' | 'petals', { k: ComputeKernel; g: [GPUBindGroup, GPUBindGroup]; n: number }[]> | null = null;
+  private split: Record<'emit' | 'fire' | 'petals' | 'plants', { k: ComputeKernel; g: [GPUBindGroup, GPUBindGroup]; n: number }[]> | null = null;
   /** (`other`: what the second group binds differently — the emitters' other brush state texture; none: one group) */
-  private splitOf(name: 'emit' | 'fire' | 'petals', entry: string, spec: Record<number, BindKind>, bufs: Record<number, GPUBuffer | GPUTextureView>, other?: Record<number, GPUTextureView>): void {
+  private splitOf(name: 'emit' | 'fire' | 'petals' | 'plants', entry: string, spec: Record<number, BindKind>, bufs: Record<number, GPUBuffer | GPUTextureView>, other?: Record<number, GPUTextureView>): void {
     const t = this.world.tiles!;
     const src = [commonWgsl, materialsWgsl, tiersWgsl, vegplanWgsl, particlesWgsl].join('\n');
     for (const [n, code] of [
@@ -227,11 +236,18 @@ export class ParticleSystem implements SimSystem {
 
   encode(enc: GPUCommandEncoder): void {
     if (this.split) {
-      for (const [name, list] of Object.entries(this.split)) for (const x of list) dispatchTiles(enc, this.prof, `particles-${name}`, x.k, x.g[this.world.editCur], this.world.tiles!, x.n);
+      for (const [name, list] of Object.entries(this.split)) {
+        // (round 128p: the plants' kernels not dispatched at all while they're off)
+        if (!this.plants && (name === 'petals' || name === 'plants')) continue;
+        for (const x of list) dispatchTiles(enc, this.prof, `particles-${name}`, x.k, x.g[this.world.editCur], this.world.tiles!, x.n);
+      }
     } else {
       dispatch(enc, this.prof, 'particles-emit', this.emitK, this.groups[this.world.editCur], this.world.groups);
       dispatch(enc, this.prof, 'particles-fire', this.fireK, this.groupFire, this.world.groups);
-      dispatch(enc, this.prof, 'particles-petals', this.petalK, this.groupPetal, this.world.groups);
+      if (this.plants) {
+        dispatch(enc, this.prof, 'particles-petals', this.petalK, this.groupPetal, this.world.groups);
+        dispatch(enc, this.prof, 'particles-plants', this.plantK, this.groups[this.world.editCur], this.world.groups);
+      }
     }
     if (this.queue.length) {
       const d = this.reqData;

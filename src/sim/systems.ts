@@ -24,6 +24,7 @@ import terrainShapeWgsl from '../shaders/terrainshape.wgsl?raw';
 import fireWgsl from '../shaders/fire.wgsl?raw';
 import statsWgsl from '../shaders/stats.wgsl?raw';
 import swayWgsl from '../shaders/sway.wgsl?raw';
+import swayListWgsl from '../shaders/swaylist.wgsl?raw';
 import wiltWgsl from '../shaders/wilt.wgsl?raw';
 import windFieldWgsl from '../shaders/windfield.wgsl?raw';
 import sedimentWgsl from '../shaders/sediment.wgsl?raw';
@@ -66,7 +67,7 @@ const RIVER_WET_CELLS: f32 = ${RIVER_WET_CELLS};
 ` + riverHeldWgsl;
 import { settleLand, SLEEP_MORE } from './sleep';
 import { FLOW_SUB, WIND_K, fieldPass, fieldPeriod, flowConst, flowN } from './flow';
-import { LIVE, NEAR, SIM_CULL, cullKernel, dispatchTiles } from './cull';
+import { CUSTOM, GpuTileList, LIVE, NEAR, SIM_CULL, cullKernel, cullSource, dispatchTiles } from './cull';
 import { LIFE_S, WindRects } from './windrect';
 import { EventKind, MAX_EVENTS, type GlobalsState, type WorldEvent } from './globals';
 import { BLOW_TAG, EditBusy, OP, editOpOf } from './edit-ops';
@@ -730,15 +731,77 @@ export class ClimateSystem implements SimSystem {
 }
 
 /** Vegetation sway springs (render-only state with memory; sway.wgsl). */
+/** (round 128p) the sway's scope: every chunk of the window (sim/cull.ts CUSTOM lists are their owners') */
+const SWAY_SCOPE = CUSTOM + 20;
+
+/**
+ * The plants' sway spring (sway.wgsl), render-only, once a frame. (Round 128p — the user: "when wind is low let them
+ * sleep and wake them up for gusts like other systems like dust") Over the chunks the GPU lists (swaylist.wgsl): where
+ * the wind past the map's own breeze wakes them (a gust, a blow, a shove, a storm), or a spring is still swinging; the
+ * rest keep their lean. No readback: the list is
+ * dispatched indirect. Without the tile lists (?simcull=0, a render-only tile): the whole window every frame.
+ */
 export class SwaySystem implements SimSystem {
   readonly name = 'sway';
   readonly period = 1;
-  private s;
-  constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
-    this.s = kernel(device, world, 'sway', swayWgsl, { 3: 'read', 4: 'rw', 15: 'tex' }, { 3: world.surface, 4: world.bend, 15: world.windFieldView });
+  // (round 128o, DA-B22: render-only — once a frame, at a tick's step, whatever the speed)
+  readonly perFrame = true;
+  private s: { k: ComputeKernel; group: GPUBindGroup };
+  private lister?: { k: ComputeKernel; group: GPUBindGroup; list: GpuTileList; empty: GPUBuffer; n: GPUBuffer; count: number };
+  private restless: GPUBuffer;
+  private all: number[] = [];
+  constructor(
+    device: GPUDevice,
+    private world: WorldGpu,
+    private prof: Profiler,
+  ) {
+    const tiles = world.tiles;
+    const chunks = tiles ? tiles.chunks : 1;
+    this.restless = world.buf('swayRestless', Math.max(chunks, 1) * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);
+    const spec: BindSpec = { 0: 'uniform', 2: 'uniform', 3: 'read', 4: 'rw', 5: 'rw', 15: 'tex' };
+    const bound: Record<number, GPUBuffer | GPUTextureView> = { 0: world.globals, 2: world.materials, 3: world.surface, 4: world.bend, 5: this.restless, 15: world.windFieldView };
+    if (!tiles) {
+      const k = makeCompute(device, 'sway', [commonWgsl, materialsWgsl, swayWgsl], spec, 'main');
+      this.s = { k, group: makeBindGroup(device, 'sway', k.layout, bound) };
+      return;
+    }
+    const list = new GpuTileList(device, 'sway', tiles);
+    const k = makeCompute(device, 'sway', [cullSource([commonWgsl, materialsWgsl, swayWgsl].join('\n'), 'main', tiles.vec4s)], { ...spec, [TILES]: 'uniform' }, 'main');
+    this.s = { k, group: makeBindGroup(device, 'sway', k.layout, { ...bound, [TILES]: list.uniform }) };
+    const all = (this.all = Array.from({ length: tiles.chunks }, (_, c) => c));
+    tiles.setList(SWAY_SCOPE, all);
+    const n = device.createBuffer({ label: 'sway scope n', size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(n, 0, new Uint32Array([all.length, 0, 0, 0]));
+    const empty = device.createBuffer({ label: 'sway empty args', size: 12, usage: GPUBufferUsage.COPY_SRC, mappedAtCreation: true });
+    new Uint32Array(empty.getMappedRange()).set([0, 1, 1]);
+    empty.unmap();
+    const lspec: BindSpec = { 0: 'uniform', 2: 'uniform', 3: 'read', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'uniform', 15: 'tex', [TILES]: 'uniform' };
+    const lk = makeCompute(device, 'sway-list', [commonWgsl, materialsWgsl, `const VEC4S: u32 = ${tiles.vec4s}u;`, swayListWgsl], lspec, 'swayList');
+    const lgroup = makeBindGroup(device, 'sway-list', lk.layout, { 0: world.globals, 2: world.materials, 3: world.surface, 5: this.restless, 6: list.list, 7: list.args, 8: n, 15: world.windFieldView, [TILES]: tiles.list(SWAY_SCOPE) });
+    this.lister = { k: lk, group: lgroup, list, empty, n, count: all.length };
   }
   encode(enc: GPUCommandEncoder): void {
-    dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
+    const L = this.lister;
+    if (!L) {
+      dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
+      return;
+    }
+    // (the chunks the wind wakes, or still settling: listed on the GPU, then the spring over them, indirect. The scope's
+    // entries carry each chunk's page — packed again each frame, so a slide's new pages are the list's)
+    this.world.tiles!.setList(SWAY_SCOPE, this.all);
+    L.list.reset(enc, L.empty);
+    const pass = enc.beginComputePass({ label: 'sway', timestampWrites: this.prof.timestamps('sway') });
+    pass.setBindGroup(0, L.group);
+    pass.setPipeline(L.k.pipeline);
+    pass.dispatchWorkgroups(Math.ceil(L.count / 64));
+    pass.end();
+    L.list.publish(enc);
+    const p2 = enc.beginComputePass({ label: 'sway', timestampWrites: this.prof.timestamps('sway') });
+    p2.setBindGroup(0, this.s.group);
+    p2.setPipeline(this.s.k.pipeline);
+    L.list.dispatch(p2);
+    p2.end();
+    this.prof.dispatches += 2;
   }
 }
 

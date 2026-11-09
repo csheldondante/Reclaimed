@@ -21082,3 +21082,742 @@ edit the same structures reached as the whole town laid again, every lane's door
   (DA-A12).
 - **The allbuilt gate** now plants its three blocks on the free cell nearest each point (searched 12 m out).
 - **The units.wgsl hold** (no surface: no walking) has no unit test; the lab gate is its check.
+
+## 2026-11-06 — round 128o (`phonefix`, DA-B27 part 2): the phone-z8 fast pan, measured with the rate pinned
+
+- The rate recorded: `tilegate --update --no-golden` (phone screens) wrote
+  data/baselines/tilegate/intel-xe-lpg/tilerate.json: phone 9.24, run-phone 13.3, w384-phone 9.77 tiles/s.
+- Pinned at phone's 9.24 tiles/s, three runs: floor 3.38 every run, geometric undrawn 0.00% every run.
+  - Two of the three still failed the agreement check: far land on 1.07% and 1.53% of a frame that the geometric
+    check calls drawn. The pixels see a hole the geometric check doesn't.
+- The rate itself decides the outcome. scripts/fastpanprobe.mjs (the gate's setting, frame by frame):
+  - Pinned at 0.11 tiles a frame (6.6/s, floor 4.44): 69 undrawn frames, identical in two runs.
+  - Pinned at 0.154 (9.24/s): none.
+  - The rate reaches nothing but the zoom floor (the camera's clamp; the atlas grows only when room-bound). A higher
+    floor clamps the boot's zoom, so the window and tiles start the pan from another state.
+- What's undrawn (0.11): one region past the window, r229,220.
+  - Its land left the window at a slide while still on screen, behind the pan.
+  - It sits in the tiles' wanted list for 50+ frames, always at or near the end (place 4–12 of a 5–13 list).
+  - It drops out of the list every 5–6 frames, never gets a scratch slot, and is never baked while on screen.
+  - The list ranks regions on screen by how far ahead along the motion they are (TileCache.wanted:
+    k = -along × 100 + distance). The land fills the ones ahead first at ~9 tiles/s, so a trailing region handed over
+    by the window is last every frame.
+  - The window's own bakes of its regions (the cheap ones, no land to make: TileCache.encode) wait whenever the
+    land bakes that frame (round 105), and while the mesh's built mirror is behind a slide.
+- Cause: at 160 c/s the screen's trailing edge is handed from the window to tiles at each slide (on the phone the
+  screen at z8 is taller than the window, 297 cells against 277 world units). Nothing has baked those regions before
+  they leave the window, and once out they rank last.
+- Options, not done (main's call):
+  - (a) Bake the window's regions that the next slide will drop and that are still on screen before the slide,
+    from the window (cheap: no land), ahead of the land's bakes ahead. This removes the handoff hole at its source.
+  - (b) Rank an on-screen undrawn region by how long it stays visible against the tiles' latency: a trailing one that
+    leaves before a tile could land is skipped, one that stays is ranked by that time. A ranking change, not a
+    threshold, but it doesn't remove the hole.
+  - (c) The slide keeps the window's trailing strip drawn (its mesh) until its tiles are drawn. The window's memory
+    can't hold both ends, so this means a later slide.
+  - Recommended: (a).
+- The probe is committed as scripts/fastpanprobe.mjs.
+
+## 2026-11-06 — round 128o (`phonefix`, DA-B27): the fast-pan hole re-measured — it's ahead, not the hand-off
+
+- Correction to the entry above:
+  - I said the undrawn region (r229,220) was the trailing edge, handed from the window at a slide. I inferred that from
+    its rank, not measured it.
+  - scripts/fastpanprobe.mjs now logs each undrawn region's distance along the motion. It is **ahead**: along +147
+    cells, 161 from the camera, past the window, queued, place 8–12 in the wanted list. The camera itself was past
+    the window's edge (window y -27): at 160 c/s the window's slides don't keep up.
+  - Option (a), main's pick on my wrong premise, was built: the window bakes on-screen regions behind the motion,
+    never baked, first.
+  - Eight probe runs at 0.11 tiles a frame, before and after (a), found the same thing: every undrawn region is ahead
+    (r229,220, and r230,218 making), none behind. (a) changed nothing, so it's reverted, not committed.
+- What the hole is: the land's throughput at 160 c/s.
+  - About 10 on-screen regions ahead of the window wait for tiles at 6.6 tiles/s.
+  - The wanted list ranks the furthest ahead first. A nearer region, already on screen, waits behind them.
+  - The window itself lags the camera.
+- The far land the pixels show while the geometric check sees none (the pinned runs' 1.07% and 1.53%).
+  - .testcache/farprobe.mjs (bgcheck's snapshot each frame, each far-land sample put back on the ground) found 50
+    stand-in samples in 22 of 92 frames.
+  - All of them are where a tile is drawn (TileCache.drawsAt) at one world spot: window x 45, y -17. That is 17 rows
+    past the window's top edge, in the regions' tiles, as a thin line (one sample column) moving down the screen
+    with the pan.
+  - The check is right that a tile is there. The drawing is wrong: the tile has a crack, or the tile and the window
+    meet with a gap.
+  - Next: a shot of those frames at that spot, then the tile's bake there (its box, overlap and seam).
+- Not done (main's call on the throughput):
+  - the land's order for on-screen regions: nearest-hole first instead of furthest-ahead first (a ranking change);
+  - the window's slides keeping up with a fast pan (the planner's reach);
+  - the crack in the tile at the window's edge.
+
+## 2026-11-06 — round 128o (`phonefix`, DA-B27): the specks, the queue order, and the window at speed
+
+- (1) The far land through a drawn tile (the geometric check's blind spot).
+  - scripts/farprobe.mjs (committed) holds the pan at the first frame where bgcheck sees the far land's stand-in and
+    saves a shot.
+  - The shot (.testcache/crack-0.png, zoomed in docs/shots/da-b27-tile-specks.png, not tracked) shows dark specks and
+    short bars, one to three cells, inside the fine land of a tile next to coarse tile land. It is not a line along the
+    window's edge.
+  - They are holes in a baked tile: texels with nothing, so the stand-in under the tile shows through. The geometric
+    check rightly sees a tile there. The drawing is wrong.
+  - They are old: in every tilegate run today, before DA-B28 too (06052231: far land in 136 of the fast pan's frames),
+    on 0.1–4% of a frame's samples.
+  - Not fixed. The bake (tilelandgpu.ts, tile land meshed in a scratch slot with its border) leaves texels empty. Next
+    is a bake-level probe: one region baked alone, its G-buffer read back, its empty texels mapped to their columns,
+    and whether those columns' mesh quads are missing (the scratch's edge chunks, or land over the window's z cut).
+- (2) The queue order for on-screen regions: nearest the camera first (TileCache.wanted: k = distance for what's on
+  screen, the camera's way first ahead of it).
+  - Built and measured with fastpanprobe at 0.11 tiles a frame, three runs each:
+
+    | order | undrawn frames | summed share |
+    | --- | --- | --- |
+    | before | 48, 47, 46 | 0.0069, 0.2223, 0.0065 |
+    | after | 46, 48, 47 | 0.0064, 0.0068, 0.1261 |
+
+  - No change: the holes in these runs are slivers (0.0002 of the screen) of one region ahead at the screen's edge.
+    Reverted, not committed.
+  - The probe doesn't reproduce the gate's 2–9% (at floors 3.8–4.1 it finds none). The gate's run order (parked
+    views, then the slow pan, then the fast one) leaves a different state. Its holes need the gate's own sequence to
+    study.
+- (3) The window keeping up at 160 c/s: a design note, not built.
+  - DESIGN §5 (decided 2026-11-05): play centres on the city with a large resident area, and play mostly doesn't
+    stream. §2's residency planner (BACKLOG DA-P2) replaces the sliding keep rect.
+  - Once that exists, a pan inside the resident area draws the full land from resident pages: no slide, no tile, no
+    hole at any speed. 160 c/s matters only in two cases:
+    - (i) a pan out past the resident area's edge, where tiles stand in;
+    - (ii) the gate's synthetic pan across the atlas, which is today's window-follows-camera case.
+  - In (i), §5's layers already say what's drawn: the stand-in at once, then the tile when made, then the full land.
+    A stand-in showing for the tiles' latency is the design, not a gap. "No draw gaps" means no pixel drawn by
+    nothing, which the bg check (background 0 in every run) holds.
+  - So the window keeping up at speed buys little after DA-P2. The two things worth doing are:
+    - a gate that pans inside the resident area at 160 c/s and demands full land, plus one past its edge that
+      demands no background and judges the stand-in's time against the tiles' measured latency, not 0%;
+    - the tile holes of (1), which are real gaps in a drawn layer.
+  - Recommended: don't build window-follow-at-speed. Retarget DA-B27's fast-pan gate when DA-P2 lands, and fix (1)
+    now.
+
+## 2026-11-06 — round 128o (`phonefix`, DA-B27 (1)): the specks are at the window and tile join, not inside a tile
+
+- Main's plan was to bake one region alone and read its G-buffer. Before that, a cheaper look: scripts/farprobe.mjs
+  with `--extra "&tiledebug=1"` (tiles drawn tinted), the pan held at a far-land frame and shot.
+  - The tinted tiles fill the top of the screen.
+  - The window's land is untinted below them.
+  - The dark specks (single cells and short bars) sit along the boundary between the two: the window's edge, where
+    its land meets the render-only tiles past it.
+  - Inside the tinted tiles, no specks.
+- So the earlier read, a tile with empty texels, is wrong too. The likely cause: two surfaces made apart meet with a
+  step. The window's land is simulated (sediment moved it); the tile's is generated for the tile alone, with no
+  simulation. Where the window's edge column is lower than the tile's land beside it, the gap shows what's under
+  both: the stand-in.
+  - The probe's samples were placed on the camera's ground plane and land 17 rows off, so its "where a tile is drawn"
+    label is unreliable for high ground.
+  - The geometric check boxes regions by the CPU's macro heights, and may attribute those pixels to the tile's
+    region, so it calls them drawn.
+- Next (not done): read the window's edge columns' tops and the tile land's tops for the same columns, and measure
+  the step at the specks. Two fixes then compare:
+  - the window's edge drawn down to the tile's height, a skirt (the field mesh's open edge, fieldmesh.wgsl colDist);
+  - the tile taking the window's land where the two overlap.
+  Either one, with farprobe as the test (no far land along the join).
+
+## 2026-11-06 — round 128o (`phonefix`, DA-B27 (1)): measured — no step at the join; a hole in a drawn tile on flat land
+
+- Main asked for a measurement before any claim. Two of them:
+- The window's land against the generated land along the window's edges (scripts/stepprobe.mjs, committed): the
+  tops of the two rows at each edge, after 35 s at the gate's spot.
+  - Top edge: 630 of 640 columns identical; 10 differ (mean 0.57, max 4.2 cells; 8 higher in the window, 2 lower).
+  - Bottom edge: 631 of 640 identical; 9 differ (max 0.48).
+  - The simulated land has barely moved from what a tile is made from: about 1.5% of edge columns, mostly by less
+    than a cell.
+- The far-land samples cast against the land's heights (scripts/farprobe.mjs now casts each sample with
+  Camera.groundAt: the window's surface mirror in the window, the generated land past it). Two runs, held at the
+  first far frame:
+  - one sample each time, at column (55, -5) and (55, -6), 5–6 rows past the window's top edge;
+  - a tile is drawn there (TileCache.drawsAt);
+  - the land is flat and unremarkable: generated tops 121.3–121.7 at it and round it, nothing above the window's z
+    (zMax 504), nothing outside.
+- So it's not the window/tile join (5–6 rows off it), not land diverging (the columns there are the generated land),
+  and not land over the z cut.
+- What's left: a texel of a drawn tile with nothing in it, on flat land. A bake gap (the grid drawn through the
+  columns' tops leaving a crack), or a tile drawn before its bake filled the slot (allocTile then the bake's write,
+  or a slot's earlier contents, during a fast pan).
+  - The previous entry's "along the join" read came from the tinted shot alone. This measurement puts the one held
+    sample past the join.
+- The geometric check: at the measured sample, CPU and check agree a tile is drawn, and the hole is in the tile. So
+  no blind spot of its own is shown here. The coverage check's macro-height boxes stay as they are until a sample
+  shows them wrong.
+- Next (main's original step 1): bake the region of (55, -5) alone, read its atlas texels (colour and depth) back, and
+  map the empty ones to columns. A gap in the bake shows there; a tile drawn early shows only during the pan. That
+  readback becomes the test.
+
+## 2026-11-06 — round 128o (`phonefix`, DA-B27 (1)): the speck parked
+
+- Main time-boxed this to the one-region bake readback, then park; towns come first.
+- One thing settled without the readback: the speck is **transient**. The pan was held at the first far-land frame and
+  bgcheck's snapshot taken a frame or two later. In three of four holds that snapshot had no far land; in the fourth,
+  one sample somewhere else.
+  - A gap baked into a tile would stay while the camera holds (nothing re-bakes it for REBAKE, 600 frames).
+  - So the hole is a tile drawn while its pixels aren't there yet: its slot before the bake writes it, or a slot's
+    previous contents with the new tile's place.
+- Ruled out by measurement:
+  - the window/tile join (5–6 rows off it);
+  - simulated land diverging from generated (98.5% of edge columns identical);
+  - land over the window's z cut (flat at 121, zMax 504);
+  - a persistent bake gap (it goes when the pan stops).
+- Not done: the readback of a tile's slot as it is first drawn. The tools are committed: scripts/farprobe.mjs (casts
+  far-land samples to columns, holds and shoots), scripts/stepprobe.mjs (window land against generated), and
+  scripts/fastpanprobe.mjs.
+- Next when it's picked up: TileCache's draw of a GPU-baked tile in the frame its bake is encoded (allocTile then
+  encodeBake). Whether the draw can read the slot before the bake's resolve, or with the previous occupant's TP.
+
+## 2026-11-06 — round 128o (`phonefix`, DA-B22): 16x slow on the phone — design note, measurement first
+
+- The ask (main): the units' sync reads every unit, about 920 KB/s, because combat, picking, the follow card and the
+  lab read positions. Make the per-frame sync read only the watched units (DA-B2b's `sync({ watch })`), turn the
+  other position readers into GPU queries or events, then toggle-diff at 16x what else scales with sim speed.
+- First, what scales with speed:
+  - AgentUnits.update runs `agents.sync()` once a **frame** (scenes/level/frame.ts, not per tick) and skips while one
+    is in flight. Its bytes a second follow the frame rate, not the sim's speed: the same at 1x and 16x.
+  - So the sync is a cost at every speed, not what makes 16x slow. What multiplies at 16x is ticks per frame: every
+    sim system, the agents' tick, units.wgsl, the trait stages. Then anything per tick on the CPU: the crowd's
+    routine (TownLife), edits, the reach requests.
+  - The measurement comes before the redesign: toggle each of those off at 16x and diff the frame. It needs the
+    lease.
+- The position readers now (fortress play first):
+  - **AgentUnits.think**, every sync, on the CPU, O(hostiles × live units):
+    - hostiles noticing what's in sight and hunting it (sight, leash);
+    - the hunt's targets field (the nearest TARGETS);
+    - guards picking a hostile in sight.
+    - This is combat targeting, and it is CPU-side: it reads every unit's `at`. The GPU only has the targets field
+      it's given.
+  - **Picking** (scenes/level/fortress.ts personAt): projects every crowd member's `at` to the screen and takes the
+    nearest within 26 px.
+  - **The follow card / camera** (fortress/follow.ts): one unit's `at`, already a watched unit's need.
+  - **Raiders** (fortress/raiders.ts): `alive` (events have it), and one `at` for a stat line.
+  - **The lab** (lab.ts snapshot): walkers' `at` for its scenarios. A test's read, on demand.
+  - **Not fortress**: heroes (play/heroes: `units.near`), runsit and story (`units.query`, `get().at`). Hero play's
+    own CPU queries. Out of scope here, but they keep needing positions.
+- Proposed:
+  - (1) The sync reads `watch` only: the followed and selected units, and each hero's party (≤ 32). Every other
+    unit's `alive`, health and death come from the events it already reads (hurt, death).
+  - (2) Picking as a GPU pass: the tap's pixel, each unit's projected figure (units' draw positions on the GPU),
+    nearest within 26 px, the id read back. One small async read a tap. Or the units' draw writes their id into the
+    pick target, and the existing `renderer.pick` returns it.
+  - (3) Combat targeting on the GPU: a pass per tick over the hostiles and guards that finds the nearest enemy in
+    sight through the occupancy grid (units.wgsl occ, per column), writes the unit's target, and emits a `noticed`
+    event when it takes one. The game's rule (mayFight) as faction and hostility tables uploaded once. The targets
+    field is seeded on the GPU from those choices. This is the riskiest part: it changes who fights whom.
+  - (4) `Units.get(id).at` for unwatched units becomes "not read": null, with the API saying so. `query` and `near`
+    become async GPU queries (the box read already exists for the scope). Their hero-play callers change with them,
+    a contract change across play/, runsit/ and story/.
+- Order:
+  - the 16x toggle diff (the lease);
+  - then (1)+(4) behind the contract change, (2), (3), each with a test;
+  - main reviews before (3) and (4), which change the Units contract and combat.
+- Asks: the lease for the 16x measurement; go or no-go on (3) and (4) as scoped.
+
+## 2026-11-06 — round 128o (`phonefix`, DA-B22): the 16x toggle diff — the agents' tick dominates, not the sync
+
+- scripts/lab/speedcost.mjs (committed): the lab's `town`, Build pressed, the game's own frames at a speed with parts
+  of the tick toggled off, 6 s a phase.
+  - Per phase: frame interval, the rAF callbacks' CPU, and the GPU passes by name summed per frame.
+  - The profiler's query set fills at ~9 ticks a frame, so at 16x the late passes (the draw) go untimed. The sums are
+    what got timed, not the frame.
+  - Fix found on the way: lab.run's `keep` restores the speed it found, so a scenario must set `scene.speed` itself.
+    fortressperf's "speed" phases ran at the speed the lab was left at.
+- Desktop (Intel Xe-LPG, 100 Hz, nothing near its limit):
+
+  | phase | ticks/frame | CPU p50/p95 (ms) | top GPU passes (ms/frame) |
+  | --- | --- | --- | --- |
+  | 1x all | 0.6 | 0.7 / 1.3 | draw 2.4, shadow 0.8, agents 0.41 |
+  | 16x all | 9.1 | 1.4 / 4.1 | **agents 1.19**, particles 0.37, sway 0.15, water 0.18 |
+  | 16x fortress preset | 9.5 | 1.5 / 2.4 | **agents 2.93**, water 0.44, tile lists 0.17 |
+  | 16x without agents and traits | 9.4 | 1.1 / 1.8 | particles 0.46, sway 0.18, water 0.21 |
+  | 16x without water | 9.2 | 1.5 / 3.4 | agents 1.43 |
+  | 16x without the structure judge | 9.1 | 1.4 / 4.1 | agents 1.19 |
+  | 16x all, AgentUnits.update off | 9.5 | 1.6 / 3.7 | agents 0.85 |
+  | 16x, no sims at all | 9.5 | 0.8 / 1.4 | draw 2.6 (as 1x) |
+
+- Reading it:
+  - At 16x the agents' tick is the sim's GPU cost, 0.13–0.31 ms a tick here, 9–16 ticks a frame. It is about 3–6
+    times every other system together.
+  - The CPU doubles (0.7 → 1.4 ms p50, p95 4.1). Turning AgentUnits.update off (the sync, think) doesn't move it
+    (1.6), so the units' sync isn't the 16x cost. That fits it running once a frame.
+  - The rest of the CPU rise is per tick (the frame's tick loop, the crowd's routine and the traits' CPU side). Not
+    split further here.
+- Phone estimate: the Pixel 9a runs GPU work tens of times slower than this iGPU (fieldmesh-hash: 6.3 ms there, ~0.1
+  here). An agents' tick of 0.2 ms here is several ms there, 16 times a frame at 16x. That alone breaks 60 fps. That
+  is the 16x report.
+- For main to decide: the next target is the agents' tick per tick (what in it costs, the relax sweeps, the units'
+  step, the trait stages, with ?agentprof=1's stages on the phone bench), or a fast-forward that doesn't run the
+  agents' full tick 16 times a frame (DA-B22's "trips by clock"), before the sync work (1)–(4).
+
+## 2026-11-06 — round 128o (`phonefix`, DA-B22): the agents' tick by stage at 1x and 16x; fast-forward design note
+
+- Fixes on the way:
+  - **The profiler's timestamps grow with the frame** (gpu/profiler.ts). A fixed 128 (64 passes) left a 16x frame's
+    later passes untimed, the draw among them, with nothing said. Now a frame that asks for more doubles the set for
+    the next frame, up to the device's limit (4096), and what a frame couldn't time is counted (`untimed`; 0 in every
+    phase below). Test: test/gpu/profiler.test.ts.
+  - **fortressperf.mjs's speed**: lab.run's `keep` puts back the speed it found, so the "speed" phases ran at
+    whatever the lab was left at. The scenario now sets `scene.speed` itself, as speedcost.mjs does.
+  - **lab.mjs `--flags`**: the lab page's own URL flags (here `&agentprof=1`); a page loaded with others is loaded
+    again.
+  - **?agentprof=1 splits the units' part**: agents-step, -traits, -ride and -draw, besides -in, -peel, -relax and
+    -units (the occupancy's clear).
+- Measured: speedcost.mjs with `--flags "&agentprof=1"`, the lab's `town`, Build pressed, desktop Intel Xe-LPG, ms a
+  frame summed per pass (now every pass timed):
+
+  | pass | 1x all | 16x all (9.8 ticks/frame) | 16x fortress preset |
+  | --- | --- | --- | --- |
+  | **GPU frame p50 / p95** | 6.2 / 7.8 | **18.7 / 39.3** | 8.0 / 18.2 |
+  | agents-relax (the fields' sweeps) | 0.05 | **2.32** | 0.95 |
+  | agents-ride (riders steered on the roads) | 0.28 | **1.81** | 1.08 |
+  | draw (the world) | 2.98 | 1.58 | 1.57 |
+  | particles (update, emit, petals, fire) | 0.13 | **2.37** | — |
+  | agents-step (the units' integration) | 0.05 | 0.90 | 0.50 |
+  | sway (plants' springs, render only) | 0.03 | 0.81 | — |
+  | agents-draw (the units' instances) | 0.04 | 0.75 | 0.40 |
+  | agents-traits | 0.03 | 0.67 | 0.34 |
+  | water (flux, depth) | 0.05 | 0.89 | 0.50 |
+  | tile lists (the peel's GPU lists) | 0.02 | 0.39 | 0.20 |
+  | agents-units (occupancy clear) | 0.02 | 0.34 | 0.19 |
+  | agents-peel | 0.01 | 0.25 | 0.12 |
+
+- At 16x the agents' tick is about 7.4 ms a frame here: relax 2.3, ride 1.8, step 0.9, draw 0.75, traits 0.67,
+  occupancy 0.34, peel and lists 0.6. Particles and sway, render-side work run per tick, add another 3.2.
+- Fast-forward design (DESIGN §12, "trips without ticks", decided by this measurement). Each stage, per sim tick or
+  once a frame with the elapsed time:
+
+  | stage | per tick? | once a frame, why |
+  | --- | --- | --- |
+  | agents-draw (units' and items' instances) | no | what's drawn is the frame's last state; per tick it builds 9–16 instance lists and draws one |
+  | sway, particles' look (petals, emit, update) | no | render-only animation; per frame with elapsed time. Sparks that light fires stay events |
+  | agents-relax (the fields) | no | the fields steer, they don't integrate; a frame's sweeps (as at 1x) on the frame's land. At 16x the units read a field up to a frame old: their way, not their physics |
+  | agents-ride (steering on the roads) | no | its steer is read by the next step already (a tick late); once a frame, read by the frame's substeps. Trips are interpolated by clock (DESIGN §12) |
+  | peel, tile lists | no | they follow the versions; once a frame sees every change since |
+  | agents-step (integration, collisions, occupancy) | substeps | see below |
+  | agents-traits (damage, burning, effects) | with the step | rates take the substep's dt; one-tick events (a swing landing) need the step's cadence |
+
+- The units' step, in substeps:
+  - A unit must not cross more than half a cell in a step (the occupancy and the column-floor rides are per cell, so
+    a step past a cell skips its checks).
+  - The fastest unit, a rider on a road, is about 6 cells/s, so the step's dt is at most 1/12 s.
+  - At 16x, a 60 Hz frame's elapsed sim time is 16/60 = 0.27 s: **4 substeps** (ceil(0.27 × 6 / 0.5)) instead of 16
+    ticks. At 1x and 2x, one.
+  - Substeps = ceil(elapsed × v_max / 0.5 cell), v_max from the kinds' table. A speed bound, not a tuning knob.
+  - The traits run with each substep.
+- Cost at 16x if so: step + traits + occupancy ×4 (about 0.8 ms here), plus relax, ride, peel, draw, sway and
+  particles once (about 0.7). About 1.5 ms against 10.6, so 7 times less. The world's other systems (water, wind,
+  stats) still tick 16 times.
+- Risks:
+  - Combat outcomes (windup, swing timing) at substep resolution.
+  - Riders at a frame-old steer.
+  - The CPU's crowd routine per tick (TownLife's trips by clock) is unchanged here.
+  - Fights with fortressraid against today's outcomes is the gate, as for (3).
+- Phone bench: the same per-stage numbers from the Pixel 9a, the deployed branch with `&agentprof=1&perf=1`. The
+  perf overlay lists the passes; it has no download yet.
+- For main before any code.
+
+## 2026-11-06 — round 128o (`phonefix`, DA-B22 (b)): fast-forward — the units step in strides, the rest once a frame
+
+Why: at 16x the agents' tick was about 7.4 ms a frame on desktop, all of it per tick: relax, ride, step, draw,
+traits, 9–16 times a frame (the stage diff above). The approved design note (DESIGN §12) runs what doesn't integrate
+once a frame, and the units' step in strides. Main's gates: fight outcomes as today's, build and harvest within today's
+sim times at 16x, and the step bound measured.
+
+What:
+- `Simulation.frameTicks` and `tickOfFrame`, set by `WorldCore.advance` round its loop. `?ffwd=0` makes every tick a
+  frame of its own, which is today's behaviour: the comparison for the gates and the phone bench.
+- `SimSystem.perFrame`: render-only work runs on the frame's last tick. Sway is the first. The particle visuals are
+  DA-B30: their kernels mix gameplay kinds with look-only ones.
+- The agents:
+  - The units step every `stride` ticks and on the frame's last (`stepPlan`, agents/stepplan.ts, unit-tested). The
+    stride is the ticks the fastest kind's walk takes to cross half a cell: 9 at 60 Hz, so 2 steps at 16x.
+  - The step's dt is the ticks since the last step (AgentParams.step).
+  - A tick that doesn't step does nothing; the hits, holds, launches and regroups it would have taken wait for the
+    next step.
+  - The fields' relax, the peel and its lists, the scope, the ride and the draw run on the frame's last tick.
+  - The traits step with the units at the step's dt; statuses and corpses still last in ticks.
+  - The ride covers the frame's elapsed time (RideParams.off.z): trips advance by elapsed time, so the change carries
+    over to DA-A13's trips by clock.
+- **Sub-moves (option A, main's choice).** The first step-bound run failed. A step of 9 ticks moved a raider 0.63 of a
+  cell at 4.2 cells/s against its kind's 3.1, and workers, guards and carts also moved 10–30% over their kinds' speeds:
+  crowd and wind pushes, blows' knock-back, running alight. Kind speed does not bound a unit's motion. So the step now
+  moves a unit in sub-moves:
+  - each at most half a cell across (SUB_MOVE): walking, each sub-move into a column linked to the last;
+  - when tumbling, gravity, walls and landings run a sub-move at a time, and each sub-move falls less than
+    floorUnder's reach (SUB_FALL 0.25 < 0.3).
+  - The forces and the mind still run once a step.
+  - The stride stays a cost choice: most steps take one sub-move.
+- **The fields' sweeps.** On the first gate run the walled raid at 16x ran late: the gates shut at t≈94–151 s against
+  50–84, and the houses torched near the end never burned (burned 0 against 2). A sweep carries a field's front one
+  step on, so with a tick's sweeps once a frame the fields reached 16 times slower in sim time. Now the frame's last
+  tick runs a tick's sweeps for every tick of the frame (`frameSweeps`). A converged front is empty and its relax
+  dispatches no workgroups, so the cost stays low.
+- The hitch report (`?hitch=1`, its download button) gains a `passes` table: each GPU pass's ms a frame, its frames
+  and its most. With `&agentprof=1` the agents' stages are listed apart, so the phone bench downloads the per-stage
+  numbers.
+- Tumbling units move to the physics engine later (DA-E6); until then, sub-moves are the right bound.
+
+Gates (lab, desktop Intel Xe, `--flags "&ffwd=0"` against fast-forward):
+
+| gate | `?ffwd=0` (today) | fast-forward |
+| --- | --- | --- |
+| step bound, stepbound.mjs: 600 one-stride steps of a walled raid with 4 soldiers | — | most a step moved: worker 0.36, guard 0.41, cart 0.25, raider 0.47 cells; steps needing 2 sub-moves: 0 to 0.05% (raiders) |
+| throws at a wall, throwwall.mjs: 15 throws, 8–60 cells/s, 3 angles, 16x and 32x | inside the land: 0 | inside the land: 0. Ends within 0.33 of a tick at a time for every throw that stops short of the wall's crest; the straight-on 40 and 60 cells/s throws end 1.5–3.8 short (they bounce and climb its slope) |
+| fortressraid walled, 16x (×3 / ×2 after the sweeps fix) | blows 24, breaches 1, looted 2, torched 2, burned 2, escaped 2–4 | blows 24, breaches 1, looted 2, torched 2, burned 2, escaped 3–4 |
+| fortressraid open + 4 soldiers, 16x (the hunt: soldiers after raiders) ×3 | looted 1–3, raiders fallen 0–3, burned 0–2 | looted 1–3, raiders fallen 1–3, burned 0–2 |
+| fortressallbuilt, 16x | 362, 301 s, once 6 blocks unbuilt at 603 s (earlier: 271, 301, 362, 362; 300 s at 4x, 360 s at 1x) | 362, 362, 362 s (after the steer fix below; 60 s before it) |
+| fortressharvest, 16x | passes (243 s, no carrier stuck) | passes |
+| rider speed on trips, ridespeed.mjs, 60 sim s from allbuilt's start, the sim's own ticks | 1x 2.398, 16x 2.358 cells/s | 1x 2.398, 16x 2.360 cells/s (kind 2.4: at 16x a frame's chord cuts the route's bends; the fastest frame is 2.40 in all four) |
+| thin wall, test/gpu/thinwall.test.ts: a wall one column thick, 15 throws at 10–90 cells/s | none into it or through it | none into it or through it, frames of 16 ticks. With the sub-moves off (SUB_MOVE, SUB_FALL 1000) the 60 and 90 cells/s throws go through, 1–11 columns past it |
+
+- **fortressallbuilt finished in 60 s, not today's ~300 — a false arrival, now fixed.** Main asked for this to be
+  measured, not guessed.
+  - Rider speed was right in both modes (table above), so the ride doesn't over-advance.
+  - A trace of the builders (job and phase every sim second) showed the cause. At fast-forward, from 2 s on, the
+    four builders were `working` at the stores (165, 185) and blocks got built from there. Today they rode about 15 s
+    to the site (178, 174) first.
+  - The cause: a unit's road steer is its group's ride's. The builders stood at their stores goal (steer STAND) when
+    the routine regrouped them to the site's group. units.wgsl's arrival check, `steer` STAND with
+    `grp == info's group`, only guarded the regroup tick itself. The next step read the old group's STAND for the
+    new group and told an arrival at the site. Per tick, the ride ran right after the step and rewrote the steer
+    first. Once a frame, a whole stride's step came between.
+  - Fix: a regrouped unit lets its steer go, in the step and in its record (units.wgsl, after the regroups). With it,
+    allbuilt takes 362 s, as today, and the trace shows the builders riding to the site.
+  - The "ride loses time per tick" guess in the first version of this entry was wrong.
+  - Side finding: at 1x the lab's `run` sums wall time (dt × speed). The tick clock ran about 50 ticks a 60 frames
+    there, so rider speed measured over the lab's sim seconds read 2.0. ridespeed.mjs counts the sim's own ticks.
+
+Cost, from speedcost.mjs on the town at 16x with `&agentprof=1`. This was a behaviour lab run on a shared GPU, not
+under the timing lease, so it is a proxy; the phone bench is the measure.
+- GPU frame p50 / p95: 33.3 / 44.3 ms → 6.9 / 11.5 ms.
+- Frame rate: 90 → 120 fps (a 120 Hz display). Sim speed: 13.9x → 16.0x, so it keeps up now.
+- The agents' stages a frame:
+  - relax 2.72 → 0.47 ms
+  - ride 2.08 → 0.10 ms
+  - step 1.65 → 0.08 ms
+  - draw 1.02 → under 0.08 ms
+  - traits 0.91 → under 0.08 ms
+- At 1x nothing changed: 3.9 vs 4.1 ms GPU p50.
+
+## 2026-11-06 — round 128p (`phonefix`): the lab's `run` counts the world's ticks, not wall time
+
+Why: main ("a measurement gap is a bug"). `lab.run(seconds, speed)` added `dt × speed` a frame and reported that as
+sim seconds, but the tick clock decides a frame's ticks. In the DA-B22 rider-speed check, 1x frames ran about 50 ticks
+in 60, and riders read 2.0 cells/s against their real 2.4.
+
+What:
+- `WorldCore.ticksRun` counts the world's ticks run by `advance`. Bake ticks are left out: `tiers.pump` runs them in
+  its own region at its own gain.
+- `lab.run` runs until `seconds` of those ticks (× TICK_DT) have passed and returns them as `simSeconds`.
+- A run in which the world ticks no tick for 600 frames throws instead of spinning.
+- Checked: `run(10, 1)` ran 600 frames for 10.0 s and `run(10, 16)` ran 38 frames for 10.13 s. fortressallbuilt is
+  unchanged at 362 s.
+- Left: the CPU's crowd still steps by `dt × speed` a frame (scenes/level/frame.ts), not by the ticks run. A frame
+  whose ticks the clock cuts gives the routine more time than the world. Not fixed here.
+
+## 2026-11-06 — round 128p (`phonefix`): debug overlays let the map's input through
+
+Why: the user on the phone bench link (`/fortress/?…&perf=1&agentprof=1&speed=16&hitch=1`): "The screen is blocked by
+a semi transparent panel that prevents me from panning or planning."
+
+Reproduced at 412×915, dpr 2.6, by asking the page what a tap reaches over a grid of points. The top 560 CSS px went
+to the overlays:
+- **The perf overlay** (`.perf`) is meant to pass input through (`pointer-events: none`), but `#ui > * {
+  pointer-events: auto }` outranks a bare class, so it took every tap and drag. With the agentprof stages split it is
+  as wide as the phone and about 880 px tall.
+- **The hitch HUD** set `pointer-events: auto` on its whole panel (timeline, worst-ten text) and stopped every
+  pointer event on it.
+
+Fix, at the cause:
+- Debug overlays are marked `data-overlay="debug"`. CSS sets `#ui > [data-overlay='debug'] { pointer-events: none }`.
+  Only their own controls (`data-overlay-control`) take taps: the perf overlay's new fold button and the hitch HUD's
+  bar (title and buttons).
+- Both start folded on a screen narrower than 600 px and unfold with a tap. The perf overlay no longer updates its
+  text while folded.
+
+Check:
+- scripts/lib/overlaycheck.mjs asks the page what a tap reaches over a 40 px grid. It fails on any debug overlay
+  other than its controls.
+- scripts/shot.mjs runs it after the wait and again after the taps and drags. scripts/lab.mjs runs it once the lab
+  opens (a page opened with `--flags "&perf=1…"`).
+- Verified on the bench URL at 412×915:
+  - the check passes folded and unfolded;
+  - a drag over the panel's area pans the camera (target 152, 168 → 194, 110);
+  - a tap at (200, 400) with the perf overlay unfolded reaches the canvas.
+- With the CSS rule removed, the check fails at the perf overlay's points.
+
+## 2026-11-06 — round 128p (`phonefix`): no plant particles in fortress play
+
+Why: the user, on the phone bench: "I see a lot of plant particles and grow effects which I don't think add much and I
+would be happy to turn off", then "I'm ok with leaves but I don't think the seeds add much." DECISIONS round 128p.
+
+What:
+- The plants' own particles are split out of the emitters into a kernel of their own, `plantEmit`
+  (particles.wgsl): the trees' seed pulses, the story rules' seed shed, and the grow tap's glow, seed puff and
+  sparkles.
+- The grow tap's growth stays in `emit`: it is gameplay, so only its look moved.
+- `ParticleSystem.plants` decides whether `plantEmit` and the petals' kernel (`petalEmit`) dispatch, in both the full
+  and the tile-culled paths. Off, neither runs at all.
+- `WorldCore.plantParticles(on)` is the mode's switch. `startFortress` turns it off, beside ValleyReads.
+- Kept: leaves (on the trees and on the woodland floor), dust, litter, fire, embers, smoke, deer, rabbits and
+  fireflies.
+
+Measured: desktop, the lab's town with Build pressed, 16x, speedcost.mjs, 8 s a phase, two runs.
+- `particles-petals` 0.19–0.22 ms and `particles-plants` 0.19–0.21 ms a frame, about 0.4 ms. Both are gone with the
+  plants off.
+- GPU frame p50: 8.1 / 7.7 ms with the plants off against 8.4 / 8.1 ms with them on; the frame-to-frame noise is
+  about as big as the saving.
+- The phone's share is for its bench to show (by toggle diff).
+
+Left:
+- With story rules on, the seed shed is how green spreads. A mode with story rules (the sandbox valley) keeps the
+  plants' particles on; fortress play has no story rules.
+- Plants' wind response (sway) sleeping where the wind is low and waking for gusts: next (DECISIONS round 128p, the
+  user's correction).
+
+## 2026-11-06 — round 128p (`phonefix`): plant sway sleeps under the breeze and wakes for gusts
+
+Why: the user, "when wind is low let them sleep and wake them up for gusts like other systems like dust" (DECISIONS
+round 128p, the correction). The sway spring ran over every column of the window every frame, whatever the wind.
+
+What:
+- `SwaySystem` dispatches over a tile list made on the GPU (swaylist.wgsl, GpuTileList, indirect, no readback). A
+  chunk is listed when either:
+  - the wind past the map's own breeze (windAt less the field's map wind, ba − rg: painted gusts, blows, a landing's
+    shove, storms, the cursor's breeze) is more than WAKE (1 cell/s) at its middle or a corner; or
+  - one of its springs is still swinging (`restless`, written by sway.wgsl while the lean moves faster than
+    0.01 cells/s).
+- The other chunks keep the lean they have.
+- The scope, every chunk of the window, is packed again each frame, so a slide's pages are the list's.
+- Without the tile lists (`?simcull=0`) the whole window runs every frame, as before.
+- No jitter: the sway is once a frame since fast-forward (0.04 ms on desktop), so a woken region is simulated.
+
+Measured:
+- test/gpu/sway.test.ts:
+  - under a steady breeze, no chunk is listed;
+  - a gust in one corner lists some chunks, not all, and the plants there lean;
+  - once the gust is gone and the springs stop swinging, none is listed.
+- The lab's town after Build at 16x, read every 5 sim s for 30 s: 0 of 400 chunks listed.
+
+Limits:
+- Under the map's own breeze the plants no longer lean into it. With no lean, the draws' flutter (scaled by the
+  lean) is still too.
+- Trees and leaves answering real weather is BACKLOG DA-B31.
+- WAKE (1 cell/s past the breeze) and the settling speed (0.01) are the wake and sleep levels. They are thresholds,
+  chosen so the breeze's own patches don't wake the window (with a lean-difference rule, 300 to 400 of the 400 chunks
+  stayed awake).
+
+## 2026-11-06 — round 128p (`phonefix`): the breeze's lean in the draw, the spring for gusts only
+
+Why: main, on da418ee7. With the sway asleep under the map's breeze, trees no longer leaned or fluttered in it. The
+breeze is a known analytic function (common.wgsl mapWind: the prevailing wind in its gust patches, the dust storms,
+the eddies), so the draws can work out its lean themselves, with no sim and no state.
+
+What:
+- `plantLean(bend, p)` (common.wgsl) is the breeze's lean, `leanFor(mapWind(p))`, plus the column's bend.
+- The draws use it in vertex.wgsl, meshinst.wgsl and structgame.wgsl. Their flutter scales with it, as before.
+- The sway spring (sway.wgsl) springs only to the wind past the breeze, windAt less the field's map wind (ba − rg),
+  the same wind swaylist.wgsl wakes on. In a calm or a steady breeze the bend goes to 0 and the chunk sleeps.
+- `leanFor` is the one lean formula, shared by the spring's aim and the breeze.
+
+Checked:
+- test/gpu/sway.test.ts passes: no chunk listed under the breeze, the corner gust's chunks listed and leaning, none
+  once settled.
+- Before (32e1820a) and after, the atlas town at play zoom × 2.2 with time running in the natural breeze (1.4
+  cells/s):
+  - over the town: the two frames 0.6 s apart differ by 11.70 and 11.75 a pixel (before, after), and the frames
+    differ from each other by 2.5 a pixel;
+  - over the river's green bank: 18.50 against 18.25.
+- So the motion in the view is the same. The breeze's lean at 1.4 cells/s is 0.07 cells, as small as it was.
+
+## 2026-11-06 — round 128p (`phonefix`, DA-B22): the 16x toggle-diff phone bench
+
+Why: the Pixel 9a's hitch report at 16x after Build (fortress 22b2c0f9): 12–20 fps; minute 1 p50 33, p95 100, p99 150
+ms, max 3.4 s. Per-pass means were 6–9 ms for passes that have nothing to do with each other: windfield 9.2,
+windfield-box 7.3, agents relax 8.2, step 7.5, traits 7.2, draw 6.7, ride 6.6, particles 4–5. On a tiler per-pass
+timestamps can't be trusted (memory: "toggle, don't timestamp"), so the bench measures toggle diffs instead.
+
+What: `?speedbench=1` (src/perf/speedbench.ts) on the fortress link.
+- It lets the level settle 10 s, presses Build, runs at `benchspeed` (16) for 8 s, then runs fixed phases of
+  `benchsecs` (10 s, after 2 s to settle) each:
+  - all;
+  - no agents or traits;
+  - fast-forward off;
+  - no particles;
+  - no wind field (windfield, wind-blows);
+  - no traits;
+  - no sway;
+  - no water;
+  - the plants' particles on;
+  - all again.
+- Each phase records the frame interval (p50, p95, p99, max), frames over 33 and 50 ms, fps, the world's ticks a
+  frame and the speed reached (WorldCore.ticksRun), the GPU frame and the 12 heaviest passes when there are
+  timestamps, and the p50 it saves against the first phase.
+- The report (kind 'reclaimed-speedbench') can be downloaded, copied or shared, and is kept in localStorage.
+- `WorldCore.ffwd` is now a field (from `?ffwd=`), so a phase can turn fast-forward off.
+
+Checked on desktop, 412×915, 4 s phases: it runs through. Frame p50 is held at the display's 10 ms, so the GPU
+frame p50 is the readout there: all 19.6 (first phase, warming), fast-forward off 37.2, no particles 7.6, no water
+8.6, all again 16.6 ms. The phone, GPU-bound, shows it in the frames.
+
+A finding to check against the bench: the wind field runs every tick. At 16x that is 16 a frame — the painted box,
+its copy, and a band of the map's own wind each (16 bands: the whole field a frame). The map wind's band needn't
+follow the ticks; the bench's "no wind field" phase will say what it costs on the phone.
+
+## 2026-11-06 — round 128p (`phonefix`, DA-B22 (c)): the sync steps — design note before code
+
+Why: DESIGN §11's rule, "no per-frame CPU copy of all units". AgentUnits.update reads every unit once a frame
+(`agents.sync()`), because the CPU's unit logic reads every unit's `at`:
+- **AgentUnits.think**, every sync, O(fighters × live). Hostiles notice the nearest enemy in sight and drop it past
+  their leash. Guards pick a hostile in sight. The hunt's targets field takes the 8 nearest candidates, and their
+  positions go into AgentParams.targets. A defender closes in and strikes on a CPU timer (`agents.hit`); a hostile's
+  GPU swing comes back as an event, which the CPU turns into `hit(target)`. `mayFight` is the game's rule: a posted
+  archer, someone in a house or a cart don't fight; neither do two units 1.6 or more apart in height, or on different
+  sides of the wall while it stands.
+- **AgentUnits.goalOf and assign** for jobs that aren't the routine's work: `go`, `guard` (radius), `patrol` and
+  `flee` read the unit's own `at`; `follow` and `attack` read the target's.
+- **Picking**: personAt projects every crowd member's `at`.
+- **The fortress's defence** (archers aim at a raider's `at`), the **raiders' stepping** (their own `at` against
+  goals), the crowd (a soldier's `at` as its post), the **follow card**. These are few units: watched ones.
+- **Hero play, runsit and story**: `units.query` and `units.near` (parked: async contract, call sites keep working).
+
+Proposed, in order (riskiest first):
+- **(3) Combat targeting on the GPU** — a pass once a frame, after the step (`agents-notice`):
+  - The rules as data, uploaded when they change:
+    - per unit, a combat word: faction (8 bits), hostile, role bits (guard, no-fight: posted, inside, cart), home and
+      leash for a guard;
+    - a faction-hostility table;
+    - a per-column side map (out / in / other) with a `sides open` flag;
+    - the height limit.
+  - mayFight becomes those, so it isn't a callback any more.
+  - Each hunter (hostile or guard) keeps its target (word f.y) while the target lives, fights and is within leash;
+    otherwise the nearest eligible enemy within sight. Brute force over the live units first: hundreds of hunters ×
+    a thousand units is about 1e5 checks a frame. A spatial index only if the measurement says so.
+  - A new target emits `noticed` (id, target), which drives the game's `noticed` hooks. A unit struck with no
+    target turns on its attacker, on the GPU.
+  - The targets field's seeds are the targeted units, compacted on the GPU (≤ 8 as today: the nearest to their
+    hunters).
+  - **Strikes stay as they are in this step**: the hostile swing event names its target unit (not an index into
+    the CPU's list), and the CPU's defender strikes read the positions of watched units (fighters and their targets
+    are watched while they fight, ≤ MAX_WATCH; raised if needed).
+  - Fully GPU strikes (damage applied by the swing to the target's record, hurt and death with `by`) come after,
+    gated the same way.
+  - **Gate**: fortressraid walled and open with soldiers (the hunt), 3 runs each, outcomes within today's spread;
+    a scripted GPU test of the rules (sides, posted, height, factions).
+- **(2) GPU pick**: a compute pass over the units projects each figure's middle with the camera's matrix and takes
+  the nearest within PICK_PX by atomicMin, among units the game marks pickable (a bit in the combat word: the
+  crowd's). One 4-byte async read a tap. `personAt` becomes async.
+- **(4) The Units contract**: `get(id).at` is the last read only for watched units. `watch(id)` / `unwatch(id)`
+  replaces reading everyone; the `at` of an unwatched unit is `null` ("not read", never a stale value). `query` and
+  `near` become async GPU queries: the one-pass box query that already exists for the scope, generalised to a
+  centre and radius with an id list back. The hero, runsit and story call sites move to await them.
+- **(1) The watched-only sync**: once nothing above reads every unit, `sync({ watch })` with the followed, the
+  selected, the fighters and their targets, and the routine's few. Jobs that read their own `at` (go, guard radius,
+  patrol, flee) move to arrival events (DA-A6 already has them: `arrivals(field, radius)`).
+- Measure at the end: the sync's KB a frame and its ms, before and after, at 1x and 16x.
+
+Asks (main): go or no-go on (3) as scoped (strikes stay CPU-side this step), and on (4)'s contract (`at: null` when
+not watched, `query` and `near` async).
+
+## 2026-11-06 — round 128p (`phonefix`, DA-B22 (c)(3)): combat targeting on the GPU
+
+Why: the design note above, and main's go: who fights whom is found on the GPU through the units' buckets in rings,
+not by brute force. The CPU's search over every unit (AgentUnits.think, O(fighters × live), and mayFight as a
+callback) goes, so later steps can stop reading every unit.
+
+What:
+- `UnitNotice` (agents/notice.ts, shaders/notice.wgsl) is an agents stage once a frame, after the units' last step.
+  Its passes:
+  - `bucketClear` and `bucketFill`: each live unit pushed onto a list for its 16 × 16 columns.
+  - `huntClear`.
+  - `notice`: each fighter keeps its target (unit word f.y, a target code: id + 1, or ACTOR | i for the game's
+    actors) while the target lives, the rules allow it, and it is within the leash. Otherwise it takes the nearest
+    enemy it may fight within its sight, searching the buckets in rings and stopping once a ring lies past the best
+    found.
+  - `huntWrite`: a hostile hunter scans its whole sight and marks the hunt's candidates (`hunted`, word f.z: the
+    nearest hunting hostile's distance, its target's too), which AgentUnits ranks into the hunt's 8 targets as
+    before.
+  - A new target is a `noticed` event (EV 9).
+- The rules are data: a combat word a unit (faction, hostile, guard, no-fight, posted, raider, out of the fighting,
+  sight, a guard's post), a side map per window column, the rules' flags (on, open), the height limit and the leash.
+  - `AgentUnits.fightRules({ open, sideAt } | null)` and `fightFlags(noFight, posted)` replace `mayFight`.
+  - The fortress raid hands them its sides after each look, and who is in at home and who holds a post every
+    update.
+  - A spawned slot is out of the fighting until the game gives it a part (`notice.out`), so units no one has a part
+    for are not fought.
+- Kept on the CPU: strikes. A hostile's swing event becomes a hit, and a defender closes in and strikes on its timer,
+  reading its target's position. The game's own targets (an order to attack, a unit struck turning on its striker)
+  go to the GPU (`notice.aim`).
+
+Gates:
+- test/gpu/notice.test.ts:
+  - the ring search finds what a brute force over all 400 units finds, for every hunter (over 100 hunters), and
+    marks the same candidates;
+  - the rules: sides and open, in at home, height, posted, a guard's leash from its post, no faction.
+- fortressraid walled, 16x × 3: blows 24, breaches 1, looted 2, torched 2, burned 2, escaped 2–4 (today the same).
+- fortressraid open with 4 soldiers, 16x (the hunt), 21 runs:
+  - looted 1–3, raiders fallen 1–2, burned 2, in 20;
+  - 1 run had the soldiers meet the raiders outside, with raiders struck by raiders in the crowd (CPU hits land on
+    whoever stands at the target: unchanged), and nothing looted.
+  - Today's code in a clean worktree, 9 runs: looted 1–3, raiders fallen 0–3, no run without loot.
+- Left: the sync still reads every unit (step (1)); combat words are compared and written from AgentUnits.think each
+  sync (a key a unit, O(units) on the CPU); strikes on the GPU later, under the same gate.
+
+## 2026-11-06 — round 128p (`phonefix`, DA-B22 (c)(2)): a tap's person found on the GPU
+
+Why: picking was one of the CPU's readers of every unit. `personAt` projected every crowd member's last-synced `at` on
+the CPU.
+
+What:
+- `UnitPick` (agents/pick.ts, shaders/unitpick.wgsl): over the candidates' slots, each live one's figure middle is
+  projected with the camera's view-projection, as `Camera.project` does. The nearest to the tap within the radius
+  wins (atomicMin of the distance × 64 and the candidate's index).
+- One 4 B read a tap. Asks are taken in turn.
+- `Agents.pick(ids, ask)` and `AgentUnits.pickAt(among, ask)` expose it. `personAt` is async.
+- `fortressAt` returns a promise, done when its picks are back. The tap's ray and the ground pick's pixel are taken
+  at the tap.
+- The lab's `tap` returns that promise, and fortressfollow.mjs awaits it.
+
+Gates:
+- test/gpu/unitpick.test.ts: 40 taps over 120 units with every other one a candidate, each the same unit (or none)
+  that the CPU's projection finds; no candidates, none.
+- fortressfollow.mjs passes: the tap picks the worker, Follow keeps them on screen, and a tap elsewhere lets go.
+
+## 2026-11-06 — round 128p (`phonefix`, DA-B22 (c)(1)): the sync measured; its event window sized by what comes
+
+Why: main asked for the sync's KB and ms at 1x and 16x before and after (c)(1)(4).
+
+Measured (the lab's start town, 12 units, Build pressed, 10 sim s at each speed; syncm.js wraps Agents.sync):
+- Before: 9.1 KB a sync at both speeds, 540 KB a sim second at 1x and 34 at 16x (one sync a frame). The round trip
+  is p50 1.5–1.6 ms, p95 5.6–8.1 ms.
+- Of the 9.1 KB, 8 KB is the event window. Every sync copied 256 events' room whether any came or not; the units'
+  records were 1.1 KB.
+
+What:
+- The window is sized by what the syncs find: twice the events that came, or as many as are still waiting, rounded
+  up to a power of two between 16 and 256.
+- What doesn't fit waits in the ring for the next sync, as before. test/gpu/agentevents.test.ts passes: 600 deaths
+  in one tick read over several syncs, every one once; past the ring's room the overflow is counted.
+- After: 1.6 KB a sync, 91–96 KB a sim second at 1x and 6.2 at 16x. The round trip is unchanged (p50 1.6–2.0 ms, p95
+  5.2–6.7): it is latency, not bytes.
+- On this town the units' share is small (12 units). The watched-only sync, (1) with (4), is for the crowds and
+  battles of DESIGN §11, where every unit's 96 B a frame adds up.
+
+## 2026-11-06 — round 128p (`phonefix`, DA-B22 (c)(1)): the sync's events counted by the head, not guessed
+
+Why: main found d4a8e038 failing the GPU tier. In test/gpu/traits.test.ts, "raise turns the dead living…" expected
+100 and got 16, and "corpses decay…" expected 20 and got 16. The window was sized from the previous sync, so a burst
+bigger than it (100 raised in one tick) wasn't read in full: the sync guessed instead of reading the GPU's count.
+
+What:
+- Each sync copies the head (the GPU's count) and the first 16 events with the units, as one read.
+- When the head counts more since the last read (up to 256 a sync, as with the fixed window before), a second read
+  fetches exactly those before the sync returns. The ring keeps them until `eventsRead` moves past.
+- No sizing from earlier syncs. Agents.sync is listed twice in the transfer table.
+
+Gates:
+- The GPU tier: 42 files, 191 passed, 5 skipped. It includes traits.test.ts (raise, corpses) and
+  agentevents.test.ts (600 deaths read over syncs, every one once; the overflow counted).
+- The unit tier: 844 passed, 3 expected fail.
+- The start town still reads 1.6 KB a sync (91–95 KB a sim second at 1x, 6.2 at 16x), with a second read only when
+  more than 16 events came.

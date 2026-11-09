@@ -1,7 +1,7 @@
 // (round 128o, onetown) Every block of the user's start town gets built: the generated town's own sites (a house walled
 // in by houses, reached under its neighbour's arch) and three blocks planned 55 m west of the stores, Build, 16x; fails
 // if any block still waits after `limit` sim s (default 600). Was 702/708 (nobody built), then 706/708 (cell 1188).
-//   node scripts/lab.mjs run scripts/lab/fortressallbuilt.mjs [--args '{"limit":600}']
+//   node scripts/lab.mjs run scripts/lab/fortressallbuilt.mjs [--args '{"limit":600,"speed":16}']
 export const recipe = 'town';
 
 export default async function (lab, args) {
@@ -34,7 +34,7 @@ export default async function (lab, args) {
   let t = 0;
   let s = lab.snapshot();
   while (t < limit) {
-    t += (await lab.run(30, 16)).simSeconds;
+    t += (await lab.run(30, args.speed ?? 16)).simSeconds;
     s = lab.snapshot();
     console.log(`t ${Math.round(t)} s`, JSON.stringify({ progress: s.progress, cutOff: s.cutOff, grain: Math.round(s.stores.grain ?? 0) }));
     if (s.progress.built === s.progress.total) break;

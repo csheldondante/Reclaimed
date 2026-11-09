@@ -51,7 +51,8 @@ struct Effect { a: vec4<f32>, b: vec4<f32>, c: vec4<u32> };
 struct TraitParams {
   // x slots, y effects, z the events' capacity, w ticks a corpse lasts
   n: vec4<u32>,
-  // x trait assignments this tick
+  // x trait assignments this tick, y the step's dt (f32 bits: the units' step's — a tick's, or at fast-forward the
+  // ticks since the last step: agents.ts stepPlan)
   m: vec4<u32>,
   // per kind (8): the traits it starts with
   kindSeed: array<vec4<u32>, 2>,
@@ -135,7 +136,7 @@ fn effCovers(e: u32, p: vec3<f32>) -> bool {
 /** what an effect gives this tick: its amount once (a burst), or its amount a second × dt (a field) */
 fn effAmount(e: u32) -> f32 {
   let b = TP.effects[e].b;
-  return select(b.x * G.dt, b.x, b.w > 0.5);
+  return select(b.x * bitcast<f32>(TP.m.y), b.x, b.w > 0.5);
 }
 
 fn emit(kind: u32, id: u32, other: u32, amount: f32, p: vec3<f32>) {

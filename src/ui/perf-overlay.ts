@@ -21,12 +21,30 @@ export interface PerfSnapshot {
 
 export class PerfOverlay {
   private el: HTMLElement;
+  private text: HTMLPreElement;
   visible: boolean;
   private last = 0;
 
   constructor(root: HTMLElement, visible: boolean) {
+    // (round 128p: a debug overlay — the map's input passes through it, only its fold button takes taps; folded on a
+    // narrow screen, where it covered the map: style.css [data-overlay='debug'])
     this.el = document.createElement('div');
     this.el.className = 'perf';
+    this.el.dataset.overlay = 'debug';
+    const fold = document.createElement('button');
+    fold.dataset.overlayControl = '';
+    const narrow = typeof innerWidth === 'number' && innerWidth < 600;
+    if (narrow) this.el.classList.add('folded');
+    const label = () => (fold.textContent = this.el.classList.contains('folded') ? 'perf ▸' : 'perf ▾');
+    label();
+    fold.onclick = (e) => {
+      e.stopPropagation();
+      this.el.classList.toggle('folded');
+      label();
+    };
+    this.el.appendChild(fold);
+    this.text = document.createElement('pre');
+    this.el.appendChild(this.text);
     root.appendChild(this.el);
     this.visible = visible;
     this.el.style.display = visible ? '' : 'none';
@@ -38,7 +56,7 @@ export class PerfOverlay {
   }
 
   update(p: PerfSnapshot, prof: Profiler, sim: Simulation): void {
-    if (!this.visible) return;
+    if (!this.visible || this.el.classList.contains('folded')) return;
     const now = performance.now();
     if (now - this.last < 250) return;
     this.last = now;
@@ -67,6 +85,6 @@ export class PerfOverlay {
       lines.push(`vegetated ${s.vegCells}  mature ${s.matureCells}  clean ${s.cleanCells}`);
       if (s.overflow) lines.push(`!! slot overflow ${s.overflow}`);
     }
-    this.el.textContent = lines.join('\n');
+    this.text.textContent = lines.join('\n');
   }
 }

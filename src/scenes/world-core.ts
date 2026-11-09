@@ -10,6 +10,12 @@ import { Camera } from '../render/camera';
 import { Renderer } from '../render/renderer';
 import type { GlobalsState } from '../sim/globals';
 import { Simulation, TICK_DT } from '../sim/simulation';
+import { urlFlags } from '../flags';
+
+/** (round 128o, DA-B22) ?ffwd=0: every tick a frame of its own — the units step every tick, the render-only work and
+ *  the agents' fields, ride and draw run every tick (as before fast-forward): the comparison the gates and the phone
+ *  bench toggle against (DESIGN §12) */
+const FFWD = urlFlags().get('ffwd') !== '0';
 import type { SimSystem } from '../sim/system';
 import { WorldGpu } from '../sim/world-gpu';
 import { Tiers } from '../sim/tiers';
@@ -235,6 +241,22 @@ export class WorldCore {
   }
 
   /** Advance light, weather and the fixed-step simulation. Returns ticks run. */
+  /**
+   * (round 128p) The plants' particles as a mode picks them: on (default), petals, seeds and the grow tap's glow and
+   * sparkles fly; off (fortress play — the user: "I see a lot of plant particles and grow effects which I don't think
+   * add much"; "I'm ok with leaves but I don't think the seeds add much"), none of their kernels dispatches. Leaves stay.
+   */
+  plantParticles(on: boolean): void {
+    this.sim.particles.plants = on;
+  }
+
+  /** (round 128p) fast-forward on (DA-B22: ?ffwd=0 off; the 16x toggle bench turns it off for a phase, perf/speedbench.ts) */
+  ffwd = FFWD;
+
+  /** (round 128p) the world's ticks run by advance so far (not a bake's: tiers.pump's ticks run its region at its
+   *  gain) — the sim time that passed, TICK_DT each; the lab's `run` counts by it */
+  ticksRun = 0;
+
   advance(now: number, simDt: number, speed: number, filter?: (s: SimSystem) => boolean): number {
     const g = this.globals;
     this.weather.time = g.time;
@@ -272,10 +294,16 @@ export class WorldCore {
     // (SM2: the player's strokes of wind count as interactions — gusts[0] is the cursor's breeze, not a stroke)
     for (const st of g.gusts.slice(1)) if (st.strength > 0) this.tiers.interact(st.x, st.y, st.radius);
     this.tiers.apply();
+    // (round 128o, DA-B22: where each tick lies in the frame — fast-forward's per-frame work runs on the last)
+    this.sim.frameTicks = this.ffwd ? n : 1;
     while (ticks < n) {
+      this.sim.tickOfFrame = this.ffwd ? ticks : 0;
       this.sim.step(g, filter);
       ticks++;
+      this.ticksRun++;
     }
+    this.sim.frameTicks = 1;
+    this.sim.tickOfFrame = 0;
     // (round 108, simtiers: a bake's ticks — the baked processes run in its region at its gain, the rest alongside)
     ticks += this.tiers.pump(() => this.sim.step(g, filter));
     return ticks;

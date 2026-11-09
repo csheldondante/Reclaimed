@@ -90,6 +90,9 @@ export default async function (lab, args) {
   const plan = await phase('plan');
   lab.build();
   await lab.run(2, speed, { keep: true });
+  // (round 128o, DA-B22: lab.run's keep puts back the speed it found — the phases ran at whatever the lab was left at;
+  // the game's frames at `speed` from here)
+  window.reclaimed.scene.speed = speed;
   const build = await phase('build');
   let work;
   if (args.work) {
@@ -105,5 +108,6 @@ export default async function (lab, args) {
   }
   on = false;
   window.requestAnimationFrame = raf;
+  window.reclaimed.scene.speed = 0;
   return { plan, build, work };
 }

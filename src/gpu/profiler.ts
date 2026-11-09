@@ -3,7 +3,12 @@
 // - Draw/dispatch counts, buffer/texture memory tracked at allocation time.
 // Readbacks are asynchronous and ring-buffered so they never stall the frame.
 
-const MAX_QUERIES = 128; // 64 passes per frame
+/** (round 128o, DA-B22) the timestamps a frame to start with (64 passes); the set doubles when a frame asks for more,
+ *  up to the device's query-set limit (QUERY_MOST): a frame at 16x (9-16 ticks) asks for several hundred, and the
+ *  passes past a fixed 128 went untimed — the draw among them — with nothing said */
+const QUERIES_START = 128;
+/** WebGPU's limit on a query set's count */
+const QUERY_MOST = 4096;
 const RING = 3;
 
 export class Profiler {
@@ -18,6 +23,13 @@ export class Profiler {
   private perName = new Map<string, number>();
   private names: string[] = [];
   private next = 0;
+  /** timestamps the set holds now (grows: QUERIES_START doubled to QUERY_MOST) */
+  private cap = QUERIES_START;
+  /** (DA-B22) passes asked for this frame past the set's room: the set grows for the next frame; at QUERY_MOST they
+   *  stay untimed and are counted here, frame by frame (the last frame's) — never silently */
+  untimed = 0;
+  private wanted = 0;
+  private device?: GPUDevice;
 
   /** Smoothed GPU ms per pass name (over the frames it ran in). */
   readonly passMs = new Map<string, number>();
@@ -53,22 +65,35 @@ export class Profiler {
   constructor(device: GPUDevice, hasTimestamps: boolean) {
     this.enabled = hasTimestamps;
     if (!hasTimestamps) return;
-    this.querySet = device.createQuerySet({ type: 'timestamp', count: MAX_QUERIES });
-    this.resolveBuf = device.createBuffer({
-      size: MAX_QUERIES * 8,
-      usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
-    });
-    for (let i = 0; i < RING; i++) {
-      this.staging.push({
-        buf: device.createBuffer({ size: MAX_QUERIES * 8, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }),
-        busy: false,
-        names: [],
-      });
-    }
+    this.device = device;
+    this.make(QUERIES_START);
+  }
+
+  /** the query set, its resolve buffer and the staging ring for `cap` timestamps (the old ones let go: a staging
+   *  buffer still being read finishes on its own) */
+  private make(cap: number): void {
+    const device = this.device!;
+    this.querySet?.destroy();
+    this.resolveBuf?.destroy();
+    this.cap = cap;
+    this.querySet = device.createQuerySet({ type: 'timestamp', count: cap });
+    this.resolveBuf = device.createBuffer({ size: cap * 8, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC });
+    this.writes = [];
+    this.staging = [];
+    for (let i = 0; i < RING; i++) this.staging.push({ buf: device.createBuffer({ size: cap * 8, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }), busy: false, names: [] });
   }
 
   beginFrame(): void {
     this.frameNo++;
+    // (DA-B22: the last frame asked for more than the set held: what went untimed said, then twice the room, as far as
+    // the device allows)
+    this.untimed = Math.max(0, this.wanted - this.cap) / 2;
+    if (this.device && this.wanted > this.cap && this.cap < QUERY_MOST) {
+      let c = this.cap;
+      while (c < this.wanted && c < QUERY_MOST) c *= 2;
+      this.make(Math.min(c, QUERY_MOST));
+    }
+    this.wanted = 0;
     this.names.length = 0;
     this.next = 0;
     this.dispatches = 0;
@@ -86,7 +111,9 @@ export class Profiler {
 
   /** Timestamp writes for a pass, or undefined when unsupported / out of slots. */
   timestamps(name: string): GPUComputePassTimestampWrites | undefined {
-    if (!this.querySet || !this.active || this.next + 2 > MAX_QUERIES) return undefined;
+    if (!this.querySet || !this.active) return undefined;
+    this.wanted += 2;
+    if (this.next + 2 > this.cap) return undefined;
     const i = this.next;
     this.next += 2;
     this.names.push(name);

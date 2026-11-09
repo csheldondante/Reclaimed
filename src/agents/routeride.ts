@@ -13,6 +13,7 @@ import routesWgsl from '../shaders/routes.wgsl?raw';
 import { makeBindGroup, makeCompute, type ComputeKernel } from '../gpu/pipeline';
 import { cellPos } from '../world/lattice';
 import { Router, type RouteNet } from './routes';
+import { TICK_DT } from '../sim/flow';
 
 type P = readonly [number, number];
 
@@ -24,7 +25,7 @@ const KINDS = 8;
 export const RIDE_NEAR = 6;
 /** the queue's gap: a rider keeps this far behind the one ahead on its route (m) */
 export const QUEUE_GAP = 1.1;
-const RP_BYTES = 32;
+const RP_BYTES = 48;
 
 export class RouteRide {
   private k: ComputeKernel;
@@ -278,7 +279,13 @@ export class RouteRide {
     }
   }
 
-  /** the advance: an agents stage, after the units' step (every tick there are riders) */
+  /**
+   * (round 128p, DA-B22 with DA-A13: advance(route, dt)) The sim time the next advance covers (s): the time since it last
+   * ran — the agents set it to the frame's ticks × TICK_DT, the advance running once a frame at fast-forward.
+   */
+  elapsed = TICK_DT;
+
+  /** the advance: an agents stage, after the units' step, once a frame (the frame's elapsed time: `elapsed`) */
   encode(pass: GPUComputePassEncoder): void {
     if (!this.armed || !this.hwm) return;
     const b = new ArrayBuffer(RP_BYTES);
@@ -287,6 +294,7 @@ export class RouteRide {
     u.set([this.hwm, this.maxUnits, 0, 0], 0);
     const [wx, wy] = this.toWindow([0, 0]);
     f.set([wx, wy, this.oz, QUEUE_GAP], 4);
+    f[8] = this.elapsed;
     this.device.queue.writeBuffer(this.params, 0, b);
     pass.setBindGroup(0, this.g);
     pass.setPipeline(this.k.pipeline);
