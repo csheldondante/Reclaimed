@@ -51,6 +51,7 @@ in the repository or measured in this session unless marked *unverified*. The pi
 | `phonefix-observe-wip` | 322962a3 | Unfinished Units-contract cutover (observe/release, `at: V3 \| null`, async query, watched-only sync). **Does not typecheck (131 errors)**; commit message lists what's left. Track A or the speed work owns it. |
 | `onetown-roadgen` | — | Parked streamline road generator (the user rejected its look). Reference only. |
 | `onetown-wip-grade` | 33f7bf18 | Parked "graded at generation" attempt. Reference only. |
+| `forest` | beb2a51 | Paused flora "forests as worlds" epic (canopy presentation, forest floor) from before the pivot; pushed. Review with the user before resuming (Track B for looks, Track A for gameplay). |
 
 ## Build, run, test
 
