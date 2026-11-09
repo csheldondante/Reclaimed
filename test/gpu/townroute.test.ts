@@ -40,9 +40,9 @@ beforeAll(async () => {
   w = await tinyWorld(g, map, [], 'table');
   graph = routeGraphOf(site.grid);
   const r = site.plan.layout.roads!;
-  plan = routePlanOf({ plan: site.plan, floor: (c) => site.town.base[c] }, graph, new Set(r.verge), r.stores);
+  plan = routePlanOf({ plan: site.plan, grid: site.grid, floor: (c) => site.town.base[c] }, graph, { roads: new Set(r.verge), stores: r.stores, centre: r.centre, far: 4 });
   place = { dx: site.box.x0 - header.origin[0], dy: site.box.y0 - header.origin[1], oz: header.oz! + header.zBase };
-  gpu = new TownRouteGpu(g.device, w.core.world, graph);
+  gpu = new TownRouteGpu(g.device, { live: w.core.world }, graph);
   gpu.setPlan(plan);
 }, 120_000);
 afterAll(() => {
@@ -93,7 +93,7 @@ describe("the start town's routes on the GPU", () => {
         if (b & RC.cliff) n.cliffKept++;
         else n.cliffGone++;
       } else if (b & RC.cliff) n.cliffNew++;
-      // (the live surface by the CPU's rule — its two ends only, over the whole edge)
+      // (the live surface by the CPU's rule â€” its two ends only, over the whole edge)
       const endsRise = Math.abs(zb[e] - za[e]) / Math.max(net.length[e], 1e-6);
       if (endsRise > SLOPE) ends.cliff++;
       if (endsRise > SLOPE && c & CUT_CLIFF) ends.kept++;
@@ -156,6 +156,40 @@ describe("the start town's routes on the GPU", () => {
     expect(best).toBeGreaterThanOrEqual(0);
     // (the levelled road: a road edge the land before the town made a cliff, the stamped road walkable as it stands)
     expect(gone.some((x) => (x as { cells: string[] }).cells.every((c) => c === 'road'))).toBe(true);
+  });
+
+  it('the drawn paths laid down the GPU fields, against the CPU walks', async () => {
+    const s = await gpu.solve(place);
+    const net = roads.net;
+    const n = { cpu: { main: 0, lane: 0 }, gpu: { main: 0, lane: 0 }, both: 0, cpuOnly: 0, gpuOnly: 0, mainBoth: 0 };
+    for (let e = 0; e < graph.ne; e++) {
+      const c = net.kind[e];
+      const k = s.kinds[e];
+      if (c === 2) n.cpu.main++;
+      else if (c === 1) n.cpu.lane++;
+      if (k === 2) n.gpu.main++;
+      else if (k === 1) n.gpu.lane++;
+      if (c && k) n.both++;
+      else if (c) n.cpuOnly++;
+      else if (k) n.gpuOnly++;
+      if (c === 2 && k === 2) n.mainBoth++;
+    }
+    let doorsSame = 0;
+    let doorsCpu = 0;
+    let doorsGpu = 0;
+    for (let i = 0; i < plan.ids.length; i++) {
+      const cd = net.door.get(plan.ids[i]);
+      if (cd !== undefined) doorsCpu++;
+      if (s.door[i] >= 0) doorsGpu++;
+      if (cd !== undefined && cd === s.door[i]) doorsSame++;
+    }
+    const terraces = [...s.terrace].filter((t) => !Number.isNaN(t)).length;
+    const noGrade = [...s.grade].filter((x) => !x).length;
+    console.log(JSON.stringify({ paths: n, doors: { cpu: doorsCpu, gpu: doorsGpu, same: doorsSame }, far: plan.far.length, cpuFar: net.far.length, terraces, noDoorAtGrade: noGrade, cpuNoDoorAtGrade: net.reach.noDoorAtGrade, gates: s.gates, rounds: s.rounds }));
+    expect(n.gpu.main).toBeGreaterThan(0);
+    expect(n.gpu.lane).toBeGreaterThan(0);
+    // (every structure that isn't far and has a free door at grade gets a lane)
+    expect(doorsGpu).toBeGreaterThan(0);
   });
 
   it('a solve costs (desktop, Dawn D3D12): cut + 5 solves to convergence + the answer read', async () => {

@@ -19,6 +19,9 @@ import type { CellGrid } from './quadgrid';
 import { ROAD_GRADE } from './grade';
 import { SLOPE } from './ways';
 import { STEP } from '../agents/rules';
+import { edgesOf } from './routegraph';
+
+export { edgesOf };
 
 type V2 = [number, number];
 
@@ -138,31 +141,6 @@ class Union {
     const y = this.find(b);
     if (x !== y) this.p[Math.max(x, y)] = Math.min(x, y);
   }
-}
-
-/** The grid's edges: each cell side once (a neighbour's same side shares it) — its ends, the cells either side (-1 the
- *  rim), and per cell side its edge. */
-export function edgesOf(grid: { count: number; verts: ArrayLike<number>; quads: ArrayLike<number> }): { ends: Int32Array; cells: Int32Array; edgeOf: Int32Array } {
-  const nv = grid.verts.length / 2;
-  const edgeOf = new Int32Array(grid.count * 4).fill(-1);
-  const ends: number[] = [];
-  const cells: number[] = [];
-  const byPair = new Map<number, number>();
-  for (let c = 0; c < grid.count; c++)
-    for (let s = 0; s < 4; s++) {
-      const a = grid.quads[c * 4 + s];
-      const b = grid.quads[c * 4 + ((s + 1) & 3)];
-      const key = Math.min(a, b) * nv + Math.max(a, b);
-      let e = byPair.get(key);
-      if (e === undefined) {
-        e = ends.length / 2;
-        byPair.set(key, e);
-        ends.push(a, b);
-        cells.push(c, -1);
-      } else cells[e * 2 + 1] = c;
-      edgeOf[c * 4 + s] = e;
-    }
-  return { ends: Int32Array.from(ends), cells: Int32Array.from(cells), edgeOf };
 }
 
 /** What the view draws of the paths (build/edgeview.ts): the edges, each one's drawn kind, the verge, the curves. */

@@ -21930,3 +21930,26 @@ Measured (test/gpu/townroute.test.ts on data/lab/town.rclt, Dawn D3D12; scripts/
 
 Not yet: the cut runs over every edge (not only the dirty chunks' — 8.7k threads, sub-millisecond); the plan's part is
 uploaded whole (150 KB) on a solve, not per changed edge.
+
+## 2026-11-09 — DA-A22 step 2a: the drawn paths laid on the GPU; one walkability for reach and routes
+
+Why: the drawn path kinds weren't authored — edgenet.ts laid the main streets and lanes with Dijkstra walks over the
+cuts, so the walks were the CPU's judgement of the land too. Main's decision (A, option 1): lay them down GPU fields
+over the same cuts. And DA-A19: reach joined edges the routes never walk (an undrawn edge along a building's wall).
+
+What: shaders/townroute.wgsl reads the ground only through rgValid / rgTop / rgWater — routeground-live.wgsl (the
+world's columns, play) or routeground-raw.wgsl (a box's raw ground, generation: main's option 2) — one cut kernel.
+Field 0 (Bellman-Ford over the edges, f32 costs as their bits under atomicMin) from the middle and the main roads'
+uncut verge edges; the gates' far corners traced down it (main streets). Field 1 from every main street; each
+structure's free door at grade nearest the network (onto open ground first) traced down it (its lane; the door edge is
+its answer). The layout's costs are edgenet.ts's (stairs ×3, a drawn path ×0.5), fixed while the traces run so many
+traces at once agree. Reach now walks the routes' rule (uncut, not a block's inside, drawn or with no structure either
+side) — the one `walks` both use. Per structure: the reach word, its door, a door at grade, a terrace's level (the
+ground of its walkable side nearest its floor). The gate cells joining an unreached component to the stores'.
+The kinds come back a byte an edge (8.7 KB: main's stopgap until the view and the claims move to the GPU).
+
+Measured (test/gpu/townroute.test.ts, start town): reach 65/65 agree under the routes' rule (DA-A19's rule didn't
+change any structure's answer here). Main streets 269 (CPU 270; 267 the same edges), lanes 114 (CPU 84): the lanes are
+one shortest-path tree to the main streets, not laid nearest-first onto each other, so they merge less — to judge in
+shots. Doors 65/65 chosen, 43 the CPU's. Converged in 2 + 2 + 1 submits (32 sweeps a field submit, 16 hook-and-jump
+iterations a reach submit); a solve 13-27 ms wall on Dawn (5 submits' map latency; the GPU work is under 1 ms).

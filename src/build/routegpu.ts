@@ -1,19 +1,26 @@
 // The town's route network on the GPU (DA-A22, docs/design/ROUTES_ON_GPU.md; shaders/townroute.wgsl, the graph and
-// the plan's part: build/routegraph.ts). One graph — the cuts read from the live columns, reach as its connected
-// components — so nothing on the CPU judges the land.
+// the plan's part: build/routegraph.ts). One graph — the cuts read from the ground as it stands, the drawn paths laid
+// down fields over them, reach as its connected components, the riders' fields over the same edges — so nothing on the
+// CPU judges the land and reach and routes can't differ.
 //
-// A solve: one submit cuts every edge from the columns as they stand, starts the five solves' labels (the rules as they
-// are; a wall, water, a cliff, a terrace lifted), hooks and jumps them ROUND times, asks each structure's node whether
-// it's in the stores' vertex's component, and copies out the answers with the "something moved in the last iteration"
-// flag. Read back asynchronously: a word for the flag and one a structure (bit m: reached in solve m). Not settled (the
-// flag set): another ROUND on the same labels. A half-made labelling only ever leaves components split, never joined,
-// so a bit set is a reach that holds.
+// The ground (RouteGround): in play the world's live columns (the chunk table, the layers, the water sheet:
+// routeground-live.wgsl); at generation the raw ground the GPU made of a town's box (routeground-raw.wgsl). One cut
+// kernel reads either through the same three functions.
+//
+// A solve, in submits (each read back asynchronously: the "something moved" flag, 4 B, until clear):
+//  1. every edge cut; field 0 seeded (the middle, the main roads' verge edges: main streets) and relaxed SWEEPS a submit;
+//  2. the gates' far corners traced down it (main streets); field 1 seeded (every main street) and relaxed;
+//  3. each structure's lane traced down field 1; the five reach solves started and hooked and jumped ROUND a submit;
+//  4. per structure its answer, the gate cells that would join what isn't reached; the answer and the paths' kinds read.
+// Nothing waits on it: the caller gets the answer a few frames later.
 import { makeBindGroup, makeCompute, whenPipelinesReady, type BindSpec, type ComputeKernel } from '../gpu/pipeline';
 import type { WorldGpu } from '../sim/world-gpu';
 import commonWgsl from '../shaders/common.wgsl?raw';
 import layersWgsl from '../shaders/layers.wgsl?raw';
 import materialsWgsl from '../shaders/materials.wgsl?raw';
 import routeWgsl from '../shaders/townroute.wgsl?raw';
+import liveWgsl from '../shaders/routeground-live.wgsl?raw';
+import rawWgsl from '../shaders/routeground-raw.wgsl?raw';
 import type { RouteGraph, RoutePlan } from './routegraph';
 import { SLOPE } from './ways';
 import { ROAD_GRADE } from './grade';
@@ -24,57 +31,86 @@ export const REACH_BIT = { reached: 1, wall: 2, water: 4, cliff: 8, terrace: 16 
 const MODES = 5;
 /** the cut's bits as read back by `cuts` (townroute.wgsl RC_*) */
 export const RC = { wall: 1, water: 2, cliff: 4, steep: 16, inner: 32, off: 64 } as const;
+/** townroute.wgsl GATE_CAP, ANSWER_W */
+export const GATE_CAP = 64;
+const ANSWER_W = 4;
 /** hook-and-jump iterations a submit (the flag cleared before the last) */
 const ROUND = 16;
-/** submits before a solve is a bug: labels that never settle, loud */
+/** relax sweeps a submit */
+const SWEEPS = 32;
+/** submits a phase before it's a bug: a field or labels that never settle, loud */
 const MAX_ROUNDS = 64;
+/** the layout's fields */
+const FIELDS = 2;
 
-type K = 'cut' | 'init' | 'hook' | 'jump' | 'query';
+/** where the ground comes from: the world's live columns, or a box's raw ground (box-local, world z, w × h) */
+export type RouteGround = { live: WorldGpu } | { raw: { ground: GPUBuffer; water: GPUBuffer; w: number; h: number } };
 
-export interface RouteSolve {
-  /** per structure (RoutePlan.ids order) its answer word (REACH_BIT) */
-  words: Uint32Array;
-  rounds: number;
-  ms: number;
-}
-
-/** where the town's box lies in the window: its column (0, 0) at (dx, dy); window z = world z − oz */
+/** where the town's box lies on the ground: its column (0, 0) at (dx, dy); the ground's z = world z − oz */
 export interface RoutePlace {
   dx: number;
   dy: number;
   oz: number;
 }
 
+export interface RouteAnswer {
+  /** per structure (RoutePlan.ids order): its REACH_BIT word; its lane's door (an edge; -1 none); with no door at
+   *  grade, the ground of its walkable side nearest its floor (a terrace's level; NaN none); a door at grade (1) */
+  words: Uint32Array;
+  door: Int32Array;
+  terrace: Float32Array;
+  grade: Uint8Array;
+  /** wall cells where a gate joins something unreached to the stores (at most GATE_CAP) */
+  gates: number[];
+  /** per edge its drawn kind (edgenet.ts PATH_LANE 1, PATH_MAIN 2) */
+  kinds: Uint8Array;
+  /** submits a phase took (fields 0 and 1, reach) and the wall time */
+  rounds: number[];
+  ms: number;
+}
+
+type K = 'cut' | 'fieldInit' | 'fieldSeed' | 'fieldRelax' | 'traceMains' | 'traceLanes' | 'init' | 'hook' | 'jump' | 'struct' | 'gates';
+type FK = 'fieldInit' | 'fieldSeed' | 'fieldRelax' | 'traceMains' | 'traceLanes';
+
 export class TownRouteGpu {
   private k: Record<K, ComputeKernel>;
   private colOf: GPUBuffer;
+  private csr: GPUBuffer;
   private edges: GPUBuffer;
   private cut: GPUBuffer;
+  private dist: GPUBuffer;
+  private kind: GPUBuffer;
   private doors: GPUBuffer;
+  private info: GPUBuffer;
+  private jobs: GPUBuffer;
   private label: GPUBuffer;
+  private mark: GPUBuffer;
   private answer: GPUBuffer;
   private stage: GPUBuffer;
+  private kindStage: GPUBuffer;
   private params: GPUBuffer;
+  private fieldParams: GPUBuffer[];
   private edgeWords: Uint32Array;
-  private ns = 0;
-  private nd = 0;
-  private storesV = 0;
-  private doorCap = 0;
-  private structCap = 0;
+  private plan: RoutePlan | null = null;
+  private cap = { doors: 0, structs: 0, jobs: 0 };
   private ready: Promise<void>;
   private gone = false;
-  readonly stats = { solves: 0, rounds: 0, lastMs: 0 };
+  private busy: Promise<unknown> = Promise.resolve();
+  readonly stats = { solves: 0, lastMs: 0, rounds: [0, 0, 0] };
 
   constructor(
     private device: GPUDevice,
-    private world: WorldGpu,
+    private ground: RouteGround,
     readonly graph: RouteGraph,
   ) {
     const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
     const { nv, ne } = graph;
-    this.colOf = device.createBuffer({ label: 'route cols', size: (nv + ne) * 4, usage: S });
+    const buf = (label: string, size: number) => device.createBuffer({ label, size: Math.max(16, size), usage: S });
+    this.colOf = buf('route cols', (nv + ne) * 4);
     device.queue.writeBuffer(this.colOf, 0, graph.colOf);
-    this.edges = device.createBuffer({ label: 'route edges', size: ne * 16, usage: S });
+    this.csr = buf('route csr', graph.csr.byteLength);
+    device.queue.writeBuffer(this.csr, 0, graph.csr);
+    this.edges = buf('route edges', ne * 16);
     this.edgeWords = new Uint32Array(ne * 4);
     const lenBits = new Uint32Array(graph.len.buffer, graph.len.byteOffset, ne);
     for (let e = 0; e < ne; e++) {
@@ -82,117 +118,246 @@ export class TownRouteGpu {
       this.edgeWords[e * 4 + 1] = graph.ends[e * 2 + 1];
       this.edgeWords[e * 4 + 2] = lenBits[e];
     }
-    this.cut = device.createBuffer({ label: 'route cut', size: ne * 16, usage: S });
-    this.doors = device.createBuffer({ label: 'route doors', size: 16, usage: S });
-    this.label = device.createBuffer({ label: 'route labels', size: 4, usage: S });
-    this.answer = device.createBuffer({ label: 'route answer', size: 4, usage: S });
-    this.stage = device.createBuffer({ label: 'route answer read', size: 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
-    this.params = device.createBuffer({ label: 'route params', size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-    const parts = [commonWgsl, layersWgsl, materialsWgsl, routeWgsl];
-    const mk = (e: string, sp: BindSpec) => makeCompute(device, `route-${e}`, parts, { 0: 'uniform', 11: 'uniform', ...sp }, e);
+    this.cut = buf('route cut', ne * 16);
+    const kb = Math.ceil(ne / 4) * 4;
+    this.kind = buf('route kinds', kb);
+    this.kindStage = device.createBuffer({ label: 'route kinds read', size: Math.max(16, kb), usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    this.doors = buf('route doors', 16);
+    this.info = buf('route structures', 16);
+    this.jobs = buf('route jobs', 16);
+    this.dist = buf('route fields', 16);
+    this.label = buf('route labels', 16);
+    this.mark = buf('route marks', 16);
+    this.answer = buf('route answer', 16);
+    this.stage = device.createBuffer({ label: 'route answer read', size: 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    this.params = device.createBuffer({ label: 'route params', size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    // (field 0: the layout's costs, seeded by the verge; field 1: the layout's, seeded by the main streets)
+    this.fieldParams = [
+      [0, 0, 0, 0],
+      [1, 0, 1, 0],
+    ].map((f) => {
+      const b = device.createBuffer({ label: 'route field params', size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+      device.queue.writeBuffer(b, 0, new Uint32Array(f));
+      return b;
+    });
+    const live = 'live' in ground;
+    const parts = live ? [commonWgsl, layersWgsl, materialsWgsl, routeWgsl, liveWgsl] : [commonWgsl, routeWgsl, rawWgsl];
+    const groundSpec: BindSpec = live ? { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read' } : { 3: 'read', 4: 'read' };
+    const mk = (e: string, sp: BindSpec) => makeCompute(device, `route-${e}`, parts, { 11: 'uniform', ...sp }, e);
+    const F: BindSpec = { 17: 'uniform' };
     this.k = {
-      cut: mk('routeCut', { 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw' }),
-      init: mk('routeInit', { 9: 'rw' }),
-      hook: mk('routeHook', { 6: 'read', 7: 'rw', 8: 'read', 9: 'rw', 10: 'rw' }),
+      cut: mk('routeCut', { ...groundSpec, 5: 'read', 6: 'read', 7: 'rw' }),
+      fieldInit: mk('fieldInit', { ...F, 13: 'rw' }),
+      fieldSeed: mk('fieldSeed', { ...F, 6: 'read', 7: 'rw', 13: 'rw', 14: 'rw' }),
+      fieldRelax: mk('fieldRelax', { ...F, 6: 'read', 7: 'rw', 10: 'rw', 13: 'rw', 14: 'rw' }),
+      traceMains: mk('traceMains', { ...F, 6: 'read', 7: 'rw', 12: 'read', 13: 'rw', 14: 'rw', 15: 'read' }),
+      traceLanes: mk('traceLanes', { ...F, 6: 'read', 7: 'rw', 8: 'read', 10: 'rw', 12: 'read', 13: 'rw', 14: 'rw', 16: 'read' }),
+      init: mk('routeInit', { 9: 'rw', 18: 'rw' }),
+      hook: mk('routeHook', { 6: 'read', 7: 'rw', 8: 'read', 9: 'rw', 10: 'rw', 14: 'rw' }),
       jump: mk('routeJump', { 9: 'rw', 10: 'rw' }),
-      query: mk('routeQuery', { 9: 'rw', 10: 'rw' }),
+      struct: mk('routeStruct', { 7: 'rw', 8: 'read', 9: 'rw', 10: 'rw', 16: 'read', 18: 'rw' }),
+      gates: mk('routeGates', { 9: 'rw', 10: 'rw', 15: 'read', 18: 'rw' }),
     };
     this.ready = new Promise((r) => whenPipelinesReady(r));
   }
 
-  /** The plan's part (an edit's): the edges' bits, the door candidates, the structures, the stores' vertex. */
+  /** The plan's part (an edit's): the edges' bits, the door candidates, the structures, the jobs, the stores. */
   setPlan(p: RoutePlan): void {
     const { ne, nv } = this.graph;
     if (p.edgeBits.length !== ne) throw new Error(`route: plan bits for ${p.edgeBits.length} edges, the graph has ${ne}`);
     for (let e = 0; e < ne; e++) this.edgeWords[e * 4 + 3] = p.edgeBits[e];
-    this.device.queue.writeBuffer(this.edges, 0, this.edgeWords);
-    this.ns = p.ids.length;
-    this.nd = p.doors.length / 4;
-    this.storesV = p.storesV;
+    const d = this.device;
+    d.queue.writeBuffer(this.edges, 0, this.edgeWords);
     const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
-    if (this.nd > this.doorCap) {
-      this.doorCap = Math.max(this.nd, this.doorCap * 2, 64);
+    const nd = p.doors.length / 4;
+    const ns = p.ids.length;
+    if (nd > this.cap.doors) {
+      this.cap.doors = Math.max(nd, this.cap.doors * 2, 64);
       this.doors.destroy();
-      this.doors = this.device.createBuffer({ label: 'route doors', size: this.doorCap * 16, usage: S });
+      this.doors = d.createBuffer({ label: 'route doors', size: this.cap.doors * 16, usage: S });
     }
-    if (this.nd) this.device.queue.writeBuffer(this.doors, 0, p.doors);
-    if (this.structCap === 0 || this.ns > this.structCap) {
-      this.structCap = Math.max(this.ns, this.structCap * 2, 64);
-      this.label.destroy();
-      this.answer.destroy();
-      this.stage.destroy();
-      this.label = this.device.createBuffer({ label: 'route labels', size: MODES * (nv + this.structCap) * 4, usage: S });
-      this.answer = this.device.createBuffer({ label: 'route answer', size: (1 + this.structCap) * 4, usage: S });
-      this.stage = this.device.createBuffer({ label: 'route answer read', size: (1 + this.structCap) * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    if (p.jobs.length > this.cap.jobs) {
+      this.cap.jobs = Math.max(p.jobs.length, this.cap.jobs * 2, 64);
+      this.jobs.destroy();
+      this.jobs = d.createBuffer({ label: 'route jobs', size: this.cap.jobs * 4, usage: S });
     }
+    if (this.cap.structs === 0 || ns > this.cap.structs) {
+      this.cap.structs = Math.max(ns, this.cap.structs * 2, 64);
+      const n = nv + this.cap.structs;
+      for (const b of [this.info, this.dist, this.label, this.mark, this.answer, this.stage]) b.destroy();
+      this.info = d.createBuffer({ label: 'route structures', size: this.cap.structs * 16, usage: S });
+      this.dist = d.createBuffer({ label: 'route fields', size: FIELDS * n * 4, usage: S });
+      this.label = d.createBuffer({ label: 'route labels', size: MODES * n * 4, usage: S });
+      this.mark = d.createBuffer({ label: 'route marks', size: n * 4, usage: S });
+      const words = 2 + GATE_CAP + this.cap.structs * ANSWER_W;
+      this.answer = d.createBuffer({ label: 'route answer', size: words * 4, usage: S });
+      this.stage = d.createBuffer({ label: 'route answer read', size: words * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    }
+    if (nd) d.queue.writeBuffer(this.doors, 0, p.doors);
+    if (p.jobs.length) d.queue.writeBuffer(this.jobs, 0, p.jobs);
+    if (ns) d.queue.writeBuffer(this.info, 0, p.info);
+    this.plan = p;
   }
 
   private writeParams(place: RoutePlace): void {
+    const p = this.plan!;
     const { nv, ne } = this.graph;
-    const b = new ArrayBuffer(64);
-    new Int32Array(b, 0, 4).set([place.dx, place.dy, this.storesV, 0]);
-    new Uint32Array(b, 16, 4).set([nv, ne, this.ns, this.nd]);
+    const b = new ArrayBuffer(80);
+    new Int32Array(b, 0, 4).set([place.dx, place.dy, p.storesV, p.centreV]);
+    new Uint32Array(b, 16, 4).set([nv, ne, p.ids.length, p.doors.length / 4]);
     new Float32Array(b, 32, 8).set([place.oz, SLOPE, ROAD_GRADE, DEEP, STEP, MODES, 0, 0]);
+    const raw = 'raw' in this.ground ? this.ground.raw : null;
+    new Uint32Array(b, 64, 4).set([raw?.w ?? 0, raw?.h ?? 0, p.targets, p.walls]);
     this.device.queue.writeBuffer(this.params, 0, b);
   }
 
-  private groups(): Record<K, GPUBindGroup> {
-    const W = this.world;
-    const g = (k: ComputeKernel, r: Record<number, GPUBuffer>) => makeBindGroup(this.device, 'route', k.layout, { 0: W.globals, 11: this.params, ...r });
-    return {
-      cut: g(this.k.cut, { 1: W.chunks, 2: W.materials, 3: W.layers, 4: W.water, 5: this.colOf, 6: this.edges, 7: this.cut }),
-      init: g(this.k.init, { 9: this.label }),
-      hook: g(this.k.hook, { 6: this.edges, 7: this.cut, 8: this.doors, 9: this.label, 10: this.answer }),
-      jump: g(this.k.jump, { 9: this.label, 10: this.answer }),
-      query: g(this.k.query, { 9: this.label, 10: this.answer }),
+  private groups(): { k: Record<'cut' | 'init' | 'hook' | 'jump' | 'struct' | 'gates', GPUBindGroup>; f: Record<FK, GPUBindGroup>[] } {
+    const gr = this.ground;
+    const base: Record<number, GPUBuffer> = { 11: this.params };
+    const groundRes: Record<number, GPUBuffer> = 'live' in gr ? { 0: gr.live.globals, 1: gr.live.chunks, 2: gr.live.materials, 3: gr.live.layers, 4: gr.live.water } : { 3: gr.raw.ground, 4: gr.raw.water };
+    const g = (k: ComputeKernel, r: Record<number, GPUBuffer>) => makeBindGroup(this.device, 'route', k.layout, { ...base, ...r });
+    const R: Record<number, GPUBuffer> = { 5: this.colOf, 6: this.edges, 7: this.cut, 8: this.doors, 9: this.label, 10: this.answer, 12: this.csr, 13: this.dist, 14: this.kind, 15: this.jobs, 16: this.info, 18: this.mark };
+    const pick = (ks: number[]) => Object.fromEntries(ks.map((n) => [n, R[n]]));
+    const k = {
+      cut: g(this.k.cut, { ...groundRes, ...pick([5, 6, 7]) }),
+      init: g(this.k.init, pick([9, 18])),
+      hook: g(this.k.hook, pick([6, 7, 8, 9, 10, 14])),
+      jump: g(this.k.jump, pick([9, 10])),
+      struct: g(this.k.struct, pick([7, 8, 9, 10, 16, 18])),
+      gates: g(this.k.gates, pick([9, 10, 15, 18])),
     };
+    const f = this.fieldParams.map((fp) => ({
+      fieldInit: g(this.k.fieldInit, { 17: fp, ...pick([13]) }),
+      fieldSeed: g(this.k.fieldSeed, { 17: fp, ...pick([6, 7, 13, 14]) }),
+      fieldRelax: g(this.k.fieldRelax, { 17: fp, ...pick([6, 7, 10, 13, 14]) }),
+      traceMains: g(this.k.traceMains, { 17: fp, ...pick([6, 7, 12, 13, 14, 15]) }),
+      traceLanes: g(this.k.traceLanes, { 17: fp, ...pick([6, 7, 8, 10, 12, 13, 14, 16]) }),
+    }));
+    return { k, f };
   }
 
-  /** The cuts and the components to convergence, the answers read back (see the head). */
-  async solve(place: RoutePlace): Promise<RouteSolve> {
+  /** The cuts, the paths, reach — to convergence, the answer read back (see the head). One at a time, in order. */
+  solve(place: RoutePlace): Promise<RouteAnswer> {
+    const run = this.busy.then(
+      () => this.solveNow(place),
+      () => this.solveNow(place),
+    );
+    this.busy = run;
+    return run;
+  }
+
+  private async solveNow(place: RoutePlace): Promise<RouteAnswer> {
     await this.ready;
     if (this.gone) throw new DOMException('route: disposed', 'AbortError');
+    const p = this.plan;
+    if (!p) throw new Error('route: solve before setPlan');
     const t0 = performance.now();
     const d = this.device;
     this.writeParams(place);
     const G = this.groups();
     const { nv, ne } = this.graph;
-    const nodes = nv + this.ns;
-    const bytes = (1 + this.ns) * 4;
-    for (let round = 1; round <= MAX_ROUNDS; round++) {
-      const enc = d.createCommandEncoder({ label: 'route' });
-      const pass = (k: ComputeKernel, gr: GPUBindGroup, n: number, z: number) => {
-        const cp = enc.beginComputePass({ label: 'route' });
-        cp.setPipeline(k.pipeline);
-        cp.setBindGroup(0, gr);
-        cp.dispatchWorkgroups(Math.max(1, Math.ceil(n / 64)), 1, z);
-        cp.end();
-      };
-      if (round === 1) {
-        pass(this.k.cut, G.cut, ne, 1);
-        pass(this.k.init, G.init, nodes, MODES);
+    const ns = p.ids.length;
+    const nd = p.doors.length / 4;
+    const nodes = nv + ns;
+    let enc!: GPUCommandEncoder;
+    const pass = (k: K, gr: GPUBindGroup, n: number, z = 1) => {
+      const cp = enc.beginComputePass({ label: 'route' });
+      cp.setPipeline(this.k[k].pipeline);
+      cp.setBindGroup(0, gr);
+      cp.dispatchWorkgroups(Math.max(1, Math.ceil(n / 64)), 1, z);
+      cp.end();
+    };
+    /** submits until the flag stays clear: `first` once, then `each` `iters` times (the flag cleared before the last) */
+    const settle = async (label: string, first: () => void, each: () => void, iters: number): Promise<number> => {
+      for (let round = 1; round <= MAX_ROUNDS; round++) {
+        enc = d.createCommandEncoder({ label });
+        if (round === 1) first();
+        for (let i = 0; i < iters; i++) {
+          if (i === iters - 1) enc.clearBuffer(this.answer, 0, 4);
+          each();
+        }
+        enc.copyBufferToBuffer(this.answer, 0, this.stage, 0, 4);
+        d.queue.submit([enc.finish()]);
+        await this.stage.mapAsync(GPUMapMode.READ, 0, 4);
+        if (this.gone) throw new DOMException('route: disposed', 'AbortError');
+        const moved = new Uint32Array(this.stage.getMappedRange(0, 4))[0];
+        this.stage.unmap();
+        if (!moved) return round;
       }
-      for (let i = 0; i < ROUND; i++) {
-        if (i === ROUND - 1) enc.clearBuffer(this.answer, 0, 4);
-        pass(this.k.hook, G.hook, ne + this.nd, MODES);
-        pass(this.k.jump, G.jump, nodes, MODES);
-        pass(this.k.jump, G.jump, nodes, MODES);
-      }
-      if (this.ns) enc.clearBuffer(this.answer, 4, this.ns * 4);
-      pass(this.k.query, G.query, this.ns, MODES);
-      enc.copyBufferToBuffer(this.answer, 0, this.stage, 0, bytes);
-      d.queue.submit([enc.finish()]);
-      await this.stage.mapAsync(GPUMapMode.READ, 0, bytes);
-      if (this.gone) throw new DOMException('route: disposed', 'AbortError');
-      const all = new Uint32Array(this.stage.getMappedRange(0, bytes).slice(0));
-      this.stage.unmap();
-      if (all[0] !== 0) continue;
-      this.stats.solves++;
-      this.stats.rounds = round;
-      this.stats.lastMs = performance.now() - t0;
-      return { words: all.slice(1), rounds: round, ms: this.stats.lastMs };
+      throw new Error(`route: ${label} didn't settle in ${MAX_ROUNDS} submits`);
+    };
+    const words = 2 + GATE_CAP + ns * ANSWER_W;
+    const r0 = await settle(
+      'route field 0',
+      () => {
+        enc.clearBuffer(this.kind);
+        enc.clearBuffer(this.answer, 0, words * 4);
+        pass('cut', G.k.cut, ne);
+        pass('fieldInit', G.f[0].fieldInit, nodes);
+        pass('fieldSeed', G.f[0].fieldSeed, ne);
+      },
+      () => pass('fieldRelax', G.f[0].fieldRelax, ne),
+      SWEEPS,
+    );
+    const r1 = await settle(
+      'route field 1',
+      () => {
+        if (p.targets) pass('traceMains', G.f[0].traceMains, p.targets);
+        pass('fieldInit', G.f[1].fieldInit, nodes);
+        pass('fieldSeed', G.f[1].fieldSeed, ne);
+      },
+      () => pass('fieldRelax', G.f[1].fieldRelax, ne),
+      SWEEPS,
+    );
+    const r2 = await settle(
+      'route reach',
+      () => {
+        if (ns) pass('traceLanes', G.f[1].traceLanes, ns);
+        pass('init', G.k.init, nodes, MODES);
+      },
+      () => {
+        pass('hook', G.k.hook, ne + nd, MODES);
+        pass('jump', G.k.jump, nodes, MODES);
+        pass('jump', G.k.jump, nodes, MODES);
+      },
+      ROUND,
+    );
+    enc = d.createCommandEncoder({ label: 'route answer' });
+    if (ns) pass('struct', G.k.struct, ns, MODES);
+    if (p.walls) pass('gates', G.k.gates, p.walls);
+    enc.copyBufferToBuffer(this.answer, 0, this.stage, 0, words * 4);
+    const kb = Math.ceil(ne / 4) * 4;
+    enc.copyBufferToBuffer(this.kind, 0, this.kindStage, 0, kb);
+    d.queue.submit([enc.finish()]);
+    await Promise.all([this.stage.mapAsync(GPUMapMode.READ, 0, words * 4), this.kindStage.mapAsync(GPUMapMode.READ, 0, kb)]);
+    if (this.gone) throw new DOMException('route: disposed', 'AbortError');
+    const all = new Uint32Array(this.stage.getMappedRange(0, words * 4).slice(0));
+    this.stage.unmap();
+    const kinds = new Uint8Array(this.kindStage.getMappedRange(0, kb).slice(0), 0, ne);
+    this.kindStage.unmap();
+    const f = new Float32Array(all.buffer);
+    const out: RouteAnswer = {
+      words: new Uint32Array(ns),
+      door: new Int32Array(ns),
+      terrace: new Float32Array(ns),
+      grade: new Uint8Array(ns),
+      gates: [...all.subarray(2, 2 + Math.min(all[1], GATE_CAP))],
+      kinds: kinds.map((k) => (k & 2 ? 2 : k)),
+      rounds: [r0, r1, r2],
+      ms: 0,
+    };
+    for (let s = 0; s < ns; s++) {
+      const a = 2 + GATE_CAP + s * ANSWER_W;
+      out.words[s] = all[a];
+      out.door[s] = all[a + 1] - 1;
+      out.terrace[s] = all[a + 2] === 0x7f800000 ? NaN : f[a + 2];
+      out.grade[s] = all[a + 3];
     }
-    throw new Error(`route: the labels didn't settle in ${MAX_ROUNDS * ROUND} iterations`);
+    out.ms = performance.now() - t0;
+    this.stats.solves++;
+    this.stats.lastMs = out.ms;
+    this.stats.rounds = out.rounds;
+    return out;
   }
 
   /** (tests, ?routedebug) the cuts as last solved: per edge its RC bits and the ground at its middle and its two ends
@@ -217,6 +382,6 @@ export class TownRouteGpu {
 
   dispose(): void {
     this.gone = true;
-    for (const b of [this.colOf, this.edges, this.cut, this.doors, this.label, this.answer, this.stage, this.params]) b.destroy();
+    for (const b of [this.colOf, this.csr, this.edges, this.cut, this.dist, this.kind, this.kindStage, this.doors, this.info, this.jobs, this.label, this.mark, this.answer, this.stage, this.params, ...this.fieldParams]) b.destroy();
   }
 }

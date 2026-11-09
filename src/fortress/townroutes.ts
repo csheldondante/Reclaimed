@@ -5,7 +5,7 @@
 import type { WorldGpu } from '../sim/world-gpu';
 import type { Fortress } from './fortress';
 import { routeGraphOf, routePlanOf, type RoutePlan } from '../build/routegraph';
-import { TownRouteGpu, type RouteSolve } from '../build/routegpu';
+import { TownRouteGpu, type RouteAnswer } from '../build/routegpu';
 
 export class TownRoutes {
   private gpu: TownRouteGpu | null = null;
@@ -18,17 +18,17 @@ export class TownRoutes {
   ) {}
 
   /** the plan's part made again (an edit's) and the graph if the grid moved; then the solve */
-  async solve(): Promise<RouteSolve & { ids: number[] }> {
+  async solve(): Promise<RouteAnswer & { ids: number[] }> {
     const f = this.fort;
     const grid = f.site.grid;
     if (!this.gpu || this.gpu.graph.version !== grid.version) {
       this.gpu?.dispose();
-      this.gpu = new TownRouteGpu(this.device, this.world, routeGraphOf(grid));
+      this.gpu = new TownRouteGpu(this.device, { live: this.world }, routeGraphOf(grid));
     }
     const r = f.plan.layout.roads;
     const st = f.storesAt();
     const stores = r ? r.stores : st ? f.toBox(st[0], st[1]) : grid.centre(0);
-    this.plan = routePlanOf({ plan: f.plan, floor: (c) => f.site.town.base[c] }, this.gpu.graph, new Set(r?.verge ?? []), stores);
+    this.plan = routePlanOf({ plan: f.plan, grid, floor: (c) => f.site.town.base[c] }, this.gpu.graph, { roads: new Set(r?.verge ?? []), stores, centre: r ? r.centre : stores, far: 4 });
     this.gpu.setPlan(this.plan);
     const [dx, dy] = f.offset();
     const s = await this.gpu.solve({ dx, dy, oz: f.zShift });
