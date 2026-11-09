@@ -36,7 +36,7 @@ GPU agents (the crowd every unit and worker runs on): their kernels' wrappers, j
 - `pick.ts` (83) — (round 128p, DA-B22 (c)(2)) A tap's unit found on the GPU (shaders/unitpick.wgsl): the candidates the game … API: `PickAsk`, `UnitPick`.
 - `roads.ts` (162) — The agents' road bits from shapes (round 128i, FT-58; API: `RoadShape`, `ROAD_SHAPE_FLOATS`, `packRoadShapes`, `roadInside` +2.
 - `routeride.ts` (305) — The riders on their routes on the GPU (round 128p, DA-A13; API: `RIDE_NEAR`, `QUEUE_GAP`, `RouteRide`.
-- `routes.ts` (411) — Routes (round 128p, DA-A13; API: `RouteNetSite`, `RoutePoints`, `RouteNet`, `COST` +5.
+- `routes.ts` (434) — Routes (round 128p, DA-A13; API: `RouteNetSite`, `RoutePoints`, `RouteNet`, `COST` +5.
 - `rules.ts` (14) — The walkers' rules as numbers (agents.wgsl's constants, mirrored: keep them in step) — what the agents … API: `AGENT_H`, `STEP`, `DROP`, `DEEP` +1.
 - `scope.ts` (155) — Where the agents' fields are kept, and where they're relaxed (round 104, simscale — the user: "For the … API: `SCOPE_MARGIN`, `Box`, `AgentScope`.
 - `stepplan.ts` (17) — (round 128o, DA-B22) Fast-forward's stride: when the units step in a frame of many ticks (agents.ts, … API: `stepPlan`.
@@ -148,6 +148,7 @@ The atlas: the whole generated world map (coarse sim, GPU finish, far land, geys
 
 - `claims.ts` (119) — A town's built blocks in the world's columns (round 128m, onetown; API: `TownClaimsIO`, `TownClaims`.
 - `curveroad.ts` (374) — Main roads as curves the grid adapts to, and the radial relax (round 128p, DA-A13 step 2; API: `LandIO`, `growRoad`, `chaikin`, `MAX_SNAP` +3.
+- `edgecuts.ts` (177) — (diagnostic, Track A: the user — "Can we identify noise in terrain that makes portions unwalkable near … API: `SHOW_NONE`, `SHOW_WALL`, `SHOW_WATER`, `SHOW_CLIFF` +7.
 - `edgenet.ts` (784) — The town's paths on its grid's edges (round 128p, DA-A13 step 1; API: `PATH_LANE`, `PATH_MAIN`, `CUT_WALL`, `CUT_WATER` +17.
 - `edgeview.ts` (217) — How the edge paths show (round 128p, DA-A13 step 1; API: `insetTiles`, `pathPaving`, `MAIN_ROAD_WIDTH`, `curvePieces`.
 - `grade.ts` (93) — A road's grade over the land (DA-A10, round 128o; API: `ROAD_GRADE`, `GradeOpts`, `LaneGrade`, `gradeLane` +1.
@@ -219,6 +220,7 @@ Fortress mode: the fortress, its economy, pieces, claims, life (workers) and its
 - `raid.ts` (289) — The attack wave's rules (round 128l, m4: fortress M5-lite, docs/DECISIONS.md round 128l "the attack wave"). API: `RAID`, `LOOT_ORDER`, `waveSize`, `Side` +13.
 - `raiders.ts` (744) — The attack wave on the fortress (round 128l, m4: fortress M5-lite; API: `RAID_FACTION`, `RaidIO`, `RaidReport`, `FortressRaid`.
 - `recipes.ts` (161) — The fortress's recipes (round 128l, m4: fortress slice 1, milestone 4 — "the blacksmith makes weapons from … API: `Recipe`, `RECIPES`, `recipeTakes`, `TrainRoom` +2.
+- `routedebug.ts` (173) — ?routedebug=1 (diagnostic, Track A): the fortress town's edge network over the view — every edge the … API: `RouteDebug`.
 - `testing.ts` (12) — (round 128m, onetown) Tests' fortress: the player editing a town with nothing on it yet (build/site.ts … API: `fortressOn`.
 - `townwork.ts` (391) — A town's work as TownLife asks for it (DA-A6, round 128o; API: `LOAD`, `SITES`, `RIPE_LOAD`, `FortressWorkIO` +1.
 - `ui.ts` (377) — The fortress's bar. Planning (time stopped): select what — one of the nine types — then tap to plan it; API: `FortressBarHooks`, `SPEEDS`, `FortressBar`.
@@ -567,7 +569,7 @@ Scenes and the live world: WorldCore (one live world), the level and the menu, t
 - `atlas-view.ts` (361) — The atlas viewer (round 67): `?atlas=view` (and `?a.<param>=` for the atlas's parameters). API: `AtlasView`.
 - `frame-cap.ts` (15) — (round 128o, DA-B5; DESIGN.md §24, decided 2026-11-05: "Cap at 30 fps while building or paused" — the … API: `CAP_FPS`, `frameDue`.
 - `hybrid.ts` (362) — The hybrid renderer's choice (?hybrid=1, the atlas level): which of the window's mesh chunks are voxels — … API: `HybridStats`, `HybridChunks`.
-- `level.ts` (730) — The playable valley: world + diegetic powers + HUD + level goal. API: `LevelOptions`, `worldSaveOf`, `LevelScene`.
+- `level.ts` (733) — The playable valley: world + diegetic powers + HUD + level goal. API: `LevelOptions`, `worldSaveOf`, `LevelScene`.
 - `menu.ts` (368) — Main menu (design doc §4): a small live diorama — a skull in barren soil — whose state reflects persistent … API: `MenuScene`.
 - `planner.ts` (124) — Round 113 (`tilesfirst`, the streaming design's step 4 — https://claude.ai/artifact/UnqDENhSKGH1abe7pxWiNh; API: `PlanSource`, `Plan`, `StreamPlanner`.
 - `pool-victim.ts` (38) — (merge122) The region pool's eviction choice, out of the Streamer so it is tested on its own … API: `VictimQuery`, `poolVictim`.
@@ -586,15 +588,15 @@ LevelScene's internals, split out of scenes/level.ts: free functions over the sc
 - `attach.ts` (96) — LevelScene.attach: wires a made level to the page once — the HUD and powers, the sandbox's tools, the … API: `attach`.
 - `camera-moves.ts` (176) — Scripted and keyed camera motion: the drive and pan benches (?drive, ?pan), the free flyer's keys, and the … API: `driveOn`, `panOn`, `flyKeys`, `turnControls` +2.
 - `flags.ts` (37) — The level's URL flags and constants (read once at load): test and comparison switches (?cutaway, ?planner, … API: `NON_METAL`, `CUTAWAY`, `PLANNER_OFF`, `COARSE_PARTS` +10.
-- `fortress.ts` (465) — Fortress mode on the level: the player editing a town (its one plan: build/site.ts) — the fortress, its … API: `startFortress`, `pitView`, `skipFrame`, `fortressAt` +4.
-- `frame.ts` (531) — The level's frame: camera input, the planner and the window's slide, the world's systems, the sim's ticks, … API: `levelFrame`, `planFrame`, `lifeFrame`, `ceilingFrame` +1.
+- `fortress.ts` (467) — Fortress mode on the level: the player editing a town (its one plan: build/site.ts) — the fortress, its … API: `startFortress`, `pitView`, `skipFrame`, `fortressAt` +4.
+- `frame.ts` (532) — The level's frame: camera input, the planner and the window's slide, the world's systems, the sim's ticks, … API: `levelFrame`, `planFrame`, `lifeFrame`, `ceilingFrame` +1.
 - `impacts.ts` (306) — The sandbox's world-changing tools: meteors and their impacts, volcano vents, dropped bodies, the heat … API: `meteorAtPick`, `stepMeteors`, `impact`, `bowlVolume` +7.
 - `input-wiring.ts` (224) — The level's pointer and key input: Controls' taps, drags, pinches and wheel routed to the powers, the … API: `wireInput`.
 - `labs.ts` (205) — The test beds on the level: the tuning panel, bug report and stations bar (level.lab, ?tunepanel=1), the … API: `mountLab`, `mountNoiseLab`, `labStationKit`, `traitStationDriver` +1.
 - `runs.ts` (253) — Starting the game layers a URL asks for on the level: the play sandbox (?play), a situation or planned run … API: `startPlay`, `playRaise`, `startSituationRun`, `useRiverWorld` +3.
 - `sandbox-tools.ts` (245) — The sandbox editor's brush tools: layer edits and pours, the break tool, the brush ring, undo, and the … API: `editTool`, `pickSmash`, `smashAt`, `drawRing` +4.
 - `stream-setup.ts` (370) — The level's world over time, set up once at attach: sleep for a fixed map's held rivers, and for a … API: `attachStream`.
-- `test-api.ts` (227) — window.reclaimed: the test and console API over the live level (scripts/*.mjs drive the game through it). API: `testApi`, `exposeTestApi`.
+- `test-api.ts` (228) — window.reclaimed: the test and console API over the live level (scripts/*.mjs drive the game through it). API: `testApi`, `exposeTestApi`.
 - `town-fixture.ts` (57) — (round 128m, townlab) The window round the start town as the lab's fixture (src/lab/townfixture.ts): read … API: `captureTownFixture`.
 - `town-tools.ts` (149) — The sandbox's town tool: picking blocks of the editor's town, the plan outline, placing rectangles, and … API: `editorTown`, `townPick`, `townAtPick`, `sendBuilders` +3.
 - `valley-reads.ts` (57) — (round 128o, DA-B5; DESIGN.md §24) The sandbox valley's timed reads of the GPU, in one place: what the … API: `ValleyReadsIO`, `ValleyReads`.

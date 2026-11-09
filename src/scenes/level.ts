@@ -22,6 +22,7 @@ import type { LavaSystem } from '../sim/lava';
 import type { InhabitantsGpu } from '../inhabitants/system';
 import { Settlements } from '../settle/settlements';
 import { TownDebug } from '../settle/debug';
+import type { RouteDebug } from '../fortress/routedebug';
 import { AgentUnits } from '../units/agent-units';
 import type { TraitSystem } from '../traits/system';
 import { TraitStation } from '../levels/traitstation';
@@ -246,6 +247,8 @@ export class LevelScene implements Scene {
   settlements?: Settlements;
   units?: AgentUnits;
   townDebug?: TownDebug;
+  /** (?routedebug=1) the fortress town's edge network: what isn't walkable and why (fortress/routedebug.ts) */
+  routeDebug?: RouteDebug;
   /** (fortress slice 1, ?fortress=1 with ?town=) the town held as the player's fortress, and its planning bar */
   fortress?: Fortress;
   fortressBar?: FortressBar;

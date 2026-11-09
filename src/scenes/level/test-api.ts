@@ -186,6 +186,7 @@ export function exposeTestApi(scene: LevelScene, api: ReturnType<typeof testApi>
     // (round 128j) the static grids' claims written with the land: stats, audit(slots, packed) (scripts/staticclaims.mjs)
     statics: () => scene.statics,
     townDebug: scene.townDebug,
+    routeDebug: () => scene.routeDebug,
     // (?flow=1) the flow model: flow.water / flow.lava (LiquidSystem: addSpring), flow.steady (last read),
     // flow.breach() (the lab's plug dug out), flow.sleep (awake chunks)
     flow: scene.flow && {

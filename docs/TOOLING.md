@@ -155,3 +155,9 @@ scenarios should ask for the sim seconds they need, not more.
 - `EDGE_OUT=<dir> npx vitest run --project unit edgetown` writes the map previews.
 - `node scripts/lab.mjs run scripts/lab/townroads.mjs`: the start town's generated roads, and a far lumber camp painted
   (the edit's grown road).
+- `?routedebug=1` (the game's fortress or the lab): the town's edge net over the view — not-walkable edges by why
+  (cliff magenta, water blue, wall red, a structure side with no door at grade dashed yellow), stairs green, vertices off
+  `RouteNet.main` orange dots; a panel with the counts and the cliffs' rise against SLOPE (build/edgecuts.ts).
+  `reclaimed.routeDebug().show(false)` for a clean shot. `node scripts/lab.mjs run scripts/lab/routedebug.mjs --flags
+  "&routedebug=1" [--args '{"zoom":12,"nopanel":1}']`: shots of the middle, the three biggest clusters of cliff-only
+  cuts and the whole town (with clean twins), the summary and every cliff cut as JSON.

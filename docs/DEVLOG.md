@@ -21861,3 +21861,30 @@ the reach/route walkability split is DA-A19). After DA-A17 unitsonground fails 2
 
 The fixture: routes.ts is in GEN_VERSION's import graph, so data/lab/town.rclt was captured again (`node
 scripts/labtown.mjs capture`); decoded, only `gen` and `capturedAt` differ.
+
+---
+
+## 2026-11-09 — DA-A20: `?routedebug=1`, what the edge net won't walk and why (diagnostic)
+
+Why: the user suspects terrain noise near towns cuts edges as cliffs, making ground that looks walkable unwalkable, and
+wants to see it before tuning. Nothing about walkability changes here.
+
+What: build/edgecuts.ts (pure) classes each edge of a laid net by the net's own bits (wall, water, cliff; stairs) plus
+"no door at grade" (a block's perimeter edge not in `net.doors`), measures the rise as edgenet.ts does, and summarises
+(counts, cliff rise against SLOPE, drop and length quartiles, cuts within N cells of a structure, vertices off
+`RouteNet.main`). fortress/routedebug.ts draws it as an SVG overlay (the ?towndebug=1 convention), rebuilt when
+`Fortress.roads` changes; per frame it only compares that and the camera matrix. Off unless the flag is set.
+
+Start town (lab `town`, scripts/lab/routedebug.mjs): 8,698 edges; cut: water 874, cliff 49 (20 of them also water or
+wall), wall 18; 30 sides with no door at grade; stairs 332; 1,078 vertices off the network (fields' insides, water).
+Cliff rise over SLOPE 0.75: within 10 % 16, 10–25 % 24, 25–50 % 4, past 50 % 5 (rise quartiles 0.75 / 0.79 / 0.87 /
+0.90 / 2.89). Drops 1.30 / 2.61 / 3.01 / 3.23 / 3.74 m over edges 1.03 / 2.62 / 3.28 / 3.81 / 4.45 m — none under a
+metre. 22 cliffs lie within 3 cells of a structure.
+
+Where the rise comes from: edgeStatics (edgenet.ts:201) samples `io.ground` once per grid vertex and divides the drop by
+the edge's own length (edgenet.ts:213-216). `io.ground` is the nearest box column's top of the land before the town
+(TownSite.groundAt, site.ts:92, over `groundCols`: settlements.ts:515 the raw land's top interval; generation's own
+`groundAt` in settle/plan.ts:256 reads the same columns) — no interpolation, no terraced ground, no built floors.
+Heights are continuous (256 distinct fractions in 65,536 columns), so there is no integer-step quantum; the noise is the
+nearest-column pick (up to ~0.58 m off the vertex) on short edges. Where the live terrain could be read, its drop
+matched the net's (within 0.3 m): the land really has those 2-4 m steps.

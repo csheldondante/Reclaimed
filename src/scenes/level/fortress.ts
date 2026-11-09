@@ -11,6 +11,7 @@ import { cellPos } from '../../world/lattice';
 import { levelFrame } from './frame';
 import { ROW_H } from '../../world/lattice';
 import { Fortress } from '../../fortress/fortress';
+import { RouteDebug } from '../../fortress/routedebug';
 import { FortressBar } from '../../fortress/ui';
 import { SKIP_DONE, skipCutOffLine, skipShortLine } from '../../fortress/words';
 import { FortressCrowd } from '../../fortress/crowd';
@@ -79,6 +80,7 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: T
     clearPlants: (x, y, r) => worldApiOf(scene).plants!.clear(x, y, r),
   });
   scene.fortress = fort;
+  if (scene.host.params.get('routedebug') === '1') scene.routeDebug = new RouteDebug(scene.host.ui, fort, core.camera);
   fort.status.people = ECON.startPeople;
   // (onetown) the fortress's edit state drawn and claimed with its town (the view host's: one slab, one static grid)
   view.setHook(rec.id, {

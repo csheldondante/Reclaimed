@@ -145,6 +145,7 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
       }
     }
     scene.townDebug?.draw();
+    scene.routeDebug?.draw();
   }
 
   const simDt = dt * scene.speed;

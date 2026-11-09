@@ -73,6 +73,7 @@ const SOURCES: Record<string, Source> = {
   'runplan/viewer.ts': { who: 'dev', why: 'the run plan viewer page' },
   'scenes/atlas-view.ts': { who: 'dev', why: 'the atlas generator view and its sliders (?atlas)' },
   'settle/debug.ts': { who: 'dev', why: 'the settlements\' debug overlay' },
+  'fortress/routedebug.ts': { who: 'dev', why: 'the route network\'s debug overlay (?routedebug=1)' },
   'structures/viewer/main.ts': { who: 'dev', why: 'the structures viewer page' },
   'terrain/viewer.ts': { who: 'dev', why: 'the terrain viewer page' },
   'ui/audio-debug.ts': { who: 'dev', why: 'the audio debug panel' },
