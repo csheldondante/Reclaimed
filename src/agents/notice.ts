@@ -29,6 +29,7 @@ const MAX_ACTORS = 8;
 const MAX_SETS = 64;
 const NR_RULES = 1;
 const NR_OPEN = 2;
+const NR_SIDES = 4;
 /** NoticeParams (notice.wgsl): n, dims, f, 8 actors, 2 faction vec4s, 32 set vec4s */
 const PARAMS_WORDS = 4 + 4 + 4 + MAX_ACTORS * 4 + 8 + (MAX_SETS / 2) * 4;
 
@@ -67,13 +68,16 @@ export interface FightRules {
 }
 
 export class UnitNotice {
-  private combat: GPUBuffer;
+  /** the units' combat words (also read by a query of one faction: agents/reads.ts) */
+  readonly combat: GPUBuffer;
   private sides: GPUBuffer;
   private head: GPUBuffer;
   private next: GPUBuffer;
   private hunted: GPUBuffer;
+  /** (round 128p) the hunt's 8 nearest candidates (notice.wgsl top): copied out by the agents' sync */
+  readonly top: GPUBuffer;
   private params: GPUBuffer;
-  private k: Record<'bucketClear' | 'bucketFill' | 'huntClear' | 'notice' | 'huntWrite', ComputeKernel>;
+  private k: Record<'bucketClear' | 'bucketFill' | 'huntClear' | 'notice' | 'huntWrite' | 'huntTop', ComputeKernel>;
   private group: GPUBindGroup;
   private bw: number;
   private bh: number;
@@ -100,11 +104,12 @@ export class UnitNotice {
     this.head = world.buf('agentBuckets', this.bw * this.bh * 4, S);
     this.next = world.buf('agentBucketNext', maxUnits * 4, S);
     this.hunted = world.buf('agentHunted', maxUnits * 4, S);
+    this.top = world.buf('agentHuntTop', 8 * 16, S | GPUBufferUsage.COPY_SRC);
     this.params = world.buf('agentNotice', PARAMS_WORDS * 4, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
-    const spec: BindSpec = { 0: 'uniform', 7: 'rw', 13: 'rw', 41: 'read', 42: 'read', 43: 'rw', 44: 'rw', 45: 'uniform', 46: 'rw' };
+    const spec: BindSpec = { 0: 'uniform', 7: 'rw', 13: 'rw', 41: 'read', 42: 'read', 43: 'rw', 44: 'rw', 45: 'uniform', 46: 'rw', 47: 'rw' };
     const mk = (e: string) => makeCompute(device, `agents-${e}`, [commonWgsl, noticeWgsl], spec, e);
-    this.k = { bucketClear: mk('bucketClear'), bucketFill: mk('bucketFill'), huntClear: mk('huntClear'), notice: mk('notice'), huntWrite: mk('huntWrite') };
-    this.group = makeBindGroup(device, 'agents-notice', this.k.notice.layout, { 0: world.globals, 7: units, 13: events, 41: this.combat, 42: this.sides, 43: this.head, 44: this.next, 45: this.params, 46: this.hunted });
+    this.k = { bucketClear: mk('bucketClear'), bucketFill: mk('bucketFill'), huntClear: mk('huntClear'), notice: mk('notice'), huntWrite: mk('huntWrite'), huntTop: mk('huntTop') };
+    this.group = makeBindGroup(device, 'agents-notice', this.k.notice.layout, { 0: world.globals, 7: units, 13: events, 41: this.combat, 42: this.sides, 43: this.head, 44: this.next, 45: this.params, 46: this.hunted, 47: this.top });
   }
 
   /** a unit slot's part in the fighting (written at once: a spawn, a change of side, post or job) */
@@ -156,7 +161,7 @@ export class UnitNotice {
     const f = new Float32Array(this.data);
     u.fill(0);
     const sets = this.sets.splice(0, MAX_SETS);
-    const flags = (this.rules.on ? NR_RULES : 0) | (this.rules.open || !this.hasSides ? NR_OPEN : 0);
+    const flags = (this.rules.on ? NR_RULES : 0) | (this.rules.open || !this.hasSides ? NR_OPEN : 0) | (this.hasSides ? NR_SIDES : 0);
     u.set([count, this.actorList.length, sets.length, flags], 0);
     u.set([this.bw, this.bh, this.eventCap, 0], 4);
     f.set([this.rules.heightLimit, this.rules.leash, 0, 0], 8);
@@ -177,5 +182,7 @@ export class UnitNotice {
     pass.dispatchWorkgroups(Math.ceil(count / 64));
     pass.setPipeline(this.k.huntWrite.pipeline);
     pass.dispatchWorkgroups(Math.ceil(count / 64));
+    pass.setPipeline(this.k.huntTop.pipeline);
+    pass.dispatchWorkgroups(1);
   }
 }

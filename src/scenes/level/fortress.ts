@@ -385,12 +385,25 @@ export function personAt(scene: LevelScene, sx: number, sy: number): Promise<num
   return units.pickAt(life.everyone(), { viewProj: cam.viewProj, viewport: [cam.viewportW, cam.viewportH], at: [sx, sy], radius: PICK_PX, lift: 0.7 });
 }
 
+/** (round 128p) the person picked, observed (Units.observe), per scene */
+const observing = new WeakMap<LevelScene, { id: number; release: () => void }>();
+
 /** (round 128l, m4; V128-10) Follow, each frame: the camera on the person picked (the window slides with the camera) */
 export function followFrame(scene: LevelScene): void {
   const f = scene.fortressFollow;
+  // (round 128p, DA-B22 (c)(4): the person picked is observed — its position read each frame — while it's picked)
+  const sel = f?.selected ?? null;
+  const o = observing.get(scene);
+  if ((o?.id ?? null) !== sel) {
+    o?.release();
+    if (sel !== null && scene.units) observing.set(scene, { id: sel, release: scene.units.observe(sel) });
+    else observing.delete(scene);
+  }
   if (!f?.following || f.selected === null) return;
   const u = scene.units?.get(f.selected);
   if (!u?.alive) return void f.select(null);
+  // (not read yet: the frame after it was picked)
+  if (!u.at) return;
   const t = scene.core.camera.target;
   t[0] = u.at[0];
   t[1] = u.at[1];

@@ -70,7 +70,12 @@ export interface UnitView {
   character?: string;
   settlement?: string;
   faction: FactionId | null;
-  at: V3;
+  /**
+   * Where it stands: (round 128p, DA-B22 (c)(4)) read only for a unit observed (`Units.observe`) or a query's answer —
+   * null otherwise: not read, never a stale value. The game reacts to events (arrived, hurt, died, noticed) and asks
+   * where units are (`query`); it doesn't read every unit every frame (DESIGN §11).
+   */
+  at: V3 | null;
   /** radians, the way it faces (0: +x) */
   heading: number;
   health: number;
@@ -121,8 +126,17 @@ export interface AreaHit {
 export interface Units {
   spawn(kind: string, at: V2, faction: FactionId | null, opts?: SpawnOpts): UnitId;
   get(id: UnitId): UnitView | null;
-  /** the units within `radius` of `near` (living ones unless `dead`), nearest first */
-  query(near: V2, radius: number, opts?: { faction?: FactionId | null; hostile?: boolean; dead?: boolean }): UnitView[];
+  /**
+   * the units within `radius` of `near` (living ones unless `dead`), nearest first, with where they stand as the query
+   * found them (round 128p: asked of the GPU — an answer a frame or two later)
+   */
+  query(near: V2, radius: number, opts?: { faction?: FactionId | null; hostile?: boolean; dead?: boolean }): Promise<UnitView[]>;
+  /**
+   * (round 128p, DA-B22 (c)(4)) Keep these units' positions read each frame (`get(id).at`) until the returned release
+   * is called; counted — each observer releases its own. For the few the game follows: the selected, a held one, a
+   * fleeing one. Everything else is events and queries.
+   */
+  observe(ids: UnitId | readonly UnitId[]): () => void;
   /** (round 97, heroapi) every unit, living and dead (a run picks what's under a tap, draws figures) */
   all?(): readonly UnitView[];
   /** every unit standing for this story character */
