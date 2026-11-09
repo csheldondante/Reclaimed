@@ -3,6 +3,19 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-11-09 — round 128r (session 5, Track A) — the shortlist answered: seasons, discrete stages, a visible city
+
+Answers to Orchestrator A's shortlist questions (audit + ranked slices), verbatim:
+1. Turn length: "Seasons but this should be an attribute if the opportunity" → the strategic step is a season; how long a card runs (and is offered) is the card's own attribute, in seasons.
+2. Phases: "I don't feel strongly that this is encoded as turns so much as clear places to trigger effects mechanically. I really want the jobs to finish in discrete chunks we can show visually with time lapse playback so buildings noticable erect or get delapedated or otherwise modified so that it is as visually rewarding as combat actions." → named trigger points, not a rigid phase list; work completes in discrete stages, each a visible change replayed as a time-lapse.
+3. Resources: "As mentioned I think it's slightly more legible for gameplay to have simplified resources but we may eventually use a changing set for world building and immersion reasons" → the five pools (+ Unrest) are the truth; the set is data and may change later.
+4. Magic from the fortress: "Yes reasonable but let's make it discrete chunks and changes to the tower as part of the legibility issue" → Magic comes in discrete steps, each one a visible change to the tower.
+5. Raid card vs the Units-contract cutover: "This is important but no more so than fixing town legibility and showing the building and making that juicy and fun" → legibility and juicy building come first.
+6. First threat: "A fight sounds fine but uninspired I'll pass a list of the type of effects we want (we want spectacle and the engine supports it)" → wait for the user's list of effects before choosing the big-bad.
+7. Persistence: "Yes this was always meant as a config option to help with debugging" → the world carries over between runs by default; pruning is a debug option.
+8. DESIGN §18/§21: "Yeah write it up for my review but essentially I imagine seasons and buildings go up in some smallish counting number and then effect the world and future opportunities" → draft in docs/handoff/DESIGN_18_21_DRAFT.md for review.
+- Overall: "I want to see social, economic and political changes visually reflected and evident in the city."
+
 ## 2026-11-09 — round 128q (session 5) — the pivot: two orchestrators
 
 - The user handed over a pivot brief (docs/handoff/PIVOT_ORCHESTRATOR_HANDOFF.md, with the Track A and Track B memos): two successor orchestrators — Track A (strategic City POV loop, instant validated world mutations, city legibility) and Track B (art, GPU asset pipeline, procedural architecture; Phase 0 private repo + Cloudflare Pages + Synty licence gate). "One minor modification but I would not delay the the instant mutation track for the art track's requirement for the private repo."
