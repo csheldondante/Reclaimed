@@ -77,3 +77,4 @@ stage, gates green.
 | Date | Track | Need | From | Status |
 |---|---|---|---|---|
 | 2026-11-09 | both | Agree the `stage` field above | A ↔ B | open |
+| 2026-11-09 | A → B | Stage visuals that read at play zoom (412x915, zoom ~6): scaffolding is thin dark frames on dark ground, the plot outline a faint slab, a standing storey inside its frame not distinct (shots: trackA-season .testcache/seasonderisk/). Track A supplies `stageOf(s)`: planned / building (progress) / built / damaged / ruined / overgrown; cranes and fast agents planned for the time-lapse | Track B | open |
