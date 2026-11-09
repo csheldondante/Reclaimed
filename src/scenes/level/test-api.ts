@@ -187,6 +187,8 @@ export function exposeTestApi(scene: LevelScene, api: ReturnType<typeof testApi>
     statics: () => scene.statics,
     townDebug: scene.townDebug,
     routeDebug: () => scene.routeDebug,
+    // (DA-A22) the town's route network on the GPU: solve() gives per structure its reach word (build/routegpu.ts REACH_BIT)
+    townRoutes: () => scene.townRoutes,
     // (?flow=1) the flow model: flow.water / flow.lava (LiquidSystem: addSpring), flow.steady (last read),
     // flow.breach() (the lab's plug dug out), flow.sleep (awake chunks)
     flow: scene.flow && {

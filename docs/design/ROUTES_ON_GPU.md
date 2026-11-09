@@ -46,6 +46,19 @@ don't look large".
   - Larger steps stay as terraces.
 - **How it writes:** through the existing column edit path, so chunk versions bump and the cut kernel above re-reads it.
   There is no separate "levelled ground" copy.
+- **The world is changed; no rule declares a step walkable.** The user: "Small stuff within 1 building height should not
+  block walking in a developed area" and "Use stairs and build ramps or modify terrain to flatten this noise."
+  - The cut kernel stays truthful: SLOPE on the live surface.
+  - The town keeps its height differences and shows them. The user: "I would rather have cities build paths and
+    switchbacks and stairs or ladders or structure to change heights so we can see the elevation differences within a
+    city. As long as it doesn't mess up legibility."
+  - Where a path crosses a step, the town builds a crossing as a plan structure that claims columns. The kind depends on
+    the drop and the room available: a ramp, a switchback, stairs, or a stair tower (for steep drops in a tight space: one structure, a door at the bottom and a door at the top, walkable inside as one node).
+    Retaining walls give terraces their edges.
+  - Levelling happens only within a structure's own site. Rewrite `solid.ts` `rampShape`/`rampRun` and `terrace.ts`
+    as GPU passes.
+  - Roads get wider for legibility: today a lane is 2 m and a main street 3.2 m, on cells of about 3.3 m. Anno 117 draws
+    streets slightly wider than a tile. Judge it in play-zoom shots.
 - **Outside towns:** a drop counts as a cliff only when it's large. SLOPE is re-tuned against shots: the drops cut today
   (median 3 m) don't look large on screen.
 

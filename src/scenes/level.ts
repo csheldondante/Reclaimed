@@ -23,6 +23,7 @@ import type { InhabitantsGpu } from '../inhabitants/system';
 import { Settlements } from '../settle/settlements';
 import { TownDebug } from '../settle/debug';
 import type { RouteDebug } from '../fortress/routedebug';
+import type { TownRoutes } from '../fortress/townroutes';
 import { AgentUnits } from '../units/agent-units';
 import type { TraitSystem } from '../traits/system';
 import { TraitStation } from '../levels/traitstation';
@@ -249,6 +250,8 @@ export class LevelScene implements Scene {
   townDebug?: TownDebug;
   /** (?routedebug=1) the fortress town's edge network: what isn't walkable and why (fortress/routedebug.ts) */
   routeDebug?: RouteDebug;
+  /** (DA-A22) the fortress town's route network on the GPU (fortress/townroutes.ts) */
+  townRoutes?: TownRoutes;
   /** (fortress slice 1, ?fortress=1 with ?town=) the town held as the player's fortress, and its planning bar */
   fortress?: Fortress;
   fortressBar?: FortressBar;
@@ -703,6 +706,7 @@ export class LevelScene implements Scene {
     this.abort.abort();
     this.tunePanel?.dispose();
     this.fortressBar?.dispose();
+    this.townRoutes?.dispose();
     this.fortressRaid?.dispose();
     this.fortressCrowd?.dispose();
     this.statics?.dispose();

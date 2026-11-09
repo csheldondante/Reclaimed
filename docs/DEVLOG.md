@@ -21888,3 +21888,45 @@ the edge's own length (edgenet.ts:213-216). `io.ground` is the nearest box colum
 Heights are continuous (256 distinct fractions in 65,536 columns), so there is no integer-step quantum; the noise is the
 nearest-column pick (up to ~0.58 m off the vertex) on short edges. Where the live terrain could be read, its drop
 matched the net's (within 0.3 m): the land really has those 2-4 m steps.
+
+## 2026-11-09 — DA-A22 step 1: the town's cuts and reach on the GPU, from the live columns
+
+Why: the user — "Stop putting shit on the CPU this is a GPU engine" and "we absolutely should not have different
+mechanisms so it isn't even possible for reach and routes to diverge". DA-A13 judged walkability on the CPU over
+`groundCols` (the land before the town), so a stamped road, a flood or erosion never reached the reach. Design note:
+docs/design/ROUTES_ON_GPU.md. This is the riskiest part first: the cut kernel and the components, measured against the
+CPU before anything is cut over.
+
+What: build/routegraph.ts (pure: the grid's edges as the kernels walk them, a box column per vertex and per edge middle;
+the plan's part — a wall across an edge, a block's inside, a road's span over water, each structure's perimeter edges
+with its floor, the stores' vertex). build/routegpu.ts + shaders/townroute.wgsl: `routeCut` per edge reads the live
+columns through the chunk table (the top of the highest solid or granular interval that isn't an External claim) and
+the water sheet at both ends and the middle — deep water (DEEP, the agents' wading limit) cuts unless a road spans it,
+the drop (highest sample less lowest) over the edge's length past SLOPE cuts (a cliff), past the road grade it's stairs.
+SLOPE is unchanged (the user, the same day: "Use stairs and build ramps or modify terrain to flatten this noise" — the
+world is changed, no rule declares a step walkable). `routeHook`/`routeJump` are the old fortreach hook-and-jump over
+the uncut edges, each structure one node joined to its doors at grade (its floor within STEP of the live ground at the
+edge's middle); five solves run in one dispatch (z): the rules, then a wall, water, a cliff, every perimeter edge a door
+lifted, so a refusal can say why. `routeQuery` writes a word per structure. fortress/townroutes.ts holds it for the
+fortress (scene.townRoutes; the test API's `townRoutes()`); nothing in play calls it yet.
+
+Measured (test/gpu/townroute.test.ts on data/lab/town.rclt, Dawn D3D12; scripts/lab/routegpuperf.mjs in the lab):
+- Agreement: 65 of 65 structures reached on both, no difference. The graph (8,698 edges, 7,379 vertices + 65
+  structure nodes, 672 door candidates) and the stores' vertex are the CPU's.
+- Converged in one submit (16 hook-and-jump iterations, the flag clear before the last).
+- Cuts, CPU (groundCols) → GPU (live): wall 18 → 18 (the plan's), water 874 → 825 (per column, not per cell centre),
+  cliff 49 → 44, stairs 332 → 378. Of the CPU's 49 cliffs the live surface keeps 37; 12 are gone (the stamped roads and
+  the lighthouse's site lowered the drop under SLOPE) and 7 are new. The live cliffs drop 1.30 / 2.60 / 3.02 / 3.32 /
+  3.85 m (min, quartiles, max): the levelling/crossings slice's baseline. (A first try that judged each half of an edge
+  over half its length cut 206: the column steps doubled; dropped.)
+- The levelled road: edge 6513 between two road cells, 3.68 m, the CPU's ends 97.29 → 100.40 (a cliff), the live
+  columns 97.84 / 99.84 / 100.40 (2.56 m, rise 0.70: walkable). The nearest CPU cliff to the middle on a road's side
+  (edge 5316, 3.5 m out, 1.57 m long, by a verge cell) is a real step: live 101.11 / 101.11 / 99.81, still cut.
+- A flood: deep water written onto a lane's three columns cuts it on the next solve; dry again, walkable again.
+- Cost: a solve (cut + five component solves + the 264 B answer read) 4.7-5.6 ms wall on Dawn, ~7 ms in the lab
+  (mostly the map's latency). Toggle diff at 412x915 `?q=low`, start town, 8 s a phase: rAF p50/p95 10.0/10.2 ms with no
+  solves, 10.0/10.1 ms with a solve started the moment the last one read back (120 solves a second — far more than
+  edits ask), 10.0/10.1 ms off again: no difference on desktop. Idle costs nothing: nothing is dispatched.
+
+Not yet: the cut runs over every edge (not only the dirty chunks' — 8.7k threads, sub-millisecond); the plan's part is
+uploaded whole (150 KB) on a solve, not per changed edge.
