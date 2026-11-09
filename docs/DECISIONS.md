@@ -15,6 +15,8 @@ Answers to Orchestrator A's shortlist questions (audit + ranked slices), verbati
 7. Persistence: "Yes this was always meant as a config option to help with debugging" → the world carries over between runs by default; pruning is a debug option.
 8. DESIGN §18/§21: "Yeah write it up for my review but essentially I imagine seasons and buildings go up in some smallish counting number and then effect the world and future opportunities" → draft in docs/handoff/DESIGN_18_21_DRAFT.md for review.
 - Overall: "I want to see social, economic and political changes visually reflected and evident in the city."
+- On slice 0's footprint finding (unitsonground: a building's claimed corner stands on a route): "What is the footprint fix and can you simplify it? Can we not just make roads walkable by definition and interpolate positions along them? Can we identify noise in terrain that makes portions unwalkable near cities and mark it in debug so we can see if it is visually something that appears walkable and then tune it to make it much less restrictive?" → roads are walkable by definition (nothing claims a road); a debug view of cut edges by reason, then tuning with the user.
+- Then: "And we absolutely should not have different mechanisms so it isn't even possible for reach and routes to diverge." → one graph: reach is the route network's connected part (DA-A19); the separate union-find goes.
 
 ## 2026-11-09 — round 128q (session 5) — the pivot: two orchestrators
 
