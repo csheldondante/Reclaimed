@@ -3,6 +3,14 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-11-09 — round 128q (session 5) — the pivot: two orchestrators
+
+- The user handed over a pivot brief (docs/handoff/PIVOT_ORCHESTRATOR_HANDOFF.md, with the Track A and Track B memos): two successor orchestrators — Track A (strategic City POV loop, instant validated world mutations, city legibility) and Track B (art, GPU asset pipeline, procedural architecture; Phase 0 private repo + Cloudflare Pages + Synty licence gate). "One minor modification but I would not delay the the instant mutation track for the art track's requirement for the private repo."
+- Economy: "Turns plus abstract resources for now with the plan that we might experiment with tracking physical goods instead in the future (it's better simulation but worse game design)" → supersedes DESIGN §18's physical goods for the strategic layer; §18/§21 to be rewritten by Track A with the user.
+- Baseline: merge in-flight work only if green (the roads merge and the Units-contract cutover were not green: left on branches, see docs/handoff/CURRENT_STATE.md).
+- Phase 0: Track B owns it; the user does the account steps; Cloudflare live before the repo goes private.
+- Launch: each orchestrator in its own fresh session with its package (docs/handoff/).
+
 ## 2026-11-06 — round 128p (session 5) — roads and reach rewritten from the design
 
 - On reach and roads: "Yes I think you are fighting the current implementation and ignoring the design. If the current implementation is bad redo it don't fight it. Git history preserves it if we need to go back." → roads and reach are rewritten from DESIGN §12/§13 as one route network (tiles declare paths, reach builds road pieces, cached routes), deleting the lanes/ways/keepReach/fix-field layering instead of patching it. A design note comes first.

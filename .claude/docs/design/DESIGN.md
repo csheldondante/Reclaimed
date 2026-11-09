@@ -650,6 +650,8 @@ Also: "Looking heavy and moving at a consistent speed matter more than preventin
 
 ## 18. The fortress loop and economy (agreed)
 
+> **2026-11-09 (round 128q):** for the strategic layer this section is superseded by the user's decision: turns plus abstract resources (Magic, Might, Labor, Resources, Intel; Unrest), resolved instantly; physical goods and carrying become presentation, with physical goods a possible later experiment. Track A rewrites this section with the user (docs/handoff/ORCHESTRATOR_A_HANDOFF.md).
+
 **Intent** (the user):
 - "shaping your city (and the world through opportunities) then making cool effects that shape the world alongside exciting battles" (round 128e).
 - "People act as resources" (round 128c).
