@@ -1001,7 +1001,7 @@ fn huntSet(@builtin(global_invocation_id) id: vec3<u32>) {
   // (new here: the field falls round it)
   if (((old >> (16u + f)) & 1u) == 0u) {
     atomicOr(&dirtyCur[chunkOfCol(u32(c.x), u32(c.y))], 1u << f);
-    atomicAdd(&frontDbg[32], 1u);
+    if (AP.u2.w != 0u) { atomicAdd(&frontDbg[32], 1u); }
   }
 }
 
@@ -1016,7 +1016,7 @@ fn huntGone(@builtin(global_invocation_id) id: vec3<u32>) {
   if (((m >> f) & 1u) == 0u && ((m >> (16u + f)) & 1u) != 0u) {
     // (a column's chunk: its page's slot — common.wgsl colIdx)
     atomicOr(&dirtyCur[(s / NAV_K) / (COLS_PAGE * COLS_PAGE)], 1u << f);
-    atomicAdd(&frontDbg[33], 1u);
+    if (AP.u2.w != 0u) { atomicAdd(&frontDbg[33], 1u); }
   }
 }
 
