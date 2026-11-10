@@ -90,6 +90,16 @@ export interface StreetParams {
   maskR: number;
   grown: number;
   lmTopK: number;
+  /** (m3h) supercells: on (1); their size (block lengths); the limit (× the town's radius) and its noise
+   *  (supercells); the empty fraction; the seed; the growth (0–1); the district tint (1) */
+  city: number;
+  scSize: number;
+  limit: number;
+  limitNoise: number;
+  emptyFrac: number;
+  citySeed: number;
+  growth: number;
+  tint: number;
 }
 /** (m3g) how the distance field is made smooth: the distance blurred (m2 to m3f: uneven contours at the creases), or
  *  the water/cliff mask blurred and thresholded first (a true distance) */
@@ -133,11 +143,11 @@ export interface StreetTimes {
 
 const SLOT = 256;
 const MAX_PASSES = 256;
-const UNI_BYTES = 192;
+const UNI_BYTES = 224;
 const KERNELS = [
   'fill', 'blur', 'feat', 'jfa', 'jdist', 'autoPts', 'phi', 'tensor', 'trace', 'mis', 'blocks',
   'vseed', 'vthin', 'vrast', 'vjfa', 'vseg', 'vblock', 'lots', 'roadMajor', 'roadMinor', 'vroad', 'lotMesh', 'marks', 'meshCap',
-  'shape', 'roadShape', 'ground', 'bqual', 'bclaim', 'bapply', 'vnext', 'jstat', 'lmlist', 'lmprune', 'vclip', 'lmMesh', 'gcov', 'gmask', 'glabel', 'gacc', 'gnode', 'gsplit', 'gleaf', 'groad', 'mseed', 'ginit', 'gmarch', 'gclaim', 'gkeep',
+  'shape', 'roadShape', 'ground', 'bqual', 'bclaim', 'bapply', 'vnext', 'jstat', 'lmlist', 'lmprune', 'vclip', 'lmMesh', 'gcov', 'gmask', 'glabel', 'gacc', 'gnode', 'gsplit', 'gleaf', 'groad', 'mseed', 'ginit', 'gmarch', 'gclaim', 'gkeep', 'sctab', 'bgrow', 'ctint',
 ] as const;
 type Kernel = (typeof KERNELS)[number];
 /** streets.wgsl TRW, BQW, LW, SDW (words a trace, a block, a lot, a seed) */
@@ -245,6 +255,8 @@ export class StreetLabGpu {
     for (const n of ['GC', 'GL0', 'GL1', 'GS']) this.B[n] = buf(n, G * 4);
     this.B.NODE = buf('gap nodes', G * 16 * NODEW * 4);
     this.B.GB = buf('gap blocks', GAP_ROOM * 3 * BQW * 4);
+    // (m3h: the supercells' table — at the smallest supercell, 8 cells)
+    this.B.SCT = buf('supercells', (4 + this.scCells(8) * 6) * 4);
     this.verts = buf('mesh', VERT_ROOM * 32, GPUBufferUsage.STORAGE);
     this.args = buf('mesh args', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
     device.queue.writeBuffer(this.args, 0, new Uint32Array([0, 1, 0, 0]));
@@ -331,6 +343,8 @@ export class StreetLabGpu {
     [p.bad, p.lmMult, p.lmN, p.lmKind].forEach((v, j) => dv.setFloat32(144 + j * 4, v, true));
     [p.lmRmin, p.lmRmax, p.bigBlock, p.gap].forEach((v, j) => dv.setFloat32(160 + j * 4, v, true));
     [p.field, p.maskR, p.cross === 0 && p.grown === 1 ? 1 : 0, p.lmTopK].forEach((v, j) => dv.setFloat32(176 + j * 4, v, true));
+    [p.scSize, p.limitNoise, p.emptyFrac, p.citySeed].forEach((v, j) => dv.setFloat32(192 + j * 4, v, true));
+    [p.growth, p.tint, this.cityOn() ? 1 : 0, p.limit].forEach((v, j) => dv.setFloat32(208 + j * 4, v, true));
     return i;
   }
 
@@ -432,6 +446,8 @@ export class StreetLabGpu {
       this.kS('vclip', {}, { 2: B.LM, 5: B.SD });
     }
     this.kS('vblock', {}, { 1: B.SD, 5: B.BQ, 7: B.AL1 });
+    // (m3h) the supercells: their centres, states and growth starts
+    if (this.cityOn()) this.k('sctab', {}, { 1: B.PTS, 2: B.LM, 5: B.SCT }, Math.ceil(this.scCells(Math.max(p.scSize * p.blockLen, 8)) / 64));
     // (m3d) the bad blocks: found, then merged (a claim each on a good neighbour, the lowest seed wins) or paved
     // (MERGE_ROUNDS rounds — a fan's triangles merge in pairs, then the pairs — then what's still bad is paved)
     for (let r = 0; r <= MERGE_ROUNDS; r++) {
@@ -442,6 +458,14 @@ export class StreetLabGpu {
       this.kS('bclaim', {}, { 1: B.SD, 5: B.BQ, 6: B.AL0 });
       this.kS('bapply', {}, { 1: B.SD, 2: B.AL0, 5: B.BQ, 7: B.AL1 });
     }
+  }
+  /** (m3h) supercells on: the vector streets only */
+  private cityOn(): boolean {
+    return this.p.city === 1 && this.p.cross === 0;
+  }
+  /** (m3h) the supercells for a size (streets.wgsl sctab) */
+  private scCells(sc: number): number {
+    return (Math.floor(this.world.w / sc) + 1) * (Math.floor((this.world.h * ROW_H) / sc) + 1);
   }
   /** the seed slots this run (streets.wgsl nSeeds): the lattice's, twice that grown */
   private nS(): number {
@@ -560,18 +584,24 @@ export class StreetLabGpu {
       this.cp = enc.beginComputePass(this.pass('lots'));
       this.fill(B.CNT, 4, 0);
       if (p.gap) this.gapFill();
-      this.k('lots', { count: LOT_ROOM }, { 1: B.BQ, 5: B.LOTS, 6: B.CNT }, Math.ceil((3 * this.nS()) / 64));
-      if (p.gap) this.k('lots', { count: LOT_ROOM }, { 1: B.GB, 5: B.LOTS, 6: B.CNT }, Math.ceil((3 * GAP_ROOM) / 64));
+      // (m3h) each block's supercell state and growth key, into its meta
+      if (this.cityOn()) {
+        this.k('bgrow', { count: 3 * this.nS() }, { 4: B.SCT, 5: B.BQ }, Math.ceil(this.nS() / 64));
+        if (p.gap) this.k('bgrow', { count: 3 * GAP_ROOM }, { 4: B.SCT, 5: B.GB }, Math.ceil(GAP_ROOM / 64));
+      }
+      this.k('lots', { count: LOT_ROOM }, { 1: B.BQ, 4: B.SCT, 5: B.LOTS, 6: B.CNT }, Math.ceil((3 * this.nS()) / 64));
+      if (p.gap) this.k('lots', { count: LOT_ROOM }, { 1: B.GB, 4: B.SCT, 5: B.LOTS, 6: B.CNT }, Math.ceil((3 * GAP_ROOM) / 64));
       this.cp.end();
     }
     // the mesh: roads, lots and the points' markers
     enc.clearBuffer(this.args, 0, 4);
     this.cp = enc.beginComputePass(this.pass('mesh'));
-    this.k2('roadMajor', {}, { 1: B.LM, 3: HH, 4: B.FD, 7: this.verts }, true);
+    this.k2('roadMajor', {}, { 1: B.LM, 2: B.SCT, 3: HH, 4: B.FD, 7: this.verts }, true);
     // (one thread a street's piece: eight a vector street, TP a trace)
-    if (vector) this.k('vroad', {}, { 1: B.SD, 2: B.AL1, 3: HH, 7: this.verts }, Math.ceil((this.nS() * 8) / 64), 1, true);
+    if (vector) this.k('vroad', {}, { 1: B.SD, 2: B.AL1, 3: HH, 4: B.SCT, 7: this.verts }, Math.ceil((this.nS() * 8) / 64), 1, true);
     else this.k('roadMinor', {}, { 1: B.TR, 2: B.AL0, 3: HH, 7: this.verts }, this.seeds[0] * this.seeds[1], 1, true);
-    this.k('groad', {}, { 1: B.CNT, 3: HH, 4: B.FD, 7: this.verts }, (ROAD_ROOM * 8) / 64, 1, true);
+    this.k('groad', {}, { 1: B.CNT, 2: B.SCT, 3: HH, 4: B.FD, 7: this.verts }, (ROAD_ROOM * 8) / 64, 1, true);
+    if (this.cityOn() && p.tint === 1) this.k2('ctint', {}, { 2: B.SCT, 3: HH, 4: B.FD, 7: this.verts }, true);
     this.k('lotMesh', { count: LOT_ROOM }, { 1: B.LOTS, 2: B.CNT, 3: HH, 4: B.FD, 5: B.LM, 7: this.verts }, Math.ceil(LOT_ROOM / 64), 1, true);
     if (vector && p.lmMult > 0) this.k('lmMesh', {}, { 1: B.LM, 3: HH, 7: this.verts }, (64 * 48) / 64, 1, true);
     if (PHI_MODE[p.majors] !== 0) this.k('marks', { mode: this.sel + 1 }, { 1: B.PTS, 3: HH, 7: this.verts }, 1, 1, true);

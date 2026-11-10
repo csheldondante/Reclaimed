@@ -20842,3 +20842,28 @@ Two root causes the user approved fixing, each a radio option so the old way sta
 - **Measurements:** headless D3D11, median of 7. Full rebuild 1.67–1.74 ms: field 0.31–0.35, phi 0.13, trace
   0.66–0.70 (grown: 8 lines × 4 dispatches plus the floods and merges), lots 0.35–0.37 (gap fill about 0.29),
   mesh 0.20 ms. With M3f's defaults it was 1.45–1.6 ms. 8 growth lines give the same lots as 12, for 0.04 ms less.
+
+## 2026-11-10 — trackA-streetlab m3h: supercells for the city's limit, its sparse interior and its growth
+
+The user wanted the city limit to end on spokes rather than on a contour, with more randomness; sparse districts
+between the landmarks; and districts that grow out from the population centres during play.
+- **Supercells:** a jittered grid of seeds, `supercell size` block lengths apart (default 4). A point's supercell is
+  the nearest seed among the 3 × 3 cells round it, a lookup instead of a JFA. The population centres are the live
+  points and the kept landmark sites. `sctab` builds one entry per cell: its seed, its nearest centre and that
+  centre's distance, and its state.
+  - A cell is **in** when that distance, plus a noise of `limit noise` supercells, is under `city limit` × the town
+    radius.
+  - It is **empty** when its hash is under `empty districts`, unless it lies within 0.6 supercells of a centre.
+- **Limit and sparse interior:** a block is lotted only if its supercell is in, shown and grown. Whole blocks go,
+  so the edge runs along the cross streets and the major lines, not along a contour ring. A street (major or cross)
+  is drawn where a shown block lies on either side of it. The major lines also run on through empty cells, and so
+  does an arterial: about one cross street in three, chosen by hash. Arterials past the limit (tendrils) were tried;
+  alone out there they read as stray stubs, so they are off.
+- **Growth:** each block's key is half its supercell's start (its centre's distance over the limit) plus half its own
+  distance to that centre over the limit. `bgrow` writes it into the block's meta (word 9, with the state in word
+  10), for districts and the time-lapse to come. `city growth` shows the blocks whose key is under it, so the city
+  grows out from its centres. The `district tint` toggle draws a muted ground colour per supercell, darker where a
+  district is empty.
+- **Measurements:** headless D3D11, noisy. Full rebuild about 1.9 ms with everything on (Muru): sctab and bgrow are
+  tiny, and the city tests add a little to the mesh. The growth slider reruns from the lots stage (gap fill, lots,
+  mesh) in 0.41–0.56 ms. The tint costs about 0.25 ms of mesh.

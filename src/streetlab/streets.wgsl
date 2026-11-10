@@ -29,6 +29,8 @@ struct U {
   q: vec4<f32>, // (m3d) bad cells (0 merge, 1 plaza, 2 left); (m3e) the landmarks' radius × (0 none), the cross streets a busy junction has, their kind (0 plaza, 1 big structure)
   l: vec4<f32>, // (m3e) a landmark's smallest and largest radius; (m3f) a big block's area (0: no roads in them), gap fill (1 on)
   r: vec4<f32>, // (m3g) the field (0 the distance smoothed, 1 the mask smoothed), the mask's smoothing, grown streets (1), the landmarks kept (top K)
+  h: vec4<f32>, // (m3h) a supercell's size (block lengths), the limit's noise (supercells), the empty fraction, the seed
+  h2: vec4<f32>, // (m3h) the growth (0–1), the district tint (1), supercells on (1), the limit (× the town's radius)
 };
 @group(0) @binding(0) var<uniform> u: U;
 
@@ -519,6 +521,8 @@ fn lots(@builtin(global_invocation_id) g: vec3<u32>) {
   if (bi >= 3u * T) { return; }
   let o = bi * BQW;
   if (b1[o] == 0u) { return; }
+  // (m3h: a block whose supercell is out or empty, or not grown yet, isn't lotted — bgrow's meta words 10 and 9)
+  if (u.h2.z > 0.5 && bi % 3u == 0u && !(b1[o + BQW + 10u] == 2u && bitcast<f32>(b1[o + BQW + 9u]) <= u.h2.x)) { return; }
   // (m3d: a block made a plaza — its meta, the slot after it, status 1 — is one paved lot, not split)
   let plaza = bi % 3u == 0u && u.o.w == 0u && b1[o + BQW + 5u] == 1u;
   var st: array<Quad, STACK>;
@@ -664,6 +668,12 @@ fn roadMajor(@builtin(global_invocation_id) g: vec3<u32>) {
     let t = normalize(vec2<f32>(-gr.y, gr.x));
     let a = p - t * 0.85;
     let b = p + t * 0.85;
+    // (m3h: drawn where a block either side is shown, and on through the empty supercells as they grow)
+    if (u.h2.z > 0.5) {
+      let side = normalize(gr) * 0.35 * u.a.x;
+      let c = cityB2(p);
+      if (!(shownCity(cityB2(p + side)) || shownCity(cityB2(p - side)) || (c.state == 1u && c.t <= u.h2.x))) { continue; }
+    }
     let at = room(6u);
     if (at == NONE) { return; }
     ribbon(at, a, b, u.b.x * 0.5, select(C_MAJOR, C_STEEP, steep(a, b)));
@@ -1182,6 +1192,15 @@ fn vroad(@builtin(global_invocation_id) g: vec3<u32>) {
   let e = sdEnd(id);
   let a = mix(s, e, f32(k) / 8.0);
   let b = mix(s, e, f32(k + 1u) / 8.0);
+  // (m3h: drawn where a block either side of it is shown; an arterial — about one street in three — also through
+  // the empty supercells; not out past the limit: alone there they read as stray stubs)
+  if (u.h2.z > 0.5) {
+    let mid = 0.5 * (a + b);
+    let side = normalize(vec2<f32>(a.y - b.y, b.x - a.x)) * 0.5 * u.a.w;
+    let c = cityB4(mid);
+    let arterial = hsh(id * 31u + 5u) < 0.33;
+    if (!(shownCity(cityB4(mid + side)) || shownCity(cityB4(mid - side)) || (arterial && c.state == 1u && c.t <= u.h2.x))) { return; }
+  }
   let at = room(6u);
   if (at == NONE) { return; }
   let d = normalize(b - a) * 0.3;
@@ -1880,7 +1899,7 @@ fn groad(@builtin(global_invocation_id) g: vec3<u32>) {
   let e = vec2<f32>(r1(6u + i * 4u), r1(7u + i * 4u));
   let a = mix(s, e, f32(k) / 8.0);
   let b = mix(s, e, f32(k + 1u) / 8.0);
-  if (blockedAt(0.5 * (a + b)) || !inTown(0.5 * (a + b))) { return; }
+  if (blockedAt(0.5 * (a + b)) || !inTown(0.5 * (a + b)) || !shownCity(cityB2(0.5 * (a + b)))) { return; }
   let at = room(6u);
   if (at == NONE) { return; }
   ribbon(at, a, b, u.b.y * 0.5, C_MINOR);
@@ -2022,4 +2041,155 @@ fn gkeep(@builtin(global_invocation_id) g: vec3<u32>) {
     }
   }
   if (!landed) { w5[o + 3u] = 1u; w5[o + 11u] = 2u; }
+}
+
+// ==== milestone 3h: supercells — the city's limit, its sparse interior, its growth ==============================
+// Supercells: a jittered grid h.x block lengths apart, each point's supercell the nearest grid seed among the 3 × 3
+// round it. The population centres are the live points and the kept landmark sites (none: the town's centre). A
+// supercell (SCT: a header — across, down, its size, the limit radius — then SCW words a cell: seed x, y, state (0
+// out, 1 empty, 2 in), its centre's distance over the limit (its growth start), its centre x, y): in when its
+// centre's distance, plus noise of h.y supercells, is under the limit; empty, inside, by a hash under h.z (never
+// within 0.6 supercells of a centre). A point's growth key: half its supercell's start, half its own distance to that
+// centre over the limit — shown when under the growth h2.x. Blocks are kept or dropped whole, so the limit runs along
+// streets; the major lines run on through empty cells, and every third or so cross street (an arterial) too.
+const SCW: u32 = 6u;
+const SC_HEAD: u32 = 4u;
+fn hash2(a: u32, b: u32) -> f32 { return hsh((a * 73856093u) ^ (b * 19349663u) ^ (u32(u.h.w) * 83492791u)); }
+/** one thread a supercell: its seed, its centre, its state and its growth start (r1 the points, r2 the sites; w5
+ *  the table) */
+@compute @workgroup_size(64)
+fn sctab(@builtin(global_invocation_id) g: vec3<u32>) {
+  let sc = max(u.h.x * u.a.w, 8.0);
+  let gx = u32(f32(W()) / sc) + 1u;
+  let gy = u32(f32(H()) * ROW_H / sc) + 1u;
+  let i = g.x;
+  let lim = u.d.z * u.h2.w;
+  if (i == 0u) { w5[0] = gx; w5[1] = gy; set5(2u, sc); set5(3u, lim); }
+  if (i >= gx * gy) { return; }
+  let cx = i % gx;
+  let cy = i / gx;
+  let s = (vec2<f32>(f32(cx), f32(cy)) + 0.5 + 0.7 * (vec2<f32>(hash2(i, 1u), hash2(i, 2u)) - 0.5)) * sc;
+  var best = 1e9;
+  var bc = u.d.xy;
+  for (var k = 0u; k < NPTS; k++) {
+    if (b1[k * PW + 5u] == 0u) { continue; }
+    let c = vec2<f32>(r1(k * PW), r1(k * PW + 1u));
+    let dd = distance(s, c);
+    if (dd < best) { best = dd; bc = c; }
+  }
+  for (var k = 0u; k < min(b2[0], LM_ROOM); k++) {
+    let o = 1u + k * LMW;
+    if (r2(o + 2u) <= 0.0) { continue; }
+    let c = vec2<f32>(r2(o), r2(o + 1u));
+    let dd = distance(s, c);
+    if (dd < best) { best = dd; bc = c; }
+  }
+  if (best > 1e8) { best = distance(s, u.d.xy); }
+  let inside = best + u.h.y * sc * 2.0 * (hash2(i, 3u) - 0.5) < lim;
+  let empty = hash2(i, 4u) < u.h.z && best > 0.6 * sc;
+  let o = SC_HEAD + i * SCW;
+  set5(o, s.x);
+  set5(o + 1u, s.y);
+  w5[o + 2u] = select(0u, select(2u, 1u, empty), inside);
+  set5(o + 3u, best / max(lim, 1.0));
+  set5(o + 4u, bc.x);
+  set5(o + 5u, bc.y);
+}
+struct City { state: u32, t: f32, id: u32 }
+/** a point's supercell — its state, its growth key, its id (the table at b4) */
+fn cityB4(p: vec2<f32>) -> City {
+  var c: City;
+  c.state = 2u;
+  c.t = 0.0;
+  c.id = 0u;
+  if (u.h2.z < 0.5) { return c; }
+  let gx = b4[0];
+  let gy = b4[1];
+  let sc = r4(2u);
+  let q = vec2<i32>(floor(p / sc));
+  var best = 1e9;
+  var bi = 0u;
+  for (var dy = -1; dy <= 1; dy++) {
+    for (var dx = -1; dx <= 1; dx++) {
+      let n = q + vec2<i32>(dx, dy);
+      if (n.x < 0 || n.y < 0 || n.x >= i32(gx) || n.y >= i32(gy)) { continue; }
+      let i = u32(n.y) * gx + u32(n.x);
+      let d = distance(p, vec2<f32>(r4(SC_HEAD + i * SCW), r4(SC_HEAD + i * SCW + 1u)));
+      if (d < best) { best = d; bi = i; }
+    }
+  }
+  let o = SC_HEAD + bi * SCW;
+  c.state = b4[o + 2u];
+  c.t = 0.5 * r4(o + 3u) + 0.5 * distance(p, vec2<f32>(r4(o + 4u), r4(o + 5u))) / max(r4(3u), 1.0);
+  c.id = bi;
+  return c;
+}
+/** the same, the table at b2 */
+fn cityB2(p: vec2<f32>) -> City {
+  var c: City;
+  c.state = 2u;
+  c.t = 0.0;
+  c.id = 0u;
+  if (u.h2.z < 0.5) { return c; }
+  let gx = b2[0];
+  let gy = b2[1];
+  let sc = r2(2u);
+  let q = vec2<i32>(floor(p / sc));
+  var best = 1e9;
+  var bi = 0u;
+  for (var dy = -1; dy <= 1; dy++) {
+    for (var dx = -1; dx <= 1; dx++) {
+      let n = q + vec2<i32>(dx, dy);
+      if (n.x < 0 || n.y < 0 || n.x >= i32(gx) || n.y >= i32(gy)) { continue; }
+      let i = u32(n.y) * gx + u32(n.x);
+      let d = distance(p, vec2<f32>(r2(SC_HEAD + i * SCW), r2(SC_HEAD + i * SCW + 1u)));
+      if (d < best) { best = d; bi = i; }
+    }
+  }
+  let o = SC_HEAD + bi * SCW;
+  c.state = b2[o + 2u];
+  c.t = 0.5 * r2(o + 3u) + 0.5 * distance(p, vec2<f32>(r2(o + 4u), r2(o + 5u))) / max(r2(3u), 1.0);
+  c.id = bi;
+  return c;
+}
+fn shownCity(c: City) -> bool { return c.state == 2u && c.t <= u.h2.x; }
+/** one thread a block slot (every third: the blocks): its supercell's state and its growth key into its meta, words
+ *  10 and 9 — the hook for districts and the time-lapse (w5 the blocks — BQ or the gap blocks; b4 the table) */
+@compute @workgroup_size(64)
+fn bgrow(@builtin(global_invocation_id) g: vec3<u32>) {
+  let bi = g.x * 3u;
+  if (bi >= u.m.x) { return; }
+  let o = bi * BQW;
+  if (w5[o] == 0u) { return; }
+  var m = vec2<f32>(0.0);
+  for (var k = 0u; k < 4u; k++) { m += 0.25 * vec2<f32>(bitcast<f32>(w5[o + 2u + k * 2u]), bitcast<f32>(w5[o + 3u + k * 2u])); }
+  let c = cityB4(m);
+  set5(o + BQW + 9u, c.t);
+  w5[o + BQW + 10u] = c.state;
+}
+/** a district tint over the town's ground: a muted colour a supercell, darker where empty, nothing outside (one
+ *  thread a column, two triangles; b2 the table, r3 H, b4 φ) */
+@compute @workgroup_size(8, 8)
+fn ctint(@builtin(global_invocation_id) g: vec3<u32>) {
+  let x = i32(g.x); let y = i32(g.y);
+  if (x >= W() - 1 || y >= H() - 1) { return; }
+  let p = cpos(x, y);
+  if (!inTown(p) || blockedAt(p)) { return; }
+  let c = cityB2(p);
+  if (c.state == 0u) { return; }
+  let q1 = vec2<i32>(x + 1, y);
+  let q2 = vec2<i32>(x + (y & 1), y + 1);
+  let q3 = vec2<i32>(x + (y & 1) - 1, y + 1);
+  let h = hsh(c.id * 2654435761u + 7u);
+  let k = select(1.0, 0.7, c.state == 1u);
+  let rgb = vec3<f32>(0.62 + 0.25 * h, 0.6 + 0.25 * fract(h * 7.3), 0.55 + 0.25 * fract(h * 3.1)) * k;
+  let col = (u32(rgb.x * 255.0) << 16u) | (u32(rgb.y * 255.0) << 8u) | u32(rgb.z * 255.0);
+  let at = room(6u);
+  if (at == NONE) { return; }
+  let v0 = vec3<f32>(p, r3(ixq(vec2<i32>(x, y))) + 0.08);
+  let v1 = vec3<f32>(cpos(q1.x, q1.y), r3(ixq(q1)) + 0.08);
+  let v2 = vec3<f32>(cpos(q2.x, q2.y), r3(ixq(q2)) + 0.08);
+  let v3 = vec3<f32>(cpos(q3.x, q3.y), r3(ixq(q3)) + 0.08);
+  tri(at, v0, v1, v2, col);
+  tri(at + 3u, v0, v2, v3, col);
 }
