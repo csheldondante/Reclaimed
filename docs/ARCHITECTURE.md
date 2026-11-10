@@ -1468,6 +1468,7 @@ on any level; the pipes stay the default until the user approves. With the flow 
   a chunk's first step since is a real one even asleep (`lqFrozen`, `realStep`): its water settles into its gaps and its
   flux is seeded with the steady flux for its levels (the pipes' seed). A sleeping chunk whose columns' version moved
   (chunkver.wgsl) with liquid in it is woken through steady's act bit 2 (a claim, a cut over still water).
+- **Water sources** (`waterSource`, positive): cells^3 a second, in both models (PW6); negative: the pipes' held depth.
 - **No CPU skip**: the lists made on the GPU are empty when nothing runs.
 - **(LQ4) The water on every surface — `waterGaps`, the contract's per-gap part.** The user: agents "can traverse any
   walkable layer that they are connected to" (caves, floating islands, decks). The water contract (`water`, the open

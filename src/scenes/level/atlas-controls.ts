@@ -218,7 +218,7 @@ export function stepGeysers(scene: LevelScene, dt: number): void {
     if (going !== scene.geyserOn.has(k)) {
       if (going) scene.geyserOn.add(k);
       else scene.geyserOn.delete(k);
-      dev.queue.writeBuffer(core.world.waterSource, core.ring.idx(i % core.dims.w, Math.floor(i / core.dims.w)) * 4, new Float32Array([going ? 0.08 : 0]));
+      dev.queue.writeBuffer(core.world.waterSource, core.ring.idx(i % core.dims.w, Math.floor(i / core.dims.w)) * 4, new Float32Array([going ? 4.8 : 0]));
     }
   });
 }

@@ -213,7 +213,7 @@ function setup(R: Rec, model: 'flow' | 'pipes'): void {
   // can't run under rock — and the lava vent as the sandbox's lava, flowlab.ts's numbers)
   for (let y = 53; y < 57; y += 2) for (let k = 0; k < 3; k++) dig(R, 65, y, 2.2);
   const w = R.core.world;
-  const src = new Float32Array(1).fill(1.2 / 60 / 3);
+  const src = new Float32Array(1).fill(1.2 / 3);
   for (let y = 124; y < 127; y++) R.core.host.gpu.device.queue.writeBuffer(w.waterSource, w.ring.idx(151, y) * 4, src);
   R.scene.lava?.addVent(...cellPos(34, 205), 1e6, 6, 1.6, 0, 0.1);
 }

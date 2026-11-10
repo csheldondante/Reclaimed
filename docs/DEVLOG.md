@@ -21628,3 +21628,21 @@ The user's priority: saving first. Design: SEASON_LOOP.md "Saving" (DESIGN §23)
   springs?) — the contract's unit is the user's/coordinator's call.
 - FL11: the flow lab breached, lava stopped: all asleep 15 s after the breach (the note said ~3 min).
 - GIFs (412x915, 60°): scratchpad liquids/river-under-deck.gif (Muru), waterfall.gif, lava.gif (the flow lab).
+
+## 2026-11-10 — trackA-liquids: PW6 — water sources a rate a second in the contract
+
+The coordinator: "make water sources a rate per second in the contract, for both models, like the flow model's
+springs. A per-step unit makes behaviour depend on tick rate."
+- The contract (`waterSource`, positive): cells^3 a second. The pipes' depth pass (a 60 Hz step) adds src / 60, the flow
+  model's publish src × DTQ; a negative source stays the pipes' held depth (?rivers=hold) and adds nothing to the flow
+  model (it had added it, draining the column).
+- Callers rescaled so their volumes hold: the atlas's river springs (forms.wgsl RIVER_SPRING 0.0008 a step → 0.048 a
+  second), the kit's rivers (0.01 → 0.6), landforms' channel heads (0.004 → 0.24), the valley's river (0.01 → 0.6),
+  the lab recipes' springs, the geysers (0.08 → 4.8), the flow bench's source; the stations' kit already meant a rate a
+  second (it divided by 60) and now writes it as it is.
+- My earlier PW6 "runaway" wrote 6 a step to each of three columns — 180× the station's 6 cells^3 a second in all. At the
+  station's own rate (2 a column, then 0.5, chunks woken): 30 s on, no NaN, nothing over 50, the deepest column 2.6 as
+  before. The round-110 report was the two models sharing one buffer, which can't happen now (installFlow splices the
+  pipes out). PW6 closed.
+- Saved worlds and lab fixtures keep the sources they were saved with (a step's): 60× weaker under the new unit until
+  remade.

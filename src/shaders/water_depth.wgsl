@@ -66,10 +66,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let q = nbr(p, k);
     if (inMap(q)) { nd += flux[colIdxI(q)][k ^ 1u]; }
   }
-  // a source: positive, a spring (water a step); negative (?rivers=hold: forms.wgsl RIVER_HOLD), the depth it's
+  // a source: positive, a spring (trackA-liquids, PW6: cells^3 a second — this pass is a 60 Hz step, sim/flow.ts FLOW_SUB);
+  // negative (?rivers=hold: forms.wgsl RIVER_HOLD), the depth it's
   // topped up to — the river held at its level by what comes down from upstream
   let src = waterSource[i];
-  nd += rainAt(cellPos(p)) * G.tune.waterRain * (1.0 - snowShare(airTempAt(f32(sfZ(surface[i]))))) + max(src, 0.0);
+  nd += rainAt(cellPos(p)) * G.tune.waterRain * (1.0 - snowShare(airTempAt(f32(sfZ(surface[i]))))) + max(src, 0.0) / 60.0;
   if (src < 0.0) { nd = max(nd, min(-src, nd + HOLD_RATE)); }
   // thin films (wet ground, puddles) evaporate; deep water barely does — otherwise
   // a large lake evaporates the whole river inflow

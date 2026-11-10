@@ -43,8 +43,8 @@ const MAT_SILT: u32 = 22u;
 const MAT_LAVA: u32 = 24u;
 const MAT_SNOW: u32 = 25u;
 const MAT_BASALT_F: u32 = 23u;
-/** a river's springs: water a tick at the middle of its channel (what comes down from upstream) */
-const RIVER_SPRING: f32 = 0.0008;
+/** a river's springs: water a second (trackA-liquids, PW6: was 0.0008 a 60 Hz step) at the middle of its channel (what comes down from upstream) */
+const RIVER_SPRING: f32 = 0.048;
 // (round 84, ?rivers=table) RIVER_FALL: a step down from a river's column this high or more is a fall, its water a
 // sheet RIVER_SHEET deep — (round 110) from world/rivertable.ts, the atlas's prefix (atlas.ts parts())
 
@@ -101,7 +101,7 @@ struct ColOut {
   /** 1: more forms near it than a column considers, 2: more runs than it holds */
   flags: u32,
   ground: f32,
-  /** water a tick from a spring (a river's: what flows in from upstream) */
+  /** water a second from a spring (a river's: what flows in from upstream) */
   spring: f32,
   /** (round 84) a river's column: its flow at the reference wetness (cells a tick) and the river's depth at its
    *  line (0: not a river's) — atlas.ts landFrom's riverFlow */

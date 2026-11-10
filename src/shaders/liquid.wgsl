@@ -720,7 +720,8 @@ fn publishWater(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   let r0 = runsOut[i * NSLOT];
   var nd = select(d, r0.y, (u32(r0.w) >> 3u) == stepNow());
-  nd += rainAt(cellPos(p)) * G.tune.waterRain * (1.0 - snowShare(airTempAt(sfZ(surface[i])))) + waterSourceL[i];
+  // (a source: cells^3 a second — PW6; a negative one is a held depth, the pipes' ?rivers=hold, not water added)
+  nd += rainAt(cellPos(p)) * G.tune.waterRain * (1.0 - snowShare(airTempAt(sfZ(surface[i])))) + max(waterSourceL[i], 0.0) * DTQ;
   nd = max(0.0, nd - select(EVAP_DEEP_Q, G.tune.waterEvap, nd < 0.08));
   if (sfCount(surface[i]) == 0u) { nd = 0.0; }
   waterPrevL[i] = d;

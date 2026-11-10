@@ -246,7 +246,7 @@ export function generateMap(dims: WorldDims, seed = 1): MapData {
   // through the near edge. A few cells in from the edge so most of it heads
   // downstream rather than straight back out.
   for (let dy = -2; dy <= 2; dy++)
-    for (let dx = 2; dx <= 4; dx++) waterSource[(RIVER[0][1] + dy + 2) * w + RIVER[0][0] + dx] = 0.01;
+    for (let dx = 2; dx <= 4; dx++) waterSource[(RIVER[0][1] + dy + 2) * w + RIVER[0][0] + dx] = 0.6;
 
   // Industrial ruins on the pad
   const ruinRand = rng(seed * 31 + 7);

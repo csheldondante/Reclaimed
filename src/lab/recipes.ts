@@ -101,7 +101,7 @@ export const LAB_RECIPES: Record<string, LabRecipe> = {
       // the time the lab opened; on the 320 window it stayed 2.4 m deep, and fortressrefuse's east shore was cut off)
       return lake ? 2 : d < 3 ? 0.6 : 0;
     },
-    springs: (x, y) => (Math.abs(x - (LAB_MID[0] + 45)) < 2 && y < 6 ? 0.01 : 0),
+    springs: (x, y) => (Math.abs(x - (LAB_MID[0] + 45)) < 2 && y < 6 ? 0.6 : 0),
     woods: wood([LAB_MID[0] - 75, LAB_MID[1] + 60], 20),
     heap: HEAP,
     homes: HOMES,

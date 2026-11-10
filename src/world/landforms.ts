@@ -338,7 +338,7 @@ export function generateLandforms(dims: WorldDims, opts: LandformsOpts = {}): Ma
       }
       return false;
     })();
-    if (!up) waterSource[i] = 0.004;
+    if (!up) waterSource[i] = 0.24;
     // the river's water to start with (it settles from there)
     water[i] = Math.max(water[i], Math.min(0.8, 0.25 + 0.15 * Math.log2(acc[i] / A0)));
   }

@@ -83,7 +83,7 @@ function station(id: string): { map: MapData; rect: [number, number, number, num
     smash: (x, y, z, r) => core.globals.events.push({ kind: EventKind.Edit, x: x - ox, y: y - oy, z: OP.SMASH * 32, radius: r, strength: z }),
     dig: (x, y, r, layers) => core.globals.events.push({ kind: EventKind.Edit, x: x - ox, y: y - oy, z: OP.DIG * 32 + 512, radius: r, strength: layers }),
     source: (cols, rate) => {
-      const v = new Float32Array([rate / 60 / cols.length]);
+      const v = new Float32Array([rate / cols.length]);
       for (const [cx, cy] of cols) core.host.gpu.device.queue.writeBuffer(core.world.waterSource, core.ring.i(cx - x0, cy - y0) * 4, v);
     },
     dust: () => undefined,
