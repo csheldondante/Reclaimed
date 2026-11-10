@@ -111,8 +111,8 @@ test('riders ride routes traced on the GPU from the road raster, over a deck at 
   expect(onDeck).toBeGreaterThan(0);
   // (the builders: at the two sites (progress between 0 and 1, read on the GPU), working)
   expect(c('buildWork')).toBeGreaterThan(50);
-  // (Track B's interface: byte 3 of the behaviour word is its override — a rider with it set isn't stepped by its job
-  // that tick, and resumes where it was once it's cleared)
+  // (Track B's interface: a rider whose override is set — its `overridden`, a forced stub here — is not advanced by the
+  // job kernel, and its state isn't touched, so the job resumes by itself once the override's gone)
   {
     const frames = async (n: number) => {
       for (let f = 0; f < n; f++) {
@@ -131,17 +131,13 @@ test('riders ride routes traced on the GPU from the road raster, over a deck at 
       if (leg === 1 || leg === 2) k = i;
     }
     expect(k).toBeGreaterThanOrEqual(0);
-    const word = (before[k * 16 + 4] & 0x00ffffff) | (0x01 << 24);
-    dev.queue.writeBuffer(town.rid, k * 64 + 16, new Uint32Array([word >>> 0]));
+    town.debugOverride = k + 1;
     await frames(40);
     const held = await rows();
-    // (untouched: its position and its behaviour word, override and all)
-    expect(Array.from(held.slice(k * 16, k * 16 + 8))).toEqual([...Array.from(before.slice(k * 16, k * 16 + 4)), word >>> 0, ...Array.from(before.slice(k * 16 + 5, k * 16 + 8))]);
-    // (the override cleared: the job goes on from the same state)
-    dev.queue.writeBuffer(town.rid, k * 64 + 16, new Uint32Array([before[k * 16 + 4]]));
+    expect(Array.from(held.slice(k * 16, k * 16 + 16))).toEqual(Array.from(before.slice(k * 16, k * 16 + 16)));
+    town.debugOverride = 0;
     await frames(10);
     const after = await rows();
-    expect(after[k * 16 + 4] >>> 24).toBe(0);
     expect(after[k * 16] !== held[k * 16] || after[k * 16 + 1] !== held[k * 16 + 1]).toBe(true);
   }
   // (the state words' size as the WGSL's)

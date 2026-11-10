@@ -241,10 +241,12 @@ readback. Everything the haul cycle is, in one place:
 Track B owns the one crowd, combat, flee priority, the inhabitants merge and the CPU flora mirror; Track A keeps the
 haul job states. Track B builds the one crowd around this rider row.
 1. **The behaviour word is RID word 1, for every unit:** byte 0 job (the behaviour bundle), byte 1 state, byte 2
-   leg/mode (route trip, open walk; Track B adds surface field steering), **byte 3 Track B's override** (FLEE / FIGHT /
-   DOWNED and the preempted state). The haul code never writes byte 3: it reads it, and keeps it when it saves.
-2. **Overrides preempt in the same tick:** `riders` returns at once for a row whose byte 3 is set, so the job resumes
-   where it was once it's cleared (test/gpu/living.test.ts, the override block).
+   leg/mode (route trip, open walk; Track B adds surface field steering); byte 3 reserved and unused.
+2. **Overrides are Track B's** (docs/design/UNIT_MINDS.md on trackB: in the unit row's state bits, info 12–14;
+   DOWNED > FLEE > FIGHT > job). The job kernel calls `overridden(…)` and returns at once for such a rider, never
+   touching its state, so the job resumes by itself. Until Track B's `unitstate.wgsl` exists and the riders are unit
+   rows (U5), routes.wgsl has a stub, marked for replacement, that a test forces for one rider
+   (test/gpu/living.test.ts: "not advanced by the job kernel").
 3. **Events:** routine hauling emits none. If haul ever needs one it takes a code above 32 in the agents' ring
    (units.wgsl EV_*: EV_ARRIVED 8, …). Totals (stone delivered, logs, produce) stay GPU counters, read async on demand.
 4. **Orders:** the parameters' uniform for haul; per-unit orders through the agents' paths (Track B's U1).

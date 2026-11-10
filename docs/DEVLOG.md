@@ -21160,3 +21160,7 @@ Track B builds the one crowd around the rider row. Byte 3 of the behaviour word 
 the haul step skips a row with it set (the job resumes after) and never writes it; the leg reads byte 2 only (it read
 bits 16–31). A Dawn test holds a riding rider 40 frames under an override and sees it ride on once cleared. The row
 stays 64 B. Recorded in LIVING_TOWN.md "Agreed with Track B".
+
+Amended the same day (Track B): the override isn't byte 3 but the unit row's state bits (info 12–14, Track B's
+UNIT_MINDS.md). The riders call an `overridden` stub (false unless a test forces one rider through the uniform), marked
+for Track B's unitstate.wgsl; byte 3 is reserved and unused. The test now forces the stub.

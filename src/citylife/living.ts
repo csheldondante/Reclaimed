@@ -119,6 +119,8 @@ export class LivingTown {
   private time = 0;
   private dealt = '';
   readonly stages: LivingStage[] = [];
+  /** (tests only) a rider forced overridden (its index + 1; 0 none): routes.wgsl's `overridden` stub */
+  debugOverride = 0;
   /** the last counters read (the panel's) */
   head = new Uint32Array(HEAD_WORDS);
 
@@ -187,7 +189,7 @@ export class LivingTown {
     F.set([v.quarry.digRate, v.quarry.ledge, v.quarry.load, 2], 28);
     F.set([v.forest.radius, v.forest.cut, v.forest.replant, v.forest.regrow], 32);
     I.set([place.dx, place.dy, place.winW, place.winH], 36);
-    F.set([place.dz, 0, p.spread, 0], 40);
+    F.set([place.dz, 0, p.spread, this.debugOverride], 40);
     this.device.queue.writeBuffer(this.uni, 0, a);
   }
 

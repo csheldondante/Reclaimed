@@ -32,7 +32,7 @@ struct P {
   f: vec4<f32>,
   /** where the grid is in the window: dx, dy (columns), the window's columns, rows */
   pl: vec4<i32>,
-  /** z: world → window (add), unused, lateral spread (m), unused */
+  /** z: world → window (add), unused, lateral spread (m), (tests only) a rider forced overridden: its index + 1 */
   pz: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> u: P;
@@ -749,8 +749,7 @@ fn rampRoute() {
 // RID, 4 vec4s a rider (64 B):
 //   0 x, y, z (grid world, world z), heading
 //   1 (u32 bits) the behaviour word — byte 0 job, byte 1 state, byte 2 leg (0 none, 1 route forward, 2 back, 3 open
-//     walk), byte 3 Track B's override (never written here: a set override skips the job); then route id, cursor,
-//     home lot
+//     walk), byte 3 reserved (unused); then route id, cursor, home lot. Overrides are Track B's (`overridden`)
 //   2 s (along the route), timer, load (m³ or logs), walk phase
 //   3 the open leg's end x, y; aux (u32 bits: a claimed tree's column + 1, a site's record + 1), the job's column
 //     (u32 bits: a farm's door, the base)
@@ -774,7 +773,7 @@ struct Rider {
   job: u32,
   st: u32,
   leg: u32,
-  /** byte 3: Track B's override (FLEE / FIGHT / DOWNED and the state to resume) — never written here */
+  /** byte 3: reserved (kept as it is, never set here) */
   ovr: u32,
   route: u32,
   cursor: u32,
@@ -787,6 +786,13 @@ struct Rider {
   aux: u32,
   col: u32,
 };
+/**
+ * STUB — to be replaced by Track B's unitstate.wgsl `overridden(info)` (docs/design/UNIT_MINDS.md on trackB: the
+ * override in the unit row's state bits, info 12–14) when the riders become unit rows (U5). Until then no rider has an
+ * override; a test forces one rider's (P.pz.w = its index + 1) to check the job kernel's side of the interface.
+ */
+fn overridden(i: u32) -> bool { return u.pz.w > 0.5 && u32(u.pz.w) == i + 1u; }
+
 fn loadRider(i: u32) -> Rider {
   let a = RID[i * 4u];
   let b = bitcast<vec4<u32>>(RID[i * 4u + 1u]);
@@ -923,8 +929,9 @@ fn riders(@builtin(global_invocation_id) g: vec3<u32>) {
   let i = g.x;
   if (i >= u.n.z) { return; }
   var r = loadRider(i);
-  // (an override set — Track B's fight, flee, downed: the job steps not at all this tick; it resumes where it was)
-  if (r.ovr != 0u) { return; }
+  // (an override set — Track B's DOWNED > FLEE > FIGHT: the job steps not at all this tick and its state isn't touched,
+  // so it resumes by itself)
+  if (overridden(i)) { return; }
   let dt = u.t.x;
   if (r.st == S_INIT && r.job == 0u && r.home == 0u) {
     // (a fresh row: dealt its job and home, placed at its door — or its base: the stores)
