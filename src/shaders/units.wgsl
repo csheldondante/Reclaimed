@@ -198,7 +198,7 @@ fn scopeIn(@builtin(global_invocation_id) id: vec3<u32>) {
   for (var f = 0u; f < NFIELDS; f++) {
     for (var k = 0u; k < NAV_K; k++) { dist[f * N + i * NAV_K + k] = FAR; }
   }
-  atomicOr(&dirtyCur[chunkOfCol(id.x, id.y)], 1u);
+  atomicOr(&dirtyCur[chunkOfCol(id.x, id.y)], ALL_FIELDS);
   for (var h = 0u; h < 2u; h++) {
     atomicStore(&occ[h * cols + i], 0u);
     for (var k = 0u; k < 4u; k++) { atomicStore(&shove[(h * cols + i) * 4u + k], 0); }
@@ -935,4 +935,87 @@ fn itemDraw(@builtin(global_invocation_id) id: vec3<u32>) {
   let ax = vec3<f32>(b.zw, 0.0);
   let q = select(vec4<f32>(0.0, 0.0, 0.0, 1.0), vec4<f32>(normalize(ax) * sin(b.y * 0.5), cos(b.y * 0.5)), length(ax) > 1e-3);
   putVoxel(k, a.xyz, u32(a.w) | (min(u32(b.x * 16.0 + 0.5), 63u) << 24u), q);
+}
+
+// ---- (U2, docs/design/UNIT_MINDS_U2.md §5: the riskiest part first) the hunt field seeded on the GPU -----------------
+// Each hostile fighter's target (unit word f.y, notice.wgsl) is a seed of the hunt field, scattered into seedMask — not
+// ranked and uploaded by the CPU (agent-units.ts think: TARGETS, setTargets). Once a frame, before the relaxation:
+//   huntReset   this frame's list emptied
+//   huntUnmark  last frame's seeds: bit f moved to bit 16 + f (there last frame)
+//   huntSet     every hostile with a unit target: its target's surface's bit f set; a surface new to it (not there last
+//               frame) listed and its chunk marked for field f
+//   huntGone    last frame's seeds not seeded again: their chunks marked for field f (the field rises there); bit 16 + f
+//               cleared
+//   huntFlip    this frame's list becomes last frame's
+// Actors' targets stay the CPU's seeds (their positions are the CPU's).
+// [0] [1] the two lists' counts, [2] which is last frame's, [3] the field (NFIELDS: none); then the lists
+@group(0) @binding(53) var<storage, read_write> huntList: array<atomic<u32>>;
+const HUNT_LIST: u32 = 8192u;
+const HUNT_HEAD: u32 = 4u;
+fn huntAt(l: u32, k: u32) -> u32 { return HUNT_HEAD + l * HUNT_LIST + k; }
+fn huntField() -> u32 { return atomicLoad(&huntList[3]); }
+
+@compute @workgroup_size(1)
+fn huntReset() {
+  atomicStore(&huntList[1u - atomicLoad(&huntList[2])], 0u);
+}
+
+@compute @workgroup_size(64)
+fn huntUnmark(@builtin(global_invocation_id) id: vec3<u32>) {
+  let f = huntField();
+  let prev = atomicLoad(&huntList[2]);
+  if (f >= NFIELDS || id.x >= min(atomicLoad(&huntList[prev]), HUNT_LIST)) { return; }
+  let s = atomicLoad(&huntList[huntAt(prev, id.x)]);
+  atomicAnd(&seedMask[s], ~(1u << f));
+  atomicOr(&seedMask[s], 1u << (16u + f));
+}
+
+@compute @workgroup_size(64)
+fn huntSet(@builtin(global_invocation_id) id: vec3<u32>) {
+  let u = id.x;
+  let f = huntField();
+  if (u >= AP.n.x || f >= NFIELDS) { return; }
+  let info = unitInfo(units[u * UNIT_V]);
+  if (((info >> 8u) & 1u) == 0u) { return; }
+  // (a hostile kind: one that notices — kind.b.w, as unitStep's `worker`)
+  if (AP.kinds[(info >> 9u) & 7u].b.w <= 0.0) { return; }
+  let code = bitcast<u32>(units[u * UNIT_V + 5u].y);
+  if (code == 0u || (code & 0x80000000u) != 0u) { return; }
+  let t = (code - 1u) % MAX_SLOTS;
+  if (t >= AP.n.x) { return; }
+  let ta = units[t * UNIT_V];
+  let ti = unitInfo(ta);
+  if (((ti >> 8u) & 1u) == 0u || unitId(t, ti) != code - 1u) { return; }
+  let c = clampCell(cellAt(ta.xy));
+  if (!inScope(c)) { return; }
+  let i = colIdxI(c);
+  let k = surfaceNear(i, ta.z);
+  if (k >= NAV_K) { return; }
+  let s = i * NAV_K + k;
+  let old = atomicOr(&seedMask[s], 1u << f);
+  if (((old >> f) & 1u) != 0u) { return; }
+  let cur = 1u - atomicLoad(&huntList[2]);
+  let n = atomicAdd(&huntList[cur], 1u);
+  if (n < HUNT_LIST) { atomicStore(&huntList[huntAt(cur, n)], s); }
+  // (new here: the field falls round it)
+  if (((old >> (16u + f)) & 1u) == 0u) { atomicOr(&dirtyCur[chunkOfCol(u32(c.x), u32(c.y))], 1u << f); }
+}
+
+@compute @workgroup_size(64)
+fn huntGone(@builtin(global_invocation_id) id: vec3<u32>) {
+  let f = huntField();
+  let prev = atomicLoad(&huntList[2]);
+  if (f >= NFIELDS || id.x >= min(atomicLoad(&huntList[prev]), HUNT_LIST)) { return; }
+  let s = atomicLoad(&huntList[huntAt(prev, id.x)]);
+  let m = atomicAnd(&seedMask[s], ~(1u << (16u + f)));
+  // (gone: the field rises round it — FC4's count-up; U2 §5 measures it)
+  if (((m >> f) & 1u) == 0u && ((m >> (16u + f)) & 1u) != 0u) {
+    // (a column's chunk: its page's slot — common.wgsl colIdx)
+    atomicOr(&dirtyCur[(s / NAV_K) / (COLS_PAGE * COLS_PAGE)], 1u << f);
+  }
+}
+
+@compute @workgroup_size(1)
+fn huntFlip() {
+  atomicStore(&huntList[2], 1u - atomicLoad(&huntList[2]));
 }

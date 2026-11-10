@@ -21522,3 +21522,52 @@ Track B's units ride the living town's routes for the soldiers' `march` (U2) and
 - The transfer gate lists the two season-life reads (`askRoute`, `reachedWall`: event reads, a few words).
 - Checked: typecheck; the unit tier (107 files, 866 tests); `opps=1` at Muru — 3 gates, each march route along its
   own arterial to the box's edge (94, 125, 144 units), 52 posts, none unreachable (`scratchpad/opps/postmerge2.png`).
+## 2026-11-10 — U2 round 2: the hunt field seeded on the GPU, a front per field, measured (Track B, trackB-u2)
+
+Why: UNIT_MINDS_U2.md §5 names moving-seed fields as U2's riskiest part (seeds that move, appear and vanish every
+tick in a battle; FC4's count-up). Main approved building only that, measuring, and stopping.
+
+- **Built.** `Agents.gpuHunt(f, { bySource })`. Five kernels (units.wgsl `huntReset/Unmark/Set/Gone/Flip`) run once a
+  frame before the relaxation and scatter each hostile kind's target (unit word f.y) into `seedMask` (a bit per field
+  per surface). Bit 16 + f remembers last frame's seeds, so a seed that stays isn't marked again and one that goes is.
+  `relax` reads the bit. Actors' targets stay CPU seeds. `?huntgpu=1` turns it on in AgentUnits; strikes still go
+  through the CPU's 8 `AP.targets`. So with it on, raiders walk toward targets they can't swing at unless the target
+  is among those 8: fewer deaths (4–65 vs 57–93). It is a measuring toggle until DA-B32.
+- **FC10, a front per field.** A dirty word's low 16 bits are "changed for field f"; the high 16 are "carried for
+  field f". Peel, links, marks and a chunk coming into scope mark all fields. `frontBuild` stores each listed chunk's
+  field mask after the list (`frontList[FRONT_CAP + k]`), and the relax front skips the other fields. `?fieldfront=0`
+  turns this off. NFIELDS ≤ 16 is asserted.
+- **The seed-id fix (`?huntsrc=1`).** A second plane in seedMask holds, per surface, the seed surface its distance came
+  from. A neighbour whose seed's distance is no longer 0 is passed over, so a vanished seed's values go FAR at once and
+  refill from the seeds left.
+- **Bindings.** No row growth and no occ/shove merge: the seed kernels are their own pipelines (5 storage buffers); the
+  relax front reaches 8 with seedMask.
+
+**Correctness** (`test/gpu/huntseed.test.ts`: 128² flat, 60 prey, 40 hunters, 5 waves killing every current target,
+then the last prey; the field vs. a CPU BFS, worst gap ≤ 1):
+
+| Mode | Frames to match after each wave (0–5) | Last prey dies: frames to empty |
+|---|---|---|
+| CPU seeds (today) | 46, 46, 47, 49, 49, 51 | 3 |
+| GPU seeds | 45, 46, 45, 51, 47, 51 | never (> 240): FC4 count-up |
+| GPU seeds + seed-id | 45, 47, 47, 45, 46, 48 | 4 |
+
+**Cost** (scripts/lab/huntbench.mjs: `town` recipe, 412×915, q=low, 200 guards v 200 raiders, 20 s at 1x, ?agentprof=1;
+ms mean / p95 / max; two runs each):
+
+| Flags | relax | hunt kernels | notice | agents total | front a sweep | asked | carried | sweeps carrying |
+|---|---|---|---|---|---|---|---|---|
+| huntgpu=0, fieldfront=0 | 0.373/0.65/1.71; 0.339/0.61/1.15 | — | 0.64; 0.74 | 1.23; 1.30 | 32 | 90–91 | 58–59 | 98–99% |
+| huntgpu=0 | 0.303/0.55/4.65; 0.382/0.57/4.36; 0.292/0.48/0.77; 0.373/0.61/5.18 | — | 0.63–1.08 | 1.13–1.71 | 32 | 90–91 | 58–60 | 99% |
+| huntgpu=1 | 0.226/0.34/0.67; 0.308/0.47/0.87 | 0.022; 0.033 | 0.52; 0.74 | 0.94; 1.31 | 32 | 89–91 | 57–59 | 99% |
+| huntgpu=1, huntsrc=1 | 0.254/0.46/0.98; 0.307/0.52/3.73 | 0.026; 0.029 | 0.76; 1.07 | 1.23; 1.62 | 32 | 100–110 | 68–78 | 100% |
+
+What it says:
+- GPU seeding costs nothing measurable (0.02–0.03 ms of kernels; relax is no higher).
+- FC10 moves relax by less than the run-to-run spread here: every chunk is relaxed at the cap regardless.
+- The front is saturated in every mode, before and after this round. In a 400-unit fight about 90 chunks ask each
+  sweep and 32 are taken, so fields lag by FRONT_CAP whoever seeds them. The tiny-world test shows the same: every mode
+  takes ~45 frames a wave. That is FC4's "what is left", now the risk for 1,000 units.
+- notice (0.5–1.1 ms, spikes of 35–106 ms in four of the ten runs) is the largest agents stage.
+
+Gates: typecheck clean; GPU tier 196 passed, 11 expected fail (the 10 U2 skeletons + the no-fix count-up), 5 skipped; unit tier 858 passed, 3 expected fail. No shot (nothing drawn changed).

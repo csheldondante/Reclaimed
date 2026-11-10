@@ -145,6 +145,27 @@ stale gradients or the agents' frame spikes. That decides whether "fields for co
 | Correctness | a GPU test: after k sweeps, HUNT_H at each fighter's feet vs. a CPU BFS on the same tiny world; > 2 cells stale counts as a failure. Run while targets die at 10 a second. |
 | If stale | the candidate (decided by the numbers, not now): **a source label per dynamic field** (u32 per surface: the seed it came from). When a seed vanishes, the surfaces labelled with it reset to FAR locally and refill from their neighbours. That is local, with no whole-field restart. It costs a plane per dynamic field (HUNT_H/D, THREAT: +4.7 MB). |
 
+### 5b. Measured (round 2, 2026-11-10; the DEVLOG has the tables)
+
+Built: `huntReset/Unmark/Set/Gone/Flip` (units.wgsl), seeds scattered into seedMask and read by relax (agents.wgsl),
+the per-field front (FC10: a dirty word's low half is a bit per field, the high half carried), `?huntgpu=0/1`, the
+seed-id fix behind `?huntsrc=1` (seedMask's second plane; `bySource` on `Agents.gpuHunt`), and `?fieldfront=0` (FC10
+off). No row growth and no occ/shove merge: the seed kernels are their own pipelines (5 storage buffers), and relax
+reaches exactly 8 with seedMask.
+
+| Finding | Number |
+|---|---|
+| Correctness vs. a CPU BFS while targets die (`test/gpu/huntseed.test.ts`, 128² flat, 5 waves) | CPU seeds, GPU seeds, and GPU seeds + seed-id all match the BFS again in 45–54 frames a wave. It is the same in every mode: the front's cap sets it, not the count-up. |
+| The last target dies (no seeds left) | CPU: empty in 3 frames (its restart). GPU: **never** within 240 frames (the FC4 count-up). GPU + seed-id: 4 frames. |
+| Town, 200 v 200, 1x: relax ms, mean / p95 (two runs each) | huntgpu=0: 0.29–0.38 / 0.48–0.61. huntgpu=1: 0.23–0.31 / 0.34–0.47. +huntsrc: 0.25–0.31 / 0.46–0.52. fieldfront=0: 0.34–0.37 / 0.61–0.65. The run-to-run spread is as large as the differences. |
+| Seed kernels | 0.02–0.03 ms a frame |
+| Front | **Saturated in every mode**: 32 chunks a sweep (the cap), 90–110 asking, 58–78 carried, 99% of sweeps carrying. |
+
+**Conclusion.** GPU seeding costs nothing measurable, and the field is correct while it has seeds. It needs the
+seed-id fix, or an equivalent, to empty. The cost risk has moved: in a 400-unit fight the front sits at FRONT_CAP
+whichever way the field is seeded, so fields lag by the cap, not by the seeding. FC4's "what is left" is the next thing
+to examine before 1,000 units. Notice (0.5–1.1 ms) is the largest agents stage, ahead of relax.
+
 ## 6. Interface tests both tracks run (`test/gpu/unitminds-u2.test.ts`)
 
 Through the `Units` contract only, with AgentUnits on Dawn. `update()` drains events and decides nothing.
