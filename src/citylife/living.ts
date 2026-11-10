@@ -8,8 +8,9 @@ import routesWgsl from './routes.wgsl?raw';
 import { makeBindGroup, makeCompute, type BindSpec, type ComputeKernel } from '../gpu/pipeline';
 import { LIVING_TUNING, type LivingValues } from './params';
 
-/** routes.wgsl's LT layout: its words (L_RH + ROUTES × 4), the counters' first word, the quarry's, the clearing's */
-export const LT_WORDS = 52520 + 256 * 2;
+/** routes.wgsl's LT layout: its words (to the wall's block's end: L_WALL + WL_WORDS), the counters' first word, the
+ *  quarry's, the clearing's */
+export const LT_WORDS = 53032 + 416;
 export const L_C = 48;
 export const L_Q = 96;
 export const L_F = 128;
@@ -24,7 +25,19 @@ export const C = {
 } as const;
 /** the points pool (vec4 a point) and the riders' room */
 const PTS_ROOM = 262_144;
+/** routes.wgsl ROUTES (ids, both halves) and routeread.wgsl's header words (the wall's table in them: the wall-walk
+ *  entries at 16, routes.wgsl WW_ROOM of them; the gate entries after, GATE_SLOTS of them) */
+const ROUTE_IDS = 8192;
+export const ROUTE_HEAD_WORDS = 128;
+const WW_AT = 16;
+const WW_ROOM = 36;
+const GATE_AT = WW_AT + 2 * WW_ROOM;
+const GATE_SLOTS = 10;
+/** the wall's state words (routes.wgsl L_WALL: … the reached pieces at + 5) */
+const L_WALL = 53032;
 export const MAX_RIDERS = 4096;
+/** routes.wgsl RELAX_INNER: sweeps a relax dispatch makes */
+const RELAX_INNER = 4;
 /** voxels a rider at most (figures: legs, torso, head, a cart and its load, a falling trunk) */
 const VOX_PER = 14;
 const NONE = 0xffffffff;
@@ -38,6 +51,8 @@ export interface LivingInput {
   roads: GPUBuffer;
   heights: GPUBuffer;
   wet: GPUBuffer;
+  /** (season life) the town wall's words (citygen streets.wgsl WALL; SL19's post check) */
+  wall?: GPUBuffer;
   pop: GPUBuffer;
   art: GPUBuffer;
   /** the contract's lot records, counts and progress (api/contracts/citygen.ts; progress read only: the time-lapse's) */
@@ -67,10 +82,10 @@ type K =
   | 'checkClear' | 'checkCols' | 'checkPick' | 'checkLay' | 'checkDoors' | 'checkStep'
   | 'hubSeed1' | 'hashScrub' | 'relax' | 'relaxMark' | 'relaxCheck' | 'trace' | 'traceDone' | 'rampRoute' | 'riders'
   | 'sites' | 'sitesClear' | 'figuresClear' | 'figures' | 'overlay' | 'poolSwitch' | 'hashClear' | 'passMeshClear' | 'passMesh'
-  | 'seaSeed' | 'seaRelax' | 'ships';
+  | 'seaSeed' | 'seaRelax' | 'ships' | 'wallWork';
 /** each kernel's bindings (at most 8 storage buffers) */
 const SPECS: Record<K, BindSpec> = {
-  gate: { 0: 'uniform', 10: 'rw', 14: 'rw' },
+  gate: { 0: 'uniform', 10: 'rw', 11: 'rw', 14: 'rw', 20: 'read' },
   walkInit: { 0: 'uniform', 1: 'read', 8: 'rw', 9: 'rw' },
   doors: { 0: 'uniform', 3: 'read', 4: 'read', 7: 'read', 8: 'rw' },
   pads: { 0: 'uniform', 3: 'read', 4: 'read', 7: 'read', 8: 'rw' },
@@ -91,9 +106,9 @@ const SPECS: Record<K, BindSpec> = {
   relax: { 0: 'uniform', 2: 'read', 8: 'rw', 9: 'rw', 10: 'rw', 15: 'read' },
   relaxMark: { 0: 'uniform', 10: 'rw' },
   relaxCheck: { 0: 'uniform', 10: 'rw' },
-  trace: { 0: 'uniform', 1: 'read', 2: 'read', 9: 'rw', 10: 'rw', 11: 'rw' },
+  trace: { 0: 'uniform', 1: 'read', 2: 'read', 8: 'rw', 9: 'rw', 10: 'rw', 11: 'rw', 15: 'read' },
   traceDone: { 0: 'uniform', 10: 'rw' },
-  poolSwitch: { 0: 'uniform', 10: 'rw', 14: 'rw' },
+  poolSwitch: { 0: 'uniform', 10: 'rw', 11: 'rw', 14: 'rw' },
   passMeshClear: { 0: 'uniform', 19: 'rw' },
   passMesh: { 0: 'uniform', 2: 'read', 8: 'rw', 18: 'rw', 19: 'rw' },
   hashClear: { 0: 'uniform', 10: 'rw' },
@@ -102,12 +117,14 @@ const SPECS: Record<K, BindSpec> = {
   sites: { 0: 'uniform', 3: 'read', 4: 'read', 7: 'read', 10: 'rw' },
   sitesClear: { 0: 'uniform', 10: 'rw' },
   figuresClear: { 0: 'uniform', 16: 'rw' },
-  figures: { 0: 'uniform', 12: 'rw', 13: 'rw', 16: 'rw' },
-  overlay: { 0: 'uniform', 1: 'read', 2: 'read', 8: 'rw', 9: 'rw', 13: 'rw', 16: 'rw' },
+  figures: { 0: 'uniform', 10: 'rw', 12: 'rw', 13: 'rw', 16: 'rw' },
+  overlay: { 0: 'uniform', 1: 'read', 2: 'read', 8: 'rw', 9: 'rw', 11: 'rw', 13: 'rw', 16: 'rw' },
   // (season life: the sea field and the ships)
   seaSeed: { 0: 'uniform', 3: 'read', 4: 'read', 5: 'read', 7: 'read', 9: 'rw', 15: 'read' },
   seaRelax: { 0: 'uniform', 9: 'rw', 15: 'read' },
   ships: { 0: 'uniform', 2: 'read', 9: 'rw', 12: 'rw', 15: 'read' },
+  // (the wall's routes and table: gate's watch dispatches it)
+  wallWork: { 0: 'uniform', 1: 'read', 2: 'read', 6: 'read', 8: 'rw', 9: 'rw', 10: 'rw', 11: 'rw', 15: 'read' },
 };
 /** routes.wgsl struct P's bytes (12 vec4s) */
 const P_BYTES = 192;
@@ -126,7 +143,8 @@ export class LivingTown {
   /** the state words (LT), the walk mask, the points pool, the riders, the parameters — the works bind them */
   readonly lt: GPUBuffer;
   readonly walk: GPUBuffer;
-  readonly pts: GPUBuffer;
+  /** the route buffer (api/contracts/routes.ts CityRouteRead; shaders/routeread.wgsl reads it): header, heads, points */
+  readonly routes: GPUBuffer;
   readonly rid: GPUBuffer;
   readonly uni: GPUBuffer;
   readonly field: GPUBuffer;
@@ -146,10 +164,20 @@ export class LivingTown {
   readonly stages: LivingStage[] = [];
   /** (?livingdebug=1) the graph drawn over the town: reached, cut off, doors, passages, decks */
   debugGraph = false;
+  /** (the living bench, ?livingbench=1, only) the graph forced awake: its relax sweeps dispatched every frame even when
+   *  settled — the toggle diff's "awake" side */
+  debugAwake = false;
+  /** (the living bench only) the graph's pass not encoded at all — the toggle diff's measure of what the settled graph's
+   *  empty indirect dispatches cost. Never in play: the graph would never wake */
+  debugSkipGraph = false;
   /** (tests only) a rider forced overridden (its index + 1; 0 none): routes.wgsl's `overridden` stub */
   debugOverride = 0;
   /** the last counters read (the panel's) */
   head = new Uint32Array(HEAD_WORDS);
+  /** (season life) the towns' clock (s: citygen's, FieldTowns.townTime) and a wall piece's span of it to rise
+   *  (DISTRICT_SPAN): the wall's pieces rise on the GPU by it, as citygen draws them */
+  wallClock = 0;
+  wallSpan = 1;
 
   constructor(
     private device: GPUDevice,
@@ -174,17 +202,24 @@ export class LivingTown {
     this.pmesh = buf('passage mesh', 6000 * 18 * 32);
     this.pargs = buf('passage mesh args', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
     this.lt = buf('state', LT_WORDS * 4);
-    this.pts = buf('points', ptsRoom * 16);
+    // (the route buffer: the header with the wall's table, ROUTE_IDS heads of 4 words, then the points — routeread.wgsl's
+    // layout; its fixed words written here once, the table's entries empty: no route, no gate)
+    this.routes = buf('routes', (ROUTE_HEAD_WORDS + ROUTE_IDS * 4 + ptsRoom * 5) * 4);
+    const head = new Uint32Array(ROUTE_HEAD_WORDS);
+    head.set([0, 0, ROUTE_IDS / 2, ROUTE_HEAD_WORDS + ROUTE_IDS * 4, 0, 0, 0, ptsRoom, ROUTE_HEAD_WORDS, 0, GATE_SLOTS, 0, WW_AT, GATE_AT]);
+    for (let i = 0; i < WW_ROOM; i++) head[WW_AT + 2 * i] = NONE;
+    for (let k = 0; k < GATE_SLOTS; k++) head.set([NONE, 1], GATE_AT + 2 * k);
+    device.queue.writeBuffer(this.routes, 0, head);
     this.rid = buf('riders', MAX_RIDERS * 64);
     // (room for the figures and, with ?livingdebug=1, a block a walkable column)
     this.vox = buf('voxels', (MAX_RIDERS * VOX_PER + input.w * input.h) * 32);
     this.vargs = buf('voxel args', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
-    this.ind = buf('indirect', 30 * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
+    this.ind = buf('indirect', 36 * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
     this.read = buf('read', HEAD_WORDS * 4, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
     device.queue.writeBuffer(this.vargs, 0, new Uint32Array([36, 0, 0, 0]));
     const R: Record<number, GPUBuffer> = {
       1: input.roads, 2: input.heights, 3: input.records, 4: input.counts, 5: input.pop, 6: input.art, 7: input.progress,
-      8: this.walk, 9: this.field, 17: this.pass, 18: this.pmesh, 19: this.pargs, 10: this.lt, 11: this.pts, 12: this.rid, 13: this.vox, 14: this.ind, 15: input.wet, 16: this.vargs,
+      8: this.walk, 9: this.field, 17: this.pass, 20: input.wall ?? buf('no wall', 600 * 4), 18: this.pmesh, 19: this.pargs, 10: this.lt, 11: this.routes, 12: this.rid, 13: this.vox, 14: this.ind, 15: input.wet, 16: this.vargs,
     };
     R[0] = this.uni;
     this.k = {} as Record<K, ComputeKernel>;
@@ -213,7 +248,7 @@ export class LivingTown {
     const ends: number[] = [];
     let acc = 0;
     for (const n of [p.commuters, p.farmers, p.quarrymen, p.stoneCarts, p.woodcutters, p.logCarts, p.builders]) ends.push((acc = Math.min(MAX_RIDERS, acc + n)));
-    const flags = 1 | (v.quarry.on ? 2 : 0) | (v.forest.on ? 4 : 0) | (v.forest.replant ? 8 : 0) | (this.debugGraph ? 16 : 0);
+    const flags = 1 | (v.quarry.on ? 2 : 0) | (v.forest.on ? 4 : 0) | (v.forest.replant ? 8 : 0) | (this.debugGraph ? 16 : 0) | (this.debugAwake ? 32 : 0);
     U.set([this.input.w, this.input.h, this.riders, this.frameNo], 0);
     U.set([this.input.lotRoom, this.input.lotRoom, flags, v.graph.sweeps], 4);
     U.set([ends[0], ends[1], ends[2], ends[3]], 8);
@@ -227,8 +262,11 @@ export class LivingTown {
     F.set([place.dz, 0, p.spread, this.debugOverride], 40);
     // (season life: the wagons' and the ships' ends, after the builders')
     const wEnd = Math.min(MAX_RIDERS, acc + p.wagons);
-    U.set([wEnd, Math.min(MAX_RIDERS, wEnd + p.ships), 0, 0], 44);
+    U.set([wEnd, Math.min(MAX_RIDERS, wEnd + p.ships)], 44);
+    F.set([this.wallClock, this.wallSpan], 46);
     this.device.queue.writeBuffer(this.uni, 0, a);
+    // (the route buffer's place: where the grid's frame is in the window — routeread.wgsl routePoint)
+    this.device.queue.writeBuffer(this.routes, 16, new Float32Array([place.dx, place.dy * 0.8660254, place.dz]));
   }
 
   /** the jobs dealt again when the counts change (the riders' rows cleared: each is dealt at its next frame) */
@@ -264,9 +302,11 @@ export class LivingTown {
     };
     // (one pass for the graph: the build, the relax sweeps, the connectivity check, the trace — each indirect, sized by
     // the phase word: settled, they're dispatches of 0 workgroups)
-    pass('graph', (cp) => {
+    if (!this.debugSkipGraph) pass('graph', (cp) => {
       // (build)
       run(cp, 'gate', 1);
+      // (season life: the wall's routes and table — 0 workgroups unless the wall changed)
+      run(cp, 'wallWork', ind(30));
       run(cp, 'walkInit', ind(0));
       run(cp, 'doors', ind(3));
       run(cp, 'pads', ind(3));
@@ -282,8 +322,10 @@ export class LivingTown {
       run(cp, 'passMeshClear', ind(6));
       run(cp, 'passMesh', ind(0));
     // (relax)
-      // (the frame's sweeps in turn: one after another is what carries a distance far; settled, each is 0 workgroups)
-      for (let k = 0; k < Math.max(2, this.values.graph.sweeps) - 1; k++) run(cp, 'relax', ind(9));
+      // (the frame's sweeps in turn, RELAX_INNER in place a dispatch: one after another is what carries a distance far;
+      // settled, each is 0 workgroups)
+      const disp = Math.max(2, Math.ceil(this.values.graph.sweeps / RELAX_INNER));
+      for (let k = 0; k < disp - 1; k++) run(cp, 'relax', ind(9));
       run(cp, 'relaxMark', 1);
       run(cp, 'relax', ind(9));
       run(cp, 'relaxCheck', 1);
@@ -318,10 +360,23 @@ export class LivingTown {
     if (this.stages.length) pass('works', (cp) => this.stages.forEach((s) => s.encode(cp, this.frameNo)));
     pass('figures', (cp) => {
       run(cp, 'figuresClear', 1);
-      run(cp, 'figures', Math.ceil(this.riders / 64) || 1);
-      if (this.debugGraph) run(cp, 'overlay', Math.ceil((this.input.w * this.input.h) / 64));
+      // (and past the riders, a thread a wall segment: its red marks where the town doesn't reach its walk)
+      run(cp, 'figures', Math.ceil((this.riders + 72) / 64));
+      // (and the wall's table's routes with their widths: a thread a route past the columns)
+      if (this.debugGraph) run(cp, 'overlay', Math.ceil((this.input.w * this.input.h + WW_ROOM + GATE_SLOTS) / 64));
     });
     this.frameNo++;
+  }
+
+  /**
+   * (tests only) Which wall segments' walk the town reaches (routes.wgsl wallWork's reach bits: a piece risen in a run
+   * of risen pieces with a stair whose foot is on the graph joined to the stores). In play the GPU draws the unreached
+   * pieces red itself (wallMark) and Track B reads `wallWalkRun(i)`; nothing reads this but tests. Null: no wall input.
+   */
+  async debugWallReach(): Promise<boolean[] | null> {
+    if (!this.input.wall) return null;
+    const w = new Uint32Array(await this.debugRead(this.lt, (L_WALL + 8) * 4)).subarray(L_WALL + 5);
+    return Array.from({ length: 72 }, (_, b) => ((w[b >> 5] >> (b & 31)) & 1) === 1);
   }
 
   /** the graph made again (the town's road raster was drawn again: a district's roads appeared): 4 bytes */

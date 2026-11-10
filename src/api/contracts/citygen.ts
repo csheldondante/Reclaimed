@@ -157,4 +157,6 @@ export interface CityRoutes {
   readonly wet: GPUBuffer;
   readonly pop: GPUBuffer;
   readonly art: GPUBuffer;
+  /** (season life) the town wall's words (streets.wgsl WALL): the living town checks its posts' reach from them */
+  readonly wall: GPUBuffer;
 }

@@ -379,6 +379,11 @@ export class FieldTown {
     return c;
   }
 
+  /** world z to the window's (the mesh's offset: its z less the window's oz) */
+  oz(): number {
+    return this.io.oz();
+  }
+
   /** a point of the town's grid frame (world units) in the window now */
   inWindow(at: readonly [number, number]): [number, number] {
     const p = this.gridPlace();

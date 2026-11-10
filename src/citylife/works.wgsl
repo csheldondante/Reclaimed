@@ -24,7 +24,7 @@ struct P {
   f: vec4<f32>,
   pl: vec4<i32>,
   pz: vec4<f32>,
-  /** (season life) the wagons' and the ships' ends (after the builders'), 0, 0 */
+  /** (season life) the wagons' and the ships' ends; the town's clock and a wall piece's span to rise (f32 bits) */
   x: vec4<u32>,
 };
 
@@ -93,6 +93,10 @@ const F_LISTING: u32 = 5u;
 const H_STORES: u32 = 0u;
 const H_GRANARY: u32 = 1u;
 const W_CLAIM: u32 = 0x10000u;
+/** routes.wgsl W_DUG, L_WAKE: a walked column dug out more than a step is blocked from the next build, and the graph
+ *  woken (no CPU signal) */
+const W_DUG: u32 = 0x100000u;
+const L_WAKE: u32 = 40u;
 const J_WOOD: u32 = 4u;
 const LEG_FWD: u32 = 1u;
 const LEG_BACK: u32 = 2u;
@@ -246,6 +250,14 @@ fn dig(@builtin(global_invocation_id) g: vec3<u32>) {
     let lit = u32(taken * CELL_AREA * 1000.0);
     bumpC(C_DUG, lit);
     bumpC(C_FACE, lit);
+    // (a walked column — a road, a deck, a door, a track: not a pad — dug more than a step below where it was: the
+    // graph woken, the column blocked from its next build)
+    let wk = atomicLoad(&WALK[bix(c)]);
+    let cls = wk & 0xfu;
+    if (cls != 0u && cls != 5u && (wk & W_DUG) == 0u && g0 - (tgt - u.pz.x) > 1.1) {
+      atomicOr(&WALK[bix(c)], W_DUG);
+      atomicStore(&LT[L_WAKE], 1u);
+    }
     // (the pit's floor bare: no plants on fresh-cut rock)
     let vi = colIdx(u32(w.x), u32(w.y));
     vegW[vi] = 0.0;
@@ -486,7 +498,7 @@ fn riderZ(@builtin(global_invocation_id) g: vec3<u32>) {
   let b = bitcast<vec4<u32>>(RID[i * 4u + 1u]);
   let leg = (b.x >> 16u) & 0xffu;
   let ramp = lt(L_Q + 4u);
-  if ((leg == LEG_FWD || leg == LEG_BACK) && !(ramp != 0u && (b.y & 0xffffu) == ramp - 1u)) { return; }
+  if ((leg == LEG_FWD || leg == LEG_BACK) && !(ramp != 0u && (b.y & 0xffffu) == ((ramp - 1u) & 0xffffu))) { return; }
   let a = RID[i * 4u];
   let r = (a.y - 0.5 * ROWH) / ROWH;
   let ax = vec2<f32>(a.x - 0.5 - 0.5 * r, r);

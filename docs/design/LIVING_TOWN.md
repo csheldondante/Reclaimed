@@ -227,6 +227,7 @@ run: a district's roads appear), the living town's graph is made again (a 4-byte
 | the grid's place in the window | a slide | 16 B |
 | encoding the frame's dispatches (fixed: relax sweeps, trace, riders, dig, pile, fell, figures) | a frame | — |
 | the graph made again when citygen draws its roads again (a district started) | a mesh run of citygen's | 4 B |
+| (season life) the towns' clock, so the wall's pieces rise on the GPU as citygen draws them (the wall's table) | a frame, in the parameters | 8 B |
 | the panel's counters (debug only, `?living=1` with the panel open) | every 0.5 s | 256 B read |
 
 No route search, job logic, rider state, site pick or material count is on the CPU.
@@ -295,8 +296,14 @@ difference the desktop can see. The phone bench is the measure (not run).
 - A third crowd until Track B's one crowd (U5); no knock-off by wind (Track B's).
 - The `overridden()` stub (Track B's unitstate.wgsl replaces it).
 - No lanes or queueing (LT-F1); a fixed spread across the road.
-- The relax is fixed sweeps a frame, gated by indirect counts: settled, they're 0-workgroup dispatches, not skipped.
+- The relax is fixed sweeps a frame (four in place a dispatch over 8 × 8 tiles), gated by indirect counts: settled,
+  they're 0-workgroup dispatches (31 of them), not skipped — no CPU signal unless the phone bench says they cost.
 - Quarry rock is judged from the ground's slope; the pit digs only inside the window and is lost when streamed land is
   regenerated (no edit log for streamed land).
 - Passages aren't drawn as roads yet (only walked; the overlay shows them).
 - A falling tree is an animation (DA-E7). Builders use no stone.
+- (routes2) The wall-walk passes through the corner towers (RT2-8); a run shorter than its two stairs gets one stair
+  (RT2-7, citygen's fixed stair length). The wall's pieces rise on the GPU by the CPU's town clock in the parameters
+  (the same clock citygen draws them by). Unreached pieces drawn as lava voxels (the debug overlay's cut-off colour).
+- (routes2) A rebuild switches the points pool so every route is traced again — a burst of traces, and riders two
+  rebuilds old re-ask (LT-F9's reference counts would keep the live ones).

@@ -407,6 +407,7 @@ export function attachStream(scene: LevelScene): void {
             livingFromUrl(host.params);
             const lt = new LivingTowns({
               logs: towns.logs,
+              townTime: () => towns.townTime,
               device: host.gpu.device,
               towns: () => towns.live,
               addVoxels: (i, g) => core.renderer.addVoxels(i, g),

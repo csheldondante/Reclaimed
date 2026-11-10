@@ -160,7 +160,7 @@ export class LiquidSystem implements SimSystem {
     this.runList = new GpuTileList(device, `${kind.name} run`, tiles);
     this.wetList = new GpuTileList(device, `${kind.name} wet`, tiles);
     // (LQ4) the water on every surface: the water's runs published per gap (liquid.wgsl publishGaps)
-    if (kind.name === 'water') world.waterGaps = this.gaps = world.buf('waterGaps', N * 16, S);
+    if (kind.name === 'water') this.gaps = world.waterGaps;
     this.lqWet = world.buf(`${kind.name}LqWet`, this.runW * 8, S | GPUBufferUsage.COPY_DST);
     this.lqState = world.buf(`${kind.name}LqState`, this.runW * 16, S | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST);
     this.lqRun = device.createTexture({ label: `${kind.name}LqRun`, size: { width: this.runW, height: 1 }, format: 'rgba32uint', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });

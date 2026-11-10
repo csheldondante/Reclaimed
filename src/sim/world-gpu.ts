@@ -140,9 +140,9 @@ export class WorldGpu {
   readonly waterPrev: GPUBuffer;
   /** vec4 volume leaving toward +x,-x,+y,-y this tick */
   readonly flux: GPUBuffer;
-  /** (trackA-liquids, LQ4) the water on every surface, per column (flow/liquid.ts, liquid.wgsl publishGaps): set by
-   *  the flow model when it runs (null under the pipes: the top's `water` is all there is) */
-  waterGaps: GPUBuffer | null = null;
+  /** (trackA-liquids, LQ4) the water on every surface, per column: x the open run's depth (f32 bits, as `water`), y..w
+   *  the enclosed runs as pack2x16float(floor, depth) — written by the liquid (liquid.wgsl publishGaps) */
+  readonly waterGaps: GPUBuffer;
   readonly waterSource: GPUBuffer;
   /**
    * (round 84 — the user: "we can have a tolerance and decide when we are close enough to steady state to freeze")
@@ -419,6 +419,7 @@ export class WorldGpu {
     this.waterPrev = this.buf('waterPrev', N * 4, S);
     // per-direction quantities: one f32 per hex direction (common.wgsl Dirs)
     this.flux = this.buf('flux', N * DIRS_BYTES, S);
+    this.waterGaps = this.buf('waterGaps', N * 16, S);
     this.waterSource = this.buf('waterSource', N * 4, S);
     this.waterChange = this.buf('waterChange', 2048 * 4, S);
     device.queue.writeBuffer(this.water, 0, r.toStore(map.water));

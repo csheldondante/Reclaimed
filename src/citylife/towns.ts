@@ -9,7 +9,9 @@ import { LivingTown, C, L_C, L_Q, L_F } from './living';
 import { Works, type WorksWorld } from './works';
 import { LIVING_TUNING } from './params';
 import { TunePanel } from '../ui/tunepanel';
+import type { CityRouteRead } from '../api/contracts/routes';
 import type { TownLogs } from '../citygen/townlog';
+import { DISTRICT_SPAN } from '../citygen/gpu';
 
 export interface LivingTownsIO {
   device: GPUDevice;
@@ -25,6 +27,8 @@ export interface LivingTownsIO {
   world: WorksWorld;
   /** (saving) the towns' edit logs: the works' state laid back when a town's people are made again */
   logs?: TownLogs;
+  /** (season life) the towns' clock (s: FieldTowns.townTime) — the wall's pieces rise by it on the GPU */
+  townTime?: () => number;
 }
 
 interface Live {
@@ -96,6 +100,7 @@ export class LivingTowns {
       const works = new Works(this.io.device, life, this.io.world);
       life.stages.push(works);
       life.debugGraph = this.debugGraph;
+      life.wallSpan = DISTRICT_SPAN;
       this.io.addVoxels(life.vox, life.vargs);
       this.io.addVoxels(works.vox, works.vargs);
       this.io.addMesh(life.pmesh, life.pargs, lots.place);
@@ -118,6 +123,7 @@ export class LivingTowns {
     const ts = this.io.profiler ? (n: string) => this.io.profiler!.timestamps(n) : undefined;
     for (const l of this.live.values()) {
       const p = l.town.gridPlace();
+      l.life.wallClock = this.io.townTime?.() ?? 0;
       l.life.frame(enc, this.dt, { dx: p.dx, dy: p.dy, dz: p.dz, winW: this.io.dims.w, winH: this.io.dims.h }, ts);
     }
   }
@@ -173,6 +179,12 @@ export class LivingTowns {
       `clearing: ${h[L_F + 1] ? 'camp' : 'no camp yet'} · trees listed ${c('trees')} · felled ${c('felled')} · logs at the camp ${c('logCamp')}, carts ${c('logCart')}, stores ${c('logStores')} · regrown ${c('regrown')}`,
       `produce ${c('produce')} · building sites ${c('sites')} · build work ${c('buildWork')}`,
     ].join('\n');
+  }
+
+  /** (api/contracts/routes.ts) a town's routes for systems that ride them; null when it has no living town */
+  routeRead(id: string): CityRouteRead | null {
+    const l = this.live.get(id);
+    return l ? { buffer: l.life.routes } : null;
   }
 
   /** (scripts, the perf overlay) the living town's passes' smoothed GPU ms (the profiler's: with ?perf=1) */

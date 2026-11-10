@@ -9,7 +9,7 @@
 //
 // Bindings (each kernel's layout lists the ones it uses — at most 8 storage buffers a kernel):
 //   0 P (uniform)   1 ROADS  2 H  3 REC  4 CNT  5 POP  6 ART  15 M (citygen's, read)   7 PROG (citygen's progress, read)
-//   8 WALK  9 FIELD  10 LT (state, atomic)  11 PTS  12 RID  13 VOX  14 IND (indirect args)  16 VARGS (draw args)
+//   8 WALK  9 FIELD  10 LT (state, atomic)  11 RB (the route buffer: routeread.wgsl)  12 RID  13 VOX  14 IND (indirect args)  16 VARGS (draw args)
 
 struct P {
   /** w, h (the box), riders, frame */
@@ -34,7 +34,8 @@ struct P {
   pl: vec4<i32>,
   /** z: world → window (add), unused, lateral spread (m), (tests only) a rider forced overridden: its index + 1 */
   pz: vec4<f32>,
-  /** (season life) the wagons' and the ships' ends (after the builders'), 0, 0 */
+  /** (season life) the wagons' and the ships' ends (after the builders'); the town's clock and a wall piece's span of
+   *  it to rise (f32 bits, s: the wall's routes) */
   x: vec4<u32>,
 };
 @group(0) @binding(0) var<uniform> u: P;
@@ -45,6 +46,8 @@ const F_FOREST: u32 = 4u;
 const F_REPLANT: u32 = 8u;
 /** ?livingdebug=1: the graph drawn over the town (figures' pass) */
 const F_DEBUG: u32 = 16u;
+/** (the living bench, ?livingbench=1) the relax sweeps dispatched every frame even when settled: the graph forced awake */
+const F_AWAKE: u32 = 32u;
 
 const ROW_H: f32 = 0.8660254;
 const NONE: u32 = 0xffffffffu;
@@ -75,6 +78,9 @@ const W_CLAIM: u32 = 0x10000u;
 const W_PASS: u32 = 0x20000u;
 const W_BLOCK: u32 = 0x40000u;
 const W_LOTGROUND: u32 = 0x80000u;
+/** bit 20: a walked column the works dug out more than a step (works.wgsl dig): blocked from the next build on, kept
+ *  across rebuilds (a pit across a road) */
+const W_DUG: u32 = 0x100000u;
 /** FIELD's planes past the hubs: the open ground's distance to the network, the cut-off components' labels */
 const P_OPEN: u32 = 8u;
 const P_LAB: u32 = 9u;
@@ -108,6 +114,9 @@ const L_TQ: u32 = 2u;
 const L_PTS: u32 = 3u;
 const L_ROUTES: u32 = 4u;
 const L_SWEEPS: u32 = 7u;
+/** the wake word: a GPU edit that changed what the graph is made from (works.wgsl: a walked column dug out, the
+ *  clearing's camp placed) sets it; `gate` turns it into a rebuild once the graph is settled. No CPU signal */
+const L_WAKE: u32 = 40u;
 /** the gate's snapshot: relax sweeps run this frame (the phase was 1 at its start), the trace ran (it was 2) */
 const L_RELAXING: u32 = 8u;
 const L_TRACING: u32 = 9u;
@@ -141,8 +150,7 @@ const ROUTES: u32 = 8192u;
 /** (works.wgsl) the felled columns waiting to be replanted: column + 1, the time felled (f32 bits) */
 const L_REGROW: u32 = 52520u;
 const REGROW_ROOM: u32 = 256u;
-// (L_REGROW + REGROW_ROOM × 2 = 53032 words: living.ts LT_WORDS)
-
+// (L_REGROW + REGROW_ROOM × 2 = 53032 words: the wall's block, L_WALL, after)
 /** counters (L_C + …): volumes in litres (1e-3 m³) */
 const C_DUG: u32 = 0u;
 const C_FACE: u32 = 1u;
@@ -221,7 +229,28 @@ const R_FAILED: u32 = 0xfffffffdu;
 @group(0) @binding(8) var<storage, read_write> WALK: array<atomic<u32>>;
 @group(0) @binding(9) var<storage, read_write> FIELD: array<u32>;
 @group(0) @binding(10) var<storage, read_write> LT: array<atomic<u32>>;
-@group(0) @binding(11) var<storage, read_write> PTS: array<vec4<f32>>;
+/** the route buffer (the contract src/shaders/routeread.wgsl reads: keep the two the same): a header (the halves'
+ *  generations, ids a half, where the points start, the grid's place, the points' room; where the heads start, the
+ *  wall's table — living.ts writes the fixed words), a head a route (first point, count, length, generation), then the
+ *  points (x, y, z, distance along, free width) */
+@group(0) @binding(11) var<storage, read_write> RB: array<u32>;
+/** header words: where the heads start; the wall-walk routes' count; the gate slots; the table's version (bumped each
+ *  time the table is written); where the wall-walk entries start (2 words each: id, segments); where the gate entries
+ *  start (2 words each: id, status | segment << 8) */
+const RB_HEADS: u32 = 8u;
+const RB_WW_COUNT: u32 = 9u;
+const RB_GATE_SLOTS: u32 = 10u;
+const RB_TABLE_VER: u32 = 11u;
+const RB_WW_AT: u32 = 12u;
+const RB_GATE_AT: u32 = 13u;
+fn ptsRoom() -> u32 { return RB[7u]; }
+/** a point's words (routeread.wgsl ROUTE_POINT_WORDS): x, y, z, distance along, free width */
+const PT_WORDS: u32 = 5u;
+fn pt(i: u32) -> vec4<f32> { let o = RB[3u] + i * PT_WORDS; return bitcast<vec4<f32>>(vec4<u32>(RB[o], RB[o + 1u], RB[o + 2u], RB[o + 3u])); }
+fn setPtW(i: u32, v: vec4<f32>, width: f32) { let o = RB[3u] + i * PT_WORDS; let b = bitcast<vec4<u32>>(v); RB[o] = b.x; RB[o + 1u] = b.y; RB[o + 2u] = b.z; RB[o + 3u] = b.w; RB[o + 4u] = bitcast<u32>(width); }
+/** a generated route's point (the quarry's ramp, a march): its width the ramp's own, 2 m */
+fn setPt(i: u32, v: vec4<f32>) { setPtW(i, v, 2.0); }
+fn setHead(rid: u32, first: u32, count: u32, len: f32, gen: u32) { let o = RB[RB_HEADS] + rid * 4u; RB[o] = first; RB[o + 1u] = count; RB[o + 2u] = bitcast<u32>(len); RB[o + 3u] = gen; }
 @group(0) @binding(12) var<storage, read_write> RID: array<vec4<f32>>;
 @group(0) @binding(13) var<storage, read_write> VOX: array<vec4<u32>>;
 @group(0) @binding(14) var<storage, read_write> IND: array<u32>;
@@ -232,6 +261,8 @@ const R_FAILED: u32 = 0xfffffffdu;
 /** the passages' mesh (citygen's vertex format: x, y, z, colour, normal, 0) and its draw args */
 @group(0) @binding(18) var<storage, read_write> PMESH: array<u32>;
 @group(0) @binding(19) var<storage, read_write> PARGS: array<atomic<u32>>;
+/** (season life) the town wall's words (citygen streets.wgsl WALL; postCheck) */
+@group(0) @binding(20) var<storage, read> WALLW: array<u32>;
 
 // ---- the lattice (common.wgsl's, in the box) ----
 fn W() -> i32 { return i32(u.n.x); }
@@ -318,17 +349,23 @@ fn doorCol(r: u32) -> u32 {
 }
 
 // ---- the gate: the build's and the relax's indirect args from the phase ----
-// IND: [0..3) build over columns, [3..6) build over lots, [6..9) build one thread, [9..12) relax sweeps,
+// IND: [0..3) build over columns, [3..6) build over lots, [6..9) build one thread, [9..12) relax (8 × 8 tiles),
 // [12..15) trace, [15..18) build over hash slots
 @compute @workgroup_size(1)
 fn gate() {
-  let ph = lt(L_PHASE);
+  var ph = lt(L_PHASE);
+  // (woken by a GPU edit while settled: the graph made again)
+  if (ph == 4u && lt(L_WAKE) != 0u) {
+    setLt(L_WAKE, 0u);
+    setLt(L_PHASE, 0u);
+    ph = 0u;
+  }
   let b = ph == 0u;
   let cols = (N() + 63u) / 64u;
   IND[0] = select(0u, cols, b); IND[1] = 1u; IND[2] = 1u;
   IND[3] = select(0u, (u.m.x + 63u) / 64u, b); IND[4] = 1u; IND[5] = 1u;
   IND[6] = select(0u, 1u, b); IND[7] = 1u; IND[8] = 1u;
-  IND[9] = select(0u, cols, ph == 1u || ph == 3u); IND[10] = 1u; IND[11] = 1u;
+  IND[9] = select(0u, (u.n.x + 7u) / 8u, ph == 1u || ph == 3u || (u.m.z & F_AWAKE) != 0u); IND[10] = (u.n.y + 7u) / 8u; IND[11] = 1u;
   // (the hash cleared only on a pool switch: poolSwitch writes these)
   IND[27] = 0u; IND[28] = 1u; IND[29] = 1u;
   IND[12] = select(0u, (min(lt(L_TQ), TQ_ROOM) + 63u) / 64u, ph == 4u); IND[13] = 1u; IND[14] = 1u;
@@ -348,6 +385,8 @@ fn gate() {
     for (var h = 0u; h < HUBS; h++) { setLt(L_PICK + h, NONE); setLt(L_SEEDS + h, 0u); }
     setLt(L_Q + Q_PICK, 0u);
   }
+  // (season life: the wall's routes and table, worked on only when the wall changed)
+  wallWatch(ph);
 }
 
 // ---- the build (phase 0): the walkable mask, the hubs' seeds ----
@@ -359,8 +398,8 @@ fn walkInit(@builtin(global_invocation_id) g: vec3<u32>) {
   let m = ROADS[i];
   var w = 0u;
   // (season life: a town wall's column — citygen streets.wgsl WALL_MARK — blocked: routes go out through the gates)
-  if (m == WALL_MARK) {
-    atomicStore(&WALK[i], W_BLOCK);
+  if (m == WALL_MARK || (atomicLoad(&WALK[i]) & W_DUG) != 0u) {
+    atomicStore(&WALK[i], W_BLOCK | (atomicLoad(&WALK[i]) & W_DUG));
     for (var h = 0u; h < PLANES; h++) { FIELD[h * N() + i] = NONE; }
     return;
   }
@@ -616,8 +655,9 @@ fn hubSeed1() {
       if (c != 0u) { FIELD[h * N() + c - 1u] = 0u; atomicAdd(&LT[L_SEEDS + h], 1u); }
     }
   }
-  // (the gates: where each arterial ends — ART word o+3, its length to the town's limit)
-  let na = min(ART[0] + ART[2], NART);
+  // (the gates: where each arterial ends — ART word o+3, its length to the town's limit; the atlas roads' only — season
+  // life: the town's own bridges after them (ART[2]) are inside it, no way out)
+  let na = min(ART[0], NART);
   for (var k = 0u; k < na; k++) {
     let o = 4u + k * AW;
     let n = min(ART[o], NAP);
@@ -643,6 +683,10 @@ fn hubSeed1() {
   }
   setLt(L_PHASE, 1u);
   setLt(L_CHANGED, 1u);
+  // (a rebuild — the raster drawn again: a district's roads, the wall rising, a column dug out — with routes already
+  // traced: every key traced again over the new graph once it settles (the pool's switch clears the hash), so no
+  // cached route runs through a wall or keeps a width from before it. Riders on the old half ride on till it's reused)
+  if (lt(L_ROUTES) > 0u) { setLt(L_SWITCH, 1u); }
 }
 
 /** B10 (a thread a hash slot): routes that failed traced again over the new graph */
@@ -669,11 +713,20 @@ fn stepCost(w: u32) -> u32 {
 }
 /** a sweep (a thread a column, every hub): each walkable column takes the least of its neighbours' + its step, in
  *  place (monotone: a value only falls to a path's true cost, so a neighbour's fresh or stale value are both safe) */
-@compute @workgroup_size(64)
+/** sweeps a relax dispatch makes in place over its 8 × 8 tile (a storage barrier between): fewer dispatches for the same
+ *  sweeps — settled, fewer empty ones (RT2-4) — and a value carried across a tile within one */
+const RELAX_INNER: u32 = 4u;
+@compute @workgroup_size(8, 8)
 fn relax(@builtin(global_invocation_id) g: vec3<u32>) {
-  let i = g.x;
-  if (i >= N()) { return; }
-  if (lt(L_GPH) == 3u) { relaxOpen(i); return; }
+  let inb = g.x < u.n.x && g.y < u.n.y;
+  let i = select(0u, g.y * u.n.x + g.x, inb);
+  let open = lt(L_GPH) == 3u;
+  for (var k = 0u; k < RELAX_INNER; k++) {
+    if (inb) { if (open) { relaxOpen(i); } else { relaxCol(i); } }
+    storageBarrier();
+  }
+}
+fn relaxCol(i: u32) {
   let cost = stepCost(walkClass(i));
   if (cost == NONE) { return; }
   let c = cxy(i);
@@ -867,12 +920,12 @@ fn routeFor(col: u32, hub: u32) -> u32 {
   bump(C_MISS, 1u);
   return R_FAILED;
 }
-fn rFirst(r: u32) -> u32 { return lt(L_RH + rId(r) * 4u); }
-fn rCount(r: u32) -> u32 { return lt(L_RH + rId(r) * 4u + 1u); }
-fn rLen(r: u32) -> f32 { return ltf(L_RH + rId(r) * 4u + 2u); }
+fn rFirst(r: u32) -> u32 { return RB[RB[RB_HEADS] + rId(r) * 4u]; }
+fn rCount(r: u32) -> u32 { return RB[RB[RB_HEADS] + rId(r) * 4u + 1u]; }
+fn rLen(r: u32) -> f32 { return bitcast<f32>(RB[RB[RB_HEADS] + rId(r) * 4u + 2u]); }
 /** a route's last point's column (where it ended: its hub's seed) */
 fn rEndCol(r: u32) -> u32 {
-  let p = PTS[rFirst(r) + rCount(r) - 1u];
+  let p = pt(rFirst(r) + rCount(r) - 1u);
   let c = cat(p.xy);
   return select(NONE, ix(c), inBox(c));
 }
@@ -886,12 +939,12 @@ fn pointZ(c: u32) -> f32 {
 /** a route's id (the low 16 bits: the high are its half's generation, in a rider's word) */
 fn rId(x: u32) -> u32 { return x & 0xffffu; }
 fn halfOf(id: u32) -> u32 { return select(0u, 1u, id >= ROUTES / 2u); }
-fn genOf(id: u32) -> u32 { return lt(L_GEN0 + halfOf(id)) & 0xffffu; }
+fn genOf(id: u32) -> u32 { return RB[halfOf(id)] & 0xffffu; }
 /** np points and a route id in the current half: (first point, route id), or NONE when the half is full; three
  *  quarters full asks for the switch */
 fn alloc(np: u32) -> vec2<u32> {
   let h = lt(L_HALF);
-  let room = arrayLength(&PTS) / 2u;
+  let room = ptsRoom() / 2u;
   let at = atomicAdd(&LT[L_PTS], np);
   let rid = atomicAdd(&LT[L_ROUTES], 1u);
   if (at + np > room * 3u / 4u || rid >= ROUTES * 3u / 8u) { setLt(L_SWITCH, 1u); }
@@ -906,7 +959,7 @@ fn poolSwitch() {
   if (lt(L_SWITCH) == 0u || lt(L_GPH) != 4u) { return; }
   let h = 1u - lt(L_HALF);
   setLt(L_HALF, h);
-  atomicAdd(&LT[L_GEN0 + h], 1u);
+  RB[h] = RB[h] + 1u;
   setLt(L_PTS, 0u);
   setLt(L_ROUTES, 0u);
   setLt(L_SWITCH, 0u);
@@ -924,18 +977,39 @@ fn hashClear(@builtin(global_invocation_id) g: vec3<u32>) {
   setLt(L_HASH + g.x * 2u + 1u, 0u);
 }
 
-/** (a thread a queued key, phase 2) traced down its hub's field: counted, room taken, written — a point every second
- *  step, the last always */
-@compute @workgroup_size(64)
-fn trace(@builtin(global_invocation_id) g: vec3<u32>) {
-  let q = g.x;
-  if (q >= min(lt(L_TQ), TQ_ROOM)) { return; }
-  let s = lt(L_TQL + q);
-  let key = lt(L_HASH + s * 2u);
-  let hub = key % HUBS;
-  let start = key / HUBS - 1u;
+/**
+ * The free width at a route's point (m): along each of the hex lattice's three axes, how far either way before a
+ * building's footprint, water, a drop or a climb of more than a step (1.1 m against the route's own height — a deck's
+ * points against the deck), or the box's edge; the least of the three spans (across the way, the narrowest), at most
+ * 12 m. Written when the route is traced (routeread.wgsl routeWidth).
+ */
+fn freeWidth(p: vec2<f32>, z: f32) -> f32 {
+  let axes = array<vec2<f32>, 3>(vec2<f32>(1.0, 0.0), vec2<f32>(0.5, 0.8660254), vec2<f32>(-0.5, 0.8660254));
+  var best = 12.0;
+  for (var a = 0u; a < 3u; a++) {
+    var span = 0.0;
+    for (var sgn = 0u; sgn < 2u; sgn++) {
+      let d = axes[a] * select(1.0, -1.0, sgn == 1u);
+      var k = 1u;
+      for (; k <= 12u; k++) {
+        let c = cat(p + d * 0.5 * f32(k));
+        if (!inBox(c)) { break; }
+        let i = ix(c);
+        if ((atomicLoad(&WALK[i]) & W_BLOCK) != 0u || WET[i] != 0u || abs(pointZ(i) - z) > 1.1) { break; }
+      }
+      span += 0.5 * f32(k - 1u);
+    }
+    best = min(best, span + 0.5);
+  }
+  return best;
+}
+
+/** a route traced down hub `hub`'s field from column `start` into the pool — counted, room taken, written: a point every
+ *  second step, the last always, each with its free width. Its id with its generation; R_FAILED when the field doesn't
+ *  reach there; R_PENDING when the pool's half is full (asked again after the switch) */
+fn traceDown(start: u32, hub: u32) -> u32 {
   let o = hub * N();
-  if (FIELD[o + start] == NONE) { setLt(L_HASH + s * 2u + 1u, R_FAILED); bump(C_MISS, 1u); return; }
+  if (start >= N() || FIELD[o + start] == NONE) { return R_FAILED; }
   // (count)
   var c = start;
   var n = 1u;
@@ -955,11 +1029,10 @@ fn trace(@builtin(global_invocation_id) g: vec3<u32>) {
     c = bi;
     n++;
   }
-  if (FIELD[o + c] != 0u) { setLt(L_HASH + s * 2u + 1u, R_FAILED); bump(C_MISS, 1u); return; }
+  if (FIELD[o + c] != 0u) { return R_FAILED; }
   let np = (n + 1u) / 2u + 1u;
   let al = alloc(np);
-  // (the half full: the key stays asked — traced again into the next half after the switch)
-  if (al.x == NONE) { setLt(L_HASH + s * 2u + 1u, R_PENDING); bump(C_POOLFULL, 1u); return; }
+  if (al.x == NONE) { bump(C_POOLFULL, 1u); return R_PENDING; }
   let first = al.x;
   let rid = al.y;
   // (write)
@@ -967,7 +1040,7 @@ fn trace(@builtin(global_invocation_id) g: vec3<u32>) {
   var w = 0u;
   var acc = 0.0;
   var prev = cpos(cxy(start));
-  PTS[first] = vec4<f32>(prev, pointZ(start), 0.0);
+  setPtW(first, vec4<f32>(prev, pointZ(start), 0.0), freeWidth(prev, pointZ(start)));
   w = 1u;
   for (var step = 1u; step < n; step++) {
     let cc = cxy(c);
@@ -984,15 +1057,24 @@ fn trace(@builtin(global_invocation_id) g: vec3<u32>) {
     if ((step & 1u) == 0u || step == n - 1u) {
       acc += distance(p, prev);
       prev = p;
-      if (w < np) { PTS[first + w] = vec4<f32>(p, pointZ(c), acc); w++; }
+      if (w < np) { setPtW(first + w, vec4<f32>(p, pointZ(c), acc), freeWidth(p, pointZ(c))); w++; }
     }
   }
-  setLt(L_RH + rid * 4u, first);
-  setLt(L_RH + rid * 4u + 1u, w);
-  setLtf(L_RH + rid * 4u + 2u, acc);
-  setLt(L_RH + rid * 4u + 3u, key);
-  setLt(L_HASH + s * 2u + 1u, rid);
+  setHead(rid, first, w, acc, genOf(rid));
   bump(C_TRACED, 1u);
+  return rid | (genOf(rid) << 16u);
+}
+/** (a thread a queued key, phase 4) traced down its hub's field (traceDown) */
+@compute @workgroup_size(64)
+fn trace(@builtin(global_invocation_id) g: vec3<u32>) {
+  let q = g.x;
+  if (q >= min(lt(L_TQ), TQ_ROOM)) { return; }
+  let s = lt(L_TQL + q);
+  let key = lt(L_HASH + s * 2u);
+  let r = traceDown(key / HUBS - 1u, key % HUBS);
+  // (the half full: the key stays asked — traced again into the next half after the switch)
+  if (r == R_FAILED) { bump(C_MISS, 1u); }
+  setLt(L_HASH + s * 2u + 1u, r);
 }
 /** after the trace: the queue emptied (only when it was traced: phase 2) */
 @compute @workgroup_size(1)
@@ -1030,7 +1112,7 @@ fn rampRoute() {
   var w = 0u;
   var acc = 0.0;
   var prev = cpos(cxy(rimc - 1u));
-  PTS[first] = vec4<f32>(prev, z0 + 0.05, 0.0);
+  setPt(first, vec4<f32>(prev, z0 + 0.05, 0.0));
   w = 1u;
   for (var k = 0u; k <= bench; k++) {
     // (bench k's ramp down side k mod 4, along the face's strip: from its corner k to corner k + 1, k benches in)
@@ -1039,13 +1121,13 @@ fn rampRoute() {
     let a = pitCorner(k, d);
     let zA = z0 - f32(k) * u.q.y;
     acc += distance(a, prev);
-    PTS[first + w] = vec4<f32>(a, zA + 0.05, acc);
+    setPt(first + w, vec4<f32>(a, zA + 0.05, acc));
     w++;
     prev = a;
     if (k == bench) { break; }
     let b = pitCorner(k + 1u, d);
     acc += distance(b, prev);
-    PTS[first + w] = vec4<f32>(b, zA - u.q.y + 0.05, acc);
+    setPt(first + w, vec4<f32>(b, zA - u.q.y + 0.05, acc));
     w++;
     prev = b;
   }
@@ -1056,15 +1138,12 @@ fn rampRoute() {
     let ww = max(u.q.y / tan(radians(clamp(u.q.w, 20.0, 80.0))), 2.0);
     let wk = vec2<f32>(o.x + f32(bench) * run + ww, o.y + u.q.x * 0.5);
     acc += distance(wk, prev);
-    PTS[first + w] = vec4<f32>(wk, z0 - f32(bench) * u.q.y + 0.05, acc);
+    setPt(first + w, vec4<f32>(wk, z0 - f32(bench) * u.q.y + 0.05, acc));
     w++;
     prev = wk;
   }
-  setLt(L_RH + rid * 4u, first);
-  setLt(L_RH + rid * 4u + 1u, w);
-  setLtf(L_RH + rid * 4u + 2u, acc);
-  setLt(L_RH + rid * 4u + 3u, 0u);
-  setLt(L_Q + Q_RAMP, rid + 1u);
+  setHead(rid, first, w, acc, genOf(rid));
+  setLt(L_Q + Q_RAMP, (rid | (genOf(rid) << 16u)) + 1u);
   setLt(L_Q + Q_RAMPV, bench + 1u);
   setLtf(L_Q + Q_ENDX, prev.x);
   setLtf(L_Q + Q_ENDY, prev.y);
@@ -1155,8 +1234,9 @@ fn startRoute(r: ptr<function, Rider>, col: u32, hub: u32, dir: u32) -> bool {
   return startRid(r, id, dir);
 }
 fn startRid(r: ptr<function, Rider>, id: u32, dir: u32) -> bool {
-  if (rCount(id) < 2u) { return false; }
-  (*r).route = rId(id) | (genOf(rId(id)) << 16u);
+  // (an id carries its generation: a held route whose half was reused since is stale — the caller asks again)
+  if ((id >> 16u) != genOf(rId(id)) || rCount(id) < 2u) { return false; }
+  (*r).route = id;
   (*r).leg = dir;
   if (dir == LEG_FWD) { (*r).s = 0.0; (*r).cursor = 0u; } else { (*r).s = rLen(id); (*r).cursor = rCount(id) - 2u; }
   return true;
@@ -1192,13 +1272,13 @@ fn advance(i: u32, r: ptr<function, Rider>, speed: f32) -> bool {
   (*r).s = clamp((*r).s + select(-1.0, 1.0, fwd) * speed * dt, 0.0, len);
   var k = min((*r).cursor, n - 2u);
   for (var g = 0u; g < 64u; g++) {
-    if (fwd && k + 2u < n && PTS[f + k + 1u].w < (*r).s) { k++; continue; }
-    if (!fwd && k > 0u && PTS[f + k].w > (*r).s) { k--; continue; }
+    if (fwd && k + 2u < n && pt(f + k + 1u).w < (*r).s) { k++; continue; }
+    if (!fwd && k > 0u && pt(f + k).w > (*r).s) { k--; continue; }
     break;
   }
   (*r).cursor = k;
-  let a = PTS[f + k];
-  let b = PTS[f + k + 1u];
+  let a = pt(f + k);
+  let b = pt(f + k + 1u);
   let t = clamp(((*r).s - a.w) / max(b.w - a.w, 1e-4), 0.0, 1.0);
   let dir = select(a.xy - b.xy, b.xy - a.xy, fwd);
   let L = max(length(dir), 1e-4);
@@ -1304,7 +1384,7 @@ fn riders(@builtin(global_invocation_id) g: vec3<u32>) {
         r.st = S_WORK; r.timer = u.r.w * (0.5 + rnd(i, u.n.w / 600u));
       } else if (r.st == S_WORK) {
         r.timer -= dt; bump(C_WORKING, 1u);
-        if (r.timer <= 0.0 && startRid(&r, r.route, LEG_BACK)) { r.st = S_BACK; }
+        if (r.timer <= 0.0 && (startRid(&r, r.route, LEG_BACK) || startRoute(&r, homeCol, hub2, LEG_BACK))) { r.st = S_BACK; }
       } else if (r.st == S_BACK) {
         r.st = S_REST; r.timer = u.r.w * (0.3 + rnd(i, 13u));
       }
@@ -1423,7 +1503,7 @@ fn riders(@builtin(global_invocation_id) g: vec3<u32>) {
           if (q < FELL_ROOM) { setLt(L_FELL + 1u + q, i + 1u); r.st = S_FELL; r.load = -1.0; }
         }
       } else if (r.st == S_FELL) {
-        if (r.load >= 0.0 && startRid(&r, r.route, LEG_FWD)) { r.st = S_YARD; }
+        if (r.load >= 0.0 && (startRid(&r, r.route, LEG_FWD) || startRoute(&r, r.aux - 1u, H_CAMP, LEG_FWD))) { r.st = S_YARD; }
       } else if (r.st == S_YARD) {
         bump(C_LOG_CAMP, u32(r.load)); r.load = 0.0; r.aux = 0u; r.st = S_DROP; r.timer = 0.0;
       } else if (r.st == S_LOAD) {
@@ -1455,7 +1535,7 @@ fn riders(@builtin(global_invocation_id) g: vec3<u32>) {
         // builder works while it's rising and leaves once it's built)
         let p = PROG[r.aux - 1u];
         if (p < 1.0) { bump(C_BUILDWORK, 1u); }
-        if ((r.timer <= 0.0 || p >= 1.0) && startRid(&r, r.route, LEG_FWD)) { r.st = S_BACK; }
+        if ((r.timer <= 0.0 || p >= 1.0) && (startRid(&r, r.route, LEG_FWD) || startRoute(&r, doorCol(r.aux - 1u), H_STORES, LEG_FWD))) { r.st = S_BACK; }
       } else if (r.st == S_BACK) {
         r.st = S_REST; r.timer = 2.0 + rnd(i, 40u) * 4.0;
       }
@@ -1470,7 +1550,7 @@ fn riders(@builtin(global_invocation_id) g: vec3<u32>) {
         r.st = S_DROP; r.timer = u.r.w * (0.6 + rnd(i, 41u) * 0.6); bump(C_PRODUCE, 1u);
       } else if (r.st == S_DROP) {
         r.timer -= dt;
-        if (r.timer <= 0.0 && startRid(&r, r.route, LEG_FWD)) { r.st = S_GO; r.load = 0.0; }
+        if (r.timer <= 0.0 && (startRid(&r, r.route, LEG_FWD) || startRoute(&r, homeCol, H_GATES, LEG_FWD))) { r.st = S_GO; r.load = 0.0; }
       } else if (r.st == S_GO) {
         r.st = S_REST; r.timer = 20.0 + rnd(i, u.n.w / 600u + 42u) * 40.0;
       }
@@ -1536,7 +1616,9 @@ fn vox(at: vec3<f32>, mat: u32, size: u32, yaw: f32) {
 @compute @workgroup_size(64)
 fn figures(@builtin(global_invocation_id) g: vec3<u32>) {
   let i = g.x;
-  if (i >= u.n.z || (u.m.z & F_ON) == 0u) { return; }
+  if ((u.m.z & F_ON) == 0u) { return; }
+  // (past the riders: the wall's unreached pieces marked, a thread a segment)
+  if (i >= u.n.z) { wallMark(i - u.n.z); return; }
   let r = loadRider(i);
   if (r.job == J_NONE || r.st == S_INIT || r.home == NONE) { return; }
   // (at rest at home: inside; a wagon or a ship away: off the map)
@@ -1591,7 +1673,9 @@ fn figures(@builtin(global_invocation_id) g: vec3<u32>) {
 @compute @workgroup_size(64)
 fn overlay(@builtin(global_invocation_id) g: vec3<u32>) {
   let i = g.x;
-  if (i >= N() || (u.m.z & F_DEBUG) == 0u) { return; }
+  if ((u.m.z & F_DEBUG) == 0u) { return; }
+  // (past the columns, a thread a route of the wall's table: its points, and its free width drawn either side)
+  if (i >= N()) { overlayRoute(i - N()); return; }
   let w = atomicLoad(&WALK[i]);
   let cls = w & 0xfu;
   if (cls == 0u) { return; }
@@ -1605,6 +1689,33 @@ fn overlay(@builtin(global_invocation_id) g: vec3<u32>) {
   else if (cls == W_DECK) { m = 20u; }
   else if (cls == W_PAD) { m = 15u; }
   vox(wp, m, 10u, 0.0);
+}
+
+/** (?livingdebug=1) route k of the wall's table (the wall-walks, then the gates' marches): a block on each point —
+ *  yellow flowers on a wall-walk, brick on a march — and a sand block either side at its free width (routeWidth),
+ *  across its way */
+fn overlayRoute(k: u32) {
+  var id = NONE;
+  if (k < WW_ROOM) { if (k < RB[RB_WW_COUNT]) { id = RB[RB[RB_WW_AT] + 2u * k]; } }
+  else if (k < WW_ROOM + GATE_SLOTS) { id = RB[RB[RB_GATE_AT] + 2u * (k - WW_ROOM)]; }
+  if (id == NONE) { return; }
+  let n = rCount(id);
+  let f = rFirst(id);
+  let off = vec3<f32>(f32(u.pl.x), f32(u.pl.y) * ROW_H, u.pz.x);
+  for (var j = 0u; j < n; j++) {
+    let p = pt(f + j);
+    let q = pt(f + min(j + 1u, n - 1u));
+    let o = pt(f + max(j, 1u) - 1u);
+    var d = q.xy - o.xy;
+    if (length(d) < 1e-3) { d = vec2<f32>(1.0, 0.0); }
+    let s = normalize(vec2<f32>(-d.y, d.x));
+    let w = bitcast<f32>(RB[RB[3u] + (f + j) * PT_WORDS + 4u]);
+    let at = vec3<f32>(p.xy, p.z + 0.35) + off;
+    if (at.x < 1.0 || at.y < 1.0 || at.x > f32(u.pl.z) - 1.0 || at.y > f32(u.pl.w) * ROW_H - 1.0) { continue; }
+    vox(at, select(11u, 15u, k < WW_ROOM), 22u, 0.0);
+    vox(at + vec3<f32>(s * 0.5 * w, 0.0), 3u, 14u, 0.0);
+    vox(at - vec3<f32>(s * 0.5 * w, 0.0), 3u, 14u, 0.0);
+  }
 }
 
 // ---- the passages drawn (LT-F8): dirt road in citygen's own mesh format and tone, made with the graph (phase 0) ----
@@ -1793,4 +1904,436 @@ fn shipVox(wp: vec3<f32>, h: f32, i: u32) {
   vox(wp + vec3<f32>(-fw * 2.6, 1.4), M_WOOD, 18u, h);
   for (var k = 0; k < 4; k++) { vox(wp + vec3<f32>(fw * 0.4, 1.4 + f32(k) * 1.3), M_WOOD, 7u, h); }
   vox(wp + vec3<f32>(fw * 0.6, 3.6), M_CANVAS, 44u, h + 1.5708);
+}
+
+/** (SL18) a route made along arterial k from `s0` (world units along it from its centre end) out to its last point in
+ *  the box — the atlas road's way out — its points at the ground's (or a deck's) height, each with its free width (a
+ *  gate narrower than the street out: the wall's columns are blocked in the walk mask). Its id with its generation, or
+ *  NONE */
+fn artRoute(k: u32, s0: f32) -> u32 {
+  if (k >= min(ART[0], NART)) { return NONE; }
+  let o = 4u + k * AW;
+  let n = min(ART[o], NAP);
+  if (n < 2u) { return NONE; }
+  // (the pieces from s0 on: the first point where s0 falls, then each vertex after, while in the box; a point every
+  // two metres or so between, so the width is known along it)
+  var acc = 0.0;
+  var j0 = 0u;
+  var start = vec2<f32>(bitcast<f32>(ART[o + AP]), bitcast<f32>(ART[o + AP + 1u]));
+  for (var j = 0u; j + 1u < n; j++) {
+    let a = vec2<f32>(bitcast<f32>(ART[o + AP + 2u * j]), bitcast<f32>(ART[o + AP + 2u * j + 1u]));
+    let b = vec2<f32>(bitcast<f32>(ART[o + AP + 2u * j + 2u]), bitcast<f32>(ART[o + AP + 2u * j + 3u]));
+    let L = distance(a, b);
+    if (acc + L >= s0) { start = mix(a, b, clamp((s0 - acc) / max(L, 1e-4), 0.0, 1.0)); j0 = j + 1u; break; }
+    acc += L;
+  }
+  var np = 1u;
+  var prev = start;
+  for (var j = j0; j < n; j++) {
+    let b = vec2<f32>(bitcast<f32>(ART[o + AP + 2u * j]), bitcast<f32>(ART[o + AP + 2u * j + 1u]));
+    if (!inBox(cat(b))) { break; }
+    np += max(u32(ceil(distance(prev, b) / ART_STEP)), 1u);
+    prev = b;
+  }
+  if (np < 2u) { return NONE; }
+  let al = alloc(np);
+  if (al.x == NONE) { return NONE; }
+  let first = al.x;
+  let rid = al.y;
+  prev = start;
+  var len = 0.0;
+  let c0 = ix(clamp(cat(start), vec2<i32>(0), vec2<i32>(W() - 1, Hh() - 1)));
+  setPtW(first, vec4<f32>(start, pointZ(c0), 0.0), freeWidth(start, pointZ(c0)));
+  var w = 1u;
+  for (var j = j0; j < n && w < np; j++) {
+    let b = vec2<f32>(bitcast<f32>(ART[o + AP + 2u * j]), bitcast<f32>(ART[o + AP + 2u * j + 1u]));
+    if (!inBox(cat(b))) { break; }
+    let m = max(u32(ceil(distance(prev, b) / ART_STEP)), 1u);
+    let a = prev;
+    for (var t = 1u; t <= m && w < np; t++) {
+      let p = mix(a, b, f32(t) / f32(m));
+      let c = ix(cat(p));
+      len += distance(prev, p);
+      setPtW(first + w, vec4<f32>(p, pointZ(c), len), freeWidth(p, pointZ(c)));
+      prev = p;
+      w++;
+    }
+  }
+  // (the route-read contract: its head with its half's generation; its id with the generation packed in)
+  setHead(rid, first, w, len, genOf(rid));
+  return rid | (genOf(rid) << 16u);
+}
+/** a march route's points: about this far apart (m) */
+const ART_STEP: f32 = 2.0;
+// ---- season life: the town wall's words ----
+// (citygen streets.wgsl WALL, its layout repeated: keep the same): NB segments; corner b at WB_V + 2b, its ground at
+// WB_Z + b; segment b's piece at WB_KIND + b (0 a wall, 1 a gate, 2 none), a gate's arterial + 1 at WB_ART + b and
+// where along it the ring crosses at WB_S + b; the stage at 4–6, the first gate at 2.
+const WNB: u32 = 72u;
+const WB_V2: u32 = 80u;
+const WB_KIND2: u32 = 368u;
+/** streets.wgsl WALL_BAND, TOWER_HW, WALL_HW, STAIR_HW */
+const W_BAND: f32 = 0.12;
+const W_TOWER_HW: f32 = 2.0;
+const W_WALL_HW: f32 = 1.0;
+const W_STAIR_HW: f32 = 0.55;
+
+// ---- the wall's routes (routeread.wgsl's wall table: Track B's `man` and `march`) ----
+// Nothing asked by the CPU: `gate` watches the wall's words each frame (one thread: is the ring made, which pieces
+// have risen — the CPU's town clock in the parameters — has the graph settled, have the pool's halves moved on) and,
+// when any of it changed, dispatches `wallWork` (one workgroup, indirect: 0 workgroups otherwise). wallWork traces each
+// run of wall's wall-walk route once its run has risen and each gate's march route, checks which pieces' walk the town
+// reaches, and writes the table. The ring's shape is copied into the state words once when it's made (wallWork has
+// no binding left for the wall's words).
+const WB_Z2: u32 = 296u;
+const WB_ART2: u32 = 440u;
+const WB_S2: u32 = 512u;
+/** streets.wgsl STAIR_STEPS, STAIR_RUN, WALL_H */
+const W_STAIR_STEPS: u32 = 6u;
+const W_STAIR_RUN: f32 = 1.1;
+const W_WALL_H: f32 = 4.5;
+/** the runs of wall (wall-walk routes) at most; the gate slots: the arterials' room (NART), then the filler gates' */
+const WW_ROOM: u32 = 36u;
+const GATE_FILL: u32 = 2u;
+const GATE_SLOTS: u32 = 10u;
+/** routeread.wgsl GATE_* */
+const G_OK: u32 = 0u;
+const G_NONE: u32 = 1u;
+const G_RISING: u32 = 2u;
+const G_WATER: u32 = 3u;
+const G_FAILED: u32 = 4u;
+/** the wall's state words (L_WALL + …): the ring's signature (0: the graph not settled — everything again once it is;
+ *  2: no wall, its empty table written), the risen pieces (3 words of bits), the reached pieces (3), the runs, unused,
+ *  made (1), each run (first segment | last << 8) and its route, each gate slot's segment + 1, where along its arterial
+ *  the ring crosses (f32) and its route, the ring's corners (x, y), their ground (world z), each segment's piece (0 a
+ *  wall, 1 a gate, 2 none) */
+const L_WALL: u32 = 53032u;
+const WL_FULL: u32 = 0u;
+const WL_RISEN: u32 = 2u;
+const WL_REACH: u32 = 5u;
+const WL_RUNS: u32 = 8u;
+const WL_MADE: u32 = 10u;
+const WL_RUN: u32 = 16u;
+const WL_RUNID: u32 = 52u;
+const WL_GSEG: u32 = 88u;
+const WL_GALONG: u32 = 98u;
+const WL_GID: u32 = 108u;
+const WL_V: u32 = 128u;
+const WL_Z: u32 = 272u;
+const WL_KIND: u32 = 344u;
+const WL_WORDS: u32 = 416u;
+
+/** a segment's rise (0..1): streets.wgsl wallRise at the town's clock (P.x.z; the build's span P.x.w) */
+fn wallRiseAt(seg: u32) -> f32 {
+  let span = max(bitcast<f32>(u.x.w), 1e-3);
+  let k = clamp((bitcast<f32>(u.x.z) - bitcast<f32>(WALLW[6])) / span, 0.0, 1.0);
+  let S = mix(bitcast<f32>(WALLW[4]), bitcast<f32>(WALLW[5]), k * k * (3.0 - 2.0 * k));
+  let w = f32((seg + WNB - WALLW[2]) % WNB) / f32(WNB);
+  return clamp((S - w * (1.0 - W_BAND)) / W_BAND, 0.0, 1.0);
+}
+/** (gate, once the ring is new or the halves moved on) the ring copied into the state words; its runs of wall round
+ *  the ring from the first gate; each gate's slot (its arterial's index; the filler gates after, in ring order); every
+ *  route traced again */
+fn wallCopy() {
+  for (var b = 0u; b < WNB; b++) {
+    setLt(L_WALL + WL_V + 2u * b, WALLW[WB_V2 + 2u * b]);
+    setLt(L_WALL + WL_V + 2u * b + 1u, WALLW[WB_V2 + 2u * b + 1u]);
+    setLt(L_WALL + WL_Z + b, WALLW[WB_Z2 + b]);
+    setLt(L_WALL + WL_KIND + b, WALLW[WB_KIND2 + b]);
+  }
+  let g0 = WALLW[2] % WNB;
+  var n = 0u;
+  var start = NONE;
+  for (var j = 1u; j <= WNB; j++) {
+    let b = (g0 + j) % WNB;
+    let wall = WALLW[WB_KIND2 + b] == 0u;
+    if (wall && start == NONE) { start = b; }
+    if (wall && WALLW[WB_KIND2 + (b + 1u) % WNB] != 0u) {
+      if (n < WW_ROOM) { setLt(L_WALL + WL_RUN + n, start | (b << 8u)); setLt(L_WALL + WL_RUNID + n, NONE); n++; }
+      start = NONE;
+    }
+  }
+  setLt(L_WALL + WL_RUNS, n);
+  for (var k = 0u; k < GATE_SLOTS; k++) { setLt(L_WALL + WL_GSEG + k, 0u); setLt(L_WALL + WL_GID + k, NONE); }
+  var fill = 0u;
+  for (var j = 0u; j < WNB; j++) {
+    let b = (g0 + j) % WNB;
+    if (WALLW[WB_KIND2 + b] != 1u) { continue; }
+    let art = WALLW[WB_ART2 + b];
+    let along = WALLW[WB_S2 + b];
+    if (art > 0u && art - 1u < NART) {
+      // (an arterial crossing the ring twice: its outer crossing)
+      let k = art - 1u;
+      if (lt(L_WALL + WL_GSEG + k) == 0u || bitcast<f32>(along) > ltf(L_WALL + WL_GALONG + k)) {
+        setLt(L_WALL + WL_GSEG + k, b + 1u);
+        setLt(L_WALL + WL_GALONG + k, along);
+      }
+    } else if (fill < GATE_FILL) {
+      setLt(L_WALL + WL_GSEG + NART + fill, b + 1u);
+      fill++;
+    }
+  }
+  setLt(L_WALL + WL_MADE, 1u);
+}
+/** (gate, a thread, every frame) the wall's work dispatched (IND 30) when the ring is new, a piece has risen, the
+ *  graph has settled again or the pool's halves moved on; else 0 workgroups */
+fn wallWatch(ph: u32) {
+  IND[30] = 0u; IND[31] = 1u; IND[32] = 1u;
+  if (WALLW[0] != 1u) {
+    // (no wall: its empty table written once)
+    if (lt(L_WALL + WL_FULL) != 2u) { setLt(L_WALL + WL_FULL, 2u); IND[30] = 1u; }
+    return;
+  }
+  // (the graph not settled: the table kept as it is; everything again once it settles)
+  if (ph != 4u) { setLt(L_WALL + WL_FULL, 0u); return; }
+  var hs = hash(WALLW[1] ^ (WALLW[2] << 8u)) ^ hash(RB[0] * 65599u + RB[1]);
+  for (var b = 0u; b < WNB; b++) { hs = hash(hs ^ WALLW[WB_KIND2 + b] ^ WALLW[WB_V2 + 2u * b]); }
+  hs = hs | 1u;
+  var work = false;
+  if (hs != lt(L_WALL + WL_FULL)) { setLt(L_WALL + WL_FULL, hs); wallCopy(); work = true; }
+  var m = array<u32, 3>(0u, 0u, 0u);
+  for (var b = 0u; b < WNB; b++) { if (wallRiseAt(b) >= 1.0) { m[b / 32u] |= 1u << (b % 32u); } }
+  for (var j = 0u; j < 3u; j++) {
+    if (m[j] != lt(L_WALL + WL_RISEN + j)) { setLt(L_WALL + WL_RISEN + j, m[j]); work = true; }
+  }
+  if (work) { IND[30] = 1u; }
+}
+
+fn wlRisen(b: u32) -> bool { let s = b % WNB; return ((lt(L_WALL + WL_RISEN + s / 32u) >> (s % 32u)) & 1u) == 1u; }
+fn wlReached(b: u32) -> bool { let s = b % WNB; return ((lt(L_WALL + WL_REACH + s / 32u) >> (s % 32u)) & 1u) == 1u; }
+fn wlKind(b: u32) -> u32 { return lt(L_WALL + WL_KIND + b % WNB); }
+fn wlCorner(b: u32) -> vec2<f32> { let o = L_WALL + WL_V + 2u * (b % WNB); return vec2<f32>(ltf(o), ltf(o + 1u)); }
+/** the wall's top at corner b (world z: wbox's foot, its ground less 0.4, plus the wall's height) */
+fn wlTop(b: u32) -> f32 { return ltf(L_WALL + WL_Z + b % WNB) - 0.4 + W_WALL_H; }
+fn groundAt(p: vec2<f32>) -> f32 { return HT[ix(clamp(cat(p), vec2<i32>(0), vec2<i32>(W() - 1, Hh() - 1)))]; }
+/** a stair at end e of piece b (streets.wgsl stairStep): its corner, its way up (along the piece, away from the gap)
+ *  and its side (toward the town) */
+struct Stair { c: vec2<f32>, d: vec2<f32>, n: vec2<f32> }
+fn stairOf(b: u32, e: u32) -> Stair {
+  let p = wlCorner(b);
+  let q = wlCorner(b + 1u);
+  let c = select(q, p, e == 1u);
+  let o = select(p, q, e == 1u);
+  let d = normalize(o - c);
+  var n = vec2<f32>(-d.y, d.x);
+  if (dot(n, u.t.zw - c) < 0.0) { n = -n; }
+  return Stair(c, d, n);
+}
+/** the run's wall top s metres along it from piece a's first corner (corners a … a + L) */
+fn runAt(a: u32, L: u32, s: f32) -> vec3<f32> {
+  var acc = 0.0;
+  for (var j = 0u; j < L; j++) {
+    let p = wlCorner(a + j);
+    let q = wlCorner(a + j + 1u);
+    let l = distance(p, q);
+    if (acc + l >= s || j + 1u == L) {
+      let t = clamp((s - acc) / max(l, 1e-4), 0.0, 1.0);
+      return vec3<f32>(mix(p, q, t), mix(wlTop(a + j), wlTop(a + j + 1u), t));
+    }
+    acc += l;
+  }
+  return vec3<f32>(wlCorner(a), wlTop(a));
+}
+struct WalkW { at: u32, n: u32, room: u32, prev: vec3<f32>, len: f32 }
+fn wwPut(s: ptr<function, WalkW>, p: vec3<f32>, width: f32) {
+  if ((*s).n >= (*s).room) { return; }
+  if ((*s).n > 0u) { (*s).len += distance(p, (*s).prev); }
+  setPtW((*s).at + (*s).n, vec4<f32>(p, (*s).len), width);
+  (*s).prev = p;
+  (*s).n += 1u;
+}
+/** a stair's points: its foot on the ground, then each step's top (up: from the foot; down: to it) */
+fn wwStair(s: ptr<function, WalkW>, st: Stair, up: bool) {
+  let side = st.n * (W_WALL_HW + W_STAIR_HW);
+  let foot = st.c + st.d * (W_TOWER_HW + 0.6 - 0.8) + side;
+  if (up) { wwPut(s, vec3<f32>(foot, groundAt(foot)), 2.0 * W_STAIR_HW); }
+  for (var j = 0u; j < W_STAIR_STEPS; j++) {
+    let k = select(W_STAIR_STEPS - 1u - j, j, up);
+    let a = st.c + st.d * (W_TOWER_HW + 0.6 + f32(k) * W_STAIR_RUN) + side;
+    let z = groundAt(a) - 0.4 + W_WALL_H * f32(k + 1u) / f32(W_STAIR_STEPS + 1u);
+    wwPut(s, vec3<f32>(a + st.d * (0.5 * W_STAIR_RUN), z), 2.0 * W_STAIR_HW);
+  }
+  if (!up) { wwPut(s, vec3<f32>(foot, groundAt(foot)), 2.0 * W_STAIR_HW); }
+}
+/** run r's wall-walk route: up the stair at its start (piece a's near end), along the wall's top (its corners), down
+ *  the stair at its end (piece b's far end). Its id with its generation, or NONE (the pool's half full) */
+fn wallWalkTrace(r: u32) -> u32 {
+  let w = lt(L_WALL + WL_RUN + r);
+  let a = w & 0xffu;
+  let b = (w >> 8u) & 0xffu;
+  let L = (b + WNB - a) % WNB + 1u;
+  var total = 0.0;
+  for (var j = 0u; j < L; j++) { total += distance(wlCorner(a + j), wlCorner(a + j + 1u)); }
+  let np = L + 2u * W_STAIR_STEPS + 4u;
+  let al = alloc(np);
+  if (al.x == NONE) { return NONE; }
+  var s = WalkW(al.x, 0u, np, vec3<f32>(0.0), 0.0);
+  // (where a stair meets the walk: beside its top step's far end, on the wall's line from its corner. A run shorter
+  // than its two stairs — citygen's stairs are a fixed 9.2 m from the gap's corner, so they'd overlap — gets its first
+  // stair only: up it and onto the walk, a dead end)
+  let reach = W_TOWER_HW + 0.6 + f32(W_STAIR_STEPS) * W_STAIR_RUN;
+  let sa = stairOf(a, 1u);
+  let sb = stairOf(b, 0u);
+  wwStair(&s, sa, true);
+  wwPut(&s, vec3<f32>(sa.c + sa.d * reach, runAt(a, L, min(reach, total)).z), 2.0 * W_WALL_HW);
+  if (total >= 2.0 * reach) {
+    var acc = 0.0;
+    for (var j = 0u; j + 1u < L; j++) {
+      acc += distance(wlCorner(a + j), wlCorner(a + j + 1u));
+      if (acc > reach && acc < total - reach) { wwPut(&s, vec3<f32>(wlCorner(a + j + 1u), wlTop(a + j + 1u)), 2.0 * W_WALL_HW); }
+    }
+    wwPut(&s, vec3<f32>(sb.c + sb.d * reach, runAt(a, L, total - reach).z), 2.0 * W_WALL_HW);
+    wwStair(&s, sb, false);
+  }
+  setHead(al.y, al.x, s.n, s.len, genOf(al.y));
+  return al.y | (genOf(al.y) << 16u);
+}
+/** gate slot k's march route: along its arterial from where the ring crosses it out to the box's edge; a filler gate's
+ *  from its middle down the GATES field (the nearest arterial's end). Its id with its generation, or NONE */
+fn gateTrace(k: u32) -> u32 {
+  let s1 = lt(L_WALL + WL_GSEG + k);
+  if (s1 == 0u) { return NONE; }
+  if (k < NART) { return artRoute(k, ltf(L_WALL + WL_GALONG + k)); }
+  let mid = 0.5 * (wlCorner(s1 - 1u) + wlCorner(s1));
+  let c = snapWalk(cat(mid));
+  if (c == NONE) { return NONE; }
+  let r = traceDown(c, H_GATES);
+  return select(r, NONE, r == R_FAILED || r == R_PENDING);
+}
+/** a stair's foot reached from the town: a column of the graph joined to the stores within FOOT_R, over open ground —
+ *  rays from the foot in 16 directions, each stopped by water, a wall or a standing building */
+const FOOT_R: i32 = 14;
+fn footReached(at: vec2<f32>) -> bool {
+  for (var a = 0u; a < 16u; a++) {
+    let dir = vec2<f32>(cos(f32(a) * 0.3926991), sin(f32(a) * 0.3926991));
+    for (var r = 0; r <= FOOT_R; r++) {
+      let c = cat(at + dir * f32(r));
+      if (!inBox(c)) { break; }
+      let i = ix(c);
+      if (walkClass(i) != 0u && FIELD[H_STORES * N() + i] != NONE) { return true; }
+      if (WET[i] != 0u || (atomicLoad(&WALK[i]) & W_BLOCK) != 0u) { break; }
+    }
+  }
+  return false;
+}
+var<workgroup> wpUp: array<u32, 72>;
+var<workgroup> wpFoot: array<u32, 72>;
+var<workgroup> wpFull: u32;
+/**
+ * (one workgroup, when gate's watch asks) the wall's work: which pieces' walk the town reaches (SL19: a piece risen in
+ * a run of risen pieces with a stair whose foot is on the graph joined to the stores); each risen run's wall-walk route
+ * and each gate's march route traced if it hasn't one; then the table written (routeread.wgsl's wall table).
+ */
+@compute @workgroup_size(128)
+fn wallWork(@builtin(local_invocation_index) li: u32) {
+  if (li == 0u) { wpFull = lt(L_WALL + WL_FULL); }
+  let full = workgroupUniformLoad(&wpFull);
+  if (full == 2u) {
+    // (no wall: the table empty)
+    if (li == 0u) {
+      setLt(L_WALL + WL_MADE, 0u);
+      for (var j = 0u; j < 3u; j++) { setLt(L_WALL + WL_RISEN + j, 0u); setLt(L_WALL + WL_REACH + j, 0u); }
+      RB[RB_WW_COUNT] = 0u;
+      for (var k = 0u; k < GATE_SLOTS; k++) { RB[RB[RB_GATE_AT] + 2u * k] = NONE; RB[RB[RB_GATE_AT] + 2u * k + 1u] = G_NONE; }
+      RB[RB_TABLE_VER] = RB[RB_TABLE_VER] + 1u;
+    }
+    return;
+  }
+  // (reach: each piece's stairs' feet)
+  if (li < WNB) {
+    let up = wlRisen(li) && wlKind(li) == 0u;
+    wpUp[li] = select(0u, 1u, up);
+    var foot = 0u;
+    for (var e = 0u; e < 2u; e++) {
+      let nb = select(li + 1u, li + WNB - 1u, e == 1u);
+      if (!up || wlKind(nb) == 0u) { continue; }
+      let st = stairOf(li, e);
+      if (footReached(st.c + st.d * (W_TOWER_HW + 0.6 - 0.8) + st.n * (W_WALL_HW + W_STAIR_HW + 0.8))) { foot = 1u; }
+    }
+    wpFoot[li] = foot;
+  }
+  if (li < 3u) { setLt(L_WALL + WL_REACH + li, 0u); }
+  workgroupBarrier();
+  storageBarrier();
+  // (along the ring both ways while the walk runs on: reached if any piece of the run has a reached stair)
+  let me = min(li, WNB - 1u);
+  var ok = li < WNB && wpUp[me] == 1u && wpFoot[me] == 1u;
+  if (li < WNB && wpUp[me] == 1u) {
+    for (var k = 1u; k < WNB && !ok; k++) {
+      let b = (me + k) % WNB;
+      if (wpUp[b] == 0u) { break; }
+      if (wpFoot[b] == 1u) { ok = true; }
+    }
+    for (var k = 1u; k < WNB && !ok; k++) {
+      let b = (me + WNB - k) % WNB;
+      if (wpUp[b] == 0u) { break; }
+      if (wpFoot[b] == 1u) { ok = true; }
+    }
+  }
+  if (ok) { atomicOr(&LT[L_WALL + WL_REACH + li / 32u], 1u << (li % 32u)); }
+  // (the routes: a thread a run, a thread a gate slot — each traced once, when it has none)
+  let runs = lt(L_WALL + WL_RUNS);
+  if (li < runs && lt(L_WALL + WL_RUNID + li) == NONE) {
+    let w = lt(L_WALL + WL_RUN + li);
+    var risen = true;
+    for (var b = w & 0xffu; ; b = (b + 1u) % WNB) {
+      if (!wlRisen(b)) { risen = false; }
+      if (b == ((w >> 8u) & 0xffu)) { break; }
+    }
+    if (risen) { setLt(L_WALL + WL_RUNID + li, wallWalkTrace(li)); }
+  }
+  if (li >= 64u && li < 64u + GATE_SLOTS) {
+    if (lt(L_WALL + WL_GID + li - 64u) == NONE) { setLt(L_WALL + WL_GID + li - 64u, gateTrace(li - 64u)); }
+  }
+  workgroupBarrier();
+  storageBarrier();
+  if (li != 0u) { return; }
+  // (the table: routeread.wgsl's wall-walk and gate entries)
+  let wwAt = RB[RB_WW_AT];
+  RB[RB_WW_COUNT] = runs;
+  for (var r = 0u; r < runs; r++) {
+    let w = lt(L_WALL + WL_RUN + r);
+    var risen = true;
+    var reached = false;
+    for (var b = w & 0xffu; ; b = (b + 1u) % WNB) {
+      if (!wlRisen(b)) { risen = false; }
+      if (wlReached(b)) { reached = true; }
+      if (b == ((w >> 8u) & 0xffu)) { break; }
+    }
+    let id = lt(L_WALL + WL_RUNID + r);
+    RB[wwAt + 2u * r] = select(NONE, id, risen);
+    RB[wwAt + 2u * r + 1u] = (w & 0xffffu) | (select(0u, 1u, reached) << 16u) | (select(0u, 1u, risen) << 17u);
+  }
+  let gAt = RB[RB_GATE_AT];
+  for (var k = 0u; k < GATE_SLOTS; k++) {
+    let s1 = lt(L_WALL + WL_GSEG + k);
+    let id = lt(L_WALL + WL_GID + k);
+    var st = G_OK;
+    var seg = 0u;
+    if (s1 == 0u) { st = G_NONE; } else {
+      seg = s1 - 1u;
+      let mid = 0.5 * (wlCorner(seg) + wlCorner(seg + 1u));
+      let c = ix(clamp(cat(mid), vec2<i32>(0), vec2<i32>(W() - 1, Hh() - 1)));
+      if (!wlRisen(seg)) { st = G_RISING; }
+      else if (WET[c] != 0u && (ROADS[c] & DECK_BIT) == 0u) { st = G_WATER; }
+      else if (id == NONE) { st = G_FAILED; }
+    }
+    RB[gAt + 2u * k] = select(NONE, id, st == G_OK);
+    RB[gAt + 2u * k + 1u] = st | (seg << 8u);
+  }
+  RB[RB_TABLE_VER] = RB[RB_TABLE_VER] + 1u;
+}
+/** (figures: a thread past the riders, a segment) a risen piece whose walk the town doesn't reach marked red along its
+ *  top — the reach check's verdict in the world (lava voxels, as the debug overlay marks cut-off columns) */
+fn wallMark(b: u32) {
+  if (b >= WNB || lt(L_WALL + WL_MADE) != 1u || wlKind(b) != 0u || !wlRisen(b) || wlReached(b)) { return; }
+  let p = wlCorner(b);
+  let q = wlCorner(b + 1u);
+  let n = max(u32(ceil(distance(p, q) / 1.5)), 1u);
+  for (var k = 0u; k < n; k++) {
+    let t = (f32(k) + 0.5) / f32(n);
+    let wp = vec3<f32>(mix(p, q, t) + vec2<f32>(f32(u.pl.x), f32(u.pl.y) * ROW_H), mix(wlTop(b), wlTop(b + 1u), t) + u.pz.x + 0.45);
+    if (wp.x < 1.0 || wp.y < 1.0 || wp.x > f32(u.pl.z) - 1.0 || wp.y > f32(u.pl.w) * ROW_H - 1.0) { continue; }
+    vox(wp, 24u, 9u, 0.0);
+  }
 }

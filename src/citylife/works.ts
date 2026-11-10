@@ -27,7 +27,7 @@ type K =
 const SPECS: Record<K, BindSpec> = {
   worksInit: { 0: 'uniform', 40: 'rw' },
   quarryStep: { 0: 'uniform', 40: 'rw', 43: 'uniform' },
-  dig: { 0: 'uniform', 1: 'read', 2: 'uniform', 40: 'rw', 43: 'uniform', 44: 'rw', 45: 'rw', 46: 'rw', 47: 'rw' },
+  dig: { 0: 'uniform', 1: 'read', 2: 'uniform', 40: 'rw', 41: 'rw', 43: 'uniform', 44: 'rw', 45: 'rw', 46: 'rw', 47: 'rw' },
   yardPick: { 0: 'uniform', 40: 'rw', 43: 'uniform', 49: 'read', 50: 'read' },
   yardFix: { 0: 'uniform', 40: 'rw', 43: 'uniform', 49: 'read' },
   pile: { 0: 'uniform', 1: 'read', 2: 'uniform', 40: 'rw', 43: 'uniform', 47: 'rw', 49: 'read', 55: 'rw' },

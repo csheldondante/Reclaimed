@@ -10,6 +10,7 @@ import { FieldTown, fieldTownBox, type FieldTownBox, type FieldTownIO, type Fiel
 import { OPPORTUNITY_PURPOSE, type CityDistricts, type OpportunityKind, type TownDistrict, type DistrictStage } from '../api/contracts/citygen';
 import { CLAIM_COUNT, DISTRICT_SPAN } from './gpu';
 import { TownLogs } from './townlog';
+import { wallGates, wallPosts, type WallGate } from './wallshape';
 
 /** a town's box this near the window (columns) is made; this far, let go */
 const PREFETCH = 128;
@@ -96,13 +97,16 @@ export class FieldTowns implements CityDistricts {
     const t = this.live.get(town);
     if (!t) return false;
     t.wallStart(this.townTime);
-    // (saving: the ring as made, read back once — a few words, an event)
-    const log = this.logs.of(t.site.at);
-    log.wall = { words: [], to: 0 };
-    void t.gen.readWall().then((w) => {
-      if (log.wall) log.wall.words = w;
-    });
+    // (saving: the ring's words read back at the next save point — saveWall — not now: nothing in play reads them)
+    this.logs.of(t.site.at).wall = { words: [], to: 0 };
     return true;
+  }
+  /** (saving, a save point) the wall's words read back into the town's edit log (a few hundred bytes), if it has one */
+  async saveWall(town: string): Promise<void> {
+    const t = this.live.get(town);
+    const log = t ? this.logs.of(t.site.at) : undefined;
+    if (!t || !log?.wall) return;
+    log.wall.words = await t.gen.readWall();
   }
   wallStage(town: string, from: number, to: number, atOnce = false): boolean {
     const t = this.live.get(town);
@@ -112,6 +116,28 @@ export class FieldTowns implements CityDistricts {
     const log = this.logs.of(t.site.at);
     if (log.wall) log.wall.to = to;
     return true;
+  }
+
+  /**
+   * (debug and tests only) The wall's posts in the window (x, y; z window): one on the wall-walk's middle of each piece
+   * fully risen. From the ring's words as last saved (saveWall) — empty before the first save point. Orders don't use
+   * it: Track B's `man` reads the wall-walk routes on the GPU (routeread.wgsl wallWalkRoute).
+   */
+  wallPosts(town: string): { seg: number; at: [number, number, number] }[] {
+    const t = this.live.get(town);
+    const wall = t ? this.logs.of(t.site.at).wall : undefined;
+    if (!t || !wall?.words.length) return [];
+    return wallPosts(wall.words, wall.to).map((p) => {
+      const [x, y] = t.inWindow([p.at[0], p.at[1]]);
+      return { seg: p.seg, at: [x, y, p.at[2] - t.oz()] };
+    });
+  }
+  /** (debug and tests only) the wall's gates in the town grid's frame, from the ring's words as last saved; orders use
+   *  routeread.wgsl gateRoute(k) on the GPU */
+  wallGates(town: string): WallGate[] {
+    const t = this.live.get(town);
+    const wall = t ? this.logs.of(t.site.at).wall : undefined;
+    return t && wall?.words.length ? wallGates(wall.words) : [];
   }
 
   /** (season loop) a point of a town's frame (a claim's centre) in the window now; null: the town isn't live */

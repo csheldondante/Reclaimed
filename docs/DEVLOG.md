@@ -21646,3 +21646,275 @@ springs. A per-step unit makes behaviour depend on tick rate."
   pipes out). PW6 closed.
 - Saved worlds and lab fixtures keep the sources they were saved with (a step's): 60× weaker under the new unit until
   remade.
+
+## 2026-11-10 — Track B's two conditions for U2's soldiers (trackA-seasonlife)
+
+- **A walkable wall-walk.** The wall pieces are 2 units thick and claimed solid to their height, so their tops are a
+  walk. Each piece before a gate now has a stair on the town's side: 6 steps of 1.1 units, rising 0.64 a step to the
+  walk (`wallMesh`, `wallClaim`; TG_WALL ids with a step bit, risen with their piece). The ring's words now also keep
+  each corner's ground and each segment's piece (wall, gate, or none over water) — WALL 296 → 440 words — so the CPU
+  has the posts without another read: `FieldTowns.wallPosts(town)` (citygen/wallshape.ts, pure) gives one post on the
+  walk's middle of each piece fully risen, in window coordinates. Muru after 3 seasons: 52 posts.
+- **Route ids for marches.** `LivingTowns.marchRoutes(town, FieldTowns.wallGates(town))`: from each gate (snapped to
+  the graph) down the GATES field, as a cached route of the living town's graph — asked through a new one-thread
+  kernel (`routeAsk`, LT's 16 words at L_ASK), traced if new, and read back ten words a poll (an event). The id holds
+  while its points' generation does. The GATES hub is now seeded at the atlas roads' ends only (the town's own bridges
+  are inside it). Muru: 4 of 5 gates give a route (the fifth is over the lake), lengths 102–132.
+- An arterial's columns are never walled (b2 the arterials' distance), so a tower or a stair at a gate's corner
+  doesn't close the gate.
+
+## 2026-11-10 — SL18 and SL19: each gate's march follows its own arterial; every post reached (trackA-seasonlife)
+
+- **SL18.** The ring keeps, for each gate segment, the arterial through it and where along it the ring crosses
+  (WALL 440 → 584 words; the atlas roads only — the town's own bridges are inside it, so Muru now has three gates).
+  `marchRoutes` asks for a route made along that arterial from the crossing out to its last point in the box — the
+  atlas road's way out — as a route of the living town's pool (`routeAsk` → `artRouteAnswer`: its points at the
+  ground's or a deck's height). Muru: gate 8 → the north edge (94 units, over the lake's causeway), gates 34 and 35 →
+  the east edge (125, 144). A gate with no arterial (one the rule of two adds) falls back to the GATES field.
+- **SL19.** Stairs at both ends of each run of wall — beside a gate, and where water or a cliff breaks the ring —
+  not only before gates. A GPU check (`postCheck`, one workgroup, three words back): a segment's walk is reached when
+  its run of risen wall has a stair whose foot reaches a column of the town's graph joined to the stores over open
+  ground (16 rays out to 14 columns, stopped by water, a wall or a building). `LivingTowns.unreachablePosts(town,
+  posts)` names the posts' segments that aren't. Muru after 3 seasons: 52 posts, 0 unreachable (before the stairs at
+  water gaps: 29, then 20 with roads-only feet).
+- `test/unit/wallshape.test.ts`: posts on risen pieces only (none on gates or water) at the walk's height, the rise
+  round the ring from the first gate, the gates with their arterials, nothing before the ring is made.
+- Shot: `scratchpad/opps/gate-stairs.png` (play zoom, 60°: the east gate, its towers, a stair up to the walk).
+## 2026-11-10 — the route-read contract (trackA-routeread)
+
+Track B's units ride the living town's routes for the soldiers' `march` (U2) and mustn't read routes.wgsl's internals.
+- **One storage binding** (Track B's unitStep and relax are at the 8-buffer limit): the route heads and the points
+  moved out of the state words and the old points buffer into one route buffer — an 8-word header, a head a route,
+  the points. `src/shaders/routeread.wgsl` reads it (`routeHead`, `routePoint`, `routeDist`, `routeAt`, `routeValid`);
+  `src/api/contracts/routes.ts` hands it over (`LivingTowns.routeRead`).
+- **Ids carry their generation everywhere** (the hash, the ramp, the riders): `startRid` refuses a stale held id and the
+  rider asks for its route again. Before, resuming a held route re-stamped it with the half's new generation, so a
+  rider could ride points overwritten by a newer route — the contract's test caught it (a rider 25 m off its route's
+  points on a 700-point pool).
+- Gates: the transfers list adds the wall's and the works' saved-state sites that came with fortress.
+
+## 2026-11-10 — fortress (the route-read contract) merged into trackA-seasonlife
+
+- origin/fortress 5192c434: one route buffer (header, heads, points) read through shaders/routeread.wgsl; every id
+  carries its generation (`id | gen << 16`). The season-life route kernels follow it: `routeAsk` reads points through
+  `pt()`, `artRouteAnswer` writes them with `setPt` and its head with `setHead` (its half's generation), and answers
+  its id packed `rid | gen << 16` — what `routeValid` takes; the cached routes' ids come packed from the hash already.
+- The transfer gate lists the two season-life reads (`askRoute`, `reachedWall`: event reads, a few words).
+- Checked: typecheck; the unit tier (107 files, 866 tests); `opps=1` at Muru — 3 gates, each march route along its
+  own arterial to the box's edge (94, 125, 144 units), 52 posts, none unreachable (`scratchpad/opps/postmerge2.png`).
+
+## 2026-11-10 — routes2 item 3: routeWidth (trackA-routes2)
+
+A route point is 5 words now: x, y, z, distance along, and its free width — along each of the lattice's three axes
+how far either way before a building's footprint, water, a drop or a climb over a step against the route's own height,
+or the box's edge; the least span, at most 12 m. Written when the route is traced; generated routes (the quarry's ramp,
+a march) carry their own 2 m. routeread.wgsl `routeWidth(id, i)`, `ROUTE_POINT_WORDS`; one binding still. The Dawn
+test checks every traced point's width is finite and in range and the open streets' mean is over 2 m. Not counted
+yet: the town wall (its geometry is in the wall's words, which the trace doesn't bind), so a gate isn't narrower
+than the street through it.
+
+## 2026-11-10 — RT2-1/2: the wall's routes and a GPU table in routeread's header (trackA-routes2)
+
+Track B's U2 orders (`man {town, side?}`, `march {town, gate: k, leave}`) carry intent by index only; the GPU finds the
+routes (UNIT_MINDS_U2 §9a). The user: "The CPU paths are supposed to be GPU resident … we should not need CPU readback."
+- **The header grew past word 8** (128 words): word 8 says where the heads start, so the layout can change behind
+  routeread.wgsl. Words 9–13: the wall-walk count, the gate slots (10: the 8 arterials, then 2 filler gates), the
+  table's version, where the wall-walk entries and the gate entries start. Accessors: `wallWalkCount`,
+  `wallWalkRoute(i)`, `wallWalkRun(i)` (its segments, reached, risen), `gateSlots`, `gateRoute(k)`, `gateStatus(k)`
+  (GATE_OK, NONE, RISING, WATER, FAILED), `gateSegment(k)`, `wallTableVersion`. An empty entry is ROUTE_NONE, which
+  `routeValid` refuses.
+- **Wall-walk routes.** One a run of wall between two gaps: from the stair's foot at its start, up its six steps, onto
+  the wall's top beside the top step, along the corners, onto the other stair and down to its foot; points written
+  through `alloc`/`setPtW` like every route, ids packed with their generation. Widths: the walk's 2 m, the stairs'
+  1.1 m. A run shorter than its two stairs (citygen's are a fixed 9.2 m from the gap's corner, so they'd overlap)
+  gets its first stair only (RT2-7).
+- **March routes by arterial index**, traced along the arterial from where the ring crosses it (the outer crossing if
+  it crosses twice) to the box's edge, a point every 2 m with its free width; a filler gate's down the GATES field
+  (`traceDown`, the trace kernel's body, now shared).
+- **No CPU signal.** `gate` (one thread, every frame, already there) watches the wall's words: the ring's signature
+  (its kinds, corners, first gate, the pool halves' generations), the pieces risen at the town's clock (the CPU's
+  FieldTowns.townTime in the parameters' spare words, as citygen's own `wallRise`), and whether the graph is settled.
+  When any of it changes it sets an indirect count for `wallWork` (one workgroup; 0 workgroups otherwise): the reach
+  check (SL19's postCheck, now here), each risen run's walk and each gate's march traced if they have none, the table
+  written. A pool switch moves the generations, so every wall route is traced again into the new half — the table's
+  ids never go stale. wallWork is at the 8-storage limit, so the ring is copied into the state words when it's new.
+- Test (Dawn, test/gpu/living.test.ts): a ring of radius 22 round the crossroads with four arterial gates and a stretch
+  of water, its columns, towers and stairs in the raster as citygen claims them. No ring → empty table; the ring made
+  at half its stage → 5 runs, only the risen ones with routes; the stage moved on (a buffer write, as `wallStage`) →
+  every run valid, the four gates OK, the other slots NONE. Every wall-walk route from the ground to 4.1 m over it and
+  back, no gap over 3.5 m; the east gate's march out to the edge. Muru in play (`?opps=1`, walls for three seasons):
+  3 runs for its 52 pieces, all reached; the east arterial's gate a march route; the north one GATE_WATER (its
+  causeway over the lake); table version 1 → 6 as the wall rose.
+
+## 2026-11-10 — U2 round 2: the hunt field seeded on the GPU, a front per field, measured (Track B, trackB-u2)
+
+Why: UNIT_MINDS_U2.md §5 names moving-seed fields as U2's riskiest part (seeds that move, appear and vanish every
+tick in a battle; FC4's count-up). Main approved building only that, measuring, and stopping.
+
+- **Built.** `Agents.gpuHunt(f, { bySource })`. Five kernels (units.wgsl `huntReset/Unmark/Set/Gone/Flip`) run once a
+  frame before the relaxation and scatter each hostile kind's target (unit word f.y) into `seedMask` (a bit per field
+  per surface). Bit 16 + f remembers last frame's seeds, so a seed that stays isn't marked again and one that goes is.
+  `relax` reads the bit. Actors' targets stay CPU seeds. `?huntgpu=1` turns it on in AgentUnits; strikes still go
+  through the CPU's 8 `AP.targets`. So with it on, raiders walk toward targets they can't swing at unless the target
+  is among those 8: fewer deaths (4–65 vs 57–93). It is a measuring toggle until DA-B32.
+- **FC10, a front per field.** A dirty word's low 16 bits are "changed for field f"; the high 16 are "carried for
+  field f". Peel, links, marks and a chunk coming into scope mark all fields. `frontBuild` stores each listed chunk's
+  field mask after the list (`frontList[FRONT_CAP + k]`), and the relax front skips the other fields. `?fieldfront=0`
+  turns this off. NFIELDS ≤ 16 is asserted.
+- **The seed-id fix (`?huntsrc=1`).** A second plane in seedMask holds, per surface, the seed surface its distance came
+  from. A neighbour whose seed's distance is no longer 0 is passed over, so a vanished seed's values go FAR at once and
+  refill from the seeds left.
+- **Bindings.** No row growth and no occ/shove merge: the seed kernels are their own pipelines (5 storage buffers); the
+  relax front reaches 8 with seedMask.
+
+**Correctness** (`test/gpu/huntseed.test.ts`: 128² flat, 60 prey, 40 hunters, 5 waves killing every current target,
+then the last prey; the field vs. a CPU BFS, worst gap ≤ 1):
+
+| Mode | Frames to match after each wave (0–5) | Last prey dies: frames to empty |
+|---|---|---|
+| CPU seeds (today) | 46, 46, 47, 49, 49, 51 | 3 |
+| GPU seeds | 45, 46, 45, 51, 47, 51 | never (> 240): FC4 count-up |
+| GPU seeds + seed-id | 45, 47, 47, 45, 46, 48 | 4 |
+
+**Cost** (scripts/lab/huntbench.mjs: `town` recipe, 412×915, q=low, 200 guards v 200 raiders, 20 s at 1x, ?agentprof=1;
+ms mean / p95 / max; two runs each):
+
+| Flags | relax | hunt kernels | notice | agents total | front a sweep | asked | carried | sweeps carrying |
+|---|---|---|---|---|---|---|---|---|
+| huntgpu=0, fieldfront=0 | 0.373/0.65/1.71; 0.339/0.61/1.15 | — | 0.64; 0.74 | 1.23; 1.30 | 32 | 90–91 | 58–59 | 98–99% |
+| huntgpu=0 | 0.303/0.55/4.65; 0.382/0.57/4.36; 0.292/0.48/0.77; 0.373/0.61/5.18 | — | 0.63–1.08 | 1.13–1.71 | 32 | 90–91 | 58–60 | 99% |
+| huntgpu=1 | 0.226/0.34/0.67; 0.308/0.47/0.87 | 0.022; 0.033 | 0.52; 0.74 | 0.94; 1.31 | 32 | 89–91 | 57–59 | 99% |
+| huntgpu=1, huntsrc=1 | 0.254/0.46/0.98; 0.307/0.52/3.73 | 0.026; 0.029 | 0.76; 1.07 | 1.23; 1.62 | 32 | 100–110 | 68–78 | 100% |
+
+What it says:
+- GPU seeding costs nothing measurable (0.02–0.03 ms of kernels; relax is no higher).
+- FC10 moves relax by less than the run-to-run spread here: every chunk is relaxed at the cap regardless.
+- The front is saturated in every mode, before and after this round. In a 400-unit fight about 90 chunks ask each
+  sweep and 32 are taken, so fields lag by FRONT_CAP whoever seeds them. The tiny-world test shows the same: every mode
+  takes ~45 frames a wave. That is FC4's "what is left", now the risk for 1,000 units.
+- notice (0.5–1.1 ms, spikes of 35–106 ms in four of the ten runs) is the largest agents stage.
+
+Gates: typecheck clean; GPU tier 196 passed, 11 expected fail (the 10 U2 skeletons + the no-fix count-up), 5 skipped; unit tier 858 passed, 3 expected fail. No shot (nothing drawn changed).
+
+## 2026-11-10 — U2 round 3 (FC11): why the agents' front is saturated in a fight; reaction latency measured (trackB-u2)
+
+Why: round 2 found the front at FRONT_CAP in every mode of a 200 v 200 fight. Main accepted the seed-id fix as the
+default and put FC11 before strikes: ~45 frames of field lag would break the user's "a few frames" reaction. This
+round measures before deciding; the recommendation is UNIT_MINDS_U2.md §5c.
+
+- **The seed-id fix is the only GPU path** (`?huntsrc` removed; `Agents.gpuHunt(f)`). The params gained a `u2`
+  vec4 at the end: the hunt field, and the fields the CPU's marks are for. AP.step.z/w are free again.
+- **Attribution (`?agentprof=1`).** frontBuild counts each asking chunk by field: changed round it, or carried only
+  (`frontDbg`, binding 54, read and cleared each logged tick). huntSet/huntGone count seeds new and gone. The tick log
+  gains `fieldAsk`, `fieldCarry`, `seedsNew/Gone`, `seedChanged`, `restarted`, `marksFor`.
+- **Toggles kept:** `?frontcap=N` (the WGSL constant replaced at pipeline creation; the front list sized for it);
+  `?seedcell=1` (a CPU seed that stays in its cell is no change, and markChunks marks only the fields whose seeds
+  changed: `u2.y`). **Removed after measuring:** `?direct=R` (hunters steering straight at a target within R). It
+  helped nobody, and it read another unit's row inside the step's dispatch (a race).
+- **Tests:** `test/gpu/huntreact.test.ts` (reaction latency, `SWEEPS=`/`FRONTCAP=` env to vary); huntseed.test.ts lost
+  its no-fix mode.
+
+Town recipe, 200 v 200, 412×915, q=low (2 sweeps a tick), 20 s at 1x, one run each. Chunk asks per tick by field,
+changed / carried:
+
+| Run | relax ms | asked/sweep | carried | foes | goal0 | goal1 | goal2 | hunt | each static field | hunters <10 cells from target |
+|---|---|---|---|---|---|---|---|---|---|---|
+| huntgpu=0 | 0.73/1.19 | 90.5 | 58.6 | 75/54 | 19/14 | 69/50 | 43/29 | 98/70 (CPU-seeded) | 15.6/12.2 | 348 of 3,788 |
+| huntgpu=1 | 0.46/0.65 | 94.4 | 62.4 | 80/67 | 13/12 | 34/37 | 80/69 | 19/16 | 12.6/12 | 116 of 3,947 |
+| huntgpu=1 (repeat) | 0.75/1.18 | 97.6 | 65.6 | 82/77 | 31/32 | 52/56 | 94/80 | 25/21 | 12.9/12.8 | 368 of 3,966 |
+| + frontcap=64 | 0.71/1.21 | 104.8 | 40.8 | 130/35 | 12/8 | 31/14 | 176/33 | 23/11 | 11.8/7.6 | 304 of 3,857 |
+| + frontcap=128 | 0.53/0.65 | 92.1 (all relaxed) | 0 | 149/0 | 150/0 | 38/0 | 40/0 | 50/0 | 11.1/0 | 335 of 3,727 |
+| + seedcell=1 | 0.44/0.53 | 105.3 | 73.3 | 93/93 | 101/96 | 28/40 | 104/97 | 13/18 | 0.1/8.2 | 205 of 3,985 |
+| + direct=10 | 0.41/0.49 | 98.6 | 66.6 | 77/76 | 14/14 | 29/22 | 99/82 | 23/20 | 14.3/13.7 | 314 of 4,000 |
+
+- foes' CPU seeds change on 1,063–1,189 ticks of 1,200; with seedcell, 116. Peel: 1–5 ticks in 1,200.
+- Run-to-run spread is large: in the two plain huntgpu=1 runs relax was 0.46 and 0.75 ms, and notice 0.70 and 1.57.
+- The repeat run held the round's notice spike: maxima of notice 122 ms, relax 40, step 33 and hunt 8.9 in one run.
+  That is a GPU stall, not notice's work; it was not chased.
+
+**Reaction latency** (test/gpu/huntreact.test.ts, 128² flat: frames from the target's death until the hunter's
+velocity has any part toward its new target; notice retargets in 1 frame; ~7–9 frames is the steering's easing floor):
+
+| Gap | 2 sweeps, cap 32 / 64 / 128 | 8 sweeps | 16 sweeps |
+|---|---|---|---|
+| 6 cells | 9–12 / 10–12 / 9–11 | — | — |
+| 40 cells | 12–27 / 13–27 / 11–27 | 10–12 | 9–10 |
+
+What it says:
+- The demand is the CPU's moving-seed fields (foes, the churning goals), plus every field being marked by every CPU
+  mark. The GPU-seeded hunt field, with up to 200 seeds, asks a quarter of what foes asks with 6.
+- Far reaction is set by propagation per sweep (about 1–2 cells) at the phone's 2 sweeps, not by the cap.
+- Recommended next (§5c):
+  - block relaxation in workgroup memory, so a change crosses a chunk per sweep;
+  - foes and goals GPU-seeded (HUNT_D, the pool);
+  - per-field marks by default;
+  - the cap sized after the phone bench.
+- The user's answers are folded into UNIT_MINDS_U2.md §9 (design only), the interface test `orderFailed` among them:
+  - every order argument from the CPU's own state, by index;
+  - the paged field atlas;
+  - manning walls as a wall-walk formation;
+  - formations on every march;
+  - a hunt and a threat field per side.
+
+Gates: typecheck clean; GPU tier 197 passed, 10 expected fail (the U2 skeletons; the orderFailed skeleton added after is an 11th, run on its own), 5 skipped; unit tier 858 passed, 3
+expected fail. No shot (nothing drawn changed).
+
+## 2026-11-10 — RT2-3: the order-facing readbacks removed (trackA-routes2)
+
+- Gone: `LivingTown.askRoute` (a GPU route ask polled 40 B at a time), the `routeAsk` kernel and its 16 state words,
+  `LivingTowns.marchRoutes` (ids handed to the CPU) and `unreachablePosts` (three words read back). Track B's orders
+  find their routes in the GPU's wall table (RT2-2); nothing about a route comes back to the CPU.
+- The reach verdict is shown, not read: each risen piece whose walk the town doesn't reach is marked along its top
+  with red (lava) voxels by the figures kernel's spare threads (a thread a segment past the riders: no new dispatch),
+  as the debug overlay marks cut-off columns. `debugWallReach` reads the bits for tests only.
+- The wall's ring is read back only at a save point (`FieldTowns.saveWall`, before the edit log is written at a
+  season's end), no longer when the wall starts. `wallPosts` / `wallGates` (CPU, from those saved words) stay as
+  debug and test helpers.
+- Transfers gate: `askRoute` struck; `readWall` now a save point's read.
+
+## 2026-11-10 — RT2-4: the settled graph with no CPU signal; fewer empty dispatches; the living bench (trackA-routes2)
+
+- **Woken on the GPU.** A wake word (LT 40): the works' dig sets it when it takes a walked column (a road, a deck, a
+  door, a track — not a pad) more than a step below where it was, and marks that column W_DUG, which the next build
+  keeps blocked (a pit across a road is routed round). `gate` turns the word into a rebuild once the graph is settled.
+  Fells don't wake it: the walk mask isn't made from trees, so a rebuild would make the same graph. The clearing's
+  camp already set the phase word itself. Player edits (edit.wgsl) don't reach it yet (RT2-9).
+- **Fewer empty dispatches.** The relax kernel makes four sweeps in place over an 8 × 8 tile, a storage barrier between
+  (monotone, so stale or fresh neighbours are both safe, as before): 9 relax dispatches a frame instead of 33 at the
+  default 32 sweeps. Settled, the graph pass encodes 31 indirect dispatches of 0 workgroups instead of 53 (and 5
+  one-thread ones). Unlike the one-dispatch loop tried before (settling 9× slower), it keeps every tile in parallel.
+- **Measured** (headless D3D11, Intel Xe-LPG, Muru, `?living=1`, the bench below; the profiler's smoothed pass ms):
+  | | before | tiles |
+  |---|---|---|
+  | the settled graph pass | 0.16–0.31 ms | 0.093 ms |
+  | forced awake (32 sweeps a frame) | 8.5 ms | 1.9 ms |
+  | settled after the town's made | 8.7 s | 7.5 s (34 relax frames) |
+  Misses 0, nothing cut off, 352 routes. The empty dispatches' toggle (encoded vs not): +0.24 / +0.58 ms of GPU span
+  over two runs — within the desktop's noise; the frame interval (vsync) unchanged. A CPU "settled" signal waits on
+  the phone's number.
+- **The living bench** (`?livingbench=1`, src/perf/livingbench.ts, the citygen/physics bench pattern: wake lock, a
+  result card, Download / Copy / Share, perf-reports/ on the dev server). Once settled, two toggle diffs in four
+  alternating 2 s windows: the graph pass encoded vs not (what the empty dispatches cost), and forced awake vs settled
+  (`LivingTown.debugAwake`: the sweeps every frame). Bench-only flags; never in play.
+
+## 2026-11-10 — RT2-5: width at gates (trackA-routes2)
+
+- The width pass already sees the wall where the walk mask was built after it: citygen's claim marks the wall's
+  columns (pieces, towers, stairs; never an arterial's) WALL_MARK in the road raster, the build blocks them (W_BLOCK)
+  and `freeWidth` stops at W_BLOCK. What it missed: routes traced *before* the wall rose. A rebuild kept every cached
+  route — its width, and its path, possibly through where the wall now stands. Now a build that finds routes in the
+  pool asks for the pool's switch: once the graph settles every key is traced again over it (riders on the old half
+  ride on until it's reused). March routes (RT2-2) carry their free width every 2 m too.
+- Test (Dawn): the wall's columns drawn into the raster after the first routes, the graph made again → the pool
+  switched, the riders' routes at the east gate 9.0 m wide before the wall and 7.2 m after; the gate's march 5.0 m at
+  the gate against 8.7 m in the street outside; the stairs 1.1 m.
+
+## 2026-11-10 — RT2-6: the wall's routes drawn (trackA-routes2)
+
+- `?livingdebug=1` draws the wall table's routes over the town (the overlay kernel's threads past the columns, a
+  thread a route): a block on each point (yellow flowers on a wall-walk, brick on a march) and a sand block either
+  side at its free width, so a route's width reads in the world.
+- Shots (Muru, walls for three seasons, play zoom 7, 60°, 412 × 915, `&seasoncam=0`): `wallwalk-overlay.png` (a run's
+  walk up its stair and along the top), `gate-widths.png` (the east gate's march: 5 m at the gate — its edge blocks
+  close in by the towers — 10–12 m in the street out), `unreached-red.png` (the red marks, with the reach bits
+  cleared by the shot's script to show them: in play every Muru piece is reached).

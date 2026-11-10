@@ -195,6 +195,9 @@ async function main() {
   if (params.get('townbench') === '1') void import('./perf/townbench').then((m) => m.townBench(params));
   // (citygen: ?citygenbench=1 — the town layout's phone bench, on the atlas with &citygen=fields: src/perf/citygenbench.ts)
   if (params.get('citygenbench') === '1') void import('./perf/citygenbench').then((m) => m.citygenBench(params));
+  // (living town, RT2-4: ?livingbench=1 — the settled graph's phone bench, its empty dispatches and its awake cost by
+  // toggling: src/perf/livingbench.ts)
+  if (params.get('livingbench') === '1') void import('./perf/livingbench').then((m) => m.livingBench(params));
   // (round 128p, DA-B22: ?speedbench=1 — the 16x toggle-diff phone bench, on the fortress: src/perf/speedbench.ts)
   if (params.get('speedbench') === '1') void import('./perf/speedbench').then((m) => m.speedBench(params));
   // (trackA-liquids, DA-P5: ?flowbench=1 — the flow model against the pipes, a phone bench on the flow lab: src/perf/flowbench.ts)
