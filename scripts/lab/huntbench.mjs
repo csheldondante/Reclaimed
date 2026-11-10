@@ -98,7 +98,7 @@ export default async function (lab, args) {
   );
   const hist = (v, edges) => Object.fromEntries(edges.map((e, i) => [`<${e}`, v.filter((x) => x < e && (i === 0 || x >= edges[i - 1])).length]).concat([[`>=${edges[edges.length - 1]}`, v.filter((x) => x >= edges[edges.length - 1]).length]]));
   const out = {
-    flags: Object.fromEntries(['huntgpu', 'frontcap', 'seedcell', 'fieldfront'].map((k) => [k, flags.get(k)])),
+    flags: Object.fromEntries(['huntgpu', 'frontcap', 'seedcell', 'fieldfront', 'blockrelax', 'relaxk'].map((k) => [k, flags.get(k)])),
     ticks: ticks.length,
     byField,
     seeds: { newPerTick: +(logged.reduce((s, t) => s + (t.seedsNew ?? 0), 0) / Math.max(1, logged.length)).toFixed(2), gonePerTick: +(logged.reduce((s, t) => s + (t.seedsGone ?? 0), 0) / Math.max(1, logged.length)).toFixed(2) },

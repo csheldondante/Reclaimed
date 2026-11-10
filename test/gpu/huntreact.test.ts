@@ -1,13 +1,17 @@
 // (U2 FC11, docs/design/UNIT_MINDS_U2.md §5b) Reaction latency, the acceptance number: frames from a target change to
 // the hunter turning toward its new target, by the GPU-seeded hunt field. (FC11 (a), steering straight at a target
 // within a radius, was measured and dropped: no faster near a target, where the field is fresh — DEVLOG, U2 §5b.)
-//   HUNT_LOG=<file> appends the numbers; SWEEPS=N relax sweeps a tick (default the low tier's 2). FRONTCAP=N runs it with ?frontcap=N (FC11 (b)): the page's flags are read as
-//   the agents module loads, so this file sets them first and imports the game's code after.
+//   HUNT_LOG=<file> appends the numbers; SWEEPS=N relax sweeps a tick (default the low tier's 2). FRONTCAP=N, RELAXK=N
+//   and BLOCKRELAX=0 run it with ?frontcap / ?relaxk / ?blockrelax (FC11 (b), FC12): the page's flags are read as the
+//   agents module loads, so this file sets them first and imports the game's code after.
 import { appendFileSync } from 'node:fs';
 import { afterAll, beforeAll, expect, test } from 'vitest';
 import { testGpu, type TestGpu } from './dawn';
 
-if (process.env.FRONTCAP) Object.defineProperty(globalThis, 'location', { value: new URL(`http://localhost/?frontcap=${process.env.FRONTCAP}`), configurable: true });
+// (the measurement toggles as the page's flags: FRONTCAP → ?frontcap, RELAXK → ?relaxk, BLOCKRELAX → ?blockrelax)
+const flags = new URLSearchParams();
+for (const [env, flag] of [['FRONTCAP', 'frontcap'], ['RELAXK', 'relaxk'], ['BLOCKRELAX', 'blockrelax']] as const) if (process.env[env]) flags.set(flag, process.env[env]!);
+if ([...flags].length) Object.defineProperty(globalThis, 'location', { value: new URL(`http://localhost/?${flags}`), configurable: true });
 const { MAT } = await import('../../src/world/materials');
 const { tinyMap } = await import('../support/tinymap');
 const { tinyWorld } = await import('./world');
@@ -100,15 +104,13 @@ async function reaction(gap: number, y: number) {
 test('reaction latency: frames from a target change to the hunter turning toward its new target, by the field', async () => {
   const out = [];
   for (const gap of [6, 40]) for (const y of [40, 60, 80]) out.push(await reaction(gap, y));
-  log(`reaction cap ${process.env.FRONTCAP ?? 32} sweeps ${process.env.SWEEPS ?? 2} ${JSON.stringify(out)}`);
+  log(`reaction cap ${process.env.FRONTCAP ?? 32} sweeps ${process.env.SWEEPS ?? 2} block ${process.env.BLOCKRELAX ?? 1} k ${process.env.RELAXK ?? 16} ${JSON.stringify(out)}`);
   for (const r of out) {
     expect(r.retarget, JSON.stringify(r)).toBeGreaterThan(0);
     expect(r.turning, JSON.stringify(r)).toBeGreaterThan(0);
   }
-  // (near its new target: notice's frame, then the steering's own easing — the floor, ~7–9 frames — and the field's
-  // first sweeps round the new seed: ≤ 13 frames at the low tier's 2 sweeps)
-  for (const r of out.filter((x) => x.gap === 6)) expect(r.turning, JSON.stringify(r)).toBeLessThanOrEqual(13);
-  // (40 cells off: the field's change must cross them, about a cell or two a sweep — 11–27 frames at 2 sweeps, 9–12 at
-  // 8–16: the propagation, not the front's cap (U2 §5b). Bounded here so a regression shows; the target is the floor)
-  for (const r of out.filter((x) => x.gap === 40)) expect(r.turning, JSON.stringify(r)).toBeLessThanOrEqual(30);
+  // (FC12's gate: at the steering's floor, near or 40 cells off, at the low tier's 2 sweeps. The floor: notice's frame,
+  // then the velocity's easing at 6/s from 3 cells/s through zero — 8–9 frames measured near. With block relaxation
+  // (K 16) a change crosses a chunk a sweep: 40 cells measured 9–10 frames; relax's front kernel took 11–27 there)
+  for (const r of out) expect(r.turning, JSON.stringify(r)).toBeLessThanOrEqual(10);
 });
