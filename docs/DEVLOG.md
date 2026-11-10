@@ -21565,3 +21565,116 @@ routes (UNIT_MINDS_U2 §9a). The user: "The CPU paths are supposed to be GPU res
   back, no gap over 3.5 m; the east gate's march out to the edge. Muru in play (`?opps=1`, walls for three seasons):
   3 runs for its 52 pieces, all reached; the east arterial's gate a march route; the north one GATE_WATER (its
   causeway over the lake); table version 1 → 6 as the wall rose.
+
+## 2026-11-10 — U2 round 2: the hunt field seeded on the GPU, a front per field, measured (Track B, trackB-u2)
+
+Why: UNIT_MINDS_U2.md §5 names moving-seed fields as U2's riskiest part (seeds that move, appear and vanish every
+tick in a battle; FC4's count-up). Main approved building only that, measuring, and stopping.
+
+- **Built.** `Agents.gpuHunt(f, { bySource })`. Five kernels (units.wgsl `huntReset/Unmark/Set/Gone/Flip`) run once a
+  frame before the relaxation and scatter each hostile kind's target (unit word f.y) into `seedMask` (a bit per field
+  per surface). Bit 16 + f remembers last frame's seeds, so a seed that stays isn't marked again and one that goes is.
+  `relax` reads the bit. Actors' targets stay CPU seeds. `?huntgpu=1` turns it on in AgentUnits; strikes still go
+  through the CPU's 8 `AP.targets`. So with it on, raiders walk toward targets they can't swing at unless the target
+  is among those 8: fewer deaths (4–65 vs 57–93). It is a measuring toggle until DA-B32.
+- **FC10, a front per field.** A dirty word's low 16 bits are "changed for field f"; the high 16 are "carried for
+  field f". Peel, links, marks and a chunk coming into scope mark all fields. `frontBuild` stores each listed chunk's
+  field mask after the list (`frontList[FRONT_CAP + k]`), and the relax front skips the other fields. `?fieldfront=0`
+  turns this off. NFIELDS ≤ 16 is asserted.
+- **The seed-id fix (`?huntsrc=1`).** A second plane in seedMask holds, per surface, the seed surface its distance came
+  from. A neighbour whose seed's distance is no longer 0 is passed over, so a vanished seed's values go FAR at once and
+  refill from the seeds left.
+- **Bindings.** No row growth and no occ/shove merge: the seed kernels are their own pipelines (5 storage buffers); the
+  relax front reaches 8 with seedMask.
+
+**Correctness** (`test/gpu/huntseed.test.ts`: 128² flat, 60 prey, 40 hunters, 5 waves killing every current target,
+then the last prey; the field vs. a CPU BFS, worst gap ≤ 1):
+
+| Mode | Frames to match after each wave (0–5) | Last prey dies: frames to empty |
+|---|---|---|
+| CPU seeds (today) | 46, 46, 47, 49, 49, 51 | 3 |
+| GPU seeds | 45, 46, 45, 51, 47, 51 | never (> 240): FC4 count-up |
+| GPU seeds + seed-id | 45, 47, 47, 45, 46, 48 | 4 |
+
+**Cost** (scripts/lab/huntbench.mjs: `town` recipe, 412×915, q=low, 200 guards v 200 raiders, 20 s at 1x, ?agentprof=1;
+ms mean / p95 / max; two runs each):
+
+| Flags | relax | hunt kernels | notice | agents total | front a sweep | asked | carried | sweeps carrying |
+|---|---|---|---|---|---|---|---|---|
+| huntgpu=0, fieldfront=0 | 0.373/0.65/1.71; 0.339/0.61/1.15 | — | 0.64; 0.74 | 1.23; 1.30 | 32 | 90–91 | 58–59 | 98–99% |
+| huntgpu=0 | 0.303/0.55/4.65; 0.382/0.57/4.36; 0.292/0.48/0.77; 0.373/0.61/5.18 | — | 0.63–1.08 | 1.13–1.71 | 32 | 90–91 | 58–60 | 99% |
+| huntgpu=1 | 0.226/0.34/0.67; 0.308/0.47/0.87 | 0.022; 0.033 | 0.52; 0.74 | 0.94; 1.31 | 32 | 89–91 | 57–59 | 99% |
+| huntgpu=1, huntsrc=1 | 0.254/0.46/0.98; 0.307/0.52/3.73 | 0.026; 0.029 | 0.76; 1.07 | 1.23; 1.62 | 32 | 100–110 | 68–78 | 100% |
+
+What it says:
+- GPU seeding costs nothing measurable (0.02–0.03 ms of kernels; relax is no higher).
+- FC10 moves relax by less than the run-to-run spread here: every chunk is relaxed at the cap regardless.
+- The front is saturated in every mode, before and after this round. In a 400-unit fight about 90 chunks ask each
+  sweep and 32 are taken, so fields lag by FRONT_CAP whoever seeds them. The tiny-world test shows the same: every mode
+  takes ~45 frames a wave. That is FC4's "what is left", now the risk for 1,000 units.
+- notice (0.5–1.1 ms, spikes of 35–106 ms in four of the ten runs) is the largest agents stage.
+
+Gates: typecheck clean; GPU tier 196 passed, 11 expected fail (the 10 U2 skeletons + the no-fix count-up), 5 skipped; unit tier 858 passed, 3 expected fail. No shot (nothing drawn changed).
+
+## 2026-11-10 — U2 round 3 (FC11): why the agents' front is saturated in a fight; reaction latency measured (trackB-u2)
+
+Why: round 2 found the front at FRONT_CAP in every mode of a 200 v 200 fight. Main accepted the seed-id fix as the
+default and put FC11 before strikes: ~45 frames of field lag would break the user's "a few frames" reaction. This
+round measures before deciding; the recommendation is UNIT_MINDS_U2.md §5c.
+
+- **The seed-id fix is the only GPU path** (`?huntsrc` removed; `Agents.gpuHunt(f)`). The params gained a `u2`
+  vec4 at the end: the hunt field, and the fields the CPU's marks are for. AP.step.z/w are free again.
+- **Attribution (`?agentprof=1`).** frontBuild counts each asking chunk by field: changed round it, or carried only
+  (`frontDbg`, binding 54, read and cleared each logged tick). huntSet/huntGone count seeds new and gone. The tick log
+  gains `fieldAsk`, `fieldCarry`, `seedsNew/Gone`, `seedChanged`, `restarted`, `marksFor`.
+- **Toggles kept:** `?frontcap=N` (the WGSL constant replaced at pipeline creation; the front list sized for it);
+  `?seedcell=1` (a CPU seed that stays in its cell is no change, and markChunks marks only the fields whose seeds
+  changed: `u2.y`). **Removed after measuring:** `?direct=R` (hunters steering straight at a target within R). It
+  helped nobody, and it read another unit's row inside the step's dispatch (a race).
+- **Tests:** `test/gpu/huntreact.test.ts` (reaction latency, `SWEEPS=`/`FRONTCAP=` env to vary); huntseed.test.ts lost
+  its no-fix mode.
+
+Town recipe, 200 v 200, 412×915, q=low (2 sweeps a tick), 20 s at 1x, one run each. Chunk asks per tick by field,
+changed / carried:
+
+| Run | relax ms | asked/sweep | carried | foes | goal0 | goal1 | goal2 | hunt | each static field | hunters <10 cells from target |
+|---|---|---|---|---|---|---|---|---|---|---|
+| huntgpu=0 | 0.73/1.19 | 90.5 | 58.6 | 75/54 | 19/14 | 69/50 | 43/29 | 98/70 (CPU-seeded) | 15.6/12.2 | 348 of 3,788 |
+| huntgpu=1 | 0.46/0.65 | 94.4 | 62.4 | 80/67 | 13/12 | 34/37 | 80/69 | 19/16 | 12.6/12 | 116 of 3,947 |
+| huntgpu=1 (repeat) | 0.75/1.18 | 97.6 | 65.6 | 82/77 | 31/32 | 52/56 | 94/80 | 25/21 | 12.9/12.8 | 368 of 3,966 |
+| + frontcap=64 | 0.71/1.21 | 104.8 | 40.8 | 130/35 | 12/8 | 31/14 | 176/33 | 23/11 | 11.8/7.6 | 304 of 3,857 |
+| + frontcap=128 | 0.53/0.65 | 92.1 (all relaxed) | 0 | 149/0 | 150/0 | 38/0 | 40/0 | 50/0 | 11.1/0 | 335 of 3,727 |
+| + seedcell=1 | 0.44/0.53 | 105.3 | 73.3 | 93/93 | 101/96 | 28/40 | 104/97 | 13/18 | 0.1/8.2 | 205 of 3,985 |
+| + direct=10 | 0.41/0.49 | 98.6 | 66.6 | 77/76 | 14/14 | 29/22 | 99/82 | 23/20 | 14.3/13.7 | 314 of 4,000 |
+
+- foes' CPU seeds change on 1,063–1,189 ticks of 1,200; with seedcell, 116. Peel: 1–5 ticks in 1,200.
+- Run-to-run spread is large: in the two plain huntgpu=1 runs relax was 0.46 and 0.75 ms, and notice 0.70 and 1.57.
+- The repeat run held the round's notice spike: maxima of notice 122 ms, relax 40, step 33 and hunt 8.9 in one run.
+  That is a GPU stall, not notice's work; it was not chased.
+
+**Reaction latency** (test/gpu/huntreact.test.ts, 128² flat: frames from the target's death until the hunter's
+velocity has any part toward its new target; notice retargets in 1 frame; ~7–9 frames is the steering's easing floor):
+
+| Gap | 2 sweeps, cap 32 / 64 / 128 | 8 sweeps | 16 sweeps |
+|---|---|---|---|
+| 6 cells | 9–12 / 10–12 / 9–11 | — | — |
+| 40 cells | 12–27 / 13–27 / 11–27 | 10–12 | 9–10 |
+
+What it says:
+- The demand is the CPU's moving-seed fields (foes, the churning goals), plus every field being marked by every CPU
+  mark. The GPU-seeded hunt field, with up to 200 seeds, asks a quarter of what foes asks with 6.
+- Far reaction is set by propagation per sweep (about 1–2 cells) at the phone's 2 sweeps, not by the cap.
+- Recommended next (§5c):
+  - block relaxation in workgroup memory, so a change crosses a chunk per sweep;
+  - foes and goals GPU-seeded (HUNT_D, the pool);
+  - per-field marks by default;
+  - the cap sized after the phone bench.
+- The user's answers are folded into UNIT_MINDS_U2.md §9 (design only), the interface test `orderFailed` among them:
+  - every order argument from the CPU's own state, by index;
+  - the paged field atlas;
+  - manning walls as a wall-walk formation;
+  - formations on every march;
+  - a hunt and a threat field per side.
+
+Gates: typecheck clean; GPU tier 197 passed, 10 expected fail (the U2 skeletons; the orderFailed skeleton added after is an 11th, run on its own), 5 skipped; unit tier 858 passed, 3
+expected fail. No shot (nothing drawn changed).

@@ -26,6 +26,7 @@ import { MAT } from '../world/materials';
 import { timed } from '../gpu/cpustat';
 import { ACTOR, NO_FACTION, type CombatSpec } from '../agents/notice';
 import { cellPos } from '../world/lattice';
+import { urlFlags } from '../flags';
 
 /** GPU hit points per contract health point */
 const HPK = 3;
@@ -82,6 +83,9 @@ function raiderModel(): [number, number, number, number][] {
   return v;
 }
 const TARGETS = 8;
+/** (U2, UNIT_MINDS_U2.md §5: the riskiest part, measured) ?huntgpu=1: the hunt field seeded on the GPU from every
+ *  hostile's target (Agents.gpuHunt) — the actors' targets still seeded here; off: the TARGETS nearest, as before */
+const HUNT_GPU = typeof location !== 'undefined' && urlFlags().get('huntgpu') === '1';
 const REACH = 1.5;
 const STRIKE = 1.0;
 const LEASH = 28;
@@ -192,7 +196,15 @@ export class AgentUnits implements Units {
   /** live units at the last sync, and how long that sync took to come back (ms) */
   stats = { units: 0, hunting: 0, syncMs: 0, syncs: 0 };
 
-  constructor(readonly agents: Agents) {
+  /** (U2) the hunt field's seeds the GPU's (Agents.gpuHunt): ?huntgpu=1, or a test's */
+  readonly huntGpu: boolean;
+
+  constructor(
+    readonly agents: Agents,
+    o: { huntGpu?: boolean } = {},
+  ) {
+    this.huntGpu = o.huntGpu ?? HUNT_GPU;
+    if (this.huntGpu) agents.gpuHunt(F.targets);
     agents.defineKind(K.guard, { name: 'guard', height: 1.45, mass: 1.2, hp: 10, speed: 2.7, colours: { torso: MAT.Steel, head: MAT.Steel } });
     agents.defineKind(K.character, { name: 'character', height: 1.4, mass: 1, hp: 10, speed: 2.5, colours: { torso: MAT.Brick, legs: MAT.Wood } });
     agents.defineKind(K.raider, { name: 'raider', height: 1.6, mass: 1, hp: 10, speed: 3.1, reach: 1.35, damage: 1, swingPeriod: 1.1, notice: 160, colours: { torso: MAT.Tile, legs: MAT.Basalt, head: MAT.Obsidian }, model: { voxels: raiderModel(), voxel: 0.25 } });
@@ -912,8 +924,15 @@ export class AgentUnits implements Units {
     }
     this.targetsPrev = this.targetsNow;
     this.targetsNow = chosen;
-    this.agents.setTargets(targets, hunters.length ? F.targets : -1);
-    if (!hunters.length) this.agents.seed(F.targets, []);
+    if (this.huntGpu) {
+      // (U2: the units' targets are the GPU's seeds; the actors' — the CPU's positions — seeded here)
+      this.agents.setTargets(targets, -1);
+      const acts = chosen.flatMap((c, i) => (typeof c === 'string' ? [targets[i]] : []));
+      this.agents.seed(F.targets, hunters.length ? acts : []);
+    } else {
+      this.agents.setTargets(targets, hunters.length ? F.targets : -1);
+      if (!hunters.length) this.agents.seed(F.targets, []);
+    }
     // defenders: guards with a hostile in sight, units ordered to attack, anyone struck — their targets the GPU's: close
     // in and strike
     const foes: V2[] = [];
