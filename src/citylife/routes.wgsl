@@ -1784,12 +1784,13 @@ fn ships(@builtin(global_invocation_id) g: vec3<u32>) {
 fn shipVox(wp: vec3<f32>, h: f32, i: u32) {
   let fw = vec2<f32>(cos(h), sin(h));
   let sd = vec2<f32>(-fw.y, fw.x);
+  // (a hull of five big voxels along its heading — about 9 units — tapered at bow and stern; a cabin aft; a mast and
+  // a square sail across it)
   for (var k = 0; k < 5; k++) {
-    let a = f32(k - 2) * 0.9;
-    vox(wp + vec3<f32>(fw * a, 0.0), M_WOOD, select(14u, 11u, k == 0 || k == 4), h);
-    if (k != 0 && k != 4) { vox(wp + vec3<f32>(fw * a + sd * 0.6, 0.0), M_WOOD, 10u, h); vox(wp + vec3<f32>(fw * a - sd * 0.6, 0.0), M_WOOD, 10u, h); }
+    let a = f32(k - 2) * 1.8;
+    vox(wp + vec3<f32>(fw * a, 0.0), M_WOOD, select(30u, 22u, k == 0 || k == 4), h);
   }
-  vox(wp + vec3<f32>(-fw * 1.4, 0.9), M_WOOD, 9u, h);
-  for (var k = 0; k < 3; k++) { vox(wp + vec3<f32>(fw * 0.2, 0.9 + f32(k) * 0.8), M_WOOD, 4u, h); }
-  vox(wp + vec3<f32>(fw * 0.5 + sd * 0.0, 1.9), M_CANVAS, 16u, h + 1.5708);
+  vox(wp + vec3<f32>(-fw * 2.6, 1.4), M_WOOD, 18u, h);
+  for (var k = 0; k < 4; k++) { vox(wp + vec3<f32>(fw * 0.4, 1.4 + f32(k) * 1.3), M_WOOD, 7u, h); }
+  vox(wp + vec3<f32>(fw * 0.6, 3.6), M_CANVAS, 44u, h + 1.5708);
 }

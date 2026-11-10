@@ -21447,3 +21447,7 @@ The user: "I do want to see agents moving around and more things to reflect choi
 - Checked at Muru (the time-lapse built, 20 wagons and 4 ships by URL): wagons riding in and unloading; ships coming in
   from the edges.
 - `SeasonLoop.grant()` (scripts and shots): pools as a gift, to reach the late cards in a GIF.
+- Ships drawn bigger (a hull of five 30-size voxels, about 9 units, a cabin, a mast and a sail) — at play zoom the
+  first ones were specks. Shots: `scratchpad/opps/seasonlife3.gif` (Muru, 3 seasons: the wall rising round both banks
+  with towers, the trade route opening; wagons are carts at people's size, hard to pick out at this zoom; no ship came
+  into this frame — Muru's harbour district here isn't beside the lake, see SL14).
